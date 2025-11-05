@@ -465,6 +465,81 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(x, indices), x[indices[0, : indices.size // 4]]
     )
 
+  def test_invalid_gather_1d_with_extra_transforms(self):
+    x = jnp.arange(8)
+    indices = jax.random.permutation(jax.random.key(42), x)
+
+    @vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=x.shape, dtype=jnp.int32),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+    )
+    def kernel(x_hbm_ref, indices_ref, o_ref):
+      pltpu.sync_copy(x_hbm_ref.at[indices_ref].reshape(o_ref.size), o_ref)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "cannot have any transforms following the indexer"
+    ):
+      kernel(x, indices)
+
+  def test_invalid_gather_1d_with_indexed_destination(self):
+    x = jnp.arange(8)
+    indices = jax.random.permutation(jax.random.key(42), x)
+
+    @vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=x.shape, dtype=jnp.int32),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+    )
+    def kernel(x_hbm_ref, indices_ref, o_ref):
+      pltpu.sync_copy(x_hbm_ref.at[indices_ref], o_ref.at[indices_ref])
+
+    with self.assertRaisesRegex(ValueError, "source ref can be indexed"):
+      kernel(x, indices)
+
+  def test_invalid_gather_1d_memory_space(self):
+    x = jnp.arange(8)
+    indices = jax.random.permutation(jax.random.key(42), x)
+
+    @vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=x.shape, dtype=jnp.int32),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_hbm_ref, indices_ref, o_ref):
+      pltpu.sync_copy(x_hbm_ref.at[indices_ref], o_ref)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "from HBM to HBM is not supported"
+    ):
+      kernel(x, indices)
+
+  def test_invalid_gather_1d_offsets_memory_space(self):
+    x = jnp.arange(8)
+    indices = jax.random.permutation(jax.random.key(42), x)
+
+    @vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=x.shape, dtype=jnp.int32),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.HBM),
+        ),
+    )
+    def kernel(x_hbm_ref, indices_ref, o_ref):
+      pltpu.sync_copy(x_hbm_ref.at[indices_ref], o_ref)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "must be in VMEM, got HBM"
+    ):
+      kernel(x, indices)
+
   def test_implicit_gather_1d(self):
     num_steps = 4
     x = jnp.arange(num_steps * 8).reshape(num_steps, 8)
