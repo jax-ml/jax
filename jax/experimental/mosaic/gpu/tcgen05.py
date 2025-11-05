@@ -870,7 +870,10 @@ def _infer_tmem_layout(shape: tuple[int, int], collective: bool, packing: int) -
     else:
       return tmem_half_lane_layout(shape[1], packing)
   else:
-    raise ValueError(f"Unsupported shape: {shape}")
+    raise ValueError(
+        f"Unsupported shape: {shape}. TMEM references must have either"
+        f" {TMEM_ROWS} or {TMEM_ROWS // 2} rows, but got {shape[0]}."
+    )
 
 
 def tmem_default_layout(packing: int = 1) -> TMEMLayout:
