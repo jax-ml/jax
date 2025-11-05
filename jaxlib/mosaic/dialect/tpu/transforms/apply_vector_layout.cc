@@ -3487,15 +3487,20 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
     out_vregs = concatenate(operand_vregs, dimension);
   } else {
     const int64_t tiling_dim = idimension - (irank - 2);
-    if (res_layout->offsets()[tiling_dim] != 0) {
-      return op.emitOpError("Not implemented: result non-zero offset.");
+    if (!res_layout->offsets()[tiling_dim]) {
+      // The result layout offset should never be replicated because that
+      // requires all inputs to be logically replicated *with the same value*,
+      // which Mosaic can never guarantee.
+      return op.emitOpError(
+          "Invalid result layout: Offset for concatenation dimension cannot be "
+          "replicated.");
     }
     if (tiling[1] != ctx.target_shape[1]) {
       return op.emitOpError("Not implemented: Unsupported tiling.");
     }
 
     // Tiled concatenation logic.
-    int64_t offset_at_dim = 0;
+    int64_t offset_at_dim = *res_layout->offsets()[tiling_dim];
     for (size_t i = 0; i < op.getNumOperands(); ++i) {
       auto& vregs = operand_vregs[i];
 
@@ -3512,7 +3517,7 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
             out_idx.assign(idx.begin(), idx.end());
             out_idx[dimension] += offset_at_dim / vreg_slice[tiling_dim];
             Value& out_vreg = out_vregs(out_idx);
-            if (idx[dimension] == 0 && operand_offset != 0) {
+            if (idx[dimension] == 0 && operand_offset != 0 && i != 0) {
               const std::array<int64_t, 2> start_offsets = {0, 0};
               std::array<int64_t, 2> end_offsets = vreg_slice;
               end_offsets[tiling_dim] = operand_offset;
