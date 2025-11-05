@@ -1067,6 +1067,27 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "mgpu_transposed_ragged_dot_run",
+    srcs = [
+        "//jax/experimental/pallas/ops/gpu:transposed_ragged_dot_mgpu.py",
+    ],
+    enable_backends = [],
+    enable_configs = [
+        "gpu_h100_x32",
+        "gpu_h100",
+    ],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_mosaic_gpu",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
     name = "mgpu_ragged_dot_test",
     srcs = ["mgpu_ragged_dot_test.py"],
     enable_backends = [],
