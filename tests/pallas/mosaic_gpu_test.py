@@ -3191,6 +3191,19 @@ class PallasCallSm100ATest(PallasSm100ATest):
     ):
       kernel()
 
+  def test_transposed_tmem_ref_raises(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([], jnp.float32),
+        scratch_shapes=[plgpu.TMEM((128, 128), jnp.float32)],
+    )
+    def kernel(out, tmem_ref):
+      del out
+      plgpu.transpose_ref(tmem_ref, (1, 0))
+
+    with self.assertRaisesRegex(ValueError, "Can't transpose a TMEM reference"):
+      kernel()
+
   @parameterized.parameters((False,), (True,))
   def test_tmem(self, collective):
     transforms = self.default_transforms(dtype=jnp.float32)

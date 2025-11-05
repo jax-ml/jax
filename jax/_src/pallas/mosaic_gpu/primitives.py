@@ -1639,10 +1639,12 @@ def _tcgen05_mma_lowering(
 
   if acc_transforms_tree is not None:
     acc_transforms = acc_transforms_tree.unflatten(acc_transforms_leaves)
-    acc, acc_transforms = lowering._handle_transforms(ctx, acc, acc_transforms)
+    acc, acc_transforms = lowering._handle_transforms(
+        ctx, acc, acc_transforms, handle_transposes=False
+    )
     if acc_transforms:
       raise NotImplementedError(
-          f"Unsupported transforms: {acc_transforms}."
+          f"Unsupported transforms for ACC: {acc_transforms}."
       )
 
   if a_transforms_tree is not None:
@@ -1664,7 +1666,7 @@ def _tcgen05_mma_lowering(
         lhs_tiling = None  # type: ignore
       case _:
         raise NotImplementedError(
-            f"Unsupported transforms: {a_transforms}."
+            f"Unsupported transforms for LHS: {a_transforms}."
         )
     if not isinstance(a_ref, tcgen05.TMEMRef):
       swizzle_elems = 8 * lhs_swizzle // dtypes.bit_width(a_dtype)  # type: ignore
@@ -1689,7 +1691,7 @@ def _tcgen05_mma_lowering(
       rhs_transpose = True
     case _:
       raise NotImplementedError(
-          f"Unsupported transforms: {b_transforms}."
+          f"Unsupported transforms for RHS: {b_transforms}."
       )
   swizzle_elems = 8 * rhs_swizzle // dtypes.bit_width(b_dtype)
   if rhs_tiling != (8, swizzle_elems):
