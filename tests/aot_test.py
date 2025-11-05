@@ -287,10 +287,9 @@ class JaxAotTest(jtu.JaxTestCase):
 class ComponentTest(jtu.JaxTestCase):
   @contextlib.contextmanager
   def make_in_memory_cache(self):
-    cache = aot_util.make_in_memory_cache()
+    cache = aot_util.Cache()
     with aot_util.component_cache(cache):
       yield
-      aot.clear_caches()
       jax.clear_caches()
 
   # TODO(dsuo): It would be nice to have a way to grab the pjit jaxpr cache
@@ -308,16 +307,22 @@ class ComponentTest(jtu.JaxTestCase):
     num_jaxpr_hits: int | Sequence[int],
     num_trace_hits: int,
     num_trace_misses: int,
+    num_wrapper_hits: int,
     num_disk_hits: int,
   ):
     cache = aot.get_cache()
-    component_key = fun.component_key
+    component_key = fun.component_key  # type: ignore
 
     # Verify component key exists in disk cache.
-    self.assertIn(component_key, cache.keys())
+    self.assertIn(component_key, cache.cache_keys())
+    # Verify the number of wrapper cache hits.
+    self.assertEqual(
+      aot_util._wrapper_cache.cache_info()[component_key]["hits"],
+      num_wrapper_hits,
+    )
 
     # Verify the number of disk hits.
-    self.assertEqual(cache.info(component_key)["hits"], num_disk_hits)
+    self.assertEqual(cache.cache_info(component_key)["hits"], num_disk_hits)
 
     jaxpr_key = self.get_jaxpr_key(fun.fun)
     jaxpr_cache = pjit._create_pjit_jaxpr.cache_get(jaxpr_key)
@@ -338,7 +343,6 @@ class ComponentTest(jtu.JaxTestCase):
     self.assertEqual(
       pjit._infer_params_cached.cache_info().hits, num_trace_hits
     )
-
     self.assertEqual(
       pjit._infer_params_cached.cache_info().misses, num_trace_misses
     )
@@ -371,6 +375,8 @@ class ComponentTest(jtu.JaxTestCase):
         num_trace_hits=1,
         # We should have 4 misses: add, equal, f, and call_wrapped.
         num_trace_misses=4,
+        # We shouldn't have hit the wrapper cache yet.
+        num_wrapper_hits=0,
         # We get 1 hit on the disk cache during the lowering rule. However, this
         # hit is for an incomplete CacheEntry; only avals_out were populated
         # and not the lowered module. The lowering rule updates the CacheEntry
@@ -384,8 +390,8 @@ class ComponentTest(jtu.JaxTestCase):
 
       self.assertEqual(f.fun, g.fun)
       self.assertEqual(g(1.0), 2.0)
-      # Cache state should remain unchanged.
-      self.validate_cache_states(g, 1, 0, 1, 4, 1)
+      # Cache state should remain unchanged except we grabbed the wrapped fun.
+      self.validate_cache_states(g, 1, 0, 1, 4, 1, 1)
 
   @config.enable_checks(False)
   def test_component_in_function(self):
@@ -400,24 +406,22 @@ class ComponentTest(jtu.JaxTestCase):
       def g(x):
         return f(x) + 1.0
 
-      # Create cache entry when abstract_eval f. 1 hit when lowering f.
       self.assertEqual(f(1.0), 2.0)
-      self.assertEqual(cache.keys(), [f.component_key])
-      self.assertEqual(cache.info(f.component_key)["hits"], 1)
-      # Make sure the underlying function f.fun exists in the jaxpr cache.
-      pjit_key = self.get_jaxpr_key(f.fun)
-      self.assertIsNotNone(pjit_key)
-      # Make sure there is only one entry for f.fun. If there are more, then it
-      # means the lowering rule missed.
-      num_entries = len(list(self.get_pjit_jaxpr_entry(pjit_key)))
-      self.assertEqual(num_entries, 1)
+
+      # We should have the same cache states as in test_component_basic.
+      self.validate_cache_states(f, 1, 0, 1, 4, 1)
+
+      logging.info("\n\n\n")
+
       # 1 hit when lowering g. g is not a component, so doesn't look up
       # CacheEntry during abstract_eval.
       self.assertEqual(g(1.0), 3.0)
-      # Make sure we didn't add any new entries for f.fun.
-      num_entries = len(list(self.get_pjit_jaxpr_entry(pjit_key)))
-      self.assertEqual(num_entries, 1)
-      self.assertEqual(cache.info(f.component_key)["hits"], 2)
+      # We incur one more missed trace for g and
+      self.validate_cache_states(f, 1, 0, 2, 6, 2)
+      # # Make sure we didn't add any new entries for f.fun.
+      # num_entries = len(list(self.get_pjit_jaxpr_entry(pjit_key)))
+      # self.assertEqual(num_entries, 1)
+      # self.assertEqual(cache.info(f.component_key)["hits"], 2)
 
   @config.enable_checks(False)
   def test_jit_of_component(self):

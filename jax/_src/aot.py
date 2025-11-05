@@ -30,7 +30,6 @@ from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 
@@ -39,7 +38,6 @@ UserKey = Hashable | Callable[..., Hashable]
 ComponentKey = aot_util.ComponentKey
 get_cache = aot_util.get_cache
 
-_wrapper_cache: dict[ComponentKey, xc._xla.PjitFunction] = {}
 
 
 def component(
@@ -51,8 +49,8 @@ def component(
     # the component key?
     component_key = ComponentKey(key)
 
-    if component_key in _wrapper_cache:
-      return _wrapper_cache[component_key]
+    if component_key in aot_util._wrapper_cache.cache_keys():
+      return aot_util._wrapper_cache.get(component_key)
 
     @api.jit
     @util.wraps(fun)
@@ -78,7 +76,7 @@ def component(
     wrapper.component_key = component_key
     wrapper.fun = fun
     logging.info("wrapper id %s", id(wrapper._fun))
-    _wrapper_cache[component_key] = wrapper
+    aot_util._wrapper_cache.put(component_key, wrapper)
     return wrapper
 
   return _component
@@ -202,10 +200,6 @@ def component_batcher(
     component_key=ComponentKey.vmap(component_key),
   )
   return vals_out, dims_out()
-
-
-def clear_caches():
-  get_cache().clear()
 
 
 component_p = core.Primitive("component")

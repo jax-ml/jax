@@ -24,7 +24,9 @@ from jax._src import config
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import stages
+from jax._src import util
 from jax._src.interpreters import mlir
+from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 
@@ -56,7 +58,10 @@ class ComponentKey:
 
 
 def _validate_component_cache(val):
+  logging.info("Validating component cache config.")
   assert val is None or isinstance(val, Cache)
+  if val is not None:
+    util.register_cache(val, "aot_cache")
 
 
 component_cache = config.string_or_object_state(
@@ -95,47 +100,40 @@ class CacheEntry:
     return cls(avals_out, module)
 
 
-class Cache(NamedTuple):
-  get: Callable[[ComponentKey], bytes | None]
-  put: Callable[[ComponentKey, bytes], None]
-  keys: Callable[[], list[ComponentKey]]
-  clear: Callable[[], None]
-  info: Callable[[ComponentKey], dict[str, Any]]
+# TODO(dsuo): This should be a protocol.
+class Cache:
+  def __init__(self):
+    self._in_memory_cache: dict[ComponentKey, SerializedType] = {}
+    self._in_memory_cache_info: dict[ComponentKey, dict[str, Any]] = {}
 
-
-_in_memory_cache: dict[ComponentKey, SerializedType] = {}
-_in_memory_cache_info: dict[ComponentKey, dict[str, Any]] = {}
-
-
-def make_in_memory_cache():
-  def get(key: ComponentKey) -> SerializedType | None:
-    entry = _in_memory_cache.get(key, None)
+  def get(self, key: ComponentKey) -> SerializedType | None:
+    entry = self._in_memory_cache.get(key, None)
     if entry is None:
-      _in_memory_cache_info[key] = dict(hits=0)
+      self._in_memory_cache_info[key] = dict(hits=0)
     else:
-      _in_memory_cache_info[key] = dict(
-        hits=_in_memory_cache_info[key]["hits"] + 1
+      self._in_memory_cache_info[key] = dict(
+        hits=self._in_memory_cache_info[key]["hits"] + 1
       )
     return entry
 
-  def put(key: ComponentKey, data: SerializedType, update: bool):
-    _in_memory_cache[key] = data
+  def put(self, key: ComponentKey, data: SerializedType, update: bool):
+    self._in_memory_cache[key] = data
     if not update:
-      _in_memory_cache_info[key] = dict(hits=0)
+      self._in_memory_cache_info[key] = dict(hits=0)
 
-  def keys() -> list[ComponentKey]:
-    return list(_in_memory_cache.keys())
+  def cache_keys(
+    self,
+  ) -> list[ComponentKey]:
+    return list(self._in_memory_cache.keys())
 
-  def clear() -> None:
-    _in_memory_cache.clear()
-    _in_memory_cache_info.clear()
+  def cache_clear(self) -> None:
+    self._in_memory_cache.clear()
+    self._in_memory_cache_info.clear()
 
-  def info(key: ComponentKey) -> dict[str, Any]:
-    if key not in _in_memory_cache_info:
-      raise ValueError(f"`{key}` not found in _in_memory_cache_info")
-    return _in_memory_cache_info[key]
-
-  return Cache(get, put, keys, clear, info)
+  def cache_info(self, key: ComponentKey) -> dict[str, Any]:
+    if key not in self._in_memory_cache_info:
+      raise ValueError(f"`{key}` not found in self._in_memory_cache_info")
+    return self._in_memory_cache_info[key]
 
 
 def get_cache() -> Cache | None:
@@ -157,6 +155,7 @@ def put_entry(
   if (cache := get_cache()) is not None:
     cache.put(key, entry.serialize(), update)
 
+
 @lu.cache
 def cached_flat_fun(flat_fun):
   return maybe_reset_stores(flat_fun)
@@ -176,3 +175,33 @@ def maybe_reset_stores(fun):
 
   fun.f_transformed = reset_stores_f_transformed
   return fun
+
+
+class WrapperCache:
+  def __init__(self):
+    self.data = dict()
+    self.info = dict()
+
+  def get(self, key: ComponentKey) -> xc._xla.PjitFunction | None:
+    fun = self.data.get(key, None)
+    if fun is not None:
+      self.info[key]["hits"] += 1
+    return fun
+
+  def put(self, key: ComponentKey, fun: xc._xla.PjitFunction):
+    fun = self.data.setdefault(key, fun)
+    info = self.info.setdefault(key, dict(hits=0))
+    self.info[key]["hits"] = 0
+
+  def cache_info(self):
+    return self.info
+
+  def cache_clear(self):
+    self.data.clear()
+
+  def cache_keys(self):
+    return self.data.keys()
+
+
+_wrapper_cache = WrapperCache()
+util.register_cache(_wrapper_cache, "aot_wrapper_cache")
