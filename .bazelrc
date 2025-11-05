@@ -413,9 +413,6 @@ common:rbe_linux_x86_64 --config=ci_linux_x86_64
 
 common:rbe_linux_x86_64_cuda_common --config=rbe_linux_x86_64_base
 common:rbe_linux_x86_64_cuda_common --repo_env=REMOTE_GPU_TESTING=1
-# Enable forward compatibility for CUDA builds because RBE docker image doesn't
-# have latest CUDA drivers installed.
-common:rbe_linux_x86_64_cuda_common --@cuda_driver//:enable_forward_compatibility=true
 
 common:rbe_linux_x86_64_cuda12 --config=rbe_linux_x86_64_cuda_common
 common:rbe_linux_x86_64_cuda12 --config=ci_linux_x86_64_cuda12

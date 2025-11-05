@@ -83,13 +83,13 @@ else
     TEST_STRATEGY=""
 fi
 
-# Enable forward compatibility for NVIDIA drivers older than 580.
+# Enable hermetic UMD 13.0 for NVIDIA drivers older than 580.
 driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -n 1)
 driver_major_version=${driver_version%%.*}
 if [[ "$driver_major_version" -lt "580" ]]; then
   echo "NVIDIA driver version ($driver_version) is older than 580."
-  echo "Enabling forward compatibility."
-  TEST_CONFIG="$TEST_CONFIG --@cuda_driver//:enable_forward_compatibility=true"
+  echo "Enabling hermetic UMD 13.0."
+  TEST_CONFIG="$TEST_CONFIG --repo_env=HERMETIC_CUDA_UMD_VERSION=13.0.0"
 fi
 
 
