@@ -409,19 +409,16 @@ class ComponentTest(jtu.JaxTestCase):
       self.assertEqual(f(1.0), 2.0)
 
       # We should have the same cache states as in test_component_basic.
-      self.validate_cache_states(f, 1, 0, 1, 4, 1)
+      self.validate_cache_states(f, 1, 0, 1, 4, 0, 1)
 
       logging.info("\n\n\n")
 
       # 1 hit when lowering g. g is not a component, so doesn't look up
       # CacheEntry during abstract_eval.
       self.assertEqual(g(1.0), 3.0)
-      # We incur one more missed trace for g and
-      self.validate_cache_states(f, 1, 0, 2, 6, 2)
-      # # Make sure we didn't add any new entries for f.fun.
-      # num_entries = len(list(self.get_pjit_jaxpr_entry(pjit_key)))
-      # self.assertEqual(num_entries, 1)
-      # self.assertEqual(cache.info(f.component_key)["hits"], 2)
+      # We have one more trace cache hit on f from tracing g, two more misses,
+      # one for g and one for add, and one more disk cache hit from lowering g.
+      self.validate_cache_states(f, 1, 0, 2, 6, 0, 2)
 
   @config.enable_checks(False)
   def test_jit_of_component(self):
