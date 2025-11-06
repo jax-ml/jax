@@ -130,6 +130,7 @@ from jax._src.lax.lax import (
   top_k_p as top_k_p,
   transpose_p as transpose_p,
   xor_p as xor_p,
+  empty2_p as empty2_p,
 )
 
 from jax._src.lax.special import (
