@@ -29,10 +29,12 @@ from jax import lax
 from jax._src import ad_util
 from jax._src import core
 from jax._src import custom_derivatives
+from jax._src import hijax
 from jax._src import pjit
 from jax._src import prng
 from jax._src import state
 from jax._src import tree_util
+from jax._src import typing
 from jax._src import util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
@@ -454,14 +456,7 @@ def make_kernel_function(
       tree_util.tree_unflatten(in_tree, in_block_avals)
   )
 
-  def sds_like(x):
-    if x is _no_aval:
-      return _no_aval
-    return jax.ShapeDtypeStruct(x.shape, x.dtype)
-
-  kernel_in_type = jax.tree.map(
-      sds_like, (unflat_in_block_arg_avals, unflat_in_block_kwarg_avals)
-  )
+  kernel_in_type = (unflat_in_block_arg_avals, unflat_in_block_kwarg_avals)
 
   def _read_block_spec(atom: core.Atom) -> pallas_core.BlockSpec | Any:
     if isinstance(atom, core.Literal):
@@ -542,7 +537,9 @@ def make_kernel_function(
 
 def get_fusion_values(
     fusion: Callable, *args, **kwargs
-) -> tuple[Callable, tuple[jax.Array, ...], tuple[jax.Array, ...]]:
+) -> tuple[
+    Callable, tuple[typing.SupportsShape, ...], tuple[typing.SupportsShape, ...]
+]:
   jaxpr, values, in_tree, out_tree = fuser_utils.make_jaxpr(
       fusion, *args, **kwargs
   )
@@ -1945,6 +1942,22 @@ def _custom_vjp_call_pull_block_spec_rule(
       read_usage_env=read_usage_env,
   )
   return in_block_specs
+
+
+@register_pull_block_spec_rule(hijax.call_hi_primitive_p)
+def _custom_call_hi_primitive_pull_block_spec_rule(
+    ctx: PullRuleContext, out_block_specs, *, prim
+):
+  del ctx
+  return prim.pull_block_spec_rule(out_block_specs)
+
+
+@register_eval_rule(hijax.call_hi_primitive_p)
+def _custom_call_hi_primitive_eval_rule(
+    ctx: KernelEvalContext, x, *, prim
+):
+  del ctx
+  return prim.expand(x)
 
 
 def push_block_spec(
