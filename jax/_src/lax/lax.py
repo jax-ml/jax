@@ -4038,6 +4038,26 @@ def broadcasting_sharding_rule(name, *avals):
 
   specs = [a.sharding.spec for a in avals if a.shape]
 
+  # TODO(yashkatariya): Maybe we need a reduced_rule too?
+  reduced_s = None
+  for s in specs:
+    if reduced_s is not None and s.reduced and s.reduced != reduced_s:
+      raise core.ShardingTypeError(
+          'All inputs should be reduced across the same mesh axes. Got one'
+          f' input with reduced={reduced_s} and another input with'
+          f' reduced={s.reduced}')
+    if s.reduced:
+      reduced_s = s.reduced
+  if reduced_s is None:
+    reduced_s = frozenset()
+  if reduced_s:
+    for s in specs:
+      flat_spec = flatten_spec(s)
+      if any(r in flat_spec for r in reduced_s):
+        raise core.ShardingTypeError(
+            'Inputs cannot be sharded on the same axes that another input is'
+            f' reduced on. Got input spec: {s} and reduced spec: {reduced_s}')
+
   result_specs = [None] * len(shapes[0])
   for i, (ss, ds) in enumerate(zip(zip(*specs), zip(*shapes))):
     if all(ss[0] == s for s in ss[1:]):
@@ -4060,7 +4080,7 @@ def broadcasting_sharding_rule(name, *avals):
             raise core.ShardingTypeError(
                 f'{name} got incompatible shardings for broadcasting: '
                 f'{", ".join(map(str, map(tuple, specs)))}.')
-  return NamedSharding(mesh, P(*result_specs))
+  return NamedSharding(mesh, P(*result_specs, reduced=reduced_s))
 
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
            require_same_dtypes=True, unreduced_rule=None):
@@ -4717,15 +4737,41 @@ ad.primitive_transposes[sub_p] = _sub_transpose
 mlir.register_lowering(sub_p, partial(_nary_lower_hlo, hlo.subtract))
 batching.ragged_prop_rules[sub_p] = batching.ragged_mask_elementwise_rule
 
+def _mul_unreduced_rule(out_sharding, x, y):
+  x_ur, y_ur = x.sharding.spec.unreduced, y.sharding.spec.unreduced
+  if x_ur and y_ur:
+    raise core.ShardingTypeError(
+          'lhs and rhs to `mul` cannot be unreduced since mul is bilinear. '
+          f'Got lhs={x_ur}, rhs={y_ur}')
+  elif x_ur and not y_ur:
+    if x_ur != y.sharding.spec.reduced:
+      raise core.ShardingTypeError(
+          'RHS should be reduced along the same axes LHS is unreduced on. Got'
+          f' lhs={x} and rhs={y}')
+    out_unreduced = x_ur
+  elif not x_ur and y_ur:
+    if x.sharding.spec.reduced != y_ur:
+      raise core.ShardingTypeError(
+          'LHS should be reduced along the same axes RHS is unreduced on. Got'
+          f' lhs={x} and rhs={y}')
+    out_unreduced = y_ur
+  else:
+    assert not x_ur and not y_ur
+    out_unreduced = frozenset()
+  if out_unreduced:
+    assert out_sharding.spec.reduced == out_unreduced
+    out_reduced = frozenset()  # if both are equal, set difference is empty.
+  else:
+    out_reduced = out_sharding.spec.reduced
+  return out_sharding.update(spec=out_sharding.spec.update(
+      unreduced=out_unreduced, reduced=out_reduced))
 
-mul_p = standard_naryop([_num, _num], 'mul')
+mul_p = standard_naryop([_num, _num], 'mul', unreduced_rule=_mul_unreduced_rule)
 ad.defjvp(mul_p,
           lambda xdot, x, y: mul(xdot, y),
           lambda ydot, x, y: mul(x, ydot))
-
 ad.defbilinear(mul_p, lambda ct, x, y: _unbroadcast(x.aval, mul(ct, y)),
                lambda ct, x, y: _unbroadcast(y.aval, mul(x, ct)))
-
 mlir.register_lowering(mul_p, partial(_nary_lower_hlo, hlo.multiply))
 batching.ragged_prop_rules[mul_p] = batching.ragged_mask_elementwise_rule
 

@@ -62,6 +62,8 @@ from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
+from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import ifrt_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -9532,6 +9534,61 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return y
 
     jax.jit(jax.grad(f))(1., 2.)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_reduced_sin_fwd_mul_bwd(self, mesh):
+    if jaxlib_extension_version < 387:
+      self.skipTest('Requires jaxlib_extension_version >= 387')
+    if ifrt_version < 36:
+      self.skipTest('Requires jaxlib_extension_version >= 36')
+    if jtu.if_cloud_tpu_at_least(2025, 11, 7):
+      self.skipTest('Requires libtpu built after 2025-11-6')
+
+    np_inp1 = np.arange(8.).reshape(4, 2)
+    np_inp2 = np.arange(16.).reshape(2, 8)
+    arr1 = jax.device_put(np_inp1, P(reduced={'x'}))
+    arr2 = jax.device_put(np_inp2, P(None, 'x'))
+
+    @jax.jit
+    def f(x, y):
+      x_ = jnp.sin(x)
+      y_ = jnp.sin(y)
+      z = x_ @ y_
+      return z.sum()
+
+    f(arr1, arr2)  # doesn't crash
+
+    out1, out2 = jax.jit(jax.grad(f, argnums=(0, 1)))(arr1, arr2)
+    self.assertEqual(out1.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
+    self.assertEqual(out2.sharding, NamedSharding(mesh, P(None, 'x')))
+
+    with jax.set_mesh(jtu.create_mesh((1,), 'x')):
+      ex_out1, ex_out2 = jax.jit(jax.grad(f, argnums=(0, 1)))(np_inp1, np_inp2)
+
+    self.assertArraysAllClose(ex_out1, reshard(out1, P()), rtol=2e-4)
+    self.assertArraysAllClose(ex_out2, out2, rtol=2e-4)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_mul_reduced_error(self, mesh):
+    arr1 = jax.device_put(np.arange(8.), P(reduced={'x'}))
+    arr2 = jax.device_put(np.arange(8.), P('x'))
+
+    @jax.jit
+    def f(x, y):
+      return x * y
+
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        "Inputs cannot be sharded on the same axes that another input is "
+        "reduced on"):
+      f(arr1, arr2)
+
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        "Inputs cannot be sharded on the same axes that another input is "
+        "reduced on"):
+      f(arr2, arr1)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
