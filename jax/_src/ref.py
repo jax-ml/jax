@@ -15,7 +15,7 @@
 from typing import Any
 from jax._src import core
 
-def new_ref(init_val, *, memory_space: Any = None) -> core.Ref:
+def new_ref(init_val, *, memory_space: Any = None, kind: Any = None) -> core.Ref:
   """Create a mutable array reference with initial value ``init_val``.
 
   For more discussion, see the `Ref guide`_.
@@ -30,4 +30,4 @@ def new_ref(init_val, *, memory_space: Any = None) -> core.Ref:
 
   .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
-  return core.new_ref(init_val, memory_space=memory_space)
+  return core.new_ref(init_val, memory_space=memory_space, kind=kind)
