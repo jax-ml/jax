@@ -431,7 +431,7 @@ def uniform(key: ArrayLike,
   return maybe_auto_axes(_uniform, out_sharding,
                          shape=shape, dtype=dtype)(key, minval, maxval)
 
-@partial(jit, static_argnums=(3, 4))
+@jit(static_argnums=(3, 4))
 def _uniform(key, minval, maxval, shape, dtype) -> Array:
   _check_shape("uniform", shape)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -581,7 +581,7 @@ def randint(key: ArrayLike,
   return maybe_auto_axes(_randint, out_sharding, shape=shape, dtype=dtype)(
       key, minval, maxval)
 
-@partial(jit, static_argnums=(3, 4))
+@jit(static_argnums=(3, 4))
 def _randint(key, minval, maxval, shape, dtype) -> Array:
   # We have three imperfect options for generating random integers in an arbitrary
   # user-specified range:
@@ -700,7 +700,7 @@ def _permutation(key, x, axis, independent):
   return jnp.take(x, ind, axis, unique_indices=True)
 
 
-@partial(jit, static_argnums=(2,))
+@jit(static_argnums=(2,))
 def _shuffle(key, x, axis) -> Array:
   # On parallel architectures, Fisher-Yates is more expensive than doing
   # multiple sorts. This algorithm is based on one developed and analyzed by
@@ -854,7 +854,7 @@ def normal(key: ArrayLike,
                      f"got {dtype}")
   return maybe_auto_axes(_normal, out_sharding, shape=shape, dtype=dtype)(key)
 
-@partial(jit, static_argnums=(1, 2))
+@jit(static_argnums=(1, 2))
 def _normal(key, shape, dtype) -> Array:
   if dtypes.issubdtype(dtype, np.complexfloating):
     sqrt2 = np.array(np.sqrt(2), dtype)
@@ -867,7 +867,7 @@ def _normal(key, shape, dtype) -> Array:
   else:
     return _normal_real(key, shape, dtype)
 
-@partial(jit, static_argnums=(1, 2))
+@jit(static_argnums=(1, 2))
 def _normal_real(key, shape, dtype) -> Array:
   _check_shape("normal", shape)
   lo = np.nextafter(np.array(-1., dtype), np.array(0., dtype), dtype=dtype)
@@ -927,7 +927,7 @@ def multivariate_normal(key: ArrayLike,
     shape = core.canonicalize_shape(shape)
   return _multivariate_normal(key, mean, cov, shape, dtype, method)
 
-@partial(jit, static_argnums=(3, 4, 5))
+@jit(static_argnums=(3, 4, 5))
 def _multivariate_normal(key, mean, cov, shape, dtype, method) -> Array:
   if not np.ndim(mean) >= 1:
     msg = "multivariate_normal requires mean.ndim >= 1, got mean.ndim == {}"
@@ -1005,7 +1005,7 @@ def truncated_normal(key: ArrayLike,
   return maybe_auto_axes(_truncated_normal, out_sharding,
                          shape=shape, dtype=dtype)(key, lower, upper)
 
-@partial(jit, static_argnums=(3, 4))
+@jit(static_argnums=(3, 4))
 def _truncated_normal(key, lower, upper, shape, dtype) -> Array:
   if shape is None:
     shape = lax.broadcast_shapes(np.shape(lower), np.shape(upper))
@@ -1032,7 +1032,8 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> Array:
 def bernoulli(key: ArrayLike,
               p: RealArray = 0.5,
               shape: Shape | None = None,
-              mode: str = 'low') -> Array:
+              mode: str = 'low',
+              *, out_sharding=None) -> Array:
   r"""Sample Bernoulli random values with given shape and mean.
 
   The values are distributed according to the probability mass function:
@@ -1064,15 +1065,17 @@ def bernoulli(key: ArrayLike,
   if mode not in ['high', 'low']:
     raise ValueError(f"got {mode=}, expected 'high' or 'low'")
   key, _ = _check_prng_key("bernoulli", key)
+  out_sharding = canonicalize_sharding(out_sharding, "bernoulli")
   dtype = lax.dtype(p)
   if not dtypes.issubdtype(dtype, np.floating):
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
   p = lax.convert_element_type(p, dtype)
-  return _bernoulli(key, p, shape, mode=mode)
+  return maybe_auto_axes(_bernoulli, out_sharding,
+                         shape=shape, mode=mode)(key, p)
 
 
-@partial(jit, static_argnames=['shape', 'mode'])
+@jit(static_argnames=['shape', 'mode'])
 def _bernoulli(key: Array, p: Array, shape: Shape | None, mode: str) -> Array:
   if shape is None:
     # TODO: Use the named part of `p` as well
@@ -1184,7 +1187,7 @@ def cauchy(key: ArrayLike,
   shape = core.canonicalize_shape(shape)
   return _cauchy(key, shape, dtype)
 
-@partial(jit, static_argnums=(1, 2))
+@jit(static_argnums=(1, 2))
 def _cauchy(key, shape, dtype) -> Array:
   _check_shape("cauchy", shape)
   u = uniform(key, shape, dtype, minval=dtypes.finfo(dtype).eps, maxval=1.)
@@ -1237,7 +1240,7 @@ def dirichlet(key: ArrayLike,
     shape = core.canonicalize_shape(shape)
   return _dirichlet(key, alpha, shape, dtype)
 
-@partial(jit, static_argnums=(2, 3))
+@jit(static_argnums=(2, 3))
 def _dirichlet(key, alpha, shape, dtype) -> Array:
   from jax._src.nn.functions import softmax  # pytype: disable=import-error
 
@@ -1288,7 +1291,7 @@ def exponential(key: ArrayLike,
   shape = core.canonicalize_shape(shape)
   return _exponential(key, shape, dtype)
 
-@partial(jit, static_argnums=(1, 2))
+@jit(static_argnums=(1, 2))
 def _exponential(key, shape, dtype) -> Array:
   _check_shape("exponential", shape)
   u = uniform(key, shape, dtype)
@@ -1530,7 +1533,7 @@ def loggamma(key: ArrayLike,
   return _gamma(key, a, shape=shape, dtype=dtype, log_space=True)
 
 
-@partial(jit, static_argnames=('shape', 'dtype', 'log_space'))
+@jit(static_argnames=('shape', 'dtype', 'log_space'))
 def _gamma(key, a, shape, dtype, log_space=False) -> Array:
   if shape is None:
     shape = np.shape(a)
@@ -1544,7 +1547,7 @@ def _gamma(key, a, shape, dtype, log_space=False) -> Array:
   return random_gamma_p.bind(key, a, log_space=log_space)
 
 
-@partial(jit, static_argnums=(2, 3, 4))
+@jit(static_argnums=(2, 3, 4))
 def _poisson_knuth(key, lam, shape, dtype, max_iters) -> Array:
   # Knuth's algorithm for generating Poisson random variates.
   # Reference:
@@ -1567,7 +1570,7 @@ def _poisson_knuth(key, lam, shape, dtype, max_iters) -> Array:
   return (k - 1).astype(dtype)
 
 
-@partial(jit, static_argnums=(2, 3, 4))
+@jit(static_argnums=(2, 3, 4))
 def _poisson_rejection(key, lam, shape, dtype, max_iters) -> Array:
   # Transformed rejection due to Hormann.
   # Reference:
@@ -1610,7 +1613,7 @@ def _poisson_rejection(key, lam, shape, dtype, max_iters) -> Array:
   return k.astype(dtype)
 
 
-@partial(jit, static_argnums=(2, 3))
+@jit(static_argnums=(2, 3))
 def _poisson(key, lam, shape, dtype) -> Array:
   # The implementation matches TensorFlow and NumPy:
   # https://github.com/tensorflow/tensorflow/blob/v2.2.0-rc3/tensorflow/core/kernels/random_poisson_op.cc
@@ -1720,7 +1723,7 @@ def gumbel(key: ArrayLike,
   return maybe_auto_axes(_gumbel, out_sharding, shape=shape, dtype=dtype,
                          mode=mode)(key)
 
-@partial(jit, static_argnums=(1, 2, 3))
+@jit(static_argnums=(1, 2, 3))
 def _gumbel(key, shape, dtype, mode) -> Array:
   _check_shape("gumbel", shape)
   info = dtypes.finfo(dtype)
@@ -1846,7 +1849,7 @@ def laplace(key: ArrayLike,
   shape = core.canonicalize_shape(shape)
   return _laplace(key, shape, dtype)
 
-@partial(jit, static_argnums=(1, 2))
+@jit(static_argnums=(1, 2))
 def _laplace(key, shape, dtype) -> Array:
   _check_shape("laplace", shape)
   u = uniform(
@@ -1883,7 +1886,7 @@ def logistic(key: ArrayLike,
   shape = core.canonicalize_shape(shape)
   return _logistic(key, shape, dtype)
 
-@partial(jit, static_argnums=(1, 2))
+@jit(static_argnums=(1, 2))
 def _logistic(key, shape, dtype):
   _check_shape("logistic", shape)
   x = uniform(key, shape, dtype, minval=dtypes.finfo(dtype).tiny, maxval=1.)
@@ -1927,7 +1930,7 @@ def pareto(key: ArrayLike,
     shape = core.canonicalize_shape(shape)
   return _pareto(key, b, shape, dtype)
 
-@partial(jit, static_argnums=(2, 3))
+@jit(static_argnums=(2, 3))
 def _pareto(key, b, shape, dtype) -> Array:
   if shape is None:
     shape = np.shape(b)
@@ -1975,7 +1978,7 @@ def t(key: ArrayLike,
   shape = core.canonicalize_shape(shape)
   return _t(key, df, shape, dtype)
 
-@partial(jit, static_argnums=(2, 3))
+@jit(static_argnums=(2, 3))
 def _t(key, df, shape, dtype) -> Array:
   if shape is None:
     shape = np.shape(df)
@@ -2029,7 +2032,7 @@ def chisquare(key: ArrayLike,
     shape = core.canonicalize_shape(shape)
   return _chisquare(key, df, shape, dtype)
 
-@partial(jit, static_argnums=(2, 3))
+@jit(static_argnums=(2, 3))
 def _chisquare(key, df, shape, dtype) -> Array:
   if shape is None:
     shape = np.shape(df)
@@ -2087,7 +2090,7 @@ def f(key: ArrayLike,
     shape = core.canonicalize_shape(shape)
   return _f(key, dfnum, dfden, shape, dtype)
 
-@partial(jit, static_argnums=(3, 4))
+@jit(static_argnums=(3, 4))
 def _f(key, dfnum, dfden, shape, dtype) -> Array:
   if shape is None:
     shape =  lax.broadcast_shapes(np.shape(dfden), np.shape(dfnum))
@@ -2136,7 +2139,7 @@ def rademacher(key: ArrayLike,
   return _rademacher(key, shape, dtype)
 
 
-@partial(jit, static_argnums=(1, 2))
+@jit(static_argnums=(1, 2))
 def _rademacher(key, shape, dtype) -> Array:
   bernoulli_samples = bernoulli(key=key, p=0.5, shape=shape).astype(dtype)
   return (2 * bernoulli_samples - 1).astype(dtype)
@@ -2175,7 +2178,7 @@ def maxwell(key: ArrayLike,
   return _maxwell(key, shape, dtype)
 
 
-@partial(jit, static_argnums=(1, 2))
+@jit(static_argnums=(1, 2))
 def _maxwell(key, shape, dtype) -> Array:
   shape = shape + (3,)
   norm_rvs = normal(key=key, shape=shape, dtype=dtype)
@@ -2218,7 +2221,7 @@ def double_sided_maxwell(key: ArrayLike,
   return _double_sided_maxwell(key, loc, scale, shape, dtype)
 
 
-@partial(jit, static_argnums=(3, 4))
+@jit(static_argnums=(3, 4))
 def _double_sided_maxwell(key, loc, scale, shape, dtype) -> Array:
   params_shapes = lax.broadcast_shapes(np.shape(loc), np.shape(scale))
   if not shape:
@@ -2270,7 +2273,7 @@ def weibull_min(key: ArrayLike,
   return _weibull_min(key, scale, concentration, shape, dtype)
 
 
-@partial(jit, static_argnums=(3, 4))
+@jit(static_argnums=(3, 4))
 def _weibull_min(key, scale, concentration, shape, dtype) -> Array:
   random_uniform = uniform(
       key=key, shape=shape, minval=0, maxval=1, dtype=dtype)
@@ -2443,7 +2446,7 @@ def rayleigh(key: ArrayLike,
     shape = core.canonicalize_shape(shape)
   return _rayleigh(key, scale, shape, dtype)
 
-@partial(jit, static_argnums=(2, 3))
+@jit(static_argnums=(2, 3))
 def _rayleigh(key, scale, shape, dtype) -> Array:
   if shape is None:
     shape = np.shape(scale)
@@ -2497,7 +2500,7 @@ def wald(key: ArrayLike,
     shape = core.canonicalize_shape(shape)
   return _wald(key, mean, shape, dtype)
 
-@partial(jit, static_argnums=(2, 3))
+@jit(static_argnums=(2, 3))
 def _wald(key, mean, shape, dtype) -> Array:
   if shape is None:
     shape =  np.shape(mean)
@@ -2553,7 +2556,7 @@ def geometric(key: ArrayLike,
     shape = core.canonicalize_shape(shape)
   return _geometric(key, p, shape, dtype)
 
-@partial(jit, static_argnums=(2, 3))
+@jit(static_argnums=(2, 3))
 def _geometric(key, p, shape, dtype) -> Array:
   if shape is None:
     shape =  np.shape(p)
@@ -2615,7 +2618,7 @@ def triangular(key: ArrayLike,
     shape = core.canonicalize_shape(shape)
   return _triangular(key, left, mode, right, shape, dtype)
 
-@partial(jit, static_argnums=(4, 5), inline=True)
+@jit(static_argnums=(4, 5), inline=True)
 def _triangular(key, left, mode, right, shape, dtype) -> Array:
   # https://en.wikipedia.org/wiki/Triangular_distribution#Generating_triangular-distributed_random_variates
   if shape is None:
@@ -2668,7 +2671,7 @@ def lognormal(key: ArrayLike,
     shape = core.canonicalize_shape(shape)
   return _lognormal(key, sigma, shape, dtype)
 
-@partial(jit, static_argnums=(2, 3), inline=True)
+@jit(static_argnums=(2, 3), inline=True)
 def _lognormal(key, sigma, shape, dtype) -> Array:
   if shape is None:
     shape =  np.shape(sigma)
@@ -2704,7 +2707,7 @@ def _stirling_approx_tail(k):
       use_tail_values, stirling_tail_vals[jnp.asarray(k, dtype='int32')], approx)
 
 
-@partial(jit, static_argnums=(3, 4, 5), inline=True)
+@jit(static_argnums=(3, 4, 5), inline=True)
 def _binomial_inversion(key, count, prob, shape, dtype, max_iters):
   if config.enable_checks.value:
     assert dtypes.issubdtype(prob.dtype, np.floating)
@@ -2731,7 +2734,7 @@ def _binomial_inversion(key, count, prob, shape, dtype, max_iters):
   return (k - 1).astype(dtype)
 
 
-@partial(jit, static_argnums=(3, 4, 5), inline=True)
+@jit(static_argnums=(3, 4, 5), inline=True)
 def _btrs(key, count, prob, shape, dtype, max_iters):
   # transforman-rejection algorithm
   # https://www.tandfonline.com/doi/abs/10.1080/00949659308811496
@@ -2779,7 +2782,7 @@ def _btrs(key, count, prob, shape, dtype, max_iters):
   return lax_control_flow.while_loop(cond_fn, body_fn, carry)[1].astype(dtype)
 
 
-@partial(jit, static_argnums=(3, 4), inline=True)
+@jit(static_argnums=(3, 4), inline=True)
 def _binomial(key, count, prob, shape, dtype) -> Array:
   # The implementation matches TensorFlow and TensorFlow Probability:
   # https://github.com/tensorflow/tensorflow/blob/v2.2.0-rc3/tensorflow/core/kernels/random_binomial_op.cc

@@ -55,23 +55,18 @@ def LLVM_PointerShared : LLVM_PointerInAddressSpace<3>;
 
 def MosaicGPU_InitializeBarrierOp : Op<MosaicGPU_Dialect, "initialize_barrier",
                                       []> {
-  let summary = "Initializes a memref of barriers";
+  let summary = "Initializes barrier objects at specified location.";
   let description = [{
-    Initializes a memref of barriers each meant to synchronize exactly
+    Initializes `num_barriers` barriers each meant to synchronize exactly
     `arrival_count` threads.
 
-    The base pointer of the result memref corresponds to `base_pointer`, which
-    must be a pointer to a shared memory location.
+    `base_pointer` must be a pointer to a shared memory location.
   }];
 
   let arguments = (ins
     LLVM_PointerShared:$base_pointer,
-    ConfinedAttr<I64Attr, [IntPositive]>:$arrival_count);
-  let results = (outs MemRefOf<[MosaicGPU_Barrier]>:$barriers_ref);
-
-  let assemblyFormat = [{
-    $base_pointer $arrival_count attr-dict `:` type($barriers_ref)
-  }];
+    ConfinedAttr<I64Attr, [IntPositive]>:$arrival_count,
+    ConfinedAttr<I32Attr, [IntPositive]>:$num_barriers);
 }
 
 def MosaicGPU_ArriveExpectTxOp : Op<MosaicGPU_Dialect, "arrive_expect_tx", []> {
@@ -767,6 +762,24 @@ def MosaicGPU_AsyncStoreTmemOp : Op<MosaicGPU_Dialect, "async_store_tmem", []> {
     VectorOfRank<[2]>: $source,
     MemRefRankOf<[AnyType], [2]>:$destination
   );
+
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_SliceTmemOp : Op<MosaicGPU_Dialect, "slice_tmem", []> {
+  let summary = "Constructs a TMEM MemRef with the requested type that begins at the specified TMEM column offset by the argument";
+  let description = [{
+    The principal use case for this op is to do a single TMEM allocation and
+    slice it into multiple smaller TMEM references. `source` is the large TMEM
+    allocation and `offset` is the number of columns to start slicing from.
+  }];
+
+  let arguments = (ins
+    MemRefRankOf<[AnyType], [2]>:$source,
+    ConfinedAttr<I32Attr, [IntNonNegative]>:$offset
+  );
+
+  let results = (outs MemRefRankOf<[AnyType], [2]>);
 
   let hasVerifier = 1;
 }

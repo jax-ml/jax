@@ -14,14 +14,12 @@
 
 from __future__ import annotations
 
-from functools import partial
-
 from jax._src.api import jit
 from jax._src.numpy import lax_numpy
 from jax._src.typing import Array, ArrayLike
 
 
-@partial(jit, static_argnames=('axis',))
+@jit(static_argnames=('axis',))
 def trapezoid(y: ArrayLike, x: ArrayLike | None = None, dx: ArrayLike = 1.0,
               axis: int = -1) -> Array:
   r"""

@@ -181,40 +181,46 @@ absl::StatusOr<std::vector<int64_t>> GetByteStrides(const DLTensor& dl_tensor) {
 absl::StatusOr<std::unique_ptr<xla::PjRtBuffer>> MakePjrtBuffer(
     xla::PjRtDevice& device, ::DLManagedTensor* dlmt, const xla::Shape& shape,
     xla::PrimitiveType element_type, absl::Span<int64_t const> dimensions,
+    std::optional<bool> copy = std::nullopt,
     std::optional<std::intptr_t> stream = std::nullopt) {
   std::function<void()> on_delete_callback;
   if (dlmt->deleter) {
     on_delete_callback = [dlmt]() { dlmt->deleter(dlmt); };
   }
 
-  // First try to create a view.
   void* data =
       static_cast<char*>(dlmt->dl_tensor.data) + dlmt->dl_tensor.byte_offset;
-  auto result = device.client()->CreateViewOfDeviceBuffer(
-      data, shape, *device.default_memory_space(), on_delete_callback, stream);
 
-  // If that fails with invalid argument, it's possibly because of the incorrect
-  // alignment. If we're on CPU, we can create a copy of buffer.
-  if (result.status().code() == absl::StatusCode::kInvalidArgument &&
-      dlmt->dl_tensor.device.device_type == kDLCPU) {
-    LOG(WARNING) << "DLPack buffer is not aligned (data at: " << data
-                 << "). Creating a copy.";
+  // On CPU, creating a view may fail because of unaligned data buffer
+  // in which case we'll fallback to copy. On non-CPU, array-api copy
+  // semantics is handled in dlpack._place_array function.
+  bool fallback_to_copy =
+      !copy.has_value() && dlmt->dl_tensor.device.device_type == kDLCPU;
 
-    // Convert tensor strides (expressed in number of elements) to byte strides.
-    std::optional<std::vector<int64_t>> byte_strides;
-    if (dlmt->dl_tensor.strides) {
-      TF_ASSIGN_OR_RETURN(byte_strides, GetByteStrides(dlmt->dl_tensor));
+  // Create a view.
+  if (!copy.value_or(false)) {
+    auto result = device.client()->CreateViewOfDeviceBuffer(
+        data, shape, *device.default_memory_space(), on_delete_callback,
+        stream);
+    if (!(result.status().code() == absl::StatusCode::kInvalidArgument &&
+          fallback_to_copy)) {
+      return result;
     }
-
-    TF_ASSIGN_OR_RETURN(auto* memory_space, device.default_memory_space());
-
-    // Create a copy.
-    result = device.client()->BufferFromHostBuffer(
-        data, element_type, dimensions, byte_strides,
-        xla::PjRtClient::HostBufferSemantics::kMutableZeroCopy,
-        on_delete_callback, memory_space, /*device_layout=*/nullptr);
   }
-  return result;
+
+  // Convert tensor strides (expressed in number of elements) to byte strides.
+  std::optional<std::vector<int64_t>> byte_strides;
+  if (dlmt->dl_tensor.strides) {
+    TF_ASSIGN_OR_RETURN(byte_strides, GetByteStrides(dlmt->dl_tensor));
+  }
+
+  TF_ASSIGN_OR_RETURN(auto* memory_space, device.default_memory_space());
+
+  // Create a copy.
+  return device.client()->BufferFromHostBuffer(
+      data, element_type, dimensions, byte_strides,
+      xla::PjRtClient::HostBufferSemantics::kMutableZeroCopy,
+      on_delete_callback, memory_space, /*device_layout=*/nullptr);
 }
 
 }  // namespace
@@ -314,7 +320,8 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
 
 absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
     const nb::capsule& tensor, ifrt::Device* ifrt_device,
-    nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream) {
+    nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream,
+    std::optional<bool> copy) {
   ifrt::PjRtDevice* device =
       llvm::dyn_cast_or_null<ifrt::PjRtDevice>(ifrt_device);
   if (device == nullptr) {
@@ -360,7 +367,7 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
 
   TF_ASSIGN_OR_RETURN(auto pjrt_buffer,
                       MakePjrtBuffer(*device->pjrt_device(), dlmt, shape,
-                                     element_type, dimensions, stream));
+                                     element_type, dimensions, copy, stream));
 
   // We have taken ownership of the array inside the capsule; make sure the
   // capsule it cannot be used again.

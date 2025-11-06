@@ -20,6 +20,7 @@ import pathlib
 import re
 import signal
 import subprocess
+import sys
 import time
 
 from absl import app
@@ -111,6 +112,13 @@ _BARRIER_TIMEOUT = absl.flags.DEFINE_integer(
     " sanitizers.",
 )
 
+_INITIALIZATION_TIMEOUT = absl.flags.DEFINE_integer(
+    "initialization_timeout",
+    10,
+    "Coordination service initialization timeout in seconds. Set to a higher"
+    " number when running under sanitizers.",
+)
+
 _DUMP_HLO = absl.flags.DEFINE_bool(
     "dump_hlo",
     False,
@@ -142,6 +150,10 @@ class GracefulKiller:
 
 
 def _main(argv, shard_main):
+  # TODO(emilyaf): Enable multiprocess tests on Windows.
+  if sys.platform == "win32":
+    print("Multiprocess tests are not supported on Windows.")
+    return
   num_processes = NUM_PROCESSES.value
   if MULTIPROCESS_TEST_WORKER_ID.value >= 0:
     local_device_ids = _DEVICE_IDS.value
@@ -154,7 +166,7 @@ def _main(argv, shard_main):
         local_device_ids=local_device_ids,
         heartbeat_timeout_seconds=_HEARTBEAT_TIMEOUT.value,
         shutdown_timeout_seconds=_SHUTDOWN_TIMEOUT.value,
-        initialization_timeout=10,
+        initialization_timeout=_INITIALIZATION_TIMEOUT.value,
     )
     if shard_main is not None:
       return shard_main()
@@ -258,6 +270,7 @@ def _main(argv, shard_main):
         f"--heartbeat_timeout={_HEARTBEAT_TIMEOUT.value}",
         f"--shutdown_timeout={_SHUTDOWN_TIMEOUT.value}",
         f"--barrier_timeout={_BARRIER_TIMEOUT.value}",
+        f"--initialization_timeout={_INITIALIZATION_TIMEOUT.value}",
         "--logtostderr",
     ]
 

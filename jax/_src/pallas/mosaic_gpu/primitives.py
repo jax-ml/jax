@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Sequence
+import contextlib
 import dataclasses
 import functools
 import itertools
@@ -1285,30 +1286,20 @@ def _wgmma_warpgroup_lowering(
     )
     a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
     a, a_transforms = lowering._handle_transforms(ctx, a, a_transforms)
-    match a_transforms:
-      case (gpu_core.TransposeRef((1, 0)),):
-        a = mgpu.memref_transpose(a, (1, 0))
-      case ():
-        pass
-      case _:
-        raise ValueError(
-            f"WGMMA lhs has unsupported transforms: {a_transforms}."
-        )
+    if a_transforms:
+      raise ValueError(
+          f"WGMMA lhs has unsupported transforms: {a_transforms}."
+      )
   else:
     b_transforms_leaves = transforms_leaves  # type: ignore
 
   if b_transforms_tree is not None:
     b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
     b, b_transforms = lowering._handle_transforms(ctx, b, b_transforms)
-    match b_transforms:
-      case (gpu_core.TransposeRef((1, 0)),):
-        b = mgpu.memref_transpose(b, (1, 0))
-      case ():
-        pass
-      case _:
-        raise ValueError(
-            f"WGMMA rhs has unsupported transforms: {b_transforms}."
-        )
+    if b_transforms:
+      raise ValueError(
+          f"WGMMA rhs has unsupported transforms: {b_transforms}."
+      )
 
   new_acc = mgpu.dialect.wgmma(acc, a, b)
   nvvm_dialect.wgmma_commit_group_sync_aligned()
@@ -1648,10 +1639,12 @@ def _tcgen05_mma_lowering(
 
   if acc_transforms_tree is not None:
     acc_transforms = acc_transforms_tree.unflatten(acc_transforms_leaves)
-    acc, acc_transforms = lowering._handle_transforms(ctx, acc, acc_transforms)
+    acc, acc_transforms = lowering._handle_transforms(
+        ctx, acc, acc_transforms, handle_transposes=False
+    )
     if acc_transforms:
       raise NotImplementedError(
-          f"Unsupported transforms: {acc_transforms}."
+          f"Unsupported transforms for ACC: {acc_transforms}."
       )
 
   if a_transforms_tree is not None:
@@ -1673,7 +1666,7 @@ def _tcgen05_mma_lowering(
         lhs_tiling = None  # type: ignore
       case _:
         raise NotImplementedError(
-            f"Unsupported transforms: {a_transforms}."
+            f"Unsupported transforms for LHS: {a_transforms}."
         )
     if not isinstance(a_ref, tcgen05.TMEMRef):
       swizzle_elems = 8 * lhs_swizzle // dtypes.bit_width(a_dtype)  # type: ignore
@@ -1698,7 +1691,7 @@ def _tcgen05_mma_lowering(
       rhs_transpose = True
     case _:
       raise NotImplementedError(
-          f"Unsupported transforms: {b_transforms}."
+          f"Unsupported transforms for RHS: {b_transforms}."
       )
   swizzle_elems = 8 * rhs_swizzle // dtypes.bit_width(b_dtype)
   if rhs_tiling != (8, swizzle_elems):
@@ -1794,6 +1787,129 @@ def _tcgen05_mma_lowering(
   return []
 
 
+@lowering.register_lowering_rule(
+    tcgen05_mma_p, mgpu.LoweringSemantics.Warpgroup
+)
+def _tcgen05_mma_lowering_wg(
+    ctx: lowering.LoweringRuleContext,
+    acc_ref,
+    a_ref,
+    b_ref,
+    accumulate: bool | ir.Value,
+    *barrier_scales_and_transforms_leaves,
+    acc_transforms_tree,
+    a_transforms_tree,
+    b_transforms_tree,
+    barrier_transforms_tree,
+    a_scale_transforms_tree,
+    b_scale_transforms_tree,
+    a_sparse_metadata_transforms_tree,
+    collective_axis,
+    arrive,
+    scaled: bool,
+    sparse: bool,
+):
+  del (
+      a_scale_transforms_tree,
+      b_scale_transforms_tree,
+      a_sparse_metadata_transforms_tree,
+  )
+  if scaled or sparse:
+    raise NotImplementedError(
+        "Scaled and sparse MMAs not supported for WG semantics."
+    )
+
+  if arrive:
+    barrier_ref, *transforms_leaves = barrier_scales_and_transforms_leaves
+  else:
+    barrier_ref = None
+    transforms_leaves = barrier_scales_and_transforms_leaves  # type: ignore[assignment]
+
+  transforms_trees = (
+      acc_transforms_tree,
+      a_transforms_tree,
+      b_transforms_tree,
+      barrier_transforms_tree,
+  )
+  (
+      acc_transforms_leaves,
+      a_transforms_leaves,
+      b_transforms_leaves,
+      barrier_transforms_leaves,
+      leftovers,
+  ) = util.split_list(
+      transforms_leaves,
+      [getattr(tree, "num_leaves", 0) for tree in transforms_trees],
+  )
+  assert not leftovers
+
+  if acc_transforms_tree is not None:
+    acc_transforms = acc_transforms_tree.unflatten(acc_transforms_leaves)
+    acc_ref, acc_transforms = lowering._handle_transforms(
+        ctx, acc_ref, acc_transforms, handle_transposes=False
+    )
+    if acc_transforms:
+      raise NotImplementedError(
+          f"Unsupported transforms for ACC: {acc_transforms}."
+      )
+
+  if a_transforms_tree is not None:
+    a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
+    a_aval = ctx.avals_in[1]
+    assert isinstance(a_aval, state_types.AbstractRef)
+    handle_transposes = a_aval.memory_space == gpu_core.SMEM
+    a_ref, a_transforms = lowering._handle_transforms(
+        ctx, a_ref, a_transforms, handle_transposes=handle_transposes
+    )
+    if a_transforms:
+      raise NotImplementedError(
+          f"Unsupported transforms for LHS: {a_transforms}."
+      )
+
+  if b_transforms_tree is not None:
+    b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
+    b_ref, b_transforms = lowering._handle_transforms(ctx, b_ref, b_transforms)
+    if b_transforms:
+      raise NotImplementedError(
+          f"Unsupported transforms for RHS: {b_transforms}."
+      )
+
+  if barrier_transforms_tree is not None and barrier_ref is not None:
+    barrier_transforms = barrier_transforms_tree.unflatten(
+        barrier_transforms_leaves
+    )
+    indexer = _extract_barrier_indexer(barrier_transforms)
+    if indexer is not None:
+      barrier_ref = barrier_ref.__getitem__(
+          *map(lowering._as_index, indexer.indices)
+      )
+
+  predicate_ctx: contextlib.AbstractContextManager[None]
+  if collective_axis is not None:
+    predicate_ctx = mgpu.when(_collective_mma_predicate(ctx, collective_axis))
+    collective = True
+  else:
+    predicate_ctx = contextlib.nullcontext()
+    collective = False
+
+  if isinstance(accumulate, bool):
+    i1 = ir.IntegerType.get_signless(1)
+    accumulate = arith_dialect.constant(i1, accumulate)
+
+  with predicate_ctx:
+    mgpu.dialect.tcgen05_mma(
+        acc_ref,
+        a_ref,
+        b_ref,
+        accumulate=accumulate,
+        collective=collective,
+    )
+    if arrive:
+      assert isinstance(barrier_ref, mgpu.DialectBarrierRef)
+      tcgen05.commit_arrive(barrier_ref.get_ptr(), collective, ctx.launch_ctx)
+  return []
+
+
 tcgen05_commit_arrive_p = jax_core.Primitive("tcgen05_commit_arrive")
 tcgen05_commit_arrive_p.multiple_results = True
 
@@ -1875,6 +1991,39 @@ def _tcgen05_commit_arrive_lowering(
   return []
 
 
+@lowering.register_lowering_rule(
+    tcgen05_commit_arrive_p, mgpu.LoweringSemantics.Warpgroup
+)
+def _tcgen05_commit_arrive_lowering_wg(
+    ctx: lowering.LoweringRuleContext,
+    barrier_ref: mgpu.DialectBarrierRef,
+    *barrier_transforms_leaves,
+    barrier_transforms_tree,
+    collective_axis,
+):
+  if barrier_transforms_tree is not None:
+    barrier_transforms = barrier_transforms_tree.unflatten(
+        barrier_transforms_leaves
+    )
+    indexer = _extract_barrier_indexer(barrier_transforms)
+    if indexer is not None:
+      barrier_ref = barrier_ref.__getitem__(
+          *map(lowering._as_index, indexer.indices)
+      )
+
+  predicate_ctx: contextlib.AbstractContextManager[None]
+  if collective_axis is not None:
+    predicate_ctx = mgpu.when(_collective_mma_predicate(ctx, collective_axis))
+    collective = True
+  else:
+    predicate_ctx = contextlib.nullcontext()
+    collective = False
+
+  with predicate_ctx:
+    tcgen05.commit_arrive(barrier_ref.get_ptr(), collective, ctx.launch_ctx)
+  return []
+
+
 def _collective_mma_predicate(ctx: lowering.LoweringRuleContext,
                               collective_axis: str) -> ir.Value:
   """Computes a predicate to run only on the leader block."""
@@ -1906,6 +2055,9 @@ def _commit_tmem_abstract_eval():
 
 
 @lowering.register_lowering_rule(commit_tmem_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(
+    commit_tmem_p, mgpu.LoweringSemantics.Warpgroup
+)
 def _commit_tmem_lowering(_):
   tcgen05.commit_tmem()
   return ()
@@ -3001,6 +3153,30 @@ def _async_load_tmem_lowering_rule(
   return x_tmem.load(layout=layout_hint, is_signed=is_signed)
 
 
+@lowering.register_lowering_rule(
+    async_load_tmem_p, mgpu.LoweringSemantics.Warpgroup
+)
+def _async_load_tmem_lowering_rule_wg(
+    ctx: lowering.LoweringRuleContext, x_ref: ir.Value, *leaves, tree
+):
+  assert isinstance(x_ref, ir.Value)
+  assert ir.MemRefType.isinstance(x_ref.type)
+
+  transforms = jax.tree.unflatten(tree, leaves)
+  x_tmem, transforms = lowering._handle_transforms(
+      ctx,
+      x_ref,
+      transforms,
+      handle_transposes=False,
+      handle_reshapes=False,
+  )
+  if transforms:
+    raise NotImplementedError(
+        f"Unimplemented transforms for TMEM refs. {transforms=}"
+    )
+  return mgpu.dialect.async_load_tmem(x_tmem)
+
+
 wait_load_tmem_p = jax_core.Primitive("wait_load_tmem")
 wait_load_tmem_p.multiple_results = True
 
@@ -3072,6 +3248,37 @@ def _async_store_tmem_lowering_rule(
         f"Unimplemented transforms for TMEM refs. {transforms=}"
     )
   x_tmem.store(value)
+  return ()
+
+
+@lowering.register_lowering_rule(
+    async_store_tmem_p, mgpu.LoweringSemantics.Warpgroup
+)
+def _async_store_tmem_lowering_rule_wg(
+    ctx: lowering.LoweringRuleContext,
+    x_ref: ir.Value,
+    value: ir.Value,
+    *leaves,
+    tree,
+):
+  assert isinstance(x_ref, ir.Value)
+  assert ir.MemRefType.isinstance(x_ref.type)
+  assert isinstance(value, ir.Value)
+  assert ir.VectorType.isinstance(value.type)
+
+  transforms = jax.tree.unflatten(tree, leaves)
+  x_tmem, transforms = lowering._handle_transforms(
+      ctx,
+      x_ref,
+      transforms,
+      handle_transposes=False,
+      handle_reshapes=False,
+  )
+  if transforms:
+    raise NotImplementedError(
+        f"Unimplemented transforms for TMEM refs. {transforms=}"
+    )
+  mgpu.dialect.async_store_tmem(value, x_tmem)
   return ()
 
 

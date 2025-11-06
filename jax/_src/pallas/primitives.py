@@ -968,7 +968,8 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes):
 
 get_global_p = jax_core.Primitive("get_global")
 get_global_p.multiple_results = False
-
+get_global_p.ref_primitive = True
+jax_core._ref_allocating_primitives.add(get_global_p)
 
 def get_global(what: pallas_core.ScratchShape) -> jax.Array:
   """Returns a global reference that persists across all kernel invocations.
@@ -1348,3 +1349,18 @@ def device_id_to_logical(
   elif device_id_type is DeviceIdType.LOGICAL:
     return device_id, non_mesh_axes
   raise NotImplementedError(f"Unsupported device id type: {device_id_type}")
+
+
+delay_p = jax_core.Primitive("delay")
+delay_p.multiple_results = True
+
+
+@delay_p.def_abstract_eval
+def _delay_abstract_eval(nanos):
+  del nanos
+  return []
+
+
+def delay(nanos: int | jax.Array) -> None:
+  """Sleeps for the given number of nanoseconds."""
+  delay_p.bind(nanos)

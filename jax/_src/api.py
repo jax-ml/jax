@@ -30,7 +30,7 @@ from functools import partial
 import inspect
 import typing
 from typing import (Any, Literal, NamedTuple, Optional, TypeVar, overload,
-                    cast)
+                    cast, TYPE_CHECKING)
 import weakref
 
 import numpy as np
@@ -74,7 +74,7 @@ from jax._src.sharding_impls import (PmapSharding, PartitionSpec as P,
 from jax._src.layout import Format
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
-from jax._src.util import unzip2, safe_map, safe_zip, wraps, split_list
+from jax._src.util import unzip2, safe_map, safe_zip, wraps
 from jax._src import util
 
 from jax._src.interpreters import ad
@@ -357,6 +357,11 @@ def jit(
   else:
     return pjit.make_jit(fun, **kwds)
 
+if not TYPE_CHECKING:
+  # TODO(slebedev): This ought to be a decorator, but it seems it makes
+  # pytype ignore the overloads
+  jit = api_boundary(jit, repro_api_name="jax.jit")
+
 
 @contextmanager
 def disable_jit(disable: bool = True):
@@ -409,6 +414,7 @@ def disable_jit(disable: bool = True):
     yield
 
 
+@partial(api_boundary, repro_api_name="jax.grad")
 def grad(fun: Callable, argnums: int | Sequence[int] = 0,
          has_aux: bool = False, holomorphic: bool = False,
          allow_int: bool = False,
@@ -475,6 +481,7 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
 
   return grad_f_aux if has_aux else grad_f
 
+@partial(api_boundary, repro_api_name="jax.value_and_grad")
 def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
                    has_aux: bool = False, holomorphic: bool = False,
                    allow_int: bool = False, reduce_axes: Sequence[AxisName] = ()
@@ -542,7 +549,7 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
       ans, vjp_py, aux = _vjp(f_partial, *dyn_args, has_aux=True)
     _check_scalar(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
-    g = vjp_py(lax_internal._one(ans))
+    g = vjp_py(lax_internal._one_vjp(ans))
     g = g[0] if isinstance(argnums, int) else g
     if not has_aux:
       return ans, g
@@ -607,6 +614,7 @@ def _check_output_dtype_revderiv(name, holomorphic, x):
                     "jax.vjp directly.")
 _check_output_dtype_grad = partial(_check_output_dtype_revderiv, "grad")
 
+@partial(api_boundary, repro_api_name="jax.fwd_and_bwd")
 def fwd_and_bwd(
     fun: Callable, argnums: int | Sequence[int], has_aux: bool = False,
     jitted: bool = True,
@@ -681,6 +689,7 @@ def fwd_and_bwd(
   return fwd, bwd
 
 
+@partial(api_boundary, repro_api_name="jax.jacfwd")
 def jacfwd(fun: Callable, argnums: int | Sequence[int] = 0,
            has_aux: bool = False, holomorphic: bool = False) -> Callable:
   """Jacobian of ``fun`` evaluated column-by-column using forward-mode AD.
@@ -771,6 +780,7 @@ def _check_output_dtype_jacfwd(holomorphic, x):
       raise TypeError("jacfwd with holomorphic=True requires outputs with complex dtype, "
                       f"but got {aval.dtype.name}.")
 
+@partial(api_boundary, repro_api_name="jax.jacrev")
 def jacrev(fun: Callable, argnums: int | Sequence[int] = 0,
            has_aux: bool = False, holomorphic: bool = False,
            allow_int: bool = False) -> Callable:
@@ -852,6 +862,7 @@ _check_input_dtype_jacrev = partial(_check_input_dtype_revderiv, "jacrev")
 _check_output_dtype_jacrev = partial(_check_output_dtype_revderiv, "jacrev")
 
 
+@partial(api_boundary, repro_api_name="jax.hessian")
 def hessian(fun: Callable, argnums: int | Sequence[int] = 0,
             has_aux: bool = False, holomorphic: bool = False) -> Callable:
   """Hessian of ``fun`` as a dense array.
@@ -993,6 +1004,7 @@ def _split(x, indices, axis):
     return x._split(indices, axis)
 
 
+@partial(api_boundary, repro_api_name="jax.vmap")
 def vmap(fun: F,
          in_axes: int | None | Sequence[Any] = 0,
          out_axes: Any = 0,
@@ -1189,16 +1201,10 @@ def vmap(fun: F,
     try:
       axis_data = batching.AxisData(axis_name, axis_size_, spmd_axis_name,
                                     explicit_mesh_axis)
-      if config.vmap_primitive.value:
-        out_axes_thunk = lambda: flatten_axes("vmap out_axes", out_tree(), out_axes)
-        out_flat = batching.vmap_p.bind(
-            flat_fun, *args_flat, axis_data=axis_data, in_axes=(*in_axes_flat,),
-            out_axes_thunk=out_axes_thunk)
-      else:
-        out_flat = batching.batch(
-            flat_fun, axis_data, in_axes_flat,
-            lambda: flatten_axes("vmap out_axes", out_tree(), out_axes)
-        ).call_wrapped(*args_flat)
+      out_flat = batching.batch(
+          flat_fun, axis_data, in_axes_flat,
+          lambda: flatten_axes("vmap out_axes", out_tree(), out_axes)
+      ).call_wrapped(*args_flat)
     except batching.SpecMatchError as e:
       out_axes_flat = flatten_axes("vmap out_axes", out_tree(), out_axes)
       out_axes_full = tree_unflatten(out_tree(), out_axes_flat)
@@ -1320,7 +1326,7 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
       msg.append(f"  * some axes ({ct} of them) had size {sz}, e.g. axis {ax} of {ex};\n")
   raise ValueError(''.join(msg)[:-2])  # remove last semicolon and newline
 
-
+@partial(api_boundary, repro_api_name="jax.pmap")
 def pmap(
     fun: Callable,
     axis_name: AxisName | None = None,
@@ -1880,7 +1886,7 @@ def _cpp_mapped_lower(pmap_f, *args, **kwargs):
 _pmap_cache_clears = weakref.WeakSet()  # type: ignore
 
 
-@api_boundary
+@partial(api_boundary, repro_api_name="jax.jvp")
 def jvp(
     fun: Callable, primals, tangents, has_aux: bool = False
   ) -> tuple[Any, ...]:
@@ -1975,6 +1981,7 @@ def linearize(fun: Callable, *primals, has_aux: Literal[True]
               ) -> tuple[Any, Callable, Any]:
   ...
 
+@partial(api_boundary, repro_api_name="jax.linearize")
 def linearize(fun: Callable, *primals, has_aux: bool = False
               ) -> tuple[Any, Callable] | tuple[Any, Callable, Any]:
   """Produces a linear approximation to ``fun`` using :py:func:`jvp` and partial eval.
@@ -2134,7 +2141,7 @@ def _vjp_pullback_wrapper(name, out_primal_avals, io_tree, fun, *py_args_):
                      f"got {in_tree}, but expected to match {in_tree_expected}")
   for arg, aval in zip(args, out_primal_avals):
     ct_aval = shaped_abstractify(arg)
-    ct_aval_expected = aval.to_tangent_aval()
+    ct_aval_expected = aval.to_cotangent_aval()
     if (not core.typecompat(ct_aval, ct_aval_expected) and
         not _temporary_dtype_exception(ct_aval, ct_aval_expected)):
       raise ValueError(
@@ -2164,7 +2171,7 @@ def vjp(fun: Callable[..., tuple[T, U]], *primals: Any,
         reduce_axes: Sequence[AxisName] = ()) -> tuple[T, Callable, U]:
   ...
 
-@api_boundary
+@partial(api_boundary, repro_api_name="jax.vjp")
 def vjp(
     fun: Callable, *primals, has_aux: bool = False, reduce_axes=()
   ) -> tuple[Any, Callable] | tuple[Any, Callable, Any]:
@@ -2240,7 +2247,7 @@ def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
   else:
     return out_primal_py, vjp_py, tree_unflatten(aux_tree, aux)
 
-
+@partial(api_boundary, repro_api_name="jax.experimental.saved_input_vjp")
 def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
                     allow_unused: bool = True, allow_opaque: bool = True):
   if len(which) != len(primals):
@@ -2431,7 +2438,9 @@ def _vjp_check_ct_avals(cts, primal_avals):
   # TODO(mattjj): improve this error  by flattening with keys in the first place
   for ct, aval in zip(cts, primal_avals):
     ct_aval = typeof(ct)
-    ct_aval_expected = aval.to_tangent_aval()
+    ct_aval_expected = (
+        aval.to_cotangent_aval() if hasattr(aval, 'to_cotangent_aval') else
+        aval.to_tangent_aval())
     if (not core.typecompat(ct_aval, ct_aval_expected) and
         not _temporary_dtype_exception(ct_aval, ct_aval_expected)):
       raise ValueError(
@@ -2484,6 +2493,7 @@ register_pytree_node(
     lambda meta, args_res: VJP(*meta, *args_res))
 
 
+@partial(api_boundary, repro_api_name="jax.linear_transpose")
 def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   """Transpose a function that is promised to be linear.
 
@@ -2591,6 +2601,7 @@ def make_jaxpr(
 ) -> Callable[..., tuple[core.ClosedJaxpr, Any]]:
   ...
 
+@partial(api_boundary, repro_api_name="jax.make_japr")
 def make_jaxpr(
     fun: Callable,
     static_argnums: int | Iterable[int] = (),
@@ -2670,9 +2681,8 @@ def make_jaxpr(
     # consts not to be converted.
     num_consts = traced._num_consts
     if num_consts:
-      consts, _ = split_list(traced._args_flat, [num_consts])
       jaxpr_ = pe.convert_invars_to_constvars(traced.jaxpr.jaxpr, num_consts)
-      jaxpr = core.ClosedJaxpr(jaxpr_, consts)
+      jaxpr = core.ClosedJaxpr(jaxpr_, traced._consts)
     else:
       jaxpr = traced.jaxpr
     if return_shape:
@@ -3032,7 +3042,7 @@ def device_get(x: Any):
     return tree_map(_device_get, x)
 
 
-@api_boundary
+@partial(api_boundary, repro_api_name="jax.eval_shape")
 def eval_shape(fun: Callable, *args, **kwargs):
   """Compute the shape/dtype of ``fun`` without any FLOPs.
 
@@ -3105,6 +3115,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
   return jit(fun).trace(*args, **kwargs).out_info
 
 
+@partial(api_boundary, repro_api_name="jax.named_call")
 def named_call(
     fun: F,
     *,

@@ -20,6 +20,7 @@ import dataclasses
 import enum
 import functools
 import hashlib
+import io
 import itertools
 import math
 import os
@@ -155,7 +156,7 @@ def _has_communication(module, **_):
 
 # TODO(apaszke): Implement a proper system for managing kernel lifetimes
 # Maps kernel ID to the compiled kernel ASM.
-KNOWN_KERNELS: dict[bytes, str] = {}
+KNOWN_KERNELS: dict[bytes, bytes] = {}
 
 
 def _mosaic_gpu_lowering_rule(
@@ -208,7 +209,9 @@ def _mosaic_gpu_lowering_rule(
       serialize=True,
       ir_version=FWD_COMPAT_IR_VERSION if ctx.is_forward_compat() else None,
   )
-  module_asm = module.operation.get_asm(binary=True, enable_debug_info=True)
+  bytecode_buffer = io.BytesIO()
+  module.operation.write_bytecode(bytecode_buffer, desired_version=0)
+  module_asm = bytecode_buffer.getvalue()
   kernel_id = hashlib.sha256(module_asm).digest()
   # Note that this is technically only a half measure. Someone might load a
   # compiled module with a hash collision from disk. But that's so unlikely with
@@ -1010,7 +1013,7 @@ def _compile_as_torch_gpu_kernel(module_asm: bytes):
   unload_func.argtypes = [compile_func.restype]
   unload_func.restype = None
 
-  compiled = compile_func(ctypes.c_char_p(module_asm))
+  compiled = compile_func(ctypes.c_char_p(module_asm), ctypes.c_int(len(module_asm)))
   if not compiled:
     raise RuntimeError("Failed to compile the module")
   ctx, launch_ptr = compiled[0], compiled[1]

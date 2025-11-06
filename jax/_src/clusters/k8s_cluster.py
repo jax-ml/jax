@@ -173,7 +173,7 @@ class K8sCluster(clusters.ClusterEnv):
     )
 
   @classmethod
-  def get_coordinator_address(cls, timeout_secs: int | None) -> str:
+  def get_coordinator_address(cls, timeout_secs: int | None, override_coordinator_port: str | None) -> str:
     controller = cls._controller()
     job = cls._job()
     pod = cls._pod()
@@ -254,9 +254,10 @@ class K8sCluster(clusters.ClusterEnv):
 
           wait_for_host(coordinator_hostname)
 
+      port = override_coordinator_port or cls._coordinator_port
       return '{hostname}:{port}'.format(
         hostname=coordinator_hostname,
-        port=cls._coordinator_port
+        port=port
       )
 
     else:

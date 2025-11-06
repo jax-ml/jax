@@ -12,14 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# buildifier: disable=module-docstring
+# ruff: noqa
 
-# To update XLA to a new revision,
-# a) update XLA_COMMIT to the new git commit hash
-# b) get the sha256 hash of the commit by running:
-#    curl -L https://api.github.com/repos/openxla/xla/tarball/{git_hash} | sha256sum
-#    and update XLA_SHA256 with the result.
-
-# buildifier: disable=module-docstring
-XLA_COMMIT = "b61bdafbdc730696cd6dc29bf505f0cbe9a4338a"
-XLA_SHA256 = "2e3a28df8e318b60f1d69bf4d47a3ff45034ff5a825d3a7a815ebf20a3d98e86"
+from jax._src.ad_util import (
+    Zero as Zero,
+)
+from jax._src.core import (
+    AbstractValue as AbstractValue,
+    AvalQDD as AvalQDD,
+    ShapedArray as ShapedArray,
+    aval_method as aval_method,
+    aval_property as aval_property,
+)
+from jax._src.effects import (
+    control_flow_allowed_effects as control_flow_allowed_effects,
+)
+from jax._src.hijax import (
+    HiPrimitive as HiPrimitive,
+    HiType as HiType,
+    MutableHiType as MutableHiType,
+    register_hitype as register_hitype,
+    VJPHiPrimitive as VJPHiPrimitive,
+)

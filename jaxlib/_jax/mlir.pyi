@@ -32,18 +32,18 @@ def mhlo_to_stablehlo(mlir_module: bytes) -> bytes: ...
 def mhlo_to_stablehlo(mlir_module: str) -> bytes: ...
 @overload
 def serialize_portable_artifact(
-    mlir_module: bytes, target: str, use_mixed_serialization: bool = False
+    mlir_module: bytes, target: str, use_mixed_serialization: bool = ...
 ) -> bytes: ...
 @overload
 def serialize_portable_artifact(
-    mlir_module: str, target: str, use_mixed_serialization: bool = False
+    mlir_module: str, target: str, use_mixed_serialization: bool = ...
 ) -> bytes: ...
 def deserialize_portable_artifact(mlir_module: bytes) -> str: ...
 def refine_polymorphic_shapes(
     mlir_module: bytes,
-    enable_shape_assertions: bool = True,
-    validate_static_shapes: bool = True,
-    enable_shardy: bool = False,
+    enable_shape_assertions: bool = ...,
+    validate_static_shapes: bool = ...,
+    enable_shardy: bool = ...,
 ) -> bytes:
   """Refines the dynamic shapes for a module.
 

@@ -66,8 +66,7 @@ def identity(x: ArrayLike) -> Array:
     Array([-2. , -1. , -0.5, 0. , 0.5, 1. , 2. ], dtype=float32)
 
   """
-  numpy_util.check_arraylike("identity", x)
-  return jnp.asarray(x)
+  return numpy_util.ensure_arraylike("identity", x)
 
 @custom_derivatives.custom_jvp
 @api.jit
@@ -121,10 +120,7 @@ def squareplus(x: ArrayLike, b: ArrayLike = 4) -> Array:
     x : input array
     b : smoothness parameter
   """
-  numpy_util.check_arraylike("squareplus", x)
-  numpy_util.check_arraylike("squareplus", b)
-  x = jnp.asarray(x)
-  b = jnp.asarray(b)
+  x, b = numpy_util.ensure_arraylike("squareplus", x, b)
   y = x + jnp.sqrt(jnp.square(x) + b)
   return y / 2
 
@@ -164,8 +160,7 @@ def sparse_plus(x: ArrayLike) -> Array:
   Args:
     x: input (float)
   """
-  numpy_util.check_arraylike("sparse_plus", x)
-  x = jnp.asarray(x)
+  x = numpy_util.ensure_arraylike("sparse_plus", x)
   return jnp.where(x <= -1.0, 0.0, jnp.where(x >= 1.0, x, (x + 1.0)**2/4))
 
 @api.jit
@@ -180,11 +175,10 @@ def soft_sign(x: ArrayLike) -> Array:
   Args:
     x : input array
   """
-  numpy_util.check_arraylike("soft_sign", x)
-  x_arr = jnp.asarray(x)
+  x_arr = numpy_util.ensure_arraylike("soft_sign", x)
   return x_arr / (jnp.abs(x_arr) + 1)
 
-@partial(api.jit, inline=True)
+@api.jit(inline=True)
 def sigmoid(x: ArrayLike) -> Array:
   r"""Sigmoid activation function.
 
@@ -257,8 +251,7 @@ def silu(x: ArrayLike) -> Array:
   See also:
     :func:`sigmoid`
   """
-  numpy_util.check_arraylike("silu", x)
-  x_arr = jnp.asarray(x)
+  x_arr = numpy_util.ensure_arraylike("silu", x)
   return x_arr * sigmoid(x_arr)
 
 swish = silu
@@ -282,8 +275,7 @@ def mish(x: ArrayLike) -> Array:
   Returns:
     An array.
   """
-  numpy_util.check_arraylike("mish", x)
-  x_arr = jnp.asarray(x)
+  x_arr = numpy_util.ensure_arraylike("mish", x)
   return x_arr * jnp.tanh(softplus(x_arr))
 
 @api.jit
@@ -304,8 +296,7 @@ def log_sigmoid(x: ArrayLike) -> Array:
   See also:
     :func:`sigmoid`
   """
-  numpy_util.check_arraylike("log_sigmoid", x)
-  x_arr = jnp.asarray(x)
+  x_arr = numpy_util.ensure_arraylike("log_sigmoid", x)
   return -softplus(-x_arr)
 
 @api.jit
@@ -330,8 +321,7 @@ def elu(x: ArrayLike, alpha: ArrayLike = 1.0) -> Array:
   See also:
     :func:`selu`
   """
-  numpy_util.check_arraylike("elu", x)
-  x_arr = jnp.asarray(x)
+  x_arr = numpy_util.ensure_arraylike("elu", x)
   return jnp.where(x_arr > 0,
                    x_arr,
                    alpha * jnp.expm1(jnp.where(x_arr > 0, 0., x_arr)))
@@ -360,8 +350,7 @@ def leaky_relu(x: ArrayLike, negative_slope: ArrayLike = 1e-2) -> Array:
   See also:
     :func:`relu`
   """
-  numpy_util.check_arraylike("leaky_relu", x)
-  x_arr = jnp.asarray(x)
+  x_arr = numpy_util.ensure_arraylike("leaky_relu", x)
   return jnp.where(x_arr >= 0, x_arr, negative_slope * x_arr)
 
 @api.jit
@@ -383,8 +372,7 @@ def hard_tanh(x: ArrayLike) -> Array:
   Returns:
     An array.
   """
-  numpy_util.check_arraylike("hard_tanh", x)
-  x_arr = jnp.asarray(x)
+  x_arr = numpy_util.ensure_arraylike("hard_tanh", x)
   return jnp.where(x_arr > 1, 1, jnp.where(x_arr < -1, -1, x_arr))
 
 @api.jit
@@ -445,7 +433,7 @@ def selu(x: ArrayLike) -> Array:
   return scale * elu(x, alpha)
 
 # TODO(phawkins): this jit was found to change numerics in a test. Debug this.
-# @partial(api.jit, static_argnames=("approximate",))
+# @api.jit(static_argnames=("approximate",))
 def gelu(x: ArrayLike, approximate: bool = True) -> Array:
   r"""Gaussian error linear unit activation function.
 
@@ -480,7 +468,7 @@ def gelu(x: ArrayLike, approximate: bool = True) -> Array:
         0.5 * x_arr * (lax.erfc(-x_arr * sqrt_half)), dtype=x_arr.dtype
     )
 
-@partial(api.jit, static_argnames=("axis",))
+@api.jit(static_argnames=("axis",))
 def glu(x: ArrayLike, axis: int = -1) -> Array:
   r"""Gated linear unit activation function.
 
@@ -504,8 +492,7 @@ def glu(x: ArrayLike, axis: int = -1) -> Array:
   See also:
     :func:`sigmoid`
   """
-  numpy_util.check_arraylike("glu", x)
-  x_arr = jnp.asarray(x)
+  x_arr = numpy_util.ensure_arraylike("glu", x)
   size = x_arr.shape[axis]
   assert size % 2 == 0, "axis size must be divisible by 2"
   x1, x2 = jnp.split(x_arr, 2, axis)
@@ -516,7 +503,7 @@ def glu(x: ArrayLike, axis: int = -1) -> Array:
 logsumexp = _logsumexp
 
 
-@partial(api.jit, static_argnames=("axis", "keepdims"))
+@api.jit(static_argnames=("axis", "keepdims"))
 def logmeanexp(
     x: ArrayLike,
     axis: Axis = None,
@@ -545,7 +532,7 @@ def logmeanexp(
   return lse - jnp.log(count)
 
 
-@partial(api.jit, static_argnames=("axis",))
+@api.jit(static_argnames=("axis",))
 def log_softmax(x: ArrayLike,
                 axis: Axis = -1,
                 where: ArrayLike | None = None) -> Array:
@@ -575,8 +562,7 @@ def log_softmax(x: ArrayLike,
   See also:
     :func:`softmax`
   """
-  numpy_util.check_arraylike("log_softmax", x)
-  x_arr = jnp.asarray(x)
+  x_arr = numpy_util.ensure_arraylike("log_softmax", x)
   x_max = jnp.max(x_arr, axis, where=where, initial=-np.inf, keepdims=True)
   x_safe = x_arr if where is None else jnp.where(where, x_arr, -np.inf)
   shifted = x_safe - lax.stop_gradient(x_max)
@@ -589,7 +575,7 @@ def log_softmax(x: ArrayLike,
 
 
 # TODO(phawkins): this jit was found to change numerics in a test. Debug this.
-# @partial(api.jit, static_argnames=("axis",))
+# @api.jit(static_argnames=("axis",))
 def softmax(x: ArrayLike,
             axis: Axis = -1,
             where: ArrayLike | None = None) -> Array:
@@ -662,7 +648,7 @@ def _softmax_deprecated(
   return result
 
 
-@partial(api.jit, static_argnames=("axis",))
+@api.jit(static_argnames=("axis",))
 def standardize(x: ArrayLike,
                 axis: Axis = -1,
                 mean: ArrayLike | None = None,
@@ -710,7 +696,7 @@ def standardize(x: ArrayLike,
   return jnp.subtract(x, jnp.asarray(mean)) * lax.rsqrt(jnp.asarray(variance) + epsilon)
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
-@partial(api.jit, static_argnames=("num_classes", "dtype", "axis"))
+@api.jit(static_argnames=("num_classes", "dtype", "axis"))
 def _one_hot(x: Array, num_classes: int, *,
              dtype: DTypeLike, axis: int | AxisName) -> Array:
   num_classes = core.concrete_dim_or_error(
@@ -849,8 +835,7 @@ def hard_silu(x: ArrayLike) -> Array:
   See also:
     :func:`hard_sigmoid`
   """
-  numpy_util.check_arraylike("hard_silu", x)
-  x_arr = jnp.asarray(x)
+  x_arr = numpy_util.ensure_arraylike("hard_silu", x)
   return x_arr * hard_sigmoid(x_arr)
 
 hard_swish = hard_silu
@@ -1496,8 +1481,7 @@ def log1mexp(x: ArrayLike) -> Array:
     .. [1] Martin Mächler. `Accurately Computing log(1 − exp(−|a|)) Assessed by the Rmpfr package.
       <https://cran.r-project.org/web/packages/Rmpfr/vignettes/log1mexp-note.pdf>`_.
   """
-  numpy_util.check_arraylike("log1mexp", x)
-  x = jnp.asarray(x)
+  x = numpy_util.ensure_arraylike("log1mexp", x)
   c = jnp.log(2.0)
   return jnp.where(
       x < c,

@@ -111,6 +111,7 @@ jax_py_test(
 jax_py_test(
     name = "array_extensibility_test",
     srcs = ["array_extensibility_test.py"],
+    shard_count = 3,
     tags = [
         "notsan",  # Times out
     ],
@@ -1254,6 +1255,9 @@ jax_multiplatform_test(
             "nomsan",  # Times out
             "notsan",  # Times out
         ],
+    },
+    env = {
+        "XLA_FLAGS": "--xla_cpu_use_xnnpack=false",  # TODO(b/454581761): Reenable once we switch to YNNPACK.
     },
     shard_count = 4,
     deps = py_deps([

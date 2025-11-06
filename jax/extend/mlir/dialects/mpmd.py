@@ -12,14 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# buildifier: disable=module-docstring
+# ruff: noqa: F403
 
-# To update XLA to a new revision,
-# a) update XLA_COMMIT to the new git commit hash
-# b) get the sha256 hash of the commit by running:
-#    curl -L https://api.github.com/repos/openxla/xla/tarball/{git_hash} | sha256sum
-#    and update XLA_SHA256 with the result.
-
-# buildifier: disable=module-docstring
-XLA_COMMIT = "b61bdafbdc730696cd6dc29bf505f0cbe9a4338a"
-XLA_SHA256 = "2e3a28df8e318b60f1d69bf4d47a3ff45034ff5a825d3a7a815ebf20a3d98e86"
+from jaxlib.mlir.dialects.mpmd import *

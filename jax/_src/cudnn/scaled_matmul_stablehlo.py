@@ -355,7 +355,7 @@ batching.primitive_batchers[_scaled_matmul_p_wrapper] = _scaled_matmul_batcher
 batching.primitive_batchers[_scaled_matmul_p] = _scaled_matmul_batcher
 
 
-@partial(api.jit, static_argnames=("preferred_element_type",))
+@api.jit(static_argnames=("preferred_element_type",))
 def _scaled_matmul(
     lhs: Array,
     rhs: Array,

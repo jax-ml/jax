@@ -53,6 +53,10 @@ class PallasSCTest(jtu.JaxTestCase):
 
     super().setUp()
 
+  @property
+  def sc_info(self):
+    return plsc.get_sparse_core_info()
+
 
 class DebugPrintTest(PallasSCTest):
 
@@ -111,7 +115,7 @@ class DebugPrintTest(PallasSCTest):
     @plsc.kernel(
         out_shape=int32s,
         mesh=plsc.ScalarSubcoreMesh(
-            axis_name="core", num_cores=sc_core._num_available_cores()
+            axis_name="core", num_cores=self.sc_info.num_cores
         ),
     )
     def kernel(int32s_hbm_ref, int16s_hbm_ref, int8s_hbm_ref, o_hbm_ref):
@@ -461,6 +465,81 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(x, indices), x[indices[0, : indices.size // 4]]
     )
 
+  def test_invalid_gather_1d_with_extra_transforms(self):
+    x = jnp.arange(8)
+    indices = jax.random.permutation(jax.random.key(42), x)
+
+    @vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=x.shape, dtype=jnp.int32),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+    )
+    def kernel(x_hbm_ref, indices_ref, o_ref):
+      pltpu.sync_copy(x_hbm_ref.at[indices_ref].reshape(o_ref.size), o_ref)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "cannot have any transforms following the indexer"
+    ):
+      kernel(x, indices)
+
+  def test_invalid_gather_1d_with_indexed_destination(self):
+    x = jnp.arange(8)
+    indices = jax.random.permutation(jax.random.key(42), x)
+
+    @vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=x.shape, dtype=jnp.int32),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+    )
+    def kernel(x_hbm_ref, indices_ref, o_ref):
+      pltpu.sync_copy(x_hbm_ref.at[indices_ref], o_ref.at[indices_ref])
+
+    with self.assertRaisesRegex(ValueError, "source ref can be indexed"):
+      kernel(x, indices)
+
+  def test_invalid_gather_1d_memory_space(self):
+    x = jnp.arange(8)
+    indices = jax.random.permutation(jax.random.key(42), x)
+
+    @vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=x.shape, dtype=jnp.int32),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_hbm_ref, indices_ref, o_ref):
+      pltpu.sync_copy(x_hbm_ref.at[indices_ref], o_ref)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "from HBM to HBM is not supported"
+    ):
+      kernel(x, indices)
+
+  def test_invalid_gather_1d_offsets_memory_space(self):
+    x = jnp.arange(8)
+    indices = jax.random.permutation(jax.random.key(42), x)
+
+    @vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=x.shape, dtype=jnp.int32),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.HBM),
+        ),
+    )
+    def kernel(x_hbm_ref, indices_ref, o_ref):
+      pltpu.sync_copy(x_hbm_ref.at[indices_ref], o_ref)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "must be in VMEM, got HBM"
+    ):
+      kernel(x, indices)
+
   def test_implicit_gather_1d(self):
     num_steps = 4
     x = jnp.arange(num_steps * 8).reshape(num_steps, 8)
@@ -572,6 +651,28 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(x, indices),
         jnp.zeros_like(x).at[indices[mask]].set(x[mask]),
     )
+
+  def test_store_scatter_2d(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 31):
+      self.skipTest("Needs a newer libtpu")
+
+    num_steps = 4
+    x = jnp.arange(num_steps * 8).reshape(num_steps, 8)
+    indices = jax.random.permutation(jax.random.key(42), jnp.arange(8))
+
+    @vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, indices_ref, o_ref):
+      indices = indices_ref[...]
+      o_ref[...] = jnp.zeros_like(o_ref)
+      for i in range(num_steps):
+        plsc.store_scatter(
+            o_ref, [jnp.full(indices.shape, i), indices], x_ref[i])
+
+    out = kernel(x, indices)
+    for i in range(num_steps):
+      np.testing.assert_array_equal(
+          out[i], jnp.zeros_like(x[i]).at[indices].set(x[i])
+      )
 
   @parameterized.parameters(*MASK_FNS)
   def test_addupdate_scatter(self, mask_fn):
@@ -991,7 +1092,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_cumsum(self, dtype):
-    x = jnp.arange(sc_core._vector_dimension(), dtype=dtype)
+    x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
 
     @vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
@@ -1001,7 +1102,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_cumsum_2d_not_supported(self, dtype):
-    x = jnp.arange(sc_core._vector_dimension(), dtype=dtype)
+    sc_info = plsc.get_sparse_core_info()
+    x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
 
     with self.assertRaisesRegex(NotImplementedError, r"must be rank 1"):
       @vector_subcore_kernel(out_shape=x)
@@ -1012,7 +1114,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_masked_cumsum(self, dtype):
-    x = jnp.arange(sc_core._vector_dimension(), dtype=dtype)
+    x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
 
     @vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
@@ -1021,7 +1123,7 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), np.cumsum(x * (x % 2)))
 
   def test_parallel_loop_with_carry(self):
-    chunk_size = sc_core._vector_dimension()
+    chunk_size = self.sc_info.num_lanes
     nchunks = 4
     per_step_increment = 10
     sentinel_multiplier = 1000
@@ -1130,7 +1232,7 @@ class VectorSubcoreTest(PallasSCTest):
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
-    vec_dim = sc_core._vector_dimension()
+    vec_dim = self.sc_info.num_lanes
     @plsc.kernel(
         out_shape=jax.ShapeDtypeStruct(
             shape=(mesh.num_subcores, vec_dim), dtype=jnp.uint32
@@ -1159,7 +1261,7 @@ class VectorSubcoreTest(PallasSCTest):
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
-    vec_dim = sc_core._vector_dimension()
+    vec_dim = self.sc_info.num_lanes
     @functools.partial(
         pl.pallas_call,
         grid=16,
@@ -1281,19 +1383,71 @@ class VectorSubcoreTest(PallasSCTest):
     indices = 31 - jnp.arange(32)
     np.testing.assert_array_equal(kernel(x, indices), x[0] + x.sum(0)[::-1])
 
+  def test_shared_scratch(self):
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+    )
+    shape = (mesh.num_subcores, 8, 8)
+    x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(*shape)
+
+    @plsc.kernel(out_shape=x, mesh=mesh)
+    def kernel(x_ref, o_ref):
+      subcore_id = lax.axis_index("subcore")
+      shared_scratch_ref = pl.get_global(
+          pltpu.VMEM_SHARED(shape[1:], jnp.int32))
+      @pl.when(subcore_id == 0)
+      def _():
+        pltpu.sync_copy(x_ref.at[subcore_id], shared_scratch_ref)
+        pltpu.sync_copy(shared_scratch_ref, o_ref.at[subcore_id])
+
+    np.testing.assert_array_equal(kernel(x)[0], x[0])
+
+  def test_copy_in_shard_map(self):
+    num_devices = len(jax.devices())
+    mesh = jax.make_mesh((num_devices,), ("x",))
+
+    rng = np.random.default_rng(0)
+    x = rng.integers(512, size=(num_devices * 1024, 16), dtype=np.int32)
+
+    # The test ensures that JAX-level memory space for ``x`` is not propagated
+    # into Pallas, since Pallas cannot use it.
+    x = jax.device_put(x, jax.sharding.NamedSharding(mesh, jax.P("x", None)))
+    self.assertEqual(jax.typeof(x).memory_space, jax.memory.Space.Device)
+
+    @functools.partial(
+        jax.shard_map,
+        in_specs=(jax.P("x", None),),
+        out_specs=jax.P("x", None),
+        mesh=mesh,
+        check_vma=False,
+    )
+    def f(x):
+      @plsc.kernel(
+          out_shape=x,
+          mesh=plsc.VectorSubcoreMesh(
+              core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+          ),
+          scratch_shapes=(pltpu.VMEM(x.shape, x.dtype),),
+      )
+      def kernel(in_ref, o_ref, scratch_ref):
+        pltpu.sync_copy(in_ref, scratch_ref)
+        pltpu.sync_copy(scratch_ref, o_ref)
+
+      return kernel(x)
+
+    np.testing.assert_array_equal(f(x), x)
+
 
 class ScalarSubcoreTest(PallasSCTest):
-
-  @property
-  def num_cores(self):
-    return sc_core._num_available_cores()
 
   def test_copy(self):
     x = jnp.arange(16)
 
     @plsc.kernel(
         out_shape=x,
-        mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=self.num_cores),
+        mesh=plsc.ScalarSubcoreMesh(
+            axis_name="core", num_cores=self.sc_info.num_cores
+        ),
     )
     def kernel(x_ref, o_ref):
       lax.cond(
@@ -1305,11 +1459,15 @@ class ScalarSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x)
 
   def test_sliced_copy(self):
-    x = jnp.arange(self.num_cores * 8).reshape(self.num_cores, -1)
+    x = jnp.arange(self.sc_info.num_cores * 8).reshape(
+        self.sc_info.num_cores, -1
+    )
 
     @plsc.kernel(
         out_shape=x,
-        mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=self.num_cores),
+        mesh=plsc.ScalarSubcoreMesh(
+            axis_name="core", num_cores=self.sc_info.num_cores
+        ),
     )
     def kernel(x_ref, o_ref):
       @functools.partial(pl.run_scoped, sems=pltpu.SemaphoreType.DMA(4))

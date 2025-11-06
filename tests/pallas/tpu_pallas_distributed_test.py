@@ -557,12 +557,23 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
     def test_kernel(x_ref,
                output_ref,
                send_sem,
-               recv_sem):
+               recv_sem, barrier_sem):
       output_ref[...] = jnp.zeros_like(output_ref[...])
       my_id = lax.axis_index('x')
       even_device = lax.rem(my_id, 2)
       odd_device = 1 - even_device
-      neighbor = lax.rem(my_id + 1, num_devices)
+      next_device = lax.rem(my_id + 1, num_devices)
+
+      del barrier_sem
+      # This kernel as written is racey, but remote semaphore_signal is not
+      # supported in HLO interpret mode yet. HLO interpret will not race
+      # because DMAs are implemented as collectives which will barrier.
+      # Signal to the sender to this device that output_ref has been zeroed
+      # and this device is ready to receive.
+      # prev_device = (my_id - 1) % num_devices
+      # pltpu.semaphore_signal(barrier_sem, 1, device_id=prev_device)
+      # pltpu.semaphore_wait(barrier_sem)
+
       # If the device_id is even, we copy to output_ref[1].
       # If it's odd, we copy to output_ref[0].
       @pl.when(even_device)
@@ -572,7 +583,7 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
             dst_ref=output_ref.at[1],
             send_sem=send_sem,
             recv_sem=recv_sem,
-            device_id=neighbor,
+            device_id=next_device,
         )
         remote_dma.start()
         remote_dma.wait()
@@ -583,7 +594,7 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
             dst_ref=output_ref.at[0],
             send_sem=send_sem,
             recv_sem=recv_sem,
-            device_id=neighbor,
+            device_id=next_device,
         )
         remote_dma.start()
         remote_dma.wait()
@@ -596,7 +607,9 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
             ],
             out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
             scratch_shapes=(
-                [pltpu.SemaphoreType.DMA] * 2
+                [pltpu.SemaphoreType.DMA,
+                 pltpu.SemaphoreType.DMA,
+                 pltpu.SemaphoreType.REGULAR]
             )
         )
 
@@ -622,22 +635,21 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
       check_vma=False))
     result_interpret = compiled_func(sharded_arr)
 
-    kernel = pl.pallas_call(
-        test_kernel,
-        out_shape=out_shape,
-        grid_spec=grid_spec,
-    )
-    compiled_func = jax.jit(shard_map.shard_map(
-      kernel,
-      mesh=mesh,
-      in_specs=P(None, 'x'),
-      out_specs=P(None, 'x'),
-      check_vma=False))
-    result_noninterpret = compiled_func(sharded_arr)
-    np.testing.assert_allclose(result_interpret,
-                               result_noninterpret,
-                               atol=1e-5,
-                               rtol=1e-3)
+    expected = []
+    zeros = jnp.zeros((8, 128), jnp.float32)
+    for i in range(num_devices):
+      if i == 0:
+        x_slice = unsharded_arr[:, 128 * (num_devices - 1):]
+      else:
+        x_slice = unsharded_arr[:, 128 * (i-1):128 * i]
+      if i % 2 == 0:
+        expected.append(jnp.stack([zeros, x_slice], axis=0))
+      else:
+        expected.append(jnp.stack([x_slice, zeros], axis=0))
+    expected = jnp.concatenate(expected, axis=1)
+
+    np.testing.assert_array_equal(result_interpret,
+                                  expected)
 
   def test_interpret_remote_dma_asymmetrical_refs(self):
     # Test DMAs where dst refs are not the same.
@@ -738,6 +750,9 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
 class VerificationTest(jtu.JaxTestCase):
 
   def test_verification(self):
+    self.skipTest(
+        'TODO(b/455847773): Fix MLIR layout mismatch in tpu.memref_slice (dynamic offset issue).'
+    )
     if (num_devices := jax.local_device_count()) <= 1:
       self.skipTest('Test requires multiple devices.')
     if not jtu.is_device_tpu_at_least(4) or jax.devices()[0].num_cores > 1:

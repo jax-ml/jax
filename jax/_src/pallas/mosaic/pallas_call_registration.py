@@ -353,6 +353,7 @@ def _sc_lowering_rule(
         input_output_aliases=input_output_aliases,
         metadata=metadata,
         collective_id=mosaic_params.collective_id,
+        _ir_version=tpu_custom_call.get_ir_version(ctx),
     )(*args)
     return out
 
@@ -372,9 +373,13 @@ def pallas_call_tpu_lowering_rule(
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
     metadata: frozen_dict.FrozenDict[str, str] | None,
+    name: str | None,
 ):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
   del interpret  # Unused.
+  if name is not None:
+    # XLA TPU will use the final name in the stack for the op name.
+    ctx = ctx.replace(name_stack=ctx.name_stack.extend(name))
 
   debug_info = jaxpr.debug_info
   if debug:

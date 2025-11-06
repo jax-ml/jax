@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from functools import partial
 import math
 import operator
 from typing import cast, NamedTuple
@@ -42,7 +41,7 @@ from jax._src.typing import Array, ArrayLike
 export = set_module('jax.numpy')
 
 
-@partial(api.jit, static_argnames=('assume_unique', 'invert', 'method'))
+@api.jit(static_argnames=('assume_unique', 'invert', 'method'))
 def _in1d(ar1: ArrayLike, ar2: ArrayLike, invert: bool,
           method='auto', assume_unique=False) -> Array:
   ar1, ar2 = ensure_arraylike("in1d", ar1, ar2)
@@ -254,7 +253,7 @@ def union1d(ar1: ArrayLike, ar2: ArrayLike,
   return cast(Array, out)
 
 
-@partial(api.jit, static_argnames=['assume_unique', 'size'])
+@api.jit(static_argnames=['assume_unique', 'size'])
 def _setxor1d_size(arr1: Array, arr2: Array, fill_value: ArrayLike | None, *,
                    assume_unique: bool, size: int, ) -> Array:
   # Ensured by caller
@@ -341,7 +340,7 @@ def setxor1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False, *,
   return aux[flag[1:] & flag[:-1]]
 
 
-@partial(api.jit, static_argnames=['return_indices'])
+@api.jit(static_argnames=['return_indices'])
 def _intersect1d_sorted_mask(arr1: Array, arr2: Array,
                              return_indices: bool) -> tuple[Array, Array, Array | None]:
   """JIT-compatible helper function for intersect1d"""
@@ -358,7 +357,7 @@ def _intersect1d_sorted_mask(arr1: Array, arr2: Array,
   return aux, mask, indices
 
 
-@partial(api.jit, static_argnames=['fill_value', 'assume_unique', 'size', 'return_indices'])
+@api.jit(static_argnames=['fill_value', 'assume_unique', 'size', 'return_indices'])
 def _intersect1d_size(arr1: Array, arr2: Array, fill_value: ArrayLike | None, assume_unique: bool,
                       size: int, return_indices: bool) -> Array | tuple[Array, Array, Array]:
   """Jit-compatible helper function for intersect1d with size specified."""
@@ -575,7 +574,7 @@ UNIQUE_SIZE_HINT = (
   "To make jnp.unique() compatible with JIT and other transforms, you can specify "
   "a concrete value for the size argument, which will determine the output size.")
 
-@partial(api.jit, static_argnames=['axis', 'equal_nan'])
+@api.jit(static_argnames=['axis', 'equal_nan'])
 def _unique_sorted_mask(ar: Array, axis: int, equal_nan: bool) -> tuple[Array, Array, Array]:
   aux = moveaxis(ar, axis, 0)
   if np.issubdtype(aux.dtype, np.complexfloating):

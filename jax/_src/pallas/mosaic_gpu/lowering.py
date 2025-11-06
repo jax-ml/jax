@@ -406,7 +406,7 @@ class ModuleContext:
   smem_used_bytes: int
   tmem_requested_cols: int
   tmem_used_cols: int
-  tmem_base_ptr: ir.Value
+  tmem_base: ir.Value | None
   scoped_gmem_used_semaphores: dict[CollectiveAxesType, int]
   scoped_gmem_semaphore_base_ptr: dict[CollectiveAxesType, ir.Value]
   runtime_barriers: MutableMapping[AnyBarrier, MutableSequence[AnyBarrierRef]]
@@ -476,15 +476,28 @@ class ModuleContext:
       struct: jax.ShapeDtypeStruct,
       *,
       layout: tcgen05.TMEMLayout,
-  ) -> Iterator[ir.Value]:
-    off = arith_dialect.addi(
-        self.tmem_base_ptr, _i32_constant(self.tmem_used_cols)
-    )
-    tmem_ref = tcgen05.TMEMRef(
-        address=off,
-        shape=struct.shape,
-        dtype=mgpu_utils.dtype_to_ir_type(struct.dtype),
-        layout=layout)
+  ) -> Iterator[tcgen05.TMEMRef | ir.Value]:
+    if self.lowering_semantics == mgpu.LoweringSemantics.Lane:
+      off = arith_dialect.addi(
+          self.tmem_base, _i32_constant(self.tmem_used_cols)
+      )
+      tmem_ref = tcgen05.TMEMRef(
+          address=off,
+          shape=struct.shape,
+          dtype=mgpu_utils.dtype_to_ir_type(struct.dtype),
+          layout=layout,
+      )
+    else:
+      type = ir.MemRefType.get(
+          struct.shape,
+          mgpu_utils.dtype_to_ir_type(struct.dtype),
+          memory_space=mgpu_utils.tmem(),
+      )
+      tmem_ref = mgpu.dialect.slice_tmem(
+          type, self.tmem_base, self.tmem_used_cols
+      )
+      layout_attr = mgpu.to_layout_attr(layout)
+      tmem_ref = mgpu.dialect.tmem_layout_cast(tmem_ref, layout_attr)
     cols_used = layout.cols_in_shape(
         struct.shape, dtypes.bit_width(struct.dtype)
     )
@@ -924,9 +937,15 @@ def lower_jaxpr_to_module(
     for barrier, barrier_ref in zip(rs.barriers, runtime_barriers):
       grouped_barriers[barrier].append(barrier_ref)
     if runtime_tmem is not None:
-      tmem_cols = math.prod(runtime_tmem.shape) // tcgen05.TMEM_ROWS
+      if lowering_semantics == mgpu.LoweringSemantics.Lane:
+        tmem_cols = math.prod(runtime_tmem.shape) // tcgen05.TMEM_ROWS
+        tmem_base = runtime_tmem.address
+      else:
+        tmem_cols = math.prod(runtime_tmem.type.shape) // tcgen05.TMEM_ROWS
+        tmem_base = runtime_tmem
     else:
       tmem_cols = 0
+      tmem_base = None
 
     if lowering_semantics == mgpu.LoweringSemantics.Lane:
       single_wg_lane_predicate = mgpu.single_thread_predicate(
@@ -951,7 +970,7 @@ def lower_jaxpr_to_module(
         smem_used_bytes=0,
         tmem_requested_cols=tmem_cols,
         tmem_used_cols=0,
-        tmem_base_ptr=runtime_tmem.address if runtime_tmem else None,
+        tmem_base=tmem_base,
         scoped_gmem_used_semaphores={k: 0 for k in scoped_gmem_semaphores},
         scoped_gmem_semaphore_base_ptr=scoped_gmem_semaphores,
         runtime_barriers=grouped_barriers,
@@ -1767,6 +1786,24 @@ def _slice_lowering_rule(
     raise NotImplementedError("Strides are not supported.")
 
   return x[tuple(slice(b, e) for b, e in zip(start_indices, limit_indices))]
+
+
+@register_lowering_rule(lax.slice_p, mgpu.LoweringSemantics.Warpgroup)
+def _slice_lowering_rule_wg(
+    ctx: LoweringRuleContext, x, limit_indices, start_indices, strides
+):
+  del limit_indices
+  assert ir.VectorType.isinstance(x.type)
+  if strides is not None:
+    raise NotImplementedError("Strides are not supported.")
+  out_ty = ir.VectorType.get(
+      ctx.avals_out[0].shape, ir.VectorType(x.type).element_type
+  )
+  sizes = ctx.avals_out[0].shape
+  strides = [1] * len(start_indices)
+  return vector_dialect.extract_strided_slice(
+      out_ty, x, start_indices, sizes, strides
+  )
 
 
 @register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Lane)
@@ -2622,7 +2659,10 @@ def _run_scoped_lowering_rule(
               mgpu.WGMMAAccumulator.zero(*aval.shape, dtype, is_signed=is_signed)
           )
         else:
-          zero = arith_dialect.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
+          if ir.IntegerType.isinstance(dtype):
+            zero = arith_dialect.constant(dtype, 0)
+          else:
+            zero = arith_dialect.constant(dtype, 0.0)
           acc = vector_dialect.broadcast(
               ir.VectorType.get(aval.shape, dtype), zero
           )
@@ -3589,3 +3629,12 @@ def _iota_lowering(
       create_array=True,
       is_signed=is_signed,
   )
+
+
+@register_lowering_rule(primitives.delay_p, mgpu.LoweringSemantics.Lane)
+def _delay_lowering(ctx: LoweringRuleContext, nanos):
+  del ctx  # Unused.
+  if not isinstance(nanos, ir.Value):
+    nanos = _i32_constant(nanos)
+  mgpu.nanosleep(nanos)
+  return []

@@ -201,6 +201,7 @@ def _smap(f, *, in_axes, out_axes, axis_name: AxisName):
                     axis_names={axis_name}, check_vma=True, _smap=True)
 
 
+@partial(traceback_util.api_boundary, repro_api_name="jax.shard_map")
 def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
                in_specs: Specs, out_specs: Specs | Callable[[], Specs],
                axis_names: Set[AxisName], check_vma: bool,
@@ -232,7 +233,7 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
         all(mesh._name_to_type[a] == AxisType.Explicit for a in axis_names)):
       arg_s = [typeof(a).sharding for a in args_flat]
       assert all(i is Infer for i in in_specs_flat), in_specs_flat
-      in_specs_flat = [_manual_spec(axis_names, s.spec) for s in arg_s]
+      in_specs_flat = [_manual_spec(axis_names, s.spec, mesh) for s in arg_s]
 
     dyn_argnums, in_specs_flat = unzip2((i, s) for i, s in enumerate(in_specs_flat)
                                         if s is not None)
@@ -245,6 +246,7 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
 
     if check_vma:
       fun = _implicit_pvary_on_output(fun, out_specs_thunk)
+      fun = _implicit_unreduced_on_output(fun, out_specs_thunk)
 
     try:
       out_flat = shard_map_p.bind(
@@ -352,7 +354,7 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _smap):
   return mesh, axis_names
 
 
-def _manual_spec(manual_axes, spec: P) -> P:
+def _manual_spec(manual_axes, spec: P, mesh) -> P:
   out = []  # type: ignore
   for s in spec:
     if s is None:
@@ -366,6 +368,7 @@ def _manual_spec(manual_axes, spec: P) -> P:
       out.append(None if len(temp) == 0 else tuple(temp))
     else:
       out.append(s if s in manual_axes else None)
+  _check_unreduced(SpecErrorType.input, mesh, manual_axes, spec)
   return P(*out, unreduced=spec.unreduced, reduced=spec.reduced)
 
 
@@ -378,17 +381,22 @@ def _check_unreduced(error_type, mesh, manual_axes, specs):
   full_manual = frozenset(mesh.axis_names) == manual_axes
   specs_flat, _ = tree_flatten(specs)
   for s in specs_flat:
-    if not s.unreduced:
+    if not s.unreduced and not s.reduced:
       continue
     if not full_manual:
       raise NotImplementedError(
-          f"unreduced can only be passed to {prefix}_specs when shard_map is in"
-          f" full manual mode. Got mesh axis names {mesh.axis_names},"
-          f" manual_axes: {manual_axes}, specs: {s}. Please file a bug"
-          " at https://github.com/jax-ml/jax/issues.")
+          f"unreduced/reduced can only be passed to {prefix}_specs when"
+          " shard_map is in full manual mode. Got mesh axis names"
+          f" {mesh.axis_names}, manual_axes: {manual_axes}, specs: {s}. Please"
+          " file a bug at https://github.com/jax-ml/jax/issues.")
     if not all(mesh._name_to_type[u] == AxisType.Explicit for u in s.unreduced):
       raise ValueError(
           f"unreduced in {prefix}_specs {s} can only be used when the mesh"
+          " passed to shard_map contains axis names all of type `Explicit`."
+          f" Got mesh {mesh}")
+    if not all(mesh._name_to_type[u] == AxisType.Explicit for u in s.reduced):
+      raise ValueError(
+          f"reduced in {prefix}_specs {s} can only be used when the mesh"
           " passed to shard_map contains axis names all of type `Explicit`."
           f" Got mesh {mesh}")
 
@@ -473,7 +481,7 @@ def _spec_rank_error(
     fails: list[core.ShapedArray | NoFail]) -> str:
   fun_name = util_fun_name(f)
   if error_type == SpecErrorType.input:
-    prefix, base = 'in', 'args'
+    prefix, base = 'in', 'the passed args'
     ba = _try_infer_args(f, tree)
   else:
     prefix, base = 'out', f'{fun_name}(*args)'
@@ -482,16 +490,19 @@ def _spec_rank_error(
     extra = ""
     if error_type == SpecErrorType.input and ba is not None:
       arg_key, *_ = fail_key
-      if arg_key.idx < len(ba.arguments):
-        param_name = list(ba.arguments.keys())[arg_key.idx]
-        extra = (f", where {base}{arg_key} is bound to {fun_name}'s "
-                 f"parameter '{param_name}',")
+      param_names, params = unzip2(
+          (name, param) for name, param in ba.signature.parameters.items()
+          if param.kind not in (inspect.Parameter.KEYWORD_ONLY,
+                                inspect.Parameter.VAR_KEYWORD))
+      if (arg_key.idx >= len(params) or
+          params[arg_key.idx].kind == inspect.Parameter.VAR_POSITIONAL):
+        extra = (f", where args{arg_key} is the index "
+                 f"{arg_key.idx - len(params) + 1} component "
+                 f"of {fun_name}'s varargs parameter '{param_names[-1]}',")
       else:
-        param = list(ba.signature.parameters.values())[-1]
-        assert param.kind == inspect.Parameter.VAR_POSITIONAL
-        extra = (f", where {base}{arg_key} is the index "
-                 f"{arg_key.idx - len(ba.signature.parameters) + 1} component "
-                 f"of {fun_name}'s varargs parameter '{param.name}',")
+        param_name = params[arg_key.idx]
+        extra = (f", where args{arg_key} is bound to {fun_name}'s "
+                 f"parameter '{param_name}',")
     msgs.append(
         f"* {prefix}_specs{keystr(spec_key)} is {spec} which has length "
         f"{len(spec)}, but "
@@ -522,16 +533,19 @@ def _spec_divisibility_error(
     extra = ""
     if ba is not None:
       arg_key, *_ = fail_key
-      if arg_key.idx < len(ba.arguments):
-        param_name = list(ba.arguments.keys())[arg_key.idx]
+      param_names, params = unzip2(
+          (name, param) for name, param in ba.signature.parameters.items()
+          if param.kind not in (inspect.Parameter.KEYWORD_ONLY,
+                                inspect.Parameter.VAR_KEYWORD))
+      if (arg_key.idx >= len(params) or
+          params[arg_key.idx].kind == inspect.Parameter.VAR_POSITIONAL):
+        extra = (f", where args{arg_key} is the index "
+                 f"{arg_key.idx - len(params) + 1} component "
+                 f"of {fun_name}'s varargs parameter '{param_names[-1]}',")
+      else:
+        param_name = params[arg_key.idx]
         extra = (f", where args{arg_key} is bound to {fun_name}'s "
                  f"parameter '{param_name}',")
-      else:
-        param = list(ba.signature.parameters.values())[-1]
-        assert param.kind == inspect.Parameter.VAR_POSITIONAL
-        extra = (f", where args{arg_key} is the index "
-                 f"{arg_key.idx - len(ba.signature.parameters) + 1} component "
-                 f"of {fun_name}'s varargs parameter '{param.name}',")
     names = _spec_to_names(spec)
     for d, ns in names.items():
       if aval.shape[d] % prod(mesh.shape[n] for n in ns):
@@ -539,7 +553,7 @@ def _spec_divisibility_error(
         total = 'total ' if len(ns) > 1 else ''
         sz = prod(mesh.shape[n] for n in ns)
         msgs.append(
-            f"* args{keystr(fail_key)} of shape {aval.str_short()}{extra} "
+            f"* the passed args{keystr(fail_key)} of shape {aval.str_short()}{extra} "
             f"corresponds to in_specs{keystr(spec_key)} of value {spec}, "
             f"which maps array axis {d} (of size {aval.shape[d]}) to mesh "
             f"{axis} (of {total}size {sz}), but {sz} does not evenly divide "
@@ -627,16 +641,34 @@ def _implicit_pvary_on_output(f, out_specs_thunk, *args, **kwargs):
   return [pvary(o, tuple(_spec_to_vma(sp) - typeof(o).vma))
           for o, sp in zip(out_flat, out_specs_thunk())]
 
+
+@lu.transformation2
+def _implicit_unreduced_on_output(f, out_specs_thunk, *args, **kwargs):
+  out_flat = f(*args, **kwargs)
+  new_out_flat = []
+  for o, sp in zip(out_flat, out_specs_thunk()):
+    o_aval = typeof(o)
+    if unreduced := (sp.unreduced - o_aval.sharding.spec.unreduced):
+      axes = order_wrt_mesh(o_aval.sharding.mesh, unreduced)
+      new_out_flat.append(lax_parallel.vary_unreduced_cast(o, axes))
+    else:
+      new_out_flat.append(o)
+  return new_out_flat
+
+
 JaxType = Any
 MaybeTracer = Union[JaxType, Tracer]
 
 class ShardMapPrimitive(core.Primitive):
   multiple_results = True
-  skip_canonicalization = True
+
+  def bind(self, *args, **params):
+    return self._true_bind(*args, **params)
 
   def bind_with_trace(self, trace, fun_and_args, params):
+    fun: lu.WrappedFun
     fun, *args = fun_and_args
-    return trace.process_shard_map(shard_map_p, fun, args, **params)  # type: ignore
+    return trace.process_shard_map(shard_map_p, fun, args, **params)
 
   def get_bind_params(self, params):
     new_params = dict(params)
@@ -709,20 +741,37 @@ def _check_shapedarray(aval: core.AbstractValue) -> core.ShapedArray:
 def _shard_shaped_array(mesh: Mesh, manual_axes: frozenset, check_vma,
                         spec, aval: core.AbstractValue) -> core.AbstractValue:
   assert isinstance(aval, core.ShapedArray)
+  if spec.unreduced != aval.sharding.spec.unreduced:
+    raise ValueError(
+        f"in_specs containing unreduced {spec} passed to shard_map should be"
+        " equal to the unreduced present on the in_aval"
+        f" {aval.str_short(True)}")
+  if spec.reduced != aval.sharding.spec.reduced:
+    raise ValueError(
+        f"in_specs containing reduced {spec} passed to shard_map should be"
+        f" equal to the reduced present on the in_aval {aval.str_short(True)}")
   names = _spec_to_names(spec)
   new_shape = tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
                     for i, sz in enumerate(aval.shape))
   manual_mesh = _as_manual_mesh(mesh, manual_axes)
-  new_spec = aval.sharding.spec.update(unreduced=frozenset(), reduced=frozenset())
-  new_sharding = aval.sharding.update(mesh=manual_mesh, spec=new_spec)
+  new_sharding = aval.sharding.update(mesh=manual_mesh)
   vma = _spec_to_vma(spec) if check_vma else frozenset()
-  vma = vma | aval.vma | aval.sharding.spec.unreduced
+  vma = vma | aval.vma
   return aval.update(shape=new_shape, sharding=new_sharding, vma=vma)
 core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
 
 def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.AbstractValue
                           ) -> core.AbstractValue:
   assert isinstance(aval, core.ShapedArray)
+  if spec.unreduced != aval.sharding.spec.unreduced:
+    raise ValueError(
+        f"out_specs containing unreduced {spec} passed to shard_map should be"
+        " equal to the unreduced present on the out_aval"
+        f" {aval.str_short(True)}")
+  if spec.reduced != aval.sharding.spec.reduced:
+    raise ValueError(
+        f"out_specs containing reduced {spec} passed to shard_map should be"
+        f" equal to the reduced present on the out_aval {aval.str_short(True)}")
   names = _spec_to_names(spec)
   new_shape = tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
                     for i, sz in enumerate(aval.shape))
@@ -749,7 +798,7 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.AbstractValue
               get_abstract_mesh())
   new_sharding = NamedSharding(new_mesh, out_spec)
   manual_axes = set(new_mesh.manual_axes)
-  vma = (frozenset(v for v in aval.vma | out_spec.unreduced if v in manual_axes)
+  vma = (frozenset(v for v in aval.vma if v in manual_axes)
          if check_vma else frozenset())
   return aval.update(shape=new_shape, sharding=new_sharding, vma=vma)
 core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
@@ -1019,7 +1068,7 @@ def _vma_to_spec(mesh, vma):
 
 def _spec_to_vma(spec):
   return frozenset(p for s in spec if s is not None
-                   for p in (s if isinstance(s, tuple) else (s,))) | spec.unreduced
+                   for p in (s if isinstance(s, tuple) else (s,)))
 
 def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs, out_specs_thunk,
                     check_vma, manual_axes):
@@ -1662,11 +1711,13 @@ def _shard_map_transpose(out_cts, *args,
   fun_trans_flat, out_tree = api_util.flatten_fun_nokwargs(fun_trans, in_tree)
 
   new_in_specs = (
-      [n for n, x in zip(out_specs, out_cts) if type(x) is not ad.Zero] +
-      [n for n, x in zip(in_specs, args) if type(x) is not ad.UndefinedPrimal])
+      [core.primal_spec_to_cotangent_spec(s)
+       for s, x in zip(out_specs, out_cts) if type(x) is not ad.Zero] +
+      [s for s, x in zip(in_specs, args) if type(x) is not ad.UndefinedPrimal])
 
   def new_out_specs_thunk():
-    return tuple(sp for sp, nz in zip(in_specs, nz_arg_cts()) if nz)
+    return tuple(core.primal_spec_to_cotangent_spec(sp)
+                 for sp, nz in zip(in_specs, nz_arg_cts()) if nz)
 
   try:
     out_flat = shard_map_p.bind(

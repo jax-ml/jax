@@ -271,6 +271,10 @@ bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
   if (auto cast_op = value.getDefiningOp<arith::IndexCastOp>()) {
     return isGuaranteedDivisible(cast_op.getOperand(), divisor, fuel - 1);
   }
+  if (auto add_op = value.getDefiningOp<arith::AddIOp>()) {
+    return isGuaranteedDivisible(add_op.getRhs(), divisor, fuel / 2) &&
+           isGuaranteedDivisible(add_op.getLhs(), divisor, (fuel + 1) / 2);
+  }
   return false;
 }
 

@@ -58,20 +58,20 @@ _MOSAIC_ALLOW_HLO = config.bool_state(
 # mode: for 1 month when exporting, or when using old cloud TPU.
 #
 # This can be achieved by adding:
-#    if ctx.is_forward_compat() or is_cloud_tpu_older_than(<today>):
+#    if ctx.is_forward_compat() or backend is None or is_cloud_tpu_older_than(<today>):
 #       return <previous_serialization_version>
 #    return None
 #
 # We should also add a TODO to remove the conditional one month later.
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
-  # TODO(naumsmogers): remove the forward compatibility check after 2025-09-14.
+  # TODO(apaszke): remove the forward compatibility check after 2025-12-5.
   if (
       ctx.is_forward_compat()
       or backend is None
-      or is_cloud_tpu_older_than(2025, 8, 14, backend)
+      or is_cloud_tpu_older_than(2025, 11, 5, backend)
   ):
-    return 7
+    return 8
   return None
 
 
@@ -269,7 +269,7 @@ class CustomCallBackendConfig:
       for i, (flag, value) in enumerate(self.flags.items()):
         config.write(b'{"flag_type": "')
         config.write(flag.encode("ascii"))
-        config.write(b'", value: {')
+        config.write(b'", "value": {')
         if isinstance(value, bool):
           config.write(b'"boolean_value": ')
           config.write(b"true" if value else b"false")
@@ -701,6 +701,7 @@ def as_tpu_kernel(
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     shape_invariant_numerics: bool = False,
     metadata: Any | None = None,
+    _ir_version: int | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
   config = _lower_to_custom_call_config(
@@ -716,6 +717,7 @@ def as_tpu_kernel(
       disable_bounds_checks=disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
       shape_invariant_numerics=shape_invariant_numerics,
+      ir_version=_ir_version,
   )
   return _as_jax_callable(
       config,

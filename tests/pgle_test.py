@@ -319,7 +319,7 @@ class PgleTest(jtu.JaxTestCase):
 
         monitoring.register_event_listener(check_if_cache_hit)
         f(x)
-        monitoring._unregister_event_listener_by_callback(check_if_cache_hit)
+        monitoring.unregister_event_listener(check_if_cache_hit)
 
         self.assertGreater(cache_hit, 0)
 
@@ -448,7 +448,7 @@ class PgleTest(jtu.JaxTestCase):
 
         monitoring.register_event_listener(check_if_cache_hit)
         f(x)
-        monitoring._unregister_event_listener_by_callback(check_if_cache_hit)
+        monitoring.unregister_event_listener(check_if_cache_hit)
         self.assertGreater(cache_hit, 0)
 
         # Run 5: `g` was only executed once and did not get re-compiled with PGLE, so
@@ -459,7 +459,7 @@ class PgleTest(jtu.JaxTestCase):
           cache_hit = 0
           monitoring.register_event_listener(check_if_cache_hit)
           g(x)
-          monitoring._unregister_event_listener_by_callback(check_if_cache_hit)
+          monitoring.unregister_event_listener(check_if_cache_hit)
           self.assertEqual(cache_hit, 1)
           if len(w) != 1:
             print("Warnings:", [str(w_) for w_ in w], flush=True)

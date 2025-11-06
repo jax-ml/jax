@@ -106,24 +106,12 @@ class DialectTest(MosaicGpuTest):
   def test_dialect_module_is_loaded(self):
     self.assertTrue(_cext.globals._check_dialect_module_loaded("mosaic_gpu"))
 
-  def test_initialize_barrier_op_result_memref_must_wrap_barriers(self):
-    with ir.InsertionPoint(self.module.body):
-      mgpu.dialect.initialize_barrier(
-          ir.MemRefType.get((1, 2), ir.F32Type.get()),
-          llvm.UndefOp(workgroup_ptr_ty()),
-          arrival_count=1,
-      )
-    with self.assertRaisesRegex(
-        ir.MLIRError, "must be memref of barrier values"
-    ):
-      self.module.operation.verify()
-
   def test_initialize_barrier_op_arrival_count_must_be_strictly_positive(self):
     with ir.InsertionPoint(self.module.body):
       mgpu.dialect.initialize_barrier(
-          ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
           llvm.UndefOp(workgroup_ptr_ty()),
           arrival_count=0,
+          num_barriers=2,
       )
     with self.assertRaisesRegex(ir.MLIRError, "value is positive"):
       self.module.operation.verify()
@@ -131,9 +119,9 @@ class DialectTest(MosaicGpuTest):
   def test_initialize_barrier_op_with_a_non_shared_base_pointer_fails(self):
     with ir.InsertionPoint(self.module.body):
       mgpu.dialect.initialize_barrier(
-          ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
           llvm.UndefOp(ir.Type.parse(f"!llvm.ptr<{0}>")),
           arrival_count=1,
+          num_barriers=2,
       )
     with self.assertRaisesRegex(ir.MLIRError, "pointer in address space 3"):
       self.module.operation.verify()
@@ -141,14 +129,11 @@ class DialectTest(MosaicGpuTest):
   def test_initialize_barrier_op_with_a_positive_arrival_count_passes(self):
     with ir.InsertionPoint(self.module.body):
       mgpu.dialect.initialize_barrier(
-          ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
           llvm.UndefOp(workgroup_ptr_ty()),
           arrival_count=1,
+          num_barriers=2,
       )
     self.assertTrue(self.module.operation.verify())
-    self.assertIsInstance(
-        self.module.body.operations[1], mgpu.dialect.InitializeBarrierOp
-    )
 
   def test_async_load_op_dest_must_be_contiguous(self):
     with ir.InsertionPoint(self.module.body):
@@ -1107,9 +1092,9 @@ class DialectLoweringTest(MosaicGpuTest):
   def test_lowering_removes_mosaic_gpu_ops(self):
     with ir.InsertionPoint(self.module.body):
       mgpu.dialect.initialize_barrier(
-          ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
           llvm.UndefOp(workgroup_ptr_ty()),
           arrival_count=1,
+          num_barriers=2,
       )
     mgpu.lower_mgpu_dialect(self.module, None)
 
@@ -1124,9 +1109,9 @@ class DialectLoweringTest(MosaicGpuTest):
       if_op = scf.IfOp(cst_true)
       with ir.InsertionPoint(if_op.then_block):
         mgpu.dialect.initialize_barrier(
-            ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
             llvm.UndefOp(workgroup_ptr_ty()),
             arrival_count=1,
+            num_barriers=2,
         )
         scf.yield_([])
     mgpu.lower_mgpu_dialect(self.module, None)
@@ -1136,19 +1121,15 @@ class DialectLoweringTest(MosaicGpuTest):
     )
 
   def test_initialize_barrier_op_lowering_rule(self):
-    shape = (3, 4)
-    num_shape_elements = shape[0] * shape[1]
+    num_barriers = 4
     arrival_count = 1337
 
     with ir.InsertionPoint(self.module.body):
-      barriers_ref = mgpu.dialect.initialize_barrier(
-          ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier")),
+      mgpu.dialect.initialize_barrier(
           llvm.UndefOp(workgroup_ptr_ty()),
           arrival_count=arrival_count,
+          num_barriers=num_barriers,
       )
-      # Add a user for barriers_ref to make sure that the lowering keeps types
-      # consistent.
-      memref.copy(barriers_ref, barriers_ref)
 
     self.assertTrue(self.module.operation.verify())
     mgpu.lower_mgpu_dialect(self.module, None)
@@ -1160,7 +1141,7 @@ class DialectLoweringTest(MosaicGpuTest):
     )
 
     # One nvvm.mbarrier_init_shared is issued per barrier.
-    self.assertLen(all_mbarrier_init_shared_ops, num_shape_elements)
+    self.assertLen(all_mbarrier_init_shared_ops, num_barriers)
 
     # Each barrier has its count equal to the arrival count times the
     # warpgroup size.
@@ -1434,6 +1415,59 @@ class DialectLoweringTest(MosaicGpuTest):
       self.assertEqual(ty_transformed.shape, [8, 2, 16, 32])
       strides, _ = ty_transformed.get_strides_and_offset()
       self.assertEqual(strides, [512, 4096, 1, 16])
+
+  def test_optimized_gmem_transfers_are_not_supported(self):
+    def body(ctx, input, output, scratch):
+      del ctx, output, scratch
+      ref_type = ir.MemRefType(input.type)
+      zero = arith.constant(ir.IndexType.get(), 0)
+      zero_indices = [zero] * len(ref_type.shape)
+      vector_type = ir.VectorType.get(ref_type.shape, ref_type.element_type)
+      load = vector.LoadOp(vector_type, input, zero_indices)
+      load.attributes["optimized"] = ir.BoolAttr.get(True)
+      layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
+      mgpu.dialect.layout_cast(load.result, layout)
+
+    shape = (128, 128)
+    dtype = jnp.bfloat16
+    with self.assertRaisesRegex(
+        NotImplementedError, "Only optimized transfers to SMEM supported"
+    ):
+      mgpu.as_gpu_kernel(
+          body,
+          grid=(1, 1, 1),
+          block=(128, 1, 1),
+          in_shape=jax.ShapeDtypeStruct(shape, dtype),
+          out_shape=jax.ShapeDtypeStruct(shape, dtype),
+          smem_scratch_shape=(),
+          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+      )
+
+  def test_inconsistent_collective_attributes_in_kernel_raise(self):
+    def body(ctx, out, smem_ptr):
+      del ctx, out
+      ref_ty = ir.MemRefType.get(
+          (128, 128),
+          ir.BF16Type.get(),
+          memory_space=mgpu_utils.tmem(),
+      )
+      mgpu.dialect.tmem_alloc(ref_ty, smem_ptr, collective=False)
+      mgpu.dialect.tmem_alloc(ref_ty, smem_ptr, collective=True)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Collective attributes are inconsistent across operations in the"
+        " kernel",
+    ):
+      mgpu.as_gpu_kernel(
+          body,
+          grid=(1, 1, 1),
+          block=(128, 1, 1),
+          in_shape=(),
+          out_shape=(jax.ShapeDtypeStruct((), jnp.int32),),
+          smem_scratch_shape=jax.ShapeDtypeStruct((), jnp.int32),
+          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+      )
 
 
 if __name__ == "__main__":

@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from functools import partial
 import enum
 from typing import Any
 
@@ -272,7 +271,7 @@ def _resize_nearest(x, output_shape: core.Shape):
   return x
 
 
-@partial(api.jit, static_argnums=(1, 2, 3, 4))
+@api.jit(static_argnums=(1, 2, 3, 4))
 def _resize(image, shape: core.Shape, method: str | ResizeMethod,
             antialias: bool, precision):
   if len(shape) != image.ndim:

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Mosaic-specific Pallas APIs."""
+import typing
 
 from jax._src.pallas.mosaic import core as core
 from jax._src.pallas.mosaic.core import create_tensorcore_mesh as create_tensorcore_mesh
@@ -40,17 +41,19 @@ from jax._src.pallas.mosaic.pipeline import make_pipeline_allocations as make_pi
 from jax._src.pallas.mosaic.primitives import async_copy as async_copy
 from jax._src.pallas.mosaic.primitives import async_remote_copy as async_remote_copy
 from jax._src.pallas.mosaic.primitives import bitcast as bitcast
-from jax._src.pallas.mosaic.primitives import delay as delay
 from jax._src.pallas.mosaic.primitives import get_barrier_semaphore as get_barrier_semaphore
 from jax._src.pallas.mosaic.primitives import load as load
 from jax._src.pallas.mosaic.primitives import make_async_copy as make_async_copy
 from jax._src.pallas.mosaic.primitives import make_async_remote_copy as make_async_remote_copy
+from jax._src.pallas.mosaic.primitives import pack_elementwise as pack_elementwise
 from jax._src.pallas.mosaic.primitives import prng_random_bits as prng_random_bits
 from jax._src.pallas.mosaic.primitives import prng_seed as prng_seed
 from jax._src.pallas.mosaic.primitives import repeat as repeat
 from jax._src.pallas.mosaic.primitives import roll as roll
+from jax._src.pallas.mosaic.primitives import stochastic_round as stochastic_round
 from jax._src.pallas.mosaic.primitives import store as store
 from jax._src.pallas.mosaic.primitives import touch as touch
+from jax._src.pallas.mosaic.primitives import unpack_elementwise as unpack_elementwise
 from jax._src.pallas.mosaic.primitives import with_memory_space_constraint as with_memory_space_constraint
 from jax._src.pallas.mosaic.random import sample_block as sample_block
 from jax._src.pallas.mosaic.random import stateful_bernoulli as stateful_bernoulli
@@ -65,6 +68,7 @@ from jax._src.pallas.mosaic.tpu_info import TpuInfo as TpuInfo
 
 # Those primitives got moved to Pallas core. Keeping the updated imports
 # here for backward compatibility.
+from jax._src.pallas import primitives as pl_primitives
 from jax._src.pallas.core import semaphore as semaphore
 from jax._src.pallas.core import MemorySpace as GeneralMemorySpace
 from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
@@ -97,3 +101,21 @@ SEMAPHORE = MemorySpace.SEMAPHORE
 # Expose ANY for backward compatibility.
 ANY = GeneralMemorySpace.ANY
 del GeneralMemorySpace
+
+
+_deprecations = {
+    # Added Oct 31, 2025
+    "delay": (
+      "pltpu.delay is deprecated, use pl.delay instead.",
+      pl_primitives.delay
+    ),
+}
+
+if typing.TYPE_CHECKING:
+  delay = pl_primitives.delay
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing
+del pl_primitives

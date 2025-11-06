@@ -1333,7 +1333,7 @@ def _interpret_jaxpr(
             ordered=True,
         )
 
-      elif prim is mosaic_primitives.delay_p:
+      elif prim is primitives.delay_p:
         # TODO(jburnim): Implement this properly?
         out = []
 
@@ -1959,8 +1959,9 @@ def interpret_pallas_call(
     out_avals: tuple[jax_core.AbstractValue, ...],
     interpret_params: InterpretParams,
     metadata: frozen_dict.FrozenDict[str, str] | None,
+    name: str | None,
 ):
-  del debug, cost_estimate, out_avals
+  del debug, cost_estimate, out_avals, name
   del metadata  # TODO(sharadmv): Add metadata to HLO.
 
   if isinstance(mesh, mosaic_core.TensorCoreMesh):

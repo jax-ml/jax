@@ -68,6 +68,9 @@ jobs:
       skip-download-jaxlib-from-gcs: ${{inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
+      # TODO(b/456203132): Increase to more than 16 processes if this works
+      #  (56 prior to this).
+      max-processes: ${{ contains(matrix.runner, 'windows-x86') && '16' || '' }}
 
   run-bazel-test-cpu:
     uses: ./.github/workflows/bazel_cpu.yml

@@ -1388,12 +1388,12 @@ class ShardingTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P(unreduced={'a'}, reduced={'b'}))
     aval = jax.core.ShapedArray((1, 1, 1, 1), np.float32, sharding=s,
                                 vma=frozenset('c'))
-    self.assertEqual(aval.str_short(True), 'f32[1,1,1,1]{U:a, R:b}{c}')
+    self.assertEqual(aval.str_short(True), 'f32[1,1,1,1]{V:c, U:a, R:b}')
 
     s = NamedSharding(mesh, P(unreduced={'a'}))
     aval = jax.core.ShapedArray((1, 1, 1, 1), np.float32, sharding=s,
                                 vma=frozenset('c'))
-    self.assertEqual(aval.str_short(True), 'f32[1,1,1,1]{U:a}{c}')
+    self.assertEqual(aval.str_short(True), 'f32[1,1,1,1]{V:c, U:a}')
 
     s = NamedSharding(mesh, P(unreduced={'a'}))
     aval = jax.core.ShapedArray((1, 1, 1, 1), np.float32, sharding=s)
@@ -1402,7 +1402,7 @@ class ShardingTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P())
     aval = jax.core.ShapedArray((1, 1, 1, 1), np.float32, sharding=s,
                                 vma=frozenset('c'))
-    self.assertEqual(aval.str_short(True), 'f32[1,1,1,1]{c}')
+    self.assertEqual(aval.str_short(True), 'f32[1,1,1,1]{V:c}')
 
     aval = jax.core.ShapedArray((1, 1, 1, 1), np.float32)
     self.assertEqual(aval.str_short(True), 'f32[1,1,1,1]')

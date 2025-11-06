@@ -15,7 +15,7 @@
 from collections.abc import Callable, Hashable, Iterable, Sequence
 from typing import Any, TypeVar
 
-version: int = 3
+version: int = ...
 
 _T = TypeVar("_T")
 
@@ -32,11 +32,11 @@ _AuxData = TypeVar("_AuxData", bound=Hashable)
 class PyTreeRegistry:
   def __init__(
       self,
-      enable_none: bool = True,
-      enable_tuple: bool = True,
-      enable_namedtuple: bool = True,
-      enable_list: bool = True,
-      enable_dict: bool = True,
+      enable_none: bool = ...,
+      enable_tuple: bool = ...,
+      enable_namedtuple: bool = ...,
+      enable_list: bool = ...,
+      enable_dict: bool = ...,
   ) -> None: ...
   def flatten(
       self,

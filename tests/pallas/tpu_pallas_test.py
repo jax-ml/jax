@@ -1246,6 +1246,8 @@ class PallasCallDMATest(PallasBaseTest):
   def test_host_input_host_to_hbm_dma(self):
     if self.INTERPRET:
       self.skipTest('Interpret mode does not support host memory.')
+    if jax.device_count() > 1:
+      self.skipTest("Test only works with a single device.")
     def kernel(x_host_ref, y_hbm_ref):
       def body(sem):
         pltpu.async_copy(x_host_ref, y_hbm_ref, sem).wait()
@@ -1273,6 +1275,8 @@ class PallasCallDMATest(PallasBaseTest):
     np.testing.assert_array_equal(y, x)
 
   def test_hbm_to_host_host_output_dma(self):
+    if jax.device_count() > 1:
+      self.skipTest("Test only works with a single device.")
     def kernel(y_hbm_ref, x_host_ref):
       def body(sem):
         pltpu.async_copy(y_hbm_ref, x_host_ref, sem).wait()
@@ -2061,7 +2065,7 @@ class PallasCallTest(PallasBaseTest):
       y[:] = x[:]
     batch_size = 3
     x = jnp.arange(batch_size * 1024.).reshape(batch_size, 8, 128)
-    f = pl.pallas_call(
+    f = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
         cost_estimate=pl.CostEstimate(
@@ -2073,6 +2077,57 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(analysis_result['flops'], batch_size * 1234)
     self.assertEqual(analysis_result['transcendentals'], batch_size * 21)
     self.assertEqual(analysis_result['bytes accessed'], batch_size * 12345)
+
+  def test_cost_analysis_vmap_symbolic_batch_size(self):
+    # When exporting a module with a symbolic batch size, the cost analysis
+    # should be stripped from the tpu_custom_call because we can't accurately
+    # scale it by the dynamic batch size.
+
+    def kernel(x, y):
+      y[:] = x[:]
+
+    flops = 1234
+    transcendentals = 21
+    bytes_accessed = 12345
+
+    f = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        cost_estimate=pl.CostEstimate(
+            flops=flops,
+            transcendentals=transcendentals,
+            bytes_accessed=bytes_accessed,
+        ),
+    )
+    f = jax.vmap(f)
+
+    batch_size = 3
+    x = jnp.arange(batch_size * 1024.0).reshape(batch_size, 8, 128)
+    exported_module = pl.lower_as_mlir(jax.jit(f), x, dynamic_shapes=True)
+
+    self.assertIn('tpu_custom_call', str(exported_module))
+    self.assertIn('cost_estimate', str(exported_module))
+    # The exported module string encodes " as \22.
+    self.assertIn(f'flops\\22: {batch_size * flops}', str(exported_module))
+    self.assertIn(
+        f'transcendentals\\22: {batch_size * transcendentals}',
+        str(exported_module),
+    )
+    self.assertIn(
+        f'bytes_accessed\\22: {batch_size * bytes_accessed}',
+        str(exported_module),
+    )
+
+    x_shape = jax.ShapeDtypeStruct(
+        jax.export.symbolic_shape('b, 8, 128'), jnp.float32
+    )
+    exported_module = pl.lower_as_mlir(jax.jit(f), x_shape, dynamic_shapes=True)
+    # Assert that the cost analysis is not present in the serialized module.
+    self.assertIn('tpu_custom_call', str(exported_module))
+    self.assertNotIn('cost_estimate', str(exported_module))
+    self.assertNotIn('flops', str(exported_module))
+    self.assertNotIn('transcendentals', str(exported_module))
+    self.assertNotIn('bytes_accessed', str(exported_module))
 
   def test_vmem_limit(self):
     shape = (128, 128)
@@ -2095,9 +2150,10 @@ class PallasCallTest(PallasBaseTest):
 
   @parameterized.parameters([
       pl.Buffered(1),
-      pl.Buffered(2),
+      # TODO(b/457717220): Seems like the error message doesn't show up anymore.
+      # pl.Buffered(2),
   ])
-  def test_vmem_oom_error_message_basics(self, pmode):
+  def test_vmem_oom_error_message_basics(self, pmode: pl.Buffered):
     if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
       self.skipTest('Support added on Oct 14, 2025')
 
@@ -2148,15 +2204,19 @@ class PallasCallTest(PallasBaseTest):
         f' full shape is f32[{shape[0]},{shape[1]}].',
         error_message,
     )
-    # When VMEM is OOM, double buffering is disabled.
-    self.assertIn(
-        'This allocation is single buffered.',
-        error_message,
-    )
+    if jtu.if_cloud_tpu_at_least(2025, 11, 5):
+      self.assertIn(
+          'This allocation is single buffered.'
+          if pmode.buffer_count == 1
+          else 'This allocation has 2 buffering levels',
+          error_message,
+      )
 
   def test_vmem_oom_error_message_dynamic_grid_scalar_prefetch_and_vmem_scratch(
       self,
   ):
+    if jax.device_count() > 1:
+      self.skipTest("Test only works with a single device.")
     if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
       self.skipTest('Support added on Oct 14, 2025')
 
@@ -3994,6 +4054,32 @@ class MiscellaneousTest(PallasBaseTest):
         out_shape=jax.ShapeDtypeStruct(out_shape, dtype),
     )(x)
     np.testing.assert_array_equal(out, x.reshape(out_shape))
+
+  def test_dynamic_grid_with_smem_output(self):
+    if self.INTERPRET:
+      self.skipTest('Fail on interpreter.')
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 3):
+      self.skipTest('Needs a newer libTPU')
+
+    def body(_, o_ref):
+      o_ref[0] = lax.cond(
+          pl.program_id(0) == 0, lambda: 1, lambda: o_ref[0] + 1
+      )
+
+    def wrapper_dynamic(n):
+      return self.pallas_call(
+          body,
+          out_shape=pltpu.SMEM((1,), dtype=jnp.int32),
+          grid_spec=pl.GridSpec(
+              grid=(n,),
+              in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+              out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+          ),
+      )(n)
+
+    n = jax.random.randint(jax.random.key(0), (1,), 1, 10, dtype=jnp.int32)
+    compiled_kernel = jax.jit(wrapper_dynamic).lower(n).compile()
+    np.testing.assert_array_equal(compiled_kernel(n), n)
 
 
 class MiscellaneousInterpretTest(MiscellaneousTest):

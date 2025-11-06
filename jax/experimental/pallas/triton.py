@@ -22,6 +22,7 @@ from jax._src.pallas.primitives import atomic_min as atomic_min
 from jax._src.pallas.primitives import atomic_or as atomic_or
 from jax._src.pallas.primitives import atomic_xchg as atomic_xchg
 from jax._src.pallas.primitives import atomic_xor as atomic_xor
+from jax._src.pallas.primitives import max_contiguous as max_contiguous
 from jax._src.pallas.triton.core import CompilerParams as CompilerParams
 from jax._src.pallas.triton.primitives import approx_tanh as approx_tanh
 from jax._src.pallas.triton.primitives import debug_barrier as debug_barrier

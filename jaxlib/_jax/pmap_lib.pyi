@@ -78,7 +78,7 @@ class PmapFunction:
   def __call__(self, /, *args, **kwargs):
     """Call self as a function."""
 
-  def __get__(self, instance, owner=None, /):
+  def __get__(self, instance, owner=..., /):
     """Return an attribute of instance, which is of type owner."""
   __vectorcalloffset__: types.MemberDescriptorType = ...
 

@@ -74,7 +74,7 @@ def _ignore_known_hidden_frame(f: types.FrameType) -> bool:
 
 def _add_tracebackhide_to_hidden_frames(tb: types.TracebackType):
   for f, _lineno in traceback.walk_tb(tb):
-    if not include_frame(f):
+    if not include_frame(f) and not _is_reraiser_frame(f):
       f.f_locals["__tracebackhide__"] = True
 
 def filter_traceback(tb: types.TracebackType) -> types.TracebackType | None:
@@ -110,9 +110,12 @@ def _add_call_stack_frames(tb: types.TracebackType) -> types.TracebackType:
       reached_module_level = True
   return out
 
-def _is_reraiser_frame(f: traceback.FrameSummary) -> bool:
-  return (f.filename == __file__ and
-          f.name == 'reraise_with_filtered_traceback')
+def _is_reraiser_frame(f: traceback.FrameSummary | types.FrameType) -> bool:
+  if isinstance(f, traceback.FrameSummary):
+    filename, name = f.filename, f.name
+  else:
+    filename, name = f.f_code.co_filename, f.f_code.co_name
+  return filename == __file__ and name == 'reraise_with_filtered_traceback'
 
 def _is_under_reraiser(e: BaseException) -> bool:
   if e.__traceback__ is None:
@@ -157,7 +160,10 @@ def _filtering_mode() -> str:
       mode = "quiet_remove_frames"
   return mode
 
-def api_boundary(fun: C) -> C:
+def api_boundary(
+    fun: C, *,
+    repro_api_name: str | None = None,
+    repro_user_func: bool = False) -> C:
   '''Wraps ``fun`` to form a boundary for filtering exception tracebacks.
 
   When an exception occurs below ``fun``, this appends to it a custom
@@ -178,6 +184,8 @@ def api_boundary(fun: C) -> C:
   ``g``. Because the function returned by :func:`~jax.jit` is annotated as an
   :func:`~api_boundary`, such an exception is accompanied by an additional
   traceback that excludes the frames specific to JAX's implementation.
+
+  For the "repro" kwargs, see the comments for `repro.boundary`.
   '''
 
   @functools.wraps(fun)
@@ -193,11 +201,9 @@ def api_boundary(fun: C) -> C:
         _add_tracebackhide_to_hidden_frames(e.__traceback__)
         raise
 
-      filtered_tb, unfiltered = None, None
+      tb = e.__traceback__
       try:
-        tb = e.__traceback__
-        filtered_tb = filter_traceback(tb)
-        e.with_traceback(filtered_tb)
+        e.with_traceback(filter_traceback(tb))
         if mode == "quiet_remove_frames":
           e.add_note("--------------------\n" + _simplified_tb_msg)
         else:
@@ -213,9 +219,21 @@ def api_boundary(fun: C) -> C:
           jax_error.__suppress_context__ = e.__suppress_context__
           e.__cause__ = jax_error
           e.__context__ = None
+          del jax_error
         raise
       finally:
-        del filtered_tb
-        del unfiltered
-        del mode
+        del mode, tb
+  if (repro_api_name or repro_user_func) and repro:
+    reraise_with_filtered_traceback = repro.boundary(
+        reraise_with_filtered_traceback, api_name=repro_api_name,
+        is_user=repro_user_func)
   return cast(C, reraise_with_filtered_traceback)
+
+try:
+  # TODO: import from the final location
+  from jax._src import repro  # type: ignore
+  repro_is_enabled = repro.is_enabled
+
+except ImportError:
+  repro = None  # type: ignore
+  def repro_is_enabled(): return False # type: ignore

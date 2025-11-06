@@ -24,7 +24,7 @@ from __future__ import annotations
 __all__ = ['register_jax_array_methods']
 
 import abc
-from functools import partial, wraps
+from functools import wraps
 import math
 from typing import Any
 from collections.abc import Callable, Sequence
@@ -318,6 +318,10 @@ def _reshape(self: Array, *args: Any, order: str = "C", out_sharding=None
     return lax.reshape(self, newshape, None, out_sharding=out_sharding)
   elif order == "F":
     dims = list(range(self.ndim)[::-1])
+    out_sharding = canonicalize_sharding(out_sharding, "jnp.reshape")
+    out_sharding = (
+        None if out_sharding is None else out_sharding.update(
+            spec=out_sharding.spec.update(partitions=out_sharding.spec[::-1])))
     return lax.reshape(self, newshape[::-1], dims, out_sharding=out_sharding).T
   elif order == "A":
     raise NotImplementedError("np.reshape order=A is not implemented.")
@@ -639,7 +643,7 @@ def __array_module__(self, types):
     return NotImplemented
 
 
-@partial(api.jit, static_argnums=(1,2,3))
+@api.jit(static_argnums=(1,2,3))
 def _multi_slice(self: Array,
                  start_indices: tuple[tuple[int, ...]],
                  limit_indices: tuple[tuple[int, ...]],

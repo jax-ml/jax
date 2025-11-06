@@ -675,6 +675,58 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self.assertEqual(jnp.isnan(z).sum(), 0)
 
   @jtu.sample_product(
+  [
+    dict(shape=(5,), axis=None),
+    dict(shape=(5,), axis=0),
+    dict(shape=(5,), axis=-1),
+    dict(shape=(10, 5), axis=None),
+    dict(shape=(10, 5), axis=0),
+    dict(shape=(10, 5), axis=1),
+    dict(shape=(10, 5), axis=-1),
+    dict(shape=(10, 5), axis=(0, 1)),
+    dict(shape=(5, 4, 3), axis=(0, 2)),
+    dict(shape=(5, 4, 3), axis=(1, -1)),
+  ],
+  jnp_fn_name=["var", "std", "nanvar", "nanstd"],
+  dtype=inexact_dtypes + int_dtypes,
+  ddof=[0, 1],
+  keepdims=[False, True],
+  )
+  def testReducerWithMean(self, jnp_fn_name, shape, dtype, axis, ddof, keepdims):
+    """Tests variance and standard deviation functions with a pre-supplied mean."""
+    jnp_fn = getattr(jnp, jnp_fn_name)
+    np_fn = getattr(np, jnp_fn_name)
+    is_nan_test = "nan" in jnp_fn_name
+
+    # Generate a random mean value. This should have NaNs if the test is for NaNs.
+    input_rng = jtu.rand_some_nan(self.rng()) if is_nan_test else jtu.rand_default(self.rng())
+    # Generate a random mean value. This should never have NaNs.
+    mean_rng = jtu.rand_default(self.rng())
+    mean_shape = np.mean(np.zeros(shape, dtype=dtype), axis=axis, keepdims=True).shape
+    mean_dtype = dtypes.to_inexact_dtype(dtype)
+
+    args_maker = lambda: [input_rng(shape, dtype), mean_rng(mean_shape, mean_dtype)]
+
+    def jnp_wrapper(x, mean_val):
+      return jnp_fn(x, axis=axis, ddof=ddof, keepdims=keepdims, mean=mean_val)
+
+    @jtu.ignore_warning(category=RuntimeWarning, message="Degrees of freedom <= 0 for slice.")
+    @jtu.ignore_warning(category=np.exceptions.ComplexWarning)
+    def np_wrapper(x, mean_val):
+      if dtype in int_dtypes:
+        x = x.astype(dtypes.to_inexact_dtype(x.dtype))
+      x_cast = x.astype(np.float32) if x.dtype == dtypes.bfloat16 else x
+      mean_cast = mean_val.astype(np.float32) if mean_val.dtype == dtypes.bfloat16 else mean_val
+      return np_fn(x_cast, axis=axis, ddof=ddof, keepdims=keepdims, mean=mean_cast)
+
+    tol_spec = {np.float16: 1e-1, np.float32: 1e-3, np.float64: 1e-5, np.complex128: 1e-6,
+                np.int8: 1e-4, np.int16: 1e-4, np.int32: 1e-4, np.int64: 1e-5}
+    self._CheckAgainstNumpy(np_wrapper, jnp_wrapper, args_maker,
+                            check_dtypes=dtype != jnp.bfloat16,
+                            tol=tol_spec)
+    self._CompileAndCheck(jnp_wrapper, args_maker, rtol=tol_spec, atol=tol_spec)
+
+  @jtu.sample_product(
     [dict(shape=shape, dtype=dtype, y_dtype=y_dtype, rowvar=rowvar,
           y_shape=y_shape)
       for shape in [(5,), (10, 5), (5, 10)]

@@ -104,7 +104,7 @@ class ExportTestWithMosaicGpu(ExportTestWithTriton):
   def _check_cuda_export(self, exp):
     self.assertRegex(
         exp.mlir_module(),
-        r"stablehlo.custom_call @mosaic_gpu.+name\s*=\s*\\22my_custom_kernel_name\\22")
+        r"stablehlo.custom_call @mosaic_gpu_v2.*my_custom_kernel_name")
 
 
 if __name__ == '__main__':

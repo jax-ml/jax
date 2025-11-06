@@ -134,8 +134,8 @@ class Shape:
   def array_shape(
       type: PrimitiveType,
       dims: Sequence[int],
-      layout: Sequence[int] | None = None,
-      dynamic_dimensions: Sequence[bool] | None = None,
+      layout: Sequence[int] | None = ...,
+      dynamic_dimensions: Sequence[bool] | None = ...,
   ) -> Shape:
     """Constructs an array shape."""
 
@@ -144,8 +144,8 @@ class Shape:
   def array_shape(
       type: numpy.dtype,
       dims: Sequence[int],
-      layout: Sequence[int] | None = None,
-      dynamic_dimensions: Sequence[bool] | None = None,
+      layout: Sequence[int] | None = ...,
+      dynamic_dimensions: Sequence[bool] | None = ...,
   ) -> Shape: ...
   @staticmethod
   def token_shape() -> Shape: ...
@@ -191,7 +191,7 @@ class Literal:
   def __init__(self, arg: Shape, /) -> None: ...
   def __repr__(self) -> str: ...
   def __array__(
-      self, dtype: object | None = None, copy: bool | None = None
+      self, dtype: object | None = ..., copy: bool | None = ...
   ) -> NDArray: ...
   def shape(self) -> Shape: ...
 
@@ -201,7 +201,7 @@ class XlaComputation:
   def program_shape(self) -> ProgramShape: ...
   def name(self) -> str: ...
   def as_serialized_hlo_module_proto(self) -> bytes: ...
-  def as_hlo_text(self, print_large_constants: bool = False) -> str: ...
+  def as_hlo_text(self, print_large_constants: bool = ...) -> str: ...
   def as_hlo_dot_graph(self) -> str: ...
   def hash(self) -> int: ...
   def as_hlo_module(self) -> HloModule: ...
@@ -368,8 +368,8 @@ def register_custom_call_target(
     fn_name: object,
     fn: object,
     platform: str,
-    api_version: int = 0,
-    traits: int = 0,
+    api_version: int = ...,
+    traits: int = ...,
 ) -> None: ...
 def custom_call_targets(platform: str) -> dict: ...
 
@@ -724,9 +724,9 @@ class HloSharding:
   @staticmethod
   def iota_tile(
       dims: Sequence[int],
-      reshape_dims: Sequence[int] = [],
-      transpose_perm: Sequence[int] = [],
-      subgroup_types: Sequence[OpSharding_Type] = [],
+      reshape_dims: Sequence[int] = ...,
+      transpose_perm: Sequence[int] = ...,
+      subgroup_types: Sequence[OpSharding_Type] = ...,
   ) -> HloSharding: ...
   @staticmethod
   def manual() -> HloSharding: ...
@@ -739,7 +739,7 @@ class HloSharding:
   @staticmethod
   def subgroup_with_device_ordering(
       tile_assignment: Annotated[NDArray[numpy.int64], dict(order='C')],
-      subgroup_types: Sequence[OpSharding_Type] = [],
+      subgroup_types: Sequence[OpSharding_Type] = ...,
   ) -> HloSharding: ...
   def __eq__(self, other: object, /) -> bool: ...
   def __ne__(self, other: object, /) -> bool: ...
@@ -872,8 +872,8 @@ class Client:
   def buffer_from_pyval(
       self,
       argument: object,
-      device: Device | None = None,
-      force_copy: bool = False,
+      device: Device | None = ...,
+      force_copy: bool = ...,
       host_buffer_semantics: HostBufferSemantics = HostBufferSemantics.ZERO_COPY,
   ) -> object: ...
   def compile(
@@ -924,15 +924,23 @@ class Client:
       self,
       serialized: bytes,
       executable_devices: DeviceList,
-      compile_options: CompileOptions | None = None,
-      host_callbacks: Sequence[typing_extensions.CapsuleType] = [],
+      compile_options: CompileOptions | None = ...,
+      host_callbacks: Sequence[typing_extensions.CapsuleType] = ...,
+  ) -> LoadedExecutable: ...
+  @overload
+  def deserialize_executable(
+      self,
+      serialized: bytes,
+      executable_devices: DeviceList,
+      compile_options: CompileOptions | None = ...,
+      host_callbacks: Sequence[Callable] = ...,
   ) -> LoadedExecutable: ...
   @overload
   def deserialize_executable(
       self,
       serialized: bytes,
       executable_devices: Sequence,
-      compile_options: CompileOptions | None = None,
+      compile_options: CompileOptions | None = ...,
   ) -> LoadedExecutable: ...
   def heap_profile(self) -> bytes: ...
   def defragment(self) -> None: ...
@@ -943,7 +951,7 @@ class Client:
       result_shapes: Sequence[Shape],
       send_channel_ids: Sequence[int],
       recv_channel_ids: Sequence[int],
-      serializer: Callable | None = None,
+      serializer: Callable | None = ...,
   ) -> object: ...
   def get_default_layout(
       self, dtype: numpy.dtype, shard_shape: Sequence, device: Device
@@ -971,34 +979,34 @@ class CpuCollectives:
 
 def make_gloo_tcp_collectives(
     distributed_client: DistributedRuntimeClient,
-    hostname: str | None = None,
-    interface: str | None = None,
+    hostname: str | None = ...,
+    interface: str | None = ...,
 ) -> CpuCollectives: ...
 def make_mpi_collectives() -> CpuCollectives: ...
 def get_tfrt_cpu_client(
-    asynchronous: bool = True,
-    distributed_client: DistributedRuntimeClient | None = None,
-    node_id: int = 0,
-    num_nodes: int = 1,
-    collectives: CpuCollectives | None = None,
-    num_devices: int | None = None,
-    get_local_topology_timeout_minutes: int | None = None,
-    get_global_topology_timeout_minutes: int | None = None,
-    transfer_server_factory: TransferServerInterfaceFactory | None = None,
+    asynchronous: bool = ...,
+    distributed_client: DistributedRuntimeClient | None = ...,
+    node_id: int = ...,
+    num_nodes: int = ...,
+    collectives: CpuCollectives | None = ...,
+    num_devices: int | None = ...,
+    get_local_topology_timeout_minutes: int | None = ...,
+    get_global_topology_timeout_minutes: int | None = ...,
+    transfer_server_factory: TransferServerInterfaceFactory | None = ...,
 ) -> Client: ...
 def pjrt_plugin_loaded(arg: str, /) -> bool: ...
 def load_pjrt_plugin(
     platform_name: str,
-    library_path: str | None = None,
-    c_api: typing_extensions.CapsuleType | None = None,
+    library_path: str | None = ...,
+    c_api: typing_extensions.CapsuleType | None = ...,
 ) -> typing_extensions.CapsuleType: ...
 def pjrt_plugin_initialized(arg: str, /) -> bool: ...
 def initialize_pjrt_plugin(arg: str, /) -> None: ...
 def get_c_api_client(
     platform_name: str,
-    options: Mapping[str, str | bool | int | Sequence[int] | float] = {},
-    distributed_client: DistributedRuntimeClient | None = None,
-    transfer_server_factory: TransferServerInterfaceFactory | None = None,
+    options: Mapping[str, str | bool | int | Sequence[int] | float] = ...,
+    distributed_client: DistributedRuntimeClient | None = ...,
+    transfer_server_factory: TransferServerInterfaceFactory | None = ...,
 ) -> Client: ...
 def get_default_c_api_topology(
     arg0: str,
@@ -1026,7 +1034,7 @@ def batched_copy_array_to_devices_with_sharding(
     /,
 ) -> list[Array]: ...
 def array_result_handler(
-    aval: object, sharding: object, committed: bool, _skip_checks: bool = False
+    aval: object, sharding: object, committed: bool, _skip_checks: bool = ...
 ) -> ResultHandler: ...
 
 class ResultHandler:
@@ -1068,8 +1076,8 @@ class NamedSharding(Sharding):
       self,
       mesh: object,
       spec: PartitionSpec,
-      memory_kind: object | None = None,
-      _logical_device_ids: object | None = None,
+      memory_kind: object | None = ...,
+      _logical_device_ids: object | None = ...,
   ) -> None: ...
   @property
   def mesh(self) -> object: ...
@@ -1086,7 +1094,7 @@ class NamedSharding(Sharding):
 
 class SingleDeviceSharding(Sharding):
   def __init__(
-      self, device: object, memory_kind: object | None = None
+      self, device: object, memory_kind: object | None = ...
   ) -> None: ...
   @property
   def _device(self) -> object: ...
@@ -1112,28 +1120,28 @@ class GSPMDSharding(Sharding):
       self,
       devices: DeviceList,
       op_sharding: OpSharding,
-      memory_kind: object | None = None,
+      memory_kind: object | None = ...,
   ) -> None: ...
   @overload
   def __init__(
       self,
       devices: DeviceList,
       op_sharding: HloSharding,
-      memory_kind: object | None = None,
+      memory_kind: object | None = ...,
   ) -> None: ...
   @overload
   def __init__(
       self,
       devices: Sequence[Device],
       op_sharding: OpSharding,
-      memory_kind: object | None = None,
+      memory_kind: object | None = ...,
   ) -> None: ...
   @overload
   def __init__(
       self,
       devices: Sequence[Device],
       op_sharding: HloSharding,
-      memory_kind: object | None = None,
+      memory_kind: object | None = ...,
   ) -> None: ...
   @property
   def _devices(self) -> DeviceList: ...
@@ -1215,9 +1223,7 @@ class LoadedExecutable:
   def size_of_generated_code_in_bytes(self) -> int: ...
   def get_compiled_memory_stats(self) -> CompiledMemoryStats: ...
   def execute_sharded(
-      self,
-      arguments: Sequence[Array | Sequence[Array]],
-      with_tokens: bool = False,
+      self, arguments: Sequence[Array], with_tokens: bool = ...
   ) -> ExecuteResults: ...
   def hlo_modules(self) -> list[HloModule]: ...
   def get_output_memory_kinds(self) -> list[list[str]]: ...
@@ -1242,13 +1248,16 @@ class ShardedToken:
   def get_token(self, arg: int, /) -> Token: ...
 
 def buffer_to_dlpack_managed_tensor(
-    buffer: object, stream: int | None = None
+    buffer: object, stream: int | None = ...
 ) -> typing_extensions.CapsuleType: ...
 def dlpack_managed_tensor_to_buffer(
-    dlpack: typing_extensions.CapsuleType, device: Device, stream: int | None
+    dlpack: typing_extensions.CapsuleType,
+    device: Device,
+    stream: int | None,
+    copy: bool | None = ...,
 ) -> ArrayImpl: ...
 def cuda_array_interface_to_buffer(
-    cai: dict, gpu_backend: Client | None = None, device_id: int | None = None
+    cai: dict, gpu_backend: Client | None = ..., device_id: int | None = ...
 ) -> object: ...
 
 class RuntimeTracebackMode(enum.Enum):
@@ -1269,7 +1278,7 @@ def set_send_traceback_to_runtime_thread_local(
 ) -> None: ...
 
 class PjitFunctionCache:
-  def __init__(self, capacity: int = 4096) -> None: ...
+  def __init__(self, capacity: int = ...) -> None: ...
   def size(self) -> int: ...
   def capacity(self) -> int: ...
   def clear(self) -> None: ...
@@ -1285,7 +1294,7 @@ class PjitFunction:
   def __call__(self, /, *args, **kwargs):
     """Call self as a function."""
 
-  def __get__(self, instance, owner=None, /):
+  def __get__(self, instance, owner=..., /):
     """Return an attribute of instance, which is of type owner."""
   __vectorcalloffset__: types.MemberDescriptorType = ...
 
@@ -1382,8 +1391,8 @@ def register_custom_call_partitioner(
     prop_user_sharding: object,
     partition: object,
     infer_sharding_from_operands: object,
-    can_side_effecting_have_replicated_sharding: bool = False,
-    c_api: typing_extensions.CapsuleType | None = None,
+    can_side_effecting_have_replicated_sharding: bool = ...,
+    c_api: typing_extensions.CapsuleType | None = ...,
 ) -> None:
   """Registers a partitioner for a custom-call operation.
 
@@ -1404,7 +1413,7 @@ def register_custom_call_partitioner(
 
 def encode_inspect_sharding_callback(arg: object, /) -> bytes: ...
 def register_custom_call_as_batch_partitionable(
-    target_name: str, c_api: typing_extensions.CapsuleType | None = None
+    target_name: str, c_api: typing_extensions.CapsuleType | None = ...
 ) -> None:
   """Registers a custom call as batch partitionable.
 
@@ -1421,6 +1430,7 @@ def register_custom_call_as_batch_partitionable(
 
 class TransferConnection:
   def _testonly_inject_failure(self) -> None: ...
+  def _poison_connection(self) -> None: ...
   def _pull_flat(
       self, arg0: int, arg1: Client, arg2: Sequence[object], /
   ) -> list[Array]: ...
@@ -1437,19 +1447,19 @@ class TransferServer:
 def _make_error_array(arg0: Client, arg1: object, arg2: str, /) -> Array: ...
 def start_transfer_server(
     client: Client,
-    address: str = '[::]:0',
-    transport_addresses: Sequence[str] = [],
-    max_num_parallel_copies: int = 8,
-    transfer_size: int = 268435456,
-    supports_pinned_allocator: bool = False,
-    use_raw_buffers: bool = False,
+    address: str = ...,
+    transport_addresses: Sequence[str] = ...,
+    max_num_parallel_copies: int = ...,
+    transfer_size: int = ...,
+    supports_pinned_allocator: bool = ...,
+    use_raw_buffers: bool = ...,
 ) -> TransferServer: ...
 def make_transfer_server_interface_factory(
-    transfer_size: int = 268435456,
-    cross_host_transfer_timeout_seconds: int = 60,
-    distributed_client: DistributedRuntimeClient | None = None,
-    socket_address: str = '[::]:0',
-    transport_addresses: Sequence[str] = [],
+    transfer_size: int = ...,
+    cross_host_transfer_timeout_seconds: int = ...,
+    distributed_client: DistributedRuntimeClient | None = ...,
+    socket_address: str = ...,
+    transport_addresses: Sequence[str] = ...,
 ) -> TransferServerInterfaceFactory: ...
 
 class PreemptionSyncManager:
@@ -1478,14 +1488,14 @@ class DistributedRuntimeClient:
       self,
       barrier_id: str,
       timeout_in_ms: int,
-      process_ids: Sequence[int] | None = None,
+      process_ids: Sequence[int] | None = ...,
   ) -> None: ...
   def get_live_nodes(self, process_ids: Sequence[int]) -> dict[int, int]: ...
   def key_value_set(
-      self, key: str, value: str, allow_overwrite: bool = False
+      self, key: str, value: str, allow_overwrite: bool = ...
   ) -> None: ...
   def key_value_set_bytes(
-      self, key: str, value: bytes, allow_overwrite: bool = False
+      self, key: str, value: bytes, allow_overwrite: bool = ...
   ) -> None: ...
   def key_value_dir_get(self, key: str) -> list[tuple[str, str]]: ...
   def key_value_dir_get_bytes(self, key: str) -> list[tuple[str, bytes]]: ...
@@ -1494,21 +1504,21 @@ class DistributedRuntimeClient:
 def get_distributed_runtime_service(
     address: str,
     num_nodes: int,
-    heartbeat_timeout: int | None = None,
-    cluster_register_timeout: int | None = None,
-    shutdown_timeout: int | None = None,
+    heartbeat_timeout: int | None = ...,
+    cluster_register_timeout: int | None = ...,
+    shutdown_timeout: int | None = ...,
 ) -> DistributedRuntimeService: ...
 def get_distributed_runtime_client(
     address: str,
     node_id: int,
-    rpc_timeout: int | None = None,
-    init_timeout: int | None = None,
-    shutdown_timeout: int | None = None,
-    heartbeat_timeout: int | None = None,
-    missed_heartbeat_callback: Callable | None = None,
-    shutdown_on_destruction: bool | None = None,
-    use_compression: bool | None = None,
-    recoverable: bool | None = None,
+    rpc_timeout: int | None = ...,
+    init_timeout: int | None = ...,
+    shutdown_timeout: int | None = ...,
+    heartbeat_timeout: int | None = ...,
+    missed_heartbeat_callback: Callable | None = ...,
+    shutdown_on_destruction: bool | None = ...,
+    use_compression: bool | None = ...,
+    recoverable: bool | None = ...,
 ) -> DistributedRuntimeClient: ...
 def collect_garbage() -> None: ...
 def is_optimized_build() -> bool: ...
@@ -1561,10 +1571,10 @@ def batched_device_put(
     sharding: object,
     xs: Sequence[object],
     devices: Sequence[Device],
-    committed: bool = True,
-    force_copy: bool = False,
+    committed: bool = ...,
+    force_copy: bool = ...,
     host_buffer_semantics: HostBufferSemantics = HostBufferSemantics.ZERO_COPY,
-    enable_x64: bool | None = None,
+    enable_x64: bool | None = ...,
 ) -> object: ...
 def reorder_shards(
     x: Array, dst_sharding: object, array_copy_semantics: ArrayCopySemantics
@@ -1574,15 +1584,15 @@ def check_and_canonicalize_memory_kind(
     memory_kind: object | None, device_list: DeviceList
 ) -> object: ...
 
-ifrt_version_number: int = 34
+ifrt_version_number: int = ...
 
 def approx_top_k_reduction_output_size(
     input_size: int,
     rank: int,
     top_k: int,
     recall_target: float,
-    aggregate_to_topk: bool = True,
-    input_size_override: int = -1,
+    aggregate_to_topk: bool = ...,
+    input_size_override: int = ...,
 ) -> tuple[int, int]: ...
 def get_internal_device_put_info() -> dict[str, int]: ...
 

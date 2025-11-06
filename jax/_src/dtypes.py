@@ -678,27 +678,42 @@ def _type_promotion_lattice(strict: bool, x64: bool) -> dict[JAXType, list[JAXTy
     x64: allow promotions that form x64 types from non-x64 inputs?
   """
   b1, = _bool_types
-  uint2, uint4, u1, u2, u4, u8, int2, int4, i1, i2, i4, i8 = _int_types
-  *f1_types, bf, f2, f4, f8 = _float_types
-  c4, c8 = _complex_types
+  u2, u4, u8, u16, u32, u64, i2, i4, i8, i16, i32, i64 = _int_types
+  *small_float_types, bf16, f16, f32, f64 = _float_types
+  c64, c128 = _complex_types
   i_, f_, c_ = _weak_types
   if not strict:
-    out: dict[JAXType, list[JAXType]]
-    out = {
-      b1: [i_],
-      i_: [u1, uint2, uint4, i1, int2, int4],
-      uint2: [], uint4: [], u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
-      int2: [], int4: [], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
-      f_: [*f1_types, bf, f2, c_],
-      **{t: [] for t in f1_types}, bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
-      c_: [c4], c4: [c8], c8: [],
+    out: dict[JAXType, list[JAXType]] = {
+        b1: [i_],
+        i_: [u8, u2, u4, i8, i2, i4],
+        u2: [],
+        u4: [],
+        u8: [i16, u16],
+        u16: [i32, u32],
+        u32: [i64, u64],
+        u64: [f_],
+        i2: [],
+        i4: [],
+        i8: [i16],
+        i16: [i32],
+        i32: [i64],
+        i64: [f_],
+        f_: [*small_float_types, bf16, f16, c_],
+        **{t: [] for t in small_float_types},
+        bf16: [f32],
+        f16: [f32],
+        f32: [f64, c64],
+        f64: [c128],
+        c_: [c64],
+        c64: [c128],
+        c128: [],
     }
     # If x64 mode is not enabled, then we want to avoid any promotions that form
     # 64-bit types from non-64-bit inputs. There's only one of these in the
     # entire promotion lattice, namely u4xi4->i8, which we can avoid by
     # replacing it with u4xi4->i4.
     if not x64:
-      out[u4] = [i4, u8]
+      out[u32] = [i32, u64]
     return out
   else:
     return {

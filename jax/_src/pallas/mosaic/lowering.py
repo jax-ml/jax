@@ -472,7 +472,8 @@ class MosaicGridMapping:
     )
     if len(user_grid) != len(dimension_semantics):
       raise ValueError(
-          "Must have dimension semantics for each dimension of the grid."
+          "Length of grid does not match length of dimension semantics."
+          f" len(grid)={len(user_grid)}, {len(dimension_semantics)=}"
       )
     assert len(self.vmapped_dims) + len(dimension_semantics) == len(
         self.grid
@@ -3556,6 +3557,68 @@ def _reciprocal_lowering_rule(ctx: LoweringRuleContext, x, *, approx):
   return tpu.reciprocal(x, approx=approx)
 
 
+@register_lowering_rule(tpu_primitives.stochastic_round_p)
+def _stochastic_round_lowering_rule(
+    ctx: LoweringRuleContext, x, random_bits, *, target_dtype
+):
+  if not isinstance(x.type.element_type, ir.F32Type):
+    raise ValueError("Only float32 input is supported.")
+  if target_dtype not in [
+      jnp.bfloat16,
+      jnp.float8_e5m2,
+      jnp.float8_e4m3fn,
+      jnp.float8_e4m3b11fnuz,
+  ]:
+    raise ValueError(
+        "Only bfloat16, float8_e5m2, float8_e4m3fn, and float8_e4m3b11fnuz "
+        "are supported as target dtypes."
+    )
+  (_, in_aval,) = ctx.avals_in
+  out_type = ir.VectorType.get(
+      in_aval.shape, mlir.dtype_to_ir_type(jnp.dtype(target_dtype))
+  )
+  return tpu.stochastic_convert(out_type, x, random_bits)
+
+
+def _check_elementwise_packing_dtypes(unpacked_dtype, packed_dtype):
+  if unpacked_dtype == jnp.float32 and packed_dtype == jnp.bfloat16:
+    return
+  if unpacked_dtype == jnp.int32 and packed_dtype in [
+      jnp.int16, jnp.int8, jnp.int4
+    ]:
+    return
+  raise ValueError(
+      f"Unsupported elementwise packing: {unpacked_dtype} -> {packed_dtype}. "
+      "Only f32 <-> bf16 and i32 <-> i16/i8/i4 are supported."
+  )
+
+
+@register_lowering_rule(tpu_primitives.pack_elementwise_p)
+def _pack_elementwise_lowering_rule(
+    ctx: LoweringRuleContext, *xs, packed_dtype
+):
+  in_aval = ctx.avals_in[0]
+  _check_elementwise_packing_dtypes(in_aval.dtype, packed_dtype)
+  packed_ir_type = _dtype_to_ir_type(packed_dtype)
+  out_type = ir.VectorType.get(
+      in_aval.shape, _dtype_to_ir_type(jnp.uint32)
+  )
+  return tpu.pack_elementwise(out_type, xs, target_type=packed_ir_type)
+
+
+@register_lowering_rule(tpu_primitives.unpack_elementwise_p)
+def _unpack_elementwise_lowering_rule(
+    ctx: LoweringRuleContext, x, index, packed_dtype, unpacked_dtype
+):
+  in_aval = ctx.avals_in[0]
+  _check_elementwise_packing_dtypes(unpacked_dtype, packed_dtype)
+  out_type = ir.VectorType.get(
+      in_aval.shape, _dtype_to_ir_type(unpacked_dtype)
+  )
+  return tpu.unpack_elementwise(
+      out_type, x, source_type=_dtype_to_ir_type(packed_dtype), index=index)
+
+
 @register_lowering_rule(tpu_primitives.bitcast_p)
 def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):
   del ty
@@ -3859,7 +3922,7 @@ def _get_barrier_semaphore_rule(ctx: LoweringRuleContext):
   return tpu.sem_barrier(memref_type)
 
 
-@register_lowering_rule(tpu_primitives.delay_p)
+@register_lowering_rule(primitives.delay_p)
 def _delay_rule(ctx: LoweringRuleContext, nanos: int):
   tpu.delay(nanos)
   return []

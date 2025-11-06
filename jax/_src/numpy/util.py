@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from functools import partial
 from typing import Any, overload
 import math
 import warnings
@@ -249,7 +248,7 @@ def promote_args_inexact(fun_name: str, *args: ArrayLike) -> list[Array]:
   return promote_shapes(fun_name, *promote_dtypes_inexact(*args))
 
 
-@partial(api.jit, inline=True)
+@api.jit(inline=True)
 def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
   """Like Numpy's broadcast_arrays but doesn't return views."""
   avals = [core.shaped_abstractify(arg) for arg in args]

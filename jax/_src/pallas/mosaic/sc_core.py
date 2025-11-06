@@ -30,6 +30,7 @@ from jax._src.lax import lax
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic import core as tpu_core
+from jax._src.pallas.mosaic import tpu_info
 import jax.numpy as jnp
 
 
@@ -150,6 +151,13 @@ class BlockMapping(pallas_core.BlockMapping):
   indexed_dim: int | None = None
 
 
+def get_sparse_core_info() -> tpu_info.SparseCoreInfo:
+  """Returns the SparseCore information for the current device."""
+  return tpu_info.get_tpu_info().sparse_core or tpu_info.SparseCoreInfo(
+      num_cores=0, num_subcores=0, num_lanes=0
+  )
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class ScalarSubcoreMesh:
   axis_name: str
@@ -168,32 +176,23 @@ class ScalarSubcoreMesh:
     return False
 
 
-def _num_available_cores():
-  """Returns the number of SparseCores on the current device."""
-  device_kind = tpu_core.get_device_kind()
-  match device_kind:
-    case "TPU v5" | "TPU v5p":
-      return 4
-    case "TPU v6 lite" | "TPU v6" | "TPU7x":
-      return 2
-    case _:
-      raise NotImplementedError(
-          f"Unsupported device kind: {device_kind}"
-      )
+def gather_global_allocations(jaxpr):
 
+  def _gather_from_eqns(*, eqn=None, jaxpr=None):
+    if eqn is not None:
+      if eqn.primitive is pallas_primitives.get_global_p:
+        what = eqn.params["what"]
+        yield pallas_core.MemoryRef(what.inner_aval, what.memory_space)
+      for subjaxpr in jax_core.jaxprs_in_params(eqn.params):
+        yield from _gather_from_eqns(jaxpr=subjaxpr)
+    else:
+      for eqn in jaxpr.eqns:
+        yield from _gather_from_eqns(eqn=eqn)
 
-def _vector_dimension():
-  """Returns the supported vector dimension for the current device."""
-  device_kind = tpu_core.get_device_kind()
-  match device_kind:
-    case "TPU v5" | "TPU v5p" | "TPU v6" | "TPU v6 lite":
-      return 8
-    case "TPU7x":
-      return 16
-    case _:
-      raise NotImplementedError(
-          f"Unsupported device kind: {device_kind}"
-      )
+  allocations = collections.defaultdict(list)
+  for memref in _gather_from_eqns(jaxpr=jaxpr):
+    allocations[memref].append(memref)
+  return allocations
 
 
 def _scalar_subcore_mesh_discharge_rule(
@@ -212,7 +211,8 @@ def _scalar_subcore_mesh_discharge_rule(
   if not isinstance(mesh, ScalarSubcoreMesh):
     raise TypeError(f"Mesh must be a ScalarSubcoreMesh, got {type(mesh)}")
   assert len(mesh.shape) == 1
-  if mesh.num_cores > (num_expected := _num_available_cores()):
+  sc_info = get_sparse_core_info()
+  if mesh.num_cores > (num_expected := sc_info.num_cores):
     raise ValueError(
         f"Mesh has {mesh.num_cores} cores, but the current TPU chip has only"
         f" {num_expected} SparseCores"
@@ -238,6 +238,7 @@ def _scalar_subcore_mesh_discharge_rule(
       name=name,
       memory_space=tpu_core.MemorySpace.HBM,
       metadata=metadata,
+      scratch_shapes=tree_util.tree_leaves(gather_global_allocations(jaxpr)),
   )
 
 
@@ -252,6 +253,19 @@ class VectorSubcoreMesh:
   subcore_axis_name: str
   num_cores: int
   num_subcores: int = dataclasses.field(default=16, init=False)
+
+  def __post_init__(self):
+    sc_info = get_sparse_core_info()
+    if self.num_cores > (num_expected := sc_info.num_cores):
+      raise ValueError(
+          f"Mesh has {self.num_cores} cores, but the current TPU chip has only"
+          f" {num_expected} SparseCores"
+      )
+    if self.num_subcores != sc_info.num_subcores:
+      raise ValueError(
+          f"Mesh has {self.num_subcores} subcores, but the current TPU chip has"
+          f" only {num_expected} subcores"
+      )
 
   @property
   def backend(self) -> str:
@@ -283,7 +297,8 @@ def _vector_subcore_mesh_discharge_rule(
   if not isinstance(mesh, VectorSubcoreMesh):
     raise TypeError(f"Mesh must be a VectorSubcoreMesh, got {type(mesh)}")
   assert len(mesh.shape) == 2
-  if mesh.num_cores > (num_expected := _num_available_cores()):
+  sc_info = get_sparse_core_info().num_cores
+  if mesh.num_cores > (num_expected := sc_info):
     raise ValueError(
         f"Mesh has {mesh.num_cores} cores, but the current TPU chip has only"
         f" {num_expected} SparseCores"
@@ -309,6 +324,7 @@ def _vector_subcore_mesh_discharge_rule(
       name=name,
       memory_space=tpu_core.MemorySpace.HBM,
       metadata=metadata,
+      scratch_shapes=tree_util.tree_leaves(gather_global_allocations(jaxpr)),
   )
 
 
@@ -333,7 +349,14 @@ def kernel(
       out_refs = jax.tree.map(
           lambda out: jax_core.new_ref(
               lax.empty(out.shape, out.dtype),
-              memory_space=getattr(out, "memory_space", None),
+              memory_space=(
+                  ms
+                  if hasattr(out, "memory_space")
+                  and not isinstance(
+                      ms := out.memory_space, jax_core.MemorySpace
+                  )
+                  else None
+              ),
           ),
           out_shape,
       )

@@ -740,6 +740,10 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
   def setUp(self):
     if jax.device_count() < 2:
       self.skipTest('Only >=2 devices are supported.')
+    if jtu.is_device_tpu(7, variant='x') and jax.device_count() < 4:
+      # v7x consists of pairs of chips that share the same ICI connection,
+      # so we need at least 4 chips to test collectives.
+      self.skipTest('Only >=4 devices are supported on TPU v7x.')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('Only works with TPU v5')
 

@@ -79,6 +79,7 @@ effects.control_flow_allowed_effects.add_type(RefEffect)
 effects.custom_derivatives_allowed_effects.add_type(RefEffect)
 effects.custom_derivatives_allowed_effects.add_type(core.InternalMutableArrayEffect)
 effects.partial_eval_kept_effects.add_type(RefEffect)
+effects.remat_allowed_effects.add_type(RefEffect)
 
 StateEffect = Union[ReadEffect, WriteEffect, AccumEffect]
 
@@ -395,11 +396,13 @@ class AbstractRef(core.AbstractValue):
 
   .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
-  __slots__ = ["inner_aval", "memory_space"]
+  __slots__ = ["inner_aval", "memory_space", "kind"]
 
-  def __init__(self, inner_aval: core.AbstractValue, memory_space: Any = None):
+  def __init__(self, inner_aval: core.AbstractValue, memory_space: Any = None,
+               kind: Any = None):
     self.inner_aval = inner_aval
     self.memory_space = memory_space
+    self.kind = kind
 
   @property
   def is_high(self):
@@ -548,7 +551,7 @@ class AbstractRef(core.AbstractValue):
   __str__ = __repr__
 
   def to_tangent_aval(self):
-    return AbstractRef(self.inner_aval.to_tangent_aval(), self.memory_space)
+    return AbstractRef(self.inner_aval.to_tangent_aval(), self.memory_space, kind=self.kind)
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.inner_aval == other.inner_aval

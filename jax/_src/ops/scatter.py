@@ -94,7 +94,7 @@ def _scatter_update(x: ArrayLike, idx: Index, y: ArrayLike, scatter_op: Callable
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
-# @partial(jit, static_argnums=(2, 3, 4))
+# @jit(static_argnums=(2, 3, 4))
 def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
                   scatter_op: Callable[..., Array],
                   treedef: tree_util.PyTreeDef, static_idx: tuple[Any, ...],

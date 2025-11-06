@@ -605,8 +605,6 @@ def assert_unreachable(x):
   raise AssertionError(f"Unhandled case: {type(x).__name__}")
 
 def tuple_insert(t: tuple[T, ...], idx: int, val: T) -> tuple[T, ...]:
-  if len(t) == 0 and idx == 0 or idx == -1:
-    return (val,)
   assert 0 <= idx <= len(t), (idx, len(t))
   return t[:idx] + (val,) + t[idx:]
 

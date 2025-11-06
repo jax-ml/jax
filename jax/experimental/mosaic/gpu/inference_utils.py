@@ -14,12 +14,10 @@
 
 """Layout & transform inference convenience utils."""
 
-from collections.abc import Callable, Sequence
-import enum
+from collections.abc import Sequence
 from functools import partial
 from typing import cast, Union
 
-from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 
 from . import fragmented_array as fa
@@ -303,41 +301,3 @@ def is_mma_layout(layout: fa.FragmentedLayout) -> bool:
   return columns % 16 == 0 and (
       layout == tcgen05.fa_m64_collective_layout(columns)
   )
-
-
-class TraversalOrder(enum.Enum):
-  """Traversal orders with respect to the data flow for IR."""
-
-  FORWARD = 1
-  BACKWARDS = 2
-
-
-def traverse_op(
-    op: ir.OpView,
-    callback: Callable[[ir.OpView], None],
-    traversal_order: TraversalOrder = TraversalOrder.FORWARD,
-    do_not_recurse_into_ops: tuple[type, ...] = (mgpu.CustomPrimitiveOp,),
-    pre_order: bool = False,
-):
-  """Traverses the operation and applies the callback in the given order.
-
-  If do_not_recurse_into_ops is provided, the callback will be executed on these
-  ops, but any regions they might have will not be traversed.
-  """
-  if pre_order:
-    callback(op)
-  if not isinstance(op, do_not_recurse_into_ops):
-    # The block of a mosaic_gpu.custom_primitive op is already lowered so it
-    # should not be traversed.
-    for region in op.operation.regions:
-      for block in region:
-        if traversal_order == TraversalOrder.FORWARD:
-          ops_to_traverse = list(block)
-        else:
-          ops_to_traverse = reversed(list(block))  # type: ignore
-        for block_op in ops_to_traverse:
-          traverse_op(
-              block_op, callback, traversal_order, do_not_recurse_into_ops
-          )
-  if not pre_order:
-    callback(op)

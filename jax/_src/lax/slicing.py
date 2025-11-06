@@ -31,6 +31,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import source_info_util
+from jax._src.traceback_util import api_boundary
 from jax._src import util
 from jax._src import mesh as mesh_lib
 from jax._src.interpreters import ad
@@ -49,12 +50,14 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.named_sharding import NamedSharding
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.typing import Array, ArrayLike, Shape
+from jax._src.state.indexing import ds
 from jax._src.util import safe_map, safe_zip
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 _dtype = dtypes.dtype
+_slice = slice
 
 
 def slice(operand: ArrayLike, start_indices: Sequence[int],
@@ -472,6 +475,7 @@ class ScatterDimensionNumbers(NamedTuple):
   operand_batching_dims: Sequence[int] = ()
   scatter_indices_batching_dims: Sequence[int] = ()
 
+@partial(api_boundary, repro_api_name="lax.scatter_add")
 def scatter_add(
   operand: ArrayLike, scatter_indices: ArrayLike, updates: ArrayLike,
   dimension_numbers: ScatterDimensionNumbers, *,
@@ -557,7 +561,7 @@ def scatter_add(
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
       mode=GatherScatterMode.from_any(mode))
 
-
+@partial(api_boundary, repro_api_name="lax.scatter_sub")
 def scatter_sub(
     operand: ArrayLike,
     scatter_indices: ArrayLike,
@@ -621,6 +625,7 @@ def scatter_sub(
   )
 
 
+@partial(api_boundary, repro_api_name="lax.scatter_mul")
 def scatter_mul(
   operand: ArrayLike, scatter_indices: ArrayLike, updates: ArrayLike,
   dimension_numbers: ScatterDimensionNumbers, *,
@@ -670,6 +675,7 @@ def scatter_mul(
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
       mode=GatherScatterMode.from_any(mode))
 
+@partial(api_boundary, repro_api_name="lax.scatter_min")
 def scatter_min(
   operand: ArrayLike, scatter_indices: ArrayLike, updates: ArrayLike,
   dimension_numbers: ScatterDimensionNumbers, *,
@@ -719,6 +725,7 @@ def scatter_min(
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
       mode=GatherScatterMode.from_any(mode))
 
+@partial(api_boundary, repro_api_name="lax.scatter_max")
 def scatter_max(
   operand: ArrayLike, scatter_indices: ArrayLike, updates: ArrayLike,
   dimension_numbers: ScatterDimensionNumbers, *,
@@ -1415,7 +1422,6 @@ def _slice_sharding_rule(operand, *, start_indices, limit_indices, strides):
   return _get_sharding_for_varying_out_shape(out_shape, operand, 'slicing')
 
 def _slice_transpose_rule(t, operand, *, start_indices, limit_indices, strides):
-  assert ad.is_undefined_primal(operand)
   operand_shape = operand.aval.shape
   if strides is None or np.all(np.equal(strides, 1)):
     pads = zip(start_indices, np.subtract(operand_shape, limit_indices),
@@ -1430,6 +1436,25 @@ def _slice_transpose_rule(t, operand, *, start_indices, limit_indices, strides):
   result = lax.pad(t, lax._const(t, 0), pads)
   assert result.shape == operand_shape, f"{result.shape=} {operand_shape=}"
   return [result]
+
+def _slice_transpose_fancy(out_ct, operand, *, start_indices, limit_indices, strides):
+  assert isinstance(operand, ad.GradAccum)
+  if type(out_ct) is ad_util.Zero: return
+  if isinstance(operand, ad.RefAccum):
+    slices = map(_slice, start_indices, limit_indices, strides)
+    operand.ref.addupdate(out_ct, tuple(slices))
+  else:
+    if strides is None or np.all(np.equal(strides, 1)):
+      pads = zip(start_indices, np.subtract(operand.aval.shape, limit_indices),
+                 (0,) * len(start_indices))
+    else:
+      real_limits = np.add(
+        start_indices,
+        np.where(np.array(out_ct.shape) == 0, 0,
+                 np.add(1, np.multiply(np.subtract(out_ct.shape, 1), strides))))
+      pads = zip(start_indices, np.subtract(operand.aval.shape, real_limits),
+                 np.subtract(strides, 1))
+    operand.accum(lax.pad(out_ct, lax._const(out_ct, 0), pads))
 
 
 def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
@@ -1456,6 +1481,7 @@ slice_p = standard_primitive(_slice_shape_rule, input_dtype, 'slice',
                              sharding_rule=_slice_sharding_rule,
                              vma_rule=partial(core.standard_vma_rule, 'slice'))
 ad.deflinear2(slice_p, _slice_transpose_rule)
+ad.fancy_transposes[slice_p] = _slice_transpose_fancy
 batching.primitive_batchers[slice_p] = _slice_batching_rule
 # TODO(mvoz): A better slice rule for ragged prop, enforcing boundaries
 # or supporting nested jumbles. NYI.
@@ -1542,6 +1568,18 @@ def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes):
     return ([dynamic_update_slice_p.bind(zeros, t, *start_indices)] +
             [None] * len(start_indices))
 
+def _dynamic_slice_transpose_fancy(out_ct, operand, *start_indices, slice_sizes):
+  assert isinstance(operand, ad.GradAccum)
+  assert all(not isinstance(s, ad.GradAccum) for s in start_indices)
+  if type(out_ct) is ad_util.Zero: return
+  if isinstance(operand, ad.RefAccum):
+    operand.ref.addupdate(out_ct, tuple(map(ds, start_indices, slice_sizes)))
+  else:
+    zeros = lax.full(operand.aval.shape, 0, operand.aval.dtype,
+                     sharding=operand.aval.sharding)
+    zeros = core.pvary(zeros, tuple(operand.aval.vma))
+    operand.accum(dynamic_update_slice_p.bind(zeros, out_ct, *start_indices))
+
 def _batch_dynamic_slice_indices(indices, bdims):
   if len(indices) == 0:
     return np.array([], 'int32'), None
@@ -1626,6 +1664,7 @@ dynamic_slice_p = standard_primitive(
     vma_rule=partial(core.standard_vma_rule, 'dynamic_slice'))
 ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp
 ad.primitive_transposes[dynamic_slice_p] = _dynamic_slice_transpose_rule
+ad.fancy_transposes[dynamic_slice_p] = _dynamic_slice_transpose_fancy
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
 pe.custom_staging_rules[dynamic_slice_p] = _dynamic_slice_staging_rule
 core.custom_typechecks[dynamic_slice_p] = _dynamic_slice_typecheck_rule
@@ -2171,7 +2210,7 @@ def _gather_transpose_rule(t, operand, indices, *, dimension_numbers,
   if type(t) is ad_util.Zero:
     out = ad_util.Zero(operand.aval)
   else:
-    zeros = lax.full(operand.aval.shape, 0, operand.aval.dtype,
+    zeros = lax.full(operand.aval.shape, 0, core.typeof(t).dtype,
                      sharding=operand.aval.sharding)
     zeros = core.pvary(zeros, tuple(operand.aval.vma))
     scatter_dnums = ScatterDimensionNumbers(

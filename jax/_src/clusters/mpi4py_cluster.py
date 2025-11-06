@@ -33,7 +33,7 @@ class Mpi4pyCluster(clusters.ClusterEnv):
     return find_spec("mpi4py") is not None
 
   @classmethod
-  def get_coordinator_address(cls, timeout_secs: int | None) -> str:
+  def get_coordinator_address(cls, timeout_secs: int | None, override_coordinator_port: str | None) -> str:
 
     # Using mpi4py, figure out rank 0 and it's hostname.
     # Then broadcast the hostname and port.
@@ -49,8 +49,11 @@ class Mpi4pyCluster(clusters.ClusterEnv):
         # Order all the hostnames, and find unique ones
         hostname = socket.gethostname()
 
-        # Apparently, we want to pick a port in an ephemeral range...
-        port_id = hash(hostname) % 2**12 + (65535 - 2**12 + 1)
+        if override_coordinator_port:
+            port_id = override_coordinator_port
+        else:
+            # Apparently, we want to pick a port in an ephemeral range...
+            port_id = str(hash(hostname) % 2**12 + (65535 - 2**12 + 1))
 
         hostname = f'{hostname}:{port_id}'
 

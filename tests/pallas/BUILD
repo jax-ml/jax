@@ -399,6 +399,7 @@ jax_multiplatform_test(
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
+        "notap",  # TODO(b/455849275): Timing out.
         "notsan",  # Times out.
     ],
     deps = [
@@ -842,8 +843,11 @@ jax_multiplatform_test(
         "gpu_h100_x32",
         "gpu_b200",
     ],
-    shard_count = 6,
-    tags = ["notsan"],  # Times out.
+    shard_count = 12,
+    tags = [
+        "noasan",  # Times out.
+        "notsan",  # Times out.
+    ],
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",
@@ -1050,6 +1054,27 @@ jax_multiplatform_test(
         "gpu_h100_x32",
         "gpu_h100",
         "gpu_b200",
+    ],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_mosaic_gpu",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
+    name = "mgpu_transposed_ragged_dot_run",
+    srcs = [
+        "//jax/experimental/pallas/ops/gpu:transposed_ragged_dot_mgpu.py",
+    ],
+    enable_backends = [],
+    enable_configs = [
+        "gpu_h100_x32",
+        "gpu_h100",
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     tags = [

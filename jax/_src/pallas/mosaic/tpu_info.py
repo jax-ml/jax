@@ -40,8 +40,15 @@ class ChipVersion(ChipVersionBase, enum.Enum):
   def __str__(self) -> str:
     return self.value
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class SparseCoreInfo:
+  """SparseCore-specific information."""
+  num_cores: int
+  num_subcores: int
+  num_lanes: int
 
-@dataclasses.dataclass(frozen=True)
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class TpuInfo:
   """TPU hardware information.
 
@@ -65,6 +72,8 @@ class TpuInfo:
   fp8_ops_per_second: int
   int4_ops_per_second: int
 
+  sparse_core: SparseCoreInfo | None = None
+
   @property
   def is_lite(self) -> bool:
     return self.chip_version in {
@@ -77,12 +86,6 @@ class TpuInfo:
   def is_split_chip(self) -> bool:
     # Is this a multi-core chip being used in single-core mode?
     return self.num_cores == 1 and not self.is_lite
-
-  @property
-  def supports_sparse_core(self) -> bool:
-    return (
-        self.chip_version == ChipVersion.TPU_V5P and not self.is_split_chip
-    ) or self.chip_version in {ChipVersion.TPU_7X, ChipVersion.TPU_V6E}
 
   def is_matmul_supported(
       self,
@@ -291,6 +294,7 @@ def get_tpu_info() -> TpuInfo:
           int8_ops_per_second=int(9.18e14 // num_chip_cores),
           fp8_ops_per_second=0,  # Not Available
           int4_ops_per_second=int(1.84e15 // num_chip_cores),
+          sparse_core=SparseCoreInfo(num_cores=4, num_subcores=16, num_lanes=8),
       )
     case "TPU v6 lite" | "TPU v6e":  # 1 TensorCore per chip
       return TpuInfo(
@@ -309,6 +313,7 @@ def get_tpu_info() -> TpuInfo:
           int8_ops_per_second=int(1.84e15),
           fp8_ops_per_second=int(9.20e14),
           int4_ops_per_second=int(3.68e15),
+          sparse_core=SparseCoreInfo(num_cores=2, num_subcores=16, num_lanes=8),
       )
     case _ as d:
       if d in registry:

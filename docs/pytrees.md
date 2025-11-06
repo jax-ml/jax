@@ -318,3 +318,8 @@ jax.tree.transpose(
   pytree_to_transpose = episode_steps
 )
 ```
+
+(extending-pytrees)=
+### Extending pytrees
+
+Material on extending pytrees has been moved to {ref}`pytrees-custom-pytree-nodes`.

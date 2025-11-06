@@ -54,7 +54,13 @@ NB_MODULE(_gpu_examples, m) {
   m.def("type_id",
         []() { return nb::capsule(reinterpret_cast<void*>(&State::id)); });
   m.def("state_type", []() {
-    static auto kStateTypeInfo = ffi::TypeInfo<State>();
+    // In earlier versions of XLA:FFI, the `MakeTypeInfo` helper was not
+    // available. In latest XLF:FFI `TypeInfo` is an alias for C API struct.
+#if XLA_FFI_API_MINOR >= 2
+    static auto kStateTypeInfo = xla::ffi::MakeTypeInfo<State>();
+#else
+    static auto kStateTypeInfo = xla::ffi::TypeInfo<State>();
+#endif
     nb::dict d;
     d["type_id"] = nb::capsule(reinterpret_cast<void*>(&State::id));
     d["type_info"] = nb::capsule(reinterpret_cast<void*>(&kStateTypeInfo));

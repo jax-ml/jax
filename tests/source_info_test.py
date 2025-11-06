@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 import inspect
 
 from absl.testing import absltest
@@ -32,7 +31,7 @@ class SourceInfoTest(jtu.JaxTestCase):
     # 'f' should be inlined into both 'g' and 'h', using the source line
     # information of the call site. In particular, the source line information
     # of 'h' should not refer to the source information of 'g'.
-    @partial(jax.jit, inline=True)
+    @jax.jit(inline=True)
     def f(x): return lax.add(x, 3)
 
     def g(x): return lax.add(f(x), 4)

@@ -813,7 +813,7 @@ def threefry_seed(seed: typing.Array) -> typing.Array:
   """
   return _threefry_seed(seed)
 
-@partial(jit, inline=True)
+@jit(inline=True)
 def _threefry_seed(seed: typing.Array) -> typing.Array:
   if seed.shape:
     raise TypeError(f"PRNG key seed must be a scalar; got {seed!r}.")
@@ -1088,7 +1088,7 @@ def iota_2x32_shape_lowering(ctx, *, shape):
 mlir.register_lowering(iota_2x32_shape_p, iota_2x32_shape_lowering)
 
 
-@partial(jit, inline=True)
+@jit(inline=True)
 def threefry_2x32(keypair, count):
   """Apply the Threefry 2x32 hash.
 
@@ -1139,20 +1139,20 @@ def threefry_split(key: typing.Array, shape: Shape) -> typing.Array:
   shape = tuple(unsafe_map(core.concrete_dim_or_error, shape))
   return _threefry_split(key, shape)
 
-@partial(jit, static_argnums=(1,))
+@jit(static_argnums=(1,))
 def _threefry_split(key, shape) -> typing.Array:
   if config.threefry_partitionable.value:
     return _threefry_split_foldlike(key, shape)
   else:
     return _threefry_split_original(key, shape)
 
-@partial(jit, static_argnums=(1,), inline=True)
+@jit(static_argnums=(1,), inline=True)
 def _threefry_split_original(key, shape) -> typing.Array:
   num = math.prod(shape)
   counts = lax.iota(np.uint32, num * 2)
   return lax.reshape(threefry_2x32(key, counts), (*shape, 2))
 
-@partial(jit, static_argnums=(1,), inline=True)
+@jit(static_argnums=(1,), inline=True)
 def _threefry_split_foldlike(key, shape) -> typing.Array:
   k1, k2 = key
   counts1, counts2 = iota_2x32_shape(shape)
@@ -1199,7 +1199,7 @@ def _threefry_random_bits_partitionable(key: typing.Array, bit_width, shape):
   else:
     return lax.convert_element_type(bits1 ^ bits2, dtype)
 
-@partial(jit, static_argnums=(1, 2), inline=True)
+@jit(static_argnums=(1, 2), inline=True)
 def _threefry_random_bits_original(key: typing.Array, bit_width, shape):
   size = math.prod(shape)
   # Compute ceil(bit_width * size / 32) in a way that is friendly to shape

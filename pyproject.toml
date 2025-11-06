@@ -85,6 +85,9 @@ filterwarnings = [
     # TODO(b/401588349): Remove this once transparent hugepages are enabled.
     "ignore:Transparent hugepages",
 
+    # TODO(phawkins): Remove this once cloud_tpu_init is removed.
+    "ignore:jax.cloud_tpu_init was deprecated",
+
     # NOTE: this is probably not where you want to add code to suppress a
     # warning. Only pytest tests look at this list, whereas Bazel tests also
     # check for warnings and do not check this list. Most likely, you should

@@ -2658,15 +2658,16 @@ class LaxTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=[np.float32, np.int32, np.uint32],
-    shape=[(20,), (5, 20), (2000,)],
-    k=[1, 3, 12],
+    shape=[(20,), (8, 20), (2000,)],
+    k=[1, 3, 8],
+    axis=[0, -1]
   )
-  def testTopK(self, shape, dtype, k):
+  def testTopK(self, shape, dtype, k, axis):
     rng = jtu.rand_some_equal(self.rng())
     def args_maker():
       return [rng(shape, dtype)]
-    op = lambda vs: lax.top_k(vs, k=k)
-    ref_op = lambda vs: lax_reference.top_k(vs, k=k)
+    op = lambda vs: lax.top_k(vs, k=k, axis=axis)
+    ref_op = lambda vs: lax_reference.top_k(vs, k=k, axis=axis)
     self._CheckAgainstNumpy(op, ref_op, args_maker)
     self._CompileAndCheck(op, args_maker)
 
@@ -3741,6 +3742,30 @@ class LaxTest(jtu.JaxTestCase):
       expected = expected.astype(dtype)
     self.assertArraysEqual(actual, expected, check_dtypes=True)
 
+  def test_gather_with_asymmetric_dtype(self):
+    @jax.custom_vjp
+    def f(x):
+      return x
+
+    def f_fwd(x):
+      return f(x), ()
+
+    def f_bwd(res, g):
+      del res
+      return g.astype(jnp.bfloat16),
+
+    f.defvjp(f_fwd, f_bwd)
+
+    def g(x):
+      idx = jnp.argsort(x)
+      x = x.at[idx].get()
+      return f(x)
+
+    x = jnp.arange(8, dtype=jnp.float8_e4m3fn)
+    _, vjp_fn = jax.vjp(g, x)
+    cts = vjp_fn(jnp.ones((8,), dtype=jnp.float8_e4m3fn))  # Don't crash
+    self.assertEqual(cts[0].dtype, jnp.bfloat16)
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
@@ -4733,7 +4758,7 @@ class CompositeTest(jtu.JaxTestCase):
   def test_composite_with_attributes(self):
     # The static_argnames is required here since k is a constant that should
     # come out of a larger context, but we unit test one op (composite) here.
-    @partial(jax.jit, static_argnames=['k'])
+    @jax.jit(static_argnames=['k'])
     @partial(lax.composite, name="my.top_k")
     def my_top_k(x, *, k):
       return lax.top_k(x, k)

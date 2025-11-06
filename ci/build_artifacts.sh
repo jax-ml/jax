@@ -57,10 +57,10 @@ fi
 # the git commit hash of the HEAD of the current branch and the date of the
 # commit (e.g. 0.5.1.dev20250128+3e75e20c7).
 if [[ "$JAXCI_ARTIFACT_TYPE" == "release" ]]; then
-  artifact_tag_flags="--bazel_options=--repo_env=ML_WHEEL_TYPE=release"
+  artifact_tag_flags="--bazel_options=--repo_env=ML_WHEEL_TYPE=release  --bazel_options=--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)"
 elif [[ "$JAXCI_ARTIFACT_TYPE" == "nightly" ]]; then
   current_date=$(date +%Y%m%d)
-  artifact_tag_flags="--bazel_options=--repo_env=ML_WHEEL_BUILD_DATE=${current_date} --bazel_options=--repo_env=ML_WHEEL_TYPE=nightly"
+  artifact_tag_flags="--bazel_options=--repo_env=ML_WHEEL_BUILD_DATE=${current_date} --bazel_options=--repo_env=ML_WHEEL_TYPE=nightly  --bazel_options=--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)"
 elif [[ "$JAXCI_ARTIFACT_TYPE" == "default" ]]; then
   artifact_tag_flags="--bazel_options=--repo_env=ML_WHEEL_TYPE=custom --bazel_options=--repo_env=ML_WHEEL_BUILD_DATE=$(git show -s --format=%as HEAD) --bazel_options=--repo_env=ML_WHEEL_GIT_HASH=$(git rev-parse HEAD) --bazel_options=--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)"
 else

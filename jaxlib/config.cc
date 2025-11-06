@@ -82,8 +82,6 @@ class ThreadLocalConfigState {
 };
 
 // This class represents all of the global configuration state.
-// TODO(phawkins): to support free-threading, we will need to add locking to
-// this class.
 class GlobalConfigState {
  public:
   static GlobalConfigState& Instance() {

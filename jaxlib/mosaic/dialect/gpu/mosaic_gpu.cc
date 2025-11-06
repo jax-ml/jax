@@ -585,10 +585,9 @@ namespace {
 int kTmemMaxColumns = 512;
 int kTmemCellBitwidth = 32;
 
-llvm::LogicalResult VerifyTmemRefType(mlir::MLIRContext* context,
-                                      mlir::Operation* op,
+llvm::LogicalResult VerifyTmemRefType(mlir::Operation* op,
                                       mlir::MemRefType tmem_ref_type) {
-  mlir::Attribute tmem = TmemAttr::get(context);
+  mlir::Attribute tmem = TmemAttr::get(op->getContext());
   if (tmem_ref_type.getMemorySpace() != tmem) {
     return op->emitError() << "The tmem memref must have a "
                               "mosaic_gpu.tmem memory space but got: "
@@ -611,8 +610,7 @@ llvm::LogicalResult TmemAllocOp::verify() {
   }
 
   mlir::MemRefType tmem_ref_type = getResult().getType();
-  llvm::LogicalResult result =
-      VerifyTmemRefType(getContext(), getOperation(), tmem_ref_type);
+  llvm::LogicalResult result = VerifyTmemRefType(getOperation(), tmem_ref_type);
   if (result.failed()) {
     return result;
   }
@@ -646,8 +644,7 @@ llvm::LogicalResult TmemAllocOp::verify() {
 }
 
 llvm::LogicalResult TmemDeallocOp::verify() {
-  return VerifyTmemRefType(getContext(), getOperation(),
-                           getTmemRef().getType());
+  return VerifyTmemRefType(getOperation(), getTmemRef().getType());
 }
 
 llvm::LogicalResult AsyncLoadTmemOp::verify() {
@@ -659,7 +656,7 @@ llvm::LogicalResult AsyncLoadTmemOp::verify() {
   if (getSource().getType().getShape() != getResult().getType().getShape()) {
     return emitError() << "The `source` and `result` must have the same shape.";
   }
-  return VerifyTmemRefType(getContext(), getOperation(), getSource().getType());
+  return VerifyTmemRefType(getOperation(), getSource().getType());
 }
 
 llvm::LogicalResult AsyncStoreTmemOp::verify() {
@@ -673,12 +670,27 @@ llvm::LogicalResult AsyncStoreTmemOp::verify() {
     return emitError()
            << "The `source` and `destination` must have the same shape.";
   }
-  return VerifyTmemRefType(getContext(), getOperation(),
-                           getDestination().getType());
+  return VerifyTmemRefType(getOperation(), getDestination().getType());
 }
 
 llvm::LogicalResult TmemLayoutCastOp::verify() {
-  return VerifyTmemRefType(getContext(), getOperation(), getRef().getType());
+  return VerifyTmemRefType(getOperation(), getRef().getType());
+}
+
+llvm::LogicalResult SliceTmemOp::verify() {
+  if (VerifyTmemRefType(getOperation(), getSource().getType()).failed() ||
+      VerifyTmemRefType(getOperation(), getResult().getType()).failed()) {
+    return llvm::failure();
+  }
+  if (getOffset() % 4 != 0) {
+    return emitError() << "The offset must be a multiple of 4 but got: "
+                       << getOffset();
+  }
+  // TODO(allanrenucci): We can't precisely compute the number of columns in
+  // source/result because we need to know packing. We can however assume
+  // packing is either 1 (unpacked) or 32 / element_bitwidth (fully packed) and
+  // reject some invalid slices.
+  return llvm::success();
 }
 
 void MosaicGPUDialect::initialize() {

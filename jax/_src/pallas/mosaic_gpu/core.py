@@ -746,6 +746,7 @@ class TransposeTransform(MemoryRefTransform):
 
 
 @tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
 class TransposeRef(state_types.RefTransposer):
 
   def untransform_transpose(
@@ -885,6 +886,9 @@ def transpose_ref(
     ref: pallas_core.TransformedRef | Any,
     permutation: tuple[int, ...],
 ) -> pallas_core.TransformedRef:
+  assert hasattr(ref, "memory_space")
+  if ref.memory_space == MemorySpace.TMEM:
+    raise ValueError("Can't transpose a TMEM reference.")
   return ref.transpose(permutation)
 
 def untile_ref(ref, tiling: tuple[int, ...]) -> pallas_core.TransformedRef:
@@ -1357,6 +1361,7 @@ def _gpu_mesh_discharge_rule(
       name=name,
       memory_space=GMEM,
       metadata=metadata,
+      scratch_shapes=[],
   )
 
 
@@ -1435,6 +1440,7 @@ class ReducedLayout(SomeLayout):
 class Layout(SomeLayout, enum.Enum):
   #: [m, n] matrix, where m % 64 == 0 == n % 8.
   WGMMA = enum.auto()
+  WGMMA_8BIT = enum.auto()
   WGMMA_UPCAST_2X = enum.auto()
   WGMMA_UPCAST_4X = enum.auto()
   WGMMA_TRANSPOSED = enum.auto()
@@ -1470,6 +1476,9 @@ class Layout(SomeLayout, enum.Enum):
       case Layout.WGMMA:
         check_no_args()
         return mgpu.WGMMA_LAYOUT
+      case Layout.WGMMA_8BIT:
+        check_no_args()
+        return mgpu.WGMMA_LAYOUT_8BIT
       case Layout.WGMMA_UPCAST_2X:
         check_no_args()
         return mgpu.WGMMA_LAYOUT_UPCAST_2X

@@ -69,6 +69,7 @@ limitations under the License.
 #include "xla/python/transfer/streaming_ifrt.h"
 #include "xla/python/transfer/transfer_socket.pb.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -280,6 +281,12 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
       .def(
           "_testonly_inject_failure",
           [](PyTransferServerConnection& self) { self.conn().InjectFailure(); })
+#if JAX_IFRT_VERSION_NUMBER >= 35
+      .def("_poison_connection",
+           [](PyTransferServerConnection& self) {
+             self.conn().InjectFailure(aux::SocketServer::Connection::kPoison);
+           })
+#endif
       .def("_pull_flat",
            [](PyTransferServerConnection& self, nb::int_ uuid,
               jax::nb_class_ptr<jax::PyClient> py_client,

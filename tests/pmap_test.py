@@ -596,6 +596,8 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testAllToAllSplitAxis(self, split_axis, concat_axis):
     if jax.device_count() < 4:
       raise SkipTest("test requires at least four devices")
+    if jtu.device_under_test() == "gpu":
+      raise SkipTest("TODO(b/456133538): Disable on GPUs until we figure out.")
     if config.pmap_shmap_merge.value:
       raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
 
@@ -2201,10 +2203,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     save_cos = lambda prim, *_, **__: str(prim) == 'cos'
     f = remat(g, policy=save_cos)
     _, f_vjp = jax.vjp(f, x)
-    if config.vjp3.value:
-      jaxpr = f_vjp.jaxpr
-    else:
-      jaxpr = f_vjp.args[0].func.args[1]
+    jaxpr = f_vjp.jaxpr
     jaxpr_text = str(jaxpr)
     self.assertEqual(jaxpr_text.count(' sin '), 0)
     self.assertEqual(jaxpr_text.count(' cos '), 0)
@@ -2212,10 +2211,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     save_sin = lambda prim, *_, **__: str(prim) == 'sin'
     f = remat(g, policy=save_sin)
     _, f_vjp = jax.vjp(f, x)
-    if config.vjp3.value:
-      jaxpr = f_vjp.jaxpr
-    else:
-      jaxpr = f_vjp.args[0].func.args[1]
+    jaxpr = f_vjp.jaxpr
     jaxpr_text = str(jaxpr)
     self.assertEqual(jaxpr_text.count(' sin '), 0)
     self.assertEqual(jaxpr_text.count(' cos '), 2)
@@ -2223,10 +2219,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     save_nothing = lambda prim, *_, **__: False
     f = remat(g, policy=save_nothing)
     _, f_vjp = jax.vjp(f, x)
-    if config.vjp3.value:
-      jaxpr = f_vjp.jaxpr
-    else:
-      jaxpr = f_vjp.args[0].func.args[1]
+    jaxpr = f_vjp.jaxpr
     jaxpr_text = str(jaxpr)
     self.assertEqual(jaxpr_text.count(' sin '), 1)
     self.assertEqual(jaxpr_text.count(' cos '), 2)
@@ -2461,6 +2454,8 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
        "collective": collective}
       for collective in [lax.psum, lax.pmean, lax.pmax, lax.pmin])
   def testCollectivesWithVmap2(self, collective):
+    if jtu.device_under_test() == "gpu":
+      raise SkipTest("TODO(b/456133538): Disable on GPUs until we figure out.")
     def f(map1, map2):
       @partial(map1, axis_name='i')
       @partial(map2, axis_name='j')

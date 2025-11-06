@@ -17,19 +17,20 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import dataclasses
-import math
-from typing import Any, cast, Callable, Iterator
-
 import itertools
+import math
+from typing import Any, Callable, Iterator, cast
+
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
+from jaxlib.mlir.dialects import nvvm
 import numpy as np
 
-from . import utils
 from . import fragmented_array as fa
 from . import mma_utils
+from . import utils
 from .launch_context import LaunchContext
 
 
@@ -252,7 +253,10 @@ def mma(
       # We can't split N into groups if we would partition it below the tile size.
       # TODO: We only need to check this if N is the minormost dim in B.
       if 8 * b_swizzle // utils.bitwidth(element_type) > n // n_lane_groups:
-        raise ValueError("Swizzle is too big for MMA with M=64. Try lowering it.")
+        raise ValueError(
+            f"Swizzle={b_swizzle} is too big for MMA with M=64. Try"
+            " lowering it."
+        )
   else:
     raise ValueError(f"Only M=128 and M=64 are supported for MMA, but got M={m}")
   f32 = ir.F32Type.get()
@@ -678,18 +682,13 @@ def commit_arrive(
     # TODO(apaszke): This is just 0b11 shifted by the even CTA index.
     if ctx.cluster_size != (2, 1, 1):
       raise NotImplementedError("Collective arrivals only support (2, 1, 1)-shaped clusters")
-    ptx = """
-    {
-        .reg .b16 msk;
-        mov.b16 msk, 3;
-        tcgen05.commit.cta_group::2.mbarrier::arrive::one.multicast::cluster.b64 [$0], msk;
-    }
-    """
+    i16 = ir.IntegerType.get_signless(16)
+    mask = arith.constant(i16, 3)
+    nvvm.tcgen05_commit(
+        barrier, group=nvvm.CTAGroupKind.CTA_2, multicast_mask=mask
+    )
   else:
-    ptx = "tcgen05.commit.cta_group::1.mbarrier::arrive::one.b64 [$0];"
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"), [barrier], ptx, "r", has_side_effects=True
-  )
+    nvvm.tcgen05_commit(barrier)
 
 
 def tmem_alloc_exact_ncols(ncols: int, exact: bool) -> int:
@@ -727,39 +726,31 @@ def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact:
   elif tmem_addr.type != ir.Type.parse("!llvm.ptr<3>"):
     raise ValueError(f"tmem_addr must be an SMEM pointer or a memref, got: {tmem_addr.type}")
   ncols = tmem_alloc_exact_ncols(ncols, exact)
-  num_cta = 2 if collective else 1
-  return llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [tmem_addr],
-      f"tcgen05.alloc.cta_group::{num_cta}.sync.aligned.shared::cta.b32  [$0], {ncols};",
-      "r",
-      has_side_effects=True,
-  ), ncols
+  group = nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1
+  i32 = ir.IntegerType.get_signless(32)
+  return nvvm.tcgen05_alloc(tmem_addr, utils.c(ncols, i32), group=group), ncols
+
+
+def _tmem_addr_to_ptr(tmem_addr: ir.Value) -> ir.Value:
+  assert tmem_addr.type == ir.IntegerType.get_signless(32)
+  ptr_ty = ir.Type.parse("!llvm.ptr<6>")
+  return llvm.inttoptr(ptr_ty, tmem_addr)
 
 
 def tmem_dealloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact: bool = True) -> None:
   if tmem_addr.type != ir.IntegerType.get_signless(32):
     raise ValueError(f"tmem_addr must be an i32, got: {tmem_addr.type}")
   ncols = tmem_alloc_exact_ncols(ncols, exact)
-  num_cta = 2 if collective else 1
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [tmem_addr],
-      f"tcgen05.dealloc.cta_group::{num_cta}.sync.aligned.b32  $0, {ncols};",
-      "r",
-      has_side_effects=True,
+  group = nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1
+  i32 = ir.IntegerType.get_signless(32)
+  nvvm.tcgen05_dealloc(
+      _tmem_addr_to_ptr(tmem_addr), utils.c(ncols, i32), group=group
   )
 
 
 def tmem_relinquish_alloc_permit(collective: bool) -> None:
-  num_cta = 2 if collective else 1
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [],
-      f"tcgen05.relinquish_alloc_permit.cta_group::{num_cta}.sync.aligned;",
-      "",
-      has_side_effects=True,
-  )
+  group = nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1
+  nvvm.tcgen05_relinquish_alloc_permit(group=group)
 
 def _tmem_access_helper(shape, num) -> tuple[int, str]:
   if num.bit_count() != 1 or num > 128:
@@ -798,17 +789,6 @@ def _tmem_load(tmem_addr, shape, num, pack: bool):
       has_side_effects=True,
   )
   return [llvm.extractvalue(i32, regs, [i]) for i in range(num_out_regs)]
-
-
-def wait_tmem_load() -> None:
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [],
-      "tcgen05.wait::ld.sync.aligned;",
-      "",
-      has_side_effects=True,
-  )
-  utils.warpgroup_barrier()
 
 
 def _tmem_store(tmem_addr, shape, num, regs, unpack: bool) -> None:
@@ -890,7 +870,10 @@ def _infer_tmem_layout(shape: tuple[int, int], collective: bool, packing: int) -
     else:
       return tmem_half_lane_layout(shape[1], packing)
   else:
-    raise ValueError(f"Unsupported shape: {shape}")
+    raise ValueError(
+        f"Unsupported shape: {shape}. TMEM references must have either"
+        f" {TMEM_ROWS} or {TMEM_ROWS // 2} rows, but got {shape[0]}."
+    )
 
 
 def tmem_default_layout(packing: int = 1) -> TMEMLayout:
@@ -1154,12 +1137,8 @@ class TMEMRef:
     num_cols = self.layout.cols_in_shape(self.shape, utils.bitwidth(self.dtype))
     lane = arith.remui(utils.thread_idx(), arith.constant(i32, utils.WARPGROUP_SIZE))
     for c in range(num_cols):
-      val = llvm.inline_asm(
-          i32,
-          [arith.addi(self.address, arith.constant(i32, c))],
-          "tcgen05.ld.sync.aligned.32x32b.x1.b32 {$0}, [$1];",
-          "=r,r",
-      )
+      ptr = _tmem_addr_to_ptr(arith.addi(self.address, arith.constant(i32, c)))
+      val = nvvm.tcgen05_ld(i32, nvvm.Tcgen05LdStShape.SHAPE_32X32B, ptr)
       dtype_bitwidth = utils.bitwidth(self.dtype)
       full_packing = 32 // dtype_bitwidth
       if self.packing == 1:
@@ -1383,18 +1362,12 @@ def _load_32xcols_native(base_addr, cols, dtype, tmem_packing) -> np.ndarray:
 
 
 def commit_tmem() -> None:
-  void = ir.Type.parse("!llvm.void")
-  llvm.inline_asm(
-      void, [], "tcgen05.wait::st.sync.aligned;", "", has_side_effects=True,
-  )
+  nvvm.tcgen05_wait(nvvm.Tcgen05WaitKind.STORE)
   utils.warpgroup_barrier()
 
 
 def wait_load_tmem() -> None:
-  void = ir.Type.parse("!llvm.void")
-  llvm.inline_asm(
-      void, [], "tcgen05.wait::ld.sync.aligned;", "", has_side_effects=True,
-  )
+  nvvm.tcgen05_wait(nvvm.Tcgen05WaitKind.LOAD)
   utils.warpgroup_barrier()
 
 
@@ -1449,15 +1422,14 @@ def async_copy_scales_smem_to_tmem(smem_ref: ir.Value, tmem_ref: TMEMRef) -> Non
     load_ptr = utils.getelementptr(
         smem_base_ptr, [row_tile * row_tile_stride_i32], i32
     )
-    store_ptr = arith.addi(tmem_ref.address, arith.constant(i32, 4 * row_tile))
+    store_addr = arith.addi(tmem_ref.address, arith.constant(i32, 4 * row_tile))
     # The "core matrix" here is the same as in MMA: 8x(16 bytes).
     desc = mma_utils.encode_descriptor(load_ptr, 0, 8 * 16, swizzle=None)
-    llvm.inline_asm(
-        ir.Type.parse("!llvm.void"),
-        [store_ptr, desc],
-        "tcgen05.cp.cta_group::1.32x128b.warpx4 [$0], $1;",
-        "r,l",
-        has_side_effects=True,
+    nvvm.tcgen05_cp(
+        nvvm.Tcgen05CpShape.SHAPE_32x128b,
+        _tmem_addr_to_ptr(store_addr),
+        desc,
+        multicast=nvvm.Tcgen05CpMulticast.WARPX4,
     )
 
 
@@ -1499,10 +1471,5 @@ def async_copy_sparse_metadata_smem_to_tmem(smem_ref: ir.Value, tmem_ref: TMEMRe
     store_ptr = arith.addi(tmem_ref.address, arith.constant(i32, 4 * k_tile))
     # The "core matrix" here is the same as in MMA: 8x(16 bytes).
     desc = mma_utils.encode_descriptor(load_ptr, 0, 8 * 16, swizzle=None)
-    llvm.inline_asm(
-        ir.Type.parse("!llvm.void"),
-        [store_ptr, desc],
-        "tcgen05.cp.cta_group::1.128x128b [$0], $1;",
-        "r,l",
-        has_side_effects=True,
-    )
+    ptr = _tmem_addr_to_ptr(store_ptr)
+    nvvm.tcgen05_cp(nvvm.Tcgen05CpShape.SHAPE_128x128b, ptr, desc)

@@ -99,6 +99,8 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
       )(x)
 
     if memory_space == pltpu.HOST:
+      if jax.device_count() > 1:
+        self.skipTest("Test only works with a single device.")
       out_sharding = jax.sharding.NamedSharding(
           jax.sharding.Mesh(jax.devices(), 'x'),
           jax.sharding.PartitionSpec(),

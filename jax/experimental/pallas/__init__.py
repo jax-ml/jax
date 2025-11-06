@@ -55,11 +55,12 @@ from jax._src.pallas.primitives import atomic_or as _deprecated_atomic_or
 from jax._src.pallas.primitives import atomic_xchg as _deprecated_atomic_xchg
 from jax._src.pallas.primitives import atomic_xor as _deprecated_atomic_xor
 from jax._src.pallas.primitives import debug_print as debug_print
+from jax._src.pallas.primitives import delay as delay
 from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
 from jax._src.pallas.primitives import dot as dot
 from jax._src.pallas.primitives import get_global as get_global
 from jax._src.pallas.primitives import load as _deprecated_load
-from jax._src.pallas.primitives import max_contiguous as max_contiguous
+from jax._src.pallas.primitives import max_contiguous as _deprecated_max_contiguous
 from jax._src.pallas.primitives import multiple_of as multiple_of
 from jax._src.pallas.primitives import num_programs as num_programs
 from jax._src.pallas.primitives import program_id as program_id
@@ -69,7 +70,7 @@ from jax._src.pallas.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
 from jax._src.pallas.primitives import semaphore_wait as semaphore_wait
 from jax._src.pallas.primitives import store as _deprecated_store
-from jax._src.pallas.primitives import swap as swap
+from jax._src.pallas.primitives import swap as _deprecated_swap
 from jax._src.pallas.utils import cdiv as cdiv
 from jax._src.pallas.utils import next_power_of_2 as next_power_of_2
 from jax._src.pallas.utils import strides_from_shape as strides_from_shape
@@ -96,9 +97,20 @@ if _typing.TYPE_CHECKING:
   atomic_xor = _deprecated_atomic_xor
   load = _deprecated_load
   store = _deprecated_store
+  swap = _deprecated_swap
+  max_contiguous = _deprecated_max_contiguous
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   _deprecations = {
+      # Deprecated on October 28th 2025.
+      "max_contiguous": (
+          "pl.max_contiguous is deprecated, access it through jax.experimental.pallas.triton.",
+          _deprecated_max_contiguous,
+      ),
+      "swap": (
+          "pl.swap is deprecated, use ``ref[idx]``/``ref[idx] = value`` or a backend-specific loading/storing API instead.",
+          _deprecated_swap,
+      ),
       # Deprecated on July 25th 2025.
       "load": (
           "pl.load is deprecated, use ``ref[idx]`` or a backend-specific loading API instead.",

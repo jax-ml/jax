@@ -64,7 +64,7 @@ def _str_to_fft_type(s: str) -> FftType:
   else:
     raise ValueError(f"Unknown FFT type '{s}'")
 
-@partial(jit, static_argnums=(1, 2))
+@jit(static_argnums=(1, 2))
 def fft(x, fft_type: FftType | str, fft_lengths: Sequence[int]):
   if isinstance(fft_type, str):
     typ = _str_to_fft_type(fft_type)
@@ -140,7 +140,7 @@ def _naive_rfft(x, fft_lengths):
   n = fft_lengths[-1]
   return y[..., : n//2 + 1]
 
-@partial(jit, static_argnums=1)
+@jit(static_argnums=1)
 def _rfft_transpose(t, fft_lengths):
   # The transpose of RFFT can't be expressed only in terms of irfft. Instead of
   # manually building up larger twiddle matrices (which would increase the

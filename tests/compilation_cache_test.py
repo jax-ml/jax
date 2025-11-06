@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from collections import Counter
-from functools import partial
 import logging
 import math
 import os
@@ -229,7 +228,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
   def test_jit_sharded(self):
     mesh = jtu.create_mesh((2,), 'x')
     with jax.set_mesh(mesh):
-      @partial(jax.jit, in_shardings=(P("x"), P("x")), out_shardings=None)
+      @jax.jit(in_shardings=(P("x"), P("x")), out_shardings=None)
       def f(x, y):
         return x + y
 

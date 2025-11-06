@@ -2722,27 +2722,22 @@ class PallasCallWGTest(
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
     expected_missing_primitives = {
-        mgpu_primitives.tcgen05_mma_p,
         mgpu_primitives.print_layout_p,
-        mgpu_primitives.tcgen05_commit_arrive_p,
         mgpu_primitives.async_copy_scales_to_tmem_p,
         mgpu_primitives.async_copy_sparse_metadata_to_tmem_p,
-        mgpu_primitives.async_load_tmem_p,
-        mgpu_primitives.async_store_tmem_p,
         mgpu_primitives.wait_load_tmem_p,
-        mgpu_primitives.commit_tmem_p,
         mgpu_primitives.semaphore_signal_parallel_p,
         mgpu_primitives.semaphore_signal_multicast_p,
         mgpu_primitives.try_cluster_cancel_p,
         mgpu_primitives.query_cluster_cancel_p,
         mgpu_primitives.multimem_store_p,
         mgpu_primitives.multimem_load_reduce_p,
-        lax.slice_p,
         lax.iota_p,
         pallas_core.core_map_p,
         pallas_primitives.semaphore_signal_p,
         pallas_primitives.semaphore_wait_p,
         pallas_primitives.semaphore_read_p,
+        pallas_primitives.delay_p,
         checkify.check_p,
     }
 
@@ -2900,7 +2895,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
 
   @parameterized.parameters(jnp.int8, jnp.uint8)
   def test_wgmma_integer(self, dtype):
-    self.skip_if_wg_semantics()
     m, k, n = 64, 128, 64
 
     is_signed = jnp.issubdtype(dtype, jnp.signedinteger)
@@ -2997,6 +2991,37 @@ class PallasCallSm90ATest(PallasSm90ATest):
     )(a, b)
     np.testing.assert_allclose(res, a @ b, rtol=1e-3)
 
+  def test_wgmma_registers_integer(self):
+    self.skip_if_wg_semantics()  # WGMMA_8BIT layout not supported
+    input_dtype = jnp.int8
+    out_dtype = jnp.int32
+    def kernel(a_ref, b_ref, o_ref):
+      def scope(acc_ref):
+        a_regs = plgpu.load(a_ref, (), layout=plgpu.Layout.WGMMA_8BIT)
+        plgpu.wgmma(acc_ref, a_regs, plgpu.transpose_ref(b_ref, (1, 0)))
+        return acc_ref[...]
+      o_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 192), out_dtype))
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    m = 64
+    k = 128
+    n = 192
+    a = jax.random.randint(key1, shape=(m, k), minval=-128, maxval=127, dtype=input_dtype)
+    b = jax.random.randint(key2, shape=(n, k), minval=-128, maxval=127, dtype=input_dtype)
+
+    transforms = self.default_transforms(swizzle=64, dtype=input_dtype)
+    res = self.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.BlockSpec(transforms=transforms),
+            plgpu.BlockSpec(transforms=transforms),
+        ],
+        out_shape=jax.ShapeDtypeStruct((64, 192), out_dtype),
+    )(a, b)
+    np.testing.assert_array_equal(
+        res, a.astype(out_dtype) @ b.T.astype(out_dtype)
+    )
+
   def test_wgmma_registers_init(self):
     def kernel(a_ref, b_ref, i_ref, o_ref):
       def scope(acc_ref):
@@ -3044,7 +3069,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     np.testing.assert_allclose(res, a[0] @ b[0], rtol=1e-3)
 
   def test_wgmma_sliced_acc_read(self):
-    self.skip_if_wg_semantics()  # Needs WGMMA to support slices.
+    self.skip_if_wg_semantics()  # MLIR verifier error for `memref.subview`.
 
     def kernel(a_ref, b_ref, o_ref):
       def scope(acc_ref):
@@ -3145,27 +3170,39 @@ class PallasCallSm90AWGTest(
 class PallasCallSm100ATest(PallasSm100ATest):
 
   def test_mixed_tmem_allocations_raise(self):
-    def kernel(out_ref, tmem_ref0, tmem_ref1):
-      del out_ref, tmem_ref0, tmem_ref1
-
-    f = self.pallas_call(
-        kernel,
+    @functools.partial(
+        self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((), jnp.float32),
         scratch_shapes=[
             plgpu.TMEM((128, 128), jnp.float32, collective=True),
             plgpu.TMEM((128, 128), jnp.float32, collective=False),
         ],
     )
+    def kernel(out_ref, tmem_ref0, tmem_ref1):
+      del out_ref, tmem_ref0, tmem_ref1
+
     with self.assertRaisesRegex(
         ValueError,
         "Can't mix collective and non-collective TMEM allocations within the"
         " same kernel.",
     ):
-      f()
+      kernel()
+
+  def test_transposed_tmem_ref_raises(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([], jnp.float32),
+        scratch_shapes=[plgpu.TMEM((128, 128), jnp.float32)],
+    )
+    def kernel(out, tmem_ref):
+      del out
+      plgpu.transpose_ref(tmem_ref, (1, 0))
+
+    with self.assertRaisesRegex(ValueError, "Can't transpose a TMEM reference"):
+      kernel()
 
   @parameterized.parameters((False,), (True,))
   def test_tmem(self, collective):
-    self.skip_if_wg_semantics()  # TMEM read not wired up in the WG get rule.
     transforms = self.default_transforms(dtype=jnp.float32)
     @functools.partial(
         self.kernel,
@@ -3208,7 +3245,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
 
     All of the refs below are packed and should fit into TMEM at once.
     """
-    self.skip_if_wg_semantics()  # TMEM read not wired up in the WG get rule.
     transforms = self.default_transforms(dtype=jnp.bfloat16)
     @functools.partial(
         self.kernel,
@@ -3297,7 +3333,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
       plgpu.Layout.TCGEN05, plgpu.Layout.TCGEN05_TMEM_NATIVE
   )
   def test_tmem_load_layout(self, layout):
-    self.skip_if_wg_semantics()  # TMEM read not wired up in the WG get rule.
+    self.skip_if_wg_semantics()  # TiledLayout replication not supported yet.
     transforms = self.default_transforms(dtype=jnp.float32)
     @functools.partial(
         self.kernel,
@@ -3365,7 +3401,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
       dtype=[jnp.int8, jnp.uint8]
   )
   def test_integer_matmul(self, m, n, swizzle, dtype):
-    self.skip_if_wg_semantics()
     if n * jnp.dtype(dtype).itemsize <= swizzle:
       self.skipTest("swizzle too big")
     k = 128
@@ -3424,7 +3459,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
   def test_simple_matmul(
       self, m, n, swizzle, dtype, lhs_tmem, transpose_lhs, transpose_rhs
   ):
-    self.skip_if_wg_semantics()
     if transpose_lhs and lhs_tmem:
       self.skipTest("TMEM transpose not supported")
     if n * jnp.dtype(dtype).itemsize <= swizzle:
@@ -3493,7 +3527,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
   def test_matmul_alignment(self):
-    self.skip_if_wg_semantics()
     m = k = n = 128
     dtype = jnp.float16
     transforms = self.default_transforms(dtype=dtype)
@@ -3657,7 +3690,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
       (128, jnp.float16)
   )
   def test_manual_tcgen05_commit_arrive(self, swizzle, dtype):
-    self.skip_if_wg_semantics()
     shape = (128, 128)
     transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
 
@@ -3700,7 +3732,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
     np.testing.assert_allclose(result, x @ y, rtol=1e-3)
 
   def test_matmul_with_sliced_accumulator(self):
-    self.skip_if_wg_semantics()
+    self.skip_if_wg_semantics()  # Slicing TMEM is not supported.
     dtype = jnp.bfloat16
     shape = (128, 128)
     tmem_shape = (128, 2 * 128)
@@ -3758,7 +3790,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
       lhs_tmem=[False, True],
   )
   def test_simple_collective_matmul(self, m_n_k, swizzle, dtype, lhs_tmem):
-    self.skip_if_wg_semantics()
     m, n, k = m_n_k
     if (n // 2) * jnp.dtype(dtype).itemsize < swizzle:
       self.skipTest("swizzle too big")
@@ -4004,7 +4035,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
   def test_mma_barrier_indexing(
       self, barrier_index, shape=(128, 128), swizzle=128, dtype=jnp.float16
   ):
-    self.skip_if_wg_semantics()
     transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
 
     def kernel(a_smem, b_smem, out_ref, acc_tmem, scratch_smem, barrier_ref):

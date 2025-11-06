@@ -748,16 +748,69 @@ class MutableArrayTest(jtu.JaxTestCase):
     jtu.check_grads(f, (mut_const_vals, pure_consts, init_carry, xs),
                     2, ['fwd', 'rev'], rtol=1.5e-2)
 
-  def test_remat_basic_errors(self):
+  @parameterized.parameters([False, True])
+  def test_remat_basic_internal(self, jit):
     @jax.remat
-    def f(x_ref, y):
+    def f(y, x):
+      x_ref = jax.new_ref(x)
+      out = y * x_ref[...]
       x_ref[...] += 1
-      return y
+      return out
 
-    x_ref = core.new_ref(0)
+    if jit:
+      f = jax.jit(f)
 
-    with self.assertRaises(NotImplementedError):
-      jax.grad(f, 1)(x_ref, 3.14)
+    g = jax.grad(f)(2., 1.)
+    self.assertAllClose(g, 1.)
+
+  @parameterized.parameters([False, True])
+  def test_remat_basic_arg(self, jit):
+    @jax.remat
+    def f(y, x_ref):
+      out = y * y
+      x_ref[...] += out
+      return out
+
+    if jit:
+      f = jax.jit(f)
+
+    x_ref = core.new_ref(1., kind='anselm_ref')
+    g = jax.grad(f)(2., x_ref)
+    self.assertAllClose(x_ref[...], 5.)
+    self.assertAllClose(g, 4.)
+
+  @parameterized.parameters([False, True])
+  def test_remat_basic_closed_over(self, jit):
+    @jax.remat
+    def f(y):
+      out = y * x_ref[...]
+      x_ref[...] += 1
+      return out
+
+    if jit:
+      f = jax.jit(f)
+
+    x_ref = core.new_ref(1., kind='anselm_ref')
+    g = jax.grad(f)(2.)
+    self.assertAllClose(x_ref[...], 2.)
+    self.assertAllClose(g, 1.)
+
+  def test_remat_basic_closed_over_nested(self):
+    @jax.remat
+    @partial(jax.remat, policy=lambda *_, **__: False)
+    @jax.remat
+    def f(y):
+      jax.debug.callback(lambda _: lst.append('hi'), y)
+      out = y * x_ref[...]
+      x_ref[...] += 1
+      return jnp.sin(out)
+
+    lst = []
+    x_ref = core.new_ref(1., kind='anselm_ref')
+    g = jax.grad(f)(2.)
+    self.assertAllClose(x_ref[...], 2.)
+    self.assertAllClose(g, jnp.cos(2.))
+    self.assertLen(lst, 4)
 
   def test_remat_grad_stats_plumbing_basic(self):
     @jax.remat
@@ -950,6 +1003,31 @@ class MutableArrayTest(jtu.JaxTestCase):
     issue_vmap1_minimized()
     issue_vmap2()
 
+  def test_slicing_with_vjp3(self):
+    @jax.jit
+    def f(x, i):
+      return x[i] ** 2
+
+    x = jnp.arange(10.)
+
+    grad_accum = jax.new_ref(jnp.zeros(10))
+    not_needed = object()
+
+    @jax.make_jaxpr
+    def run():
+      _, f_vjp = jax.vjp(f, x, 5)
+      f_vjp = f_vjp.with_refs(grad_accum, not_needed)
+      f_vjp(1.)
+
+    jaxpr = run()
+    self.assertIn('+=', str(jaxpr))
+    self.assertNotIn('0.0', str(jaxpr))
+
+  @absltest.skip("Not yet implemented")
+  def test_none_index(self):
+    ref = jax.new_ref(jnp.array([1, 2, 3]))
+    y = ref[None]
+    self.assertEqual(y.shape, (1, 3))
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):

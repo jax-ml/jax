@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
+import gc
 import re
 import traceback
+import weakref
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -403,6 +406,39 @@ class FilteredTracebackTest(jtu.JaxTestCase):
     check_filtered_stack_trace(self, TypeError, err, [
         ('err', 'return jit(f)(a)')], filter_mode=filter_mode)
 
+  def test_api_boundary_does_not_add_to_garbage(self, filter_mode):
+    self.enter_context(config.traceback_filtering(filter_mode))
+    self.enter_context(disable_gc())
+
+    class MyObject:
+      def __call__(self):
+        f()
+
+    @traceback_util.api_boundary
+    def f():
+      g()
+
+    @traceback_util.api_boundary
+    def g():
+      raise ValueError('f')
+
+    o = MyObject()
+    weak_o = weakref.ref(o)
+    try:
+      o()
+    except ValueError:
+      pass
+    del o
+    self.assertIsNone(weak_o())
+
+@contextlib.contextmanager
+def disable_gc():
+  gc.disable()
+  gc.collect()
+  try:
+    yield
+  finally:
+    gc.enable()
 
 @jtu.with_config(jax_traceback_filtering='auto')  # JaxTestCase defaults to off.
 class UserContextTracebackTest(jtu.JaxTestCase):

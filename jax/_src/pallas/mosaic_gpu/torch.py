@@ -245,7 +245,7 @@ def _compile_fn(fn, in_structs):
   _, out_treedef = jax.tree.flatten(out_structs)
 
   backend_config = mgpu_call.attributes["mhlo.backend_config"]
-  module_asm = backend_config["module"].value.encode()
+  module_asm = backend_config["module"].value_bytes
   launch, unload = mgpu_core._compile_as_torch_gpu_kernel(module_asm)
 
   def as_torch_dtype(dtype):

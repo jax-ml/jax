@@ -297,7 +297,7 @@ class _Subproblem(NamedTuple):
   size: Array
 
 
-@partial(api.jit, static_argnames=('termination_size', 'subset_by_index'))
+@api.jit(static_argnames=('termination_size', 'subset_by_index'))
 def _eigh_work(H, n, termination_size, subset_by_index):
   """ The main work loop performing the symmetric eigendecomposition of H.
   Each step recursively computes a projector into the space of eigenvalues

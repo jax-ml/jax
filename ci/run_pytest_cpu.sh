@@ -44,11 +44,16 @@ export PY_COLORS=1
 export JAX_SKIP_SLOW_TESTS=true
 export TF_CPP_MIN_LOG_LEVEL=0
 export JAX_ENABLE_X64="$JAXCI_ENABLE_X64"
-MAX_PROCESSES=""
-if [[ "$(uname -s)" == *"MSYS"* ]]; then
-  MAX_PROCESSES="--maxprocesses=56"  # Tests OOM on Windows sometimes.
+
+MAX_PROCESSES=${MAX_PROCESSES:-}
+MAX_PROCESSES_ARG=""
+if [[ -n "${MAX_PROCESSES}" ]]; then
+  MAX_PROCESSES_ARG="--maxprocesses=${MAX_PROCESSES}"
+elif [[ "$(uname -s)" == *"MSYS"* ]]; then
+  MAX_PROCESSES_ARG="--maxprocesses=56"  # Tests OOM on Windows sometimes.
 fi
 # End of test environment variable setup
 
 echo "Running CPU tests..."
-"$JAXCI_PYTHON" -m pytest -n auto --tb=short $MAX_PROCESSES --maxfail=20 tests examples
+"$JAXCI_PYTHON" -m pytest -n auto --tb=short $MAX_PROCESSES_ARG \
+ --maxfail=20 tests examples

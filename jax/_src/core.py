@@ -50,7 +50,7 @@ from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, cache,
                            HashableFunction, HashableWrapper, weakref_lru_cache,
                            partition_list, StrictABCMeta, foreach,
-                           weakref_cache_key_types)
+                           weakref_cache_key_types, set_module)
 import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding
 from jax._src.sharding import Sharding
@@ -2134,11 +2134,7 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
           p for p in s if mesh._name_to_type[p] == AxisType.Explicit))
     else:
       new_spec.append(s if mesh._name_to_type[s] == AxisType.Explicit else None)  # type: ignore
-  new_unreduced = {u for u in spec.unreduced
-                   if mesh._name_to_type[u] == AxisType.Explicit}
-  new_reduced = {u for u in spec.reduced
-                 if mesh._name_to_type[u] == AxisType.Explicit}
-  return P(*new_spec, unreduced=new_unreduced, reduced=new_reduced)
+  return P(*new_spec, unreduced=spec.unreduced, reduced=spec.reduced)
 
 def remove_size_one_mesh_axis(spec, mesh) -> P:
   new_spec = []  # type: ignore
@@ -2209,10 +2205,13 @@ def get_sharding(sharding, shape):
 
 @cache(max_size=4096,
        trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
-def get_vma(vma, mesh):
+def get_vma(vma, sharding):
+  mesh = sharding.mesh
+  spec = sharding.spec
   if mesh.empty:
     assert not vma, vma
     return vma
+
   axis_env = get_axis_env()
   for i in vma:
     if axis_env.axis_exists(i) and i not in mesh._name_to_type:
@@ -2223,6 +2222,15 @@ def get_vma(vma, mesh):
           f" be of type `Manual`. Got axis: {i} of type {mesh._name_to_type[i]}")
   if config.remove_size_one_mesh_axis_from_type.value:
     vma = frozenset(i for i in vma if mesh.shape[i] != 1)
+
+  if vma & spec.unreduced:
+    raise ValueError(
+        f"vma and unreduced cannot have common mesh axes. Got {vma=} and"
+        f" unreduced={spec.unreduced}")
+  if vma & spec.reduced:
+    raise ValueError(
+        f"vma and reduced cannot have common mesh axes. Got {vma=} and"
+        f" reduced={spec.reduced}")
   assert isinstance(vma, frozenset)
   return vma
 
@@ -2246,7 +2254,7 @@ class ShapedArray(UnshapedArray):
     self.sharding = get_sharding(sharding, self.shape)
     # short for varying_manual_axes. See docs at
     # https://docs.jax.dev/en/latest/notebooks/shard_map.html#tracking-how-values-vary-over-manual-mesh-axes-and-check-vma-true
-    self.vma = get_vma(vma, self.sharding.mesh)
+    self.vma = get_vma(vma, self.sharding)
     # See description of https://github.com/jax-ml/jax/pull/30556
     self.memory_space = get_memory_space(memory_space)
 
@@ -2354,10 +2362,8 @@ def str_short_aval(shape, dtype, mesh, spec, vma, memory_space,
             f"<{memory_space.name.lower()}>")
   return f'{dt_str}{ms_str}[{shapestr}]{vma_ur}{mesh_axes}'
 
-def _create_str(x, prefix=None):
+def _create_str(x, prefix):
   x_str = f"{','.join(i for i in x)}"
-  if prefix is None:
-    return x_str
   x_str = x_str if len(x) == 1 else f"({x_str})"
   return f"{prefix}:{x_str}, "
 
@@ -2367,12 +2373,11 @@ def order_wrt_mesh(mesh, x):
 def _vma_ur_str(vma, unreduced, reduced, mesh):
   if not vma and not unreduced and not reduced:
     return ''
-  vma_str = f"{{{_create_str(order_wrt_mesh(mesh, vma), None)}}}" if vma else ''
+  vma_str = _create_str(order_wrt_mesh(mesh, vma), 'V') if vma else ''
   ur_str = _create_str(unreduced, 'U') if unreduced else ''
   red_str = _create_str(reduced, 'R') if reduced else ''
-  m_str = f"{ur_str}{red_str}".rstrip(', ')
-  m_str = f"{{{m_str}}}" if m_str else ''
-  return f"{m_str}{vma_str}"
+  m_str = f"{vma_str}{ur_str}{red_str}".rstrip(', ')
+  return f"{{{m_str}}}"
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
   if isinstance(primal_dtype, dtypes.ExtendedDType):
@@ -2389,9 +2394,9 @@ def primal_sharding_to_cotangent_sharding(sharding):
   return sharding.update(spec=primal_spec_to_cotangent_spec(sharding.spec))
 
 def pvary(x, axis_name):
+  axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
     return x
-  axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   xs, treedef = tree_flatten(x)
   ys = pvary_p.bind(*xs, axes=axes, axis_index_groups=None)
   return tree_unflatten(treedef, ys)
@@ -2667,7 +2672,7 @@ class ArrayRefImpl:
 pytype_aval_mappings[Ref] = lambda x: x._aval
 dtypes.canonicalize_value_handlers[Ref] = lambda x: x
 
-def new_ref(init_val, *, memory_space: Any = None):
+def new_ref(init_val, *, memory_space: Any = None, kind: Any = None):
   """Create a mutable array reference with initial value ``init_val``.
 
   For more discussion, see the `Ref guide`_.
@@ -2682,19 +2687,18 @@ def new_ref(init_val, *, memory_space: Any = None):
 
   .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
-  return ref_p.bind(init_val, memory_space=memory_space)
+  return ref_p.bind(init_val, memory_space=memory_space, kind=kind)
 ref_p = Primitive('new_ref')
 ref_p.is_effectful = lambda params: True  # type: ignore
 ref_p.ref_primitive = True
 
-ref_p.is_high = lambda aval, *, memory_space: aval.is_high  # type: ignore
-def _ref_to_lojax(init_val, *, memory_space):
+ref_p.is_high = lambda aval, *, memory_space, kind: aval.is_high  # type: ignore
+def _ref_to_lojax(init_val, *, memory_space, kind):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   val_ty = typeof(init_val)
   hival_of_refs = val_ty.raise_val(*map(new_ref, val_ty.lower_val(init_val)))  # type: ignore
   aval = AbstractRef(typeof(init_val))
   return Ref(AbstractRef(val_ty), hival_of_refs)
-  # return Ref(
 ref_p.to_lojax = _ref_to_lojax  # type: ignore
 
 
@@ -2705,19 +2709,19 @@ effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
 effects.remat_allowed_effects.add_type(InternalMutableArrayEffect)
 
 @ref_p.def_effectful_abstract_eval
-def array_ref_abstract_eval(init_aval, *, memory_space: Any):
+def _ref_abstract_eval(init_aval, *, memory_space: Any, kind: Any):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
-  return (AbstractRef(init_aval, memory_space=memory_space),
+  return (AbstractRef(init_aval, memory_space=memory_space, kind=kind),
           {internal_mutable_array_effect})
 
 @ref_p.def_impl
-def _array_ref_impl(init_val, *, memory_space: Any):
+def _ref_impl(init_val, *, memory_space: Any, kind: Any):
   if memory_space is not None:
     raise NotImplementedError(
         "array ref with memory space only works inside of a `jit`.")
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   from jax._src.lax.lax import _array_copy  # pytype: disable=import-error
-  aval = AbstractRef(typeof(init_val))
+  aval = AbstractRef(typeof(init_val), kind=kind)
   return Ref(aval, ArrayRefImpl(aval, _array_copy(init_val)))
 
 def freeze(ref: Ref) -> Array:
@@ -3049,7 +3053,8 @@ class CallPrimitive(Primitive):
     return self._true_bind(*args, **params)
 
   def bind_with_trace(self, trace, fun_and_args, params):
-    fun, *args = fun_and_args
+    fun = fun_and_args[0]
+    args = fun_and_args[1:]
     return trace.process_call(self, fun, args, params)
 
   def get_bind_params(self, params):
@@ -3355,6 +3360,10 @@ class MutableTypecheckVal:
   aval : AbstractValue
   mutable_qdd : MutableQuasiDynamicData
 
+
+_ref_allocating_primitives = {ref_p}
+
+
 def _check_jaxpr(
     ctx_factory: Callable[[], tuple[JaxprPpContext, JaxprPpSettings]],
     jaxpr: Jaxpr
@@ -3444,7 +3453,7 @@ def _check_jaxpr(
       # Check the computed effect type matches the eqn's annotation, and is
       # included in the jaxpr's annotation.
       if prim.ref_primitive:
-        if prim is ref_p:
+        if prim in _ref_allocating_primitives:
           outvar, = eqn.outvars
           in_idx[outvar] = None  # type: ignore
           mut_arrays.add(outvar)
@@ -3643,6 +3652,7 @@ def _check_map(ctx_factory, prim, in_avals, params):
 
 # ------------------- ShapeDtypeStruct -------------------
 
+@set_module("jax")
 class ShapeDtypeStruct:
   """A container for the shape, dtype, and other static attributes of an array.
 

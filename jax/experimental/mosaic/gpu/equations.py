@@ -481,24 +481,25 @@ class IsTransferable:
 
 
 @dataclasses.dataclass(frozen=True)
-class Distinct:
-  """States that `lhs != rhs`."""
-  lhs: Expression
-  rhs: Expression
+class NotOfType:
+  """States that `expr` is not an instance of `type`."""
+
+  expr: Expression
+  type: type[fa.FragmentedLayout]
 
   def holds(self) -> bool | None:
     """Whether the distinctiveness constraint holds.
 
     Returns `None` if the constraint can't be checked.
     """
-    if self.lhs == self.rhs:
-      return False
-    if isinstance(self.lhs, Constant) and isinstance(self.rhs, Constant):
+    if not isinstance(self.expr, Constant):
+      return None
+    if not isinstance(self.expr, RegisterLayout):
       return True
-    return None
+    return not isinstance(self.expr.value, self.type)
 
   def __str__(self):
-    return f"{self.lhs} ≠ {self.rhs}"
+    return f"type({self.expr}) ≠ {self.type.__name__}"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -520,18 +521,22 @@ class Divides:
   tiling_multiple: tuple[int, ...]
 
   def holds(self) -> bool | None:
-    if not isinstance(self.expr, SMEMTiling):
-      return None
-    if self.expr.value is None:
-      # If there is no tiling, then this holds trivially.
-      return True
+    match self.expr:
+      case SMEMTiling(value=None):
+        # If there is no tiling, then this holds trivially.
+        return True
+      case SMEMTiling(value=lc.TileTransform(tiling=t)):
+        tiling = t
+      case RegisterLayout(value=fa.TiledLayout() as layout):
+        tiling = layout.base_tile_shape
+      case _:
+        return None
 
-    if len(self.expr.value.tiling) > len(self.tiling_multiple):
+    if len(tiling) > len(self.tiling_multiple):
       # The rank of the tiling is larger than the rank of the constraint. This
       # is not allowed.
       return False
 
-    tiling = self.expr.value.tiling
     for size, multiple in zip(reversed(tiling), reversed(self.tiling_multiple)):
       if multiple % size:
         return False
@@ -541,7 +546,7 @@ class Divides:
     return f"{self.tiling_multiple} % {self.expr} == 0"
 
 
-Constraint = Relayout | Distinct | IsTransferable | Divides
+Constraint = Relayout | NotOfType | IsTransferable | Divides
 
 
 def _canonicalize_dimensions_to_tile(
@@ -576,15 +581,16 @@ def reduce_constraint(
     case Relayout(source=source, target=target):
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
-      if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
+      if isinstance(source_red, Unsatisfiable) or isinstance(
+          target_red, Unsatisfiable
+      ):
         return Unsatisfiable()
       new_constraint = Relayout(source_red, target_red)
-    case Distinct(lhs=lhs, rhs=rhs):
-      lhs_red = reduce_expression(lhs, assignments)
-      rhs_red = reduce_expression(rhs, assignments)
-      if isinstance(lhs_red, Unsatisfiable) or isinstance(rhs_red, Unsatisfiable):
+    case NotOfType(expr=expr, type=type):
+      expr_red = reduce_expression(expr, assignments)
+      if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
-      new_constraint = Distinct(lhs_red, rhs_red)
+      new_constraint = NotOfType(expr_red, type)
     case IsTransferable(source=source, target=target, shape=shape):
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
@@ -703,9 +709,8 @@ class EquationSystem:
         case Relayout(source=source, target=target):
           extract_variables(source)
           extract_variables(target)
-        case Distinct(lhs=lhs, rhs=rhs):
-          extract_variables(lhs)
-          extract_variables(rhs)
+        case NotOfType(expr=expr):
+          extract_variables(expr)
         case IsTransferable(source=source, target=target, shape=_):
           extract_variables(source)
           extract_variables(target)
@@ -760,25 +765,15 @@ class Tautological:
 
 def non_splat_variables(
     constraints: Sequence[Constraint],
-) -> dict[Variable, Constant]:
-  """Returns a map var->splat_layout for all vars distinct from a splat."""
-  result: dict[Variable, Constant] = {}
+) -> set[Variable]:
+  """Returns a all vars distinct from a splat."""
+  vars: set[Variable] = set()
   for constraint in constraints:
     match constraint:
-      case Distinct(lhs=lhs, rhs=rhs):
-        if (
-            isinstance(lhs, Variable)
-            and isinstance(rhs, RegisterLayout)
-            and isinstance(rhs.value, fa.WGSplatFragLayout)
-        ):
-          result[lhs] = rhs
-        if (
-            isinstance(rhs, Variable)
-            and isinstance(lhs, RegisterLayout)
-            and isinstance(lhs.value, fa.WGSplatFragLayout)
-        ):
-          result[rhs] = lhs
-  return result
+      case NotOfType(expr=Variable() as var, type=fa.WGSplatFragLayout):
+        assert isinstance(var, Variable)  # make pytype happy
+        vars.add(var)
+  return vars
 
 
 # The result of reducing an equation---and by extension, a system of
@@ -819,7 +814,7 @@ def _has_relayout_of_non_splat_to_splat(constraints: Sequence[Constraint]) -> bo
 def saturate_distinct_from_splat(
     equation_system: EquationSystem,
 ) -> EquationSystem | Unsatisfiable:
-  """Adds transitive Distinct constraints for all non-splat variables.
+  """Adds transitive NotOfType constraints for all non-splat variables.
 
   Given `n` variables `l0`, ... `l{n-1}`, and a set of relayouts
   `{ Relayout(l{i}, l{i+1}) : 0 <= i < n }`, if we also know that
@@ -838,12 +833,14 @@ def saturate_distinct_from_splat(
     for constraint in equation_system.constraints:
       match constraint:
         case Relayout(source=source, target=target):
-          if isinstance(target, Variable) and source in non_splat and target not in non_splat:
+          if (
+              isinstance(target, Variable)
+              and source in non_splat
+              and target not in non_splat
+          ):
             new_non_splat_found = True
-            assert isinstance(source, Variable)
-            splat_layout = non_splat[source]
-            non_splat[target] = splat_layout
-            new_constraints.append(Distinct(lhs=target, rhs=splat_layout))
+            non_splat.add(target)
+            new_constraints.append(NotOfType(target, fa.WGSplatFragLayout))
         case _:
           pass
   return equation_system & EquationSystem(constraints=new_constraints)

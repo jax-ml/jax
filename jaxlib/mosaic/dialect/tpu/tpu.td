@@ -687,6 +687,44 @@ def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure, SameTypeOperands]>
   let hasVerifier = 1;
 }
 
+def TPU_PackElementwiseOp : TPU_Op<"pack_elementwise", [Pure, SameTypeOperands, ElementwiseMappable]> {
+  let description = [{
+    Packs multiple `sources` elementwise into a single vector of a narrower `target_type`.
+
+    The number of `sources` must equal the packing factor, which is the ratio of
+    the element bitwidth of the `sources` to the element bitwidth of the
+    `target_type`. Elements from the `sources` are interleaved and packed into
+    each word of the `output`, ordered from lowest to highest bits,
+    corresponding to their order in the `sources`.
+  }];
+  let arguments = (ins
+    Variadic<VectorOfNonZeroRankOf<[F32, I32]>>:$sources,
+    TypeAttr:$target_type
+  );
+  let results = (outs VectorOfNonZeroRankOf<[I32]>:$output);
+  let assemblyFormat = [{ $sources attr-dict `:` type($sources) `->` type($output) }];
+  let hasVerifier = 1;
+}
+
+def TPU_UnpackElementwiseOp : TPU_Op<"unpack_elementwise", [Pure, ElementwiseMappable]> {
+  let description = [{
+    Unpacks a single vector from `source`, which contains multiple `source_type`
+    vectors packed elementwise.
+
+    The `index` selects which packed value to extract from each word of `source`.
+    An `index` of 0 corresponds to the lowest bits. The extracted values are
+    cast to the output element type.
+  }];
+  let arguments = (ins
+    VectorOfNonZeroRankOf<[I32]>:$source,
+    TypeAttr:$source_type,
+    I32Attr:$index
+  );
+  let results = (outs VectorOfNonZeroRankOf<[F32, I32]>:$output);
+  let assemblyFormat = [{ $source `,` $index attr-dict `:` type($source) `->` type($output) }];
+  let hasVerifier = 1;
+}
+
 def TPU_RelayoutOp : TPU_Op<"relayout", [Pure, SameOperandsAndResultType]> {
   let arguments = (ins AnyVectorOfAnyRank:$input);
   let results = (outs AnyVectorOfAnyRank:$output);
@@ -1560,6 +1598,11 @@ def PreCanonicalizationOptimizationPass : Pass<"pre-canonicalization-optimizatio
   let dependentDialects = [
     "::mlir::vector::VectorDialect",
     "::mlir::tpu::TPUDialect",
+  ];
+  let options = [
+    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"6", "">,
+    Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
+    Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
   ];
 }
 

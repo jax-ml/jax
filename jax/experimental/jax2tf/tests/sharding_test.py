@@ -258,7 +258,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
   @jtu.with_explicit_mesh((2,), ("x",), axis_types=(AxisType.Auto,))
   def test_jit_variable_arg(self, mesh):
     # The first argument is a tf.Variable
-    @partial(jax.jit, in_shardings=(P(None, "x"), P("x", None)),
+    @jax.jit(in_shardings=(P(None, "x"), P("x", None)),
              out_shardings=None)
     def f_jax(x, y):  # f32[10,20] , f32[20,30] -> f32[10,30]
       return x @ y
@@ -289,7 +289,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     x = np.ones((10, 20), dtype=np.float32)
     const = jnp.full((10, 20), 7, dtype=np.float32)
 
-    @partial(jax.jit, in_shardings=(P("x"),), out_shardings=None)
+    @jax.jit(in_shardings=(P("x"),), out_shardings=None)
     def f_jax(x):  # f32[10,20] -> f32[20,10]
       return (x * const).T
 

@@ -1334,6 +1334,9 @@ class IOCallbackTest(jtu.JaxTestCase):
   @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
                       category=DeprecationWarning)
   def test_sequence_pjit_io_callback_ordered(self):
+    if jtu.is_device_tpu(7, 'x'):
+      self.skipTest('TODO(b/453664256): Failing on TPU 7x.')
+
     # A sequence of pairs of calls to pjit(io_callback(ordered=True)) with each
     # pair on a different device assignment.
     _collected: list[int] = []

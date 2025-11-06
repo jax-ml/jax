@@ -68,8 +68,7 @@ from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    PmapSharding, NamedSharding, ShardingContext, SPMDAxisContext,
-    PartitionSpec as P, canonicalize_sharding, flatten_spec)
+    PmapSharding, NamedSharding, PartitionSpec as P, canonicalize_sharding, flatten_spec)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DType, DTypeLike, Shape
 from jax._src.util import (cache, canonicalize_axis,
                            safe_map, safe_zip, split_list, weakref_lru_cache,
@@ -3333,12 +3332,14 @@ def sort_key_val(keys: Array, values: ArrayLike, dimension: int = -1,
   k, v = sort_p.bind(keys, values, dimension=dimension, is_stable=is_stable, num_keys=1)
   return k, v
 
-def top_k(operand: ArrayLike, k: int) -> tuple[Array, Array]:
-  """Returns top ``k`` values and their indices along the last axis of ``operand``.
+def top_k(operand: ArrayLike, k: int, *, axis: int = -1) -> tuple[Array, Array]:
+  """Returns top ``k`` values and their indices along the specified axis of ``operand``.
 
   Args:
     operand: N-dimensional array of non-complex type.
     k: integer specifying the number of top entries.
+    axis: optional integer specifying the axis along which to compute the top
+      ``k`` entries. Default is -1, indicating the last axis.
 
   Returns:
     A tuple ``(values, indices)`` where
@@ -3346,8 +3347,8 @@ def top_k(operand: ArrayLike, k: int) -> tuple[Array, Array]:
     - ``values`` is an array containing the top k values along the last axis.
     - ``indices`` is an array containing the indices corresponding to values.
 
-  ``values[..., i]`` is the ``i``-th largest entry in ``operand`` along the last
-  axis, and its index is ``indices[..., i]``.
+  ``values[..., i, ...]`` is the ``i``-th largest entry in ``operand`` along the
+  specified axis, and its index is ``indices[..., i, ...]``.
 
   If two elements are equal, the lower-index element appears first.
 
@@ -3369,7 +3370,8 @@ def top_k(operand: ArrayLike, k: int) -> tuple[Array, Array]:
     k = int(k)
   if k < 0:
     raise ValueError(f"k argument to top_k must be nonnegative, got {k}")
-  return top_k_p.bind(operand, k=k)
+  axis = canonicalize_axis(axis, np.ndim(operand))
+  return top_k_p.bind(operand, k=k, axis=axis)
 
 def tie_in(x: Any, y: T) -> T:
   """Deprecated. Ignores ``x`` and returns ``y``."""
@@ -3480,12 +3482,19 @@ def _delta(dtype: DTypeLike, shape: Shape, axes: Sequence[int]) -> Array:
 
 def _tri(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
-  offset = _clip_int_to_valid_range(offset, np.int32,
-                                    "argument `offset` of jax.numpy.tri")
+  offset = asarray(core.dimension_as_value(offset))
+  if not dtypes.issubdtype(offset, np.integer):
+    raise TypeError(f"offset must be an integer, got {offset!r}")
+  shape_dtype = lax_utils.int_dtype_for_shape(shape, signed=True)
+  if (
+      np.iinfo(offset.dtype).min < np.iinfo(shape_dtype).min
+      or np.iinfo(offset.dtype).max > np.iinfo(shape_dtype).max
+  ):
+    shape_dtype = np.dtype(np.int64)
   dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "tri")
-  bool_tri = ge(add(broadcasted_iota(np.int32, shape, 0),
-                    asarray(core.dimension_as_value(offset)).astype(np.int32)),
-                broadcasted_iota(np.int32, shape, 1))
+  bool_tri = ge(add(broadcasted_iota(shape_dtype, shape, 0),
+                    offset.astype(shape_dtype)),
+                broadcasted_iota(shape_dtype, shape, 1))
   return convert_element_type_p.bind(bool_tri, new_dtype=dtype, weak_type=False,
                                      sharding=None)
 
@@ -6403,18 +6412,7 @@ def _ragged_dot_general_lower(
   if group_offset is not None:
     raise NotImplementedError('Unimplemented group_offset support.')
 
-  # TODO(pravnar): Remove this once we have sharding support.
-  def use_default_lowering():
-    if config.jax_ragged_dot_use_ragged_dot_instruction.value:
-      # Default lowering is via the pattern match, hence we return False.
-      return False
-    axis_context = ctx.module_context.axis_context
-    return (
-        isinstance(axis_context, SPMDAxisContext)
-        or isinstance(axis_context, ShardingContext)
-        and axis_context.num_devices > 1
-    )
-  if use_default_lowering():
+  if not config.jax_ragged_dot_use_ragged_dot_instruction.value:
     result = mlir.lower_fun(_ragged_dot_general_impl, multiple_results=False)(
         ctx, lhs, rhs, group_sizes,
         ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
@@ -8240,7 +8238,7 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
 mlir.register_lowering(sort_p, _sort_lower)
 
 
-def _top_k_abstract_eval(operand, *, k):
+def _top_k_abstract_eval(operand, *, k, axis):
   if dtypes.issubdtype(operand.dtype, np.complexfloating):
     raise ValueError("top_k is not compatible with complex inputs.")
   if k < 0:
@@ -8248,28 +8246,30 @@ def _top_k_abstract_eval(operand, *, k):
   if len(operand.shape) == 0:
     raise TypeError("top_k operand must have >= 1 dimension, got {}"
                     .format(operand.shape))
+  if not (0 <= axis < len(operand.shape)):
+    raise ValueError(f"axis argument out of range: {axis=} for {operand.shape=}")
   shape = list(operand.shape)
-  if shape[-1] < k:
-    msg = "k argument to top_k must be no larger than minor dimension; {} vs {}"
-    raise ValueError(msg.format(k, shape))
+  if shape[axis] < k:
+    raise ValueError("k argument to top_k must be no larger than size along axis;"
+                     f" got {k=} with {shape=} and {axis=}")
   int32_max = dtypes.iinfo('int32').max
   try:
-    too_large = (shape[-1] > int32_max + 1)
+    too_large = (shape[axis] > int32_max + 1)
   except core.InconclusiveDimensionOperation:
     pass
   else:
     if too_large:
       raise ValueError("top_k returns int32 indices, which will overflow for array dimensions "
                        f"larger than the maximum int32 ({int32_max}). Got {operand.shape=}")
-  shape[-1] = k
+  shape[axis] = k
   return (operand.update(shape=shape, dtype=operand.dtype,
                          weak_type=operand.weak_type),
           operand.update(shape=shape, dtype=np.dtype(np.int32)))
 
-def _top_k_jvp(primals, tangents, *, k):
+def _top_k_jvp(primals, tangents, *, k, axis):
   operand, = primals
   tangent, = tangents
-  primals_out = top_k(operand, k)
+  primals_out = top_k(operand, k, axis=axis)
   if type(tangent) is ad_util.Zero:
     tangent_out = ad_util.Zero.from_primal_value(primals_out[0])
   else:
@@ -8281,40 +8281,52 @@ def _top_k_jvp(primals, tangents, *, k):
     slice_sizes = (1,) * rank
     dnums = slicing.GatherDimensionNumbers(
         offset_dims=(),
-        collapsed_slice_dims=(rank - 1,),
-        operand_batching_dims=tuple(range(rank - 1)),
-        start_indices_batching_dims=tuple(range(rank - 1)),
-        start_index_map=(rank - 1,),
+        collapsed_slice_dims=(axis,),
+        operand_batching_dims=tuple(i for i in range(rank) if i != axis),
+        start_indices_batching_dims=tuple(i for i in range(rank) if i != axis),
+        start_index_map=(axis,),
     )
     tangent_out = slicing.gather(tangent, gather_indices, dnums, slice_sizes)
   return primals_out, (tangent_out, ad_util.Zero.from_primal_value(primals_out[1]))
 
-def _top_k_batch_rule(batched_args, batch_dims, *, k):
+def _top_k_batch_rule(batched_args, batch_dims, *, k, axis):
   operand, = batched_args
   bdim, = batch_dims
-  if bdim == operand.ndim-1:
-    perm = np.arange(operand.ndim)
-    perm[bdim-1], perm[bdim] = perm[bdim], perm[bdim-1]
-    top_k_v, top_k_i = top_k(transpose(operand, perm), k=k)
-    return (transpose(top_k_v, perm),
-            transpose(top_k_i, perm)), (bdim, bdim)
-  else:
-    return top_k(operand, k=k), (bdim, bdim)
+  if bdim <= axis:
+    axis += 1
+  return top_k(operand, k=k, axis=axis), (bdim, bdim)
 
 top_k_p = Primitive('top_k')
 top_k_p.multiple_results = True
 top_k_p.def_impl(partial(dispatch.apply_primitive, top_k_p))
 top_k_p.def_abstract_eval(_top_k_abstract_eval)
-def _top_k_lower(ctx, operand, k):
+def _top_k_lower(ctx, operand, k, axis):
+  # Move axis to last dimension:
+  ndim = len(ctx.avals_in[0].shape)
+  if axis != ndim - 1:
+    perm = list(range(ndim))
+    perm[axis], perm[-1] = perm[-1], perm[axis]
+    operand = hlo.transpose(operand, mlir.dense_int_array(perm))
+  else:
+    perm = None
+
+  # Compute the top-k along the last dimension
   if core.is_constant_dim(k):
-    return chlo.TopKOp(operand, mlir.i64_attr(k)).results
-  k_value, = mlir.eval_dynamic_shape_as_vals(ctx, (k,))
-  out_values_aval, out_indices_aval, = ctx.avals_out
-  return mlir.custom_call(
-      "stablehlo.dynamic_top_k",
-      result_types=[mlir.aval_to_ir_type(out_values_aval),
-       mlir.aval_to_ir_type(out_indices_aval)],
-      operands=[operand, k_value]).results
+    results = chlo.TopKOp(operand, mlir.i64_attr(k)).results
+  else:
+    k_value, = mlir.eval_dynamic_shape_as_vals(ctx, (k,))
+    out_values_aval, out_indices_aval, = ctx.avals_out
+    results = mlir.custom_call(
+        "stablehlo.dynamic_top_k",
+        result_types=[mlir.aval_to_ir_type(out_values_aval),
+        mlir.aval_to_ir_type(out_indices_aval)],
+        operands=[operand, k_value]).results
+
+  # Move last dimension back into place
+  if perm is not None:
+    results = [hlo.transpose(result, mlir.dense_int_array(perm))
+               for result in results]
+  return results
 
 mlir.register_lowering(top_k_p, _top_k_lower)
 ad.primitive_jvps[top_k_p] = _top_k_jvp
@@ -8914,6 +8926,12 @@ def _one(x):
                   sharding=x_aval.sharding.update(spec=P()))
   return out
 
+def _one_vjp(x):
+  x_aval = core.get_aval(x)
+  ct_s = core.primal_sharding_to_cotangent_sharding(x_aval.sharding)
+  ct_s = ct_s.update(spec=ct_s.spec.update(partitions=()))
+  return full_like(x, shape=(), fill_value=1, sharding=ct_s)
+
 _twos: Callable = partial(full_like, fill_value=2)
 _two: Callable = partial(full_like, shape=(), fill_value=2)
 
@@ -9191,7 +9209,8 @@ def _optimization_barrier_lowering_rule(ctx, *args):
 
 optimization_barrier_p = core.Primitive('optimization_barrier')
 optimization_barrier_p.multiple_results = True
-optimization_barrier_p.def_impl(lambda *xs: xs)
+optimization_barrier_p.def_impl(
+    partial(dispatch.apply_primitive, optimization_barrier_p))
 optimization_barrier_p.def_abstract_eval(_optimization_barrier_abstract_eval)
 mlir.register_lowering(optimization_barrier_p,
                        _optimization_barrier_lowering_rule)

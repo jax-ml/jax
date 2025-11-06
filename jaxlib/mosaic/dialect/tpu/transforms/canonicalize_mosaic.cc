@@ -1217,6 +1217,23 @@ FailureOr<Value> canonicalize_select(const CanonicalizeContext& ctx,
            << result_type << " is not supported on this target.";
   }
 
+  // On TPUv4, bf16 float extension and truncation
+  // operations are faster than those for integers.
+  if (result_type.getElementType().isBF16()) {
+    auto extended_shape =
+    VectorType::get(result_type.getShape(), builder.getF32Type());
+    Value true_val =
+        builder.create<arith::ExtFOp>(extended_shape, op.getTrueValue());
+    Value false_val =
+        builder.create<arith::ExtFOp>(extended_shape, op.getFalseValue());
+    Value new_op =
+        builder.create<arith::SelectOp>(op.getCondition(), true_val, false_val);
+    new_op = builder.create<arith::TruncFOp>(result_type, new_op);
+    op.replaceAllUsesWith(new_op);
+    op.erase();
+    return new_op;
+  }
+
   VectorType itype =
       VectorType::get(result_type.getShape(), builder.getIntegerType(bitwidth));
   Value true_val = builder.create<arith::BitcastOp>(itype, op.getTrueValue());
@@ -1353,6 +1370,32 @@ FailureOr<Value> canonicalize_sitofp(const CanonicalizeContext &ctx,
     return new_op;
   }
 
+  // We have low-level optimized code for s8->f8 casts on v7.
+  if (ctx.hardware_generation >= 7 && is_vector &&
+      src_vty.getElementType().isSignlessInteger(8) &&
+      isa<Float8E5M2Type, Float8E4M3FNType>(dst_vty.getElementType())) {
+    Value new_op = builder.create<tpu::SIToFPOp>(
+        VectorType::get(src_vty.getShape(), dst_vty.getElementType()),
+        op.getIn(), tpu::RoundingMode::kToNearestEven);
+    op.replaceAllUsesWith(new_op);
+    op.erase();
+    return new_op;
+  }
+
+  // Convert s4->f8 casts to s4->s8->f8 on v7 so that we can use the optimized
+  // s8->f8 code path above.
+  if (ctx.hardware_generation >= 7 && is_vector &&
+      src_vty.getElementType().isSignlessInteger(4) &&
+      isa<Float8E5M2Type, Float8E4M3FNType>(dst_vty.getElementType())) {
+    Value new_op = builder.create<arith::ExtSIOp>(
+        VectorType::get(src_vty.getShape(), builder.getI8Type()), op.getIn());
+    new_op = builder.create<arith::SIToFPOp>(
+        VectorType::get(src_vty.getShape(), dst_vty.getElementType()), new_op);
+    op.replaceAllUsesWith(new_op);
+    op.erase();
+    return new_op;
+  }
+
   if (src_bitwidth == 32 && dst_bitwidth == 32) {
     return raw_op.getResult(0);
   }
@@ -1425,66 +1468,6 @@ FailureOr<Value> canonicalize_vector_transpose(const CanonicalizeContext &ctx,
   return new_op;
 }
 
-// Finds the split point for a reshape between a multi-dimensional shape and a
-// shape where a suffix has been collapsed into a single dimension.
-//
-// This function checks if `src_shape` and `tgt_shape` follow the pattern:
-//   src_shape: (P..., S_1, S_2, ..., S_N)
-//   tgt_shape: (P..., T_collapsed)
-// where `P` is a common prefix and `product(S_1..S_N) == T_collapsed`.
-//
-// It handles a differing number of leading 1s in the prefix by stripping them
-// from both shapes before comparison.
-//
-// This utility is used for two inverse patterns:
-// 1. Collapse (e.g., `load` -> `reshape`): The function is called directly,
-//    where `src_shape` is the multi-dimensional pre-reshape vector shape.
-// 2. Expand (e.g., `reshape` -> `store`): The function is called with swapped
-//    arguments, where `src_shape` is the multi-dimensional *post-reshape*
-//    vector shape.
-//
-// Returns:
-//   - A pair containing:
-//     1. The index in `src_shape` where the collapsing suffix begins.
-//     2. The product of the collapsed dimensions excluding the innermost one
-//        (i.e., product(S_1..S_{N-1})), used as the "sublane product".
-//   - `std::nullopt` if the shapes do not match the pattern.
-std::optional<std::pair<int, int>> findSplitPoint(ArrayRef<int64_t> src_shape,
-                                                  ArrayRef<int64_t> tgt_shape) {
-  int s = 0, t = 0;
-  // drop leading 1s
-  while (s < src_shape.size() && src_shape[s] == 1) {
-    ++s;
-  }
-  while (t < tgt_shape.size() && tgt_shape[t] == 1) {
-    ++t;
-  }
-
-  // Find the end of the common prefix between the shapes (ignoring leading 1s).
-  int s_prefix_end = s, t_prefix_end = t;
-  while (s_prefix_end < src_shape.size() && t_prefix_end < tgt_shape.size() &&
-         src_shape[s_prefix_end] == tgt_shape[t_prefix_end]) {
-    ++s_prefix_end;
-    ++t_prefix_end;
-  }
-
-  // After the common prefix, the rest of the target shape must consist of just
-  // one dimension (the collapsed one).
-  if (t_prefix_end != tgt_shape.size() - 1) {
-    return std::nullopt;
-  }
-  int64_t src_prod = 1;
-  for (int i = s_prefix_end; i < src_shape.size(); ++i) {
-    src_prod *= src_shape[i];
-  }
-
-  if (tgt_shape.back() != src_prod) {
-    return std::nullopt;
-  }
-  src_prod /= src_shape.back();
-  return std::make_pair(s_prefix_end, src_prod);
-}
-
 FailureOr<Value> canonicalize_shape_cast(const CanonicalizeContext& ctx,
                                          Operation& raw_op) {
   CanonicalBuilder builder(ctx, raw_op.getLoc(), &raw_op);
@@ -1498,173 +1481,146 @@ FailureOr<Value> canonicalize_shape_cast(const CanonicalizeContext& ctx,
   op.replaceAllUsesWith(new_op);
   op.erase();
   return new_op;
-                                         }
+}
 
 FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
                                       Operation &raw_op) {
-  // def fused_load_reshape(memref, indices):
-  //   # 1. Create a memref view for packed i32 loading.
-  //   # Original shape: <Prefix_mem..., S, Lane, ElemTy>
-  //   # New i32 view:   <Prefix_mem..., S/packing, Lane, i32>
-  //   i32_view = memref.reshape_and_bitcast(...)
+  // Below, we try to look for reshapes that flatten multiple dims into the
+  // lane dimension. If the source of the reshape originates from a load of a
+  // ref with 128 minor dimension (effectively untiled), we can replace the
+  // load/reshape sequence with an efficient strided load. In essence, the
+  // strided load creates vregs with a narrow slice along the target minor
+  // dimension, but with the 2nd minor dim after the reshape already in
+  // sublanes. The results of strided load can be concatenated to form the
+  // final vector result.
   //
-  //   # 2. Load i32 rows, unpack elements from each, and collect the chunks.
-  //   unpacked_chunks = []
-  //   for i in range(S / packing):
-  //     # Load a single row of packed data. This corresponds to a
-  //     # `StridedLoad` + `ShapeCast`. Result shape: <Prefix_vec..., Lane, i32>
-  //     i32_chunk = load_i32_row(i32_view, indices_prefix, i)
-  //
-  //     # Unpack `packing` smaller elements from each i32 in the chunk.
-  //     for p in range(packing):
-  //       unpacked_chunk = i32_chunk >> (p * bitwidth)
-  //       unpacked_chunks.append(unpacked_chunk)
-  //
-  //   # 3. Concatenate all resulting chunks into a single large vector.
-  //   # Result shape after concat: <Prefix_vec..., S*Lane, i32>
-  //   concatenated_i32 = np.concatenate(unpacked_chunks, axis=-1)
-  //
-  //   # 4. Truncate/bitcast the i32 vector to the final target type.
-  //   return concatenated_i32.trunc().bitcast(final_element_type)
+  // A little extra care needs to be applied to packed types, which we handle by
+  // briefly extending to 32-bit and repacking them after concatenation.
   auto op = cast<tpu::ReshapeOp>(raw_op);
-  Value src = op.getSource();
-  auto tgt_ty = op.getResult().getType();
+  TypedValue<VectorType> src = op.getSource();
+  VectorType src_ty = src.getType();
+  VectorType tgt_ty = op.getResult().getType();
+  if (src_ty.getRank() < 2 || tgt_ty.getRank() < 1) {
+    return raw_op.getResult(0);
+  }
+  const int bitwidth = src_ty.getElementTypeBitWidth();
+  const int packing = 32 / bitwidth;
+  if (ctx.hardware_generation < 4 && packing > 1) {
+    return raw_op.getResult(0);
+  }
 
   auto load_op = dyn_cast_if_present<vector::LoadOp>(src.getDefiningOp());
-  if (!load_op) {
-    return raw_op.getResult(0);
-  }
-  // This rewrite is only safe if the load has one user (this shape_cast).
-  if (!load_op.getResult().hasOneUse()) {
+  // This rewrite might not be profitable if the load has other users.
+  if (!load_op || !load_op.getBase().hasOneUse()) {
     return raw_op.getResult(0);
   }
 
-  auto src_ty = cast<VectorType>(load_op.getResult().getType());
-  auto ref = load_op.getBase();
-  auto memref_ty = ref.getType();
+  TypedValue<MemRefType> ref = load_op.getBase();
+  MemRefType ref_ty = getMemRefType(ref);
+  // The reshape below might be invalid if the memref is not contiguous, but it
+  // is an overly conservative check (we don't need all dims to be contiguous).
   if (!isContiguousMemref(ref)) {
     return raw_op.getResult(0);
   }
 
-  const int64_t sublane = ctx.target_shape[0];
   const int64_t lane = ctx.target_shape[1];
-  // Check if we are collapsing the lanes.
-  if (tgt_ty.getShape().back() == lane) {
-    return raw_op.getResult(0);
-  }
-  // This pattern is for collapse only, not expand.
-  if (src_ty.getRank() < tgt_ty.getRank()) {
-    return raw_op.getResult(0);
-  }
-
-  auto split_opt = findSplitPoint(src_ty.getShape(), tgt_ty.getShape());
-  if (!split_opt) {
-    return raw_op.getResult(0);
-  }
-  auto [split_point, sublane_prod] = *split_opt;
-  if (split_point == 0) {
-    // This is a 1d case
+  auto src_shape = src_ty.getShape();
+  auto tgt_shape = tgt_ty.getShape();
+  // Only handle the cases where the minor dim starts out as the number of lanes
+  // and we fold at least the second minor dim into it, in a way that changes
+  // its shape.
+  if (src_shape.back() != lane ||
+      tgt_shape.back() % (packing * lane) != 0 ||
+      tgt_shape.back() == src_shape.back() ||
+      tgt_shape.back() < llvm::product_of(src_shape.take_back(2))) {
     return raw_op.getResult(0);
   }
 
-  auto memref_shape = cast<MemRefType>(memref_ty).getShape();
-  auto src_ty_shape = src_ty.getShape();
-  auto mem_rank = memref_shape.size();
-  auto vec_rank = src_ty_shape.size();
-  if (mem_rank < 2 || vec_rank < 2) {
-    // This is a 1d case
+  // We don't handle memrefs with padding.
+  auto tiled_layout = dyn_cast<tpu::TiledLayoutAttr>(ref_ty.getLayout());
+  if (!tiled_layout || tiled_layout.getTiles().empty()) {
     return raw_op.getResult(0);
   }
-
-  if (memref_shape[mem_rank - 1] != src_ty_shape[vec_rank - 1] ||
-      memref_shape[mem_rank - 2] != src_ty_shape[vec_rank - 2]) {
-    // This indicates slicing in the 2nd minor or minor.
-    return raw_op.getResult(0);
-  }
-
-  int bitwidth = src_ty.getElementTypeBitWidth();
-  int packing = 32 / bitwidth;
-  if (ctx.hardware_generation < 4 && packing > 1) {
-    return raw_op.getResult(0);
-  }
-  if (sublane_prod == 0 || sublane_prod % packing != 0) {
-    return raw_op.getResult(0);
-  }
-  // We only support cases where we fill a full vreg.
-  auto tgt_sublane = *(tgt_ty.getShape().end() - 2);
-  auto tgt_lane = *(tgt_ty.getShape().end() - 1);
-  if (tgt_sublane % (sublane * packing) != 0) {
-    if (tgt_lane % lane != 0) {
+  ArrayRef<int64_t> front_tile = tiled_layout.getTiles().front().dimensions();
+  ArrayRef<int64_t> ref_tiled_shape =
+      ref_ty.getShape().take_back(front_tile.size());
+  for (int i = 0; i < front_tile.size(); ++i) {
+    if (ref_tiled_shape[i] % front_tile[i]) {
       return raw_op.getResult(0);
     }
   }
 
-  auto indices = load_op.getIndices();
-
-  // Distinguish between the memref's prefix and the (potentially sliced)
-  // vector's prefix.
-  SmallVector<int64_t> mem_shape(memref_ty.getShape().begin(),
-                                 memref_ty.getShape().begin() + split_point);
-  SmallVector<int64_t> vec_shape(src_ty.getShape().begin(),
-                                 src_ty.getShape().begin() + split_point);
-
-  CanonicalBuilder b(ctx, op->getLoc(), op.getOperation());
-  auto loc = op.getLoc();
-  auto i32_type = b.getI32Type();
-
-  // Create a new memref view that matches the dimensions being collapsed.
-  mem_shape.back() *= sublane_prod;
-  mem_shape.push_back(lane);
-  auto mem_shape_prod = 1;
-  for (int i = 0; i < mem_shape.size(); ++i) {
-    mem_shape_prod *= mem_shape[i];
+  // NOTE: We could generalize this to allow only flattening part of a dimension
+  int folded_dims = 0;
+  {
+    int suffix_size = 1;
+    auto sizes_it = src_shape.rbegin();
+    while (suffix_size < tgt_shape.back()) {
+      suffix_size *= *(sizes_it++);
+    }
+    // Make sure that the minor dim is folded only from entire major dims, not
+    // from a part of some minor dim.
+    if (suffix_size != tgt_shape.back()) {
+      return raw_op.getResult(0);
+    }
+    folded_dims = sizes_it - src_shape.rbegin();
   }
-  auto ref_prod = 1;
-  for (int i = 0; i < ref.getType().getShape().size(); ++i) {
-    ref_prod *= ref.getType().getShape()[i];
-  }
-  if (mem_shape_prod != ref_prod) {
-    // In certain cases, upstream padding may change the memref shape,
-    // which makes the intermediary memref reshape we rely on not sound.
-    // ex: 13 in sublanes will get padded to 16 in sublanes for bf16.
+  DCHECK_GE(folded_dims, 2);  // Should fold at least 2nd minor into minor.
+
+  // We don't handle slicing in the folded dims at the moment.
+  if (ref_ty.getShape().take_back(folded_dims) !=
+      src_ty.getShape().take_back(folded_dims)) {
     return raw_op.getResult(0);
   }
-  Value reshaped_ref = b.create<tpu::MemRefReshapeOp>(
-      MemRefType::get(mem_shape, memref_ty.getElementType()), ref);
 
-  // Bitcast this view to i32 for packed loading.
+  // NOTE: Source vector shape might be different from ref shape when slicing.
+  SmallVector<int64_t> mem_shape(ref_ty.getShape().drop_back(folded_dims));
+  if (mem_shape.empty()) {
+    mem_shape.push_back(1);
+  }
+
+  CanonicalBuilder b(ctx, op->getLoc(), op.getOperation());
+  Location loc = op.getLoc();
+
+  // Flatten the untiled dims into second minor and bitcast to i32.
+  mem_shape.back() *= tgt_shape.back() / lane;
+  mem_shape.push_back(lane);
+  Value reshaped_ref = b.create<tpu::MemRefReshapeOp>(
+      MemRefType::get(mem_shape, ref_ty.getElementType()), ref);
   *(mem_shape.end() - 2) /= packing;
   Value i32_view = b.create<tpu::MemRefBitcastOp>(
-      MemRefType::get(mem_shape, i32_type), reshaped_ref);
+      MemRefType::get(mem_shape, b.getI32Type()), reshaped_ref);
 
   // Define the shape of the small i32 chunk we will load in each iteration.
-  SmallVector<int64_t> chunk_shape = vec_shape;
+  SmallVector<int64_t> chunk_shape(src_shape.drop_back(folded_dims));
+  if (chunk_shape.empty()) {
+    chunk_shape.push_back(1);
+  }
   chunk_shape.push_back(lane);
-  auto chunk_ty = VectorType::get(chunk_shape, i32_type);
+  VectorType chunk_ty = VectorType::get(chunk_shape, b.getI32Type());
 
-  // Set up strides for tpu.StridedLoadOp. We only stride along the dimension
-  // we're iterating over.
-  int stride_dim = split_point - 1;
   SmallVector<int32_t> strides(mem_shape.size(), 1);
-  int64_t stride = sublane_prod / packing;
-  strides[stride_dim] = stride;
-
-  // Loop to load, unpack, and collect all vector chunks.
-  SmallVector<Value> unpacked_chunks;
-  unpacked_chunks.reserve(sublane_prod);
+  const int64_t sublane_prod = tgt_shape.back() / lane;
+  const int64_t stride = sublane_prod / packing;
+  *(strides.end() - 2) = stride;
 
   // Reuse indices from the original load for the prefix.
-  SmallVector<Value> idxs(indices.begin(), indices.begin() + split_point);
+  auto indices = load_op.getIndices();
+  SmallVector<Value> idxs(indices.drop_back(folded_dims));
+  if (idxs.empty()) {
+    idxs.push_back(IdxConst(0, b, loc));
+  }
   Value split_base_idx =
       b.create<arith::MulIOp>(idxs.back(), IdxConst(stride, b, loc));
   idxs.push_back(IdxConst(0, b, loc));
 
+  SmallVector<Value> unpacked_chunks;
+  unpacked_chunks.reserve(stride * packing);
   for (int i = 0; i < stride; ++i) {
-    idxs[stride_dim] =
+    *(idxs.end() - 2) =
         b.create<arith::AddIOp>(split_base_idx, IdxConst(i, b, loc));
     Value chunk =
         b.create<tpu::StridedLoadOp>(chunk_ty, i32_view, idxs, strides);
-
     // Unpack elements from i32 if necessary.
     for (int p = 0; p < packing; ++p) {
       unpacked_chunks.push_back(b.create<arith::ShRUIOp>(
@@ -1672,36 +1628,43 @@ FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
     }
   }
 
-  Value i32_flat;
+  Value unpacked_flat;
   if (unpacked_chunks.size() == 1) {
-    i32_flat = unpacked_chunks.front();
+    unpacked_flat = unpacked_chunks.front();
   } else {
-    SmallVector<int64_t> concat_shape = vec_shape;
-    concat_shape.push_back(lane * sublane_prod);
-    int concat_dim = concat_shape.size() - 1;
-    i32_flat = b.create<tpu::ConcatenateOp>(
-        VectorType::get(concat_shape, i32_type), unpacked_chunks, concat_dim);
+    SmallVector<int64_t> concat_shape(src_shape.drop_back(folded_dims));
+    if (concat_shape.empty()) {
+      concat_shape.push_back(1);
+    }
+    concat_shape.push_back(tgt_shape.back());
+    unpacked_flat = b.create<tpu::ConcatenateOp>(
+        VectorType::get(concat_shape, b.getI32Type()), unpacked_chunks,
+        concat_shape.size() - 1);
   }
 
-  // Convert the final i32 vector back to the target type.
-  Value final_vec = i32_flat;
-  if (packing > 1) {
-    final_vec = b.create<arith::TruncIOp>(
-        VectorType::get(cast<VectorType>(i32_flat.getType()).getShape(),
+  Value result = unpacked_flat;
+  if (packing > 1) {  // Pack back, if needed.
+    result = b.create<arith::TruncIOp>(
+        VectorType::get(cast<VectorType>(result.getType()).getShape(),
                         b.getIntegerType(bitwidth)),
-        i32_flat);
+        result);
   }
-  final_vec = b.create<arith::BitcastOp>(
-      VectorType::get(cast<VectorType>(final_vec.getType()).getShape(),
-                      tgt_ty.getElementType()),
-      final_vec);
-  if (final_vec.getType() != tgt_ty) {
-    final_vec = b.create<tpu::ReshapeOp>(tgt_ty, final_vec);
+  // Bitcast to the target type, if needed.
+  if (cast<VectorType>(result.getType()) != tgt_ty.getElementType()) {
+    result = b.create<arith::BitcastOp>(
+        VectorType::get(cast<VectorType>(result.getType()).getShape(),
+                        tgt_ty.getElementType()),
+        result);
   }
+  // Apply the reshape to major dims, if needed.
+  if (cast<VectorType>(result.getType()).getShape() != tgt_ty.getShape()) {
+    result = b.create<tpu::ReshapeOp>(tgt_ty, result);
+  }
+  DCHECK_EQ(result.getType(), tgt_ty);
 
-  op.replaceAllUsesWith(final_vec);
+  op.replaceAllUsesWith(result);
   op.erase();
-  return final_vec;
+  return result;
 }
 
 FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
@@ -1854,9 +1817,8 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
 
   bool uses_xlu = !op.getPermutation().empty() &&
                   op.getPermutation().back() != op.getPermutation().size() - 1;
-  // TODO(b/448848595): Enable 8-bit transposes on generation 7.
   if (element_type.getIntOrFloatBitWidth() == 8 && ctx.compatibility_mode &&
-      ctx.hardware_generation > 3 && uses_xlu) {
+      ctx.hardware_generation > 3 && ctx.hardware_generation < 6 && uses_xlu) {
     VectorType input_vty_int = VectorType::get(
         input_vty.getShape(),
         builder.getIntegerType(input_vty.getElementTypeBitWidth()));

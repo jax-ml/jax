@@ -278,7 +278,7 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
       self.skipTest("Megacore is only available on TPU v4 or TPU v5p")
     if num_kv_heads % 2 != 0 and megacore_mode == "kv_head":
       self.skipTest("Skip kv_head megacore mode when num_kv_heads is odd")
-    if (jtu.is_device_tpu(version=7) and dtype == jnp.bfloat16 and
+    if (jtu.is_device_tpu(version=7, variant='x') and dtype == jnp.bfloat16 and
         num_kv_heads == 8):
       self.skipTest("Test does not work with large second-minor layout.")
     max_kv_len = 2048

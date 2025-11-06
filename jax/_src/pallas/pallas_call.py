@@ -32,6 +32,7 @@ from jax._src import effects
 from jax._src import hijax
 from jax._src import linear_util as lu
 from jax._src import state
+from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import ad
@@ -152,6 +153,7 @@ def _pallas_call_to_lojax(
     out_avals: tuple[jax_core.AbstractValue, ...],
     backend: Backend | None,
     metadata: FrozenDict[str, str] | None,
+    name: str | None,
 ):
   if any(jax_core.get_aval(x).has_qdd for x in hi_args):
     raise NotImplementedError("pallas_call does not support QDD for inputs")
@@ -221,6 +223,7 @@ def _pallas_call_to_lojax(
       interpret=interpret,
       input_output_aliases=tuple(new_input_output_aliases),
       out_avals=tuple(lo_out_avals),
+      name=name,
   )
   return pe.raise_lo_outs(out_avals, lo_outs)
 pallas_call_p.to_lojax = _pallas_call_to_lojax  # type: ignore
@@ -241,6 +244,7 @@ def _pallas_call_jvp_rule(
     out_avals: tuple[jax_core.AbstractValue, ...],
     backend: Backend | None,
     metadata: FrozenDict[str, str] | None,
+    name: str | None,
 ):
   debug_info = jaxpr.debug_info
   if grid_mapping.num_dynamic_grid_bounds:
@@ -308,6 +312,7 @@ def _pallas_call_jvp_rule(
       out_avals=(*out_avals, *out_avals),
       backend=backend,
       metadata=metadata,
+      name=name,
   )
   out_primals, out_tangents = split_list(out_flat, [len(out_flat) // 2])
   return out_primals, out_tangents
@@ -457,6 +462,7 @@ def _batch_with_explicit_loop(
     out_avals: tuple[jax_core.AbstractValue, ...],
     backend: Backend | None,
     metadata: FrozenDict[str, str] | None,
+    name: str | None,
 ):
   """Batch the pallas_call by calling it in loop over the batch size.
 
@@ -526,6 +532,7 @@ def _batch_with_explicit_loop(
         out_avals=out_avals,
         backend=backend,
         metadata=metadata,
+        name=name,
     )
     for i, batch_out_array in enumerate(batch_out):
       state[i] = jax.lax.dynamic_update_index_in_dim(
@@ -557,6 +564,7 @@ def _pallas_call_batching_rule(
     out_avals: tuple[jax_core.AbstractValue, ...],
     backend: Backend | None,
     metadata: FrozenDict[str, str] | None = None,
+    name: str | None = None,
 ):
   if mesh is not None:
     raise NotImplementedError(
@@ -596,6 +604,7 @@ def _pallas_call_batching_rule(
         out_avals=out_avals,
         backend=backend,
         metadata=metadata,
+        name=name,
     )
     return [jnp.expand_dims(x, 0) for x in out], (0,) * len(out)
 
@@ -631,6 +640,7 @@ def _pallas_call_batching_rule(
         out_avals=out_avals,
         backend=backend,
         metadata=metadata,
+        name=name,
     )
   else:
     pass  # No dynamic grid dimensions
@@ -667,6 +677,7 @@ def _pallas_call_batching_rule(
           out_avals=out_avals,
           backend=backend,
           metadata=metadata,
+          name=name,
       )
 
   if not dims:
@@ -761,7 +772,10 @@ def _pallas_call_batching_rule(
       vmapped_dims=(0,) + tuple(a + 1 for a in grid_mapping.vmapped_dims),
   )
 
-  if cost_estimate is not None:
+  # Avoid scaling the cost estimate by the batch size if the batch size is a
+  # dynamic shape (DimExpr).
+  # https://docs.jax.dev/en/latest/export/shape_poly.html#computing-with-dimension-variables
+  if cost_estimate is not None and isinstance(axis_size, int):
     batched_cost_estimate = CostEstimate(
         flops=cost_estimate.flops * axis_size,
         bytes_accessed=cost_estimate.bytes_accessed * axis_size,
@@ -1048,6 +1062,7 @@ def _pallas_call_batching_rule(
       out_avals=batched_out_avals,
       backend=backend,
       metadata=metadata,
+      name=name,
   )
   return out, (0,) * len(out)
 
@@ -1523,6 +1538,7 @@ def _pallas_call_state_discharge_rule(
     out_avals: tuple[jax_core.AbstractValue, ...],
     backend: Backend | None,
     metadata: FrozenDict[str, str] | None,
+    name: str | None,
 ):
   del avals_out
   assert all(isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars)
@@ -1629,6 +1645,7 @@ def _pallas_call_state_discharge_rule(
       out_avals=new_out_avals,
       backend=backend,
       metadata=metadata,
+      name=name,
   )
   refs_out, rest = split_list(out_flat, [num_refs])
   updated_vals_in = refs_out + [None] * len(rest_in_avals)
@@ -1776,6 +1793,7 @@ def _normalize_compiler_params(
   return compiler_params
 
 
+@partial(api_boundary, repro_api_name="jax.experimental.pallas.pallas_call")
 def _pallas_call(
     kernel: Callable[..., None],
     out_shape: Any,
@@ -1909,6 +1927,7 @@ def _pallas_call(
         cost_estimate=cost_estimate,
         backend=backend,
         metadata=FrozenDict(metadata) if metadata is not None else None,
+        name=name,
     )
     out = tree_util.tree_unflatten(out_tree, out_flat)
     return out

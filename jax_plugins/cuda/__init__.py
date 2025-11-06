@@ -335,22 +335,26 @@ def initialize():
       'cuda', priority=500, library_path=str(path), options=options
   )
   if cuda_plugin_extension:
-    xla_client.register_custom_call_handler(
-        "CUDA",
-        functools.partial(
-            cuda_plugin_extension.register_custom_call_target, c_api
-        ),
-    )
-    for _name, _value in cuda_plugin_extension.ffi_registrations().items():
-      xla_client.register_custom_call_target(
-          _name, _value, platform='CUDA', api_version=1
-      )
     xla_client.register_custom_type_handler(
         "CUDA",
         functools.partial(
             cuda_plugin_extension.register_custom_type, c_api
         ),
     )
+    xla_client.register_custom_call_handler(
+        "CUDA",
+        functools.partial(
+            cuda_plugin_extension.register_custom_call_target, c_api
+        ),
+    )
+    for _name, _value in cuda_plugin_extension.ffi_types().items():
+      xla_client.register_custom_type(
+          _name, _value
+      )
+    for _name, _value in cuda_plugin_extension.ffi_handlers().items():
+      xla_client.register_custom_call_target(
+          _name, _value, platform='CUDA', api_version=1
+      )
     triton.register_compilation_handler(
         "CUDA",
         functools.partial(

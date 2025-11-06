@@ -855,12 +855,9 @@ LogicalResult VectorStoreIdxOp::verify() {
                "memref with dimension: ")
            << ref_ty.getRank() << ". Got: " << llvm::size(getIndices()) << ".";
   }
-  if (llvm::size(getIndices()) != value_ty.getRank()) {
-    return emitOpError(
-               "Expected one index vector for each dimension of the value "
-               "to store with dimension: ")
-           << value_ty.getRank() << ". Got: " << llvm::size(getIndices())
-           << ".";
+  if (value_ty.getRank() != 1) {
+    return emitOpError("Expected value to have rank 1. Got: ")
+           << value_ty.getRank() << ".";
   }
   for (const auto [i, index] : llvm::enumerate(getIndices())) {
     VectorType index_ty = llvm::cast<VectorType>(index.getType());
@@ -1820,7 +1817,7 @@ LogicalResult ReciprocalOp::verify() {
 LogicalResult UnpackSubelementsOp::verify() {
   const int packing_factor = getType().getElementTypeBitWidth() /
                              getSource().getType().getElementTypeBitWidth();
-  if (auto index = getIndex(); index < 0 || index >= packing_factor) {
+  if (auto index = getIndex(); index >= packing_factor) {
     return emitOpError("Index must be between 0 and the packing factor (")
            << packing_factor << "), got " << index;
   }
@@ -1842,8 +1839,8 @@ LogicalResult UnpackSubelementsOp::canonicalize(UnpackSubelementsOp op,
       rewriter.replaceAllOpUsesWith(
           op, pack.getPaddedSources(
                   pack.getSources(), pack.getPositions(),
-                  pack.getType().getElementTypeBitWidth() /
-                      op.getType().getElementTypeBitWidth())[op.getIndex()]);
+                  op.getType().getElementTypeBitWidth() /
+                      pack.getType().getElementTypeBitWidth())[op.getIndex()]);
       return success();
     }
     return failure();
@@ -1911,6 +1908,57 @@ LogicalResult PackSubelementsOp::verify() {
       return emitOpError("Positions must be unique");
     }
     seen_positions[position] = true;
+  }
+  return success();
+}
+
+namespace {
+LogicalResult verifyElementwisePacking(Operation *op, Type unpacked_ty,
+                                       Type packed_ty) {
+  if (unpacked_ty.isF32() && !packed_ty.isBF16()) {
+    return op->emitOpError(
+        "Only packing/unpacking between f32 and bf16 is supported for floats");
+  }
+  if (unpacked_ty.isSignlessInteger(32) &&
+      !packed_ty.isSignlessInteger(16) &&
+      !packed_ty.isSignlessInteger(8) &&
+      !packed_ty.isSignlessInteger(4)) {
+    return op->emitOpError(
+        "Only packing/unpacking between i32 and i16/i8/i4 is supported for "
+        "integers");
+  }
+  return success();
+}
+}  // namespace
+
+LogicalResult PackElementwiseOp::verify() {
+  if (getSources().empty()) {
+    return emitOpError("At least one source is required");
+  }
+  const auto src_vty = cast<VectorType>(getSources().front().getType());
+  if (failed(verifyElementwisePacking(*this, src_vty.getElementType(),
+                                      getTargetType()))) {
+    return failure();
+  }
+  const int packing_factor =
+      src_vty.getElementTypeBitWidth() /
+          getTargetType().getIntOrFloatBitWidth();
+  if (packing_factor != getSources().size()) {
+    return emitOpError("The number of sources must match the packing factor (")
+           << packing_factor << "), got " << getSources().size();
+  }
+  return success();
+}
+
+LogicalResult UnpackElementwiseOp::verify() {
+  if (failed(verifyElementwisePacking(*this, getType(), getSourceType()))) {
+    return failure();
+  }
+  const int packing_factor = getType().getElementTypeBitWidth() /
+                             getSourceType().getIntOrFloatBitWidth();
+  if (auto index = getIndex(); index >= packing_factor) {
+    return emitOpError("Index must be between 0 and the packing factor (")
+           << packing_factor << "), got " << index;
   }
   return success();
 }

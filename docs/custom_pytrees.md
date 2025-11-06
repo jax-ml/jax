@@ -12,7 +12,6 @@ kernelspec:
   name: python3
 ---
 
-(extending-pytrees)=
 (pytrees-custom-pytree-nodes)=
 # Custom pytree nodes
 

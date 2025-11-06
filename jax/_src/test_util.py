@@ -1246,36 +1246,30 @@ class JaxTestCase(parameterized.TestCase):
     'jax_legacy_prng_key': 'error',
   }
 
-  _context_stack: ExitStack | None = None
 
 
   def setUp(self):
     super().setUp()
-    self.enter_context(assert_global_configs_unchanged())
+    self.enterContext(assert_global_configs_unchanged())
 
     # We use the adler32 hash for two reasons.
     # a) it is deterministic run to run, unlike hash() which is randomized.
     # b) it returns values in int32 range, which RandomState requires.
     self._rng = npr.RandomState(zlib.adler32(self._testMethodName.encode()))
 
-    # TODO(phawkins): use TestCase.enterContext once Python 3.11 is the minimum
-    # version.
-    self._context_stack = ExitStack()
-    self.addCleanup(self._context_stack.close)
-    stack = self._context_stack
-    stack.enter_context(global_config_context(**self._default_global_config))
+    self.enterContext(global_config_context(**self._default_global_config))
     for config_name, value in self._default_thread_local_config.items():
-      stack.enter_context(config.config_states[config_name](value))
+      self.enterContext(config.config_states[config_name](value))
 
     if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       assert TEST_NUM_THREADS.value <= 1, "Persistent compilation cache is not thread-safe."
-      stack.enter_context(config.enable_compilation_cache(True))
-      stack.enter_context(config.raise_persistent_cache_errors(True))
-      stack.enter_context(config.persistent_cache_min_compile_time_secs(0))
-      stack.enter_context(config.persistent_cache_min_entry_size_bytes(0))
-      tmp_dir = stack.enter_context(tempfile.TemporaryDirectory())
-      stack.enter_context(config.compilation_cache_dir(tmp_dir))
-      stack.callback(compilation_cache.reset_cache)
+      self.enterContext(config.enable_compilation_cache(True))
+      self.enterContext(config.raise_persistent_cache_errors(True))
+      self.enterContext(config.persistent_cache_min_compile_time_secs(0))
+      self.enterContext(config.persistent_cache_min_entry_size_bytes(0))
+      tmp_dir = self.enterContext(tempfile.TemporaryDirectory())
+      self.enterContext(config.compilation_cache_dir(tmp_dir))
+      self.addCleanup(compilation_cache.reset_cache)
 
   def tearDown(self) -> None:
     assert core.reset_trace_state()
@@ -1745,7 +1739,7 @@ def register_event_duration_listener(callback):
     monitoring.register_event_duration_secs_listener(callback)
     yield
   finally:
-    monitoring._unregister_event_duration_listener_by_callback(callback)
+    monitoring.unregister_event_duration_listener(callback)
 
 
 @contextmanager
