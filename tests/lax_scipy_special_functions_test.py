@@ -400,6 +400,16 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(si_jax, expected_si, atol=1e-6, rtol=1e-6)
     self.assertAllClose(ci_jax, expected_ci, atol=1e-6, rtol=1e-6)
 
+  def testSiciValueRanges(self):
+    dtype = jnp.zeros(0).dtype
+    x_samples = np.array([2, 6, 10, 1e15], dtype=dtype)
+    scipy_op = lambda x: osp_special.sici(x)
+    lax_op = lambda x: lsp_special.sici(x)
+    si_scipy, ci_scipy = scipy_op(x_samples)
+    si_jax, ci_jax = lax_op(x_samples)
+    self.assertAllClose(si_jax, si_scipy, atol=1e-6, rtol=1e-6)
+    self.assertAllClose(ci_jax, ci_scipy, atol=1e-6, rtol=1e-6)
+
   def testSiciRaiseOnComplexInput(self):
     samples = jnp.arange(5, dtype=complex)
     with self.assertRaisesRegex(ValueError, "Argument `x` to sici must be real-valued."):
