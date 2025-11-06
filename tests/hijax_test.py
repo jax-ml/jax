@@ -1286,13 +1286,30 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
       box.set(result)
       return box.get()
 
-    f_jit = jax.jit(f, donate_argnums=('box'))
+    f_jit = jax.jit(f, donate_argnames=('box'))
     x = jnp.arange(16.).reshape(8, 2)
     box = Box(x)
     y = jnp.ones((8, 2))
     expected_result = x + y
     result = f_jit(box, y)
     self.assertAllClose(result, expected_result)
+
+  def test_hitypes_eval_shape(self):
+      tup = make_tup(jnp.array(2.0), jnp.array(3.0))
+      x = jnp.array(3.0)
+
+      def loss_fn(x, tup):
+        y = get_tuple_element(tup, 1)
+        return make_tup(x ** 2 + y, y)
+
+      def capturing_loss_fn(x):
+        y = get_tuple_element(tup, 1)
+        return make_tup(x ** 2 + y, y)
+
+      inner_shape = ShapedArray(shape=[], dtype=jnp.float32, weak_type=True)
+      expected_result = TupTy((inner_shape, inner_shape))
+      self.assertEqual(jax.eval_shape(loss_fn, x, tup), expected_result)
+      self.assertEqual(jax.eval_shape(capturing_loss_fn, x), expected_result)
 
   # with differentiable hijax arguments
   def test_hitypes_as_grad_args(self):
