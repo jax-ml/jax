@@ -1044,7 +1044,7 @@ class BlockSpec(pallas_core.BlockSpec):
       the pipelining helpers to use collective async copies, which can improve
       performance.
   """
-  transforms: Sequence[MemoryRefTransform] = ()
+  transforms: tuple[MemoryRefTransform, ...] = ()
   delay_release: int = 0
   collective_axes: tuple[Hashable, ...] = ()
 
