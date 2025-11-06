@@ -716,7 +716,6 @@ class OpsTest(PallasBaseTest):
 
     result = pl.pallas_call(
         kernel,
-        in_specs=[pl.BlockSpec(), pl.BlockSpec()],
         out_shape=jax.ShapeDtypeStruct(x.shape, target_dtype),
     )(x, bits)
 
@@ -729,6 +728,109 @@ class OpsTest(PallasBaseTest):
         jnp.isnan(x_cast), jnp.isnan(result), is_correct_bitwise
     )
     self.assertTrue(jnp.all(is_correct))
+
+  def _pack_unpack_elementwise_test_data(
+      self, shape, unpacked_dtype, packed_dtype):
+    """Generates data for test_pack_elementwise and test_unpack_elementwise."""
+    bitwidth = dtypes.bit_width(packed_dtype)
+    num_sources = 32 // bitwidth
+    if unpacked_dtype == jnp.int32:
+      stacked_sources = jax.random.randint(
+          jax.random.key(0),
+          (num_sources, *shape),
+          minval=-1000,
+          maxval=1000,
+          dtype=unpacked_dtype,
+      )
+    else:
+      stacked_sources = jax.random.uniform(
+          jax.random.key(0), (num_sources, *shape), dtype=unpacked_dtype
+      )
+    stacked_results = (
+        stacked_sources.astype(packed_dtype)
+        .view(getattr(jnp, f"uint{bitwidth}"))
+        .astype(jnp.uint32)
+    )
+    shifts = jnp.arange(num_sources, dtype=jnp.uint32) * bitwidth
+    shifts = jnp.expand_dims(shifts, axis=tuple(range(1, stacked_results.ndim)))
+    packed_data = jnp.bitwise_or.reduce(stacked_results << shifts, axis=0)
+    return stacked_sources, packed_data
+
+  @parameterized.product(
+      config=[
+          (jnp.float32, jnp.bfloat16),
+          (jnp.int32, jnp.int16),
+          (jnp.int32, jnp.int8),
+          (jnp.int32, jnp.int4),
+      ],
+      shape=[(8, 128), (2, 15, 300)],
+  )
+  def test_pack_elementwise(self, config, shape):
+    unpacked_dtype, packed_dtype = config
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 7):
+      self.skipTest("Test requires libtpu from 2025/11/7 or later")
+
+    bitwidth = dtypes.bit_width(packed_dtype)
+    num_sources = 32 // bitwidth
+
+    def kernel(xs_ref, o_ref):
+      xs = [xs_ref[i] for i in range(num_sources)]
+      o_ref[...] = pltpu.pack_elementwise(xs, packed_dtype=packed_dtype)
+
+    stacked_sources, expected = self._pack_unpack_elementwise_test_data(
+        shape, unpacked_dtype, packed_dtype
+    )
+
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.uint32),
+    )(stacked_sources)
+
+    np.testing.assert_array_equal(result, expected)
+
+  @parameterized.product(
+      config=[
+          (jnp.float32, jnp.bfloat16),
+          (jnp.int32, jnp.int16),
+          (jnp.int32, jnp.int8),
+          (jnp.int32, jnp.int4),
+      ],
+      index=[0, 1, 3],
+      shape=[(8, 128), (2, 15, 300)],
+  )
+  def test_unpack_elementwise(self, config, index, shape):
+    unpacked_dtype, packed_dtype = config
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 7):
+      self.skipTest("Test requires libtpu from 2025/11/7 or later")
+
+    bitwidth = dtypes.bit_width(packed_dtype)
+    packing_factor = 32 // bitwidth
+
+    if index >= packing_factor:
+      self.skipTest(
+          f"Index {index} out of bounds for packing factor {packing_factor}")
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = pltpu.unpack_elementwise(
+          x_ref[...], index=index,
+          packed_dtype=packed_dtype, unpacked_dtype=unpacked_dtype
+      )
+
+    sources, packed = self._pack_unpack_elementwise_test_data(
+        shape, unpacked_dtype, packed_dtype
+    )
+    expected = sources[index].astype(packed_dtype).astype(unpacked_dtype)
+
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, unpacked_dtype),
+    )(packed)
+
+    np.testing.assert_array_equal(result, expected)
 
 if __name__ == "__main__":
   absltest.main()

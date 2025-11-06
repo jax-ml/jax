@@ -969,6 +969,60 @@ def _stochastic_round_abstract_eval(x, random_bits, *, target_dtype):
     )
   return jax_core.ShapedArray(x.shape, target_dtype)
 
+def _get_elementwise_packing_factor(unpacked_dtype, packed_dtype):
+  unpacked_bitwidth = dtypes.bit_width(unpacked_dtype)
+  packed_bitwidth = dtypes.bit_width(packed_dtype)
+  if unpacked_bitwidth % packed_bitwidth != 0:
+    raise ValueError(
+        "Unpacked bitwidth must be a multiple of packed bitwidth, got "
+        f"{unpacked_bitwidth} and {packed_bitwidth}"
+    )
+  return unpacked_bitwidth // packed_bitwidth
+
+pack_elementwise_p = jax_core.Primitive("pack_elementwise")
+
+
+def pack_elementwise(xs, *, packed_dtype):
+  return pack_elementwise_p.bind(*xs, packed_dtype=packed_dtype)
+
+
+@pack_elementwise_p.def_abstract_eval
+def _pack_elementwise_abstract_eval(*xs, packed_dtype):
+  if not xs:
+    raise ValueError("At least one source is required")
+  first = xs[0]
+  if not all(x.shape == first.shape for x in xs):
+    raise ValueError("All sources must have the same shape")
+  if not all(x.dtype == first.dtype for x in xs):
+    raise ValueError("All sources must have the same dtype")
+  packing_factor = _get_elementwise_packing_factor(first.dtype, packed_dtype)
+  if len(xs) != packing_factor:
+    raise ValueError(
+        "The number of sources must match the packing factor "
+        f"({packing_factor}), got {len(xs)}"
+    )
+  return jax_core.ShapedArray(first.shape, jnp.uint32)
+
+
+unpack_elementwise_p = jax_core.Primitive("unpack_elementwise")
+
+
+def unpack_elementwise(x, *, index, packed_dtype, unpacked_dtype):
+  return unpack_elementwise_p.bind(
+      x, index=index, packed_dtype=packed_dtype, unpacked_dtype=unpacked_dtype
+  )
+
+
+@unpack_elementwise_p.def_abstract_eval
+def _unpack_elementwise_abstract_eval(x, *, index, packed_dtype, unpacked_dtype):
+  if x.dtype != jnp.uint32:
+    raise ValueError(f"Source must be uint32, got {x.dtype}")
+  packing_factor = _get_elementwise_packing_factor(unpacked_dtype, packed_dtype)
+  if index < 0 or index >= packing_factor:
+    raise ValueError(
+        f"Index {index} is out of bounds for packing factor {packing_factor}")
+  return jax_core.ShapedArray(x.shape, unpacked_dtype)
+
 
 def with_memory_space_constraint(
     x: jax.Array, memory_space: Any
