@@ -393,12 +393,22 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     lax_op = lambda x: lsp_special.sici(x)
     si_scipy, ci_scipy = scipy_op(x_samples)
     si_jax, ci_jax = lax_op(x_samples)
+
     expected_si = np.array([0.0, np.pi/2, -np.pi/2], dtype=dtype)
     expected_ci = np.array([-np.inf, 0.0, np.nan], dtype=dtype)
     self.assertAllClose(si_jax, si_scipy, atol=1e-6, rtol=1e-6)
     self.assertAllClose(ci_jax, ci_scipy, atol=1e-6, rtol=1e-6)
     self.assertAllClose(si_jax, expected_si, atol=1e-6, rtol=1e-6)
     self.assertAllClose(ci_jax, expected_ci, atol=1e-6, rtol=1e-6)
+
+  @jtu.sample_product(
+    scale=[1, 10, 1e9],
+    shape=[(5,), (10,)]
+  )
+  def testSiciValueRanges(self, scale, shape):
+    rng = jtu.rand_default(self.rng(), scale=scale)
+    args_maker = lambda: [rng(shape, jnp.float32)]
+    self._CheckAgainstNumpy(osp_special.sici, lsp_special.sici, args_maker)
 
   def testSiciRaiseOnComplexInput(self):
     samples = jnp.arange(5, dtype=complex)
