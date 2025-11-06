@@ -1400,7 +1400,8 @@ class LayoutInferenceTest(parameterized.TestCase):
     )
 
   @parameterized.parameters(mgpu.dialect.AsyncLoadOp, mgpu.dialect.AsyncStoreOp)
-  def test_infer_transforms_for_async_load_store(self, op_type):
+  def test_infer_transforms_for_async_load_store_works_on_ok_input(self, op_type):
+    # OK input means that the indices are a multiple of the tile size.
     shape = (64, 64)
     elt_ty = ir.BF16Type.get()
 
@@ -1438,6 +1439,42 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertSequenceEqual(
         inference_utils.in_transforms(op), [transforms]
     )
+
+  @parameterized.parameters(mgpu.dialect.AsyncLoadOp, mgpu.dialect.AsyncStoreOp)
+  def test_infer_transforms_for_async_load_store_raises_on_unaligned_tiles(self, op_type):
+    shape = (64, 64)
+    elt_ty = ir.BF16Type.get()
+
+    with ir.InsertionPoint(self.module.body):
+      gmem_ty = ir.MemRefType.get(shape, elt_ty)
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+      barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
+      gmem_ref, smem_ref, barrier = undefs(gmem_ty, smem_ty, barrier_ty)
+
+      transforms = ir.ArrayAttr.get(
+          [mgpu.dialect.TileTransformAttr.get((8, 32))]
+      )
+      one = arith.constant(ir.IntegerType.get_signless(32), 1)
+      smem_ref = mgpu.dialect.with_transforms(smem_ref, transforms)
+      if op_type == mgpu.dialect.AsyncLoadOp:
+        mgpu.dialect.AsyncLoadOp(
+            source=gmem_ref,
+            destination=smem_ref,
+            barrier=barrier,
+            indices=[one, one],
+            slice_lengths=shape,
+            collective=ir.ArrayAttr.get([]),
+        )
+      else:
+        mgpu.dialect.AsyncStoreOp(
+            source=smem_ref,
+            destination=gmem_ref,
+            indices=[one, one],
+            slice_lengths=shape,
+        )
+
+    with self.assertRaisesRegex(ValueError, "Failed to infer"):
+      mgpu.infer_layout(self.module)
 
   @parameterized.product(
       layout=tuple(mtu.RegisterLayout),

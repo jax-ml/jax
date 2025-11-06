@@ -829,7 +829,7 @@ def dynamic_gcd(a: int, b: ir.Value) -> int:
     raise ValueError("a must be strictly positive")
   if not ir.IntegerType.isinstance(b.type) and not ir.IndexType.isinstance(b.type):
     raise ValueError(f"Expected an integer dynamic value, got a {b.type}")
-  if isinstance(b.owner.opview, arith.ConstantOp):
+  if isinstance(b.owner, ir.Operation) and isinstance(b.owner.opview, arith.ConstantOp):
     return math.gcd(a, b.owner.opview.literal_value)
   running_gcd = 1
   for factor in prime_decomposition(a):
@@ -1581,10 +1581,18 @@ def _async_load_store_equation_system(
     ctx: DerivationContext,
     op: mgpu.AsyncLoadOp | mgpu.AsyncStoreOp,
 ) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
+  tiling_multiple = []
+  for size, index in zip(op.slice_lengths, op.indices, strict=True):
+    if size == -1:
+      # This dimension does not appear in the final smem memref shape.
+      continue
+    tiling_multiple.append(dynamic_gcd(size, index))
+
   operand_index = 1 if isinstance(op, mgpu.AsyncLoadOp) else 0
   operand = ValueSite(op, VariableType.OPERAND, operand_index)
   var = ctx.producer_ref(operand)
-  return eqns.EquationSystem(), {var: [operand]}, []
+  constraints = [eqns.Divides(expr=var, tiling_multiple=tuple(tiling_multiple))]
+  return eqns.EquationSystem(constraints=constraints), {var: [operand]}, []
 
 
 def _ensure_all_layouts_are_set(op: ir.OpView) -> None:
