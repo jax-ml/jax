@@ -93,6 +93,7 @@ std::unique_ptr<OperationPass<func::FuncOp>> createApplyVectorLayoutPass(
 std::unique_ptr<OperationPass<func::FuncOp>>
 createPreCanonicalizationOptimizationPass(
     int hardware_generation = -1,
+    bool compatibility_mode = true,
     std::array<int64_t, 2> target_shape = {8, 128});
 
 std::unique_ptr<OperationPass<func::FuncOp>>

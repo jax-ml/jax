@@ -2700,6 +2700,58 @@ class OpsTest(PallasBaseTest):
         interpret=self.INTERPRET)(x)
     np.testing.assert_array_equal(result, x)
 
+  @parameterized.parameters(
+      (jnp.bfloat16, jnp.float32),
+      (jnp.float8_e5m2, jnp.float32),
+      (jnp.float8_e4m3fn, jnp.float32),
+      (jnp.int16, jnp.int32),
+      (jnp.int8, jnp.int32),
+  )
+  def test_low_precision_optimization(
+      self, low_precision_dtype, high_precision_dtype
+  ):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("Low precision dtypes not implemented on GPU")
+
+    def apply_transpose(val):
+      return (
+          val.reshape((1, 4, 8, 128))
+          .transpose((0, 2, 1, 3))
+          .reshape((1, 32, 128))
+      )
+
+    def kernel(cond_ref, x_ref, y_ref, o_ref):
+      cond = cond_ref[...]
+      x = x_ref[...]
+      y = y_ref[...]
+      x_high = apply_transpose(x.astype(high_precision_dtype))
+      y_high = apply_transpose(y.astype(high_precision_dtype))
+      x_broadcast = jnp.broadcast_to(x_high, cond.shape)
+      y_broadcast = jnp.broadcast_to(y_high, cond.shape)
+      x = jnp.where(cond, x_broadcast, y_broadcast)
+      o_ref[...] = x.astype(x_ref.dtype)
+
+    cond = random.randint(random.key(0), (16, 32, 128), minval=0, maxval=2)
+    x = random.normal(random.key(0), (1, 32, 128)).astype(low_precision_dtype)
+    y = random.normal(random.key(0), (1, 32, 128)).astype(low_precision_dtype)
+    cond_spec = pl.BlockSpec((2, 32, 128), lambda i: (i % 8, 0, 0))
+    xy_spec = pl.BlockSpec((1, 32, 128), lambda i: (0, 0, 0))
+    out = self.pallas_call(
+        kernel,
+        grid=(8,),
+        in_specs=[cond_spec, xy_spec, xy_spec],
+        out_specs=cond_spec,
+        out_shape=jax.ShapeDtypeStruct(cond.shape, x.dtype),
+    )(cond, x, y)
+    np.testing.assert_array_equal(
+        out,
+        np.where(
+            cond,
+            np.broadcast_to(apply_transpose(x), cond.shape),
+            np.broadcast_to(apply_transpose(y), cond.shape),
+        ),
+    )
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True
