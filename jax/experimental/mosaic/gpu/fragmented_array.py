@@ -1798,6 +1798,24 @@ class FragmentedArray:
           "Register bitwidth in target type must be divisible by 8, got"
           f" {new_reg_bitwidth}"
       )
+    def packed_registers(dst_vector_len: int) -> Iterable[tuple[Sequence[int], ir.Value]]:
+      """Tries to pack registers up to destination vector length."""
+      generator = np.ndenumerate(self.registers)
+      indices = []
+      regs = []
+      while True:
+        try:
+          for _ in range(max(dst_vector_len // vector_len, 1)):
+            idx, reg = next(generator)
+            indices.append(cast(int, idx))
+            regs.append(reg)
+          yield indices, utils.vector_concat(regs)
+          regs.clear()
+          indices.clear()
+        except StopIteration:
+          break
+      if regs:
+        yield indices, utils.vector_concat(regs)
     if cur_dtype == i4 and new_dtype == f8e4m3fn:
       # The algorithm here is taken from CUTLASS's `NumericArrayConverter`
       # specialization for int4 -> f8e4m3, available at
@@ -1838,26 +1856,7 @@ class FragmentedArray:
         )
       new_registers = np.empty_like(self.registers)
 
-      def packed_registers() -> Iterable[tuple[Sequence[int], ir.Value]]:
-        """Tries to pack registers into groups of 16 bits if vector_len < 4."""
-        generator = np.ndenumerate(self.registers)
-        indices = []
-        regs = []
-        while True:
-          try:
-            for _ in range(max(4 // vector_len, 1)):
-              idx, reg = next(generator)
-              indices.append(cast(int, idx))
-              regs.append(reg)
-            yield indices, utils.vector_concat(regs)
-            regs.clear()
-            indices.clear()
-          except StopIteration:
-            break
-        if regs:
-          yield indices, utils.vector_concat(regs)
-
-      for indices, reg in packed_registers():
+      for indices, reg in packed_registers(4):
         group_size = ir.VectorType(reg.type).shape[0]
         assert group_size % vector_len == 0
         int_ty = ir.IntegerType.get_signless(group_size * 4)
@@ -1965,7 +1964,8 @@ class FragmentedArray:
     if cur_dtype == i4 and self.is_signed and new_dtype == i8 and is_signed:
       new_registers = np.empty_like(self.registers)
       out_vec_ty = ir.VectorType.get((vector_len,), new_dtype)
-      for idx, reg in np.ndenumerate(self.registers):
+      dst_vector_len = 8
+      for indices, reg in packed_registers(dst_vector_len):
         def upcast_i4_to_i8(reg: ir.Value, first_valid_nibble: int = 0):
           # When first_valid_nibble is >0, then only the nibbles in the range
           # [first_valid_nibble, 8) will be upcast and placed in the low
@@ -2002,31 +2002,30 @@ class FragmentedArray:
               utils.bitcast(llvm.extractvalue(i32, out_struct, (i,)), i8_vec)
               for i in range(2)
           ])
+        int_ty = ir.IntegerType.get_signless(dst_vector_len * 4)
+        # If the vector originates from a slice (common after relayouts), we
+        # can fuse the slicing into the conversion and reuse many
+        # preprocessing ops (shifts, prmts) accross different vectors.
+        if (isinstance(slice_op := reg.owner.opview, vector.ExtractStridedSliceOp)
+            and utils.bitwidth(slice_op.source.type) == 32
+            and slice_op.strides[0].value == 1):
+          slice_offset = slice_op.offsets[0].value
+          reg_int = utils.bitcast(slice_op.source, i32)
+          reg_i8 = upcast_i4_to_i8(reg_int, first_valid_nibble=slice_offset)
+        else:
+          reg_slice_int = utils.bitcast(reg, int_ty)
+          if int_ty != i32:
+            reg_slice_int = arith.extsi(i32, reg_slice_int)
+          reg_i8 = upcast_i4_to_i8(reg_slice_int)
+
+        # distribute packed registers to original indices
         offset = 0
-        out_regs: list[ir.Value] = []
-        for group_size in (8, 4, 2):
-          int_ty = ir.IntegerType.get_signless(group_size * 4)
-          while vector_len - offset >= group_size:
-            # If the vector originates from a slice (common after relayouts), we
-            # can fuse the slicing into the conversion and reuse many
-            # preprocessing ops (shifts, prmts) accross different vectors.
-            if (isinstance(slice_op := reg.owner.opview, vector.ExtractStridedSliceOp)
-                and utils.bitwidth(slice_op.source.type) == 32
-                and slice_op.strides[0].value == 1):
-              slice_offset = slice_op.offsets[0].value + offset
-              reg_int = utils.bitcast(slice_op.source, i32)
-              reg_i8 = upcast_i4_to_i8(reg_int, first_valid_nibble=slice_offset)
-            else:
-              reg_slice = utils.vector_slice(reg, slice(offset, offset + group_size))
-              reg_slice_int = utils.bitcast(reg_slice, int_ty)
-              if int_ty != i32:
-                reg_slice_int = arith.extsi(i32, reg_slice_int)
-              reg_i8 = upcast_i4_to_i8(reg_slice_int)
-            out_regs.append(utils.vector_slice(reg_i8, slice(group_size)))
-            offset += group_size
-        assert offset == vector_len
-        new_registers[idx] = new_reg = utils.vector_concat(out_regs)
-        assert new_reg.type == out_vec_ty
+        for idx in indices:
+          new_registers[idx] = new_reg = utils.vector_slice(
+              reg_i8, slice(offset, offset + vector_len)
+          )
+          offset += vector_len
+          assert new_reg.type == out_vec_ty
       return FragmentedArray(
           _registers=new_registers, _layout=self.layout, _is_signed=is_signed
       )
