@@ -1375,6 +1375,30 @@ class LayoutInferenceTest(parameterized.TestCase):
         inference_utils.in_transforms(tcgen05_mma_op), transforms
     )
 
+  def test_infer_correct_swizzle_for_tcgen05_mma_op_with_m64(self):
+    with ir.InsertionPoint(self.module.body):
+      dtype = ir.IntegerType.get_signless(8)
+      shape = (64, 64)
+      lhs_ty = ir.MemRefType.get(shape, dtype, memory_space=mgpu.utils.smem())
+      rhs_ty = ir.MemRefType.get(shape, dtype, memory_space=mgpu.utils.smem())
+      acc_ty = ir.MemRefType.get(shape, dtype, memory_space=mgpu.utils.tmem())
+      [acc, lhs, rhs] = undefs(acc_ty, lhs_ty, rhs_ty)
+      accumulate = arith.constant(ir.IntegerType.get_signless(1), 1)
+      op = mgpu.dialect.TcGen05MMAOp(acc, lhs, rhs, accumulate)
+
+    mgpu.infer_layout(self.module)
+    lhs_transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((8, 64)),
+        mgpu.dialect.SwizzleTransformAttr.get(64),
+    ])
+    rhs_transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((8, 32)),
+        mgpu.dialect.SwizzleTransformAttr.get(32),
+    ])
+    self.assertSequenceEqual(
+        inference_utils.in_transforms(op), [lhs_transforms, rhs_transforms]
+    )
+
   @parameterized.parameters(mgpu.dialect.AsyncLoadOp, mgpu.dialect.AsyncStoreOp)
   def test_infer_transforms_for_async_load_store(self, op_type):
     shape = (64, 64)

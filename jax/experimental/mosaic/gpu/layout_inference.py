@@ -1322,10 +1322,21 @@ def _tcgen05_mma_equation_system(
     operands_for_variable[a_var] = [a]
 
   # SMEM
-  b_tiling = _infer_tiling_for_mma_ref(
-      ir.MemRefType(op.b.type),
-      max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle,
-  )
+  M = op.accumulator.type.shape[0]
+  if M == 64 and not op.collective.value:
+    # We can't split N into groups if we would partition it below the tile size.
+    N = op.b.type.shape[1]
+    element_type_bitwidth = utils.bitwidth(op.b.type.element_type)
+    n_lane_groups = 2
+    max_b_swizzle = next(
+        s
+        for s in reversed(mgpu.SwizzlingMode)
+        if 8 * s // element_type_bitwidth <= N // n_lane_groups
+    )
+  else:
+    max_b_swizzle = mgpu.SwizzlingMode.k128ByteSwizzle
+
+  b_tiling = _infer_tiling_for_mma_ref(ir.MemRefType(op.b.type), max_b_swizzle)
   b = ValueSite(op, VariableType.OPERAND, 2)
   b_var = ctx.producer_ref(b)
   assignments[b_var] = eqns.SMEMTiling(lc.TileTransform(b_tiling))

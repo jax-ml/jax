@@ -3401,8 +3401,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
       dtype=[jnp.int8, jnp.uint8]
   )
   def test_integer_matmul(self, m, n, swizzle, dtype):
-    if m == 64:
-      self.skip_if_wg_semantics()  # Inferred swizzle too big for MMA with M=64.
     if n * jnp.dtype(dtype).itemsize <= swizzle:
       self.skipTest("swizzle too big")
     k = 128
@@ -3461,8 +3459,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
   def test_simple_matmul(
       self, m, n, swizzle, dtype, lhs_tmem, transpose_lhs, transpose_rhs
   ):
-    if m == 64 and n == 64:
-      self.skip_if_wg_semantics()  # Inferred swizzle too big for MMA with M=64 and N=64.
     if transpose_lhs and lhs_tmem:
       self.skipTest("TMEM transpose not supported")
     if n * jnp.dtype(dtype).itemsize <= swizzle:
