@@ -2075,12 +2075,11 @@ def _pjit_linearize(trace, *tracers_in, jaxpr, in_shardings, out_shardings,
   tangents_in_nz, tangent_in_tree = tree_flatten(tangents_in)
   in_nzs = [type(t) is not ad.Zero for t in tangents_in]
   num_remats = len(remats_in)
-  jaxprs, trees, dces = ad.linearize_jaxpr3(jaxpr, tangent_in_tree, num_remats)
+  jaxprs, trees, fwds = ad.linearize_jaxpr3(jaxpr, in_nzs, num_remats)
   primal_jaxpr, *remat_jaxprs, tangent_jaxpr = jaxprs
   in_trees, out_trees = unzip2(trees)
-  *remat_dces, tangent_dce = dces
+  *remat_fwds, tangent_fwd = fwds
 
-  # fwd0
   primal_out_shardings = tuple(out_shardings) + (UNSPECIFIED,) * num_res_out(out_trees[0])
   primal_out_layouts = tuple(out_layouts) + (None,) * num_res_out(out_trees[0])
   with core.set_current_trace(trace.parent_traces[0]):
@@ -2092,20 +2091,25 @@ def _pjit_linearize(trace, *tracers_in, jaxpr, in_shardings, out_shardings,
         compiler_options_kvs=compiler_options_kvs)
     primals_out, residuals = tree_unflatten(out_trees[0], ans)
 
-  # # TODO remats (fwd1, ..., fwdN)
-  # remat_outs = []
-  # for n in range(N):
-  #   ...
-  #   remat_outs.append((y1_n, y2_n))
+  remat_outs = []
+  for n in range(num_remats):
+    breakpoint()
+  remat_outs = [[]] * len(primals_out)
 
   # tangent
   def _filter_zeros(is_nz_l, l):
     return tuple(x for nz, x in zip(is_nz_l, l) if nz)
-  out_nzs = [type(t) is not Zero for t in
+
+  out_nzs = [type(t) is not ad.Zero for t in
              tree_unflatten(out_trees[-1], [None] * out_trees[-1].num_leaves)]
   with core.set_current_trace(trace.tangent_trace):
-    nonlin_inputs = [*primals_in, *primals_out, *residuals]
-    nonlin_inputs = [x for x, u in zip(nonlin_inputs, tangent_dce) if u]
+    nonlin_inputs = [*jaxpr.consts, *primals_in]
+    res_ = iter(residuals)
+    nonlin_inputs = [next(res_) if f is None else nonlin_inputs[f]
+                     for f in tangent_fwd]
+    res_shardings_in = (UNSPECIFIED,) * len(nonlin_inputs)
+    res_layouts_in = (None,) * len(nonlin_inputs)
+    res_donated = (False,) * len(nonlin_inputs)
     nz_tangents_out = jit_p.bind(
           *nonlin_inputs, *tangents_in_nz, jaxpr=tangent_jaxpr,
           in_shardings=res_shardings_in + _filter_zeros(in_nzs, in_shardings),
@@ -2115,10 +2119,10 @@ def _pjit_linearize(trace, *tracers_in, jaxpr, in_shardings, out_shardings,
           donated_invars=res_donated + _filter_zeros(in_nzs, donated_invars),
           ctx_mesh=ctx_mesh, name=name, keep_unused=keep_unused,
           inline=inline, compiler_options_kvs=compiler_options_kvs)
-    tangent_outs = tree_unflatten(out_trees[-1], nz_tangent_outs)
+    tangent_outs = tree_unflatten(out_trees[-1], nz_tangents_out)
 
   return [ad.LinearizeTracer(trace, [x, *rs], x_dot)
-          for x, rs, x_dot in zip(primal_outs, zip(*remat_outs), tangent_outs)]
+          for x, rs, x_dot in zip(primals_out, remat_outs, tangent_outs)]
 
 ad.fancy_linearizations[jit_p] = _pjit_linearize
 

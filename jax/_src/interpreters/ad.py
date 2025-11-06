@@ -25,7 +25,7 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
-from jax._src.tree_util import (tree_flatten, tree_unflatten,
+from jax._src.tree_util import (tree_flatten, tree_unflatten, tree_structure,
                                 register_pytree_node, Partial, PyTreeDef)
 from jax._src import mesh as mesh_lib
 from jax._src import core
@@ -158,7 +158,75 @@ def linearize_jaxpr3(
     num_remats: int,
 ) -> tuple[list[core.ClosedJaxpr], list[tuple[PyTreeDef, PyTreeDef]],
            list[list[bool]]]:
-  breakpoint()
+  dbg = jaxpr.jaxpr.debug_info
+  primal_trace = pe.DynamicJaxprTrace(dbg)
+  remat_traces = [pe.DynamicJaxprTrace(dbg.with_unknown_names())
+                  for _ in range(num_remats)]
+  tangent_trace = pe.DynamicJaxprTrace(dbg.with_unknown_names(), auto_dce=True)
+  lin_trace = LinearizeTrace([primal_trace, *remat_traces], tangent_trace)
+  tangent_trace.tag = lin_trace.tag
+  source_info = source_info_util.current()
+
+  def new_arg(primal_aval, nz):
+    primal = primal_trace.new_arg(primal_aval, source_info)
+    remats = [t.new_arg(primal_aval, source_info) for t in remat_traces]
+    tangent_aval = primal_aval.to_tangent_aval()
+    tangent = (tangent_trace.new_arg(tangent_aval, source_info)
+               if nz else Zero(tangent_aval))
+    return LinearizeTracer(lin_trace, [primal, *remats], tangent)
+
+  tracers = map(new_arg, jaxpr.in_aval_qdds, nonzeros)
+  in_primals_, in_tangents = unzip2((t.primals, t.tangent) for t in tracers)
+  in_primals, *in_remats = zip(*in_primals_)
+
+  with core.set_current_trace(lin_trace, check_leaks=True):
+    ans = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *tracers)
+    out_primals_, out_tangents = unzip2(map(lin_trace.to_primals_tangent_list, ans))
+    out_primals, *out_remats = zip(*out_primals_)
+    # TODO instantiate zeros when we add the instantiate arg
+    del lin_trace, ans, new_arg, tracers
+
+  nzs_out = [type(t) is not Zero for t in out_tangents]
+  out_tangents_nz = [tangent_trace.to_jaxpr_tracer(t, source_info)
+                  for (nz, t) in zip(nzs_out, out_tangents) if nz]
+  tangent_jaxpr, residuals = tangent_trace.to_jaxpr(
+      out_tangents_nz, dbg.with_unknown_names(), source_info)
+  tangent_trace.invalidate()
+  tangent_jaxpr, residuals = _dce_consts(tangent_jaxpr, residuals)
+  tangent_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(tangent_jaxpr))
+
+  tangent_trees = (tree_structure((residuals, in_tangents)),
+                   tree_structure(out_tangents))
+
+  remat_jaxprs = []
+  remat_fwds = []
+  remat_trees = []
+  for trace in reversed(remat_traces):
+    # set `residuals`
+    breakpoint()
+
+  fwd_inputs = [*jaxpr.consts, *in_primals]
+  id_map = {id(x):i for i, x in enumerate(fwd_inputs)}
+  primal_fwds = [id_map.get(id(c)) for c in residuals]
+  reduced_residuals = [c for c, f in zip(residuals, primal_fwds) if f is None]
+
+  primals_and_residuals = *out_primals, *reduced_residuals
+  to_jaxpr_tracer = partial(primal_trace.to_jaxpr_tracer,source_info=source_info)
+  primals_and_residuals = map(to_jaxpr_tracer, primals_and_residuals)
+  primal_jaxpr, primal_consts = primal_trace.to_jaxpr(
+      primals_and_residuals, dbg.with_unknown_names(), source_info)
+  primal_trace.invalidate()
+  primal_jaxpr, primal_consts = _dce_consts(primal_jaxpr, primal_consts)
+  primal_jaxpr = core.ClosedJaxpr(primal_jaxpr, primal_consts)
+
+  primal_trees = (tree_structure(in_primals),
+                  tree_structure((out_primals, reduced_residuals)))
+
+  jaxprs = [primal_jaxpr, *remat_jaxprs, tangent_jaxpr]
+  fwds = [primal_fwds, *remat_fwds]
+  trees = [primal_trees, *remat_trees, tangent_trees]
+  return jaxprs, trees, fwds
+
 
 def linearize_jaxpr(
     jaxpr: core.ClosedJaxpr,
@@ -226,7 +294,8 @@ def _linearize_jaxpr(
 
   # pe._check_no_returned_refs(debug_info, out_primals)
   primals_and_residuals = *out_primals, *tangent_consts
-  primals_and_residuals = map(partial(primal_trace.to_jaxpr_tracer, source_info=source_info),
+  primals_and_residuals = map(partial(primal_trace.to_jaxpr_tracer,
+                                      source_info=source_info),
                               primals_and_residuals)
   primal_jaxpr, primal_consts = primal_trace.to_jaxpr(
       primals_and_residuals, dbg.with_unknown_names(),
