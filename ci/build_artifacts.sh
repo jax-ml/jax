@@ -103,7 +103,6 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
   # Build the artifact.
   python build/build.py build --wheels="$artifact" \
     --bazel_options=--config="$bazelrc_config" $bazel_remote_cache \
-    --bazel_options=--config=use_tar_archive_files \
     --bazel_startup_options="$bazel_startup_options" \
     --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
     --cuda_major_version=$JAXCI_CUDA_VERSION \
@@ -116,7 +115,6 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
   if [[ "$JAXCI_ARTIFACT_TYPE" == "release" ]]; then
     python build/build.py build --wheels="$artifact" \
       --bazel_options=--config="$bazelrc_config" $bazel_remote_cache \
-      --bazel_options=--config=use_tar_archive_files \
       --bazel_startup_options="$bazel_startup_options" \
       --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
       --cuda_major_version=$JAXCI_CUDA_VERSION \

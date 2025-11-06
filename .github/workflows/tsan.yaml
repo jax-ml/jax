@@ -190,7 +190,6 @@ jobs:
             --bazel_options=--repo_env=HERMETIC_PYTHON_URL="file://${GITHUB_WORKSPACE}/python-tsan.tgz" \
             --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256=${PYTHON_SHA256} \
             --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX="cpython-tsan/" \
-            --bazel_options=--config=use_tar_archive_files \
             --bazel_options=--color=yes \
             --bazel_options=--copt=-fsanitize=thread \
             --bazel_options=--linkopt="-fsanitize=thread" \

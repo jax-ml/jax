@@ -78,7 +78,6 @@ jobs:
           source ${GITHUB_WORKSPACE}/venv/bin/activate
           cd jax
           python build/build.py build --wheels=jaxlib --verbose \
-            --bazel_options=--config=use_tar_archive_files \
             --bazel_options=--color=yes \
             --bazel_options=--copt=-fsanitize=address
           uv pip install dist/jaxlib-*.whl \

@@ -92,7 +92,6 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     $OVERRIDE_XLA_REPO \
     --config=ci_linux_x86_64 \
     --config=ci_rbe_cache \
-    --config=use_tar_archive_files \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAX \
     --run_under="$(pwd)/build/parallel_accelerator_execute.sh" \
@@ -127,7 +126,6 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     $OVERRIDE_XLA_REPO \
     --config=ci_linux_x86_64 \
     --config=ci_rbe_cache \
-    --config=use_tar_archive_files \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
@@ -157,7 +155,6 @@ else
     $OVERRIDE_XLA_REPO \
     --config=ci_linux_x86_64 \
     --config=ci_rbe_cache \
-    --config=use_tar_archive_files \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
     --run_under="$(pwd)/build/parallel_accelerator_execute.sh" \
@@ -207,7 +204,6 @@ else
     $OVERRIDE_XLA_REPO \
     --config=ci_linux_x86_64 \
     --config=ci_rbe_cache \
-    --config=use_tar_archive_files \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
