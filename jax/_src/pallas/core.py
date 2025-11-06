@@ -44,6 +44,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import types as state_types
+from jax._src import traceback_util
 from jax._src.state.types import TransformedRef
 import jax.numpy as jnp
 
@@ -479,7 +480,8 @@ class BlockSpec:
 
   def __post_init__(self):
     if self.index_map is not None:
-      self.index_map = _IndexMapFunc(self.index_map)
+      self.index_map = _IndexMapFunc(
+          traceback_util.api_boundary(self.index_map, repro_user_func=True))
 
   def to_block_mapping(
       self,

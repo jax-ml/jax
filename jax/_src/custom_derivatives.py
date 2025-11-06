@@ -256,7 +256,8 @@ class custom_jvp(Generic[ReturnValue]):
 
     self.defjvp(jvp)
 
-  @traceback_util.api_boundary
+  @partial(traceback_util.api_boundary,
+           repro_api_name="jax.custom_jvp.__call__")
   def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
     debug = debug_info("custom_jvp fun", self.fun, args, kwargs,
                        static_argnums=self.nondiff_argnums)
@@ -685,7 +686,8 @@ class custom_vjp(Generic[ReturnValue]):
       raise NotImplementedError(
           "remat optimization for custom_vjp does not support symbolic zeros")
 
-  @traceback_util.api_boundary
+  @partial(traceback_util.api_boundary,
+           repro_api_name="jax.custom_vjp.__call__")
   def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
     debug_fun = debug_info("custom_vjp fun", self.fun, args, kwargs,
                            static_argnums=self.nondiff_argnums)

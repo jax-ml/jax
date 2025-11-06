@@ -42,6 +42,7 @@ from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.fuser import fuser_utils
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
+from jax._src.traceback_util import api_boundary
 import jax.numpy as jnp
 import numpy as np
 
@@ -75,6 +76,7 @@ class PushRuleContext:
   avals_out: tuple[core.AbstractValue, ...]
 
 
+@functools.partial(api_boundary, repro_api_name="fuser.make_scalar_prefetch_handler")
 def make_scalar_prefetch_handler(*args):
   def scalar_prefetch_getter(*sp_inputs):
     result = sp_inputs
@@ -236,6 +238,7 @@ def _unwrap_block_spec_scalar_prefetch(
   return out_block_spec
 
 
+@functools.partial(api_boundary, repro_api_name="fuser.pull_block_spec")
 def pull_block_spec(
     f: Callable,
     out_block_specs: pallas_core.BlockSpec | tuple[pallas_core.BlockSpec, ...],
@@ -535,6 +538,7 @@ def make_kernel_function(
   return kernel_fn
 
 
+@functools.partial(api_boundary, repro_api_name="fuser.get_fusion_values")
 def get_fusion_values(
     fusion: Callable, *args, **kwargs
 ) -> tuple[
@@ -1960,6 +1964,7 @@ def _custom_call_hi_primitive_eval_rule(
   return prim.expand(x)
 
 
+@functools.partial(api_boundary, repro_api_name="fuser.push_block_spec")
 def push_block_spec(
     f: Callable,
     *in_spec_args,

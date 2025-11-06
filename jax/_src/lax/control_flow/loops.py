@@ -111,7 +111,7 @@ Carry = TypeVar('Carry')
 X = TypeVar('X')
 Y = TypeVar('Y')
 
-@api_boundary
+@partial(api_boundary, repro_api_name="jax.lax.scan")
 def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
          init: Carry,
          xs: X | None = None,
@@ -1632,7 +1632,7 @@ def _move_right(lst, to_move):
 
 ### while_loop
 
-@api_boundary
+@partial(api_boundary, repro_api_name="jax.lax.while_loop")
 def while_loop(cond_fun: Callable[[T], BooleanNumeric],
                body_fun: Callable[[T], T],
                init_val: T) -> T:
@@ -2544,7 +2544,7 @@ def _fori_scan_body_fun(body_fun: Callable, body_fun_dbg: core.DebugInfo) -> Cal
       scanned_fun, body_fun_dbg._replace(result_paths=None))
   return scanned_fun
 
-@api_boundary
+@partial(api_boundary, repro_api_name="jax.lax.fori_loop")
 def fori_loop(lower, upper, body_fun, init_val,
               *, unroll: int | bool | None = None):
   """Loop from ``lower`` to ``upper`` by reduction to :func:`jax.lax.while_loop`.
