@@ -2895,7 +2895,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
 
   @parameterized.parameters(jnp.int8, jnp.uint8)
   def test_wgmma_integer(self, dtype):
-    self.skip_if_wg_semantics()
     m, k, n = 64, 128, 64
 
     is_signed = jnp.issubdtype(dtype, jnp.signedinteger)
@@ -2993,9 +2992,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     np.testing.assert_allclose(res, a @ b, rtol=1e-3)
 
   def test_wgmma_registers_integer(self):
-    # TODO(bchetioui): plumb in is_signed into WGMMA lowering and allow an
-    # integer accumulator type to be created.
-    self.skip_if_wg_semantics()
+    self.skip_if_wg_semantics()  # WGMMA_8BIT layout not supported
     input_dtype = jnp.int8
     out_dtype = jnp.int32
     def kernel(a_ref, b_ref, o_ref):

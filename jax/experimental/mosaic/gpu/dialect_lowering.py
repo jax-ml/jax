@@ -1199,11 +1199,12 @@ def _mgpu_wgmma_op_lowering_rule(
     if layout != wgmma_layout:
       raise ValueError("Layout mismatch")
 
+  # s8/i8 WGMMA expects signed integer accumulator.
+  element_type = wgmma_op.a.type.element_type
+  is_signed = True if ir.IntegerType.isinstance(element_type) else None
   # TODO(dasenov): Move the value -> accumulator conversion outside of wgmma.
   # The associated fence could be a little expensive and is not needed if the
   # result a wgmma feeds into another wgmma (even in another loop step).
-  # TODO(b/415721295): Derive `is_signed` from attributes.
-  is_signed = None
   regs = _fragmented_array_from_ir(
       wgmma_op.accumulator, wgmma_layout, is_signed
   )

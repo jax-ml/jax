@@ -4821,6 +4821,71 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
         rtol=0,
     )
 
+  @parameterized.parameters(jnp.int8, jnp.uint8)
+  def test_integer_wgmma(self, dtype):
+    m, k, n = 64, 128, 64
+
+    def body(ctx, lhs_gmem, rhs_gmem, result_gmem, scratch):
+      del ctx
+      lhs, rhs, tma_barrier = scratch
+
+      i32 = ir.IntegerType.get_signless(32)
+      zero = arith.constant(i32, 0)
+
+      tma_barrier.arrive_expect_tx(m * k + k * n)
+      mgpu_dialect.async_load(
+          source=lhs_gmem,
+          destination=lhs,
+          barrier=tma_barrier.as_barrier_memref(),
+          indices=[zero, zero],
+          slice_lengths=lhs.type.shape,
+          collective=ir.ArrayAttr.get([]),
+      )
+      mgpu_dialect.async_load(
+          source=rhs_gmem,
+          destination=rhs,
+          barrier=tma_barrier.as_barrier_memref(),
+          indices=[zero, zero],
+          slice_lengths=rhs.type.shape,
+          collective=ir.ArrayAttr.get([]),
+      )
+      tma_barrier.wait()
+
+      acc_type = ir.VectorType.get((m, n), i32)
+      acc = vector.broadcast(acc_type, zero)
+      # Only f16 WGMMA supports transposes
+      rhs = utils.memref_transpose(rhs, (1, 0))
+      result = mgpu_dialect.wgmma(acc, lhs, rhs)
+      nvvm.wgmma_commit_group_sync_aligned()
+      nvvm.wgmma_wait_group_sync_aligned(0)
+      vector_store(result, result_gmem)
+
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(
+            jax.ShapeDtypeStruct((m, k), dtype),
+            jax.ShapeDtypeStruct((n, k), dtype),
+        ),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.int32),
+        smem_scratch_shape=[
+            jax.ShapeDtypeStruct((m, k), dtype),
+            jax.ShapeDtypeStruct((n, k), dtype),
+            core.TMABarrier(1),
+        ],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+    # Use small values to avoid overflow, [0, 8) for u8 and (-8, 8) for s8.
+    is_signed = jnp.issubdtype(dtype, jnp.signedinteger)
+    low, high = (-8, 8) if is_signed else (0, 8)
+    lhs = self.prng.uniform(low, high, (m, k)).astype(dtype)
+    rhs = self.prng.uniform(low, high, (n, k)).astype(dtype)
+    self.assertArraysEqual(
+        kernel(lhs, rhs),
+        np.matmul(lhs.astype(jnp.int32), rhs.astype(jnp.int32).T),
+    )
+
 
 class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
 

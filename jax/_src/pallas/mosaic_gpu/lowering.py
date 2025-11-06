@@ -2659,7 +2659,10 @@ def _run_scoped_lowering_rule(
               mgpu.WGMMAAccumulator.zero(*aval.shape, dtype, is_signed=is_signed)
           )
         else:
-          zero = arith_dialect.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
+          if ir.IntegerType.isinstance(dtype):
+            zero = arith_dialect.constant(dtype, 0)
+          else:
+            zero = arith_dialect.constant(dtype, 0.0)
           acc = vector_dialect.broadcast(
               ir.VectorType.get(aval.shape, dtype), zero
           )
