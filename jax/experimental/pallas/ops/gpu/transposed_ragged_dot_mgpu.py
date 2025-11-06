@@ -54,10 +54,10 @@ def transposed_ragged_dot(
   if n % block_n != 0:
     raise ValueError(f"n={n} must be a multiple of block_n={block_n}")
 
-  group_sizes = group_sizes.astype(jnp.int64)
+  group_sizes = group_sizes.astype(int)
   group_starts = jnp.concatenate(
       [jnp.zeros(1, dtype=int), jnp.cumsum(group_sizes)[:-1]]
-  ).astype(jnp.int64)
+  ).astype(int)
   group_ends = jnp.cumsum(group_sizes)
   group_block_starts = group_starts // block_k * block_k
   group_block_ends = -(group_ends // -block_k) * block_k
