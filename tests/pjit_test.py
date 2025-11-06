@@ -9541,7 +9541,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.skipTest('Requires jaxlib_extension_version >= 387')
     if ifrt_version < 36:
       self.skipTest('Requires jaxlib_extension_version >= 36')
-    if jtu.if_cloud_tpu_at_least(2025, 11, 7):
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 7):
       self.skipTest('Requires libtpu built after 2025-11-6')
 
     np_inp1 = np.arange(8.).reshape(4, 2)

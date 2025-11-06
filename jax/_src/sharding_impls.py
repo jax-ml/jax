@@ -1192,6 +1192,26 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)
 
 class set_mesh:
+  """Sets a concrete mesh in a thread-local context.
+
+  ``jax.set_mesh`` has dual behavior. You can use it as a global setter or as a
+  context manager.
+
+  When a mesh is in context via ``jax.set_mesh``, you can use pass
+  raw PartitionSpecs to all APIs that accept sharding as an argument.
+  Using ``jax.set_mesh`` is also required for enabling explicit sharding mode:
+  https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
+
+  For example::
+
+    mesh = jax.make_mesh((2,), ('x',))
+    jax.set_mesh(mesh)  # use the API as a global setter
+
+    with jax.set_mesh(mesh):  # use the API as a context manager
+      ...
+
+  Note: ``jax.set_mesh`` can only be used outside of ``jax.jit``.
+  """
   __slots__ = ["prev_abstract_mesh", "prev_mesh"]
 
   def __init__(self, mesh: mesh_lib.Mesh):
