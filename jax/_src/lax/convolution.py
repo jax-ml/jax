@@ -248,6 +248,7 @@ def conv_with_general_padding(lhs: Array, rhs: Array,
       rhs_dilation=rhs_dilation, precision=precision,
       preferred_element_type=preferred_element_type)
 
+
 def _conv_transpose_padding(k, s, padding):
   """Calculate before and after padding for a dim of transposed convolution.
 
@@ -290,7 +291,8 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
                    dimension_numbers: ConvGeneralDilatedDimensionNumbers = None,
                    transpose_kernel: bool = False,
                    precision: lax.PrecisionLike = None,
-                   preferred_element_type: DTypeLike | None = None) -> Array:
+                   preferred_element_type: DTypeLike | None = None,
+                   use_consistent_padding: bool = False) -> Array:
   """Convenience wrapper for calculating the N-d convolution "transpose".
 
   This function directly calculates a fractionally strided conv rather than
@@ -301,10 +303,13 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
     rhs: a rank `n+2` dimensional array of kernel weights.
     strides: sequence of `n` integers, sets fractional stride.
     padding: 'SAME', 'VALID', or a sequence of `n` integer 2-tuples describing before-and-after
-      padding for each spatial dimension in the corresponding forward conv. This effectively adds
+      padding for each spatial dimension. If `use_consistent_padding=True`, this is interpreted
+      as the padding of the corresponding forward conv, which effectively adds
       `dilation * (kernel_size - 1) - padding` zero padding to each side
       of the input so that `conv_transpose` becomes the gradient of `conv` when given the same padding
-      and stride arguments.
+      and stride arguments. This is the behavior in PyTorch. If `use_consistent_padding=False`,
+      the 'SAME' and 'VALID' strings are interpreted as the padding of the corresponding forward conv,
+      but integer tuples are interpreted as padding for the transposed convolution.
     rhs_dilation: `None`, or a sequence of `n` integers, giving the
       dilation factor to apply in each spatial dimension of `rhs`. RHS dilation
       is also known as atrous convolution.
@@ -322,7 +327,10 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
     preferred_element_type: Optional. Either ``None``, which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
-
+    use_consistent_padding : In older versions of jax, the `padding` argument was interpreted differently
+      depending on whether it was a string or a sequence of integers. Strings were interpreted as padding
+      for the forward convolution, while integers were interpreted as padding for the transposed convolution.
+      If `use_consistent_padding` is False, this inconsistent behavior is preserved for backwards compatibility.
   Returns:
     Transposed N-d convolution, with output padding following the conventions of
     keras.layers.Conv2DTranspose.
@@ -348,10 +356,14 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
   # Calculate correct output shape given padding and strides.
   if rhs_dilation is None:
     rhs_dilation = (1,) * (rhs.ndim - 2)
-  effective_k_size = map(lambda k, r: core.dilate_dim(k, r), k_sdims, rhs_dilation)
-  replicated_padding = [padding] * len(strides) if isinstance(padding, str) else padding
-  pads = [_conv_transpose_padding(k, s, p)
-          for k,s,p in zip(effective_k_size, strides, replicated_padding)]
+  pads: str | Sequence[tuple[int, int]]
+  if use_consistent_padding or padding in {'SAME', 'VALID'}:
+    effective_k_size = map(lambda k, r: core.dilate_dim(k, r), k_sdims, rhs_dilation)
+    replicated_padding = [padding] * len(strides) if isinstance(padding, str) else padding
+    pads = tuple(_conv_transpose_padding(k, s, p)
+      for k,s,p in zip(effective_k_size, strides, replicated_padding))
+  else:
+      pads = padding
   if transpose_kernel:
     # flip spatial dims and swap input / output channel axes
     rhs = _flip_axes(rhs, np.array(dn.rhs_spec)[2:])

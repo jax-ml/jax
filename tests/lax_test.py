@@ -946,7 +946,8 @@ class LaxTest(jtu.JaxTestCase):
       return lax.conv_transpose(lhs, rhs, strides, padding,
                                 rhs_dilation=rhs_dilation,
                                 dimension_numbers=dspec,
-                                transpose_kernel=True)
+                                transpose_kernel=True,
+                                use_consistent_padding=True)
 
     def fun_via_grad(lhs, rhs):
       return self._conv_transpose_via_grad(lhs, rhs, strides, padding,
@@ -986,7 +987,8 @@ class LaxTest(jtu.JaxTestCase):
       return lax.conv_transpose(lhs, rhs, strides, padding,
                                 rhs_dilation=rhs_dilation,
                                 dimension_numbers=dspec,
-                                transpose_kernel=False)
+                                transpose_kernel=False,
+                                use_consistent_padding=True)
 
     def fun_via_grad(lhs, rhs):
       rhs_t = self._transpose_conv_kernel(lhs, rhs, dimension_numbers=dspec)
