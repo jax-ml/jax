@@ -53,6 +53,7 @@ Then create a pull request that adds a file named
   18137: Scope of JAX NumPy & SciPy Wrappers <18137-numpy-scipy-scope>
   25516: Effort-based versioning <25516-effver>
   28661: Supporting the `__jax_array__` protocol <28661-jax-array-protocol>
+  28845: Stateful Randomness in JAX <28845-stateful-rng>
 
 
 Several early JEPs were converted in hindsight from other documentation,

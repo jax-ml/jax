@@ -253,3 +253,8 @@ from jax._src.random import (
   weibull_min as weibull_min,
   wrap_key_data as wrap_key_data,
 )
+
+from jax._src.stateful_rng import (
+    stateful_rng as stateful_rng,
+    StatefulPRNG as StatefulPRNG,
+)

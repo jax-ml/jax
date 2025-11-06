@@ -42,7 +42,7 @@ from jax._src.state.types import (
     TransformedRef,
     WriteEffect,
 )
-from jax._src.typing import Array
+from jax._src.typing import Array, ArrayLike
 from jax._src.util import safe_map, safe_zip
 
 
@@ -334,9 +334,9 @@ addupdate_p.def_impl(partial(dispatch.apply_primitive, addupdate_p))
 
 
 def ref_addupdate(
-    ref: AbstractRef,
+    ref: core.Ref | TransformedRef,
     idx: Indexer | tuple[Indexer, ...] | None,
-    x: Array,
+    x: ArrayLike,
 ) -> None:
   """Add to an element in an Ref in-place.
 
