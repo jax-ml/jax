@@ -436,9 +436,9 @@ FailureOr<Value> selectWithBounds(RewriteContext& ctx,
                                   TypedValue<VectorType> out_of_bounds_vreg) {
   auto native_vreg_ty = getNativeVregType(
       in_bounds_vreg.getType().getElementType(), ctx.target_shape);
+  TPU_ASSERT_LOC(builder.getLoc(), in_bounds_vreg.getType() == native_vreg_ty);
   TPU_ASSERT_LOC(builder.getLoc(),
-                 llvm::equal(in_bounds_vreg.getType().getShape(),
-                             native_vreg_ty.getShape()));
+                 out_of_bounds_vreg.getType() == native_vreg_ty);
   if (bounds.isComplete(ctx.target_shape)) {
     return in_bounds_vreg;
   }
@@ -446,17 +446,28 @@ FailureOr<Value> selectWithBounds(RewriteContext& ctx,
       TypedValue<VectorType> mask,
       bounds.getVectorMask(builder, builder.getLoc(), ctx.hardware_generation,
                            ctx.target_shape));
-  if (cast<IntegerType>(mask.getType().getElementType()).getWidth() != 1) {
+  VectorType mask_ty = mask.getType();
+  if (cast<IntegerType>(mask_ty.getElementType()).getWidth() != 1) {
     return emitError(builder.getLoc(),
                      "Not implemented: Unsupported mask bitwidth");
   }
-  if (mask.getType().getShape() != native_vreg_ty.getShape()) {
-    mask = builder.create<tpu::MaskCastOp>(
-        VectorType::get(native_vreg_ty.getShape(), builder.getI1Type()), mask);
+  const bool needs_bitcast = mask_ty.getShape() != native_vreg_ty.getShape();
+  if (needs_bitcast) {
+    DCHECK_GE(mask_ty.getRank(), 2);
+    const int mask_packing = mask_ty.getRank() == 2 ? 1 : mask_ty.getDimSize(2);
+    const int mask_bitwidth = 32 / mask_packing;
+    VectorType bitcast_ty = VectorType::get(
+        mask_ty.getShape(), builder.getIntegerType(mask_bitwidth));
+    in_bounds_vreg = builder.create<BitcastVregOp>(bitcast_ty, in_bounds_vreg);
+    out_of_bounds_vreg =
+        builder.create<BitcastVregOp>(bitcast_ty, out_of_bounds_vreg);
   }
-  return builder
-      .create<arith::SelectOp>(mask, in_bounds_vreg, out_of_bounds_vreg)
-      .getResult();
+  Value result =
+      builder.create<arith::SelectOp>(mask, in_bounds_vreg, out_of_bounds_vreg);
+  if (needs_bitcast) {
+    result = builder.create<BitcastVregOp>(native_vreg_ty, result);
+  }
+  return result;
 }
 FailureOr<Value> maskOOB(RewriteContext& ctx, ImplicitLocOpBuilder& builder,
                          TypedValue<VectorType> vreg,
