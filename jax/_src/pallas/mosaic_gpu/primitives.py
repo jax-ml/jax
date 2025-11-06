@@ -1819,7 +1819,6 @@ def _tcgen05_mma_lowering_wg(
         "Scaled and sparse MMAs not supported for WG semantics."
     )
 
-  _, a_aval, *_ = ctx.avals_in
   if arrive:
     barrier_ref, *transforms_leaves = barrier_scales_and_transforms_leaves
   else:
@@ -1856,6 +1855,7 @@ def _tcgen05_mma_lowering_wg(
 
   if a_transforms_tree is not None:
     a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
+    a_aval = ctx.avals_in[1]
     assert isinstance(a_aval, state_types.AbstractRef)
     handle_transposes = a_aval.memory_space == gpu_core.SMEM
     a_ref, a_transforms = lowering._handle_transforms(
