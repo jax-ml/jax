@@ -100,7 +100,8 @@ class TpuInfo:
     BF16 = jnp.bfloat16
     S8 = jnp.int8
     U8 = jnp.uint8
-    F8E4M3 = jnp.float8_e4m3
+    F8E4M3B11FNUZ = jnp.float8_e4m3b11fnuz
+    F8E4M3FN = jnp.float8_e4m3fn
     F8E5M2 = jnp.float8_e5m2
     S4 = jnp.int4
     U4 = jnp.uint4
@@ -113,15 +114,19 @@ class TpuInfo:
       case 5 | 6:
         return (
             (
-                lhs_dt in {F32, BF16, F8E5M2, F8E4M3}
-                and rhs_dt in {F32, BF16, F8E5M2, F8E4M3}
+                lhs_dt in {F32, BF16, F8E5M2, F8E4M3B11FNUZ}
+                and rhs_dt in {F32, BF16, F8E5M2, F8E4M3B11FNUZ}
             )
             or (lhs_dt in {U8, S8} and rhs_dt in {U8, S8})
             or (lhs_dt in {U4, S4} and rhs_dt in {U4, S4})
         )
       case 7:
-        return (lhs_dt in {F32, BF16} and rhs_dt in {F32, BF16}) or (
-            lhs_dt in {F8E5M2, F8E4M3} and rhs_dt in {F8E5M2, F8E4M3}
+        return (
+            lhs_dt in {F32, BF16}
+            and rhs_dt in {F32, BF16}
+        ) or (
+            lhs_dt in {F32, BF16, F8E5M2, F8E4M3FN}
+            and rhs_dt in {F8E5M2, F8E4M3FN}
         )
       case _:
         return False
