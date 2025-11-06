@@ -34,19 +34,19 @@ class StatefulRNGTest(jtu.JaxTestCase):
     rng = jax.random.stateful_rng(seed)
     key = jax.random.key(seed)
 
-    self.assertEqual(key, rng.base_key)
-    self.assertEqual(rng.counter.shape, ())
-    self.assertEqual(0, rng.counter[...])
+    self.assertEqual(key, rng._base_key)
+    self.assertEqual(rng._counter.shape, ())
+    self.assertEqual(0, rng._counter[...])
 
   def test_stateful_rng_counter_increment(self, seed=7865943):
     rng = jax.random.stateful_rng(seed)
-    original_key = rng.base_key
-    self.assertEqual(0, rng.counter[...])
+    original_key = rng._base_key
+    self.assertEqual(0, rng._counter[...])
 
     _ = jax.jit(rng.key)()  # implicit update
 
-    self.assertEqual(original_key, rng.base_key)  # base key does not change
-    self.assertEqual(1, rng.counter[...])  # counter is incremented
+    self.assertEqual(original_key, rng._base_key)  # base key does not change
+    self.assertEqual(1, rng._counter[...])  # counter is incremented
 
   def test_stateful_rng_invalid_instantiation(self):
     valid_key = jax.random.key(0)
@@ -55,7 +55,7 @@ class StatefulRNGTest(jtu.JaxTestCase):
     invalid_counter = 0
     with self.assertRaisesRegex(ValueError, "Expected base_key to be a typed PRNG key"):
       jax.random.StatefulPRNG(invalid_key, valid_counter)
-    with self.assertRaisesRegex(ValueError, "Expected counter to be a mutable scalar integer"):
+    with self.assertRaisesRegex(ValueError, "Expected counter to be a scalar integer ref"):
       jax.random.StatefulPRNG(valid_key, invalid_counter)
 
   def testRepeatedKeys(self, seed=578543):
@@ -161,8 +161,8 @@ class StatefulRNGTest(jtu.JaxTestCase):
     rngs = rng.spawn(4)
 
     for child_rng in rngs:
-      self.assertNotEqual(rng.base_key, child_rng.base_key)
-      self.assertEqual(0, child_rng.counter[...])
+      self.assertNotEqual(rng._base_key, child_rng._base_key)
+      self.assertEqual(0, child_rng._counter[...])
 
   @jtu.sample_product(shape=[4, (5,), (2, 3)])
   def testSplit(self, shape):
@@ -171,11 +171,11 @@ class StatefulRNGTest(jtu.JaxTestCase):
 
     expected_shape = (shape,) if isinstance(shape, int) else shape
 
-    self.assertEqual(rng_split.base_key.dtype, rng.base_key.dtype)
-    self.assertEqual(rng_split.base_key.shape, expected_shape)
+    self.assertEqual(rng_split._base_key.dtype, rng._base_key.dtype)
+    self.assertEqual(rng_split._base_key.shape, expected_shape)
 
-    self.assertIsInstance(rng_split.counter, jax.Ref)
-    self.assertEqual(rng_split.counter.shape, expected_shape)
+    self.assertIsInstance(rng_split._counter, jax.Ref)
+    self.assertEqual(rng_split._counter.shape, expected_shape)
 
   def testVmapMapped(self):
     seed = 758943

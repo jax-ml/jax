@@ -1,3 +1,4 @@
+(stateful-randomness-jep)=
 # JEP 28845: Stateful Randomness in JAX
 
 [@jakevdp](http://github.com/jakevdp), *November 2025*
