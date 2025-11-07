@@ -1753,7 +1753,7 @@ class OpsTest(PallasBaseTest):
       o_ref[...] = f(x_ref[...], y_ref[...])
 
     x = jnp.array([1, 3, -4, -6, 2, 5, 4, -7]).astype(dtype)
-    if f == jnp.bitwise_left_shift:
+    if "shift" in f.__name__:
       y = jnp.array([3, 1, 4, 5, 2, 2, 2, 4]).astype(dtype)
     else:
       y = jnp.array([3, 1, -4, -5, 2, -2, 2, 4]).astype(dtype)
