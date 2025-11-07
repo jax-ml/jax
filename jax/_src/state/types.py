@@ -431,10 +431,11 @@ class AbstractRef(core.AbstractValue):
   def update_weak_type(self, weak_type):
     return self.update(inner_aval=self.inner_aval.update_weak_type(weak_type))
 
-  def update(self, inner_aval=None, memory_space=None):
+  def update(self, inner_aval=None, memory_space=None, kind=None):
     inner_aval = self.inner_aval if inner_aval is None else inner_aval
     memory_space = self.memory_space if memory_space is None else memory_space
-    return AbstractRef(inner_aval, memory_space)
+    kind = self.kind if kind is None else kind
+    return AbstractRef(inner_aval, memory_space, kind)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: math.prod(self.shape))
@@ -562,12 +563,12 @@ class AbstractRef(core.AbstractValue):
 
 def _map_ref(size, axis, ref_aval):
   return AbstractRef(core.mapped_aval(size, axis, ref_aval.inner_aval),
-                     ref_aval.memory_space)
+                     ref_aval.memory_space, ref_aval.kind)
 
 def _unmap_ref(size, axis, explicit_mesh_axis, ref_aval):
   return AbstractRef(core.unmapped_aval(
       size, axis, ref_aval.inner_aval, explicit_mesh_axis),
-                     ref_aval.memory_space)
+                     ref_aval.memory_space, ref_aval.kind)
 
 core.aval_mapping_handlers[AbstractRef] = (_map_ref, _unmap_ref)
 

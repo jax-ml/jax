@@ -496,8 +496,8 @@ class AbstractRefUnion(state.AbstractRef):
     del tracer, index, value  # Unused.
     raise ValueError("Ref unions can't be assigned to.")
 
-  def update(self, inner_aval=None, memory_space=None):
-    ref = super().update(inner_aval, memory_space)
+  def update(self, inner_aval=None, memory_space=None, kind=None):
+    ref = super().update(inner_aval, memory_space, kind)
     return AbstractRefUnion(ref.inner_aval, self.refs, self.memory_space)
 
   @functools.cached_property
@@ -1208,8 +1208,8 @@ class WGMMAAbstractAccumulatorRef(state.AbstractRef):
   def __repr__(self) -> str:
     return f'Accumulator{{{self.inner_aval.str_short()}}}'
 
-  def update(self, inner_aval=None, memory_space=None):
-    ref = super().update(inner_aval, memory_space)
+  def update(self, inner_aval=None, memory_space=None, kind=None):
+    ref = super().update(inner_aval, memory_space, kind)
     return WGMMAAbstractAccumulatorRef(
         inner_aval=ref.inner_aval,
         memory_space=ref.memory_space,
@@ -1236,8 +1236,8 @@ class AbstractTMEMRef(state.AbstractRef):
   def __repr__(self) -> str:
     return f'TMEM({self.inner_aval.str_short()}, layout={self.layout}, collective={self.collective})'
 
-  def update(self, inner_aval=None, memory_space=None):
-    ref = super().update(inner_aval, memory_space)
+  def update(self, inner_aval=None, memory_space=None, kind=None):
+    ref = super().update(inner_aval, memory_space, kind)
     return AbstractTMEMRef(
         ref.inner_aval, ref.memory_space, self.layout, self.collective
     )
