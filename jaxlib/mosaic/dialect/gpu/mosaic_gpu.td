@@ -361,6 +361,64 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
   let hasVerifier = 1;
 }
 
+def MosaicGPU_VectorLoadOp : Op<MosaicGPU_Dialect, "vector_load",
+      [InferTypeOpInterface, MemoryEffects<[MemRead]>]> {
+  let summary = "Reads an n-D slice of memory into an n-D vector.";
+  let description = [{
+    Similar to `vector.load` (vector dialect) but supports loading from
+    non-contiguous memory.
+
+    If `optimized` is true, raises an error if we cannot generate an optimised
+    transfer. If unset, fall back to a non-optimized transfer if unable to
+    generate an optimized transfer.
+  }];
+
+  let arguments = (ins
+    AnyNon0RankedMemRef:$source,
+    OptionalAttr<BoolAttr>:$optimized
+  );
+  let results = (outs AnyFixedVectorOfNonZeroRank);
+
+  let extraClassDeclaration = [{
+    static llvm::LogicalResult inferReturnTypes(
+        mlir::MLIRContext *,
+        std::optional<mlir::Location> location,
+        mlir::ValueRange operands,
+        mlir::DictionaryAttr attributes,
+        mlir::OpaqueProperties properties,
+        mlir::RegionRange regions,
+        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
+      mlir::MemRefType memref_type =
+          mlir::cast<mlir::MemRefType>(operands[0].getType());
+      auto vector_type = mlir::VectorType::get(
+          memref_type.getShape(), memref_type.getElementType());
+      inferredReturnTypes.assign({vector_type});
+      return ::mlir::success();
+    }
+  }];
+}
+
+def MosaicGPU_VectorStoreOp : Op<MosaicGPU_Dialect, "vector_store",
+      [MemoryEffects<[MemWrite]>]> {
+  let summary = "Writes an n-D vector to an n-D slice of memory.";
+  let description = [{
+    Similar to `vector.store` (vector dialect) but supports storing to
+    non-contiguous memory.
+
+    If `optimized` is true, raises an error if we cannot generate an optimised
+    transfer. If unset, fall back to a non-optimized transfer if unable to
+    generate an optimized transfer.
+  }];
+
+  let arguments = (ins
+    AnyFixedVectorOfNonZeroRank:$valueToStore,
+    AnyNon0RankedMemRef:$destination,
+    OptionalAttr<BoolAttr>:$optimized
+  );
+
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_WGMMASupportedType : AnyTypeOf<[F16, BF16, F32],
     "A type supported by the WGMMA operation">;
 

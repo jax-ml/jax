@@ -1086,6 +1086,30 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
+  def test_vector_store_op_src_dst_shape_mismatch(self):
+    with ir.InsertionPoint(self.module.body):
+      src_ty = ir.VectorType.get((8,), ir.BF16Type.get())
+      dst_ty = ir.MemRefType.get((4,), ir.BF16Type.get())
+      (src, dst) = undefs(src_ty, dst_ty)
+      mgpu.dialect.vector_store(src, dst)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The source and destination must have the same shape",
+    ):
+      self.module.operation.verify()
+
+  def test_vector_store_op_src_dst_dtype_mismatch(self):
+    with ir.InsertionPoint(self.module.body):
+      src_ty = ir.VectorType.get((8,), ir.BF16Type.get())
+      dst_ty = ir.MemRefType.get((8,), ir.F32Type.get())
+      (src, dst) = undefs(src_ty, dst_ty)
+      mgpu.dialect.vector_store(src, dst)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The source and destination must have the same element type",
+    ):
+      self.module.operation.verify()
+
 
 class DialectLoweringTest(MosaicGpuTest):
 
@@ -1157,9 +1181,7 @@ class DialectLoweringTest(MosaicGpuTest):
     elt_ty = ir.BF16Type.get()
     with ir.InsertionPoint(self.module.body):
       ref = llvm.mlir_undef(ir.MemRefType.get(shape, elt_ty))
-      zero_index = arith.constant(ir.IndexType.get(), 0)
-      ty = ir.VectorType.get(shape, elt_ty)
-      vector.load(ty, ref, [zero_index, zero_index])
+      mgpu.dialect.vector_load(ref)
     with self.assertRaisesRegex(
         ValueError, "missing a layout and can not be lowered"
     ):
@@ -1170,10 +1192,8 @@ class DialectLoweringTest(MosaicGpuTest):
     elt_ty = ir.BF16Type.get()
     with ir.InsertionPoint(self.module.body):
       ref = llvm.mlir_undef(ir.MemRefType.get(shape, elt_ty))
-      zero_index = arith.constant(ir.IndexType.get(), 0)
-      ty = ir.VectorType.get(shape, elt_ty)
-      load = vector.load(ty, ref, [zero_index, zero_index])
-      strided_layout = mgpu.WGStridedFragLayout.from_shaped_type(ty)
+      load = mgpu.dialect.vector_load(ref)
+      strided_layout = mgpu.WGStridedFragLayout.from_shaped_type(load.type)
       assert strided_layout is not None
       load.owner.attributes["out_layouts"] = ir.ArrayAttr.get([
           layouts.to_layout_attr(strided_layout)
@@ -1218,10 +1238,8 @@ class DialectLoweringTest(MosaicGpuTest):
     elt_ty = ir.BF16Type.get()
     with ir.InsertionPoint(self.module.body):
       ref = llvm.mlir_undef(ir.MemRefType.get(shape, elt_ty))
-      zero_index = arith.constant(ir.IndexType.get(), 0)
-      ty = ir.VectorType.get(shape, elt_ty)
-      reg = vector.load(ty, ref, [zero_index, zero_index])
-      vector.store(reg, ref, [zero_index, zero_index])
+      reg = mgpu.dialect.vector_load(ref)
+      mgpu.dialect.vector_store(reg, ref)
 
     mgpu.infer_layout(self.module)
     mgpu.lower_mgpu_dialect(self.module, None)
@@ -1255,11 +1273,7 @@ class DialectLoweringTest(MosaicGpuTest):
   def test_lowering_for(self):
     shape = (4, 128)
     i32 = ir.IntegerType.get_signless(32)
-    vec_ty = ir.VectorType.get(shape, i32)
     splat_layout_attr = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
-    strided_layout_attr = layouts.to_layout_attr(
-        mgpu.WGStridedFragLayout.from_shaped_type(vec_ty)
-    )
     with ir.InsertionPoint(self.module.body):
       i1 = arith.constant(ir.IndexType.get(), 1)
       c1 = arith.constant(i32, 1)
@@ -1272,8 +1286,10 @@ class DialectLoweringTest(MosaicGpuTest):
       ])
       ptr = llvm.mlir_undef(ir.Type.parse("!llvm.ptr"))
       ref = mgpu_utils.ptr_as_memref(ptr, ir.MemRefType.get(shape, i32))
-      i0 = arith.constant(ir.IndexType.get(), 0)
-      other_vec = vector.LoadOp(vec_ty, ref, [i0, i0])
+      other_vec = mgpu.dialect.VectorLoadOp(ref)
+      strided_layout_attr = layouts.to_layout_attr(
+          mgpu.WGStridedFragLayout.from_shaped_type(other_vec.result.type)
+      )
       other_vec.attributes["out_layouts"] = ir.ArrayAttr.get([strided_layout_attr])
       for_op = scf.ForOp(i1, i1, i1, [c1, splat.result])
       for_op.attributes["in_layouts"] = ir.ArrayAttr.get([strided_layout_attr])
@@ -1419,11 +1435,7 @@ class DialectLoweringTest(MosaicGpuTest):
   def test_optimized_gmem_transfers_are_not_supported(self):
     def body(ctx, input, output, scratch):
       del ctx, output, scratch
-      ref_type = ir.MemRefType(input.type)
-      zero = arith.constant(ir.IndexType.get(), 0)
-      zero_indices = [zero] * len(ref_type.shape)
-      vector_type = ir.VectorType.get(ref_type.shape, ref_type.element_type)
-      load = vector.LoadOp(vector_type, input, zero_indices)
+      load = mgpu.dialect.VectorLoadOp(input)
       load.attributes["optimized"] = ir.BoolAttr.get(True)
       layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
       mgpu.dialect.layout_cast(load.result, layout)

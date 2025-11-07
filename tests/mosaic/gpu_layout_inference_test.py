@@ -16,8 +16,6 @@
 
 # pylint: disable=g-complex-comprehension
 
-import math
-
 from absl.testing import parameterized
 import jax
 from jax import numpy as jnp
@@ -270,8 +268,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       vec_ty = ir.VectorType.get(shape, ir.BF16Type.get())
       ref_ty = ir.MemRefType.get(shape, ir.BF16Type.get())
       vec, ref = undefs(vec_ty, ref_ty)
-      zero = mgpu.utils.c(0, ir.IntegerType.get_signless(32))
-      load_op = vector.LoadOp(vec_ty, ref, [zero])
+      load_op = mgpu.dialect.VectorLoadOp(ref)
       lhs = layout_cast(vec, splat_layout_attr)
       arith.AddFOp(lhs, load_op.result)
 
@@ -550,16 +547,15 @@ class LayoutInferenceTest(parameterized.TestCase):
       ref_ty = ir.MemRefType.get(shape, elt_ty)
       array_ty = ir.VectorType.get(shape, elt_ty)
       ref, array = undefs(ref_ty, array_ty)
-      zero_index = arith.constant(ir.IndexType.get(), 0)
-      vector_store = vector.store(array, ref, [zero_index, zero_index])
+      op = mgpu.dialect.VectorStoreOp(array, ref)
 
     mgpu.infer_layout(self.module)
 
     # The vector store should have a layout for the input array, but not for the
     # memref.
-    self.assertIn("in_layouts", vector_store.attributes)
-    self.assertLen(vector_store.attributes["in_layouts"], 1)
-    self.assertNotIn("out_layouts", vector_store.attributes)
+    self.assertIn("in_layouts", op.attributes)
+    self.assertLen(op.attributes["in_layouts"], 1)
+    self.assertNotIn("out_layouts", op.attributes)
 
   @parameterized.parameters(
       mgpu.WGStridedFragLayout((64, 16), vec_size=1),
@@ -865,11 +861,9 @@ class LayoutInferenceTest(parameterized.TestCase):
     shape = (32, 4)
     splat_layout = mgpu.WGSplatFragLayout(shape=shape)
     with ir.InsertionPoint(self.module.body):
-      vec_ty = ir.VectorType.get(shape, ir.BF16Type.get())
       ref_ty = ir.MemRefType.get(shape, ir.BF16Type.get())
       [ref] = undefs(ref_ty)
-      zero = mgpu.utils.c(0, ir.IntegerType.get_signless(32))
-      loaded = vector.load(vec_ty, ref, [zero])
+      loaded = mgpu.dialect.vector_load(ref)
       layout_cast(loaded, splat_layout)
 
     with self.assertRaisesRegex(
@@ -1101,9 +1095,8 @@ class LayoutInferenceTest(parameterized.TestCase):
       c_079 = arith.constant(vector_ty, ir.DenseElementsAttr.get_splat(vector_ty,  ir.FloatAttr.get(f32, 0.797884583)))
       c_044 = arith.constant(vector_ty, ir.DenseElementsAttr.get_splat(vector_ty,  ir.FloatAttr.get(f32, 0.044715)))
 
-      zero = mgpu.utils.c(0, ir.IntegerType.get_signless(32))
       memref = llvm.mlir_undef(memref_ty)
-      load = vector.LoadOp(vector_ty, memref, [zero])
+      load = mgpu.dialect.VectorLoadOp(memref)
       x = load.result
       x2 = arith.mulf(x, x)
       x3 = arith.mulf(x2, x)
@@ -1114,7 +1107,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       u = arith.addf(t, c_1)
       v = arith.mulf(u, c_05)
       r = arith.mulf(x, v)
-      store = vector.StoreOp(r, memref, [zero])
+      store = mgpu.dialect.VectorStoreOp(r, memref)
 
     mgpu.infer_layout(self.module)
 
@@ -1476,39 +1469,24 @@ class LayoutInferenceTest(parameterized.TestCase):
     with self.assertRaisesRegex(ValueError, "Failed to infer"):
       mgpu.infer_layout(self.module)
 
-  @parameterized.product(
-      layout=tuple(mtu.RegisterLayout),
-      major_dim_index=(0, 3, 4),
-  )
-  def test_infer_transforms_for_vector_load_op(
-      self, layout, major_dim_index
-  ):
+  @parameterized.parameters(*mtu.RegisterLayout)
+  def test_infer_transforms_for_vector_load_op(self, layout):
     if layout == mtu.RegisterLayout.WG_SPLAT:
-      self.skipTest("WG_SPLAT is not supported for `vector.load`.")
+      self.skipTest("WG_SPLAT is not supported for `vector_load`.")
 
-    big_shape = (128, 128)
-    small_shape = (64, 64)
+    shape = (128, 128)
     elt_ty = ir.BF16Type.get()
-    layout = layout.to_mgpu(small_shape, elt_ty)
+    layout = layout.to_mgpu(shape, elt_ty)
 
     with ir.InsertionPoint(self.module.body):
-      smem_ty = ir.MemRefType.get(big_shape, elt_ty, memory_space=mgpu.utils.smem())
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       [smem_ref] = undefs(smem_ty)
-
-      c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
-      zero = c(0)
-      major_index = c(major_dim_index)
-
-      vector_op = vector.LoadOp(
-          ir.VectorType.get(small_shape, elt_ty), smem_ref, [major_index, zero]
-      )
-
-      layout_cast(vector_op.result, layout)
+      op = mgpu.dialect.VectorLoadOp(smem_ref)
+      layout_cast(op.result, layout)
 
     if inference_utils.is_mma_layout(layout):
-      expected_major_dim = math.gcd(8, major_dim_index)
       expected_transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((expected_major_dim, 64)),
+          mgpu.dialect.TileTransformAttr.get((8, 64)),
           mgpu.dialect.SwizzleTransformAttr.get(128),
       ])
     else:
@@ -1516,37 +1494,25 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     mgpu.infer_layout(self.module)
     self.assertSequenceEqual(
-        inference_utils.in_transforms(vector_op), [expected_transforms]
+        inference_utils.in_transforms(op), [expected_transforms]
     )
 
-  @parameterized.product(
-      layout=tuple(mtu.RegisterLayout),
-      major_dim_index=(0, 3, 4),
-  )
-  def test_infer_transforms_for_vector_store_op(
-      self, layout, major_dim_index
-  ):
-    big_shape = (128, 128)
-    small_shape = (64, 64)
+  @parameterized.parameters(*mtu.RegisterLayout)
+  def test_infer_transforms_for_vector_store_op(self, layout):
+    shape = (128, 128)
     elt_ty = ir.BF16Type.get()
-    layout = layout.to_mgpu(small_shape, elt_ty)
+    layout = layout.to_mgpu(shape, elt_ty)
 
     with ir.InsertionPoint(self.module.body):
-      smem_ty = ir.MemRefType.get(big_shape, elt_ty, memory_space=mgpu.utils.smem())
-      [smem_ref] = undefs(smem_ty)
-
-      c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
-      zero = c(0)
-      major_index = c(major_dim_index)
-
-      [value_to_store] = undefs(ir.VectorType.get(small_shape, elt_ty))
-      vector_op = vector.StoreOp(value_to_store, smem_ref, [major_index, zero])
-      layout_cast(value_to_store, layout)
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+      value_ty = ir.VectorType.get(shape, elt_ty)
+      [smem_ref, value_to_store] = undefs(smem_ty, value_ty)
+      value_to_store = layout_cast(value_to_store, layout)
+      op = mgpu.dialect.VectorStoreOp(value_to_store, smem_ref)
 
     if inference_utils.is_mma_layout(layout):
-      expected_major_dim = math.gcd(8, major_dim_index)
       expected_transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((expected_major_dim, 64)),
+          mgpu.dialect.TileTransformAttr.get((8, 64)),
           mgpu.dialect.SwizzleTransformAttr.get(128),
       ])
     else:
@@ -1554,7 +1520,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     mgpu.infer_layout(self.module)
     self.assertSequenceEqual(
-        inference_utils.in_transforms(vector_op), [expected_transforms]
+        inference_utils.in_transforms(op), [expected_transforms]
     )
 
   def test_slice_smem_gets_empty_by_default(self):
@@ -1957,14 +1923,13 @@ class LayoutInferenceTest(parameterized.TestCase):
       dst_elt_ty = ir.IntegerType.get_signless(16)
       src_ref_ty = ir.MemRefType.get(shape, src_elt_ty)
       dst_ref_ty = ir.MemRefType.get(shape, dst_elt_ty)
-      zero = mgpu.utils.c(0, ir.IntegerType.get_signless(32))
       src_ref, dst_ref = undefs(src_ref_ty, dst_ref_ty)
 
       # Make sure to have at least three ops such that the default assignment
       # can pick a vector size from data types of various lengths.
-      src = vector.load(ir.VectorType.get(shape, src_elt_ty), src_ref, [zero])
+      src = mgpu.dialect.vector_load(src_ref)
       conversion = arith.TruncIOp(ir.VectorType.get(shape, dst_elt_ty), src)
-      vector.store(conversion.result, dst_ref, [zero])
+      mgpu.dialect.vector_store(conversion.result, dst_ref)
 
     mgpu.infer_layout(self.module)
 

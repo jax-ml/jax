@@ -693,6 +693,23 @@ llvm::LogicalResult SliceTmemOp::verify() {
   return llvm::success();
 }
 
+llvm::LogicalResult VectorStoreOp::verify() {
+  mlir::VectorType src_type = getValueToStore().getType();
+  mlir::MemRefType dst_type = getDestination().getType();
+  if (src_type.getShape() != dst_type.getShape()) {
+    return emitError()
+           << "The source and destination must have the same shape but got "
+           << src_type.getShape() << " and " << dst_type.getShape();
+  }
+  if (src_type.getElementType() != dst_type.getElementType()) {
+    return emitError()
+           << "The source and destination must have the same element type but "
+              "got "
+           << src_type.getElementType() << " and " << dst_type.getElementType();
+  }
+  return llvm::success();
+}
+
 void MosaicGPUDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST

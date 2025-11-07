@@ -344,7 +344,9 @@ def reduce_expression(
 _SUPPORTED_TILED_RELAYOUTS = frozenset([
     # Transposed layouts.
     (fa.WGMMA_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT),
+    (fa.WGMMA_TRANSPOSED_LAYOUT, fa.WGMMA_LAYOUT),
     (fa.TCGEN05_LAYOUT, fa.TCGEN05_TRANSPOSED_LAYOUT),
+    (fa.TCGEN05_TRANSPOSED_LAYOUT, fa.TCGEN05_LAYOUT),
     # "Conversion-optimized" layouts.
     (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT),
     (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X),

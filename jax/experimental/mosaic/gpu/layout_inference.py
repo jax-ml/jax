@@ -620,86 +620,64 @@ for op in [
   _add_equation_system_derivation_rule(op)(_pointwise_op_equation_system)
 
 
-@_add_equation_system_derivation_rule(vector.LoadOp)
-def _vector_load_equation_system(
-    ctx: DerivationContext,
-    op: vector.LoadOp,
-) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
-  # TODO(b/447079781): Investigate whether we should check for contiguous
-  # strides here. An initial implementation of this failed the
-  # test_gmem_to_smem_with_multiple_smem_indexers_and_transforms test, but
-  # we should confirm that this is properly supported.
+if jaxlib.version > (0, 8, 0):
 
-  # Registers
-  dest = ValueSite(op, VariableType.RESULT, 0)
-  dest_var = eqns.Variable(dest)
-  value_sites_for_variable = {dest_var: [dest]}
-  constraints = [eqns.NotOfType(dest_var, fa.WGSplatFragLayout)]
+  @_add_equation_system_derivation_rule(mgpu.VectorLoadOp)
+  def _vector_load_equation_system(
+      ctx: DerivationContext,
+      op: mgpu.VectorLoadOp,
+  ) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
+    # TODO(b/447079781): Investigate whether we should check for contiguous
+    # strides here. An initial implementation of this failed the
+    # test_gmem_to_smem_with_multiple_smem_indexers_and_transforms test, but
+    # we should confirm that this is properly supported.
 
-  # SMEM
-  if utils.is_smem_ref(op.base):
-    base_shape = ir.ShapedType(op.base.type).shape
-    divisibility_constraints = []
-    for axis_size, index in zip(base_shape, op.indices, strict=True):
-      divisibility_constraints.append(dynamic_gcd(axis_size, index))
-    source = ValueSite(op, VariableType.OPERAND, 0)
-    source_var = ctx.producer_ref(source)
-    value_sites_for_variable[source_var] = [source]
-    constraints.extend([
-        eqns.IsTransferable(
-            source=source_var,
-            target=dest_var,
-            shape=tuple(ir.ShapedType(op.result.type).shape),
-        ),
-        eqns.Divides(
-            expr=source_var,
-            tiling_multiple=tuple(divisibility_constraints),
-        ),
-    ])
+    # Registers
+    dest = ValueSite(op, VariableType.RESULT, 0)
+    dest_var = eqns.Variable(dest)
+    value_sites_for_variable = {dest_var: [dest]}
+    constraints = [eqns.NotOfType(dest_var, fa.WGSplatFragLayout)]
 
-  system = eqns.EquationSystem(constraints=constraints)
-  return system, value_sites_for_variable, []
+    # SMEM
+    if utils.is_smem_ref(op.source):
+      source = ValueSite(op, VariableType.OPERAND, 0)
+      source_var = ctx.producer_ref(source)
+      value_sites_for_variable[source_var] = [source]
+      shape = tuple(ir.MemRefType(op.source.type).shape)
+      constraints.append(eqns.IsTransferable(source_var, dest_var, shape))
+
+    system = eqns.EquationSystem(constraints=constraints)
+    return system, value_sites_for_variable, []
 
 
-@_add_equation_system_derivation_rule(vector.StoreOp)
-def _vector_store_equation_system(
-    ctx: DerivationContext,
-    op: vector.StoreOp,
-) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
-  # TODO(b/447079781): Investigate whether we should check for contiguous
-  # strides here. An initial implementaiton of this failed the
-  # test_gmem_to_smem_with_multiple_smem_indexers_and_transforms test, but
-  # we should confirm that this is properly supported.
+if jaxlib.version > (0, 8, 0):
 
-  # Registers
-  value = ValueSite(op, VariableType.OPERAND, 0)
-  value_var = eqns.Variable(value)
-  value_sites_for_variable = {value_var: [value]}
+  @_add_equation_system_derivation_rule(mgpu.VectorStoreOp)
+  def _vector_store_equation_system(
+      ctx: DerivationContext,
+      op: mgpu.VectorStoreOp,
+  ) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
+    # TODO(b/447079781): Investigate whether we should check for contiguous
+    # strides here. An initial implementaiton of this failed the
+    # test_gmem_to_smem_with_multiple_smem_indexers_and_transforms test, but
+    # we should confirm that this is properly supported.
 
-  # SMEM
-  constraints = []
-  if utils.is_smem_ref(op.base):
-    dest_shape = ir.ShapedType(op.base.type).shape
-    divisibility_constraints = []
-    for axis_size, index in zip(dest_shape, op.indices, strict=True):
-      divisibility_constraints.append(dynamic_gcd(axis_size, index))
-    dest = ValueSite(op, VariableType.OPERAND, 1)
-    dest_var = ctx.producer_ref(dest)
-    value_sites_for_variable[dest_var] = [dest]
-    constraints = [
-        eqns.IsTransferable(
-            source=value_var,
-            target=dest_var,
-            shape=tuple(ir.ShapedType(op.base.type).shape),
-        ),
-        eqns.Divides(
-            expr=dest_var,
-            tiling_multiple=tuple(divisibility_constraints),
-        ),
-    ]
+    # Registers
+    value = ValueSite(op, VariableType.OPERAND, 0)
+    value_var = eqns.Variable(value)
+    value_sites_for_variable = {value_var: [value]}
 
-  system = eqns.EquationSystem(constraints=constraints)
-  return system, value_sites_for_variable, []
+    # SMEM
+    constraints = []
+    if utils.is_smem_ref(op.destination):
+      dest = ValueSite(op, VariableType.OPERAND, 1)
+      dest_var = ctx.producer_ref(dest)
+      value_sites_for_variable[dest_var] = [dest]
+      shape = tuple(ir.MemRefType(op.destination.type).shape)
+      constraints.append(eqns.IsTransferable(value_var, dest_var, shape))
+
+    system = eqns.EquationSystem(constraints=constraints)
+    return system, value_sites_for_variable, []
 
 
 @_add_equation_system_derivation_rule(mgpu.OptimizationBarrierOp)

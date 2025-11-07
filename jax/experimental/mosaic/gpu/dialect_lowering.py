@@ -416,164 +416,135 @@ def _retry_on_failure(transfer: _Transfer, optimized: bool | None) -> Any:
     return transfer(optimized=False)
 
 
-@_register_lowering(vector.LoadOp)
-def _vector_load_op_lowering_rule(
-    _: LoweringContext, vector_load_op: vector.LoadOp
-) -> Sequence[ir.Value]:
-  (out_layout_attr,) = cast(
-      ir.ArrayAttr, vector_load_op.attributes["out_layouts"]
-  )
+if jaxlib.version > (0, 8, 0):
 
-  for i in vector_load_op.indices:
-    index_defining_op = i.owner.opview
-    if (
-        not isinstance(index_defining_op, arith.ConstantOp)
-        or index_defining_op.literal_value != 0
-    ):
-      # TODO(bchetioui,dasenov): support non-zero indices.
-      raise NotImplementedError(
-          "Only constants with value 0 are supported as indices "
-          f"for {vector_load_op}"
+  @_register_lowering(mgpu.VectorLoadOp)
+  def _vector_load_op_lowering_rule(
+      _: LoweringContext, op: mgpu.VectorLoadOp
+  ) -> Sequence[ir.Value]:
+    (out_layout_attr,) = inference_utils.out_layouts(op)
+
+    element_type = ir.VectorType(op.result.type).element_type
+    is_signed = _default_is_signed(element_type)
+
+    def _fragmented_array_to_ir(
+        fragmented_array: fa.FragmentedArray,
+    ) -> ir.Value:
+      return fragmented_array_to_ir(fragmented_array, op.result.type)
+
+    if layouts.is_strided_fragmented_layout(out_layout_attr):
+      strided_layout = layouts.from_strided_fragmented_layout_attr(
+          out_layout_attr
       )
-
-  element_type = ir.VectorType(vector_load_op.result.type).element_type
-  is_signed = _default_is_signed(element_type)
-
-  def _fragmented_array_to_ir(fragmented_array: fa.FragmentedArray) -> ir.Value:
-    return fragmented_array_to_ir(fragmented_array, vector_load_op.result.type)
-
-  if layouts.is_strided_fragmented_layout(out_layout_attr):
-    strided_layout = layouts.from_strided_fragmented_layout_attr(
-        out_layout_attr
-    )
-    # TODO(bchetioui): Process transforms.
-    fragmented_array = fa.FragmentedArray.load_strided(
-        vector_load_op.base,
-        is_signed=is_signed,
-        vec_size=strided_layout.vec_size,
-    )
-    return [_fragmented_array_to_ir(fragmented_array)]
-
-  if not layouts.is_tiled_layout(out_layout_attr):
-    raise ValueError(
-        f"{vector_load_op} has an unsupported layout: {out_layout_attr}"
-    )
-
-  optimized = (
-      vector_load_op.attributes["optimized"].value
-      if "optimized" in vector_load_op.attributes
-      else None
-  )
-  layout = layouts.from_tiled_layout_attr(out_layout_attr)
-  ref_ty = ir.MemRefType(vector_load_op.base.type)
-  if ref_ty.memory_space is None:  # GMEM
-    fragmented_array = fa.FragmentedArray.load_untiled(
-        vector_load_op.base,
-        layout=layout,
-        is_signed=is_signed,
-        optimized=optimized if optimized is not None else False,
-    )
-    return [_fragmented_array_to_ir(fragmented_array)]
-
-  if ref_ty.memory_space != utils.smem():
-    raise ValueError(f"Unsupported memory space: {ref_ty.memory_space}")
-
-  transforms_attr = inference_utils.in_transforms(vector_load_op)[0]
-  swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
-      transforms_attr
-  )
-  has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
-  if has_transforms:
-    _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
-    transformed_ref = unwrap_transformed_memref(
-        vector_load_op.base, transforms_attr
-    )
-    def load_tiled(optimized: bool) -> fa.FragmentedArray:
-      return fa.FragmentedArray.load_tiled(
-          transformed_ref,
-          swizzle,
+      # TODO(bchetioui): Process transforms.
+      fragmented_array = fa.FragmentedArray.load_strided(
+          op.source,
           is_signed=is_signed,
-          layout=layout,
-          optimized=optimized,
+          vec_size=strided_layout.vec_size,
       )
+      return [_fragmented_array_to_ir(fragmented_array)]
 
-    fragmented_array = _retry_on_failure(load_tiled, optimized)
-  else:
-    def load_untiled(optimized: bool) -> fa.FragmentedArray:
-      return fa.FragmentedArray.load_untiled(
-          vector_load_op.base,
+    if not layouts.is_tiled_layout(out_layout_attr):
+      raise ValueError(f"{op} has an unsupported layout: {out_layout_attr}")
+
+    optimized = op.optimized.value if op.optimized is not None else None
+    layout = layouts.from_tiled_layout_attr(out_layout_attr)
+    ref_ty = ir.MemRefType(op.source.type)
+    if ref_ty.memory_space is None:  # GMEM
+      fragmented_array = fa.FragmentedArray.load_untiled(
+          op.source,
           layout=layout,
           is_signed=is_signed,
-          optimized=optimized,
+          optimized=bool(optimized),
       )
+      return [_fragmented_array_to_ir(fragmented_array)]
 
-    fragmented_array = _retry_on_failure(load_untiled, optimized)
+    if ref_ty.memory_space != utils.smem():
+      raise ValueError(f"Unsupported memory space: {ref_ty.memory_space}")
 
-  return [_fragmented_array_to_ir(fragmented_array)]
-
-
-@_register_lowering(vector.StoreOp)
-def _vector_store_op_lowering_rule(
-     ctx: LoweringContext, vector_store_op: vector.StoreOp
-) -> Sequence[ir.Value]:
-  for i in vector_store_op.indices:
-    index_defining_op = i.owner.opview
-    if (
-        not isinstance(index_defining_op, arith.ConstantOp)
-        or index_defining_op.literal_value != 0
-    ):
-      # TODO(bchetioui,dasenov): support non-zero indices.
-      raise NotImplementedError(
-          "Only constants with value 0 are supported as indices "
-          f"for {vector_store_op}"
-      )
-
-  [to_store_layout] = inference_utils.in_layouts(vector_store_op)
-  fragmented_array = _fragmented_array_from_ir(
-      vector_store_op.valueToStore, to_store_layout
-  )
-
-  if ctx.auto_barriers:
-    mgpu_utils.warpgroup_barrier()  # Make sure the reads have completed.
-
-  ref = vector_store_op.base
-  ref_type = ir.MemRefType(ref.type)
-  optimized = (
-      vector_store_op.attributes["optimized"].value
-      if "optimized" in vector_store_op.attributes
-      else None
-  )
-
-  if ref_type.memory_space is None:  # GMEM
-    fragmented_array.store_untiled(
-        ref, optimized=optimized if optimized is not None else False
-    )
-  elif ref_type.memory_space == utils.smem():
-    transforms_attr = inference_utils.in_transforms(vector_store_op)[0]
+    transforms_attr = inference_utils.in_transforms(op)[0]
     swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
         transforms_attr
     )
     has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
     if has_transforms:
-      _check_transforms_and_swizzle_are_supported(ref_type, transforms, swizzle)
-      unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)
-      def store_tiled(optimized: bool):
-        fragmented_array.store_tiled(unwrapped_ref, swizzle, optimized)
+      _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
+      transformed_ref = unwrap_transformed_memref(op.source, transforms_attr)
 
-      _retry_on_failure(store_tiled, optimized)
+      def load_tiled(optimized: bool) -> fa.FragmentedArray:
+        return fa.FragmentedArray.load_tiled(
+            transformed_ref,
+            swizzle,
+            is_signed=is_signed,
+            layout=layout,
+            optimized=optimized,
+        )
+
+      fragmented_array = _retry_on_failure(load_tiled, optimized)
     else:
 
-      def store_untiled(optimized: bool):
-        fragmented_array.store_untiled(ref, optimized=optimized)
+      def load_untiled(optimized: bool) -> fa.FragmentedArray:
+        return fa.FragmentedArray.load_untiled(
+            op.source,
+            layout=layout,
+            is_signed=is_signed,
+            optimized=optimized,
+        )
 
-      _retry_on_failure(store_untiled, optimized)
-  else:
-    raise ValueError(f"Unsupported memory space: {ref_type.memory_space}")
+      fragmented_array = _retry_on_failure(load_untiled, optimized)
 
-  if ctx.auto_barriers:
-    mgpu_utils.warpgroup_barrier()  # Make sure the writes have completed.
+    return [_fragmented_array_to_ir(fragmented_array)]
 
-  return []
+
+if jaxlib.version > (0, 8, 0):
+
+  @_register_lowering(mgpu.VectorStoreOp)
+  def _vector_store_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.VectorStoreOp
+  ) -> Sequence[ir.Value]:
+    [to_store_layout] = inference_utils.in_layouts(op)
+    fragmented_array = _fragmented_array_from_ir(
+        op.valueToStore, to_store_layout
+    )
+
+    if ctx.auto_barriers:
+      mgpu_utils.warpgroup_barrier()  # Make sure the reads have completed.
+
+    ref = op.destination
+    ref_type = ir.MemRefType(ref.type)
+    optimized = op.optimized.value if op.optimized is not None else None
+
+    if ref_type.memory_space is None:  # GMEM
+      fragmented_array.store_untiled(ref, optimized=bool(optimized))
+    elif ref_type.memory_space == utils.smem():
+      transforms_attr = inference_utils.in_transforms(op)[0]
+      swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+          transforms_attr
+      )
+      has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
+      if has_transforms:
+        _check_transforms_and_swizzle_are_supported(
+            ref_type, transforms, swizzle
+        )
+        unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)
+
+        def store_tiled(optimized: bool):
+          fragmented_array.store_tiled(unwrapped_ref, swizzle, optimized)
+
+        _retry_on_failure(store_tiled, optimized)
+      else:
+
+        def store_untiled(optimized: bool):
+          fragmented_array.store_untiled(ref, optimized=optimized)
+
+        _retry_on_failure(store_untiled, optimized)
+    else:
+      raise ValueError(f"Unsupported memory space: {ref_type.memory_space}")
+
+    if ctx.auto_barriers:
+      mgpu_utils.warpgroup_barrier()  # Make sure the writes have completed.
+
+    return []
 
 
 @_register_lowering(vector.BroadcastOp)

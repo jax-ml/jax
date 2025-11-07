@@ -1608,22 +1608,16 @@ def _get_lowering_rule_wg(
   x_ref, transforms = _handle_transforms(
       ctx, x_ref, transforms, allow_peer_refs=True
   )
-  assert isinstance(x_ref, ir.Value)
-  mlir_dtype = ir.MemRefType(x_ref.type).element_type
 
   if transforms:
     raise NotImplementedError(
         "Transforms are not yet implemented for warpgroup semantics"
     )
 
+  assert isinstance(x_ref, ir.Value)
   shape = ctx.avals_out[0].shape
-  ty = ir.VectorType.get(shape, mlir_dtype)
   if shape:
-    zero_index = arith_dialect.constant(ir.IndexType.get(), 0)
-    indices = [zero_index for _ in range(len(shape))]
-    op = vector_dialect.LoadOp(ty, x_ref, indices)
-    op.attributes["optimized"] = ir.BoolAttr.get(optimized)
-    return op.result
+    return mgpu.dialect.vector_load(x_ref, optimized=optimized)
   else:
     return memref_dialect.load(x_ref, [])
 
@@ -1752,13 +1746,9 @@ def _swap_lowering_rule_wg(
         "Transforms are not yet implemented for warpgroup semantics"
     )
   assert isinstance(x_smem, ir.Value)
-  x_mlir_dtype = ir.MemRefType(x_smem.type).element_type
-  ty = ir.VectorType.get(shape, x_mlir_dtype)
   if shape:
-    zero_index = arith_dialect.constant(ir.IndexType.get(), 0)
-    indices = [zero_index] * len(shape)
-    old_value = vector_dialect.load(ty, x_smem, indices)
-    vector_dialect.store(value, x_smem, indices)
+    old_value = mgpu.dialect.vector_load(x_smem)
+    mgpu.dialect.vector_store(value, x_smem)
   else:
     old_value = memref_dialect.load(x_smem, [])
     memref_dialect.store(value, x_smem, [])
