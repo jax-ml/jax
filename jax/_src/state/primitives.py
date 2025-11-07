@@ -42,8 +42,12 @@ from jax._src.state.types import (
     TransformedRef,
     WriteEffect,
 )
-from jax._src.typing import Array
+from jax._src.typing import Array, ArrayLike
 from jax._src.util import safe_map, safe_zip
+
+
+# Stand-in for hi-jax inputs to Ref.
+HijaxType = Any
 
 
 ## General utilities
@@ -112,8 +116,9 @@ def get_ref_and_transforms(
 
 @partial(traceback_util.api_boundary, repro_api_name="jax.ref.get")
 def ref_get(
-    ref: Any, idx: Indexer | tuple[Indexer, ...] | None = None
-) -> Array:
+    ref: core.Ref | TransformedRef,
+    idx: Indexer | tuple[Indexer, ...] | None = None
+) -> Array | HijaxType:
   """Read a value from an Ref.
 
   This is equivalent to ``ref[idx]`` for a NumPy-style indexer ``idx``.
@@ -199,11 +204,11 @@ batching.ragged_prop_rules[swap_p] = swap_ragged_prop_rule
 
 @partial(traceback_util.api_boundary, repro_api_name="jax.ref.swap")
 def ref_swap(
-    ref: AbstractRef | TransformedRef,
+    ref: core.Ref | TransformedRef,
     idx: Indexer | tuple[Indexer, ...] | None,
-    value: Array,
+    value: ArrayLike | HijaxType,
     _function_name: str = "ref_swap",
-) -> Array:
+) -> Array | HijaxType:
   """Update an array value inplace while returning the previous value.
 
   This is equivalent to ``ref[idx], prev = value, ref[idx]`` while returning
@@ -271,9 +276,9 @@ def _maybe_implicit_cast(dtype, value):
 
 @partial(traceback_util.api_boundary, repro_api_name="jax.ref.set")
 def ref_set(
-    ref: AbstractRef | TransformedRef,
+    ref: core.Ref | TransformedRef,
     idx: Indexer | tuple[Indexer, ...] | None,
-    value: Array,
+    value: ArrayLike | HijaxType,
 ) -> None:
   """Set a value in an Ref in-place.
 
@@ -334,9 +339,9 @@ addupdate_p.def_impl(partial(dispatch.apply_primitive, addupdate_p))
 
 
 def ref_addupdate(
-    ref: AbstractRef,
+    ref: core.Ref | TransformedRef,
     idx: Indexer | tuple[Indexer, ...] | None,
-    x: Array,
+    x: ArrayLike | HijaxType,
 ) -> None:
   """Add to an element in an Ref in-place.
 

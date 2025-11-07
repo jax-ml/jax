@@ -2672,7 +2672,7 @@ class ArrayRefImpl:
 pytype_aval_mappings[Ref] = lambda x: x._aval
 dtypes.canonicalize_value_handlers[Ref] = lambda x: x
 
-def new_ref(init_val, *, memory_space: Any = None, kind: Any = None):
+def new_ref(init_val: Any, *, memory_space: Any = None, kind: Any = None):
   """Create a mutable array reference with initial value ``init_val``.
 
   For more discussion, see the `Ref guide`_.
