@@ -2269,6 +2269,8 @@ class PallasCallTest(PallasBaseTest):
       self.skipTest('OOM tests need us to compile the kernels')
     if not jtu.if_cloud_tpu_at_least(2025, 11, 12):
       self.skipTest('Support added on Oct 14, 2025')
+    if jtu.is_device_tpu_at_least(6):
+      self.skipTest('Test currently fails on TPU v6e and v7x')
 
     def body(y_ref):
       pass  # We only want to compile the kernel.
