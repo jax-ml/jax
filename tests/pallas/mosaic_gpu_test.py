@@ -4518,6 +4518,32 @@ class PipelineTest(PallasTest):
     y = x + 1.0
     np.testing.assert_array_equal(kernel_fn(x), y)
 
+  def test_emit_with_dynamic_grid_smaller_than_concurrent_steps(self):
+    block_x = 128
+    x = jax.random.randint(jax.random.key(1234), (block_x,),
+                           minval=-128, maxval=128, dtype=jnp.int32)
+
+    def body(num_blocks_gmem, x_gmem, o_gmem):
+      num_blocks = num_blocks_gmem[...]
+      def pipeline_body(_, x_smem, o_smem):
+        o_smem[...] = x_smem[...]
+      for _ in range(2):
+        plgpu.emit_pipeline(
+            pipeline_body,
+            grid=(num_blocks,),
+            in_specs=[plgpu.BlockSpec((block_x,), lambda i: (i,))],
+            out_specs=[plgpu.BlockSpec((block_x,), lambda i: (i,))],
+            max_concurrent_steps=2,
+        )(x_gmem, o_gmem)
+
+    # The test only intends to check that this does not crash/hang.
+    plgpu.kernel(
+        body,
+        out_shape=jax.ShapeDtypeStruct((block_x,), jnp.int32),
+        grid=(1,),
+        grid_names=("blocks",)
+    )(0, x).block_until_ready()
+
   @parameterized.product(static=[False, True], short=[False, True])
   def test_emit_with_2d_grid(self, static, short):
     num_steps1 = 4
