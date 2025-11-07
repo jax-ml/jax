@@ -548,7 +548,7 @@ def log_softmax(x: ArrayLike,
   Args:
     x : input array
     axis: the axis or axes along which the :code:`log_softmax` should be
-      computed. Either an integer or a tuple of integers.
+      computed. Either an integer, tuple of integers, or ``None`` (all axes).
     where: Elements to include in the :code:`log_softmax`. The output for any
       masked-out element is minus infinity.
 
@@ -591,7 +591,7 @@ def softmax(x: ArrayLike,
     x : input array
     axis: the axis or axes along which the softmax should be computed. The
       softmax output summed across these dimensions should sum to :math:`1`.
-      Either an integer or a tuple of integers.
+      Either an integer, tuple of integers, or ``None`` (all axes).
     where: Elements to include in the :code:`softmax`. The output for any
       masked-out element is zero.
 
@@ -668,8 +668,8 @@ def standardize(x: ArrayLike,
 
   Args:
     x: input array to be standardized.
-    axis: integer or tuple of integers representing the axes along which
-      to standardize. Defaults to the last axis (``-1``).
+    axis: integer, tuple of integers, or ``None`` (all axes), representing the
+      axes along which to standardize. Defaults to the last axis (``-1``).
     mean: optionally specify the mean used for standardization. If not specified,
       then ``x.mean(axis, where=where)`` will be used.
     variance: optionally specify the variance used for standardization. If not
