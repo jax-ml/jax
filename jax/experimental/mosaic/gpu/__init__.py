@@ -105,7 +105,6 @@ from .utils import (
     query_cluster_cancel as query_cluster_cancel,
     single_thread as single_thread,
     single_thread_predicate as single_thread_predicate,
-    system_memory_barrier as system_memory_barrier,
     thread_idx as thread_idx,
     tile_shape as tile_shape,
     try_cluster_cancel as try_cluster_cancel,

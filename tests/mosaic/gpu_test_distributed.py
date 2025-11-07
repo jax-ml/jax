@@ -95,13 +95,10 @@ class ProfilerTest(TestCase):
       barrier.wait()
       ctx.async_copy(src_ref=tmp, dst_ref=dst, gmem_peer_id=other_device)
       ctx.await_async_copy(0)
-      # Observe completion of my write to peer's memory.
-      mgpu.system_memory_barrier()
-      # Signal completion (of my write to peer's memory) to the peer.
       other_sem = mgpu.SemaphoreRef(
-        mgpu.utils.memref_ptr(ctx.to_remote(sem, other_device)))
+          mgpu.utils.memref_ptr(ctx.to_remote(sem, other_device))
+      )
       other_sem.signal(1)
-      # Observe completion of peer's write to my memory.
       my_sem = mgpu.SemaphoreRef(mgpu.utils.memref_ptr(sem))
       my_sem.wait(1)
 
