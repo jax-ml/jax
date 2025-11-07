@@ -1577,7 +1577,7 @@ def _reshape_pull_rule(
   aval_out = ctx.avals_out[0]
   assert isinstance(aval_out, core.ShapedArray)
 
-  block_shape = tuple(map(_block_size, block_spec.block_shape))
+  block_shape = block_spec.block_shape
   shape_in = aval_in.shape
   shape_out = aval_out.shape
   assert np.prod(shape_in) == np.prod(shape_out)
@@ -1604,27 +1604,34 @@ def _reshape_pull_rule(
     new_grids = []
 
     for d, bd, merged in zip(shape_out, block_shape, merged_dims):
-      if bd is None:
-        bd = 1
+      bs = pallas_core.get_block_size(bd)
+
+      if len(merged) == 1:
+        new_grids.append((merged[0] // bs,))
+        new_block_shape.append(bd if bd is not None else 1)
+        continue
 
       if not isinstance(bd, (int, pallas_core.Blocked)):
         raise NotImplementedError('reshape merge must use `Blocked` block size')
 
-      num_blocks = pallas_utils.cdiv(d, bd)
+      num_blocks = pallas_utils.cdiv(d, bs)
       new_block_dims = []
       for md in reversed(merged):
-        if bd % md == 0:
+        if bs % md == 0:
           new_block_dims.append(md)
-          bd //= md
-        elif md % bd == 0:
-          new_block_dims.append(bd)
-          bd = 1
+          bs //= md
+        elif md % bs == 0:
+          new_block_dims.append(bs)
+          bs = 1
         else:
           raise NotImplementedError('unsupported reshape merge')
 
       new_block_dims.reverse()
       new_block_shape.extend(new_block_dims)
-      new_grid = [np.int32(md // bd) for md, bd in zip(merged, new_block_dims)]
+      new_grid = [
+          np.int32(md // pallas_core.get_block_size(bd))
+          for md, bd in zip(merged, new_block_dims)
+      ]
       new_grids.append(tuple(new_grid))
 
       if np.prod(new_grid) != num_blocks:
