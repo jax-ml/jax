@@ -86,7 +86,7 @@ class ProfilerTest(TestCase):
       y_np = multihost_utils.process_allgather(y, tiled=True)
       np.testing.assert_array_equal(y_np, np.arange(jax.device_count()))
 
-  def test_remote_async_copy(self):
+  def test_remote_async_copy_basic(self):
     i32 = ir.IntegerType.get_signless(32)
     def kernel(ctx, src, sem, dst, scratch):
       tmp, barrier = scratch
@@ -122,6 +122,48 @@ class ProfilerTest(TestCase):
       y_np = multihost_utils.process_allgather(y, tiled=True)
       np.testing.assert_array_equal(
           y_np, np.concatenate(np.split(x_np, 2)[::-1], axis=0)
+      )
+
+  def test_remote_async_copy_add(self):
+    i32 = ir.IntegerType.get_signless(32)
+    def kernel(ctx, src, sem, dst, scratch):
+      tmp, barrier = scratch
+      other_device = arith.subi(arith.constant(i32, 1), ctx.device_id())
+      other_sem = mgpu.SemaphoreRef(
+          mgpu.utils.memref_ptr(ctx.to_remote(sem, other_device))
+      )
+      my_sem = mgpu.SemaphoreRef(mgpu.utils.memref_ptr(sem))
+      ctx.async_copy(src_ref=src, dst_ref=tmp, barrier=barrier)
+      barrier.wait()
+      fa.FragmentedArray.splat(arith.constant(ir.F32Type.get(), 1.0), (32, 64)).store_untiled(dst)
+      mgpu.warpgroup_barrier()
+      other_sem.signal(1)
+      my_sem.wait(1)
+      ctx.async_copy(src_ref=tmp, dst_ref=dst, gmem_peer_id=other_device, reduction_op="add")
+      ctx.await_async_copy(0)
+      other_sem.signal(1)
+      my_sem.wait(1)
+
+    mesh = jax.make_mesh(
+        (2,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
+    )
+    with jax.set_mesh(mesh):
+      x_np = np.arange(64 * 64, dtype=jnp.float32).reshape(64, 64)
+      x = jax.sharding.reshard(x_np, P("x"))
+      sem = jax.sharding.reshard(jnp.zeros((1,), dtype=jnp.int32), P())
+      y, _ = jax.jit(
+          jax.shard_map(
+              lambda x, sem: mgpu.as_gpu_kernel(
+                  kernel, (1, 1, 1), (128, 1, 1), x, x, (x, mgpu.TMABarrier()), inout_shape=sem
+              )(x, sem),
+              in_specs=(P("x"), P(None)),
+              out_specs=[P("x"), P(None)],
+              check_vma=False,
+          )
+      )(x, sem)
+      y_np = multihost_utils.process_allgather(y, tiled=True)
+      np.testing.assert_array_equal(
+          y_np, 1 + np.concatenate(np.split(x_np, 2)[::-1], axis=0)
       )
 
   def test_remote_semaphore(self):
