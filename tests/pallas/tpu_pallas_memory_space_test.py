@@ -100,7 +100,7 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
 
     if memory_space == pltpu.HOST:
       if jax.device_count() > 1:
-        self.skipTest("Test only works with a single device.")
+        self.skipTest('Test only works with a single device.')
       out_sharding = jax.sharding.NamedSharding(
           jax.sharding.Mesh(jax.devices(), 'x'),
           jax.sharding.PartitionSpec(),
@@ -160,13 +160,11 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
 
     x = jnp.arange(1024, dtype=jnp.float32).reshape((8, 128))
     num_cores = jax.devices()[0].num_cores
-    if num_cores > 1 and (
-        memory_space == pltpu.VMEM or memory_space == pltpu.SMEM
-    ):
+    if num_cores > 1 and memory_space == pltpu.VMEM:
       with self.assertRaisesRegex(
           NotImplementedError,
-          'TensorCoreMesh does not support VMEM/SMEM inputs/outputs when there'
-          ' are >1 cores. Use HBM or ANY instead.',
+          'TensorCoreMesh does not support VMEM inputs/outputs when there are'
+          ' >1 cores. Use HBM or ANY instead.',
       ):
         f.lower(x).compile()
       return
@@ -244,6 +242,50 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
       return y_out_ref[...]
 
     np.testing.assert_array_equal(f(), np.arange(8) + 1)
+
+  def test_smem_async_copy_megacore(self):
+    mesh = pltpu.create_tensorcore_mesh('core')
+    num_cores = len(mesh.devices)
+    if num_cores == 1:
+      self.skipTest('Only megacore is supported for this test.')
+
+    kernel = pl.core_map(mesh=mesh)
+    n = 256
+
+    @jax.jit
+    def f():
+      y_ref = pl.empty_ref_like(pltpu.SMEM((1, n), jnp.int32))
+
+      @kernel
+      def _():
+        core_i = jax.lax.axis_index('core')
+        for i in range(n):
+          y_ref[0, i] = i + core_i * n
+
+      @kernel
+      def _():
+        for i in range(n):
+          y_ref[0, i] = y_ref[0, i] + 1
+
+      y_out_ref = pl.empty_ref_like(pltpu.HBM((num_cores, 1, n), jnp.int32))
+
+      sem = pl.empty_ref_like(pltpu.SemaphoreType.DMA(()))
+
+      @kernel
+      def _():
+        core_i = jax.lax.axis_index('core')
+        pltpu.make_async_copy(y_ref, y_out_ref.at[core_i, ...], sem).start()
+
+      @kernel
+      def _():
+        core_i = jax.lax.axis_index('core')
+        pltpu.make_async_copy(y_ref, y_out_ref.at[core_i, ...], sem).wait()
+
+      return y_out_ref[...]
+
+    np.testing.assert_array_equal(
+        f(), np.arange(num_cores * n).reshape((num_cores, 1, n)) + 1
+    )
 
 
 if __name__ == '__main__':
