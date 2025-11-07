@@ -716,6 +716,9 @@ async def main():
       wheel_dir = wheel.replace("cuda", f"cuda{cuda_major_version}").replace(
           "-", "_"
       )
+    elif "rocm" in wheel:
+      # Use wildcard pattern to match any ROCm version (rocm60, rocm7, etc.)
+      wheel_dir = wheel.replace("rocm", "rocm*").replace("-", "_")
     else:
       wheel_dir = wheel
 
@@ -733,7 +736,7 @@ async def main():
           wheel_version_suffix += (
               f"+{wheel_git_hash}{custom_wheel_version_suffix}"
           )
-      if wheel in ["jax", "jax-cuda-pjrt"]:
+      if wheel in ["jax", "jax-cuda-pjrt", "jax-rocm-pjrt"]:
         python_tag = "py"
       else:
         python_tag = "cp"
