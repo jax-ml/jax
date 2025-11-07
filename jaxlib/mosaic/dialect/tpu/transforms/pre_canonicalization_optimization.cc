@@ -49,40 +49,6 @@ namespace mlir::tpu {
 
 namespace {
 
-// Finds the split point between common prefix and expanded dimensions for
-// shape canonicalization patterns.
-std::optional<std::pair<int64_t, int64_t>> findSplitPoint(
-    ArrayRef<int64_t> src_shape, ArrayRef<int64_t> tgt_shape) {
-  int64_t s = 0, t = 0;
-  while (s < src_shape.size() && src_shape[s] == 1) {
-    ++s;
-  }
-  while (t < tgt_shape.size() && tgt_shape[t] == 1) {
-    ++t;
-  }
-
-  int64_t s_prefix_end = s, t_prefix_end = t;
-  while (s_prefix_end < src_shape.size() && t_prefix_end < tgt_shape.size() &&
-         src_shape[s_prefix_end] == tgt_shape[t_prefix_end]) {
-    ++s_prefix_end;
-    ++t_prefix_end;
-  }
-
-  if (t_prefix_end != tgt_shape.size() - 1) {
-    return std::nullopt;
-  }
-  int64_t src_prod = 1;
-  for (int64_t i = s_prefix_end; i < src_shape.size(); ++i) {
-    src_prod *= src_shape[i];
-  }
-
-  if (tgt_shape.back() != src_prod) {
-    return std::nullopt;
-  }
-  src_prod /= src_shape.back();
-  return std::make_pair(s_prefix_end, src_prod);
-}
-
 void optimizeStore(int hardware_generation, std::array<int64_t, 2> target_shape,
                    Operation& raw_op) {
   // Fuses a vector.shape_cast (that expands dimensions) into a subsequent
@@ -107,165 +73,155 @@ void optimizeStore(int hardware_generation, std::array<int64_t, 2> target_shape,
     return;
   }
 
-  // Look for vector::ShapeCastOp feeding the store
+  // This rewrite might not be profitable if the reshape has other users.
   auto shape_cast_op =
       dyn_cast_if_present<vector::ShapeCastOp>(value_to_store.getDefiningOp());
   if (!shape_cast_op || !shape_cast_op.getResult().hasOneUse()) {
     return;
   }
 
-  auto src_ty = shape_cast_op.getSource().getType();
-  auto tgt_ty = shape_cast_op.getResult().getType();
-  auto memref_ty = base.getType();
+  MemRefType ref_ty = getMemRefType(base);
+  VectorType src_ty = shape_cast_op.getSource().getType();
+  VectorType tgt_ty = shape_cast_op.getResult().getType();
+  if (src_ty.getRank() < 1 || tgt_ty.getRank() < 2) {
+    return;
+  }
+  auto src_shape = src_ty.getShape();
+  auto tgt_shape = tgt_ty.getShape();
 
-  // TODO(mvoz,apaszke): Add slicing support for stores (analogous to loads).
-  if (tgt_ty.getShape() != memref_ty.getShape()) {
-    return;
-  }
-  if (!isContiguousMemref(base)) {
-    return;
-  }
-  if (src_ty.getRank() > tgt_ty.getRank()) {
-    return;
-  }
-  auto last_src_lanes = src_ty.getShape().back();
-  if (last_src_lanes % target_shape[1] != 0) {
-    return;
-  }
-  std::optional<std::pair<int64_t, int64_t>> split_opt =
-      findSplitPoint(tgt_ty.getShape(), src_ty.getShape());
-  if (!split_opt) {
-    return;
-  }
-  auto [split_point, sublane_prod] = *split_opt;
-
-  int64_t bitwidth = src_ty.getElementTypeBitWidth();
-  int64_t packing = 32 / bitwidth;
+  const int bitwidth = src_ty.getElementTypeBitWidth();
+  const int packing = 32 / bitwidth;
   if (hardware_generation < 4 && packing > 1) {
     return;
   }
-  if (sublane_prod % packing != 0) {
+
+  // The reshape below might be invalid if the memref is not contiguous, but it
+  // is an overly conservative check (we don't need all dims to be contiguous).
+  if (!isContiguousMemref(base)) {
+    return;
+  }
+  const int64_t lane = target_shape[1];
+  // Only handle the cases where the minor dim starts out as the number of lanes
+  // and we fold at least the second minor dim into it, in a way that changes
+  // its shape.
+  if (tgt_shape.back() != lane ||
+      src_shape.back() % (packing * lane) != 0 ||
+      src_shape.back() == tgt_shape.back() ||
+      src_shape.back() < llvm::product_of(tgt_shape.take_back(2))) {
+    return;
+  }
+  // We don't handle memrefs with padding.
+  auto tiled_layout = dyn_cast<tpu::TiledLayoutAttr>(ref_ty.getLayout());
+  if (!tiled_layout || tiled_layout.getTiles().empty()) {
+    return;
+  }
+  ArrayRef<int64_t> front_tile = tiled_layout.getTiles().front().dimensions();
+  ArrayRef<int64_t> ref_tiled_shape =
+      ref_ty.getShape().take_back(front_tile.size());
+  for (int i = 0; i < front_tile.size(); ++i) {
+    if (ref_tiled_shape[i] % front_tile[i]) {
+      return;
+    }
+  }
+
+  int expanded_dims = 0;
+  {
+    int suffix_size = 1;
+    auto sizes_it = tgt_shape.rbegin();
+    while (suffix_size < src_shape.back()) {
+      suffix_size *= *(sizes_it++);
+    }
+    // Make sure the minor dim is expanded into its own dims and not folded into
+    // other major dims.
+    if (suffix_size != src_shape.back()) {
+      return;
+    }
+    expanded_dims = sizes_it - tgt_shape.rbegin();
+  }
+  DCHECK_GE(expanded_dims, 2);  // Minor should expand at least into 2 dims.
+
+  // TODO(mvoz,apaszke): Add slicing support for stores (analogous to loads).
+  if (tgt_ty.getShape() != ref_ty.getShape()) {
     return;
   }
 
   ImplicitLocOpBuilder b(raw_op.getLoc(), &raw_op);
   auto loc = raw_op.getLoc();
   auto i32_type = b.getI32Type();
-  int64_t num_i32_rows = sublane_prod / packing;
 
-  SmallVector<int64_t> mem_shape;
-  if (split_point == 0) {
-    // Expand 1D: no common prefix between shapes, create new dimension.
-    mem_shape.push_back(sublane_prod);
-  } else {
-    mem_shape.assign(memref_ty.getShape().begin(),
-                     memref_ty.getShape().begin() + split_point);
-    int64_t prev_dim = mem_shape.back();
-    int64_t new_dim = prev_dim * sublane_prod;
-    // Check for overflow in multiplication.
-    if (sublane_prod != 0 && new_dim / sublane_prod != prev_dim) {
-      return;
-    }
-    mem_shape.back() = new_dim;
+  // Normalize source to be 2D (since the target is at least 2D anyway).
+  if (src_ty.getRank() == 1) {
+    std::array<int64_t, 2> new_shape{1, src_ty.getShape().back()};
+    Value source_2d = b.create<vector::ShapeCastOp>(
+        VectorType::get(new_shape, src_ty.getElementType()),
+        shape_cast_op.getSource());
+    shape_cast_op->setOperand(0, source_2d);
+    src_ty = cast<VectorType>(source_2d.getType());
+    src_shape = src_ty.getShape();
   }
 
-  auto lane_dim = memref_ty.getShape().back();
-  if (lane_dim != target_shape[1]) {
-    return;
-  }
-  mem_shape.push_back(lane_dim);
+  SmallVector<int64_t> mem_shape(src_ty.getShape().drop_back(1));
+  mem_shape.back() *= src_shape.back() / lane;
+  mem_shape.push_back(lane);
+
   Value reshaped_ref = b.create<tpu::MemRefReshapeOp>(
-      MemRefType::get(mem_shape, memref_ty.getElementType()), base);
-
+      MemRefType::get(mem_shape, ref_ty.getElementType()), base);
   *(mem_shape.end() - 2) /= packing;
   Value i32_view = b.create<tpu::MemRefBitcastOp>(
       MemRefType::get(mem_shape, i32_type), reshaped_ref);
 
   Value src_vec = shape_cast_op.getSource();
-  SmallVector<int64_t> slice_sizes(src_ty.getShape());
-  slice_sizes.back() = lane_dim;
-  SmallVector<int64_t> unit_strides(src_ty.getRank(), 1);
+  SmallVector<int64_t> slice_shape(src_ty.getShape());
+  slice_shape.back() = lane;
 
-  auto i32_view_shape = cast<MemRefType>(i32_view.getType()).getShape();
+  // We don't support slicing so the program only didn't contain OOB stores
+  // if all indices were 0.
+  SmallVector<Value> store_indices(mem_shape.size(), IdxConst(0, b, loc));
+  SmallVector<int32_t> store_strides(mem_shape.size(), 1);
+  const int64_t sublane_prod = src_shape.back() / lane;
+  const int64_t stride = sublane_prod / packing;
+  *(store_strides.end() - 2) = stride;
 
-  SmallVector<Value> store_indices;
-  Value split_base_idx;
-  int64_t stride_dim;
-
-  if (split_point == 0) {
-    // No common prefix - create indices for entire i32_view shape
-    split_base_idx = IdxConst(0, b, loc);
-    for (size_t i = 0; i < i32_view_shape.size(); ++i) {
-      store_indices.push_back(IdxConst(0, b, loc));
-    }
-    stride_dim = 0;
-  } else {
-    // TODO(mvoz,apaszke): This common prefix handling could be simplified by
-    // always reinterpreting an nd operation as a 3d operation with untiled,
-    // second minor, and minor dimensions. Common prefix exists - use it
-    // This happens when split_point == 0 (1D expansion case).
-    // The i32_view has an extra leading dimension compared to the packed
-    // vector, so we need to add a dimension via reshape.
-    store_indices.assign(indices.begin(), indices.begin() + split_point);
-    split_base_idx = store_indices.back();
-    // Add remaining indices to match i32_view rank
-    while (store_indices.size() < i32_view_shape.size()) {
-      store_indices.push_back(IdxConst(0, b, loc));
-    }
-    stride_dim = split_point - 1;
-  }
-  SmallVector<int32_t> strides(i32_view_shape.size(), 1);
-  strides[stride_dim] = num_i32_rows;
-  for (int64_t i = 0; i < num_i32_rows; ++i) {
-    SmallVector<int64_t> offsets(src_ty.getRank(), 0);
-    offsets.back() = i * packing * lane_dim;
+  SmallVector<int64_t> slice_strides(src_ty.getRank(), 1);
+  SmallVector<int64_t> slice_offsets(src_ty.getRank(), 0);
+  for (int64_t i = 0; i < stride; ++i) {
+    slice_offsets.back() = i * packing * lane;
     Value slice_i = b.create<vector::ExtractStridedSliceOp>(
-        src_vec, offsets, slice_sizes, unit_strides);
-
-    auto i_chunk_ty =
-        VectorType::get(cast<VectorType>(slice_i.getType()).getShape(),
-                        b.getIntegerType(bitwidth));
-    auto i32_chunk_ty = VectorType::get(
-        cast<VectorType>(slice_i.getType()).getShape(), i32_type);
+        src_vec, slice_offsets, slice_shape, slice_strides);
     Value packed_chunk;
     if (packing > 1) {
       // TODO(mvoz): This packing can be implemented more efficiently as an
       // interleaved pack. We don't have an op for this in the
       // pre-apply_vector_layout IR, but we'll soon have one.
       Value acc = b.create<arith::ExtUIOp>(
-          i32_chunk_ty, b.create<arith::BitcastOp>(i_chunk_ty, slice_i));
+          VectorType::get(slice_shape, i32_type),
+          b.create<arith::BitcastOp>(
+              VectorType::get(slice_shape, b.getIntegerType(bitwidth)),
+              slice_i));
       for (int64_t p = 1; p < packing; ++p) {
-        offsets.back() = (i * packing + p) * lane_dim;
+        slice_offsets.back() = (i * packing + p) * lane;
         Value slice_p = b.create<vector::ExtractStridedSliceOp>(
-            src_vec, offsets, slice_sizes, unit_strides);
+            src_vec, slice_offsets, slice_shape, slice_strides);
         Value slice_p_i32 = b.create<arith::ExtUIOp>(
-            i32_chunk_ty, b.create<arith::BitcastOp>(i_chunk_ty, slice_p));
-        Value sh = I32Const(p * bitwidth, i32_chunk_ty.getShape(), b, loc);
+            acc.getType(),
+            b.create<arith::BitcastOp>(
+                VectorType::get(slice_shape, b.getIntegerType(bitwidth)),
+                slice_p));
+        Value sh = I32Const(p * bitwidth, slice_shape, b, loc);
         acc = b.create<arith::OrIOp>(acc,
                                      b.create<arith::ShLIOp>(slice_p_i32, sh));
       }
       packed_chunk = acc;
     } else {
-      packed_chunk = b.create<arith::BitcastOp>(i32_chunk_ty, slice_i);
+      packed_chunk = b.create<arith::BitcastOp>(
+          VectorType::get(slice_shape, i32_type), slice_i);
     }
 
-    auto packed_shape = cast<VectorType>(packed_chunk.getType()).getShape();
     Value chunk_to_store = packed_chunk;
-    // Reshape to match i32_view rank when split_point == 0 adds extra dims.
-    // We've already verified early that any needed reshape only adds size-1
-    // dims.
-    if (i32_view_shape.size() > packed_shape.size()) {
-      SmallVector<int64_t> reshape_vec_shape(
-          i32_view_shape.size() - packed_shape.size(), 1);
-      reshape_vec_shape.append(packed_shape.begin(), packed_shape.end());
-      auto reshape_type = VectorType::get(reshape_vec_shape, i32_type);
-      chunk_to_store = b.create<tpu::ReshapeOp>(reshape_type, packed_chunk);
-    }
-    store_indices[stride_dim] =
-        b.create<arith::AddIOp>(split_base_idx, IdxConst(i, b, loc));
-
+    CHECK_GE(store_indices.size(), 2);
+    *(store_indices.end() - 2) = IdxConst(i, b, loc);
     b.create<tpu::StridedStoreOp>(chunk_to_store, i32_view, store_indices,
-                                  strides);
+                                  store_strides);
   }
 
   raw_op.erase();
