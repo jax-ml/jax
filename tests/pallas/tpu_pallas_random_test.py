@@ -346,7 +346,11 @@ class ThreefryTest(parameterized.TestCase):
       self.skipTest("Need at least 2 devices")
     num_devices = jax.device_count()
     partition = P("x")
-    mesh = jax.make_mesh((num_devices,), ("x",))
+    mesh = jax.make_mesh(
+        (num_devices,),
+        ("x",),
+        axis_types=(jax.sharding.AxisType.Auto,),
+    )
     sharding = jax.sharding.NamedSharding(mesh, partition)
 
     with jax.threefry_partitionable(True):
