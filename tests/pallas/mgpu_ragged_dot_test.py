@@ -121,7 +121,7 @@ class RaggedDotTestCase(jtu.JaxTestCase):
       block_n=(64, 128),
       block_k=(64, 128),
       grid_block_n=(2, 4),
-      max_concurrent_steps=(1,),
+      max_concurrent_steps=(1, 2, 4),
       num_groups=(1, 3, 16),
   )
   def test_ragged_dot_transposed(

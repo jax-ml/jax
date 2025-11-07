@@ -1089,6 +1089,7 @@ jax_multiplatform_test(
 
 jax_multiplatform_test(
     name = "mgpu_ragged_dot_test",
+    size = "large",  # Increased timout to account for the extra tests.
     srcs = ["mgpu_ragged_dot_test.py"],
     enable_backends = [],
     enable_configs = [

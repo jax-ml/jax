@@ -235,9 +235,7 @@ def main(unused_argv):
 
   block_m = block_n = [64, 128]
   block_k = [64, 128]
-  #TODO(younggeng): Add more max_concurrent_steps when the emit_pipeline
-  # deadlock bug is fixed.
-  max_concurrent_steps = [1]
+  max_concurrent_steps = [1, 2, 4, 5, 6]
   grid_block_n = [1, 2, 4, 8, 16]
 
   configs = itertools.product(
