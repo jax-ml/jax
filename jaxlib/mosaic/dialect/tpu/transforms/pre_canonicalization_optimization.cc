@@ -22,6 +22,7 @@ limitations under the License.
 #include <tuple>
 #include <utility>
 
+#include "absl/log/check.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -140,8 +141,9 @@ void optimizeStore(int hardware_generation, std::array<int64_t, 2> target_shape,
   }
   DCHECK_GE(expanded_dims, 2);  // Minor should expand at least into 2 dims.
 
-  // TODO(mvoz,apaszke): Add slicing support for stores (analogous to loads).
-  if (tgt_ty.getShape() != ref_ty.getShape()) {
+  // We don't support slicing in the expanded dims at the moment.
+  if (tgt_ty.getShape().take_back(expanded_dims) !=
+      ref_ty.getShape().take_back(expanded_dims)) {
     return;
   }
 
@@ -160,7 +162,10 @@ void optimizeStore(int hardware_generation, std::array<int64_t, 2> target_shape,
     src_shape = src_ty.getShape();
   }
 
-  SmallVector<int64_t> mem_shape(src_ty.getShape().drop_back(1));
+  SmallVector<int64_t> mem_shape(ref_ty.getShape().drop_back(expanded_dims));
+  if (mem_shape.empty()) {
+    mem_shape.push_back(1);
+  }
   mem_shape.back() *= src_shape.back() / lane;
   mem_shape.push_back(lane);
 
@@ -170,20 +175,37 @@ void optimizeStore(int hardware_generation, std::array<int64_t, 2> target_shape,
   Value i32_view = b.create<tpu::MemRefBitcastOp>(
       MemRefType::get(mem_shape, i32_type), reshaped_ref);
 
+
   Value src_vec = shape_cast_op.getSource();
-  SmallVector<int64_t> slice_shape(src_ty.getShape());
+  SmallVector<int64_t> slice_shape(src_shape);
   slice_shape.back() = lane;
+  SmallVector<int64_t> slice_strides(slice_shape.size(), 1);
+  SmallVector<int64_t> slice_offsets(slice_shape.size(), 0);
 
   // We don't support slicing so the program only didn't contain OOB stores
   // if all indices were 0.
-  SmallVector<Value> store_indices(mem_shape.size(), IdxConst(0, b, loc));
   SmallVector<int32_t> store_strides(mem_shape.size(), 1);
   const int64_t sublane_prod = src_shape.back() / lane;
   const int64_t stride = sublane_prod / packing;
   *(store_strides.end() - 2) = stride;
 
-  SmallVector<int64_t> slice_strides(src_ty.getRank(), 1);
-  SmallVector<int64_t> slice_offsets(src_ty.getRank(), 0);
+  SmallVector<Value> store_indices(indices.drop_back(expanded_dims));
+  if (store_indices.empty()) {
+    store_indices.push_back(IdxConst(0, b, loc));
+  }
+  Value second_minor_base = b.create<arith::MulIOp>(
+      store_indices.back(),
+      b.create<arith::ConstantOp>(b.getIndexType(),
+                                  b.getI32IntegerAttr(stride)));
+  store_indices.back() = nullptr;
+  store_indices.push_back(IdxConst(0, b, loc));
+  SmallVector<int64_t> to_store_shape(tgt_shape.drop_back(expanded_dims));
+  if (to_store_shape.empty()) {
+    to_store_shape.push_back(1);
+  }
+  to_store_shape.push_back(lane);
+  auto store_vty = VectorType::get(to_store_shape, b.getI32Type());
+
   for (int64_t i = 0; i < stride; ++i) {
     slice_offsets.back() = i * packing * lane;
     Value slice_i = b.create<vector::ExtractStridedSliceOp>(
@@ -217,9 +239,19 @@ void optimizeStore(int hardware_generation, std::array<int64_t, 2> target_shape,
           VectorType::get(slice_shape, i32_type), slice_i);
     }
 
-    Value chunk_to_store = packed_chunk;
+    // TODO(b/458291444): This reshape might end up being non-trivial and might
+    // produce a vector with an unnecessarily bad layout. Consider the where
+    // src_shape is (24, 1024) and tgt_shape is (8, 3, 8, 128). In that case
+    // slice_shape is (24, 128), which can be neatly packed into vregs, but here
+    // we would reshape to (8, 3, 128), which of course is problematic and will
+    // introduce lots of padding... We could work around this by flattening the
+    // ref dimensions, but it is complicated by non-contiguous slices which
+    // might prevent this. In case we find a non-contiguous slice we could still
+    // try unrolling into multiple strided stores.
+    Value chunk_to_store = b.create<tpu::ReshapeOp>(store_vty, packed_chunk);
     CHECK_GE(store_indices.size(), 2);
-    *(store_indices.end() - 2) = IdxConst(i, b, loc);
+    *(store_indices.end() - 2) =
+        b.create<arith::AddIOp>(second_minor_base, IdxConst(i, b, loc));
     b.create<tpu::StridedStoreOp>(chunk_to_store, i32_view, store_indices,
                                   store_strides);
   }

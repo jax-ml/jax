@@ -1592,6 +1592,8 @@ FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
       MemRefType::get(mem_shape, b.getI32Type()), reshaped_ref);
 
   // Define the shape of the small i32 chunk we will load in each iteration.
+  // TODO(b/458291444): The loads we emit here might use suboptimal shapes and
+  // we could do better by folding some dims (as much as slicing allows).
   SmallVector<int64_t> chunk_shape(src_shape.drop_back(folded_dims));
   if (chunk_shape.empty()) {
     chunk_shape.push_back(1);
