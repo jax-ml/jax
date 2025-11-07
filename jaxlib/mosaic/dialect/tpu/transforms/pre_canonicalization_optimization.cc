@@ -207,36 +207,30 @@ void optimizeStore(int hardware_generation, std::array<int64_t, 2> target_shape,
   auto store_vty = VectorType::get(to_store_shape, b.getI32Type());
 
   for (int64_t i = 0; i < stride; ++i) {
-    slice_offsets.back() = i * packing * lane;
-    Value slice_i = b.create<vector::ExtractStridedSliceOp>(
-        src_vec, slice_offsets, slice_shape, slice_strides);
     Value packed_chunk;
     if (packing > 1) {
-      // TODO(mvoz): This packing can be implemented more efficiently as an
-      // interleaved pack. We don't have an op for this in the
-      // pre-apply_vector_layout IR, but we'll soon have one.
-      Value acc = b.create<arith::ExtUIOp>(
-          VectorType::get(slice_shape, i32_type),
-          b.create<arith::BitcastOp>(
-              VectorType::get(slice_shape, b.getIntegerType(bitwidth)),
-              slice_i));
-      for (int64_t p = 1; p < packing; ++p) {
+      auto slice_int_vty =
+          VectorType::get(slice_shape, b.getIntegerType(bitwidth));
+      SmallVector<Value> packed_slices;
+      packed_slices.reserve(packing);
+      for (int64_t p = 0; p < packing; ++p) {
         slice_offsets.back() = (i * packing + p) * lane;
-        Value slice_p = b.create<vector::ExtractStridedSliceOp>(
+        Value slice = b.create<vector::ExtractStridedSliceOp>(
             src_vec, slice_offsets, slice_shape, slice_strides);
-        Value slice_p_i32 = b.create<arith::ExtUIOp>(
-            acc.getType(),
-            b.create<arith::BitcastOp>(
-                VectorType::get(slice_shape, b.getIntegerType(bitwidth)),
-                slice_p));
-        Value sh = I32Const(p * bitwidth, slice_shape, b, loc);
-        acc = b.create<arith::OrIOp>(acc,
-                                     b.create<arith::ShLIOp>(slice_p_i32, sh));
+        Value slice_narrow_int =
+            b.create<arith::BitcastOp>(slice_int_vty, slice);
+        packed_slices.push_back(b.create<arith::ExtSIOp>(
+            VectorType::get(slice_shape, b.getI32Type()), slice_narrow_int));
       }
-      packed_chunk = acc;
+      packed_chunk = b.create<tpu::PackElementwiseOp>(
+          VectorType::get(slice_shape, b.getI32Type()), packed_slices,
+          b.getIntegerType(bitwidth));
     } else {
+      slice_offsets.back() = i * packing * lane;
+      Value slice = b.create<vector::ExtractStridedSliceOp>(
+          src_vec, slice_offsets, slice_shape, slice_strides);
       packed_chunk = b.create<arith::BitcastOp>(
-          VectorType::get(slice_shape, i32_type), slice_i);
+          VectorType::get(slice_shape, i32_type), slice);
     }
 
     // TODO(b/458291444): This reshape might end up being non-trivial and might
