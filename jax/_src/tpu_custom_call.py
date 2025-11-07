@@ -305,6 +305,7 @@ def _tpu_custom_call_lowering(
     *in_nodes,  # pylint: disable=missing-function-docstring
     config: CustomCallBackendConfig,
     has_side_effects: bool,
+    allow_dce_side_effecting_op: bool,
     kernel_name: str | None,
     out_avals: Any,
     input_output_aliases: tuple[tuple[int, int], ...],
@@ -354,10 +355,13 @@ def _tpu_custom_call_lowering(
       result_shapes=result_shapes,
       extra_attributes=extra_attributes,
   )
+  metadata_dict = {}
   if metadata is not None:
-    call.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
-        dict(kernel_metadata=ir.StringAttr.get(json.dumps(metadata)))
-    )
+    metadata_dict["kernel_metadata"] = ir.StringAttr.get(json.dumps(metadata))
+  if allow_dce_side_effecting_op:
+    metadata_dict["xla_allow_dce_side_effecting_op"] = ir.StringAttr.get("true")
+  if metadata_dict:
+    call.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(metadata_dict)
   return call.results
 
 
@@ -644,6 +648,7 @@ def lower_module_to_custom_call(
     internal_scratch_in_bytes: int | None,
     collective_id: int | None,
     has_side_effects: bool,
+    allow_dce_side_effecting_op: bool,
     serialization_format: int | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None,
     disable_bounds_checks: bool = False,
@@ -675,6 +680,7 @@ def lower_module_to_custom_call(
       *in_nodes,
       config=config,
       has_side_effects=has_side_effects,
+      allow_dce_side_effecting_op=allow_dce_side_effecting_op,
       kernel_name=kernel_name,
       out_avals=out_type,
       input_output_aliases=input_output_aliases,
@@ -695,6 +701,7 @@ def as_tpu_kernel(
     internal_scratch_in_bytes: int | None = None,
     collective_id: int | None = None,
     has_side_effects: bool = False,
+    allow_dce_side_effecting_op: bool = False,
     serialization_format: int | None = 1,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     disable_bounds_checks: bool = False,
@@ -722,6 +729,7 @@ def as_tpu_kernel(
   return _as_jax_callable(
       config,
       has_side_effects,
+      allow_dce_side_effecting_op,
       out_type,
       kernel_name=kernel_name,
       input_output_aliases=input_output_aliases,
@@ -739,6 +747,7 @@ def lowered_as_tpu_kernel(
     needs_layout_passes: bool = False,
     has_communication: bool = False,
     has_side_effects: bool = False,
+    allow_dce_side_effecting_op: bool = False,
     has_custom_barrier: bool = False,
     kernel_name: str | None = None,
     vmem_limit_bytes: int | None = None,
@@ -775,6 +784,7 @@ def lowered_as_tpu_kernel(
   return _as_jax_callable(
       config,
       has_side_effects,
+      allow_dce_side_effecting_op,
       out_type,
       kernel_name=kernel_name,
       input_output_aliases=input_output_aliases,
@@ -785,6 +795,7 @@ def lowered_as_tpu_kernel(
 def _as_jax_callable(
     config: CustomCallBackendConfig,
     has_side_effects: bool,
+    allow_dce_side_effecting_op: bool,
     out_type: Any,
     *,
     kernel_name: str | None,
@@ -803,6 +814,7 @@ def _as_jax_callable(
         *args,
         config=config,
         has_side_effects=has_side_effects,
+        allow_dce_side_effecting_op=allow_dce_side_effecting_op,
         kernel_name=kernel_name,
         out_avals=out_avals,
         input_output_aliases=input_output_aliases,
