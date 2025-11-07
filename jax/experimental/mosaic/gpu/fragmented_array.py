@@ -1037,19 +1037,20 @@ class FragmentedArray:
         raise NotImplementedError
 
   def to_layout(self, new_layout: FragmentedLayout) -> FragmentedArray:
-    """Converts the fragmented array to the given layout.
-
-    At the moment, only conversions from ``WGSplatFragLayout`` are supported.
-    """
+    """Converts the fragmented array to the given layout."""
     i32 = ir.IntegerType.get_signless(32)
     c = lambda x: arith.constant(i32, x)
     if self.layout == new_layout:
       return self
     shape = self.shape
     bitwidth = utils.bitwidth(self.mlir_dtype)
+    transpose_pairs = (
+        (WGMMA_LAYOUT, WGMMA_TRANSPOSED_LAYOUT),
+        (TCGEN05_LAYOUT, TCGEN05_TRANSPOSED_LAYOUT),
+    )
     if bitwidth in {16, 32} and (
-        (self.layout == WGMMA_LAYOUT and new_layout == WGMMA_TRANSPOSED_LAYOUT)
-        or (self.layout == TCGEN05_LAYOUT and new_layout == TCGEN05_TRANSPOSED_LAYOUT)
+        (self.layout, new_layout) in transpose_pairs
+        or (new_layout, self.layout) in transpose_pairs
     ):
       is_even_row = arith.cmpi(
           arith.CmpIPredicate.eq,

@@ -3339,16 +3339,54 @@ class FragmentedArrayTest(TestCase):
     np.testing.assert_array_equal(result, reference)
 
   @parameterized.parameters(
-      ([64 * 4], "WGMMA_ROW_LAYOUT"),
-      ([64 * 4, 8 * 2], "WGMMA_LAYOUT"),
+      ([64 * 4], mgpu.WGMMA_ROW_LAYOUT),
+      ([64 * 4, 8 * 2], mgpu.WGMMA_LAYOUT),
   )
-  def test_to_layout(self, shape, new_layout):
+  def test_splat_relayout(self, shape, new_layout):
     def kernel(ctx, _):
       # No assertions, we are just checking there are no compile-time errors.
       arr = mgpu.FragmentedArray.splat(c(42.0, ir.F32Type.get()), shape)
-      arr.to_layout(getattr(mgpu, new_layout))
+      arr.to_layout(new_layout)
 
     _ = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (), (), None)()
+
+  @parameterized.parameters(
+      (mgpu.WGMMA_LAYOUT, mgpu.WGMMA_TRANSPOSED_LAYOUT),
+      (mgpu.TCGEN05_LAYOUT, mgpu.TCGEN05_TRANSPOSED_LAYOUT),
+      (mgpu.WGMMA_TRANSPOSED_LAYOUT, mgpu.WGMMA_LAYOUT),
+      (mgpu.TCGEN05_TRANSPOSED_LAYOUT, mgpu.TCGEN05_LAYOUT),
+  )
+  def test_transpose_relayout(self, src_layout, dst_layout):
+    def is_transposed(layout):
+      return (
+          layout == mgpu.WGMMA_TRANSPOSED_LAYOUT
+          or layout == mgpu.TCGEN05_TRANSPOSED_LAYOUT
+      )
+
+    def body(ctx, src, dst, scratch):
+      del ctx, scratch
+      if is_transposed(src_layout):
+        src = utils.memref_transpose(src, (1, 0))
+      src_reg = mgpu.FragmentedArray.load_untiled(
+          src, layout=src_layout, optimized=False
+      )
+      dst_reg = src_reg.to_layout(dst_layout)
+      if is_transposed(dst_layout):
+        dst = utils.memref_transpose(dst, (1, 0))
+      dst_reg.store_untiled(dst, optimized=False)
+
+    shape = (128, 128)
+    dtype = jnp.float32
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(jax.ShapeDtypeStruct(shape, dtype),),
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        smem_scratch_shape=[],
+    )
+    x = self.prng.uniform(-1, 1, shape).astype(dtype)
+    np.testing.assert_array_equal(kernel(x), x.T)
 
   @parameterized.parameters(
       (jnp.float16, jnp.float16),  # Noop
