@@ -623,6 +623,15 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
                            " are not supported as matmul/accumulator inputs."));
       }
     };
+    // Cast lhs to bf16 because there is no hardware support for f8 @ bf16/f32.
+    if (isa<Float8E4M3FNType, Float8E5M2Type>(lhs_element_type) &&
+        isa<BFloat16Type, Float32Type>(rhs_element_type)) {
+      RETURN_IF_FAILED(require_compatibility_mode());
+      lhs_element_type = builder.getBF16Type();
+      lhs = cast<TypedValue<VectorType>>(builder.create<arith::ExtFOp>(
+          VectorType::get(lhs.getType().getShape(), lhs_element_type), lhs));
+      op->setOperand(/*idx=*/0, lhs);
+    }
     // i32 is not normally supported for matmul inputs, only for accumulation.
     // But don't throw an error because it may be handled by the mixed element
     // type canonicalization pass below.
