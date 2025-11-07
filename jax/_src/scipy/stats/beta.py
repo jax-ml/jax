@@ -20,6 +20,8 @@ from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.scipy.special import betaln, betainc, xlogy, xlog1py
 from jax._src.typing import Array, ArrayLike
+from jax._src.scipy.special import erfinv
+import jax
 
 
 def logpdf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
@@ -260,3 +262,66 @@ def logsf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
     - :func:`jax.scipy.stats.beta.logpdf`
   """
   return lax.log(sf(x, a, b, loc, scale))
+
+
+def ppf(q: ArrayLike, a: ArrayLike, b: ArrayLike,
+        loc: ArrayLike = 0, scale: ArrayLike = 1,
+        tol: float = 1e-8, maxiter: int = 60) -> Array:
+  r"""Percent point function (inverse of cdf) for the Beta distribution.
+
+  This implements a robust bisection solver in standardized space [0,1].
+  The function exposes a custom VJP so that gradients match the implicit
+  relation dx/dq = 1 / pdf(x).
+  """
+  q, a, b, loc, scale = promote_args_inexact("beta.ppf", q, a, b, loc, scale)
+  q = jnp.asarray(q)
+  zero = _lax_const(q, 0)
+  one = _lax_const(q, 1)
+
+  is_zero = lax.eq(q, zero)
+  is_one = lax.eq(q, one)
+
+  q_clamped = lax.clamp(zero, q, one)
+
+  def _bisection_std(q, a, b, maxiter):
+    # ensure lo/hi have the same shape as q so the loop carry types don't change
+    lo = jnp.full_like(q, 1e-12)
+    hi = jnp.full_like(q, 1.0) - jnp.full_like(q, 1e-12)
+
+    def body(i, state):
+      lo, hi = state
+      mid = (lo + hi) * 0.5
+      c = betainc(a, b, mid)
+      lo = jnp.where(lax.lt(c, q), mid, lo)
+      hi = jnp.where(lax.lt(c, q), hi, mid)
+      return (lo, hi)
+
+    lo, hi = jax.lax.fori_loop(0, int(maxiter), body, (lo, hi))
+    return (lo + hi) * 0.5
+
+  @jax.custom_vjp
+  def _ppf_std(q, a, b, loc, scale):
+    x = _bisection_std(q, a, b, maxiter)
+    return loc + scale * x
+
+  def _ppf_std_fwd(q, a, b, loc, scale):
+    x = _bisection_std(q, a, b, maxiter)
+    return loc + scale * x, (x, a, b, scale)
+
+  def _ppf_std_bwd(res, g):
+    x, a, b, scale = res
+    # pdf in standardized space
+    safe_x = jnp.clip(x, 1e-12, 1.0 - 1e-12)
+    log_pdf = lax.sub(lax.add(lax.mul(lax.sub(a, _lax_const(a, 1)), lax.log(safe_x)),
+                              lax.mul(lax.sub(b, _lax_const(b, 1)), lax.log(lax.sub(_lax_const(safe_x, 1), safe_x)))), betaln(a, b))
+    pdf_std = lax.exp(log_pdf)
+    # d(res)/dq = scale * (1 / pdf_std)
+    dq = g * (scale / jnp.maximum(pdf_std, _lax_const(pdf_std, 1e-300)))
+    return (dq, jnp.zeros_like(a), jnp.zeros_like(b), jnp.zeros_like(loc), jnp.zeros_like(scale))
+
+  _ppf_std.defvjp(_ppf_std_fwd, _ppf_std_bwd)
+
+  res = _ppf_std(q_clamped, a, b, loc, scale)
+  res = jnp.where(is_zero, loc, res)
+  res = jnp.where(is_one, loc + scale, res)
+  return res

@@ -20,6 +20,8 @@ from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.scipy.special import gammaln, xlogy, gammainc, gammaincc
 from jax._src.typing import Array, ArrayLike
+from jax._src.scipy.special import erfinv
+from jax._src.numpy.util import promote_dtypes_inexact
 
 
 def logpdf(x: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
@@ -235,3 +237,73 @@ def logsf(x: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) 
     - :func:`jax.scipy.stats.gamma.logpdf`
   """
   return lax.log(sf(x, a, loc, scale))
+
+
+def ppf(q: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1,
+        tol: float = 1e-8, maxiter: int = 50) -> Array:
+  r"""Percent point function (inverse of cdf) for the Gamma distribution.
+
+  This implements a pure-JAX Newton solver to find `x` such that
+  ``gammainc(a, (x - loc) / scale) = q``. The implementation is jittable
+  and differentiable but is a Python-level solver rather than a specialized
+  inverse incomplete-gamma primitive.
+
+  Args:
+    q: probabilities in [0, 1]
+    a: shape parameter (a > 0)
+    loc: location parameter
+    scale: scale parameter (scale > 0)
+    tol: not used for early stopping (kept for API compatibility)
+    maxiter: number of Newton iterations
+
+  Returns:
+    Quantiles corresponding to probabilities `q`.
+  """
+  q, a, loc, scale = promote_args_inexact("gamma.ppf", q, a, loc, scale)
+  # Promote to a common floating dtype
+  q = jnp.asarray(q)
+  one = _lax_const(q, 1)
+  zero = _lax_const(q, 0)
+
+  # Handle edge cases
+  is_zero = lax.eq(q, zero)
+  is_one = lax.eq(q, one)
+
+  # clamp q into (0,1) for numerical operations
+  q_clamped = lax.clamp(zero, q, one)
+
+  # initial guess: Wilson-Hilferty approximation via normal quantile
+  z = jnp.sqrt(2.0) * erfinv(2.0 * q_clamped - 1.0)
+  # avoid division by zero for very small a
+  a_safe = jnp.maximum(a, _lax_const(a, 1e-6))
+  t = 1.0 / (9.0 * a_safe)
+  y0 = a_safe * jnp.power(1.0 - t + z * jnp.sqrt(t), 3.0)
+  y0 = jnp.where(jnp.isfinite(y0), y0, a_safe)
+  y = jnp.maximum(y0, _lax_const(y0, 1e-12))
+
+  # Newton iterations: solve gammainc(a, y) = q
+  def body_fun(i, val):
+    y = val
+    # compute residual and derivative (pdf)
+    c = gammainc(a, y)
+    # pdf: y^{a-1} e^{-y} / Gamma(a) = exp((a-1)*log(y) - y - gammaln(a))
+    log_pdf = lax.sub(lax.sub(lax.mul(lax.sub(a, _lax_const(a, 1)), lax.log(y)), y), gammaln(a))
+    pdf = lax.exp(log_pdf)
+    # Newton step
+    update = lax.div(lax.sub(c, q_clamped), jnp.maximum(pdf, _lax_const(pdf, 1e-300)))
+    y = jnp.maximum(y - update, _lax_const(y, 1e-300))
+    return y
+
+  # Fixed number of iterations for JIT-friendly behavior
+  i = _lax_const(q, 0)
+  def _for_loop(n, init):
+    return jax.lax.fori_loop(0, n, lambda ii, v: body_fun(ii, v), init)
+
+  import jax
+  y = _for_loop(int(maxiter), y)
+
+  res = loc + scale * y
+  res = jnp.where(is_zero, loc, res)
+  # Use numpy.inf with appropriate dtype for the infinite quantile at q==1.
+  res = jnp.where(is_one, _lax_const(res, np.inf), res)
+  return res
