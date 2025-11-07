@@ -317,12 +317,15 @@ def _tensorcore_mesh_discharge_rule(
   num_cores = len(mesh.devices)
   if num_cores > 1:
     # Since each core will have its own VMEM, we currently disallow VMEM inputs
-    # and outputs since we do not know how they are sharded across cores.
-    if any(pallas_core.get_memory_space_aval(aval) in {MemorySpace.VMEM, MemorySpace.SMEM}
-            for aval in in_avals):
+    # and outputs since other ops might not agree on how they are sharded across
+    # cores by the (core-mapped) kernel.
+    if any(
+        pallas_core.get_memory_space_aval(aval) == MemorySpace.VMEM
+        for aval in in_avals
+    ):
       raise NotImplementedError(
-          "TensorCoreMesh does not support VMEM/SMEM inputs/outputs when there"
-          " are >1 cores. Use HBM or ANY instead."
+          "TensorCoreMesh does not support VMEM inputs/outputs when there are"
+          " >1 cores. Use HBM or ANY instead."
       )
   return pallas_core.default_mesh_discharge_rule(
       in_avals,
