@@ -1560,6 +1560,8 @@ def create_mesh(mesh_shape, axis_names, iota_order=False, axis_types=None):
     mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
     return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)
   else:
+    if axis_types is None:
+      axis_types = (mesh_lib.AxisType.Auto,) * len(mesh_shape)
     return sharding_impls.make_mesh(mesh_shape, axis_names, axis_types)
 
 class _cached_property:

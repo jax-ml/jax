@@ -1404,7 +1404,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   def test_copy_in_shard_map(self):
     num_devices = len(jax.devices())
-    mesh = jax.make_mesh((num_devices,), ("x",))
+    mesh = jtu.create_mesh((num_devices,), ("x",))
 
     rng = np.random.default_rng(0)
     x = rng.integers(512, size=(num_devices * 1024, 16), dtype=np.int32)

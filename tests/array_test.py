@@ -25,6 +25,7 @@ import jax.numpy as jnp
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
+from jax._src import deprecations
 from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
@@ -1324,8 +1325,13 @@ class ShardingTest(jtu.JaxTestCase):
     mesh2 = jax.sharding.AbstractMesh((2,), 'x', axis_types=Auto)
     self.assertEqual(mesh1, mesh2)
 
-    mesh = jax.make_mesh((1, 1), ('x', 'y'))
-    self.assertTupleEqual(mesh.axis_types, (AxisType.Auto,) * 2)
+    if deprecations.is_accelerated('jax-make-mesh-default-explicit'):
+      mesh = jax.make_mesh((1, 1), ('x', 'y'))
+      self.assertTupleEqual(mesh.axis_types, (AxisType.Explicit,) * 2)
+    else:
+      mesh = jax.make_mesh((1, 1), ('x', 'y'),
+                          axis_types=(AxisType.Explicit,) * 2)
+      self.assertTupleEqual(mesh.axis_types, (AxisType.Explicit,) * 2)
 
     mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'),
                          axis_types=(Explicit, Auto, Manual))
@@ -1528,6 +1534,15 @@ class ShardingTest(jtu.JaxTestCase):
         ValueError,
         "A tuple inside PartitionSpec cannot contain a nested tuple"):
       jax.P((('a', 'b'), 'c'))
+
+  def test_make_mesh_accelerate_explicit(self):
+    if deprecations.is_accelerated('jax-make-mesh-default-explicit'):
+      mesh = jax.make_mesh((1,), 'x')
+      self.assertTupleEqual(mesh.axis_types, (AxisType.Explicit,))
+    else:
+      with self.assertWarnsRegex(DeprecationWarning, "The default axis_types"):
+        mesh = jax.make_mesh((1,), 'x')
+        self.assertTupleEqual(mesh.axis_types, (AxisType.Auto,))
 
 
 class RngShardingTest(jtu.JaxTestCase):

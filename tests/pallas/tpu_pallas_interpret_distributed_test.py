@@ -55,7 +55,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
   def test_right_permute_example(self, dma_execution_mode, detect_races):
     num_devices = jax.device_count()
     partition = P(None, 'x')
-    mesh = jax.make_mesh((num_devices,), ('x',))
+    mesh = jtu.create_mesh((num_devices,), ('x',))
     sharding = jax.sharding.NamedSharding(mesh, partition)
 
     # Create an input array that shards the last dimension across
@@ -141,7 +141,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
   def test_all_gather_example(self, dma_execution_mode, detect_races):
     num_devices = jax.device_count()
     partition = P('x', None)
-    mesh = jax.make_mesh((num_devices,), ('x',))
+    mesh = jtu.create_mesh((num_devices,), ('x',))
     sharding = jax.sharding.NamedSharding(mesh, partition)
 
     # Create an input array that shards the first dimension across
@@ -264,7 +264,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
   def test_all_reduce_sum_example(self, dma_execution_mode, detect_races):
     num_devices = jax.device_count()
     partition = P(None, 'x')
-    mesh = jax.make_mesh((num_devices,), ('x',))
+    mesh = jtu.create_mesh((num_devices,), ('x',))
     sharding = jax.sharding.NamedSharding(mesh, partition)
 
     input_arr = jax.random.uniform(
@@ -425,7 +425,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
   def test_reduce_scatter_sum_example(self, dma_execution_mode, detect_races):
     num_devices = jax.device_count()
     partition = P(None, 'x')
-    mesh = jax.make_mesh((num_devices,), ('x',))
+    mesh = jtu.create_mesh((num_devices,), ('x',))
     sharding = jax.sharding.NamedSharding(mesh, partition)
 
     # We need a block size of (16, 128) to ensure that a half-slice is at least
@@ -719,7 +719,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       self.skipTest('pallas.emit_pipeline + x64 is not currently supported')
     num_devices = jax.device_count()
     partition = P(None, 'x')
-    mesh = jax.make_mesh((num_devices,), ('x',))
+    mesh = jtu.create_mesh((num_devices,), ('x',))
     sharding = jax.sharding.NamedSharding(mesh, partition)
 
     # We pick a large outer kernel block size that we do not want to place
@@ -1088,7 +1088,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
   def test_shard_map_of_core_map(self, num_cores):
     num_devices = jax.device_count()
     partition = P('x', None)
-    mesh = jax.make_mesh((num_devices,), ('x',))
+    mesh = jtu.create_mesh((num_devices,), ('x',))
     sharding = jax.sharding.NamedSharding(mesh, partition)
 
     core_mesh = pltpu.create_tensorcore_mesh('core', num_cores=num_cores)
