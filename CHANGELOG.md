@@ -44,10 +44,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     on TPUs.
 
 * Deprecations:
-  * Default `axis_types` of `jax.make_mesh` will change in JAX v0.9.0 to return
-  `jax.sharding.AxisType.Explicit`. Leaving axis_types unspecified will raise a
-  `DeprecationWarning`.
-  * {mod}`jax.cloud_tpu_init` and its contents were deprecated. There is no reason for a user to import or use the contents of this module; JAX handles this for you automatically if needed.
+  * {mod}`jax.cloud_tpu_init` and its contents were deprecated. There is no
+    reason for a user to import or use the contents of this module; JAX handles
+    this for you automatically if needed.
 
 ## JAX 0.8.0 (October 15, 2025)
 

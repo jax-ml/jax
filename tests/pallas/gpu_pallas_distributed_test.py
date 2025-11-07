@@ -296,7 +296,7 @@ class PallasCallRemoteDMATest(TestCase):
             plgpu.SemaphoreType.REGULAR,
         ],
     )
-    mesh = jtu.create_mesh((1, 2), ("x", "y"))
+    mesh = jax.make_mesh((1, 2), ("x", "y"))
     y = jax.jit(
         jax.shard_map(
             kernel_call, mesh=mesh, in_specs=(), out_specs=P("y"), check_vma=False,

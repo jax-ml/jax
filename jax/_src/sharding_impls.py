@@ -20,7 +20,6 @@ from collections.abc import Mapping, Sequence
 import dataclasses
 import functools
 import math
-import warnings
 from typing import Any, NamedTuple, cast
 
 from jax._src import config
@@ -33,7 +32,6 @@ from jax._src import util
 from jax._src import source_info_util
 from jax._src import xla_bridge as xb
 from jax._src import mesh_utils
-from jax._src import deprecations
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
@@ -1191,19 +1189,6 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   mesh_devices = mesh_utils.create_device_mesh(
       new_axis_shapes, devices,
       allow_split_physical_axes=allow_split_physical_axes)
-  if axis_types is None:
-    if deprecations.is_accelerated('jax-make-mesh-default-explicit'):
-      axis_types = (mesh_lib.AxisType.Explicit,) * len(mesh_devices.shape)
-    else:
-      warnings.warn(
-          'The default axis_types will change in JAX v0.9.0 to'
-          ' jax.sharding.AxisType.Explicit. To maintain the old behavior, pass'
-          ' `axis_types=(jax.sharding.AxisType.Auto,) * len(axis_names)`. To'
-          ' opt-into the  behavior, pass'
-          ' `axis_types=(jax.sharding.AxisType.Explicit,) * len(axis_names)',
-          category=DeprecationWarning,
-          stacklevel=2,
-      )
   return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)
 
 class set_mesh:

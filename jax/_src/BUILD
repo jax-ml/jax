@@ -1272,7 +1272,6 @@ pytype_strict_library(
     deps = [
         ":config",
         ":core",
-        ":deprecations",
         ":internal_mesh_utils",
         ":mesh",
         ":named_sharding",

@@ -71,7 +71,8 @@ tree_load_pytreedef = pytree_serialization.load_pytreedef
 
 
 def _get_replicated_sharding(devices):
-  return NamedSharding(jax.sharding.Mesh(devices, 'x'), P())
+  return NamedSharding(
+      jax.make_mesh(np.shape(devices), P('x'), devices=devices), P())
 
 
 class CheckpointTest(jtu.JaxTestCase):

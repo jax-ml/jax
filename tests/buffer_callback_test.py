@@ -185,8 +185,8 @@ class BufferCallbackTest(jtu.JaxTestCase):
           no_op, output_shape, command_buffer_compatible=True)
       return buffer_call((z,))
 
-    mesh1 = jtu.create_mesh((1, 1), ('a', 'b'))
-    mesh2 = jtu.create_mesh((1, 1), ('x', 'y'))
+    mesh1 = jax.make_mesh((1, 1), ('a', 'b'))
+    mesh2 = jax.make_mesh((1, 1), ('x', 'y'))
 
     x = jax.device_put(
         jnp.ones((32, 32)), jax.NamedSharding(mesh1, jax.P('a', 'b')))

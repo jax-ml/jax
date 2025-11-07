@@ -4412,7 +4412,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, s)
 
   def test_jnp_array_sharding(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    if jax.device_count() < 4:
+      self.skipTest('Requires >=4 devices')
+    mesh = jax.make_mesh((2, 2), ('x', 'y'), devices=jax.devices()[:4])
     s = NamedSharding(mesh, P('x', 'y'))
     inp = np.arange(16).reshape(8, 2)
 
@@ -4421,7 +4423,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, s)
 
   def test_jnp_array_inside_jit_sharding(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    if jax.device_count() < 4:
+      self.skipTest('Requires >=4 devices')
+    mesh = jax.make_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
     inp = np.arange(16).reshape(8, 2)
 
@@ -4447,10 +4451,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "`axis_shapes` passed to `make_mesh` should be a sequence of ints"):
-      jax.make_mesh(((4,), 4), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
+      jax.make_mesh(((4,), 4), ('x', 'y'))
 
-    jax.make_mesh((1, np.int32(1), np.int64(1)), ('x', 'y', 'z'),
-                  axis_types=(AxisType.Explicit,) * 3)  # doesn't crash
+    jax.make_mesh((1, np.int32(1), np.int64(1)), ('x', 'y', 'z'))  # doesn't crash
 
   def test_jnp_array_reshard_error(self):
     if jax.device_count() < 2:

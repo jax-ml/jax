@@ -89,7 +89,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
       f(1)
 
   def testShardMap(self):
-    mesh = jtu.create_mesh((1,), ('x',))
+    mesh = jax.make_mesh((1,), ('x',))
     f = shard_map(lambda x: 0. / x, mesh=mesh, in_specs=(P('x')), out_specs=P('x'))
     # For the Cpp pmap, the first execution always goes through Python.
     f(jnp.array([1.]))
@@ -152,7 +152,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
       y = x**2
       return jnp.log(y)
 
-    mesh = jtu.create_mesh((1,), ('x',))
+    mesh = jax.make_mesh((1,), ('x',))
     shmap_f = shard_map(f, mesh=mesh, in_specs=(P('x')), out_specs=P('x'))
     _, f_vjp = jax.vjp(shmap_f, jnp.zeros([1]))
 
