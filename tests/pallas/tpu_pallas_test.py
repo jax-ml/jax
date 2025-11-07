@@ -2150,17 +2150,16 @@ class PallasCallTest(PallasBaseTest):
 
   @parameterized.parameters([
       pl.Buffered(1),
-      # TODO(b/457717220): Seems like the error message doesn't show up anymore.
-      # pl.Buffered(2),
+      pl.Buffered(2),
   ])
   def test_vmem_oom_error_message_basics(self, pmode: pl.Buffered):
-    if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
-      self.skipTest('Support added on Oct 14, 2025')
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 12):
+      self.skipTest('Support added on Nov 12, 2025')
 
     if jtu.is_device_tpu(version=5, variant='e') or jtu.is_device_tpu(
         version=6, variant='e'
     ):
-      block_shape = (4096, 8192)
+      block_shape = (4096 // pmode.buffer_count, 8192)
     elif jtu.is_device_tpu(version=5, variant='p'):
       block_shape = (1024, 8192)
     else:
