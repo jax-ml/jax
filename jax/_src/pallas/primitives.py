@@ -24,15 +24,15 @@ import math
 import string
 from typing import Any
 
-import jax
-from jax import lax
-from jax import tree_util
+import jax._src.lax as lax
+from jax._src import tree_util
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import config
 from jax._src import debugging
 from jax._src import dtypes
+from jax._src import typing as jax_typing
 from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import pretty_printer as pp
@@ -50,7 +50,7 @@ from jax._src.state import indexing
 from jax._src.state import primitives as sp
 from jax._src.state import types as state_types
 from jax.interpreters import mlir
-import jax.numpy as jnp
+from jax._src import numpy as jnp
 
 Slice = indexing.Slice
 NDIndexer = indexing.NDIndexer
@@ -61,7 +61,7 @@ zip, unsafe_zip = util.safe_zip, zip
 program_id_p = jax_core.Primitive("program_id")
 batching.ragged_prop_rules[program_id_p] = batching.ragged_mask_no_op_rule
 
-def program_id(axis: int) -> jax.Array:
+def program_id(axis: int) -> jax_typing.Array:
   """Returns the kernel execution position along the given axis of the grid.
 
   For example, with a 2D `grid` in the kernel execution corresponding to the
@@ -94,7 +94,7 @@ def _program_id_abstract_eval(**_):
 
 num_programs_p = jax_core.Primitive("num_programs")
 
-def num_programs(axis: int) -> int | jax.Array:
+def num_programs(axis: int) -> int | jax_typing.Array:
   """Returns the size of the grid along the given axis."""
   return num_programs_p.bind(axis=axis)
 
@@ -363,7 +363,7 @@ multiple_of_p = jax_core.Primitive("multiple_of")
 multiple_of_p.def_impl(lambda x, **_: x)
 mlir.register_lowering(multiple_of_p, lambda _, x, **__: [x])
 
-def multiple_of(x: jax.Array, values: Sequence[int] | int) -> jax.Array:
+def multiple_of(x: jax_typing.Array, values: Sequence[int] | int) -> jax_typing.Array:
   values = (values,) if isinstance(values, int) else tuple(values)
   return multiple_of_p.bind(x, values=values)
 
@@ -647,7 +647,7 @@ def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
 
 
 def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier=None,
-         eviction_policy=None, volatile=False) -> jax.Array:
+         eviction_policy=None, volatile=False) -> jax_typing.Array:
   """Returns an array loaded from the given index.
 
   If neither ``mask`` nor ``other`` is specified, this function has the same
@@ -677,7 +677,7 @@ def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier=None,
   )
 
 def swap(x_ref_or_view, idx, val, *, mask=None, eviction_policy=None,
-         _function_name="swap") -> jax.Array:
+         _function_name="swap") -> jax_typing.Array:
   """Swaps the value at the given index and returns the old value.
 
   See :func:`~jax.experimental.pallas.load` for the meaning of the arguments.
@@ -702,7 +702,7 @@ def store(x_ref_or_view, idx, val, *, mask=None, eviction_policy=None) -> None:
            _function_name="store")
 
 
-def _handle_small(dtype: jax.typing.DTypeLike):
+def _handle_small(dtype: jax_typing.DTypeLike):
   """Ugly workaround to support types that don't allow automatic promotion."""
   if dtype == jnp.int4:
     return jnp.int8
@@ -724,7 +724,7 @@ def dot(a, b, trans_a: bool = False, trans_b: bool = False,
 
   dtype = jnp.promote_types(_handle_small(a.dtype), _handle_small(b.dtype))
   out_dtype = jnp.int32 if jnp.issubdtype(dtype, jnp.integer) else jnp.float32
-  return jax.lax.dot_general(
+  return lax.dot_general(
       a,
       b,
       dimension_numbers=(((lhs_contract_dim,), (rhs_contract_dim,)), ((), ())),
@@ -761,7 +761,7 @@ def _reciprocal_lowering_rule(
 mlir.register_lowering(reciprocal_p, _reciprocal_lowering_rule)
 
 
-def debug_print(fmt: str, *args: jax.typing.ArrayLike):
+def debug_print(fmt: str, *args: jax_typing.ArrayLike):
   """Prints values from inside a Pallas kernel.
 
   Args:
@@ -786,7 +786,7 @@ def debug_print(fmt: str, *args: jax.typing.ArrayLike):
 
 
 def check_debug_print_format(
-    fmt: str, *args: jax.typing.ArrayLike
+    fmt: str, *args: jax_typing.ArrayLike
 ):
   n_placeholders = 0
   for _, field, spec, conversion in string.Formatter().parse(fmt):
@@ -971,7 +971,7 @@ get_global_p.multiple_results = False
 get_global_p.ref_primitive = True
 jax_core._ref_allocating_primitives.add(get_global_p)
 
-def get_global(what: pallas_core.ScratchShape) -> jax.Array:
+def get_global(what: pallas_core.ScratchShape) -> jax_typing.Array:
   """Returns a global reference that persists across all kernel invocations.
 
   Each call to get_global returns a different and unique reference, but one that
@@ -1092,7 +1092,7 @@ state_discharge.register_discharge_rule(semaphore_read_p)(
 )
 
 
-DeviceId = int | jax.Array | None | tuple[int | jax.Array, ...] | dict[Any, int | jax.Array]
+DeviceId = int | jax_typing.Array | None | tuple[int | jax_typing.Array, ...] | dict[Any, int | jax_typing.Array]
 
 
 semaphore_signal_p = jax_core.Primitive('semaphore_signal')
@@ -1101,11 +1101,11 @@ semaphore_signal_p.multiple_results = True
 
 def semaphore_signal(
     sem_or_view,
-    inc: int | jax.Array = 1,
+    inc: int | jax_typing.Array = 1,
     *,
     device_id: DeviceId = None,
     device_id_type: DeviceIdType = DeviceIdType.MESH,
-    core_index: int | jax.Array | None = None,
+    core_index: int | jax_typing.Array | None = None,
 ):
   ref, transforms = _get_ref_and_transforms(sem_or_view)
   inc = jnp.asarray(inc, dtype=jnp.int32)
@@ -1206,7 +1206,7 @@ semaphore_wait_p.multiple_results = True
 
 
 def semaphore_wait(
-    sem_or_view, value: int | jax.Array = 1, *, decrement: bool = True
+    sem_or_view, value: int | jax_typing.Array = 1, *, decrement: bool = True
 ):
   ref, transforms = _get_ref_and_transforms(sem_or_view)
   value = jnp.asarray(value, dtype=jnp.int32)
@@ -1361,6 +1361,6 @@ def _delay_abstract_eval(nanos):
   return []
 
 
-def delay(nanos: int | jax.Array) -> None:
+def delay(nanos: int | jax_typing.Array) -> None:
   """Sleeps for the given number of nanoseconds."""
   delay_p.bind(nanos)

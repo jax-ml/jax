@@ -18,7 +18,7 @@ import math
 from typing import Any
 from collections.abc import Sequence
 
-import jax
+from jax._src import tree_util
 from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
@@ -89,7 +89,7 @@ def estimate_cost(fun, *args, **kwargs) -> pallas_core.CostEstimate:
   Returns:
     A pallas_core.CostEstimate object containing the cost estimate.
   """
-  flattened_args, treedef = jax.tree.flatten(args)
+  flattened_args, treedef = tree_util.tree_flatten(args)
   partial_fun = functools.partial(fun, **kwargs)
   wrapped_fun, _ = api_util.flatten_fun_nokwargs(
       lu.wrap_init(partial_fun,

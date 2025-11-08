@@ -21,8 +21,9 @@ from functools import partial, reduce
 import types
 from typing import Any
 
-import jax
-from jax import lax
+from jax._src import api
+import jax._src.lax as lax
+
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import checkify
@@ -34,6 +35,7 @@ from jax._src import linear_util as lu
 from jax._src import state
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
+from jax._src import typing as jax_typing
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -52,7 +54,8 @@ from jax._src.util import (
     tuple_insert,
     unzip2,
 )
-import jax.numpy as jnp
+from jax._src import numpy as jnp
+
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -71,7 +74,8 @@ pallas_call_p.multiple_results = True
 
 def _pallas_call_impl(*args, **params):
   # Call the lowering path
-  @partial(jax.jit, inline=True)
+  @partial(api.jit, inline=True)
+
   def _jit_run(*args):
     return pallas_call_p.bind(*args, **params)
 
@@ -412,12 +416,13 @@ def _batch_block_mapping(
 
 
 def _broadcast_input_output_aliases(
-    args: Sequence[jax.Array],
+    args: Sequence[jax_typing.Array],
+
     dims: Sequence[int | batching.NotMapped],
     *,
     input_output_aliases: tuple[tuple[int, int], ...],
     axis_size: int,
-) -> tuple[tuple[jax.Array, ...], tuple[int | batching.NotMapped, ...]]:
+) -> tuple[tuple[jax_typing.Array, ...], tuple[int | batching.NotMapped, ...]]:
   """Broadcast input/output operands.
 
   When we have input/output aliasing, since the output will be mapped, we need
@@ -448,7 +453,7 @@ def _broadcast_input_output_aliases(
 
 
 def _batch_with_explicit_loop(
-    args: Sequence[jax.Array],
+    args: Sequence[jax_typing.Array],
     dims: Sequence[int | batching.NotMapped],
     *,
     jaxpr: jax_core.Jaxpr,
@@ -499,7 +504,8 @@ def _batch_with_explicit_loop(
       for bm in grid_mapping.block_mappings_output
   ]
 
-  def body(batch_index: jax.Array, state: list[jax.Array]) -> list[jax.Array]:
+  def body(batch_index: jax_typing.Array, state: list[jax_typing.Array]) -> list[jax_typing.Array]:
+
     batch_args = []
 
     for arg, dim in zip(args, dims):
@@ -510,7 +516,7 @@ def _batch_with_explicit_loop(
       else:
         batch_args.append(
             jnp.squeeze(
-                jax.lax.dynamic_slice_in_dim(
+                lax.dynamic_slice_in_dim(
                     operand=arg,
                     start_index=batch_index,
                     slice_size=1,
@@ -535,7 +541,7 @@ def _batch_with_explicit_loop(
         name=name,
     )
     for i, batch_out_array in enumerate(batch_out):
-      state[i] = jax.lax.dynamic_update_index_in_dim(
+      state[i] = lax.dynamic_update_index_in_dim(
           state[i],
           batch_out_array,
           batch_index,
@@ -544,7 +550,7 @@ def _batch_with_explicit_loop(
 
     return state
 
-  result = jax.lax.fori_loop(0, axis_size, body, initial_state, unroll=False)
+  result = lax.fori_loop(0, axis_size, body, initial_state, unroll=False)
 
   return result, (0,) * len(result)
 
@@ -572,8 +578,8 @@ def _pallas_call_batching_rule(
     )
 
   def _maybe_squeeze_out_bdim(
-      x: jax.Array, bdim: int | batching.NotMapped
-  ) -> jax.Array:
+      x: jax_typing.Array, bdim: int | batching.NotMapped
+  ) -> jax_typing.Array:
     if bdim is batching.not_mapped:
       return x
     return jnp.squeeze(x, axis=bdim)
@@ -1151,7 +1157,7 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
     return lax.while_loop(
         cond, body, (jnp.int32(0), grid_start_indices, [jnp.zeros(shape) for shape in block_shapes])
     )
-  flat_args, jaxpr_in_tree = jax.tree_util.tree_flatten((jnp.int32(0),))
+  flat_args, jaxpr_in_tree = tree_util.tree_flatten((jnp.int32(0),))
   wrapped_loop, _ = api_util.flatten_fun_nokwargs(
       lu.wrap_init(f,
                    debug_info=api_util.debug_info("checkify oob_grid_access",
@@ -1201,7 +1207,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
   _jaxpr, _, error_effects = checkify_pallas_kernel_body_jaxpr(
       closed_jaxpr, enabled_errors, error, grid_mapping)
   error = error._add_placeholder_effects(error_effects)
-  err_vals, err_in_tree = jax.tree.flatten(error)
+  err_vals, err_in_tree = tree_util.tree_flatten(error)
   shaped_err_avals = map(jax_core.get_aval, err_vals)
 
   # Trace the kernel jaxpr to get a checkified jaxpr. This jaxpr will have
@@ -1253,7 +1259,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
       dtype = arg.dtype
       return jax_core.ShapedArray((1, 1) + arg.shape, dtype=dtype,
                                   weak_type=arg.weak_type)
-    elif isinstance(arg, jax.Array):
+    elif isinstance(arg, jax_typing.Array):
       return jnp.reshape(arg, (1, 1) + arg.shape)
     else:
       return jnp.array([[arg]])
@@ -1321,7 +1327,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
   errors, results = split_list(result, [num_err_vals])
   # TODO(b/350593266): Remove line below once we support ()-shaped scalars.
   errors = [err_val[0, 0] for err_val in errors]
-  new_error, _ = jax.tree.unflatten(error_out_tree, errors)
+  new_error, _ = tree_util.tree_unflatten(error_out_tree, errors)
   return new_error, results
 checkify.error_checks[pallas_call_p] = pallas_call_checkify_rule
 
@@ -1334,7 +1340,7 @@ def _trace_kernel_to_jaxpr(
     kernel_in_tree: tree_util.PyTreeDef,
     kernel_in_transforms: tuple[tuple[pallas_core.Transform, ...], ...],
     indexer: bool = False,
-) -> tuple[jax_core.Jaxpr, tuple[jax.Array, ...]]:
+) -> tuple[jax_core.Jaxpr, tuple[jax_typing.Array, ...]]:
   wrapped_kernel_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(fun, debug_info=debug_info), kernel_in_tree)
   wrapped_kernel_fun = primitives.wrap_with_transforms(
@@ -1495,7 +1501,7 @@ jax_core.custom_typechecks[pallas_call_p] = _pallas_call_typecheck_rule
 
 def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
   match out_shape:
-    case jax.ShapeDtypeStruct():
+    case jax_core.ShapeDtypeStruct():
       if config._check_vma.value:
         if out_shape.vma is None:
           raise ValueError(
@@ -1834,7 +1840,7 @@ def _pallas_call(
   flat_out_shapes_with_paths, out_tree = tree_util.tree_flatten_with_path(out_shape)
   out_paths, flat_out_shapes = unzip2(flat_out_shapes_with_paths)
 
-  @partial(jax.jit, inline=True)
+  @partial(api.jit, inline=True)
   def wrapped(*args):
     flat_args_with_paths, in_tree = tree_util.tree_flatten_with_path(args)
     in_paths, flat_args = unzip2(flat_args_with_paths)
