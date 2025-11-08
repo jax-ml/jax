@@ -669,7 +669,7 @@ def lower_module_to_custom_call(
     has_side_effects = (
         TpuSideEffectType.PURE
         if not has_side_effects
-        else TpuSideEffectType.DATAFLOW_SIDE_EFFECTING
+        else TpuSideEffectType.SIDE_EFFECTING
     )
   config = _lower_to_custom_call_config(
       module,
