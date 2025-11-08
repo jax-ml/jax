@@ -69,7 +69,7 @@ fi
 # single machine can take a long time, we skip running them on these
 # platforms in the presubmit jobs.
 if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] ); then
-      if [[ "$JAXCI_BUILD_JAXLIB" == 'true' ]]; then
+      if [[ "$JAXCI_BAZEL_CPU_RBE_MODE" == 'build' ]]; then
           echo "Building RBE CPU tests..."
           bazel build --config=rbe_cross_compile_${os}_${arch} \
               --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
