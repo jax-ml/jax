@@ -1204,7 +1204,7 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
           'The default axis_types will change in JAX v0.9.0 to'
           ' jax.sharding.AxisType.Explicit. To maintain the old behavior, pass'
           ' `axis_types=(jax.sharding.AxisType.Auto,) * len(axis_names)`. To'
-          ' opt-into the  behavior, pass'
+          ' opt-into the new behavior, pass'
           ' `axis_types=(jax.sharding.AxisType.Explicit,) * len(axis_names)',
           category=DeprecationWarning,
           stacklevel=2,
