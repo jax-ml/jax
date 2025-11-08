@@ -266,10 +266,12 @@ _DEFAULT_TYPEMAP: dict[type, Callable[[], np.dtype]] = {
   complex: default_complex_dtype,
 }
 
-def bit_width(dtype: DTypeLike) -> int:
+def itemsize_bits(dtype: DTypeLike) -> int:
   """Number of bits per element for the dtype."""
   # Note: we cannot use dtype.itemsize here because this is
   # incorrect for sub-byte integer types.
+  if dtype is None:
+    raise ValueError("dtype cannot be None.")
   if dtype == np.dtype(bool):
     return 8  # physical bit layout for boolean dtype
   elif issubdtype(dtype, np.integer):
@@ -280,6 +282,9 @@ def bit_width(dtype: DTypeLike) -> int:
     return 2 * finfo(dtype).bits
   else:
     raise ValueError(f"unexpected input: {dtype=}")
+
+# TODO(justinfu): Rename all instances of bit_width to itemsize_bits
+bit_width = itemsize_bits
 
 # Trivial vectorspace datatype needed for tangent values of int/bool primals
 float0: np.dtype = np.dtype([('float0', np.void, 0)])
