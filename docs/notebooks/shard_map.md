@@ -2,6 +2,7 @@
 jupytext:
   cell_metadata_filter: -all
   formats: ipynb,md:myst
+  main_language: python
   text_representation:
     extension: .md
     format_name: myst
@@ -663,7 +664,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 
-from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
+from jax.sharding import Mesh, PartitionSpec as P
 ```
 
 ```{code-cell}
@@ -1033,7 +1034,7 @@ overlap and thus improve FLOP utilization?
 import jax
 import jax.numpy as jnp
 
-from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
+from jax.sharding import Mesh, PartitionSpec as P
 ```
 
 ```{code-cell}
@@ -1309,7 +1310,7 @@ the end. (To evaluate the gradient of the loss, the devices must perform
 all-reduce-sums of parameter gradients in the backward pass.)
 
 ```{code-cell}
-from jax.sharding import NamedSharding, Mesh, PartitionSpec as P
+from jax.sharding import Mesh, PartitionSpec as P
 
 mesh = jax.make_mesh((8,), ('batch',), axis_types=(Auto,))
 jax.set_mesh(mesh)
