@@ -1135,17 +1135,17 @@ class DialectLoweringTest(MosaicGpuTest):
     mgpu.lower_mgpu_dialect(self.module, None)
     self.assertTrue(self.module.operation.verify())
 
-    all_mbarrier_init_shared_ops = find_if(
+    all_mbarrier_init_ops = find_if(
         self.module,
-        lambda op: op.name == nvvm.MBarrierInitSharedOp.OPERATION_NAME,
+        lambda op: op.name == nvvm.MBarrierInitOp.OPERATION_NAME,
     )
 
     # One nvvm.mbarrier_init_shared is issued per barrier.
-    self.assertLen(all_mbarrier_init_shared_ops, num_barriers)
+    self.assertLen(all_mbarrier_init_ops, num_barriers)
 
     # Each barrier has its count equal to the arrival count times the
     # warpgroup size.
-    for op in all_mbarrier_init_shared_ops:
+    for op in all_mbarrier_init_ops:
       count = op.count.owner.opview
       self.assertIsInstance(count, arith.ConstantOp)
       self.assertEqual(

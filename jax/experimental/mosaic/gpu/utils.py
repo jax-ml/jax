@@ -961,7 +961,7 @@ class BarrierRef:
     memref.store(c(0, i32), phases, [])
     with single_thread(scope=ThreadSubset.BLOCK):
       for i in range(num_barriers):
-        nvvm.mbarrier_init_shared(
+        nvvm.mbarrier_init(
             getelementptr(address, [i], i64),
             c(arrival_count, i32),
         )

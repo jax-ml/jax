@@ -277,7 +277,7 @@ def _initialize_barrier_op_lowering_rule(
   lowered_barrier_type = _lowered_barrier_type()
 
   for i in range(op.num_barriers.value):
-    nvvm.mbarrier_init_shared(
+    nvvm.mbarrier_init(
         utils.getelementptr(op.base_pointer, [i], lowered_barrier_type),
         utils.c(
             op.arrival_count.value * utils.WARPGROUP_SIZE,

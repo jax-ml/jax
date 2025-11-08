@@ -133,6 +133,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:NVVMDialect",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:VectorDialect",
