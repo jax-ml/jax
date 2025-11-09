@@ -332,6 +332,7 @@ pallas_core._core_map_mesh_rules[VectorSubcoreMesh] = (
     _vector_subcore_mesh_discharge_rule
 )
 
+# TODO(justinfu): Reconcile with pl.kernel.
 def kernel(
     out_shape: object,
     *,

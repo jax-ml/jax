@@ -244,24 +244,17 @@ class CoreMapTest(jtu.JaxTestCase):
   def test_can_create_tensorcore_mesh(self):
     _ = pltpu.create_tensorcore_mesh("x")
 
-  def test_can_run_basic_pallas_kernel_with_core_map(self):
+  def test_kernel_helper_basic(self):
     mesh = pltpu.create_tensorcore_mesh("x")
-
-    @jax.jit
-    def f(x):
-      y = jnp.zeros_like(x)
-      def inner(refs):
-        x_ref, y_ref = refs
-        @pl.core_map(mesh)
-        def _():
-          def alloc(sem):
-            pltpu.async_copy(x_ref, y_ref, sem).wait()
-          pl.run_scoped(alloc, pltpu.SemaphoreType.DMA)
-      _, y = pl.run_state(inner)((x, y))
-      return y
+    def body(x_ref, o_ref):
+      pltpu.sync_copy(x_ref, o_ref)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
-    y = f(x)
-    np.testing.assert_array_equal(y, x)
+    with self.subTest("decorator"):
+      result = pl.kernel(body, out_shape=x, mesh=mesh)(x)
+      np.testing.assert_array_equal(result, x)
+    with self.subTest("decorator_factory"):
+      result = pl.kernel(out_shape=x, mesh=mesh)(body)(x)
+      np.testing.assert_array_equal(result, x)
 
   def test_empty_core_map_raises_error(self):
     @jax.jit
@@ -279,37 +272,35 @@ class CoreMapTest(jtu.JaxTestCase):
       "Attempted to lower core_map without discharging."):
       f(x)
 
-  def test_can_query_core_index_pallas_kernel_with_core_map(self):
+  def test_can_query_core_index(self):
     mesh = pltpu.create_tensorcore_mesh("x")
+    slc_size = 16 // mesh.shape["x"]
 
     @jax.jit
     def f(x):
-      y = jnp.zeros_like(x)
-      def inner(refs):
-        x_ref, y_ref = refs
-        @pl.core_map(mesh)
-        def _():
-          num_cores = jax.lax.axis_size("x")
-          slc_size = 16 // num_cores
-          def alloc(x_vmem_ref, y_vmem_ref, sem):
-            core_index = jax.lax.axis_index("x")
-            slc = pl.ds(core_index * slc_size, slc_size)
-            pltpu.async_copy(
-                x_ref.at[slc],
-                x_vmem_ref,
-                sem,
-            ).wait()
-            y = x_vmem_ref[...] + jax.lax.axis_index("x")
-            y_vmem_ref[...] = y
-            pltpu.async_copy(y_vmem_ref, y_ref.at[slc], sem).wait()
-          pl.run_scoped(
-              alloc,
-              pltpu.VMEM((slc_size, 128), x_ref.dtype),
-              pltpu.VMEM((slc_size, 128), y_ref.dtype),
+      @pl.kernel(
+          out_shape=x,
+          mesh=mesh,
+          scratch_shapes=[
+              pltpu.VMEM((slc_size, 128), x.dtype),
+              pltpu.VMEM((slc_size, 128), x.dtype),
               pltpu.SemaphoreType.DMA,
-          )
-      _, y = pl.run_state(inner)((x, y))
-      return y
+          ],
+      )
+      def kernel(x_ref, y_ref, x_vmem_ref, y_vmem_ref, sem):
+        num_cores = jax.lax.axis_size("x")
+        slc_size = 16 // num_cores
+        core_index = jax.lax.axis_index("x")
+        slc = pl.ds(core_index * slc_size, slc_size)
+        pltpu.async_copy(
+            x_ref.at[slc],
+            x_vmem_ref,
+            sem,
+        ).wait()
+        y = x_vmem_ref[...] + jax.lax.axis_index("x")
+        y_vmem_ref[...] = y
+        pltpu.async_copy(y_vmem_ref, y_ref.at[slc], sem).wait()
+      return kernel(x)
     num_cores = jax.devices()[0].num_cores
     x = jnp.arange(16 * 128, dtype=jnp.int32).reshape((16, 128))
     expected_out = (
@@ -323,21 +314,44 @@ class CoreMapTest(jtu.JaxTestCase):
     def f(x):
       y = jnp.zeros_like(x)
 
-      def inner(x_ref):
-        @pl.core_map(pltpu.create_tensorcore_mesh("x"))
-        def _():
-          @functools.partial(
-              pl.run_scoped, tmp_ref=pltpu.VMEM(x_ref.shape, x_ref.dtype)
-          )
-          def _(tmp_ref):
-            pltpu.sync_copy(x_ref, tmp_ref)
-            tmp_ref[...] += y
-
-      return pl.run_state(inner)(x)
+      @pl.kernel(out_shape=x,
+                 mesh=pltpu.create_tensorcore_mesh("x"),
+                 scratch_shapes=dict(tmp_ref=pltpu.VMEM(x.shape, x.dtype)))
+      def kernel(x_ref, out_ref, tmp_ref):
+        pltpu.sync_copy(x_ref, tmp_ref)
+        tmp_ref[...] += y
+        out_ref[...] = tmp_ref[...]
+      return kernel(x)
 
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     with self.assertRaisesRegex(Exception, "core_map .* captures constants"):
       f(x)
+
+  def test_kernel_helper_with_scratch(self):
+    mesh = pltpu.create_tensorcore_mesh("x")
+    def body(x_ref, o_ref, scratch_ref):
+      pltpu.sync_copy(x_ref, scratch_ref)
+      scratch_ref[...] += 1
+      pltpu.sync_copy(scratch_ref, o_ref)
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    result = pl.kernel(
+        body, out_shape=x, mesh=mesh,
+        scratch_shapes=dict(scratch_ref=pltpu.VMEM(x.shape, x.dtype)))(x)
+    np.testing.assert_array_equal(result, x + 1)
+
+  def test_kernel_helper_with_out_tree(self):
+    mesh = pltpu.create_tensorcore_mesh("x")
+    def body(x_ref, o1_ref, o2_ref, scratch_ref):
+      pltpu.sync_copy(x_ref, o1_ref)
+      pltpu.sync_copy(x_ref, scratch_ref)
+      scratch_ref[...] += 1
+      pltpu.sync_copy(scratch_ref, o2_ref)
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    result1, result2 = pl.kernel(
+        body, out_shape=[x, x], mesh=mesh,
+        scratch_shapes=[pltpu.VMEM(x.shape, x.dtype)])(x)
+    np.testing.assert_array_equal(result1, x)
+    np.testing.assert_array_equal(result2, x + 1)
 
 
 if __name__ == "__main__":

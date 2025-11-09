@@ -216,6 +216,7 @@ WGxWG_SEMANTICS = (
     mgpu.LoweringSemantics.Warpgroup, PrimitiveSemantics.Warpgroup)
 
 
+# TODO(justinfu): Reconcile with pl.kernel.
 def kernel(
     body: Callable[..., None],
     out_shape: object,
