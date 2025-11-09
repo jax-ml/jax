@@ -201,6 +201,7 @@ py_library(
     deps = [
         ":core",
         ":primitives",
+        ":tpu_info",
         "//jax",
         "//jax/_src:api_util",
         "//jax/_src:util",
@@ -239,5 +240,6 @@ pytype_strict_library(
         ":core",
         "//jax",
         "//jax/_src:dtypes",
+        "//jax/_src:util",
     ],
 )

@@ -21,6 +21,7 @@ from typing import Callable
 from jax import numpy as jnp
 from jax._src import dtypes
 from jax._src.pallas.mosaic import core
+from jax._src import util as jax_util
 
 
 class ChipVersionBase:
@@ -170,6 +171,7 @@ def is_tpu_device() -> bool:
 
 registry: dict[str, Callable[[], TpuInfo]] = {}
 
+@jax_util.cache(trace_context_in_key=True)
 def get_tpu_info() -> TpuInfo:
   """Returns the TPU hardware information for the current device.
 
