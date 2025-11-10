@@ -2264,6 +2264,65 @@ class PallasCallTest(PallasBaseTest):
         error_message,
     )
 
+  def test_automatic_single_buffering(self,):
+    if self.INTERPRET:
+      self.skipTest('OOM tests need us to compile the kernels')
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 12):
+      self.skipTest('Support added on Oct 14, 2025')
+
+    def body(*_):
+      pass  # We only want to compile the kernel.
+
+    window_mib = 10
+    if jtu.is_device_tpu_at_least(6):
+      window_mib = 20
+    x = jax.ShapeDtypeStruct((100 * 1024 * 1024,), jnp.int8)
+    x_small = jax.ShapeDtypeStruct((window_mib * 1024 * 1024,), jnp.int8)
+    # Should recognize that the block specs only load a single window.
+    self.pallas_call(body, grid=(4,), out_shape=x_small).lower().compile()
+    # Should recognize that the block specs only load a single window, as it
+    # only depends on the 1-sized grid dim
+    self.pallas_call(
+        body, grid=(4, 1), out_shape=x,
+        out_specs=pl.BlockSpec((window_mib * 1024 * 1024,), lambda i, j: (j,))
+    ).lower().compile()
+    self.pallas_call(
+        body, grid=(1, 4), out_shape=x,
+        out_specs=pl.BlockSpec((window_mib * 1024 * 1024,), lambda i, j: (i,))
+    ).lower().compile()
+    # Should OOM, as now we are extracting different windows
+    with self.assertRaisesRegex(
+        jax.errors.JaxRuntimeError, '(Ran out of memory)|(exceed memory)'
+    ):
+      self.pallas_call(
+          body, grid=(4, 1), out_shape=x,
+          out_specs=pl.BlockSpec((window_mib * 1024 * 1024,), lambda i, j: (j + i,))
+      ).lower().compile()
+    # Explicitly setting single-buffering should fix it, though.
+    self.pallas_call(
+        body, grid=(4, 1), out_shape=x,
+        out_specs=pl.BlockSpec((window_mib * 1024 * 1024,),lambda i, j: (j + i,),
+                               pipeline_mode=pl.Buffered(1))
+    ).lower().compile()
+    # Add unused scalar prefetch args to make sure we don't incorrectly consider
+    # them to be unused grid indices.
+    scalar = jnp.array([0], jnp.int32)
+    with self.assertRaisesRegex(
+        jax.errors.JaxRuntimeError, '(Ran out of memory)|(exceed memory)'
+    ):
+      self.pallas_call(
+          body,
+          out_shape=x,
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=2,
+              grid=(4, 1),
+              out_specs=pl.BlockSpec(
+                  (window_mib * 1024 * 1024,),
+                  lambda i, j, *_: (j + i,),
+              ),
+          ),
+      ).lower(scalar, scalar).compile()
+
   def test_allow_input_fusion(self):
     shape = (3, 128, 128)
 
