@@ -322,6 +322,27 @@ def get_tpu_info() -> TpuInfo:
           int4_ops_per_second=int(3.68e15),
           sparse_core=SparseCoreInfo(num_cores=2, num_subcores=16, num_lanes=8),
       )
+    case "TPU7x":
+      num_cores = core.get_num_device_cores()
+      num_chip_cores = 2
+      return TpuInfo(
+        chip_version=ChipVersion.TPU_7X,
+        generation=7,
+        num_cores=num_cores,
+        num_lanes=128,
+        num_sublanes=8,
+        mxu_column_size=256,
+        vmem_capacity_bytes=64 * 1024 * 1024,  # 64 MiB per core
+        cmem_capacity_bytes=0,
+        smem_capacity_bytes=1024 * 1024,  # 1 MiB per core
+        hbm_capacity_bytes=206_000_000_000 // num_chip_cores,
+        mem_bw_bytes_per_second=int(7.40e12 // num_chip_cores),
+        bf16_ops_per_second=int(2.31e15 // num_chip_cores),
+        int8_ops_per_second=0,  # Not Available
+        fp8_ops_per_second=int(4.60e15 // num_chip_cores),
+        int4_ops_per_second=0,  # Not Available
+        sparse_core=SparseCoreInfo(num_cores=4, num_subcores=16, num_lanes=16),
+    )
     case _ as d:
       if d in registry:
         return registry[d]()
