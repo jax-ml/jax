@@ -20,10 +20,8 @@ from jaxlib.triton import dialect  # noqa: F401  # pytype: disable=import-error
 
 class CompilationResult(Protocol):
   asm: str
+  hsaco_path: str
   smem_bytes: int
-  cluster_dim_x: int
-  cluster_dim_y: int
-  cluster_dim_z: int
 
 
 class CompilationHandler(Protocol):
