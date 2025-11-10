@@ -363,7 +363,8 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
     in_avals = [core.shaped_abstractify(x) for x in args_flat]
     jaxpr, consts, out_tree = _trace_to_jaxpr(fun_, in_tree, tuple(in_avals), debug)
     if isinstance(prevent_cse, tuple):
-      cse = (*broadcast_prefix(prevent_cse, (args, kwargs) if kwargs else args),)
+      cse_args = (tuple(args), kwargs) if kwargs else tuple(args)
+      cse = (False,) * len(consts) + tuple(broadcast_prefix(prevent_cse, cse_args))
     else:
       cse = prevent_cse
     out_flat = remat_p.bind(
