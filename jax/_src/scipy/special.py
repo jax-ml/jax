@@ -3129,6 +3129,7 @@ def softmax(x: ArrayLike,
     x : input array
     axis: the axis or axes along which the softmax should be computed. The
       softmax output summed across these dimensions should sum to :math:`1`.
+      ``None`` means all axes.
 
   Returns:
     An array of the same shape as ``x``.
@@ -3163,7 +3164,7 @@ def log_softmax(x: ArrayLike,
   Args:
     x : input array
     axis: the axis or axes along which the :code:`log_softmax` should be
-      computed.
+      computed. ``None`` means all axes.
 
   Returns:
     An array of the same shape as ``x``
