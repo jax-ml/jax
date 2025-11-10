@@ -5,6 +5,7 @@ flatbuffers
 hypothesis
 mpmath>=1.3
 pillow>=11.3
+pytest<9.0  # Works around https://github.com/pytest-dev/pytest/issues/13895
 pytest-xdist
 rich
 # TODO(phawkins): enable matplotlib once it ships a 3.14 wheel.
