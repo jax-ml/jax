@@ -523,7 +523,9 @@ class ComponentTest(jtu.JaxTestCase):
       self.validate_cache_states(
         component_f.fun, component_f.key, 1, 0, 1, 7, 0, 0
       )
-      self.validate_cache_states(component_f.fun, vmapped_key, 1, 0, 1, 7, None, 1)
+      self.validate_cache_states(
+        component_f.fun, vmapped_key, 1, 0, 1, 7, None, 1
+      )
 
   @config.enable_checks(False)
   def test_vmap_of_vmap_of_component(self):
@@ -549,7 +551,15 @@ class ComponentTest(jtu.JaxTestCase):
       )
       vv_f = jax.vmap(v_f)
       logging.info("\n\nvv_f id %s", id(vv_f))
-      self.assertArraysEqual(vv_f(jnp.ones((4, 4,))), jnp.ones((4, 4)) + 1.0)
+      self.assertArraysEqual(
+        vv_f(
+          jnp.ones((
+            4,
+            4,
+          ))
+        ),
+        jnp.ones((4, 4)) + 1.0,
+      )
       self.validate_cache_states(
         c_f.fun,
         aot_util.ComponentKey.vmap(aot_util.ComponentKey.vmap(c_f.key)),
@@ -559,6 +569,64 @@ class ComponentTest(jtu.JaxTestCase):
         16,
         None,
         1,
+      )
+
+  @config.enable_checks(False)
+  def test_vmap_of_jit_of_component(self):
+    # NOTE: This should be the same as test_vmap_of_component except for one
+    # more infer params cache miss because of the extra jit.
+    with self.make_in_memory_cache():
+      cache = aot.get_cache()
+
+      def f(x):
+        logging.info("running!")
+        return x + 1.0
+
+      logging.info("\n\nuser fun id %s", id(f))
+      component_f = jax.jit(aot.component(key="f")(f))
+      logging.info("\n\ncomponent_f id %s", id(component_f))
+      vmapped_f = jax.vmap(component_f)
+      logging.info("\n\nvmapped_f id %s", id(vmapped_f))
+      logging.info("vmapped_f.__wrapped__ id %s", id(vmapped_f.__wrapped__))
+
+      # TODO(dsuo): How to put component_key on vmapped_f? This is just a hack.
+      vmapped_key = aot_util.ComponentKey.vmap(component_f.key)
+
+      self.assertArraysEqual(vmapped_f(jnp.ones((4,))), [2.0] * 4)
+      self.validate_cache_states(
+        component_f.fun, component_f.key, 1, 0, 1, 8, 0, 0
+      )
+      self.validate_cache_states(
+        component_f.fun, vmapped_key, 1, 0, 1, 8, None, 1
+      )
+
+  @config.enable_checks(False)
+  def test_jit_of_vmap_of_component(self):
+    # NOTE: This should be the same as test_vmap_of_component except for one
+    # more infer params cache miss because of the extra jit.
+    with self.make_in_memory_cache():
+      cache = aot.get_cache()
+
+      def f(x):
+        logging.info("running!")
+        return x + 1.0
+
+      logging.info("\n\nuser fun id %s", id(f))
+      component_f = aot.component(key="f")(f)
+      logging.info("\n\ncomponent_f id %s", id(component_f))
+      vmapped_f = jax.jit(jax.vmap(component_f))
+      logging.info("\n\nvmapped_f id %s", id(vmapped_f))
+      logging.info("vmapped_f.__wrapped__ id %s", id(vmapped_f.__wrapped__))
+
+      # TODO(dsuo): How to put component_key on vmapped_f? This is just a hack.
+      vmapped_key = aot_util.ComponentKey.vmap(component_f.key)
+
+      self.assertArraysEqual(vmapped_f(jnp.ones((4,))), [2.0] * 4)
+      self.validate_cache_states(
+        component_f.fun, component_f.key, 1, 0, 1, 8, 0, 0
+      )
+      self.validate_cache_states(
+        component_f.fun, vmapped_key, 1, 0, 1, 8, None, 1
       )
 
 
