@@ -26,8 +26,6 @@ import dataclasses
 import math
 from typing import Any, Callable, assert_never, final
 
-from jax._src.lib.mlir import ir
-
 from . import fragmented_array as fa
 from . import launch_context as lc
 from . import layouts as layouts_lib
@@ -547,28 +545,6 @@ class Divides:
 
 
 Constraint = Relayout | NotOfType | IsTransferable | Divides
-
-
-def _canonicalize_dimensions_to_tile(
-    dimensions_to_tile: tuple[tuple[int | ir.Value, ...], ...]
-) -> tuple[tuple[int | ir.Value, ...], ...]:
-  """Canonicalizes the dimensions to tile.
-
-  Int dimension values are merged into a single one by computing their greatest
-  common divisor. This works because any valid tiling must evenly divide all
-  dimensions, so it is a common divisor. Thus proving that it divides the gcd of
-  the dimensions proves that it divides all of them.
-
-  ir.Values are deduplicated and sorted at the end based on their string
-  representation.
-  """
-  def _canonicalize(vals: tuple[int | ir.Value, ...]) -> tuple[int | ir.Value, ...]:
-    static_val = math.gcd(*[x if isinstance(x, int) else 0 for x in vals])
-    dyn_vals = {x for x in vals if isinstance(x, ir.Value)}
-    dyn_vals = sorted(dyn_vals, key=str)
-    return (static_val,) + tuple(x for x in dyn_vals)
-
-  return tuple(_canonicalize(x) for x in dimensions_to_tile)
 
 
 def reduce_constraint(
