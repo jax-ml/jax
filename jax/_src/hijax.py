@@ -366,6 +366,9 @@ class VJPHiPrimitive:
     raise NotImplementedError(f"for vmap support, subclass {type(self)} must "
                               "implement `batch`")
 
+  def linearize_ncnp(self, trace, *args):
+    return trace.default_process_primitive(call_hi_primitive_p, args, dict(prim=self))
+
   def __call__(self, *args):
     args_flat = tree_leaves_checked(self.in_tree, args)
     ans_flat = call_hi_primitive_p.bind(*args_flat, prim=self)
@@ -427,6 +430,10 @@ def fake_linear_op(prim, rs, *tangents):
                                              residuals_tree=residuals_tree, prim=prim)
 
 ad.primitive_linearizations[call_hi_primitive_p] = _call_hi_primitive_linearize
+
+def _call_hi_primitive_linearize(trace, *args, prim):
+  return prim.linearize_ncnp(trace, *args)
+ad.fancy_linearizations[call_hi_primitive_p] = _call_hi_primitive_linearize
 
 call_hi_primitive_linearized_p = core.Primitive("call_hi_primitive_linearized")
 call_hi_primitive_linearized_p.multiple_results = True
