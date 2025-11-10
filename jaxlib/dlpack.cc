@@ -194,13 +194,16 @@ absl::StatusOr<std::unique_ptr<xla::PjRtBuffer>> MakePjrtBuffer(
   // On CPU, creating a view may fail because of unaligned data buffer
   // in which case we'll fallback to copy. On non-CPU, array-api copy
   // semantics is handled in dlpack._place_array function.
-  bool fallback_to_copy = !copy.has_value() && dlmt->dl_tensor.device.device_type == kDLCPU;
+  bool fallback_to_copy =
+      !copy.has_value() && dlmt->dl_tensor.device.device_type == kDLCPU;
 
   // Create a view.
   if (!copy.value_or(false)) {
     auto result = device.client()->CreateViewOfDeviceBuffer(
-        data, shape, *device.default_memory_space(), on_delete_callback, stream);
-    if (!(result.status().code() == absl::StatusCode::kInvalidArgument && fallback_to_copy)) {
+        data, shape, *device.default_memory_space(), on_delete_callback,
+        stream);
+    if (!(result.status().code() == absl::StatusCode::kInvalidArgument &&
+          fallback_to_copy)) {
       return result;
     }
   }
@@ -216,8 +219,8 @@ absl::StatusOr<std::unique_ptr<xla::PjRtBuffer>> MakePjrtBuffer(
   // Create a copy.
   return device.client()->BufferFromHostBuffer(
       data, element_type, dimensions, byte_strides,
-      xla::PjRtClient::HostBufferSemantics::kMutableZeroCopy, on_delete_callback,
-      memory_space, /*device_layout=*/nullptr);
+      xla::PjRtClient::HostBufferSemantics::kMutableZeroCopy,
+      on_delete_callback, memory_space, /*device_layout=*/nullptr);
 }
 
 }  // namespace
@@ -317,7 +320,8 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
 
 absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
     const nb::capsule& tensor, ifrt::Device* ifrt_device,
-    nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream, std::optional<bool> copy) {
+    nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream,
+    std::optional<bool> copy) {
   ifrt::PjRtDevice* device =
       llvm::dyn_cast_or_null<ifrt::PjRtDevice>(ifrt_device);
   if (device == nullptr) {
