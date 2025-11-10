@@ -72,13 +72,6 @@ jax_multiprocess_test(
 jax_multiprocess_test(
     name = "array_test",
     srcs = ["array_test.py"],
-    enable_backends = if_oss(
-        [
-            "gpu",
-            "tpu",
-        ],
-        None,
-    ),  # TODO(b/446172564): Remove enable_backends once the CPU test is fixed.
     main = "array_test.py",
     deps = [
         "//jax/_src:test_multiprocess",
