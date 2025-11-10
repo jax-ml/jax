@@ -34,6 +34,7 @@ from jax._src import state
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map
 from jax._src.state.discharge import run_state
@@ -341,6 +342,18 @@ class ImmutBoxNew(HiPrimitive):
 
 immutbox_new_p = ImmutBoxNew('immutbox_new')
 
+def _immutbox_new_batcher(vals_in, dims_in, *, leaf_avals, treedef):
+  # All leaves should have the same batch dimension
+  batched_leaf_avals = tuple(
+      core.mapped_aval(leaf_aval.shape[dim] if dim is not batching.not_mapped else None,
+                       dim, leaf_aval) if dim is not batching.not_mapped else leaf_aval
+      for leaf_aval, dim in zip(leaf_avals, dims_in))
+  val_out = immutbox_new_p.bind(*vals_in, leaf_avals=batched_leaf_avals, treedef=treedef)
+  # Return the same batch dimension for the output
+  return val_out, dims_in[0] if dims_in else batching.not_mapped
+
+batching.primitive_batchers[immutbox_new_p] = _immutbox_new_batcher
+
 def immutbox_new(val):
   leaves, treedef = jax.tree.flatten(val)
   leaf_avals = tuple(map(core.typeof, leaves))
@@ -371,6 +384,18 @@ class ImmutBoxGet(HiPrimitive):
     return (immutbox_new(reconstructed_cotangent),)
 
 immutbox_get_p = ImmutBoxGet('immutbox_get')
+
+def _immutbox_get_batcher(vals_in, dims_in):
+  box, = vals_in
+  dim, = dims_in
+  box_ty = core.typeof(box)
+  # Get leaves from the batched box
+  leaves = immutbox_get_p.bind(box)
+  # All output leaves should have the same batch dimension as the input
+  dims_out = (dim,) * len(leaves)
+  return leaves, dims_out
+
+batching.primitive_batchers[immutbox_get_p] = _immutbox_get_batcher
 
 def immutbox_get(box):
   leaves = immutbox_get_p.bind(box)
@@ -1432,7 +1457,7 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
     box = immutbox_new(x)
     y = jnp.ones((2,3))
     result = f_vmap(box, y)
-    self.assertEqual(immutbox_get(result).shape, (8,2))
+    self.assertEqual(immutbox_get(result).shape, (8,3))
 
   def test_broadcast_hijax(self):
     def f(box, y):
