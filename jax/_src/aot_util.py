@@ -43,7 +43,7 @@ class ComponentKey:
     return hash(self.user_key)
 
   def __eq__(self, other):
-    return hash(self) == hash(other)
+    return isinstance(other, ComponentKey) and self.user_key == other.user_key
 
   def __str__(self):
     return self.user_key
