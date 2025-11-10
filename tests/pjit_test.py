@@ -9587,6 +9587,15 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "reduced on"):
       f(arr2, arr1)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_jnp_pad_reflect(self, mesh):
+    np_inp = np.arange(2 * 1024).reshape(2, 16, 16, -1)
+    arr = reshard(np_inp, P('x', None))
+
+    padded_arr = jnp.pad(arr, [(0, 0), (3, 3), (3, 3), (0, 0)], mode='reflect')
+    self.assertEqual(padded_arr.sharding,
+                     NamedSharding(mesh, P('x', None, None, None)))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

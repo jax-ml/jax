@@ -3978,11 +3978,12 @@ def _pad_symmetric_or_reflect(array: Array, pad_width: PadValue[int],
   assert reflect_type in ("even", "odd")
 
   for i in range(np.ndim(array)):
-    if array.shape[i] == 0:
+    axis_size = array.shape[i]
+    if axis_size == 0:
       _check_no_padding(pad_width[i], mode)
       continue
-
-    axis_size = array.shape[i]
+    if pad_width[i][0] == 0 and pad_width[i][1] == 0:
+      continue
 
     def build_padding(array, padding, before):
       if before:
