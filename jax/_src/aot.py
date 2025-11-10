@@ -14,6 +14,7 @@
 """JAX AOT API"""
 
 from collections.abc import Hashable
+import functools
 import traceback
 from typing import Any, Callable, Sequence
 
@@ -76,7 +77,7 @@ def component(
       )
       return tree_util.tree_unflatten(out_tree(), out_flat)
 
-    wrapper.component_key = component_key
+    wrapper.key = component_key
     wrapper.fun = fun
     logging.info("jit(wrapper(fun)) wrapper id %s", id(wrapper))
     logging.info("wrapper(fun) wrapper._fun id %s", id(wrapper._fun))
@@ -103,9 +104,14 @@ def component_abstract_eval(
   entry = aot_util.get_entry(component_key)
   logging.info("component_abstract_eval got entry %s", component_key)
   if entry is None:
-    logging.info("missed abstract_eval %s", component_key)
+    logging.info("missed abstract_eval %s %s", component_key, type(fun))
     # TODO(dsuo): By the time we get to lowering, our trace context has picked
     # up an empty AbstractMesh. Don't know why.
+    if isinstance(fun, functools.partial):
+      logging.info("abstract_eval partial %s", fun.func.__name__)
+    if isinstance(fun, lu.WrappedFun):
+      logging.info("abstract_eval lu.WrappedFun")
+      fun = aot_util.maybe_reset_stores(fun).call_wrapped
     with mesh_lib.use_abstract_mesh(mesh_lib.AbstractMesh((), (), ())):
       avals_out = tree_util.tree_map(
         lambda x: core.ShapedArray(x.shape, x.dtype), api.eval_shape(fun, *args)
@@ -195,14 +201,21 @@ def component_batcher(
   # TODO(dsuo): Ignore updating annotations.
 
   # TODO(dsuo): Dummy debug info.
+  if isinstance(fun, functools.partial):
+    name = fun.func.__name__
+  else:
+    name = fun.__name__
+  if isinstance(fun, lu.WrappedFun):
+    fun = aot_util.maybe_reset_stores(fun)
   wrapped_fun = lu.wrap_init(
-    fun, debug_info=lu.DebugInfo("vmap(component)", fun.__name__, None, None)
+    fun, debug_info=lu.DebugInfo("vmap(component)", name, None, None)
   )
 
   # ????(dsuo): I don't understand trace tags.
   batched_fun, dims_out = batching.batch_subtrace(
     wrapped_fun, core.TraceTag(), axis_data, tuple(dims_in)
   )
+  batched_fun = aot_util.maybe_reset_stores(batched_fun)
 
   vals_out = component_p.bind(
     *vals_in,

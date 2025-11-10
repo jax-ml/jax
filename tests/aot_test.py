@@ -308,7 +308,7 @@ class ComponentTest(jtu.JaxTestCase):
     num_jaxpr_hits: int | Sequence[int],
     num_trace_hits: int,
     num_trace_misses: int,
-    num_wrapper_hits: int,
+    num_wrapper_hits: int | None,
     num_disk_hits: int,
   ):
     cache = aot.get_cache()
@@ -336,7 +336,8 @@ class ComponentTest(jtu.JaxTestCase):
     # Verify component key exists in disk cache.
     self.assertIn(component_key, cache.cache_keys())
 
-    if num_wrapper_hits > 0:
+    # If we don't have wrapper hits (0) or we don't expect component_key (-1).
+    if num_wrapper_hits is not None:
       # Verify the number of wrapper cache hits.
       self.assertEqual(
         aot_util._wrapper_cache.cache_info()[component_key]["hits"],
@@ -364,7 +365,7 @@ class ComponentTest(jtu.JaxTestCase):
       self.assertEqual(f(1.0), 2.0)
       self.validate_cache_states(
         f.fun,
-        f.component_key,
+        f.key,
         # Make sure there is only one entry for f.fun. If there are more, then
         # it means the lowering rule missed.
         num_jaxpr_entries=1,
@@ -376,7 +377,7 @@ class ComponentTest(jtu.JaxTestCase):
         # We should have 4 misses: add, equal, f, and call_wrapped.
         num_trace_misses=4,
         # We shouldn't have hit the wrapper cache yet.
-        num_wrapper_hits=0,
+        num_wrapper_hits=None,
         # We get 1 hit on the disk cache during the lowering rule. However, this
         # hit is for an incomplete CacheEntry; only avals_out were populated
         # and not the lowered module. The lowering rule updates the CacheEntry
@@ -391,7 +392,7 @@ class ComponentTest(jtu.JaxTestCase):
       self.assertEqual(f.fun, g.fun)
       self.assertEqual(g(1.0), 2.0)
       # Cache state should remain unchanged except we grabbed the wrapped fun.
-      self.validate_cache_states(g.fun, g.component_key, 1, 0, 1, 4, 1, 1)
+      self.validate_cache_states(g.fun, g.key, 1, 0, 1, 4, 1, 1)
 
   @config.enable_checks(False)
   def test_component_in_function(self):
@@ -409,14 +410,14 @@ class ComponentTest(jtu.JaxTestCase):
       self.assertEqual(f(1.0), 2.0)
 
       # We should have the same cache states as in test_component_basic.
-      self.validate_cache_states(f.fun, f.component_key, 1, 0, 1, 4, 0, 1)
+      self.validate_cache_states(f.fun, f.key, 1, 0, 1, 4, None, 1)
 
       # 1 hit when lowering g. g is not a component, so doesn't look up
       # CacheEntry during abstract_eval.
       self.assertEqual(g(1.0), 3.0)
       # We have one more trace cache hit on f from tracing g, two more misses,
       # one for g and one for add, and one more disk cache hit from lowering g.
-      self.validate_cache_states(f.fun, f.component_key, 1, 0, 2, 6, 0, 2)
+      self.validate_cache_states(f.fun, f.key, 1, 0, 2, 6, None, 2)
 
   @config.enable_checks(False)
   def test_jit_of_component(self):
@@ -432,7 +433,7 @@ class ComponentTest(jtu.JaxTestCase):
       self.assertEqual(f(1.0), 2.0)
       # We should have the same cache states as in test_component_basic except
       # one additional infer params cache miss for the outermost jitted f.
-      self.validate_cache_states(f.fun, f.component_key, 1, 0, 1, 5, 0, 1)
+      self.validate_cache_states(f.fun, f.key, 1, 0, 1, 5, None, 1)
 
       @aot.component(key="f")
       def g(x):
@@ -444,7 +445,7 @@ class ComponentTest(jtu.JaxTestCase):
       self.assertEqual(g(1.0), 2.0)
       # We have one more hit in infer params cache for the inner f and one more
       # hit in the disk cache for the lowering of f.
-      self.validate_cache_states(g.fun, g.component_key, 1, 0, 2, 5, 1, 2)
+      self.validate_cache_states(g.fun, g.key, 1, 0, 2, 5, 1, 2)
 
   @config.enable_checks(False)
   def test_component_of_jit(self):
@@ -459,7 +460,7 @@ class ComponentTest(jtu.JaxTestCase):
       self.assertEqual(f(1.0), 2.0)
       # We should have the same cache states as in test_component_basic except
       # one additional infer params cache miss for the outermost jitted f.
-      self.validate_cache_states(f.fun, f.component_key, 1, 0, 1, 5, 0, 1)
+      self.validate_cache_states(f.fun, f.key, 1, 0, 1, 5, None, 1)
 
       @aot.component(key="f")
       def g(x):
@@ -471,7 +472,7 @@ class ComponentTest(jtu.JaxTestCase):
       self.assertEqual(g(1.0), 2.0)
       logging.info(g(1.0))
       # We have one hit in the wrapper cache.
-      self.validate_cache_states(g.fun, g.component_key, 1, 0, 1, 5, 1, 1)
+      self.validate_cache_states(g.fun, g.key, 1, 0, 1, 5, 1, 1)
 
   @config.enable_checks(False)
   def test_explicit_lowering(self):
@@ -485,7 +486,7 @@ class ComponentTest(jtu.JaxTestCase):
       lowered = f.lower(jax.ShapeDtypeStruct((), "float32"))
       # One less infer params cache miss because we just have add, f, and
       # call_wrapped; no equal.
-      self.validate_cache_states(f.fun, f.component_key, 1, 0, 1, 3, 0, 1)
+      self.validate_cache_states(f.fun, f.key, 1, 0, 1, 3, None, 1)
 
       logging.info("\n\n\n")
 
@@ -497,7 +498,7 @@ class ComponentTest(jtu.JaxTestCase):
       # We hit the wrapper cache because we have the same component key, but
       # because we explicitly call lower, we hit infer params cache again.
       # TODO(dsuo): Do we want this behavior?
-      self.validate_cache_states(f.fun, f.component_key, 1, 0, 2, 3, 1, 1)
+      self.validate_cache_states(f.fun, f.key, 1, 0, 2, 3, 1, 1)
 
   @config.enable_checks(False)
   def test_vmap_of_component(self):
@@ -516,11 +517,49 @@ class ComponentTest(jtu.JaxTestCase):
       logging.info("vmapped_f.__wrapped__ id %s", id(vmapped_f.__wrapped__))
 
       # TODO(dsuo): How to put component_key on vmapped_f? This is just a hack.
-      vmapped_key = aot_util.ComponentKey.vmap(aot_util.ComponentKey("f"))
+      vmapped_key = aot_util.ComponentKey.vmap(component_f.key)
 
       self.assertArraysEqual(vmapped_f(jnp.ones((4,))), [2.0] * 4)
-      self.validate_cache_states(component_f.fun, component_f.component_key, 1, 0, 1, 7, 0, 0)
-      self.validate_cache_states(component_f.fun, vmapped_key, 1, 0, 1, 7, 0, 1)
+      self.validate_cache_states(
+        component_f.fun, component_f.key, 1, 0, 1, 7, 0, 0
+      )
+      self.validate_cache_states(component_f.fun, vmapped_key, 1, 0, 1, 7, None, 1)
+
+  @config.enable_checks(False)
+  def test_vmap_of_vmap_of_component(self):
+    with self.make_in_memory_cache():
+      cache = aot.get_cache()
+
+      def f(x):
+        logging.info("running!")
+        return x + 1.0
+
+      logging.info("\n\nuser fun id %s", id(f))
+      c_f = aot.component(key="f")(f)
+      logging.info("\n\nc_f id %s", id(c_f))
+      self.assertEqual(c_f(1.0), 2.0)
+      self.validate_cache_states(c_f.fun, c_f.key, 1, 0, 1, 4, 0, 1)
+      v_f = jax.vmap(c_f)
+      logging.info("\n\nv_f id %s", id(v_f))
+      self.assertArraysEqual(v_f(jnp.ones((4,))), jnp.ones((4,)) + 1.0)
+      # TODO(dsuo): How to put component key on vmapped?
+      # We now have 2 entries, one for f and one for vmap(f).
+      self.validate_cache_states(
+        c_f.fun, aot_util.ComponentKey.vmap(c_f.key), 2, (0, 0), 1, 12, None, 1
+      )
+      vv_f = jax.vmap(v_f)
+      logging.info("\n\nvv_f id %s", id(vv_f))
+      self.assertArraysEqual(vv_f(jnp.ones((4, 4,))), jnp.ones((4, 4)) + 1.0)
+      self.validate_cache_states(
+        c_f.fun,
+        aot_util.ComponentKey.vmap(aot_util.ComponentKey.vmap(c_f.key)),
+        2,
+        (0, 0),
+        3,
+        16,
+        None,
+        1,
+      )
 
 
 if __name__ == "__main__":
