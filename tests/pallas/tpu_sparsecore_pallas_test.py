@@ -112,7 +112,7 @@ class DebugPrintTest(PallasSCTest):
     debug_int = 1234552
     debug_float = 12344.625
 
-    @plsc.kernel(
+    @pl.kernel(
         out_shape=int32s,
         mesh=plsc.ScalarSubcoreMesh(
             axis_name="core", num_cores=self.sc_info.num_cores
@@ -1013,7 +1013,7 @@ class VectorSubcoreTest(PallasSCTest):
   def test_subcore_parallel(self):
     num_subcores = 16
 
-    @plsc.kernel(
+    @pl.kernel(
         out_shape=jax.ShapeDtypeStruct(
             shape=(num_subcores, 8), dtype=jnp.int32
         ),
@@ -1033,7 +1033,7 @@ class VectorSubcoreTest(PallasSCTest):
   def test_smem_vmem_store_literals(self):
     num_subcores = 16
 
-    @plsc.kernel(
+    @pl.kernel(
         out_shape=jax.ShapeDtypeStruct(
             shape=(num_subcores, 8), dtype=jnp.float32
         ),
@@ -1060,7 +1060,7 @@ class VectorSubcoreTest(PallasSCTest):
   def test_parallel_loop_effects(self):
     chunk_size = 8
 
-    @plsc.kernel(
+    @pl.kernel(
         out_shape=(),
         mesh=plsc.VectorSubcoreMesh(
             core_axis_name="core", subcore_axis_name="subcore", num_cores=1
@@ -1233,7 +1233,7 @@ class VectorSubcoreTest(PallasSCTest):
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
     vec_dim = self.sc_info.num_lanes
-    @plsc.kernel(
+    @pl.kernel(
         out_shape=jax.ShapeDtypeStruct(
             shape=(mesh.num_subcores, vec_dim), dtype=jnp.uint32
         ),
@@ -1299,7 +1299,7 @@ class VectorSubcoreTest(PallasSCTest):
     shape = (16, 64, 32)
     x = jnp.arange(np.prod(shape), dtype=dtype).reshape(*shape)
 
-    @plsc.kernel(
+    @pl.kernel(
         out_shape=x[:, :8],
         mesh=plsc.VectorSubcoreMesh(
             core_axis_name="core", subcore_axis_name="subcore", num_cores=1
@@ -1390,7 +1390,7 @@ class VectorSubcoreTest(PallasSCTest):
     shape = (mesh.num_subcores, 8, 8)
     x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(*shape)
 
-    @plsc.kernel(out_shape=x, mesh=mesh)
+    @pl.kernel(out_shape=x, mesh=mesh)
     def kernel(x_ref, o_ref):
       subcore_id = lax.axis_index("subcore")
       shared_scratch_ref = pl.get_global(
@@ -1422,7 +1422,7 @@ class VectorSubcoreTest(PallasSCTest):
         check_vma=False,
     )
     def f(x):
-      @plsc.kernel(
+      @pl.kernel(
           out_shape=x,
           mesh=plsc.VectorSubcoreMesh(
               core_axis_name="core", subcore_axis_name="subcore", num_cores=1
@@ -1443,7 +1443,7 @@ class ScalarSubcoreTest(PallasSCTest):
   def test_copy(self):
     x = jnp.arange(16)
 
-    @plsc.kernel(
+    @pl.kernel(
         out_shape=x,
         mesh=plsc.ScalarSubcoreMesh(
             axis_name="core", num_cores=self.sc_info.num_cores
@@ -1463,7 +1463,7 @@ class ScalarSubcoreTest(PallasSCTest):
         self.sc_info.num_cores, -1
     )
 
-    @plsc.kernel(
+    @pl.kernel(
         out_shape=x,
         mesh=plsc.ScalarSubcoreMesh(
             axis_name="core", num_cores=self.sc_info.num_cores
@@ -1482,7 +1482,7 @@ class ScalarSubcoreTest(PallasSCTest):
   def test_scalar_load_store(self):
     x = jnp.arange(8)
 
-    @plsc.kernel(
+    @pl.kernel(
         out_shape=x, mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
     )
     def kernel(x_ref, o_ref):
@@ -1514,7 +1514,7 @@ class ScalarSubcoreTest(PallasSCTest):
         else pl.loop(start, end, **kwargs)
     )
 
-    @plsc.kernel(
+    @pl.kernel(
         out_shape=x,
         mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1),
         scratch_shapes=(
@@ -1538,7 +1538,7 @@ class ScalarSubcoreTest(PallasSCTest):
   def test_parallel_loop_with_carry(self):
     x = jnp.arange(8*8).reshape(8, 8)
 
-    @plsc.kernel(
+    @pl.kernel(
         out_shape=x,
         mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1),
         scratch_shapes=(
