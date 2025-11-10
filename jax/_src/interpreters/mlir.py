@@ -2502,12 +2502,9 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   return f_lowered
 
 
-def _lower_jaxpr_to_fun_cached(ctx: ModuleContext,
-                               fn_name, call_jaxpr: core.ClosedJaxpr,
-                               num_const_args: int,
-                               effects,
-                               in_avals,
-                               arg_names=None, result_names=None):
+def _lower_jaxpr_to_fun_cached(
+    ctx: ModuleContext, fn_name, call_jaxpr: core.ClosedJaxpr,
+    num_const_args: int, effects, in_avals, arg_names=None, result_names=None):
   assert num_const_args + len(call_jaxpr.in_avals) == len(in_avals)
   if not call_jaxpr.consts and arg_names is result_names is None:
     # Cacheable.
@@ -2517,12 +2514,8 @@ def _lower_jaxpr_to_fun_cached(ctx: ModuleContext,
     except KeyError:
       num_callbacks = len(ctx.host_callbacks)
       func_op = lower_jaxpr_to_fun(
-          ctx, fn_name, call_jaxpr, effects,
-          num_const_args=num_const_args,
-          in_avals=in_avals,
-          arg_names=arg_names,
-          result_names=result_names)
-
+          ctx, fn_name, call_jaxpr, effects, num_const_args=num_const_args,
+          in_avals=in_avals, arg_names=arg_names, result_names=result_names)
       # If this Jaxpr includes callbacks, we can't cache the lowering because
       # on TPU every callback must have a globally unique channel, but the
       # channel gets assigned during lowering.
@@ -2555,32 +2548,17 @@ def check_backend_matches(inner_backend: str | None,
 
 
 def lower_called_computation(
-    fn_name,
-    call_jaxpr: core.ClosedJaxpr,
-    ctx: ModuleContext,
-    num_const_args: int,
-    in_avals,
-    out_avals,
-    tokens_in,
-    backend=None,
-    arg_names=None,
-    result_names=None,
-):
+    fn_name, call_jaxpr: core.ClosedJaxpr, ctx: ModuleContext,
+    num_const_args: int, in_avals, out_avals, tokens_in, backend=None,
+    arg_names=None, result_names=None):
   assert isinstance(call_jaxpr, core.ClosedJaxpr), type(call_jaxpr)
   check_backend_matches(backend, ctx.platforms)
   effects = list(tokens_in.effects())
   output_types = map(aval_to_ir_type, out_avals)
   output_types = [token_type()] * len(effects) + output_types
   func_op = _lower_jaxpr_to_fun_cached(
-      ctx,
-      fn_name,
-      call_jaxpr,
-      num_const_args,
-      effects,
-      in_avals=in_avals,
-      arg_names=arg_names,
-      result_names=result_names,
-  )
+      ctx, fn_name, call_jaxpr, num_const_args, effects, in_avals=in_avals,
+      arg_names=arg_names, result_names=result_names)
   return func_op, output_types, effects
 
 

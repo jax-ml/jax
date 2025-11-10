@@ -101,6 +101,28 @@ class SchedulingGroupsTest(jtu.JaxTestCase):
     grads = grad_f(jnp.array(5.0), use_remat=True)
     self.assertIsNotNone(grads)
 
+  @jtu.run_on_devices('cpu')
+  def test_xla_metadata_call_deduplication(self):
+    inp = jnp.arange(8.)
+
+    @xla_metadata_call(inlineable='false')
+    @jax.jit
+    def g(x):
+      return x * 2
+
+    def f(x):
+      y = g(x)
+      z = g(y)
+      return z.sum()
+
+    f(inp)  # doesn't crash
+
+    lowered = jax.jit(f).lower(inp)
+    self.assertEqual(
+        lowered.as_text().count('func.func private @xla_metadata_call'), 1)
+    compiled = lowered.compile()
+    compiled(inp)  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

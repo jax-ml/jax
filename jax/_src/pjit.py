@@ -1177,8 +1177,9 @@ def _create_pjit_jaxpr(
       "Finished tracing + transforming {fun_name} for pjit in {elapsed_time:.9f} sec",
       fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
     if config.dynamic_shapes.value:
+      assert isinstance(in_type, core.InputType)
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic2(
-          lu.annotate(fun, cast(core.InputType, in_type)))
+          lu.annotate(fun, in_type))
     else:
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, in_type)
 

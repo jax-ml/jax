@@ -2167,14 +2167,14 @@ class DynamicJaxprTrace(core.Trace):
   def process_call(self, call_primitive, f: lu.WrappedFun, explicit_tracers, params):
     source_info = source_info_util.current()
     to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
-    if f.in_type is None:
-      f = lu.annotate(f, tuple((get_aval(t), True) for t in explicit_tracers))
-    assert f.in_type is not None
-    implicit_tracers = _extract_implicit_args(self, f.in_type, explicit_tracers,
+    in_type = (tuple((get_aval(t), True) for t in explicit_tracers)
+               if f.in_type is None else f.in_type)
+    assert in_type is not None
+    implicit_tracers = _extract_implicit_args(self, in_type, explicit_tracers,
                                               source_info)
     in_tracers = map(to_jaxpr_tracer, [*implicit_tracers, *explicit_tracers])
     # TODO(mattjj): check in_tracers are consistent with f.in_type annotation
-    jaxpr, out_type, consts = trace_to_jaxpr_dynamic2(f)
+    jaxpr, out_type, consts = _cached_trace_to_jaxpr(f, in_type)
     if params.get('inline', False):
       return core.eval_jaxpr(jaxpr, consts, *in_tracers,
                              propagate_source_info=False)
@@ -2340,6 +2340,13 @@ class DynamicJaxprTrace(core.Trace):
     return self.frame.to_jaxpr(self, out_tracers, debug_info, source_info)
 
 
+
+@lu.cache
+def _cached_trace_to_jaxpr(f, in_type):
+  jaxpr, out_type, consts = trace_to_jaxpr_dynamic2(lu.annotate(f, in_type))
+  return jaxpr, out_type, consts
+
+
 custom_staging_rules: dict[Primitive, Callable] = {}
 
 @lu.transformation2
@@ -2471,7 +2478,6 @@ def trace_to_jaxpr_dynamic2(
     out_tracers = map(partial(trace.to_jaxpr_tracer, source_info=source_info), ans)
     jaxpr = trace.frame.to_jaxpr2(out_tracers, fun.debug_info)
     del trace, in_tracers, out_tracers, ans
-
   return jaxpr
 
 AbstractedAxisName = Hashable
