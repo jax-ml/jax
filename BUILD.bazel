@@ -158,3 +158,21 @@ pytype_test(
         "notap",
     ],
 )
+
+pytype_test(
+    name = "jax_wheel_imports_test",
+    srcs = ["//jaxlib/tools:wheel_imports_test.py"],
+    args = [
+        "--package-name=jax",
+    ],
+    main = "wheel_imports_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [
+        ":jax_py_import",
+        "//jaxlib/tools:jaxlib_py_import"
+    ],
+)
+

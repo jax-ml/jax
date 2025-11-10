@@ -43,7 +43,10 @@ licenses(["notice"])  # Apache 2
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["wheel_size_test.py"])
+exports_files([
+    "wheel_size_test.py",
+    "wheel_imports_test.py",
+])
 
 genrule(
     name = "platform_tags_py",
@@ -476,6 +479,17 @@ py_import(
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
+# Py_import targets for tests.
+py_import(
+    name = "jax_cuda_plugin_py_import_for_test",
+    wheel = ":jax_cuda{cuda}_plugin_wheel".format(cuda = cuda_major_version),
+)
+
+py_import(
+    name = "jax_cuda_pjrt_py_import_for_test",
+    wheel = ":jax_cuda{cuda}_pjrt_wheel".format(cuda = cuda_major_version),
+)
+
 # Mosaic GPU
 
 py_binary(
@@ -631,5 +645,52 @@ pytype_test(
     tags = [
         "manual",
         "notap",
+    ],
+)
+
+pytype_test(
+    name = "jaxlib_wheel_imports_test",
+    srcs = [":wheel_imports_test.py"],
+    args = [
+        "--package-name=jaxlib",
+    ],
+    main = "wheel_imports_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [":jaxlib_py_import"],
+)
+
+pytype_test(
+    name = "jax_cuda_plugin_wheel_imports_test",
+    srcs = [":wheel_imports_test.py"],
+    args = [
+        "--package-name=jax_cuda{cuda}_plugin".format(cuda = cuda_major_version),
+    ],
+    main = "wheel_imports_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [":jax_cuda_plugin_py_import_for_test"],
+)
+
+pytype_test(
+    name = "jax_cuda_pjrt_wheel_imports_test",
+    srcs = [":wheel_imports_test.py"],
+    args = [
+        "--package-name=jax_plugins.xla_cuda{cuda}".format(cuda = cuda_major_version),
+    ],
+    main = "wheel_imports_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [
+        # CUDA PJRT wheel depends on jax and jaxlib
+        ":jax_cuda_pjrt_py_import_for_test",
+        ":jaxlib_py_import",
+        "//:jax_py_import",
     ],
 )
