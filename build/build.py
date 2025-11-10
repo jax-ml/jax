@@ -519,7 +519,10 @@ async def main():
   clang_local = args.clang_path or (not utils.is_linux_x86_64(arch, os_name)
                                     and not utils.is_linux_aarch64(arch, os_name))
   if clang_local:
-    wheel_build_command_base.append("--config=clang_local")
+    if utils.is_linux(os_name):
+      wheel_build_command_base.append("--config=linux_clang_local")
+    else:
+      wheel_build_command_base.append("--config=clang_local")
 
     clang_path = args.clang_path or utils.get_clang_path_or_exit()
     clang_major_version = utils.get_clang_major_version(clang_path)

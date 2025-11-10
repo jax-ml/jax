@@ -24,6 +24,14 @@ common:clang_local --noincompatible_enable_cc_toolchain_resolution
 common:clang_local --@rules_ml_toolchain//common:enable_hermetic_cc=False
 common:clang_local --repo_env USE_HERMETIC_CC_TOOLCHAIN=0
 
+# Toolchains for Linux non-hermetic builds.
+# We do not have a non-hermetic CPU only toolchain so we use the CUDA
+# toolchain for both CPU and GPU builds.
+# TODO: Migrate toolchain definitions out of local_config_cuda repository.
+common:linux_clang_local --config=clang_local
+common:linux_clang_local --host_crosstool_top="@local_config_cuda//crosstool:toolchain"
+common:linux_clang_local --crosstool_top="@local_config_cuda//crosstool:toolchain"
+
 # Do not use C-Ares when building gRPC.
 common --define=grpc_no_ares=true
 
@@ -273,10 +281,7 @@ common:ci_linux_x86_64 --color=yes
 # TODO(b/356695103): We do not have a CPU only toolchain so we use the CUDA
 # toolchain for both CPU and GPU builds.
 common:ci_linux_x86_64_clang_local --config=ci_linux_x86_64
-common:ci_linux_x86_64_clang_local --config=clang_local
-common:ci_linux_x86_64_clang_local --host_crosstool_top="@local_config_cuda//crosstool:toolchain"
-common:ci_linux_x86_64_clang_local --crosstool_top="@local_config_cuda//crosstool:toolchain"
-common:ci_linux_x86_64_clang_local --extra_toolchains="@local_config_cuda//crosstool:toolchain-linux-x86_64"
+common:ci_linux_x86_64_clang_local --config=linux_clang_local
 common:ci_linux_x86_64_clang_local --repo_env=TF_SYSROOT="/dt9"
 
 # Clang path needs to be set for remote toolchain to be configured correctly.
@@ -317,15 +322,12 @@ common:ci_linux_aarch64_cuda13 --config=ci_linux_aarch64_cuda_common
 common:ci_linux_aarch64_cuda13 --config=cuda13
 
 # Deprecated CI config with non-hermetic toolchains.
-common:ci_linux_aarch64_clang_local --config=clang_local
+common:ci_linux_aarch64_clang_local --config=linux_clang_local
 common:ci_linux_aarch64_clang_local --config=ci_linux_aarch64_base
-common:ci_linux_aarch64_clang_local --host_crosstool_top="@ml2014_clang_aarch64_config_aarch64//crosstool:toolchain"
-common:ci_linux_aarch64_clang_local --crosstool_top="@ml2014_clang_aarch64_config_aarch64//crosstool:toolchain"
 
-common:ci_linux_aarch64_cuda_common_clang_local --config=clang_local
+common:ci_linux_aarch64_cuda_common_clang_local --config=linux_clang_local
 common:ci_linux_aarch64_cuda_common_clang_local --config=ci_linux_aarch64_cuda_common
 common:ci_linux_aarch64_cuda_common_clang_local --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
-common:ci_linux_aarch64_cuda_common_clang_local --crosstool_top="@local_config_cuda//crosstool:toolchain"
 
 common:ci_linux_aarch64_cuda12_clang_local --config=ci_linux_aarch64_cuda_common_clang_local
 common:ci_linux_aarch64_cuda12_clang_local --config=cuda12
