@@ -50,6 +50,7 @@ def component(
     component_key = ComponentKey(key)
 
     if component_key in aot_util._wrapper_cache.cache_keys():
+      logging.info('hit wrapper_cache: %s', component_key)
       return aot_util._wrapper_cache.get(component_key)
 
     @api.jit
@@ -63,7 +64,9 @@ def component(
       flat_fun, out_tree = api_util.flatten_fun(wrapped_fun, in_tree)
       flat_fun = aot_util.cached_flat_fun(flat_fun)
       logging.info("miss component flat_fun %s:", id(flat_fun))
-      jitted_fun = api.jit(flat_fun.call_wrapped)
+      flat_fun = flat_fun.f_transformed
+      flat_fun.__name__ = 'wrapped(flat_fun)'
+      jitted_fun = api.jit(flat_fun)
       logging.info("miss component jitted_fun %s:", id(jitted_fun))
 
       out_flat = component_p.bind(
@@ -75,7 +78,10 @@ def component(
 
     wrapper.component_key = component_key
     wrapper.fun = fun
-    logging.info("wrapper id %s", id(wrapper._fun))
+    logging.info("jit(wrapper(fun)) wrapper id %s", id(wrapper))
+    logging.info("wrapper(fun) wrapper._fun id %s", id(wrapper._fun))
+    logging.info("fun wrapper._fun.__wrapped__ id %s", id(wrapper._fun.__wrapped__))
+    logging.info("user fun id %s", id(fun))
     aot_util._wrapper_cache.put(component_key, wrapper)
     return wrapper
 
@@ -105,6 +111,8 @@ def component_abstract_eval(
         lambda x: core.ShapedArray(x.shape, x.dtype), api.eval_shape(fun, *args)
       )
     aot_util.put_entry(component_key, entry := aot_util.CacheEntry(avals_out))
+  else:
+    logging.info("hit abstract_eval %s", component_key)
   return entry.avals_out
 
 
@@ -156,6 +164,8 @@ def component_lowering(
     # the right context?
     entry.module = module = ir.Module.parse(mlir.module_to_bytecode(module))
     aot_util.put_entry(component_key, entry, update=True)
+  else:
+    logging.info("hit lowering: %s", component_key)
 
   symtab = ir.SymbolTable(module.operation)
   module = mlir.merge_mlir_modules(
@@ -196,7 +206,7 @@ def component_batcher(
 
   vals_out = component_p.bind(
     *vals_in,
-    fun=batched_fun,
+    fun=batched_fun.f_transformed,
     component_key=ComponentKey.vmap(component_key),
   )
   return vals_out, dims_out()

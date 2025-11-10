@@ -254,7 +254,7 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 
   @api_boundary
   def cache_miss(*args, **kwargs):
-    logging.info('cpp_pjit fun: %s', id(fun))
+    logging.info('cpp_pjit fun: %s %s', id(fun), fun.__name__)
     # args do not include the const args
     # See https://docs.jax.dev/en/latest/internals/constants.html.
     if config.no_tracing.value:
@@ -653,8 +653,11 @@ def _infer_params_internal(
   entry = _infer_params_cached(fun, ji, signature, avals, ctx_mesh)
 
   if entry.pjit_params is None:
-    # if fun.__name__ not in ['add', 'equal']:
-    logging.info('missed infer params: %s %s', id(fun), fun.__name__)
+    if isinstance(fun, partial):
+      name = f'partial({fun.func.__name__})'
+    else:
+      name = fun.__name__
+    logging.info('missed infer params: %s %s', id(fun), name)
     # if fun.__name__ == 'f':
     #   import traceback
     #   traceback.print_stack()

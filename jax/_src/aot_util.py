@@ -108,9 +108,7 @@ class Cache:
 
   def get(self, key: ComponentKey) -> SerializedType | None:
     entry = self._in_memory_cache.get(key, None)
-    if entry is None:
-      self._in_memory_cache_info[key] = dict(hits=0)
-    else:
+    if entry is not None:
       self._in_memory_cache_info[key] = dict(
         hits=self._in_memory_cache_info[key]["hits"] + 1
       )

@@ -160,10 +160,8 @@ def _filtering_mode() -> str:
       mode = "quiet_remove_frames"
   return mode
 
-def api_boundary(
-    fun: C, *,
-    repro_api_name: str | None = None,
-    repro_user_func: bool = False) -> C:
+import logging
+def api_boundary(fun: C) -> C:
   '''Wraps ``fun`` to form a boundary for filtering exception tracebacks.
 
   When an exception occurs below ``fun``, this appends to it a custom
@@ -184,10 +182,10 @@ def api_boundary(
   ``g``. Because the function returned by :func:`~jax.jit` is annotated as an
   :func:`~api_boundary`, such an exception is accompanied by an additional
   traceback that excludes the frames specific to JAX's implementation.
-
-  For the "repro" kwargs, see the comments for `repro.boundary`.
   '''
 
+  if hasattr(fun, '__name__') and 'wrapper' in fun.__name__:
+    logging.info("api_boundary fun id %s", id(fun))
   @functools.wraps(fun)
   def reraise_with_filtered_traceback(*args, **kwargs):
     __tracebackhide__ = True
@@ -223,17 +221,13 @@ def api_boundary(
         raise
       finally:
         del mode, tb
-  if (repro_api_name or repro_user_func) and repro:
-    reraise_with_filtered_traceback = repro.boundary(
-        reraise_with_filtered_traceback, api_name=repro_api_name,
-        is_user=repro_user_func)
-  return cast(C, reraise_with_filtered_traceback)
+  if hasattr(fun, '__name__') and 'wrapper' in fun.__name__:
+    logging.info("reraise_with_filtered_traceback id %s",
+                 id(reraise_with_filtered_traceback))
+  casted = cast(C, reraise_with_filtered_traceback)
 
-try:
-  # TODO: import from the final location
-  from jax._src import repro  # type: ignore
-  repro_is_enabled = repro.is_enabled
+  if hasattr(fun, '__name__') and 'wrapper' in fun.__name__:
+    logging.info("casted reraise id %s",
+                 id(casted))
 
-except ImportError:
-  repro = None  # type: ignore
-  def repro_is_enabled(): return False # type: ignore
+  return reraise_with_filtered_traceback
