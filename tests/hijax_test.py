@@ -1490,6 +1490,24 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
       self.assertEqual(jax.eval_shape(loss_fn, x, tup), expected_result)
       self.assertEqual(jax.eval_shape(capturing_loss_fn, x), expected_result)
 
+  @parameterized.parameters([False, True])
+  def test_while_loop_hi_arg(self, jit):
+    box = Box(1.)
+
+    def f():
+      def cond_fun(box):
+        return box.get() < 10
+      def body_fun(box):
+        box.set(box.get() * 2.)
+        return box
+      _ = jax.lax.while_loop(cond_fun, body_fun, box)
+
+    if jit:
+      f = jax.jit(f)
+
+    f()
+    self.assertAllClose(box.get(), 16, check_dtypes=False)
+
   # ------------
   # grad
   # ------------
