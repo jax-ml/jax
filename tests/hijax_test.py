@@ -1412,18 +1412,15 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
     y_sharding = NamedSharding(mesh, P('y'))
 
     def f(box, y):
-      val = box.get()
-      result = val + y
-      box.set(result)
-      return box.get()
+      val = immutbox_get(box)
+      return val + y
 
     f_jit = jax.jit(f, in_shardings=(box_sharding, y_sharding))
     x = jnp.arange(16.).reshape(8, 2)
-    box = Box(x)
+    box = immutbox_new(x)
     y = jnp.ones((8, 2))
     result = f_jit(box, y)
     self.assertAllClose(result, x + y)
-    self.assertAllClose(box.get(), x + y)
 
   def test_donate_hijax_jit(self):
     def f(box, y):
