@@ -153,6 +153,7 @@ maintains an up-to-date list.
    contributor_guide
    extensions
    notes
+   pallas/index
    about
 
 
