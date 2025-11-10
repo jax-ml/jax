@@ -128,6 +128,7 @@ def _tc_lowering_rule(
     metadata: frozen_dict.FrozenDict[str, str] | None,
     mosaic_params: tpu_core.CompilerParams,
     debug_info: jax_core.DebugInfo,
+    name: str | None,
 ):
   del mesh
   jax_mesh = None
@@ -277,7 +278,7 @@ def _tc_lowering_rule(
       *args,
       module=mosaic_module,
       out_type=kernel_out_avals,
-      kernel_name=mlir.sanitize_name(debug_info.func_name),
+      kernel_name=mlir.sanitize_name(name or debug_info.func_name),
       cost_estimate=mosaic_cost_estimate,
       vmem_limit_bytes=mosaic_params.vmem_limit_bytes,
       flags=mosaic_params.flags,
@@ -324,6 +325,7 @@ def _sc_lowering_rule(
     backend: str | None = None,
     metadata: frozen_dict.FrozenDict[str, str] | None,
     debug_info: jax_core.DebugInfo,
+    name: str | None,
 ):
   """Lowers a pallas_call to a Mosaic SparseCore custom call."""
   del mesh, out_avals, backend
@@ -362,7 +364,7 @@ def _sc_lowering_rule(
     out = mosaic.as_tpu_kernel(
         mosaic_module,
         out_avals,
-        kernel_name=mlir.sanitize_name(debug_info.func_name),
+        kernel_name=mlir.sanitize_name(name or debug_info.func_name),
         cost_estimate=mosaic_cost_estimate,
         input_output_aliases=input_output_aliases,
         metadata=metadata,
@@ -391,9 +393,6 @@ def pallas_call_tpu_lowering_rule(
 ):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
   del interpret  # Unused.
-  if name is not None:
-    # XLA TPU will use the final name in the stack for the op name.
-    ctx = ctx.replace(name_stack=ctx.name_stack.extend(name))
 
   debug_info = jaxpr.debug_info
   if debug:
@@ -427,4 +426,5 @@ def pallas_call_tpu_lowering_rule(
       metadata=metadata,
       mosaic_params=mosaic_params,
       debug_info=debug_info,
+      name=name,
   )
