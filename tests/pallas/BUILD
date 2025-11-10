@@ -598,6 +598,19 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "tpu_side_effects_test",
+    srcs = ["tpu_side_effects_test.py"],
+    enable_backends = ["tpu"],
+    deps = [
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_tpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "tpu_pallas_state_test",
     srcs = ["tpu_pallas_state_test.py"],
     enable_backends = ["tpu"],

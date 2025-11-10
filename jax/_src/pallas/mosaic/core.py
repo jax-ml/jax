@@ -64,6 +64,15 @@ DimensionSemantics = (
 )
 
 
+class SideEffectType(enum.Enum):
+  # No side effects, can be deduplicated / removed if unused.
+  PURE = "pure"
+  # Cannot be deduplicated, but can be removed if unused.
+  DATAFLOW_SIDE_EFFECTING = "dataflow_side_effecting"
+  # Cannot be deduplicated or removed.
+  SIDE_EFFECTING = "side_effecting"
+
+
 @dataclasses.dataclass(frozen=True)
 class CompilerParams(pallas_core.CompilerParams):
   """Mosaic TPU compiler parameters.
@@ -97,7 +106,7 @@ class CompilerParams(pallas_core.CompilerParams):
   allow_input_fusion: tuple[bool, ...] | None = None
   vmem_limit_bytes: int | None = None
   collective_id: int | None = None
-  has_side_effects: bool = False
+  has_side_effects: bool | SideEffectType = False
   flags: dict[str, Any] | None = None
   internal_scratch_in_bytes: int | None = None
   serialization_format: int = 1
@@ -113,7 +122,7 @@ class CompilerParams(pallas_core.CompilerParams):
       allow_input_fusion: Sequence[bool] | None = None,
       vmem_limit_bytes: int | None = None,
       collective_id: int | None = None,
-      has_side_effects: bool = False,
+      has_side_effects: bool | SideEffectType = False,
       flags: Mapping[str, Any] | None = None,
       internal_scratch_in_bytes: int | None = None,
       serialization_format: int = 1,

@@ -22,6 +22,7 @@ from jax._src.pallas.mosaic.core import GridDimensionSemantics as GridDimensionS
 from jax._src.pallas.mosaic.core import KernelType as KernelType
 from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec as PrefetchScalarGridSpec
 from jax._src.pallas.mosaic.core import SemaphoreType as SemaphoreType
+from jax._src.pallas.mosaic.core import SideEffectType as SideEffectType
 from jax._src.pallas.mosaic.core import MemorySpace as MemorySpace
 from jax._src.pallas.mosaic.core import CompilerParams as CompilerParams
 from jax._src.pallas.mosaic.helpers import sync_copy as sync_copy

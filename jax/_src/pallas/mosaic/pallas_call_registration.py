@@ -257,6 +257,20 @@ def _tc_lowering_rule(
         else None
         for i in input_memory_spaces
     )
+  has_side_effects: bool | tpu_custom_call.TpuSideEffectType
+  match mosaic_params.has_side_effects:
+    case bool():
+      has_side_effects = mosaic_params.has_side_effects
+    case tpu_core.SideEffectType.PURE:
+      has_side_effects = tpu_custom_call.TpuSideEffectType.PURE
+    case tpu_core.SideEffectType.DATAFLOW_SIDE_EFFECTING:
+      has_side_effects = (
+          tpu_custom_call.TpuSideEffectType.DATAFLOW_SIDE_EFFECTING
+      )
+    case tpu_core.SideEffectType.SIDE_EFFECTING:
+      has_side_effects = tpu_custom_call.TpuSideEffectType.SIDE_EFFECTING
+    case _:
+      raise ValueError(f"Invalid side effect type: {mosaic_params.has_side_effects}")
   out_nodes = mosaic.lower_module_to_custom_call(
       kernel_ctx,
       *dynamic_grid_args,
@@ -272,7 +286,7 @@ def _tc_lowering_rule(
       serialization_format=mosaic_params.serialization_format,
       internal_scratch_in_bytes=mosaic_params.internal_scratch_in_bytes,
       collective_id=mosaic_params.collective_id,
-      has_side_effects=mosaic_params.has_side_effects,
+      has_side_effects=has_side_effects,
       output_memory_spaces=output_memory_spaces,
       disable_bounds_checks=mosaic_params.disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
