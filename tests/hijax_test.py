@@ -1413,14 +1413,38 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
 
     def f(box, y):
       val = immutbox_get(box)
-      return val + y
+      return immutbox_new(val + y)
 
     f_jit = jax.jit(f, in_shardings=(box_sharding, y_sharding))
     x = jnp.arange(16.).reshape(8, 2)
     box = immutbox_new(x)
     y = jnp.ones((8, 2))
     result = f_jit(box, y)
-    self.assertAllClose(result, x + y)
+    self.assertAllClose(immutbox_get(result), x + y)
+
+  def test_vmap_hijax(self):
+    def f(box, y):
+      val = immutbox_get(box)
+      return immutbox_new(val @ y)
+
+    f_vmap = jax.vmap(f, in_axes=(0, None))
+    x = jnp.arange(16.).reshape(8, 2)
+    box = immutbox_new(x)
+    y = jnp.ones((2,3))
+    result = f_vmap(box, y)
+    self.assertEqual(immutbox_get(result).shape, (8,2))
+
+  def test_broadcast_hijax(self):
+    def f(box, y):
+      val = immutbox_get(box)
+      return immutbox_new(val + y)
+
+    f_vmap = jax.vmap(f, in_axes=(None, 0))
+    x = jnp.arange(3.)
+    box = immutbox_new(x)
+    y = jnp.ones((2,3))
+    result = f_vmap(box, y)
+    self.assertEqual(immutbox_get(result).shape, (2,3))
 
   def test_donate_hijax_jit(self):
     def f(box, y):
