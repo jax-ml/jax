@@ -6295,11 +6295,6 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
       disassemble(builder, layout_in, transpose_op.getVector(),
                   ctx.target_shape));
   ArrayRef<int64_t> permutation = transpose_op.getPermutation();
-  const auto tile_perm = permutation.take_back(2);
-
-  const bool untiled_tiled_swap =
-      permutation.take_back(3) ==
-      ArrayRef<int64_t>({rank - 2, rank - 3, rank - 1});
 
   auto reshape_to_4d = [&](xla::Array<Value>& arr) {
     auto dims = arr.dimensions();
@@ -6315,116 +6310,21 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
     arr.Reshape(new_dims);
   };
 
-  // Packed major minor permute
-  // TODO(b/448865291): Merge this branch and the unpacked one into a single
-  // general algorithm.
-  if (untiled_tiled_swap && layout_in.packing() > 1) {
-    int packing = layout_in.packing();
-    int bitwidth = layout_in.bitwidth();
-    if (layout_in.offsets() != LayoutOffsets{0, 0}) {
-      return op.emitOpError("Not implemented: Layout with offset");
-    }
-    if (layout_in.tiling()[0] != layout_in.packing() ||
-        layout_in.tiling()[1] != ctx.target_shape[1]) {
-      return op.emitOpError("Not implemented: expected single-sublane tiling");
-    }
-
-    const int64_t rank = src_ty.getRank();
-    const auto& src_shape = src_ty.getShape();
-    int64_t src_3rd_minor_shape_padded =
-        llvm::alignTo(src_shape[rank - 3], packing);
-    int64_t src_2nd_minor_shape_padded =
-        llvm::alignTo(src_shape[rank - 2], packing);
-
-    reshape_to_4d(src_vregs);
-
-    // Zero-initialize and pad the src_vregs to have correct 3rd minor and 2nd
-    // minor dimensions.
-    SmallVector<int64_t> padded_src_vreg_dims = {
-        src_vregs.dim(0), src_3rd_minor_shape_padded,
-        src_2nd_minor_shape_padded / packing, src_vregs.dim(3)};
-    auto temp_src_vregs = xla::Array<Value>(
-        padded_src_vreg_dims,
-        getZerosVector(builder, getNativeVregType(src_ty.getElementType(),
-                                                  ctx.target_shape)));
-    temp_src_vregs.UpdateSlice(src_vregs, {0, 0, 0, 0});
-    src_vregs = std::move(temp_src_vregs);
-    // Since this is a major-minor permute, we can use information about
-    // src_vregs to determine the dimensions of dst_vregs.
-    SmallVector<int64_t> temp_dst_vreg_dims = {
-        src_vregs.dim(0), src_2nd_minor_shape_padded,
-        src_3rd_minor_shape_padded / packing, src_vregs.dim(3)};
-    xla::Array<Value> temp_dst_vregs(temp_dst_vreg_dims);
-
-    VectorType int_packed_ty = getNativeVregType(
-        builder.getIntegerType(layout_in.bitwidth()), ctx.target_shape);
-    VectorType int_32_ty =
-        getNativeVregType(builder.getI32Type(), ctx.target_shape);
-    VectorType vreg_ty =
-        getNativeVregType(src_ty.getElementType(), ctx.target_shape);
-    // Iterate over the first dim. The algorithm operates on the last 3 dims.
-    for (int64_t outer_idx = 0; outer_idx < src_vregs.dim(0); ++outer_idx) {
-      for (int64_t minor_idx = 0; minor_idx < src_vregs.dim(3); ++minor_idx) {
-        for (int64_t second_minor_vreg_idx = 0;
-             second_minor_vreg_idx < src_vregs.dim(2);
-             ++second_minor_vreg_idx) {
-          for (int64_t third_minor_base_idx = 0;
-               third_minor_base_idx < src_vregs.dim(1);
-               third_minor_base_idx += packing) {
-            for (int64_t second_minor_subidx = 0; second_minor_subidx < packing;
-                 ++second_minor_subidx) {
-              SmallVector<Value> unpacked;
-              // We could have just interleaved unpacked the second_minor_idx
-              // part of the vreg in the loop below, but that ends up being more
-              // expensive than we need. Simple shifts do the trick. The high
-              // bits will be truncated by packing anyway.
-              for (int64_t third_minor_subidx = 0; third_minor_subidx < packing;
-                   ++third_minor_subidx) {
-                Value vreg = src_vregs(
-                    outer_idx, third_minor_base_idx + third_minor_subidx,
-                    second_minor_vreg_idx, minor_idx);
-                vreg = tpu::BitcastVregOp::create(builder, int_32_ty, vreg);
-                vreg = arith::ShRUIOp::create(
-                    builder, vreg,
-                    getFullLikeVector(builder,
-                                      cast<TypedValue<VectorType>>(vreg),
-                                      builder.getI32IntegerAttr(
-                                          second_minor_subidx * bitwidth)));
-                unpacked.push_back(vreg);
-              }
-              Value repacked_i32 = tpu::PackSubelementsOp::create(
-                  builder, int_packed_ty, unpacked,
-                  tpu::PackFormat::kInterleaved);
-              temp_dst_vregs(
-                  outer_idx,
-                  second_minor_vreg_idx * packing + second_minor_subidx,
-                  third_minor_base_idx / packing, minor_idx) =
-                  tpu::BitcastVregOp::create(builder, vreg_ty, repacked_i32);
-            }
-          }
-        }
-      }
-    }
-
-    // Prepare the final dst_vregs.
-    SmallVector<int64_t> dst_vreg_dims =
-        layout_out.tileArrayShape(dst_ty.getShape(), ctx.target_shape);
-    xla::Array<Value> dst_vregs(dst_vreg_dims);
-    reshape_to_4d(dst_vregs);
-    dst_vregs = temp_dst_vregs.Slice({0, 0, 0, 0}, dst_vregs.dimensions());
-    dst_vregs.Reshape(dst_vreg_dims);
-
-    auto assembled =
-        assemble(builder, dst_ty, layout_out, dst_vregs, ctx.target_shape);
-    transpose_op.getOperation()->replaceAllUsesWith(assembled);
-    transpose_op.erase();
-    return success();
   // Major minor permute
-  } else if (untiled_tiled_swap) {
+  if (permutation.take_back(3) ==
+      ArrayRef<int64_t>({rank - 2, rank - 3, rank - 1})) {
     // This is a 3 stage algorithm that uses combinations and shuffles to do a
-    // transposition of an 8x8 or 4x8 or 2x8 block of sublanes. We use the 8x8
-    // case as an example. For 4x8 and 2x8, we just need to run fewer rounds of
-    // the algorithm.
+    // transposition of an 8x8 or 4x8 or 2x8 block of sublanes. We use the
+    // 32-bit 8x8 case as an example. For 4x8 and 2x8, we just need to run fewer
+    // rounds of the algorithm. For packed dtypes, we will essentially working
+    // on (8*packing)x8 blocks, and repeat the 8x8 algorithm `packing` times,
+    // the first 8x8 block contains the `packing * i`th input vregs, the second
+    // 8x8 block contains the `packing * i + 1`th input vregs, etc. Take 16-bit
+    // as an example, we have 16 vregs in total, they are [V0, V1,..., V15]. We
+    // view [V0, V2,...,V14] as the first 8x8 block, and [V1, V3,...,V15] as the
+    // second 8x8 block. We also need to do an extra unpacking and repacking
+    // step for packed dtypes after the 3 stage algorithm.
+
     // In the following algorithm description, A, B, ..., H represent 8 distinct
     // input vregs that form an 8x8 block of data to be transposed. In our
     // notation, B2 identifies the third sublane (2) of the second vreg (B)".
@@ -6520,17 +6420,10 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
     // (e.g. L=s2_vregs[1], R=s2_vregs[5]).
     //
     // This results in the correctly transposed 8x8 block.
-
-    auto sublane_tiling = layout_in.tiling()[0];
-    if (sublane_tiling != 1 && sublane_tiling != 2 && sublane_tiling != 4 &&
-        sublane_tiling != 8) {
-      return transpose_op.emitOpError(
-          "Not implemented: Only sublane tiling of 1, 2, 4, or 8 is supported "
-          "for 32-bit vectors.");
-    }
     if (layout_in.offsets() != LayoutOffsets{0, 0}) {
       return transpose_op.emitOpError("Not implemented: Layout with offset.");
     }
+    // TODO(b/456173864): Relax this constraint.
     if (ctx.target_shape[0] != 8) {
       return transpose_op.emitOpError(
           "Not implemented: Major-second-minor transpose expects 8 sublanes.");
@@ -6544,6 +6437,10 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
       p[rank - 1] = rank - 1;
       src_vregs.TransposeDimensions(p);
     }
+
+    const int packing = layout_in.packing();
+    const int bitwidth = layout_in.bitwidth();
+    const int64_t sublane_tiling = layout_in.tiling()[0];
 
     int64_t src_vregs_dim = src_vregs.num_dimensions();
     // The dimensions without padding is used for slicing the output.
@@ -6644,109 +6541,194 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
 
     // Iterate over the first dim. The algorithm operates on the last 3 dims.
     for (int outer_idx = 0; outer_idx < src_vregs.dim(0); ++outer_idx) {
-      for (int major_dim_slice_idx = 0;
-           major_dim_slice_idx < num_slices_in_major_dim;
-           ++major_dim_slice_idx) {
+      for (int minor_most_dim_slice_idx = 0;
+           minor_most_dim_slice_idx < num_slices_in_minor_most_dim;
+           ++minor_most_dim_slice_idx) {
         for (int second_minor_dim_slice_idx = 0;
              second_minor_dim_slice_idx < num_slices_in_second_minor_dim;
              ++second_minor_dim_slice_idx) {
-          for (int minor_most_dim_slice_idx = 0;
-               minor_most_dim_slice_idx < num_slices_in_minor_most_dim;
-               ++minor_most_dim_slice_idx) {
-            // Initialize dst_vregs with src_vregs, needed for (1, 128) tiling.
-            dst_vregs({outer_idx, second_minor_dim_slice_idx * sublane_tiling,
-                       major_dim_slice_idx, minor_most_dim_slice_idx}) =
-                src_vregs({outer_idx, sublane_tiling * major_dim_slice_idx,
-                           second_minor_dim_slice_idx,
-                           minor_most_dim_slice_idx});
-            // STAGE 1!
-            std::array<Value, 8>
-                stage1_output_vregs;  // Stores s1_vregs from comments
-            const int num_pairs_stage1 =
-                sublane_tiling /
-                2;  // Processes pairs of vregs (A,C), (B,D), (E,G), (F,H)
-            const int stage1_stride = sublane_tiling > 2 ? 2 : 1;
+          for (int major_dim_slice_idx = 0;
+               major_dim_slice_idx < num_slices_in_major_dim;
+               ++major_dim_slice_idx) {
+            for (int major_subidx = 0; major_subidx < packing; ++major_subidx) {
+              // Initialize dst_vregs with src_vregs, needed for (packing, 128).
+              if (sublane_tiling == packing) {
+                dst_vregs({outer_idx, second_minor_dim_slice_idx + major_subidx,
+                           major_dim_slice_idx, minor_most_dim_slice_idx}) =
+                    src_vregs({outer_idx,
+                               major_dim_slice_idx * packing + major_subidx,
+                               second_minor_dim_slice_idx,
+                               minor_most_dim_slice_idx});
+              }
 
-            for (int i = 0; i < num_pairs_stage1; ++i) {
-              int stage1_first_idx = (i / 2) * 4 + (i % 2);
-              int stage1_second_idx = stage1_first_idx + stage1_stride;
+              // STAGE 1!
+              std::array<Value, 8>
+                  stage1_output_vregs;  // Stores s1_vregs from comments
+              const int num_pairs_stage1 =
+                  sublane_tiling / (2 * packing);  // Processes pairs of vregs
+                                                   // (A,C), (B,D), (E,G), (F,H)
+              const int stage1_stride = num_pairs_stage1 > 1 ? 2 : 1;
 
-              Value first_vreg = src_vregs(
-                  {outer_idx,
-                   stage1_first_idx + (sublane_tiling * major_dim_slice_idx),
-                   second_minor_dim_slice_idx, minor_most_dim_slice_idx});
-              Value second_vreg = src_vregs(
-                  {outer_idx,
-                   stage1_second_idx + (sublane_tiling * major_dim_slice_idx),
-                   second_minor_dim_slice_idx, minor_most_dim_slice_idx});
+              for (int i = 0; i < num_pairs_stage1; ++i) {
+                int stage1_first_idx = (i / 2) * 4 + (i % 2);
+                int stage1_second_idx = stage1_first_idx + stage1_stride;
 
-              auto combined_low_val = combine_low(first_vreg, second_vreg);
-              auto combined_high_val = combine_high(first_vreg, second_vreg);
+                Value first_vreg = src_vregs(
+                    {outer_idx,
+                     stage1_first_idx * packing + major_subidx +
+                         sublane_tiling * major_dim_slice_idx,
+                     second_minor_dim_slice_idx, minor_most_dim_slice_idx});
+                Value second_vreg = src_vregs(
+                    {outer_idx,
+                     stage1_second_idx * packing + major_subidx +
+                         sublane_tiling * major_dim_slice_idx,
+                     second_minor_dim_slice_idx, minor_most_dim_slice_idx});
 
-              // Initialize for (2, 128) tiling and combine for larger tilings.
-              stage1_output_vregs[stage1_first_idx] =
-                  (sublane_tiling == 2)
-                      ? first_vreg
-                      : shuffle(combined_low_val, combined_high_val,
-                                permute_pattern_stage1_low_arr);
-              stage1_output_vregs[stage1_second_idx] =
-                  (sublane_tiling == 2)
-                      ? second_vreg
-                      : shuffle(combined_low_val, combined_high_val,
-                                permute_pattern_stage1_high_arr);
+                auto combined_low_val = combine_low(first_vreg, second_vreg);
+                auto combined_high_val = combine_high(first_vreg, second_vreg);
+
+                // Initialize for (2*packing, 128) tiling and combine for larger
+                // tilings.
+                stage1_output_vregs[stage1_first_idx] =
+                    (sublane_tiling / packing == 2)
+                        ? first_vreg
+                        : shuffle(combined_low_val, combined_high_val,
+                                  permute_pattern_stage1_low_arr);
+                stage1_output_vregs[stage1_second_idx] =
+                    (sublane_tiling / packing == 2)
+                        ? second_vreg
+                        : shuffle(combined_low_val, combined_high_val,
+                                  permute_pattern_stage1_high_arr);
+              }
+
+              // STAGE 2!
+              std::array<Value, 8>
+                  stage2_output_vregs;  // Stores s2_vregs from comments
+              const int num_pairs_stage2 =
+                  sublane_tiling / (2 * packing);  // Processes pairs of vregs
+                                                   // from stage1_output_vregs
+              constexpr int stage2_stride = 1;
+
+              for (int i = 0; i < num_pairs_stage2; ++i) {
+                int stage2_first_idx = 2 * i;
+                int stage2_second_idx = stage2_first_idx + stage2_stride;
+
+                Value stage2_first_vreg = stage1_output_vregs[stage2_first_idx];
+                Value stage2_second_vreg =
+                    stage1_output_vregs[stage2_second_idx];
+
+                auto combined_low_val =
+                    combine_low(stage2_first_vreg, stage2_second_vreg);
+                auto combined_high_val =
+                    combine_high(stage2_first_vreg, stage2_second_vreg);
+
+                stage2_output_vregs[stage2_first_idx] =
+                    shuffle(combined_low_val, combined_high_val,
+                            permute_pattern_stage2_low_arr);
+                stage2_output_vregs[stage2_second_idx] =
+                    shuffle(combined_low_val, combined_high_val,
+                            permute_pattern_stage2_high_arr);
+              }
+
+              // STAGE 3! Combine results from stage 2.
+              // For (8, 128) tiling, this corresponds to
+              // s2_vregs[0]..s2_vregs[3] pairing with s2_vregs[4]..s2_vregs[7].
+              // For (4, 128) tiling, this corresponds to
+              // s2_vregs[0]..s2_vregs[1] pairing with s2_vregs[2]..s2_vregs[3].
+              // For (2, 128) tiling, this corresponds to s2_vregs[0] pairing
+              // with s2_vregs[1].
+              const int num_final_combines = sublane_tiling / (2 * packing);
+              const int final_combine_stride = sublane_tiling / (2 * packing);
+              for (int i = 0; i < num_final_combines; ++i) {
+                Value lhs = stage2_output_vregs[i];
+                Value rhs = stage2_output_vregs[i + final_combine_stride];
+                auto final_combined_low = combine_low(lhs, rhs);
+                auto final_combined_high = combine_high(lhs, rhs);
+
+                int final_dst_idx = 2 * packing * i + major_subidx;
+                dst_vregs(
+                    outer_idx,
+                    final_dst_idx + second_minor_dim_slice_idx * sublane_tiling,
+                    major_dim_slice_idx, minor_most_dim_slice_idx) =
+                    final_combined_low;
+                dst_vregs(outer_idx,
+                          final_dst_idx + packing +
+                              second_minor_dim_slice_idx * sublane_tiling,
+                          major_dim_slice_idx, minor_most_dim_slice_idx) =
+                    final_combined_high;
+              }
             }
+          }
+        }
+      }
+    }
+    // Unpack and repack the dst_vregs to get the desired results for packed
+    // types. For example, suppose bitwidth is 16, consider the following
+    // original tensor:
+    //  0  1  2  3
+    //  4  5  6  7
+    //  8  9 10 11
+    // 12 13 14 15
+    // after the 3 stages above, we already have:
+    //  0  1  8  9
+    //  4  5 12 13
+    //  2  3 10 11
+    //  6  7 14 15
+    // and the last step will basically swap the off-diagonal elements within
+    // each 2x2 block.
+    if (packing > 1) {
+      VectorType int_packed_ty = getNativeVregType(
+          builder.getIntegerType(layout_in.bitwidth()), ctx.target_shape);
+      VectorType int_32_ty =
+          getNativeVregType(builder.getI32Type(), ctx.target_shape);
+      VectorType vreg_ty =
+          getNativeVregType(src_ty.getElementType(), ctx.target_shape);
 
-            // STAGE 2!
-            std::array<Value, 8>
-                stage2_output_vregs;  // Stores s2_vregs from comments
-            const int num_pairs_stage2 =
-                sublane_tiling /
-                2;  // Processes pairs of vregs from stage1_output_vregs
-            constexpr int stage2_stride = 1;
-
-            for (int i = 0; i < num_pairs_stage2; ++i) {
-              int stage2_first_idx = 2 * i;
-              int stage2_second_idx = stage2_first_idx + stage2_stride;
-
-              Value stage2_first_vreg = stage1_output_vregs[stage2_first_idx];
-              Value stage2_second_vreg = stage1_output_vregs[stage2_second_idx];
-
-              auto combined_low_val =
-                  combine_low(stage2_first_vreg, stage2_second_vreg);
-              auto combined_high_val =
-                  combine_high(stage2_first_vreg, stage2_second_vreg);
-
-              stage2_output_vregs[stage2_first_idx] =
-                  shuffle(combined_low_val, combined_high_val,
-                          permute_pattern_stage2_low_arr);
-              stage2_output_vregs[stage2_second_idx] =
-                  shuffle(combined_low_val, combined_high_val,
-                          permute_pattern_stage2_high_arr);
-            }
-
-            // STAGE 3! Combine results from stage 2.
-            std::array<int64_t, 4> output_idx_parts{
-                outer_idx, second_minor_dim_slice_idx * sublane_tiling,
-                major_dim_slice_idx, minor_most_dim_slice_idx};
-
-            // For (8, 128) tiling, this corresponds to s2_vregs[0]..s2_vregs[3]
-            // pairing with s2_vregs[4]..s2_vregs[7].
-            // For (4, 128) tiling, this corresponds to s2_vregs[0]..s2_vregs[1]
-            // pairing with s2_vregs[2]..s2_vregs[3].
-            // For (2, 128) tiling, this corresponds to s2_vregs[0] pairing with
-            // s2_vregs[1].
-            const int num_final_combines = sublane_tiling / 2;
-            const int final_combine_stride = sublane_tiling / 2;
-            for (int i = 0; i < num_final_combines; ++i) {
-              Value lhs = stage2_output_vregs[i];
-              Value rhs = stage2_output_vregs[i + final_combine_stride];
-              auto final_combined_low = combine_low(lhs, rhs);
-              auto final_combined_high = combine_high(lhs, rhs);
-
-              dst_vregs(output_idx_parts) = final_combined_low;
-              output_idx_parts[1] += 1;
-              dst_vregs(output_idx_parts) = final_combined_high;
-              output_idx_parts[1] += 1;
+      // Temporary buffer to hold original values for the current block
+      SmallVector<Value> tmp_vregs(packing);
+      for (int outer_idx = 0; outer_idx < dst_vregs.dim(0); ++outer_idx) {
+        for (int minor_most_dim_slice_idx = 0;
+             minor_most_dim_slice_idx < dst_vregs.dim(3);
+             ++minor_most_dim_slice_idx) {
+          for (int second_minor_dim_slice_idx = 0;
+               second_minor_dim_slice_idx < dst_vregs.dim(2);
+               ++second_minor_dim_slice_idx) {
+            for (int major_dim_slice_idx = 0;
+                 major_dim_slice_idx < dst_vregs.dim(1);
+                 major_dim_slice_idx += packing) {
+              // Copy the original values to the temporary buffer.
+              for (int i = 0; i < packing; ++i) {
+                tmp_vregs[i] = dst_vregs(outer_idx, major_dim_slice_idx + i,
+                                         second_minor_dim_slice_idx,
+                                         minor_most_dim_slice_idx);
+              }
+              for (int second_minor_subidx = 0; second_minor_subidx < packing;
+                   ++second_minor_subidx) {
+                SmallVector<Value> unpacked;
+                // We could have just interleaved unpacked the second_minor_idx
+                // part of the vreg in the loop below, but that ends up being
+                // more expensive than we need. Simple shifts do the trick. The
+                // high bits will be truncated by packing anyway.
+                for (int major_subidx = 0; major_subidx < packing;
+                     ++major_subidx) {
+                  Value vreg = tmp_vregs[major_subidx];
+                  vreg = tpu::BitcastVregOp::create(builder, int_32_ty, vreg);
+                  vreg = arith::ShRUIOp::create(
+                      builder, vreg,
+                      getFullLikeVector(builder,
+                                        cast<TypedValue<VectorType>>(vreg),
+                                        builder.getI32IntegerAttr(
+                                            second_minor_subidx * bitwidth)));
+                  unpacked.push_back(vreg);
+                }
+                Value repacked_i32 = tpu::PackSubelementsOp::create(
+                    builder, int_packed_ty, unpacked,
+                    tpu::PackFormat::kInterleaved);
+                dst_vregs(outer_idx, major_dim_slice_idx + second_minor_subidx,
+                          second_minor_dim_slice_idx,
+                          minor_most_dim_slice_idx) =
+                    tpu::BitcastVregOp::create(builder, vreg_ty, repacked_i32);
+              }
             }
           }
         }
@@ -6770,7 +6752,7 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
     p[rank - 1] = rank - 1;
     src_vregs.TransposeDimensions(p);
   }
-  if (tile_perm == ArrayRef<int64_t>{rank - 2, rank - 1}) {
+  if (permutation.take_back(2) == ArrayRef<int64_t>{rank - 2, rank - 1}) {
     transpose_op->replaceAllUsesWith(
         assemble(builder, dst_ty, layout_out, src_vregs, ctx.target_shape));
     transpose_op.erase();

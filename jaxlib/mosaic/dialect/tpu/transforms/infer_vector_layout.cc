@@ -1850,16 +1850,8 @@ class VectorLayoutInferer {
     }
     Layout required_layout = some_layout;
     if (untiled_tiled_swap) {
-      // We have a special limited implementation for packed untiled/tiled
-      // swaps.
-      if (layout.packing() > 1) {
-        required_layout = VectorLayout(layout.bitwidth(), LayoutOffsets{0, 0},
-                                       {layout.packing(), target_shape_[1]},
-                                       ImplicitDim::kNone);
-      } else {
-        required_layout = VectorLayout(layout.bitwidth(), LayoutOffsets{0, 0},
-                                       layout.tiling(), ImplicitDim::kNone);
-      }
+      required_layout = VectorLayout(layout.bitwidth(), LayoutOffsets{0, 0},
+                                     layout.tiling(), ImplicitDim::kNone);
     // Require native tiling if we're going to use the XLU.
     } else if (permutation[permutation.size() - 1] == permutation.size() - 2) {
       auto native_tiling = nativeTiling(layout.bitwidth());
