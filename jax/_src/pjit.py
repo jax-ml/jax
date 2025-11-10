@@ -631,7 +631,6 @@ def _infer_params(
     return _infer_params_internal(fun, ji, args, kwargs)
 
 
-cache = dict()
 def _infer_params_internal(
     fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
   ) -> tuple[PjitParams, list[Any]]:
