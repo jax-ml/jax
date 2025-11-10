@@ -83,13 +83,13 @@ else
     TEST_STRATEGY=""
 fi
 
-# Enable forward compatibility for NVIDIA drivers older than 580.
+# Enable hermetic UMD 13.0 for NVIDIA drivers older than 580.
 driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -n 1)
 driver_major_version=${driver_version%%.*}
 if [[ "$driver_major_version" -lt "580" ]]; then
   echo "NVIDIA driver version ($driver_version) is older than 580."
-  echo "Enabling forward compatibility."
-  TEST_CONFIG="$TEST_CONFIG --@cuda_driver//:enable_forward_compatibility=true"
+  echo "Enabling hermetic UMD 13.0."
+  TEST_CONFIG="$TEST_CONFIG --repo_env=HERMETIC_CUDA_UMD_VERSION=13.0.0"
 fi
 
 
@@ -103,7 +103,6 @@ set +e
 # should match the VM's CPU core count (set in `--local_test_jobs`).
 bazel test --config=$TEST_CONFIG \
       $CACHE_OPTION \
-      --config=use_tar_archive_files \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
@@ -139,7 +138,6 @@ fi
 # Runs multiaccelerator tests with all GPUs directly on the VM without RBE..
 bazel test --config=$TEST_CONFIG \
       $CACHE_OPTION \
-      --config=use_tar_archive_files \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
