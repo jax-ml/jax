@@ -2035,10 +2035,10 @@ array_garbage_collection_guard = optional_enum_state(
 
 # TODO(nbasile): Remove hasattr checks after jaxlib 0.8.1 release
 if hasattr(_jax, 'RuntimeTracebackMode'):
-  class RuntimeTracebackMode(enum.Enum):
-    OFF = _jax.RuntimeTracebackMode.OFF
-    ON = _jax.RuntimeTracebackMode.ON
-    FULL = _jax.RuntimeTracebackMode.FULL
+  class RuntimeTracebackMode(enum.StrEnum):
+    OFF = 'off'
+    ON = 'on'
+    FULL = 'full'
 
     @classmethod
     def _missing_(cls, value):
@@ -2048,6 +2048,9 @@ if hasattr(_jax, 'RuntimeTracebackMode'):
         except KeyError:
           pass
       return None
+
+    def as_cpp_enum(self):
+      return getattr(_jax.RuntimeTracebackMode, self.name)
 
   send_traceback_to_runtime = enum_class_state(
       name='jax_send_traceback_to_runtime',
@@ -2062,9 +2065,9 @@ if hasattr(_jax, 'RuntimeTracebackMode'):
           ' and should be used only for debugging.'
       ),
       update_global_hook=lambda val: _jax.set_send_traceback_to_runtime_global(
-          val.value if val is not None else _jax.RuntimeTracebackMode.OFF),
+          val.as_cpp_enum() if val is not None else _jax.RuntimeTracebackMode.OFF),
       update_thread_local_hook=lambda val: _jax.set_send_traceback_to_runtime_thread_local(
-          val.value if val is not None else None),
+          val.as_cpp_enum() if val is not None else None),
   )
 
 # Don't define a context manager since this isn't threadsafe.
