@@ -161,7 +161,7 @@ run you're interested in, and then under the "Tools" dropdown, select
 trace_viewer. You should now see a timeline of the execution. You can use the
 WASD keys to navigate the trace, and click or drag to select events for more
 details. See
-[these TensorFlow docs](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras#use_the_tensorflow_profiler_to_profile_model_training_performance)=
+[these TensorFlow docs](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras#use_the_tensorflow_profiler_to_profile_model_training_performance)
 for more details on using the trace viewer.
 
 ### Manual capture via XProf
