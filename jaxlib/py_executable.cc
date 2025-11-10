@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <Python.h>
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -30,11 +29,13 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
-#include "absl/container/inlined_vector.h"
+#include "absl/base/const_init.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/call_location.h"
@@ -70,11 +71,11 @@ namespace ifrt = xla::ifrt;
 
 namespace {
 
-uint32_t GetBaseLaunchId(std::optional<std::string> fingerprint,
+uint64_t GetBaseLaunchId(std::optional<std::string> fingerprint,
                          ifrt::LoadedExecutableRef executable) {
-  uint32_t ret = 0;
+  uint64_t ret = 0;
   if (fingerprint.has_value()) {
-    ret = tsl::Fingerprint32(*fingerprint);
+    ret = tsl::Fingerprint64(*fingerprint);
   }
   // Don't use the device fingerprint for executables running on single process.
   // Pmap and replicated executables for example will only populate the local
@@ -132,7 +133,7 @@ PyLoadedExecutable::PyLoadedExecutable(
     : client_(std::move(client)),
       ifrt_loaded_executable_(std::move(ifrt_loaded_executable)),
       fingerprint_(std::move(fingerprint)),
-      next_launch_id_(GetBaseLaunchId(fingerprint_, ifrt_loaded_executable_)) {
+      launch_id_key_(GetBaseLaunchId(fingerprint_, ifrt_loaded_executable_)) {
   CHECK(PyGILState_Check());
   if (ifrt_loaded_executable_->user_context() == nullptr &&
       Traceback::IsEnabled()) {
@@ -258,6 +259,10 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
 }
 
 }  // namespace
+
+absl::Mutex PyLoadedExecutable::next_launch_id_mutex_(absl::kConstInit);
+absl::flat_hash_map<uint64_t, uint32_t>* PyLoadedExecutable::next_launch_id_ =
+    new absl::flat_hash_map<uint64_t, uint32_t>();
 
 PyExecuteResults::PyExecuteResults(const nb_class_ptr<PyClient>& client,
                                    std::vector<ifrt::ArrayRef> ifrt_arrays,
@@ -425,8 +430,13 @@ PyLoadedExecutable::GetOutputShardings() const {
 }
 
 int32_t PyLoadedExecutable::GetNextLaunchId() {
-  return absl::bit_cast<int32_t>(
-      next_launch_id_.fetch_add(1, std::memory_order_relaxed));
+  absl::MutexLock lock(next_launch_id_mutex_);
+  auto it = next_launch_id_->find(launch_id_key_);
+  if (it == next_launch_id_->end()) {
+    uint32_t initial_value = static_cast<uint32_t>(launch_id_key_);
+    it = next_launch_id_->emplace(launch_id_key_, initial_value).first;
+  }
+  return absl::bit_cast<int32_t>(it->second++);
 }
 
 void PyLoadedExecutable::KeepAlive(nb::object obj) {
