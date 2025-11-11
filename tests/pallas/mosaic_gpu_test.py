@@ -5408,8 +5408,6 @@ class CoreMapTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(result, ref)
 
   def test_cross_wg_barrier(self):
-    self.skip_if_wg_semantics()  # Times out!
-
     @functools.partial(
         self.kernel,
         out_shape=jnp.zeros((2, 128), np.int32),
