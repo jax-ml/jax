@@ -358,8 +358,6 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
     pjit_all(pjit_all(check_shape))(x)
     pjit_all(pjit_all(pjit_all(check_shape)))(x)
 
-  # TODO(phawkins): it appears we have some thread safety issues on CPU.
-  @jtu.skip_on_devices("cpu")
   def test_compile_parallel(self):
     x = jnp.arange(16)
     global_mesh = jtu.create_mesh((4, 2), ("x", "y"))
@@ -372,7 +370,7 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
             out_shardings=None,
         )
         exe = f.lower(inp).compile()
-        return exe(inp)
+        return exe
 
     with futures.ThreadPoolExecutor(max_workers=5) as executor:
       result = executor.map(_lower_compile, [x] * 5)
@@ -380,7 +378,7 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
     expected_out = np.arange(16).sum()
 
     for out in list(result):
-      np.testing.assert_array_equal(out, expected_out)
+      np.testing.assert_array_equal(out(x), expected_out)
 
   def test_fully_sharded_on_all_devices(self):
     if jax.local_device_count() > 1:
