@@ -240,6 +240,14 @@ mlirTpuRelayout(MlirTpuInsertionPoint insertion_point, MlirValue val,
 
 MLIR_CAPI_EXPORTED void mlirTpuRegisterMosaicSerdePass();
 
+MLIR_CAPI_EXPORTED MlirType mlirTpuFloat8EXMYTypeGetUnderlyingType(
+    MlirType exmy_type);
+
+MLIR_CAPI_EXPORTED bool mlirTpuIsAFloat8EXMYType(MlirType type);
+
+MLIR_CAPI_EXPORTED MlirType mlirTpuFloat8EXMYTypeGet(
+    MlirContext ctx, MlirType exmy_type);
+
 #ifdef __cplusplus
 }
 #endif

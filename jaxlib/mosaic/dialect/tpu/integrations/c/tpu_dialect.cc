@@ -418,6 +418,26 @@ MLIR_CAPI_EXPORTED void mlirTpuRegisterMosaicSerdePass() {
   mlir::tpu::registerMosaicSerdePass();
 }
 
+//===----------------------------------------------------------------------===//
+// Type API.
+//===----------------------------------------------------------------------===//
+
+// Float8EXMYType
+//===----------------------------------------------------------------------===//
+
+MlirType mlirTpuFloat8EXMYTypeGetUnderlyingType(MlirType exmy_type) {
+  return wrap(llvm::cast<mlir::tpu::Float8EXMYType>(unwrap(exmy_type))
+                  .getUnderlyingType());
+}
+
+bool mlirTpuIsAFloat8EXMYType(MlirType type) {
+  return llvm::isa<mlir::tpu::Float8EXMYType>(unwrap(type));
+}
+
+MlirType mlirTpuFloat8EXMYTypeGet(MlirContext ctx, MlirType exmy_type) {
+  return wrap(mlir::tpu::Float8EXMYType::get(unwrap(ctx), unwrap(exmy_type)));
+}
+
 #include "mlir/CAPI/Pass.h"  // IWYU pragma: keep
 #include "mlir/CAPI/Support.h"  // IWYU pragma: keep
 
