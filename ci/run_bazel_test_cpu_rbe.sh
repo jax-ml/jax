@@ -67,7 +67,7 @@ fi
 if [[ $os == "linux" ]] && [[ $arch == "x86_64" ]] && [[ $FREETHREADED_FLAG_VALUE == "no" ]]; then
   IGNORE_TESTS=""
 else
-  IGNORE_TESTS="//tests/multiprocess:array_test_cpu"
+  IGNORE_TESTS="-//tests/multiprocess:array_test_cpu"
 fi
 
 if [[ "$JAXCI_BAZEL_CPU_RBE_MODE" == 'build' ]]; then
