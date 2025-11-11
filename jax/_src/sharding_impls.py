@@ -692,7 +692,7 @@ def parse_flatten_op_sharding(
         mesh.shape, hlo_sharding.tile_assignment_devices()
     )
     mesh_axis = iter(mesh_axis_order)
-    shape = hlo_sharding.tile_assignment_dimensions()
+    shape = hlo_sharding.dimensions()
     partitions = []
     for dim_size in shape:
       dim_partitions = []

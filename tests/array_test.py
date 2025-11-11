@@ -898,7 +898,7 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertArraysEqual(device_assignment, list(mesh.devices.flat),
                            allow_object_dtype=True)
     self.assertTrue(hlo_sharding.is_tiled())
-    self.assertListEqual(hlo_sharding.tile_assignment_dimensions(), [2, 4])
+    self.assertListEqual(hlo_sharding.dimensions(), [2, 4])
     self.assertListEqual(hlo_sharding.tile_assignment_devices(),
                          [0, 2, 4, 6, 1, 3, 5, 7])
 
