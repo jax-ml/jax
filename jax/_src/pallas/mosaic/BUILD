@@ -38,16 +38,6 @@ py_library(
 )
 
 py_library(
-    name = "verification",
-    srcs = ["verification.py"],
-    deps = [
-        "//jax",
-        "//jax/_src:mlir",
-        "//jax/_src/lib",
-    ],
-)
-
-py_library(
     name = "error_handling",
     srcs = ["error_handling.py"],
     deps = [
@@ -81,10 +71,11 @@ py_library(
         ":core",
         ":lowering",
         ":sc_lowering",
-        ":verification",
         "//jax",
         "//jax/_src:config",
         "//jax/_src:core",
+        "//jax/_src:frozen_dict",
+        "//jax/_src:lax",
         "//jax/_src:mlir",
         "//jax/_src:sharding_impls",
         "//jax/_src:source_info_util",

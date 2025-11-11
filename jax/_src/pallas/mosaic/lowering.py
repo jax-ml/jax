@@ -186,7 +186,6 @@ class LoweringContext:
   mesh_context: pallas_utils.MeshInfo | None
   kernel_type: tpu_core.KernelType
   traceback_caches: mlir.TracebackCaches
-  for_verification: bool
   forward_compatible: bool
   backend: xla_bridge.XlaBackend | None
   dynamic_shape_replacement_fn: DynamicShapeReplacementFn
@@ -731,7 +730,6 @@ def lower_jaxpr_to_module(
     dimension_semantics: Sequence[tpu_core.DimensionSemantics] | None,
     kernel_type: tpu_core.KernelType,
     mesh: mesh_lib.Mesh | None = None,
-    for_verification: bool = False,
     dynamic_shape_replacement_enabled: bool = False,
 ) -> ir.Module:
   backend = lowering_context.module_context.get_backend(optional=True)
@@ -782,7 +780,6 @@ def lower_jaxpr_to_module(
       mosaic_grid_mapping=mosaic_grid_mapping,
       name="main",
       kernel_type=kernel_type,
-      for_verification=for_verification,
       forward_compatible=lowering_context.is_forward_compat(),
       dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
       dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
@@ -820,7 +817,6 @@ def lower_jaxpr_to_module(
           name=func_name,
           mosaic_grid_mapping=mosaic_grid_mapping,
           kernel_type=kernel_type,
-          for_verification=for_verification,
           forward_compatible=lowering_context.is_forward_compat(),
           dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
           backend=backend,
@@ -975,7 +971,6 @@ def lower_jaxpr_to_transform_func(
     name: str,
     mosaic_grid_mapping: MosaicGridMapping,
     kernel_type: tpu_core.KernelType,
-    for_verification: bool,
     forward_compatible: bool,
     backend: Any | None,
     dynamic_shape_replacement_fn: DynamicShapeReplacementFn | None = None,
@@ -1005,7 +1000,6 @@ def lower_jaxpr_to_transform_func(
         mesh_context=mosaic_grid_mapping.mesh_info,
         kernel_type=kernel_type,
         traceback_caches=mlir.TracebackCaches(),
-        for_verification=for_verification,
         forward_compatible=forward_compatible,
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
@@ -1035,7 +1029,6 @@ def lower_jaxpr_to_func(
     mosaic_grid_mapping: MosaicGridMapping,
     name: str,
     kernel_type: tpu_core.KernelType,
-    for_verification: bool,
     forward_compatible: bool,
     backend: Any | None,
     dynamic_shape_replacement_fn: DynamicShapeReplacementFn | None = None,
@@ -1070,7 +1063,6 @@ def lower_jaxpr_to_func(
         mesh_context=mosaic_grid_mapping.mesh_info,
         kernel_type=kernel_type,
         traceback_caches=mlir.TracebackCaches(),
-        for_verification=for_verification,
         forward_compatible=forward_compatible,
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,

@@ -77,16 +77,6 @@ from jax._src.pallas.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
 from jax._src.pallas.primitives import semaphore_wait as semaphore_wait
 
-import types
-from jax._src.pallas.mosaic.verification import assume
-from jax._src.pallas.mosaic.verification import pretend
-from jax._src.pallas.mosaic.verification import skip
-from jax._src.pallas.mosaic.verification import define_model
-verification = types.SimpleNamespace(
-    assume=assume, pretend=pretend, skip=skip, define_model=define_model
-)
-del types, assume, pretend, skip, define_model  # Clean up.
-
 PARALLEL = GridDimensionSemantics.PARALLEL
 CORE_PARALLEL = GridDimensionSemantics.CORE_PARALLEL
 SUBCORE_PARALLEL = GridDimensionSemantics.SUBCORE_PARALLEL

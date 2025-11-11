@@ -18,18 +18,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import dataclasses
-import os
-import tempfile
 from typing import cast
 
 import jax
 from jax import dtypes
-from jax._src import config
 from jax._src import core as jax_core
 from jax._src import frozen_dict
 from jax._src import sharding_impls
 from jax._src import tpu_custom_call
-from jax._src.state import types as state_types
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager
@@ -37,7 +33,7 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import lowering
 from jax._src.pallas.mosaic import sc_lowering
-from jax._src.pallas.mosaic import verification
+from jax._src.state import types as state_types
 from jax.experimental import mosaic
 from jax.experimental.mosaic.dialects import tpu
 
@@ -63,16 +59,6 @@ def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
         raise NotImplementedError  # TODO(mattjj,sharadmv)
       return jax_core.ShapedArray(x.shape, lowering.BOOL_MEMREF_TYPE)
     return x
-
-_DUMP_PROMELA_TO = config.string_flag(
-    "jax_pallas_dump_promela_to",
-    default=os.getenv("JAX_PALLAS_DUMP_PROMELA_TO", ""),
-    help=(
-        "If set, dumps a Promela model of the kernel to the specified"
-        " directory. The model can verify that the kernel is free of data"
-        " races, deadlocks, etc."
-    ),
-)
 
 
 def _get_memory_space_from_aval(
@@ -164,22 +150,17 @@ def pallas_call_tpu_lowering_rule(
           f"Unsupported kernel type: {mosaic_params.kernel_type}"
       )
 
-  def lower_module(for_verification: bool):
-    if for_verification:
-      mlir_ctx.allow_unregistered_dialects = True
-    with mlir_ctx, ir.Location.unknown(mlir_ctx):
-      return lower_jaxpr_to_module(
-          ctx,
-          grid_mapping,
-          jaxpr,
-          dimension_semantics=mosaic_params.dimension_semantics,
-          kernel_type=mosaic_params.kernel_type,
-          mesh=jax_mesh,
-          for_verification=for_verification,
-          dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
-      )
+  with mlir_ctx, ir.Location.unknown(mlir_ctx):
+    mosaic_module = lower_jaxpr_to_module(
+        ctx,
+        grid_mapping,
+        jaxpr,
+        dimension_semantics=mosaic_params.dimension_semantics,
+        kernel_type=mosaic_params.kernel_type,
+        mesh=jax_mesh,
+        dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
+    )
 
-  mosaic_module = lower_module(for_verification=False)
   if debug:
     pm = passmanager.PassManager.parse("builtin.module(canonicalize)", mlir_ctx)
     pm.run(mosaic_module.operation)
@@ -190,38 +171,6 @@ def pallas_call_tpu_lowering_rule(
       (a[0] + num_dyn_bounds, a[1])
       for a in input_output_aliases
   )
-
-  if promela_dump_path := _DUMP_PROMELA_TO.value:
-    num_devices = 1 if jax_mesh is None else jax_mesh.devices.size
-    num_cores = (
-        jax.devices()[0].num_cores
-        if jax_mesh is None
-        else jax_mesh.devices[0].num_cores
-    )
-    verification_module = lower_module(for_verification=True)
-    model = verification.export_promela_model(
-        verification_module, num_devices, num_cores
-    )
-    if promela_dump_path == "stdout":
-      print(f"The Promela model for pallas_call {debug_info.func_src_info}:")
-      print(model)
-    else:
-      if promela_dump_path == "sponge":
-        promela_dump_path = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR", "")
-        if not promela_dump_path:
-          raise ValueError(
-              "TEST_UNDECLARED_OUTPUTS_DIR must be set when"
-              " --jax_pallas_dump_promela_to=sponge"
-          )
-      dump_ctx = tempfile.NamedTemporaryFile(
-          mode="w",
-          prefix=mlir.sanitize_name(name or debug_info.func_name) + "-",
-          suffix=".pml",
-          dir=promela_dump_path,
-          delete=False,
-      )
-      with dump_ctx as f:
-        f.write(model)
 
   # Replace in_avals to physical avals.
   # This step is required for mapping logical types to physical types.
