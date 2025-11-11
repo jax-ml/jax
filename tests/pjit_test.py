@@ -9596,6 +9596,16 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(padded_arr.sharding,
                      NamedSharding(mesh, P('x', None, None, None)))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_jnp_repeat_arraylike(self, mesh):
+    positions = jnp.zeros((5, 3))
+    charges = jnp.ones((5,), dtype=jnp.int32)
+    num_electrons = 5
+    jnp.repeat(positions, charges, axis=0, total_repeat_length=num_electrons,
+               out_sharding=P())  # doesn't crash
+    jnp.repeat(positions, 5, axis=0, total_repeat_length=num_electrons,
+               out_sharding=P())  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
