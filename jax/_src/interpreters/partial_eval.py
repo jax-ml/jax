@@ -2170,6 +2170,7 @@ class DynamicJaxprTrace(core.Trace):
     to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
     in_type = (tuple((get_aval(t), True) for t in explicit_tracers)
                if f.in_type is None else f.in_type)
+    f.in_type = None
     assert in_type is not None
     implicit_tracers = _extract_implicit_args(self, in_type, explicit_tracers,
                                               source_info)

@@ -557,6 +557,7 @@ pytype_strict_library(
         "//jax/_src:ad",
         "//jax/_src:api",
         "//jax/_src:api_util",
+        "//jax/_src:batching",
         "//jax/_src:core",
         "//jax/_src:mlir",
         "//jax/_src:partial_eval",

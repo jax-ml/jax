@@ -2490,7 +2490,6 @@ def _dce_jaxpr_pjit(
 
 def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
                         ) -> tuple[list[bool], core.JaxprEqn | None]:
-
   if not any(used_outputs) and not pe.has_effects(eqn):
     return [False] * len(eqn.invars), None
 

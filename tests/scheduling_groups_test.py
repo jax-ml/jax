@@ -129,6 +129,35 @@ class SchedulingGroupsTest(jtu.JaxTestCase):
     compiled = lowered.compile()
     compiled(inp)  # doesn't crash
 
+  @jtu.run_on_devices('cpu')
+  def test_xla_metadata_call_deduplication_remat(self):
+    inp = jnp.arange(8.)
+
+    @jax.remat
+    @xla_metadata_call(inlineable='false')
+    @jax.jit
+    def g(x):
+      return x * 2
+
+    def f(x):
+      y = g(x)
+      z = g(y)
+      return z.sum()
+
+    f(inp)  # doesn't crash
+    lowered = jax.jit(f).lower(inp)
+    self.assertEqual(
+        lowered.as_text().count('func.func private @xla_metadata_call'), 1)
+    compiled = lowered.compile()
+    compiled(inp)  # doesn't crash
+
+    jax.jit(jax.value_and_grad(f))(inp)  # doesn't crash
+    lowered = jax.jit(jax.value_and_grad(f)).lower(inp)
+    self.assertEqual(
+        lowered.as_text().count('func.func private @xla_metadata_call'), 2)
+    compiled = lowered.compile()
+    compiled(inp)  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
