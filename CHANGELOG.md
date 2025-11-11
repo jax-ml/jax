@@ -43,6 +43,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     decomposition on CUDA GPUs. This is also an alias for the existing algorithm
     on TPUs.
 
+* Bug fixes:
+
+  * Fixed a bug introduced in JAX 0.7.2 where eigh failed for large matrices on
+    GPU (({jax-issue}`#33062`).
+
 * Deprecations:
   * Default `axis_types` of `jax.make_mesh` will change in JAX v0.9.0 to return
   `jax.sharding.AxisType.Explicit`. Leaving axis_types unspecified will raise a

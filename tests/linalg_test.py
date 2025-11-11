@@ -15,6 +15,7 @@
 from functools import partial
 import itertools
 from collections.abc import Iterator
+import unittest
 
 import numpy as np
 import scipy
@@ -456,6 +457,15 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(
         w_np.astype(w.dtype), w, atol=tol * np.linalg.norm(a), rtol=tol
     )
+
+  @jax._src.config.explicit_x64_dtypes("allow")
+  @jtu.run_on_devices("gpu")
+  @unittest.skip("Needs a large amount of GPU memory, doesn't work in CI")
+  def testEighLargeMatrix(self):
+    # https://github.com/jax-ml/jax/issues/33062
+    n = 16384
+    A = jnp.eye(n, dtype=jnp.float64)
+    jax.block_until_ready(jax.lax.linalg.eigh(A))
 
   @jtu.sample_product(
       start=[0, 1, 63, 64, 65, 255],

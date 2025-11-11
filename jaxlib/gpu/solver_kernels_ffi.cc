@@ -537,9 +537,10 @@ ffi::Error Syevd64Impl(int64_t batch, int64_t n, gpuStream_t stream,
   int64_t batch_step = 1;
   FFI_ASSIGN_OR_RETURN(bool is_batched_syev_supported,
                        IsSyevBatchedSupported());
-  if (is_batched_syev_supported) {
+  if (is_batched_syev_supported && n > 0) {
     int64_t matrix_size = n * n * ffi::ByteWidth(dataType);
-    batch_step = std::numeric_limits<int>::max() / matrix_size;
+    batch_step =
+        std::max(int64_t(1), std::numeric_limits<int>::max() / matrix_size);
     if (batch_step >= 32 * 1024) {
       batch_step = 32 * 1024;
     }
@@ -585,7 +586,7 @@ ffi::Error Syevd64Impl(int64_t batch, int64_t n, gpuStream_t stream,
 
   for (int64_t i = 0; i < batch; i += batch_step) {
     size_t batch_size = static_cast<size_t>(std::min(batch_step, batch - i));
-    if (is_batched_syev_supported) {
+    if (is_batched_syev_supported && batch_step > 1) {
       JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnXsyevBatched(
           handle.get(), params, jobz, uplo, n, aType, out_data, n, wType,
           w_data, aType, workspaceOnDevice, workspaceInBytesOnDevice,
