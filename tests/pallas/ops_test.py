@@ -1499,6 +1499,45 @@ class OpsTest(PallasBaseTest):
     )
 
   @parameterized.product(
+      shapes_and_dims_numbers=(
+          ((3, 4, 128), (4, 2, 128), (((2,), (2,)), ((1,), (0,)))),
+          ((3, 4, 128), (2, 4, 128), (((2,), (2,)), ((1,), (1,)))),
+          ((3, 4, 256), (2, 3, 256), (((2,), (2,)), ((0,), (1,)))),
+          ((4, 3, 2, 32), (2, 128, 32, 2), (((3,), (2,)), ((2,), (3,)))),
+      ),
+  )
+  def test_dot_general_non_front_batch_dims(self, shapes_and_dims_numbers):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("TPU only test")
+
+    if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
+        2025, 11, 21
+    ):
+      self.skipTest("Requires libtpu built after 2025-11-21")
+
+    x_shape, y_shape, dims_numbers = shapes_and_dims_numbers
+
+    k1, k2 = random.split(jax.random.key(0))
+    x = jax.random.normal(k1, x_shape, dtype=jnp.float32)
+    y = jax.random.normal(k2, y_shape, dtype=jnp.float32)
+
+    # Just infer shape from jax.
+    expected = jax.lax.dot_general(x, y, dimension_numbers=dims_numbers)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.float32),
+    )
+    def kernel(x_ref, y_ref, out_ref):
+      out_ref[...] = jax.lax.dot_general(
+          x_ref[...],
+          y_ref[...],
+          dimension_numbers=dims_numbers,
+      )
+
+    np.testing.assert_allclose(kernel(x, y), expected, atol=1e-5, rtol=1e-5)
+
+  @parameterized.product(
       batch_size=(None, 1, 2),
       # dims_numbers is without batch dims
       shapes_and_dims_numbers=(
