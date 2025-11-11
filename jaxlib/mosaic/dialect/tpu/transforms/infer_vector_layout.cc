@@ -62,7 +62,7 @@ using ImplicitDim = VectorLayout::ImplicitDim;
 
 static constexpr int kLayoutLog = 10;
 
-bool is_fully_replicated(const Layout &layout) {
+bool is_fully_replicated(const Layout& layout) {
   static LayoutOffsets replicated_offsets = {std::nullopt, std::nullopt};
   return layout.has_value() && layout->offsets() == replicated_offsets;
 }
@@ -429,18 +429,16 @@ class VectorLayoutInferer {
       op.emitOpError("Only one block functions supported");
       return failure();
     }
-    return inferBlock(
-        op.getBody().front(), [this](Operation *op) -> LogicalResult {
-          TPU_CHECK_OP(isa<func::ReturnOp>(op),
-                       "Expected func.return terminator");
-          for (Value o : op->getOperands()) {
-            TPU_CHECK_OP(!isa<VectorType>(o.getType()),
-                         "vector returns unsupported");
-          }
-          SmallVector<Layout, 4> in_layout(op->getNumOperands(), {kNoLayout});
-          setInLayout(op, in_layout);
-          return success();
-        });
+    return inferBlock(op.getBody().front(), [](Operation* op) -> LogicalResult {
+      TPU_CHECK_OP(isa<func::ReturnOp>(op), "Expected func.return terminator");
+      for (Value o : op->getOperands()) {
+        TPU_CHECK_OP(!isa<VectorType>(o.getType()),
+                     "vector returns unsupported");
+      }
+      SmallVector<Layout, 4> in_layout(op->getNumOperands(), {kNoLayout});
+      setInLayout(op, in_layout);
+      return success();
+    });
   }
 
   LogicalResult infer(memref::LoadOp op) {
@@ -1392,8 +1390,6 @@ class VectorLayoutInferer {
     llvm::ArrayRef<int64_t> dims = op.getReductionDims();
     int64_t src_rank = src_ty.getRank();
     auto acc_layout = getLayout(op.getAcc());
-    TPU_CHECK_OP(is_fully_replicated(acc_layout),
-                 "only constant accumulators supported");
     TPU_CHECK_OP(
         src_ty.getElementTypeBitWidth() == 32 ||
             src_ty.getElementTypeBitWidth() == 16,
@@ -1491,9 +1487,12 @@ class VectorLayoutInferer {
           nativeTiling(src_layout.bitwidth()),
           src_rank > 1 ? ImplicitDim::kNone : ImplicitDim::kSecondMinor);
     }
-    setLayout(op, {src_layout, acc_layout},
-              VectorLayout(src_layout.bitwidth(), out_offsets,
-                           src_layout.tiling(), out_implicit_dim));
+    auto out_layout = VectorLayout(src_layout.bitwidth(), out_offsets,
+                                   src_layout.tiling(), out_implicit_dim);
+    setLayout(
+        op,
+        {src_layout, is_fully_replicated(acc_layout) ? acc_layout : out_layout},
+        out_layout);
     return success();
   }
 

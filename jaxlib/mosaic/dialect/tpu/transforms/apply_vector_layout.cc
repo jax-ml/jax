@@ -4874,31 +4874,13 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
   SmallVector<int64_t> dims(multi_reduction_op.getReductionDims());
   std::sort(dims.begin(), dims.end());
 
-  // Make sure that the accumulator is a splat of the neutral value
-  if (acc_layout.offsets() != LayoutOffsets{std::nullopt, std::nullopt}) {
-    return multi_reduction_op.emitOpError(
-        "Not implemented: Only replicated accumulator supported");
-  }
-  FAILUREOR_ASSIGN_OR_RETURN(
-      const xla::Array<Value> acc_vregs,
-      disassemble(builder, acc_layout, acc, ctx.target_shape));
-  auto acc_def = dyn_cast_if_present<arith::ConstantOp>(
-      acc_vregs.begin()->getDefiningOp());
-  if (acc_def == nullptr) {
-    return multi_reduction_op.emitOpError(
-        "Not implemented: Only constant accumulator supported");
-  }
   if (!element_type.isF32() && !element_type.isBF16() &&
       !element_type.isSignlessInteger((32))) {
     return multi_reduction_op.emitOpError(
         "Not implemented: unsupported element type");
   }
   bool is_int = element_type.isSignlessInteger(32);
-  const auto acc_def_value = dyn_cast<DenseElementsAttr>(acc_def.getValue());
-  if (acc_def_value == nullptr || !acc_def_value.isSplat()) {
-    return multi_reduction_op.emitOpError("Expected a splat constant");
-  }
-  TPU_ASSERT_OP(acc_def_value.getElementType() == element_type);
+
   Attribute neutral;
   switch (multi_reduction_op.getKind()) {
     case vector::CombiningKind::ADD:
@@ -4933,11 +4915,40 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
       return multi_reduction_op.emitOpError(
           "Not implemented: unsupported kind");
   }
-  if (auto val = acc_def_value.getSplatValue<Attribute>(); val != neutral) {
+
+  FAILUREOR_ASSIGN_OR_RETURN(
+      const xla::Array<Value> acc_vregs,
+      disassemble(builder, acc_layout, acc, ctx.target_shape));
+  bool neutral_acc;
+  // The accumulator should either be a splat neutral value or having the same
+  // layout as the output.
+  if (acc_layout.offsets() == LayoutOffsets{std::nullopt, std::nullopt}) {
+    auto acc_def = dyn_cast_if_present<arith::ConstantOp>(
+        acc_vregs.begin()->getDefiningOp());
+    if (acc_def == nullptr) {
+      return multi_reduction_op.emitOpError(
+          "Accumulator should be constant when it has fully replicated "
+          "offsets");
+    }
+    const auto acc_def_value = dyn_cast<DenseElementsAttr>(acc_def.getValue());
+    if (acc_def_value == nullptr || !acc_def_value.isSplat()) {
+      return multi_reduction_op.emitOpError(
+          "Expected a splat constant for constant accumulator");
+    }
+    TPU_ASSERT_OP(acc_def_value.getElementType() == element_type);
+    if (auto val = acc_def_value.getSplatValue<Attribute>(); val != neutral) {
+      return multi_reduction_op.emitOpError(
+                 "Only neutral accumulator supported for splat constant "
+                 "accumulator. Expected ")
+             << neutral << ", but got " << val;
+    }
+    neutral_acc = true;
+  } else if (acc_layout == dst_layout) {
+    neutral_acc = false;
+  } else {
     return multi_reduction_op.emitOpError(
-               "Not implemented: Only neutral accumulator supported for "
-               "float reduction. Expected ")
-           << neutral << ", but got " << val;
+        "Not implemented: multi_reduction_op expects accumulator to be neutral "
+        "or have the same layout as the output");
   }
 
   bool is_shape_invariant_mode =
@@ -5296,7 +5307,8 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
                 tpu::PackFormat::kInterleaved);
           }
         }
-        *dst_vreg = acc_vreg;
+        *dst_vreg = neutral_acc ? acc_vreg
+                                : reduce_elementwise(acc_vreg, acc_vregs(idx));
         return success();
       }));
   multi_reduction_op->replaceAllUsesWith(
@@ -5577,7 +5589,6 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
   TPU_ASSERT_OP(layouts_in.front().has_value());
   TPU_ASSERT_OP(layouts_out.front().has_value());
-  using Tiling = std::array<int64_t, 2>;
   const VectorLayout &layout_in = *layouts_in.front();
   const VectorLayout &layout_out = *layouts_out.front();
   TPU_ASSERT_EQ_OP(

@@ -206,6 +206,41 @@ class OpsTest(PallasBaseTest):
         ),
     )
 
+  def test_sum_of_two_matmuls(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 15):
+      self.skipTest("Test requires libtpu from 2025/11/15 or later")
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Test requires TPUv5+")
+
+    M, K = 8, 8
+    k1, k2, k3, k4 = jax.random.split(jax.random.key(42), 4)
+    a_val = jax.random.normal(k1, (M, K), dtype=jnp.float32)
+    b_val = jax.random.normal(k2, (K,), dtype=jnp.float32)
+    c_val = jax.random.normal(k3, (M, K), dtype=jnp.float32)
+    d_val = jax.random.normal(k4, (K,), dtype=jnp.float32)
+
+    def kernel(a_ref, b_ref, c_ref, d_ref, o_ref):
+      a = a_ref[:]
+      b = b_ref[:]
+      c = c_ref[:]
+      d = d_ref[:]
+      res1 = jnp.dot(a, b)
+      res2 = jnp.dot(c, d)
+
+      o_ref[:] = res1 + res2
+
+    @jax.jit
+    def pallas_fn(a, b, c, d):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((M,), np.float32),
+          grid=(1,),
+      )(a, b, c, d)
+
+    result_pallas = pallas_fn(a_val, b_val, c_val, d_val)
+    expected = jnp.dot(a_val, b_val) + jnp.dot(c_val, d_val)
+    self.assertAllClose(result_pallas, expected, atol=1e-5, rtol=1e-5)
+
   @parameterized.product(from_dtype=_JAX_INT_DTYPES,
                          to_dtype=_JAX_INT_DTYPES)
   def test_integer_cast(self, from_dtype, to_dtype):
