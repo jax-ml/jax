@@ -1351,6 +1351,10 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_sparsecore_pallas_test",
     srcs = ["tpu_sparsecore_pallas_test.py"],
+    args = [
+        "--xla_tpu_use_tc_device_shape_on_sc=true",
+        "--xla_msa_enable=false",
+    ],
     config_tags_overrides = {
         # TODO(slebedev): Flip to False once we have more v5p capacity.
         "tpu_v5p": {"ondemand": True},
