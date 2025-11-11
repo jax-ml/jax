@@ -97,13 +97,24 @@ def dynamic_shape_replacement_fn(x):
 
 def lower_jaxpr_to_module(
     lowering_context: mlir.LoweringRuleContext,
-    jaxpr: jax_core.Jaxpr,
     grid_mapping: pallas_core.GridMapping,
-    mosaic_params: tpu_core.CompilerParams,
+    jaxpr: jax_core.Jaxpr,
+    *,
+    dimension_semantics: Sequence[tpu_core.DimensionSemantics] | None,
+    kernel_type: tpu_core.KernelType,
     mesh: mesh_lib.Mesh | None = None,
+    for_verification: bool = False,
+    dynamic_shape_replacement_enabled: bool = False,
 ) -> ir.Module:
   """Lowers a Jaxpr to a Mosaic SparseCore module."""
-  dimension_semantics = mosaic_params.dimension_semantics
+  if dynamic_shape_replacement_enabled:
+    raise NotImplementedError(
+        "Dynamic shape replacement is not supported for SparseCore."
+    )
+  if for_verification:
+    raise NotImplementedError(
+        "Verification is not supported for SparseCore."
+    )
   if not grid_mapping.grid:
     index_map_avals, index_map_tree = jax.tree.flatten(
         ((jax_core.ShapedArray((), jnp.int32),), {})
@@ -167,7 +178,7 @@ def lower_jaxpr_to_module(
   func_op = lower_jaxpr_to_func(
       jaxpr,
       name="main",
-      kernel_type=mosaic_params.kernel_type,
+      kernel_type=kernel_type,
       mosaic_grid_mapping=mosaic_grid_mapping,
       forward_compatible=lowering_context.is_forward_compat(),
       backend=backend,
@@ -188,7 +199,7 @@ def lower_jaxpr_to_module(
         bm.block_aval,
         name=func_name,
         mosaic_grid_mapping=mosaic_grid_mapping,
-        kernel_type=mosaic_params.kernel_type,
+        kernel_type=kernel_type,
         for_verification=False,
         forward_compatible=lowering_context.is_forward_compat(),
         backend=backend,
