@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <utility>
 
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "mlir-c/IR.h"
 #include "mlir-c/Support.h"
@@ -43,3 +44,23 @@ MLIR_CAPI_EXPORTED void mlirTpuRegisterMosaicSerdePass() {
 }
 
 }  // extern "C"
+
+//===----------------------------------------------------------------------===//
+// Type API.
+//===----------------------------------------------------------------------===//
+
+// Float8EXMYType
+//===----------------------------------------------------------------------===//
+
+MlirType mlirTpuFloat8EXMYTypeGetUnderlyingType(MlirType exmy_type) {
+  return wrap(llvm::cast<mlir::tpu::Float8EXMYType>(unwrap(exmy_type))
+                  .getUnderlyingType());
+}
+
+bool mlirTpuIsAFloat8EXMYType(MlirType type) {
+  return llvm::isa<mlir::tpu::Float8EXMYType>(unwrap(type));
+}
+
+MlirType mlirTpuFloat8EXMYTypeGet(MlirContext ctx, MlirType exmy_type) {
+  return wrap(mlir::tpu::Float8EXMYType::get(unwrap(ctx), unwrap(exmy_type)));
+}
