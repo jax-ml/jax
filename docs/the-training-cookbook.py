@@ -157,13 +157,13 @@ def model_apply(config: Config, params: dot_dict, tokens: jax.Array) -> jax.Arra
   return logits  # tag: model-apply
 
 
-# tag: get-adam-state
+# tag: init-adam-state
 def init_adam_state(param: jax.Array) -> dot_dict:
   adam_state = dot_dict(mu=jnp.zeros_like(param), nu=jnp.zeros_like(param), count=jnp.array(0))
-  return adam_state  # tag: get-adam-state
+  return adam_state  # tag: init-adam-state
 
 
-# tag: adam-apply
+# tag: adam-update
 def adam_update(config: Config, param: jax.Ref, grad: jax.Array, adam_state: dot_dict):
   adam_state.mu[...] = (1 - config.beta_1) * adam_state.mu[...] + config.beta_1 * grad
   adam_state.nu[...] = (1 - config.beta_2) * adam_state.nu[...] + config.beta_2 * grad**2
@@ -172,7 +172,7 @@ def adam_update(config: Config, param: jax.Ref, grad: jax.Array, adam_state: dot
   mu_hat = adam_state.mu[...] / (1 - config.beta_1 ** adam_state.count[...])
   nu_hat = adam_state.nu[...] / (1 - config.beta_2 ** adam_state.count[...])
   param[...] -= config.learning_rate * mu_hat / (jnp.sqrt(nu_hat + config.eps_root) + config.eps)
-  # tag: adam-apply
+  # tag: adam-update
 
 
 # tag: get-train-state
