@@ -998,7 +998,8 @@ class LinearizeTrace(Trace):
     else:
       primal_params = params
 
-    all_primal_results = call_primitive.bind_with_trace(self.parent_trace, (f_primal, *primals), primal_params)
+    all_primal_results = call_primitive.bind_with_trace(
+        self.parent_trace, (f_primal, *primals), primal_params)
     residual_avals, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = linearize_outs_thunk()
     num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
     non_fwd_res = all_primal_results[:num_res_out]
@@ -1024,18 +1025,22 @@ class LinearizeTrace(Trace):
 
     update_params = call_linearize_param_updaters.get(call_primitive)
     num_new_args = len(residuals) + len(env)
-    new_params = update_params(params, num_new_args, nzs_in) if update_params else params
+    new_params = (update_params(params, num_new_args, nzs_in)
+                  if update_params else params)
     num_residuals = len(residual_avals)
 
-    @as_hashable_function(closure=(num_residuals, lin_jaxpr))
-    def f_tangent(*args):
-      consts = args[:num_residuals]
-      nz_tangents = args[num_residuals:]
-      return core.eval_jaxpr(lin_jaxpr, consts, *nz_tangents)
     # TODO(mattjj,dougalm): this tag is read by DynamicJaxprTrace.process_map to
     # avoid round-tripping the jaxpr and thus getting grad-of-pmap cache misses.
-    # Remove when we replace the pmap implementation.
-    f_tangent._pmap_tag = isinstance(call_primitive, core.MapPrimitive)
+    # Remove the `if` branch when we replace the pmap implementation.
+    if isinstance(call_primitive, core.MapPrimitive):
+      @as_hashable_function(closure=(num_residuals, lin_jaxpr))
+      def f_tangent(*args):
+        consts = args[:num_residuals]
+        nz_tangents = args[num_residuals:]
+        return core.eval_jaxpr(lin_jaxpr, consts, *nz_tangents)
+      f_tangent._pmap_tag = isinstance(call_primitive, core.MapPrimitive)
+    else:
+      f_tangent = _get_f_tangent(lin_jaxpr, num_residuals)
 
     nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
     nz_tangents_out = call_primitive.bind_with_trace(
@@ -1051,6 +1056,16 @@ class LinearizeTrace(Trace):
   # the `in_axes` and `out_axes_thunk` params must be updated;
   # that's handled in process_call.
   process_map = process_call
+
+
+@weakref_lru_cache
+def _get_f_tangent(lin_jaxpr, num_residuals):
+  def _f(*args):
+    consts = args[:num_residuals]
+    nz_tangents = args[num_residuals:]
+    return core.eval_jaxpr(lin_jaxpr, consts, *nz_tangents)
+  return _f
+
 
 def maybe_linearize_tracer(trace, primal, is_nonzero, tangent):
   if is_nonzero:
@@ -1310,10 +1325,11 @@ def call_transpose(primitive, params, call_jaxpr: core.Jaxpr, args, ct, _):
     call_jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
   else:
     consts = ()
-  all_args, in_tree_def = tree_flatten((consts, args, ct))
-  fun = lu.hashable_partial(lu.wrap_init(
-    backward_pass, debug_info=call_jaxpr.debug_info), call_jaxpr, False)
-  fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
+  all_args, in_treedef = tree_flatten((consts, args, ct))
+  fun = lu.hashable_partial(
+      lu.wrap_init(backward_pass, debug_info=call_jaxpr.debug_info),
+      call_jaxpr, False)
+  fun, out_tree = flatten_fun_nokwargs(fun, in_treedef)
   update_params = call_transpose_param_updaters.get(primitive)
   if update_params:
     params = update_params(params, map(is_undefined_primal, args),

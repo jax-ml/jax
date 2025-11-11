@@ -116,8 +116,14 @@ class SchedulingGroupsTest(jtu.JaxTestCase):
       return z.sum()
 
     f(inp)  # doesn't crash
-
     lowered = jax.jit(f).lower(inp)
+    self.assertEqual(
+        lowered.as_text().count('func.func private @xla_metadata_call'), 1)
+    compiled = lowered.compile()
+    compiled(inp)  # doesn't crash
+
+    jax.jit(jax.grad(f))(inp)  # doesn't crash
+    lowered = jax.jit(jax.grad(f)).lower(inp)
     self.assertEqual(
         lowered.as_text().count('func.func private @xla_metadata_call'), 1)
     compiled = lowered.compile()

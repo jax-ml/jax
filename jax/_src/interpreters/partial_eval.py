@@ -2164,7 +2164,8 @@ class DynamicJaxprTrace(core.Trace):
       self.frame.add_eqn(eqn)
     return out_tracers if primitive.multiple_results else out_tracers.pop()
 
-  def process_call(self, call_primitive, f: lu.WrappedFun, explicit_tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, explicit_tracers,
+                   params):
     source_info = source_info_util.current()
     to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
     in_type = (tuple((get_aval(t), True) for t in explicit_tracers)
