@@ -102,3 +102,13 @@ pytype_strict_library(
     srcs = ["ifrt_programs.py"],
     deps = ["//jax/_src/lib"],
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+)

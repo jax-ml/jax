@@ -62,3 +62,13 @@ py_library(
         "//jax/experimental/jax2tf",
     ] + py_deps("tensorflow_core"),
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+)

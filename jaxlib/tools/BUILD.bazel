@@ -32,7 +32,6 @@ load(
     "//jaxlib:jax.bzl",
     "PLATFORM_TAGS_DICT",
     "if_pypi_cuda_wheel_deps",
-    "jax_py_test",
     "jax_wheel",
     "pytype_strict_library",
     "pytype_test",
@@ -43,7 +42,10 @@ licenses(["notice"])  # Apache 2
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["wheel_size_test.py"])
+exports_files([
+    "wheel_size_test.py",
+    "wheel_imports_test.py",
+])
 
 genrule(
     name = "platform_tags_py",
@@ -631,5 +633,90 @@ pytype_test(
     tags = [
         "manual",
         "notap",
+    ],
+)
+
+genrule(
+    name = "jaxlib_py_sources",
+    srcs = [
+        "//jaxlib:py_sources",
+        "//jaxlib/mosaic/python:py_sources",
+    ],
+    outs = ["jaxlib_py_sources.txt"],
+    cmd = "(for f in $(SRCS); do echo $$f; done) | sort -u > $@",
+)
+
+genrule(
+    name = "jax_cuda_plugin_py_sources",
+    srcs = [
+        "//jaxlib/cuda:cuda_so_files",
+    ],
+    outs = ["jax_cuda_plugin_py_sources.txt"],
+    cmd = "for FILE in $(locations //jaxlib/cuda:cuda_so_files); do basename $$FILE; done > $@",
+)
+
+genrule(
+    name = "jax_cuda_pjrt_py_sources",
+    srcs = [
+        "//jax_plugins/cuda:__init__.py",
+        "//jax_plugins/cuda:cuda_plugin_so",
+    ],
+    outs = ["jax_cuda_pjrt_py_sources.txt"],
+    # The PJRT plugin .so is renamed to xla_cuda_plugin.so to match the module
+    # name. We cannot directly obtain the name of the final file that goes into
+    # the wheel, so we rename it here.
+    cmd = "for FILE in $(SRCS); do basename $$FILE; done | sed 's/pjrt_c_api_gpu_plugin.so/xla_cuda_plugin.so/' | sort -u > $@",
+)
+
+pytype_test(
+    name = "jaxlib_wheel_imports_test",
+    srcs = [":wheel_imports_test.py"],
+    args = [
+        "--package-name=jaxlib",
+        "--pysources-path=$(location :jaxlib_py_sources)",
+    ],
+    data = [":jaxlib_py_sources"],
+    main = "wheel_imports_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [":jaxlib_py_import"],
+)
+
+pytype_test(
+    name = "jax_cuda_plugin_wheel_imports_test",
+    srcs = [":wheel_imports_test.py"],
+    args = [
+        "--package-name=jax_cuda{cuda}_plugin".format(cuda = cuda_major_version),
+        "--pysources-path=$(location :jax_cuda_plugin_py_sources)",
+    ],
+    data = [":jax_cuda_plugin_py_sources"],
+    main = "wheel_imports_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [":jax_cuda_plugin_py_import"],
+)
+
+pytype_test(
+    name = "jax_cuda_pjrt_wheel_imports_test",
+    srcs = [":wheel_imports_test.py"],
+    args = [
+        "--package-name=jax_plugins.xla_cuda{cuda}".format(cuda = cuda_major_version),
+        "--pysources-path=$(location :jax_cuda_pjrt_py_sources)",
+    ],
+    data = [":jax_cuda_pjrt_py_sources"],
+    main = "wheel_imports_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [
+        # CUDA PJRT wheel depends on jax and jaxlib
+        ":jax_cuda_pjrt_py_import",
+        ":jaxlib_py_import",
+        "//:jax_py_import",
     ],
 )

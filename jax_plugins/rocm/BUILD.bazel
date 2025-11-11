@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-licenses(["notice"])
-
 load(
-  "//jaxlib:jax.bzl",
-  "py_library_providing_imports_info",
-  "pytype_library",
+    "//jaxlib:jax.bzl",
+    "py_library_providing_imports_info",
+    "pytype_library",
 )
+
+licenses(["notice"])
 
 package(
     default_applicable_licenses = [],

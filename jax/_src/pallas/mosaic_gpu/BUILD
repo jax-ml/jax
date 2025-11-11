@@ -173,3 +173,13 @@ pytype_strict_library(
         "//jax/experimental:mosaic_gpu",
     ] + py_deps("numpy"),
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+)

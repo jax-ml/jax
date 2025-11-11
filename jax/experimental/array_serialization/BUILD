@@ -89,3 +89,14 @@ pytype_library(
         "numpy",
     ]),
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+    visibility = ["//jax:__pkg__"],
+)

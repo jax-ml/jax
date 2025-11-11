@@ -43,3 +43,13 @@ py_library_providing_imports_info(
         "//jaxlib",
     ]),
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+)
