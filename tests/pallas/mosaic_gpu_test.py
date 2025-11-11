@@ -3017,9 +3017,14 @@ class PallasCallSm90ATest(PallasSm90ATest):
     )(a, b)
     np.testing.assert_allclose(res, a @ b, rtol=1e-3)
 
-  def test_wgmma_registers_integer(self):
-    input_dtype = jnp.int8
-    out_dtype = jnp.int32
+  @parameterized.parameters(jnp.int8, jnp.float8_e4m3fn, jnp.float8_e5m2)
+  def test_wgmma_registers_8bit(self, input_dtype):
+    if input_dtype != jnp.int8:
+      self.skip_if_wg_semantics()
+    if jnp.issubdtype(input_dtype, jnp.integer):
+      out_dtype = jnp.int32
+    else:
+      out_dtype = jnp.float32
     def kernel(a_ref, b_ref, o_ref):
       def scope(acc_ref):
         a_regs = plgpu.load(a_ref, (), layout=plgpu.Layout.WGMMA_8BIT)
@@ -3031,8 +3036,13 @@ class PallasCallSm90ATest(PallasSm90ATest):
     m = 64
     k = 128
     n = 192
-    a = jax.random.randint(key1, shape=(m, k), minval=-128, maxval=127, dtype=input_dtype)
-    b = jax.random.randint(key2, shape=(n, k), minval=-128, maxval=127, dtype=input_dtype)
+    if input_dtype == jnp.int8:
+      a = jax.random.randint(key1, shape=(m, k), minval=-128, maxval=127, dtype=jnp.int8)
+      b = jax.random.randint(key2, shape=(n, k), minval=-128, maxval=127, dtype=jnp.int8)
+    else:
+      assert jnp.issubdtype(input_dtype, jnp.floating)
+      a = jax.random.uniform(key1, shape=(m, k), dtype=input_dtype)
+      b = jax.random.uniform(key2, shape=(n, k), dtype=input_dtype)
 
     transforms = self.default_transforms(swizzle=64, dtype=input_dtype)
     res = self.pallas_call(
@@ -3043,9 +3053,11 @@ class PallasCallSm90ATest(PallasSm90ATest):
         ],
         out_shape=jax.ShapeDtypeStruct((64, 192), out_dtype),
     )(a, b)
-    np.testing.assert_array_equal(
-        res, a.astype(out_dtype) @ b.T.astype(out_dtype)
-    )
+    ref = a.astype(out_dtype) @ b.T.astype(out_dtype)
+    if input_dtype == jnp.int8:
+      np.testing.assert_array_equal(res, ref)
+    else:
+      np.testing.assert_allclose(res, ref)
 
   def test_wgmma_registers_init(self):
     def kernel(a_ref, b_ref, i_ref, o_ref):

@@ -1024,15 +1024,16 @@ class WGMMATest(TestCase):
       n=(64, 128, 192),
       k_steps=(1, 2),
       swizzle=(32, 64, 128),
+      dtype=(jnp.int8, jnp.float8_e5m2, jnp.float8_e4m3fn),
   )
-  def test_wgmma_reg_lhs_int8(self, m, n, k_steps, swizzle):
+  def test_wgmma_reg_lhs_8bit(self, m, n, k_steps, swizzle, dtype):
     # TODO(bchetioui): relax this when ptxas is fixed. As of ptxas 12.8,
     # optimizations eliminate MMA instructions, leading to only the first tile
     # of the result being computed correctly.
-    if swizzle == 32:
+    if swizzle == 32 and dtype == jnp.int8:
       self.skipTest("32-bit swizzle not supported for int8")
     self._test_wgmma_reg_lhs(
-        m, n, k_steps, rhs_transpose=True, swizzle=swizzle, dtype=jnp.int8
+        m, n, k_steps, rhs_transpose=True, swizzle=swizzle, dtype=dtype
     )
 
   def _test_wgmma_reg_lhs(self, m, n, k_steps, rhs_transpose, swizzle, dtype):
@@ -1044,7 +1045,7 @@ class WGMMATest(TestCase):
     if n % nk_tile:
       self.skipTest("swizzle must divide N")
 
-    def kernel(ctx, rhs, out, rhs_smem):
+    def kernel(ctx, lhs, rhs, out, rhs_smem):
       del ctx
       for ki in range(k_steps):
         for ni in range(n // nk_tile):
@@ -1063,8 +1064,10 @@ class WGMMATest(TestCase):
           m=m, n=n, dtype=utils.dtype_to_ir_type(out_dtype),
           is_signed=True if dtype == jnp.int8 else None,
       )
-      layout = fa.WGMMA_LAYOUT_8BIT if dtype == jnp.int8 else fa.WGMMA_LAYOUT
-      lhs_regs = iota_tensor(m, k, dtype, layout=layout)
+      layout = fa.WGMMA_LAYOUT_8BIT if dtypes.bit_width(dtype) == 8 else fa.WGMMA_LAYOUT
+      lhs_regs = fa.FragmentedArray.load_untiled(
+          lhs, layout=layout, optimized=False, is_signed=utils.is_signed(dtype),
+      )
       if rhs_transpose:
         rhs_smem = memref_transpose(rhs_smem, (0, 1, 3, 2))
       acc = mgpu.wgmma(init_acc, lhs_regs, rhs_smem, swizzle=swizzle)
@@ -1074,22 +1077,38 @@ class WGMMATest(TestCase):
 
     y_shape = (n, k) if rhs_transpose else (k, n)
     if dtype == jnp.int8:
+      x = np.arange(m * k, dtype=dtype).reshape(m, k)
       y = self.prng.integers(-128, 127, y_shape, dtype=dtype)
     else:
-      y = self.prng.uniform(-1, 1, y_shape).astype(dtype)
+      def quantize_f8(x):
+        if dtype not in {jnp.float8_e4m3fn, jnp.float8_e5m2}:
+          return x
+        if dtype == jnp.float8_e4m3fn:
+          exponent_bits, mantissa_bits = 4, 3
+        else:
+          exponent_bits, mantissa_bits = 5, 2
+        return jax.lax.reduce_precision(x, exponent_bits, mantissa_bits)
+      x = quantize_f8(self.prng.uniform(-1, 1, (m, k))).astype(dtype)
+      y = quantize_f8(self.prng.uniform(-1, 1, y_shape)).astype(dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), out_dtype)
     scratch_shape = jax.ShapeDtypeStruct(
-        (k_steps, n // nk_tile, nk_tile, nk_tile), dtype
+            (k_steps, n // nk_tile, nk_tile, nk_tile), dtype
     )
     z = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), y, out_shape, scratch_shape
-    )(y)
-    x = np.arange(m * k, dtype=dtype).reshape(m, k)
+        kernel, (1, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape
+    )(x, y)
     ref = jax.lax.dot(
         x, (y.T if rhs_transpose else y), preferred_element_type=out_dtype
     )
-    rtol = 0 if dtype == jnp.int8 else 5e-4
-    np.testing.assert_allclose(z, ref, rtol=rtol, atol=0)
+    if dtype == jnp.int8:
+      atol = rtol = 0
+    elif dtype == jnp.float8_e4m3fn:
+      atol = rtol = 6e-3
+    elif dtype == jnp.float8_e5m2:
+      atol = rtol = 3e-3
+    else:
+      atol, rtol = 0, 5e-4
+    np.testing.assert_allclose(z, ref, rtol=rtol, atol=atol)
 
   @parameterized.product(
       rhs_transpose=(False, True),

@@ -3276,7 +3276,6 @@ def optimization_barrier(*arrays):
   Passing arrays through this function will make sure that they are computed
   before any side-effecting operations that follow this barrier.
   """
-  i8 = ir.IntegerType.get_signless(8)
   i32 = ir.IntegerType.get_signless(32)
 
   def _repack(regs_it, reg_ty):
@@ -3316,7 +3315,7 @@ def optimization_barrier(*arrays):
       else:
         array_regs = list(array.registers.flat)
       reg_constraint = "r" if dtype == i32 else "f"
-    elif ir.BF16Type.isinstance(dtype) or ir.F16Type.isinstance(dtype) or dtype == i8:
+    elif utils.bitwidth(dtype) < 32:
       reg_packing = 4 // utils.bytewidth(dtype)
       if not ir.VectorType.isinstance(reg_ty):
         raise NotImplementedError(array.mlir_dtype)

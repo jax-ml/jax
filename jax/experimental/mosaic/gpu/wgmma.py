@@ -134,6 +134,8 @@ def wgmma_m64(
   i8 = ir.IntegerType.get_signless(8)
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
+  f8e5m2 = ir.Float8E5M2Type.get()
+  f8e4m3fn = ir.Float8E4M3FNType.get()
   if b_k_stride % 16:
     raise ValueError
   # Only 16-bit types support transposes
@@ -141,7 +143,7 @@ def wgmma_m64(
   if not supports_transpose and (a_transpose or b_transpose):
     raise ValueError("Only f16 WGMMA supports transposes")
   if a_in_regs := isinstance(a, fa.FragmentedArray):
-    if a.mlir_dtype not in {bf16, f16, i8}:
+    if a.mlir_dtype not in {bf16, f16, i8, f8e5m2, f8e4m3fn}:
       raise ValueError(f"Unsupported A register array dtype: {a.mlir_dtype}")
     # Column count must be equal to swizzle // bytewidth.
     elt_bytewidth = utils.bytewidth(element_type)
@@ -321,13 +323,16 @@ def wgmma(
   f16 = ir.F16Type.get()
   i32 = ir.IntegerType.get_signless(32)
   i8 = ir.IntegerType.get_signless(8)
+  f8e5m2 = ir.Float8E5M2Type.get()
+  f8e4m3fn = ir.Float8E4M3FNType.get()
   (k, n), element_type = mma_utils.tiled_memref_shape(b)
   if a_in_regs := isinstance(a, fa.FragmentedArray):
     m, k2 = a.shape
     element_type2 = a.mlir_dtype
-    if element_type2 not in {f16, bf16, i8}:
+    if element_type2 not in {f16, bf16, i8, f8e5m2, f8e4m3fn}:
       raise ValueError(
-          f"Only f16, bf16 and i8 are supported for A in registers, got {element_type2}"
+          "Only f16, bf16, i8, f8e5m2, f8e4m3fn are supported for A "
+          f"in registers, got {element_type2}"
       )
     if element_type2 == i8 and swizzle == 32:
       # TODO(bchetioui): relax this when ptxas is fixed. As of ptxas 12.8,
