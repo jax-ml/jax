@@ -2657,16 +2657,18 @@ def ragged_dot_general(
 
   Let `g` be the number of groups in the lhs ragged dimension. Ragged dot has
   three modes, depending on the kind of the lhs ragged dimension:
-  1. `[b...,m...,k...], [g,b...,k...,n...], [b...,x...,g] -> [b...,m...,n...]`.
-     Here the ragged dimension is a non-contracting dimension (`m`) of ``lhs``,
-     and `x...` are the lhs non-contracting dims outer to the ragged dim.
-  2. `[b...,m...,k...], [b...,k...,n...], [b...,x...,g] -> [g,b...,m...,n...]`.
-     Here the ragged dimension is a contracting dimension (`k`) of ``lhs`` and
+
+  1. ``[b...,m...,k...], [g,b...,k...,n...], [b...,x...,g] -> [b...,m...,n...]``.
+     Here the ragged dimension is a non-contracting dimension (``m``) of ``lhs``,
+     and ``x...`` are the lhs non-contracting dims outer to the ragged dim.
+  2. ``[b...,m...,k...], [b...,k...,n...], [b...,x...,g] -> [g,b...,m...,n...]``.
+     Here the ragged dimension is a contracting dimension (``k``) of ``lhs`` and
      ``rhs``, and `x...` are the lhs contracting dims outer to the ragged dim.
-  3. `[b...,m...,k...], [b...,k...,n...], [x...,g] -> [b...,m...,n...]`.
-     Here the ragged dimension is a batch dimension (`b`) of ``lhs`` and
-     ``rhs``, and `x...` are the lhs batch dims outer to the ragged dim.
-  If ``group_sizes`` is passed-in with shape `[g]`, it is broadcasted according
+  3. ``[b...,m...,k...], [b...,k...,n...], [x...,g] -> [b...,m...,n...]``.
+     Here the ragged dimension is a batch dimension (``b``) of ``lhs`` and
+     ``rhs``, and ``x...`` are the lhs batch dims outer to the ragged dim.
+
+  If ``group_sizes`` is passed-in with shape ``[g]``, it is broadcasted according
   to the rules above.
 
   Args:
@@ -9087,6 +9089,8 @@ def empty(shape, dtype, *, out_sharding=None):
   Examples:
     >>> jnp.empty(3, jnp.float32)  # doctest: +SKIP
     Array([-5.7326739e+29 -7.7323739e+29 -3.14159256e-29], dtype=float32)
+
+  .. _explicit sharding: https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
   """
   out_sharding = canonicalize_sharding(out_sharding, 'lax.empty')
   return empty_p.bind(shape=shape, dtype=dtype, out_sharding=out_sharding)

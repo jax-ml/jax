@@ -581,14 +581,17 @@ def ragged_all_to_all(
 
   That is, we can represent ragged data contiguously using a triple of dense
   arrays ``(data, offsets, sizes)``:
+
     * ``data``: the concatenated component arrays,
     * ``offsets``: 1D array of indices into the leading axis of ``data``
       indicating where the data for each component array begins,
     * ``sizes``: 1D array of sizes of the leading axis of each component array.
+
   We refer to this triple as a ragged array. (Offsets can't be computed from
   sizes in general to allow for internal padding.)
 
   For example::
+
     data: f32[8,3] = jnp.array([
         [a,b,c], [d,e,f], [g,h,i], [j,k,l], [m,n,o], [p,q,r], [s,t,u], [v,w,x],
     ])
