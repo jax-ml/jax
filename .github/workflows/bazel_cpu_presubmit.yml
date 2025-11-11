@@ -32,7 +32,7 @@ jobs:
     strategy:
       matrix:
         python: ["3.11", "3.14"]
-        runner: ["linux-x86-n4-16", "linux-arm64-c4a-16"]
+        runner: ["linux-x86-n4-16", "linux-arm64-c4a-16", "windows-x86-n2-16"]
         enable-x64: [1, 0]
         exclude:
             # Exclude x64=1 on the oldest Python and x64=0 on the newest Python. As long as we have
@@ -41,10 +41,12 @@ jobs:
               enable-x64: 1
             - python: "3.14"
               enable-x64: 0
-            # Only test a single Python version on Arm64 as we don't run the tests.
+            # Only test a single Python version on Arm64 and Windows as we don't run the tests.
             - python: "3.11"
               runner: "linux-arm64-c4a-16"
-    name: "Bazel CPU ${{ (contains(matrix.runner, 'linux-arm64') && 'build only' || 'tests') }}"
+            - python: "3.11"
+              runner: "windows-x86-n2-16"
+    name: "Bazel CPU ${{ (contains(matrix.runner, 'linux-x86') && 'tests' || 'build only') }}"
 # End Presubmit Naming Check github-cpu-presubmits
     with:
       runner: ${{ matrix.runner }}
@@ -53,3 +55,4 @@ jobs:
       enable-x64:  ${{ matrix.enable-x64 }}
       build_jaxlib: 'true'
       build_jax: 'true'
+      bazel_command: ${{ (contains(matrix.runner, 'linux-x86') && 'test') || 'build' }}
