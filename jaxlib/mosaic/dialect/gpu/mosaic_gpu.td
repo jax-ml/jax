@@ -842,4 +842,13 @@ def MosaicGPU_SliceTmemOp : Op<MosaicGPU_Dialect, "slice_tmem", []> {
   let hasVerifier = 1;
 }
 
+def MosaicGPU_DebugPrintOp : Op<MosaicGPU_Dialect, "debug_print", []> {
+  let summary = "Prints value from inside a MGPU kernel";
+
+  let arguments = (ins
+    StrAttr:$format,
+    AnyVectorOfAnyRank:$value
+  );
+}
+
 #endif // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_

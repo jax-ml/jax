@@ -544,6 +544,18 @@ if hasattr(mgpu, "VectorStoreOp"):
     return []
 
 
+if hasattr(mgpu, "DebugPrintOp"):
+  @_register_lowering(mgpu.DebugPrintOp)
+  def _debug_print_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.DebugPrintOp
+  ) -> Sequence[ir.Value]:
+    del ctx
+    [layout] = inference_utils.in_layouts(op)
+    a = _fragmented_array_from_ir(op.value, layout)
+    a.debug_print(op.format.value)
+    return []
+
+
 @_register_lowering(vector.BroadcastOp)
 def _vector_splat_op_lowering_rule(
     _: LoweringContext, vector_splat_op: vector.BroadcastOp

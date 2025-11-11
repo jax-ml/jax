@@ -677,6 +677,17 @@ if hasattr(mgpu, "VectorStoreOp"):
     return system, value_sites_for_variable, []
 
 
+if hasattr(mgpu, "DebugPrintOp"):
+  @_add_equation_system_derivation_rule(mgpu.DebugPrintOp)
+  def _debug_print_equation_system(
+      ctx: DerivationContext,
+      op: mgpu.DebugPrintOp,
+  ) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
+    del ctx
+    value = ValueSite(op, VariableType.OPERAND, 0)
+    return eqns.EquationSystem(), {eqns.Variable(value): [value]}, []
+
+
 @_add_equation_system_derivation_rule(mgpu.OptimizationBarrierOp)
 def _optimization_barrier_equation_system(
     ctx: DerivationContext,

@@ -1237,8 +1237,6 @@ class PallasCallTest(PallasTest):
       self.assertEqual(v, i * shape[1] + j)
 
   def test_print_scalar(self):
-    self.skip_if_wg_semantics()
-
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
@@ -1254,8 +1252,6 @@ class PallasCallTest(PallasTest):
     self.assertIn(f"x.sum() = {x.sum()}", output())
 
   def test_print_scalar_array(self):
-    self.skip_if_wg_semantics()
-
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
@@ -1271,8 +1267,6 @@ class PallasCallTest(PallasTest):
     self.assertIn(f"x.sum() = {x.sum() + 1}", output())
 
   def test_print_array(self):
-    self.skip_if_wg_semantics()
-
     in_shape = [2, 1, 64, 64]
 
     @functools.partial(
@@ -5427,8 +5421,6 @@ class CoreMapTest(PallasTest, jtu.CudaArchSpecificTest):
     )
 
   def test_cluster(self):
-    self.skip_if_wg_semantics()  # Needs debug_print in the MGPU dialect.
-
     @functools.partial(
         self.kernel,
         out_shape=jnp.zeros(128, np.int32),

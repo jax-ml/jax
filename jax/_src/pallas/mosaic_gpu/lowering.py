@@ -2538,6 +2538,9 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
     mgpu.LoweringSemantics.Lane,
     gpu_core.PrimitiveSemantics.Warp,
 )
+@register_lowering_rule(
+    debugging.debug_print_p, mgpu.LoweringSemantics.Warpgroup
+)
 def _debug_print_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -2572,36 +2575,17 @@ def _debug_print_lowering_rule(
     )
   elif len(ctx.avals_in) == 1:
     [arg] = args
-    arg.debug_print(fmt)
+    if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+      mgpu.dialect.debug_print(fmt, arg)
+    else:
+      arg.debug_print(fmt)
+
   else:
     raise NotImplementedError(
         "debug_print only supports printing of scalar values, or a single array"
         " value when using the Mosaic GPU backend."
     )
 
-  return ()
-
-
-@register_lowering_rule(
-    debugging.debug_print_p, mgpu.LoweringSemantics.Warpgroup
-)
-def _debug_print_lowering_rule_wg(
-    ctx: LoweringRuleContext,
-    *args,
-    fmt,
-    ordered,
-    partitioned,
-    in_tree,
-    static_args,
-    np_printoptions,
-    has_placeholders,
-):
-  del ctx, partitioned, in_tree, np_printoptions, has_placeholders  # Unused.
-  if ordered:
-    raise NotImplementedError("Ordered debug_print is not supported on Pallas.")
-  if args or static_args:
-    raise NotImplementedError("debug_print does not support format arguments in warpgroup semantics")
-  mgpu.debug_print(fmt)
   return ()
 
 
