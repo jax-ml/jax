@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/python/ifrt/host_callback.h"
 #include "xla/python/pjrt_ifrt/pjrt_host_callback.h"
 #include "xla/python/pjrt_ifrt/xla_host_callback.pb.h"
+#include "xla/python/strides.h"
 #include "xla/python/types.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"

@@ -35,7 +35,6 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/ndarray.h"
-#include "jaxlib/dlpack_support.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
@@ -47,12 +46,13 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
+#include "xla/python/dlpack_types.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
-#include "xla/python/types.h"
+#include "xla/python/strides.h"
 #include "xla/python/version.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
@@ -61,6 +61,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
+// todo: remove
 namespace ifrt = xla::ifrt;
 namespace nb = nanobind;
 

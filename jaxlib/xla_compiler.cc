@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/nb_numpy.h"
+#include "xla/python/strides.h"
 #include "xla/python/types.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/custom_call_target_registry.h"
@@ -83,6 +84,7 @@ limitations under the License.
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
+// todo: remove
 namespace xla {
 namespace {
 
