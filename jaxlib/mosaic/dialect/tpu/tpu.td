@@ -1576,6 +1576,22 @@ def ApplyVectorLayoutPass : Pass<"tpu-apply-vector-layout", "::mlir::func::FuncO
   ];
 }
 
+def LinalgVectorizationPass : Pass<"linalg-vectorization", "::mlir::func::FuncOp"> {
+  let dependentDialects = [
+    "::mlir::func::FuncDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::linalg::LinalgDialect",
+    "::mlir::tensor::TensorDialect",
+    "::mlir::vector::VectorDialect",
+    "::mlir::tpu::TPUDialect",
+  ];
+  let constructor = "::mlir::tpu::createLinalgVectorizationPass(false)";
+  let options = [
+    Option<"supports_bf16_alu_instructions", "supports-bf16-alu-instructions", "bool", "", "">,
+    Option<"supports_bf16_matmul", "supports-bf16-matmul", "bool", "", "">,
+  ];
+}
+
 def PreCanonicalizationOptimizationPass : Pass<"pre-canonicalization-optimization", "::mlir::func::FuncOp"> {
   let summary = "Fold matmul rhs tranpose into the op before layout inference";
   let constructor = "::mlir::tpu::createPreCanonicalizationOptimizationPass()";
