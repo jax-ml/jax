@@ -235,3 +235,13 @@ pytype_strict_library(
         "//jax/_src:util",
     ],
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+)

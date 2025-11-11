@@ -93,3 +93,13 @@ pytype_strict_library(
         "//jax/_src/pallas",
     ],
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+)

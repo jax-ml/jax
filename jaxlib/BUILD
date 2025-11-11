@@ -1436,3 +1436,13 @@ py_strict_test(
         "absl/testing",
     ]),
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+)

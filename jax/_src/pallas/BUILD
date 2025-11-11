@@ -56,3 +56,13 @@ py_library(
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+)
