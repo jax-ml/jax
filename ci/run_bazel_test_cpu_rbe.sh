@@ -76,6 +76,7 @@ else
     echo "Running RBE CPU tests..."
 fi
 
+test_strategy=""
 # When running on Mac or Linux Aarch64, we only build the test targets and
 # not run them. These platforms do not have native RBE support so we
 # RBE cross-compile them on remote Linux x86 machines. As the tests still
@@ -84,6 +85,9 @@ fi
 # platforms in the presubmit jobs.
 if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] ); then
     rbe_config=rbe_cross_compile_${os}_${arch}
+    if [[ "$JAXCI_BAZEL_CPU_RBE_MODE" == 'test' ]]; then
+        test_strategy="--strategy=TestRunner=local"
+    fi
 else
     rbe_config=rbe_${os}_${arch}
 fi
@@ -96,6 +100,7 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAX \
+    $test_strategy \
     --test_env=JAX_NUM_GENERATED_CASES=25 \
     --test_env=JAX_SKIP_SLOW_TESTS=true \
     --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
