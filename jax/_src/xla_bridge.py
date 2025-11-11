@@ -1005,6 +1005,11 @@ def default_backend() -> str:
   return get_backend(None).platform
 
 
+def backend_version(platform=None) -> str:
+  """Returns the platform version of the backend."""
+  return get_backend(platform).platform_version
+
+
 def backend_pjrt_c_api_version(platform=None) -> tuple[int, int] | None:
   """Returns the PJRT C API version of the backend.
 
