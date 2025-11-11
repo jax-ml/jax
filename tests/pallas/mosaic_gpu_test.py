@@ -1051,6 +1051,38 @@ class PallasCallTest(PallasTest):
     idx = jax.random.permutation(jax.random.key(1234), out_shape[0]).astype(jnp.uint32)
     np.testing.assert_array_equal(kernel(x, idx), x[idx, 64:])
 
+  @parameterized.parameters(
+      (plgpu.Layout.WGMMA, plgpu.Layout.WGMMA_TRANSPOSED),
+      (plgpu.Layout.WGMMA_TRANSPOSED, plgpu.Layout.WGMMA),
+  )
+  def test_transposed_load_store(self, src_layout, dst_layout):
+    def is_transposed(layout):
+      return layout == plgpu.Layout.WGMMA_TRANSPOSED
+
+    if (
+        self.LOWERING_SEMANTICS == mgpu.LoweringSemantics.Lane
+        and is_transposed(dst_layout)
+    ):
+      self.skipTest("Not implemented: transposed, not tiled")
+
+    shape, dtype = (128, 128), jnp.float32
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )
+    def kernel(src_ref, dst_ref):
+      if is_transposed(src_layout):
+        src_ref = src_ref.T
+      if is_transposed(dst_layout):
+        dst_ref = dst_ref.T
+      src = plgpu.load(src_ref, (), layout=src_layout, optimized=False)
+      dst = plgpu.layout_cast(src, dst_layout)
+      dst_ref[...] = dst
+
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    np.testing.assert_array_equal(kernel(x), x.T)
+
   @parameterized.product(
       src_memory_space=[plgpu.SMEM, plgpu.GMEM],
       layout=[plgpu.Layout.WG_STRIDED((128,), vec_size=1), None,
