@@ -757,7 +757,7 @@ class OpsTest(PallasBaseTest):
       self.skipTest("Not supported: cannot extend to sub-32 bit types")
 
     if from_dtype != "bool":
-      from_bitwidth = dtypes.bit_width(from_dtype)
+      from_bitwidth = dtypes.itemsize_bits(from_dtype)
       from_int_dtype = getattr(jnp, "uint" + str(from_bitwidth))
       if randomize:
         # randint has no support for 4 bit integers.

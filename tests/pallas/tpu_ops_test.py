@@ -122,8 +122,8 @@ class OpsTest(PallasBaseTest):
           y_ref[...] = pltpu.bitcast(x_ref[...], to_dtype)
 
     m, n = 1, 256
-    in_packing = 32 // dtypes.bit_width(from_dtype)
-    out_packing = 32 // dtypes.bit_width(to_dtype)
+    in_packing = 32 // dtypes.itemsize_bits(from_dtype)
+    out_packing = 32 // dtypes.itemsize_bits(to_dtype)
     in_shape = (m * in_packing, n)
     out_shape = (m * out_packing, n)
     inp = np.arange(np.prod(in_shape), dtype=from_dtype).reshape(in_shape)
@@ -170,7 +170,7 @@ class OpsTest(PallasBaseTest):
 
   @parameterized.parameters([jnp.int32, jnp.int16, jnp.int8, jnp.int4])
   def test_row_broadcast(self, dtype):
-    bitwidth = dtypes.bit_width(dtype)
+    bitwidth = dtypes.itemsize_bits(dtype)
     if not self.INTERPRET and jtu.get_tpu_version() < 4 and bitwidth < 8:
       self.skipTest("Requires TPUv4+ for sub-byte types")
     def kernel(x_ref, y_ref):
@@ -313,7 +313,7 @@ class OpsTest(PallasBaseTest):
   @parameterized.product(dtype=[jnp.float32, jnp.bfloat16, jnp.int16, jnp.int8])
   def test_cast_vector_to_mask(self, dtype):
     shape = (128, 128)
-    bitwidth = dtypes.bit_width(dtype)
+    bitwidth = dtypes.itemsize_bits(dtype)
     if jtu.get_tpu_version() < 5 and bitwidth < 32:
       self.skipTest(
           f"Not implemented: cast vector to mask with bitwidth == {bitwidth}"
@@ -388,8 +388,8 @@ class OpsTest(PallasBaseTest):
   def test_i1_relayout_bw(self, shape, msk_dtype, dtype):
     if shape[0] < 8 and not jtu.if_cloud_tpu_at_least(2025, 11, 9):
       self.skipTest("Requires libtpu built after 2025-11-09")
-    msk_bitwidth = dtypes.bit_width(msk_dtype)
-    bitwidth = dtypes.bit_width(dtype)
+    msk_bitwidth = dtypes.itemsize_bits(msk_dtype)
+    bitwidth = dtypes.itemsize_bits(dtype)
     if jtu.get_tpu_version() < 5 and msk_bitwidth < 32:
       self.skipTest(
           "Not implemented: cast vector to mask with bitwidth =="
@@ -424,8 +424,8 @@ class OpsTest(PallasBaseTest):
     if not jtu.if_cloud_tpu_at_least(2025, 10, 7):
       self.skipTest("Requires libtpu built after 2025-10-07")
     shape = (256, 256)
-    bitwidth = dtypes.bit_width(dtype)
-    msk_bitwidth = dtypes.bit_width(msk_dtype)
+    bitwidth = dtypes.itemsize_bits(dtype)
+    msk_bitwidth = dtypes.itemsize_bits(msk_dtype)
     msk_packing = 32 // msk_bitwidth
     if jtu.get_tpu_version() < 5 and msk_bitwidth < 32:
       self.skipTest(
@@ -541,7 +541,7 @@ class OpsTest(PallasBaseTest):
       dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
   )
   def test_concat_mask(self, dtype):
-    bitwidth = dtypes.bit_width(dtype)
+    bitwidth = dtypes.itemsize_bits(dtype)
     if jtu.get_tpu_version() < 5 and bitwidth < 32:
       self.skipTest(
           f"Not implemented: cast vector to mask with bitwidth == {bitwidth}"
@@ -754,7 +754,7 @@ class OpsTest(PallasBaseTest):
         out_shape=jax.ShapeDtypeStruct(x.shape, target_dtype),
     )(x, bits)
 
-    int_dtype = getattr(jnp, f"uint{dtypes.bit_width(target_dtype)}")
+    int_dtype = getattr(jnp, f"uint{dtypes.itemsize_bits(target_dtype)}")
     is_correct_bitwise = (
         (result.view(int_dtype) == lower.view(int_dtype)) |
         (result.view(int_dtype) == upper.view(int_dtype))
@@ -767,7 +767,7 @@ class OpsTest(PallasBaseTest):
   def _pack_unpack_elementwise_test_data(
       self, shape, unpacked_dtype, packed_dtype):
     """Generates data for test_pack_elementwise and test_unpack_elementwise."""
-    bitwidth = dtypes.bit_width(packed_dtype)
+    bitwidth = dtypes.itemsize_bits(packed_dtype)
     num_sources = 32 // bitwidth
     if unpacked_dtype == jnp.int32:
       stacked_sources = jax.random.randint(
@@ -807,7 +807,7 @@ class OpsTest(PallasBaseTest):
     if not jtu.if_cloud_tpu_at_least(2025, 11, 7):
       self.skipTest("Test requires libtpu from 2025/11/7 or later")
 
-    bitwidth = dtypes.bit_width(packed_dtype)
+    bitwidth = dtypes.itemsize_bits(packed_dtype)
     num_sources = 32 // bitwidth
 
     def kernel(xs_ref, o_ref):
@@ -842,7 +842,7 @@ class OpsTest(PallasBaseTest):
     if not jtu.if_cloud_tpu_at_least(2025, 11, 7):
       self.skipTest("Test requires libtpu from 2025/11/7 or later")
 
-    bitwidth = dtypes.bit_width(packed_dtype)
+    bitwidth = dtypes.itemsize_bits(packed_dtype)
     packing_factor = 32 // bitwidth
 
     if index >= packing_factor:

@@ -160,7 +160,7 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
   ) -> Sequence[plgpu.MemoryRefTransform]:
     if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
       return ()
-    swizzle_elems = 8 * swizzle // dtypes.bit_width(dtype)
+    swizzle_elems = 8 * swizzle // dtypes.itemsize_bits(dtype)
     return (
         plgpu.TilingTransform((8, swizzle_elems)),
         plgpu.SwizzleTransform(swizzle),

@@ -233,9 +233,9 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
     if not jtu.is_cuda_compute_capability_equal("9.0"):
       self.skipTest("Only works on GPU with capability sm90a")
     out_dtype = rhs_dtype
-    lhs_bits = dtypes.bit_width(lhs_dtype)
-    rhs_bits = dtypes.bit_width(rhs_dtype)
-    out_bits = dtypes.bit_width(out_dtype)
+    lhs_bits = dtypes.itemsize_bits(lhs_dtype)
+    rhs_bits = dtypes.itemsize_bits(rhs_dtype)
+    out_bits = dtypes.itemsize_bits(out_dtype)
 
     cta_tile_m = tile_m * (1 + (wg_dimension == hopper_mixed_type_matmul_mgpu.MatmulDimension.M))
     cta_tile_n = tile_n * (1 + (wg_dimension == hopper_mixed_type_matmul_mgpu.MatmulDimension.N))

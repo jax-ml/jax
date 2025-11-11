@@ -167,7 +167,7 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
         k_scale=k_scale,
         v_scale=v_scale,
     )
-    dtype_bits = dtypes.bit_width(jnp.dtype(kv_dtype))
+    dtype_bits = dtypes.itemsize_bits(jnp.dtype(kv_dtype))
     tols = {
         32: 0.15,
         16: 0.2,
