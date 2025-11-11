@@ -4869,13 +4869,16 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
         rtol=0,
     )
 
-  @parameterized.parameters(jnp.int8, jnp.uint8)
-  def test_integer_wgmma(self, dtype):
+  @parameterized.product(
+      dtype=(jnp.int8, jnp.uint8),
+      lhs_in_smem=(False, True),
+  )
+  def test_integer_wgmma(self, dtype, lhs_in_smem):
     m, k, n = 64, 128, 64
 
     def body(ctx, lhs_gmem, rhs_gmem, result_gmem, scratch):
       del ctx
-      lhs, rhs, tma_barrier = scratch
+      lhs_smem, rhs_smem, tma_barrier = scratch
 
       i32 = ir.IntegerType.get_signless(32)
       zero = arith.constant(i32, 0)
@@ -4883,27 +4886,28 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
       tma_barrier.arrive_expect_tx(m * k + k * n)
       mgpu_dialect.async_load(
           source=lhs_gmem,
-          destination=lhs,
+          destination=lhs_smem,
           barrier=tma_barrier.as_barrier_memref(),
           indices=[zero, zero],
-          slice_lengths=lhs.type.shape,
+          slice_lengths=lhs_smem.type.shape,
           collective=ir.ArrayAttr.get([]),
       )
       mgpu_dialect.async_load(
           source=rhs_gmem,
-          destination=rhs,
+          destination=rhs_smem,
           barrier=tma_barrier.as_barrier_memref(),
           indices=[zero, zero],
-          slice_lengths=rhs.type.shape,
+          slice_lengths=rhs_smem.type.shape,
           collective=ir.ArrayAttr.get([]),
       )
       tma_barrier.wait()
 
       acc_type = ir.VectorType.get((m, n), i32)
       acc = vector.broadcast(acc_type, zero)
+      lhs = lhs_smem if lhs_in_smem else mgpu_dialect.vector_load(lhs_smem)
       # Only f16 WGMMA supports transposes
-      rhs = utils.memref_transpose(rhs, (1, 0))
-      result = mgpu_dialect.wgmma(acc, lhs, rhs)
+      rhs_smem = utils.memref_transpose(rhs_smem, (1, 0))
+      result = mgpu_dialect.wgmma(acc, lhs, rhs_smem)
       nvvm.wgmma_commit_group_sync_aligned()
       nvvm.wgmma_wait_group_sync_aligned(0)
       mgpu_dialect.vector_store(result, result_gmem)

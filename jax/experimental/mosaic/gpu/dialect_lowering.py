@@ -1161,14 +1161,10 @@ def _bitcast_op_lowering_rule(
 def _mgpu_wgmma_op_lowering_rule(
     _: LoweringContext, wgmma_op: mgpu.WGMMAOp
 ) -> Sequence[ir.Value]:
-  fa_layouts = (
-      *inference_utils.in_layouts(wgmma_op),
-      *inference_utils.out_layouts(wgmma_op),
-  )
-  wgmma_layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
-  for layout in fa_layouts:
-    if layout != wgmma_layout:
-      raise ValueError("Layout mismatch")
+  in_layouts = inference_utils.in_layouts(wgmma_op)
+  assert in_layouts[0] == layouts.to_layout_attr(fa.WGMMA_LAYOUT)
+  [out_layout] = inference_utils.out_layouts(wgmma_op)
+  assert out_layout == layouts.to_layout_attr(fa.WGMMA_LAYOUT)
 
   # s8/i8 WGMMA expects signed integer accumulator.
   element_type = wgmma_op.a.type.element_type
@@ -1177,7 +1173,7 @@ def _mgpu_wgmma_op_lowering_rule(
   # The associated fence could be a little expensive and is not needed if the
   # result a wgmma feeds into another wgmma (even in another loop step).
   regs = _fragmented_array_from_ir(
-      wgmma_op.accumulator, wgmma_layout, is_signed
+      wgmma_op.accumulator, in_layouts[0], is_signed
   )
   acc = wgmma.WGMMAAccumulator.from_registers(regs)
 
@@ -1200,7 +1196,13 @@ def _mgpu_wgmma_op_lowering_rule(
   )
 
   if ir.VectorType.isinstance(wgmma_op.a.type):
-    a_operand = _fragmented_array_from_ir(wgmma_op.a, wgmma_layout, is_signed)
+    expected_a_layout = (
+        fa.WGMMA_LAYOUT_8BIT
+        if element_type == ir.IntegerType.get_signless(8)
+        else fa.WGMMA_LAYOUT
+    )
+    assert in_layouts[1] == layouts.to_layout_attr(expected_a_layout)
+    a_operand = _fragmented_array_from_ir(wgmma_op.a, in_layouts[1], is_signed)
   else:
     a_swizzle, a_transforms = swizzle_and_transforms_from_transforms_attr(
         a_transforms
@@ -1217,7 +1219,6 @@ def _mgpu_wgmma_op_lowering_rule(
     a_operand = unwrapped_a_ref
 
   new_acc = wgmma.wgmma(acc, a_operand, unwrapped_b_ref, swizzle=b_swizzle)
-
   return [
       fragmented_array_to_ir(
           new_acc.value.to_layout(fa.WGMMA_LAYOUT),

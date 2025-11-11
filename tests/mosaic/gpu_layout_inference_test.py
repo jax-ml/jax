@@ -1313,6 +1313,32 @@ class LayoutInferenceTest(parameterized.TestCase):
     )
 
   @parameterized.product(
+      dtype=(jnp.int8, jnp.uint8),
+      lhs_in_registers=(False, True),
+  )
+  def test_infer_layouts_for_8bits_wgmma_op(self, dtype, lhs_in_registers):
+    shape = (128, 128)
+    with ir.InsertionPoint(self.module.body):
+      elt_ty = mgpu.utils.dtype_to_ir_type(dtype)
+      lhs_ref_ty = ir.MemRefType.get(
+          shape, elt_ty, memory_space=mgpu.utils.smem()
+      )
+      lhs_vec_ty = ir.VectorType.get(shape, elt_ty)
+      lhs_ty = lhs_vec_ty if lhs_in_registers else lhs_ref_ty
+      rhs_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+      acc_ty = ir.VectorType.get(shape, elt_ty)
+      [acc, lhs, rhs] = undefs(acc_ty, lhs_ty, rhs_ty)
+      wgmma_op = mgpu.dialect.WGMMAOp(acc, lhs, rhs)
+
+    mgpu.infer_layout(self.module)
+
+    if lhs_in_registers:
+      self.checkInLayouts(wgmma_op, [mgpu.WGMMA_LAYOUT, mgpu.WGMMA_LAYOUT_8BIT])
+    else:
+      self.checkInLayouts(wgmma_op, [mgpu.WGMMA_LAYOUT])
+    self.checkOutLayouts(wgmma_op, [mgpu.WGMMA_LAYOUT])
+
+  @parameterized.product(
       swizzle_lhs=tuple(mgpu.dialect.SwizzlingMode),
       swizzle_rhs=tuple(mgpu.dialect.SwizzlingMode),
       dtype=(jnp.bfloat16, jnp.float32),

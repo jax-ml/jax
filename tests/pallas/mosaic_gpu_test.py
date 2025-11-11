@@ -3024,7 +3024,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
     np.testing.assert_allclose(res, a @ b, rtol=1e-3)
 
   def test_wgmma_registers_integer(self):
-    self.skip_if_wg_semantics()  # WGMMA_8BIT layout not supported
     input_dtype = jnp.int8
     out_dtype = jnp.int32
     def kernel(a_ref, b_ref, o_ref):

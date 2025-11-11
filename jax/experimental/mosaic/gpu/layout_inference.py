@@ -962,31 +962,34 @@ def _wgmma_equation_system(
     op: mgpu.WGMMAOp,
 ) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
   assignments: dict[eqns.Variable, eqns.Constant] = {}
-  # Registers
-  vector_operands_or_results = vector_value_sites(op)
-  vec_variable = eqns.Variable(vector_operands_or_results[0])
-  assignments[vec_variable] = eqns.RegisterLayout(fa.WGMMA_LAYOUT)
-  operands_or_results_for_variable = {vec_variable: vector_operands_or_results}
+  value_sites_for_variable: ValueSitesForVariable = {}
 
-  # SMEM
+  acc_out = ValueSite(op, VariableType.RESULT, 0)
+  acc_in = ValueSite(op, VariableType.OPERAND, 0)
+  acc_var = eqns.Variable(acc_out)
+  assignments[acc_var] = eqns.RegisterLayout(fa.WGMMA_LAYOUT)
+  value_sites_for_variable[acc_var] = [acc_in, acc_out]
+
   a_tiling, b_tiling = _infer_wgmma_tiling(op.a.type, op.b.type)
   b = ValueSite(op, VariableType.OPERAND, 2)
   b_var = ctx.producer_ref(b)
-
   assignments[b_var] = eqns.SMEMTiling(lc.TileTransform(b_tiling))
-  operands_or_results_for_variable[b_var] = [b]
+  value_sites_for_variable[b_var] = [b]
 
-  if a_tiling is not None:
-    # a is in SMEM
-    a = ValueSite(op, VariableType.OPERAND, 1)
+  a = ValueSite(op, VariableType.OPERAND, 1)
+  if _is_smem_ref(op.a):
     a_var = ctx.producer_ref(a)
     assignments[a_var] = eqns.SMEMTiling(lc.TileTransform(a_tiling))
-    operands_or_results_for_variable[a_var] = [a]
+  else:
+    assert a_tiling is None
+    a_var = eqns.Variable(a)
+    if ir.IntegerType.get_signless(8) == ir.VectorType(op.a.type).element_type:
+      assignments[a_var] = eqns.RegisterLayout(fa.WGMMA_LAYOUT_8BIT)
+    else:
+      assignments[a_var] = eqns.RegisterLayout(fa.WGMMA_LAYOUT)
+  value_sites_for_variable[a_var] = [a]
 
-  system = eqns.EquationSystem(
-      assignments=assignments,
-  )
-  return system, operands_or_results_for_variable, []
+  return eqns.EquationSystem(assignments), value_sites_for_variable, []
 
 
 @_add_equation_system_derivation_rule(vector.BroadcastOp)
