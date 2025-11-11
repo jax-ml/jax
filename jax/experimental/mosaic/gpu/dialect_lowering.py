@@ -22,7 +22,6 @@ import math
 import operator
 from typing import Any, Protocol, cast
 
-from jax._src import lib as jaxlib
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
@@ -416,8 +415,7 @@ def _retry_on_failure(transfer: _Transfer, optimized: bool | None) -> Any:
     return transfer(optimized=False)
 
 
-if jaxlib.version > (0, 8, 0):
-
+if hasattr(mgpu, "VectorLoadOp"):
   @_register_lowering(mgpu.VectorLoadOp)
   def _vector_load_op_lowering_rule(
       _: LoweringContext, op: mgpu.VectorLoadOp
@@ -496,8 +494,7 @@ if jaxlib.version > (0, 8, 0):
     return [_fragmented_array_to_ir(fragmented_array)]
 
 
-if jaxlib.version > (0, 8, 0):
-
+if hasattr(mgpu, "VectorStoreOp"):
   @_register_lowering(mgpu.VectorStoreOp)
   def _vector_store_op_lowering_rule(
       ctx: LoweringContext, op: mgpu.VectorStoreOp
@@ -958,8 +955,7 @@ def _tmem_layout_cast_lowering_rule(
   return [op.ref]
 
 
-if jaxlib.version > (0, 8, 0):
-
+if hasattr(mgpu, "SliceTmemOp"):
   @_register_lowering(mgpu.SliceTmemOp)
   def _slice_tmem_lowering_rule(
       ctx: LoweringContext, op: mgpu.SliceTmemOp

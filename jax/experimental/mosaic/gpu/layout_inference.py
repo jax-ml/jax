@@ -29,7 +29,6 @@ import math
 import re
 from typing import Any, assert_never, cast
 
-from jax._src import lib as jaxlib
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -620,8 +619,7 @@ for op in [
   _add_equation_system_derivation_rule(op)(_pointwise_op_equation_system)
 
 
-if jaxlib.version > (0, 8, 0):
-
+if hasattr(mgpu, "VectorLoadOp"):
   @_add_equation_system_derivation_rule(mgpu.VectorLoadOp)
   def _vector_load_equation_system(
       ctx: DerivationContext,
@@ -650,8 +648,7 @@ if jaxlib.version > (0, 8, 0):
     return system, value_sites_for_variable, []
 
 
-if jaxlib.version > (0, 8, 0):
-
+if hasattr(mgpu, "VectorStoreOp"):
   @_add_equation_system_derivation_rule(mgpu.VectorStoreOp)
   def _vector_store_equation_system(
       ctx: DerivationContext,
@@ -1357,8 +1354,7 @@ def _async_load_tmem_equation_system(
   )
 
 
-if jaxlib.version > (0, 8, 0):
-
+if hasattr(mgpu, "SliceTmemOp"):
   @_add_equation_system_derivation_rule(mgpu.SliceTmemOp)
   def _slice_tmem_equation_system(
       ctx: DerivationContext,
