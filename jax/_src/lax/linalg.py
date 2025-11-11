@@ -881,11 +881,6 @@ def _cholesky_cpu_lowering(ctx, operand):
 
 
 def _cholesky_gpu_lowering(ctx, operand, *, target_name_prefix):
-  # TODO(phawkins): remove forward compat path after Nov 10, 2025.
-  # Remove also the `with config.export_ignore_forward_compatibility(True)`
-  # in `export_back_compat_test.py`.
-  if ctx.is_forward_compat():
-    return _cholesky_lowering(ctx, operand)
   operand_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
