@@ -15,12 +15,10 @@ limitations under the License.
 
 #include <algorithm>
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <tuple>
-#include <utility>
 
 #include "absl/log/check.h"
 #include "llvm/ADT/ArrayRef.h"
