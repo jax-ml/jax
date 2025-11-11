@@ -17,7 +17,7 @@ from functools import partial
 from jax._src import core
 from jax._src import dispatch
 from jax._src import linear_util as lu
-from jax._src.api_util import debug_info, flatten_fun_nokwargs
+from jax._src.api_util import debug_info, flatten_fun
 from jax._src.util import (safe_map, safe_zip, weakref_lru_cache, unzip2,
                            split_list)
 from jax._src.tree_util import tree_flatten, tree_unflatten
@@ -38,9 +38,9 @@ def xla_metadata_call(f=None, **meta):
 
 # TODO(yashkatariya): Figure out a way to reuse code with compute_on2_p, fused_p
 def _xla_metadata_call(f, **meta):
-  def wrapped(*args):
-    dbg = debug_info('xla_metadata_call', f, args, {})
-    args_flat, in_tree = tree_flatten(args)
+  def wrapped(*args, **kwargs):
+    dbg = debug_info('xla_metadata_call', f, args, kwargs)
+    args_flat, in_tree = tree_flatten((args, kwargs))
     in_avals = tuple(core.shaped_abstractify(x) for x in args_flat)
     jaxpr, out_tree = _trace_to_jaxpr(f, in_avals, in_tree, dbg)
     outs_flat = xla_metadata_call_p.bind(*args_flat, jaxpr=jaxpr, **meta)
@@ -50,7 +50,7 @@ def _xla_metadata_call(f, **meta):
 @weakref_lru_cache
 def _trace_to_jaxpr(fun, in_avals, in_tree, dbg):
   f = lu.wrap_init(fun, debug_info=dbg)
-  f, out_tree = flatten_fun_nokwargs(f, in_tree)
+  f, out_tree = flatten_fun(f, in_tree)
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(f, in_avals)
   return core.ClosedJaxpr(jaxpr, consts), out_tree()
 
