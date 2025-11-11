@@ -264,7 +264,7 @@ def mma(
   s32 = ir.IntegerType.get_signless(32)
   if element_type == f32 or element_type == ir.BF16Type.get():
     if element_type == f32 and is_sparse:
-      raise NotImplementedError("Only 16-bit types supported for sparse MMA")
+      raise NotImplementedError("Sparse MMA unsupported for f32")
     if is_scaled:
       raise ValueError(
           f"MMA with element type {element_type} does not support block scaling"
@@ -288,8 +288,6 @@ def mma(
       t.isinstance(element_type)
       for t in {ir.Float8E5M2Type, ir.Float8E4M3FNType}
   ):
-    if is_sparse:
-      raise NotImplementedError("Only 16-bit types supported for sparse MMA")
     if d.dtype != f16 and d.dtype != f32:
       raise ValueError(
           f"MMA with element type {element_type} only supports accumulators of"
@@ -304,7 +302,7 @@ def mma(
       t.isinstance(element_type) for t in {ir.Float4E2M1FNType}
   ):
     if is_sparse:
-      raise NotImplementedError("Only 16-bit types supported for sparse MMA")
+      raise NotImplementedError("Sparse MMA unsupported for f4e2m1fn")
     if not is_scaled:
       raise ValueError(
           f"MMA with element type {element_type} only supports block scaling"
@@ -315,8 +313,6 @@ def mma(
           f" accumulators, but got: {d.dtype}"
       )
   elif element_type == ir.IntegerType.get_signless(8):
-    if is_sparse:
-      raise NotImplementedError("Only 16-bit types supported for sparse MMA")
     if is_scaled:
       raise ValueError(
           f"MMA with element type {element_type} does not support block scaling"
@@ -561,11 +557,11 @@ def _do_mma(
   elem_bitwidth = utils.bitwidth(element_type)
   instr_k = (1 + is_sparse) * 8 * 32 // elem_bitwidth
   packing = 8 * 4 // elem_bitwidth
-  assert not is_sparse or elem_bitwidth == 16  # Only 16-bit supported for now.
 
   extra_args: Sequence[object]
   scale_steps = None
   if is_scaled:
+    assert not is_sparse
     if (ir.Float8E5M2Type.isinstance(element_type) or
         ir.Float8E4M3FNType.isinstance(element_type)):
       kind = "mxf8f6f4.block_scale.scale_vec::1X"
@@ -628,10 +624,11 @@ def _do_mma(
     else:
       sp_selector = None
       if is_sparse:
-        assert (k // instr_k) % 2 == 0
-        sp_selector = k_step % 2
-        selector_width = 64
-        k_steps_for_col_inc = selector_width // instr_k
+        assert 32 <= instr_k <= 64
+        selector_width = instr_k
+        k_steps_for_col_inc = 64 // selector_width
+        assert (k // instr_k) % k_steps_for_col_inc == 0
+        sp_selector = k_step % k_steps_for_col_inc
         # If the K group is large, we need to increment the sparse metadata.
         # TODO(apaszke): At this point the purpose of this function is becoming
         # less clear, since we end up replicating address arithmetic that's

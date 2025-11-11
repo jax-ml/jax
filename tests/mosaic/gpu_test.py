@@ -1643,14 +1643,17 @@ class TCGen05Test(TestCase):
   @parameterized.product(
       lhs_transpose=(False, True),
       rhs_transpose=(False, True),
-      in_jax_dtype=(jnp.float16, jnp.bfloat16,),
+      in_jax_dtype=(jnp.float16, jnp.bfloat16, jnp.int8, jnp.float8_e4m3fn),
       m=(128,),  # TODO(apaszke): 256
       n=(128, 256),  # TODO(apaszke): other non-power-of-2
       lhs_swizzle=(32, 64, 128),
       rhs_swizzle=(64, 128),  # 32 is too small and unsuported.
   )
   def test_mma_sparse(self, m, n, in_jax_dtype, lhs_swizzle, rhs_swizzle, lhs_transpose, rhs_transpose):
-    out_jax_dtype = jnp.float32
+    if jnp.issubdtype(in_jax_dtype, jnp.floating):
+      out_jax_dtype = jnp.float32
+    else:
+      out_jax_dtype = jnp.int32
     sparse_meta_dtype = jnp.uint2
 
     in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
@@ -1682,12 +1685,17 @@ class TCGen05Test(TestCase):
         )
         tcgen05.commit_arrive(mma_barrier)
       mma_barrier.wait(orders_tensor_core=True)
-      acc.load().store_untiled(out, optimized=False)
+      is_signed = True if jnp.issubdtype(in_jax_dtype, jnp.integer) else None
+      acc.load(is_signed=is_signed).store_untiled(out, optimized=False)
 
     x_shape = (k // 2, m) if lhs_transpose else (m, k // 2)
-    x = self.prng.uniform(-1, 1, x_shape).astype(in_jax_dtype)
     y_shape = (n, k) if rhs_transpose else (k, n)
-    y = self.prng.uniform(-1, 1, y_shape).astype(in_jax_dtype)
+    if jnp.issubdtype(in_jax_dtype, jnp.integer):
+      x = jax.random.randint(jax.random.key(1234), x_shape, -64, 64, dtype=in_jax_dtype)
+      y = jax.random.randint(jax.random.key(2567), y_shape, -64, 64, dtype=in_jax_dtype)
+    else:
+      x = self.prng.uniform(-1, 1, x_shape).astype(in_jax_dtype)
+      y = self.prng.uniform(-1, 1, y_shape).astype(in_jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_shape, lhs_tiling), in_jax_dtype),
@@ -1708,10 +1716,17 @@ class TCGen05Test(TestCase):
       mn, k, _2 = meta.shape
       assert _2 == 2
       k *= 2
-      return (
+      if jnp.dtype(in_jax_dtype).itemsize == 1:
+        meta_tiled = (
+            meta.reshape(mn // 128, 128, k // 64, 64).transpose(0, 2, 1, 3)
+        )
+      else:
+        meta_tiled = (
           meta.reshape(mn // 128, 8, 2, 8, k // 64, 4, 2, 8)
           .transpose(0, 4, 1, 6, 3, 5, 2, 7)
-          .reshape(mn // 128, k // 64, 128, 64)
+        )
+      return (
+          meta_tiled.reshape(mn // 128, k // 64, 128, 64)
           .astype(sparse_meta_dtype)
       )
     x_gpu_sparse = format_sparse_meta(x_sparse)
