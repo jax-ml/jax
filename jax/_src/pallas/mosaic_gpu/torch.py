@@ -32,7 +32,7 @@ from jax._src.lib.mlir.dialects import hlo
 from jax.experimental.mosaic.gpu import core as mgpu_core
 
 
-def as_torch_kernel(fn):
+def as_torch_kernel(fn, mesh=None):
   """Makes a Mosaic GPU kernel callable with PyTorch tensors.
 
   Args:
@@ -68,12 +68,12 @@ def as_torch_kernel(fn):
         ),
         args,
     )
-    return _compile_fn(fn, in_structs)(*args)
+    return _compile_fn(fn, in_structs, mesh)(*args)
 
   return wrapper
 
 
-def _find_mgpu_call_in_module(module: ir.Module):
+def _find_mgpu_call_in_module(module: ir.Module, collective: bool):
   main_funcs = [
       op
       for op in module.body.operations
@@ -84,7 +84,24 @@ def _find_mgpu_call_in_module(module: ir.Module):
   if len(main_funcs) != 1:
     raise ValueError("Expected a single function in the kernel module")
   [func_body] = main_funcs[0].body.blocks
-  return _find_mgpu_call(func_body, list(func_body.arguments))
+  if not collective:
+    return _find_mgpu_call(func_body, list(func_body.arguments), False)
+  if len(func_body.operations) != 2:
+    raise ValueError(
+        "Expected a manual sharding call and a terminator op in a collective"
+        " kernel module"
+    )
+  manual_sharding_op, return_op = func_body.operations
+  if manual_sharding_op.name != "sdy.manual_computation":
+    raise ValueError("Expected a manual computation call")
+  if return_op.name != "func.return":
+    raise ValueError("Expected a return op")
+  if list(manual_sharding_op.results) != list(return_op.operands):
+    raise ValueError(
+        "The manual sharding call must return all values and nothing else"
+    )
+  [body_block] = manual_sharding_op.body.blocks
+  return _find_mgpu_call(body_block, list(func_body.arguments), True)
 
 
 def _mlir_to_torch_dtype(torch, mlir_dtype: ir.Type):
@@ -105,6 +122,8 @@ def _mlir_to_torch_dtype(torch, mlir_dtype: ir.Type):
 
 def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
   import torch  # type: ignore[import-not-found]  # pytype: disable=import-error
+  import torch.distributed._symmetric_memory as symm_mem
+  import torch.distributed as dist
   mgpu_call: hlo.CustomCallOp | None = None
   get_outputs = None
   to_evaluate: list[Callable] = []
@@ -120,6 +139,12 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
           _result_name=value_names[op.result],
       ):
         env[_result_name] = torch.empty(_shape, dtype=_dtype, device=device)
+        if collective:
+          # TODO(apaszke): Not all args need to be in symmetric memory
+          alloc = env[_result_name] = symm_mem.empty(_shape, dtype=_dtype, device=device)
+          symm_mem.rendezvous(alloc, dist.group.WORLD)
+        else:
+          env[_result_name] = torch.empty(_shape, dtype=_dtype, device=device)
       to_evaluate.append(allocate_torch_buffer)
     elif _is_custom_call(op, "mosaic_gpu_v2"):
       if mgpu_call is not None:
@@ -190,7 +215,14 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
       env[name] = arg
     for thunk in to_evaluate:
       thunk(env, device)
-    return tuple(env[name] for name in arg_names)
+    def _make_symmetric(arg):
+      if not collective:
+        return arg
+      symm_arg = symm_mem.empty(arg.shape, dtype=arg.dtype, device=device)
+      symm_mem.rendezvous(symm_arg, dist.group.WORLD)
+      return symm_arg
+    scratch_args = (_make_symmetric(env[name]) for name in arg_names[len(user_args):])
+    return (*user_args, *scratch_args)
   output_input_aliases = [None] * len(mgpu_call.results)
   for alias in mgpu_call.output_operand_aliases:
     alias = hlo.OutputOperandAlias(alias)
@@ -211,7 +243,13 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
       if alias is not None:
         outputs.append(all_args[alias])
         continue
-      outputs.append(torch.empty(ty[0], dtype=ty[1], device=device))
+      if collective:
+        # TODO(apaszke): Not all kernels need outputs in symmetric memory!
+        out = symm_mem.empty(ty[0], dtype=ty[1], device=device)
+        symm_mem.rendezvous(out, dist.group.WORLD)
+      else:
+        out = torch.empty(ty[0], dtype=ty[1], device=device)
+      outputs.append(out)
     return outputs
 
   return mgpu_call, prepare_args, prepare_outputs, get_outputs
@@ -222,17 +260,29 @@ def _is_custom_call(op: ir.Operation, name: str) -> TypeGuard[hlo.CustomCallOp]:
 
 
 @util.weakref_lru_cache
-def _compile_fn(fn, in_structs):
+def _compile_fn(fn, in_structs, mesh):
   try:
     import torch  # type: ignore[import-not-found]  # pytype: disable=import-error
   except ImportError:
     raise RuntimeError("Can't compile for PyTorch: import torch failed") from None
 
+  if collective := (mesh is not None):
+    all_axes_spec = jax.sharding.PartitionSpec(*mesh.axis_names)
+    # We use shard_map only to ensure that the kernel is traced with the right
+    # mesh context.
+    fn = jax.shard_map(
+        fn,
+        mesh=mesh,
+        in_specs=all_axes_spec,
+        out_specs=all_axes_spec,
+        check_vma=False,
+    )
+
   traced = jax.jit(fn).trace(*in_structs)
   main_module = traced.lower().compiler_ir()
   with main_module.context:
     mgpu_call, prepare_args, prepare_outputs, get_outputs = _find_mgpu_call_in_module(
-        main_module
+        main_module, collective
     )
 
   if not isinstance(in_structs, tuple):

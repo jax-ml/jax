@@ -1087,6 +1087,7 @@ def _as_torch_gpu_kernel(
       device = arg.device
     flat_outs = []
     for i, t in enumerate(flat_out_types, i + 1):
+      # DO NOT SUBMIT: Collective allocation!
       out = torch.empty(t.shape, dtype=as_torch_dtype(t.dtype), device=device)
       flat_outs.append(out)
       buffers[i] = out.data_ptr()
