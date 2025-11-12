@@ -35,7 +35,7 @@ jobs:
     runs-on: "linux-x86-n4-64"
     strategy:
       matrix:
-            python: ["3.13",]
+            python: ["3.14t",]
     container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
     name: "CI - jaxlib head with NumPy nightly"
 
