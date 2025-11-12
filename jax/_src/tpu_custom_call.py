@@ -380,14 +380,11 @@ mlir.register_lowering(tpu_custom_call_p, _tpu_custom_call_lowering,
 def _lower_mosaic_module_to_asm(
     module: ir.Module,
     *,
-    device_type: str | None,
     ir_version: int | None = None,
-) -> tuple[ir.Module, tuple[bool, bool, bool, bool]]:
+) -> tuple[ir.Module, tuple[bool, bool]]:
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
   )
-  needs_hlo_passes = _MOSAIC_ALLOW_HLO.value
-  needs_layout_passes = not device_type
   # We'll mutate the module, so clone it
   with module.context as ctx, module.operation.location as _:
     module_op = module.operation.clone()
@@ -409,8 +406,6 @@ def _lower_mosaic_module_to_asm(
     return asm, (
         has_communication,
         has_custom_barrier,
-        needs_hlo_passes,
-        needs_layout_passes,
     )
 
 
@@ -544,16 +539,17 @@ def _lower_to_custom_call_config(
     skip_device_barrier: bool = False,
     allow_collective_id_without_custom_barrier: bool = False,
     shape_invariant_numerics: bool = False,
+    needs_layout_passes: bool | None = None,
 ) -> CustomCallBackendConfig:
   device_type = _get_device_type(module)
+  needs_hlo_passes = _MOSAIC_ALLOW_HLO.value
+  if needs_layout_passes is None:
+    needs_layout_passes = not device_type
   lowered_module_asm, (
       has_communication,
       has_custom_barrier,
-      needs_hlo_passes,
-      needs_layout_passes,
   ) = _lower_mosaic_module_to_asm(
       module,
-      device_type=device_type,
       ir_version=ir_version,
   )
   active_core_count = _get_active_core_count(module)
@@ -664,6 +660,7 @@ def lower_module_to_custom_call(
     skip_device_barrier: bool = False,
     allow_collective_id_without_custom_barrier: bool = False,
     shape_invariant_numerics: bool = False,
+    needs_layout_passes: bool | None = None,
 ) -> Sequence[ir.Value]:
   if isinstance(has_side_effects, bool):
     has_side_effects = (
@@ -687,6 +684,7 @@ def lower_module_to_custom_call(
       skip_device_barrier=skip_device_barrier,
       allow_collective_id_without_custom_barrier=allow_collective_id_without_custom_barrier,
       shape_invariant_numerics=shape_invariant_numerics,
+      needs_layout_passes=needs_layout_passes,
   )
   return _tpu_custom_call_lowering(
       ctx,
@@ -718,6 +716,7 @@ def as_tpu_kernel(
     disable_bounds_checks: bool = False,
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     shape_invariant_numerics: bool = False,
+    needs_layout_passes: bool | None = None,
     metadata: Any | None = None,
     _ir_version: int | None = None,
 ) -> Callable[..., Any]:
@@ -735,6 +734,7 @@ def as_tpu_kernel(
       disable_bounds_checks=disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
       shape_invariant_numerics=shape_invariant_numerics,
+      needs_layout_passes=needs_layout_passes,
       ir_version=_ir_version,
   )
   return _as_jax_callable(
