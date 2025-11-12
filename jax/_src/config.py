@@ -422,7 +422,7 @@ def bool_state(
   def parser(val):
     if validator:
       validator(val)
-    return val
+    return bool(val)
 
   s = State[bool](
       name, default, help, update_global_hook=update_global_hook,
