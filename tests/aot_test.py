@@ -356,7 +356,6 @@ class ComponentTest(jtu.JaxTestCase):
   @config.enable_checks(False)
   def test_component_basic(self):
     with self.make_in_memory_cache():
-      cache = aot.get_cache()
 
       @aot.component(key="f")
       def f(x):
@@ -397,7 +396,6 @@ class ComponentTest(jtu.JaxTestCase):
   @config.enable_checks(False)
   def test_component_in_function(self):
     with self.make_in_memory_cache():
-      cache = aot.get_cache()
 
       @aot.component(key="f")
       def f(x):
@@ -422,7 +420,6 @@ class ComponentTest(jtu.JaxTestCase):
   @config.enable_checks(False)
   def test_jit_of_component(self):
     with self.make_in_memory_cache():
-      cache = aot.get_cache()
 
       @jax.jit
       @aot.component(key="f")
@@ -450,7 +447,6 @@ class ComponentTest(jtu.JaxTestCase):
   @config.enable_checks(False)
   def test_component_of_jit(self):
     with self.make_in_memory_cache():
-      cache = aot.get_cache()
 
       @aot.component(key="f")
       @jax.jit
@@ -477,7 +473,6 @@ class ComponentTest(jtu.JaxTestCase):
   @config.enable_checks(False)
   def test_explicit_lowering(self):
     with self.make_in_memory_cache():
-      cache = aot.get_cache()
 
       @aot.component(key="f")
       def f(x):
@@ -503,7 +498,6 @@ class ComponentTest(jtu.JaxTestCase):
   @config.enable_checks(False)
   def test_vmap_of_component(self):
     with self.make_in_memory_cache():
-      cache = aot.get_cache()
 
       def f(x):
         logging.info("running!")
@@ -530,7 +524,6 @@ class ComponentTest(jtu.JaxTestCase):
   @config.enable_checks(False)
   def test_vmap_of_vmap_of_component(self):
     with self.make_in_memory_cache():
-      cache = aot.get_cache()
 
       def f(x):
         logging.info("running!")
@@ -576,7 +569,6 @@ class ComponentTest(jtu.JaxTestCase):
     # NOTE: This should be the same as test_vmap_of_component except for one
     # more infer params cache miss because of the extra jit.
     with self.make_in_memory_cache():
-      cache = aot.get_cache()
 
       def f(x):
         logging.info("running!")
@@ -605,7 +597,6 @@ class ComponentTest(jtu.JaxTestCase):
     # NOTE: This should be the same as test_vmap_of_component except for one
     # more infer params cache miss because of the extra jit.
     with self.make_in_memory_cache():
-      cache = aot.get_cache()
 
       def f(x):
         logging.info("running!")
@@ -628,6 +619,24 @@ class ComponentTest(jtu.JaxTestCase):
       self.validate_cache_states(
         component_f.fun, vmapped_key, 1, 0, 1, 8, None, 1
       )
+
+  @config.enable_checks(False)
+  def test_scan_of_component(self):
+    with self.make_in_memory_cache():
+
+      @aot.component(key="f")
+      def f(x):
+        logging.info("running!")
+        return x + 1.0
+
+      def body(carry, x):
+        return f(carry), f(x)
+
+      carry, ys = jax.lax.scan(body, 0, jnp.arange(10, dtype="float32"))
+
+      self.assertEqual(carry, 10)
+      self.assertArraysEqual(ys, jnp.arange(10, dtype="float32") + 1)
+      self.validate_cache_states(f.fun, f.key, 2, (0, 0), 2, 13, None, 2)
 
 
 if __name__ == "__main__":

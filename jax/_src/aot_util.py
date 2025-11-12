@@ -14,6 +14,7 @@
 """JAX AOT API utilities."""
 
 from collections.abc import Hashable
+import functools
 import pickle
 import traceback
 from typing import Any, Callable, NamedTuple, Self, Sequence
@@ -237,5 +238,41 @@ def lower_component_to_module(
   # - host_callbacks: probably not supported.
   # - shape_poly_state: talk to necula@
   module = lowering_result.module
+  # TODO(dsuo): Do we need to do this step to strip context?
+  module = ir.Module.parse(mlir.module_to_bytecode(module))
 
   return module
+
+
+def get_module_name(module: ir.Module) -> str:
+  # TODO(dsuo): Is this reasonable?
+  module_name = str(module.operation.attributes["sym_name"].value)
+  logging.info("module_name: %s", module_name)
+  return module_name
+
+
+def get_module_results(
+  ctx: mlir.LoweringRuleContext, module: ir.Module, module_name: str, *args
+) -> Sequence[ir.Value]:
+  symtab = ir.SymbolTable(module.operation)
+  module = mlir.merge_mlir_modules(
+    ctx.module_context.module,
+    f"component_{module_name}",
+    module,
+    dst_symtab=ctx.module_context.symbol_table,
+  )
+  results = symtab["main"].type.results
+  call = func_dialect.CallOp(results, ir.FlatSymbolRefAttr.get(module), args)
+
+  return call.results
+
+
+def wrap_init(fun: Callable[..., Any], traced_for: str) -> lu.WrappedFun:
+  # TODO(dsuo): Dummy debug info.
+  if isinstance(fun, functools.partial):
+    name = fun.func.__name__
+  else:
+    name = fun.__name__
+  return lu.wrap_init(
+    fun, debug_info=lu.DebugInfo(traced_for, name, None, None)
+  )
