@@ -1448,8 +1448,12 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
     self.assertAllClose(immutbox_get(result), x + y)
 
   def test_vmap_hijax(self):
+    traced_shape = [None]
+
     def f(box, y):
       val = immutbox_get(box)
+      # Ensure that the the traced shape lacks a batch dim
+      traced_shape[0] = val.shape
       return immutbox_new(val @ y)
 
     f_vmap = jax.vmap(f, in_axes=(0, None))
@@ -1458,6 +1462,7 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
     y = jnp.ones((2,3))
     result = f_vmap(box, y)
     self.assertEqual(immutbox_get(result).shape, (8,3))
+    self.assertEqual(traced_shape[0], (2,))
 
   def test_broadcast_hijax(self):
     def f(box, y):
