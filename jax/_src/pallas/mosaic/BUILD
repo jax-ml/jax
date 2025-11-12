@@ -99,6 +99,7 @@ pytype_strict_library(
         "//jax/_src:api",
         "//jax/_src:checkify",
         "//jax/_src:cloud_tpu_init",
+        "//jax/_src:config",
         "//jax/_src:core",
         "//jax/_src:custom_derivatives",
         "//jax/_src:debugging",

@@ -30,6 +30,7 @@ import jax
 from jax import api_util
 from jax import lax
 from jax._src import checkify
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import debugging
 from jax._src import dtypes
@@ -54,7 +55,6 @@ from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.lib.mlir.dialects import vector as vector_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import helpers as pallas_helpers
-from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
@@ -1213,7 +1213,7 @@ def lower_jaxpr_to_mosaic_gpu(
       except LoweringError:
         raise  # We only add the extra info to the innermost exception.
       except Exception as e:
-        if not pallas_call._verbose_errors_enabled():
+        if not config.jax_pallas_verbose_errors.value:
           raise
         inval_types = map(lambda t: getattr(t, "type", None), invals)
         raise LoweringError(
