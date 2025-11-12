@@ -1435,10 +1435,9 @@ class DialectLoweringTest(MosaicGpuTest):
   def test_optimized_gmem_transfers_are_not_supported(self):
     def body(ctx, input, output, scratch):
       del ctx, output, scratch
-      load = mgpu.dialect.VectorLoadOp(input)
-      load.attributes["optimized"] = ir.BoolAttr.get(True)
+      reg = mgpu.dialect.vector_load(input, optimized=True)
       layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
-      mgpu.dialect.layout_cast(load.result, layout)
+      mgpu.dialect.layout_cast(reg, layout)
 
     shape = (128, 128)
     dtype = jnp.bfloat16
