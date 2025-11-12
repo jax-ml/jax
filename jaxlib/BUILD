@@ -41,7 +41,7 @@ licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//jax:internal"],
+    default_visibility = ["//visibility:public"],
 )
 
 package_group(
