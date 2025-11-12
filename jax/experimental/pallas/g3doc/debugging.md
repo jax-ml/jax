@@ -3,7 +3,7 @@
 <!--internal:0-->
 
 <!--*
-freshness: { owner: 'slebedev' reviewed: '2025-05-22' }
+freshness: { owner: 'slebedev' reviewed: '2025-11-12' }
 *-->
 
 [TOC]
@@ -173,21 +173,6 @@ module {
 Mosaic is the underlying TPU compiler for Pallas. It can be useful to dump Mosaic if you are running into errors that are originating from the Mosaic compiler to see what code is actually being generated.
 
 Passing the `--xla_mosaic_dump_to=<directory>` argument will dump the output of all intermediate Mosaic passes. The names of the files contain either the parameter `name` passed to the `pallas_call`, or the name of the kernel function. A useful option is to dump to Sponge with `--test_arg=--xla_mosaic_dump_to=sponge` after which you will see all passes under the “Artifacts” tab in sponge.
-
-### Static Verification
-
-The static verification tool can be used to automatically detect race conditions in distributed kernels.
-Because this tool uses formal verification, it is best used for small kernels (<=2 devices).
-
-Verification can be performed by running your kernel with the `--jax_pallas_dump_promela_to=<directory>`,
-which will output a Promela dump file. Afterwards, the dump file can be
-analyzed using the [`spin`](https://spinroot.com) tool. For example, with a dump named `dump.pml`, run:
-
-```
-spin -a dump.pml && gcc -o pan -O3 pan.c -Wno-format-overflow && time ./pan
-```
-
-<!--internal:2-->
 
 ### Dynamic Race Detection
 
