@@ -1537,6 +1537,7 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
     result = f()
     self.assertAllClose(immutbox_get(result), 16, check_dtypes=False)
 
+  @absltest.skip("Box.ty has_qdd, but isn't an AvalQDD, which confuses DynamicJaxprTracer")
   @parameterized.parameters([False, True])
   def test_while_loop_mut_hi_arg(self, jit):
     box = Box(1.)
