@@ -40,7 +40,6 @@ ComponentKey = aot_util.ComponentKey
 get_cache = aot_util.get_cache
 
 
-
 def component(
   key: UserKey = None,
 ) -> Callable[..., Any]:
@@ -51,7 +50,7 @@ def component(
     component_key = ComponentKey(key)
 
     if component_key in aot_util._wrapper_cache.cache_keys():
-      logging.info('hit wrapper_cache: %s', component_key)
+      logging.info("hit wrapper_cache: %s", component_key)
       return aot_util._wrapper_cache.get(component_key)
 
     @api.jit
@@ -63,10 +62,11 @@ def component(
         fun, debug_info=api_util.debug_info("component", fun, args, kwargs)
       )
       flat_fun, out_tree = api_util.flatten_fun(wrapped_fun, in_tree)
+      # TODO(dsuo): do we need this cached?
       flat_fun = aot_util.cached_flat_fun(flat_fun)
       logging.info("miss component flat_fun %s:", id(flat_fun))
       flat_fun = flat_fun.f_transformed
-      flat_fun.__name__ = 'wrapped(flat_fun)'
+      flat_fun.__name__ = "wrapped(flat_fun)"
       jitted_fun = api.jit(flat_fun)
       logging.info("miss component jitted_fun %s:", id(jitted_fun))
 
@@ -81,7 +81,9 @@ def component(
     wrapper.fun = fun
     logging.info("jit(wrapper(fun)) wrapper id %s", id(wrapper))
     logging.info("wrapper(fun) wrapper._fun id %s", id(wrapper._fun))
-    logging.info("fun wrapper._fun.__wrapped__ id %s", id(wrapper._fun.__wrapped__))
+    logging.info(
+      "fun wrapper._fun.__wrapped__ id %s", id(wrapper._fun.__wrapped__)
+    )
     logging.info("user fun id %s", id(fun))
     aot_util._wrapper_cache.put(component_key, wrapper)
     return wrapper
@@ -123,7 +125,7 @@ def component_abstract_eval(
 
 
 def component_lowering(
-  ctx,
+  ctx: mlir.LoweringRuleContext,
   *args,
   fun: Callable[..., Any],
   component_key: ComponentKey,
@@ -139,31 +141,9 @@ def component_lowering(
     logging.info("missed lowering: %s", component_key)
     if isinstance(fun, lu.WrappedFun):
       fun = aot_util.maybe_reset_stores(fun).call_wrapped
-    traced = api.trace(fun, *ctx.avals_in)
-    lowering_result = mlir.lower_jaxpr_to_module(
-      module_name=module_name,
-      jaxpr=traced.jaxpr,
-      num_const_args=traced._num_consts,
-      in_avals=ctx.avals_in,
-      # TODO(dsuo): What are ordered effects vs effects?
-      ordered_effects=traced.jaxpr.effects,
-      # TODO(dsuo): Figure out why ctx.platforms=None.
-      platforms=["cpu"],
-      backend=ctx.module_context.backend,
-      axis_context=ctx.module_context.axis_context,
-      donated_args=tuple(
-        x.donated for x in tree_util.tree_leaves(traced.args_info)
-      ),
-      lowering_parameters=mlir.LoweringParameters(),
-      # TODO(dsuo): Presumably we need to forward the rest of the arguments to
-      # lower_jaxpr_to_module?
+    module = aot_util.lower_component_to_module(
+      ctx, fun, module_name, component_key
     )
-    # TODO(dsuo): What should we do about the other attributes on
-    # LoweringResult?
-    # - keepalive: probably not supported.
-    # - host_callbacks: probably not supported.
-    # - shape_poly_state: talk to necula@
-    module = lowering_result.module
     # TODO(dsuo): We have this to ensure the source and destination modules have
     # the same context, but is it necessary? Perhaps yes, since we need to get
     # rid of the submodule context before merging. Could we just create it with

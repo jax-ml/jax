@@ -24,6 +24,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import stages
+from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
@@ -203,3 +204,38 @@ class WrapperCache:
 
 _wrapper_cache = WrapperCache()
 util.register_cache(_wrapper_cache, "aot_wrapper_cache")
+
+
+def lower_component_to_module(
+  ctx: mlir.LoweringRuleContext,
+  fun: Callable[..., Any],
+  module_name: str,
+  component_key: ComponentKey,
+) -> ir.Module:
+  traced = api.trace(fun, *ctx.avals_in)
+  lowering_result = mlir.lower_jaxpr_to_module(
+    module_name=module_name,
+    jaxpr=traced.jaxpr,
+    num_const_args=traced._num_consts,
+    in_avals=ctx.avals_in,
+    # TODO(dsuo): What are ordered effects vs effects?
+    ordered_effects=traced.jaxpr.effects,
+    # TODO(dsuo): Figure out why ctx.platforms=None.
+    platforms=["cpu"],
+    backend=ctx.module_context.backend,
+    axis_context=ctx.module_context.axis_context,
+    donated_args=tuple(
+      x.donated for x in tree_util.tree_leaves(traced.args_info)
+    ),
+    lowering_parameters=mlir.LoweringParameters(),
+    # TODO(dsuo): Presumably we need to forward the rest of the arguments to
+    # lower_jaxpr_to_module?
+  )
+  # TODO(dsuo): What should we do about the other attributes on
+  # LoweringResult?
+  # - keepalive: probably not supported.
+  # - host_callbacks: probably not supported.
+  # - shape_poly_state: talk to necula@
+  module = lowering_result.module
+
+  return module
