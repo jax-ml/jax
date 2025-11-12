@@ -710,6 +710,16 @@ llvm::LogicalResult VectorStoreOp::verify() {
   return llvm::success();
 }
 
+llvm::LogicalResult BroadcastedIotaOp::verify() {
+  mlir::VectorType result_type = getResult().getType();
+  if (getDimension() >= result_type.getRank()) {
+    return emitError(llvm::formatv(
+        "dimension={0} must be smaller than the rank={1} of the result.",
+        getDimension(), result_type.getRank()));
+  }
+  return llvm::success();
+}
+
 void MosaicGPUDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST

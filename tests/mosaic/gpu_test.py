@@ -4764,6 +4764,30 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     x = self.prng.uniform(-1, 1, (128, 128)).astype(dtype)
     self.assertArraysEqual(kernel(x), x[0:64, 64:128])
 
+  @parameterized.product(
+      dtype=(jnp.float32, jnp.int32, jnp.uint32),
+      dimension=(0, 1),
+  )
+  def test_broadcasted_iota(self, dtype, dimension):
+    def body(ctx, out, scratch):
+      del ctx, scratch
+      result_type = ir.VectorType.get(out.type.shape, out.type.element_type)
+      iota = mgpu_dialect.broadcasted_iota(result_type, dimension)
+      mgpu_dialect.vector_store(iota, out)
+
+    shape = (128, 128)
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(),
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        smem_scratch_shape=[],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+    expected = jax.lax.broadcasted_iota(dtype, shape, dimension)
+    self.assertArraysEqual(kernel(), expected)
+
 
 class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
 

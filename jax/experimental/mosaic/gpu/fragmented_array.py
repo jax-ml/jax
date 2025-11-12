@@ -1013,6 +1013,38 @@ class FragmentedArray:
         _is_signed=is_signed,
     )
 
+  @staticmethod
+  def broadcasted_iota(
+      dtype: ir.Type,
+      shape: tuple[int, ...],
+      dimension: int,
+      layout: FragmentedLayout | None = None,
+      *,
+      is_signed: bool | None = None,
+  ) -> FragmentedArray:
+    """Creates a broadcasted iota array along the specified dimension."""
+    if dimension >= len(shape):
+      raise ValueError(
+          "`dimension` must be smaller than the rank of the array."
+      )
+
+    def cast(idx: ir.Value) -> ir.Value:
+      if ir.FloatType.isinstance(dtype):
+        i32 = ir.IntegerType.get_signless(32)
+        return arith.uitofp(dtype, arith.index_cast(i32, idx))
+      return arith.index_cast(dtype, idx)
+
+    return mgpu.FragmentedArray.splat(
+        llvm.mlir_undef(dtype),
+        shape,
+        layout,
+        is_signed=is_signed,
+    ).foreach(
+        lambda _, idx: cast(idx[dimension]),
+        create_array=True,
+        is_signed=is_signed,
+    )
+
   @property
   def shape(self) -> tuple[int, ...]:
     match self.layout:

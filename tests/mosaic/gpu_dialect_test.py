@@ -1110,6 +1110,16 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
+  def test_broadcasted_iota_op_invalid_dimension(self):
+    with ir.InsertionPoint(self.module.body):
+      ty = ir.VectorType.get((2,), ir.F32Type.get())
+      mgpu.dialect.broadcasted_iota(ty, dimension=2)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "dimension=2 must be smaller than the rank=1 of the result.",
+    ):
+      self.module.operation.verify()
+
 
 class DialectLoweringTest(MosaicGpuTest):
 

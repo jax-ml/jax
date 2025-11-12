@@ -2043,6 +2043,17 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInLayouts(add, [layout, layout])
     self.checkOutLayouts(add, [layout])
 
+  def test_infer_layout_for_broadcasted_iota_rejects_splat_layout(self):
+    with ir.InsertionPoint(self.module.body):
+      vec_ty = ir.VectorType.get((128, 128), ir.BF16Type.get())
+      iota = mgpu.dialect.broadcasted_iota(vec_ty, 0)
+      layout_cast(iota, fa.WGSplatFragLayout(vec_ty.shape))
+
+    with self.assertRaisesRegex(
+        ValueError, "user-provided layout casts are unsatisfiable"
+    ):
+      mgpu.infer_layout(self.module)
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

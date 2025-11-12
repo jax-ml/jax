@@ -454,8 +454,6 @@ class PallasCallTest(PallasTest):
 
   @parameterized.parameters(jnp.float32, jnp.int32, jnp.uint32)
   def test_iota(self, dtype):
-    self.skip_if_wg_semantics()  # No WG lowering for iota.
-
     dimension = 1
 
     @functools.partial(
@@ -1807,7 +1805,7 @@ class PallasCallTest(PallasTest):
       ],
   )
   def test_transposed_layout(self, layouts):
-    self.skip_if_wg_semantics()
+    self.skip_if_wg_semantics()  # TiledLayout replication not supported.
     layout, transposed_layout = layouts
     dtype = jnp.dtype(jnp.float16)
     shape = (256, 192)
@@ -2758,7 +2756,6 @@ class PallasCallWGTest(
         mgpu_primitives.query_cluster_cancel_p,
         mgpu_primitives.multimem_store_p,
         mgpu_primitives.multimem_load_reduce_p,
-        lax.iota_p,
         pallas_core.core_map_p,
         pallas_primitives.semaphore_signal_p,
         pallas_primitives.semaphore_wait_p,

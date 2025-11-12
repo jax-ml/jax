@@ -688,6 +688,20 @@ if hasattr(mgpu, "DebugPrintOp"):
     return eqns.EquationSystem(), {eqns.Variable(value): [value]}, []
 
 
+if hasattr(mgpu, "BroadcastedIotaOp"):
+
+  @_add_equation_system_derivation_rule(mgpu.BroadcastedIotaOp)
+  def _broadcasted_iota_equation_system(
+      ctx: DerivationContext,
+      op: mgpu.BroadcastedIotaOp,
+  ) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
+    del ctx
+    value = ValueSite(op, VariableType.RESULT, 0)
+    var = eqns.Variable(value)
+    constraints = [eqns.NotOfType(var, fa.WGSplatFragLayout)]
+    return eqns.EquationSystem(constraints=constraints), {var: [value]}, []
+
+
 @_add_equation_system_derivation_rule(mgpu.OptimizationBarrierOp)
 def _optimization_barrier_equation_system(
     ctx: DerivationContext,

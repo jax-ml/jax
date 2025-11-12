@@ -3585,24 +3585,19 @@ def _iota_lowering(
         " plgpu.layout_cast to its output right after its creation."
     )
   mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
-  if ir.FloatType.isinstance(mlir_dtype):
-    i32 = ir.IntegerType.get_signless(32)
-    cast = lambda x: arith_dialect.uitofp(
-        mlir_dtype, arith_dialect.index_cast(i32, x)
-    )
-  else:
-    cast = lambda x: arith_dialect.index_cast(mlir_dtype, x)
   is_signed = mgpu_utils.is_signed(dtype)
-  return mgpu.FragmentedArray.splat(
-      llvm_dialect.mlir_undef(mlir_dtype),
-      shape,
-      ctx.out_layout_hint,
-      is_signed=is_signed,
-  ).foreach(
-      lambda _, idx: cast(idx[dimension]),
-      create_array=True,
-      is_signed=is_signed,
+  return mgpu.FragmentedArray.broadcasted_iota(
+      mlir_dtype, shape, dimension, ctx.out_layout_hint, is_signed=is_signed
   )
+
+
+@register_lowering_rule(lax.iota_p, mgpu.LoweringSemantics.Warpgroup)
+def _iota_lowering_wg(
+    ctx: LoweringRuleContext, dtype, shape, dimension, sharding
+):
+  del ctx, sharding
+  result_type = ir.VectorType.get(shape, mgpu_utils.dtype_to_ir_type(dtype))
+  return mgpu.dialect.broadcasted_iota(result_type, dimension)
 
 
 @register_lowering_rule(primitives.delay_p, mgpu.LoweringSemantics.Lane)

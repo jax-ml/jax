@@ -851,4 +851,21 @@ def MosaicGPU_DebugPrintOp : Op<MosaicGPU_Dialect, "debug_print", []> {
   );
 }
 
+def MosaicGPU_BroadcastedIotaOp : Op<MosaicGPU_Dialect, "broadcasted_iota", []> {
+  let summary = "Create a broadcasted iota vector.";
+  let description = [{
+    Creates an array that has the specified shape and holds values starting at
+    zero and incrementing by one along the specified dimension.
+  }];
+
+  let arguments = (ins
+    ConfinedAttr<I32Attr, [IntNonNegative]>:$dimension
+  );
+
+  let results = (outs AnyFixedVectorOfNonZeroRank);
+
+  let hasVerifier = 1;
+}
+
+
 #endif // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_
