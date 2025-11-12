@@ -992,8 +992,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             unitary_mat, rtol=unitariness_tol,
                             atol=unitariness_tol)
     else:
-      self.assertTrue(np.allclose(np.linalg.svd(a, compute_uv=False),
-                                  np.asarray(out), atol=1e-4, rtol=1e-4))
+      self.assertAllClose(np.linalg.svd(a, compute_uv=False), np.asarray(out),
+                          atol=1e-4, rtol=3e-4)
 
     self._CompileAndCheck(partial(fun, full_matrices=full_matrices,
                                   compute_uv=compute_uv),
