@@ -2618,14 +2618,12 @@ def _run_scoped_lowering_rule(
               " remove collective_axes from run_scoped. If other allocations"
               " are performed as well, split the run_scoped into two."
           )
-        is_signed = None
-        if jnp.issubdtype(aval.dtype, jnp.integer):
-          is_signed = jnp.issubdtype(aval.dtype, jnp.signedinteger)
-          if not is_signed:
-            raise ValueError(
-                  f"Invalid WGMMA accumulator dtype for s8/i8 WGMMA. "
-                  f"Expected signed integer, but got {aval.dtype}."
-              )
+        is_signed = mgpu_utils.is_signed(aval.dtype)
+        if is_signed is not None and not is_signed:
+          raise ValueError(
+              "Invalid WGMMA accumulator dtype for s8/i8 WGMMA. "
+              f"Expected signed integer, but got {aval.dtype}."
+          )
 
         dtype = mlir.dtype_to_ir_type(aval.dtype)
         if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
@@ -3164,10 +3162,7 @@ def _bitcast_convert_type_lowering_rule(
     )
 
   x = _ensure_fa(x, x_aval.dtype)
-  if ir.IntegerType.isinstance(dst_elem_type):
-    output_is_signed = mgpu_utils.is_signed(new_dtype)
-  else:
-    output_is_signed = None
+  output_is_signed = mgpu_utils.is_signed(new_dtype)
   return mgpu.FragmentedArray.bitcast(
       x, dst_elem_type, output_is_signed=output_is_signed
   )

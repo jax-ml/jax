@@ -590,10 +590,7 @@ class WGMMALayoutTest(TestCase):
           "Raises: failed to prove that vector transfers don't cross swizzle"
           " tile boundaries.")
     jax_dtype_from = jnp.int4
-    if jnp.issubdtype(jax_dtype_to, jnp.integer):
-      is_signed = jnp.issubdtype(jax_dtype_to, jnp.signedinteger)
-    else:
-      is_signed = None
+    is_signed = utils.is_signed(jax_dtype_to)
     def kernel(ctx, inp, out, smem):
       del ctx  # Unused.
       smem_inp, smem_out = smem

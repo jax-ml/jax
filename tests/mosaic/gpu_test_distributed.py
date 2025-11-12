@@ -349,7 +349,7 @@ class ProfilerTest(TestCase):
       arr = mgpu.FragmentedArray.load_reduce_untiled(
           ctx.to_remote_multicast(inp),
           layout=layout,
-          is_signed=True if jnp.issubdtype(dtype, jnp.integer) else None,
+          is_signed=mgpu.utils.is_signed(dtype),
           reduction=reduction,
       )
       arr.store_untiled(out, optimized=False)

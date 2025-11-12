@@ -471,12 +471,7 @@ class PallasCallTest(PallasTest):
   @parameterized.parameters(jnp.bfloat16, jnp.int16, jnp.uint16)
   def test_inline_mgpu(self, jnp_type):
     dtype = jnp.dtype(jnp_type)
-    if jnp.issubdtype(dtype, jnp.signedinteger):
-      is_signed = True
-    elif jnp.issubdtype(dtype, jnp.unsignedinteger):
-      is_signed = False
-    else:
-      is_signed = None
+    is_signed = mgpu.utils.is_signed(dtype)
     shape = (128, 128)
     tile = (64, 128 // dtype.itemsize)
     tiled_shape = list(mgpu.tile_shape(shape, tile))

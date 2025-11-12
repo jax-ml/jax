@@ -2916,13 +2916,7 @@ def _populate_custom_primitive_op_block(
         conversion_cast.attributes["layout"] = layout_attr
 
         registers = np.array(list(conversion_cast.results)).reshape(reg_shape)
-
-        if jnp.issubdtype(aval.dtype, jnp.signedinteger) :
-          is_signed = True
-        elif jnp.issubdtype(aval.dtype, jnp.unsignedinteger):
-          is_signed = False
-        else:
-          is_signed = None
+        is_signed = mgpu_utils.is_signed(aval.dtype)
         fa = mgpu.FragmentedArray(
             _registers=registers, _layout=layout, _is_signed=is_signed
         )
@@ -3168,13 +3162,7 @@ def _async_load_tmem_lowering_rule(
   layout_hint = None
   if isinstance(ctx.out_layout_hint, mgpu.TiledLayout):
     layout_hint = ctx.out_layout_hint
-  aval = ctx.avals_out[0]
-  if jnp.issubdtype(aval.dtype, jnp.signedinteger):
-    is_signed = True
-  elif jnp.issubdtype(aval.dtype, jnp.unsignedinteger):
-    is_signed = False
-  else:
-    is_signed = None
+  is_signed = mgpu_utils.is_signed(ctx.avals_out[0].dtype)
   return x_tmem.load(layout=layout_hint, is_signed=is_signed)
 
 
