@@ -1789,6 +1789,117 @@ class TCGen05Test(TestCase):
     np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
 
   @parameterized.product(
+      in_jax_dtype=(jnp.float16, jnp.bfloat16),
+      m=(128,),  # TODO(apaszke): 256
+      n=(128, 256),  # TODO(apaszke): other non-power-of-2
+      lhs_swizzle=(32, 64, 128),
+      rhs_swizzle=(64, 128),  # 32 is too small and unsuported.
+  )
+  def test_mma_sparse_lhs_tmem(
+      self, m, n, in_jax_dtype, lhs_swizzle, rhs_swizzle
+  ):
+    out_jax_dtype = jnp.float32
+    sparse_meta_dtype = jnp.uint2
+
+    in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
+    k = 256
+    rhs_tiling = (8, 8 * rhs_swizzle // bitwidth(in_mlir_dtype))
+
+    def kernel(ctx, lhs, rhs, lhs_sparse_gmem, out, scratch):
+      (
+          rhs_smem,
+          lhs_sparse_smem,
+          barriers,
+          mma_barrier,
+          acc,
+          lhs_tmem,
+          lhs_sparse,
+      ) = scratch
+      ctx.async_copy(
+          src_ref=rhs,
+          dst_ref=rhs_smem,
+          barrier=barriers[0],
+          swizzle=rhs_swizzle,
+          gmem_transform=mgpu.TileTransform(rhs_tiling),
+      )
+      ctx.async_copy(
+          src_ref=lhs_sparse_gmem, dst_ref=lhs_sparse_smem, barrier=barriers[1]
+      )
+      barriers[0].wait()
+      barriers[1].wait()
+      lhs_tmem.store(
+          fa.FragmentedArray.load_untiled(
+              lhs, layout=tcgen05.LAYOUT, optimized=False
+          )
+      )
+      tcgen05.commit_tmem()
+      with mgpu.single_thread():
+        tcgen05.async_copy_sparse_metadata_smem_to_tmem(
+            lhs_sparse_smem, lhs_sparse
+        )
+        tcgen05.mma(
+            acc,
+            lhs_tmem,
+            rhs_smem,
+            a_swizzle=lhs_swizzle,
+            b_swizzle=rhs_swizzle,
+            a_sparse_metadata=lhs_sparse,
+            accumulate=False,
+        )
+        tcgen05.commit_arrive(mma_barrier)
+      mma_barrier.wait(orders_tensor_core=True)
+      acc.load().store_untiled(out, optimized=False)
+
+    x_shape = (m, k // 2)
+    x = self.prng.uniform(-1, 1, x_shape).astype(in_jax_dtype)
+    y_shape = (k, n)
+    y = self.prng.uniform(-1, 1, y_shape).astype(in_jax_dtype)
+    out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
+    scratch_shape = [
+        jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
+        jax.ShapeDtypeStruct((m // 128, k // 128, 128, 64), sparse_meta_dtype),
+        mgpu.TMABarrier(2),
+        mgpu.Barrier(1),
+        mgpu.TMEM((m, n), out_jax_dtype),
+        mgpu.TMEM((m, k // 2), in_jax_dtype, packing=2),
+        mgpu.TMEM(
+            (m, k // 2), sparse_meta_dtype, layout=tcgen05.sparse_meta_layout()
+        ),
+    ]
+    index_pairs = np.asarray(np.meshgrid(range(4), range(4))).T.reshape(-1, 2)
+    valid_pairs = index_pairs[index_pairs[:, 0] < index_pairs[:, 1]]
+    assert len(valid_pairs) == 6
+    x_pairs = jax.random.randint(
+        jax.random.key(1234), (m, k // 4), 0, 6, dtype=jnp.uint8
+    )
+    x_sparse = valid_pairs[x_pairs]
+    assert x_sparse.shape == (m, k // 4, 2)
+
+    def format_sparse_meta(meta):
+      mn, k, _2 = meta.shape
+      assert _2 == 2
+      k *= 2
+      return (
+          meta.reshape(mn // 128, 8, 2, 8, k // 64, 4, 2, 8)
+          .transpose(0, 4, 1, 6, 3, 5, 2, 7)
+          .reshape(mn // 128, k // 64, 128, 64)
+          .astype(sparse_meta_dtype)
+      )
+
+    x_gpu_sparse = format_sparse_meta(x_sparse)
+    args = (x, y, x_gpu_sparse)
+    z = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), args, out_shape, scratch_shape
+    )(*args)
+    x_logical = np.zeros_like(x, shape=(m, k // 4, 4))
+    np.put_along_axis(x_logical, x_sparse, x.reshape(x_sparse.shape), axis=-1)
+    x_logical = x_logical.reshape(m, k)
+    ref = x_logical.astype(jnp.float32) @ y.astype(jnp.float32)
+    atol = 2e-2 if out_jax_dtype == jnp.float16 else 7e-5
+    rtol = 8e-4 if out_jax_dtype == jnp.float16 else 5e-6
+    np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
+
+  @parameterized.product(
       lhs_transpose=(False, True),
       rhs_transpose=(False, True),
       in_jax_dtype=(jnp.float16,),

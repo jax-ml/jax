@@ -195,8 +195,10 @@ def mma(
   if isinstance(a, TMEMRef):
     m, k2 = a.shape
     element_type2 = a.dtype
-    if is_scaled or is_sparse:
-      raise NotImplementedError("A in TMEM unsupported for block-scaled and sparse matmuls")
+    if is_scaled:
+      raise NotImplementedError(
+          "A in TMEM unsupported for block-scaled matmuls"
+      )
     if m != 128:
       raise NotImplementedError(f"Only M=128 is supported for MMA with A in TMEM, but got M={m}")
     # Watch out: this layout must be consistent with D's layout (up to packing).
@@ -481,7 +483,8 @@ def mma(
     if isinstance(a, TMEMRef):
       if m_groups != 1:
         raise NotImplementedError("A address calculation for multiple M tiles")
-      a_mk = a.slice(slice(None), utils.ds(ki * k_group_elems, k_group_elems)).address
+      a_k_group_elems = k_group_elems // (1 + is_sparse)
+      a_mk = a.slice(slice(None), utils.ds(ki * a_k_group_elems, a_k_group_elems)).address
     else:
       a_offset = mi * a_m_group_stride + ki * a_k_group_stride
       a_mk = arith.addi(a_desc_base, utils.c(mma_utils.encode_addr(a_offset), i64))
@@ -642,8 +645,9 @@ def _do_mma(
           m * num_cta, n * num_cta, d_type, element_type, a_transpose, b_transpose, sparsity_selector=sp_selector
       )
     if a_in_tmem:
+      cols_per_k_group = instr_k // packing // (1 + is_sparse)
       a_desc_or_addr_instr = arith.addi(
-          a_desc_or_addr, arith.constant(i32, k_step * instr_k // packing)
+          a_desc_or_addr, arith.constant(i32, k_step * cols_per_k_group)
       )
     else:
       assert a_k_idx_tiling is not None and a_k_strides is not None
