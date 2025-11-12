@@ -356,9 +356,7 @@ void optimizeStore(int hardware_generation, std::array<int64_t, 2> target_shape,
     store_indices.push_back(IdxConst(0, b, loc));
   }
   Value second_minor_base = b.create<arith::MulIOp>(
-      store_indices.back(),
-      b.create<arith::ConstantOp>(b.getIndexType(),
-                                  b.getI32IntegerAttr(stride)));
+      store_indices.back(), b.create<arith::ConstantIndexOp>(stride));
   store_indices.back() = nullptr;
   store_indices.push_back(IdxConst(0, b, loc));
   SmallVector<int64_t> to_store_shape(tgt_shape.drop_back(expanded_dims));
