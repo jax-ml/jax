@@ -851,6 +851,17 @@ def MosaicGPU_DebugPrintOp : Op<MosaicGPU_Dialect, "debug_print", []> {
   );
 }
 
+def MosaicGPU_PrintLayoutOp : Op<MosaicGPU_Dialect, "print_layout", []> {
+  let summary = "Prints the layout of the given array or TMEM reference.";
+
+  let arguments = (ins
+    StrAttr:$format,
+    AnyTypeOf<[AnyMemRef, AnyVectorOfAnyRank]>:$value
+  );
+
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_BroadcastedIotaOp : Op<MosaicGPU_Dialect, "broadcasted_iota", []> {
   let summary = "Create a broadcasted iota vector.";
   let description = [{
@@ -866,6 +877,5 @@ def MosaicGPU_BroadcastedIotaOp : Op<MosaicGPU_Dialect, "broadcasted_iota", []> 
 
   let hasVerifier = 1;
 }
-
 
 #endif // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_

@@ -1120,6 +1120,19 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
+  def test_print_layout_op_invalid_ref(self):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(
+          (2,), ir.F32Type.get(), memory_space=mgpu_utils.smem()
+      )
+      (ref,) = undefs(ref_ty)
+      mgpu.dialect.print_layout("tmem: {}", ref)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The tmem memref must have a mosaic_gpu.tmem memory space",
+    ):
+      self.module.operation.verify()
+
 
 class DialectLoweringTest(MosaicGpuTest):
 

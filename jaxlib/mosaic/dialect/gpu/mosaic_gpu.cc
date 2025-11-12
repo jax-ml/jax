@@ -720,6 +720,15 @@ llvm::LogicalResult BroadcastedIotaOp::verify() {
   return llvm::success();
 }
 
+llvm::LogicalResult PrintLayoutOp::verify() {
+  if (auto ref_ty = mlir::dyn_cast<mlir::MemRefType>(getValue().getType())) {
+    if (VerifyTmemRefType(getOperation(), ref_ty).failed()) {
+      return llvm::failure();
+    }
+  }
+  return llvm::success();
+}
+
 void MosaicGPUDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST

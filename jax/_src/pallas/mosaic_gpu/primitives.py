@@ -73,30 +73,6 @@ def _check_ref(
     )
 
 
-def _pprint_layout(v: mgpu.FragmentedArray | tcgen05.TMEMRef) -> str:
-  if isinstance(v, mgpu.FragmentedArray):
-    match v.layout:
-      case mgpu.WGMMA_LAYOUT:
-        return "WGMMA"
-      case mgpu.WGMMA_ROW_LAYOUT:
-        return "WGMMA_ROW"
-      case mgpu.WGMMA_TRANSPOSED_LAYOUT:
-        return "WGMMA_TRANSPOSED"
-      case mgpu.TCGEN05_LAYOUT:
-        return "TCGEN05"
-      case mgpu.TCGEN05_TRANSPOSED_LAYOUT:
-        return "TCGEN05_TRANSPOSED"
-      case mgpu.tcgen05.TMEM_NATIVE_LAYOUT:
-        return "TCGEN05_TMEM_NATIVE"
-      case _:
-        return str(v.layout)
-  else:
-    assert isinstance(v, tcgen05.TMEMRef), v
-    if v.layout == tcgen05.tmem_default_layout(packing=v.packing):
-      return f"TMEM_DEFAULT(packing={v.packing})"
-    return str(v.layout)
-
-
 print_layout_p = jax_core.Primitive("print_layout")
 print_layout_p.multiple_results = True
 
@@ -108,9 +84,12 @@ def _print_layout_abstract_eval(aval_in, fmt, *_, **params):
 
 
 @lowering.register_lowering_rule(print_layout_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(
+    print_layout_p, mgpu.LoweringSemantics.Warpgroup
+)
 def _print_layout_lowering(
     ctx: lowering.LoweringRuleContext,
-    x: mgpu.FragmentedArray | tcgen05.TMEMRef,
+    x: mgpu.FragmentedArray | tcgen05.TMEMRef | ir.Value,
     fmt: str,
     *transforms_leaves,
     transforms_tree
@@ -123,7 +102,11 @@ def _print_layout_lowering(
       raise NotImplementedError(
           f"Unsupported transforms {remaining_transforms}."
       )
-  print(fmt.format(_pprint_layout(x)))
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    print(fmt.format(mgpu.dialect_lowering.pprint_layout(x)))
+  else:
+    assert isinstance(x, ir.Value)
+    mgpu.dialect.print_layout(fmt, x)
   return ()
 
 

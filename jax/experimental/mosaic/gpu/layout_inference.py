@@ -688,6 +688,19 @@ if hasattr(mgpu, "DebugPrintOp"):
     return eqns.EquationSystem(), {eqns.Variable(value): [value]}, []
 
 
+if hasattr(mgpu, "PrintLayoutOp"):
+  @_add_equation_system_derivation_rule(mgpu.PrintLayoutOp)
+  def _print_layout_equation_system(
+      ctx: DerivationContext,
+      op: mgpu.PrintLayoutOp,
+  ) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
+    value = ValueSite(op, VariableType.OPERAND, 0)
+    var = (
+        eqns.Variable(value) if is_vector(op.value) else ctx.producer_ref(value)
+    )
+    return eqns.EquationSystem(), {var: [value]}, []
+
+
 if hasattr(mgpu, "BroadcastedIotaOp"):
 
   @_add_equation_system_derivation_rule(mgpu.BroadcastedIotaOp)

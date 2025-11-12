@@ -1275,7 +1275,6 @@ class PallasCallTest(PallasTest):
     self.assertIn("x: [1, 0, 43, 23]: 6871\n", output())
 
   def test_print_layout(self):
-    self.skip_if_wg_semantics()
     shape = (128,)
 
     @functools.partial(
@@ -2739,7 +2738,6 @@ class PallasCallWGTest(
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
     expected_missing_primitives = {
-        mgpu_primitives.print_layout_p,
         mgpu_primitives.async_copy_scales_to_tmem_p,
         mgpu_primitives.async_copy_sparse_metadata_to_tmem_p,
         mgpu_primitives.wait_load_tmem_p,
@@ -3197,7 +3195,6 @@ class PallasCallSm90AWGTest(
 class PallasCallSm100ATest(PallasSm100ATest):
 
   def test_print_layout_tmem(self):
-    self.skip_if_wg_semantics()
     shape = (128, 256)
 
     @functools.partial(
@@ -3207,7 +3204,13 @@ class PallasCallSm100ATest(PallasSm100ATest):
     )
     def kernel(o_ref, tmem_ref):
       del o_ref
-      plgpu.print_layout("tmem: {}", tmem_ref.at[:, :128])
+      if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
+        # Slicing TMEM to make sure we handle transforms correctly.
+        plgpu.print_layout("tmem: {}", tmem_ref.at[:, :128])
+      else:
+        # TODO(b/415721295): Remove this branch once TMEM slicing is supported
+        # for WG semantics.
+        plgpu.print_layout("tmem: {}", tmem_ref)
 
     with self.capture_stdout() as output:
       jax.block_until_ready(kernel())

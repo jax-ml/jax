@@ -2054,6 +2054,27 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module)
 
+  def test_infer_layout_for_print_register_layout_op(self):
+    with ir.InsertionPoint(self.module.body):
+      vec_ty = ir.VectorType.get((128, 128), ir.BF16Type.get())
+      [vec] = undefs(vec_ty)
+      vec = layout_cast(vec, fa.WGMMA_LAYOUT)
+      op = mgpu.dialect.PrintLayoutOp("{}", vec)
+    mgpu.infer_layout(self.module)
+    self.checkInLayouts(op, [fa.WGMMA_LAYOUT])
+
+  def test_infer_layout_for_print_tmem_layout_op(self):
+    layout = tcgen05.tmem_default_layout(packing=1)
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(
+          (128, 128), ir.BF16Type.get(), memory_space=mgpu.utils.tmem()
+      )
+      [ref] = undefs(ref_ty)
+      ref = mgpu.dialect.tmem_layout_cast(ref, layouts.to_layout_attr(layout))
+      op = mgpu.dialect.PrintLayoutOp("{}", ref)
+    mgpu.infer_layout(self.module)
+    self.checkInTmemLayouts(op, [layout])
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

@@ -556,6 +556,47 @@ if hasattr(mgpu, "DebugPrintOp"):
     return []
 
 
+def pprint_layout(v: fa.FragmentedArray | tcgen05.TMEMRef) -> str:
+  if isinstance(v, fa.FragmentedArray):
+    match v.layout:
+      case fa.WGMMA_LAYOUT:
+        return "WGMMA"
+      case fa.WGMMA_ROW_LAYOUT:
+        return "WGMMA_ROW"
+      case fa.WGMMA_TRANSPOSED_LAYOUT:
+        return "WGMMA_TRANSPOSED"
+      case fa.TCGEN05_LAYOUT:
+        return "TCGEN05"
+      case fa.TCGEN05_TRANSPOSED_LAYOUT:
+        return "TCGEN05_TRANSPOSED"
+      case fa.TMEM_NATIVE_LAYOUT:
+        return "TCGEN05_TMEM_NATIVE"
+      case _:
+        return str(v.layout)
+  else:
+    assert isinstance(v, tcgen05.TMEMRef), v
+    if v.layout == tcgen05.tmem_default_layout(packing=v.packing):
+      return f"TMEM_DEFAULT(packing={v.packing})"
+    return str(v.layout)
+
+
+if hasattr(mgpu, "PrintLayoutOp"):
+  @_register_lowering(mgpu.PrintLayoutOp)
+  def _print_layout_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.PrintLayoutOp
+  ) -> Sequence[ir.Value]:
+    del ctx
+    if ir.VectorType.isinstance(op.value.type):
+      (layout,) = inference_utils.in_layouts(op)
+      a = _fragmented_array_from_ir(op.value, layout)
+      print(op.format.value.format(pprint_layout(a)))
+    else:
+      (layout,) = inference_utils.in_tmem_layouts(op)
+      ref = _tmem_ref_from_ir(op.value, layout)
+      print(op.format.value.format(pprint_layout(ref)))
+    return []
+
+
 if hasattr(mgpu, "BroadcastedIotaOp"):
   @_register_lowering(mgpu.BroadcastedIotaOp)
   def _broadcasted_iota_op_lowering_rule(
