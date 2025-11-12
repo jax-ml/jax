@@ -123,6 +123,11 @@ def _load_nvidia_libraries():
   We prefer the Python packages, if present. If not, we fall back to loading
   them from LD_LIBRARY_PATH. By loading the libraries here, later lookups will
   find these copies."""
+  # For Bazel environment: try to load hermetic user mode driver libs first
+  python_runfiles = os.environ.get('PYTHON_RUNFILES')
+  if python_runfiles:
+    _load("cuda_driver", ["libcuda.so.1", "libnvidia-ptxjitcompiler.so.1"])
+    _load("cu13", ["libcuda.so.1", "libnvidia-ptxjitcompiler.so.1"])
   _load("cuda_runtime", ["libcudart.so.12"])
   _load("cu13", ["libcudart.so.13"])
   # cuda_nvrtc isn't directly a dependency of JAX, but CUDNN appears to need it

@@ -31,6 +31,7 @@ load(
 load(
     "//jaxlib:jax.bzl",
     "PLATFORM_TAGS_DICT",
+    "if_cuda_umd_libs",
     "if_pypi_cuda_wheel_deps",
     "jax_py_test",
     "jax_wheel",
@@ -455,6 +456,7 @@ py_import(
     name = "jax_cuda_plugin_py_import",
     wheel = ":jax_cuda{cuda}_plugin_wheel".format(cuda = cuda_major_version),
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
+    zip_deps = if_cuda_umd_libs(["//jax_plugins:cuda_umd_libs"]),
 )
 
 py_import(
@@ -468,6 +470,7 @@ py_import(
     name = "pypi_jax_cuda_plugin_with_cuda_deps",
     wheel = "@pypi_jax_cuda{cuda}_plugin//:whl".format(cuda = cuda_major_version),
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
+    zip_deps = if_cuda_umd_libs(["//jax_plugins:cuda_umd_libs"]),
 )
 
 py_import(
