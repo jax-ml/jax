@@ -3387,25 +3387,36 @@ def _async_copy_to_tmem_lowering_rule(
     raise NotImplementedError(f"Unimplemented transforms for SMEM refs: {smem_transforms}")
   if tmem_transforms:
     raise NotImplementedError(f"Unimplemented transforms for TMEM refs: {tmem_transforms}")
-  impl(smem_ref, tmem_ref)
+  with mgpu.when(ctx.module_ctx.single_lane_predicate):
+    impl(smem_ref, tmem_ref)
   return ()
 
-lowering.register_lowering_rule(
+@lowering.register_lowering_rule(
     async_copy_scales_to_tmem_p, mgpu.LoweringSemantics.Lane
-)(
-    functools.partial(
-        _async_copy_to_tmem_lowering_rule,
-        tcgen05.async_copy_scales_smem_to_tmem,
-    )
 )
-lowering.register_lowering_rule(
+@lowering.register_lowering_rule(
+    async_copy_scales_to_tmem_p,
+    mgpu.LoweringSemantics.Lane,
+    gpu_core.PrimitiveSemantics.Warp,
+)
+def _async_copy_scales_to_tmem_lowering_rule(*args, **kwargs):
+  return _async_copy_to_tmem_lowering_rule(
+      tcgen05.async_copy_scales_smem_to_tmem, *args, **kwargs
+  )
+
+
+@lowering.register_lowering_rule(
     async_copy_sparse_metadata_to_tmem_p, mgpu.LoweringSemantics.Lane
-)(
-    functools.partial(
-        _async_copy_to_tmem_lowering_rule,
-        tcgen05.async_copy_sparse_metadata_smem_to_tmem,
-    )
 )
+@lowering.register_lowering_rule(
+    async_copy_sparse_metadata_to_tmem_p,
+    mgpu.LoweringSemantics.Lane,
+    gpu_core.PrimitiveSemantics.Warp,
+)
+def _async_copy_sparse_metadata_to_tmem_lowering_rule(*args, **kwargs):
+  return _async_copy_to_tmem_lowering_rule(
+      tcgen05.async_copy_sparse_metadata_smem_to_tmem, *args, **kwargs
+  )
 
 
 semaphore_signal_parallel_p = jax_core.Primitive('semaphore_signal_parallel')
