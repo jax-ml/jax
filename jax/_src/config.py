@@ -2239,3 +2239,9 @@ jax_collectives_common_channel_id = bool_flag(
     default=True,
     help="Should collectives use a common channel ID? Temporary feature flag.",
 )
+
+jax_pallas_verbose_errors = bool_flag(
+    "jax_pallas_verbose_errors",
+    default=bool_env("JAX_PALLAS_VERBOSE_ERRORS", False),
+    help="If True, print verbose error messages for Pallas kernels.",
+)
