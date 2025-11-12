@@ -1200,8 +1200,6 @@ class PallasCallTest(PallasTest):
     self.assertEqual(output(), "It works!\n")
 
   def test_print_wgmma_tiled_layout(self):
-    self.skip_if_wg_semantics()
-
     shape = (128, 64)
     size = math.prod(shape)
 
