@@ -1517,6 +1517,23 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
 
   @parameterized.parameters([False, True])
   def test_while_loop_hi_arg(self, jit):
+    box = immutbox_new(1.0)
+
+    def f():
+      def cond_fun(box):
+        return immutbox_get(box) < 10
+      def body_fun(box):
+        return immutbox_new(immutbox_get(box) * 2)
+      return jax.lax.while_loop(cond_fun, body_fun, box)
+
+    if jit:
+      f = jax.jit(f)
+
+    result = f()
+    self.assertAllClose(immutbox_get(result), 16, check_dtypes=False)
+
+  @parameterized.parameters([False, True])
+  def test_while_loop_mut_hi_arg(self, jit):
     box = Box(1.)
 
     def f():
