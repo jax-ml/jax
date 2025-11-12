@@ -3450,11 +3450,16 @@ class PallasCallSm100ATest(PallasSm100ATest):
       m=[64, 128],
       n=[64, 128, 256],
       swizzle=[64, 32],
-      dtype=[jnp.int8, jnp.uint8]
+      dtype=[jnp.int8, jnp.uint8],
+      lhs_tmem=[False, True],
   )
-  def test_integer_matmul(self, m, n, swizzle, dtype):
+  def test_integer_matmul(self, m, n, swizzle, dtype, lhs_tmem):
     if n * jnp.dtype(dtype).itemsize <= swizzle:
       self.skipTest("swizzle too big")
+    if lhs_tmem and m == 64:
+      self.skipTest("m=64 not supported for LHS in TMEM")
+    if lhs_tmem:
+      self.skip_if_wg_semantics()  # Layout inference fails to find a solution.
     k = 128
     is_signed = jnp.issubdtype(dtype, jnp.signedinteger)
     o_dtype = jnp.int32
@@ -3462,9 +3467,19 @@ class PallasCallSm100ATest(PallasSm100ATest):
     in_transforms = self.default_transforms(dtype=dtype, swizzle=swizzle)
     out_transforms = self.default_transforms(dtype=o_dtype)
 
-    def kernel(a_smem, b_smem, out_ref, acc_tmem, scratch_smem, barrier_ref):
+    def kernel(
+        a_smem, b_smem, out_ref, acc_tmem, scratch_smem, barrier_ref, a_tmem_ref
+    ):
+      if lhs_tmem:
+        lhs_ref = a_tmem_ref
+        layout = plgpu.Layout.TCGEN05_TMEM_NATIVE(4)
+        plgpu.async_store_tmem(lhs_ref, plgpu.load(a_smem, (), layout=layout, optimized=False))
+        plgpu.commit_tmem()
+      else:
+        lhs_ref = a_smem
+
       plgpu.tcgen05_mma(
-          acc_tmem, a_smem, b_smem, barrier_ref, accumulate=False
+          acc_tmem, lhs_ref, b_smem, barrier_ref, accumulate=False
       )
       plgpu.barrier_wait(barrier_ref)
       scratch_smem[...] = plgpu.async_load_tmem(acc_tmem)
@@ -3478,6 +3493,10 @@ class PallasCallSm100ATest(PallasSm100ATest):
         plgpu.SMEM((m, n), o_dtype, transforms=out_transforms),
         plgpu.Barrier(orders_tensor_core=True),
     ]
+    if lhs_tmem:
+      scratch_shapes.append(plgpu.TMEM((m, k), dtype, packed=True))
+    else:
+      scratch_shapes.append(None)
 
     f = self.pallas_call(
         kernel,

@@ -1207,7 +1207,8 @@ class TCGen05Test(TestCase):
 
   @parameterized.parameters([(jnp.float32, 1), (jnp.float16, 1), (jnp.float16, 2)])
   def test_load_store_tmem_native(self, jax_dtype, packing):
-
+    # TODO(bchetioui): add a test for int8 with a native layout with vector
+    # length equal to 4 once TMEM load is implemented for it.
     def kernel(ctx, input, output, tmem):
       del ctx
       tmem.store(fa.FragmentedArray.load_untiled(input, layout=tcgen05.TMEM_NATIVE_LAYOUT, optimized=False))
@@ -1468,8 +1469,26 @@ class TCGen05Test(TestCase):
       m=(128,),  # TODO(apaszke): 64, 192, 256
       n=(64, 160, 128, 256),
   )
-  def test_mma_lhs_tmem(self, m, n, in_jax_dtype, out_jax_dtype):
-    swizzle = 128
+  def test_mma_lhs_tmem_float(self, m, n, in_jax_dtype, out_jax_dtype):
+    self._basic_mma_lhs_tmem_test(
+        m, n, in_jax_dtype, out_jax_dtype, tcgen05.LAYOUT, swizzle=128
+    )
+
+  @parameterized.product(
+      in_jax_dtype=(jnp.int8, jnp.uint8),
+      out_jax_dtype=(jnp.int32,),
+      m=(128,),
+      n=(64, 128, 256),
+  )
+  def test_mma_lhs_tmem_integer(self, m, n, in_jax_dtype, out_jax_dtype):
+    self._basic_mma_lhs_tmem_test(
+        m, n, in_jax_dtype, out_jax_dtype, fa.tmem_native_layout(vector_length=4),
+        swizzle=math.gcd(n, 128)
+    )
+
+  def _basic_mma_lhs_tmem_test(
+      self, m, n, in_jax_dtype, out_jax_dtype, lhs_layout, swizzle
+  ):
     k_steps = 2  # Reducing to 1 can be helpful while debugging.
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
@@ -1489,9 +1508,13 @@ class TCGen05Test(TestCase):
           barrier=barrier,
       )
       barrier.wait()
+      if jnp.issubdtype(in_jax_dtype, jnp.integer):
+        is_signed = jnp.issubdtype(in_jax_dtype, jnp.signedinteger)
+      else:
+        is_signed = None
       lhs_tmem.store(
           fa.FragmentedArray.load_untiled(
-              lhs, layout=tcgen05.LAYOUT, optimized=False
+              lhs, layout=lhs_layout, is_signed=is_signed, optimized=False
           )
       )
       tcgen05.commit_tmem()
@@ -1501,7 +1524,7 @@ class TCGen05Test(TestCase):
         )
         tcgen05.commit_arrive(mma_barrier)
       mma_barrier.wait(orders_tensor_core=True)
-      acc.load().store_untiled(out, optimized=False)
+      acc.load(is_signed=is_signed).store_untiled(out, optimized=False)
 
     x_shape = (m, k)
     x = self.prng.uniform(-1, 1, x_shape).astype(in_jax_dtype)
@@ -1515,7 +1538,7 @@ class TCGen05Test(TestCase):
         mgpu.TMABarrier(),
         mgpu.Barrier(1),
         mgpu.TMEM((128, n), out_jax_dtype),
-        mgpu.TMEM((128, k), in_jax_dtype, packing=2),
+        mgpu.TMEM((128, k), in_jax_dtype, packing=4 // bytewidth(in_mlir_dtype)),
     ]
     z = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape
@@ -5071,6 +5094,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       ("custom layout", None, tcgen05.tmem_default_layout(packing=1)),
   )
   def test_tmem_load_store(self, packing, layout):
+    # TODO(bchetioui): add layout inference logic to handle packed/unpacked int8s.
     dtype = jnp.bfloat16
     shape = (128, 128)
 

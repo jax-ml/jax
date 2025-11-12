@@ -1094,7 +1094,7 @@ class TMEMRef:
     )
 
   def store(self, value: fa.FragmentedArray):
-    if utils.bitwidth(self.dtype) not in {16, 32}:
+    if utils.bitwidth(self.dtype) not in {8, 16, 32}:
       raise NotImplementedError(f"Unsupported dtype: {self.dtype}")
     if not isinstance(value, fa.FragmentedArray):
       raise TypeError(f"TMEM stores expect a FragmentedArray, got: {value}")
@@ -1109,11 +1109,18 @@ class TMEMRef:
           f" {self.dtype}"
       )
     packing = self.packing
-    if value.layout == LAYOUT and self.layout == tmem_default_layout(packing=packing):
+    has_default_layout = self.layout == tmem_default_layout(packing=packing)
+    if value.layout == LAYOUT and has_default_layout:
       _store_32xcols(
           self.address, value.registers.T.reshape((4, -1)), packing
       )
-    elif value.layout == TMEM_NATIVE_LAYOUT and self.layout == tmem_default_layout(packing=packing):
+    elif (
+        utils.bitwidth(self.dtype) == 8
+        and value.layout == fa.tmem_native_layout(vector_length=packing)
+        and has_default_layout
+    ):
+      _store_32xcols_native(self.address, value.registers.reshape(-1), packing)
+    elif value.layout == TMEM_NATIVE_LAYOUT and has_default_layout:
       _store_32xcols_native(
           self.address, value.registers.reshape(-1), packing
       )
@@ -1237,12 +1244,14 @@ def _store_32xcols_native(base_addr, vector_regs, tmem_packing) -> None:
   i32 = ir.IntegerType.get_signless(32)
   assert vector_regs.ndim == 1
   cols = len(vector_regs) * TMEM_NATIVE_LAYOUT.vector_length
-
-  reg_packing = 64 // utils.bitwidth(vector_regs.flat[0].type)
-  store_shape = "32x32b"
+  vec_ty = ir.VectorType(vector_regs.flat[0].type)
+  reg_packing = 64 // utils.bitwidth(vec_ty)
+  store_atom_shape = (32, reg_packing)
+  elt_bitwidth = utils.bitwidth(vec_ty.element_type)
   if reg_packing == 1:
-    store_atom_shape = (32, 1)
-    regs = [None] * (len(vector_regs) * 2)
+    # Transform data such that each reg is 32 bits wide.
+    assert elt_bitwidth == 32, elt_bitwidth
+    regs = [None] * cols
     c0 = arith.constant(i32, 0)
     c1 = arith.constant(i32, 1)
     for idx, vreg in enumerate(vector_regs):
@@ -1251,18 +1260,25 @@ def _store_32xcols_native(base_addr, vector_regs, tmem_packing) -> None:
     assert tmem_packing == 1
     unpack = False
   elif reg_packing == 2:
-    store_atom_shape = (32, 2)
+    # In this case, registers are already packed into 32-bit registers.
     regs = vector_regs
-    assert 1 <= tmem_packing <= 2
-    unpack = tmem_packing == 1
+    if elt_bitwidth == 16:
+      assert 1 <= tmem_packing <= 2
+      unpack = tmem_packing == 1
+    else:
+      if tmem_packing == 1:
+        raise NotImplementedError(
+            f"Unsupported packing: {tmem_packing} for element type {elt_bitwidth}"
+        )
+      assert tmem_packing == 32 // elt_bitwidth
+      unpack = False
   else:
     raise NotImplementedError(reg_packing)
-
   it = _transfer_32xcols(base_addr, cols, store_atom_shape, tmem_packing, reg_packing)
   for addr_row_col, instr_num, lane_step, num_slice in it:
     assert lane_step == 0
     regs_slice = regs[num_slice]
-    _tmem_store(addr_row_col, store_shape, instr_num, regs_slice, unpack)
+    _tmem_store(addr_row_col, "32x32b", instr_num, regs_slice, unpack)
 
 
 def _load_32xcols(base_addr, cols, dtype, tmem_packing) -> np.ndarray:
