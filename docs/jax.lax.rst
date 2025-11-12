@@ -172,7 +172,6 @@ Operators
     tanh
     top_k
     transpose
-    zeros_like_array
     zeta
 
 .. _lax-control-flow:
