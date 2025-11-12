@@ -444,8 +444,9 @@ def _while_rule(
       - len(body_jaxpr.jaxpr.invars)
   )
   flat_args = tree_util.tree_leaves(args)
-  cond_consts, body_consts, flat_args = \
-        util.split_list(flat_args, [cond_nconsts, body_nconsts])
+  cond_consts, body_consts, flat_args = util.split_list(
+      flat_args, [new_num_cond_consts, new_num_body_consts]
+  )
   assert len(flat_args) + len(body_consts) == len(
       new_body_jaxpr.jaxpr.invars), (
       f"Length mismatch: {len(flat_args) + len(body_consts)} !="
