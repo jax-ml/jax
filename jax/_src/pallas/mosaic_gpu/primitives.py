@@ -73,22 +73,28 @@ def _check_ref(
     )
 
 
-def _pprint_layout(layout: mgpu.FragmentedLayout) -> str:
-  match layout:
-    case mgpu.WGMMA_LAYOUT:
-      return "WGMMA"
-    case mgpu.WGMMA_ROW_LAYOUT:
-      return "WGMMA_ROW"
-    case mgpu.WGMMA_TRANSPOSED_LAYOUT:
-      return "WGMMA_TRANSPOSED"
-    case mgpu.TCGEN05_LAYOUT:
-      return "TCGEN05"
-    case mgpu.TCGEN05_TRANSPOSED_LAYOUT:
-      return "TCGEN05_TRANSPOSED"
-    case mgpu.tcgen05.TMEM_NATIVE_LAYOUT:
-      return "TCGEN05_TMEM_NATIVE"
-    case _:
-      return str(layout)
+def _pprint_layout(v: mgpu.FragmentedArray | tcgen05.TMEMRef) -> str:
+  if isinstance(v, mgpu.FragmentedArray):
+    match v.layout:
+      case mgpu.WGMMA_LAYOUT:
+        return "WGMMA"
+      case mgpu.WGMMA_ROW_LAYOUT:
+        return "WGMMA_ROW"
+      case mgpu.WGMMA_TRANSPOSED_LAYOUT:
+        return "WGMMA_TRANSPOSED"
+      case mgpu.TCGEN05_LAYOUT:
+        return "TCGEN05"
+      case mgpu.TCGEN05_TRANSPOSED_LAYOUT:
+        return "TCGEN05_TRANSPOSED"
+      case mgpu.tcgen05.TMEM_NATIVE_LAYOUT:
+        return "TCGEN05_TMEM_NATIVE"
+      case _:
+        return str(v.layout)
+  else:
+    assert isinstance(v, tcgen05.TMEMRef), v
+    if v.layout == tcgen05.tmem_default_layout(packing=v.packing):
+      return f"TMEM_DEFAULT(packing={v.packing})"
+    return str(v.layout)
 
 
 print_layout_p = jax_core.Primitive("print_layout")
@@ -96,33 +102,52 @@ print_layout_p.multiple_results = True
 
 
 @print_layout_p.def_effectful_abstract_eval
-def _print_layout_abstract_eval(aval_in, fmt):
-  del aval_in, fmt  # Unused.
+def _print_layout_abstract_eval(aval_in, fmt, *_, **params):
+  del aval_in, fmt, params  # Unused.
   return (), {debugging.debug_effect}
 
 
 @lowering.register_lowering_rule(print_layout_p, mgpu.LoweringSemantics.Lane)
 def _print_layout_lowering(
     ctx: lowering.LoweringRuleContext,
-    arr: mgpu.FragmentedArray,
+    x: mgpu.FragmentedArray | tcgen05.TMEMRef,
     fmt: str,
+    *transforms_leaves,
+    transforms_tree
 ):
-  del ctx  # Unused.
-  print(fmt.format(_pprint_layout(arr.layout)))
+  if transforms_leaves:
+    x, remaining_transforms = lowering._handle_transforms(
+        ctx, x, transforms_tree.unflatten(transforms_leaves),
+    )
+    if remaining_transforms:
+      raise NotImplementedError(
+          f"Unsupported transforms {remaining_transforms}."
+      )
+  print(fmt.format(_pprint_layout(x)))
   return ()
 
 
-def print_layout(fmt: str, array: jax.typing.ArrayLike) -> None:
-  """Prints the layout chosen by Mosaic GPU for a given array.
+def print_layout(fmt: str, x: jax.typing.ArrayLike | _Ref) -> None:
+  """Prints the layout chosen by Mosaic GPU for a given array or TMEM reference.
 
   This is evaluated at compile-time and has no incidence on the runtime behavior
   of the program.
 
   Args:
     fmt: The format string to use for printing the layout.
-    array: The array to print the layout of.
+    x: The array or TMEM reference to print the layout of.
   """
-  print_layout_p.bind(array, fmt=fmt)
+  if isinstance(x, pallas_core.TransformedRef):
+    transforms_leaves, transforms_tree = jax.tree.flatten(x.transforms)
+    x = x.ref
+  else:
+    transforms_leaves, transforms_tree = [], None
+  print_layout_p.bind(
+      x,
+      fmt=fmt,
+      *transforms_leaves,
+      transforms_tree=transforms_tree,
+  )
 
 
 copy_smem_to_gmem_p = jax_core.Primitive("copy_smem_to_gmem")

@@ -1285,7 +1285,7 @@ class PallasCallTest(PallasTest):
 
   def test_print_layout(self):
     self.skip_if_wg_semantics()
-    shape = [128]
+    shape = (128,)
 
     @functools.partial(
         self.pallas_call,
@@ -3205,6 +3205,24 @@ class PallasCallSm90AWGTest(
 
 
 class PallasCallSm100ATest(PallasSm100ATest):
+
+  def test_print_layout_tmem(self):
+    self.skip_if_wg_semantics()
+    shape = (128, 256)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.bfloat16),
+        scratch_shapes=[plgpu.TMEM(shape, jnp.bfloat16, packed=True)],
+    )
+    def kernel(o_ref, tmem_ref):
+      del o_ref
+      plgpu.print_layout("tmem: {}", tmem_ref.at[:, :128])
+
+    with self.capture_stdout() as output:
+      jax.block_until_ready(kernel())
+
+    self.assertIn("tmem: TMEM_DEFAULT(packing=2)\n", output())
 
   def test_mixed_tmem_allocations_raise(self):
     @functools.partial(
