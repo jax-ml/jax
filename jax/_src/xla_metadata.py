@@ -131,9 +131,6 @@ def _target_op_to_attach_metadata(value_mlir: ir.Value) -> ir.Operation | None:
   op = value_mlir.owner
   if op is None or isinstance(op, ir.Block):
     return None
-  # TODO(nbasile): Add logic for handling multiply-by-constant-1.0 ops, which
-  # are often added by jax gradients.
-  # [Couple this change with tagging gradient ops.]
   return op
 
 

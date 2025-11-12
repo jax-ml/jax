@@ -33,17 +33,17 @@ class XlaMetadataTest(jtu.JaxTestCase):
 
   def _assert_metadata_appears_once_per_op(
       self,
-      stable_hlo_text: str,
+      hlo_text: str,
       expected_tagged_ops: list[str],
       metadata: dict[str, str],
   ):
-    attribute_strings = [f'{k} = "{v}"' for k, v in metadata.items()]
+    attribute_strings = [f'{k}="{v}"' for k, v in metadata.items()]
     op_with_metadata_count = {op: 0 for op in expected_tagged_ops}
 
-    for line in stable_hlo_text.splitlines():
+    for line in hlo_text.splitlines():
       for op in expected_tagged_ops:
-        if (op in line and all(attr in line for attr in attribute_strings)
-            and "mhlo.frontend_attributes = " in line):
+        if (str(op + "(") in line and all(attr in line for attr in attribute_strings)
+            and "frontend_attributes=" in line):
           op_with_metadata_count[op] += 1
 
     for op in op_with_metadata_count:
@@ -53,7 +53,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
           f"Expected op '{op}' to have the metadata exactly once,"
           f" but found it {op_with_metadata_count[op]} times\n"
           f"Metadata: {metadata}\n"
-          f"StableHLO Graph:\n\n{stable_hlo_text}",
+          f"HLO Graph:\n\n{hlo_text}",
       )
 
   def test_f_jitted(self):
@@ -384,7 +384,38 @@ class XlaMetadataTest(jtu.JaxTestCase):
       return set_xla_metadata(fn(x), **metadata)
 
     x_scalar = jnp.array(0.7)
-    text = jax.jit(wrapped_fn).lower(x_scalar).as_text()
+    text = jax.jit(wrapped_fn).lower(x_scalar).as_text("hlo")
+    self._assert_metadata_appears_once_per_op(
+        text, [expected_tagged_op], metadata)
+
+  @parameterized.parameters(
+      ("x*x", lambda x: x * x, "add"),
+      # TODO(b/459818130): Re-enable once stablehlo changes (cl/797055546) are on HEAD.
+      # ("sin(x)", jnp.sin, "cosine"),
+      ("tanh(x)", jnp.tanh, "add"),
+      ("1/x", lambda x: 1 / x, "negate"),
+      ("sinc(x)", jnp.sinc, "call"),
+  )
+  def test_value_grad_tagging(self, name, fn, expected_tagged_op):
+    metadata = {"test_value_grad_tagging": name}
+
+    @jax.custom_vjp
+    def wrapped_fn(x):
+      return fn(x)
+
+    def fwd(*args):
+      primal_out, vjp_fn = jax.vjp(fn, *args)
+      return primal_out, vjp_fn
+
+    def bwd(vjp_fn, cts_in):
+      cts_out = vjp_fn(cts_in)
+      cts_out = set_xla_metadata(cts_out, **metadata)
+      return cts_out
+
+    wrapped_fn.defvjp(fwd, bwd)
+
+    x_scalar = jnp.array(0.7)
+    text = jax.jit(jax.grad(wrapped_fn)).lower(x_scalar).as_text("hlo")
     self._assert_metadata_appears_once_per_op(
         text, [expected_tagged_op], metadata)
 
@@ -404,7 +435,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
     z_batch = rng.random((batch_size, num_rows, num_rows)).astype(np.float32)
     inputs = (x_batch, y_batch, z_batch)
 
-    text = jax.jit(vmapped_fn).lower(*inputs).as_text()
+    text = jax.jit(vmapped_fn).lower(*inputs).as_text("hlo")
     self._assert_metadata_appears_once_per_op(
         text, ["add", "subtract"], metadata)
 
@@ -419,7 +450,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
     def wrapped_fn(x):
       return set_xla_metadata(x * 2.0, **metadata)
 
-    text = jax.jit(wrapped_fn).lower(arr).as_text()
+    text = jax.jit(wrapped_fn).lower(arr).as_text("hlo")
     self._assert_metadata_appears_once_per_op(text, ["multiply"], metadata)
 
   def test_scan_support_value_tagging(self):
@@ -435,7 +466,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
       return jax.lax.scan(scan_body_val_with_metadata, init_carry, inputs_arr)
 
     inputs = (jnp.array(0.0), jnp.arange(1, 4, dtype=jnp.float32))
-    text = jax.jit(scan_fn).lower(*inputs).as_text()
+    text = jax.jit(scan_fn).lower(*inputs).as_text("hlo")
     self._assert_metadata_appears_once_per_op(text, ["multiply"], metadata)
 
 
