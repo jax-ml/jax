@@ -141,6 +141,7 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
   try:
     if (core.trace_state_clean() and not config.debug_key_reuse.value
         and not p.params['jaxpr'].jaxpr.is_high):
+      if 'vmap' in str(p.params['jaxpr']): pass
       args_flat = map(core.full_lower, args_flat)
       core.check_eval_args(args_flat)
       out_flat, compiled, profiler, const_args = _pjit_call_impl_python(
