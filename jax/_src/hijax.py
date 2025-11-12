@@ -350,7 +350,7 @@ class VJPHiPrimitive:
     raise NotImplementedError(f"subclass {type(self)} must implement `expand`")
 
   def vjp_fwd(self, *args):
-    raise NotImplementedError(f"for AD support, subclass {type(self)} must "
+    raise NotImplementedError(f"for grad support, subclass {type(self)} must "
                               "implement `vjp_fwd`")
 
   def vjp_bwd(self, res, outgrad, *arg_accums):
@@ -359,12 +359,16 @@ class VJPHiPrimitive:
 
   def vjp_bwd_retval(self, res, outgrad):
     # Classic API: returns values instead of using accumulators
-    raise NotImplementedError(f"for AD support, subclass {type(self)} must "
+    raise NotImplementedError(f"for grad support, subclass {type(self)} must "
                               "implement `vjp_bwd` or `vjp_bwd_retval`")
 
   def batch(self, axis_data, args, dims):
     raise NotImplementedError(f"for vmap support, subclass {type(self)} must "
                               "implement `batch`")
+
+  def jvp(self, primals, tangents):
+    raise NotImplementedError(f"for jvp support, subclass {type(self)} must "
+                              "implement `jvp`")
 
   def __call__(self, *args):
     args_flat = tree_leaves_checked(self.in_tree, args)
@@ -405,8 +409,8 @@ def _call_hi_primitive_batcher(axis_data, args_flat, dims_flat, prim):
   args = tree_unflatten(prim.in_tree, args_flat)
   dims = tree_unflatten(prim.in_tree, dims_flat)
   ans, dims = prim.batch(axis_data, args, dims)
-  ans_flat, ans_tree = tree_flatten(ans)
-  dims_flat = ans_tree.flatten_up_to(dims)
+  ans_flat = tree_leaves_checked(prim.out_tree, ans)
+  dims_flat = prim.out_tree.flatten_up_to(dims)
   return ans_flat, dims_flat
 batching.fancy_primitive_batchers[call_hi_primitive_p] = _call_hi_primitive_batcher
 
@@ -443,3 +447,12 @@ def _call_hi_primitive_linearized_transpose(cts_flat, *args, prim, residuals_tre
   none = prim.vjp_bwd(residuals, cts, *accums)
   assert none is None
 ad.fancy_transposes[call_hi_primitive_linearized_p] = _call_hi_primitive_linearized_transpose
+
+def _call_hi_primitive_jvp(primals, tangents, *, prim):
+  primals = tree_unflatten(prim.in_tree, primals)
+  tangents = tree_unflatten(prim.in_tree, tangents)
+  out_primals, out_tangents =  prim.jvp(primals, tangents)
+  out_primals_flat = tree_leaves_checked(prim.out_tree, out_primals)
+  out_tangents_flat = prim.out_tree.flatten_up_to(out_tangents)
+  return out_primals_flat, out_tangents_flat
+ad.primitive_jvps[call_hi_primitive_p] = _call_hi_primitive_jvp
