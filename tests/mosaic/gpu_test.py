@@ -663,17 +663,25 @@ class WGMMALayoutTest(TestCase):
       jax_dtype_from_to=(
           (jnp.int8, jnp.bfloat16),
           (jnp.int4, jnp.bfloat16),
+          (jnp.int4, jnp.float8_e4m3fn),
           (jnp.int4, jnp.int8),
+          # TODO(apaszke,bchetioui): bf16/f32 -> f8e4m3fn
       ),
-      layout=(
-          fa.WGMMA_LAYOUT,
-          fa.WGMMA_LAYOUT_UPCAST_2X,
-          fa.WGMMA_LAYOUT_UPCAST_4X,
+      layout_desc=(
+          "WGMMA_LAYOUT",
+          "WGMMA_LAYOUT_8BIT",
+          "WGMMA_LAYOUT_UPCAST_2X",
+          "WGMMA_LAYOUT_UPCAST_4X",
       ),
       change_layout=(False, True),
   )
   @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
-  def test_optimized_conversion(self, jax_dtype_from_to, layout, change_layout):
+  def test_optimized_conversion(self, jax_dtype_from_to, layout_desc, change_layout):
+    if change_layout and layout_desc == "WGMMA_LAYOUT":
+      self.skipTest("No-op relayout")
+    if change_layout and layout_desc == "WGMMA_LAYOUT_8BIT":
+      self.skipTest("Unimplemented relayout")
+    layout: fa.TiledLayout = getattr(fa, layout_desc)
     jax_dtype_from, jax_dtype_to = jax_dtype_from_to
     mlir_dtype_from = utils.dtype_to_ir_type(jax_dtype_from)
     mlir_dtype_to = utils.dtype_to_ir_type(jax_dtype_to)
@@ -697,8 +705,6 @@ class WGMMALayoutTest(TestCase):
       t = t.astype(mlir_dtype_to, is_signed=utils.is_signed(jax_dtype_to))
       t.store_untiled(out, optimized=False)
 
-    # We only test lossless conversions for now.
-    # TODO(apaszke): Test and fix failures that appear with lossy conversions.
     int_sample_dtype = getattr(
         jnp,
         "int" + str(min(bitwidth(mlir_dtype_from), bitwidth(mlir_dtype_to))),
@@ -709,9 +715,25 @@ class WGMMALayoutTest(TestCase):
     ).astype(jax_dtype_from)
 
     expected = values.astype(np.int32).astype(jax_dtype_to)
-    res = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), values, expected, ()
-    )(values)
+    @contextlib.contextmanager
+    def _maybe_profile():
+      yield; return   # Comment to gather statistics.
+      with jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"), self.capture_stdout() as sass:
+        yield
+      log_dir = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR", "/tmp")
+      file_path = os.path.join(log_dir, "conversion_stats.csv")
+      with open(file_path, "a") as f:
+        data = (
+            jnp.dtype(jax_dtype_from).name, jnp.dtype(jax_dtype_to).name,
+            layout_desc, change_layout, sass().count("\n"),
+        )
+        f.write(",".join(map(str, data)) + "\n")
+        f.flush()
+      self.fail("Disable profiling before submission")
+    with _maybe_profile():
+      res = mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), values, expected, ()
+      )(values)
     np.testing.assert_array_equal(res, expected)
 
   @parameterized.named_parameters(
