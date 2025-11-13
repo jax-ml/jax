@@ -562,6 +562,7 @@ rocm_nanobind_extension(
     enable_stub_generation = False,
     module_name = "rocm_plugin_extension",
     deps = [
+        ":hip_gpu_kernel_helpers",
         ":py_client_gpu",
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/gpu:gpu_plugin_extension",
