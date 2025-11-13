@@ -293,7 +293,7 @@ struct MemRefSliceEraseLayout : public OpRewritePattern<MemRefSliceOp> {
     auto slice = MemRefSliceOp::create(rewriter, op.getLoc(), new_result_type,
                                        layout_ref, op.getBaseIdx(),
                                        op.getDynamicSizes());
-    rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), slice);
+    rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, slice);
     return success();
   }
 };
@@ -461,7 +461,7 @@ LogicalResult MemRefSqueezeOp::canonicalize(MemRefSqueezeOp op,
 
   auto new_squeeze =
       MemRefSqueezeOp::create(rewriter, op.getLoc(), new_ty, layout_ref);
-  rewriter.replaceOpWithNewOp<tpu::EraseLayoutOp>(op, target_type, new_squeeze);
+  rewriter.replaceOpWithNewOp<tpu::EraseLayoutOp>(op, new_squeeze);
   return success();
 }
 
@@ -615,7 +615,7 @@ LogicalResult MemRefReshapeOp::canonicalize(MemRefReshapeOp op,
                       layout_ty.getMemorySpace());
   auto reshape =
       MemRefReshapeOp::create(rewriter, op.getLoc(), new_result_ty, layout_ref);
-  rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), reshape);
+  rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, reshape);
   return success();
 }
 
@@ -710,7 +710,7 @@ LogicalResult MemRefBitcastOp::canonicalize(MemRefBitcastOp op,
                       layout_ty.getMemorySpace());
   auto bitcast =
       MemRefBitcastOp::create(rewriter, op.getLoc(), new_result_ty, layout_ref);
-  rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), bitcast);
+  rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, bitcast);
   return success();
 }
 
@@ -876,6 +876,16 @@ LogicalResult ReinterpretCastOp::verify() {
   return success(
       source_type.getMemorySpace() &&  // Require memory space annotations.
       source_type.getMemorySpace() == target_type.getMemorySpace());
+}
+
+LogicalResult EraseLayoutOp::inferReturnTypes(
+    MLIRContext* context, std::optional<Location> location,
+    EraseLayoutOp::Adaptor adaptor,
+    ::llvm::SmallVectorImpl<Type>& inferredReturnTypes) {
+  inferredReturnTypes.push_back(
+      MemRefType::Builder(cast<MemRefType>(adaptor.getOperand().getType()))
+          .setLayout(nullptr));
+  return success();
 }
 
 template <typename Op>

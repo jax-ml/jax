@@ -108,10 +108,8 @@ struct MemRefCastEraseLayout : public OpRewritePattern<memref::CastOp> {
         MemRefType::Builder(orig_type).setShape(cast_shape);
     auto new_cast_op = memref::CastOp::create(rewriter, cast_op.getLoc(),
                                               new_cast_type, orig_value);
-    MemRefType new_erase_layout_type =
-        MemRefType::Builder(new_cast_type).setLayout(nullptr);
-    auto new_erase_layout_op = EraseLayoutOp::create(
-        rewriter, erase_layout_op.getLoc(), new_erase_layout_type, new_cast_op);
+    auto new_erase_layout_op =
+        EraseLayoutOp::create(rewriter, erase_layout_op.getLoc(), new_cast_op);
     rewriter.replaceOp(cast_op, new_erase_layout_op);
     return success();
   }

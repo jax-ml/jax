@@ -1089,7 +1089,11 @@ def TPU_AssumeLayoutOp : TPU_Op<"assume_layout", [Pure]> {
   }];
 }
 
-def TPU_EraseLayoutOp : TPU_Op<"erase_memref_layout", [Pure]> {
+// Erases the layout attribute from the memref.
+//
+// The resulting memref is identical to the input, except that it has an
+// identity layout.
+def TPU_EraseLayoutOp : TPU_Op<"erase_memref_layout", [Pure, InferTypeOpAdaptor]> {
   let arguments = (ins AnyMemRef:$operand);
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
