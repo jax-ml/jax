@@ -296,6 +296,34 @@ def pull_block_spec(
   return wrapped
 
 
+def _block_dim_equal(
+    b1: int | pallas_core.BlockDim | None, b2: int | pallas_core.BlockDim | None
+) -> bool:
+  block_size1 = pallas_core.get_block_size(b1)
+  block_size2 = pallas_core.get_block_size(b2)
+  match (b1, b2):
+    case (None, _) | (_, None):
+      return b1 == b2
+    case (
+        (pallas_core.Blocked(), int())
+        | (int(), pallas_core.Blocked())
+        | (pallas_core.Blocked(), pallas_core.Blocked())
+        | (int(), int())
+    ):
+      return block_size1 == block_size2
+    case _:
+      return type(b1) == type(b2) and (block_size1 == block_size2)
+
+
+def _block_shapes_equal(
+    bs1: tuple[int | pallas_core.BlockDim | None] | None,
+    bs2: tuple[int | pallas_core.BlockDim | None] | None,
+) -> bool:
+  if bs1 is None or bs2 is None:
+    return bs1 == bs2
+  return all(_block_dim_equal(b1, b2) for b1, b2 in zip(bs1, bs2))
+
+
 def _pull_block_spec(
     jaxpr: core.Jaxpr,
     out_block_specs: tuple[pallas_core.BlockSpec, ...],
@@ -393,7 +421,8 @@ def _pull_block_spec(
       if (
           not isinstance(v, core.Literal)
           and v in env
-          and env[v].block_shape != in_block_spec.block_shape
+          and not _block_shapes_equal(env[v].block_shape,
+                                      in_block_spec.block_shape)
       ):
         in_block_spec = pallas_core.BlockSpec(_illegal, _illegal)  # pytype: disable=wrong-arg-types
       _write_block_spec(v, in_block_spec)
@@ -436,7 +465,7 @@ def make_kernel_function(
   def _remove_nones(
       shape: tuple[pallas_core.BlockDim | int | None, ...] | None,
   ) -> tuple[int, ...]:
-    assert shape is not None
+    assert isinstance(shape, tuple)
     new_shape = tuple(_block_size(s) for s in shape)
     return tuple(s for s in new_shape if s is not None)
 
