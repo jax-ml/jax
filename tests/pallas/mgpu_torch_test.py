@@ -53,8 +53,8 @@ class TorchTest(jtu.JaxTestCase):
     if attention_mgpu is None:
       self.skipTest("Mosaic GPU not available.")
     if (not jtu.test_device_matches(["cuda"]) or
-        not jtu.is_cuda_compute_capability_equal("9.0")):
-      self.skipTest("Only works on GPU with capability sm90a")
+        not jtu.is_cuda_compute_capability_at_least("9.0")):
+      self.skipTest("Only works on GPU with capability sm90a+")
     self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
 
   def test_simple_pallas_call(self):
@@ -130,7 +130,8 @@ class TorchTest(jtu.JaxTestCase):
       plgpu.as_torch_kernel(lambda x, y: (kernel(x, y), x, y))(x, y)
 
   def test_attention(self):
-    self.skipTest("Need to add support for kernels wrapped in jax.jit")
+    if not jtu.is_cuda_compute_capability_equal("9.0"):
+      self.skipTest("Test requires compute capability == 9.0")
     batch_size = 1
     q_seq_len = 4096
     kv_seq_len = 4096

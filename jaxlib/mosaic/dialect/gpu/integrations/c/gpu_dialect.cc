@@ -16,10 +16,19 @@ limitations under the License.
 #include "jaxlib/mosaic/dialect/gpu/integrations/c/gpu_dialect.h"
 
 #include "mlir/CAPI/Registration.h"
+#include "mlir/Dialect/Func/Extensions/InlinerExtension.h"
+#include "mlir/Dialect/LLVMIR/Transforms/InlinerInterfaceImpl.h"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 
 extern "C" {
 
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(MosaicGPU, mosaic_gpu,
                                       mosaic_gpu::MosaicGPUDialect);
+
+void mlirDialectRegistryInsertMosaicGpuInlinerExtensions(
+    MlirDialectRegistry registry) {
+  mlir::LLVM::registerInlinerInterface(*unwrap(registry));
+  mlir::func::registerInlinerExtension(*unwrap(registry));
 }
+
+}  // extern "C"

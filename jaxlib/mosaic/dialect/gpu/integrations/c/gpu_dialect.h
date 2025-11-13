@@ -26,6 +26,9 @@ extern "C" {
 
 MLIR_DECLARE_CAPI_DIALECT_REGISTRATION(MosaicGPU, mosaic_gpu);
 
+MLIR_CAPI_EXPORTED void
+mlirDialectRegistryInsertMosaicGpuInlinerExtensions(MlirDialectRegistry registry);
+
 #ifdef __cplusplus
 }
 #endif
