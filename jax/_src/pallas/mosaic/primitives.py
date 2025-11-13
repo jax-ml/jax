@@ -723,7 +723,7 @@ def dma_wait_partial_discharge_rule(should_discharge,
 
   num_sem_transforms = len(tree_util.tree_leaves(dst_sem_transforms_avals))
   num_transforms = len(tree_util.tree_leaves(dst_ref_transforms_avals))
-  updates = state_discharge.transform_array(dst_ref, dst_ref_transforms)
+  updates = state_discharge.transform_array(dst_ref[...], dst_ref_transforms)
   copy_size = jnp.minimum(updates.size, pl_core.SEMAPHORE_MAX_VALUE)
   copy_size = jnp.array(copy_size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
   sem_value = primitives._transform_semaphore(dst_sem, dst_sem_transforms, dst_sem_aval)

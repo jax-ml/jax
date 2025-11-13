@@ -4143,6 +4143,24 @@ class MiscellaneousTest(PallasBaseTest):
 class MiscellaneousInterpretTest(MiscellaneousTest):
   INTERPRET: bool = True
 
+  def test_async_copy_slice(self):
+    # https://github.com/jax-ml/jax/issues/33260
+    def kernel(o):
+      @functools.partial(pl.run_scoped,
+                         sem=pltpu.SemaphoreType.DMA,
+                         x=pltpu.MemorySpace.VMEM((1,), jnp.float32))
+      def _(sem, x):
+        x[...] = jnp.ones_like(x)
+        @functools.partial(pl.run_scoped,
+                           y=pltpu.MemorySpace.VMEM((1, 1,), jnp.float32))
+        def _(y):
+          pltpu.async_copy(x, y.at[0], sem).wait()
+          o[...] = y[0]
+
+    result = pl.pallas_call(kernel, out_shape=jax.ShapeDtypeStruct(
+      (1,), jnp.float32), interpret=True)()
+    np.testing.assert_array_equal(result, np.ones((1,), dtype=jnp.float32))
+
 
 class PallasKernelMetadataTest(PallasBaseTest):
 
