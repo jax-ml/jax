@@ -1794,34 +1794,29 @@ def vector_slice(v: ir.Value, s: slice):
 
 
 def vector_concat(vectors: Sequence[ir.Value]) -> ir.Value:
-  index = ir.IndexType.get()
   if not vectors:
     raise ValueError("Cannot concatenate an empty list of vectors")
   vty = vectors[0].type
   if not ir.VectorType.isinstance(vty):
     raise ValueError("Cannot concatenate non-vector values")
+  vty = ir.VectorType(vty)
   if vty.rank != 1:
     raise NotImplementedError("Only 1D vectors are supported")
   for v in vectors:
     if v.type != vty:
       raise ValueError("Cannot concatenate vectors of different types")
-  result = llvm.mlir_undef(
-      ir.VectorType.get((vty.shape[0] * len(vectors),), vty.element_type)
-  )
-  offset = 0
-  for v in vectors:
-    for i in range(vty.shape[0]):
-      elem = vector.extract(
-          v, dynamic_position=[], static_position=ir.DenseI64ArrayAttr.get([i])
-      )
-      result = vector.insert(
-          elem,
-          result,
-          dynamic_position=[],
-          static_position=ir.DenseI64ArrayAttr.get([offset + i]),
-      )
-    offset += vty.shape[0]
-  return result
+  return _vector_concat_rec(vectors)
+
+
+def _vector_concat_rec(vectors: Sequence[ir.Value]) -> ir.Value:
+  if len(vectors) == 1:
+    return vectors[0]
+  elif len(vectors) == 2:
+    [vec_len] = ir.VectorType(vectors[0].type).shape
+    return vector.shuffle(*vectors, mask=ir.DenseI64ArrayAttr.get(list(range(2 * vec_len))))
+  l = _vector_concat_rec(vectors[: len(vectors) // 2])
+  r = _vector_concat_rec(vectors[len(vectors) // 2 :])
+  return _vector_concat_rec([l, r])
 
 
 def is_known_divisible(value, divisor, max_depth=10) -> bool:
