@@ -125,15 +125,15 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
                                        int64_t leading_tile_rows = 0) {
   if (auto tiled_layout_attr =
           dyn_cast<TiledLayoutAttr>(memref_ty.getLayout())) {
-    if (leading_tile_rows > 0 && !tiled_layout_attr.getTiles().empty() &&
-        tiled_layout_attr.getTiles().front().dimensions().size() == 2 &&
-        tiled_layout_attr.getTiles().front().dimensions()[0] !=
-            leading_tile_rows) {
+    const ArrayRef<xla::Tile> tiles = tiled_layout_attr.getTiles();
+    if (leading_tile_rows > 0 && !tiles.empty() &&
+        tiles.front().dimensions().size() == 2 &&
+        tiles.front().dimensions()[0] != leading_tile_rows) {
       return emitError(UnknownLoc::get(memref_ty.getContext()),
                        "Trying to infer memref layout with sublane tiling ")
              << leading_tile_rows
              << ", but the memref already has sublane tiling "
-             << tiled_layout_attr.getTiles().front().dimensions()[0];
+             << tiles.front().dimensions()[0];
     }
     return tiled_layout_attr;
   }
@@ -440,6 +440,8 @@ struct InferMemRefLayoutPass
   void runOnOperation() override {
     // Fail if hardware_generation has not been set from the default value.
     if (hardware_generation < 0) {
+      getOperation().emitError("hardware_generation must be set")
+          << hardware_generation;
       signalPassFailure();
       return;
     }
