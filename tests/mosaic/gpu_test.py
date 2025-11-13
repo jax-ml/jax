@@ -1567,7 +1567,7 @@ class TCGen05Test(TestCase):
       )._debug_print()
       copy(src, out)
 
-    shape = (1, 32, 16)
+    shape = (1, 1, 32, 16)
     x = jax.lax.bitcast_convert_type(
         np.arange(math.prod(shape), dtype=np.uint8).reshape(shape), dtype
     )
@@ -1601,8 +1601,8 @@ class TCGen05Test(TestCase):
   def test_mma_block_scaled(self, m, n, in_jax_dtype):
     out_jax_dtype = jnp.float32
     scale_jax_dtype = jnp.float8_e8m0fnu
-    swizzle = 128 // (8 // jnp.finfo(in_jax_dtype).bits)
-    k_steps = 1
+    swizzle = 128
+    k_steps = 2
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
 
@@ -1648,24 +1648,29 @@ class TCGen05Test(TestCase):
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_shape, lhs_tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
-        jax.ShapeDtypeStruct((m // 128, 32, 16), scale_jax_dtype),
-        jax.ShapeDtypeStruct((n // 128, 32, 16), scale_jax_dtype),
+        jax.ShapeDtypeStruct((m // 128, k // (32 * 4), 32, 16), scale_jax_dtype),
+        jax.ShapeDtypeStruct((n // 128, k // (32 * 4), 32, 16), scale_jax_dtype),
         mgpu.TMABarrier(4),
         mgpu.Barrier(1),
         mgpu.TMEM((m, n), out_jax_dtype),
-        mgpu.TMEM((m, 4), scale_jax_dtype, layout=tcgen05.scales_layout()),
-        mgpu.TMEM((n, 4), scale_jax_dtype, layout=tcgen05.scales_layout()),
+        mgpu.TMEM((m, k // 32), scale_jax_dtype, layout=tcgen05.scales_layout()),
+        mgpu.TMEM((n, k // 32), scale_jax_dtype, layout=tcgen05.scales_layout()),
     ]
     ka, kb = jax.random.split(jax.random.key(1234), 2)
     a_scales = jax.lax.bitcast_convert_type(
-        jax.random.randint(ka, (m, 4), 122, 132, dtype=jnp.uint8), scale_jax_dtype
+        jax.random.randint(ka, (m, k // 32), 122, 132, dtype=jnp.uint8), scale_jax_dtype
     )
     b_scales = jax.lax.bitcast_convert_type(
-        jax.random.randint(kb, (n, 4), 122, 132, dtype=jnp.uint8), scale_jax_dtype
+        jax.random.randint(kb, (n, k // 32), 122, 132, dtype=jnp.uint8), scale_jax_dtype
     )
     def format_scales(scales):
-      assert scales.shape[0] % 128 == 0 and scales.shape[1] == 4
-      return scales.reshape(-1, 4, 32, 4).swapaxes(1, 2).reshape(-1, 32, 16)
+      mn, k = scales.shape
+      assert mn % 128 == 0 and k % 4 == 0, scales.shape
+      return (
+          scales.reshape(mn // 128, 4, 32, k // 4, 4)
+          .transpose(0, 3, 2, 1, 4)
+          .reshape(mn // 128, k // 4, 32, 16)
+      )
     a_gpu_scales, b_gpu_scales = map(format_scales, (a_scales, b_scales))
     args = (x, y, a_gpu_scales, b_gpu_scales)
     z = mgpu.as_gpu_kernel(
@@ -1675,9 +1680,7 @@ class TCGen05Test(TestCase):
     a_logical_scales = jnp.repeat(a_scales, 32, axis=1).astype(jnp.float32)
     b_logical_scales = jnp.repeat(b_scales, 32, axis=1).astype(jnp.float32)
     ref = (x32 * a_logical_scales) @ (y32 * b_logical_scales).T
-    atol = 2e-2 if out_jax_dtype == jnp.float16 else 7e-5
-    rtol = 8e-4 if out_jax_dtype == jnp.float16 else 5e-6
-    np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
+    np.testing.assert_allclose(z, ref, atol=2e-4, rtol=5e-6)
 
   @parameterized.product(
       lhs_transpose=(False, True),
