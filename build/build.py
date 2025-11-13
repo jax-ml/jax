@@ -723,8 +723,12 @@ async def main():
           "-", "_"
       )
     elif "rocm" in wheel:
-      # Use wildcard pattern to match any ROCm version (rocm60, rocm7, etc.)
-      wheel_dir = wheel.replace("rocm", "rocm*").replace("-", "_")
+      if args.editable:
+        # For editable builds, use the actual ROCm version since directory paths cannot contain wildcards
+        wheel_dir = wheel.replace("rocm", f"rocm{args.rocm_version}").replace("-", "_")
+      else:
+        # For non-editable builds, use wildcard pattern to match any ROCm version in glob patterns
+        wheel_dir = wheel.replace("rocm", "rocm*").replace("-", "_")
     else:
       wheel_dir = wheel
 
