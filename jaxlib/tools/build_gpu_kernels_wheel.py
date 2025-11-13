@@ -72,6 +72,9 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
+if args.enable_cuda and not args.nvidia_wheel_versions_data:
+  parser.error('argument --nvidia_wheel_versions_data is required for CUDA builds')
+
 r = runfiles.Create()
 pyext = "pyd" if build_utils.is_windows() else "so"
 
