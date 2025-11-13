@@ -529,6 +529,8 @@ class Divides:
         tiling = t
       case RegisterLayout(value=fa.TiledLayout() as layout):
         tiling = layout.base_tile_shape
+      case TMEMLayout(value):
+        tiling = value.base_tile_shape
       case _:
         return None
 

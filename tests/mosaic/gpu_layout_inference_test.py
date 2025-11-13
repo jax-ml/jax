@@ -1660,36 +1660,52 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_transforms_for_subview_raises_on_slice_incompatible_with_tile(
       self, annotate_input
   ):
-    shape = (2, 64, 64)
-    elt_ty = ir.BF16Type.get()
-
-    in_ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
-    out_ref_ty = ir.MemRefType.get((2, 64, 32), elt_ty, memory_space=mgpu.utils.smem())
-
     with ir.InsertionPoint(self.module.body):
+      in_ref_ty = ir.MemRefType.get(
+          (2, 64, 64), ir.BF16Type.get(), memory_space=mgpu.utils.smem()
+      )
       [in_ref] = undefs(in_ref_ty)
 
       transforms = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((32, 16)),
-        mgpu.dialect.SwizzleTransformAttr.get(32),
+          mgpu.dialect.TileTransformAttr.get((32, 16)),
+          mgpu.dialect.SwizzleTransformAttr.get(32),
       ])
 
       if annotate_input:
         in_ref = mgpu.dialect.with_transforms(in_ref, transforms)
 
-      subview_op = memref.SubViewOp(
-          out_ref_ty,
-          in_ref,
-          [],
-          [],
-          [],
-          static_offsets = [1, 0, 0],
-          static_sizes = [2, 64, 8],
-          static_strides = [1, 1, 1]
+      out_ref = memref.subview(
+          in_ref, offsets=[1, 0, 0], sizes=[2, 64, 8], strides=[1, 1, 1]
       )
 
       if not annotate_input:
-        mgpu.dialect.with_transforms(subview_op.result, transforms)
+        mgpu.dialect.with_transforms(out_ref, transforms)
+
+    with self.assertRaisesRegex(ValueError, "Failed to infer"):
+      mgpu.infer_layout(self.module)
+
+  @parameterized.parameters([False, True])
+  def test_infer_tmem_layouts_for_subview_raises_on_slice_incompatible_with_tile(
+      self, annotate_input
+  ):
+    with ir.InsertionPoint(self.module.body):
+      in_ref_ty = ir.MemRefType.get(
+          (128, 64), ir.BF16Type.get(), memory_space=mgpu.utils.tmem()
+      )
+      [in_ref] = undefs(in_ref_ty)
+
+      layout = tcgen05.tmem_default_layout(packing=1)
+      layout_attr = layouts.to_layout_attr(layout)
+
+      if annotate_input:
+        in_ref = mgpu.dialect.tmem_layout_cast(in_ref, layout_attr)
+
+      out_ref = memref.subview(
+          in_ref, offsets=[1, 0], sizes=[2, 64], strides=[1, 1]
+      )
+
+      if not annotate_input:
+        mgpu.dialect.tmem_layout_cast(out_ref, layout_attr)
 
     with self.assertRaisesRegex(ValueError, "Failed to infer"):
       mgpu.infer_layout(self.module)
@@ -1807,13 +1823,10 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_transforms_for_subview_handles_dynamic_offsets(
       self, annotate_input
   ):
-    shape = (32, 32, 32, 32)
-    elt_ty = ir.BF16Type.get()
-
-    in_ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
-    out_ref_ty = ir.MemRefType.get((16, 16, 32, 32), elt_ty, memory_space=mgpu.utils.smem())
-
     with ir.InsertionPoint(self.module.body):
+      in_ref_ty = ir.MemRefType.get(
+          (32, 32, 32, 32), ir.BF16Type.get(), memory_space=mgpu.utils.smem()
+      )
       [in_ref] = undefs(in_ref_ty)
 
       transforms = ir.ArrayAttr.get([
@@ -1825,33 +1838,54 @@ class LayoutInferenceTest(parameterized.TestCase):
         in_ref = mgpu.dialect.with_transforms(in_ref, transforms)
 
       c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
-      subview_op = memref.SubViewOp(
-          out_ref_ty,
+      out_ref = memref.subview(
           in_ref,
-          [c(16), c(4), arith.muli(c(8), c(3))],
-          [],
-          [],
-          static_offsets=[
-              ir.ShapedType.get_dynamic_size(),
-              ir.ShapedType.get_dynamic_size(),
-              ir.ShapedType.get_dynamic_size(),
-              0,
-          ],
-          static_sizes=[16, 16, 32, 32],
-          static_strides=[1, 1, 1, 1],
+          offsets=[c(16), c(4), arith.muli(c(8), c(3)), 0],
+          sizes=[16, 16, 32, 32],
+          strides=[1, 1, 1, 1],
       )
 
       if not annotate_input:
-        mgpu.dialect.with_transforms(subview_op.result, transforms)
+        mgpu.dialect.with_transforms(out_ref, transforms)
 
     mgpu.infer_layout(self.module)
+    self.assertSequenceEqual(
+        inference_utils.in_transforms(out_ref.owner), [transforms]
+    )
+    self.assertSequenceEqual(
+        inference_utils.out_transforms(out_ref.owner), [transforms]
+    )
 
-    self.assertSequenceEqual(
-        inference_utils.in_transforms(subview_op), [transforms]
-    )
-    self.assertSequenceEqual(
-        inference_utils.out_transforms(subview_op), [transforms]
-    )
+  @parameterized.parameters([False, True])
+  def test_infer_tmem_layouts_for_subview_handles_dynamic_offsets(
+      self, annotate_input
+  ):
+    with ir.InsertionPoint(self.module.body):
+      in_ref_ty = ir.MemRefType.get(
+          (128, 256), ir.BF16Type.get(), memory_space=mgpu.utils.tmem()
+      )
+      [in_ref] = undefs(in_ref_ty)
+
+      layout = tcgen05.tmem_default_layout(packing=1)
+      layout_attr = layouts.to_layout_attr(layout)
+
+      if annotate_input:
+        in_ref = mgpu.dialect.tmem_layout_cast(in_ref, layout_attr)
+
+      c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
+      out_ref = memref.subview(
+          in_ref,
+          offsets=[c(0), arith.muli(c(16), c(4))],
+          sizes=[128, 128],
+          strides=[1, 1],
+      )
+
+      if not annotate_input:
+        mgpu.dialect.tmem_layout_cast(out_ref, layout_attr)
+
+    mgpu.infer_layout(self.module)
+    self.checkInTmemLayouts(out_ref.owner, [layout])
+    self.checkOutTmemLayouts(out_ref.owner, [layout])
 
   def test_custom_primitive_op_retains_transforms(self):
     with ir.InsertionPoint(self.module.body):

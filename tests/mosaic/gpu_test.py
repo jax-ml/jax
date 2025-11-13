@@ -5570,6 +5570,46 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
     self.assertArraysEqual(x_out, x)
     self.assertArraysEqual(y_out, y)
 
+  def test_tmem_subview(self):
+    def body(ctx, in_ref, out_ref, tmem):
+      del ctx
+      # GMEM -> Registers -> TMEM
+      in_reg = mgpu_dialect.vector_load(in_ref)
+      slice_in = memref.subview(
+          tmem, offsets=[0, 8], sizes=[128, 200], strides=[1, 1]
+      )
+      slice_in = memref.subview(
+          slice_in, offsets=[0, 0], sizes=[128, 128], strides=[1, 1]
+      )
+      mgpu_dialect.async_store_tmem(in_reg, slice_in)
+      tcgen05.commit_tmem()
+
+      def dynamic_idx(idx: int) -> ir.Value:
+        idx_type = ir.IndexType.get()
+        return arith.constant(idx_type, idx)
+
+      # TMEM -> Registers -> GMEM
+      slice_out = memref.subview(
+          tmem,
+          offsets=[dynamic_idx(0), dynamic_idx(8)],
+          sizes=[128, 128],
+          strides=[1, 1],
+      )
+      out_reg = mgpu_dialect.async_load_tmem(slice_out)
+      mgpu_dialect.vector_store(out_reg, out_ref)
+
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=jax.ShapeDtypeStruct((128, 128), jnp.float32),
+        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.float32),
+        smem_scratch_shape=mgpu.TMEM((128, 256), jnp.float32),
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+    x = self.prng.uniform(-100, 100, (128, 128)).astype(jnp.float32)
+    self.assertArraysEqual(kernel(x), x)
+
 
 class UtilsTest(TestCase):
   @parameterized.parameters(

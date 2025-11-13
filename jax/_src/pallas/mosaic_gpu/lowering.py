@@ -1449,7 +1449,10 @@ def _handle_transforms(
         indices = _bubble_up(
             lambda t, idxs: t.untransform_index(mlir_dtype, idxs), indices
         )
-        if isinstance(transformed_ref, tcgen05.TMEMRef):
+        if (
+            isinstance(transformed_ref, tcgen05.TMEMRef)
+            and ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane
+        ):
           transformed_ref = transformed_ref.slice(*indices)
         else:
           transformed_ref = mgpu.memref_slice(transformed_ref, indices)

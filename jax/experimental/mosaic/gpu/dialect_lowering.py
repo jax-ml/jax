@@ -1441,6 +1441,29 @@ def _memref_subview_op_lowering_rule(
 ) -> Sequence[ir.Value]:
   del ctx
 
+  if any(s != 1 for s in op.static_strides):
+    raise NotImplementedError("SubViewOp only supports static strides of 1.")
+  if op.sizes:
+    raise NotImplementedError("SubViewOp only supports static sizes.")
+  src_ty = ir.MemRefType(op.source.type)
+
+  if utils.is_memref_transposed(src_ty):
+    raise NotImplementedError("SubViewOp does not support transposed memrefs.")
+
+  if utils.is_tmem_ref(src_ty):
+    [in_tmem_layout] = inference_utils.in_tmem_layouts(op)
+    [out_tmem_layout] = inference_utils.out_tmem_layouts(op)
+    assert in_tmem_layout == out_tmem_layout
+    ref = _tmem_ref_from_ir(op.source, in_tmem_layout)
+    indices = []
+    dynamic_offset_index = 0
+    for offset, size in zip(op.static_offsets, op.static_sizes, strict=True):
+      if ir.ShapedType.is_dynamic_size(offset):
+        offset = op.offsets[dynamic_offset_index]
+        dynamic_offset_index += 1
+      indices.append(utils.DynamicSlice(offset, size))
+    return [_tmem_ref_to_ir(ref.slice(*indices))]
+
   in_transforms = inference_utils.in_transforms(op)[0]
   out_transforms = inference_utils.out_transforms(op)[0]
 
@@ -1449,22 +1472,11 @@ def _memref_subview_op_lowering_rule(
         "SubViewOp transforms for the input and output refs must be identical."
     )
 
-  if any(s != 1 for s in op.static_strides):
-    raise NotImplementedError(
-        "SubViewOp only supports static strides of 1."
-    )
-
-  if utils.is_memref_transposed(op.source.type):
-    raise NotImplementedError(
-        "SubViewOp does not support transposed memrefs."
-    )
-
   unwrapped_source_ref = unwrap_transformed_memref(op.source, in_transforms)
   swizzle, transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
   if swizzle != mgpu.SwizzlingMode.kNoSwizzle:
-    source_ty = ir.MemRefType(op.source.type)
-    swizzle_elems = swizzle * 8 // utils.bitwidth(source_ty.element_type)
-    source_strides, _ = source_ty.get_strides_and_offset()
+    swizzle_elems = swizzle * 8 // utils.bitwidth(src_ty.element_type)
+    source_strides, _ = src_ty.get_strides_and_offset()
     for stride, offset, size in zip(
         source_strides, op.static_offsets, op.static_sizes, strict=True
     ):
@@ -1772,6 +1784,14 @@ def _tmem_ref_from_ir(
       layout.tiling, layout.warp_dims, layout.lane_dims, layout.vector_dim
   )
   return tcgen05.TMEMRef(tmem_addr, shape, el_ty, tmem_layout)
+
+
+def _tmem_ref_to_ir(ref: tcgen05.TMEMRef) -> ir.Value:
+  """Returns an IR value from a TMEMRef."""
+  type = ir.MemRefType.get(ref.shape, ref.dtype, memory_space=mgpu_utils.tmem())
+  cast = builtin.UnrealizedConversionCastOp([type], [ref.address])
+  cast.attributes["layout"] = layouts_lib.to_layout_attr(ref.layout)
+  return cast.result
 
 
 @_register_lowering(mgpu.TcGen05MMAOp)
@@ -2155,6 +2175,7 @@ def _should_lower(op: ir.OpView) -> bool:
       op.OPERATION_NAME.startswith("mosaic_gpu.")  # pytype: disable=attribute-error
       or inference_utils.should_have_layout(op)
       or inference_utils.should_have_transforms(op)
+      or inference_utils.should_have_tmem_layout(op)
       or any(bool(b) for r in op.regions for b in r)  # Does it have subblocks?
   )
 

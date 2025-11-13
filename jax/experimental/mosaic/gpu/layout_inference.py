@@ -1450,7 +1450,7 @@ def _memref_subview_equation_system(
   dest = ValueSite(op, VariableType.RESULT, 0)
   source_dest_var = ctx.producer_ref(source)
 
-  if any(map(lambda s: s != 1, op.static_strides)):
+  if any(s != 1 for s in op.static_strides):
     raise NotImplementedError(
         f"Only unit strides are supported but got {op.static_strides}."
     )
@@ -1473,7 +1473,7 @@ def _memref_subview_equation_system(
     if ir.ShapedType.is_dynamic_size(size):
       tiling_multiple = []
     else:
-      src_type = ir.ShapedType(op.source.type)
+      src_type = ir.MemRefType(op.source.type)
       divisibility_constraint = math.gcd(size, src_type.shape[i])
       if isinstance(offset, int):
         divisibility_constraint = math.gcd(divisibility_constraint, offset)

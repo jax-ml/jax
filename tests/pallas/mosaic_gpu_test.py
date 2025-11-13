@@ -3204,13 +3204,8 @@ class PallasCallSm100ATest(PallasSm100ATest):
     )
     def kernel(o_ref, tmem_ref):
       del o_ref
-      if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
-        # Slicing TMEM to make sure we handle transforms correctly.
-        plgpu.print_layout("tmem: {}", tmem_ref.at[:, :128])
-      else:
-        # TODO(b/415721295): Remove this branch once TMEM slicing is supported
-        # for WG semantics.
-        plgpu.print_layout("tmem: {}", tmem_ref)
+      # Slicing TMEM to make sure we handle transforms correctly.
+      plgpu.print_layout("tmem: {}", tmem_ref.at[:, :128])
 
     with self.capture_stdout() as output:
       jax.block_until_ready(kernel())
@@ -3412,7 +3407,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
     np.testing.assert_array_equal(x_result, x + 1)
 
   def test_tmem_column_slicing(self):
-    self.skip_if_wg_semantics()
     transforms = self.default_transforms(dtype=jnp.float32)
     @functools.partial(
         self.kernel,
@@ -3806,7 +3800,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
     np.testing.assert_allclose(result, x @ y, rtol=1e-3)
 
   def test_matmul_with_sliced_accumulator(self):
-    self.skip_if_wg_semantics()  # Slicing TMEM is not supported.
     dtype = jnp.bfloat16
     shape = (128, 128)
     tmem_shape = (128, 2 * 128)

@@ -21,6 +21,7 @@ import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import equations
 from jax.experimental.mosaic.gpu import fragmented_array as fa
 from jax.experimental.mosaic.gpu import launch_context as lc
+from jax.experimental.mosaic.gpu import tcgen05
 
 config.parse_flags_with_absl()
 
@@ -469,6 +470,10 @@ class EquationSystemTest(parameterized.TestCase):
     with self.subTest("RegisterLayout"):
       tiling = equations.RegisterLayout(fa.WGMMA_LAYOUT)
       self.assertTrue(equations.Divides(tiling, (0, 64)).holds())
+    with self.subTest("TMEMLayout"):
+      layout = tcgen05.tmem_default_layout(packing=1)
+      tiling = equations.TMEMLayout(layout)
+      self.assertTrue(equations.Divides(tiling, (0, 64)).holds())
 
   def test_divides_constraints_are_not_satisfied_by_non_divisor_tiling(self):
     with self.subTest("SMEMTiling"):
@@ -476,6 +481,10 @@ class EquationSystemTest(parameterized.TestCase):
       self.assertFalse(equations.Divides(tiling, (4, 3)).holds())
     with self.subTest("RegisterLayout"):
       tiling = equations.RegisterLayout(fa.WGMMA_LAYOUT)
+      self.assertFalse(equations.Divides(tiling, (3, 64)).holds())
+    with self.subTest("TMEMLayout"):
+      layout = tcgen05.tmem_default_layout(packing=1)
+      tiling = equations.TMEMLayout(layout)
       self.assertFalse(equations.Divides(tiling, (3, 64)).holds())
 
   def test_reduce_merges_divides_constraints_on_same_variable(self):
