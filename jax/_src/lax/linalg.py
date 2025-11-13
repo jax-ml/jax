@@ -2024,7 +2024,11 @@ def _svd_jvp_rule(
       algorithm=algorithm,
   )
 
-  if compute_uv and full_matrices:
+  if (
+      compute_uv
+      and full_matrices
+      and not core.definitely_equal(A.shape[-2], A.shape[-1])
+  ):
     # TODO: implement full matrices case, documented here: https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
     raise NotImplementedError(
       "Singular value decomposition JVP not implemented for full matrices")
