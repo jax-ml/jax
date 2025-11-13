@@ -3931,6 +3931,7 @@ def _debug_print_rule(
     static_args,
     np_printoptions,
     has_placeholders,
+    logging_record,
 ):
   del partitioned, np_printoptions
   if ordered:

@@ -689,6 +689,7 @@ pytype_strict_library(
         ":shard_map",
         ":sharding",
         ":sharding_impls",
+        ":source_info_util",
         ":tree_util",
         ":util",
         ":xla_bridge",
