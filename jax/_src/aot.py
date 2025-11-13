@@ -147,6 +147,10 @@ def component_batcher(
   return vals_out, dims_out()
 
 
+def component_jvp(arg_values, arg_tangents):
+  pass
+
+
 component_p = core.Primitive("component")
 component_p.multiple_results = True
 component_p.def_impl(component_impl)
