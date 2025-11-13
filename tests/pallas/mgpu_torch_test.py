@@ -166,6 +166,17 @@ class TorchTest(jtu.JaxTestCase):
         kernel_fn(jnp.asarray(q), jnp.asarray(k), jnp.asarray(v)),
     )
 
+  def test_torch_aliasing(self):
+    @pl.kernel(mesh=plgpu.Mesh(), out_shape=(), compiler_params=plgpu.CompilerParams())
+    def kernel(x_ref):
+      x_ref[...] = jnp.ones_like(x_ref)
+
+    x = torch.zeros(128, dtype=torch.float32, device="cuda")
+    plgpu.as_torch_kernel(kernel)(x)  # Run for side effects
+    np.testing.assert_array_equal(
+        x.cpu(), torch.ones((128,), dtype=torch.float32, device="cpu")
+    )
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
