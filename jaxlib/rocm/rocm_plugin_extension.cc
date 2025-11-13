@@ -14,7 +14,6 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstdint>
-#include <functional>
 #include <string>
 
 #include "absl/log/log.h"
