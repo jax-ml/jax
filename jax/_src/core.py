@@ -2398,14 +2398,14 @@ def pvary(x, axis_name):
   if not axis_name:
     return x
   xs, treedef = tree_flatten(x)
-  ys = pvary_p.bind(*xs, axes=axes, axis_index_groups=None)
+  ys = pvary_p.bind(*xs, axes=axes)
   return tree_unflatten(treedef, ys)
 
 pvary_p = Primitive('pvary')
 pvary_p.multiple_results = True
-pvary_p.def_impl(lambda *args, axes, axis_index_groups: args)
+pvary_p.def_impl(lambda *args, axes: args)
 
-def _pvary_abstract_eval(*args, axes, axis_index_groups):
+def _pvary_abstract_eval(*args, axes):
   if not config._check_vma.value:
     return args
   check_unreduced_args(args, 'pvary')

@@ -3297,4 +3297,4 @@ def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
 
 ########################### pvary ##################################
 
-register_lowering(core.pvary_p, lambda ctx, *x, axes, axis_index_groups: x)
+register_lowering(core.pvary_p, lambda ctx, *x, axes: x)

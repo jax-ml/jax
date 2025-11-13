@@ -1234,11 +1234,10 @@ skippable_batchers[add_jaxvals_p] = lambda _: ()
 
 ########################### core. ##################################
 
-def _pvary_batcher(vals_in, dims_in, *, axes, axis_index_groups):
+def _pvary_batcher(vals_in, dims_in, *, axes):
   if any(type(axis) is int for axis in axes):
     raise NotImplementedError
-  vals_out = core.pvary_p.bind(*vals_in, axes=axes,
-                          axis_index_groups=axis_index_groups)
+  vals_out = core.pvary_p.bind(*vals_in, axes=axes)
   return vals_out, dims_in
 primitive_batchers[core.pvary_p] = _pvary_batcher
 

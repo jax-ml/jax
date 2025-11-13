@@ -166,8 +166,7 @@ def bind_psum_invariant(leaves, *, axes, axis_index_groups):
     in_vma = core.get_aval(x).vma
     args_.append(pvary(x, tuple(pbroadcast_names))
                  if (pbroadcast_names := axes_ - in_vma) else x)
-  return psum_invariant_p.bind(*args_, axes=axes,
-                               axis_index_groups=axis_index_groups)
+  return psum_invariant_p.bind(*args_, axes=axes)
 
 
 def pmean(x, axis_name, *, axis_index_groups=None):
@@ -943,10 +942,9 @@ def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
   ]
   return out_avals, {core.NamedAxisEffect(axis) for axis in named_axes}
 
-def _psum_invariant_abstract_eval(name, *args, axes, axis_index_groups):
+def _psum_invariant_abstract_eval(name, *args, axes):
   if not config._check_vma.value:
-    return psum_p.abstract_eval(
-        *args, axes=axes, axis_index_groups=axis_index_groups)
+    return psum_p.abstract_eval(*args, axes=axes, axis_index_groups=None)
 
   assert isinstance(axes, tuple)
   _check_axis_names(axes, 'psum')
@@ -961,11 +959,6 @@ def _psum_invariant_abstract_eval(name, *args, axes, axis_index_groups):
 
   named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
   pos_axes = tuple(axis for axis in axes if isinstance(axis, int))
-  if axis_index_groups is not None:
-    if len(pos_axes) != 0:
-      raise ValueError(
-          "axis_index_groups can only be used with reductions over "
-          f"named axes, but got: {axes}")
   core.check_avals_context_mesh(args, name)
   check_unreduced_args(args, name)
   out_avals = [
@@ -982,8 +975,7 @@ def _pmin_pmax_abstract_eval(name, *args, axes, axis_index_groups):
   if not config._check_vma.value:
     return _allreduce_effectful_abstract_eval(
         *args, axes=axes, axis_index_groups=axis_index_groups)
-  return _psum_invariant_abstract_eval(
-      name, *args, axes=axes, axis_index_groups=axis_index_groups)
+  return _psum_invariant_abstract_eval(name, *args, axes=axes)
 
 def _check_axis_names(axes, api_name):
   named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
@@ -2343,34 +2335,42 @@ psum_invariant_p.multiple_results = True
 psum_invariant_p.def_impl(psum_p.impl)
 psum_invariant_p.def_effectful_abstract_eval(
     partial(_psum_invariant_abstract_eval, psum_invariant_p.name))
-mlir.register_lowering(psum_invariant_p,
-                       partial(_allreduce_lowering, lax.add_p, lax.reduce_sum))
+
+def _psum_invariant_lowering_rule(prim, pos_fn, ctx, *args, axes):
+  return _allreduce_lowering(prim, pos_fn, ctx, *args, axes=axes,
+                             axis_index_groups=None)
+mlir.register_lowering(
+    psum_invariant_p,
+    partial(_psum_invariant_lowering_rule, lax.add_p, lax.reduce_sum))
+
+def _psum_invariant_batching_rule(
+    prim, if_unmapped, axis_data, vals_in, dims_in, axes):
+  return _batched_reduction_collective(
+      prim, if_unmapped, axis_data, vals_in, dims_in, axes, None)
 batching.fancy_primitive_batchers[psum_invariant_p] = partial(
-    _batched_reduction_collective, psum_invariant_p,
+    _psum_invariant_batching_rule, psum_invariant_p,
     lambda v, axis_size: axis_size * v)
 batching.skippable_batchers[psum_invariant_p] = partial(_names_in_param, 'axes')
 
-def _psum_invariant_transpose_rule(cts, *args, axes, axis_index_groups):
+def _psum_invariant_transpose_rule(cts, *args, axes):
   def f(ct, arg):
     assert ad.is_undefined_primal(arg)
     return ad.Zero(arg.aval) if type(ct) is ad.Zero else ct
   cts = map(f, cts, args)
   nonzero_out_cts, treedef = tree_util.tree_flatten(cts)
-  nonzero_in_cts = core.pvary_p.bind(*nonzero_out_cts, axes=axes,
-                                     axis_index_groups=axis_index_groups)
+  nonzero_in_cts = core.pvary_p.bind(*nonzero_out_cts, axes=axes)
   return tree_util.tree_unflatten(treedef, nonzero_in_cts)
 ad.deflinear2(psum_invariant_p, _psum_invariant_transpose_rule)
 
 ########################### pvary ##################################
 
-def _pvary_transpose_rule(cts, *args, axes, axis_index_groups):
+def _pvary_transpose_rule(cts, *args, axes):
   def f(ct, arg):
     assert ad.is_undefined_primal(arg)
     return ad.Zero(arg.aval) if type(ct) is ad.Zero else ct
   cts = map(f, cts, args)
   nonzero_out_cts, treedef = tree_util.tree_flatten(cts)
-  nonzero_in_cts = psum_invariant_p.bind(*nonzero_out_cts, axes=axes,
-                                         axis_index_groups=axis_index_groups)
+  nonzero_in_cts = psum_invariant_p.bind(*nonzero_out_cts, axes=axes)
   return tree_util.tree_unflatten(treedef, nonzero_in_cts)
 ad.deflinear2(core.pvary_p, _pvary_transpose_rule)
 
