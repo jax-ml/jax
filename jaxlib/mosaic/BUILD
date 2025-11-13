@@ -60,7 +60,10 @@ cc_library(
     ] + glob([
         "dialect/tpu/transforms/*.h",
     ]),
-    # compatible with libtpu
+    compatible_with = [
+        "//buildenv/target:libtpu",
+        "//buildenv/target:non_prod",
+    ],
     deps = [
         ":pass_boilerplate",
         ":serde",
@@ -105,7 +108,10 @@ cc_library(
 
 gentbl_cc_library(
     name = "tpu_inc_gen",
-    # compatible with libtpu
+    compatible_with = [
+        "//buildenv/target:libtpu",
+        "//buildenv/target:non_prod",
+    ],
     tbl_outs = {
         "dialect/tpu/tpu_ops.h.inc": ["-gen-op-decls"],
         "dialect/tpu/tpu_ops.cc.inc": ["-gen-op-defs"],
@@ -140,7 +146,10 @@ td_library(
     srcs = [
         "dialect/tpu/tpu.td",
     ],
-    # compatible with libtpu
+    compatible_with = [
+        "//buildenv/target:libtpu",
+        "//buildenv/target:non_prod",
+    ],
     deps = [
         "@llvm-project//mlir:BuiltinDialectTdFiles",
         "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
@@ -264,7 +273,10 @@ filegroup(
 cc_library(
     name = "pass_boilerplate",
     hdrs = ["pass_boilerplate.h"],
-    # compatible with libtpu
+    compatible_with = [
+        "//buildenv/target:libtpu",
+        "//buildenv/target:non_prod",
+    ],
     deps = [
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
@@ -276,7 +288,10 @@ cc_library(
     name = "serde",
     srcs = ["serde.cc"],
     hdrs = ["serde.h"],
-    # compatible with libtpu
+    compatible_with = [
+        "//buildenv/target:libtpu",
+        "//buildenv/target:non_prod",
+    ],
     deps = [
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:DataLayoutInterfaces",
