@@ -116,6 +116,7 @@ limitations under the License.
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"
+#include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/stream_executor/cuda/assemble_compilation_provider.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/compilation_provider_options.h"
@@ -438,6 +439,14 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     abort();
   }
 #endif
+  // Use `div.full` for float32 division---this generates better SASS.
+  const std::vector<std::string> llvm_cl_options{"-nvptx-prec-divf32=1"};
+  // Acquire a lock over the LLVM command line options here. XLA uses this
+  // lock to override the default LLVM command line options on a per-client
+  // basis. This means that failing to acquire this lock and explicitly
+  // setting our own command line options makes compilation dependent on
+  // outside state/non-deterministic.
+  xla::llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_cl_options);
   auto passes = GetPassPipeline(module.getContext(), compilation_provider, cc,
                                 sm, ptx_isa, nvshmem_path);
   if (mlir::failed(passes)) {
