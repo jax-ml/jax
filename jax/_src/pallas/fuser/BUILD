@@ -111,7 +111,9 @@ pytype_strict_library(
         "fusion.py",
     ],
     deps = [
+        ":block_spec",
         "//jax",
+        "//jax/_src:tree_util",
         "//jax/_src:util",
     ],
 )
