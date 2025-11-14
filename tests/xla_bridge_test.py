@@ -224,6 +224,20 @@ class XlaBridgeTest(jtu.JaxTestCase):
         xb._backend_factories["foo"].factory()
     mock_make.assert_called_once()
 
+  def test_num_cpu_devices_update(self):
+    xb.devices()
+
+    current_val = config.config.jax_num_cpu_devices
+
+    config.update("jax_num_cpu_devices", current_val)
+
+    with self.assertRaisesRegex(
+        RuntimeError,
+        "jax_num_cpu_devices config should be updated before backends are"
+        " initialized",
+    ):
+      config.update("jax_num_cpu_devices", current_val + 2)
+
 
 class GetBackendTest(jtu.JaxTestCase):
 

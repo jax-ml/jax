@@ -1170,10 +1170,12 @@ def make_pjrt_tpu_topology(topology_name='', **kwargs):
       topology_name, **kwargs
   )
 
-def _validate_backend_not_initialized(new_val):
+def _validate_backend_not_initialized(name, new_val):
   if backends_are_initialized():
+    if getattr(config.config, name) == new_val:
+      return
     raise RuntimeError(
-        "jax_num_cpu_devices config should be updated before backends are"
+        f"{name} config should be updated before backends are"
         " initialized i.e. before any JAX operation is executed. You should"
         " initialize this config immediately after `import jax`.")
 
@@ -1184,7 +1186,7 @@ num_cpu_devices = config.int_state(
         "Number of CPU devices to use. If not provided, the value of "
         "the XLA flag --xla_force_host_platform_device_count is used."
         " Must be set before JAX is initialized."),
-    validator=_validate_backend_not_initialized,
+    validator=partial(_validate_backend_not_initialized, "jax_num_cpu_devices"),
 )
 
 cpu_get_local_topology_timeout_minutes = config.int_state(
@@ -1194,7 +1196,8 @@ cpu_get_local_topology_timeout_minutes = config.int_state(
         "Timeout in minutes for getting the local topology of each CPU device"
         " when building the global topology."
     ),
-    validator=_validate_backend_not_initialized,
+    validator=partial(_validate_backend_not_initialized,
+                      "jax_cpu_get_local_topology_timeout_minutes"),
 )
 
 cpu_get_global_topology_timeout_minutes = config.int_state(
@@ -1205,5 +1208,6 @@ cpu_get_global_topology_timeout_minutes = config.int_state(
         " should be strictly greater than"
         " `--jax_cpu_get_local_topology_timeout_minutes`."
     ),
-    validator=_validate_backend_not_initialized,
+    validator=partial(_validate_backend_not_initialized,
+                      "jax_cpu_get_global_topology_timeout_minutes"),
 )
