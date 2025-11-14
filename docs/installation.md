@@ -322,6 +322,16 @@ rebuilt. If automation or testing must be done against nightlies or you cannot
 use our full index, use the extra index `https://us-python.pkg.dev/ml-oss-artifacts-published/jax-public-nightly-artifacts-registry/simple/`
 which only contains nightly artifacts.
 
+The nightly index URLs can also be browsed directly. The `--index` URL is a
+[PEP 503](https://peps.python.org/pep-0503/) simple repository index for `pip`,
+and each package has its own sub-directory. For example, you can see the available
+`jax` packages at
+[https://us-python.pkg.dev/ml-oss-artifacts-published/jax-public-nightly-artifacts-registry/simple/jax](https://us-python.pkg.dev/ml-oss-artifacts-published/jax-public-nightly-artifacts-registry/simple/jax),
+`jax-cuda12-pjrt` packages at
+[https://us-python.pkg.dev/ml-oss-artifacts-published/jax-public-nightly-artifacts-registry/simple/jax-cuda12-pjrt](https://us-python.pkg.dev/ml-oss-artifacts-published/jax-public-nightly-artifacts-registry/simple/jax-cuda12-pjrt),
+and `jax-cuda13-pjrt` packages at
+[https://us-python.pkg.dev/ml-oss-artifacts-published/jax-public-nightly-artifacts-registry/simple/jax-cuda13-pjrt](https://us-python.pkg.dev/ml-oss-artifacts-published/jax-public-nightly-artifacts-registry/simple/jax-cuda13-pjrt).
+
 - CPU only:
 
 ```bash
