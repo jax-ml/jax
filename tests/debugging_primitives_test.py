@@ -1106,6 +1106,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     """)
     self.assertEqual(output(), expected)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_visualize_pmap_sharding(self):
     ss = pxla.ShardingSpec(
         sharding=(pxla.Unstacked(8),),

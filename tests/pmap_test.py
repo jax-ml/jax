@@ -868,6 +868,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected = grad(lambda x: jnp.sum(baseline_fun(x)))(x)
     self.assertAllClose(ans, expected, atol=1e-3, rtol=1e-3)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def testArrays(self):
     inner_f = lambda x: 2 * x
     f = self.pmap(inner_f, axis_name='i')
@@ -1760,6 +1761,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     multi_step_pmap(jnp.zeros((device_count,)), count=1)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_typed_prng_key_sharded(self):
     devices = jax.local_devices()
 
@@ -2943,6 +2945,7 @@ class ArrayTest(jtu.JaxTestCase):
       self.assertIsInstance(sharded_x[i], array.ArrayImpl)
     self.assertIsNone(sharded_x._npy_value)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_device_put_sharded(self):
     devices = jax.local_devices()
     n_devices = len(devices)
@@ -2958,6 +2961,7 @@ class ArrayTest(jtu.JaxTestCase):
     self.assertTrue(all(b.devices() == {d} for b, d in zip(buffers, devices)))
     self.assertArraysEqual(y, jnp.stack(x))
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_device_put_sharded_pytree(self):
     devices = jax.local_devices()
     n_devices = len(devices)
@@ -2974,6 +2978,7 @@ class ArrayTest(jtu.JaxTestCase):
     y2_buffers = getattr(y2, '_arrays')
     self.assertTrue(all(b.devices() == {d} for b, d in zip(y2_buffers, devices)))
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_device_put_replicated(self):
     devices = jax.local_devices()
     x = np.arange(1, 5)
@@ -2985,6 +2990,7 @@ class ArrayTest(jtu.JaxTestCase):
     self.assertTrue(all(b.devices() == {d} for b, d in zip(buffers, devices)))
     self.assertArraysEqual(y, np.stack([x for _ in devices]))
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_device_put_replicated_pytree(self):
     devices = jax.local_devices()
     xs = {'a': np.arange(1, 5), 'b': np.arange(3)}
@@ -3004,10 +3010,12 @@ class ArrayTest(jtu.JaxTestCase):
     self.assertTrue(all(b.devices() == {d} for b, d in zip(y2_buffers, devices)))
     self.assertArraysEqual(y2, np.stack([xs['b'] for _ in devices]))
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_repr(self):
     x = jax.device_put_replicated(1, jax.devices())
     self.assertStartsWith(repr(x), 'Array')
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_delete_is_idempotent(self):
     x = jax.device_put_replicated(1, jax.devices())
     x.delete()
@@ -3183,6 +3191,7 @@ class ShardArgsTest(jtu.JaxTestCase):
           [(), pxla.ShardingSpec(sharding=(),
                                  mesh_mapping=(pxla.Replicated(2), pxla.Replicated(3)))],
       ])
+  @jtu.ignore_warning(category=DeprecationWarning)
   def testShardArgs(self, shape, spec, make_arg):
     indices = sharding_specs.spec_to_indices(shape, spec)
     nshards = len(indices)
@@ -3206,6 +3215,7 @@ class ShardArgsTest(jtu.JaxTestCase):
 @jtu.pytest_mark_if_available('multiaccelerator')
 class ArrayPmapTest(jtu.JaxTestCase):
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_pmap_input_array_output_array(self):
     input_shape = (jax.device_count(), 2)
     input_array, input_data = create_input_array_for_pmap(input_shape)
@@ -3220,6 +3230,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
       self.assertArraysEqual(s.data, expected[s.index])
     self.assertArraysEqual(out, expected)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_pmap_double_input_array_output_array(self):
     input_shape = (jax.device_count(), 2)
     input_array, input_data = create_input_array_for_pmap(input_shape)
@@ -3240,6 +3251,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
     self.assertArraysEqual(out1, input_data)
     self.assertArraysEqual(out2, input_data)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_pmap_array_in_axes_out_axes(self):
     dc = jax.device_count()
     input_shape = (dc, 2)
@@ -3266,6 +3278,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
       else:
         self.assertArraysEqual(s2.data, input_data)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_pmap_array_sharding_mismatch(self):
     input_shape = (jax.device_count(), 2)
     a1, inp_data = create_input_array_for_pmap(input_shape, in_axes=None,
@@ -3276,6 +3289,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(out_array, inp_data)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_pmap_array_devices_mismatch(self):
     if jax.device_count() <= 1:
       raise unittest.SkipTest('Skipping because this test needs more than '
@@ -3288,6 +3302,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(out_array, inp_data)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_amap(self):
     # Copied from an example mattjj@ posted in a chat thread.
 
@@ -3316,6 +3331,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(w, jnp.cos(jnp.sin(x) ** 2))
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_same_out_sharding_id(self):
     if config.disable_jit.value:
       self.skipTest('Skip this under eager pmap mode.')
@@ -3339,6 +3355,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
     self.assertEqual(out1_sharding_id, out3_sharding_id)
     self.assertEqual(out2_sharding_id, out3_sharding_id)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_array_with_pmap_sharding_copy_without_round_trip(self):
 
     def _compare_if_equal(out, out_copy):
@@ -3372,6 +3389,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
     out_copy1 = jnp.copy(out1)
     _compare_if_equal(out1, out_copy1)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_device_put_sharded_transfer_guard(self):
     inp = jnp.arange(jax.device_count())
     arr_inp = [jax.device_put(i, d) for i, d in zip(inp, jax.devices())]

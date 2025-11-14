@@ -946,6 +946,7 @@ class ShardingTest(jtu.JaxTestCase):
         r"factors: \[4, 2\] should evenly divide the shape\)"):
       mps.shard_shape((8, 3))
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_pmap_sharding_hash_eq(self):
     if jax.device_count() < 2:
@@ -1056,6 +1057,7 @@ class ShardingTest(jtu.JaxTestCase):
       ('sharded_dim_2', (4, 2, 4), 2),
       ('sharded_dim_1_1', (2, 4), 1)
   )
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_default_pmap_sharding(self, shape, sharded_dim):
     if jax.device_count() < 4:
       self.skipTest('Test needs >= 4 devices.')
@@ -1081,6 +1083,7 @@ class ShardingTest(jtu.JaxTestCase):
       self.assertEqual(actual_sharding.sharding_spec, expected_sharding.sharding_spec)
       self.assertEqual(actual_sharding._device_assignment, expected_sharding._device_assignment)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_default_pmap_sharding_with_devices(self):
     if jax.device_count() < 4:
       self.skipTest('Test needs >= 4 devices.')
@@ -1090,6 +1093,7 @@ class ShardingTest(jtu.JaxTestCase):
     ps = jax.sharding.PmapSharding.default((4, 2), devices=new_order)
     self.assertEqual(ps._device_assignment, new_order)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_default_pmap_sharding_replicated(self):
     x = np.zeros((len(jax.local_devices()), 8), dtype=np.float32)
     x = jax.pmap(lambda x: x, in_axes=0, out_axes=None, axis_name='x')(x)

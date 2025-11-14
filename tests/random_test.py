@@ -978,12 +978,14 @@ class KeyArrayTest(jtu.JaxTestCase):
     keys_on_device = jax.device_put(keys, device)
     self.assertKeysEqual(keys, keys_on_device)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_device_put_sharded(self):
     devices = jax.devices()
     keys = self.make_keys(len(devices))
     keys_on_device = jax.device_put_sharded(list(keys), devices)
     self.assertKeysEqual(keys, keys_on_device)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_device_put_replicated(self):
     devices = jax.devices()
     key = self.make_keys()

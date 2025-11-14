@@ -2871,8 +2871,8 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
     >>> import jax
     >>> devices = jax.local_devices()
     >>> x = [jax.numpy.ones(5) for device in devices]
-    >>> y = jax.device_put_sharded(x, devices)
-    >>> np.allclose(y, jax.numpy.stack(x))
+    >>> y = jax.device_put_sharded(x, devices)  # doctest: +SKIP
+    >>> np.allclose(y, jax.numpy.stack(x))  # doctest: +SKIP
     True
 
     Passing a list of nested container objects with arrays at the leaves for
@@ -2880,14 +2880,14 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
     all entries in the list to have the same tree structure:
 
     >>> x = [(i, jax.numpy.arange(i, i + 4)) for i in range(len(devices))]
-    >>> y = jax.device_put_sharded(x, devices)
-    >>> type(y)
+    >>> y = jax.device_put_sharded(x, devices)  # doctest: +SKIP
+    >>> type(y)  # doctest: +SKIP
     <class 'tuple'>
-    >>> y0 = jax.device_put_sharded([a for a, b in x], devices)
-    >>> y1 = jax.device_put_sharded([b for a, b in x], devices)
-    >>> np.allclose(y[0], y0)
+    >>> y0 = jax.device_put_sharded([a for a, b in x], devices)  # doctest: +SKIP
+    >>> y1 = jax.device_put_sharded([b for a, b in x], devices)  # doctest: +SKIP
+    >>> np.allclose(y[0], y0)  # doctest: +SKIP
     True
-    >>> np.allclose(y[1], y1)
+    >>> np.allclose(y[1], y1)  # doctest: +SKIP
     True
 
   See Also:
@@ -2953,8 +2953,8 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
     >>> import jax
     >>> devices = jax.local_devices()
     >>> x = jax.numpy.array([1., 2., 3.])
-    >>> y = jax.device_put_replicated(x, devices)
-    >>> np.allclose(y, jax.numpy.stack([x for _ in devices]))
+    >>> y = jax.device_put_replicated(x, devices)  # doctest: +SKIP
+    >>> np.allclose(y, jax.numpy.stack([x for _ in devices]))  # doctest: +SKIP
     True
 
   See Also:

@@ -419,6 +419,7 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
       )
       np.testing.assert_array_equal(o.data, global_data[o.index])
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_host_local_to_global_replicated(self):
     num_local_devices = jax.local_device_count()
     global_mesh = jax.sharding.Mesh(jax.devices(), axis_names=['x'])
@@ -435,6 +436,7 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
     # Array is accessible on every host.
     np.testing.assert_array_equal(out, local_input_data)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_host_local_to_global_locally_replicated(self):
     # Make an array which is locally replicated but sharded across hosts.
     num_processes = jax.process_count()

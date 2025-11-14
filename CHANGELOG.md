@@ -49,6 +49,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     GPU (({jax-issue}`#33062`).
 
 * Deprecations:
+  * `jax.sharding.PmapSharding` is now deprecated. Please use
+    `jax.NamedSharding` instead.
+  * `jx.device_put_replicated` is now deprecated. Please use `jax.device_put`
+    with the appropriate sharding instead.
+  * `jax.device_put_sharded` is now deprecated. Please use `jax.device_put` with
+    the appropriate sharding instead.
   * Default `axis_types` of `jax.make_mesh` will change in JAX v0.9.0 to return
   `jax.sharding.AxisType.Explicit`. Leaving axis_types unspecified will raise a
   `DeprecationWarning`.

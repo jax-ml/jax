@@ -2892,6 +2892,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     pjit(foo)(0)  # doesn't crash
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_pmap_in_axis_resources_error(self):
     if config.pmap_shmap_merge.value:
       self.skipTest("Test does not raise under pmap_shmap_merge=True")
@@ -2909,6 +2910,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         r"One of out_shardings.*got sharding.*which is not allowed."):
       pjit(lambda x: x, out_shardings=pmap_out.sharding)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_pmap_sharding_input_to_pjit_single_device(self):
     pmap_out = jax.pmap(lambda x: x)(jnp.arange(jax.device_count()))
     if config.pmap_shmap_merge.value:
@@ -2926,6 +2928,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       # output will be 1 device since it will be resharded.
       self.assertLen(out.devices(), 1)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_pmap_sharding_input_to_pjit_multi_device(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
 
@@ -2952,6 +2955,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertTrue(out1.is_fully_replicated)
     self.assertTrue(out2.is_fully_replicated)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_pmap_sharding_input_pjit_in_axis_resources(self):
     if config.pmap_shmap_merge.value:
       # NOTE(dsuo): jax.pmap under `pmap_shmap_merge=True` will use this mesh

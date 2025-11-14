@@ -525,24 +525,31 @@ class MultiHostDebuggingTest(jt_multiprocess.MultiProcessTest):
     else:
       self.assertEqual(output(), "")
 
-  def test_print_in_multihost_pmap(self):
+  def test_print_in_multihost_shard_map(self):
+    devices = jax.devices()
+    mesh = jax.sharding.Mesh(devices, ("i",))
     num_devices = jax.local_device_count()
-    x = (
+    local_x = (
         jnp.arange(num_devices, dtype=jnp.int32)
         + jax.process_index() * num_devices
     )
+    global_shape = (jax.device_count(),)
+    sharding = jax.NamedSharding(mesh, jax.P("i"))
+    global_x = jax.make_array_from_process_local_data(sharding, local_x, global_shape)
 
+    @jax.jit
+    @jax.shard_map(mesh=mesh, in_specs=jax.P("i"), out_specs=jax.P("i"))
     def f(x):
-      debugging.debug_print("{}", x, ordered=False)
+      debugging.debug_print("{}", x[0], ordered=False)
       return x
 
-    f = jax.pmap(f)
     with capture_stdout() as output:
-      f(x)
+      out = f(global_x)
+      out.block_until_ready()
       jax.effects_barrier()
-    lines = [f"{i}" for i in x] + [""]
-    self._assert_lines_equal(output(), "\n".join(lines))
 
+    lines = [f"{i}" for i in local_x] + [""]
+    self._assert_lines_equal(output(), "\n".join(lines))
 
 if __name__ == "__main__":
   jt_multiprocess.main()
