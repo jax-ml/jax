@@ -100,7 +100,7 @@ def initialize():
     )
     for _name, _value in rocm_plugin_extension.ffi_types().items():
       xla_client.register_custom_type(
-          _name, _value
+          _name, _value, platform='ROCM'
       )
     for _name, _value in rocm_plugin_extension.ffi_handlers().items():
       xla_client.register_custom_call_target(
