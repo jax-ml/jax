@@ -23,6 +23,7 @@ import functools
 from typing import Any, Union
 
 import jax
+from jax import core as jax_core
 from jax import lax
 from jax import tree_util
 from jax._src import util as jax_util
@@ -30,11 +31,11 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as primitives
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import helpers as tpu_helpers
-from jax._src.pallas.mosaic import tpu_info
 from jax._src.pallas.mosaic import primitives as tpu_primitives
+from jax._src.pallas.mosaic import tpu_info
+from jax._src.state import types as state_types
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
-import numpy as np
 
 
 SMEM = tpu_core.MemorySpace.SMEM
@@ -79,16 +80,22 @@ def _broadcast_pytree_to(from_pytree, to_pytree):
 def _get_tpu_generation() -> int:
   return tpu_info.get_tpu_info().generation
 
-def _make_tiling(shape: tuple[int, ...], dtype: np.dtype) -> tuple[int, ...]:
+def _make_tiling(shape: tuple[int, ...], ty: jax_core.AbstractValue) -> tuple[int | None, ...]:
   # For a n-dimensional shape, returns (8, 128) for the last 2 dimensions
   # and 1 for the leading n - 2. For example, (256, 256) -> (8, 128) and
   # (2, 3, 128, 128) -> (1, 1, 8, 128).
   if len(shape) < 2:
     raise ValueError(f"Shape must have at least 2 dimensions: {shape=}")
+
+  dtype = getattr(ty, 'dtype', None)
+  if dtype is None:
+    return (None,) * len(shape)
+
   leading_dims, final_dims = shape[:-2], shape[-2:]
   # We want to find the minimum power of 2 that fits the second-minor dimension
   # of shape, with maximum value 8.
   second_minor, _ = final_dims
+
   packing = 4 // dtype.itemsize
   max_tiling = _TILING[0]
   second_minor_tiling = (1 + int(_get_tpu_generation() < 4)) * packing
@@ -114,17 +121,23 @@ def _make_block_ds(
   assert isinstance(out, pl.Slice)
   return out
 
-def _create_blocked_slice(block_index: jax.Array | int,
-                          block_size: int,
-                          dim_size: int,
-                          tiling: int):
+
+def _create_blocked_slice(
+    block_index: jax.Array | int,
+    block_size: int,
+    dim_size: int,
+    tiling: int | None,
+):
   block_start = block_size * block_index
   if (dim_rem := dim_size % block_size) == 0:
     return pl.ds(block_start, block_size)
+  if tiling is None:
+    raise ValueError("If tiling is None, block_size must divide dim_size.")
   if block_size % tiling != 0:
     raise ValueError(f"Block size must divide tiling: {block_size=}, {tiling=}")
   num_blocks = pl.cdiv(dim_size, block_size)
   is_last = block_index == num_blocks - 1
+
   rounded_size = jnp.where(
       is_last,
       _round_up_to_nearest_multiple(dim_rem % block_size, tiling),
@@ -133,31 +146,35 @@ def _create_blocked_slice(block_index: jax.Array | int,
   rounded_size = pl.multiple_of(rounded_size, tiling)
   return pl.ds(block_index * block_size, rounded_size)
 
+
 def _create_bounded_slice(slice_start: jax.Array | int,
                           slice_size: jax.Array | int,
                           block_size: int,
                           dim_size: int,
-                          tiling: int):
-  if block_size % tiling != 0:
+                          tiling: int | None):
+  if tiling is not None and block_size % tiling != 0:
     raise ValueError(f"Block size must divide tiling: {block_size=}, {tiling=}")
+
   # We assume by construction that slice_size <= block_size. We also assume
   # that the slice_start is already aligned to the tiling.
 
-  # If we are out of bound, we need to round the slice size down to the nearest
-  # multiple of the tiling.
-  is_oob = slice_start + slice_size > dim_size
-  remaining = dim_size - slice_start
-  rounded_size = jnp.where(
-      is_oob,
-      _round_up_to_nearest_multiple(remaining, tiling),
-      slice_size,
-  )
-  rounded_size = pl.multiple_of(rounded_size, tiling)
+  rounded_size = slice_size
+  if tiling is not None:
+    # If we are out of bound, we need to round the slice size down to the nearest
+    # multiple of the tiling.
+    is_oob = slice_start + slice_size > dim_size
+    remaining = dim_size - slice_start
+
+    rounded_size = jnp.where(
+        is_oob,
+        _round_up_to_nearest_multiple(remaining, tiling),
+        slice_size,
+    )
   return pl.ds(slice_start, rounded_size)
 
 def _make_block_slice(
     block_index: jax.Array, block_size: pl.BlockDim | int | None, size: int,
-    tiling: int
+    tiling: int | None
 ) -> pl.Slice | slice | int | jax.Array:
   # Computes a slice given a block index and block size. In the default case,
   # we return slice(block_index * block_size, (block_index + 1) * block_size).
@@ -332,7 +349,7 @@ class BufferedRefBase:
   def compute_index(self):
     return self.spec.index_map
 
-  def get_dma_slice(self, src_shape, src_dtype, grid_indices):
+  def get_dma_slice(self, src_ty, grid_indices):
     # We need to handle blocks that might go OOB in the src array. An in bounds
     # block looks like this (for array shape (600, 600) and block shape
     # (256, 256)):
@@ -379,10 +396,15 @@ class BufferedRefBase:
     # Suppose A is now (601, 600), instead of picking a (88, 256)-sized block
     # for the last iteration on that dimension, we will pick the next highest
     # tile multiple, i.e. (96, 256).
+
+    src_shape = getattr(src_ty, 'shape', None)
+    if src_shape is None:
+      raise ValueError(f'Type {src_ty} does not have a type.')
+
     if len(src_shape) < 2:
       raise NotImplementedError("Must use >1D values.")
 
-    tiling = _make_tiling(src_shape, src_dtype)
+    tiling = _make_tiling(src_shape, src_ty)
     block_indices = self.compute_index(*grid_indices)
     return tuple(
         _make_block_slice(bi, bs, ss, t)
@@ -403,6 +425,14 @@ class BufferedRefBase:
     """Returns a new BufferedRefBase with the given block spec."""
     raise NotImplementedError()
 
+def _ref_to_value_aval(ref):
+  """Return the inner of a ref, or a ShapedArray for TransformedRefs."""
+  return (
+      jax_core.ShapedArray(shape=ref.shape, dtype=ref.dtype)
+      if isinstance(ref, state_types.TransformedRef)
+      else jax.typeof(ref).inner_aval
+  )
+
 
 # TODO(justinfu): Refactor and rename slot fields to reflect cumulative values
 # instead of slot index.
@@ -413,7 +443,7 @@ class BufferedRef(BufferedRefBase):
 
   Attributes:
     spec: pallas blockspec.
-    dtype: dtype for buffers.
+    type: type for buffers.
     buffer_type: enum indicating whether this is an input, output, or in/out
       accumulator buffered reference.
     window_ref: a multiple-buffer to hold the working and dirty buffers used
@@ -444,7 +474,6 @@ class BufferedRef(BufferedRefBase):
       copy.
   """
   _spec: pl.BlockSpec       # static metadata
-  dtype: Any                # static metadata
   _buffer_type: BufferType  # static metadata
   window_ref: ArrayRef | None
   accum_ref: ArrayRef | None
@@ -521,7 +550,7 @@ class BufferedRef(BufferedRefBase):
             self.sem_sends,
             self.swap,
         ),
-        (self._spec, self.dtype, self._buffer_type),
+        (self._spec, self._buffer_type),
     )
 
   @classmethod
@@ -533,7 +562,7 @@ class BufferedRef(BufferedRefBase):
     return BufferType
 
   @classmethod
-  def create(cls, spec: pl.BlockSpec, dtype, buffer_type, buffer_count,
+  def create(cls, spec: pl.BlockSpec, dtype_or_type, buffer_type, buffer_count,
              needs_swap_ref=True,
              grid_rank=None,
              use_lookahead=False,
@@ -542,7 +571,8 @@ class BufferedRef(BufferedRefBase):
 
     Args:
       spec: pallas blockspec.
-      dtype: dtype for buffers.
+      dtype_or_type: dtype or aval for buffers. If an aval, the shape is
+        ignored.
       buffer_type: enum indicating whether this is an input, output, or in/out
         accumulator buffered reference.
       needs_swap_ref: whether a swap slots tracker needs to be allocated.
@@ -553,9 +583,15 @@ class BufferedRef(BufferedRefBase):
     Returns:
       Initialized BufferedRef
     """
+    ty = (
+        dtype_or_type
+        if isinstance(dtype_or_type, jax_core.AbstractValue) else
+        jax_core.ShapedArray((1, 1,), dtype_or_type) # dummy shape
+    )
+
     block_shape = _get_block_shape(spec)
     if buffer_type is BufferType.ACCUMULATOR:
-      accum_ref = VMEM(block_shape, dtype)
+      accum_ref = VMEM.from_type(ty.update(shape=block_shape))
     else:
       accum_ref = None
     if source_memory_space == VMEM:
@@ -567,7 +603,6 @@ class BufferedRef(BufferedRefBase):
             f"Cannot hold a non-buffered ref in {spec.memory_space=}")
       return cls(
           _spec=spec,
-          dtype=dtype,
           _buffer_type=buffer_type,
           window_ref=None,  # to be bound to existing ref by the pipeline routine
           accum_ref=accum_ref,
@@ -596,11 +631,12 @@ class BufferedRef(BufferedRefBase):
         raise ValueError(
             "grid_rank must be specified when use_lookahead is True."
         )
+
+      buffer_ty = ty.update(shape=(buffer_count, *block_shape))
       return cls(
           _spec=spec,
-          dtype=dtype,
           _buffer_type=buffer_type,
-          window_ref=buffer_memory_space((buffer_count,) + block_shape, dtype),
+          window_ref=buffer_memory_space.from_type(buffer_ty),
           accum_ref=accum_ref,
           copy_in_slot=SMEM((1,), jnp.uint32) if buffer_type.is_input else None,
           wait_in_slot=SMEM((1,), jnp.uint32) if buffer_type.is_input else None,
@@ -627,21 +663,21 @@ class BufferedRef(BufferedRefBase):
       )
 
   @classmethod
-  def input(cls, spec, dtype, buffer_count=2, **kwargs):
-    return cls.create(spec, dtype, BufferType.INPUT, buffer_count, **kwargs)
+  def input(cls, spec, dtype_or_type, buffer_count=2, **kwargs):
+    return cls.create(spec, dtype_or_type, BufferType.INPUT, buffer_count, **kwargs)
 
   @classmethod
-  def output(cls, spec, dtype, buffer_count=2, **kwargs):
-    return cls.create(spec, dtype, BufferType.OUTPUT, buffer_count, **kwargs)
+  def output(cls, spec, dtype_or_type, buffer_count=2, **kwargs):
+    return cls.create(spec, dtype_or_type, BufferType.OUTPUT, buffer_count, **kwargs)
 
   @classmethod
-  def accumulator(cls, spec, dtype, buffer_count=2, **kwargs):
-    return cls.create(spec, dtype, BufferType.ACCUMULATOR, buffer_count,
+  def accumulator(cls, spec, dtype_or_type, buffer_count=2, **kwargs):
+    return cls.create(spec, dtype_or_type, BufferType.ACCUMULATOR, buffer_count,
                       **kwargs)
 
   @classmethod
-  def input_output(cls, spec, dtype, buffer_count=2, **kwargs):
-    return cls.create(spec, dtype, BufferType.INPUT_OUTPUT, buffer_count,
+  def input_output(cls, spec, dtype_or_type, buffer_count=2, **kwargs):
+    return cls.create(spec, dtype_or_type, BufferType.INPUT_OUTPUT, buffer_count,
                       **kwargs)
 
   @property
@@ -949,7 +985,7 @@ class BufferedRef(BufferedRefBase):
     if self.swap is not None:
       self.swap[0] = True
     slot = self.current_copy_in_slot
-    src_slice = self.get_dma_slice(src_ref.shape, src_ref.dtype, grid_indices)
+    src_slice = self.get_dma_slice(_ref_to_value_aval(src_ref), grid_indices)
     dst_slice = tuple(
         pl.ds(0, s.size)
         for s, bd in zip(src_slice, self.block_shape)
@@ -970,7 +1006,7 @@ class BufferedRef(BufferedRefBase):
     if self.swap is not None:
       self.swap[0] = True
     slot = self.current_copy_out_slot
-    dst_slice = self.get_dma_slice(dst_ref.shape, dst_ref.dtype, grid_indices)
+    dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)
     src_slice = tuple(
         pl.ds(0, s.size)
         for s, bd in zip(dst_slice, self.block_shape)
@@ -988,7 +1024,7 @@ class BufferedRef(BufferedRefBase):
     if not self.is_buffered: return
     assert not (self.window_ref is None or isinstance(self.window_ref, REF))
     assert self.sem_recvs is not None
-    src_slice = self.get_dma_slice(src_ref.shape, src_ref.dtype, grid_indices)
+    src_slice = self.get_dma_slice(_ref_to_value_aval(src_ref), grid_indices)
     dst_slice = tuple(
         pl.ds(0, s.size)
         for s, bd in zip(src_slice, self.block_shape)
@@ -1010,7 +1046,7 @@ class BufferedRef(BufferedRefBase):
     assert not (self.window_ref is None or isinstance(self.window_ref, REF))
     assert self.sem_sends is not None
     wait_slot = self.current_wait_out_slot
-    dst_slice = self.get_dma_slice(dst_ref.shape, dst_ref.dtype, grid_indices)
+    dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)
     src_slice = tuple(
         pl.ds(0, s.size)
         for s, bd in zip(dst_slice, self.block_shape)
@@ -1708,7 +1744,9 @@ def make_pipeline_allocations(
       use_lookahead = in_spec.pipeline_mode.use_lookahead
     if use_lookahead and grid is None:
       raise ValueError("Grid must be specified when using lookahead.")
-    return BufferedRef.input(in_spec, in_ref.dtype, buffer_count,
+
+    in_aval = _ref_to_value_aval(in_ref)
+    return BufferedRef.input(in_spec, in_aval, buffer_count,
                              needs_swap_ref=needs_swap_ref,
                              grid_rank=len(grid),
                              use_lookahead=use_lookahead,
@@ -1721,11 +1759,13 @@ def make_pipeline_allocations(
       if out_spec.pipeline_mode.use_lookahead:
         raise ValueError("Output buffering does not support lookahead.")
 
+    out_aval = _ref_to_value_aval(out_ref)
+
     if accumulate:
-      return BufferedRef.accumulator(out_spec, out_ref.dtype, buffer_count,
+      return BufferedRef.accumulator(out_spec, out_aval, buffer_count,
                                      needs_swap_ref=needs_swap_ref,
                                      source_memory_space=out_ref.memory_space)
-    return BufferedRef.output(out_spec, out_ref.dtype, buffer_count,
+    return BufferedRef.output(out_spec, out_aval, buffer_count,
                               needs_swap_ref=needs_swap_ref,
                               source_memory_space=out_ref.memory_space)
   out_brefs = jax.tree.map(
@@ -1843,7 +1883,7 @@ def sync_copy(src: REF | BufferedRef, dst: REF | BufferedRef, indices):
     bref = dst
     hbm_ref = src
     copy_in = True
-  hbm_slice = bref.get_dma_slice(hbm_ref.shape, hbm_ref.dtype, indices)
+  hbm_slice = bref.get_dma_slice(_ref_to_value_aval(hbm_ref), indices)
   bref_slice = tuple(
       pl.ds(0, s.size)
       for s, bd in zip(hbm_slice, bref.block_shape)

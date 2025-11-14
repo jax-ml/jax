@@ -276,6 +276,28 @@ bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
     return isGuaranteedDivisible(add_op.getRhs(), divisor, fuel / 2) &&
            isGuaranteedDivisible(add_op.getLhs(), divisor, (fuel + 1) / 2);
   }
+
+  if (auto sub_op = value.getDefiningOp<arith::SubIOp>()) {
+    return isGuaranteedDivisible(sub_op.getRhs(), divisor, fuel / 2) &&
+           isGuaranteedDivisible(sub_op.getLhs(), divisor, (fuel + 1) / 2);
+  }
+
+  if (auto rem_op = value.getDefiningOp<arith::RemSIOp>()) {
+    return isGuaranteedDivisible(rem_op.getRhs(), divisor, fuel / 2) &&
+           isGuaranteedDivisible(rem_op.getLhs(), divisor, (fuel + 1) / 2);
+  }
+
+  if (auto select_op = value.getDefiningOp<arith::SelectOp>()) {
+    return isGuaranteedDivisible(select_op.getTrueValue(), divisor, fuel / 2) &&
+           isGuaranteedDivisible(select_op.getFalseValue(), divisor,
+                                 (fuel + 1) / 2);
+  }
+
+  if (auto min_op = value.getDefiningOp<arith::MinSIOp>()) {
+    return isGuaranteedDivisible(min_op.getLhs(), divisor, fuel / 2) &&
+           isGuaranteedDivisible(min_op.getRhs(), divisor,
+                                 (fuel + 1) / 2);
+  }
   return false;
 }
 
