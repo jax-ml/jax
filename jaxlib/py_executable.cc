@@ -430,13 +430,21 @@ PyLoadedExecutable::GetOutputShardings() const {
 }
 
 int32_t PyLoadedExecutable::GetNextLaunchId() {
-  absl::MutexLock lock(next_launch_id_mutex_);
-  auto it = next_launch_id_->find(launch_id_key_);
-  if (it == next_launch_id_->end()) {
-    uint32_t initial_value = static_cast<uint32_t>(launch_id_key_);
-    it = next_launch_id_->emplace(launch_id_key_, initial_value).first;
+  int32_t launch_id;
+  {
+    absl::MutexLock lock(next_launch_id_mutex_);
+    auto it = next_launch_id_->find(launch_id_key_);
+    if (it == next_launch_id_->end()) {
+      uint32_t initial_value = static_cast<uint32_t>(launch_id_key_);
+      it = next_launch_id_->emplace(launch_id_key_, initial_value).first;
+    }
+    launch_id = absl::bit_cast<int32_t>(it->second++);
   }
-  return absl::bit_cast<int32_t>(it->second++);
+  VLOG(1) << "Launching executable " << ifrt_loaded_executable_->name()
+          << " with launch ID: " << launch_id;
+  VLOG(2) << "Executable devices for launch ID " << launch_id << ": "
+          << ifrt_loaded_executable_->devices()->DebugString();
+  return launch_id;
 }
 
 void PyLoadedExecutable::KeepAlive(nb::object obj) {
