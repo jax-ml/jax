@@ -1846,12 +1846,14 @@ LogicalResult UnpackSubelementsOp::canonicalize(UnpackSubelementsOp op,
     if (auto pack = dyn_cast<PackSubelementsOp>(op.getSource().getDefiningOp());
         pack && pack.getPackFormat() == op.getPackFormat() &&
         pack.getSources().front().getType() == op.getType()) {
-      rewriter.replaceAllOpUsesWith(
-          op, pack.getPaddedSources(
-                  pack.getSources(), pack.getPositions(),
-                  op.getType().getElementTypeBitWidth() /
-                      pack.getType().getElementTypeBitWidth())[op.getIndex()]);
-      return success();
+      Value source = pack.getPaddedSources(
+          pack.getSources(), pack.getPositions(),
+          op.getType().getElementTypeBitWidth() /
+              pack.getType().getElementTypeBitWidth())[op.getIndex()];
+      if (source) {
+        rewriter.replaceAllOpUsesWith(op, source);
+        return success();
+      }
     }
     return failure();
   }
