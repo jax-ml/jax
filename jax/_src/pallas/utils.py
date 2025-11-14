@@ -324,7 +324,7 @@ def nextafter_lowering_helper(x, y):
       jnp.float64, jnp.uint64, np.float64, np.uint64, np.int64,
   )
 
-  bitwidth = dtypes.bit_width(x.dtype)
+  bitwidth = dtypes.itemsize_bits(x.dtype)
 
   x_as_int = x.view(jnp_uint)
   y_as_int = y.view(jnp_uint)

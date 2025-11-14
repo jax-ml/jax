@@ -401,8 +401,8 @@ bitcast_p = jax_core.Primitive("bitcast")
 
 @bitcast_p.def_abstract_eval
 def _bitcast_abstract_eval(x, dtype):
-  old_bitwidth = dtypes.bit_width(x.dtype)
-  new_bitwidth = dtypes.bit_width(dtype)
+  old_bitwidth = dtypes.itemsize_bits(x.dtype)
+  new_bitwidth = dtypes.itemsize_bits(dtype)
   if old_bitwidth == new_bitwidth:
     return jax_core.ShapedArray(x.shape, dtype)
   if x.ndim == 0:
@@ -797,11 +797,11 @@ def _pack_abstract_eval(a, b, *, format, preferred_element_type):
             f"Only packing of float32 and int32 is supported, got {a.dtype}"
         )
   else:
-    packed_bw = dtypes.bit_width(a.dtype) // 2
-    if dtypes.bit_width(preferred_element_type) != packed_bw:
+    packed_bw = dtypes.itemsize_bits(a.dtype) // 2
+    if dtypes.itemsize_bits(preferred_element_type) != packed_bw:
       raise ValueError(
           f"preferred_element_type= must have bitwidth {packed_bw}, got"
-          f" {dtypes.bit_width(preferred_element_type)}"
+          f" {dtypes.itemsize_bits(preferred_element_type)}"
       )
     packed_dtype = preferred_element_type
 
@@ -893,11 +893,11 @@ def _unpack_abstract_eval(ab, *, format, preferred_element_type):
             f"Only unpacking of bloat16 and int16 is supported, got {ab.dtype}"
         )
   else:
-    unpacked_bw = dtypes.bit_width(ab.dtype) * 2
-    if dtypes.bit_width(preferred_element_type) != unpacked_bw:
+    unpacked_bw = dtypes.itemsize_bits(ab.dtype) * 2
+    if dtypes.itemsize_bits(preferred_element_type) != unpacked_bw:
       raise ValueError(
           f"preferred_element_type= must have bitwidth {unpacked_bw}, got"
-          f" {dtypes.bit_width(preferred_element_type)}"
+          f" {dtypes.itemsize_bits(preferred_element_type)}"
       )
     unpacked_dtype = preferred_element_type
   return (jax_core.ShapedArray((ab.size // 2,), unpacked_dtype),) * 2

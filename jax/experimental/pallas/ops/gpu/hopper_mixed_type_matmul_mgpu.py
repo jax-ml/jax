@@ -93,9 +93,9 @@ def mixed_matmul_kernel(
   if tile_m % epi_tile_m != 0:
     raise ValueError(f"{tile_m=} must be divisible by {epi_tile_m=}")
 
-  a_bits = dtypes.bit_width(a.dtype)
-  b_bits = dtypes.bit_width(b.dtype)
-  out_bits = dtypes.bit_width(out_dtype)
+  a_bits = dtypes.itemsize_bits(a.dtype)
+  b_bits = dtypes.itemsize_bits(b.dtype)
+  out_bits = dtypes.itemsize_bits(out_dtype)
 
   a_swizzle = plgpu.find_swizzle(tile_k * a_bits, "lhs")
   b_swizzle = plgpu.find_swizzle(tile_n * b_bits, "rhs")

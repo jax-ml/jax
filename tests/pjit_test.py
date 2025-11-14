@@ -7455,8 +7455,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
                                 mesh):
     shape, spec = shape_and_spec
     rng = jtu.rand_default(self.rng())
-    nbits_in = dtypes.bit_width(from_dtype)
-    nbits_out = dtypes.bit_width(to_dtype)
+    nbits_in = dtypes.itemsize_bits(from_dtype)
+    nbits_out = dtypes.itemsize_bits(to_dtype)
     if nbits_in < nbits_out:
       shape = (*shape, nbits_out // nbits_in)
       spec = P(*(*spec, None))

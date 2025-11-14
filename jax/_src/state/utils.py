@@ -88,8 +88,8 @@ def val_to_ref_aval(x) -> AbstractRef:
 
 
 def bitcast(x, dtype: DTypeLike):
-  x_bitwidth = dtypes.bit_width(x.dtype)
-  y_bitwidth = dtypes.bit_width(dtype)
+  x_bitwidth = dtypes.itemsize_bits(x.dtype)
+  y_bitwidth = dtypes.itemsize_bits(dtype)
   shape = list(x.shape)
   if x_bitwidth != y_bitwidth:
     if len(shape) < 2:

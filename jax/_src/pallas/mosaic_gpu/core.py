@@ -158,7 +158,7 @@ class MemorySpace(enum.Enum):
         collective = False
       if layout is None:
         if packed is None:
-          if dtypes.bit_width(dtype) != 32:
+          if dtypes.itemsize_bits(dtype) != 32:
             raise ValueError(
                 "dtypes narrower than 32-bit require either the packed argument"
                 " or an explicit TMEM layout"
@@ -397,7 +397,8 @@ def _ref_group_tmem_col_size(refs: _GPUMemoryRefTree) -> int:
   """
   ncols = 0
   for ref in jax.tree.leaves(refs):
-    ref_ncols = ref.layout.cols_in_shape(ref.shape, dtypes.bit_width(ref.dtype))
+    ref_ncols = ref.layout.cols_in_shape(ref.shape,
+                                         dtypes.itemsize_bits(ref.dtype))
     ncols += align_to(ref_ncols, TMEM_COL_ALIGNMENT)
   return ncols
 
@@ -410,7 +411,7 @@ def infer_tmem_layout(
     collective: bool) -> tcgen05.TMEMLayout:
   """Infers the number of columns used and layout for allocating TMEM Refs."""
   if packed:
-    packing = 32 // dtypes.bit_width(dtype)
+    packing = 32 // dtypes.itemsize_bits(dtype)
   else:
     packing = 1
   return tcgen05._infer_tmem_layout(shape, collective=collective, packing=packing)  # type: ignore
@@ -459,7 +460,8 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
         col_offset = align_to(col_offset, TMEM_COL_ALIGNMENT)
         if not isinstance(ref, pallas_core.TransformedRef):
           ref = pallas_core.TransformedRef(ref, transforms=())
-        ncols = ref.layout.cols_in_shape(ref.shape, dtypes.bit_width(ref.dtype))
+        ncols = ref.layout.cols_in_shape(ref.shape,
+                                         dtypes.itemsize_bits(ref.dtype))
         transform = ExtractAliasedRef.from_transformed_ref(
             ref, col_offset, layout=ref.layout)
         flat_refs.append(
@@ -966,7 +968,7 @@ class SwizzleTransform(MemoryRefTransform):
     raise NotImplementedError
 
   def __call__(self, aval: jax_core.ShapedArray) -> jax_core.ShapedArray:
-    swizzle_elems = (self.swizzle * 8) // dtypes.bit_width(aval.dtype)
+    swizzle_elems = (self.swizzle * 8) // dtypes.itemsize_bits(aval.dtype)
     if swizzle_elems != aval.shape[-1]:
       raise ValueError(
           f"Swizzle {self.swizzle} requires the trailing dimension to be of"
@@ -1510,7 +1512,7 @@ class Layout(SomeLayout, enum.Enum):
       case Layout.SMEM_GMEM_COPY:
         normalize_args = lambda shape, dtype, swizzle: (shape, dtype, swizzle)
         shape, dtype, swizzle = normalize_args(*args, **kwargs)
-        bitwidth = dtypes.bit_width(dtype)
+        bitwidth = dtypes.itemsize_bits(dtype)
         tiling = (8, 8 * swizzle // bitwidth)
         row_tiles, col_tiles = mgpu.tile_shape(shape, tiling)[-4:-2]
         return mgpu.fragmented_array.tiled_copy_smem_gmem_layout(

@@ -84,8 +84,8 @@ def bitcast(x: jax.Array, ty: DTypeLike) -> jax.Array:
   ty = dtypes.check_and_canonicalize_user_dtype(ty)
   if len(x.shape) < 2:
     raise ValueError("Not implemented: bitcast 1D")
-  src_bitwidth = dtypes.bit_width(x.dtype)
-  dst_bitwidth = dtypes.bit_width(ty)
+  src_bitwidth = dtypes.itemsize_bits(x.dtype)
+  dst_bitwidth = dtypes.itemsize_bits(ty)
   if x.shape[-2] * src_bitwidth % dst_bitwidth:
     raise ValueError(
         "Not implemented: the 2nd minor dim can not be perfectly packed or"
@@ -97,16 +97,16 @@ def bitcast(x: jax.Array, ty: DTypeLike) -> jax.Array:
 @bitcast_p.def_abstract_eval
 def _bitcast_abstract_eval(x, *, ty):
   shape = list(x.shape)
-  src_bitwidth = dtypes.bit_width(x.dtype)
-  dst_bitwidth = dtypes.bit_width(ty)
+  src_bitwidth = dtypes.itemsize_bits(x.dtype)
+  dst_bitwidth = dtypes.itemsize_bits(ty)
   shape[-2] = shape[-2] * src_bitwidth // dst_bitwidth
   return jax_core.ShapedArray(shape, ty)
 
 
 def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
   def _bitcast(x):
-    src_bitwidth = dtypes.bit_width(x.dtype)
-    dst_bitwidth = dtypes.bit_width(ty)
+    src_bitwidth = dtypes.itemsize_bits(x.dtype)
+    dst_bitwidth = dtypes.itemsize_bits(ty)
     if src_bitwidth < dst_bitwidth:
       *leading, m, n = x.shape
       packing = dst_bitwidth // src_bitwidth
@@ -970,8 +970,8 @@ def _stochastic_round_abstract_eval(x, random_bits, *, target_dtype):
   return jax_core.ShapedArray(x.shape, target_dtype)
 
 def _get_elementwise_packing_factor(unpacked_dtype, packed_dtype):
-  unpacked_bitwidth = dtypes.bit_width(unpacked_dtype)
-  packed_bitwidth = dtypes.bit_width(packed_dtype)
+  unpacked_bitwidth = dtypes.itemsize_bits(unpacked_dtype)
+  packed_bitwidth = dtypes.itemsize_bits(packed_dtype)
   if unpacked_bitwidth % packed_bitwidth != 0:
     raise ValueError(
         "Unpacked bitwidth must be a multiple of packed bitwidth, got "

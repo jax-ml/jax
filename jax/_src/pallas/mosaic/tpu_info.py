@@ -137,7 +137,7 @@ class TpuInfo:
 
     Note that this is a heurustic and depends on the settings of the XLA flags.
     """
-    bitwidth = dtypes.bit_width(dtype)
+    bitwidth = dtypes.itemsize_bits(dtype)
     if self.generation < 7:
       # Caveat: before TPU7x, by default XLA does not use large 2nd minor tiling
       # but it can be enabled by setting the flag

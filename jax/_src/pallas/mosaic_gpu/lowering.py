@@ -334,7 +334,7 @@ def _run_scoped_resource_estimator(
         cols_used = aval.shape[1]
       else:
         cols_used = aval.layout.cols_in_shape(
-            aval.shape, dtypes.bit_width(aval.dtype)
+            aval.shape, dtypes.itemsize_bits(aval.dtype)
         )
       if aval.collective:
         rs += Resources(tmem_collective_scratch_cols=cols_used)
@@ -342,7 +342,7 @@ def _run_scoped_resource_estimator(
         rs += Resources(tmem_scratch_cols=cols_used)
     elif aval.memory_space == gpu_core.SMEM:
       rs += Resources(
-          smem_scratch_bytes=aval.size * dtypes.bit_width(aval.dtype) // 8
+          smem_scratch_bytes=aval.size * dtypes.itemsize_bits(aval.dtype) // 8
       )
     elif aval.memory_space == gpu_core.REGS:
       # Don't need to allocate anything.
@@ -499,7 +499,7 @@ class ModuleContext:
       layout_attr = mgpu.to_layout_attr(layout)
       tmem_ref = mgpu.dialect.tmem_layout_cast(tmem_ref, layout_attr)
     cols_used = layout.cols_in_shape(
-        struct.shape, dtypes.bit_width(struct.dtype)
+        struct.shape, dtypes.itemsize_bits(struct.dtype)
     )
     cols_used = gpu_core.align_to(cols_used, gpu_core.TMEM_COL_ALIGNMENT)
     self.tmem_used_cols += cols_used
@@ -549,7 +549,7 @@ class ModuleContext:
 
     off += gpu_core.align_to(
         math.prod(struct.shape)
-        * dtypes.bit_width(jnp.dtype(struct.dtype))
+        * dtypes.itemsize_bits(jnp.dtype(struct.dtype))
         // 8,
         gpu_core.SMEM_ALIGNMENT,
     )
@@ -1563,7 +1563,7 @@ def _get_lowering_rule(
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
       if len(tiling) != 2:
         raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
-      expected_minor_tiling = swizzle * 8 // dtypes.bit_width(dtype)
+      expected_minor_tiling = swizzle * 8 // dtypes.itemsize_bits(dtype)
       if tiling[-1] != expected_minor_tiling:
         raise NotImplementedError(
             "Minor tiling dimension does not fit swizzle: "
@@ -1680,7 +1680,7 @@ def _swap_lowering_rule(
     ):
       if len(tiling) != 2:
         raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
-      bw = dtypes.bit_width(v_aval.dtype)
+      bw = dtypes.itemsize_bits(v_aval.dtype)
       expected_minor_tiling = swizzle * 8 // bw
       if tiling[-1] != expected_minor_tiling:
         raise NotImplementedError(

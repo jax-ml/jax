@@ -202,8 +202,8 @@ class LaxTest(jtu.JaxTestCase):
   )
   def testBitcastConvertType(self, from_dtype, to_dtype, shape):
     rng = jtu.rand_default(self.rng())
-    nbits_in = dtypes.bit_width(from_dtype)
-    nbits_out = dtypes.bit_width(to_dtype)
+    nbits_in = dtypes.itemsize_bits(from_dtype)
+    nbits_out = dtypes.itemsize_bits(to_dtype)
     if nbits_in < nbits_out:
       shape = (*shape, nbits_out // nbits_in)
     args_maker = lambda: [rng(shape, from_dtype)]
@@ -230,8 +230,8 @@ class LaxTest(jtu.JaxTestCase):
     shape=[(4,), (2, 4), (2, 3, 4)]
   )
   def testBitcastConvertTypeAgainstNumpy(self, from_dtype, to_dtype, shape):
-    nbits_in = dtypes.bit_width(from_dtype)
-    nbits_out = dtypes.bit_width(to_dtype)
+    nbits_in = dtypes.itemsize_bits(from_dtype)
+    nbits_out = dtypes.itemsize_bits(to_dtype)
     if nbits_in < nbits_out:
       shape = (*shape, nbits_out // nbits_in)
     rng = jtu.rand_default(self.rng())

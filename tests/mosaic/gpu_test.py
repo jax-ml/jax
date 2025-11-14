@@ -1300,7 +1300,7 @@ class TCGen05Test(TestCase):
     n_instr_size = kwargs["n"] * in_bytewidth // n_steps
     if n_instr_size < swizzle or n_instr_size % swizzle != 0:
       self.skipTest("swizzle doesn't work with this instruction size")
-    if dtypes.bit_width(kwargs["in_jax_dtype"]) <= 8 and kwargs["n"] == swizzle:
+    if dtypes.itemsize_bits(kwargs["in_jax_dtype"]) <= 8 and kwargs["n"] == swizzle:
       self.skipTest("Only 8-bit and larger inputs are supported for MMA")
     self._basic_mma_test(
         **kwargs,
@@ -1328,7 +1328,7 @@ class TCGen05Test(TestCase):
     n_instr_size = kwargs["n"] * in_bytewidth // n_steps
     if n_instr_size < swizzle or n_instr_size % swizzle != 0:
       self.skipTest("swizzle doesn't work with this instruction size")
-    if dtypes.bit_width(kwargs["in_jax_dtype"]) <= 8 and kwargs["n"] == swizzle:
+    if dtypes.itemsize_bits(kwargs["in_jax_dtype"]) <= 8 and kwargs["n"] == swizzle:
       self.skipTest("Only 8-bit and larger inputs are supported for MMA")
     self._basic_mma_test(
         **kwargs,

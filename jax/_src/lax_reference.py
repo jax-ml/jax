@@ -189,8 +189,8 @@ def _bitcast_uint8_to_uint4(operand):
 
 def bitcast_convert_type(operand, dtype):
   operand = np.asarray(operand)
-  nbits_in = dtypes.bit_width(operand.dtype)
-  nbits_out = dtypes.bit_width(dtype)
+  nbits_in = dtypes.itemsize_bits(operand.dtype)
+  nbits_out = dtypes.itemsize_bits(dtype)
 
   if nbits_out > nbits_in:
     assert operand.shape[-1] == nbits_out // nbits_in

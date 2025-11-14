@@ -295,7 +295,7 @@ class TMEM:
 
 
 def _count_buffer_bytes(shape_dtype: jax.ShapeDtypeStruct) -> int:
-  return math.prod(shape_dtype.shape) * dtypes.bit_width(dtypes.dtype(shape_dtype.dtype)) // 8
+  return math.prod(shape_dtype.shape) * dtypes.itemsize_bits(dtypes.dtype(shape_dtype.dtype)) // 8
 
 
 class LoweringSemantics(enum.Enum):

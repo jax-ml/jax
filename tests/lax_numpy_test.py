@@ -103,8 +103,8 @@ def np_view(arr: np.ndarray, dtype) -> np.ndarray:
   if dtype is None:
     return arr
   dtype = np.dtype(dtype)
-  nbits_in = dtypes.bit_width(arr.dtype)
-  nbits_out = dtypes.bit_width(dtype)
+  nbits_in = dtypes.itemsize_bits(arr.dtype)
+  nbits_out = dtypes.itemsize_bits(dtype)
   if nbits_in == 4:
     arr = _bitcast_uint4_to_uint8(arr.view('uint4'))
   if nbits_out == 4:
@@ -4055,7 +4055,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     {'a_dtype': a_dtype, 'dtype': dtype}
     for a_dtype in [jnp.int4, jnp.uint4, *all_dtypes]
     for dtype in [jnp.int4, jnp.uint4, *all_dtypes]
-    if dtypes.bit_width(a_dtype) == dtypes.bit_width(dtype)
+    if dtypes.itemsize_bits(a_dtype) == dtypes.itemsize_bits(dtype)
   ])
   def testViewScalar(self, a_dtype, dtype):
     if jtu.test_device_matches(["tpu"]):

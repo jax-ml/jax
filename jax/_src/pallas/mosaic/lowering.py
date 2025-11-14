@@ -703,9 +703,9 @@ def _check_block_mappings(
     else:
       assert rank == 1
       if bm.array_aval.dtype == jnp.bool_:
-        bitwidth = dtypes.bit_width(BOOL_MEMREF_TYPE)
+        bitwidth = dtypes.itemsize_bits(BOOL_MEMREF_TYPE)
       else:
-        bitwidth = dtypes.bit_width(physical_dtype)
+        bitwidth = dtypes.itemsize_bits(physical_dtype)
       packing = 32 // bitwidth
       tiling_size = 128 * packing
       evenly_divisible = (bs0 == as0 or bs0 % tiling_size == 0)
@@ -716,7 +716,7 @@ def _check_block_mappings(
             " shape is equal to the first (and only) dimension of the array"
             " shape, or 2) the first (and only) dimension of the block shape"
             f" is a multiple of the tiling size ({tiling_size} = 128 * (32 //"
-            f" {dtypes.bit_width(physical_dtype)})) of the"
+            f" {dtypes.itemsize_bits(physical_dtype)})) of the"
             " array shape. "
             + err_details()
         )
@@ -1474,8 +1474,8 @@ def _bitcast_memref(
     ref_dtype: DTypeLike,
     ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
 ) -> tuple[ir.Value, DTypeLike, tuple[int | pallas_core.Squeezed, ...]]:
-  src_bitwidth = dtypes.bit_width(ref_dtype)
-  dst_bitwidth = dtypes.bit_width(bitcaster.dtype)
+  src_bitwidth = dtypes.itemsize_bits(ref_dtype)
+  dst_bitwidth = dtypes.itemsize_bits(bitcaster.dtype)
   if src_bitwidth != dst_bitwidth:
     if len(ref_block_shape) < 2:
       raise NotImplementedError(
@@ -2298,8 +2298,8 @@ def _dot_general_lowering_rule(
 def _convert_helper(x: Array, *, to_dtype: jnp.dtype) -> Array:
   # Helper function for dtype conversion
   from_dtype = x.dtype
-  from_bitwidth = dtypes.bit_width(from_dtype)
-  to_bitwidth = dtypes.bit_width(to_dtype)
+  from_bitwidth = dtypes.itemsize_bits(from_dtype)
+  to_bitwidth = dtypes.itemsize_bits(to_dtype)
   if from_dtype == jnp.bool_:
     x = x.astype(jnp.int32)
     return _convert_helper(x, to_dtype=to_dtype)
@@ -2355,8 +2355,8 @@ def _convert_element_type_lowering_rule(
   integer = jnp.integer
   signed = jnp.signedinteger
   unsigned = jnp.unsignedinteger
-  old_bitwidth = dtypes.bit_width(old_dtype)
-  new_bitwidth = dtypes.bit_width(new_dtype)
+  old_bitwidth = dtypes.itemsize_bits(old_dtype)
+  new_bitwidth = dtypes.itemsize_bits(new_dtype)
   both_32bit = old_bitwidth == 32 and new_bitwidth == 32
   if _from(floating) and _to(floating):
     forward_compat = ctx.forward_compatible or ctx.is_cloud_tpu_older_than(
@@ -3631,8 +3631,8 @@ def _bitcast_convert_type_lowering_rule(
 ):
   (in_aval, ) = ctx.avals_in
   (out_aval,) = ctx.avals_out
-  old_bitwidth = dtypes.bit_width(in_aval.dtype)
-  new_bitwidth = dtypes.bit_width(new_dtype)
+  old_bitwidth = dtypes.itemsize_bits(in_aval.dtype)
+  new_bitwidth = dtypes.itemsize_bits(new_dtype)
   if old_bitwidth != new_bitwidth:
     raise NotImplementedError("Changing bitwidths not supported.")
   return tpu.bitcast(

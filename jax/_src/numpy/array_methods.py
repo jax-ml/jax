@@ -534,8 +534,8 @@ def _view(self: Array, dtype: DTypeLike | None = None, type: None = None) -> Arr
 
   dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "view")
 
-  nbits_in = dtypes.bit_width(self.dtype)
-  nbits_out = dtypes.bit_width(dtype)
+  nbits_in = dtypes.itemsize_bits(self.dtype)
+  nbits_out = dtypes.itemsize_bits(dtype)
 
   if self.ndim == 0:
     if nbits_in != nbits_out:
