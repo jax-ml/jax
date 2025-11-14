@@ -106,8 +106,8 @@ LogicalResult UnrollVectorsOp::canonicalize(UnrollVectorsOp op,
 LogicalResult BitcastOp::verify() {
   auto in_ty = getInput().getType();
   auto out_ty = getOutput().getType();
-  auto in_bitwidth = in_ty.getElementTypeBitWidth();
-  auto out_bitwidth = out_ty.getElementTypeBitWidth();
+  auto in_bitwidth = getElementTypeBitwidth(in_ty).value();
+  auto out_bitwidth = getElementTypeBitwidth(out_ty).value();
   if (in_bitwidth != out_bitwidth) {
     if (in_ty.getRank() < 2 || out_ty.getRank() < 2) {
       return emitError(
@@ -632,8 +632,8 @@ LogicalResult MemRefBitcastOp::verify() {
   if (src_ty.getRank() <= 1) {
     return emitOpError("Not implemented: 1d memref bitcast.");
   }
-  auto src_bitwidth = src_ty.getElementTypeBitWidth();
-  auto tgt_bitwidth = tgt_ty.getElementTypeBitWidth();
+  auto src_bitwidth = getElementTypeBitwidth(src_ty).value();
+  auto tgt_bitwidth = getElementTypeBitwidth(tgt_ty).value();
   for (int i = 0; i < src_ty.getRank(); ++i) {
     auto src_dim_size = src_ty.getDimSize(i);
     auto tgt_dim_size = tgt_ty.getDimSize(i);
@@ -688,8 +688,8 @@ LogicalResult MemRefBitcastOp::canonicalize(MemRefBitcastOp op,
   if (!erase_layout_op) {
     return failure();
   }
-  auto src_bitwidth = src_ty.getElementTypeBitWidth();
-  auto tgt_bitwidth = dst_ty.getElementTypeBitWidth();
+  auto src_bitwidth = getElementTypeBitwidth(src_ty).value();
+  auto tgt_bitwidth = getElementTypeBitwidth(dst_ty).value();
   auto layout_ref = erase_layout_op.getOperand();
   auto layout_ty = layout_ref.getType();
   auto layout = cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
@@ -765,7 +765,7 @@ LogicalResult verifyStoreOp(Op op) {
         "Expected base and valueToStore element type to match");
   }
   if (op.getMask()) {
-    if (value_ty.getElementTypeBitWidth() != 32) {
+    if (getElementTypeBitwidth(value_ty) != 32) {
       return op.emitError(
           "Not implemented: masked store with non-32-bit element type");
     }
@@ -799,7 +799,7 @@ LogicalResult verifyLoadOp(Op op) {
     return op.emitOpError("Expected base and result element type to match.");
   }
   if (op.getMask()) {
-    if (value_ty.getElementTypeBitWidth() != 32) {
+    if (getElementTypeBitwidth(value_ty) != 32) {
       return op.emitError(
           "Not implemented: masked load with non-32-bit element type");
     }
@@ -988,7 +988,7 @@ LogicalResult MatmulOp::verify() {
     return emitOpError(
         "Not implemented: matmul acc and result have different types");
   }
-  if (acc_ty.getElementTypeBitWidth() != 32) {
+  if (getElementTypeBitwidth(acc_ty) != 32) {
     return emitOpError("Expected matmul acc to be 32-bit");
   }
 
@@ -1825,8 +1825,8 @@ LogicalResult ReciprocalOp::verify() {
 }
 
 LogicalResult UnpackSubelementsOp::verify() {
-  const int packing_factor = getType().getElementTypeBitWidth() /
-                             getSource().getType().getElementTypeBitWidth();
+  const int packing_factor = getElementTypeBitwidth(getType()).value() /
+                             getElementTypeBitwidth(getSource().getType()).value();
   if (auto index = getIndex(); index >= packing_factor) {
     return emitOpError("Index must be between 0 and the packing factor (")
            << packing_factor << "), got " << index;
@@ -1849,8 +1849,8 @@ LogicalResult UnpackSubelementsOp::canonicalize(UnpackSubelementsOp op,
       rewriter.replaceAllOpUsesWith(
           op, pack.getPaddedSources(
                   pack.getSources(), pack.getPositions(),
-                  op.getType().getElementTypeBitWidth() /
-                      pack.getType().getElementTypeBitWidth())[op.getIndex()]);
+                  getElementTypeBitwidth(op.getType()).value() /
+                      getElementTypeBitwidth(pack.getType()).value())[op.getIndex()]);
       return success();
     }
     return failure();
@@ -1864,8 +1864,8 @@ LogicalResult UnpackSubelementsOp::canonicalize(UnpackSubelementsOp op,
     }
     auto packed_elem_ty = pack.getType().getElementType();
     if (!packed_elem_ty.isSignlessInteger() ||
-        packed_elem_ty.getIntOrFloatBitWidth() >
-            src_elem_ty.getIntOrFloatBitWidth()) {
+        getTypeBitwidth(packed_elem_ty).value() >
+            getTypeBitwidth(src_elem_ty).value()) {
       return failure();
     }
   }
@@ -1905,9 +1905,8 @@ LogicalResult PackSubelementsOp::verify() {
   if (getPositions().size() != getSources().size()) {
     return emitOpError("Size of sources and positions must match");
   }
-  const int packing_factor = cast<VectorType>(getSources().front().getType())
-                                 .getElementTypeBitWidth() /
-                             getType().getElementTypeBitWidth();
+  const int packing_factor = getElementTypeBitwidth(cast<VectorType>(getSources().front().getType())).value() /
+                             getElementTypeBitwidth(getType()).value();
   SmallVector<bool> seen_positions(packing_factor, false);
   for (const int32_t position : getPositions()) {
     if (position < 0 || packing_factor <= position) {
@@ -1950,9 +1949,8 @@ LogicalResult PackElementwiseOp::verify() {
                                       getTargetType()))) {
     return failure();
   }
-  const int packing_factor =
-      src_vty.getElementTypeBitWidth() /
-          getTargetType().getIntOrFloatBitWidth();
+  const int packing_factor = getElementTypeBitwidth(src_vty).value() /
+                             getTypeBitwidth(getTargetType()).value();
   if (packing_factor != getSources().size()) {
     return emitOpError("The number of sources must match the packing factor (")
            << packing_factor << "), got " << getSources().size();
@@ -1964,8 +1962,8 @@ LogicalResult UnpackElementwiseOp::verify() {
   if (failed(verifyElementwisePacking(*this, getType(), getSourceType()))) {
     return failure();
   }
-  const int packing_factor = getType().getElementTypeBitWidth() /
-                             getSourceType().getIntOrFloatBitWidth();
+  const int packing_factor = getElementTypeBitwidth(getType()).value() /
+                             getTypeBitwidth(getSourceType()).value();
   if (auto index = getIndex(); index >= packing_factor) {
     return emitOpError("Index must be between 0 and the packing factor (")
            << packing_factor << "), got " << index;
@@ -2012,9 +2010,9 @@ LogicalResult DynamicGatherOp::verify() {
 
 LogicalResult AllReduceOp::verify() {
   auto in_ty = getInput().getType();
-  auto in_bitwidth = in_ty.getElementTypeBitWidth();
+  auto in_bitwidth = getElementTypeBitwidth(in_ty).value();
   auto out_ty = getOutput().getType();
-  auto out_bitwidth = out_ty.getElementTypeBitWidth();
+  auto out_bitwidth = getElementTypeBitwidth(out_ty).value();
   auto kind = getKind();
 
   if (in_bitwidth == 1) {
@@ -2070,7 +2068,7 @@ LogicalResult AllReduceOp::verify() {
 LogicalResult ReduceIndexOp::verify() {
   auto in_ty = getInput().getType();
   auto out_ty = getOutput().getType();
-  auto bitwidth = in_ty.getElementTypeBitWidth();
+  auto bitwidth = getElementTypeBitwidth(in_ty).value();
   auto axis = getAxis();
   auto kind = getKind();
   if (kind != ReductionKind::kArgMax &&

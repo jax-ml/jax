@@ -51,7 +51,7 @@ VectorType getNativeVregOrVmaskTypeImpl(
 
 VectorType getNativeVregOrVmaskType(Type elem_ty, const int8_t layout_bitwidth,
                                     const std::array<int64_t, 2> target_shape) {
-  int8_t bitwidth = elem_ty.getIntOrFloatBitWidth();
+  int8_t bitwidth = getTypeBitwidth(elem_ty).value();
   if (bitwidth == 1) {
     bitwidth = layout_bitwidth;
   } else {
@@ -62,8 +62,8 @@ VectorType getNativeVregOrVmaskType(Type elem_ty, const int8_t layout_bitwidth,
 
 VectorType getNativeVregType(Type elem_ty,
                              const std::array<int64_t, 2> target_shape) {
-  return getNativeVregOrVmaskTypeImpl(elem_ty, elem_ty.getIntOrFloatBitWidth(),
-                                      target_shape);
+  return getNativeVregOrVmaskTypeImpl(
+      elem_ty, getTypeBitwidth(elem_ty).value(), target_shape);
 }
 
 TypedValue<VectorType> getFullVector(ImplicitLocOpBuilder &builder,
@@ -187,7 +187,7 @@ LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder &builder,
     Value partial_sublane_mask = getFullVector(
         builder, i32_vreg_ty,
         builder.getI32IntegerAttr(
-            0xffffffff >> (sub_padding * vreg_ty.getElementTypeBitWidth())));
+            0xffffffff >> (sub_padding * getElementTypeBitwidth(vreg_ty).value())));
     // Insert 0xffffffff above the blended sublane.
     Value sublane_mask = builder.create<arith::SelectOp>(mask_top, i32_max_vreg,
                                                          partial_sublane_mask);
@@ -225,7 +225,7 @@ LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder &builder,
 FailureOr<TypedValue<VectorType>> broadcastSubelements(
     ImplicitLocOpBuilder &builder, TypedValue<VectorType> vec,
     int subelement_idx, std::array<int64_t, 2> target_shape) {
-  int bitwidth = vec.getType().getElementTypeBitWidth();
+  int bitwidth = getElementTypeBitwidth(vec.getType()).value();
   int packing = 32 / bitwidth;
   if (subelement_idx < 0 || subelement_idx >= packing) {
     return builder.emitError()

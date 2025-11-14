@@ -154,7 +154,7 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
     return emitError(UnknownLoc::get(memref_ty.getContext()),
                      "Invalid element type for memref");
   }
-  const int8_t bitwidth = memref_ty.getElementTypeBitWidth();
+  const int8_t bitwidth = getElementTypeBitwidth(memref_ty).value();
   const auto [sublane_count, lane_count] = target_shape;
   // Infer the layout
   if (memref_ty.getRank() == 1) {
@@ -284,7 +284,7 @@ LogicalResult inferOp(Operation &op, const int hardware_generation,
     int64_t leading_tile_rows = 0;
     // TODO(b/375038685): generalize untiled memref with packed type which
     // needs to update load/store rules.
-    if (memref_ty.getElementTypeBitWidth() == 32 && memref_ty.getRank() > 1 &&
+    if (getElementTypeBitwidth(memref_ty) == 32 && memref_ty.getRank() > 1 &&
         *(memref_ty.getShape().end() - 1) <= target_shape[1]) {
       leading_tile_rows = 1;
     }
@@ -375,7 +375,7 @@ LogicalResult inferFunc(func::FuncOp f, const int hardware_generation,
                                         /*allow_minormost_padding=*/true) &&
           // TODO(b/375038685): generalize untiled memref with packed type which
           // needs to update load/store rules.
-          new_memref_ty.getElementTypeBitWidth() == 32) {
+          getElementTypeBitwidth(new_memref_ty) == 32) {
         auto tiled_layout =
             cast<tpu::TiledLayoutAttr>(new_memref_ty.getLayout());
         SmallVector<xla::Tile> tiles(tiled_layout.getTiles());
