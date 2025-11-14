@@ -713,6 +713,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
     }
   }
 
+
   // Attempt to canonicalize matmul(x, transpose(y)) to a matmul with the
   // dimension numbers changed which will later be lowered into a more efficient
   // operation that fuses the transpose into the matmul.
