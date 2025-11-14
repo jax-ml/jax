@@ -463,6 +463,10 @@ def find_assignments_for(
   # In this case, we have determined an assignment for all the unknown
   # variables. Return their respective assignment.
   if not remaining_unknowns:
+    assert not equation_system.constraints, (
+        "A satisfiable system should not have remaining unsatisfied"
+        " constraints. This is a bug."
+    )
     return {v: k for v, k in equation_system.assignments.items() if v in unknowns}, fuel
 
   # Reduce the expressions in the remaining hints based on the current
