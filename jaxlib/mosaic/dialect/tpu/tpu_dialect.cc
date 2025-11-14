@@ -20,6 +20,7 @@ limitations under the License.
 
 #include "absl/hash/hash.h"
 #include "absl/log/log.h"
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep.
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -288,6 +289,13 @@ DotDimensionNumbersAttr defaultDimensionNumbers(Builder &builder,
       /*output_dim_order=*/{0, transpose_lhs ? 1 : 0, 1, transpose_rhs ? 0 : 1},
       /*lhs_batch_dims=*/{},
       /*rhs_batch_dims=*/{});
+}
+
+const ::llvm::fltSemantics& Float8EXMYType::getFloatSemantics() const {
+  // Borrow E8M0FNU semantics for now. Compiler checks int/float types and bit
+  // widths in many places, we need the bit width to be power of 2. However we
+  // cannot create new fltSemantics outside APFloat.cc.
+  return llvm::APFloat::Float8E8M0FNU();
 }
 
 }  // namespace mlir::tpu
