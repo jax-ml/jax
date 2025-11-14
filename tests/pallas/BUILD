@@ -808,6 +808,9 @@ jax_multiplatform_test(
         "gpu_b200",
     ],
     shard_count = 1,
+    tags = [
+        "noasan",  # Times out.
+    ],
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
