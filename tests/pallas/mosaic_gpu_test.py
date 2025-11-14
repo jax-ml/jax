@@ -547,6 +547,11 @@ class PallasCallTest(PallasTest):
         )
         ctx.await_async_copy(0)
 
+        # A dummy if statement to make sure we inline nested blocks correctly.
+        is_leader_thread = mgpu.utils.single_thread_predicate()
+        with mgpu.utils.when(is_leader_thread):
+          pass
+
       # This time we slice inside the inline_mgpu body.
       store(arr, smem_ref, o_ref)
 
