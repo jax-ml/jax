@@ -390,8 +390,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
 
   @parameterized.parameters(
       ("x*x", lambda x: x * x, "add"),
-      # TODO(b/459818130): Re-enable once stablehlo changes (cl/797055546) are on HEAD.
-      # ("sin(x)", jnp.sin, "cosine"),
+      ("sin(x)", jnp.sin, "cosine"),
       ("tanh(x)", jnp.tanh, "add"),
       ("1/x", lambda x: 1 / x, "negate"),
       ("sinc(x)", jnp.sinc, "call"),
