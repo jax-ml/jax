@@ -69,6 +69,14 @@ def MosaicGPU_InitializeBarrierOp : Op<MosaicGPU_Dialect, "initialize_barrier",
     ConfinedAttr<I32Attr, [IntPositive]>:$num_barriers);
 }
 
+def MosaicGPU_ArriveOp : Op<MosaicGPU_Dialect, "arrive", []> {
+  let summary = "Executes an arrive operation on the given barrier.";
+
+  let arguments = (ins
+    MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
+    BoolAttr:$orders_tensor_core);
+}
+
 def MosaicGPU_ArriveExpectTxOp : Op<MosaicGPU_Dialect, "arrive_expect_tx", []> {
   let summary = "Executes an arrive.expect_tx operation on the given barrier.";
 

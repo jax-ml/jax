@@ -1118,8 +1118,8 @@ class DialectBarrierRef:
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     return self.barrier_ref.update_parities(parities)
 
-  def arrive(self):
-    self.barrier_ref.arrive()
+  def arrive(self, orders_tensor_core: bool = False):
+    dialect.ArriveOp(self.as_barrier_memref(), orders_tensor_core)
 
   def arrive_expect_tx(self, bytes: int | ir.Value):
     dialect.ArriveExpectTxOp(barrier=self.as_barrier_memref(), expect_tx=bytes)

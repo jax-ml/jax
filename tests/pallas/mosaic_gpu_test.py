@@ -4228,7 +4228,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
     np.testing.assert_array_equal(result, a + b)
 
   def test_arrive_wait_on_tc_barrier(self):
-    self.skip_if_wg_semantics()
     def kernel(out_ref, barrier):
       plgpu.barrier_arrive(barrier)
       plgpu.barrier_wait(barrier)

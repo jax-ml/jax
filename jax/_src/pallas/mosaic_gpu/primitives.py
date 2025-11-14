@@ -868,18 +868,20 @@ def _barrier_arrive_lowering(
   if indexer is not None:
     barrier = barrier.__getitem__(*map(lowering._as_index, indexer.indices))
   sem_dtype = ctx.avals_in[0].inner_aval.dtype  # type: ignore
-  if getattr(sem_dtype, "orders_tensor_core", False):
-    if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
-      raise NotImplementedError("barrier_arrive on barriers with orders_tensor_core=True")
-    # We only do a single arrival for barriers with orders_tensor_core=True,
+  orders_tensor_core = getattr(sem_dtype, "orders_tensor_core", False)
+  if orders_tensor_core:
+    # We arrive on only one lane for barriers with orders_tensor_core=True,
     # so we need to perfom a separate warpgroup barrier.
     mgpu_utils.warpgroup_barrier()
-    if isinstance(barrier, mgpu.CollectiveBarrierRef):
-      barrier.arrive(orders_tensor_core=True)
-    else:
-      barrier.arrive(orders_tensor_core=True, predicate=ctx.module_ctx.single_lane_predicate)
+
+  if isinstance(barrier, mgpu.CollectiveBarrierRef):
+    barrier.arrive(orders_tensor_core)
   else:
-    barrier.arrive()
+    if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+      barrier.arrive(orders_tensor_core)
+    else:
+      pred = ctx.module_ctx.single_lane_predicate if orders_tensor_core else None
+      barrier.arrive(orders_tensor_core=orders_tensor_core, predicate=pred)
   return ()
 
 

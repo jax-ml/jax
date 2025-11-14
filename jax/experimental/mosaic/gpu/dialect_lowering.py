@@ -1294,6 +1294,35 @@ def _mgpu_wgmma_op_lowering_rule(
   ]
 
 
+if hasattr(mgpu, "ArriveOp"):
+  @_register_lowering(mgpu.ArriveOp)
+  def _mgpu_arrive_op_lowering_rule(
+      ctx: LoweringContext, arrive_op: mgpu.ArriveOp
+  ) -> Sequence[ir.Value]:
+    barrier = utils.DialectBarrierRef.from_barrier_memref(arrive_op.barrier)
+    orders_tc = arrive_op.orders_tensor_core.value
+    if orders_tc:
+      # Only one thread arrives, so make sure it ups the arrival count for the
+      # whole warpgroup.
+      #
+      # TODO(b/415721295): At the moment we assume that there is a single arrival
+      # per warpgroup. If we need to support also Warp-level semantics we will
+      # need to use a warp-level predicate.
+      predicate = ctx.single_thread_per_warpgroup_predicate
+      arrival_count = utils.WARPGROUP_SIZE
+    else:
+      # Each thread arrives once.
+      arrival_count = 1
+      predicate = None
+
+    barrier.barrier_ref.arrive(
+        arrival_count=arrival_count,
+        orders_tensor_core=orders_tc,
+        predicate=predicate,
+    )
+    return []
+
+
 @_register_lowering(mgpu.ArriveExpectTxOp)
 def _mgpu_arrive_expect_tx_op_lowering_rule(
     _: LoweringContext, arrive_expect_tx_op: mgpu.ArriveExpectTxOp
