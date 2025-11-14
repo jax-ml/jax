@@ -1617,14 +1617,22 @@ class TCGen05Test(TestCase):
 
   @parameterized.product(
       in_jax_dtype=(jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float4_e2m1fn),
+      scale_jax_dtype=(jnp.float8_e8m0fnu, jnp.float8_e4m3fn),
       m=(128,),  # TODO(apaszke): 256
       n=(128, 256),  # TODO(apaszke): 192, other non-power-of-2
   )
-  def test_mma_block_scaled(self, m, n, in_jax_dtype):
+  def test_mma_block_scaled(self, m, n, in_jax_dtype, scale_jax_dtype):
     out_jax_dtype = jnp.float32
-    scale_jax_dtype = jnp.float8_e8m0fnu
     swizzle = 128
     k_steps = 2
+    if scale_jax_dtype == jnp.float8_e8m0fnu:
+      block_size = 32
+    elif scale_jax_dtype == jnp.float8_e4m3fn:
+      if in_jax_dtype != jnp.float4_e2m1fn:
+        self.skipTest("Only float4_e2m1fn input is supported for e4m3fn scale.")
+      block_size = 16
+    else:
+      raise ValueError(f"Unsupported scale dtype: {scale_jax_dtype}")
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
 
@@ -1670,21 +1678,37 @@ class TCGen05Test(TestCase):
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_shape, lhs_tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
-        jax.ShapeDtypeStruct((m // 128, k // (32 * 4), 32, 16), scale_jax_dtype),
-        jax.ShapeDtypeStruct((n // 128, k // (32 * 4), 32, 16), scale_jax_dtype),
+        jax.ShapeDtypeStruct((m // 128, k // (block_size * 4), 32, 16), scale_jax_dtype),
+        jax.ShapeDtypeStruct((n // 128, k // (block_size * 4), 32, 16), scale_jax_dtype),
         mgpu.TMABarrier(4),
         mgpu.Barrier(1),
         mgpu.TMEM((m, n), out_jax_dtype),
-        mgpu.TMEM((m, k // 32), scale_jax_dtype, layout=tcgen05.scales_layout()),
-        mgpu.TMEM((n, k // 32), scale_jax_dtype, layout=tcgen05.scales_layout()),
+        mgpu.TMEM((m, k // block_size), scale_jax_dtype, layout=tcgen05.scales_layout()),
+        mgpu.TMEM((n, k // block_size), scale_jax_dtype, layout=tcgen05.scales_layout()),
     ]
     ka, kb = jax.random.split(jax.random.key(1234), 2)
-    a_scales = jax.lax.bitcast_convert_type(
-        jax.random.randint(ka, (m, k // 32), 122, 132, dtype=jnp.uint8), scale_jax_dtype
-    )
-    b_scales = jax.lax.bitcast_convert_type(
-        jax.random.randint(kb, (n, k // 32), 122, 132, dtype=jnp.uint8), scale_jax_dtype
-    )
+    if scale_jax_dtype == jnp.float8_e8m0fnu:
+      a_scales = jax.lax.bitcast_convert_type(
+          jax.random.randint(ka, (m, k // block_size), 122, 132, dtype=jnp.uint8),
+          scale_jax_dtype
+      )
+      b_scales = jax.lax.bitcast_convert_type(
+          jax.random.randint(kb, (n, k // block_size), 122, 132, dtype=jnp.uint8),
+          scale_jax_dtype
+      )
+    elif scale_jax_dtype == jnp.float8_e4m3fn:
+      a_scales = jnp.abs(
+          jax.random.normal(ka, (m, k // block_size), dtype=jnp.float32).astype(
+              scale_jax_dtype
+          )
+      )
+      b_scales = jnp.abs(
+          jax.random.normal(kb, (n, k // block_size), dtype=jnp.float32).astype(
+              scale_jax_dtype
+          )
+      )
+    else:
+      raise ValueError(f"Unsupported scale dtype: {scale_jax_dtype}")
     def format_scales(scales):
       mn, k = scales.shape
       assert mn % 128 == 0 and k % 4 == 0, scales.shape
@@ -1699,8 +1723,8 @@ class TCGen05Test(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), args, out_shape, scratch_shape
     )(*args)
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
-    a_logical_scales = jnp.repeat(a_scales, 32, axis=1).astype(jnp.float32)
-    b_logical_scales = jnp.repeat(b_scales, 32, axis=1).astype(jnp.float32)
+    a_logical_scales = jnp.repeat(a_scales, block_size, axis=1).astype(jnp.float32)
+    b_logical_scales = jnp.repeat(b_scales, block_size, axis=1).astype(jnp.float32)
     ref = (x32 * a_logical_scales) @ (y32 * b_logical_scales).T
     np.testing.assert_allclose(z, ref, atol=2e-4, rtol=5e-6)
 
