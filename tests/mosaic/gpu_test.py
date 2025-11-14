@@ -1620,11 +1620,13 @@ class TCGen05Test(TestCase):
       scale_jax_dtype=(jnp.float8_e8m0fnu, jnp.float8_e4m3fn),
       m=(128,),  # TODO(apaszke): 256
       n=(128, 256),  # TODO(apaszke): 192, other non-power-of-2
+      swizzle=(32, 128),
   )
-  def test_mma_block_scaled(self, m, n, in_jax_dtype, scale_jax_dtype):
+  def test_mma_block_scaled(self, m, n, in_jax_dtype, scale_jax_dtype, swizzle):
     out_jax_dtype = jnp.float32
-    swizzle = 128
-    k_steps = 2
+    # When swizzle is small, we need to take many steps to make it large enough
+    # to make the scale count a multiple of 4.
+    k_steps = 4 if swizzle == 32 else 2
     if scale_jax_dtype == jnp.float8_e8m0fnu:
       block_size = 32
     elif scale_jax_dtype == jnp.float8_e4m3fn:

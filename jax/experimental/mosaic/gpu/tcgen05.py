@@ -335,13 +335,17 @@ def mma(
     raise NotImplementedError(f"Unsupported element type: {element_type}")
 
   # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
-  # instructions must be issued in groups of the same width as the swizzle.
+  # instructions must be issued in groups that are a multiple of swizzle.
   m_group_elems = m  # We have already verified M is supported above.
   k_group_elems = 8 * max(a_swizzle * (1 + is_sparse), b_swizzle) // utils.bitwidth(element_type)
   if is_sparse and k_group_elems < 64:
     # This is a limitation of the implementation below. We could relax it if we
     # ever need to support k=32.
     k_group_elems = 64
+  scale_block: int | None = None
+  if is_scaled:
+    scale_block = 32 if a_scale.dtype == ir.Float8E8M0FNUType.get() else 16  # type: ignore
+    k_group_elems = max(k_group_elems, 4 * scale_block)
   required_multiple = 16 if collective else 8
   mode_name = "2 CTA" if collective else "1 CTA"
   if d.dtype == s32:
@@ -384,7 +388,6 @@ def mma(
 
   # Check that the shapes and element types are correct for block scaling.
   scale_element_type = None
-  scale_block = None
   if is_scaled:
     if collective:
       raise NotImplementedError("MMA with block scaling does not support collective")
@@ -395,13 +398,12 @@ def mma(
       )
     assert a_scale is not None and b_scale is not None
     scale_element_type = a_scale.dtype
-    if a_scale.dtype == ir.Float8E8M0FNUType.get():
-      scale_block = 32
-    elif a_scale.dtype == ir.Float8E4M3FNType.get():
-      scale_block = 16
-    else:
+    if (
+        a_scale.dtype != ir.Float8E8M0FNUType.get()
+        and a_scale.dtype != ir.Float8E4M3FNType.get()
+    ):
       raise ValueError(
-          f"A scale dtype mismatch: expected f8e8m0fnu, got {a_scale.dtype}"
+          f"A scale dtype mismatch: expected f8e8m0fnu or f8e4m3fn, got {a_scale.dtype}"
       )
     if b_scale.dtype != a_scale.dtype:
       raise ValueError(
@@ -417,12 +419,6 @@ def mma(
       raise ValueError(
           f"B scale shape mismatch: expected ({n}, {k // scale_block}), got"
           f" {b_scale.shape}"
-      )
-    if k_group_elems % (scale_block * 4):
-      min_swizzle = scale_block // 2 * utils.bitwidth(element_type)
-      raise NotImplementedError(
-          f"{element_type} MMA with block scaling requires swizzle to be at"
-          f" least {min_swizzle}"
       )
   if is_sparse:
     a_sparse_metadata = cast(TMEMRef, a_sparse_metadata)
