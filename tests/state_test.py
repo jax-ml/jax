@@ -998,6 +998,29 @@ class StateHypothesisTest(jtu.JaxTestCase):
     self.assertAllClose(discharge_of_vmap_ans, vmap_of_discharge_ans,
                         check_dtypes=False)
 
+  @parameterized.parameters(
+      ((4, 5), 0, (0,)),
+      ((4, 5), 1, (0,)),
+      ((9, 10, 11, 12), 0, (slice(None), 0, 1)),  # Contiguous int indexing
+      ((9, 10, 11, 12), 0, (0, slice(None), 1)),  # Non-contiguous int indexing
+      ((9, 10, 11, 12), 1, (slice(None), 0, 1)),  # Contiguous after batch
+      ((9, 10, 11, 12), 2, (slice(None), 0, 1)),  # Non-contiguous after batch
+      ((9, 10, 11, 12), 3, (slice(None), slice(None), 0)),
+      # Shaped int indexer, contiguous after batch
+      ((9, 10, 11, 12), 3,
+       (slice(None), slice(None), np.array([[0,1]]))),
+      # Shaped int indexer, non-contiguous after batch
+      ((9, 10, 11, 12), 2,
+       (np.array([[0, 1]]), slice(None), np.array([[0, 1]]))),
+  )
+  def test_vmap_of_get_regression(self, shape, in_axes, indexer):
+    # Regression test for https://github.com/jax-ml/jax/issues/33309
+    def f(x):
+      return x[indexer]
+    x = jnp.ones(shape)
+    result = jax.vmap(f, in_axes=in_axes)(jax.new_ref(x))
+    expected = jax.vmap(f, in_axes=in_axes)(x)
+    self.assertArraysEqual(result, expected)
 
   @hp.given(set_vmap_params())
   @hp.settings(deadline=None, print_blob=True,
