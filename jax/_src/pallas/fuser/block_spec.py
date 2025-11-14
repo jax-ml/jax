@@ -2164,7 +2164,7 @@ def _transpose_push_rule(
 ) -> pallas_core.BlockSpec:
   del ctx
   block_shape = block_spec.block_shape
-  new_shape = [block_shape[i] for i in permutation]
+  new_shape = tuple(block_shape[i] for i in permutation)
   if set(permutation[-2:]) != {permutation[-1], permutation[-2]}:
     raise NotImplementedError(
         'Cannot permute last two dimensions with leading dimensions.'
