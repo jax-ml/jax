@@ -244,13 +244,23 @@ pallas_core._core_map_mesh_rules[ScalarSubcoreMesh] = (
     _scalar_subcore_mesh_discharge_rule
 )
 
+def _get_num_cores() -> int:
+  """Returns the number of cores for the current SparseCore."""
+  return get_sparse_core_info().num_cores
+
+def _get_num_subcores() -> int:
+  """Returns the number of subcores for the current SparseCore."""
+  return get_sparse_core_info().num_subcores
+
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class VectorSubcoreMesh:
   core_axis_name: str
   subcore_axis_name: str
-  num_cores: int
-  num_subcores: int = dataclasses.field(default=16, init=False)
+  num_cores: int = dataclasses.field(default_factory=_get_num_cores)
+  num_subcores: int = dataclasses.field(
+      default_factory=_get_num_subcores, init=False
+  )
 
   def __post_init__(self):
     sc_info = get_sparse_core_info()
