@@ -2,7 +2,7 @@ absl-py
 cloudpickle
 filelock
 flatbuffers
-hypothesis
+hypothesis==6.142.1  # TODO(justinfu): Fix test failures surfaced by Hypothesis 6.147.0 and remove pin.
 mpmath>=1.3
 pillow>=11.3
 pytest<9.0  # Works around https://github.com/pytest-dev/pytest/issues/13895
