@@ -92,12 +92,18 @@ else
     rbe_config=rbe_${os}_${arch}
 fi
 
+git clone https://github.com/ybaturina/rules_ml_toolchain.git
+cd rules_ml_toolchain
+git checkout yb-umd-files
+cd ..
+
 bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     --build_runfile_links=false \
     --config=$rbe_config \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
+    --override_repository=rules_ml_toolchain=./rules_ml_toolchain \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAX \
     $test_strategy \

@@ -18,6 +18,7 @@ package(
 
 licenses(["notice"])
 
+load("@cuda_cudart//:version.bzl", cuda_major_version = "VERSION")
 load(
   "//jaxlib:jax.bzl",
   "if_cuda_is_configured",
@@ -38,4 +39,33 @@ py_library(
     ]) + if_rocm_is_configured([
         "//jax_plugins/rocm:rocm_plugin",
     ]),
+)
+
+filegroup(
+    name = "cuda_umd_libs",
+    srcs = if_cuda_is_configured([":cuda_umd_libs_zip"]),
+)
+
+genrule(
+    name = "cuda_umd_libs_zip",
+    srcs = [
+        "@cuda_driver//:umd_libs",
+    ],
+    outs = ["cuda_umd_libs.zip"],
+    cmd = """
+      set -e
+      set -x
+      PKG_DIR="nvidia/%s/lib"
+      mkdir -p $$PKG_DIR
+      FILES_TO_ZIP=( $(SRCS) )
+      for f in "$${FILES_TO_ZIP[@]}"; do
+        cp "$$f" "$$PKG_DIR/"
+      done
+      $(location @bazel_tools//tools/zip:zipper) c $@ %s
+    """ % (
+        "cu13" if cuda_major_version == "13" else "cuda_driver",
+        if_cuda_is_configured("$$PKG_DIR/*", "$$PKG_DIR"),
+    ),
+    message = "Zipping CUDA UMD libraries",
+    tools = ["@bazel_tools//tools/zip:zipper"],
 )

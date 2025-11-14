@@ -652,6 +652,13 @@ def if_pypi_cuda_wheel_deps(if_true, if_false = []):
         "//conditions:default": if_false,
     })
 
+def if_cuda_umd_libs(if_true, if_false = []):
+    """ select() on whether we're adding CUDA UMD libs. """
+    return select({
+        "@cuda_driver//:cuda_umd_libs": if_true,
+        "//conditions:default": if_false,
+    })
+
 def jax_multiprocess_test(
         name,
         srcs,
