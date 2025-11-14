@@ -27,6 +27,7 @@ import threading
 import time
 import tracemalloc  as tm
 from typing import Any
+from concurrent.futures import ThreadPoolExecutor
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -301,6 +302,24 @@ class CheckpointTest(jtu.JaxTestCase):
       self.assertEqual(s.replica_id, i)
       self.assertArraysEqual(np.asarray(s.data), np.array([], dtype=np.float32))
     self.assertEqual(m3.dtype, np.float32)
+
+  @jtu.thread_unsafe_test()
+  def test_deserialization_does_not_hang_when_concurrent_gb_exceeded(self):
+    TIMEOUT_SEC = 5
+    mngr = serialization.GlobalAsyncCheckpointManager(timeout_secs=TIMEOUT_SEC)
+    a = jnp.ones((1024, 1024))
+    path = str(pathlib.Path(self.create_tempdir('small').full_path) / 'array')
+    mngr.serialize_with_paths([a], [path])
+    mngr.wait_until_finished()
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(mngr.deserialize_with_paths, [a.sharding],
+                             [path], concurrent_gb=1e-9)  # 1 byte
+    try:
+      future.result(timeout=TIMEOUT_SEC)
+    except TimeoutError:
+      future.cancel()
+      self.fail('Deserialization times out if size exceeds concurrent_gb.')
 
   def test_checkpointing_ocdbt_transaction(self):
     global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
