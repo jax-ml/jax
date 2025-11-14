@@ -465,7 +465,6 @@ def make_kernel_function(
   def _remove_nones(
       shape: tuple[pallas_core.BlockDim | int | None, ...] | None,
   ) -> tuple[int, ...]:
-    assert isinstance(shape, tuple)
     new_shape = tuple(_block_size(s) for s in shape)
     return tuple(s for s in new_shape if s is not None)
 
