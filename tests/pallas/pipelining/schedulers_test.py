@@ -14,9 +14,10 @@
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import test_util as jtu
 from jax._src.pallas.pipelining import internal
+from jax._src.pallas.pipelining import pipeline_test_util as test_util
 from jax._src.pallas.pipelining import schedulers
-from jax._src.pallas.pipelining import test_util
 
 
 jax.config.parse_flags_with_absl()
@@ -29,6 +30,11 @@ def empty_jaxpr():
 
 
 class SchedulersGoldenTest(parameterized.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.test_device_matches(["cpu"]):
+      self.skipTest("Only works on CPU")
 
   def test_2_async_stages(self):
     # This test uses 2 stages that are both async.
@@ -73,7 +79,7 @@ class SchedulersGoldenTest(parameterized.TestCase):
         stages=(stage1_start, stage1_done, stage2_start, stage2_done),
         grid=(4,)
     )
-    with test_util.capture_stdout() as stdout:
+    with jtu.capture_stdout() as stdout:
       schedulers.static_nd_loop_scheduler(
           loop_struct,
           args=(None,),
@@ -150,7 +156,7 @@ class SchedulersGoldenTest(parameterized.TestCase):
                 stage2,),
         grid=(6,)
     )
-    with test_util.capture_stdout() as stdout:
+    with jtu.capture_stdout() as stdout:
       schedulers.static_nd_loop_scheduler(
           loop_struct,
           args=(None, None),
@@ -223,7 +229,7 @@ class SchedulersGoldenTest(parameterized.TestCase):
         grid=(4,)
     )
 
-    with test_util.capture_stdout() as stdout:
+    with jtu.capture_stdout() as stdout:
       schedulers.static_nd_loop_scheduler(
           loop_struct,
           args=(None, None),
@@ -302,7 +308,7 @@ class SchedulersGoldenTest(parameterized.TestCase):
                 copy_out_start, copy_out_done),
         grid=(4, 4)
     )
-    with test_util.capture_stdout() as stdout:
+    with jtu.capture_stdout() as stdout:
       schedulers.static_nd_loop_scheduler(
           loop_struct,
           args=(None,),
@@ -413,7 +419,7 @@ class SchedulersGoldenTest(parameterized.TestCase):
                 copy_out_start, copy_out_done),
         grid=(4, 4)
     )
-    with test_util.capture_stdout() as stdout:
+    with jtu.capture_stdout() as stdout:
       schedulers.static_nd_loop_scheduler(
           loop_struct,
           args=(None,),

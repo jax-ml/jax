@@ -18,8 +18,9 @@ from absl.testing import absltest
 import jax
 from jax import numpy as jnp
 from jax._src import core as jax_core
+from jax._src import test_util as jtu
+from jax._src.pallas.pipelining import pipeline_test_util as test_util
 from jax._src.pallas.pipelining import schedule_api
-from jax._src.pallas.pipelining import test_util
 from jax._src.state import types as state_types
 import numpy as np
 
@@ -41,6 +42,11 @@ class MemoryRef:
 
 
 class ApiTest(absltest.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.test_device_matches(["cpu"]):
+      self.skipTest("Only works on CPU")
 
   def test_basic_pipeline(self):
     # Use reads/writes to mimic the Ref effects of DMAs.
@@ -88,7 +94,7 @@ class ApiTest(absltest.TestCase):
     )
     ref = jnp.ones((128, 128), jnp.float32)
     ref = jax.new_ref(ref)
-    with test_util.capture_stdout() as stdout:
+    with jtu.capture_stdout() as stdout:
       pipeline(ref, ref)
     output = stdout().strip().split("\n")
     expected = [

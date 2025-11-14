@@ -61,12 +61,11 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
-    name = "test_util",
+    name = "pipeline_test_util",
     testonly = True,
-    srcs = ["test_util.py"],
+    srcs = ["pipeline_test_util.py"],
     deps = [
         "//jax/_src:debugging",
-        "//jax/_src:test_util",
         "//jax/_src/pallas/pipelining:internal",
         "//jax/_src/pallas/pipelining:schedulers",
     ] + py_deps([

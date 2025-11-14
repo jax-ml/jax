@@ -16,11 +16,8 @@ import dataclasses
 from typing import Any, Sequence
 
 from jax._src import debugging
-from jax._src import test_util as jtu
 from jax._src.pallas.pipelining import schedulers
 from jax._src.pallas.pipelining import internal
-
-capture_stdout = jtu.capture_stdout
 
 
 def print_stage(

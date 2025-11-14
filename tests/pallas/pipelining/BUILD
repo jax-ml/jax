@@ -35,9 +35,8 @@ jax_multiplatform_test(
     deps = [
         "//jax/_src:core",
         "//jax/_src:state_types",
+        "//jax/_src/pallas/pipelining:pipeline_test_util",
         "//jax/_src/pallas/pipelining:schedule_api",
-        "//jax/_src/pallas/pipelining:test_util",
-        "//testing/pybase",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -51,10 +50,8 @@ jax_multiplatform_test(
     enable_configs = ["cpu"],
     deps = [
         "//jax/_src/pallas/pipelining:internal",
+        "//jax/_src/pallas/pipelining:pipeline_test_util",
         "//jax/_src/pallas/pipelining:schedulers",
-        "//jax/_src/pallas/pipelining:test_util",
-        "//testing/pybase",
-        "//testing/pybase:parameterized",
     ] + py_deps([
         "absl/testing",
     ]),
