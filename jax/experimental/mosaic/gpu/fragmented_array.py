@@ -1946,7 +1946,11 @@ class FragmentedArray:
     if cur_dtype == i4 and self.is_signed and new_dtype == bf16 and vector_len % 2 == 0:
       new_registers = np.empty_like(self.registers)
       out_vec_ty = ir.VectorType.get((vector_len,), new_dtype)
-      for idx, reg in np.ndenumerate(self.registers):
+      # We use packed_registers for consistency, even though the packing is not
+      # really profitable here: the PTX below begins by an op dependent on the
+      # extracted part and so there are no ops that can be shared across packed
+      # parts.
+      for indices, reg in packed_registers(2, if_not_sliced=True):
         # The algorithm here is largely the same as CUTLASS's
         # NumericArrayConverter specialization for int4 -> bf16 casts.
         # We modify it slightly, because we only extract 2 values.
@@ -1962,7 +1966,7 @@ class FragmentedArray:
         # bias coming from flipping the sign bit which is 136 (0x4308 as bits).
         def upcast_i4_to_bf16(reg: ir.Value, reg_shr: ir.Value, part: int):
           assert 0 <= part < 4
-          return llvm.inline_asm(
+          int_reg = llvm.inline_asm(
               i32,
               [reg, reg_shr],
               f"""
@@ -1976,43 +1980,43 @@ class FragmentedArray:
               """,
               "=r,r,r",
           )
-        offset = 0
+          return utils.bitcast(int_reg, ir.VectorType.get((2,), bf16))
+        [group_size] = ir.VectorType(reg.type).shape
+        assert group_size % vector_len == 0
+        assert group_size * 4 <= 32
+        int_ty = ir.IntegerType.get_signless(group_size * 4)
+        # If the vector originates from a slice (common after relayouts), we
+        # can fuse the slicing into the conversion and prevent LLVM from
+        # generating a bunch of shifts to align the vector data to the LSB.
+        # This also lets us share the right shift among more vectors.
         out_int_regs: list[ir.Value] = []
-        # TODO(apaszke): Use packed_registers here.
-        for group_size in (8, 4, 2):
-          int_ty = ir.IntegerType.get_signless(group_size * 4)
-          while vector_len - offset >= group_size:
-            # If the vector originates from a slice (common after relayouts), we
-            # can fuse the slicing into the conversion and prevent LLVM from
-            # generating a bunch of shifts to align the vector data to the LSB.
-            # This also lets us share the right shift among more vectors.
-            if (isinstance(slice_op := reg.owner.opview, vector.ExtractStridedSliceOp)
-                and utils.bitwidth(slice_op.source.type) == 32
-                and slice_op.strides[0].value == 1):
-              slice_offset = slice_op.offsets[0].value + offset
-              reg_int = utils.bitcast(slice_op.source, i32)
-              reg_int_shr = arith.shrui(reg_int, c(4, i32))
-              out_int_regs.extend(
-                  upcast_i4_to_bf16(reg_int, reg_int_shr, part=(slice_offset // 2 + part))
-                  for part in range(group_size // 2)
-              )
-            else:
-              reg_slice = utils.vector_slice(reg, slice(offset, offset + group_size))
-              reg_slice_int = utils.bitcast(reg_slice, int_ty)
-              if int_ty != i32:
-                reg_slice_int = arith.extsi(i32, reg_slice_int)
-              reg_slice_int_shr = arith.shrui(reg_slice_int, c(4, i32))
-              out_int_regs.extend(
-                  upcast_i4_to_bf16(reg_slice_int, reg_slice_int_shr, part=part)
-                  for part in range(group_size // 2)
-              )
-            offset += group_size
-        assert offset == vector_len
-        out_vec_int = utils.vector_concat([
-            vector.broadcast(ir.VectorType.get((1,), i32), reg)
-            for reg in out_int_regs
-        ])
-        new_registers[idx] = utils.bitcast(out_vec_int, out_vec_ty)
+        if regs_from_32bit_slice:
+          slice_op = reg.owner.opview
+          slice_offset = slice_op.offsets[0].value
+          reg_int = utils.bitcast(slice_op.source, i32)
+          reg_int_shr = arith.shrui(reg_int, c(4, i32))
+          assert slice_offset % 2 == 0
+          out_int_regs.extend(
+              upcast_i4_to_bf16(reg_int, reg_int_shr, part=slice_offset // 2 + part)
+              for part in range(group_size // 2)
+          )
+        else:
+          reg_slice_int = utils.bitcast(reg, int_ty)
+          if int_ty != i32:
+            reg_slice_int = arith.extsi(i32, reg_slice_int)
+          reg_slice_int_shr = arith.shrui(reg_slice_int, c(4, i32))
+          out_int_regs.extend(
+              upcast_i4_to_bf16(reg_slice_int, reg_slice_int_shr, part=part)
+              for part in range(group_size // 2)
+          )
+        out_reg = utils.vector_concat(out_int_regs)
+        offset = 0
+        for idx in indices:
+          new_registers[idx] = new_reg = utils.vector_slice(
+              out_reg, slice(offset, offset + vector_len)
+          )
+          offset += vector_len
+          assert new_reg.type == out_vec_ty
       return FragmentedArray(
           _registers=new_registers, _layout=self.layout, _is_signed=None
       )
@@ -2058,6 +2062,7 @@ class FragmentedArray:
           ])
         [group_size] = ir.VectorType(reg.type).shape
         assert group_size % vector_len == 0
+        assert group_size * 4 <= 32
         int_ty = ir.IntegerType.get_signless(group_size * 4)
         if regs_from_32bit_slice:
           slice_op = reg.owner.opview

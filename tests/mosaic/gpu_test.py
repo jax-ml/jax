@@ -667,21 +667,21 @@ class WGMMALayoutTest(TestCase):
           (jnp.int4, jnp.int8),
           # TODO(apaszke,bchetioui): bf16/f32 -> f8e4m3fn
       ),
-      layout_desc=(
-          "WGMMA_LAYOUT",
-          "WGMMA_LAYOUT_8BIT",
-          "WGMMA_LAYOUT_UPCAST_2X",
-          "WGMMA_LAYOUT_UPCAST_4X",
+      layout_descs=(
+          ("WGMMA_LAYOUT", "WGMMA_LAYOUT"),
+          ("WGMMA_LAYOUT_8BIT", "WGMMA_LAYOUT_8BIT"),
+          ("WGMMA_LAYOUT_UPCAST_2X", "WGMMA_LAYOUT_UPCAST_2X"),
+          ("WGMMA_LAYOUT_UPCAST_2X", "WGMMA_LAYOUT"),
+          ("WGMMA_LAYOUT_UPCAST_4X", "WGMMA_LAYOUT_UPCAST_4X"),
+          ("WGMMA_LAYOUT_UPCAST_4X", "WGMMA_LAYOUT_UPCAST_2X"),
+          ("WGMMA_LAYOUT_UPCAST_4X", "WGMMA_LAYOUT"),
       ),
-      change_layout=(False, True),
   )
   @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
-  def test_optimized_conversion(self, jax_dtype_from_to, layout_desc, change_layout):
-    if change_layout and layout_desc == "WGMMA_LAYOUT":
-      self.skipTest("No-op relayout")
-    if change_layout and layout_desc == "WGMMA_LAYOUT_8BIT":
-      self.skipTest("Unimplemented relayout")
-    layout: fa.TiledLayout = getattr(fa, layout_desc)
+  def test_optimized_conversion(self, jax_dtype_from_to, layout_descs):
+    layout_desc_from, layout_desc_to = layout_descs
+    layout_from: fa.TiledLayout = getattr(fa, layout_desc_from)
+    layout_to: fa.TiledLayout = getattr(fa, layout_desc_to)
     jax_dtype_from, jax_dtype_to = jax_dtype_from_to
     mlir_dtype_from = utils.dtype_to_ir_type(jax_dtype_from)
     mlir_dtype_to = utils.dtype_to_ir_type(jax_dtype_to)
@@ -692,16 +692,16 @@ class WGMMALayoutTest(TestCase):
       t = mgpu.FragmentedArray.load_untiled(
           inp,
           is_signed=utils.is_signed(jax_dtype_from),
-          layout=layout,
+          layout=layout_from,
           optimized=False,
       )
-      if change_layout:
+      if layout_from != layout_to:
         if (
-            layout == fa.WGMMA_LAYOUT_UPCAST_4X
-            and utils.bitwidth(mlir_dtype_from) > 4
+            layout_from == fa.WGMMA_LAYOUT_UPCAST_4X
+            and utils.bitwidth(mlir_dtype_from) != 4
         ):
           self.skipTest("Unimplemented relayout")
-        t = t.to_layout(fa.WGMMA_LAYOUT)
+        t = t.to_layout(layout_to)
       t = t.astype(mlir_dtype_to, is_signed=utils.is_signed(jax_dtype_to))
       t.store_untiled(out, optimized=False)
 
@@ -725,7 +725,7 @@ class WGMMALayoutTest(TestCase):
       with open(file_path, "a") as f:
         data = (
             jnp.dtype(jax_dtype_from).name, jnp.dtype(jax_dtype_to).name,
-            layout_desc, change_layout, sass().count("\n"),
+            layout_desc_from, layout_desc_to, sass().count("\n")
         )
         f.write(",".join(map(str, data)) + "\n")
         f.flush()
