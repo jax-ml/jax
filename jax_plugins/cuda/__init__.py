@@ -349,7 +349,7 @@ def initialize():
     )
     for _name, _value in cuda_plugin_extension.ffi_types().items():
       xla_client.register_custom_type(
-          _name, _value
+          _name, _value, platform='CUDA'
       )
     for _name, _value in cuda_plugin_extension.ffi_handlers().items():
       xla_client.register_custom_call_target(
