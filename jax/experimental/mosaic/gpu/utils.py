@@ -1054,7 +1054,7 @@ class BarrierRef:
             "Predicate not supported for no-complete arrive"
         )
       count = c(arrival_count, ir.IntegerType.get_signless(32))
-      nvvm.mbarrier_arrive_nocomplete_shared(i64, self.get_ptr(), count)
+      nvvm.mbarrier_arrive_nocomplete(i64, self.get_ptr(), count)
 
   def arrive_expect_tx(
       self, bytes: int | ir.Value, predicate: ir.Value | None = None
