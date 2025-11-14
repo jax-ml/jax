@@ -25,6 +25,7 @@ import inspect
 import logging
 import math
 import os
+from pathlib import Path
 import platform
 import re
 import sys
@@ -391,6 +392,15 @@ def supported_dtypes() -> set[DTypeLike]:
 
 def is_device_rocm() -> bool:
   return 'rocm' in xla_bridge.get_backend().platform_version
+
+def get_rocm_version():
+  rocm_path = os.environ.get("ROCM_PATH", "/opt/rocm")
+  version_path = Path(rocm_path) / ".info" / "version"
+  if not version_path.exists():
+    raise FileNotFoundError(f"Expected ROCm version file at {version_path}")
+  version_str = version_path.read_text().strip()
+  major, minor, *_ = version_str.split(".")
+  return int(major), int(minor)
 
 def is_device_cuda() -> bool:
   return 'cuda' in xla_bridge.get_backend().platform_version
