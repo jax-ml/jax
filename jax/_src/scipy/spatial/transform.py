@@ -99,8 +99,24 @@ class Rotation(typing.NamedTuple):
     return cls(_from_mrp(mrp))
 
   @classmethod
-  def from_quat(cls, quat: Array):
-    """Initialize from quaternions."""
+  def from_quat(cls, quat: Array, *, scalar_first: bool = False):
+    """Initialize from quaternions.
+    
+    Args:
+      quat: Quaternions as (N, 4) or (4,) array. Each quaternion will be
+        normalized to unit norm.
+      scalar_first: Whether the scalar component comes first or last. 
+        Default is False, i.e. the scalar-last order (x, y, z, w) is assumed.
+        If True, the scalar-first order (w, x, y, z) is assumed.
+    
+    Returns:
+      A Rotation instance containing the rotations represented by input
+      quaternions.
+    """
+    quat = jnp.asarray(quat)
+    if scalar_first:
+      # Convert from (w, x, y, z) to (x, y, z, w)
+      quat = jnp.roll(quat, shift=-1, axis=-1)
     return cls(_normalize_quaternion(quat))
 
   @classmethod
