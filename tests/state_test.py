@@ -963,6 +963,7 @@ class StateHypothesisTest(jtu.JaxTestCase):
   @hp.settings(deadline=None, print_blob=True,
                 max_examples=jtu.NUM_GENERATED_CASES.value)
   def test_get_vmap(self, get_vmap_param: GetVmapParams):
+    raise ValueError(hp.__version__)
 
     indexed_dims = get_vmap_param.vmap_index_param.index_param.indexed_dims
 
