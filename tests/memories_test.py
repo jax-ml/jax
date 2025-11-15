@@ -16,29 +16,29 @@ import copy
 import functools
 import math
 import re
-from absl.testing import absltest
-from absl.testing import parameterized
-from absl import flags
 import unittest
 
+from absl import flags
+from absl.testing import absltest
+from absl.testing import parameterized
 import jax
 from jax import lax
+from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax._src.layout import Layout as DLL, Format
-from jax._src.lib import jaxlib_extension_version
-from jax._src import config
-from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
-import jax.numpy as jnp
-from jax.ad_checkpoint import Offloadable, remat, Recompute
-from jax._src.sharding import common_devices_indices_map
-from jax._src.sharding_impls import (
-    NamedSharding, SingleDeviceSharding, GSPMDSharding, PartitionSpec as P)
-from jax._src.xla_metadata import set_xla_metadata
-from jax.experimental.compute_on import compute_on
 from jax._src.compute_on import compute_on2
+from jax._src.layout import Format, Layout as DLL
+from jax._src.lib import jaxlib_extension_version
 from jax._src.shard_map import shard_map
+from jax._src.sharding import common_devices_indices_map
+from jax._src.sharding_impls import ( GSPMDSharding,
+    NamedSharding, PartitionSpec as P, SingleDeviceSharding)
+from jax._src.xla_metadata import set_xla_debug_metadata
+from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
+from jax.ad_checkpoint import Offloadable, Recompute, remat
+from jax.experimental.compute_on import compute_on
+import jax.numpy as jnp
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -1900,7 +1900,7 @@ class StreamAnnotationTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x, y):
-        return g(x, y)
+      return g(x, y)
 
     compiled_f = jax.jit(f).lower(arr1, arr2).compile()
     compiled_text = compiled_f.as_text()
@@ -1932,7 +1932,7 @@ class StreamAnnotationTest(jtu.JaxTestCase):
         jax.shard_map, mesh=mesh, in_specs=(P('x'), P('x')),
         out_specs=P('x'))
     def f(x, y):
-      with set_xla_metadata(_scheduling_group_id="1"):
+      with set_xla_debug_metadata(_scheduling_group_id="1"):
         a = g(x, y)
         b = h(y, x)
       return a + b

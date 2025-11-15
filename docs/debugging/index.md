@@ -9,7 +9,7 @@ Table of contents:
 * [Interactive inspection with `jax.debug`](print_breakpoint)
 * [Functional error checks with jax.experimental.checkify](checkify_guide)
 * [Throwing Python errors with JAX’s debug flags](flags)
-* [Attaching XLA metadata with `set_xla_metadata`](xla_metadata)
+* [Attaching XLA metadata with `set_xla_debug_metadata`](xla_metadata)
 
 ## Interactive inspection with `jax.debug`
 
@@ -101,24 +101,24 @@ jax.jit(f)(0., 0.)  # ==> raises FloatingPointError exception!
 
 [Read more](flags).
 
-## Attaching XLA Metadata with `set_xla_metadata`
+## Attaching XLA Metadata with `set_xla_debug_metadata`
 
 Complete guide [here](xla_metadata)
 
-**Summary:** `set_xla_metadata` allows you to attach metadata to operations in your JAX code. This metadata is passed down to the XLA compiler as `frontend_attributes` and can be used to enable compiler-level debugging tools, such as the XLA-TPU debugger.
+**Summary:** `set_xla_debug_metadata` allows you to attach metadata to operations in your JAX code. This metadata is passed down to the XLA compiler as `frontend_attributes` and can be used to enable compiler-level debugging tools, such as the XLA-TPU debugger.
 
-**Note:** `set_xla_metadata` is an experimental feature and its API is subject to change.
+**Note:** `set_xla_debug_metadata` is an experimental feature and its API is subject to change.
 
 ```python
 import jax
 import jax.numpy as jnp
-from jax.experimental.xla_metadata import set_xla_metadata
+from jax.experimental.xla_metadata import set_xla_debug_metadata
 
 # Tagging an individual operation
 def value_tagging(x):
   y = jnp.sin(x)
   z = jnp.cos(x)
-  return set_xla_metadata(y * z, breakpoint=True)
+  return set_xla_debug_metadata(y * z, breakpoint=True)
 
 print(jax.jit(value_tagging).lower(1.0).as_text("hlo"))
 ```
@@ -143,4 +143,3 @@ checkify_guide
 flags
 xla_metadata
 ```
-

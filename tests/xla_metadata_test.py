@@ -22,7 +22,7 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import lax
-from jax.experimental.xla_metadata import set_xla_metadata
+from jax.experimental.xla_metadata import set_xla_debug_metadata
 import jax.numpy as jnp
 import numpy as np
 
@@ -59,7 +59,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
   def test_f_jitted(self):
     @jax.jit
     def f(a, b):
-      with set_xla_metadata(a="b"):
+      with set_xla_debug_metadata(a="b"):
         return a + b
 
     f_jaxpr = jax.make_jaxpr(f)(1, 2)
@@ -73,7 +73,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
   def test_f_jitted_bool_attributes(self):
     @jax.jit
     def f(a, b):
-      with set_xla_metadata(a=True):
+      with set_xla_debug_metadata(a=True):
         return a + b
 
     f_lowered_text = f.lower(1.0, 2.0).as_text()
@@ -82,14 +82,15 @@ class XlaMetadataTest(jtu.JaxTestCase):
   def test_f_jitted_int_attributes(self):
     @jax.jit
     def f(a, b):
-      with set_xla_metadata(a=10):
+      with set_xla_debug_metadata(a=10):
         return a + b
 
     f_lowered_text = f.lower(1.0, 2.0).as_text()
     self.assertIn('mhlo.frontend_attributes = {a = "10"}', f_lowered_text)
 
   def test_decorator(self):
-    @set_xla_metadata(a="b")
+
+    @set_xla_debug_metadata(a="b")
     @jax.jit
     def f(a, b):
       return a + b
@@ -103,10 +104,11 @@ class XlaMetadataTest(jtu.JaxTestCase):
     self.assertIn('mhlo.frontend_attributes = {a = "b"}', f_lowered_text)
 
   def test_decorator_and_context_manager_nested(self):
-    @set_xla_metadata(a="b")
+
+    @set_xla_debug_metadata(a="b")
     @jax.jit
     def f(a, b):
-      with set_xla_metadata(c="d"):
+      with set_xla_debug_metadata(c="d"):
         return a + b
 
     f_lowered_text = f.lower(1.0, 2.0).as_text()
@@ -120,7 +122,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
       return lax.add(a, b)
 
     arg1 = jnp.arange(2)
-    with set_xla_metadata(a="b"):
+    with set_xla_debug_metadata(a="b"):
       self.assertIn(
           'mhlo.frontend_attributes = {a = "b"}',
           jax.jit(f_add).lower(arg1, arg1).as_text(),
@@ -131,11 +133,11 @@ class XlaMetadataTest(jtu.JaxTestCase):
     def g(a, b):
       return a * b
 
-    with set_xla_metadata(a="b"):
+    with set_xla_debug_metadata(a="b"):
 
       @jax.jit
       def f(a, b):
-        with set_xla_metadata(a="c"):
+        with set_xla_debug_metadata(a="c"):
           return a + b
 
       f_lowered_text = f.lower(1.0, 2.0).as_text()
@@ -146,11 +148,11 @@ class XlaMetadataTest(jtu.JaxTestCase):
     self.assertNotIn("mhlo.frontend_attributes", g.lower(1.0, 2.0).as_text())
 
   def test_f_attributes_merge(self):
-    with set_xla_metadata(key1="val1"):
+    with set_xla_debug_metadata(key1="val1"):
 
       @jax.jit
       def f(a, b):
-        with set_xla_metadata(key2="val2"):
+        with set_xla_debug_metadata(key2="val2"):
           return a + b
 
       f_lowered_text = f.lower(1.0, 2.0).as_text()
@@ -164,11 +166,11 @@ class XlaMetadataTest(jtu.JaxTestCase):
     def f_add_jit(a, b):
       return a + b
 
-    with set_xla_metadata(b="c"):
+    with set_xla_debug_metadata(b="c"):
       f_add_lowered1 = f_add_jit.lower(2.0, 3.0).as_text()
     # Expect no attributes in the mlir.
     f_add_lowered2 = f_add_jit.lower(1.0, 2.0).as_text()
-    with set_xla_metadata(c="d"):
+    with set_xla_debug_metadata(c="d"):
       f_add_lowered3 = f_add_jit.lower(4.0, 5.0).as_text()
     self.assertIn('mhlo.frontend_attributes = {b = "c"}', f_add_lowered1)
     self.assertNotIn("mhlo.frontend_attributes = {}", f_add_lowered2)
@@ -183,7 +185,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
     arg1 = jnp.arange(2)
     arg2 = jnp.arange(2) + 1
     arg3 = jnp.arange(2) + 2
-    with set_xla_metadata(b="c"):
+    with set_xla_debug_metadata(b="c"):
       self.assertIn(
           'mhlo.frontend_attributes = {b = "c"}',
           jax.jit(f_add).lower(arg1, arg1).as_text(),
@@ -194,7 +196,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
         jax.jit(f_add).lower(arg2, arg2).as_text(),
     )
 
-    with set_xla_metadata(c="d"):
+    with set_xla_debug_metadata(c="d"):
       self.assertIn(
           'mhlo.frontend_attributes = {c = "d"}',
           jax.jit(f_add).lower(arg3, arg3).as_text(),
@@ -203,7 +205,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
   def test_axpy(self):
     @jax.jit
     def axpy(a, x, y):
-      with set_xla_metadata(a="b"):
+      with set_xla_debug_metadata(a="b"):
         return a * x + y
 
     for line in axpy.lower(1.0, 2.0, 3.0).as_text().split("\n"):
@@ -215,7 +217,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
   def test_while(self):
     @jax.jit
     def f(a):
-      with set_xla_metadata(a="b"):
+      with set_xla_debug_metadata(a="b"):
         return jax.lax.while_loop(lambda x: x < 10, lambda x: x + 1, a)
 
     self.assertIn(
@@ -225,12 +227,12 @@ class XlaMetadataTest(jtu.JaxTestCase):
   def test_while_condition_body(self):
     @jax.jit
     def f_condition(x):
-      with set_xla_metadata(a="b"):
+      with set_xla_debug_metadata(a="b"):
         return x < 10
 
     @jax.jit
     def f_body(x):
-      with set_xla_metadata(a="c"):
+      with set_xla_debug_metadata(a="c"):
         return x + 1
 
     @jax.jit
@@ -249,7 +251,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      with set_xla_metadata(a="b"):
+      with set_xla_debug_metadata(a="b"):
         return jax.lax.cond(x < 0., sin, cos, x)
 
     hlo_lines = f.lower(1.).as_text().split("\n")
@@ -262,12 +264,12 @@ class XlaMetadataTest(jtu.JaxTestCase):
     sin = jnp.sin
 
     def cos(x):
-      with set_xla_metadata(a=None):
+      with set_xla_debug_metadata(a=None):
         return jnp.cos(x)
 
     @jax.jit
     def f(x):
-      with set_xla_metadata(a="b"):
+      with set_xla_debug_metadata(a="b"):
         return jax.lax.cond(x < 0., sin, cos, x)
 
     hlo_lines = f.lower(1.).as_text().split("\n")
@@ -279,12 +281,12 @@ class XlaMetadataTest(jtu.JaxTestCase):
   def test_nested_jit(self):
     @jax.jit
     def f(x, y):
-      with set_xla_metadata(a="b"):
+      with set_xla_debug_metadata(a="b"):
         z = x * y
 
         @jax.jit
         def g(z):
-          with set_xla_metadata(c="d"):
+          with set_xla_debug_metadata(c="d"):
             return z**2 + 1
 
         return g(z)
@@ -297,7 +299,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
   def test_grad(self):
     @jax.jit
     def f(x, y):
-      with set_xla_metadata(a="b"):
+      with set_xla_debug_metadata(a="b"):
         return jax.grad(lambda x: x**3 + y**2 + jnp.sin(x))(x)
 
     f_jaxpr = jax.make_jaxpr(f)(1.0, 2.0)
@@ -312,7 +314,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
   def test_grad_outside_ctx(self):
     @jax.jit
     def f(x):
-      with set_xla_metadata(a="b"):
+      with set_xla_debug_metadata(a="b"):
         return x**3 + x**2 + jnp.sin(x)
 
     grad_fn = jax.jit(jax.grad(f))
@@ -327,10 +329,10 @@ class XlaMetadataTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(dct, x):
-      with set_xla_metadata(a="b"):
+      with set_xla_debug_metadata(a="b"):
         return dct["a"] + dct["b"] + x
 
-    with set_xla_metadata(a="d"):
+    with set_xla_debug_metadata(a="d"):
       f_vmap = jax.vmap(f, in_axes=({"a": None, "b": 0}, None))
       f_jaxpr = jax.make_jaxpr(f_vmap)(dct, 1.0)
       eqns = f_jaxpr.eqns
@@ -338,7 +340,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
         self.assertDictEqual(eq.ctx.attributes, {"a": "d"})
     @jax.jit
     def f2(x, y):
-      with set_xla_metadata(a="b"):
+      with set_xla_debug_metadata(a="b"):
         return (x + y, y * 2.0)
 
     f2_vmap = jax.vmap(f2, in_axes=(0, None))
@@ -351,7 +353,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
     @jax.jit
     def f(x, a):
       y = jnp.matmul(x, x)
-      with set_xla_metadata(a="b"):
+      with set_xla_debug_metadata(a="b"):
         return y + a
 
     for line in f.lower(jnp.arange(5.0), 1.0).as_text().split("\n"):
@@ -364,7 +366,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
   def test_softmax(self):
     @jax.jit
     def f(x):
-      with set_xla_metadata(a="b"):
+      with set_xla_debug_metadata(a="b"):
         return jax.nn.softmax(x)
     self.assertIn(
         'mhlo.frontend_attributes = {a = "b"}', f.lower(jnp.arange(5.0)).as_text()
@@ -381,7 +383,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
     metadata = {"test_value_tagging": name}
 
     def wrapped_fn(x):
-      return set_xla_metadata(fn(x), **metadata)
+      return set_xla_debug_metadata(fn(x), **metadata)
 
     x_scalar = jnp.array(0.7)
     text = jax.jit(wrapped_fn).lower(x_scalar).as_text("hlo")
@@ -426,7 +428,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
 
     @jax.vmap
     def vmapped_fn(x_item, y_item, z_item):
-      return set_xla_metadata(fn(x_item, y_item, z_item), **metadata)
+      return set_xla_debug_metadata(fn(x_item, y_item, z_item), **metadata)
 
     batch_size, num_rows, num_cols = 4, 5, 6
     rng = np.random.default_rng(0)
@@ -448,7 +450,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
 
     @jax.jit
     def wrapped_fn(x):
-      return set_xla_metadata(x * 2.0, **metadata)
+      return set_xla_debug_metadata(x * 2.0, **metadata)
 
     text = jax.jit(wrapped_fn).lower(arr).as_text("hlo")
     self._assert_metadata_appears_once_per_op(text, ["multiply"], metadata)
@@ -459,7 +461,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
     fn = lambda carry, x: (carry + x) * 2.0
 
     def scan_body_val_with_metadata(carry, x):
-      tagged_result = set_xla_metadata(fn(carry, x), **metadata)
+      tagged_result = set_xla_debug_metadata(fn(carry, x), **metadata)
       return tagged_result, tagged_result
 
     def scan_fn(init_carry, inputs_arr):
