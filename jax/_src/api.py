@@ -68,7 +68,7 @@ from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
-from jax._src.mesh import get_concrete_mesh
+from jax._src.mesh import get_concrete_mesh, Mesh
 from jax._src.sharding_impls import (PmapSharding, PartitionSpec as P,
                                      NamedSharding)
 from jax._src.layout import Format
@@ -2967,7 +2967,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
   def _device_put_replicated(x):
     aval = core.unmapped_aval(len(devices), 0, core.get_aval(x))
     assert isinstance(aval, ShapedArray)
-    sharding_spec = sharding_specs.create_pmap_sharding_spec(aval.shape)
+    sharding = NamedSharding(Mesh(devices, 'x'), P('x'))
     if config.pmap_no_rank_reduction.value:
       if isinstance(x, (np.ndarray, basearray.Array)):
         buf = device_put(x[None], devices[0])
@@ -2975,11 +2975,9 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
         buf = device_put(x, devices[0])[None]
     else:
       buf = device_put(x, devices[0])
-    sharding = PmapSharding(np.array(devices), sharding_spec)
     if dtypes.issubdtype(aval.dtype, dtypes.extended):
       return aval.dtype._rules.device_put_replicated(buf, aval, sharding, devices)
     return pxla.batched_device_put(aval, sharding, [buf] * len(devices), devices)
-
   with config.explicit_device_put_scope():
     return tree_map(_device_put_replicated, x)
 
