@@ -59,10 +59,9 @@ CpuCallback::~CpuCallback() {
   GlobalPyRefManager()->AddGarbage(absl::MakeSpan(objects));
 }
 
-absl::Status CpuCallback::PrepareAndCall(void* result, void** arg_ptrs) {
+absl::Status CpuCallback::PrepareAndCall(void** result, void** arg_ptrs) {
   absl::Span<void* const> inputs(arg_ptrs, args_.size());
-  absl::Span<void* const> outputs(reinterpret_cast<void**>(result),
-                                  results_.size());
+  absl::Span<void* const> outputs(result, results_.size());
 
   nb::gil_scoped_acquire gil;
   nb::tuple args = nb::steal<nb::tuple>(PyTuple_New(inputs.size()));
