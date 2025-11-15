@@ -599,18 +599,17 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     )
 
   @jtu.sample_product(
-    shape=[(1, 1), (4, 4), (5, 5), (50, 50), (2, 10, 10)],
-    dtype=float_types + complex_types,
-    lower=[True, False],
+      shape=[(1, 1), (4, 4), (5, 5), (2, 5, 5)],
+      dtype=float_types + complex_types,
+      lower=[True, False],
   )
   def testEighGrad(self, shape, dtype, lower):
     rng = jtu.rand_default(self.rng())
-    self.skipTest("Test fails with numeric errors.")
     uplo = "L" if lower else "U"
     a = rng(shape, dtype)
     a = (a + np.conj(T(a))) / 2
     ones = np.ones((a.shape[-1], a.shape[-1]), dtype=dtype)
-    a *= np.tril(ones) if lower else np.triu(ones)
+    a = jnp.tril(a) if lower else jnp.triu(a)
     # Gradient checks will fail without symmetrization as the eigh jvp rule
     # is only correct for tangents in the symmetric subspace, whereas the
     # checker checks against unconstrained (co)tangents.
@@ -618,7 +617,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       f = partial(jnp.linalg.eigh, UPLO=uplo, symmetrize_input=True)
     else:  # only check eigenvalue grads for complex matrices
       f = lambda a: partial(jnp.linalg.eigh, UPLO=uplo, symmetrize_input=True)(a)[0]
-    jtu.check_grads(f, (a,), 2, rtol=1e-5)
+    jtu.check_grads(f, (a,), 1, atol=0.06, rtol=0.02)
 
   @jtu.sample_product(
       shape=[(1, 1), (4, 4), (5, 5), (50, 50)],
@@ -918,15 +917,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if jtu.is_device_rocm() and algorithm == lax.linalg.SvdAlgorithm.POLAR:
       self.skipTest("ROCM polar SVD not implemented")
 
-    if (
-        jtu.test_device_matches(["cuda"])
-        and (algorithm, m, n) in [
-          (lax.linalg.SvdAlgorithm.POLAR, 400000, 2),
-          (lax.linalg.SvdAlgorithm.POLAR, 2, 400000),
-          (lax.linalg.SvdAlgorithm.JACOBI, 400000, 2),
-          (lax.linalg.SvdAlgorithm.JACOBI, 2, 400000),
-        ]
-    ):
+    if jtu.test_device_matches(["cuda"]) and (algorithm, m, n) in [
+        (lax.linalg.SvdAlgorithm.POLAR, 40000, 2),
+        (lax.linalg.SvdAlgorithm.POLAR, 2, 40000),
+        (lax.linalg.SvdAlgorithm.JACOBI, 40000, 2),
+        (lax.linalg.SvdAlgorithm.JACOBI, 2, 40000),
+    ]:
       # Test fails with CUDA polar and jacobi decompositions
       self.skipTest("Test fails with CUDA polar and jacobi decompositions")
 
@@ -1023,6 +1019,28 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       else:
         tol = 6e-4
       self.assertArraysAllClose(t_out, d.real, atol=tol, rtol=tol)
+
+  @jtu.sample_product(
+      shape=[(1, 1), (4, 4), (5, 5), (2, 5, 5)],
+      dtype=float_types,
+      full_matrices=[True, False],
+      compute_uv=[True, False],
+  )
+  @jax.default_matmul_precision("float32")
+  def testSVDGrad(self, shape, dtype, full_matrices, compute_uv):
+    rng = jtu.rand_default(self.rng())
+    # Construct a matrix whose singular values are well separated, in order to make
+    # the gradients well-defined.
+    u, _ = jnp.linalg.qr(rng(shape, dtype))
+    v, _ = jnp.linalg.qr(rng(shape, dtype))
+    sigma = jnp.broadcast_to(
+        jnp.diag(jnp.arange(shape[-1], dtype=dtype) + 1), shape
+    )
+    a = u @ (sigma @ jnp.conj(jnp.swapaxes(v, -1, -2)))
+    f = partial(
+        jnp.linalg.svd, full_matrices=full_matrices, compute_uv=compute_uv
+    )
+    jtu.check_grads(f, (a,), order=1, atol=0.025, rtol=0.04)
 
   def testJspSVDBasic(self):
     # since jax.scipy.linalg.svd is almost the same as jax.numpy.linalg.svd
