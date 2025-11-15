@@ -334,10 +334,10 @@ def register_pytree_node_class(cls: Typ) -> Typ:
     ...   def __init__(self, x, y):
     ...     self.x = x
     ...     self.y = y
-    ...   def tree_flatten(self):
+    ...   def __tree_flatten__(self):
     ...     return ((self.x, self.y), None)
     ...   @classmethod
-    ...   def tree_unflatten(cls, aux_data, children):
+    ...   def __tree_unflatten__(cls, aux_data, children):
     ...     return cls(*children)
     ...
     >>> m = MyContainer(jnp.zeros(4), jnp.arange(4))
@@ -346,7 +346,20 @@ def register_pytree_node_class(cls: Typ) -> Typ:
     >>> jax.jit(f)(m)
     Array([0., 2., 4., 6.], dtype=float32)
   """
-  register_pytree_node(cls, op.methodcaller("tree_flatten"), cls.tree_unflatten)
+  has_dunder_flatten = hasattr(cls, "__tree_flatten__")
+  has_dunder_unflatten = hasattr(cls, "__tree_unflatten__")
+  if has_dunder_flatten != has_dunder_unflatten:
+    defined = "__tree_flatten__" if has_dunder_flatten else "__tree_unflatten__"
+    raise ValueError(
+      "register_pytree_node_class: if using dunder methods, the type must define"
+      " both a __tree_flatten__ method and a __tree_unflatten__ classmethod."
+      f" {cls=} only defines {defined}.")
+  if has_dunder_flatten and has_dunder_unflatten:
+    register_pytree_node(
+      cls, op.methodcaller("__tree_flatten__"), cls.__tree_unflatten__)
+  else:
+    register_pytree_node(
+      cls, op.methodcaller("tree_flatten"), cls.tree_unflatten)
   return cls
 
 
@@ -966,19 +979,28 @@ def register_pytree_with_keys_class(cls: Typ) -> Typ:
     ...   def __init__(self, x, y):
     ...     self.x = x
     ...     self.y = y
-    ...   def tree_flatten_with_keys(self):
+    ...   def __tree_flatten_with_keys__(self):
     ...     return (((GetAttrKey('x'), self.x), (GetAttrKey('y'), self.y)), None)
     ...   @classmethod
-    ...   def tree_unflatten(cls, aux_data, children):
+    ...   def __tree_unflatten__(cls, aux_data, children):
     ...     return cls(*children)
   """
-  flatten_func = (
-      op.methodcaller("tree_flatten") if hasattr(cls, "tree_flatten") else None
-  )
-  register_pytree_with_keys(
-      cls, op.methodcaller("tree_flatten_with_keys"), cls.tree_unflatten,
-      flatten_func
-  )
+  has_dunder_flatten = hasattr(cls, "__tree_flatten_with_keys__")
+  has_dunder_unflatten = hasattr(cls, "__tree_unflatten__")
+  if has_dunder_flatten != has_dunder_unflatten:
+    defined = "__tree_flatten_with_keys__" if has_dunder_flatten else "__tree_unflatten__"
+    raise ValueError(
+      "register_pytree_with_keys_class: if using dunder methods, the type must"
+      " define both a __tree_flatten_with_keys__ method and a __tree_unflatten__"
+      f" classmethod. {cls=} only defines {defined}.")
+  if has_dunder_flatten and has_dunder_unflatten:
+    register_pytree_with_keys(
+      cls, op.methodcaller("__tree_flatten_with_keys__"),
+      cls.__tree_unflatten__, getattr(cls, "__tree_flatten__", None))
+  else:
+    register_pytree_with_keys(
+      cls, op.methodcaller("tree_flatten_with_keys"),
+      cls.tree_unflatten, getattr(cls, "tree_flatten", None))
   return cls
 
 
