@@ -131,7 +131,7 @@ FailureOr<TypedValue<MemRefType>> getInternalScratch(
   if (shape.back() % ctx.target_shape[1] != 0) {
     return emitError(loc, "Unaligned scratch shape on minormost dimension");
   }
-  int packing = 32 / elem_ty.getIntOrFloatBitWidth();
+  int packing = 32 / getTypeBitwidth(elem_ty).value();
   int sublane_count = llvm::divideCeil(
       std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<int>()) /
           ctx.target_shape[1],
@@ -364,7 +364,7 @@ FailureOr<BlockArgument> appendConstant(RewriteContext &ctx, func::FuncOp func,
   MLIRContext *mlir_ctx = func.getContext();
   Block &entry_block = func.getBody().front();
   auto value_ty = cast<VectorType>(value.getType());
-  if (value_ty.getElementType().getIntOrFloatBitWidth() != 32) {
+  if (getTypeBitwidth(value_ty.getElementType()) != 32) {
     return func.emitOpError("Not implemented: Only 32-bit constants supported");
   }
   if (func->getAttr("scratch_operands")) {
@@ -1403,7 +1403,7 @@ FailureOr<xla::Array<Value>> unpackVregs(RewriteContext &ctx,
       //
       //   28  24  20  16  12   8   4   0   bit index
       // yyyyyyyyyyyyyyyyxxxxxxxxxxxxxxxx
-      if (res_vreg_ty.getElementTypeBitWidth() == 32) {
+      if (getElementTypeBitwidth(res_vreg_ty) == 32) {
         // If the result vreg is 32-bit, we can just interleaved unpack the
         // input vreg, as there are no multiple subelements to unpack.
         *v = builder.create<UnpackSubelementsOp>(
@@ -1417,7 +1417,7 @@ FailureOr<xla::Array<Value>> unpackVregs(RewriteContext &ctx,
                                   : cast<Type>(builder.getF32Type()),
                               ctx.target_shape);
         const int dst_packing_factor =
-            32 / res_vreg_ty.getElementTypeBitWidth();
+            32 / getElementTypeBitwidth(res_vreg_ty).value();
         // `vreg_part` is with respect to result vreg bitwidth. Expand it to
         // base on 32-bit.
         const int vreg_part_unpacked_to_32b = vreg_part * dst_packing_factor;
@@ -1442,7 +1442,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> unpackVregs(
     const xla::Array<Value> &input_vregs, VectorType input_ty,
     VectorType result_ty, const VectorLayout &layout_in,
     const std::array<int64_t, 2> tiling_out) {
-  const int unpacked_bitwidth = result_ty.getElementTypeBitWidth();
+  const int unpacked_bitwidth = getElementTypeBitwidth(result_ty).value();
   const LayoutOffsets offsets_out = alignedToVregSlice(
       layout_in.offsets(), ctx.target_shape, unpacked_bitwidth, tiling_out);
   const VectorLayout layout_out(unpacked_bitwidth, offsets_out, tiling_out,
@@ -1539,7 +1539,7 @@ LogicalResult arith_extui_rule(RewriteContext &ctx, Operation &op,
   auto extui_op = cast<arith::ExtUIOp>(op);
   const auto in_ty = cast<VectorType>(extui_op.getIn().getType());
   const auto out_ty = cast<VectorType>(extui_op.getType());
-  const unsigned in_bitwidth = in_ty.getElementTypeBitWidth();
+  const unsigned in_bitwidth = getElementTypeBitwidth(in_ty).value();
   if (in_bitwidth == 1) {
     return elementwise_op_rule(ctx, op, layouts_in, layouts_out);
   }
@@ -1548,7 +1548,7 @@ LogicalResult arith_extui_rule(RewriteContext &ctx, Operation &op,
       xla::Array<Value> output_vregs,
       ext_op_rule_impl(ctx, builder, extui_op, *layouts_in.front(),
                        *layouts_out.front()));
-  unsigned out_bitwidth = out_ty.getElementTypeBitWidth();
+  unsigned out_bitwidth = getElementTypeBitwidth(out_ty).value();
   // Generate a mask to mask out the sign extension. e.g., for u8 -> u16,
   // the mask is 0x00ff00ff.
   unsigned mask = (1 << in_bitwidth) - 1;
@@ -1656,7 +1656,7 @@ FailureOr<xla::Array<Value>> packVregs(RewriteContext &ctx, OpBuilder &builder,
       // achieve this, we can unpack all subelements in each part to 32-bit and
       // then interleaved pack them into desired type.
       SmallVector<Value> unpacks;
-      if (input_ty.getElementType().getIntOrFloatBitWidth() == 32) {
+      if (getTypeBitwidth(input_ty.getElementType()) == 32) {
         unpacks.append(parts.begin(), parts.end());
       } else {
         VectorType unpacked_vty =
@@ -1664,7 +1664,7 @@ FailureOr<xla::Array<Value>> packVregs(RewriteContext &ctx, OpBuilder &builder,
                                   ? cast<Type>(builder.getI32Type())
                                   : cast<Type>(builder.getF32Type()),
                               ctx.target_shape);
-        const int32_t packing_factor = 32 / input_ty.getElementTypeBitWidth();
+        const int32_t packing_factor = 32 / getElementTypeBitwidth(input_ty).value();
         for (Value part : parts) {
           if (part) {
             for (int i = 0; i < packing_factor; ++i) {
@@ -1692,7 +1692,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> packVregs(
     const xla::Array<Value> &input_vregs, VectorType input_ty,
     VectorType result_ty, const VectorLayout &layout_in,
     const std::array<int64_t, 2> tiling_out, const LayoutOffsets offset_hints) {
-  const int packed_bitwidth = result_ty.getElementTypeBitWidth();
+  const int packed_bitwidth = getElementTypeBitwidth(result_ty).value();
   const std::array<int64_t, 2> unpacked_vreg_slice =
       layout_in.vregSlice(ctx.target_shape);
   const std::array<int64_t, 2> packed_vreg_slice =
@@ -2600,7 +2600,7 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
           "Not implemented: Unsupported matmul operand tiling");
     }
   }
-  if (acc.getType().getElementType().getIntOrFloatBitWidth() != 32) {
+  if (getTypeBitwidth(acc.getType().getElementType()) != 32) {
     return op.emitOpError("Not implemented: Non-32-bit matmul acc");
   }
   const ArrayRef<int64_t> lhs_shape = lhs.getType().getShape();
@@ -2659,8 +2659,8 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
   // second dim to be a multiple of mxu_size.
   auto mxu_contracting_size = ctx.mxu_shape[0];
   auto mxu_noncontracting_size = ctx.mxu_shape[1];
-  if (lhs.getType().getElementTypeBitWidth() < 8 &&
-      rhs.getType().getElementTypeBitWidth() < 8) {
+  if (getElementTypeBitwidth(lhs.getType()) < 8 &&
+      getElementTypeBitwidth(rhs.getType()) < 8) {
     mxu_contracting_size *= 2;
   }
   auto rhs_row_size = mxu_contracting_size;
@@ -4530,7 +4530,7 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
     broadcast_op.erase();
     return success();
   } else if (layout_out.bitwidth() == 32 &&
-             broadcast_op.getSourceType().getIntOrFloatBitWidth() == 1) {
+             getTypeBitwidth(broadcast_op.getSourceType()) == 1) {
     // Broadcasting the i1 scalar involves first converting i1 to i32, followed
     // by broadcasting i32 to the target shape. Finally, the comparison with 0s
     // yields the vmask.
@@ -4553,14 +4553,14 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
     return success();
   } else if (layout_out.bitwidth() < 32) {
     CHECK_EQ(layout_out.bitwidth(),
-             broadcast_op.getSourceType().getIntOrFloatBitWidth());
+             getTypeBitwidth(broadcast_op.getSourceType()).value());
     // Broadcasting the scalar with narrower type involves first packing (32 /
     // bitwidth) copies to i32, followed by broadcasting i32 to the target
     // shape. Finally, bitcast i32 vector back to the original narrower type
     // vector.
     auto loc = broadcast_op.getLoc();
     auto src_ty = broadcast_op.getSourceType();
-    auto bitwidth = src_ty.getIntOrFloatBitWidth();
+    auto bitwidth = getTypeBitwidth(src_ty).value();
     auto unpacked_src = broadcast_op.getSource();
     if (!src_ty.isSignlessInteger(bitwidth)) {
       unpacked_src = builder.create<arith::BitcastOp>(
@@ -4904,12 +4904,12 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     case vector::CombiningKind::MAXSI: {
       neutral = builder.getIntegerAttr(
           element_type,
-          APInt::getSignedMinValue(element_type.getIntOrFloatBitWidth()));
+          APInt::getSignedMinValue(getTypeBitwidth(element_type).value()));
     } break;
     case vector::CombiningKind::MINSI: {
       neutral = builder.getIntegerAttr(
           element_type,
-          APInt::getSignedMaxValue(element_type.getIntOrFloatBitWidth()));
+          APInt::getSignedMaxValue(getTypeBitwidth(element_type).value()));
     } break;
     default:
       return multi_reduction_op.emitOpError(
@@ -5007,7 +5007,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
   }
   for (int i = 0; i < 2; ++i) {
     if (reduces[i] && src_layout.offsets()[i] == std::nullopt &&
-        element_type.getIntOrFloatBitWidth() != 32) {
+        getTypeBitwidth(element_type) != 32) {
       return multi_reduction_op.emitOpError(
           "Not implemented: Non-32-bit reductions over replicated axes");
     }
@@ -5550,7 +5550,7 @@ Value copyOneRow(OpBuilder &builder, Value src_vreg, int src_row_idx,
   if (dst_vreg) {
     int bitwidth = 32 / packing_factor;
     CHECK_EQ(bitwidth,
-             cast<VectorType>(dst_vreg.getType()).getElementTypeBitWidth());
+             getElementTypeBitwidth(cast<VectorType>(dst_vreg.getType())).value());
     const VectorType i32_vreg_ty =
         getNativeVregType(builder.getI32Type(), target_shape);
     src_vreg = builder.create<tpu::BitcastVregOp>(src_vreg.getLoc(),
@@ -5856,10 +5856,10 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
           pack_format = tpu::PackFormat::kInterleaved;
         }
         VectorType packed_vty = getNativeVregType(
-            builder.getIntegerType(src_ty.getElementTypeBitWidth()),
+            builder.getIntegerType(getElementTypeBitwidth(src_ty).value()),
             ctx.target_shape);
         VectorType unpacked_vty = getNativeVregType(
-            builder.getIntegerType(src_ty.getElementTypeBitWidth() * 2),
+            builder.getIntegerType(getElementTypeBitwidth(src_ty).value() * 2),
             ctx.target_shape);
         src_vregs.Each(
             [&](absl::Span<const int64_t> src_vreg_indices, Value* src_vreg) {
@@ -6901,7 +6901,7 @@ LogicalResult tpu_prng_random_bits_rule(RewriteContext &ctx, Operation &op,
   VectorType vty = rng_op.getResult().getType();
   TPU_ASSERT_OP(vty.getElementType().isInteger());
   // Only 32-bit output supported currently.
-  TPU_ASSERT_OP(vty.getElementType().getIntOrFloatBitWidth() == 32);
+  TPU_ASSERT_OP(getTypeBitwidth(vty.getElementType()) == 32);
   xla::Array<Value> tiles(
       layout_out.tileArrayShape(vty.getShape(), ctx.target_shape));
   VectorType tile_ty = VectorType::get(ctx.target_shape, vty.getElementType());

@@ -567,7 +567,8 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
                           std::optional<FloatType> maybe_dest = std::nullopt) {
     FloatType dest = maybe_dest.value_or(builder.getF32Type());
     const VectorType ty = element.getType();
-    unsigned int source_width = ty.getElementType().getIntOrFloatBitWidth();
+    unsigned int source_width =
+        getTypeBitwidth(ty.getElementType()).value();
     auto shape = ty.getShape();
     CHECK(ty.getElementType().isInteger());
     CHECK(source_width <= dest.getWidth())
@@ -608,7 +609,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
     }
     auto get_dest_type =
         [&](::mlir::Type element_type) -> FailureOr<FloatType> {
-      switch (element_type.getIntOrFloatBitWidth()) {
+      switch (getTypeBitwidth(element_type).value()) {
         case 4:
           return static_cast<FloatType>(
               Float8E4M3FNType::get(builder.getContext()));
@@ -619,7 +620,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
         default:
           return op->emitOpError(
               absl::StrCat("Integer inputs with bitwidth ",
-                           element_type.getIntOrFloatBitWidth(),
+                           getTypeBitwidth(element_type).value(),
                            " are not supported as matmul/accumulator inputs."));
       }
     };
@@ -636,7 +637,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
     // But don't throw an error because it may be handled by the mixed element
     // type canonicalization pass below.
     if (lhs_element_type.isInteger() &&
-        lhs_element_type.getIntOrFloatBitWidth() != 32) {
+        getTypeBitwidth(lhs_element_type) != 32) {
       RETURN_IF_FAILED(require_compatibility_mode());
       FAILUREOR_ASSIGN_OR_RETURN(FloatType dest_type,
                                  get_dest_type(lhs_element_type));
@@ -645,7 +646,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
       lhs_element_type = dest_type;
     }
     if (rhs_element_type.isInteger() &&
-        rhs_element_type.getIntOrFloatBitWidth() != 32) {
+        getTypeBitwidth(rhs_element_type) != 32) {
       RETURN_IF_FAILED(require_compatibility_mode());
       FAILUREOR_ASSIGN_OR_RETURN(FloatType dest_type,
                                  get_dest_type(rhs_element_type));
@@ -1064,8 +1065,8 @@ FailureOr<Value> canonicalize_extract(const CanonicalizeContext &ctx,
   auto op = dyn_cast<vector::ExtractOp>(raw_op);
   Type result_ty = op.getResult().getType();
   if (!isa<VectorType>(result_ty)) {
-    bool is_supported = result_ty.isSignlessIntOrFloat() &&
-                        result_ty.getIntOrFloatBitWidth() == 32;
+    bool is_supported =
+        result_ty.isSignlessIntOrFloat() && getTypeBitwidth(result_ty) == 32;
     if (!is_supported) {
       return op.emitOpError(
           "Only 32-bit scalar vector.extracts supported. Cast your input to a "
@@ -1206,7 +1207,7 @@ FailureOr<Value> canonicalize_select(const CanonicalizeContext& ctx,
     return new_op;
   }
 
-  unsigned bitwidth = result_type.getElementTypeBitWidth();
+  unsigned bitwidth = getElementTypeBitwidth(result_type).value();
   unsigned min_supported_bitwidth = 32;
   if (ctx.hardware_generation >= 5) {
     min_supported_bitwidth = 8;
@@ -1648,11 +1649,11 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
 
   bool uses_xlu = !op.getPermutation().empty() &&
                   op.getPermutation().back() != op.getPermutation().size() - 1;
-  if (element_type.getIntOrFloatBitWidth() == 8 && ctx.compatibility_mode &&
+  if (getTypeBitwidth(element_type) == 8 && ctx.compatibility_mode &&
       ctx.hardware_generation > 3 && ctx.hardware_generation < 6 && uses_xlu) {
     VectorType input_vty_int = VectorType::get(
         input_vty.getShape(),
-        builder.getIntegerType(input_vty.getElementTypeBitWidth()));
+        builder.getIntegerType(getElementTypeBitwidth(input_vty).value()));
     Value input_int = op.getOperand();
     if (input_int.getType() != input_vty_int) {
       input_int = builder.create<arith::BitcastOp>(input_vty_int, input_int);
@@ -1666,7 +1667,7 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
 
     VectorType output_vty_int = VectorType::get(
         output_vty.getShape(),
-        builder.getIntegerType(output_vty.getElementTypeBitWidth()));
+        builder.getIntegerType(getElementTypeBitwidth(output_vty).value()));
     Value transposed_int =
         builder.create<arith::TruncIOp>(output_vty_int, transposed_bf16);
     Value new_result = transposed_int;
@@ -1748,7 +1749,7 @@ FailureOr<Value> canonicalize_stochastic_convert(const CanonicalizeContext &ctx,
   auto op = cast<tpu::StochasticConvertOp>(raw_op);
   auto out_vty = cast<VectorType>(op.getType());
   auto out_ety = out_vty.getElementType();
-  auto out_bitwidth = out_vty.getElementTypeBitWidth();
+  auto out_bitwidth = getElementTypeBitwidth(out_vty).value();
 
   if (ctx.hardware_generation < 5) {
     op.emitOpError("Stochastic convert not supported on TPU generations < 5.");

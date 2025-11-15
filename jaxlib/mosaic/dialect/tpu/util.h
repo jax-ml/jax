@@ -172,7 +172,7 @@ FailureOr<int8_t> getTypeBitwidth(Type ty) {
       return width;
     }
   }
-  if (isa<IntegerType, Float32Type, BFloat16Type, Float8E5M2Type,
+  if (isa<Float32Type, BFloat16Type, Float16Type, Float8E5M2Type,
           Float8E4M3FNType, Float8E4M3B11FNUZType, Float4E2M1FNType>(ty)) {
     return ty.getIntOrFloatBitWidth();
   }
@@ -189,6 +189,11 @@ inline FailureOr<int8_t> getElementTypeBitwidth(Type ty) {
     return getTypeBitwidth<adjust_bool>(vty.getElementType());
   }
   return getTypeBitwidth<adjust_bool>(ty);
+}
+
+template <bool adjust_bool = false>
+inline FailureOr<int8_t> getElementTypeBitwidth(MemRefType ty) {
+  return getElementTypeBitwidth<adjust_bool>(ty.getElementType());
 }
 
 template <typename T>

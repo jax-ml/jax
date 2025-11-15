@@ -55,7 +55,7 @@ std::optional<int64_t> canOptimizeReshapeMemory(
   if (expanded_ty.getRank() < 2 || collapsed_ty.getRank() < 1) {
     return std::nullopt;
   }
-  const int bitwidth = expanded_ty.getElementTypeBitWidth();
+  const int bitwidth = getElementTypeBitwidth(expanded_ty).value();
   const int packing = 32 / bitwidth;
   if (hardware_generation < 4 && packing > 1) {
     return std::nullopt;
@@ -150,7 +150,7 @@ void optimizeLoadReshape(int hardware_generation,
   ArrayRef<int64_t> src_shape = src_ty.getShape();
   ArrayRef<int64_t> tgt_shape = tgt_ty.getShape();
   const int lane = target_shape[1];
-  const int bitwidth = src_ty.getElementTypeBitWidth();
+  const int bitwidth = getElementTypeBitwidth(src_ty).value();
   const int packing = 32 / bitwidth;
 
   auto load_op = dyn_cast_if_present<vector::LoadOp>(src.getDefiningOp());
@@ -299,7 +299,7 @@ void optimizeStore(int hardware_generation, std::array<int64_t, 2> target_shape,
   auto src_shape = src_ty.getShape();
   auto tgt_shape = tgt_ty.getShape();
   const int64_t lane = target_shape[1];
-  const int bitwidth = src_ty.getElementTypeBitWidth();
+  const int bitwidth = getElementTypeBitwidth(src_ty).value();
   const int packing = 32 / bitwidth;
 
   std::optional<int> maybe_expanded_dims = canOptimizeReshapeMemory(

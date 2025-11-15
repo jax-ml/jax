@@ -160,9 +160,8 @@ class VectorLayoutInferer {
         }
       } else if (auto op = dyn_cast<tpu::SIToFPOp>(any_op);
                  op &&
-                 cast<VectorType>(op.getIn().getType())
-                         .getElementTypeBitWidth() <
-                     cast<VectorType>(op.getType()).getElementTypeBitWidth()) {
+                 getElementTypeBitwidth(cast<VectorType>(op.getIn().getType())).value() <
+                     getElementTypeBitwidth(cast<VectorType>(op.getType())).value()) {
         if (inferExt(&any_op).failed()) {
           return failure();
         }
@@ -172,9 +171,8 @@ class VectorLayoutInferer {
         }
       } else if (auto op = dyn_cast<tpu::FPToSIOp>(any_op);
                  op &&
-                 cast<VectorType>(op.getOperand().getType())
-                         .getElementTypeBitWidth() >
-                     cast<VectorType>(op.getType()).getElementTypeBitWidth()) {
+                 getElementTypeBitwidth(cast<VectorType>(op.getOperand().getType())).value() >
+                     getElementTypeBitwidth(cast<VectorType>(op.getType())).value()) {
         if (inferTrunc(&any_op).failed()) {
           return failure();
         }
@@ -191,8 +189,9 @@ class VectorLayoutInferer {
         auto out_ty = dyn_cast<VectorType>(op.getType());
         TPU_CHECK_OP(static_cast<bool>(in_ty) == static_cast<bool>(out_ty),
                      "Input and output are not both vectors?");
-        auto in_bitwidth = in_ty ? in_ty.getElementTypeBitWidth()
-                                 : op.getIn().getType().getIntOrFloatBitWidth();
+        auto in_bitwidth =
+            in_ty ? getElementTypeBitwidth(in_ty).value()
+                  : getTypeBitwidth(op.getIn().getType()).value();
         if (in_bitwidth == 1) {
           if (inferElementwise(&any_op).failed()) {
             return failure();
@@ -379,7 +378,7 @@ class VectorLayoutInferer {
                    "expected scalar element type in vector");
       TPU_CHECK_OP(ty.getRank() > 0, "rank 0 vectors unsupported");
       TPU_CHECK_OP(elems, "expected vector constants to use DenseElementsAttr");
-      auto bitwidth = ty.getElementTypeBitWidth();
+      auto bitwidth = getElementTypeBitwidth(ty).value();
       if (bitwidth == 1) {
         // i1 is a special case where the layout bitwidth can be different from
         // the element bitwidth, see comment in VectorLayout class
@@ -399,7 +398,7 @@ class VectorLayoutInferer {
                                nativeTiling(bitwidth), ImplicitDim::kNone));
         }
       } else {
-        TPU_CHECK_OP(ty.getElementTypeBitWidth() == kNativeBitwidth,
+        TPU_CHECK_OP(getElementTypeBitwidth(ty) == kNativeBitwidth,
                      "Only 32-bit non-splat constants supported");
         if (ty.getRank() == 1) {
           if (ty.getDimSize(0) <= target_shape_[0]) {
@@ -763,7 +762,7 @@ class VectorLayoutInferer {
 
   // TODO(b/347016737): deprecate the static rotate.
   LogicalResult infer(tpu::RotateOp op) {
-    auto bitwidth = op.getType().getElementTypeBitWidth();
+    auto bitwidth = getElementTypeBitwidth(op.getType()).value();
     if (bitwidth != 32) {
       NYI("Rotate with non-32-bit data");
     }
@@ -777,7 +776,7 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(tpu::DynamicRotateOp op) {
-    auto bitwidth = op.getType().getElementTypeBitWidth();
+    auto bitwidth = getElementTypeBitwidth(op.getType()).value();
     // TODO(b/347067057): Support dynamic rotate with packed dtype.
     if (bitwidth != 32) {
       NYI("Rotate with non-32-bit data");
@@ -895,7 +894,7 @@ class VectorLayoutInferer {
 
   LogicalResult infer(tpu::LoadOp op) {
     auto res_ty = op.getResult().getType();
-    int8_t bitwidth = res_ty.getElementTypeBitWidth();
+    int8_t bitwidth = getElementTypeBitwidth(res_ty).value();
 
     // We expect the result is already a native-sized vreg.
     TPU_CHECK_OP(bitwidth == 32 && res_ty.getShape()[0] == target_shape_[0] &&
@@ -910,7 +909,7 @@ class VectorLayoutInferer {
 
   LogicalResult infer(tpu::StridedLoadOp op) {
     auto vty = op.getResult().getType();
-    int8_t bitwidth = vty.getElementTypeBitWidth();
+    int8_t bitwidth = getElementTypeBitwidth(vty).value();
     if (bitwidth != 32) {
       NYI("Strided load with non 32-bit data");
     }
@@ -926,7 +925,7 @@ class VectorLayoutInferer {
 
   LogicalResult infer(tpu::StridedStoreOp op) {
     auto vty = op.getValueToStore().getType();
-    int8_t bitwidth = vty.getElementTypeBitWidth();
+    int8_t bitwidth = getElementTypeBitwidth(vty).value();
     if (bitwidth != 32) {
       NYI("Strided store with non 32-bit data");
     }
@@ -942,10 +941,10 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(tpu::MatmulOp op) {
-    auto lhs_bitwidth = op.getLhs().getType().getElementTypeBitWidth();
-    auto rhs_bitwidth = op.getRhs().getType().getElementTypeBitWidth();
-    auto acc_bitwidth = op.getAcc().getType().getElementTypeBitWidth();
-    auto res_bitwidth = op.getResult().getType().getElementTypeBitWidth();
+    auto lhs_bitwidth = getElementTypeBitwidth(op.getLhs().getType()).value();
+    auto rhs_bitwidth = getElementTypeBitwidth(op.getRhs().getType()).value();
+    auto acc_bitwidth = getElementTypeBitwidth(op.getAcc().getType()).value();
+    auto res_bitwidth = getElementTypeBitwidth(op.getResult().getType()).value();
     TPU_CHECK_OP(acc_bitwidth == kNativeBitwidth,
                  "Expected 32-bit acc in tpu::MatmulOp");
     TPU_CHECK_OP(res_bitwidth == kNativeBitwidth,
@@ -964,7 +963,7 @@ class VectorLayoutInferer {
 
   LogicalResult infer(tpu::StoreOp op) {
     auto store_ty = op.getValueToStore().getType();
-    int8_t bitwidth = store_ty.getElementTypeBitWidth();
+    int8_t bitwidth = getElementTypeBitwidth(store_ty).value();
 
     // We expect the value to store is already a native-sized vreg.
     TPU_CHECK_OP(bitwidth == 32 && store_ty.getShape()[0] == target_shape_[0] &&
@@ -994,12 +993,12 @@ class VectorLayoutInferer {
     // offset but since we are forcing all operands and result to be the same
     // layout, we can set all offsets to zero for now. Also maybe we should
     // consider adding this to elementwise rule.
-    const int bitwidth = op.getType().getElementTypeBitWidth();
+    const int bitwidth = getElementTypeBitwidth(op.getType()).value();
     if (bitwidth != 8 && bitwidth != 16 && bitwidth != 32) {
       return op.emitOpError(
           "Not implemented: Only 8-, 16- or 32-bit gathers supported");
     }
-    if (bitwidth != op.getIndices().getType().getElementTypeBitWidth()) {
+    if (bitwidth != getElementTypeBitwidth(op.getIndices().getType()).value()) {
       return op.emitOpError(
           "Not implemented: Gather indices and result have different "
           "bitwidths");
@@ -1012,7 +1011,7 @@ class VectorLayoutInferer {
 
   LogicalResult infer(tpu::ReduceIndexOp op) {
     auto input_ty = op.getInput().getType();
-    int8_t bitwidth = input_ty.getElementTypeBitWidth();
+    int8_t bitwidth = getElementTypeBitwidth(input_ty).value();
     int64_t input_rank = input_ty.getRank();
 
     TPU_CHECK_OP(input_ty.getElementType().isF32(),
@@ -1046,8 +1045,8 @@ class VectorLayoutInferer {
     // Note we have verified the shapes in verify().
     auto in_ty = cast<VectorType>(op.getInput().getType());
     auto out_ty = cast<VectorType>(op.getOutput().getType());
-    auto in_bitwidth = in_ty.getElementTypeBitWidth();
-    auto out_bitwidth = out_ty.getElementTypeBitWidth();
+    auto in_bitwidth = getElementTypeBitwidth(in_ty).value();
+    auto out_bitwidth = getElementTypeBitwidth(out_ty).value();
     auto src_layout = getLayout(op.getInput());
     LayoutOffsets src_offsets = src_layout->offsets();
     auto implicit_dim = src_layout->implicit_dim();
@@ -1116,7 +1115,7 @@ class VectorLayoutInferer {
 
   LogicalResult infer(tpu::IotaOp op) {
     auto ty = op.getResult().getType();
-    const int bitwidth = ty.getElementTypeBitWidth();
+    const int bitwidth = getElementTypeBitwidth(ty).value();
     TPU_CHECK_OP(ty.getRank() >= 2, "iota rank below 2D unsupported");
     LayoutOffsets offsets = {std::nullopt, std::nullopt};
     if (llvm::is_contained(op.getDimensions(), ty.getRank() - 2)) {
@@ -1230,7 +1229,7 @@ class VectorLayoutInferer {
       }
     } else {
       TPU_CHECK_OP(
-          op.getSourceVectorType().getElementTypeBitWidth() == kNativeBitwidth,
+          getElementTypeBitwidth(op.getSourceVectorType()) == kNativeBitwidth,
           "Only 32-bit scalar result vector::ExtractOp is supported");
       setLayout(op,
                 VectorLayout(kNativeBitwidth, {0, 0}, layout->tiling(),
@@ -1246,14 +1245,14 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(src_ty.getRank() == res_ty.getRank(),
                  "memref and vector rank mismatch");
     int64_t rank = res_ty.getRank();
-    int8_t bitwidth = res_ty.getElementTypeBitWidth();
+    int8_t bitwidth = getElementTypeBitwidth(res_ty).value();
     if (kNativeBitwidth % bitwidth != 0) {
       return op.emitOpError("Unsupported bitwidth");
     }
     const int packing = kNativeBitwidth / bitwidth;
     auto maybe_tiling =
         verifyMemoryTiling(op, getMemRefLayout(op.getBase()).getTiles(),
-                           src_ty.getRank(), src_ty.getElementTypeBitWidth());
+                           src_ty.getRank(), getElementTypeBitwidth(src_ty).value());
     if (!maybe_tiling) {
       return failure();
     }
@@ -1393,8 +1392,8 @@ class VectorLayoutInferer {
     int64_t src_rank = src_ty.getRank();
     auto acc_layout = getLayout(op.getAcc());
     TPU_CHECK_OP(
-        src_ty.getElementTypeBitWidth() == 32 ||
-            src_ty.getElementTypeBitWidth() == 16,
+        getElementTypeBitwidth(src_ty) == 32 ||
+            getElementTypeBitwidth(src_ty) == 16,
         "only 32-bit (and 16-bit only on some targets) reductions supported");
     auto some_src_layout = getLayout(op.getSource());
     TPU_CHECK_OP(some_src_layout, "missing vector layout");
@@ -1507,7 +1506,7 @@ class VectorLayoutInferer {
     auto some_src_layout = getLayout(op->getOperand(0));
     TPU_CHECK_OP(some_src_layout, "missing vector layout");
     auto layout = *some_src_layout;
-    const unsigned bitwidth = src_ty.getElementTypeBitWidth();
+    const unsigned bitwidth = getElementTypeBitwidth(src_ty).value();
     const int8_t packing = kNativeBitwidth / bitwidth;
     const std::array<int64_t, 2> native_tiling = nativeTiling(bitwidth);
     const std::array<int64_t, 2> src_tiled_ishape =
@@ -1711,14 +1710,14 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(ref_ty.getRank() == store_ty.getRank(),
                  "memref and vector rank mismatch");
     int64_t rank = ref_ty.getRank();
-    int8_t bitwidth = store_ty.getElementTypeBitWidth();
+    int8_t bitwidth = getElementTypeBitwidth(store_ty).value();
     if (kNativeBitwidth % bitwidth != 0) {
       return op.emitOpError("Unsupported bitwidth");
     }
     const int packing = kNativeBitwidth / bitwidth;
     auto maybe_tiling =
         verifyMemoryTiling(op, getMemRefLayout(op.getBase()).getTiles(),
-                           ref_ty.getRank(), ref_ty.getElementTypeBitWidth());
+                           ref_ty.getRank(), getElementTypeBitwidth(ref_ty).value());
     if (!maybe_tiling) {
       return failure();
     }
@@ -1874,8 +1873,8 @@ class VectorLayoutInferer {
       return success();
     }
     auto dst_ty = cast<VectorType>(op->getResult(0).getType());
-    unsigned src_bitwidth = src_ty.getElementTypeBitWidth();
-    unsigned dst_bitwidth = dst_ty.getElementTypeBitWidth();
+    unsigned src_bitwidth = getElementTypeBitwidth(src_ty).value();
+    unsigned dst_bitwidth = getElementTypeBitwidth(dst_ty).value();
     auto some_layout = getLayout(op->getOperand(0));
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
     if (isa<tpu::ExtFOp>(op)) {
@@ -1969,16 +1968,16 @@ class VectorLayoutInferer {
     // We might want to reconsider enabling native this aggressively in cases
     // when it would introduce a lot of padding (e.g. when the value only has
     // a small second minor size, but large minor size).
-    if (dst_ty.getElementTypeBitWidth() == 16) {
+    if (getElementTypeBitwidth(dst_ty) == 16) {
       // TPUv6 has good support for compute in 16-bit and cheap retiling between
       // large 2nd minor and the default tiling, so we bias towards large tiles.
       select_native |= hardware_generation_ >= 6 ||
                        tpu_tiling_flags_.use_x16_large_second_minor;
-    } else if (dst_ty.getElementTypeBitWidth() == 8) {
+    } else if (getElementTypeBitwidth(dst_ty) == 8) {
       select_native |= tpu_tiling_flags_.use_x8_large_second_minor;
-    } else if (dst_ty.getElementTypeBitWidth() == 4) {
+    } else if (getElementTypeBitwidth(dst_ty) == 4) {
       select_native |= tpu_tiling_flags_.use_x4_large_second_minor;
-    } else if (dst_ty.getElementTypeBitWidth() == 2) {
+    } else if (getElementTypeBitwidth(dst_ty) == 2) {
       // Force it to native tiling. See comments in `inferExt`.
       select_native = true;
     } else {
@@ -1988,8 +1987,8 @@ class VectorLayoutInferer {
         VectorLayout(layout.bitwidth(), layout.offsets(),
                      nativeTiling(layout.bitwidth()), layout.implicit_dim());
     auto dst_layout = VectorLayout(
-        dst_ty.getElementTypeBitWidth(), layout.offsets(),
-        select_native ? nativeTiling(dst_ty.getElementTypeBitWidth())
+        getElementTypeBitwidth(dst_ty).value(), layout.offsets(),
+        select_native ? nativeTiling(getElementTypeBitwidth(dst_ty).value())
                       : src_layout.tiling(),
         layout.implicit_dim());
     setLayout(op, src_layout, dst_layout);
@@ -2010,7 +2009,7 @@ class VectorLayoutInferer {
     // don't commit to their bitwidth. See comments in VectorLayout class.
     for (Value val : llvm::concat<Value>(op->getOperands(), op->getResults())) {
       if (const VectorType vty = dyn_cast<VectorType>(val.getType())) {
-        const int64_t val_bitwidth = vty.getElementTypeBitWidth();
+        const int64_t val_bitwidth = getElementTypeBitwidth(vty).value();
         if (val_bitwidth != 1) {
           if (bitwidth == -1) {
             bitwidth = val_bitwidth;
@@ -2033,7 +2032,7 @@ class VectorLayoutInferer {
           bitwidth = layout.bitwidth();
           out_layout = layout;
         } else if (bitwidth != layout.bitwidth()) {
-          DCHECK_EQ(vty.getElementTypeBitWidth(), 1);
+          DCHECK_EQ(getElementTypeBitwidth(vty).value(), 1);
         } else if (!out_layout) {
           // TODO(apaszke): There are probably smarter ways to choose layout.
           out_layout = layout;
@@ -2084,7 +2083,7 @@ class VectorLayoutInferer {
 
   LogicalResult infer(tpu::PRNGRandomBitsOp op) {
     auto res_ty = dyn_cast<VectorType>(op->getResult(0).getType());
-    TPU_CHECK_OP(res_ty.getElementTypeBitWidth() == kNativeBitwidth,
+    TPU_CHECK_OP(getElementTypeBitwidth(res_ty) == kNativeBitwidth,
                  "only 32-bit random bit generation supported");
     // TODO: b/342054464 - Support implicit dims for PRNGRandomBitsOp.
     LayoutOffsets offsets = {0, 0};
@@ -2125,11 +2124,11 @@ class VectorLayoutInferer {
         auto maybe_tiling = verifyMemoryTiling(
             store, getMemRefLayout(store.getBase()).getTiles(),
             store.getMemRefType().getRank(),
-            store.getMemRefType().getElementTypeBitWidth());
+            getElementTypeBitwidth(store.getMemRefType()).value());
         if (maybe_tiling) {
           auto tiling = *maybe_tiling;
           if (tiling ==
-              nativeTiling(store.getMemRefType().getElementTypeBitWidth())) {
+              nativeTiling(getElementTypeBitwidth(store.getMemRefType()).value())) {
             continue;
           }
         }
