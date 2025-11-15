@@ -1124,15 +1124,8 @@ LogicalResult MatmulOp::verify() {
     const std::optional<int64_t> batch_dim_rhs =
         rhs_batch_dims.empty() ? std::nullopt
                                : std::optional<int64_t>(rhs_batch_dims[0]);
-    if (batch_dim_lhs != batch_dim_rhs) {
-      emitOpError("Not Implemented: batch dims must be equal");
-      return failure();
-    }
-    if (batch_dim_lhs.has_value() && (batch_dim_lhs.value() != 0)) {
-      emitOpError("Not Implemented: batch dims pos must be 0");
-      return failure();
-    }
-    // Invariant above enforces only 1 batch dim atm, and that both are eq
+
+    // Invariant above enforces only 1 batch dim atm.
     std::optional<int64_t> batch_size = std::nullopt;
     if (batch_dim_lhs.has_value()) {
       batch_size = lhs_ty.getShape()[batch_dim_lhs.value()];
@@ -1152,19 +1145,9 @@ LogicalResult MatmulOp::verify() {
           "Illegal: output dim order must have an even number of elements.");
       return failure();
     }
-    if (batch_size.has_value()) {
-      if (output_dim_order[0] != 0 || output_dim_order[1] != 0) {
-        emitOpError(
-            "Not implemented: Output with batch size must be the lhs 0 idx for "
-            "now.");
-        return failure();
-      }
-    }
 
-    // Invariants above enforce a single batch idx for now, and that it is in
-    // position 0. Future extensions to this will be to:
-    // 1. Support multiple batch dims
-    // 2. Support batch dims in any position in the output dim order
+    // Invariants above enforce a single batch idx for now. Future extension to
+    // this will be to support multiple batch dims.
 
     // Verify that the output dim order is always in the form of [0, batch_dims,
     // 0, lhs_non_contracting_dims, 1, rhs_non_contracting_dims].
