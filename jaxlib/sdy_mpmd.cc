@@ -16,7 +16,6 @@ limitations under the License.
 #include <cstdint>
 #include <map>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <variant>
@@ -59,6 +58,7 @@ using ::mlir::mpmd::FragmentMergeRule;
 using ::mlir::mpmd::FragmentMergeRules;
 using ::mlir::mpmd::FragmentOrigin;
 using ::mlir::mpmd::FragmentScheduleRule;
+using ::mlir::mpmd::FragmentScheduleRules;
 using ::mlir::mpmd::FunctionIOShardingSpecsAndMeshes;
 using ::mlir::mpmd::MpmdProgram;
 using ::mlir::mpmd::NamedSpmdShardingSpec;
@@ -98,27 +98,13 @@ UserAssignmentMap GetCppUserAssignmentMap(const PyUserAssignmentMap& py_map) {
 }
 
 NB_MODULE(_sdy_mpmd, m) {
-  nb::enum_<PartitioningPhase>(m, "PartitioningPhase")
+  nb::enum_<PartitioningPhase>(m, "PartitioningPhase", nb::is_flag())
       .value("NONE", PartitioningPhase::kNone)
       .value("IMPORT", PartitioningPhase::kImport)
+      .value("OPTIMIZE", PartitioningPhase::kOptimize)
       .value("PARTITION", PartitioningPhase::kPartition)
       .value("ALL", PartitioningPhase::kAll)
-      .export_values()
-      // Allow ORing PartitioningPhase values in Python
-      .def("__or__",
-           [](PartitioningPhase a, PartitioningPhase b) -> PartitioningPhase {
-             int result = static_cast<int>(a) | static_cast<int>(b);
-
-             // Validate that result doesn't exceed the maximum valid value
-             // (kAll)
-             if (result > static_cast<int>(PartitioningPhase::kAll)) {
-               throw std::runtime_error(
-                   "Invalid PartitioningPhase combination: exceeds maximum "
-                   "value");
-             }
-
-             return static_cast<PartitioningPhase>(result);
-           });
+      .export_values();
 
   nb::enum_<SplitFragmentType>(m, "SplitFragmentType")
       .value("KEEP_TRANSFERRED", SplitFragmentType::kKeepTransferred)
@@ -136,8 +122,9 @@ NB_MODULE(_sdy_mpmd, m) {
                     std::optional<int>,
                     std::optional<mlir::mpmd::SplitFragmentType>,
                     const std::string&>(),
-           nb::arg("origins"), nb::arg("stage_id"), nb::arg("call_counter"),
-           nb::arg("split_type"), nb::arg("mesh_name"))
+           nb::arg("origins"), nb::arg("stage_id"),
+           nb::arg("call_counter").none() = std::nullopt,
+           nb::arg("split_type").none() = std::nullopt, nb::arg("mesh_name"))
       .def_ro("origins", &FragmentInfo::origins)
       .def_ro("stage_id", &FragmentInfo::stage_id)
       .def_ro("call_counter", &FragmentInfo::call_counter)
@@ -172,6 +159,7 @@ NB_MODULE(_sdy_mpmd, m) {
              std::map<std::string, std::variant<std::string, bool>>>&
              partitioning_options,
          const FragmentMergeRules& fragment_merge_rules,
+         const FragmentScheduleRules& fragment_schedule_rules,
          PartitioningPhase phases) -> PartitioningResultWrapper {
         PartitioningOptions options;
         if (partitioning_options) {
@@ -185,7 +173,8 @@ NB_MODULE(_sdy_mpmd, m) {
                             .input_meshes = input_meshes,
                             .output_meshes = output_meshes,
                             .donate_argnums = donate_argnums,
-                            .fragment_merge_rules = fragment_merge_rules};
+                            .fragment_merge_rules = fragment_merge_rules,
+                            .fragment_schedule_rules = fragment_schedule_rules};
 
         PartitioningResult partitioning_result =
             program.ApplyPartitioning(phases);
@@ -199,7 +188,8 @@ NB_MODULE(_sdy_mpmd, m) {
       nb::arg("assignment"), nb::arg("input_meshes"), nb::arg("output_meshes"),
       nb::arg("donate_argnums"),
       nb::arg("partitioning_options").none() = std::nullopt,
-      nb::arg("fragment_merge_rules"), nb::arg("phases"));
+      nb::arg("fragment_merge_rules"), nb::arg("fragment_schedule_rules"),
+      nb::arg("phases"));
 
   m.def("get_fragment_info",
         [](MlirModule c_module) -> std::vector<FragmentInfo> {
