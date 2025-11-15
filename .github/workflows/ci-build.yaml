@@ -186,6 +186,6 @@ jobs:
     - name: Run CPU tests
       run: python -m pytest examples/ffi/tests
       env:
-        JAX_PLATFORM_NAME: cpu
+        JAX_PLATFORMS: cpu
     - name: Run GPU tests
       run: python -m pytest examples/ffi/tests
