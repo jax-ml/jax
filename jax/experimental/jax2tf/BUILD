@@ -47,3 +47,14 @@ py_library(
         "//jax",
     ] + py_deps("numpy") + py_deps("tensorflow_core") + jax2tf_deps,
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+    visibility = ["//jax:__pkg__"],
+)
