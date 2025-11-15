@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Sequence
+from collections.abc import Callable, Hashable, Iterator, Sequence
 import contextlib
 import dataclasses
 import functools
@@ -2678,50 +2678,23 @@ def _shape_dtype_struct_to_type_and_layout(
   return vector_type, layout
 
 
-# TODO(allanrenucci): This function is most likely broken. We need to review the
-# `inline_mgpu` lowering logic and clean it up.
-# It was moved from MGPU dialect lowering where it is not used anymore. The
-# rewrite in the dialect lowering addressed bugs in this code.
-def _inline_block(
-    block: ir.Block,
-    args: Sequence[ir.Value],
-    mapper: dict[ir.Value, ir.Value],
-) -> list[ir.Value]:
-  """Inlines the given block at the current insertion point.
+def _replace_uses_in_block(old: ir.Value, new: ir.Value, block: ir.Block):
+  """Replaces all uses of the `old` value with the `new` value in `block`."""
 
-  The block args are replaced with the provided `args`. If the input mapper is
-  not empty, it could further be used to replace captured values with an
-  alternative.
+  def is_contained_within_block(op: ir.OpView, block: ir.Block) -> bool:
+    def parent_blocks(op: ir.OpView) -> Iterator[ir.Block]:
+      current_op = op
+      while current_op.parent is not None:
+        yield current_op.operation.block
+        current_op = current_op.parent
 
-  The operands of the terminator are returned as results.
-  """
-  for arg, val in zip(block.arguments, args, strict=True):
-    mapper[arg] = val
-  return_op = None
-  for op in block.operations:
-    if isinstance(op.opview, mgpu.dialect.ReturnOp):
-      assert return_op is None
-      return_op = op.opview
+    return block in parent_blocks(op)
 
-    # Operands not in the mapper are captured from the context.
-    new_operands = [mapper[o] if o in mapper else o for o in op.operands]
-    new_attributes = {
-        named_attr: op.attributes[named_attr] for named_attr in op.attributes
-    }
-    new_op = ir.Operation.create(
-        name=op.name,
-        results=[res.type for res in op.results],
-        operands=new_operands,
-        attributes=new_attributes,
-    )
-    for old_result, new_result in zip(op.results, new_op.results):
-      mapper[old_result] = new_result
-
-  if return_op is None:
-    raise ValueError("A custom return op must terminate the block.")
-
-  inlined_return_values = [mapper[o] for o in return_op.operands]
-  return inlined_return_values
+  exceptions = []
+  for use in old.uses:
+    if not is_contained_within_block(use.owner, block):
+      exceptions.append(use.owner.operation)
+  old.replace_all_uses_except(new, exceptions)
 
 
 def _clone_custom_op_with_extra_args(
@@ -2759,21 +2732,19 @@ def _clone_custom_op_with_extra_args(
       out_layouts=custom_op.out_layouts,
   )
   new_block = new_op.body.blocks.append(*new_in_types)
-
-  # Clone the old block, by inlining it into the new one.
+  ip = ir.InsertionPoint(new_block)
+  for op in old_block.operations:
+    op.detach_from_parent()
+    ip.insert(op)
+  for old_arg, new_arg in zip(old_block.arguments, new_block.arguments):
+    old_arg.replace_all_uses_with(new_arg)
   num_old_args = len(old_block.arguments)
-  with ir.InsertionPoint.at_block_begin(new_block):
-    _inline_block(
-        old_block,
-        list(new_block.arguments)[:num_old_args],
-        mapper=dict(
-            zip(
-                extra_args,
-                list(new_block.arguments)[num_old_args:],
-                strict=True,
-            )
-        ),
-    )
+  for extra_arg, new_arg in zip(
+      extra_args,
+      list(new_block.arguments)[num_old_args:],
+      strict=True,
+  ):
+    _replace_uses_in_block(extra_arg, new_arg, new_block)
 
   return new_op
 
@@ -3000,10 +2971,8 @@ def _inline_mgpu_lowering_rule_wg_semantics(
   )
 
   # We need to ensure that the block doesn't capture any values from the context
-  # and uses args for everything instead. At least one thing the block is likely
-  # to capture is the SMEM scratch buffer which could have been created outside
-  # of the block during the execution of the provided mgpu_fn, if it calls
-  # `async_copy`.
+  # and uses args for everything instead. E.g. `LaunchContext.tma_descriptors`
+  # will be capture when calling `ctx.async_copy`.
   captured = _closed_over_values(block)
   if captured:
     old_custom_op = custom_op
@@ -3021,7 +2990,7 @@ def _inline_mgpu_lowering_rule_wg_semantics(
       x.type
   )
   return _inline_mgpu_flat_results(
-      ctx, ret, pytree_ret_ty, flat_ret_ty, is_leaf=is_leaf
+      ctx, ret, pytree_ret_ty, flat_ret_ty, is_leaf
   )
 
 
