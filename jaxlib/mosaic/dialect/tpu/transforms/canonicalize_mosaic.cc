@@ -1494,7 +1494,77 @@ FailureOr<Value> canonicalize_shape_cast(const CanonicalizeContext& ctx,
 
 FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
                                       Operation &raw_op) {
-  // TODO(b/456092935): Better implementation for reshapes that (un)fold minor.
+  auto op = dyn_cast<tpu::ReshapeOp>(raw_op);
+  auto src_ty = dyn_cast<VectorType>(op.getSource().getType());
+  auto dst_ty = dyn_cast<VectorType>(op.getResult().getType());
+  ArrayRef<int64_t> src_shape = src_ty.getShape();
+  ArrayRef<int64_t> dst_shape = dst_ty.getShape();
+  int64_t src_rank = src_ty.getRank();
+  int64_t dst_rank = dst_ty.getRank();
+
+  // Target pattern: [D0, ..., D(n-1), Dn] -> [D0, ..., D(n-2), D(n-1)*Dn],
+  // i.e., flattening the last two dimensions.
+  if (src_rank == dst_rank + 1) {
+    if (src_rank < 3) {
+      return raw_op.getResult(0);
+    }
+
+    for (int i = 0; i < src_rank - 2; ++i) {
+      if (src_shape[i] != dst_shape[i]) {
+        return raw_op.getResult(0);
+      }
+    }
+
+    int64_t src_minor_size = src_shape[src_rank - 1];
+    int64_t src_second_minor_size = src_shape[src_rank - 2];
+    if (dst_shape[dst_rank - 1] != src_minor_size * src_second_minor_size) {
+      return raw_op.getResult(0);
+    }
+
+    CanonicalBuilder builder(ctx, op.getLoc(), &raw_op);
+    // Build the permutation: [R-2, 0, 1, ..., R-3, R-1].
+    SmallVector<int64_t> permutation;
+    permutation.reserve(src_rank);
+    permutation.push_back(src_rank - 2);
+    for (int i = 0; i < src_rank - 2; ++i) {
+      permutation.push_back(i);
+    }
+    permutation.push_back(src_rank - 1);
+
+    // Calculate the shape after transpose.
+    SmallVector<int64_t> transposed_shape;
+    transposed_shape.reserve(src_rank);
+    for (int64_t dim_idx : permutation) {
+      transposed_shape.push_back(src_shape[dim_idx]);
+    }
+    Value transposed = builder.create<tpu::TransposeOp>(
+        VectorType::get(transposed_shape, src_ty.getElementType()),
+        op.getSource(), permutation);
+
+    // Unstack along the new major dimension.
+    SmallVector<Value> unstacked;
+    unstacked.reserve(src_second_minor_size);
+    for (int64_t i = 0; i < src_second_minor_size; ++i) {
+      unstacked.push_back(builder.create<vector::ExtractOp>(transposed, i));
+    }
+
+    // Concatenate the slices. Each has shape [S0, S1, ..., S(R-3), S(R-1)].
+    Value result = src_second_minor_size == 1
+                       ? unstacked[0]
+                       : builder.create<tpu::ConcatenateOp>(dst_ty, unstacked,
+                                                            dst_rank - 1);
+
+    op.replaceAllUsesWith(result);
+    op.erase();
+    return result;
+
+    // TODO(b/456092935): Better implementation for reshapes that unfold minor.
+    // Target pattern: [D0, ..., D(n-1), Dn] -> [D0, ..., D(n-1), Dn', D(n+1)],
+    // where Dn = Dn' * D(n+1), i.e., the last dimension is split into two
+    // dimensions.
+  } else if (src_rank == dst_rank - 1) {
+    return raw_op.getResult(0);
+  }
   return raw_op.getResult(0);
 }
 
