@@ -16,7 +16,6 @@ limitations under the License.
 #include <cstdint>
 #include <map>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <variant>
@@ -98,27 +97,13 @@ UserAssignmentMap GetCppUserAssignmentMap(const PyUserAssignmentMap& py_map) {
 }
 
 NB_MODULE(_sdy_mpmd, m) {
-  nb::enum_<PartitioningPhase>(m, "PartitioningPhase")
+  nb::enum_<PartitioningPhase>(m, "PartitioningPhase", nb::is_flag())
       .value("NONE", PartitioningPhase::kNone)
       .value("IMPORT", PartitioningPhase::kImport)
+      .value("OPTIMIZE", PartitioningPhase::kOptimize)
       .value("PARTITION", PartitioningPhase::kPartition)
       .value("ALL", PartitioningPhase::kAll)
-      .export_values()
-      // Allow ORing PartitioningPhase values in Python
-      .def("__or__",
-           [](PartitioningPhase a, PartitioningPhase b) -> PartitioningPhase {
-             int result = static_cast<int>(a) | static_cast<int>(b);
-
-             // Validate that result doesn't exceed the maximum valid value
-             // (kAll)
-             if (result > static_cast<int>(PartitioningPhase::kAll)) {
-               throw std::runtime_error(
-                   "Invalid PartitioningPhase combination: exceeds maximum "
-                   "value");
-             }
-
-             return static_cast<PartitioningPhase>(result);
-           });
+      .export_values();
 
   nb::enum_<SplitFragmentType>(m, "SplitFragmentType")
       .value("KEEP_TRANSFERRED", SplitFragmentType::kKeepTransferred)
@@ -136,8 +121,9 @@ NB_MODULE(_sdy_mpmd, m) {
                     std::optional<int>,
                     std::optional<mlir::mpmd::SplitFragmentType>,
                     const std::string&>(),
-           nb::arg("origins"), nb::arg("stage_id"), nb::arg("call_counter"),
-           nb::arg("split_type"), nb::arg("mesh_name"))
+           nb::arg("origins"), nb::arg("stage_id"),
+           nb::arg("call_counter").none() = std::nullopt,
+           nb::arg("split_type").none() = std::nullopt, nb::arg("mesh_name"))
       .def_ro("origins", &FragmentInfo::origins)
       .def_ro("stage_id", &FragmentInfo::stage_id)
       .def_ro("call_counter", &FragmentInfo::call_counter)
