@@ -835,7 +835,6 @@ def _batch_indexer(
           np.dtype('int32'), new_integer_indexer_shape, 0)
     else:
       batch_idx = indexing.Slice(0, axis_size)  # type: ignore
-      new_integer_indexer_shape = ()
     new_indices.insert(ref_dim, batch_idx)
   return indexing.NDIndexer(
       tuple(new_indices), ref_shape, new_integer_indexer_shape, validate=True
@@ -863,36 +862,38 @@ def _get_vmap(batched_args, batched_dims, *, tree):
   flat_indexers, tree = tree_util.tree_flatten(new_indexers)
 
   is_int_indexing, _, _ = indexing.unpack_ndindexer(indexers[0])
-  # Note: _batch_indexer will add a slice for the batch dim if the int_indexer
-  # shape is empty, else it will use advanced/int indexing.
-  will_add_int_batcher = (indexers[0].int_indexer_shape != ())
-
+  int_indexers_contiguous = bool(
+      np.all(np.diff(np.where(is_int_indexing)[0]) == 1)
+  )
   is_new_int_indexing, _, _ = indexing.unpack_ndindexer(new_indexers[0])
   new_int_indexers_contiguous = bool(
       np.all(np.diff(np.where(is_new_int_indexing)[0]) == 1)
   )
 
   out = get_p.bind(ref, *flat_indexers, tree=tree)
-  if will_add_int_batcher and not new_int_indexers_contiguous:  # now going to be moved to the front
-    original_pos = is_int_indexing.index(True)
-    array_indexer_shape = new_indexers[0].int_indexer_shape
-    array_indexer_len = len(array_indexer_shape)
-
-    transpose_order = list(range(len(out.shape)))
-    transpose_order = (
-        transpose_order[0],
-        *transpose_order[array_indexer_len:array_indexer_len+original_pos],
-        *transpose_order[1:array_indexer_len],
-        *transpose_order[array_indexer_len+original_pos:],
-    )
-
-    out = lax.transpose(out, transpose_order)
+  if not int_indexers_contiguous:  # will always be moved to the front
     out_bdim = 0
-  else:
-    # We only trigger this case when the int_indexer shape is empty,
-    # so we don't need to account for int_indexer_shape.
-    int_indexers_before_ref_dim = int(np.sum(is_new_int_indexing[:ref_dim]))
-    out_bdim = ref_dim - int_indexers_before_ref_dim
+  else:  # originally not going to be moved to the front
+    if new_int_indexers_contiguous:  # now not going to be moved to the front
+      try:
+        out_bdim = is_new_int_indexing.index(True)
+      except ValueError:
+        out_bdim = 0
+    else:  # now going to be moved to the front
+      original_pos = is_int_indexing.index(True)
+      array_indexer_shape = new_indexers[0].int_indexer_shape
+      array_indexer_len = len(array_indexer_shape)
+
+      transpose_order = list(range(len(out.shape)))
+      transpose_order = (
+          transpose_order[0],
+          *transpose_order[array_indexer_len:array_indexer_len+original_pos],
+          *transpose_order[1:array_indexer_len],
+          *transpose_order[array_indexer_len+original_pos:],
+      )
+
+      out = lax.transpose(out, transpose_order)
+      out_bdim = 0
   return out, out_bdim
 batching.primitive_batchers[get_p] = _get_vmap
 
