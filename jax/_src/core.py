@@ -437,13 +437,13 @@ class JaxprEqn:
   __slots__ = ['invars', 'outvars', 'primitive', 'params', 'effects',
                'source_info', 'ctx']
 
-  def __init__(self, invars, outvars, primitive, params, effects, source_info,
+  def __init__(self, invars, outvars, primitive, params, effs, source_info,
                ctx):
     self.invars = invars
     self.outvars = outvars
     self.primitive = primitive
     self.params = params
-    self.effects = effects
+    self.effects = effs
     self.source_info = source_info
     self.ctx = ctx
 
@@ -3086,7 +3086,7 @@ class ClosedCallPrimitive(CallPrimitive):
 closed_call_p: ClosedCallPrimitive = ClosedCallPrimitive('closed_call')
 closed_call_p.def_impl(call_impl)
 closed_call_p.def_effectful_abstract_eval(
-    lambda *_, call_jaxpr: (call_jaxpr.out_avals, call_jaxpr.effects))
+    lambda *_, call_jaxpr: (call_jaxpr.out_avals, eqn_effects(call_jaxpr)))
 
 # ------------------- Map -------------------
 
@@ -3312,7 +3312,7 @@ def _check_closed_call(_, *in_atoms, call_jaxpr):
   in_avals = [x.aval for x in in_atoms]
   if not all(map(typecompat, call_jaxpr.in_avals, in_avals)):
     raise JaxprTypeError("Closed call in_avals mismatch")
-  return call_jaxpr.out_avals, call_jaxpr.effects
+  return call_jaxpr.out_avals, eqn_effects(call_jaxpr)
 custom_typechecks[closed_call_p] = _check_closed_call
 
 def check_jaxpr(jaxpr: Jaxpr):
@@ -3649,6 +3649,14 @@ def _check_map(ctx_factory, prim, in_avals, params):
                if out_axis is not None else aval
                for aval, out_axis in zip(mapped_out_avals, out_axes)]
   return out_avals, filter_named_axis_effects(call_jaxpr.effects, {axis_name})
+
+def eqn_effects(jaxpr):
+  # jaxpr input effects are indexed to include jaxpr.constvars, but the eqn
+  # should have effects indexed only on its explicit arguments
+  effs = jaxpr.effects
+  return {e.replace(input_index=e.input_index - len(jaxpr.constvars))
+          if isinstance(e, effects.JaxprInputEffect) else e for e in effs}
+
 
 # ------------------- ShapeDtypeStruct -------------------
 

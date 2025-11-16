@@ -288,8 +288,8 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
         return bar(w)
 
     foo(jax.new_ref(jnp.ones((1,))))
+    jax.grad(jax.remat(lambda x: foo(jax.new_ref(x)).sum()))(jnp.ones((1,)))
 
-  @unittest.skip("this has never worked")  # TODO(mattjj)
   def test_cond_const_input_effect_indexing(self):
     @jax.custom_jvp
     def weird(x):
@@ -307,7 +307,6 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
 
     jax.jvp(f, (1.,), (1.,))
 
-  @unittest.skip("this has never worked")  # TODO(mattjj)
   def test_scan_const_input_effect_indexing(self):
     @jax.custom_jvp
     def weird(x):
@@ -326,6 +325,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       return y
 
     jax.jvp(f, (1.,), (1.,))
+    jax.grad(jax.remat(f))(1.)
 
 
 @jtu.thread_unsafe_test_class()  # because of mlir.register_lowering calls
