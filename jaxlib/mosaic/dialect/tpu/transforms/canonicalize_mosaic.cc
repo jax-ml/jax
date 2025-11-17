@@ -132,24 +132,24 @@ class CanonicalBuilder : public ImplicitLocOpBuilder {
   Operation *op_;
 };
 
-// Ensures both lhs and rhs have contiguous non-contracting and contracting
-// dimensions by inserting transposes if needed. Returns lhs, rhs, and new
-// dimension numbers if a transpose was inserted, otherwise returns
-// std::nullopt.
+// Ensures both lhs and rhs are in form of [batch_dims, non_contracting_dims,
+// contracting_dims] or [batch_dims, contracting_dims, non_contracting_dims] by
+// inserting transposes if needed. Returns lhs, rhs, and new dimension numbers
+// if a transpose was inserted, otherwise returns std::nullopt.
 std::optional<std::tuple<TypedValue<VectorType>, TypedValue<VectorType>,
                          DotDimensionNumbersAttr>>
 ensure_matmul_contiguous_dims(
     CanonicalBuilder& builder, TypedValue<VectorType> lhs,
     TypedValue<VectorType> rhs,
     const DotDimensionNumbersAttr& dimension_numbers) {
-  // Returns a tuple of [new_operand, new_non_contracting_dims,
+  // Returns a tuple of [new_operand, new_batch_dims, new_non_contracting_dims,
   // new_contracting_dims]. new_operand is nullptr if no transpose is inserted.
   auto maybe_insert_transpose =
       [&](TypedValue<VectorType> operand, ArrayRef<int64_t> batch_dims,
           ArrayRef<int64_t> non_contracting_dims,
           ArrayRef<int64_t> contracting_dims, bool is_lhs)
       -> std::tuple<TypedValue<VectorType>, SmallVector<int64_t>,
-                    SmallVector<int64_t>> {
+                    SmallVector<int64_t>, SmallVector<int64_t>> {
     VectorType vty = operand.getType();
     auto shape = vty.getShape();
     auto rank = shape.size();
@@ -170,7 +170,8 @@ ensure_matmul_contiguous_dims(
                     contracting_dims.end());
     // Already in [B..., NC..., C...].
     if (is_identity(perm_BNC)) {
-      return {nullptr, llvm::to_vector(non_contracting_dims),
+      return {nullptr, llvm::to_vector(batch_dims),
+              llvm::to_vector(non_contracting_dims),
               llvm::to_vector(contracting_dims)};
     }
 
@@ -183,7 +184,8 @@ ensure_matmul_contiguous_dims(
                     non_contracting_dims.end());
     // Already in [B..., C..., NC...].
     if (is_identity(perm_BCN)) {
-      return {nullptr, llvm::to_vector(non_contracting_dims),
+      return {nullptr, llvm::to_vector(batch_dims),
+              llvm::to_vector(non_contracting_dims),
               llvm::to_vector(contracting_dims)};
     }
 
@@ -246,18 +248,21 @@ ensure_matmul_contiguous_dims(
     };
 
     // Map the dimension indices to the new dimension order.
+    SmallVector<int64_t> new_b = map_dims(batch_dims);
     SmallVector<int64_t> new_c = map_dims(contracting_dims);
     SmallVector<int64_t> new_nc = map_dims(non_contracting_dims);
 
-    return {new_operand, new_nc, new_c};
+    return {new_operand, new_b, new_nc, new_c};
   };
 
-  auto [new_lhs, new_lhs_non_contracting_dims, new_lhs_contracting_dims] =
+  auto [new_lhs, new_lhs_batch_dims, new_lhs_non_contracting_dims,
+        new_lhs_contracting_dims] =
       maybe_insert_transpose(lhs, dimension_numbers.getLhsBatchDims(),
                              dimension_numbers.getLhsNonContractingDims(),
                              dimension_numbers.getLhsContractingDims(),
                              /*is_lhs=*/true);
-  auto [new_rhs, new_rhs_non_contracting_dims, new_rhs_contracting_dims] =
+  auto [new_rhs, new_rhs_batch_dims, new_rhs_non_contracting_dims,
+        new_rhs_contracting_dims] =
       maybe_insert_transpose(rhs, dimension_numbers.getRhsBatchDims(),
                              dimension_numbers.getRhsNonContractingDims(),
                              dimension_numbers.getRhsContractingDims(),
@@ -267,10 +272,10 @@ ensure_matmul_contiguous_dims(
   }
 
   SmallVector<int64_t> new_output_dim_order;
-  new_output_dim_order.reserve(2 * (dimension_numbers.getLhsBatchDims().size() +
+  new_output_dim_order.reserve(2 * (new_lhs_batch_dims.size() +
                                     new_lhs_non_contracting_dims.size() +
                                     new_rhs_non_contracting_dims.size()));
-  for (int64_t batch_dim : dimension_numbers.getLhsBatchDims()) {
+  for (int64_t batch_dim : new_lhs_batch_dims) {
     new_output_dim_order.push_back(0);
     new_output_dim_order.push_back(batch_dim);
   }
@@ -286,8 +291,7 @@ ensure_matmul_contiguous_dims(
   DotDimensionNumbersAttr new_dimension_numbers = DotDimensionNumbersAttr::get(
       builder.getContext(), new_lhs_contracting_dims, new_rhs_contracting_dims,
       new_lhs_non_contracting_dims, new_rhs_non_contracting_dims,
-      new_output_dim_order, dimension_numbers.getLhsBatchDims(),
-      dimension_numbers.getRhsBatchDims());
+      new_output_dim_order, new_lhs_batch_dims, new_rhs_batch_dims);
 
   return std::make_tuple(new_lhs ? new_lhs : lhs, new_rhs ? new_rhs : rhs,
                          new_dimension_numbers);
@@ -562,7 +566,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
         "dim and rhs must be vector-like [B, K] or [B, 1, K].");
   }
 
-  auto extsi_sitofp = [&builder, &op](
+  auto extsi_sitofp = [&builder](
                           TypedValue<VectorType> element,
                           std::optional<FloatType> maybe_dest = std::nullopt) {
     FloatType dest = maybe_dest.value_or(builder.getF32Type());
