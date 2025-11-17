@@ -21,7 +21,6 @@ from functools import partial
 from typing import Any
 
 from jax._src import ad_util
-from jax._src import api_util
 from jax._src import core
 from jax._src import config
 from jax._src import linear_util as lu
@@ -49,11 +48,8 @@ def _initial_style_open_jaxpr(fun: Callable,
                               in_tree: PyTreeDef,
                               in_avals: Sequence[core.AbstractValue | core.AvalQDD],
                               debug_info: core.DebugInfo):
-  wrapped_fun, out_tree = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(fun, debug_info=debug_info),
-      in_tree)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
-  return jaxpr, consts, out_tree()
+  jaxpr, out_tree, consts = pe.trace_to_jaxpr(fun, in_tree, in_avals, debug_info)
+  return jaxpr, consts, out_tree
 
 @weakref_lru_cache
 def _initial_style_jaxpr(fun: Callable,
