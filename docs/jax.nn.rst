@@ -33,6 +33,7 @@ Activation functions
     hard_silu
     hard_swish
     hard_tanh
+    tanh
     elu
     celu
     selu
