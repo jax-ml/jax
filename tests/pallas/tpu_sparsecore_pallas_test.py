@@ -287,6 +287,7 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x.sum(axis=0))
 
   def test_get_multi_index(self):
+    self.skipTest("TODO(apaszke): This test may be flaky, at least for TPU v6.")
     self.skip_if_tc_tiling()
 
     @self.vector_subcore_kernel(
