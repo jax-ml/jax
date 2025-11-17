@@ -27,6 +27,11 @@ package(
     default_visibility = ["//visibility:private"],
 )
 
+test_suite(
+    name = "gpu_mlir_deviceless_tests",
+    tags = ["gpu_mlir_deviceless_test"],
+)
+
 jax_generate_backend_suites()
 
 jax_multiplatform_test(
@@ -122,6 +127,7 @@ jax_multiplatform_test(
 jax_py_test(
     name = "gpu_dialect_test",
     srcs = ["gpu_dialect_test.py"],
+    tags = ["gpu_mlir_deviceless_test"],
     deps = [
         "//jax",
         "//jax:mosaic_gpu",
@@ -143,6 +149,7 @@ jax_py_test(
     name = "gpu_layout_inference_test",
     size = "small",
     srcs = ["gpu_layout_inference_test.py"],
+    tags = ["gpu_mlir_deviceless_test"],
     deps = [
         "//jax",
         "//jax:mosaic_gpu",
