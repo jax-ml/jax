@@ -90,6 +90,7 @@ def create_2d_non_contiguous_mesh2():
 # TODO(apaszke): Test with mesh that has host-tiled axes (especially nesting!)
 class PJitTestMultiHost(jt_multiprocess.MultiProcessTest):
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def testLocalInputsWithJaxArray(self):
     # Note that this is too small to shard over the global mesh, but fine for
     # the local mesh and so should be accepted.

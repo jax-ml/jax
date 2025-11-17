@@ -111,6 +111,7 @@ class IoCallbackMultiProcessTest(jtu.JaxTestCase,
                     10 * local_device_idx + 11], dtype=np.int32),
           expected_sum_global)])
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_io_callback_pjit(self):
     devices = np.array(sorted_devices()).reshape(
         (NR_PROCESSES, NR_LOCAL_DEVICES))
