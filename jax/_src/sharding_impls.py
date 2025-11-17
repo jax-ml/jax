@@ -1191,7 +1191,8 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   mesh_devices = mesh_utils.create_device_mesh(
       new_axis_shapes, devices,
       allow_split_physical_axes=allow_split_physical_axes)
-  if (hasattr(mesh_devices.flat[0], 'slice_index') and
+  first_d = mesh_devices.flat[0]
+  if (first_d.platform == 'tpu' and hasattr(first_d, 'slice_index') and
       len({d.slice_index for d in mesh_devices.flat}) > 1):
     raise ValueError(
         '`jax.make_mesh` does not support multi-slice topologies. Please use'
