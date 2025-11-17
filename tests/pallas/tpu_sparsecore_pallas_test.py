@@ -287,13 +287,13 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x.sum(axis=0))
 
   def test_get_multi_index(self):
-    self.skipTest("TODO(apaszke): This test may be flaky, at least for TPU v6.")
     self.skip_if_tc_tiling()
 
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(shape=(8,), dtype=jnp.int32)
     )
     def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.zeros_like(o_ref)
       for i, j in itertools.product(*map(range, x_ref.shape[:-1])):
         o_ref[...] += x_ref.at[i][j]
 
