@@ -1910,7 +1910,8 @@ class FragmentedArray:
 
       # TODO(apaszke,bchetioui): Using 8 helps some (but not all) cases.
       # TODO(apaszke,bchetioui): Add the slice optimization here.
-      for indices, reg in packed_registers(4, if_not_sliced=False):
+      packing_width = 8 if vector_len == 2 else 4
+      for indices, reg in packed_registers(packing_width, if_not_sliced=False):
         [group_size] = ir.VectorType(reg.type).shape
         assert group_size % vector_len == 0
         int_ty = ir.IntegerType.get_signless(group_size * 4)
