@@ -7633,6 +7633,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       jax.set_mesh(mesh)
       out = reshard(np.arange(8), P('x'))
       self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+      out_mesh = jax.sharding.get_mesh()
+      self.assertEqual(out_mesh, mesh)
     finally:
       config.abstract_mesh_context_manager.set_local(
           mesh_lib.empty_abstract_mesh)

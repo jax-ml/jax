@@ -21,6 +21,7 @@ from jax._src.sharding_impls import (
     SingleDeviceSharding as SingleDeviceSharding,
     PmapSharding as _deprecated_PmapSharding,
     set_mesh as set_mesh,
+    get_mesh as get_mesh,
 )
 from jax._src.partition_spec import (
     PartitionSpec as PartitionSpec,

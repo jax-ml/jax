@@ -1258,6 +1258,14 @@ class set_mesh:
     config.device_context.set_local(self.prev_mesh)
 
 
+def get_mesh() -> mesh_lib.Mesh:
+  if not core.trace_state_clean():
+    raise ValueError(
+        '`get_mesh` can only be used outside of `jax.jit`. Maybe you want'
+        ' `jax.sharding.get_abstract_mesh()`?')
+  return mesh_lib.get_concrete_mesh()
+
+
 @contextlib.contextmanager
 def _internal_use_concrete_mesh(mesh: mesh_lib.Mesh):
   assert isinstance(mesh, mesh_lib.Mesh)
