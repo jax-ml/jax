@@ -5650,40 +5650,55 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
     no_op = true;
   }
 
-  auto can_use_row_shuffle = [&ctx](ArrayRef<int64_t> shape,
-                                    VectorLayout layout,
-                                    std::array<int64_t, 2> vreg_slice) {
-    if (shape.size() < 2) {
+  bool can_use_row_shuffle = [&]() {
+    if (!llvm::isPowerOf2_32(layout_in.bitwidth())) {
       return false;
     }
-    // vreg must not be padded.
-    if (shape.back() % vreg_slice[1] != 0 ||
-        shape[shape.size() - 2] % vreg_slice[0] != 0) {
+    if (layout_in.offsets() != LayoutOffsets{0, 0} ||
+        layout_out.offsets() != LayoutOffsets{0, 0}) {
       return false;
     }
-    if (!llvm::isPowerOf2_32(layout.bitwidth())) {
-      return false;
+    bool src_is_1d_tiling =
+        layout_in.tiling() ==
+        std::array<int64_t, 2>{1, ctx.target_shape[1] * layout_in.packing()};
+    bool dst_is_1d_tiling =
+        layout_out.tiling() ==
+        std::array<int64_t, 2>{1, ctx.target_shape[1] * layout_out.packing()};
+    bool src_is_vreg_slice_lane_aligned =
+        (!src_is_1d_tiling && src_tiled_dims[1] == src_vreg_slice[1]) ||
+        (src_is_1d_tiling && src_tiled_dims[1] % src_vreg_slice[1] == 0);
+    bool dst_is_vreg_slice_lane_aligned =
+        (!dst_is_1d_tiling && dst_tiled_dims[1] == dst_vreg_slice[1]) ||
+        (dst_is_1d_tiling && dst_tiled_dims[1] % dst_vreg_slice[1] == 0);
+    bool src_is_vreg_slice_sublane_aligned =
+        src_tiled_dims[0] % src_vreg_slice[0] == 0;
+    bool dst_is_vreg_slice_sublane_aligned =
+        dst_tiled_dims[0] % dst_vreg_slice[0] == 0;
+    if (src_is_vreg_slice_lane_aligned && dst_is_vreg_slice_lane_aligned) {
+      if (src_is_vreg_slice_sublane_aligned &&
+          dst_is_vreg_slice_sublane_aligned) {
+        // Both src and dst are aligned to vreg slice sublanes.
+        return true;
+      }
+      if (!src_is_vreg_slice_sublane_aligned &&
+          !dst_is_vreg_slice_sublane_aligned &&
+          llvm::product_of(src_tiled_dims) ==
+              llvm::product_of(dst_tiled_dims)) {
+        // Neither src nor dst are aligned to vreg slice sublanes.
+        // Padding happens only on the last vreg in tiled dims.
+        return true;
+      }
     }
-    if (layout.offsets() != LayoutOffsets{0, 0}) {
-      return false;
-    }
-    if (layout.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
-      return false;
-    }
-    // 2d tiling.
-    if (layout.tiling()[0] <= ctx.target_shape[0] * layout.packing() &&
-        layout.tiling()[1] == ctx.target_shape[1] &&
-        shape.back() == vreg_slice[1]) {
+    if (src_is_vreg_slice_lane_aligned && dst_is_1d_tiling &&
+        llvm::product_of(src_tiled_dims) == dst_tiled_dims[1]) {
       return true;
     }
-    // 1d tiling.
-    if (layout.tiling() ==
-            std::array<int64_t, 2>{1, ctx.target_shape[1] * layout.packing()} &&
-        shape.back() % vreg_slice[1] == 0) {
+    if (dst_is_vreg_slice_lane_aligned && src_is_1d_tiling &&
+        llvm::product_of(dst_tiled_dims) == src_tiled_dims[1]) {
       return true;
     }
     return false;
-  };
+  }();
 
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> src_vregs,
@@ -5715,15 +5730,13 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
           layout_out.tileArrayImplicitShape(dst_shape, ctx.target_shape));
       return dst_vregs_local;
     } else if (
-        // Row shuffle within a vreg if there is no padding and each vreg holds
-        // a contiguous slice of the flattened data.
-        can_use_row_shuffle(src_shape, layout_in, src_vreg_slice) &&
-        can_use_row_shuffle(dst_shape, layout_out, dst_vreg_slice)) {
+        // Row shuffle within a vreg if each vreg holds a contiguous slice of
+        // the flattened data and each row is either fully occupied or is all
+        // padding.
+        can_use_row_shuffle) {
       auto [sublane_count, lane_count] = ctx.target_shape;
-      auto dst_vregs_shape =
-          layout_out.tileArrayShape(false, false, dst_shape, ctx.target_shape);
-      auto src_vregs_shape =
-          layout_in.tileArrayShape(false, false, src_shape, ctx.target_shape);
+      src_vregs.Reshape(
+          layout_out.tileArrayImplicitShape(dst_shape, ctx.target_shape));
       if (bitwidth == 32) {
         // For 32 bit data, a sublane is effectively a physical row.
         std::array<int64_t, 2> src_sublane_slice = {
@@ -5845,8 +5858,20 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
         // with tiling (16, 128) and then to (8, 512) with tiling (8, 128).
         const int64_t src_sublane_tiling = layout_in.tiling()[0];
         const int64_t dst_sublane_tiling = layout_out.tiling()[0];
+        const int64_t native_sublane_tiling =
+            ctx.target_shape[0] * layout_in.packing();
         CHECK(llvm::isPowerOf2_64(static_cast<uint64_t>(src_sublane_tiling)));
         CHECK(llvm::isPowerOf2_64(static_cast<uint64_t>(dst_sublane_tiling)));
+        CHECK(
+            llvm::isPowerOf2_64(static_cast<uint64_t>(native_sublane_tiling)));
+        // (target_shape[0] * packing, target_shape[1]) <->
+        // (1, target_shape[1] * packing) is a no-op.
+        if ((src_sublane_tiling == 1 &&
+             dst_sublane_tiling == native_sublane_tiling) ||
+            (src_sublane_tiling == native_sublane_tiling &&
+             dst_sublane_tiling == 1)) {
+          return src_vregs;
+        }
         tpu::PackFormat unpack_format, pack_format;
         if (src_sublane_tiling > dst_sublane_tiling) {
           unpack_format = tpu::PackFormat::kInterleaved;
@@ -5887,7 +5912,6 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
                   src_vreg->getLoc(), src_vreg->getType(), dst_vreg);
             });
       }
-      src_vregs.Reshape(dst_vregs_shape);
       return src_vregs;
     } else if (
         // Lower shape_casts for {32/16/8}-bit types where the minor dimension

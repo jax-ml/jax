@@ -1633,8 +1633,8 @@ class VectorLayoutInferer {
       return success();
     }
 
-    // Find the small tiling such that there is not padding and each vreg holds
-    // a continuous slice of the flatten data.
+    // Find the small tiling such that each vreg holds a continuous slice of the
+    // flatten data and each row is either fully occupied or is all padding.
     auto small_second_minor_tiling_layout =
         [&](ArrayRef<int64_t> shape) -> std::optional<VectorLayout> {
       const int64_t elements_per_vreg = native_tiling[0] * native_tiling[1];
@@ -1659,16 +1659,15 @@ class VectorLayoutInferer {
       // TODO(b/440370770): Preserve replicated offsets.
       auto layout = VectorLayout(bitwidth, {0, 0}, tiling, ImplicitDim::kNone);
       auto vreg_slice = layout.vregSlice(target_shape_);
-      if ((shape.back() != vreg_slice[1] && !can_use_1d_tiling) ||
-          shape[shape.size() - 2] % vreg_slice[0] != 0) {
+      if (shape.back() != vreg_slice[1] && !can_use_1d_tiling) {
         return std::nullopt;
       }
       return layout;
     };
 
-    // Use the small tiling if there's no padding and each vreg holds a
-    // contiguous slice of the flattened data. It makes reshape a row shuffle
-    // within a vreg.
+    // Use the small tiling if each vreg holds a contiguous slice of the
+    // flattened data and each row is either fully occupied or is all
+    // padding. It makes reshape a row shuffle within a vreg.
     //
     // For example,
     // - (4, 256) with (4, 128) tiling to (1, 1024) with (1, 128) tiling is
@@ -1684,8 +1683,51 @@ class VectorLayoutInferer {
 
     if (src_small_second_minor_tiling_layout.has_value() &&
         res_small_second_minor_tiling_layout.has_value()) {
-      setLayout(op, *src_small_second_minor_tiling_layout,
-                *res_small_second_minor_tiling_layout);
+      auto src_vreg_slice =
+          src_small_second_minor_tiling_layout->vregSlice(target_shape_);
+      auto res_vreg_slice =
+          res_small_second_minor_tiling_layout->vregSlice(target_shape_);
+      bool src_vreg_slice_aligned =
+          src_shape[src_shape.size() - 2] % src_vreg_slice[0] == 0;
+      bool res_vreg_slice_aligned =
+          res_shape[res_shape.size() - 2] % res_vreg_slice[0] == 0;
+      if (
+          // Both input and output are aligned to its vreg slice.
+          (src_vreg_slice_aligned && res_vreg_slice_aligned) ||
+          // Because the last dims are equal vreg slice lane dim, we know that
+          // in 2D tiled dim, vregs are organized from top to bottom. By
+          // checking the product of the last two dims, we make sure the tiled
+          // dims have the same number of vregs/elements, and only the last or
+          // bottom-most vreg has padding.
+          // For example, it's valid to reshape i32 (12, 128) to (6, 256) with
+          // input tiling (8, 128) and output tiling (4, 128), but not valid to
+          // reshape i32 (12, 128) to (3, 2, 256) with input tiling (8, 128) and
+          // output tiling (4, 128).
+          (!src_vreg_slice_aligned && !res_vreg_slice_aligned &&
+           llvm::product_of(src_shape.take_back(2)) ==
+               llvm::product_of(res_shape.take_back(2)))) {
+        setLayout(op, *src_small_second_minor_tiling_layout,
+                  *res_small_second_minor_tiling_layout);
+        return success();
+      }
+    }
+    if (src_small_second_minor_tiling_layout.has_value() &&
+        llvm::product_of(src_shape.take_back(2)) == res_shape.back()) {
+      // For example, reshape i32 (8, 10, 128) to (8, 1280) with input tiling
+      // (8, 128) and output tiling (1, 128).
+      setLayout(
+          op, *src_small_second_minor_tiling_layout,
+          VectorLayout(layout.bitwidth(), {0, 0},
+                       {1, target_shape_[1] * packing}, ImplicitDim::kNone));
+      return success();
+    }
+    if (res_small_second_minor_tiling_layout.has_value() &&
+        llvm::product_of(res_shape.take_back(2)) == src_shape.back()) {
+      setLayout(
+          op,
+          VectorLayout(layout.bitwidth(), {0, 0},
+                       {1, target_shape_[1] * packing}, ImplicitDim::kNone),
+          *res_small_second_minor_tiling_layout);
       return success();
     }
 
