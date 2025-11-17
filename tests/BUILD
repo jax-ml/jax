@@ -957,6 +957,20 @@ jax_py_test(
     ] + py_deps("absl/testing"),
 )
 
+jax_py_test(
+    name = "documentation_coverage_test",
+    srcs = [
+        "documentation_coverage_test.py",
+    ],
+    deps = [
+        "//jax",
+        # "//jax/docs",
+        "//jax/_src:config",
+        "//jax/_src:internal_test_util",
+        "//jax/_src:test_util",
+    ] + py_deps("absl/testing"),
+)
+
 jax_multiplatform_test(
     name = "linalg_test",
     srcs = ["linalg_test.py"],

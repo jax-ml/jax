@@ -2409,3 +2409,13 @@ def setup_hypothesis(max_examples=30) -> None:
   profile = HYPOTHESIS_PROFILE.value
   logging.info("Using hypothesis profile: %s", profile)
   hp.settings.load_profile(profile)
+
+
+def runtime_environment() -> str | None:
+  """Returns None, "bazel" or "pytest"."""
+  if sys.executable is None:
+    return None
+  elif 'bazel-out' in sys.executable:
+    return "bazel"
+  else:
+    return "pytest"
