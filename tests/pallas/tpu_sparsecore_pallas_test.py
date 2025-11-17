@@ -604,7 +604,6 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_load_gather_1d(self):
-    self.skip_if_tc_tiling()
     x = jnp.arange(8)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(8))
 
@@ -615,7 +614,6 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, indices), x[indices])
 
   def test_load_gather_2d(self):
-    self.skip_if_tc_tiling()
     x = jnp.arange(8 * 8).reshape(8, -1)
     indices0 = indices1 = jax.random.permutation(
         jax.random.key(42), jnp.arange(8)
@@ -649,7 +647,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(*MASK_FNS)
   def test_load_gather_masked(self, mask_fn):
-    self.skip_if_tc_tiling()
     x = jnp.arange(8)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(8))
 
@@ -683,7 +680,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(*MASK_FNS)
   def test_store_scatter_masked(self, mask_fn):
-    self.skip_if_tc_tiling()
     x = jnp.arange(8)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(8))
 
@@ -700,7 +696,6 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_store_scatter_2d(self):
-    self.skip_if_tc_tiling()
     if not jtu.if_cloud_tpu_at_least(2025, 10, 31):
       self.skipTest("Needs a newer libtpu")
 
