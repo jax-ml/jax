@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "jaxlib/mosaic/dialect/tpu/transforms/linalg_vectorization.h"
 
-#include <memory>
 #include <optional>
 #include <string_view>
 #include <utility>
