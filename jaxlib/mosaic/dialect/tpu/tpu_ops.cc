@@ -873,9 +873,12 @@ LogicalResult VectorStoreIdxOp::verify() {
 LogicalResult ReinterpretCastOp::verify() {
   auto source_type = getMemRefType(getInput());
   auto target_type = getType();
-  return success(
-      source_type.getMemorySpace() &&  // Require memory space annotations.
-      source_type.getMemorySpace() == target_type.getMemorySpace());
+  if (source_type.getMemorySpace() != target_type.getMemorySpace()) {
+    return emitOpError("Source and target memory spaces must match, but got ")
+           << source_type.getMemorySpace() << " and "
+           << target_type.getMemorySpace();
+  }
+  return success();
 }
 
 LogicalResult EraseLayoutOp::inferReturnTypes(
