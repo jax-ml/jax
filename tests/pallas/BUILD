@@ -702,8 +702,8 @@ jax_multiplatform_test(
         "tpu_v5p",
     ],
     enable_backends = ["tpu"],
-    minimal_shard_count = 5,
-    shard_count = 5,
+    minimal_shard_count = 10,
+    shard_count = 10,
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
