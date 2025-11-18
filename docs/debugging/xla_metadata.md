@@ -1,8 +1,8 @@
-# Attaching XLA Metadata with `set_xla_metadata`
+# Attaching XLA Debug Metadata with `set_xla_debug_metadata`
 
 <!--* freshness: { reviewed: '2025-08-20' } *-->
 
-**Summary:** `set_xla_metadata` allows you to attach metadata to operations in your JAX code. This metadata is passed down to the XLA compiler as `frontend_attributes` and can be used to enable compiler-level debugging tools, such as the XLA-TPU debugger.
+**Summary:** `set_xla_debug_metadata` allows you to attach metadata to operations in your JAX code. This metadata is passed down to the XLA compiler as `frontend_attributes` and can be used to enable compiler-level debugging tools, such as the XLA-TPU debugger.
 
 You can use it in three ways:
 
@@ -10,27 +10,27 @@ You can use it in three ways:
 2. Tag a block of operations using a context manager
 3. Tag all operations in a function using a decorator
 
-**Warning:** `set_xla_metadata` is an experimental feature and its API is subject to change.
+**Warning:** `set_xla_debug_metadata` is an experimental feature and its API is subject to change.
 
 # What is XLA Metadata?
 When JAX transforms and compiles your code, it ultimately generates an XLA (Accelerated Linear Algebra) computation graph. Each operation in this graph can have associated metadata, specifically `frontend_attributes`. This metadata doesn't change the numerical result of the operation, but it can be used to signal special behavior to the compiler or runtime.
 
-`set_xla_metadata` provides a way to attach this metadata directly from your JAX code. This is a powerful feature for low-level debugging and profiling.
+`set_xla_debug_metadata` provides a way to attach this metadata directly from your JAX code. This is a powerful feature for low-level debugging and profiling.
 
 # Usage
 ## Tagging Individual Operations
-Tagging an individual operation gives you precise control over which parts of your computation you want to inspect. To do this, you wrap the output (value) of an operation with `set_xla_metadata`. When wrapping a function with multiple operations within, only the final operation of said function will be tagged.
+Tagging an individual operation gives you precise control over which parts of your computation you want to inspect. To do this, you wrap the output (value) of an operation with `set_xla_debug_metadata`. When wrapping a function with multiple operations within, only the final operation of said function will be tagged.
 
 ```python
 import jax
 import jax.numpy as jnp
-from jax.experimental.xla_metadata import set_xla_metadata
+from jax.experimental.xla_metadata import set_xla_debug_metadata
 
 # Tagging an individual operation
 def value_tagging(x):
   y = jnp.sin(x)
   z = jnp.cos(x)
-  return set_xla_metadata(y * z, breakpoint=True)
+  return set_xla_debug_metadata(y * z, breakpoint=True)
 
 print(jax.jit(value_tagging).lower(1.0).as_text("hlo"))
 ```
@@ -44,16 +44,16 @@ ENTRY main.5 {
 }
 ```
 ## Tagging a Block of Code with a Context Manager or Decorator
-If you want to apply the same metadata to a larger section of code, you can use `set_xla_metadata` as a context manager. All JAX operations within the `with` block will have the specified metadata attached.
+If you want to apply the same metadata to a larger section of code, you can use `set_xla_debug_metadata` as a context manager. All JAX operations within the `with` block will have the specified metadata attached.
 
 ```python
 import jax
 import jax.numpy as jnp
-from jax.experimental.xla_metadata import set_xla_metadata
+from jax.experimental.xla_metadata import set_xla_debug_metadata
 
 # Tagging a block of code
 def context_tagging(x):
-  with set_xla_metadata(_xla_log=True):
+  with set_xla_debug_metadata(_xla_log=True):
     y = jnp.sin(x)
     z = jnp.cos(y)
     return y * z
@@ -70,15 +70,15 @@ ENTRY main.5 {
 }
 ```
 
-If you want to tag all operations in a function, you can also use `set_xla_metadata` as a decorator:
+If you want to tag all operations in a function, you can also use `set_xla_debug_metadata` as a decorator:
 
 ```python
 import jax
 import jax.numpy as jnp
-from jax.experimental.xla_metadata import set_xla_metadata
+from jax.experimental.xla_metadata import set_xla_debug_metadata
 
 # Tagging with a decorator
-@set_xla_metadata(_xla_log=True)
+@set_xla_debug_metadata(_xla_log=True)
 @jax.jit
 def decorator_tagging(x):
   y = jnp.sin(x)
@@ -90,15 +90,15 @@ print(decorator_tagging.lower(1.0).as_text("hlo"))
 This will result in the same HLO as above.
 
 # Interaction with JAX Transformations
-`set_xla_metadata` utilizes either a `XlaMetadataContextManager` or JAX `primitive` depending on use-case and is compatible with JAX's transformations like `jit`, `vmap`, and `grad`.
-*   **`vmap`**: When you `vmap` a function containing `set_xla_metadata`, the metadata will be applied to all of the relevant batched operations.
+`set_xla_debug_metadata` utilizes either a `XlaMetadataContextManager` or JAX `primitive` depending on use-case and is compatible with JAX's transformations like `jit`, `vmap`, and `grad`.
+*   **`vmap`**: When you `vmap` a function containing `set_xla_debug_metadata`, the metadata will be applied to all of the relevant batched operations.
 *   **`grad`**:
-    1. When tagging a block of operations with the **context manager** `with set_xla_metadata(...):`, the metadata is applied to both the forward pass and backward pass of the operations within it.
-    2. Tagging **individual ops** with `set_xla_metadata()` currently only applies to the forward pass of a function. To tag individual operations generated by the backward pass (i.e., the gradient computation), a simple `custom_vjp` can be used:
+    1. When tagging a block of operations with the **context manager** `with set_xla_debug_metadata(...):`, the metadata is applied to both the forward pass and backward pass of the operations within it.
+    2. Tagging **individual ops** with `set_xla_debug_metadata()` currently only applies to the forward pass of a function. To tag individual operations generated by the backward pass (i.e., the gradient computation), a simple `custom_vjp` can be used:
         ```python
         import jax
         import jax.numpy as jnp
-        from jax.experimental.xla_metadata import set_xla_metadata
+        from jax.experimental.xla_metadata import set_xla_debug_metadata
 
         def fn(x):
             y = jnp.sin(x)
@@ -118,7 +118,7 @@ This will result in the same HLO as above.
 
         def bwd(vjp_fn, cts_in):
             cts_out = vjp_fn(cts_in)
-            cts_out = set_xla_metadata(cts_out, **metadata)
+            cts_out = set_xla_debug_metadata(cts_out, **metadata)
             return cts_out
 
         wrapped_fn.defvjp(fwd, bwd)
@@ -140,7 +140,7 @@ This will result in the same HLO as above.
           ROOT add_any.9 = f32[] add(mul.7, mul.8), frontend_attributes={example="grad_tagging"}
         }
         ```
-### Strengths and Limitations of `set_xla_metadata`
+### Strengths and Limitations of `set_xla_debug_metadata`
 
 #### Strengths
 *   **Variable Control:** Allows you to target individual operations or blocks of operations.
@@ -150,4 +150,4 @@ This will result in the same HLO as above.
 #### Limitations
 *   **Attributes may be lost:** While it's intended for XLA metadata to be maintained throughout transformations and HLO optimizations, certain edge-cases may result in the metadata being lost.
 *   **Forward-pass only:** Metadata is not currently automatically propagated to gradients <u>when tagging individual operations</u> in the backward pass. A `custom_vjp` must be used in order to tag gradients in this case. See above for an example.
-*   **Liable to change**: `set_xla_metadata` is an experimental feature and its API is subject to change.
+*   **Liable to change**: `set_xla_debug_metadata` is an experimental feature and its API is subject to change.

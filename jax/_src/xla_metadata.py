@@ -14,6 +14,7 @@
 
 from functools import partial, wraps
 from typing import Any
+import warnings
 
 from jax._src import config
 from jax._src import core
@@ -85,7 +86,7 @@ class XlaMetadataContextManager:
     return _XlaMetadataWrapper(f, self)
 
 
-def set_xla_metadata(x=None, **kwargs):
+def set_xla_debug_metadata(x=None, **kwargs):
   if x is None:
     return XlaMetadataContextManager(kwargs)
   else:
@@ -96,6 +97,16 @@ def set_xla_metadata(x=None, **kwargs):
         ),
         x,
     )
+
+
+def set_xla_metadata(x=None, **kwargs):
+  warnings.warn(
+      "set_xla_metadata is deprecated and will be removed in the future JAX"
+      " version. Please use set_xla_debug_metadata instead.",
+      DeprecationWarning,
+      stacklevel=2,
+  )
+  return set_xla_debug_metadata(x, **kwargs)
 
 
 # `xla_metadata_value_p` is an identity primitive for attaching frontend_attributes
