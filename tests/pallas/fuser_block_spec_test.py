@@ -1439,6 +1439,46 @@ class PushBlockSpecTest(parameterized.TestCase):
     self.assertEqual(out_block_spec.block_shape, (128, 256))
     self.assertEqual(out_block_spec.index_map(1), (0, 1))
 
+  def test_concatenate_push(self):
+    def f(x1, x2):
+      return jnp.concatenate((x1, x2), axis=0)
+
+    x_type = jax.ShapeDtypeStruct((512,), jnp.float32)
+    block_spec = pl.BlockSpec((128,), lambda i: (i,))
+    with self.assertRaisesRegex(
+        NotImplementedError, 'concatenate not supported yet'
+    ):
+      block_spec_lib.push_block_spec(f, block_spec, block_spec)(x_type, x_type)
+    x_type = jax.ShapeDtypeStruct((512,), jnp.float32)
+    block_spec = pl.BlockSpec((512,), lambda i: (i,))
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec, block_spec)(
+        x_type, x_type
+    )
+    self.assertEqual(out_block_spec.block_shape, (1024,))
+    self.assertEqual(out_block_spec.index_map(0), (0,))
+
+    def f(x1, x2):
+      return jnp.stack([x1, x2], axis=0)
+
+    x_type = jax.ShapeDtypeStruct((512,), jnp.float32)
+    block_spec = pl.BlockSpec((128,), lambda i: (i,))
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec, block_spec)(
+        x_type, x_type
+    )
+    self.assertEqual(out_block_spec.block_shape, (2, 128))
+    self.assertEqual(out_block_spec.index_map(3), (0, 3))
+
+    def f(x1, x2):
+      return jnp.stack([x1, x2], axis=1)
+
+    x_type = jax.ShapeDtypeStruct((512,), jnp.float32)
+    block_spec = pl.BlockSpec((128,), lambda i: (i,))
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec, block_spec)(
+        x_type, x_type
+    )
+    self.assertEqual(out_block_spec.block_shape, (128, 2))
+    self.assertEqual(out_block_spec.index_map(3), (3, 0))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
