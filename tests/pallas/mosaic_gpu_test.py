@@ -564,8 +564,6 @@ class PallasCallTest(PallasTest):
       plgpu.Layout.TCGEN05,
   )
   def test_inline_mgpu_layout_args(self, layout: gpu_core.SomeLayout):
-    self.skip_if_wg_semantics()  # Layout inference is not fully working here.
-
     quant_dtype = jnp.int8
     dtype = jnp.bfloat16
     mgpu_layout = layout.to_mgpu()

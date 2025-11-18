@@ -46,7 +46,6 @@ from jax._src.state import discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax.experimental.mosaic import gpu as mgpu
-from jax.experimental.mosaic.gpu import inference_utils as mgpu_inference_utils
 from jax.experimental.mosaic.gpu import layouts as mgpu_layouts
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
@@ -2509,41 +2508,16 @@ def _type_check_mgpu_lane_semantics(v, ty):
       raise ValueError(f"Unexpected type {ty} for value {v}")
 
 
-def _type_check_mgpu_warpgroup_semantics(v: ir.Value, ty : Any):
-  if isinstance(ty, RefType) and ir.MemRefType.isinstance(v.type):
+def _type_check_mgpu_warpgroup_semantics(
+    value: ir.Value, ty: RefType | SomeLayout
+):
+  if ir.MemRefType.isinstance(value.type) and isinstance(ty, RefType):
     return
 
-  if isinstance(ty, ShapeDtypeStruct) and ir.VectorType.isinstance(v.type):
-    vector_type = ir.VectorType(v.type)
-    el_dtype = mgpu_utils.dtype_to_ir_type(ty.dtype)
-    if vector_type.element_type != el_dtype:
-      raise ValueError(
-          f"Array dtype mismatch: expected {vector_type.element_type} got"
-          f" {el_dtype}."
-      )
-    if list(ty.shape) != vector_type.shape:
-      raise ValueError(
-          f"Array shape mismatch: expected {ty.shape} got"
-          f" {vector_type.shape}."
-      )
-    layout_attr = mgpu_inference_utils.value_layout(v)
-    value_layout = mgpu_layouts.from_layout_attr(layout_attr)
-    if ty.layout.to_mgpu() != value_layout:
-      raise ValueError(
-          f"Vector layout mismatch: {ty.layout.to_mgpu()} != {value_layout}"
-      )
+  if ir.VectorType.isinstance(value.type) and isinstance(ty, SomeLayout):
     return
 
-  if ir.VectorType.isinstance(v.type) and isinstance(ty, SomeLayout):
-    layout_attr = mgpu_inference_utils.value_layout(v)
-    value_layout = mgpu_layouts.from_layout_attr(layout_attr)
-    if ty.to_mgpu() != value_layout:
-      raise ValueError(
-          f"Vector layout mismatch: {ty.to_mgpu()} != {value_layout}"
-      )
-    return
-
-  raise ValueError(f"Unexpected type {ty} for value {v}")
+  raise ValueError(f"Unexpected type {ty} for value {value}")
 
 
 def _inline_mgpu_flat_transformed_args(
@@ -2601,30 +2575,6 @@ def _inline_mgpu_flat_transformed_args(
   return flat_transformed
 
 
-def _inline_mgpu_flat_results(
-    ctx: lowering.LoweringRuleContext,
-    ret,
-    pytree_ret_ty,
-    flat_ret_ty,
-    is_leaf: Callable[[Any], bool],
-):
-  ret_leaves, ret_tree = jax.tree.flatten(ret, is_leaf)
-
-  if ret_tree != pytree_ret_ty:
-    return_type = jax.tree.unflatten(pytree_ret_ty, flat_ret_ty)
-    raise ValueError(
-        f"inline_mgpu_p return type tree mismatch: {ret} != {return_type}"
-    )
-
-  for ty, r in zip(flat_ret_ty, ret_leaves):
-    if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
-      _type_check_mgpu_warpgroup_semantics(r, ty)
-    else:
-      _type_check_mgpu_lane_semantics(r, ty)
-
-  return ret_leaves
-
-
 @lowering.register_lowering_rule(inline_mgpu_p, mgpu.LoweringSemantics.Lane)
 def _inline_mgpu_lowering_rule(
     ctx: lowering.LoweringRuleContext,
@@ -2645,13 +2595,20 @@ def _inline_mgpu_lowering_rule(
   )
   args = jax.tree.unflatten(pytree_args, flat_transformed)
   ret = mgpu_fn(ctx.launch_ctx, *args)
-  return _inline_mgpu_flat_results(
-      ctx,
-      ret,
-      pytree_ret_ty,
-      flat_ret_ty,
-      is_leaf=lambda x: isinstance(x, mgpu.FragmentedArray),
+  ret_leaves, ret_tree = jax.tree.flatten(
+      ret, lambda x: isinstance(x, mgpu.FragmentedArray)
   )
+
+  if ret_tree != pytree_ret_ty:
+    return_type = jax.tree.unflatten(pytree_ret_ty, flat_ret_ty)
+    raise ValueError(
+        f"inline_mgpu_p return type tree mismatch: {ret} != {return_type}"
+    )
+
+  for ty, r in zip(flat_ret_ty, ret_leaves):
+    _type_check_mgpu_lane_semantics(r, ty)
+
+  return ret_leaves
 
 
 def _ref_type_to_transforms(ref_type: RefType) -> ir.ArrayAttribute:
@@ -2929,6 +2886,7 @@ def _inline_mgpu_lowering_rule_wg_semantics(
     pytree_ref_transforms,
     pytree_ret_ty,
 ):
+  del pytree_ret_ty
   flat_transformed_args = _inline_mgpu_flat_transformed_args(
       ctx,
       flat_args_and_transforms,
@@ -2972,19 +2930,7 @@ def _inline_mgpu_lowering_rule_wg_semantics(
     custom_op = _clone_custom_op_with_extra_args(custom_op, captured)
     old_custom_op.erase()
 
-  if len(custom_op.results) == 0:
-    ret = None
-  elif len(custom_op.results) == 1:
-    ret = custom_op.result
-  else:
-    ret = list(custom_op.results)
-
-  is_leaf = lambda x: isinstance(x, ir.Value) and ir.VectorType.isinstance(
-      x.type
-  )
-  return _inline_mgpu_flat_results(
-      ctx, ret, pytree_ret_ty, flat_ret_ty, is_leaf
-  )
+  return custom_op.results
 
 
 load_p = jax_core.Primitive("load")
