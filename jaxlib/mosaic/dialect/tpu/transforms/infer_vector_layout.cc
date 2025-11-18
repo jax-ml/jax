@@ -202,7 +202,7 @@ class VectorLayoutInferer {
             return failure();
           }
         }
-      } else if (isa<arith::CmpIOp>(any_op) || isa<arith::CmpFOp>(any_op)) {
+      } else if (isa<tpu::CmpIOp>(any_op) || isa<arith::CmpFOp>(any_op)) {
         Operation *op = &any_op;  // For TPU_CHECK_OP macros, which use the `op`
                                   // variable in scope
         auto lhs_ty = dyn_cast<VectorType>(any_op.getOperand(0).getType());
