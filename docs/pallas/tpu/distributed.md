@@ -1233,7 +1233,7 @@ inner_grid = (
 inner_block_spec = pl.BlockSpec(
     index_map=lambda i, j: (i, j),
     block_shape=inner_block_size,
-    memory_space=pltpu.TPUMemorySpace.ANY,
+    memory_space=pltpu.TPUMemorySpace.VMEM,
 )
 
 
