@@ -333,6 +333,11 @@ class DebugInfo(NamedTuple):
     func_src_comps[0] = name
     return self._replace(func_src_info=" ".join(func_src_comps))
 
+  def set_result_paths(self, ans):
+    result_paths = tuple(f"result{_clean_keystr_arg_names(path)}"
+                         for path, _ in generate_key_paths(ans))
+    return self._replace(result_paths=result_paths)
+
   @property
   def func_filename(self) -> str | None:
     m = _re_func_src_info.match(self.func_src_info)

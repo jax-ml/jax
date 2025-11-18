@@ -44,7 +44,8 @@ from jax._src.core import (
     OutDBIdx, InputType, OutputType, get_referent, JaxprEqnContext, typeof)
 from jax._src.source_info_util import SourceInfo
 from jax._src.state.types import AbstractRef, ReadEffect
-from jax._src.tree_util import PyTreeDef, treedef_tuple, register_static
+from jax._src.tree_util import (PyTreeDef, treedef_tuple, register_static,
+                                tree_flatten, tree_unflatten)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            as_hashable_function, weakref_lru_cache,
@@ -2382,7 +2383,39 @@ def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
   store.store(out_zeros)
   return [*out_primals, *out_nz_tangents]
 
+def trace_to_jaxpr(
+    fun: Callable,
+    in_tree: PyTreeDef,
+    in_avals_flat: Sequence[AbstractValue | core.AvalQDD],
+    debug_info: core.DebugInfo
+) -> tuple[Jaxpr, PyTreeDef, list[Any]]:
+  config.enable_checks.value and debug_info.assert_arg_names(len(in_avals_flat))
+  parent_trace = core.trace_ctx.trace
+  trace = DynamicJaxprTrace(debug_info, parent_trace=parent_trace)
+  # Name stacks are reset because the name stacks on jaxpr equations should be
+  # rooted at the enclosing jaxpr.
+  with core.ensure_no_leaks(trace), source_info_util.reset_name_stack():
+    source_info = source_info_util.current()
+    in_tracers_flat = map(partial(trace.new_arg, source_info=source_info),
+                          in_avals_flat)
+    with core.set_current_trace(trace):
+      in_tracers = tree_unflatten(in_tree, in_tracers_flat)
+      ans = fun(*in_tracers)
+      debug_info = debug_info.set_result_paths(ans)
+      ans_flat, out_tree = tree_flatten(ans)
 
+    _check_returned_jaxtypes(debug_info, ans_flat)
+    out_tracers = map(partial(trace.to_jaxpr_tracer, source_info=source_info), ans_flat)
+    _check_no_returned_refs(debug_info, out_tracers)
+    jaxpr, consts = trace.frame.to_jaxpr(trace, out_tracers, debug_info,
+                                         source_info)
+    del trace, fun, in_tracers_flat, in_tracers, out_tracers, ans, ans_flat
+
+  config.enable_checks.value and core.check_jaxpr(jaxpr)
+  return jaxpr, out_tree, consts
+
+
+# TODO(dougalm): remove in favor of `trace_to_jaxpr`
 @profiler.annotate_function
 def trace_to_jaxpr_dynamic(
     fun: lu.WrappedFun,
