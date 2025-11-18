@@ -79,6 +79,25 @@ jax_multiprocess_test(
 )
 
 jax_multiprocess_test(
+    name = "colocated_python_test",
+    srcs = ["colocated_python_test.py"],
+    disable_configs = [
+        # This config has two cores per chip, and JAX distributed does not get
+        # the correct number of logical devices per host.
+        "tpu_v3_x4",
+    ],
+    enable_backends = [
+        "gpu",
+        "tpu",
+    ],
+    main = "colocated_python_test.py",
+    deps = [
+        "//jax:experimental_colocated_python",
+        "//jax/_src:test_multiprocess",
+    ],
+)
+
+jax_multiprocess_test(
     name = "device_id_test",
     srcs = ["device_id_test.py"],
     main = "device_id_test.py",
