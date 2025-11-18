@@ -35,7 +35,7 @@ jtu.request_cpu_devices(4)
 
 
 # TODO: AOT tests fails with the tracer leak checker.
-# Reenable once https://github.com/jax-ml/jax/issues/27315 is fixed.
+# Re-enable once https://github.com/jax-ml/jax/issues/27315 is fixed.
 # @jtu.with_config(jax_check_tracer_leaks=True)
 class ErrorCheckTests(jtu.JaxTestCase):
 
@@ -225,7 +225,7 @@ class ErrorCheckTests(jtu.JaxTestCase):
       jax.jit(error_check.raise_if_error)()
 
   @parameterized.product(jit=[True, False])
-  @jtu.with_user_mesh((2, 2), ("x", "y"))
+  @jtu.with_explicit_mesh((2, 2), ("x", "y"))
   def test_error_check_explicit_mode(self, mesh, jit):
     def f(x):
       error_check.set_error_if(x <= 0, "x must be greater than 0")
@@ -254,7 +254,7 @@ class ErrorCheckTests(jtu.JaxTestCase):
         error_check.raise_if_error()
 
   @parameterized.product(jit=[True, False])
-  @jtu.with_user_mesh(
+  @jtu.with_explicit_mesh(
       (2, 2),
       ("x", "y"),
       axis_types=(mesh_lib.AxisType.Auto, mesh_lib.AxisType.Auto),

@@ -1,0 +1,105 @@
+# Composite action to download the jax and jaxlib wheels
+name: Download JAX CPU wheels
+
+inputs:
+  runner:
+    description: "Which runner type should the wheels be downloaded for?"
+    type: string
+    default: "linux-x86-n4-16"
+  python:
+    description: "Which python version should the artifact be downloaded for?"
+    required: true
+    type: string
+  jaxlib-version:
+    description: "Which jaxlib version to download? (head/pypi_latest)"
+    type: string
+    default: "head"
+  skip-download-jaxlib-from-gcs:
+    description: "Whether to skip downloading the jaxlib artifact from GCS (e.g for testing a jax only release)"
+    default: '0'
+    type: string
+  gcs_download_uri:
+    description: "GCS location prefix from where the artifacts should be downloaded"
+    default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+    type: string
+permissions: {}
+runs:
+  using: "composite"
+
+  steps:
+    # Note that certain envs such as JAXCI_HERMETIC_PYTHON_VERSION are set by the calling workflow.
+    - name: Set env vars for use in artifact download URL
+      shell: bash
+      run: |
+        os=$(uname -s | awk '{print tolower($0)}')
+        arch=$(uname -m)
+
+        # Adjust os and arch for Windows
+        if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
+          os="win"
+          arch="amd64"
+        fi
+
+        # Get the major and minor version of Python.
+        # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.10, then python_major_minor=310
+        # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13-nogil, then python_major_minor=313t
+        python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')
+
+        echo "OS=${os}" >> $GITHUB_ENV
+        echo "ARCH=${arch}" >> $GITHUB_ENV
+        # Python wheels follow a naming convention: standard wheels use the pattern
+        # `*-cp<py_version>-cp<py_version>-*`, while free-threaded wheels use
+        # `*-cp<py_version>-cp<py_version>t-*`.
+        echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
+    - name: Download wheels from GCS (non-Windows runs)
+      shell: bash
+      id: download-wheel-artifacts-nw
+      # Set continue-on-error to true to prevent actions from failing the workflow if this step
+      # fails. Instead, we verify the outcome in the step below so that we can print a more
+      # informative error message.
+      continue-on-error: true
+      if: ${{ !contains(inputs.runner, 'windows-x86') }}
+      run: |
+        mkdir -p $(pwd)/dist
+        gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+
+        if [[ "${{ inputs.skip-download-jaxlib-from-gcs }}" == "1" ]]; then
+          echo "JAX only release. Only downloading the jax wheel from the release bucket."
+        else
+          if [[ ${{ inputs.jaxlib-version }} == "head" ]]; then
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+          elif [[ ${{ inputs.jaxlib-version }} == "pypi_latest" ]]; then
+            PYTHON=python${{ inputs.python }}
+            $PYTHON -m pip download jaxlib --dest $(pwd)/dist/
+          else
+            echo "Invalid jaxlib version: ${{ inputs.jaxlib-version }}"
+            exit 1
+          fi
+        fi
+    - name: Download wheels from GCS (Windows runs)
+      shell: cmd
+      id: download-wheel-artifacts-w
+      # Set continue-on-error to true to prevent actions from failing the workflow if this step
+      # fails. Instead, we verify the outcome in step below so that we can print a more
+      # informative error message.
+      continue-on-error: true
+      if: ${{ contains(inputs.runner, 'windows-x86') }}
+      run: |
+        mkdir dist
+        @REM Use `call` so that we can run sequential gcloud storage commands on Windows
+        @REM See https://github.com/GoogleCloudPlatform/gsutil/issues/233#issuecomment-196150652
+        call gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl dist/
+
+        if "${{ inputs.skip-download-jaxlib-from-gcs }}"=="1" (
+          echo "JAX only release. Only downloading the jax wheel from the release bucket."
+        ) else (
+          call gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
+        )
+    - name: Skip the test run if the wheel artifacts were not downloaded successfully
+      shell: bash
+      if: steps.download-wheel-artifacts-nw.outcome == 'failure' || steps.download-wheel-artifacts-w.outcome == 'failure'
+      run: |
+        echo "Failed to download wheel artifacts from GCS. Please check if the wheels were"
+        echo "built successfully by the artifact build jobs and are available in the GCS bucket."
+        echo "Skipping the test run."
+        exit 1

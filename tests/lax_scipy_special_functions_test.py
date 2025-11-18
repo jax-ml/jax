@@ -25,6 +25,7 @@ import scipy.special as osp_special
 
 import jax
 import jax.numpy as jnp
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
 
@@ -88,6 +89,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     ),
     op_record(
         "expit", 1, float_dtypes, jtu.rand_small_positive, True
+    ),
+    op_record(
+        "sici", 1, float_dtypes, jtu.rand_default, True
     ),
     # TODO: gammaln has slightly high error.
     op_record(
@@ -156,6 +160,10 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record(
         "hyp1f1", 3, float_dtypes,
         functools.partial(jtu.rand_uniform, low=0.5, high=30), True
+    ),
+    op_record(
+        "hyp2f1", 4, float_dtypes,
+        functools.partial(jtu.rand_uniform, low=0.1, high=0.9), True
     ),
     op_record("log_softmax", 1, float_dtypes, jtu.rand_default, True),
     op_record("softmax", 1, float_dtypes, jtu.rand_default, True),
@@ -256,6 +264,17 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_special.ndtri, lsp_special.ndtri, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.ndtri, args_maker, rtol=rtol)
 
+  @parameterized.parameters([True, False])
+  def testNdtriDebugInfs(self, with_jit):
+    # ref: https://github.com/jax-ml/jax/issues/29328
+    f = jax.jit(lsp_special.ndtri) if with_jit else lsp_special.ndtri
+    with jax.debug_infs(True):
+      f(0.5)  # Doesn't crash
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
+        f(1.0)
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
+        f(0.0)
+
   def testRelEntrExtremeValues(self):
     # Testing at the extreme values (bounds (0. and 1.) and outside the bounds).
     dtype = jnp.zeros(0).dtype  # default float dtype.
@@ -288,7 +307,7 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(result_jit, result_nojit)
 
   def testGammaIncBoundaryValues(self):
-    dtype = jax.dtypes.canonicalize_dtype(float)
+    dtype = dtypes.default_float_dtype()
     nan = float('nan')
     inf = float('inf')
     if jtu.parse_version(scipy.__version__) >= (1, 16):
@@ -306,7 +325,7 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_special.gammainc, args_maker, rtol=rtol)
 
   def testGammaIncCBoundaryValues(self):
-    dtype = jax.dtypes.canonicalize_dtype(float)
+    dtype = dtypes.default_float_dtype()
     nan = float('nan')
     inf = float('inf')
     if jtu.parse_version(scipy.__version__) >= (1, 16):
@@ -324,7 +343,7 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_special.gammaincc, args_maker, rtol=rtol)
 
   def testBetaIncBoundaryValues(self):
-    dtype = jax.dtypes.canonicalize_dtype(float)
+    dtype = dtypes.default_float_dtype()
     fi = jax.numpy.finfo(dtype)
     nan = float('nan')
     inf = float('inf')
@@ -353,6 +372,40 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 5e-5
     self._CheckAgainstNumpy(osp_special.betainc, lsp_special.betainc, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.betainc, args_maker, rtol=rtol)
+
+  def testHyp2f1SpecialCases(self):
+    dtype = dtypes.default_float_dtype()
+
+    a_samples = np.array([0, 1, 1, 1, 1, 5, 5, 0.245, 0.45, 0.45, 2, 0.4, 0.32, 4, 4], dtype=dtype)
+    b_samples = np.array([1, 0, 1, 1, 1, 1, 1, 3, 0.7, 0.7, 1, 0.7, 0.76, 2, 3], dtype=dtype)
+    c_samples = np.array([1, 1, 0, 1, -1, 3, 3, 3, 0.45, 0.45, 5, 0.3, 0.11, 7, 7], dtype=dtype)
+    x_samples = np.array([1, 1, 1, 0, 1, 0.5, 1, 0.35, 0.35, 1.5, 1, 0.4, 0.95, 0.95, 0.95], dtype=dtype)
+
+    args_maker = lambda: (a_samples, b_samples, c_samples, x_samples)
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 5e-5
+    self._CheckAgainstNumpy(osp_special.hyp2f1, lsp_special.hyp2f1, args_maker, rtol=rtol)
+    self._CompileAndCheck(lsp_special.hyp2f1, args_maker, rtol=rtol)
+
+  def testSiciEdgeCases(self):
+    dtype = jnp.zeros(0).dtype
+    x_samples = np.array([0.0, np.inf, -np.inf], dtype=dtype)
+    scipy_op = lambda x: osp_special.sici(x)
+    lax_op = lambda x: lsp_special.sici(x)
+    si_scipy, ci_scipy = scipy_op(x_samples)
+    si_jax, ci_jax = lax_op(x_samples)
+    expected_si = np.array([0.0, np.pi/2, -np.pi/2], dtype=dtype)
+    expected_ci = np.array([-np.inf, 0.0, np.nan], dtype=dtype)
+    self.assertAllClose(si_jax, si_scipy, atol=1e-6, rtol=1e-6)
+    self.assertAllClose(ci_jax, ci_scipy, atol=1e-6, rtol=1e-6)
+    self.assertAllClose(si_jax, expected_si, atol=1e-6, rtol=1e-6)
+    self.assertAllClose(ci_jax, expected_ci, atol=1e-6, rtol=1e-6)
+
+  def testSiciRaiseOnComplexInput(self):
+    samples = jnp.arange(5, dtype=complex)
+    with self.assertRaisesRegex(ValueError, "Argument `x` to sici must be real-valued."):
+      lsp_special.sici(samples)
+
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

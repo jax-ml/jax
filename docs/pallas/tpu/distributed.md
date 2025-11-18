@@ -17,30 +17,30 @@ kernelspec:
 
 # Distributed Computing in Pallas for TPUs
 
-In this tutorial, we will cover the basics of distributed computing in Pallas on TPUs. We will learn about TPU topologies, communication using the remote DMA primitive, and calling a distributed kernel from JAX using `shard_map`. We will also cover some more advanced kernel writing techniques, such as double-buffering, bi-directional bandwidth optimization, and nested pipelining. As educational examples, we will learn how to implement various collective primitives from JAX, such as `lax.ppermute`, `lax.all_gather`, `lax.psum`, and `lax.psum_scatter`.
+In this tutorial, we will cover the basics of distributed computing in Pallas on TPUs. We will learn about TPU topologies, communication using the remote DMA primitive, and calling a distributed kernel from JAX using `jax.shard_map`. We will also cover some more advanced kernel writing techniques, such as double-buffering, bi-directional bandwidth optimization, and nested pipelining. As educational examples, we will learn how to implement various collective primitives from JAX, such as `lax.ppermute`, `lax.all_gather`, `lax.psum`, and `lax.psum_scatter`.
 
 Some recommended readings beforehand:
  - [Pallas Pipelining on TPU](pallas_tpu_pipelining)
- - [Collectives with `shard_map`](shard_map_collectives_tutorial)
+ - [Collectives with `jax.shard_map`](shard_map_collectives_tutorial)
 
 ```{code-cell} ipython3
 ---
 executionInfo:
-  elapsed: 1978
+  elapsed: 52
   status: ok
-  timestamp: 1722904801801
+  timestamp: 1744390458993
   user:
     displayName: Justin Fu
     userId: '17543197034567316452'
   user_tz: 420
 id: PyAGnWc9yI8T
-outputId: 1d8229bd-cab5-495f-93e9-fff2e41db480
+outputId: c5912653-c34b-4810-c373-4a2787691317
 ---
+import functools
 import jax
 from jax import lax
 from jax import numpy as jnp
 from jax.experimental import pallas as pl
-from jax.experimental import shard_map
 from jax.experimental.pallas import tpu as pltpu
 
 P = jax.sharding.PartitionSpec
@@ -61,7 +61,7 @@ TPUs pods are typically arranged in an ND torus topology. The following graphic 
 
 ![tpu_topologies](https://cloud.google.com/static/tpu/docs/images/v4-topologies.png)
 
-Flattened as a graph, the torus can be visualized as follows. Each edge (orange or black) is a bidirectional connection between two devices. You will commonly hear about rings in conjunction with discussion about device toplogies — a key feature of a torus is that when taking a slice along an axis of the pod, such as the nodes `[(0,1), (1, 1), (2, 1), (3, 1)]` or `[(0, 1), (1, 1)]`, we have a ring of devices. This is a feature we can use to simplify communication patterns within the pod.
+Flattened as a graph, the torus can be visualized as follows. Each edge (orange or black) is a bidirectional connection between two devices. You will commonly hear about rings in conjunction with discussion about device topologies — a key feature of a torus is that when taking a slice along an axis of the pod, such as the nodes `[(0,1), (1, 1), (2, 1), (3, 1)]` or `[(0, 1), (1, 1)]`, we have a ring of devices. This is a feature we can use to simplify communication patterns within the pod.
 
 ![tpu_torus](https://cloud.google.com/static/tpu/docs/images/untwisted-tori.png)
 
@@ -163,7 +163,7 @@ def example_kernel(input_ref, output_ref, send_sem, recv_sem):
 
 `send_sem` and `recv_sem` are instances of a special type of semaphore reserved exclusively for use with DMAs. They must be allocated with the `tpu.SemaphoreType.DMA` type when specifying input specs to `pallas_call`.
 
-Internally, DMA semaphores can be thought of as integer-valued progress trackers. On DMA start, the local device will begin to increment the value of `send_sem` and the receiver's `recv_sem` asynchronously. Waiting on a semaphore will block until the value of the semaphore reaches the total bytes of data sent/received; when the value is reached, waiting threads are released and the sempahore's value is decremented by the same amount. This means that either all data has been sent (for `send_sem`) or all data has been received (for `dst_sem`). The value of the semaphore can be read with `pl.semaphore_read`, but note that the underlying semantics of the value could change between hardware generations (e.g. the value may not represent exactly the number of bytes sent, although this is a useful mental model to have when reasoning about the behavior of the semaphore).
+Internally, DMA semaphores can be thought of as integer-valued progress trackers. On DMA start, the local device will begin to increment the value of `send_sem` and the receiver's `recv_sem` asynchronously. Waiting on a semaphore will block until the value of the semaphore reaches the total bytes of data sent/received; when the value is reached, waiting threads are released and the semaphore's value is decremented by the same amount. This means that either all data has been sent (for `send_sem`) or all data has been received (for `recv_sem`). The value of the semaphore can be read with `pl.semaphore_read`, but note that the underlying semantics of the value could change between hardware generations (e.g. the value may not represent exactly the number of bytes sent, although this is a useful mental model to have when reasoning about the behavior of the semaphore).
 
 ### Routing
 
@@ -195,15 +195,15 @@ In order to call the kernel in distributed mode, we wrap the `pallas_call` in a 
 ```{code-cell} ipython3
 ---
 executionInfo:
-  elapsed: 1606
+  elapsed: 152
   status: ok
-  timestamp: 1722904803566
+  timestamp: 1744390459367
   user:
     displayName: Justin Fu
     userId: '17543197034567316452'
   user_tz: 420
 id: YkyIKN2thZ-V
-outputId: 9b7ed142-d161-4237-fed8-cbce41adc5f0
+outputId: 26719bb9-87ff-46dd-af90-a114ce332417
 ---
 partition = P(None, 'x')
 mesh = jax.make_mesh((num_devices,), ('x',))
@@ -233,11 +233,11 @@ def right_permute_kernel(input_ref, output_ref, send_sem, recv_sem):
 out_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
 grid_spec = pltpu.PrefetchScalarGridSpec(
     num_scalar_prefetch=0,
-    # TPUMemorySpace.ANY will (usually) place the tensor in HBM.
+    # MemorySpace.ANY will (usually) place the tensor in HBM.
     in_specs=[
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
     ],
-    out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+    out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
     scratch_shapes=(
         # We allocate DMA semaphores in scratch memory.
         [pltpu.SemaphoreType.DMA] * 2
@@ -250,12 +250,12 @@ right_permute = pl.pallas_call(
 )
 # Wrap the kernel within a shard_map to call.
 pallas_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         right_permute,
         mesh=mesh,
         in_specs=partition,
         out_specs=partition,
-        check_rep=False,
+        check_vma=False,
     )
 )(input_arr)
 
@@ -263,7 +263,7 @@ pallas_result = jax.jit(
 perm = tuple((src, (src + 1) % num_devices) for src in range(num_devices))
 
 xla_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         lambda x: lax.ppermute(x, 'x', perm),
         mesh=mesh, in_specs=partition, out_specs=partition)
 )(input_arr)
@@ -296,15 +296,15 @@ We can re-purpose Pallas's `grid` argument to implement the loop. Rather than it
 ```{code-cell} ipython3
 ---
 executionInfo:
-  elapsed: 812
+  elapsed: 209
   status: ok
-  timestamp: 1722904804531
+  timestamp: 1744390459789
   user:
     displayName: Justin Fu
     userId: '17543197034567316452'
   user_tz: 420
 id: ojQEZB5mBRqM
-outputId: e1648f54-737c-4921-ca3b-b4c639a38d2b
+outputId: 3a4373f8-1fb5-4a6b-b88e-3461c2609021
 ---
 partition = P('x', None)
 mesh = jax.make_mesh((num_devices,), ('x',))
@@ -356,10 +356,10 @@ out_shape = jax.ShapeDtypeStruct((num_devices, 8, 128), jnp.float32)
 grid_spec = pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
-                # TPUMemorySpace.ANY will (usually) place the tensor in HBM.
-                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+                # MemorySpace.ANY will (usually) place the tensor in HBM.
+                pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
             ],
-            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+            out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
             scratch_shapes=(
               # DMA semaphores are allocated in scratch memory.
               # We allocated one semaphore for a local HBM-VMEM copy,
@@ -383,18 +383,18 @@ all_gather = pl.pallas_call(
 
 # Wrap the kernel within a shard_map to call.
 pallas_result = jax.jit(
-      shard_map.shard_map(
+      jax.shard_map(
           all_gather,
           mesh=mesh,
           in_specs=partition,
           out_specs=partition,
-          check_rep=False
+          check_vma=False
       )
 )(input_arr)
 
 # Compare Pallas result to XLA shard_map result.
 xla_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         lambda x: lax.all_gather(x, 'x'),
         mesh=mesh, in_specs=partition, out_specs=partition
     )
@@ -409,9 +409,9 @@ print('Difference |Pallas - lax.all_gather| = ',
 
 +++ {"id": "KgU7HI2pS4om"}
 
-A detail worth mentioning here is the use of multiple receive semaphores. Because we only block on the receiving device, it is still possible for a sender to have sent multiple DMAs in flight before the receiver has finished processing the first one (see the next section and reduce-sum example which discusses race conditions in more detail). In this situation we may hit a situation where the same semaphore is being used for multiple DMAs occurring simultaneously. To avoid this, we allocate `num_devices-1` semaphores so there is no risk of re-use. While this race condition is unlikely to happen on such a small kernel, on larger kernels there is more chance for devices to fall out of sync and potentially cause a silent failure.
+A detail worth mentioning here is the use of multiple receive semaphores. Because we only block on the receiving device, it is still possible for a sender to have sent multiple DMAs in flight before the receiver has finished processing the first one (see the next section and reduce-sum example which discusses race conditions in more detail). In this situation we may hit a situation where the same semaphore is being used for multiple DMAs occurring simultaneously. To avoid this, we allocate `num_devices-1` semaphores so there is no risk of reuse. While this race condition is unlikely to happen on such a small kernel, on larger kernels there is more chance for devices to fall out of sync and potentially cause a silent failure.
 
-+++ {"id": "KgU7HI2pS4om"}
++++ {"id": "EDCmAaHVtY7x"}
 
 ## Advanced Techniques
 
@@ -451,9 +451,9 @@ def semaphore_read(
 
 In order to use regular semaphores, they can be allocated in the same way as a DMA semaphore, but by specifying `pltpu.SemaphoreType.REGULAR` rather than `pltpu.SemaphoreType.DMA`.
 
-Semaphores must be zero at the end of a Pallas program to complete succesfully. There are two error cases where this may happen:
+Semaphores must be zero at the end of a Pallas program to complete successfully. There are two error cases where this may happen:
  - If a semaphore is over-signaled, the program will end with non-zero (>0) semaphores. In this case, the program will crash upon completion. This is useful for debugging as non-zero semaphores typically means there is a bug somewhere inside of the program.
- - If a semaphore is over-waited, the program will hang on the blocking `semaphore_wait` call while it waits for the sempahore to be incremented. In this case the device or program will need to be restarted.
+ - If a semaphore is over-waited, the program will hang on the blocking `semaphore_wait` call while it waits for the semaphore to be incremented. In this case the device or program will need to be restarted.
 
 #### Barrier Semaphores
 
@@ -491,7 +491,7 @@ When using barrier semaphores, the `collective_id` compiler parameter must be pa
 kernel = pl.pallas_call(
       example_kernel,
       ...,
-      compiler_params=pltpu.TPUCompilerParams(collective_id=0),
+      compiler_params=pltpu.CompilerParams(collective_id=0),
 )
 ```
 
@@ -556,22 +556,22 @@ The prologue (executed when `outer_step==0`) first initiates a barrier with both
 
 The main body assumes that a value has already been copied into our local working slot, either from the previous iteration or from the prologue. A complicating factor is that our destination buffers live in HBM, but we need to load values to VMEM before we perform arithmetic. Therefore, we simultaneously copy the working slot value into our VMEM (`receive_scratch`) and pass the value on to our right neighbor's receiving slot. Once the value has been copied into our VMEM, we can accumulate it into our result (contained in `o_ref`).
 
-A subtle race condition can occur if one device runs one loop ahead of it's right neighbor. In this case, it could copy into the receiver's `working_slot` at the same time the receiver is reading from it. In order to avoid this, each device will block on a `REGULAR` semaphore before copying into the right neighbor's `dst_ref` until it has signaled that it is done reading from its `working_slot`. This race condition is rarely triggered for a small kernel such as this example, but can it can be explicitly triggered if for example using a `pltpu.delay` instruction to artifically hang a device.
+A subtle race condition can occur if one device runs one loop ahead of it's right neighbor. In this case, it could copy into the receiver's `working_slot` at the same time the receiver is reading from it. In order to avoid this, each device will block on a `REGULAR` semaphore before copying into the right neighbor's `dst_ref` until it has signaled that it is done reading from its `working_slot`. This race condition is rarely triggered for a small kernel such as this example, but can it can be explicitly triggered if for example using a `pltpu.delay` instruction to artificially hang a device.
 
 Note that this is not an optimal or fully general kernel, as the block sizes must entirely fit in VMEM and we could better interleave communication and accumulation. We will discuss these optimizations in later sections.
 
 ```{code-cell} ipython3
 ---
 executionInfo:
-  elapsed: 254
+  elapsed: 248
   status: ok
-  timestamp: 1722904804952
+  timestamp: 1744390460289
   user:
     displayName: Justin Fu
     userId: '17543197034567316452'
   user_tz: 420
 id: XrY5bMlvBroQ
-outputId: 77497000-4496-462e-cc3c-73fb640cc14c
+outputId: 9216e749-48d2-43ff-d64b-bd419acf3e11
 ---
 partition = P(None, 'x')
 mesh = jax.make_mesh((num_devices,), ('x',))
@@ -579,6 +579,41 @@ sharding = jax.sharding.NamedSharding(mesh, partition)
 
 input_arr = jax.random.uniform(jax.random.key(0), shape=(8, 128 * num_devices))
 input_arr = jax.device_put(input_arr, sharding)
+
+
+def local_barrier(left_neighbor, right_neighbor, double_barrier=True):
+  """Performs a barrier with neighbors on the global barrier semaphore.
+
+  Optionally performs a second barrier, which prevents a potential race
+  when reusing the same collective_id across kernel invocations.
+  """
+  barrier_sem = pltpu.get_barrier_semaphore()
+  for neighbor in [left_neighbor, right_neighbor]:
+    pltpu.semaphore_signal(
+      barrier_sem,
+      inc=1,
+      device_id=(neighbor,),
+      device_id_type=pltpu.DeviceIdType.MESH,
+    )
+  pltpu.semaphore_wait(barrier_sem, 2)
+  if double_barrier:
+    # The double-barrier prevents a race condition where one neighbor can
+    # re-enter the kernel again on a subsequent call and increment the
+    # barrier semaphore a second time. This would unblock the current device
+    # even if the other neighbor is not ready yet.
+    # To implement a double-barrier, we stack-allocate a second REGULAR
+    # semaphore using run_scoped.
+    @functools.partial(pl.run_scoped,
+                       second_barrier=pltpu.SemaphoreType.REGULAR)
+    def _(second_barrier):
+      for neighbor in [left_neighbor, right_neighbor]:
+        pltpu.semaphore_signal(
+          second_barrier,
+          inc=1,
+          device_id=(neighbor,),
+          device_id_type=pltpu.DeviceIdType.MESH,
+        )
+      pltpu.semaphore_wait(second_barrier, 2)
 
 
 def all_reduce_kernel(
@@ -603,20 +638,7 @@ def all_reduce_kernel(
   def _():
     # Barrier with both neighbors at the start, since we will be
     # communicating with both.
-    barrier_sem = pltpu.get_barrier_semaphore()
-    pltpu.semaphore_signal(
-        barrier_sem,
-        inc=1,
-        device_id=(left_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
-    )
-    pltpu.semaphore_signal(
-        barrier_sem,
-        inc=1,
-        device_id=(right_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
-    )
-    pltpu.semaphore_wait(barrier_sem, 2)
+    local_barrier(left_neighbor, right_neighbor)
 
     # Initialize o_ref, acc_scratch, and hbm_scratch.
     o_ref[...] = jnp.zeros_like(o_ref)
@@ -681,13 +703,13 @@ grid_spec = pltpu.PrefetchScalarGridSpec(
     num_scalar_prefetch=0,
     in_specs=[
         # Our input lives in VMEM
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
     ],
     out_specs=[
         # Our output lives in VMEM
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
         # Our double-buffer lives in HBM
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
     ],
     grid=(num_devices,),
     scratch_shapes=(
@@ -701,16 +723,16 @@ kernel = pl.pallas_call(
     all_reduce_kernel,
     out_shape=out_shape,
     grid_spec=grid_spec,
-    compiler_params=pltpu.TPUCompilerParams(collective_id=0),
+    compiler_params=pltpu.CompilerParams(collective_id=0),
 )
 
 pallas_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         kernel,
         mesh=mesh,
         in_specs=partition,
         out_specs=partition,
-        check_rep=False,
+        check_vma=False,
     )
 )(input_arr)
 pallas_result = jax.block_until_ready(pallas_result)[0]
@@ -721,7 +743,7 @@ def lax_sum(x):
 
 
 xla_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         lax_sum, mesh=mesh, in_specs=P(None, 'x'), out_specs=P(None, 'x')
     )
 )(input_arr)
@@ -772,9 +794,9 @@ In terms of construction of the kernel, we introduce an additional `phase` dimen
 ```{code-cell} ipython3
 ---
 executionInfo:
-  elapsed: 544
+  elapsed: 362
   status: ok
-  timestamp: 1722904805699
+  timestamp: 1744390460871
   user:
     displayName: Justin Fu
     userId: '17543197034567316452'
@@ -890,20 +912,7 @@ def reduce_scatter_kernel(
   def _():
     # Barrier with both neighbors at the start, since we will be
     # communicating with both.
-    barrier_sem = pltpu.get_barrier_semaphore()
-    pltpu.semaphore_signal(
-        barrier_sem,
-        inc=1,
-        device_id=(left_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
-    )
-    pltpu.semaphore_signal(
-        barrier_sem,
-        inc=1,
-        device_id=(right_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
-    )
-    pltpu.semaphore_wait(barrier_sem, 2)
+    local_barrier(left_neighbor, right_neighbor)
 
     # Initialize o_ref, acc_scratch, and hbm_scratch with initial copies.
     o_ref[...] = jnp.zeros_like(o_ref[...])
@@ -1010,11 +1019,11 @@ out_shape = (
 grid_spec = pltpu.PrefetchScalarGridSpec(
     num_scalar_prefetch=0,
     in_specs=[
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
     ],
     out_specs=[
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
     ],
     grid=(num_devices, 2),
     scratch_shapes=(
@@ -1033,17 +1042,17 @@ def pallas_reduce_scatter(input_arr):
       reduce_scatter_kernel,
       out_shape=out_shape,
       grid_spec=grid_spec,
-      compiler_params=pltpu.TPUCompilerParams(collective_id=0),
+      compiler_params=pltpu.CompilerParams(collective_id=0),
   )(input_arr)[0]
 
 
 pallas_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         pallas_reduce_scatter,
         mesh=mesh,
         in_specs=P(None, 'x'),
         out_specs=P('x', None),
-        check_rep=False,
+        check_vma=False,
     )
 )(input_arr)
 
@@ -1053,15 +1062,15 @@ pallas_result = jax.block_until_ready(pallas_result)
 ```{code-cell} ipython3
 ---
 executionInfo:
-  elapsed: 596
+  elapsed: 917
   status: ok
-  timestamp: 1722904806442
+  timestamp: 1744390461967
   user:
     displayName: Justin Fu
     userId: '17543197034567316452'
   user_tz: 420
 id: E-NMh-_teoi4
-outputId: 24beb42f-1bdd-4c34-e8d2-681dd7f2e9c0
+outputId: 6c8b82bc-ed64-4cc1-8c5f-65e29cdb333c
 ---
 # Compare our result to XLA.
 def lax_reduce_sum_scatter(x):
@@ -1070,7 +1079,7 @@ def lax_reduce_sum_scatter(x):
 
 
 xla_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         lax_reduce_sum_scatter,
         mesh=mesh,
         in_specs=P(None, 'x'),
@@ -1093,21 +1102,7 @@ print(
 
 A limitation of the previous all-reduce and reduce-scatter kernels that we wrote is that the blocks we copy via remote DMA must be small enough to fit in our working VMEM that we use for accumulation. For some kernels it may be advantageous to use larger block sizes to better utilize the TPU. For example, a matrix multiplication requires on the order of $O(N^3)$ compute operations, but only $O(N^2)$ memory transfers. Therefore, we want each block of work transferred between devices to be large enough such that the operation becomes compute bound and we can hide the communication cost using pipelining. For reference, the VMEM of a TPU (for generations v4/v5) is typically on the order of 10-100MB, whereas HBM ranges from 10-100GB.
 
-To address this problem, we need to be able to write an "inner kernel" that handles local HBM-VMEM pipelining inside of the "outer kernel" that handles pipelining larger HBM-HBM transfers between devices. Pallas offers an API for constructing nested pipelines using the `emit_pipeline` function. The basic call signature for `emit_pipeline` follows that of a standard `pallas_call` by specifying a `grid` and `BlockSpec`s for the inputs and outputs:
-
-```python
-def emit_pipeline(
-    kernel: Callable,
-    grid: tuple[int],
-    in_specs: PyTree[BlockSpec] = None,
-    out_specs: PyTree[BlockSpec] = None,
-    should_accumulate_out: bool = False,
-    dimension_semantics: tuple[GridDimensionSemantics] = None,
-) -> Callable:
-  ... # Returns a custom pipeline given an inner kernel and BlockSpecs.
-```
-
-Indeed, one can view `pallas_call` itself as simply a wrapper around `emit_pipeline`. Because our outer kernel only involves remote HBM-HBM transfers, we are not using any of the built-in pipelining that `pallas_call` provides for HBM-VMEM transfers. The following code skeleton demonstrates what a typical program structure would look like using this pattern:
+To address this problem, we need to be able to write an "inner kernel" that handles local HBM-VMEM pipelining inside of the "outer kernel" that handles pipelining larger HBM-HBM transfers between devices. Pallas offers an API for constructing nested pipelines using the `emit_pipeline` function. See the [TPU pipelining](pallas_tpu_emit_pipeline) guide for a general overview on `emit_pipeline`. Because our outer kernel only involves remote HBM-HBM transfers, we are not using any of the built-in pipelining that `pallas_call` provides for HBM-VMEM transfers. The following code skeleton demonstrates what a typical program structure would look like using this pattern:
 
 ```python
 
@@ -1139,7 +1134,7 @@ pl.pallas_call(
 
 In this next example we will modify our previous reduce-scatter example to utilize a nested inner pipeline. Note that the communication and computation costs of `reduce_scatter` both scale linearly with the size of the input, so we do not necessarily expect to see the operation become compute-bound with larger block sizes. This example is purely for demonstration purposes on how to use the pipeline emitter.
 
-We will increase the block sizes of the outer kernel such that they would be undesirable to place inside of VMEM, and allocate all inputs and outputs in HBM (`memory_space=TPUMemorySpace.Any`). The only major change from our previous kernel is the body of the kernel where accumulation is done. Rather than manually copying from HBM to VMEM, accumulating, and copying back to HBM, we use `emit_pipeline` to handle the memory transfers for us. Accumulation is done in an inner kernel with a much smaller, VMEM-friendly block size.
+We will increase the block sizes of the outer kernel such that they would be undesirable to place inside of VMEM, and allocate all inputs and outputs in HBM (`memory_space=MemorySpace.ANY`). The only major change from our previous kernel is the body of the kernel where accumulation is done. Rather than manually copying from HBM to VMEM, accumulating, and copying back to HBM, we use `emit_pipeline` to handle the memory transfers for us. Accumulation is done in an inner kernel with a much smaller, VMEM-friendly block size.
 
 In our previous kernel we had the following kernel body to copy data from HBM to the VMEM accumulator, increment, and then copy the results back to HBM:
 
@@ -1197,9 +1192,9 @@ The full kernel is as follows:
 ```{code-cell} ipython3
 ---
 executionInfo:
-  elapsed: 1341
+  elapsed: 997
   status: ok
-  timestamp: 1722904807930
+  timestamp: 1744390463178
   user:
     displayName: Justin Fu
     userId: '17543197034567316452'
@@ -1308,20 +1303,7 @@ def reduce_scatter_kernel(
   def _():
     # Barrier with both neighbors at the start, since we will be
     # communicating with both.
-    barrier_sem = pltpu.get_barrier_semaphore()
-    pltpu.semaphore_signal(
-        barrier_sem,
-        inc=1,
-        device_id=(left_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
-    )
-    pltpu.semaphore_signal(
-        barrier_sem,
-        inc=1,
-        device_id=(right_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
-    )
-    pltpu.semaphore_wait(barrier_sem, 2)
+    local_barrier(left_neighbor, right_neighbor)
 
     initial_left_copy.start()
     initial_left_copy.wait()
@@ -1428,11 +1410,11 @@ out_shape = (
 grid_spec = pltpu.PrefetchScalarGridSpec(
     num_scalar_prefetch=0,
     in_specs=[
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
     ],
     out_specs=[
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
     ],
     grid=(num_devices, 2),
     scratch_shapes=(
@@ -1450,17 +1432,17 @@ def pallas_reduce_scatter(input_arr):
       reduce_scatter_kernel,
       out_shape=out_shape,
       grid_spec=grid_spec,
-      compiler_params=pltpu.TPUCompilerParams(collective_id=0),
+      compiler_params=pltpu.CompilerParams(collective_id=0),
   )(input_arr)[0]
 
 
 pallas_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         pallas_reduce_scatter,
         mesh=mesh,
         in_specs=P(None, 'x'),
         out_specs=P('x', None),
-        check_rep=False,
+        check_vma=False,
     )
 )(input_arr)
 
@@ -1470,15 +1452,15 @@ pallas_result = jax.block_until_ready(pallas_result)
 ```{code-cell} ipython3
 ---
 executionInfo:
-  elapsed: 768
+  elapsed: 1132
   status: ok
-  timestamp: 1722904808851
+  timestamp: 1744390464532
   user:
     displayName: Justin Fu
     userId: '17543197034567316452'
   user_tz: 420
 id: cTEyiMDyx9Y0
-outputId: 1de26695-3713-430e-9ab4-4ea646691680
+outputId: 70ce154e-dab2-4ae0-e297-c4774d29da85
 ---
 # Now we compare our result to XLA.
 def lax_reduce_sum_scatter(x):
@@ -1487,7 +1469,7 @@ def lax_reduce_sum_scatter(x):
 
 
 xla_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         lax_reduce_sum_scatter,
         mesh=mesh,
         in_specs=P(None, 'x'),
@@ -1518,4 +1500,4 @@ In this tutorial we covered several kernel examples which replicate the function
 
 ### Next Steps
 
-Excellent follow-up excercises for the reader could include implementing a distributed matrix multiplication, implementing `lax.all_to_all`, and relaxing synchronization to allow for additional run-ahead.
+Excellent follow-up exercises for the reader could include implementing a distributed matrix multiplication, implementing `lax.all_to_all`, and relaxing synchronization to allow for additional run-ahead.

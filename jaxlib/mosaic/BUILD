@@ -1,4 +1,6 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_python//python:defs.bzl", "py_library")
 
 # Copyright 2023 The JAX Authors.
@@ -21,7 +23,7 @@ licenses(["notice"])
 package(
     default_applicable_licenses = [],
     default_visibility = [
-        "//jax:mosaic_users",
+        "//jax/experimental:mosaic_users",
     ],
 )
 
@@ -45,35 +47,148 @@ cc_library(
         "dialect/tpu/tpu_ops.cc",
         "dialect/tpu/util.cc",
         "dialect/tpu/vreg_util.cc",
-        ":extension_srcs",
-    ] + glob([
-        "dialect/tpu/transforms/*.cc",
-    ]),
+    ],
     hdrs = [
         "dialect/tpu/array_util.h",
         "dialect/tpu/layout.h",
         "dialect/tpu/tpu_dialect.h",
         "dialect/tpu/util.h",
         "dialect/tpu/vreg_util.h",
-    ] + glob([
-        "dialect/tpu/transforms/*.h",
-    ]),
+    ],
     # compatible with libtpu
     deps = [
-        ":pass_boilerplate",
-        ":serde",
         ":tpu_inc_gen",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:CommonFolders",
+        "@llvm-project//mlir:DataLayoutInterfaces",
+        "@llvm-project//mlir:Dialect",
+        "@llvm-project//mlir:DialectUtils",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MathDialect",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:VectorDialect",
+        "@xla//xla:array",
+        "@xla//xla:shape_util",
+        "@xla//xla/tsl/platform:statusor",
+    ] + mosaic_extension_deps,
+)
+
+cc_library(
+    name = "tpu_passes",
+    srcs = [
+        ":extension_srcs",
+    ] + glob(
+        [
+            "dialect/tpu/transforms/*.cc",
+        ],
+        exclude = [
+            "dialect/tpu/transforms/serde.cc",
+            "dialect/tpu/transforms/linalg_vectorization.cc",
+        ],
+    ),
+    hdrs = glob(
+        [
+            "dialect/tpu/transforms/*.h",
+        ],
+        exclude = [
+            "dialect/tpu/transforms/serde.h",
+            "dialect/tpu/transforms/linalg_vectorization.h",
+        ],
+    ),
+    # compatible with libtpu
+    deps = [
+        ":pass_boilerplate",
+        ":tpu_dialect",
+        ":tpu_inc_gen",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:CommonFolders",
+        "@llvm-project//mlir:ControlFlowDialect",
+        "@llvm-project//mlir:DataLayoutInterfaces",
+        "@llvm-project//mlir:Dialect",
+        "@llvm-project//mlir:DialectUtils",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MathDialect",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:SCFDialect",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:TransformUtils",
+        "@llvm-project//mlir:VectorDialect",
+        "@llvm-project//mlir:VectorTransforms",
+        "@tsl//tsl/platform:statusor",
+        "@xla//xla:array",
+        "@xla//xla:shape_util",
+        "@xla//xla:util",
+        "@xla//xla/tsl/platform:errors",
+        "@xla//xla/tsl/platform:statusor",
+    ] + mosaic_extension_deps,
+)
+
+cc_library(
+    name = "tpu_serde_pass",
+    srcs = ["dialect/tpu/transforms/serde.cc"],
+    hdrs = ["dialect/tpu/transforms/serde.h"],
+    # compatible with libtpu
+    deps = [
+        ":pass_boilerplate",
+        ":serde",
+        ":tpu_dialect",
+        ":tpu_inc_gen",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:ControlFlowDialect",
+        "@llvm-project//mlir:DataLayoutInterfaces",
+        "@llvm-project//mlir:Dialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MathDialect",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:SCFDialect",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:VectorDialect",
+    ] + mosaic_extension_deps,
+)
+
+cc_library(
+    name = "tpu_linalg_vectorization_pass",
+    srcs = ["dialect/tpu/transforms/linalg_vectorization.cc"],
+    hdrs = ["dialect/tpu/transforms/linalg_vectorization.h"],
+    # compatible with libtpu
+    deps = [
+        ":pass_boilerplate",
+        ":serde",
+        ":tpu_dialect",
+        ":tpu_inc_gen",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:CommonFolders",
         "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:Dialect",
@@ -90,12 +205,6 @@ cc_library(
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:VectorDialect",
         "@llvm-project//mlir:VectorTransforms",
-        "@tsl//tsl/platform:statusor",
-        "@xla//xla:array",
-        "@xla//xla:shape_util",
-        "@xla//xla:util",
-        "@xla//xla/tsl/platform:errors",
-        "@xla//xla/tsl/platform:statusor",
     ] + mosaic_extension_deps,
 )
 
@@ -166,6 +275,8 @@ cc_library(
     deps = [
         ":tpu_dialect",
         ":tpu_inc_gen",
+        ":tpu_passes",
+        ":tpu_serde_pass",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@llvm-project//llvm:Support",
@@ -229,6 +340,22 @@ cc_test(
         "//testing/base/public:gunit_main",
         "@llvm-project//mlir:Support",
         "@xla//xla:array",
+    ],
+)
+
+cc_test(
+    name = "tpu_ops_verification_test",
+    srcs = ["dialect/tpu/tpu_ops_verification_test.cc"],
+    deps = [
+        ":tpu_dialect",
+        "//testing/base/public:gunit_main",
+        "@com_google_absl//absl/status",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:Support",
+        "@xla//xla/mlir/utils:error_util",
     ],
 )
 

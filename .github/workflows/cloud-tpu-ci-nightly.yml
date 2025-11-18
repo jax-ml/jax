@@ -11,31 +11,44 @@
 # Github Actions environment).
 
 name: CI - Cloud TPU (nightly)
+# Disable the schedule; Slated for removal, the new test workflow is in
+# "wheel_tests_nightly_release.yml"
 on:
-  schedule:
-    - cron: "0 2,14 * * *" # Run at 7am and 7pm PST
+#   schedule:
+#     - cron: "0 2,14 * * *" # Run at 7am and 7pm PST
   workflow_dispatch: # allows triggering the workflow run manually
+
 # This should also be set to read-only in the project settings, but it's nice to
 # document and enforce the permissions here.
 permissions:
   contents: read
+
+env:
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+
 jobs:
   cloud-tpu-test:
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
-        jaxlib-version: ["head", "pypi_latest", "nightly", "nightly+oldest_supported_libtpu"]
+        jaxlib-version: ["head", "pypi_latest", "nightly"]
         tpu: [
           {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
-          {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"}
+          {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
+          {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"}
         ]
-        python-version: ["3.10"]
+        python-version: ["3.11"]
+        # Exclude v6e-8 tests for pypi_latest for resource constraints.
+        exclude:
+          - tpu:
+              type: "v6e-8"
+            jaxlib-version: "pypi_latest"
     name: "TPU test (jaxlib=${{ matrix.jaxlib-version }}, ${{ matrix.tpu.type }})"
     env:
-      LIBTPU_OLDEST_VERSION_DATE: 20241205
+      LIBTPU_OLDEST_VERSION_DATE: 20250228
       PYTHON: python${{ matrix.python-version }}
     runs-on: ${{ matrix.tpu.runner }}
-    container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest"
+    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
     timeout-minutes: 180
     defaults:
       run:
@@ -44,14 +57,17 @@ jobs:
       # https://opensource.google/documentation/reference/github/services#actions
       # mandates using a specific commit for non-Google actions. We use
       # https://github.com/sethvargo/ratchet to pin specific versions.
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        with:
+          persist-credentials: false
       # Checkout XLA at head, if we're building jaxlib at head.
       - name: Checkout XLA at head
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
         if: ${{ matrix.jaxlib-version == 'head' }}
         with:
           repository: openxla/xla
           path: xla
+          persist-credentials: false
       # We need to mark the GitHub workspace as safe as otherwise git commands will fail.
       - name: Mark GitHub workspace as safe
         run: |
@@ -79,14 +95,14 @@ jobs:
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly" ]; then
             $PYTHON -m uv pip install \
-              --pre . -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html \
+              --pre . -i https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/ \
               libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html \
               requests
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly+oldest_supported_libtpu" ]; then
             # TODO(phawkins): switch to libtpu, when the oldest release we support is a libtpu release.
             $PYTHON -m uv pip install \
-              --pre . -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html \
+              --pre . -i https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/ \
               libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html \
               requests
@@ -99,8 +115,8 @@ jobs:
           $PYTHON -c 'import jax; print("jax version:", jax.__version__)'
           $PYTHON -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
           strings /usr/local/lib/"$PYTHON"/dist-packages/libtpu/libtpu.so | grep 'Built on'
-          $PYTHON -c 'import jax; print("libtpu version:",
-            jax.lib.xla_bridge.get_backend().platform_version)'
+          $PYTHON -c 'import jax.extend; print("libtpu version:",
+            jax.extend.backend.get_backend().platform_version)'
       - name: Run tests
         env:
           JAX_PLATFORMS: tpu,cpu
@@ -115,11 +131,11 @@ jobs:
           fi
           # Run single-accelerator tests in parallel
           JAX_ENABLE_TPU_XDIST=true $PYTHON -m pytest -n=${{ matrix.tpu.cores }} --tb=short \
-            --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
+            --deselect=tests/pallas/tpu_pallas_call_print_test.py::PallasCallPrintTest \
             --maxfail=20 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
           # Run Pallas printing tests, which need to run with I/O capturing disabled.
           TPU_STDERR_LOG_LEVEL=0 $PYTHON -m pytest -s \
-            tests/pallas/tpu_pallas_test.py::PallasCallPrintTest
+            tests/pallas/tpu_pallas_call_print_test.py::PallasCallPrintTest
           # Run multi-accelerator across all chips
           $PYTHON -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
       - name: Send chat on failure

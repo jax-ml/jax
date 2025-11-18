@@ -231,7 +231,7 @@ The cost we pay is redundant work: in `f_bwd2` we must re-evaluate `g(x)` as par
 
 +++ {"id": "LqTrjPoGqrK7"}
 
-We can get this VJP behavior in autodiff &#151; without having to write VJP functions directly &#151; by instead using `jax.checkpoint` in an alternative definition of the original function `f`:
+We can get this VJP behavior in autodiff --- without having to write VJP functions directly --- by instead using `jax.checkpoint` in an alternative definition of the original function `f`:
 
 ```{code-cell}
 def f_checkpoint(x):
@@ -275,7 +275,7 @@ Notice that if `f = lambda x: h(g(x))` is the function we want to differentiate,
 That is, in code we'd have something like:
 
 ```{code-cell}
-def f_grad_bad(x):
+def f_grad_bad1(x):
   _ = f(x)                  # step 1
   _, f_vjp = jax.vjp(f, x)  # step 2
   x_bar, = f_vjp(1.0)       # step 3
@@ -396,17 +396,7 @@ print_saved_residuals(loss_checkpoint2, params, x, y)
 
 Another policy which refers to names is `jax.checkpoint_policies.save_only_these_names`.
 
-Some of the policies are:
-* `everything_saveable` (the default strategy, as if `jax.checkpoint` were not being used at all)
-* `nothing_saveable` (i.e. rematerialize everything, as if a custom policy were not being used at all)
-* `dots_saveable` or its alias `checkpoint_dots`
-* `dots_with_no_batch_dims_saveable` or its alias `checkpoint_dots_with_no_batch_dims`
-* `save_anything_but_these_names` (save any values except for the output of
-  `checkpoint_name` with any of the names given)
-* `save_any_names_but_these` (save only named values, i.e. any outputs of
-  `checkpoint_name`, except for those with the names given)
-* `save_only_these_names` (save only named values, and only among the names
-  given)
+A list of policies can be found [here](https://docs.jax.dev/en/latest/jax.html#checkpoint-policies).
 
 Policies only indicate what is saveable; a value is only saved if it's actually needed by the backward pass.
 

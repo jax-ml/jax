@@ -34,16 +34,16 @@ def _vmappable_softmax_kernel(
   row_len = input_ref.shape[-1]
 
   mask = jnp.arange(block_row) < row_len
-  row = pl.load(
-      input_ref, (pl.dslice(0, block_row),), mask=mask, other=-float("inf")
+  row = plgpu.load(
+      input_ref.at[pl.ds(0, block_row)], mask=mask, other=-float("inf")
   )
 
   row_max = jnp.max(row, axis=0)
   numerator = jnp.exp((row - row_max).astype(jnp.float32))
   denominator = jnp.sum(numerator, axis=0)
 
-  pl.store(
-      probs_ref, (pl.dslice(0, block_row),),
+  plgpu.store(
+      probs_ref.at[pl.ds(0, block_row)],
       (numerator / denominator).astype(probs_ref.dtype),
       mask=mask
   )
@@ -80,7 +80,7 @@ def softmax(
   kernel = functools.partial(_vmappable_softmax_kernel, block_row=block_row)
   f = pl.pallas_call(
       kernel,
-      compiler_params=plgpu.TritonCompilerParams(
+      compiler_params=plgpu.CompilerParams(
           num_warps=num_warps, num_stages=1),
       grid=(),
       out_shape=out_shape,

@@ -21,7 +21,6 @@ import unittest
 
 from absl.testing import absltest
 import jax
-from jax.experimental import pjit
 from jax._src import debugger
 from jax._src import test_util as jtu
 import jax.numpy as jnp
@@ -43,6 +42,10 @@ def _format_multiline(text):
 
 foo = 2
 
+# This test is thread-unsafe because jax.effects_barrier() is global. This means
+# that we can create a deadlock if running tests in multiple threads because we
+# can introduce false dependencies via the effects barrier.
+@jtu.thread_unsafe_test_class()
 class CliDebuggerTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -272,7 +275,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertRegex(stdout.getvalue(), expected)
 
-  def test_debugger_works_with_pjit(self):
+  def test_debugger_works_with_jit(self):
     if jax.default_backend() != "tpu":
       raise unittest.SkipTest("`pjit` doesn't work with CustomCall.")
 
@@ -286,18 +289,19 @@ class CliDebuggerTest(jtu.JaxTestCase):
     def g(x):
       y = f(x)
       return jnp.exp(y)
-    g = pjit.pjit(
+    g = jax.jit(
         g,
         in_shardings=jax.sharding.PartitionSpec("dev"),
         out_shardings=jax.sharding.PartitionSpec("dev"),
     )
-    with jax.sharding.Mesh(np.array(jax.devices()), ["dev"]):
-      arr = (1 + jnp.arange(8)).astype(np.int32)
+    arr = (1 + jnp.arange(8)).astype(np.int32)
+    arr2 = jnp.arange(8, dtype=jnp.int32)
+    with jax.set_mesh(jax.sharding.Mesh(np.array(jax.devices()), ["dev"])):
       expected = _format_multiline(r"""
       Entering jdb:
       \(jdb\) {}
       \(jdb\) """.format(re.escape(repr(arr))))
-      g(jnp.arange(8, dtype=jnp.int32))
+      g(arr2)
       jax.effects_barrier()
       self.assertRegex(stdout.getvalue(), expected)
 

@@ -62,7 +62,6 @@ import numpy as np
 from jax import lax
 from jax import api_util
 import jax.numpy as jnp
-from jax.experimental import pjit
 from jax.tree_util import (register_pytree_node, tree_structure,
                            treedef_is_leaf, tree_flatten, tree_unflatten,)
 
@@ -70,13 +69,14 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import dispatch
 from jax._src import linear_util as lu
+from jax._src import pjit
 from jax._src import sharding_impls
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
 from jax._src.util import unzip2, weakref_lru_cache, safe_zip
 
 
-def jet(fun, primals, series, **_):
+def jet(fun, primals, series, factorial_scaled=True, **_):
   r"""Taylor-mode higher-order automatic differentiation.
 
   Args:
@@ -91,6 +91,13 @@ def jet(fun, primals, series, **_):
       Together, `primals` and `series` make up a truncated Taylor polynomial.
       Should be either a tuple or a list of tuples or lists,
       and its length dictates the degree of the truncated Taylor polynomial.
+    factorial_scaled: If True, each term in both the input and output series is scaled
+      by the factorial of its order, so that the input and output series is a
+      Taylor series. This is the default behavior so that the n-th order term
+      in the input and output series is the n-th order derivative of the function.
+      If False, the input and output series are the non-factorial scaled Taylor
+      coefficients (i.e., the constant coefficients for each term in the Taylor
+      series).
 
   Returns:
     A ``(primals_out, series_out)`` pair, where ``primals_out`` is ``fun(*primals)``,
@@ -120,10 +127,10 @@ def jet(fun, primals, series, **_):
   0.12467473 0.12467473
 
   >>> print(f1, df(h0) * h1)
-  0.7441479 0.74414825
+  0.74414825 0.74414825
 
   >>> print(f2, ddf(h0) * h1 ** 2 + df(h0) * h2)
-  2.9064622 2.9064634
+  2.9064636 2.9064634
   """
   try:
     order, = set(map(len, series))
@@ -151,8 +158,19 @@ def jet(fun, primals, series, **_):
   f, out_tree = flatten_fun_output(
       lu.wrap_init(fun,
                    debug_info=api_util.debug_info("jet", fun, primals, {})))
+  if factorial_scaled:
+    series = [[(term / fact(order + 1)) for order, term in enumerate(terms)]
+      for terms in series]
   out_primals, out_terms = jet_fun(jet_subtrace(f), order).call_wrapped(primals, series)
+  if factorial_scaled:
+    out_terms = [[term * fact(order + 1) for order, term in enumerate(terms)]
+      for terms in out_terms]
   return tree_unflatten(out_tree(), out_primals), tree_unflatten(out_tree(), out_terms)
+
+jet2 = partial(jet, factorial_scaled=False)
+
+def fact(n):
+  return lax.exp(lax.lgamma(n+1.))
 
 @lu.transformation2
 def jet_fun(f, order, primals, series):
@@ -365,7 +383,7 @@ def _cumulative_jet_rule(primals_in, series_in, *, axis: int, reverse: bool,
   # Irrespective of backend, we always use the parallel prefix scan
   # implementation when differentiating because reduce_window is not
   # arbitrarily differentiable.
-  return jet(partial(lax.associative_scan, combine_fn, axis=axis,
+  return jet2(partial(lax.associative_scan, combine_fn, axis=axis,
                      reverse=reverse),
              primals_in, series_in)
 
@@ -389,12 +407,12 @@ def deriv_prop(prim, deriv, primals_in, series_in):
   x, = primals_in
   series, = series_in
   primal_out = prim.bind(x)
-  c0, cs = jet(deriv, primals_in, series_in)
+  c0, cs = jet2(deriv, primals_in, series_in)
   c = [c0] + cs
   u = [x] + series
   v = [primal_out] + [None] * len(series)
   for k in range(1, len(v)):
-    v[k] = fact(k-1) * sum(_scale(k, j) * c[k-j] * u[j] for j in range(1, k + 1))
+    v[k] = sum(j * c[k-j] * u[j] for j in range(1, k + 1)) / k
   primal_out, *series_out = v
   return primal_out, series_out
 
@@ -409,7 +427,7 @@ def def_comp(prim, comp, **kwargs):
   """
   Define the jet rule for a primitive in terms of a composition of simpler primitives.
   """
-  jet_rules[prim] = partial(jet, comp, **kwargs)
+  jet_rules[prim] = partial(jet2, comp, **kwargs)
 
 
 def_comp(lax.expm1_p, lambda x: lax.exp(x) - 1)
@@ -446,22 +464,22 @@ def _erf_inv_rule(primals_in, series_in):
     # we know c[:k], we compute c[k]
 
     # propagate c to get v
-    v[k] = fact(k-1) * sum(_scale(k, j) * c[k-j] * u[j] for j in range(1, k + 1))
+    v[k] = sum(j * c[k-j] * u[j] for j in range(1, k + 1)) / k
 
     # propagate v to get next c
 
     # square
-    tmp_sq[k] = fact(k) * sum(_scale2(k, j) * v[k-j] * v[j] for j in range(k + 1))
+    tmp_sq[k] = sum( v[k-j] * v[j] for j in range(k + 1))
 
     # exp
-    tmp_exp[k] = fact(k-1) * sum(_scale(k, j) * tmp_exp[k-j] * tmp_sq[j] for j in range(1, k + 1))
+    tmp_exp[k] = sum(j * tmp_exp[k-j] * tmp_sq[j] for j in range(1, k + 1)) / k
 
     # const
     c[k] = deriv_const * tmp_exp[k]
 
   # we can't, and don't need, to compute c[k+1], just need to get the last v[k]
   k = len(series)
-  v[k] = fact(k-1) * sum(_scale(k, j) * c[k-j] * u[j] for j in range(1, k + 1))
+  v[k] = sum(j * c[k-j] * u[j] for j in range(1, k + 1)) / k
 
   primal_out, *series_out = v
   return primal_out, series_out
@@ -469,22 +487,13 @@ jet_rules[lax.erf_inv_p] = _erf_inv_rule
 
 ### More complicated rules
 
-def fact(n):
-  return lax.exp(lax.lgamma(n+1.))
-
-def _scale(k, j):
-  return 1. / (fact(k - j) * fact(j - 1))
-
-def _scale2(k, j):
-  return 1. / (fact(k - j) * fact(j))
-
 def _exp_taylor(primals_in, series_in, **_):
   x, = primals_in
   series, = series_in
   u = [x] + series
   v = [lax.exp(x)] + [None] * len(series)
   for k in range(1,len(v)):
-    v[k] = fact(k-1) * sum(_scale(k, j) * v[k-j] * u[j] for j in range(1, k+1))
+    v[k] = sum(j * v[k-j] * u[j] for j in range(1, k+1)) / k
   primal_out, *series_out = v
   return primal_out, series_out
 jet_rules[lax.exp_p] = _exp_taylor
@@ -492,12 +501,11 @@ jet_rules[lax.exp_p] = _exp_taylor
 def _pow_taylor(primals_in, series_in):
   u_, r_ = primals_in
 
-  x, series = jet(lambda x, y: lax.mul(y, lax.log(x)), primals_in, series_in)
-
+  x, series = jet2(lambda x, y: lax.mul(y, lax.log(x)), primals_in, series_in)
   u = [x] + series
   v = [u_ ** r_] + [None] * len(series)
   for k in range(1, len(v)):
-    v[k] = fact(k-1) * sum(_scale(k, j) * v[k-j] * u[j] for j in range(1, k+1))
+    v[k] = sum(j * v[k-j] * u[j] for j in range(1, k+1)) / k
   primal_out, *series_out = v
 
   return primal_out, series_out
@@ -515,9 +523,9 @@ def _pow_by_squaring(x, n):
 
 def _integer_pow_taylor(primals_in, series_in, *, y):
   if y == 0:
-    return jet(jnp.ones_like, primals_in, series_in)
+    return jet2(jnp.ones_like, primals_in, series_in)
   else:
-    return jet(lambda x: _pow_by_squaring(x, y), primals_in, series_in)
+    return jet2(lambda x: _pow_by_squaring(x, y), primals_in, series_in)
 
 jet_rules[lax.integer_pow_p] = _integer_pow_taylor
 
@@ -529,8 +537,8 @@ def _logistic_taylor(primals_in, series_in, **_):
   v = [lax.logistic(x)] + [None] * len(series)
   e = [v[0] * (1 - v[0])] + [None] * len(series)  # terms for sigmoid' = sigmoid * (1 - sigmoid)
   for k in range(1, len(v)):
-    v[k] = fact(k-1) * sum(_scale(k, j) * e[k-j] * u[j] for j in range(1, k+1))
-    e[k] = (1 - v[0]) * v[k] - fact(k) * sum(_scale2(k, j) * v[j] * v[k-j] for j in range(1, k+1))
+    v[k] = sum(j * e[k-j] * u[j] for j in range(1, k+1)) / k
+    e[k] = (1 - v[0]) * v[k] - sum(v[j] * v[k-j] for j in range(1, k+1))
 
   primal_out, *series_out = v
   return primal_out, series_out
@@ -554,8 +562,8 @@ def _log_taylor(primals_in, series_in, **_):
   u = [x] + series
   v = [lax.log(x)] + [None] * len(series)
   for k in range(1, len(v)):
-    conv = sum(_scale(k, j) * v[j] * u[k-j] for j in range(1, k))
-    v[k] = (u[k] - fact(k - 1) * conv) / u[0]
+    conv = sum(j * v[j] * u[k-j] for j in range(1, k))
+    v[k] = (u[k] - conv / k) / u[0]
   primal_out, *series_out = v
   return primal_out, series_out
 jet_rules[lax.log_p] = _log_taylor
@@ -564,14 +572,14 @@ def _atan2_taylor(primals_in, series_in):
   x, y = primals_in
   primal_out = lax.atan2(x, y)
 
-  x, series = jet(lax.div, primals_in, series_in)
+  x, series = jet2(lax.div, primals_in, series_in)
   one = lax_internal._const(x, 1)
-  c0, cs = jet(lambda x: lax.div(one, 1 + lax.square(x)), (x, ), (series, ))
+  c0, cs = jet2(lambda x: lax.div(one, 1 + lax.square(x)), (x, ), (series, ))
   c = [c0] + cs
   u = [x] + series
   v = [primal_out] + [None] * len(series)
   for k in range(1, len(v)):
-    v[k] = fact(k-1) * sum(_scale(k, j) * c[k-j] * u[j] for j in range(1, k + 1))
+    v[k] = sum(j * c[k-j] * u[j] for j in range(1, k + 1)) / k
   primal_out, *series_out = v
   return primal_out, series_out
 jet_rules[lax.atan2_p] = _atan2_taylor
@@ -582,10 +590,10 @@ def _div_taylor_rule(primals_in, series_in):
   u = [x] + x_terms
   w = [y] + y_terms
   v = [None] * len(u)
-  def scale(k, j): return 1. / (fact(k - j) * fact(j))
+
   for k in range(0, len(v)):
-    conv = sum(scale(k, j) * v[j] * w[k-j] for j in range(0, k))
-    v[k] = (u[k] - fact(k) * conv) / w[0]
+    conv = sum(v[j] * w[k-j] for j in range(0, k))
+    v[k] = (u[k] - conv) / w[0]
   primal_out, *series_out = v
   return primal_out, series_out
 jet_rules[lax.div_p] = _div_taylor_rule
@@ -598,8 +606,8 @@ def _sinusoidal_rule(sign, prims, primals_in, series_in, **_):
   s = [s(x)] + [None] * len(series)
   c = [c(x)] + [None] * len(series)
   for k in range(1, len(s)):
-    s[k] = fact(k-1) * sum(_scale(k, j) * u[j] * c[k-j] for j in range(1, k + 1))
-    c[k] = fact(k-1) * sum(_scale(k, j) * u[j] * s[k-j] for j in range(1, k + 1)) * sign
+    s[k] = sum(j * u[j] * c[k-j] for j in range(1, k + 1)) / k
+    c[k] = sum(j * u[j] * s[k-j] for j in range(1, k + 1)) / k * sign
   return (s[0], s[1:]), (c[0], c[1:])
 
 def _get_ind(f, ind):
@@ -617,9 +625,8 @@ def _bilinear_taylor_rule(prim, primals_in, series_in, **params):
   w = [y] + y_terms
   v = [None] * len(u)
   op = partial(prim.bind, **params)
-  def scale(k, j): return 1. / (fact(k - j) * fact(j))
   for k in range(0, len(v)):
-    v[k] = fact(k) * sum(scale(k, j) * op(u[j], w[k-j]) for j in range(0, k+1))
+    v[k] = sum(op(u[j], w[k-j]) for j in range(0, k+1))
   primal_out, *series_out = v
   return primal_out, series_out
 jet_rules[lax.dot_general_p] = partial(_bilinear_taylor_rule, lax.dot_general_p)
@@ -727,9 +734,10 @@ jet_rules[lax.scatter_add_p] = _scatter_add_rule
 def _jet_jaxpr(
     jaxpr: core.ClosedJaxpr, order: int, primals_and_series_avals, in_tree_def
 ) -> tuple[core.ClosedJaxpr, Any]:
-  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr), debug_info=jaxpr.jaxpr.debug_info)
+  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr),
+                   debug_info=jaxpr.jaxpr.debug_info.with_unknown_names())
   f_jet, out_tree_def = traceable(jet_fun(jet_subtrace(f), order), in_tree_def)
-  jaxpr_jet, _, consts, () = pe.trace_to_jaxpr_dynamic(
+  jaxpr_jet, _, consts = pe.trace_to_jaxpr_dynamic(
       f_jet, primals_and_series_avals)
   return core.ClosedJaxpr(jaxpr_jet, consts), out_tree_def
 
@@ -756,7 +764,7 @@ def _pjit_jet_rule(primals_in, series_in, **params):
       'out_layouts': params['out_layouts'] + (None,) * num_series_out,
       'donated_invars': params['donated_invars'] + (False,) * num_series_in,
   }
-  result = pjit.pjit_p.bind(*primals_and_series, **new_params)
+  result = pjit.jit_p.bind(*primals_and_series, **new_params)
   return tree_unflatten(out_tree_def(), result)
 
-jet_rules[pjit.pjit_p] = _pjit_jet_rule
+jet_rules[pjit.jit_p] = _pjit_jet_rule

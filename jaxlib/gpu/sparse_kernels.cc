@@ -16,19 +16,27 @@ limitations under the License.
 #include "jaxlib/gpu/sparse_kernels.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <string>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
+#include "jaxlib/ffi_helpers.h"
 #include "jaxlib/gpu/ffi_wrapper.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/handle_pool.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_helpers.h"
-#include "xla/service/custom_call_status.h"
+#include "xla/ffi/api/ffi.h"
+
+#define JAX_FFI_RETURN_IF_GPU_ERROR(...) \
+  FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(__VA_ARGS__))
+
+namespace ffi = ::xla::ffi;
 
 namespace jax {
 
@@ -36,7 +44,7 @@ template <>
 /*static*/ absl::StatusOr<SparseHandlePool::Handle> SparseHandlePool::Borrow(
     gpuStream_t stream) {
   SparseHandlePool* pool = Instance();
-  absl::MutexLock lock(&pool->mu_);
+  absl::MutexLock lock(pool->mu_);
   gpusparseHandle_t handle;
   if (pool->handles_[stream].empty()) {
     JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreate(&handle)));
@@ -63,24 +71,19 @@ absl::StatusOr<SparseConst> ConstOne(gpuDataType type) {
   std::memset(&c, 0, sizeof(c));
   switch (type) {
 #ifdef JAX_GPU_CUDA
-#if JAX_GPU_HAVE_SPARSE
     // TODO(jakevdp): 4I/4U here might break on big endian platforms.
     case CUDA_R_4I:
     case CUDA_C_4I:
-#endif
     case CUDA_R_8I:
     case CUDA_C_8I:
       c.i8[0] = 1;
       break;
-#if JAX_GPU_HAVE_SPARSE
     case CUDA_R_4U:
     case CUDA_C_4U:
-#endif
     case CUDA_R_8U:
     case CUDA_C_8U:
       c.u8[0] = 1;
       break;
-#if JAX_GPU_HAVE_SPARSE
     case CUDA_R_16I:
     case CUDA_C_16I:
       c.i16[0] = 1;
@@ -89,7 +92,6 @@ absl::StatusOr<SparseConst> ConstOne(gpuDataType type) {
     case CUDA_C_16U:
       c.u16[0] = 1;
       break;
-#endif
     case CUDA_R_32I:
     case CUDA_C_32I:
       c.i32[0] = 1;
@@ -98,7 +100,6 @@ absl::StatusOr<SparseConst> ConstOne(gpuDataType type) {
     case CUDA_C_32U:
       c.u32[0] = 1;
       break;
-#if JAX_GPU_HAVE_SPARSE
     case CUDA_R_64I:
     case CUDA_C_64I:
       c.i64[0] = 1;
@@ -107,7 +108,6 @@ absl::StatusOr<SparseConst> ConstOne(gpuDataType type) {
     case CUDA_C_64U:
       c.u64[0] = 1;
       break;
-#endif
 #if JAX_GPU_HAVE_FP8
     case CUDA_R_8F_E4M3:
       c.u8[0] = __nv_cvt_float_to_fp8(1.0f, __NV_NOSAT, __NV_E4M3);
@@ -116,12 +116,10 @@ absl::StatusOr<SparseConst> ConstOne(gpuDataType type) {
       c.u8[0] = __nv_cvt_float_to_fp8(1.0f, __NV_NOSAT, __NV_E5M2);
       break;
 #endif
-#if JAX_GPU_HAVE_SPARSE
     case CUDA_R_16BF:
     case CUDA_C_16BF:
       c.u16[0] = 0b11111110000000;  // 1.0 in little-endian bfloat16
       break;
-#endif
 #endif  // JAX_GPU_CUDA
     // TODO(rocm): add more data types if new rocm supports them.
 
@@ -145,7 +143,6 @@ absl::StatusOr<SparseConst> ConstOne(gpuDataType type) {
   return c;
 }
 
-#if JAX_GPU_HAVE_SPARSE
 // CsrToDense: Convert CSR matrix to dense matrix
 
 static absl::Status CsrToDense_(gpuStream_t stream, void** buffers,
@@ -179,15 +176,6 @@ static absl::Status CsrToDense_(gpuStream_t stream, void** buffers,
 }
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CsrToDenseFfi, CsrToDense_);
-
-void CsrToDense(gpuStream_t stream, void** buffers, const char* opaque,
-                size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CsrToDense_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
 
 // CsrFromDense: Convert dense matrix to CSR matrix
 
@@ -223,15 +211,6 @@ static absl::Status CsrFromDense_(gpuStream_t stream, void** buffers,
 }
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CsrFromDenseFfi, CsrFromDense_);
-
-void CsrFromDense(gpuStream_t stream, void** buffers, const char* opaque,
-                  size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CsrFromDense_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
 
 // CsrMatvec: Product of CSR matrix and dense vector.
 
@@ -282,15 +261,6 @@ static absl::Status CsrMatvec_(gpuStream_t stream, void** buffers,
 }
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CsrMatvecFfi, CsrMatvec_);
-
-void CsrMatvec(gpuStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CsrMatvec_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
 
 // CsrMatmat: Product of CSR matrix and dense matrix.
 
@@ -343,15 +313,6 @@ static absl::Status CsrMatmat_(gpuStream_t stream, void** buffers,
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CsrMatmatFfi, CsrMatmat_);
 
-void CsrMatmat(gpuStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CsrMatmat_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
-
 // CooToDense: Convert COO matrix to dense matrix
 
 static absl::Status CooToDense_(gpuStream_t stream, void** buffers,
@@ -385,15 +346,6 @@ static absl::Status CooToDense_(gpuStream_t stream, void** buffers,
 }
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooToDenseFfi, CooToDense_);
-
-void CooToDense(gpuStream_t stream, void** buffers, const char* opaque,
-                size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CooToDense_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
 
 // CooFromDense: Convert dense matrix to COO matrix
 
@@ -429,15 +381,6 @@ static absl::Status CooFromDense_(gpuStream_t stream, void** buffers,
 }
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooFromDenseFfi, CooFromDense_);
-
-void CooFromDense(gpuStream_t stream, void** buffers, const char* opaque,
-                  size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CooFromDense_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
 
 // CooMatvec: Product of COO matrix and dense vector.
 
@@ -487,15 +430,6 @@ static absl::Status CooMatvec_(gpuStream_t stream, void** buffers,
 }
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooMatvecFfi, CooMatvec_);
-
-void CooMatvec(gpuStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CooMatvec_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
 
 // CooMatmat: Product of COO matrix and dense matrix.
 
@@ -556,90 +490,162 @@ static absl::Status CooMatmat_(gpuStream_t stream, void** buffers,
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooMatmatFfi, CooMatmat_);
 
-void CooMatmat(gpuStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CooMatmat_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+template <typename T, typename BufferSizeF, typename KernelF>
+ffi::Error Gtsv2Impl(BufferSizeF getBufferSize, KernelF kernel, int64_t batch,
+                     int64_t rows, int64_t cols, gpuStream_t stream,
+                     ffi::ScratchAllocator& scratch, ffi::AnyBuffer dl,
+                     ffi::AnyBuffer d, ffi::AnyBuffer du, ffi::AnyBuffer b,
+                     ffi::Result<ffi::AnyBuffer> out) {
+  FFI_ASSIGN_OR_RETURN(auto m, MaybeCastNoOverflow<int>(rows));
+  FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(cols));
+
+  FFI_ASSIGN_OR_RETURN(auto handle, SparseHandlePool::Borrow(stream));
+  size_t buffer_size_in_bytes;
+  JAX_FFI_RETURN_IF_GPU_ERROR(getBufferSize(handle.get(), m, n, nullptr,
+                                            nullptr, nullptr, nullptr, m,
+                                            &buffer_size_in_bytes));
+  auto maybe_workspace = scratch.Allocate(buffer_size_in_bytes);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error::Internal("Unable to allocate workspace for gtsv2");
   }
-}
-#endif  // if JAX_GPU_HAVE_SPARSE
+  void* workspace = maybe_workspace.value();
 
-template <typename T, typename F>
-static absl::Status gtsv2(F computeGtsv2, gpuStream_t stream, void** buffers,
-                          const char* opaque, std::size_t opaque_len) {
-  auto h = SparseHandlePool::Borrow(stream);
-  JAX_RETURN_IF_ERROR(h.status());
-  auto& handle = *h;
-
-  auto s = UnpackDescriptor<Gtsv2Descriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  const Gtsv2Descriptor& descriptor = **s;
-  int batch = descriptor.batch;
-  int m = descriptor.m;
-  int n = descriptor.n;
-  int ldb = descriptor.ldb;
-
-  T* dl = static_cast<T*>(buffers[0]);
-  T* d = static_cast<T*>(buffers[1]);
-  T* du = static_cast<T*>(buffers[2]);
-  T* B = static_cast<T*>(buffers[3]);
-  T* X = static_cast<T*>(buffers[4]);
-  void* buffer = static_cast<void*>(buffers[5]);
-
-  // The solution X is written in place to B. We need to therefore copy the
-  // contents of B into the output buffer X and pass that into the kernel as B.
-  // Once copy insertion is supported for custom call aliasing, we could alias B
-  // with X and avoid the copy, the code below is written defensively assuming B
-  // and X might alias, but today we know they will not.
-  // TODO(b/182906199): Update the comment here once copy insertion is WAI.
-  if (X != B) {
-    size_t B_bytes = ldb * n * sizeof(T) * batch;
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-        gpuMemcpyAsync(X, B, B_bytes, gpuMemcpyDeviceToDevice, stream)));
+  auto dl_data = static_cast<T*>(dl.untyped_data());
+  auto d_data = static_cast<T*>(d.untyped_data());
+  auto du_data = static_cast<T*>(du.untyped_data());
+  auto b_data = static_cast<T*>(b.untyped_data());
+  auto out_data = static_cast<T*>(out->untyped_data());
+  if (b_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, b_data, b.size_bytes(), gpuMemcpyDeviceToDevice, stream));
   }
-  for (int i = 0; i < batch; ++i) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-        computeGtsv2(handle.get(), m, n, dl, d, du, X, ldb, buffer)));
-    dl += m;
-    d += m;
-    du += m;
-    X += m * n;
+
+  for (int64_t i = 0; i < batch; ++i) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(kernel(handle.get(), m, n, dl_data, d_data,
+                                       du_data, out_data, m, workspace));
+    dl_data += m;
+    d_data += m;
+    du_data += m;
+    out_data += m * n;
   }
-  return absl::OkStatus();
+  return ffi::Error::Success();
 }
 
-JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(
-    gtsv2_f32_ffi, [](gpuStream_t stream, void** buffers, const char* opaque,
-                      std::size_t opaque_len) {
-      return gtsv2<float>(gpusparseSgtsv2, stream, buffers, opaque, opaque_len);
-    });
+template <typename T, typename BufferSizeF, typename KernelF>
+ffi::Error Gtsv2BatchedImpl(BufferSizeF getBufferSize, KernelF kernel,
+                            int64_t batch, int64_t rows, gpuStream_t stream,
+                            ffi::ScratchAllocator& scratch, ffi::AnyBuffer dl,
+                            ffi::AnyBuffer d, ffi::AnyBuffer du,
+                            ffi::AnyBuffer b, ffi::Result<ffi::AnyBuffer> out) {
+  FFI_ASSIGN_OR_RETURN(auto batch_count, MaybeCastNoOverflow<int>(batch));
+  FFI_ASSIGN_OR_RETURN(auto m, MaybeCastNoOverflow<int>(rows));
 
-JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(
-    gtsv2_f64_ffi, [](gpuStream_t stream, void** buffers, const char* opaque,
-                      std::size_t opaque_len) {
-      return gtsv2<double>(gpusparseDgtsv2, stream, buffers, opaque,
-                           opaque_len);
-    });
-
-void gtsv2_f32(gpuStream_t stream, void** buffers, const char* opaque,
-               std::size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = gtsv2<float>(gpusparseSgtsv2, stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+  FFI_ASSIGN_OR_RETURN(auto handle, SparseHandlePool::Borrow(stream));
+  size_t buffer_size_in_bytes;
+  JAX_FFI_RETURN_IF_GPU_ERROR(getBufferSize(handle.get(), m, nullptr, nullptr,
+                                            nullptr, nullptr, batch_count, m,
+                                            &buffer_size_in_bytes));
+  auto maybe_workspace = scratch.Allocate(buffer_size_in_bytes);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error::Internal("Unable to allocate workspace for gtsv2");
   }
+  void* workspace = maybe_workspace.value();
+
+  auto dl_data = static_cast<T*>(dl.untyped_data());
+  auto d_data = static_cast<T*>(d.untyped_data());
+  auto du_data = static_cast<T*>(du.untyped_data());
+  auto b_data = static_cast<T*>(b.untyped_data());
+  auto out_data = static_cast<T*>(out->untyped_data());
+  if (b_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, b_data, b.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  JAX_FFI_RETURN_IF_GPU_ERROR(kernel(handle.get(), m, dl_data, d_data, du_data,
+                                     out_data, batch_count, m, workspace));
+  return ffi::Error::Success();
 }
 
-void gtsv2_f64(gpuStream_t stream, void** buffers, const char* opaque,
-               std::size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = gtsv2<double>(gpusparseDgtsv2, stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+ffi::Error Gtsv2(gpuStream_t stream, ffi::ScratchAllocator scratch,
+                 ffi::AnyBuffer dl, ffi::AnyBuffer d, ffi::AnyBuffer du,
+                 ffi::AnyBuffer b, ffi::Result<ffi::AnyBuffer> out) {
+  auto dataType = dl.element_type();
+  if (dataType != d.element_type() || dataType != du.element_type() ||
+      dataType != b.element_type() || dataType != out->element_type()) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to gtsv2 must have the same element type");
   }
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(b.dimensions()));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, rows, cols}, "out", "gtsv2"));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(dl.dimensions(), {batch, rows}, "dl", "gtsv2"));
+  FFI_RETURN_IF_ERROR(CheckShape(d.dimensions(), {batch, rows}, "d", "gtsv2"));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(du.dimensions(), {batch, rows}, "du", "gtsv2"));
+  if (batch > 1 && cols == 1) {
+    switch (dataType) {
+      case ffi::F32:
+        return Gtsv2BatchedImpl<float>(
+            gpusparseSgtsv2StridedBatch_bufferSizeExt,
+            gpusparseSgtsv2StridedBatch, batch, rows, stream, scratch, dl, d,
+            du, b, out);
+      case ffi::F64:
+        return Gtsv2BatchedImpl<double>(
+            gpusparseDgtsv2StridedBatch_bufferSizeExt,
+            gpusparseDgtsv2StridedBatch, batch, rows, stream, scratch, dl, d,
+            du, b, out);
+      case ffi::C64:
+        return Gtsv2BatchedImpl<gpuComplex>(
+            gpusparseCgtsv2StridedBatch_bufferSizeExt,
+            gpusparseCgtsv2StridedBatch, batch, rows, stream, scratch, dl, d,
+            du, b, out);
+      case ffi::C128:
+        return Gtsv2BatchedImpl<gpuDoubleComplex>(
+            gpusparseZgtsv2StridedBatch_bufferSizeExt,
+            gpusparseZgtsv2StridedBatch, batch, rows, stream, scratch, dl, d,
+            du, b, out);
+      default:
+        break;
+    }
+
+  } else {
+    switch (dataType) {
+      case ffi::F32:
+        return Gtsv2Impl<float>(gpusparseSgtsv2_bufferSizeExt, gpusparseSgtsv2,
+                                batch, rows, cols, stream, scratch, dl, d, du,
+                                b, out);
+      case ffi::F64:
+        return Gtsv2Impl<double>(gpusparseDgtsv2_bufferSizeExt, gpusparseDgtsv2,
+                                 batch, rows, cols, stream, scratch, dl, d, du,
+                                 b, out);
+      case ffi::C64:
+        return Gtsv2Impl<gpuComplex>(gpusparseCgtsv2_bufferSizeExt,
+                                     gpusparseCgtsv2, batch, rows, cols, stream,
+                                     scratch, dl, d, du, b, out);
+      case ffi::C128:
+        return Gtsv2Impl<gpuDoubleComplex>(gpusparseZgtsv2_bufferSizeExt,
+                                           gpusparseZgtsv2, batch, rows, cols,
+                                           stream, scratch, dl, d, du, b, out);
+      default:
+        break;
+    }
+  }
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in gtsv2", absl::FormatStreamed(dataType)));
 }
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(kGtsv2, Gtsv2,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Arg<ffi::AnyBuffer>()  // dl
+                                  .Arg<ffi::AnyBuffer>()  // d
+                                  .Arg<ffi::AnyBuffer>()  // du
+                                  .Arg<ffi::AnyBuffer>()  // b
+                                  .Ret<ffi::AnyBuffer>()  // out
+);
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

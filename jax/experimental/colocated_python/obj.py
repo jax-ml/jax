@@ -18,7 +18,8 @@ from __future__ import annotations
 import inspect
 import random
 import threading
-from typing import Any, Callable, Type
+from typing import Any
+from collections.abc import Callable
 
 import jax
 from jax._src import api_util
@@ -58,7 +59,7 @@ class _InstanceRegistry:
 SINGLETON_INSTANCE_REGISTRY = _InstanceRegistry()
 
 
-@jax.util.cache(max_size=4096)
+@jax._src.util.cache(max_size=4096)
 def _update_instance_devices(
     uid: int, shardings: tuple[jax.sharding.Sharding, ...]
 ) -> None:
@@ -70,7 +71,7 @@ def _update_instance_devices(
 
 
 def _make_method(
-    cls: Type[object],
+    cls: type[object],
     cls_sourceinfo: str | None,
     uid: int,
     init_args: tuple[Any, ...],
@@ -94,29 +95,47 @@ def _make_method(
       api_util.fun_signature(original_method),
   )
 
-  # Outer wrapper of the method for the controller. It tracks
-  @api_boundary
-  def method_wrapper(*args, **kwargs):
-    if not args:
-      raise NotImplementedError(
-          'Method calls with no arguments are not yet supported.'
-      )
-    # TODO(hyeontaek): Instead of inspecting argument shardings, get shardings
-    # from final specialization of the function. This may require lowering
-    # `_update_instance_devices` into the function API.
-    args_leaves = tree_util.tree_leaves((args, kwargs))
-    shardings_leaves = tuple(func._get_spec(x).sharding for x in args_leaves)
-    _update_instance_devices(uid, shardings_leaves)
-    return callable(*args, **kwargs)
+  # Outer wrapper of the method for the controller. It tracks devices that have
+  # been used with any method call.
+  def make_method_wrapper(callable):
+    @api_boundary
+    def method_wrapper(*args, **kwargs):
+      # TODO(hyeontaek): Instead of inspecting argument/result shardings, get
+      # shardings from final specialization of the function. This may require
+      # lowering `_update_instance_devices` into the function API.
 
-  method_wrapper = wraps(original_method)(method_wrapper)
+      args_leaves = tree_util.tree_leaves((args, kwargs))
+      args_shardings_leaves = tuple(
+          func._get_spec(x).sharding for x in args_leaves)
+      if args_shardings_leaves:
+        _update_instance_devices(uid, args_shardings_leaves)
+
+      result = callable(*args, **kwargs)
+
+      # If args had any array, we can skip incorporating devices from the result
+      # because results will not use any new devices.
+      if not args_shardings_leaves:
+        result_leaves = tree_util.tree_leaves(result)
+        result_shardings_leaves = tuple(
+            func._get_spec(x).sharding for x in result_leaves)
+        _update_instance_devices(uid, result_shardings_leaves)
+      return result
+
+    def specialize(*args, **kwargs):
+      return make_method_wrapper(callable.specialize(*args, **kwargs))
+
+    method_wrapper = wraps(original_method)(method_wrapper)
+    method_wrapper.specialize = specialize
+    return method_wrapper
+
+  method_wrapper = make_method_wrapper(callable)
   return method_wrapper
 
 
 def wrap_class(
-    cls: Type[object],
+    cls: type[object],
     cls_sourceinfo: str | None,
-) -> Type[object]:
+) -> type[object]:
   class WrappedClass:
 
     @wraps(cls.__init__)
@@ -165,7 +184,7 @@ def wrap_class(
             None,
         )
         destructor = destructor.specialize(  # type: ignore[attribute-error]
-            devices=devices
+            devices=sorted(devices, key=lambda device: device.id)
         )
         destructor()
 

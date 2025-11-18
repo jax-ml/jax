@@ -18,41 +18,43 @@ from __future__ import annotations
 import atexit
 from collections.abc import Sequence
 import dataclasses
-import enum
 from functools import partial
 import itertools
 import logging
 import threading
 import time
-from typing import Any, Callable, NamedTuple
+from typing import Any
 
-import jax
 from jax._src import api
 from jax._src import array
 from jax._src import basearray
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
-from jax._src import lib
-from jax._src import source_info_util
+
+from jax._src import literals
+from jax._src import pjit
 from jax._src import traceback_util
 from jax._src import util
+
+from jax._src import xla_bridge
 from jax._src.abstract_arrays import array_types
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval
 from jax._src.interpreters import pxla
-from jax._src.interpreters import xla
-from jax._src.layout import DeviceLocalLayout, Layout
-from jax._src.lib import jaxlib_extension_version
+from jax._src.api_util import InternalFloatingPointError
+from jax._src.layout import Layout, Format
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh, Mesh
-from jax._src.monitoring import record_event_duration_secs, record_event_time_span
+from jax._src.monitoring import record_scalar, record_event_duration_secs, record_event_time_span
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import ( NamedSharding,
-    SingleDeviceSharding, TransferToMemoryKind,
+from jax._src.sharding_impls import (
+    NamedSharding, SingleDeviceSharding, GSPMDSharding,
     is_single_device_sharding)
+from jax._src.stages import SourceInfo
 import numpy as np
 
 
@@ -66,6 +68,7 @@ xe = xc._xla
 
 Backend = xe.Client
 Device = xc.Device
+ArrayCopySemantics = xc.ArrayCopySemantics
 
 CompileOptions = xc.CompileOptions
 
@@ -84,13 +87,18 @@ def apply_primitive(prim, *args, **params):
   fun = xla_primitive_callable(prim, **params)
   # TODO(yashkatariya): Investigate adding is_primitive to jit and never
   # triggering the disable jit path instead of messing around with it here.
-  prev = lib.jax_jit.swap_thread_local_state_disable_jit(False)
+  prev = config.disable_jit.swap_local(False)
   try:
     outs = fun(*args)
   finally:
-    lib.jax_jit.swap_thread_local_state_disable_jit(prev)
+    config.disable_jit.set_local(prev)
   return outs
 
+# TODO(necula): this cache will contain strong references to all
+# Jaxprs in `params` (for higher-order primitives).
+# This is not immediately fixable by using
+# util.multi_weakref_lru_cache, because the `params` (including the Jaxpr)
+# are closed over in the `prim_fun` lambda. Leaving this fix for a later PR.
 @util.cache()
 def xla_primitive_callable(prim: core.Primitive, **params):
   util.test_event("xla_primitive_callable_cache_miss")
@@ -133,12 +141,17 @@ class RuntimeTokenSet(threading.local):
       # TODO(yueshengys): This might still be buggy in a multi-process SPMD
       # scenario. Revise the logic later. A distributed shutdown barrier inside
       # the XLA program may be needed.
-      return jax.device_put(tok, jax.sharding.PositionalSharding(devices))
+      return api.device_put(
+          tok, NamedSharding(Mesh(devices, 'x'), PartitionSpec('x')))
 
     # We only use replicated sharding for the first time when the token for the
     # order effect hasn't been created.
-    s = jax.sharding.GSPMDSharding.get_replicated(devices)
-    sharded_tok = core.Token(pxla.shard_args([s], [None], [None], [tok])[0])
+    s = GSPMDSharding.get_replicated(devices)
+    sharded_tok = core.Token(
+        pxla.shard_args(
+            [s], [None], [xc.ArrayCopySemantics.REUSE_INPUT], [tok]
+        )[0]
+    )
     self.current_tokens[eff] = sharded_tok
     return sharded_tok
 
@@ -179,6 +192,10 @@ class LogElapsedTimeContextManager:
 
   def __enter__(self):
     self.start_time = time.time()
+    if self.event is not None:
+      record_scalar(
+          self.event, self.start_time, fun_name=self.fun_name
+      )
 
   def __exit__(self, exc_type, exc_value, traceback):
     if _on_exit:
@@ -191,8 +208,12 @@ class LogElapsedTimeContextManager:
       logger.log(log_priority, self.fmt.format(
           fun_name=self.fun_name, elapsed_time=elapsed_time))
     if self.event is not None:
-      record_event_duration_secs(self.event, elapsed_time)
-      record_event_time_span(self.event, self.start_time, end_time)
+      record_event_duration_secs(
+          self.event, elapsed_time, fun_name=self.fun_name
+      )
+      record_event_time_span(
+          self.event, self.start_time, end_time, fun_name=self.fun_name
+      )
 
 log_elapsed_time = LogElapsedTimeContextManager
 
@@ -232,16 +253,10 @@ def jaxpr_has_prim_requiring_devices(jaxpr: core.Jaxpr) -> bool:
   return False
 
 
-class SourceInfo(NamedTuple):
-  source_info: source_info_util.SourceInfo
-  eqn_name: str
-
-
 @util.weakref_lru_cache
 def get_intermediate_shardings(
     jaxpr: core.Jaxpr) -> Sequence[tuple[Sharding, SourceInfo]]:
-  from jax._src import pjit
-  from jax.experimental import shard_map
+  from jax._src import shard_map  # pytype: disable=import-error
 
   out = []
   for eqn in jaxpr.eqns:
@@ -251,19 +266,17 @@ def get_intermediate_shardings(
         continue
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
       out.append((s, source_info))
-    elif eqn.primitive is pjit.pjit_p:
+    elif eqn.primitive is pjit.jit_p:
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
       out.extend((i, source_info) for i in eqn.params['in_shardings'])
       out.extend((o, source_info) for o in eqn.params['out_shardings'])
     elif eqn.primitive is shard_map.shard_map_p:
-      if isinstance(eqn.params['mesh'], AbstractMesh):
+      mesh = eqn.params['mesh']
+      if isinstance(mesh, AbstractMesh):
         continue
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
-      def _names_to_pspec(names):
-        ndmin = max(names) + 1 if names else 0
-        return PartitionSpec(*(names.get(i) for i in range(ndmin)))
-      out.extend((NamedSharding(eqn.params['mesh'], _names_to_pspec(names)), source_info)
-                 for names in [*eqn.params['in_names'], *eqn.params['out_names']])
+      out.extend((NamedSharding(mesh, spec), source_info)
+                 for spec in [*eqn.params['in_specs'], *eqn.params['out_specs']])
     elif eqn.primitive is device_put_p:
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
       out.extend((s, source_info) for s in eqn.params['devices']
@@ -297,29 +310,6 @@ def check_arg(arg: Any):
                     "JAX type.")
 
 
-def jaxpr_replicas(jaxpr: core.Jaxpr) -> int:
-  """The number of replicas needed for a jaxpr.
-
-  For a eqn, multiply the `axis_size` with the `jaxpr_replicas` of the
-  subjaxprs. For a list of eqns, take the maximum number of replicas.
-  """
-  return max(unsafe_map(_eqn_replicas, jaxpr.eqns), default=1)
-
-# TODO(mattjj): this function assumes that only pmap has a parameter named
-# axis_size, and that it corresponds to cross-replica mapping
-def _eqn_replicas(eqn: core.JaxprEqn) -> int:
-  call_jaxpr = eqn.params.get("call_jaxpr")
-  if call_jaxpr:
-    return eqn.params.get('axis_size', 1) * jaxpr_replicas(call_jaxpr)
-  elif eqn.primitive in xla.initial_style_primitives:
-    return _initial_style_primitive_replicas(eqn.params)
-  else:
-    return 1
-
-def _initial_style_primitive_replicas(params: dict[str, Any]) -> int:
-  return max(core.traverse_jaxpr_params(jaxpr_replicas, params).values(),
-             default=1)
-
 def needs_check_special() -> bool:
   return config.debug_infs.value or config.debug_nans.value
 
@@ -335,70 +325,21 @@ def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
     if config.debug_infs.value and np.any(np.isinf(np.asarray(buf))):
       raise InternalFloatingPointError(name, "inf")
 
-class CopySemantics(enum.Enum):
-  ALIAS = enum.auto()
-  COPY = enum.auto()
-  DONATE = enum.auto()
-
-class InternalFloatingPointError(Exception):
-  name: str
-  ty: str
-
-  def __init__(self, name: str, ty: str):
-    self.name = name
-    self.ty = ty
-
-def maybe_recursive_nan_check(e: Exception, fun: Callable, args, kwargs,
-) -> None:  # always raises an exception
-  print("Invalid nan value encountered in the output of a jax.jit "
-        "function. Calling the de-optimized version.")
-  try:
-    _ = fun(*args, **kwargs)
-  except (FloatingPointError, ZeroDivisionError) as e2:
-    raise e2 from None
-  else:
-    _raise_no_nan_in_deoptimized(e)
-
-def _raise_no_nan_in_deoptimized(e) -> None:
-  msg = (f"{str(e)}. Because "
-        "jax_config.debug_nans.value and/or config.jax_debug_infs is set, the "
-        "de-optimized function (i.e., the function as if the `jit` "
-        "decorator were removed) was called in an attempt to get a more "
-        "precise error message. However, the de-optimized function did not "
-        "produce invalid values during its execution. This behavior can "
-        "result from `jit` optimizations causing the invalid value to be "
-        "produced. It may also arise from having nan/inf literals as "
-        "inputs or outputs, like `jax.jit(lambda ...: jax.numpy.nan)(...)`. "
-        "\n\n"
-        "It may be possible to avoid the invalid value by removing the "
-        "`jit` decorator, at the cost of losing optimizations. "
-        "\n\n"
-        "If you see this error, consider opening a bug report at "
-        "https://github.com/jax-ml/jax.")
-  raise FloatingPointError(msg) from None
-
 def _identity_fn(x):
   return x
 
-def _different_device_order_reshard(x, target_sharding, copy: CopySemantics):
+
+def _different_device_order_reshard(
+    x: array.ArrayImpl, target_sharding: NamedSharding, copy: ArrayCopySemantics
+) -> array.ArrayImpl:
   x._check_if_deleted()
   inp_sharding = x.sharding
   assert isinstance(inp_sharding, NamedSharding)
 
-  donate_argnums = 0 if copy == CopySemantics.DONATE else None
+  donate_argnums = 0 if copy == ArrayCopySemantics.DONATE_INPUT else None
   if inp_sharding._device_assignment == target_sharding._device_assignment:
     return api.jit(_identity_fn, out_shardings=target_sharding,
                    donate_argnums=donate_argnums)(x)
-
-  if inp_sharding.device_set != target_sharding.device_set:
-    inp_ids = [d.id for d in inp_sharding._device_assignment]
-    inp_plat = inp_sharding._device_assignment[0].platform.upper()
-    target_ids = [d.id for d in target_sharding._device_assignment]
-    target_plat = target_sharding._device_assignment[0].platform.upper()
-    raise ValueError("Input and target sharding should have the same set of "
-                     f"devices. Got input's device set ids: {inp_ids} on "
-                     f"platform {inp_plat} and target sharding's device set "
-                     f"ids: {target_ids} on platform {target_plat}")
 
   if inp_sharding.is_fully_replicated:
     permute_order = None
@@ -412,16 +353,39 @@ def _different_device_order_reshard(x, target_sharding, copy: CopySemantics):
       new_mesh, inp_sharding.spec, memory_kind=target_sharding.memory_kind,
       _logical_device_ids=(None if permute_order is None else
                             tuple(permute_order.tolist())))
-  new_x = _reorder_shards(x, new_s, CopySemantics.ALIAS)
+  new_x = xc.reorder_shards(x, new_s, ArrayCopySemantics.REUSE_INPUT)  # type: ignore
   return api.jit(_identity_fn, out_shardings=target_sharding,
                 donate_argnums=donate_argnums)(new_x)
 
 
-def _reorder_shards(x, new_s, copy_semantics: CopySemantics):
-  """Reorders array shards to match the order indicated by the new sharding."""
-  xc_copy_semantics = pxla.to_xc_copy_semantics([copy_semantics])[0]
-  return xc.reorder_shards(x, new_s, xc_copy_semantics)  # type: ignore
-
+@util.cache(max_size=2048, trace_context_in_key=False)
+def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
+  """Returns True if src->dst is a supported cross-host transfer."""
+  if (src_sharding._internal_device_list.device_kind !=
+      dst_sharding._internal_device_list.device_kind):
+    return False
+  if (src_sharding._to_xla_hlo_sharding(ndim) !=
+      dst_sharding._to_xla_hlo_sharding(ndim)):
+    return False
+  # This check excludes the case where the source and destination shardings
+  # have the same process index sets but there are shards that require
+  # cross-host transfers. This case is supportable but expensive to check for.
+  different_process_inds = (
+      src_sharding._internal_device_list.process_indices !=
+      dst_sharding._internal_device_list.process_indices)
+  backend = xla_bridge.get_backend()
+  # If a cross-host device transfer is requested but the backend does not
+  # support it, then the user must set the flags to enable DCN-based transfers.
+  if (different_process_inds and
+      not getattr(backend, 'supports_cross_host_transfers', False) and
+      not xla_bridge.CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value):
+    raise ValueError(
+        f"The backend ({backend.platform}, {backend.platform_version}) does "
+        "not support cross-host device transfers via ICI/NCCL. Please set "
+        "jax_cross_host_transfer_socket_address and (optionally) "
+        "jax_cross_host_transport_addresses flags to enable DCN-based cross "
+        "host device transfers.")
+  return different_process_inds
 
 @dataclasses.dataclass(frozen=True)
 class _DeferredShardArg:
@@ -436,40 +400,84 @@ class _DeferredShardArg:
   s: Sharding
   aval: core.AbstractValue
   committed: bool
-  copy_semantics: CopySemantics
+  copy_semantics: ArrayCopySemantics
 
   def result_handler(self, shard_arg_result):
     return pxla.global_aval_to_result_handler(
         self.aval, self.s, self.committed)(shard_arg_result)
 
 
-def _device_put_sharding_impl(x, aval, device, copy):
-  from jax.experimental import multihost_utils
+def _device_put_sharding_impl(
+    x: Any,
+    aval: core.ShapedArray,
+    device: Device | Sharding | None,
+    copy: ArrayCopySemantics,
+):
+  from jax.experimental import multihost_utils  # pytype: disable=import-error
+
+  if isinstance(x, array.ArrayImpl):
+    x_is_jax_array = True
+    x_is_fully_addressable, x_sharding = x.is_fully_addressable, x.sharding
+  else:
+    x_is_jax_array = False
+    x_is_fully_addressable, x_sharding = None, None
 
   if isinstance(device, Sharding):
     s = device
+    s_is_fully_addressable = s.is_fully_addressable
     if (getattr(x, 'sharding', None) == s and getattr(x, '_committed', False)
-        and copy == CopySemantics.ALIAS):
+        and copy == ArrayCopySemantics.REUSE_INPUT):
       return x
 
-    if (not s.is_fully_addressable and
-        isinstance(x, array.ArrayImpl) and not x.is_fully_addressable):
-      assert isinstance(s, Sharding)
+    if (not s_is_fully_addressable and
+        x_is_jax_array and not x_is_fully_addressable and
+        s.device_set == x_sharding.device_set):
+      assert isinstance(s, NamedSharding), s
       return _different_device_order_reshard(x, s, copy)
 
-    if (s.is_fully_addressable and isinstance(x, array.ArrayImpl) and
-        x.is_fully_addressable and s.num_devices > 1 and
-        s._internal_device_list != x.sharding._internal_device_list and  # pytype: disable=attribute-error
-        s.device_set == x.sharding.device_set):
-      assert isinstance(s, Sharding)
+    if (s_is_fully_addressable and x_is_jax_array and
+        x_is_fully_addressable and s.num_devices > 1 and
+        s._internal_device_list != x_sharding._internal_device_list and  # pytype: disable=attribute-error
+        s.device_set == x_sharding.device_set):
+      assert isinstance(s, NamedSharding), s
       return _different_device_order_reshard(x, s, copy)
 
-    if not s.is_fully_addressable:
-      if ((isinstance(x, array.ArrayImpl) and not x._committed) or
-          type(x) in array_types):
-        # TODO(emilyaf): Remove this condition when jit works when a sharding
-        # has no local devices.
-        if not config.enable_empty_arrays.value:
+    if (x_is_jax_array and x._committed and xla_bridge.process_count() > 1
+        and _is_supported_cross_host_transfer(x.ndim, x_sharding, s)):
+      return xc.batched_copy_array_to_devices_with_sharding(
+          [x], [s._internal_device_list], [s],  # pytype: disable=attribute-error
+          [copy])[0]
+
+    if not s_is_fully_addressable:
+      # If both the source and target shardings are not fully addressable and
+      # one of the above conditions has not been met, then assume that the user
+      # is attempting a different device order reshard.
+      if (x_is_jax_array and not x_is_fully_addressable
+          and s.device_set != x_sharding.device_set):
+        inp_ids = [d.id for d in x_sharding._device_assignment]
+        inp_plat = x_sharding._device_assignment[0].platform.upper()
+        target_ids = [d.id for d in s._device_assignment]
+        target_plat = s._device_assignment[0].platform.upper()
+        raise ValueError(
+            "For a cross-host reshard in multi-controller JAX, input and target"
+            " sharding should have the same set of devices. Got input's device"
+            f" set ids: {inp_ids} on platform {inp_plat} and target sharding's"
+            f" device set ids: {target_ids} on platform {target_plat}.\n\n"
+            "There is experimental support for cross-host transfers with "
+            "different device sets, when input/output shardings have the same "
+            "indices and layouts, in the TFRT TPU runtime only.")
+
+      if ((x_is_jax_array and not x._committed) or
+          type(x) in array_types or type(x) in dtypes.python_scalar_types):
+        # If all hosts participate in the sharding, assert that the input is the
+        # same on all hosts. If some hosts have no addressable devices in the
+        # sharding, bypass the check, since we can't easily distinguish between
+        # these two cases: (1) the sharding contains the same subset of global
+        # devices on all hosts (and hosts with no addressable devices in the
+        # sharding do not transfer data) or (2) the sharding contains a
+        # different subset of devices on each host. For (1), the input should be
+        # the same on all hosts, but for (2) it need not be.
+        if xla_bridge.process_count() == len(s._internal_device_list.process_indices):  # pytype: disable=attribute-error
           multihost_utils.assert_equal(
               x, fail_message=(
                   f"{type(x)} passed to device_put is not the same on each"
@@ -484,19 +492,19 @@ def _device_put_sharding_impl(x, aval, device, copy):
     return _DeferredShardArg(x, s, aval, True, copy)
 
   # Only `Device` exists below. `Sharding` instance is handled above.
-  if isinstance(x, array.ArrayImpl):
-    if not x.is_fully_addressable:
+  if x_is_jax_array:
+    if not x_is_fully_addressable:
       raise ValueError(
           "device_put's first argument must be a fully addressable array, but "
           f"got value with devices {x.devices()}")
     if device is None:
-      if copy == CopySemantics.ALIAS:
+      if copy == ArrayCopySemantics.REUSE_INPUT:
         return x
       else:
-        return _DeferredShardArg(x, x.sharding, aval, x.committed, copy)
-    elif is_single_device_sharding(x.sharding):
-      device = x.sharding._device_assignment[0] if device is None else device
-      if copy == CopySemantics.COPY and jaxlib_extension_version >= 327:
+        return _DeferredShardArg(x, x_sharding, aval, x.committed, copy)
+    elif is_single_device_sharding(x_sharding):
+      device = x_sharding._device_assignment[0] if device is None else device
+      if copy == ArrayCopySemantics.ALWAYS_COPY:
         return xc.batched_device_put(aval, SingleDeviceSharding(device), [x],
                                      [device], True, True)
       return pxla.batched_device_put(aval, SingleDeviceSharding(device), [x],
@@ -508,53 +516,56 @@ def _device_put_sharding_impl(x, aval, device, copy):
 
 
 def _device_put_impl(
-    x, *, device: Device | Sharding | Layout | None,
-    src: Device | Sharding | Layout | None, copy: CopySemantics):
-  if (isinstance(device, TransferToMemoryKind) or
-      isinstance(src, TransferToMemoryKind)):
-    raise ValueError(
-        "TransferToMemoryKind argument to jax.device_put can only be used"
-        " inside jax.jit. If you are using device_put outside jax.jit, then"
-        " please provide a concrete Sharding with memory_kind.")
+    x, *, device: Device | Sharding | Format | None,
+    src: Device | Sharding | Format | None, copy: ArrayCopySemantics, aval):
+  if aval is None:
+    try:
+      aval = core.abstractify(x)
+      aval = update_dp_aval(aval, device)
+    except TypeError as err:
+      raise TypeError(
+          f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
 
-  try:
-    aval = core.abstractify(x)
-  except TypeError as err:
-    raise TypeError(
-        f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
+  if isinstance(device, core.MemorySpace):
+    return apply_primitive(device_put_p, x, devices=(device,), srcs=(src,),
+                           copy_semantics=(copy,))[0]
 
-  if isinstance(device, Layout):
+  if isinstance(device, Format):
     l = device
-    dll = l.device_local_layout
-    x_dll = x.layout.device_local_layout if hasattr(x, 'layout') else None
+    dll = l.layout
+    x_dll = x.format.layout if hasattr(x, 'format') else None
     if dll is None and l.sharding is None:
       return _device_put_sharding_impl(x, aval, l.sharding, copy)
     if (not isinstance(l.sharding, Sharding) or
-        not isinstance(dll, (DeviceLocalLayout, type(None)))):
+        not isinstance(dll, (Layout, type(None)))):
       raise ValueError(
-          "sharding and device_local_layout in `Layout` instance should be"
+          "sharding and layout in `Layout` instance should be"
           f" concrete. Got layout: {l} for input {aval.str_short()}")
-    if (getattr(x, 'layout', None) == l and getattr(x, '_committed', False) and
-        copy == CopySemantics.ALIAS):
+    if (getattr(x, 'format', None) == l and getattr(x, '_committed', False) and
+        copy == ArrayCopySemantics.REUSE_INPUT):
       return x
     if x_dll is None and dll is None:
       return _device_put_sharding_impl(x, aval, l.sharding, copy)
     return api.jit(
-        _identity_fn, out_shardings=l,
-        donate_argnums=(0 if copy == CopySemantics.DONATE else None))(x)
+        _identity_fn,
+        out_shardings=l,
+        donate_argnums=(0 if copy == ArrayCopySemantics.DONATE_INPUT else None),
+    )(x)
 
   return _device_put_sharding_impl(x, aval, device, copy)
 
 
 def _batched_device_put_impl(
     *xs,
-    devices: Sequence[Device | Sharding | Layout | None],
-    srcs: Sequence[Device | Sharding | Layout | None],
-    copy_semantics: Sequence[CopySemantics]):
+    devices: Sequence[Device | Sharding | Format | None],
+    srcs: Sequence[Device | Sharding | Format | None],
+    copy_semantics: Sequence[ArrayCopySemantics],
+    dst_avals: Sequence[core.ShapedArray | None]):
   ys = []
   dsa_indices, dsa_xs, dsa_shardings, dsa_copy_semantics = [], [], [], []
-  for i, (x, device, src, cp) in enumerate(zip(xs, devices, srcs, copy_semantics)):
-    y = _device_put_impl(x, device=device, src=src, copy=cp)
+  for i, (x, device, src, cp, aval) in enumerate(
+      zip(xs, devices, srcs, copy_semantics, dst_avals)):
+    y = _device_put_impl(x, device=device, src=src, copy=cp, aval=aval)
     if isinstance(y, _DeferredShardArg):
       dsa_indices.append(i)
       dsa_xs.append(y.x)
@@ -565,23 +576,57 @@ def _batched_device_put_impl(
   if dsa_xs:
     # Batch shard_arg calls. Helps improve efficiency for backends that support
     # efficient batch transfer.
-    # device_put handles `Layout` via a different path, so just pass `None` as
+    # device_put handles `Format` via a different path, so just pass `None` as
     # the layout here.
     shard_arg_results = pxla.shard_args(dsa_shardings, [None] * len(dsa_xs),
                                         dsa_copy_semantics, dsa_xs)
     for i, shard_arg_result in zip(dsa_indices, shard_arg_results):
       assert isinstance(ys[i], _DeferredShardArg)
       ys[i] = ys[i].result_handler(shard_arg_result)
-
   return ys
+
+def batched_device_put_impl(
+    *xs,
+    devices: Sequence[Device | Sharding | Format | None],
+    srcs: Sequence[Device | Sharding | Format | None],
+    copy_semantics: Sequence[ArrayCopySemantics]):
+  return _batched_device_put_impl(
+      *xs, devices=devices, srcs=srcs, copy_semantics=copy_semantics,
+      dst_avals=[None] * len(devices))
 
 
 device_put_p = core.Primitive('device_put')
 device_put_p.multiple_results = True
-device_put_p.def_impl(_batched_device_put_impl)
+device_put_p.def_impl(batched_device_put_impl)
+
+
+def _device_put_folding_rule(consts, params, out_avals):
+  # We elide device_puts that do nothing; these can be generated by jnp.array,
+  # for example.
+  if (all(x is None for x in params["devices"])
+      and all(isinstance(x, literals.TypedNdArray) for x in consts)
+      and all(x == ArrayCopySemantics.REUSE_INPUT for x in params["copy_semantics"])):
+    return consts
+  return None
+
+partial_eval.const_fold_rules[device_put_p] = _device_put_folding_rule
+
+
+def update_dp_aval(aval, d):
+  if not isinstance(aval, core.ShapedArray):
+    return aval
+  if isinstance(d, Sharding):
+    aval = (aval.update(sharding=aval.sharding.update(mesh=d.mesh.abstract_mesh))
+            if isinstance(d, NamedSharding) else aval.update(sharding=None))
+    if d.memory_kind is not None:
+      aval = aval.update(memory_space=core.mem_kind_to_space(d.memory_kind))
+    return aval
+  elif isinstance(d, core.MemorySpace):
+    return aval.update(memory_space=d)
+  return aval
 
 def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):
-  return xs
+  return [update_dp_aval(x, d) for x, d in zip(xs, devices)]
 device_put_p.def_abstract_eval(_device_put_abstract_eval)
 
 def _device_put_transpose(cts, *_, devices, srcs, copy_semantics):
@@ -594,17 +639,17 @@ def _device_put_transpose(cts, *_, devices, srcs, copy_semantics):
     indices, args, devices, srcs, copy_semantics = list(zip(*dp_args))
     new_copy_semantics = []
     for cp in copy_semantics:
-      if cp == CopySemantics.DONATE:
+      if cp == ArrayCopySemantics.DONATE_INPUT:
         raise ValueError(
             "donate=True is not allowed during tranposition of device_put."
             " Please file an issue if you want this to be supported.")
-      elif cp == CopySemantics.ALIAS:
-        new_copy_semantics.append(CopySemantics.COPY)
+      elif cp == ArrayCopySemantics.REUSE_INPUT:
+        new_copy_semantics.append(ArrayCopySemantics.ALWAYS_COPY)
       else:
-        assert cp == CopySemantics.COPY
-        new_copy_semantics.append(CopySemantics.COPY)
+        assert cp == ArrayCopySemantics.ALWAYS_COPY
+        new_copy_semantics.append(ArrayCopySemantics.ALWAYS_COPY)
     ys = device_put_p.bind(*args, devices=srcs, srcs=devices,
-                           copy_semantics=new_copy_semantics)
+                           copy_semantics=tuple(new_copy_semantics))
     for i, y in zip(indices, ys):
       results[i] = y
   return results
@@ -625,8 +670,8 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
   if ctx.module_context.all_default_mem_kind:
     return xs
   def lower(x, device, aval, out_aval):
-    if (isinstance(device, (Sharding, TransferToMemoryKind)) and
-        device.memory_kind is not None):
+    if ((isinstance(device, Sharding) and device.memory_kind is not None) or
+        isinstance(device, core.MemorySpace)):
       if isinstance(device, Sharding):
         if config.use_shardy_partitioner.value:
           x = mlir.wrap_with_sharding_op(
@@ -636,7 +681,9 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
           x = mlir.wrap_with_sharding_op(
               ctx, x, out_aval,
               device._to_xla_hlo_sharding(aval.ndim).to_proto())
-      x = mlir.wrap_with_memory_kind(x, device.memory_kind, out_aval)
+      mem_kind = (core.mem_space_to_kind(device)
+                  if isinstance(device, core.MemorySpace) else device.memory_kind)
+      x = mlir.wrap_with_memory_kind(x, mem_kind, out_aval)
       return x
     return x
   return list(map(lower, xs, devices, ctx.avals_in, ctx.avals_out))
@@ -650,13 +697,3 @@ mlir.register_lowering(
 def _common_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
   return xs
 mlir.register_lowering(device_put_p, _common_device_put_lowering)
-
-def _propagate_mem_kind_dp(*xm, devices, srcs, copy_semantics):
-  memory_kinds = []
-  for device in devices:
-    if isinstance(device, (Sharding, TransferToMemoryKind)):
-      memory_kinds.append(device.memory_kind)
-    else:
-      memory_kinds.append(None)
-  return memory_kinds
-pxla.memory_kind_propagate_rule[device_put_p] = _propagate_mem_kind_dp

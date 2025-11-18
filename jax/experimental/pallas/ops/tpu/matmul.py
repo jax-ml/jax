@@ -78,7 +78,7 @@ def matmul(
           grid=(x.shape[0] // l, y.shape[1] // r, x.shape[1] // block_k),
           scratch_shapes=[pltpu.VMEM((l, r), acc_dtype)],
       ),
-      compiler_params=pltpu.TPUCompilerParams(
+      compiler_params=pltpu.CompilerParams(
           dimension_semantics=("parallel", "parallel", "arbitrary")),
       debug=debug,
   )(x, y)

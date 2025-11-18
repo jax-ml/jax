@@ -1,0 +1,96 @@
+<svg width="700" height="500" viewBox="0 0 700 500" xmlns="http://www.w3.org/2000/svg" font-family="Inter, sans-serif">
+  <defs>
+    <style type="text/css">
+    <![CDATA[
+      /* Import Inter font from Google Fonts */
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+
+      /* Style definitions for different memory blocks and text elements */
+      .reg-fill { fill: #FEE2E2; } /* red-100 */
+      .reg-stroke { stroke: #FCA5A5; } /* red-300 */
+      .reg-text-head { fill: #991B1B; font-weight: 600; font-size: 15px; } /* red-800 */
+      .reg-text-body { fill: #B91C1C; font-size: 13px;} /* red-700 */
+
+      .tmem-fill { fill: #FFEDD5; } /* orange-100 */
+      .tmem-stroke { stroke: #FDBA74; } /* orange-300 */
+      .tmem-text-head { fill: #9A3412; font-weight: 600; font-size: 15px; } /* orange-800 */
+      .tmem-text-body { fill: #C2410C; font-size: 13px;} /* orange-700 */
+
+      .smem-fill { fill: #FEF9C3; } /* yellow-100 */
+      .smem-stroke { stroke: #FDE047; } /* yellow-300 */
+      .smem-text-head { fill: #854D0E; font-weight: 600; font-size: 15px; } /* yellow-800 */
+      .smem-text-body { fill: #A16207; font-size: 13px;} /* yellow-700 */
+
+      .l2-fill { fill: #D1FAE5; } /* green-100 */
+      .l2-stroke { stroke: #6EE7B7; } /* green-300 */
+      .l2-text-head { fill: #065F46; font-weight: 600; font-size: 15px; } /* green-800 */
+      .l2-text-body { fill: #047857; font-size: 13px;} /* green-700 */
+
+      .gmem-fill { fill: #DBEAFE; } /* blue-100 */
+      .gmem-stroke { stroke: #93C5FD; } /* blue-300 */
+      .gmem-text-head { fill: #1E40AF; font-weight: 600; font-size: 15px; } /* blue-800 */
+      .gmem-text-body { fill: #1D4ED8; font-size: 13px;} /* blue-700 */
+
+      .desc-text { fill: #4B5563; font-size: 11px; } /* gray-600 */
+      .legend-text { fill: #374151; font-size: 12px; } /* gray-700 */
+
+      /* Common styling for the rectangular blocks */
+      .block { stroke-width: 1; rx: 8; ry: 8; }
+      .heavy-font { font-weight: 500; }
+    ]]>
+    </style>
+  </defs>
+
+   <g transform="translate(195, 40)"> <g transform="translate(0,2)"><path d="M -5 0 L 0 -5 L 5 0 Z" fill="#10B981"/></g> <text x="10" y="3" class="legend-text">Faster / Smaller Capacity</text>
+
+      <g transform="translate(320, 0)">
+          <g transform="translate(0,-2)"><path d="M -5 0 L 0 5 L 5 0 Z" fill="#EF4444"/></g> <text x="-10" y="3" text-anchor="end" class="legend-text">Slower / Larger Capacity</text>
+      </g>
+  </g>
+
+  <g transform="translate(0, 75)"> <g transform="translate(185, -5)"> <g>
+        <rect x="0" y="0" width="160" height="95" class="block reg-fill reg-stroke"/>
+        <text x="80" y="20" text-anchor="middle" class="reg-text-head">Registers (RMEM)</text>
+        <text x="80" y="40" text-anchor="middle" class="reg-text-body">Fastest Latency &amp; BW</text>
+        <text x="80" y="55" text-anchor="middle" class="reg-text-body">Smallest Capacity</text>
+        <text x="80" y="75" text-anchor="middle" class="desc-text">
+            <tspan x="80" dy="0">Holds arrays (in Pallas).</tspan>
+          <tspan x="80" dy="1.2em">Spills if full!</tspan>
+        </text>
+      </g>
+
+      <g transform="translate(170, 0)"> <rect x="0" y="0" width="180" height="95" class="block tmem-fill tmem-stroke"/>
+        <text x="90" y="20" text-anchor="middle" class="tmem-text-head">Tensor Memory (TMEM)</text>
+        <text x="90" y="40" text-anchor="middle" class="tmem-text-body">Fastest Latency &amp; BW</text>
+        <text x="90" y="55" text-anchor="middle" class="tmem-text-body">Smallest Capacity</text>
+        <text x="90" y="75" text-anchor="middle" class="desc-text">
+            <tspan x="90" dy="0">Explicitly managed.</tspan>
+            <tspan x="90" dy="1.2em"><tspan font-weight="500">Blackwell specific.</tspan></tspan>
+        </text>
+      </g>
+    </g>
+
+    <g transform="translate(155, 100)"> <rect x="0" y="0" width="390" height="80" class="block smem-fill smem-stroke"/>
+      <text x="195" y="20" text-anchor="middle" class="smem-text-head">Shared Memory (SMEM)</text>
+      <text x="195" y="40" text-anchor="middle" class="smem-text-body">Fast (close to compute)</text>
+      <text x="195" y="55" text-anchor="middle" class="smem-text-body">Small Capacity (per SM)</text>
+      <text x="195" y="72" text-anchor="middle" class="desc-text">Partitioned into private slices for each CUDA block/cluster.</text>
+    </g>
+
+    <g transform="translate(95, 190)"> <rect x="0" y="0" width="510" height="80" class="block l2-fill l2-stroke"/>
+      <text x="255" y="20" text-anchor="middle" class="l2-text-head">L2 Cache</text>
+      <text x="255" y="40" text-anchor="middle" class="l2-text-body">Moderate Speed</text>
+      <text x="255" y="55" text-anchor="middle" class="l2-text-body">Moderate Capacity (~100MBs)</text>
+      <text x="255" y="72" text-anchor="middle" class="desc-text">Shared betwen SMs, not directly programmable.</text>
+    </g>
+
+    <g transform="translate(35, 280)"> <rect x="0" y="0" width="630" height="80" class="block gmem-fill gmem-stroke"/>
+      <text x="315" y="20" text-anchor="middle" class="gmem-text-head">Global Memory (GMEM)</text>
+      <text x="315" y="40" text-anchor="middle" class="gmem-text-body">Slowest Latency &amp; Bandwidth</text>
+      <text x="315" y="55" text-anchor="middle" class="gmem-text-body">Largest Capacity (GBs)</text>
+      <text x="315" y="72" text-anchor="middle" class="desc-text">Main GPU memory (HBM/GDDR technology).</text>
+    </g>
+
+  </g>
+
+</svg>

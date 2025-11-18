@@ -15,21 +15,7 @@
 """JAX tools."""
 
 load("@rules_python//python:py_binary.bzl", "py_binary")
-
-def _shell_quote(s):
-    """Copy of bazel-skylib's shell.quote.
-
-    Quotes the given string for use in a shell command.
-
-    This function quotes the given string (in case it contains spaces or other
-    shell metacharacters.)
-
-    Args:
-      s: The string to quote.
-    Returns:
-      A quoted version of the string that can be passed to a shell command.
-    """
-    return "'" + s.replace("'", "'\\''") + "'"
+load("@bazel_skylib//lib:shell.bzl", "shell")
 
 def jax_to_hlo(name, deps, fn, input_shapes, constants = None):
     jax_to_ir(name, deps, fn, input_shapes, constants = constants, format = "HLO")
@@ -182,9 +168,9 @@ EOF
         """.format(
             name = name,
             fn = fn,
-            input_shapes = _shell_quote(str(input_shapes)),
-            constants = _shell_quote(str(constants)),
+            input_shapes = shell.quote(str(input_shapes)),
+            constants = shell.quote(str(constants)),
             runner = runner,
-            format = _shell_quote(format),
+            format = shell.quote(format),
         ),
     )

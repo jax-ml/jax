@@ -23,7 +23,7 @@ extensible. For example, the main JAX API offers mechanisms for
 `customizing derivatives
 <https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html>`_,
 `registering custom pytree definitions
-<https://docs.jax.dev/en/latest/pytrees.html#extending-pytrees>`_,
+<https://docs.jax.dev/en/latest/custom_pytrees.html#pytrees-custom-pytree-nodes>`_,
 and more.
 
 API policy
@@ -39,8 +39,9 @@ Breaking changes will be announced via the
 from jax.extend import (
     backend as backend,
     core as core,
-    ffi as ffi,
     linear_util as linear_util,
+    mlir as mlir,
     random as random,
+    sharding as sharding,
     source_info_util as source_info_util,
 )

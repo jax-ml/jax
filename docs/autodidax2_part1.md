@@ -348,7 +348,7 @@ There are some subtleties worth discussing. First, how do you tell if
 something is constant with respect to differentiation? It's tempting to say
 "it's a constant if and only if it's not a dual number". But actually dual
 numbers created by a *different* JVPInterpreter also need to be considered
-constants with resepect to the JVPInterpreter we're currently handling. That's
+constants with respect to the JVPInterpreter we're currently handling. That's
 why we need the `x.interpreter is self` check in `JVPInterpreter.lift`. This
 comes up in higher order differentiation when there are multiple JVPInterprers
 in scope. The sort of bug where you accidentally interpret a dual number from
@@ -539,7 +539,7 @@ print(jvp(lambda x: eval_jaxpr(build_jaxpr(foo, 1), (x,)), 2.0, 1.0))
 That's it for part one of this tutorial. We've done two primitives, three
 interpreters and the tracing mechanism that weaves them together. In the next
 part we'll add types other than floats, error handling, compilation,
-reverse-mode AD and higher-order primtives. Note that the second part is
+reverse-mode AD and higher-order primitives. Note that the second part is
 structured differently. Rather than trying to have a top-to-bottom order that
 obeys both code dependencies (e.g. data structures need to be defined before
 they're used) and pedagogical dependencies (concepts need to be introduced

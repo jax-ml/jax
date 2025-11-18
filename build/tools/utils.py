@@ -184,9 +184,6 @@ def get_compiler_path_or_exit(compiler_path_flag, compiler_name):
     )
     sys.exit(-1)
 
-def get_gcc_path_or_exit():
-  return get_compiler_path_or_exit("gcc_path", "gcc")
-
 def get_clang_path_or_exit():
   return get_compiler_path_or_exit("clang_path", "clang")
 
@@ -206,8 +203,13 @@ def get_clangpp_path(clang_path):
   clang_path = pathlib.Path(clang_path)
   clang_exec_name = clang_path.name
   clangpp_exec_name = clang_exec_name
-  if "clang++" not in clang_exec_name:
-    clangpp_exec_name = clang_exec_name.replace("clang", "clang++")
+  clangpp_path = clang_path.parent / clang_exec_name
+  # Try and match what the user passed in (either clang-18 or clang)
+  if "clang++" not in clangpp_exec_name:
+    clangpp_exec_name = clangpp_exec_name.replace("clang", "clang++")
+    clangpp_path = clang_path.parent / clangpp_exec_name
+    if not clangpp_path.exists():
+      clangpp_exec_name = "clang++"
   clangpp_path = clang_path.parent / clangpp_exec_name
   if not clangpp_path.exists():
     raise FileNotFoundError(
@@ -216,27 +218,12 @@ def get_clangpp_path(clang_path):
     )
   return str(clangpp_path)
 
-def get_gcc_major_version(gcc_path: str):
-  gcc_version_proc = subprocess.run(
-    [gcc_path, "-dumpversion"],
-    check=True,
-    capture_output=True,
-    text=True,
-  )
-  major_version = int(gcc_version_proc.stdout.split(".")[0])
 
-  return major_version
-
-
-def get_jax_configure_bazel_options(bazel_command: list[str], use_new_wheel_build_rule: bool):
+def get_jax_configure_bazel_options(bazel_command: list[str]):
   """Returns the bazel options to be written to .jax_configure.bazelrc."""
-  # Get the index of the "run" parameter. Build options will come after "run" so
-  # we find the index of "run" and filter everything after it. If we are using
-  # the new wheel build rule, we will find the index of "build" instead.
-  if use_new_wheel_build_rule:
-    start = bazel_command.index("build")
-  else:
-    start = bazel_command.index("run")
+  # Get the index of the "build" parameter. Build options will come after
+  # "build" so we find the index of "build" and filter everything after it.
+  start = bazel_command.index("build")
   jax_configure_bazel_options = ""
   try:
     for i in range(start + 1, len(bazel_command)):
@@ -248,19 +235,9 @@ def get_jax_configure_bazel_options(bazel_command: list[str], use_new_wheel_buil
       jax_configure_bazel_options += f"build {bazel_flag}\n"
     return jax_configure_bazel_options
   except ValueError:
-    logging.error("Unable to find index for 'run' in the Bazel command")
+    logging.error("Unable to find index for 'build' in the Bazel command")
     return ""
 
-def get_githash():
-  try:
-    return subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        encoding="utf-8",
-        capture_output=True,
-        check=True,
-    ).stdout.strip()
-  except (subprocess.CalledProcessError, OSError):
-    return ""
 
 def _parse_string_as_bool(s):
   """Parses a string as a boolean value."""
@@ -288,11 +265,26 @@ def copy_dir_recursively(src, dst):
   logging.info("Editable wheel path: %s" % dst)
 
 
-def copy_individual_files(src, dst, regex):
+def copy_individual_files(src: str, dst: str, glob_pattern: str):
   os.makedirs(dst, exist_ok=True)
-  for f in glob.glob(os.path.join(src, regex)):
+  logging.debug(
+    f"Copying files matching pattern {glob_pattern!r} from {src!r} to {dst!r}"
+  )
+  for f in glob.glob(os.path.join(src, glob_pattern)):
     dst_file = os.path.join(dst, os.path.basename(f))
     if os.path.exists(dst_file):
       os.remove(dst_file)
     shutil.copy2(f, dst_file)
     logging.info("Distribution path: %s" % dst_file)
+
+def is_linux(os_name: str):
+  """Returns true if OS is Linux."""
+  return os_name == "linux"
+
+def is_linux_x86_64(arch: str, os_name: str):
+  """Returns true if the architecture is Linux x86_64."""
+  return arch == "x86_64" and os_name == "linux"
+
+def is_linux_aarch64(arch: str, os_name: str):
+  """Returns true if the architecture is Linux aarch64."""
+  return arch == "aarch64" and os_name == "linux"

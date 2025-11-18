@@ -19,7 +19,6 @@ from typing import Any
 import functools
 import operator
 
-from jax import lax
 from jax._src import api
 from jax._src import core
 from jax._src import custom_api_util
@@ -34,7 +33,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters.batching import not_mapped
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import xla
+from jax._src.interpreters import pxla
 from jax._src.tree_util import (tree_flatten, tree_map, tree_structure,
                                 tree_unflatten, treedef_tuple)
 
@@ -103,7 +102,7 @@ class custom_vmap:
     >>> jax.grad(f)(jnp.zeros(()), jnp.ones(()))
     Array(1., dtype=float32)
 
-  Note that the :py:class:`jax.custom_vjp` must be on the ouside, wrapping the
+  Note that the :py:class:`jax.custom_vjp` must be on the outside, wrapping the
   ``custom_vmap``-decorated function.
   """
 
@@ -161,7 +160,7 @@ class custom_vmap:
         lu.wrap_init(self.fun, debug_info=debug_fun),
         in_tree)
     in_avals = [core.get_aval(x) for x in args_flat]
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
     in_tree = treedef_tuple((tree_structure(consts), in_tree))
     assert self.vmap_rule is not None
@@ -296,7 +295,7 @@ def custom_vmap_jvp(primals, tangents, *,
       out_mutually_batched.store(out_batched)
       return out
 
-    api_util.save_wrapped_fun_sourceinfo(to_jvp, call.jaxpr.debug_info)
+    api_util.save_wrapped_fun_debug_info(to_jvp, call.jaxpr.debug_info)
     def to_vmap_over_extra_batched_dims(primals, tangents):
       return api.jvp(to_jvp, primals, tangents)
 
@@ -351,7 +350,7 @@ custom_vmap_p.def_impl(custom_vmap_impl)
 custom_vmap_p.def_abstract_eval(custom_vmap_abstract_eval)
 batching.primitive_batchers[custom_vmap_p] = custom_vmap_batching
 ad.primitive_jvps[custom_vmap_p] = custom_vmap_jvp
-xla.register_initial_style_primitive(custom_vmap_p)
+pxla.register_initial_style_primitive(custom_vmap_p)
 mlir.register_lowering(custom_vmap_p, mlir.lower_fun(
     custom_vmap_impl, multiple_results=True))
 
@@ -394,6 +393,8 @@ def sequential_vmap(f):
   See the documentation for :py:class:`~jax.custom_batching.custom_vmap` for
   more details.
   """
+  from jax._src.lax import control_flow  # pytype: disable=import-error
+
   f = custom_vmap(f)
 
   @f.def_vmap
@@ -405,7 +406,7 @@ def sequential_vmap(f):
       return f(*args)
 
     mapped_args, bcast_args = tree_split(in_batched, list(args))
-    out = lax.map(to_map, mapped_args)
+    out = control_flow.map(to_map, mapped_args)
     out_batched = tree_map(lambda _: True, out)
     return out, out_batched
 

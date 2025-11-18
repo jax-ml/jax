@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
+import gc
 import re
-import sys
 import traceback
+import weakref
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -46,10 +48,7 @@ def check_filtered_stack_trace(test, etype, f, frame_patterns=(),
     e = get_exception(etype, f)
   c = e.__cause__
   if filter_mode == "quiet_remove_frames":
-    if sys.version_info >= (3, 11):
-      assert any("For simplicity" in x for x in e.__notes__)
-    else:
-      test.assertIsInstance(c, jax.errors.SimplifiedTraceback)
+    assert any("For simplicity" in x for x in e.__notes__)
   elif filter_mode == "remove_frames":
     test.assertIsInstance(c, traceback_util.UnfilteredStackTrace)
   else:
@@ -393,12 +392,8 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('<lambda>', 'f = lambda: outer'),
         ('outer', 'raise TypeError')], filter_mode=filter_mode)
     e = get_exception(TypeError, f)  # Uses the default JAX_TRACEBACK_FILTERING=auto
-    if sys.version_info >= (3, 11):
-      assert any("For simplicity" in x for x in e.__notes__)
-      self.assertIsInstance(e.__cause__, ValueError)
-    else:
-      self.assertIsInstance(e.__cause__, jax.errors.SimplifiedTraceback)
-      self.assertIsInstance(e.__cause__.__cause__, ValueError)
+    assert any("For simplicity" in x for x in e.__notes__)
+    self.assertIsInstance(e.__cause__, ValueError)
 
   def test_null_traceback(self, filter_mode):
     class TestA: pass
@@ -411,6 +406,39 @@ class FilteredTracebackTest(jtu.JaxTestCase):
     check_filtered_stack_trace(self, TypeError, err, [
         ('err', 'return jit(f)(a)')], filter_mode=filter_mode)
 
+  def test_api_boundary_does_not_add_to_garbage(self, filter_mode):
+    self.enter_context(config.traceback_filtering(filter_mode))
+    self.enter_context(disable_gc())
+
+    class MyObject:
+      def __call__(self):
+        f()
+
+    @traceback_util.api_boundary
+    def f():
+      g()
+
+    @traceback_util.api_boundary
+    def g():
+      raise ValueError('f')
+
+    o = MyObject()
+    weak_o = weakref.ref(o)
+    try:
+      o()
+    except ValueError:
+      pass
+    del o
+    self.assertIsNone(weak_o())
+
+@contextlib.contextmanager
+def disable_gc():
+  gc.disable()
+  gc.collect()
+  try:
+    yield
+  finally:
+    gc.enable()
 
 @jtu.with_config(jax_traceback_filtering='auto')  # JaxTestCase defaults to off.
 class UserContextTracebackTest(jtu.JaxTestCase):
@@ -424,14 +452,9 @@ class UserContextTracebackTest(jtu.JaxTestCase):
       e = exc
     self.assertIsNot(e, None)
     self.assertIn("invalid value", str(e))
-    if sys.version_info >= (3, 11):
-      self.assertIsInstance(
-          e.__cause__,
-          source_info_util.JaxStackTraceBeforeTransformation)
-    else:
-      self.assertIsInstance(
-          e.__cause__.__cause__,
-          source_info_util.JaxStackTraceBeforeTransformation)
+    self.assertIsInstance(
+        e.__cause__,
+        source_info_util.JaxStackTraceBeforeTransformation)
 
 
 class CustomErrorsTest(jtu.JaxTestCase):

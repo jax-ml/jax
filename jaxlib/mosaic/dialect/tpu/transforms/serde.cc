@@ -40,11 +40,46 @@ constexpr StringRef kMangledDialect = "stable_mosaic.";
 constexpr StringRef kVersionAttrName = "stable_mosaic.version";
 // When this is bumped, we should file a TODO to update the forward-compatible
 // version in tpu_custom_call.py in a month!
-constexpr int kVersion = 4;
+constexpr int kVersion = 9;
 
 using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
 
-LogicalResult enqueue_dma_upgrade(Operation* op, int version) {
+LogicalResult dynamic_gather_upgrade(Operation* op, int version, bool&) {
+  if (version < 5) {
+    auto dimension_attr = op->getAttrOfType<IntegerAttr>("dimension");
+    if (!dimension_attr || dimension_attr.getValue().getBitWidth() != 32) {
+      return op->emitError("Missing or invalid dimension attribute");
+    }
+    const int32_t dimension = dimension_attr.getInt();
+    op->removeAttr("dimension");
+    op->setAttr("dimensions",
+                DenseI32ArrayAttr::get(op->getContext(), {dimension}));
+  }
+  return success();
+}
+
+LogicalResult dynamic_gather_downgrade(Operation* op, int version, bool&) {
+  if (version < 5) {
+    auto dimensions_attr = op->getAttrOfType<DenseI32ArrayAttr>("dimensions");
+    if (!dimensions_attr) {
+      return op->emitError("Missing or invalid dimensions attribute");
+    }
+    const ArrayRef<int32_t> dimensions = dimensions_attr.asArrayRef();
+    if (dimensions.size() != 1) {
+      return op->emitError(
+          "Can only downgrade below version 5 when a single dimension is "
+          "specified.");
+    }
+    const int32_t dimension = dimensions.front();
+    op->removeAttr("dimensions");
+    op->setAttr("dimension",
+                mlir::IntegerAttr::get(
+                    mlir::IntegerType::get(op->getContext(), 32), dimension));
+  }
+  return success();
+}
+
+LogicalResult enqueue_dma_upgrade(Operation* op, int version, bool&) {
   // Added AttrSizedOperandSegments and core_id in version 2.
   if (version < 2) {
     if (op->getNumOperands() == 3) {  // Local DMA.
@@ -70,17 +105,98 @@ LogicalResult enqueue_dma_upgrade(Operation* op, int version) {
   return success();
 }
 
-LogicalResult enqueue_dma_downgrade(Operation* op, int version) {
-  if (version < 2) {
-    return op->emitError("Downgrade to version ") << version << " unsupported";
+LogicalResult enqueue_dma_downgrade(Operation* op, int version, bool&) {
+  if (version < 8) {
+    auto ordering_attr = op->getAttrOfType<BoolAttr>("strict_ordering");
+    if (ordering_attr != nullptr) {
+      if (ordering_attr.getValue()) {
+        return op->emitError(
+            "Can only downgrade below version 8 when strict ordering is not "
+            "set to True");
+      }
+      op->removeAttr("strict_ordering");
+    }
   }
   if (version < 4) {
     op->removeAttr("priority");
   }
+  if (version < 2) {
+    return op->emitError("Downgrade to version ") << version << " unsupported";
+  }
   return success();
 }
 
-LogicalResult semaphore_signal_upgrade(Operation* op, int version) {
+LogicalResult iota_upgrade(Operation* op, int version, bool&) {
+  if (version < 6) {
+    auto dimension_attr = op->getAttrOfType<IntegerAttr>("dimension");
+    if (!dimension_attr || dimension_attr.getValue().getBitWidth() != 32) {
+      return op->emitError("Missing or invalid dimension attribute");
+    }
+    const int32_t dimension = dimension_attr.getInt();
+    op->removeAttr("dimension");
+    op->setAttr("dimensions",
+                DenseI32ArrayAttr::get(op->getContext(), {dimension}));
+  }
+  return success();
+}
+
+LogicalResult iota_downgrade(Operation* op, int version, bool&) {
+  if (version < 6) {
+    auto dimensions_attr = op->getAttrOfType<DenseI32ArrayAttr>("dimensions");
+    if (!dimensions_attr) {
+      return op->emitError("Missing or invalid dimensions attribute");
+    }
+    const ArrayRef<int32_t> dimensions = dimensions_attr.asArrayRef();
+    if (dimensions.size() != 1) {
+      return op->emitError(
+          "Can only downgrade below version 5 when a single dimension is "
+          "specified.");
+    }
+    const int32_t dimension = dimensions.front();
+    op->removeAttr("dimensions");
+    op->setAttr("dimension",
+                mlir::IntegerAttr::get(
+                    mlir::IntegerType::get(op->getContext(), 32), dimension));
+  }
+  return success();
+}
+
+LogicalResult wait_dma2_upgrade(Operation* op, int version, bool&) {
+  if (version < 7) {
+    if (op->getNumOperands() != 3) {
+      return op->emitError("Unexpected operand count in tpu.wait_dma2: ")
+             << op->getNumOperands();
+    }
+    op->setAttr(
+      OpTrait::AttrSizedOperandSegments<
+          EnqueueDMAOp>::getOperandSegmentSizeAttr(),
+      mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 1, 1, 0, 0}));
+  }
+  return success();
+}
+
+LogicalResult wait_dma2_downgrade(Operation* op, int version, bool&) {
+  if (version < 7) {
+    auto operands = op->getAttrOfType<mlir::DenseI32ArrayAttr>(
+      OpTrait::AttrSizedOperandSegments<
+          EnqueueDMAOp>::getOperandSegmentSizeAttr());
+    if (!operands || operands.size() != 5) {
+      return op->emitError("Missing or invalid AttrSizedOperandSegments");
+    }
+    if (operands[3] || operands[4]) {
+      return op->emitError("Downgrade to version ")
+             << version << " impossible: device_id and/or core_id is set";
+    }
+    op->removeAttr(OpTrait::AttrSizedOperandSegments<
+                   EnqueueDMAOp>::getOperandSegmentSizeAttr());
+  }
+  if (version < 3) {
+    return op->emitError("Downgrade to version ") << version << " unsupported";
+  }
+  return success();
+}
+
+LogicalResult semaphore_signal_upgrade(Operation* op, int version, bool&) {
   // Added AttrSizedOperandSegments and core_id in version 2.
   if (version < 2) {
     if (op->getNumOperands() == 2) {  // Local signal.
@@ -98,7 +214,7 @@ LogicalResult semaphore_signal_upgrade(Operation* op, int version) {
   return success();
 }
 
-LogicalResult semaphore_signal_downgrade(Operation* op, int version) {
+LogicalResult semaphore_signal_downgrade(Operation* op, int version, bool&) {
   if (version < 2) {
     auto operands = op->getAttrOfType<mlir::DenseI32ArrayAttr>(
         OpTrait::AttrSizedOperandSegments<
@@ -116,7 +232,8 @@ LogicalResult semaphore_signal_downgrade(Operation* op, int version) {
   return success();
 }
 
-LogicalResult vector_multi_dim_reduce_upgrade(Operation* op, int version) {
+LogicalResult vector_multi_dim_reduce_upgrade(Operation* op, int version,
+                                              bool&) {
   // Changed reductions_dims from ArrayAttr of IntegerAttrs to DenseI64ArrayAttr
   // in version 3.
   if (version < 3) {
@@ -144,7 +261,8 @@ LogicalResult vector_multi_dim_reduce_upgrade(Operation* op, int version) {
   return success();
 }
 
-LogicalResult vector_multi_dim_reduce_downgrade(Operation* op, int version) {
+LogicalResult vector_multi_dim_reduce_downgrade(Operation* op, int version,
+                                                bool&) {
   if (version < 3) {
     return op->emitError("Downgrade to version ") << version << " unsupported";
   }
@@ -154,15 +272,22 @@ LogicalResult vector_multi_dim_reduce_downgrade(Operation* op, int version) {
 const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
   static auto rules = new llvm::StringMap<SerdeRuleType>{
       {EnqueueDMAOp::getOperationName(), enqueue_dma_upgrade},
+      {WaitDMA2Op::getOperationName(), wait_dma2_upgrade},
+      {DynamicGatherOp::getOperationName(), dynamic_gather_upgrade},
+      {IotaOp::getOperationName(), iota_upgrade},
       {SemaphoreSignalOp::getOperationName(), semaphore_signal_upgrade},
       {vector::MultiDimReductionOp::getOperationName(),
-       vector_multi_dim_reduce_upgrade}};
+       vector_multi_dim_reduce_upgrade},
+  };
   return *rules;
 }
 
 const llvm::StringMap<SerdeRuleType>& downgrade_rules() {
   static auto rules = new llvm::StringMap<SerdeRuleType>{
       {EnqueueDMAOp::getOperationName(), enqueue_dma_downgrade},
+      {WaitDMA2Op::getOperationName(), wait_dma2_downgrade},
+      {DynamicGatherOp::getOperationName(), dynamic_gather_downgrade},
+      {IotaOp::getOperationName(), iota_downgrade},
       {SemaphoreSignalOp::getOperationName(), semaphore_signal_downgrade},
       {vector::MultiDimReductionOp::getOperationName(),
        vector_multi_dim_reduce_downgrade}};
@@ -186,7 +311,8 @@ void MosaicSerdePass::runOnOperation() {
           {.dialect_prefix = kMangledDialect,
            .highest_version = kVersion,
            .version_attr_name = kVersionAttrName,
-           .serialize_version = serialize_version}))) {
+           .serialize_version = serialize_version},
+          /*keep_version_attr=*/keep_version_attr))) {
     signalPassFailure();
   }
 }

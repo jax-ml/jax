@@ -3,10 +3,10 @@ project(${SKBUILD_PROJECT_NAME} LANGUAGES CXX)
 
 option(JAX_FFI_EXAMPLE_ENABLE_CUDA "Enable CUDA support" OFF)
 
-find_package(Python 3.10 REQUIRED COMPONENTS Interpreter Development.Module)
+find_package(Python 3.11 REQUIRED COMPONENTS Interpreter Development.Module)
 execute_process(
   COMMAND "${Python_EXECUTABLE}"
-          "-c" "from jax.extend import ffi; print(ffi.include_dir())"
+          "-c" "from jax import ffi; print(ffi.include_dir())"
   OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE XLA_DIR)
 message(STATUS "XLA include directory: ${XLA_DIR}")
 

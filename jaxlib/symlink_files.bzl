@@ -84,6 +84,8 @@ symlink_inputs(
 )
 """
 
+visibility(["//jaxlib/..."])
+
 def _symlink_files_impl(ctx):
     flatten = ctx.attr.flatten
     strip_prefix = ctx.attr.strip_prefix

@@ -14,7 +14,8 @@
 """An example showcasing overlap on a (forward-only) PP-like workload."""
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 import time
 
 import numpy as np

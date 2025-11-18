@@ -64,6 +64,8 @@ MlirTpuImplicitDim wrap(mlir::tpu::VectorLayout::ImplicitDim implicit_dim) {
       return MlirTpuImplicitDimMinor;
     case mlir::tpu::VectorLayout::ImplicitDim::kSecondMinor:
       return MlirTpuImplicitDimSecondMinor;
+    case mlir::tpu::VectorLayout::ImplicitDim::kMinorAndSecondMinor:
+      return MlirTpuImplicitDimMinorAndSecondMinor;
   }
   LOG(FATAL) << "Invalid implicit dim (C++)";
 }
@@ -75,6 +77,8 @@ mlir::tpu::VectorLayout::ImplicitDim unwrap(MlirTpuImplicitDim implicit_dim) {
       return mlir::tpu::VectorLayout::ImplicitDim::kMinor;
     case MlirTpuImplicitDimSecondMinor:
       return mlir::tpu::VectorLayout::ImplicitDim::kSecondMinor;
+    case MlirTpuImplicitDimMinorAndSecondMinor:
+      return mlir::tpu::VectorLayout::ImplicitDim::kMinorAndSecondMinor;
   }
   LOG(FATAL) << "Invalid implicit dim (C)";
 }
@@ -115,7 +119,8 @@ mlir::tpu::ApplyVectorLayoutContext unwrap(
       .target_shape = unwrap(ctx.target_shape),
       .mxu_shape = {ctx.mxu_shape.contracting_size,
                     ctx.mxu_shape.non_contracting_size},
-      .max_sublanes_in_scratch = ctx.max_sublanes_in_scratch};
+      .max_sublanes_in_scratch = ctx.max_sublanes_in_scratch,
+      .shape_invariant_numerics = ctx.shape_invariant_numerics};
 }
 
 mlir::OpBuilder mlirTpuInsertionPointToOpBuilder(
@@ -313,7 +318,7 @@ bool mlirTpuVectorLayoutEquivalentTo(MlirTpuVectorLayout layout,
 void mlirTpuVectorLayoutPrint(
     MlirTpuVectorLayout layout, MlirStringCallback callback, void *userData) {
   mlir::detail::CallbackOstream stream(callback, userData);
-  unwrap(layout)->print<llvm::raw_ostream>(stream);
+  unwrap(layout)->print(stream);
 }
 
 bool mlirTpuVectorLayoutIsValid(MlirTpuVectorLayout layout,

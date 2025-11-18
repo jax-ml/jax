@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
+#include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -34,14 +35,15 @@ limitations under the License.
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "mlir/Support/WalkResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/transforms/infer_vector_layout_extensions.h"
@@ -60,8 +62,7 @@ using ImplicitDim = VectorLayout::ImplicitDim;
 
 static constexpr int kLayoutLog = 10;
 
-
-bool is_fully_replicated(const Layout &layout) {
+bool is_fully_replicated(const Layout& layout) {
   static LayoutOffsets replicated_offsets = {std::nullopt, std::nullopt};
   return layout.has_value() && layout->offsets() == replicated_offsets;
 }
@@ -88,11 +89,13 @@ class VectorLayoutInferer {
  public:
   explicit VectorLayoutInferer(int hardware_generation,
                                std::array<int64_t, 2> target_shape,
-                               const TpuTilingFlags &tpu_tiling_flags)
+                               const TpuTilingFlags& tpu_tiling_flags,
+                               bool shape_invariant_numerics)
       : hardware_generation_(hardware_generation),
         target_shape_({target_shape[0], target_shape[1]}),
         default_tiling_(target_shape),
-        tpu_tiling_flags_(tpu_tiling_flags) {}
+        tpu_tiling_flags_(tpu_tiling_flags),
+        shape_invariant_numerics_(shape_invariant_numerics) {}
 
 #define TPU_CHECK_OP(cond, msg) \
   if (!(cond)) {                \
@@ -136,10 +139,10 @@ class VectorLayoutInferer {
 
       bool has_vector_io = false;
       for (auto op : any_op.getOperands()) {
-        has_vector_io |= op.getType().isa<VectorType>();
+        has_vector_io |= isa<VectorType>(op.getType());
       }
       for (auto r : any_op.getResults()) {
-        has_vector_io |= r.getType().isa<VectorType>();
+        has_vector_io |= isa<VectorType>(r.getType());
       }
       if (!has_vector_io && any_op.getRegions().empty()) {
         SmallVector<Layout, 4> in_layout(any_op.getNumOperands(), kNoLayout);
@@ -151,11 +154,19 @@ class VectorLayoutInferer {
           any_op.emitOpError("Multi-result ops not supported");
           return failure();
         }
-      } else if (isa<arith::ExtFOp, arith::ExtSIOp>(any_op)) {
+      } else if (isa<arith::ExtSIOp, tpu::ExtFOp>(any_op)) {
         if (inferExt(&any_op).failed()) {
           return failure();
         }
-      } else if (isa<arith::TruncFOp, arith::TruncIOp>(any_op)) {
+      } else if (auto op = dyn_cast<tpu::SIToFPOp>(any_op);
+                 op &&
+                 cast<VectorType>(op.getIn().getType())
+                         .getElementTypeBitWidth() <
+                     cast<VectorType>(op.getType()).getElementTypeBitWidth()) {
+        if (inferExt(&any_op).failed()) {
+          return failure();
+        }
+      } else if (isa<arith::TruncIOp, tpu::TruncFOp>(any_op)) {
         if (inferTrunc(&any_op).failed()) {
           return failure();
         }
@@ -274,6 +285,10 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<tpu::ReduceIndexOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<tpu::BitcastOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -307,7 +322,11 @@ class VectorLayoutInferer {
           return failure();
         }
       } else if (auto op = dyn_cast<vector::ShapeCastOp>(any_op)) {
-        if (infer(op).failed()) {
+        if (inferReshape(op).failed()) {
+          return failure();
+        }
+      } else if (auto op = dyn_cast<tpu::ReshapeOp>(any_op)) {
+        if (inferReshape(op).failed()) {
           return failure();
         }
       } else if (auto op = dyn_cast<tpu::VectorStoreOp>(any_op)) {
@@ -320,7 +339,7 @@ class VectorLayoutInferer {
         if (inferStore<vector::StoreOp>(op).failed()) {
           return failure();
         }
-      } else if (auto op = dyn_cast<vector::TransposeOp>(any_op)) {
+      } else if (auto op = dyn_cast<tpu::TransposeOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
         }
@@ -410,18 +429,16 @@ class VectorLayoutInferer {
       op.emitOpError("Only one block functions supported");
       return failure();
     }
-    return inferBlock(
-        op.getBody().front(), [this](Operation *op) -> LogicalResult {
-          TPU_CHECK_OP(isa<func::ReturnOp>(op),
-                       "Expected func.return terminator");
-          for (Value o : op->getOperands()) {
-            TPU_CHECK_OP(!isa<VectorType>(o.getType()),
-                         "vector returns unsupported");
-          }
-          SmallVector<Layout, 4> in_layout(op->getNumOperands(), {kNoLayout});
-          setInLayout(op, in_layout);
-          return success();
-        });
+    return inferBlock(op.getBody().front(), [](Operation* op) -> LogicalResult {
+      TPU_CHECK_OP(isa<func::ReturnOp>(op), "Expected func.return terminator");
+      for (Value o : op->getOperands()) {
+        TPU_CHECK_OP(!isa<VectorType>(o.getType()),
+                     "vector returns unsupported");
+      }
+      SmallVector<Layout, 4> in_layout(op->getNumOperands(), {kNoLayout});
+      setInLayout(op, in_layout);
+      return success();
+    });
   }
 
   LogicalResult infer(memref::LoadOp op) {
@@ -462,7 +479,7 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(else_yield->getOperandTypes() == op->getResultTypes(),
                  "scf if results and else branch yield operands do not match");
     auto else_yield_in_layouts = getLayoutFromOperands(else_yield);
-    // Find a compatible layout from then and else branches for each reuslt. For
+    // Find a compatible layout from then and else branches for each result. For
     // example, if we yield offset (*, *) in then branch and offset (*, 0) in
     // else branch, the result offset should be (*, 0).
     SmallVector<Layout, 4> out_layouts;
@@ -622,6 +639,11 @@ class VectorLayoutInferer {
 
     SmallVector<Layout, 4> in_layouts = getLayoutFromOperands(op);
 
+    // The "after" region takes as arguments the values produced by the
+    // "before" region and uses `scf.yield` to supply new arguments for the
+    // "before" region. In other words, (op.inputs, beforeBody.inputs,
+    // afterBody.outputs) need to match each other and (op.outputs,
+    // beforeBody.outputs, afterBody.inputs) need to match each other.
     if (assumeLayoutsForBlockArgs(*op.getBeforeBody(), in_layouts).failed() ||
         inferBlock(*op.getBeforeBody(), match_condition).failed()) {
       return op.emitOpError(
@@ -629,78 +651,76 @@ class VectorLayoutInferer {
           "scf.while op");
     }
 
-    if (assumeLayoutsForBlockArgs(*op.getAfterBody(), in_layouts).failed() ||
+    auto *cond_op = op.getBeforeBody()->getTerminator();
+    auto cond_in_layouts = getLayoutFromOperands(cond_op);
+    auto cond_arg_layouts = ArrayRef<Layout>(cond_in_layouts).drop_front(1);
+
+    if (assumeLayoutsForBlockArgs(*op.getAfterBody(), cond_arg_layouts)
+            .failed() ||
         inferBlock(*op.getAfterBody(), match_yield).failed()) {
       return op.emitOpError(
           "failed to infer layout with initial layouts for after body in "
           "scf.while op");
     }
 
-    auto *cond_op = op.getBeforeBody()->getTerminator();
-    auto cond_in_layouts = getLayoutFromOperands(cond_op);
     auto *yield_op = op.getAfterBody()->getTerminator();
     auto yield_in_layouts = getLayoutFromOperands(yield_op);
 
-    // Find a compatible layout from condition body and loop body for each
-    // reuslt. For example, if we yield offset (*, *) in condition body and
+    // Find a compatible layout from before body's inputs and after body's
+    // outputs. For example, if we yield offset (*, *) in condition body and
     // offset (*, 0) in loop body, the result offset should be (*, 0).
-    SmallVector<Layout, 4> out_layouts;
-    out_layouts.reserve(op->getNumResults());
-    int out_idx = 0;
+    SmallVector<Layout, 4> carry_layouts;
+    carry_layouts.reserve(op->getNumOperands());
+    int carry_idx = 0;
     bool require_reinfer = false;
-    for (auto [in_layout, cond_layout, yield_layout, result] : llvm::zip_equal(
-             in_layouts, ArrayRef<Layout>(cond_in_layouts).drop_front(1),
-             yield_in_layouts, op.getResults())) {
-      if (auto vty = dyn_cast<VectorType>(result.getType())) {
+
+    // We only need to find compatible layouts for inputs layout of before body
+    // and output layout of the after body because the latter will be passed as
+    // inputs to the former.
+    for (auto [in_layout, yield_layout, input] :
+         llvm::zip_equal(in_layouts, yield_in_layouts, op.getOperands())) {
+      if (auto vty = dyn_cast<VectorType>(input.getType())) {
         if (!in_layout.has_value()) {
           return op.emitOpError("expected a vector layout for whileOp input ")
-                 << out_idx;
-        }
-        if (!cond_layout.has_value()) {
-          return op.emitOpError("expected a vector layout for condition input ")
-                 << out_idx + 1;  // ConditionOp's first input is 1 bit bool.
+                 << carry_idx;
         }
         if (!yield_layout.has_value()) {
           return op.emitOpError("expected a vector layout for yield input ")
-                 << out_idx;
+                 << carry_idx;
         }
         auto compatible_layout = VectorLayout::join(
-            cond_layout.value(), yield_layout.value(), vty.getShape());
-        if (compatible_layout.has_value()) {
-          compatible_layout = VectorLayout::join(
-              in_layout.value(), compatible_layout.value(), vty.getShape());
-        }
-        // If no compatible layout is found in layouts for input, condition and
-        // yield, the output layout falls back to a normalized layout which
-        // has offsets 0 and the native tiling.
+            in_layout.value(), yield_layout.value(), vty.getShape());
+        // If no compatible layout is found in layouts for input and yield, the
+        // output layout falls back to a normalized layout which has offsets 0
+        // and the native tiling.
         if (!compatible_layout.has_value()) {
-          compatible_layout = VectorLayout(in_layout->bitwidth(), {0, 0},
-                                           nativeTiling(in_layout->bitwidth()),
-                                           ImplicitDim::kNone);
+          if (vty.getRank() == 0) {
+            return op.emitOpError("Not implemented: 0D vector");
+          }
+          compatible_layout =
+              VectorLayout(in_layout->bitwidth(), {0, 0},
+                           nativeTiling(in_layout->bitwidth()),
+                           vty.getRank() == 1 ? ImplicitDim::kSecondMinor
+                                              : ImplicitDim::kNone);
         }
         if (!require_reinfer &&
             (compatible_layout.value() != in_layout.value() ||
-             compatible_layout.value() != cond_layout.value() ||
              compatible_layout.value() != yield_layout.value())) {
           require_reinfer = true;
         }
-        out_layouts.push_back(compatible_layout);
+        carry_layouts.push_back(compatible_layout);
       } else {
         if (in_layout.has_value()) {
           return op.emitOpError("expected no layout for whileOp input ")
-                 << out_idx;
-        }
-        if (cond_layout.has_value()) {
-          return op.emitOpError("expected no layout for condition input ")
-                 << out_idx + 1;  // ConditionOp's first input is 1 bit bool.
+                 << carry_idx;
         }
         if (yield_layout.has_value()) {
           return op.emitOpError("expected no layout for yield input ")
-                 << out_idx;
+                 << carry_idx;
         }
-        out_layouts.push_back(kNoLayout);
+        carry_layouts.push_back(kNoLayout);
       }
-      ++out_idx;
+      ++carry_idx;
     }
     if (require_reinfer) {
       clearBlockLayouts(*op.getBeforeBody());
@@ -711,25 +731,33 @@ class VectorLayoutInferer {
       // consistent across all branches. To ensure that, we need to reprocess
       // layout inference for the entire body with the final consolidated
       // layout.
-      if (assumeLayoutsForBlockArgs(*op.getBeforeBody(), out_layouts)
+      if (assumeLayoutsForBlockArgs(*op.getBeforeBody(), carry_layouts)
               .failed() ||
           inferBlock(*op.getBeforeBody(), match_condition).failed()) {
         return op.emitOpError(
             "failed to infer layout with compatible layouts for before body in "
             "scf.while op");
       }
-      if (assumeLayoutsForBlockArgs(*op.getAfterBody(), out_layouts).failed() ||
+
+      cond_op = op.getBeforeBody()->getTerminator();
+      cond_in_layouts = getLayoutFromOperands(cond_op);
+      cond_arg_layouts = ArrayRef<Layout>(cond_in_layouts).drop_front(1);
+
+      if (assumeLayoutsForBlockArgs(*op.getAfterBody(), cond_arg_layouts)
+              .failed() ||
           inferBlock(*op.getAfterBody(), match_yield).failed()) {
         return op.emitOpError(
             "failed to infer layout with compatible layouts for after body in "
             "scf.while op");
       }
     }
-    std::copy(out_layouts.begin(), out_layouts.end(),
-              cond_in_layouts.begin() + 1);  // Skip the first 1 bit bool.
+
+    // The input layouts should be set as the consolidated carry layouts and
+    // the output layouts should be set as the condition arg layouts which is
+    // inferred along the way when input layouts are determined.
     setInLayout(cond_op, cond_in_layouts);
-    setInLayout(yield_op, out_layouts);
-    setLayout(op, out_layouts, out_layouts);
+    setInLayout(yield_op, carry_layouts);
+    setLayout(op, carry_layouts, cond_arg_layouts);
     return success();
   }
 
@@ -757,9 +785,28 @@ class VectorLayoutInferer {
     if (op.getType().getRank() < 2) {
       NYI("Unsupported 1D shape");
     }
+    // TODO(b/337384645): Currently we assume {0, 0} offsets in the input
+    // layout. Relax this assumption.
     auto layout = VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
                                ImplicitDim::kNone);
-    setLayout(op, {layout, kNoLayout}, layout);
+    // Calculate the offsets for the output layout.
+    LayoutOffsets offsets_out = layout.offsets();
+    // We assume there are no implicit dims.
+    int tiling_dim = op.getDimension() - (op.getType().getRank() - 2);
+    if (auto amount = op.getAmount().getDefiningOp<arith::ConstantOp>();
+        amount && (tiling_dim == 0 || tiling_dim == 1)) {
+      if (auto integer_attr = dyn_cast<IntegerAttr>(amount.getValue())) {
+        const int64_t tile_size = layout.tiling()[tiling_dim];
+        const int64_t dim_size = op.getType().getShape()[op.getDimension()];
+        const int64_t shift = integer_attr.getValue().getSExtValue();
+        if (dim_size % tile_size != 0) {
+          offsets_out[tiling_dim] = (dim_size - (shift % dim_size)) % tile_size;
+        }
+      }
+    }
+    auto out_layout = VectorLayout(bitwidth, offsets_out,
+                                   nativeTiling(bitwidth), ImplicitDim::kNone);
+    setLayout(op, {layout, kNoLayout}, out_layout);
     return success();
   }
 
@@ -772,6 +819,9 @@ class VectorLayoutInferer {
                  "Expect a valid concatenate dimension");
     VectorType res_ty = op.getResult().getType();
 
+    // TODO(tlongeri): This logic is flawed in that it assumes kNone or
+    // kSecondMinor implicit dim. We force this in the tiled case, but it might
+    // it might make us hit it unnecessarily when we could do a no-op concat.
     std::optional<int64_t> tiling_dim;
     if (dimension == res_ty.getRank() - 1) {
       tiling_dim = 1;
@@ -796,6 +846,12 @@ class VectorLayoutInferer {
           res_rank == 1 ? ImplicitDim::kSecondMinor : ImplicitDim::kNone;
       std::array<int64_t, 2> vreg_slice =
           VectorLayout::vregSlice(target_shape_, bitwidth, tiling);
+
+      LayoutOffsets res_layout_offsets(
+          {first_layout->offsets()[0].value_or(0) % vreg_slice[0],
+           first_layout->offsets()[1].value_or(0) % vreg_slice[1]});
+      res_layout_offsets[tiling_dim.value()] = 0;
+
       for (int i = 0; i < op.getSources().size(); ++i) {
         // Compute the offset per source.
         // Ex: for a cat of (10, 128), (10, 128) on dim 0, where the
@@ -804,29 +860,22 @@ class VectorLayoutInferer {
         // by 2, so the offset for the second input is 2.
         ArrayRef<int64_t> op_shape =
             cast<VectorType>(op.getSources()[i].getType()).getShape();
-        Layout op_layout = op_layouts[i];
         int64_t offset_amount = starting_point % vreg_slice[tiling_dim.value()];
+        LayoutOffsets in_offsets = res_layout_offsets;
         if (offset_amount >= tiling[tiling_dim.value()]) {
           return op.emitError(
               "Not implemented: Input offsets outside of the first tile");
         }
-        SmallVector<int64_t> in_idx{op_layout->offsets()[0].value_or(0),
-                                    op_layout->offsets()[1].value_or(0)};
-        in_idx[tiling_dim.value()] = offset_amount;
+        in_offsets[tiling_dim.value()] = offset_amount;
         starting_point += op_shape[dimension];
-        in_layouts.push_back(VectorLayout(bitwidth, {in_idx[0], in_idx[1]},
-                                          tiling, implicit_dim));
+        in_layouts.push_back(
+            VectorLayout(bitwidth, in_offsets, tiling, implicit_dim));
       }
-      SmallVector<int64_t> res_layout_offsets(
-          {first_layout->offsets()[0].value_or(0),
-           first_layout->offsets()[1].value_or(0)});
-      res_layout_offsets[tiling_dim.value()] = 0;
       // TODO(mvoz): A tiny optimization we could do here later is to
       // no-op setting tiling when sublane dim size is aligned to sublane
       // tiling.
       VectorLayout res_layout =
-          VectorLayout(bitwidth, {res_layout_offsets[0], res_layout_offsets[1]},
-                       tiling, implicit_dim);
+          VectorLayout(bitwidth, res_layout_offsets, tiling, implicit_dim);
       setLayout(op, in_layouts, res_layout);
       return success();
     } else {
@@ -941,22 +990,55 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(tpu::DynamicGatherOp op) {
-    if (op.getType().getShape() != ArrayRef<int64_t>(target_shape_) &&
-        op.getType().getElementTypeBitWidth() != 32) {
-      return op.emitOpError(
-          "Not implemented: DynamicGatherOp only supports 32-bit VREG shape");
-    }
-    if (op.getDimension() != 0 && op.getDimension() != 1) {
-      return op.emitOpError(
-          "Not implemented: Only dimension 0 and 1 are supported");
-    }
     // TODO(jevinjiang): we could preserve some offsets such as replicated
     // offset but since we are forcing all operands and result to be the same
     // layout, we can set all offsets to zero for now. Also maybe we should
     // consider adding this to elementwise rule.
-    auto layout = VectorLayout(kNativeBitwidth, {0, 0}, default_tiling_,
-                               ImplicitDim::kNone);
+    const int bitwidth = op.getType().getElementTypeBitWidth();
+    if (bitwidth != 8 && bitwidth != 16 && bitwidth != 32) {
+      return op.emitOpError(
+          "Not implemented: Only 8-, 16- or 32-bit gathers supported");
+    }
+    if (bitwidth != op.getIndices().getType().getElementTypeBitWidth()) {
+      return op.emitOpError(
+          "Not implemented: Gather indices and result have different "
+          "bitwidths");
+    }
+    VectorLayout layout(bitwidth, {0, 0}, nativeTiling(bitwidth),
+                        ImplicitDim::kNone);
     setLayout(op, {layout, layout}, layout);
+    return success();
+  }
+
+  LogicalResult infer(tpu::ReduceIndexOp op) {
+    auto input_ty = op.getInput().getType();
+    int8_t bitwidth = input_ty.getElementTypeBitWidth();
+    int64_t input_rank = input_ty.getRank();
+
+    TPU_CHECK_OP(input_ty.getElementType().isF32(),
+                 "Not implemented: Only f32 is supported.")
+    TPU_CHECK_OP(input_rank > 1,
+                 "Not implemented: Only input rank > 1 is supported.");
+    auto some_layout = getLayout(op.getInput());
+    TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
+    if (op.getAxis() < input_rank - 2) {
+      VectorLayout& in_layout = *some_layout;
+      setLayout(op, in_layout, in_layout);
+    } else {
+      VectorLayout in_layout(bitwidth, {0, 0}, nativeTiling(bitwidth),
+                             ImplicitDim::kNone);
+      LayoutOffsets out_offsets = {0, 0};
+      ImplicitDim out_implicit_dim = ImplicitDim::kNone;
+      if (op.getAxis() == input_rank - 1) {
+        out_implicit_dim = ImplicitDim::kMinor;
+        out_offsets[1] = std::nullopt;
+      } else if (op.getAxis() == input_rank - 2) {
+        out_implicit_dim = ImplicitDim::kSecondMinor;
+      }
+      VectorLayout out_layout(bitwidth, out_offsets, nativeTiling(bitwidth),
+                              out_implicit_dim);
+      setLayout(op, in_layout, out_layout);
+    }
     return success();
   }
 
@@ -1034,17 +1116,16 @@ class VectorLayoutInferer {
 
   LogicalResult infer(tpu::IotaOp op) {
     auto ty = op.getResult().getType();
-    TPU_CHECK_OP(ty.getElementType().isSignlessInteger(32),
-                 "Only 32-bit integer iota supported");
+    const int bitwidth = ty.getElementTypeBitWidth();
     TPU_CHECK_OP(ty.getRank() >= 2, "iota rank below 2D unsupported");
-    LayoutOffsets offsets = {0, 0};
-    if (op.getDimension() == ty.getRank() - 1) {
-      offsets[0] = std::nullopt;
+    LayoutOffsets offsets = {std::nullopt, std::nullopt};
+    if (llvm::is_contained(op.getDimensions(), ty.getRank() - 2)) {
+      offsets[0] = 0;
     }
-    if (op.getDimension() == ty.getRank() - 2) {
-      offsets[1] = std::nullopt;
+    if (llvm::is_contained(op.getDimensions(), ty.getRank() - 1)) {
+      offsets[1] = 0;
     }
-    setOutLayout(op, VectorLayout(kNativeBitwidth, offsets, default_tiling_,
+    setOutLayout(op, VectorLayout(bitwidth, offsets, nativeTiling(bitwidth),
                                   ImplicitDim::kNone));
     return success();
   }
@@ -1118,9 +1199,6 @@ class VectorLayoutInferer {
 
   LogicalResult infer(vector::ExtractOp op) {
     TPU_CHECK_OP(!op.hasDynamicPosition(), "dynamic indices not supported");
-    TPU_CHECK_OP(
-        op.getSourceVectorType().getElementTypeBitWidth() == kNativeBitwidth,
-        "Only 32-bit types supported");
     auto layout = getLayout(op.getVector());
     TPU_CHECK_OP(layout.has_value(), "missing vector layout");
     if (VectorType res_vty = dyn_cast<VectorType>(op.getResult().getType());
@@ -1151,6 +1229,9 @@ class VectorLayoutInferer {
         setLayout(op, layout, layout);
       }
     } else {
+      TPU_CHECK_OP(
+          op.getSourceVectorType().getElementTypeBitWidth() == kNativeBitwidth,
+          "Only 32-bit scalar result vector::ExtractOp is supported");
       setLayout(op,
                 VectorLayout(kNativeBitwidth, {0, 0}, layout->tiling(),
                              layout->implicit_dim()),
@@ -1293,7 +1374,7 @@ class VectorLayoutInferer {
           (*(offsets.end() - 1) + *input_layout->offsets()[1]) % vreg_slice[1];
     }
     for (auto stride : strides_attr) {
-      TPU_CHECK_OP(stride.cast<IntegerAttr>().getInt() == 1,
+      TPU_CHECK_OP(cast<IntegerAttr>(stride).getInt() == 1,
                    "Only trivial strides supported.");
     }
 
@@ -1311,8 +1392,6 @@ class VectorLayoutInferer {
     llvm::ArrayRef<int64_t> dims = op.getReductionDims();
     int64_t src_rank = src_ty.getRank();
     auto acc_layout = getLayout(op.getAcc());
-    TPU_CHECK_OP(is_fully_replicated(acc_layout),
-                 "only constant accumulators supported");
     TPU_CHECK_OP(
         src_ty.getElementTypeBitWidth() == 32 ||
             src_ty.getElementTypeBitWidth() == 16,
@@ -1336,6 +1415,8 @@ class VectorLayoutInferer {
             std::find(dims.begin(), dims.end(), src_rank - 1) != dims.end(),
             false};
         break;
+      case VectorLayout::ImplicitDim::kMinorAndSecondMinor:
+        return op.emitOpError("Not implemented: double implicit dimensions");
     }
     if ((reduces[0] || reduces[1]) &&
         !src_layout.hasNativeTiling(target_shape_)) {
@@ -1343,41 +1424,91 @@ class VectorLayoutInferer {
                                 nativeTiling(src_layout.bitwidth()),
                                 src_layout.implicit_dim());
     }
+    ImplicitDim out_implicit_dim = src_layout.implicit_dim();
+    if ((reduces[0] && reduces[1]) ||
+        (src_layout.implicit_dim() != ImplicitDim::kNone &&
+         (reduces[0] || reduces[1]))) {
+      if (dst_ty.getRank() > 0 && *(dst_ty.getShape().end() - 1) == 1) {
+        out_implicit_dim = VectorLayout::ImplicitDim::kSecondMinor;
+      } else {
+        // TODO(tlongeri): Remove this once we have proper support for double
+        // implicit dims.
+        if (src_ty.getRank() > 1 &&
+            src_layout.implicit_dim() != ImplicitDim::kNone) {
+          LayoutOffsets new_src_offsets = src_layout.offsets();
+          switch (src_layout.implicit_dim()) {
+            case ImplicitDim::kNone:
+              CHECK(false);  // We excluded this case above.
+            case ImplicitDim::kSecondMinor:
+              CHECK((reduces == std::array<bool, 2>{false, true}));
+              new_src_offsets[0] = new_src_offsets[0].value_or(0);
+              break;
+            case ImplicitDim::kMinor:
+              CHECK((reduces == std::array<bool, 2>{true, false}));
+              reduces = {false, true};
+              new_src_offsets[1] = new_src_offsets[0];
+              new_src_offsets[0] = 0;
+              break;
+            case ImplicitDim::kMinorAndSecondMinor:
+              CHECK(false);  // Checked in switch statement above
+          }
+          out_implicit_dim = ImplicitDim::kMinor;
+          src_layout = VectorLayout(src_layout.bitwidth(), new_src_offsets,
+                                    src_layout.tiling(), ImplicitDim::kNone);
+        } else {
+          op.emitOpError(
+              "Not implemented: reductions over both trailing dimensions are "
+              "only supported when the resulting value has a trailing axis of "
+              "size 1");
+        }
+      }
+    } else if (reduces[0]) {
+      out_implicit_dim = VectorLayout::ImplicitDim::kSecondMinor;
+    } else if (reduces[1]) {
+      out_implicit_dim = VectorLayout::ImplicitDim::kMinor;
+    }
     LayoutOffsets out_offsets = src_layout.offsets();
     for (int i = 0; i < out_offsets.size(); ++i) {
       if (reduces[i]) {
         out_offsets[i] = std::nullopt;
       }
     }
-    ImplicitDim out_implicit_dim = src_layout.implicit_dim();
-    if ((reduces[0] && reduces[1]) ||
-        (src_layout.implicit_dim() != ImplicitDim::kNone &&
-         (reduces[0] || reduces[1]))) {
-      TPU_CHECK_OP(
-          dst_ty.getRank() > 0 && *(dst_ty.getShape().end() - 1) == 1,
-          "Not implemented: reductions over both trailing dimensions are only "
-          "supported when the resulting value has a trailing axis of size 1");
-      out_implicit_dim = VectorLayout::ImplicitDim::kSecondMinor;
-    } else if (reduces[0]) {
-      out_implicit_dim = VectorLayout::ImplicitDim::kSecondMinor;
-    } else if (reduces[1]) {
-      out_implicit_dim = VectorLayout::ImplicitDim::kMinor;
+    // When shape_invariant_numerics is enabled, the input type is a float type,
+    // and reduction is ADD or MUL, force zero offsets to the reduction
+    // dimensions, use native tiling and default implicit dim for the source
+    // layout. This is because we want to guarantee more stable numerics by
+    // disabling some optimizations in apply-vector-layout pass which may change
+    // the numerics.
+    if (shape_invariant_numerics_ && isa<FloatType>(src_ty.getElementType()) &&
+        (op.getKind() == vector::CombiningKind::ADD ||
+         op.getKind() == vector::CombiningKind::MUL)) {
+      src_layout = VectorLayout(
+          src_layout.bitwidth(),
+          {reduces[0] ? 0 : src_layout.offsets()[0],
+           reduces[1] ? 0 : src_layout.offsets()[1]},
+          nativeTiling(src_layout.bitwidth()),
+          src_rank > 1 ? ImplicitDim::kNone : ImplicitDim::kSecondMinor);
     }
-    setLayout(op, {src_layout, acc_layout},
-              VectorLayout(src_layout.bitwidth(), out_offsets,
-                           src_layout.tiling(), out_implicit_dim));
+    auto out_layout = VectorLayout(src_layout.bitwidth(), out_offsets,
+                                   src_layout.tiling(), out_implicit_dim);
+    setLayout(
+        op,
+        {src_layout, is_fully_replicated(acc_layout) ? acc_layout : out_layout},
+        out_layout);
     return success();
   }
 
-  LogicalResult infer(vector::ShapeCastOp op) {
-    auto src_ty = op.getSourceVectorType();
+  LogicalResult inferReshape(Operation* op) {
+    CHECK(op->getNumOperands() == 1 && op->getNumResults() == 1);
+    auto src_ty = cast<VectorType>(op->getOperand(0).getType());
     auto src_shape = src_ty.getShape();
-    auto res_ty = op.getResultVectorType();
+    auto res_ty = cast<VectorType>(op->getResult(0).getType());
     auto res_shape = res_ty.getShape();
-    auto some_src_layout = getLayout(op.getSource());
+    auto some_src_layout = getLayout(op->getOperand(0));
     TPU_CHECK_OP(some_src_layout, "missing vector layout");
     auto layout = *some_src_layout;
     const unsigned bitwidth = src_ty.getElementTypeBitWidth();
+    const int8_t packing = kNativeBitwidth / bitwidth;
     const std::array<int64_t, 2> native_tiling = nativeTiling(bitwidth);
     const std::array<int64_t, 2> src_tiled_ishape =
         layout.getImplicitTiledDims(src_shape, 1);
@@ -1501,7 +1632,117 @@ class VectorLayoutInferer {
                              native_tiling, ImplicitDim::kNone));
       return success();
     }
-    op.emitOpError("unsupported shape cast");
+
+    // Find the small tiling such that each vreg holds a continuous slice of the
+    // flatten data and each row is either fully occupied or is all padding.
+    auto small_second_minor_tiling_layout =
+        [&](ArrayRef<int64_t> shape) -> std::optional<VectorLayout> {
+      const int64_t elements_per_vreg = native_tiling[0] * native_tiling[1];
+      if (shape.size() < 2) {
+        return std::nullopt;
+      }
+      if (!llvm::isPowerOf2_32(bitwidth)) {
+        return std::nullopt;
+      }
+      int64_t second_minor_tiling = elements_per_vreg / shape.back();
+      bool can_use_1d_tiling = shape.back() % elements_per_vreg == 0;
+      std::array<int64_t, 2> tiling;
+      if (can_use_1d_tiling) {
+        tiling = {1, target_shape_[1] * packing};
+      } else if (elements_per_vreg % shape.back() == 0 &&
+                 second_minor_tiling % packing == 0 &&
+                 second_minor_tiling <= native_tiling[0]) {
+        tiling = {second_minor_tiling, target_shape_[1]};
+      } else {
+        return std::nullopt;
+      }
+      // TODO(b/440370770): Preserve replicated offsets.
+      auto layout = VectorLayout(bitwidth, {0, 0}, tiling, ImplicitDim::kNone);
+      auto vreg_slice = layout.vregSlice(target_shape_);
+      if (shape.back() != vreg_slice[1] && !can_use_1d_tiling) {
+        return std::nullopt;
+      }
+      return layout;
+    };
+
+    // Use the small tiling if each vreg holds a contiguous slice of the
+    // flattened data and each row is either fully occupied or is all
+    // padding. It makes reshape a row shuffle within a vreg.
+    //
+    // For example,
+    // - (4, 256) with (4, 128) tiling to (1, 1024) with (1, 128) tiling is
+    //  to shuffle sublane from [0, 1, 2, 3, 4, 5, 6, 7] to
+    //  [0, 4, 1, 5, 2, 6, 3, 7]
+    // - (4, 256) with (4, 128) tiling to (2, 512) with (2, 128) tiling is
+    //  to shuffle sublane from [0, 1, 2, 3, 4, 5, 6, 7] to
+    //  [0, 2, 4, 6, 1, 3, 5, 7]
+    auto src_small_second_minor_tiling_layout =
+        small_second_minor_tiling_layout(src_shape);
+    auto res_small_second_minor_tiling_layout =
+        small_second_minor_tiling_layout(res_shape);
+
+    if (src_small_second_minor_tiling_layout.has_value() &&
+        res_small_second_minor_tiling_layout.has_value()) {
+      auto src_vreg_slice =
+          src_small_second_minor_tiling_layout->vregSlice(target_shape_);
+      auto res_vreg_slice =
+          res_small_second_minor_tiling_layout->vregSlice(target_shape_);
+      bool src_vreg_slice_aligned =
+          src_shape[src_shape.size() - 2] % src_vreg_slice[0] == 0;
+      bool res_vreg_slice_aligned =
+          res_shape[res_shape.size() - 2] % res_vreg_slice[0] == 0;
+      if (
+          // Both input and output are aligned to its vreg slice.
+          (src_vreg_slice_aligned && res_vreg_slice_aligned) ||
+          // Because the last dims are equal vreg slice lane dim, we know that
+          // in 2D tiled dim, vregs are organized from top to bottom. By
+          // checking the product of the last two dims, we make sure the tiled
+          // dims have the same number of vregs/elements, and only the last or
+          // bottom-most vreg has padding.
+          // For example, it's valid to reshape i32 (12, 128) to (6, 256) with
+          // input tiling (8, 128) and output tiling (4, 128), but not valid to
+          // reshape i32 (12, 128) to (3, 2, 256) with input tiling (8, 128) and
+          // output tiling (4, 128).
+          (!src_vreg_slice_aligned && !res_vreg_slice_aligned &&
+           llvm::product_of(src_shape.take_back(2)) ==
+               llvm::product_of(res_shape.take_back(2)))) {
+        setLayout(op, *src_small_second_minor_tiling_layout,
+                  *res_small_second_minor_tiling_layout);
+        return success();
+      }
+    }
+    if (src_small_second_minor_tiling_layout.has_value() &&
+        llvm::product_of(src_shape.take_back(2)) == res_shape.back()) {
+      // For example, reshape i32 (8, 10, 128) to (8, 1280) with input tiling
+      // (8, 128) and output tiling (1, 128).
+      setLayout(
+          op, *src_small_second_minor_tiling_layout,
+          VectorLayout(layout.bitwidth(), {0, 0},
+                       {1, target_shape_[1] * packing}, ImplicitDim::kNone));
+      return success();
+    }
+    if (res_small_second_minor_tiling_layout.has_value() &&
+        llvm::product_of(res_shape.take_back(2)) == src_shape.back()) {
+      setLayout(
+          op,
+          VectorLayout(layout.bitwidth(), {0, 0},
+                       {1, target_shape_[1] * packing}, ImplicitDim::kNone),
+          *res_small_second_minor_tiling_layout);
+      return success();
+    }
+
+    // Shape casts for {32/16/8}-bit vector types with rank >= 2.
+    if (bitwidth >= 8 && bitwidth <= kNativeBitwidth && res_shape.size() >= 2 &&
+        src_shape.size() >= 2 && src_shape.back() % native_tiling[1] == 0 &&
+        res_shape.back() % native_tiling[1] == 0) {
+      setLayout(op,
+                VectorLayout(layout.bitwidth(), {0, 0}, native_tiling,
+                             ImplicitDim::kNone),
+                VectorLayout(layout.bitwidth(), {0, 0}, native_tiling,
+                             ImplicitDim::kNone));
+      return success();
+    }
+    op->emitOpError("infer-vector-layout: unsupported shape cast");
     return failure();
   }
 
@@ -1622,7 +1863,7 @@ class VectorLayoutInferer {
     return success();
   }
 
-  LogicalResult infer(vector::TransposeOp op) {
+  LogicalResult infer(tpu::TransposeOp op) {
     auto permutation = op.getPermutation();
     TPU_CHECK_OP(permutation.size() > 1,
                  "Vector and scalar transpose should be a no-op and removed");
@@ -1633,21 +1874,35 @@ class VectorLayoutInferer {
     auto src_ty = op.getSourceVectorType();
     TPU_CHECK_OP(permutation.size() == src_ty.getRank(),
                  "Transpose permutation has incorrect rank");
-    for (auto dim : permutation.drop_back(2)) {
-      TPU_CHECK_OP(dim < src_ty.getRank() - 2,
-                   "Unsupported transpose permutation - minor dims into major");
-    }
-    for (auto dim : permutation.take_back(2)) {
-      TPU_CHECK_OP(dim >= src_ty.getRank() - 2,
-                   "Unsupported transpose permutation - major dims into minor");
+    bool untiled_tiled_swap = false;
+    const int64_t rank = src_ty.getRank();
+    if (permutation.take_back(3) ==
+        ArrayRef<int64_t>({rank - 2, rank - 3, rank - 1})) {
+      untiled_tiled_swap = true;
+    } else {
+      for (auto dim : permutation.drop_back(2)) {
+        TPU_CHECK_OP(dim < src_ty.getRank() - 2,
+                     "Unsupported transpose permutation - minor dims into "
+                     "major > 3 dimensions");
+      }
+      for (auto dim : permutation.take_back(2)) {
+        TPU_CHECK_OP(dim >= src_ty.getRank() - 2,
+                     "Unsupported transpose permutation - major dims into "
+                     "minor > 3 dimensions");
+      }
     }
     Layout required_layout = some_layout;
+    if (untiled_tiled_swap) {
+      required_layout = VectorLayout(layout.bitwidth(), LayoutOffsets{0, 0},
+                                     layout.tiling(), ImplicitDim::kNone);
     // Require native tiling if we're going to use the XLU.
-    if (permutation[permutation.size() - 1] == permutation.size() - 2) {
+    } else if (permutation[permutation.size() - 1] == permutation.size() - 2) {
       auto native_tiling = nativeTiling(layout.bitwidth());
       required_layout = VectorLayout(layout.bitwidth(), LayoutOffsets{0, 0},
                                      native_tiling, ImplicitDim::kNone);
     }
+    // TODO(b/455654089): Consider using different layouts for input and output
+    // when there are benefits.
     setLayout(op, required_layout, required_layout);
     return success();
   }
@@ -1665,8 +1920,12 @@ class VectorLayoutInferer {
     unsigned dst_bitwidth = dst_ty.getElementTypeBitWidth();
     auto some_layout = getLayout(op->getOperand(0));
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
-    if (dyn_cast<arith::ExtFOp>(op)) {
-      TPU_CHECK_OP(dst_bitwidth == 32, "Only supported extensions to 32-bit");
+    if (isa<tpu::ExtFOp>(op)) {
+      TPU_CHECK_OP(
+        dst_bitwidth == 32 || dst_bitwidth == 16 ||
+          (dst_bitwidth == 8 && hardware_generation_ >= 7),
+        "Only support extensions to 32-bit (float32), 16-bit (bfloat16), "
+        "or to 8-bit (float8) on TPUv7+");
     }
     auto &layout = *some_layout;
     Layout src_layout;
@@ -1785,9 +2044,7 @@ class VectorLayoutInferer {
                  "elementwise ops with no operands unsupported");
     // Elementwise operators can be parameterized by both scalars and shaped
     // types, so make sure we infer layout based on a shaped-typed operand.
-    std::optional<VectorLayout> out_layout_candidate;
     std::optional<VectorLayout> out_layout;
-    SmallVector<std::optional<Layout>, 4> in_layouts;
     int64_t bitwidth = -1;
     // Find the bitwidth of the operands/results. They must all be the same
     // except for the case of i1s, which use a "fake" bitwidth for layouts.
@@ -1817,64 +2074,51 @@ class VectorLayoutInferer {
           DCHECK(!out_layout.has_value());
           bitwidth = layout.bitwidth();
           out_layout = layout;
-          in_layouts.push_back(layout);
         } else if (bitwidth != layout.bitwidth()) {
           DCHECK_EQ(vty.getElementTypeBitWidth(), 1);
-          in_layouts.push_back(std::nullopt);
-        } else if (is_fully_replicated(some_layout)) {
-          // If the input is fully replicated, don't use it to commit to any
-          // layout. Replicated values are easy to relayout.
-          in_layouts.push_back(std::nullopt);
-          out_layout_candidate = layout;
         } else if (!out_layout) {
           // TODO(apaszke): There are probably smarter ways to choose layout.
           out_layout = layout;
-          in_layouts.push_back(some_layout);
+        } else if (auto new_out = VectorLayout::join(layout, *out_layout,
+                                                     vty.getShape())) {
+          out_layout = *new_out;
         } else {
-          if (auto new_out =
-                  VectorLayout::join(layout, *out_layout, vty.getShape())) {
-            out_layout = *new_out;
-            in_layouts.push_back(some_layout);
-          } else {
-            // When we detect a layout conflict we cannot reconcile, we remove
-            // any replication bits that might have been present in out_layout,
-            // since there is no guarantee that the conflicting inputs could
-            // even become replicated.
-            DCHECK_EQ(out_layout->bitwidth(), bitwidth);
-            out_layout =
-                VectorLayout(bitwidth,
-                             {out_layout->offsets()[0].value_or(0),
-                              out_layout->offsets()[1].value_or(0)},
-                             out_layout->tiling(), out_layout->implicit_dim());
-            in_layouts.push_back(std::nullopt);
-          }
+          // When we detect a layout conflict we cannot reconcile, we remove any
+          // replication bits that might have been present in out_layout, since
+          // there is no guarantee that the conflicting inputs could even
+          // become replicated.
+          DCHECK_EQ(out_layout->bitwidth(), bitwidth);
+          out_layout =
+              VectorLayout(bitwidth,
+                           {out_layout->offsets()[0].value_or(0),
+                            out_layout->offsets()[1].value_or(0)},
+                           out_layout->tiling(), out_layout->implicit_dim());
         }
       } else {
         TPU_CHECK_OP(op->getOperand(i).getType().isSignlessIntOrIndexOrFloat(),
                      "expected only vector and scalar operands");
-        in_layouts.push_back({kNoLayout});
       }
     }
     Layout final_out_layout = std::nullopt;
-    if (auto out_vty = dyn_cast<VectorType>(op->getResult(0).getType())) {
+    if (isa<VectorType>(op->getResult(0).getType())) {
       if (out_layout) {
         final_out_layout = *out_layout;
-      } else if (out_layout_candidate) {
-        final_out_layout = *out_layout_candidate;
       } else {
-        op->emitOpError(
-            "Elementwise op has no vector operands but returns a vector?");
-        return failure();
+        if (bitwidth == -1) {
+          // bitwidth may be unset when all operands are i1s.
+          bitwidth = 32;
+        }
+        // out_layout might not be set if all operands are i1s and their
+        // layout bitwidths don't match the output bitwidth.
+        final_out_layout = VectorLayout(
+            bitwidth, {0, 0}, nativeTiling(bitwidth), ImplicitDim::kNone);
       }
     }
-    CHECK_EQ(in_layouts.size(), op->getNumOperands()) << Print(op);
-    SmallVector<Layout, 4> final_in_layouts;
-    for (int i = 0; i < in_layouts.size(); ++i) {
-      if (in_layouts[i]) {
-        final_in_layouts.push_back(*in_layouts[i]);
-      } else {
-        final_in_layouts.push_back(final_out_layout);
-      }
+    SmallVector<Layout> final_in_layouts(op->getNumOperands());
+    for (unsigned i = 0; i < op->getNumOperands(); ++i) {
+      final_in_layouts[i] = isa<VectorType>(op->getOperand(i).getType())
+                                ? final_out_layout
+                                : kNoLayout;
     }
     setLayout(op, final_in_layouts, final_out_layout);
     return success();
@@ -1893,12 +2137,11 @@ class VectorLayoutInferer {
   }
 
   bool allUsersRequireNativeTiling(Value x) {
-    for (OpOperand &operand : x.getUses()) {
-      if (isa<tpu::MatmulOp>(operand.getOwner())) {
+    for (Operation *user : getNontrivialTransitiveUsers(x)) {
+      if (isa<tpu::MatmulOp>(user)) {
         continue;
       }
-      if (auto reduce =
-              dyn_cast<vector::MultiDimReductionOp>(operand.getOwner())) {
+      if (auto reduce = dyn_cast<vector::MultiDimReductionOp>(user)) {
         bool reduces_tiled_dims = false;
         for (int64_t dim : reduce.getReductionDims()) {
           if (dim >= reduce.getSourceVectorType().getRank() - 2) {
@@ -1910,7 +2153,7 @@ class VectorLayoutInferer {
           continue;
         }
       }
-      if (auto transpose = dyn_cast<vector::TransposeOp>(operand.getOwner())) {
+      if (auto transpose = dyn_cast<tpu::TransposeOp>(user)) {
         auto perm = transpose.getPermutation();
         auto rank = perm.size();
         // Only permutations that actually swap the last two dims need it.
@@ -1920,7 +2163,7 @@ class VectorLayoutInferer {
         }
         // Fall through.
       }
-      if (auto store = dyn_cast<vector::StoreOp>(operand.getOwner())) {
+      if (auto store = dyn_cast<vector::StoreOp>(user)) {
         auto maybe_tiling = verifyMemoryTiling(
             store, getMemRefLayout(store.getBase()).getTiles(),
             store.getMemRefType().getRank(),
@@ -2086,6 +2329,7 @@ class VectorLayoutInferer {
   std::array<int64_t, 2> target_shape_;
   std::array<int64_t, 2> default_tiling_;
   TpuTilingFlags tpu_tiling_flags_;
+  bool shape_invariant_numerics_;
 
   // TODO(b/342235360): Deprecate force_first_tile_offsets_ once we fully
   // remove the restriction that offsets must fall within the first tile.
@@ -2100,22 +2344,25 @@ struct InferVectorLayoutPass
     : public impl::InferVectorLayoutPassBase<InferVectorLayoutPass> {
   InferVectorLayoutPass(int hardware_generation,
                         std::array<int64_t, 2> target_shape,
-                        TpuTilingFlags tpu_tiling_flags) {
+                        TpuTilingFlags tpu_tiling_flags,
+                        bool shape_invariant_numerics) {
     this->hardware_generation = hardware_generation;
     this->sublane_count = target_shape[0];
     this->lane_count = target_shape[1];
     this->tpu_tiling_flags = tpu_tiling_flags;
+    this->shape_invariant_numerics = shape_invariant_numerics;
   }
   void runOnOperation() override {
     // Fail if hardware_generation has not been set from the default value.
     if (hardware_generation < 0) {
-      getOperation().emitError("hardware_generation must be set") << hardware_generation;
+      getOperation().emitError("hardware_generation must be set")
+          << hardware_generation;
       signalPassFailure();
       return;
     }
     func::FuncOp func = getOperation();
     VectorLayoutInferer run(hardware_generation, {sublane_count, lane_count},
-                            tpu_tiling_flags);
+                            tpu_tiling_flags, shape_invariant_numerics);
     if (run.infer(func).failed()) {
       signalPassFailure();
     }
@@ -2128,9 +2375,10 @@ struct InferVectorLayoutPass
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferVectorLayoutPass(
     int hardware_generation, std::array<int64_t, 2> target_shape,
-    const TpuTilingFlags &tpu_tiling_flags) {
-  return std::make_unique<InferVectorLayoutPass>(
-      hardware_generation, target_shape, tpu_tiling_flags);
+    const TpuTilingFlags& tpu_tiling_flags, bool shape_invariant_numerics) {
+  return std::make_unique<InferVectorLayoutPass>(hardware_generation,
+                                                 target_shape, tpu_tiling_flags,
+                                                 shape_invariant_numerics);
 }
 
 }  // namespace mlir::tpu

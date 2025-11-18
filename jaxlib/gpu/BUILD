@@ -14,13 +14,15 @@
 
 # Shared CUDA/ROCM GPU kernels.
 
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+# Placeholder: load proto_library
+
 load(
     "//jaxlib:jax.bzl",
     "cc_proto_library",
     "jax_visibility",
     "xla_py_proto_library",
 )
-# Placeholder: load proto_library
 
 licenses(["notice"])
 
@@ -59,8 +61,6 @@ exports_files(srcs = [
     "solver_handle_pool.h",
     "solver_interface.cc",
     "solver_interface.h",
-    "solver_kernels.cc",
-    "solver_kernels.h",
     "solver_kernels_ffi.cc",
     "solver_kernels_ffi.h",
     "sparse.cc",
@@ -120,7 +120,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/strings:string_view",
         "@nanobind",
         "@xla//xla:util",
         "@xla//xla/ffi/api:c_api",

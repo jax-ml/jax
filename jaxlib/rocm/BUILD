@@ -14,6 +14,7 @@
 
 # AMD HIP kernels
 
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
@@ -104,7 +105,6 @@ cc_library(
         "@local_config_rocm//rocm:miopen",
         "@local_config_rocm//rocm:rocm_headers",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_status",
     ],
 )
 
@@ -144,24 +144,6 @@ cc_library(
 )
 
 cc_library(
-    name = "hipsolver_kernels",
-    srcs = ["//jaxlib/gpu:solver_kernels.cc"],
-    hdrs = ["//jaxlib/gpu:solver_kernels.h"],
-    deps = [
-        ":hip_gpu_kernel_helpers",
-        ":hip_solver_handle_pool",
-        ":hip_vendor",
-        "//jaxlib:kernel_helpers",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/synchronization",
-        "@local_config_rocm//rocm:hipsolver",
-        "@local_config_rocm//rocm:rocm_headers",
-        "@xla//xla/service:custom_call_status",
-    ],
-)
-
-cc_library(
     name = "hipsolver_interface",
     srcs = ["//jaxlib/gpu:solver_interface.cc"],
     hdrs = ["//jaxlib/gpu:solver_interface.h"],
@@ -195,7 +177,6 @@ cc_library(
         "@local_config_rocm//rocm:hipsolver",
         "@local_config_rocm//rocm:rocm_headers",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_status",
     ],
 )
 
@@ -209,20 +190,13 @@ nanobind_extension(
     features = ["-use_header_modules"],
     module_name = "_solver",
     deps = [
-        ":hip_gpu_kernel_helpers",
-        ":hip_solver_handle_pool",
         ":hip_vendor",
-        ":hipsolver_kernels",
         ":hipsolver_kernels_ffi",
         "//jaxlib:kernel_nanobind_helpers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:str_format",
         "@local_config_rocm//rocm:hipblas",
         "@local_config_rocm//rocm:hipsolver",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
-        "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
 
@@ -244,16 +218,17 @@ cc_library(
         ":ffi_wrapper",
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
+        "//jaxlib:ffi_helpers",
         "//jaxlib:kernel_helpers",
         "//jaxlib/gpu:handle_pool",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:hipsparse",
         "@local_config_rocm//rocm:rocm_headers",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_status",
     ],
 )
 
@@ -271,7 +246,6 @@ nanobind_extension(
         ":hip_vendor",
         ":hipsparse_kernels",
         "//jaxlib:absl_status_casters",
-        "//jaxlib:kernel_helpers",
         "//jaxlib:kernel_nanobind_helpers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
@@ -279,14 +253,12 @@ nanobind_extension(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:hipsparse",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
-        "@xla//xla/service:custom_call_status",
         "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
@@ -354,7 +326,6 @@ cc_library(
         "@local_config_rocm//rocm:rocm_headers",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_status",
     ],
 )
 
@@ -368,7 +339,6 @@ rocm_library(
         "//jaxlib:kernel_helpers",
         "@local_config_rocm//rocm:rocm_headers",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_status",
     ],
 )
 
@@ -386,6 +356,7 @@ nanobind_extension(
         ":hip_prng_kernels",
         ":hip_vendor",
         "//jaxlib:kernel_nanobind_helpers",
+        "@local_config_rocm//rocm:hip_runtime",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
     ],
@@ -428,6 +399,7 @@ nanobind_extension(
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/cpu:lapack_kernels",
         "@com_google_absl//absl/base",
+        "@local_config_rocm//rocm:hip_runtime",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
         "@xla//xla/ffi/api:ffi",
@@ -452,7 +424,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/tsl/platform:env",
@@ -496,7 +467,7 @@ nanobind_extension(
         "//jaxlib/gpu:triton_cc_proto",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:string_view",
+        "@local_config_rocm//rocm:hip_runtime",
         "@nanobind",
     ],
 )
@@ -525,6 +496,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":hip_vendor",
+        "//jaxlib:ffi",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:inlined_vector",
@@ -533,14 +505,16 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@dlpack",
         "@nanobind",
         "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
         "@xla//xla:comparison_util",
         "@xla//xla:shape_util",
+        "@xla//xla:util",
         "@xla//xla:xla_data_proto_cc",
         "@xla//xla/ffi:ffi_api",
+        "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/pjrt:host_callback",
         "@xla//xla/pjrt:transpose",
@@ -560,7 +534,7 @@ nanobind_extension(
         "//jaxlib/gpu:gpu_plugin_extension",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
-        "@local_config_rocm//rocm:hip",
+        "@local_config_rocm//rocm:hip_runtime",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
     ],

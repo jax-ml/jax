@@ -38,11 +38,9 @@ limitations under the License.
 #include "third_party/gpus/cudnn/cudnn.h"
 // IWYU pragma: end_exports
 
-#if CUDA_VERSION < 11080
-#error "JAX requires CUDA 11.8 or newer."
-#endif  // CUDA_VERSION < 11080
-
-#define JAX_GPU_HAVE_SPARSE 1
+#if CUDA_VERSION < 12000
+#error "JAX requires CUDA 12.0 or newer."
+#endif  // CUDA_VERSION < 12000
 
 // CUDA-11.8 introduces FP8 E4M3/E5M2 types.
 #define JAX_GPU_HAVE_FP8 1
@@ -152,7 +150,8 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUDNN_STATUS_SUCCESS CUDNN_STATUS_SUCCESS
 #define GPUDNN_WGRAD_MODE_ADD CUDNN_WGRAD_MODE_ADD
 #define GPUDNN_RNN_ALGO_STANDARD CUDNN_RNN_ALGO_STANDARD
-#define GPUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED CUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED
+#define GPUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED \
+  CUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED
 #define GPUDNN_RNN_PADDED_IO_ENABLED CUDNN_RNN_PADDED_IO_ENABLED
 #define GPUDNN_DEFAULT_MATH CUDNN_DEFAULT_MATH
 #define GPUDNN_FMA_MATH CUDNN_FMA_MATH
@@ -198,6 +197,18 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpusolverDnDorgqr_bufferSize cusolverDnDorgqr_bufferSize
 #define gpusolverDnCungqr_bufferSize cusolverDnCungqr_bufferSize
 #define gpusolverDnZungqr_bufferSize cusolverDnZungqr_bufferSize
+#define gpusolverDnSpotrf cusolverDnSpotrf
+#define gpusolverDnDpotrf cusolverDnDpotrf
+#define gpusolverDnCpotrf cusolverDnCpotrf
+#define gpusolverDnZpotrf cusolverDnZpotrf
+#define gpusolverDnSpotrf_bufferSize cusolverDnSpotrf_bufferSize
+#define gpusolverDnDpotrf_bufferSize cusolverDnDpotrf_bufferSize
+#define gpusolverDnCpotrf_bufferSize cusolverDnCpotrf_bufferSize
+#define gpusolverDnZpotrf_bufferSize cusolverDnZpotrf_bufferSize
+#define gpusolverDnSpotrfBatched cusolverDnSpotrfBatched
+#define gpusolverDnDpotrfBatched cusolverDnDpotrfBatched
+#define gpusolverDnCpotrfBatched cusolverDnCpotrfBatched
+#define gpusolverDnZpotrfBatched cusolverDnZpotrfBatched
 #define gpusolverDnSsyevd cusolverDnSsyevd
 #define gpusolverDnDsyevd cusolverDnDsyevd
 #define gpusolverDnCheevd cusolverDnCheevd
@@ -289,10 +300,28 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpusparseSpMM_bufferSize cusparseSpMM_bufferSize
 #define gpusparseSpMV cusparseSpMV
 #define gpusparseSpMV_bufferSize cusparseSpMV_bufferSize
+
 #define gpusparseSgtsv2 cusparseSgtsv2
 #define gpusparseDgtsv2 cusparseDgtsv2
+#define gpusparseCgtsv2 cusparseCgtsv2
+#define gpusparseZgtsv2 cusparseZgtsv2
 #define gpusparseSgtsv2_bufferSizeExt cusparseSgtsv2_bufferSizeExt
 #define gpusparseDgtsv2_bufferSizeExt cusparseDgtsv2_bufferSizeExt
+#define gpusparseCgtsv2_bufferSizeExt cusparseCgtsv2_bufferSizeExt
+#define gpusparseZgtsv2_bufferSizeExt cusparseZgtsv2_bufferSizeExt
+
+#define gpusparseSgtsv2StridedBatch_bufferSizeExt \
+  cusparseSgtsv2StridedBatch_bufferSizeExt
+#define gpusparseDgtsv2StridedBatch_bufferSizeExt \
+  cusparseDgtsv2StridedBatch_bufferSizeExt
+#define gpusparseCgtsv2StridedBatch_bufferSizeExt \
+  cusparseCgtsv2StridedBatch_bufferSizeExt
+#define gpusparseZgtsv2StridedBatch_bufferSizeExt \
+  cusparseZgtsv2StridedBatch_bufferSizeExt
+#define gpusparseSgtsv2StridedBatch cusparseSgtsv2StridedBatch
+#define gpusparseDgtsv2StridedBatch cusparseDgtsv2StridedBatch
+#define gpusparseCgtsv2StridedBatch cusparseCgtsv2StridedBatch
+#define gpusparseZgtsv2StridedBatch cusparseZgtsv2StridedBatch
 
 #define GPUSPARSE_INDEX_16U CUSPARSE_INDEX_16U
 #define GPUSPARSE_INDEX_32I CUSPARSE_INDEX_32I
@@ -391,10 +420,25 @@ typedef cusolverDnParams_t gpusolverDnParams_t;
 #define gpusolverDnCreateParams cusolverDnCreateParams
 #define gpusolverDnDestroyParams cusolverDnDestroyParams
 
+#define gpusolverGetVersion cusolverGetVersion
+
 #define gpusolverDnXsyevd_bufferSize cusolverDnXsyevd_bufferSize
 #define gpusolverDnXsyevd cusolverDnXsyevd
+#define gpusolverDnXsyevBatched_bufferSize cusolverDnXsyevBatched_bufferSize
+#define gpusolverDnXsyevBatched cusolverDnXsyevBatched
 #define gpusolverDnXgesvd_bufferSize cusolverDnXgesvd_bufferSize
 #define gpusolverDnXgesvd cusolverDnXgesvd
+
+#define gpusolverDnXgesvdp_bufferSize cusolverDnXgesvdp_bufferSize
+#define gpusolverDnXgesvdp cusolverDnXgesvdp
+
+#if CUDA_VERSION >= 12060
+#define JAX_GPU_HAVE_SOLVER_GEEV 1
+#define gpusolverDnXgeev_bufferSize cusolverDnXgeev_bufferSize
+#define gpusolverDnXgeev cusolverDnXgeev
+#else
+#define JAX_GPU_HAVE_SOLVER_GEEV 0
+#endif  // CUDA_VERSION >= 12060
 
 namespace jax::JAX_GPU_NAMESPACE {
 namespace {
@@ -411,13 +455,13 @@ constexpr uint32_t kNumThreadsPerWarp = 32;
 #include "rocm/include/hipsolver/hipsolver.h"
 #include "rocm/include/hipsparse/hipsparse.h"
 #include "rocm/include/miopen/miopen.h"
+#include "rocm/rocm_config.h"
 // IWYU pragma: end_exports
 
 #define JAX_GPU_NAMESPACE hip
 #define JAX_GPU_PREFIX "hip"
 #define JAX_GPU_PLUGIN_NAME "rocm"
 
-#define JAX_GPU_HAVE_SPARSE 1
 #define JAX_GPU_HAVE_64_BIT 0
 #define JAX_GPU_HAVE_FP8 0
 // TODO(Ruturaj4): Currently equivalent API does exist in
@@ -427,12 +471,18 @@ constexpr uint32_t kNumThreadsPerWarp = 32;
 typedef hipFloatComplex gpuComplex;
 typedef hipDoubleComplex gpuDoubleComplex;
 
+#if TF_ROCM_VERSION >= 70000
+typedef hipFloatComplex gpublasComplex;
+typedef hipDoubleComplex gpublasDoubleComplex;
+#else
 typedef hipblasComplex gpublasComplex;
 typedef hipblasDoubleComplex gpublasDoubleComplex;
-typedef hipsolverHandle_t gpusolverDnHandle_t;
+#endif  // TF_ROCM_VERSION >= 70000
+
+typedef struct hipsolverHandle_* gpusolverDnHandle_t;
 typedef hipblasFillMode_t gpublasFillMode_t;
 typedef hipsolverFillMode_t gpusolverFillMode_t;
-typedef hipblasHandle_t gpublasHandle_t;
+typedef struct hipblasHandle_* gpublasHandle_t;
 typedef hipblasOperation_t gpublasOperation_t;
 typedef hipblasStatus_t gpublasStatus_t;
 typedef hipCtx_t gpuContext_t;
@@ -464,7 +514,7 @@ typedef hipsolverSyevjInfo_t gpuSyevjInfo_t;
 typedef hipsolverEigMode_t gpusolverEigMode_t;
 typedef hipsolverStatus_t gpusolverStatus_t;
 typedef hipsparseIndexType_t gpusparseIndexType_t;
-typedef hipsparseHandle_t gpusparseHandle_t;
+typedef struct hipsparseHandle_* gpusparseHandle_t;
 typedef hipsparseOperation_t gpusparseOperation_t;
 typedef hipsparseStatus_t gpusparseStatus_t;
 typedef hipsparseSpMatDescr_t gpusparseSpMatDescr_t;
@@ -478,7 +528,11 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPU_C_64F HIP_C_64F
 #define GPU_R_64F HIP_R_64F
 
-#define gpublasCreate hipblasCreate
+namespace{
+inline hipblasStatus_t gpublasCreate(gpublasHandle_t* handle) {
+    return hipblasCreate(reinterpret_cast<hipblasHandle_t*>(handle));
+}
+}
 #define gpublasSetStream hipblasSetStream
 #define gpublasSgeqrfBatched hipblasSgeqrfBatched
 #define gpublasDgeqrfBatched hipblasDgeqrfBatched
@@ -529,7 +583,11 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUDNN_LSTM miopenLSTM
 #define GPUDNN_BIDIRECTIONAL miopenRNNbidirection
 
-#define gpusolverDnCreate hipsolverCreate
+namespace{
+inline hipsolverStatus_t gpusolverDnCreate(gpusolverDnHandle_t* handle) {
+    return hipsolverCreate(reinterpret_cast<hipsolverHandle_t*>(handle));
+}
+}
 #define gpusolverDnSetStream hipsolverSetStream
 #define gpusolverDnCreateSyevjInfo hipsolverCreateSyevjInfo
 #define gpusolverDnDestroySyevjInfo hipsolverDestroySyevjInfo
@@ -561,6 +619,18 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpusolverDnDorgqr_bufferSize hipsolverDorgqr_bufferSize
 #define gpusolverDnCungqr_bufferSize hipsolverCungqr_bufferSize
 #define gpusolverDnZungqr_bufferSize hipsolverZungqr_bufferSize
+#define gpusolverDnSpotrf hipsolverSpotrf
+#define gpusolverDnDpotrf hipsolverDpotrf
+#define gpusolverDnCpotrf hipsolverCpotrf
+#define gpusolverDnZpotrf hipsolverZpotrf
+#define gpusolverDnSpotrf_bufferSize hipsolverSpotrf_bufferSize
+#define gpusolverDnDpotrf_bufferSize hipsolverDpotrf_bufferSize
+#define gpusolverDnCpotrf_bufferSize hipsolverCpotrf_bufferSize
+#define gpusolverDnZpotrf_bufferSize hipsolverZpotrf_bufferSize
+#define gpusolverDnSpotrfBatched hipsolverDnSpotrfBatched
+#define gpusolverDnDpotrfBatched hipsolverDnDpotrfBatched
+#define gpusolverDnCpotrfBatched hipsolverDnCpotrfBatched
+#define gpusolverDnZpotrfBatched hipsolverDnZpotrfBatched
 #define gpusolverDnSsyevd hipsolverSsyevd
 #define gpusolverDnDsyevd hipsolverDsyevd
 #define gpusolverDnCheevd hipsolverCheevd
@@ -617,7 +687,11 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUBLAS_OP_C HIPBLAS_OP_C
 
 #define gpusparseCooSetStridedBatch hipsparseCooSetStridedBatch
-#define gpusparseCreate hipsparseCreate
+namespace{
+inline hipsparseStatus_t gpusparseCreate(gpusparseHandle_t* handle) {
+    return hipsparseCreate(reinterpret_cast<hipsparseHandle_t*>(handle));
+}
+}
 #define gpusparseSetStream hipsparseSetStream
 #define gpusparseCreateCoo hipsparseCreateCoo
 #define gpusparseCreateCsr hipsparseCreateCsr
@@ -636,10 +710,28 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpusparseSpMM_bufferSize hipsparseSpMM_bufferSize
 #define gpusparseSpMV hipsparseSpMV
 #define gpusparseSpMV_bufferSize hipsparseSpMV_bufferSize
+
 #define gpusparseSgtsv2 hipsparseSgtsv2
 #define gpusparseDgtsv2 hipsparseDgtsv2
+#define gpusparseCgtsv2 hipsparseCgtsv2
+#define gpusparseZgtsv2 hipsparseZgtsv2
 #define gpusparseSgtsv2_bufferSizeExt hipsparseSgtsv2_bufferSizeExt
 #define gpusparseDgtsv2_bufferSizeExt hipsparseDgtsv2_bufferSizeExt
+#define gpusparseCgtsv2_bufferSizeExt hipsparseCgtsv2_bufferSizeExt
+#define gpusparseZgtsv2_bufferSizeExt hipsparseZgtsv2_bufferSizeExt
+
+#define gpusparseSgtsv2StridedBatch_bufferSizeExt \
+  hipsparseSgtsv2StridedBatch_bufferSizeExt
+#define gpusparseDgtsv2StridedBatch_bufferSizeExt \
+  hipsparseDgtsv2StridedBatch_bufferSizeExt
+#define gpusparseCgtsv2StridedBatch_bufferSizeExt \
+  hipsparseCgtsv2StridedBatch_bufferSizeExt
+#define gpusparseZgtsv2StridedBatch_bufferSizeExt \
+  hipsparseZgtsv2StridedBatch_bufferSizeExt
+#define gpusparseSgtsv2StridedBatch hipsparseSgtsv2StridedBatch
+#define gpusparseDgtsv2StridedBatch hipsparseDgtsv2StridedBatch
+#define gpusparseCgtsv2StridedBatch hipsparseCgtsv2StridedBatch
+#define gpusparseZgtsv2StridedBatch hipsparseZgtsv2StridedBatch
 
 #define GPUSPARSE_INDEX_16U HIPSPARSE_INDEX_16U
 #define GPUSPARSE_INDEX_32I HIPSPARSE_INDEX_32I
@@ -715,6 +807,8 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuDeviceProp hipDeviceProp_t
 #define gpuGetDeviceProperties hipGetDeviceProperties
 #define gpuLaunchCooperativeKernel hipLaunchCooperativeKernel
+
+#define JAX_GPU_HAVE_SOLVER_GEEV 0
 
 namespace jax::JAX_GPU_NAMESPACE {
 namespace {

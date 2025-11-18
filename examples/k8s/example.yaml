@@ -1,7 +1,7 @@
 apiVersion: jobset.x-k8s.io/v1alpha2
 kind: JobSet
 metadata:
-  name: example
+  name: jaxjob
 spec:
   replicatedJobs:
   - name: workers
@@ -12,20 +12,19 @@ spec:
         backoffLimit: 0
         template:
           spec:
-            serviceAccountName: training-job-sa
+            serviceAccountName: jax-job-sa  # kubectl apply -f svc-acct.yaml
             restartPolicy: Never
-            imagePullSecrets: 
+            imagePullSecrets:
+              # https://k8s.io/docs/tasks/configure-pod-container/pull-image-private-registry/
             - name: null
             containers:
             - name: main
-              image: PLACEHOLDER
-              imagePullPolicy: IfNotPresent
+              image: null  # e.g. ghcr.io/nvidia/jax:jax
+              imagePullPolicy: Always
               resources:
-                requests:
-                  cpu: 900m
-                  nvidia.com/gpu: null
                 limits:
-                  cpu: 1
+                  cpu: 900m
+                  # https://k8s.io/docs/tasks/manage-gpus/scheduling-gpus/
                   nvidia.com/gpu: null
               command: 
                 - python

@@ -13,19 +13,21 @@
 # limitations under the License.
 
 import collections
-from typing import overload, Any, Callable, Sequence
+from typing import overload, Any
+from collections.abc import Callable, Sequence
 
 import numpy as np
 import opt_einsum
 
+from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
-from jax._src.api import jit, named_call
+from jax._src.export import shape_poly
 from jax._src.lax import lax
-from jax._src.lax.lax import PrecisionLike
 from jax._src.numpy import util
-from jax._src.sharding_impls import canonicalize_sharding, NamedSharding, PartitionSpec as P
+from jax._src.pjit import auto_axes
+from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.util import partition_list, set_module, unzip2
 
@@ -44,7 +46,7 @@ def einsum(
     *operands: ArrayLike,
     out: None = None,
     optimize: str | bool | list[tuple[int, ...]] = "auto",
-    precision: PrecisionLike = None,
+    precision: lax.PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
     out_sharding=None,
@@ -57,7 +59,7 @@ def einsum(
     *operands: ArrayLike | Sequence[Any],
     out: None = None,
     optimize: str | bool | list[tuple[int, ...]] = "auto",
-    precision: PrecisionLike = None,
+    precision: lax.PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
     out_sharding=None,
@@ -69,7 +71,7 @@ def einsum(
     *operands,
     out: None = None,
     optimize: str | bool | list[tuple[int, ...]] = "auto",
-    precision: PrecisionLike = None,
+    precision: lax.PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
     out_sharding=None,
@@ -307,13 +309,33 @@ def einsum(
         *operands, einsum_call=True, use_blas=True, optimize=path_type)
 
   contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)  # pytype: disable=attribute-error
+  num_contractions = len(contractions)
 
-  jit_einsum = jit(_einsum, static_argnums=(1, 2, 3, 4, 5), inline=True)
+  out_sharding = canonicalize_sharding(out_sharding, 'einsum')
+  if out_sharding is not None and not isinstance(out_sharding, NamedSharding):
+    raise NotImplementedError(
+        "`out_sharding` argument of `einsum` only supports NamedSharding"
+        " instances.")
+
+  jit_einsum = api.jit(_einsum, static_argnums=(1, 2, 3, 4, 5), inline=True)
   if spec is not None:
-    jit_einsum = named_call(jit_einsum, name=spec)
+    jit_einsum = api.named_call(jit_einsum, name=spec)
   operand_arrays = list(util.ensure_arraylike_tuple("einsum", operands))
-  return jit_einsum(operand_arrays, contractions, precision,
-                    preferred_element_type, _dot_general, out_sharding)
+
+  if num_contractions > 1 and out_sharding is not None:
+    # TODO(yashkatariya): If the out_sharding is unreduced, figure out a way to
+    # run the dot_general unreduced_rule on these einsums because right now we
+    # drop into Auto mode skipping the checks happening in the rule.
+    return auto_axes(
+        jit_einsum,
+        axes=out_sharding.mesh.explicit_axes,
+        out_sharding=out_sharding,
+    )(operand_arrays, contractions=contractions, precision=precision,
+      preferred_element_type=preferred_element_type, _dot_general=_dot_general,
+      out_sharding=None)
+  else:
+    return jit_einsum(operand_arrays, contractions, precision,
+                      preferred_element_type, _dot_general, out_sharding)
 
 
 # Enable other modules to override einsum_contact_path.
@@ -397,10 +419,8 @@ def einsum_path(
 
   .. _opt_einsum: https://github.com/dgasmith/opt_einsum
   """
-  if optimize is True:
-    optimize = 'optimal'
-  elif optimize is False:
-    optimize = Unoptimized()
+  if isinstance(optimize, bool):
+    optimize = 'optimal' if optimize else Unoptimized()
   return opt_einsum.contract_path(subscripts, *operands, optimize=optimize)
 
 def _removechars(s, chars):
@@ -415,22 +435,21 @@ def _einsum(
     _dot_general=lax.dot_general,
     out_sharding=None,
 ):
-  out_sharding = canonicalize_sharding(out_sharding, 'einsum')
-  if out_sharding is not None and not isinstance(out_sharding, NamedSharding):
-    raise NotImplementedError(
-        "`out_sharding` argument of `einsum` only supports NamedSharding"
-        " instances. Please file a bug if this is not enough for your use case.")
-  dtypes.check_user_dtype_supported(preferred_element_type, "einsum")
   if preferred_element_type is None:
-    preferred_element_type, output_weak_type = dtypes.result_type(*operands, return_weak_type_flag=True)
+    preferred_element_type, output_weak_type = dtypes.result_type(
+        *operands, return_weak_type_flag=True)
   else:
+    preferred_element_type = dtypes.check_and_canonicalize_user_dtype(
+        preferred_element_type, 'einsum'
+    )
     output_weak_type = False
 
   def sum(x, axes):
     if dtypes.result_type(x, preferred_element_type) != x.dtype:
       x = x.astype(preferred_element_type)
-    return lax.reduce(x, np.array(0, x.dtype),
-                      lax.add if x.dtype != bool else lax.bitwise_or, axes)
+    return lax.reduce(
+        x, np.array(0, x.dtype), lax.add if x.dtype != bool else lax.bitwise_or,
+        axes, out_sharding)
 
   def sum_uniques(operand, names, uniques):
     if uniques:
@@ -460,8 +479,7 @@ def _einsum(
     sqez_axes, keep_axes = partition_list(keep, list(range(operand.ndim)))
     return lax.squeeze(operand, sqez_axes), "".join(names[i] for i in keep_axes)
 
-  for i, (operand_indices, contracted_names_set, einstr) in enumerate(contractions):
-    last_contraction = i == len(contractions) - 1
+  for operand_indices, contracted_names_set, einstr in contractions:
     contracted_names = sorted(contracted_names_set)
     input_str, result_names = einstr.split('->')
     input_names = input_str.split(',')
@@ -541,33 +559,27 @@ def _einsum(
       names = batch_names_str + remaining_rhs_names + remaining_lhs_names
       if names == result_names:
         dimension_numbers = ((rhs_cont, lhs_cont), (rhs_batch, lhs_batch))
-        k_out_sharding = ({} if out_sharding is None else
-                          {'out_sharding': out_sharding})
+        dot_out_sharding = ({} if out_sharding is None else
+                            {'out_sharding': out_sharding})
         operand = _dot_general(rhs, lhs, dimension_numbers, precision,
                                preferred_element_type=preferred_element_type,
-                               **k_out_sharding)
+                               **dot_out_sharding)
       else:
         names = batch_names_str + remaining_lhs_names + remaining_rhs_names
-        if not last_contraction:
-          dot_general_out_sharding = None
-        elif out_sharding is not None and names != result_names:
-          if len(result_names) > len(out_sharding.spec):
-            out_sharding = out_sharding.with_spec(
-                out_sharding.spec._normalized_spec_for_aval(len(result_names)))
-          spec = out_sharding.spec
-          inverse_spec = tuple(spec[result_names.index(name)] for name in names)
-          dot_general_out_sharding = NamedSharding(
-              out_sharding.mesh, P(*inverse_spec))
-        else:
-          dot_general_out_sharding = out_sharding  # type: ignore
         dimension_numbers = ((lhs_cont, rhs_cont), (lhs_batch, rhs_batch))
-        dot_general_out_sharding = ({} if dot_general_out_sharding is None else  # type: ignore
-                                    {'out_sharding': dot_general_out_sharding})
+        out_sharding = (_get_inverse_sharding(out_sharding, names, result_names)
+                        if out_sharding is not None and names != result_names
+                        else out_sharding)
+        dot_out_sharding = ({} if out_sharding is None else  # type: ignore
+                            {'out_sharding': out_sharding})
         operand = _dot_general(lhs, rhs, dimension_numbers, precision,
-                               preferred_element_type=preferred_element_type,
-                               **dot_general_out_sharding)
+                                preferred_element_type=preferred_element_type,
+                                **dot_out_sharding)
     else:
-      raise NotImplementedError  # if this is actually reachable, open an issue!
+      raise NotImplementedError(
+        "jax.numpy.einsum does not support simultaneous contraction of 3 or more"
+        " operands. Typically this means you've passed an unsupported path to"
+        " the einsum optimize parameter.")
 
     # the resulting 'operand' with axis labels 'names' should be a permutation
     # of the desired result
@@ -580,3 +592,14 @@ def _einsum(
 
   return lax._convert_element_type(operands[0], preferred_element_type,
                                    output_weak_type)
+
+def _get_inverse_sharding(out_sharding, names, result_names):
+  if len(result_names) > len(out_sharding.spec):
+    out_sharding = out_sharding.update(spec=
+        out_sharding.spec._normalized_spec_for_aval(len(result_names)))
+  spec = out_sharding.spec
+  inverse_spec = tuple(spec[result_names.index(name)] for name in names)
+  return NamedSharding(out_sharding.mesh, spec.update(partitions=inverse_spec))
+
+
+_poly_einsum_handlers[shape_poly._DimExpr] = shape_poly._einsum_contract_path

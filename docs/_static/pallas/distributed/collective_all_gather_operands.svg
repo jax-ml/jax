@@ -1,0 +1,25 @@
+<svg width="450" height="220" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
+  <style>
+    .matrix-full { fill: #e0f2f7; stroke: #0d6efd; stroke-width: 2; }
+    .matrix-part-x { fill: #d1e7ff; stroke: #0d6efd; stroke-width: 2; }
+    .matrix-part-w { fill: #d1ffde; stroke: #198754; stroke-width: 2; }
+    .text-label { font-size: 18px; text-anchor: middle; font-weight: bold; }
+    .device-label { font-size: 14px; font-weight: bold; fill: #555; text-anchor: middle; } /* Added text-anchor: middle */
+  </style>
+
+  <text x="100" y="50" class="text-label">Activations</text>
+  <rect x="50" y="70" width="100" height="100" class="matrix-full" />
+  <line x1="50" y1="120" x2="150" y2="120" stroke="#0d6efd" stroke-width="1.5" />
+
+  <text x="100" y="100" class="device-label">0</text>
+  <text x="100" y="150" class="device-label">1</text>
+
+
+  <text x="350" y="50" class="text-label">Weights</text>
+  <rect x="300" y="70" width="100" height="100" class="matrix-full" />
+  <line x1="350" y1="70" x2="350" y2="170" stroke="#198754" stroke-width="1.5" />
+
+  <text x="325" y="125" class="device-label">0</text>
+  <text x="375" y="125" class="device-label">1</text>
+
+</svg>

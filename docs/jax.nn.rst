@@ -33,6 +33,7 @@ Activation functions
     hard_silu
     hard_swish
     hard_tanh
+    tanh
     elu
     celu
     selu
@@ -50,6 +51,7 @@ Other functions
 
     softmax
     log_softmax
+    logmeanexp
     logsumexp
     standardize
     one_hot
@@ -57,3 +59,4 @@ Other functions
     scaled_matmul
     get_scaled_dot_general_config
     scaled_dot_general
+    log1mexp

@@ -13,7 +13,7 @@ allow_redefinition = true
 module = [
     "IPython.*",
     "absl.*",
-    "colorama.*",
+    "compression.*",
     "etils.*",
     "filelock.*",
     "flatbuffers.*",
@@ -23,24 +23,32 @@ module = [
     "jax.experimental.jax2tf.tests.back_compat_testdata",
     "jax.experimental.jax2tf.tests.flax_models",
     "jax_cuda12_plugin.*",
+    "jax_cuda13_plugin.*",
     "jaxlib.cpu_feature_guard",
     "jaxlib.cuda.*",
     "jaxlib.mlir.*",
+    "jaxlib.mosaic.dialect.gpu.*",
+    "jaxlib.mosaic.python._tpu_gen",
+    "jaxlib.triton.*",
     "jaxlib.utils",
-    "jaxlib.xla_extension.utils",
+    "jaxlib.version",
+    "jaxlib._jax.utils",
+    "jaxlib._pretty_printer",
     "jraph.*",
     "libtpu.*",
     "matplotlib.*",
+    "mlir.*",
+    "ml_dtypes.*",
     "nvidia.*",
     "numpy.*",
     "opt_einsum.*",
     "optax.*",
+    "portpicker.*",
     "pygments.*",
     "pytest.*",
     "rich.*",
-    "scipy.*",
     "setuptools.*",
-    "tensorboard_plugin_profile.convert.*",
+    "xprof.convert.*",
     "tensorflow.*",
     "tensorflow.io.*",
     "tensorflowjs.*",
@@ -69,8 +77,14 @@ filterwarnings = [
     # https://github.com/protocolbuffers/protobuf/issues/12186#issuecomment-1745679358
     "ignore:Type google\\._upb\\._message\\.(Scalar|Message)MapContainer uses PyType_Spec with a metaclass that has custom tp_new\\. This is deprecated and will no longer be allowed in Python 3\\.14\\.:DeprecationWarning",
 
+    # Protobuf version in TF releases may lag behind the ones in code.
+    "ignore:Protobuf gencode version \\d+\\.\\d+\\.\\d is exactly one major version older than the runtime version \\d+\\.\\d+\\.\\d at tensorflow/fore/framework/attr_value\\.proto\\. Please update the gencode to avoid compatibility violations in the next runtime release\\.:UserWarning",
+
     # TODO(b/401588349): Remove this once transparent hugepages are enabled.
     "ignore:Transparent hugepages",
+
+    # TODO(phawkins): Remove this once cloud_tpu_init is removed.
+    "ignore:jax.cloud_tpu_init was deprecated",
 
     # NOTE: this is probably not where you want to add code to suppress a
     # warning. Only pytest tests look at this list, whereas Bazel tests also
@@ -81,7 +95,7 @@ doctest_optionflags = [
     "NUMBER",
     "NORMALIZE_WHITESPACE"
 ]
-addopts = "--doctest-glob='*.rst' --ignore='examples/ffi'"
+addopts = "--doctest-glob='*.rst' --ignore='examples/ffi' --import-mode=importlib"
 
 [tool.ruff]
 preview = true
@@ -90,9 +104,9 @@ exclude = [
     "build",
     "__pycache__",
 ]
-line-length = 88
+line-length = 80
 indent-width = 2
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 ignore = [
@@ -106,6 +120,8 @@ ignore = [
     "C901",
     # Local variable is assigned to but never used
     "F841",
+    # Class could be dataclass or namedtuple
+    "B903",
     # Raise with from clause inside except block
     "B904",
     # Zip without explicit strict parameter

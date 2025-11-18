@@ -274,7 +274,7 @@ Fortunately, there's another option for this case.
 Strategy 3: Making ``CustomClass`` a PyTree
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 The most flexible approach to correctly JIT-compiling a class method is to register the
-type as a custom PyTree object; see :ref:`extending-pytrees`. This lets you specify
+type as a custom PyTree object; see :ref:`pytrees-custom-pytree-nodes`. This lets you specify
 exactly which components of the class should be treated as static and which should be
 treated as dynamic. Here's how it might look::
 
@@ -322,143 +322,6 @@ So long as your ``tree_flatten`` and ``tree_unflatten`` functions correctly hand
 relevant attributes in the class, you should be able to use objects of this type directly
 as arguments to JIT-compiled functions, without any special annotations.
 
-.. _faq-data-placement:
-
-Controlling data and computation placement on devices
------------------------------------------------------
-
-Let's first look at the principles of data and computation placement in JAX.
-
-In JAX, the computation follows data placement. JAX arrays
-have two placement properties: 1) the device where the data resides;
-and 2) whether it is **committed** to the device or not (the data is sometimes
-referred to as being *sticky* to the device).
-
-By default, JAX arrays are placed uncommitted on the default device
-(``jax.devices()[0]``), which is the first GPU or TPU by default. If no GPU or
-TPU is present, ``jax.devices()[0]`` is the CPU. The default device can
-be temporarily overridden with the :func:`jax.default_device` context manager, or
-set for the whole process by setting the environment variable ``JAX_PLATFORMS``
-or the absl flag ``--jax_platforms`` to "cpu", "gpu", or "tpu"
-(``JAX_PLATFORMS`` can also be a list of platforms, which determines which
-platforms are available in priority order).
-
->>> from jax import numpy as jnp
->>> print(jnp.ones(3).devices())  # doctest: +SKIP
-{CudaDevice(id=0)}
-
-Computations involving uncommitted data are performed on the default
-device and the results are uncommitted on the default device.
-
-Data can also be placed explicitly on a device using :func:`jax.device_put`
-with a ``device`` parameter, in which case the data becomes **committed** to the device:
-
->>> import jax
->>> from jax import device_put
->>> arr = device_put(1, jax.devices()[2])  # doctest: +SKIP
->>> print(arr.devices())  # doctest: +SKIP
-{CudaDevice(id=2)}
-
-Computations involving some committed inputs will happen on the
-committed device and the result will be committed on the
-same device. Invoking an operation on arguments that are committed
-to more than one device will raise an error.
-
-You can also use :func:`jax.device_put` without a ``device`` parameter. If the data
-is already on a device (committed or not), it's left as-is. If the data isn't on any
-device—that is, it's a regular Python or NumPy value—it's placed uncommitted on the default
-device.
-
-Jitted functions behave like any other primitive operations—they will follow the
-data and will show errors if invoked on data committed on more than one device.
-
-(Before `PR #6002 <https://github.com/jax-ml/jax/pull/6002>`_ in March 2021
-there was some laziness in creation of array constants, so that
-``jax.device_put(jnp.zeros(...), jax.devices()[1])`` or similar would actually
-create the array of zeros on ``jax.devices()[1]``, instead of creating the
-array on the default device then moving it. But this optimization was removed
-so as to simplify the implementation.)
-
-(As of April 2020, :func:`jax.jit` has a `device` parameter that affects the device
-placement. That parameter is experimental, is likely to be removed or changed,
-and its use is not recommended.)
-
-For a worked-out example, we recommend reading through
-``test_computation_follows_data`` in
-`multi_device_test.py <https://github.com/jax-ml/jax/blob/main/tests/multi_device_test.py>`_.
-
-.. _faq-benchmark:
-
-Benchmarking JAX code
----------------------
-
-You just ported a tricky function from NumPy/SciPy to JAX. Did that actually
-speed things up?
-
-Keep in mind these important differences from NumPy when measuring the
-speed of code using JAX:
-
-1. **JAX code is Just-In-Time (JIT) compiled.** Most code written in JAX can be
-   written in such a way that it supports JIT compilation, which can make it run
-   *much faster* (see `To JIT or not to JIT`_). To get maximum performance from
-   JAX, you should apply :func:`jax.jit` on your outer-most function calls.
-
-   Keep in mind that the first time you run JAX code, it will be slower because
-   it is being compiled. This is true even if you don't use ``jit`` in your own
-   code, because JAX's builtin functions are also JIT compiled.
-2. **JAX has asynchronous dispatch.** This means that you need to call
-   ``.block_until_ready()`` to ensure that computation has actually happened
-   (see :ref:`async-dispatch`).
-3. **JAX by default only uses 32-bit dtypes.** You may want to either explicitly
-   use 32-bit dtypes in NumPy or enable 64-bit dtypes in JAX (see
-   `Double (64 bit) precision`_) for a fair comparison.
-4. **Transferring data between CPUs and accelerators takes time.** If you only
-   want to measure how long it takes to evaluate a function, you may want to
-   transfer data to the device on which you want to run it first (see
-   :ref:`faq-data-placement`).
-
-Here's an example of how to put together all these tricks into a microbenchmark
-for comparing JAX versus NumPy, making using of IPython's convenient
-`%time and %timeit magics`_::
-
-    import numpy as np
-    import jax.numpy as jnp
-    import jax
-
-    def f(x):  # function we're benchmarking (works in both NumPy & JAX)
-      return x.T @ (x - x.mean(axis=0))
-
-    x_np = np.ones((1000, 1000), dtype=np.float32)  # same as JAX default dtype
-    %timeit f(x_np)  # measure NumPy runtime
-
-    %time x_jax = jax.device_put(x_np)  # measure JAX device transfer time
-    f_jit = jax.jit(f)
-    %time f_jit(x_jax).block_until_ready()  # measure JAX compilation time
-    %timeit f_jit(x_jax).block_until_ready()  # measure JAX runtime
-
-When run with a GPU in Colab_, we see:
-
-- NumPy takes 16.2 ms per evaluation on the CPU
-- JAX takes 1.26 ms to copy the NumPy arrays onto the GPU
-- JAX takes 193 ms to compile the function
-- JAX takes 485 µs per evaluation on the GPU
-
-In this case, we see that once the data is transferred and the function is
-compiled, JAX on the GPU is about 30x faster for repeated evaluations.
-
-Is this a fair comparison? Maybe. The performance that ultimately matters is for
-running full applications, which inevitably include some amount of both data
-transfer and compilation. Also, we were careful to pick large enough arrays
-(1000x1000) and an intensive enough computation (the ``@`` operator is
-performing matrix-matrix multiplication) to amortize the increased overhead of
-JAX/accelerators vs NumPy/CPU. For example, if we switch this example to use
-10x10 input instead, JAX/GPU runs 10x slower than NumPy/CPU (100 µs vs 10 µs).
-
-.. _To JIT or not to JIT: https://docs.jax.dev/en/latest/notebooks/thinking_in_jax.html#to-jit-or-not-to-jit
-.. _Double (64 bit) precision: https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision
-.. _`%time and %timeit magics`: https://ipython.readthedocs.io/en/stable/interactive/magics.html#magic-time
-.. _Colab: https://colab.research.google.com/
-
 .. _faq-jax-vs-numpy:
 
 Is JAX faster than NumPy?
@@ -491,172 +354,6 @@ array operations on CPU, you can generally expect NumPy to outperform JAX due to
 lower per-operation dispatch overhead. If you're running your code on GPU or TPU,
 or are benchmarking more complicated JIT-compiled sequences of operations on CPU, you
 can generally expect JAX to outperform NumPy.
-
-.. _faq-different-kinds-of-jax-values:
-
-Different kinds of JAX values
------------------------------
-
-In the process of transforming functions, JAX replaces some function
-arguments with special tracer values.
-
-You could see this if you use a ``print`` statement::
-
-  def func(x):
-    print(x)
-    return jnp.cos(x)
-
-  res = jax.jit(func)(0.)
-
-The above code does return the correct value ``1.`` but it also prints
-``Traced<ShapedArray(float32[])>`` for the value of ``x``. Normally, JAX
-handles these tracer values internally in a transparent way, e.g.,
-in the numeric JAX primitives that are used to implement the
-``jax.numpy`` functions. This is why ``jnp.cos`` works in the example above.
-
-More precisely, a **tracer** value is introduced for the argument of
-a JAX-transformed function, except the arguments identified by special
-parameters such as ``static_argnums`` for :func:`jax.jit` or
-``static_broadcasted_argnums`` for :func:`jax.pmap`. Typically, computations
-that involve at least a tracer value will produce a tracer value. Besides tracer
-values, there are **regular** Python values: values that are computed outside JAX
-transformations, or arise from above-mentioned static arguments of certain JAX
-transformations, or computed solely from other regular Python values.
-These are the values that are used everywhere in absence of JAX transformations.
-
-A tracer value carries an **abstract** value, e.g., ``ShapedArray`` with information
-about the shape and dtype of an array. We will refer here to such tracers as
-**abstract tracers**. Some tracers, e.g., those that are
-introduced for arguments of autodiff transformations, carry ``ConcreteArray``
-abstract values that actually include the regular array data, and are used,
-e.g., for resolving conditionals. We will refer here to such tracers
-as **concrete tracers**. Tracer values computed from these concrete tracers,
-perhaps in combination with regular values, result in concrete tracers.
-A **concrete value** is either a regular value or a concrete tracer.
-
-Most often values computed from tracer values are themselves tracer values.
-There are very few exceptions, when a computation can be entirely done
-using the abstract value carried by a tracer, in which case the result
-can be a regular value. For example, getting the shape of a tracer
-with ``ShapedArray`` abstract value. Another example is when explicitly
-casting a concrete tracer value to a regular type, e.g., ``int(x)`` or
-``x.astype(float)``.
-Another such situation is for ``bool(x)``, which produces a Python bool when
-concreteness makes it possible. That case is especially salient because
-of how often it arises in control flow.
-
-Here is how the transformations introduce abstract or concrete tracers:
-
-* :func:`jax.jit`: introduces **abstract tracers** for all positional arguments
-  except those denoted by ``static_argnums``, which remain regular
-  values.
-* :func:`jax.pmap`: introduces **abstract tracers** for all positional arguments
-  except those denoted by ``static_broadcasted_argnums``.
-* :func:`jax.vmap`, :func:`jax.make_jaxpr`, :func:`xla_computation`:
-  introduce **abstract tracers** for all positional arguments.
-* :func:`jax.jvp` and :func:`jax.grad` introduce **concrete tracers**
-  for all positional arguments. An exception is when these transformations
-  are within an outer transformation and the actual arguments are
-  themselves abstract tracers; in that case, the tracers introduced
-  by the autodiff transformations are also abstract tracers.
-* All higher-order control-flow primitives (:func:`lax.cond`, :func:`lax.while_loop`,
-  :func:`lax.fori_loop`, :func:`lax.scan`) when they process the functionals
-  introduce **abstract tracers**, whether or not there is a JAX transformation
-  in progress.
-
-All of this is relevant when you have code that can operate
-only on regular Python values, such as code that has conditional
-control-flow based on data::
-
-    def divide(x, y):
-      return x / y if y >= 1. else 0.
-
-If we want to apply :func:`jax.jit`, we must ensure to specify ``static_argnums=1``
-to ensure ``y`` stays a regular value. This is due to the boolean expression
-``y >= 1.``, which requires concrete values (regular or tracers). The
-same would happen if we write explicitly ``bool(y >= 1.)``, or ``int(y)``,
-or ``float(y)``.
-
-Interestingly, ``jax.grad(divide)(3., 2.)``, works because :func:`jax.grad`
-uses concrete tracers, and resolves the conditional using the concrete
-value of ``y``.
-
-.. _faq-donation:
-
-Buffer donation
----------------
-
-When JAX executes a computation it uses buffers on the device for all inputs and outputs.
-If you know that one of the inputs is not needed after the computation, and if it
-matches the shape and element type of one of the outputs, you can specify that you
-want the corresponding input buffer to be donated to hold an output. This will reduce
-the memory required for the execution by the size of the donated buffer.
-
-If you have something like the following pattern, you can use buffer donation::
-
-   params, state = jax.pmap(update_fn, donate_argnums=(0, 1))(params, state)
-
-You can think of this as a way to do a memory-efficient functional update
-on your immutable JAX arrays. Within the boundaries of a computation XLA can
-make this optimization for you, but at the jit/pmap boundary you need to
-guarantee to XLA that you will not use the donated input buffer after calling
-the donating function.
-
-You achieve this by using the `donate_argnums` parameter to the functions :func:`jax.jit`,
-:func:`jax.pjit`, and :func:`jax.pmap`. This parameter is a sequence of indices (0 based) into
-the positional argument list::
-
-   def add(x, y):
-     return x + y
-
-   x = jax.device_put(np.ones((2, 3)))
-   y = jax.device_put(np.ones((2, 3)))
-   # Execute `add` with donation of the buffer for `y`. The result has
-   # the same shape and type as `y`, so it will share its buffer.
-   z = jax.jit(add, donate_argnums=(1,))(x, y)
-
-Note that this currently does not work when calling your function with key-word arguments!
-The following code will not donate any buffers::
-
-   params, state = jax.pmap(update_fn, donate_argnums=(0, 1))(params=params, state=state)
-
-If an argument whose buffer is donated is a pytree, then all the buffers
-for its components are donated::
-
-   def add_ones(xs: List[Array]):
-     return [x + 1 for x in xs]
-
-   xs = [jax.device_put(np.ones((2, 3))), jax.device_put(np.ones((3, 4)))]
-   # Execute `add_ones` with donation of all the buffers for `xs`.
-   # The outputs have the same shape and type as the elements of `xs`,
-   # so they will share those buffers.
-   z = jax.jit(add_ones, donate_argnums=0)(xs)
-
-It is not allowed to donate a buffer that is used subsequently in the computation,
-and JAX will give an error because the buffer for `y` has become invalid
-after it was donated::
-
-   # Donate the buffer for `y`
-   z = jax.jit(add, donate_argnums=(1,))(x, y)
-   w = y + 1  # Reuses `y` whose buffer was donated above
-   # >> RuntimeError: Invalid argument: CopyToHostAsync() called on invalid buffer
-
-You will get a warning if the donated buffer is not used, e.g., because
-there are more donated buffers than can be used for the outputs::
-
-   # Execute `add` with donation of the buffers for both `x` and `y`.
-   # One of those buffers will be used for the result, but the other will
-   # not be used.
-   z = jax.jit(add, donate_argnums=(0, 1))(x, y)
-   # >> UserWarning: Some donated buffers were not usable: f32[2,3]{1,0}
-
-The donation may also be unused if there is no output whose shape matches
-the donation::
-
-   y = jax.device_put(np.ones((1, 3)))  # `y` has different shape than the output
-   # Execute `add` with donation of the buffer for `y`.
-   z = jax.jit(add, donate_argnums=(1,))(x, y)
-   # >> UserWarning: Some donated buffers were not usable: f32[1,3]{1,0}
 
 Gradients contain `NaN` where using ``where``
 ------------------------------------------------
@@ -777,7 +474,7 @@ can replace uses of :func:`jax.nn.relu`, etc.
 How can I convert a JAX Tracer to a NumPy array?
 ------------------------------------------------
 When inspecting a transformed JAX function at runtime, you'll find that array
-values are replaced by :class:`~jax.core.Tracer` objects::
+values are replaced by `jax.core.Tracer` objects::
 
   @jax.jit
   def f(x):
@@ -840,6 +537,28 @@ in doubt, try running the program again with reduced pre-allocation, either by
 reducing :code:`XLA_PYTHON_CLIENT_MEM_FRACTION` from the default of :code:`.75`,
 or setting :code:`XLA_PYTHON_CLIENT_PREALLOCATE=false`. For more details, please
 see the page on `JAX GPU memory allocation`_.
+
+.. _faq-data-placement:
+
+Controlling data and computation placement on devices
+-----------------------------------------------------
+
+Moved to :ref:`sharded-data-placement`.
+
+.. _faq-benchmark:
+
+Benchmarking JAX code
+---------------------
+
+Moved to :ref:`benchmarking-jax-code`.
+
+.. _faq-donation:
+
+Buffer donation
+---------------
+
+Moved to :ref:`buffer-donation`.
+
 
 .. _JIT mechanics: https://docs.jax.dev/en/latest/notebooks/thinking_in_jax.html#jit-mechanics-tracing-and-static-variables
 .. _External callbacks in JAX: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html

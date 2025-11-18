@@ -15,14 +15,14 @@
 from __future__ import annotations
 
 from collections import namedtuple
-from functools import partial
 import math
 
-import jax
-import jax.numpy as jnp
-from jax import jit
+import numpy as np
+
+from jax._src import api
 from jax._src import dtypes
-from jax._src.api import vmap
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.numpy.util import check_arraylike, promote_args_inexact
 from jax._src.typing import ArrayLike, Array
 from jax._src.util import canonicalize_axis
@@ -30,7 +30,7 @@ from jax._src.util import canonicalize_axis
 
 ModeResult = namedtuple('ModeResult', ('mode', 'count'))
 
-@partial(jit, static_argnames=['axis', 'nan_policy', 'keepdims'])
+@api.jit(static_argnames=['axis', 'nan_policy', 'keepdims'])
 def mode(a: ArrayLike, axis: int | None = 0, nan_policy: str = "propagate", keepdims: bool = False) -> ModeResult:
   """Compute the mode (most common value) along an axis of an array.
 
@@ -116,11 +116,11 @@ def mode(a: ArrayLike, axis: int | None = 0, nan_policy: str = "propagate", keep
     axis = 0
     x = x.ravel()
 
-  def _mode_helper(x: jax.Array) -> tuple[jax.Array, jax.Array]:
+  def _mode_helper(x: Array) -> tuple[Array, Array]:
     """Helper function to return mode and count of a given array."""
     if x.size == 0:
-      return (jnp.array(jnp.nan, dtype=dtypes.canonicalize_dtype(jnp.float_)),
-              jnp.array(0, dtype=dtypes.canonicalize_dtype(jnp.float_)))
+      return (jnp.array(np.nan, dtype=dtypes.default_float_dtype()),
+              jnp.array(0, dtype=dtypes.default_float_dtype()))
     else:
       vals, counts = jnp.unique(x, return_counts=True, size=x.size)
       return vals[jnp.argmax(counts)], counts.max()
@@ -128,7 +128,7 @@ def mode(a: ArrayLike, axis: int | None = 0, nan_policy: str = "propagate", keep
   axis = canonicalize_axis(axis, x.ndim)
   x = jnp.moveaxis(x, axis, 0)
   x = x.reshape(x.shape[0], math.prod(x.shape[1:]))
-  vals, counts = vmap(_mode_helper, in_axes=1)(x)
+  vals, counts = api.vmap(_mode_helper, in_axes=1)(x)
   return ModeResult(vals.reshape(output_shape), counts.reshape(output_shape))
 
 def invert_permutation(i: Array) -> Array:
@@ -136,7 +136,7 @@ def invert_permutation(i: Array) -> Array:
   return jnp.empty_like(i).at[i].set(jnp.arange(i.size, dtype=i.dtype))
 
 
-@partial(jit, static_argnames=["method", "axis", "nan_policy"])
+@api.jit(static_argnames=["method", "axis", "nan_policy"])
 def rankdata(
   a: ArrayLike,
   method: str = "average",
@@ -198,7 +198,7 @@ def rankdata(
     return jnp.apply_along_axis(rankdata, axis, a, method)
 
   arr = jnp.ravel(a)
-  arr, sorter = jax.lax.sort_key_val(arr, jnp.arange(arr.size))
+  arr, sorter = lax.sort_key_val(arr, jnp.arange(arr.size))
   inv = invert_permutation(sorter)
 
   if method == "ordinal":
@@ -213,11 +213,11 @@ def rankdata(
   if method == "min":
     return count[dense - 1] + 1
   if method == "average":
-    return .5 * (count[dense] + count[dense - 1] + 1).astype(dtypes.canonicalize_dtype(jnp.float_))
+    return .5 * (count[dense] + count[dense - 1] + 1).astype(dtypes.default_float_dtype())
   raise ValueError(f"unknown method '{method}'")
 
 
-@partial(jit, static_argnames=['axis', 'nan_policy', 'keepdims'])
+@api.jit(static_argnames=['axis', 'nan_policy', 'keepdims'])
 def sem(a: ArrayLike, axis: int | None = 0, ddof: int = 1, nan_policy: str = "propagate", *, keepdims: bool = False) -> Array:
   """Compute the standard error of the mean.
 
@@ -276,7 +276,7 @@ def sem(a: ArrayLike, axis: int | None = 0, ddof: int = 1, nan_policy: str = "pr
     Since, by default, ``nan_policy='propagate'``, ``sem`` propagates the ``nan``
     values in the result.
 
-    >>> nan = jnp.nan
+    >>> nan = np.nan
     >>> x2 = jnp.array([[1, 2, 3, nan, 4, 2],
     ...                 [4, 5, 4, 3, nan, 1],
     ...                 [7, nan, 8, 7, 9, nan]])
@@ -285,7 +285,7 @@ def sem(a: ArrayLike, axis: int | None = 0, ddof: int = 1, nan_policy: str = "pr
     Array([1.73,  nan, 1.53,  nan,  nan,  nan], dtype=float32)
 
     If ``nan_policy='omit```, ``sem`` omits the ``nan`` values and computes the error
-    for the remainging values along the specified axis.
+    for the remaining values along the specified axis.
 
     >>> with jnp.printoptions(precision=2, suppress=True):
     ...   jax.scipy.stats.sem(x2, nan_policy='omit')

@@ -14,7 +14,6 @@
 # ==============================================================================
 
 from absl.testing import absltest, parameterized
-import jax
 from jax._src import config
 from jax._src import test_util as jtu
 import jax.numpy as jnp
@@ -43,11 +42,11 @@ class ProfilerCuptiTest(parameterized.TestCase):
     self.f = lambda x: 2*x
 
   def test_measure_cupti_explicit(self):
-    _, runtime_ms = profiler.measure(self.f, mode="cupti")(self.x)
+    _, runtime_ms = profiler.measure(self.f)(self.x)
     self.assertIsInstance(runtime_ms, float)
 
   def test_measure_per_kernel(self):
-    _, runtimes_ms = profiler.measure(self.f, mode="cupti", aggregate=False)(self.x)
+    _, runtimes_ms = profiler.measure(self.f, aggregate=False)(self.x)
     for item in runtimes_ms:
       self.assertIsInstance(item, tuple)
       self.assertEqual(len(item), 2)
@@ -56,7 +55,7 @@ class ProfilerCuptiTest(parameterized.TestCase):
       self.assertIsInstance(runtime_ms, float)
 
   def test_measure_cupti_repeated(self):
-    f_profiled = profiler.measure(self.f, mode="cupti")
+    f_profiled = profiler.measure(self.f)
     n = 3
     timings = [f_profiled(self.x)[1] for _ in range(n)]
     for item in timings:
@@ -64,11 +63,29 @@ class ProfilerCuptiTest(parameterized.TestCase):
 
   def test_measure_repeated_interleaved(self):
     # test that kernels run outside of measure() are not captured
-    _, timings = profiler.measure(self.f, mode="cupti", aggregate=False)(self.x)
+    _, timings = profiler.measure(self.f, aggregate=False)(self.x)
     self.assertEqual(len(timings), 1)
     self.f(self.x)
-    _, timings = profiler.measure(self.f, mode="cupti", aggregate=False)(self.x)
+    _, timings = profiler.measure(self.f, aggregate=False)(self.x)
     self.assertEqual(len(timings), 1)
+
+  def test_iterations(self):
+    _, timings = profiler.measure(
+        self.f, aggregate=False, iterations=10
+    )(self.x)
+    self.assertEqual(len(timings), 10)
+    self.assertTrue(
+        all(
+            isinstance(n, str) and isinstance(t, float)
+            for iter_timings in timings
+            for n, t in iter_timings
+        )
+    )
+    _, timings = profiler.measure(
+        self.f, aggregate=True, iterations=5
+    )(self.x)
+    self.assertEqual(len(timings), 5)
+    self.assertTrue(all(isinstance(t, float) for t in timings))
 
   def test_measure_double_subscription(self):
     # This needs to run in a separate process, otherwise it affects the

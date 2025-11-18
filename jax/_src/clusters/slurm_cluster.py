@@ -30,12 +30,16 @@ class SlurmCluster(clusters.ClusterEnv):
 
   @classmethod
   def is_env_present(cls) -> bool:
-    return _JOBID_PARAM in os.environ
+    return all(var in os.environ for var in
+               (_JOBID_PARAM, _NODE_LIST, _PROCESS_COUNT, _PROCESS_ID, _LOCAL_PROCESS_ID))
 
   @classmethod
-  def get_coordinator_address(cls, timeout_secs: int | None) -> str:
-    # Pick port in ephemeral range [(65535 - 2^12 + 1), 65535]
-    port = int(os.environ[_JOBID_PARAM]) % 2**12 + (65535 - 2**12 + 1)
+  def get_coordinator_address(cls, timeout_secs: int | None, override_coordinator_port: str | None) -> str:
+    if override_coordinator_port:
+        port = override_coordinator_port
+    else:
+        # Pick port in ephemeral range [(65535 - 2^12 + 1), 65535]
+        port = str(int(os.environ[_JOBID_PARAM]) % 2**12 + (65535 - 2**12 + 1))
 
     # Parse the first hostname of the job
     # If we are looking for 'node001',

@@ -47,6 +47,7 @@ from jax import typing as typing
 from jax._src.config import (
   config as config,
   enable_checks as enable_checks,
+  enable_x64 as enable_x64,
   debug_key_reuse as debug_key_reuse,
   check_tracer_leaks as check_tracer_leaks,
   checking_leaks as checking_leaks,
@@ -57,6 +58,7 @@ from jax._src.config import (
   debug_infs as debug_infs,
   log_compiles as log_compiles,
   no_tracing as no_tracing,
+  no_execution as no_execution,
   explain_cache_misses as explain_cache_misses,
   default_device as default_device,
   default_matmul_precision as default_matmul_precision,
@@ -70,7 +72,8 @@ from jax._src.config import (
   transfer_guard_host_to_device as transfer_guard_host_to_device,
   transfer_guard_device_to_device as transfer_guard_device_to_device,
   transfer_guard_device_to_host as transfer_guard_device_to_host,
-  spmd_mode as spmd_mode,
+  make_user_context as make_user_context,
+  remove_size_one_mesh_axis_from_type as remove_size_one_mesh_axis_from_type,
 )
 from jax._src.core import ensure_compile_time_eval as ensure_compile_time_eval
 from jax._src.environment_info import print_environment_info as print_environment_info
@@ -94,12 +97,13 @@ from jax._src.xla_bridge import default_backend as default_backend
 from jax._src.xla_bridge import device_count as device_count
 from jax._src.api import device_get as device_get
 from jax._src.api import device_put as device_put
-from jax._src.api import device_put_sharded as device_put_sharded
-from jax._src.api import device_put_replicated as device_put_replicated
+from jax._src.api import device_put_sharded as _deprecated_device_put_sharded
+from jax._src.api import device_put_replicated as _deprecated_device_put_replicated
 from jax._src.xla_bridge import devices as devices
 from jax._src.api import disable_jit as disable_jit
 from jax._src.api import eval_shape as eval_shape
 from jax._src.dtypes import float0 as float0
+from jax._src.api import fwd_and_bwd as fwd_and_bwd
 from jax._src.api import grad as grad
 from jax._src.api import hessian as hessian
 from jax._src.xla_bridge import host_count as host_count
@@ -124,12 +128,21 @@ from jax._src.xla_bridge import process_index as process_index
 from jax._src.xla_bridge import process_indices as process_indices
 from jax._src.callback import pure_callback as pure_callback
 from jax._src.ad_checkpoint import checkpoint_wrapper as remat  # noqa: F401
-from jax._src.api import ShapeDtypeStruct as ShapeDtypeStruct
+from jax._src.core import ShapeDtypeStruct as ShapeDtypeStruct
 from jax._src.api import value_and_grad as value_and_grad
 from jax._src.api import vjp as vjp
 from jax._src.api import vmap as vmap
 from jax._src.sharding_impls import NamedSharding as NamedSharding
 from jax._src.sharding_impls import make_mesh as make_mesh
+from jax._src.sharding_impls import set_mesh as set_mesh
+from jax._src.partition_spec import P as P
+
+from jax._src.shard_map import shard_map as shard_map
+from jax._src.shard_map import smap as smap
+
+from jax.ref import new_ref as new_ref
+from jax.ref import freeze as freeze
+from jax.ref import Ref as Ref
 
 # Force import, allowing jax.interpreters.* to be used after import jax.
 from jax.interpreters import ad, batching, mlir, partial_eval, pxla, xla
@@ -152,6 +165,7 @@ from jax import debug as debug
 from jax import dlpack as dlpack
 from jax import dtypes as dtypes
 from jax import errors as errors
+from jax import export as export
 from jax import ffi as ffi
 from jax import image as image
 from jax import lax as lax
@@ -163,9 +177,9 @@ from jax import profiler as profiler
 from jax import random as random
 from jax import scipy as scipy
 from jax import sharding as sharding
+from jax import memory as memory
 from jax import stages as stages
 from jax import tree_util as tree_util
-from jax import util as util
 
 # Also circular dependency.
 from jax._src.array import Shard as Shard
@@ -174,6 +188,25 @@ import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
 _deprecations = {
+  # Added for v0.8.0
+  "array_ref": (
+    "jax.array_ref is deprecated; use jax.new_ref instead.",
+    new_ref
+  ),
+  "ArrayRef": (
+    "jax.ArrayRef is deprecated; use jax.Ref instead.",
+    Ref
+  ),
+  # Added for v0.8.1
+  "device_put_replicated": (
+    "jax.device_put_replicated is deprecated; use jax.device_put instead.",
+    _deprecated_device_put_replicated
+  ),
+  # Added for v0.8.1
+  "device_put_sharded": (
+    "jax.device_put_sharded is deprecated; use jax.device_put instead.",
+    _deprecated_device_put_sharded
+  ),
   # Finalized 2025-03-25; remove after 2025-06-25
   "treedef_is_leaf": (
     "jax.treedef_is_leaf was removed in JAX v0.6.0: use jax.tree_util.treedef_is_leaf.",
@@ -213,7 +246,10 @@ _deprecations = {
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  pass
+  array_ref = new_ref
+  ArrayRef = Ref
+  device_put_replicated = _deprecated_device_put_replicated
+  device_put_sharded = _deprecated_device_put_sharded
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
@@ -223,3 +259,5 @@ del _typing
 import jax.lib  # TODO(phawkins): remove this export.  # noqa: F401
 
 # trailer
+del _deprecated_device_put_sharded
+del _deprecated_device_put_replicated

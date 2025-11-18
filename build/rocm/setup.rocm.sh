@@ -13,7 +13,7 @@ ROCM_BUILD_NAME=ubuntu
 ROCM_BUILD_NUM=main
 
 # Adjust the ROCM repo location
-# Intial release don't have the trialing '.0'
+# Initial release don't have the trialing '.0'
 # For example ROCM 5.7.0 is at https://repo.radeon.com/rocm/apt/5.7/
 if [ ${ROCM_VERSION##*[^0-9]} -eq '0' ]; then
         ROCM_VERS=${ROCM_VERSION%.*}

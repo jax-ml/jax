@@ -117,6 +117,25 @@ JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::StatusOr<int>, OrgqrBufferSize);
 JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Orgqr);
 #undef JAX_GPU_SOLVER_Orgqr_ARGS
 
+// Cholesky decomposition: potrf
+
+#define JAX_GPU_SOLVER_PotrfBufferSize_ARGS(Type, ...) \
+  gpusolverDnHandle_t handle, gpusolverFillMode_t uplo, int n
+JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::StatusOr<int>, PotrfBufferSize);
+#undef JAX_GPU_SOLVER_PotrfBufferSize_ARGS
+
+#define JAX_GPU_SOLVER_Potrf_ARGS(Type, ...)                          \
+  gpusolverDnHandle_t handle, gpusolverFillMode_t uplo, int n, Type *a, \
+      Type *workspace, int lwork, int *info
+JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Potrf);
+#undef JAX_GPU_SOLVER_Potrf_ARGS
+
+#define JAX_GPU_SOLVER_PotrfBatched_ARGS(Type, ...)                       \
+  gpusolverDnHandle_t handle, gpusolverFillMode_t uplo, int n, Type **a, \
+      int lda, int *info, int batch
+JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, PotrfBatched);
+#undef JAX_GPU_SOLVER_PotrfBatched_ARGS
+
 // Symmetric (Hermitian) eigendecomposition:
 // * Jacobi algorithm: syevj/heevj (batches of matrices up to 32)
 // * QR algorithm: syevd/heevd

@@ -16,4 +16,3 @@
 
 import jaxlib.mlir.ir as ir
 import jaxlib.mlir.passmanager as passmanager
-from jaxlib.mlir._mlir_libs import register_jax_dialects

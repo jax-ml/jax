@@ -24,9 +24,7 @@ from jax._src.core import (
 
 from jax._src.custom_derivatives import (
   custom_jvp_call_p as custom_jvp_call_p,
-  custom_jvp_call_jaxpr_p as custom_jvp_call_jaxpr_p,
   custom_vjp_call_p as custom_vjp_call_p,
-  custom_vjp_call_jaxpr_p as custom_vjp_call_jaxpr_p,
 )
 
 from jax._src.dispatch import device_put_p as device_put_p
@@ -34,7 +32,6 @@ from jax._src.dispatch import device_put_p as device_put_p
 from jax._src.interpreters.ad import (
   add_jaxvals_p as add_jaxvals_p,
   custom_lin_p as custom_lin_p,
-  zeros_like_p as zeros_like_p,
 )
 
 from jax._src.interpreters.pxla import xla_pmap_p as xla_pmap_p
@@ -78,7 +75,6 @@ from jax._src.lax.lax import (
   ge_p as ge_p,
   gt_p as gt_p,
   imag_p as imag_p,
-  infeed_p as infeed_p,
   integer_pow_p as integer_pow_p,
   iota_p as iota_p,
   is_finite_p as is_finite_p,
@@ -97,7 +93,6 @@ from jax._src.lax.lax import (
   nextafter_p as nextafter_p,
   not_p as not_p,
   or_p as or_p,
-  outfeed_p as outfeed_p,
   pad_p as pad_p,
   population_count_p as population_count_p,
   pow_p as pow_p,
@@ -135,6 +130,7 @@ from jax._src.lax.lax import (
   top_k_p as top_k_p,
   transpose_p as transpose_p,
   xor_p as xor_p,
+  empty2_p as empty2_p,
 )
 
 from jax._src.lax.special import (
@@ -225,7 +221,10 @@ from jax._src.lax.linalg import (
   schur_p as schur_p,
 )
 
-from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
+from jax._src.pjit import (
+    jit_p as jit_p,
+    sharding_constraint_p as sharding_constraint_p,
+)
 
 from jax._src.prng import (
   random_bits_p as random_bits_p,

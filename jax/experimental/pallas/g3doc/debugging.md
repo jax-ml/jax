@@ -3,7 +3,7 @@
 <!--internal:0-->
 
 <!--*
-freshness: { owner: 'justinfu' reviewed: '2024-11-19' }
+freshness: { owner: 'slebedev' reviewed: '2025-11-12' }
 *-->
 
 [TOC]
@@ -16,9 +16,38 @@ a ticket on https://github.com/jax-ml/jax/issues.
 
 ### Interpret (HLO) Mode
 
-Passing in `interpret=True` into `pl.pallas_call` will run the kernel in HLO instead of lowering to Mosaic/Triton. This is useful for checking correctness of your program and prototyping on smaller block sizes (as TPUs kernels require block sizes of at least 8x128). HLO is also more feature-complete so sometimes kernels will run in interpret mode but fail otherwise - this will make sure the bug is not in your kernel but in Pallas.
+Passing in `interpret=True` into `pl.pallas_call` or `pl.core_map` will run the kernel in HLO instead of lowering to Mosaic/Triton. This is useful for checking correctness of your program and prototyping on smaller block sizes (as TPUs kernels require block sizes of at least 8x128). HLO is also more feature-complete so sometimes kernels will run in interpret mode but fail otherwise - this will make sure the bug is not in your kernel but in Pallas.
 
 Note that interpret mode will not be able to fully replicate the behavior or programs that use communication (DMAs) between devices. This is because low-level communication APIs are more general than the interface that XLA provides via SPMD collective operations.
+
+### TPU Interpret Mode
+
+TPU interpret mode is similar to [interpret (HLO) mode](#interpret-hlo-mode),
+but TPU interpret mode explicitly simulates accesses to TPU memory (HBM, VMEM,
+SMEM, etc.), communication via remote DMAs, TPU synchronization operations
+(e.g., barriers and semaphores), and parallel execution of kernels distributed
+across
+[multiple TPUs](https://docs.jax.dev/en/latest/pallas/tpu/distributed.html) and
+[Megacore cores](https://docs.jax.dev/en/latest/pallas/tpu/distributed.html#megacore).
+
+TPU interpret mode is slower than interpret (HLO) mode, but it can be useful for
+developing and debugging distributed TPU kernels with explicit communication and
+synchronization. With this mode, kernels can be run on CPU -- enabling local
+development (with no TPU), using a debugger and inspecting the state of
+simulated TPU buffers and semaphores, etc.
+
+To use TPU interpret mode, pass `interpret=pltpu.InterpretParams()` into
+`pl.pallas_call` or `pl.core_map`. For examples, see
+`test_matmul_example` in
+[tpu_pallas_interpret_test.py](https://github.com/jax-ml/jax/blob/main/tests/pallas/tpu_pallas_interpret_test.py#:~:text=test_matmul_example)
+and
+`test_right_permute_example` and the other tests in
+[tpu_pallas_interpret_distributed_test.py](https://github.com/jax-ml/jax/blob/main/tests/pallas/tpu_pallas_interpret_distributed_test.py#:~:text=test_right_permute_example).
+
+The behavior of TPU interpret mode can be configured via arguments to
+[`pltpu.InterpretParams`](https://github.com/jax-ml/jax/blob/main/jax/_src/pallas/mosaic/interpret.py#:~:text=class%20InterpretParams). For example, use `num_cores_per_device=2`
+to simulate Megacore or `uninitialized_memory='zero'` to initialize simuluated
+TPU buffers with zeros instead of NaNs.
 
 ### debug_print
 
@@ -45,16 +74,14 @@ as a Python error after the kernel has successfully executed.
 
 #### Hard assertion
 
-Hard assertions can be inserted with `checkify.check`
-and running your program with the `--jax_pallas_enable_runtime_assert` flag.
+Hard assertions can be inserted with `pl.debug_check`
+and running your program with the `--jax_pallas_enable_debug_checks` flag.
 
 Your code will look like the following:
 
 ```python
-from jax.experimental import checkify
-
 def kernel(...):
-  checkify.check(x > y, "Check x > y failed")  # Will halt if x <= y
+  pl.debug_check(x > y, "Check x > y failed")  # Will halt if x <= y
 ```
 
 This will print a relatively lengthy dump which resembles the following:
@@ -76,11 +103,10 @@ Functionalized asserts can be performed by checkify-ing the `pl.pallas_call` op 
 from jax.experimental import checkify
 
 def kernel(...):
-  checkify.check(x > y, "Check x > y failed")  # Will throw an error if x <= y
+  pl.debug_check(x > y, "Check x > y failed")  # Will throw an error if x <= y
 
 kernel = pl.pallas_call(...)
-checkified_kernel = checkify.checkify(kernel,
-  errors=checkify.all_checks)
+checkified_kernel = checkify.checkify(kernel, errors=checkify.all_checks)
 error, result = checkified_kernel(x)
 error.throw()
 ```
@@ -148,26 +174,39 @@ Mosaic is the underlying TPU compiler for Pallas. It can be useful to dump Mosai
 
 Passing the `--xla_mosaic_dump_to=<directory>` argument will dump the output of all intermediate Mosaic passes. The names of the files contain either the parameter `name` passed to the `pallas_call`, or the name of the kernel function. A useful option is to dump to Sponge with `--test_arg=--xla_mosaic_dump_to=sponge` after which you will see all passes under the “Artifacts” tab in sponge.
 
-### Static Verification
+### Dynamic Race Detection
 
-The static verification tool can be used to automatically detect race conditions in distributed kernels.
-Because this tool uses formal verification, it is best used for small kernels (<=2 devices).
+[TPU Interpret Mode](#tpu-interpret-mode) includes a dynamic race detector.
+While running a kernel, it can detect and log data races -- pairs of accesses
+to shared memory (HBM, VMEM, SMEM, etc.) that are not properly synchronized.
 
-Verification can be performed by running your kernel with the `--jax_pallas_dump_promela_to=<directory>`,
-which will output a Promela dump file. Afterwards, the dump file can be
-analyzed using the [`spin`](https://spinroot.com) tool. For example, with a dump named `dump.pml`, run:
+To enable the dynamic race detector, use the option `detect_races=True` in the
+`pltpu.InterpretParams` passed to `pl.pallas_call`:
+
+```python
+pl.pallas_call(
+  kernel,
+  ...,
+  intepret=pltpu.InterpretParams(..., detect_races=True),
+)
+```
+
+If any data races are detected while running the kernel, a message will be
+printed -- for example:
 
 ```
-spin -a dump.pml && gcc -o pan -O3 pan.c -Wno-format-overflow && time ./pan
+RACE DETECTED
+  write ... from ...jax/tests/pallas/tpu_pallas_interpret_distributed_test.py:1038:10 (InterpretDistributedTest.test_race_detection.<locals>.kernel.<locals>._)
+  write ... from .../jax/tests/pallas/tpu_pallas_interpret_distributed_test.py:1038:10 (InterpretDistributedTest.test_race_detection.<locals>.kernel.<locals>._)
 ```
 
-<!--internal:2-->
+<!--internal:3-->
 
 ## Useful Command line flags
 
 * OOB Checks: `--xla_mosaic_on_device_checks=bounds`
 * Poison VMEM allocations: `--xla_jf_poison_vmem_allocations=true`
-<!--internal:3-->
+<!--internal:4-->
 * Dump Mosaic: `--xla_mosaic_dump_to=<directory>`
 * Enable trace markers in XProf: `--xla_enable_transpose_trace`
 
@@ -203,5 +242,3 @@ In most cases the error message should hint at what is wrong.
 For specific errors:
 
 * `Mixed dtype operands in cmp` when using `jnp.mod`: Use lax.rem instead of jnp.mod
-
-

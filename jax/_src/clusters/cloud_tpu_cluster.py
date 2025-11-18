@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # We use an arbitrarily chosen port for the coordinator since we cannot
 # rely on communication to choose one in real time.
-coordinator_port = '8476'
+coordinator_port = '8482'
 
 metadata_response_code_success = 200
 
@@ -54,24 +54,26 @@ def get_metadata(key):
     raise RuntimeError(f"Getting metadata['{key}'] failed for 6 tries")
   return api_resp.text, api_resp.status_code
 
-def get_tpu_env_value(key):
-  def get_tpu_env_value_from_metadata(key):
-    tpu_env_data = get_metadata('tpu-env')[0]
-    key_value_pairs = tpu_env_data.split('\n')
-    for key_value_pair in key_value_pairs:
-      # Typical line is MEGASCALE_NUM_SLICES: '2'
-      if ':' in key_value_pair:
-        row_key, value = re.split(':', key_value_pair, 1)
-        row_key = row_key.strip()
-        if row_key == key:
-          return value.strip().strip("'")
-    return None
+def get_tpu_env_value_from_metadata(key) -> str | None:
+  metadata_value = None
+  tpu_env_data = get_metadata('tpu-env')[0]
+  key_value_pairs = tpu_env_data.split('\n')
+  for key_value_pair in key_value_pairs:
+    # Typical line is MEGASCALE_NUM_SLICES: '2'
+    if ':' in key_value_pair:
+      row_key, value = re.split(':', key_value_pair, 1)
+      row_key = row_key.strip()
+      if row_key == key:
+        metadata_value = value.strip().strip("'")
+  return metadata_value
 
+def get_tpu_env_value(key) -> str | None:
+  # First try to get the value from the environment.
   value = os.environ.get(key, None)
-  return value if value is not None else get_tpu_env_value_from_metadata(key)
-
-def has_megascale_address():
-  return get_tpu_env_value('MEGASCALE_COORDINATOR_ADDRESS') is not None
+  if value is None:
+    # If not found, try to get it from the metadata.
+    value = get_tpu_env_value_from_metadata(key)
+  return value
 
 class BaseTpuCluster(clusters.ClusterEnv):
 
@@ -93,13 +95,12 @@ class BaseTpuCluster(clusters.ClusterEnv):
     return False
 
   @classmethod
-  def get_coordinator_address(cls, timeout_secs: int | None) -> str:
-    if has_megascale_address():
-      # For both GCE via QueuedResources and GKE via JobSet, the
-      # Megascale coordinator address is set as the host with process id = 0,
-      # so can be used as the jax distributed system coordinator.
-      coordinator_address = get_tpu_env_value('MEGASCALE_COORDINATOR_ADDRESS')
-    else:
+  def get_coordinator_address(cls, timeout_secs: int | None, override_coordinator_port: str | None) -> str:
+    # For both GCE via QueuedResources and GKE via JobSet, the
+    # Megascale coordinator address is set as the host with process id = 0,
+    # so can be used as the jax distributed system coordinator.
+    coordinator_address = get_tpu_env_value('MEGASCALE_COORDINATOR_ADDRESS')
+    if not coordinator_address:
       # For both GCE (QueuedResources and TPUVM create) and GKE via Job API,
       # the workers lists are sorted by process ID so the first one can
       # be used as the jax distributed system coordinator.
@@ -107,7 +108,8 @@ class BaseTpuCluster(clusters.ClusterEnv):
     coordinator_address = coordinator_address.split(':')[0]
     logger.debug("TPU Cluster using coordinator address: %s", coordinator_address)
     cls.wait_for_coordinator(coordinator_address, timeout_secs)
-    return f'{coordinator_address}:{coordinator_port}'
+    port = override_coordinator_port or coordinator_port
+    return f'{coordinator_address}:{port}'
 
   @classmethod
   def wait_for_coordinator(cls, coordinator_address, timeout_secs):
@@ -149,17 +151,18 @@ class BaseTpuCluster(clusters.ClusterEnv):
 
   @staticmethod
   def _get_num_slices() -> int:
-    if has_megascale_address():
-      return int(get_tpu_env_value('MEGASCALE_NUM_SLICES'))
-    else:
+    num_slices = get_tpu_env_value('MEGASCALE_NUM_SLICES')
+    if not num_slices:
       return 1
+    return int(num_slices)  # type: ignore
+
 
   @staticmethod
   def _get_slice_id() -> int:
-    if has_megascale_address():
-      return int(get_tpu_env_value('MEGASCALE_SLICE_ID'))
-    else:
+    slice_id = get_tpu_env_value('MEGASCALE_SLICE_ID')
+    if not slice_id:
       return 0
+    return int(slice_id)  # type: ignore
 
   @staticmethod
   def _get_process_id_in_slice() -> int:
@@ -208,14 +211,15 @@ class GkeTpuCluster(BaseTpuCluster):
 
   @classmethod
   def is_env_present(cls) -> bool:
-    if running_in_cloud_tpu_vm and os.environ.get("TPU_WORKER_HOSTNAMES") is not None:
+    if running_in_cloud_tpu_vm and cls._get_worker_host_names_env_var() is not None:
       logger.debug("Gke Tpu Cluster detected for Jax Distributed System")
       return True
     else:
       if not running_in_cloud_tpu_vm:
         logger.debug("Did not detect cloud TPU VM")
       else:
-        logger.debug("Did not detect TPU GKE cluster since TPU_WORKER_HOSTNAMES is not set")
+        logger.debug("Did not detect TPU GKE cluster since neither "
+                     "TPU_PROCESS_ADDRESSES nor TPU_WORKER_HOSTNAMES is set.")
       return False
 
   @staticmethod
@@ -223,5 +227,22 @@ class GkeTpuCluster(BaseTpuCluster):
     return int(str(os.environ.get('TPU_WORKER_ID')))
 
   @staticmethod
+  def _get_worker_host_names_env_var() -> str | None:
+    """
+    Retrieves the list of worker hostnames from environment variables.
+
+    Checks 'TPU_PROCESS_ADDRESSES' first, then 'TPU_WORKER_HOSTNAMES'.
+    Returns None if neither environment variable is set.
+    """
+    worker_hostnames = os.environ.get('TPU_PROCESS_ADDRESSES', None)
+    if worker_hostnames is not None:
+      return worker_hostnames
+    return os.environ.get('TPU_WORKER_HOSTNAMES', None)
+
+  @staticmethod
   def _get_worker_list_in_slice() -> list[str]:
-    return str(os.environ.get('TPU_WORKER_HOSTNAMES', None)).split(',')
+    """
+    Returns a list of worker endpoints/hostnames within slice.
+    """
+    worker_hostnames_str = str(GkeTpuCluster._get_worker_host_names_env_var())
+    return worker_hostnames_str.split(',')

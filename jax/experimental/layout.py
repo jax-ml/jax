@@ -13,9 +13,9 @@
 # limitations under the License.
 
 from jax._src.layout import (
-    DeviceLocalLayout as DeviceLocalLayout,
     Layout as Layout,
+    Format as Format,
 )
 from jax._src.pjit import (
-    with_dll_constraint as with_dll_constraint,
+    with_layout_constraint as with_layout_constraint,
 )

@@ -23,8 +23,6 @@ Classes
   GridSpec
   Slice
 
-  MemoryRef
-
 Functions
 ---------
 
@@ -39,14 +37,6 @@ Functions
   store
   swap
 
-  atomic_and
-  atomic_add
-  atomic_cas
-  atomic_max
-  atomic_min
-  atomic_or
-  atomic_xchg
-  atomic_xor
   broadcast_to
   debug_print
   dot

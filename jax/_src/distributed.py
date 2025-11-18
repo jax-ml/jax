@@ -18,11 +18,12 @@ from collections.abc import Sequence
 import logging
 import os
 from typing import Any
+import warnings
 
 from jax._src import clusters
 from jax._src import config
 from jax._src import xla_bridge
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +35,23 @@ _CHECK_PROXY_ENVS = config.bool_flag(
 )
 
 
+_ENABLE_RECOVERABILITY = config.bool_state(
+    name="jax_enable_recoverability",
+    default=False,
+    help=(
+        "Allows a multi-controller JAX job to continue running, even after some"
+        " tasks have failed."
+    ),
+)
+
 class State:
   process_id: int = 0
   num_processes: int = 1
-  service: Any | None = None
-  client: Any | None = None
+  service: _jax.DistributedRuntimeService | Any | None = None
+  client: _jax.DistributedRuntimeClient | Any | None = None
   preemption_sync_manager: Any | None = None
   coordinator_address: str | None = None
-  slice_index: int | None = None
+  partition_index: int | None = None
 
   def initialize(self,
                  coordinator_address: str | None = None,
@@ -51,11 +61,9 @@ class State:
                  cluster_detection_method: str | None = None,
                  initialization_timeout: int = 300,
                  coordinator_bind_address: str | None = None,
-                 service_heartbeat_interval_seconds: int = 10,
-                 service_max_missing_heartbeats: int = 10,
-                 client_heartbeat_interval_seconds: int = 10,
-                 client_max_missing_heartbeats: int = 10,
-                 slice_index: int | None = None):
+                 heartbeat_timeout_seconds: int = 100,
+                 shutdown_timeout_seconds: int = 300,
+                 partition_index: int | None = None):
     coordinator_address = (coordinator_address or
                            os.environ.get('JAX_COORDINATOR_ADDRESS'))
     if isinstance(local_device_ids, int):
@@ -132,45 +140,59 @@ class State:
       logger.info(
           'Starting JAX distributed service on %s', coordinator_bind_address
       )
-      self.service = xla_extension.get_distributed_runtime_service(
+      self.service = _jax.get_distributed_runtime_service(
           coordinator_bind_address, num_processes,
-          heartbeat_interval=service_heartbeat_interval_seconds,
-          max_missing_heartbeats=service_max_missing_heartbeats)
+          heartbeat_timeout=heartbeat_timeout_seconds,
+          shutdown_timeout=shutdown_timeout_seconds)
 
     self.num_processes = num_processes
 
     if self.client is not None:
       raise RuntimeError('distributed.initialize should only be called once.')
 
-    self.client = xla_extension.get_distributed_runtime_client(
+    self.client = _jax.get_distributed_runtime_client(
         coordinator_address, process_id, init_timeout=initialization_timeout,
-        heartbeat_interval=client_heartbeat_interval_seconds,
-        max_missing_heartbeats=client_max_missing_heartbeats, use_compression=True)
+        use_compression=True, heartbeat_timeout=heartbeat_timeout_seconds,
+        recoverable=_ENABLE_RECOVERABILITY.value)  # type: ignore
     logger.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 
     self.initialize_preemption_sync_manager()
 
-    if slice_index is None and 'JAX_SLICE_INDEX' in os.environ:
-      slice_index = int(os.environ.get('JAX_SLICE_INDEX'))  # type: ignore
-    self.slice_index = slice_index
+    if partition_index is None:
+      jax_partition_index = os.environ.get('JAX_PARTITION_INDEX')
+      jax_slice_index = os.environ.get('JAX_SLICE_INDEX')
+      if jax_partition_index is not None:
+        partition_index = int(jax_partition_index)  # type: ignore
+      elif jax_slice_index is not None:
+        # Deprecation added 2025-08-05. Should be removed after 3 months.
+        warnings.warn(
+            'JAX_SLICE_INDEX has been deprecated. Please use'
+            ' JAX_PARTITION_INDEX instead.',
+            DeprecationWarning,
+        )
+        partition_index = int(jax_slice_index)  # type: ignore
+    self.partition_index = partition_index
 
   def shutdown(self):
+    if self.preemption_sync_manager:
+      # It's important to shut down the preemption sync manager before the
+      # client because the preemption sync manager depends on the client.
+      self.preemption_sync_manager.shutdown()
+      self.preemption_sync_manager = None
     if self.client:
       self.client.shutdown()
       self.client = None
     if self.service:
       self.service.shutdown()
       self.service = None
-    if self.preemption_sync_manager:
-      self.preemption_sync_manager = None
 
   def initialize_preemption_sync_manager(self):
     if self.preemption_sync_manager is not None:
       raise RuntimeError(
           'Preemption sync manager should only be initialized once.')
     self.preemption_sync_manager = (
-        xla_extension.create_preemption_sync_manager())
+        _jax.create_preemption_sync_manager())
     self.preemption_sync_manager.initialize(self.client)
 
 global_state = State()
@@ -181,8 +203,11 @@ def initialize(coordinator_address: str | None = None,
                local_device_ids: int | Sequence[int] | None = None,
                cluster_detection_method: str | None = None,
                initialization_timeout: int = 300,
+               heartbeat_timeout_seconds: int = 100,
+               shutdown_timeout_seconds: int = 300,
                coordinator_bind_address: str | None = None,
-               slice_index: int | None = None):
+               slice_index: int | None = None,
+               partition_index: int | None = None):
   """Initializes the JAX distributed system.
 
   Calling :func:`~jax.distributed.initialize` prepares JAX for execution on
@@ -238,13 +263,19 @@ def initialize(coordinator_address: str | None = None,
     initialization_timeout: Time period (in seconds) for which connection will
       be retried. If the initialization takes more than the timeout specified,
       the initialization will error. Defaults to 300 secs i.e. 5 mins.
+    heartbeat_timeout_seconds: The time (in seconds) after which a process is
+      considered dead if it hasn't successfully sent any heartbeats. Defaults
+      to 100 seconds.
+    shutdown_timeout_seconds: The time (in seconds) a terminating process will
+      wait for all other processes to also terminate. Defaults to 300 seconds.
     coordinator_bind_address: the address and port to which the coordinator service
       on process `0` should bind. If this is not specified, the default is to bind to
       all available addresses on the same port as ``coordinator_address``. On systems
       that have multiple network interfaces per node it may be insufficient to only
       have the coordinator service listen on one address/interface.
-    slice_index: The slice index assigned to this process' local devices. If any process sets ``slice_index``,
-      then all processes must do so. If ``None`` the slice indices will be chosen automatically.
+    slice_index: DEPRECATED: Use ``partition_index`` instead.
+    partition_index: The partition index assigned to this process' local devices. If any process sets ``partition_index``,
+      then all processes must do so. If ``None`` the partition indices will be chosen automatically.
 
   Raises:
     RuntimeError: If :func:`~jax.distributed.initialize` is called more than once
@@ -268,10 +299,20 @@ def initialize(coordinator_address: str | None = None,
     raise RuntimeError("jax.distributed.initialize() must be called before "
                         "any JAX calls that might initialise the XLA backend. "
                         "This includes any computation, but also calls to jax.devices, jax.device_put, and others.")
+  if partition_index is None:
+    if slice_index is not None:
+      # Deprecation added 2025-08-05. Should be removed after 3 months.
+      warnings.warn(
+          '`slice_index` has been deprecated. Please use `partition_index` instead.',
+          DeprecationWarning,
+      )
+    partition_index = slice_index
   global_state.initialize(coordinator_address, num_processes, process_id,
                           local_device_ids, cluster_detection_method,
                           initialization_timeout, coordinator_bind_address,
-                          slice_index=slice_index)
+                          heartbeat_timeout_seconds=heartbeat_timeout_seconds,
+                          shutdown_timeout_seconds=shutdown_timeout_seconds,
+                          partition_index=partition_index)
 
 
 def is_initialized() -> bool:

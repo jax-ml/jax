@@ -24,7 +24,7 @@ DeepMind.
 """
 
 import functools
-import operator as op
+import math
 
 from jax import lax
 from jax import random
@@ -215,7 +215,7 @@ AvgPool = _pooling_layer(lax.add, 0., _normalize_by_window_size)
 def Flatten():
   """Layer construction function for flattening all but the leading dim."""
   def init_fun(rng, input_shape):
-    output_shape = input_shape[0], functools.reduce(op.mul, input_shape[1:], 1)
+    output_shape = input_shape[0], math.prod(input_shape[1:])
     return output_shape, ()
   def apply_fun(params, inputs, **kwargs):
     return jnp.reshape(inputs, (inputs.shape[0], -1))

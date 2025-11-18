@@ -23,6 +23,7 @@ from typing import cast as type_cast
 
 from jax._src import config
 from jax._src.lib import version_str as jaxlib_version_str
+from jax._src.lib import _jax
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager as pm
@@ -56,7 +57,7 @@ def get_flag_prefixes() -> list[str]:
 def custom_hook() -> str:
   """Custom hook for any addition to the cache key.
 
-  The custom hook will be called everytime get() is called and can be
+  The custom hook will be called every time get() is called and can be
   defined to return a string that will be hashed into the cache key.
   """
   return ""
@@ -232,7 +233,7 @@ def _hash_accelerator_config(hash_obj, accelerators: np.ndarray):
     hash_obj.update(
         xla_client.get_topology_for_devices(accelerator_devices).serialize()
     )
-  except xla_client._xla.XlaRuntimeError as ex:
+  except _jax.JaxRuntimeError as ex:
     # Fall back for those backends that do not support serialized
     # PjRtTopologyDescription as yet.
     logger.info("get (_hash_accelerator_config): unable to hash "

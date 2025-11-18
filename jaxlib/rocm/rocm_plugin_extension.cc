@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 #include "absl/log/log.h"
@@ -26,7 +27,7 @@ limitations under the License.
 
 namespace nb = nanobind;
 
-namespace xla {
+namespace jax {
 namespace {
 
 std::string ToString(hipError_t result) {
@@ -66,15 +67,33 @@ std::string ToString(hipError_t result) {
   }
 }
 
-nb::dict FfiRegistrations() {
+static nb::dict GpuTransposePlanCacheType() {
+  auto [type_id, type_info] = hip::GpuTransposePlanCacheTypeInfo();
+  nb::dict d;
+  d["type_id"] = nb::capsule(type_id);
+  d["type_info"] = nb::capsule(type_info);
+  return d;
+}
+
+nb::dict FfiTypes() {
+  nb::dict dict;
+  dict["GpuTransposePlanCache"] = GpuTransposePlanCacheType();
+  return dict;
+}
+
+nb::dict FfiHandlers() {
   nb::dict dict;
   nb::dict gpu_callback_dict;
   gpu_callback_dict["instantiate"] =
-      jax::EncapsulateFfiHandler(jax::hip::kGpuTransposePlanCacheInstantiate);
+      EncapsulateFfiHandler(hip::kGpuTransposePlanCacheInstantiate);
   gpu_callback_dict["execute"] =
-      jax::EncapsulateFfiHandler(jax::hip::kXlaFfiPythonGpuCallback);
+      EncapsulateFfiHandler(hip::kXlaFfiPythonGpuCallback);
   dict["xla_ffi_python_gpu_callback"] = gpu_callback_dict;
   dict["xla_ffi_partitioned_python_gpu_callback"] = gpu_callback_dict;
+  dict["xla_buffer_python_gpu_callback"] =
+      EncapsulateFfiHandler(hip::kXlaBufferPythonGpuCallback);
+  dict["xla_buffer_python_gpu_callback_cmd_buffer"] =
+      EncapsulateFfiHandler(hip::kXlaBufferPythonGpuCallbackCmdBuffer);
   return dict;
 }
 
@@ -82,7 +101,8 @@ nb::dict FfiRegistrations() {
 
 NB_MODULE(rocm_plugin_extension, m) {
   BuildGpuPluginExtension(m);
-  m.def("ffi_registrations", &FfiRegistrations);
+  m.def("ffi_types", &FfiTypes);
+  m.def("ffi_handlers", &FfiHandlers);
 
   m.def(
       "get_device_ordinal",
@@ -104,4 +124,4 @@ NB_MODULE(rocm_plugin_extension, m) {
       },
       nb::arg("data_value"));
 }
-}  // namespace xla
+}  // namespace jax

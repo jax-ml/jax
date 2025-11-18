@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Implementation of the Philox PRNG as a Pallas kernel."""
-from typing import Sequence
+from collections.abc import Sequence
 import jax
 from jax import typing
 from jax._src import prng
@@ -46,7 +46,9 @@ def mul32_hi_lo(x: jax.Array, y: jax.Array) -> tuple[jax.Array, jax.Array]:
   cross_xy = xhi * ylo
   cross_yx = xlo * yhi
   carry = (cross_xy & 0xffff) + (cross_yx & 0xffff) + (xy_lo >> 16)
-  return xy_hi + (cross_xy >> 16) + (cross_yx >> 16) + (carry >> 16), xy_lo
+  result_hi = xy_hi + (cross_xy >> 16) + (cross_yx >> 16) + (carry >> 16)
+  result_lo = (carry << 16) + (xy_lo & 0xffff)
+  return result_hi, result_lo
 
 
 def philox_4x32(hi0, lo0, hi1, lo1, k_hi, k_lo, rounds = 10):
@@ -140,8 +142,8 @@ def philox_4x32_kernel(key,
   return pl.pallas_call(
       kernel,
       in_specs=[
-          pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
-          pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+          pl.BlockSpec(memory_space=pltpu.SMEM),
+          pl.BlockSpec(memory_space=pltpu.SMEM),
       ],
       out_specs=out_spec,
       grid=grid_dims,

@@ -33,10 +33,10 @@ from jax import numpy as jnp
 from jax import random
 from jax._src import config
 from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax import vmap
-from jax.interpreters import xla
 
 from jax._src import random as jax_random
 from jax._src import prng as prng_internal
@@ -243,13 +243,14 @@ class PrngTest(jtu.JaxTestCase):
         jnp.ones((10, 0,), jnp.uint32))
     np.testing.assert_equal(result, np.zeros((10, 0,), dtype=np.uint32))
 
+  @jtu.thread_unsafe_test()
   def testNoOpByOpUnderHash(self):
     def fail(*args, **kwargs): assert False
-    apply_primitive, xla.apply_primitive = xla.apply_primitive, fail
+    apply_primitive, dispatch.apply_primitive = dispatch.apply_primitive, fail
     try:
       _ = prng_internal.threefry_2x32(np.zeros(2, np.uint32), np.arange(10, dtype=np.uint32))
     finally:
-      xla.apply_primitive = apply_primitive
+      dispatch.apply_primitive = apply_primitive
 
   @skipIf(config.threefry_partitionable.value, 'changed random bit values')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
@@ -278,13 +279,18 @@ class PrngTest(jtu.JaxTestCase):
       expected64 = np.array([56197195, 4200222568, 961309823], dtype=np.uint32)
     self.assertArraysEqual(bits64, expected64)
 
-  @jtu.sample_product(prng_name=[name for name, _ in PRNG_IMPLS],
-                      make_key=KEY_CTORS)
-  def testRngRandomBitsShapeDtype(self, prng_name, make_key):
+  @jtu.sample_product(
+      prng_name=[name for name, _ in PRNG_IMPLS],
+      make_key=KEY_CTORS,
+      explicit_x64_dtypes=config.ExplicitX64Mode.__members__.values(),
+  )
+  def testRngRandomBitsShapeDtype(self, prng_name, make_key,
+                                  explicit_x64_dtypes):
     # Like testRngRandomBits, but only meant to exercise random_bits
     # on every PRNG implementation. Instead of values, only checks
     # that shapes/dtypes are as expected.
 
+    @config.explicit_x64_dtypes(explicit_x64_dtypes)
     def random_bits(key, width, shape):
       dtype = jnp.dtype(f'uint{width}')
       return jax.random.bits(key, shape, dtype)
@@ -304,11 +310,20 @@ class PrngTest(jtu.JaxTestCase):
       self.assertEqual(bits32.shape, (3,))
       self.assertEqual(bits32.dtype, np.dtype('uint32'))
 
-      with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
-        bits64 = random_bits(make_key(seed), 64, (3,))
-      expected_dtype = np.dtype('uint64' if config.enable_x64.value else 'uint32')
-      self.assertEqual(bits64.shape, (3,))
-      self.assertEqual(bits64.dtype, expected_dtype)
+      if explicit_x64_dtypes == config.ExplicitX64Mode.ERROR and not config.enable_x64.value:
+        with self.assertRaisesRegex(ValueError, "Explicitly requested dtype.*"):
+          bits64 = random_bits(make_key(seed), 64, (3,))
+      else:
+        with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
+          bits64 = random_bits(make_key(seed), 64, (3,))
+        expected_dtype = np.dtype(
+            "uint64"
+            if config.enable_x64.value
+            or explicit_x64_dtypes == config.ExplicitX64Mode.ALLOW
+            else "uint32"
+        )
+        self.assertEqual(bits64.shape, (3,))
+        self.assertEqual(bits64.dtype, expected_dtype)
 
   @skipIf(config.threefry_partitionable.value, 'changed random bit values')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
@@ -325,7 +340,6 @@ class PrngTest(jtu.JaxTestCase):
     rand_bits = [random_bits(make_key(1701), n, (N * 64 // n,)) for n in nbits]
     rand_bits_32 = np.array([np.array(r).view(np.uint32) for r in rand_bits])
     assert np.all(rand_bits_32 == rand_bits_32[0])
-
 
   @jtu.sample_product(case=_RANDOM_VALUES_CASES, make_key=KEY_CTORS)
   @skipIf(config.threefry_partitionable.value, 'changed random bit values')
@@ -364,9 +378,9 @@ class PrngTest(jtu.JaxTestCase):
     # Test to ensure consistent random values between JAX versions
     seed = 0
     self.assertEqual(random.randint(make_key(seed), (3, 3), 0, 8).dtype,
-                     dtypes.canonicalize_dtype(jnp.int_))
+                     dtypes.default_int_dtype())
     if config.enable_x64.value:
-        self.assertAllClose(
+      self.assertAllClose(
             random.randint(make_key(seed), (3, 3), 0, 8, dtype='int64'),
             np.array([[7, 2, 6],
                        [2, 1, 0],
@@ -602,9 +616,25 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertEqual(key1.dtype, key2.dtype)
     self.assertArraysEqual(random.key_data(key1), random.key_data(key2))
 
+  def make_keys(self, *shape, seed=28):
+    seeds = seed + jnp.arange(math.prod(shape), dtype=jnp.uint32)
+    return jax.vmap(random.key)(seeds).reshape(shape)
+
   def test_construction(self):
     key = random.key(42)
     self.assertIsInstance(key, prng_internal.PRNGKeyArray)
+
+  def test_numpy_construction(self):
+    key = random.wrap_key_data(np.array([42, 173], dtype=np.uint32),
+                               impl='threefry2x32')
+    self.assertIsInstance(key, prng_internal.PRNGKeyArray)
+    self.assertIsInstance(key._base_array, jax.Array)
+    self.assertEqual(key._base_array.device, jax.devices()[0])
+    self.assertEqual(key.device, jax.devices()[0])
+
+  def test_device_property(self):
+    key = random.key(42)
+    self.assertEqual(key.device, key._base_array.device)
 
   def test_random_clone(self):
     # Here we test value semantics and compatibility with jit/vmap
@@ -631,10 +661,6 @@ class KeyArrayTest(jtu.JaxTestCase):
   def test_construction_upgrade_flag(self):
     key = random.PRNGKey(42)
     self.assertIsInstance(key, prng_internal.PRNGKeyArray)
-
-  def make_keys(self, *shape, seed=28):
-    seeds = seed + jnp.arange(math.prod(shape), dtype=jnp.uint32)
-    return jax.vmap(random.key)(seeds).reshape(shape)
 
   def test_key_as_seed(self):
     key = self.make_keys()
@@ -952,12 +978,14 @@ class KeyArrayTest(jtu.JaxTestCase):
     keys_on_device = jax.device_put(keys, device)
     self.assertKeysEqual(keys, keys_on_device)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_device_put_sharded(self):
     devices = jax.devices()
     keys = self.make_keys(len(devices))
     keys_on_device = jax.device_put_sharded(list(keys), devices)
     self.assertKeysEqual(keys, keys_on_device)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_device_put_replicated(self):
     devices = jax.devices()
     key = self.make_keys()
@@ -979,7 +1007,7 @@ class KeyArrayTest(jtu.JaxTestCase):
   def test_make_array_from_single_device_arrays(self):
     devices = jax.devices()
     shape = (len(devices),)
-    mesh = jtu.create_mesh((len(devices),), ('x',))
+    mesh = jtu.create_mesh((len(devices),), ('x',), iota_order=True)
     sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
     keys = random.split(random.key(0), len(devices))
     arrays = [jax.device_put(keys[i:i + 1], device) for i, device in enumerate(devices)]

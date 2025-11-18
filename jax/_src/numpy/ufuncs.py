@@ -32,6 +32,7 @@ from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax
 from jax._src.lax import other as lax_other
 from jax._src.typing import Array, ArrayLike
+from jax._src.numpy import array_constructors
 from jax._src.numpy import error as jnp_error
 from jax._src.numpy import reductions
 from jax._src.numpy.ufunc_api import ufunc
@@ -53,7 +54,7 @@ _INT_DTYPES = {
 }
 
 def _constant_like(x, const):
-  return np.array(const, dtype=dtypes.dtype(x))
+  return array_constructors.array(const, dtype=dtypes.dtype(x))
 
 def _replace_inf(x: ArrayLike) -> Array:
   return lax.select(isposinf(real(x)), lax._zeros(x), x)
@@ -81,7 +82,7 @@ def binary_ufunc(identity: Any, reduce: Callable[..., Any] | None = None,
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def fabs(x: ArrayLike, /) -> Array:
   """Compute the element-wise absolute values of the real-valued input.
 
@@ -119,28 +120,28 @@ def fabs(x: ArrayLike, /) -> Array:
     >>> jnp.fabs(x2)
     Array([1., 0.], dtype=float32)
   """
-  check_arraylike('fabs', x)
-  if dtypes.issubdtype(dtypes.dtype(x), np.complexfloating):
+  x = ensure_arraylike('fabs', x)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
     raise TypeError("ufunc 'fabs' does not support complex dtypes")
   return lax.abs(*promote_args_inexact('fabs', x))
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def bitwise_invert(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.invert`."""
   return lax.bitwise_not(*promote_args('bitwise_invert', x))
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def bitwise_not(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.invert`."""
   return lax.bitwise_not(*promote_args('bitwise_not', x))
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def invert(x: ArrayLike, /) -> Array:
   """Compute the bitwise inversion of an input.
 
@@ -233,7 +234,7 @@ def negative(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def positive(x: ArrayLike, /) -> Array:
   """Return element-wise positive values of the input.
 
@@ -282,7 +283,7 @@ def positive(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def sign(x: ArrayLike, /) -> Array:
   r"""Return an element-wise indication of sign of the input.
 
@@ -297,7 +298,7 @@ def sign(x: ArrayLike, /) -> Array:
       -1, & x < 0
     \end{cases}
 
-  For complex valued input, ``jnp.sign`` returns a unit vector repesenting the
+  For complex valued input, ``jnp.sign`` returns a unit vector representing the
   phase. For generalized case, the sign of ``x`` is given by:
 
   .. math::
@@ -333,7 +334,7 @@ def sign(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def floor(x: ArrayLike, /) -> Array:
   """Round input to the nearest integer downwards.
 
@@ -347,8 +348,8 @@ def floor(x: ArrayLike, /) -> Array:
     the nearest integer that is less than or equal to the value itself.
 
   See also:
-    - :func:`jax.numpy.fix`: Rounds the input to the nearest interger towards zero.
-    - :func:`jax.numpy.trunc`: Rounds the input to the nearest interger towards
+    - :func:`jax.numpy.fix`: Rounds the input to the nearest integer towards zero.
+    - :func:`jax.numpy.trunc`: Rounds the input to the nearest integer towards
       zero.
     - :func:`jax.numpy.ceil`: Rounds the input up to the nearest integer.
 
@@ -365,14 +366,14 @@ def floor(x: ArrayLike, /) -> Array:
            [ 0., -1.,  0.],
            [-5.,  2.,  1.]], dtype=float32)
   """
-  check_arraylike('floor', x)
-  if dtypes.isdtype(dtypes.dtype(x), ('integral', 'bool')):
-    return lax.asarray(x)
+  x = ensure_arraylike('floor', x)
+  if dtypes.isdtype(x.dtype, ('integral', 'bool')):
+    return x
   return lax.floor(*promote_args_inexact('floor', x))
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def ceil(x: ArrayLike, /) -> Array:
   """Round input to the nearest integer upwards.
 
@@ -386,8 +387,8 @@ def ceil(x: ArrayLike, /) -> Array:
     the nearest integer that is greater than or equal to the value itself.
 
   See also:
-    - :func:`jax.numpy.fix`: Rounds the input to the nearest interger towards zero.
-    - :func:`jax.numpy.trunc`: Rounds the input to the nearest interger towards
+    - :func:`jax.numpy.fix`: Rounds the input to the nearest integer towards zero.
+    - :func:`jax.numpy.trunc`: Rounds the input to the nearest integer towards
       zero.
     - :func:`jax.numpy.floor`: Rounds the input down to the nearest integer.
 
@@ -404,14 +405,14 @@ def ceil(x: ArrayLike, /) -> Array:
            [-0.,  4.,  1.],
            [ 5.,  4., -1.]], dtype=float32)
   """
-  check_arraylike('ceil', x)
-  if dtypes.isdtype(dtypes.dtype(x), ('integral', 'bool')):
+  x = ensure_arraylike('ceil', x)
+  if dtypes.isdtype(x.dtype, ('integral', 'bool')):
     return lax.asarray(x)
   return lax.ceil(*promote_args_inexact('ceil', x))
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def exp(x: ArrayLike, /) -> Array:
   """Calculate element-wise exponential of the input.
 
@@ -453,7 +454,7 @@ def exp(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def log(x: ArrayLike, /) -> Array:
   """Calculate element-wise natural logarithm of the input.
 
@@ -493,7 +494,7 @@ def log(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def expm1(x: ArrayLike, /) -> Array:
   """Calculate ``exp(x)-1`` of each element of the input.
 
@@ -538,7 +539,7 @@ def expm1(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def log1p(x: ArrayLike, /) -> Array:
   """Calculates element-wise logarithm of one plus input, ``log(x+1)``.
 
@@ -581,7 +582,7 @@ def log1p(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def sin(x: ArrayLike, /) -> Array:
   """Compute a trigonometric sine of each element of input.
 
@@ -615,7 +616,7 @@ def sin(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def cos(x: ArrayLike, /) -> Array:
   """Compute a trigonometric cosine of each element of input.
 
@@ -648,7 +649,7 @@ def cos(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def tan(x: ArrayLike, /) -> Array:
   """Compute a trigonometric tangent of each element of input.
 
@@ -681,7 +682,7 @@ def tan(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def arcsin(x: ArrayLike, /) -> Array:
   r"""Compute element-wise inverse of trigonometric sine of input.
 
@@ -725,7 +726,7 @@ def arcsin(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def arccos(x: ArrayLike, /) -> Array:
   """Compute element-wise inverse of trigonometric cosine of input.
 
@@ -770,7 +771,7 @@ def arccos(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def arctan(x: ArrayLike, /) -> Array:
   """Compute element-wise inverse of trigonometric tangent of input.
 
@@ -811,7 +812,7 @@ def arctan(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def sinh(x: ArrayLike, /) -> Array:
   r"""Calculate element-wise hyperbolic sine of input.
 
@@ -866,7 +867,7 @@ def sinh(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def cosh(x: ArrayLike, /) -> Array:
   r"""Calculate element-wise hyperbolic cosine of input.
 
@@ -920,7 +921,7 @@ def cosh(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def arcsinh(x: ArrayLike, /) -> Array:
   r"""Calculate element-wise inverse of hyperbolic sine of input.
 
@@ -1027,7 +1028,7 @@ def arccosh(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def tanh(x: ArrayLike, /) -> Array:
   r"""Calculate element-wise hyperbolic tangent of input.
 
@@ -1081,7 +1082,7 @@ def tanh(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def arctanh(x: ArrayLike, /) -> Array:
   r"""Calculate element-wise inverse of hyperbolic tangent of input.
 
@@ -1132,7 +1133,7 @@ def arctanh(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def sqrt(x: ArrayLike, /) -> Array:
   """Calculates element-wise non-negative square root of the input array.
 
@@ -1167,7 +1168,7 @@ def sqrt(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def cbrt(x: ArrayLike, /) -> Array:
   """Calculates element-wise cube root of the input array.
 
@@ -1371,7 +1372,7 @@ def bitwise_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def left_shift(x: ArrayLike, y: ArrayLike, /) -> Array:
   r"""Shift bits of ``x`` to left by the amount specified in ``y``, element-wise.
 
@@ -1427,14 +1428,14 @@ def left_shift(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def bitwise_left_shift(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.left_shift`."""
   return lax.shift_left(*promote_args_numeric("bitwise_left_shift", x, y))
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def equal(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Returns element-wise truth value of ``x == y``.
 
@@ -1484,7 +1485,7 @@ def equal(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def not_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Returns element-wise truth value of ``x != y``.
 
@@ -1571,7 +1572,7 @@ def subtract(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def arctan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   r"""Compute the arctangent of x1/x2, choosing the correct quadrant.
 
@@ -1605,7 +1606,7 @@ def arctan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     :math:`\tan(\theta) = y / x`, and compute :math:`\theta = \tan^{-1}(y/x)`.
     Unfortunately, this does not recover the input angle:
 
-    >>> with jnp.printoptions(precision=2, suppress=True):
+    >>> with jnp.printoptions(precision=2, suppress=True):  # doctest: +SKIP
     ...   print(jnp.arctan(y / x))
     [-0.    0.79  1.57 -0.79  0.    0.79  1.57 -0.79  0.  ]
 
@@ -1621,13 +1622,12 @@ def arctan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
     The results match the input ``theta``, except at the endpoints where :math:`+\pi`
     and :math:`-\pi` represent indistinguishable points on the unit circle. By convention,
-    :func:`arctan2` alwasy returns values between :math:`-\pi` and :math:`+\pi` inclusive.
+    :func:`arctan2` always returns values between :math:`-\pi` and :math:`+\pi` inclusive.
   """
   return lax.atan2(*promote_args_inexact("arctan2", x1, x2))
 
 
-@export
-@partial(jit, inline=True)
+@binary_ufunc(identity=None, reduce=reductions._reduce_min)
 def minimum(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise minimum of the input arrays.
 
@@ -1687,8 +1687,7 @@ def minimum(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.min(*promote_args("minimum", x, y))
 
 
-@export
-@partial(jit, inline=True)
+@binary_ufunc(identity=None, reduce=reductions._reduce_max)
 def maximum(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise maximum of the input arrays.
 
@@ -1712,7 +1711,7 @@ def maximum(x: ArrayLike, y: ArrayLike, /) -> Array:
       arrays.
     - :func:`jax.numpy.fmax`: Returns element-wise maximum of the input arrays,
       ignoring NaNs.
-    - :func:`jax.numpy.amax`: Retruns the maximum of array elements along a given
+    - :func:`jax.numpy.amax`: Returns the maximum of array elements along a given
       axis.
     - :func:`jax.numpy.nanmax`: Returns the maximum of the array elements along
       a given axis, ignoring NaNs.
@@ -1748,7 +1747,7 @@ def maximum(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def float_power(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Calculate element-wise base ``x`` exponential of ``y``.
 
@@ -1776,7 +1775,7 @@ def float_power(x: ArrayLike, y: ArrayLike, /) -> Array:
     >>> jnp.float_power(x, y)
     Array([ 9. ,  1. , -0.2], dtype=float32)
 
-    Inputs with broacast compatibility:
+    Inputs with broadcast compatibility:
 
     >>> x1 = jnp.array([[2, -4, 1],
     ...                 [-1, 2, 3]])
@@ -1797,7 +1796,7 @@ def float_power(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def nextafter(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise next floating point value after ``x`` towards ``y``.
 
@@ -1825,7 +1824,7 @@ def nextafter(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def spacing(x: ArrayLike, /) -> Array:
   """Return the spacing between ``x`` and the next adjacent number.
 
@@ -1933,7 +1932,7 @@ def logical_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def logical_not(x: ArrayLike, /) -> Array:
   """Compute NOT bool(x) element-wise.
 
@@ -1980,7 +1979,7 @@ def _complex_comparison(lax_op: Callable[[ArrayLike, ArrayLike], Array],
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def greater_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise truth value of ``x >= y``.
 
@@ -2026,7 +2025,7 @@ def greater_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def greater(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise truth value of ``x > y``.
 
@@ -2073,7 +2072,7 @@ def greater(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def less_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise truth value of ``x <= y``.
 
@@ -2120,7 +2119,7 @@ def less_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def less(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise truth value of ``x < y``.
 
@@ -2168,49 +2167,49 @@ def less(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 # Array API aliases
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def acos(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arccos`"""
   return arccos(*promote_args('acos', x))
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def acosh(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arccosh`"""
   return arccosh(*promote_args('acosh', x))
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def asin(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arcsin`"""
   return arcsin(*promote_args('asin', x))
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def asinh(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arcsinh`"""
   return arcsinh(*promote_args('asinh', x))
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def atan(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arctan`"""
   return arctan(*promote_args('atan', x))
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def atanh(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arctanh`"""
   return arctanh(*promote_args('atanh', x))
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def atan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arctan2`"""
   return arctan2(*promote_args('atan2', x1, x2))
@@ -2254,7 +2253,7 @@ def bitwise_count(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   r"""Right shift the bits of ``x1`` to the amount specified in ``x2``.
 
@@ -2306,14 +2305,14 @@ def right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def bitwise_right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.right_shift`."""
   return right_shift(x1, x2)
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def absolute(x: ArrayLike, /) -> Array:
   r"""Calculate the absolute value element-wise.
 
@@ -2343,13 +2342,13 @@ def absolute(x: ArrayLike, /) -> Array:
     >>> jnp.absolute(x3)
     Array([17.,  5.,  5.], dtype=float32)
   """
-  check_arraylike('absolute', x)
-  dt = dtypes.dtype(x)
+  x = ensure_arraylike('absolute', x)
+  dt = x.dtype
   return lax.asarray(x) if dt == np.bool_ or dtypes.issubdtype(dt, np.unsignedinteger) else lax.abs(x)
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def abs(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.absolute`."""
   return absolute(x)
@@ -2386,10 +2385,10 @@ def rint(x: ArrayLike, /) -> Array:
     >>> jnp.rint(x3)
     Array([-2.+4.j,  4.-0.j], dtype=complex64)
   """
-  check_arraylike('rint', x)
-  dtype = dtypes.dtype(x)
+  x = ensure_arraylike('rint', x)
+  dtype = x.dtype
   if dtype == bool or dtypes.issubdtype(dtype, np.integer):
-    return lax.convert_element_type(x, dtypes.float_)
+    return lax.convert_element_type(x, dtypes.default_float_dtype())
   if dtypes.issubdtype(dtype, np.complexfloating):
     return lax.complex(rint(lax.real(x)), rint(lax.imag(x)))
   return lax.round(x, lax.RoundingMethod.TO_NEAREST_EVEN)
@@ -2430,13 +2429,13 @@ def copysign(x1: ArrayLike, x2: ArrayLike, /) -> Array:
            [ 2.,  3.]], dtype=float32)
   """
   x1, x2 = promote_args_inexact("copysign", x1, x2)
-  if dtypes.issubdtype(dtypes.dtype(x1), np.complexfloating):
+  if dtypes.issubdtype(x1.dtype, np.complexfloating):
     raise TypeError("copysign does not support complex-valued inputs")
   return _where(signbit(x2).astype(bool), -lax.abs(x1), lax.abs(x1))
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def true_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Calculates the division of x1 by x2 element-wise
 
@@ -2525,7 +2524,7 @@ def floor_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """
   x1, x2 = promote_args_numeric("floor_divide", x1, x2)
   jnp_error._set_error_if_divide_by_zero(x2)
-  dtype = dtypes.dtype(x1)
+  dtype = x1.dtype
   if dtypes.issubdtype(dtype, np.unsignedinteger):
     return lax.div(x1, x2)
   elif dtypes.issubdtype(dtype, np.integer):
@@ -2576,7 +2575,7 @@ def divmod(x1: ArrayLike, x2: ArrayLike, /) -> tuple[Array, Array]:
      Array([0.30000007, 1.        , 2.9       ], dtype=float32))
   """
   x1, x2 = promote_args_numeric("divmod", x1, x2)
-  if dtypes.issubdtype(dtypes.dtype(x1), np.integer):
+  if dtypes.issubdtype(x1.dtype, np.integer):
     return floor_divide(x1, x2), remainder(x1, x2)
   else:
     jnp_error._set_error_if_divide_by_zero(x2)
@@ -2615,8 +2614,9 @@ def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
       :func:`jax.lax.integer_pow`.
     - When ``x2`` is a traced scalar or an array, ``jnp.power`` lowers to
       :func:`jax.lax.pow`.
-    - ``jnp.power`` raises a ``TypeError`` for integer type raised to negative
-      integer power.
+    - ``jnp.power`` raises a ``TypeError`` for integer type raised to a concrete
+      negative integer power. For a non-concrete power, the operation is invalid
+      and the returned value is implementation-defined.
     - ``jnp.power`` returns ``nan`` for negative value raised to the power of
       non-integer values.
 
@@ -2692,19 +2692,19 @@ def pow(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.power`"""
   return power(x1, x2)
 
-@partial(jit, inline=True)
+@jit(inline=True)
 def _power(x1: ArrayLike, x2: ArrayLike) -> Array:
   x1, x2 = promote_shapes("power", x1, x2)  # not dtypes
 
   # Case 2: bool/integer result
   x1_, x2_ = promote_args_numeric("power", x1, x2)
-  if (dtypes.issubdtype(dtypes.dtype(x1_), np.integer) or
-      dtypes.issubdtype(dtypes.dtype(x1_), np.bool_)):
-    assert np.iinfo(dtypes.dtype(x1_)).bits <= 64  # _pow_int_int assumes <=64bit
+  if (dtypes.issubdtype(x1_.dtype, np.integer) or
+      dtypes.issubdtype(x1_.dtype, np.bool_)):
+    assert np.iinfo(x1_.dtype).bits <= 64  # _pow_int_int assumes <=64bit
     return _pow_int_int(x1_, x2_)
 
   # Case 3: float/complex base with integer power (special autodiff behavior)
-  d1, d2 = dtypes.dtype(x1), dtypes.dtype(x2)
+  d1, d2 = x1.dtype, x2.dtype
   if dtypes.issubdtype(d1, np.inexact) and dtypes.issubdtype(d2, np.integer):
     return lax.pow(x1, x2)
 
@@ -2781,12 +2781,11 @@ def logaddexp2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     Array(True, dtype=bool)
   """
   x1, x2 = promote_args_inexact("logaddexp2", x1, x2)
-  ln2 = float(np.log(2))
-  return logaddexp(x1 * ln2, x2 * ln2) / ln2
+  return lax_other.logaddexp2(x1, x2)
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def log2(x: ArrayLike, /) -> Array:
   """Calculates the base-2 logarithm of ``x`` element-wise.
 
@@ -2817,7 +2816,7 @@ def log2(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def log10(x: ArrayLike, /) -> Array:
   """Calculates the base-10 logarithm of x element-wise
 
@@ -2837,19 +2836,20 @@ def log10(x: ArrayLike, /) -> Array:
     [-2. -1.  0.  1.  2.  3.]
   """
   x, = promote_args_inexact("log10", x)
+  one_over_log10 = np.array(0.4342944819032518,  # exact value of 1 / log(10)
+                            dtype=dtypes.finfo(x.dtype).dtype)
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     r = lax.log(x)
     re = lax.real(r)
     im = lax.imag(r)
-    ln10 = lax.log(_constant_like(re, 10))
-    return lax.complex(lax.div(re, ln10), lax.div(im, ln10))
-  out = lax.div(lax.log(x), lax.log(_constant_like(x, 10)))
+    return lax.complex(lax.mul(re, one_over_log10), lax.mul(im, one_over_log10))
+  out = lax.mul(lax.log(x), one_over_log10)
   jnp_error._set_error_if_nan(out)
   return out
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def exp2(x: ArrayLike, /) -> Array:
   """Calculate element-wise base-2 exponential of input.
 
@@ -2929,7 +2929,7 @@ def signbit(x: ArrayLike, /) -> Array:
     Array([False,  True, False,  True], dtype=bool)
     """
   x, = promote_args("signbit", x)
-  dtype = dtypes.dtype(x)
+  dtype = x.dtype
   if dtypes.issubdtype(dtype, np.integer):
     return lax.lt(x, _constant_like(x, 0))
   elif dtypes.issubdtype(dtype, np.bool_):
@@ -2994,15 +2994,24 @@ def ldexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     >>> jnp.ldexp(m, e)
     Array([ 2.,  3.,  5., 11.], dtype=float32)
   """
-  check_arraylike("ldexp", x1, x2)
-  x1_dtype = dtypes.dtype(x1)
-  x2_dtype = dtypes.dtype(x2)
+  x1, x2 = ensure_arraylike("ldexp", x1, x2)
+  x1_dtype = x1.dtype
+  x2_dtype = x2.dtype
   if (dtypes.issubdtype(x1_dtype, np.complexfloating)
       or dtypes.issubdtype(x2_dtype, np.inexact)):
     raise ValueError(f"ldexp not supported for input types {(x1_dtype, x2_dtype)}")
   x1, = promote_args_inexact("ldexp", x1)
-  x2 = lax.convert_element_type(x2, dtypes.dtype(x1))
-  x = x1 * (2 ** x2)
+  x2 = lax.convert_element_type(x2, x1.dtype)
+
+  # Split off the exponent to avoid overflow for small x1 and large x2.
+  m, e = frexp(x1)
+  e = (e.astype(x2.dtype) + x2).astype(x1.dtype)
+
+  # exponent may overflow by 1 and still have a finite result.
+  m = _where(e > 0, m * 2, m)
+  e = _where(e > 0, e - 1, e)
+
+  x = m * (2 ** e.astype(m.dtype))
   return _where(isinf(x1) | (x1 == 0), x1, x)
 
 
@@ -3039,11 +3048,14 @@ def frexp(x: ArrayLike, /) -> tuple[Array, Array]:
     >>> m * 2 ** e
     Array([1., 2., 3., 4., 5.], dtype=float32)
   """
-  check_arraylike("frexp", x)
+  x = ensure_arraylike("frexp", x)
   x, = promote_dtypes_inexact(x)
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     raise TypeError("frexp does not support complex-valued inputs")
+  return _frexp(x)
 
+@custom_jvp
+def _frexp(x):
   dtype = dtypes.dtype(x)
   info = dtypes.finfo(dtype)
   mask = (1 << info.nexp) - 1
@@ -3058,6 +3070,16 @@ def frexp(x: ArrayLike, /) -> tuple[Array, Array]:
   cond = isinf(x) | isnan(x) | (x == 0)
   x2 = _where(cond, lax._zeros(x2), x2)
   return _where(cond, x, x1), lax.convert_element_type(x2, np.int32)
+
+
+@_frexp.defjvp
+def _frexp_jvp(primals, tangents):
+  x, = primals
+  t, = tangents
+  m, e = frexp(x)
+  mdot = t * exp2(-e.astype(t.dtype))
+  edot = lax.full_like(e, fill_value=0, dtype=dtypes.float0)
+  return (m, e), (mdot, edot)
 
 
 @export
@@ -3153,7 +3175,7 @@ def fmod(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     Array([[ 1., -1.,  4.],
            [ 0.,  2., -2.]], dtype=float32)
   """
-  check_arraylike("fmod", x1, x2)
+  x1, x2 = ensure_arraylike("fmod", x1, x2)
   if dtypes.issubdtype(dtypes.result_type(x1, x2), np.integer):
     x2 = _where(x2 == 0, lax._ones(x2), x2)
   out = lax.rem(*promote_args_numeric("fmod", x1, x2))
@@ -3162,7 +3184,7 @@ def fmod(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def square(x: ArrayLike, /) -> Array:
   """Calculate element-wise square of the input array.
 
@@ -3206,13 +3228,13 @@ def square(x: ArrayLike, /) -> Array:
     >>> jnp.square(x2)
     Array([-8.-6.j, -1.+0.j,  4.+0.j], dtype=complex64)
   """
-  check_arraylike("square", x)
+  x = ensure_arraylike("square", x)
   x, = promote_dtypes_numeric(x)
   return lax.square(x)
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def deg2rad(x: ArrayLike, /) -> Array:
   r"""Convert angles from degrees to radians.
 
@@ -3247,7 +3269,7 @@ def deg2rad(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def rad2deg(x: ArrayLike, /) -> Array:
   r"""Convert angles from radians to degrees.
 
@@ -3295,7 +3317,7 @@ def radians(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def conjugate(x: ArrayLike, /) -> Array:
   """Return element-wise complex-conjugate of the input.
 
@@ -3320,7 +3342,7 @@ def conjugate(x: ArrayLike, /) -> Array:
     >>> jnp.conjugate(x)
     Array([2.+1.j, 3.-5.j, 7.-0.j], dtype=complex64)
   """
-  check_arraylike("conjugate", x)
+  x = ensure_arraylike("conjugate", x)
   return lax.conj(x) if np.iscomplexobj(x) else lax.asarray(x)
 
 
@@ -3331,7 +3353,7 @@ def conj(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def imag(val: ArrayLike, /) -> Array:
   """Return element-wise imaginary of part of the complex argument.
 
@@ -3358,12 +3380,12 @@ def imag(val: ArrayLike, /) -> Array:
     >>> jnp.imag(x)
     Array([ 3., -1.,  0.], dtype=float32)
   """
-  check_arraylike("imag", val)
+  val = ensure_arraylike("imag", val)
   return lax.imag(val) if np.iscomplexobj(val) else lax.full_like(val, 0)
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def real(val: ArrayLike, /) -> Array:
   """Return element-wise real part of the complex argument.
 
@@ -3390,7 +3412,7 @@ def real(val: ArrayLike, /) -> Array:
     >>> jnp.real(x)
     Array([ 3.,  4., -0.], dtype=float32)
   """
-  check_arraylike("real", val)
+  val = ensure_arraylike("real", val)
   return lax.real(val) if np.iscomplexobj(val) else lax.asarray(val)
 
 
@@ -3420,7 +3442,7 @@ def modf(x: ArrayLike, /, out=None) -> tuple[Array, Array]:
     >>> jnp.modf(x)
     (Array([-0.4000001 , -0.6999998 ,  0.6       ,  0.5       ,  0.29999995],      dtype=float32), Array([-3., -5.,  0.,  1.,  2.], dtype=float32))
   """
-  check_arraylike("modf", x)
+  x = ensure_arraylike("modf", x)
   x, = promote_dtypes_inexact(x)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.modf is not supported.")
@@ -3429,7 +3451,7 @@ def modf(x: ArrayLike, /, out=None) -> tuple[Array, Array]:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def isfinite(x: ArrayLike, /) -> Array:
   """Return a boolean array indicating whether each element of input is finite.
 
@@ -3459,8 +3481,8 @@ def isfinite(x: ArrayLike, /) -> Array:
     >>> jnp.isfinite(3-4j)
     Array(True, dtype=bool, weak_type=True)
   """
-  check_arraylike("isfinite", x)
-  dtype = dtypes.dtype(x)
+  x = ensure_arraylike("isfinite", x)
+  dtype = x.dtype
   if dtypes.issubdtype(dtype, np.floating):
     return lax.is_finite(x)
   elif dtypes.issubdtype(dtype, np.complexfloating):
@@ -3501,7 +3523,7 @@ def isinf(x: ArrayLike, /) -> Array:
     Array([False,  True, False,  True, False], dtype=bool)
   """
   x = ensure_arraylike("isinf", x)
-  dtype = dtypes.dtype(x)
+  dtype = x.dtype
   if dtypes.issubdtype(dtype, np.floating):
     return lax.eq(lax.abs(x), _constant_like(x, np.inf))
   elif dtypes.issubdtype(dtype, np.complexfloating):
@@ -3516,7 +3538,7 @@ def isinf(x: ArrayLike, /) -> Array:
 def _isposneginf(infinity: float, x: Array, out) -> Array:
   if out is not None:
     raise NotImplementedError("The 'out' argument to isneginf/isposinf is not supported.")
-  dtype = dtypes.dtype(x)
+  dtype = x.dtype
   if dtypes.issubdtype(dtype, np.floating):
     return lax.eq(x, _constant_like(x, infinity))
   elif dtypes.issubdtype(dtype, np.complexfloating):
@@ -3596,7 +3618,7 @@ def isneginf(x, /, out=None):
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def isnan(x: ArrayLike, /) -> Array:
   """Returns a boolean array indicating whether each element of input is ``NaN``.
 
@@ -3673,7 +3695,7 @@ def heaviside(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     >>> jnp.heaviside(-3, x2)
     Array([0., 0., 0.], dtype=float32)
   """
-  check_arraylike("heaviside", x1, x2)
+  x1, x2 = ensure_arraylike("heaviside", x1, x2)
   x1, x2 = promote_dtypes_inexact(x1, x2)
   zero = _lax_const(x1, 0)
   return _where(lax.lt(x1, zero), zero,
@@ -3730,7 +3752,7 @@ def hypot(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
+@jit(inline=True)
 def reciprocal(x: ArrayLike, /) -> Array:
   """Calculate element-wise reciprocal of the input.
 
@@ -3758,7 +3780,7 @@ def reciprocal(x: ArrayLike, /) -> Array:
     >>> jnp.reciprocal(x)
     Array([1.  , 0.2 , 0.25], dtype=float32)
   """
-  check_arraylike("reciprocal", x)
+  x = ensure_arraylike("reciprocal", x)
   x, = promote_dtypes_inexact(x)
   return lax.integer_pow(x, -1)
 
@@ -3811,7 +3833,7 @@ def sinc(x: ArrayLike, /) -> Array:
     (d/dx)^4 f(0.0) = 19.48
     (d/dx)^5 f(0.0) = 0.00
   """
-  check_arraylike("sinc", x)
+  x = ensure_arraylike("sinc", x)
   x, = promote_dtypes_inexact(x)
   eq_zero = lax.eq(x, _lax_const(x, 0))
   pi_x = lax.mul(_lax_const(x, np.pi), x)

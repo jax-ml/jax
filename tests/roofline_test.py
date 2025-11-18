@@ -14,10 +14,11 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Sequence
+from collections.abc import Sequence
 
 from absl.testing import absltest
 import jax
+from jax._src import core
 from jax._src import test_util as jtu
 from jax.experimental import roofline
 import jax.lax as lax
@@ -44,6 +45,49 @@ def create_inputs(
     )
     arrays.append(array)
   return mesh, tuple(arrays)
+
+
+def example_function(x):
+  return jnp.sin(x) + x**2
+
+
+@jax.custom_jvp
+def example_custom_function(x):
+  """Example custom function.
+
+  Small wrapper around `example_function`. We define `example_custom_function`
+  separately since we add the `@jax.custom_jvp` decorator and want to compare
+  its behavior to `example_function`'s in tests.
+  """
+  return example_function(x)
+
+
+@example_custom_function.defjvp
+def example_custom_function_jvp(primals, tangents):
+  """Example custom function jvp.
+
+  Normally this function would define a mathematically correct JVP, but its
+  definition has 0 effect on the roofline result, so we keep it very simple.
+  """
+  return example_custom_function(primals), tangents
+
+# A fake primitive without a roofline rule. This is used to test that roofline
+# can handle primitives without a roofline rule.
+fake_jax_primitive_p = core.Primitive("fake_jax_primitive")
+
+
+@fake_jax_primitive_p.def_impl
+def _fake_jax_primitive_impl(x):
+  return x
+
+
+@fake_jax_primitive_p.def_abstract_eval
+def _fake_jax_primitive_abstract_eval(x):
+  return core.ShapedArray(x.shape, x.dtype)
+
+
+def fake_jax_primitive_function(x):
+  return fake_jax_primitive_p.bind(x)
 
 
 class RooflineTest(jtu.JaxTestCase):
@@ -467,13 +511,12 @@ class RooflineTest(jtu.JaxTestCase):
   def test_unary_ops(self, f, dtype):
     data = jnp.zeros((3, 8), dtype=dtype)
     out, result = roofline.roofline(f)(data)
-    with self.subTest("flops"):
-      self.assertEqual(result.unfused_flops, 3 * 8)
-    with self.subTest("hbm_bytes"):
-      self.assertEqual(
-          result.unfused_hbm_bytes,
-          data.dtype.itemsize * 3 * 8 + out.dtype.itemsize * 3 * 8,
-      )
+
+    self.assertEqual(result.unfused_flops, 3 * 8)
+    self.assertEqual(
+        result.unfused_hbm_bytes,
+        data.dtype.itemsize * 3 * 8 + out.dtype.itemsize * 3 * 8,
+    )
 
   def test_binary_ops(self):
     for f in [
@@ -542,6 +585,37 @@ class RooflineTest(jtu.JaxTestCase):
         lambda a, b: a + b,
     )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
     self.assertEqual(result.unfused_flops, 3 * 8)
+
+  @jtu.parameterized.product(
+      cumulative_function=[lax.cummax, lax.cummin, lax.cumprod, lax.cumsum],
+      axis=[0, 1, 2],
+  )
+  def test_cumulative_ops(self, cumulative_function: int, axis: int):
+    f = lambda x: cumulative_function(operand=x, axis=axis)
+    x = jnp.zeros((3, 8, 15), dtype=int)
+
+    _, result = roofline.roofline(f)(x)
+
+    self.assertEqual(result.unfused_flops, x.shape[axis])
+    self.assertEqual(
+        result.unfused_hbm_bytes, 2 * self._bytes_per_word * 3 * 8 * 15
+    )
+
+  @jtu.parameterized.named_parameters(
+      dict(testcase_name="axis_0", axis=0),
+      dict(testcase_name="axis_1", axis=1),
+      dict(testcase_name="axis_2", axis=2),
+  )
+  def test_cumlogsumexp_p_roofline(self, axis: int):
+    f = lambda x: lax.cumlogsumexp(operand=x, axis=axis)
+    x = jnp.zeros((3, 8, 15), dtype=int)
+
+    _, result = roofline.roofline(f)(x)
+
+    self.assertEqual(result.unfused_flops, 2 * x.shape[axis])
+    self.assertEqual(
+        result.unfused_hbm_bytes, 2 * self._bytes_per_word * 3 * 8 * 15
+    )
 
   def test_dot_general(self):
     _, result = roofline.roofline(lambda a, b: a @ b)(
@@ -625,7 +699,7 @@ class RooflineTest(jtu.JaxTestCase):
     expected_output_shape = jnp.array(
         (batch / batch_group_count, num_output_channels, ow, oh)
     )
-    expected_output_size = jnp.prod((expected_output_shape))
+    expected_output_size = jnp.prod(expected_output_shape)
     # Bytes accessed is sum of inputs and output.
     expected_unfused_hbm_bytes = self._bytes_per_word * (
         expected_input_size + expected_kernel_size + expected_output_size
@@ -709,7 +783,6 @@ class RooflineTest(jtu.JaxTestCase):
     self.assertEqual(
         result.unfused_flops, 2 * expected_output_size * 3 * 3
     )
-
 
   @jtu.parameterized.named_parameters(
       dict(
@@ -802,6 +875,325 @@ class RooflineTest(jtu.JaxTestCase):
       self.assertEqual(
           result.unfused_hbm_bytes, self._bytes_per_word * expected_memory
       )
+
+  def test_custom_jvp_call_p_roofline(self):
+    dummy_input = jnp.ones((3, 8))
+
+    _, base_result = roofline.roofline(example_function)(dummy_input)
+    _, custom_result = roofline.roofline(example_custom_function)(dummy_input)
+
+    self.assertEqual(custom_result.unfused_flops, base_result.unfused_flops)
+    self.assertEqual(
+        custom_result.unfused_hbm_bytes, base_result.unfused_hbm_bytes
+    )
+
+  def test_custom_jvp_call_p_roofline_with_neg(self):
+    dummy_input = jnp.ones((3, 8))
+
+    def with_neg(f):
+      return lambda x: jax.lax.neg(f(x))
+
+    _, base_result = roofline.roofline(with_neg(example_function))(dummy_input)
+    _, custom_result = roofline.roofline(with_neg(example_custom_function))(
+        dummy_input
+    )
+
+    self.assertEqual(custom_result.unfused_flops, base_result.unfused_flops)
+    self.assertEqual(
+        custom_result.unfused_hbm_bytes, base_result.unfused_hbm_bytes
+    )
+
+  @jtu.parameterized.named_parameters(
+      dict(
+          testcase_name="promise_in_bounds",
+          mode=lax.GatherScatterMode.PROMISE_IN_BOUNDS,
+          expected_flops=0,
+      ),
+      dict(
+          testcase_name="clip",
+          mode=lax.GatherScatterMode.CLIP,
+          expected_flops=0,
+      ),
+      dict(
+          testcase_name="fill_or_drop",
+          mode=lax.GatherScatterMode.FILL_OR_DROP,
+          expected_flops=4 * 2 * 1 + 2 * 3,
+      ),
+  )
+  def test_gather_roofline(self, mode, expected_flops):
+    operand = jnp.zeros((3, 3), dtype=jnp.int32)
+    indices = jnp.zeros((2, 1), dtype=jnp.int32)
+
+    dimension_numbers = jax.lax.GatherDimensionNumbers(
+        offset_dims=(1,),
+        collapsed_slice_dims=(0,),
+        start_index_map=(0,),
+    )
+
+    f = lambda x, y: jax.lax.gather(
+        x,
+        y,
+        dimension_numbers=dimension_numbers,
+        slice_sizes=(1, 3),
+        mode=mode,
+    )
+
+    _, result = roofline.roofline(f)(operand, indices)
+
+    self.assertEqual(result.unfused_flops, expected_flops)
+    # Expected bytes:
+    # operand: 2 * 3 * sizeof(int32) = 24
+    # indices: 2 * 1 * sizeof(int32) = 8
+    # output: 2 * 3 * sizeof(int32) = 24
+    # total = 56
+    self.assertEqual(result.unfused_hbm_bytes, 56)
+
+  def test_gather_batching_dims_roofline(self):
+    operand = jnp.zeros((5, 3, 3), dtype=jnp.int32)
+    indices = jnp.zeros((5, 1), dtype=jnp.int32)
+
+    dimension_numbers = jax.lax.GatherDimensionNumbers(
+        offset_dims=(1,),
+        collapsed_slice_dims=(1,),
+        start_index_map=(1,),
+        operand_batching_dims=(0,),
+        start_indices_batching_dims=(0,),
+    )
+
+    f = lambda x, y: jax.lax.gather(
+        x,
+        y,
+        dimension_numbers=dimension_numbers,
+        slice_sizes=(1, 1, 3),
+    )
+
+    _, result = roofline.roofline(f)(operand, indices)
+
+    self.assertEqual(result.unfused_flops, 0)
+    # Expected bytes:
+    # operand: 5 * 3 * sizeof(int32) = 60
+    # indices: 5 * 1 * sizeof(int32) = 20
+    # output: 5 * 3 * sizeof(int32) = 60
+    # total = 140
+    self.assertEqual(result.unfused_hbm_bytes, 140)
+
+  def _assert_scatter_hbm_bytes_is_correct(
+      self,
+      result: roofline.RooflineResult,
+      indices: jnp.ndarray,
+      updates: jnp.ndarray,
+  ):
+    self.assertEqual(
+        result.unfused_hbm_bytes,
+        3 * updates.size * updates.dtype.itemsize
+        + indices.size * indices.dtype.itemsize,
+    )
+
+  @jtu.parameterized.named_parameters(
+      dict(
+          testcase_name="scatter_add",
+          scatter_fn=jax.lax.scatter_add,
+      ),
+      dict(
+          testcase_name="scatter_max",
+          scatter_fn=jax.lax.scatter_max,
+      ),
+      dict(
+          testcase_name="scatter_min",
+          scatter_fn=jax.lax.scatter_min,
+      ),
+      dict(
+          testcase_name="scatter_mul",
+          scatter_fn=jax.lax.scatter_mul,
+      ),
+      dict(
+          testcase_name="scatter_sub",
+          scatter_fn=jax.lax.scatter_sub,
+      ),
+  )
+  def test_scatter_unary_roofline(self, scatter_fn):
+    operand = jnp.zeros((3, 3), dtype=jnp.float32)
+    indices = jnp.zeros((2, 1), dtype=jnp.int32)
+    updates = jnp.ones((2, 3), dtype=jnp.float32)
+
+    f = lambda x, y, z: scatter_fn(
+        x,
+        y,
+        z,
+        dimension_numbers=jax.lax.ScatterDimensionNumbers(
+            update_window_dims=(1,),
+            inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,),
+        ),
+    )
+
+    _, result = roofline.roofline(f)(operand, indices, updates)
+
+    # The `update_jaxpr` computation is a simple unary op, which has 1 flop, and
+    # is applied for each element in the updates tensor, which has size 2 * 3.
+    self.assertEqual(result.unfused_flops, 1 * 2 * 3)
+    self._assert_scatter_hbm_bytes_is_correct(result, indices, updates)
+
+  def test_scatter_with_batching_dims_roofline(self):
+    operand = jnp.zeros((5, 3, 3), dtype=jnp.float32)
+    indices = jnp.zeros((5, 1), dtype=jnp.int32)
+    updates = jnp.zeros((5, 3), dtype=jnp.float32)
+
+    # Use `scatter_add` as an example.
+    f = lambda x, y, z: jax.lax.scatter_add(
+        x,
+        y,
+        z,
+        dimension_numbers=jax.lax.ScatterDimensionNumbers(
+            update_window_dims=(1,),
+            inserted_window_dims=(1,),
+            operand_batching_dims=(0,),
+            scatter_indices_batching_dims=(0,),
+            scatter_dims_to_operand_dims=(1,),
+        ),
+    )
+
+    _, result = roofline.roofline(f)(operand, indices, updates)
+
+    # The `update_jaxpr` computation is a simple add, which has 1 flop, and
+    # is applied for each element in the updates tensor, which has size 5 * 3.
+    self.assertEqual(result.unfused_flops, 1 * 5 * 3)
+    self._assert_scatter_hbm_bytes_is_correct(result, indices, updates)
+
+  def test_scatter_roofline(self):
+    operand = jnp.zeros((3, 3), dtype=jnp.float32)
+    indices = jnp.zeros((2, 1), dtype=jnp.int32)
+    updates = jnp.ones((2, 3), dtype=jnp.float32)
+
+    dimension_numbers = jax.lax.ScatterDimensionNumbers(
+        update_window_dims=(1,),
+        inserted_window_dims=(0,),
+        scatter_dims_to_operand_dims=(0,),
+    )
+
+    f = lambda x, y, z: jax.lax.scatter(
+        x,
+        y,
+        z,
+        dimension_numbers=dimension_numbers,
+    )
+
+    _, result = roofline.roofline(f)(operand, indices, updates)
+
+    # There is no update computation, so 0 flops.
+    self.assertEqual(result.unfused_flops, 0)
+    # Memory is still accessed though.
+    self._assert_scatter_hbm_bytes_is_correct(result, indices, updates)
+
+  def test_scatter_apply_roofline(self):
+    operand = jnp.zeros((3, 3), dtype=jnp.float32)
+    indices = jnp.ones((2, 1), dtype=jnp.int32)
+    updates = jnp.ones((2, 3), dtype=jnp.float32)
+
+    f = lambda x, y, z: jax.lax.scatter_apply(
+        operand=x,
+        scatter_indices=y,
+        func=example_function,
+        update_shape=z.shape,
+        dimension_numbers=lax.ScatterDimensionNumbers(
+            update_window_dims=(1,),
+            inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,),
+        ),
+        indices_are_sorted=True,
+        mode=lax.GatherScatterMode.PROMISE_IN_BOUNDS,
+    )
+
+    _, result = roofline.roofline(f)(operand, indices, updates)
+
+    # `example_function` should take 3 flops per element, and we compute it for
+    # each element in the updates tensor, which has size 2 * 3.
+    self.assertEqual(result.unfused_flops, 3 * 2 * 3)
+    self._assert_scatter_hbm_bytes_is_correct(result, indices, updates)
+
+  def test_select_n_roofline(self):
+    which = jnp.zeros((4, 8), dtype=int)
+    cases = (
+        jnp.zeros((4, 8), dtype=int),
+        jnp.zeros((4, 8), dtype=int),
+        jnp.zeros((4, 8), dtype=int),
+    )
+
+    out, result = roofline.roofline(lax.select_n)(which, *cases)
+
+    self.assertEqual(result.unfused_flops, 4 * 8)
+    self.assertEqual(
+        result.unfused_hbm_bytes,
+        which.dtype.itemsize * 4 * 8 + out.dtype.itemsize * 4 * 8,
+    )
+
+  def test_random_primitive_roofline_does_not_raise_error(self):
+    """Tests that roofline can handle primitives with PRNG keys as ins/outs."""
+    dummy_input = jax.random.PRNGKey(0)
+
+    def f(key):
+      # Use jax.random.split to ensure the random_wrap primitive is used.
+      prng_key, _ = jax.random.split(key)
+      return prng_key
+
+    _, result = roofline.roofline(f)(dummy_input)
+
+    self.assertEqual(result.unfused_flops, 0)
+    self.assertEqual(result.unfused_hbm_bytes, 0)
+
+  @jtu.parameterized.named_parameters(
+      dict(
+          testcase_name="pure_callback",
+          callback_fn=jax.pure_callback,
+      ),
+      dict(
+          testcase_name="io_callback",
+          callback_fn=jax._src.callback.io_callback,
+      ),
+  )
+  def test_callback_with_output_roofline(self, callback_fn):
+    def _example_callback_function(x):
+      result_shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
+      return callback_fn(example_function, result_shape, x)
+
+    x = jnp.zeros((3, 8), dtype=jnp.float32)
+    out, result = roofline.roofline(_example_callback_function)(x)
+
+    # Bytes accessed is sum of inputs and output.
+    expected_hbm_bytes = (
+        x.dtype.itemsize * x.size + out.dtype.itemsize * out.size
+    )
+    self.assertEqual(result.unfused_hbm_bytes, expected_hbm_bytes)
+    self.assertEqual(result.unfused_flops, 0)
+
+  def test_debug_callback_roofline(self):
+    def _example_debug_callback_function(x):
+      jax.debug.callback(example_function, x)
+      return x
+
+    x = jnp.zeros((3, 8), dtype=jnp.float32)
+    _, result = roofline.roofline(_example_debug_callback_function)(x)
+
+    # Bytes accessed is only the input, as debug.callback does not return a
+    # value.
+    self.assertEqual(result.unfused_hbm_bytes, x.dtype.itemsize * x.size)
+    self.assertEqual(result.unfused_flops, 0)
+
+  def test_primitive_with_no_roofline_rule_contributes_nothing(self):
+    x = jnp.zeros((3, 8), dtype=jnp.float32)
+    _, result = roofline.roofline(fake_jax_primitive_function)(x)
+    self.assertEqual(result.flops, 0)
+    self.assertEqual(result.unfused_flops, 0)
+    self.assertEqual(result.hbm_bytes, 0)
+    self.assertEqual(result.unfused_hbm_bytes, 0)
+
+  def test_primitive_with_no_roofline_rule_contributes_nothing_with_abs(self):
+    x = jnp.zeros((3, 8), dtype=jnp.float32)
+    f = lambda x: lax.abs(fake_jax_primitive_function(x))
+    _, result = roofline.roofline(f)(x)
+
+    _, expected_result = roofline.roofline(lax.abs)(x)
+    self.assertDataclassEqual(result, expected_result)
 
 
 if __name__ == "__main__":

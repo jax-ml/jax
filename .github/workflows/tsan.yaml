@@ -3,10 +3,9 @@ name: CI - Free-threading and Thread Sanitizer (nightly)
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 on:
   schedule:
-    - cron: "0 5 * * *" # Daily at 05:00 UTC == 00:00 EST == 21:00 PST
+    - cron: "0 5 * * *"  # Daily at 05:00 UTC == 00:00 EST == 21:00 PST
   workflow_dispatch: # allows triggering the workflow run manually
   pull_request: # Automatically trigger on pull requests affecting this file
     branches:
@@ -14,24 +13,29 @@ on:
     paths:
       - '**/workflows/tsan.yaml'
       - '**/workflows/tsan-suppressions*.txt'
-      - '**/workflows/requirements_lock_3_13_ft.patch'
+permissions: {}
+
+env:
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+  PIP_INDEX_URL: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
 
 jobs:
   tsan:
-    runs-on: linux-x86-n2-64
+    runs-on: linux-x86-n4-64
     container:
       image: index.docker.io/library/ubuntu@sha256:b359f1067efa76f37863778f7b6d0e8d911e3ee8efa807ad01fbf5dc1ef9006b # ratchet:ubuntu:24.04
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name-prefix: "with 3.13"
-            python-version: "3.13"
-            github_branch: "3.13"
-            requirements_lock_name: "requirements_lock_3_13_ft"
+          # Disabled. 3.13 has unfixed races in CPython itself; we get better signal from 3.14.
+          # - name-prefix: "with 3.13"
+          #   python-version: "3.13"
+          #   github_branch: "3.13"
+          #   requirements_lock_name: "requirements_lock_3_13_ft"
           - name-prefix: "with 3.14"
             python-version: "3.14"
-            github_branch: "main"
+            github_branch: "3.14"
             requirements_lock_name: "requirements_lock_3_14_ft"
     defaults:
       run:
@@ -44,29 +48,20 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt update
-          apt install -y clang-18 libstdc++-14-dev build-essential libssl-dev \
+          apt install -q -y clang-18 libstdc++-14-dev build-essential libssl-dev \
             zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git \
             libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
             libffi-dev liblzma-dev file zip
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           path: jax
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: python/cpython
-          path: cpython
-          ref: ${{ matrix.github_branch }}
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+          persist-credentials: false
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           repository: numpy/numpy
           path: numpy
           submodules: true
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        if: ${{ matrix.python-version == '3.14' }}
-        with:
-          repository: scipy/scipy
-          path: scipy
-          submodules: true
+          persist-credentials: false
 
       - name: Get year & week number
         id: get-date
@@ -75,11 +70,20 @@ jobs:
 
       - name: Restore cached TSAN CPython ${{ matrix.python-version }}
         id: cache-cpython-tsan-restore
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ./python-tsan.tgz
           key: ${{ runner.os }}-cpython-tsan-${{ matrix.python-version }}-${{ steps.get-date.outputs.date }}
+
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
+        with:
+          repository: python/cpython
+          path: cpython
+          ref: ${{ matrix.github_branch }}
+          persist-credentials: false
+
 
       - name: Build TSAN CPython ${{ matrix.python-version }}
         if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
@@ -98,7 +102,7 @@ jobs:
       - name: Save TSAN CPython ${{ matrix.python-version }}
         id: cache-cpython-tsan-save
         if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ./python-tsan.tgz
@@ -106,7 +110,7 @@ jobs:
 
       - name: Restore cached TSAN Numpy
         id: cache-numpy-tsan-restore
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ./wheelhouse
@@ -115,6 +119,7 @@ jobs:
       - name: Build TSAN Numpy wheel
         if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
         run: |
+          set -eux
           cd numpy
 
           # If we restored cpython from cache, we need to get python interpreter from python-tsan.tgz
@@ -130,8 +135,6 @@ jobs:
           export PATH=${GITHUB_WORKSPACE}/cpython-tsan/bin/:$PATH
 
           python3 -m pip install uv~=0.5.30
-          # Make sure to install a compatible Cython version (master branch is best for now)
-          NO_CYTHON_COMPILE=true python3 -m uv pip install -U git+https://github.com/cython/cython
           python3 -m uv pip install -r requirements/build_requirements.txt
 
           CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -v . --no-build-isolation -Csetup-args=-Db_sanitize=thread -Csetup-args=-Dbuildtype=debugoptimized
@@ -161,102 +164,27 @@ jobs:
       - name: Save TSAN Numpy wheel
         id: cache-numpy-tsan-save
         if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ./wheelhouse
           key: ${{ runner.os }}-numpy-tsan-${{ matrix.python-version }}-${{ hashFiles('numpy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
 
-      - name: Restore cached Scipy
-        if: ${{ matrix.python-version == '3.14' }}
-        id: cache-scipy-restore
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ./wheelhouse
-          key: ${{ runner.os }}-scipy-${{ matrix.python-version }}-${{ hashFiles('scipy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
-
-      - name: Build Scipy wheel
-        if: ${{ steps.cache-scipy-restore.outputs.cache-hit != 'true' && matrix.python-version == '3.14' }}
-        run: |
-          # Install scipy dependencies:
-          apt-get install -y gfortran libopenblas-dev liblapack-dev pkg-config --no-install-recommends
-
-          cd scipy
-
-          # If we restored cpython from cache, we need to get python interpreter from python-tsan.tgz
-          if [ ! -d ${GITHUB_WORKSPACE}/cpython-tsan/bin/ ]; then
-            echo "Extract cpython from python-tsan.tgz"
-            pushd .
-            ls ${GITHUB_WORKSPACE}/python-tsan.tgz
-            cd ${GITHUB_WORKSPACE} && tar -xzf python-tsan.tgz
-            ls ${GITHUB_WORKSPACE}/cpython-tsan/bin/
-            popd
-          fi
-
-          export PATH=${GITHUB_WORKSPACE}/cpython-tsan/bin/:$PATH
-
-          python3 -m pip install uv~=0.5.30
-          # Make sure to install a compatible Cython version (master branch is best for now)
-          NO_CYTHON_COMPILE=true python3 -m uv pip install -U git+https://github.com/cython/cython
-          python3 -m uv pip install -U --pre numpy --extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/
-          python3 -m uv pip install pythran pybind11 meson-python ninja
-
-          python3 -m uv pip list | grep -E "(numpy|pythran|cython|pybind11)"
-
-          export CC=clang-18
-          export CXX=clang++-18
-          python3 -m pip wheel --wheel-dir dist -vvv . --no-build-isolation --no-deps -Csetup-args=-Dbuildtype=debugoptimized
-
-          python3 -m uv pip list | grep -E "(numpy|pythran|cython|pybind11)"
-
-          # Create simple index and copy the wheel
-          mkdir -p ${GITHUB_WORKSPACE}/wheelhouse/scipy
-
-          scipy_whl_name=($(cd dist && ls scipy*.whl))
-          if [ -z "${scipy_whl_name}" ]; then exit 1; fi
-
-          echo "Built TSAN Scipy wheel: ${scipy_whl_name}"
-
-          cp dist/${scipy_whl_name} ${GITHUB_WORKSPACE}/wheelhouse/scipy
-
-          # Recreate wheelhouse index with Numpy and Scipy
-          cat << EOF > ${GITHUB_WORKSPACE}/wheelhouse/index.html
-          <!DOCTYPE html><html><body>
-          <a href="numpy">numpy></a></br>
-          <a href="scipy">scipy></a></br>
-          </body></html>
-          EOF
-
-          cat << EOF > ${GITHUB_WORKSPACE}/wheelhouse/scipy/index.html
-          <!DOCTYPE html><html><body>
-          <a href="${scipy_whl_name}">${scipy_whl_name}</a></br>
-          </body></html>
-          EOF
-
-      - name: Save Scipy wheel
-        id: cache-scipy-save
-        if: ${{ steps.cache-scipy-restore.outputs.cache-hit != 'true' && matrix.python-version == '3.14' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ./wheelhouse
-          key: ${{ runner.os }}-scipy-${{ matrix.python-version }}-${{ hashFiles('scipy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
-
       - name: Build Jax and run tests
-        timeout-minutes: 120
+        timeout-minutes: 180
         env:
           JAX_NUM_GENERATED_CASES: 1
           JAX_ENABLE_X64: true
           JAX_SKIP_SLOW_TESTS: true
           PY_COLORS: 1
+          DEBIAN_FRONTEND: noninteractive
         run: |
+          set -x
           cd jax
 
           export PYTHON_SHA256=($(sha256sum ${GITHUB_WORKSPACE}/python-tsan.tgz))
           echo "Python sha256: ${PYTHON_SHA256}"
 
-          python3 -VV
           python3 build/build.py build --configure_only \
             --python_version=${{ matrix.python-version }}-ft \
             --bazel_options=--repo_env=HERMETIC_PYTHON_URL="file://${GITHUB_WORKSPACE}/python-tsan.tgz" \
@@ -268,31 +196,13 @@ jobs:
             --bazel_options=--copt=-g \
             --clang_path=/usr/bin/clang-18
 
-          if [ "${{ matrix.python-version }}" == "3.13" ]; then
-            # Patch build/requirements_lock_3_13_ft.txt to use TSAN instrumented NumPy
-
-            sed -i "s|+--extra-index-url.*|+--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" .github/workflows/${{ matrix.requirements_lock_name }}.patch
-            cat .github/workflows/${{ matrix.requirements_lock_name }}.patch
-            git apply .github/workflows/${{ matrix.requirements_lock_name }}.patch || exit 1
-
-            # Display the content for debugging in logs
-            cat build/${{ matrix.requirements_lock_name }}.txt | head -15
-            # Check the patch
-            cat build/${{ matrix.requirements_lock_name }}.txt | head -15 | grep -E "(--pre|.*${GITHUB_WORKSPACE}/wheelhouse/|numpy)"
-            if [ "$?" == "1" ]; then echo "Could not find the patch in the ${{ matrix.requirements_lock_name }}.txt"; exit 1; fi
-            cat build/${{ matrix.requirements_lock_name }}.txt | grep -E "(numpy==)"
-            if [ "$?" == "0" ]; then "Found original numpy dependency in the ${{ matrix.requirements_lock_name }}.txt"; exit 1; fi
-
-          else
-            # Patch build/requirements_lock_3_14_ft.txt to use TSAN instrumented NumPy and Scipy
-
+          mkdir -p dist
+          # Check whether we have numpy wheel or exit with error
+          ls ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl || exit 1
+          cp -v ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl dist/
+          if [ "${{ matrix.python-version }}" == "3.14" ]; then
+            # Patch build/requirements_lock_3_14_ft.txt to use TSAN instrumented NumPy
             sed -i "s|--extra-index-url.*|--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" build/${{ matrix.requirements_lock_name }}.txt
-
-            # We should install jpeg dev package to be able to build Pillow from source:
-            apt-get install -y libjpeg-dev --no-install-recommends
-
-            # Install scipy runtime dependencies (in case we restore scipy wheel from cache):
-            apt-get install -y libopenblas-dev liblapack-dev --no-install-recommends
           fi
 
           echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
@@ -304,15 +214,11 @@ jobs:
           ln -s ${bazel_exec} bazel
 
           # Check python version
-          ./bazel run --@rules_python//python/config_settings:py_freethreaded="yes" @python//:python3 -- -VV
+          python_version="${{ matrix.python-version }}"
+          ./bazel run --@rules_python//python/config_settings:py_freethreaded="yes" @python_${python_version//./_}_host//:python -- -VV
 
           # Check numpy version
           ./bazel cquery @pypi_numpy//:* | grep whl
-
-          if [ "${{ matrix.python-version }}" == "3.14" ]; then
-            # Check scipy version
-            ./bazel cquery @pypi_scipy//:* | grep whl
-          fi
 
           # Build JAX and run tests
           ./bazel test \
@@ -323,8 +229,7 @@ jobs:
               --test_env=TSAN_OPTIONS=halt_on_error=1,suppressions=$PWD/.github/workflows/tsan-suppressions_${{ matrix.python-version }}.txt \
               --test_env=JAX_TEST_NUM_THREADS=8 \
               --test_output=errors \
-              --local_test_jobs=32 \
+              --local_test_jobs=10 \
               --test_timeout=1800 \
-              --config=resultstore \
-              --config=rbe_cache \
+              --config=ci_rbe_cache \
               //tests:cpu_tests

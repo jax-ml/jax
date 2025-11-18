@@ -7,6 +7,9 @@ Backend specific documentation for the Mosaic GPU backend.
    :maxdepth: 2
 
    reference
+   pipelining
+   blackwell_matmul
+   collective_matmul
 
 .. toctree::
    :caption: Guides

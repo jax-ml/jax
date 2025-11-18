@@ -15,11 +15,11 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <memory>
-#include <optional>
 #include <string>
 #include <thread>  // NOLINT
 #include <unordered_map>
@@ -107,7 +107,9 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
  public:
   WeakrefLRUCache(nb::callable cache_context_fn, nb::callable fn,
                   int64_t maxsize)
-      : cache_context_fn_(cache_context_fn), fn_(fn), lru_list_(maxsize) {}
+      : cache_context_fn_(cache_context_fn),
+        fn_(fn),
+        lru_list_(std::make_shared<Cache::LRUList>(maxsize)) {}
 
   nb::object Call(nb::object weakref_key, nb::args args, nb::kwargs kwargs);
 
@@ -182,6 +184,7 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
   using Cache = xla::LRUCache<Key, std::shared_ptr<CacheEntry>>;
 
   struct WeakrefCacheValue {
+    std::shared_ptr<Cache::LRUList> lru_list;
     std::shared_ptr<Cache> cache;
   };
 
@@ -199,20 +202,25 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
   std::shared_ptr<Cache> GetCache(WeakrefCacheKey key) {
     WeakrefCacheValue& value = entries_[key];
     if (!value.cache) {
-      value.cache = std::make_shared<Cache>(&lru_list_);
+      value.lru_list = lru_list_;
+      value.cache = std::make_shared<Cache>(lru_list_.get());
     }
     return value.cache;
   }
 
   nb::callable cache_context_fn_;
   nb::callable fn_;
-  Cache::LRUList lru_list_;
+  std::shared_ptr<Cache::LRUList> lru_list_;
   std::unordered_map<WeakrefCacheKey, WeakrefCacheValue, WeakrefKeyHash,
                      WeakrefKeyEq>
       entries_;
   int64_t misses_ = 0;
   int64_t total_queries_ = 0;
   absl::Mutex mu_;
+
+  // The thread ID of the thread that currently holds mu_. This is used to
+  // detect reentrant calls.
+  std::atomic<std::thread::id> mu_holder_thread_id_;
 
   static int tp_traverse(PyObject* self, visitproc visit, void* arg);
   static int tp_clear(PyObject* self);
@@ -266,19 +274,32 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
 
   bool inserted = false;
   std::shared_ptr<CacheEntry> entry;
+  if (mu_holder_thread_id_.load() == std::this_thread::get_id()) {
+    auto error_string =
+        absl::StrCat("Reentrant call to weakref_lru_cache. Key: ",
+                     nb::cast<std::string>(nb::repr(weakref_key)),
+                     nb::cast<std::string>(nb::repr(args)));
+    PyErr_SetString(PyExc_RecursionError, error_string.c_str());
+    throw nb::python_error();
+  }
   {
     // Because the gil can be released during cache insertion, this forces
     // the lock order to be mu_ then gil so we must release the gil first.
     nb::gil_scoped_release release;
+
     // Acquire a mutex to avoid problems where the gil is released during
     // cache insertion and then a second thread invalidates the cache order.
-    mu_.Lock();
+    mu_.lock();
+    mu_holder_thread_id_.store(std::this_thread::get_id());
   }
   {
     // GetOrCreateIfAbsent calls into Python hash and equality functions,
     // which may throw exceptions. The use of absl::Cleanup ensures mu_ is
     // released if that happens.
-    absl::Cleanup unlock = [this]() ABSL_UNLOCK_FUNCTION(mu_) { mu_.Unlock(); };
+    absl::Cleanup unlock = [this]() ABSL_UNLOCK_FUNCTION(mu_) {
+      mu_holder_thread_id_.store(std::thread::id());
+      mu_.unlock();
+    };
     entry = cache.GetOrCreateIfAbsent(key, [&inserted](const Key& key) {
       inserted = true;
       return std::make_shared<CacheEntry>();
@@ -314,16 +335,17 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
 
 std::vector<nb::object> WeakrefLRUCache::GetKeys() {
   std::vector<nb::object> results;
-  mu_.Lock();
-  for (const auto& wr_entry : entries_) {
-    for (const auto& rest : *wr_entry.second.cache) {
+  mu_.lock();
+  for (const auto& [wr_key, wr_value] : entries_) {
+    wr_value.cache->ForEach([&results, &wr_key](
+                                const Key& key,
+                                const std::shared_ptr<CacheEntry>& value) {
       nb::tuple result =
-          nb::make_tuple(*wr_entry.first.ref, rest.first.context(),
-                         rest.first.args(), rest.first.kwargs());
+          nb::make_tuple(*wr_key.ref, key.context(), key.args(), key.kwargs());
       results.push_back(std::move(result));
-    }
+    });
   }
-  mu_.Unlock();
+  mu_.unlock();
   return results;
 }
 
@@ -331,8 +353,8 @@ WeakrefLRUCache::CacheInfo WeakrefLRUCache::GetCacheInfo() const {
   CacheInfo result;
   result.hits = total_queries_ - misses_;
   result.misses = misses_;
-  result.maxsize = lru_list_.Capacity();
-  result.currsize = lru_list_.Size();
+  result.maxsize = lru_list_->Capacity();
+  result.currsize = lru_list_->Size();
   return result;
 }
 
@@ -349,20 +371,30 @@ void WeakrefLRUCache::Clear() {
 
 /*static*/ int WeakrefLRUCache::tp_traverse(PyObject* self, visitproc visit,
                                             void* arg) {
-  WeakrefLRUCache* cache = nb::inst_ptr<WeakrefLRUCache>(self);
   Py_VISIT(Py_TYPE(self));
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
+  WeakrefLRUCache* cache = nb::inst_ptr<WeakrefLRUCache>(self);
   Py_VISIT(cache->cache_context_fn_.ptr());
   Py_VISIT(cache->fn_.ptr());
   for (const auto& [wr_key, wr_value] : cache->entries_) {
     Py_VISIT(wr_key.ref.ptr());
-    for (const auto& [key, cache_value] : *wr_value.cache) {
-      int rval = key.tp_traverse(visit, arg);
-      if (rval != 0) {
-        return rval;
-      }
-      if (cache_value.value.has_value()) {
-        cache_value.value->get()->tp_traverse(visit, arg);
-      }
+    int rval = 0;
+    wr_value.cache->ForEach(
+        [&visit, &arg, &rval](const Key& key,
+                              const std::shared_ptr<CacheEntry>& value) {
+          if (rval != 0) {
+            return;
+          }
+          rval = key.tp_traverse(visit, arg);
+          if (rval != 0) {
+            return;
+          }
+          value->tp_traverse(visit, arg);
+        });
+    if (rval != 0) {
+      return rval;
     }
   }
   return 0;

@@ -18,7 +18,6 @@ limitations under the License.
 
 #include <array>
 #include <cstdint>
-#include <string_view>
 
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Support/LogicalResult.h"
@@ -31,8 +30,6 @@ FailureOr<MemRefType> inferMemref(MemRefType memref, int hardware_generation,
                                   const TpuTilingFlags& tpu_tiling_flags,
                                   bool is_kernel_argument,
                                   int64_t leading_tile_rows = 0);
-
-const std::string_view kLeadingTileRows = "leading_tile_rows";
 
 }  // namespace mlir::tpu
 

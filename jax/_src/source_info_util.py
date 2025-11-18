@@ -21,13 +21,11 @@ import functools
 import itertools
 import os.path
 import re
-import sys
 import sysconfig
 import threading
 import types
 from typing import NamedTuple
 
-import jax.version
 from jax._src.lib import xla_client
 
 from jax._src import traceback_util
@@ -48,11 +46,11 @@ class Frame(NamedTuple):
 _exclude_paths: list[str] = [
     # Attach the separator to make sure that .../jax does not end up matching
     # .../jax_triton and other packages that might have a jax prefix.
-    os.path.dirname(jax.version.__file__) + os.sep,
+    os.path.dirname(os.path.dirname(__file__)) + os.sep,
     # Also exclude stdlib as user frames. In a non-standard Python runtime,
-    # the following two may be different.
+    # the following may be different.
     sysconfig.get_path('stdlib'),
-    os.path.dirname(sysconfig.__file__)
+    os.path.dirname(contextlib.__file__),
 ]
 
 @functools.cache
@@ -95,6 +93,9 @@ class Transform(NamedTuple):
   def wrap(self, stack: list[str]):
     if stack:
       stack[-1] = f'{self.name}({stack[-1]})'
+    else:
+      stack.append(f'{self.name}()')
+
 
 @dataclasses.dataclass(frozen=True)
 class NameStack:
@@ -159,23 +160,17 @@ def is_user_filename(filename: str) -> bool:
   return (_include_path_regex().search(filename) is not None
           or _exclude_path_regex().search(filename) is None)
 
-if sys.version_info >= (3, 11):
-  def raw_frame_to_frame(code: types.CodeType, lasti: int) -> Frame:
-    loc = xla_client.Traceback.code_addr2location(code, lasti)
-    start_line, start_column, end_line, end_column = loc
-    return Frame(file_name=code.co_filename,
-                function_name=code.co_qualname,
-                start_line=start_line, start_column=start_column,
-                end_line=end_line, end_column=end_column)
-else:
-  def raw_frame_to_frame(code: types.CodeType, lasti: int) -> Frame:
-    # pre-3.11 co_qualname does not exist, use co_name
-    return Frame(file_name=code.co_filename,
-                function_name=code.co_name,
-                start_line=xla_client.Traceback.code_addr2line(code, lasti),
-                start_column=0, end_line=0, end_column=0)
 
-def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
+def raw_frame_to_frame(code: types.CodeType, lasti: int) -> Frame:
+  loc = xla_client.Traceback.code_addr2location(code, lasti)
+  start_line, start_column, end_line, end_column = loc
+  return Frame(file_name=code.co_filename,
+              function_name=code.co_qualname,
+              start_line=start_line, start_column=start_column,
+              end_line=end_line, end_column=end_column)
+
+
+def user_frames(traceback: Traceback | None) -> Iterator[Frame]:
   """Iterator over the user's frames, filtering jax-internal frames."""
   # Guess the user's frame is the innermost frame not in the jax source tree or
   # Python stdlib. We don't use traceback_util.path_starts_with because that
@@ -183,14 +178,13 @@ def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
   # e.g. adding source provenance annotations to XLA lowerings, so we don't
   # want to incur the cost. We consider files that end with _test.py as user
   # frames, to allow testing this mechanism from tests.
-  traceback = source_info.traceback
   code, lasti = traceback.raw_frames() if traceback else ([], [])
   return (raw_frame_to_frame(code[i], lasti[i]) for i in range(len(code))
           if is_user_filename(code[i].co_filename))
 
 @functools.lru_cache(maxsize=64)
-def user_frame(source_info: SourceInfo) -> Frame | None:
-  return next(user_frames(source_info), None)
+def user_frame(traceback: Traceback | None) -> Frame | None:
+  return next(user_frames(traceback), None)
 
 def _summarize_frame(frame: Frame) -> str:
   if frame.start_column != 0:
@@ -200,7 +194,7 @@ def _summarize_frame(frame: Frame) -> str:
     return f"{frame.file_name}:{frame.start_line} ({frame.function_name})"
 
 def summarize(source_info: SourceInfo, num_frames=1) -> str:
-  frames = itertools.islice(user_frames(source_info), num_frames)
+  frames = itertools.islice(user_frames(source_info.traceback), num_frames)
   frame_strs = [_summarize_frame(frame) if frame else "unknown"
                 for frame in frames]
   return '\n'.join(reversed(frame_strs))

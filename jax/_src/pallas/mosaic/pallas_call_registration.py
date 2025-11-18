@@ -16,23 +16,24 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
-from typing import Any
+from collections.abc import Sequence
+import dataclasses
+from typing import cast
 
 import jax
 from jax import dtypes
-from jax._src import config
 from jax._src import core as jax_core
+from jax._src import frozen_dict
 from jax._src import sharding_impls
 from jax._src import tpu_custom_call
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
-from jax._src.pallas import core
+from jax._src.lib.mlir import passmanager
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import lowering
-from jax._src.pallas.mosaic import verification
+from jax._src.pallas.mosaic import sc_lowering
+from jax._src.state import types as state_types
 from jax.experimental import mosaic
 from jax.experimental.mosaic.dialects import tpu
 
@@ -45,7 +46,8 @@ def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
   after loading from a memref inside of the kernel.
   """
   assert isinstance(
-      x, (jax.Array, jax_core.ShapedArray, jax_core.DShapedArray)
+      x, (jax.Array, jax_core.ShapedArray, jax_core.DShapedArray,
+          state_types.AbstractLinVal)
   ), type(x)
   if isinstance(x, jax.Array):
     if dtypes.issubdtype(x.dtype, jax.numpy.bool_):
@@ -53,26 +55,18 @@ def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
     return x
   else:
     if dtypes.issubdtype(x.dtype, jax.numpy.bool_):
+      if isinstance(x, state_types.AbstractLinVal):
+        raise NotImplementedError  # TODO(mattjj,sharadmv)
       return jax_core.ShapedArray(x.shape, lowering.BOOL_MEMREF_TYPE)
     return x
-
-_DUMP_PROMELA_TO = config.string_flag(
-    "jax_pallas_dump_promela_to",
-    default=os.getenv("JAX_PALLAS_DUMP_PROMELA_TO", ""),
-    help=(
-        "If set, dumps a Promela model of the kernel to the specified"
-        " directory. The model can verify that the kernel is free of data"
-        " races, deadlocks, etc."
-    ),
-)
 
 
 def _get_memory_space_from_aval(
     out_aval: jax_core.AbstractValue,
 ) -> tpu_custom_call.MemorySpace | None:
   if not isinstance(out_aval, jax_core.ShapedArray):
-    raise ValueError('Memory spaces not defined for non-ShapedArrays')
-  if not isinstance(out_aval, core.ShapedArrayWithMemorySpace):
+    raise ValueError("Memory spaces not defined for non-ShapedArrays")
+  if not isinstance(out_aval, pallas_core.ShapedArrayWithMemorySpace):
     # If we are passed a regular old ShapedArray, we don't constrain the
     # memory space
     return None
@@ -81,53 +75,61 @@ def _get_memory_space_from_aval(
   match out_aval.memory_space:
     case None:
       return None
-    case tpu_core.TPUMemorySpace.ANY:
+    case tpu_core.MemorySpace.ANY:
       return None
-    case tpu_core.TPUMemorySpace.VMEM:
+    case tpu_core.MemorySpace.HBM:
+      return tpu_custom_call.MemorySpace.HBM
+    case tpu_core.MemorySpace.VMEM:
       return tpu_custom_call.MemorySpace.VMEM
-    case tpu_core.TPUMemorySpace.SMEM:
+    case tpu_core.MemorySpace.SMEM:
       return tpu_custom_call.MemorySpace.SMEM
-    case tpu_core.TPUMemorySpace.SEMAPHORE:
+    case tpu_core.MemorySpace.SEMAPHORE:
       return tpu_custom_call.MemorySpace.SEMAPHORE_MEM
+    case tpu_core.MemorySpace.HOST:
+      return tpu_custom_call.MemorySpace.HOST
   return None
 
 
 def _get_memory_spaces_from_avals(
-    out_avals: tuple[jax_core.AbstractValue, ...],
+    avals: Sequence[jax_core.AbstractValue],
 ) -> tuple[tpu_custom_call.MemorySpace | None, ...] | None:
-  output_memory_spaces = None
+  memory_spaces = None
   if any(
-      isinstance(out_aval, core.ShapedArrayWithMemorySpace)
-      for out_aval in out_avals
+      isinstance(aval, pallas_core.ShapedArrayWithMemorySpace) for aval in avals
   ):
-    output_memory_spaces = tuple(map(_get_memory_space_from_aval, out_avals))
-  return output_memory_spaces
+    memory_spaces = tuple(map(_get_memory_space_from_aval, avals))
+  return memory_spaces
+
 
 def pallas_call_tpu_lowering_rule(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
     jaxpr: jax_core.Jaxpr,
-    grid_mapping: core.GridMapping,
+    grid_mapping: pallas_core.GridMapping,
     mesh: pallas_core.Mesh | None,
     input_output_aliases: tuple[tuple[int, int], ...],
     debug: bool,
     interpret: bool,
-    compiler_params: dict[str, Any],
-    cost_estimate: core.CostEstimate | None,
+    compiler_params: dict[str, pallas_core.CompilerParams],
+    cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
+    metadata: frozen_dict.FrozenDict[str, str] | None,
+    name: str | None,
 ):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
-  del mesh, interpret  # Unused.
+  del interpret  # Unused.
 
-  debug_info = jaxpr._debug_info
+  debug_info = jaxpr.debug_info
   if debug:
     print(f"\nThe kernel jaxpr for pallas_call {debug_info.func_src_info}:")
     print(jaxpr)
-  if "mosaic" in compiler_params:
-    mosaic_params = compiler_params["mosaic"]
-  else:
-    mosaic_params = {}
 
+  if "mosaic_tpu" in compiler_params:
+    mosaic_params = cast(tpu_core.CompilerParams, compiler_params["mosaic_tpu"])
+  else:
+    mosaic_params = tpu_core.CompilerParams()
+
+  del mesh
   jax_mesh = None
   axis_context = ctx.module_context.axis_context
   if axis_context is not None:
@@ -138,63 +140,37 @@ def pallas_call_tpu_lowering_rule(
   mlir_ctx.load_all_available_dialects()
   tpu.register_dialect(mlir_ctx)
 
-  def lower_module(for_verification: bool):
-    if for_verification or tpu_core.runtime_assert_enabled():
-      mlir_ctx.allow_unregistered_dialects = True
-    with mlir_ctx, ir.Location.unknown(mlir_ctx):
-      dimension_semantics = mosaic_params.get("dimension_semantics", None)
-      return lowering.lower_jaxpr_to_module(
-          ctx,
-          mlir_ctx,
-          grid_mapping,
-          jaxpr,
-          dimension_semantics=dimension_semantics,
-          mesh=jax_mesh,
-          for_verification=for_verification,
-          dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
+  match mosaic_params.kernel_type:
+    case tpu_core.KernelType.TC:
+      lower_jaxpr_to_module = lowering.lower_jaxpr_to_module
+    case tpu_core.KernelType.SC_SCALAR_SUBCORE | tpu_core.KernelType.SC_VECTOR_SUBCORE:
+      lower_jaxpr_to_module = sc_lowering.lower_jaxpr_to_module
+    case _:
+      raise ValueError(
+          f"Unsupported kernel type: {mosaic_params.kernel_type}"
       )
 
-  mosaic_module, extra_args = lower_module(for_verification=False)
+  with mlir_ctx, ir.Location.unknown(mlir_ctx):
+    mosaic_module = lower_jaxpr_to_module(
+        ctx,
+        grid_mapping,
+        jaxpr,
+        dimension_semantics=mosaic_params.dimension_semantics,
+        kernel_type=mosaic_params.kernel_type,
+        mesh=jax_mesh,
+        dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
+    )
+
   if debug:
+    pm = passmanager.PassManager.parse("builtin.module(canonicalize)", mlir_ctx)
+    pm.run(mosaic_module.operation)
     print(f"\nThe Mosaic module for pallas_call {debug_info.func_src_info}:")
     print(mosaic_module)
-  num_extra_args = len(extra_args)
   num_dyn_bounds = grid_mapping.num_dynamic_grid_bounds
   input_output_aliases = tuple(
-      (a[0] + num_dyn_bounds + num_extra_args, a[1])
+      (a[0] + num_dyn_bounds, a[1])
       for a in input_output_aliases
   )
-
-  if promela_dump_path := _DUMP_PROMELA_TO.value:
-    num_devices = 1 if jax_mesh is None else jax_mesh.devices.size
-    num_cores = (
-        jax.devices()[0].num_cores
-        if jax_mesh is None
-        else jax_mesh.devices[0].num_cores
-    )
-    verification_module, _ = lower_module(for_verification=True)
-    model = verification.export_promela_model(
-        verification_module, num_devices, num_cores
-    )
-    if promela_dump_path == "stdout":
-      print(f"The Promela model for pallas_call {debug_info.func_src_info}:")
-      print(model)
-    else:
-      if promela_dump_path == "sponge":
-        promela_dump_path = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR", "")
-        if not promela_dump_path:
-          raise ValueError(
-              "TEST_UNDECLARED_OUTPUTS_DIR must be set when"
-              " --jax_pallas_dump_promela_to=sponge"
-          )
-      dump_ctx = tempfile.NamedTemporaryFile(
-          mode="w",
-          prefix=mlir.sanitize_name(debug_info.func_name) + "-",
-          suffix=".pml",
-          dir=promela_dump_path, delete=False,
-      )
-      with dump_ctx as f:
-        f.write(model)
 
   # Replace in_avals to physical avals.
   # This step is required for mapping logical types to physical types.
@@ -206,8 +182,9 @@ def pallas_call_tpu_lowering_rule(
   def _maybe_cast_inputs(*args):
     args = [_maybe_cast_to_int(x) for x in args]
     return args
+
   kernel_in_avals = [_maybe_cast_to_int(x) for x in ctx.avals_in]
-  kernel_out_avals = [_maybe_cast_to_int(x) for x in out_avals]
+  kernel_out_avals = [_maybe_cast_to_int(x) for x in ctx.avals_out]
   cast_ctx = ctx.replace(avals_out=kernel_in_avals)
   in_nodes = mlir.lower_fun(_maybe_cast_inputs)(cast_ctx, *in_nodes)
 
@@ -215,39 +192,93 @@ def pallas_call_tpu_lowering_rule(
   dynamic_grid_args, args = in_nodes[:num_dyn_bounds], in_nodes[num_dyn_bounds:]
   kernel_ctx = ctx.replace(avals_in=kernel_in_avals, avals_out=kernel_out_avals)
   output_memory_spaces = _get_memory_spaces_from_avals(out_avals)
+  input_memory_spaces = None
+  if any(
+      isinstance(aval, pallas_core.ShapedArrayWithMemorySpace)
+      for aval in ctx.avals_in
+  ):
+    # TODO(sharadmv): Support dynamic grid bounds.
+    if num_dyn_bounds != 0:
+      raise NotImplementedError(
+          "Dynamic grid bounds are not supported when specifying memory spaces for inputs."
+      )
+    input_memory_spaces = _get_memory_spaces_from_avals(ctx.avals_in)
   if cost_estimate is not None:
-    mosaic_cost_estimate = tpu_custom_call.CostEstimate(
-        flops=cost_estimate.flops,
-        bytes_accessed=cost_estimate.bytes_accessed,
-        transcendentals=cost_estimate.transcendentals,
+    mosaic_cost_estimate = cast(
+        tpu_custom_call.CostEstimate, dataclasses.asdict(cost_estimate)
     )
   else:
     mosaic_cost_estimate = None
+  if input_memory_spaces is None and output_memory_spaces is not None:
+    input_memory_spaces_list: list[tpu_custom_call.MemorySpace | None] = [
+        None,
+    ] * len(ctx.avals_in)
+    for input_output_alias in input_output_aliases:
+      input_memory_spaces_list[input_output_alias[0]] = output_memory_spaces[
+          input_output_alias[1]
+      ]
+    input_memory_spaces = tuple(input_memory_spaces_list)
+  if input_memory_spaces is not None:
+    # Filter out the memory spaces that are not supported for input memory
+    # spaces.
+    input_memory_spaces = tuple(
+        i
+        if i
+        in {  # pylint: disable=g-long-ternary
+            tpu_custom_call.MemorySpace.HBM,
+            tpu_custom_call.MemorySpace.VMEM,
+            tpu_custom_call.MemorySpace.SMEM,
+        }
+        else None
+        for i in input_memory_spaces
+    )
+  has_side_effects: bool | tpu_custom_call.TpuSideEffectType
+  match mosaic_params.has_side_effects:
+    case bool():
+      has_side_effects = mosaic_params.has_side_effects
+    case tpu_core.SideEffectType.PURE:
+      has_side_effects = tpu_custom_call.TpuSideEffectType.PURE
+    case tpu_core.SideEffectType.DATAFLOW_SIDE_EFFECTING:
+      has_side_effects = (
+          tpu_custom_call.TpuSideEffectType.DATAFLOW_SIDE_EFFECTING
+      )
+    case tpu_core.SideEffectType.SIDE_EFFECTING:
+      has_side_effects = tpu_custom_call.TpuSideEffectType.SIDE_EFFECTING
+    case _:
+      raise ValueError(f"Invalid side effect type: {mosaic_params.has_side_effects}")
   out_nodes = mosaic.lower_module_to_custom_call(
       kernel_ctx,
       *dynamic_grid_args,
-      *extra_args,
       *args,
       module=mosaic_module,
       out_type=kernel_out_avals,
-      backend="tpu",
-      kernel_name=mlir.sanitize_name(debug_info.func_name),
+      kernel_name=mlir.sanitize_name(name or debug_info.func_name),
       cost_estimate=mosaic_cost_estimate,
-      vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes"),
-      flags=mosaic_params.get("flags"),
-      allow_input_fusion=mosaic_params.get("allow_input_fusion"),
+      vmem_limit_bytes=mosaic_params.vmem_limit_bytes,
+      flags=mosaic_params.flags,
+      allow_input_fusion=mosaic_params.allow_input_fusion,
       input_output_aliases=input_output_aliases,
-      serialization_format=mosaic_params.get("serialization_format", 1),
-      device_type=mosaic_params.get("device_type"),
-      internal_scratch_in_bytes=mosaic_params.get("internal_scratch_in_bytes"),
-      collective_id=mosaic_params.get("collective_id", None),
-      has_side_effects=mosaic_params.get("has_side_effects", False),
+      serialization_format=mosaic_params.serialization_format,
+      internal_scratch_in_bytes=mosaic_params.internal_scratch_in_bytes,
+      collective_id=mosaic_params.collective_id,
+      has_side_effects=has_side_effects,
       output_memory_spaces=output_memory_spaces,
+      disable_bounds_checks=mosaic_params.disable_bounds_checks,
+      input_memory_spaces=input_memory_spaces,
+      metadata=dict(metadata) if metadata is not None else None,
+      skip_device_barrier=mosaic_params.skip_device_barrier,
+      allow_collective_id_without_custom_barrier=mosaic_params.allow_collective_id_without_custom_barrier,
+      shape_invariant_numerics=mosaic_params.shape_invariant_numerics,
   )
-  _maybe_cast_to_bool = lambda x, aval: x.astype(
-      jax.numpy.bool_) if aval.dtype == jax.numpy.bool_ else x
+  _maybe_cast_to_bool = (
+      lambda x, aval: x.astype(jax.numpy.bool_)
+      if aval.dtype == jax.numpy.bool_
+      else x
+  )
+
   def _maybe_cast_outputs(*args):
     args = [_maybe_cast_to_bool(x, aval) for x, aval in zip(args, out_avals)]
     return args
+
   cast_ctx = ctx.replace(avals_in=kernel_out_avals)
   return mlir.lower_fun(_maybe_cast_outputs)(cast_ctx, *out_nodes)

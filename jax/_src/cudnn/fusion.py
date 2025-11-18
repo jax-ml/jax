@@ -13,12 +13,13 @@
 # limitations under the License.
 
 import functools
-import jax
+
+from jax._src import api
 from jax._src import core as jax_core
-from jax.interpreters import mlir
+from jax._src import tree_util
+from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-
 
 
 def _cudnn_fusion_impl(*args, jaxpr, **unused_kwargs):
@@ -41,21 +42,16 @@ cudnn_fusion_p.def_impl(_cudnn_fusion_impl)
 def call_cudnn_fusion(f, *args, **kwargs):
   """Creates a new cudnn_fusion corresponding to calling
   the given function f with args and kwargs."""
-  jaxpr, out_shapes = jax.make_jaxpr(
+  jaxpr, out_shapes = api.make_jaxpr(
     functools.partial(f, **kwargs), return_shape=True
   )(*args)
-  flat_args = jax.tree.leaves(args)
-  out_tree = jax.tree.structure(out_shapes)
+  flat_args = tree_util.tree_leaves(args)
+  out_tree = tree_util.tree_structure(out_shapes)
   out_flat = cudnn_fusion_p.bind(*flat_args, name=f.__name__, jaxpr=jaxpr)
-  return jax.tree.unflatten(out_tree, out_flat)
+  return tree_util.tree_unflatten(out_tree, out_flat)
 
 
-def _cudnn_fusion_stablehlo_lowering(
-  ctx,
-  *args,
-  name,
-  jaxpr,
-):
+def _cudnn_fusion_stablehlo_lowering(ctx, *args, name, jaxpr):
   """Make cudnn_fusion which calls the implementation function.
   Currently this leaks a CallOp since we're using the `core_call_lowering`
   function, but this should get cleaned up by DCE easily.

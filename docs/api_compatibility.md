@@ -59,6 +59,11 @@ Any API or import path prefixed with an underscore is explicitly private,
 and may change without warning between JAX releases. We are working to move
 all private APIs into `jax._src` to make these expectations more clear.
 
+### jaxlib
+Any import path in the `jaxlib` package is considered private, and may change
+without warning between releases. Some APIs defined in `jaxlib` have public
+aliases in the `jax` package.
+
 ### Legacy internal APIs
 In addition, there are several legacy modules that currently expose some
 private APIs without an underscore, including:
@@ -91,7 +96,7 @@ guarantees of the main JAX package. If you have code that uses `jax.extend`,
 we would strongly recommend CI tests against JAX's nightly releases, so as to
 catch potential changes before they are released.
 
-For details on `jax.extend`, see the [`jax.extend` module docuementation](https://docs.jax.dev/en/latest/jax.extend.html), or the design document, {ref}`jax-extend-jep`.
+For details on `jax.extend`, see the [`jax.extend` module documentation](https://docs.jax.dev/en/latest/jax.extend.html), or the design document, {ref}`jax-extend-jep`.
 
 ## Numerics and randomness
 

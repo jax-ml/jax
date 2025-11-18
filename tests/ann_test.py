@@ -179,7 +179,7 @@ class AnnTest(jtu.JaxTestCase):
 
 
   def test_vmap_after(self):
-    batch = 4
+    batch = 8
     qy_size = 128
     db_size = 1024
     feature_dim = 32

@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import collections
 from collections.abc import Callable
 from functools import partial
 import sys
@@ -54,15 +53,6 @@ def interp(djaxpr, slab, sizes, args):
       views.append(x)
   slab, outs = eval_djaxpr(djaxpr, slab, *sizes.values(), *views)
   return slab, outs
-
-def _check_axis_size_conflicts(all_axes, sizes):
-  if len(all_axes) != len(set(all_axes)):
-    d = collections.defaultdict(list)
-    for name, sz in zip(all_axes, sizes):
-      d[name].append(sz)
-    msg = '; '.join([f'{name}: {" != ".join(map(str, sizes))}'
-                      for name, sizes in d.items() if len(sizes) > 1])
-    raise ValueError(f'abstracted axes resolve to conflicting sizes. {msg}')
 
 def djit(f, abstracted_axes, **djit_kwargs):
   # TODO(frostig,mattjj): un/flatten f

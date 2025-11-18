@@ -7,26 +7,38 @@ jupytext:
     format_version: 0.13
     jupytext_version: 1.16.4
 kernelspec:
-  display_name: Python 3
+  display_name: Python 3 (ipykernel)
+  language: python
   name: python3
 ---
+
++++ {"id": "7704d3bb"}
 
 (pallas_tpu_pipelining)=
 
 +++ {"id": "teoJ_fUwlu0l"}
 
-# Pipelining
+# TPU Pipelining
 
 <!--* freshness: { reviewed: '2024-04-08' } *-->
 
 +++ {"id": "gAJDZh1gBh-h"}
 
-In this guide we'll cover how memory spaces in TPU work and how to write
-pipelines in Pallas that overlap memory I/O with compute.
+This guide serves as a reference for TPU-specific pipelining concerns.
+We'll review the memory hierarchy and compute units on TPUs, and TPU-specific features of the pipelining API. For a more general-purpose overview of pipelining, see the {ref}`pallas_software_pipelining`.
 
-```{code-cell}
-:id: ejAVO6ikUUuF
-
+```{code-cell} ipython3
+---
+executionInfo:
+  elapsed: 54
+  status: ok
+  timestamp: 1744908474512
+  user:
+    displayName: Justin Fu
+    userId: '17543197034567316452'
+  user_tz: 420
+id: ejAVO6ikUUuF
+---
 #@title Imports
 
 import jax
@@ -36,13 +48,13 @@ import jax.numpy as jnp
 import numpy as np
 ```
 
-+++ {"id": "TWKESTKAlyjT"}
++++ {"id": "0e212a5e"}
 
 (tpu_and_its_memory_spaces)=
 
 ## TPU and its memory spaces
 
-+++
++++ {"id": "NnWW9GV4kW6P"}
 
 A TPU and its TensorCore consist of memory spaces (where arrays can reside),
 registers (which temporarily store scalar and array values) and compute units
@@ -65,384 +77,174 @@ Let's talk about the components of this diagram in more detail:
   Values can be loaded into memory from their respective caches (VMEM for
   VREGs and SMEM for SREGs).
 * **Compute units**: A TensorCore has a scalar unit, vector unit (VPU) and
-  matrix unit (MXU) that can do numerical computation.
+  matrix unit (MXU) that can do numerical computation. Each of these compute units can operate asynchronously, but this is managed by the TPU compiler and thus from the programmer's perspective a TPU program is single-threaded.
   Compute units operate on values that live in SREGs and VREGs and output
   values into those registers as well.
 
-In order to do a vectorized computation on our values `x` and `y` that live
-in HBM, we need to:
++++ {"id": "8Tl3wt5Wk3Ek"}
 
-1. Copy the values `x` and `y` into VMEM.
-2. Load the values from VMEM into VREGs.
-3. Execute the computation using the VPU or MXU, storing the output in VREGs.
-4. Store the values in the output VREGs into VMEM.
-5. Copy the output values in VMEM back to HBM.
+## TPU-specific Pipelining Features
 
-+++ {"id": "TzctMbNsn3vc"}
+Pallas TPU supports the following platform-specific features.
 
-Let's implement a Pallas function that does just that!
++++ {"id": "1jg5WmExk47l"}
 
-```{code-cell}
-:id: 2IXQxNWrKJyb
-:outputId: d62eb493-5f92-4496-f113-d3cd24cb0b9f
+### TPU Memory Spaces
 
-def add_matrices_kernel(x_vmem_ref, y_vmem_ref, z_vmem_ref):
-  # Load x and y from VMEM into VREGs
-  x_vregs = x_vmem_ref[:, :]
-  y_vregs = y_vmem_ref[:, :]
-  # Execute a vectorized add
-  z_vregs = x_vregs + y_vregs
-  # Store the output values in VREGs back into VMEM
-  z_vmem_ref[:, :] = z_vregs
+Pallas exposes all levels of the TPU memory hierarchy to users. The following table maps from Pallas TPU memory spaces to their standard memory types (DRAM/SRAM):
 
+| Pallas Enum | TPU Memory Space | Type (DRAM/SRAM) |
+| --- | --- | --- |
+| `pltpu.MemorySpace.ANY` | HBM (usually) or VMEM | DRAM |
+| `pltpu.MemorySpace.VMEM` | VMEM | SRAM |
+| `pltpu.MemorySpace.SMEM` | SMEM | SRAM |
+| `pltpu.MemorySpace.SEMAPHORE` | Semaphore | SRAM |
 
-def add_matrices(x: jax.Array, y: jax.Array) -> jax.Array:
-  # pallas_call will first allocate scratch buffers for `x` and `y` in VMEM.
-  # It will then copy `x` and `y` from HBM into VMEM.
-  z = pl.pallas_call(
-      add_matrices_kernel, out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype)
-  )(x, y)
-  # pallas_call will also copy the output from VMEM back into HBM.
-  return z
+- `MemorySpace.VMEM` denotes vector SRAM. It is the default memory space if nothing is specified.
+- `MemorySpace.SMEM` denotes scalar SRAM. Only scalar loads and stores can be performed to/from SMEM.
+- `MemorySpace.ANY` is a hint to the compiler that the memory space is unconstrained. In most cases, XLA will place this buffer in HBM. A buffer assigned to the `ANY` memory space cannot be dereferenced normally using array indexing syntax (e.g. `x[...]`). Instead, we must first copy the values into a VMEM or SMEM buffer using `pltpu.sync_copy` or `pltpu.async_copy`.
+- `MemorySpace.SEMAPHORE` is used to allocate semaphores for constructing barriers or tracking asynchronous operations. It is also possible to return semaphores from the kernel for building asynchronous kernels - this is an experimental feature; see {ref}`pallas_async` for more details.
 
+Pipelining on TPUs is typically done between HBM (DRAM) to VMEM (Vector SRAM). The default behavior for `pallas_call` on TPU is that arguments to `pallas_call` are assumed to live in HBM, and inputs to the user kernel body are stored in VMEM.
 
-x, y = jnp.ones((512, 512)), jnp.ones((512, 512))
-add_matrices(x, y)
+While not specific to pipelining, it is possible to gain manual control over the memory space of input and output buffers, you can specify the `memory_space` argument on a `BlockSpec`. Note that pipelining is not allowed unless the `memory_space` is marked as `VMEM`. Memory spaces can also be used to specify scratch arguments to a kernel via the `scratch_shapes` argument on `pallas_call`. Scratch buffers are persistent across kernel iterations and are useful for storing intermediate results such as partial accumulations and reductions. A scratch buffer must reside in `VMEM`, `SMEM`, or `SEMAPHORE`.
+
+As an example for using multiple manual memory space assignments in a kernel, the following program copies a slice of an HBM buffer `x_hbm_ref` into a scratch VMEM buffer `scratch_vmem_ref` before using it for arithmetic and storing the result into an output VMEM buffer:
+
+```{code-cell} ipython3
+---
+executionInfo:
+  elapsed: 65
+  status: ok
+  timestamp: 1744908591430
+  user:
+    displayName: Justin Fu
+    userId: '17543197034567316452'
+  user_tz: 420
+id: zcqz1CA_o50a
+---
+def hbm_vmem_kernel(x_hbm_ref, out_vmem_ref, scratch_vmem_ref):
+  pltpu.sync_copy(x_hbm_ref.at[0:1], scratch_vmem_ref)
+  out_vmem_ref[...] = scratch_vmem_ref[...] + 1
+
+x = jax.random.uniform(jax.random.key(0), (8, 128), jnp.float32)
+out = pl.pallas_call(hbm_vmem_kernel,
+  in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY)],
+  out_shape=jax.ShapeDtypeStruct((1, 128), jnp.float32),
+  scratch_shapes=(pltpu.MemorySpace.VMEM(shape=(1, 128), dtype=jnp.float32),)
+)(x)
+
+np.testing.assert_allclose(out, x[0:1] + 1)
 ```
 
-+++ {"id": "HMENNLy8okCL"}
+### Multiple Buffering
 
-We've written two functions: `add_matrices_kernel` and `add_matrices`.
-
-`add_matrices_kernel` operates using `Ref`s that live in VMEM.
-Loading from a VMEM `Ref` produces a value that lives in VREGs.
-Values in VREGs behave like `jax.Array`s in that we can use `jnp` and
-`jax.lax` operations on them to produce new values that live in VREGs.
-When we produce the values we'd like to return, we store them in the output
-VMEM `Ref`.
-
-The `add_matrices` function acts on `jax.Array`s and returns a `jax.Array`.
-Inside it, we pass `x` and `y` into `pallas_call`.
-`pallas_call` is responsible for copying `x` and `y` into VMEM and for
-allocating the VMEM buffers that the kernel operates on (including allocating
-`z_vmem_ref`, the output VMEM buffer).
-After the kernel function is finished running, `pallas_call` will also copy
-the value in `z_vmem_ref` to HBM, resulting in an output `jax.Array`.
-
-+++ {"id": "5kWr-1tKpYro"}
-
-## Constraints of using VMEM/SMEM
-
-Pallas exposes access to lower level memory spaces like VMEM and SMEM but
-writing kernels utilizing them adds some considerations.
-
-1. Memory capacity. VMEM and SMEM are *small*! VMEM on v4 TPUs is only 16MiB
-  and SMEM ranges in the tens to hundreds of KiB.
-  If our arrays are too big, we won't even be able to fit them into VMEM at all.
-  For reference, a `f32[2048, 2048]` array is 16MiB, so our above kernel won't
-  scale beyond moderately sized arrays.
-
-2. Memory bandwidth. Copying to/from HBM and VMEM takes a long time, at least
-  compared to most compute instructions.
-  The `add_matrices` function above will likely spend more time copying
-  between HBM and VMEM than actually performing the addition itself.
-
-With these two constraints in mind, we'll have to rethink our strategy for
-getting performance out of our TPUs.
-
-+++ {"id": "_NTqvlbetB3P"}
-
-## Primer: Pipelining
-
-Pipelining our computation offers a way of dealing with both the memory
-capacity and bandwidth constraints in one fell swoop.
-What do we mean by pipelining?
-
-The goal is: *in parallel* copy to/from HBM and VMEM *while* utilizing our
-compute units.
-Naively this is difficult because in our program above we copy *all* of `x`
-and `y` before we start doing any compute with them, creating a dependence
-between the copy and the compute.
-
-However, if we can chunk up our computation into several subcomputations
-(e.g. when we add two matrices, we can express that as addition of "blocks"
-of the original matrices together), we can now overlap the copies of one of
-those subcomputations with the compute of the other. Let's walk through a
-simple example:
-
-Let's say we split our arrays `x` and `y` into `x1, x2` and `y1, y2` (for
-example, split along the leading axis, resulting in two `(256, 512)` arrays
-for each input.
-We can now execute the following pipelined computation.
-
-1. Copy `x1` and `y1` into VMEM.
-1. Start copying `x2` and `y2` into VMEM
-2. Load `x1, y1` from VMEM into VREGs.
-3. Execute the `z1 = x1 + y1` using the compute units.
-4. Store `z1` into VMEM.
-5. Start copying `z1` from VMEM back into HBM.
-6. Wait until `x2, y2` have been copied into VMEM.
-7. Load `x2, y2` from VMEM into VREGs.
-8. Execute the `z2 = x2 + y2` using the compute units.
-9. Store `z2` into VMEM.
-10. Wait until `z1` is copied into HBM.
-10. Start copying `z2` from VMEM back into HBM.
-10. Wait until `z2` is copied into HBM.
-
-Any time we are doing compute here, we are asynchronously copying something.
-This means that some of the time spent copying is not wasted.
-
-The two most important numbers for determining how efficient a pipelined
-computation are a) how many floating point operations (FLOPs) we need to
-execute and b) how many bytes we need to copy to execute that computation.
-The ratio of these two (FLOPs/memory usage) is called the
-*arithmetic intensity* of an operation and determines if our pipeline will
-be compute bound or memory bound.
-
-+++ {"id": "gutx7y8uvZKH"}
-
-## Pipelining in Pallas
-
-+++ {"id": "U-dPTjlBverB"}
-
-How do we implement a pipeline like the one above in Pallas?
-It seems like a complex sequence of asynchronous data operations and
-executing kernels that would be a pain to implement manually.
-Fear not! Pallas offers an API for expressing pipelines without too much
-boilerplate, namely through `grid`s and `BlockSpec`s.
-
-See how in the above pipelined example, we are executing the same logic
-multiple times: steps 3-5 and 8-10 both execute the same operations,
-only on different inputs.
-The {func}`jax.experimental.pallas.pallas_call` provides a way to
-execute a kernel multiple times, by using the `grid` argument.
-See {ref}`pallas_grid`.
-
-We also use {class}`jax.experimental.pallas.BlockSpec` to specify
-how to construct the input of each kernel invocation.
-See {ref}`pallas_blockspec`.
-
-In the pipelining example above, we had `(512, 512)`-shaped arrays and
-split them along the leading dimension into two `(256, 512)`-shaped arrays.
-In this pipeline, our `BlockSpec.block_shape` would be `(256, 512)`.
-On the 1st iteration we'd
-like to select `x1` and on the second iteration we'd like to use `x2`.
-This can be expressed with the following `index_map`:
+Multiple buffering can be specified on a per-argument basis to the pipeline via the `pipeline_mode` option on `pl.BlockSpec`. To do so, pass a `pl.Buffered` object to `pl.BlockSpec` specifying the number of buffers to allocate for this particular argument:
 
 ```python
-def x_index_map(i):
-  return (i, 0)
+pl.BlockSpec(
+  pipeline_mode=pl.Buffered(buffer_count=buffer_count)
+)
 ```
 
-We'd then construct the `BlockSpec`:
+The default buffer count is 2 for all inputs and outputs.
+
++++
+
+(pallas_tpu_emit_pipeline)=
+
+### pltpu.emit_pipeline
+
+`pltpu.emit_pipeline` is a pipelining API implemented in Pallas that allows you to construct pipelines inside of a kernel rather than only on kernel entry. This several use-cases over using `pl.pallas_call`, such as:
+- For constructing nested pipelines. For example, an outer pipeline that communicates between chips, and an inner pipeline that performs HBM-VMEM pipelining.
+- For using `emit_pipeline` specific features such as lookahead prefetch and dynamic block shapes (covered below).
+
+`pltpu.emit_pipeline` follows a similar signature to `pl.pallas_call` and requires you to specify a body `kernel`, a grid, and block specs for inputs and outputs:
+
 ```python
-block_spec = pl.BlockSpec((256, 512), x_index_map)
+def emit_pipeline(
+    kernel: Callable,
+    grid: tuple[int],
+    in_specs: PyTree[BlockSpec] = None,
+    out_specs: PyTree[BlockSpec] = None,
+    dimension_semantics: tuple[GridDimensionSemantics] = None,
+    core_axis: int | None = None,
+) -> Callable:
+  ... # Returns a custom pipeline given an inner kernel and BlockSpecs.
 ```
 
-The `BlockSpec`s for `y` and `z` will be the same as the one for `x`.
+The `dimension_semantics` and `core_axis` arguments are used for partitioning the kernel grid over Megacore (see below).
 
-+++ {"id": "noybOKghzjwG"}
++++
 
-### Putting it together
+### Lookahead Prefetch
 
-We provide these arguments to `pallas_call` via `grid`, `in_specs` and
-`out_specs` (`in_specs` corresponds to the tuple of positional arguments,
-and `out_specs` corresponds to the output).
+Lookahead prefetch is a pipelining feature where the pipeline will attempt to prefetch the next input block as soon as a buffering slot is available, rather than the iteration directly before it would be used. For example, if the kernel had a grid of `(8,)` and the block indices to fetch on each iteration were `0, 0, 0, 0, 1, 1, 1, 1`, then lookahead prefetch will begin fetching both blocks `0` and `1` on iteration 0, whereas the standard pipeline schedule would fetch block `0` on iteration 0 but not begin fetching block `1` until iteration 3. There is a small amount of control flow overhead in performing lookahead so it is disabled by default.
 
-```{code-cell}
-:id: ehKAYAwIojfv
-:outputId: 504bab29-83f3-4e1f-8664-1860ad15b6de
+Lookahead is primarily useful when there is a variable amount of compute work in each block, such as when some blocks contain skipped or a reduced amount of work. In these cases, there may not be enough compute work in the iteration immediately preceding the step when the block is needed to fully overlap with the memory transfer. Therefore, we would like to begin fetching blocks earlier in the pipeline.
 
-def add_matrices_pipelined(x: jax.Array, y: jax.Array) -> jax.Array:
-  block_spec = pl.BlockSpec((256, 512), lambda i: (i, 0))
-  return pl.pallas_call(
-      add_matrices_kernel,
-      out_shape=x,
-      in_specs=[block_spec, block_spec],
-      out_specs=block_spec,
-      grid=(2,)
-  )(x, y)
-
-add_matrices_pipelined(x, y)
-```
-
-+++ {"id": "rkytgIZYzz4t"}
-
-We've only added a little bit of code to our original function to add
-automatic pipelining but the `BlockSpec`s and `grid` do a lot of heavy
-lifting!
-
-How does it work? Well, the `BlockSpec`s provide enough information to start
-*prefetching* blocks of our input from HBM into VMEM.
-For example, if we are starting iteration `i` of our `grid`, we can pass
-`i + 1` into the `index_map` functions to obtain the blocks needed for the
-next iteration. We can then start an asynchronous copy for those blocks.
-Similarly for outputs, we can wait for the outputs of the previous iteration
-to be copied before starting the copy for the current iteration's outputs.
-
-+++ {"id": "7Xtz9oMs0ZRL"}
-
-### Parameterizing a pipeline
-
-+++ {"id": "esY4GcIB0bqQ"}
-
-It's common to parameterize the block shapes in our kernel. Block sizes are
-perhaps the most important parameter to tune when optimizing the performance
-of Pallas kernels! They give us control over the pipeline (for example,
-picking smaller blocks adds more iterations to our pipelined loop where each
-iteration has less work to do).
-
-Furthermore, we could also carve up the inputs and outputs along the 2nd
-dimension (we are only splitting along the first right now). Let's write a
-more general kernel that handles both of these features.
-
-```{code-cell}
-:id: VartelFd0YfY
-
-def add_matrices_pipelined_2d(
-    x: jax.Array, y: jax.Array, *, bm: int = 256, bn: int = 256
-) -> jax.Array:
-  m, n = x.shape
-  block_spec = pl.BlockSpec((bm, bn), lambda i, j: (i, j))
-  return pl.pallas_call(
-      add_matrices_kernel,
-      out_shape=x,
-      in_specs=[block_spec, block_spec],
-      out_specs=block_spec,
-      grid=(m // bm, n // bn),
-  )(x, y)
-
-np.testing.assert_array_equal(
-    add_matrices_pipelined_2d(x, y, bm=256, bn=256), x + y
-)
-np.testing.assert_array_equal(
-    add_matrices_pipelined_2d(x, y, bm=128, bn=128), x + y
-)
-np.testing.assert_array_equal(
-    add_matrices_pipelined_2d(x, y, bm=512, bn=512), x + y
+Lookahead prefetch can be used in conjunction with multiple buffering and can likewise be enabled by passing `pl.Buffered` into the `pipeline_mode` argument:
+```python
+pl.BlockSpec(
+  pipeline_mode=pl.Buffered(buffer_count=buffer_count, use_lookahead=True)
 )
 ```
 
-+++ {"id": "KrfeYwaW1QA-"}
++++
 
-## Handling reductions
+### Dynamic Block Shapes
 
-+++ {"id": "P3SqEKDe3Mar"}
+`pltpu.emit_pipeline` supports pipelining over blocks with dynamic but bounded shapes. In order to specify such an block shape, the dynamic-sized dimension in the block should be marked with `pl.BoundedSlice(max_size)` rather than a static integer size, where `max_size` is the maximum size of the block. In addition, the corresponding index returned by `index_map` should be a dynamic slice constructed via `pl.ds(start, size)` where both `start` and `size` are _element_ indices (not block indices) and can be dynamic.
 
-How would you implement something like `jnp.sum` using `pallas_call`?
-Specifically, we'd like to pipeline across the reduction dimension.
+The following is an example for a block spec with a dynamic first dimension:
 
-Take the example of reducing a `(8, 512, 512)`-shaped array to a
-`(512, 512)`-shaped one.
-
-```{code-cell}
-:id: JoT-ZKEk1R7l
-:outputId: fd842223-98a5-4e5c-87fc-5dadc94da4fa
-
-x = jnp.ones((8, 512, 512))
-jnp.sum(x, axis=0)
+```python
+pl.BlockSpec(
+   block_shape=(pl.BoundedSlice(32), 256),
+   index_map=lambda *grid_idxs: (pl.ds(start, end), 0),
+)
 ```
 
-+++ {"id": "5O3ByvuT3iyC"}
+```{code-cell} ipython3
+# The following kernel copies `x` to the output in dynamic-sized chunks
+# passed in via `slices`.
 
-To do this using `pallas_call`, we could use a grid of size `(8,)` and in
-each iteration `i` load `x[i]` into VMEM.
-Then we could add `x[i]` to an output VMEM buffer. Let's implement this
-naively first.
+def dynamic_block_example_kernel(x_hbm, slices_hbm, o_hbm, slices_smem):
+    pltpu.sync_copy(slices_hbm, slices_smem)  # Copy slices into SMEM.
+    def pipeline_body(x_vmem, o_vmem):
+        o_vmem[...] = x_vmem[...]
+    def index_map(i):
+        start = slices_smem[i, 0]
+        size = slices_smem[i, 1] - slices_smem[i, 0]
+        return (pl.ds(start, size), 0)
+    block_spec = pl.BlockSpec(block_shape=(pl.BoundedSlice(8), 128),
+                              index_map=index_map)
+    pltpu.emit_pipeline(
+        pipeline_body,
+        grid=(slices.shape[0],),
+        in_specs=[block_spec],
+        out_specs=block_spec
+    )(x_hbm, o_hbm)
 
-```{code-cell}
-:id: hqvv_WRQ3bvP
-:outputId: 200648d2-3f4d-4d1a-b95a-d2c1352cd7b8
+x = jax.random.uniform(jax.random.key(0), (8, 128), jnp.float32)
+slices = jnp.array([[0, 2], [2, 3], [3, 5], [5, 8]], dtype=jnp.int32)
 
-# Warning: this implementation is incorrect!
+hbm_block_spec = pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY)
+out = pl.pallas_call(dynamic_block_example_kernel,
+               in_specs=[hbm_block_spec, hbm_block_spec],
+               out_specs=hbm_block_spec,
+               out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+               scratch_shapes=(pltpu.MemorySpace.SMEM(slices.shape, jnp.int32),)
+              )(x, slices)
 
-def naive_sum_kernel(x_ref, o_ref):
-  o_ref[...] += x_ref[...]
-
-def naive_sum(x: jax.Array) -> jax.Array:
-  grid, *out_shape = x.shape
-  return pl.pallas_call(
-      naive_sum_kernel,
-      grid=grid,
-      # None in `block_shape` means we pick a size of 1 and squeeze it away
-      in_specs=[pl.BlockSpec((None, *out_shape), lambda i: (i, 0, 0))],
-      out_specs=pl.BlockSpec(out_shape, lambda i: (0, 0)),
-      out_shape=jax.ShapeDtypeStruct(out_shape, x.dtype),
-  )(x)
-naive_sum(x)
+np.testing.assert_allclose(x, out)
 ```
-
-+++ {"id": "Kv9qJYJY4jbK"}
-
-Notice how we've set up the `BlockSpec`s: we're loading the entirety of
-the `(512, 512)` dimension into VMEM (no pipelining there) but selecting
-the `i`-th dimension of `x` each iteration in the `index_map`.
-We are using a `None` for that dimension in the block shape, which indicates
-that we are selecting a singleton dimension from `x` that we would like
-to squeeze away in the kernel.
-Therefore, `x_ref` is `(512, 512)`-shaped in VMEM as well.
-
-`out_spec` uses `lambda i: (0, 0)` as its `index_map`, indicating that
-`o_ref` is unchanged over the course of the pipeline.
-This means that we can update its value each iteration by reading from and
-writing to it. Or can it?
-Actually there is one catch: *`o_ref` is initially garbage*, meaning we'll
-be accumulating into garbage.
-This will result in the overall function outputting the incorrect value!
-
-Therefore, **whenever we do a reduction in a kernel, we need to make sure
-to initialize the `Ref` that is storing the reduced value**.
-We can accomplish this by conditionally writing a value to `out_ref`
-when we're on iteration 0.
-We can do this with the helper function `pl.when`, a convenience wrapper
-around `jax.lax.cond`, and `pl.program_id`,
-which queries which iteration in a grid axis we are in.
-
-```{code-cell}
-:id: JXN2RthX5cSw
-:outputId: 195df19b-a889-479b-95b6-1fb7281f1518
-
-def sum_kernel(x_ref, o_ref):
-  @pl.when(pl.program_id(axis=0) == 0)
-  def _():
-    o_ref[...] = jnp.zeros_like(o_ref)
-
-  o_ref[...] += x_ref[...]
-
-def sum(x: jax.Array) -> jax.Array:
-  grid, *out_shape = x.shape
-  return pl.pallas_call(
-      sum_kernel,
-      grid=grid,
-      # None in `block_shape` means we pick a size of 1 and squeeze it away
-      in_specs=[pl.BlockSpec((None, *out_shape), lambda i: (i, 0, 0))],
-      out_specs=pl.BlockSpec(out_shape, lambda i: (0, 0)),
-      out_shape=jax.ShapeDtypeStruct(out_shape, x.dtype)
-  )(x)
-
-sum(x)
-```
-
-+++ {"id": "2828qXBI5ksZ"}
-
-This `sum` function now outputs the correct values!
-
-One last thing to note about reductions in Pallas are that **they must be
-done in the minormost (rightmost) dimensions of our grid** (our grid is
-1-dimensional in the above example so we are reducing over its minormost
-dimension). This is because the pipeline that Pallas generates using
-the `BlockSpec`s, `grid` and kernel function *does not read outputs back
-from HBM*.
-Once you've written an output value back to HBM you cannot revisit it.
-Therefore, you cannot do a reduction across a grid dimension that has any
-revisiting and therefore all reductions need to happen in the rightmost
-dimensions.
 
 +++ {"id": "KvPFez9N8cKJ"}
 
 (pallas_tpu_megacore)=
 
-## TPUs in Megacore configuration
+### TPUs in Megacore configuration
 
 +++ {"id": "0f4HAVzQ8n71"}
 
@@ -462,19 +264,38 @@ computation, we can split up those dimensions across the TensorCores.
 We can indicate which dimensions are parallelizable by providing an
 annotation to `pallas_call` called `dimension_semantics`.
 
-```{code-cell}
-:id: nQNa8RaQ-TR1
-:outputId: 385ed87c-d95c-466c-af77-df3845c979f2
+```{code-cell} ipython3
+---
+executionInfo:
+  elapsed: 106
+  status: ok
+  timestamp: 1744910274556
+  user:
+    displayName: Justin Fu
+    userId: '17543197034567316452'
+  user_tz: 420
+id: nQNa8RaQ-TR1
+outputId: 29c0b574-3528-49a5-8a88-b6987efc69ce
+---
+def add_matrices_kernel(x_vmem_ref, y_vmem_ref, z_vmem_ref):
+  # Load x and y from VMEM into VREGs
+  x_vregs = x_vmem_ref[:, :]
+  y_vregs = y_vmem_ref[:, :]
+  # Execute a vectorized add
+  z_vregs = x_vregs + y_vregs
+  # Store the output values in VREGs back into VMEM
+  z_vmem_ref[:, :] = z_vregs
 
 def add_matrices_pipelined_megacore(x: jax.Array, y: jax.Array) -> jax.Array:
   block_spec = pl.BlockSpec((256, 512), lambda i: (i, 0))
   return pl.pallas_call(
       add_matrices_kernel,
-      out_shape=x,
+      out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
       in_specs=[block_spec, block_spec],
       out_specs=block_spec,
       grid=(2,),
-      compiler_params=pltpu.TPUCompilerParams(dimension_semantics=("parallel",))
+      compiler_params=pltpu.CompilerParams(
+          dimension_semantics=("parallel",))
   )(x, y)
 
 x, y = jnp.ones((512, 512)), jnp.ones((512, 512))
@@ -492,16 +313,21 @@ automatically.
 
 > Note that Megacore is only currently available on TPU `v4` and TPU `v5p`. Supplying `dimension_semantics` annotations is a no-op on other platforms, but *not* specifying it will result in only one TensorCore being used (even if there are more than one available).
 
-+++ {"id": "1ZJ2rV5W8FAe"}
+When using `pltpu.emit_pipeline`, `core_axis` should be passed into `emit_pipeline`. `core_axis` should be the index of a parallel grid axis to partition the grid on. For example, the following template can be used to partition the kernel over a leading parallel grid dimension:
 
-## Conclusion
+```python
+def kernel_body(...):
+  def inner_pipeline_body(...):
+    ...
+  pltpu.emit_pipeline(inner_pipeline_body,
+                      grid=(4, 4), 
+                      core_axis=0,
+                      dimension_semantics=("parallel", "sequential"))
 
-In this guide we covered how to express TPU pipelines using `pallas_call`,
-`grid` and `BlockSpec`s. We covered how to express nested loops via a
-multi-dimensional grid and how to handle reductions by initialize our
-accumulators at the beginning of the reduction.
-We also learned how to handle Megacore by adding annotations to the kernel.
-
-Exercises left to the reader:
-* Try implementing a `sum` kernel that pipelines the other dimensions as well
-* Add megacore support to the `add` kernel and the `sum` kernel as well.
+pl.pallas_call(
+      kernel_body,
+      grid=(num_cores,),
+      compiler_params=pltpu.CompilerParams(
+          dimension_semantics=("parallel",))
+  )
+```

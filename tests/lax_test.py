@@ -28,18 +28,17 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax._src import core
 from jax import export
 from jax import jvp, grad
 from jax import lax
 import jax.numpy as jnp
 from jax.test_util import check_grads
-import jax.util
 
 from jax.interpreters import batching
-from jax.interpreters import xla
 from jax._src import array
 from jax._src import config
+from jax._src import core
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import lax_reference
 from jax._src import test_util as jtu
@@ -48,7 +47,8 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
-from jax._src.util import NumpyComplexWarning, safe_zip
+from jax._src.lax import utils as lax_utils
+from jax._src.util import safe_zip
 from jax._src.tree_util import tree_map
 
 config.parse_flags_with_absl()
@@ -136,6 +136,25 @@ class LaxTest(jtu.JaxTestCase):
       tol = jtu.join_tolerance(tol, 2e-15)
     self._CheckAgainstNumpy(numpy_op, op, args_maker, tol=tol)
 
+  @parameterized.parameters(["logistic", "tanh"])
+  def testEvenFunctionGrads(self, op_name):
+    op = getattr(lax, op_name)
+    x = jnp.arange(0.0, 80.0, 1.0, dtype=jnp.float32)
+    high_acc_op = lambda x: op(x, accuracy=lax.AccuracyMode.HIGHEST)
+    grads = jax.vmap(jax.grad(high_acc_op))(x)
+    neg_grads = jax.vmap(jax.grad(high_acc_op))(-x)
+    self.assertAllClose(
+        grads, neg_grads, atol=jtu.default_tolerance()[np.dtype(np.float32)], rtol=0.0
+    )
+
+  def testExpm1Grad(self):
+    x = jnp.arange(-80.0, 80.0, 1.0, dtype=jnp.float32)
+    expected = jax.vmap(jax.grad(lambda x: lax.exp(x, accuracy=lax.AccuracyMode.HIGHEST)))(x)
+    actual = jax.vmap(jax.grad(lambda x: lax.expm1(x, accuracy=lax.AccuracyMode.HIGHEST)))(x)
+    self.assertAllClose(
+        actual, expected, atol=jtu.default_tolerance()[np.dtype(np.float32)], rtol=0.0
+    )
+
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
 
   @jtu.sample_product(
@@ -147,7 +166,12 @@ class LaxTest(jtu.JaxTestCase):
   def testConvertElementType(self, from_dtype, to_dtype, weak_type):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng((2, 3), from_dtype)]
-    op = lambda x: lax_internal._convert_element_type(x, to_dtype, weak_type)
+    to_dtype_canonicalized = (
+        dtypes.canonicalize_dtype(to_dtype) if to_dtype is not None else None
+    )
+    op = lambda x: lax_internal._convert_element_type(
+        x, to_dtype_canonicalized, weak_type
+    )
     self._CompileAndCheck(op, args_maker)
 
     x = rng((1,), from_dtype)
@@ -178,8 +202,8 @@ class LaxTest(jtu.JaxTestCase):
   )
   def testBitcastConvertType(self, from_dtype, to_dtype, shape):
     rng = jtu.rand_default(self.rng())
-    nbits_in = dtypes.bit_width(from_dtype)
-    nbits_out = dtypes.bit_width(to_dtype)
+    nbits_in = dtypes.itemsize_bits(from_dtype)
+    nbits_out = dtypes.itemsize_bits(to_dtype)
     if nbits_in < nbits_out:
       shape = (*shape, nbits_out // nbits_in)
     args_maker = lambda: [rng(shape, from_dtype)]
@@ -206,8 +230,8 @@ class LaxTest(jtu.JaxTestCase):
     shape=[(4,), (2, 4), (2, 3, 4)]
   )
   def testBitcastConvertTypeAgainstNumpy(self, from_dtype, to_dtype, shape):
-    nbits_in = dtypes.bit_width(from_dtype)
-    nbits_out = dtypes.bit_width(to_dtype)
+    nbits_in = dtypes.itemsize_bits(from_dtype)
+    nbits_out = dtypes.itemsize_bits(to_dtype)
     if nbits_in < nbits_out:
       shape = (*shape, nbits_out // nbits_in)
     rng = jtu.rand_default(self.rng())
@@ -224,7 +248,7 @@ class LaxTest(jtu.JaxTestCase):
   )
   def testBitcastConvertWeakType(self, from_dtype, to_dtype, weak_type):
     rng = jtu.rand_default(self.rng())
-    x_in = lax_internal._convert_element_type(rng((2, 3), from_dtype),
+    x_in = lax_internal._convert_element_type(rng((2, 3), np.dtype(from_dtype)),
                                               weak_type=weak_type)
     op = lambda x: lax.bitcast_convert_type(x, to_dtype)
     self.assertEqual(dtypes.is_weakly_typed(x_in), weak_type)
@@ -1079,6 +1103,29 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     self._CompileAndCheck(partial(lax.dot, precision=precision), args_maker)
 
+  def testDotPositionalArgumentDeprecation(self):
+    lhs = jnp.arange(5.0)
+    rhs = jnp.arange(5.0)
+    msg = "jax.lax.dot: passing precision or preferred_element_type by position"
+    multiple_args_msg = "jax.lax.dot got multiple values for argument"
+
+    with self.assertDeprecationWarnsOrRaises("jax-lax-dot-positional-args", msg):
+      lax.dot(lhs, rhs, lax.Precision.DEFAULT, jnp.float32)
+
+    with self.assertDeprecationWarnsOrRaises("jax-lax-dot-positional-args", msg):
+      with self.assertRaises(TypeError):
+        lax.dot(lhs, rhs, lax.Precision.DEFAULT, precision=lax.Precision.DEFAULT)
+
+    if deprecations.is_accelerated("jax-lax-dot-positional-args"):
+      with self.assertRaisesRegex(ValueError, msg):
+        lax.dot(lhs, rhs, lax.Precision.DEFAULT, jnp.float32,
+                preferred_element_type=jnp.float32)
+    else:
+      with self.assertWarnsRegex(DeprecationWarning, msg):
+        with self.assertRaisesRegex(TypeError, multiple_args_msg):
+          lax.dot(lhs, rhs, lax.Precision.DEFAULT, jnp.float32,
+                  preferred_element_type=jnp.float32)
+
   @parameterized.parameters([
       (algorithm, dtype)
       for algorithm, test_dtypes in [
@@ -1152,9 +1199,6 @@ class LaxTest(jtu.JaxTestCase):
         raise SkipTest(
             f"The dot algorithm '{algorithm}' is not supported on GPU.")
     if jtu.test_device_matches(["tpu"]):
-      # TODO(apaszke): Remove after 12 weeks have passed.
-      if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
-        self.skipTest("Requires libtpu built after 2024-12-19")
       if algorithm not in {
           lax.DotAlgorithmPreset.DEFAULT,
           lax.DotAlgorithmPreset.BF16_BF16_F32,
@@ -1168,7 +1212,8 @@ class LaxTest(jtu.JaxTestCase):
     rhs_shape = (4, 3)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
-    self._CompileAndCheck(partial(lax.dot, precision=algorithm), args_maker)
+    self._CompileAndCheck(partial(lax.dot, precision=algorithm), args_maker,
+                          rtol={np.float64: 3e-15})
     self.assertEqual(lax.dot(*args_maker(), precision=algorithm).dtype, dtype)
 
   def testDotAlgorithmInvalidFloat8Type(self):
@@ -1227,7 +1272,8 @@ class LaxTest(jtu.JaxTestCase):
                               preferred_element_type):
     if (not config.enable_x64.value and
        (dtype == np.float64 or preferred_element_type == np.float64
-        or dtype == np.int64 or preferred_element_type == np.int64)):
+        or dtype == np.int64 or preferred_element_type == np.int64
+        or dtype == np.complex128 or preferred_element_type == np.complex128)):
       raise SkipTest("64-bit mode disabled")
     if (jtu.test_device_matches(["tpu"]) and
        (dtype == np.complex128 or preferred_element_type == np.complex128)):
@@ -1979,7 +2025,6 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker)
     self._CheckAgainstNumpy(reference_fun, lax_fun, args_maker)
 
-
   @jtu.sample_product(
     op=["add", "mul"],
     op_namespace=[lax, operator],
@@ -1988,9 +2033,10 @@ class LaxTest(jtu.JaxTestCase):
   )
   def testReduceWeakType(self, op_namespace, op, arr_weak_type, init_weak_type):
     op = getattr(op_namespace, op)
-    arr = lax_internal._convert_element_type(np.arange(10), int,
+    arr = lax_internal._convert_element_type(np.arange(10), dtypes.dtype(int),
                                              weak_type=arr_weak_type)
-    init = lax_internal._convert_element_type(1, int, weak_type=init_weak_type)
+    init = lax_internal._convert_element_type(1, dtypes.dtype(int),
+                                              weak_type=init_weak_type)
     fun = lambda arr, init: lax.reduce(arr, init, op, (0,))
     out = fun(arr, init)
     self.assertEqual(dtypes.is_weakly_typed(out), arr_weak_type and init_weak_type)
@@ -2422,7 +2468,7 @@ class LaxTest(jtu.JaxTestCase):
                                window_dimensions=window_dimensions)
     # With a stride of 1 in each direction and a padding of 'SAME', the
     # shape of the input should be equal to the shape of the result according
-    # to https://www.tensorflow.org/xla/operation_semantics#reducewindow.
+    # to https://www.openxla.org/xla/operation_semantics#reducewindow.
     self.assertEqual(shape, result.shape)
 
   def testReduceWindowWithEmptyOutput(self):
@@ -2525,8 +2571,8 @@ class LaxTest(jtu.JaxTestCase):
     # - NaNs are sorted to the end, regardless of representation
     # - sign bit of 0.0 is ignored
     x = jnp.array([-np.inf, 0.0, -0.0, np.inf, np.nan, -np.nan], dtype=dtype)
-    index = lax.iota(dtypes.int_, x.size)
-    argsort = lambda x: lax.sort_key_val(x, lax.iota(dtypes.int_, x.size), is_stable=True)[1]
+    index = lax.iota(int, x.size)
+    argsort = lambda x: lax.sort_key_val(x, lax.iota(int, x.size), is_stable=True)[1]
     self.assertArraysEqual(argsort(x), index)
     self.assertArraysEqual(jax.jit(argsort)(x), index)
 
@@ -2612,24 +2658,23 @@ class LaxTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=[np.float32, np.int32, np.uint32],
-    shape=[(20,), (5, 20), (2000,)],
-    k=[1, 3, 12],
-    negative=[False, True]
+    shape=[(20,), (8, 20), (2000,)],
+    k=[1, 3, 8],
+    axis=[0, -1]
   )
-  def testTopK(self, shape, dtype, k, negative):
+  def testTopK(self, shape, dtype, k, axis):
+    rng = jtu.rand_some_equal(self.rng())
     def args_maker():
-      flat_values = np.arange(math.prod(shape), dtype=dtype)
-      values = self.rng().permutation(flat_values).reshape(shape)
-      if negative:
-        values = -values
-      return [values]
-    def reference_top_k(x):
-      bcast_idxs = np.broadcast_to(np.arange(shape[-1], dtype=np.int32), shape)
-      sorted_vals, sorted_idxs = lax_reference.sort_key_val(x, bcast_idxs)
-      return sorted_vals[..., :-k-1:-1], sorted_idxs[..., :-k-1:-1]
-    op = lambda vs: lax.top_k(vs, k=k)
-    self._CheckAgainstNumpy(op, reference_top_k, args_maker)
+      return [rng(shape, dtype)]
+    op = lambda vs: lax.top_k(vs, k=k, axis=axis)
+    ref_op = lambda vs: lax_reference.top_k(vs, k=k, axis=axis)
+    self._CheckAgainstNumpy(op, ref_op, args_maker)
     self._CompileAndCheck(op, args_maker)
+
+  def testTopKOverflow(self):
+    x = jax.ShapeDtypeStruct((2 ** 31 + 1,), np.dtype('bfloat16'))
+    with self.assertRaisesRegex(ValueError, "top_k returns int32 indices, which will overflow"):
+      jax.eval_shape(lambda x: jax.lax.top_k(x, 100), x)
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
@@ -2712,7 +2757,12 @@ class LaxTest(jtu.JaxTestCase):
                offset_dims=(2,), collapsed_slice_dims=(),
                start_index_map=(2,), operand_batching_dims=(0, 1),
                start_indices_batching_dims=(1, 0)),
-           (1, 1, 3))
+           (1, 1, 3)),
+          # This test verifies that we allow slice sizes that would not fit in
+          # the operand if indices were empty. This is a useful base case.
+          ((0,), np.zeros((0, 1), dtype=np.int32), lax.GatherDimensionNumbers(
+            offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
+            (1,)),
     ]],
     dtype=lax_test_util.all_dtypes,
   )
@@ -3522,11 +3572,11 @@ class LaxTest(jtu.JaxTestCase):
     if dtype in set(lax_test_util.python_scalar_types):
       val = dtype(0)
     else:
-      val = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
+      val = lax_internal._convert_element_type(0, np.dtype(dtype),
+                                               weak_type=weak_type)
 
     const = lax_internal._const(val, 0)
-    self.assertEqual(dtypes.dtype(val, canonicalize=True),
-                     dtypes.dtype(const, canonicalize=True))
+    self.assertEqual(dtypes.dtype(val), dtypes.dtype(const))
 
   def testIgammaSpecial(self):
     self.assertEqual(lax.igamma(1., np.inf), 1.)
@@ -3624,13 +3674,13 @@ class LaxTest(jtu.JaxTestCase):
 
   def test_shape_as_value_handles_static_shapes(self):
     result = lax.shape_as_value(())
-    self.assertArraysEqual(result, lax.full((0,), np.array(0, np.int64)))
+    self.assertArraysEqual(result, lax.full((0,), np.array(0, np.int32)))
 
     result = lax.shape_as_value((2,))
-    self.assertArraysEqual(result, np.asarray((2,), np.int64))
+    self.assertArraysEqual(result, np.asarray((2,), np.int32))
 
     result = lax.shape_as_value((2, 3))
-    self.assertArraysEqual(result, np.asarray((2, 3), np.int64))
+    self.assertArraysEqual(result, np.asarray((2, 3), np.int32))
 
   def test_shape_as_value_handles_polymorphic_shapes(self):
     @jax.jit
@@ -3652,6 +3702,69 @@ class LaxTest(jtu.JaxTestCase):
     self.assertArraysEqual(result, np.asarray((1, 2), np.int64))
     result = exported.call(np.ones((3, 4), dtype=np.float32))
     self.assertArraysEqual(result, np.asarray((3, 4), np.int64))
+
+  @jtu.sample_product(
+      name = ['abs'],
+      dtype = ['int4', 'uint4'],
+  )
+  def test_int4_non_support_errors(self, name, dtype):
+    func = getattr(lax, name)
+    arg = lax.iota(dtype, 3)
+    with self.assertRaisesRegex(TypeError, f'{name} does not accept dtype {dtype}.'):
+      func(arg)
+
+  @jtu.sample_product(
+      name = ['bitwise_not', 'neg', 'sign'],
+      dtype = ['int4', 'uint4'],
+  )
+  def test_int4_unary_ops(self, name, dtype):
+    func = getattr(lax, name)
+    rng = jtu.rand_default(self.rng())
+    x = rng(3, dtype)
+    actual = func(x)
+    expected = func(x.astype('int8')).astype(dtype)
+    self.assertArraysEqual(actual, expected, check_dtypes=True)
+
+  @jtu.sample_product(
+      name = ['add', 'sub', 'mul', 'div', 'rem', 'max', 'min',
+              'shift_left', 'shift_right_arithmetic', 'shift_right_logical',
+              'bitwise_and', 'bitwise_or', 'bitwise_xor',
+              'eq', 'ne', 'gt', 'ge', 'lt', 'le'],
+      dtype = ['int4', 'uint4'],
+  )
+  def test_int4_binary_ops(self, name, dtype):
+    func = getattr(lax, name)
+    rng = jtu.rand_default(self.rng())
+    x, y = rng(3, dtype), rng(3, dtype)
+    actual = func(x, y)
+    expected = func(x.astype('int8'), y.astype('int8'))
+    if expected.dtype == 'int8':
+      expected = expected.astype(dtype)
+    self.assertArraysEqual(actual, expected, check_dtypes=True)
+
+  def test_gather_with_asymmetric_dtype(self):
+    @jax.custom_vjp
+    def f(x):
+      return x
+
+    def f_fwd(x):
+      return f(x), ()
+
+    def f_bwd(res, g):
+      del res
+      return g.astype(jnp.bfloat16),
+
+    f.defvjp(f_fwd, f_bwd)
+
+    def g(x):
+      idx = jnp.argsort(x)
+      x = x.at[idx].get()
+      return f(x)
+
+    x = jnp.arange(8, dtype=jnp.float8_e4m3fn)
+    _, vjp_fn = jax.vjp(g, x)
+    cts = vjp_fn(jnp.ones((8,), dtype=jnp.float8_e4m3fn))  # Don't crash
+    self.assertEqual(cts[0].dtype, jnp.bfloat16)
 
 
 class LazyConstantTest(jtu.JaxTestCase):
@@ -3744,7 +3857,7 @@ class LazyConstantTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
       dtype_in=lax_test_util.all_dtypes, dtype_out=lax_test_util.all_dtypes)
-  @jtu.ignore_warning(category=NumpyComplexWarning)
+  @jtu.ignore_warning(category=np.exceptions.ComplexWarning)
   def testConvertElementTypeAvoidsCopies(self, dtype_in, dtype_out):
     x = jax.device_put(np.zeros(5, dtype_in))
     self.assertEqual(x.dtype, dtype_in)
@@ -3942,8 +4055,8 @@ def shard_foo_array_handler(xs, shardings, layouts, copy_semantics):
         aval, jax.sharding.SingleDeviceSharding(device), [x.data], [device]))
   return results
 
-def foo_array_constant_handler(x):
-  return array._array_mlir_constant_handler(x.data)
+def foo_array_constant_handler(x, aval):
+  return array._array_mlir_constant_handler(x.data, aval)
 
 def make_lowering(*, shape):
   return jnp.zeros((*shape, 2), 'uint32')
@@ -3974,7 +4087,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
   def setUp(self):
     core.pytype_aval_mappings[FooArray] = \
         lambda x: core.ShapedArray(x.shape, FooTy(), sharding=None)
-    xla.canonicalize_dtype_handlers[FooArray] = lambda x: x
+    dtypes.canonicalize_value_handlers[FooArray] = lambda x: x
     pxla.shard_arg_handlers[FooArray] = shard_foo_array_handler
     mlir._constant_handlers[FooArray] = foo_array_constant_handler
     mlir.register_lowering(make_p, mlir.lower_fun(make_lowering, False))
@@ -3986,7 +4099,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
 
   def tearDown(self):
     del core.pytype_aval_mappings[FooArray]
-    del xla.canonicalize_dtype_handlers[FooArray]
+    del dtypes.canonicalize_value_handlers[FooArray]
     del mlir._constant_handlers[FooArray]
     del mlir._lowerings[make_p]
     del mlir._lowerings[bake_p]
@@ -4100,6 +4213,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     b, = e.outvars
     self.assertEqual(b.aval, core.ShapedArray((3, 4), FooTy()))
 
+  @unittest.skip('removed split_transpose')
   def test_scan_jaxpr_split_transpose(self):
     def stage(x, w):
       x = x @ w
@@ -4395,7 +4509,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     #
     # In addition, the 1/3 middle parts of regions q1, q2, q3, q4,
     # neg, pos are tested separately as these don't contain extremely
-    # small or extremelly large values and functions on these regions
+    # small or extremely large values and functions on these regions
     # ought not to possess any incorrectness issues.
 
     s0, s1 = size_re, size_im
@@ -4432,7 +4546,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     # return values) to (i) workaround numpy 1.x assert_allclose bug
     # in comparing complex infinities, and (ii) expose more details
     # about failing cases:
-    s_dict_parts = dict()
+    s_dict_parts = {}
     for k, v in s_dict.items():
       s_dict_parts[k + '.real'] = v
       s_dict_parts[k + '.imag'] = v
@@ -4644,7 +4758,7 @@ class CompositeTest(jtu.JaxTestCase):
   def test_composite_with_attributes(self):
     # The static_argnames is required here since k is a constant that should
     # come out of a larger context, but we unit test one op (composite) here.
-    @partial(jax.jit, static_argnames=['k'])
+    @jax.jit(static_argnames=['k'])
     @partial(lax.composite, name="my.top_k")
     def my_top_k(x, *, k):
       return lax.top_k(x, k)
@@ -4799,11 +4913,15 @@ class CompositeTest(jtu.JaxTestCase):
     x = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32)
     self.assertAllClose(my_consts(x, scale=scale), jnp.round(x / scale))
 
-    # The constant must not appear as an extra input argument to the composite.
     mlir_module = jax.jit(partial(my_consts, scale=scale)).lower(x).as_text()
-    self.assertIn(
-        "@my.consts(%arg0: tensor<3xf32>) -> tensor<3xf32>", mlir_module
-    )
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertIn(
+          "@my.consts(%arg0: tensor<3xf32> {jax.const = true}, %arg1: tensor<3xf32>) -> tensor<3xf32>", mlir_module
+      )
+    else:
+      self.assertIn(
+          "@my.consts(%arg0: tensor<3xf32>, %arg1: tensor<3xf32>) -> tensor<3xf32>", mlir_module
+      )
 
   def test_composite_with_tracer_consts(self):
     def fun(x, scale):
@@ -4826,14 +4944,7 @@ class CompositeTest(jtu.JaxTestCase):
 
 class RaggedTest(jtu.JaxTestCase):
 
-  @jtu.sample_product(
-      [
-          {'m': 64, 'k': 4, 'n': 3, 'num_groups': 1},
-          {'m': 64, 'k': 9, 'n': 8, 'num_groups': 2},
-      ],
-      dtype=jtu.dtypes.all_floating,
-  )
-  def test_ragged_dot(self, m, k, n, num_groups, dtype):
+  def _test_ragged_dot(self, m, k, n, num_groups, dtype):
     """Tests ragged_dot.
 
     The ragged_dot is tested against numpy reference implementation, and by
@@ -4865,12 +4976,41 @@ class RaggedTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(
         lax_reference.ragged_dot, lax.ragged_dot, args_maker)
 
-  @parameterized.parameters(
-        { "m": 5, "k": 4, "n": 3, "num_groups": 1},
-        { "m": 10, "k": 9, "n": 8, "num_groups": 2},
+  @jtu.sample_product(
+      [
+          {"m": 64, "k": 4, "n": 3, "num_groups": 1},
+          {"m": 64, "k": 9, "n": 8, "num_groups": 2},
+      ],
+      dtype=jtu.dtypes.all_floating,
   )
-  def test_ragged_dot_unsupported(
-      self, m, k, n, num_groups):
+  def test_ragged_dot(self, m, k, n, num_groups, dtype):
+    return self._test_ragged_dot(m, k, n, num_groups, dtype)
+
+  @parameterized.parameters([True, False])
+  def test_ragged_dot_use_ragged_dot_instruction(self, use_instruction):
+    with config.jax_ragged_dot_use_ragged_dot_instruction(use_instruction):
+      self._test_ragged_dot(16, 4, 3, 2, jnp.float32)
+      if jtu.test_device_matches(["tpu"]) and use_instruction:
+        self.assertIn(
+            "chlo.ragged_dot",
+            jax.jit(lax.ragged_dot)
+            .lower(
+                core.ShapedArray((16, 4), dtype=jnp.float32),
+                core.ShapedArray((2, 4, 3), dtype=jnp.float32),
+                core.ShapedArray((2,), dtype=jnp.int32),
+            )
+            .as_text(dialect="stablehlo"),
+        )
+
+  @parameterized.parameters(
+      {"m": 5, "k": 4, "n": 3, "num_groups": 1},
+      {"m": 5, "k": 4, "n": 3, "num_groups": 2},
+      {"m": 9, "k": 4, "n": 3, "num_groups": 1},
+      {"m": 10, "k": 9, "n": 8, "num_groups": 2},
+  )
+  def test_ragged_dot_small_m(self, m, k, n, num_groups):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
+      self.skipTest("Requires libtpu built after 2025-10-14")
     lhs_shape = (m, k)
     rhs_shape = (num_groups, k, n)
     group_sizes_shape = (num_groups,)
@@ -4880,9 +5020,7 @@ class RaggedTest(jtu.JaxTestCase):
         jnp.ones(rhs_shape, dtype=jnp.float32),
         jnp.ones(group_sizes_shape, dtype=jnp.int32),
     ]
-    if jtu.test_device_matches(["tpu"]):
-      with self.assertRaises(jax.errors.JaxRuntimeError):
-        self._CompileAndCheck(lax.ragged_dot, args_maker)
+    self._CompileAndCheck(lax.ragged_dot, args_maker)
 
   @parameterized.parameters(
       {
@@ -5073,7 +5211,7 @@ class RaggedTest(jtu.JaxTestCase):
           "out_shape": out_shape,
       }
       for lhs_shape, rhs_shape, group_sizes_shape, ragged_dnums, out_shape in [
-          (
+          ( # Ragged non-contracting.
               [11, 5],
               [3, 5, 7],
               [3],
@@ -5084,7 +5222,7 @@ class RaggedTest(jtu.JaxTestCase):
               ),
               (11, 7),
           ),
-          (
+          ( # Ragged contracting.
               [11, 5],
               [5, 7],
               [3],
@@ -5094,6 +5232,18 @@ class RaggedTest(jtu.JaxTestCase):
                   rhs_group_dimensions=[],
               ),
               (3, 11, 7),
+          ),
+          (  # Ragged contracting with batch dimensions.
+              [2, 11, 5],
+              [2, 5, 7],
+              [2, 3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([2], [1]), ([0], [0]),
+                  ),
+                  lhs_ragged_dimensions=[2],
+                  rhs_group_dimensions=[],
+              ),
+              (3, 2, 11, 7),
           ),
       ]
   )
@@ -5165,6 +5315,61 @@ class RaggedTest(jtu.JaxTestCase):
       self.assertArraysAllClose(
           batch_res[i, 0:upper_bound, :], ref_res, rtol=tol, atol=tol
       )
+
+class LaxUtilsTest(jtu.JaxTestCase):
+
+  def test_int_dtype_for_dim(self):
+    self.assertEqual(lax_utils.int_dtype_for_dim(10, signed=True), np.int32)
+    self.assertEqual(lax_utils.int_dtype_for_dim(10, signed=False), np.uint32)
+    self.assertEqual(
+        lax_utils.int_dtype_for_dim(np.iinfo(np.int32).max, signed=True),
+        np.int32,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_dim(np.iinfo(np.int32).max + 1, signed=True),
+        np.int64,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_dim(np.iinfo(np.uint32).max, signed=False),
+        np.uint32,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_dim(np.iinfo(np.uint32).max + 1, signed=False),
+        np.uint64,
+    )
+
+  def test_int_dtype_for_shape(self):
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape([10, 20], signed=True), np.int32
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape([10, 20], signed=False), np.uint32
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape(
+            [10, np.iinfo(np.int32).max], signed=True
+        ),
+        np.int32,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape(
+            [np.iinfo(np.int32).max + 1, 20], signed=True
+        ),
+        np.int64,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape(
+            [10, np.iinfo(np.uint32).max], signed=False
+        ),
+        np.uint32,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape(
+            [np.iinfo(np.uint32).max + 1, 20], signed=False
+        ),
+        np.uint64,
+    )
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

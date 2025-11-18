@@ -17,33 +17,38 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Union
+from functools import partial
+from types import EllipsisType
+from typing import Any
 import warnings
 
 import numpy as np
 
-from jax import lax
-
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
+from jax._src import numpy as jnp
+from jax._src import tree_util
 from jax._src import util
-from jax._src.lax import lax as lax_internal
+from jax._src.lax import lax
+from jax._src.lax import slicing
 from jax._src.numpy import indexing
-from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import reductions
 from jax._src.numpy.util import check_arraylike, promote_dtypes
+from jax._src.pjit import auto_axes
+from jax._src.sharding_impls import NamedSharding
 from jax._src.typing import Array, ArrayLike
 
 
-from types import EllipsisType
 SingleIndex = int | slice | Sequence[int] | Array | EllipsisType | None
-Index = Union[SingleIndex, tuple[SingleIndex, ...]]
-Scalar = Union[complex, float, int, np.number]
+Index = SingleIndex | tuple[SingleIndex, ...]
+Scalar = complex | float | int | np.number
 
 
-def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
-                    unique_indices, mode=None, normalize_indices=True):
+def _scatter_update(x: ArrayLike, idx: Index, y: ArrayLike, scatter_op: Callable[..., Array],
+                    indices_are_sorted: bool, unique_indices: bool,
+                    mode: slicing.GatherScatterMode | str | None = None, normalize_indices: bool = True,
+                    out_sharding: NamedSharding | None = None):
   """Helper for indexed updates.
 
   Computes the value of x that would result from computing::
@@ -74,17 +79,27 @@ def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
   # XLA gathers and scatters are very similar in structure; the scatter logic
   # is more or less a transpose of the gather equivalent.
   treedef, static_idx, dynamic_idx = indexing.split_index_for_jit(idx, x.shape)
-  return _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
-                       indices_are_sorted, unique_indices, mode,
-                       normalize_indices)
+
+  internal_scatter = partial(
+      _scatter_impl, scatter_op=scatter_op, treedef=treedef,
+      static_idx=static_idx, indices_are_sorted=indices_are_sorted,
+      unique_indices=unique_indices, mode=mode,
+      normalize_indices=normalize_indices)
+  if out_sharding is not None:
+    return auto_axes(internal_scatter, out_sharding=out_sharding,
+                     axes=out_sharding.mesh.explicit_axes  # type: ignore
+                     )(x, y, dynamic_idx)
+  return internal_scatter(x, y, dynamic_idx)
 
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
-# @partial(jit, static_argnums=(2, 3, 4))
-def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
-                  indices_are_sorted, unique_indices, mode,
-                  normalize_indices):
+# @jit(static_argnums=(2, 3, 4))
+def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
+                  scatter_op: Callable[..., Array],
+                  treedef: tree_util.PyTreeDef, static_idx: tuple[Any, ...],
+                  indices_are_sorted: bool, unique_indices: bool,
+                  mode: slicing.GatherScatterMode | str | None, normalize_indices: bool):
   dtype = lax.dtype(x)
   weak_type = dtypes.is_weakly_typed(x)
 
@@ -93,12 +108,12 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
     warnings.warn(
       "scatter inputs have incompatible types: cannot safely cast value "
       f"from dtype={lax.dtype(y)} to dtype={lax.dtype(x)} with "
-      f"jax_numpy_dtype_promotion={config.numpy_dtype_promotion.value!r}. "
+      f"jax_numpy_dtype_promotion={config.numpy_dtype_promotion.value}. "
       "In future JAX releases this will result in an error.",
       FutureWarning)
 
   idx = indexing.merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = indexing.index_to_gather(np.shape(x), idx,
+  indexer = indexing.index_to_gather(np.shape(x), idx, core.typeof(x).sharding,
                                      normalize_indices=normalize_indices)
 
   # Avoid calling scatter if the slice shape is empty, both as a fast path and
@@ -109,7 +124,8 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
   x, y = promote_dtypes(x, y)
 
   # Broadcast `y` to the slice output shape.
-  y = jnp.broadcast_to(y, tuple(indexer.slice_shape))
+  y = jnp.broadcast_to(y, tuple(indexer.slice_shape),
+                       out_sharding=indexer.slice_sharding)
   # Collapse any `None`/`np.newaxis` dimensions.
   y = jnp.squeeze(y, axis=indexer.newaxis_dims)
   if indexer.reversed_y_dims:
@@ -120,7 +136,7 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
 
   # Transpose the gather dimensions into scatter dimensions (cf.
   # lax._gather_transpose_rule)
-  dnums = lax.ScatterDimensionNumbers(
+  dnums = slicing.ScatterDimensionNumbers(
     update_window_dims=indexer.dnums.offset_dims,
     inserted_window_dims=indexer.dnums.collapsed_slice_dims,
     scatter_dims_to_operand_dims=indexer.dnums.start_index_map,
@@ -134,22 +150,22 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
     mode=mode)
   if indexer.scalar_bool_dims:
     out = lax.squeeze(out, indexer.scalar_bool_dims)
-  return lax_internal._convert_element_type(out, dtype, weak_type)
+  return lax._convert_element_type(out, dtype, weak_type)
 
 
 def _get_identity(op, dtype):
   """Get an appropriate identity for a given operation in a given dtype."""
-  if op is lax.scatter_add:
+  if op is slicing.scatter_add:
     return 0
-  elif op is lax.scatter_mul:
+  elif op is slicing.scatter_mul:
     return 1
-  elif op is lax.scatter_min:
+  elif op is slicing.scatter_min:
     if dtype == dtypes.bool_:
       return True
     elif dtypes.issubdtype(dtype, np.integer):
       return dtypes.iinfo(dtype).max
     return float('inf')
-  elif op is lax.scatter_max:
+  elif op is slicing.scatter_max:
     if dtype == dtypes.bool_:
       return False
     elif dtypes.issubdtype(dtype, np.integer):
@@ -168,9 +184,9 @@ def _segment_update(name: str,
                     unique_indices: bool = False,
                     bucket_size: int | None = None,
                     reducer: Callable | None = None,
-                    mode: lax.GatherScatterMode | None = None) -> Array:
+                    mode: slicing.GatherScatterMode | str | None = None) -> Array:
   check_arraylike(name, data, segment_ids)
-  mode = lax.GatherScatterMode.FILL_OR_DROP if mode is None else mode
+  mode = slicing.GatherScatterMode.FILL_OR_DROP if mode is None else mode
   data = jnp.asarray(data)
   segment_ids = jnp.asarray(segment_ids)
   dtype = data.dtype
@@ -207,7 +223,7 @@ def segment_sum(data: ArrayLike,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
                 bucket_size: int | None = None,
-                mode: lax.GatherScatterMode | None = None) -> Array:
+                mode: slicing.GatherScatterMode | str | None = None) -> Array:
   """Computes the sum within segments of an array.
 
   Similar to TensorFlow's `segment_sum
@@ -252,7 +268,7 @@ def segment_sum(data: ArrayLike,
     Array([1, 5, 4], dtype=int32)
   """
   return _segment_update(
-      "segment_sum", data, segment_ids, lax.scatter_add, num_segments,
+      "segment_sum", data, segment_ids, slicing.scatter_add, num_segments,
       indices_are_sorted, unique_indices, bucket_size, reductions.sum, mode=mode)
 
 
@@ -262,7 +278,7 @@ def segment_prod(data: ArrayLike,
                  indices_are_sorted: bool = False,
                  unique_indices: bool = False,
                  bucket_size: int | None = None,
-                 mode: lax.GatherScatterMode | None = None) -> Array:
+                 mode: slicing.GatherScatterMode | str | None = None) -> Array:
   """Computes the product within segments of an array.
 
   Similar to TensorFlow's `segment_prod
@@ -307,7 +323,7 @@ def segment_prod(data: ArrayLike,
     Array([ 0,  6, 20], dtype=int32)
   """
   return _segment_update(
-      "segment_prod", data, segment_ids, lax.scatter_mul, num_segments,
+      "segment_prod", data, segment_ids, slicing.scatter_mul, num_segments,
       indices_are_sorted, unique_indices, bucket_size, reductions.prod, mode=mode)
 
 
@@ -317,7 +333,7 @@ def segment_max(data: ArrayLike,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
                 bucket_size: int | None = None,
-                mode: lax.GatherScatterMode | None = None) -> Array:
+                mode: slicing.GatherScatterMode | str | None = None) -> Array:
   """Computes the maximum within segments of an array.
 
   Similar to TensorFlow's `segment_max
@@ -361,7 +377,7 @@ def segment_max(data: ArrayLike,
     Array([1, 3, 5], dtype=int32)
   """
   return _segment_update(
-      "segment_max", data, segment_ids, lax.scatter_max, num_segments,
+      "segment_max", data, segment_ids, slicing.scatter_max, num_segments,
       indices_are_sorted, unique_indices, bucket_size, reductions.max, mode=mode)
 
 
@@ -371,7 +387,7 @@ def segment_min(data: ArrayLike,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
                 bucket_size: int | None = None,
-                mode: lax.GatherScatterMode | None = None) -> Array:
+                mode: slicing.GatherScatterMode | str | None = None) -> Array:
   """Computes the minimum within segments of an array.
 
   Similar to TensorFlow's `segment_min
@@ -415,5 +431,5 @@ def segment_min(data: ArrayLike,
     Array([0, 2, 4], dtype=int32)
   """
   return _segment_update(
-      "segment_min", data, segment_ids, lax.scatter_min, num_segments,
+      "segment_min", data, segment_ids, slicing.scatter_min, num_segments,
       indices_are_sorted, unique_indices, bucket_size, reductions.min, mode=mode)

@@ -38,18 +38,20 @@ struct SerdeOptions {
 //
 // The first argument is the operation to upgrade/downgrade.
 // The second argument is the target version.
+// The third argument is a boolean that the serde rule will set to true if it
+// happens to erase the operation.
 //
 // The function should return success if the upgrade/downgrade was successful,
 // or an error otherwise.
 using SerdeRuleType =
-    std::function<::mlir::LogicalResult(::mlir::Operation *, int)>;
+    std::function<::mlir::LogicalResult(::mlir::Operation *, int, bool &)>;
 
 // Run serialization or deserialization on the given module.
 ::mlir::LogicalResult RunSerde(
     ::mlir::ModuleOp module,
-    const llvm::StringMap<SerdeRuleType> &upgrade_rules,
-    const llvm::StringMap<SerdeRuleType> &downgrade_rules, bool serialize,
-    SerdeOptions options);
+    const llvm::StringMap<SerdeRuleType>& upgrade_rules,
+    const llvm::StringMap<SerdeRuleType>& downgrade_rules, bool serialize,
+    SerdeOptions options, bool keep_version_attr = false);
 
 }  // namespace jaxlib::mosaic
 

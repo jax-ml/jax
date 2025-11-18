@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -31,6 +32,7 @@ limitations under the License.
 #include "mlir/IR/Visitors.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/Support/WalkResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
@@ -43,83 +45,164 @@ namespace mlir::tpu {
 
 namespace {
 
+FailureOr<TypedValue<VectorType>> changeBitwidth(
+    OpBuilder& builder, TypedValue<VectorType> v, VectorLayout src,
+    VectorLayout dst, int hardware_generation,
+    const std::array<int64_t, 2> target_shape) {
+  if (v.getType().getElementType() != builder.getI1Type()) {
+    return emitError(v.getLoc(),
+                     "Not implemented: change bitwidth for non-mask types");
+  }
+  if (src.bitwidth() == dst.bitwidth()) {
+    return emitError(v.getLoc(), "Expected bitwidths are different, got src=")
+           << src << " dst=" << dst;
+  }
+  if (src.tiling() != dst.tiling() || src.offsets() != dst.offsets() ||
+      src.implicit_dim() != dst.implicit_dim()) {
+    return emitError(v.getLoc(),
+                     "Expected only bitwidth change during relayout, got src=")
+           << src << " dst=" << dst;
+  }
+  // We might be able to pack mask directly.
+  // TODO(jevinjiang): Add support for 16bit -> 8bit mask packing.
+  if (src.bitwidth() == 32 && dst.bitwidth() == 16 &&
+      // TODO(jevinjiang): support mask packing for non-native source tiling.
+      src.tiling()[0] == src.packing() * target_shape[0] &&
+      src.tiling()[1] == target_shape[1]) {
+    auto relayout_op =
+        builder.create<tpu::RelayoutOp>(v.getLoc(), v.getType(), v);
+    setLayout(relayout_op, src, dst);
+    return cast<TypedValue<VectorType>>(relayout_op.getResult());
+  }
+  CHECK(llvm::isPowerOf2_32(src.bitwidth()));
+  CHECK(llvm::isPowerOf2_32(dst.bitwidth()));
+  auto make_vty = [&](int bitwidth) {
+    return VectorType::get(v.getType().getShape(),
+                           builder.getIntegerType(bitwidth));
+  };
+  auto make_constant = [&](int val, VectorLayout layout) {
+    auto vty = make_vty(layout.bitwidth());
+    auto constant_op = builder.create<arith::ConstantOp>(
+        v.getLoc(),
+        DenseElementsAttr::get(
+            vty, builder.getIntegerAttr(vty.getElementType(), val)));
+    setOutLayout(constant_op,
+                 VectorLayout(layout.bitwidth(), {std::nullopt, std::nullopt},
+                              layout.tiling(), layout.implicit_dim()));
+    return constant_op;
+  };
+  auto src_int_vty = make_vty(src.bitwidth());
+  auto dst_int_vty = make_vty(dst.bitwidth());
+  // TODO(jevinjiang): Since dst layout will be firstly used in the
+  // extSI or truncI below, we can reuse the inferExt and inferTrunc from
+  // infer-vector-layout pass.
+  auto ext_op = builder.create<arith::ExtUIOp>(v.getLoc(), src_int_vty, v);
+  setLayout(ext_op, src, src);
+
+  // TODO(jevinjiang): some conversion might not be supported in HW.
+  Operation* cast_op =
+      dst.bitwidth() > src.bitwidth()
+          ? builder.create<arith::ExtSIOp>(v.getLoc(), dst_int_vty, ext_op)
+          // TODO(jevinjiang): HW may support pack vmask directly.
+          : builder.create<arith::TruncIOp>(v.getLoc(), dst_int_vty, ext_op);
+  setLayout(cast_op, src, dst);
+
+  auto cmp_op = builder.create<arith::CmpIOp>(
+      v.getLoc(), v.getType(), arith::CmpIPredicate::ne, cast_op->getResult(0),
+      make_constant(0, dst));
+  setLayout(cmp_op, {dst, dst}, dst);
+  return cast<TypedValue<VectorType>>(cmp_op.getResult());
+}
+
 FailureOr<TypedValue<VectorType>> relayout(
     OpBuilder &builder, TypedValue<VectorType> v, VectorLayout src,
     VectorLayout dst, int hardware_generation,
     const std::array<int64_t, 2> target_shape) {
   // change bitwidth
   if (v.getType().getElementType() == builder.getI1Type() &&
-      // TODO(jevinjiang): for other relayout changes (tiling, offsets, implicit
-      // dim), we currently rely on apply-vector-layout pass to do the relayout.
       src.bitwidth() != dst.bitwidth()) {
-    auto vreg_slice = src.vregSlice(target_shape, dst.bitwidth(), src.tiling());
-    auto dst_bitwidth_layout = VectorLayout(
-        dst.bitwidth(),
-        {
-            src.offsets()[0].has_value() ? *src.offsets()[0] % vreg_slice[0]
-                                         : LayoutOffset(),
-            src.offsets()[1].has_value() ? *src.offsets()[1] % vreg_slice[1]
-                                         : LayoutOffset(),
-        },
-        src.tiling(), src.implicit_dim());
-    if (!dst_bitwidth_layout.isValid(target_shape)) {
-      return emitError(v.getLoc(),
-                       "Not implemented: failed to infer valid layout during "
-                       "relayout, got ")
-             << dst_bitwidth_layout;
+    // TODO(jevinjiang, tlongeri): need to support 1d mask relayout.
+    if (src.tiling()[1] != target_shape[1] ||
+        dst.tiling()[1] != target_shape[1]) {
+      return emitError(
+                 v.getLoc(),
+                 "Not implemented: changeBitwidth when minor tiling is not ")
+             << target_shape[1];
     }
-    // We might be able to pack mask directly.
-    // TODO(jevinjiang): Add support for 16bit -> 8bit mask packing.
-    if (src.bitwidth() == 32 && dst.bitwidth() == 16 &&
-        // TODO(jevinjiang): support mask packing for non-native source tiling.
-        src.tiling()[0] == src.packing() * target_shape[0] &&
-        src.tiling()[1] == target_shape[1]) {
+    // We are trying to find the safe layout as intermediate layout for src and
+    // dst. We will only change bitwidth when both src and dst are in the safe
+    // layout. Necessary relayout will be inserted to relayout from src to the
+    // safe layout or from the safe layout to dst.
+    // Consider cases like src is 32-bit with (8, 128) tiling and dst is 8-bit
+    // with (32, 128) tiling, sublane tiling shouldn't be too large, so we
+    // choose the smaller one between src and dst. On the other hand, for cases
+    // like src is 32-bit with (1, 128) tiling and dst is 8-bit with (4, 128)
+    // tiling, a safe sublane tiling should be at least the larger packing
+    // between src and dst.
+    int64_t safe_packing = std::max(src.packing(), dst.packing());
+    // TODO(yueshengys): this is still not safe for cases with 2-bit, because we
+    // may end with (16, 128) tiling for 32-bit. In those cases, we should do
+    // multiple rounds of the process.
+    if (safe_packing * src.bitwidth() > 32 * target_shape[0] ||
+        safe_packing * dst.bitwidth() > 32 * target_shape[0]) {
+      return emitError(v.getLoc(),
+                       "Not implemented: changeBitwidth when src bitwidth and "
+                       "dst bitwidth differs too much.");
+    }
+    std::array<int64_t, 2> safe_tiling = {
+        std::max(std::min(src.tiling()[0], dst.tiling()[0]), safe_packing),
+        target_shape[1]};
+    auto safe_vreg_slice =
+        VectorLayout::vregSlice(target_shape, dst.bitwidth(), safe_tiling);
+    auto safe_offsets = LayoutOffsets{
+        src.offsets()[0].has_value() ? *src.offsets()[0] % safe_vreg_slice[0]
+                                     : LayoutOffset(),
+        src.offsets()[1].has_value() ? *src.offsets()[1] % safe_vreg_slice[1]
+                                     : LayoutOffset(),
+    };
+    auto safe_src = VectorLayout(src.bitwidth(), safe_offsets, safe_tiling,
+                                 dst.implicit_dim());
+    auto safe_dst = VectorLayout(dst.bitwidth(), safe_offsets, safe_tiling,
+                                 dst.implicit_dim());
+
+    if (src != safe_src) {
       auto relayout_op =
           builder.create<tpu::RelayoutOp>(v.getLoc(), v.getType(), v);
-      setLayout(relayout_op, src, dst_bitwidth_layout);
-      return cast<TypedValue<VectorType>>(relayout_op.getResult());
+      setLayout(relayout_op, src, safe_src);
+      v = cast<TypedValue<VectorType>>(relayout_op.getResult());
     }
-    CHECK(llvm::isPowerOf2_32(src.bitwidth()));
-    CHECK(llvm::isPowerOf2_32(dst.bitwidth()));
-    auto make_vty = [&](int bitwidth) {
-      return VectorType::get(v.getType().getShape(),
-                             builder.getIntegerType(bitwidth));
-    };
-    auto make_constant = [&](int val, VectorLayout layout) {
-      auto vty = make_vty(layout.bitwidth());
-      auto constant_op = builder.create<arith::ConstantOp>(
-          v.getLoc(),
-          DenseElementsAttr::get(
-              vty, builder.getIntegerAttr(vty.getElementType(), val)));
-      setOutLayout(constant_op,
-                   VectorLayout(layout.bitwidth(), {std::nullopt, std::nullopt},
-                                layout.tiling(), layout.implicit_dim()));
-      return constant_op;
-    };
-    auto src_int_vty = make_vty(src.bitwidth());
-    auto dst_int_vty = make_vty(dst.bitwidth());
-    // TODO(jevinjiang): Since dst_bitwidth_layout will be firstly used in the
-    // extSI or truncI below, we can reuse the inferExt and inferTrunc from
-    // infer-vector-layout pass.
-    auto ext_op = builder.create<arith::ExtUIOp>(v.getLoc(), src_int_vty, v);
-    setLayout(ext_op, src, src);
-
-    // TODO(jevinjiang): some conversion might not be supported in HW.
-    Operation *cast_op =
-        dst.bitwidth() > src.bitwidth()
-            ? builder.create<arith::ExtSIOp>(v.getLoc(), dst_int_vty, ext_op)
-            // TODO(jevinjiang): HW may support pack vmask directly.
-            : builder.create<arith::TruncIOp>(v.getLoc(), dst_int_vty, ext_op);
-    setLayout(cast_op, src, dst_bitwidth_layout);
-
-    auto cmp_op = builder.create<arith::CmpIOp>(
-        v.getLoc(), v.getType(), arith::CmpIPredicate::ne,
-        cast_op->getResult(0), make_constant(0, dst_bitwidth_layout));
-    setLayout(cmp_op, {dst_bitwidth_layout, dst_bitwidth_layout},
-              dst_bitwidth_layout);
-    return cast<TypedValue<VectorType>>(cmp_op.getResult());
+    FAILUREOR_ASSIGN_OR_RETURN(
+        TypedValue<VectorType> new_v,
+        changeBitwidth(builder, v, safe_src, safe_dst, hardware_generation,
+                       target_shape));
+    if (dst != safe_dst) {
+      auto relayout_op =
+          builder.create<tpu::RelayoutOp>(v.getLoc(), v.getType(), new_v);
+      setLayout(relayout_op, safe_dst, dst);
+      new_v = cast<TypedValue<VectorType>>(relayout_op.getResult());
+    }
+    return new_v;
   }
-  return v;
+  // Fall through to generic relayout.
+  auto relayout_op =
+      builder.create<tpu::RelayoutOp>(v.getLoc(), v.getType(), v);
+  setLayout(relayout_op, src, dst);
+
+  return cast<TypedValue<VectorType>>(relayout_op.getResult());
+}
+
+LogicalResult insertRelayout(Operation &op, int hardware_generation,
+                             std::array<int64_t, 2> target_shape);
+
+LogicalResult insertRelayoutBlock(Block &block, int hardware_generation,
+                                  const std::array<int64_t, 2> target_shape) {
+  // We'll be modifying the block, so use early increment.
+  for (Operation &op : make_early_inc_range(block)) {
+    if (failed(insertRelayout(op, hardware_generation, target_shape))) {
+      return failure();
+    }
+  }
+  return success();
 }
 
 // TODO(jevinjiang): make relayout to an op so we don't need decide when to
@@ -166,6 +249,15 @@ LogicalResult insertRelayout(Operation &op, int hardware_generation,
         Value new_v, relayout(builder, vector_operand, /*src=*/*lo,
                               /*dst=*/*li, hardware_generation, target_shape));
     op.setOperand(idx, new_v);
+  }
+
+  for (auto &region : op.getRegions()) {
+    for (auto &block : region.getBlocks()) {
+      if (failed(
+              insertRelayoutBlock(block, hardware_generation, target_shape))) {
+        return failure();
+      }
+    }
   }
   return success();
 }

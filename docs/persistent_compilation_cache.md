@@ -234,7 +234,7 @@ jax.config.update("jax_explain_cache_misses", True)
 
 There are a couple of pitfalls that have currently been discovered:
 
-* Currently the persistent cache doesn't work with function that have host callbacks. In this situation, caching in completely avoided.
+* Currently the persistent cache doesn't work with function that have host callbacks. In this situation, caching is completely avoided.
   - This is because the HLO contains a pointer to the callback and changes from run to run even if the computation and compute infrastructure is exactly the same.
 
 * Currently the persistent cache doesn't work with a function that uses primitives that implement their own custom_partitioning.
@@ -260,14 +260,13 @@ If we were to merely compile this function without shard_map, the cache key for 
 layernorm_matmul_without_shard_map = jax.jit(F, in_shardings=(...), out_sharding=(...))(x1, x2, gamma, beta)
 ```
 
-However, if we were to wrap the layernorm primitive in shard_map and define a function G that performs the same computation, the cache key for `layernorm_matmul_with_shard_map` will be the same everytime despite `LayerNorm` being implementing `custom_partitioning`:
+However, if we were to wrap the layernorm primitive in shard_map and define a function G that performs the same computation, the cache key for `layernorm_matmul_with_shard_map` will be the same every time despite `LayerNorm` being implementing `custom_partitioning`:
 
 ```python
 import jax
-from jax.experimental.shard_map import shard_map
 
 def G(x1, x2, gamma, beta, mesh, ispecs, ospecs):
-   ln_out = shard_map(LayerNorm, mesh, in_specs=ispecs, out_specs=ospecs, check_rep=False)(x1, x2, gamma, beta)
+   ln_out = jax.shard_map(LayerNorm, mesh=mesh, in_specs=ispecs, out_specs=ospecs, check_vma=False)(x1, x2, gamma, beta)
    return ln_out @ x2
 
 ispecs = jax.sharding.PartitionSpec(...)

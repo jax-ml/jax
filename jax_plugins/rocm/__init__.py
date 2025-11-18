@@ -51,7 +51,7 @@ def _get_library_path():
     runfiles_dir = os.getenv('RUNFILES_DIR', None)
     if runfiles_dir:
       local_path = pathlib.Path(
-          os.path.join(runfiles_dir, 'xla/xla/pjrt/c/pjrt_c_api_gpu_plugin.so')
+          os.path.join(runfiles_dir, '__main__/jax_plugins/rocm/pjrt_c_api_gpu_plugin.so')
       )
 
   if local_path.exists():
@@ -86,21 +86,25 @@ def initialize():
       'rocm', priority=500, library_path=str(path), options=options
   )
   if rocm_plugin_extension:
+    xla_client.register_custom_type_handler(
+        "ROCM",
+        functools.partial(
+            rocm_plugin_extension.register_custom_type, c_api
+        ),
+    )
     xla_client.register_custom_call_handler(
         "ROCM",
         functools.partial(
             rocm_plugin_extension.register_custom_call_target, c_api
         ),
     )
-    for _name, _value in rocm_plugin_extension.ffi_registrations().items():
+    for _name, _value in rocm_plugin_extension.ffi_types().items():
+      xla_client.register_custom_type(
+          _name, _value, platform='ROCM'
+      )
+    for _name, _value in rocm_plugin_extension.ffi_handlers().items():
       xla_client.register_custom_call_target(
           _name, _value, platform='ROCM', api_version=1
       )
-    xla_client.register_custom_type_id_handler(
-        "ROCM",
-        functools.partial(
-            rocm_plugin_extension.register_custom_type_id, c_api
-        ),
-    )
   else:
     logger.warning('rocm_plugin_extension is not found.')

@@ -27,16 +27,19 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from functools import reduce, partial
 import itertools
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import jax
 from jax import lax
 from jax._src import core as jax_core
+from jax._src import frozen_dict
 from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
+from jax._src import state
 from jax._src.state import discharge as state_discharge
 from jax._src import util
 from jax._src.util import (
@@ -74,7 +77,7 @@ def _logical_to_interpret_mode_dtype(dtype):
 
 
 def _logical_aval_to_interpret_mode_aval(aval):
-  if isinstance(aval, pallas_core.AbstractMemoryRef):
+  if isinstance(aval, state.AbstractRef):
     inner_aval = _logical_aval_to_interpret_mode_aval(aval.inner_aval)
     return aval.update(inner_aval=inner_aval)
   if isinstance(aval, jax_core.ShapedArray):
@@ -83,18 +86,19 @@ def _logical_aval_to_interpret_mode_aval(aval):
   return aval
 
 
-def _dynamic_slice(start_idx, block_shape, value, is_indexing):
+def _dynamic_slice(
+    start_idx, block_shape: tuple[int, ...], value, is_squeeze,
+):
   start_idx = tuple(jnp.asarray(s, dtype=jnp.int32) for s in start_idx)
   output = lax.dynamic_slice(value, start_idx, slice_sizes=block_shape)
-  squeeze_dims = tuple(np.arange(len(is_indexing))[np.array(is_indexing,
-                                                            dtype=np.bool_)])
-  return lax.squeeze(output, squeeze_dims)
+  squeeze_dims = tuple(np.arange(len(is_squeeze))[np.array(is_squeeze,
+                                                           dtype=np.bool_)])
+  return lax.squeeze(output, squeeze_dims)  # type: ignore[arg-type]
 
 
-def _dynamic_update_slice(start_idx, block_shape, value, update,
-                                is_indexing):
+def _dynamic_update_slice(start_idx, block_shape, value, update, is_squeeze):
   start_idx = tuple(jnp.asarray(s, dtype=jnp.int32) for s in start_idx)
-  broadcast_dims = tuple(i for i, b in enumerate(is_indexing)
+  broadcast_dims = tuple(i for i, b in enumerate(is_squeeze)
                          if not b)
   update = lax.broadcast_in_dim(update, block_shape, broadcast_dims)
   assert update.shape == block_shape
@@ -112,8 +116,7 @@ def _get_next_indices(grid, indices):
   return tuple(reversed(next_indices))
 
 
-def _pad_to_block_dimension(value,
-                            block_shape):
+def _pad_to_block_dimension(value, block_shape: tuple[int, ...]):
   """Pads values so the shape evenly divides into block dimensions.
 
   For example, if values has a shape of (33, 2, 5) with a block_shape of
@@ -121,8 +124,7 @@ def _pad_to_block_dimension(value,
 
   Args:
     value: Array to be padded.
-    block_shape: Block shapes to use for padding. If None, no padding will
-      be performed.
+    block_shape: Block shapes to use for padding.
 
   Returns:
     A padded array.
@@ -147,8 +149,8 @@ def _initialize_output_vals(
       output_vals.append(input_args[oi_map[i]])
     else:
       output_vals.append(primitives.uninitialized_value(
-          bm.array_shape_dtype.shape,
-          bm.array_shape_dtype.dtype))
+          bm.array_aval.shape,
+          bm.array_aval.dtype))
   return output_vals
 
 
@@ -190,7 +192,7 @@ def eval_jaxpr_recursive(
     consts: Consts that ``jaxpr`` closes over.
     *args: Input arguments to the ``jaxpr``.
     recurse_hop_rule: A Jaxpr interpreter to call on sub-jaxprs of
-      higher-order primtives.
+      higher-order primitives.
     propagate_source_info: Whether to propagate source info.
   """
   def read(v: jax_core.Atom) -> Any:
@@ -236,8 +238,7 @@ def pad_jaxpr_constvars(jaxpr: jax_core.Jaxpr,
   to pad each Jaxpr with all consts from all branches so the
   signatures match, but only use the consts for this branch.
   """
-  newvar = jax_core.gensym(suffix='_')
-  unused_const_vars = [tuple(map(newvar, const_avals))
+  unused_const_vars = [tuple(map(jax_core.Var, const_avals))
                        for const_avals in all_const_avals]
   const_prefix = util.concatenate(unused_const_vars[:i])
   const_suffix = util.concatenate(unused_const_vars[i + 1:])
@@ -313,9 +314,15 @@ _eval_jaxpr_hop_rules[lax.while_p] = make_hop_rule(
     lax.while_p, 'body_jaxpr', 'cond_jaxpr')
 _eval_jaxpr_hop_rules[lax.cond_p] = make_hop_rule(lax.cond_p, 'branches')
 def _run_scoped_physicalize_rule(
-    interpreter, *consts, jaxpr: jax_core.Jaxpr):
+    interpreter, *consts, jaxpr: jax_core.Jaxpr, collective_axes):
+  if collective_axes:
+    raise NotImplementedError(
+        "run_scoped interpret rule does not support collective axes"
+    )
   physical_jaxpr, physical_consts = interpreter(jaxpr, consts)
-  return primitives.run_scoped_p.bind(*physical_consts, jaxpr=physical_jaxpr)
+  return primitives.run_scoped_p.bind(
+      *physical_consts, jaxpr=physical_jaxpr, collective_axes=collective_axes
+  )
 _eval_jaxpr_hop_rules[primitives.run_scoped_p] = _run_scoped_physicalize_rule
 
 
@@ -328,7 +335,7 @@ def resolve_physical_types(jaxpr: jax_core.Jaxpr, consts: Sequence[Any]):
       eval_jaxpr_recursive, jaxpr, consts,
       recurse_hop_rule=resolve_physical_types)
   wrapped = lu.wrap_init(interp_fun, debug_info=jaxpr.debug_info)
-  new_jaxpr, _, new_consts, () = pe.trace_to_jaxpr_dynamic(
+  new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
       wrapped, kernel_avals)
   return new_jaxpr, new_consts
 
@@ -344,8 +351,10 @@ def pallas_call_hlo_interpret(
     compiler_params: Any,
     cost_estimate: CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
+    metadata: frozen_dict.FrozenDict[str, str] | None,
+    name: str | None,
 ):
-  del mesh, compiler_params, cost_estimate, out_avals
+  del mesh, compiler_params, cost_estimate, out_avals, metadata, name
   debug_info = jaxpr.debug_info
   # If we're in interpret mode, we *scan* over the grid and eval the
   # discharged jaxpr.
@@ -377,22 +386,20 @@ def pallas_call_hlo_interpret(
 
   carry = []
   for x, bm in zip(itertools.chain(block_args, out), grid_mapping.block_mappings):
-    if isinstance(bm.indexing_mode, pallas_core.Unblocked):
-      padding = bm.indexing_mode.padding
-      if padding is not None and any(p != (0, 0) for p in padding):
-        if input_output_aliases:
-          raise NotImplementedError("Padding with aliasing not supported.")
-        pad_value = primitives.uninitialized_value(shape=(), dtype=x.dtype)
-        x = lax.pad(x, pad_value, [(*p, 0) for p in padding])
+    padding = [bd.padding if isinstance(bd, pallas_core.Element) else (0, 0)
+               for bd in bm.block_shape]
+    if padding is not None and any(p != (0, 0) for p in padding):
+      if input_output_aliases:
+        raise NotImplementedError("Padding with aliasing not supported.")
+      pad_value = primitives.uninitialized_value(shape=(), dtype=x.dtype)
+      x = lax.pad(x, pad_value, [(*p, 0) for p in padding])
     carry.append(x)
 
-  is_indexing_dim = [
-      tuple(b is pallas_core.mapped for b in bm.block_shape)
+  block_shapes = [pallas_core._get_block_shape(bm.block_shape)
+                  for bm in grid_mapping.block_mappings]
+  is_squeeze_dim = [
+      tuple(isinstance(bd, pallas_core.Squeezed) for bd in bm.block_shape)
       for bm in grid_mapping.block_mappings
-  ]
-  block_shapes = [
-      tuple(1 if i else b for i, b in zip(iid, bm.block_shape))
-      for iid, bm in zip(is_indexing_dim, grid_mapping.block_mappings)
   ]
 
   # Pad values to evenly divide into block dimensions. This matches the
@@ -416,7 +423,7 @@ def pallas_call_hlo_interpret(
     num_iterations = 1
 
   # The scan carry: (i, loop_idx, *consts, *ins, *outs, *scratch)
-  # i:int32 is the interation index
+  # i:int32 is the iteration index
   # loop_idx: tuple[int32] are the program ids for each grid axis
   def cond(carry):
     i, *_ = carry
@@ -444,7 +451,7 @@ def pallas_call_hlo_interpret(
           for bm in grid_mapping.block_mappings
       ]
     blocks = map(_dynamic_slice, start_indices, block_shapes,
-                 carry_consts_ins, is_indexing_dim)
+                 carry_consts_ins, is_squeeze_dim)
     with pallas_core.grid_env(local_grid_env):
       assert len(discharged_jaxpr.invars) == len(scalars) + len(blocks) + len(
           scratch_values
@@ -462,7 +469,7 @@ def pallas_call_hlo_interpret(
     _, out_inout, out_scratch = split_list(
         blocks, [grid_mapping.num_index_operands, num_inout_blocks])
     out_carry = map(_dynamic_update_slice, start_indices, block_shapes,
-                    carry_consts_ins, out_inout, is_indexing_dim)
+                    carry_consts_ins, out_inout, is_squeeze_dim)
     return (i + 1, _get_next_indices(grid, loop_idx),
             *out_carry, *out_scratch)
 
@@ -473,15 +480,15 @@ def pallas_call_hlo_interpret(
   out_out = carry[len(block_args):len(block_args) + len(out)]
   out_nopad = []
   for o, bm in zip(out_out, grid_mapping.block_mappings_output):
-    if isinstance(bm.indexing_mode, pallas_core.Unblocked):
-      padding = bm.indexing_mode.padding
-      if padding is not None and any(p != (0, 0) for p in padding):
-        if input_output_aliases:
-          raise NotImplementedError("Padding with aliasing not supported.")
-        pad_low, pad_high = zip(*padding)
-        limit_indices = [s - p for s, p in zip(o.shape, pad_high)]
-        o = lax.slice(o, pad_low, limit_indices)
-    if o.shape != bm.array_shape_dtype.shape:
-      o = lax.slice(o, (0,) * o.ndim, bm.array_shape_dtype.shape)
+    padding = [bd.padding if isinstance(bd, pallas_core.Element) else (0, 0)
+               for bd in bm.block_shape]
+    if padding is not None and any(p != (0, 0) for p in padding):
+      if input_output_aliases:
+        raise NotImplementedError("Padding with aliasing not supported.")
+      pad_low, pad_high = zip(*padding)
+      limit_indices = [s - p for s, p in zip(o.shape, pad_high)]
+      o = lax.slice(o, pad_low, limit_indices)
+    if o.shape != bm.array_aval.shape:
+      o = lax.slice(o, (0,) * o.ndim, bm.array_aval.shape)
     out_nopad.append(o)
   return out_nopad

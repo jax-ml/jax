@@ -1,7 +1,7 @@
 .. currentmodule:: jax
 
-Public API: ``jax`` package
-===========================
+API Reference
+=============
 
 Subpackages
 -----------
@@ -24,6 +24,7 @@ Subpackages
    jax.nn
    jax.ops
    jax.profiler
+   jax.ref
    jax.stages
    jax.test_util
    jax.tree
@@ -33,11 +34,6 @@ Subpackages
    jax.extend
    jax.example_libraries
    jax.experimental
-
-.. toctree::
-   :hidden:
-
-   jax.lib
 
 Configuration
 -------------
@@ -56,6 +52,7 @@ Configuration
    enable_checks
    enable_custom_prng
    enable_custom_vjp_by_custom_transpose
+   enable_x64
    log_compiles
    no_tracing
    numpy_rank_promotion
@@ -83,6 +80,7 @@ Just-in-time compilation (:code:`jit`)
     block_until_ready
     copy_to_host_async
     make_mesh
+    set_mesh
 
 .. _jax-grad:
 
@@ -105,6 +103,32 @@ Automatic differentiation
     custom_gradient
     closure_convert
     checkpoint
+
+Vectorization
+-------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    vmap
+    numpy.vectorize
+
+Parallelization
+---------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    shard_map
+    smap
+    pmap
+    devices
+    local_devices
+    process_index
+    device_count
+    local_device_count
+    process_count
+    process_indices
 
 Customization
 -------------
@@ -217,30 +241,6 @@ Array properties and methods
     Array.T
     Array.mT
 
-Vectorization (:code:`vmap`)
-----------------------------
-
-.. autosummary::
-  :toctree: _autosummary
-
-    vmap
-    numpy.vectorize
-
-Parallelization (:code:`pmap`)
-------------------------------
-
-.. autosummary::
-  :toctree: _autosummary
-
-    pmap
-    devices
-    local_devices
-    process_index
-    device_count
-    local_device_count
-    process_count
-    process_indices
-
 Callbacks
 ---------
 
@@ -262,3 +262,21 @@ Miscellaneous
     print_environment_info
     live_arrays
     clear_caches
+
+Checkpoint policies
+-------------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    checkpoint_policies.everything_saveable
+    checkpoint_policies.nothing_saveable
+    checkpoint_policies.dots_saveable
+    checkpoint_policies.checkpoint_dots
+    checkpoint_policies.dots_with_no_batch_dims_saveable
+    checkpoint_policies.checkpoint_dots_with_no_batch_dims
+    checkpoint_policies.save_any_names_but_these
+    checkpoint_policies.save_only_these_names
+    checkpoint_policies.offload_dot_with_no_batch_dims
+    checkpoint_policies.save_and_offload_only_these_names
+    checkpoint_policies.save_from_both_policies

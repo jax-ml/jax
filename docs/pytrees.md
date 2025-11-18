@@ -1,338 +1,325 @@
 ---
 jupytext:
+  formats: md:myst
   text_representation:
     extension: .md
     format_name: myst
+    format_version: 0.13
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   language: python
   name: python3
-language_info:
-  name: python
-  file_extension: .py
 ---
 
-(pytrees)=
+```{code-cell}
+:tags: [remove-cell]
 
+# This ensures that code cell tracebacks appearing below will be concise.
+%xmode minimal
+```
+
+(pytrees)=
+(working-with-pytrees)=
 # Pytrees
 
-<!--* freshness: { reviewed: '2024-03-13' } *-->
+<!--* freshness: { reviewed: '2025-10-15' } *-->
 
+JAX has built-in support for objects that look like dictionaries (dicts) of arrays, or lists of lists of dicts, or other nested structures — in JAX these are called pytrees.
+This section will explain how to use them, provide useful code examples, and point out common "gotchas" and patterns.
+
+For an explanation of how to create custom pytrees, see {doc}`custom_pytrees`.
+
+(pytrees-what-is-a-pytree)=
 ## What is a pytree?
 
-In JAX, we use the term *pytree* to refer to a tree-like structure built out of
-container-like Python objects. Classes are considered container-like if they
-are in the pytree registry, which by default includes lists, tuples, and dicts.
-That is:
+A pytree is a container-like structure built out of container-like Python objects — “leaf” pytrees and/or more pytrees. A pytree can include lists, tuples, and dicts. A leaf is anything that’s not a pytree, such as an array, but a single leaf is also a pytree.
 
-1. any object whose type is *not* in the pytree container registry is
-   considered a *leaf* pytree;
-2. any object whose type is in the pytree container registry, and which
-   contains pytrees, is considered a pytree.
+In the context of machine learning (ML), a pytree can contain:
 
-For each entry in the pytree container registry, a container-like type is
-registered with a pair of functions that specify how to convert an instance of
-the container type to a `(children, metadata)` pair and how to convert such a
-pair back to an instance of the container type. Using these functions, JAX can
-canonicalize any tree of registered container objects into tuples.
+- Model parameters
+- Dataset entries
+- Reinforcement learning agent observations
 
-Example pytrees:
+When working with datasets, you can often come across pytrees (such as lists of lists of dicts).
 
-```
-[1, "a", object()]  # 3 leaves
+Below is an example of a simple pytree. In JAX, you can use {func}`jax.tree.leaves`, to extract the flattened leaves from the trees, as demonstrated here:
 
-(1, (2, 3), ())  # 3 leaves
+```{code-cell}
+import jax
+import jax.numpy as jnp
 
-[1, {"k1": 2, "k2": (3, 4)}, 5]  # 5 leaves
-```
+example_trees = [
+    [1, 'a', object()],
+    (1, (2, 3), ()),
+    [1, {'k1': 2, 'k2': (3, 4)}, 5],
+    {'a': 2, 'b': (2, 3)},
+    jnp.array([1, 2, 3]),
+]
 
-JAX can be extended to consider other container types as pytrees; see
-{ref}`extending-pytrees` below.
-
-## Pytrees and JAX functions
-
-Many JAX functions, like {func}`jax.lax.scan`, operate over pytrees of arrays.
-JAX function transformations can be applied to functions that accept as input
-and produce as output pytrees of arrays.
-
-## Applying optional parameters to pytrees
-
-Some JAX function transformations take optional parameters that specify how
-certain input or output values should be treated (e.g. the `in_axes` and
-`out_axes` arguments to {func}`~jax.vmap`). These parameters can also be pytrees,
-and their structure must correspond to the pytree structure of the corresponding
-arguments. In particular, to be able to "match up" leaves in these parameter
-pytrees with values in the argument pytrees, the parameter pytrees are often
-constrained to be tree prefixes of the argument pytrees.
-
-For example, if we pass the following input to {func}`~jax.vmap` (note that the input
-arguments to a function are considered a tuple):
-
-```
-(a1, {"k1": a2, "k2": a3})
+# Print how many leaves the pytrees have.
+for pytree in example_trees:
+  # This `jax.tree.leaves()` method extracts the flattened leaves from the pytrees.
+  leaves = jax.tree.leaves(pytree)
+  print(f"{repr(pytree):<45} has {len(leaves)} leaves: {leaves}")
 ```
 
-We can use the following `in_axes` pytree to specify that only the `k2`
-argument is mapped (`axis=0`) and the rest aren't mapped over
-(`axis=None`):
+Any tree-like structure built out of container-like Python objects can be treated as a pytree in JAX.
+Classes are considered container-like if they are in the pytree registry, which by default includes lists, tuples, and dicts. Any object whose type is *not* in the pytree container registry will be treated as a leaf node in the tree.
 
+The pytree registry can be extended to include user-defined container classes by registering the class
+with functions that specify how to flatten the tree; see {ref}`pytrees-custom-pytree-nodes` below.
+
+(pytrees-common-pytree-functions)=
+## Common pytree functions
+
+JAX provides a number of utilities to operate over pytrees. These can be found in the {mod}`jax.tree_util` subpackage;
+for convenience many of these have aliases in the {mod}`jax.tree` module.
+
+### Common function: `jax.tree.map`
+
+The most commonly used pytree function is {func}`jax.tree.map`. It works analogously to Python's native `map`, but transparently operates over entire pytrees.
+
+Here's an example:
+
+```{code-cell}
+list_of_lists = [
+    [1, 2, 3],
+    [1, 2],
+    [1, 2, 3, 4]
+]
+
+jax.tree.map(lambda x: x*2, list_of_lists)
 ```
-(None, {"k1": None, "k2": 0})
+
+{func}`jax.tree.map` also allows mapping a [N-ary](https://en.wikipedia.org/wiki/N-ary) function over multiple arguments. For example:
+
+```{code-cell}
+another_list_of_lists = list_of_lists
+jax.tree.map(lambda x, y: x+y, list_of_lists, another_list_of_lists)
 ```
 
-The optional parameter pytree structure must match that of the main input
-pytree. However, the optional parameters can optionally be specified as a
-"prefix" pytree, meaning that a single leaf value can be applied to an entire
-sub-pytree. For example, if we have the same {func}`~jax.vmap` input as above,
-but wish to only map over the dictionary argument, we can use:
+When using multiple arguments with {func}`jax.tree.map`, the structure of the inputs must exactly match. That is, lists must have the same number of elements, dicts must have the same keys, etc.
 
+(pytrees-example-jax-tree-map-ml)=
+### Example of `jax.tree.map` with ML model parameters
+
+This example demonstrates how pytree operations can be useful when training a simple [multi-layer perceptron (MLP)](https://en.wikipedia.org/wiki/Multilayer_perceptron).
+
+Begin with defining the initial model parameters:
+
+```{code-cell}
+import numpy as np
+
+def init_mlp_params(layer_widths):
+  params = []
+  for n_in, n_out in zip(layer_widths[:-1], layer_widths[1:]):
+    params.append(
+        dict(weights=np.random.normal(size=(n_in, n_out)) * np.sqrt(2/n_in),
+             biases=np.ones(shape=(n_out,))
+            )
+    )
+  return params
+
+params = init_mlp_params([1, 128, 128, 1])
 ```
-(None, 0)  # equivalent to (None, {"k1": 0, "k2": 0})
+
+Use {func}`jax.tree.map` to check the shapes of the initial parameters:
+
+```{code-cell}
+jax.tree.map(lambda x: x.shape, params)
 ```
 
-Or, if we want every argument to be mapped, we can simply write a single leaf
-value that is applied over the entire argument tuple pytree:
+Next, define the functions for training the MLP model:
 
+```{code-cell}
+# Define the forward pass.
+def forward(params, x):
+  *hidden, last = params
+  for layer in hidden:
+    x = jax.nn.relu(x @ layer['weights'] + layer['biases'])
+  return x @ last['weights'] + last['biases']
+
+# Define the loss function.
+def loss_fn(params, x, y):
+  return jnp.mean((forward(params, x) - y) ** 2)
+
+# Set the learning rate.
+LEARNING_RATE = 0.0001
+
+# Using the stochastic gradient descent, define the parameter update function.
+# Apply `@jax.jit` for JIT compilation (speed).
+@jax.jit
+def update(params, x, y):
+  # Calculate the gradients with `jax.grad`.
+  grads = jax.grad(loss_fn)(params, x, y)
+  # Note that `grads` is a pytree with the same structure as `params`.
+  # `jax.grad` is one of many JAX functions that has
+  # built-in support for pytrees.
+  # This is useful - you can apply the SGD update using JAX pytree utilities.
+  return jax.tree.map(
+      lambda p, g: p - LEARNING_RATE * g, params, grads
+  )
 ```
-0
-```
-
-This happens to be the default `in_axes` value for {func}`~jax.vmap`!
-
-The same logic applies to other optional parameters that refer to specific input
-or output values of a transformed function, e.g. `vmap`'s `out_axes`.
 
 ## Viewing the pytree definition of an object
 
 To view the pytree definition of an arbitrary `object` for debugging purposes, you can use:
 
-```
+```{code-cell}
 from jax.tree_util import tree_structure
 print(tree_structure(object))
 ```
 
-## Developer information
+(pytree-and-jax-transformations)=
+## Pytrees and JAX transformations
 
-*This is primarily JAX internal documentation, end-users are not supposed to need
-to understand this to use JAX, except when registering new user-defined
-container types with JAX. Some of these details may change.*
+Many JAX functions, like {func}`jax.lax.scan`, operate over pytrees of arrays. In addition, all JAX function transformations can be applied to functions that accept as input and produce as output pytrees of arrays.
 
-### Internal pytree handling
+Some JAX function transformations take optional parameters that specify how certain input or output values should be treated (such as the `in_axes` and `out_axes` arguments to {func}`jax.vmap`). These parameters can also be pytrees, and their structure must correspond to the pytree structure of the corresponding arguments. In particular, to be able to “match up” leaves in these parameter pytrees with values in the argument pytrees, the parameter pytrees are often constrained to be tree prefixes of the argument pytrees.
 
-JAX flattens pytrees into lists of leaves at the `api.py` boundary (and also
-in control flow primitives). This keeps downstream JAX internals simpler:
-transformations like {func}`~jax.grad`, {func}`~jax.jit`, and {func}`~jax.vmap`
-can handle user functions that accept and return the myriad different Python
-containers, while all the other parts of the system can operate on functions
-that only take (multiple) array arguments and always return a flat list of arrays.
+For example, if you pass the following input to {func}`jax.vmap` (note that the input arguments to a function are considered a tuple):
 
-When JAX flattens a pytree it will produce a list of leaves and a `treedef`
-object that encodes the structure of the original value. The `treedef` can
-then be used to construct a matching structured value after transforming the
-leaves. Pytrees are tree-like, rather than DAG-like or graph-like, in that we
-handle them assuming referential transparency and that they can't contain
-reference cycles.
-
-Here is a simple example:
-
-```{code-cell}
-:tags: [remove-cell]
-
-# Execute this to consume & hide the GPU warning.
-import jax.numpy as _jnp
-_jnp.arange(10)
+```python
+vmap(f, in_axes=(a1, {"k1": a2, "k2": a3}))
 ```
 
-```{code-cell}
-from jax.tree_util import tree_flatten, tree_unflatten
-import jax.numpy as jnp
+then you can use the following `in_axes` pytree to specify that only the `k2` argument is mapped (`axis=0`), and the rest aren’t mapped over (`axis=None`):
 
-# The structured value to be transformed
-value_structured = [1., (2., 3.)]
-
-# The leaves in value_flat correspond to the `*` markers in value_tree
-value_flat, value_tree = tree_flatten(value_structured)
-print(f"{value_flat=}\n{value_tree=}")
-
-# Transform the flat value list using an element-wise numeric transformer
-transformed_flat = list(map(lambda v: v * 2., value_flat))
-print(f"{transformed_flat=}")
-
-# Reconstruct the structured output, using the original
-transformed_structured = tree_unflatten(value_tree, transformed_flat)
-print(f"{transformed_structured=}")
+```python
+vmap(f, in_axes=(None, {"k1": None, "k2": 0}))
 ```
 
-By default, pytree containers can be lists, tuples, dicts, namedtuple, None,
-OrderedDict. Other types of values, including numeric and ndarray values, are
-treated as leaves:
+The optional parameter pytree structure must match that of the main input pytree. However, the optional parameters can optionally be specified as a “prefix” pytree, meaning that a single leaf value can be applied to an entire sub-pytree.
+
+For example, if you have the same {func}`jax.vmap` input as above, but wish to only map over the dictionary argument, you can use:
+
+```python
+vmap(f, in_axes=(None, 0))  # equivalent to (None, {"k1": 0, "k2": 0})
+```
+
+Alternatively, if you want every argument to be mapped, you can write a single leaf value that is applied over the entire argument tuple pytree:
+
+```python
+vmap(f, in_axes=0)  # equivalent to (0, {"k1": 0, "k2": 0})
+```
+
+This happens to be the default `in_axes` value for {func}`jax.vmap`.
+
+The same logic applies to other optional parameters that refer to specific input or output values of a transformed function, such as `out_axes` in {func}`jax.vmap`.
+
+(pytrees-explicity-key-paths)=
+## Explicit key paths
+
+In a pytree each leaf has a _key path_. A key path for a leaf is a `list` of _keys_, where the length of the list is equal to the depth of the leaf in the pytree . Each _key_ is a [hashable object](https://docs.python.org/3/glossary.html#term-hashable) that represents an index into the corresponding pytree node type. The type of the key depends on the pytree node type; for example, the type of keys for `dict`s is different from the type of keys for `tuple`s.
+
+For built-in pytree node types, the set of keys for any pytree node instance is unique. For a pytree comprising nodes with this property, the key path for each leaf is unique.
+
+JAX has the following `jax.tree_util.*` methods for working with key paths:
+
+- {func}`jax.tree_util.tree_flatten_with_path`: Works similarly to {func}`jax.tree.flatten`, but returns key paths.
+- {func}`jax.tree_util.tree_map_with_path`: Works similarly to {func}`jax.tree.map`, but the function also takes key paths as arguments.
+- {func}`jax.tree_util.keystr`: Given a general key path, returns a reader-friendly string expression.
+
+For example, one use case is to print debugging information related to a certain leaf value:
 
 ```{code-cell}
-from collections import namedtuple
-Point = namedtuple('Point', ['x', 'y'])
+import collections
 
-example_containers = [
-    (1., [2., 3.]),
-    (1., {'b': 2., 'a': 3.}),
-    1.,
-    None,
-    jnp.zeros(2),
-    Point(1., 2.)
-]
-def show_example(structured):
-  flat, tree = tree_flatten(structured)
-  unflattened = tree_unflatten(tree, flat)
-  print(f"{structured=}\n  {flat=}\n  {tree=}\n  {unflattened=}")
+ATuple = collections.namedtuple("ATuple", ('name'))
 
-for structured in example_containers:
-  show_example(structured)
+tree = [1, {'k1': 2, 'k2': (3, 4)}, ATuple('foo')]
+flattened, _ = jax.tree_util.tree_flatten_with_path(tree)
+
+for key_path, value in flattened:
+  print(f'Value of tree{jax.tree_util.keystr(key_path)}: {value}')
+```
+
+To express key paths, JAX provides a few default key types for the built-in pytree node types, namely:
+
+*  `SequenceKey(idx: int)`: For lists and tuples.
+*  `DictKey(key: Hashable)`: For dictionaries.
+*  `GetAttrKey(name: str)`: For `namedtuple`s and preferably custom pytree nodes (more in the next section)
+
+You are free to define your own key types for your custom nodes. They will work with {func}`jax.tree_util.keystr` as long as their `__str__()` method is also overridden with a reader-friendly expression.
+
+```{code-cell}
+for key_path, _ in flattened:
+  print(f'Key path of tree{jax.tree_util.keystr(key_path)}: {repr(key_path)}')
+```
+
+(pytrees-common-pytree-gotchas)=
+## Common pytree gotchas
+
+This section covers some of the most common problems ("gotchas") encountered when using JAX pytrees.
+
+### Mistaking pytree nodes for leaves
+
+A common gotcha to look out for is accidentally introducing _tree nodes_ instead of _leaves_:
+
+```{code-cell}
+a_tree = [jnp.zeros((2, 3)), jnp.zeros((3, 4))]
+
+# Try to make another pytree with ones instead of zeros.
+shapes = jax.tree.map(lambda x: x.shape, a_tree)
+jax.tree.map(jnp.ones, shapes)
+```
+
+What happened here is that the `shape` of an array is a tuple, which is a pytree node, with its elements as leaves. Thus, in the map, instead of calling `jnp.ones` on e.g. `(2, 3)`, it's called on `2` and `3`.
+
+The solution will depend on the specifics, but there are two broadly applicable options:
+
+- Rewrite the code to avoid the intermediate {func}`jax.tree.map`.
+- Convert the tuple into a NumPy array (`np.array`) or a JAX NumPy array (`jnp.array`), which makes the entire sequence a leaf.
+
+### Handling of `None` by `jax.tree_util`
+
+`jax.tree_util` functions treat `None` as the absence of a pytree node, not as a leaf:
+
+```{code-cell}
+jax.tree.leaves([None, None, None])
+```
+
+To treat `None` as a leaf, you can use the `is_leaf` argument:
+
+```{code-cell}
+jax.tree.leaves([None, None, None], is_leaf=lambda x: x is None)
+```
+
+(pytrees-common-pytree-patterns)=
+## Common pytree patterns
+
+This section covers some of the most common patterns with JAX pytrees.
+
+### Transposing pytrees with `jax.tree.map` and `jax.tree.transpose`
+
+To transpose a pytree (turn a list of trees into a tree of lists), JAX has two functions: {func}`jax.tree.map` (more basic) and {func}`jax.tree.transpose` (more flexible, complex and verbose).
+
+**Option 1:** Use {func}`jax.tree.map`. Here's an example:
+
+```{code-cell}
+def tree_transpose(list_of_trees):
+  """
+  Converts a list of trees of identical structure into a single tree of lists.
+  """
+  return jax.tree.map(lambda *xs: list(xs), *list_of_trees)
+
+# Convert a dataset from row-major to column-major.
+episode_steps = [dict(t=1, obs=3), dict(t=2, obs=4)]
+tree_transpose(episode_steps)
+```
+
+**Option 2:** For more complex transposes, use {func}`jax.tree.transpose`, which is more verbose, but allows you specify the structure of the inner and outer pytree for more flexibility. For example:
+
+```{code-cell}
+jax.tree.transpose(
+  outer_treedef = jax.tree.structure([0 for e in episode_steps]),
+  inner_treedef = jax.tree.structure(episode_steps[0]),
+  pytree_to_transpose = episode_steps
+)
 ```
 
 (extending-pytrees)=
-
 ### Extending pytrees
 
-By default, any part of a structured value that is not recognized as an
-internal pytree node (i.e. container-like) is treated as a leaf:
-
-```{code-cell}
-class Special(object):
-  def __init__(self, x, y):
-    self.x = x
-    self.y = y
-
-  def __repr__(self):
-    return "Special(x={}, y={})".format(self.x, self.y)
-
-
-show_example(Special(1., 2.))
-```
-
-The set of Python types that are considered internal pytree nodes is extensible,
-through a global registry of types, and values of registered types are traversed
-recursively. To register a new type, you can use
-{func}`~jax.tree_util.register_pytree_node`:
-
-```{code-cell}
-from jax.tree_util import register_pytree_node
-
-class RegisteredSpecial(Special):
-  def __repr__(self):
-    return "RegisteredSpecial(x={}, y={})".format(self.x, self.y)
-
-def special_flatten(v):
-  """Specifies a flattening recipe.
-
-  Params:
-    v: the value of registered type to flatten.
-  Returns:
-    a pair of an iterable with the children to be flattened recursively,
-    and some opaque auxiliary data to pass back to the unflattening recipe.
-    The auxiliary data is stored in the treedef for use during unflattening.
-    The auxiliary data could be used, e.g., for dictionary keys.
-  """
-  children = (v.x, v.y)
-  aux_data = None
-  return (children, aux_data)
-
-def special_unflatten(aux_data, children):
-  """Specifies an unflattening recipe.
-
-  Params:
-    aux_data: the opaque data that was specified during flattening of the
-      current treedef.
-    children: the unflattened children
-
-  Returns:
-    a re-constructed object of the registered type, using the specified
-    children and auxiliary data.
-  """
-  return RegisteredSpecial(*children)
-
-# Global registration
-register_pytree_node(
-    RegisteredSpecial,
-    special_flatten,    # tell JAX what are the children nodes
-    special_unflatten   # tell JAX how to pack back into a RegisteredSpecial
-)
-
-show_example(RegisteredSpecial(1., 2.))
-```
-
-Alternatively, you can define appropriate `tree_flatten` and `tree_unflatten` methods
-on your class and decorate it with {func}`~jax.tree_util.register_pytree_node_class`:
-
-```{code-cell}
-from jax.tree_util import register_pytree_node_class
-
-@register_pytree_node_class
-class RegisteredSpecial2(Special):
-  def __repr__(self):
-    return "RegisteredSpecial2(x={}, y={})".format(self.x, self.y)
-
-  def tree_flatten(self):
-    children = (self.x, self.y)
-    aux_data = None
-    return (children, aux_data)
-
-  @classmethod
-  def tree_unflatten(cls, aux_data, children):
-    return cls(*children)
-
-show_example(RegisteredSpecial2(1., 2.))
-```
-
-When defining unflattening functions, in general `children` should contain all the
-dynamic elements of the data structure (arrays, dynamic scalars, and pytrees), while
-`aux_data` should contain all the static elements that will be rolled into the `treedef`
-structure. JAX sometimes needs to compare `treedef` for equality, or compute its hash
-for use in the JIT cache, and so care must be taken to ensure that the auxiliary data
-specified in the flattening recipe supports meaningful hashing and equality comparisons.
-
-The whole set of functions for operating on pytrees are in {mod}`jax.tree_util`.
-
-### Custom PyTrees and Initialization
-
-One common gotcha with user-defined PyTree objects is that JAX transformations occasionally
-initialize them with unexpected values, so that any input validation done at initialization
-may fail. For example:
-
-```{code-cell}
-:tags: [skip-execution]
-class MyTree:
-  def __init__(self, a):
-    self.a = jnp.asarray(a)
-
-register_pytree_node(MyTree, lambda tree: ((tree.a,), None),
-    lambda _, args: MyTree(*args))
-
-tree = MyTree(jnp.arange(5.0))
-
-jax.vmap(lambda x: x)(tree)      # Error because object() is passed to MyTree.
-jax.jacobian(lambda x: x)(tree)  # Error because MyTree(...) is passed to MyTree
-```
-In the first case, JAX's internals use arrays of `object()` values to infer the structure
-of the tree; in the second case, the jacobian of a function mapping a tree to a tree
-is defined as a tree of trees.
-
-For this reason, the `__init__` and `__new__` methods of custom PyTree classes should
-generally avoid doing any array conversion or other input validation, or else
-anticipate and handle these special cases. For example:
-```{code-cell}
-class MyTree:
-  def __init__(self, a):
-    if not (type(a) is object or a is None or isinstance(a, MyTree)):
-      a = jnp.asarray(a)
-    self.a = a
-```
-Another possibility is to structure your `tree_unflatten` function so that it avoids
-calling `__init__`; for example:
-```{code-cell}
-def tree_unflatten(aux_data, children):
-  del aux_data  # unused in this class
-  obj = object.__new__(MyTree)
-  obj.a = a
-  return obj
-```
-If you go this route, make sure that your `tree_unflatten` function stays in-sync with 
-`__init__` if and when the code is updated.
+Material on extending pytrees has been moved to {ref}`pytrees-custom-pytree-nodes`.

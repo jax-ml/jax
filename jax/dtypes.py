@@ -17,6 +17,7 @@
 
 from jax._src.dtypes import (
     bfloat16 as bfloat16,
+    itemsize_bits as itemsize_bits,
     canonicalize_dtype as canonicalize_dtype,
     finfo,  # TODO(phawkins): switch callers to jnp.finfo?  # noqa: F401
     float0 as float0,

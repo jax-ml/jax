@@ -24,29 +24,32 @@ from __future__ import annotations
 __all__ = ['register_jax_array_methods']
 
 import abc
-from functools import partial, wraps
+from functools import wraps
 import math
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Callable, Sequence
 
 import numpy as np
-import jax
-from jax import lax
-from jax.sharding import Sharding
+
 from jax._src import api
 from jax._src import core
 from jax._src import dtypes
+from jax._src import literals
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.array import ArrayImpl
-from jax._src.lax import lax as lax_internal
+from jax._src.lax import lax
+from jax._src.lax import slicing as lax_slicing
 from jax._src.lib import xla_client as xc
 from jax._src.numpy import array_api_metadata
+from jax._src.numpy import array_creation
 from jax._src.numpy import indexing
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import tensor_contractions
-from jax._src.pjit import PartitionSpec
-from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
+from jax._src.pjit import PartitionSpec
+from jax._src.sharding import Sharding
+from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
 from jax._src.ops import scatter
 from jax._src.typing import Array, ArrayLike, DimSize, DTypeLike, Shape, StaticScalar
 from jax._src.util import safe_zip, safe_map
@@ -189,7 +192,7 @@ def _diagonal(self: Array, offset: int = 0, axis1: int = 0, axis2: int = 1) -> A
   """
   return lax_numpy.diagonal(self, offset=offset, axis1=axis1, axis2=axis2)
 
-def _dot(self: Array, b: ArrayLike, *, precision: lax_internal.PrecisionLike = None,
+def _dot(self: Array, b: ArrayLike, *, precision: lax.PrecisionLike = None,
          preferred_element_type: DTypeLike | None = None) -> Array:
   """Compute the dot product of two arrays.
 
@@ -197,12 +200,12 @@ def _dot(self: Array, b: ArrayLike, *, precision: lax_internal.PrecisionLike = N
   """
   return tensor_contractions.dot(self, b, precision=precision, preferred_element_type=preferred_element_type)
 
-def _flatten(self: Array, order: str = "C") -> Array:
+def _flatten(self: Array, order: str = "C", *, out_sharding=None) -> Array:
   """Flatten array into a 1-dimensional shape.
 
   Refer to :func:`jax.numpy.ravel` for the full documentation.
   """
-  return lax_numpy.ravel(self, order=order)
+  return lax_numpy.ravel(self, order=order, out_sharding=out_sharding)
 
 def _imag_property(self: Array) -> Array:
   """Return the imaginary part of the array."""
@@ -217,7 +220,7 @@ def _item(self: Array, *args: int) -> bool | int | float | complex:
 
 def _itemsize_property(self: Array) -> int:
   """Length of one array element in bytes."""
-  return dtypes.dtype(self, canonicalize=True).itemsize
+  return self.dtype.itemsize
 
 def _matrix_transpose_property(self: Array):
   """Compute the (batched) matrix transpose.
@@ -259,7 +262,7 @@ def _min(self: Array, axis: reductions.Axis = None, out: None = None,
 
 def _nbytes_property(self: Array) -> int:
   """Total bytes consumed by the elements of the array."""
-  return np.size(self) * dtypes.dtype(self, canonicalize=True).itemsize
+  return np.size(self) * self.dtype.itemsize
 
 def _nonzero(self: Array, *, fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None,
              size: int | None = None) -> tuple[Array, ...]:
@@ -293,14 +296,18 @@ def _real_property(self: Array) -> Array:
   return ufuncs.real(self)
 
 def _repeat(self: Array, repeats: ArrayLike, axis: int | None = None, *,
-            total_repeat_length: int | None = None) -> Array:
+            total_repeat_length: int | None = None,
+            out_sharding: NamedSharding | PartitionSpec | None = None) -> Array:
   """Construct an array from repeated elements.
 
   Refer to :func:`jax.numpy.repeat` for the full documentation.
   """
-  return lax_numpy.repeat(self, repeats=repeats, axis=axis, total_repeat_length=total_repeat_length)
+  return lax_numpy.repeat(self, repeats=repeats, axis=axis,
+                          total_repeat_length=total_repeat_length,
+                          out_sharding=out_sharding)
 
-def _reshape(self: Array, *args: Any, order: str = "C") -> Array:
+def _reshape(self: Array, *args: Any, order: str = "C", out_sharding=None
+             ) -> Array:
   """Returns an array containing the same data with a new shape.
 
   Refer to :func:`jax.numpy.reshape` for full documentation.
@@ -308,10 +315,14 @@ def _reshape(self: Array, *args: Any, order: str = "C") -> Array:
   __tracebackhide__ = True
   newshape = _compute_newshape(self, args[0] if len(args) == 1 else args)
   if order == "C":
-    return lax.reshape(self, newshape, None)
+    return lax.reshape(self, newshape, None, out_sharding=out_sharding)
   elif order == "F":
     dims = list(range(self.ndim)[::-1])
-    return lax.reshape(self, newshape[::-1], dims).T
+    out_sharding = canonicalize_sharding(out_sharding, "jnp.reshape")
+    out_sharding = (
+        None if out_sharding is None else out_sharding.update(
+            spec=out_sharding.spec.update(partitions=out_sharding.spec[::-1])))
+    return lax.reshape(self, newshape[::-1], dims, out_sharding=out_sharding).T
   elif order == "A":
     raise NotImplementedError("np.reshape order=A is not implemented.")
   else:
@@ -499,22 +510,32 @@ def _view(self: Array, dtype: DTypeLike | None = None, type: None = None) -> Arr
     Array([ True, False,  True], dtype=bool)
 
   However, there are no guarantees about the results of any expression involving
-  a view such as this: `jnp.array([1, 2, 3], dtype=jnp.int8).view(jnp.bool_)`.
+  a view such as this: ``jnp.array([1, 2, 3], dtype=jnp.int8).view(jnp.bool_)``.
   In particular, the results may change between JAX releases and depending on
   the platform. To safely convert such an array to a boolean array, compare it
   with `0`::
 
     >>> jnp.array([1, 2, 0], dtype=jnp.int8) != 0
     Array([ True,  True, False], dtype=bool)
+
+  Args:
+    dtype: An optional output dtype. If not specified, the output dtype is the
+      same as the input dtype.
+    type: Not implemented; accepted for NumPy compatibility.
+  Returns:
+    The array, viewed as the new dtype. Unlike NumPy, the array may or may not
+    be a copy of the input array.
   """
   if type is not None:
     raise NotImplementedError("`type` argument of array.view() is not supported.")
 
-  dtypes.check_user_dtype_supported(dtype, "view")
-  dtype = dtypes.canonicalize_dtype(dtype)
+  if dtype is None:
+    return self
 
-  nbits_in = dtypes.bit_width(self.dtype)
-  nbits_out = dtypes.bit_width(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "view")
+
+  nbits_in = dtypes.itemsize_bits(self.dtype)
+  nbits_out = dtypes.itemsize_bits(dtype)
 
   if self.ndim == 0:
     if nbits_in != nbits_out:
@@ -536,7 +557,7 @@ def _view(self: Array, dtype: DTypeLike | None = None, type: None = None) -> Arr
   if lax_numpy.issubdtype(self.dtype, np.complexfloating):
     new_shape = (*self.shape[:-1], self.shape[-1] * 2)
     new_dtype = lax_numpy.finfo(self.dtype).dtype
-    self = (lax_numpy.zeros(new_shape, new_dtype)
+    self = (array_creation.zeros(new_shape, new_dtype)
              .at[..., 0::2].set(self.real)
              .at[..., 1::2].set(self.imag))
     return _view(self, dtype)
@@ -566,7 +587,15 @@ def _notimplemented_flat(self):
   raise NotImplementedError("JAX Arrays do not implement the arr.flat property: "
                             "consider arr.flatten() instead.")
 
-_accepted_binop_types = (int, float, complex, np.generic, np.ndarray, Array)
+_accepted_binop_types = (
+    int,
+    float,
+    complex,
+    np.generic,
+    np.ndarray,
+    Array,
+    literals.TypedNdArray,
+)
 _rejected_binop_types = (list, tuple, set, dict)
 
 def _defer_to_unrecognized_arg(opchar, binary_op, swap=False):
@@ -608,12 +637,13 @@ _HANDLED_ARRAY_TYPES = _JAX_ARRAY_TYPES + (np.ndarray,)
 
 def __array_module__(self, types):
   if all(issubclass(t, _HANDLED_ARRAY_TYPES) for t in types):
+    import jax.numpy  # pytype: disable=import-error
     return jax.numpy
   else:
     return NotImplemented
 
 
-@partial(jax.jit, static_argnums=(1,2,3))
+@api.jit(static_argnums=(1,2,3))
 def _multi_slice(self: Array,
                  start_indices: tuple[tuple[int, ...]],
                  limit_indices: tuple[tuple[int, ...]],
@@ -625,7 +655,7 @@ def _multi_slice(self: Array,
   """
   results: list[Array] = []
   for starts, limits, removed in zip(start_indices, limit_indices, removed_dims):
-    sliced = lax.slice(self, starts, limits)
+    sliced = lax_slicing.slice(self, starts, limits)
     if removed:
       sliced = lax.squeeze(sliced, removed)
     results.append(sliced)
@@ -633,7 +663,7 @@ def _multi_slice(self: Array,
 
 # The next two functions are related to iter(array), implemented here to
 # avoid circular imports.
-@jax.jit
+@api.jit
 def _unstack(x: Array) -> list[Array]:
   dims = (0,)
   return [lax.squeeze(t, dims) for t in lax.split(x, (1,) * x.shape[0])]
@@ -644,12 +674,13 @@ def _chunk_iter(x, size):
   else:
     num_chunks, tail = ufuncs.divmod(x.shape[0], size)
     for i in range(num_chunks):
-      yield lax.dynamic_slice_in_dim(x, i * size, size)
+      yield lax_slicing.dynamic_slice_in_dim(x, i * size, size)
     if tail:
-      yield lax.dynamic_slice_in_dim(x, num_chunks * size, tail)
+      yield lax_slicing.dynamic_slice_in_dim(x, num_chunks * size, tail)
 
 def _getitem(self, item):
   return indexing.rewriting_take(self, item)
+
 
 # Syntactic sugar for scatter operations.
 class _IndexUpdateHelper:
@@ -689,10 +720,8 @@ class _IndexUpdateHelper:
   By default, JAX assumes that all indices are in-bounds. Alternative out-of-bound
   index semantics can be specified via the ``mode`` parameter (see below).
 
-  Arguments
-  ---------
-  mode : str
-      Specify out-of-bound indexing mode. Options are:
+  Args:
+    mode: string specifying out-of-bound indexing mode. Options are:
 
       - ``"promise_in_bounds"``: (default) The user promises that indices are in bounds.
         No additional checking will be performed. In practice, this means that
@@ -703,50 +732,68 @@ class _IndexUpdateHelper:
       - ``"fill"``: alias for ``"drop"``.  For `get()`, the optional ``fill_value``
         argument specifies the value that will be returned.
 
-        See :class:`jax.lax.GatherScatterMode` for more details.
+      See :class:`jax.lax.GatherScatterMode` for more details.
+    wrap_negative_indices: If True (default) then negative indices indicate position
+      from the end of the array, similar to Python and NumPy indexing. If False, then
+      negative indices are considered out-of-bounds and behave according to the
+      ``mode`` parameter.
+    fill_value: Only applies to the ``get()`` method: the fill value to return for
+      out-of-bounds slices when ``mode`` is ``'fill'``. Ignored otherwise. Defaults
+      to ``NaN`` for inexact types, the largest negative value for signed types, the
+      largest positive value for unsigned types, and ``True`` for booleans.
+    indices_are_sorted: If True, the implementation will assume that the (normalized)
+      indices passed to ``at[]`` are sorted in ascending order, which can lead to more
+      efficient execution on some backends. If True but the indices are not actually
+      sorted, the output is undefined.
+    unique_indices: If True, the implementation will assume that the (normalized) indices
+      passed to ``at[]`` are unique, which can result in more efficient execution on some
+      backends. If True but the indices are not actually unique, the output is undefined.
 
-  indices_are_sorted : bool
-      If True, the implementation will assume that the indices passed to ``at[]``
-      are sorted in ascending order, which can lead to more efficient execution
-      on some backends.
-  unique_indices : bool
-      If True, the implementation will assume that the indices passed to ``at[]``
-      are unique, which can result in more efficient execution on some backends.
-  fill_value : Any
-      Only applies to the ``get()`` method: the fill value to return for out-of-bounds
-      slices when `mode` is ``'fill'``. Ignored otherwise. Defaults to ``NaN`` for
-      inexact types, the largest negative value for signed types, the largest positive
-      value for unsigned types, and ``True`` for booleans.
+  Examples:
+    >>> x = jnp.arange(5.0)
+    >>> x
+    Array([0., 1., 2., 3., 4.], dtype=float32)
+    >>> x.at[2].get()
+    Array(2., dtype=float32)
+    >>> x.at[2].add(10)
+    Array([ 0.,  1., 12.,  3.,  4.], dtype=float32)
 
-  Examples
-  --------
-  >>> x = jnp.arange(5.0)
-  >>> x
-  Array([0., 1., 2., 3., 4.], dtype=float32)
-  >>> x.at[2].add(10)
-  Array([ 0.,  1., 12.,  3.,  4.], dtype=float32)
-  >>> x.at[10].add(10)  # out-of-bounds indices are ignored
-  Array([0., 1., 2., 3., 4.], dtype=float32)
-  >>> x.at[20].add(10, mode='clip')
-  Array([ 0.,  1.,  2.,  3., 14.], dtype=float32)
-  >>> x.at[2].get()
-  Array(2., dtype=float32)
-  >>> x.at[20].get()  # out-of-bounds indices clipped
-  Array(4., dtype=float32)
-  >>> x.at[20].get(mode='fill')  # out-of-bounds indices filled with NaN
-  Array(nan, dtype=float32)
-  >>> x.at[20].get(mode='fill', fill_value=-1)  # custom fill value
-  Array(-1., dtype=float32)
+    By default, out-of-bound indices are ignored in updates, but this behavior
+    can be controlled with the ``mode`` parameter:
+
+    >>> x.at[10].add(10)  # dropped
+    Array([0., 1., 2., 3., 4.], dtype=float32)
+    >>> x.at[20].add(10, mode='clip')  # clipped
+    Array([ 0.,  1.,  2.,  3., 14.], dtype=float32)
+
+    For ``get()``, out-of-bound indices are clipped by default:
+
+    >>> x.at[20].get()  # out-of-bounds indices clipped
+    Array(4., dtype=float32)
+    >>> x.at[20].get(mode='fill')  # out-of-bounds indices filled with NaN
+    Array(nan, dtype=float32)
+    >>> x.at[20].get(mode='fill', fill_value=-1)  # custom fill value
+    Array(-1., dtype=float32)
+
+    Negative indices count from the end of the array, but this behavior can
+    be disabled by setting ``wrap_negative_indices = False``:
+
+    >>> x.at[-1].set(99)
+    Array([ 0.,  1.,  2.,  3., 99.], dtype=float32)
+    >>> x.at[-1].set(99, wrap_negative_indices=False, mode='drop')  # dropped!
+    Array([0., 1., 2., 3., 4.], dtype=float32)
   """
   __slots__ = ("array",)
 
-  def __init__(self, array):
+  array: Array
+
+  def __init__(self, array: Array):
     self.array = array
 
-  def __getitem__(self, index):
+  def __getitem__(self, index: scatter.Index) -> _IndexUpdateRef:
     return _IndexUpdateRef(self.array, index)
 
-  def __repr__(self):
+  def __repr__(self) -> str:
     return f"_IndexUpdateHelper({self.array!r})"
 
 
@@ -759,15 +806,21 @@ class _IndexUpdateRef:
   """
   __slots__ = ("array", "index")
 
-  def __init__(self, array, index):
+  array: Array
+  index: scatter.Index
+
+  def __init__(self, array: Array, index: scatter.Index):
     self.array = array
     self.index = index
 
   def __repr__(self) -> str:
     return f"_IndexUpdateRef({self.array!r}, {self.index!r})"
 
-  def get(self, *, indices_are_sorted=False, unique_indices=False,
-          mode=None, fill_value=None, out_sharding=None):
+  def get(self, *, indices_are_sorted: bool = False, unique_indices: bool = False,
+          mode: str | lax_slicing.GatherScatterMode | None = None,
+          fill_value: ArrayLike | None = None,
+          out_sharding: Sharding | PartitionSpec | None = None,
+          wrap_negative_indices: bool = True):
     """Equivalent to ``x[idx]``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -775,7 +828,7 @@ class _IndexUpdateRef:
     the usual array indexing syntax in that it allows additional keyword
     arguments ``indices_are_sorted`` and ``unique_indices`` to be passed.
 
-    See :mod:`jax.ops` for details.
+    See :func:`jax.numpy.ndarray.at` for details.
     """
     if out_sharding is not None:
       assert isinstance(out_sharding, (NamedSharding, PartitionSpec))
@@ -784,23 +837,34 @@ class _IndexUpdateRef:
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode,
                                    fill_value=fill_value,
+                                   normalize_indices=wrap_negative_indices,
                                    out_sharding=out_sharding)
 
-  def set(self, values, *, indices_are_sorted=False, unique_indices=False,
-          mode=None):
+  def set(self, values: ArrayLike, *, indices_are_sorted: bool = False,
+          unique_indices: bool = False,
+          mode: str | lax_slicing.GatherScatterMode | None = None,
+          out_sharding: Sharding | PartitionSpec | None = None,
+          wrap_negative_indices: bool = True) -> None:
     """Pure equivalent of ``x[idx] = y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
     :mod:`indexed assignment <numpy.doc.indexing>` ``x[idx] = y``.
 
-    See :mod:`jax.ops` for details.
+    See :func:`jax.numpy.ndarray.at` for details.
     """
-    return scatter._scatter_update(self.array, self.index, values, lax.scatter,
-                                   indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices, mode=mode)
+    if out_sharding is not None:
+      assert isinstance(out_sharding, (NamedSharding, PartitionSpec))
+      out_sharding = canonicalize_sharding(out_sharding, '.set')
+    return scatter._scatter_update(
+        self.array, self.index, values, lax_slicing.scatter,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+        mode=mode, out_sharding=out_sharding,  # type: ignore
+        normalize_indices=wrap_negative_indices)
 
-  def apply(self, func, *, indices_are_sorted=False, unique_indices=False,
-            mode=None):
+  def apply(self, func: Callable[[ArrayLike], Array], *,
+            indices_are_sorted: bool = False, unique_indices: bool = False,
+            mode: str | lax_slicing.GatherScatterMode | None = None,
+            wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``func.at(x, idx)`` for a unary ufunc ``func``.
 
     Returns the value of ``x`` that would result from applying the unary
@@ -812,121 +876,144 @@ class _IndexUpdateRef:
     Note that in the current implementation, ``scatter_apply`` is not compatible
     with automatic differentiation.
 
-    See :mod:`jax.ops` for details.
+    See :func:`jax.numpy.ndarray.at` for details.
     """
     def _scatter_apply(x, indices, y, dims, **kwargs):
-      return lax.scatter_apply(x, indices, func, dims, update_shape=y.shape, **kwargs)
-    return scatter._scatter_update(self.array, self.index,
-                                   lax_internal._zero(self.array),
-                                   _scatter_apply,
-                                   indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices, mode=mode)
+      return lax_slicing.scatter_apply(x, indices, func, dims, update_shape=y.shape, **kwargs)
+    return scatter._scatter_update(
+        self.array, self.index, lax._zero(self.array), _scatter_apply,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+        mode=mode, normalize_indices=wrap_negative_indices)
 
-  def add(self, values, *, indices_are_sorted=False, unique_indices=False,
-          mode=None):
+  def add(self, values: ArrayLike, *,
+          indices_are_sorted: bool = False, unique_indices: bool = False,
+          mode: str | lax_slicing.GatherScatterMode | None = None,
+          out_sharding: Sharding | PartitionSpec | None = None,
+          wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] += y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
     :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] += y``.
 
-    See :mod:`jax.ops` for details.
+    See :func:`jax.numpy.ndarray.at` for details.
     """
-    return scatter._scatter_update(self.array, self.index, values,
-                                   lax.scatter_add,
-                                   indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices, mode=mode)
+    if out_sharding is not None:
+      assert isinstance(out_sharding, (NamedSharding, PartitionSpec))
+      out_sharding = canonicalize_sharding(out_sharding, '.add')
+    return scatter._scatter_update(
+        self.array, self.index, values, lax_slicing.scatter_add,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+        mode=mode, out_sharding=out_sharding,  # type: ignore
+        normalize_indices=wrap_negative_indices)
 
-  def subtract(self, values, *, indices_are_sorted=False, unique_indices=False,
-               mode=None):
+  def subtract(self, values: ArrayLike, *,
+               indices_are_sorted: bool = False, unique_indices: bool = False,
+               mode: str | lax_slicing.GatherScatterMode | None = None,
+               wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] -= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
     :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] -= y``.
 
-    See :mod:`jax.ops` for details.
+    See :func:`jax.numpy.ndarray.at` for details.
     """
     return scatter._scatter_update(self.array, self.index, values,
-                                   lax.scatter_sub,
+                                   lax_slicing.scatter_sub,
                                    indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices, mode=mode)
+                                   unique_indices=unique_indices, mode=mode,
+                                   normalize_indices=wrap_negative_indices)
 
-  def multiply(self, values, *, indices_are_sorted=False, unique_indices=False,
-               mode=None):
+  def multiply(self, values: ArrayLike, *,
+               indices_are_sorted: bool = False, unique_indices: bool = False,
+               mode: str | lax_slicing.GatherScatterMode | None = None,
+               wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] *= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
     :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] *= y``.
 
-    See :mod:`jax.ops` for details.
+    See :func:`jax.numpy.ndarray.at` for details.
     """
     return scatter._scatter_update(self.array, self.index, values,
-                                   lax.scatter_mul,
+                                   lax_slicing.scatter_mul,
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices,
-                                   mode=mode)
+                                   mode=mode, normalize_indices=wrap_negative_indices)
   mul = multiply
 
-  def divide(self, values, *, indices_are_sorted=False, unique_indices=False,
-             mode=None):
+  def divide(self, values: ArrayLike, *,
+             indices_are_sorted: bool = False, unique_indices: bool = False,
+             mode: str | lax_slicing.GatherScatterMode | None = None,
+             wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] /= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
     :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] /= y``.
 
-    See :mod:`jax.ops` for details.
+    See :func:`jax.numpy.ndarray.at` for details.
     """
     return ufuncs.divide(
       self.array,
-      scatter._scatter_update(lax_numpy.ones_like(self.array), self.index, values,
-                              lax.scatter_mul,
+      scatter._scatter_update(array_creation.ones_like(self.array), self.index, values,
+                              lax_slicing.scatter_mul,
                               indices_are_sorted=indices_are_sorted,
-                              unique_indices=unique_indices, mode=mode))
+                              unique_indices=unique_indices, mode=mode,
+                              normalize_indices=wrap_negative_indices))
 
-  def power(self, values, *, indices_are_sorted=False, unique_indices=False,
-            mode=None):
+  def power(self, values: ArrayLike, *,
+            indices_are_sorted: bool = False, unique_indices: bool = False,
+            mode: str | lax_slicing.GatherScatterMode | None = None,
+            wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] **= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
     :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] **= y``.
 
-    See :mod:`jax.ops` for details.
+    See :func:`jax.numpy.ndarray.at` for details.
     """
     return ufuncs.power(
       self.array,
-      scatter._scatter_update(lax_numpy.ones_like(self.array), self.index, values,
-                              lax.scatter_mul,
+      scatter._scatter_update(array_creation.ones_like(self.array), self.index, values,
+                              lax_slicing.scatter_mul,
                               indices_are_sorted=indices_are_sorted,
-                              unique_indices=unique_indices, mode=mode))
+                              unique_indices=unique_indices, mode=mode,
+                              normalize_indices=wrap_negative_indices))
 
-  def min(self, values, *, indices_are_sorted=False, unique_indices=False,
-          mode=None):
+  def min(self, values: ArrayLike, *,
+          indices_are_sorted: bool = False, unique_indices: bool = False,
+          mode: str | lax_slicing.GatherScatterMode | None = None,
+          wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] = minimum(x[idx], y)``.
 
     Returns the value of ``x`` that would result from the NumPy-style
     :mod:indexed assignment <numpy.doc.indexing>`
     ``x[idx] = minimum(x[idx], y)``.
 
-    See :mod:`jax.ops` for details.
+    See :func:`jax.numpy.ndarray.at` for details.
     """
     return scatter._scatter_update(self.array, self.index, values,
-                                   lax.scatter_min,
+                                   lax_slicing.scatter_min,
                                    indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices, mode=mode)
+                                   unique_indices=unique_indices, mode=mode,
+                                   normalize_indices=wrap_negative_indices)
 
-  def max(self, values, *, indices_are_sorted=False, unique_indices=False,
-          mode=None):
+  def max(self, values: ArrayLike, *,
+          indices_are_sorted: bool = False, unique_indices: bool = False,
+          mode: str | lax_slicing.GatherScatterMode | None = None,
+          wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] = maximum(x[idx], y)``.
 
     Returns the value of ``x`` that would result from the NumPy-style
     :mod:indexed assignment <numpy.doc.indexing>`
     ``x[idx] = maximum(x[idx], y)``.
 
-    See :mod:`jax.ops` for details.
+    See :func:`jax.numpy.ndarray.at` for details.
     """
     return scatter._scatter_update(self.array, self.index, values,
-                                   lax.scatter_max,
+                                   lax_slicing.scatter_max,
                                    indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices, mode=mode)
+                                   unique_indices=unique_indices, mode=mode,
+                                   normalize_indices=wrap_negative_indices)
 
 _array_operators = {
   "getitem": _getitem,
@@ -948,8 +1035,6 @@ _array_operators = {
   "rsub": _defer_to_unrecognized_arg("-", ufuncs.subtract, swap=True),
   "mul": _defer_to_unrecognized_arg("*", ufuncs.multiply),
   "rmul": _defer_to_unrecognized_arg("*", ufuncs.multiply, swap=True),
-  "div": _defer_to_unrecognized_arg("/", ufuncs.divide),
-  "rdiv": _defer_to_unrecognized_arg("/", ufuncs.divide, swap=True),
   "truediv": _defer_to_unrecognized_arg("/", ufuncs.true_divide),
   "rtruediv": _defer_to_unrecognized_arg("/", ufuncs.true_divide, swap=True),
   "floordiv": _defer_to_unrecognized_arg("//", ufuncs.floor_divide),

@@ -14,15 +14,16 @@
 """Utilities for tracing stateful functions."""
 
 from functools import partial
-from typing import Callable
+from collections.abc import Callable
 
-import jax
+from jax._src import api
 from jax._src import core
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
-from jax._src.state import AbstractRef
+from jax._src.lax import lax
 from jax._src.state.primitives import ref_get
+from jax._src.state.types import AbstractRef
 from jax._src.typing import DTypeLike
 from jax._src.util import safe_map, safe_zip, split_list
 
@@ -72,8 +73,9 @@ def hoist_consts_to_refs(
     ]
     return core.eval_jaxpr(jaxpr, all_consts, *args0, *args1)
 
-  hoisted_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(_hoist, debug_info=jaxpr.debug_info), in_avals)
+  hoisted_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+      lu.wrap_init(_hoist, debug_info=jaxpr.debug_info.with_unknown_names()),
+      in_avals)
   assert not consts, "All consts should have been converted to refs"
   return hoisted_jaxpr
 
@@ -85,15 +87,9 @@ def val_to_ref_aval(x) -> AbstractRef:
   return AbstractRef(aval)
 
 
-def dtype_bitwidth(dtype: DTypeLike) -> int:
-  if dtypes.isdtype(dtype, "integral"):
-    return dtypes.iinfo(dtype).bits
-  return dtypes.dtype(dtype).itemsize * 8
-
-
 def bitcast(x, dtype: DTypeLike):
-  x_bitwidth = dtype_bitwidth(x.dtype)
-  y_bitwidth = dtype_bitwidth(dtype)
+  x_bitwidth = dtypes.itemsize_bits(x.dtype)
+  y_bitwidth = dtypes.itemsize_bits(dtype)
   shape = list(x.shape)
   if x_bitwidth != y_bitwidth:
     if len(shape) < 2:
@@ -112,7 +108,7 @@ def bitcast(x, dtype: DTypeLike):
     x = x.reshape(*x.shape[:-2], x.shape[-2] // ratio, ratio, -1).swapaxes(
         -1, -2
     )
-  y = jax.lax.bitcast_convert_type(x, dtype)
+  y = lax.bitcast_convert_type(x, dtype)
   if x_bitwidth > y_bitwidth:
     y = y.swapaxes(-1, -2).reshape(shape)
   return y
@@ -120,4 +116,4 @@ def bitcast(x, dtype: DTypeLike):
 
 def eval_bitcast_shape(x, dtype: DTypeLike):
   f = partial(bitcast, dtype=dtype)
-  return jax.eval_shape(f, jax.ShapeDtypeStruct(x.shape, x.dtype)).shape
+  return api.eval_shape(f, api.ShapeDtypeStruct(x.shape, x.dtype)).shape

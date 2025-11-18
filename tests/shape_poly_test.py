@@ -14,39 +14,38 @@
 
 from __future__ import annotations
 
-import enum
+import collections
 from collections.abc import Callable, Sequence
 import cProfile
+import enum
+from functools import partial
 import itertools
 import math
+import operator as op
 import os
 from pstats import Stats
+import re
 from typing import Any
 import unittest
 
 from absl import logging
 from absl.testing import absltest
 
-import collections
-import functools
-from functools import partial
-import operator as op
-import re
-
 import jax
 from jax import export
-from jax.experimental import pjit
 from jax import lax
 import jax.numpy as jnp
 from jax import ops
 from jax import random
 from jax._src import config
 from jax._src import core
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.export import shape_poly
 from jax._src.export import shape_poly_decision
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
+from jax._src.lax import utils as lax_utils
 from jax._src.state import discharge
 from jax._src.state import primitives as ref_primitives
 
@@ -76,17 +75,6 @@ def _expect(*, current, best):
 
 def _bounds(e: shape_poly.DimSize) -> tuple[float, float]:
   return shape_poly._bounds_decision(e, shape_poly.BoundsPrecision.BEST)
-
-def _assert_equal_bounds(tst: jtu.JaxTestCase,
-                         e: shape_poly.DimSize,
-                         bounds: tuple[float, float]):
-  if isinstance(e, shape_poly._DimExpr):
-    scope = e.scope
-  else:
-    scope = shape_poly.SymbolicScope()
-  decision = shape_poly._make_decision_state(scope)
-  found_bounds = decision.bounds(e)
-  tst.assertEqual(bounds, found_bounds)
 
 def _start_profile(tst: jtu.JaxTestCase):
   tst.prof = None
@@ -673,7 +661,6 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertGreaterEqual(-8, -poly)
     self.assertGreater(-7, -poly)
 
-
   def test_int_results(self):
     # Whenever the result is an integer, it should be represented as a
     # Python integer, not a symbolic dimension.
@@ -717,7 +704,6 @@ class DimExprTest(jtu.JaxTestCase):
                              dividend, divisor)
       self.sampled_assertion(remainder, lambda *args: divmod(*args)[1],
                              dividend, divisor)
-
 
   def test_unit_combine_term_with_constraints(self):
     a, b, c, d, e = shape_poly.symbolic_shape("a, b, c, d, e",
@@ -786,7 +772,6 @@ class DimExprTest(jtu.JaxTestCase):
          (Comparator.GEQ, 3*d + c - 10, 2, -3)},
         set(decision.combine_term_with_existing(_m(d), 2, scope=scope,
                                                 only_smaller_than_t=True)))
-
 
   def test_dilate_dim(self):
     """0 if d == 0 else 1 + dilation * (d - 1))"""
@@ -961,7 +946,7 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(bounds, _bounds(exp))
 
   def test_constraints_ge_override(self):
-    # Some constaints override other
+    # Some constraints override other
     a, b = shape_poly.symbolic_shape("a, b",
                                      constraints=("a >= 5", "b <= 16",
                                                   "a >= 10", "b <= 10"))
@@ -979,7 +964,7 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertIs(d, 5)
 
   def test_constraints_eq_1(self):
-    # Some constaints override other
+    # Some constraints override other
     a, b, c = shape_poly.symbolic_shape("a, b, c",
                                         constraints=("max(a, b) == c",))
     self.assertEqual(_bounds(core.max_dim(a, b) - c + 3), (3, 3))
@@ -1002,7 +987,7 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(_bounds(b), (2, np.inf))
     # TODO: the following ought to work, but the way we wrote the equality
     # constraint, `min(b, 2)` gets rewritten to `2`.
-    #self.assertEqual(core.min_dim(a, b), b - core.min_dim(b, 2))
+    # self.assertEqual(core.min_dim(a, b), b - core.min_dim(b, 2))
 
   def test_constraints_eq_4(self):
     # Equalities of a variable with an expression
@@ -1253,6 +1238,25 @@ class DimExprTest(jtu.JaxTestCase):
         with self.assertRaisesRegex(ValueError,
                                     "Invalid mixing of symbolic scopes"):
           o(a, a1)
+
+  def test_int_dtype_for_shape(self):
+    shape = shape_poly.symbolic_shape("2, a")
+    self.assertEqual(
+        dtypes.default_int_dtype(),
+        lax_utils.int_dtype_for_shape(shape, signed=True),
+    )
+    self.assertEqual(
+        dtypes.default_uint_dtype(),
+        lax_utils.int_dtype_for_shape(shape, signed=False),
+    )
+    self.assertEqual(
+        dtypes.default_int_dtype(),
+        lax_utils.int_dtype_for_dim(shape[1], signed=True),
+    )
+    self.assertEqual(
+        dtypes.default_uint_dtype(),
+        lax_utils.int_dtype_for_dim(shape[1], signed=False),
+    )
 
 
 class PolyHarness(Harness):
@@ -1531,8 +1535,7 @@ class ShapePolyTest(jtu.JaxTestCase):
     # Arguments are of the form [([x00, x01], [x10]), dict(a=ya, b=yb)]
     def add_all_jax(x_pair_of_list, y_dict):
       x_list_0, x_list_1 = x_pair_of_list
-      return functools.reduce(op.add,
-                              x_list_0 + x_list_1 + [y_dict["a"], y_dict["b"]])
+      return sum(x_list_0 + x_list_1 + [y_dict["a"], y_dict["b"]])
 
     x = np.arange(4, dtype=_f32)
     args = (([x, x], [x]), dict(a=x, b=x))
@@ -1582,8 +1585,7 @@ class ShapePolyTest(jtu.JaxTestCase):
     args = (([x, x], [x]), dict(a=x, b=x))
     def add_all_jax(x_pair_of_list, y_dict):
       x_list_0, x_list_1 = x_pair_of_list
-      return functools.reduce(op.add,
-                              x_list_0 + x_list_1 + [y_dict["a"], y_dict["b"]])
+      return sum(x_list_0 + x_list_1 + [y_dict["a"], y_dict["b"]])
 
     with self.assertRaisesRegex(ValueError, "pytree structure error"):
       check_shape_poly(self,
@@ -1966,7 +1968,7 @@ class ShapePolyTest(jtu.JaxTestCase):
 
       setattr(shape_poly._DimExpr, "__hash__", collision_hash)
       xs = [np.ones((3, 5, 6), dtype=np.float32)]
-      f_toconvert = jax.vmap(pjit.pjit(f_jax))
+      f_toconvert = jax.vmap(jax.jit(f_jax))
       res_1 = check_shape_poly(self, f_toconvert, arg_descriptors=xs,
                                polymorphic_shapes=["..."])
       res_2 = check_shape_poly(self, f_toconvert, arg_descriptors=xs,
@@ -3463,6 +3465,26 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                    k=x.shape[1]),
                 arg_descriptors=[RandArg((3, 4), _f32)],
                 polymorphic_shapes=["m, n"]),
+    [
+        PolyHarness("tril_indices", f"{has_k=}_{has_m=}",
+                    lambda x: jnp.tril_indices(x.shape[0],  # n
+                                               k=x.shape[0] - 1 if has_k else 0,
+                                               m=x.shape[1] if has_m else None),
+                    arg_descriptors=[RandArg((3, 4), _f32)],
+                    polymorphic_shapes=["n, m"])
+        for has_k in [True, False]
+        for has_m in [True, False]
+    ],
+    [
+      PolyHarness("triu_indices", f"{has_k=}_{has_m=}",
+                  lambda x: jnp.triu_indices(x.shape[0], # n
+                                             k=x.shape[0] - 1 if has_k else 0,
+                                             m=x.shape[1] if has_m else None),
+                  arg_descriptors=[RandArg((3, 4), _f32)],
+                  polymorphic_shapes=["n, m"])
+      for has_k in [True, False]
+      for has_m in [True, False]
+    ],
     [
       PolyHarness("triangular_solve",
                   f"shape={jtu.format_shape_dtype_string(a_shape, dtype)}_{left_side=}_{a_poly=}_{b_poly=}",

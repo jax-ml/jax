@@ -259,6 +259,27 @@ class WeakrefLRUCacheTest(absltest.TestCase):
     for ref in expected_refs:
       self.assertIn(ref, gc.get_referents(cache))
 
+  def testReentrantKey(self):
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x, y: y, 2048
+    )
+
+    class WRKey:
+      pass
+
+    class ReentrantKey:
+      def __eq__(self, other):
+        cache(WRKey(), None)
+        return False
+
+      def __hash__(self):
+        return 42
+
+    wrkey = WRKey()
+    with self.assertRaisesRegex(RecursionError, "Reentrant call"):
+      for _ in range(100):
+        cache(wrkey, ReentrantKey())
+
 
 if __name__ == "__main__":
   absltest.main()

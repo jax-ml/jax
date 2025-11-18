@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 
+#include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <ostream>
@@ -25,11 +27,15 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Attributes.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
@@ -48,19 +54,61 @@ std::ostream &operator<<(std::ostream &os, Print p) {
 
 SmallVector<int64_t> ComputeTileStrides(absl::Span<const int64_t> shape,
                                         absl::Span<const int64_t> tiling) {
+  CHECK_LE(tiling.size(), shape.size());
   SmallVector<int64_t> tile_strides(shape.size());
   int64_t stride = 1;
-  for (int64_t i = 0; i < shape.size(); ++i) {
-    int64_t idx = shape.size() - 1 - i;
-    int64_t tiling_idx = tiling.size() - 1 - i;
+  for (size_t i = 0; i < shape.size(); ++i) {
+    const size_t idx = shape.size() - 1 - i;
     tile_strides[idx] = stride;
-    if (tiling_idx >= 0) {
+    if (i < tiling.size()) {
+      const size_t tiling_idx = tiling.size() - 1 - i;
       stride *= llvm::divideCeil(shape[idx], tiling[tiling_idx]);
     } else {
       stride *= shape[idx];
     }
   }
   return tile_strides;
+}
+
+FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
+    Operation *op, ArrayRef<int64_t> source_shape,
+    ArrayRef<int64_t> target_shape) {
+  SmallVector<int> squeezed;
+  int source_index = source_shape.size() - 1;
+  int target_index = target_shape.size() - 1;
+
+  while (source_index >= 0 || target_index >= 0) {
+    int64_t target_dim = (target_index >= 0) ? target_shape[target_index] : -1;
+    if (source_index < 0) {
+      op->emitError() << llvm::formatv(
+          "Target shape is not valid. Source: {0}, Target: {1}.",
+          shapeToString(source_shape), shapeToString(target_shape));
+      return failure();
+    }
+    int64_t source_dim = source_shape[source_index];
+    if (source_dim == target_dim) {
+      source_index--;
+      target_index--;
+    } else {
+      if (source_dim != 1) {
+        op->emitError() << llvm::formatv(
+            "Target shape is not valid. Source: {0}, Target: {1}.",
+            shapeToString(source_shape), shapeToString(target_shape));
+        return failure();
+      }
+      squeezed.push_back(source_index);
+      source_index--;
+    }
+  }
+
+  if (source_index != -1 || target_index != -1) {
+    op->emitError() << "Shape mismatch after traversal. Source shape: "
+                    << shapeToString(source_shape)
+                    << ", target shape: " << shapeToString(target_shape);
+    return failure();
+  }
+  std::reverse(squeezed.begin(), squeezed.end());
+  return squeezed;
 }
 
 std::optional<std::pair<bool, bool>> isTransposedMatmul(
@@ -159,6 +207,17 @@ bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
          *(tiled_layout.getTileStrides().end() - 2) == 1;
 }
 
+bool isContiguousMemref(TypedValue<MemRefType> memref) {
+  auto memref_ty = getMemRefType(memref);
+  if (auto tiled_layout =
+          dyn_cast<tpu::TiledLayoutAttr>(memref_ty.getLayout())) {
+    auto contiguous_tile_strides = ComputeTileStrides(
+        memref_ty, tiled_layout.getTiles().front().dimensions());
+    return contiguous_tile_strides == tiled_layout.getTileStrides();
+  }
+  return true;
+}
+
 bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space) {
   auto memory_space =
       dyn_cast_or_null<tpu::MemorySpaceAttr>(ty.getMemorySpace());
@@ -210,7 +269,9 @@ FailureOr<SmallVector<Layout>> getOutLayouts(
   FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> out_layouts,
                              getLayoutArrayFromAttr(op.getAttr("out_layout")));
   if (out_layouts.size() != op.getNumResults()) {
-    return op.emitOpError("out_layout size does not match number of results");
+    return op.emitOpError("out_layout size (")
+           << out_layouts.size() << ") does not match number of results ("
+           << op.getNumResults() << ")";
   }
   for (const auto [l, res] : llvm::zip_equal(out_layouts, op.getResults())) {
     if (!layoutIsValidForValue(l, res, target_shape)) {
@@ -225,7 +286,9 @@ FailureOr<SmallVector<Layout>> getInLayouts(
   FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> in_layouts,
                              getLayoutArrayFromAttr(op.getAttr("in_layout")));
   if (in_layouts.size() != op.getNumOperands()) {
-    return op.emitOpError("in_layout size does not match number of operands");
+    return op.emitOpError("in_layout size (")
+           << in_layouts.size() << ") does not match number of operands ("
+           << op.getNumOperands() << ")";
   }
   for (const auto [l, operand] :
        llvm::zip_equal(in_layouts, op.getOperands())) {
@@ -275,4 +338,37 @@ void setLayout(Operation *op, ArrayRef<Layout> in, ArrayRef<Layout> out) {
   setInLayout(op, in);
   setOutLayout(op, out);
 }
+
+std::optional<int64_t> getIntConst(Value v) {
+  if (auto const_op = v.getDefiningOp<arith::ConstantOp>()) {
+    if (auto cst_attr = dyn_cast<IntegerAttr>(const_op.getValue())) {
+      return cst_attr.getValue().getSExtValue();
+    }
+  }
+  return std::nullopt;
+}
+
+SmallVector<Operation *> getNontrivialTransitiveUsers(Value v) {
+  auto isUnaryElementwise = [](Operation *op) {
+    if (!op->hasTrait<mlir::OpTrait::Elementwise>()) {
+      return false;
+    }
+    return op->getNumOperands() == 1 && op->getNumResults() == 1;
+  };
+  SmallVector<Operation *> users;
+  SmallVector<Value> candidates;
+  candidates.push_back(v);
+  while (!candidates.empty()) {
+    Value candidate = candidates.back();
+    candidates.pop_back();
+    for (const auto &user : candidate.getUsers()) {
+      if (isa<tpu::BitcastOp>(user) || isUnaryElementwise(user))
+        candidates.push_back(user->getResult(0));
+      else
+        users.push_back(user);
+    }
+  }
+  return users;
+}
+
 }  // namespace mlir::tpu

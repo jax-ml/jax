@@ -15,14 +15,13 @@
 import functools
 import math
 import sys
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import lax
+from jax._src import dtypes
 from jax._src import test_util as jtu
-from jax._src.pallas import utils as pallas_utils
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -32,24 +31,49 @@ if sys.platform != "win32":
 else:
   pltpu = None
 
-try:
-  import hypothesis as hp
-except (ModuleNotFoundError, ImportError):
-  raise unittest.SkipTest("tests depend on hypothesis library")
-
-import hypothesis.strategies as hps
 
 jax.config.parse_flags_with_absl()
 jtu.setup_hypothesis(max_examples=100)
 
-_JAX_DTYPES = (
+_JAX_DTYPES_NO_BOOL = (
     jnp.float32,
     jnp.bfloat16,
     jnp.int32,
     jnp.int16,
     jnp.int8,
+    jnp.int4,
+    jnp.float8_e5m2,
+)
+
+_JAX_DTYPES = (
+    *_JAX_DTYPES_NO_BOOL,
     jnp.bool_,
 )
+
+_JAX_INT_DTYPES = (
+    jnp.int32,
+    jnp.int16,
+    jnp.int8,
+    jnp.int4,
+    jnp.uint32,
+    jnp.uint16,
+    jnp.uint8,
+    jnp.uint4,
+)
+
+
+def rand(
+    shape: tuple[int, ...], dtype: np.dtype | jnp.dtype, seed: int = 1234
+) -> np.ndarray:
+  """A helper function to generate random data for testing."""
+  rng = np.random.Generator(np.random.Philox(counter=0, key=seed))
+  if jnp.issubdtype(dtype, jnp.floating):
+    return rng.normal(size=shape).astype(dtype)
+  if jnp.issubdtype(dtype, jnp.integer):
+    return rng.integers(
+        jnp.iinfo(dtype).min, jnp.iinfo(dtype).max, shape, dtype=np.int32
+    ).astype(dtype)
+  raise NotImplementedError(f"Unsupported random data generation for {dtype=}")
 
 
 class PallasBaseTest(jtu.JaxTestCase):
@@ -66,13 +90,18 @@ class PallasBaseTest(jtu.JaxTestCase):
     return pl.pallas_call(*args, interpret=cls.INTERPRET, **kwargs)
 
 
-@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
+@jtu.thread_unsafe_test_class(condition=not jtu.hypothesis_is_thread_safe())
 class OpsTest(PallasBaseTest):
 
   @parameterized.product(
-      from_dtype=_JAX_DTYPES, to_dtype=_JAX_DTYPES, is_ref_bitcast=[False, True]
+      from_dtype=_JAX_DTYPES,
+      to_dtype=_JAX_DTYPES,
+      is_ref_bitcast=[False, True],
+      use_primitive_io_op=[False, True],
   )
-  def test_bitcast(self, from_dtype, to_dtype, is_ref_bitcast):
+  def test_bitcast(
+      self, from_dtype, to_dtype, is_ref_bitcast, use_primitive_io_op
+  ):
     if not jtu.is_device_tpu_at_least(version=4):
       self.skipTest("Run on TPUv4+ to have expected memory layout")
     if from_dtype == to_dtype:
@@ -82,13 +111,19 @@ class OpsTest(PallasBaseTest):
 
     def kernel(x_ref, y_ref):
       if is_ref_bitcast:
-        y_ref[...] = x_ref.bitcast(to_dtype)[...]
+        if use_primitive_io_op:
+          pltpu.store(y_ref, pltpu.load(x_ref.bitcast(to_dtype)))
+        else:
+          y_ref[...] = x_ref.bitcast(to_dtype)[...]
       else:
-        y_ref[...] = pltpu.bitcast(x_ref[...], to_dtype)
+        if use_primitive_io_op:
+          pltpu.store(y_ref, pltpu.bitcast(pltpu.load(x_ref), to_dtype))
+        else:
+          y_ref[...] = pltpu.bitcast(x_ref[...], to_dtype)
 
     m, n = 1, 256
-    in_packing = 32 // pallas_utils.dtype_bitwidth(from_dtype)
-    out_packing = 32 // pallas_utils.dtype_bitwidth(to_dtype)
+    in_packing = 32 // dtypes.itemsize_bits(from_dtype)
+    out_packing = 32 // dtypes.itemsize_bits(to_dtype)
     in_shape = (m * in_packing, n)
     out_shape = (m * out_packing, n)
     inp = np.arange(np.prod(in_shape), dtype=from_dtype).reshape(in_shape)
@@ -104,57 +139,13 @@ class OpsTest(PallasBaseTest):
       )(inp)
       self.assertAllClose(out, out_interpret)
 
-  @parameterized.product(is_dynamic=(False, True))
-  @hp.given(
-      axis=hps.integers(0, 3),
-      shift=hps.integers(0, 3),
-      stride=hps.one_of(hps.just(None), hps.integers(0, 2)),
-      # Stride dimension on the minor most is not supported.
-      stride_axis=hps.one_of(hps.just(None), hps.integers(0, 2)),
-  )
-  @hp.example(3, 9, 1, 2)
-  @hp.example(3, 9, 2, 2)
-  @hp.example(0, 9, 0, 1)
-  @hp.example(0, 9, 1, 1)
-  def test_roll(self, is_dynamic, axis, shift, stride, stride_axis):
-    if (stride is None) != (stride_axis is None):
-      self.skipTest(
-          "Roll op requires both stride and stride_axis to be either specified"
-          " or not specified."
-      )
-    if (not jtu.is_device_tpu(version=5)) and stride_axis == 2:
-      self.skipTest(
-          "Roll op with stride axis on 2nd minor requires at least TPU v5"
-      )
-    shape = (4, 4, 32, 512)
+  def test_stop_gradient(self):
+    def kernel(x_ref, y_ref):
+      y_ref[...] = jax.lax.stop_gradient(x_ref[...] + 1)
 
-    def kernel(s_ref, x_ref, y_ref):
-      amt = s_ref[0] if is_dynamic else shift
-      y_ref[...] = pltpu.roll(
-          x_ref[...], amt, axis, stride=stride, stride_axis=stride_axis
-      )
-
-    def roll(x, shift, axis, stride=None, stride_axis=None):
-      assert (stride is None) == (stride_axis is None)
-      if stride is None:
-        return np.roll(x, shift, axis)
-      outputs = [
-          np.roll(xs, shift + i * stride, axis)
-          for i, xs in enumerate(np.split(x, x.shape[stride_axis], stride_axis))
-      ]
-      return np.concatenate(outputs, stride_axis)
-
-    inp = np.arange(np.prod(shape), dtype=jnp.int32).reshape(shape)
-    ref = roll(inp, shift, axis, stride, stride_axis)
-    dynamic_shift = jnp.array([abs(shift)], jnp.int32)
-    for interpret in [False, True]:
-      out = pl.pallas_call(
-          kernel,
-          out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
-          grid_spec=pltpu.PrefetchScalarGridSpec(num_scalar_prefetch=1),
-          interpret=interpret,
-      )(dynamic_shift, inp)
-      np.testing.assert_array_equal(out, ref, err_msg=f"{interpret=}")
+    x = jnp.arange(1024, dtype=jnp.float32)
+    y = pl.pallas_call(kernel, out_shape=x)(x)
+    self.assertAllClose(y, x + 1)
 
   def test_interleave_vectors(self):
     if not jtu.is_device_tpu_at_least(version=4):
@@ -179,10 +170,9 @@ class OpsTest(PallasBaseTest):
 
   @parameterized.parameters([jnp.int32, jnp.int16, jnp.int8, jnp.int4])
   def test_row_broadcast(self, dtype):
-    if not jtu.if_cloud_tpu_at_least(2025, 1, 10):
-      self.skipTest("Requires libtpu built after 2025-01-10")
-    if not self.INTERPRET and jtu.get_tpu_version() < 5:
-      self.skipTest("Requires TPUv5+")
+    bitwidth = dtypes.itemsize_bits(dtype)
+    if not self.INTERPRET and jtu.get_tpu_version() < 4 and bitwidth < 8:
+      self.skipTest("Requires TPUv4+ for sub-byte types")
     def kernel(x_ref, y_ref):
       y_ref[...] = jnp.broadcast_to(x_ref[pl.ds(3, 1)], y_ref.shape).astype(y_ref.dtype)
     m, n = 4, 1152
@@ -194,30 +184,18 @@ class OpsTest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(y, jnp.broadcast_to(x[3:4], y.shape))
 
-  def test_tpu_unsigned_int(self):
-    self.skipTest("TODO(apaszke): Unsigned upcasts were implemented incorrectly")
-    def body(x_ref, o_ref):
-      # Test cast from uint16 -> uint32
-      ux = lax.convert_element_type(x_ref[...], jnp.uint32)
-      res = ux + 1
-      # Test cast from uint32 -> float32
-      o_ref[...] = res.astype(jnp.float32)
-    out = jax.ShapeDtypeStruct((8, 128), jnp.float32)
-    x = jnp.arange(8 * 128, dtype=jnp.uint16).reshape((8, 128))
-    result = self.pallas_call(body, out_shape=out)(x)
-    np.testing.assert_array_equal(result, x.astype(jnp.float32) + 1.0)
-
-  def test_tpu_signed_int_upcast(self):
+  @parameterized.parameters([jnp.uint4, jnp.int4])
+  def test_tpu_int4_upcast_and_matmul(self, dtype):
     if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("TPUv5+ needed for integer matmuls")
 
     def body(x_ref, o_ref):
-      # Test cast from int4 -> int8
+      # Test cast from (u)int4 -> int8
       ux = lax.convert_element_type(x_ref[...], jnp.int8)
       o_ref[...] = jax.lax.dot(ux, ux, preferred_element_type=jnp.int32)
 
     out = jax.ShapeDtypeStruct((128, 128), jnp.int32)
-    x = jnp.arange(128 * 128, dtype=jnp.int4).reshape((128, 128))
+    x = jnp.arange(128 * 128, dtype=dtype).reshape((128, 128))
     result = self.pallas_call(body, out_shape=out)(x)
     np.testing.assert_array_equal(
         result,
@@ -227,6 +205,67 @@ class OpsTest(PallasBaseTest):
             preferred_element_type=jnp.int32,
         ),
     )
+
+  def test_sum_of_two_matmuls(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 15):
+      self.skipTest("Test requires libtpu from 2025/11/15 or later")
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Test requires TPUv5+")
+
+    M, K = 8, 8
+    k1, k2, k3, k4 = jax.random.split(jax.random.key(42), 4)
+    a_val = jax.random.normal(k1, (M, K), dtype=jnp.float32)
+    b_val = jax.random.normal(k2, (K,), dtype=jnp.float32)
+    c_val = jax.random.normal(k3, (M, K), dtype=jnp.float32)
+    d_val = jax.random.normal(k4, (K,), dtype=jnp.float32)
+
+    def kernel(a_ref, b_ref, c_ref, d_ref, o_ref):
+      a = a_ref[:]
+      b = b_ref[:]
+      c = c_ref[:]
+      d = d_ref[:]
+      res1 = jnp.dot(a, b)
+      res2 = jnp.dot(c, d)
+
+      o_ref[:] = res1 + res2
+
+    @jax.jit
+    def pallas_fn(a, b, c, d):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((M,), np.float32),
+          grid=(1,),
+      )(a, b, c, d)
+
+    result_pallas = pallas_fn(a_val, b_val, c_val, d_val)
+    expected = jnp.dot(a_val, b_val) + jnp.dot(c_val, d_val)
+    self.assertAllClose(result_pallas, expected, atol=1e-5, rtol=1e-5)
+
+  @parameterized.product(from_dtype=_JAX_INT_DTYPES,
+                         to_dtype=_JAX_INT_DTYPES)
+  def test_integer_cast(self, from_dtype, to_dtype):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Expect TPUv4+")
+    # Generate both low and high values to better cover the entire range
+    # of the source dtype.
+    min_val = from_dtype(jnp.iinfo(from_dtype).min)
+    max_val = from_dtype(jnp.iinfo(from_dtype).max)
+    if jnp.iinfo(from_dtype).bits > 4:
+      x_random = jax.random.randint(jax.random.key(0), shape=(112, 256),
+                                    minval=min_val, maxval=max_val, dtype=from_dtype)
+    else:
+      # randint does not support sub-byte types.
+      x_random = jnp.arange(112 * 256, dtype=from_dtype).reshape((112, 256))
+    arange = jnp.arange(8 * 256, dtype=from_dtype).reshape((8, 256))
+    x = jnp.concatenate([min_val + arange, x_random, max_val - arange], axis=0)
+
+    def body(x_ref, o_ref):
+      o_ref[...] = lax.convert_element_type(x_ref[...], to_dtype)
+
+    out = jax.ShapeDtypeStruct(x.shape, to_dtype)
+    expected = x.astype(to_dtype)
+    result = self.pallas_call(body, out_shape=out)(x)
+    np.testing.assert_array_equal(result, expected)
 
   def test_select_with_scalar_condition(self):
     def kernel(cond, lhs, rhs, out):
@@ -273,10 +312,8 @@ class OpsTest(PallasBaseTest):
 
   @parameterized.product(dtype=[jnp.float32, jnp.bfloat16, jnp.int16, jnp.int8])
   def test_cast_vector_to_mask(self, dtype):
-    if not jtu.if_cloud_tpu_at_least(2025, 1, 22):
-      self.skipTest("Requires libtpu built after 2025-01-22")
     shape = (128, 128)
-    bitwidth = pallas_utils.dtype_bitwidth(dtype)
+    bitwidth = dtypes.itemsize_bits(dtype)
     if jtu.get_tpu_version() < 5 and bitwidth < 32:
       self.skipTest(
           f"Not implemented: cast vector to mask with bitwidth == {bitwidth}"
@@ -303,15 +340,6 @@ class OpsTest(PallasBaseTest):
       reduce_func = [jnp.sum, jnp.max, jnp.min]
   )
   def test_reduction(self, dtype, axis, reduce_func):
-    if dtype == jnp.int32:
-      # TODO(apaszke): Remove after 12 weeks have passed.
-      if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
-        self.skipTest("Requires libtpu built after 2024-12-19")
-      if axis == 2:
-        self.skipTest("Int32 reduction on minor is not supported.")
-    # TODO(b/384127570): fix bfloat16 reduction.
-    if dtype == jnp.bfloat16 and reduce_func != jnp.sum:
-      self.skipTest("b/384127570")
     in_shape = (2, 16, 128)
     out_shape = list(in_shape)
     out_shape[axis] = 1
@@ -328,15 +356,40 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_array_equal(result, expected)
 
   @parameterized.product(
+      axis=[0, 1, 2],
+      reduce_func = [jnp.argmax, jnp.argmin]
+  )
+  def test_reduce_index(self, axis, reduce_func):
+    dtype = jnp.float32
+    in_shape = (2, 32, 256)
+    rank = len(in_shape)
+    if axis == rank - 1 and not jtu.is_device_tpu_at_least(version=4):
+      self.skipTest("Requires TPUv4+ for axis=1")
+
+    out_shape = list(in_shape)
+    out_shape[axis] = 1
+
+    def kernel(x, out):
+      out[:] = reduce_func(x[:], axis, keepdims=True)
+
+    x = jnp.arange(np.prod(in_shape), dtype=dtype).reshape(in_shape)
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.int32),
+    )(x)
+    expected = reduce_func(x, axis, keepdims=True)
+    np.testing.assert_array_equal(result, expected)
+
+  @parameterized.product(
+      shape=[(129, 129), (1, 129), (2, 129), (4, 129)],
       msk_dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
       dtype=[jnp.float32, jnp.bfloat16],
   )
-  def test_i1_relayout_with_bitwidth_change(self, msk_dtype, dtype):
-    if not jtu.if_cloud_tpu_at_least(2025, 1, 25):
-      self.skipTest("Requires libtpu built after 2025-01-25")
-    shape = (129, 129)
-    msk_bitwidth = pallas_utils.dtype_bitwidth(msk_dtype)
-    bitwidth = pallas_utils.dtype_bitwidth(dtype)
+  def test_i1_relayout_bw(self, shape, msk_dtype, dtype):
+    if shape[0] < 8 and not jtu.if_cloud_tpu_at_least(2025, 11, 9):
+      self.skipTest("Requires libtpu built after 2025-11-09")
+    msk_bitwidth = dtypes.itemsize_bits(msk_dtype)
+    bitwidth = dtypes.itemsize_bits(dtype)
     if jtu.get_tpu_version() < 5 and msk_bitwidth < 32:
       self.skipTest(
           "Not implemented: cast vector to mask with bitwidth =="
@@ -363,12 +416,62 @@ class OpsTest(PallasBaseTest):
     self.assertArraysEqual(out, expected)
 
   @parameterized.product(
+      msk_dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
+      dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
+  )
+  def test_i1_relayout_bw_tiling(self, msk_dtype, dtype):
+    self.skipTest("TODO: jevinjiang - Enable once presubmits pass.")
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 7):
+      self.skipTest("Requires libtpu built after 2025-10-07")
+    shape = (256, 256)
+    bitwidth = dtypes.itemsize_bits(dtype)
+    msk_bitwidth = dtypes.itemsize_bits(msk_dtype)
+    msk_packing = 32 // msk_bitwidth
+    if jtu.get_tpu_version() < 5 and msk_bitwidth < 32:
+      self.skipTest(
+          "Not implemented: cast vector to mask with bitwidth =="
+          f" {msk_bitwidth}"
+      )
+    if jtu.get_tpu_version() < 5 and bitwidth < 32:
+      self.skipTest(f"Not implemented: comparison with bitwidth == {bitwidth}")
+
+    # Creating large tiling for masks by passing i32 vector first and
+    # then bitcast to msk_dtype so the tiling is also bitcasted from
+    #  T(8, 128) to T(8 * msk_packing, 128).
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )
+    def kernel(x_ref, msk_ref, o_ref):
+      zeros = jnp.zeros_like(x_ref)
+      msk = pltpu.bitcast(msk_ref[...], msk_dtype)
+      o_ref[...] = jnp.where(msk, x_ref[...], zeros)
+
+    mask = jax.random.bernoulli(jax.random.key(1234), 0.5, shape).astype(
+        msk_dtype
+    )
+    if msk_bitwidth < 32:
+      mask_for_bitcast = mask.reshape(
+          shape[0] // msk_packing, msk_packing, shape[1]
+      ).swapaxes(-1, -2)
+    else:
+      mask_for_bitcast = mask
+
+    mask_i32 = lax.bitcast_convert_type(
+        mask_for_bitcast,
+        jnp.int32,
+    )
+    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape) + 1
+
+    out = kernel(x, mask_i32)
+    expected = jnp.where(mask, x, jnp.zeros_like(x))
+    self.assertArraysEqual(out, expected)
+
+  @parameterized.product(
       target=(jnp.int8,),  # TODO(apaszke): Add int4.
       round=(False, True),
   )
   def test_quantize(self, target, round):
-    if not jtu.if_cloud_tpu_at_least(2025, 1, 15):
-      self.skipTest("Requires libtpu built after 2025-01-15")
     if not jtu.is_device_tpu_at_least(version=6):
       self.skipTest("Requires TPUv6+")
     shape = (256, 256)
@@ -391,8 +494,6 @@ class OpsTest(PallasBaseTest):
 
   @parameterized.product(axis=[0, 1], mode=["promise_in_bounds", None])
   def test_dynamic_gather_along_axis(self, axis, mode):
-    if not jtu.if_cloud_tpu_at_least(2025, 2, 5):
-      self.skipTest("Requires libtpu built after 2025-02-05")
     if (axis == 0 and not jtu.is_device_tpu_at_least(version=5)) or (
         axis == 1 and not jtu.is_device_tpu_at_least(version=4)
     ):
@@ -419,12 +520,10 @@ class OpsTest(PallasBaseTest):
 
   @parameterized.product(dtype=[jnp.float32, jnp.bfloat16])
   def test_float_div(self, dtype):
-    if not jtu.if_cloud_tpu_at_least(2025, 2, 13):
-      self.skipTest("Requires libtpu built after 2025-02-13")
     if not jtu.is_device_tpu_at_least(version=4):
       self.skipTest("Requires TPUv4+")
     kwargs = {}
-    if jtu.get_tpu_version() == 6:
+    if jtu.is_device_tpu_at_least(version=6):
       kwargs.update(dict(rtol=1e-2))
     def kernel(x, y, out):
       out[:] = jax.lax.div(x[:], y[:])
@@ -442,9 +541,7 @@ class OpsTest(PallasBaseTest):
       dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
   )
   def test_concat_mask(self, dtype):
-    if not jtu.if_cloud_tpu_at_least(2025, 2, 19):
-      self.skipTest("Requires libtpu built after 2025-02-19")
-    bitwidth = pallas_utils.dtype_bitwidth(dtype)
+    bitwidth = dtypes.itemsize_bits(dtype)
     if jtu.get_tpu_version() < 5 and bitwidth < 32:
       self.skipTest(
           f"Not implemented: cast vector to mask with bitwidth == {bitwidth}"
@@ -491,11 +588,284 @@ class OpsTest(PallasBaseTest):
     expected = dot(x[:], jnp.ones((1, d), jnp.bfloat16))
     np.testing.assert_array_equal(output, expected)
 
+  # We need to manually run the test with the env variable
+  # `export LIBTPU_INIT_ARGS="--xla_jf_bounds_check=true"`
+  def test_disable_bounds_check(self):
+    if jtu.get_tpu_version() < 4:
+      self.skipTest("Requires TPUv4+")
+    src_shape = (8, 128)
+    tgt_shape = (16, 256)
 
-@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
-class OpsInterpretTest(OpsTest):
-  INTERPRET = True
+    def kernel(src, tgt):
+      tgt[:] = src[tuple(pl.ds(d) for d in tgt.shape)]
 
+    x = jnp.arange(np.prod(src_shape), dtype=jnp.float32).reshape(src_shape)
+    run = pl.pallas_call(
+        kernel,
+        jax.ShapeDtypeStruct(tgt_shape, jnp.float32),
+        compiler_params=pltpu.CompilerParams(disable_bounds_checks=True),
+    )
+    output = run(x)
+    np.testing.assert_array_equal(
+        output[tuple(slice(0, d) for d in src_shape)], x
+    )
+
+  def test_while_loop_arg_num_change(self):
+    # This kernel will generate a while loop that will be CSEd by MLIR to have
+    # the different number of argments in before region and after region.
+    def kernel(
+        out_ref,
+        a,
+    ):
+      def loop_cond(state):
+        _, y = state
+        return y
+
+      def loop_body(state):
+        x, y = state
+
+        def then_0():
+          def then_1():
+            return jnp.int32(0)
+
+          def else_1():
+            a[0] = a[0] + 1
+
+            return jnp.int32(1)
+
+          z = lax.cond(x == 0, then_1, else_1)
+          new_x = z
+          new_y = z != 0
+          return new_x, new_y
+
+        def else_0():
+          return x, jnp.bool_(False)
+
+        new_x, new_y = lax.cond(y, then_0, else_0)
+
+        return (new_x, new_y)
+
+      out_ref[0] = lax.while_loop(
+          loop_cond, loop_body, (jnp.int32(0), jnp.bool_(True))
+      )[0]
+
+    output = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
+        in_specs=(),
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+        scratch_shapes=(pltpu.SMEM((1,), jnp.int32),),
+    )()[0]
+    self.assertEqual(output, 0)
+
+  def test_produce_predicate_phi(self):
+    def kernel(
+        out_ref,
+        a,
+    ):
+      def loop_cond(state):
+        x, y = state
+        return jnp.logical_or(y, (x == 1))
+
+      def loop_body(state):
+        x, y = state
+
+        def then_0():
+          def then_1():
+            return jnp.int32(0)
+
+          def else_1():
+            a[0] = a[0] + 1
+
+            return jnp.int32(1)
+
+          z = lax.cond(x == 0, then_1, else_1)
+          new_x = z
+          new_y = z != 0
+          return new_x, new_y
+
+        def else_0():
+          return x, jnp.bool_(False)
+
+        new_x, new_y = lax.cond(y, then_0, else_0)
+
+        return (new_x, new_y)
+
+      out_ref[0] = lax.while_loop(
+          loop_cond, loop_body, (jnp.int32(0), jnp.bool_(True))
+      )[0]
+
+    output = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
+        in_specs=(),
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+        scratch_shapes=(pltpu.SMEM((1,), jnp.int32),),
+    )()[0]
+    self.assertEqual(output, 0)
+
+  def test_retiling_with_replicated_lane(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 5):
+      self.skipTest("Test requires libtpu from 2025/11/5 or later")
+    shape = (32, 1)
+    broadcast_shape = (32, 256)
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 4, 256), jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.broadcast_to(
+          x_ref[...], broadcast_shape
+      ).reshape(o_ref.shape)
+
+    x = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
+    out = kernel(x).reshape(broadcast_shape)
+    expected = jnp.broadcast_to(x, broadcast_shape)
+    np.testing.assert_array_equal(out, expected)
+
+  @parameterized.parameters(
+      [jnp.bfloat16, jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float8_e4m3b11fnuz]
+  )
+  def test_stochastic_round(self, target_dtype):
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 29):
+      self.skipTest("Test requires libtpu from 2025/10/29 or later")
+
+    def kernel(x_ref, b_ref, o_ref):
+      o_ref[...] = pltpu.stochastic_round(
+          x_ref[...], b_ref[...], target_dtype=target_dtype
+      )
+
+    shape = (8, 128)
+    k1, k2 = jax.random.split(jax.random.key(4242), 2)
+    x = jax.random.normal(k1, shape, dtype=jnp.float32)
+    bits = jax.random.bits(k2, shape, dtype=jnp.uint32)
+    x_cast = x.astype(target_dtype)
+    x_cast_as_f32 = x_cast.astype(jnp.float32)
+    max_val = jnp.finfo(target_dtype).max
+    min_val = jnp.finfo(target_dtype).min
+    lower = jnp.where(x_cast_as_f32 > x, jnp.nextafter(x_cast, min_val), x_cast)
+    upper = jnp.where(x_cast_as_f32 < x, jnp.nextafter(x_cast, max_val), x_cast)
+
+    result = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, target_dtype),
+    )(x, bits)
+
+    int_dtype = getattr(jnp, f"uint{dtypes.itemsize_bits(target_dtype)}")
+    is_correct_bitwise = (
+        (result.view(int_dtype) == lower.view(int_dtype)) |
+        (result.view(int_dtype) == upper.view(int_dtype))
+    )
+    is_correct = jnp.where(
+        jnp.isnan(x_cast), jnp.isnan(result), is_correct_bitwise
+    )
+    self.assertTrue(jnp.all(is_correct))
+
+  def _pack_unpack_elementwise_test_data(
+      self, shape, unpacked_dtype, packed_dtype):
+    """Generates data for test_pack_elementwise and test_unpack_elementwise."""
+    bitwidth = dtypes.itemsize_bits(packed_dtype)
+    num_sources = 32 // bitwidth
+    if unpacked_dtype == jnp.int32:
+      stacked_sources = jax.random.randint(
+          jax.random.key(0),
+          (num_sources, *shape),
+          minval=-1000,
+          maxval=1000,
+          dtype=unpacked_dtype,
+      )
+    else:
+      stacked_sources = jax.random.uniform(
+          jax.random.key(0), (num_sources, *shape), dtype=unpacked_dtype
+      )
+    stacked_results = (
+        stacked_sources.astype(packed_dtype)
+        .view(getattr(jnp, f"uint{bitwidth}"))
+        .astype(jnp.uint32)
+    )
+    shifts = jnp.arange(num_sources, dtype=jnp.uint32) * bitwidth
+    shifts = jnp.expand_dims(shifts, axis=tuple(range(1, stacked_results.ndim)))
+    packed_data = jnp.bitwise_or.reduce(stacked_results << shifts, axis=0)
+    return stacked_sources, packed_data
+
+  @parameterized.product(
+      config=[
+          (jnp.float32, jnp.bfloat16),
+          (jnp.int32, jnp.int16),
+          (jnp.int32, jnp.int8),
+          (jnp.int32, jnp.int4),
+      ],
+      shape=[(8, 128), (2, 15, 300)],
+  )
+  def test_pack_elementwise(self, config, shape):
+    unpacked_dtype, packed_dtype = config
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 7):
+      self.skipTest("Test requires libtpu from 2025/11/7 or later")
+
+    bitwidth = dtypes.itemsize_bits(packed_dtype)
+    num_sources = 32 // bitwidth
+
+    def kernel(xs_ref, o_ref):
+      xs = [xs_ref[i] for i in range(num_sources)]
+      o_ref[...] = pltpu.pack_elementwise(xs, packed_dtype=packed_dtype)
+
+    stacked_sources, expected = self._pack_unpack_elementwise_test_data(
+        shape, unpacked_dtype, packed_dtype
+    )
+
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.uint32),
+    )(stacked_sources)
+
+    np.testing.assert_array_equal(result, expected)
+
+  @parameterized.product(
+      config=[
+          (jnp.float32, jnp.bfloat16),
+          (jnp.int32, jnp.int16),
+          (jnp.int32, jnp.int8),
+          (jnp.int32, jnp.int4),
+      ],
+      index=[0, 1, 3],
+      shape=[(8, 128), (2, 15, 300)],
+  )
+  def test_unpack_elementwise(self, config, index, shape):
+    unpacked_dtype, packed_dtype = config
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 7):
+      self.skipTest("Test requires libtpu from 2025/11/7 or later")
+
+    bitwidth = dtypes.itemsize_bits(packed_dtype)
+    packing_factor = 32 // bitwidth
+
+    if index >= packing_factor:
+      self.skipTest(
+          f"Index {index} out of bounds for packing factor {packing_factor}")
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = pltpu.unpack_elementwise(
+          x_ref[...], index=index,
+          packed_dtype=packed_dtype, unpacked_dtype=unpacked_dtype
+      )
+
+    sources, packed = self._pack_unpack_elementwise_test_data(
+        shape, unpacked_dtype, packed_dtype
+    )
+    expected = sources[index].astype(packed_dtype).astype(unpacked_dtype)
+
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, unpacked_dtype),
+    )(packed)
+
+    np.testing.assert_array_equal(result, expected)
 
 if __name__ == "__main__":
   absltest.main()

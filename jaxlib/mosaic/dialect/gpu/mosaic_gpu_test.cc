@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -25,7 +26,6 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Conversion/LLVMCommon/MemRefBuilder.h"
 #include "mlir/Conversion/LLVMCommon/StructBuilder.h"
@@ -63,9 +63,8 @@ absl::StatusOr<mlir::func::FuncOp> FromCppFunc(
   mlir::OpBuilder b(context);
   b.setInsertionPointToEnd(module.getBody());
 
-  auto fn = b.create<mlir::func::FuncOp>(
-      b.getUnknownLoc(), "function_wrapper",
-      b.getFunctionType({type1, type2}, std::nullopt));
+  auto fn = mlir::func::FuncOp::create(b, b.getUnknownLoc(), "function_wrapper",
+                                       b.getFunctionType({type1, type2}, {}));
   fn.addEntryBlock();
   b.setInsertionPointToStart(&fn.front());
 
@@ -73,7 +72,7 @@ absl::StatusOr<mlir::func::FuncOp> FromCppFunc(
                        mlir::cast<mlir::TypedValue<T2>>(fn.getArgument(1)),
                        varargs...));
 
-  b.create<mlir::func::ReturnOp>(b.getUnknownLoc());
+  mlir::func::ReturnOp::create(b, b.getUnknownLoc());
 
   if (mlir::failed(mlir::verify(module))) {
     return absl::InternalError("Failed to verify generated module");
@@ -95,7 +94,7 @@ class MosaicGpuTest : public ::testing::Test {
     mosaic_gpu::DeclareRuntimeFunctions(builder_);
   }
 
-  void ExpectLastErrorContains(absl::string_view substring) {
+  void ExpectLastErrorContains(std::string_view substring) {
     EXPECT_THAT(last_error_message_, HasSubstr(substring));
   }
 

@@ -22,7 +22,7 @@ import jax
 from jax._src import core
 from jax import tree_util
 from jax._src.api_util import _ensure_index, _ensure_index_tuple
-from jax.util import safe_zip
+from jax._src.util import safe_zip
 from jax._src.util import split_list, wraps
 from jax._src.traceback_util import api_boundary
 from jax.experimental.sparse._base import JAXSparse

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Sequence, Union
+from typing import Any, Union
 
 from jax._src import core
 from jax._src import pretty_printer as pp
@@ -139,6 +139,7 @@ DimIndexer = Union[IntIndexer, Slice]
 def unpack_ndindexer(indexer: NDIndexer) -> tuple[tuple[bool, ...],
                                                   tuple[Slice, ...],
                                                   tuple[IntIndexer, ...]]:
+  # TODO(slebedev): Flip this to be ``is_slice_indexing`` and update callers.
   is_int_indexing = [not isinstance(i, Slice) for i in indexer.indices]
   slice_indexers, int_indexers = partition_list(
       is_int_indexing, indexer.indices)
@@ -155,17 +156,17 @@ def _maybe_concretize(x: Any):
 class NDIndexer:
   indices: tuple[DimIndexer, ...]
   shape: tuple[int, ...]
-  int_indexer_shape: tuple[int, ...]
+  int_indexer_shape: tuple[int | Array, ...]
   # Off by default to avoid doing validation during pytree operations.
   validate: bool = False
 
   def __post_init__(self):
-    if not self.validate:
-      return
     if len(self.indices) != len(self.shape):
       raise ValueError(
           f"`indices` must be the same length as `Ref` shape.: {self}."
       )
+    if not self.validate:
+      return
     # We validate integer indexing shapes here
     for idx, s in zip(self.indices, self.shape):
       if isinstance(idx, Slice):
@@ -182,21 +183,27 @@ class NDIndexer:
         continue
       # The shape of indexer integers should be broadcastable up to the
       # int_indexer_shape of the whole NDIndexer
-      if not np.shape(idx):
+      from jax._src.state import types as state_types  # pytype: disable=import-error
+      idx_shape = (
+          idx.shape
+          if isinstance(idx, state_types.TransformedRef)
+          else core.get_aval(idx).shape
+      )
+      if not idx_shape:
         if (value := _maybe_concretize(idx)) and value >= s:
           raise ValueError(f"Out of bound indexer: idx={value}, dim={s}.")
         # For ()-shaped indexers, we can broadcast no problm.
         continue
       # If we don't have a ()-shaped indexer, the rank must match
       # int_indexer_shape
-      if np.ndim(idx) != len(self.int_indexer_shape):
+      if len(idx_shape) != len(self.int_indexer_shape):
         raise ValueError(
-            f"Indexer must have rank {np.ndim(idx)}: {idx=} vs."
+            f"Indexer must have rank {len(idx_shape)}: {idx=} vs."
             f" {self.int_indexer_shape=}"
         )
       # Here we check that the shapes broadcast.
       try:
-        np.broadcast_shapes(np.shape(idx), self.int_indexer_shape)
+        np.broadcast_shapes(idx_shape, self.int_indexer_shape)
       except ValueError as e:
         raise ValueError(
             f"Could not broadcast integer indexer: {idx=} vs."
@@ -209,11 +216,19 @@ class NDIndexer:
 
   def tree_flatten(self):
     flat_idx, idx_tree = tree_util.tree_flatten(self.indices)
-    return flat_idx, (idx_tree, self.shape, self.int_indexer_shape)
+    if not all(isinstance(i, int) for i in self.int_indexer_shape):
+      return (*flat_idx, self.int_indexer_shape), (idx_tree, self.shape)
+    else:
+      return flat_idx, (idx_tree, self.shape, self.int_indexer_shape)
 
   @classmethod
   def tree_unflatten(cls, data, flat_idx):
-    idx_tree, shape, int_indexer_shape = data
+    if len(data) == 3:
+      idx_tree, shape, int_indexer_shape = data
+    else:
+      # The ``int_indexer_shape`` is dynamic.
+      idx_tree, shape = data
+      *flat_idx, int_indexer_shape = flat_idx
     indices = tree_util.tree_unflatten(idx_tree, flat_idx)
     return cls(tuple(indices), shape, int_indexer_shape)
 
@@ -243,17 +258,45 @@ class NDIndexer:
         Slice.from_slice(i, s) if isinstance(i, slice) else i
         for i, s in zip(indices, shape))
 
-    is_int_indexing = [not isinstance(i, Slice) for i in indices]
-    if any(is_int_indexing):
-      int_indexers: Sequence[Any]
-      other_indexers, int_indexers = partition_list(is_int_indexing, indices)
-      indexer_shapes = tuple(core.get_aval(i).shape for i in int_indexers)
+    is_slice_indexing = [isinstance(i, Slice) for i in indices]
+    if all(is_slice_indexing):
+      return cls(indices, shape, (), validate=True)
+
+    other_indexers, slice_indexers = partition_list(is_slice_indexing, indices)
+    validate = True
+
+    # We treat refs differently from scalars and arrays, because refs can have
+    # a dynamic shape, making it impossible to statically determine the
+    # broadcasted shape in the presence of other non-slice indexers.
+    from jax._src.state import types as state_types  # pytype: disable=import-error
+    if ref_indexers := [
+        i
+        for i in other_indexers
+        if isinstance(i, state_types.TransformedRef)
+        or isinstance(core.get_aval(i), state_types.AbstractRef)
+    ]:
+      # TODO(slebedev): Consider pushing these checks to lowering time.
+      if len(ref_indexers) > 1:
+        raise NotImplementedError("Multiple Ref indexers are not supported")
+      if len(ref_indexers) != len(other_indexers):
+        raise NotImplementedError(
+            "Ref cannot be mixed with other non-slice indexers"
+        )
+      [ref_indexer] = ref_indexers
+      indexer_shape = ref_indexer.shape  # type: ignore
       try:
-        int_indexer_shape = np.broadcast_shapes(*indexer_shapes)
+        core.canonicalize_shape(indexer_shape)
+      except TypeError:
+        validate = False  # The shape is dynamic.
+    else:
+      indexer_shapes = [core.get_aval(i).shape for i in other_indexers]
+      try:
+        indexer_shape = np.broadcast_shapes(*indexer_shapes)
       except ValueError as e:
         # Raise a nicer error than the NumPy one.
         raise ValueError(
-            f"Cannot broadcast shapes for indexing: {indexer_shapes}") from e
+            "Cannot broadcast shapes for indexing: {indexer_shapes}"
+        ) from e
 
       # Here we use the `broadcast_to` primitive instead of composing lax
       # primitives together because it is easier to lower in targets like
@@ -262,14 +305,20 @@ class NDIndexer:
       # The local import avoids a circular dependency between primitives
       # and this module.
       from jax._src.state import primitives as sp  # pytype: disable=import-error
-      int_indexers = [
-          sp.broadcast_to(i, int_indexer_shape) for i in int_indexers
+      other_indexers = [
+          sp.broadcast_to(i, indexer_shape) for i in other_indexers  # type: ignore[arg-type]
       ]
-      indices = tuple(merge_lists(is_int_indexing, other_indexers, int_indexers))
-    else:
-      int_indexer_shape = ()
+      indices = tuple(
+          merge_lists(is_slice_indexing, other_indexers, slice_indexers)
+       )
+    return cls(indices, shape, indexer_shape, validate)
 
-    return cls(indices, shape, int_indexer_shape, validate=True)
+  @classmethod
+  def make_trivial_indexer(cls, shape: tuple[int, ...]) -> NDIndexer:
+    return NDIndexer.from_indices_shape(
+        tuple(slice(0, e) for e in shape),
+        shape,
+    )
 
   def get_indexer_shape(self) -> tuple[int | Array, ...]:
     is_int_indexing, slice_indexers, _ = unpack_ndindexer(self)
@@ -324,5 +373,5 @@ class NDIndexer:
       if isinstance(idx, Slice):
         indices.append(_pp_slice(context, dim, idx))
       else:
-        indices.append(core.pp_var(idx, context))  # type: ignore
+        indices.append(core.pp_var(idx, context, print_literal_dtype=False))  # type: ignore
     return pp.concat([pp.text("["), pp.text(",".join(indices)), pp.text("]")])

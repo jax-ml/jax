@@ -28,10 +28,9 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import util
-from jax._src.lib import jaxlib_extension_version
 from jax.experimental import io_callback
 from jax.experimental import pjit
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 import jax.numpy as jnp
 from jax.sharding import Mesh
 import numpy as np
@@ -586,10 +585,13 @@ class PythonCallbackTest(jtu.JaxTestCase):
         self.assertAllClose(2 * x, fun(x))
     self.assertEqual(count(), 1)
 
-  @parameterized.parameters("int2", "int4", "uint2", "uint4")
+  @parameterized.parameters("int2", "int4", "uint2", "uint4", "float4_e2m1fn")
   def test_subbyte_operands(self, dtype: str):
-    if jaxlib_extension_version <= 321:
-      self.skipTest("Requires jaxlib_extension_version >= 322.")
+    if "2" in dtype and jtu.test_device_matches(["tpu"]):
+      self.skipTest(
+          "TODO(dsuo): TPU callbacks send SIGABRT for int2, uint2, and"
+          " float4_e2m1fn."
+      )
     def get(x):
       return x
     def f(x):
@@ -600,21 +602,26 @@ class PythonCallbackTest(jtu.JaxTestCase):
       )
       return y
     x = np.arange(8, dtype=dtype)
-    # TODO(b/395428868): Remove this check once we support subbyte types.
-    if jtu.test_device_matches(["tpu"]):
-      if "2" in dtype:
-        self.skipTest("TODO(dsuo): TPU callbacks send SIGABRT for int2/uint2.")
-      np.testing.assert_array_equal(jax.jit(f)(x), np.arange(8, dtype=dtype))
-    else:
-      with self.assertRaisesRegex(
-          Exception, "Unsupported primitive type"
-      ):
-        _ = jax.jit(f)(x)
+    np.testing.assert_array_equal(jax.jit(f)(x), np.arange(8, dtype=dtype))
 
-  @parameterized.parameters("int2", "int4", "uint2", "uint4")
+  def test_pure_callback_sequential_vmap_method_eval_jaxpr(self):
+    def f(x):
+      return jax.pure_callback(
+          lambda x: x, jax.ShapeDtypeStruct(shape=(), dtype=jnp.float32),
+          x, vmap_method="sequential")
+
+    jaxpr = jax.make_jaxpr(lambda: jax.vmap(f)(
+        jnp.zeros(100, dtype=jnp.float32)))()
+    with jax.ensure_compile_time_eval():
+      jax.core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts)  # doesn't crash
+
+  @parameterized.parameters("int2", "int4", "uint2", "uint4", "float4_e2m1fn")
   def test_subbyte_results(self, dtype: str):
-    if jaxlib_extension_version <= 321:
-      self.skipTest("Requires jaxlib_extension_version >= 322.")
+    if "2" in dtype and jtu.test_device_matches(["tpu"]):
+      self.skipTest(
+          "TODO(dsuo): TPU callbacks send SIGABRT for int2, uint2, and"
+          " float4_e2m1fn."
+      )
     def get():
       return np.arange(8, dtype=dtype)
 
@@ -625,16 +632,41 @@ class PythonCallbackTest(jtu.JaxTestCase):
       )
       return y
 
-    # TODO(b/395428868): Remove this check once we support subbyte types.
-    if jtu.test_device_matches(["tpu"]):
-      if "2" in dtype:
-        self.skipTest("TODO(dsuo): TPU callbacks send SIGABRT for int2/uint2.")
-      np.testing.assert_array_equal(jax.jit(f)(), np.arange(8, dtype=dtype))
-    else:
-      with self.assertRaisesRegex(
-          Exception, "Unsupported primitive type"
-      ):
-        _ = jax.jit(f)()
+    np.testing.assert_array_equal(jax.jit(f)(), np.arange(8, dtype=dtype))
+
+  @parameterized.parameters("int2", "int4", "uint2", "uint4", "float4_e2m1fn")
+  def test_non_default_stride_subbyte_results(self, dtype: str):
+    if "2" in dtype and jtu.test_device_matches(["tpu"]):
+      self.skipTest(
+          "TODO(dsuo): TPU callbacks send SIGABRT for int2, uint2, and"
+          " float4_e2m1fn."
+      )
+    x = jnp.arange(24, dtype=dtype).reshape(2, 3, 4)
+    def callback(x):
+      return np.asfortranarray(x)
+
+    @jax.jit
+    def f(x):
+      return jax.pure_callback(
+          callback, jax.ShapeDtypeStruct(x.shape, x.dtype), x
+      )
+
+    result = f(x)
+    np.testing.assert_array_equal(x, result)
+
+  def test_non_default_stride(self):
+    x = jnp.arange(24, dtype=jnp.float32).reshape(2, 3, 4)
+    def callback(x):
+      return np.asfortranarray(x)
+
+    @jax.jit
+    def f(x):
+      return jax.pure_callback(
+          callback, jax.ShapeDtypeStruct(x.shape, x.dtype), x
+      )
+
+    result = f(x)
+    np.testing.assert_array_equal(x, result)
 
 
 class PureCallbackTest(jtu.JaxTestCase):
@@ -838,7 +870,7 @@ class PureCallbackTest(jtu.JaxTestCase):
     def f(x):
       return sin(x)
     out = f(2.)
-    np.testing.assert_allclose(out, jnp.cos(2.))
+    np.testing.assert_allclose(out, jnp.cos(2.), atol=1e-7)
 
   def test_callback_inside_of_cond(self):
 
@@ -1041,25 +1073,10 @@ class PureCallbackTest(jtu.JaxTestCase):
   def test_vmap_method_raise(self):
     @jax.vmap
     def f(x):
-      # Setting vectorized to None disables the current default behavior of
-      # falling back on sequential.
-      return jax.pure_callback(np.sin, x, x, vectorized=None)
+      return jax.pure_callback(np.sin, x, x)
 
     with self.assertRaisesRegex(NotImplementedError, "vmap is only supported"):
       f(jnp.arange(4.))
-
-  def test_deprecated_vectorized(self):
-    def f(x, **kwargs):
-      return jax.pure_callback(np.sin, x, x, **kwargs)
-
-    with self.assertWarnsRegex(DeprecationWarning, "The default behavior"):
-      jax.vmap(f)(jnp.arange(4.0))
-
-    with self.assertWarnsRegex(DeprecationWarning, "The vectorized argument"):
-      f(jnp.arange(4.0), vectorized=True)
-
-    with self.assertWarnsRegex(DeprecationWarning, "The vectorized argument"):
-      f(jnp.arange(4.0), vectorized=False)
 
   def test_vmap_method_expand_dims(self):
     def callback(x, y):
@@ -1108,19 +1125,17 @@ class PureCallbackTest(jtu.JaxTestCase):
       result += fun(jnp.ones((500, 500), jnp.complex64))[1]
     jax.block_until_ready(result)  # doesn't deadlock
 
-  def test_non_default_stride(self):
-    x = jnp.arange(24, dtype=jnp.float32).reshape(2, 3, 4)
-    def callback(x):
-      return np.asfortranarray(x)
-
+  def test_pure_callback_fastpath(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/31319
     @jax.jit
     def f(x):
-      return jax.pure_callback(
-          callback, jax.ShapeDtypeStruct(x.shape, x.dtype), x
-      )
+      return jax.pure_callback(lambda x: x, x, x)
 
-    result = f(x)
-    np.testing.assert_array_equal(x, result)
+    x = jax.numpy.arange(5.0)
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      f(x)
+      f(x)
+    self.assertEqual(count(), 1)
 
 
 class IOCallbackTest(jtu.JaxTestCase):
@@ -1168,6 +1183,8 @@ class IOCallbackTest(jtu.JaxTestCase):
     self.assertEqual(_mut, 8)
 
   def test_cannot_call_ordered_io_in_pmap(self):
+    if config.pmap_shmap_merge.value:
+      self.skipTest("Test does not raise under pmap_shmap_merge=True")
     def f(x):
       return io_callback(
           lambda x: x, jax.ShapeDtypeStruct((), jnp.int32), x, ordered=True)
@@ -1252,6 +1269,8 @@ class IOCallbackTest(jtu.JaxTestCase):
       for ordered in [True, False]
       for with_sharding in [True, False]
   )
+  @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
+                      category=DeprecationWarning)
   def test_can_use_io_callback_in_pjit(
       self, *, ordered: bool, with_sharding: bool
   ):
@@ -1312,7 +1331,12 @@ class IOCallbackTest(jtu.JaxTestCase):
     else:
       self.assertIn(f"{{maximal device={callback_device_index}}}", stablehlo_ir)
 
+  @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
+                      category=DeprecationWarning)
   def test_sequence_pjit_io_callback_ordered(self):
+    if jtu.is_device_tpu(7, 'x'):
+      self.skipTest('TODO(b/453664256): Failing on TPU 7x.')
+
     # A sequence of pairs of calls to pjit(io_callback(ordered=True)) with each
     # pair on a different device assignment.
     _collected: list[int] = []
@@ -1364,11 +1388,18 @@ class IOCallbackTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertEqual(_collected, expected)
 
-  def test_can_shard_io_callback_manually(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/384938613): Failing under shardy.")
+  @parameterized.named_parameters(
+    dict(testcase_name='multi_device',
+         single_device=False),
+    dict(testcase_name='single_device',
+         single_device=True)
+  )
+  def test_can_shard_io_callback_manually(self, single_device: bool):
 
-    mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
+    devices = jax.devices()
+    if single_device:
+      devices = devices[:1]
+    mesh = Mesh(np.array(devices), axis_names=('x',))
 
     spec = jax.sharding.PartitionSpec('x')
     sharding = jax.sharding.NamedSharding(mesh, spec)

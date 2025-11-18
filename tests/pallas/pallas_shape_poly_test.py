@@ -27,7 +27,6 @@ from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from jax import export
@@ -93,13 +92,12 @@ class ShapePolyTest(jtu.JaxTestCase,
     if sys.platform == "win32":
       self.skipTest("Only works on non-Windows platforms")
     super().setUp()
-    _trace_kernel_to_jaxpr.cache_clear()
 
   def test_copy(self):
     # The blocks are static, but the input and the grid are of polymorphic
     # dimensions.
     block_shape = (8, 128)
-    def f(x, *, eager=False):  # x: i32[w, h]
+    def f(x, *, eager=False, backend=None):  # x: i32[w, h]
       def copy_kernel(x_ref, o_ref):
         o_ref[...] = x_ref[...]
       # Use both pl.cdiv and // for specifying the grid
@@ -111,6 +109,7 @@ class ShapePolyTest(jtu.JaxTestCase,
           in_specs=[pl.BlockSpec(block_shape, lambda i, j: (i, j))],
           out_specs=pl.BlockSpec(block_shape, lambda i, j: (i, j)),
           grid=grid,
+          backend=backend,
           interpret=eager and jtu.test_device_matches(["cpu"]))(x)
 
     shape1 = (128, 256)
@@ -137,7 +136,7 @@ class ShapePolyTest(jtu.JaxTestCase,
         NotImplementedError,
         "dynamic grid bounds not supported in the Triton backend"):
       export.export(
-          jax.jit(f),
+          jax.jit(functools.partial(f, backend="triton")),
           platforms=["cuda"])(jax.ShapeDtypeStruct((w, h), jnp.int32))
 
   def test_block_sizes_must_be_static_no_grid(self):

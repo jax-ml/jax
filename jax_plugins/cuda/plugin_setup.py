@@ -21,6 +21,20 @@ __version__ = None
 cuda_version = 0  # placeholder
 project_name = f"jax-cuda{cuda_version}-plugin"
 package_name = f"jax_cuda{cuda_version}_plugin"
+cuda_wheel_suffix = ''  # placeholder
+
+nvidia_cublas_version = ''  # placeholder
+nvidia_cuda_cupti_version = ''  # placeholder
+nvidia_cuda_nvcc_version = ''  # placeholder
+nvidia_cuda_runtime_version = ''  # placeholder
+nvidia_cudnn_version = ''  # placeholder
+nvidia_cufft_version = ''  # placeholder
+nvidia_cusolver_version = ''  # placeholder
+nvidia_cusparse_version = ''  # placeholder
+nvidia_nccl_version = ''  # placeholder
+nvidia_nvjitlink_version = ''  # placeholder
+nvidia_cuda_nvrtc_version = ''  # placeholder
+nvidia_nvshmem_version = ''  # placeholder
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -49,19 +63,19 @@ setup(
     author="JAX team",
     author_email="jax-dev@google.com",
     packages=[package_name],
-    python_requires=">=3.10",
+    python_requires=">=3.11",
     install_requires=[f"jax-cuda{cuda_version}-pjrt=={__version__}"],
     extras_require={
-      'with_cuda': [
-          "nvidia-cublas-cu12>=12.1.3.1",
-          "nvidia-cuda-cupti-cu12>=12.1.105",
-          "nvidia-cuda-nvcc-cu12>=12.6.85",
-          "nvidia-cuda-runtime-cu12>=12.1.105",
-          "nvidia-cudnn-cu12>=9.8,<10.0",
-          "nvidia-cufft-cu12>=11.0.2.54",
-          "nvidia-cusolver-cu12>=11.4.5.107",
-          "nvidia-cusparse-cu12>=12.1.0.106",
-          "nvidia-nccl-cu12>=2.18.1",
+      'with-cuda': [
+          f"nvidia-cublas{cuda_wheel_suffix}{nvidia_cublas_version}",
+          f"nvidia-cuda-cupti{cuda_wheel_suffix}{nvidia_cuda_cupti_version}",
+          f"nvidia-cuda-nvcc{cuda_wheel_suffix}{nvidia_cuda_nvcc_version}",
+          f"nvidia-cuda-runtime{cuda_wheel_suffix}{nvidia_cuda_runtime_version}",
+          f"nvidia-cudnn-cu{cuda_version}{nvidia_cudnn_version}",
+          f"nvidia-cufft{cuda_wheel_suffix}{nvidia_cufft_version}",
+          f"nvidia-cusolver{cuda_wheel_suffix}{nvidia_cusolver_version}",
+          f"nvidia-cusparse{cuda_wheel_suffix}{nvidia_cusparse_version}",
+          f"nvidia-nccl-cu{cuda_version}{nvidia_nccl_version}",
           # nvjitlink is not a direct dependency of JAX, but it is a transitive
           # dependency via, for example, cuSOLVER. NVIDIA's cuSOLVER packages
           # do not have a version constraint on their dependencies, so the
@@ -69,16 +83,23 @@ setup(
           # problems (https://github.com/jax-ml/jax/issues/18027#issuecomment-1756305196)
           # Until NVIDIA add version constraints, add a version constraint
           # here.
-          "nvidia-nvjitlink-cu12>=12.1.105",
-      ],
+          f"nvidia-nvjitlink{cuda_wheel_suffix}{nvidia_nvjitlink_version}",
+          # nvrtc is a transitive and undeclared dep of cudnn.
+          f"nvidia-cuda-nvrtc{cuda_wheel_suffix}{nvidia_cuda_nvrtc_version}",
+          # NVSHMEM is used by Mosaic GPU collectives and can be used by XLA to
+          # speed up collectives too.
+          f"nvidia-nvshmem-cu{cuda_version}{nvidia_nvshmem_version}",
+      ] + (["nvidia-nvvm"] if cuda_version == 13 else []),
     },
     url="https://github.com/jax-ml/jax",
     license="Apache-2.0",
     classifiers=[
-        "Development Status :: 3 - Alpha",
-        "Programming Language :: Python :: 3.10",
+        "Development Status :: 5 - Production/Stable",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: Free Threading :: 3 - Stable",
     ],
     package_data={
         package_name: [

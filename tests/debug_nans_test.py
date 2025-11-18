@@ -19,10 +19,10 @@ import numpy as np
 from unittest import SkipTest
 
 from jax._src import api
+from jax._src import config
 from jax._src import test_util as jtu
 from jax import numpy as jnp
-from jax.experimental import pjit
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 from jax.sharding import PartitionSpec as P
 
 jax.config.parse_flags_with_absl()
@@ -89,7 +89,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
       f(1)
 
   def testShardMap(self):
-    mesh = jax.make_mesh((1,), ('x',))
+    mesh = jtu.create_mesh((1,), ('x',))
     f = shard_map(lambda x: 0. / x, mesh=mesh, in_specs=(P('x')), out_specs=P('x'))
     # For the Cpp pmap, the first execution always goes through Python.
     f(jnp.array([1.]))
@@ -136,9 +136,13 @@ class DebugNaNsTest(jtu.JaxTestCase):
 
     _, f_vjp = jax.vjp(jax.pmap(f), jnp.zeros([1]))
 
+    if config.pmap_shmap_merge.value:
+      expected_regex = r"Invalid value \(nan\) encountered in sharded computation."
+    else:
+      expected_regex = r"invalid value \(nan\) encountered in mul\nWhen differentiating"
+
     with self.assertRaisesRegex(
-        FloatingPointError,
-        r"invalid value \(nan\) encountered in mul\nWhen differentiating"):
+        FloatingPointError, expected_regex):
       ans, = f_vjp(jnp.ones([1]))
       ans.block_until_ready()
 
@@ -148,7 +152,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
       y = x**2
       return jnp.log(y)
 
-    mesh = jax.make_mesh((1,), ('x',))
+    mesh = jtu.create_mesh((1,), ('x',))
     shmap_f = shard_map(f, mesh=mesh, in_specs=(P('x')), out_specs=P('x'))
     _, f_vjp = jax.vjp(shmap_f, jnp.zeros([1]))
 
@@ -162,16 +166,18 @@ class DebugNaNsTest(jtu.JaxTestCase):
     ans.block_until_ready()
 
   @jtu.ignore_warning(message=".*is an experimental.*")
-  def testPjit(self):
+  def test_jit(self):
     if jax.device_count() < 2:
       raise SkipTest("test requires >=2 devices")
 
     p = jax.sharding.PartitionSpec('x')
-    f = pjit.pjit(lambda x: 0. / x, in_shardings=p, out_shardings=p)
+    f = jax.jit(lambda x: 0. / x, in_shardings=p, out_shardings=p)
+    inp = jnp.array([0., 1.])
 
-    with jax.sharding.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
+    with jax.set_mesh(
+        jax.sharding.Mesh(np.array(jax.local_devices()[:2]), ('x',))):
       with self.assertRaises(FloatingPointError):
-        ans = f(jnp.array([0., 1.]))
+        ans = f(inp)
         ans.block_until_ready()
 
   def testDebugNansJitWithDonation(self):
@@ -187,20 +193,18 @@ class DebugNaNsTest(jtu.JaxTestCase):
       ans = jax.pmap(lambda x: 0. / x, donate_argnums=(0,))(a)
       ans.block_until_ready()
 
-  @jtu.ignore_warning(message=".*is an experimental.*")
-  def testDebugNansPjitWithDonation(self):
+  def testDebugNansJitWithDonationSharded(self):
     if jax.device_count() < 2:
       raise SkipTest("test requires >=2 devices")
 
-    p = jax.sharding.PartitionSpec('x')
-    f = pjit.pjit(lambda x: 0. / x,
-                  in_shardings=p,
-                  out_shardings=p,
-                  donate_argnums=(0,))
+    inp = jnp.array([0., 1.])
+    f = jax.jit(lambda x: 0. / x, in_shardings=jax.P('x'),
+                out_shardings=jax.P('x'), donate_argnums=(0,))
 
-    with jax.sharding.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
+    with jax.set_mesh(
+        jax.sharding.Mesh(np.array(jax.local_devices()[:2]), ('x',))):
       with self.assertRaises(FloatingPointError):
-        ans = f(jnp.array([0., 1.]))
+        ans = f(inp)
         ans.block_until_ready()
 
   def testDebugNansZeroDiv(self):

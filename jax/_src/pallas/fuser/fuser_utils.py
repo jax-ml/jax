@@ -20,14 +20,13 @@ from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
 
 
-
 def make_jaxpr(f, *args, **kwargs):
   flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
-  flat_avals = [core.get_aval(x) for x in flat_args]
+  flat_avals = [core.shaped_abstractify(x) for x in flat_args]
   debug_info = api_util.debug_info('make_jaxpr', f, args, kwargs)
   flat_fun, out_tree_thunk = api_util.flatten_fun(
       lu.wrap_init(f, debug_info=debug_info), in_tree
   )
-  jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
   out_tree = out_tree_thunk()
   return jaxpr, consts, in_tree, out_tree

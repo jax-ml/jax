@@ -35,7 +35,7 @@ source ./ci/utilities/install_wheels_locally.sh
 
 # Print all the installed packages
 echo "Installed packages:"
-"$JAXCI_PYTHON" -m uv pip list
+"$JAXCI_PYTHON" -m uv pip freeze
 
 "$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
 
@@ -43,8 +43,17 @@ echo "Installed packages:"
 export PY_COLORS=1
 export JAX_SKIP_SLOW_TESTS=true
 export TF_CPP_MIN_LOG_LEVEL=0
-export JAX_ENABLE_64="$JAXCI_ENABLE_X64"
+export JAX_ENABLE_X64="$JAXCI_ENABLE_X64"
+
+MAX_PROCESSES=${MAX_PROCESSES:-}
+MAX_PROCESSES_ARG=""
+if [[ -n "${MAX_PROCESSES}" ]]; then
+  MAX_PROCESSES_ARG="--maxprocesses=${MAX_PROCESSES}"
+elif [[ "$(uname -s)" == *"MSYS"* ]]; then
+  MAX_PROCESSES_ARG="--maxprocesses=56"  # Tests OOM on Windows sometimes.
+fi
 # End of test environment variable setup
 
 echo "Running CPU tests..."
-"$JAXCI_PYTHON" -m pytest -n auto --tb=short --maxfail=20 tests examples
+"$JAXCI_PYTHON" -m pytest -n auto --tb=short $MAX_PROCESSES_ARG \
+ --maxfail=20 tests examples

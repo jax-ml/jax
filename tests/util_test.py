@@ -11,17 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import dataclasses
+import random
+from functools import partial
+import gc
 import operator
+import threading
 
-from absl.testing import absltest
-
+from absl.testing import absltest, parameterized
 import jax
 from jax import api_util
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import util
-
 from jax._src.util import weakref_lru_cache
 jax.config.parse_flags_with_absl()
 
@@ -74,6 +76,64 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual(dict(three=6, four=8), scaled_kwargs)
     self.assertEqual(2, out_thunk())
 
+  def test_wrapped_fun_name(self):
+    def my_function():
+      return
+
+    with self.subTest("function"):
+      wrapped = lu.wrap_init(
+          my_function,
+          debug_info=api_util.debug_info("test", my_function, (), {}),
+      )
+      self.assertEqual(wrapped.__name__, my_function.__name__)
+
+    with self.subTest("default_partial"):
+      my_partial = partial(my_function)
+      wrapped = lu.wrap_init(
+          my_partial,
+          debug_info=api_util.debug_info("test", my_partial, (), {}),
+      )
+      self.assertEqual(wrapped.__name__, my_function.__name__)
+
+    with self.subTest("nested_default_partial"):
+      my_partial = partial(partial(my_function))
+      wrapped = lu.wrap_init(
+          my_partial,
+          debug_info=api_util.debug_info("test", my_partial, (), {}),
+      )
+      self.assertEqual(wrapped.__name__, my_function.__name__)
+
+    with self.subTest("named_partial"):
+      my_partial = partial(my_function)
+      my_partial.__name__ = "my_partial"
+      wrapped = lu.wrap_init(
+          my_partial,
+          debug_info=api_util.debug_info("test", my_partial, (), {}),
+      )
+      self.assertEqual(wrapped.__name__, my_partial.__name__)
+
+    with self.subTest("lambda"):
+      l = lambda: my_function()
+      wrapped = lu.wrap_init(
+          l,
+          debug_info=api_util.debug_info("test", l, (), {}),
+      )
+      self.assertEqual(wrapped.__name__, "<lambda>")
+
+    with self.subTest("unnamed_callable"):
+
+      class MyCallable:
+
+        def __call__(self):
+          return
+
+      my_callable = MyCallable()
+      wrapped = lu.wrap_init(
+          my_callable,
+          debug_info=api_util.debug_info("test", my_callable, (), {}),
+      )
+      self.assertEqual(wrapped.__name__, "<unnamed wrapped function>")
+
   def test_weakref_lru_cache(self):
     @weakref_lru_cache
     def example_cached_fn(key):
@@ -97,6 +157,128 @@ class UtilTest(jtu.JaxTestCase):
 
     for _ in range(4097):
       reference_loop_generator(lambda x: x)
+
+  @parameterized.named_parameters(
+      dict(weakref_count=weakref_count,
+           testcase_name=f"_{weakref_count=}")
+      for weakref_count in [0, 1, 3])
+  def test_multi_weak_ref_cache(self, *, weakref_count=1):
+
+    class Key:  # hashed by id
+      def __init__(self, x):
+        self.x = x
+
+    if weakref_count > 0:
+      util.weakref_cache_key_types.add(Key)
+
+    @partial(util.multi_weakref_lru_cache, trace_context_in_key=False)
+    def myfun(a, k1, *, k2, k3):
+      return f"{a=}, {k1=}, {k2=}, {k3=}"
+
+    def check_invariant(expected_live_keys: int):
+      self.assertLen(myfun._multi_weakref_id_to_key, expected_live_keys if weakref_count > 1 else 0)
+      for key_id, key in myfun._multi_weakref_id_to_key.items():
+        for wr in key.weakrefs:
+          self.assertIn(wr, myfun._multi_weakref_to_key_ids)
+          self.assertIn(key_id, myfun._multi_weakref_to_key_ids[wr])
+
+    k1 = Key(1)
+    k3 = (k1, k1) if weakref_count > 1 else 4
+    util.clear_all_caches()
+    r1 = myfun(2, k1, k2=3, k3=k3)  # miss
+    c1 = myfun.cache_info()
+    self.assertEqual((0, 1, 1), (c1.hits, c1.misses, c1.currsize))
+    check_invariant(1)
+
+    for i in range(10):
+      r2 = myfun(2, k1, k2=3, k3=k3)  # all hits
+      self.assertIs(r1, r2)
+      c2 = myfun.cache_info()
+      self.assertEqual((1 + i, 1, 1), (c2.hits, c2.misses, c2.currsize))
+      check_invariant(1)
+
+    del k1, k3  # expect that the cache entries are removed (if weakref_count > 0)
+    gc.collect()
+    c3 = myfun.cache_info()
+    self.assertEqual(c3.currsize, 0 if weakref_count > 0 else 1)
+    check_invariant(0)
+
+    k1_2 = Key(2)
+    k3_2 = (Key(3), Key(3)) if weakref_count > 1 else (3, 3)
+    r4 = myfun(2, k1_2, k2=3, k3=k3_2)  # miss
+    c4 = myfun.cache_info()
+    self.assertEqual((10, 2, (1 if weakref_count > 0 else 2)), (c4.hits, c4.misses, c4.currsize))
+    check_invariant(1)
+
+    if weakref_count > 1:
+      del k3_2  # clear the cache entry
+      gc.collect()
+      c5 = myfun.cache_info()
+      self.assertEqual((10, 2, 0), (c5.hits, c5.misses, c5.currsize))
+      check_invariant(0)
+
+      k3_3 = (Key(3), Key(3))
+      r6 = myfun(2, k1_2, k2=3, k3=k3_3)  # miss because Key hashed by it
+      self.assertIsNot(r4, r6)
+      c6 = myfun.cache_info()
+      self.assertEqual((10, 3, 1), (c6.hits, c6.misses, c6.currsize))
+      check_invariant(1)
+
+    del k1_2
+    gc.collect()
+    c7 = myfun.cache_info()
+    self.assertEqual(0 if weakref_count > 0 else 2, c7.currsize )
+    check_invariant(0)
+
+  def test_multi_weak_ref_cache_custom_tuple(self):
+    class MyTuple(tuple):
+      pass
+
+    class Key:  # hashed by id
+      def __init__(self, x):
+        self.x = x
+
+    util.weakref_cache_key_types.add(Key)
+
+    @partial(util.multi_weakref_lru_cache, trace_context_in_key=False)
+    def my_fun(a):
+      self.assertIsInstance(a, MyTuple)
+      return str(a)
+
+    key = Key(1)
+    my_fun(MyTuple([key, key]))
+    self.assertLen(my_fun._multi_weakref_id_to_key, 0)  # key was not picked up
+
+    del key
+    self.assertEqual(1, my_fun.cache_info().currsize)  # cache is not cleaned
+
+  def test_multi_weakref_lru_cache_threads(self):
+    num_workers = 5
+    num_live_keys_per_worker = 16
+    size_key_space = 32
+    @dataclasses.dataclass(frozen=True)
+    class WRKey:
+      f: int
+
+    util.weakref_cache_key_types.add(WRKey)
+
+    @partial(util.multi_weakref_lru_cache, maxsize=size_key_space // 2)
+    def myfun(k: WRKey):
+      return None
+
+    def Worker():
+      keys = [None] * num_live_keys_per_worker  # These are the live keys for this worker
+      for i in range(1000):
+        key_idx = random.randint(0, num_live_keys_per_worker - 1)
+        key = WRKey(random.randint(0, size_key_space))
+        myfun(key)
+        keys[key_idx] = key  # Kill some previous key and keep this live
+
+    workers = [threading.Thread(target=Worker()) for _ in range(num_workers)]
+    for t in workers:
+      t.start()
+    for t in workers:
+      t.join()
 
 
 class SafeMapTest(jtu.JaxTestCase):
@@ -186,17 +368,17 @@ class SafeZipTest(jtu.JaxTestCase):
       util.safe_zip(lambda x: x)
 
     with self.assertRaisesRegex(
-        ValueError, r"safe_zip\(\) argument 2 is longer than argument 1"
+        ValueError, r"zip\(\) argument 2 is longer than argument 1"
     ):
       util.safe_zip(range(3), range(4))
 
     with self.assertRaisesRegex(
-        ValueError, r"safe_zip\(\) argument 2 is shorter than argument 1"
+        ValueError, r"zip\(\) argument 2 is shorter than argument 1"
     ):
       util.safe_zip(range(7), range(2))
 
     with self.assertRaisesRegex(
-        ValueError, r"safe_zip\(\) argument 2 is longer than argument 1"
+        ValueError, r"zip\(\) argument 2 is longer than argument 1"
     ):
       util.safe_zip((), range(3))
 

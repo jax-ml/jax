@@ -21,7 +21,6 @@ from absl.testing import parameterized
 
 import numpy as np
 import scipy.linalg
-import scipy.special
 import scipy.stats
 
 import jax
@@ -70,9 +69,8 @@ class RandomTestBase(jtu.JaxTestCase):
       samples = samples.astype('float32')
     # kstest fails for infinities starting in scipy 1.12
     # (https://github.com/scipy/scipy/issues/20386)
-    # TODO(jakevdp): remove this logic if/when fixed upstream.
     scipy_version = jtu.parse_version(scipy.__version__)
-    if scipy_version >= (1, 12) and np.issubdtype(samples.dtype, np.floating):
+    if scipy_version < (1, 14) and np.issubdtype(samples.dtype, np.floating):
       samples = np.array(samples, copy=True)
       samples[np.isposinf(samples)] = 0.01 * np.finfo(samples.dtype).max
       samples[np.isneginf(samples)] = 0.01 * np.finfo(samples.dtype).min
@@ -286,8 +284,9 @@ class DistributionsTest(RandomTestBase):
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.integer,
     weighted=[True, False],
+    mode=[None, 'low', 'high']
   )
-  def testChoice(self, dtype, input_range_or_shape, shape, replace, weighted, axis):
+  def testChoice(self, dtype, input_range_or_shape, shape, replace, weighted, axis, mode):
     # This is the function API that we test against (note that self.rng().choice differs)
     np_choice = np.random.default_rng(0).choice
     p_dtype = dtypes.to_inexact_dtype(dtype)
@@ -303,7 +302,7 @@ class DistributionsTest(RandomTestBase):
       p /= p.sum()
     else:
       p = None
-    rand = lambda key, x: random.choice(key, x, shape, replace, p, axis)
+    rand = lambda key, x: random.choice(key, x, shape, replace, p, axis, mode=mode)
     sample = rand(key(), x)
     if not is_range:
       self.assertEqual(dtype, sample.dtype)
@@ -372,11 +371,13 @@ class DistributionsTest(RandomTestBase):
   @jtu.sample_product(
     p=[0.1, 0.5, 0.9],
     dtype=jtu.dtypes.floating,
+    mode=[None, 'low', 'high'],
   )
-  def testBernoulli(self, p, dtype):
+  def testBernoulli(self, p, dtype, mode):
     key = lambda: self.make_key(0)
     p = np.array(p, dtype=dtype)
-    rand = lambda key, p: random.bernoulli(key, p, (10000,))
+    kwds = {} if mode is None else {'mode': mode}
+    rand = lambda key, p: random.bernoulli(key, p, (10000,), **kwds)
     crand = jax.jit(rand)
 
     uncompiled_samples = rand(key(), p)
@@ -395,15 +396,16 @@ class DistributionsTest(RandomTestBase):
       ]
     ],
     sample_shape=[(10000,), (5000, 2)],
+    mode=[None, 'low', 'high'],
     dtype=jtu.dtypes.floating,
   )
-  def testCategorical(self, p, axis, dtype, sample_shape):
+  def testCategorical(self, p, axis, dtype, sample_shape, mode):
     key = lambda: self.make_key(0)
     p = np.array(p, dtype=dtype)
     logits = np.log(p) - 42 # test unnormalized
     out_shape = tuple(np.delete(logits.shape, axis))
     shape = sample_shape + out_shape
-    rand = partial(random.categorical, shape=shape, axis=axis)
+    rand = partial(random.categorical, shape=shape, axis=axis, mode=mode)
     crand = jax.jit(rand)
 
     uncompiled_samples = rand(key(), logits)
@@ -460,6 +462,23 @@ class DistributionsTest(RandomTestBase):
     with jax.numpy_rank_promotion('allow'):
       x = random.bernoulli(key, np.array([0.2, 0.3]), shape=(3, 2))
     assert x.shape == (3, 2)
+
+  def testBernoulliSmallProbabilty(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/28017
+    key = jax.random.key(0)
+
+    # Choose such that N * p is much less than 1.
+    p = jnp.float32(1E-10)
+    N = int(1E8)
+
+    # mode='low' fails for p<~1E-7 in float32
+    samples = jax.random.bernoulli(key, p=p, shape=N, mode='low')
+    self.assertNotEqual(samples.sum(), 0)
+
+    # mode='high' is good up to p<~1E-14 in float32
+    samples = jax.random.bernoulli(key, p=p, shape=N, mode='high')
+    self.assertEqual(samples.sum(), 0)
+
 
   @jtu.sample_product(
     a=[0.2, 5.],
@@ -994,7 +1013,7 @@ class DistributionsTest(RandomTestBase):
   def testIssue756(self):
     key = self.make_key(0)
     w = random.normal(key, ())
-    self.assertEqual(w.dtype, dtypes.canonicalize_dtype(jnp.float_))
+    self.assertEqual(w.dtype, dtypes.default_float_dtype())
 
   def testIssue1789(self):
     def f(x):
@@ -1135,7 +1154,7 @@ class DistributionsTest(RandomTestBase):
     max = np.iinfo(dtype).max
     key = lambda: self.make_key(1701)
     shape = (10,)
-    if np.iinfo(dtype).bits < np.iinfo(dtypes.canonicalize_dtype(int)).bits:
+    if np.iinfo(dtype).bits < np.iinfo(dtypes.default_int_dtype()).bits:
       expected = random.randint(key(), shape, min, max + 1, dtype)
       self.assertArraysEqual(expected, random.randint(key(), shape, min - 12345, max + 12345, dtype))
     else:
@@ -1420,6 +1439,21 @@ class DistributionsTest(RandomTestBase):
     with self.assertNoWarnings():
       jax.random.key_data(keys())
       jax.random.key_impl(keys())
+
+  @jtu.sample_product(
+    dtype=['int8', 'uint8', 'int16', 'uint16']
+  )
+  def test_randint_narrow_int_bias(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/27702
+    key = self.make_key(7534892)
+    n_samples = 100_000
+    n_bins = 100
+    data = jax.random.randint(key, (n_samples,), 0, n_bins, dtype=dtype)
+
+    # Check that counts within each bin are consistent with a uniform distribution:
+    # i.e. counts are poisson-distributed about the average count per bin.
+    counts = jnp.bincount(data, length=n_bins).astype(float)
+    self._CheckKolmogorovSmirnovCDF(counts, scipy.stats.poisson(n_samples / n_bins).cdf)
 
 
 def get_energy_distance(samples_1, samples_2):
