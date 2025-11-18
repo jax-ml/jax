@@ -46,7 +46,7 @@ on:
         # - "nightly": Use the nightly libtpu wheel.
         # - "pypi_latest": Use the latest libtpu wheel from PyPI.
         # - "oldest_supported_libtpu": Use the oldest supported libtpu wheel.
-        default: "nightly"
+        default: "pypi_latest"
       skip-download-jaxlib-from-gcs:
         description: "Whether to skip downloading the jaxlib artifact from GCS (e.g for testing a jax only release)"
         default: '0'
@@ -71,7 +71,7 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
-    name: "${{ inputs.tpu-type }}, py ${{ inputs.python }}, libtpu=${{ inputs.libtpu-version-type }}"
+    name: "${{ inputs.tpu-type }}, py ${{ inputs.python }}, libtpu=pypi_latest"
 
     env:
       LIBTPU_OLDEST_VERSION_DATE: 20250228
@@ -96,10 +96,10 @@ jobs:
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt -r build/collect-profile-requirements.txt
       - name: Set up libtpu wheels
         run: |
-          if [[ "${{ inputs.libtpu-version-type }}" == "nightly" ]]; then
-            echo "Using nightly libtpu"
-            $JAXCI_PYTHON -m uv pip install --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-          elif [[ "${{ inputs.libtpu-version-type }}" == "pypi_latest" ]]; then
+          # if [[ "${{ inputs.libtpu-version-type }}" == "nightly" ]]; then
+          #   echo "Using nightly libtpu"
+          #   $JAXCI_PYTHON -m uv pip install --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+          if [[ "pypi_latest" == "pypi_latest" ]]; then
             echo "Using latest libtpu from PyPI"
             # Set JAXCI_JAX_PYPI_EXTRAS to "tpu". The `run_pytest_tpu.sh` script will install the
             # latest libtpu wheel from PyPI.
