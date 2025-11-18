@@ -2508,18 +2508,6 @@ def _type_check_mgpu_lane_semantics(v, ty):
       raise ValueError(f"Unexpected type {ty} for value {v}")
 
 
-def _type_check_mgpu_warpgroup_semantics(
-    value: ir.Value, ty: RefType | SomeLayout
-):
-  if ir.MemRefType.isinstance(value.type) and isinstance(ty, RefType):
-    return
-
-  if ir.VectorType.isinstance(value.type) and isinstance(ty, SomeLayout):
-    return
-
-  raise ValueError(f"Unexpected type {ty} for value {value}")
-
-
 def _inline_mgpu_flat_transformed_args(
     ctx: lowering.LoweringRuleContext,
     flat_args_and_transforms,
@@ -2534,10 +2522,8 @@ def _inline_mgpu_flat_transformed_args(
       ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup
   )
 
-  for a, t in zip(flat_args, flat_arg_types):
-    if is_wg_semantics:
-      _type_check_mgpu_warpgroup_semantics(a, t)
-    else:
+  if not is_wg_semantics:
+    for a, t in zip(flat_args, flat_arg_types):
       _type_check_mgpu_lane_semantics(a, t)
 
   flat_transformed : list[ir.Value] = []
