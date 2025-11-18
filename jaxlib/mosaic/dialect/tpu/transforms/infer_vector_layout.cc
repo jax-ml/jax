@@ -1656,13 +1656,7 @@ class VectorLayoutInferer {
       } else {
         return std::nullopt;
       }
-      // TODO(b/440370770): Preserve replicated offsets.
-      auto layout = VectorLayout(bitwidth, {0, 0}, tiling, ImplicitDim::kNone);
-      auto vreg_slice = layout.vregSlice(target_shape_);
-      if (shape.back() != vreg_slice[1] && !can_use_1d_tiling) {
-        return std::nullopt;
-      }
-      return layout;
+      return VectorLayout(bitwidth, {0, 0}, tiling, ImplicitDim::kNone);
     };
 
     // Use the small tiling if each vreg holds a contiguous slice of the
