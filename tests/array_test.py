@@ -31,7 +31,7 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.util import safe_zip
-from jax._src.mesh import AxisType, AbstractMesh
+from jax._src.mesh import AxisType, AbstractMesh, Mesh
 from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
     pmap_sharding_devices_indices_map, NamedSharding, GSPMDSharding)
@@ -221,6 +221,15 @@ class JaxArrayTest(jtu.JaxTestCase):
       arr._check_if_deleted()
     self.assertIsNone(arr._npy_value)
     self.assertIsNone(arr._arrays)
+
+  def test_device_put_to_cpu(self):
+    mesh = Mesh(jax.devices(), 'x')
+    mesh_cpu = Mesh(jax.devices('cpu'), 'x')
+    x = np.zeros(16)
+    y = jax.device_put(x, NamedSharding(mesh, P('x')))
+    z = jax.device_put(y, NamedSharding(mesh_cpu, P('x')))
+    for z_s in z.addressable_shards:
+      self.assertArraysEqual(z_s.data, x[z_s.index])
 
   def test_array_device_get(self):
     global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))

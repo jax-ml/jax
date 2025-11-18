@@ -1331,12 +1331,15 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
   tsl::profiler::TraceMe results_traceme(
       "BatchedCopyToDeviceWithSharding create results");
   for (auto& [i, ifrt_array] : ifrt_arrays) {
+    TF_ASSIGN_OR_RETURN(nb_class_ptr<PyDeviceList> dst_device_list,
+                        GetPyDeviceList(dst_shardings[i]));
+    nb_class_ptr<PyClient> py_client = dst_device_list->py_client();
     const auto& py_array = py_arrays[i];
     absl::Span<const int64_t> shape_span = py_array.shape();
     results[i] =
         PyArray(py_array.aval(), py_array.weak_type(), py_array.dtype(),
                 std::vector<int64_t>(shape_span.begin(), shape_span.end()),
-                dst_shardings[i], py_array.py_client(), std::move(ifrt_array),
+                dst_shardings[i], py_client, std::move(ifrt_array),
                 py_array.committed(),
                 /*skip_checks=*/true, py_array.result_status());
   }
