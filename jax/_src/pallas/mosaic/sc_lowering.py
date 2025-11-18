@@ -13,21 +13,23 @@
 # limitations under the License.
 """Lowering for Pallas TPU SparseCore."""
 
+from typing import Any, NoReturn, cast
 from collections.abc import Sequence
 import contextlib
 import dataclasses
 import functools
-from typing import Any, NoReturn, cast
 
-import jax
 from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import debugging
+from jax._src import lax
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
+from jax._src import numpy as jnp
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import util
+from jax._src import tree_util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
@@ -43,7 +45,6 @@ from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax.experimental.mosaic.dialects import tpu
-import jax.numpy as jnp
 
 
 map, unsafe_map = util.safe_map, map
@@ -111,7 +112,7 @@ def lower_jaxpr_to_module(
         "Dynamic shape replacement is not supported for SparseCore."
     )
   if not grid_mapping.grid:
-    index_map_avals, index_map_tree = jax.tree.flatten(
+    index_map_avals, index_map_tree = tree_util.tree_flatten(
         ((jax_core.ShapedArray((), jnp.int32),), {})
     )
     if grid_mapping.num_index_operands:
@@ -289,7 +290,7 @@ def lower_jaxpr_to_func(
     )
 
     allocations = sc_core.gather_global_allocations(jaxpr)
-    flat_allocations, allocations_tree = jax.tree.flatten(allocations)
+    flat_allocations, allocations_tree = tree_util.tree_flatten(allocations)
     allocation_operands = operands_and_scratch[
         len(operands_and_scratch) - len(flat_allocations):]
     allocations = allocations_tree.unflatten(allocation_operands)
@@ -385,7 +386,7 @@ def _load_lowering_rule(
         " via `pltpu.async_copy`."
     )
 
-  transforms = list(jax.tree.unflatten(tree, flat_transforms))
+  transforms = list(tree_util.tree_unflatten(tree, flat_transforms))
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
     ref_shape = state.get_transforms_shape(transforms, ref_aval.shape)
     transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_shape))
@@ -446,7 +447,7 @@ def _store_lowering_rule(
         " via `pltpu.async_copy`."
     )
 
-  transforms = list(jax.tree.unflatten(tree, flat_transforms))
+  transforms = list(tree_util.tree_unflatten(tree, flat_transforms))
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
     ref_shape = state.get_transforms_shape(transforms, ref_aval.shape)
     transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_shape))
@@ -488,7 +489,7 @@ def _store_lowering_rule(
   return old_val
 
 
-@register_lowering_rule(jax.lax.iota_p,
+@register_lowering_rule(lax.iota_p,
                         kernel_types=[tpu_core.KernelType.SC_VECTOR_SUBCORE])
 def _iota_lowering_rule_sc(ctx: LoweringRuleContext, dtype, shape, dimension,
                            sharding):
