@@ -7225,6 +7225,31 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "Only one of spmd_axis_name or arrays sharded on.*spmd_axis_name"):
       jax.vmap(f, spmd_axis_name='y')(arr, arr)
 
+  @parameterized.parameters('x', 'y')
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_spmd_axis_name_explicit_mode_assert(self, spmd_axis_name, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+
+    @jax.jit
+    @partial(jax.vmap, spmd_axis_name=spmd_axis_name)
+    def f(x):
+      self.assertEqual(x.aval.sharding.spec, P('y'))
+      out = x * 2
+      self.assertEqual(out.aval.sharding.spec, P('y'))
+      return out
+
+    if spmd_axis_name == 'x':
+      out = f(arr)
+      self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+      self.assertArraysEqual(out, np_inp * 2)
+    else:
+      assert spmd_axis_name == 'y'
+      with self.assertRaisesRegex(
+        ValueError,
+        "Only one of spmd_axis_name or arrays sharded on.*spmd_axis_name"):
+        f(arr)
+
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_unmapped_last_vmap(self, mesh):
     np_inp = np.arange(8)

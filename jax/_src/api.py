@@ -1149,7 +1149,7 @@ def vmap(fun: F,
     docstr += fun.__doc__
 
   axis_name = core.no_axis_name if axis_name is None else axis_name
-  if spmd_axis_name is not None and type(spmd_axis_name) is not tuple:
+  if spmd_axis_name is not None and not isinstance(spmd_axis_name, tuple):
     spmd_axis_name = (spmd_axis_name,)
 
   if isinstance(in_axes, list):
@@ -1173,6 +1173,7 @@ def vmap(fun: F,
   @wraps(fun, docstr=docstr)
   @api_boundary
   def vmap_f(*args, **kwargs):
+    nonlocal spmd_axis_name
     if isinstance(in_axes, tuple) and len(in_axes) != len(args):
       raise ValueError("vmap in_axes must be an int, None, or a tuple of entries corresponding "
                        "to the positional arguments passed to the function, "
@@ -1194,10 +1195,14 @@ def vmap(fun: F,
                   _mapped_axis_size(fun, in_tree, args_flat, in_axes_flat, "vmap"))
     explicit_mesh_axis = _mapped_axis_spec(args_flat, in_axes_flat)
     if spmd_axis_name is not None and explicit_mesh_axis is not None:
-      raise ValueError(
-          "Only one of spmd_axis_name or arrays sharded on `Explicit` mesh"
-          f" axis type is allowed. Got {spmd_axis_name=} and"
-          f" arrays sharded on {explicit_mesh_axis=}")
+      if spmd_axis_name == explicit_mesh_axis:
+        spmd_axis_name = None
+      else:
+        raise ValueError(
+            "Only one of spmd_axis_name or arrays sharded on `Explicit` mesh"
+            f" axis type is allowed. Got {spmd_axis_name=} and"
+            f" arrays sharded on {explicit_mesh_axis=}")
+      assert spmd_axis_name is None
     try:
       axis_data = batching.AxisData(axis_name, axis_size_, spmd_axis_name,
                                     explicit_mesh_axis)
