@@ -210,6 +210,17 @@ def TPU_AllReduceOp : TPU_Op<"all_reduce", [Pure]> {
   let hasVerifier = 1;
 }
 
+def TPU_ClampSymmetricOp : TPU_Op<"vclamps", [Pure, SameOperandsAndResultType, ElementwiseMappable]> {
+  let summary = "TPU symmetric clamp operation.";
+  let arguments = (ins
+    AnyVectorOfNonZeroRank:$input,
+    AnyVectorOfNonZeroRank:$bound
+  );
+  let results = (outs AnyVectorOfNonZeroRank:$output);
+  let assemblyFormat = [{ $input `,` $bound attr-dict `:` type($input) `->` type($output) }];
+  // TODO(mvoz): Add verifier
+}
+
 def TPU_ReduceIndexOp : TPU_Op<"reduce_index", [Pure]> {
   let arguments = (ins
     AnyVectorOfNonZeroRank:$input,
@@ -1467,6 +1478,8 @@ def TPU_LogBufferOp : TPU_Op<"log_buffer"> {
   let assemblyFormat = [{ $tag attr-dict `:` $input `:` type($input) }];
   let hasVerifier = 1;
 }
+
+
 
 def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::FuncOp"> {
   let dependentDialects = [

@@ -67,6 +67,19 @@ namespace mlir::tpu {
 
 namespace {
 
+# 
+static std::optional<APFloat> getConstantSplatValue(Value value) {
+  auto broadcast =
+      dyn_cast_if_present<vector::BroadcastOp>(value.getDefiningOp());
+  Value const_val = broadcast ? broadcast.getSource() : value;
+
+  DenseElementsAttr attr;
+  if (!matchPattern(const_val, m_Constant(&attr)) || !attr.isSplat()) {
+    return std::nullopt;
+  }
+  return attr.getSplatValue<APFloat>();
+}
+
 struct CanonicalizeContext {
   // see compiler flag xla_mosaic_compat_mode
   bool compatibility_mode;
@@ -1828,6 +1841,126 @@ FailureOr<Value> canonicalize_tpu_truncf(const CanonicalizeContext &ctx,
   return new_result;
 }
 
+FailureOr<Value> canonicalize_maximumf(const CanonicalizeContext& ctx,
+                                       Operation& raw_op) {
+  auto op = cast<arith::MaximumFOp>(raw_op);
+  CanonicalBuilder builder(ctx, op.getLoc(), op.getOperation());
+  auto is_f32_or_bf16 = [](Value v) {
+    auto vty = dyn_cast<VectorType>(v.getType());
+    return vty &&
+           (vty.getElementType().isF32() || vty.getElementType().isBF16());
+  };
+
+  // Pattern: max(min(x, C), -C) -> clamp_symmetric(x, C)
+  // TODO(mvoz): Canon isn't really a pattern matcher! We should think of
+  // separating this out.
+  // TODO(mvoz): The clamp_symmetric op is actually fine with non constant
+  // operands, basically anything that goes into the min or max op can be
+  // rewritten like this.
+  for (int i = 0; i < 2; ++i) {
+    Value maybe_min_op = op.getOperand(i);
+    Value maybe_neg_c = op.getOperand(1 - i);
+
+    if (!is_f32_or_bf16(maybe_min_op) || !is_f32_or_bf16(maybe_neg_c)) {
+      // Lowering to clamp_symmetric requires f32 or bf16 operands.
+      continue;
+    }
+
+    auto min_op =
+        dyn_cast_if_present<arith::MinimumFOp>(maybe_min_op.getDefiningOp());
+    if (!min_op) {
+      continue;
+    }
+
+    auto neg_c_val = getConstantSplatValue(maybe_neg_c);
+    if (!neg_c_val) {
+      continue;
+    }
+
+    for (int j = 0; j < 2; ++j) {
+      Value x = min_op.getOperand(j);
+      Value maybe_c = min_op.getOperand(1 - j);
+
+      if (auto c_val = getConstantSplatValue(maybe_c)) {
+        if (!c_val->isNegative() && *neg_c_val == -(*c_val)) {
+          Value new_op = builder.create<tpu::ClampSymmetricOp>(
+              op.getLoc(), op.getType(), x, maybe_c);
+          op.replaceAllUsesWith(new_op);
+          op.erase();
+          return new_op;
+        }
+      }
+    }
+  }
+
+  // If pattern doesn't match, fall back to generic elementwise handling.
+  if (need_elementwise_canonicalization(ctx, raw_op)) {
+    return canonicalize_elementwise(ctx, raw_op);
+  }
+
+  return op.getResult();
+}
+
+FailureOr<Value> canonicalize_minimumf(const CanonicalizeContext& ctx,
+                                       Operation& raw_op) {
+  auto op = cast<arith::MinimumFOp>(raw_op);
+  CanonicalBuilder builder(ctx, op.getLoc(), op.getOperation());
+  auto is_f32_or_bf16 = [](Value v) {
+    auto vty = dyn_cast<VectorType>(v.getType());
+    return vty &&
+           (vty.getElementType().isF32() || vty.getElementType().isBF16());
+  };
+
+  // Pattern: min(max(x, -C), C) -> clamp_symmetric(x, C)
+  // TODO(mvoz): Canon isn't really a pattern matcher! We should think of
+  // separating this out.
+  // TODO(mvoz): The clamp_symmetric op is actually fine with non constant
+  // operands, basically anything that goes into the min or max op can be
+  // rewritten like this.
+  for (int i = 0; i < 2; ++i) {
+    Value maybe_max_op = op.getOperand(i);
+    Value maybe_c = op.getOperand(1 - i);
+
+    if (!is_f32_or_bf16(maybe_max_op) || !is_f32_or_bf16(maybe_c)) {
+      // Lowering to clamp_symmetric requires f32 or bf16 operands.
+      continue;
+    }
+
+    auto max_op =
+        dyn_cast_if_present<arith::MaximumFOp>(maybe_max_op.getDefiningOp());
+    if (!max_op) {
+      continue;
+    }
+
+    auto c_val = getConstantSplatValue(maybe_c);
+    if (!c_val || c_val->isNegative()) {
+      continue;
+    }
+
+    for (int j = 0; j < 2; ++j) {
+      Value x = max_op.getOperand(j);
+      Value maybe_neg_c = max_op.getOperand(1 - j);
+
+      if (auto neg_c_val = getConstantSplatValue(maybe_neg_c)) {
+        if (*neg_c_val == -(*c_val)) {
+          Value new_op = builder.create<tpu::ClampSymmetricOp>(
+              op.getLoc(), op.getType(), x, maybe_c);
+          op.replaceAllUsesWith(new_op);
+          op.erase();
+          return new_op;
+        }
+      }
+    }
+  }
+
+  // If pattern doesn't match, fall back to generic elementwise handling.
+  if (need_elementwise_canonicalization(ctx, raw_op)) {
+    return canonicalize_elementwise(ctx, raw_op);
+  }
+
+  return op.getResult();
+}
+
 const llvm::StringMap<canonicalize_rule_type> &rules() {
   static auto rules = new llvm::StringMap<canonicalize_rule_type>{
       {tpu::MatmulOp::getOperationName(), canonicalize_matmul},
@@ -1850,7 +1983,9 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
        canonicalize_stochastic_convert},
       {tpu::TransposeOp::getOperationName(), canonicalize_transpose},
       {tpu::RepeatOp::getOperationName(), canonicalize_repeat},
-      {tpu::ReshapeOp::getOperationName(), canonicalize_reshape}};
+      {tpu::ReshapeOp::getOperationName(), canonicalize_reshape},
+      {arith::MaximumFOp::getOperationName(), canonicalize_maximumf},
+      {arith::MinimumFOp::getOperationName(), canonicalize_minimumf}};
   return *rules;
 }
 
