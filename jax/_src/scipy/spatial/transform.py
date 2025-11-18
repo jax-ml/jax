@@ -20,6 +20,7 @@ import typing
 
 import numpy as np
 
+import jax.lax as lax
 from jax._src import config
 from jax._src import numpy as jnp
 from jax._src.numpy import linalg as jnp_linalg
@@ -381,15 +382,24 @@ def _elementary_quat_compose(angles: Array, axes: Array, intrinsic: bool, degree
   return result
 
 
+def _small_scale(angle2: Array, rotvec: Array) -> Array:
+  scale = 0.5 - angle2 / 48.0 + angle2 * angle2 / 3840.0
+  w = 1.0 - angle2 / 8.0 + angle2 * angle2 / 384.0
+  return jnp.hstack([scale * rotvec, jnp.array([w], rotvec.dtype)])
+
+
+def _large_scale(angle2: Array, rotvec: Array) -> Array:
+  angle = jnp.sqrt(angle2)
+  scale = jnp.sin(angle * 0.5) / angle
+  xyz = scale * rotvec
+  w = jnp.cos(angle * 0.5)
+  return jnp.hstack([xyz, jnp.array([w], rotvec.dtype)])
+
 @functools.partial(jnp_vectorize.vectorize, signature=('(m),()->(n)'))
 def _from_rotvec(rotvec: Array, degrees: bool) -> Array:
   rotvec = jnp.where(degrees, jnp.deg2rad(rotvec), rotvec)
-  angle = _vector_norm(rotvec)
-  angle2 = angle * angle
-  small_scale = scale = 0.5 - angle2 / 48 + angle2 * angle2 / 3840
-  large_scale = jnp.sin(angle / 2) / angle
-  scale = jnp.where(angle <= 1e-3, small_scale, large_scale)
-  return jnp.hstack([scale * rotvec, jnp.cos(angle / 2)])
+  angle2 = jnp.dot(rotvec, rotvec)
+  return lax.cond(angle2 < 1e-6, _small_scale, _large_scale, angle2, rotvec)
 
 
 @functools.partial(jnp_vectorize.vectorize, signature=('(m,m)->(n)'))
