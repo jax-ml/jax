@@ -16,6 +16,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.8.1 (November 18, 2025)
+
 * New features:
 
   * {func}`jax.jit` now supports the decorator factory pattern; i.e instead of
