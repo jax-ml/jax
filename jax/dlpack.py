@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-import jax._src.dlpack
-
 from jax._src.dlpack import (
   from_dlpack as from_dlpack,
   is_supported_dtype as is_supported_dtype,
@@ -33,5 +30,5 @@ _deprecations = {
 
 
 from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-__getattr__ = jax._src.deprecations.deprecation_getattr(__name__, _deprecations)
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
 del _deprecation_getattr

@@ -57,7 +57,6 @@ UNDOCUMENTED_APIS = {
   'jax.custom_transpose': ['custom_transpose'],
   'jax.debug': ['DebugEffect', 'log'],
   'jax.distributed': ['is_initialized'],
-  'jax.dlpack': ['jax'],
   'jax.dtypes': ['extended', 'finfo', 'iinfo'],
   'jax.errors': ['JAXIndexError', 'JAXTypeError'],
   'jax.ffi': ['build_ffi_lowering_function', 'include_dir', 'register_ffi_target_as_batch_partitionable', 'register_ffi_type_id'],
