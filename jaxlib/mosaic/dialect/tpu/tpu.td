@@ -1489,22 +1489,6 @@ def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mli
   let options = [Option<"total_devices", "total-devices", "int", "", "">];
 }
 
-def InferMemRefLayoutPass : Pass<"tpu-infer-memref-layout", "::mlir::func::FuncOp"> {
-  let dependentDialects = [
-    "::mlir::func::FuncDialect",
-    "::mlir::memref::MemRefDialect",
-  ];
-  let constructor = "::mlir::tpu::createInferMemRefLayoutPass()";
-  let options = [
-    // If hardware_generation is not set, the default value of -1 will crash on
-    // runOnOperation.
-    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
-    Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
-    Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
-    Option<"tpu_tiling_flags", "tpu-tiling-flags", "::mlir::tpu::TpuTilingFlags", /*default=*/"::mlir::tpu::TpuTilingFlags{}", "">,
-  ];
-}
-
 def CanonicalizeMosaicPass : Pass<"tpu-canonicalize-mosaic", "::mlir::func::FuncOp"> {
   let dependentDialects = [
     "::mlir::arith::ArithDialect",
