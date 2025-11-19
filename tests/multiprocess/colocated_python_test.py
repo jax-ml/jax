@@ -20,11 +20,20 @@ from jax._src import test_util as jtu
 from jax.experimental import colocated_python
 import numpy as np
 
+try:
+  import cloudpickle  # noqa
+  HAS_CLOUDPICKLE = True
+except (ModuleNotFoundError, ImportError):
+  HAS_CLOUDPICKLE = False
 
 class ColocatedPythonTestMultiHost(jt_multiprocess.MultiProcessTest):
 
   def setUp(self):
     super().setUp()
+    if not HAS_CLOUDPICKLE:
+      self.skipTest(
+        "ColocatedPythonTestMultiHost depends on cloudpickle library"
+      )
     jtu.request_cpu_devices(jax.local_device_count())
 
   def test_colocated_cpu_devices(self):

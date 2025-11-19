@@ -86,10 +86,6 @@ jax_multiprocess_test(
         # the correct number of logical devices per host.
         "tpu_v3_x4",
     ],
-    enable_backends = [
-        "gpu",
-        "tpu",
-    ],
     main = "colocated_python_test.py",
     deps = [
         "//jax:experimental_colocated_python",
