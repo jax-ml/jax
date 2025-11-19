@@ -1027,13 +1027,16 @@ class LayoutInferenceTest(parameterized.TestCase):
     out_layout = layouts.to_layout_attr(fa.TCGEN05_LAYOUT)
     self.checkOutLayouts(op, [out_layout])
 
-  def test_async_load_tmem_accepts_compatible_in_out_layouts(self):
+  @parameterized.parameters(
+      mtu.RegisterLayout.TCGEN05, mtu.RegisterLayout.TCGEN05_TMEM_NATIVE
+  )
+  def test_async_load_tmem_accepts_expected_in_out_layouts(self, out_layout):
     f32 = ir.F32Type.get()
     shape = (128, 128)
     ref_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
     in_layout = tcgen05.tmem_default_layout(packing=1)
     in_layout = layouts.to_layout_attr(in_layout)
-    out_layout = layouts.to_layout_attr(fa.TCGEN05_LAYOUT)
+    out_layout = out_layout.to_layout_attr(shape, f32)
 
     with ir.InsertionPoint(self.module.body):
       [ref] = undefs(ref_type)
@@ -1064,12 +1067,17 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module)
 
-  def test_async_store_tmem_accepts_compatible_src_dest_layouts(self):
+  @parameterized.parameters(
+      mtu.RegisterLayout.TCGEN05, mtu.RegisterLayout.TCGEN05_TMEM_NATIVE
+  )
+  def test_async_store_tmem_accepts_expected_src_dest_layouts(
+      self, src_layout
+  ):
     f32 = ir.F32Type.get()
     shape = (128, 128)
     dest_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
     src_type = ir.VectorType.get(shape, f32)
-    src_layout = layouts.to_layout_attr(fa.TCGEN05_LAYOUT)
+    src_layout = src_layout.to_layout_attr(shape, f32)
     dest_layout = tcgen05.tmem_default_layout(packing=1)
     dest_layout = layouts.to_layout_attr(dest_layout)
 
