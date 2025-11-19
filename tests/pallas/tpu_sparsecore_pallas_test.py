@@ -1152,7 +1152,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_cumsum_2d_not_supported(self, dtype):
-    sc_info = plsc.get_sparse_core_info()
     x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
 
     with self.assertRaisesRegex(NotImplementedError, r"must be rank 1"):
@@ -1225,7 +1224,8 @@ class VectorSubcoreTest(PallasSCTest):
       @self.vector_subcore_kernel(out_shape=x)
       def kernel(x_ref, o_ref):
         @plsc.parallel_loop(0, 1, carry=carry_fn(x_ref))
-        def for_each_chunk(i, carry):
+        def _(i, carry):
+          del i  # Unused.
           x_ref[...] = o_ref[...]
           return carry
 
@@ -1239,7 +1239,8 @@ class VectorSubcoreTest(PallasSCTest):
       def kernel(x_ref, o_ref):
         init = dict(x=jnp.zeros([]), y=jnp.ones([8]))
         @plsc.parallel_loop(0, 1, carry=init)
-        def for_each_chunk(i, carry):
+        def _(i, carry):
+          del i  # Unused.
           x_ref[...] = o_ref[...]
           return carry["x"]
 
@@ -1257,7 +1258,7 @@ class VectorSubcoreTest(PallasSCTest):
         out_specs=pl.BlockSpec(spec_shape, lambda i: (i, 0, 0)),
     )
     def kernel(x_ref, o_ref):
-      pass
+      del x_ref, o_ref  # Unused.
 
     with self.assertRaisesRegex(
         NotImplementedError, r"Unsupported block dimension type.*Squeezed"):
@@ -1346,8 +1347,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(jnp.int32, jnp.float32)
   def test_gather_add(self, dtype):
-    self.skip_if_tc_tiling()
     """Gather from HBM at indices added to contiguous VMEM."""
+    self.skip_if_tc_tiling()
     shape = (16, 64, 32)
     x = jnp.arange(np.prod(shape), dtype=dtype).reshape(*shape)
 
@@ -1383,8 +1384,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(jnp.int32, jnp.float32)
   def test_scatter_add(self, dtype):
-    self.skip_if_tc_tiling()
     """Scatter from contiguous VMEM added to VMEM_SHARED at indices."""
+    self.skip_if_tc_tiling()
     shape = (16, 32)
     x = jnp.arange(np.prod(shape), dtype=dtype).reshape(*shape)
 
