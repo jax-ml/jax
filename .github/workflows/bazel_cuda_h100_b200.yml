@@ -81,7 +81,7 @@ jobs:
             --repo_env=HERMETIC_CUDA_UMD_VERSION="13.0.0" \
             --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
             --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
-            --test_output=errors \
+            --test_output=all \
             --test_tag_filters=-multiaccelerator \
             --test_env=JAX_ACCELERATOR_COUNT=1 \
             --test_env=JAX_TESTS_PER_ACCELERATOR=8 \
@@ -102,7 +102,8 @@ jobs:
             //tests/pallas:gpu_tests \
             //tests/mosaic:gpu_tests
   run_multiaccelerator_tests:
-    if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
+    needs: changed_files
+    if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || needs.changed_files.outputs.any_changed == 'true' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
     runs-on: linux-x86-a3-8g-h100-8gpu
     container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
     name: "Bazel multiple H100 CUDA tests"
@@ -124,7 +125,7 @@ jobs:
             --repo_env=HERMETIC_CUDNN_VERSION="9.11.0" \
             --repo_env=HERMETIC_CUDA_UMD_VERSION="13.0.0" \
             --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
-            --test_output=errors \
+            --test_output=all \
             --strategy=TestRunner=local \
             --local_test_jobs=8 \
             --test_env=JAX_EXCLUDE_TEST_TARGETS='PmapTest.testSizeOverflow|.*InterpretTest.*' \
