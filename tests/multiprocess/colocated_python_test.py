@@ -32,11 +32,14 @@ class ColocatedPythonTestMultiHost(jt_multiprocess.MultiProcessTest):
       mesh_shape = (2, jax.device_count() // 2)
     else:
       mesh_shape = (1, jax.device_count())
-    mesh = jax.make_mesh(mesh_shape, ("x", "y"))
+    mesh = jax.make_mesh(mesh_shape, ("x", "y"),
+                         axis_types=(jax.sharding.AxisType.Explicit,) * 2)
     cpu_mesh1 = colocated_python.colocated_cpu_devices(mesh)
 
     cpu_devices = colocated_python.colocated_cpu_devices(mesh.devices.flat)
-    cpu_mesh2 = jax.make_mesh(mesh_shape, ("x", "y"), devices=cpu_devices)
+    cpu_mesh2 = jax.make_mesh(mesh_shape, ("x", "y"),
+                              axis_types=(jax.sharding.AxisType.Explicit,) * 2,
+                              devices=cpu_devices)
     self.assertEqual(cpu_mesh1, cpu_mesh2)
 
   def test_simple_function(self):
@@ -45,7 +48,8 @@ class ColocatedPythonTestMultiHost(jt_multiprocess.MultiProcessTest):
       return jax.make_array_from_single_device_arrays(
           x.shape, x.sharding, [s.data + 1 for s in x.addressable_shards])
 
-    mesh = jax.make_mesh((jax.device_count(),), ("x",))
+    mesh = jax.make_mesh((jax.device_count(),), ("x",),
+                         axis_types=(jax.sharding.AxisType.Explicit,))
     cpu_mesh = colocated_python.colocated_cpu_devices(mesh)
     cpu_sharding = jax.NamedSharding(cpu_mesh, jax.P("x"))
 
