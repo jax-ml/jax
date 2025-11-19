@@ -136,6 +136,30 @@ class StatePrimitivesTest(jtu.JaxTestCase):
       self.assertEqual(out_aval.shape, out_shape)
       self.assertEqual(out_aval.dtype, out_dtype)
 
+  @parameterized.parameters(
+      ((4, 5), 0, (0,)),
+      ((4, 5), 1, (0,)),
+      ((9, 10, 11, 12), 0, (slice(None), 0, 1)),  # Contiguous int indexing
+      ((9, 10, 11, 12), 0, (0, slice(None), 1)),  # Non-contiguous int indexing
+      ((9, 10, 11, 12), 1, (slice(None), 0, 1)),  # Contiguous after batch
+      ((9, 10, 11, 12), 2, (slice(None), 0, 1)),  # Non-contiguous after batch
+      ((9, 10, 11, 12), 3, (slice(None), slice(None), 0)),
+      # Shaped int indexer, contiguous after batch
+      ((9, 10, 11, 12), 3,
+       (slice(None), slice(None), np.array([[0,1]]))),
+      # Shaped int indexer, non-contiguous after batch
+      ((9, 10, 11, 12), 2,
+       (np.array([[0, 1]]), slice(None), np.array([[0, 1]]))),
+  )
+  def test_vmap_of_get_regression(self, shape, in_axes, indexer):
+    # Regression test for https://github.com/jax-ml/jax/issues/33309
+    def f(x):
+      return x[indexer]
+    x = jnp.ones(shape)
+    result = jax.vmap(f, in_axes=in_axes)(jax.new_ref(x))
+    expected = jax.vmap(f, in_axes=in_axes)(x)
+    self.assertArraysEqual(result, expected)
+
   def test_swap_abstract_eval_must_take_in_refs(self):
     ref_aval = core.ShapedArray((), jnp.float32)
     val_aval = core.ShapedArray((), jnp.float32)
