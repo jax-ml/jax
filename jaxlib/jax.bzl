@@ -50,7 +50,6 @@ mosaic_internal_users = []
 pallas_gpu_internal_users = []
 pallas_sc_internal_users = []
 pallas_fuser_users = []
-mosaic_extension_deps = []
 serialize_executable_internal_users = []
 buffer_callback_internal_users = []
 

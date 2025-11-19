@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <optional>
+#include <utility>
 
 #include "absl/hash/hash.h"
 #include "absl/log/log.h"
@@ -288,6 +289,44 @@ DotDimensionNumbersAttr defaultDimensionNumbers(Builder &builder,
       /*output_dim_order=*/{0, transpose_lhs ? 1 : 0, 1, transpose_rhs ? 0 : 1},
       /*lhs_batch_dims=*/{},
       /*rhs_batch_dims=*/{});
+}
+
+namespace {
+
+struct CommsAnalysisState {
+  bool has_communication = false;
+  bool has_custom_barrier = false;
+
+  explicit operator bool() { return has_communication && has_custom_barrier; }
+};
+
+void analyzeCrossChipCommunication(mlir::Operation *op,
+                                   CommsAnalysisState *state) {
+  if (auto dma = dyn_cast<tpu::EnqueueDMAOp>(op)) {
+    state->has_communication |= dma.getDeviceId() != nullptr;
+  } else if (auto signal = dyn_cast<tpu::SemaphoreSignalOp>(op)) {
+    state->has_communication |= signal.getDeviceId() != nullptr;
+  } else if (auto barrier = dyn_cast<tpu::GetBarrierSemaphoreOp>(op)) {
+    state->has_custom_barrier = true;
+  }
+  for (Region &region : op->getRegions()) {
+    for (Block &block : region.getBlocks()) {
+      for (Operation &op : block.getOperations()) {
+        analyzeCrossChipCommunication(&op, state);
+        if (*state) {
+          return;
+        }
+      }
+    }
+  }
+}
+
+}  // namespace
+
+std::pair<bool, bool> mightCommunicateBetweenChips(mlir::Operation *op) {
+  CommsAnalysisState state;
+  analyzeCrossChipCommunication(op, &state);
+  return std::make_pair(state.has_communication, state.has_custom_barrier);
 }
 
 }  // namespace mlir::tpu
