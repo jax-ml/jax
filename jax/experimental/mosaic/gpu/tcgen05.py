@@ -389,8 +389,6 @@ def mma(
   # Check that the shapes and element types are correct for block scaling.
   scale_element_type = None
   if is_scaled:
-    if collective:
-      raise NotImplementedError("MMA with block scaling does not support collective")
     assert m == 128  # Checked above.
     if n % 32:
       raise ValueError(
@@ -415,7 +413,7 @@ def mma(
           f"A scale shape mismatch: expected ({m}, {k // scale_block}), got"
           f" {a_scale.shape}"
       )
-    if b_scale.shape != (n, k // scale_block):
+    if b_scale.shape != (n * num_cta, k // scale_block):
       raise ValueError(
           f"B scale shape mismatch: expected ({n}, {k // scale_block}), got"
           f" {b_scale.shape}"
@@ -520,13 +518,14 @@ def mma(
       assert k_group_elems % (scale_block * 4) == 0
       assert m_group_elems % 32 == 0 and n_group_elems % 32 == 0
       k_scales_per_group = k_group_elems // (scale_block * 4)
+      # A scales are sharded, B scales are replicated across CTAs.
       a_scale_addr = arith.addi(
           a_scale_addr_base,
           utils.c(ki * k_scales_per_group * m_group_elems // 32, i32),
       )
       b_scale_addr = arith.addi(
           b_scale_addr_base,
-          utils.c(ki * k_scales_per_group * n_group_elems // 32, i32),
+          utils.c(ki * k_scales_per_group * n_collective_group_elems // 32, i32)
       )
     else:
       a_scale_addr = b_scale_addr = None
@@ -661,15 +660,18 @@ def _do_mma(
   for k_step in range(k // instr_k):
     if is_scaled:
       assert scale_steps is not None
+      assert not is_sparse
       scale_vec_width = 4 // scale_steps
       scale_id = (k_step % scale_steps) * scale_vec_width
       i_desc = create_scaled_instr_descriptor(
-          m, n, element_type, element_type, scale_id, scale_id, a_transpose, b_transpose
+          m * num_cta, n * num_cta, element_type, element_type,
+          scale_id, scale_id, a_transpose, b_transpose
       )
       assert m == 128
       assert n % 128 == 0
+      # A scales are sharded, B scales are replicated across CTAs.
       a_scale_addr_offset = arith.constant(i32, k_step // scale_steps * 4)
-      b_scale_addr_offset = arith.constant(i32, k_step // scale_steps * n // 32)
+      b_scale_addr_offset = arith.constant(i32, k_step // scale_steps * n // 32 * num_cta)
       scales_addrs = (
           arith.addi(a_scale_addr, a_scale_addr_offset),
           arith.addi(b_scale_addr, b_scale_addr_offset),
@@ -1445,7 +1447,9 @@ def wait_load_tmem() -> None:
   utils.warpgroup_barrier()
 
 
-def async_copy_scales_smem_to_tmem(smem_ref: ir.Value, tmem_ref: TMEMRef) -> None:
+def async_copy_scales_smem_to_tmem(
+    smem_ref: ir.Value, tmem_ref: TMEMRef, collective: bool = False
+) -> None:
   """Asynchronously copies the scale data from SMEM to TMEM.
 
   The result of the copy can be awaited by calling ``commit_arrive`` and waiting
@@ -1507,6 +1511,7 @@ def async_copy_scales_smem_to_tmem(smem_ref: ir.Value, tmem_ref: TMEMRef) -> Non
         [mn_tile * mn_tile_stride_i32 + k_tile * k_tile_stride_i32],
         i32,
     )
+    # NOTE: The tiles are MN-minor in TMEM, but MN-major (logically) in SMEM.
     store_addr = arith.addi(
         tmem_ref.address,
         arith.constant(i32, 4 * smem_shape[0] * k_tile + 4 * mn_tile),
@@ -1518,6 +1523,7 @@ def async_copy_scales_smem_to_tmem(smem_ref: ir.Value, tmem_ref: TMEMRef) -> Non
         _tmem_addr_to_ptr(store_addr),
         desc,
         multicast=nvvm.Tcgen05CpMulticast.WARPX4,
+        group=nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1
     )
 
 
