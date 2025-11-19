@@ -35,12 +35,12 @@ class _JAXErrorMixin:
 
 @export
 class JAXTypeError(_JAXErrorMixin, TypeError):
-  pass
+  """JAX-specific :class:`TypeError`"""
 
 
 @export
 class JAXIndexError(_JAXErrorMixin, IndexError):
-  pass
+  """JAX-specific :class:`IndexError`"""
 
 
 @export
