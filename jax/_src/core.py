@@ -3462,19 +3462,7 @@ def _check_jaxpr(
                              f"Equation effects: {eqn.effects}. "
                              f"Inferred effects: {eqn_effects}")
       for eff in eqn.effects:
-        if isinstance(eff, effects.JaxprInputEffect):
-          eqn_invar = eqn.invars[eff.input_index]
-          if type(eqn_invar) is Literal or eqn_invar in mut_arrays:
-            continue
-          if (jaxpr_index := in_idx.get(eqn_invar, sentinel)) is sentinel:
-            raise JaxprTypeError(
-                "Invalid `JaxprInputEffect`: must correspond to a jaxpr invar")
-          jaxpr_effect = eff.replace(input_index=jaxpr_index)
-          if jaxpr_effect not in jaxpr.effects:
-            raise JaxprTypeError(
-                "Invalid `JaxprInputEffect`: must be present in jaxpr. "
-                f"{jaxpr_effect} is not in {jaxpr.effects}.")
-        elif isinstance(eff, NamedAxisEffect):
+        if isinstance(eff, NamedAxisEffect):
           # It is valid for a primitive to discharge the named axis effect.
           continue
         elif eff not in jaxpr.effects:
@@ -3604,13 +3592,7 @@ def _check_call(ctx_factory, prim, in_atoms, params):
                                    if type(d) is Var else d for d in a.shape))
               if type(a) is DShapedArray else a for a in out_avals]
 
-  # jaxpr input effects are indexed to include jaxpr.constvars, but the eqn
-  # should have effects indexed only on its explicit arguments
-  effs = {e.replace(input_index=e.input_index - len(call_jaxpr.constvars))
-          if isinstance(e, effects.JaxprInputEffect)
-          else e for e in call_jaxpr.effects}
-
-  return out_type, effs
+  return out_type, call_jaxpr.effects
 
 def _check_map(ctx_factory, prim, in_avals, params):
   if "call_jaxpr" not in params:

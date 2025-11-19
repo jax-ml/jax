@@ -96,9 +96,7 @@ def _pad_constvars(jaxpr: core.Jaxpr, left: tuple[core.AvalQDD, ...],
   def make_var(aq):
     return core.Var(aq.aval, initial_qdd=aq.qdd, final_qdd=aq.qdd)
   constvars = [*map(make_var, left), *jaxpr.constvars, *map(make_var, right)]
-  effs = pe._renumber_effects([*constvars, *jaxpr.invars],
-                              [*jaxpr.constvars, *jaxpr.invars], jaxpr.effects)
-  jaxpr = jaxpr.replace(constvars=constvars, effects=effs)
+  jaxpr = jaxpr.replace(constvars=constvars)
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr
 
@@ -112,11 +110,7 @@ def _dedup_consts(jaxpr, const_ids):
   outvars = [canonicalize.get(x, x) if isinstance(x, core.Var) else x
              for x in jaxpr.outvars]
   constvars = list(newvars.values())
-  effs = pe._renumber_effects(
-      [*constvars, *jaxpr.invars],
-      [*map(canonicalize.get, jaxpr.constvars), *jaxpr.invars], jaxpr.effects)
-  jaxpr = jaxpr.replace(constvars=constvars, eqns=eqns, outvars=outvars,
-                        effects=effs)
+  jaxpr = jaxpr.replace(constvars=constvars, eqns=eqns, outvars=outvars)
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr
 

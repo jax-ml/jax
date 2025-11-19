@@ -1473,11 +1473,8 @@ def rearrange_binders(jaxpr: core.ClosedJaxpr, primals_in, tangents_in, primals_
   new_debug_info = jaxpr.jaxpr.debug_info._replace(
       arg_names=new_arg_names, result_paths=new_result_paths)
   constvars = jaxpr.jaxpr.constvars
-  new_effects = pe._renumber_effects(
-      (*constvars, *new_invars), (*constvars, *jaxpr.jaxpr.invars),
-      jaxpr.jaxpr.effects)
   new_jaxpr = core.Jaxpr(constvars, new_invars, new_outvars, jaxpr.jaxpr.eqns,
-                         new_effects, new_debug_info)
+                         jaxpr.jaxpr.effects, new_debug_info)
   return core.ClosedJaxpr(new_jaxpr, jaxpr.consts)
 
 def _perm(primal_counts: Sequence[int], tangent_counts: Sequence[int],
