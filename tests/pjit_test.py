@@ -62,8 +62,6 @@ from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version
-from jax._src.lib import ifrt_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -9565,10 +9563,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_reduced_sin_fwd_mul_bwd(self, mesh):
-    if jaxlib_extension_version < 387:
-      self.skipTest('Requires jaxlib_extension_version >= 387')
-    if ifrt_version < 36:
-      self.skipTest('Requires jaxlib_extension_version >= 36')
     if not jtu.if_cloud_tpu_at_least(2025, 11, 7):
       self.skipTest('Requires libtpu built after 2025-11-6')
 

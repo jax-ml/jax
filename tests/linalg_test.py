@@ -32,7 +32,6 @@ from jax import scipy as jsp
 from jax._src import config
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lib import cuda_versions
-from jax._src.lib import version as jaxlib_version
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.numpy.util import promote_dtypes_inexact
@@ -106,9 +105,7 @@ def svd_algorithms():
     algorithms.append(lax.linalg.SvdAlgorithm.QR)
   if jtu.device_under_test() == "gpu":
     algorithms.append(lax.linalg.SvdAlgorithm.JACOBI)
-  if jtu.device_under_test() == "tpu" or (
-      jaxlib_version >= (0, 8, 1) and jtu.device_under_test() == "gpu"
-  ):
+  if jtu.device_under_test() == "tpu" or jtu.device_under_test() == "gpu":
     algorithms.append(lax.linalg.SvdAlgorithm.POLAR)
   return algorithms
 

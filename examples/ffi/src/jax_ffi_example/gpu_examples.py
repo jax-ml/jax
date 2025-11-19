@@ -13,20 +13,12 @@
 # limitations under the License.
 
 import jax
-from jax._src.lib import jaxlib_extension_version
 from jax_ffi_example import _gpu_examples
 import jax.numpy as jnp
 
 
-if jaxlib_extension_version >= 381:
-  jax.ffi.register_ffi_type(
-      "state", _gpu_examples.state_type(), platform="CUDA"
-  )
-else:
-  jax.ffi.register_ffi_type_id(
-      "state", _gpu_examples.type_id(), platform="CUDA"
-  )
-
+jax.ffi.register_ffi_type(
+    "state", _gpu_examples.state_type(), platform="CUDA")
 jax.ffi.register_ffi_target("state", _gpu_examples.handler(), platform="CUDA")
 
 

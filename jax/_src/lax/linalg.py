@@ -45,7 +45,6 @@ from jax._src.lib import cuda_versions
 from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib import lapack
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
@@ -2206,8 +2205,6 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
     use_jacobi = True
   elif algorithm == SvdAlgorithm.POLAR:
     use_polar = True
-    if jaxlib_version < (0, 8, 1):
-      raise NotImplementedError("Polar SVD requires jaxlib >= 0.8.1")
 
   column_major = True
   if use_jacobi:
