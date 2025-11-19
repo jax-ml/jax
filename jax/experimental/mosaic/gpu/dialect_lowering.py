@@ -415,145 +415,138 @@ def _retry_on_failure(transfer: _Transfer, optimized: bool | None) -> Any:
     return transfer(optimized=False)
 
 
-if hasattr(mgpu, "VectorLoadOp"):
-  @_register_lowering(mgpu.VectorLoadOp)
-  def _vector_load_op_lowering_rule(
-      _: LoweringContext, op: mgpu.VectorLoadOp
-  ) -> Sequence[ir.Value]:
-    (out_layout_attr,) = inference_utils.out_layouts(op)
+@_register_lowering(mgpu.VectorLoadOp)
+def _vector_load_op_lowering_rule(
+    _: LoweringContext, op: mgpu.VectorLoadOp
+) -> Sequence[ir.Value]:
+  (out_layout_attr,) = inference_utils.out_layouts(op)
 
-    element_type = ir.VectorType(op.result.type).element_type
-    is_signed = _default_is_signed(element_type)
+  element_type = ir.VectorType(op.result.type).element_type
+  is_signed = _default_is_signed(element_type)
 
-    def _fragmented_array_to_ir(
-        fragmented_array: fa.FragmentedArray,
-    ) -> ir.Value:
-      return fragmented_array_to_ir(fragmented_array, op.result.type)
+  def _fragmented_array_to_ir(
+      fragmented_array: fa.FragmentedArray,
+  ) -> ir.Value:
+    return fragmented_array_to_ir(fragmented_array, op.result.type)
 
-    if layouts.is_strided_fragmented_layout(out_layout_attr):
-      strided_layout = layouts.from_strided_fragmented_layout_attr(
-          out_layout_attr
-      )
-      # TODO(bchetioui): Process transforms.
-      fragmented_array = fa.FragmentedArray.load_strided(
-          op.source,
+  if layouts.is_strided_fragmented_layout(out_layout_attr):
+    strided_layout = layouts.from_strided_fragmented_layout_attr(
+        out_layout_attr
+    )
+    # TODO(bchetioui): Process transforms.
+    fragmented_array = fa.FragmentedArray.load_strided(
+        op.source,
+        is_signed=is_signed,
+        vec_size=strided_layout.vec_size,
+    )
+    return [_fragmented_array_to_ir(fragmented_array)]
+
+  if not layouts.is_tiled_layout(out_layout_attr):
+    raise ValueError(f"{op} has an unsupported layout: {out_layout_attr}")
+
+  optimized = op.optimized.value if op.optimized is not None else None
+  layout = layouts.from_tiled_layout_attr(out_layout_attr)
+  ref_ty = ir.MemRefType(op.source.type)
+  if ref_ty.memory_space is None:  # GMEM
+    fragmented_array = fa.FragmentedArray.load_untiled(
+        op.source,
+        layout=layout,
+        is_signed=is_signed,
+        optimized=bool(optimized),
+    )
+    return [_fragmented_array_to_ir(fragmented_array)]
+
+  if ref_ty.memory_space != utils.smem():
+    raise ValueError(f"Unsupported memory space: {ref_ty.memory_space}")
+
+  transforms_attr = inference_utils.in_transforms(op)[0]
+  swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+      transforms_attr
+  )
+  has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
+  if has_transforms:
+    _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
+    transformed_ref = unwrap_transformed_memref(op.source, transforms_attr)
+
+    def load_tiled(optimized: bool) -> fa.FragmentedArray:
+      return fa.FragmentedArray.load_tiled(
+          transformed_ref,
+          swizzle,
           is_signed=is_signed,
-          vec_size=strided_layout.vec_size,
+          layout=layout,
+          optimized=optimized,
       )
-      return [_fragmented_array_to_ir(fragmented_array)]
 
-    if not layouts.is_tiled_layout(out_layout_attr):
-      raise ValueError(f"{op} has an unsupported layout: {out_layout_attr}")
+    fragmented_array = _retry_on_failure(load_tiled, optimized)
+  else:
 
-    optimized = op.optimized.value if op.optimized is not None else None
-    layout = layouts.from_tiled_layout_attr(out_layout_attr)
-    ref_ty = ir.MemRefType(op.source.type)
-    if ref_ty.memory_space is None:  # GMEM
-      fragmented_array = fa.FragmentedArray.load_untiled(
+    def load_untiled(optimized: bool) -> fa.FragmentedArray:
+      return fa.FragmentedArray.load_untiled(
           op.source,
           layout=layout,
           is_signed=is_signed,
-          optimized=bool(optimized),
+          optimized=optimized,
       )
-      return [_fragmented_array_to_ir(fragmented_array)]
 
-    if ref_ty.memory_space != utils.smem():
-      raise ValueError(f"Unsupported memory space: {ref_ty.memory_space}")
+    fragmented_array = _retry_on_failure(load_untiled, optimized)
 
+  return [_fragmented_array_to_ir(fragmented_array)]
+
+
+@_register_lowering(mgpu.VectorStoreOp)
+def _vector_store_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.VectorStoreOp
+) -> Sequence[ir.Value]:
+  [to_store_layout] = inference_utils.in_layouts(op)
+  fragmented_array = _fragmented_array_from_ir(op.valueToStore, to_store_layout)
+
+  if ctx.auto_barriers:
+    mgpu_utils.warpgroup_barrier()  # Make sure the reads have completed.
+
+  ref = op.destination
+  ref_type = ir.MemRefType(ref.type)
+  optimized = op.optimized.value if op.optimized is not None else None
+
+  if ref_type.memory_space is None:  # GMEM
+    fragmented_array.store_untiled(ref, optimized=bool(optimized))
+  elif ref_type.memory_space == utils.smem():
     transforms_attr = inference_utils.in_transforms(op)[0]
     swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
         transforms_attr
     )
     has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
     if has_transforms:
-      _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
-      transformed_ref = unwrap_transformed_memref(op.source, transforms_attr)
+      _check_transforms_and_swizzle_are_supported(ref_type, transforms, swizzle)
+      unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)
 
-      def load_tiled(optimized: bool) -> fa.FragmentedArray:
-        return fa.FragmentedArray.load_tiled(
-            transformed_ref,
-            swizzle,
-            is_signed=is_signed,
-            layout=layout,
-            optimized=optimized,
-        )
+      def store_tiled(optimized: bool):
+        fragmented_array.store_tiled(unwrapped_ref, swizzle, optimized)
 
-      fragmented_array = _retry_on_failure(load_tiled, optimized)
+      _retry_on_failure(store_tiled, optimized)
     else:
 
-      def load_untiled(optimized: bool) -> fa.FragmentedArray:
-        return fa.FragmentedArray.load_untiled(
-            op.source,
-            layout=layout,
-            is_signed=is_signed,
-            optimized=optimized,
-        )
+      def store_untiled(optimized: bool):
+        fragmented_array.store_untiled(ref, optimized=optimized)
 
-      fragmented_array = _retry_on_failure(load_untiled, optimized)
+      _retry_on_failure(store_untiled, optimized)
+  else:
+    raise ValueError(f"Unsupported memory space: {ref_type.memory_space}")
 
-    return [_fragmented_array_to_ir(fragmented_array)]
+  if ctx.auto_barriers:
+    mgpu_utils.warpgroup_barrier()  # Make sure the writes have completed.
 
-
-if hasattr(mgpu, "VectorStoreOp"):
-  @_register_lowering(mgpu.VectorStoreOp)
-  def _vector_store_op_lowering_rule(
-      ctx: LoweringContext, op: mgpu.VectorStoreOp
-  ) -> Sequence[ir.Value]:
-    [to_store_layout] = inference_utils.in_layouts(op)
-    fragmented_array = _fragmented_array_from_ir(
-        op.valueToStore, to_store_layout
-    )
-
-    if ctx.auto_barriers:
-      mgpu_utils.warpgroup_barrier()  # Make sure the reads have completed.
-
-    ref = op.destination
-    ref_type = ir.MemRefType(ref.type)
-    optimized = op.optimized.value if op.optimized is not None else None
-
-    if ref_type.memory_space is None:  # GMEM
-      fragmented_array.store_untiled(ref, optimized=bool(optimized))
-    elif ref_type.memory_space == utils.smem():
-      transforms_attr = inference_utils.in_transforms(op)[0]
-      swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
-          transforms_attr
-      )
-      has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
-      if has_transforms:
-        _check_transforms_and_swizzle_are_supported(
-            ref_type, transforms, swizzle
-        )
-        unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)
-
-        def store_tiled(optimized: bool):
-          fragmented_array.store_tiled(unwrapped_ref, swizzle, optimized)
-
-        _retry_on_failure(store_tiled, optimized)
-      else:
-
-        def store_untiled(optimized: bool):
-          fragmented_array.store_untiled(ref, optimized=optimized)
-
-        _retry_on_failure(store_untiled, optimized)
-    else:
-      raise ValueError(f"Unsupported memory space: {ref_type.memory_space}")
-
-    if ctx.auto_barriers:
-      mgpu_utils.warpgroup_barrier()  # Make sure the writes have completed.
-
-    return []
+  return []
 
 
-if hasattr(mgpu, "DebugPrintOp"):
-  @_register_lowering(mgpu.DebugPrintOp)
-  def _debug_print_op_lowering_rule(
-      ctx: LoweringContext, op: mgpu.DebugPrintOp
-  ) -> Sequence[ir.Value]:
-    del ctx
-    [layout] = inference_utils.in_layouts(op)
-    a = _fragmented_array_from_ir(op.value, layout)
-    a.debug_print(op.format.value)
-    return []
+@_register_lowering(mgpu.DebugPrintOp)
+def _debug_print_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.DebugPrintOp
+) -> Sequence[ir.Value]:
+  del ctx
+  [layout] = inference_utils.in_layouts(op)
+  a = _fragmented_array_from_ir(op.value, layout)
+  a.debug_print(op.format.value)
+  return []
 
 
 def pprint_layout(v: fa.FragmentedArray | tcgen05.TMEMRef) -> str:
@@ -580,39 +573,37 @@ def pprint_layout(v: fa.FragmentedArray | tcgen05.TMEMRef) -> str:
     return str(v.layout)
 
 
-if hasattr(mgpu, "PrintLayoutOp"):
-  @_register_lowering(mgpu.PrintLayoutOp)
-  def _print_layout_op_lowering_rule(
-      ctx: LoweringContext, op: mgpu.PrintLayoutOp
-  ) -> Sequence[ir.Value]:
-    del ctx
-    if ir.VectorType.isinstance(op.value.type):
-      (layout,) = inference_utils.in_layouts(op)
-      a = _fragmented_array_from_ir(op.value, layout)
-      print(op.format.value.format(pprint_layout(a)))
-    else:
-      (layout,) = inference_utils.in_tmem_layouts(op)
-      ref = _tmem_ref_from_ir(op.value, layout)
-      print(op.format.value.format(pprint_layout(ref)))
-    return []
+@_register_lowering(mgpu.PrintLayoutOp)
+def _print_layout_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.PrintLayoutOp
+) -> Sequence[ir.Value]:
+  del ctx
+  if ir.VectorType.isinstance(op.value.type):
+    (layout,) = inference_utils.in_layouts(op)
+    a = _fragmented_array_from_ir(op.value, layout)
+    print(op.format.value.format(pprint_layout(a)))
+  else:
+    (layout,) = inference_utils.in_tmem_layouts(op)
+    ref = _tmem_ref_from_ir(op.value, layout)
+    print(op.format.value.format(pprint_layout(ref)))
+  return []
 
 
-if hasattr(mgpu, "BroadcastedIotaOp"):
-  @_register_lowering(mgpu.BroadcastedIotaOp)
-  def _broadcasted_iota_op_lowering_rule(
-      ctx: LoweringContext, op: mgpu.BroadcastedIotaOp
-  ) -> Sequence[ir.Value]:
-    del ctx
-    [layout] = inference_utils.out_layouts(op)
-    result_type = ir.VectorType(op.result.type)
-    a = fa.FragmentedArray.broadcasted_iota(
-        result_type.element_type,
-        tuple(result_type.shape),
-        op.dimension.value,
-        layouts.from_layout_attr(layout),
-        is_signed=_default_is_signed(result_type.element_type),
-    )
-    return [fragmented_array_to_ir(a, result_type)]
+@_register_lowering(mgpu.BroadcastedIotaOp)
+def _broadcasted_iota_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.BroadcastedIotaOp
+) -> Sequence[ir.Value]:
+  del ctx
+  [layout] = inference_utils.out_layouts(op)
+  result_type = ir.VectorType(op.result.type)
+  a = fa.FragmentedArray.broadcasted_iota(
+      result_type.element_type,
+      tuple(result_type.shape),
+      op.dimension.value,
+      layouts.from_layout_attr(layout),
+      is_signed=_default_is_signed(result_type.element_type),
+  )
+  return [fragmented_array_to_ir(a, result_type)]
 
 
 @_register_lowering(vector.BroadcastOp)
@@ -1026,21 +1017,20 @@ def _tmem_layout_cast_lowering_rule(
   return [op.ref]
 
 
-if hasattr(mgpu, "SliceTmemOp"):
-  @_register_lowering(mgpu.SliceTmemOp)
-  def _slice_tmem_lowering_rule(
-      ctx: LoweringContext, op: mgpu.SliceTmemOp
-  ) -> Sequence[ir.Value]:
-    del ctx
-    in_layout_attr = inference_utils.in_tmem_layouts(op)[0]
-    out_layout_attr = inference_utils.out_tmem_layouts(op)[0]
-    source = _tmem_ref_from_ir(op.source, in_layout_attr)
-    i32 = ir.IntegerType.get_signless(32)
-    offset = arith.constant(i32, op.offset)
-    dest_addr = arith.addi(source.address, offset)
-    cast = builtin.UnrealizedConversionCastOp([op.result.type], [dest_addr])
-    cast.attributes["layout"] = out_layout_attr
-    return [cast.result]
+@_register_lowering(mgpu.SliceTmemOp)
+def _slice_tmem_lowering_rule(
+    ctx: LoweringContext, op: mgpu.SliceTmemOp
+) -> Sequence[ir.Value]:
+  del ctx
+  in_layout_attr = inference_utils.in_tmem_layouts(op)[0]
+  out_layout_attr = inference_utils.out_tmem_layouts(op)[0]
+  source = _tmem_ref_from_ir(op.source, in_layout_attr)
+  i32 = ir.IntegerType.get_signless(32)
+  offset = arith.constant(i32, op.offset)
+  dest_addr = arith.addi(source.address, offset)
+  cast = builtin.UnrealizedConversionCastOp([op.result.type], [dest_addr])
+  cast.attributes["layout"] = out_layout_attr
+  return [cast.result]
 
 
 def _conversion_op_lowering_rule(
@@ -1294,33 +1284,32 @@ def _mgpu_wgmma_op_lowering_rule(
   ]
 
 
-if hasattr(mgpu, "ArriveOp"):
-  @_register_lowering(mgpu.ArriveOp)
-  def _mgpu_arrive_op_lowering_rule(
-      ctx: LoweringContext, arrive_op: mgpu.ArriveOp
-  ) -> Sequence[ir.Value]:
-    barrier = utils.DialectBarrierRef.from_barrier_memref(arrive_op.barrier)
-    orders_tc = arrive_op.orders_tensor_core.value
-    if orders_tc:
-      # Only one thread arrives, so make sure it ups the arrival count for the
-      # whole warpgroup.
-      #
-      # TODO(b/415721295): At the moment we assume that there is a single arrival
-      # per warpgroup. If we need to support also Warp-level semantics we will
-      # need to use a warp-level predicate.
-      predicate = ctx.single_thread_per_warpgroup_predicate
-      arrival_count = utils.WARPGROUP_SIZE
-    else:
-      # Each thread arrives once.
-      arrival_count = 1
-      predicate = None
+@_register_lowering(mgpu.ArriveOp)
+def _mgpu_arrive_op_lowering_rule(
+    ctx: LoweringContext, arrive_op: mgpu.ArriveOp
+) -> Sequence[ir.Value]:
+  barrier = utils.DialectBarrierRef.from_barrier_memref(arrive_op.barrier)
+  orders_tc = arrive_op.orders_tensor_core.value
+  if orders_tc:
+    # Only one thread arrives, so make sure it ups the arrival count for the
+    # whole warpgroup.
+    #
+    # TODO(b/415721295): At the moment we assume that there is a single arrival
+    # per warpgroup. If we need to support also Warp-level semantics we will
+    # need to use a warp-level predicate.
+    predicate = ctx.single_thread_per_warpgroup_predicate
+    arrival_count = utils.WARPGROUP_SIZE
+  else:
+    # Each thread arrives once.
+    arrival_count = 1
+    predicate = None
 
-    barrier.barrier_ref.arrive(
-        arrival_count=arrival_count,
-        orders_tensor_core=orders_tc,
-        predicate=predicate,
-    )
-    return []
+  barrier.barrier_ref.arrive(
+      arrival_count=arrival_count,
+      orders_tensor_core=orders_tc,
+      predicate=predicate,
+  )
+  return []
 
 
 @_register_lowering(mgpu.ArriveExpectTxOp)

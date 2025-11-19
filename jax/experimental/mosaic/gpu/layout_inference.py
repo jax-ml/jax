@@ -623,100 +623,92 @@ for op in [
   _add_equation_system_derivation_rule(op)(_pointwise_op_equation_system)
 
 
-if hasattr(mgpu, "VectorLoadOp"):
-  @_add_equation_system_derivation_rule(mgpu.VectorLoadOp)
-  def _vector_load_equation_system(
-      ctx: DerivationContext,
-      op: mgpu.VectorLoadOp,
-  ) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
-    # TODO(b/447079781): Investigate whether we should check for contiguous
-    # strides here. An initial implementation of this failed the
-    # test_gmem_to_smem_with_multiple_smem_indexers_and_transforms test, but
-    # we should confirm that this is properly supported.
+@_add_equation_system_derivation_rule(mgpu.VectorLoadOp)
+def _vector_load_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.VectorLoadOp,
+) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
+  # TODO(b/447079781): Investigate whether we should check for contiguous
+  # strides here. An initial implementation of this failed the
+  # test_gmem_to_smem_with_multiple_smem_indexers_and_transforms test, but
+  # we should confirm that this is properly supported.
 
-    # Registers
-    dest = ValueSite(op, VariableType.RESULT, 0)
-    dest_var = eqns.Variable(dest)
-    value_sites_for_variable = {dest_var: [dest]}
-    constraints = [eqns.NotOfType(dest_var, fa.WGSplatFragLayout)]
+  # Registers
+  dest = ValueSite(op, VariableType.RESULT, 0)
+  dest_var = eqns.Variable(dest)
+  value_sites_for_variable = {dest_var: [dest]}
+  constraints = [eqns.NotOfType(dest_var, fa.WGSplatFragLayout)]
 
-    # SMEM
-    if utils.is_smem_ref(op.source):
-      source = ValueSite(op, VariableType.OPERAND, 0)
-      source_var = ctx.producer_ref(source)
-      value_sites_for_variable[source_var] = [source]
-      shape = tuple(ir.MemRefType(op.source.type).shape)
-      constraints.append(eqns.IsTransferable(source_var, dest_var, shape))
+  # SMEM
+  if utils.is_smem_ref(op.source):
+    source = ValueSite(op, VariableType.OPERAND, 0)
+    source_var = ctx.producer_ref(source)
+    value_sites_for_variable[source_var] = [source]
+    shape = tuple(ir.MemRefType(op.source.type).shape)
+    constraints.append(eqns.IsTransferable(source_var, dest_var, shape))
 
-    system = eqns.EquationSystem(constraints=constraints)
-    return system, value_sites_for_variable, []
-
-
-if hasattr(mgpu, "VectorStoreOp"):
-  @_add_equation_system_derivation_rule(mgpu.VectorStoreOp)
-  def _vector_store_equation_system(
-      ctx: DerivationContext,
-      op: mgpu.VectorStoreOp,
-  ) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
-    # TODO(b/447079781): Investigate whether we should check for contiguous
-    # strides here. An initial implementaiton of this failed the
-    # test_gmem_to_smem_with_multiple_smem_indexers_and_transforms test, but
-    # we should confirm that this is properly supported.
-
-    # Registers
-    value = ValueSite(op, VariableType.OPERAND, 0)
-    value_var = eqns.Variable(value)
-    value_sites_for_variable = {value_var: [value]}
-
-    # SMEM
-    constraints = []
-    if utils.is_smem_ref(op.destination):
-      dest = ValueSite(op, VariableType.OPERAND, 1)
-      dest_var = ctx.producer_ref(dest)
-      value_sites_for_variable[dest_var] = [dest]
-      shape = tuple(ir.MemRefType(op.destination.type).shape)
-      constraints.append(eqns.IsTransferable(value_var, dest_var, shape))
-
-    system = eqns.EquationSystem(constraints=constraints)
-    return system, value_sites_for_variable, []
+  system = eqns.EquationSystem(constraints=constraints)
+  return system, value_sites_for_variable, []
 
 
-if hasattr(mgpu, "DebugPrintOp"):
-  @_add_equation_system_derivation_rule(mgpu.DebugPrintOp)
-  def _debug_print_equation_system(
-      ctx: DerivationContext,
-      op: mgpu.DebugPrintOp,
-  ) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
-    del ctx
-    value = ValueSite(op, VariableType.OPERAND, 0)
-    return eqns.EquationSystem(), {eqns.Variable(value): [value]}, []
+@_add_equation_system_derivation_rule(mgpu.VectorStoreOp)
+def _vector_store_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.VectorStoreOp,
+) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
+  # TODO(b/447079781): Investigate whether we should check for contiguous
+  # strides here. An initial implementaiton of this failed the
+  # test_gmem_to_smem_with_multiple_smem_indexers_and_transforms test, but
+  # we should confirm that this is properly supported.
+
+  # Registers
+  value = ValueSite(op, VariableType.OPERAND, 0)
+  value_var = eqns.Variable(value)
+  value_sites_for_variable = {value_var: [value]}
+
+  # SMEM
+  constraints = []
+  if utils.is_smem_ref(op.destination):
+    dest = ValueSite(op, VariableType.OPERAND, 1)
+    dest_var = ctx.producer_ref(dest)
+    value_sites_for_variable[dest_var] = [dest]
+    shape = tuple(ir.MemRefType(op.destination.type).shape)
+    constraints.append(eqns.IsTransferable(value_var, dest_var, shape))
+
+  system = eqns.EquationSystem(constraints=constraints)
+  return system, value_sites_for_variable, []
 
 
-if hasattr(mgpu, "PrintLayoutOp"):
-  @_add_equation_system_derivation_rule(mgpu.PrintLayoutOp)
-  def _print_layout_equation_system(
-      ctx: DerivationContext,
-      op: mgpu.PrintLayoutOp,
-  ) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
-    value = ValueSite(op, VariableType.OPERAND, 0)
-    var = (
-        eqns.Variable(value) if is_vector(op.value) else ctx.producer_ref(value)
-    )
-    return eqns.EquationSystem(), {var: [value]}, []
+@_add_equation_system_derivation_rule(mgpu.DebugPrintOp)
+def _debug_print_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.DebugPrintOp,
+) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
+  del ctx
+  value = ValueSite(op, VariableType.OPERAND, 0)
+  return eqns.EquationSystem(), {eqns.Variable(value): [value]}, []
 
 
-if hasattr(mgpu, "BroadcastedIotaOp"):
+@_add_equation_system_derivation_rule(mgpu.PrintLayoutOp)
+def _print_layout_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.PrintLayoutOp,
+) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
+  value = ValueSite(op, VariableType.OPERAND, 0)
+  var = eqns.Variable(value) if is_vector(op.value) else ctx.producer_ref(value)
+  return eqns.EquationSystem(), {var: [value]}, []
 
-  @_add_equation_system_derivation_rule(mgpu.BroadcastedIotaOp)
-  def _broadcasted_iota_equation_system(
-      ctx: DerivationContext,
-      op: mgpu.BroadcastedIotaOp,
-  ) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
-    del ctx
-    value = ValueSite(op, VariableType.RESULT, 0)
-    var = eqns.Variable(value)
-    constraints = [eqns.NotOfType(var, fa.WGSplatFragLayout)]
-    return eqns.EquationSystem(constraints=constraints), {var: [value]}, []
+
+@_add_equation_system_derivation_rule(mgpu.BroadcastedIotaOp)
+def _broadcasted_iota_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.BroadcastedIotaOp,
+) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
+  del ctx
+  value = ValueSite(op, VariableType.RESULT, 0)
+  var = eqns.Variable(value)
+  constraints = [eqns.NotOfType(var, fa.WGSplatFragLayout)]
+  return eqns.EquationSystem(constraints=constraints), {var: [value]}, []
 
 
 @_add_equation_system_derivation_rule(mgpu.OptimizationBarrierOp)
@@ -1396,21 +1388,20 @@ def _async_load_tmem_equation_system(
   )
 
 
-if hasattr(mgpu, "SliceTmemOp"):
-  @_add_equation_system_derivation_rule(mgpu.SliceTmemOp)
-  def _slice_tmem_equation_system(
-      ctx: DerivationContext,
-      op: mgpu.SliceTmemOp,
-  ) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
-    operand = ValueSite(op, VariableType.OPERAND, 0)
-    operand_variable = ctx.producer_ref(operand)
-    result = ValueSite(op, VariableType.RESULT, 0)
-    result_variable = eqns.Variable(result)
-    return (
-        eqns.EquationSystem(),
-        {operand_variable: [operand], result_variable: [result]},
-        [],
-    )
+@_add_equation_system_derivation_rule(mgpu.SliceTmemOp)
+def _slice_tmem_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.SliceTmemOp,
+) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
+  operand = ValueSite(op, VariableType.OPERAND, 0)
+  operand_variable = ctx.producer_ref(operand)
+  result = ValueSite(op, VariableType.RESULT, 0)
+  result_variable = eqns.Variable(result)
+  return (
+      eqns.EquationSystem(),
+      {operand_variable: [operand], result_variable: [result]},
+      [],
+  )
 
 
 @_add_equation_system_derivation_rule(mgpu.AsyncStoreTmemOp)
