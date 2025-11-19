@@ -2728,7 +2728,7 @@ def _vary_unreduced_cast_transpose_rule(cts, *args, axes):
     return ad.Zero(arg.aval) if type(ct) is ad.Zero else ct
   cts = map(f, cts, args)
   nonzero_out_cts, treedef = tree_util.tree_flatten(cts)
-  nonzero_in_cts = reduced_vary_cast_p.bind(*nonzero_out_cts, axes=axes)
+  nonzero_in_cts = core.reduced_vary_cast_p.bind(*nonzero_out_cts, axes=axes)
   return tree_util.tree_unflatten(treedef, nonzero_in_cts)
 ad.deflinear2(vary_unreduced_cast_p, _vary_unreduced_cast_transpose_rule)
 
@@ -2739,18 +2739,10 @@ batching.primitive_batchers[vary_unreduced_cast_p] = _vary_unreduced_cast_batche
 ####################### reduced_vary_cast #############################
 
 # Reduced -> Varying cast
-def reduced_vary_cast(x, axis_name):
-  axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
-  if not axis_name:
-    return x
-  x_flat, treedef = tree_util.tree_flatten(x)
-  out_flat = reduced_vary_cast_p.bind(*x_flat, axes=axes)
-  return tree_util.tree_unflatten(treedef, out_flat)
 
-reduced_vary_cast_p = core.Primitive('reduced_vary_cast_p')
-reduced_vary_cast_p.multiple_results = True
-reduced_vary_cast_p.def_impl(lambda *args, axes: args)
-mlir.register_lowering(reduced_vary_cast_p, lambda ctx, *x, axes: x)
+# Traceable defined in core.py to avoid circular imports
+core.reduced_vary_cast_p.def_impl(lambda *args, axes: args)
+mlir.register_lowering(core.reduced_vary_cast_p, lambda ctx, *x, axes: x)
 
 def _reduced_vary_cast_abstract_eval(*avals, axes):
   assert isinstance(axes, tuple)
@@ -2781,7 +2773,7 @@ def _reduced_vary_cast_abstract_eval(*avals, axes):
     out_vma = aval.vma | frozenset(axes)
     out_avals.append(aval.update(sharding=out_sharding, vma=out_vma))
   return out_avals
-reduced_vary_cast_p.def_abstract_eval(_reduced_vary_cast_abstract_eval)
+core.reduced_vary_cast_p.def_abstract_eval(_reduced_vary_cast_abstract_eval)
 
 def _reduced_vary_cast_transpose_rule(cts, *args, axes):
   def f(ct, arg):
@@ -2791,8 +2783,8 @@ def _reduced_vary_cast_transpose_rule(cts, *args, axes):
   nonzero_out_cts, treedef = tree_util.tree_flatten(cts)
   nonzero_in_cts = vary_unreduced_cast_p.bind(*nonzero_out_cts, axes=axes)
   return tree_util.tree_unflatten(treedef, nonzero_in_cts)
-ad.deflinear2(reduced_vary_cast_p, _reduced_vary_cast_transpose_rule)
+ad.deflinear2(core.reduced_vary_cast_p, _reduced_vary_cast_transpose_rule)
 
 def _reduced_vary_cast_batcher(vals_in, dims_in, *, axes):
   raise NotImplementedError
-batching.primitive_batchers[reduced_vary_cast_p] = _reduced_vary_cast_batcher
+batching.primitive_batchers[core.reduced_vary_cast_p] = _reduced_vary_cast_batcher

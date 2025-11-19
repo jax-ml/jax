@@ -2435,6 +2435,22 @@ def check_unreduced_args(args, name):
           f"{name} cannot accept args which are reduced. Got"
           f" {a.str_short(True)}")
 
+####################### reduced_vary_cast #############################
+
+# Reduced -> Varying no-op cast
+def reduced_vary_cast(x, axis_name):
+  axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
+  if not axis_name:
+    return x
+  x_flat, treedef = tree_flatten(x)
+  out_flat = reduced_vary_cast_p.bind(*x_flat, axes=axes)
+  return tree_unflatten(treedef, out_flat)
+
+reduced_vary_cast_p = Primitive('reduced_vary_cast_p')
+reduced_vary_cast_p.multiple_results = True
+
+#######################################################################
+
 def standard_insert_pvary(*args):
   if not config._check_vma.value:
     return args
@@ -2442,13 +2458,24 @@ def standard_insert_pvary(*args):
     return args
   in_vma = [aval.vma if isinstance(aval := get_aval(a), ShapedArray)
             else frozenset() for a in args]
+  in_reduced = [aval.sharding.spec.reduced
+                if isinstance(aval := get_aval(a), ShapedArray) else frozenset()
+                for a in args]
   out_vma = frozenset.union(*in_vma)
-  return [
-      pvary(arg, tuple(n for n in out_vma if n not in src))
-      if isinstance(get_aval(arg), ShapedArray) and out_vma - src
-      else arg
-      for arg, src in zip(args, in_vma)
-  ]
+  out = []
+  for arg, src_vma, src_reduced in zip(args, in_vma, in_reduced):
+    if (isinstance(get_aval(arg), ShapedArray) and
+        (rest_vma := out_vma - src_vma)):
+      # TODO(yashkatariya): Handle partial reduced_vary_cast and partial pvary.
+      # Will need more changes to pvary to allow such partialness.
+      if src_reduced == rest_vma:
+        out.append(
+            reduced_vary_cast(arg, tuple(n for n in out_vma if n in rest_vma)))
+      else:
+        out.append(pvary(arg, tuple(n for n in out_vma if n in rest_vma)))
+    else:
+      out.append(arg)
+  return out
 
 def standard_vma_rule(prim_name, *avals, **kwargs) -> frozenset[AxisName]:
   if not config._check_vma.value:

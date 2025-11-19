@@ -4506,6 +4506,59 @@ class ShardMapTest(jtu.JaxTestCase):
     with self.assertRaises(ValueError):  # not AssertionError
       f(jnp.arange(3.), jnp.arange(3.), jnp.arange(3.))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_reduced_vary_automatically_inserted(self, mesh):
+    arr1 = jax.device_put(np.arange(8.).reshape(4, 2), P('x', None))
+    arr2 = jax.device_put(np.arange(12.).reshape(2, 6),
+                          P(None, None, reduced={'x'}))
+
+    @jax.jit
+    @jax.shard_map(in_specs=(P('x', None), P(None, None, reduced={'x'})),
+                   out_specs=P('x', None))
+    def f(x, y):
+      return jnp.dot(x, y)
+
+    out = f(arr1, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertArraysEqual(out, arr1 @ arr2)
+
+    def g(x, y):
+      return f(x, y).sum()
+
+    out1, out2 = jax.jit(jax.grad(g, argnums=(0, 1)))(arr1, arr2)
+    self.assertEqual(out1.sharding, arr1.sharding)
+    self.assertEqual(out2.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reduced_vary_automatically_inserted_psum(self, mesh):
+    arr1 = jax.device_put(np.arange(8.).reshape(4, 2), P('x', 'y'))
+    arr2 = jax.device_put(np.arange(12.).reshape(2, 6),
+                          P('y', None, reduced={'x'}))
+
+    @jax.jit
+    @jax.shard_map(in_specs=(P('x', 'y'), P('y', None, reduced={'x'})),
+                   out_specs=P('x', None))
+    def f(x, y):
+      self.assertEqual(x.vma, {'x', 'y'})
+      self.assertEqual(y.vma, {'y'})
+      self.assertEqual(y.aval.sharding.spec.reduced, {'x'})
+      z = jnp.dot(x, y)
+      self.assertEqual(z.vma, {'x', 'y'})
+      return jax.lax.psum(z, axis_name='y')
+
+    out = f(arr1, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertArraysEqual(out, jnp.dot(arr1, arr2, out_sharding=P('x')))
+
+    def g(x, y):
+      return f(x, y).sum()
+
+    out1, out2 = jax.jit(jax.grad(g, argnums=(0, 1)))(arr1, arr2)
+    self.assertEqual(out1.sharding, arr1.sharding)
+    self.assertEqual(out2.sharding,
+                     NamedSharding(mesh, P('y', None, unreduced={'x'})))
+
 
 class FunSpec(NamedTuple):
   name: str
