@@ -357,27 +357,43 @@ class OpsTest(PallasBaseTest):
 
   @parameterized.product(
       axis=[0, 1, 2],
-      reduce_func = [jnp.argmax, jnp.argmin]
+      in_shape=[(2, 29, 206), (12, 28), (12,)],
+      reduce_func = [jnp.argmax, jnp.argmin],
+      keepdims=[False, True],
   )
-  def test_reduce_index(self, axis, reduce_func):
+  def test_reduce_index(self, axis, in_shape, reduce_func, keepdims):
+    if not keepdims and not jtu.if_cloud_tpu_at_least(2025, 11, 24):
+      self.skipTest("Requires libtpu built after 2025-11-24")
     dtype = jnp.float32
-    in_shape = (2, 32, 256)
     rank = len(in_shape)
-    if axis == rank - 1 and not jtu.is_device_tpu_at_least(version=4):
-      self.skipTest("Requires TPUv4+ for axis=1")
+    if axis >= rank:
+      self.skipTest("Requires axis < rank")
+    if axis == rank - 1:
+      if keepdims and not jtu.is_device_tpu_at_least(version=4):
+        self.skipTest("Requires TPUv4+ for axis=rank-1 and keepdims=True")
+      if not keepdims and not jtu.is_device_tpu_at_least(version=5):
+        self.skipTest("Requires TPUv5+ for axis=rank-1 and keepdims=False")
+    if rank == 1 and not keepdims:
+      self.skipTest("Scalar output not supported")
 
     out_shape = list(in_shape)
-    out_shape[axis] = 1
+    if keepdims:
+      out_shape[axis] = 1
+    else:
+      del out_shape[axis]
 
     def kernel(x, out):
-      out[:] = reduce_func(x[:], axis, keepdims=True)
+      out[:] = reduce_func(x[:], axis, keepdims=keepdims)
 
-    x = jnp.arange(np.prod(in_shape), dtype=dtype).reshape(in_shape)
+    x = jax.random.permutation(
+        jax.random.key(22),
+        jnp.arange(np.prod(in_shape), dtype=dtype)
+    ).reshape(in_shape)
     result = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct(out_shape, jnp.int32),
     )(x)
-    expected = reduce_func(x, axis, keepdims=True)
+    expected = reduce_func(x, axis, keepdims=keepdims)
     np.testing.assert_array_equal(result, expected)
 
   @parameterized.product(
