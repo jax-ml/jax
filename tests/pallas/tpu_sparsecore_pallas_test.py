@@ -236,21 +236,23 @@ class VectorSubcoreTest(PallasSCTest):
       )
       for dtype, shapes in sc_core.SUPPORTED_VECTOR_SHAPES.items()
       for shape in shapes
+      if math.prod(shape) * dtype.itemsize == 32
       for minor_scale in [1, 2, 4]
   ))
   def test_slicing(self, dtype, out_shape, minor_scale):
     self.skip_if_tc_tiling()
-    if jtu.is_device_tpu(6, "e"):
+
+    if dtype == jnp.float16 and jtu.is_device_tpu(6, "e"):
       # TODO(b/433704850): Remove this once the bug is fixed.
       self.skipTest("Crashes")
 
     crashing = {
-        "int16": [(2, 8), (2, 16)],
-        "uint16": [(2, 8), (2, 16)],
-        "float16": [(2, 8), (2, 16), (4, 8), (4, 16)],
-        "bfloat16": [(2, 8), (2, 16), (4, 8), (4, 16)],
-        "int8": [(4, 8), (4, 16)],
-        "uint8": [(4, 8), (4, 16)],
+        "int16": [(2, 8)],
+        "uint16": [(2, 8)],
+        "float16": [(2, 8)],
+        "bfloat16": [(2, 8)],
+        "int8": [(4, 8)],
+        "uint8": [(4, 8)],
     }
     if out_shape in crashing.get(dtype.name, []):
       self.skipTest("Crashes")

@@ -341,7 +341,7 @@ pallas_core._core_map_mesh_rules[VectorSubcoreMesh] = (
 )
 
 
-# TODO(slebedev): Add more dtypes and vector shapes.
+# TODO(slebedev): Only keep the shapes which do not require unrolling.
 SUPPORTED_VECTOR_SHAPES = collections.defaultdict(list)
 for dtype in [jnp.int32, jnp.uint32, jnp.float32]:
   SUPPORTED_VECTOR_SHAPES[jnp.dtype(dtype)].extend([
