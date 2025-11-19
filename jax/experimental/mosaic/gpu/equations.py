@@ -415,12 +415,12 @@ class IsTransferable:
 
   def supported_tmem_transfers(
       self, packing: int
-  ) -> set[tuple[tcgen05.TMEMLayout, fa.FragmentedLayout]]:
-    """Returns the set of supported TMEM <-> Register transfers."""
+  ) -> list[tuple[tcgen05.TMEMLayout, fa.FragmentedLayout]]:
+    """Returns the list of supported TMEM <-> Register transfers."""
     assert len(self.shape) == 2
     columns = self.shape[1]
     tmem_default_layout = tcgen05.tmem_default_layout(packing)
-    return {
+    return [
         (tmem_default_layout, fa.TCGEN05_LAYOUT),
         (tmem_default_layout, fa.TMEM_NATIVE_LAYOUT),
         (tcgen05.tmem_half_lane_layout(columns, packing), fa.WGMMA_LAYOUT),
@@ -428,7 +428,7 @@ class IsTransferable:
             tcgen05.tmem_m64_collective_layout(columns, packing),
             tcgen05.fa_m64_collective_layout(columns),
         ),
-    }
+    ]
 
   def _is_valid_tmem_transfer(
       self, tmem_layout: tcgen05.TMEMLayout, reg_layout: fa.FragmentedLayout

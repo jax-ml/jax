@@ -727,6 +727,25 @@ class LayoutInferenceTest(parameterized.TestCase):
     )
     self.assertEqual(assignments, {v0: RL(mgpu.WGMMA_ROW_LAYOUT)})
 
+  def test_find_assignments_for_is_transferable_constraints_is_deterministic(
+      self,
+  ):
+    v0 = V(0)
+    tmem_layout = tcgen05.tmem_default_layout(packing=1)
+    constraint = eqns.IsTransferable(
+        v0, eqns.TMEMLayout(tmem_layout), shape=(128, 128)
+    )
+    assignments, _ = layout_inference.find_assignments_for(
+        {v0},
+        eqns.EquationSystem(constraints=[constraint]),
+        [],
+        fuel=1000,
+    )
+    # Another valid layout is TMEM_NATIVE_LAYOUT but TCGEN05_LAYOUT is tried
+    # first. This may require updating if we decide to change the traversal
+    # order in the future.
+    self.assertEqual(assignments, {v0: RL(mgpu.TCGEN05_LAYOUT)})
+
   def test_cannot_find_assignments_for_unsatisfiable_equation_system(self):
     with ir.InsertionPoint(self.module.body):
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))
