@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "llvm/ADT/FloatingPointMode.h"
@@ -1371,6 +1372,39 @@ LogicalResult EnqueueDMAOp::verify() {
   return success();
 }
 
+namespace {
+  // Returns true if we can prove that the two shapes are non-equal at compile
+  // time. Returns false if we can prove that the two shapes are equal at
+  // compile time, or if one or both shapes are dynamic.
+  bool areStaticallyNonEqual(ArrayRef<int64_t> lhs, ArrayRef<int64_t> rhs) {
+    if (lhs.size() != rhs.size()) {
+      return true;
+    }
+    for (auto [lhs_dim, rhs_dim] : llvm::zip(lhs, rhs)) {
+      if (lhs_dim == ShapedType::kDynamic || rhs_dim == ShapedType::kDynamic) {
+        continue;
+      }
+      if (lhs_dim != rhs_dim) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+std::string dynamicShapeToStr(ArrayRef<int64_t> shape) {
+  llvm::SmallVector<std::string> dims;
+  for (int64_t dim : shape) {
+    if (dim == ShapedType::kDynamic) {
+      dims.push_back("?");
+    } else {
+      dims.push_back(absl::StrCat(dim));
+    }
+  }
+  return absl::StrJoin(dims, ", ");
+}
+}  // namespace
+
+
 LogicalResult EnqueueIndirectDMAOp::verifyGather(
     MemRefType operand_ty, ArrayRef<int64_t> offsets_shape,
     MemRefType result_ty) {
@@ -1389,17 +1423,16 @@ LogicalResult EnqueueIndirectDMAOp::verifyGather(
       operand_ty.getShape().drop_front(offsets_rank);
   uint64_t slice_rank = operand_slice_dims.size();
 
-  const std::string result_shape_str =
-      absl::StrJoin(result_ty.getShape(), ", ");
+  const std::string result_shape_str = dynamicShapeToStr(result_ty.getShape());
 
   // Make sure that the output shape is such that there is one output slice per
   // offset.
   // offsets shape : [o0, .., on]
   // result shape  : [o'0, .., o'n, s0, .., sm]
   // [o0, .., on] == [o'0, .., o'n]
-  if (!absl::c_equal(offsets_shape, result_offset_dims)) {
+  if (areStaticallyNonEqual(offsets_shape, result_offset_dims)) {
     return emitOpError("Offsets shape (")
-           << absl::StrJoin(offsets_shape, ", ")
+           << dynamicShapeToStr(offsets_shape)
            << ") must match the majormost dimensions of the target (gather "
               "result) shape ("
            << result_shape_str << ")";
@@ -1411,13 +1444,13 @@ LogicalResult EnqueueIndirectDMAOp::verifyGather(
   // Operand shape : [z0, .., zn, s0, .., sm]
   // Result shape :  [o0, .., on, s'0, .., s'm]
   // [s0, .., sm] == [s'0, .., s'm]
-  if (!absl::c_equal(operand_slice_dims, result_slice_dims)) {
+  if (areStaticallyNonEqual(operand_slice_dims, result_slice_dims)) {
     const std::string plural = slice_rank == 1 ? "" : "s";
     return emitOpError(absl::StrFormat(
         "%d minormost dimension%s of the source (gather operand) shape (%s) "
         "must match the minormost dimension%s of the target (gather result) "
         "shape (%s)",
-        slice_rank, plural, absl::StrJoin(operand_ty.getShape(), ", "), plural,
+        slice_rank, plural, dynamicShapeToStr(operand_ty.getShape()), plural,
         result_shape_str));
   }
   return success();
@@ -1442,15 +1475,15 @@ LogicalResult EnqueueIndirectDMAOp::verifyScatter(
   uint64_t slice_rank = operand_slice_dims.size();
 
   const std::string updates_shape_str =
-      absl::StrJoin(updates_ty.getShape(), ", ");
+      dynamicShapeToStr(updates_ty.getShape());
 
   // Make sure that there is one slice of updates per offset
   // offsets shape : [o0, .., on]
   // updates shape : [o'0, .., o'n, s0, .., sm]
   // [o0, .., on] == [o'0, .., o'n]
-  if (!absl::c_equal(offsets_shape, updates_offset_dims)) {
+  if (areStaticallyNonEqual(offsets_shape, updates_offset_dims)) {
     return emitOpError("Offsets shape (")
-           << absl::StrJoin(offsets_shape, ", ")
+           << dynamicShapeToStr(offsets_shape)
            << ") must match the majormost dimensions of the source "
               "(scatter updates) shape ("
            << updates_shape_str << ")";
@@ -1462,14 +1495,14 @@ LogicalResult EnqueueIndirectDMAOp::verifyScatter(
   // Updates shape : [o0, .., on, s0, .., sm]
   // Operand shape : [z0, .., zn, s'0, .., s'm]
   // [s0, .., sm] == [s'0, .., s'm]
-  if (!absl::c_equal(operand_slice_dims, updates_slice_dims)) {
+  if (areStaticallyNonEqual(operand_slice_dims, updates_slice_dims)) {
     const std::string plural = slice_rank == 1 ? "" : "s";
     return emitOpError(absl::StrFormat(
         "%d minormost dimension%s of the source (scatter updates) shape (%s) "
         "must match the minormost dimension%s of the target (scatter operand) "
         "shape (%s)",
         slice_rank, plural, updates_shape_str, plural,
-        absl::StrJoin(operand_ty.getShape(), ", ")));
+        dynamicShapeToStr(operand_ty.getShape())));
   }
   return success();
 }

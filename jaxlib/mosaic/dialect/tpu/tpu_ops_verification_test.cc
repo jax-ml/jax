@@ -1072,6 +1072,24 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       IndirectDmaGatherDynamicTargetShapeVerificationWorks) {
+  auto dma = Create<EnqueueIndirectDMAOp>(
+      /*source=*/AllocaI32({1024, 256, 128}, MemorySpace::kHbm),
+      /*target=*/AllocaI32({ShapedType::kDynamic, 16, 128}, MemorySpace::kVmem),
+      /*offsets=*/AllocaI32({64, 32}, MemorySpace::kVmem),
+      /*semaphore=*/AllocaSemaphore(),
+      /*add=*/false,
+      /*offset_filter=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(dma),
+      StatusIs(_,
+               HasSubstr(
+                   "Offsets shape (64, 32) must match the majormost dimensions "
+                   "of the target (gather result) shape (?, 16, 128)")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
        IndirectDmaVectorGatherTargetShapeInvalid) {
   Value vector_of_offsets =
       ConstantI32Vector(/*shape=*/{8},
@@ -1110,6 +1128,22 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
                    "the target (gather result) shape (64, 32, 128)")));
 }
 
+// Like IndirectDmaGatherOperandShapeInvalid above, but we can't prove that the
+// shapes are non-equal at compile time.
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       IndirectDmaGatherDynamicOperandShapeVerificationWorks) {
+  auto dma = Create<EnqueueIndirectDMAOp>(
+      /*source=*/AllocaI32({1024, 256, ShapedType::kDynamic},
+                           MemorySpace::kHbm),
+      /*target=*/AllocaI32({64, 32, 128}, MemorySpace::kVmem),
+      /*offsets=*/AllocaI32({64, 32}, MemorySpace::kVmem),
+      /*semaphore=*/AllocaSemaphore(),
+      /*add=*/false,
+      /*offset_filter=*/nullptr);
+
+  ASSERT_OK(VerifyOp(dma));
+}
+
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
        IndirectDmaScatterUpdatesShapeInvalid) {
   auto dma = Create<EnqueueIndirectDMAOp>(
@@ -1129,6 +1163,24 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       IndirectDmaScatterDynamicUpdatesShapeInvalid) {
+  auto dma = Create<EnqueueIndirectDMAOp>(
+      /*source=*/AllocaI32({ShapedType::kDynamic, 16, 128}, MemorySpace::kVmem),
+      /*target=*/AllocaI32({1024, 256, 128}, MemorySpace::kHbm),
+      /*offsets=*/AllocaI32({64, 32}, MemorySpace::kVmem),
+      /*semaphore=*/AllocaSemaphore(),
+      /*add=*/false,
+      /*offset_filter=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(dma),
+      StatusIs(_,
+               HasSubstr(
+                   "Offsets shape (64, 32) must match the majormost dimensions "
+                   "of the source (scatter updates) shape (?, 16, 128)")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
        IndirectDmaScatterOperandShapeInvalid) {
   auto dma = Create<EnqueueIndirectDMAOp>(
       /*source=*/AllocaI32({64, 32, 128}, MemorySpace::kVmem),
@@ -1145,6 +1197,21 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
                  "1 minormost dimension of the source (scatter updates) shape "
                  "(64, 32, 128) must match the minormost dimension of the "
                  "target (scatter operand) shape (1024, 256, 512)")));
+}
+
+// Like IndirectDmaScatterOperandShapeInvalid above, but we can't prove that the
+// shapes are non-equal at compile time.
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       IndirectDmaScatterDynamicOperandShapeVerificationWorks) {
+  auto dma = Create<EnqueueIndirectDMAOp>(
+      /*source=*/AllocaI32({64, 32, ShapedType::kDynamic}, MemorySpace::kVmem),
+      /*target=*/AllocaI32({1024, 256, 512}, MemorySpace::kHbm),
+      /*offsets=*/AllocaI32({64, 32}, MemorySpace::kVmem),
+      /*semaphore=*/AllocaSemaphore(),
+      /*add=*/false,
+      /*offset_filter=*/nullptr);
+
+  ASSERT_OK(VerifyOp(dma));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
