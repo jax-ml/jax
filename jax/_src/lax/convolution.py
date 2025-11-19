@@ -296,10 +296,10 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
 
   Notes:
     TensorFlow/Keras Compatibility: By default, JAX does NOT reverse the
-    kernel's spatial dimensions. This differs from TensorFlow's "Conv2DTranspose"
+    kernel's spatial dimensions. This differs from TensorFlow's ``Conv2DTranspose``
     and similar frameworks, which flip spatial axes and swap input/output channels.
 
-    To match TensorFlow/Keras behavior, set "transpose_kernel=True" .
+    To match TensorFlow/Keras behavior, set ``transpose_kernel=True``.
 
   Args:
     lhs: a rank `n+2` dimensional input array.
