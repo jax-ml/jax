@@ -496,18 +496,98 @@ LogicalResult RelayoutOp::verify() {
   return success();
 }
 
+/*static*/ tpu::TiledLayoutAttr MemRefReshapeOp::findReshapedLayout(
+    tpu::TiledLayoutAttr src_layout, const ArrayRef<int64_t> src_shape,
+    const ArrayRef<int64_t> new_shape) {
+  CHECK(src_layout != nullptr);
+  if (src_shape == new_shape) {
+    return src_layout;
+  }
+  auto is_contiguous_and_can_preserve_tiling =
+      [&](tpu::TiledLayoutAttr layout) -> bool {
+    const ArrayRef<xla::Tile> tiles = layout.getTiles();
+    CHECK(!tiles.empty());
+    const xla::Tile& first_tile = tiles.front();
+    const size_t first_tile_rank = first_tile.dimensions().size();
+    CHECK_LE(first_tile_rank, src_shape.size());
+    // TODO(tlongeri): Verify that tiling is not weird: trailing tiles don't
+    // tile past the first tile and that trailing tiles don't pad the first one.
+    // For example, T(8, 128)(2, 1, 1) and T(8, 128)(16, 1) are not handled
+    // correctly
+    {
+      // TODO(tlongeri): Non-contiguous tile strides would be easy to handle if
+      // we could decompose the reshape into a collapse and expand
+      const SmallVector<int64_t> contiguous_src_tile_strides =
+          ComputeTileStrides(src_shape, first_tile.dimensions());
+      if (ArrayRef(contiguous_src_tile_strides) != layout.getTileStrides()) {
+        // Non-contiguous memref
+        return false;
+      }
+    }
+    if (new_shape.size() < first_tile_rank) {
+      // Not handled: New shape is too small to preserve tiling.
+    }
+    // Leading ones in the first tile can be ignored, provided they are evenly
+    // divided (not padded) by trailing tiles.
+    int64_t leading_ones = 0;
+    while (leading_ones < first_tile_rank &&
+           first_tile.dimension(leading_ones) == 1) {
+      ++leading_ones;
+    }
+    const int64_t trimmed_first_tile_rank = first_tile_rank - leading_ones;
+    if (src_shape.take_back(trimmed_first_tile_rank) ==
+        new_shape.take_back(trimmed_first_tile_rank)) {
+      return true;
+    }
+    CHECK_GE(trimmed_first_tile_rank, 1);
+    // Splitting or merging into the first tiled dimension changes nothing as
+    // long as it's divisible by the first tile (no padding).
+    // Examples:
+    //    8x100 with T(2, 128)       <-> 2x4x100 with T(2, 128)
+    //    4x4x4 with T(2, 10, 10)    <-> 2x2x4x4 with T(2, 10, 10)
+    //    8x256 with T(128)          <-> 8x2x128 with T(128)
+    if (*(src_shape.end() - trimmed_first_tile_rank) %
+                first_tile.dimension(leading_ones) ==
+            0 &&
+        *(new_shape.end() - trimmed_first_tile_rank) %
+                first_tile.dimension(leading_ones) ==
+            0 &&
+        src_shape.take_back(trimmed_first_tile_rank - 1) ==
+            new_shape.take_back(trimmed_first_tile_rank - 1)) {
+      return true;
+    }
+    return false;
+  };
+  if (is_contiguous_and_can_preserve_tiling(src_layout)) {
+    SmallVector<int64_t> new_tile_strides = ComputeTileStrides(
+        new_shape, src_layout.getTiles().front().dimensions());
+    return tpu::TiledLayoutAttr::get(src_layout.getContext(),
+                                     src_layout.getTiles(), new_tile_strides);
+  }
+  // TODO(tlongeri): We could just only try the simplified layout, but, even
+  // though the layouts are *equivalent*, they result in different behavior
+  // in infer-vector-layout. infer-vector-layout shouldn't have different
+  // behavior for equivalent layouts..
+  if (tpu::TiledLayoutAttr small_tile_layout =
+          simplifyToSmallTile(src_layout, src_shape);
+      small_tile_layout != src_layout &&
+      is_contiguous_and_can_preserve_tiling(small_tile_layout)) {
+    SmallVector<int64_t> new_tile_strides = ComputeTileStrides(
+        new_shape, small_tile_layout.getTiles().front().dimensions());
+    return tpu::TiledLayoutAttr::get(small_tile_layout.getContext(),
+                                     small_tile_layout.getTiles(),
+                                     new_tile_strides);
+  }
+  // Failed to find a tiled layout to express the layout of the reshaped memref.
+  return nullptr;
+}
+
 LogicalResult MemRefReshapeOp::verify() {
   auto src_ty = getMemRefType(getInput());
   auto tgt_ty = getType();
   if (tgt_ty.getMemorySpace() != nullptr &&
       tgt_ty.getMemorySpace() != src_ty.getMemorySpace()) {
     return emitOpError("Memory spaces do not match.");
-  }
-  if (src_ty.getShape().size() < 2 || tgt_ty.getShape().size() < 2) {
-    return emitError("Not implemented: 1d memref reshape.");
-  }
-  if (tgt_ty.getElementType() != src_ty.getElementType()) {
-    return emitOpError("Element types don't match.");
   }
   auto src_elements_num = ShapedType::getNumElements(src_ty.getShape());
   auto tgt_elements_num = ShapedType::getNumElements(tgt_ty.getShape());
@@ -527,34 +607,17 @@ LogicalResult MemRefReshapeOp::verify() {
   if (!src_layout || src_layout.getTiles().empty()) {
     return emitOpError("Expected a tiled layout for the input memref.");
   }
-  if (src_layout.getTiles() != tgt_layout.getTiles()) {
+
+  tpu::TiledLayoutAttr expected_tgt_layout =
+      findReshapedLayout(src_layout, src_ty.getShape(), tgt_ty.getShape());
+  if (expected_tgt_layout == nullptr) {
     return emitOpError(
-        "Expected the same tiling for the input and output memref.");
+        "Failed to find a tiled layout for the reshaped memref.");
   }
-  auto tile = src_layout.getTiles().front().dimensions();
-  if (tile.size() != 2) {
-    return emitOpError("Not implemented: memref reshape with 1D tiling.");
-  }
-  SmallVector<int64_t> src_tile_strides(src_layout.getTileStrides());
-  if (ComputeTileStrides(src_ty, tile) != src_tile_strides) {
-    return emitOpError("Not implemented: reshape on a non-contiguous memref.");
-  }
-  auto src_tiled_shape = src_ty.getShape().take_back(2);
-  auto tgt_tiled_shape = tgt_ty.getShape().take_back(2);
-  bool is_src_align_tile_2nd_minor = src_tiled_shape[0] % tile[0] == 0;
-  bool is_src_align_tile_minor = src_tiled_shape[1] % tile[1] == 0;
-  bool is_tgt_align_tile_2nd_minor = tgt_tiled_shape[0] % tile[0] == 0;
-  bool is_tgt_align_tile_minor = tgt_tiled_shape[1] % tile[1] == 0;
-  if (tile[0] == 1 && is_src_align_tile_minor && is_tgt_align_tile_minor) {
-    // When the tiling is (1, ?) and the source and target shapes are aligned
-    // to the tile, we support reshape on any dims.
-  } else if (tgt_tiled_shape[1] != src_tiled_shape[1]) {
-    return emitError("Expected the minormost dimension to be unchanged");
-  } else if (tgt_tiled_shape[0] != src_tiled_shape[0]) {
-    if (!is_src_align_tile_2nd_minor || !is_tgt_align_tile_2nd_minor) {
-      return emitError(
-          "Expected the 2nd minor dimension is aligned to the tile");
-    }
+  // TODO(tlongeri): Should be less strict and check for equivalence instead.
+  if (tgt_layout != expected_tgt_layout) {
+    return emitOpError("Expected output memref to have layout ")
+           << expected_tgt_layout << " but got " << tgt_layout << " instead.";
   }
   return success();
 }
@@ -596,6 +659,7 @@ LogicalResult TransposeOp::verify() {
 
 LogicalResult MemRefReshapeOp::canonicalize(MemRefReshapeOp op,
                                             PatternRewriter &rewriter) {
+  // TODO(tlongeri): Move this outside of canonicalize. This
   auto src_ty = op.getInput().getType();
   auto dst_ty = op.getType();
   auto erase_layout_op = op.getInput().getDefiningOp<tpu::EraseLayoutOp>();
@@ -605,11 +669,14 @@ LogicalResult MemRefReshapeOp::canonicalize(MemRefReshapeOp op,
   auto layout_ref = erase_layout_op.getOperand();
   auto layout_ty = layout_ref.getType();
   auto layout = dyn_cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
-  CHECK(!layout.getTiles().empty());
-  auto tile = layout.getTiles().front().dimensions();
-  auto new_tile_strides = ComputeTileStrides(dst_ty, tile);
-  auto new_layout = tpu::TiledLayoutAttr::get(
-      src_ty.getContext(), layout.getTiles(), new_tile_strides);
+  if (layout == nullptr) {
+    return failure();
+  }
+  tpu::TiledLayoutAttr new_layout =
+      findReshapedLayout(layout, src_ty.getShape(), dst_ty.getShape());
+  if (new_layout == nullptr) {
+    return failure();
+  }
   auto new_result_ty =
       MemRefType::get(dst_ty.getShape(), dst_ty.getElementType(), new_layout,
                       layout_ty.getMemorySpace());

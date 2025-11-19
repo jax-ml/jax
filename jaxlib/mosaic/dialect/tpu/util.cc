@@ -41,6 +41,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "xla/layout.h"
 
 namespace mlir::tpu {
 
@@ -134,6 +135,90 @@ std::optional<std::pair<bool, bool>> isTransposedMatmul(
   bool rhs_transposed = rhs_contracting_dim > rhs_non_contracting_dim;
 
   return std::pair<bool, bool>{lhs_transposed, rhs_transposed};
+}
+
+// Returns a new tiling that is equivalent to the given tiling for the given
+// shape, but try to make the first tile as small as possible.
+tpu::TiledLayoutAttr simplifyToSmallTile(tpu::TiledLayoutAttr layout,
+                                         const ArrayRef<int64_t> shape) {
+  const ArrayRef<xla::Tile> tiles = layout.getTiles();
+  const ArrayRef<int64_t> tile_strides = layout.getTileStrides();
+  if (tiles.empty()) {
+    return layout;
+  }
+  // Sometimes we can find an equivalent smaller tiling by changing the leading
+  // size of the first tile
+  // Examples:
+  //    8x256 with T(256)          <-> 8x256 with T(1)
+  //    8x100 with T(8, 128)       <-> 8x100 with T(1, 128)
+  //    8x100 with T(8, 128)(2, 1) <-> 8x100 with T(2, 128)(2, 1)
+  //    4x4x4 with T(4, 10, 10)    <-> 4x4x4 with T(1, 10, 10)
+  // Invalid examples to be wary of:
+  //    8x100 with T(8, 128)(4, 1) <-> 4x2x100 with T(1, 128)(4, 1)
+  //   14x100 with T(16, 128)      <-> 2x7x100 with T(1, 128)
+  // The amount of tiles along all tiled dimensions must be 1, except possibly
+  // for the first tiled dimension.
+  // TODO(tlongeri): In addition, when the leading size of the first tile is 1,
+  // and it is never divided by the trailing tiles, it can be removed. But
+  // this is unexpected within Mosaic.
+  const xla::Tile& first_tile = tiles.front();
+  const size_t first_tile_rank = first_tile.dimensions().size();
+  CHECK_LE(first_tile_rank, shape.size());
+  // leading_alignment is the alignment of the leading dimension of the first
+  // tile that is required for it to be evenly divisible by the trailing
+  // tiles that divide it.
+  int64_t leading_alignment = 1;
+  {
+    size_t current_tiled_rank = first_tile_rank;
+    for (const xla::Tile& tile : tiles.drop_front()) {
+      const size_t tile_rank = tile.dimensions().size();
+      if (tile_rank > current_tiled_rank) {
+        // Not handled: Trailing tile tiles past the first tile.
+        return layout;
+      } else if (tile_rank == current_tiled_rank) {
+        leading_alignment *= tile.dimension(0);
+      }
+      current_tiled_rank += tile_rank;
+    }
+  }
+  if (first_tile.dimension(0) % leading_alignment != 0) {
+    // Not handled: First tile's leading dimension is not evenly divided by
+    // trailing tiles.
+    return layout;
+  }
+  for (size_t i = 1; i < first_tile_rank; ++i) {
+    if (*(shape.end() - first_tile_rank + i) > first_tile.dimension(i)) {
+      // Not handled: More than one tile along non-leading tiled dimension.
+      return layout;
+    }
+  }
+  // The strides of the non-leading tiled dimensions are irrelevant since there
+  // is only one tile. The stride of the leading tiled dimension, however, needs
+  // to be 1, unless the leading tiled dimension also has only one tile.
+  if (*(tile_strides.end() - first_tile_rank) != 1 &&
+      *(shape.end() - first_tile_rank) > first_tile.dimension(0)) {
+    // Not handled
+    return layout;
+  }
+
+  if (*(shape.end() - first_tile_rank) % leading_alignment == 0) {
+    SmallVector<xla::Tile> new_tiles(tiles);
+    {
+      SmallVector<int64_t> new_first_tile_dims(
+          toArrayRef(first_tile.dimensions()));
+      new_first_tile_dims[0] = leading_alignment;
+      new_tiles[0] = xla::Tile(new_first_tile_dims);
+    }
+    SmallVector<int64_t> new_tile_strides(layout.getTileStrides());
+    // Scale up the tile strides since the tile size is smaller now.
+    for (int64_t i = 0; i < shape.size() - first_tile_rank; ++i) {
+      new_tile_strides[i] *= first_tile.dimension(0) / leading_alignment;
+    }
+    *(new_tile_strides.end() - first_tile_rank) = 1;
+    return tpu::TiledLayoutAttr::get(layout.getContext(), new_tiles,
+                                     new_tile_strides);
+  }
+  return layout;
 }
 
 bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,

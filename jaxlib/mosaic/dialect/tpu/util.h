@@ -40,6 +40,7 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "xla/layout.h"
 #include "xla/tsl/platform/statusor.h"
 
 // TODO: Instead of CHECK_EQs, can we do something like TF_RET_CHECK but with
@@ -236,6 +237,11 @@ FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
 // and the second is true if the rhs is transposed.
 std::optional<std::pair<bool, bool>> isTransposedMatmul(
     DotDimensionNumbersAttr dim_numbers);
+
+// Returns a new tiling that is equivalent to the given tiling for the given
+// shape, but try to make the first tile as small as possible.
+tpu::TiledLayoutAttr simplifyToSmallTile(tpu::TiledLayoutAttr layout,
+                                         ArrayRef<int64_t> shape);
 
 // Returns true if a >=2D memref has a tiled layout and can be equivalently
 // considered as an untiled memref, except for potential padding in the

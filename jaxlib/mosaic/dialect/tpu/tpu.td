@@ -1052,7 +1052,7 @@ def TPU_MemRefSqueezeOp : TPU_Op<"memref_squeeze", [Pure]> {
   let hasCanonicalizeMethod = 1;
 }
 
-def TPU_MemRefReshapeOp : TPU_Op<"memref_reshape", [Pure]> {
+def TPU_MemRefReshapeOp : TPU_Op<"memref_reshape", [Pure, SameOperandsAndResultElementType]> {
   let arguments = (ins AnyMemRef:$input);
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
@@ -1060,6 +1060,13 @@ def TPU_MemRefReshapeOp : TPU_Op<"memref_reshape", [Pure]> {
   }];
   let hasVerifier = 1;
   let hasCanonicalizeMethod = 1;
+
+  let extraClassDeclaration = [{
+    static ::mlir::tpu::TiledLayoutAttr findReshapedLayout(
+        ::mlir::tpu::TiledLayoutAttr src_layout,
+        const ::mlir::ArrayRef<int64_t> src_shape,
+        const ::mlir::ArrayRef<int64_t> new_shape);
+  }];
 }
 
 def TPU_MemRefBitcastOp : TPU_Op<"memref_bitcast", [Pure]> {
