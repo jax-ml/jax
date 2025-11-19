@@ -77,9 +77,6 @@ absl::StatusOr<TritonCompilationResult> CompileTritonToASM(
   return TritonCompilationResult{
       .asm_text = asm_text,
       .smem_bytes = args.out_smem_bytes,
-      .cluster_dim_x = args.out_cluster_dim_x,
-      .cluster_dim_y = args.out_cluster_dim_y,
-      .cluster_dim_z = args.out_cluster_dim_z,
   };
 }
 

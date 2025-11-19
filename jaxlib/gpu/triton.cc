@@ -45,8 +45,8 @@ namespace jax::JAX_GPU_NAMESPACE {
 
 NB_MODULE(_triton, m) {
   nb::class_<Kernel>(m, "TritonKernel")
-      .def(nb::init<std::string, uint32_t, uint32_t, std::string, std::string,
-                    int, uint32_t, uint32_t, uint32_t>());
+      .def(nb::init<std::string, uint32_t, uint32_t, uint32_t, std::string,
+                    std::string, int>());
 
   nb::class_<KernelCall::Parameter>(m, "TritonParameter");
 
