@@ -995,7 +995,7 @@ class BarrierRef:
     i32 = ir.IntegerType.get_signless(32)
     ticks = arith.constant(i32, 10000000)
     parity = arith.extui(i32, parity)
-    nvvm.mbarrier_try_wait_parity_shared(self.get_ptr(), parity, ticks)
+    nvvm.mbarrier_try_wait_parity(self.get_ptr(), parity, ticks)
     if orders_tensor_core:
       llvm.inline_asm(
           ir.Type.parse("!llvm.void"),
@@ -1064,9 +1064,7 @@ class BarrierRef:
     elif ir.IndexType.isinstance(bytes.type):
       i32 = ir.IntegerType.get_signless(32)
       bytes = arith.index_cast(i32, bytes)
-    nvvm.mbarrier_arrive_expect_tx_shared(
-        self.get_ptr(), bytes, predicate=predicate
-    )
+    nvvm.mbarrier_arrive_expect_tx(self.get_ptr(), bytes, predicate=predicate)
 
   def get_ptr(self):
     i64 = ir.IntegerType.get_signless(64)

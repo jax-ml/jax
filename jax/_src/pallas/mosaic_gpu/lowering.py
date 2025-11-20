@@ -3112,8 +3112,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
   switch_op = scf_dialect.IndexSwitchOp(
       yielded_types,
       _as_index(_ensure_ir_value(index, index_aval.dtype)),
-      ir.DenseI64ArrayAttr.get(range(len(branches) - 1)),
-      num_caseRegions=len(branches) - 1,
+      range(len(branches) - 1),
   )
 
   # ``RegionSequence`` in MLIR does not support slicing, so the
@@ -3124,7 +3123,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
   regions = regions[1:] + regions[:1]
   treedef = None
   for branch, region in zip(branches, regions):
-    with ir.InsertionPoint(region.blocks.append()):
+    with ir.InsertionPoint(region.blocks[0]):
       outs = lower_jaxpr_to_mosaic_gpu(
           ctx.module_ctx, ctx.launch_ctx, branch.jaxpr, args, consts=branch.consts
       )

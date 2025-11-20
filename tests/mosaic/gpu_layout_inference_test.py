@@ -509,20 +509,19 @@ class LayoutInferenceTest(parameterized.TestCase):
       index_switch = scf.IndexSwitchOp(
           [out_type, out_type, f32],
           condition,
-          ir.DenseI64ArrayAttr.get(range(3)),
-          num_caseRegions=2,
+          range(2),
       )
-      with ir.InsertionPoint(index_switch.caseRegions[0].blocks.append()):
+      with ir.InsertionPoint(index_switch.caseRegions[0].blocks[0]):
         out0, out1, dummy0 = undefs(out_type, out_type, f32)
         if out0_layout is not None:
           out0 = layout_cast(out0, out0_layout)
         yield0 = scf.YieldOp([out0, out1, dummy0])
-      with ir.InsertionPoint(index_switch.caseRegions[1].blocks.append()):
+      with ir.InsertionPoint(index_switch.caseRegions[1].blocks[0]):
         out2, out3, dummy1 = undefs(out_type, out_type, f32)
         if out3_layout is not None:
           out3 = layout_cast(out3, out3_layout)
         yield1 = scf.YieldOp([out2, out3, dummy1])
-      with ir.InsertionPoint(index_switch.defaultRegion.blocks.append()):
+      with ir.InsertionPoint(index_switch.defaultRegion.blocks[0]):
         out4, out5, dummy2 = undefs(out_type, out_type, f32)
         if out4_layout is not None:
           out4 = layout_cast(out4, out4_layout)

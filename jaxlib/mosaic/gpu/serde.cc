@@ -50,7 +50,9 @@ constexpr llvm::StringRef kVersionAttrName = "stable_mosaic_gpu.version";
 // lowering after 2025-11-13.
 // TODO(apaszke): Update the forward-compatible version to 5 in Mosaic GPU
 // lowering after 2025-12-07.
-constexpr int kVersion = 5;
+// TODO(apaszke): Update the forward-compatible version to 6 in Mosaic GPU
+// lowering after 2025-12-18.
+constexpr int kVersion = 6;
 
 using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
 
@@ -174,6 +176,38 @@ LogicalResult nvvm_mbarrier_init_shared_upgrade(Operation* op, int version,
   return success();
 }
 
+LogicalResult nvvm_mbarrier_try_wait_parity_shared_upgrade(Operation* op,
+                                                           int version,
+                                                           bool& erased) {
+  // https://github.com/llvm/llvm-project/commit/7eeae8e41d7827d84de12df7b5ecfab3058900cb
+  if (version < 6) {
+    mlir::OpBuilder b(op->getParentRegion());
+    b.setInsertionPointAfter(op);
+    mlir::NVVM::MBarrierTryWaitParityOp::create(
+        b, op->getLoc(), op->getOperand(0), op->getOperand(1),
+        op->getOperand(2));
+    op->erase();
+    erased = true;
+  }
+  return success();
+}
+
+LogicalResult nvvm_mbarrier_arrive_expect_tx_shared_upgrade(Operation* op,
+                                                            int version,
+                                                            bool& erased) {
+  // https://github.com/llvm/llvm-project/commit/7eeae8e41d7827d84de12df7b5ecfab3058900cb
+  if (version < 6) {
+    mlir::OpBuilder b(op->getParentRegion());
+    b.setInsertionPointAfter(op);
+    mlir::NVVM::MBarrierArriveExpectTxOp::create(
+        b, op->getLoc(), op->getOperand(0), op->getOperand(1),
+        op->getNumOperands() < 3 ? Value{} : op->getOperand(2));
+    op->erase();
+    erased = true;
+  }
+  return success();
+}
+
 const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
   static auto rules = new llvm::StringMap<SerdeRuleType>{
       {::llvm::StringLiteral("vector.extractelement"),
@@ -185,6 +219,10 @@ const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
       {::llvm::StringLiteral("vector.splat"), vector_splat_upgrade},
       {::llvm::StringLiteral("nvvm.mbarrier.init.shared"),
        nvvm_mbarrier_init_shared_upgrade},
+      {::llvm::StringLiteral("nvvm.mbarrier.try_wait.parity.shared"),
+       nvvm_mbarrier_try_wait_parity_shared_upgrade},
+      {::llvm::StringLiteral("nvvm.mbarrier.arrive.expect_tx.shared"),
+       nvvm_mbarrier_arrive_expect_tx_shared_upgrade},
   };
   return *rules;
 }

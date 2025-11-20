@@ -1332,7 +1332,7 @@ def _mgpu_arrive_expect_tx_op_lowering_rule(
   barrier = utils.DialectBarrierRef.from_barrier_memref(
       arrive_expect_tx_op.barrier
   )
-  nvvm.mbarrier_arrive_expect_tx_shared(barrier.get_ptr(), bytes)
+  nvvm.mbarrier_arrive_expect_tx(barrier.get_ptr(), bytes)
 
   return []
 
@@ -2155,7 +2155,6 @@ def _index_switch_op_lowering_rule(
       _infer_flat_result_types(switch_op, out_layouts),
       switch_op.arg,
       switch_op.cases,
-      len(switch_op.regions) - 1,
   )
 
   results_template: Sequence[_VectorTemplate | None] = []
@@ -2163,7 +2162,7 @@ def _index_switch_op_lowering_rule(
       switch_op.regions, new_switch_op.regions, strict=True
   ):
     [block] = region.blocks
-    new_block = new_region.blocks.append()
+    new_block = new_region.blocks[0]
     results_template = _move_scf_block_to_block_with_flattened_arguments(
         ctx, block, new_block, scf.YieldOp, []
     )
