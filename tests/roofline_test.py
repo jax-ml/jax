@@ -919,6 +919,11 @@ class RooflineTest(jtu.JaxTestCase):
           mode=lax.GatherScatterMode.FILL_OR_DROP,
           expected_flops=4 * 2 * 1 + 2 * 3,
       ),
+      dict(
+          testcase_name="bounds_check",
+          mode=lax.GatherScatterMode.BOUNDS_CHECK,
+          expected_flops=4 * 2 * 1 + 2 * 3,
+      ),
   )
   def test_gather_roofline(self, mode, expected_flops):
     operand = jnp.zeros((3, 3), dtype=jnp.int32)

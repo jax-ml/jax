@@ -517,7 +517,7 @@ def _calculate_gather_flops(
 ) -> int:
   """Calculates roofline unfused flops for Jax's gather primitive."""
 
-  if mode == slicing.GatherScatterMode.FILL_OR_DROP:
+  if mode in [slicing.GatherScatterMode.BOUNDS_CHECK, slicing.GatherScatterMode.FILL_OR_DROP]:
     # With FILL_OR_DROP, we have 4 steps to check whether to fill (or drop):
     # 1. Check if the index is within upper bound.
     # 2. Check if the index is within lower bound.

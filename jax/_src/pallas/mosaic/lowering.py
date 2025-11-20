@@ -2533,6 +2533,7 @@ def _gather_lowering_rule(
       and mode
       in (
           lax.GatherScatterMode.FILL_OR_DROP,
+          lax.GatherScatterMode.BOUNDS_CHECK,
           lax.GatherScatterMode.PROMISE_IN_BOUNDS,
       )
   ):
