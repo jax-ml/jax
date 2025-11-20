@@ -9631,6 +9631,22 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     jnp.repeat(positions, 5, axis=0, total_repeat_length=num_electrons,
                out_sharding=P())  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_mul_inputs_both_reduced(self, mesh):
+    arr1 = jax.device_put(np.arange(8.), P(reduced={'x'}))
+    arr2 = jax.device_put(np.arange(8.), P(reduced={'x'}))
+
+    @jax.jit
+    def f(x, y):
+      z = x * y
+      return z.sum()
+
+    out1, out2 = jax.jit(jax.grad(f, argnums=(0, 1)))(arr1, arr2)
+    self.assertEqual(out1.sharding,
+                     NamedSharding(mesh, P(None, unreduced={'x'})))
+    self.assertEqual(out2.sharding,
+                     NamedSharding(mesh, P(None, unreduced={'x'})))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
