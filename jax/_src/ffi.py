@@ -325,19 +325,9 @@ def ffi_lowering(
 ResultMetadata = DuckTypedArray | core.AbstractToken
 
 
-def _result_avals(results: Sequence[ResultMetadata]) -> tuple[core.AbstractValue, ...]:
-  avals: list[core.AbstractValue] = []
-  for idx, result in enumerate(results):
-    if isinstance(result, core.AbstractToken):
-      avals.append(result)
-    else:
-      if not hasattr(result, "shape") or not hasattr(result, "dtype"):
-        raise ValueError(
-            "All elements of result_shape_dtypes must have 'shape' and 'dtype' "
-            f"attributes. Got {result} at position {idx}.")
-      avals.append(core.ShapedArray(result.shape, result.dtype))
-  return tuple(avals)
-
+def _result_avals(results: Sequence[ResultMetadata]
+                  ) -> tuple[core.AbstractValue, ...]:
+  return tuple(core.shaped_abstractify(r) for r in results)
 
 def _check_compatible_avals(a: core.AbstractValue, b: core.AbstractValue) -> bool:
   if isinstance(a, core.AbstractToken) and isinstance(b, core.AbstractToken):
@@ -487,7 +477,7 @@ def ffi_call(
     result_avals = _result_avals(result_shape_dtypes)
   else:
     multiple_results = False
-    result_avals = _result_avals((result_shape_dtypes,))
+    result_avals = _result_avals([result_shape_dtypes])
     output_layouts_ = (output_layouts,)  # type: ignore
 
   if custom_call_api_version >= 4 and legacy_backend_config is not None:
@@ -622,12 +612,11 @@ def ffi_call_abstract_eval(
     has_side_effect: bool,
     **_,
 ):
-  out_vma = core.standard_vma_rule('ffi_call', *avals_in)
+  core.standard_vma_rule('ffi_call', *avals_in)
   effects = {_FfiEffect} if has_side_effect else core.no_effects
   return tuple(r if r is core.abstract_token else
                r.update(sharding=(core.get_cur_mesh_sharding()
-                                  if r.sharding.mesh.empty else r.sharding),  # type: ignore
-                        vma=out_vma)
+                                  if r.sharding.mesh.empty else r.sharding))  # type: ignore
                for r in result_avals), effects
 
 

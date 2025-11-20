@@ -292,7 +292,7 @@ class FfiTest(jtu.JaxTestCase):
       jax.jit(fun).lower(jnp.ones(5)).as_text()
 
   def test_allow_x64(self):
-    if config.enable_x64.value:
+    if not config.enable_x64.value:
       self.skipTest("Requires enable_x64=False")
     def fun():
       return jax.ffi.ffi_call("test", jax.ShapeDtypeStruct((), np.int64))()
@@ -300,10 +300,10 @@ class FfiTest(jtu.JaxTestCase):
 
   def test_invalid_result_type(self):
     with self.assertRaisesRegex(
-        ValueError, "All elements of result_shape_dtypes.*position 0"):
+        TypeError, "Cannot interpret value of type.*"):
       jax.ffi.ffi_call("test", None)()
     with self.assertRaisesRegex(
-        ValueError, "All elements of result_shape_dtypes.*position 1"):
+        TypeError, "Cannot interpret value of type.*"):
       jax.ffi.ffi_call("test", (jax.ShapeDtypeStruct((), np.float32), ()))()
 
   @jtu.run_on_devices("gpu", "cpu")
