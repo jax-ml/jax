@@ -513,6 +513,7 @@ pytype_strict_library(
         "//jax/_src:core",
         "//jax/_src:effects",
         "//jax/_src:hijax",
+        "//jax/_src:lax",
     ],
 )
 

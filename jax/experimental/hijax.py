@@ -31,6 +31,9 @@ from jax._src.hijax import (
     HiPrimitive as HiPrimitive,
     HiType as HiType,
     MutableHiType as MutableHiType,
-    register_hitype as register_hitype,
     VJPHiPrimitive as VJPHiPrimitive,
+    register_hitype as register_hitype,
+)
+from jax._src.state import (
+    AbstractRef as AbstractRef,
 )
