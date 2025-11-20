@@ -1495,6 +1495,24 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(f(x), x)
 
+  def test_exp(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 21):
+      self.skipTest("Test requires a newer libtpu")
+
+    x = jnp.arange(8, dtype=jnp.float32)
+
+    def sc_exp_kernel(x_hbm_ref, out_ref):
+      out_ref[...] = jnp.exp(x_hbm_ref[...])
+
+    result = pl.pallas_call(
+        sc_exp_kernel,
+        compiler_params=pltpu.CompilerParams(
+                kernel_type=pltpu.KernelType.SC_VECTOR_SUBCORE
+            ),
+        out_shape=x,
+    )(x)
+    np.testing.assert_array_equal(result, jnp.exp(x))
+
 
 class VectorSubcoreTestWithTCTiling(TCTilingMixin, VectorSubcoreTest):
   pass
