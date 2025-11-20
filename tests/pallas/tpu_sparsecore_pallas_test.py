@@ -1307,8 +1307,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(), expected)
 
   def test_barrier_via_pallas_call(self):
-    # TODO(slebedev): Fix the IR and re-enable the test.
-    self.skipTest("Failing at MLIR verification time")
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 22):
+      self.skipTest("Test requires a newer libtpu")
 
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
@@ -1325,11 +1325,11 @@ class VectorSubcoreTest(PallasSCTest):
             shape=(mesh.num_subcores, vec_dim), dtype=jnp.uint32
         ),
         out_specs=pl.BlockSpec((1, vec_dim), lambda i: (i, 0)),
-        scratch_shapes=dict(
-            shared_ref=pltpu.VMEM_SHARED(
+        scratch_shapes=(
+            pltpu.VMEM_SHARED(
                 (mesh.num_subcores, vec_dim), jnp.uint32
             ),
-            vmem_ref=pltpu.VMEM((vec_dim,), jnp.uint32),
+            pltpu.VMEM((vec_dim,), jnp.uint32),
         ),
     )
     def kernel(o_ref, shared_ref, vmem_ref):
