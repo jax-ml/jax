@@ -41,27 +41,11 @@ traceback_util.register_exclusion(__file__)
 
 _ref_effect_color = pp.Color.GREEN
 
-class RefEffect(effects.JaxprInputEffect):
+class RefEffect(effects.Effect): pass
   name: str
 
-  def __eq__(self, other):
-    if not isinstance(other, self.__class__):
-      return False
-    return self.input_index == other.input_index
-
-  def __hash__(self):
-    return hash((self.__class__, self.input_index))
-
   def _pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
-    if isinstance(self.input_index, core.Var):
-      index_text = pp.text(core.pp_var(self.input_index, context))
-    else:
-      index_text = pp.text(self.input_index)
-    return pp.concat([
-      pp.color(pp.text(self.name), foreground=_ref_effect_color),
-      pp.text("<"),
-      index_text,
-      pp.text(">")])
+    return pp.color(pp.text(self.name), foreground=_ref_effect_color)
 
   def __str__(self):
     return f"{self.name}<{self.input_index}>"
@@ -74,6 +58,10 @@ class WriteEffect(RefEffect):
 
 class AccumEffect(RefEffect):
   name: str = "Accum"
+
+read_effect = ReadEffect()
+write_effect = WriteEffect()
+accum_effect = AccumEffect()
 
 effects.control_flow_allowed_effects.add_type(RefEffect)
 effects.custom_derivatives_allowed_effects.add_type(RefEffect)
