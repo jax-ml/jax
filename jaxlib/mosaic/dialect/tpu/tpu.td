@@ -299,6 +299,7 @@ def TPU_VectorStoreOp :TPU_Op<"vector_store", [DefaultMemWrite, AttrSizedOperand
     $base `[` $indices `]` `,` $valueToStore (`masked` $mask^)? attr-dict `:` type($base) `,` type($valueToStore) `,` type($mask)
   }];
   let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
 }
 
 // tpu.vector_load loads a vector from memory into a register.
@@ -326,6 +327,7 @@ def TPU_VectorLoadOp :TPU_Op<"vector_load", [DefaultMemRead, AttrSizedOperandSeg
     $base `[` $indices `]` (`masked` $mask^)? attr-dict `:` type($base) `,` type($result) `,` type($mask)
   }];
   let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
 }
 
 def TPU_StridedLoadOp : TPU_Op<"strided_load", [DefaultMemRead]> {
@@ -413,6 +415,7 @@ def TPU_VectorLoadIdxOp :TPU_Op<"vector_load_idx", [DefaultMemRead, AttrSizedOpe
     $base `[` $indices `]` (`masked` $mask^)? attr-dict `:` type($base) `[` type($indices) `]` `,` type($value) `,` type($mask)
   }];
   let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
 }
 
 // tpu.vector_store_idx stores values to arbitrary locations in memory.
@@ -448,6 +451,7 @@ def TPU_VectorStoreIdxOp :TPU_Op<"vector_store_idx", [DefaultMemWrite, AttrSized
     $base `[` $indices `]` `,` $valueToStore (`masked` $mask^)? attr-dict `:` type($base) `[` type($indices) `]` `,` type($valueToStore) `,` type($mask)
   }];
   let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
 }
 
 // TODO(jevinjiang): deprecate to use dynamic_rotate.
@@ -1079,6 +1083,7 @@ def TPU_ReinterpretCastOp : TPU_Op<"reinterpret_cast", [Pure]> {
     $input attr-dict `:` type($input) `->` type($result)
   }];
   let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
 }
 
 def TPU_AssumeLayoutOp : TPU_Op<"assume_layout", [Pure]> {
@@ -1099,6 +1104,7 @@ def TPU_EraseLayoutOp : TPU_Op<"erase_memref_layout", [Pure, InferTypeOpAdaptor]
   let assemblyFormat = [{
     $operand attr-dict `:` type($operand) `->` type($result)
   }];
+  let hasFolder = 1;
 }
 
 // Returns the ID of the current device.
@@ -1206,6 +1212,7 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     attr-dict
   }];
   let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
 }
 
 // A base class for all ops that need to differentiate between gather and
@@ -1260,6 +1267,7 @@ def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma">, IndirectDMAOp {
                                 ArrayRef<int64_t> offsets_shape,
                                 MemRefType operand_ty);
   }];
+  let hasCanonicalizeMethod = 1;
 }
 
 // tpu.wait_dma2 waits for a DMA to complete.
@@ -1288,6 +1296,7 @@ def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
   let builders = [
     OpBuilder<(ins "Value":$semaphore, "Value":$src, "Value":$dst)>
   ];
+  let hasCanonicalizeMethod = 1;
 }
 
 // TODO(b/395630795): Remove after 2025-08-10.
@@ -1318,6 +1327,7 @@ def TPU_WaitIndirectDMAOp : TPU_Op<"wait_indirect_dma">, IndirectDMAOp {
     attr-dict
   }];
   let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
   let extraClassDeclaration = extraBaseClassDeclaration;
 }
 

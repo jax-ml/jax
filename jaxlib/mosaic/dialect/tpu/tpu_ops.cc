@@ -42,6 +42,7 @@ limitations under the License.
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Region.h"
@@ -57,6 +58,22 @@ namespace mlir {
 namespace tpu {
 
 namespace {
+
+// This should only be used to canonicalize away EraseLayoutOps that feed ops
+// that only consume memrefs and don't return them.
+LogicalResult propagateTiledLayoutToConsumer(Operation* op,
+                                             PatternRewriter& rewriter) {
+  bool modified = false;
+  for (unsigned int i = 0; i < op->getNumOperands(); ++i) {
+    if (auto erase_layout_op =
+            op->getOperand(i).getDefiningOp<tpu::EraseLayoutOp>()) {
+      modified = true;
+      rewriter.modifyOpInPlace(
+          op, [&]() { op->setOperand(i, erase_layout_op.getOperand()); });
+    }
+  }
+  return success(modified);
+}
 
 llvm::RoundingMode convertTpuRoundingModeToLLVMIR(tpu::RoundingMode mode) {
   switch (mode) {
@@ -268,6 +285,8 @@ struct MemRefSliceFoldConstantDynamicDim
       op.getResult().setType(new_type);
       op.getDynamicSizesMutable().assign(new_dynamic_sizes);
     });
+    mlir::OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointAfter(op);
     auto cast_op = memref::CastOp::create(rewriter, op.getLoc(), old_type, op);
     rewriter.replaceAllUsesExcept(op, cast_op, cast_op);
     return success();
@@ -604,7 +623,7 @@ LogicalResult MemRefReshapeOp::canonicalize(MemRefReshapeOp op,
   }
   auto layout_ref = erase_layout_op.getOperand();
   auto layout_ty = layout_ref.getType();
-  auto layout = dyn_cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
+  auto layout = cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
   CHECK(!layout.getTiles().empty());
   auto tile = layout.getTiles().front().dimensions();
   auto new_tile_strides = ComputeTileStrides(dst_ty, tile);
@@ -788,6 +807,11 @@ LogicalResult VectorStoreOp::verify() {
   return verifyStoreOp(*this);
 }
 
+LogicalResult VectorStoreOp::canonicalize(VectorStoreOp op,
+                                          PatternRewriter& rewriter) {
+  return propagateTiledLayoutToConsumer(op, rewriter);
+}
+
 template <typename Op>
 LogicalResult verifyLoadOp(Op op) {
   MemRefType ref_ty = op.getBase().getType();
@@ -826,6 +850,11 @@ LogicalResult VectorLoadOp::verify() {
   return verifyLoadOp(*this);
 }
 
+LogicalResult VectorLoadOp::canonicalize(VectorLoadOp op,
+                                         PatternRewriter& rewriter) {
+  return propagateTiledLayoutToConsumer(op, rewriter);
+}
+
 LogicalResult VectorLoadIdxOp::verify() {
   VectorType value_ty = getResult().getType();
   MemRefType ref_ty = getBase().getType();
@@ -844,6 +873,11 @@ LogicalResult VectorLoadIdxOp::verify() {
     }
   }
   return verifyLoadOp(*this);
+}
+
+LogicalResult VectorLoadIdxOp::canonicalize(VectorLoadIdxOp op,
+                                            PatternRewriter& rewriter) {
+  return propagateTiledLayoutToConsumer(op, rewriter);
 }
 
 LogicalResult VectorStoreIdxOp::verify() {
@@ -870,6 +904,11 @@ LogicalResult VectorStoreIdxOp::verify() {
   return verifyStoreOp(*this);
 }
 
+LogicalResult VectorStoreIdxOp::canonicalize(VectorStoreIdxOp op,
+                                             PatternRewriter& rewriter) {
+  return propagateTiledLayoutToConsumer(op, rewriter);
+}
+
 LogicalResult ReinterpretCastOp::verify() {
   auto source_type = getMemRefType(getInput());
   auto target_type = getType();
@@ -881,6 +920,17 @@ LogicalResult ReinterpretCastOp::verify() {
   return success();
 }
 
+LogicalResult ReinterpretCastOp::canonicalize(ReinterpretCastOp op,
+                                              PatternRewriter& rewriter) {
+  if (auto erase_layout_op = op.getInput().getDefiningOp<EraseLayoutOp>()) {
+    rewriter.modifyOpInPlace(op, [&]() {
+      op.getInputMutable().assign(erase_layout_op.getOperand());
+    });
+    return success();
+  }
+  return failure();
+}
+
 LogicalResult EraseLayoutOp::inferReturnTypes(
     MLIRContext* context, std::optional<Location> location,
     EraseLayoutOp::Adaptor adaptor,
@@ -889,6 +939,14 @@ LogicalResult EraseLayoutOp::inferReturnTypes(
       MemRefType::Builder(cast<MemRefType>(adaptor.getOperand().getType()))
           .setLayout(nullptr));
   return success();
+}
+
+OpFoldResult EraseLayoutOp::fold(FoldAdaptor op) {
+  // If the operand has no interesting layout then there's no need to erase it.
+  if (getOperand().getType().getLayout().isIdentity()) {
+    return op.getOperand();
+  }
+  return OpFoldResult();
 }
 
 template <typename Op>
@@ -1371,6 +1429,11 @@ LogicalResult EnqueueDMAOp::verify() {
   return success();
 }
 
+LogicalResult EnqueueDMAOp::canonicalize(EnqueueDMAOp op,
+                                         PatternRewriter& rewriter) {
+  return propagateTiledLayoutToConsumer(op, rewriter);
+}
+
 LogicalResult EnqueueIndirectDMAOp::verifyGather(
     MemRefType operand_ty, ArrayRef<int64_t> offsets_shape,
     MemRefType result_ty) {
@@ -1550,6 +1613,11 @@ LogicalResult EnqueueIndirectDMAOp::verify() {
                        /*operand_ty=*/target_ty);
 }
 
+LogicalResult EnqueueIndirectDMAOp::canonicalize(EnqueueIndirectDMAOp op,
+                                                 PatternRewriter& rewriter) {
+  return propagateTiledLayoutToConsumer(op, rewriter);
+}
+
 // TODO(b/395630795): Remove after 2025-08-10.
 LogicalResult WaitDMAOp::verify() {
   auto sem_type = getMemRefType(getSemaphore());
@@ -1573,6 +1641,11 @@ LogicalResult WaitDMA2Op::verify() {
   return success();
 }
 
+LogicalResult WaitDMA2Op::canonicalize(WaitDMA2Op op,
+                                       PatternRewriter& rewriter) {
+  return propagateTiledLayoutToConsumer(op, rewriter);
+}
+
 FailureOr<bool> WaitIndirectDMAOp::isGather() {
   return mlir::tpu::isGather(*getOperation(), getSrc(), getDst());
 }
@@ -1591,6 +1664,11 @@ LogicalResult WaitIndirectDMAOp::verify() {
     return emitOpError("Indirect DMA wait semaphore must be rank 0");
   }
   return isGather();
+}
+
+LogicalResult WaitIndirectDMAOp::canonicalize(WaitIndirectDMAOp op,
+                                              PatternRewriter& rewriter) {
+  return propagateTiledLayoutToConsumer(op, rewriter);
 }
 
 LogicalResult RegionOp::verify() {
