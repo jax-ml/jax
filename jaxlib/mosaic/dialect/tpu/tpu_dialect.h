@@ -91,11 +91,6 @@ std::unique_ptr<OperationPass<func::FuncOp>> createApplyVectorLayoutPass(
     const ApplyVectorLayoutContext &ctx = ApplyVectorLayoutContext{});
 
 std::unique_ptr<OperationPass<func::FuncOp>>
-createPreCanonicalizationOptimizationPass(
-    int hardware_generation = -1,
-    std::array<int64_t, 2> target_shape = {8, 128});
-
-std::unique_ptr<OperationPass<func::FuncOp>>
 createLogicalToPhysicalDeviceIdPass(int64_t total_devices);
 
 #define GEN_PASS_DECL_MOSAICSERDEPASS
