@@ -292,7 +292,8 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
                    transpose_kernel: bool = False,
                    precision: lax.PrecisionLike = None,
                    preferred_element_type: DTypeLike | None = None,
-                   use_consistent_padding: bool = False) -> Array:
+                   use_consistent_padding: bool = False,
+                   out_sharding: NamedSharding | P | None = None) -> Array:
   """Convenience wrapper for calculating the N-d convolution "transpose".
 
   This function directly calculates a fractionally strided conv rather than
@@ -370,7 +371,8 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
     rhs = rhs.swapaxes(dn.rhs_spec[0], dn.rhs_spec[1])
   return conv_general_dilated(lhs, rhs, one, pads, strides, rhs_dilation, dn,
                               precision=precision,
-                              preferred_element_type=preferred_element_type)
+                              preferred_element_type=preferred_element_type,
+                              out_sharding=out_sharding)
 
 
 def _conv_general_dilated_shape_rule(
