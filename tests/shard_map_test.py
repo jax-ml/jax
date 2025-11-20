@@ -41,6 +41,7 @@ from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src.mesh import AxisType, get_abstract_mesh
+from jax._src.lax.parallel import all_gather_invariant
 from jax._src.interpreters import partial_eval as pe
 from jax._src import linear_util as lu
 from jax._src import tree_util
@@ -116,7 +117,7 @@ class ShardMapTest(jtu.JaxTestCase):
     @jax.jit
     @shard_map(mesh=mesh, in_specs=P('x'), out_specs=P())
     def f(a):
-      out = lax.all_gather_invariant(a, 'x', tiled=True)
+      out = all_gather_invariant(a, 'x', tiled=True)
       self.assertEqual(out.aval.vma, set())
       return out
 
@@ -140,9 +141,9 @@ class ShardMapTest(jtu.JaxTestCase):
     @shard_map(mesh=mesh, in_specs=(P('z', ('x', 'y')),),
                out_specs=(P(None, ('x', 'y')), P('z')))
     def f(a):
-      c = lax.all_gather_invariant(a, 'z', axis=0, tiled=True)
+      c = all_gather_invariant(a, 'z', axis=0, tiled=True)
       self.assertEqual(jax.typeof(c).vma, {'x', 'y'})
-      d = lax.all_gather_invariant(a, ('x', 'y'), axis=-1, tiled=True)
+      d = all_gather_invariant(a, ('x', 'y'), axis=-1, tiled=True)
       self.assertEqual(jax.typeof(d).vma, {'z'})
       return c, d
 
