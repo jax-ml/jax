@@ -579,7 +579,9 @@ class LayoutTest(jtu.JaxTestCase):
     shape = (16*2, 32016*2)
     np_inp = np.arange(math.prod(shape), dtype=jnp.bfloat16).reshape(shape)
 
-    custom_dll1 = Layout(major_to_minor=(1, 0), tiling=((8,128), (2,1)))
+    tiling = (((16, 128), (2, 1)) if jtu.get_tpu_version() == 7
+              else ((8, 128), (2, 1)))
+    custom_dll1 = Layout(major_to_minor=(1, 0), tiling=tiling)
     l1 = Format(custom_dll1, s)
     arr = jax.device_put(np_inp, s)
 
