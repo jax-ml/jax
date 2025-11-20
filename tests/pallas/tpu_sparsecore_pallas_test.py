@@ -14,12 +14,15 @@
 """Tests for Pallas on SparseCore."""
 
 import collections
+import contextlib
 import functools
 import itertools
 import math
 
 from absl.testing import absltest
 from absl.testing import parameterized
+import hypothesis as hp
+import hypothesis.strategies as hps
 import jax
 from jax import lax
 from jax._src import test_util as jtu
@@ -29,8 +32,6 @@ from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas import tpu_sc as plsc
 import jax.numpy as jnp
 import numpy as np
-import hypothesis as hp
-import hypothesis.strategies as hps
 
 jtu.setup_hypothesis()
 jax.config.parse_flags_with_absl()
@@ -368,9 +369,13 @@ class VectorSubcoreTest(PallasSCTest):
     x = jnp.arange(major_dim * 8).reshape(major_dim, 8)
     np.testing.assert_array_equal(kernel(x), x[::-1])
 
-  @parameterized.product(shape=[(8,), (16,), (8, 8), (16, 8), (8, 16, 8)])
+  @parameterized.product(
+      shape=[
+          (8,), (16,), (8, 8), (16, 8), (8, 16, 8),
+          (16, 128), (16, 256), (8, 8, 128),
+      ]
+  )
   def test_scatter_major(self, shape):
-    self.skip_if_tc_tiling()
     x = jnp.arange(math.prod(shape)).reshape(shape)
     major_dim, *_ = shape
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(major_dim))
@@ -383,9 +388,22 @@ class VectorSubcoreTest(PallasSCTest):
       def _(sem):
         pltpu.async_copy(x_ref, o_hbm_ref.at[indices_ref], sem).wait()
 
-    np.testing.assert_array_equal(
-        kernel(x, indices), jnp.empty_like(x).at[indices].set(x)
-    )
+    expected_error = contextlib.nullcontext()
+    if self.uses_tc_tiling:
+      if len(shape) >= 2 and (shape[-2] % 8 or shape[-1] % 128):
+        expected_error = self.assertRaisesRegex(
+            jax.errors.JaxRuntimeError, "non-trivial padding"
+        )
+      elif len(shape) == 2 and shape[-1] != 128:
+        expected_error = self.assertRaisesRegex(
+            jax.errors.JaxRuntimeError, "Indirect streams over tiled dimensions"
+        )
+
+    with expected_error:
+      result = kernel(x, indices)
+      np.testing.assert_array_equal(
+          result, jnp.empty_like(x).at[indices].set(x)
+      )
 
   def test_scatter_1d_array(self):
     x = jnp.arange(8)
