@@ -98,8 +98,6 @@ createPreCanonicalizationOptimizationPass(
 std::unique_ptr<OperationPass<func::FuncOp>>
 createLogicalToPhysicalDeviceIdPass(int64_t total_devices);
 
-std::unique_ptr<OperationPass<func::FuncOp>> createDebugAssertInsertionPass();
-
 #define GEN_PASS_DECL_MOSAICSERDEPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 

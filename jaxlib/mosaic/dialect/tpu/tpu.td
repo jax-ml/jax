@@ -1468,16 +1468,7 @@ def TPU_LogBufferOp : TPU_Op<"log_buffer"> {
   let hasVerifier = 1;
 }
 
-def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::FuncOp"> {
-  let dependentDialects = [
-    "::mlir::func::FuncDialect",
-    "::mlir::arith::ArithDialect",
-    "::mlir::cf::ControlFlowDialect",
-    "::mlir::vector::VectorDialect",
-    "::mlir::tpu::TPUDialect",
-  ];
-  let constructor = "::mlir::tpu::createDebugAssertInsertionPass()";
-}
+
 
 def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mlir::func::FuncOp"> {
   let dependentDialects = [
