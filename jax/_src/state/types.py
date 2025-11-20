@@ -45,12 +45,10 @@ class RefEffect(effects.JaxprInputEffect):
   name: str
 
   def __eq__(self, other):
-    if not isinstance(other, self.__class__):
-      return False
-    return self.input_index == other.input_index
+    return isinstance(other, self.__class__)
 
   def __hash__(self):
-    return hash((self.__class__, self.input_index))
+    return hash(self.__class__)
 
   def _pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
     if isinstance(self.input_index, core.Var):
@@ -571,13 +569,6 @@ def _unmap_ref(size, axis, explicit_mesh_axis, ref_aval):
                      ref_aval.memory_space, ref_aval.kind)
 
 core.aval_mapping_handlers[AbstractRef] = (_map_ref, _unmap_ref)
-
-def get_ref_state_effects(
-    avals: Sequence[core.AbstractValue],
-    effects: core.Effects) -> list[set[StateEffect]]:
-  return [{eff for eff in effects
-           if isinstance(eff, (ReadEffect, WriteEffect, AccumEffect))
-           and eff.input_index == i} for i, _ in enumerate(avals)]
 
 def shaped_array_ref(
     shape: tuple[int, ...], dtype, weak_type: bool = False) -> AbstractRef:

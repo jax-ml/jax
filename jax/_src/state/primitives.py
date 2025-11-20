@@ -434,7 +434,7 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
     if transforms:
       raise ValueError("Cannot index non-shaped array with nontrivial indices.")
     out_aval = ref_aval.inner_aval
-  return (out_aval, {ReadEffect(0)})
+  return (out_aval, {ReadEffect()})
 get_p.def_effectful_abstract_eval(_get_abstract_eval)
 
 def _swap_abstract_eval(ref_aval: AbstractRef,
@@ -471,7 +471,7 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
     if transforms:
       raise ValueError("Cannot index non-shaped array with nontrivial indices.")
     out_aval = ref_aval.inner_aval
-  return (out_aval, {WriteEffect(0)})
+  return (out_aval, {WriteEffect()})
 swap_p.def_effectful_abstract_eval(_swap_abstract_eval)
 
 
@@ -508,7 +508,7 @@ def _addupdate_abstract_eval(ref_aval: AbstractRef,
     # Check that the transforms are valid
     if transforms:
       raise ValueError("Cannot index non-shaped array with nontrivial indices.")
-  return [], {AccumEffect(0)}
+  return [], {AccumEffect()}
 addupdate_p.def_effectful_abstract_eval(_addupdate_abstract_eval)
 
 ## Pretty printing for `get` and `swap` in jaxprs

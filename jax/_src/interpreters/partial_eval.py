@@ -1602,11 +1602,7 @@ def _move_invars_right(jaxpr: ClosedJaxpr, to_move: tuple[bool, ...]):
   invars, rest = split_list(jaxpr.jaxpr.invars, [len(to_move)])
   left_invars, right_invars = partition_list(to_move, invars)
   new_invars = [*left_invars, *right_invars, *rest]
-  new_effs = _renumber_effects(
-      (*jaxpr.jaxpr.constvars, *new_invars),
-      (*jaxpr.jaxpr.constvars, *jaxpr.jaxpr.invars),
-      jaxpr.jaxpr.effects)
-  new_jaxpr = jaxpr.jaxpr.replace(invars=new_invars, effects=new_effs)
+  new_jaxpr = jaxpr.jaxpr.replace(invars=new_invars)
   return jaxpr.replace(jaxpr=new_jaxpr)
 
 def move_binders_to_front(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]
@@ -1620,22 +1616,14 @@ def _move_binders_to_front(jaxpr: ClosedJaxpr, to_move: tuple[bool, ...]
   assert len(jaxpr.in_avals) == len(to_move)
   constvars, invars = jaxpr.jaxpr.constvars, jaxpr.jaxpr.invars
   new_invars = _move_to_front(invars, to_move)
-  new_effs = _renumber_effects(
-      (*constvars, *new_invars), (*constvars, *invars), jaxpr.jaxpr.effects)
   if jaxpr.jaxpr.debug_info.arg_names is None:
     new_arg_names = None
   else:
     new_arg_names = tuple(_move_to_front(jaxpr.jaxpr.debug_info.arg_names, to_move))
   dbg = jaxpr.jaxpr.debug_info._replace(arg_names=new_arg_names)
   new_jaxpr = jaxpr.jaxpr.replace(
-      constvars=constvars, invars=new_invars, effects=new_effs, debug_info=dbg)
+      constvars=constvars, invars=new_invars, debug_info=dbg)
   return core.ClosedJaxpr(new_jaxpr, jaxpr.consts)
-
-def _renumber_effects(new_vars, old_vars, effs):
-  newvar_idxs = {id(v): i for i, v in enumerate(new_vars)}
-  old_to_new = {i: newvar_idxs[id(v)] for i, v in enumerate(old_vars)}
-  return {e.replace(input_index=old_to_new[e.input_index])
-          if isinstance(e, effects.JaxprInputEffect) else e for e in effs}
 
 def _move_to_front(lst: Sequence, to_move: Sequence[bool]) -> Sequence:
   return ([elt for elt, move in zip(lst, to_move) if move] +
@@ -1764,35 +1752,6 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
       all_vars[outvar] = None  # type: ignore
       mut_arrays.add(outvar)
     for eff in eqn.effects:
-      if isinstance(eff, effects.JaxprInputEffect):
-        if eff.input_index >= len(eqn.invars):
-          # TODO(mattjj): ask for forgiveness
-          dbg = type('Fake', (), {'resolve_result_paths': lambda self_: self_,
-                                  'assert_arg_names': lambda _, __: None,
-                                  'assert_result_paths': lambda _, __: None,
-                                  })()
-          raise ValueError(
-              f"`JaxprInputEffect` {eff} is invalid."
-              f"\n Equation: {eqn}\n"
-              "\n Jaxpr: "
-              f"{core.Jaxpr(constvars, invars, outvars, eqns, set(), dbg)}")  # type: ignore
-        eqn_invar = eqn.invars[eff.input_index]
-        if type(eqn_invar) is core.Literal or eqn_invar in mut_arrays:
-          continue
-        if (input_index := all_vars.get(eqn_invar, sentinel)) is sentinel:
-          # TODO(mattjj): ask for forgiveness
-          dbg = type('Fake', (), {'resolve_result_paths': lambda self_: self_,
-                                  'assert_arg_names': lambda _, __: None,
-                                  'assert_result_paths': lambda _, __: None,
-                                  })()
-          raise ValueError(
-                f"`JaxprInputEffect` {eff} does not have "
-                f"corresponding jaxpr input: {eqn_invar=}."
-                f"\n Equation: {eqn}\n"
-                f"\n Effects: {eqn.effects}\n"
-                "\n Jaxpr: "
-                f"{core.Jaxpr(constvars, invars, outvars, eqns, set(), dbg)}")  # type: ignore
-        eff = eff.replace(input_index=input_index)
       jaxpr_effects.add(eff)
   return jaxpr_effects
 

@@ -919,13 +919,7 @@ def _rearrange_mutable_binders(
     immut_names, mut_names = partition_list(is_mutable, names)
     new_arg_names = [*fst, *mut_names, *immut_names, *rst]
   dbg = jaxpr.jaxpr.debug_info._replace(arg_names=new_arg_names)
-
-  # TODO(mattjj): don't we need to re-number effects? test coverage?
-  new_effs = pe._renumber_effects((*jaxpr.jaxpr.constvars, *new_invars),
-                                  (*jaxpr.jaxpr.constvars, *jaxpr.jaxpr.invars),
-                                  jaxpr.jaxpr.effects)
-  new_jaxpr = jaxpr.jaxpr.replace(invars=new_invars, effects=new_effs,
-                                  debug_info=dbg)
+  new_jaxpr = jaxpr.jaxpr.replace(invars=new_invars, debug_info=dbg)
   if config.enable_checks.value: core.check_jaxpr(new_jaxpr)
   return ClosedJaxpr(new_jaxpr, jaxpr.consts)
 
@@ -1777,16 +1771,8 @@ def _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts, cond_nconsts
                        ) -> effects.Effects:
   joined_effects = set()
   for eff in cond_jaxpr.effects:
-    if isinstance(eff, effects.JaxprInputEffect):
-      index = eff.input_index
-      if index >= cond_nconsts:
-        index += body_nconsts
-      eff = eff.replace(input_index=index)
     joined_effects.add(eff)
   for eff in body_jaxpr.effects:
-    if isinstance(eff, effects.JaxprInputEffect):
-      index = eff.input_index + cond_nconsts
-      eff = eff.replace(input_index=index)
     joined_effects.add(eff)
   return joined_effects
 
@@ -2285,17 +2271,6 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
                                                                  [cond_nconsts,
                                                                   body_nconsts])
 
-  # Check if the same Ref is written to in both cond and body.
-  cond_write_ids = {id(cond_consts_avals[effect.input_index])
-    for effect in cond_jaxpr.effects if isinstance(effect, state.WriteEffect)}
-  cond_has_writes = len(cond_write_ids) > 0
-  body_write_ids = {id(body_consts_avals[effect.input_index])
-    for effect in body_jaxpr.effects if isinstance(effect, state.WriteEffect)}
-  write_to_both_ids = cond_write_ids & body_write_ids
-  if write_to_both_ids:
-    raise NotImplementedError(
-        "Cannot write to the same ref in both cond and body of while loop.")
-
   cond_is_ref = [
       isinstance(aval, state.AbstractRef) and should
       for aval, should in zip(cond_consts_avals, cond_consts_discharge)
@@ -2315,13 +2290,6 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
   num_body_refs = sum(body_is_ref)
   num_remaining_body_consts = body_nconsts - num_body_refs
   num_out_body_consts = num_remaining_body_consts
-  if cond_has_writes:
-    # If the cond has writes, we need to add the cond consts into the body
-    # consts since we need to evaluate the cond condition in the body.
-    remaining_body_consts = [*remaining_cond_consts, *remaining_body_consts]
-    remaining_body_const_avals = [*remaining_cond_const_avals,
-                                  *remaining_body_const_avals]
-    num_remaining_body_consts += num_remaining_cond_consts
 
   num_carry = len(in_avals) - body_nconsts - cond_nconsts
   body_jaxpr, body_jaxpr_consts = body_jaxpr.jaxpr, body_jaxpr.consts
@@ -2353,23 +2321,8 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
     consts, body_refs, cond_refs, carry = split_list(
         consts_refs_carry,
         [num_remaining_body_consts, num_body_refs, num_cond_refs])
-    if cond_has_writes:
-      # We run the cond jaxpr in the body so that Refs that are updated
-      # in the cond jaxpr are persisted via the carry.
-      cond_consts, body_consts = split_list(consts, [num_remaining_cond_consts])
-      cond_consts_and_refs = merge_lists(cond_is_ref, cond_consts, cond_refs)
-      cond_carry_refs = core.eval_jaxpr(discharged_cond_jaxpr, (),
-                                  *cond_consts_and_refs,
-                                  *carry)
-      # Note: in order to handle the same Ref being updated in both the cond
-      # and body, we would need to interleave the updated cond_carry_refs into
-      # body_refs here.
-      # Currently we disallow this so we don't need to handle it.
-      _, cond_refs_out = split_list(cond_carry_refs, [1])
-      assert len(cond_refs_out) == len(cond_refs)
-    else:
-      body_consts = consts
-      cond_refs_out = cond_refs
+    body_consts = consts
+    cond_refs_out = cond_refs
 
     body_consts_and_refs = merge_lists(body_is_ref, body_consts, body_refs)
     body_carry_refs = core.eval_jaxpr(discharged_body_jaxpr, (),
