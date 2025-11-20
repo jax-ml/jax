@@ -469,6 +469,24 @@ class ProfilerTest(unittest.TestCase):
     thread_profiler.join()
     self._check_xspace_pb_exist(logdir)
 
+  def testDeviceVersionSavedToMetadata(self):
+    with tempfile.TemporaryDirectory() as tmpdir_string:
+      tmpdir = pathlib.Path(tmpdir_string)
+      with jax.profiler.trace(tmpdir):
+        jax.pmap(lambda x: jax.lax.psum(x + 1, 'i'), axis_name='i')(
+            jnp.ones(jax.local_device_count()))
+
+      proto_path = tuple(tmpdir.rglob("*.xplane.pb"))
+      self.assertEqual(len(proto_path), 1)
+      (proto_file,) = proto_path
+      proto = proto_file.read_bytes()
+      if jtu.test_device_matches(["tpu"]):
+        self.assertIn(b"libtpu_version", proto)
+      if jtu.test_device_matches(["gpu"]):
+        self.assertIn(b"cuda_version", proto)
+        self.assertIn(b"cuda_runtime_version", proto)
+        self.assertIn(b"cuda_driver_version", proto)
+
   @unittest.skip("Profiler takes >30s on Cloud TPUs")
   @unittest.skipIf(
       not (portpicker and _pywrap_profiler_plugin),
