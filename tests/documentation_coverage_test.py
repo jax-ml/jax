@@ -58,7 +58,6 @@ UNDOCUMENTED_APIS = {
   'jax.debug': ['DebugEffect', 'log'],
   'jax.distributed': ['is_initialized'],
   'jax.dtypes': ['extended', 'finfo', 'iinfo'],
-  'jax.errors': ['JAXIndexError', 'JAXTypeError'],
   'jax.ffi': ['build_ffi_lowering_function', 'include_dir', 'register_ffi_target_as_batch_partitionable', 'register_ffi_type_id'],
   'jax.lax': ['unreduced_psum', 'dce_sink', 'conv_transpose_shape_tuple', 'reduce_window_shape_tuple', 'preduced', 'conv_general_permutations', 'conv_general_shape_tuple', 'pbroadcast', 'padtype_to_pads', 'conv_shape_tuple', 'unreduced_psum_scatter', 'create_token', 'dtype', 'shape_as_value', 'all_gather_reduced', 'pvary', *(name for name in dir(jax.lax) if name.endswith('_p'))],
   'jax.lax.linalg': [api for api in dir(jax.lax.linalg) if api.endswith('_p')],
