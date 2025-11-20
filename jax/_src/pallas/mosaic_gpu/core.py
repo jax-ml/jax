@@ -142,7 +142,7 @@ class MemorySpace(enum.Enum):
 
   def __call__(
       self,
-      shape: tuple[int, ...],
+      shape: Sequence[int],
       dtype: jnp.dtype,
       *,
       transforms: Sequence[MemoryRefTransform] = (),
@@ -150,6 +150,7 @@ class MemorySpace(enum.Enum):
       collective: bool | None = None,
       layout: TMEMLayout | None = None,
   ) -> pallas_core.MemoryRef:
+    shape = tuple(shape)
     # TODO(sharadmv): Add HiType constructor support.
     if self == MemorySpace.TMEM:
       if transforms:
