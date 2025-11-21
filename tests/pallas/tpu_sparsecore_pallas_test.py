@@ -323,7 +323,8 @@ class VectorSubcoreTest(PallasSCTest):
       slice_shape[-1] *= 128
     else:
       slice_shape[-1] *= 8
-    hp.assume(math.prod(slice_shape) <= 25000)  # Avoid OOMs.
+    max_elems = 12000 if jtu.is_device_tpu(6, "e") else 25000
+    hp.assume(math.prod(slice_shape) <= max_elems)  # Avoid OOMs.
     rank = len(slice_shape)
     offsets = data.draw(
         hps.lists(hps.integers(0, 4), min_size=rank, max_size=rank)
