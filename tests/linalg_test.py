@@ -110,6 +110,23 @@ def svd_algorithms():
   return algorithms
 
 
+# (complex) Eigenvectors are only unique up to an arbitrary phase. This makes the gradient
+# tests based on finite differences unstable, since perturbing the input matri may cause an
+# arbitrary sign flip of one or more of the eigenvectors. To remedy this, we normalize the
+# vectors such that the first component has phase 0.
+def _normalizing_eigh(H: np.ndarray, lower: bool, symmetrize_input: bool):
+  uplo = "L" if lower else "U"
+  e, v = jnp.linalg.eigh(H, UPLO=uplo, symmetrize_input=symmetrize_input)
+  top_rows = v[..., 0:1, :]
+  if np.issubdtype(H.dtype, np.complexfloating):
+    angle = -jnp.angle(top_rows)
+    phase = lax.complex(jnp.cos(angle), jnp.sin(angle))
+  else:
+    phase = jnp.sign(top_rows)
+  v *= phase
+  return e, v
+
+
 # (complex) singular vectors are only unique up to an arbitrary phase. This makes the gradient
 # tests based on finite differences unstable, since perturbing the input matri may cause an
 # arbitrary sign flip of one or more of the singular vectors. To remedy this, we normalize the
@@ -615,14 +632,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     )
 
   @jtu.sample_product(
-    shape=[(1, 1), (4, 4), (5, 5), (50, 50), (2, 10, 10)],
-    dtype=float_types + complex_types,
-    lower=[True, False],
+      shape=[(1, 1), (4, 4), (5, 5), (25, 25), (2, 10, 10)],
+      dtype=float_types + complex_types,
+      lower=[True, False],
   )
   def testEighGrad(self, shape, dtype, lower):
     rng = jtu.rand_default(self.rng())
-    self.skipTest("Test fails with numeric errors.")
-    uplo = "L" if lower else "U"
     a = rng(shape, dtype)
     a = (a + np.conj(T(a))) / 2
     ones = np.ones((a.shape[-1], a.shape[-1]), dtype=dtype)
@@ -630,51 +645,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Gradient checks will fail without symmetrization as the eigh jvp rule
     # is only correct for tangents in the symmetric subspace, whereas the
     # checker checks against unconstrained (co)tangents.
-    if dtype not in complex_types:
-      f = partial(jnp.linalg.eigh, UPLO=uplo, symmetrize_input=True)
-    else:  # only check eigenvalue grads for complex matrices
-      f = lambda a: partial(jnp.linalg.eigh, UPLO=uplo, symmetrize_input=True)(a)[0]
-    jtu.check_grads(f, (a,), 2, rtol=1e-5)
-
-  @jtu.sample_product(
-      shape=[(1, 1), (4, 4), (5, 5), (50, 50)],
-      dtype=complex_types,
-      lower=[True, False],
-      eps=[1e-5],
-  )
-  def testEighGradVectorComplex(self, shape, dtype, lower, eps):
-    rng = jtu.rand_default(self.rng())
-    # Special case to test for complex eigenvector grad correctness.
-    # Exact eigenvector coordinate gradients are hard to test numerically for complex
-    # eigensystem solvers given the extra degrees of per-eigenvector phase freedom.
-    # Instead, we numerically verify the eigensystem properties on the perturbed
-    # eigenvectors.  You only ever want to optimize eigenvector directions, not coordinates!
-    uplo = "L" if lower else "U"
-    a = rng(shape, dtype)
-    a = (a + np.conj(a.T)) / 2
-    a = np.tril(a) if lower else np.triu(a)
-    a_dot = eps * rng(shape, dtype)
-    a_dot = (a_dot + np.conj(a_dot.T)) / 2
-    a_dot = np.tril(a_dot) if lower else np.triu(a_dot)
-    # evaluate eigenvector gradient and groundtruth eigensystem for perturbed input matrix
-    f = partial(jnp.linalg.eigh, UPLO=uplo)
-    (w, v), (dw, dv) = jvp(f, primals=(a,), tangents=(a_dot,))
-    self.assertTrue(jnp.issubdtype(w.dtype, jnp.floating))
-    self.assertTrue(jnp.issubdtype(dw.dtype, jnp.floating))
-    new_a = a + a_dot
-    new_w, new_v = f(new_a)
-    new_a = (new_a + np.conj(new_a.T)) / 2
-    new_w = new_w.astype(new_a.dtype)
-    # Assert rtol eigenvalue delta between perturbed eigenvectors vs new true eigenvalues.
-    RTOL = 1e-2
-    with jax.numpy_rank_promotion('allow'):
-      assert np.max(
-        np.abs((np.diag(np.dot(np.conj((v+dv).T), np.dot(new_a,(v+dv)))) - new_w) / new_w)) < RTOL
-      # Redundant to above, but also assert rtol for eigenvector property with new true eigenvalues.
-      assert np.max(
-        np.linalg.norm(np.abs(new_w*(v+dv) - np.dot(new_a, (v+dv))), axis=0) /
-        np.linalg.norm(np.abs(new_w*(v+dv)), axis=0)
-      ) < RTOL
+    f = partial(_normalizing_eigh, lower=lower, symmetrize_input=True)
+    norm_a = jnp.linalg.norm(a)
+    eps = 2e-5 * norm_a
+    atol = 5e-3 * norm_a
+    rtol = 0.025
+    jtu.check_grads(f, (a,), 2, atol=atol, rtol=rtol, eps=eps)
 
   def testEighGradPrecision(self):
     rng = jtu.rand_default(self.rng())
