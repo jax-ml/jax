@@ -29,8 +29,10 @@ from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas import tpu_sc as plsc
 import jax.numpy as jnp
 import numpy as np
+import hypothesis as hp
+import hypothesis.strategies as hps
 
-
+jtu.setup_hypothesis()
 jax.config.parse_flags_with_absl()
 
 
@@ -68,6 +70,12 @@ class PallasSCTest(jtu.JaxTestCase):
       f = pl.kernel(f, *args, **kwargs)
       return jax.jit(f, compiler_options=jax_compiler_options)
     return wrapper
+
+  @property
+  def uses_tc_tiling(self):
+    return self.COMPILER_OPTIONS.get(
+        "xla_tpu_use_tc_device_shape_on_sc", "false"
+    ) == "true"
 
   def skip_if_tc_tiling(self):
     use_tc_tiling = self.COMPILER_OPTIONS.get(
@@ -289,8 +297,6 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x.sum(axis=0))
 
   def test_get_multi_index(self):
-    self.skip_if_tc_tiling()
-
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(shape=(8,), dtype=jnp.int32)
     )
@@ -301,6 +307,52 @@ class VectorSubcoreTest(PallasSCTest):
 
     x = jnp.arange(3 * 4 * 8).reshape(3, 4, 8)
     np.testing.assert_array_equal(kernel(x), x.sum(axis=(0, 1)))
+
+  @jtu.thread_unsafe_test(condition=not jtu.hypothesis_is_thread_safe())
+  @hp.given(hps.data())
+  def test_block_spec_untiled_slicing(self, data):
+    if not self.uses_tc_tiling:
+      self.skipTest("Test uncoveres a bug: @reproduce_failure('6.80.0', b'AAEBAQAAAAA=')")
+    slice_shape = data.draw(
+        hps.lists(
+            hps.integers(1, 3), min_size=(1 + self.uses_tc_tiling), max_size=4
+        )
+    )
+    if self.uses_tc_tiling:
+      slice_shape[-2] *= 8
+      slice_shape[-1] *= 128
+    else:
+      slice_shape[-1] *= 8
+    hp.assume(math.prod(slice_shape) <= 25000)  # Avoid OOMs.
+    rank = len(slice_shape)
+    offsets = data.draw(
+        hps.lists(hps.integers(0, 4), min_size=rank, max_size=rank)
+    )
+    full_shape = tuple(s * (o + 2) for s, o in zip(slice_shape, offsets))
+
+    def nd_loop(bounds, body, *, _idxs = ()):
+      if not bounds:
+        body(*_idxs)
+        return
+      bound, *other_bounds = bounds
+      def _loop_body(i, _):
+        nd_loop(other_bounds, body, _idxs=(*_idxs, i))
+      jax.lax.fori_loop(0, bound, _loop_body, None)
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=slice_shape, dtype=jnp.int32),
+        in_specs=[pl.BlockSpec(slice_shape, lambda: offsets)],
+    )
+    def kernel(x_ref, o_ref):
+      slice_vec_shape = (*slice_shape[:-1], slice_shape[-1] // 8)
+      def copy(*idxs):
+        idxs = (*idxs[:-1], pl.ds(idxs[-1] * 8, 8))
+        o_ref[idxs] = x_ref[idxs]
+      nd_loop(slice_vec_shape, copy)
+
+    x = jnp.arange(math.prod(full_shape)).reshape(full_shape)
+    np_slc = tuple(slice(o * s, (o + 1) * s) for o, s in zip(offsets, slice_shape))
+    np.testing.assert_array_equal(kernel(x), x[np_slc])
 
   @parameterized.product(major_dim=[2, 3, 4])
   def test_swap_index(self, major_dim):

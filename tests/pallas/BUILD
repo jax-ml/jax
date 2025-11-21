@@ -1355,8 +1355,9 @@ jax_multiplatform_test(
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_sc",
     ] + py_deps([
-        "numpy",
         "absl/testing",
+        "hypothesis",
+        "numpy",
     ]),
 )
 
