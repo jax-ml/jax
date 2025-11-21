@@ -1480,15 +1480,6 @@ def TPU_LogBufferOp : TPU_Op<"log_buffer"> {
 
 
 
-def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mlir::func::FuncOp"> {
-  let dependentDialects = [
-    "::mlir::func::FuncDialect",
-    "::mlir::memref::MemRefDialect",
-    "::mlir::tpu::TPUDialect",
-  ];
-  let constructor = "::mlir::tpu::createLogicalToPhysicalDeviceIdPass(-1)";
-  let options = [Option<"total_devices", "total-devices", "int", "", "">];
-}
 
 def CanonicalizeMosaicPass : Pass<"tpu-canonicalize-mosaic", "::mlir::func::FuncOp"> {
   let dependentDialects = [
@@ -1565,18 +1556,5 @@ def ApplyVectorLayoutPass : Pass<"tpu-apply-vector-layout", "::mlir::func::FuncO
   ];
 }
 
-def PreCanonicalizationOptimizationPass : Pass<"pre-canonicalization-optimization", "::mlir::func::FuncOp"> {
-  let summary = "Fold matmul rhs tranpose into the op before layout inference";
-  let constructor = "::mlir::tpu::createPreCanonicalizationOptimizationPass()";
-  let dependentDialects = [
-    "::mlir::vector::VectorDialect",
-    "::mlir::tpu::TPUDialect",
-  ];
-  let options = [
-    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"6", "">,
-    Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
-    Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
-  ];
-}
 
 #endif  // TPU_ATTRS
