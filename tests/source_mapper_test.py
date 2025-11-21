@@ -18,6 +18,33 @@ from absl.testing import parameterized
 from jax import numpy as jnp
 from jax._src import test_util as jtu
 from jax.experimental import source_mapper
+from jax.experimental.source_mapper import hlo
+
+
+HLO_EXAMPLE = r"""HloModule m, entry_computation_layout={()->pred[]}
+
+FileNames
+1 "<embedded module>"
+2 "experimental/module.py"
+3 "yet/another/test.py"
+
+FunctionNames
+1 "main"
+2 "method"
+
+FileLocations
+1 {file_name_id=1 function_name_id=1 line=153 end_line=153 column=2 end_column=31}
+2 {file_name_id=3 function_name_id=2 line=35 end_line=35 column=2 end_column=24}
+3 {file_name_id=2 function_name_id=2 line=83 end_line=83 column=2 end_column=15}
+
+StackFrames
+1 {file_location_id=1 parent_frame_id=1}
+2 {file_location_id=2 parent_frame_id=2}
+
+
+ENTRY %constant_pred () -> pred[] {
+  ROOT %constant = pred[] constant(true), metadata={op_type="const" op_name="opname" stack_frame_id=1}
+}"""
 
 
 class SourceMapperTest(jtu.JaxTestCase):
@@ -90,6 +117,29 @@ class SourceMapperTest(jtu.JaxTestCase):
     self.assertEqual(src_line, jax_fn.__code__.co_firstlineno)
     # TODO(justinfu): This fails on external but not internal builds.
     # self.assertEqual(src_col, expected_col)
+
+
+class HLOParserTest(jtu.JaxTestCase):
+
+  def test_hlo_parser(self):
+    source_map = hlo._parse_hlo_new_format(HLO_EXAMPLE.split("\n"))
+    print(source_map)
+    self.assertLen(source_map.sources, 1)
+    self.assertEqual(source_map.sources[0], "<embedded module>")
+    mappings = source_map.mappings
+    constant_line_idx = -1
+    for i, line in enumerate(HLO_EXAMPLE.split("\n")):
+      if r"ROOT %constant" in line:
+        constant_line_idx = i
+        break
+    line_mappings = mappings[constant_line_idx]
+    gen_col, file_idx, src_line, _ = line_mappings[0]
+
+    self.assertEqual(
+        file_idx, 0
+    )  # "<embedded module>" is the first and only used source
+    self.assertEqual(src_line, 152)  # 153 - 1
+    self.assertEqual(gen_col, 2)
 
 
 if __name__ == "__main__":
