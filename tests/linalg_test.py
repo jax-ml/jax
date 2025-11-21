@@ -110,6 +110,25 @@ def svd_algorithms():
   return algorithms
 
 
+# (complex) singular vectors are only unique up to an arbitrary phase. This makes the gradient
+# tests based on finite differences unstable, since perturbing the input matri may cause an
+# arbitrary sign flip of one or more of the singular vectors. To remedy this, we normalize the
+# singular vectors such that the first component of the left singular vectors has phase 0.
+def _normalizing_svd(a: np.array, full_matrices: bool):
+  u, s, vt = jnp.linalg.svd(a, full_matrices=full_matrices, compute_uv=True)
+  top_rows = u[..., 0:1, :]
+  if np.issubdtype(a.dtype, np.complexfloating):
+    angle = -jnp.angle(top_rows)
+    u_phase = lax.complex(jnp.cos(angle), jnp.sin(angle))
+    v_phase = lax.complex(jnp.cos(-angle), jnp.sin(-angle))
+  else:
+    u_phase = jnp.sign(top_rows)
+    v_phase = u_phase
+  u *= u_phase
+  vt *= np.swapaxes(v_phase, -1, -2)
+  return u, s, vt
+
+
 class NumpyLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
@@ -1025,6 +1044,25 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # since jax.scipy.linalg.svd is almost the same as jax.numpy.linalg.svd
     # do not check it functionality here
     jsp.linalg.svd(np.ones((2, 2), dtype=np.float32))
+
+  @jtu.sample_product(
+      shape=[(1, 1), (4, 4), (2, 5), (5, 2), (5, 5), (2, 5, 5)],
+      dtype=float_types + complex_types,
+      full_matrices=[True, False],
+      compute_uv=[True, False],
+  )
+  @jax.default_matmul_precision("float32")
+  def testSVDGrad(self, shape, dtype, full_matrices, compute_uv):
+    rng = jtu.rand_default(self.rng())
+    a = rng(shape, dtype)
+    if not compute_uv:
+      f = partial(jnp.linalg.svd, full_matrices=False, compute_uv=False)
+    else:
+      f = partial(_normalizing_svd, full_matrices=full_matrices)
+    if full_matrices and shape[-1] != shape[-2]:
+      self.skipTest("JVP for SVD not implemented for full matrices.")
+
+    jtu.check_grads(f, (a,), order=2, rtol=0.035, eps=1.0 / 512)
 
   @jtu.sample_product(
     shape=[(0, 2), (2, 0), (3, 4), (3, 3), (4, 3)],
