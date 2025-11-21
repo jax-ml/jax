@@ -21,6 +21,7 @@ from collections.abc import Callable, Hashable, Iterator, MutableMapping, Mutabl
 import contextlib
 import dataclasses
 import functools
+import inspect
 import itertools
 import math
 import operator
@@ -34,8 +35,8 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import debugging
 from jax._src import dtypes
-from jax._src import literals
 from jax._src import linear_util as lu
+from jax._src import literals
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
 from jax._src import source_info_util
@@ -3109,11 +3110,21 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
     ]
     del outs
 
-  switch_op = scf_dialect.IndexSwitchOp(
-      yielded_types,
-      _as_index(_ensure_ir_value(index, index_aval.dtype)),
-      range(len(branches) - 1),
-  )
+  # TODO(apaszke): Remove once minimal jaxlib is 0.8.2
+  idx_switch_params = inspect.signature(scf_dialect.IndexSwitchOp).parameters
+  if (mlir_compat := "num_caseRegions" in idx_switch_params):
+    switch_op = scf_dialect.IndexSwitchOp(
+        yielded_types,
+        _as_index(_ensure_ir_value(index, index_aval.dtype)),
+        ir.DenseI64ArrayAttr.get(range(len(branches) - 1)),
+        num_caseRegions=len(branches) - 1,
+    )
+  else:
+    switch_op = scf_dialect.IndexSwitchOp(
+        yielded_types,
+        _as_index(_ensure_ir_value(index, index_aval.dtype)),
+        range(len(branches) - 1),
+    )
 
   # ``RegionSequence`` in MLIR does not support slicing, so the
   # auto-generated Python bindings for ``caseRegions`` fail at runtime!
@@ -3123,7 +3134,8 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
   regions = regions[1:] + regions[:1]
   treedef = None
   for branch, region in zip(branches, regions):
-    with ir.InsertionPoint(region.blocks[0]):
+    block = region.blocks.append() if mlir_compat else region.blocks[0]
+    with ir.InsertionPoint(block):
       outs = lower_jaxpr_to_mosaic_gpu(
           ctx.module_ctx, ctx.launch_ctx, branch.jaxpr, args, consts=branch.consts
       )
