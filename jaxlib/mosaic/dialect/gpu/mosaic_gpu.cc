@@ -522,8 +522,8 @@ llvm::LogicalResult BroadcastInDimOp::verify() {
     return emitOpError(llvm::formatv(params...));
   };
 
-  auto operand_type = mlir::cast<mlir::VectorType>(getOperand().getType());
-  auto result_type = mlir::cast<mlir::VectorType>(getResult().getType());
+  mlir::VectorType operand_type = getOperand().getType();
+  mlir::VectorType result_type = getResult().getType();
 
   if (operand_type.getRank() == 0) {
     return error("The input vector must have rank > 0.");
@@ -559,15 +559,12 @@ llvm::LogicalResult BroadcastInDimOp::verify() {
 }
 
 llvm::LogicalResult ReturnOp::verify() {
-  auto custom_primitive_op =
-      mlir::cast<CustomPrimitiveOp>((*this)->getParentOp());
-
   // The operand number and types must match the custom primitive signature.
-  const auto& results = custom_primitive_op->getResultTypes();
+  const auto& results = getParentOp()->getResultTypes();
   if (getNumOperands() != results.size())
     return emitOpError("has ")
            << getNumOperands() << " operands, but enclosing custom_primitive (@"
-           << custom_primitive_op->getName() << ") returns " << results.size();
+           << getParentOp()->getName() << ") returns " << results.size();
 
   for (unsigned i = 0, e = results.size(); i != e; ++i)
     if (getOperand(i).getType() != results[i])
@@ -576,7 +573,7 @@ llvm::LogicalResult ReturnOp::verify() {
                          << ") doesn't match the result type (" << results[i]
                          << ")"
                          << " in custom_primitive @"
-                         << custom_primitive_op->getName();
+                         << getParentOp()->getName();
 
   return llvm::success();
 }
