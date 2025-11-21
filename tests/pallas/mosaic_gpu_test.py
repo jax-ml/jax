@@ -2592,6 +2592,33 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
                           jnp.ones((128,), jnp.int32) * 3), axis=0)
     np.testing.assert_array_equal(result, expected)
 
+  def test_scalar_load(self):
+    warp_mesh = plgpu.WarpMesh(axis_name="warp")
+    @functools.partial(self.kernel,
+                       out_shape=jax.ShapeDtypeStruct((), jnp.int32))
+    def kernel(x_ref, y_ref):
+      @pl.core_map(warp_mesh)
+      def _():
+        warp_id = lax.axis_index("warp")
+        @pl.when(warp_id == 1)
+        def _():
+          y_ref[...] = x_ref[...]
+    np.testing.assert_array_equal(kernel(4), 4)
+
+  def test_non_scalar_load_raises(self):
+    warp_mesh = plgpu.WarpMesh(axis_name="warp")
+    @functools.partial(self.kernel,
+                       out_shape=jax.ShapeDtypeStruct((2,), jnp.int32))
+    def kernel(x_ref, y_ref):
+      @pl.core_map(warp_mesh)
+      def _():
+        warp_id = lax.axis_index("warp")
+        @pl.when(warp_id == 1)
+        def _():
+          y_ref[...] = x_ref[...]
+    with self.assertRaisesRegex(ValueError, "Can only load scalars",):
+      kernel(jnp.ones((2,), jnp.int32))
+
   @parameterized.parameters(
     lax.add, lax.sub, lax.mul, lax.div, lax.rem, lax.bitwise_and,
     lax.bitwise_or, lax.bitwise_xor, lax.max, lax.min,

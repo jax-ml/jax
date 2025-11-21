@@ -1536,6 +1536,9 @@ def _ndindexer_indices(
 
 
 @register_lowering_rule(sp.get_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(
+    sp.get_p, mgpu.LoweringSemantics.Lane, gpu_core.PrimitiveSemantics.Warp
+)
 def _get_lowering_rule(
     ctx: LoweringRuleContext, x_ref, *leaves, tree, optimized=True
 ):
@@ -1544,6 +1547,11 @@ def _get_lowering_rule(
         "Loads from TMEM are asynchronous operations and cannot be performed"
         " using the usual syntax. Please use plgpu.async_load_tmem instead."
     )
+  if (
+      ctx.avals_out[0].shape
+      and ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp
+  ):
+    raise ValueError("Can only load scalars in warp-level code.")
   if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):
     raise TypeError(f"Can only load from references (got {x_ref}).")
   dtype = ctx.avals_out[0].dtype
