@@ -1511,9 +1511,9 @@ class OpsTest(PallasBaseTest):
       self.skipTest("TPU only test")
 
     if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
-        2025, 11, 21
+        2025, 11, 30
     ):
-      self.skipTest("Requires libtpu built after 2025-11-21")
+      self.skipTest("Requires libtpu built after 2025-11-30")
 
     x_shape, y_shape, dims_numbers = shapes_and_dims_numbers
 

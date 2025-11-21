@@ -1566,7 +1566,7 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(f(x), x)
 
   def test_exp(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 11, 21):
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 30):
       self.skipTest("Test requires a newer libtpu")
 
     x = jnp.arange(8, dtype=jnp.float32)
