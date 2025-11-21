@@ -1317,12 +1317,13 @@ def call_partial_eval_custom_rule(
       params_staged)
   residuals = [Var(res_aval(params_known, var.aval))
                for var in jaxpr_staged.invars[:num_res]]
-  eqn_known = new_jaxpr_eqn(ins_known, [*out_binders_known, *residuals],
-                            eqn.primitive, params_known, jaxpr_known.effects,
-                            eqn.source_info, eqn.ctx)
-  eqn_staged = new_jaxpr_eqn([*residuals, *ins_staged], out_binders_staged,
-                             eqn.primitive, params_staged,
-                             jaxpr_staged.effects, eqn.source_info, eqn.ctx)
+  eqn_known = new_jaxpr_eqn(
+      ins_known, [*out_binders_known, *residuals], eqn.primitive, params_known,
+      core.eqn_effects(jaxpr_known), eqn.source_info, eqn.ctx)
+  eqn_staged = new_jaxpr_eqn(
+      [*residuals, *ins_staged], out_binders_staged, eqn.primitive,
+      params_staged, core.eqn_effects(jaxpr_staged), eqn.source_info,
+      eqn.ctx)
   assert len(eqn_staged.invars) == len(jaxpr_staged.invars)
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
               if type(x) is Var and not inst]
@@ -1358,14 +1359,14 @@ def closed_call_partial_eval_custom_rule(
        for v in jaxpr_staged.in_avals[:num_res]], [num_res_val])
   res_val_binders = [v for v, f in zip(res_val_binders, out_fwd) if f is None]
   res_val_vars = subs_list(out_fwd, out_binders_known, res_val_binders)
-  eqn_known = new_jaxpr_eqn([*ins_known, *res_ref_binders],
-                            [*out_binders_known, *res_val_binders],
-                            eqn.primitive, params_known, jaxpr_known.effects,
-                            eqn.source_info, eqn.ctx)
-  eqn_staged = new_jaxpr_eqn([*res_val_vars, *res_ref_binders, *ins_staged],
-                             out_binders_staged,
-                             eqn.primitive, params_staged, jaxpr_staged.effects,
-                             eqn.source_info, eqn.ctx)
+  eqn_known = new_jaxpr_eqn(
+      [*ins_known, *res_ref_binders], [*out_binders_known, *res_val_binders],
+      eqn.primitive, params_known, core.eqn_effects(jaxpr_known),
+      eqn.source_info, eqn.ctx)
+  eqn_staged = new_jaxpr_eqn(
+      [*res_val_vars, *res_ref_binders, *ins_staged], out_binders_staged,
+      eqn.primitive, params_staged, core.eqn_effects(jaxpr_staged),
+      eqn.source_info, eqn.ctx)
   assert len(eqn_staged.invars) == len(jaxpr_staged.in_avals)
   assert len(ins_known) + len(res_ref_binders) == len(jaxpr_known.jaxpr.invars)
   assert len(ins_staged) + len(res_ref_binders) + len(res_val_vars) == len(jaxpr_staged.jaxpr.invars)
@@ -1578,11 +1579,12 @@ def dce_jaxpr_closed_call_rule(used_outputs: list[bool], eqn: JaxprEqn
     return [False] * len(eqn.invars), None
   jaxpr_ = eqn.params['call_jaxpr']
   closed_jaxpr, used_inputs = _cached_closed_call_dce(jaxpr_, tuple(used_outputs))
+  effects = core.eqn_effects(closed_jaxpr)
   new_params = dict(eqn.params, call_jaxpr=closed_jaxpr)
   new_eqn = new_jaxpr_eqn(
       [v for v, used in zip(eqn.invars, used_inputs) if used],
       [v for v, used in zip(eqn.outvars, used_outputs) if used],
-      eqn.primitive, new_params, closed_jaxpr.effects, eqn.source_info, eqn.ctx)
+      eqn.primitive, new_params, effects, eqn.source_info, eqn.ctx)
   return used_inputs, new_eqn
 dce_rules[core.closed_call_p] = dce_jaxpr_closed_call_rule
 
@@ -1972,6 +1974,15 @@ class TracingEqn:
   effects: core.Effects
   source_info: source_info_util.SourceInfo
   ctx: JaxprEqnContext
+
+  def __init__(self, in_tracers, outvars, primitive, params, effects, source_info, ctx):
+    self.in_tracers = in_tracers
+    self.outvars = outvars
+    self.primitive = primitive
+    self.params = params
+    self.effects = effects
+    self.source_info = source_info
+    self.ctx = ctx
 
   # Allow TracingEqn to duck-type JaxpeEqn because some of the forwarding
   # rules need to work with both. TODO(dougalm): remove this once we fix

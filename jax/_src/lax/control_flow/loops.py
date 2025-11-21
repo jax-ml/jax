@@ -603,7 +603,7 @@ def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
         'temporary workaround pass the check_vma=False argument to '
         '`jax.shard_map`')
   ys_avals = _map(partial(_prepend_dim_to_aval, length), y_avals)
-  return out_carry_avals + ys_avals, jaxpr.effects
+  return out_carry_avals + ys_avals, core.eqn_effects(jaxpr)
 
 def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
               linear, unroll, _split_transpose):
@@ -1327,8 +1327,8 @@ def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn
   # TODO(mattjj,sharadmv): don't assume effects are never DCE'd?
   new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
   new_outvars = [v for v, used in zip(eqn.outvars, used_outputs) if used]
-  _, new_effects = eqn.primitive.abstract_eval(*[v.aval for v in new_invars],
-                                               **new_params)
+  _, new_effects = eqn.primitive.abstract_eval(
+      *[v.aval for v in new_invars], **new_params)
   new_eqn = pe.new_jaxpr_eqn(
       new_invars,
       new_outvars,
@@ -1411,11 +1411,8 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   # (corresponding to consts_known_lp_avals) followed by known carry and xs.
   linear_known_ = [l for l, uk in zip(eqn.params['linear'], unks_in) if not uk]
   _, linear_known_ = split_list(linear_known_, [num_const_known])
-  linear_known = [False] * len(consts_known_lp_avals) + linear_known_
   params_known = dict(eqn.params, jaxpr=jaxpr_known_loop,
-                      num_consts=len(consts_known_lp_avals),
-                      num_carry=len(carry_uk)-sum(carry_uk),
-                      linear=tuple(linear_known))
+                      num_carry=len(carry_uk)-sum(carry_uk))
 
   def known(*ins_known):
     consts_known_maybehoist, ins_known_lp = split_list(ins_known, [num_const_known])
@@ -1423,8 +1420,11 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
         partition_list(const_donthoist, consts_known_maybehoist)
     out_hoist = core.jaxpr_as_fun(jaxpr_known_hoist)(*consts_known_hoist)
     intensive_res, consts_known_lp = split_list(out_hoist, [num_intensive_res])
-    out_loop = scan_p.bind(*consts_known_lp, *consts_known_donthoist,
-                           *ins_known_lp, **params_known)
+    num_consts = len(consts_known_lp) + len(consts_known_donthoist)
+    linear_known = (False,) * num_consts + (False,) * len(ins_known_lp)
+    out_loop = scan_p.bind(
+        *consts_known_lp, *consts_known_donthoist, *ins_known_lp,
+        **dict(params_known, linear=linear_known, num_consts=num_consts))
     return [*intensive_res, *out_loop]
   call_jaxpr_, _, call_jaxpr_consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(known, debug_info=jaxpr_known_hoist.jaxpr.debug_info),
@@ -1432,8 +1432,8 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   call_jaxpr = ClosedJaxpr(call_jaxpr_, call_jaxpr_consts)
   eqn_known = pe.new_jaxpr_eqn(
       ins_known, [*intensive_res, *out_binders_known, *extensive_res],
-      core.closed_call_p, dict(call_jaxpr=call_jaxpr), call_jaxpr.effects,
-      eqn.source_info, eqn.ctx)
+      core.closed_call_p, dict(call_jaxpr=call_jaxpr),
+      core.eqn_effects(call_jaxpr), eqn.source_info, eqn.ctx)
 
   # Create the staged eqn.
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
@@ -1442,12 +1442,17 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   params_staged = dict(eqn.params, jaxpr=jaxpr_staged,
                        num_consts=len(intensive_res) + eqn.params['num_consts'],
                        linear=tuple(linear_staged))
-  eqn_staged = pe.new_jaxpr_eqn([*intensive_res, *eqn.invars, *extensive_res],
-                                out_binders_staged, eqn.primitive,
-                                params_staged, jaxpr_staged.effects,
-                                eqn.source_info, eqn.ctx)
+  eqn_staged = pe.new_jaxpr_eqn(
+      [*intensive_res, *eqn.invars, *extensive_res], out_binders_staged,
+      eqn.primitive, params_staged, core.eqn_effects(jaxpr_staged),
+      eqn.source_info, eqn.ctx)
 
   new_vars = [*new_inst, *intensive_res, *extensive_res]
+  assert len(eqn_staged.invars) == len(eqn_staged.params['linear'])
+  for e in [eqn_known, eqn_staged]:
+    for eff in e.effects:
+      if isinstance(eff, effects.JaxprInputEffect):
+        assert isinstance(e.invars[eff.input_index].aval, AbstractRef)
   return eqn_known, eqn_staged, unks_out, inst_out, new_vars
 
 def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts,
@@ -1497,7 +1502,7 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts,
     raise core.JaxprTypeError(
       f'scan jaxpr takes input sequence types\n{_avals_short(x_avals_jaxpr)},\n'
       f'called with sequence whose items have type\n{_avals_short(x_avals_mapped)}')
-  return [*init_avals, *y_avals], jaxpr.effects
+  return [*init_avals, *y_avals], core.eqn_effects(jaxpr)
 
 def _scan_state_partial_discharge_rule(
     should_discharge, in_avals, out_avals, *args, jaxpr, num_consts, num_carry,
