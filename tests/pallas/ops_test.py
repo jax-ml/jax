@@ -173,6 +173,8 @@ def select_n_strategy(
               # TODO(sharadmv,apaszke): enable bf16
               # np.dtype(jnp.bfloat16),
           ],
+          # Max 4K bytes. Helps avoid slow input generation.
+          max_bytes=2**12,
       )
   )
   allowed_elements = hps.integers(min_value=0, max_value=n_cases - 1)
