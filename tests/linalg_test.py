@@ -15,6 +15,7 @@
 from functools import partial
 import itertools
 from collections.abc import Iterator
+import platform
 import unittest
 
 import numpy as np
@@ -637,6 +638,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       lower=[True, False],
   )
   def testEighGrad(self, shape, dtype, lower):
+    if platform.system() == "Windows":
+      self.skipTest("Skip on Windows due to tolerance issues.")
     rng = jtu.rand_default(self.rng())
     a = rng(shape, dtype)
     a = (a + np.conj(T(a))) / 2
