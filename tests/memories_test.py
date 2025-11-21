@@ -743,6 +743,23 @@ class DevicePutTest(jtu.JaxTestCase):
       self.assertEqual(d.sharding.memory_kind, 'device')
       self.assertArraysEqual(d, orig)
 
+  def test_memory_space_propagated_identity_jit(self):
+    shd = jax.sharding.SingleDeviceSharding(
+        jax.devices()[0], memory_kind='pinned_host')
+    a = jax.device_put(1, shd)
+
+    f = jax.jit(lambda x: x, out_shardings=shd)
+    b = f(a)
+    self.assertEqual(b.sharding, a.sharding)
+
+    f = jax.jit(lambda x: x)
+    b = f(a)
+    self.assertEqual(b.sharding, a.sharding)
+
+    exported = jax.export.export(f)(a)
+    b = exported.call(a)
+    self.assertEqual(b.sharding, a.sharding)
+
 
 class ComputeOffload(jtu.BufferDonationTestCase):
 

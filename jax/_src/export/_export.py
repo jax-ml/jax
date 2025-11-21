@@ -1405,7 +1405,8 @@ def _call_exported_abstract_eval(
   out_avals = tuple(
       core.ShapedArray(core.evaluate_shape(out_aval.shape, exported_dim_vars,
                                            *exported_dim_values),
-                       dtype=out_aval.dtype, weak_type=out_aval.weak_type)
+                       dtype=out_aval.dtype, weak_type=out_aval.weak_type,
+                       memory_space=out_aval.memory_space)
       for out_aval in exported.out_avals)
   return out_avals, set(exported.ordered_effects + exported.unordered_effects)
 
