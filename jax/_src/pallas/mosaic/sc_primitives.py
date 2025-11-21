@@ -519,6 +519,45 @@ def scan_count(
   return scan_count_p.bind(x, lax.full(x.shape, True) if mask is None else mask)
 
 
+masked_cummax_p = jax_core.Primitive("masked_cummax")
+masked_cummax_p.multiple_results = False
+
+@masked_cummax_p.def_abstract_eval
+def _masked_cummax_abstract_eval(x, mask):
+  if x.dtype != jnp.int32 and x.dtype != jnp.float32:
+    raise NotImplementedError(f"x.dtype={x.dtype} must be int32 or float32")
+  if not jnp.issubdtype(mask.dtype, jnp.bool):
+    raise TypeError(f"mask.dtype={mask.dtype} is not a boolean dtype")
+  if x.shape != mask.shape:
+    raise ValueError(f"x.shape={x.shape} != mask.shape={mask.shape}")
+  return x
+
+@sc_lowering.register_lowering_rule(masked_cummax_p)
+def _masked_cummax_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask):
+  del ctx  # Unused.
+  return tpu.scan(
+      x.type, x, ir.Attribute.parse("#tpu.reduction_kind<max>"), mask=mask)
+
+def cummax(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
+  """Returns the cumulative max of the array along its innermost axis.
+
+  Elements from `x` will pass through directly to the result until the first
+  valid value is encountered (`mask[i] == True`). If you would like to specify
+  a default value for such elements instead, write
+  `x = jnp.where(mask, x, default_value)` before or after calling this function.
+
+  Args:
+    x: An array of integers or floats.
+    mask: An optional array of booleans, which specifies which elements of `x`
+      are eligible for the max. If `None`, all elements are eligible.
+  """
+  if x.ndim != 1:
+    raise NotImplementedError(f"masked_cummax: x={x.aval} must be rank 1")
+  if mask is None:
+    mask = lax.full(x.shape, True)
+  return masked_cummax_p.bind(x, mask)
+
+
 masked_cumsum_p = jax_core.Primitive("masked_cumsum")
 masked_cumsum_p.multiple_results = False
 
@@ -553,18 +592,20 @@ def _lax_cumsum_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axis,
   return tpu.scan(
       x.type, x, ir.Attribute.parse("#tpu.reduction_kind<sum>"), mask=c1v)
 
-def masked_cumsum(x: jax.Array, mask: jax.Array) -> jax.Array:
+def cumsum(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
   """Returns the cumulative sum of the array along its innermost axis.
 
   This differs from `jnp.cumsum` in that it takes an additional `mask` argument.
 
   Args:
     x: An array of integers or floats.
-    mask: An optional array of booleans, which specifies which elements ``x``
-      are eligible for summing. If ``None``, all elements are eligible.
+    mask: An optional array of booleans, which specifies which elements of `x`
+      are eligible for summing. If `None`, all elements are eligible.
   """
   if x.ndim != 1:
-    raise NotImplementedError(f"masked_cumsum: x={x.aval} must be rank 1")
+    raise NotImplementedError(f"cumsum: x={x.aval} must be rank 1")
+  if mask is None:
+    mask = lax.full(x.shape, True)
   return masked_cumsum_p.bind(x, mask)
 
 

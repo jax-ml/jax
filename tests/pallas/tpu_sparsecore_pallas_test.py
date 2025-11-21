@@ -1219,9 +1219,26 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
-      o_ref[...] = plsc.masked_cumsum(x_ref[...], mask=(x_ref[...] % 2) == 1)
+      o_ref[...] = plsc.cumsum(x_ref[...], mask=(x_ref[...] % 2) == 1)
 
     np.testing.assert_array_equal(kernel(x), np.cumsum(x * (x % 2)))
+
+  @parameterized.product(dtype=[jnp.int32, jnp.float32])
+  def test_masked_cummax(self, dtype):
+    x = np.arange(self.sc_info.num_lanes, dtype=dtype)
+    np.random.shuffle(x)
+
+    @self.vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, o_ref):
+      o_ref[...] = plsc.cummax(x_ref[...], mask=(x_ref[...] % 2) == 1)
+
+    row = np.arange(self.sc_info.num_lanes)[:, np.newaxis]
+    col = np.arange(self.sc_info.num_lanes)[np.newaxis, :]
+    mask = x % 2
+    expected = (x * mask * (col <= row)).max(axis=1)
+    has_valid_value_so_far = np.cumsum(mask) > 0
+    expected = np.where(has_valid_value_so_far, expected, x)
+    np.testing.assert_array_equal(kernel(x), expected)
 
   def test_parallel_loop_with_carry(self):
     chunk_size = self.sc_info.num_lanes
