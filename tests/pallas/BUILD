@@ -1104,6 +1104,32 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "mgpu_blackwell_transposed_ragged_dot_run",
+    size = "large",
+    srcs = [
+        "//jax/experimental/pallas/ops/gpu:blackwell_matmul_mgpu.py",
+        "//jax/experimental/pallas/ops/gpu:blackwell_ragged_dot_mgpu.py",
+        "//jax/experimental/pallas/ops/gpu:blackwell_transposed_ragged_dot_mgpu.py",
+        "//jax/experimental/pallas/ops/gpu:ragged_dot_mgpu.py",
+    ],
+    enable_backends = [],
+    enable_configs = ["gpu_b200"],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    main = "//jax/experimental/pallas/ops/gpu:blackwell_transposed_ragged_dot_mgpu.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_mosaic_gpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "mgpu_ragged_dot_test",
     size = "large",  # Increased timout to account for the extra tests.
     srcs = ["mgpu_ragged_dot_test.py"],
