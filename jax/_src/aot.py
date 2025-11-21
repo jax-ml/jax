@@ -94,7 +94,7 @@ def component_abstract_eval(
         lambda x: core.ShapedArray(x.shape, x.dtype), api.eval_shape(fun, *args)
       )
     aot_util.put_entry(component_key, entry := aot_util.CacheEntry(avals_out))
-  return entry.avals_out
+  return entry.abstract_eval
 
 
 def component_lowering(
@@ -129,6 +129,12 @@ def component_batcher(
   # TODO(dsuo): Ignore updating annotations.
 
   # TODO(dsuo): This doesn't handle nesting.
+  batched_component_key = ComponentKey.vmap(component_key)
+  if (
+    entry := aot_util.get_entry(batched_component_key)
+  ) is not None and entry.module is not None:
+    pass
+
   wrapped_fun = aot_util.wrap_init(fun, "vmap(component)")
 
   # ????(dsuo): I don't understand trace tags.
@@ -142,8 +148,9 @@ def component_batcher(
   vals_out = component_p.bind(
     *vals_in,
     fun=batched_fun.f_transformed,
-    component_key=ComponentKey.vmap(component_key),
+    component_key=batched_component_key,
   )
+  # assert False
   return vals_out, dims_out()
 
 

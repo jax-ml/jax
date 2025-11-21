@@ -77,29 +77,32 @@ component_cache = config.string_or_object_state(
 class CacheEntry:
   def __init__(
     self,
-    avals_out: Sequence[core.AbstractValue] | None,
+    abstract_eval: Sequence[core.AbstractValue] | None,
+    # TODO(dsuo): What are the vals_out of batcher, DynamicJaxprTrace?
     module: ir.Module | None = None,
+    batcher: tuple[Any, tuple[int]] = None,
   ):
-    self.avals_out = avals_out
+    self.abstract_eval = abstract_eval
     self.module = module
+    self.batcher = batcher
 
   def serialize(self) -> SerializedType:
     module_bytecode = None
     if self.module is not None:
       module_bytecode = mlir.module_to_bytecode(self.module)
-    return pickle.dumps((self.avals_out, module_bytecode))
+    return pickle.dumps((self.abstract_eval, module_bytecode, self.batcher))
 
   @classmethod
   def deserialize(
     cls, blob: SerializedType, ctx: ir.Context | None = None
   ) -> Self:
-    avals_out, module_bytecode = pickle.loads(blob)
+    abstract_eval, module_bytecode, batcher = pickle.loads(blob)
     if module_bytecode is None or ctx is None:
       module = None
     else:
       with ctx:
         module = ir.Module.parse(module_bytecode)
-    return cls(avals_out, module)
+    return cls(abstract_eval, module, batcher)
 
 
 # TODO(dsuo): This should be a protocol.
