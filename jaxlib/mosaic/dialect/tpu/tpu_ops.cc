@@ -735,7 +735,7 @@ LogicalResult MemRefBitcastOp::canonicalize(MemRefBitcastOp op,
 
 template <typename Op>
 LogicalResult verifyStridedOp(Op op, MemRefType memref_ty,
-                              VectorType vector_ty) {
+                              VectorType vector_ty, int64_t min_stride) {
   auto indices = op.getIndices();
   auto strides = op.getStrides();
   if (memref_ty.getRank() != indices.size()) {
@@ -754,8 +754,9 @@ LogicalResult verifyStridedOp(Op op, MemRefType memref_ty,
     return failure();
   }
   for (int64_t i = 0; i < memref_ty.getRank(); ++i) {
-    if (strides[i] < 1) {
-      op.emitError("Strides[") << i << "]=" << strides[i] << " must be >= 1";
+    if (strides[i] < min_stride) {
+      op.emitError("Strides[") << i << "]=" << strides[i] << " must be >= "
+          << min_stride;
       return failure();
     }
   }
@@ -764,12 +765,13 @@ LogicalResult verifyStridedOp(Op op, MemRefType memref_ty,
 
 LogicalResult StridedLoadOp::verify() {
   return verifyStridedOp<StridedLoadOp>(*this, getMemRefType(getBase()),
-                                        getType());
+                                        getType(), /*min_stride=*/0);
 }
 
 LogicalResult StridedStoreOp::verify() {
   return verifyStridedOp<StridedStoreOp>(*this, getMemRefType(getBase()),
-                                         getValueToStore().getType());
+                                         getValueToStore().getType(),
+                                         /*min_stride=*/1);
 }
 
 template <typename Op>
