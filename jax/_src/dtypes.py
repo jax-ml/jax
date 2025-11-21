@@ -283,9 +283,6 @@ def itemsize_bits(dtype: DTypeLike) -> int:
   else:
     raise ValueError(f"unexpected input: {dtype=}")
 
-# TODO(justinfu): Rename all instances of bit_width to itemsize_bits
-bit_width = itemsize_bits
-
 # Trivial vectorspace datatype needed for tangent values of int/bool primals
 float0: np.dtype = np.dtype([('float0', np.void, 0)])
 
