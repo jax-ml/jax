@@ -162,7 +162,7 @@ class Print {
 std::ostream &operator<<(std::ostream &os, Print p);
 
 template <bool adjust_bool = false>
-FailureOr<int8_t> getTypeBitwidth(Type ty) {
+int8_t getTypeBitwidth(Type ty) {
   if (auto integer_ty = dyn_cast<IntegerType>(ty)) {
     const unsigned width = integer_ty.getWidth();
     if constexpr (adjust_bool) {
@@ -172,23 +172,22 @@ FailureOr<int8_t> getTypeBitwidth(Type ty) {
       return width;
     }
   }
-  if (isa<IntegerType, Float32Type, BFloat16Type, Float8E5M2Type,
-          Float8E4M3FNType, Float8E4M3B11FNUZType, Float4E2M1FNType>(ty)) {
-    return ty.getIntOrFloatBitWidth();
-  }
-  return emitError(UnknownLoc::get(ty.getContext()),
-                   "Unsupported type in mosaic dialect: ")
-         << ty;
+  return ty.getIntOrFloatBitWidth();
 }
 
 // Returns the bitwidth of the element type. The function works for both
 // scalar and vector types.
 template <bool adjust_bool = false>
-inline FailureOr<int8_t> getElementTypeBitwidth(Type ty) {
+inline int8_t getElementTypeBitwidth(Type ty) {
   if (auto vty = dyn_cast<VectorType>(ty)) {
     return getTypeBitwidth<adjust_bool>(vty.getElementType());
   }
   return getTypeBitwidth<adjust_bool>(ty);
+}
+
+template <bool adjust_bool = false>
+inline int8_t getElementTypeBitwidth(MemRefType ty) {
+  return getElementTypeBitwidth<adjust_bool>(ty.getElementType());
 }
 
 template <typename T>

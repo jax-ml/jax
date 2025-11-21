@@ -179,7 +179,7 @@ bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
     return false;
   }
   auto rank = tiled_memref_ty.getRank();
-  auto packing = 32 / tiled_memref_ty.getElementTypeBitWidth();
+  auto packing = 32 / getElementTypeBitwidth(tiled_memref_ty);
   if (tiled_memref_ty.isDynamicDim(rank - 1)) {
     // TODO(jevinjiang): we can still allow the minormost padding if we know the
     // max bound of the dynamic size is not larger than the target_shape[1].
@@ -237,7 +237,7 @@ bool layoutIsValidForValue(const Layout &l, const Value v,
     if (!vty.getElementType().isIntOrFloat()) {
       return false;
     }
-    const int8_t bitwidth = vty.getElementTypeBitWidth();
+    const int8_t bitwidth = getElementTypeBitwidth(vty);
     if (bitwidth != l->bitwidth() && bitwidth != 1) {
       return false;
     }
