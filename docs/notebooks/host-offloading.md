@@ -637,4 +637,4 @@ Note: The optimizer states can be compared for numerical equivalence using `jax.
 
 ## Tools for Host Offloading
 
-{func}`jax.stages.Compiled.memory_analysis` API is utilized above to get memory usage information. For device memory analysis, refer to :doc:`device_memory_profiling`. The profiling tools described in {ref}`profiling` can help measure memory savings and performance impact from host offloading.
+{func}`jax.stages.Compiled.memory_analysis` API is utilized above to get memory usage information. For device memory analysis, refer to {doc}`../device_memory_profiling`. The profiling tools described in {doc}`../profiling` can help measure memory savings and performance impact from host offloading.
