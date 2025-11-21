@@ -1083,7 +1083,7 @@ class WGMMATest(TestCase):
           m=m, n=n, dtype=utils.dtype_to_ir_type(out_dtype),
           is_signed=True if dtype == jnp.int8 else None,
       )
-      layout = fa.WGMMA_LAYOUT_8BIT if dtypes.bit_width(dtype) == 8 else fa.WGMMA_LAYOUT
+      layout = fa.WGMMA_LAYOUT_8BIT if dtypes.itemsize_bits(dtype) == 8 else fa.WGMMA_LAYOUT
       lhs_regs = fa.FragmentedArray.load_untiled(
           lhs, layout=layout, optimized=False, is_signed=utils.is_signed(dtype),
       )
