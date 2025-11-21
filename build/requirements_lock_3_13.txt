@@ -1307,7 +1307,7 @@ pluggy==1.6.0 \
 portpicker==1.6.0 \
     --hash=sha256:b2787a41404cf7edbe29b07b9e0ed863b09f2665dcc01c1eb0c2261c1e7d0755 \
     --hash=sha256:bd507fd6f96f65ee02781f2e674e9dc6c99bbfa6e3c39992e3916204c9d431fa
-    # via -r build/nonfreethreading-requirements.txt
+    # via -r build/test-requirements.txt
 protobuf==6.33.1 \
     --hash=sha256:023af8449482fa884d88b4563d85e83accab54138ae098924a985bcbb734a213 \
     --hash=sha256:0f4cf01222c0d959c2b399142deb526de420be8236f22c71356e2a544e153c53 \
