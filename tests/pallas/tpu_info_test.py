@@ -46,6 +46,12 @@ class TpuInfoTest(jtu.JaxTestCase):
       case _:
         self.fail(f"Unexpected device kind: {device.device_kind}")
 
+  def test_get_tpu_info_given_chip_version(self):
+    for chip_version in pltpu.ChipVersion:
+      info = pltpu.get_tpu_info(chip_version=chip_version)
+      self.assertIsInstance(info, pltpu.TpuInfo)
+      self.assertEqual(info.chip_version, chip_version)
+
 
 if __name__ == "__main__":
   jax.config.parse_flags_with_absl()
