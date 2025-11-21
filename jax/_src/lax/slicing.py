@@ -422,6 +422,8 @@ def gather(operand: ArrayLike, start_indices: ArrayLike,
         fill_value = dtypes.iinfo(dtype).max
       elif dtype == dtypes.bool_:
         fill_value = True
+      elif dtypes.issubdtype(dtype, dtypes.prng_key):
+        fill_value = np.iinfo('uint32').max
       else:
         raise ValueError(f"Unsupported dtype for gather fill_value {dtype}")
   else:
