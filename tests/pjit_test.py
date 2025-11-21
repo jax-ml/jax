@@ -9387,6 +9387,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       assert_unreduced(grad_acc)
       # AR once for a batch
       grad_acc = reshard(grad_acc, P())
+      ws = reshard(ws, P())
       return jax.tree.map(lambda W, g: W - g * 0.01, ws, grad_acc)
 
     if use_custom_vjp:
@@ -9475,6 +9476,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       assert_unreduced(stacked_grad_acc)
       # AR once for a batch
       stacked_grad_acc = reshard(stacked_grad_acc, P())
+      stacked_ws = reshard(stacked_ws, P())
       return jax.tree.map(
           lambda W, g: W - g * 0.01, stacked_ws, stacked_grad_acc)
 
@@ -9631,14 +9633,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     jnp.repeat(positions, 5, axis=0, total_repeat_length=num_electrons,
                out_sharding=P())  # doesn't crash
 
+  @parameterized.named_parameters(
+      ('mul', jax.lax.mul),
+      ('add', jax.lax.add),
+  )
   @jtu.with_explicit_mesh((2,), 'x')
-  def test_mul_inputs_both_reduced(self, mesh):
+  def test_both_inputs_reduced(self, func, mesh):
     arr1 = jax.device_put(np.arange(8.), P(reduced={'x'}))
     arr2 = jax.device_put(np.arange(8.), P(reduced={'x'}))
 
     @jax.jit
     def f(x, y):
-      z = x * y
+      z = func(x, y)
       return z.sum()
 
     out1, out2 = jax.jit(jax.grad(f, argnums=(0, 1)))(arr1, arr2)
@@ -9646,6 +9652,25 @@ class ShardingInTypesTest(jtu.JaxTestCase):
                      NamedSharding(mesh, P(None, unreduced={'x'})))
     self.assertEqual(out2.sharding,
                      NamedSharding(mesh, P(None, unreduced={'x'})))
+
+  @parameterized.named_parameters(
+      ('mul', jax.lax.mul),
+      ('add', jax.lax.add),
+  )
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_one_input_reduced_another_replicated(self, func, mesh):
+    arr1 = jax.device_put(np.arange(8.), P(reduced={'x'}))
+    arr2 = jax.device_put(np.arange(8.), P(None))
+
+    def f(x, y):
+      z = func(x, y)
+      return z.sum()
+
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        "Inputs cannot be replicated on the same axes that another input is "
+        "reduced on"):
+      jax.jit(f)(arr1, arr2)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

@@ -4038,24 +4038,27 @@ def broadcasting_sharding_rule(name, *avals):
     msg = '{}: arrays must have same number of dimensions, got {}.'
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
 
-  specs = [a.sharding.spec for a in avals if a.shape]
+  non_empty_avals = [a for a in avals if a.shape]
+  specs = [a.sharding.spec for a in non_empty_avals]
 
   # TODO(yashkatariya): Maybe we need a reduced_rule too?
-  reduced_s = None
-  for s in specs:
-    if reduced_s is not None and s.reduced and s.reduced != reduced_s:
-      raise core.ShardingTypeError(
-          'All inputs should be reduced across the same mesh axes. Got one'
-          f' input with reduced={reduced_s} and another input with'
-          f' reduced={s.reduced}')
-    if s.reduced:
-      reduced_s = s.reduced
-  if reduced_s is None:
-    reduced_s = frozenset()
+  reduced_spec = {s.reduced for s in specs if s.reduced}
+  if len(reduced_spec) > 1:
+    raise core.ShardingTypeError(
+        'All inputs should be reduced across the same mesh axes. Got specs:'
+        f' {reduced_spec}')
+  reduced_s, = reduced_spec if reduced_spec else (frozenset(),)
   if reduced_s:
-    for s in specs:
+    for a in non_empty_avals:
+      s = a.sharding.spec
       flat_spec = flatten_spec(s)
-      if any(r in flat_spec for r in reduced_s):
+      if a.sharding.replicated_axes & reduced_s:
+        raise core.ShardingTypeError(
+            'Inputs cannot be replicated on the same axes that another input'
+            f' is reduced on. Got input spec: {s} and reduced spec: {reduced_s}')
+      # TODO(yashkatariya): Remove this condition since this is valid after
+      # adding a test like add/mul(x: f32[8@x], y: f32[8]{R:x})
+      if frozenset(flat_spec) & reduced_s:
         raise core.ShardingTypeError(
             'Inputs cannot be sharded on the same axes that another input is'
             f' reduced on. Got input spec: {s} and reduced spec: {reduced_s}')

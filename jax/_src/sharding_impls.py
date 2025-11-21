@@ -37,8 +37,8 @@ from jax._src import deprecations
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
-    SdyArray, SdyDim, UnspecifiedValue, AUTO,
-    _check_unique_resources, NamedSharding, UNSPECIFIED,
+    SdyArray, SdyDim, UnspecifiedValue, AUTO, flatten_spec, NamedSharding,
+    _check_unique_resources, UNSPECIFIED,
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, get_array_mapping,
     array_mapping_to_axis_resources, named_sharding_to_xla_hlo_sharding,
     modify_sdy_sharding_wrt_axis_types)
@@ -1054,16 +1054,6 @@ def _gspmd_to_named_sharding_via_mesh(
 ) -> NamedSharding:
   spec = parse_flatten_op_sharding(out_s._hlo_sharding, mesh)[0]
   return cached_named_sharding(mesh, spec, out_s.memory_kind)
-
-
-def flatten_spec(spec):
-  out = []
-  for s in spec:
-    if isinstance(s, tuple):
-      out.extend(s)
-    else:
-      out.append(s)
-  return out
 
 
 @util.cache()

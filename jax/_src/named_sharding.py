@@ -231,6 +231,14 @@ class NamedSharding(JSharding.Sharding):
       num_partitions *= mesh_shape[name]
     return num_partitions == 1
 
+  @functools.cached_property
+  def replicated_axes(self) -> frozenset[MeshAxisName]:
+    flat_spec = frozenset(
+        s for s in flatten_spec(self.spec)
+        if s is not None and s is not PartitionSpec.UNCONSTRAINED)
+    return frozenset(self.mesh.axis_names) - (
+        flat_spec | self.spec.unreduced | self.spec.reduced)
+
   def with_memory_kind(self, kind: str) -> NamedSharding:
     return self.update(memory_kind=kind)
 
@@ -266,6 +274,16 @@ class NamedSharding(JSharding.Sharding):
                     unreduced_axes=self.spec.unreduced)
 
 NamedSharding.__module__ = 'jax.sharding'
+
+def flatten_spec(spec):
+  out = []
+  for s in spec:
+    if isinstance(s, tuple):
+      out.extend(s)
+    else:
+      out.append(s)
+  return out
+
 
 def get_array_mapping(
     axis_resources: PartitionSpec | AUTO | UnspecifiedValue
