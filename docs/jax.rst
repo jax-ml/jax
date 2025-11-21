@@ -262,6 +262,7 @@ Miscellaneous
     print_environment_info
     live_arrays
     clear_caches
+    typeof
 
 Checkpoint policies
 -------------------
