@@ -50,7 +50,7 @@ MAX_PROCESSES_ARG=""
 if [[ -n "${MAX_PROCESSES}" ]]; then
   MAX_PROCESSES_ARG="--maxprocesses=${MAX_PROCESSES}"
 elif [[ "$(uname -s)" == *"MSYS"* ]]; then
-  MAX_PROCESSES_ARG="--maxprocesses=56"  # Tests OOM on Windows sometimes.
+  MAX_PROCESSES_ARG="--maxprocesses=32"  # Tests OOM on Windows sometimes.
 fi
 # End of test environment variable setup
 
