@@ -22,6 +22,7 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import tree_util
 from jax._src import typing as jax_typing
+from jax._src import util
 import jax._src.lax as lax
 from jax._src.lax.control_flow import conditionals
 from jax._src.pallas import core as pl_core
@@ -132,6 +133,7 @@ def _make_kernel(body,
                  out_shape: object,
                  mesh: pl_core.Mesh,
                  scratch_shapes: pl_core.ScratchShapeTree = (),
+                 name: str | None = None,
                  **mesh_kwargs
                  ):
   if unwrap_out := not isinstance(out_shape, (tuple, list)):
@@ -155,7 +157,8 @@ def _make_kernel(body,
         out_shape,
     )
 
-    @pl_core.core_map(mesh, **mesh_kwargs)
+
+    @pl_core.core_map(mesh, **mesh_kwargs, name=name or util.fun_name(body))
     def _():
       return pl_primitives.run_scoped(
           functools.partial(body, *arg_refs, *out_refs),
