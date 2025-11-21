@@ -80,16 +80,18 @@ def transposed_ragged_dot(
       o_gmem,
   ):
 
-    grid = (
-        g,
-        grid_block_n,
-        pl.cdiv(m, block_m),
-        pl.cdiv(n, grid_block_n * block_n),
-    )
-    @plgpu.nd_loop(grid, collective_axes="sm")
+    grid_m = pl.cdiv(m, block_m)
+    grid_n = pl.cdiv(n, block_n)
+
+    @plgpu.nd_loop((g, grid_m * grid_n), collective_axes="sm")
     def mn_loop(loop_info: plgpu.NDLoopInfo):
-      g_i, block_n_i, m_i, remainder_n_i = loop_info.index
-      n_i = block_n_i * pl.cdiv(n, block_n * grid_block_n) + remainder_n_i
+      g_i = loop_info.index[0]
+      m_i, n_i = plgpu.planar_snake(
+          loop_info.index[1],
+          (grid_m, grid_n),
+          1,
+          grid_block_n,
+      )
 
       # This slice is potentially out of bounds, but we never access the
       # out of bound part in emit_pipeline.

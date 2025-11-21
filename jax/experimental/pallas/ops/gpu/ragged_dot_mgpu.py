@@ -100,6 +100,7 @@ def ragged_dot(
     max_concurrent_steps: int,
     grid_block_n: int,
     transpose_rhs: bool = False,
+    load_group_sizes_to_register: bool = True,
 ) -> jax.Array:
   if lhs.dtype != rhs.dtype:
     raise NotImplementedError(
@@ -123,16 +124,22 @@ def ragged_dot(
     raise ValueError(f"k={k} must be a multiple of block_k={block_k}")
 
   def body(rows_per_expert_gmem, lhs_gmem, rhs_gmem, o_gmem):
-    grid = (
-        grid_block_n,
-        pl.cdiv(m, block_m) + g - 1,
-        pl.cdiv(n, grid_block_n * block_n),
-    )
+    grid_m = pl.cdiv(m, block_m) + g - 1
+    grid_n = pl.cdiv(n, block_n)
+    grid = (grid_m * grid_n,)
+    if load_group_sizes_to_register:
+      rows_per_expert = [rows_per_expert_gmem[i] for i in range(len(rows_per_expert_gmem))]
+    else:
+      rows_per_expert = rows_per_expert_gmem
 
     @plgpu.nd_loop(grid, collective_axes="sm")
     def mn_loop(loop_info: plgpu.NDLoopInfo):  # pylint: disable=unused-variable
-      block_ni, mi, remainder_ni = loop_info.index
-      ni = block_ni * pl.cdiv(n, block_n * grid_block_n) + remainder_ni
+      mi, ni = plgpu.planar_snake(
+          loop_info.index[0],
+          (grid_m, grid_n),
+          1,
+          grid_block_n,
+      )
       group_info = GroupInfo.create(rows_per_expert_gmem, block_m, mi)
 
       def acc_scope(acc_ref):
