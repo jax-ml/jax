@@ -204,7 +204,7 @@ class CustomCallBackendConfig:
     if self.needs_layout_passes:
       config.write(b', "needs_layout_passes": ')
       config.write(str(self.needs_layout_passes).lower().encode("ascii"))
-    if not self.shape_invariant_numerics:
+    if self.shape_invariant_numerics:
       config.write(b', "shape_invariant_numerics": ')
       config.write(str(self.shape_invariant_numerics).lower().encode("ascii"))
     if self.allow_input_fusion is not None:
