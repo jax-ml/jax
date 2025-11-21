@@ -2669,6 +2669,7 @@ class Ref(metaclass=RefMeta):
   # forward type-level info to aval
   aval = property(lambda self: self._aval)
   shape = property(lambda self: self._aval.shape)
+  ndim = property(lambda self: len(self._aval.shape))
   dtype = property(lambda self: self._aval.dtype)
 
   # get operations from aval, munging the name
