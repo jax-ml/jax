@@ -39,6 +39,7 @@ Breaking changes will be announced via the
 from jax.extend import (
     backend as backend,
     core as core,
+    device_kernels as device_kernels,
     linear_util as linear_util,
     mlir as mlir,
     random as random,
