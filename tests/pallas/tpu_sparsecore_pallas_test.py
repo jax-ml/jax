@@ -454,6 +454,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, indices)[0], x[indices])
 
   def test_large_gather_1d(self):
+    self.skip_if_tc_tiling()
+
     x = jnp.arange(1024)
     indices = jax.random.permutation(jax.random.key(42), x)
 
@@ -997,6 +999,7 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x)[5:13:2], x[2:6])
 
   def test_scalar_load_store(self):
+    self.skip_if_tc_tiling()
 
     @self.vector_subcore_kernel(
         in_specs=(pl.BlockSpec(memory_space=pltpu.HBM),),
@@ -1054,6 +1057,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x)
 
   def test_run_scoped_with_tiling(self):
+    self.skip_if_tc_tiling()
+
     x = jnp.arange(2 * 8).reshape(-1, 8)
 
     @self.vector_subcore_kernel(out_shape=x)
@@ -1089,6 +1094,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x)
 
   def test_scratch(self):
+    self.skip_if_tc_tiling()
+
     x = jnp.arange(8)
 
     @self.vector_subcore_kernel(
