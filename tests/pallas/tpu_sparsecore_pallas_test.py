@@ -1507,11 +1507,52 @@ class VectorSubcoreTest(PallasSCTest):
     result = pl.pallas_call(
         sc_exp_kernel,
         compiler_params=pltpu.CompilerParams(
-                kernel_type=pltpu.KernelType.SC_VECTOR_SUBCORE
-            ),
+            kernel_type=pltpu.KernelType.SC_VECTOR_SUBCORE
+        ),
         out_shape=x,
     )(x)
     np.testing.assert_array_equal(result, jnp.exp(x))
+
+  def test_vector_mod(self):
+    """Test a compiler failure case."""
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 6):
+      self.skipTest("Needs a newer libtpu")
+    n = 32
+    vec_dim = self.sc_info.num_lanes
+
+    @self.kernel(
+        out_shape=jax.ShapeDtypeStruct((n,), jnp.int32),
+        mesh=plsc.VectorSubcoreMesh(
+            core_axis_name="core", subcore_axis_name="subcore", num_cores=1),
+        scratch_shapes=(
+            pltpu.VMEM((vec_dim,), np.int32),
+            pltpu.VMEM((n,), np.int32),
+            pltpu.VMEM((n,), np.int32),
+            pltpu.VMEM((4, n), np.int32),
+        ),
+    )
+    def _kernel(my_shard_id_ref, arg_ref, o_ref,
+                my_shard_id_vmem, arg_vmem, counts, values):
+      @pl.when(jax.lax.axis_index("subcore") == 0)
+      def _():
+        pltpu.sync_copy(my_shard_id_ref.at[:1], my_shard_id_vmem.at[:1])
+        pltpu.sync_copy(arg_ref, arg_vmem)
+        my_shard_id = my_shard_id_vmem[...][0]
+        @plsc.parallel_loop(0, n, vec_dim)
+        def zero_out(i):
+          counts[pl.ds(i, vec_dim)] = jnp.ones(vec_dim, np.int32) * 3
+          for k in range(3):
+            values[k, pl.ds(i, vec_dim)] = k + (i + jnp.arange(vec_dim)) * 3
+        @plsc.parallel_loop(0, n, vec_dim)
+        def compute_outputs(i):
+          num_replicas = counts[pl.ds(i, vec_dim)].view(jnp.uint32)
+          indices = (my_shard_id.view(np.uint32) % num_replicas).view(np.int32)
+          arg_vmem[pl.ds(i, vec_dim)] = plsc.load_gather(
+              values, [indices, i + jnp.arange(vec_dim)])
+        pltpu.sync_copy(arg_vmem.at[pl.ds(0, n)], o_ref)
+
+    actual = _kernel(jnp.ones(vec_dim, jnp.int32), jnp.arange(n))
+    np.testing.assert_array_equal(actual, jnp.arange(n) * 3 + 1)
 
 
 class VectorSubcoreTestWithTCTiling(TCTilingMixin, VectorSubcoreTest):
