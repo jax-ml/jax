@@ -11,8 +11,8 @@ on:
     branches:
       - main
     paths:
-      - '**/workflows/tsan.yaml'
-      - '**/workflows/tsan-suppressions*.txt'
+      - '.github/workflows/tsan.yaml'
+      - '.github/workflows/tsan-suppressions*.txt'
 permissions: {}
 
 env:
