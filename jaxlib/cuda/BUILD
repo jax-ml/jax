@@ -582,6 +582,22 @@ py_library(
     ],
 )
 
+filegroup(
+    name = "cuda_so_files",
+    srcs = [
+        ":_hybrid.so",
+        ":_linalg.so",
+        ":_prng.so",
+        ":_rnn.so",
+        ":_solver.so",
+        ":_sparse.so",
+        ":_triton.so",
+        ":_versions.so",
+        ":cuda_plugin_extension.so",
+    ],
+    visibility = ["//jaxlib/tools:__pkg__"],
+)
+
 cc_library(
     name = "py_client_gpu",
     srcs = ["//jaxlib/gpu:py_client_gpu.cc"],

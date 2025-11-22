@@ -113,3 +113,13 @@ pytype_strict_library(
     srcs = ["vector.py"],
     deps = if_building_jaxlib(["//jaxlib/mlir:vector_dialect"]),
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+)
