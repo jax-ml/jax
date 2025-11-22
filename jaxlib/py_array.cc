@@ -254,11 +254,10 @@ struct PyBaseArrayObject {
 #endif  // PY_VERSION_HEX < 0x030C0000
 };
 
-extern "C" void PyBaseArray_tp_dealloc(PyBaseArrayObject* self) {
+extern "C" void PyBaseArray_tp_dealloc(PyObject* self) {
   PyObject_GC_UnTrack(self);
-  PyObject_ClearWeakRefs((PyObject*)self);
   PyTypeObject* tp = Py_TYPE(self);
-  tp->tp_free((PyObject*)self);
+  tp->tp_free(self);
   Py_DECREF(tp);
 }
 
@@ -2035,30 +2034,26 @@ void PyHostValue::Clear() {
 }
 
 namespace {
-PyMemberDef PyBaseArray_members[] = {
-#if PY_VERSION_HEX < 0x030C0000
-    {"__weaklistoffset__", T_PYSSIZET,
-     static_cast<Py_ssize_t>(offsetof(PyBaseArrayObject, weakrefs)), READONLY,
-     nullptr},
-#endif  // PY_VERSION_HEX < 0x030C0000
-    {nullptr, 0, 0, 0, nullptr},
+
+PyType_Slot array_meta_slots[] = {
+    {Py_tp_base, &PyType_Type},
+    {0, nullptr},
 };
 
-PyType_Slot PyBaseArray_slots[] = {
+PyType_Slot array_slots[] = {
     {Py_tp_dealloc, reinterpret_cast<void*>(PyBaseArray_tp_dealloc)},
-    {Py_tp_members, reinterpret_cast<void*>(PyBaseArray_members)},
     {Py_tp_traverse, reinterpret_cast<void*>(PyBaseArray_tp_traverse)},
     {Py_tp_hash, reinterpret_cast<void*>(PyObject_HashNotImplemented)},
     {0, nullptr},
 };
 
-PyGetSetDef PyArray_tp_getset[] = {
+PyGetSetDef array_impl_tp_getset[] = {
     {"__dict__", PyObject_GenericGetDict, PyObject_GenericSetDict, nullptr,
      nullptr},
     {nullptr, nullptr, nullptr, nullptr, nullptr},
 };
 
-PyMemberDef PyArray_members[] = {
+PyMemberDef array_impl_members[] = {
 #if PY_VERSION_HEX < 0x030C0000
     {"__weaklistoffset__", T_PYSSIZET,
      static_cast<Py_ssize_t>(offsetof(PyArrayObject, weakrefs)), READONLY,
@@ -2069,46 +2064,138 @@ PyMemberDef PyArray_members[] = {
     {nullptr, 0, 0, 0, nullptr},
 };  // namespace jax
 
-PyType_Slot PyArray_slots[] = {
+PyType_Slot array_impl_slots[] = {
     {Py_tp_new, reinterpret_cast<void*>(PyArray_tp_new)},
     {Py_tp_dealloc, reinterpret_cast<void*>(PyArray_tp_dealloc)},
-    {Py_tp_members, reinterpret_cast<void*>(PyArray_members)},
+    {Py_tp_members, reinterpret_cast<void*>(array_impl_members)},
     {Py_tp_traverse, reinterpret_cast<void*>(PyArray_tp_traverse)},
     {Py_tp_clear, reinterpret_cast<void*>(PyArray_tp_clear)},
-    {Py_tp_getset, reinterpret_cast<void*>(PyArray_tp_getset)},
+    {Py_tp_getset, reinterpret_cast<void*>(array_impl_tp_getset)},
     {Py_bf_getbuffer, reinterpret_cast<void*>(PyArray_bf_getbuffer)},
     {Py_bf_releasebuffer, reinterpret_cast<void*>(PyArray_bf_releasebuffer)},
     {0, nullptr},
 };
 
+// TODO(phawkins): remove this code when we drop support for Python < 3.12
+PyObject* MakeArrayTypeFromMetaclass(PyTypeObject* meta, PyObject* module,
+                                     PyType_Spec* spec) {
+#if PY_VERSION_HEX >= 0x030C0000
+  return PyType_FromMetaclass(meta, module, spec, nullptr);
+#else
+  nb::str name = nb::steal<nb::str>(PyUnicode_InternFromString(spec->name));
+  const char* name_cstr = PyUnicode_AsUTF8AndSize(name.ptr(), nullptr);
+  if (!name_cstr) {
+    return nullptr;
+  }
+
+  PyHeapTypeObject* ht =
+      reinterpret_cast<PyHeapTypeObject*>(PyType_GenericAlloc(meta, 0));
+  if (!ht) {
+    return nullptr;
+  }
+  ht->ht_name = name.inc_ref().ptr();
+  ht->ht_qualname = name.inc_ref().ptr();
+  Py_INCREF(module);
+  ht->ht_module = module;
+
+  PyTypeObject* tp = &ht->ht_type;
+  tp->tp_name = name_cstr;
+  tp->tp_basicsize = spec->basicsize;
+  tp->tp_itemsize = spec->itemsize;
+  tp->tp_flags = spec->flags | Py_TPFLAGS_HEAPTYPE;
+  tp->tp_as_async = &ht->as_async;
+  tp->tp_as_number = &ht->as_number;
+  tp->tp_as_sequence = &ht->as_sequence;
+  tp->tp_as_mapping = &ht->as_mapping;
+  tp->tp_as_buffer = &ht->as_buffer;
+
+  for (PyType_Slot* slot = spec->slots; slot->slot; slot++) {
+    switch (slot->slot) {
+      case Py_tp_dealloc:
+        tp->tp_dealloc = reinterpret_cast<destructor>(slot->pfunc);
+        break;
+      case Py_tp_traverse:
+        tp->tp_traverse = reinterpret_cast<traverseproc>(slot->pfunc);
+        break;
+      case Py_tp_hash:
+        tp->tp_hash = reinterpret_cast<hashfunc>(slot->pfunc);
+        break;
+      default:
+        // TODO(phawkins): support other slots as needed.
+        LOG(FATAL) << "Unsupported slot: " << slot->slot;
+    }
+  }
+
+  if (PyType_Ready(tp) != 0) {
+    Py_DECREF(tp);
+    return nullptr;
+  }
+
+  return reinterpret_cast<PyObject*>(tp);
+#endif
+}
+
 }  // namespace
 
 absl::Status PyArray::RegisterTypes(nb::module_& m) {
+  std::string metaclass_name =
+      absl::StrCat(nb::cast<std::string>(m.attr("__name__")), ".ArrayMeta");
+  PyType_Spec array_meta_spec = {/*.name=*/metaclass_name.c_str(),
+                                 /*.basicsize=*/0,
+                                 /*.itemsize=*/0,
+                                 /*.flags=*/Py_TPFLAGS_DEFAULT,
+                                 /*.slots=*/array_meta_slots};
+  nb::object array_meta_type =
+      nb::steal<nb::object>(PyType_FromSpec(&array_meta_spec));
+  if (!array_meta_type) {
+    throw nb::python_error();
+  }
+  m.attr("ArrayMeta") = array_meta_type;
+
   // We are not using nanobind to avoid having a non-standard metaclass, which
   // would make Array incompatible with abc.ABCMeta.
   std::string base_name =
       absl::StrCat(nb::cast<std::string>(m.attr("__name__")), ".Array");
-  PyType_Spec PyBaseArray_spec = {
+  PyType_Spec array_spec = {
       /*.name=*/base_name.c_str(),
       /*.basicsize=*/static_cast<int>(sizeof(PyBaseArrayObject)),
       /*.itemsize=*/0,
-#if PY_VERSION_HEX < 0x030C0000
       /*.flags=*/Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
-#else   // PY_VERSION_HEX >= 0x030C0000
-      /*.flags=*/Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC |
-          Py_TPFLAGS_MANAGED_WEAKREF,
-#endif  // PY_VERSION_HEX >= 0x030C0000
-      /*.slots=*/PyBaseArray_slots};
-  auto* base_type = PyType_FromSpec(&PyBaseArray_spec);
+      /*.slots=*/array_slots};
+  nb::object base_type = nb::steal<nb::object>(MakeArrayTypeFromMetaclass(
+      reinterpret_cast<PyTypeObject*>(array_meta_type.ptr()), m.ptr(),
+      &array_spec));
   if (!base_type) {
     throw nb::python_error();
   }
-  m.attr("Array") = nb::borrow<nb::object>(base_type);
+  m.attr("Array") = base_type;
+
+  array_meta_type.attr("__instancecheck__") = nb::cpp_function(
+      [base_type](nb::object self, nb::object x) {
+        int ret = PyObject_TypeCheck(
+            x.ptr(), reinterpret_cast<PyTypeObject*>(self.ptr()));
+        if (ret < 0) {
+          throw nb::python_error();
+        }
+        if (ret != 0) {
+          return true;
+        }
+        // Tracers of array aval are considered instances of Array.
+        if (self.ptr() == base_type.ptr()) {
+          auto is_traced_array_fn =
+              nb::getattr(x, "_is_traced_array", nb::none());
+          if (!is_traced_array_fn.is_none()) {
+            return nb::cast<bool>(is_traced_array_fn());
+          }
+        }
+        return false;
+      },
+      nb::is_method(), nb::arg("x").none());
 
   std::string name =
       absl::StrCat(nb::cast<std::string>(m.attr("__name__")), ".ArrayImpl");
 
-  PyType_Spec PyArray_spec = {
+  PyType_Spec array_impl_spec = {
       /*.name=*/name.c_str(),
       /*.basicsize=*/static_cast<int>(sizeof(PyArrayObject)),
       /*.itemsize=*/0,
@@ -2118,10 +2205,10 @@ absl::Status PyArray::RegisterTypes(nb::module_& m) {
       /*.flags=*/Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC |
           Py_TPFLAGS_MANAGED_DICT | Py_TPFLAGS_MANAGED_WEAKREF,
 #endif  // PY_VERSION_HEX >= 0x030C0000
-      /*.slots=*/PyArray_slots,
+      /*.slots=*/array_impl_slots,
   };
 
-  type_ = PyType_FromSpecWithBases(&PyArray_spec, base_type);
+  type_ = PyType_FromSpecWithBases(&array_impl_spec, base_type.ptr());
   if (!type_) {
     throw nb::python_error();
   }
