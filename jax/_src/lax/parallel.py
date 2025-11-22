@@ -2676,7 +2676,7 @@ batching.primitive_batchers[preduced_p] = _preduced_batcher
 
 ######################## vary_unreduced_cast #######################
 
-# Varying -> Unreduced cast
+# Varying -> Unreduced no-op cast
 def vary_unreduced_cast(x, axis_name):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
@@ -2738,8 +2738,7 @@ batching.primitive_batchers[vary_unreduced_cast_p] = _vary_unreduced_cast_batche
 
 ####################### reduced_vary_cast #############################
 
-# Reduced -> Varying cast
-
+# Reduced -> Varying no-op cast
 # Traceable defined in core.py to avoid circular imports
 core.reduced_vary_cast_p.def_impl(lambda *args, axes: args)
 mlir.register_lowering(core.reduced_vary_cast_p, lambda ctx, *x, axes: x)

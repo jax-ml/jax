@@ -4560,6 +4560,29 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out2.sharding,
                      NamedSharding(mesh, P('y', None, unreduced={'x'})))
 
+  @config.numpy_dtype_promotion('standard')
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_astype_reduced_fwd_unreduced_bwd_shmap(self, mesh):
+    inputs = jax.device_put(np.ones((32, 64), dtype=jnp.bfloat16), P('x', None))
+    params = jax.device_put(np.ones((64, 64), dtype=jnp.float32),
+                            P(None, None, reduced={'x'}))
+    targets = jax.device_put(np.ones((32, 64), dtype=jnp.bfloat16), P('x', None))
+
+    @jax.shard_map(in_specs=(P('x', None), P(None, None, reduced={'x'})),
+                   out_specs=P('x', None))
+    def dot(inputs, params):
+      self.assertEqual(params.aval.sharding.spec.reduced, {'x'})
+      params = params.astype(jnp.bfloat16)
+      self.assertEqual(params.aval.sharding.spec.reduced, {'x'})
+      return jnp.dot(inputs.astype(jnp.bfloat16), params)
+
+    @jax.jit
+    def loss_fn(inputs, params, targets):
+      out = dot(inputs, params)
+      return jnp.mean(jnp.sum((out - targets) ** 2, axis=-1))
+
+    jax.jit(jax.grad(loss_fn, argnums=1))(inputs, params, targets)  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str

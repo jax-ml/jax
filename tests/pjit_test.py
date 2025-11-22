@@ -9657,10 +9657,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       ('mul', jax.lax.mul),
       ('add', jax.lax.add),
   )
-  @jtu.with_explicit_mesh((2,), 'x')
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_one_input_reduced_another_replicated(self, func, mesh):
-    arr1 = jax.device_put(np.arange(8.), P(reduced={'x'}))
-    arr2 = jax.device_put(np.arange(8.), P(None))
+    arr1 = jax.device_put(np.arange(8.).reshape(4, 2), P('x', reduced={'y'}))
+    arr2 = jax.device_put(np.arange(8.).reshape(4, 2), P('x', None))
 
     def f(x, y):
       z = func(x, y)
@@ -9671,6 +9671,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "Inputs cannot be replicated on the same axes that another input is "
         "reduced on"):
       jax.jit(f)(arr1, arr2)
+
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        "Inputs cannot be replicated on the same axes that another input is "
+        "reduced on"):
+      jax.jit(jax.shard_map(f, out_specs=P()))(arr1, arr2)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

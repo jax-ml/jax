@@ -2393,6 +2393,10 @@ def primal_spec_to_cotangent_spec(spec):
 def primal_sharding_to_cotangent_sharding(sharding):
   return sharding.update(spec=primal_spec_to_cotangent_spec(sharding.spec))
 
+############################## pvary #################################
+
+# Invariant -> Variant no-op cast
+
 def pvary(x, axis_name):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
