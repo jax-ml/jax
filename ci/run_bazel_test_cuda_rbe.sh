@@ -55,9 +55,15 @@ fi
 # Run Bazel GPU tests with RBE (single accelerator tests with one GPU apiece).
 echo "Running RBE GPU tests..."
 
+git clone https://github.com/ybaturina/rules_ml_toolchain.git
+cd rules_ml_toolchain
+git checkout yb-umd-files
+cd ..
+
 bazel test --config=rbe_linux_x86_64_cuda${JAXCI_CUDA_VERSION} \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
+      --override_repository=rules_ml_toolchain=./rules_ml_toolchain \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --test_output=errors \
       --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
