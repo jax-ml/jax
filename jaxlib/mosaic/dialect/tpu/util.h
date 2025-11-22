@@ -172,6 +172,10 @@ int8_t getTypeBitwidth(Type ty) {
       return width;
     }
   }
+  if (isa<Float8EXMYType>(ty)) {
+    // eXmY type in 8 bit container.
+    return 8;
+  }
   return ty.getIntOrFloatBitWidth();
 }
 
