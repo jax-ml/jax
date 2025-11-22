@@ -2060,16 +2060,7 @@ def jaxpr_transfer_mem_kinds(jaxpr: core.Jaxpr):
   return out
 
 
-def are_all_shardings_default_mem_kind(
-    device_list: xc.DeviceList | None, shardings
-):
-  if device_list is None:
-    return True
-  try:
-    default_mem_kind = device_list.default_memory_kind
-  except:
-    return True
-
+def are_all_shardings_default_mem_kind(shardings):
   for i in shardings:
     if isinstance(i, (UnspecifiedValue, AUTO)):
       continue
@@ -2077,7 +2068,7 @@ def are_all_shardings_default_mem_kind(
                 else i.memory_kind)
     if mem_kind is None:
       continue
-    if mem_kind != default_mem_kind:
+    if mem_kind != 'device':
       return False
   return True
 
@@ -2369,7 +2360,6 @@ def lower_sharding_computation(
   )
 
   all_default_mem_kind = are_all_shardings_default_mem_kind(
-      device_list,
       it.chain(unique_in_shardings, unique_out_shardings,
                unique_intermediate_shardings, transfer_mem_kind_in_jaxpr))  # pytype: disable=wrong-arg-types
 
