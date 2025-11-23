@@ -64,7 +64,7 @@ fi
 
  # TODO(b/446172564): Remove this condition when the test is fixed on all
  # platforms.
-if [[ $os == "linux" ]] && [[ $arch == "x86_64" ]] && [[ $FREETHREADED_FLAG_VALUE == "no" ]]; then
+if [[ $os == "linux" ]] && [[ $arch == "x86_64" ]]; then
   IGNORE_TESTS=""
 else
   IGNORE_TESTS="-//tests/multiprocess:array_test_cpu"

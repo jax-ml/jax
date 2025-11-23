@@ -129,12 +129,6 @@ bazel test --config=$TEST_CONFIG \
 first_bazel_cmd_retval=$?
 
 echo "Running multi-accelerator tests (without RBE)..."
-if [[ $FREETHREADED_FLAG_VALUE == "yes" ]]; then
-  # TODO(emilyaf): Enable multiprocess tests once portpicker is available.
-  IGNORE_TESTS="-//tests/multiprocess:gpu_tests"
-else
-  IGNORE_TESTS=""
-fi
 # Runs multiaccelerator tests with all GPUs directly on the VM without RBE..
 bazel test --config=$TEST_CONFIG \
       $CACHE_OPTION \
@@ -153,10 +147,8 @@ bazel test --config=$TEST_CONFIG \
       --action_env=NCCL_DEBUG=WARN \
       --color=yes \
       --config=cuda_libraries_from_stubs \
-      -- \
       //tests:gpu_tests //tests/pallas:gpu_tests \
-      //tests/multiprocess:gpu_tests \
-      $IGNORE_TESTS
+      //tests/multiprocess:gpu_tests
 
 # Store the return value of the second bazel command.
 second_bazel_cmd_retval=$?
