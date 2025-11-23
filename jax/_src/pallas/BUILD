@@ -59,7 +59,7 @@ py_library(
 
 py_test(
     name = "cost_estimate_test",
-    srcs = ["test.py"],
+    srcs = ["cost_estimate_test.py"],
     deps = [
         ":pallas",
         "//jax",
