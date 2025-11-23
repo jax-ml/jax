@@ -818,8 +818,6 @@ class Compiled(Stage):
     # which might conflict here.
     params = args[0]
     args = args[1:]  # Not including const_args
-    if config.dynamic_shapes.value:
-      raise NotImplementedError
     if params.no_kwargs and kwargs:
       kws = ', '.join(kwargs.keys())
       raise NotImplementedError(

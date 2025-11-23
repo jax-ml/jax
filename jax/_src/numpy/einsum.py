@@ -20,7 +20,6 @@ import numpy as np
 import opt_einsum
 
 from jax._src import api
-from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src.export import shape_poly
@@ -537,7 +536,7 @@ def _einsum(
 
       # NOTE(mattjj): this can fail non-deterministically in python3, maybe
       # due to opt_einsum
-      assert config.dynamic_shapes.value or all(
+      assert all(
         name in lhs_names and name in rhs_names and
         lhs.shape[lhs_names.index(name)] == rhs.shape[rhs_names.index(name)]
         for name in contracted_names), (

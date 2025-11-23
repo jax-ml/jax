@@ -199,11 +199,6 @@ def standard_abstract_eval(
         vma=out_vma, memory_space=out_mem_space)
     core.check_avals_context_mesh([out_aval], prim.name)
     return out_aval
-  elif least_specialized is core.DShapedArray:
-    shape = shape_rule(*avals, **kwargs)
-    ty = (core.ShapedArray if all(type(d) is int for d in shape)
-          else core.DShapedArray)
-    return ty(shape, dtype_rule(*avals, **kwargs), weak_type)
   else:
     raise TypeError(avals, least_specialized)
 

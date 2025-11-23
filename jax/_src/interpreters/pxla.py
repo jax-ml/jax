@@ -51,7 +51,6 @@ from jax._src import typing
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.abstract_arrays import array_types
-from jax._src.core import DShapedArray
 from jax._src.core import ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -227,11 +226,6 @@ def _shard_typed_scalar(xs, shardings, layouts, copy_semantics):
   )
 for _t in literals.typed_scalar_types:
   shard_arg_handlers[_t] = _shard_typed_scalar
-
-def _shard_darray(xs, shardings, layouts, copy_semantics):
-  bufs = [x._data for x in xs]
-  return shard_args(shardings, layouts, copy_semantics, bufs)
-shard_arg_handlers[core.DArray] = _shard_darray
 
 def _shard_mutable_array(xs, shardings, layouts, copy_semantics):
   bufs = [x._refs._buf for x in xs]
@@ -2460,7 +2454,7 @@ def _to_logical_sharding(
     return None
   if isinstance(sharding, AUTO):
     return sharding
-  elif isinstance(aval, (ShapedArray, DShapedArray, AbstractRef)):
+  elif isinstance(aval, (ShapedArray, AbstractRef)):
     assert isinstance(sharding, JSharding)
     return sharding
   elif isinstance(aval, core.AbstractToken):

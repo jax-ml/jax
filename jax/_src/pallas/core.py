@@ -529,15 +529,7 @@ class BlockSpec:
         )
 
     ref_block_shape = _get_ref_block_shape(block_shape)
-    if isinstance(array_aval, jax_core.DShapedArray):
-      # Get the "max" shape for the ragged array.
-      block_array_aval = array_aval.update(shape=ref_block_shape)
-      block_array_aval = jax_core.ShapedArray(
-          block_array_aval.shape,
-          block_array_aval.dtype,
-          block_array_aval.weak_type,
-      )
-    elif isinstance(array_aval, ShapedArrayWithMemorySpace):
+    if isinstance(array_aval, ShapedArrayWithMemorySpace):
       block_array_aval = jax_core.ShapedArray(
           ref_block_shape, array_aval.dtype, array_aval.weak_type
       )
@@ -617,10 +609,6 @@ class BlockSpec:
           f"Index map function {debug_info.func_src_info} for "
           f"{origin} must not capture constants: {consts}"
       )
-
-    if isinstance(array_aval, (jax_core.ShapedArray, jax_core.DShapedArray)):
-      array_aval_shape = _max_shape_from_aval(array_aval)
-      array_aval = array_aval.update(shape=array_aval_shape)
 
     mapping = BlockMapping(
         block_shape=block_shape,
@@ -1064,8 +1052,6 @@ def _max_shape_from_aval(array_aval: jax_core.ShapedArray):
   for i, s in enumerate(array_aval.shape):
     try:
       aval = jax_core.get_aval(s)
-      if isinstance(aval, jax_core.DShapedArray):
-        array_aval_shape[i] = aval.dtype.bound
     except OverflowError as e:
       # Note - there are annoying cases where on 32 bit hardware,
       # a flattened index space may overflow - for these cases,

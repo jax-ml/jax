@@ -21,7 +21,6 @@ from jax._src.core import (
   Atom as Atom,
   CallPrimitive as CallPrimitive,
   DebugInfo as DebugInfo,
-  DShapedArray as DShapedArray,
   DropVar as DropVar,
   Effect as Effect,
   Effects as Effects,

@@ -81,18 +81,6 @@ jax_multiplatform_test(
     deps = py_deps("absl/testing"),
 )
 
-jax_py_test(
-    name = "dynamic_api_test",
-    srcs = ["dynamic_api_test.py"],
-    deps = [
-        "//jax",
-        "//jax/_src:test_util",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
 jax_multiplatform_test(
     name = "api_util_test",
     srcs = ["api_util_test.py"],
