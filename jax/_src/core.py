@@ -1808,7 +1808,14 @@ def get_aval(x: Any) -> Any:
     )
   raise TypeError(f"Argument '{x}' of type '{typ}' is not a valid JAX type")
 
-typeof = get_aval
+
+# TODO(phawkins): the return type should be AbstractValue.
+def typeof(x: Any, /) -> Any:
+  """Return the JAX type (i.e. :class:`AbstractValue`) of the input.
+
+  Raises a ``TypeError`` if ``x`` is not a valid JAX type.
+  """
+  return get_aval(x)
 
 def is_concrete(x):
   return to_concrete_value(x) is not None
