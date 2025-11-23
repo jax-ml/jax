@@ -204,11 +204,14 @@ def dot_general_cost_rule(ctx: Context,
   assert len(lhs_contracting_dims) == len(rhs_contracting_dims)
   assert len(lhs_batch_dims) == len(rhs_batch_dims)
   flops = 1
-  # Flops along a contracting dim is 2*dim (addition and multiplication)
+
+  contracting_size=1
   for i in range(len(lhs_contracting_dims)):
-    lhs_dim, rhs_dim = lhs_contracting_dims[i], rhs_contracting_dims[i]
+    lhs_dim, rhs_dim=lhs_contracting_dims[i], rhs_contracting_dims[i]
     assert x_shape[lhs_dim] == y_shape[rhs_dim]
-    flops *= 2 * x_shape[lhs_dim]
+    contracting_size *= x_shape[lhs_dim]
+
+  flops *= 2 * contracting_size
   # Now we handle all other dimensions.
   for i, lhs_dim in enumerate(x_shape):
     if i in lhs_contracting_dims:
