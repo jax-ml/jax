@@ -693,7 +693,7 @@ def standardize(x: ArrayLike,
     # when used in neural network normalization layers
     variance = jnp.mean(
         jnp.square(x), axis, keepdims=True, where=where) - jnp.square(mean)
-  return jnp.subtract(x, jnp.asarray(mean)) * lax.rsqrt(jnp.asarray(variance) + epsilon)
+  return jnp.subtract(x, jnp.asarray(mean)) * lax.rsqrt(jnp.maximum(jnp.asarray(variance), epsilon))
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
 @api.jit(static_argnames=("num_classes", "dtype", "axis"))
