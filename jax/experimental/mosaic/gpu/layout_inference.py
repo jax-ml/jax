@@ -209,20 +209,23 @@ def extract_constant_from_broadcast_in_dim_expression_for_hint(
   if not isinstance(e.expression, eqns.RegisterLayout):
     return None
 
-  reduced_layout = e.expression.value
+  candidates = [
+      fa.WGMMA_LAYOUT,
+      fa.WGMMA_TRANSPOSED_LAYOUT,
+      fa.TCGEN05_LAYOUT,
+      fa.TCGEN05_TRANSPOSED_LAYOUT,
+      tcgen05.TMEM_NATIVE_LAYOUT,
+  ]
+  if e.shape[-1] % 16 == 0:
+    candidates.append(tcgen05.fa_m64_collective_layout(e.shape[-1]))
 
-  wgmma_tm, wgmma_tn = fa.WGMMA_LAYOUT.base_tile_shape
-  # TODO(bchetioui): enable generators to handle TCGEN05 layout from WGMMA_COL.
-  if reduced_layout == fa.WGMMA_COL_LAYOUT and e.axes == (1,) and e.shape[0] % wgmma_tm == 0:
-    return eqns.RegisterLayout(fa.WGMMA_LAYOUT)
-
-  if reduced_layout == fa.WGMMA_ROW_LAYOUT and e.axes == (0,) and e.shape[1] % wgmma_tn == 0:
-    return eqns.RegisterLayout(fa.WGMMA_LAYOUT)
-
-  tcgen05_tm, _ = fa.TCGEN05_LAYOUT.base_tile_shape
-  if reduced_layout == fa.TCGEN05_ROW_LAYOUT and e.axes == (0,) and e.shape[0] % tcgen05_tm == 0:
-    return eqns.RegisterLayout(fa.TCGEN05_LAYOUT)
-
+  # TODO(allanrenucci): Allow returning multiple valid candidates.
+  reduction_dims = tuple(d for d in range(len(e.shape)) if d not in e.axes)
+  for candidate in candidates:
+    if len(candidate.base_tile_shape) > len(e.shape):
+      continue
+    if candidate.reduce(reduction_dims) == e.expression.value:
+      return eqns.RegisterLayout(candidate)
   return None
 
 

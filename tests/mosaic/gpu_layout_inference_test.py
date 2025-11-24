@@ -293,38 +293,39 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInLayouts(cast, [wgmma_layout])
     self.checkOutLayouts(cast, [wgmma_layout])
 
-  @parameterized.parameters(
-      (0, mgpu.WGMMA_ROW_LAYOUT, None),
-      (1, mgpu.WGMMA_COL_LAYOUT, None),
-      (0, None, mgpu.WGMMA_LAYOUT),
-      (1, None, mgpu.WGMMA_LAYOUT),
-      (0, mgpu.TCGEN05_ROW_LAYOUT, None),
-      (0, None, mgpu.TCGEN05_LAYOUT),
-      (1, None, mgpu.TCGEN05_LAYOUT),
+  @parameterized.product(
+      layout=(
+          mtu.RegisterLayout.WGMMA,
+          mtu.RegisterLayout.TCGEN05,
+          mtu.RegisterLayout.TCGEN05_TMEM_NATIVE,
+          mtu.RegisterLayout.TCGEN05_M64_COLLECTIVE,
+      ),
+      axis=(0, 1),
+      hint_on_input=(True, False),
   )
-  def test_infer_broadcast_in_dim_layout(self, broadcast_dim, in_cast, out_cast):
+  def test_infer_broadcast_in_dim_layout(self, layout, axis, hint_on_input):
     in_shape = (128,)
     out_shape = (128, 128)
+    dtype = ir.F32Type.get()
+    out_layout = layout.to_mgpu(out_shape, dtype)
+    in_layout = out_layout.reduce((1 - axis,))
 
     with ir.InsertionPoint(self.module.body):
-      [x] = undefs(ir.VectorType.get(in_shape, ir.F32Type.get()))
-      x = layout_cast(x, in_cast) if in_cast is not None else x
-      out_type = ir.VectorType.get(out_shape, ir.F32Type.get())
-      bcast = mgpu.dialect.BroadcastInDimOp(out_type, x, [broadcast_dim])
-      if out_cast is not None:
-        layout_cast(bcast.result, out_cast)
+      [x] = undefs(ir.VectorType.get(in_shape, dtype))
+      if hint_on_input:
+        x = layout_cast(x, in_layout)
+      out_type = ir.VectorType.get(out_shape, dtype)
+      bcast = mgpu.dialect.BroadcastInDimOp(out_type, x, [axis])
+      if not hint_on_input:
+        layout_cast(bcast.result, out_layout)
 
-    # The tests always expect WGMMA or TCGEN05 as the out layout.
-    if out_cast == mgpu.TCGEN05_LAYOUT or in_cast == mgpu.TCGEN05_ROW_LAYOUT:
-      out_layout = mgpu.TCGEN05_LAYOUT
-    else:
-      out_layout = mgpu.WGMMA_LAYOUT
-
-    in_layout = out_layout.reduce((1 - broadcast_dim,))
+    if hint_on_input and axis == 1 and layout == mtu.RegisterLayout.TCGEN05:
+      # Both TCGEN05 and WGMMA are valid layout candidates. WGMMA is tried first.
+      out_layout = fa.WGMMA_LAYOUT
 
     mgpu.infer_layout(self.module)
-    self.checkInLayouts(bcast, [layouts.to_layout_attr(in_layout)])
-    self.checkOutLayouts(bcast, [layouts.to_layout_attr(out_layout)])
+    self.checkInLayouts(bcast, [in_layout])
+    self.checkOutLayouts(bcast, [out_layout])
 
   @parameterized.parameters(
       (1, mgpu.WGMMA_LAYOUT, None, None),

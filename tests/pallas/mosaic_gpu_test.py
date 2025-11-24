@@ -2345,10 +2345,6 @@ class PallasCallTest(PallasTest):
     np.testing.assert_allclose(x_result, op(x, axis=axis), atol=1e-5)
 
   def _test_broadcast_in_dim_base(self, shape, layout, *, axis, hint):
-    if not hint:
-      # When the hint is not set, inference may choose incompatible layouts.
-      # TODO(bchetioui): investigate and fix.
-      self.skip_if_wg_semantics()
     assert len(shape) == 2
 
     @functools.partial(
