@@ -370,7 +370,7 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
 }
 
 def MosaicGPU_VectorLoadOp : Op<MosaicGPU_Dialect, "vector_load",
-      [InferTypeOpInterface, MemoryEffects<[MemRead]>]> {
+      [DeclareOpInterfaceMethods<InferTypeOpInterface>, MemoryEffects<[MemRead]>]> {
   let summary = "Reads an n-D slice of memory into an n-D vector.";
   let description = [{
     Similar to `vector.load` (vector dialect) but supports loading from
@@ -386,24 +386,6 @@ def MosaicGPU_VectorLoadOp : Op<MosaicGPU_Dialect, "vector_load",
     OptionalAttr<BoolAttr>:$optimized
   );
   let results = (outs AnyFixedVectorOfNonZeroRank);
-
-  let extraClassDeclaration = [{
-    static llvm::LogicalResult inferReturnTypes(
-        mlir::MLIRContext *,
-        std::optional<mlir::Location> location,
-        mlir::ValueRange operands,
-        mlir::DictionaryAttr attributes,
-        mlir::OpaqueProperties properties,
-        mlir::RegionRange regions,
-        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
-      mlir::MemRefType memref_type =
-          mlir::cast<mlir::MemRefType>(operands[0].getType());
-      auto vector_type = mlir::VectorType::get(
-          memref_type.getShape(), memref_type.getElementType());
-      inferredReturnTypes.assign({vector_type});
-      return ::mlir::success();
-    }
-  }];
 }
 
 def MosaicGPU_VectorStoreOp : Op<MosaicGPU_Dialect, "vector_store",
@@ -502,7 +484,8 @@ def MosaicGPU_WGMMASupportedAccumulatorType : AnyTypeOf<[F16, F32, I32],
     "A type supported by the accumulator `wgmma.mma_async` instruction">;
 
 
-def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
+def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma",
+    [DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let summary = "Multiply two matrices asynchronously using warpgroup level matrix multiply operations.";
   let description = [{
     Schedules WGMMA operations that perform the following matrix multiply and
@@ -552,24 +535,6 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
     `b` `(` $b `:` type($b) `)`
     attr-dict
     `->` type(results)
-  }];
-
-  let extraClassDeclaration = [{
-    static llvm::LogicalResult inferReturnTypes(
-        mlir::MLIRContext *,
-        std::optional<mlir::Location> location,
-        mlir::ValueRange operands,
-        mlir::DictionaryAttr attributes,
-        mlir::OpaqueProperties properties,
-        mlir::RegionRange regions,
-        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
-      if (operands.empty()) {
-        return ::mlir::emitOptionalError(
-          location, "expected non-empty operands");
-      }
-      inferredReturnTypes.assign({operands[0].getType()});
-      return ::mlir::success();
-    }
   }];
 
   let hasVerifier = 1;
@@ -630,32 +595,13 @@ def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [AttrSizedOper
 }
 
 def MosaicGPU_OptimizationBarrierOp : Op<MosaicGPU_Dialect, "optimization_barrier",
-    [InferTypeOpInterface]> {
+    [DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let summary = "Prevents MLIR from moving operations across the barrier.";
 
   let arguments = (ins
     Variadic<AnyType>:$operands
   );
   let results = (outs Variadic<AnyType>);
-
-  let extraClassDeclaration = [{
-    static llvm::LogicalResult inferReturnTypes(
-        mlir::MLIRContext *,
-        std::optional<mlir::Location> location,
-        mlir::ValueRange operands,
-        mlir::DictionaryAttr attributes,
-        mlir::OpaqueProperties properties,
-        mlir::RegionRange regions,
-        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
-      if (operands.empty()) {
-        return ::mlir::emitOptionalError(
-          location, "expected non-empty operands");
-      }
-      ::mlir::TypeRange operand_types = operands.getTypes();
-      inferredReturnTypes.assign(operand_types.begin(), operand_types.end());
-      return ::mlir::success();
-    }
-  }];
 }
 
 def MosaicGPU_ReturnOp : Op<MosaicGPU_Dialect, "return",
@@ -794,31 +740,13 @@ def MosaicGPU_TmemDeallocOp : Op<MosaicGPU_Dialect, "tmem_dealloc", []> {
 }
 
 def MosaicGPU_AsyncLoadTmemOp : Op<MosaicGPU_Dialect, "async_load_tmem",
-    [InferTypeOpInterface]> {
+    [DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let summary = "Copies TMEM to registers asynchronously.";
 
   let arguments = (ins MemRefRankOf<[AnyType], [2]>:$source);
   let results = (outs VectorOfRank<[2]>);
 
   let hasVerifier = 1;
-
-  let extraClassDeclaration = [{
-    static llvm::LogicalResult inferReturnTypes(
-        mlir::MLIRContext *,
-        std::optional<mlir::Location> location,
-        mlir::ValueRange operands,
-        mlir::DictionaryAttr attributes,
-        mlir::OpaqueProperties properties,
-        mlir::RegionRange regions,
-        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
-      mlir::MemRefType memref_type =
-          mlir::cast<mlir::MemRefType>(operands[0].getType());
-      auto vector_type = mlir::VectorType::get(
-          memref_type.getShape(), memref_type.getElementType());
-      inferredReturnTypes.assign({vector_type});
-      return ::mlir::success();
-    }
-  }];
 }
 
 def MosaicGPU_AsyncStoreTmemOp : Op<MosaicGPU_Dialect, "async_store_tmem", []> {

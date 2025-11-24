@@ -16,6 +16,7 @@ limitations under the License.
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 
 #include <cstdint>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -50,6 +51,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/OperationSupport.h"
+#include "mlir/IR/Region.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
@@ -332,6 +334,18 @@ llvm::LogicalResult AsyncStoreOp::verify() {
   return VerifyCommonLoadStoreOp(getOperation(), getDestination().getType(),
                                  "destination", getSource().getType(), "source",
                                  getSliceLengths(), getIndices().size());
+}
+
+llvm::LogicalResult WGMMAOp::inferReturnTypes(
+    mlir::MLIRContext*, std::optional<mlir::Location> location,
+    mlir::ValueRange operands, mlir::DictionaryAttr attributes,
+    mlir::OpaqueProperties properties, mlir::RegionRange regions,
+    llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  if (operands.empty()) {
+    return mlir::emitOptionalError(location, "expected non-empty operands");
+  }
+  inferredReturnTypes.assign({operands[0].getType()});
+  return mlir::success();
 }
 
 llvm::LogicalResult WGMMAOp::verify() {
@@ -644,6 +658,19 @@ llvm::LogicalResult TmemDeallocOp::verify() {
   return VerifyTmemRefType(getOperation(), getTmemRef().getType());
 }
 
+llvm::LogicalResult AsyncLoadTmemOp::inferReturnTypes(
+    mlir::MLIRContext*, std::optional<mlir::Location> location,
+    mlir::ValueRange operands, mlir::DictionaryAttr attributes,
+    mlir::OpaqueProperties properties, mlir::RegionRange regions,
+    llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  mlir::MemRefType memref_type =
+      mlir::cast<mlir::MemRefType>(operands[0].getType());
+  auto vector_type = mlir::VectorType::get(memref_type.getShape(),
+                                           memref_type.getElementType());
+  inferredReturnTypes.assign({vector_type});
+  return mlir::success();
+}
+
 llvm::LogicalResult AsyncLoadTmemOp::verify() {
   if (getSource().getType().getElementType() !=
       getResult().getType().getElementType()) {
@@ -690,6 +717,18 @@ llvm::LogicalResult SliceTmemOp::verify() {
   return llvm::success();
 }
 
+llvm::LogicalResult VectorLoadOp::inferReturnTypes(
+    mlir::MLIRContext*, std::optional<mlir::Location>,
+    mlir::ValueRange operands, mlir::DictionaryAttr, mlir::OpaqueProperties,
+    mlir::RegionRange, llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  mlir::MemRefType memref_type =
+      mlir::cast<mlir::MemRefType>(operands[0].getType());
+  auto vector_type = mlir::VectorType::get(memref_type.getShape(),
+                                           memref_type.getElementType());
+  inferredReturnTypes.assign({vector_type});
+  return mlir::success();
+}
+
 llvm::LogicalResult VectorStoreOp::verify() {
   mlir::VectorType src_type = getValueToStore().getType();
   mlir::MemRefType dst_type = getDestination().getType();
@@ -724,6 +763,19 @@ llvm::LogicalResult PrintLayoutOp::verify() {
     }
   }
   return llvm::success();
+}
+
+llvm::LogicalResult OptimizationBarrierOp::inferReturnTypes(
+    mlir::MLIRContext*, std::optional<mlir::Location> location,
+    mlir::ValueRange operands, mlir::DictionaryAttr attributes,
+    mlir::OpaqueProperties properties, mlir::RegionRange regions,
+    llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  if (operands.empty()) {
+    return mlir::emitOptionalError(location, "expected non-empty operands");
+  }
+  mlir::TypeRange operand_types = operands.getTypes();
+  inferredReturnTypes.assign(operand_types.begin(), operand_types.end());
+  return mlir::success();
 }
 
 void MosaicGPUDialect::initialize() {
