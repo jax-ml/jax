@@ -136,8 +136,8 @@ jax_py_test(
 )
 
 jax_py_test(
-    name = "gpu_equations_test",
-    srcs = ["gpu_equations_test.py"],
+    name = "gpu_constraints_test",
+    srcs = ["gpu_constraints_test.py"],
     deps = [
         "//jax",
         "//jax:mosaic_gpu",

@@ -677,7 +677,7 @@ def MosaicGPU_TmemAllocOp : Op<MosaicGPU_Dialect, "tmem_alloc", []> {
     TMEM will be stored. The op returns a memref to the allocated TMEM. The
     result must have a shape with dimensions [rows, logical_columns]. If
     `packing` is 1, then the number of logical (unpacked) columns is equal to
-    the number of allocated columns in TMEM. Otherwise, these equations
+    the number of allocated columns in TMEM. Otherwise, these constraints
     must hold:
 
         packing = 32 / bitwidth(element type of result)

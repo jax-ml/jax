@@ -31,7 +31,7 @@ from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import jax.experimental.mosaic.gpu as mgpu
-from jax.experimental.mosaic.gpu import equations as eqns
+from jax.experimental.mosaic.gpu import constraints as cs
 from jax.experimental.mosaic.gpu import fragmented_array as fa
 from jax.experimental.mosaic.gpu import inference_utils
 from jax.experimental.mosaic.gpu import launch_context as lc
@@ -64,17 +64,17 @@ def undefs(*tys: ir.Type) -> list[ir.Value]:
   return [llvm.mlir_undef(ty) for ty in tys]
 
 
-V = eqns.Variable
+V = cs.Variable
 H = layout_inference.Hint
-E = eqns.Equals
-RL = eqns.RegisterLayout
+E = cs.Equals
+RL = cs.RegisterLayout
 
 
-def _undef_equation_system(
+def _undef_constraint_system(
     ctx: layout_inference.DerivationContext,
     op: llvm.UndefOp,
 ) -> tuple[
-    eqns.EquationSystem,
+    cs.ConstraintSystem,
     layout_inference.ValueSitesForVariable,
     list[layout_inference.Hint],
 ]:
@@ -84,21 +84,21 @@ def _undef_equation_system(
   result = layout_inference.ValueSite(
       op, layout_inference.VariableType.RESULT, 0
   )
-  return eqns.EquationSystem(), {eqns.Variable(result): [result]}, []
+  return cs.ConstraintSystem(), {cs.Variable(result): [result]}, []
 
 
 class LayoutInferenceTest(parameterized.TestCase):
   @classmethod
   def setUpClass(cls):
     super().setUpClass()
-    layout_inference._add_equation_system_derivation_rule(llvm.UndefOp)(
-        _undef_equation_system
+    layout_inference._add_constraint_system_derivation_rule(llvm.UndefOp)(
+        _undef_constraint_system
     )
 
   @classmethod
   def tearDownClass(cls):
     super().tearDownClass()
-    del layout_inference._equation_system_derivation_rules[
+    del layout_inference._constraint_system_derivation_rules[
         llvm.UndefOp.OPERATION_NAME
     ]
 
@@ -655,8 +655,8 @@ class LayoutInferenceTest(parameterized.TestCase):
       lc = layout_cast(x.result, layouts.to_layout_attr(layout)).owner.opview
 
     ctx = layout_inference.DerivationContext()
-    x_system, x_mapping, _ = _undef_equation_system(ctx, x)
-    lc_system, lc_mapping, _ = layout_inference._layout_cast_equation_system(
+    x_system, x_mapping, _ = _undef_constraint_system(ctx, x)
+    lc_system, lc_mapping, _ = layout_inference._layout_cast_constraint_system(
         ctx, lc
     )
     assignments = x_system.assignments | lc_system.assignments
@@ -669,7 +669,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     [lc_variable] = lc_mapping.keys()
     self.assertEqual(hint_cst.variable, x_variable)
     self.assertEqual(hint_cst.expression, RL(layout))
-    self.assertEqual(constraint, eqns.Relayout(x_variable, lc_variable))
+    self.assertEqual(constraint, cs.Relayout(x_variable, lc_variable))
 
   @parameterized.parameters(*layout_inference.MemorySpace)
   def test_relayout_only_derived_for_registers(self, memory_space):
@@ -692,24 +692,24 @@ class LayoutInferenceTest(parameterized.TestCase):
       r = layout_inference.ValueSite(
           producer.owner, layout_inference.VariableType.RESULT, 0
       )
-      r_var = eqns.Variable(r)
+      r_var = cs.Variable(r)
       o = layout_inference.ValueSite(
           consumer.owner, layout_inference.VariableType.OPERAND, 0
       )
-      o_var = eqns.Variable(o)
+      o_var = cs.Variable(o)
 
       hints, relayouts = layout_inference.derive_hints_and_constraints(
           layout_inference.ValueSitesForVariable({r_var: [r], o_var: [o]})
       )
 
       if memory_space == layout_inference.MemorySpace.REG:
-        hint0 = layout_inference.Hint(r_var, eqns.MostReplicated((o_var,)))
+        hint0 = layout_inference.Hint(r_var, cs.MostReplicated((o_var,)))
         hint1 = layout_inference.Hint(
-            o_var, eqns.MostReplicated((eqns.LeastReplicated((r_var,)),))
+            o_var, cs.MostReplicated((cs.LeastReplicated((r_var,)),))
         )
 
         self.assertEqual(hints, [hint0, hint1])
-        self.assertEqual(relayouts, [eqns.Relayout(r_var, o_var)])
+        self.assertEqual(relayouts, [cs.Relayout(r_var, o_var)])
       else:
         self.assertEmpty(hints)
         self.assertEmpty(relayouts)
@@ -718,12 +718,12 @@ class LayoutInferenceTest(parameterized.TestCase):
     v0 = V(0)
     assignments, _ = layout_inference.find_assignments_for(
         {v0},
-        eqns.EquationSystem(),
+        cs.ConstraintSystem(),
         # Voluntarily use conflicting hints to check that we use one of them
         # deterministically. This may require updating if we decide to change
         # the traversal order in the future.
         [H(v0, RL(mgpu.WGMMA_ROW_LAYOUT)), H(v0, RL(mgpu.WGMMA_COL_LAYOUT))],
-        fuel=1000
+        fuel=1000,
     )
     self.assertEqual(assignments, {v0: RL(mgpu.WGMMA_ROW_LAYOUT)})
 
@@ -732,12 +732,12 @@ class LayoutInferenceTest(parameterized.TestCase):
   ):
     v0 = V(0)
     tmem_layout = tcgen05.tmem_default_layout(packing=1)
-    constraint = eqns.IsTransferable(
-        v0, eqns.TMEMLayout(tmem_layout), shape=(128, 128)
+    constraint = cs.IsTransferable(
+        v0, cs.TMEMLayout(tmem_layout), shape=(128, 128)
     )
     assignments, _ = layout_inference.find_assignments_for(
         {v0},
-        eqns.EquationSystem(constraints=[constraint]),
+        cs.ConstraintSystem(constraints=[constraint]),
         [],
         fuel=1000,
     )
@@ -746,24 +746,24 @@ class LayoutInferenceTest(parameterized.TestCase):
     # order in the future.
     self.assertEqual(assignments, {v0: RL(mgpu.TCGEN05_LAYOUT)})
 
-  def test_cannot_find_assignments_for_unsatisfiable_equation_system(self):
+  def test_cannot_find_assignments_for_unsatisfiable_constraint_system(self):
     with ir.InsertionPoint(self.module.body):
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))
 
     [key] = layout_inference.vector_value_sites(x)
-    variable = eqns.Variable(key)
+    variable = cs.Variable(key)
     assignments, _ = layout_inference.find_assignments_for(
         {variable},
-        eqns.EquationSystem(
+        cs.ConstraintSystem(
             constraints=[
                 E(variable, RL(mgpu.WGMMA_ROW_LAYOUT)),
                 E(variable, RL(mgpu.WGMMA_COL_LAYOUT)),
             ]
         ),
         hints=[],
-        fuel=1000
+        fuel=1000,
     )
-    self.assertIsInstance(assignments, eqns.Unsatisfiable)
+    self.assertIsInstance(assignments, cs.Unsatisfiable)
 
   def test_hint_that_would_make_system_unsatisfiable_is_not_used_in_solution(self):
     with ir.InsertionPoint(self.module.body):
@@ -771,15 +771,15 @@ class LayoutInferenceTest(parameterized.TestCase):
       op0, op1 = [llvm.mlir_undef(ty).owner.opview for _ in range(2)]
     [kv0] = layout_inference.vector_value_sites(op0)
     [kv1] = layout_inference.vector_value_sites(op1)
-    v0, v1 = eqns.Variable(kv0), eqns.Variable(kv1)
+    v0, v1 = cs.Variable(kv0), cs.Variable(kv1)
     splat_layout = RL(mgpu.WGSplatFragLayout((3, 128)))
     assignments, _ = layout_inference.find_assignments_for(
         {v0},
-        eqns.EquationSystem(
+        cs.ConstraintSystem(
             constraints=[
                 E(
                     v0,
-                    eqns.MostReplicated(
+                    cs.MostReplicated(
                         [v1, RL(mgpu.WGStridedFragLayout((3, 128), vec_size=1))]
                     ),
                 )
@@ -788,7 +788,7 @@ class LayoutInferenceTest(parameterized.TestCase):
         # The first hint would make the system unsatisfiable, but the second
         # hint should be used to find a solution.
         hints=[H(v1, RL(mgpu.WGMMA_LAYOUT)), H(v1, splat_layout)],
-        fuel=1000
+        fuel=1000,
     )
     self.assertEqual(assignments, {v0: splat_layout})
 
@@ -796,7 +796,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     v0, v1 = V(0), V(1)
     layout = RL(mgpu.WGMMA_LAYOUT)
     assignment = layout_inference.extract_variable_assignment_from_hint(
-        H(v0, eqns.LeastReplicated([layout, v1])),
+        H(v0, cs.LeastReplicated([layout, v1])),
     )
     self.assertEqual(assignment, (v0, layout))
 
@@ -804,7 +804,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     v0, v1 = V(0), V(1)
     layout = RL(mgpu.WGSplatFragLayout((1, 128)))
     assignment = layout_inference.extract_variable_assignment_from_hint(
-        H(v0, eqns.MostReplicated([layout, v1])),
+        H(v0, cs.MostReplicated([layout, v1])),
     )
     self.assertEqual(assignment, (v0, layout))
 
@@ -812,11 +812,9 @@ class LayoutInferenceTest(parameterized.TestCase):
     v0, v1 = V(0), V(1)
     layout0 = RL(mgpu.WGSplatFragLayout((1, 128)))
     layout1 = RL(mgpu.WGStridedFragLayout((1, 256), vec_size=2))
-    hint_expr = eqns.LeastReplicated(
-        [layout0, eqns.MostReplicated([layout1, v1])]
-    )
+    hint_expr = cs.LeastReplicated([layout0, cs.MostReplicated([layout1, v1])])
     self.assertIsInstance(
-        eqns.reduce_expression(hint_expr, {v1: layout1}), eqns.Unsatisfiable
+        cs.reduce_expression(hint_expr, {v1: layout1}), cs.Unsatisfiable
     )
     _, expr = layout_inference.extract_variable_assignment_from_hint(
         H(v0, hint_expr))
@@ -829,7 +827,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     layout0 = RL(mgpu.WGSplatFragLayout((1, 128)))
     layout1 = RL(mgpu.WGSplatFragLayout((1, 129)))
     assignment = layout_inference.extract_variable_assignment_from_hint(
-        H(v0, eqns.LeastReplicated([v1, layout0, layout1])),
+        H(v0, cs.LeastReplicated([v1, layout0, layout1])),
     )
     self.assertIsNotNone(assignment)
 
@@ -1163,7 +1161,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
   @parameterized.parameters([False, True])
   def test_conjure_smem_assignment_from_is_transferrable(self, transposed):
-    # Create a var to use in the equation system.
+    # Create a var to use in the constraint system.
     shape = (128, 128)
     f32 = ir.F32Type.get()
     layout = ir.StridedLayoutAttr.get(0, [1, 128]) if transposed else None
@@ -1174,58 +1172,62 @@ class LayoutInferenceTest(parameterized.TestCase):
         type=layout_inference.VariableType.RESULT,
         index=0,
     )
-    var = eqns.Variable(value_site)
+    var = cs.Variable(value_site)
 
-    def conjure(constraints) -> list[tuple[eqns.Variable, eqns.Constant]]:
-      system = eqns.EquationSystem(constraints=constraints)
+    def conjure(constraints) -> list[tuple[cs.Variable, cs.Constant]]:
+      system = cs.ConstraintSystem(constraints=constraints)
       return list(layout_inference.conjure_assignment({var}, system, []))
 
     # Yield only empty tiling with no constraints.
     with self.subTest("no_constraints_yield_empty_tiling"):
-      self.assertEqual(conjure([]), [(var, eqns.SMEMTiling(None))])
+      self.assertEqual(conjure([]), [(var, cs.SMEMTiling(None))])
 
     # Yield empty if not an mma layout.
     with self.subTest("not_mma_layout_yield_empty_tiling"):
-      layout = eqns.RegisterLayout(fa.WGSplatFragLayout(shape))
-      constraints = [eqns.IsTransferable(layout, var, (128, 128))]
+      layout = cs.RegisterLayout(fa.WGSplatFragLayout(shape))
+      constraints = [cs.IsTransferable(layout, var, (128, 128))]
       conjured = conjure(constraints)
-      self.assertEqual(conjured, [(var, eqns.SMEMTiling(None))])
+      self.assertEqual(conjured, [(var, cs.SMEMTiling(None))])
 
-    wgmma_layout = eqns.RegisterLayout(fa.WGMMA_LAYOUT)
+    wgmma_layout = cs.RegisterLayout(fa.WGMMA_LAYOUT)
 
     # Yield also maximal tiling with no Divides constraints.
     with self.subTest("no_divides_constraints_yield_maximal_tiling_with_mma"):
-      constraints = [eqns.IsTransferable(wgmma_layout, var, (128, 128))]
+      constraints = [cs.IsTransferable(wgmma_layout, var, (128, 128))]
       conjured = conjure(constraints)
       if transposed:
         expected_tiling = (32, 8)
       else:
         expected_tiling = (8, 32)
-      self.assertEqual(conjured, [
-              (var, eqns.SMEMTiling(lc.TileTransform(expected_tiling))),
-              (var, eqns.SMEMTiling(None)),
-          ]
+      self.assertEqual(
+          conjured,
+          [
+              (var, cs.SMEMTiling(lc.TileTransform(expected_tiling))),
+              (var, cs.SMEMTiling(None)),
+          ],
       )
 
     # Yield also valid tiling with Divides constraints.
     with self.subTest("divides_constraints_yield_valid_tiling"):
       constraints = [
-          eqns.IsTransferable(wgmma_layout, var, (128, 128)),
-          eqns.Divides(var, (32, 16)),
+          cs.IsTransferable(wgmma_layout, var, (128, 128)),
+          cs.Divides(var, (32, 16)),
       ]
       conjured = conjure(constraints)
       if transposed:
         expected_tiling = (32, 8)
       else:
         expected_tiling = (8, 16)
-      self.assertEqual(conjured, [
-              (var, eqns.SMEMTiling(lc.TileTransform(expected_tiling))),
-              (var, eqns.SMEMTiling(None)),
-          ]
+      self.assertEqual(
+          conjured,
+          [
+              (var, cs.SMEMTiling(lc.TileTransform(expected_tiling))),
+              (var, cs.SMEMTiling(None)),
+          ],
       )
 
   def test_conjure_orders_hints_correctly(self):
-    # Create a var to use in the equation system.
+    # Create a var to use in the constraint system.
     shape = (128, 128)
     f32 = ir.F32Type.get()
     [val] = undefs(ir.VectorType.get(shape, f32))
@@ -1234,30 +1236,30 @@ class LayoutInferenceTest(parameterized.TestCase):
         type=layout_inference.VariableType.RESULT,
         index=0,
     )
-    var = eqns.Variable(value_site)
+    var = cs.Variable(value_site)
 
     hints = [
         layout_inference.Hint(
             var,
-            eqns.RegisterLayout(fa.WGSplatFragLayout((128, 128))),
+            cs.RegisterLayout(fa.WGSplatFragLayout((128, 128))),
         ),
         layout_inference.Hint(
             var,
-            eqns.RegisterLayout(fa.WGMMA_LAYOUT),
+            cs.RegisterLayout(fa.WGMMA_LAYOUT),
         ),
         layout_inference.Hint(
             var,
-            eqns.RegisterLayout(fa.WGStridedFragLayout(shape, vec_size=4)),
+            cs.RegisterLayout(fa.WGStridedFragLayout(shape, vec_size=4)),
         ),
     ]
 
-    system = eqns.EquationSystem()
+    system = cs.ConstraintSystem()
     ordered = list(layout_inference.conjure_assignment({var}, system, hints))
     expected = [
-        (var, eqns.RegisterLayout(fa.WGMMA_LAYOUT)),
-        (var, eqns.RegisterLayout(fa.WGSplatFragLayout((128, 128)))),
-        (var, eqns.RegisterLayout(fa.WGStridedFragLayout(shape, vec_size=4))),
-        (var, eqns.RegisterLayout(fa.WGStridedFragLayout(shape, vec_size=2))),
+        (var, cs.RegisterLayout(fa.WGMMA_LAYOUT)),
+        (var, cs.RegisterLayout(fa.WGSplatFragLayout((128, 128)))),
+        (var, cs.RegisterLayout(fa.WGStridedFragLayout(shape, vec_size=4))),
+        (var, cs.RegisterLayout(fa.WGStridedFragLayout(shape, vec_size=2))),
     ]
     self.assertEqual(ordered, expected)
 

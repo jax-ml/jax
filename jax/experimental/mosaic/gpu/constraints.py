@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Defines expressions and equations over layouts."""
+"""Defines expressions and constraints over layouts."""
 
 # mypy has been causing more problems than it solves here. Disable it for these
 # files. We have pytype checks anyway.
@@ -379,7 +379,7 @@ class Relayout:
   do not ever plan to support it.
 
   Modeling this constraint this way is helpful, in order to allow pruning
-  inefficient solutions when attempting to solve an equation system.
+  inefficient solutions when attempting to solve a constraint system.
   """
 
   source: Expression
@@ -615,16 +615,14 @@ def reduce_constraint(
 
 
 @dataclasses.dataclass
-class EquationSystem:
-  """An equation system contains a set of equations and assignments.
+class ConstraintSystem:
+  """A constraint system contains a set of constraints and assignments.
 
   Assignments assign constant values to variables in the system (bound
-  variables). Equations describe relationships between variables, and can be
-  used to determine assignments for unknown (free) variables.
-
-  Constraints are used to check predicates that must hold for the assignments to
-  be valid.
+  variables). Constraints describe relationships between variables that must be
+  upheld, and can be used to determine assignments for unknown (free) variables.
   """
+
   assignments: dict[Variable, Constant] = dataclasses.field(
       default_factory=dict
   )
@@ -677,17 +675,19 @@ class EquationSystem:
           assert_never(never)
     return free_variables
 
-  def __and__(self, other: EquationSystem) -> EquationSystem | Unsatisfiable:
+  def __and__(
+      self, other: ConstraintSystem
+  ) -> ConstraintSystem | Unsatisfiable:
     for variable, assignment in self.assignments.items():
       if variable in other.assignments and assignment != other.assignments[variable]:
         return Unsatisfiable()
-    return EquationSystem(
+    return ConstraintSystem(
         assignments=self.assignments | other.assignments,
         constraints=[*self.constraints, *other.constraints],
     )
 
   def __str__(self):
-    r = "EquationSystem\n"
+    r = "ConstraintSystem\n"
     r += "  assignments:\n"
     for assignment, constant in self.assignments.items():
       r += f"    {assignment} ⟵ {constant}\n"
@@ -696,9 +696,11 @@ class EquationSystem:
       r += f"    {constraint}\n"
     return r
 
+
 @final
 class Unsatisfiable:
-  def __and__(self, other: EquationSystem | Unsatisfiable) -> Unsatisfiable:
+
+  def __and__(self, other: ConstraintSystem | Unsatisfiable) -> Unsatisfiable:
     return self
 
 
@@ -747,8 +749,8 @@ def _has_relayout_of_non_splat_to_splat(constraints: Sequence[Constraint]) -> bo
 
 
 def saturate_distinct_from_splat(
-    equation_system: EquationSystem,
-) -> EquationSystem | Unsatisfiable:
+    constraint_system: ConstraintSystem,
+) -> ConstraintSystem | Unsatisfiable:
   """Adds transitive NotOfType constraints for all non-splat variables.
 
   Given `n` variables `l0`, ... `l{n-1}`, and a set of relayouts
@@ -759,13 +761,13 @@ def saturate_distinct_from_splat(
   This helps us quickly conclude that a system is unsatisfiable in cases where
   a non-splat variable is transitively relaid out into a splat layout.
   """
-  non_splat = non_splat_variables(equation_system.constraints)
+  non_splat = non_splat_variables(constraint_system.constraints)
   new_constraints: list[Constraint] = []
   new_non_splat_found = len(non_splat) > 0
 
   while new_non_splat_found:
     new_non_splat_found = False
-    for constraint in equation_system.constraints:
+    for constraint in constraint_system.constraints:
       match constraint:
         case Relayout(source=source, target=target):
           if (
@@ -778,19 +780,19 @@ def saturate_distinct_from_splat(
             new_constraints.append(NotOfType(target, fa.WGSplatFragLayout))
         case _:
           pass
-  return equation_system & EquationSystem(constraints=new_constraints)
+  return constraint_system & ConstraintSystem(constraints=new_constraints)
 
 
 def compute_transitively_equal_vars(
-    system: EquationSystem,
+    system: ConstraintSystem,
 ) -> dict[Variable, list[Variable]]:
-  """Computes all transitively equal variables in an equation system.
+  """Computes all transitively equal variables in a constraint system.
 
-  The output dictionary maps each variable that appears in equations in the
-  equation system to all the variables it is transitively equal to.
+  The output dictionary maps each variable that appears in constraints in the
+  constraint system to all the variables it is transitively equal to.
   """
   # The equality relations between variables form a graph where variables are
-  # nodes and an equation `v1 == v2` forms an edge. All variables in a
+  # nodes and a constraint `v1 == v2` forms an edge. All variables in a
   # connected component are transitively equal. We use a Union-Find data
   # structure with path compression to efficiently find these connected
   # components (i.e., equivalence classes).
@@ -833,8 +835,8 @@ def compute_transitively_equal_vars(
 
 
 def saturate_divides_constraints_for_equal_vars(
-    system: EquationSystem,
-) -> EquationSystem:
+    system: ConstraintSystem,
+) -> ConstraintSystem:
   """Saturates Divides constraints between all transitively equal vars.
   """
   equal_vars = compute_transitively_equal_vars(system)
@@ -882,17 +884,17 @@ def merge_divides_constraints(constraints: Sequence[Constraint]) -> list[Constra
 
 
 def _reduce_system_once(
-    equation_system: EquationSystem,
-) -> EquationSystem | Unsatisfiable | None:
-  """Performs one reduction step over each equation in an equation system.
+    constraint_system: ConstraintSystem,
+) -> ConstraintSystem | Unsatisfiable | None:
+  """Performs one reduction step over each constraint in a constraint system.
 
   Returns:
-    - Unsatisfiable(): if the equation system is unsatisfiable.
-    - A new equation system if any equation was reduced.
-    - None: if the equation system is not known unsatisfiable, but hasn't been
+    - Unsatisfiable(): if the constraint system is unsatisfiable.
+    - A new constraint system if any constraint was reduced.
+    - None: if the constraint system is not known unsatisfiable, but hasn't been
       reduced.
   """
-  assignments = equation_system.assignments
+  assignments = constraint_system.assignments
   constraints: list[Constraint] = []
   changed = False
 
@@ -902,7 +904,7 @@ def _reduce_system_once(
     assignments[var] = cst
     return True
 
-  for constraint in equation_system.constraints:
+  for constraint in constraint_system.constraints:
     match reduce_constraint(constraint, assignments):
       case Unsatisfiable():
         return Unsatisfiable()
@@ -930,29 +932,31 @@ def _reduce_system_once(
     return Unsatisfiable()
 
   if changed:
-    return EquationSystem(
-        assignments=assignments | equation_system.assignments,
+    return ConstraintSystem(
+        assignments=assignments | constraint_system.assignments,
         constraints=constraints,
     )
   return None
 
 
-def reduce(equation_system: EquationSystem) -> EquationSystem | Unsatisfiable:
-  """Reduces an equation system until it can no longer be reduced.
+def reduce(
+    constraint_system: ConstraintSystem,
+) -> ConstraintSystem | Unsatisfiable:
+  """Reduces a constraint system until it can no longer be reduced.
 
   Returns:
-    - Unsatisfiable(): if the equation system is unsatisfiable.
-    - The maximally reduced equation system otherwise.
+    - Unsatisfiable(): if the constraint system is unsatisfiable.
+    - The maximally reduced constraint system otherwise.
   """
   while True:
-    match _reduce_system_once(equation_system):
+    match _reduce_system_once(constraint_system):
       case None:
         break
       case Unsatisfiable():
         return Unsatisfiable()
-      case EquationSystem() as new_system:
-        equation_system = new_system
+      case ConstraintSystem() as new_system:
+        constraint_system = new_system
       case _ as never:
         assert_never(never)
 
-  return equation_system
+  return constraint_system
