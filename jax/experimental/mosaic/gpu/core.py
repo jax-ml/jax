@@ -181,12 +181,13 @@ def _mosaic_gpu_lowering_rule(
           not np.array_equal(mesh.device_ids.ravel(), np.arange(mesh.size))):
         raise NotImplementedError(
             "Mosaic GPU only supports meshes with device ordering that follows"
-            " row-major device ids."
+            f" row-major device ids. Got: {mesh.device_ids.ravel()} device ids."
         )
     elif isinstance(axis_context, sharding_impls.ShardingContext):
       if axis_context.num_devices != 1:
         raise NotImplementedError(
             "Mosaic GPU only supports single-device meshes in ShardingContext."
+            f" Got: {axis_context.num_devices} devices."
         )
     else:
       raise NotImplementedError(f"Unsupported sharding context: {axis_context}")
@@ -218,7 +219,7 @@ def _mosaic_gpu_lowering_rule(
   # SHA256 that it shouldn't be a problem.
   if (kernel_text := KNOWN_KERNELS.get(kernel_id, None)) is not None:
     if kernel_text != module_asm:
-      raise RuntimeError("Hash collision!")
+      raise RuntimeError("Kernel hash collision!")
   else:
     KNOWN_KERNELS[kernel_id] = module_asm
 
@@ -513,7 +514,11 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
           | Barrier(_, num_barriers=num_barriers)
       ):
         if size % utils.MBARRIER_BYTES:
-          raise NotImplementedError("Misaligned barrier allocation")
+          raise NotImplementedError(
+              "Misaligned barrier allocation. Expected smem size"
+              f" ({size} bytes) to be divisible by the size of the barrier:"
+              f" {utils.MBARRIER_BYTES} bytes."
+          )
         size += num_barriers * utils.MBARRIER_BYTES
       case TMEM(_):
         # TODO(justinfu): This can trigger misaligned barrier allocations
@@ -538,7 +543,10 @@ def _launch(
     maybe_prof_buffer: ir.Value | None = None,
 ):
   if (profiler_spec is None) != (maybe_prof_buffer is None):
-    raise ValueError
+    raise ValueError(
+        "Both profiler_spec and maybe_prof_buffer must be specified or"
+        " left unspecified."
+    )
   index = ir.IndexType.get()
   i32 = ir.IntegerType.get_signless(32)
   i8 = ir.IntegerType.get_signless(8)
@@ -571,7 +579,7 @@ def _launch(
                      f"{smem_bytes=} > {max_smem_bytes=}")
   if math.prod(cluster) != 1:
     if len(cluster) != 3:
-      raise ValueError("Clusters must be 3D")
+      raise ValueError(f"Clusters must be 3D. Got: {cluster}")
     cluster_kwargs = {
         "clusterSize" + d: c(s, index) for s, d in zip(cluster, "XYZ")
     }
@@ -663,8 +671,9 @@ def _launch(
           collective = True in collective_types
           if collective and math.prod(cluster) % 2:
             raise ValueError(
-                "Collective TMEM allocations are only supported for"
-                " clusters with an even number of blocks in them."
+                "Collective TMEM allocations are only supported for clusters"
+                " with an even number of blocks in them. Got cluster:"
+                f" {cluster}"
             )
           if lowering_semantics == LoweringSemantics.Warpgroup:
             dialect.tmem_relinquish_alloc_permit(collective=collective)
