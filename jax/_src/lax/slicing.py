@@ -2173,7 +2173,8 @@ def _gather_sharding_rule(operand, indices, *, dimension_numbers,
     raise core.ShardingTypeError(
         "Use `.at[...].get(out_sharding=)` to provide output PartitionSpec for"
         " the gather indexing as out sharding could not be resolved"
-        " unambiguously (or would require collectives on inputs).")
+        " unambiguously (or would require collectives on inputs). Got"
+        f" {operand=}, {indices=}")
   return NamedSharding(out_mesh, out_spec)
 
 def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,

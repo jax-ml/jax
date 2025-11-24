@@ -40,7 +40,7 @@ from jax._src.shard_map import shard_map
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
-from jax._src.mesh import AxisType, get_abstract_mesh
+from jax._src.mesh import AxisType, get_abstract_mesh, empty_concrete_mesh
 from jax._src.lax.parallel import all_gather_invariant
 from jax._src.interpreters import partial_eval as pe
 from jax._src import linear_util as lu
@@ -4605,6 +4605,40 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out1.sharding,
                      NamedSharding(mesh, P(None, None, unreduced={'x'})))
     self.assertEqual(out2.sharding, arr2.sharding)
+
+  @parameterized.named_parameters(
+      ('mul', jax.lax.mul),
+      ('add', jax.lax.add),
+  )
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_one_input_sharded_another_reduced_shmap(self, func, mesh):
+    np1 = np.arange(16.)
+    np2 = np.arange(8.)
+    arr1 = jax.device_put(np1, P('x'))
+    arr2 = jax.device_put(np2, P(None, reduced={'x'}))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P())
+    def f(x, y):
+      z = func(x, y)
+      return jax.lax.psum(z, 'x')
+
+    out = f(arr1, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None)))
+
+    with jax.set_mesh(empty_concrete_mesh):
+      ex_out = np.sum([func(s.data, np2) for s in arr1.addressable_shards],
+                      axis=0)
+    self.assertArraysEqual(out, ex_out)
+
+    @jax.jit
+    def g(x, y):
+      return f(x, y).sum()
+
+    out1, out2 = jax.jit(jax.grad(g, argnums=(0, 1)))(arr1, arr2)
+    self.assertEqual(out1.sharding, NamedSharding(mesh, P('x')))
+    self.assertEqual(out2.sharding,
+                     NamedSharding(mesh, P(None, unreduced={'x'})))
 
 
 class FunSpec(NamedTuple):

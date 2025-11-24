@@ -4085,12 +4085,12 @@ def nary_reduced_rule(out_s, *avals, **params):
         raise core.ShardingTypeError(
             'Inputs cannot be replicated on the same axes that another input'
             f' is reduced on. Got input spec: {s} and reduced spec: {reduced_s}')
-      # TODO(yashkatariya): Remove this condition since this is valid after
-      # adding a test like add/mul(x: f32[8@x], y: f32[8]{R:x})
       if frozenset(flat_spec) & reduced_s:
         raise core.ShardingTypeError(
             'Inputs cannot be sharded on the same axes that another input is'
-            f' reduced on. Got input spec: {s} and reduced spec: {reduced_s}')
+            ' reduced on. Reshard the input which is reduced to be sharded on'
+            ' the mesh axes it is reduced on via `jax.sharding.reshard(inp,'
+            f' jax.P(...))`. Got input spec: {s} and reduced spec: {reduced_s}')
   return out_s.update(spec=out_s.spec.update(reduced=reduced_s))
 
 
