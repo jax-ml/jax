@@ -2133,6 +2133,7 @@ def _make_lengths_same(sharding, ndim):
 
 def modify_spec_for_auto_manual(spec, mesh) -> P:
   new_spec = []  # type: ignore
+  # PartitionSpec can only mention mesh axes that are Explicit.
   for s in spec:
     if s is None:
       new_spec.append(s)  # type: ignore
@@ -2141,7 +2142,12 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
           p for p in s if mesh._name_to_type[p] == AxisType.Explicit))
     else:
       new_spec.append(s if mesh._name_to_type[s] == AxisType.Explicit else None)  # type: ignore
-  return P(*new_spec, unreduced=spec.unreduced, reduced=spec.reduced)
+  # Unreduced and reduced can mention mesh axes that are Explicit and Manual.
+  new_unreduced = {u for u in spec.unreduced
+                   if mesh._name_to_type[u] != AxisType.Auto}
+  new_reduced = {u for u in spec.reduced
+                 if mesh._name_to_type[u] != AxisType.Auto}
+  return P(*new_spec, unreduced=new_unreduced, reduced=new_reduced)
 
 def remove_size_one_mesh_axis(spec, mesh) -> P:
   new_spec = []  # type: ignore

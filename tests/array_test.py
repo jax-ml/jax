@@ -1426,6 +1426,30 @@ class ShardingTest(jtu.JaxTestCase):
     aval = jax.core.ShapedArray((1, 1, 1, 1), np.float32)
     self.assertEqual(aval.str_short(True), 'f32[1,1,1,1]')
 
+  def test_modify_spec_auto_unreduced(self):
+    mesh = AbstractMesh(
+        (2, 2, 2), ('a', 'b', 'c'),
+        axis_types=(AxisType.Explicit, AxisType.Explicit, AxisType.Auto))
+    spec = P(unreduced={'a', 'b', 'c'})
+    out = core.modify_spec_for_auto_manual(spec, mesh)
+    self.assertEqual(out, P(unreduced={'a', 'b'}))
+
+    spec = P(reduced={'a', 'b', 'c'})
+    out = core.modify_spec_for_auto_manual(spec, mesh)
+    self.assertEqual(out, P(reduced={'a', 'b'}))
+
+    spec = P(unreduced={'a', 'b'}, reduced={'c'})
+    out = core.modify_spec_for_auto_manual(spec, mesh)
+    self.assertEqual(out, P(unreduced={'a', 'b'}))
+
+    spec = P(unreduced={'a', 'c'}, reduced={'b'})
+    out = core.modify_spec_for_auto_manual(spec, mesh)
+    self.assertEqual(out, P(unreduced={'a'}, reduced={'b'}))
+
+    spec = P(unreduced={'c'}, reduced={'a', 'b'})
+    out = core.modify_spec_for_auto_manual(spec, mesh)
+    self.assertEqual(out, P(reduced={'a', 'b'}))
+
   def test_pspec_unreduced(self):
     pspec = P('a', 'b', None, unreduced={'c'}, reduced={'d'})
     self.assertEqual(

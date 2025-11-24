@@ -9707,6 +9707,29 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out2.sharding,
                      NamedSharding(mesh, P(None, unreduced={'x'})))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_reduced_at_get_out_sharding(self, mesh):
+    np1 = np.ones((2048, 64), dtype=jnp.float32)
+    np2 = np.ones((4, 128), dtype=jnp.int32)
+    params = jax.device_put(np1, P(None, None, reduced={'x'}))
+    inputs = jax.device_put(np2, P('x', None))
+
+    @jax.jit
+    def f(params, inputs):
+      return params.at[inputs].get(out_sharding=P('x', None, None))
+
+    out = f(params, inputs)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None, None)))
+    self.assertArraysEqual(out, np1[np2])
+
+    @jax.jit
+    def g(params, inputs):
+      return f(params, inputs).sum()
+
+    out = jax.jit(jax.grad(g))(params, inputs)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
