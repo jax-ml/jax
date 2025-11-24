@@ -1236,6 +1236,7 @@ jax_multiplatform_test(
     tags = ["multiaccelerator"],
     deps = [
         "//jax/_src:profiler",
+        "//third_party/xprof/pywrap:_pywrap_profiler_plugin",
     ] + py_deps([
         "absl/testing",
         "portpicker",
