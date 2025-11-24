@@ -124,13 +124,13 @@ Users can now easily access both versions depending on their needs.
 
 ### Files Modified
 
-1. `c:\GSSOC\JAX\jax\docs\gradient-checkpointing.md`
+1. `docs/gradient-checkpointing.md`
    - Enhanced with overview section
    - Added cross-reference to interactive notebook
    - Reorganized with clearer section headers
    - Updated freshness date
 
-2. `c:\GSSOC\JAX\jax\docs\notebooks\autodiff_remat.md`
+2. `docs/notebooks/autodiff_remat.md`
    - Removed 300+ lines of duplicated theory
    - Transformed into complementary interactive notebook
    - Added cross-reference to comprehensive guide
