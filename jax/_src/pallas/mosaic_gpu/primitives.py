@@ -2603,24 +2603,6 @@ def _ref_type_to_transforms(ref_type: RefType) -> ir.ArrayAttribute:
   return ir.ArrayAttr.get(transform_attrs)
 
 
-def _shape_dtype_struct_to_type_and_layout(
-    shape_dtype_struct: ShapeDtypeStruct,
-) -> tuple[ir.Type, ir.Attribute | None]:
-  """Returns the type and Mosaic GPU layout for the given ShapeDtypeStruct.
-
-  Unless the input indicates a scalar, the returned type will be a vector type
-  and the returned layout will not be None. If the input is a scalar, the
-  returned type will be the type of the scalar and the returned layout will be
-  None.
-  """
-  el_type = mgpu_utils.dtype_to_ir_type(shape_dtype_struct.dtype)
-  if not shape_dtype_struct.shape:
-    return el_type, None
-  vector_type = ir.VectorType.get(shape_dtype_struct.shape, el_type)
-  layout = mgpu_layouts.to_layout_attr(shape_dtype_struct.layout.to_mgpu())
-  return vector_type, layout
-
-
 def _replace_uses_in_block(old: ir.Value, new: ir.Value, block: ir.Block):
   """Replaces all uses of the `old` value with the `new` value in `block`."""
 
@@ -2723,18 +2705,22 @@ def _custom_primitive_in_specs(
 
 def _custom_primitive_op_results(flat_ret_ty) -> tuple[
     Sequence[ir.Type],
-    Sequence[ir.Attribute],
+    Sequence[ir.Attribute | None],
 ]:
   """Returns a tuple containing the list of output MLIR types, and layouts for
   the given JAX return types."""
-  results_ty = []
-  out_layouts = []
+  results_ty: list[ir.Type] = []
+  out_layouts: list[ir.Attribute | None] = []
   for r in flat_ret_ty:
     if not isinstance(r, ShapeDtypeStruct):
       raise NotImplementedError(f"Expected a ShapeDtypeStruct, but got: {r}")
-    ty, layout = _shape_dtype_struct_to_type_and_layout(r)
-    results_ty.append(ty)
-    if layout is not None:
+    el_type = mgpu_utils.dtype_to_ir_type(r.dtype)
+    if not r.shape:  # scalar case.
+      results_ty.append(el_type)
+      out_layouts.append(None)
+    else:
+      results_ty.append(ir.VectorType.get(r.shape, el_type))
+      layout = mgpu_layouts.to_layout_attr(r.layout.to_mgpu())
       out_layouts.append(layout)
   return results_ty, out_layouts
 
@@ -2744,10 +2730,10 @@ def _populate_custom_primitive_op_block(
     block: ir.Block,
     mgpu_fn: Callable[..., Any],
     pytree_args,
-    in_layouts : Sequence[ir.Attribute],
+    in_layouts: Sequence[ir.Attribute],
     in_transforms: ir.ArrayAttr,
     results_ty: Sequence[ir.Type],
-    out_layouts: Sequence[ir.Attribute],
+    out_layouts: Sequence[ir.Attribute | None],
 ):
   """Calls the given mgpu_fn to populate the block, handling inputs and outputs.
 
@@ -2826,17 +2812,29 @@ def _populate_custom_primitive_op_block(
     for fa, result_ty, out_layout in zip(
         inner_ret, results_ty, out_layouts, strict=True
     ):
-      if not ir.VectorType.isinstance(result_ty):
-        raise NotImplementedError(
-            "Only vector return types from the inline mgpu_fn are supported,"
-            f" but got: {result_ty}"
+      if not isinstance(fa, mgpu.FragmentedArray):
+        raise ValueError(f"Expected a FragmentedArray, but got: {fa}")
+      if ir.VectorType.isinstance(result_ty):
+        result_shape = ir.VectorType(result_ty).shape
+        if fa.shape != tuple(result_shape):
+          raise ValueError(f"Expected {result_shape} but got {fa.shape}")
+        if out_layout != mgpu.layouts.to_layout_attr(fa.layout):
+          raise ValueError(
+              f"Output layout {out_layout} does not match the layout of the"
+              f" returned fragmented array {fa.layout}."
+          )
+        ir_ret.append(
+            mgpu.dialect_lowering.fragmented_array_to_ir(fa, result_ty)
         )
-      if out_layout != mgpu.layouts.to_layout_attr(fa.layout):
-        raise ValueError(
-            f"Output layout {out_layout} does not match the layout of the"
-            f" returned fragmented array {fa.layout}."
-        )
-      ir_ret.append(mgpu.dialect_lowering.fragmented_array_to_ir(fa, result_ty))
+      else:  # scalar case.
+        assert out_layout is None
+        if fa.shape:
+          raise ValueError(f"Expected 0D shape, but got {fa.shape}")
+        if not isinstance(fa.layout, mgpu.WGSplatFragLayout):
+          raise ValueError(f"Expected WGSplatFragLayout, but got {fa.layout}")
+        value = fa.registers.item()
+        ir_ret.append(value)
+
     mgpu.dialect.ReturnOp(operands_=ir_ret)
 
 
@@ -2893,7 +2891,7 @@ def _inline_mgpu_lowering_rule_wg_semantics(
       operands_=flat_transformed_args,
       in_layouts=in_layouts,
       in_transforms=in_transforms,
-      out_layouts=out_layouts,
+      out_layouts=[l for l in out_layouts if l is not None],
   )
   block : ir.Block = custom_op.body.blocks.append(*in_types)
   _populate_custom_primitive_op_block(

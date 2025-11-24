@@ -524,8 +524,19 @@ llvm::LogicalResult CustomPrimitiveOp::verify() {
         "smem.");
   }
 
-  if (getResults().size() != getOutLayouts().size()) {
-    return emitOpError("Custom primitive must have a layout for each result.");
+  int num_vector_results = 0;
+  for (auto result : getResults()) {
+    if (mlir::isa<mlir::VectorType>(result.getType())) {
+      ++num_vector_results;
+    } else if (mlir::isa<mlir::ShapedType>(result.getType())) {
+      return emitOpError(
+          "Custom primitive can only return scalars or vectors.");
+    }
+  }
+
+  if (num_vector_results != getOutLayouts().size()) {
+    return emitOpError(
+        "Custom primitive must have a layout for each vector result.");
   }
 
   return llvm::success();

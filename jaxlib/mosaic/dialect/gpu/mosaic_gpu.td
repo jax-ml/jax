@@ -618,7 +618,7 @@ def MosaicGPU_ReturnOp : Op<MosaicGPU_Dialect, "return",
   }];
 
   // The operand's type must match the parent CustomPrimitiveOp's result type.
-  let arguments = (ins Variadic<AnyVectorOfAnyRank>:$operands);
+  let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{ attr-dict ($operands^ `:` type($operands))? }];
   let hasVerifier = 1;
 }
@@ -645,7 +645,7 @@ def MosaicGPU_CustomPrimitiveOp : Op<MosaicGPU_Dialect, "custom_primitive",
     ArrayAttr:$out_layouts
   );
 
-  let results = (outs Variadic<AnyVectorOfAnyRank>);
+  let results = (outs Variadic<AnyType>);
   let regions = (region SizedRegion<1>:$body);
 
   let hasVerifier = 1;

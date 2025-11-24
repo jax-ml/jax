@@ -852,6 +852,27 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
+  def test_custom_primitive_op_results_must_be_scalar_or_vector(self):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get((128, 128), ir.F32Type.get())
+      op = mgpu.dialect.CustomPrimitiveOp(
+          result=[ref_ty],
+          operands_=[],
+          in_layouts=[],
+          in_transforms=[],
+          out_layouts=[],
+      )
+      block = op.body.blocks.append()
+      with ir.InsertionPoint(block):
+        [ref] = undefs(ref_ty)
+        mgpu.dialect.ReturnOp(operands_=[ref])
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"Custom primitive can only return scalars or vectors.",
+    ):
+      self.module.operation.verify()
+
   def test_tmem_alloc_op_must_have_smem_ref_input(self):
     with ir.InsertionPoint(self.module.body):
       (smem_ptr,) = undefs(
@@ -1431,7 +1452,7 @@ class DialectLoweringTest(MosaicGpuTest):
       error = "transforms for each memref operand in smem"
     else:
       assert omit_out_layouts
-      error = "layout for each result"
+      error = "layout for each vector result"
 
     with self.assertRaisesRegex(ir.MLIRError, error):
       self.module.operation.verify()

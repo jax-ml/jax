@@ -1442,9 +1442,6 @@ class PallasCallTest(PallasTest):
       ((2, 3, 4, 5), ("a", "b", "c", "d"), (2,), ("x",)),
   )
   def test_axis_indices_in_grid(self, grid, grid_names, cluster, cluster_names):
-    # Skipping because `inline_mpgpu` isn't supported in WG semantics.
-    self.skip_if_wg_semantics()
-
     @functools.partial(
         self.kernel,
         out_shape=[
