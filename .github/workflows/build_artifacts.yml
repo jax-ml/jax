@@ -121,7 +121,7 @@ jobs:
       gcs_upload_uri: ${{ steps.store-gcs-upload-uri.outputs.gcs_upload_uri }}
 
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           persist-credentials: false
       - name: Enable RBE if building on Linux x86 or Windows x86

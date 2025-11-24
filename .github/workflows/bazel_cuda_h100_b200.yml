@@ -32,7 +32,7 @@ jobs:
     permissions: {} # No permissions given
     runs-on: ubuntu-latest # Do not run tj-actions on self-hosted runners
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
         with:
           persist-credentials: false
       - name: Get and filter changed files # We only run this if it is a pull request, do not run tj-actions on non PR event
@@ -63,7 +63,7 @@ jobs:
     name: "Bazel single B200 CUDA tests"
 # End Presubmit Naming Check github-cuda-presubmits
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
         with:
           persist-credentials: false
       - name: Wait For Connection
@@ -107,7 +107,7 @@ jobs:
     container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
     name: "Bazel multiple H100 CUDA tests"
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
         with:
           persist-credentials: false
       - name: Wait For Connection
