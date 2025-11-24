@@ -15,17 +15,27 @@ kernelspec:
 (gradient-checkpointing)=
 ## Gradient checkpointing with `jax.checkpoint` (`jax.remat`)
 
-<!--* freshness: { reviewed: '2024-05-03' } *-->
+<!--* freshness: { reviewed: '2024-11-24' } *-->
 
-In this tutorial, you will learn how to control JAX automatic differentiation's saved values using {func}`jax.checkpoint` (also known as {func}`jax.remat`), which can be particularly helpful in machine learning.
+### Overview
+
+In this comprehensive guide, you will learn how to control JAX automatic differentiation's saved values using {func}`jax.checkpoint` (also known as {func}`jax.remat`), which is particularly helpful in machine learning and other applications with memory constraints.
 
 If you are new to automatic differentiation (autodiff) or need to refresh your memory, JAX has {ref}`automatic-differentiation` and {ref}`advanced-autodiff` tutorials.
 
-**TL;DR** Use the {func}`jax.checkpoint` decorator (aliased as {func}`jax.remat`) with {func}`jax.grad` to control which intermediates are saved on the forward pass versus the recomputed intermediates on the backward pass, trading off memory and FLOPs.
+For hands-on interactive examples and visualizations, see the {ref}`notebooks/autodiff_remat` notebook.
+
+#### Quick Summary
+
+Use the {func}`jax.checkpoint` decorator (aliased as {func}`jax.remat`) with {func}`jax.grad` to control which intermediates are saved on the forward pass versus the recomputed intermediates on the backward pass, trading off memory and FLOPs.
 
 If you don't use {func}`jax.checkpoint`, the `jax.grad(f)(x)` forward pass stores Jacobian coefficients and other intermediates to use during the backward pass. These saved values are called *residuals*.
 
 **Note:** Don't miss the {ref}`gradient-checkpointing-practical-notes` for a discussion about how {func}`jax.checkpoint` interacts with {func}`jax.jit`.
+
+### Motivating example: Understanding residuals
+
+Let's understand what residuals are and why we might want to control them:
 
 ```{code-cell}
 import jax
@@ -52,7 +62,11 @@ from jax.ad_checkpoint import print_saved_residuals
 print_saved_residuals(f, W1, W2, W3, x)
 ```
 
-By applying {func}`jax.checkpoint` to sub-functions, as a decorator or at specific application sites, you force JAX not to save any of that sub-function's residuals. Instead, only the inputs of a {func}`jax.checkpoint`-decorated function might be saved, and any residuals consumed on the backward pass are re-computed from those inputs as needed:
+This shows all the intermediate values that would be saved in memory without using checkpointing. For large models, this can become prohibitively expensive.
+
+### Using checkpointing to control residuals
+
+By applying {func}`jax.checkpoint` to sub-functions, you force JAX not to save that sub-function's residuals. Instead, only the inputs of the {func}`jax.checkpoint`-decorated function might be saved, and residuals needed on the backward pass are recomputed:
 
 ```{code-cell}
 def f2(W1, W2, W3, x):
