@@ -40,6 +40,8 @@ from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
 from jax._src.typing import Array, ArrayLike
 from jax._src.nn.functions import softmax as nn_softmax
 from jax._src.nn.functions import log_softmax as nn_log_softmax
+from jax.scipy.special import gammaln  
+
 
 def gammaln(x: ArrayLike) -> Array:
   r"""Natural log of the absolute value of the gamma function.
@@ -1563,12 +1565,9 @@ def _gen_associated_legendre(l_max: int,
   one_minus_x2 = jnp.clip(1.0 - x * x, a_min=0.0)
   sqrt1mx = jnp.sqrt(one_minus_x2)
 
-  if is_normalized:
-    initial_value = 0.5 / jnp.sqrt(np.pi)
-  else:
-    initial_value = 1.0
-
+  initial_value = 1.0
   p = p.at[(0, 0)].set(initial_value)
+
 
 
   if l_max >= 1:
@@ -1596,6 +1595,16 @@ def _gen_associated_legendre(l_max: int,
       Pn = (a * x * prev1 - b * prev2) / denom
       p = p.at[(n_idx, m_idx)].set(Pn)
       prev2, prev1 = prev1, Pn
+  if is_normalized:
+    l_arr = jnp.arange(0, l_max + 1, dtype=x.dtype)
+    m_arr = jnp.arange(0, l_max + 1, dtype=x.dtype)
+    M, L = jnp.meshgrid(m_arr, l_arr, indexing='ij')
+    log_fact_ratio = gammaln(L - M + 1) - gammaln(L + M + 1)
+    prefac = (2.0 * L + 1.0) / (4.0 * jnp.pi)
+    N_lm = jnp.sqrt(prefac * jnp.exp(log_fact_ratio))
+
+    p = p * N_lm[:, :, None]
+
 
   return p
 
