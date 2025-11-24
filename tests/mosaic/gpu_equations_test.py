@@ -26,7 +26,7 @@ from jax.experimental.mosaic.gpu import tcgen05
 config.parse_flags_with_absl()
 
 RL = equations.RegisterLayout
-Eq = equations.Equation
+Eq = equations.Equals
 V = equations.Variable
 
 
@@ -36,7 +36,7 @@ class EquationSystemTest(parameterized.TestCase):
     v0 = V(0)
     layout0, layout1 = [RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2)]
     system = equations.EquationSystem(
-        equations=[Eq(v0, layout0), Eq(v0, layout1)],
+        constraints=[Eq(v0, layout0), Eq(v0, layout1)],
     )
     self.assertIsInstance(equations.reduce(system), equations.Unsatisfiable)
 
@@ -83,21 +83,19 @@ class EquationSystemTest(parameterized.TestCase):
   ):
     v0, v1 = V(0), V(1)
     system = equations.EquationSystem(
-        equations=[Eq(v0, v1), Eq(v0, v0)],
         constraints=[
+            Eq(v0, v1),
+            Eq(v0, v0),
             equations.Relayout(v0, v0),
             equations.NotOfType(RL(mgpu.WGMMA_LAYOUT), mgpu.WGSplatFragLayout),
             equations.NotOfType(v1, mgpu.WGSplatFragLayout),
         ],
     )
-    self.assertLen(equations.reduce(system).equations, 1)
-    self.assertLen(equations.reduce(system).constraints, 1)
+    self.assertLen(equations.reduce(system).constraints, 2)
 
   def test_reduce_equation_system_of_simplified_system_is_noop(self):
     v0, v1 = V(0), V(1)
-    system = equations.EquationSystem(
-        equations=[Eq(v0, v1)],
-    )
+    system = equations.EquationSystem(constraints=[Eq(v0, v1)])
     self.assertEqual(equations.reduce(system), system)
 
   def test_reduce_equation_system_assigns_variables_with_known_equations(self):
@@ -106,7 +104,7 @@ class EquationSystemTest(parameterized.TestCase):
 
     with self.subTest("left-to-right-assignment"):
       system = equations.EquationSystem(
-          equations=[Eq(v0, layout), Eq(v0, v1)],
+          constraints=[Eq(v0, layout), Eq(v0, v1)],
       )
       self.assertEqual(
           equations.reduce(system),
@@ -115,7 +113,7 @@ class EquationSystemTest(parameterized.TestCase):
 
     with self.subTest("right-to-left-assignment"):
       system = equations.EquationSystem(
-          equations=[Eq(v1, layout), Eq(v0, v1)],
+          constraints=[Eq(v1, layout), Eq(v0, v1)],
       )
       self.assertEqual(
           equations.reduce(system),
@@ -127,8 +125,10 @@ class EquationSystemTest(parameterized.TestCase):
     layout = RL(mgpu.WGSplatFragLayout((1, 1)))
     least_replicated = equations.LeastReplicated((v2, v3))
     most_replicated = equations.MostReplicated((least_replicated,))
-    system = equations.EquationSystem(assignments={v0: layout},
-                                      equations=[Eq(v1, most_replicated)])
+    system = equations.EquationSystem(
+        assignments={v0: layout},
+        constraints=[Eq(v1, most_replicated)],
+    )
     self.assertSequenceEqual(system.unknowns(), [v1, v2, v3])
 
   def test_intersection_of_conflicting_systems_is_unsatisfiable(self):
@@ -143,17 +143,17 @@ class EquationSystemTest(parameterized.TestCase):
     layout0, layout1, layout2 = [
         RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2, 3)
     ]
-    system0 = equations.EquationSystem(equations=[Eq(v0, layout0)])
+    system0 = equations.EquationSystem(constraints=[Eq(v0, layout0)])
     system1 = equations.EquationSystem(
         assignments={v2: layout2},
-        equations=[Eq(v1, layout1)],
+        constraints=[Eq(v1, layout1)],
     )
     system_intersection = system0 & system1
     self.assertEqual(
         system_intersection,
         equations.EquationSystem(
             assignments={v2: layout2},
-            equations=[Eq(v0, layout0), Eq(v1, layout1)],
+            constraints=[Eq(v0, layout0), Eq(v1, layout1)],
         ),
     )
     self.assertSequenceEqual(system0.unknowns(), [v0])
@@ -167,7 +167,7 @@ class EquationSystemTest(parameterized.TestCase):
     layout1 = RL(mgpu.WGStridedFragLayout(shape, vec_size=1))
     with self.subTest("most-replicated-expression-exists"):
       system = equations.EquationSystem(
-          equations=[Eq(v0, equations.MostReplicated((layout0, layout1)))],
+          constraints=[Eq(v0, equations.MostReplicated((layout0, layout1)))],
       )
       self.assertEqual(
           equations.reduce(system),
@@ -176,7 +176,7 @@ class EquationSystemTest(parameterized.TestCase):
 
     with self.subTest("most-replicated-expression-is-unique-expression"):
       system = equations.EquationSystem(
-          equations=[Eq(v0, equations.MostReplicated((layout0,)))],
+          constraints=[Eq(v0, equations.MostReplicated((layout0,)))],
       )
       self.assertEqual(
           equations.reduce(system),
@@ -185,7 +185,7 @@ class EquationSystemTest(parameterized.TestCase):
 
     with self.subTest("most-replicated-expression-does-not-exist"):
       system = equations.EquationSystem(
-          equations=[Eq(v0, equations.MostReplicated((layout1, v0)))],
+          constraints=[Eq(v0, equations.MostReplicated((layout1, v0)))],
       )
       self.assertEqual(equations.reduce(system), system)
 
@@ -196,7 +196,7 @@ class EquationSystemTest(parameterized.TestCase):
     layout1 = RL(mgpu.WGStridedFragLayout(shape, vec_size=1))
     with self.subTest("least-replicated-expression-exists"):
       system = equations.EquationSystem(
-          equations=[Eq(v0, equations.LeastReplicated([layout0, layout1]))],
+          constraints=[Eq(v0, equations.LeastReplicated([layout0, layout1]))],
       )
       self.assertEqual(
           equations.reduce(system),
@@ -205,7 +205,7 @@ class EquationSystemTest(parameterized.TestCase):
 
     with self.subTest("least-replicated-expression-is-unique-expression"):
       system = equations.EquationSystem(
-          equations=[Eq(v0, equations.LeastReplicated((layout0,)))],
+          constraints=[Eq(v0, equations.LeastReplicated((layout0,)))],
       )
       self.assertEqual(
           equations.reduce(system),
@@ -214,7 +214,7 @@ class EquationSystemTest(parameterized.TestCase):
 
     with self.subTest("least-replicated-expression-does-not-exist"):
       system = equations.EquationSystem(
-          equations=[Eq(v0, equations.LeastReplicated((layout0, v0)))],
+          constraints=[Eq(v0, equations.LeastReplicated((layout0, v0)))],
       )
       self.assertEqual(equations.reduce(system), system)
 
@@ -516,30 +516,39 @@ class EquationSystemTest(parameterized.TestCase):
     )
 
   def test_saturate_divides_constraints_for_equal_vars(self):
+    def equals(a, b):
+      return equations.Equals(equations.Variable(a), equations.Variable(b))
     def divides(var, dims):
       return equations.Divides(equations.Variable(var), dims)
-    def system(equal_vars, constraints):
-      return equations.EquationSystem(
-          equations=[
-              equations.Equation(equations.Variable(a), equations.Variable(b))
-              for a, b in equal_vars
-          ],
-          constraints=constraints,
-      )
 
     # One equality
-    s = system([(0, 1)], [divides(0, (1,))])
+    s = equations.EquationSystem(
+        constraints=[
+            equals(0, 1),
+            divides(0, (1,)),
+        ],
+    )
     got = equations.saturate_divides_constraints_for_equal_vars(s)
-    want = [divides(0, (1,)), divides(1, (1,))]
-    self.assertEqual(got.equations, s.equations)
+    want = [equals(0, 1), divides(0, (1,)), divides(1, (1,))]
     self.assertEqual(got.constraints, want)
 
     # Five transitively equal variables and one disconnected one.
-    s = system(
-        [(0, 1), (2, 3), (2, 4), (1, 4)], [divides(0, (1,)), divides(5, (1,))]
+    s = equations.EquationSystem(
+        constraints=[
+            equals(0, 1),
+            equals(2, 3),
+            equals(2, 4),
+            equals(1, 4),
+            divides(0, (1,)),
+            divides(5, (1,)),
+        ],
     )
     got = equations.saturate_divides_constraints_for_equal_vars(s)
     want = [
+        equals(0, 1),
+        equals(2, 3),
+        equals(2, 4),
+        equals(1, 4),
         divides(0, (1,)),
         divides(1, (1,)),
         divides(2, (1,)),
@@ -547,7 +556,6 @@ class EquationSystemTest(parameterized.TestCase):
         divides(4, (1,)),
         divides(5, (1,)),
     ]
-    self.assertEqual(got.equations, s.equations)
     self.assertEqual(got.constraints, want)
 
 

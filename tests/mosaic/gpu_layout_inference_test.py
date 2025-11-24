@@ -66,7 +66,7 @@ def undefs(*tys: ir.Type) -> list[ir.Value]:
 
 V = eqns.Variable
 H = layout_inference.Hint
-E = eqns.Equation
+E = eqns.Equals
 RL = eqns.RegisterLayout
 
 
@@ -754,7 +754,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     assignments, _ = layout_inference.find_assignments_for(
         {variable},
         eqns.EquationSystem(
-            equations=[
+            constraints=[
                 E(variable, RL(mgpu.WGMMA_ROW_LAYOUT)),
                 E(variable, RL(mgpu.WGMMA_COL_LAYOUT)),
             ]
@@ -775,7 +775,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     assignments, _ = layout_inference.find_assignments_for(
         {v0},
         eqns.EquationSystem(
-            equations=[
+            constraints=[
                 E(
                     v0,
                     eqns.MostReplicated(

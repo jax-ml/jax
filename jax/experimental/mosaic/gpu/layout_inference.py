@@ -1052,12 +1052,12 @@ def _vector_reduction_equation_system(
   return eqns.EquationSystem(), {in_variable: [in_variable.key]}, []
 
 
-def _reduction_equation_and_hint(
+def _reduction_constraint_and_hint(
     larger: eqns.Variable,
     smaller: eqns.Variable,
     larger_shape: tuple[int, ...],
-    reduction_dims: tuple[int, ...]
-) -> tuple[eqns.Equation, Hint]:
+    reduction_dims: tuple[int, ...],
+) -> tuple[eqns.Constraint, Hint]:
   reduce_expr = eqns.Reduce(larger, reduction_dims)
   # There are always many options for broadcasting a layout, so we can only
   # derive a broadcast hint in the out_variable -> source_variable direction.
@@ -1066,7 +1066,7 @@ def _reduction_equation_and_hint(
   )
   broadcast_expr = eqns.BroadcastInDim(smaller, broadcast_dims, larger_shape)
   broadcast_hint = Hint(variable=larger, expression=broadcast_expr)
-  return eqns.Equation(lhs=smaller, rhs=reduce_expr), broadcast_hint
+  return eqns.Equals(lhs=smaller, rhs=reduce_expr), broadcast_hint
 
 
 @_add_equation_system_derivation_rule(vector.MultiDimReductionOp)
@@ -1081,15 +1081,17 @@ def _multi_dim_reduction_equation_system(
   source_variable = eqns.Variable(source)
   out_variable = eqns.Variable(out)
 
-  reduction_equation, broadcast_hint = _reduction_equation_and_hint(
-      source_variable, out_variable,
-      tuple(ir.ShapedType(op.source.type).shape), tuple(op.reduction_dims)
+  reduction_constraint, broadcast_hint = _reduction_constraint_and_hint(
+      source_variable,
+      out_variable,
+      tuple(ir.ShapedType(op.source.type).shape),
+      tuple(op.reduction_dims),
   )
   # TODO(bchetioui): in the future, we may need to add rules that prevent
   # strided layouts from being chosen---since trying to reduce a strided layout
   # may cause us to raise an Exception at the moment.
   return (
-      eqns.EquationSystem(equations=[reduction_equation]),
+      eqns.EquationSystem(constraints=[reduction_constraint]),
       {source_variable: [source], out_variable: [acc, out]},
       [broadcast_hint],
   )
@@ -1108,13 +1110,16 @@ def _broadcast_in_dim_equation_system(
       i for i in range(len(out_shape)) if i not in op.broadcast_dimensions
   )
 
-  reduction_equation, broadcast_hint = _reduction_equation_and_hint(
+  reduction_constraint, broadcast_hint = _reduction_constraint_and_hint(
       out_variable, source_variable, out_shape, reduction_dims
   )
 
   return (
-      eqns.EquationSystem(equations=[reduction_equation]),
-      {source_variable: [source_variable.key], out_variable: [out_variable.key]},
+      eqns.EquationSystem(constraints=[reduction_constraint]),
+      {
+          source_variable: [source_variable.key],
+          out_variable: [out_variable.key],
+      },
       [broadcast_hint],
   )
 
@@ -1153,9 +1158,9 @@ def _shape_cast_equation_system(
 
   return (
       eqns.EquationSystem(
-          equations=[
-              eqns.Equation(lhs=out_variable, rhs=in_to_out),
-              eqns.Equation(lhs=in_variable, rhs=out_to_in),
+          constraints=[
+              eqns.Equals(lhs=out_variable, rhs=in_to_out),
+              eqns.Equals(lhs=in_variable, rhs=out_to_in),
           ],
       ),
       {in_variable: [in_variable.key], out_variable: [out_variable.key]},
@@ -1196,7 +1201,7 @@ def _custom_primitive_equation_system(
     op: mgpu.CustomPrimitiveOp,
 ) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
   assignments: dict[eqns.Variable, eqns.Constant] = {}
-  equations: list[eqns.Equation] = []
+  constraints: list[eqns.Constraint] = []
   in_layouts = iter(op.in_layouts)
   in_transforms = iter(op.in_transforms)
   variables: list[eqns.Variable] = []
@@ -1220,7 +1225,7 @@ def _custom_primitive_equation_system(
       value_site = ValueSite(op, VariableType.OPERAND, i)
       source_var = ctx.producer_ref(value_site)
       v = eqns.Variable(value_site)
-      equations.append(eqns.Equation(lhs=source_var, rhs=v))
+      constraints.append(eqns.Equals(lhs=source_var, rhs=v))
       variables.append(v)
       transforms = next(in_transforms)
       ref_ty = value_site.value.type
@@ -1236,7 +1241,7 @@ def _custom_primitive_equation_system(
           layouts_lib.from_layout_attr(next(out_layouts))
       )
   return (
-      eqns.EquationSystem(equations=equations, assignments=assignments),
+      eqns.EquationSystem(assignments, constraints),
       {v: [v.key] for v in variables},
       [],
   )
@@ -1512,11 +1517,11 @@ def _memref_transpose_op_equation_system(
     return (eqns.EquationSystem(), {source_var: [source, dest]}, [])
 
   dest_var = eqns.Variable(dest)
-  equations = [
-      eqns.Equation(source_var, eqns.Transpose(dest_var)),
-      eqns.Equation(eqns.Transpose(source_var), dest_var),
+  constraints = [
+      eqns.Equals(eqns.Transpose(source_var), dest_var),
+      eqns.Equals(source_var, eqns.Transpose(dest_var)),
   ]
-  system = eqns.EquationSystem(equations=equations)
+  system = eqns.EquationSystem(constraints=constraints)
   return system, {source_var: [source], dest_var: [dest]}, []
 
 

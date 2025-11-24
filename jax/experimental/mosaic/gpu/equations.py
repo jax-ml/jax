@@ -340,6 +340,21 @@ def reduce_expression(
     case _:
       assert_never(expr)
 
+@dataclasses.dataclass(frozen=True)
+class Equals:
+  """States that `lhs` and `rhs` are equal."""
+  lhs: Expression
+  rhs: Expression
+
+  def holds(self) -> bool | None:
+    if self.lhs == self.rhs:
+      return True
+    if isinstance(self.lhs, Constant) and isinstance(self.rhs, Constant):
+      return False
+    return None
+
+  def __str__(self):
+    return f"Equals({self.lhs} == {self.rhs})"
 
 _SUPPORTED_TILED_RELAYOUTS = frozenset([
     # Transposed layouts.
@@ -548,7 +563,7 @@ class Divides:
     return f"{self.tiling_multiple} % {self.expr} == 0"
 
 
-Constraint = Relayout | NotOfType | IsTransferable | Divides
+Constraint = Equals | Relayout | NotOfType | IsTransferable | Divides
 
 
 def reduce_constraint(
@@ -558,6 +573,14 @@ def reduce_constraint(
 
   new_constraint: Constraint
   match constraint:
+    case Equals(lhs=lhs, rhs=rhs):
+      lhs_red = reduce_expression(lhs, assignments)
+      if isinstance(lhs_red, Unsatisfiable):
+        return Unsatisfiable()
+      rhs_red = reduce_expression(rhs, assignments)
+      if isinstance(rhs_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = Equals(lhs_red, rhs_red)
     case Relayout(source=source, target=target):
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
@@ -591,51 +614,6 @@ def reduce_constraint(
   return Tautological() if constraint_holds else Unsatisfiable()
 
 
-@dataclasses.dataclass(frozen=True)
-class Equation:
-  lhs: Expression
-  rhs: Expression
-
-  def __str__(self):
-    return f"{self.lhs} == {self.rhs}"
-
-
-def reduce_equation(
-    eq: Equation, assignments: dict[Variable, Constant]
-) -> Solution:
-  """Reduces an equation.
-
-  Args:
-    eq: the equation to reduce.
-    assignments: a set of known variable assignments.
-
-  Returns:
-    A Solution object representing the result of the evaluation. That is:
-      - Unsatisfiable(): if the equation is unsatisfiable.
-      - Tautological(): if the equation is tautological.
-      - Satisfiable(): if the equation is satisfiable by assigning a value to
-          a variable.
-      - Unknown(): if the equation contains remaining unknown variables.
-  """
-  lhs = reduce_expression(eq.lhs, assignments)
-  rhs = reduce_expression(eq.rhs, assignments)
-  match (lhs, rhs):
-    case (Variable(), Constant()):
-      return SatisfiedBy((lhs, rhs))
-    case (Constant(), Variable()):
-      return SatisfiedBy((rhs, lhs))
-    case (Constant(), Constant()) if lhs != rhs:
-      return Unsatisfiable()
-    case _ if isinstance(lhs, Unsatisfiable) or isinstance(rhs, Unsatisfiable):
-      return Unsatisfiable()
-    case _ if lhs == rhs:
-      return Tautological()
-    case _:
-      # This is covered above. Add a check here to appease the type checker.
-      assert not isinstance(lhs, Unsatisfiable) and not isinstance(rhs, Unsatisfiable)
-      return Unknown(Equation(lhs, rhs))
-
-
 @dataclasses.dataclass
 class EquationSystem:
   """An equation system contains a set of equations and assignments.
@@ -650,7 +628,6 @@ class EquationSystem:
   assignments: dict[Variable, Constant] = dataclasses.field(
       default_factory=dict
   )
-  equations: list[Equation] = dataclasses.field(default_factory=list)
   constraints: Sequence[Constraint] = dataclasses.field(default_factory=list)
 
   def unknowns(self) -> list[Variable]:
@@ -681,11 +658,11 @@ class EquationSystem:
           extract_variables(e)
         case _:
           assert_never(expr)
-    for equation in self.equations:
-      extract_variables(equation.lhs)
-      extract_variables(equation.rhs)
     for constraint in self.constraints:
       match constraint:
+        case Equals(lhs=lhs, rhs=rhs):
+          extract_variables(lhs)
+          extract_variables(rhs)
         case Relayout(source=source, target=target):
           extract_variables(source)
           extract_variables(target)
@@ -706,7 +683,6 @@ class EquationSystem:
         return Unsatisfiable()
     return EquationSystem(
         assignments=self.assignments | other.assignments,
-        equations=self.equations + other.equations,
         constraints=[*self.constraints, *other.constraints],
     )
 
@@ -715,9 +691,6 @@ class EquationSystem:
     r += "  assignments:\n"
     for assignment, constant in self.assignments.items():
       r += f"    {assignment} ⟵ {constant}\n"
-    r += "  equations:\n"
-    for equation in self.equations:
-      r += f"    {equation}\n"
     r += "  constraints:\n"
     for constraint in self.constraints:
       r += f"    {constraint}\n"
@@ -727,16 +700,6 @@ class EquationSystem:
 class Unsatisfiable:
   def __and__(self, other: EquationSystem | Unsatisfiable) -> Unsatisfiable:
     return self
-
-
-@dataclasses.dataclass(frozen=True)
-class SatisfiedBy:
-  assignment: tuple[Variable, Constant]
-
-
-@dataclasses.dataclass(frozen=True)
-class Unknown:
-  equation: Equation
 
 
 class Tautological:
@@ -754,14 +717,6 @@ def non_splat_variables(
         assert isinstance(var, Variable)  # make pytype happy
         vars.add(var)
   return vars
-
-
-# The result of reducing an equation---and by extension, a system of
-# equations. An equation can either be unsatisfiable (i.e. there exists no
-# assignment for which it holds), satisfied by an assignment, unknown (i.e.
-# still undetermined), or tautological (i.e. the equation is guaranteed to
-# hold for any assignment).
-Solution = Unsatisfiable | SatisfiedBy | Unknown | Tautological
 
 
 def _has_relayout_of_non_splat_to_splat(constraints: Sequence[Constraint]) -> bool:
@@ -854,11 +809,14 @@ def compute_transitively_equal_vars(
       parent[root2] = root1
 
   all_vars: set[Variable] = set()
-  for eq in system.equations:
-    if isinstance(eq.lhs, Variable) and isinstance(eq.rhs, Variable):
-      all_vars.add(eq.lhs)
-      all_vars.add(eq.rhs)
-      union(eq.lhs, eq.rhs)
+  for constraint in system.constraints:
+    match constraint:
+      case Equals(lhs=Variable() as lhs, rhs=Variable() as rhs):
+        assert isinstance(lhs, Variable)  # make pytype happy
+        assert isinstance(rhs, Variable)  # make pytype happy
+        all_vars.add(lhs)
+        all_vars.add(rhs)
+        union(lhs, rhs)
 
   # Group variables by their component representative.
   components: dict[Variable, list[Variable]] = {}
@@ -934,33 +892,28 @@ def _reduce_system_once(
     - None: if the equation system is not known unsatisfiable, but hasn't been
       reduced.
   """
-  changed = False
-  assignments: dict[Variable, Constant] = {}
-  equations: list[Equation] = []
-  for equation in equation_system.equations:
-    match reduce_equation(equation, equation_system.assignments):
-      case Unsatisfiable():
-        return Unsatisfiable()
-      case Tautological():
-        changed = True
-      case SatisfiedBy() as result:
-        variable, expression = result.assignment
-        if variable in assignments and assignments[variable] != expression:
-          return Unsatisfiable()
-        assignments[variable] = expression
-        changed = True
-      case Unknown(equation=reduced_equation):
-        equations.append(reduced_equation)
-        changed |= reduced_equation != equation
-      case _ as never:
-        assert_never(never)
-
-  assignments |= equation_system.assignments
+  assignments = equation_system.assignments
   constraints: list[Constraint] = []
+  changed = False
+
+  def try_assign(var: Variable, cst: Constant) -> bool:
+    if var in assignments and assignments[var] != cst:
+      return False
+    assignments[var] = cst
+    return True
+
   for constraint in equation_system.constraints:
     match reduce_constraint(constraint, assignments):
       case Unsatisfiable():
         return Unsatisfiable()
+      case Equals(lhs=Variable() as var, rhs=Constant() as cst):
+        if not try_assign(var, cst):
+          return Unsatisfiable()
+        changed = True
+      case Equals(lhs=Constant() as cst, rhs=Variable() as var):
+        if not try_assign(var, cst):
+          return Unsatisfiable()
+        changed = True
       case Tautological():
         changed = True
       case _ as new_constraint:
@@ -979,7 +932,6 @@ def _reduce_system_once(
   if changed:
     return EquationSystem(
         assignments=assignments | equation_system.assignments,
-        equations=equations,
         constraints=constraints,
     )
   return None
