@@ -1723,7 +1723,8 @@ def _dynamic_update_slice_unreduced_rule(out_s, operand, update, *start_indices)
         " same axes. Got operand sharding"
         f" {operand.str_short(mesh_axis_types=True)} and update sharding"
         f" {update.str_short(mesh_axis_types=True)}.")
-  return out_s
+  return out_s.update(spec=out_s.spec.update(
+      unreduced=operand.sharding.spec.unreduced))
 
 def _dynamic_update_slice_reduced_rule(out_s, operand, update, *start_indices):
   if operand.sharding.spec.reduced != update.sharding.spec.reduced:

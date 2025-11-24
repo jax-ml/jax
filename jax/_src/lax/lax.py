@@ -7498,7 +7498,12 @@ def _transpose_sharding_rule(operand, *, permutation):
   return operand.sharding.update(spec=o_spec.update(partitions=new_spec))
 
 def _transpose_unreduced_rule(out_s, operand, *, permutation):
-  return out_s
+  return out_s.update(spec=out_s.spec.update(
+      unreduced=operand.sharding.spec.unreduced))
+
+def _transpose_reduced_rule(out_s, operand, *, permutation):
+  return out_s.update(spec=out_s.spec.update(
+      reduced=operand.sharding.spec.reduced))
 
 def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   operand, = batched_args
@@ -7524,7 +7529,8 @@ transpose_p = standard_primitive(
     _transpose_shape_rule, input_dtype, 'transpose',
     sharding_rule=_transpose_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'transpose'),
-    unreduced_rule=_transpose_unreduced_rule)
+    unreduced_rule=_transpose_unreduced_rule,
+    reduced_rule=_transpose_reduced_rule)
 ad.deflinear2(transpose_p,
               lambda t, _, permutation: [transpose(t, np.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule

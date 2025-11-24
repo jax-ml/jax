@@ -4583,6 +4583,29 @@ class ShardMapTest(jtu.JaxTestCase):
 
     jax.jit(jax.grad(loss_fn, argnums=1))(inputs, params, targets)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_transpose_unreduced_shmap(self, mesh):
+    arr1 = jax.device_put(np.arange(8.).reshape(2, 4), P(reduced={'x'}))
+    arr2 = jax.device_put(np.arange(12.).reshape(2, 6), P(None, 'x'))
+
+    @jax.shard_map(out_specs=P(None, 'x'))
+    def f(x, y):
+      x_ = x.T
+      return jnp.dot(x_, y)
+
+    @jax.jit
+    def g(x, y):
+      return f(x, y).sum()
+
+    out = g(arr1, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+    self.assertArraysEqual(out, (arr1.T @ arr2).sum())
+
+    out1, out2 = jax.jit(jax.grad(g, argnums=(0, 1)))(arr1, arr2)
+    self.assertEqual(out1.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
+    self.assertEqual(out2.sharding, arr2.sharding)
+
 
 class FunSpec(NamedTuple):
   name: str
