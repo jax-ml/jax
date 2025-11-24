@@ -165,4 +165,4 @@ For a comprehensive walkthrough of the concepts, theory, and best practices, ple
 * **Recursive checkpointing** - Advanced memory optimization techniques
 * **Practical notes** - Integration with `jax.jit` and `jax.lax.scan`
 
-The following sections demonstrate these concepts interactively with visualizations.
+The preceding sections of this notebook demonstrate some of these concepts interactively.
