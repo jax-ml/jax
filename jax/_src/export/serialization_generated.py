@@ -21,7 +21,7 @@ import flatbuffers
 from flatbuffers.compat import import_numpy
 np = import_numpy()
 
-class PyTreeDefKind:
+class PyTreeDefKind(object):
     leaf = 0
     none = 1
     tuple = 2
@@ -30,12 +30,12 @@ class PyTreeDefKind:
     custom = 5
 
 
-class AbstractValueKind:
+class AbstractValueKind(object):
     shapedArray = 0
     abstractToken = 1
 
 
-class DType:
+class DType(object):
     bool = 0
     i8 = 1
     i16 = 2
@@ -68,18 +68,25 @@ class DType:
     key_unsafe_rbg = 29
 
 
-class ShardingKind:
+class MemorySpace(object):
+    Missing = 0
+    Device = 1
+    Host = 2
+    Any = 3
+
+
+class ShardingKind(object):
     unspecified = 0
     hlo_sharding = 1
 
 
-class DisabledSafetyCheckKind:
+class DisabledSafetyCheckKind(object):
     platform = 0
     custom_call = 1
     shape_assertions = 2
 
 
-class PyTreeDef:
+class PyTreeDef(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -214,7 +221,7 @@ def PyTreeDefEnd(builder):
 
 
 
-class AbstractValue:
+class AbstractValue(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -266,8 +273,15 @@ class AbstractValue:
             return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
         return 0
 
+    # AbstractValue
+    def MemorySpace(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
+        return 0
+
 def AbstractValueStart(builder):
-    builder.StartObject(3)
+    builder.StartObject(4)
 
 def AbstractValueAddKind(builder, kind):
     builder.PrependInt8Slot(0, kind, 0)
@@ -281,12 +295,15 @@ def AbstractValueStartShapeVector(builder, numElems):
 def AbstractValueAddDtype(builder, dtype):
     builder.PrependInt8Slot(2, dtype, 0)
 
+def AbstractValueAddMemorySpace(builder, memorySpace):
+    builder.PrependInt8Slot(3, memorySpace, 0)
+
 def AbstractValueEnd(builder):
     return builder.EndObject()
 
 
 
-class Sharding:
+class Sharding(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -355,7 +372,7 @@ def ShardingEnd(builder):
 
 
 
-class Effect:
+class Effect(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -391,7 +408,7 @@ def EffectEnd(builder):
 
 
 
-class DisabledSafetyCheck:
+class DisabledSafetyCheck(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -437,7 +454,7 @@ def DisabledSafetyCheckEnd(builder):
 
 
 
-class Exported:
+class Exported(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -460,6 +477,7 @@ class Exported:
     # Note that this field has different semantics and purpose from
     # `mlir_module_serialization_version`, which encodes
     # the calling convention of the `mlir_module_serialized`.
+    # See comments in serialization.py for more details.
     # Exported
     def SerializationVersion(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
@@ -543,7 +561,7 @@ class Exported:
         return o == 0
 
     # Exported
-    def NrDevices(self):
+    def NrDevicesShort(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Int16Flags, o + self._tab.Pos)
@@ -767,8 +785,15 @@ class Exported:
             return obj
         return None
 
+    # Exported
+    def NrDevices(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(40))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
 def ExportedStart(builder):
-    builder.StartObject(18)
+    builder.StartObject(19)
 
 def ExportedAddSerializationVersion(builder, serializationVersion):
     builder.PrependUint16Slot(0, serializationVersion, 0)
@@ -794,8 +819,8 @@ def ExportedAddOutAvals(builder, outAvals):
 def ExportedStartOutAvalsVector(builder, numElems):
     return builder.StartVector(4, numElems, 4)
 
-def ExportedAddNrDevices(builder, nrDevices):
-    builder.PrependInt16Slot(6, nrDevices, 0)
+def ExportedAddNrDevicesShort(builder, nrDevicesShort):
+    builder.PrependInt16Slot(6, nrDevicesShort, 0)
 
 def ExportedAddInShardings(builder, inShardings):
     builder.PrependUOffsetTRelativeSlot(7, flatbuffers.number_types.UOffsetTFlags.py_type(inShardings), 0)
@@ -853,6 +878,9 @@ def ExportedAddUsesGlobalConstants(builder, usesGlobalConstants):
 
 def ExportedAddVjp(builder, vjp):
     builder.PrependUOffsetTRelativeSlot(17, flatbuffers.number_types.UOffsetTFlags.py_type(vjp), 0)
+
+def ExportedAddNrDevices(builder, nrDevices):
+    builder.PrependUint32Slot(18, nrDevices, 0)
 
 def ExportedEnd(builder):
     return builder.EndObject()
