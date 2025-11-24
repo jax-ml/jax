@@ -183,9 +183,9 @@ class MemorySpace(enum.Enum):
   def from_type(self, ty):
     return pallas_core.MemoryRef(ty, memory_space=self)
 
-  def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
+  def __call__(self, shape: Sequence[int], dtype: jnp.dtype):
     # A convenience function for constructing MemoryRef types of ShapedArrays.
-    return self.from_type(jax_core.ShapedArray(shape, dtype))
+    return self.from_type(jax_core.ShapedArray(tuple(shape), dtype))
 
 class dma_semaphore(pallas_core.semaphore_dtype): pass
 
