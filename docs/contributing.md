@@ -23,6 +23,13 @@ For other proposals, we ask that you first open a GitHub
 [Discussion](https://github.com/jax-ml/jax/discussions)
 to seek feedback on your planned contribution.
 
+## Can I contribute AI generated code?
+
+All submissions to Google Open Source projects need to follow Google's [Contributor License
+Agreement (CLA)](https://cla.developers.google.com/), in which contributors agree that their
+contribution is an original work of authorship. This doesn’t prohibit the use of coding
+assistance tools, but what’s submitted does need to be a contributor's original creation.
+
 ## Contributing code using pull requests
 
 We do all of our development using git, so basic knowledge is assumed.
