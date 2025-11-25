@@ -307,3 +307,31 @@ def jax_flax_axes_scan_call(body_fun: Callable,
     return repro_bypass_wrapper(axes_scan.scan)(body_fun, *scan_args, **scan_kwargs)(*args, **kwargs)
   except ImportError:
     raise NotImplementedError("flax.core.axes_scan.scan is not available.")
+
+@partial(traceback_util.repro.boundary, api_name="jax_vjphiprimitive_call",
+         map_user_func_args=(
+             lambda toapply, expand, fwd, bwd, bwd_retval, *args, **_: (
+                   toapply(expand), toapply(fwd), toapply(bwd), toapply(bwd_retval), *args)))
+def jax_vjphiprimitive_call(expand: Callable, fwd: Callable, bwd: Callable,
+                            bwd_retval: Callable,
+                            *args, in_avals, out_aval):
+  from jax._src import hijax  # type: ignore
+  from jax._src import core  # type: ignore
+  class ReproVJPHiPrimitive(hijax.VJPHiPrimitive):
+    def __init__(self):
+      self.in_avals = in_avals
+      self.out_aval = out_aval
+      self.params = {}
+      super().__init__()
+
+    def vjp_fwd(self, *args):
+      res, residuals = fwd(self, *args)
+      return res, residuals
+
+    def expand(self, *args):
+      res = expand(self, *args)
+      return res
+
+  hi_prim = ReproVJPHiPrimitive()
+  return repro_bypass_wrapper(core.Primitive._true_bind)(hijax.call_hi_primitive_p,
+                                                         *args, prim=hi_prim)

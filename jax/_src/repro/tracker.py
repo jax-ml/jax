@@ -750,6 +750,14 @@ def true_bind_wrapper(actual_true_bind: Callable) -> Callable:
       return actual_true_bind(*prim_and_args, **params)
     # We should not be seeing higher-order primitives in USER functions
     prim, *args = prim_and_args
+    if prim.name == "call_hi_primitive":
+      from jax._src.repro import repro_api
+      hi_prim = params["prim"]
+      hi_prim_bwd = hi_prim.vjp_bwd.__func__ if hasattr(hi_prim, "vjp_bwd") else None
+      hi_prim_bwd_retval = hi_prim.vjp_bwd_retval.__func__ if hasattr(hi_prim, "vjp_bwd_retval") else None
+      return repro_api.jax_vjphiprimitive_call(
+        hi_prim.expand.__func__, hi_prim.vjp_fwd.__func__, hi_prim_bwd, hi_prim_bwd_retval,
+        *args, in_avals=hi_prim.in_avals, out_aval=())
 
     if (config.enable_checks.value and
         is_higher_order_primitive(prim, args, params)):
@@ -764,6 +772,36 @@ def true_bind_wrapper(actual_true_bind: Callable) -> Callable:
 
   true_bind.real_boundary_fun = actual_true_bind
   return true_bind
+
+
+_call_hi_primitive_handler = None
+def initialize_hijax_handling():
+  from jax._src import hijax
+
+  def call_hi_primitive(args, prim):
+
+    class ReproVJPHiPrimitive(hijax.VJPHiPrimitive):
+      def __init__(self):
+        self.user_prim = prim
+        self.fwd_func = wrap_callable(prim.vjp_fwd, is_user=True)
+        self.expand_func = wrap_callable(prim.expand, is_user=True)
+        self.in_avals = prim.in_avals
+        self.out_aval = prim.out_aval
+        self.params = {}
+        super().__init__()
+
+      def vjp_fwd(self, *args):
+        res, residuals = self.fwd_func(*args)
+        return res, residuals
+
+      def expand(self, *args):
+        return self.expand_func(*args)
+
+    return ReproVJPHiPrimitive()
+
+  global _call_hi_primitive_handler
+  _call_hi_primitive_handler = call_hi_primitive
+lazy_initializers.append(initialize_hijax_handling)
 
 
 UNKNOWN_FUN_NAME = "unknown"

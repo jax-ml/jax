@@ -2532,6 +2532,138 @@ class ReproTest(jtu.JaxTestCase):
 
     self.collect_and_check(jax.jit(fuser.fuse(g)), x, y, z)
 
+  @jtu.parameterized_filterable(
+    kwargs=[dict(with_jit=with_jit,
+                variant=variant)
+                for with_jit in [False, True]
+                for variant in ["base", "vmap", "jvp", "grad"]
+    ])
+  def test_hiprimitive(self, *, with_jit: bool, variant: str):
+    self.skipTest("TODO")
+    class RaiseToStaticPower(hijax.VJPHiPrimitive):
+      def __init__(self, in_aval, *, power):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = dict(power=power)
+        super().__init__()
+
+      def expand(self, x):
+        return x ** self.power
+
+      def vjp_fwd(self, x):
+        ans = self(x)
+        return (ans, x)
+
+      def vjp_bwd(self, res, t, xbar_accum):
+        xbar = t * self.power * raise_to_static_power(res, self.power-1)
+        xbar_accum.accum(xbar)
+
+      def batch(self, _axis_data, args, in_dims):
+        in_dim, = in_dims
+        x, = args
+        return raise_to_static_power(x, self.power), in_dim
+
+      def jvp(self, primals, tangents):
+        (x,), (t,) = primals, tangents
+        return self(x), t * self.power * raise_to_static_power(x, self.power-1)
+
+    def raise_to_static_power(x, power):
+      x_aval = jax.typeof(x)
+      return RaiseToStaticPower(x_aval, power=power)(x)
+
+    def f3(x):
+      return raise_to_static_power(x, power=3)
+    def f4(x):
+      return raise_to_static_power(x, power=4)
+    if with_jit:
+      f3, f4 = jax.jit(f3), jax.jit(f3)
+
+    if variant == "base":
+      def top():
+        x = np.float32(2.)
+        return f3(x)
+    elif variant == "vmap":
+      def top():
+        xs = jnp.arange(3.0, dtype=np.float32)
+        return jax.vmap(f3)(x)
+    elif variant == "jvp":
+      def top():
+        x = np.float32(2.)
+        return jax.jvp(f3, (x,), (1., ))
+    elif variant == "grad":
+      def top():
+        x = np.float32(2.)
+        return jax.grad(f3)(x)
+
+    self.collect_and_check(top)
+
+
+  def test_hiprimitive_qarray(self):  # adapted from hijax_test.py
+    self.skipTest("TODO")
+    @dataclasses.dataclass(frozen=True)  # not NamedTuple, which is a pytree
+    class QArray:
+      qvalue: jax.Array
+      scale: jax.Array
+
+    @dataclasses.dataclass(frozen=True)
+    class QArrayTy(hijax.HiType):
+      shape: tuple[int, int]
+
+      def to_tangent_aval(self):
+        return ShapedArray(self.shape, jnp.dtype('float32'))
+
+    hijax.register_hitype(QArray, lambda q: QArrayTy(q.qvalue.shape))
+
+    def q(x):
+      return Q(jax.typeof(x))(x)
+
+    def dq(qx):
+      return DQ(jax.typeof(qx))(qx)
+
+    class Q(hijax.VJPHiPrimitive):
+      def __init__(self, unquantized_aval):
+        if unquantized_aval.dtype != jnp.dtype('float32'): raise TypeError
+        quantized_aval = QArrayTy(unquantized_aval.shape)
+        self.in_avals = (unquantized_aval,)
+        self.out_aval = quantized_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        scale = jnp.max(jnp.abs(x)) / 127
+        qvalue = jnp.round(x / scale).astype(jnp.int8)
+        return QArray(qvalue, scale)
+
+      def vjp_fwd(self, x):
+        return self(x), None
+
+      def vjp_bwd_retval(self, _, g):
+        return g,
+
+    class DQ(hijax.VJPHiPrimitive):
+      def __init__(self, quantized_aval):
+        unquantized_aval = hijax.ShapedArray(quantized_aval.shape, jnp.dtype('float32'))
+        self.in_avals = (quantized_aval,)
+        self.out_aval = unquantized_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, qx):
+        return qx.qvalue * qx.scale
+
+      def vjp_fwd(self, qx):
+        return self(qx), None
+
+      def vjp_bwd_retval(self, _, g):
+        return g,
+
+    def f(x):
+      return jnp.sum(dq(q(x)))
+
+    x = jax.random.normal(jax.random.key(0), (3, 3), dtype='float32')
+    # self.collect_and_check(f, x)
+    self.collect_and_check(jax.grad(f), x)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
