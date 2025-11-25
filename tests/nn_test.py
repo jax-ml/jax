@@ -785,6 +785,26 @@ class NNFunctionsTest(jtu.JaxTestCase):
         atol=1e-3,
     )
 
+  def testStandardizeNegativeVariance(self):
+    # This input provokes a negative variance due to floating point error
+    x = jnp.array([-11., -11., -11.]) + 3e-6
+    result = jax.nn.standardize(x)
+    self.assertFalse(jnp.any(jnp.isnan(result)))
+
+  def testStandardizeGradientStability(self):
+    # Verifies that fixing negative variance via abs() preserves gradients,
+    # unlike clipping which would result in dead gradients (zeros).
+    x = jnp.array([-11., -11., -11.]) + 3e-6
+    
+    def loss(input_x):
+      return jnp.sum(jax.nn.standardize(input_x))
+    
+    grads = jax.grad(loss)(x)
+    
+    # Assert gradients are not NaN
+    self.assertFalse(jnp.any(jnp.isnan(grads)))
+    # Assert gradients are not zero (dead)
+    self.assertFalse(jnp.all(grads == 0), "Gradients should not be zero (dead neuron issue)")
 
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
