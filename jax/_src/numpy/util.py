@@ -29,7 +29,7 @@ from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import SingleDeviceSharding
 from jax._src.util import safe_zip, safe_map, set_module, canonicalize_axis_tuple
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 from jax._src.sharding_impls import (NamedSharding, PartitionSpec as P,
                                      canonicalize_sharding)
 from jax._src.typing import (
@@ -310,15 +310,16 @@ def _where(condition: ArrayLike, x: ArrayLike, y: ArrayLike) -> Array:
     is_always_empty = False  # can fail with dynamic shapes
   return lax.select(condition, x_arr, y_arr) if not is_always_empty else x_arr
 
-def canonicalize_device_to_sharding(device: xc.Device | Sharding | None
-                                    ) -> Sharding | None:
+def canonicalize_device_to_sharding(
+    device: xc.Device | BaseSharding | None) -> BaseSharding | None:
   if isinstance(device, xc.Device):
     return SingleDeviceSharding(device)
   return device
 
-def choose_device_or_out_sharding(device: xc.Device | Sharding | None,
-                                  out_sharding: NamedSharding | P | None,
-                                  name: str) -> Sharding | NamedSharding | None:
+def choose_device_or_out_sharding(
+    device: xc.Device | BaseSharding | None,
+    out_sharding: NamedSharding | P | None,
+    name: str) -> BaseSharding | NamedSharding | None:
   if device is not None and out_sharding is not None:
     raise ValueError(
         f"Only one of `device` or `out_sharding` can be set. Got {device=} and"

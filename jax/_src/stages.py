@@ -83,7 +83,7 @@ class Executable:
     """Optionally constructs a fast c++ dispatcher."""
     return None
 
-  def input_shardings(self) -> Sequence[sharding_lib.Sharding]:
+  def input_shardings(self) -> Sequence[sharding_lib.BaseSharding]:
     """Flat sequence of input shardings.
 
     May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
@@ -92,7 +92,7 @@ class Executable:
     raise NotImplementedError(
         "compiled executable carries no input sharding information")
 
-  def output_shardings(self) -> Sequence[sharding_lib.Sharding]:
+  def output_shardings(self) -> Sequence[sharding_lib.BaseSharding]:
     """Flat sequence of output shardings.
 
     May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
@@ -768,12 +768,12 @@ class Compiled(Stage):
     return shardings_flat
 
   @property
-  def input_shardings(self):  # -> PyTree[sharding.Sharding]
+  def input_shardings(self):  # -> PyTree[sharding.BaseSharding]
     shardings_flat = self._input_shardings_flat()
     return tree_util.tree_unflatten(self.in_tree, shardings_flat)  # pytype: disable=attribute-error
 
   @property
-  def output_shardings(self):  # -> PyTree[sharding.Sharding]
+  def output_shardings(self):  # -> PyTree[sharding.BaseSharding]
     shardings_flat = self._executable._out_shardings
     return tree_util.tree_unflatten(self.out_tree, shardings_flat)  # pytype: disable=attribute-error
 

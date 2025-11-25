@@ -28,7 +28,7 @@ from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
 from jax._src.numpy import util
 from jax._src.typing import Array, ArrayLike, DTypeLike
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 
 
@@ -58,7 +58,7 @@ def _make_string_array(
     object: np.ndarray,
     dtype: DTypeLike | None = None,
     ndmin: int = 0,
-    device: xc.Device | Sharding | None = None,
+    device: xc.Device | BaseSharding | None = None,
 ) -> Array:
   if not isinstance(object, np.ndarray):
     raise TypeError(
@@ -85,7 +85,7 @@ def _make_string_array(
 @export
 def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
           order: str | None = "K", ndmin: int = 0,
-          *, device: xc.Device | Sharding | None = None,
+          *, device: xc.Device | BaseSharding | None = None,
           out_sharding: NamedSharding | P | None = None) -> Array:
   """Convert an object to a JAX array.
 
@@ -291,11 +291,11 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
 
 
 def _get_platform(
-    device_or_sharding: xc.Device | Sharding | None | str) -> str:
+    device_or_sharding: xc.Device | BaseSharding | None | str) -> str:
   """Get device_or_sharding platform or look up config.default_device.value."""
   if isinstance(device_or_sharding, xc.Device):
     return device_or_sharding.platform
-  elif isinstance(device_or_sharding, Sharding):
+  elif isinstance(device_or_sharding, BaseSharding):
     return list(device_or_sharding.device_set)[0].platform
   elif isinstance(device_or_sharding, str):
     return device_or_sharding
@@ -322,7 +322,7 @@ def _convert_to_array_if_dtype_fails(x: ArrayLike) -> ArrayLike:
 @export
 def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
             *, copy: bool | None = None,
-            device: xc.Device | Sharding | None = None,
+            device: xc.Device | BaseSharding | None = None,
             out_sharding: NamedSharding | P | None = None) -> Array:
   """Convert an object to a JAX array.
 

@@ -41,7 +41,7 @@ from jax._src.layout import AutoLayout, Format, Layout
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import empty_concrete_mesh
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 from jax._src.tree_util import broadcast_prefix, tree_flatten, tree_unflatten
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding, NamedSharding,
@@ -79,7 +79,7 @@ class Shard:
     data : The data of this shard. None if ``device`` is non-local.
   """
 
-  def __init__(self, device: Device, sharding: Sharding, global_shape: Shape,
+  def __init__(self, device: Device, sharding: BaseSharding, global_shape: Shape,
                data: None | ArrayImpl | PRNGKeyArray = None):
     self._device = device
     self._sharding = sharding
@@ -155,7 +155,7 @@ def _process_has_full_value_in_mcjax(s, shape):
 
 def _validate_shape_and_dtype_for_per_device_arrays(
     arrays: Sequence[ArrayImpl | np.ndarray | literals.TypedNdArray],
-    sharding: Sharding,
+    sharding: BaseSharding,
     aval: core.ShapedArray,
     expected_shape: Shape,
 ):
@@ -177,14 +177,14 @@ def _validate_shape_and_dtype_for_per_device_arrays(
 
 class ArrayImpl(basearray.Array):
   aval: core.ShapedArray
-  _sharding: Sharding
+  _sharding: BaseSharding
   _arrays: list[ArrayImpl]
   _committed: bool
   _skip_checks: bool
   _npy_value: np.ndarray | None
 
   @use_cpp_method()
-  def __init__(self, aval: core.ShapedArray, sharding: Sharding,
+  def __init__(self, aval: core.ShapedArray, sharding: BaseSharding,
                arrays: Sequence[ArrayImpl],
                committed: bool, _skip_checks: bool = False):
     # NOTE: the actual implementation of the constructor is moved to C++.
@@ -713,7 +713,7 @@ setattr(ArrayImpl, "__array_priority__", 100)
 # TODO(yashkatariya): Remove None from callback input type.
 
 def make_array_from_callback(
-    shape: Shape, sharding: Sharding | Format,
+    shape: Shape, sharding: BaseSharding | Format,
     data_callback: Callable[[Index | None], ArrayLike],
     dtype: DTypeLike | None = None) -> ArrayImpl:
   # pyformat: disable
@@ -764,7 +764,7 @@ def make_array_from_callback(
         "`Layout.AUTO` cannot be used in place of a device-local"
         f" layout when calling `jax.make_array_from_callback`. Got {sharding}")
   sharding = sharding.sharding if isinstance(sharding, Format) else sharding
-  if not isinstance(sharding, Sharding):
+  if not isinstance(sharding, BaseSharding):
     raise TypeError(
         f"sharding should be an instance of `jax.sharding`. Got {sharding} of"
         f" type {type(sharding)}")
@@ -987,7 +987,7 @@ def make_array_from_process_local_data(
   return tree_unflatten(treedef, out)
 
 def _array_from_process_local_data(
-    local_data: np.ndarray, sharding: Sharding,
+    local_data: np.ndarray, sharding: BaseSharding,
     global_shape: Shape | None = None) -> ArrayImpl:
   # TODO(sandler): consider supporting partially specified global_shape or
   # making local_to_global_shape available in the api.
@@ -1048,7 +1048,7 @@ def _array_from_process_local_data(
 
 
 def make_array_from_single_device_arrays(
-    shape: Shape, sharding: Sharding, arrays: Sequence[basearray.Array], *,
+    shape: Shape, sharding: BaseSharding, arrays: Sequence[basearray.Array], *,
     dtype: DTypeLike | None = None,
 ) -> ArrayImpl:
   r"""Returns a ``jax.Array`` from a sequence of ``jax.Array``\s each on a single device.
