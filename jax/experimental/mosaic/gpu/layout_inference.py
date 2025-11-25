@@ -154,42 +154,21 @@ class Hint:
     return f"{self.variable} ?= {self.expression}"
 
 
-def extract_constant_from_least_replicated_expression_for_hint(
-    expressions: tuple[cs.Expression, ...],
+def extract_constant_from_replicated_expression_for_hint(
+    expression: cs.LeastReplicated | cs.MostReplicated,
 ) -> cs.Constant | None:
+  assert len(expression.expressions) >= 1
   choices: list[cs.Constant] = []
-  for e in expressions:
+  for e in expression.expressions:
     if (red := extract_constant_for_hint(e)) is not None:
       choices.append(red)
 
   if not choices:
     return None
 
-  # We reduce the expression here in order to recover an unambiguous least
+  # We reduce the expression here in order to recover an unambiguous
   # replicated layout if it exists.
-  maybe_choice = cs.reduce_expression(cs.LeastReplicated(tuple(choices)), {})
-
-  if isinstance(maybe_choice, cs.Unsatisfiable):
-    # TODO(bchetioui): consider other choices.
-    return choices[0]
-
-  assert isinstance(maybe_choice, cs.Constant)
-  return maybe_choice
-
-
-def extract_constant_from_most_replicated_expression_for_hint(
-    expressions: tuple[cs.Expression, ...],
-) -> cs.Constant | None:
-  assert len(expressions) >= 1
-  choices: list[cs.Constant] = []
-  for e in expressions:
-    if (red := extract_constant_for_hint(e)) is not None:
-      choices.append(red)
-
-  if not choices:
-    return None
-
-  maybe_choice = cs.reduce_expression(cs.MostReplicated(tuple(choices)), {})
+  maybe_choice = cs.reduce_expression(type(expression)(tuple(choices)), {})
 
   if isinstance(maybe_choice, cs.Unsatisfiable):
     # TODO(bchetioui): consider other choices.
@@ -233,10 +212,8 @@ def extract_constant_for_hint(e: cs.Expression) -> cs.Constant | None:
   match e:
     case cs.Constant():
       return e
-    case cs.LeastReplicated():
-      return extract_constant_from_least_replicated_expression_for_hint(e.expressions)
-    case cs.MostReplicated():
-      return extract_constant_from_most_replicated_expression_for_hint(e.expressions)
+    case cs.LeastReplicated() | cs.MostReplicated():
+      return extract_constant_from_replicated_expression_for_hint(e)
     case cs.BroadcastInDim():
       return extract_constant_from_broadcast_in_dim_expression_for_hint(e)
     case cs.Variable():
