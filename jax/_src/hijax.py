@@ -38,7 +38,8 @@ from jax._src.custom_derivatives import (
 from jax._src.errors import UnexpectedTracerError
 from jax._src.state.types import AbstractRef
 from jax._src import ad_util
-from jax._src.util import safe_zip, safe_map, split_list, unzip2
+from jax._src.util import safe_zip, safe_map, split_list
+from jax._src import traceback_util
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
     broadcast_prefix, register_static, tree_map_with_path, keystr,
@@ -450,18 +451,12 @@ class VJPHiPrimitive:
     raise NotImplementedError(f"for vmap support, subclass {type(self)} must "
                               "implement `batch` or `batch_dim_rule`")
 
-  # optional dce control
-  def dce(self, used_outs):
-    used_outs_flat = tree_leaves_checked(self.out_tree, used_outs)
-    if not any(used_outs_flat):
-      return False, False, None
-    else:
-      return True, True, self
+  def jvp(self, primals, tangents):
+    raise NotImplementedError(f"for jvp support, subclass {type(self)} must "
+                              "implement `jvp`")
 
-  # optional remat control
-  def remat(self, _policy, *args):
-    return self(*args), self  # full remat by default
-
+  @partial(traceback_util.api_boundary,
+           repro_api_name="hijax.VJPHiPrimitive.__call__.trampoline")
   def __call__(self, *args):
     args_flat = tree_leaves_checked(self.in_tree, args)
     ans_flat = call_hi_primitive_p.bind(*args_flat, _prim=self)

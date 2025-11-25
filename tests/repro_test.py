@@ -48,6 +48,7 @@ from jax.sharding import PartitionSpec as P
 from jax.sharding import AxisType
 
 from jax._src import config
+from jax._src import core
 from jax._src import dtypes
 from jax._src import hashable_array
 from jax._src import literals
