@@ -710,10 +710,10 @@ class Statement(Call):
           assert not kwargs["uses_defjvps"]
           assert kwargs["jvps_count"] == 1, kwargs["jvps_count"]
           fun.preprocess_args = lambda args, kwargs: filter_statics(args, kwargs,
-                                                                   static_argnums=cjvp_kwargs["nondiff_argnums"])
+                                                                    static_argnums=cjvp_kwargs["nondiff_argnums"])
           for fun_jvp in fun_jvps:
             fun_jvp.preprocess_args = lambda args, kwargs: filter_statics(args, kwargs,
-                                                                         static_argnums=tuple(range(len(cjvp_kwargs["nondiff_argnums"]))))
+                                                                          static_argnums=tuple(range(len(cjvp_kwargs["nondiff_argnums"]))))
           dyn_args, _ = filter_statics(rest_args, {},
                                        static_argnums=cjvp_kwargs["nondiff_argnums"],
                                        static_argnames=())
@@ -736,6 +736,12 @@ class Statement(Call):
             matching = [("dots_saveable", checkpoint_policies.dots_saveable)]
           new_t_kwargs["policy"] = emitter.EmitLiterally(f"jax.checkpoint_policies.{matching[0][0]}")
           args = (f, t_args, new_t_kwargs, *rest_args)
+
+      elif self.func.api_name == "jax_hiprimitive_call":
+        # The "prim" is treated as static, and not present in the repros
+        kwargs = dict(kwargs)
+        del kwargs["prim"]
+
 
     self.args = self.normalizer_ctx.normalize_value(args, True)  # type: ignore
     self.kwargs = self.normalizer_ctx.normalize_value(kwargs, True)  # type: ignore
@@ -776,7 +782,6 @@ def true_bind_wrapper(actual_true_bind: Callable) -> Callable:
       return actual_true_bind(*prim_and_args, **params)
     # We should not be seeing higher-order primitives in USER functions
     prim, *args = prim_and_args
-
     if (config.enable_checks.value and
         is_higher_order_primitive(prim, args, params)):
       _thread_local_state.warn_or_error(
@@ -1175,6 +1180,38 @@ def custom_vjp_trampoline(real_boundary_fun: Callable):
   return jax_custom_vjp_call_trampoline
 
 boundary_trampolines["jax.custom_vjp.__call__"] = custom_vjp_trampoline
+
+def hiprimitive_call_trampoline(real_boundary_fun: Callable):
+  def hijax_hiprimitive_call_trampoline(*args, **kwargs):
+    from jax._src import api_util  # type: ignore
+    from jax._src import hijax  # type: ignore
+    from jax._src.repro.repro_api import jax_hiprimitive_call
+    hi_prim, *rest_args = args
+
+    if hasattr(hi_prim, "_expand_fun"):  # It is a ReproVJPHiPrimitive
+      hi_prim_expand = hi_prim._expand_fun.fun if isinstance(hi_prim._expand_fun, Func) else hi_prim._expand_fun
+      hi_prim_jvp = hi_prim._jvp_fun.fun if isinstance(hi_prim._jvp_fun, Func) else hi_prim._jvp_fun
+      hi_prim_batch = hi_prim._batch_fun.fun if isinstance(hi_prim._batch_fun, Func) else hi_prim._batch_fun
+      hi_prim_vjp_fwd = hi_prim._fwd_fun.fun if isinstance(hi_prim._fwd_fun, Func) else hi_prim._fwd_fun
+      hi_prim_bwd_retval = hi_prim._bwd_retval_fun.fun if isinstance(hi_prim._bwd_retval_fun, Func) else hi_prim._bwd_retval_fun
+    else:
+      hi_prim_expand = hi_prim.expand.__func__
+      hi_prim_jvp = hi_prim.jvp.__func__
+      hi_prim_batch = hi_prim.batch.__func__
+      hi_prim_vjp_fwd = hi_prim.vjp_fwd.__func__
+      hi_prim_bwd_retval = hi_prim.vjp_bwd_retval.__func__
+      if type(hi_prim).vjp_bwd is not hijax.VJPHiPrimitive.vjp_bwd:
+        raise NotImplementedError("vjp_bwd")  # We support only vj_bwd_retval for now
+
+    return jax_hiprimitive_call(
+      hi_prim_expand, hi_prim_jvp, hi_prim_batch, hi_prim_vjp_fwd, hi_prim_bwd_retval,
+      *rest_args, in_avals=hi_prim.in_avals, out_aval=hi_prim.out_aval,
+      params=hi_prim.params, prim=hi_prim)
+
+  hijax_hiprimitive_call_trampoline.real_boundary_fun = real_boundary_fun
+  return hijax_hiprimitive_call_trampoline
+
+boundary_trampolines["hijax.VJPHiPrimitive.__call__.trampoline"] = hiprimitive_call_trampoline
 
 def named_call_trampoline(real_boundary_fun: Callable):
   # TODO: handle named_call. The problem that a named_call can wrap a jit

@@ -314,3 +314,57 @@ def jax_flax_axes_scan_call(body_fun: Callable,
     return repro_bypass_wrapper(axes_scan.scan)(body_fun, *scan_args, **scan_kwargs)(*args, **kwargs)
   except ImportError:
     raise NotImplementedError("flax.core.axes_scan.scan is not available.")
+
+
+@partial(traceback_util.repro.boundary, api_name="jax_hiprimitive_call",
+         map_user_func_args=(
+             lambda toapply, expand_fun, jvp_fun, batch_fun, fwd_fun, bwd_retval_fun, *args, **_: (
+                   toapply(expand_fun), toapply(jvp_fun), toapply(batch_fun), toapply(fwd_fun), toapply(bwd_retval_fun), *args)))
+def jax_hiprimitive_call(expand_fun: Callable,
+                         jvp_fun: Callable, batch_fun: Callable,
+                         fwd_fun: Callable, bwd_retval_fun: Callable,
+                         *args, in_avals, out_aval, params, prim=None):
+  # prim will be present when called from tracker, but is considered a static
+  # argument and dropped from the repros.
+  from jax._src import core  # type: ignore
+  from jax._src import hijax  # type: ignore
+
+  class ReproVJPHiPrimitive(hijax.VJPHiPrimitive):
+    def __init__(self):
+      self.in_avals = in_avals
+      self.out_aval = out_aval
+      self.params = params
+      self._prim = prim
+      self._expand_fun = expand_fun
+      self._jvp_fun = jvp_fun
+      self._batch_fun = batch_fun
+      self._fwd_fun = fwd_fun
+      self._bwd_retval_fun = bwd_retval_fun
+      super().__init__()
+
+    def expand(self, *args):
+      res = self._expand_fun(self, *args)
+      return res
+
+    def jvp(self, primals, tangents):
+      return self._jvp_fun(self, primals, tangents)
+
+    def batch(self, axis_data, args, dims):
+      return self._batch_fun(self, axis_data, args, dims)
+
+    def vjp_fwd(self, *args):
+      res, residuals = self._fwd_fun(self, *args)
+      return res, residuals
+
+    def vjp_bwd_retval(self, *args):
+      return self._bwd_retval_fun(self, *args)
+
+    def __getattr__(self, name):
+      """Forward attributes to the original primitive.
+      This is only needed when called from tracker. When called from the repros
+      we don't need to access any attributes of the original primitive.
+      """
+      return getattr(self._prim, name)
+
+  hi_prim = ReproVJPHiPrimitive()
+  return repro_bypass_wrapper(hi_prim.__call__)(hi_prim, *args)
