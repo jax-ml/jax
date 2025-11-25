@@ -19,6 +19,7 @@ from functools import partial
 import operator
 import string
 from typing import Any, NamedTuple
+from types import EllipsisType
 from collections.abc import Sequence
 
 import numpy as np
@@ -47,6 +48,10 @@ from jax._src.util import canonicalize_axis, safe_zip, set_module, tuple_update
 
 export = set_module('jax.numpy')
 
+# TODO(jakevdp) share these with _src.lax.scatter
+AnyInt = int | np.integer
+SingleIndex = AnyInt | slice | Sequence[AnyInt] | Array | EllipsisType | None
+Index = SingleIndex | tuple[SingleIndex, ...]
 
 @export
 def take(
@@ -627,9 +632,75 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None,
   return arr
 
 
+def static_slice(arr: Array, idx: Index):
+  """Compute NumPy-style indexing for static slices only."""
+  idx = idx if isinstance(idx, tuple) else (idx,)
+
+  # First validate the types of entries before expanding ellipses: this allows
+  # error messages to point to particular positions supplied by the user.
+  # Valid index types here are integers, ellipses, and slices.
+  for position, ind in enumerate(idx):
+    if isinstance(ind, (int, np.integer, EllipsisType)):
+      pass
+    elif isinstance(ind, slice):
+      if not all(val is None or isinstance(val, (int, np.integer))
+                 for val in [ind.start, ind.stop, ind.step]):
+        raise ValueError("Slice entries must be static integers."
+                         f" Got {ind} at position {position}")
+    elif ind is None:
+      raise TypeError(f"static_slice: got {ind} at position {position}")
+    elif isinstance(ind, (np.ndarray, Array, tuple, list, Sequence)):
+      raise TypeError("static_slice: indices must be static scalars or slices."
+                      f" Got {ind} at position {position}")
+    else:
+      raise TypeError("static_slice: unrecognized index {ind} at position {position}.")
+
+  # Now expand ellipses and validate the index values. This allows error messages
+  # to point to relevant array dimensions.
+  idx = _canonicalize_tuple_index(arr.ndim, idx)
+  start_indices: list[int] = []
+  limit_indices: list[int] = []
+  strides: list[int] = []
+  rev_axes: list[int] = []
+  squeeze_axes: list[int] = []
+
+  for axis, (ind, size) in enumerate(safe_zip(idx, arr.shape)):
+    if isinstance(ind, (int, np.integer)):
+      if not (-size <= ind < size):
+        raise IndexError(f"index {ind} out of bounds for axis {axis}  with size {size}")
+      if ind < 0:
+        ind += size
+      start_indices.append(ind)
+      limit_indices.append(ind + 1)
+      strides.append(1)
+      squeeze_axes.append(axis)
+    elif isinstance(ind, slice):
+      start, stop, stride = ind.indices(size)
+      if stride < 0:
+        new_start = stop + 1 + abs(start - stop - 1) % abs(stride)
+        start_indices.append(new_start)
+        limit_indices.append(max(new_start, start + 1))
+        strides.append(abs(stride))
+        rev_axes.append(axis)
+      else:
+        start_indices.append(start)
+        limit_indices.append(stop)
+        strides.append(stride)
+    else:
+      raise ValueError(f"Unexpected index: {ind} at axis {axis}")
+
+  if start_indices:
+    result = slicing.slice(arr, start_indices, limit_indices, strides)
+  if rev_axes:
+    result = lax.rev(result, rev_axes)
+  if squeeze_axes:
+    result = lax.squeeze(result, squeeze_axes)
+  return result
+
+
 def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
                    mode=None, fill_value=None, normalize_indices=True,
-                   out_sharding=None):
+                   out_sharding=None, strategy: str = 'auto'):
   # Computes arr[idx].
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and broadcast_in_dim.
@@ -637,10 +708,19 @@ def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
   # For simplicity of generated primitives, we call lax.slice or lax.dynamic_slice
   # in the simplest cases: i.e. non-dynamic arrays indexed with integers and slices.
   # TODO(jakevdp): lower to slice even when normalize_indices is False
-  if normalize_indices:
+  if strategy not in ['gather', 'scatter', 'static_slice', 'auto']:
+    raise ValueError(f"Unexpected strategy {strategy!r}.")
+
+  if strategy == 'static_slice':
+    assert normalize_indices
+    return static_slice(arr, idx)
+
+  if strategy == 'auto' and normalize_indices:
     result = _attempt_rewriting_take_via_slice(arr, idx, mode, out_sharding)
     if result is not None:
       return result
+
+  # otherwise, strategy = 'gather' or 'scatter'.
 
   # TODO(mattjj,dougalm): expand dynamic shape indexing support
   if config.dynamic_shapes.value and arr.ndim > 0:

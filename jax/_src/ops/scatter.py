@@ -40,6 +40,7 @@ from jax._src.sharding_impls import NamedSharding
 from jax._src.typing import Array, ArrayLike
 
 
+# TODO(jakevdp): deduplicate these with types in jax._src.numpy.indexing
 SingleIndex = int | slice | Sequence[int] | Array | EllipsisType | None
 Index = SingleIndex | tuple[SingleIndex, ...]
 Scalar = complex | float | int | np.number
