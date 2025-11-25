@@ -199,9 +199,9 @@ NB_MODULE(_jax, m) {
   // Must be before PyClient.compile.
   xla::BuildXlaCompilerSubmodule(m);
 
-  PyDevice::RegisterPythonType(m);
-  PyMemorySpace::RegisterPythonType(m);
-  PyClient::RegisterPythonTypes(m);
+  PyDevice::Register(m);
+  PyMemorySpace::Register(m);
+  PyClient::Register(m);
 
   nb::enum_<xla::ifrt::ArrayCopySemantics>(m, "ArrayCopySemantics",
                                            nb::is_arithmetic())
@@ -483,7 +483,7 @@ NB_MODULE(_jax, m) {
               client->ifrt_client()->GetTopologyForDevices(device_list));
         });
 
-  TF_CHECK_OK(PyArray::RegisterTypes(m));
+  TF_CHECK_OK(PyArray::Register(m));
   PyDeviceList::Register(m);
   RegisterSharding(m);
 
@@ -517,68 +517,15 @@ NB_MODULE(_jax, m) {
               &xla::CompiledMemoryStats::peak_memory_in_bytes)
       .def("__str__", &xla::CompiledMemoryStats::DebugString);
 
-  nb::class_<PyExecuteResults>(m, "ExecuteResults")
-      .def("__len__", [](PyExecuteResults& results) { return results.Size(); })
-      .def("disassemble_into_single_device_arrays",
-           &PyExecuteResults::DisassembleIntoSingleDeviceArrays)
-      .def("disassemble_prefix_into_single_device_arrays",
-           &PyExecuteResults::DisassemblePrefixIntoSingleDeviceArrays)
-      .def("consume_with_handlers", &PyExecuteResults::ConsumeWithHandlers)
-      .def("consume_token", &PyExecuteResults::ConsumeToken);
-
   m.def("get_execution_stream_id", []() { return GetExecutionStreamId(); });
   m.def("set_execution_stream_id",
         [](int64_t id) { GetExecutionStreamId() = id; });
 
-  nb::class_<PyLoadedExecutable>(m, "LoadedExecutable")
-      .def_prop_ro("client", &PyLoadedExecutable::client)
-      .def("local_devices", &PyLoadedExecutable::AddressableDevices)
-      .def("get_hlo_text",
-           xla::ValueOrThrowWrapper(
-               &PyLoadedExecutable::GetHumanReadableProgramText))
-      .def("size_of_generated_code_in_bytes",
-           &PyLoadedExecutable::SizeOfGeneratedCodeInBytes)
-      .def(
-          "get_compiled_memory_stats",
-          xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetCompiledMemoryStats))
-      .def("execute_sharded",
-           xla::ValueOrThrowWrapper(&PyLoadedExecutable::ExecuteSharded),
-           nb::arg("arguments"), nb::arg("with_tokens") = false)
-      .def("hlo_modules",
-           xla::ValueOrThrowWrapper(&PyLoadedExecutable::HloModules))
-      .def("get_output_memory_kinds",
-           xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetOutputMemoryKinds))
-      .def("get_output_shardings", &PyLoadedExecutable::GetOutputShardings)
-      .def("get_parameter_layouts",
-           xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetParameterLayouts))
-      .def("get_output_layouts",
-           xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetOutputLayouts))
-      .def("get_parameter_shardings",
-           &PyLoadedExecutable::GetParameterShardings)
-      .def("keep_alive", &PyLoadedExecutable::KeepAlive)
-      .def("cost_analysis",
-           [](const PyLoadedExecutable& self) {
-             auto map = xla::ValueOrThrow(self.GetCostAnalysis());
-             return xla::ifrt::ToPjRtAttributeMap(std::move(map));
-           })
-      .def_prop_ro("traceback", &PyLoadedExecutable::traceback)
-      .def_prop_ro("fingerprint", [](PyLoadedExecutable* exec) -> nb::object {
-        if (exec->fingerprint().has_value()) {
-          return nb::bytes(exec->fingerprint()->data(),
-                           exec->fingerprint()->size());
-        } else {
-          return nb::none();
-        }
-      });
-  nb::class_<PyToken> token(m, "Token");
-  token.def("block_until_ready",
-            [](PyToken& self) { xla::ThrowIfError(self.Await()); });
-
-  nb::class_<PyShardedToken> sharded_token(m, "ShardedToken");
-  sharded_token.def("block_until_ready", [](PyShardedToken& self) {
-    xla::ThrowIfError(self.Await());
-  });
-  sharded_token.def("get_token", &PyShardedToken::GetPyToken);
+  PyLoadedExecutable::Register(m);
+  PyExecuteResults::Register(m);
+  PyToken::Register(m);
+  PyShardedToken::Register(m);
+  PyExecutable::Register(m);
 
   m.def("buffer_to_dlpack_managed_tensor",
         xla::ValueOrThrowWrapper(BufferToDLPackManagedTensor),
@@ -625,7 +572,7 @@ NB_MODULE(_jax, m) {
   BuildJaxjitSubmodule(m);
   BuildPmapSubmodule(m);
   BuildPjitSubmodule(m);
-  Traceback::RegisterType(m);
+  Traceback::Register(m);
   BuildMlirSubmodule(m);
   BuildCustomCallShardingPybindAPI(m);
   BuildFfiSubmodule(m);
@@ -910,14 +857,14 @@ NB_MODULE(_jax, m) {
         "Decodes an uncompressed pprof Profile protocol buffer into a JSON "
         "representation");
 
-  RegisterCompileOnlyClient(m);
+  CompileOnlyPyClient::Register(m);
   nb::class_<xla::ifrt::Topology>(m, "DeviceTopology")
       .def("_make_compile_only_devices",
            [](std::shared_ptr<xla::ifrt::Topology> topology) {
              if (!llvm::isa<xla::ifrt::PjRtTopology>(*topology)) {
                throw xla::XlaRuntimeError("Only PjRtTopologies are supported.");
              }
-             return MakeCompileOnlyClient(
+             return CompileOnlyPyClient::Make(
                         std::dynamic_pointer_cast<xla::ifrt::PjRtTopology>(
                             topology))
                  ->Devices();
@@ -951,28 +898,6 @@ NB_MODULE(_jax, m) {
   nb::class_<xla::ifrt::TransferServerInterfaceFactory>(
       m, "TransferServerInterfaceFactory");
 
-  nb::class_<PyExecutable>(m, "Executable")
-      .def("hlo_modules",
-           xla::ValueOrThrowWrapper(&PyExecutable::GetHloModules))
-      .def("get_output_memory_kinds",
-           xla::ValueOrThrowWrapper(&PyExecutable::GetOutputMemoryKinds))
-      .def("get_output_shardings", &PyExecutable::GetOutputShardings)
-      .def("get_parameter_layouts",
-           xla::ValueOrThrowWrapper(&PyExecutable::GetParameterLayouts))
-      .def("get_output_layouts",
-           xla::ValueOrThrowWrapper(&PyExecutable::GetOutputLayouts))
-      .def("get_parameter_shardings", &PyExecutable::GetParameterShardings)
-      .def("get_compiled_memory_stats",
-           xla::ValueOrThrowWrapper(&PyExecutable::GetCompiledMemoryStats))
-      .def("serialize",
-           [](const PyExecutable& exec) -> nb::bytes {
-             std::string serialized = xla::ValueOrThrow(exec.Serialize());
-             return nb::bytes(serialized.data(), serialized.size());
-           })
-      .def("cost_analysis", [](const PyExecutable& exec) {
-        auto attrs = xla::ValueOrThrow(exec.GetCostAnalysis());
-        return xla::ifrt::ToPjRtAttributeMap(std::move(attrs));
-      });
 
   m.def("is_asan", IsAsan);
   m.def("is_msan", IsMsan);

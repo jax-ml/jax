@@ -53,60 +53,45 @@ namespace nb = nanobind;
 
 namespace jax {
 
-namespace {
-
-class CompileOnlyPyClient : public PyClient {
- public:
-  using PyClient::PyClient;
-
-  static nb_class_ptr<PyClient> Make(
-      std::shared_ptr<ifrt::PjRtTopology> topology) {
-    auto client =
-        nb::borrow<nb_class_ptr<PyClient>>(make_nb_class<CompileOnlyPyClient>(
-            std::make_unique<xla::CompileOnlyIfRtClient>(std::move(topology))));
-    CompileOnlyPyClient::Initialize(client);
-    return client;
-  }
-
-  absl::StatusOr<nb_class_ptr<PyExecutable>> CompileUnloaded(
-      MlirModule mlir_module, ifrt::DeviceListRef executable_devices,
-      xla::CompileOptions options) {
-    mlir::ModuleOp module = unwrap(mlir_module);
-    mlir::OwningOpRef<mlir::ModuleOp> clone(module.clone());
-    module = *clone;
-    ifrt::ExecutableRef ifrt_executable;
-    {
-      nb::gil_scoped_release gil_release;
-      auto* ifrt_client = llvm::dyn_cast_or_null<xla::CompileOnlyIfRtClient>(
-          this->ifrt_client());
-      CHECK(ifrt_client) << "CompileOnlyPyClient requires ifrt_client be a "
-                            "xla::CompileOnlyIfRtClient";
-
-      auto xla_options = std::make_unique<ifrt::XlaCompileOptions>(
-          options, std::move(executable_devices));
-      TF_ASSIGN_OR_RETURN(auto executable,
-                          PjRtCompile(std::move(options), module,
-                                      *ifrt_client->topology().description()));
-      TF_ASSIGN_OR_RETURN(ifrt_executable,
-                          ifrt::PjRtExecutable::Create(std::move(executable)));
-    }
-    return make_nb_class<PyExecutable>(ifrt_executable);
-  }
-
- private:
-  static void Initialize(nb_class_ptr<PyClient> client) {
-    PyClient::Initialize(client);
-  }
-};
-
-}  // namespace
-
-nb_class_ptr<PyClient> MakeCompileOnlyClient(
-    std::shared_ptr<ifrt::PjRtTopology> topology) {
-  return CompileOnlyPyClient::Make(std::move(topology));
+nb_class_ptr<PyClient> CompileOnlyPyClient::Make(
+    std::shared_ptr<xla::ifrt::PjRtTopology> topology) {
+  auto client =
+      nb::borrow<nb_class_ptr<PyClient>>(make_nb_class<CompileOnlyPyClient>(
+          std::make_unique<xla::CompileOnlyIfRtClient>(std::move(topology))));
+  CompileOnlyPyClient::Initialize(client);
+  return client;
 }
 
-void RegisterCompileOnlyClient(nb::module_& m) {
+absl::StatusOr<nb_class_ptr<PyExecutable>> CompileOnlyPyClient::CompileUnloaded(
+    MlirModule mlir_module, xla::ifrt::DeviceListRef executable_devices,
+    xla::CompileOptions options) {
+  mlir::ModuleOp module = unwrap(mlir_module);
+  mlir::OwningOpRef<mlir::ModuleOp> clone(module.clone());
+  module = *clone;
+  ifrt::ExecutableRef ifrt_executable;
+  {
+    nb::gil_scoped_release gil_release;
+    auto* ifrt_client =
+        llvm::dyn_cast_or_null<xla::CompileOnlyIfRtClient>(this->ifrt_client());
+    CHECK(ifrt_client) << "CompileOnlyPyClient requires ifrt_client be a "
+                          "xla::CompileOnlyIfRtClient";
+
+    auto xla_options = std::make_unique<ifrt::XlaCompileOptions>(
+        options, std::move(executable_devices));
+    TF_ASSIGN_OR_RETURN(auto executable,
+                        PjRtCompile(std::move(options), module,
+                                    *ifrt_client->topology().description()));
+    TF_ASSIGN_OR_RETURN(ifrt_executable,
+                        ifrt::PjRtExecutable::Create(std::move(executable)));
+  }
+  return make_nb_class<PyExecutable>(ifrt_executable);
+}
+
+void CompileOnlyPyClient::Initialize(nb_class_ptr<PyClient> client) {
+  PyClient::Initialize(client);
+}
+
+void CompileOnlyPyClient::Register(nb::module_& m) {
   nb::class_<CompileOnlyPyClient, PyClient>(m, "CompileOnlyPyClient")
       .def(
           "compile",

@@ -279,7 +279,7 @@ absl::Span<const TracebackEntry> Traceback::RawFrames() const {
 
 bool Traceback::IsEnabled() { return traceback_enabled_.load(); }
 
-void Traceback::RegisterType(nb::module_& m) {
+void Traceback::Register(nb::module_& m) {
   nb::class_<Traceback::Frame>(m, "Frame")
       .def(nb::init<const nb::str&, const nb::str&, int, int>())
       .def_ro("file_name", &Traceback::Frame::file_name)

@@ -787,7 +787,7 @@ PyType_Slot PyClient::slots_[] = {
     {0, nullptr},
 };
 
-/* static */ void PyClient::RegisterPythonTypes(nb::module_& m) {
+/* static */ void PyClient::Register(nb::module_& m) {
   nb::enum_<xla::PjRtClient::HostBufferSemantics>(m, "HostBufferSemantics")
       .value("IMMUTABLE_ONLY_DURING_CALL",
              xla::PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall)

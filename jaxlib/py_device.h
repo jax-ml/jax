@@ -66,7 +66,7 @@ class PyDevice {
 
   absl::StatusOr<std::intptr_t> GetStreamForExternalReadyEvents() const;
 
-  static void RegisterPythonType(nanobind::module_& m);
+  static void Register(nanobind::module_& m);
 
  private:
   static int tp_traverse(PyObject* self, visitproc visit, void* arg);

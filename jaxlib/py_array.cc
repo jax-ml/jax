@@ -2139,7 +2139,7 @@ PyObject* MakeArrayTypeFromMetaclass(PyTypeObject* meta, PyObject* module,
 
 }  // namespace
 
-absl::Status PyArray::RegisterTypes(nb::module_& m) {
+absl::Status PyArray::Register(nb::module_& m) {
   std::string metaclass_name =
       absl::StrCat(nb::cast<std::string>(m.attr("__name__")), ".ArrayMeta");
   PyType_Spec array_meta_spec = {

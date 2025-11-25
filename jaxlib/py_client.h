@@ -222,7 +222,7 @@ class PyClient {
 
   std::vector<PyArray> LiveArrays() const;
 
-  static void RegisterPythonTypes(nanobind::module_& m);
+  static void Register(nanobind::module_& m);
 
  protected:
   static void Initialize(nb_class_ptr<PyClient> client);

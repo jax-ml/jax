@@ -170,7 +170,8 @@ class PyArray : public nanobind::object {
                                               bool weak_type, bool committed,
                                               bool skip_checks);
 
-  static absl::Status RegisterTypes(nanobind::module_& m);
+  // Registers Array and related types in module m.
+  static absl::Status Register(nanobind::module_& m);
 
   static PyArray borrow(PyObject* ptr) {
     return nanobind::borrow<PyArray>(ptr);

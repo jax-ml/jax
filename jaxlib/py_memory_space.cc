@@ -89,7 +89,7 @@ PyType_Slot PyMemorySpace::slots_[] = {
     {0, nullptr},
 };
 
-/* static */ void PyMemorySpace::RegisterPythonType(nb::module_& m) {
+/* static */ void PyMemorySpace::Register(nb::module_& m) {
   nb::class_<PyMemorySpace> device(m, "Memory",
                                    nb::type_slots(PyMemorySpace::slots_));
   device.def_prop_ro("process_index", &PyMemorySpace::process_index)

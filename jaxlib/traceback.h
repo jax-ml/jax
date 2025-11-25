@@ -79,7 +79,7 @@ class Traceback : public nanobind::object {
   // Returns a list of Frames for the traceback.
   std::vector<Frame> Frames() const;
 
-  static void RegisterType(nanobind::module_& m);
+  static void Register(nanobind::module_& m);
 
  private:
   static bool Check(PyObject* o);

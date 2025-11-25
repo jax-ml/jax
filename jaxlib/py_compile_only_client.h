@@ -19,12 +19,18 @@ limitations under the License.
 #include <memory>
 
 // placeholder for index annotation headers
+#include "absl/status/statusor.h"
+#include "mlir-c/IR.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
+#include "xla/pjrt/pjrt_executable.h"
+#include "xla/python/ifrt/device_list.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
+#include "xla/xla_data.pb.h"
 
 namespace jax {
+class PyExecutable;
 
 // This is a workaround for AOT compilation until topologies and device
 // descriptions are better integrated into jax's Python code. It returns a
@@ -35,10 +41,22 @@ namespace jax {
 // Python duck typing to treat the unloaded executable like a loaded executable
 // (except it will raise errors if you try to run it, which is what we want for
 // AOT environments).
-nb_class_ptr<PyClient> MakeCompileOnlyClient(
-    std::shared_ptr<xla::ifrt::PjRtTopology>);
+class CompileOnlyPyClient : public PyClient {
+ public:
+  using PyClient::PyClient;
 
-void RegisterCompileOnlyClient(nanobind::module_& m);
+  static nb_class_ptr<PyClient> Make(
+      std::shared_ptr<xla::ifrt::PjRtTopology> topology);
+
+  absl::StatusOr<nb_class_ptr<PyExecutable>> CompileUnloaded(
+      MlirModule mlir_module, xla::ifrt::DeviceListRef executable_devices,
+      xla::CompileOptions options);
+
+  static void Register(nanobind::module_& m);
+
+ private:
+  static void Initialize(nb_class_ptr<PyClient> client);
+};
 
 }  // namespace jax
 
