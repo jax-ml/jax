@@ -30,6 +30,15 @@ Agreement (CLA)](https://cla.developers.google.com/), in which contributors agre
 contribution is an original work of authorship. This doesn’t prohibit the use of coding
 assistance tools, but what’s submitted does need to be a contributor's original creation.
 
+In the JAX project, a main concern with AI-generated contributions is that
+**low-quality AI-generated code imposes a disproportionate review cost**.
+Since the team's capacity for code review is limited, we have a higher bar
+for accepting AI-generated contributions compared to those written by a human.
+
+A loose rule of thumb: if the team needs to spend more time reviewing a
+contribution than the contributor spends generating it, then the contribution
+is probably not helpful to the project, and we will likely reject it.
+
 ## Contributing code using pull requests
 
 We do all of our development using git, so basic knowledge is assumed.
