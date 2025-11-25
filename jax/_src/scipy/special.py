@@ -1547,59 +1547,61 @@ def _gen_derivatives(p: Array,
 def _gen_associated_legendre(l_max: int,
                              x: Array,
                              is_normalized: bool) -> Array:
-    """Compute associated Legendre functions P_l^m using O(l_max^2) recurrences.
+  r"""Computes associated Legendre functions (ALFs) of the first kind.
 
-  This computes the (unnormalized or normalized) associated Legendre functions
-  of degree l = 0..l_max and order m = 0..l_max at evaluation points x.
-  The output shape is (l_max+1, l_max+1, len(x)) with indexing [l, m, i].
+  The ALFs of the first kind are used in spherical harmonics. The spherical
+  harmonic of degree `l` and order `m` can be written as
+  `Y_l^m(θ, φ) = N_l^m * P_l^m(cos(θ)) * exp(i m φ)`, where `N_l^m` is the
+  normalization factor and θ and φ are the colatitude and longitude,
+  respectively. `N_l^m` is chosen in the way that the spherical harmonics form
+  a set of orthonormal basis functions of L^2(S^2). For the computational
+  efficiency of spherical harmonics transform, the normalization factor is
+  used in the computation of the ALFs. In addition, normalizing `P_l^m`
+  avoids overflow/underflow and achieves better numerical stability. Three
+  recurrence relations are used in the computation.
 
-  Unnormalized recurrences used:
-      P_0^0 = 1
-      P_m^m = -(2m - 1) * sqrt(1 - x^2) * P_{m-1}^{m-1}
-      P_{m+1}^m = (2m + 1) * x * P_m^m
-      P_n^m = ((2n - 1) * x * P_{n-1}^m - (n + m - 1) * P_{n-2}^m) / (n - m)
+  Args:
+    l_max: The maximum degree of the associated Legendre function. Both the
+      degrees and orders are `[0, 1, 2, ..., l_max]`.
+    x: A vector containing the evaluation points in `[-1, 1]`.
+    is_normalized: Whether to apply spherical-harmonic normalization.
 
-  If is_normalized=True, the normalization factor
-
-      N_lm = sqrt((2l+1)/(4π) * (l-m)!/(l+m)!)
-
-  is applied at the end.
+  Returns:
+    A 3D array of shape `(l_max + 1, l_max + 1, len(x))` containing the ALFs.
   """
+
   p = jnp.zeros((l_max + 1, l_max + 1, x.shape[0]), dtype=x.dtype)
 
-  sqrt1mx = jnp.sqrt(1.0 - x * x)
+  sqrt1mx = jnp.sqrt(jnp.clip(1.0 - x * x, 0.0))
 
-  if is_normalized:
-    p00 = 0.5 / jnp.sqrt(jnp.pi)
-  else:
-    p00 = 1.0
-
+  p00 = 0.5 / jnp.sqrt(jnp.pi) if is_normalized else 1.0
   p = p.at[(0, 0)].set(p00)
 
   if l_max >= 1:
     m_vals = jnp.arange(1, l_max + 1, dtype=x.dtype)
     coef = -(2.0 * m_vals - 1.0)
+    coef_cum = jnp.cumprod(coef)                          
 
-    coef_cum = jnp.cumprod(coef)
-
-    sqrt_term = jnp.cumprod(jnp.broadcast_to(sqrt1mx, (l_max, x.shape[0])), axis=0)
+    sqrt_term = jnp.cumprod(
+        jnp.broadcast_to(sqrt1mx, (l_max, x.shape[0])),
+        axis=0
+    )
 
     Pmm = coef_cum[:, None] * sqrt_term * p00
     p = p.at[m_vals, m_vals].set(Pmm)
 
   def outer_body(m, p):
-    """Compute column m (order m) from degree m..l_max."""
-    Pmm = p[m, m]                       # P_m^m
-    Pm1m = (2 * m + 1) * x * Pmm        # P_{m+1}^m
+    Pmm = p[m, m]
+    Pm1m = (2 * m + 1) * x * Pmm
     p = p.at[(m + 1, m)].set(Pm1m)
 
     def inner_body(k, carry):
       p, prev1, prev2 = carry
       n = m + 2 + k
 
-      a = (2 * n - 1)
-      b = (n + m - 1)
-      denom = (n - m)
+      a = 2 * n - 1
+      b = n + m - 1
+      denom = n - m
 
       Pnm = (a * x * prev1 - b * prev2) / denom
       p = p.at[(n, m)].set(Pnm)
@@ -1614,12 +1616,8 @@ def _gen_associated_legendre(l_max: int,
     p = lax.fori_loop(0, l_max, outer_body, p)
 
   if is_normalized:
-    # N_lm = sqrt( (2l+1)/(4π) * (l-m)!/(l+m)! )
     l = jnp.arange(0, l_max + 1)[:, None]
     m = jnp.arange(0, l_max + 1)[None, :]
-
-    lm = jnp.minimum(l, m)
-    lp = jnp.maximum(l, m)
 
     log_norm = (
         0.5 * (jnp.log(2 * l + 1) - jnp.log(4 * jnp.pi))
