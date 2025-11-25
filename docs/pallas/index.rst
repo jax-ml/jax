@@ -39,6 +39,12 @@ See also the :class:`jax.experimental.pallas` module API documentation.
    gpu/index
 
 .. toctree::
+   :caption: Instruction Reference
+   :maxdepth: 2
+
+   Instruction Reference <../jax.experimental.pallas>
+
+.. toctree::
    :caption: Design Notes
    :maxdepth: 2
 

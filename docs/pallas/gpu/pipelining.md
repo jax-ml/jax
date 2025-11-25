@@ -48,7 +48,7 @@ The recommended approach to pipeline using Mosaic GPU is to use the `plgpu.emit_
 
 #### Compatibility API using `pl.pallas_call`
 
-As an alternative to `emit_pipeline` and to maintain compatibility with Pallas TPU, Mosaic GPU also implements the existing `pl.pallas_call` API. By default, `pl.pallas_call` on Mosaic GPU will partition your kernel in parallel over the CUDA grid. You can opt-in to pipelining by passing in a `plgpu.GPUCompilerParams` object as the `compiler_params` argument, which specifies the following options that are relevant for pipelining:
+As an alternative to `emit_pipeline` and to maintain compatibility with Pallas TPU, Mosaic GPU also implements the existing `pl.pallas_call` API. By default, `pl.pallas_call` on Mosaic GPU will partition your kernel in parallel over the CUDA grid. You can opt-in to pipelining by passing in a `plgpu.CompilerParams` object as the `compiler_params` argument, which specifies the following options that are relevant for pipelining:
 - `dimension_semantics`: A tuple of `Literal['parallel', 'sequential']` that specifies iteration semantics for each grid dimension. `parallel` will partition the corresponding dimension over the CUDA grid, and `sequential` dimensions will be pipelined sequentially. **Note that if no dimensions are marked `sequential`, no pipelining will happen!**
 - `max_concurrent_steps`: identical to the option in `plgpu.emit_pipeline`.
 - `delay_release`: identical to the option in `plgpu.emit_pipeline`.
