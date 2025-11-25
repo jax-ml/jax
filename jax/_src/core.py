@@ -28,7 +28,7 @@ import operator
 import threading
 import types
 from typing import (Any, ClassVar, Generic, NamedTuple, TypeVar,
-                    overload, Union)
+                    overload, Union, TYPE_CHECKING)
 import warnings
 import weakref
 
@@ -56,11 +56,12 @@ from jax._src.named_sharding import NamedSharding
 from jax._src.sharding import Sharding
 from jax._src.layout import Format, AutoLayout
 from jax._src.memory import Space as MemorySpace
+from jax._src.lib import _jax
 from jax._src.lib import jax_jit
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src import traceback_util
 from jax._src.typing import Array, ArrayLike, DimSize, Shape
-from jax._src import typing
 from jax._src import xla_metadata_lib
 
 traceback_util.register_exclusion(__file__)
@@ -894,11 +895,24 @@ def _aval_property(name):
   return property(lambda self: getattr(self.aval, name))
 
 
-# TODO(mattjj): it's a bug for Tracer to inherit from Array, because Tracers can
-# represent non-Array things like tokens, tuples, or refs. Remove!
-class Tracer(typing.Array, metaclass=StrictABCMeta):
+if TYPE_CHECKING or jaxlib_extension_version < 388:
+  # We want Python type checkers to accept `some_tracer: jax.Array`, even though
+  # tracers can represent non-arrays. That is, ideally we would only accept that
+  # annotation when the Tracer instance has a ShapedArray aval, but we can't
+  # decide that at Python type checking time. So instead we're overly permissive
+  # and allow all Tracer instances to typecheck against a jax.Array annotation.
+  TracerBase = Array
+  TracerMeta = StrictABCMeta
+else:
+  TracerBase = object
+  TracerMeta = type
+
+class Tracer(TracerBase, metaclass=TracerMeta):
   __array_priority__ = 1000
-  __slots__ = ['_trace', '_line_info']
+  if jaxlib_extension_version >= 388:
+    __slots__ = ['__weakref__', '_trace', '_line_info']
+  else:
+    __slots__ = ['_trace', '_line_info']
   __hash__ = None  # type: ignore
 
   _trace: Trace
@@ -919,6 +933,10 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
 
   def __array__(self, *args, **kw):
     raise TracerArrayConversionError(self)
+
+  # helper for isinstance(tracer, jax.Array), here to avoid circular imports
+  def _is_traced_array(self):
+    return isinstance(self.aval, ShapedArray)
 
   def __dlpack__(self, *args, **kw):
     raise ConcretizationTypeError(self,
@@ -1162,6 +1180,9 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
     raise ConcretizationTypeError(self,
       f"The unsafe_buffer_pointer() method was called on {self._error_repr()}."
       f"{self._origin_msg()}")
+
+if jaxlib_extension_version >= 388:
+  _jax.set_tracer_class(Tracer)
 
 # these can be used to set up forwarding of properties and instance methods from
 # Tracer instances to the underlying avals

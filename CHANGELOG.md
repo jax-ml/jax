@@ -16,6 +16,16 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Changes:
+  * jax's `Tracer` no longer inherits from `jax.Array` at runtime. However,
+    `jax.Array` now uses a custom metaclass such `isinstance(x, Array)` is true
+    if an object `x` represents a traced `Array`. Only some `Tracer`s represent
+    `Array`s, so it is not correct for `Tracer` to inherit from `Array`.
+
+    For the moment, during Python type checking, we continue to declare `Tracer`
+    as a subclass of `Array`, however we expect to remove this in a future
+    release.
+
 ## JAX 0.8.1 (November 18, 2025)
 
 * New features:
