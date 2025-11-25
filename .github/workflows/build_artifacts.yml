@@ -16,6 +16,7 @@ on:
         options:
         - "linux-x86-n4-16"
         - "linux-arm64-t2a-48"
+        - "linux-arm64-c4a-16"
         - "windows-x86-n2-16"
       artifact:
         description: "Which JAX artifact to build?"
@@ -124,15 +125,26 @@ jobs:
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           persist-credentials: false
-      - name: Enable RBE if building on Linux x86 or Windows x86
-        if: contains(inputs.runner, 'linux-x86') || contains(inputs.runner, 'windows-x86')
-        run: echo "JAXCI_BUILD_ARTIFACT_WITH_RBE=1" >> $GITHUB_ENV
-      - name: Set bazel output base on Windows runner machine
-        if: contains(inputs.runner, 'windows-x86')
-        run: echo "JAXCI_BAZEL_OUTPUT_BASE=C:\actions-runner\_work\bazel_output_base" >> $GITHUB_ENV
-      - name: Enable Bazel remote cache (with writes enabled) if building on Linux Aarch64
-        if: contains(inputs.runner, 'linux-arm64')
-        run: echo "JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE=1" >> $GITHUB_ENV
+      - name: Configure Build Environment
+        shell: bash
+        run: |
+          RUNNER_TYPE="${{ inputs.runner }}"
+          ARTIFACT_TYPE="${{ inputs.artifact }}"
+
+          # Enable RBE if building on Linux or Windows x86
+          if [[ "${RUNNER_TYPE}" == *linux-x86* || "${RUNNER_TYPE}" == *windows-x86* || ("${RUNNER_TYPE}" == *linux-arm64* && "${ARTIFACT_TYPE}" == "jaxlib") ]]; then
+            echo "JAXCI_BUILD_ARTIFACT_WITH_RBE=1" >> $GITHUB_ENV
+          fi
+
+          # Set bazel output base on Windows runner machine
+          if [[ "${RUNNER_TYPE}" == *windows-x86* ]]; then
+            echo "JAXCI_BAZEL_OUTPUT_BASE=C:\actions-runner\_work\bazel_output_base" >> $GITHUB_ENV
+          fi
+
+          # Enable Bazel remote cache (with writes enabled) if building on Linux Aarch64
+          if [[ "${RUNNER_TYPE}" == *linux-arm64* ]]; then
+            echo "JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE=1" >> $GITHUB_ENV
+          fi
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
