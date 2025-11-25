@@ -574,3 +574,106 @@ def fuser_make_scalar_prefetch_handler(*args, **kwargs):
   from jax._src.pallas.fuser import block_spec  # type: ignore
   handler_fn = repro_bypass_wrapper(block_spec.make_scalar_prefetch_handler)(*args, **kwargs)
   return repro_boundary(handler_fn, is_user=False)
+
+
+@partial(repro_boundary, repro_api_name="jax_vjphiprimitive_call",
+         map_user_func_args=(
+             lambda toapply, expand_fun, jvp_fun, batch_fun, fwd_fun, bwd_retval_fun, *args, **kwargs: (
+              (toapply(expand_fun), toapply(jvp_fun), toapply(batch_fun),
+              toapply(fwd_fun), toapply(bwd_retval_fun), *args), kwargs)))
+def jax_vjphiprimitive_call(expand_fun: Callable,
+                            jvp_fun: Callable, batch_fun: Callable,
+                            fwd_fun: Callable, bwd_retval_fun: Callable,
+                            *args, in_avals, out_aval, params, prim=None):
+  # prim will be present when called from tracker, but is dropped from repros
+  # (like a static argument), in tracker.py.
+  # TODO: find a cleaner solution
+  from jax.experimental import hijax  # type: ignore  # noqa: F401
+  from jax._src import core  # type: ignore  # noqa: F401
+
+  # class ReproHiType(hijax.HiType):
+  #   def __init__(self, typ):
+  #     self._typ = typ
+
+  #   def to_tangent_aval(self):
+  #     return self._typ
+
+  #   def __hash__(self):
+  #     return hash(self._typ)
+  #   def __eq__(self, other):
+  #     return self._typ == other._typ
+
+  #   # Keep a memo table for all types we have seen
+  #   typ_memo: dict[hijax.HiType, "ReproHiType"] = {}
+  #   @classmethod
+  #   def wrap_aval(cls, typ: core.AbstractValue) -> "ReproHiType":
+  #     if not isinstance(typ, hijax.HiType):
+  #       return typ
+  #     if (res := ReproHiType.typ_memo.get(typ)) is not None:
+  #       return res
+  #     res = ReproHiType(typ)
+  #     ReproHiType.memo[typ] = res
+  #     return res
+
+  # class ReproHiValue:
+  #   def __init__(self, typ):
+  #     self._typ = typ
+
+  class ReproVJPHiPrimitive(hijax.VJPHiPrimitive):
+    def __init__(self):
+      self.in_avals = in_avals
+      self.out_aval = out_aval
+      self.params = params
+      self._prim = prim
+      self._expand_fun = expand_fun
+      self._jvp_fun = jvp_fun
+      self._batch_fun = batch_fun
+      self._fwd_fun = fwd_fun
+      self._bwd_retval_fun = bwd_retval_fun
+      super().__init__()
+
+    def expand(self, *args):
+      res = self._expand_fun(self, *args)
+      return res
+
+    def jvp(self, primals, tangents):
+      return self._jvp_fun(self, primals, tangents)
+
+    def batch(self, axis_data, args, dims):
+      return self._batch_fun(self, axis_data, args, dims)
+
+    def vjp_fwd(self, *args):
+      res, residuals = self._fwd_fun(self, *args)
+      return res, residuals
+
+    def vjp_bwd_retval(self, *args):
+      return self._bwd_retval_fun(self, *args)
+
+    def __getattr__(self, name):
+      """Forward attributes to the original primitive.
+      This is only needed when called from tracker. When called from the repros
+      we don't need to access any attributes of the original primitive.
+      """
+      return getattr(self._prim, name)
+
+  hi_prim = ReproVJPHiPrimitive()
+  # Now call hijax.VJPHiPrimitive.__call__
+  return repro_bypass_wrapper(hi_prim.__call__)(hi_prim, *args)
+
+# def hitype(tangent_aval):
+#   from jax.experimental import hijax  # type: ignore  # noqa: F401
+#   class ReproHiType(hijax.HiType):
+#     def __init__(self):
+#       self.in_avals = in_avals
+#       self.out_aval = out_aval  # TODO: wrap the hitypes
+#       self.params = params
+#       self._prim = prim
+#       self._expand_fun = expand_fun
+#       self._jvp_fun = jvp_fun
+#       self._batch_fun = batch_fun
+#       self._fwd_fun = fwd_fun
+#       self._bwd_retval_fun = bwd_retval_fun
+#       super().__init__()
+
+#     def to_tangent_aval(self):
+#       return tangent_aval

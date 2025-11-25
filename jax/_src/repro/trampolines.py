@@ -382,3 +382,37 @@ def pallas_custom_fusion_trampoline(real_api_fun: Callable):
 
   custom_fusion_trampoline.real_api_fun = real_api_fun  # pyrefly: ignore[missing-attribute]
   return custom_fusion_trampoline
+
+
+@api_trampoline("hijax.VJPHiPrimitive.__call__.trampoline")
+def vjphiprimitive_call_trampoline(real_api_fun: Callable):
+  def hijax_vjphiprimitive_call_trampoline(*args, **kwargs):
+    from jax._src import hijax  # type: ignore
+    from jax._src.repro.repro_api import jax_vjphiprimitive_call
+    hi_prim: hijax.VJPHiPrimitive
+    hi_prim, *rest_args = args
+
+    # Unpack the user's VJPHiPrimitive into a bunch of functions.
+    if hasattr(hi_prim, "_expand_fun"):  # It is a ReproVJPHiPrimitive
+      # TODO: comment why we need this
+      hi_prim_expand = hi_prim._expand_fun.fun if hasattr(hi_prim._expand_fun, "map_user_func_args") else hi_prim._expand_fun
+      hi_prim_jvp = hi_prim._jvp_fun.fun if hasattr(hi_prim._jvp_fun, "map_user_func_args") else hi_prim._jvp_fun
+      hi_prim_batch = hi_prim._batch_fun.fun if hasattr(hi_prim._batch_fun, "map_user_func_args") else hi_prim._batch_fun
+      hi_prim_vjp_fwd = hi_prim._fwd_fun.fun if hasattr(hi_prim._fwd_fun, "map_user_func_args") else hi_prim._fwd_fun
+      hi_prim_bwd_retval = hi_prim._bwd_retval_fun.fun if hasattr(hi_prim._bwd_retval_fun, "map_user_func_args") else hi_prim._bwd_retval_fun
+    else:
+      hi_prim_expand = hi_prim.expand.__func__
+      hi_prim_jvp = hi_prim.jvp.__func__
+      hi_prim_batch = hi_prim.batch.__func__
+      hi_prim_vjp_fwd = hi_prim.vjp_fwd.__func__
+      hi_prim_bwd_retval = hi_prim.vjp_bwd_retval.__func__
+      if type(hi_prim).vjp_bwd is not hijax.VJPHiPrimitive.vjp_bwd:
+        raise NotImplementedError("vjp_bwd")  # We support only vj_bwd_retval for now
+
+    return jax_vjphiprimitive_call(
+      hi_prim_expand, hi_prim_jvp, hi_prim_batch, hi_prim_vjp_fwd, hi_prim_bwd_retval,
+      *rest_args, in_avals=hi_prim.in_avals, out_aval=hi_prim.out_aval,
+      params=hi_prim.params, prim=hi_prim)
+
+  hijax_vjphiprimitive_call_trampoline.real_api_fun = real_api_fun  # pyrefly: ignore[missing-attribute]
+  return hijax_vjphiprimitive_call_trampoline

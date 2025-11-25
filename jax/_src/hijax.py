@@ -462,6 +462,8 @@ class VJPHiPrimitive:
   def remat(self, _policy, *args):
     return self(*args), self  # full remat by default
 
+  @partial(traceback_util.api_boundary,
+           repro_api_name="hijax.VJPHiPrimitive.__call__.trampoline")
   def __call__(self, *args):
     args_flat = tree_leaves_checked(self.in_tree, args)
     ans_flat = call_hi_primitive_p.bind(*args_flat, _prim=self)

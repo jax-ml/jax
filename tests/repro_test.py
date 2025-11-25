@@ -20,6 +20,7 @@ from functools import partial
 import gc
 import concurrent
 import logging
+import itertools
 import pathlib
 import os
 import re
@@ -54,10 +55,13 @@ from jax.sharding import PartitionSpec as P
 from jax.sharding import AxisType
 
 from jax._src import config
+from jax._src import core
 from jax._src import dtypes
 from jax._src import hashable_array
+from jax._src import hijax
 from jax._src import literals
 from jax._src import repro
+from jax._src.interpreters import batching
 from jax._src.repro import tracker
 from jax._src.repro import emitter
 from jax._src.pallas.mosaic import tpu_info
@@ -3317,6 +3321,451 @@ class ReproTest(jtu.JaxTestCase):
 
     x = np.ones((128,), dtype=jnp.float32)
     self.collect_and_check(jax.jit(fuser.evaluate(f)), x)
+
+
+  class RaiseToStaticPower(hijax.VJPHiPrimitive):
+    def __init__(self, in_aval, *, power):
+      self.in_avals = (in_aval,)
+      self.out_aval = in_aval
+      self.params = {}
+      self.power = power  # An attribute that is not from params
+      super().__init__()
+
+    @classmethod
+    def build(cls, x, power):
+      x_aval = jax.typeof(x)
+      return cls(x_aval, power=power)(x)
+
+    def expand(self, x):
+      return x ** self.power
+
+    def vjp_fwd(self, nzs_in, x):
+      ans = self(x)
+      return (ans, x)
+
+    def vjp_bwd_retval(self, res, t):
+      xbar = t * self.power * self.build(res, self.power-1)
+      return (xbar,)
+
+    def batch(self, _axis_data, args, in_dims):
+      in_dim, = in_dims
+      x, = args
+      return self.build(x, power=self.power), in_dim
+
+    def jvp(self, primals, tangents):
+      (x,), (t,) = primals, tangents
+      return self(x), t * self.power * self.build(x, self.power-1)
+
+
+  @jtu.parameterized_filterable(
+    kwargs=[dict(with_jit=with_jit,
+                variant=variant)
+                for with_jit in [False, True]
+                for variant in ["base", "vmap", "jvp", "grad"]
+    ])
+  def test_vjphiprimitive_no_hitype(self, *, with_jit: bool, variant: str):
+
+    def f3(x):
+      return ReproTest.RaiseToStaticPower.build(x, power=3)
+    def f5(x):
+      return ReproTest.RaiseToStaticPower.build(x, power=5)
+    if with_jit:
+      f3, f5 = jax.jit(f3), jax.jit(f5)
+
+    if variant == "base":
+      def top():
+        x = np.float32(2.)
+        return f3(x) + f5(x)
+    elif variant == "vmap":
+      def top():
+        xs = jnp.arange(3.0, dtype=np.float32)
+        return jax.vmap(f3)(xs) + jax.vmap(f5)(xs)
+    elif variant == "jvp":
+      def top():
+        x = np.float32(2.)
+        return jax.jvp(f3, (x,), (1., )) + jax.jvp(f5, (x,), (1., ))
+    elif variant == "grad":
+      def top():
+        x = np.float32(2.)
+        return jax.grad(f3)(x) + jax.grad(f5)(x)
+
+    self.collect_and_check(top)
+
+
+  ## hijax MakeTup
+  @dataclasses.dataclass
+  class HiTup:  # a HiValue whose type is TupTy
+    elts: tuple
+    def __repr__(self):
+      return 'HiTup{' + ','.join(map(repr, self.elts)) + '}'
+
+  @dataclasses.dataclass(frozen=True)
+  class TupTy(hijax.HiType):
+    tys: tuple[Ty, ...]
+
+    def __repr__(self):
+      return 'TupTy{' + ','.join(a.str_short() for a in self.tys) + '}'
+
+    def __hash__(self):
+      return hash(self.tys)
+
+    def __eq__(self, other):
+      return isinstance(other, type(self)) and self.tys == other.tys
+
+    def lo_ty(self):
+      return list(self.tys)
+
+    def lower_val(self, hi_val: ReproTest.HiTup):
+      return [lo for ty, elt in zip(self.tys, hi_val.elts)
+              for lo in ty.lower_val(elt)]
+
+    def raise_val(self, *elts_flat):
+      elts_iter = iter(elts_flat)
+      return ReproTest.HiTup(tuple(ty.raise_val(*itertools.islice(elts_iter, len(ty.lo_ty())))
+                             for ty in self.tys))
+
+    def to_tangent_aval(self):
+      return ReproTest.TupTy(tuple(ty.to_tangent_aval() for ty in self.tys))
+
+    def normalize(self):
+      return ReproTest.TupTy(tuple(ty.normalize() for ty in self.tys))
+
+    def dec_rank(self, size, spec):
+      return ReproTest.TupTy(tuple(ty.dec_rank(size, s) for ty, s in zip(self.tys, spec.val)))
+
+    def inc_rank(self, size, spec):
+      return ReproTest.TupTy(tuple(ty.inc_rank(size, 0) for ty in self.tys))
+
+    def leading_axis_spec(self):
+      return ReproTest.TupSpec(tuple(ty.leading_axis_spec() for ty in self.tys))
+
+    def shard(self, mesh, manual_axes, check_vma, spec):
+      return ReproTest.TupTy(tuple(ty.shard(mesh, manual_axes, check_vma, s)
+                             for ty, s in zip(self.tys, spec.val)))
+
+    def unshard(self, mesh, check_vma, spec):
+      return ReproTest.TupTy(tuple(ty.unshard(mesh, check_vma, s)
+                             for ty, s in zip(self.tys, spec.val)))
+
+    def vspace_add(self, x_tup, y_tup):
+      n = len(self.tys)
+      x_elts = [ReproTest.get_tuple_element(x_tup, i) for i in range(n)]
+      y_elts = [ReproTest.get_tuple_element(y_tup, i) for i in range(n)]
+      return ReproTest.make_tup(*(ty.vspace_add(x, y)
+                                for ty, x, y in zip(self.tys, x_elts, y_elts)))
+
+  hijax.register_hitype(HiTup, lambda t: ReproTest.TupTy(tuple(map(jax.typeof, t.elts))))
+
+  @dataclasses.dataclass(frozen=True)
+  class TupSpec(hijax.MappingSpec):
+    val: tuple
+
+  @dataclasses.dataclass(frozen=True)
+  class TupP(hijax.HiPspec):
+    val: tuple
+
+    def to_lo(self) -> tuple[jax.PartitionSpec, ...]:
+      return self.val
+
+  class MakeTup(hijax.VJPHiPrimitive):
+    def __init__(self, in_avals):
+      in_avals = tuple(in_avals)
+      self.in_avals = in_avals
+      self.out_aval = ReproTest.TupTy(in_avals)
+      self.params = {}
+      super().__init__()
+
+    def expand(self, *elts):
+      return ReproTest.HiTup(elts)
+
+    def jvp(self, primals, tangents):
+      tangents = map(ad.instantiate_zeros, tangents)
+      return ReproTest.make_tup(*primals), make_tup(*tangents)
+
+    def transpose(self, ct, *maybe_accums):
+      cts = [get_tuple_element(ct, i) for i in range(len(self.out_aval.tys))]
+      for ct_, accum in zip(cts, maybe_accums):
+        if isinstance(accum, ad.GradAccum):
+          accum.accum(ct_)
+
+    def batch(self, _axis_data, args, in_dims):
+      return ReproTest.make_tup(*args), ReproTest.TupSpec(in_dims)
+
+  class GetTupElt(hijax.VJPHiPrimitive):
+    def __init__(self, in_aval, idx):
+      self.in_avals = in_aval,
+      self.out_aval = in_aval.tys[idx]
+      self.params = dict(idx=idx)
+      super().__init__()
+
+    def expand(self, tup: HiTup):
+      return tup.elts[self.idx]
+
+    def jvp(self, primals, tangents):
+      (tup,), (tup_dot,) = primals, tangents
+      return (ReproTest.get_tuple_element(tup, self.idx),
+              ReproTest.get_tuple_element(tup_dot, self.idx))
+
+    def transpose(self, g, tup_accum):
+      tup_ty, = self.in_avals
+      elts = map(ad.zeros_like_aval, tup_ty.tys)
+      elts[self.idx] = g
+      tup_accum.accum(make_tup(*elts))
+
+    def vjp_fwd(self, tup):
+      return ReproTest.get_tuple_element(tup, self.idx), None
+
+    def vjp_bwd_retval(self, _res, g):
+      tup_ty, = self.in_avals
+      elts = map(ad.zeros_like_aval, tup_ty.tys)
+      elts[self.idx] = g
+      return ReproTest.make_tup(*elts),
+
+    def batch(self, _axis_data, args, in_dims):
+      (x,), (d,) = args, in_dims
+      return ReproTest.get_tuple_element(x, self.idx), d.val[self.idx]
+
+  def make_tup(*elts):
+    return ReproTest.MakeTup(map(jax.typeof, elts))(*elts)
+
+  def get_tuple_element(tup, idx):
+    return ReproTest.GetTupElt(jax.typeof(tup), idx)(tup)
+
+  @jtu.parameterized_filterable(
+    kwargs=[dict(with_jit=with_jit)
+                for with_jit in [False, True]
+    ])
+  def test_vjphiprimitive_tuple_basic(self, with_jit: bool):
+    def f():
+      tup = ReproTest.make_tup(1, 2)
+      return ReproTest.get_tuple_element(tup, 1)
+
+    if with_jit:
+      f = jax.jit(f)
+
+    self.collect_and_check(f)
+
+  def test_vjphiprimitive_tuple_vmap(self):
+    tup = ReproTest.make_tup(jnp.arange(3.), jnp.arange(3.))
+    jax.vmap(lambda x: x, in_axes=ReproTest.TupSpec((0, 0)),
+             out_axes=ReproTest.TupSpec((0, 0)), axis_size=3)(tup)
+
+  def test_vjphiprimitive_tuple_vmap_infer(self):
+    tup = ReproTest.make_tup(jnp.arange(3.), jnp.arange(3.))
+    jax.vmap(lambda _: ReproTest.make_tup(jnp.ones(3), jnp.ones(3)),
+             in_axes=ReproTest.TupSpec((0, 0)),
+             out_axes=batching.infer, axis_size=3)(tup)
+
+  # def test_tuple_vmap_match(self):
+  #   tup = make_tup(jnp.arange(3.), jnp.arange(3.))
+  #   jax.vmap(lambda _: make_tup(jnp.ones(3), jnp.ones(3)),
+  #            in_axes=TupSpec((0, 0)), out_axes=TupSpec((0, 0)), axis_size=3)(tup)
+
+  def test_vjphiprimitive_tuple_vmap_primitive(self):
+    tup = ReproTest.make_tup(jnp.arange(3.), 5.)
+    def f(tup):
+      a, b = ReproTest.get_tuple_element(tup, 0), ReproTest.get_tuple_element(tup, 1)
+      return ReproTest.make_tup(b, a)
+    jax.vmap(f, in_axes=ReproTest.TupSpec((0, None)),
+             out_axes=ReproTest.TupSpec((None, 0)), axis_size=3)(tup)
+
+  @jtu.parameterized_filterable(
+    kwargs=[dict(with_jit=with_jit)
+                for with_jit in [False, True]
+    ])
+  def test_vjphiprimitive_tuple_scan(self, with_jit):
+    tup = ReproTest.make_tup(jnp.arange(3.), jnp.arange(3. * 4).reshape(3, 4))
+    def body(_, x):
+      self.assertEqual(jax.typeof(x), ReproTest.TupTy((jax.typeof(jnp.zeros(())), jax.typeof(jnp.arange(4.)))))
+      a = ReproTest.get_tuple_element(x, 0)
+      b = ReproTest.get_tuple_element(x, 1)
+      return (), ReproTest.make_tup(a + 1, b * 2)
+    def f(): return jax.lax.scan(body, (), tup, length=3)
+    if with_jit:
+      f = jax.jit(f)
+    (), tup2 = f()
+    a = ReproTest.get_tuple_element(tup2, 0)
+    b = ReproTest.get_tuple_element(tup2, 1)
+    self.assertAllClose(a, jnp.arange(3.) + 1)
+    self.assertAllClose(b, jnp.arange(3. * 4).reshape(3, 4) * 2)
+
+  @jtu.with_explicit_mesh((2, 2), ('i', 'j'))
+  def test_vjphiprimitive_tuple_shit(self, mesh):
+    x = jax.device_put(jnp.arange(4.), jax.P('i'))
+    y = jax.device_put(jnp.arange(3.), jax.P(None))
+    tup = ReproTest.make_tup(x, y)
+    x_ = ReproTest.get_tuple_element(tup, 0)
+    y_ = ReproTest.get_tuple_element(tup, 1)
+    self.assertEqual(jax.typeof(x_).sharding.spec, jax.P('i'))
+    self.assertEqual(jax.typeof(y_).sharding.spec, jax.P(None))
+
+  @jtu.with_explicit_mesh((2, 2), ('i', 'j'))
+  def test_vjphiprimitive_tuple_shmap(self, mesh):
+    x = jax.device_put(jnp.arange(4.), jax.P('i'))
+    y = jax.device_put(jnp.arange(3.), jax.P(None))
+    tup = ReproTest.make_tup(x, y)
+
+    @jax.jit
+    @jax.shard_map(in_specs=ReproTest.TupP((jax.P('i'), jax.P(None))),
+                   out_specs=ReproTest.TupP((jax.P(None), jax.P('i'))))
+    def fun(tup):
+      a, b = ReproTest.get_tuple_element(tup, 0), ReproTest.get_tuple_element(tup, 1)
+      return ReproTest.make_tup(b, a)
+    out = fun(tup)
+    x_ = ReproTest.get_tuple_element(out, 1)
+    y_ = ReproTest.get_tuple_element(out, 0)
+    self.assertAllClose(x, x_)
+    self.assertAllClose(y, y_)
+    self.assertEqual(x.sharding, x_.sharding)
+    self.assertEqual(y.sharding, y_.sharding)
+
+  # @jtu.with_explicit_mesh((2, 2), ('i', 'j'))
+  # def test_tuple_shmap_out_specs_error(self, mesh):
+  #   x = jax.device_put(jnp.arange(4.), jax.P('i'))
+  #   y = jax.device_put(jnp.arange(3.), jax.P(None))
+  #   tup = make_tup(x, y)
+
+  #   # TODO(mattjj,yashkatariya): this errors too late, make shmap checks work
+  #   @jax.jit
+  #   @jax.shard_map(in_specs=TupP((jax.P('i'), jax.P(None))),
+  #                  out_specs=TupP((jax.P('i'), jax.P('i'))))  # NOTE!!!!
+  #   def fun(tup):
+  #     a, b = get_tuple_element(tup, 0), get_tuple_element(tup, 1)
+  #     return make_tup(b, a)
+  #   out = fun(tup)
+  #   x_ = get_tuple_element(out, 1)
+  #   y_ = get_tuple_element(out, 0)
+  #   self.assertAllClose(x, x_)
+  #   self.assertAllClose(y, y_)
+  #   self.assertEqual(x.sharding, x_.sharding)
+  #   self.assertEqual(y.sharding, y_.sharding)
+
+  @jtu.parameterized_filterable(
+    kwargs=[dict(jit=jit)
+                for jit in [False, True]
+    ])
+  def test_vjphiprimitive_tuple_ref_to_tuple(self, jit):
+    def f():
+      tup = ReproTest.make_tup(1, 2)
+      ref = jax.new_ref(tup)
+      tup_ = ref[...]
+      return ReproTest.get_tuple_element(tup_, 1)
+
+    if jit:
+      f = jax.jit(f)
+
+    self.assertEqual(f(), 2)
+
+  @jtu.parameterized_filterable(
+    kwargs=[dict(jit=jit)
+                for jit in [False, True]
+    ])
+  def test_vjphiprimitive_tuple_run_state(self, jit):
+    def f():
+      @pl.run_state
+      def g(ref_args):
+        tup_ref, x_ref = ref_args
+        tup = tup_ref[...]
+        x_ref[...] = ReproTest.get_tuple_element(tup, 1)
+
+      tup = ReproTest.make_tup(1, 2)
+      _, ans =  g((tup, 3))
+      return ans
+
+    if jit:
+      f = jax.jit(f)
+
+    ans = f()
+    self.assertEqual(ans, 2)
+
+  ##### hijax QArray
+
+  @config.numpy_dtype_promotion('standard')
+  def test_vjphiprimitive_qarray(self):  # adapted from hijax_test.py
+
+    @dataclasses.dataclass(frozen=True)  # not NamedTuple, which is a pytree
+    class QArray:
+      qvalue: jax.Array
+      scale: jax.Array
+
+    @dataclasses.dataclass(frozen=True)
+    class QArrayTy(hijax.HiType):
+      # Use for the avals for hi values. In this example, the out_avals for
+      # Q and in_avals for DQ.
+      shape: tuple[int, int]
+
+      def to_tangent_aval(self):
+        return core.ShapedArray(self.shape, jnp.dtype('float32'))
+
+      def do_quantize(self, x):
+        assert False  # Do we need this?
+        scale = jnp.max(jnp.abs(x)) / 127
+        qvalue = jnp.round(x / scale).astype(jnp.int8)
+        return QArray(qvalue, scale)
+
+    hijax.register_hitype(QArray, lambda q: QArrayTy(q.qvalue.shape))
+
+    def q(x: jax.Array) -> QArray:
+      return Q(jax.typeof(x))(x)
+
+    def dq(qx: QArray) -> jax.Array:
+      return DQ(jax.typeof(qx))(qx)
+
+    class Q(hijax.VJPHiPrimitive):
+      def __init__(self, unquantized_aval: core.ShapedArray):
+        if unquantized_aval.dtype != jnp.dtype('float32'): raise TypeError
+        quantized_aval = QArrayTy(unquantized_aval.shape)
+        self.in_avals = (unquantized_aval,)
+        self.out_aval = quantized_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x: jax.Array) -> QArray:
+        scale = jnp.max(jnp.abs(x)) / 127
+        qvalue = jnp.round(x / scale).astype(jnp.int8)
+        return QArray(qvalue, scale)
+
+      def vjp_fwd(self, nzs_in: tuple[bool, ...], x: jax.Array):
+        return self(x), None
+
+      def vjp_bwd_retval(self, _, g: jax.Array):
+        return g,
+
+    class DQ(hijax.VJPHiPrimitive):
+      def __init__(self, quantized_aval: QArrayTy):
+        unquantized_aval = core.ShapedArray(quantized_aval.shape, jnp.dtype('float32'))
+        self.in_avals = (quantized_aval,)
+        self.out_aval = unquantized_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, qx: QArray) -> jax.Array:
+        return qx.qvalue * qx.scale
+
+      def vjp_fwd(self, nzs_in: tuple[bool, ...], qx: QArray):
+        return self(qx), None
+
+      def vjp_bwd_retval(self, _, g: jax.Array):
+        return g,
+
+    # TODO: with jit
+    @jax.jit
+    def f(x: jax.Array) -> jax.Array:
+      xq: QArray = q(x)
+      xd: jax.Array = dq(xq)
+      return jnp.sum(xd)
+
+    x = jax.random.normal(jax.random.key(0), (3, 3), dtype='float32')
+    # y = f(x)
+    # del y
+    # g = jax.grad(f)(x)
+    # del g
+    # t = jax.jit(f).trace(x)
+    # print("Hi Jaxpr: ", t.jaxpr)
+    # print("Lo Jaxpr:", t.lojax.jaxpr)
+    self.collect_and_check(f, x)
+
+    # self.collect_and_check(jax.jit(jax.grad(f)), x)
 
 
 if __name__ == '__main__':

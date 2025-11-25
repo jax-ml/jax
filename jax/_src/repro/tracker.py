@@ -729,10 +729,10 @@ class Statement(Call):
           assert not kwargs["uses_defjvps"]
           assert kwargs["jvps_count"] == 1, kwargs["jvps_count"]
           fun.preprocess_args = lambda args, kwargs: filter_statics(args, kwargs,
-                                                                   static_argnums=cjvp_kwargs["nondiff_argnums"])
+                                                                    static_argnums=cjvp_kwargs["nondiff_argnums"])
           for fun_jvp in fun_jvps:
             fun_jvp.preprocess_args = lambda args, kwargs: filter_statics(args, kwargs,
-                                                                         static_argnums=tuple(range(len(cjvp_kwargs["nondiff_argnums"]))))
+                                                                          static_argnums=tuple(range(len(cjvp_kwargs["nondiff_argnums"]))))
           dyn_args, _ = filter_statics(rest_args, {},
                                        static_argnums=cjvp_kwargs["nondiff_argnums"],
                                        static_argnames=())
@@ -755,6 +755,12 @@ class Statement(Call):
             matching = [("dots_saveable", checkpoint_policies.dots_saveable)]
           new_t_kwargs["policy"] = emitter.EmitLiterally(f"jax.checkpoint_policies.{matching[0][0]}")
           args = (f, t_args, new_t_kwargs, *rest_args)
+
+      elif self.func.api_name == "jax_vjphiprimitive_call":
+        # The "prim" is treated as static, and not present in the repros
+        kwargs = dict(kwargs)
+        del kwargs["prim"]
+
 
     self.args = self.normalizer_ctx.normalize_value(args, True)  # type: ignore
     self.kwargs = self.normalizer_ctx.normalize_value(kwargs, True)  # type: ignore
