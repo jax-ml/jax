@@ -1544,12 +1544,10 @@ def _gen_derivatives(p: Array,
 
 
 @jit(static_argnums=(0, 2))
-def _gen_associated_legendre(
-    l_max: int,
-    x: Array,
-    is_normalized: bool,
-) -> Array:
-  """Compute associated Legendre functions P_l^m using O(l_max^2) recurrences.
+def _gen_associated_legendre(l_max: int,
+                             x: Array,
+                             is_normalized: bool) -> Array:
+    """Compute associated Legendre functions P_l^m using O(l_max^2) recurrences.
 
   This computes the (unnormalized or normalized) associated Legendre functions
   of degree l = 0..l_max and order m = 0..l_max at evaluation points x.
@@ -1567,51 +1565,71 @@ def _gen_associated_legendre(
 
   is applied at the end.
   """
-  x = jnp.asarray(x)
   p = jnp.zeros((l_max + 1, l_max + 1, x.shape[0]), dtype=x.dtype)
 
-  p = p.at[(0, 0)].set(1.0)
+  sqrt1mx = jnp.sqrt(1.0 - x * x)
 
-  sqrt1mx = jnp.sqrt(jnp.clip(1.0 - x * x, 0.0))
+  if is_normalized:
+    p00 = 0.5 / jnp.sqrt(jnp.pi)
+  else:
+    p00 = 1.0
+
+  p = p.at[(0, 0)].set(p00)
 
   if l_max >= 1:
-    prev = p[0, 0]
-    for m in range(1, l_max + 1):
-      coef = -(2 * m - 1)
-      val = coef * sqrt1mx * prev
-      p = p.at[(m, m)].set(val)
-      prev = val
+    m_vals = jnp.arange(1, l_max + 1, dtype=x.dtype)
+    coef = -(2.0 * m_vals - 1.0)
 
-  for m in range(0, l_max):
-    Pmm = p[m, m]
-    Pm1m = (2 * m + 1) * x * Pmm
+    coef_cum = jnp.cumprod(coef)
+
+    sqrt_term = jnp.cumprod(jnp.broadcast_to(sqrt1mx, (l_max, x.shape[0])), axis=0)
+
+    Pmm = coef_cum[:, None] * sqrt_term * p00
+    p = p.at[m_vals, m_vals].set(Pmm)
+
+  def outer_body(m, p):
+    """Compute column m (order m) from degree m..l_max."""
+    Pmm = p[m, m]                       # P_m^m
+    Pm1m = (2 * m + 1) * x * Pmm        # P_{m+1}^m
     p = p.at[(m + 1, m)].set(Pm1m)
 
-    prev2 = Pmm
-    prev1 = Pm1m
+    def inner_body(k, carry):
+      p, prev1, prev2 = carry
+      n = m + 2 + k
 
-    for n in range(m + 2, l_max + 1):
       a = (2 * n - 1)
       b = (n + m - 1)
       denom = (n - m)
+
       Pnm = (a * x * prev1 - b * prev2) / denom
       p = p.at[(n, m)].set(Pnm)
-      prev2, prev1 = prev1, Pnm
+
+      return p, Pnm, prev1
+
+    num_inner = l_max - (m + 1)
+    p, _, _ = lax.fori_loop(0, num_inner, inner_body, (p, Pm1m, Pmm))
+    return p
+
+  if l_max > 0:
+    p = lax.fori_loop(0, l_max, outer_body, p)
 
   if is_normalized:
-    from jax.scipy.special import gammaln
+    # N_lm = sqrt( (2l+1)/(4π) * (l-m)!/(l+m)! )
+    l = jnp.arange(0, l_max + 1)[:, None]
+    m = jnp.arange(0, l_max + 1)[None, :]
 
-    l_arr = jnp.arange(0, l_max + 1, dtype=x.dtype)
-    m_arr = jnp.arange(0, l_max + 1, dtype=x.dtype)
-    L, M = jnp.meshgrid(l_arr, m_arr, indexing="ij")
+    lm = jnp.minimum(l, m)
+    lp = jnp.maximum(l, m)
 
-    log_fact = gammaln(L - M + 1) - gammaln(L + M + 1)
-    prefac = (2 * L + 1) / (4 * jnp.pi)
-    Nlm = jnp.sqrt(prefac * jnp.exp(log_fact))
-    p = p * Nlm[:, :, None]
+    log_norm = (
+        0.5 * (jnp.log(2 * l + 1) - jnp.log(4 * jnp.pi))
+        + 0.5 * (gammaln(l - m + 1) - gammaln(l + m + 1))
+    )
+    norm = jnp.exp(log_norm)
+
+    p = p * norm[:, :, None]
 
   return p
-
 
 
 def lpmn(m: int, n: int, z: Array) -> tuple[Array, Array]:
