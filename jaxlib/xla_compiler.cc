@@ -1018,9 +1018,6 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def_ro("executable_build_options",
               &CompileOptions::executable_build_options)
       .def_rw("env_option_overrides", &CompileOptions::env_option_overrides)
-      // TODO(phawkins): the following fields exist for backward compatibility.
-      // Remove them after JAX has been updated not to use them.
-      .def_rw("tuple_arguments", &CompileOptions::parameter_is_tupled_arguments)
       .def_prop_rw(
           "num_replicas",
           [](const CompileOptions& options) {
