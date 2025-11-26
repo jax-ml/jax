@@ -161,7 +161,10 @@ def debug_print(fmt, *args, uniform=True, scope=None):
       index = ir.IndexType.get()
       vec_ty = ir.VectorType(arg.type)
       if len(vec_ty.shape) > 1:
-        raise NotImplementedError(vec_ty)
+        raise NotImplementedError(
+            "2D+ vectors are not supported in debug_print:"
+            f" {vec_ty}"
+        )
       vec_args = [
           vector.extract(
               arg,
@@ -679,7 +682,11 @@ def memref_reshape(
 
   ref_ty = ir.MemRefType(ref.type)
   if math.prod(ref_ty.shape) != math.prod(shape):
-    raise ValueError("Cannot reshape to a different size")
+    raise ValueError(
+        f"Cannot reshape to a different size. Ref shape: {ref_ty.shape} (size:"
+        f" {math.prod(ref_ty.shape)}), new shape: {shape} (size:"
+        f" {math.prod(shape)})"
+    )
   if not all(dim > 0 for dim in shape):
     raise ValueError(
         "Shapes must havbe only positive dimensions (no -1 or 0 dimensions"
@@ -1500,7 +1507,11 @@ class Partition1D:
 
 def tile_shape(shape, tiling):
   if len(tiling) > len(shape):
-    raise ValueError
+    raise ValueError(
+        "Expected tiling to be at most rank of shape. Got tiling:"
+        f" {tiling} (rank: {len(tiling)}) and shape {shape} (rank:"
+        f" {len(shape)})."
+    )
   if not tiling:
     return shape
   tiling_rank = len(tiling)
@@ -1565,7 +1576,10 @@ def memref_ptr(memref_arg, memory_space=None):
       assert elem_bitwidth.bit_count() == 1
       packing = 8 // elem_bitwidth
       if static_offset % packing != 0:
-        raise ValueError
+        raise ValueError(
+            f"{memref_ty} {static_offset=} is not divisible by"
+            f" {packing=}`"
+        )
       offset_bytes = c(static_offset // packing, i64)
     else:
       offset_bits = llvm.mul(
@@ -1779,7 +1793,7 @@ def ceil_div(x: int, y: int):
 def vector_slice(v: ir.Value, s: slice):
   v_ty = ir.VectorType(v.type)
   if len(v_ty.shape) != 1:
-    raise NotImplementedError(v_ty)
+    raise NotImplementedError(f"Only 1D vectors are supported {v_ty}")
   [v_len] = v_ty.shape
   slice_length = len(range(v_len)[s])
   return vector.extract_strided_slice(
