@@ -1191,7 +1191,7 @@ single_side_collective_effect = SingleSideCollectiveEffect()
 core.effects.control_flow_allowed_effects.add_type(SingleSideCollectiveEffect)
 
 def _psend_lowering_gpu(ctx, x, *, axis_name, perm):
-  if ("cuda" not in ctx.module_context.platforms):
+  if all(p not in ctx.module_context.platforms for p in ("cuda", "rocm")):
     raise NotImplementedError("psend is currently only implemented on GPUs")
 
   full_perm, other_args = _pcollectives_lowering_common(
