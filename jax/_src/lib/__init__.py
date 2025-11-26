@@ -100,7 +100,6 @@ import jaxlib.utils as utils  # noqa: F401
 import jaxlib._jax as _jax  # noqa: F401
 
 
-
 import jaxlib.mlir._mlir_libs._jax_mlir_ext as jax_mlir_ext  # noqa: F401
 from jaxlib._jax import guard_lib as guard_lib  # noqa: F401
 from jaxlib._jax import jax_jit as jax_jit  # noqa: F401
@@ -109,6 +108,11 @@ from jaxlib._jax import pytree as pytree  # noqa: F401
 from jaxlib._jax import Device as Device  # noqa: F401
 from jaxlib import _profiler as _profiler  # noqa: F401
 from jaxlib import _profile_data as _profile_data  # noqa: F401
+
+try:
+  from jaxlib import _gpu_ondevice_tracing as _gpu_ondevice_tracing  # noqa: F401
+except (ImportError, ModuleNotFoundError):
+  _gpu_ondevice_tracing = None
 
 from jaxlib._jax import ffi as ffi  # noqa: F401
 import jaxlib.cpu_sparse as cpu_sparse  # noqa: F401
