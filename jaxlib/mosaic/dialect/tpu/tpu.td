@@ -48,8 +48,9 @@ class TPU_Attr<string name, string mnemonic_, list<Trait> traits = []>
 // TODO(b/369418606): Find out the way to verify vreg size.
 def TPU_Vreg : Type<IsVectorOfNonZeroRankTypePred, "native-sized vreg", "::mlir::VectorType">;
 
-class TPU_Type<string name, string mnemonic_, list<Trait> traits = []>
-    : TypeDef<TPU_Dialect, name, traits> {
+class TPU_Type<string name, string mnemonic_, list<Trait> traits = [],
+               string baseCppType = "::mlir::Type">
+    : TypeDef<TPU_Dialect, name, traits, baseCppType> {
   let mnemonic = mnemonic_;
 }
 
@@ -81,6 +82,24 @@ def TPU_PipelineModeEnum : EnumAttr<TPU_Dialect, TPU_PipelineMode, "pipeline_mod
 def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore", [MemRefElementTypeInterface]>;
 def TPU_DMASemaphoreType : TPU_Type<"DMASemaphore", "dma_semaphore", [MemRefElementTypeInterface]>;
 def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>;
+
+def TPU_Float8EXMYType : TPU_Type<"Float8EXMY", "float8_exmy",
+                            [DeclareTypeInterfaceMethods<FloatTypeInterface, ["getFloatSemantics"]>]> {
+    let summary = "EXMY type in a 8 bit container";
+    let description = [{
+      EXMY type in a 8 bit container. Meaningful bits are aligned to LSB, and
+      bits higher than the underlying exmy type in the container are considered
+      as ignored. See https://arxiv.org/abs/2405.13938 for more details.
+    }];
+
+    let parameters = (ins
+      TypeParameter<"::mlir::FloatType", "Underlying EXMY type">:$underlying_type
+    );
+
+    let assemblyFormat = [{
+      `<` $underlying_type `>`
+    }];
+}
 
 def TPU_DimensionSemantics : I32EnumAttr<"DimensionSemantics", "Dimension semantics", [
   I32EnumAttrCase<"parallel", 0>,
