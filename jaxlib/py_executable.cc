@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/python/ifrt/user_context_status_util.h"
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
+#include "xla/python/version.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
@@ -89,9 +90,16 @@ uint64_t GetBaseLaunchId(std::optional<std::string> fingerprint,
   // Pmap and replicated executables for example will only populate the local
   // device to the loaded executable and all devices will have different devices
   // fingerprints.
+#if JAX_IFRT_VERSION_NUMBER >= 37
+  if (std::optional<ifrt::DeviceListRef> device_list = executable->devices();
+      device_list.has_value() && !(*device_list)->IsFullyAddressable()) {
+    ret += (*device_list)->fingerprint();
+  }
+#else
   if (!executable->devices()->IsFullyAddressable()) {
     ret += executable->devices()->fingerprint();
   }
+#endif
   return ret;
 }
 
@@ -514,8 +522,15 @@ int32_t PyLoadedExecutable::GetNextLaunchId() {
   }
   VLOG(1) << "Launching executable " << ifrt_loaded_executable_->name()
           << " with launch ID: " << launch_id;
+#if JAX_IFRT_VERSION_NUMBER >= 37
+  VLOG(2) << "Executable devices for launch ID " << launch_id << ": "
+          << (ifrt_loaded_executable_->devices().has_value()
+                  ? (*ifrt_loaded_executable_->devices())->DebugString()
+                  : "<nullopt>");
+#else
   VLOG(2) << "Executable devices for launch ID " << launch_id << ": "
           << ifrt_loaded_executable_->devices()->DebugString();
+#endif
   return launch_id;
 }
 
