@@ -26,7 +26,7 @@ import enum
 import itertools
 import math
 import re
-from typing import Any, assert_never, cast
+from typing import assert_never, cast
 
 from absl import logging
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
@@ -1600,86 +1600,40 @@ def _async_load_store_constraint_system(
 
 def _ensure_all_layouts_are_set(op: ir.OpView) -> None:
   if inference_utils.should_have_layout(op):
-    _ensure_right_number_of_layouts(
-        op,
-        inference_utils.in_layouts(op)
-        if inference_utils.has_in_layouts_set(op)
-        else [],
-        inference_utils.out_layouts(op)
-        if inference_utils.has_out_layouts_set(op)
-        else [],
-    )
+    _ensure_right_number_of_layouts(is_vector, "layouts", "vector", op)
   if inference_utils.should_have_tmem_layout(op):
-    _ensure_right_number_of_tmem_layouts(
-        op,
-        inference_utils.in_tmem_layouts(op)
-        if inference_utils.has_in_tmem_layouts_set(op)
-        else [],
-        inference_utils.out_tmem_layouts(op)
-        if inference_utils.has_out_tmem_layouts_set(op)
-        else [],
-    )
+    _ensure_right_number_of_layouts(_is_tmem_ref, "tmem_layouts", "TMEM ref", op)
   if inference_utils.should_have_transforms(op):
-    _ensure_right_number_of_transforms(
-        op,
-        inference_utils.in_transforms(op)
-        if inference_utils.has_in_transforms_set(op)
-        else [],
-        inference_utils.out_transforms(op)
-        if inference_utils.has_out_transforms_set(op)
-        else [],
+    _ensure_right_number_of_layouts(
+        inference_utils.is_transformable_smem_memref, "transforms", "SMEM ref", op,
     )
 
 
 def _ensure_right_number_of_layouts(
+    filter_fn: Callable[[ir.Value], bool],
+    attr_suffix: str,
+    value_type: str,
     op: ir.OpView,
-    in_layouts: Sequence[fa.FragmentedLayout | ir.Attribute],
-    out_layouts: Sequence[fa.FragmentedLayout | ir.Attribute],
 ) -> None:
-  """Ensures that the right number of in/out layouts are provided for an op."""
-  if len(in_layouts) != sum(map(is_vector, op.operands)):
-    raise ValueError(
-        "Expected the same number of in_layouts as vector operands."
-    )
-  if len(out_layouts) != sum(map(is_vector, op.results)):
-    raise ValueError(
-        "Expected the same number of out_layouts as vector results."
-    )
+  """Ensures that the right number of in/out layouts are provided for an op.
 
+  Layouts here are can be vector layouts, TMEM layouts, or SMEM transforms.
+  """
+  layouts = lambda attr: op.attributes[attr] if attr in op.attributes else []
+  in_layouts = layouts(f"in_{attr_suffix}")
+  out_layouts = layouts(f"out_{attr_suffix}")
 
-def _ensure_right_number_of_tmem_layouts(
-    op: ir.OpView,
-    in_layouts: Sequence[ir.Attribute],
-    out_layouts: Sequence[ir.Attribute],
-) -> None:
-  """Ensures that the right number of in/out TMEM layouts are provided for an op."""
-  if len(in_layouts) != sum(map(_is_tmem_ref, op.operands)):
+  num_matching_operands = sum(map(filter_fn, op.operands))
+  if len(in_layouts) != num_matching_operands:
     raise ValueError(
-        f"Expected the same number of in_tmem_layouts({in_layouts}) as TMEM ref operands. op=\n  {op}"
+        f"Expected the same number of in_{attr_suffix} ({len(in_layouts)}) as "
+        f"{value_type} operands ({num_matching_operands}). op=\n  {op}"
     )
-  if len(out_layouts) != sum(map(_is_tmem_ref, op.results)):
+  num_matching_results = sum(map(filter_fn, op.results))
+  if len(out_layouts) != num_matching_results:
     raise ValueError(
-        f"Expected the same number of out_tmem_layouts({out_layouts}) as TMEM ref results. op=\n  {op}"
-    )
-
-
-def _ensure_right_number_of_transforms(
-    op: ir.OpView,
-    in_transforms: Sequence[Any],
-    out_transforms: Sequence[Any],
-) -> None:
-  """Ensures that the right number of in/out SMEM transforms are provided for an op."""
-  if len(in_transforms) != sum(
-      map(inference_utils.is_transformable_smem_memref, op.operands)
-  ):
-    raise ValueError(
-        f"Expected the same number of in_transforms({in_transforms}) as SMEM ref operands. op=\n  {op}"
-    )
-  if len(out_transforms) != sum(
-      map(inference_utils.is_transformable_smem_memref, op.results)
-  ):
-    raise ValueError(
-        f"Expected the same number of out_transforms({out_transforms}) as SMEM ref results. op=\n  {op}"
+        f"Expected the same number of out_{attr_suffix} ({len(out_layouts)}) "
+        f"as {value_type} results ({num_matching_results}). op=\n  {op}"
     )
 
 
@@ -1781,10 +1735,6 @@ def assign_layouts(solution: dict[ValueSite, cs.Constant]) -> None:
         tl for tl in out_tls if isinstance(tl.layout, cs.SMEMTiling)
     ]
 
-    _ensure_right_number_of_layouts(op, in_layouts, out_layouts)
-    _ensure_right_number_of_tmem_layouts(op, in_tmem_layouts, out_tmem_layouts)
-    _ensure_right_number_of_transforms(op, in_transforms, out_transforms)
-
     if inference_utils.should_have_in_layout(op):
       attrs = [layouts_lib.to_layout_attr(l) for l in in_layouts]
       op.attributes["in_layouts"] = ir.ArrayAttr.get(attrs)
@@ -1818,6 +1768,8 @@ def assign_layouts(solution: dict[ValueSite, cs.Constant]) -> None:
     if inference_utils.should_have_out_transforms(op):
       attrs = _to_transform_attrs(out_transforms)
       op.attributes["out_transforms"] = ir.ArrayAttr.get(attrs)
+
+    _ensure_all_layouts_are_set(op)
 
 
 def vector_value_sites(op: ir.OpView) -> list[ValueSite]:
