@@ -1574,11 +1574,12 @@ def _gen_associated_legendre(l_max: int,
 
   sqrt1mx = jnp.sqrt(jnp.clip(1.0 - x * x, 0.0))
 
-  p00 = 0.5 / jnp.sqrt(jnp.pi) if is_normalized else 1.0
+  # Always start unnormalized
+  p00 = 1.0
   p = p.at[(0, 0)].set(p00)
 
   if l_max >= 1:
-    m_vals = jnp.arange(1, l_max + 1, dtype=x.dtype)
+    m_vals = jnp.arange(1, l_max + 1, dtype=jnp.int32)
     coef = -(2.0 * m_vals - 1.0)
     coef_cum = jnp.cumprod(coef)                          
 
@@ -1615,12 +1616,13 @@ def _gen_associated_legendre(l_max: int,
   if l_max > 0:
     p = lax.fori_loop(0, l_max, outer_body, p)
 
+  # Apply normalization once, if requested
   if is_normalized:
     l = jnp.arange(0, l_max + 1)[:, None]
     m = jnp.arange(0, l_max + 1)[None, :]
 
     log_norm = (
-        0.5 * (jnp.log(2 * l + 1) - jnp.log(4 * jnp.pi))
+        0.5 * (jnp.log(2 * l + 1) - jnp.log(4 * np.pi))
         + 0.5 * (gammaln(l - m + 1) - gammaln(l + m + 1))
     )
     norm = jnp.exp(log_norm)
