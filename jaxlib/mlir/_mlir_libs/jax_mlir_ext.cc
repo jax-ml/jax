@@ -310,24 +310,23 @@ NB_MODULE(_jax_mlir_ext, m) {
         MlirDialectRegistry c_registry = registry.get();
 #define REGISTER_DIALECT(name)                                           \
   MlirDialectHandle name##_dialect = mlirGetDialectHandle__##name##__(); \
-  mlirDialectHandleInsertDialect(name##_dialect, c_registry)
-        REGISTER_DIALECT(arith);
-        REGISTER_DIALECT(func);
-        REGISTER_DIALECT(math);
-        REGISTER_DIALECT(memref);
-        REGISTER_DIALECT(scf);
-        REGISTER_DIALECT(vector);
-        // TODO(jpienaar): these don't seem to have C API targets known to Bazel
-        unwrap(c_registry)->insert<mlir::shape::ShapeDialect>();
-        unwrap(c_registry)->insert<mlir::tensor::TensorDialect>();
-        unwrap(c_registry)->insert<mlir::vhlo::VhloDialect>();
-
-        // For Mosaic GPU
-        REGISTER_DIALECT(cf);
-        REGISTER_DIALECT(gpu);
-        REGISTER_DIALECT(nvgpu);
-        REGISTER_DIALECT(nvvm);
-        REGISTER_DIALECT(llvm);
+  mlirDialectHandleInsertDialect(name##_dialect, registry)
+    REGISTER_DIALECT(arith);
+    REGISTER_DIALECT(func);
+    REGISTER_DIALECT(math);
+    REGISTER_DIALECT(memref);
+    REGISTER_DIALECT(scf);
+    REGISTER_DIALECT(vector);
+    // TODO(jpienaar): these don't seem to have C API targets known to Bazel
+    unwrap(registry)->insert<mlir::shape::ShapeDialect>();
+    unwrap(registry)->insert<mlir::tensor::TensorDialect>();
+    unwrap(registry)->insert<mlir::vhlo::VhloDialect>();
+    // For Mosaic GPU
+    REGISTER_DIALECT(cf);
+    REGISTER_DIALECT(gpu);
+    REGISTER_DIALECT(nvgpu);
+    REGISTER_DIALECT(nvvm);
+    REGISTER_DIALECT(llvm);
 #undef REGISTER_DIALECT
 
         mlirMosaicGpuRegisterSerdePass();
