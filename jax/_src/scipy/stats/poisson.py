@@ -21,6 +21,8 @@ from jax._src.numpy.util import promote_args_inexact
 from jax._src.scipy.special import xlogy, entr , gammaln, gammaincc
 from jax._src.typing import Array, ArrayLike
 
+import jax.numpy as j_numpy
+
 
 def logpmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   r"""Poisson log probability mass function.
@@ -188,15 +190,16 @@ def _entropy_small_mu(mu, loc):
     
     Uses adaptive upper bound k ≤ μ + 20 to capture >99.999% of mass
     """
+    max_k = 35
+    
+    k = jnp.arange(max_k)[:, None]
+    probs = pmf(k, mu, loc)
+    
+    # Mask: only compute up to mu + 20 for each value
     upper_bounds = jnp.ceil(mu + 20).astype(int)
-    max_k = int(jnp.max(upper_bounds))
-
-    k = jnp.arange(max_k)[:, None] 
-    probs = pmf(k, mu, loc) 
-
-    mask = k < upper_bounds[None, :]  # this is called bkroadcasting
+    mask = k < upper_bounds[None, :]
     probs_masked = jnp.where(mask, probs, 0.0)
-
+    
     return jnp.sum(entr(probs_masked), axis=0)
 
 def _entropy_medium_mu(mu, loc):
@@ -205,16 +208,15 @@ def _entropy_medium_mu(mu, loc):
     
     Bounds: k ≤ μ + 10√μ + 20. Caps at k=1000 (falls back to large regime).
     """
-    upper_bounds = jnp.ceil(mu + 10 * jnp.sqrt(mu) + 20).astype(int)
-    max_k = int(jnp.max(upper_bounds))
-    max_k = min(max_k, 1000)  # Safety cap - 1000 will be using _entropy_large_mu
-
+    max_k = 250  # Static bound for JIT. For mu<100, upper bound < 220
+    
     k = jnp.arange(max_k)[:, None]
     probs = pmf(k, mu, loc)
-
+    
+    upper_bounds = jnp.ceil(mu + 10 * jnp.sqrt(mu) + 20).astype(int)
     mask = k < upper_bounds[None, :]
     probs_masked = jnp.where(mask, probs, 0.0)
-
+    
     return jnp.sum(entr(probs_masked), axis=0)
 
 def _entropy_large_mu(mu, loc):
@@ -223,4 +225,4 @@ def _entropy_large_mu(mu, loc):
 
     Formula: H(λ) ≈ 0.5*log(2πeλ) - 1/(12λ) + O(λ^-2)
     """
-    return 0.5 * np.log(2 * np.pi * np.e * mu) - 1.0 / (12 * mu)
+    return 0.5 * j_numpy.log(2 * j_numpy.pi * j_numpy.e * mu) - 1.0 / (12 * mu)
