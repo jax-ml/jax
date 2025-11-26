@@ -143,7 +143,7 @@ ffi::Error XlaBufferCallback(ffi::Context ctx, int32_t device_ordinal,
   return ffi::Error::Success();
 }
 
-void BuildFfiSubmodule(nanobind::module_& m);
+void RegisterFfiApis(nanobind::module_& m);
 
 }  // namespace jax
 

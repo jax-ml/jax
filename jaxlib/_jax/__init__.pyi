@@ -360,23 +360,12 @@ class CompileOptions:
   @device_assignment.setter
   def device_assignment(self, arg: DeviceAssignment, /) -> None: ...
 
-def register_custom_call_target(
-    fn_name: object,
-    fn: object,
-    platform: str,
-    api_version: int = ...,
-    traits: int = ...,
-) -> None: ...
-def custom_call_targets(platform: str) -> dict: ...
-
 class AutotuneCacheMode(enum.Enum):
   UNSPECIFIED = 0
 
   UPDATE = 1
 
   READ = 2
-
-def register_custom_type(type_name: str, type_id: object) -> None: ...
 
 class DebugOptions:
   def __repr__(self) -> str: ...
@@ -1441,6 +1430,16 @@ def register_custom_call_as_batch_partitionable(
     target_name: the target name of the batch partitionable custom call.
     c_api: optional `PJRT_Api*` to support registration via a PJRT plugin.
   """
+
+def register_custom_call_target(
+    fn_name: object,
+    fn: object,
+    platform: str,
+    api_version: int = ...,
+    traits: int = ...,
+) -> None: ...
+def custom_call_targets(platform: str) -> dict: ...
+def register_custom_type(type_name: str, type_id: object) -> None: ...
 
 class TransferConnection:
   def _testonly_inject_failure(self) -> None: ...
