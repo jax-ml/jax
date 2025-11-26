@@ -208,7 +208,6 @@ NB_MODULE(_jax_mlir_ext, m) {
     unwrap(registry)->insert<mlir::shape::ShapeDialect>();
     unwrap(registry)->insert<mlir::tensor::TensorDialect>();
     unwrap(registry)->insert<mlir::vhlo::VhloDialect>();
-
     // For Mosaic GPU
     REGISTER_DIALECT(cf);
     REGISTER_DIALECT(gpu);
