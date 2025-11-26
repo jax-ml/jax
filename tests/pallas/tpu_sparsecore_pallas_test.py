@@ -1599,6 +1599,39 @@ class VectorSubcoreTest(PallasSCTest):
     )(x)
     np.testing.assert_array_equal(result, jnp.exp(x))
 
+  @parameterized.product(
+      keys_dtype=[np.int32, np.float32],
+      values_dtypes=[(), (np.int32,), (np.float32, np.int32)],
+  )
+  def test_sort(self, keys_dtype, values_dtypes):
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 30):
+      self.skipTest("Test requires a newer libtpu")
+
+    vec_dim = self.sc_info.num_lanes
+    keys = np.arange(vec_dim, dtype=keys_dtype)
+    np.random.shuffle(keys)
+    values = [np.arange(vec_dim, dtype=dtype) for dtype in values_dtypes]
+    _ = [np.random.shuffle(v) for v in values]
+
+    @self.vector_subcore_kernel(out_shape=(keys, *values))
+    def kernel(*args):
+      keys_ref, *values_refs = args[: len(args) // 2]
+      keys_out, *all_values_out = jax.lax.sort(
+          (keys_ref[...], *(ref[...] for ref in values_refs))
+      )
+      keys_out_ref, *values_out_refs = args[len(args) // 2 :]
+      keys_out_ref[...] = keys_out
+      for values_out_ref, values_out in zip(
+          values_out_refs, all_values_out, strict=True
+      ):
+        values_out_ref[...] = values_out
+
+    perm = np.argsort(keys)
+    keys_result, *values_results = kernel(keys, *values)
+    np.testing.assert_array_equal(keys_result, keys[perm])
+    for values_result, values_in in zip(values_results, values, strict=True):
+      np.testing.assert_array_equal(values_result, values_in[perm])
+
 
 class VectorSubcoreTestWithTCTiling(TCTilingMixin, VectorSubcoreTest):
   pass
