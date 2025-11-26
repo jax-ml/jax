@@ -12,15 +12,13 @@ load("@xla//:workspace3.bzl", "xla_workspace3")
 
 xla_workspace3()
 
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
-
 # Initialize Hermetic toolchains
 # Details: https://github.com/google-ml-infra/rules_ml_toolchain
 tf_http_archive(
     name = "rules_ml_toolchain",
-    sha256 = "8123d826b0a4c5ceda767abc8092419fcc980c3ce45fb0f438b101fb886c014c",
-    strip_prefix = "rules_ml_toolchain-552b53a04a86fd5cdb4d5091e7420411d8b2a045",
-    urls = tf_mirror_urls("https://github.com/google-ml-infra/rules_ml_toolchain/archive/552b53a04a86fd5cdb4d5091e7420411d8b2a045.tar.gz"),
+    sha256 = "915dd7dc89a5c3888b4c3fc9bb04370c73f52224bfcaccad66fd96aa1ef254a5",
+    strip_prefix = "rules_ml_toolchain-61319edbfdce8125e0e8c1c051c5359516e08dab",
+    urls = tf_mirror_urls("https://github.com/google-ml-infra/rules_ml_toolchain/archive/61319edbfdce8125e0e8c1c051c5359516e08dab.tar.gz"),
 )
 
 load(

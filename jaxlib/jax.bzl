@@ -23,6 +23,7 @@ load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_roc
 load("@nvidia_wheel_versions//:versions.bzl", "NVIDIA_WHEEL_VERSIONS")
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION", "HERMETIC_PYTHON_VERSION_KIND")
 load("@rules_cc//cc:defs.bzl", _cc_proto_library = "cc_proto_library")
+load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("@rules_python//python:defs.bzl", "py_library", "py_test")
 load("@test_shard_count//:test_shard_count.bzl", "USE_MINIMAL_SHARD_COUNT")
 load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
@@ -291,6 +292,7 @@ def jax_multiplatform_test(
         if backend == "gpu":
             test_deps += _gpu_test_deps()
             test_tags += tf_cuda_tests_tags()
+            env["LOAD_CUDA_UMD_LIBS"] = "True"
         elif backend == "tpu":
             test_deps += ["@pypi//libtpu"]
         py_test(
@@ -651,6 +653,13 @@ def if_pypi_cuda_wheel_deps(if_true, if_false = []):
         "//conditions:default": if_false,
     })
 
+def if_cuda_umd_libs(if_true, if_false = []):
+    """ select() on whether we're adding CUDA UMD libs. """
+    return select({
+        "@cuda_driver//:cuda_umd_libs": if_true,
+        "//conditions:default": if_false,
+    })
+
 def jax_multiprocess_test(
         name,
         srcs,
@@ -705,3 +714,64 @@ def jax_multiprocess_test(
 
 def jax_multiprocess_generate_backend_suites(name = None, backends = []):
     return jax_generate_backend_suites(backends = backends)
+
+def _zip_cuda_umd_libs_impl(ctx):
+    include_cuda_umd_libs = ctx.attr.include_cuda_umd_libs[BuildSettingInfo].value
+    outputs = []
+    if include_cuda_umd_libs:
+        cuda_umd_libs = {}
+        for src in ctx.attr.srcs:
+            if CcInfo in src:
+                linking_context = src[CcInfo].linking_context
+                for linker_input in linking_context.linker_inputs.to_list():
+                    for lib in linker_input.libraries:
+                        dynamic_library = lib.dynamic_library
+                        cuda_umd_libs[dynamic_library] = dynamic_library.path
+        output_zip = ctx.actions.declare_file("cuda_umd_libs.zip")
+        outputs.append(output_zip)
+        cmd = """set -e
+set -x
+TMP_PKG=%s
+mkdir -p $TMP_PKG
+FILES_TO_ZIP=( %s )
+for f in "${FILES_TO_ZIP[@]}"; do
+    cp "$f" "$TMP_PKG/"
+done
+%s c %s $TMP_PKG/*""" % (
+            ctx.attr.path_prefix,
+            " ".join(cuda_umd_libs.values()),
+            ctx.executable.zipper.path,
+            output_zip.path,
+        )
+        ctx.actions.run_shell(
+            outputs = [output_zip],
+            inputs = cuda_umd_libs.keys(),
+            tools = [ctx.executable.zipper],
+            command = cmd,
+            mnemonic = "ZipUMDLibraries",
+        )
+    return [DefaultInfo(files = depset(direct = outputs))]
+
+""" Returns a zip file containing the CUDA UMD libraries. """  # buildifier: disable=no-effect
+zip_cuda_umd_libs = rule(
+    attrs = {
+        "srcs": attr.label_list(
+            allow_files = True,
+            default = [
+                "@cuda_driver//:nvidia_driver",
+                "@cuda_driver//:nvidia_ptxjitcompiler",
+            ],
+        ),
+        "include_cuda_umd_libs": attr.label(
+            default = Label("@cuda_driver//:include_cuda_umd_libs"),
+        ),
+        "path_prefix": attr.string(mandatory = True),
+        "zipper": attr.label(
+            default = Label("@bazel_tools//tools/zip:zipper"),
+            executable = True,
+            cfg = "exec",
+        ),
+    },
+    implementation = _zip_cuda_umd_libs_impl,
+    executable = False,
+)
