@@ -26,9 +26,15 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "include/dlpack/dlpack.h"
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/optional.h"  // IWYU pragma: keep
+#include "nanobind/stl/pair.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/ffi/ffi_api.h"
@@ -36,6 +42,7 @@ limitations under the License.
 #include "xla/python/dlpack_types.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/types.h"
+#include "xla/service/custom_call_target_registry.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
@@ -128,6 +135,120 @@ xla::PrimitiveType PrimitiveTypeForFfiDataType(ffi::DataType dtype) {
     case ffi::F8E8M0FNU:
       return xla::PrimitiveType::F8E8M0FNU;
   }
+}
+// Registers a 'fn' as a custom call target.
+//
+// `fn` must be a custom call implementation function pointer (XLA_FFI_Handler*
+// when implemented as FFI handler) encapsulated in a PyCapsule object or a
+// a dictionary of function pointers (also encapsulated in a PyCapsule).
+//
+// See XLA_FFI_ExecutionStage documentation for more details about the
+// custom execution stages.
+absl::Status PyRegisterCustomCallTarget(const std::string& fn_name,
+                                        nb::object fn,
+                                        const std::string& platform,
+                                        int api_version,
+                                        XLA_FFI_Handler_Traits traits) {
+  // Register legacy custom call target (untyped void* API).
+  if (api_version == 0) {
+    if (traits != 0) {
+      return absl::InvalidArgumentError(
+          "Custom call target registration with traits is not supported for "
+          "api_version=0");
+    }
+
+    nb::capsule capsule;
+    if (!nb::try_cast<nb::capsule>(fn, capsule)) {
+      return absl::InvalidArgumentError(
+          "Custom call target registration with api_version=0 requires a "
+          "PyCapsule fn object");
+    }
+
+    xla::CustomCallTargetRegistry::Global()->Register(
+        fn_name, static_cast<void*>(capsule.data()), platform);
+    return absl::OkStatus();
+  }
+
+  // Register XLA FFI handler (typed API with explicit function signatures).
+  if (api_version == 1) {
+    nb::capsule capsule;
+    if (nb::try_cast<nb::capsule>(fn, capsule)) {
+      return ffi::TakeStatus(ffi::Ffi::RegisterStaticHandler(
+          xla::ffi::GetXlaFfiApi(), fn_name, platform,
+          reinterpret_cast<XLA_FFI_Handler*>(
+              static_cast<void*>(capsule.data()))));
+    }
+
+    nb::dict bundle;
+    if (nb::try_cast<nb::dict>(fn, bundle)) {
+      auto handler = [&](const char* name) -> absl::StatusOr<XLA_FFI_Handler*> {
+        if (!bundle.contains(name)) return nullptr;
+
+        nb::capsule capsule;
+        if (!nb::try_cast<nb::capsule>(bundle[name], capsule)) {
+          return absl::InvalidArgumentError(
+              "Custom call target registration with api_version=1 requires a "
+              "PyCapsule fn object for all dict keys");
+        }
+
+        return reinterpret_cast<XLA_FFI_Handler*>(capsule.data());
+      };
+
+      XLA_FFI_Handler_Bundle bundle;
+      TF_ASSIGN_OR_RETURN(bundle.instantiate, handler("instantiate"));
+      TF_ASSIGN_OR_RETURN(bundle.prepare, handler("prepare"));
+      TF_ASSIGN_OR_RETURN(bundle.initialize, handler("initialize"));
+      TF_ASSIGN_OR_RETURN(bundle.execute, handler("execute"));
+
+      return ffi::TakeStatus(ffi::Ffi::RegisterStaticHandler(
+          xla::ffi::GetXlaFfiApi(), fn_name, platform, bundle, traits));
+    }
+
+    return absl::InvalidArgumentError(
+        "Unsupported custom call target type for api_version=1");
+  }
+
+  return absl::UnimplementedError(absl::StrFormat(
+      "API version %d is not supported by RegisterCustomCallTarget. "
+      "Supported versions are 0 and 1.",
+      api_version));
+}
+
+absl::Status PyRegisterCustomType(std::string_view type_name, nb::object type) {
+  XLA_FFI_TypeId* type_id = nullptr;
+  XLA_FFI_TypeInfo* type_info = nullptr;
+
+  auto as_capsule = [](nb::object obj) -> absl::StatusOr<nb::capsule> {
+    nb::capsule capsule;
+    if (!nb::try_cast<nb::capsule>(obj, capsule)) {
+      return absl::InvalidArgumentError(
+          "Custom type registration requires handlers as PyCapsules");
+    }
+    return capsule;
+  };
+
+  // Extract XLA_FFI_TypeId and optional XLA_FFI_TypeInfo from the type dict.
+  nb::dict type_dict;
+  if (!nb::try_cast<nb::dict>(type, type_dict) ||
+      !type_dict.contains("type_id")) {
+    return absl::InvalidArgumentError(
+        "The type_id argument to register_custom_call_type must be a "
+        "dictionary holding a pointer to a XLA_FFI_TypeId in `type_id` and "
+        "optional pointer to a XLA_FFI_TypeInfo in `type_info` fields.");
+  }
+
+  TF_ASSIGN_OR_RETURN(auto type_id_capsule, as_capsule(type_dict["type_id"]));
+  type_id = static_cast<XLA_FFI_TypeId*>(type_id_capsule.data());
+
+  if (type_dict.contains("type_info")) {
+    TF_ASSIGN_OR_RETURN(auto type_info_capsule,
+                        as_capsule(type_dict["type_info"]));
+    type_info = static_cast<XLA_FFI_TypeInfo*>(type_info_capsule.data());
+  }
+
+  return ffi::TakeStatus(
+      ffi::Ffi::RegisterTypeId(xla::ffi::GetXlaFfiApi(), type_name, type_id,
+                               type_info ? *type_info : XLA_FFI_TypeInfo{}));
 }
 }  // namespace
 
@@ -302,9 +423,7 @@ nb::tuple PyFfiAnyBuffer::DLPackDevice() const {
   return nb::make_tuple(static_cast<int32_t>(device_type_), device_ordinal_);
 }
 
-void BuildFfiSubmodule(nb::module_& m) {
-  tsl::ImportNumpy();
-
+void RegisterFfiApis(nb::module_& m) {
   nb::module_ ffi_module =
       m.def_submodule("ffi", "Python bindings for the XLA FFI.");
 
@@ -367,6 +486,59 @@ void BuildFfiSubmodule(nb::module_& m) {
   context.def_prop_ro("stage", &PyFfiContext::stage);
   context.def_prop_ro("stream",
                       xla::ValueOrThrowWrapper(&PyFfiContext::stream));
+
+  // Custom-call targets.
+  m.def(
+      "register_custom_call_target",
+      [](nb::object fn_name_py, nb::object fn, const std::string& platform,
+         int api_version, XLA_FFI_Handler_Traits traits) {
+        std::string fn_name;
+        if (!nb::try_cast<std::string>(fn_name_py, fn_name)) {
+          nb::bytes bytes = nb::cast<nb::bytes>(fn_name_py);
+          fn_name = std::string(bytes.c_str(), bytes.size());
+        }
+        xla::ThrowIfError(PyRegisterCustomCallTarget(
+            fn_name, std::move(fn), platform, api_version, traits));
+      },
+      nb::arg("fn_name"), nb::arg("fn"), nb::arg("platform"),
+      nb::arg("api_version") = 0, nb::arg("traits") = 0);
+
+  m.def(
+      "custom_call_targets",
+      [](const std::string& platform) -> nb::dict {
+        nb::dict targets;
+        for (const auto& [name, target] :
+             xla::CustomCallTargetRegistry::Global()->registered_symbols(
+                 platform)) {
+          targets[nb::str(name.data(), name.size())] = nb::capsule(target);
+        }
+
+        auto ffi_handlers = ffi::StaticRegisteredHandlers(platform);
+        if (!ffi_handlers.ok()) return targets;
+
+        for (const auto& [name, registration] : *ffi_handlers) {
+          nb::dict bundle;
+          auto export_handler = [&](std::string_view name, XLA_FFI_Handler* h) {
+            if (h != nullptr) {
+              bundle[nb::str(name.data(), name.size())] =
+                  nb::capsule(reinterpret_cast<void*>(h));
+            }
+          };
+          export_handler("prepare", registration.bundle.prepare);
+          export_handler("initialize", registration.bundle.initialize);
+          export_handler("execute", registration.bundle.execute);
+          targets[nb::str(name.data(), name.size())] = std::move(bundle);
+        }
+        return targets;
+      },
+      nb::arg("platform"));
+
+  m.def(
+      "register_custom_type",
+      [](std::string_view type_name, nb::object type) {
+        xla::ThrowIfError(PyRegisterCustomType(type_name, type));
+      },
+      nb::arg("type_name"), nb::arg("type_id"));
 }
 
 }  // namespace jax

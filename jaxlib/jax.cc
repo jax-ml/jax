@@ -575,7 +575,7 @@ NB_MODULE(_jax, m) {
   Traceback::Register(m);
   BuildMlirSubmodule(m);
   BuildCustomCallShardingPybindAPI(m);
-  BuildFfiSubmodule(m);
+  RegisterFfiApis(m);
 #if defined(__linux__)
   aux::RegisterTransferServerTypes(m);
 #endif  // defined(__linux__)
