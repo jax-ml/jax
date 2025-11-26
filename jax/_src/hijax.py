@@ -421,7 +421,7 @@ class VJPHiPrimitive:
 class VmapOf(VJPHiPrimitive):
   def __init__(self, prim, axis_data, in_dims, out_dim):
     unmap = lambda a, d: core.unmapped_aval(axis_data.size, d, a,
-                                            axis_data.explicit_mesh_axis)
+                                            axis_data.ema_data.name)
     self.in_avals = tree_map(unmap, prim.in_avals, in_dims)
     self.out_aval = tree_map(unmap, prim.out_aval, out_dim)
     self.params = dict(prim=prim, axis_data=axis_data, in_dims=in_dims,
@@ -431,7 +431,7 @@ class VmapOf(VJPHiPrimitive):
   @property
   def _vmap_params(self):
     return dict(axis_size=self.axis_data.size, axis_name=self.axis_data.name,  # type: ignore
-                spmd_axis_name=self.axis_data.spmd_name or self.axis_data.explicit_mesh_axis)  # type: ignore
+                spmd_axis_name=self.axis_data.spmd_name or self.axis_data.ema_data.name)  # type: ignore
 
   def expand(self, *args):
     return api.vmap(self.prim.expand, in_axes=self.in_dims, out_axes=self.out_dim,  # type: ignore
@@ -470,7 +470,7 @@ def map_zero(axis_data, d, ct):
 def unmap_zero(axis_data, d, ct):
   if isinstance(ct, ad_util.Zero):
     return ad_util.Zero(core.unmapped_aval(axis_data.size, d, ct.aval,
-                                           axis_data.explicit_mesh_axis))
+                                           axis_data.ema_data.name))
   return ct
 
 

@@ -475,7 +475,7 @@ def _cond_batching_rule(axis_data, args, dims, *, branches, **params):
     # TODO(mattjj,frostig): assumes branches are side-effect-free, revise!
     index, *ops = (
         batching.bdim_at_front(x, d, axis_data.size,
-                               mesh_axis=axis_data.explicit_mesh_axis)
+                               mesh_axis=axis_data.ema_data.name)
         for x, d in zip(args, dims)
     )
 

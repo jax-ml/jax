@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import contextlib
 import dataclasses
 from functools import partial
 from typing import Any, Union
@@ -33,7 +34,7 @@ from jax._src.core import Trace, Tracer, TraceTag, AxisName
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_unflatten, tree_flatten, PyTreeDef)
 from jax._src.typing import Array
-from jax._src.util import (unzip2, safe_map, safe_zip, split_list,
+from jax._src.util import (unzip2, safe_map, safe_zip, split_list, unzip3,
                            canonicalize_axis, moveaxis, as_hashable_function,
                            curry, memoize, weakref_lru_cache, tuple_insert)
 
@@ -61,8 +62,6 @@ def to_elt(trace: Trace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
     return (BatchTracer(trace, x, spec, source_info_util.current())
             if spec is not None else x)
   else:
-    # TODO(mvoz): This is a terrible place to fall into if you pass
-    # a non jumble type in, make it clearer what went wrong.
     assert False, f'Unexpected type in ELT? {type(x)}'
 
 
@@ -162,10 +161,14 @@ class BatchTracer(Tracer):
       if config._check_vma.value:
         aval = aval.update(
             vma=aval.vma - frozenset(self._trace.axis_data.spmd_name))
+    vmap_mesh = remove_mesh_axes(self._trace.axis_data)
     if self.batch_dim is not_mapped:
-      return aval
+      return (aval.update(sharding=aval.sharding.update(mesh=vmap_mesh))
+              if isinstance(aval, core.ShapedArray) else aval)
     elif type(self.batch_dim) is int:
-      return core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)
+      aval = core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)
+      return (aval.update(sharding=aval.sharding.update(mesh=vmap_mesh))
+              if isinstance(aval, core.ShapedArray) else aval)
     else:
       raise Exception("batch dim should be int or `not_mapped`")
 
@@ -190,44 +193,71 @@ class BatchTracer(Tracer):
     else:
       return self
 
+def get_ema_pos(mesh, ema):
+  if ema is None:
+    return None
+  ema_set = set(ema)
+  return tuple(i for i, x in enumerate(mesh.axis_names) if x in ema_set)
+
+
 @dataclasses.dataclass(frozen=True)
-class AxisData:
-  name : Any
-  size : Any
-  # Only one of spmd_axis_name and explicit_mesh_axis is set.
-  spmd_name : Any
-  # short for private `_explicit_mesh_axis`. The public property is called
-  # `.explicit_mesh_axis`
-  _ema: tuple[Any, ...] | None
+class VmapExplicitData:
+  _name: tuple[Any, ...] | None
+  size: tuple[int, ...] | None
+  pos: tuple[int, ...] | None
+
+  def __repr__(self):
+    return f"VmapExplicitData(name={self.name}, size={self.size}, pos={self.pos})"
+
+  __str__ = __repr__
 
   @property
-  def explicit_mesh_axis(self):
-    assert self._ema is None or isinstance(self._ema, tuple)
-    if self._ema is None:
+  def name(self):
+    assert self._name is None or isinstance(self._name, tuple)
+    if self._name is None:
       return None
     cur_mesh = mesh_lib.get_abstract_mesh()
     if cur_mesh.empty:
-      return self._ema
-    ema0_type = cur_mesh._name_to_type[self._ema[0]]
-    assert all(cur_mesh._name_to_type[e] == ema0_type for e in self._ema)
+      return self._name
+    new_name = tuple(e for e in self._name if e in cur_mesh.axis_names)
+    if not new_name:
+      return self._name
+    ema0_type = cur_mesh._name_to_type[new_name[0]]
+    assert all(cur_mesh._name_to_type[e] == ema0_type for e in new_name)
     if ema0_type != mesh_lib.AxisType.Explicit:
       return None
-    return self._ema
+    return new_name
+
+
+@dataclasses.dataclass(frozen=True)
+class AxisData:
+  name: Any
+  size: Any
+  # Only one of spmd_axis_name and ema_data is set.
+  spmd_name: Any
+  ema_data: VmapExplicitData
 
   def __repr__(self):
     return (f'AxisData(name={self.name}, size={self.size},'
             f' spmd_name={self.spmd_name},'
-            f' explicit_mesh_axis={self.explicit_mesh_axis})')
+            f' ema_data={self.ema_data})')
 
   __str__ = __repr__
 
+  def update(self, **kwargs):
+    name = getattr(kwargs, 'name', self.name)
+    size = getattr(kwargs, 'size', self.size)
+    spmd_name = getattr(kwargs, 'spmd_name', self.spmd_name)
+    ema_data = getattr(kwargs, 'ema_data', self.ema_data)
+    return AxisData(name, size, spmd_name, ema_data)
+
 
 def get_sharding_for_vmap(axis_data, orig_sharding, axis):
-  val = axis_data.explicit_mesh_axis
   # TODO(yashkatariya): Preserve unreduced here using
   # `orig_sharding.spec.update`
-  new_spec = P(*tuple_insert(orig_sharding.spec, axis, val))
-  return NamedSharding(orig_sharding.mesh, new_spec)
+  new_spec = P(*tuple_insert(orig_sharding.spec, axis, axis_data.ema_data.name))
+  mesh = add_mesh_axes(axis_data, orig_sharding.mesh)
+  return NamedSharding(mesh, new_spec)
 
 
 class BatchTrace(Trace):
@@ -249,28 +279,33 @@ class BatchTrace(Trace):
   def process_primitive(self, p, tracers, params):
     vals_in, dims_in = unzip2(map(self.to_batch_info, tracers))
     args_not_mapped = all(bdim is not_mapped for bdim in dims_in)
+    mesh = mesh_lib.get_abstract_mesh()
+    new_mesh = add_mesh_axes(self.axis_data, mesh)
     if p in fancy_primitive_batchers:
       if (args_not_mapped
           and p in skippable_batchers
           and not any(self.axis_data.name == axis_name
                       for axis_name in skippable_batchers[p](params))):
-        return p.bind_with_trace(self.parent_trace, vals_in, params)
+        with mesh_lib.vmap_use_abstract_mesh(new_mesh):
+          return p.bind_with_trace(self.parent_trace, vals_in, params)
       else:
-        with core.set_current_trace(self.parent_trace):
+        with (core.set_current_trace(self.parent_trace),
+              mesh_lib.vmap_use_abstract_mesh(new_mesh)):
           val_out, dim_out = fancy_primitive_batchers[p](
               self.axis_data, vals_in, dims_in, **params)
+          src = source_info_util.current()
+          if p.multiple_results:
+            with core.set_current_trace(self.parent_trace):  # val_out may be lazy map
+              return [BatchTracer(self, x, d, src) if d is not not_mapped else x
+                      for x, d in zip(val_out, dim_out)]
+          else:
+            return (BatchTracer(self, val_out, dim_out, src)
+                    if dim_out is not not_mapped else val_out)
     elif args_not_mapped:
-      return p.bind_with_trace(self.parent_trace, vals_in, params)
+      with mesh_lib.vmap_use_abstract_mesh(new_mesh):
+        return p.bind_with_trace(self.parent_trace, vals_in, params)
     else:
       raise NotImplementedError(f"Batching rule for '{p}' not implemented")
-    src = source_info_util.current()
-    if p.multiple_results:
-      with core.set_current_trace(self.parent_trace):  # val_out may be lazy map
-        return [BatchTracer(self, x, d, src) if d is not not_mapped else x
-                for x, d in zip(val_out, dim_out)]
-    else:
-      return (BatchTracer(self, val_out, dim_out, src)
-              if dim_out is not not_mapped else val_out)
 
   def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
@@ -373,6 +408,45 @@ def _batch_outer(f, axis_data, in_dims, *in_vals):
   with core.ensure_no_leaks(trace): del trace
   return outs, out_dim_srcs
 
+def _remove_axes(mesh, axis_names):
+  new_axis_sizes, new_axis_names, new_axis_types = unzip3([
+      (s, n, t)
+      for s, n, t in zip(mesh.axis_sizes, mesh.axis_names, mesh.axis_types)
+      if n not in axis_names])
+  return mesh.update(new_axis_sizes, new_axis_names, new_axis_types)
+
+def remove_mesh_axes(axis_data):
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  if axis_data.ema_data.name is None:
+    return cur_mesh
+  if cur_mesh.empty:
+    return cur_mesh
+  return _remove_axes(cur_mesh, axis_data.ema_data.name)
+
+def _add_axes(mesh, axis_names, axis_sizes, axis_types, pos):
+  old_axis_names = set(mesh.axis_names)
+  def _insert(old, new, _pos, skip):
+    old = list(old)
+    for p, n, s in zip(_pos, new, skip):
+      if s: continue
+      old.insert(p, n)
+    return tuple(old)
+  skip = tuple(n in old_axis_names for n in axis_names)
+  new_axis_sizes = _insert(mesh.axis_sizes, axis_sizes, pos, skip)
+  new_axis_names = _insert(mesh.axis_names, axis_names, pos, skip)
+  new_axis_types = _insert(mesh.axis_types, axis_types, pos, skip)
+  return mesh.update(new_axis_sizes, new_axis_names, new_axis_types)
+
+def add_mesh_axes(axis_data, mesh):
+  if axis_data.ema_data.pos is None:
+    return mesh
+  names = axis_data.ema_data._name
+  sizes = axis_data.ema_data.size
+  poss = axis_data.ema_data.pos
+  axis_types = (mesh_lib.AxisType.Explicit,) * len(sizes)
+  return _add_axes(mesh, names, sizes, axis_types, poss)
+
+
 @lu.transformation2
 def _batch_inner(f: Callable, axis_data, out_dim_dests, sum_match, tag, in_dims, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
@@ -382,50 +456,18 @@ def _batch_inner(f: Callable, axis_data, out_dim_dests, sum_match, tag, in_dims,
                                       source_info_util.current()))
     with core.set_current_trace(parent_trace):
       in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)
-    # TODO(yashkatariya): Instead of `add_explicit_mesh_axis_names`, we should
-    # create a new mesh by removing the axis_data.explicit_mesh_axis from it.
     with (core.set_current_trace(trace),
           core.extend_axis_env_nd([(axis_data.name, axis_data.size)]),
           core.add_spmd_axis_names(axis_data.spmd_name),
-          core.add_explicit_mesh_axis_names(axis_data.explicit_mesh_axis)):
+          core.add_explicit_mesh_axis_names(axis_data.ema_data.name),
+          mesh_lib.vmap_use_abstract_mesh(remove_mesh_axes(axis_data))):
       outs = f(*in_tracers)
       out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
       out_vals, out_dim_srcs = unzip2(
-          map(partial(from_elt, trace, axis_data.size, axis_data.explicit_mesh_axis, sum_match),
+          map(partial(from_elt, trace, axis_data.size, axis_data.ema_data.name, sum_match),
               range(len(outs)), outs, out_dim_dests))
   return out_vals, out_dim_srcs, trace
 
-# NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
-def vtile(f_flat: lu.WrappedFun,
-          in_axes_flat: tuple[int | None, ...],
-          out_axes_flat: tuple[int | None, ...],
-          tile_size: int | None,
-          axis_name: AxisName):
-  @curry
-  def tile_axis(arg, axis: int | None, tile_size):
-    if axis is None:
-      return arg
-    shape = list(arg.shape)
-    shape[axis:axis+1] = [tile_size, shape[axis] // tile_size]
-    return arg.reshape(shape)
-
-  def untile_axis(out, axis: int | None):
-    if axis is None:
-      return out
-    shape = list(out.shape)
-    shape[axis:axis+2] = [shape[axis] * shape[axis+1]]
-    return out.reshape(shape)
-
-  @lu.transformation2
-  def _map_to_tile(f, *args_flat):
-    sizes = (x.shape[i] for x, i in safe_zip(args_flat, in_axes_flat) if i is not None)
-    tile_size_ = tile_size or next(sizes, None)
-    assert tile_size_ is not None, "No mapped arguments?"
-    outputs_flat = f(*map(tile_axis(tile_size=tile_size_), args_flat, in_axes_flat))
-    return map(untile_axis, outputs_flat, out_axes_flat)
-
-  axis_data = AxisData(axis_name, tile_size, None, None)
-  return _map_to_tile(batch(f_flat, axis_data, in_axes_flat, out_axes_flat))
 
 ### API for batching functions with jaxpr type inputs and outputs
 
@@ -461,13 +503,15 @@ def _batch_jaxpr2(
                    debug_info=closed_jaxpr.jaxpr.debug_info)
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
   f = _batch_jaxpr_outer(f, axis_data, in_axes)
+  new_mesh = add_mesh_axes(axis_data, mesh_lib.get_abstract_mesh())
   avals_in2 = []
   for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes):
+    aval = aval.update(sharding=aval.sharding.update(mesh=new_mesh))
     if b is not_mapped:
       avals_in2.append(aval)
     else:
       aval = core.unmapped_aval(
-          axis_data.size, b, aval, axis_data.explicit_mesh_axis)
+          axis_data.size, b, aval, axis_data.ema_data.name)
       if axis_data.spmd_name is not None:
         if config._check_vma.value:
           aval = aval.update(vma=aval.vma | frozenset(axis_data.spmd_name))  # type: ignore
@@ -501,10 +545,15 @@ def _batch_jaxpr_axes(closed_jaxpr: core.ClosedJaxpr,
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
   f, out_batched = _match_axes_jaxpr(f, axis_data, out_axes_dest, out_axes)
   f = _batch_jaxpr_outer(f, axis_data, in_axes)
-  avals_in = [core.unmapped_aval(axis_data.size, b, aval,
-                                 axis_data.explicit_mesh_axis)
-              if b is not not_mapped
-              else aval for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]
+  new_mesh = add_mesh_axes(axis_data, mesh_lib.get_abstract_mesh())
+  avals_in = []
+  for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes):
+    aval = aval.update(sharding=aval.sharding.update(mesh=new_mesh))
+    if b is not_mapped:
+      avals_in.append(aval)
+    else:
+      avals_in.append(core.unmapped_aval(axis_data.size, b, aval,
+                                         axis_data.ema_data.name))
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
   return core.ClosedJaxpr(jaxpr_out, consts), out_batched()
 
@@ -514,12 +563,11 @@ def _batch_jaxpr_inner(f, store, axis_data, tag, in_axes, *in_vals):
     trace = BatchTrace(parent_trace, tag, axis_data)
     in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
                   for val, dim in zip(in_vals, in_axes)]
-    # TODO(yashkatariya): Instead of `add_explicit_mesh_axis_names`, we should
-    # create a new mesh by removing the axis_data.explicit_mesh_axis from it.
     with (core.set_current_trace(trace),
           core.extend_axis_env_nd([(axis_data.name, axis_data.size)]),
           core.add_spmd_axis_names(axis_data.spmd_name),
-          core.add_explicit_mesh_axis_names(axis_data.explicit_mesh_axis)):
+          core.add_explicit_mesh_axis_names(axis_data.ema_data.name),
+          mesh_lib.vmap_use_abstract_mesh(remove_mesh_axes(axis_data))):
       outs = f(*in_tracers)
     out_vals, out_axes = unzip2(map(trace.to_batch_info, outs))
   store.store(out_axes)
@@ -537,7 +585,7 @@ def _match_axes_jaxpr(f, store, axis_data, out_axes_dest, out_axes, trace, in_ax
     out_axis_dest, = out_axes_dest
     out_axes_dest = [out_axis_dest] * len(out_axes)
   out_vals = map(partial(matchaxis, axis_data.name, axis_data.size,
-                         axis_data.explicit_mesh_axis),
+                         axis_data.ema_data.name),
                  out_axes, out_axes_dest, out_vals)
   out_batched = [dst is not None for dst in out_axes_dest]
   store.store(out_batched)
@@ -569,7 +617,7 @@ zero_if_mapped = ZeroIfMapped()
 @lu.transformation_with_aux2
 def batch_custom_jvp_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
   size = axis_data.size
-  mesh_axis = axis_data.explicit_mesh_axis
+  mesh_axis = axis_data.ema_data.name
   with core.take_current_trace() as parent_trace:
     trace = BatchTrace(parent_trace, tag, axis_data)
     in_tracers = [val if dim is None else
@@ -595,7 +643,7 @@ def batch_custom_vjp_bwd(bwd: lu.WrappedFun, tag: core.TraceTag,
                          out_dim_dests: Sequence[int | None]) -> lu.WrappedFun:
   axis_size = axis_data.size
   axis_name = axis_data.name
-  mesh_axis = axis_data.explicit_mesh_axis
+  mesh_axis = axis_data.ema_data.name
   def new_bwd(*args):
     in_dims_ = in_dims() if callable(in_dims) else in_dims
     args = [SymbolicZero(core.mapped_aval(axis_size, dim, x.aval))
@@ -774,8 +822,33 @@ def broadcast(x, sz, axis, mesh_axis):
         x = core.pvary(x, tuple(spmd_names))
     return x
 
+def broadcast2(x, axis, axis_data):
+  # Callers of this utility must be in a context where lax is importable.
+  from jax import lax  # pytype: disable=import-error
+  shape = list(np.shape(x))
+  shape.insert(axis, axis_data.size)
+  broadcast_dims = tuple(np.delete(np.arange(len(shape)), axis))
+  x_aval = core.get_aval(x)
+  mesh_axis = None if x_aval.sharding.mesh.empty else axis_data.ema_data.name
+  new_spec = P(*tuple_insert(x_aval.sharding.spec, axis, mesh_axis))
+  new_mesh = (x_aval.sharding.mesh if x_aval.sharding.mesh.empty else
+              add_mesh_axes(axis_data, x_aval.sharding.mesh))
+  sharding = x_aval.sharding.update(mesh=new_mesh, spec=new_spec)
+  # TODO(dougalm, yashkatariya): Delete this context manager once we figure
+  # out how to ensure jaxpr arguments always have the context mesh.
+  with mesh_lib.use_abstract_mesh(sharding.mesh):
+    x = lax.broadcast_in_dim(x, shape, broadcast_dims, out_sharding=sharding)
+    if config._check_vma.value:
+      # TODO(yashkatariya,parkers): don't do this, fix during fixit week 2026
+      spmd_names = core.get_axis_env().spmd_axis_names
+      if len(spmd_names) > 1:
+        raise NotImplementedError
+      if spmd_names:
+        x = core.pvary(x, tuple(spmd_names))
+    return x
+
 def matchaxis2(axis_data, src, dst, x, sum_match=False):
-  return matchaxis(axis_data.name, axis_data.size, axis_data.explicit_mesh_axis,
+  return matchaxis(axis_data.name, axis_data.size, axis_data.ema_data.name,
                    src, dst, x, sum_match)
 
 def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
@@ -813,11 +886,14 @@ def bdim_at_front(x, bdim, size, mesh_axis=None):
   else:
     return moveaxis(x, bdim, 0)
 
+def bdim_at_front2(x, bdim, axis_data):
+  return (broadcast2(x, 0, axis_data) if bdim is not_mapped else
+          moveaxis(x, bdim, 0))
 
 def add_batched(axis_data, batched_args, batch_dims):
   bdx, bdy = batch_dims
   x, y = batched_args
-  mesh_axis = axis_data.explicit_mesh_axis
+  mesh_axis = axis_data.ema_data.name
   if bdx == bdy:
     return add_jaxvals(x, y), bdx
   elif bdx is not_mapped:

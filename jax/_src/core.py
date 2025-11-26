@@ -661,7 +661,6 @@ class Primitive:
     trace.process_primitive(self, args, params)  # may raise lojax error
     raise Exception(f"couldn't apply typeof to args: {args}")
 
-
   def def_impl(self, impl):
     self.impl = impl
     return impl
@@ -2265,7 +2264,7 @@ class ShapedArray(AbstractValue):
         self.shape, dtype, self.weak_type, sharding=sharding, vma=self.vma,
         memory_space=self.memory_space)
 
-  def str_short(self, short_dtypes=False, mesh_axis_types=False):
+  def str_short(self, short_dtypes=False, mesh_axis_types=True):
     return str_short_aval(
         self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,
         self.vma, self.memory_space, short_dtypes, mesh_axis_types)
