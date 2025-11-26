@@ -1989,50 +1989,6 @@ def physical_element_aval(edtype: dtypes.ExtendedDType) -> ShapedArray:
 def _dtype_object(dtype):
   return dtype if isinstance(dtype, dtypes.ExtendedDType) else np.dtype(dtype)
 
-class UnshapedArray(AbstractValue):
-  __slots__ = ['dtype', 'weak_type']
-  array_abstraction_level = 4
-
-  def __init__(self, dtype, weak_type=False):
-    # Is it silly to initialize this object and then complain that we should
-    # never create one? Yes. But otherwise pytype complains.
-    self.dtype = _dtype_object(dtype)
-    self.weak_type = weak_type
-    raise Exception("We should never create an UnshapedArray object")
-
-  def __eq__(self, other):
-    return (type(self) is type(other) and self.dtype == other.dtype and
-            self.weak_type == other.weak_type)
-
-  def __ne__(self, other):
-    return not self == other
-
-  def __hash__(self):
-    # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
-    # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
-    # the unique character code via hash(self.dtype.char)
-    return hash((self.dtype, self.weak_type))
-
-  def __repr__(self):
-    return '{}({}{})'.format(self.__class__.__name__, self.str_short(),
-                             ", weak_type=True" if self.weak_type else "")
-
-  def __str__(self):
-    return '{}{}'.format("~" if self.weak_type else "", self.str_short())
-
-  _bool    = concretization_function_error(bool)
-  _int     = concretization_function_error(int, True)
-  _float   = concretization_function_error(float, True)
-  _complex = concretization_function_error(complex, True)
-  _hex     = concretization_function_error(hex)
-  _oct     = concretization_function_error(oct)
-  _index   = concretization_function_error(operator.index)
-
-  def str_short(self, short_dtypes=False, mesh_axis_types=False) -> str:
-    return dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
-
-  def update_weak_type(self, weak_type):
-    return self.update(weak_type=weak_type)
 
 def _canonicalize_dimension(dim: DimSize) -> DimSize:
   # Dimensions are most commonly integral (by far), so we check that first.
@@ -2549,8 +2505,8 @@ def standard_vma_rule(prim_name, *avals, **kwargs) -> frozenset[AxisName]:
 # as jaxpr type annotations), or DBIdx/InDBIdx/OutDBIdx (when used in InputType
 # or OutputType). We could reduce this polymorphism if it seems cleaner, though
 # it's kind of convenient!
-class DShapedArray(UnshapedArray):
-  __slots__ = ['shape']
+class DShapedArray(AbstractValue):
+  __slots__ = ['shape', 'dtype', 'weak_type']
   shape: tuple[AxisSize, ...]  # noqa: F821
   array_abstraction_level: int = 3
 
@@ -2601,12 +2557,26 @@ class DShapedArray(UnshapedArray):
     # We don't hash the contents of the shape because it may contain tracers.
     return hash((len(self.shape), self.dtype, self.weak_type))
 
+  def __ne__(self, other):
+    return not self == other
+
   def to_tangent_aval(self):
     return DShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
                         self.weak_type)
 
   def update_vma(self, vma):
     return self
+
+  def update_weak_type(self, weak_type):
+    return self.update(weak_type=weak_type)
+
+  _bool    = concretization_function_error(bool)
+  _int     = concretization_function_error(int, True)
+  _float   = concretization_function_error(float, True)
+  _complex = concretization_function_error(complex, True)
+  _hex     = concretization_function_error(hex)
+  _oct     = concretization_function_error(oct)
+  _index   = concretization_function_error(operator.index)
 
 
 class DArray:
