@@ -1316,6 +1316,39 @@ LogicalResult ScanOp::verify() {
   return success();
 }
 
+LogicalResult SortOp::verify() {
+  VectorType keys_ty = cast<VectorType>(getKeys().getType());
+  VectorType value_ty = cast<VectorType>(getValues().getType());
+  if (keys_ty.getShape() != value_ty.getShape()) {
+    return emitOpError("Key and value shapes must match: ")
+           << keys_ty.getShape() << " vs " << value_ty.getShape();
+  }
+  if (getMask()) {
+    VectorType mask_ty = cast<VectorType>(getMask().getType());
+    if (keys_ty.getShape() != mask_ty.getShape()) {
+      return emitOpError("Key and input mask shapes must match: ")
+             << keys_ty.getShape() << " vs " << mask_ty.getShape();
+    }
+  }
+  VectorType output_mask_ty = cast<VectorType>(getOutputMask().getType());
+  if (!output_mask_ty.getElementType().isInteger(1)) {
+    return emitOpError("Output mask must be an i1 vector.");
+  }
+  if (keys_ty.getShape() != output_mask_ty.getShape()) {
+    return emitOpError("Key and output mask shapes must match: ")
+           << keys_ty.getShape() << " vs " << output_mask_ty.getShape();
+  }
+  if (getKeys().getType() != getSortedKeys().getType()) {
+    return emitOpError("Key and sorted_key types must match: ")
+           << getKeys().getType() << " vs " << getSortedKeys().getType();
+  }
+  if (getValues().getType() != getSortedValues().getType()) {
+    return emitOpError("Value and sorted_value types must match: ")
+           << getValues().getType() << " vs " << getSortedValues().getType();
+  }
+  return success();
+}
+
 LogicalResult GetBarrierSemaphoreOp::verify() {
   auto sem_type = getMemRefType(getResult());
   if (sem_type.getRank() != 0) {
