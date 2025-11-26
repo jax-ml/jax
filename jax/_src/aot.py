@@ -130,10 +130,9 @@ def component_batcher(
 
   # TODO(dsuo): This doesn't handle nesting.
   batched_component_key = ComponentKey.vmap(component_key)
-  if (
-    entry := aot_util.get_entry(batched_component_key)
-  ) is not None and entry.module is not None:
-    pass
+  entry = aot_util.get_entry(batched_component_key)
+  if entry is not None:
+    return entry.batcher
 
   wrapped_fun = aot_util.wrap_init(fun, "vmap(component)")
 
@@ -150,8 +149,14 @@ def component_batcher(
     fun=batched_fun.f_transformed,
     component_key=batched_component_key,
   )
-  # assert False
-  return vals_out, dims_out()
+
+  batcher_outs = vals_out, dims_out()
+  entry = aot_util.get_entry(batched_component_key)
+  entry.batcher = batcher_outs
+  assert False
+  aot_util.put_entry(batched_component_key, entry, update=True)
+
+  return batcher_outs
 
 
 def component_jvp(arg_values, arg_tangents):
