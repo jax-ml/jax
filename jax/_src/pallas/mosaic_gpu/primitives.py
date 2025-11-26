@@ -639,9 +639,10 @@ def copy_gmem_to_smem(
   For example, if `src` has a shape of (256, 256) and a partitioned
   copy is performed along axis 0 with cluster size 2, then the first block will
   receive `src[0:128, :]` and the second will receive `src[128:256, :]`.
-  NOTE: Only the first block in the cluster will arrive on the barrier,
-  and an additional cluster barrier is necessary to ensure that all blocks in
-  the cluster have finished the copy.
+
+  NOTE: In the partitioned case, only the first block in the cluster will arrive
+  on its barrier. Additional synchronization (e.g. a cluster barrier) is
+  necessary before the loaded data can be safely used in any other block.
 
   Args:
     src: The source Ref. Must be in GMEM.
