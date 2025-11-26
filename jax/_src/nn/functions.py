@@ -33,6 +33,9 @@ from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src import util
 from jax._src.core import AxisName
+from jax._src.cpu_lib_ops.fused_attention_cpu  import (
+    dot_product_attention as fused_dot_product_attention_cpu,
+    can_use_cpu_fused_attention)
 from jax._src.cudnn.fused_attention_stablehlo import (
     dot_product_attention as cudnn_dot_product_attention, MaskType)
 from jax._src.cudnn.scaled_matmul_stablehlo import (
@@ -1018,10 +1021,11 @@ def dot_product_attention(
     *,
     scale: float | None = None,
     is_causal: bool = False,
+    attn_logits_soft_cap: Any | None = None,
     query_seq_lengths: ArrayLike | None = None,
     key_value_seq_lengths: ArrayLike | None = None,
     local_window_size: int | tuple[int, int] | None = None,
-    implementation: Literal['xla', 'cudnn'] | None = None,
+    implementation: Literal['xla', 'cudnn', 'cpu_fused_attention'] | None = None,
     return_residual: Literal[False] = ...,
 ) -> Array: ...
 
@@ -1051,10 +1055,11 @@ def dot_product_attention(
     *,
     scale: float | None = None,
     is_causal: bool = False,
+    attn_logits_soft_cap: Any | None = None,
     query_seq_lengths: ArrayLike | None = None,
     key_value_seq_lengths: ArrayLike | None = None,
     local_window_size: int | tuple[int, int] | None = None,
-    implementation: Literal['xla', 'cudnn'] | None = None,
+    implementation: Literal['xla', 'cudnn', 'cpu_fused_attention'] | None = None,
     return_residual: bool = False,
 ):
   r"""Scaled dot product attention function.
@@ -1177,6 +1182,10 @@ def dot_product_attention(
 
   scale_val = (1.0 / np.sqrt(H)) if scale is None else scale
 
+  # Check for attention logits soft cap, as it is only supported in cpu_fused_attention implementation
+  if attn_logits_soft_cap is not None and implementation != 'cpu_fused_attention':
+    raise ValueError("attn_logits_soft_cap is only supported with cpu_fused_attention implementation")
+
   match implementation:
     case 'xla':
       out = _dot_product_attention_xla(
@@ -1226,6 +1235,42 @@ def dot_product_attention(
         out, residual = out
         residual = jnp.transpose(residual, (0, 2, 1)).astype(out.dtype)
         out = (out, residual)
+    case 'cpu_fused_attention':
+      use_cpu_fusedop = True
+
+      if bias is not None:
+        warnings.warn("CPU fused attention doesn't support bias, falling back to xla implementation")
+        use_cpu_fusedop = False
+
+      if query_seq_lengths is not None or key_value_seq_lengths is not None:
+        warnings.warn("CPU fused attention doesn't support query_seq_lengths / key_value_seq_lengths, falling back to xla implementation")
+        use_cpu_fusedop = False
+
+      if local_window_size is not None:
+        warnings.warn("CPU fused attention doesn't support attention with window size, falling back to xla implementation")
+        use_cpu_fusedop = False
+
+      if return_residual:
+        warnings.warn("CPU fused attention doesn't support return_residual, falling back to xla implementation")
+        use_cpu_fusedop = False
+
+      # We also check cpuinfo to make sure we use cpu_fused_attention implementation
+      # only for certain cpu features
+      if not (can_use_cpu_fused_attention(query_arr.dtype) and use_cpu_fusedop):
+        warnings.warn("Dot product attention not compatible with cpu_fused_attention, falling back to xla implementation")
+        if attn_logits_soft_cap is not None:
+          raise ValueError("attn_logits_soft_cap is not supported in xla implementation of dot_product_attention")
+        out = _dot_product_attention_xla(
+            query_arr, key_arr, value_arr, bias, mask, is_causal=is_causal,
+            scale=scale_val, q_seqlen=query_seq_lengths,
+            kv_seqlen=key_value_seq_lengths,
+            local_window_size=local_window_size,
+        )
+      else:
+        out = fused_dot_product_attention_cpu(
+          query_arr, key_arr, value_arr, mask=mask, is_causal=is_causal,
+          scale=scale_val, attn_logits_soft_cap=attn_logits_soft_cap
+        )
     case None:
       # TODO(kaixih@nvidia) Automatically select the best backend (defaults to XLA for now).
       out = _dot_product_attention_xla(
