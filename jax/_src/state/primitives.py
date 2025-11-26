@@ -70,7 +70,6 @@ traceback_util.register_exclusion(__file__)
 get_p = core.Primitive("get")
 get_p.is_effectful = lambda params: True  # type: ignore
 get_p.def_impl(partial(dispatch.apply_primitive, get_p))
-batching.ragged_prop_rules[get_p] = batching.ragged_mask_transfer_identity
 
 get_p.is_high = lambda ref_aval, *_, tree: ref_aval.is_high  # type: ignore
 def _get_to_lojax(ref, *idx, tree):
@@ -200,7 +199,6 @@ def swap_ragged_prop_rule(eqn_params, invar_raggedness, outvars):
   return [invar_raggedness_rhs, invar_raggedness_lhs], [None]
 
 
-batching.ragged_prop_rules[swap_p] = swap_ragged_prop_rule
 
 @partial(traceback_util.api_boundary, repro_api_name="jax.ref.swap")
 def ref_swap(

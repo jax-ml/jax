@@ -343,11 +343,6 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
       # assert v.aval == ct.aval, (prim, v.aval, ct.aval)
       return
     ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
-    # TODO(mattjj): add back these checks for dynamic shapes
-    # if config.enable_checks.value:
-    #   ct_aval = core.get_aval(ct_env[v])
-    #   joined_aval = core.lattice_join(v.aval, ct_aval).strip_weak_type()
-    #   assert v.aval.strip_weak_type() == joined_aval, (prim, v.aval, ct_aval)
 
   def read_cotangent(v):
     return ct_env.pop(v, Zero(v.aval.to_tangent_aval()))
@@ -357,9 +352,6 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
       return v.val
     else:
       a = v.aval
-      if type(a) is core.DShapedArray:
-        shape = [primal_env[d] if type(d) is core.Var else d for d in a.shape]
-        a = a.update(shape=tuple(shape))
       return primal_env.get(v, UndefinedPrimal(a))
 
   def write_primal(v, val):
@@ -1334,15 +1326,6 @@ def call_transpose(primitive, params, call_jaxpr: core.Jaxpr, args, ct, _):
   if update_params:
     params = update_params(params, map(is_undefined_primal, args),
                            [type(x) is not Zero for x in ct])
-  if config.dynamic_shapes.value:
-    # TODO(mattjj,dougalm): handle consts, for now assume just args
-    which_lin = [is_undefined_primal(x) for x in args]
-    res_invars, _ = partition_list(which_lin, call_jaxpr.invars)
-    new_invars = [*res_invars, *call_jaxpr.outvars]
-    dbidx_map = {v: core.DBIdx(i) for i, v in enumerate(new_invars)}
-    in_type = [(v.aval.update(shape=tuple(dbidx_map.get(d, d) for d in v.aval.shape))  # type: ignore[arg-type]
-                if type(v.aval) is core.DShapedArray else v.aval, True) for v in new_invars]
-    fun = lu.annotate(fun, tuple(in_type))
   out_flat = primitive.bind(fun, *all_args, **params)
   return tree_unflatten(out_tree(), out_flat)
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)

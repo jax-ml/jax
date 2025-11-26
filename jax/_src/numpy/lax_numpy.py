@@ -5956,12 +5956,11 @@ def _arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
             out_sharding: NamedSharding | None = None) -> Array:
   if dtype is not None:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "arange")
-  if not config.dynamic_shapes.value:
-    util.check_arraylike("arange", start)
-    if stop is None and step is None:
-      start = core.concrete_or_error(None, start, "It arose in the jnp.arange argument 'stop'")
-    else:
-      start = core.concrete_or_error(None, start, "It arose in the jnp.arange argument 'start'")
+  util.check_arraylike("arange", start)
+  if stop is None and step is None:
+    start = core.concrete_or_error(None, start, "It arose in the jnp.arange argument 'stop'")
+  else:
+    start = core.concrete_or_error(None, start, "It arose in the jnp.arange argument 'start'")
   util.check_arraylike_or_none("arange", None, stop, step)
   stop = core.concrete_or_error(None, stop, "It arose in the jnp.arange argument 'stop'")
   step = core.concrete_or_error(None, step, "It arose in the jnp.arange argument 'step'")

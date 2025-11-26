@@ -1294,9 +1294,6 @@ def _scan_batching_rule(axis_data, args,
 def _cached_scan_pad_jaxpr(jaxpr):
   return ClosedJaxpr(*pe.pad_jaxpr(jaxpr.jaxpr, jaxpr.consts))
 
-def _scan_padding_rule(in_avals, out_avals, *args, jaxpr, **params):
-  return scan_p.bind(*args, jaxpr=_cached_scan_pad_jaxpr(jaxpr), **params)
-
 def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn
                    ) -> tuple[list[bool], core.JaxprEqn | None]:
   if not any(used_outputs) and not pe.has_effects(eqn):
@@ -1593,7 +1590,6 @@ mlir.register_lowering(scan_p,
 batching.fancy_primitive_batchers[scan_p] = _scan_batching_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
-pe.padding_rules[scan_p] = _scan_padding_rule
 pe.dce_rules[scan_p] = _scan_dce_rule
 state_discharge.register_partial_discharge_rule(scan_p)(_scan_state_partial_discharge_rule)
 
