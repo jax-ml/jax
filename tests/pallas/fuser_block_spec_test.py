@@ -1313,6 +1313,49 @@ class PushBlockSpecTest(parameterized.TestCase):
     if config.enable_x64.value:
       self.skipTest('x64 not supported')
 
+  def test_binop(self):
+
+    def f(x):
+      return x + jnp.ones_like(x)
+
+    block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    x_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
+    self.assertEqual(out_block_spec.block_shape, block_spec.block_shape)
+
+    def f(x, y):
+      return x + y
+
+    x_block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    y_block_spec = pl.BlockSpec((128, 1), lambda i, j: (i, 0))
+    x_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    y_type = jax.ShapeDtypeStruct((512, 1), jnp.float32)
+    with self.assertRaisesRegex(
+        ValueError, 'Cannot propagate block spec through RHS broadcast.'
+    ):
+      block_spec_lib.push_block_spec(f, pl.no_block_spec, y_block_spec)(
+          x_type, y_type
+      )
+    out_block_spec = block_spec_lib.push_block_spec(
+        f, x_block_spec, pl.no_block_spec
+    )(x_type, y_type)
+    self.assertIs(x_block_spec, out_block_spec)
+
+    x_block_spec = pl.BlockSpec((1, 128), lambda i, j: (0, j))
+    y_block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    x_type = jax.ShapeDtypeStruct((1, 512), jnp.float32)
+    y_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    with self.assertRaisesRegex(
+        ValueError, 'Cannot propagate block spec through LHS broadcast.'
+    ):
+      block_spec_lib.push_block_spec(f, x_block_spec, pl.no_block_spec)(
+          x_type, y_type
+      )
+    out_block_spec = block_spec_lib.push_block_spec(
+        f, pl.no_block_spec, y_block_spec
+    )(x_type, y_type)
+    self.assertIs(out_block_spec, y_block_spec)
+
   def test_jit(self):
 
     def f(x):
