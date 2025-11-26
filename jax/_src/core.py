@@ -2430,48 +2430,23 @@ def primal_sharding_to_cotangent_sharding(sharding):
 ############################## pvary #################################
 
 # Invariant -> Variant no-op cast
-
 def pvary(x, axis_name):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
     return x
   xs, treedef = tree_flatten(x)
-  ys = pvary_p.bind(*xs, axes=axes)
+  # TODO(yashkatariya): Maybe move `order_wrt_mesh` to pvary_transpose_rule?
+  # Across hosts we should have the same order of axes during lowering time and
+  # pvary_p transposes to psum_invariant_p.
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  new_axes = axes if cur_mesh.empty else order_wrt_mesh(cur_mesh, axes)
+  assert set(new_axes) == set(axes)
+  del axes
+  ys = pvary_p.bind(*xs, axes=new_axes)
   return tree_unflatten(treedef, ys)
 
 pvary_p = Primitive('pvary')
 pvary_p.multiple_results = True
-pvary_p.def_impl(lambda *args, axes: args)
-
-def _pvary_abstract_eval(*args, axes):
-  if not config._check_vma.value:
-    return args
-  check_unreduced_args(args, 'pvary')
-  assert isinstance(axes, tuple)
-  arg_vma = [a.vma for a in args]
-  for a in arg_vma:
-    # If there is intersection between arg_vma and axes, error
-    if set(axes) & a:
-      raise ValueError(
-          "pvary is a invariant->variant collective. This means that the axis"
-          " names mentioned in `axes` passed to `pvary` must not be present in"
-          f" `jax.typeof(inp).vma`. Got axes={axes} and"
-          f" jax.typeof(inp).vma={a}")
-  return [a.update(sharding=a.sharding.update(mesh=mesh_lib.get_abstract_mesh()),
-                   vma=a.vma.union(frozenset(axes)))
-          for a in args]
-pvary_p.def_abstract_eval(_pvary_abstract_eval)
-
-def check_unreduced_args(args, name):
-  for a in args:
-    if a.sharding.spec.unreduced:
-      raise ValueError(
-          f"{name} cannot accept args which are unreduced. Got"
-          f" {a.str_short(True)}")
-    if a.sharding.spec.reduced:
-      raise ValueError(
-          f"{name} cannot accept args which are reduced. Got"
-          f" {a.str_short(True)}")
 
 ####################### reduced_vary_cast #############################
 
@@ -2488,6 +2463,17 @@ reduced_vary_cast_p = Primitive('reduced_vary_cast_p')
 reduced_vary_cast_p.multiple_results = True
 
 #######################################################################
+
+def check_unreduced_args(args, name):
+  for a in args:
+    if a.sharding.spec.unreduced:
+      raise ValueError(
+          f"{name} cannot accept args which are unreduced. Got"
+          f" {a.str_short(True)}")
+    if a.sharding.spec.reduced:
+      raise ValueError(
+          f"{name} cannot accept args which are reduced. Got"
+          f" {a.str_short(True)}")
 
 def standard_insert_pvary(*args):
   if not config._check_vma.value:
