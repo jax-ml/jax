@@ -210,12 +210,13 @@ def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params)
     token = ctx.tokens_in.get(effect)
     result, token, _ = cb.emit_python_callback(
         ctx, _callback, token, list(args), ctx.avals_in, ctx.avals_out,
-        has_side_effect=True, partitioned=partitioned)
+        has_side_effect=True, returns_token=True, partitioned=partitioned)
     ctx.set_tokens_out(mlir.TokenSet({effect: token}))
   else:
     result, _, _ = cb.emit_python_callback(
         ctx, _callback, None, list(args), ctx.avals_in, ctx.avals_out,
-        has_side_effect=True, partitioned=partitioned, sharding=sharding)
+        has_side_effect=True, returns_token=True, partitioned=partitioned,
+        sharding=sharding)
   return result
 mlir.register_lowering(debug_callback_p, debug_callback_lowering,
                        platform="cpu")

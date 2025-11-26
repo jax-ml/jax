@@ -109,7 +109,7 @@ def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out
 
   out_op, token_out, _ = cb.emit_python_callback(
       ctx, callback, token_in, list(args), list(ctx.avals_in),
-      list(ctx.avals_out), has_side_effect=True)
+      list(ctx.avals_out), has_side_effect=True, returns_token=True)
   if token_out:
     ctx.set_tokens_out(ctx.tokens_in.update_tokens(mlir.TokenSet({effect:
       token_out})))
