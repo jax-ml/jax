@@ -2189,6 +2189,7 @@ jax_multiplatform_test(
 
 jax_multiplatform_test(
     name = "scaled_matmul_stablehlo_test",
+    size = "large",
     srcs = ["scaled_matmul_stablehlo_test.py"],
     enable_backends = ["gpu"],
     shard_count = {
