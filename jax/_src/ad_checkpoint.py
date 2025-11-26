@@ -666,7 +666,7 @@ def _insert_reduce_precision(jaxpr: core.Jaxpr, num_res: int) -> core.Jaxpr:
   used_vars = {x for e in jaxpr.eqns for x in e.invars if isinstance(x, core.Var)}
   invars, constvars, eqns = jaxpr.invars[:], jaxpr.constvars[:], jaxpr.eqns[:]
   for v in res_vars:
-    if (not isinstance(v.aval, core.UnshapedArray) or
+    if (not isinstance(v.aval, core.ShapedArray) or
         not dtypes.issubdtype(v.aval.dtype, np.inexact)):
       continue
     if v not in used_vars:

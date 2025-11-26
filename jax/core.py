@@ -39,7 +39,6 @@ from jax._src.core import (
   unsafe_am_i_under_a_jit as unsafe_am_i_under_a_jit_DO_NOT_USE,  # noqa: F401
   unsafe_am_i_under_a_vmap as unsafe_am_i_under_a_vmap_DO_NOT_USE,  # noqa: F401
   unsafe_get_axis_names as unsafe_get_axis_names_DO_NOT_USE,  # noqa: F401
-  UnshapedArray as UnshapedArray,
   Value as Value,
   abstract_token as abstract_token,
   aval_mapping_handlers as aval_mapping_handlers,

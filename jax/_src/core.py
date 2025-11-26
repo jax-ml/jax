@@ -2274,9 +2274,9 @@ def get_memory_space(memory_space):
   return memory_space
 
 
-class ShapedArray(UnshapedArray):
+class ShapedArray(AbstractValue):
   # inherits slots from parent
-  __slots__ = ['shape', 'sharding', 'vma', 'memory_space']
+  __slots__ = ['shape', 'dtype', 'weak_type', 'sharding', 'vma', 'memory_space']
   array_abstraction_level = 2
 
   def __init__(self, shape, dtype, weak_type=False, *, sharding=None,
@@ -2336,6 +2336,17 @@ class ShapedArray(UnshapedArray):
     return hash((self.shape, self.dtype, self.weak_type, self.sharding,
                  self.vma, self.memory_space))
 
+  def __ne__(self, other):
+    return not self == other
+
+  def __repr__(self):
+    wt_str = ", weak_type=True" if self.weak_type else ""
+    return f'ShapedArray({self.str_short()}{wt_str})'
+
+  def __str__(self):
+    wt_str = "~" if self.weak_type else ""
+    return f'{wt_str}{self.str_short()}'
+
   def to_tangent_aval(self):
     return ShapedArray(
         self.shape, primal_dtype_to_tangent_dtype(self.dtype),
@@ -2362,6 +2373,17 @@ class ShapedArray(UnshapedArray):
 
   def update_vma(self, vma):
     return self.update(vma=vma)
+
+  def update_weak_type(self, weak_type):
+    return self.update(weak_type=weak_type)
+
+  _bool    = concretization_function_error(bool)
+  _int     = concretization_function_error(int, True)
+  _float   = concretization_function_error(float, True)
+  _complex = concretization_function_error(complex, True)
+  _hex     = concretization_function_error(hex)
+  _oct     = concretization_function_error(oct)
+  _index   = concretization_function_error(operator.index)
 
 
 def _get_shape_sharding_str(shape, spec):

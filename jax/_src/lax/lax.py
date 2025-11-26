@@ -47,8 +47,8 @@ from jax._src import state
 from jax._src import tree_util
 from jax._src import util
 from jax._src.abstract_arrays import array_types
-from jax._src.core import (Primitive, UnshapedArray, ShapedArray,
-                           abstract_token, canonicalize_shape)
+from jax._src.core import (Primitive, ShapedArray, abstract_token,
+                           canonicalize_shape)
 from jax._src.errors import UnexpectedTracerError
 from jax._src.hashable_array import HashableArray
 from jax._src.interpreters import ad
@@ -5009,7 +5009,7 @@ def _convert_elt_type_folding_rule(consts, params, out_avals):
   c, = consts
   out_aval, = out_avals
   new_dtype = params['new_dtype']
-  if (type(c) in _foldable_types and isinstance(out_aval, core.UnshapedArray)
+  if (type(c) in _foldable_types and isinstance(out_aval, ShapedArray)
       and not np.shape(c)
       and not dtypes.issubdtype(new_dtype, dtypes.extended)):
     out = np.asarray(c)
@@ -6869,9 +6869,9 @@ def _concatenate_shape_rule(*operands, **kwargs):
   if not operands:
     msg = "concatenate expects at least one operand, got 0."
     raise TypeError(msg)
-  if not all(isinstance(operand, UnshapedArray) for operand in operands):
+  if not all(isinstance(operand, ShapedArray) for operand in operands):
     msg = "All objects to concatenate must be arrays, got {}."
-    op = next(op for op in operands if not isinstance(op, UnshapedArray))
+    op = next(op for op in operands if not isinstance(op, ShapedArray))
     raise TypeError(msg.format(type(op)))
   if len({operand.ndim for operand in operands}) != 1:
     msg = "Cannot concatenate arrays with different numbers of dimensions: got {}."
@@ -8955,7 +8955,7 @@ _JNP_FUNCTION_EQUIVALENTS = {
   'tanh': 'tanh'
 }
 
-def check_same_dtypes(name: str, *avals: core.UnshapedArray) -> None:
+def check_same_dtypes(name: str, *avals: ShapedArray) -> None:
   """Check that dtypes agree, possibly ignoring float precision."""
   # the `ignore_fp_precision` flag exists because the XLA shape inference logic
   # allows mixed floating point precision, but the HLO verifier often rejects it
