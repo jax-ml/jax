@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "absl/hash/hash.h"
 #include "absl/log/log.h"
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep.
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -30,6 +31,7 @@ limitations under the License.
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep.
 #include "mlir/IR/Location.h"
@@ -289,6 +291,15 @@ DotDimensionNumbersAttr defaultDimensionNumbers(Builder &builder,
       /*output_dim_order=*/{0, transpose_lhs ? 1 : 0, 1, transpose_rhs ? 0 : 1},
       /*lhs_batch_dims=*/{},
       /*rhs_batch_dims=*/{});
+}
+
+const ::llvm::fltSemantics& Float8EXMYType::getFloatSemantics() const {
+  if (mlir::isa<Float6E3M2FNType>(getUnderlyingType())) {
+    return llvm::APFloat::Float6E3M2FN();
+  } else if (mlir::isa<Float6E2M3FNType>(getUnderlyingType())) {
+    return llvm::APFloat::Float6E2M3FN();
+  }
+  return cast<FloatType>(getUnderlyingType()).getFloatSemantics();
 }
 
 namespace {

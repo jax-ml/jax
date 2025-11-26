@@ -172,6 +172,9 @@ int8_t getTypeBitwidth(Type ty) {
       return width;
     }
   }
+  if (isa<Float8EXMYType>(ty)) {
+    return 8;
+  }
   return ty.getIntOrFloatBitWidth();
 }
 

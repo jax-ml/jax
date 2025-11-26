@@ -53,4 +53,17 @@ NB_MODULE(_tpu_ext, m) {
           mlirFuncSetArgAttr(
               op, i, mlirStringRefCreateFromCString(name.c_str()), attr);
         });
+
+  mlir::python::nanobind_adaptors::mlir_type_subclass(m, "Float8EXMYType",
+                                                      mlirTpuIsAFloat8EXMYType)
+      .def_classmethod(
+          "get",
+          [](nb::object cls, MlirType exmy_type, MlirContext ctx) {
+            return cls(mlirTpuFloat8EXMYTypeGet(ctx, exmy_type));
+          },
+          nb::arg("self"), nb::arg("exmy_type") = nullptr,
+          nb::arg("ctx") = nullptr)
+      .def_property_readonly("underlying_type", [](MlirType self) {
+        return mlirTpuFloat8EXMYTypeGetUnderlyingType(self);
+      });
 }
