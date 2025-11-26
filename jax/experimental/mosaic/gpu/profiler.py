@@ -26,6 +26,8 @@ import warnings
 import jax
 from jax._src import stages
 from jax._src import util
+from jax._src.lib import _gpu_ondevice_tracing as gpu_ondevice_tracing
+from jax._src.lib import _profiler
 import jax.numpy as jnp
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -185,6 +187,20 @@ class ProfilerSpec:
       )
     else:
       self.dump_path = dump_path
+    self.tracing_version = self.injection_id = 0
+    self.check_gpu_ondevice_tracing()
+
+  def check_gpu_ondevice_tracing(self):
+    if (
+        gpu_ondevice_tracing is not None
+        and self.tracing_version == 0
+        and self.injection_id == 0
+    ):
+      self.tracing_version = gpu_ondevice_tracing.active_version()
+      if self.tracing_version > 0:
+        self.injection_id = gpu_ondevice_tracing.start_injection_instance(
+            self.tracing_version
+        )
 
   def _num_warpgroups(
       self, grid: tuple[int, ...], block: tuple[int, ...]
@@ -294,7 +310,42 @@ class ProfilerSpec:
           events.append(block_events)
     events = sorted(events, key=lambda x: x[0]["ts"])
     flat_events = list(itertools.chain.from_iterable(events))
-    return json.dump({"displayTimeUnit": "ns", "traceEvents": flat_events}, f)
+
+    if f is not None:
+      json.dump({"displayTimeUnit": "ns", "traceEvents": flat_events}, f)
+
+    if (
+        gpu_ondevice_tracing is not None
+        and self.tracing_version > 0
+        and self.injection_id > 0
+    ):
+      with _profiler.TraceMe(
+          "MosaicGpuProfilerDump", inject_id=self.injection_id
+      ):
+        range_dict = {}
+        for event in flat_events:
+          range_key = (event["name"], event["pid"], event["tid"])
+          if event["ph"] == "B":
+            range_dict[range_key] = event["ts"]
+          elif event["ph"] == "E":
+            if range_key in range_dict:
+              begin_ts = range_dict[range_key]
+              range_dict.pop(range_key)
+              gpu_ondevice_tracing.inject(
+                  version=self.tracing_version,
+                  injection_instance_id=self.injection_id,
+                  tag_name=event["name"],
+                  tag_id=self.interned_names[event["name"]],
+                  pid=event["pid"],
+                  tid=event["tid"],
+                  start_time_ns=int(begin_ts * 1e3),
+                  duration_ps=int((event["ts"] - begin_ts) * 1e6),
+              )
+            else:
+              warnings.warn(
+                  "Event start time not found for ending event:"
+                  f" {event['name']}@{event['ts']}"
+              )
 
 
 @dataclasses.dataclass(frozen=True)
