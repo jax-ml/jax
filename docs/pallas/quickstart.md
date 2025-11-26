@@ -72,7 +72,33 @@ Mutation has not historically been supported in JAX -- `jax.Array`s are immutabl
 `Ref`s are new (experimental) types that allow mutation under certain circumstances.
 We can interpret writing to a `Ref` as mutating its underlying buffer.
 
-+++
+**Indexing and Slicing `Ref`s with `.at`**
+
+In addition to accessing the entire underlying buffer through a reference, it
+is possible to also access only a slice by using the `.at` property. Using
+`x_ref.at[slice]` does not immediately read or write data; it
+creates a new `Ref` object that points to a slice of the original buffer. For
+example `ref.at[0:128]` creates a view of the first 128 elements; `ref.at[::2]`
+creates a strided view.
+
+Once you have a new `Ref` that represents a slice you can read it or write to it
+with the usual syntax. Here is simple example:
+
+```{code-cell} ipython3
+def add_sliced_kernel(x_ref, y_ref, o_ref):
+  mid = x_ref.shape[0] // 2
+
+  x_left = x_ref[:mid][...]
+  x_right = x_ref[mid:][...]
+  y_left = y_ref[:mid][...]
+  y_right = y_ref[mid:][...]
+
+  # The output shape is (4, mid).
+  o_ref.at[0][...] = x_left + y_left
+  o_ref.at[1][...] = x_left + y_right
+  o_ref.at[2][...] = x_right + y_left
+  o_ref.at[3][...] = x_right + y_right
+```
 
 So we've written what we call a "kernel", which we define as a program that will
 run as an atomic unit of execution on an accelerator,
