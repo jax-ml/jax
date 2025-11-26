@@ -463,6 +463,7 @@ jax.scipy.stats.poisson
    logpmf
    pmf
    cdf
+   entropy
 
 jax.scipy.stats.t
 ~~~~~~~~~~~~~~~~~

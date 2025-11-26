@@ -2070,5 +2070,60 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             atol=tol)
     self._CompileAndCheck(lax_fun, args_maker, atol=tol)
 
+  @jtu.sample_product(
+    shape=[(), (5,), (3, 4)],
+    dtype=jtu.dtypes.floating,
+  )
+  def testPoissonEntropy(self, shape, dtype):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.poisson.entropy
+    lax_fun = lsp_stats.poisson.entropy
+
+    args_maker = lambda: [rng(shape, dtype)]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,check_dtypes=False, rtol=1e-4)
+    self._CompileAndCheck(lax_fun, args_maker, rtol=1e-4)
+
+  @genNamedParametersNArgs(2)
+  def testPoissonEntropyWithLoc(self, shapes, dtypes):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = lambda mu, loc: osp_stats.poisson.entropy(mu, loc=loc)
+    lax_fun = lambda mu, loc: lsp_stats.poisson.entropy(mu, loc)
+
+    args_maker = lambda: [rng(shapes[0], dtypes[0]), rng(shapes[1], dtypes[1])]
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,  rtol=1e-4)
+      self._CompileAndCheck(lax_fun, args_maker, rtol=1e-4)
+
+  @jtu.sample_product(
+    dtype=jtu.dtypes.floating,
+  )
+  def testPoissonEntropyEdgeCases(self, dtype):
+    """Test edge cases: invalid mu and very small mu"""
+    # Invalid mu (should return NaN)
+    invalid_mu = jnp.array([-1.0, 0.0, -5.0], dtype=dtype)
+    jax_result = lsp_stats.poisson.entropy(invalid_mu)
+    scipy_result = osp_stats.poisson.entropy(np.array(invalid_mu))
+    self.assertAllClose(jax_result, scipy_result, check_dtypes=False, rtol=1e-4)
+
+    # Very small mu
+    small_mu = jnp.array([0.01, 0.1, 0.5], dtype=dtype)
+    jax_result = lsp_stats.poisson.entropy(small_mu)
+    scipy_result = osp_stats.poisson.entropy(np.array(small_mu))
+    self.assertAllClose(jax_result, scipy_result,check_dtypes=False, rtol=1e-4)
+
+  @jtu.sample_product(
+    dtype=jtu.dtypes.floating,
+  )
+  def testPoissonEntropyRegimes(self, dtype):
+    """Test all three computational regimes"""
+    mu = jnp.array([2.0, 5.0, 9.0, 15.0, 50.0, 99.0, 100.0, 200.0, 500.0], dtype=dtype)
+    scipy_fun = lambda m: osp_stats.poisson.entropy(m)
+    lax_fun = lambda m: lsp_stats.poisson.entropy(m)
+    args_maker = lambda: [mu]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,check_dtypes=False, rtol=1e-4)
+    self._CompileAndCheck(lax_fun, args_maker, rtol=1e-4)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
