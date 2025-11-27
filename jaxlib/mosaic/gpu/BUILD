@@ -327,6 +327,7 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/profiler/lib:traceme",
         "@xla//xla:executable_run_options",
+        "@xla//xla/backends/gpu:ffi",
         "@xla//xla/ffi",
         "@xla//xla/ffi:ffi_api",
         "@xla//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
