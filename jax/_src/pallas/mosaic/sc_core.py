@@ -189,7 +189,7 @@ def gather_global_allocations(jaxpr):
 
   allocations = collections.defaultdict(list)
   for memref in _gather_from_eqns(jaxpr=jaxpr):
-    allocations[memref].append(memref)
+    allocations[memref.get_array_aval().str_short()].append(memref)
   return allocations
 
 

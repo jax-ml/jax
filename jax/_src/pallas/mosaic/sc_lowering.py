@@ -57,12 +57,13 @@ MemorySpace = tpu_core.MemorySpace
 
 class GlobalAllocations:
   """Hands out global allocations sequentially during lowering."""
-  def __init__(self, allocations: dict[pallas_core.MemoryRef, list[Any]]):
+  def __init__(self, allocations: dict[str, list[ir.Value]]):
     self._allocations = {k: list(v) for k, v in allocations.items()}
 
   def next_allocation(self, what: state.AbstractRef | pallas_core.TransformedRef) -> Any:
     """Returns the next available allocation for the given shape."""
     what = pallas_core.MemoryRef(what.inner_aval, what.memory_space)
+    what = what.get_array_aval().str_short()
     if what not in self._allocations:
       raise LookupError(f"No allocations are available for {what}.")
     if not self._allocations[what]:
