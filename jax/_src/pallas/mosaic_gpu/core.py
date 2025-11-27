@@ -388,7 +388,10 @@ def _ref_group_size(refs: _GPUMemoryRefTree) -> int:
       raise NotImplementedError(f"Unsupported dtype: {ref.dtype}")
     ref_bits = math.prod(ref.shape) * nbits
     if ref_bits % 8:
-      raise ValueError("Only byte-aligned shapes are supported.")
+      raise ValueError(
+          "Only byte-aligned shapes are supported. Got shape:"
+          f" {ref.dtype}{ref.shape}"
+      )
     size += ref_bits // 8
   return size
 
@@ -449,7 +452,10 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
           raise NotImplementedError(f"Unsupported dtype: {ref.dtype}")
         ref_bits = math.prod(ref.shape) * nbits
         if ref_bits % 8:
-          raise ValueError("Only byte-aligned shapes are supported.")
+          raise ValueError(
+              "Only byte-aligned shapes are supported. Got shape:"
+              f" {ref.dtype}{ref.shape}"
+          )
         byte_offset += ref_bits // 8
       union_bytes = max(union_bytes, byte_offset)
     assert union_bytes == ref_union.shape[0]
@@ -676,9 +682,16 @@ class UntileRef(state_types.Transform):
     for idx, tile in zip(tiled_idxs, self.tiling):
       if isinstance(idx, slice):
         if idx.step is not None and idx.step != 1:
-          raise NotImplementedError("Strided slices unsupported")
-        if (idx.start is not None and idx.start % tile) or (idx.stop is not None and idx.stop % tile):
-          raise ValueError("Non-empty slices must be tile aligned")
+          raise NotImplementedError(
+              f"Strided slices unsupported. Got stride: {idx.step}"
+          )
+        if (idx.start is not None and idx.start % tile) or (
+            idx.stop is not None and idx.stop % tile
+        ):
+          raise ValueError(
+              f"Expected slice start ({idx.start}) and slice stop ({idx.stop})"
+              f" to be divisible by the tile size ({tile})"
+          )
         idxs_after_tiling.append(slice(idx.start // tile, idx.stop // tile))
       elif isinstance(idx, mgpu.DynamicSlice):
         if idx.length % tile:
@@ -1276,10 +1289,12 @@ class Mesh:
           "num_threads and thread_name must be either both set or both None,"
           f" got {self}"
       )
-    if self.num_threads is not None and self.num_threads > 2048 // 128:
+    max_mosaic_threads = 2048 // 128
+    if self.num_threads is not None and self.num_threads > max_mosaic_threads:
       raise ValueError(
           "Requested too many CUDA threads per block. Each Mosaic thread"
-          " corresponds to 128 CUDA threads."
+          f" corresponds to 128 CUDA threads. At most {max_mosaic_threads}"
+          f" are supported, got {self}"
       )
     object.__setattr__(self, "grid", tuple(self.grid))
     object.__setattr__(self, "grid_names", tuple(self.grid_names))
