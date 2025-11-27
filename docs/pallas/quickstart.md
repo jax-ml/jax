@@ -82,23 +82,31 @@ example `ref.at[0:128]` creates a view of the first 128 elements; `ref.at[::2]`
 creates a strided view.
 
 Once you have a new `Ref` that represents a slice you can read it or write to it
-with the usual syntax. Here is simple example:
+with the usual syntax. Here is a simple example:
 
 ```{code-cell} ipython3
 def add_sliced_kernel(x_ref, y_ref, o_ref):
-  mid = x_ref.shape[0] // 2
+  small_mid = x_ref.shape[0] // 2
 
-  x_left = x_ref[:mid][...]
-  x_right = x_ref[mid:][...]
-  y_left = y_ref[:mid][...]
-  y_right = y_ref[mid:][...]
+  x_left = x_ref.at[:small_mid]
+  x_right = x_ref.at[small_mid:]
+  y_left = y_ref.at[:small_mid]
+  y_right = y_ref.at[small_mid:]
 
-  # The output shape is (4, mid).
-  o_ref.at[0][...] = x_left + y_left
-  o_ref.at[1][...] = x_left + y_right
-  o_ref.at[2][...] = x_right + y_left
-  o_ref.at[3][...] = x_right + y_right
+  # The output shape is (4*small_mid).
+  large_mid = 2*small_mid
+  o_ref.at[:large_mid][:small_mid] = x_left[...] + y_left[...]
+  o_ref.at[:large_mid][small_mid:] = x_left[...] + y_right[...]
+  o_ref.at[large_mid:][:small_mid] = x_right[...] + y_left[...]
+  o_ref.at[large_mid:][small_mid:] = x_right[...] + y_right[...]
 ```
+
+Note that using `x_ref.at[slice][...]` is equivalent to `x_ref[slice]`. The
+`.at` is useful if you want to compose multiple slices (e.g.
+`x_ref.at[block_slice][thread_slice]`) or if need to pass a slice to a subkernel
+function that takes a `Ref`.
+
++++
 
 So we've written what we call a "kernel", which we define as a program that will
 run as an atomic unit of execution on an accelerator,
