@@ -442,7 +442,7 @@ This implementation demonstrates how offloading model parameters together with a
 
 **Total Memory Savings**: 33.5 MB (20 MB + 10.75 MB + 1.75 MB)
 
-This hybrid approach demonstrates that parameter and activation offloading work synergistically to achieve significant memory reductions while maintaining computational correctness.  
+This hybrid approach demonstrates that parameter and activation offloading work synergistically to achieve significant memory reductions while maintaining computational correctness.
 
 ### Limitations of Parameter Offloading
 
@@ -631,10 +631,10 @@ Memory Analysis:
    - Total memory size without offloading: 4.59 GB
    - Net memory saving: 1.72 GB
 
-while offloading increases temporary memory usage, the reduction in argument size more than compensates for this increase, resulting in an overall reduction in device memory usage. 
+while offloading increases temporary memory usage, the reduction in argument size more than compensates for this increase, resulting in an overall reduction in device memory usage.
 
 Note: The optimizer states can be compared for numerical equivalence using `jax.tree_util.tree_map` and `jnp.allclose`, but this verification step is omitted here for brevity.
 
 ## Tools for Host Offloading
 
-{func}`jax.stages.Compiled.memory_analysis` API is utilized above to get memory usage information. For device memory analysis, refer to :doc:`device_memory_profiling`. The profiling tools described in {ref}`profiling` can help measure memory savings and performance impact from host offloading.
+{func}`jax.stages.Compiled.memory_analysis` API is utilized above to get memory usage information. For device memory analysis, refer to {doc}`../device_memory_profiling`. The profiling tools described in {doc}`../profiling` can help measure memory savings and performance impact from host offloading.

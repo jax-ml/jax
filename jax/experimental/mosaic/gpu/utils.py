@@ -161,7 +161,10 @@ def debug_print(fmt, *args, uniform=True, scope=None):
       index = ir.IndexType.get()
       vec_ty = ir.VectorType(arg.type)
       if len(vec_ty.shape) > 1:
-        raise NotImplementedError(vec_ty)
+        raise NotImplementedError(
+            "2D+ vectors are not supported in debug_print:"
+            f" {vec_ty}"
+        )
       vec_args = [
           vector.extract(
               arg,
@@ -679,7 +682,11 @@ def memref_reshape(
 
   ref_ty = ir.MemRefType(ref.type)
   if math.prod(ref_ty.shape) != math.prod(shape):
-    raise ValueError("Cannot reshape to a different size")
+    raise ValueError(
+        f"Cannot reshape to a different size. Ref shape: {ref_ty.shape} (size:"
+        f" {math.prod(ref_ty.shape)}), new shape: {shape} (size:"
+        f" {math.prod(shape)})"
+    )
   if not all(dim > 0 for dim in shape):
     raise ValueError(
         "Shapes must havbe only positive dimensions (no -1 or 0 dimensions"
@@ -937,16 +944,6 @@ def warp_barrier():
   nvvm.bar_warp_sync(c(0xFFFFFFFF, ir.IntegerType.get_signless(32)))
 
 
-def system_memory_barrier():
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [],
-      "fence.sys;",
-      "",
-      has_side_effects=True,
-  )
-
-
 @dataclasses.dataclass(frozen=True)
 class BarrierRef:
   base_address: ir.Value
@@ -971,7 +968,7 @@ class BarrierRef:
     memref.store(c(0, i32), phases, [])
     with single_thread(scope=ThreadSubset.BLOCK):
       for i in range(num_barriers):
-        nvvm.mbarrier_init_shared(
+        nvvm.mbarrier_init(
             getelementptr(address, [i], i64),
             c(arrival_count, i32),
         )
@@ -1005,7 +1002,7 @@ class BarrierRef:
     i32 = ir.IntegerType.get_signless(32)
     ticks = arith.constant(i32, 10000000)
     parity = arith.extui(i32, parity)
-    nvvm.mbarrier_try_wait_parity_shared(self.get_ptr(), parity, ticks)
+    nvvm.mbarrier_try_wait_parity(self.get_ptr(), parity, ticks)
     if orders_tensor_core:
       llvm.inline_asm(
           ir.Type.parse("!llvm.void"),
@@ -1064,7 +1061,7 @@ class BarrierRef:
             "Predicate not supported for no-complete arrive"
         )
       count = c(arrival_count, ir.IntegerType.get_signless(32))
-      nvvm.mbarrier_arrive_nocomplete_shared(i64, self.get_ptr(), count)
+      nvvm.mbarrier_arrive_nocomplete(i64, self.get_ptr(), count)
 
   def arrive_expect_tx(
       self, bytes: int | ir.Value, predicate: ir.Value | None = None
@@ -1074,9 +1071,7 @@ class BarrierRef:
     elif ir.IndexType.isinstance(bytes.type):
       i32 = ir.IntegerType.get_signless(32)
       bytes = arith.index_cast(i32, bytes)
-    nvvm.mbarrier_arrive_expect_tx_shared(
-        self.get_ptr(), bytes, predicate=predicate
-    )
+    nvvm.mbarrier_arrive_expect_tx(self.get_ptr(), bytes, predicate=predicate)
 
   def get_ptr(self):
     i64 = ir.IntegerType.get_signless(64)
@@ -1100,10 +1095,7 @@ class DialectBarrierRef:
     address = memref_ptr(
         barrier_memref, memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE
     )
-    dialect.InitializeBarrierOp(
-        barrier_ty, base_pointer=address, arrival_count=arrival_count
-    )
-
+    dialect.initialize_barrier(address, arrival_count, num_barriers)
     i32 = ir.IntegerType.get_signless(32)
     phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
     memref.store(c(0, i32), phases, [])
@@ -1131,8 +1123,8 @@ class DialectBarrierRef:
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     return self.barrier_ref.update_parities(parities)
 
-  def arrive(self):
-    self.barrier_ref.arrive()
+  def arrive(self, orders_tensor_core: bool = False):
+    dialect.ArriveOp(self.as_barrier_memref(), orders_tensor_core)
 
   def arrive_expect_tx(self, bytes: int | ir.Value):
     dialect.ArriveExpectTxOp(barrier=self.as_barrier_memref(), expect_tx=bytes)
@@ -1515,7 +1507,11 @@ class Partition1D:
 
 def tile_shape(shape, tiling):
   if len(tiling) > len(shape):
-    raise ValueError
+    raise ValueError(
+        "Expected tiling to be at most rank of shape. Got tiling:"
+        f" {tiling} (rank: {len(tiling)}) and shape {shape} (rank:"
+        f" {len(shape)})."
+    )
   if not tiling:
     return shape
   tiling_rank = len(tiling)
@@ -1580,7 +1576,10 @@ def memref_ptr(memref_arg, memory_space=None):
       assert elem_bitwidth.bit_count() == 1
       packing = 8 // elem_bitwidth
       if static_offset % packing != 0:
-        raise ValueError
+        raise ValueError(
+            f"{memref_ty} {static_offset=} is not divisible by"
+            f" {packing=}`"
+        )
       offset_bytes = c(static_offset // packing, i64)
     else:
       offset_bits = llvm.mul(
@@ -1794,7 +1793,7 @@ def ceil_div(x: int, y: int):
 def vector_slice(v: ir.Value, s: slice):
   v_ty = ir.VectorType(v.type)
   if len(v_ty.shape) != 1:
-    raise NotImplementedError(v_ty)
+    raise NotImplementedError(f"Only 1D vectors are supported {v_ty}")
   [v_len] = v_ty.shape
   slice_length = len(range(v_len)[s])
   return vector.extract_strided_slice(
@@ -1807,34 +1806,34 @@ def vector_slice(v: ir.Value, s: slice):
 
 
 def vector_concat(vectors: Sequence[ir.Value]) -> ir.Value:
-  index = ir.IndexType.get()
   if not vectors:
     raise ValueError("Cannot concatenate an empty list of vectors")
   vty = vectors[0].type
   if not ir.VectorType.isinstance(vty):
     raise ValueError("Cannot concatenate non-vector values")
+  vty = ir.VectorType(vty)
   if vty.rank != 1:
     raise NotImplementedError("Only 1D vectors are supported")
   for v in vectors:
     if v.type != vty:
       raise ValueError("Cannot concatenate vectors of different types")
-  result = llvm.mlir_undef(
-      ir.VectorType.get((vty.shape[0] * len(vectors),), vty.element_type)
-  )
-  offset = 0
-  for v in vectors:
-    for i in range(vty.shape[0]):
-      elem = vector.extract(
-          v, dynamic_position=[], static_position=ir.DenseI64ArrayAttr.get([i])
-      )
-      result = vector.insert(
-          elem,
-          result,
-          dynamic_position=[],
-          static_position=ir.DenseI64ArrayAttr.get([offset + i]),
-      )
-    offset += vty.shape[0]
-  return result
+  return _vector_concat_rec(vectors)
+
+
+def _vector_concat_rec(vectors: Sequence[ir.Value]) -> ir.Value:
+  match vectors:
+    case [v]:
+      return v
+    case [v, w]:
+      [v_len] = ir.VectorType(v.type).shape
+      [w_len] = ir.VectorType(w.type).shape
+      mask = ir.DenseI64ArrayAttr.get(list(range(v_len + w_len)))
+      return vector.shuffle(*vectors, mask=mask)
+    case _:
+      assert vectors
+      l = _vector_concat_rec(vectors[: len(vectors) // 2])
+      r = _vector_concat_rec(vectors[len(vectors) // 2 :])
+      return _vector_concat_rec([l, r])
 
 
 def is_known_divisible(value, divisor, max_depth=10) -> bool:

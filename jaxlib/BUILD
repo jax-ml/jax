@@ -579,24 +579,6 @@ cc_library(
 )
 
 cc_library(
-    name = "dlpack_support",
-    srcs = ["dlpack_support.cc"],
-    hdrs = ["dlpack_support.h"],
-    compatible_with = [],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    deps = [
-        "@com_google_absl//absl/status:statusor",
-        "@dlpack",
-        "@xla//xla:util",
-        "@xla//xla:xla_data_proto_cc",
-    ],
-)
-
-cc_library(
     name = "dlpack",
     srcs = ["dlpack.cc"],
     hdrs = ["dlpack.h"],
@@ -607,7 +589,6 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        ":dlpack_support",
         ":nb_class_ptr",
         ":py_client",
         ":py_user_context",
@@ -629,6 +610,7 @@ cc_library(
         "@xla//xla/pjrt:pjrt_client",
         "@xla//xla/pjrt:pjrt_common",
         "@xla//xla/pjrt:pjrt_compiler",
+        "@xla//xla/python:dlpack_types",
         "@xla//xla/python:types",
         "@xla//xla/python/ifrt",
         "@xla//xla/python/pjrt_ifrt",
@@ -649,7 +631,6 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        ":dlpack_support",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -664,8 +645,10 @@ cc_library(
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/pjrt:host_callback",
         "@xla//xla/pjrt:status_casters",
+        "@xla//xla/python:dlpack_types",
         "@xla//xla/python:nb_numpy",
         "@xla//xla/python:types",
+        "@xla//xla/service:custom_call_target_registry",
         "@xla//xla/tsl/platform:statusor",
     ],
 )
@@ -998,6 +981,7 @@ cc_library(
         ":util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
@@ -1010,6 +994,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIR",
@@ -1037,6 +1022,7 @@ cc_library(
         "@xla//xla/pjrt:pjrt_executable",
         "@xla//xla/pjrt:pjrt_layout",
         "@xla//xla/pjrt:status_casters",
+        "@xla//xla/python:nb_absl_flat_hash_map",
         "@xla//xla/python:nb_absl_span",
         "@xla//xla/python:nb_helpers",
         "@xla//xla/python:nb_numpy",
@@ -1053,6 +1039,7 @@ cc_library(
         "@xla//xla/python/ifrt:user_context_status_util",
         "@xla//xla/python/ifrt/hlo:hlo_program",
         "@xla//xla/python/pjrt_ifrt",
+        "@xla//xla/python/pjrt_ifrt:pjrt_attribute_map_util",
         "@xla//xla/python/pjrt_ifrt:pjrt_dtype",
         "@xla//xla/python/pjrt_ifrt:xla_ifrt",
         "@xla//xla/service:platform_util",
@@ -1392,9 +1379,6 @@ cc_library(
         "@xla//xla:xla_data_proto_cc",
         "@xla//xla:xla_proto_cc",
         "@xla//xla/client:executable_build_options",
-        "@xla//xla/ffi",
-        "@xla//xla/ffi:ffi_api",
-        "@xla//xla/ffi/api:c_api",
         "@xla//xla/hlo/builder:xla_computation",
         "@xla//xla/hlo/ir:hlo",
         "@xla//xla/hlo/parser:hlo_parser",
@@ -1406,7 +1390,6 @@ cc_library(
         "@xla//xla/python:nb_numpy",
         "@xla//xla/python:types",
         "@xla//xla/service:computation_placer",
-        "@xla//xla/service:custom_call_target_registry",
         "@xla//xla/service:hlo_graph_dumper",
         "@xla//xla/service:hlo_module_config",
         "@xla//xla/service:hlo_proto_cc",

@@ -115,7 +115,7 @@ def _colocated_cpu_devices_cached_fallback_to_cpu_backend(
   else:
     # PjRt-IFRT on a non-CPU platform currently defines CPU devices on a separae
     # CPU backend.
-    cpu_backend_devices = jax.local_devices(backend="cpu")
+    cpu_backend_devices = jax.devices(backend="cpu")
   device_index_map = {device.id: i for i, device in enumerate(jax.devices())}
 
   available_devices = devices[: min(len(cpu_backend_devices), len(devices))]

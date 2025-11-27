@@ -196,6 +196,7 @@ class PickleTest(jtu.JaxTestCase):
         )
         self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_pickle_pmap_sharding(self):
     ss = pxla.ShardingSpec(
         sharding=(pxla.Unstacked(8),),

@@ -695,18 +695,19 @@ class LaxVmapTest(jtu.JaxTestCase):
       for shape in [(4,), (3, 5, 3)]
       for bdims in lax_test_util.all_bdims(shape)],
     k=[1, 3],
+    axis=[0, -1],
     dtype=lax_test_util.default_dtypes,
   )
   # The top_k indices for integer arrays with identical entries won't match between
   # vmap'd version and manual reference, so only test unique integer arrays for int_dtypes.
   # Note also that we chose 3 * 5 * 3 * 5 such that it fits in the range of
   # values a bfloat16 can represent exactly to avoid ties.
-  def testTopK(self, shape, dtype, k, bdims):
+  def testTopK(self, shape, dtype, k, bdims, axis):
     rng = jtu.rand_int(self.rng(), high=math.prod(shape))
     # _CheckBatching doesn't work with tuple outputs, so test outputs separately.
-    op1 = lambda x: lax.top_k(x, k=k)[0]
+    op1 = lambda x: lax.top_k(x, k=k, axis=axis)[0]
     self._CheckBatching(op1, 5, bdims, (shape,), (dtype,), rng)
-    op2 = lambda x: lax.top_k(x, k=k)[1]
+    op2 = lambda x: lax.top_k(x, k=k, axis=axis)[1]
     self._CheckBatching(op2, 5, bdims, (shape,), (dtype,), rng)
 
   @jtu.sample_product(

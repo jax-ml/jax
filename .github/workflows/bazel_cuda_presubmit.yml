@@ -25,6 +25,25 @@ concurrency:
   cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
 permissions: {}
 jobs:
+  build-cuda-artifacts:
+    uses: ./.github/workflows/build_artifacts.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Python values need to match the matrix stategy in the CUDA tests job below
+          runner: ["linux-x86-n4-16"]
+          artifact: ["jax-cuda-plugin", "jax-cuda-pjrt"]
+          python: ["3.14",]
+          cuda-version: ["13"]
+    name: "Build ${{ format('{0}', 'CUDA') }} artifacts"
+    with:
+      runner: ${{ matrix.runner }}
+      artifact: ${{ matrix.artifact }}
+      python: ${{ matrix.python }}
+      cuda-version: ${{ matrix.cuda-version }}
+      clone_main_xla: 1
+      upload_artifacts_to_gcs: false
+
   run-tests:
     if: github.event.repository.fork == false
     uses: ./.github/workflows/bazel_cuda.yml

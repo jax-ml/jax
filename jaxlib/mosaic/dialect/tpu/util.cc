@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <ostream>
@@ -53,13 +54,14 @@ std::ostream &operator<<(std::ostream &os, Print p) {
 
 SmallVector<int64_t> ComputeTileStrides(absl::Span<const int64_t> shape,
                                         absl::Span<const int64_t> tiling) {
+  CHECK_LE(tiling.size(), shape.size());
   SmallVector<int64_t> tile_strides(shape.size());
   int64_t stride = 1;
-  for (int64_t i = 0; i < shape.size(); ++i) {
-    int64_t idx = shape.size() - 1 - i;
-    int64_t tiling_idx = tiling.size() - 1 - i;
+  for (size_t i = 0; i < shape.size(); ++i) {
+    const size_t idx = shape.size() - 1 - i;
     tile_strides[idx] = stride;
-    if (tiling_idx >= 0) {
+    if (i < tiling.size()) {
+      const size_t tiling_idx = tiling.size() - 1 - i;
       stride *= llvm::divideCeil(shape[idx], tiling[tiling_idx]);
     } else {
       stride *= shape[idx];
@@ -177,7 +179,7 @@ bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
     return false;
   }
   auto rank = tiled_memref_ty.getRank();
-  auto packing = 32 / tiled_memref_ty.getElementTypeBitWidth();
+  auto packing = 32 / getElementTypeBitwidth(tiled_memref_ty);
   if (tiled_memref_ty.isDynamicDim(rank - 1)) {
     // TODO(jevinjiang): we can still allow the minormost padding if we know the
     // max bound of the dynamic size is not larger than the target_shape[1].
@@ -235,7 +237,7 @@ bool layoutIsValidForValue(const Layout &l, const Value v,
     if (!vty.getElementType().isIntOrFloat()) {
       return false;
     }
-    const int8_t bitwidth = vty.getElementTypeBitWidth();
+    const int8_t bitwidth = getElementTypeBitwidth(vty);
     if (bitwidth != l->bitwidth() && bitwidth != 1) {
       return false;
     }

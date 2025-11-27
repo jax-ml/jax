@@ -84,6 +84,96 @@ class SchedulingGroupsTest(jtu.JaxTestCase):
     self.assertIn('inlineable="false"', compiled.as_text())
     compiled(inp)  # doesn't crash
 
+  @jtu.run_on_devices('cpu')
+  def test_xla_metadata_call_inlineable_remat_in_scan(self):
+    @xla_metadata_call(inlineable="false")
+    def f(x, y):
+      return x + y, (x + y).sum()
+
+    def g(x, use_remat=True):
+      maybe_rematted_f = jax.remat(f) if use_remat else f
+      _, b = maybe_rematted_f(x, x)
+      return b
+
+    grad_f = jax.jit(jax.grad(g), static_argnums=(1,))
+    grads = grad_f(jnp.array(5.0), use_remat=False)
+    self.assertIsNotNone(grads)
+    grads = grad_f(jnp.array(5.0), use_remat=True)
+    self.assertIsNotNone(grads)
+
+  @jtu.run_on_devices('cpu')
+  def test_xla_metadata_call_deduplication(self):
+    inp = jnp.arange(8.)
+
+    @xla_metadata_call(inlineable='false')
+    @jax.jit
+    def g(x):
+      return x * 2
+
+    def f(x):
+      y = g(x)
+      z = g(y)
+      return z.sum()
+
+    f(inp)  # doesn't crash
+    lowered = jax.jit(f).lower(inp)
+    self.assertEqual(
+        lowered.as_text().count('func.func private @xla_metadata_call'), 1)
+    compiled = lowered.compile()
+    compiled(inp)  # doesn't crash
+
+    jax.jit(jax.grad(f))(inp)  # doesn't crash
+    lowered = jax.jit(jax.grad(f)).lower(inp)
+    self.assertEqual(
+        lowered.as_text().count('func.func private @xla_metadata_call'), 1)
+    compiled = lowered.compile()
+    compiled(inp)  # doesn't crash
+
+  @jtu.run_on_devices('cpu')
+  def test_xla_metadata_call_deduplication_remat(self):
+    inp = jnp.arange(8.)
+
+    @jax.remat
+    @xla_metadata_call(inlineable='false')
+    @jax.jit
+    def g(x):
+      return x * 2
+
+    def f(x):
+      y = g(x)
+      z = g(y)
+      return z.sum()
+
+    f(inp)  # doesn't crash
+    lowered = jax.jit(f).lower(inp)
+    self.assertEqual(
+        lowered.as_text().count('func.func private @xla_metadata_call'), 1)
+    compiled = lowered.compile()
+    compiled(inp)  # doesn't crash
+
+    jax.jit(jax.value_and_grad(f))(inp)  # doesn't crash
+    lowered = jax.jit(jax.value_and_grad(f)).lower(inp)
+    self.assertEqual(
+        lowered.as_text().count('func.func private @xla_metadata_call'), 2)
+    compiled = lowered.compile()
+    compiled(inp)  # doesn't crash
+
+  @jtu.run_on_devices('cpu')
+  def test_xla_metadata_call_deduplication_kwargs(self):
+    inp = jnp.arange(8.)
+
+    @xla_metadata_call(inlineable='false')
+    @jax.jit
+    def g(x):
+      return x * 2
+
+    def f(x):
+      y = g(x=x)
+      z = g(x=y)
+      return z.sum()
+
+    f(inp)  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

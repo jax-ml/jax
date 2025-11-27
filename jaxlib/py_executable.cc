@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <Python.h>
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -30,13 +29,21 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
-#include "absl/container/inlined_vector.h"
+#include "absl/base/const_init.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/optional.h"  // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "nanobind/stl/variant.h"  // IWYU pragma: keep
+#include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/call_location.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
@@ -47,14 +54,17 @@ limitations under the License.
 #include "xla/future.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/pjrt_layout.h"
+#include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
-#include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt/user_context_status_util.h"
+#include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
+#include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
+#include "xla/python/version.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
@@ -70,19 +80,26 @@ namespace ifrt = xla::ifrt;
 
 namespace {
 
-uint32_t GetBaseLaunchId(std::optional<std::string> fingerprint,
+uint64_t GetBaseLaunchId(std::optional<std::string> fingerprint,
                          ifrt::LoadedExecutableRef executable) {
-  uint32_t ret = 0;
+  uint64_t ret = 0;
   if (fingerprint.has_value()) {
-    ret = tsl::Fingerprint32(*fingerprint);
+    ret = tsl::Fingerprint64(*fingerprint);
   }
   // Don't use the device fingerprint for executables running on single process.
   // Pmap and replicated executables for example will only populate the local
   // device to the loaded executable and all devices will have different devices
   // fingerprints.
+#if JAX_IFRT_VERSION_NUMBER >= 37
+  if (std::optional<ifrt::DeviceListRef> device_list = executable->devices();
+      device_list.has_value() && !(*device_list)->IsFullyAddressable()) {
+    ret += (*device_list)->fingerprint();
+  }
+#else
   if (!executable->devices()->IsFullyAddressable()) {
     ret += executable->devices()->fingerprint();
   }
+#endif
   return ret;
 }
 
@@ -91,6 +108,8 @@ uint32_t GetBaseLaunchId(std::optional<std::string> fingerprint,
 namespace nb = nanobind;
 
 namespace jax {
+
+// PyToken
 
 absl::Status PyToken::Await() {
   CHECK(future_.IsValid());
@@ -106,6 +125,14 @@ absl::Status PyToken::Await() {
   // context is appended to the status message.
   return xla::ifrt::ExpandUserContexts(std::move(status));
 }
+
+void PyToken::Register(nb::module_& m) {
+  nb::class_<PyToken> token(m, "Token");
+  token.def("block_until_ready",
+            [](PyToken& self) { xla::ThrowIfError(self.Await()); });
+}
+
+// PyShardedToken
 
 absl::Status PyShardedToken::Await() {
   absl::Status status = absl::OkStatus();
@@ -125,106 +152,17 @@ absl::Status PyShardedToken::Await() {
   return xla::ifrt::ExpandUserContexts(std::move(status));
 }
 
-PyLoadedExecutable::PyLoadedExecutable(
-    nb_class_ptr<PyClient> client,
-    ifrt::LoadedExecutableRef ifrt_loaded_executable,
-    std::optional<std::string> fingerprint)
-    : client_(std::move(client)),
-      ifrt_loaded_executable_(std::move(ifrt_loaded_executable)),
-      fingerprint_(std::move(fingerprint)),
-      next_launch_id_(GetBaseLaunchId(fingerprint_, ifrt_loaded_executable_)) {
-  CHECK(PyGILState_Check());
-  if (ifrt_loaded_executable_->user_context() == nullptr &&
-      Traceback::IsEnabled()) {
-    throw nb::value_error(
-        "Expecting an IFRT `LoadedExecutable` to have a user context, but got "
-        "a null user context. Use `jax::PyUserContextScope` to set a user "
-        "context for operations producing IFRT `LoadedExecutable`s.");
-  }
-  if (fingerprint_) {
-    VLOG(1) << "Fingerprint for executable " << ifrt_loaded_executable_->name()
-            << ": " << *fingerprint_;
-  }
-  nb::ft_lock_guard lock(client_->executables_mutex_);
-  next_ = client_->executables_;
-  client_->executables_ = this;
-  prev_ = nullptr;
-  if (next_) {
-    next_->prev_ = this;
-  }
+void PyShardedToken::Register(nb::module_& m) {
+  nb::class_<PyShardedToken> sharded_token(m, "ShardedToken");
+  sharded_token.def("block_until_ready", [](PyShardedToken& self) {
+    xla::ThrowIfError(self.Await());
+  });
+  sharded_token.def("get_token", &PyShardedToken::GetPyToken);
 }
 
-PyLoadedExecutable::~PyLoadedExecutable() {
-  CHECK(PyGILState_Check());
-  nb::ft_lock_guard lock(client_->executables_mutex_);
-  if (client_->executables_ == this) {
-    client_->executables_ = next_;
-  }
-  if (prev_) {
-    prev_->next_ = next_;
-  }
-  if (next_) {
-    next_->prev_ = prev_;
-  }
-}
-
-std::vector<nb_class_ptr<PyDevice>> PyLoadedExecutable::AddressableDevices()
-    const {
-  std::vector<nb_class_ptr<PyDevice>> devices;
-  devices.reserve(ifrt_loaded_executable_->addressable_devices().size());
-  for (ifrt::Device* device : ifrt_loaded_executable_->addressable_devices()) {
-    devices.push_back(client_->GetPyDevice(device));
-  }
-  return devices;
-}
+// PyExecuteResults
 
 namespace {
-
-static int GetNumDevices(const ExecuteShardedArg& arg) {
-  if (std::holds_alternative<PyArray>(arg)) {
-    return std::get<PyArray>(arg).num_addressable_shards();
-  } else {
-    return std::get<std::vector<PyArray>>(arg).size();
-  }
-}
-static ifrt::ArrayRef GetIfRtArray(const ExecuteShardedArg& arg) {
-  if (std::holds_alternative<PyArray>(arg)) {
-    return tsl::FormRef(std::get<PyArray>(arg).ifrt_array());
-  }
-  auto& arg_vector = std::get<std::vector<PyArray>>(arg);
-
-  // TODO(hyeontaek): This on-demand Array creation is not efficient and has
-  // insufficient information about the shape (a dummy shape is used). This
-  // should be removed if possible and only be used in the context where the
-  // shape information is unused.
-  std::vector<ifrt::ArrayRef> ifrt_arrays;
-  ifrt_arrays.reserve(arg_vector.size());
-  absl::InlinedVector<ifrt::Device*, 1> devices;
-  devices.reserve(arg_vector.size());
-  for (auto& arr : arg_vector) {
-    CHECK_EQ(arr.ifrt_array()->sharding().devices()->size(), 1)
-        << arr.ifrt_array()->sharding().DebugString();
-    ifrt_arrays.push_back(tsl::FormRef(arr.ifrt_array()));
-    devices.push_back(
-        arr.ifrt_array()->sharding().devices()->devices().front());
-  }
-  CHECK(!ifrt_arrays.empty());
-  // Use a dummy shape.
-  // TODO(hyeontaek): Find a way to compute a correct shape.
-  // TODO(yashkatariya): Plumb sharding or memory_kind here.
-  ifrt::Client* client = ifrt_arrays.front()->client();
-  absl::StatusOr<ifrt::DeviceListRef> device_list =
-      client->MakeDeviceList(devices);
-  TF_CHECK_OK(device_list.status());
-  absl::Span<xla::ifrt::ArrayRef> arrays = absl::MakeSpan(ifrt_arrays);
-  auto ifrt_array = client->AssembleArrayFromSingleDeviceArrays(
-      arrays.at(0)->dtype(), std::move(ifrt_arrays.front()->shape()),
-      ifrt::OpaqueSharding::Create(*std::move(device_list), ifrt::MemoryKind()),
-      arrays, ifrt::ArrayCopySemantics::kReuseInput,
-      ifrt::SingleDeviceShardSemantics::kAddressableShards);
-  TF_CHECK_OK(ifrt_array.status());
-  return *ifrt_array;
-}
 
 void PopulateExecuteShardedResults(const nb_class_ptr<PyClient>& client,
                                    std::vector<ifrt::ArrayRef> ifrt_arrays,
@@ -248,60 +186,6 @@ void PopulateExecuteShardedResults(const nb_class_ptr<PyClient>& client,
           client, std::move(exploded_array), false, true, result_status));
     }
   }
-}
-
-absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
-    const ifrt::ExecuteOptions& options, const nb_class_ptr<PyClient>& client,
-    ifrt::LoadedExecutable* ifrt_loaded_executable,
-    absl::Span<const ExecuteShardedArg> args,
-    std::optional<std::vector<xla::Future<>>>& returned_futures) {
-  std::vector<ifrt::ArrayRef> output_arrays;
-  std::unique_ptr<tsl::Future<>> returned_future;
-  int num_computations = ifrt_loaded_executable->addressable_devices().size();
-  xla::Future<> result_status;
-  {
-    nb::gil_scoped_release gil_release;
-    for (const auto& arg : args) {
-      if (GetNumDevices(arg) != num_computations) {
-        return xla::InvalidArgument(
-            "Expected args to execute_sharded_on_local_devices to have %d "
-            "shards, got: [%s]",
-            num_computations,
-            absl::StrJoin(args, ", ",
-                          [](std::string* out, const ExecuteShardedArg& arg) {
-                            out->append(std::to_string(GetNumDevices(arg)));
-                          }));
-      }
-    }
-    std::vector<ifrt::ArrayRef> arg_arrays(args.size());
-    absl::c_transform(args, arg_arrays.begin(),
-                      [&](const ExecuteShardedArg& arg) mutable {
-                        return GetIfRtArray(arg);
-                      });
-    TF_ASSIGN_OR_RETURN(auto result, ifrt_loaded_executable->Execute(
-                                         absl::MakeSpan(arg_arrays), options,
-                                         /*devices=*/std::nullopt));
-    output_arrays = std::move(result.outputs);
-    // options.fill_status is only supposed to be true when the computation has
-    // tokens.
-    if (options.fill_status) {
-      result_status = result.status;
-      if (returned_futures.has_value()) {
-        returned_futures->resize(num_computations, std::move(result.status));
-      }
-    }
-  }
-
-  // TODO(b/240696624): Although the PjRt interface require `returned_futures`
-  // to be resized correctly if it is not nullopt, some implementation does not
-  // implement this. So we have to check whether returned_futures is empty.
-  // Remove this check once the implementation is fixed.
-  auto py_sharded_token = returned_futures.has_value()
-                              ? PyShardedToken(std::move(*returned_futures))
-                              : PyShardedToken();
-
-  return PyExecuteResults(client, std::move(output_arrays), num_computations,
-                          std::move(py_sharded_token), result_status);
 }
 
 }  // namespace
@@ -414,8 +298,162 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
   return outputs;
 }
 
+void PyExecuteResults::Register(nb::module_& m) {
+  nb::class_<PyExecuteResults>(m, "ExecuteResults")
+      .def("__len__", [](PyExecuteResults& results) { return results.Size(); })
+      .def("disassemble_into_single_device_arrays",
+           &PyExecuteResults::DisassembleIntoSingleDeviceArrays)
+      .def("disassemble_prefix_into_single_device_arrays",
+           &PyExecuteResults::DisassemblePrefixIntoSingleDeviceArrays)
+      .def("consume_with_handlers", &PyExecuteResults::ConsumeWithHandlers)
+      .def("consume_token", &PyExecuteResults::ConsumeToken);
+}
+
+// PyExecutable
+
+void PyExecutable::Register(nb::module_& m) {
+  nb::class_<PyExecutable>(m, "Executable")
+      .def("hlo_modules",
+           xla::ValueOrThrowWrapper(&PyExecutable::GetHloModules))
+      .def("get_output_memory_kinds",
+           xla::ValueOrThrowWrapper(&PyExecutable::GetOutputMemoryKinds))
+      .def("get_output_shardings", &PyExecutable::GetOutputShardings)
+      .def("get_parameter_layouts",
+           xla::ValueOrThrowWrapper(&PyExecutable::GetParameterLayouts))
+      .def("get_output_layouts",
+           xla::ValueOrThrowWrapper(&PyExecutable::GetOutputLayouts))
+      .def("get_parameter_shardings", &PyExecutable::GetParameterShardings)
+      .def("get_compiled_memory_stats",
+           xla::ValueOrThrowWrapper(&PyExecutable::GetCompiledMemoryStats))
+      .def("serialize",
+           [](const PyExecutable& exec) -> nb::bytes {
+             std::string serialized = xla::ValueOrThrow(exec.Serialize());
+             return nb::bytes(serialized.data(), serialized.size());
+           })
+      .def("cost_analysis", [](const PyExecutable& exec) {
+        auto attrs = xla::ValueOrThrow(exec.GetCostAnalysis());
+        return xla::ifrt::ToPjRtAttributeMap(std::move(attrs));
+      });
+}
+
+// PyLoadedExecutable
+
+PyLoadedExecutable::PyLoadedExecutable(
+    nb_class_ptr<PyClient> client,
+    ifrt::LoadedExecutableRef ifrt_loaded_executable,
+    std::optional<std::string> fingerprint)
+    : client_(std::move(client)),
+      ifrt_loaded_executable_(std::move(ifrt_loaded_executable)),
+      fingerprint_(std::move(fingerprint)),
+      launch_id_key_(GetBaseLaunchId(fingerprint_, ifrt_loaded_executable_)) {
+  CHECK(PyGILState_Check());
+  if (ifrt_loaded_executable_->user_context() == nullptr &&
+      Traceback::IsEnabled()) {
+    throw nb::value_error(
+        "Expecting an IFRT `LoadedExecutable` to have a user context, but got "
+        "a null user context. Use `jax::PyUserContextScope` to set a user "
+        "context for operations producing IFRT `LoadedExecutable`s.");
+  }
+  if (fingerprint_) {
+    VLOG(1) << "Fingerprint for executable " << ifrt_loaded_executable_->name()
+            << ": " << *fingerprint_;
+  }
+  nb::ft_lock_guard lock(client_->executables_mutex_);
+  next_ = client_->executables_;
+  client_->executables_ = this;
+  prev_ = nullptr;
+  if (next_) {
+    next_->prev_ = this;
+  }
+}
+
+PyLoadedExecutable::~PyLoadedExecutable() {
+  CHECK(PyGILState_Check());
+  nb::ft_lock_guard lock(client_->executables_mutex_);
+  if (client_->executables_ == this) {
+    client_->executables_ = next_;
+  }
+  if (prev_) {
+    prev_->next_ = next_;
+  }
+  if (next_) {
+    next_->prev_ = prev_;
+  }
+}
+
+std::vector<nb_class_ptr<PyDevice>> PyLoadedExecutable::AddressableDevices()
+    const {
+  std::vector<nb_class_ptr<PyDevice>> devices;
+  devices.reserve(ifrt_loaded_executable_->addressable_devices().size());
+  for (ifrt::Device* device : ifrt_loaded_executable_->addressable_devices()) {
+    devices.push_back(client_->GetPyDevice(device));
+  }
+  return devices;
+}
+
+namespace {
+
+absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
+    const ifrt::ExecuteOptions& options, const nb_class_ptr<PyClient>& client,
+    ifrt::LoadedExecutable* ifrt_loaded_executable,
+    absl::Span<const PyArray> args,
+    std::optional<std::vector<xla::Future<>>>& returned_futures) {
+  std::vector<ifrt::ArrayRef> output_arrays;
+  std::unique_ptr<tsl::Future<>> returned_future;
+  int num_computations = ifrt_loaded_executable->addressable_devices().size();
+  xla::Future<> result_status;
+  {
+    nb::gil_scoped_release gil_release;
+    for (const auto& arg : args) {
+      if (arg.num_addressable_shards() != num_computations) {
+        return xla::InvalidArgument(
+            "Expected args to execute_sharded_on_local_devices to have %d "
+            "shards, got: [%s]",
+            num_computations,
+            absl::StrJoin(args, ", ", [](std::string* out, const PyArray& arg) {
+              out->append(std::to_string(arg.num_addressable_shards()));
+            }));
+      }
+    }
+    std::vector<ifrt::ArrayRef> arg_arrays(args.size());
+    absl::c_transform(args, arg_arrays.begin(),
+                      [&](const PyArray& arg) mutable {
+                        return tsl::FormRef(arg.ifrt_array());
+                      });
+    TF_ASSIGN_OR_RETURN(auto result, ifrt_loaded_executable->Execute(
+                                         absl::MakeSpan(arg_arrays), options,
+                                         /*devices=*/std::nullopt));
+    output_arrays = std::move(result.outputs);
+    // options.fill_status is only supposed to be true when the computation has
+    // tokens.
+    if (options.fill_status) {
+      result_status = result.status;
+      if (returned_futures.has_value()) {
+        returned_futures->resize(num_computations, std::move(result.status));
+      }
+    }
+  }
+
+  // TODO(b/240696624): Although the PjRt interface require `returned_futures`
+  // to be resized correctly if it is not nullopt, some implementation does not
+  // implement this. So we have to check whether returned_futures is empty.
+  // Remove this check once the implementation is fixed.
+  auto py_sharded_token = returned_futures.has_value()
+                              ? PyShardedToken(std::move(*returned_futures))
+                              : PyShardedToken();
+
+  return PyExecuteResults(client, std::move(output_arrays), num_computations,
+                          std::move(py_sharded_token), result_status);
+}
+
+}  // namespace
+
+absl::Mutex PyLoadedExecutable::next_launch_id_mutex_(absl::kConstInit);
+absl::flat_hash_map<uint64_t, uint32_t>* PyLoadedExecutable::next_launch_id_ =
+    new absl::flat_hash_map<uint64_t, uint32_t>();
+
 absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
-    std::vector<ExecuteShardedArg> args, bool with_tokens) {
+    std::vector<PyArray> args, bool with_tokens) {
   xla::ifrt::ExecuteOptions options = options_;
   options.launch_id = GetNextLaunchId();
   options.fill_status = with_tokens;
@@ -429,7 +467,7 @@ absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
   if (with_tokens) {
     returned_futures.emplace();
   }
-  absl::Span<const ExecuteShardedArg> span_args = args;
+  absl::Span<const PyArray> span_args = args;
   return ExecuteShardedOnLocalDevicesInternal(options, client_,
                                               ifrt_loaded_executable_.get(),
                                               span_args, returned_futures);
@@ -472,12 +510,75 @@ PyLoadedExecutable::GetOutputShardings() const {
 }
 
 int32_t PyLoadedExecutable::GetNextLaunchId() {
-  return absl::bit_cast<int32_t>(
-      next_launch_id_.fetch_add(1, std::memory_order_relaxed));
+  int32_t launch_id;
+  {
+    absl::MutexLock lock(next_launch_id_mutex_);
+    auto it = next_launch_id_->find(launch_id_key_);
+    if (it == next_launch_id_->end()) {
+      uint32_t initial_value = static_cast<uint32_t>(launch_id_key_);
+      it = next_launch_id_->emplace(launch_id_key_, initial_value).first;
+    }
+    launch_id = absl::bit_cast<int32_t>(it->second++);
+  }
+  VLOG(1) << "Launching executable " << ifrt_loaded_executable_->name()
+          << " with launch ID: " << launch_id;
+#if JAX_IFRT_VERSION_NUMBER >= 37
+  VLOG(2) << "Executable devices for launch ID " << launch_id << ": "
+          << (ifrt_loaded_executable_->devices().has_value()
+                  ? (*ifrt_loaded_executable_->devices())->DebugString()
+                  : "<nullopt>");
+#else
+  VLOG(2) << "Executable devices for launch ID " << launch_id << ": "
+          << ifrt_loaded_executable_->devices()->DebugString();
+#endif
+  return launch_id;
 }
 
 void PyLoadedExecutable::KeepAlive(nb::object obj) {
   keepalives_.push_back(std::move(obj));
+}
+
+void PyLoadedExecutable::Register(nb::module_& m) {
+  nb::class_<PyLoadedExecutable>(m, "LoadedExecutable")
+      .def_prop_ro("client", &PyLoadedExecutable::client)
+      .def("local_devices", &PyLoadedExecutable::AddressableDevices)
+      .def("get_hlo_text",
+           xla::ValueOrThrowWrapper(
+               &PyLoadedExecutable::GetHumanReadableProgramText))
+      .def("size_of_generated_code_in_bytes",
+           &PyLoadedExecutable::SizeOfGeneratedCodeInBytes)
+      .def(
+          "get_compiled_memory_stats",
+          xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetCompiledMemoryStats))
+      .def("execute_sharded",
+           xla::ValueOrThrowWrapper(&PyLoadedExecutable::ExecuteSharded),
+           nb::arg("arguments"), nb::arg("with_tokens") = false)
+      .def("hlo_modules",
+           xla::ValueOrThrowWrapper(&PyLoadedExecutable::HloModules))
+      .def("get_output_memory_kinds",
+           xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetOutputMemoryKinds))
+      .def("get_output_shardings", &PyLoadedExecutable::GetOutputShardings)
+      .def("get_parameter_layouts",
+           xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetParameterLayouts))
+      .def("get_output_layouts",
+           xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetOutputLayouts))
+      .def("get_parameter_shardings",
+           &PyLoadedExecutable::GetParameterShardings)
+      .def("keep_alive", &PyLoadedExecutable::KeepAlive)
+      .def("cost_analysis",
+           [](const PyLoadedExecutable& self) {
+             auto map = xla::ValueOrThrow(self.GetCostAnalysis());
+             return xla::ifrt::ToPjRtAttributeMap(std::move(map));
+           })
+      .def_prop_ro("traceback", &PyLoadedExecutable::traceback)
+      .def_prop_ro("fingerprint", [](PyLoadedExecutable* exec) -> nb::object {
+        if (exec->fingerprint().has_value()) {
+          return nb::bytes(exec->fingerprint()->data(),
+                           exec->fingerprint()->size());
+        } else {
+          return nb::none();
+        }
+      });
 }
 
 }  // namespace jax

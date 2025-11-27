@@ -278,7 +278,7 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:scf_dialect",
         "//jaxlib/mlir:vector_dialect",
         "//jaxlib/mosaic/python:gpu_dialect",
-    ] + py_deps("absl/flags") + py_deps("numpy"),
+    ] + py_deps("absl-all") + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -435,6 +435,7 @@ pytype_strict_library(
     visibility = ["//visibility:public"],
     deps = [
         ":pallas",  # build_cleaner: keep
+        "//jax/_src:deprecations",
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:core",
         "//jax/_src/pallas/mosaic:helpers",
@@ -444,7 +445,6 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic:primitives",
         "//jax/_src/pallas/mosaic:random",
         "//jax/_src/pallas/mosaic:tpu_info",
-        "//jax/_src/pallas/mosaic:verification",
         "//jax/_src/pallas/mosaic/interpret:interpret_pallas_call",
     ],
 )
@@ -511,7 +511,9 @@ pytype_strict_library(
     deps = [
         "//jax/_src:ad_util",
         "//jax/_src:core",
+        "//jax/_src:effects",
         "//jax/_src:hijax",
+        "//jax/_src:lax",
     ],
 )
 
@@ -556,6 +558,7 @@ pytype_strict_library(
         "//jax/_src:ad",
         "//jax/_src:api",
         "//jax/_src:api_util",
+        "//jax/_src:batching",
         "//jax/_src:core",
         "//jax/_src:mlir",
         "//jax/_src:partial_eval",

@@ -27,8 +27,9 @@ import itertools
 import threading
 from typing import Any, ClassVar, Literal, Protocol, TypeAlias, Union, runtime_checkable
 
-import jax
+
 from jax._src import api_util
+from jax._src.api import jit
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
@@ -37,6 +38,7 @@ from jax._src import frozen_dict
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import tree_util
+from jax._src import typing as jax_typing
 from jax._src import util
 from jax._src.export._export import export
 from jax._src.interpreters import mlir
@@ -45,7 +47,7 @@ from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import types as state_types
 from jax._src.state.types import TransformedRef
-import jax.numpy as jnp
+from jax._src import numpy as jnp
 
 
 class DynamicGridDim:
@@ -55,7 +57,7 @@ dynamic_grid_dim = DynamicGridDim()
 
 
 partial = functools.partial
-GridElement = int | jax_core.Array
+GridElement = int | jax_typing.Array
 GridName = Hashable
 GridNames = tuple[Hashable, ...] | None
 NamedGrid = tuple[tuple[GridName, int], ...]
@@ -303,7 +305,7 @@ def axis_frame() -> PallasGridContext:
 
 @dataclasses.dataclass(frozen=True)
 class GridAxis:
-  index: jax.Array
+  index: jax_typing.Array
   size: int
 
 # Stores the kernel execution position and the size along grid axes.
@@ -479,6 +481,10 @@ class BlockSpec:
 
   def __post_init__(self):
     if self.index_map is not None:
+      # TODO(sharadmv): Add this once we have a better way to handle
+      # index_map equality.
+      # self.index_map = _IndexMapFunc(
+      #     traceback_util.api_boundary(self.index_map, repro_user_func=True))
       self.index_map = _IndexMapFunc(self.index_map)
 
   def to_block_mapping(
@@ -957,14 +963,14 @@ class GridMapping:
       return slice(0, 0)
 
   @property
-  def in_shapes(self) -> Iterable[jax.ShapeDtypeStruct]:
+  def in_shapes(self) -> Iterable[jax_core.ShapeDtypeStruct]:
     """The shapes of *index, *inputs."""
     index_shapes = (
-        jax.ShapeDtypeStruct(ia.shape, ia.dtype)
+        jax_core.ShapeDtypeStruct(ia.shape, ia.dtype)
         for ia in self.index_map_avals[len(self.grid) :]
     )
     inputs_shapes = (
-        jax.ShapeDtypeStruct(bm.array_aval.shape, bm.array_aval.dtype)
+        jax_core.ShapeDtypeStruct(bm.array_aval.shape, bm.array_aval.dtype)
         for bm in self.block_mappings[:self.num_inputs])
     return itertools.chain(index_shapes, inputs_shapes)
 
@@ -976,9 +982,9 @@ class GridMapping:
         self.num_inputs + self.num_outputs)
 
   @property
-  def out_shapes(self) -> Iterable[jax.ShapeDtypeStruct]:
+  def out_shapes(self) -> Iterable[jax_core.ShapeDtypeStruct]:
     return tuple(
-        jax.ShapeDtypeStruct(bm.array_aval.shape, bm.array_aval.dtype)
+        jax_core.ShapeDtypeStruct(bm.array_aval.shape, bm.array_aval.dtype)
         for bm in self.block_mappings_output)
 
   def to_lojax(self):
@@ -1043,8 +1049,8 @@ class GridMapping:
     return self.__repr__()
 
 
-def _is_valid_grid_dim(dim: int | jax.Array) -> bool:
-  if isinstance(dim, jax.Array):
+def _is_valid_grid_dim(dim: int | jax_typing.Array) -> bool:
+  if isinstance(dim, jax_typing.Array):
     return True
   return jax_core.is_dim(dim)
 
@@ -1361,7 +1367,7 @@ def _get_sds(aval: jax_core.AbstractValue):
     case ShapedArrayWithMemorySpace():
       return aval.memory_space(aval.shape, aval.dtype)
     case jax_core.ShapedArray():
-      return jax.ShapeDtypeStruct(aval.shape, aval.dtype)
+      return jax_core.ShapeDtypeStruct(aval.shape, aval.dtype)
     case _:
       raise ValueError(f"Unsupported abstract value: {aval}")
 
@@ -1659,7 +1665,7 @@ def lower_as_mlir(
     **kwargs,
 ) -> mlir.ir.Module:
   with pallas_export_experimental(dynamic_shapes):
-    f = jax.jit(f, device=device, static_argnames=static_argnames)
+    f = jit(f, device=device, static_argnames=static_argnames)
     if platforms is None:
       platforms = ["tpu"]
     exported = export(f, platforms=platforms)(*args, **kwargs)

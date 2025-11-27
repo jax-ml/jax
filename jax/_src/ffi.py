@@ -19,7 +19,7 @@ import ctypes
 import dataclasses
 import functools
 import os
-from typing import Any, TypedDict, NotRequired, overload, TYPE_CHECKING
+from typing import Any, TypedDict, NotRequired, overload
 
 import numpy as np
 
@@ -30,7 +30,6 @@ from jax._src import util
 from jax._src import xla_bridge
 from jax._src.hashable_array import HashableArray
 from jax._src.frozen_dict import FrozenDict
-from jax._src.lib import jaxlib_extension_version
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -96,12 +95,8 @@ def register_ffi_type_id(
     obj: a ``PyCapsule`` object encapsulating a pointer to the type ID.
     platform: the target platform.
   """
-  if TYPE_CHECKING or jaxlib_extension_version >= 381:
-    raise ValueError(
-        "register_ffi_type_id is not supported after jaxlib version 381."
-    )
-  else:
-    return xla_client.register_custom_type_id(name, obj, platform=platform)
+  raise ValueError(
+      "register_ffi_type_id is not supported after jaxlib version 381.")
 
 def register_ffi_type(
     name: str,
@@ -330,19 +325,9 @@ def ffi_lowering(
 ResultMetadata = DuckTypedArray | core.AbstractToken
 
 
-def _result_avals(results: Sequence[ResultMetadata]) -> tuple[core.AbstractValue, ...]:
-  avals: list[core.AbstractValue] = []
-  for idx, result in enumerate(results):
-    if isinstance(result, core.AbstractToken):
-      avals.append(result)
-    else:
-      if not hasattr(result, "shape") or not hasattr(result, "dtype"):
-        raise ValueError(
-            "All elements of result_shape_dtypes must have 'shape' and 'dtype' "
-            f"attributes. Got {result} at position {idx}.")
-      avals.append(core.ShapedArray(result.shape, result.dtype))
-  return tuple(avals)
-
+def _result_avals(results: Sequence[ResultMetadata]
+                  ) -> tuple[core.AbstractValue, ...]:
+  return tuple(core.shaped_abstractify(r) for r in results)
 
 def _check_compatible_avals(a: core.AbstractValue, b: core.AbstractValue) -> bool:
   if isinstance(a, core.AbstractToken) and isinstance(b, core.AbstractToken):
@@ -492,7 +477,7 @@ def ffi_call(
     result_avals = _result_avals(result_shape_dtypes)
   else:
     multiple_results = False
-    result_avals = _result_avals((result_shape_dtypes,))
+    result_avals = _result_avals([result_shape_dtypes])
     output_layouts_ = (output_layouts,)  # type: ignore
 
   if custom_call_api_version >= 4 and legacy_backend_config is not None:
@@ -627,12 +612,11 @@ def ffi_call_abstract_eval(
     has_side_effect: bool,
     **_,
 ):
-  out_vma = core.standard_vma_rule('ffi_call', *avals_in)
+  core.standard_vma_rule('ffi_call', *avals_in)
   effects = {_FfiEffect} if has_side_effect else core.no_effects
   return tuple(r if r is core.abstract_token else
                r.update(sharding=(core.get_cur_mesh_sharding()
-                                  if r.sharding.mesh.empty else r.sharding),  # type: ignore
-                        vma=out_vma)
+                                  if r.sharding.mesh.empty else r.sharding))  # type: ignore
                for r in result_avals), effects
 
 

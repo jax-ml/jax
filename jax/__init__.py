@@ -97,8 +97,8 @@ from jax._src.xla_bridge import default_backend as default_backend
 from jax._src.xla_bridge import device_count as device_count
 from jax._src.api import device_get as device_get
 from jax._src.api import device_put as device_put
-from jax._src.api import device_put_sharded as device_put_sharded
-from jax._src.api import device_put_replicated as device_put_replicated
+from jax._src.api import device_put_sharded as _deprecated_device_put_sharded
+from jax._src.api import device_put_replicated as _deprecated_device_put_replicated
 from jax._src.xla_bridge import devices as devices
 from jax._src.api import disable_jit as disable_jit
 from jax._src.api import eval_shape as eval_shape
@@ -197,6 +197,16 @@ _deprecations = {
     "jax.ArrayRef is deprecated; use jax.Ref instead.",
     Ref
   ),
+  # Added for v0.8.1
+  "device_put_replicated": (
+    "jax.device_put_replicated is deprecated; use jax.device_put instead.",
+    _deprecated_device_put_replicated
+  ),
+  # Added for v0.8.1
+  "device_put_sharded": (
+    "jax.device_put_sharded is deprecated; use jax.device_put instead.",
+    _deprecated_device_put_sharded
+  ),
   # Finalized 2025-03-25; remove after 2025-06-25
   "treedef_is_leaf": (
     "jax.treedef_is_leaf was removed in JAX v0.6.0: use jax.tree_util.treedef_is_leaf.",
@@ -238,6 +248,8 @@ import typing as _typing
 if _typing.TYPE_CHECKING:
   array_ref = new_ref
   ArrayRef = Ref
+  device_put_replicated = _deprecated_device_put_replicated
+  device_put_sharded = _deprecated_device_put_sharded
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
@@ -247,3 +259,5 @@ del _typing
 import jax.lib  # TODO(phawkins): remove this export.  # noqa: F401
 
 # trailer
+del _deprecated_device_put_sharded
+del _deprecated_device_put_replicated

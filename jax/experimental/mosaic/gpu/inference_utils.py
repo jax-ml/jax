@@ -291,6 +291,7 @@ def is_mma_layout(layout: fa.FragmentedLayout) -> bool:
       fa.WGMMA_LAYOUT_UPCAST_2X,
       fa.WGMMA_LAYOUT_UPCAST_4X,
       fa.WGMMA_TRANSPOSED_LAYOUT,
+      fa.WGMMA_LAYOUT_8BIT,
       fa.TCGEN05_LAYOUT,
       fa.TCGEN05_TRANSPOSED_LAYOUT,
   }:

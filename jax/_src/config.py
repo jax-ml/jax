@@ -27,7 +27,6 @@ from typing import Any, Generic, NoReturn, Optional, Protocol, Type, TypeVar, ca
 from jax._src import deprecations
 from jax._src.lib import _jax
 from jax._src.lib import guard_lib
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
 from jax._src import logging_config
@@ -422,7 +421,7 @@ def bool_state(
   def parser(val):
     if validator:
       validator(val)
-    return val
+    return bool(val)
 
   s = State[bool](
       name, default, help, update_global_hook=update_global_hook,
@@ -2035,10 +2034,10 @@ array_garbage_collection_guard = optional_enum_state(
 
 # TODO(nbasile): Remove hasattr checks after jaxlib 0.8.1 release
 if hasattr(_jax, 'RuntimeTracebackMode'):
-  class RuntimeTracebackMode(enum.Enum):
-    OFF = _jax.RuntimeTracebackMode.OFF
-    ON = _jax.RuntimeTracebackMode.ON
-    FULL = _jax.RuntimeTracebackMode.FULL
+  class RuntimeTracebackMode(enum.StrEnum):
+    OFF = 'off'
+    ON = 'on'
+    FULL = 'full'
 
     @classmethod
     def _missing_(cls, value):
@@ -2048,6 +2047,9 @@ if hasattr(_jax, 'RuntimeTracebackMode'):
         except KeyError:
           pass
       return None
+
+    def as_cpp_enum(self):
+      return getattr(_jax.RuntimeTracebackMode, self.name)
 
   send_traceback_to_runtime = enum_class_state(
       name='jax_send_traceback_to_runtime',
@@ -2062,9 +2064,9 @@ if hasattr(_jax, 'RuntimeTracebackMode'):
           ' and should be used only for debugging.'
       ),
       update_global_hook=lambda val: _jax.set_send_traceback_to_runtime_global(
-          val.value if val is not None else _jax.RuntimeTracebackMode.OFF),
+          val.as_cpp_enum() if val is not None else _jax.RuntimeTracebackMode.OFF),
       update_thread_local_hook=lambda val: _jax.set_send_traceback_to_runtime_thread_local(
-          val.value if val is not None else None),
+          val.as_cpp_enum() if val is not None else None),
   )
 
 # Don't define a context manager since this isn't threadsafe.
@@ -2223,7 +2225,7 @@ jax_dump_ir_modes = string_flag(
 
 jax_ragged_dot_use_ragged_dot_instruction = bool_state(
     name='jax_ragged_dot_use_ragged_dot_instruction',
-    default=True if jaxlib_extension_version >= 386 else False,
+    default=True,
     help=(
         '(TPU only) If True, use chlo.ragged_dot instruction for ragged_dot()'
         ' lowering. Otherwise, rely on the rollout logic in lowering rule for'
@@ -2235,4 +2237,10 @@ jax_collectives_common_channel_id = bool_flag(
     name='jax_collectives_common_channel_id',
     default=True,
     help="Should collectives use a common channel ID? Temporary feature flag.",
+)
+
+jax_pallas_verbose_errors = bool_flag(
+    "jax_pallas_verbose_errors",
+    default=bool_env("JAX_PALLAS_VERBOSE_ERRORS", False),
+    help="If True, print verbose error messages for Pallas kernels.",
 )

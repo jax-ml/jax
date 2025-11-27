@@ -238,6 +238,7 @@ def pure_callback_lowering(
       ctx.avals_in,
       ctx.avals_out,
       has_side_effect=False,
+      returns_token=False,
       sharding=op_sharding,
   )
   return result
@@ -514,6 +515,7 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
         ctx.avals_in,
         ctx.avals_out,
         has_side_effect=True,
+        returns_token=True,
         sharding=op_sharding,
     )
     ctx.set_tokens_out(mlir.TokenSet({_OrderedIOEffect: token}))
@@ -526,6 +528,7 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
         ctx.avals_in,
         ctx.avals_out,
         has_side_effect=True,
+        returns_token=False,
         sharding=op_sharding,
     )
   return result
@@ -687,6 +690,7 @@ def _emit_tpu_python_callback(
     result_avals: Sequence[core.ShapedArray],
     result_shapes: Sequence[xc.Shape],
     *,
+    returns_token: bool,
     sharding: SdyArrayList | xc.OpSharding | None = None,
 ) -> tuple[Sequence[ir.Value], Any]:
   token = token or hlo.create_token()
@@ -718,13 +722,28 @@ def _emit_tpu_python_callback(
 
   recv_channels = []
   outputs = []
-  for result_aval in result_avals:
+  if returns_token and not result_avals:
+    # If the caller expects a token, we need at least one result so that the
+    # token from the recv is used as an indication that the callback is
+    # complete. Without this, we would only wait for the send to finish.
+    callback_without_results = _wrapped_callback
+    def _wrapped_callback(*args):  # pylint: disable=function-redefined
+      callback_without_results(*args)
+      return 0.0,
+    dummy_recv_aval = core.ShapedArray((), np.float32)
+    result_shapes = [_aval_to_xla_shape(dummy_recv_aval)]
     channel = ctx.module_context.new_channel()
-    assert isinstance(result_aval, core.ShapedArray)
-    token, out = receive_from_host(channel, token, result_aval,
-                                   callback.__name__, sharding=sharding)
-    outputs.append(out)
+    token, _ = receive_from_host(
+        channel, token, dummy_recv_aval, callback.__name__, sharding=sharding)
     recv_channels.append(channel)
+  else:
+    for result_aval in result_avals:
+      channel = ctx.module_context.new_channel()
+      assert isinstance(result_aval, core.ShapedArray)
+      token, out = receive_from_host(channel, token, result_aval,
+                                     callback.__name__, sharding=sharding)
+      outputs.append(out)
+      recv_channels.append(channel)
   ifrt_callback = backend.make_python_callback_from_host_send_and_recv(
       _wrapped_callback, operand_shapes, result_shapes, send_channels,
       recv_channels, pickle_util.dumps)
@@ -741,6 +760,7 @@ def emit_python_callback(
     result_avals: Sequence[core.ShapedArray],
     *,
     has_side_effect: bool,
+    returns_token: bool = True,
     partitioned: bool = False,
     sharding: SdyArrayList | xc.OpSharding | None = None,
 ) -> tuple[Sequence[mlir.IrValues], Any, Any]:
@@ -754,6 +774,7 @@ def emit_python_callback(
     operand_avals: The abstract values of the operands.
     result_avals: The abstract values of the results.
     has_side_effect: Whether the callback has side effects.
+    returns_token: Whether the callback should return a token.
     partitioned: If True, then `callback` is called on local shards only. If
       False, then `callback` is called on all shards.
     sharding: The sharding of the callback.
@@ -820,7 +841,7 @@ def emit_python_callback(
         backend, ctx, _wrapped_callback,  token,
         operands, operand_avals, operand_shapes,
         non_empty_result_avals, non_empty_result_shapes,
-        sharding=sharding)
+        returns_token=returns_token, sharding=sharding)
     non_empty_outputs_iter = iter(non_empty_outputs)
     outputs = [
         mlir.ir_constant(np.zeros(result_aval.shape, dtype=result_aval.dtype))

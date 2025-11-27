@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Defines expressions and equations over layouts."""
+"""Defines expressions and constraints over layouts."""
 
 # mypy has been causing more problems than it solves here. Disable it for these
 # files. We have pytype checks anyway.
@@ -25,8 +25,6 @@ from collections.abc import Sequence
 import dataclasses
 import math
 from typing import Any, Callable, assert_never, final
-
-from jax._src.lib.mlir import ir
 
 from . import fragmented_array as fa
 from . import launch_context as lc
@@ -342,11 +340,28 @@ def reduce_expression(
     case _:
       assert_never(expr)
 
+@dataclasses.dataclass(frozen=True)
+class Equals:
+  """States that `lhs` and `rhs` are equal."""
+  lhs: Expression
+  rhs: Expression
+
+  def holds(self) -> bool | None:
+    if self.lhs == self.rhs:
+      return True
+    if isinstance(self.lhs, Constant) and isinstance(self.rhs, Constant):
+      return False
+    return None
+
+  def __str__(self):
+    return f"Equals({self.lhs} == {self.rhs})"
 
 _SUPPORTED_TILED_RELAYOUTS = frozenset([
     # Transposed layouts.
     (fa.WGMMA_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT),
+    (fa.WGMMA_TRANSPOSED_LAYOUT, fa.WGMMA_LAYOUT),
     (fa.TCGEN05_LAYOUT, fa.TCGEN05_TRANSPOSED_LAYOUT),
+    (fa.TCGEN05_TRANSPOSED_LAYOUT, fa.TCGEN05_LAYOUT),
     # "Conversion-optimized" layouts.
     (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT),
     (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X),
@@ -364,7 +379,7 @@ class Relayout:
   do not ever plan to support it.
 
   Modeling this constraint this way is helpful, in order to allow pruning
-  inefficient solutions when attempting to solve an equation system.
+  inefficient solutions when attempting to solve a constraint system.
   """
 
   source: Expression
@@ -415,12 +430,12 @@ class IsTransferable:
 
   def supported_tmem_transfers(
       self, packing: int
-  ) -> set[tuple[tcgen05.TMEMLayout, fa.FragmentedLayout]]:
-    """Returns the set of supported TMEM <-> Register transfers."""
+  ) -> list[tuple[tcgen05.TMEMLayout, fa.FragmentedLayout]]:
+    """Returns the list of supported TMEM <-> Register transfers."""
     assert len(self.shape) == 2
     columns = self.shape[1]
     tmem_default_layout = tcgen05.tmem_default_layout(packing)
-    return {
+    return [
         (tmem_default_layout, fa.TCGEN05_LAYOUT),
         (tmem_default_layout, fa.TMEM_NATIVE_LAYOUT),
         (tcgen05.tmem_half_lane_layout(columns, packing), fa.WGMMA_LAYOUT),
@@ -428,7 +443,7 @@ class IsTransferable:
             tcgen05.tmem_m64_collective_layout(columns, packing),
             tcgen05.fa_m64_collective_layout(columns),
         ),
-    }
+    ]
 
   def _is_valid_tmem_transfer(
       self, tmem_layout: tcgen05.TMEMLayout, reg_layout: fa.FragmentedLayout
@@ -529,6 +544,8 @@ class Divides:
         tiling = t
       case RegisterLayout(value=fa.TiledLayout() as layout):
         tiling = layout.base_tile_shape
+      case TMEMLayout(value):
+        tiling = value.base_tile_shape
       case _:
         return None
 
@@ -546,29 +563,7 @@ class Divides:
     return f"{self.tiling_multiple} % {self.expr} == 0"
 
 
-Constraint = Relayout | NotOfType | IsTransferable | Divides
-
-
-def _canonicalize_dimensions_to_tile(
-    dimensions_to_tile: tuple[tuple[int | ir.Value, ...], ...]
-) -> tuple[tuple[int | ir.Value, ...], ...]:
-  """Canonicalizes the dimensions to tile.
-
-  Int dimension values are merged into a single one by computing their greatest
-  common divisor. This works because any valid tiling must evenly divide all
-  dimensions, so it is a common divisor. Thus proving that it divides the gcd of
-  the dimensions proves that it divides all of them.
-
-  ir.Values are deduplicated and sorted at the end based on their string
-  representation.
-  """
-  def _canonicalize(vals: tuple[int | ir.Value, ...]) -> tuple[int | ir.Value, ...]:
-    static_val = math.gcd(*[x if isinstance(x, int) else 0 for x in vals])
-    dyn_vals = {x for x in vals if isinstance(x, ir.Value)}
-    dyn_vals = sorted(dyn_vals, key=str)
-    return (static_val,) + tuple(x for x in dyn_vals)
-
-  return tuple(_canonicalize(x) for x in dimensions_to_tile)
+Constraint = Equals | Relayout | NotOfType | IsTransferable | Divides
 
 
 def reduce_constraint(
@@ -578,6 +573,14 @@ def reduce_constraint(
 
   new_constraint: Constraint
   match constraint:
+    case Equals(lhs=lhs, rhs=rhs):
+      lhs_red = reduce_expression(lhs, assignments)
+      if isinstance(lhs_red, Unsatisfiable):
+        return Unsatisfiable()
+      rhs_red = reduce_expression(rhs, assignments)
+      if isinstance(rhs_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = Equals(lhs_red, rhs_red)
     case Relayout(source=source, target=target):
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
@@ -611,66 +614,18 @@ def reduce_constraint(
   return Tautological() if constraint_holds else Unsatisfiable()
 
 
-@dataclasses.dataclass(frozen=True)
-class Equation:
-  lhs: Expression
-  rhs: Expression
-
-  def __str__(self):
-    return f"{self.lhs} == {self.rhs}"
-
-
-def reduce_equation(
-    eq: Equation, assignments: dict[Variable, Constant]
-) -> Solution:
-  """Reduces an equation.
-
-  Args:
-    eq: the equation to reduce.
-    assignments: a set of known variable assignments.
-
-  Returns:
-    A Solution object representing the result of the evaluation. That is:
-      - Unsatisfiable(): if the equation is unsatisfiable.
-      - Tautological(): if the equation is tautological.
-      - Satisfiable(): if the equation is satisfiable by assigning a value to
-          a variable.
-      - Unknown(): if the equation contains remaining unknown variables.
-  """
-  lhs = reduce_expression(eq.lhs, assignments)
-  rhs = reduce_expression(eq.rhs, assignments)
-  match (lhs, rhs):
-    case (Variable(), Constant()):
-      return SatisfiedBy((lhs, rhs))
-    case (Constant(), Variable()):
-      return SatisfiedBy((rhs, lhs))
-    case (Constant(), Constant()) if lhs != rhs:
-      return Unsatisfiable()
-    case _ if isinstance(lhs, Unsatisfiable) or isinstance(rhs, Unsatisfiable):
-      return Unsatisfiable()
-    case _ if lhs == rhs:
-      return Tautological()
-    case _:
-      # This is covered above. Add a check here to appease the type checker.
-      assert not isinstance(lhs, Unsatisfiable) and not isinstance(rhs, Unsatisfiable)
-      return Unknown(Equation(lhs, rhs))
-
-
 @dataclasses.dataclass
-class EquationSystem:
-  """An equation system contains a set of equations and assignments.
+class ConstraintSystem:
+  """A constraint system contains a set of constraints and assignments.
 
   Assignments assign constant values to variables in the system (bound
-  variables). Equations describe relationships between variables, and can be
-  used to determine assignments for unknown (free) variables.
-
-  Constraints are used to check predicates that must hold for the assignments to
-  be valid.
+  variables). Constraints describe relationships between variables that must be
+  upheld, and can be used to determine assignments for unknown (free) variables.
   """
+
   assignments: dict[Variable, Constant] = dataclasses.field(
       default_factory=dict
   )
-  equations: list[Equation] = dataclasses.field(default_factory=list)
   constraints: Sequence[Constraint] = dataclasses.field(default_factory=list)
 
   def unknowns(self) -> list[Variable]:
@@ -701,11 +656,11 @@ class EquationSystem:
           extract_variables(e)
         case _:
           assert_never(expr)
-    for equation in self.equations:
-      extract_variables(equation.lhs)
-      extract_variables(equation.rhs)
     for constraint in self.constraints:
       match constraint:
+        case Equals(lhs=lhs, rhs=rhs):
+          extract_variables(lhs)
+          extract_variables(rhs)
         case Relayout(source=source, target=target):
           extract_variables(source)
           extract_variables(target)
@@ -720,43 +675,33 @@ class EquationSystem:
           assert_never(never)
     return free_variables
 
-  def __and__(self, other: EquationSystem) -> EquationSystem | Unsatisfiable:
+  def __and__(
+      self, other: ConstraintSystem
+  ) -> ConstraintSystem | Unsatisfiable:
     for variable, assignment in self.assignments.items():
       if variable in other.assignments and assignment != other.assignments[variable]:
         return Unsatisfiable()
-    return EquationSystem(
+    return ConstraintSystem(
         assignments=self.assignments | other.assignments,
-        equations=self.equations + other.equations,
         constraints=[*self.constraints, *other.constraints],
     )
 
   def __str__(self):
-    r = "EquationSystem\n"
+    r = "ConstraintSystem\n"
     r += "  assignments:\n"
     for assignment, constant in self.assignments.items():
       r += f"    {assignment} ⟵ {constant}\n"
-    r += "  equations:\n"
-    for equation in self.equations:
-      r += f"    {equation}\n"
     r += "  constraints:\n"
     for constraint in self.constraints:
       r += f"    {constraint}\n"
     return r
 
+
 @final
 class Unsatisfiable:
-  def __and__(self, other: EquationSystem | Unsatisfiable) -> Unsatisfiable:
+
+  def __and__(self, other: ConstraintSystem | Unsatisfiable) -> Unsatisfiable:
     return self
-
-
-@dataclasses.dataclass(frozen=True)
-class SatisfiedBy:
-  assignment: tuple[Variable, Constant]
-
-
-@dataclasses.dataclass(frozen=True)
-class Unknown:
-  equation: Equation
 
 
 class Tautological:
@@ -774,14 +719,6 @@ def non_splat_variables(
         assert isinstance(var, Variable)  # make pytype happy
         vars.add(var)
   return vars
-
-
-# The result of reducing an equation---and by extension, a system of
-# equations. An equation can either be unsatisfiable (i.e. there exists no
-# assignment for which it holds), satisfied by an assignment, unknown (i.e.
-# still undetermined), or tautological (i.e. the equation is guaranteed to
-# hold for any assignment).
-Solution = Unsatisfiable | SatisfiedBy | Unknown | Tautological
 
 
 def _has_relayout_of_non_splat_to_splat(constraints: Sequence[Constraint]) -> bool:
@@ -812,8 +749,8 @@ def _has_relayout_of_non_splat_to_splat(constraints: Sequence[Constraint]) -> bo
 
 
 def saturate_distinct_from_splat(
-    equation_system: EquationSystem,
-) -> EquationSystem | Unsatisfiable:
+    constraint_system: ConstraintSystem,
+) -> ConstraintSystem | Unsatisfiable:
   """Adds transitive NotOfType constraints for all non-splat variables.
 
   Given `n` variables `l0`, ... `l{n-1}`, and a set of relayouts
@@ -824,13 +761,13 @@ def saturate_distinct_from_splat(
   This helps us quickly conclude that a system is unsatisfiable in cases where
   a non-splat variable is transitively relaid out into a splat layout.
   """
-  non_splat = non_splat_variables(equation_system.constraints)
+  non_splat = non_splat_variables(constraint_system.constraints)
   new_constraints: list[Constraint] = []
   new_non_splat_found = len(non_splat) > 0
 
   while new_non_splat_found:
     new_non_splat_found = False
-    for constraint in equation_system.constraints:
+    for constraint in constraint_system.constraints:
       match constraint:
         case Relayout(source=source, target=target):
           if (
@@ -843,19 +780,19 @@ def saturate_distinct_from_splat(
             new_constraints.append(NotOfType(target, fa.WGSplatFragLayout))
         case _:
           pass
-  return equation_system & EquationSystem(constraints=new_constraints)
+  return constraint_system & ConstraintSystem(constraints=new_constraints)
 
 
 def compute_transitively_equal_vars(
-    system: EquationSystem,
+    system: ConstraintSystem,
 ) -> dict[Variable, list[Variable]]:
-  """Computes all transitively equal variables in an equation system.
+  """Computes all transitively equal variables in a constraint system.
 
-  The output dictionary maps each variable that appears in equations in the
-  equation system to all the variables it is transitively equal to.
+  The output dictionary maps each variable that appears in constraints in the
+  constraint system to all the variables it is transitively equal to.
   """
   # The equality relations between variables form a graph where variables are
-  # nodes and an equation `v1 == v2` forms an edge. All variables in a
+  # nodes and a constraint `v1 == v2` forms an edge. All variables in a
   # connected component are transitively equal. We use a Union-Find data
   # structure with path compression to efficiently find these connected
   # components (i.e., equivalence classes).
@@ -874,11 +811,14 @@ def compute_transitively_equal_vars(
       parent[root2] = root1
 
   all_vars: set[Variable] = set()
-  for eq in system.equations:
-    if isinstance(eq.lhs, Variable) and isinstance(eq.rhs, Variable):
-      all_vars.add(eq.lhs)
-      all_vars.add(eq.rhs)
-      union(eq.lhs, eq.rhs)
+  for constraint in system.constraints:
+    match constraint:
+      case Equals(lhs=Variable() as lhs, rhs=Variable() as rhs):
+        assert isinstance(lhs, Variable)  # make pytype happy
+        assert isinstance(rhs, Variable)  # make pytype happy
+        all_vars.add(lhs)
+        all_vars.add(rhs)
+        union(lhs, rhs)
 
   # Group variables by their component representative.
   components: dict[Variable, list[Variable]] = {}
@@ -895,8 +835,8 @@ def compute_transitively_equal_vars(
 
 
 def saturate_divides_constraints_for_equal_vars(
-    system: EquationSystem,
-) -> EquationSystem:
+    system: ConstraintSystem,
+) -> ConstraintSystem:
   """Saturates Divides constraints between all transitively equal vars.
   """
   equal_vars = compute_transitively_equal_vars(system)
@@ -944,43 +884,38 @@ def merge_divides_constraints(constraints: Sequence[Constraint]) -> list[Constra
 
 
 def _reduce_system_once(
-    equation_system: EquationSystem,
-) -> EquationSystem | Unsatisfiable | None:
-  """Performs one reduction step over each equation in an equation system.
+    constraint_system: ConstraintSystem,
+) -> ConstraintSystem | Unsatisfiable | None:
+  """Performs one reduction step over each constraint in a constraint system.
 
   Returns:
-    - Unsatisfiable(): if the equation system is unsatisfiable.
-    - A new equation system if any equation was reduced.
-    - None: if the equation system is not known unsatisfiable, but hasn't been
+    - Unsatisfiable(): if the constraint system is unsatisfiable.
+    - A new constraint system if any constraint was reduced.
+    - None: if the constraint system is not known unsatisfiable, but hasn't been
       reduced.
   """
-  changed = False
-  assignments: dict[Variable, Constant] = {}
-  equations: list[Equation] = []
-  for equation in equation_system.equations:
-    match reduce_equation(equation, equation_system.assignments):
-      case Unsatisfiable():
-        return Unsatisfiable()
-      case Tautological():
-        changed = True
-      case SatisfiedBy() as result:
-        variable, expression = result.assignment
-        if variable in assignments and assignments[variable] != expression:
-          return Unsatisfiable()
-        assignments[variable] = expression
-        changed = True
-      case Unknown(equation=reduced_equation):
-        equations.append(reduced_equation)
-        changed |= reduced_equation != equation
-      case _ as never:
-        assert_never(never)
-
-  assignments |= equation_system.assignments
+  assignments = constraint_system.assignments
   constraints: list[Constraint] = []
-  for constraint in equation_system.constraints:
+  changed = False
+
+  def try_assign(var: Variable, cst: Constant) -> bool:
+    if var in assignments and assignments[var] != cst:
+      return False
+    assignments[var] = cst
+    return True
+
+  for constraint in constraint_system.constraints:
     match reduce_constraint(constraint, assignments):
       case Unsatisfiable():
         return Unsatisfiable()
+      case Equals(lhs=Variable() as var, rhs=Constant() as cst):
+        if not try_assign(var, cst):
+          return Unsatisfiable()
+        changed = True
+      case Equals(lhs=Constant() as cst, rhs=Variable() as var):
+        if not try_assign(var, cst):
+          return Unsatisfiable()
+        changed = True
       case Tautological():
         changed = True
       case _ as new_constraint:
@@ -997,30 +932,31 @@ def _reduce_system_once(
     return Unsatisfiable()
 
   if changed:
-    return EquationSystem(
-        assignments=assignments | equation_system.assignments,
-        equations=equations,
+    return ConstraintSystem(
+        assignments=assignments | constraint_system.assignments,
         constraints=constraints,
     )
   return None
 
 
-def reduce(equation_system: EquationSystem) -> EquationSystem | Unsatisfiable:
-  """Reduces an equation system until it can no longer be reduced.
+def reduce(
+    constraint_system: ConstraintSystem,
+) -> ConstraintSystem | Unsatisfiable:
+  """Reduces a constraint system until it can no longer be reduced.
 
   Returns:
-    - Unsatisfiable(): if the equation system is unsatisfiable.
-    - The maximally reduced equation system otherwise.
+    - Unsatisfiable(): if the constraint system is unsatisfiable.
+    - The maximally reduced constraint system otherwise.
   """
   while True:
-    match _reduce_system_once(equation_system):
+    match _reduce_system_once(constraint_system):
       case None:
         break
       case Unsatisfiable():
         return Unsatisfiable()
-      case EquationSystem() as new_system:
-        equation_system = new_system
+      case ConstraintSystem() as new_system:
+        constraint_system = new_system
       case _ as never:
         assert_never(never)
 
-  return equation_system
+  return constraint_system

@@ -44,7 +44,8 @@ from jax._src.core import (
     OutDBIdx, InputType, OutputType, get_referent, JaxprEqnContext, typeof)
 from jax._src.source_info_util import SourceInfo
 from jax._src.state.types import AbstractRef, ReadEffect
-from jax._src.tree_util import PyTreeDef, treedef_tuple, register_static
+from jax._src.tree_util import (PyTreeDef, treedef_tuple, register_static,
+                                tree_flatten, tree_unflatten)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            as_hashable_function, weakref_lru_cache,
@@ -1316,12 +1317,13 @@ def call_partial_eval_custom_rule(
       params_staged)
   residuals = [Var(res_aval(params_known, var.aval))
                for var in jaxpr_staged.invars[:num_res]]
-  eqn_known = new_jaxpr_eqn(ins_known, [*out_binders_known, *residuals],
-                            eqn.primitive, params_known, jaxpr_known.effects,
-                            eqn.source_info, eqn.ctx)
-  eqn_staged = new_jaxpr_eqn([*residuals, *ins_staged], out_binders_staged,
-                             eqn.primitive, params_staged,
-                             jaxpr_staged.effects, eqn.source_info, eqn.ctx)
+  eqn_known = new_jaxpr_eqn(
+      ins_known, [*out_binders_known, *residuals], eqn.primitive, params_known,
+      core.eqn_effects(jaxpr_known), eqn.source_info, eqn.ctx)
+  eqn_staged = new_jaxpr_eqn(
+      [*residuals, *ins_staged], out_binders_staged, eqn.primitive,
+      params_staged, core.eqn_effects(jaxpr_staged), eqn.source_info,
+      eqn.ctx)
   assert len(eqn_staged.invars) == len(jaxpr_staged.invars)
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
               if type(x) is Var and not inst]
@@ -1357,14 +1359,14 @@ def closed_call_partial_eval_custom_rule(
        for v in jaxpr_staged.in_avals[:num_res]], [num_res_val])
   res_val_binders = [v for v, f in zip(res_val_binders, out_fwd) if f is None]
   res_val_vars = subs_list(out_fwd, out_binders_known, res_val_binders)
-  eqn_known = new_jaxpr_eqn([*ins_known, *res_ref_binders],
-                            [*out_binders_known, *res_val_binders],
-                            eqn.primitive, params_known, jaxpr_known.effects,
-                            eqn.source_info, eqn.ctx)
-  eqn_staged = new_jaxpr_eqn([*res_val_vars, *res_ref_binders, *ins_staged],
-                             out_binders_staged,
-                             eqn.primitive, params_staged, jaxpr_staged.effects,
-                             eqn.source_info, eqn.ctx)
+  eqn_known = new_jaxpr_eqn(
+      [*ins_known, *res_ref_binders], [*out_binders_known, *res_val_binders],
+      eqn.primitive, params_known, core.eqn_effects(jaxpr_known),
+      eqn.source_info, eqn.ctx)
+  eqn_staged = new_jaxpr_eqn(
+      [*res_val_vars, *res_ref_binders, *ins_staged], out_binders_staged,
+      eqn.primitive, params_staged, core.eqn_effects(jaxpr_staged),
+      eqn.source_info, eqn.ctx)
   assert len(eqn_staged.invars) == len(jaxpr_staged.in_avals)
   assert len(ins_known) + len(res_ref_binders) == len(jaxpr_known.jaxpr.invars)
   assert len(ins_staged) + len(res_ref_binders) + len(res_val_vars) == len(jaxpr_staged.jaxpr.invars)
@@ -1577,11 +1579,12 @@ def dce_jaxpr_closed_call_rule(used_outputs: list[bool], eqn: JaxprEqn
     return [False] * len(eqn.invars), None
   jaxpr_ = eqn.params['call_jaxpr']
   closed_jaxpr, used_inputs = _cached_closed_call_dce(jaxpr_, tuple(used_outputs))
+  effects = core.eqn_effects(closed_jaxpr)
   new_params = dict(eqn.params, call_jaxpr=closed_jaxpr)
   new_eqn = new_jaxpr_eqn(
       [v for v, used in zip(eqn.invars, used_inputs) if used],
       [v for v, used in zip(eqn.outvars, used_outputs) if used],
-      eqn.primitive, new_params, closed_jaxpr.effects, eqn.source_info, eqn.ctx)
+      eqn.primitive, new_params, effects, eqn.source_info, eqn.ctx)
   return used_inputs, new_eqn
 dce_rules[core.closed_call_p] = dce_jaxpr_closed_call_rule
 
@@ -1972,6 +1975,15 @@ class TracingEqn:
   source_info: source_info_util.SourceInfo
   ctx: JaxprEqnContext
 
+  def __init__(self, in_tracers, outvars, primitive, params, effects, source_info, ctx):
+    self.in_tracers = in_tracers
+    self.outvars = outvars
+    self.primitive = primitive
+    self.params = params
+    self.effects = effects
+    self.source_info = source_info
+    self.ctx = ctx
+
   # Allow TracingEqn to duck-type JaxpeEqn because some of the forwarding
   # rules need to work with both. TODO(dougalm): remove this once we fix
   # forwarding.
@@ -2164,17 +2176,19 @@ class DynamicJaxprTrace(core.Trace):
       self.frame.add_eqn(eqn)
     return out_tracers if primitive.multiple_results else out_tracers.pop()
 
-  def process_call(self, call_primitive, f: lu.WrappedFun, explicit_tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, explicit_tracers,
+                   params):
     source_info = source_info_util.current()
     to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
-    if f.in_type is None:
-      f = lu.annotate(f, tuple((get_aval(t), True) for t in explicit_tracers))
-    assert f.in_type is not None
-    implicit_tracers = _extract_implicit_args(self, f.in_type, explicit_tracers,
+    in_type = (tuple((get_aval(t), True) for t in explicit_tracers)
+               if f.in_type is None else f.in_type)
+    f.in_type = None
+    assert in_type is not None
+    implicit_tracers = _extract_implicit_args(self, in_type, explicit_tracers,
                                               source_info)
     in_tracers = map(to_jaxpr_tracer, [*implicit_tracers, *explicit_tracers])
     # TODO(mattjj): check in_tracers are consistent with f.in_type annotation
-    jaxpr, out_type, consts = trace_to_jaxpr_dynamic2(f)
+    jaxpr, out_type, consts = _cached_trace_to_jaxpr(f, in_type)
     if params.get('inline', False):
       return core.eval_jaxpr(jaxpr, consts, *in_tracers,
                              propagate_source_info=False)
@@ -2340,6 +2354,13 @@ class DynamicJaxprTrace(core.Trace):
     return self.frame.to_jaxpr(self, out_tracers, debug_info, source_info)
 
 
+
+@lu.cache
+def _cached_trace_to_jaxpr(f, in_type):
+  jaxpr, out_type, consts = trace_to_jaxpr_dynamic2(lu.annotate(f, in_type))
+  return jaxpr, out_type, consts
+
+
 custom_staging_rules: dict[Primitive, Callable] = {}
 
 @lu.transformation2
@@ -2373,7 +2394,39 @@ def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
   store.store(out_zeros)
   return [*out_primals, *out_nz_tangents]
 
+def trace_to_jaxpr(
+    fun: Callable,
+    in_tree: PyTreeDef,
+    in_avals_flat: Sequence[AbstractValue | core.AvalQDD],
+    debug_info: core.DebugInfo
+) -> tuple[Jaxpr, PyTreeDef, list[Any]]:
+  config.enable_checks.value and debug_info.assert_arg_names(len(in_avals_flat))
+  parent_trace = core.trace_ctx.trace
+  trace = DynamicJaxprTrace(debug_info, parent_trace=parent_trace)
+  # Name stacks are reset because the name stacks on jaxpr equations should be
+  # rooted at the enclosing jaxpr.
+  with core.ensure_no_leaks(trace), source_info_util.reset_name_stack():
+    source_info = source_info_util.current()
+    in_tracers_flat = map(partial(trace.new_arg, source_info=source_info),
+                          in_avals_flat)
+    with core.set_current_trace(trace):
+      in_tracers = tree_unflatten(in_tree, in_tracers_flat)
+      ans = fun(*in_tracers)
+      debug_info = debug_info.set_result_paths(ans)
+      ans_flat, out_tree = tree_flatten(ans)
 
+    _check_returned_jaxtypes(debug_info, ans_flat)
+    out_tracers = map(partial(trace.to_jaxpr_tracer, source_info=source_info), ans_flat)
+    _check_no_returned_refs(debug_info, out_tracers)
+    jaxpr, consts = trace.frame.to_jaxpr(trace, out_tracers, debug_info,
+                                         source_info)
+    del trace, fun, in_tracers_flat, in_tracers, out_tracers, ans, ans_flat
+
+  config.enable_checks.value and core.check_jaxpr(jaxpr)
+  return jaxpr, out_tree, consts
+
+
+# TODO(dougalm): remove in favor of `trace_to_jaxpr`
 @profiler.annotate_function
 def trace_to_jaxpr_dynamic(
     fun: lu.WrappedFun,
@@ -2471,7 +2524,6 @@ def trace_to_jaxpr_dynamic2(
     out_tracers = map(partial(trace.to_jaxpr_tracer, source_info=source_info), ans)
     jaxpr = trace.frame.to_jaxpr2(out_tracers, fun.debug_info)
     del trace, in_tracers, out_tracers, ans
-
   return jaxpr
 
 AbstractedAxisName = Hashable
@@ -2682,13 +2734,13 @@ Val = Any
 def pad_jaxpr(jaxpr: Jaxpr, consts: Sequence[Const]
               ) -> tuple[Jaxpr, list[Const]]:
   bounds = {v: v.aval.dtype.bound for v in jaxpr.invars
-            if isinstance(v.aval, core.UnshapedArray) and
+            if isinstance(v.aval, (core.ShapedArray, core.DShapedArray)) and
             type(v.aval.dtype) is core.bint and not v.aval.shape}
   idxs = {v: DBIdx(i) for i, v in enumerate(jaxpr.invars)}
 
   def substitute(aval: AbstractValue) -> AbstractValue:
-    if (isinstance(aval, core.UnshapedArray) and type(aval.dtype) is core.bint
-        and not aval.shape):
+    if (isinstance(aval, (core.ShapedArray, core.DShapedArray))
+        and type(aval.dtype) is core.bint and not aval.shape):
       return ShapedArray((), dtypes.scalar_type_to_dtype(int))
     elif isinstance(aval, DShapedArray):
       shape = [bounds.get(d, idxs.get(d, d)) for d in aval.shape]  # type: ignore

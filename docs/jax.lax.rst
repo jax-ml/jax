@@ -86,6 +86,7 @@ Operators
     dynamic_update_index_in_dim
     dynamic_update_slice
     dynamic_update_slice_in_dim
+    empty
     eq
     erf
     erfc
@@ -102,6 +103,7 @@ Operators
     ge
     gt
     igamma
+    igamma_grad_a
     igammac
     imag
     index_in_dim
@@ -128,6 +130,9 @@ Operators
     population_count
     pow
     random_gamma_grad
+    ragged_all_to_all
+    ragged_dot
+    ragged_dot_general
     real
     reciprocal
     reduce
@@ -153,6 +158,7 @@ Operators
     scatter_max
     scatter_min
     scatter_mul
+    scatter_sub
     shift_left
     shift_right_arithmetic
     shift_right_logical
@@ -172,7 +178,6 @@ Operators
     tanh
     top_k
     transpose
-    zeros_like_array
     zeta
 
 .. _lax-control-flow:
@@ -259,12 +264,22 @@ Linear algebra operators (jax.lax.linalg)
     tridiagonal
     tridiagonal_solve
 
+.. autoclass:: EigImplementation
+   :members:
+   :undoc-members:
+.. autoclass:: EighImplementation
+   :members:
+   :undoc-members:
+
 
 Argument classes
 ----------------
 
 .. currentmodule:: jax.lax
 
+.. autoclass:: AccuracyMode
+   :members:
+   :undoc-members:
 .. autoclass:: ConvDimensionNumbers
 .. autoclass:: ConvGeneralDilatedDimensionNumbers
 .. autoclass:: DotAlgorithm
@@ -272,12 +287,14 @@ Argument classes
    :members:
    :undoc-members:
    :member-order: bysource
+.. autoclass:: DotDimensionNumbers
 .. autoclass:: FftType
   :members:
 .. autoclass:: GatherDimensionNumbers
 .. autoclass:: GatherScatterMode
 .. autoclass:: Precision
 .. autoclass:: PrecisionLike
+.. autoclass:: RaggedDotDimensionNumbers
 .. autoclass:: RandomAlgorithm
   :members:
   :member-order: bysource
@@ -285,3 +302,4 @@ Argument classes
   :members:
   :member-order: bysource
 .. autoclass:: ScatterDimensionNumbers
+.. autoclass:: Tolerance

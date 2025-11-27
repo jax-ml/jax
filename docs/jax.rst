@@ -80,6 +80,7 @@ Just-in-time compilation (:code:`jit`)
     block_until_ready
     copy_to_host_async
     make_mesh
+    set_mesh
 
 .. _jax-grad:
 
@@ -261,6 +262,7 @@ Miscellaneous
     print_environment_info
     live_arrays
     clear_caches
+    typeof
 
 Checkpoint policies
 -------------------

@@ -21,24 +21,33 @@ import jax.numpy as jnp
 import numpy as np
 
 
-def randint_sample(shape):
-  return jax.random.randint(jax.random.PRNGKey(42), shape, -100, 100)
-
-
 class AllGatherTest(jt_multiprocess.MultiProcessTest):
 
   @parameterized.parameters(
       (np.int32,), (jnp.float32,), (jnp.float16,), (jnp.bfloat16,)
   )
-  def test_all_gather(self, dtype):
-    f = jax.pmap(lambda x: lax.all_gather(x, "i"), axis_name="i")
-    xs = randint_sample(
-        [jax.process_count(), jax.local_device_count(), 100]
-    ).astype(dtype)
-    out = f(xs[jax.process_index()])
-    expected = np.reshape(xs, [jax.device_count(), 100])
-    for actual in out:
-      jtu.check_close(actual, expected)
+  def test_all_gather_shard_map(self, dtype):
+    mesh_shape = (jax.process_count(), jax.local_device_count())
+    mesh = jtu.create_mesh(mesh_shape, ("x", "y"))
+    spec = jax.P("x", "y")
+
+    @jax.shard_map(
+        mesh=mesh, in_specs=spec, out_specs=jax.P(None, None), check_vma=False
+    )
+    def f(x):
+      out = lax.all_gather(x, "x", axis=0, tiled=True)
+      return lax.all_gather(out, "y", axis=1, tiled=True)
+
+    global_len = np.prod(mesh_shape)
+    global_arr = jnp.arange(global_len, dtype=dtype).reshape(mesh_shape)
+    sharding = jax.NamedSharding(mesh, spec)
+    global_xs = jax.make_array_from_callback(
+        mesh_shape, sharding, lambda index: global_arr[index]
+    )
+
+    out = f(global_xs)
+    for actual in out.addressable_shards:
+      jtu.check_close(actual.data, global_arr[actual.index])
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ limitations under the License.
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/LogicalResult.h"
+#include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -47,7 +48,11 @@ constexpr llvm::StringRef kVersionAttrName = "stable_mosaic_gpu.version";
 // lowering after 2025-10-08.
 // TODO(apaszke): Update the forward-compatible version to 4 in Mosaic GPU
 // lowering after 2025-11-13.
-constexpr int kVersion = 4;
+// TODO(apaszke): Update the forward-compatible version to 5 in Mosaic GPU
+// lowering after 2025-12-07.
+// TODO(apaszke): Update the forward-compatible version to 6 in Mosaic GPU
+// lowering after 2025-12-18.
+constexpr int kVersion = 6;
 
 using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
 
@@ -156,6 +161,53 @@ LogicalResult vector_splat_upgrade(Operation* op, int version, bool& erased) {
   return success();
 }
 
+LogicalResult nvvm_mbarrier_init_shared_upgrade(Operation* op, int version,
+                                                bool& erased) {
+  // https://github.com/llvm/llvm-project/commit/523706f2cd6a06bd9557bf0dca9986d867eddd79
+  if (version < 5) {
+    mlir::OpBuilder b(op->getParentRegion());
+    b.setInsertionPointAfter(op);
+    mlir::NVVM::MBarrierInitOp::create(
+        b, op->getLoc(), op->getOperand(0), op->getOperand(1),
+        op->getNumOperands() < 3 ? Value{} : op->getOperand(2));
+    op->erase();
+    erased = true;
+  }
+  return success();
+}
+
+LogicalResult nvvm_mbarrier_try_wait_parity_shared_upgrade(Operation* op,
+                                                           int version,
+                                                           bool& erased) {
+  // https://github.com/llvm/llvm-project/commit/7eeae8e41d7827d84de12df7b5ecfab3058900cb
+  if (version < 6) {
+    mlir::OpBuilder b(op->getParentRegion());
+    b.setInsertionPointAfter(op);
+    mlir::NVVM::MBarrierTryWaitParityOp::create(
+        b, op->getLoc(), op->getOperand(0), op->getOperand(1),
+        op->getOperand(2));
+    op->erase();
+    erased = true;
+  }
+  return success();
+}
+
+LogicalResult nvvm_mbarrier_arrive_expect_tx_shared_upgrade(Operation* op,
+                                                            int version,
+                                                            bool& erased) {
+  // https://github.com/llvm/llvm-project/commit/7eeae8e41d7827d84de12df7b5ecfab3058900cb
+  if (version < 6) {
+    mlir::OpBuilder b(op->getParentRegion());
+    b.setInsertionPointAfter(op);
+    mlir::NVVM::MBarrierArriveExpectTxOp::create(
+        b, op->getLoc(), op->getOperand(0), op->getOperand(1),
+        op->getNumOperands() < 3 ? Value{} : op->getOperand(2));
+    op->erase();
+    erased = true;
+  }
+  return success();
+}
+
 const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
   static auto rules = new llvm::StringMap<SerdeRuleType>{
       {::llvm::StringLiteral("vector.extractelement"),
@@ -164,7 +216,14 @@ const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
        vector_insertelement_upgrade},
       {::llvm::StringLiteral("nvvm.cp.async.bulk.tensor.global.shared.cta"),
        nvvm_cp_async_bulk_tensor_global_shared_cta_upgrade},
-      {::llvm::StringLiteral("vector.splat"), vector_splat_upgrade}};
+      {::llvm::StringLiteral("vector.splat"), vector_splat_upgrade},
+      {::llvm::StringLiteral("nvvm.mbarrier.init.shared"),
+       nvvm_mbarrier_init_shared_upgrade},
+      {::llvm::StringLiteral("nvvm.mbarrier.try_wait.parity.shared"),
+       nvvm_mbarrier_try_wait_parity_shared_upgrade},
+      {::llvm::StringLiteral("nvvm.mbarrier.arrive.expect_tx.shared"),
+       nvvm_mbarrier_arrive_expect_tx_shared_upgrade},
+  };
   return *rules;
 }
 

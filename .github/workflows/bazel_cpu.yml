@@ -42,6 +42,11 @@ on:
         description: 'Should jax be built from source?'
         required: true
         type: string
+      bazel_command:
+        description: "Whether to build or run test targets?"
+        required: false
+        type: string
+        default: "test"
       gcs_download_uri:
         description: "GCS location prefix from where the artifacts should be downloaded"
         default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
@@ -62,6 +67,7 @@ jobs:
       JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
+      JAXCI_BAZEL_CPU_RBE_MODE: "${{ inputs.bazel_command }}"
 
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
@@ -70,7 +76,7 @@ jobs:
 # End Presubmit Naming Check github-cpu-presubmits
 
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
         with:
           persist-credentials: false
       - name: Download JAX CPU wheels

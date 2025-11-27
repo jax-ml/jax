@@ -214,8 +214,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     x = np.ones((128, 128), dtype=np.float32)
     y = np.ones((128, 128), dtype=np.float32)
     np.testing.assert_array_equal(
-        kernel_fn((0, 0, 0), scalar_prefetch_values, new_values, x, y),
-        x + y
+        kernel_fn((0, 0, 0), scalar_prefetch_values, new_values, x, y), x + y
     )
 
   @parameterized.product(
@@ -861,6 +860,13 @@ class PullBlockSpecTest(jtu.JaxTestCase):
       ((8, 1024), (1, 256), (1, 1, 2, 128), (0, 2, 3, 0)),
       # Merge three dims and expand in trailing dim.
       ((64, 128, 1), (4, 128, 1), (1, 1, 4, 128), (0, 1, 0, 3)),
+      # Test propagating pl.BoundedSlice.
+      (
+          (8, 8, 128),
+          (2, pl.BoundedSlice(2), 16),
+          (1, 2, pl.BoundedSlice(2), 16),
+          (1, 0, 3, 5),
+      ),
   )
   def test_reshape(
       self, shape, block_shape, expected_x_block_shape, expected_x_index
@@ -887,11 +893,23 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     self.assertEqual(x_block_spec.block_shape, expected_x_block_shape)
     self.assertEqual(x_block_spec.index_map(*pids), expected_x_index)
 
-    block_shape = [bd for bd in block_shape if bd is not None]
-    x = jnp.arange(np.prod(block_shape), dtype=jnp.float32)
-    x = x.reshape(expected_x_block_shape)
+    def shape_to_concrete(block_shape):
+      return [
+          bd.block_size if isinstance(bd, pl.BoundedSlice) else bd
+          for bd in block_shape
+          if bd is not None
+      ]
+
+    concrete_block_shape = shape_to_concrete(block_shape)
+    concrete_expected_block_shape = shape_to_concrete(expected_x_block_shape)
+
+    x = jnp.arange(
+        np.prod(concrete_block_shape),
+        dtype=jnp.float32,
+    )
+    x = x.reshape(concrete_expected_block_shape)
     y = kernel_fn((0, 1, 2), scalar_prefetch_values, (), x)
-    np.testing.assert_array_equal(y, x.reshape(block_shape))
+    np.testing.assert_array_equal(y, x.reshape(concrete_block_shape))
 
   def test_basic_reshape_sublanes_to_lanes(self):
 
@@ -1112,6 +1130,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
   def test_reduce_sum(self):
 
     x = jnp.arange(1024 * 256, dtype=jnp.float32).reshape((1024, 256))
+
     def f():
       return x.sum(axis=1)
 
@@ -1120,14 +1139,12 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     self.assertEmpty(scalar_prefetch_values)
 
     block_spec = pl.BlockSpec((128,), lambda i: (i,))
-    kernel_fn, (value_block_specs,), _ = (
-        block_spec_lib.pull_block_spec(
-            f2,
-            block_spec,
-            grid=(8,),
-            scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
-        )(new_values)
-    )
+    kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        grid=(8,),
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values)
     self.assertLen(value_block_specs, 1)
     y = x[128:256]
     out = kernel_fn((1,), scalar_prefetch_values, (y,))
@@ -1216,7 +1233,7 @@ class PullBlockSpecHOPTest(jtu.JaxTestCase):
       return jax.nn.relu(x) * x, (x,)
 
     def act_bwd(res, dy):
-      x, = res
+      (x,) = res
       return (dy * x * 2.34,)
 
     act.defvjp(act_fwd, act_bwd)
@@ -1296,6 +1313,49 @@ class PushBlockSpecTest(parameterized.TestCase):
     if config.enable_x64.value:
       self.skipTest('x64 not supported')
 
+  def test_binop(self):
+
+    def f(x):
+      return x + jnp.ones_like(x)
+
+    block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    x_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
+    self.assertEqual(out_block_spec.block_shape, block_spec.block_shape)
+
+    def f(x, y):
+      return x + y
+
+    x_block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    y_block_spec = pl.BlockSpec((128, 1), lambda i, j: (i, 0))
+    x_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    y_type = jax.ShapeDtypeStruct((512, 1), jnp.float32)
+    with self.assertRaisesRegex(
+        ValueError, 'Cannot propagate block spec through RHS broadcast.'
+    ):
+      block_spec_lib.push_block_spec(f, pl.no_block_spec, y_block_spec)(
+          x_type, y_type
+      )
+    out_block_spec = block_spec_lib.push_block_spec(
+        f, x_block_spec, pl.no_block_spec
+    )(x_type, y_type)
+    self.assertIs(x_block_spec, out_block_spec)
+
+    x_block_spec = pl.BlockSpec((1, 128), lambda i, j: (0, j))
+    y_block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    x_type = jax.ShapeDtypeStruct((1, 512), jnp.float32)
+    y_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    with self.assertRaisesRegex(
+        ValueError, 'Cannot propagate block spec through LHS broadcast.'
+    ):
+      block_spec_lib.push_block_spec(f, x_block_spec, pl.no_block_spec)(
+          x_type, y_type
+      )
+    out_block_spec = block_spec_lib.push_block_spec(
+        f, pl.no_block_spec, y_block_spec
+    )(x_type, y_type)
+    self.assertIs(out_block_spec, y_block_spec)
+
   def test_jit(self):
 
     def f(x):
@@ -1324,9 +1384,7 @@ class PushBlockSpecTest(parameterized.TestCase):
       return x.reshape((512, 32, 128))
 
     x_type = jax.ShapeDtypeStruct((512, 4096), jnp.float32)
-    block_spec = pl.BlockSpec(
-        (256, 1024), lambda i, j, k: (i, k)
-    )
+    block_spec = pl.BlockSpec((256, 1024), lambda i, j, k: (i, k))
     out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
     self.assertEqual(out_block_spec.block_shape, (256, 8, 128))
     self.assertTupleEqual(out_block_spec.index_map(0, 1, 2), (0, 2, 0))
@@ -1336,9 +1394,7 @@ class PushBlockSpecTest(parameterized.TestCase):
       return x.reshape((512, 16, 256))
 
     x_type = jax.ShapeDtypeStruct((512, 4096), jnp.float32)
-    block_spec = pl.BlockSpec(
-        (256, 1024), lambda i, j, k: (i, k)
-    )
+    block_spec = pl.BlockSpec((256, 1024), lambda i, j, k: (i, k))
     out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
     self.assertEqual(out_block_spec.block_shape, (256, 4, 256))
     self.assertTupleEqual(out_block_spec.index_map(0, 1, 2), (0, 2, 0))
@@ -1353,7 +1409,7 @@ class PushBlockSpecTest(parameterized.TestCase):
       return jax.nn.relu(x) * x, (x,)
 
     def act_bwd(res, dy):
-      x, = res
+      (x,) = res
       return (dy * x * 2.34,)
 
     act.defvjp(act_fwd, act_bwd)
@@ -1425,6 +1481,46 @@ class PushBlockSpecTest(parameterized.TestCase):
     out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
     self.assertEqual(out_block_spec.block_shape, (128, 256))
     self.assertEqual(out_block_spec.index_map(1), (0, 1))
+
+  def test_concatenate_push(self):
+    def f(x1, x2):
+      return jnp.concatenate((x1, x2), axis=0)
+
+    x_type = jax.ShapeDtypeStruct((512,), jnp.float32)
+    block_spec = pl.BlockSpec((128,), lambda i: (i,))
+    with self.assertRaisesRegex(
+        NotImplementedError, 'concatenate not supported yet'
+    ):
+      block_spec_lib.push_block_spec(f, block_spec, block_spec)(x_type, x_type)
+    x_type = jax.ShapeDtypeStruct((512,), jnp.float32)
+    block_spec = pl.BlockSpec((512,), lambda i: (i,))
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec, block_spec)(
+        x_type, x_type
+    )
+    self.assertEqual(out_block_spec.block_shape, (1024,))
+    self.assertEqual(out_block_spec.index_map(0), (0,))
+
+    def f(x1, x2):
+      return jnp.stack([x1, x2], axis=0)
+
+    x_type = jax.ShapeDtypeStruct((512,), jnp.float32)
+    block_spec = pl.BlockSpec((128,), lambda i: (i,))
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec, block_spec)(
+        x_type, x_type
+    )
+    self.assertEqual(out_block_spec.block_shape, (2, 128))
+    self.assertEqual(out_block_spec.index_map(3), (0, 3))
+
+    def f(x1, x2):
+      return jnp.stack([x1, x2], axis=1)
+
+    x_type = jax.ShapeDtypeStruct((512,), jnp.float32)
+    block_spec = pl.BlockSpec((128,), lambda i: (i,))
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec, block_spec)(
+        x_type, x_type
+    )
+    self.assertEqual(out_block_spec.block_shape, (128, 2))
+    self.assertEqual(out_block_spec.index_map(3), (3, 0))
 
 
 if __name__ == '__main__':

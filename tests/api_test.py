@@ -7117,7 +7117,9 @@ class RematTest(jtu.JaxTestCase):
   def test_remat_partial_cse_prevention(self):
     @partial(jax.remat, prevent_cse=(False, True))
     def layer(W, x):
-      return x @ W
+      res = x @ W
+      res += jnp.array([1.0, 2.0, 3.0])  # ensure the jaxpr also contains a const
+      return res
 
     def net(Ws, x):
       for W in Ws:

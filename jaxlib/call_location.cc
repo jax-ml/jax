@@ -18,7 +18,6 @@ limitations under the License.
 #include <atomic>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -26,7 +25,6 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/match.h"
-#include "absl/strings/string_view.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "nanobind/nanobind.h"
@@ -70,7 +68,7 @@ static absl::NoDestructor<absl::flat_hash_map<std::string, bool>>
 // Returns true if the code object is an internal JAX frame (Cached)
 bool IsJaxInternalFrame(PyCodeObject* code) {
   nb::str file_name = nb::borrow<nb::str>(code->co_filename);
-  std::string_view file_name_sv = nb::cast<std::string_view>(file_name);
+  std::string file_name_sv = nb::cast<std::string>(file_name);
 
   absl::MutexLock lock(shared_data_mu);
   auto it = known_code_objects->find(file_name_sv);
@@ -96,7 +94,7 @@ std::string GetCallLocation(const jax::Traceback& traceback) {
     if (!IsJaxInternalFrame(frame.code)) {
       nb::str file_name = nb::borrow<nb::str>(frame.code->co_filename);
       int line_num = PyCode_Addr2Line(frame.code, frame.lasti);
-      return absl::StrCat(nb::cast<std::string_view>(file_name), ":", line_num);
+      return absl::StrCat(nb::cast<std::string>(file_name), ":", line_num);
     }
   }
   return "";

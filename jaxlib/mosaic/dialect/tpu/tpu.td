@@ -48,8 +48,9 @@ class TPU_Attr<string name, string mnemonic_, list<Trait> traits = []>
 // TODO(b/369418606): Find out the way to verify vreg size.
 def TPU_Vreg : Type<IsVectorOfNonZeroRankTypePred, "native-sized vreg", "::mlir::VectorType">;
 
-class TPU_Type<string name, string mnemonic_, list<Trait> traits = []>
-    : TypeDef<TPU_Dialect, name, traits> {
+class TPU_Type<string name, string mnemonic_, list<Trait> traits = [],
+               string baseCppType = "::mlir::Type">
+    : TypeDef<TPU_Dialect, name, traits, baseCppType> {
   let mnemonic = mnemonic_;
 }
 
@@ -81,6 +82,24 @@ def TPU_PipelineModeEnum : EnumAttr<TPU_Dialect, TPU_PipelineMode, "pipeline_mod
 def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore", [MemRefElementTypeInterface]>;
 def TPU_DMASemaphoreType : TPU_Type<"DMASemaphore", "dma_semaphore", [MemRefElementTypeInterface]>;
 def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>;
+
+def TPU_Float8EXMYType : TPU_Type<"Float8EXMY", "float8_exmy",
+                            [DeclareTypeInterfaceMethods<FloatTypeInterface, ["getFloatSemantics"]>]> {
+    let summary = "EXMY type in a 8 bit container";
+    let description = [{
+      EXMY type in a 8 bit container. Meaningful bits are aligned to LSB, and
+      bits higher than the underlying exmy type in the container are considered
+      as ignored. See https://arxiv.org/abs/2405.13938 for more details.
+    }];
+
+    let parameters = (ins
+      TypeParameter<"::mlir::FloatType", "Underlying EXMY type">:$underlying_type
+    );
+
+    let assemblyFormat = [{
+      `<` $underlying_type `>`
+    }];
+}
 
 def TPU_DimensionSemantics : I32EnumAttr<"DimensionSemantics", "Dimension semantics", [
   I32EnumAttrCase<"parallel", 0>,
@@ -251,6 +270,31 @@ def TPU_ScanOp : TPU_Op<"scan"> {
   let hasVerifier = 1;
 }
 
+def TPU_SortOp : TPU_Op<"sort", [Pure]> {
+  let summary = "Sorts key/value pairs based on keys.";
+  let description = [{
+    tpu.sort performs a stable sort of key/value pairs in ascending or
+    descending order based on keys. Masked-out keys and values are placed at the
+    end of the output vectors. An output mask indicates which outputs
+    correspond to the valid inputs.
+  }];
+  let arguments = (ins
+    VectorOfNonZeroRankOf<[I32,F32]>:$keys,
+    VectorOfNonZeroRankOf<[I32,F32]>:$values,
+    Optional<VectorOfNonZeroRankOf<[I1]>>:$mask,
+    DefaultValuedAttr<BoolAttr, "false">:$descending
+  );
+  let results = (outs
+    VectorOfNonZeroRankOf<[I1]>:$output_mask,
+    VectorOfNonZeroRankOf<[I32,F32]>:$sorted_keys,
+    VectorOfNonZeroRankOf<[I32,F32]>:$sorted_values
+  );
+  let assemblyFormat = [{
+    $keys `,` $values (`masked` $mask^)? attr-dict `:` functional-type(operands, results)
+  }];
+  let hasVerifier = 1;
+}
+
 def TPU_StoreOp : TPU_Op<"store", [DefaultMemWrite, AttrSizedOperandSegments]> {
   let arguments = (ins
     TPU_Vreg:$valueToStore,
@@ -299,6 +343,7 @@ def TPU_VectorStoreOp :TPU_Op<"vector_store", [DefaultMemWrite, AttrSizedOperand
     $base `[` $indices `]` `,` $valueToStore (`masked` $mask^)? attr-dict `:` type($base) `,` type($valueToStore) `,` type($mask)
   }];
   let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
 }
 
 // tpu.vector_load loads a vector from memory into a register.
@@ -326,6 +371,7 @@ def TPU_VectorLoadOp :TPU_Op<"vector_load", [DefaultMemRead, AttrSizedOperandSeg
     $base `[` $indices `]` (`masked` $mask^)? attr-dict `:` type($base) `,` type($result) `,` type($mask)
   }];
   let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
 }
 
 def TPU_StridedLoadOp : TPU_Op<"strided_load", [DefaultMemRead]> {
@@ -413,6 +459,7 @@ def TPU_VectorLoadIdxOp :TPU_Op<"vector_load_idx", [DefaultMemRead, AttrSizedOpe
     $base `[` $indices `]` (`masked` $mask^)? attr-dict `:` type($base) `[` type($indices) `]` `,` type($value) `,` type($mask)
   }];
   let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
 }
 
 // tpu.vector_store_idx stores values to arbitrary locations in memory.
@@ -448,6 +495,7 @@ def TPU_VectorStoreIdxOp :TPU_Op<"vector_store_idx", [DefaultMemWrite, AttrSized
     $base `[` $indices `]` `,` $valueToStore (`masked` $mask^)? attr-dict `:` type($base) `[` type($indices) `]` `,` type($valueToStore) `,` type($mask)
   }];
   let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
 }
 
 // TODO(jevinjiang): deprecate to use dynamic_rotate.
@@ -684,6 +732,44 @@ def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure, SameTypeOperands]>
   let extraClassDeclaration = [{
     static ::mlir::SmallVector<::mlir::Value> getPaddedSources(::mlir::ValueRange sources, ::mlir::ArrayRef<int32_t> positions, int packing_factor);
   }];
+  let hasVerifier = 1;
+}
+
+def TPU_PackElementwiseOp : TPU_Op<"pack_elementwise", [Pure, SameTypeOperands, ElementwiseMappable]> {
+  let description = [{
+    Packs multiple `sources` elementwise into a single vector of a narrower `target_type`.
+
+    The number of `sources` must equal the packing factor, which is the ratio of
+    the element bitwidth of the `sources` to the element bitwidth of the
+    `target_type`. Elements from the `sources` are interleaved and packed into
+    each word of the `output`, ordered from lowest to highest bits,
+    corresponding to their order in the `sources`.
+  }];
+  let arguments = (ins
+    Variadic<VectorOfNonZeroRankOf<[F32, I32]>>:$sources,
+    TypeAttr:$target_type
+  );
+  let results = (outs VectorOfNonZeroRankOf<[I32]>:$output);
+  let assemblyFormat = [{ $sources attr-dict `:` type($sources) `->` type($output) }];
+  let hasVerifier = 1;
+}
+
+def TPU_UnpackElementwiseOp : TPU_Op<"unpack_elementwise", [Pure, ElementwiseMappable]> {
+  let description = [{
+    Unpacks a single vector from `source`, which contains multiple `source_type`
+    vectors packed elementwise.
+
+    The `index` selects which packed value to extract from each word of `source`.
+    An `index` of 0 corresponds to the lowest bits. The extracted values are
+    cast to the output element type.
+  }];
+  let arguments = (ins
+    VectorOfNonZeroRankOf<[I32]>:$source,
+    TypeAttr:$source_type,
+    I32Attr:$index
+  );
+  let results = (outs VectorOfNonZeroRankOf<[F32, I32]>:$output);
+  let assemblyFormat = [{ $source `,` $index attr-dict `:` type($source) `->` type($output) }];
   let hasVerifier = 1;
 }
 
@@ -1041,6 +1127,7 @@ def TPU_ReinterpretCastOp : TPU_Op<"reinterpret_cast", [Pure]> {
     $input attr-dict `:` type($input) `->` type($result)
   }];
   let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
 }
 
 def TPU_AssumeLayoutOp : TPU_Op<"assume_layout", [Pure]> {
@@ -1051,12 +1138,17 @@ def TPU_AssumeLayoutOp : TPU_Op<"assume_layout", [Pure]> {
   }];
 }
 
-def TPU_EraseLayoutOp : TPU_Op<"erase_memref_layout", [Pure]> {
+// Erases the layout attribute from the memref.
+//
+// The resulting memref is identical to the input, except that it has an
+// identity layout.
+def TPU_EraseLayoutOp : TPU_Op<"erase_memref_layout", [Pure, InferTypeOpAdaptor]> {
   let arguments = (ins AnyMemRef:$operand);
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
     $operand attr-dict `:` type($operand) `->` type($result)
   }];
+  let hasFolder = 1;
 }
 
 // Returns the ID of the current device.
@@ -1164,6 +1256,7 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     attr-dict
   }];
   let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
 }
 
 // A base class for all ops that need to differentiate between gather and
@@ -1218,6 +1311,7 @@ def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma">, IndirectDMAOp {
                                 ArrayRef<int64_t> offsets_shape,
                                 MemRefType operand_ty);
   }];
+  let hasCanonicalizeMethod = 1;
 }
 
 // tpu.wait_dma2 waits for a DMA to complete.
@@ -1246,6 +1340,7 @@ def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
   let builders = [
     OpBuilder<(ins "Value":$semaphore, "Value":$src, "Value":$dst)>
   ];
+  let hasCanonicalizeMethod = 1;
 }
 
 // TODO(b/395630795): Remove after 2025-08-10.
@@ -1276,6 +1371,7 @@ def TPU_WaitIndirectDMAOp : TPU_Op<"wait_indirect_dma">, IndirectDMAOp {
     attr-dict
   }];
   let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
   let extraClassDeclaration = extraBaseClassDeclaration;
 }
 
@@ -1426,16 +1522,6 @@ def TPU_LogBufferOp : TPU_Op<"log_buffer"> {
   let hasVerifier = 1;
 }
 
-def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::FuncOp"> {
-  let dependentDialects = [
-    "::mlir::func::FuncDialect",
-    "::mlir::arith::ArithDialect",
-    "::mlir::cf::ControlFlowDialect",
-    "::mlir::vector::VectorDialect",
-    "::mlir::tpu::TPUDialect",
-  ];
-  let constructor = "::mlir::tpu::createDebugAssertInsertionPass()";
-}
 
 def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mlir::func::FuncOp"> {
   let dependentDialects = [
@@ -1445,22 +1531,6 @@ def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mli
   ];
   let constructor = "::mlir::tpu::createLogicalToPhysicalDeviceIdPass(-1)";
   let options = [Option<"total_devices", "total-devices", "int", "", "">];
-}
-
-def InferMemRefLayoutPass : Pass<"tpu-infer-memref-layout", "::mlir::func::FuncOp"> {
-  let dependentDialects = [
-    "::mlir::func::FuncDialect",
-    "::mlir::memref::MemRefDialect",
-  ];
-  let constructor = "::mlir::tpu::createInferMemRefLayoutPass()";
-  let options = [
-    // If hardware_generation is not set, the default value of -1 will crash on
-    // runOnOperation.
-    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
-    Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
-    Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
-    Option<"tpu_tiling_flags", "tpu-tiling-flags", "::mlir::tpu::TpuTilingFlags", /*default=*/"::mlir::tpu::TpuTilingFlags{}", "">,
-  ];
 }
 
 def CanonicalizeMosaicPass : Pass<"tpu-canonicalize-mosaic", "::mlir::func::FuncOp"> {
@@ -1538,34 +1608,5 @@ def ApplyVectorLayoutPass : Pass<"tpu-apply-vector-layout", "::mlir::func::FuncO
   ];
 }
 
-def LinalgVectorizationPass : Pass<"linalg-vectorization", "::mlir::func::FuncOp"> {
-  let dependentDialects = [
-    "::mlir::func::FuncDialect",
-    "::mlir::memref::MemRefDialect",
-    "::mlir::linalg::LinalgDialect",
-    "::mlir::tensor::TensorDialect",
-    "::mlir::vector::VectorDialect",
-    "::mlir::tpu::TPUDialect",
-  ];
-  let constructor = "::mlir::tpu::createLinalgVectorizationPass(false)";
-  let options = [
-    Option<"supports_bf16_alu_instructions", "supports-bf16-alu-instructions", "bool", "", "">,
-    Option<"supports_bf16_matmul", "supports-bf16-matmul", "bool", "", "">,
-  ];
-}
-
-def PreCanonicalizationOptimizationPass : Pass<"pre-canonicalization-optimization", "::mlir::func::FuncOp"> {
-  let summary = "Fold matmul rhs tranpose into the op before layout inference";
-  let constructor = "::mlir::tpu::createPreCanonicalizationOptimizationPass()";
-  let dependentDialects = [
-    "::mlir::vector::VectorDialect",
-    "::mlir::tpu::TPUDialect",
-  ];
-  let options = [
-    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"6", "">,
-    Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
-    Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
-  ];
-}
 
 #endif  // TPU_ATTRS

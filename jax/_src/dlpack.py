@@ -22,7 +22,6 @@ from jax._src import xla_bridge
 from jax._src.api import device_put
 from jax._src.lax.lax import _array_copy
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import scalar_types as jnp_types
@@ -267,12 +266,8 @@ def from_dlpack(external_array,
   dlpack = external_array.__dlpack__(stream=stream)
 
   try:
-    if jaxlib_extension_version < 384:
-      arr = _jax.dlpack_managed_tensor_to_buffer(
-        dlpack, dlpack_device, stream)
-    else:
-      arr = _jax.dlpack_managed_tensor_to_buffer(
-        dlpack, dlpack_device, stream, copy)
+    arr = _jax.dlpack_managed_tensor_to_buffer(
+      dlpack, dlpack_device, stream, copy)
   except xla_client.XlaRuntimeError as e:
     se = str(e)
     if "is not aligned to" in se:
@@ -287,7 +282,7 @@ def from_dlpack(external_array,
   # TODO(phawkins): when we are ready to support x64 arrays in
   # non-x64 mode, change the semantics to not canonicalize here.
   arr = jnp.asarray(arr, dtype=dtypes.canonicalize_dtype(arr.dtype))
-  if copy and jaxlib_extension_version >= 384:
+  if copy:
     # copy was already handled by dlpack_managed_tensor_to_buffer.
     copy = None
   return _place_array(arr, device, dlpack_device, copy)

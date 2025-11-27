@@ -258,6 +258,8 @@ def emit_pipeline(
 
   num_steps = math.prod(grid)
   has_dynamic_grid = not isinstance(num_steps, int)
+  # Convert the grid to int32 explicitly to avoid dtype promotion errors.
+  grid = tuple(jnp.asarray(g, dtype=jnp.int32) for g in grid)
 
   # Shrink ``max_concurrent_steps`` if the total number of steps is lower to
   # reduce the size of the refs allocated in SMEM.
@@ -317,18 +319,26 @@ def emit_pipeline(
 
     # Initialize the pipeline.
     indices = (jnp.asarray(0, dtype=jnp.int32),) * len(grid)
-    fetch_indices = indices
-    for step in range(max_concurrent_steps):
+    if has_dynamic_grid:
+      prologue_steps = lax.min(max_concurrent_steps, num_steps)
+    else:
+      assert max_concurrent_steps <= num_steps
+      prologue_steps = max_concurrent_steps
+
+    def prologue(step, fetch_indices):
       for bref in in_brefs:
         bref.copy_in(step, fetch_indices, barrier_ref)
-      fetch_indices = _inc_grid_by_1(fetch_indices, grid)
-    del fetch_indices
+      return _inc_grid_by_1(fetch_indices, grid)
+    jax.lax.fori_loop(0, prologue_steps, prologue, indices, unroll=not has_dynamic_grid)
 
     # This is true if any of the outputs need to be transferred inside the loop.
     smem_out_brefs = [bref for bref in out_brefs if _in_smem(bref.spec)]
     copies_out_in_loop = not all(bref.is_index_invariant for bref in smem_out_brefs)
     needs_epilogue = any(bref.is_index_invariant for bref in smem_out_brefs)
 
+    # In the loop body, `max_concurrent_steps` may be larger than `num_steps` in
+    # the dynamic grid case. This is fine, since in that case, we will never
+    # need to fetch more data anyway.
     def loop_body(step, carry):
       slot = lax.rem(step, max_concurrent_steps)
       indices, fetch_index_levels, last_store_slices, prev_body_carry = carry

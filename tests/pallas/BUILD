@@ -250,11 +250,16 @@ jax_multiplatform_test(
     srcs = [
         "mosaic_gpu_test.py",
     ],
+    disable_configs = [
+        # TODO(b/462499936): Re-enable when test passes on MIG partition.
+        "gpu_b200",
+    ],
     enable_backends = [],
     enable_configs = [
         "gpu_h100_x32",
         "gpu_h100",
-        "gpu_b200",
+        # TODO(b/462499936): Remove gpu_b200_full when test passes onMIG partition.
+        "gpu_b200_full",
     ],
     shard_count = 4,
     tags = [
@@ -598,6 +603,19 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "tpu_side_effects_test",
+    srcs = ["tpu_side_effects_test.py"],
+    enable_backends = ["tpu"],
+    deps = [
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_tpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "tpu_pallas_state_test",
     srcs = ["tpu_pallas_state_test.py"],
     enable_backends = ["tpu"],
@@ -689,8 +707,8 @@ jax_multiplatform_test(
         "tpu_v5p",
     ],
     enable_backends = ["tpu"],
-    minimal_shard_count = 5,
-    shard_count = 5,
+    minimal_shard_count = 10,
+    shard_count = 10,
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
@@ -795,6 +813,9 @@ jax_multiplatform_test(
         "gpu_b200",
     ],
     shard_count = 1,
+    tags = [
+        "noasan",  # Times out.
+    ],
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
@@ -1067,7 +1088,29 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "mgpu_transposed_ragged_dot_run",
+    srcs = [
+        "//jax/experimental/pallas/ops/gpu:transposed_ragged_dot_mgpu.py",
+    ],
+    enable_backends = [],
+    enable_configs = [
+        "gpu_h100_x32",
+        "gpu_h100",
+    ],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_mosaic_gpu",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
     name = "mgpu_ragged_dot_test",
+    size = "large",  # Increased timout to account for the extra tests.
     srcs = ["mgpu_ragged_dot_test.py"],
     enable_backends = [],
     enable_configs = [
@@ -1317,8 +1360,9 @@ jax_multiplatform_test(
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_sc",
     ] + py_deps([
-        "numpy",
         "absl/testing",
+        "hypothesis",
+        "numpy",
     ]),
 )
 

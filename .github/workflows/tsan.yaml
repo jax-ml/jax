@@ -52,11 +52,11 @@ jobs:
             zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git \
             libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
             libffi-dev liblzma-dev file zip
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           path: jax
           persist-credentials: false
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           repository: numpy/numpy
           path: numpy
@@ -76,7 +76,7 @@ jobs:
             ./python-tsan.tgz
           key: ${{ runner.os }}-cpython-tsan-${{ matrix.python-version }}-${{ steps.get-date.outputs.date }}
 
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
         with:
           repository: python/cpython
@@ -190,7 +190,6 @@ jobs:
             --bazel_options=--repo_env=HERMETIC_PYTHON_URL="file://${GITHUB_WORKSPACE}/python-tsan.tgz" \
             --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256=${PYTHON_SHA256} \
             --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX="cpython-tsan/" \
-            --bazel_options=--config=use_tar_archive_files \
             --bazel_options=--color=yes \
             --bazel_options=--copt=-fsanitize=thread \
             --bazel_options=--linkopt="-fsanitize=thread" \

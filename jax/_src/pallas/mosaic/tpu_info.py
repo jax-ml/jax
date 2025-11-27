@@ -21,6 +21,7 @@ from typing import Callable
 from jax import numpy as jnp
 from jax._src import dtypes
 from jax._src.pallas.mosaic import core
+from jax._src import util as jax_util
 
 
 class ChipVersionBase:
@@ -100,7 +101,8 @@ class TpuInfo:
     BF16 = jnp.bfloat16
     S8 = jnp.int8
     U8 = jnp.uint8
-    F8E4M3 = jnp.float8_e4m3
+    F8E4M3B11FNUZ = jnp.float8_e4m3b11fnuz
+    F8E4M3FN = jnp.float8_e4m3fn
     F8E5M2 = jnp.float8_e5m2
     S4 = jnp.int4
     U4 = jnp.uint4
@@ -113,15 +115,19 @@ class TpuInfo:
       case 5 | 6:
         return (
             (
-                lhs_dt in {F32, BF16, F8E5M2, F8E4M3}
-                and rhs_dt in {F32, BF16, F8E5M2, F8E4M3}
+                lhs_dt in {F32, BF16, F8E5M2, F8E4M3B11FNUZ}
+                and rhs_dt in {F32, BF16, F8E5M2, F8E4M3B11FNUZ}
             )
             or (lhs_dt in {U8, S8} and rhs_dt in {U8, S8})
             or (lhs_dt in {U4, S4} and rhs_dt in {U4, S4})
         )
       case 7:
-        return (lhs_dt in {F32, BF16} and rhs_dt in {F32, BF16}) or (
-            lhs_dt in {F8E5M2, F8E4M3} and rhs_dt in {F8E5M2, F8E4M3}
+        return (
+            lhs_dt in {F32, BF16}
+            and rhs_dt in {F32, BF16}
+        ) or (
+            lhs_dt in {F32, BF16, F8E5M2, F8E4M3FN}
+            and rhs_dt in {F8E5M2, F8E4M3FN}
         )
       case _:
         return False
@@ -131,7 +137,7 @@ class TpuInfo:
 
     Note that this is a heurustic and depends on the settings of the XLA flags.
     """
-    bitwidth = dtypes.bit_width(dtype)
+    bitwidth = dtypes.itemsize_bits(dtype)
     if self.generation < 7:
       # Caveat: before TPU7x, by default XLA does not use large 2nd minor tiling
       # but it can be enabled by setting the flag
@@ -165,6 +171,7 @@ def is_tpu_device() -> bool:
 
 registry: dict[str, Callable[[], TpuInfo]] = {}
 
+@jax_util.cache(trace_context_in_key=True)
 def get_tpu_info() -> TpuInfo:
   """Returns the TPU hardware information for the current device.
 
@@ -315,6 +322,27 @@ def get_tpu_info() -> TpuInfo:
           int4_ops_per_second=int(3.68e15),
           sparse_core=SparseCoreInfo(num_cores=2, num_subcores=16, num_lanes=8),
       )
+    case "TPU7x":
+      num_cores = core.get_num_device_cores()
+      num_chip_cores = 2
+      return TpuInfo(
+        chip_version=ChipVersion.TPU_7X,
+        generation=7,
+        num_cores=num_cores,
+        num_lanes=128,
+        num_sublanes=8,
+        mxu_column_size=256,
+        vmem_capacity_bytes=64 * 1024 * 1024,  # 64 MiB per core
+        cmem_capacity_bytes=0,
+        smem_capacity_bytes=1024 * 1024,  # 1 MiB per core
+        hbm_capacity_bytes=206_000_000_000 // num_chip_cores,
+        mem_bw_bytes_per_second=int(7.40e12 // num_chip_cores),
+        bf16_ops_per_second=int(2.31e15 // num_chip_cores),
+        int8_ops_per_second=0,  # Not Available
+        fp8_ops_per_second=int(4.60e15 // num_chip_cores),
+        int4_ops_per_second=0,  # Not Available
+        sparse_core=SparseCoreInfo(num_cores=4, num_subcores=16, num_lanes=16),
+    )
     case _ as d:
       if d in registry:
         return registry[d]()

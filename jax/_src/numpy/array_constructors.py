@@ -226,7 +226,9 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
       object = xc._xla.cuda_array_interface_to_buffer(
           cai=cai, gpu_backend=backend, device_id=device_id)
 
-  leaves, treedef = tree_util.tree_flatten(object, is_leaf=lambda x: x is None)
+  # To handle nested lists & tuples, flatten the tree and process each leaf.
+  leaves, treedef = tree_util.tree_flatten(
+      object, is_leaf=lambda x: not isinstance(x, (list, tuple)))
   if any(leaf is None for leaf in leaves):
     raise ValueError("None is not a valid value for jnp.array")
   leaves = [

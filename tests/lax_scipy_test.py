@@ -402,6 +402,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.sph_harm has been removed.")
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmAccuracy(self):
+    if not hasattr(lsp_special, 'sph_harm'):
+      self.skipTest("jax.scipy.special.sph_harm has been removed.")
     m = jnp.arange(-3, 3)[:, None]
     n = jnp.arange(3, 6)
     n_max = 5
@@ -420,6 +422,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmOrderZeroDegreeZero(self):
     """Tests the spherical harmonics of order zero and degree zero."""
+    if not hasattr(lsp_special, 'sph_harm'):
+      self.skipTest("jax.scipy.special.sph_harm has been removed.")
     theta = jnp.array([0.3])
     phi = jnp.array([2.3])
     n_max = 0
@@ -436,6 +440,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmOrderZeroDegreeOne(self):
     """Tests the spherical harmonics of order one and degree zero."""
+    if not hasattr(lsp_special, 'sph_harm'):
+      self.skipTest("jax.scipy.special.sph_harm has been removed.")
     theta = jnp.array([2.0])
     phi = jnp.array([3.1])
     n_max = 1
@@ -452,6 +458,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmOrderOneDegreeOne(self):
     """Tests the spherical harmonics of order one and degree one."""
+    if not hasattr(lsp_special, 'sph_harm'):
+      self.skipTest("jax.scipy.special.sph_harm has been removed.")
     theta = jnp.array([2.0])
     phi = jnp.array([2.5])
     n_max = 1
@@ -475,6 +483,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmForJitAndAgainstNumpy(self, l_max, num_z, dtype):
     """Tests against JIT compatibility and Numpy."""
+    if not hasattr(lsp_special, 'sph_harm'):
+      self.skipTest("jax.scipy.special.sph_harm has been removed.")
     if jtu.is_device_tpu_at_least(6):
       self.skipTest("TODO(b/364258243): fails on TPU v6+")
     n_max = l_max
@@ -502,6 +512,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmCornerCaseWithWrongNmax(self):
     """Tests the corner case where `n_max` is not the maximum value of `n`."""
+    if not hasattr(lsp_special, 'sph_harm'):
+      self.skipTest("jax.scipy.special.sph_harm has been removed.")
     m = jnp.array([2])
     n = jnp.array([10])
     n_clipped = jnp.array([6])

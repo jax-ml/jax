@@ -24,7 +24,6 @@ from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import dlpack as dlpack_src
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax._src.util import cache
 
 config.parse_flags_with_absl()
@@ -136,7 +135,7 @@ def test_ensure_alignment():
 @cache()
 def _get_max_align_bits(dtype, device):
   max_align_bits = 64
-  if device.platform == "cpu" and jaxlib_extension_version >= 384:
+  if device.platform == "cpu":
     from jax._src.lib import _jax
 
     # We determine the max_align_bits value from the error that is
@@ -265,8 +264,8 @@ class DLPackTest(jtu.JaxTestCase):
   @jtu.sample_product(
     shape=all_shapes,
     dtype=numpy_dtypes,
-    copy=[False, True, None] if jaxlib_extension_version >= 384 else [False, True],
-    aligned=[False, True] if jaxlib_extension_version >= 384 else [True],
+    copy=[False, True, None],
+    aligned=[False, True],
   )
   def testNumpyToJax(self, shape, dtype, copy, aligned):
     rng = jtu.rand_default(self.rng())

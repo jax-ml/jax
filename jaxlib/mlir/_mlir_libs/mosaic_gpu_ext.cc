@@ -36,6 +36,13 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       },
       nb::arg("context"), nb::arg("load") = true);
 
+  m.def("register_inliner_extensions", [](MlirContext context) {
+    MlirDialectRegistry registry = mlirDialectRegistryCreate();
+    mlirDialectRegistryInsertMosaicGpuInlinerExtensions(registry);
+    mlirContextAppendDialectRegistry(context, registry);
+    mlirDialectRegistryDestroy(registry);
+  });
+
   mlir::python::nanobind_adaptors::mlir_attribute_subclass(
       m, "TileTransformAttr", mlirMosaicGpuIsATileTransformAttr)
       .def_classmethod(

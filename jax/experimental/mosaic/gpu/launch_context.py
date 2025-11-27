@@ -1157,8 +1157,10 @@ class LaunchContext:
 
       if arrive:
         arrive_predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
-        nvvm.mbarrier_arrive_expect_tx_shared(
-            barrier_ptr, transfer_bytes, predicate=arrive_predicate,
+        nvvm.mbarrier_arrive_expect_tx(
+            barrier_ptr,
+            transfer_bytes,
+            predicate=arrive_predicate,
         )
 
       gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
@@ -1286,7 +1288,7 @@ class LaunchContext:
               arith.CmpIPredicate.eq, self.cluster_idx(collective), c(0, index),
           )
           arrive_predicate = arith.andi(predicate, first_block)
-          nvvm.mbarrier_arrive_expect_tx_shared(
+          nvvm.mbarrier_arrive_expect_tx(
               barrier_ptr, transfer_bytes, predicate=arrive_predicate
           )
         rank = len(slice_shape)
@@ -1307,7 +1309,7 @@ class LaunchContext:
         )
       else:
         if arrive:
-          nvvm.mbarrier_arrive_expect_tx_shared(
+          nvvm.mbarrier_arrive_expect_tx(
               barrier_ptr, transfer_bytes, predicate=predicate
           )
         if collective_size > 1:

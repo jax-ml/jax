@@ -689,6 +689,7 @@ pytype_strict_library(
         ":shard_map",
         ":sharding",
         ":sharding_impls",
+        ":source_info_util",
         ":tree_util",
         ":util",
         ":xla_bridge",
@@ -799,6 +800,7 @@ pytype_strict_library(
         ":sharding_impls",
         ":source_info_util",
         ":stages",
+        ":traceback_util",
         ":tree_util",
         ":typing",
         ":util",
@@ -1271,6 +1273,7 @@ pytype_strict_library(
     deps = [
         ":config",
         ":core",
+        ":deprecations",
         ":internal_mesh_utils",
         ":mesh",
         ":named_sharding",

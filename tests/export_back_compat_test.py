@@ -224,10 +224,7 @@ class CompatTest(bctu.CompatTestBase):
 
     info = cuda_cholesky_solver_potrf.data_2025_10_15[dtype_name]
     data = self.load_testdata(info)
-    # TODO(necula): remove after Nov 10, 2025, when the forward compatibility
-    # window closes for the cholesky solver_potrf_ffi custom call.
-    with config.export_ignore_forward_compatibility(True):
-      self.run_one_test(func, data, rtol=rtol, atol=atol)
+    self.run_one_test(func, data, rtol=rtol, atol=atol)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -1034,7 +1031,6 @@ class ShardyCompatTest(bctu.CompatTestBase):
       return shard_map_func(x)
 
     data = [
-        (shardy_sharding_ops_with_different_meshes.data_2025_02_12, []),
         (shardy_sharding_ops_with_different_meshes.data_2025_04_14, []),
         (shardy_sharding_ops_with_different_meshes.data_2025_06_30, None),
     ]

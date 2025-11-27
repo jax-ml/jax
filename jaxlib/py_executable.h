@@ -1,4 +1,3 @@
-#include "jaxlib/py_user_context.h"
 /* Copyright 2020 The JAX Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,7 +16,6 @@ limitations under the License.
 #ifndef JAXLIB_PY_EXECUTABLE_H_
 #define JAXLIB_PY_EXECUTABLE_H_
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -28,13 +26,16 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/synchronization/mutex.h"
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
+#include "jaxlib/py_user_context.h"
 #include "jaxlib/traceback.h"
 #include "xla/future.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -61,6 +62,8 @@ class PyToken {
 
   absl::Status Await();
 
+  static void Register(nanobind::module_& m);
+
  private:
   xla::Future<> future_;
 };
@@ -79,6 +82,8 @@ class PyShardedToken {
   }
 
   absl::Status Await();
+
+  static void Register(nanobind::module_& m);
 
  private:
   std::vector<xla::Future<>> futures_;
@@ -111,6 +116,8 @@ class PyExecuteResults {
 
   void CheckNotDisassembled() const;
 
+  static void Register(nanobind::module_& m);
+
  private:
   bool is_exploded_ = false;
   bool token_consumed_ = false;
@@ -121,8 +128,6 @@ class PyExecuteResults {
   // Only set if the computation has tokens.
   xla::Future<> result_status_;
 };
-
-using ExecuteShardedArg = std::variant<PyArray, std::vector<PyArray>>;
 
 // Thin Python wrapper around xla::ifrt::ExecutableRef. We use a wrapper class:
 // a) Standardize around xla::ifrt::ExecutableRef, which is
@@ -167,6 +172,8 @@ class PyExecutable {
   absl::StatusOr<xla::ifrt::AttributeMap> GetCostAnalysis() const {
     return ifrt_executable_->GetCostAnalysis();
   }
+
+  static void Register(nanobind::module_& m);
 
  private:
   xla::ifrt::ExecutableRef ifrt_executable_;
@@ -213,8 +220,8 @@ class PyLoadedExecutable {
   // Takes args indexed by argid then deviceid, transposes them, and passes to
   // xla::ifrt::LoadedExecutable::Execute. The result is similarly transposed
   // back into the argid,deviceid format. args is [num_args x num_devices].
-  absl::StatusOr<PyExecuteResults> ExecuteSharded(
-      std::vector<ExecuteShardedArg> args, bool with_tokens);
+  absl::StatusOr<PyExecuteResults> ExecuteSharded(std::vector<PyArray> args,
+                                                  bool with_tokens);
 
   absl::StatusOr<std::vector<std::shared_ptr<xla::HloModule>>> HloModules()
       const;
@@ -266,6 +273,8 @@ class PyLoadedExecutable {
   // Keep `obj` alive as long as PyLoadedExecutable.
   void KeepAlive(nanobind::object obj);
 
+  static void Register(nanobind::module_& m);
+
  private:
   friend class PyClient;
 
@@ -278,7 +287,10 @@ class PyLoadedExecutable {
   std::optional<std::string> fingerprint_;
 
   // Launch ID to use for the next execution.
-  std::atomic<uint32_t> next_launch_id_;
+  const uint64_t launch_id_key_;
+
+  static absl::Mutex next_launch_id_mutex_;
+  static absl::flat_hash_map<uint64_t, uint32_t>* next_launch_id_;
 
   // The options to pass to `executable_.Execute`.
   xla::ifrt::ExecuteOptions options_;

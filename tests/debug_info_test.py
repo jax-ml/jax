@@ -1464,7 +1464,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         tracer_spy=tracer_spy,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=<lambda>, arg_names=x, result_paths=result",
-            "traced_for=fori_loop, fun=my_body, arg_names=_,c, result_paths=None",
+            "traced_for=fori_loop, fun=my_body, arg_names=_,c, result_paths=result[0][0],result[0][1]",
 
         ],
         expected_tracer_debug_infos=[

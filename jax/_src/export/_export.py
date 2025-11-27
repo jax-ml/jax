@@ -49,6 +49,7 @@ from jax._src import sharding
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import stages
+from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import typing
 from jax._src import util
@@ -526,6 +527,8 @@ def shape_and_dtype_jax_array(a) -> tuple[Sequence[int | None], DType]:
   return aval.shape, aval.dtype
 
 
+@functools.partial(traceback_util.api_boundary,
+                   repro_api_name="jax.export.export")
 def export(
     fun_jit: stages.Wrapped,
     *,
@@ -1402,7 +1405,8 @@ def _call_exported_abstract_eval(
   out_avals = tuple(
       core.ShapedArray(core.evaluate_shape(out_aval.shape, exported_dim_vars,
                                            *exported_dim_values),
-                       dtype=out_aval.dtype, weak_type=out_aval.weak_type)
+                       dtype=out_aval.dtype, weak_type=out_aval.weak_type,
+                       memory_space=out_aval.memory_space)
       for out_aval in exported.out_avals)
   return out_avals, set(exported.ordered_effects + exported.unordered_effects)
 

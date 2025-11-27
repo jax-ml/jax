@@ -58,20 +58,20 @@ _MOSAIC_ALLOW_HLO = config.bool_state(
 # mode: for 1 month when exporting, or when using old cloud TPU.
 #
 # This can be achieved by adding:
-#    if ctx.is_forward_compat() or is_cloud_tpu_older_than(<today>):
+#    if ctx.is_forward_compat() or backend is None or is_cloud_tpu_older_than(<today>):
 #       return <previous_serialization_version>
 #    return None
 #
 # We should also add a TODO to remove the conditional one month later.
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
-  # TODO(naumsmogers): remove the forward compatibility check after 2025-09-14.
+  # TODO(apaszke): remove the forward compatibility check after 2025-12-5.
   if (
       ctx.is_forward_compat()
       or backend is None
-      or is_cloud_tpu_older_than(2025, 8, 14, backend)
+      or is_cloud_tpu_older_than(2025, 11, 5, backend)
   ):
-    return 7
+    return 8
   return None
 
 
@@ -131,6 +131,15 @@ class CostEstimate(TypedDict):
         f' {self["bytes_accessed"]}, "remote_bytes_transferred":'
         f' {self["remote_bytes_transferred"]}}}'
     ).encode("ascii")
+
+
+class TpuSideEffectType(enum.Enum):
+  # No side effects, can be deduplicated / removed if unused.
+  PURE = "pure"
+  # Cannot be deduplicated, but can be removed if unused.
+  DATAFLOW_SIDE_EFFECTING = "dataflow_side_effecting"
+  # Cannot be deduplicated or removed.
+  SIDE_EFFECTING = "side_effecting"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -304,7 +313,7 @@ def _tpu_custom_call_lowering(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,  # pylint: disable=missing-function-docstring
     config: CustomCallBackendConfig,
-    has_side_effects: bool,
+    has_side_effects: TpuSideEffectType,
     kernel_name: str | None,
     out_avals: Any,
     input_output_aliases: tuple[tuple[int, int], ...],
@@ -313,7 +322,8 @@ def _tpu_custom_call_lowering(
   result_types = [mlir.aval_to_ir_type(aval) for aval in out_avals]
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
-    if axis_context.manual_axes != frozenset(axis_context.mesh.axis_names):
+    if (axis_context.manual_axes and
+        axis_context.manual_axes != frozenset(axis_context.mesh.axis_names)):
       raise NotImplementedError(
           "Mosaic kernels cannot be automatically partitioned. Please wrap the"
           " call in a shard_map."
@@ -340,24 +350,27 @@ def _tpu_custom_call_lowering(
   # information.
   if kernel_name is not None:
     extra_attributes = dict(kernel_name=ir.StringAttr.get(kernel_name))
-  has_side_effects = has_side_effects if has_side_effects is not None else False
   call = mlir.custom_call(
       "tpu_custom_call",
       result_types=result_types,
       operands=in_nodes,
       backend_config=config.to_json(),
       api_version=1,
-      has_side_effect=has_side_effects,
+      has_side_effect=has_side_effects != TpuSideEffectType.PURE,
       operand_output_aliases=dict(input_output_aliases),
       operand_layouts=_avals_to_layouts(ctx.avals_in),
       result_layouts=_avals_to_layouts(ctx.avals_out),
       result_shapes=result_shapes,
       extra_attributes=extra_attributes,
   )
+  metadata_dict = {}
   if metadata is not None:
-    call.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
-        dict(kernel_metadata=ir.StringAttr.get(json.dumps(metadata)))
-    )
+    metadata_dict["kernel_metadata"] = ir.StringAttr.get(json.dumps(metadata))
+  assert isinstance(has_side_effects, TpuSideEffectType)
+  if has_side_effects == TpuSideEffectType.DATAFLOW_SIDE_EFFECTING:
+    metadata_dict["xla_allow_dce_side_effecting_op"] = ir.StringAttr.get("true")
+  if metadata_dict:
+    call.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(metadata_dict)
   return call.results
 
 
@@ -368,14 +381,11 @@ mlir.register_lowering(tpu_custom_call_p, _tpu_custom_call_lowering,
 def _lower_mosaic_module_to_asm(
     module: ir.Module,
     *,
-    device_type: str | None,
     ir_version: int | None = None,
-) -> tuple[ir.Module, tuple[bool, bool, bool, bool]]:
+) -> tuple[ir.Module, tuple[bool, bool]]:
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
   )
-  needs_hlo_passes = _MOSAIC_ALLOW_HLO.value
-  needs_layout_passes = not device_type
   # We'll mutate the module, so clone it
   with module.context as ctx, module.operation.location as _:
     module_op = module.operation.clone()
@@ -397,8 +407,6 @@ def _lower_mosaic_module_to_asm(
     return asm, (
         has_communication,
         has_custom_barrier,
-        needs_hlo_passes,
-        needs_layout_passes,
     )
 
 
@@ -532,16 +540,17 @@ def _lower_to_custom_call_config(
     skip_device_barrier: bool = False,
     allow_collective_id_without_custom_barrier: bool = False,
     shape_invariant_numerics: bool = False,
+    needs_layout_passes: bool | None = None,
 ) -> CustomCallBackendConfig:
   device_type = _get_device_type(module)
+  needs_hlo_passes = _MOSAIC_ALLOW_HLO.value
+  if needs_layout_passes is None:
+    needs_layout_passes = not device_type
   lowered_module_asm, (
       has_communication,
       has_custom_barrier,
-      needs_hlo_passes,
-      needs_layout_passes,
   ) = _lower_mosaic_module_to_asm(
       module,
-      device_type=device_type,
       ir_version=ir_version,
   )
   active_core_count = _get_active_core_count(module)
@@ -643,7 +652,7 @@ def lower_module_to_custom_call(
     input_output_aliases: tuple[tuple[int, int], ...],
     internal_scratch_in_bytes: int | None,
     collective_id: int | None,
-    has_side_effects: bool,
+    has_side_effects: bool | TpuSideEffectType,
     serialization_format: int | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None,
     disable_bounds_checks: bool = False,
@@ -652,7 +661,14 @@ def lower_module_to_custom_call(
     skip_device_barrier: bool = False,
     allow_collective_id_without_custom_barrier: bool = False,
     shape_invariant_numerics: bool = False,
+    needs_layout_passes: bool | None = None,
 ) -> Sequence[ir.Value]:
+  if isinstance(has_side_effects, bool):
+    has_side_effects = (
+        TpuSideEffectType.PURE
+        if not has_side_effects
+        else TpuSideEffectType.SIDE_EFFECTING
+    )
   config = _lower_to_custom_call_config(
       module,
       vmem_limit_bytes=vmem_limit_bytes,
@@ -669,6 +685,7 @@ def lower_module_to_custom_call(
       skip_device_barrier=skip_device_barrier,
       allow_collective_id_without_custom_barrier=allow_collective_id_without_custom_barrier,
       shape_invariant_numerics=shape_invariant_numerics,
+      needs_layout_passes=needs_layout_passes,
   )
   return _tpu_custom_call_lowering(
       ctx,
@@ -694,12 +711,13 @@ def as_tpu_kernel(
     input_output_aliases: tuple[tuple[int, int], ...] = (),
     internal_scratch_in_bytes: int | None = None,
     collective_id: int | None = None,
-    has_side_effects: bool = False,
+    has_side_effects: TpuSideEffectType = TpuSideEffectType.PURE,
     serialization_format: int | None = 1,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     disable_bounds_checks: bool = False,
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     shape_invariant_numerics: bool = False,
+    needs_layout_passes: bool | None = None,
     metadata: Any | None = None,
     _ir_version: int | None = None,
 ) -> Callable[..., Any]:
@@ -717,6 +735,7 @@ def as_tpu_kernel(
       disable_bounds_checks=disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
       shape_invariant_numerics=shape_invariant_numerics,
+      needs_layout_passes=needs_layout_passes,
       ir_version=_ir_version,
   )
   return _as_jax_callable(
@@ -738,7 +757,7 @@ def lowered_as_tpu_kernel(
     needs_hlo_passes: bool = False,
     needs_layout_passes: bool = False,
     has_communication: bool = False,
-    has_side_effects: bool = False,
+    has_side_effects: bool | TpuSideEffectType = False,
     has_custom_barrier: bool = False,
     kernel_name: str | None = None,
     vmem_limit_bytes: int | None = None,
@@ -755,6 +774,12 @@ def lowered_as_tpu_kernel(
   lowered_module_asm = lowered_module.operation.get_asm(
       binary=True, enable_debug_info=True
   )
+  if isinstance(has_side_effects, bool):
+    has_side_effects = (
+        TpuSideEffectType.PURE
+        if not has_side_effects
+        else TpuSideEffectType.DATAFLOW_SIDE_EFFECTING
+    )
   config = _lowered_to_custom_call_config(
       lowered_module_asm,
       vmem_limit_bytes=vmem_limit_bytes,
@@ -784,7 +809,7 @@ def lowered_as_tpu_kernel(
 
 def _as_jax_callable(
     config: CustomCallBackendConfig,
-    has_side_effects: bool,
+    has_side_effects: TpuSideEffectType,
     out_type: Any,
     *,
     kernel_name: str | None,

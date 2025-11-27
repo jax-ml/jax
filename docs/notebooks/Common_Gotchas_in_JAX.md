@@ -204,7 +204,7 @@ jax_array = jnp.array([10, 20])
 jax_array_new = jax_array
 jax_array_new += 10
 print(jax_array_new)  # `jax_array_new` is rebound to a new value [20, 30], but...
-print(jax_array)      # the original value is unodified as [10, 20] !
+print(jax_array)      # the original value is unmodified as [10, 20] !
 
 numpy_array = np.array([10, 20])
 numpy_array_new = numpy_array

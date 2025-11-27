@@ -528,6 +528,25 @@ class DtypesTest(jtu.JaxTestCase):
         dtypes.check_and_canonicalize_user_dtype(x)
       jax.jit(f)(x)
 
+  @parameterized.parameters(
+      (jnp.int2, 2),
+      (jnp.int4, 4),
+      (jnp.int8, 8),
+      (jnp.int16, 16),
+      (jnp.int32, 32),
+      *[(fp4_dtype, 4) for fp4_dtype in fp4_dtypes],
+      *[(fp8_dtype, 8) for fp8_dtype in fp8_dtypes],
+      (jnp.float16, 16),
+      (jnp.float32, 32),
+      (jnp.float64, 64),
+  )
+  def test_itemsize_bits(self, dtype, expected_bitwidth):
+    self.assertEqual(dtypes.itemsize_bits(dtype), expected_bitwidth)
+
+  def test_itemsize_none_raises(self):
+    with self.assertRaisesRegex(ValueError, 'dtype cannot be None'):
+      dtypes.itemsize_bits(None)
+
 
 class ExtendedDTypeTest(jtu.JaxTestCase):
 

@@ -190,6 +190,11 @@ class PyClient {
       xla::ifrt::DeviceListRef executable_devices,
       std::optional<xla::CompileOptions> options,
       std::vector<nanobind::capsule> host_callbacks);
+  static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> DeserializeExecutable(
+      nb_class_ptr<PyClient> client, nanobind::bytes serialized,
+      xla::ifrt::DeviceListRef executable_devices,
+      std::optional<xla::CompileOptions> options,
+      std::vector<nanobind::callable> host_callbacks);
 
   absl::StatusOr<nanobind::bytes> HeapProfile();
 
@@ -217,7 +222,7 @@ class PyClient {
 
   std::vector<PyArray> LiveArrays() const;
 
-  static void RegisterPythonTypes(nanobind::module_& m);
+  static void Register(nanobind::module_& m);
 
  protected:
   static void Initialize(nb_class_ptr<PyClient> client);

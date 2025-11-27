@@ -56,7 +56,8 @@ def create_nonaddressable_array(shape, spec=None):
     A tuple of the created array and the global data.
   """
   n_dev = len(jax.devices()) // 2
-  mesh = jax.make_mesh((n_dev,), ("x",), devices=jax.devices()[:n_dev])
+  mesh = jax.make_mesh((n_dev,), ("x",), devices=jax.devices()[:n_dev],
+                       axis_types=(jax.sharding.AxisType.Explicit,))
   if spec is None:
     spec = P("x")
   s = jax.sharding.NamedSharding(mesh, spec)
@@ -486,7 +487,8 @@ class ArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
     np.testing.assert_array_equal(out, np_inp)
 
   def test_sharding_process_indices_all_devices(self):
-    mesh = jax.make_mesh((jax.device_count(),), ("x",), devices=jax.devices())
+    mesh = jax.make_mesh((jax.device_count(),), ("x",), devices=jax.devices(),
+                         axis_types=(jax.sharding.AxisType.Explicit,))
     s = jax.sharding.NamedSharding(mesh, P("x",))
 
     expected_pids = {d.process_index for d in s.device_set}
@@ -542,7 +544,8 @@ class NonaddressableArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
     n_local = len(jax.local_devices())
     pid = 0
     mesh = jax.make_mesh(
-        (n_local,), ("x",), devices=jax.local_devices(process_index=pid))
+        (n_local,), ("x",), devices=jax.local_devices(process_index=pid),
+        axis_types=(jax.sharding.AxisType.Explicit,))
     s = jax.sharding.NamedSharding(mesh, P("x",))
     inp = jnp.arange(16).reshape(8, 2)
     out = jax.device_put(inp, s)
@@ -561,7 +564,8 @@ class NonaddressableArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
     n_local = len(jax.local_devices())
     pid = 1
     mesh = jax.make_mesh(
-        (n_local,), ("x",), devices=jax.local_devices(process_index=pid))
+        (n_local,), ("x",), devices=jax.local_devices(process_index=pid),
+        axis_types=(jax.sharding.AxisType.Explicit,))
     s = jax.sharding.NamedSharding(mesh, P("x",))
     inp = np.arange(16).reshape(8, 2)
     out = jax.device_put(inp, s)
@@ -606,7 +610,8 @@ class NonaddressableArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
     pid = 1
 
     mesh = jax.make_mesh(
-        (n_local,), ("x",), devices=jax.local_devices(process_index=pid))
+        (n_local,), ("x",), devices=jax.local_devices(process_index=pid),
+        axis_types=(jax.sharding.AxisType.Explicit,))
     s = jax.sharding.NamedSharding(mesh, P("x",))
 
     # Create an array that is non-addressable in processes besides `pid`.
@@ -627,7 +632,8 @@ class NonaddressableArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
     n_local = jax.local_device_count()
     pid = 1
     mesh = jax.make_mesh(
-        (n_local,), ("x",), devices=jax.local_devices(process_index=pid))
+        (n_local,), ("x",), devices=jax.local_devices(process_index=pid),
+        axis_types=(jax.sharding.AxisType.Explicit,))
     s = jax.sharding.NamedSharding(mesh, P("x",))
 
     # Create a PRNG key array that is non-addressable in processes besides
@@ -650,7 +656,8 @@ class NonaddressableArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
   def test_sharding_process_indices_device_subset(self):
     n_devices = jax.device_count()
     mesh = jax.make_mesh(
-        (n_devices // 2,), ("x",), devices=jax.devices()[:n_devices // 2])
+        (n_devices // 2,), ("x",), devices=jax.devices()[:n_devices // 2],
+        axis_types=(jax.sharding.AxisType.Explicit,))
     s = jax.sharding.NamedSharding(mesh, P("x",))
 
     expected_pids = {d.process_index for d in s.device_set}
@@ -665,7 +672,8 @@ class NonaddressableArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
 
     # Create a sharding that is non-addressable in processes besides `pid`.
     mesh = jax.make_mesh(
-        (n_local,), ("x",), devices=jax.local_devices(process_index=pid))
+        (n_local,), ("x",), devices=jax.local_devices(process_index=pid),
+        axis_types=(jax.sharding.AxisType.Explicit,))
     s = jax.sharding.NamedSharding(mesh, P("x",))
     y = jax.device_put(x, s)
     expected_num_shards = n_local if jax.process_index() == pid else 0
@@ -691,7 +699,8 @@ class NonaddressableArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
 
     # Create a sharding that is non-addressable in processes besides `pid`.
     mesh = jax.make_mesh(
-        (n_local,), ("x",), devices=jax.local_devices(process_index=pid))
+        (n_local,), ("x",), devices=jax.local_devices(process_index=pid),
+        axis_types=(jax.sharding.AxisType.Explicit,))
     s = jax.sharding.NamedSharding(mesh, P("x",))
     y = jax.device_put(x, s)
     expected_num_shards = n_local if jax.process_index() == pid else 0
@@ -934,10 +943,14 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
     dst_pid = 1
     src_sharding = jax.sharding.NamedSharding(
         jax.make_mesh((n_local,), ("x",),
-                      devices=jax.local_devices(process_index=src_pid)), P("x"))
+                      devices=jax.local_devices(process_index=src_pid),
+                      axis_types=(jax.sharding.AxisType.Explicit,)),
+        P("x"))
     dst_sharding = jax.sharding.NamedSharding(
         jax.make_mesh((n_local,), ("x",),
-                      devices=jax.local_devices(process_index=dst_pid)), P("x"))
+                      devices=jax.local_devices(process_index=dst_pid),
+                      axis_types=(jax.sharding.AxisType.Explicit,)),
+        P("x"))
     y = jax.device_put(x, src_sharding)
     z = jax.device_put(y, dst_sharding)
     if jax.process_index() == dst_pid:
@@ -951,10 +964,14 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
     x = np.arange(64).reshape(8, 8)
     n_dev = jax.device_count() // 2
     src_sharding = jax.sharding.NamedSharding(
-        jax.make_mesh((n_dev,), ("x",), devices=jax.devices()[:n_dev]), P()
+        jax.make_mesh((n_dev,), ("x",), devices=jax.devices()[:n_dev],
+                      axis_types=(jax.sharding.AxisType.Explicit,)),
+        P()
     )
     dst_sharding = jax.sharding.NamedSharding(
-        jax.make_mesh((n_dev,), ("x",), devices=jax.devices()[n_dev:]), P()
+        jax.make_mesh((n_dev,), ("x",), devices=jax.devices()[n_dev:],
+                      axis_types=(jax.sharding.AxisType.Explicit,)),
+        P()
     )
     y = jax.device_put(x, src_sharding)
     z = jax.device_put(y, dst_sharding)
@@ -983,10 +1000,14 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
     dst_pid = 1
     src_sharding = jax.sharding.NamedSharding(
         jax.make_mesh((n_local,), ("x",),
-                      devices=jax.local_devices(process_index=src_pid)), P("x"))
+                      devices=jax.local_devices(process_index=src_pid),
+                      axis_types=(jax.sharding.AxisType.Explicit,)),
+        P("x"))
     dst_sharding = jax.sharding.NamedSharding(
         jax.make_mesh((n_local,), ("x",),
-                      devices=jax.local_devices(process_index=dst_pid)), P("x"))
+                      devices=jax.local_devices(process_index=dst_pid),
+                      axis_types=(jax.sharding.AxisType.Explicit,)),
+        P("x"))
 
     ys = jax.device_put(xs, src_sharding)
     copy_semantics = xc.ArrayCopySemantics.ALWAYS_COPY
@@ -1021,10 +1042,14 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
     # Create CPU and GPU/TPU shardings that are not fully addressable.
     cpu_sharding = jax.sharding.NamedSharding(
         jax.make_mesh(
-            (num_devices,), ("x",), devices=cpu_devices[:num_devices]), P("x"))
+            (num_devices,), ("x",), devices=cpu_devices[:num_devices],
+            axis_types=(jax.sharding.AxisType.Explicit,)),
+        P("x"))
     sharding = jax.sharding.NamedSharding(
         jax.make_mesh(
-            (num_devices,), ("x",), devices=devices[:num_devices]), P("x"))
+            (num_devices,), ("x",), devices=devices[:num_devices],
+            axis_types=(jax.sharding.AxisType.Explicit,)),
+        P("x"))
     y = jax.device_put(x, sharding)
 
     # device_put of a GPU/TPU array to the CPU sharding should raise a helpful

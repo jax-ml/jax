@@ -23,6 +23,22 @@ For other proposals, we ask that you first open a GitHub
 [Discussion](https://github.com/jax-ml/jax/discussions)
 to seek feedback on your planned contribution.
 
+## Can I contribute AI generated code?
+
+All submissions to Google Open Source projects need to follow Google's [Contributor License
+Agreement (CLA)](https://cla.developers.google.com/), in which contributors agree that their
+contribution is an original work of authorship. This doesn’t prohibit the use of coding
+assistance tools, but what’s submitted does need to be a contributor's original creation.
+
+In the JAX project, a main concern with AI-generated contributions is that
+**low-quality AI-generated code imposes a disproportionate review cost**.
+Since the team's capacity for code review is limited, we have a higher bar
+for accepting AI-generated contributions compared to those written by a human.
+
+A loose rule of thumb: if the team needs to spend more time reviewing a
+contribution than the contributor spends generating it, then the contribution
+is probably not helpful to the project, and we will likely reject it.
+
 ## Contributing code using pull requests
 
 We do all of our development using git, so basic knowledge is assumed.
@@ -198,3 +214,109 @@ not available via standard GitHub CI. Detailed results of these tests are not pu
 viewable, but the JAX maintainer assigned to your PR will communicate with you regarding
 any failures these might uncover; it's not uncommon, for example, that numerical tests
 need different tolerances on TPU than on CPU.
+
+### Wheel sources update
+
+If a new python package or a new file is added to the wheel, one of the
+following Bazel targets should be updated:
+
+[jax wheel sources](https://github.com/jax-ml/jax/blob/0080c5c934d9e3668c93d88e2b94f66e05f9d8d8/BUILD.bazel#L29)
+
+[jaxlib wheel sources](https://github.com/jax-ml/jax/blob/0080c5c934d9e3668c93d88e2b94f66e05f9d8d8/jaxlib/tools/BUILD.bazel#L151)
+
+[jax CUDA plugin wheel sources](https://github.com/jax-ml/jax/blob/0080c5c934d9e3668c93d88e2b94f66e05f9d8d8/jaxlib/tools/BUILD.bazel#L210)
+
+[jax CUDA pjrt wheel sources](https://github.com/jax-ml/jax/blob/0080c5c934d9e3668c93d88e2b94f66e05f9d8d8/jaxlib/tools/BUILD.bazel#L318)
+
+1. A static source addition: add to `static_srcs` list.
+
+   Example: add `//:file.txt` to `jax` wheel.
+
+   ```
+   wheel_sources(
+      name = "jax_sources",
+      data_srcs = [...],
+      py_srcs = [...],
+      static_srcs = [
+         ...
+         "//:file.txt"
+      ],
+   )
+   ```
+
+2. A platform-dependent source addition: add to `data_srcs` list.
+
+   Example: add a `cc_library` target `//:cc_target` to `jax` wheel.
+
+   ```
+   wheel_sources(
+      name = "jax_sources",
+      data_srcs = [
+         ...
+         "//:cc_target"
+      ],
+      py_srcs = [...],
+      static_srcs = [...],
+   )
+   ```
+
+   If the existing targets in `data_srcs` already have a transitive
+   dependency on `//:cc_target`, you don't need to add it explicitly.
+
+3. A new python package addition: create `__init__.py` file and Bazel python
+rule target with `__init__.py` in sources, add it to `py_srcs` list.
+
+   Example: add a new package `jax.test_package` to `jax` wheel:
+
+   The content of the file `jax/test_package/BUILD`:
+
+   ```
+   pytype_strict_library(
+      name = "init",
+      srcs = ["__init__.py"],
+      visibility = ["//visibility:public"],
+   )
+   ```
+
+   ```
+   wheel_sources(
+      name = "jax_sources",
+      data_srcs = [...],
+      py_srcs = [
+         ...
+         "//jax/test_package:init",
+      ],
+      static_srcs = [...],
+   )
+   ```
+
+4. A new python source addition to existing package: create/update Bazel python
+rule target with the new file in sources, add it to `py_srcs` list.
+
+   Example: add a new file `jax/test_package/example.py` to `jax` wheel:
+
+   The content of the file `jax/test_package/BUILD`:
+
+   ```
+   pytype_strict_library(
+      name = "example",
+      srcs = ["__init__.py",
+               "example.py"],
+      visibility = ["//visibility:public"],
+   )
+   ```
+
+   ```
+   wheel_sources(
+      name = "jax_sources",
+      data_srcs = [...],
+      py_srcs = [
+         ...
+         "//jax/test_package:example",
+      ],
+      static_srcs = [...],
+   )
+   ```
+
+   If the existing targets in `py_srcs` already have a transitive
+   dependency on `example.py`, you don't need to add it explicitly.

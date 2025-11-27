@@ -429,7 +429,7 @@ async def main():
     if args.python_version.endswith("-ft"):
       freethreaded = True
       bazel_command_base.append(
-        "--@rules_python//python/config_settings:py_freethreaded='yes'"
+        "--@rules_python//python/config_settings:py_freethreaded=\"yes\""
       )
 
   # Enable verbose failures.
@@ -516,10 +516,13 @@ async def main():
     wheel_build_command_base.append("--config=nonccl")
 
   clang_path = ""
-  clang_local = args.clang_path or (not utils.is_linux_x86_64(arch, os_name)
-                                    and not utils.is_linux_aarch64(arch, os_name))
+  clang_local = args.clang_path or not (utils.is_linux_x86_64(arch, os_name)
+                                    or utils.is_linux_aarch64(arch, os_name))
   if clang_local:
-    wheel_build_command_base.append("--config=clang_local")
+    if utils.is_linux(os_name):
+      wheel_build_command_base.append("--config=linux_clang_local")
+    else:
+      wheel_build_command_base.append("--config=clang_local")
 
     clang_path = args.clang_path or utils.get_clang_path_or_exit()
     clang_major_version = utils.get_clang_major_version(clang_path)
@@ -722,6 +725,13 @@ async def main():
       wheel_dir = wheel.replace("cuda", f"cuda{cuda_major_version}").replace(
           "-", "_"
       )
+    elif "rocm" in wheel:
+      if args.editable:
+        # For editable builds, use the actual ROCm version since directory paths cannot contain wildcards
+        wheel_dir = wheel.replace("rocm", f"rocm{args.rocm_version}").replace("-", "_")
+      else:
+        # For non-editable builds, use wildcard pattern to match any ROCm version in glob patterns
+        wheel_dir = wheel.replace("rocm", "rocm*").replace("-", "_")
     else:
       wheel_dir = wheel
 
@@ -739,7 +749,7 @@ async def main():
           wheel_version_suffix += (
               f"+{wheel_git_hash}{custom_wheel_version_suffix}"
           )
-      if wheel in ["jax", "jax-cuda-pjrt"]:
+      if wheel in ["jax", "jax-cuda-pjrt", "jax-rocm-pjrt"]:
         python_tag = "py"
       else:
         python_tag = "cp"

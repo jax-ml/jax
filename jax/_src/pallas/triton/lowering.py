@@ -29,6 +29,7 @@ from jax import tree_util
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api_util
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import debugging
@@ -46,7 +47,6 @@ from jax._src.lib.mlir.dialects import math as math_dialect
 from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.lib.triton import dialect as tt_dialect
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.state import indexing
@@ -420,7 +420,7 @@ def lower_jaxpr_to_triton_ir(
     except LoweringError:
       raise  # We only add the extra info to the innermost exception.
     except Exception as e:
-      if not pallas_call._verbose_errors_enabled():
+      if not config.jax_pallas_verbose_errors.value:
         raise
       inval_types = map(lambda t: getattr(t, "type", None), invals)
       raise LoweringError(
@@ -1341,6 +1341,7 @@ def debug_print_lowering_rule(
     static_args,
     np_printoptions,
     has_placeholders,
+    logging_record,
 ):
   del partitioned, np_printoptions
   if ordered:

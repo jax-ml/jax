@@ -30,6 +30,7 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as primitives
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import helpers as tpu_helpers
+from jax._src.pallas.mosaic import tpu_info
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
@@ -75,16 +76,8 @@ def _broadcast_pytree_to(from_pytree, to_pytree):
   return tree_util.tree_unflatten(treedef, broadcast_leaves)
 
 
-@jax_util.cache(trace_context_in_key=False)
 def _get_tpu_generation() -> int:
-  kind = tpu_core.get_device_kind()
-  if kind.endswith(' lite'):
-    kind = kind[:-len(' lite')]
-  if kind.startswith("TPU v"):
-    return int(kind[5])
-  else:
-    assert "TPU7x" in kind
-    return 7
+  return tpu_info.get_tpu_info().generation
 
 def _make_tiling(shape: tuple[int, ...], dtype: np.dtype) -> tuple[int, ...]:
   # For a n-dimensional shape, returns (8, 128) for the last 2 dimensions

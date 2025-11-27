@@ -332,7 +332,11 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
       self.skipTest('Requires at least 2 devices for DMAs.')
     if (cdim := jax.devices()[0].num_cores) < 2:
       self.skipTest('Requires a TPU with at least 2 cores.')
-    mesh = jax.make_mesh((jax.device_count(),), ('device',))
+    mesh = jax.make_mesh(
+        (jax.device_count(),),
+        ('device',),
+        axis_types=(jax.sharding.AxisType.Auto,),
+    )
     ddim = jax.device_count()
     tcmesh = pltpu.create_tensorcore_mesh('core')
     pspec = P('device', None)

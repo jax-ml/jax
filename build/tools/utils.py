@@ -277,6 +277,10 @@ def copy_individual_files(src: str, dst: str, glob_pattern: str):
     shutil.copy2(f, dst_file)
     logging.info("Distribution path: %s" % dst_file)
 
+def is_linux(os_name: str):
+  """Returns true if OS is Linux."""
+  return os_name == "linux"
+
 def is_linux_x86_64(arch: str, os_name: str):
   """Returns true if the architecture is Linux x86_64."""
   return arch == "x86_64" and os_name == "linux"

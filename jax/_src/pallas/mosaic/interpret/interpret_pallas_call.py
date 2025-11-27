@@ -36,7 +36,6 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src.pallas.mosaic import core as mosaic_core
 from jax._src.pallas.mosaic import primitives as mosaic_primitives
-from jax._src.pallas.mosaic import verification
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
 from jax._src.pallas.mosaic.interpret.race_detection_state import RaceDetectionState
@@ -1344,12 +1343,6 @@ def _interpret_jaxpr(
       elif prim is mosaic_primitives.prng_random_bits_p:
         # TODO(jburnim): Implement this properly?
         out = jnp.zeros(eqn.params['shape'], jnp.int32)
-
-      elif prim is verification.assume_p:
-        out = read(eqn.invars[0])
-
-      elif prim is verification.pretend_p:
-        out = []
 
       elif ((prim is lax.axis_index_p)
             and (mesh is not None) and (eqn.params['axis_name'] in mesh.shape)):

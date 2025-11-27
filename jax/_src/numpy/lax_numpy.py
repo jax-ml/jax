@@ -3978,11 +3978,12 @@ def _pad_symmetric_or_reflect(array: Array, pad_width: PadValue[int],
   assert reflect_type in ("even", "odd")
 
   for i in range(np.ndim(array)):
-    if array.shape[i] == 0:
+    axis_size = array.shape[i]
+    if axis_size == 0:
       _check_no_padding(pad_width[i], mode)
       continue
-
-    axis_size = array.shape[i]
+    if pad_width[i][0] == 0 and pad_width[i][1] == 0:
+      continue
 
     def build_padding(array, padding, before):
       if before:
@@ -6343,7 +6344,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
     return _auto_repeat(_repeat, a, repeats, axis, total_repeat_length,
                         out_sharding)
   try:
-    return _repeat(a, repeats=repeats, axis=axis,
+    return _repeat(repeats, a, axis=axis,
                    total_repeat_length=total_repeat_length)
   except core.ShardingTypeError as e:
     raise ValueError(
@@ -6352,7 +6353,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
 def _auto_repeat(fun, a, repeats, axis, total_repeat_length, out_sharding):
   out_sharding = canonicalize_sharding(out_sharding, 'repeat')
   if total_repeat_length is None:
-    return auto_axes(partial(fun, repeats=repeats, axis=axis,
+    return auto_axes(partial(fun, repeats, axis=axis,
                              total_repeat_length=total_repeat_length),
                      out_sharding=out_sharding,
                      axes=out_sharding.mesh.explicit_axes  # type: ignore
@@ -6362,9 +6363,9 @@ def _auto_repeat(fun, a, repeats, axis, total_repeat_length, out_sharding):
         partial(fun, axis=axis, total_repeat_length=total_repeat_length),
         out_sharding=out_sharding,
         axes=out_sharding.mesh.explicit_axes  # type: ignore
-        )(a, repeats=repeats)
+        )(repeats, a)
 
-def _repeat(a: ArrayLike, *, repeats: ArrayLike, axis: int | None = None,
+def _repeat(repeats: ArrayLike, a: ArrayLike, *, axis: int | None = None,
             total_repeat_length: int | None = None) -> Array:
   if core.is_dim(repeats):
     util.check_arraylike("repeat", a)

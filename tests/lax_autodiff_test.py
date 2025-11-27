@@ -892,13 +892,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=[np.float32,],
-    shape=[(4,), (5, 5), (2, 1, 4)],
+    shape=[(4,), (5, 5), (3, 1, 4)],
     k=[1, 3],
+    axis=[0, -1]
   )
-  def testTopKGrad(self, shape, dtype, k):
+  def testTopKGrad(self, shape, dtype, k, axis):
     flat_values = np.arange(math.prod(shape), dtype=dtype)
     values = self.rng().permutation(flat_values).reshape(shape)
-    fun = lambda vs: lax.top_k(vs, k=k)[0]
+    fun = lambda vs: lax.top_k(vs, k=k, axis=axis)[0]
     check_grads(fun, (values,), 2, ["fwd", "rev"], eps=1e-2)
 
   @jtu.sample_product(

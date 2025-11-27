@@ -1560,6 +1560,8 @@ def create_mesh(mesh_shape, axis_names, iota_order=False, axis_types=None):
     mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
     return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)
   else:
+    if axis_types is None:
+      axis_types = (mesh_lib.AxisType.Auto,) * len(mesh_shape)
     return sharding_impls.make_mesh(mesh_shape, axis_names, axis_types)
 
 class _cached_property:
@@ -1739,7 +1741,7 @@ def register_event_duration_listener(callback):
     monitoring.register_event_duration_secs_listener(callback)
     yield
   finally:
-    monitoring._unregister_event_duration_listener_by_callback(callback)
+    monitoring.unregister_event_duration_listener(callback)
 
 
 @contextmanager
@@ -2407,3 +2409,13 @@ def setup_hypothesis(max_examples=30) -> None:
   profile = HYPOTHESIS_PROFILE.value
   logging.info("Using hypothesis profile: %s", profile)
   hp.settings.load_profile(profile)
+
+
+def runtime_environment() -> str | None:
+  """Returns None, "bazel" or "pytest"."""
+  if sys.executable is None:
+    return None
+  elif 'bazel-out' in sys.executable:
+    return "bazel"
+  else:
+    return "pytest"

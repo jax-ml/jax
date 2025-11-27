@@ -173,6 +173,8 @@ def select_n_strategy(
               # TODO(sharadmv,apaszke): enable bf16
               # np.dtype(jnp.bfloat16),
           ],
+          # Max 4K bytes. Helps avoid slow input generation.
+          max_bytes=2**12,
       )
   )
   allowed_elements = hps.integers(min_value=0, max_value=n_cases - 1)
@@ -658,14 +660,6 @@ class OpsTest(PallasBaseTest):
       self.skipTest("float16 is only supported with Mosaic GPU")
     if sut_is_mosaic_gpu and to_dtype == "bool":
       self.skipTest("Sub-byte types are not yet supported with Mosaic GPU")
-    if (
-        sut_is_mosaic_gpu
-        and jnp.issubdtype(from_dtype, jnp.integer)
-        and jnp.issubdtype(to_dtype, jnp.integer)
-        and jtu.is_cuda_compute_capability_at_least("10.0")
-    ):
-      # TODO(b/452558917): Remove once LLVM miscompiles are fixed.
-      self.skipTest("Integer casts are miscompiled by LLVM on Blackwell")
 
     # XLA does not specify the float->int conversion result for NaNs.
     elements = dict(allow_nan=not jnp.issubdtype(to_dtype, jnp.integer))
@@ -765,7 +759,7 @@ class OpsTest(PallasBaseTest):
       self.skipTest("Not supported: cannot extend to sub-32 bit types")
 
     if from_dtype != "bool":
-      from_bitwidth = dtypes.bit_width(from_dtype)
+      from_bitwidth = dtypes.itemsize_bits(from_dtype)
       from_int_dtype = getattr(jnp, "uint" + str(from_bitwidth))
       if randomize:
         # randint has no support for 4 bit integers.
@@ -1505,6 +1499,45 @@ class OpsTest(PallasBaseTest):
         kernel(x, y),
         expected,
     )
+
+  @parameterized.product(
+      shapes_and_dims_numbers=(
+          ((3, 4, 128), (4, 2, 128), (((2,), (2,)), ((1,), (0,)))),
+          ((3, 4, 128), (2, 4, 128), (((2,), (2,)), ((1,), (1,)))),
+          ((3, 4, 256), (2, 3, 256), (((2,), (2,)), ((0,), (1,)))),
+          ((4, 3, 2, 32), (2, 128, 32, 2), (((3,), (2,)), ((2,), (3,)))),
+      ),
+  )
+  def test_dot_general_non_front_batch_dims(self, shapes_and_dims_numbers):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("TPU only test")
+
+    if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
+        2025, 11, 30
+    ):
+      self.skipTest("Requires libtpu built after 2025-11-30")
+
+    x_shape, y_shape, dims_numbers = shapes_and_dims_numbers
+
+    k1, k2 = random.split(jax.random.key(0))
+    x = jax.random.normal(k1, x_shape, dtype=jnp.float32)
+    y = jax.random.normal(k2, y_shape, dtype=jnp.float32)
+
+    # Just infer shape from jax.
+    expected = jax.lax.dot_general(x, y, dimension_numbers=dims_numbers)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.float32),
+    )
+    def kernel(x_ref, y_ref, out_ref):
+      out_ref[...] = jax.lax.dot_general(
+          x_ref[...],
+          y_ref[...],
+          dimension_numbers=dims_numbers,
+      )
+
+    np.testing.assert_allclose(kernel(x, y), expected, atol=1e-5, rtol=1e-5)
 
   @parameterized.product(
       batch_size=(None, 1, 2),

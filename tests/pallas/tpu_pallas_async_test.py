@@ -393,7 +393,11 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
     if jax.device_count() < 2:
       self.skipTest('Requires at least 2 devices for a 2d mesh.')
     xdim, ydim = 2, jax.device_count() // 2
-    mesh = jax.make_mesh((xdim, ydim), ('x', 'y'))
+    mesh = jax.make_mesh(
+        (xdim, ydim),
+        ('x', 'y'),
+        axis_types=(jax.sharding.AxisType.Auto,) * 2,
+    )
 
     xlocal, ylocal = 8, 128
     if joint_axis:
@@ -457,7 +461,11 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
   def test_axis_dict_with_core_single_device(self):
     if jax.device_count() > 2 or (jax.devices()[0].num_cores) != 2:
       self.skipTest('Testing single device two cores')
-    mesh = jax.make_mesh((jax.device_count(),), ('device',))
+    mesh = jax.make_mesh(
+        (jax.device_count(),),
+        ('device',),
+        axis_types=(jax.sharding.AxisType.Auto,),
+    )
     ddim = jax.device_count()
     tcmesh = pltpu.create_tensorcore_mesh('core')
     pspec = P('device', None)
@@ -762,7 +770,11 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
 
   def test_basic_remote_copy(self):
 
-    mesh = jax.make_mesh((jax.device_count(),), ('x',))
+    mesh = jax.make_mesh(
+        (jax.device_count(),),
+        ('x',),
+        axis_types=(jax.sharding.AxisType.Auto,),
+    )
 
     @jax.jit
     @partial(
@@ -785,7 +797,11 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
 
   def test_multi_remote_copy(self):
 
-    mesh = jax.make_mesh((jax.device_count(),), ('x',))
+    mesh = jax.make_mesh(
+        (jax.device_count(),),
+        ('x',),
+        axis_types=(jax.sharding.AxisType.Auto,),
+    )
 
     @jax.jit
     @partial(
@@ -818,7 +834,11 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
 
   def test_basic_collective_permute_loop(self):
 
-    mesh = jax.make_mesh((jax.device_count(),), ('x',))
+    mesh = jax.make_mesh(
+        (jax.device_count(),),
+        ('x',),
+        axis_types=(jax.sharding.AxisType.Auto,),
+    )
 
     @jax.jit
     @partial(
@@ -843,7 +863,11 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
 
   def test_staggered_collective_permute_loop(self):
 
-    mesh = jax.make_mesh((jax.device_count(),), ('x',))
+    mesh = jax.make_mesh(
+        (jax.device_count(),),
+        ('x',),
+        axis_types=(jax.sharding.AxisType.Auto,),
+    )
 
     @jax.jit
     @partial(
@@ -876,7 +900,11 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
     np.testing.assert_array_equal(y, expected)
 
   def test_bidi_collective_permute_loop(self):
-    mesh = jax.make_mesh((jax.device_count(),), ('x',))
+    mesh = jax.make_mesh(
+        (jax.device_count(),),
+        ('x',),
+        axis_types=(jax.sharding.AxisType.Auto,),
+    )
 
     @jax.jit
     @partial(

@@ -35,6 +35,9 @@ from jax._src.earray import (
     EArray as EArray
 )
 from jax._src import core as _src_core
+from jax._src.core import (
+    cur_qdd as cur_qdd,
+)
 from jax.experimental import x64_context as _x64_context
 
 _deprecations = {

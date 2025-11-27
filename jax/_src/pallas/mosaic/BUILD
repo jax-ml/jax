@@ -38,16 +38,6 @@ py_library(
 )
 
 py_library(
-    name = "verification",
-    srcs = ["verification.py"],
-    deps = [
-        "//jax",
-        "//jax/_src:mlir",
-        "//jax/_src/lib",
-    ],
-)
-
-py_library(
     name = "error_handling",
     srcs = ["error_handling.py"],
     deps = [
@@ -81,10 +71,11 @@ py_library(
         ":core",
         ":lowering",
         ":sc_lowering",
-        ":verification",
         "//jax",
         "//jax/_src:config",
         "//jax/_src:core",
+        "//jax/_src:frozen_dict",
+        "//jax/_src:lax",
         "//jax/_src:mlir",
         "//jax/_src:sharding_impls",
         "//jax/_src:source_info_util",
@@ -108,6 +99,7 @@ pytype_strict_library(
         "//jax/_src:api",
         "//jax/_src:checkify",
         "//jax/_src:cloud_tpu_init",
+        "//jax/_src:config",
         "//jax/_src:core",
         "//jax/_src:custom_derivatives",
         "//jax/_src:debugging",
@@ -141,15 +133,16 @@ pytype_strict_library(
         ":lowering",
         ":primitives",
         ":sc_core",
-        "//jax",
         "//jax/_src:api_util",
         "//jax/_src:core",
         "//jax/_src:debugging",
         "//jax/_src:lax",
         "//jax/_src:mesh",
         "//jax/_src:mlir",
+        "//jax/_src:numpy",
         "//jax/_src:partial_eval",
         "//jax/_src:source_info_util",
+        "//jax/_src:tree_util",
         "//jax/_src:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
@@ -201,6 +194,7 @@ py_library(
     deps = [
         ":core",
         ":primitives",
+        ":tpu_info",
         "//jax",
         "//jax/_src:api_util",
         "//jax/_src:util",
@@ -239,5 +233,6 @@ pytype_strict_library(
         ":core",
         "//jax",
         "//jax/_src:dtypes",
+        "//jax/_src:util",
     ],
 )

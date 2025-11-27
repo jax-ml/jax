@@ -102,7 +102,7 @@ jobs:
         (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, jaxlib=${{ inputs.jaxlib-version }}, CUDA=${{ inputs.cuda-version }}, Python=${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
 # End Presubmit Naming Check github-cuda-presubmits
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           persist-credentials: false
       - name: Download JAX CUDA wheels

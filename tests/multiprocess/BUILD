@@ -72,15 +72,23 @@ jax_multiprocess_test(
 jax_multiprocess_test(
     name = "array_test",
     srcs = ["array_test.py"],
-    enable_backends = if_oss(
-        [
-            "gpu",
-            "tpu",
-        ],
-        None,
-    ),  # TODO(b/446172564): Remove enable_backends once the CPU test is fixed.
     main = "array_test.py",
     deps = [
+        "//jax/_src:test_multiprocess",
+    ],
+)
+
+jax_multiprocess_test(
+    name = "colocated_python_test",
+    srcs = ["colocated_python_test.py"],
+    disable_configs = [
+        # This config has two cores per chip, and JAX distributed does not get
+        # the correct number of logical devices per host.
+        "tpu_v3_x4",
+    ],
+    main = "colocated_python_test.py",
+    deps = [
+        "//jax:experimental_colocated_python",
         "//jax/_src:test_multiprocess",
     ],
 )

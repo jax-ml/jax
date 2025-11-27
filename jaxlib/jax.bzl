@@ -50,7 +50,6 @@ mosaic_internal_users = []
 pallas_gpu_internal_users = []
 pallas_sc_internal_users = []
 pallas_fuser_users = []
-mosaic_extension_deps = []
 serialize_executable_internal_users = []
 buffer_callback_internal_users = []
 
@@ -93,7 +92,7 @@ _py_deps = {
     "mpmath": [],
     "opt_einsum": ["@pypi//opt_einsum"],
     "pil": get_optional_dep("@pypi//pillow"),
-    "portpicker": get_optional_dep("@pypi//portpicker", ["3.13-ft", "3.14-ft"]),
+    "portpicker": ["@pypi//portpicker"],
     "ml_dtypes": ["@pypi//ml_dtypes"],
     "numpy": ["@pypi//numpy"],
     "scipy": ["@pypi//scipy"],

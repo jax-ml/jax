@@ -48,7 +48,6 @@ py_library(
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:core",
         "//jax/_src/pallas/mosaic:primitives",
-        "//jax/_src/pallas/mosaic:verification",
     ] + py_deps("numpy"),
 )
 

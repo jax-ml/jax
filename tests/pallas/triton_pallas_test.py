@@ -69,7 +69,7 @@ class TritonPallasTest(PallasBaseTest):
   def test_fp_dtype_cast(self, src_dtype, dst_dtype):
     if src_dtype == dst_dtype:
       self.skipTest("No need to test the same dtype")
-    if dtypes.bit_width(src_dtype) == 8 and dtypes.bit_width(dst_dtype) == 8:
+    if dtypes.itemsize_bits(src_dtype) == 8 and dtypes.itemsize_bits(dst_dtype) == 8:
       self.skipTest("Not casting between 8-bit types")
 
     def body(x_ref, y_ref):

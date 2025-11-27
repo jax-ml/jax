@@ -26,6 +26,8 @@ data type ``dtype``. Argument ``key`` is a PRNG key (e.g. from
     glorot_uniform
     he_normal
     he_uniform
+    kaiming_normal
+    kaiming_uniform
     lecun_normal
     lecun_uniform
     normal
@@ -34,4 +36,7 @@ data type ``dtype``. Argument ``key`` is a PRNG key (e.g. from
     truncated_normal
     uniform
     variance_scaling
+    xavier_normal
+    xavier_uniform
     zeros
+    Initializer

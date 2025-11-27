@@ -957,6 +957,20 @@ jax_py_test(
     ] + py_deps("absl/testing"),
 )
 
+jax_py_test(
+    name = "documentation_coverage_test",
+    srcs = [
+        "documentation_coverage_test.py",
+    ],
+    deps = [
+        "//jax",
+        "//jax/_src:config",
+        "//jax/_src:internal_test_util",
+        "//jax/_src:test_util",
+        # "//jax/docs",
+    ] + py_deps("absl/testing"),
+)
+
 jax_multiplatform_test(
     name = "linalg_test",
     srcs = ["linalg_test.py"],
@@ -1481,6 +1495,7 @@ jax_multiplatform_test(
     backend_variant_args = {
         "cpu": ["--jax_num_generated_cases=20"],
         "cpu_x32": ["--jax_num_generated_cases=30"],
+        "gpu_a100": ["--jax_num_generated_cases=40"],
         "gpu_p100": ["--jax_num_generated_cases=40"],
         "gpu_v100": ["--jax_num_generated_cases=40"],
         "tpu_v3": ["--jax_num_generated_cases=40"],

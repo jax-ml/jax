@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import collections
 from collections.abc import Callable, Iterable, Iterator, Sequence
-import contextlib
 import dataclasses
 import functools
 from functools import partial
@@ -365,11 +364,11 @@ def _numpy_scalar_attribute(val: Any) -> ir.Attribute:
     raise TypeError(f"Unsupported scalar attribute type: {type(val)}")
 
 def _numpy_array_attribute(x: np.ndarray | np.generic) -> ir.Attribute:
+  element_type = dtype_to_ir_type(x.dtype)
   shape = x.shape
   if x.dtype == np.bool_:
     x = np.packbits(x, bitorder='little')  # type: ignore
   x = np.ascontiguousarray(x)
-  element_type = dtype_to_ir_type(x.dtype)
   return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
 
 def _numpy_array_attribute_handler(val: np.ndarray | np.generic) -> ir.Attribute:
@@ -2465,53 +2464,47 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
     wrapped_fun = lu.wrap_init(f, params,
         debug_info=api_util.debug_info("lower_fun", fun, args, {}))
-    manager = (contextlib.nullcontext() if ctx.jaxpr_eqn_ctx is None else
-               ctx.jaxpr_eqn_ctx.manager)
 
-    with manager:
-      if config.dynamic_shapes.value:
-        # We might be applying this function to arguments with dynamic shapes,
-        # i.e. there might be Vars in the shape tuples of ctx.avals_in. In that
-        # case, we need to form a jaxpr with leading binders for those axis size
-        # arguments (by computing an InputType and using trace_to_jaxpr_dynamic2),
-        # and we need to call jaxpr_subcomp with these arguments made explicit.
-        assert ctx.axis_size_env is not None
-        args = (*ctx.axis_size_env.values(), *args)
-        idx = {d: core.DBIdx(i) for i, d in enumerate(ctx.axis_size_env)}
-        i32_aval = core.ShapedArray((), np.dtype('int32'))
-        implicit_args = [(i32_aval, False)] * len(ctx.axis_size_env)
-        explicit_args = [(a.update(shape=tuple(idx.get(d, d) for d in a.shape))  # type: ignore
-                          if type(a) is core.DShapedArray else a, True)
-                        for a in ctx.avals_in]
-        wrapped_fun = lu.annotate(wrapped_fun, (*implicit_args, *explicit_args))
-        jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic2(wrapped_fun)
-      else:
-        jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic(wrapped_fun,
-                                                                   ctx.avals_in)
-        # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?
+    if config.dynamic_shapes.value:
+      # We might be applying this function to arguments with dynamic shapes,
+      # i.e. there might be Vars in the shape tuples of ctx.avals_in. In that
+      # case, we need to form a jaxpr with leading binders for those axis size
+      # arguments (by computing an InputType and using trace_to_jaxpr_dynamic2),
+      # and we need to call jaxpr_subcomp with these arguments made explicit.
+      assert ctx.axis_size_env is not None
+      args = (*ctx.axis_size_env.values(), *args)
+      idx = {d: core.DBIdx(i) for i, d in enumerate(ctx.axis_size_env)}
+      i32_aval = core.ShapedArray((), np.dtype('int32'))
+      implicit_args = [(i32_aval, False)] * len(ctx.axis_size_env)
+      explicit_args = [(a.update(shape=tuple(idx.get(d, d) for d in a.shape))  # type: ignore
+                        if type(a) is core.DShapedArray else a, True)
+                      for a in ctx.avals_in]
+      wrapped_fun = lu.annotate(wrapped_fun, (*implicit_args, *explicit_args))
+      jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic2(wrapped_fun)
+    else:
+      jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic(wrapped_fun,
+                                                                  ctx.avals_in)
+      # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?
 
-      if ctx.platforms is not None:
-        sub_context = ctx.module_context.replace(platforms=ctx.platforms)
-      else:
-        sub_context = ctx.module_context
-      out, tokens = jaxpr_subcomp(
-          sub_context, jaxpr, ctx.name_stack, ctx.tokens_in,
-          ir_consts(consts_for_constvars, [v.aval for v in jaxpr.constvars]),
-          *args,
-          dim_var_values=ctx.dim_var_values,
-          const_lowering=ctx.const_lowering)
-      ctx.set_tokens_out(tokens)
-      return out
+    if ctx.platforms is not None:
+      sub_context = ctx.module_context.replace(platforms=ctx.platforms)
+    else:
+      sub_context = ctx.module_context
+    out, tokens = jaxpr_subcomp(
+        sub_context, jaxpr, ctx.name_stack, ctx.tokens_in,
+        ir_consts(consts_for_constvars, [v.aval for v in jaxpr.constvars]),
+        *args,
+        dim_var_values=ctx.dim_var_values,
+        const_lowering=ctx.const_lowering)
+    ctx.set_tokens_out(tokens)
+    return out
 
   return f_lowered
 
 
-def _lower_jaxpr_to_fun_cached(ctx: ModuleContext,
-                               fn_name, call_jaxpr: core.ClosedJaxpr,
-                               num_const_args: int,
-                               effects,
-                               in_avals,
-                               arg_names=None, result_names=None):
+def _lower_jaxpr_to_fun_cached(
+    ctx: ModuleContext, fn_name, call_jaxpr: core.ClosedJaxpr,
+    num_const_args: int, effects, in_avals, arg_names=None, result_names=None):
   assert num_const_args + len(call_jaxpr.in_avals) == len(in_avals)
   if not call_jaxpr.consts and arg_names is result_names is None:
     # Cacheable.
@@ -2521,12 +2514,8 @@ def _lower_jaxpr_to_fun_cached(ctx: ModuleContext,
     except KeyError:
       num_callbacks = len(ctx.host_callbacks)
       func_op = lower_jaxpr_to_fun(
-          ctx, fn_name, call_jaxpr, effects,
-          num_const_args=num_const_args,
-          in_avals=in_avals,
-          arg_names=arg_names,
-          result_names=result_names)
-
+          ctx, fn_name, call_jaxpr, effects, num_const_args=num_const_args,
+          in_avals=in_avals, arg_names=arg_names, result_names=result_names)
       # If this Jaxpr includes callbacks, we can't cache the lowering because
       # on TPU every callback must have a globally unique channel, but the
       # channel gets assigned during lowering.
@@ -2559,32 +2548,17 @@ def check_backend_matches(inner_backend: str | None,
 
 
 def lower_called_computation(
-    fn_name,
-    call_jaxpr: core.ClosedJaxpr,
-    ctx: ModuleContext,
-    num_const_args: int,
-    in_avals,
-    out_avals,
-    tokens_in,
-    backend=None,
-    arg_names=None,
-    result_names=None,
-):
+    fn_name, call_jaxpr: core.ClosedJaxpr, ctx: ModuleContext,
+    num_const_args: int, in_avals, out_avals, tokens_in, backend=None,
+    arg_names=None, result_names=None):
   assert isinstance(call_jaxpr, core.ClosedJaxpr), type(call_jaxpr)
   check_backend_matches(backend, ctx.platforms)
   effects = list(tokens_in.effects())
   output_types = map(aval_to_ir_type, out_avals)
   output_types = [token_type()] * len(effects) + output_types
   func_op = _lower_jaxpr_to_fun_cached(
-      ctx,
-      fn_name,
-      call_jaxpr,
-      num_const_args,
-      effects,
-      in_avals=in_avals,
-      arg_names=arg_names,
-      result_names=result_names,
-  )
+      ctx, fn_name, call_jaxpr, num_const_args, effects, in_avals=in_avals,
+      arg_names=arg_names, result_names=result_names)
   return func_op, output_types, effects
 
 
@@ -3320,7 +3294,3 @@ def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
   context = make_ir_context()
   with context:
     return ir.Module.parse(refined_module_str)
-
-########################### pvary ##################################
-
-register_lowering(core.pvary_p, lambda ctx, *x, axes, axis_index_groups: x)

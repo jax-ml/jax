@@ -109,7 +109,7 @@ def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out
 
   out_op, token_out, _ = cb.emit_python_callback(
       ctx, callback, token_in, list(args), list(ctx.avals_in),
-      list(ctx.avals_out), has_side_effect=True)
+      list(ctx.avals_out), has_side_effect=True, returns_token=True)
   if token_out:
     ctx.set_tokens_out(ctx.tokens_in.update_tokens(mlir.TokenSet({effect:
       token_out})))
@@ -275,6 +275,57 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
         return bar(jnp.zeros((1,)), w)
 
     foo(jax.new_ref(jnp.eye(1)))  # don't crash
+
+  def test_jit_const_input_effect_indexing(self):
+    @jax.jit
+    def bar(w):
+      x = jnp.zeros((1,)) + jnp.array([0.])
+      x = jax.jit(lambda x: x + w[...])(x)
+      return x
+
+    @jax.jit
+    def foo(w):
+        return bar(w)
+
+    foo(jax.new_ref(jnp.ones((1,))))
+    jax.grad(jax.remat(lambda x: foo(jax.new_ref(x)).sum()))(jnp.ones((1,)))
+
+  def test_cond_const_input_effect_indexing(self):
+    @jax.custom_jvp
+    def weird(x):
+      return x
+
+    @weird.defjvp
+    def weird_jvp(primals, tangents):
+      (x,), (xdot,) = primals, tangents
+      return jnp.sum(np.ones(3)) * x, xdot
+
+    @jax.jit
+    def f(x):
+      x_ref = jax.new_ref(0.)
+      return jax.lax.cond(x < 0, lambda: x_ref[...], lambda: weird(x[...]))
+
+    jax.jvp(f, (1.,), (1.,))
+
+  def test_scan_const_input_effect_indexing(self):
+    @jax.custom_jvp
+    def weird(x):
+      return x
+
+    @weird.defjvp
+    def weird_jvp(primals, tangents):
+      (x,), (xdot,) = primals, tangents
+      return jnp.sum(np.ones(3)) * x, xdot
+
+    @jax.jit
+    def f(x):
+      x_ref = jax.new_ref(0.)
+      y, () = jax.lax.scan(lambda _, __: (weird(x_ref[...]), ()),
+                           x_ref[...], length=1)
+      return y
+
+    jax.jvp(f, (1.,), (1.,))
+    jax.grad(jax.remat(f))(1.)
 
 
 @jtu.thread_unsafe_test_class()  # because of mlir.register_lowering calls

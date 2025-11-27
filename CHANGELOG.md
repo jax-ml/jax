@@ -16,6 +16,18 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Changes:
+  * jax's `Tracer` no longer inherits from `jax.Array` at runtime. However,
+    `jax.Array` now uses a custom metaclass such `isinstance(x, Array)` is true
+    if an object `x` represents a traced `Array`. Only some `Tracer`s represent
+    `Array`s, so it is not correct for `Tracer` to inherit from `Array`.
+
+    For the moment, during Python type checking, we continue to declare `Tracer`
+    as a subclass of `Array`, however we expect to remove this in a future
+    release.
+
+## JAX 0.8.1 (November 18, 2025)
+
 * New features:
 
   * {func}`jax.jit` now supports the decorator factory pattern; i.e instead of
@@ -43,10 +55,22 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     decomposition on CUDA GPUs. This is also an alias for the existing algorithm
     on TPUs.
 
+* Bug fixes:
+
+  * Fixed a bug introduced in JAX 0.7.2 where eigh failed for large matrices on
+    GPU (({jax-issue}`#33062`).
+
 * Deprecations:
-  * {mod}`jax.cloud_tpu_init` and its contents were deprecated. There is no
-    reason for a user to import or use the contents of this module; JAX handles
-    this for you automatically if needed.
+  * `jax.sharding.PmapSharding` is now deprecated. Please use
+    `jax.NamedSharding` instead.
+  * `jx.device_put_replicated` is now deprecated. Please use `jax.device_put`
+    with the appropriate sharding instead.
+  * `jax.device_put_sharded` is now deprecated. Please use `jax.device_put` with
+    the appropriate sharding instead.
+  * Default `axis_types` of `jax.make_mesh` will change in JAX v0.9.0 to return
+  `jax.sharding.AxisType.Explicit`. Leaving axis_types unspecified will raise a
+  `DeprecationWarning`.
+  * {mod}`jax.cloud_tpu_init` and its contents were deprecated. There is no reason for a user to import or use the contents of this module; JAX handles this for you automatically if needed.
 
 ## JAX 0.8.0 (October 15, 2025)
 

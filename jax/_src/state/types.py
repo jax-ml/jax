@@ -79,6 +79,7 @@ effects.control_flow_allowed_effects.add_type(RefEffect)
 effects.custom_derivatives_allowed_effects.add_type(RefEffect)
 effects.custom_derivatives_allowed_effects.add_type(core.InternalMutableArrayEffect)
 effects.partial_eval_kept_effects.add_type(RefEffect)
+effects.remat_allowed_effects.add_type(RefEffect)
 
 StateEffect = Union[ReadEffect, WriteEffect, AccumEffect]
 
@@ -395,11 +396,13 @@ class AbstractRef(core.AbstractValue):
 
   .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
-  __slots__ = ["inner_aval", "memory_space"]
+  __slots__ = ["inner_aval", "memory_space", "kind"]
 
-  def __init__(self, inner_aval: core.AbstractValue, memory_space: Any = None):
+  def __init__(self, inner_aval: core.AbstractValue, memory_space: Any = None,
+               kind: Any = None):
     self.inner_aval = inner_aval
     self.memory_space = memory_space
+    self.kind = kind
 
   @property
   def is_high(self):
@@ -428,10 +431,11 @@ class AbstractRef(core.AbstractValue):
   def update_weak_type(self, weak_type):
     return self.update(inner_aval=self.inner_aval.update_weak_type(weak_type))
 
-  def update(self, inner_aval=None, memory_space=None):
+  def update(self, inner_aval=None, memory_space=None, kind=None):
     inner_aval = self.inner_aval if inner_aval is None else inner_aval
     memory_space = self.memory_space if memory_space is None else memory_space
-    return AbstractRef(inner_aval, memory_space)
+    kind = self.kind if kind is None else kind
+    return AbstractRef(inner_aval, memory_space, kind)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: math.prod(self.shape))
@@ -548,7 +552,7 @@ class AbstractRef(core.AbstractValue):
   __str__ = __repr__
 
   def to_tangent_aval(self):
-    return AbstractRef(self.inner_aval.to_tangent_aval(), self.memory_space)
+    return AbstractRef(self.inner_aval.to_tangent_aval(), self.memory_space, kind=self.kind)
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.inner_aval == other.inner_aval
@@ -559,12 +563,12 @@ class AbstractRef(core.AbstractValue):
 
 def _map_ref(size, axis, ref_aval):
   return AbstractRef(core.mapped_aval(size, axis, ref_aval.inner_aval),
-                     ref_aval.memory_space)
+                     ref_aval.memory_space, ref_aval.kind)
 
 def _unmap_ref(size, axis, explicit_mesh_axis, ref_aval):
   return AbstractRef(core.unmapped_aval(
       size, axis, ref_aval.inner_aval, explicit_mesh_axis),
-                     ref_aval.memory_space)
+                     ref_aval.memory_space, ref_aval.kind)
 
 core.aval_mapping_handlers[AbstractRef] = (_map_ref, _unmap_ref)
 

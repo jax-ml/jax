@@ -94,12 +94,6 @@ operations.
    export/index
 
 .. toctree::
-   :caption: Pallas
-   :maxdepth: 1
-
-   pallas/index
-
-.. toctree::
    :caption: Example applications
    :maxdepth: 1
 

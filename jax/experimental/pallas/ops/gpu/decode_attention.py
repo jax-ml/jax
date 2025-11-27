@@ -370,7 +370,7 @@ def gqa(
     return o, (l, m)
   else:
     o = outputs
-    o = o.reshape(batch_size, q_heads, head_dim)
+    o = o.reshape(batch_size, q_heads, head_dim)  # pytype: disable=attribute-error
     return o
 
 

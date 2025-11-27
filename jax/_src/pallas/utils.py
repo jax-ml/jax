@@ -16,14 +16,15 @@
 
 from __future__ import annotations
 import dataclasses
-from typing import overload
+from typing import Any, overload
 
-import jax
-from jax import lax
+from jax._src.lax import lax
 from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src import typing as jax_typing
+
 from jax._src.util import split_list
-import jax.numpy as jnp
+from jax._src import numpy as jnp
 import numpy as np
 
 
@@ -32,18 +33,18 @@ def cdiv(a: int, b: int) -> int:
   ...
 
 @overload
-def cdiv(a: int, b: jax.Array) -> jax.Array:
+def cdiv(a: int, b: jax_typing.Array) -> jax_typing.Array:
   ...
 
 @overload
-def cdiv(a: jax.Array, b: int) -> jax.Array:
+def cdiv(a: jax_typing.Array, b: int) -> jax_typing.Array:
   ...
 
 @overload
-def cdiv(a: jax.Array, b: jax.Array) -> jax.Array:
+def cdiv(a: jax_typing.Array, b: jax_typing.Array) -> jax_typing.Array:
   ...
 
-def cdiv(a: int | jax.Array, b: int | jax.Array) -> int | jax.Array:
+def cdiv(a: int | jax_typing.Array, b: int | jax_typing.Array) -> int | jax_typing.Array:
   if isinstance(a, int) and isinstance(b, int):
     return (a + b - 1) // b
   return lax.div(a + (b - 1), b)
@@ -324,7 +325,7 @@ def nextafter_lowering_helper(x, y):
       jnp.float64, jnp.uint64, np.float64, np.uint64, np.int64,
   )
 
-  bitwidth = dtypes.bit_width(x.dtype)
+  bitwidth = dtypes.itemsize_bits(x.dtype)
 
   x_as_int = x.view(jnp_uint)
   y_as_int = y.view(jnp_uint)
@@ -400,7 +401,7 @@ class MeshInfo:
   mesh_strides: tuple[int, ...]
 
   @staticmethod
-  def from_mesh(mesh: jax.sharding.Mesh) -> MeshInfo:
+  def from_mesh(mesh: Any) -> MeshInfo:
     # We need mesh <-> logical translation tables. Since the logical IDs are
     # just linearized versions of the mesh IDs, we create those tables.
     mesh_strides = strides_from_shape(tuple(

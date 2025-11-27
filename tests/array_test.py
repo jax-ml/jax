@@ -25,12 +25,13 @@ import jax.numpy as jnp
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
+from jax._src import deprecations
 from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.util import safe_zip
-from jax._src.mesh import AxisType, AbstractMesh
+from jax._src.mesh import AxisType, AbstractMesh, Mesh
 from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
     pmap_sharding_devices_indices_map, NamedSharding, GSPMDSharding)
@@ -220,6 +221,15 @@ class JaxArrayTest(jtu.JaxTestCase):
       arr._check_if_deleted()
     self.assertIsNone(arr._npy_value)
     self.assertIsNone(arr._arrays)
+
+  def test_device_put_to_cpu(self):
+    mesh = Mesh(jax.devices(), 'x')
+    mesh_cpu = Mesh(jax.devices('cpu'), 'x')
+    x = np.zeros(16)
+    y = jax.device_put(x, NamedSharding(mesh, P('x')))
+    z = jax.device_put(y, NamedSharding(mesh_cpu, P('x')))
+    for z_s in z.addressable_shards:
+      self.assertArraysEqual(z_s.data, x[z_s.index])
 
   def test_array_device_get(self):
     global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
@@ -945,6 +955,7 @@ class ShardingTest(jtu.JaxTestCase):
         r"factors: \[4, 2\] should evenly divide the shape\)"):
       mps.shard_shape((8, 3))
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_pmap_sharding_hash_eq(self):
     if jax.device_count() < 2:
@@ -1055,6 +1066,7 @@ class ShardingTest(jtu.JaxTestCase):
       ('sharded_dim_2', (4, 2, 4), 2),
       ('sharded_dim_1_1', (2, 4), 1)
   )
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_default_pmap_sharding(self, shape, sharded_dim):
     if jax.device_count() < 4:
       self.skipTest('Test needs >= 4 devices.')
@@ -1080,6 +1092,7 @@ class ShardingTest(jtu.JaxTestCase):
       self.assertEqual(actual_sharding.sharding_spec, expected_sharding.sharding_spec)
       self.assertEqual(actual_sharding._device_assignment, expected_sharding._device_assignment)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_default_pmap_sharding_with_devices(self):
     if jax.device_count() < 4:
       self.skipTest('Test needs >= 4 devices.')
@@ -1089,6 +1102,7 @@ class ShardingTest(jtu.JaxTestCase):
     ps = jax.sharding.PmapSharding.default((4, 2), devices=new_order)
     self.assertEqual(ps._device_assignment, new_order)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_default_pmap_sharding_replicated(self):
     x = np.zeros((len(jax.local_devices()), 8), dtype=np.float32)
     x = jax.pmap(lambda x: x, in_axes=0, out_axes=None, axis_name='x')(x)
@@ -1324,8 +1338,13 @@ class ShardingTest(jtu.JaxTestCase):
     mesh2 = jax.sharding.AbstractMesh((2,), 'x', axis_types=Auto)
     self.assertEqual(mesh1, mesh2)
 
-    mesh = jax.make_mesh((1, 1), ('x', 'y'))
-    self.assertTupleEqual(mesh.axis_types, (AxisType.Auto,) * 2)
+    if deprecations.is_accelerated('jax-make-mesh-default-explicit'):
+      mesh = jax.make_mesh((1, 1), ('x', 'y'))
+      self.assertTupleEqual(mesh.axis_types, (AxisType.Explicit,) * 2)
+    else:
+      mesh = jax.make_mesh((1, 1), ('x', 'y'),
+                          axis_types=(AxisType.Explicit,) * 2)
+      self.assertTupleEqual(mesh.axis_types, (AxisType.Explicit,) * 2)
 
     mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'),
                          axis_types=(Explicit, Auto, Manual))
@@ -1406,6 +1425,30 @@ class ShardingTest(jtu.JaxTestCase):
 
     aval = jax.core.ShapedArray((1, 1, 1, 1), np.float32)
     self.assertEqual(aval.str_short(True), 'f32[1,1,1,1]')
+
+  def test_modify_spec_auto_unreduced(self):
+    mesh = AbstractMesh(
+        (2, 2, 2), ('a', 'b', 'c'),
+        axis_types=(AxisType.Explicit, AxisType.Explicit, AxisType.Auto))
+    spec = P(unreduced={'a', 'b', 'c'})
+    out = core.modify_spec_for_auto_manual(spec, mesh)
+    self.assertEqual(out, P(unreduced={'a', 'b'}))
+
+    spec = P(reduced={'a', 'b', 'c'})
+    out = core.modify_spec_for_auto_manual(spec, mesh)
+    self.assertEqual(out, P(reduced={'a', 'b'}))
+
+    spec = P(unreduced={'a', 'b'}, reduced={'c'})
+    out = core.modify_spec_for_auto_manual(spec, mesh)
+    self.assertEqual(out, P(unreduced={'a', 'b'}))
+
+    spec = P(unreduced={'a', 'c'}, reduced={'b'})
+    out = core.modify_spec_for_auto_manual(spec, mesh)
+    self.assertEqual(out, P(unreduced={'a'}, reduced={'b'}))
+
+    spec = P(unreduced={'c'}, reduced={'a', 'b'})
+    out = core.modify_spec_for_auto_manual(spec, mesh)
+    self.assertEqual(out, P(reduced={'a', 'b'}))
 
   def test_pspec_unreduced(self):
     pspec = P('a', 'b', None, unreduced={'c'}, reduced={'d'})
@@ -1528,6 +1571,15 @@ class ShardingTest(jtu.JaxTestCase):
         ValueError,
         "A tuple inside PartitionSpec cannot contain a nested tuple"):
       jax.P((('a', 'b'), 'c'))
+
+  def test_make_mesh_accelerate_explicit(self):
+    if deprecations.is_accelerated('jax-make-mesh-default-explicit'):
+      mesh = jax.make_mesh((1,), 'x')
+      self.assertTupleEqual(mesh.axis_types, (AxisType.Explicit,))
+    else:
+      with self.assertWarnsRegex(DeprecationWarning, "The default axis_types"):
+        mesh = jax.make_mesh((1,), 'x')
+        self.assertTupleEqual(mesh.axis_types, (AxisType.Auto,))
 
 
 class RngShardingTest(jtu.JaxTestCase):

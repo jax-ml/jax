@@ -49,6 +49,7 @@ OutShardingType: TypeAlias = NamedSharding | PartitionSpec | None
 @export
 @typing.runtime_checkable
 class Initializer(Protocol):
+  """Protocol for initializers returned by :mod:`jax.nn.initializers` APIs."""
   def __call__(self,
                key: Array,
                shape: core.Shape,

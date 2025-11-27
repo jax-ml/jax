@@ -16,6 +16,7 @@ limitations under the License.
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 
 #include <cstdint>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -50,6 +51,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/OperationSupport.h"
+#include "mlir/IR/Region.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
@@ -334,6 +336,18 @@ llvm::LogicalResult AsyncStoreOp::verify() {
                                  getSliceLengths(), getIndices().size());
 }
 
+llvm::LogicalResult WGMMAOp::inferReturnTypes(
+    mlir::MLIRContext*, std::optional<mlir::Location> location,
+    mlir::ValueRange operands, mlir::DictionaryAttr attributes,
+    mlir::OpaqueProperties properties, mlir::RegionRange regions,
+    llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  if (operands.empty()) {
+    return mlir::emitOptionalError(location, "expected non-empty operands");
+  }
+  inferredReturnTypes.assign({operands[0].getType()});
+  return mlir::success();
+}
+
 llvm::LogicalResult WGMMAOp::verify() {
   auto error = [this](auto... params) {
     return getOperation()->emitOpError(llvm::formatv(params...));
@@ -510,8 +524,19 @@ llvm::LogicalResult CustomPrimitiveOp::verify() {
         "smem.");
   }
 
-  if (getResults().size() != getOutLayouts().size()) {
-    return emitOpError("Custom primitive must have a layout for each result.");
+  int num_vector_results = 0;
+  for (auto result : getResults()) {
+    if (mlir::isa<mlir::VectorType>(result.getType())) {
+      ++num_vector_results;
+    } else if (mlir::isa<mlir::ShapedType>(result.getType())) {
+      return emitOpError(
+          "Custom primitive can only return scalars or vectors.");
+    }
+  }
+
+  if (num_vector_results != getOutLayouts().size()) {
+    return emitOpError(
+        "Custom primitive must have a layout for each vector result.");
   }
 
   return llvm::success();
@@ -522,8 +547,8 @@ llvm::LogicalResult BroadcastInDimOp::verify() {
     return emitOpError(llvm::formatv(params...));
   };
 
-  auto operand_type = mlir::cast<mlir::VectorType>(getOperand().getType());
-  auto result_type = mlir::cast<mlir::VectorType>(getResult().getType());
+  mlir::VectorType operand_type = getOperand().getType();
+  mlir::VectorType result_type = getResult().getType();
 
   if (operand_type.getRank() == 0) {
     return error("The input vector must have rank > 0.");
@@ -559,15 +584,12 @@ llvm::LogicalResult BroadcastInDimOp::verify() {
 }
 
 llvm::LogicalResult ReturnOp::verify() {
-  auto custom_primitive_op =
-      mlir::cast<CustomPrimitiveOp>((*this)->getParentOp());
-
   // The operand number and types must match the custom primitive signature.
-  const auto& results = custom_primitive_op->getResultTypes();
+  const auto& results = getParentOp()->getResultTypes();
   if (getNumOperands() != results.size())
     return emitOpError("has ")
            << getNumOperands() << " operands, but enclosing custom_primitive (@"
-           << custom_primitive_op->getName() << ") returns " << results.size();
+           << getParentOp()->getName() << ") returns " << results.size();
 
   for (unsigned i = 0, e = results.size(); i != e; ++i)
     if (getOperand(i).getType() != results[i])
@@ -576,7 +598,7 @@ llvm::LogicalResult ReturnOp::verify() {
                          << ") doesn't match the result type (" << results[i]
                          << ")"
                          << " in custom_primitive @"
-                         << custom_primitive_op->getName();
+                         << getParentOp()->getName();
 
   return llvm::success();
 }
@@ -585,10 +607,9 @@ namespace {
 int kTmemMaxColumns = 512;
 int kTmemCellBitwidth = 32;
 
-llvm::LogicalResult VerifyTmemRefType(mlir::MLIRContext* context,
-                                      mlir::Operation* op,
+llvm::LogicalResult VerifyTmemRefType(mlir::Operation* op,
                                       mlir::MemRefType tmem_ref_type) {
-  mlir::Attribute tmem = TmemAttr::get(context);
+  mlir::Attribute tmem = TmemAttr::get(op->getContext());
   if (tmem_ref_type.getMemorySpace() != tmem) {
     return op->emitError() << "The tmem memref must have a "
                               "mosaic_gpu.tmem memory space but got: "
@@ -611,8 +632,7 @@ llvm::LogicalResult TmemAllocOp::verify() {
   }
 
   mlir::MemRefType tmem_ref_type = getResult().getType();
-  llvm::LogicalResult result =
-      VerifyTmemRefType(getContext(), getOperation(), tmem_ref_type);
+  llvm::LogicalResult result = VerifyTmemRefType(getOperation(), tmem_ref_type);
   if (result.failed()) {
     return result;
   }
@@ -646,8 +666,20 @@ llvm::LogicalResult TmemAllocOp::verify() {
 }
 
 llvm::LogicalResult TmemDeallocOp::verify() {
-  return VerifyTmemRefType(getContext(), getOperation(),
-                           getTmemRef().getType());
+  return VerifyTmemRefType(getOperation(), getTmemRef().getType());
+}
+
+llvm::LogicalResult AsyncLoadTmemOp::inferReturnTypes(
+    mlir::MLIRContext*, std::optional<mlir::Location> location,
+    mlir::ValueRange operands, mlir::DictionaryAttr attributes,
+    mlir::OpaqueProperties properties, mlir::RegionRange regions,
+    llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  mlir::MemRefType memref_type =
+      mlir::cast<mlir::MemRefType>(operands[0].getType());
+  auto vector_type = mlir::VectorType::get(memref_type.getShape(),
+                                           memref_type.getElementType());
+  inferredReturnTypes.assign({vector_type});
+  return mlir::success();
 }
 
 llvm::LogicalResult AsyncLoadTmemOp::verify() {
@@ -659,7 +691,7 @@ llvm::LogicalResult AsyncLoadTmemOp::verify() {
   if (getSource().getType().getShape() != getResult().getType().getShape()) {
     return emitError() << "The `source` and `result` must have the same shape.";
   }
-  return VerifyTmemRefType(getContext(), getOperation(), getSource().getType());
+  return VerifyTmemRefType(getOperation(), getSource().getType());
 }
 
 llvm::LogicalResult AsyncStoreTmemOp::verify() {
@@ -673,12 +705,88 @@ llvm::LogicalResult AsyncStoreTmemOp::verify() {
     return emitError()
            << "The `source` and `destination` must have the same shape.";
   }
-  return VerifyTmemRefType(getContext(), getOperation(),
-                           getDestination().getType());
+  return VerifyTmemRefType(getOperation(), getDestination().getType());
 }
 
 llvm::LogicalResult TmemLayoutCastOp::verify() {
-  return VerifyTmemRefType(getContext(), getOperation(), getRef().getType());
+  return VerifyTmemRefType(getOperation(), getRef().getType());
+}
+
+llvm::LogicalResult SliceTmemOp::verify() {
+  if (VerifyTmemRefType(getOperation(), getSource().getType()).failed() ||
+      VerifyTmemRefType(getOperation(), getResult().getType()).failed()) {
+    return llvm::failure();
+  }
+  if (getOffset() % 4 != 0) {
+    return emitError() << "The offset must be a multiple of 4 but got: "
+                       << getOffset();
+  }
+  // TODO(allanrenucci): We can't precisely compute the number of columns in
+  // source/result because we need to know packing. We can however assume
+  // packing is either 1 (unpacked) or 32 / element_bitwidth (fully packed) and
+  // reject some invalid slices.
+  return llvm::success();
+}
+
+llvm::LogicalResult VectorLoadOp::inferReturnTypes(
+    mlir::MLIRContext*, std::optional<mlir::Location>,
+    mlir::ValueRange operands, mlir::DictionaryAttr, mlir::OpaqueProperties,
+    mlir::RegionRange, llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  mlir::MemRefType memref_type =
+      mlir::cast<mlir::MemRefType>(operands[0].getType());
+  auto vector_type = mlir::VectorType::get(memref_type.getShape(),
+                                           memref_type.getElementType());
+  inferredReturnTypes.assign({vector_type});
+  return mlir::success();
+}
+
+llvm::LogicalResult VectorStoreOp::verify() {
+  mlir::VectorType src_type = getValueToStore().getType();
+  mlir::MemRefType dst_type = getDestination().getType();
+  if (src_type.getShape() != dst_type.getShape()) {
+    return emitError()
+           << "The source and destination must have the same shape but got "
+           << src_type.getShape() << " and " << dst_type.getShape();
+  }
+  if (src_type.getElementType() != dst_type.getElementType()) {
+    return emitError()
+           << "The source and destination must have the same element type but "
+              "got "
+           << src_type.getElementType() << " and " << dst_type.getElementType();
+  }
+  return llvm::success();
+}
+
+llvm::LogicalResult BroadcastedIotaOp::verify() {
+  mlir::VectorType result_type = getResult().getType();
+  if (getDimension() >= result_type.getRank()) {
+    return emitError(llvm::formatv(
+        "dimension={0} must be smaller than the rank={1} of the result.",
+        getDimension(), result_type.getRank()));
+  }
+  return llvm::success();
+}
+
+llvm::LogicalResult PrintLayoutOp::verify() {
+  if (auto ref_ty = mlir::dyn_cast<mlir::MemRefType>(getValue().getType())) {
+    if (VerifyTmemRefType(getOperation(), ref_ty).failed()) {
+      return llvm::failure();
+    }
+  }
+  return llvm::success();
+}
+
+llvm::LogicalResult OptimizationBarrierOp::inferReturnTypes(
+    mlir::MLIRContext*, std::optional<mlir::Location> location,
+    mlir::ValueRange operands, mlir::DictionaryAttr attributes,
+    mlir::OpaqueProperties properties, mlir::RegionRange regions,
+    llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  if (operands.empty()) {
+    return mlir::emitOptionalError(location, "expected non-empty operands");
+  }
+  mlir::TypeRange operand_types = operands.getTypes();
+  inferredReturnTypes.assign(operand_types.begin(), operand_types.end());
+  return mlir::success();
 }
 
 void MosaicGPUDialect::initialize() {

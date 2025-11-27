@@ -57,12 +57,12 @@ jobs:
       # https://opensource.google/documentation/reference/github/services#actions
       # mandates using a specific commit for non-Google actions. We use
       # https://github.com/sethvargo/ratchet to pin specific versions.
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
         with:
           persist-credentials: false
       # Checkout XLA at head, if we're building jaxlib at head.
       - name: Checkout XLA at head
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
         if: ${{ matrix.jaxlib-version == 'head' }}
         with:
           repository: openxla/xla

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import os
 import logging
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 
@@ -69,7 +70,8 @@ class ClusterEnv:
     if env:
       logger.debug('Initializing distributed JAX environment via %s', env.__name__)
       if coordinator_address is None:
-        coordinator_address = env.get_coordinator_address(timeout_secs=initialization_timeout)
+        coordinator_port = os.environ.get("JAX_COORDINATOR_PORT")
+        coordinator_address = env.get_coordinator_address(timeout_secs=initialization_timeout, override_coordinator_port=coordinator_port)
       if num_processes is None:
         num_processes = env.get_process_count()
       if process_id is None:
@@ -95,7 +97,7 @@ class ClusterEnv:
     raise NotImplementedError("ClusterEnv subclasses must implement is_env_present")
 
   @classmethod
-  def get_coordinator_address(cls, timeout_secs: int | None) -> str:
+  def get_coordinator_address(cls, timeout_secs: int | None, override_coordinator_port: str | None) -> str:
     """Returns address and port used by JAX to bootstrap.
 
     Process id 0 will open a tcp socket at "hostname:port" where

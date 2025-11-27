@@ -90,6 +90,7 @@ def create_2d_non_contiguous_mesh2():
 # TODO(apaszke): Test with mesh that has host-tiled axes (especially nesting!)
 class PJitTestMultiHost(jt_multiprocess.MultiProcessTest):
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def testLocalInputsWithJaxArray(self):
     # Note that this is too small to shard over the global mesh, but fine for
     # the local mesh and so should be accepted.
@@ -358,8 +359,6 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
     pjit_all(pjit_all(check_shape))(x)
     pjit_all(pjit_all(pjit_all(check_shape)))(x)
 
-  # TODO(phawkins): it appears we have some thread safety issues on CPU.
-  @jtu.skip_on_devices("cpu")
   def test_compile_parallel(self):
     x = jnp.arange(16)
     global_mesh = jtu.create_mesh((4, 2), ("x", "y"))
@@ -372,7 +371,7 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
             out_shardings=None,
         )
         exe = f.lower(inp).compile()
-        return exe(inp)
+        return exe
 
     with futures.ThreadPoolExecutor(max_workers=5) as executor:
       result = executor.map(_lower_compile, [x] * 5)
@@ -380,7 +379,7 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
     expected_out = np.arange(16).sum()
 
     for out in list(result):
-      np.testing.assert_array_equal(out, expected_out)
+      np.testing.assert_array_equal(out(x), expected_out)
 
   def test_fully_sharded_on_all_devices(self):
     if jax.local_device_count() > 1:
@@ -527,24 +526,31 @@ class MultiHostDebuggingTest(jt_multiprocess.MultiProcessTest):
     else:
       self.assertEqual(output(), "")
 
-  def test_print_in_multihost_pmap(self):
+  def test_print_in_multihost_shard_map(self):
+    devices = jax.devices()
+    mesh = jax.sharding.Mesh(devices, ("i",))
     num_devices = jax.local_device_count()
-    x = (
+    local_x = (
         jnp.arange(num_devices, dtype=jnp.int32)
         + jax.process_index() * num_devices
     )
+    global_shape = (jax.device_count(),)
+    sharding = jax.NamedSharding(mesh, jax.P("i"))
+    global_x = jax.make_array_from_process_local_data(sharding, local_x, global_shape)
 
+    @jax.jit
+    @jax.shard_map(mesh=mesh, in_specs=jax.P("i"), out_specs=jax.P("i"))
     def f(x):
-      debugging.debug_print("{}", x, ordered=False)
+      debugging.debug_print("{}", x[0], ordered=False)
       return x
 
-    f = jax.pmap(f)
     with capture_stdout() as output:
-      f(x)
+      out = f(global_x)
+      out.block_until_ready()
       jax.effects_barrier()
-    lines = [f"{i}" for i in x] + [""]
-    self._assert_lines_equal(output(), "\n".join(lines))
 
+    lines = [f"{i}" for i in local_x] + [""]
+    self._assert_lines_equal(output(), "\n".join(lines))
 
 if __name__ == "__main__":
   jt_multiprocess.main()

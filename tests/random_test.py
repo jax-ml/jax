@@ -616,9 +616,9 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertEqual(key1.dtype, key2.dtype)
     self.assertArraysEqual(random.key_data(key1), random.key_data(key2))
 
-  def make_keys(self, *shape, seed=28):
+  def make_keys(self, *shape, seed=28, impl='threefry2x32'):
     seeds = seed + jnp.arange(math.prod(shape), dtype=jnp.uint32)
-    return jax.vmap(random.key)(seeds).reshape(shape)
+    return jax.vmap(partial(random.key, impl=impl))(seeds).reshape(shape)
 
   def test_construction(self):
     key = random.key(42)
@@ -945,6 +945,20 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(ys, prng_internal.PRNGKeyArray)
     self.assertEqual(ys.shape, (3, 2, 1))
 
+  @parameterized.parameters("threefry2x32", "rbg", "unsafe_rbg")
+  def test_gather_fill(self, impl):
+    # Regression test for https://github.com/jax-ml/jax/issues/33476
+    keys = self.make_keys(4, impl=impl)
+
+    # Expected fill value is a key wrapping an array containing uint32 max.
+    expected = random.wrap_key_data(
+      jnp.full_like(random.key_data(keys)[0], fill_value=np.iinfo('uint32').max),
+      impl=random.key_impl(keys))
+
+    out = jax.jit(lambda x: x.at[100].get(mode='fill'))(keys)
+    self.assertIsInstance(out, prng_internal.PRNGKeyArray)
+    self.assertKeysEqual(out, expected)
+
   def test_select(self):
     ks = self.make_keys(3, 2)
     cs = jnp.array([True, False, False, True, False, True]).reshape(3, 2)
@@ -978,12 +992,14 @@ class KeyArrayTest(jtu.JaxTestCase):
     keys_on_device = jax.device_put(keys, device)
     self.assertKeysEqual(keys, keys_on_device)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_device_put_sharded(self):
     devices = jax.devices()
     keys = self.make_keys(len(devices))
     keys_on_device = jax.device_put_sharded(list(keys), devices)
     self.assertKeysEqual(keys, keys_on_device)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_device_put_replicated(self):
     devices = jax.devices()
     key = self.make_keys()

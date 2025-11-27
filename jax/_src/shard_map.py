@@ -201,6 +201,7 @@ def _smap(f, *, in_axes, out_axes, axis_name: AxisName):
                     axis_names={axis_name}, check_vma=True, _smap=True)
 
 
+@partial(traceback_util.api_boundary, repro_api_name="jax.shard_map")
 def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
                in_specs: Specs, out_specs: Specs | Callable[[], Specs],
                axis_names: Set[AxisName], check_vma: bool,
@@ -764,13 +765,14 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.AbstractValue
   assert isinstance(aval, core.ShapedArray)
   if spec.unreduced != aval.sharding.spec.unreduced:
     raise ValueError(
-        f"out_specs containing unreduced {spec} passed to shard_map should be"
-        " equal to the unreduced present on the out_aval"
-        f" {aval.str_short(True)}")
+        "out_specs passed to shard_map should be equal to the unreduced"
+        f" present on the out_aval. Got out_specs={spec} and"
+        f" out_aval={aval.str_short(True)}")
   if spec.reduced != aval.sharding.spec.reduced:
     raise ValueError(
-        f"out_specs containing reduced {spec} passed to shard_map should be"
-        f" equal to the reduced present on the out_aval {aval.str_short(True)}")
+        "out_specs passed to shard_map should be equal to the reduced present"
+        f" on the out_aval. Got out_specs={spec} and"
+        f" out_aval={aval.str_short(True)}")
   names = _spec_to_names(spec)
   new_shape = tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
                     for i, sz in enumerate(aval.shape))

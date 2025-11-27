@@ -1232,16 +1232,6 @@ def add_batched(axis_data, batched_args, batch_dims):
 fancy_primitive_batchers[add_jaxvals_p] = add_batched
 skippable_batchers[add_jaxvals_p] = lambda _: ()
 
-########################### core. ##################################
-
-def _pvary_batcher(vals_in, dims_in, *, axes, axis_index_groups):
-  if any(type(axis) is int for axis in axes):
-    raise NotImplementedError
-  vals_out = core.pvary_p.bind(*vals_in, axes=axes,
-                          axis_index_groups=axis_index_groups)
-  return vals_out, dims_in
-primitive_batchers[core.pvary_p] = _pvary_batcher
-
 ### mutable arrays
 
 defvectorized(core.ref_p)

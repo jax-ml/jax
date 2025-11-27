@@ -541,6 +541,46 @@ class IndexerOpsTest(PallasBaseTest):
         y2[slices], expected, err_msg="Strided Store Error"
     )
 
+  @hp.given(hps.data())
+  def test_load_and_broadcast_with_stride_0(self, data):
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 25):
+      self.skipTest("Requires libtpu built after 2025-11-25")
+    if self.INTERPRET:
+      self.skipTest("TODO: fails in interpret mode.")
+    dtype = jnp.float32
+    rank = data.draw(hps.integers(min_value=2, max_value=4))
+    shape = data.draw(hps.tuples(
+        *(hps.integers(min_value=1, max_value=10) for _ in range(rank - 1))))
+    shape = (*shape, 128)
+
+    strides = data.draw(hps.tuples(
+        *(hps.sampled_from([0, 1]) for _ in range(rank - 1))))
+    strides = (*strides, 1)
+
+    indices = []
+    for i in range(rank):
+      index = (data.draw(hps.integers(min_value=0, max_value=shape[i] - 1))
+               if strides[i] == 0 else 0)
+      indices.append(index)
+
+    def body(x_ref, y_ref):
+      slices = tuple(
+          pl.ds(i, l, s) for i, l, s in zip(indices, shape, strides)
+      )
+      y_ref[...] = x_ref[slices]
+
+    x = random.normal(random.key(33), shape, dtype=dtype)
+    y = self.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )(x)
+    slices = tuple(slice(i, l, 1) if s != 0 else slice(i, i + 1, 1)
+                   for i, l, s in zip(indices, shape, strides))
+
+    expected = jnp.broadcast_to(x[slices], shape)
+    self.assertAllClose(y, expected)
+
+
   def test_load_with_dynamic_2nd_minor_index(self):
     if pltpu is None:
       self.skipTest("No TPU module available.")

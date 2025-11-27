@@ -22,6 +22,7 @@ from jax._src.pallas.mosaic.core import GridDimensionSemantics as GridDimensionS
 from jax._src.pallas.mosaic.core import KernelType as KernelType
 from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec as PrefetchScalarGridSpec
 from jax._src.pallas.mosaic.core import SemaphoreType as SemaphoreType
+from jax._src.pallas.mosaic.core import SideEffectType as SideEffectType
 from jax._src.pallas.mosaic.core import MemorySpace as MemorySpace
 from jax._src.pallas.mosaic.core import CompilerParams as CompilerParams
 from jax._src.pallas.mosaic.helpers import sync_copy as sync_copy
@@ -45,6 +46,7 @@ from jax._src.pallas.mosaic.primitives import get_barrier_semaphore as get_barri
 from jax._src.pallas.mosaic.primitives import load as load
 from jax._src.pallas.mosaic.primitives import make_async_copy as make_async_copy
 from jax._src.pallas.mosaic.primitives import make_async_remote_copy as make_async_remote_copy
+from jax._src.pallas.mosaic.primitives import pack_elementwise as pack_elementwise
 from jax._src.pallas.mosaic.primitives import prng_random_bits as prng_random_bits
 from jax._src.pallas.mosaic.primitives import prng_seed as prng_seed
 from jax._src.pallas.mosaic.primitives import repeat as repeat
@@ -52,6 +54,7 @@ from jax._src.pallas.mosaic.primitives import roll as roll
 from jax._src.pallas.mosaic.primitives import stochastic_round as stochastic_round
 from jax._src.pallas.mosaic.primitives import store as store
 from jax._src.pallas.mosaic.primitives import touch as touch
+from jax._src.pallas.mosaic.primitives import unpack_elementwise as unpack_elementwise
 from jax._src.pallas.mosaic.primitives import with_memory_space_constraint as with_memory_space_constraint
 from jax._src.pallas.mosaic.random import sample_block as sample_block
 from jax._src.pallas.mosaic.random import stateful_bernoulli as stateful_bernoulli
@@ -73,16 +76,6 @@ from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
 from jax._src.pallas.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
 from jax._src.pallas.primitives import semaphore_wait as semaphore_wait
-
-import types
-from jax._src.pallas.mosaic.verification import assume
-from jax._src.pallas.mosaic.verification import pretend
-from jax._src.pallas.mosaic.verification import skip
-from jax._src.pallas.mosaic.verification import define_model
-verification = types.SimpleNamespace(
-    assume=assume, pretend=pretend, skip=skip, define_model=define_model
-)
-del types, assume, pretend, skip, define_model  # Clean up.
 
 PARALLEL = GridDimensionSemantics.PARALLEL
 CORE_PARALLEL = GridDimensionSemantics.CORE_PARALLEL

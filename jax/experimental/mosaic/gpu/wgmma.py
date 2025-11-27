@@ -134,6 +134,8 @@ def wgmma_m64(
   i8 = ir.IntegerType.get_signless(8)
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
+  f8e5m2 = ir.Float8E5M2Type.get()
+  f8e4m3fn = ir.Float8E4M3FNType.get()
   if b_k_stride % 16:
     raise ValueError
   # Only 16-bit types support transposes
@@ -141,7 +143,7 @@ def wgmma_m64(
   if not supports_transpose and (a_transpose or b_transpose):
     raise ValueError("Only f16 WGMMA supports transposes")
   if a_in_regs := isinstance(a, fa.FragmentedArray):
-    if a.mlir_dtype not in {bf16, f16, i8}:
+    if a.mlir_dtype not in {bf16, f16, i8, f8e5m2, f8e4m3fn}:
       raise ValueError(f"Unsupported A register array dtype: {a.mlir_dtype}")
     # Column count must be equal to swizzle // bytewidth.
     elt_bytewidth = utils.bytewidth(element_type)
@@ -303,13 +305,15 @@ def wgmma(
 ):
   """Perform acc += a @ b using the WGMMA instruction.
 
-  The expected memref shapes are:
-    a: (m, k, 64, S)
-    b: (k, n,  S, S)
-  where S = swizzle // bytewidth(element_type).
+  `a` may be passed in registers, or as a memref. `b` must be a memref.
 
-  The refs must be contiguous or be contiguous except for having their two minor
-  dimensions swapped.
+  The expected (logical) memref shapes are:
+    a: (m // tile_m, k // tile_k, tile_m, tile_k)
+    b: (k // tile_k, n // tile_n, tile_k, tile_n).
+
+  While the shapes may be physically transposed, when considering the row-major
+  physical shape, the tile dimensions must be the two minor dimensions and must
+  have the shape (8, S) where S = swizzle // bytewidth(element_type).
   """
   if swizzle == 16:
     raise NotImplementedError("No swizzle is not supported")
@@ -321,15 +325,21 @@ def wgmma(
   f16 = ir.F16Type.get()
   i32 = ir.IntegerType.get_signless(32)
   i8 = ir.IntegerType.get_signless(8)
+  f8e5m2 = ir.Float8E5M2Type.get()
+  f8e4m3fn = ir.Float8E4M3FNType.get()
   (k, n), element_type = mma_utils.tiled_memref_shape(b)
   if a_in_regs := isinstance(a, fa.FragmentedArray):
     m, k2 = a.shape
     element_type2 = a.mlir_dtype
-    if element_type2 not in {f16, bf16, i8}:
+    if element_type2 not in {f16, bf16, i8, f8e5m2, f8e4m3fn}:
       raise ValueError(
-          f"Only f16, bf16 and i8 are supported for A in registers, got {element_type2}"
+          "Only f16, bf16, i8, f8e5m2, f8e4m3fn are supported for A "
+          f"in registers, got {element_type2}"
       )
     if element_type2 == i8 and swizzle == 32:
+      # TODO(bchetioui): relax this when ptxas is fixed. As of ptxas 12.8,
+      # optimizations eliminate MMA instructions, leading to only the first tile
+      # of the result being computed correctly.
       raise NotImplementedError("swizzle=32 not supported for s8 lhs in registers")
   elif ir.MemRefType.isinstance(a.type):
     (m, k2), element_type2 = mma_utils.tiled_memref_shape(a)

@@ -142,7 +142,7 @@ class MemorySpace(enum.Enum):
 
   def __call__(
       self,
-      shape: tuple[int, ...],
+      shape: Sequence[int],
       dtype: jnp.dtype,
       *,
       transforms: Sequence[MemoryRefTransform] = (),
@@ -150,6 +150,7 @@ class MemorySpace(enum.Enum):
       collective: bool | None = None,
       layout: TMEMLayout | None = None,
   ) -> pallas_core.MemoryRef:
+    shape = tuple(shape)
     # TODO(sharadmv): Add HiType constructor support.
     if self == MemorySpace.TMEM:
       if transforms:
@@ -158,7 +159,7 @@ class MemorySpace(enum.Enum):
         collective = False
       if layout is None:
         if packed is None:
-          if dtypes.bit_width(dtype) != 32:
+          if dtypes.itemsize_bits(dtype) != 32:
             raise ValueError(
                 "dtypes narrower than 32-bit require either the packed argument"
                 " or an explicit TMEM layout"
@@ -216,6 +217,7 @@ WGxWG_SEMANTICS = (
     mgpu.LoweringSemantics.Warpgroup, PrimitiveSemantics.Warpgroup)
 
 
+# TODO(justinfu): Reconcile with pl.kernel.
 def kernel(
     body: Callable[..., None],
     out_shape: object,
@@ -386,7 +388,10 @@ def _ref_group_size(refs: _GPUMemoryRefTree) -> int:
       raise NotImplementedError(f"Unsupported dtype: {ref.dtype}")
     ref_bits = math.prod(ref.shape) * nbits
     if ref_bits % 8:
-      raise ValueError("Only byte-aligned shapes are supported.")
+      raise ValueError(
+          "Only byte-aligned shapes are supported. Got shape:"
+          f" {ref.dtype}{ref.shape}"
+      )
     size += ref_bits // 8
   return size
 
@@ -396,7 +401,8 @@ def _ref_group_tmem_col_size(refs: _GPUMemoryRefTree) -> int:
   """
   ncols = 0
   for ref in jax.tree.leaves(refs):
-    ref_ncols = ref.layout.cols_in_shape(ref.shape, dtypes.bit_width(ref.dtype))
+    ref_ncols = ref.layout.cols_in_shape(ref.shape,
+                                         dtypes.itemsize_bits(ref.dtype))
     ncols += align_to(ref_ncols, TMEM_COL_ALIGNMENT)
   return ncols
 
@@ -409,7 +415,7 @@ def infer_tmem_layout(
     collective: bool) -> tcgen05.TMEMLayout:
   """Infers the number of columns used and layout for allocating TMEM Refs."""
   if packed:
-    packing = 32 // dtypes.bit_width(dtype)
+    packing = 32 // dtypes.itemsize_bits(dtype)
   else:
     packing = 1
   return tcgen05._infer_tmem_layout(shape, collective=collective, packing=packing)  # type: ignore
@@ -446,7 +452,10 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
           raise NotImplementedError(f"Unsupported dtype: {ref.dtype}")
         ref_bits = math.prod(ref.shape) * nbits
         if ref_bits % 8:
-          raise ValueError("Only byte-aligned shapes are supported.")
+          raise ValueError(
+              "Only byte-aligned shapes are supported. Got shape:"
+              f" {ref.dtype}{ref.shape}"
+          )
         byte_offset += ref_bits // 8
       union_bytes = max(union_bytes, byte_offset)
     assert union_bytes == ref_union.shape[0]
@@ -458,7 +467,8 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
         col_offset = align_to(col_offset, TMEM_COL_ALIGNMENT)
         if not isinstance(ref, pallas_core.TransformedRef):
           ref = pallas_core.TransformedRef(ref, transforms=())
-        ncols = ref.layout.cols_in_shape(ref.shape, dtypes.bit_width(ref.dtype))
+        ncols = ref.layout.cols_in_shape(ref.shape,
+                                         dtypes.itemsize_bits(ref.dtype))
         transform = ExtractAliasedRef.from_transformed_ref(
             ref, col_offset, layout=ref.layout)
         flat_refs.append(
@@ -496,8 +506,8 @@ class AbstractRefUnion(state.AbstractRef):
     del tracer, index, value  # Unused.
     raise ValueError("Ref unions can't be assigned to.")
 
-  def update(self, inner_aval=None, memory_space=None):
-    ref = super().update(inner_aval, memory_space)
+  def update(self, inner_aval=None, memory_space=None, kind=None):
+    ref = super().update(inner_aval, memory_space, kind)
     return AbstractRefUnion(ref.inner_aval, self.refs, self.memory_space)
 
   @functools.cached_property
@@ -672,9 +682,16 @@ class UntileRef(state_types.Transform):
     for idx, tile in zip(tiled_idxs, self.tiling):
       if isinstance(idx, slice):
         if idx.step is not None and idx.step != 1:
-          raise NotImplementedError("Strided slices unsupported")
-        if (idx.start is not None and idx.start % tile) or (idx.stop is not None and idx.stop % tile):
-          raise ValueError("Non-empty slices must be tile aligned")
+          raise NotImplementedError(
+              f"Strided slices unsupported. Got stride: {idx.step}"
+          )
+        if (idx.start is not None and idx.start % tile) or (
+            idx.stop is not None and idx.stop % tile
+        ):
+          raise ValueError(
+              f"Expected slice start ({idx.start}) and slice stop ({idx.stop})"
+              f" to be divisible by the tile size ({tile})"
+          )
         idxs_after_tiling.append(slice(idx.start // tile, idx.stop // tile))
       elif isinstance(idx, mgpu.DynamicSlice):
         if idx.length % tile:
@@ -886,6 +903,9 @@ def transpose_ref(
     ref: pallas_core.TransformedRef | Any,
     permutation: tuple[int, ...],
 ) -> pallas_core.TransformedRef:
+  assert hasattr(ref, "memory_space")
+  if ref.memory_space == MemorySpace.TMEM:
+    raise ValueError("Can't transpose a TMEM reference.")
   return ref.transpose(permutation)
 
 def untile_ref(ref, tiling: tuple[int, ...]) -> pallas_core.TransformedRef:
@@ -962,7 +982,7 @@ class SwizzleTransform(MemoryRefTransform):
     raise NotImplementedError
 
   def __call__(self, aval: jax_core.ShapedArray) -> jax_core.ShapedArray:
-    swizzle_elems = (self.swizzle * 8) // dtypes.bit_width(aval.dtype)
+    swizzle_elems = (self.swizzle * 8) // dtypes.itemsize_bits(aval.dtype)
     if swizzle_elems != aval.shape[-1]:
       raise ValueError(
           f"Swizzle {self.swizzle} requires the trailing dimension to be of"
@@ -1205,8 +1225,8 @@ class WGMMAAbstractAccumulatorRef(state.AbstractRef):
   def __repr__(self) -> str:
     return f'Accumulator{{{self.inner_aval.str_short()}}}'
 
-  def update(self, inner_aval=None, memory_space=None):
-    ref = super().update(inner_aval, memory_space)
+  def update(self, inner_aval=None, memory_space=None, kind=None):
+    ref = super().update(inner_aval, memory_space, kind)
     return WGMMAAbstractAccumulatorRef(
         inner_aval=ref.inner_aval,
         memory_space=ref.memory_space,
@@ -1233,8 +1253,8 @@ class AbstractTMEMRef(state.AbstractRef):
   def __repr__(self) -> str:
     return f'TMEM({self.inner_aval.str_short()}, layout={self.layout}, collective={self.collective})'
 
-  def update(self, inner_aval=None, memory_space=None):
-    ref = super().update(inner_aval, memory_space)
+  def update(self, inner_aval=None, memory_space=None, kind=None):
+    ref = super().update(inner_aval, memory_space, kind)
     return AbstractTMEMRef(
         ref.inner_aval, ref.memory_space, self.layout, self.collective
     )
@@ -1269,10 +1289,12 @@ class Mesh:
           "num_threads and thread_name must be either both set or both None,"
           f" got {self}"
       )
-    if self.num_threads is not None and self.num_threads > 2048 // 128:
+    max_mosaic_threads = 2048 // 128
+    if self.num_threads is not None and self.num_threads > max_mosaic_threads:
       raise ValueError(
           "Requested too many CUDA threads per block. Each Mosaic thread"
-          " corresponds to 128 CUDA threads."
+          f" corresponds to 128 CUDA threads. At most {max_mosaic_threads}"
+          f" are supported, got {self}"
       )
     object.__setattr__(self, "grid", tuple(self.grid))
     object.__setattr__(self, "grid_names", tuple(self.grid_names))
@@ -1506,7 +1528,7 @@ class Layout(SomeLayout, enum.Enum):
       case Layout.SMEM_GMEM_COPY:
         normalize_args = lambda shape, dtype, swizzle: (shape, dtype, swizzle)
         shape, dtype, swizzle = normalize_args(*args, **kwargs)
-        bitwidth = dtypes.bit_width(dtype)
+        bitwidth = dtypes.itemsize_bits(dtype)
         tiling = (8, 8 * swizzle // bitwidth)
         row_tiles, col_tiles = mgpu.tile_shape(shape, tiling)[-4:-2]
         return mgpu.fragmented_array.tiled_copy_smem_gmem_layout(

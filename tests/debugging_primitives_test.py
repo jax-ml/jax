@@ -13,6 +13,7 @@
 # limitations under the License.
 import collections
 import functools
+import logging
 import textwrap
 import unittest
 
@@ -1105,6 +1106,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     """)
     self.assertEqual(output(), expected)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_visualize_pmap_sharding(self):
     ss = pxla.ShardingSpec(
         sharding=(pxla.Unstacked(8),),
@@ -1370,6 +1372,28 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     }
 
     self.assertEqual(_get_output_set(output, 1), expected)
+
+  def test_debug_print_with_logging(self):
+    logger_name = "jax._src.debugging"
+    jax_logger = logging.getLogger(logger_name)
+    class RecordHandler(logging.Handler):
+      def __init__(self):
+        logging.Handler.__init__(self)
+        self.records = []
+      def emit(self, record):
+        self.records.append(record)
+    record_handler = RecordHandler()
+    jax_logger.handlers.append(record_handler)
+
+    def log_fn(x):
+      x = x * x
+      jax.debug.log("x={}", x)
+      return x * x
+
+    self.assertEqual(jax.jit(log_fn)(2), 16)
+    jax_logger.removeHandler(record_handler)
+    self.assertEqual(record_handler.records[0].msg, "x=4")
+
 
   def test_debug_print_with_nested_vmap(self):
     @jax.vmap

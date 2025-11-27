@@ -42,8 +42,8 @@ class Slice:
   stride: int = 1
 
   def __post_init__(self):
-    if self.stride < 1:
-      raise ValueError("`stride` must be >= 1.")
+    if self.stride < 0:
+      raise ValueError("`stride` must be >= 0.")
 
   @property
   def is_dynamic_start(self):

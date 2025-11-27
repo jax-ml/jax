@@ -16,9 +16,8 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 import dataclasses
-import functools
 import math
 from typing import Any, TypeAlias
 
@@ -26,7 +25,6 @@ import jax
 from jax._src import core as jax_core
 from jax._src import state
 from jax._src import tree_util
-from jax._src.lax import lax
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic import core as tpu_core
@@ -246,13 +244,23 @@ pallas_core._core_map_mesh_rules[ScalarSubcoreMesh] = (
     _scalar_subcore_mesh_discharge_rule
 )
 
+def _get_num_cores() -> int:
+  """Returns the number of cores for the current SparseCore."""
+  return get_sparse_core_info().num_cores
+
+def _get_num_subcores() -> int:
+  """Returns the number of subcores for the current SparseCore."""
+  return get_sparse_core_info().num_subcores
+
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class VectorSubcoreMesh:
   core_axis_name: str
   subcore_axis_name: str
-  num_cores: int
-  num_subcores: int = dataclasses.field(default=16, init=False)
+  num_cores: int = dataclasses.field(default_factory=_get_num_cores)
+  num_subcores: int = dataclasses.field(
+      default_factory=_get_num_subcores, init=False
+  )
 
   def __post_init__(self):
     sc_info = get_sparse_core_info()
@@ -332,52 +340,8 @@ pallas_core._core_map_mesh_rules[VectorSubcoreMesh] = (
     _vector_subcore_mesh_discharge_rule
 )
 
-def kernel(
-    out_shape: object,
-    *,
-    mesh: pallas_core.Mesh,
-    scratch_shapes: pallas_core.ScratchShapeTree = (),
-    **kwargs: object,
-):
-  if unwrap_out := not isinstance(out_shape, (tuple, list)):
-    out_shape = (out_shape,)
 
-  def decorator(body):
-    @jax.jit
-    def wrapper(*args):
-      arg_refs = jax.tree.map(jax_core.new_ref, args)
-      out_refs = jax.tree.map(
-          lambda out: jax_core.new_ref(
-              lax.empty(out.shape, out.dtype),
-              memory_space=(
-                  ms
-                  if hasattr(out, "memory_space")
-                  and not isinstance(
-                      ms := out.memory_space, jax_core.MemorySpace
-                  )
-                  else None
-              ),
-          ),
-          out_shape,
-      )
-
-      @pallas_core.core_map(mesh, **kwargs)
-      def _():
-        return pallas_primitives.run_scoped(
-            functools.partial(body, *arg_refs, *out_refs),
-            *scratch_shapes if isinstance(scratch_shapes, Sequence) else (),
-            **scratch_shapes if isinstance(scratch_shapes, Mapping) else {},
-        )
-
-      outs = jax.tree.map(lambda ref: ref[...], out_refs)
-      return outs[0] if unwrap_out else outs
-
-    return wrapper
-
-  return decorator
-
-
-# TODO(slebedev): Add more dtypes and vector shapes.
+# TODO(slebedev): Only keep the shapes which do not require unrolling.
 SUPPORTED_VECTOR_SHAPES = collections.defaultdict(list)
 for dtype in [jnp.int32, jnp.uint32, jnp.float32]:
   SUPPORTED_VECTOR_SHAPES[jnp.dtype(dtype)].extend([

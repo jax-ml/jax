@@ -266,10 +266,12 @@ _DEFAULT_TYPEMAP: dict[type, Callable[[], np.dtype]] = {
   complex: default_complex_dtype,
 }
 
-def bit_width(dtype: DTypeLike) -> int:
+def itemsize_bits(dtype: DTypeLike) -> int:
   """Number of bits per element for the dtype."""
   # Note: we cannot use dtype.itemsize here because this is
   # incorrect for sub-byte integer types.
+  if dtype is None:
+    raise ValueError("dtype cannot be None.")
   if dtype == np.dtype(bool):
     return 8  # physical bit layout for boolean dtype
   elif issubdtype(dtype, np.integer):

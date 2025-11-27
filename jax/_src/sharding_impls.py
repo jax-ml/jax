@@ -20,6 +20,7 @@ from collections.abc import Mapping, Sequence
 import dataclasses
 import functools
 import math
+import warnings
 from typing import Any, NamedTuple, cast
 
 from jax._src import config
@@ -32,11 +33,12 @@ from jax._src import util
 from jax._src import source_info_util
 from jax._src import xla_bridge as xb
 from jax._src import mesh_utils
+from jax._src import deprecations
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
-    SdyArray, SdyDim, UnspecifiedValue, AUTO,
-    _check_unique_resources, NamedSharding, UNSPECIFIED,
+    SdyArray, SdyDim, UnspecifiedValue, AUTO, flatten_spec, NamedSharding,
+    _check_unique_resources, UNSPECIFIED,
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, get_array_mapping,
     array_mapping_to_axis_resources, named_sharding_to_xla_hlo_sharding,
     modify_sdy_sharding_wrt_axis_types)
@@ -1054,16 +1056,6 @@ def _gspmd_to_named_sharding_via_mesh(
   return cached_named_sharding(mesh, spec, out_s.memory_kind)
 
 
-def flatten_spec(spec):
-  out = []
-  for s in spec:
-    if isinstance(s, tuple):
-      out.extend(s)
-    else:
-      out.append(s)
-  return out
-
-
 @util.cache()
 def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
                           api_name: str, check_mesh_consistency: bool = True
@@ -1189,9 +1181,48 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   mesh_devices = mesh_utils.create_device_mesh(
       new_axis_shapes, devices,
       allow_split_physical_axes=allow_split_physical_axes)
+  first_d = mesh_devices.flat[0]
+  if (first_d.platform == 'tpu' and hasattr(first_d, 'slice_index') and
+      len({d.slice_index for d in mesh_devices.flat}) > 1):
+    raise ValueError(
+        '`jax.make_mesh` does not support multi-slice topologies. Please use'
+        ' jax.experimental.mesh_utils.create_hybrid_device_mesh')
+  if axis_types is None:
+    if deprecations.is_accelerated('jax-make-mesh-default-explicit'):
+      axis_types = (mesh_lib.AxisType.Explicit,) * len(mesh_devices.shape)
+    else:
+      warnings.warn(
+          'The default axis_types will change in JAX v0.9.0 to'
+          ' jax.sharding.AxisType.Explicit. To maintain the old behavior, pass'
+          ' `axis_types=(jax.sharding.AxisType.Auto,) * len(axis_names)`. To'
+          ' opt-into the new behavior, pass'
+          ' `axis_types=(jax.sharding.AxisType.Explicit,) * len(axis_names)',
+          category=DeprecationWarning,
+          stacklevel=2,
+      )
   return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)
 
 class set_mesh:
+  """Sets a concrete mesh in a thread-local context.
+
+  ``jax.set_mesh`` has dual behavior. You can use it as a global setter or as a
+  context manager.
+
+  When a mesh is in context via ``jax.set_mesh``, you can use pass
+  raw PartitionSpecs to all APIs that accept sharding as an argument.
+  Using ``jax.set_mesh`` is also required for enabling explicit sharding mode:
+  https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
+
+  For example::
+
+    mesh = jax.make_mesh((2,), ('x',))
+    jax.set_mesh(mesh)  # use the API as a global setter
+
+    with jax.set_mesh(mesh):  # use the API as a context manager
+      ...
+
+  Note: ``jax.set_mesh`` can only be used outside of ``jax.jit``.
+  """
   __slots__ = ["prev_abstract_mesh", "prev_mesh"]
 
   def __init__(self, mesh: mesh_lib.Mesh):
@@ -1216,6 +1247,14 @@ class set_mesh:
   def __exit__(self, exc_type, exc_value, traceback):
     config.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
     config.device_context.set_local(self.prev_mesh)
+
+
+def get_mesh() -> mesh_lib.Mesh:
+  if not core.trace_state_clean():
+    raise ValueError(
+        '`get_mesh` can only be used outside of `jax.jit`. Maybe you want'
+        ' `jax.sharding.get_abstract_mesh()`?')
+  return mesh_lib.get_concrete_mesh()
 
 
 @contextlib.contextmanager

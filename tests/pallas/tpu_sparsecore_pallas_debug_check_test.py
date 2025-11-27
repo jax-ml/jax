@@ -74,7 +74,7 @@ class DebugCheckTest(jtu.JaxTestCase):
 
     x = jnp.arange(8)
 
-    @plsc.kernel(
+    @pl.kernel(
         out_shape=x,
         mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1),
     )

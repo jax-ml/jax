@@ -19,6 +19,7 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <string_view>
 #include <utility>
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -69,9 +70,8 @@ struct ApplyVectorLayoutContext {
 std::pair<bool, bool> mightCommunicateBetweenChips(Operation *op);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
-    int hardware_generation = -1,
-    std::array<int64_t, 2> target_shape = {8, 128},
-    const TpuTilingFlags &tpu_tiling_flags = {});
+    int hardware_generation, std::array<int64_t, 2> target_shape,
+    const TpuTilingFlags& tpu_tiling_flags, bool align = true);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createCanonicalizeMosaicPass(
     int hardware_generation = -1, bool compatibility_mode = true,
@@ -91,18 +91,7 @@ std::unique_ptr<OperationPass<func::FuncOp>> createApplyVectorLayoutPass(
     const ApplyVectorLayoutContext &ctx = ApplyVectorLayoutContext{});
 
 std::unique_ptr<OperationPass<func::FuncOp>>
-createPreCanonicalizationOptimizationPass(
-    int hardware_generation = -1,
-    std::array<int64_t, 2> target_shape = {8, 128});
-
-std::unique_ptr<OperationPass<func::FuncOp>>
 createLogicalToPhysicalDeviceIdPass(int64_t total_devices);
-
-std::unique_ptr<OperationPass<func::FuncOp>> createLinalgVectorizationPass(
-    bool supports_bf16_alu_instructions = false,
-    bool supports_bf16_matmul = false);
-
-std::unique_ptr<OperationPass<func::FuncOp>> createDebugAssertInsertionPass();
 
 #define GEN_PASS_DECL_MOSAICSERDEPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
@@ -128,6 +117,8 @@ DotDimensionNumbersAttr defaultDimensionNumbers(Builder &builder,
 
 #define GEN_PASS_REGISTRATION
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
+
+constexpr std::string_view kLeadingTileRows = "leading_tile_rows";
 
 }  // namespace tpu
 }  // namespace mlir

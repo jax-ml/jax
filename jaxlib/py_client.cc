@@ -410,6 +410,24 @@ MakeIfrtDeserializeExecutableOptions(std::optional<xla::CompileOptions> options,
       std::move(ifrt_loaded_host_callbacks));
 }
 
+std::unique_ptr<ifrt::DeserializeExecutableOptions>
+MakeIfrtDeserializeExecutableOptions(std::optional<xla::CompileOptions> options,
+                                     ifrt::DeviceListRef executable_devices,
+                                     std::vector<nb::callable> host_callbacks,
+                                     ifrt::Client* ifrt_client) {
+  std::vector<tsl::RCReference<ifrt::LoadedHostCallback>>
+      ifrt_loaded_host_callbacks;
+  ifrt_loaded_host_callbacks.reserve(host_callbacks.size());
+  for (auto& host_callback : host_callbacks) {
+    auto callback = tsl::MakeRef<PyFfiLoadedHostCallback>(
+        ifrt_client, std::move(host_callback));
+    ifrt_loaded_host_callbacks.push_back(callback);
+  }
+  return std::make_unique<ifrt::XlaDeserializeExecutableOptions>(
+      std::move(options), std::move(executable_devices),
+      std::move(ifrt_loaded_host_callbacks));
+}
+
 }  // namespace
 
 /* static */ absl::StatusOr<nb_class_ptr<PyLoadedExecutable>>
@@ -565,6 +583,32 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
   auto ifrt_deserialize_options = MakeIfrtDeserializeExecutableOptions(
       std::move(options), std::move(executable_devices),
       std::move(host_callbacks));
+  PyUserContextScope user_context_scope;
+  {
+    nb::gil_scoped_release gil_release;
+    TF_ASSIGN_OR_RETURN(
+        ifrt_loaded_executable,
+        client->ifrt_client_->GetDefaultCompiler()->DeserializeLoadedExecutable(
+            std::string_view(serialized.c_str(), serialized.size()),
+            std::move(ifrt_deserialize_options)));
+  }
+  TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
+  return make_nb_class<PyLoadedExecutable>(std::move(client),
+                                           std::move(ifrt_loaded_executable),
+                                           std::move(fingerprint));
+}
+
+/* static */ absl::StatusOr<nb_class_ptr<PyLoadedExecutable>>
+PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
+                                nb::bytes serialized,
+                                ifrt::DeviceListRef executable_devices,
+                                std::optional<xla::CompileOptions> options,
+                                std::vector<nb::callable> host_callbacks) {
+  ifrt::LoadedExecutableRef ifrt_loaded_executable;
+  std::optional<std::string> fingerprint;
+  auto ifrt_deserialize_options = MakeIfrtDeserializeExecutableOptions(
+      std::move(options), std::move(executable_devices),
+      std::move(host_callbacks), client->ifrt_client());
   PyUserContextScope user_context_scope;
   {
     nb::gil_scoped_release gil_release;
@@ -743,7 +787,7 @@ PyType_Slot PyClient::slots_[] = {
     {0, nullptr},
 };
 
-/* static */ void PyClient::RegisterPythonTypes(nb::module_& m) {
+/* static */ void PyClient::Register(nb::module_& m) {
   nb::enum_<xla::PjRtClient::HostBufferSemantics>(m, "HostBufferSemantics")
       .value("IMMUTABLE_ONLY_DURING_CALL",
              xla::PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall)
@@ -921,6 +965,22 @@ PyType_Slot PyClient::slots_[] = {
           nb::arg("serialized"), nb::arg("executable_devices"),
           nb::arg("compile_options").none() = nb::none(),
           nb::arg("host_callbacks") = std::vector<nb::capsule>())
+      .def(
+          "deserialize_executable",
+          [](nb_class_ptr<PyClient> client, nb::bytes serialized,
+             jax::PyDeviceList& py_executable_devices,
+             std::optional<xla::CompileOptions> options,
+             std::vector<nb::callable> host_callbacks) {
+            ifrt::DeviceListRef executable_devices =
+                xla::ValueOrThrow(py_executable_devices.ifrt_device_list());
+            return xla::ValueOrThrow(PyClient::DeserializeExecutable(
+                std::move(client), std::move(serialized),
+                std::move(executable_devices), std::move(options),
+                std::move(host_callbacks)));
+          },
+          nb::arg("serialized"), nb::arg("executable_devices"),
+          nb::arg("compile_options").none() = nb::none(),
+          nb::arg("host_callbacks") = std::vector<nb::callable>())
       // The following overload is for users of deprecated APIs who call
       // `deserialize_executable` but do not have visibility to `DeviceList`.
       .def(

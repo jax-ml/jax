@@ -2065,7 +2065,7 @@ class PallasCallTest(PallasBaseTest):
       y[:] = x[:]
     batch_size = 3
     x = jnp.arange(batch_size * 1024.).reshape(batch_size, 8, 128)
-    f = pl.pallas_call(
+    f = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
         cost_estimate=pl.CostEstimate(
@@ -2077,6 +2077,57 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(analysis_result['flops'], batch_size * 1234)
     self.assertEqual(analysis_result['transcendentals'], batch_size * 21)
     self.assertEqual(analysis_result['bytes accessed'], batch_size * 12345)
+
+  def test_cost_analysis_vmap_symbolic_batch_size(self):
+    # When exporting a module with a symbolic batch size, the cost analysis
+    # should be stripped from the tpu_custom_call because we can't accurately
+    # scale it by the dynamic batch size.
+
+    def kernel(x, y):
+      y[:] = x[:]
+
+    flops = 1234
+    transcendentals = 21
+    bytes_accessed = 12345
+
+    f = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        cost_estimate=pl.CostEstimate(
+            flops=flops,
+            transcendentals=transcendentals,
+            bytes_accessed=bytes_accessed,
+        ),
+    )
+    f = jax.vmap(f)
+
+    batch_size = 3
+    x = jnp.arange(batch_size * 1024.0).reshape(batch_size, 8, 128)
+    exported_module = pl.lower_as_mlir(jax.jit(f), x, dynamic_shapes=True)
+
+    self.assertIn('tpu_custom_call', str(exported_module))
+    self.assertIn('cost_estimate', str(exported_module))
+    # The exported module string encodes " as \22.
+    self.assertIn(f'flops\\22: {batch_size * flops}', str(exported_module))
+    self.assertIn(
+        f'transcendentals\\22: {batch_size * transcendentals}',
+        str(exported_module),
+    )
+    self.assertIn(
+        f'bytes_accessed\\22: {batch_size * bytes_accessed}',
+        str(exported_module),
+    )
+
+    x_shape = jax.ShapeDtypeStruct(
+        jax.export.symbolic_shape('b, 8, 128'), jnp.float32
+    )
+    exported_module = pl.lower_as_mlir(jax.jit(f), x_shape, dynamic_shapes=True)
+    # Assert that the cost analysis is not present in the serialized module.
+    self.assertIn('tpu_custom_call', str(exported_module))
+    self.assertNotIn('cost_estimate', str(exported_module))
+    self.assertNotIn('flops', str(exported_module))
+    self.assertNotIn('transcendentals', str(exported_module))
+    self.assertNotIn('bytes_accessed', str(exported_module))
 
   def test_vmem_limit(self):
     shape = (128, 128)
@@ -2101,14 +2152,14 @@ class PallasCallTest(PallasBaseTest):
       pl.Buffered(1),
       pl.Buffered(2),
   ])
-  def test_vmem_oom_error_message_basics(self, pmode):
-    if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
-      self.skipTest('Support added on Oct 14, 2025')
+  def test_vmem_oom_error_message_basics(self, pmode: pl.Buffered):
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 12):
+      self.skipTest('Support added on Nov 12, 2025')
 
     if jtu.is_device_tpu(version=5, variant='e') or jtu.is_device_tpu(
         version=6, variant='e'
     ):
-      block_shape = (4096, 8192)
+      block_shape = (4096 // pmode.buffer_count, 8192)
     elif jtu.is_device_tpu(version=5, variant='p'):
       block_shape = (1024, 8192)
     else:
@@ -2152,11 +2203,13 @@ class PallasCallTest(PallasBaseTest):
         f' full shape is f32[{shape[0]},{shape[1]}].',
         error_message,
     )
-    # When VMEM is OOM, double buffering is disabled.
-    self.assertIn(
-        'This allocation is single buffered.',
-        error_message,
-    )
+    if jtu.if_cloud_tpu_at_least(2025, 11, 5):
+      self.assertIn(
+          'This allocation is single buffered.'
+          if pmode.buffer_count == 1
+          else 'This allocation has 2 buffering levels',
+          error_message,
+      )
 
   def test_vmem_oom_error_message_dynamic_grid_scalar_prefetch_and_vmem_scratch(
       self,
@@ -2210,6 +2263,65 @@ class PallasCallTest(PallasBaseTest):
         'output window allocation for operator output 0',
         error_message,
     )
+
+  def test_automatic_single_buffering(self,):
+    if self.INTERPRET:
+      self.skipTest('OOM tests need us to compile the kernels')
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 12):
+      self.skipTest('Support added on Oct 14, 2025')
+
+    def body(*_):
+      pass  # We only want to compile the kernel.
+
+    window_mib = 10
+    if jtu.is_device_tpu_at_least(6):
+      window_mib = 20
+    x = jax.ShapeDtypeStruct((100 * 1024 * 1024,), jnp.int8)
+    x_small = jax.ShapeDtypeStruct((window_mib * 1024 * 1024,), jnp.int8)
+    # Should recognize that the block specs only load a single window.
+    self.pallas_call(body, grid=(4,), out_shape=x_small).lower().compile()
+    # Should recognize that the block specs only load a single window, as it
+    # only depends on the 1-sized grid dim
+    self.pallas_call(
+        body, grid=(4, 1), out_shape=x,
+        out_specs=pl.BlockSpec((window_mib * 1024 * 1024,), lambda i, j: (j,))
+    ).lower().compile()
+    self.pallas_call(
+        body, grid=(1, 4), out_shape=x,
+        out_specs=pl.BlockSpec((window_mib * 1024 * 1024,), lambda i, j: (i,))
+    ).lower().compile()
+    # Should OOM, as now we are extracting different windows
+    with self.assertRaisesRegex(
+        jax.errors.JaxRuntimeError, '(Ran out of memory)|(exceed memory)'
+    ):
+      self.pallas_call(
+          body, grid=(4, 1), out_shape=x,
+          out_specs=pl.BlockSpec((window_mib * 1024 * 1024,), lambda i, j: (j + i,))
+      ).lower().compile()
+    # Explicitly setting single-buffering should fix it, though.
+    self.pallas_call(
+        body, grid=(4, 1), out_shape=x,
+        out_specs=pl.BlockSpec((window_mib * 1024 * 1024,),lambda i, j: (j + i,),
+                               pipeline_mode=pl.Buffered(1))
+    ).lower().compile()
+    # Add unused scalar prefetch args to make sure we don't incorrectly consider
+    # them to be unused grid indices.
+    scalar = jnp.array([0], jnp.int32)
+    with self.assertRaisesRegex(
+        jax.errors.JaxRuntimeError, '(Ran out of memory)|(exceed memory)'
+    ):
+      self.pallas_call(
+          body,
+          out_shape=x,
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=2,
+              grid=(4, 1),
+              out_specs=pl.BlockSpec(
+                  (window_mib * 1024 * 1024,),
+                  lambda i, j, *_: (j + i,),
+              ),
+          ),
+      ).lower(scalar, scalar).compile()
 
   def test_allow_input_fusion(self):
     shape = (3, 128, 128)
@@ -4030,6 +4142,24 @@ class MiscellaneousTest(PallasBaseTest):
 
 class MiscellaneousInterpretTest(MiscellaneousTest):
   INTERPRET: bool = True
+
+  def test_async_copy_slice(self):
+    # https://github.com/jax-ml/jax/issues/33260
+    def kernel(o):
+      @functools.partial(pl.run_scoped,
+                         sem=pltpu.SemaphoreType.DMA,
+                         x=pltpu.MemorySpace.VMEM((1,), jnp.float32))
+      def _(sem, x):
+        x[...] = jnp.ones_like(x)
+        @functools.partial(pl.run_scoped,
+                           y=pltpu.MemorySpace.VMEM((1, 1,), jnp.float32))
+        def _(y):
+          pltpu.async_copy(x, y.at[0], sem).wait()
+          o[...] = y[0]
+
+    result = pl.pallas_call(kernel, out_shape=jax.ShapeDtypeStruct(
+      (1,), jnp.float32), interpret=True)()
+    np.testing.assert_array_equal(result, np.ones((1,), dtype=jnp.float32))
 
 
 class PallasKernelMetadataTest(PallasBaseTest):

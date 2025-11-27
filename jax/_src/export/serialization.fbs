@@ -82,10 +82,18 @@ enum DType: byte {
   key_unsafe_rbg = 29,
 }
 
+enum MemorySpace: byte {
+  Missing = 0,  // default if missing (pre 11/25/2025)
+  Device = 1,
+  Host = 2,
+  Any = 3,
+}
+
 table AbstractValue {
   kind: AbstractValueKind;
   shape: [string];  // Support shape polymorphism
   dtype: DType;
+  memory_space: MemorySpace;
 }
 
 enum ShardingKind: byte {
@@ -119,6 +127,7 @@ table Exported {
   /// Note that this field has different semantics and purpose from
   /// `mlir_module_serialization_version`, which encodes
   /// the calling convention of the `mlir_module_serialized`.
+  /// See comments in serialization.py for more details.
   serialization_version: uint16;
 
   function_name: string;
@@ -126,7 +135,7 @@ table Exported {
   in_avals: [AbstractValue];
   out_tree: PyTreeDef;
   out_avals: [AbstractValue];
-  nr_devices: short;
+  nr_devices_short: short;  // Deprecated as of 11/25/2025
   in_shardings: [Sharding];
   out_shardings: [Sharding];
 
@@ -142,6 +151,7 @@ table Exported {
   uses_global_constants: bool;
 
   vjp: Exported;
+  nr_devices: uint32 = 0;  // Added 11/25/2025
 }
 
 root_type Exported;

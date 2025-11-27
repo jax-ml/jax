@@ -107,6 +107,14 @@ def conv_general_dilated(
     preferred_element_type: Optional. Either ``None``, which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
+    out_sharding: Optional. Specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html>`_
+      for more details.
 
   Returns:
     An array containing the convolution result.

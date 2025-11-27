@@ -514,6 +514,7 @@ cc_library(
         "@xla//xla:util",
         "@xla//xla:xla_data_proto_cc",
         "@xla//xla/ffi:ffi_api",
+        "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/pjrt:host_callback",
         "@xla//xla/pjrt:transpose",

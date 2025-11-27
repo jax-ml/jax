@@ -64,6 +64,15 @@ DimensionSemantics = (
 )
 
 
+class SideEffectType(enum.Enum):
+  # No side effects, can be deduplicated / removed if unused.
+  PURE = "pure"
+  # Cannot be deduplicated, but can be removed if unused.
+  DATAFLOW_SIDE_EFFECTING = "dataflow_side_effecting"
+  # Cannot be deduplicated or removed.
+  SIDE_EFFECTING = "side_effecting"
+
+
 @dataclasses.dataclass(frozen=True)
 class CompilerParams(pallas_core.CompilerParams):
   """Mosaic TPU compiler parameters.
@@ -97,7 +106,7 @@ class CompilerParams(pallas_core.CompilerParams):
   allow_input_fusion: tuple[bool, ...] | None = None
   vmem_limit_bytes: int | None = None
   collective_id: int | None = None
-  has_side_effects: bool = False
+  has_side_effects: bool | SideEffectType = False
   flags: dict[str, Any] | None = None
   internal_scratch_in_bytes: int | None = None
   serialization_format: int = 1
@@ -113,7 +122,7 @@ class CompilerParams(pallas_core.CompilerParams):
       allow_input_fusion: Sequence[bool] | None = None,
       vmem_limit_bytes: int | None = None,
       collective_id: int | None = None,
-      has_side_effects: bool = False,
+      has_side_effects: bool | SideEffectType = False,
       flags: Mapping[str, Any] | None = None,
       internal_scratch_in_bytes: int | None = None,
       serialization_format: int = 1,
@@ -174,9 +183,9 @@ class MemorySpace(enum.Enum):
   def from_type(self, ty):
     return pallas_core.MemoryRef(ty, memory_space=self)
 
-  def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
+  def __call__(self, shape: Sequence[int], dtype: jnp.dtype):
     # A convenience function for constructing MemoryRef types of ShapedArrays.
-    return self.from_type(jax_core.ShapedArray(shape, dtype))
+    return self.from_type(jax_core.ShapedArray(tuple(shape), dtype))
 
 class dma_semaphore(pallas_core.semaphore_dtype): pass
 
@@ -317,12 +326,15 @@ def _tensorcore_mesh_discharge_rule(
   num_cores = len(mesh.devices)
   if num_cores > 1:
     # Since each core will have its own VMEM, we currently disallow VMEM inputs
-    # and outputs since we do not know how they are sharded across cores.
-    if any(pallas_core.get_memory_space_aval(aval) in {MemorySpace.VMEM, MemorySpace.SMEM}
-            for aval in in_avals):
+    # and outputs since other ops might not agree on how they are sharded across
+    # cores by the (core-mapped) kernel.
+    if any(
+        pallas_core.get_memory_space_aval(aval) == MemorySpace.VMEM
+        for aval in in_avals
+    ):
       raise NotImplementedError(
-          "TensorCoreMesh does not support VMEM/SMEM inputs/outputs when there"
-          " are >1 cores. Use HBM or ANY instead."
+          "TensorCoreMesh does not support VMEM inputs/outputs when there are"
+          " >1 cores. Use HBM or ANY instead."
       )
   return pallas_core.default_mesh_discharge_rule(
       in_avals,

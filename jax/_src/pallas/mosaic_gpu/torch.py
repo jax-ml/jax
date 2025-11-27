@@ -27,8 +27,10 @@ import jax
 import jax.numpy as jnp
 from jax._src import util
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir import passmanager
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import hlo
+import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
 
 
@@ -109,7 +111,8 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
   get_outputs = None
   to_evaluate: list[Callable] = []
   init_env = {}
-  value_names: Mapping[ir.Value, int] = defaultdict(int)
+  name_source = itertools.count()
+  value_names: Mapping[ir.Value, int] = defaultdict(lambda: next(name_source))
   for op in block.operations:
     if _is_custom_call(op, "AllocateBuffer"):
       def allocate_torch_buffer(
@@ -124,12 +127,7 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
     elif _is_custom_call(op, "mosaic_gpu_v2"):
       if mgpu_call is not None:
         raise ValueError("Multiple Mosaic GPU kernels found in the module")
-      operands = list(op.operands)
-      if operands[:len(args)] != args:
-        raise ValueError("The Mosaic GPU kernel operands must match the function arguments")
       mgpu_call = op
-    elif op.name == "func.call":
-      raise NotImplementedError("Pallas kernels calls wrapped in jax.jit are not supported")
     elif op.name == "func.return" or op.name == "sdy.return":
       if mgpu_call is None:
         raise ValueError("No Mosaic GPU call found in the module")
@@ -182,15 +180,15 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
   if get_outputs is None:
     raise ValueError("No return op found in the module")
 
-  arg_names = [value_names[arg] for arg in mgpu_call.operands]
+  block_arg_names = [value_names[arg] for arg in block.arguments]
+  mgpu_arg_names = [value_names[arg] for arg in mgpu_call.operands]
   def prepare_args(*user_args, device):
     env = dict(init_env)
-    # Only a prefix of operands are user args
-    for name, arg in zip(arg_names, user_args, strict=False):
+    for name, arg in zip(block_arg_names, user_args, strict=True):
       env[name] = arg
     for thunk in to_evaluate:
       thunk(env, device)
-    return tuple(env[name] for name in arg_names)
+    return tuple(env[name] for name in mgpu_arg_names)
   output_input_aliases = [None] * len(mgpu_call.results)
   for alias in mgpu_call.output_operand_aliases:
     alias = hlo.OutputOperandAlias(alias)
@@ -231,6 +229,12 @@ def _compile_fn(fn, in_structs):
   traced = jax.jit(fn).trace(*in_structs)
   main_module = traced.lower().compiler_ir()
   with main_module.context:
+    # jax.jit outlines its bodies which we undo for the interpreter.
+    mgpu.dialect.register_inliner_extensions(main_module.context)
+    inliner_pass = passmanager.PassManager.parse(
+        "builtin.module(inline{default-pipeline=})"
+    )
+    inliner_pass.run(main_module.operation)
     mgpu_call, prepare_args, prepare_outputs, get_outputs = _find_mgpu_call_in_module(
         main_module
     )

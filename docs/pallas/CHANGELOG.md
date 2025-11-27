@@ -11,7 +11,7 @@ For the overall JAX change log see [here](https://docs.jax.dev/en/latest/changel
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## Unreleased
+## Released with jax 0.8.1
 
 * New features:
 

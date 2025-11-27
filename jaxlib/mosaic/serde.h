@@ -49,9 +49,9 @@ using SerdeRuleType =
 // Run serialization or deserialization on the given module.
 ::mlir::LogicalResult RunSerde(
     ::mlir::ModuleOp module,
-    const llvm::StringMap<SerdeRuleType> &upgrade_rules,
-    const llvm::StringMap<SerdeRuleType> &downgrade_rules, bool serialize,
-    SerdeOptions options);
+    const llvm::StringMap<SerdeRuleType>& upgrade_rules,
+    const llvm::StringMap<SerdeRuleType>& downgrade_rules, bool serialize,
+    SerdeOptions options, bool keep_version_attr = false);
 
 }  // namespace jaxlib::mosaic
 

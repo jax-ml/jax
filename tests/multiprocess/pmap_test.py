@@ -21,6 +21,7 @@ import jax
 from jax import lax
 from jax._src import array
 from jax._src import test_multiprocess as jt_multiprocess
+from jax._src import test_util as jtu
 import jax.numpy as jnp
 import numpy as np
 
@@ -35,6 +36,7 @@ def sorted_devices():
 
 class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def testBasic(self):
     elems_per_host = 4
     devices = jax.local_devices()
@@ -69,6 +71,7 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
       ("sharded_dim_0", 0),
       ("sharded_dim_1", 1),
   )
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_default_pmap_sharding(self, sharded_dim):
     if jax.config.jax_pmap_shmap_merge:
       self.skipTest("Does not apply for pmap shard_map merge")

@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # We use an arbitrarily chosen port for the coordinator since we cannot
 # rely on communication to choose one in real time.
-coordinator_port = '8476'
+coordinator_port = '8482'
 
 metadata_response_code_success = 200
 
@@ -95,7 +95,7 @@ class BaseTpuCluster(clusters.ClusterEnv):
     return False
 
   @classmethod
-  def get_coordinator_address(cls, timeout_secs: int | None) -> str:
+  def get_coordinator_address(cls, timeout_secs: int | None, override_coordinator_port: str | None) -> str:
     # For both GCE via QueuedResources and GKE via JobSet, the
     # Megascale coordinator address is set as the host with process id = 0,
     # so can be used as the jax distributed system coordinator.
@@ -108,7 +108,8 @@ class BaseTpuCluster(clusters.ClusterEnv):
     coordinator_address = coordinator_address.split(':')[0]
     logger.debug("TPU Cluster using coordinator address: %s", coordinator_address)
     cls.wait_for_coordinator(coordinator_address, timeout_secs)
-    return f'{coordinator_address}:{coordinator_port}'
+    port = override_coordinator_port or coordinator_port
+    return f'{coordinator_address}:{port}'
 
   @classmethod
   def wait_for_coordinator(cls, coordinator_address, timeout_secs):

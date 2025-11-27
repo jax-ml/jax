@@ -216,7 +216,7 @@ PyType_Slot PyDevice::slots_[] = {
     {0, nullptr},
 };
 
-/* static */ void PyDevice::RegisterPythonType(nb::module_& m) {
+/* static */ void PyDevice::Register(nb::module_& m) {
   nb::class_<PyDevice> device(
       m, "Device", nb::type_slots(PyDevice::slots_),
       "A descriptor of an available device.\n\nSubclasses are used to "

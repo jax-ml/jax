@@ -71,7 +71,7 @@ class CpuCallback {
 
   xla::TransposePlanCache& transpose_cache() { return transpose_cache_; }
 
-  absl::Status PrepareAndCall(void* result, void** arg_ptrs);
+  absl::Status PrepareAndCall(void** result, void** arg_ptrs);
 
   absl::StatusOr<nanobind::tuple> Call(nanobind::tuple args);
 

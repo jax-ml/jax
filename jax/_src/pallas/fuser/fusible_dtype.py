@@ -177,7 +177,7 @@ def _physical_aval(aval):
       return aval.dtype.abstract_unpack(aval)
     return core.ShapedArray(aval.shape, aval.dtype)
   if isinstance(aval, state.AbstractRef):
-    if isinstance(aval.dtype, FusionDType):
+    if _is_fusion_type(aval):
       unpacked = aval.dtype.abstract_unpack(aval.inner_aval)
       return tuple(aval.update(inner_aval=u) for u in unpacked)
     return aval
@@ -246,11 +246,10 @@ def physicalize_interp(
         eqn.ctx.manager,
     ):
       # need to check types and then invoke the correct rule.
-      in_types = [aval.dtype for aval in avals_in]  # pytype: disable=attribute-error
       ctx = Context(
           avals_in=avals_in, avals_out=[var.aval for var in eqn.outvars]
       )
-      custom_rule = _phys_find_rule(eqn.primitive, in_types)
+      custom_rule = _phys_find_rule(eqn.primitive, avals_in)
       if custom_rule:
         outvals = custom_rule(ctx, *invals, **eqn.params)
       else:
@@ -266,11 +265,21 @@ def physicalize_interp(
   return map(read_env, jaxpr.outvars)
 
 
-def _phys_find_rule(primitive, types: Sequence[dtypes.DType]):
+def _is_fusion_type(aval: core.AbstractValue):
+  """Returns whether an aval is an array containing fusion types."""
+  return (
+      isinstance(aval, (core.ShapedArray, state.AbstractRef))
+      and hasattr(aval, 'dtype')
+      and isinstance(aval.dtype, FusionDType)
+  )
+
+
+def _phys_find_rule(primitive, avals: Sequence[core.AbstractValue]):
   """Finds the physicalization rule for a primitive."""
   if primitive in _physicalize_rules:
     return _physicalize_rules[primitive]
-  fusion_types = {type_ for type_ in types if isinstance(type_, FusionDType)}
+
+  fusion_types = {aval.dtype for aval in avals if _is_fusion_type(aval)}  # pytype: disable=attribute-error
   if len(fusion_types) == 0:
     return None
   elif len(fusion_types) > 1:
@@ -285,10 +294,8 @@ def _phys_find_rule(primitive, types: Sequence[dtypes.DType]):
 
 
 def _assert_no_fusion_types(avals: Sequence[core.AbstractValue]):
-  for aval in avals:
-    if isinstance(aval, (core.ShapedArray, state.AbstractRef)):
-      if isinstance(aval.dtype, FusionDType):
-        raise NotImplementedError(f"Fusion type found in avals: {avals}")
+  if any(_is_fusion_type(aval) for aval in avals):
+    raise NotImplementedError(f"Fusion type found in avals: {avals}")
 
 
 def _pallas_call_physicalize_rule(
@@ -437,8 +444,9 @@ def _while_rule(
       - len(body_jaxpr.jaxpr.invars)
   )
   flat_args = tree_util.tree_leaves(args)
-  cond_consts, body_consts, flat_args = \
-        util.split_list(flat_args, [cond_nconsts, body_nconsts])
+  cond_consts, body_consts, flat_args = util.split_list(
+      flat_args, [new_num_cond_consts, new_num_body_consts]
+  )
   assert len(flat_args) + len(body_consts) == len(
       new_body_jaxpr.jaxpr.invars), (
       f"Length mismatch: {len(flat_args) + len(body_consts)} !="
@@ -479,7 +487,7 @@ _physicalize_rules[unpack_dtype_p] = _unpack_rule
 
 def _swap_rule(ctx: Context, ref, val, *args, tree):
   ref_aval, *_ = ctx.avals_in
-  if not isinstance(ref_aval.dtype, FusionDType):
+  if not _is_fusion_type(ref_aval):
     return state_primitives.swap_p.bind(ref, val, *args, tree=tree)
   return ref_aval.dtype.swap(ref, val, *args, tree=tree)
 
@@ -489,7 +497,7 @@ _physicalize_rules[state_primitives.swap_p] = _swap_rule
 
 def _get_rule(ctx: Context, ref, *args, tree):
   ref_aval, *_ = ctx.avals_in
-  if not isinstance(ref_aval.dtype, FusionDType):
+  if not _is_fusion_type(ref_aval):
     return state_primitives.get_p.bind(ref, *args, tree=tree)
   return ref_aval.dtype.get(ref, *args, tree=tree)
 

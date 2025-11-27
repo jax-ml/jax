@@ -35,7 +35,6 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/ndarray.h"
-#include "jaxlib/dlpack_support.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
@@ -47,6 +46,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
+#include "xla/python/dlpack_types.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
@@ -381,15 +381,9 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
         "This operation is implemented for a PjRt-compatible backend only.");
   }
   PyUserContextScope user_context_scope;
-#if JAX_IFRT_VERSION_NUMBER >= 34
   TF_ASSIGN_OR_RETURN(
       auto ifrt_array,
       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer), has_custom_layout));
-#else
-  (void)has_custom_layout;
-  TF_ASSIGN_OR_RETURN(auto ifrt_array,
-                      ifrt_client->CreatePjRtArray(std::move(pjrt_buffer)));
-#endif
   return PyArray::MakeFromSingleDeviceArray(std::move(client),
                                             std::move(ifrt_array), false, true);
 }

@@ -15,7 +15,6 @@
 # The following are a subset of the full jax.numpy functionality used by
 # internal imports.
 
-
 from jax._src.numpy.array_constructors import (
     asarray as asarray,
     array as array,
@@ -37,12 +36,67 @@ from jax._src.numpy.indexing import (
     take as take,
 )
 
+from numpy import (
+    nan as nan,
+    inf as inf,
+    floating as floating,
+    integer as integer,
+    inexact as inexact,
+    complexfloating as complexfloating,
+    number as number,
+    character as character,
+    generic as generic,
+    dtype as dtype,
+    unsignedinteger as unsignedinteger,
+)
+from jax._src import dtypes as dtypes
+from jax._src.numpy.scalar_types import (
+    bfloat16 as bfloat16,
+    bool_ as bool,  # Array API alias for bool_  # noqa: F401
+    bool_ as bool_,
+    cdouble as cdouble,
+    csingle as csingle,
+    complex128 as complex128,
+    complex64 as complex64,
+    complex_ as complex_,
+    double as double,
+    float16 as float16,
+    float32 as float32,
+    float4_e2m1fn as float4_e2m1fn,
+    float64 as float64,
+    float8_e3m4 as float8_e3m4,
+    float8_e4m3 as float8_e4m3,
+    float8_e4m3b11fnuz as float8_e4m3b11fnuz,
+    float8_e4m3fn as float8_e4m3fn,
+    float8_e4m3fnuz as float8_e4m3fnuz,
+    float8_e5m2 as float8_e5m2,
+    float8_e5m2fnuz as float8_e5m2fnuz,
+    float8_e8m0fnu as float8_e8m0fnu,
+    float_ as float_,
+    int2 as int2,
+    int4 as int4,
+    int8 as int8,
+    int16 as int16,
+    int32 as int32,
+    int64 as int64,
+    int_ as int_,
+    single as single,
+    uint as uint,
+    uint2 as uint2,
+    uint4 as uint4,
+    uint8 as uint8,
+    uint16 as uint16,
+    uint32 as uint32,
+    uint64 as uint64,
+)
+
 from jax._src.numpy.lax_numpy import (
     apply_along_axis as apply_along_axis,
     arange as arange,
     argmax as argmax,
     argmin as argmin,
     argsort as argsort,
+    astype as astype,
     atleast_1d as atleast_1d,
     atleast_2d as atleast_2d,
     block as block,
@@ -63,6 +117,8 @@ from jax._src.numpy.lax_numpy import (
     hstack as hstack,
     iscomplexobj as iscomplexobj,
     isscalar as isscalar,
+    issubdtype as issubdtype,
+    iinfo as iinfo,
     meshgrid as meshgrid,
     moveaxis as moveaxis,
     nonzero as nonzero,
@@ -75,6 +131,7 @@ from jax._src.numpy.lax_numpy import (
     repeat as repeat,
     roll as roll,
     round as round,
+    result_type as result_type,
     searchsorted as searchsorted,
     select as select,
     split as split,
@@ -171,4 +228,7 @@ from jax._src.numpy.ufuncs import (
     square as square,
     subtract as subtract,
     tanh as tanh
+)
+from jax._src.numpy.ufuncs import (
+    multiply as multiply,
 )

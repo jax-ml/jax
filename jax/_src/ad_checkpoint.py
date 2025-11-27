@@ -199,7 +199,7 @@ checkpoint_policies = types.SimpleNamespace(
 
 ### Main API
 
-@api_boundary
+@partial(api_boundary, repro_api_name="jax.checkpoint")
 def checkpoint(fun: Callable, *, prevent_cse: bool = True,
                policy: Callable[..., bool] | None = None,
                static_argnums: int | tuple[int, ...] = (),
@@ -363,7 +363,8 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
     in_avals = [core.shaped_abstractify(x) for x in args_flat]
     jaxpr, consts, out_tree = _trace_to_jaxpr(fun_, in_tree, tuple(in_avals), debug)
     if isinstance(prevent_cse, tuple):
-      cse = (*broadcast_prefix(prevent_cse, (args, kwargs) if kwargs else args),)
+      cse_args = (tuple(args), kwargs) if kwargs else tuple(args)
+      cse = (False,) * len(consts) + tuple(broadcast_prefix(prevent_cse, cse_args))
     else:
       cse = prevent_cse
     out_flat = remat_p.bind(
@@ -562,7 +563,7 @@ def remat_impl(*args, jaxpr, prevent_cse, differentiated, policy):
 @remat_p.def_effectful_abstract_eval
 def remat_abstract_eval(*args, jaxpr, prevent_cse, differentiated, policy):
   del args, prevent_cse, differentiated, policy  # Unused.
-  return [v.aval for v in jaxpr.outvars], jaxpr.effects
+  return [v.aval for v in jaxpr.outvars], core.eqn_effects(jaxpr)
 
 def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   assert not jaxpr.constvars
@@ -629,7 +630,7 @@ def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
   new_params = dict(params, jaxpr=jaxpr_unknown, differentiated=True,
                     prevent_cse=prevent_cse)
   recipe = pe.new_eqn_recipe(trace, in_jaxpr_tracers, out_jaxpr_tracers, remat_p,
-                             new_params, jaxpr_unknown.effects,
+                             new_params, core.eqn_effects(jaxpr_unknown),
                              source_info_util.current())
 
   # log info about saved residuals
@@ -665,7 +666,7 @@ def _insert_reduce_precision(jaxpr: core.Jaxpr, num_res: int) -> core.Jaxpr:
   used_vars = {x for e in jaxpr.eqns for x in e.invars if isinstance(x, core.Var)}
   invars, constvars, eqns = jaxpr.invars[:], jaxpr.constvars[:], jaxpr.eqns[:]
   for v in res_vars:
-    if (not isinstance(v.aval, core.UnshapedArray) or
+    if (not isinstance(v.aval, core.ShapedArray) or
         not dtypes.issubdtype(v.aval.dtype, np.inexact)):
       continue
     if v not in used_vars:
@@ -818,7 +819,8 @@ def remat_dce(used_outputs: list[bool], eqn: core.JaxprEqn
     new_eqn = pe.new_jaxpr_eqn(
         [v for v, used in zip(eqn.invars, used_inputs) if used],
         [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info, eqn.ctx)
+        eqn.primitive, new_params, core.eqn_effects(new_jaxpr),
+        eqn.source_info, eqn.ctx)
     return used_inputs, new_eqn
 pe.dce_rules[remat_p] = remat_dce
 

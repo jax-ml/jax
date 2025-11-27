@@ -525,6 +525,10 @@ class HijaxTest(jtu.JaxTestCase):
         x, = args
         return raise_to_static_power(x, self.power), in_dim
 
+      def jvp(self, primals, tangents):
+        (x,), (t,) = primals, tangents
+        return self(x), t * self.power * raise_to_static_power(x, self.power-1)
+
     def raise_to_static_power(x, power):
       x_aval = jax.typeof(x)
       return RaiseToStaticPower(x_aval, power=power)(x)
@@ -539,7 +543,8 @@ class HijaxTest(jtu.JaxTestCase):
     xs = jnp.arange(3.0)
     self.assertAllClose(jax.vmap(f)(xs), xs**3)
     self.assertEqual(jax.grad(f)(2.0), 12.0)
-
+    self.assertEqual(jax.jvp(f, (2.0,), (1.0,)),
+                     (8.0, 12.0))
 
   @parameterized.parameters([False, True])
   def test_newstyle_hiprimitive_retval(self, jit):
