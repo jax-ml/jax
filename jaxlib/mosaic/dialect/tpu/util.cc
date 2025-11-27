@@ -371,4 +371,13 @@ SmallVector<Operation *> getNontrivialTransitiveUsers(Value v) {
   return users;
 }
 
+bool hasVectorOperandsOrResults(Operation& op) {
+  for (Value value : llvm::concat<Value>(op.getOperands(), op.getResults())) {
+    if (isa<VectorType>(value.getType())) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace mlir::tpu
