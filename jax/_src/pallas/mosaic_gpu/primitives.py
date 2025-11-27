@@ -521,14 +521,16 @@ def _copy_gmem_to_smem_lowering(
       )
     if math.prod(ctx.launch_ctx.cluster_size) != 2:
       raise NotImplementedError(
-          "Partitioned loads only supported for clusters of size 2"
+          "Partitioned loads only supported for clusters of size 2. Got"
+          f" cluster size {ctx.launch_ctx.cluster_size}."
       )
 
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     if bytes % WARPGROUP_SIZE:
       raise NotImplementedError(
           "Only copies transferring a number of bytes divisible by the"
-          " warpgroup size are supported"
+          f" warpgroup size are supported. Got {bytes=} but warpgroup size is"
+          f" {WARPGROUP_SIZE}"
       )
     if for_warpgroup:
       # We arrive uniformly from each thread in the WG, so we need to divide the
@@ -1201,7 +1203,9 @@ def _wgmma_lowering(
     a_mlir_dtype = ir.MemRefType(a.type).element_type
     swizzle_elems = lhs_swizzle // mgpu_utils.bytewidth(a_mlir_dtype)
     if tiling != (8, swizzle_elems):
-      raise NotImplementedError("WGMMA lhs tiling does not fit swizzle")
+      raise NotImplementedError(
+          f"WGMMA lhs tiling does not fit swizzle. Got {tiling=}, expected (8, {swizzle_elems})"
+      )
   else:
     lhs_transpose = False
     if not isinstance(a, mgpu.FragmentedArray):
