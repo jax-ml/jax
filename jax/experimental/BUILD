@@ -117,13 +117,11 @@ pytype_strict_library(
         "//jax",
         "//jax/_src:api",
         "//jax/_src:api_util",
-        "//jax/_src:config",
         "//jax/_src:traceback_util",
         "//jax/_src:tree_util",
         "//jax/_src:util",
         "//jax/_src:xla_bridge",
         "//jax/_src/lib",
-        "//jax/extend:backend",
         "//jax/extend:ifrt_programs",
     ] + py_deps("numpy") + py_deps("cloudpickle"),
 )
