@@ -113,17 +113,17 @@ class GpuModuleToAssemblyTest : public ::testing::Test {
 
 mlir::gpu::GPUModuleOp CreateGpuModuleWithEmptyFunc(mlir::OpBuilder& b,
                                                     mlir::ArrayAttr targets) {
-  mlir::gpu::GPUModuleOp gpu_module = b.create<mlir::gpu::GPUModuleOp>(
-      b.getUnknownLoc(), "gpu_module", targets);
+  mlir::gpu::GPUModuleOp gpu_module = mlir::gpu::GPUModuleOp::create(
+      b, b.getUnknownLoc(), "gpu_module", targets);
   b.setInsertionPointToEnd(gpu_module.getBody());
 
   mlir::LLVM::LLVMFunctionType func_ty = mlir::LLVM::LLVMFunctionType::get(
       mlir::LLVM::LLVMVoidType::get(b.getContext()), {});
   mlir::LLVM::LLVMFuncOp func =
-      b.create<mlir::LLVM::LLVMFuncOp>(b.getUnknownLoc(), "gpu_func", func_ty);
+      mlir::LLVM::LLVMFuncOp::create(b, b.getUnknownLoc(), "gpu_func", func_ty);
   b.setInsertionPointToEnd(func.addEntryBlock(b));
 
-  b.create<mlir::LLVM::ReturnOp>(b.getUnknownLoc(), mlir::ValueRange());
+  mlir::LLVM::ReturnOp::create(b, b.getUnknownLoc(), mlir::ValueRange());
 
   b.setInsertionPointAfter(gpu_module);
   return gpu_module;
@@ -194,15 +194,16 @@ TEST_F(GpuModuleToAssemblyTest,
 
   // Insert a declaration for `__nv_exp2f` defined in libdevice here.
   builder_.setInsertionPointToStart(gpu_module.getBody());
-  auto exp2f = builder_.create<mlir::LLVM::LLVMFuncOp>(
-      loc, "__nv_exp2f", mlir::LLVM::LLVMFunctionType::get({f32}, f32));
+  auto exp2f = mlir::LLVM::LLVMFuncOp::create(
+      builder_, loc, "__nv_exp2f",
+      mlir::LLVM::LLVMFunctionType::get({f32}, f32));
   // Call the function in the entry block of `gpu_func`.
   builder_.setInsertionPointToStart(&gpu_func.getBlocks().front());
-  auto constant = builder_.create<mlir::LLVM::ConstantOp>(
-      loc, f32, builder_.getF32FloatAttr(1.0));
-  builder_.create<mlir::LLVM::CallOp>(loc, exp2f, mlir::ValueRange{constant});
+  auto constant = mlir::LLVM::ConstantOp::create(builder_, loc, f32,
+                                                 builder_.getF32FloatAttr(1.0));
+  mlir::LLVM::CallOp::create(builder_, loc, exp2f, mlir::ValueRange{constant});
 
-  // Clone the module so that we can check that linking libraries behaves
+  // Clone the module so that we can check that linking braries behaves
   // differently than not linking them.
   mlir::OwningOpRef<mlir::ModuleOp> module2 = module_->clone();
 

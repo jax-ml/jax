@@ -71,17 +71,18 @@ struct ConvertExtractStridedSlicePattern final
     if (start < 0 || start + size > vty.getShape()[0]) {
       return rewriter.notifyMatchFailure(op, "slice is out of bounds");
     }
-    mlir::Value result = rewriter.create<mlir::LLVM::UndefOp>(
-        op.getLoc(), op.getResult().getType());
+    mlir::Value result = mlir::LLVM::UndefOp::create(rewriter, op.getLoc(),
+                                                     op.getResult().getType());
     for (int64_t i = 0; i < size; ++i) {
-      result = rewriter.create<mlir::LLVM::InsertElementOp>(
-          op.getLoc(), result,
-          rewriter.create<mlir::LLVM::ExtractElementOp>(
-              op.getLoc(), subst.getSource(),
-              rewriter.create<mlir::LLVM::ConstantOp>(
-                  op.getLoc(), rewriter.getI32IntegerAttr(i + start))),
-          rewriter.create<mlir::LLVM::ConstantOp>(
-              op.getLoc(), rewriter.getI32IntegerAttr(i)));
+      result = mlir::LLVM::InsertElementOp::create(
+          rewriter, op.getLoc(), result,
+          mlir::LLVM::ExtractElementOp::create(
+              rewriter, op.getLoc(), subst.getSource(),
+              mlir::LLVM::ConstantOp::create(
+                  rewriter, op.getLoc(),
+                  rewriter.getI32IntegerAttr(i + start))),
+          mlir::LLVM::ConstantOp::create(rewriter, op.getLoc(),
+                                         rewriter.getI32IntegerAttr(i)));
     }
     rewriter.replaceOp(op, result);
     return mlir::success();
