@@ -1473,6 +1473,7 @@ class Layout(SomeLayout, enum.Enum):
   TCGEN05_TRANSPOSED = enum.auto()
   TCGEN05_M64_COLLECTIVE = enum.auto()
   TCGEN05_TMEM_NATIVE = enum.auto()
+  TCGEN05_M64_COLLECTIVE_NATIVE = enum.auto()
 
   SMEM_GMEM_COPY = enum.auto()
   TMA_GATHER_INDICES = enum.auto()
@@ -1525,6 +1526,8 @@ class Layout(SomeLayout, enum.Enum):
         return mgpu.TMEM_NATIVE_LAYOUT
       case Layout.TCGEN05_M64_COLLECTIVE:
         return tcgen05.fa_m64_collective_layout(*args, **kwargs)  # pytype: disable=missing-parameter
+      case Layout.TCGEN05_M64_COLLECTIVE_NATIVE:
+        return tcgen05.tmem_m64_collective_layout(*args, **kwargs).as_tiled_layout()  # pytype: disable=missing-parameter
       case Layout.SMEM_GMEM_COPY:
         normalize_args = lambda shape, dtype, swizzle: (shape, dtype, swizzle)
         shape, dtype, swizzle = normalize_args(*args, **kwargs)
