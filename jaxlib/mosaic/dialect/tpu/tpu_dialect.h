@@ -83,10 +83,6 @@ std::unique_ptr<OperationPass<func::FuncOp>> createInferVectorLayoutPass(
     const TpuTilingFlags& tpu_tiling_flags = {},
     bool shape_invariant_numerics = true);
 
-std::unique_ptr<OperationPass<func::FuncOp>> createRelayoutInsertionPass(
-    int hardware_generation = -1,
-    std::array<int64_t, 2> target_shape = {8, 128});
-
 std::unique_ptr<OperationPass<func::FuncOp>> createApplyVectorLayoutPass(
     const ApplyVectorLayoutContext &ctx = ApplyVectorLayoutContext{});
 
