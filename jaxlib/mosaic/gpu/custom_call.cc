@@ -639,20 +639,20 @@ absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
   // Updated version using the new FFI API supporting custom barrier
   // for distributed kernels
   if (use_custom_barrier) {
-    fprintf(stderr, "Custom barrier is not supported on GPUs.\n");
-    abort();
+    return absl::UnimplementedError("Custom barrier is not supported on GPUs.");
   }
   if (reinterpret_cast<const uintptr_t>(kernel_hash.data()) %
           alignof(KernelHash) ||
       kernel_hash.size() != sizeof(KernelHash)) {
-    fprintf(stderr, "Misaligned opaque pointer\n");
-    abort();
+    return absl::InvalidArgumentError("Misaligned opaque pointer");
   }
   auto hash = *reinterpret_cast<const KernelHash*>(kernel_hash.data());
   CUcontext ctx;
-  if (cuCtxGetCurrent(&ctx) != CUDA_SUCCESS) {
-    fprintf(stderr, "Failed to get current CUDA context\n");
-    abort();
+  if (auto result = cuCtxGetCurrent(&ctx); result != CUDA_SUCCESS) {
+    const char* error;
+    cuGetErrorString(result, &error);
+    return absl::InternalError(
+        absl::StrFormat("Failed to get current CUDA context: %s", error));
   }
   CacheKey key(hash, reinterpret_cast<uintptr_t>(ctx));
   TF_ASSIGN_OR_RETURN(auto compiled_kernel,
