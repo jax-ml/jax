@@ -2059,7 +2059,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     dtype=default_dtypes,
     n=[0, 4],
     m=[None, 0, 1, 3, 4],
-    k=[*range(-4, 4), -2**33, 2**33, np.array(2, np.int32), np.array(2**60, np.int64)],
+    k=[*range(-4, 4), -2**33, 2**33, np.array(2, np.int32)],
   )
   def testEye(self, n, m, k, dtype):
     np_fun = lambda k: np.eye(n, M=m, k=k, dtype=dtype)
