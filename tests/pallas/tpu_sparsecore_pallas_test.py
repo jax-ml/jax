@@ -1244,6 +1244,14 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), np.cumsum(x))
 
+  @parameterized.product(dtype=[jnp.int32, jnp.float32], op=[jnp.sum, jnp.max])
+  def test_reductions(self, dtype, op):
+    x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
+    @self.vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.full(o_ref.shape, op(x_ref[...]))
+    np.testing.assert_array_equal(kernel(x)[0], op(x))
+
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_cumsum_2d_not_supported(self, dtype):
     x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)

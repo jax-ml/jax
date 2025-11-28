@@ -558,6 +558,19 @@ def cummax(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
     mask = lax.full(x.shape, True)
   return masked_cummax_p.bind(x, mask)
 
+@sc_lowering.register_lowering_rule(
+    lax.reduce_max_p, kernel_types=[tpu_core.KernelType.SC_VECTOR_SUBCORE])
+def _reduce_max_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axes):
+  if axes != (0,):
+    raise NotImplementedError(
+        f"reduce_max requires axes to be (0,) on SparseCore, but got {axes}.")
+  vec_dim = ctx.avals_in[0].shape[0]
+  i1t = ir.IntegerType.get_signless(1)
+  c1 = arith.constant(i1t, ir.IntegerAttr.get(i1t, 1))
+  c1v = vector.broadcast(ir.VectorType.get(x.type.shape, c1.type), c1)
+  return vector.extract(
+      _masked_cummax_lowering_rule(ctx, x, c1v), [], [vec_dim - 1])
+
 
 masked_cumsum_p = jax_core.Primitive("masked_cumsum")
 masked_cumsum_p.multiple_results = False
@@ -579,8 +592,8 @@ def _masked_cumsum_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask):
       x.type, x, ir.Attribute.parse("#tpu.reduction_kind<sum>"), mask=mask)
 
 @sc_lowering.register_lowering_rule(lax.cumsum_p)
-def _lax_cumsum_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axis,
-                              reverse):
+def _cumsum_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axis,
+                          reverse):
   if axis != 0:
     raise NotImplementedError(f"SC cumsum: axis={axis} must be 0.")
   if len(ctx.avals_in[0].shape) != 1:
@@ -608,6 +621,17 @@ def cumsum(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
   if mask is None:
     mask = lax.full(x.shape, True)
   return masked_cumsum_p.bind(x, mask)
+
+@sc_lowering.register_lowering_rule(
+    lax.reduce_sum_p, kernel_types=[tpu_core.KernelType.SC_VECTOR_SUBCORE])
+def _reduce_sum_lowering_rule(
+    ctx: sc_lowering.LoweringRuleContext, x, axes, out_sharding):
+  del out_sharding  # Unused.
+  vec_dim = ctx.avals_in[0].shape[0]
+  if axes != (0,):
+    raise NotImplementedError(f"SC reduce_sum: axes={axes} must be (0,).")
+  return vector.extract(
+      _cumsum_lowering_rule(ctx, x, 0, reverse=False), [], [vec_dim - 1])
 
 
 parallel_loop_p = jax_core.Primitive("parallel_loop")
