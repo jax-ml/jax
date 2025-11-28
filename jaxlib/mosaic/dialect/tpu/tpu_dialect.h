@@ -73,10 +73,6 @@ std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
     int hardware_generation, std::array<int64_t, 2> target_shape,
     const TpuTilingFlags& tpu_tiling_flags, bool align = true);
 
-std::unique_ptr<OperationPass<func::FuncOp>> createCanonicalizeMosaicPass(
-    int hardware_generation = -1, bool compatibility_mode = true,
-    std::array<int64_t, 2> target_shape = {8, 128});
-
 std::unique_ptr<OperationPass<func::FuncOp>> createInferVectorLayoutPass(
     int hardware_generation = -1,
     std::array<int64_t, 2> target_shape = {8, 128},

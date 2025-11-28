@@ -1533,24 +1533,6 @@ def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mli
   let options = [Option<"total_devices", "total-devices", "int", "", "">];
 }
 
-def CanonicalizeMosaicPass : Pass<"tpu-canonicalize-mosaic", "::mlir::func::FuncOp"> {
-  let dependentDialects = [
-    "::mlir::arith::ArithDialect",
-    "::mlir::func::FuncDialect",
-    "::mlir::memref::MemRefDialect",
-    "::mlir::scf::SCFDialect",
-    "::mlir::vector::VectorDialect",
-    "::mlir::tpu::TPUDialect",
-  ];
-  let constructor = "::mlir::tpu::createCanonicalizeMosaicPass()";
-  let options = [
-    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
-    Option<"compatibility_mode", "compatibility-mode", "bool", /*default=*/"1", "">,
-    Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
-    Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
-  ];
-}
-
 def InferVectorLayoutPass : Pass<"tpu-infer-vector-layout", "::mlir::func::FuncOp"> {
   let dependentDialects = [
     "::mlir::arith::ArithDialect",
