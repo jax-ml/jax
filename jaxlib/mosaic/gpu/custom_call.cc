@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/base/call_once.h"
 #include "absl/base/no_destructor.h"
 #include "absl/base/optimization.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -513,17 +514,6 @@ class CompiledKernel {
   bool is_comm_used_;
 };
 
-using KernelHash = std::array<uint64_t, 4>;
-using CacheKey = std::pair<KernelHash, uintptr_t>;
-
-std::pair<absl::flat_hash_map<CacheKey, CompiledKernel>*, absl::Mutex*>
-GetKernelCache() {
-  static absl::Mutex mutex;
-  static auto& context_cache =
-      *new absl::flat_hash_map<CacheKey, CompiledKernel>;
-  return std::make_pair(&context_cache, &mutex);
-}
-
 absl::StatusOr<std::pair<std::string, std::string>> GetHostAndInitFuncNames(
     mlir::ModuleOp module_op) {
   // We look for two top level C-interface functions:
@@ -603,33 +593,43 @@ absl::StatusOr<CompiledKernel> CompileAndInit(llvm::StringRef module) {
                         reinterpret_cast<MosaicHostFunc*>(*host), is_comm_used);
 }
 
+using KernelHash = std::array<uint64_t, 4>;
+using CacheKey = std::pair<KernelHash, uintptr_t>;
+
+struct KernelCache {
+  static KernelCache& Global() {
+    static absl::NoDestructor<KernelCache> cache;
+    return *cache;
+  }
+  absl::Mutex mutex;
+  absl::flat_hash_map<CacheKey, CompiledKernel> kernels ABSL_GUARDED_BY(mutex);
+};
+
 // Each compiled kernel has a unique init func, and each kernel is used from
 // a single HLO module. So it should be safe to not include the CUDA context
 // in the key.
 absl::StatusOr<CompiledKernel*> CachedCompileAndInit(CacheKey key,
                                                      llvm::StringRef module) {
-  auto cache_and_mutex = GetKernelCache();
-  auto* cache = cache_and_mutex.first;
-  auto* mutex = cache_and_mutex.second;
+  KernelCache& cache = KernelCache::Global();
 
   {
     // Fast path uses reader lock (as hash map look-up is relatively slow).
-    absl::ReaderMutexLock lock(*mutex);
-    auto it = cache->find(key);
-    if (ABSL_PREDICT_TRUE(it != cache->end())) return &it->second;
+    absl::ReaderMutexLock lock(cache.mutex);
+    auto it = cache.kernels.find(key);
+    if (ABSL_PREDICT_TRUE(it != cache.kernels.end())) return &it->second;
   }
 
-  absl::MutexLock lock(*mutex);
+  absl::MutexLock lock(cache.mutex);
   // We released the reader lock, another thread might have initialized it.
-  if (cache->find(key) == cache->end()) {
+  if (cache.kernels.find(key) == cache.kernels.end()) {
     tsl::profiler::TraceMe trace("Compilation cache miss");
     auto compiled = CompileAndInit(module);
     if (!compiled.ok()) {
       return compiled.status();
     }
-    cache->insert_or_assign(key, std::move(*compiled));
+    cache.kernels.insert_or_assign(key, std::move(*compiled));
   }
-  return &cache->at(key);
+  return &cache.kernels.at(key);
 }
 
 absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
