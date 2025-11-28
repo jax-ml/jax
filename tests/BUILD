@@ -1242,6 +1242,16 @@ jax_multiplatform_test(
     ]),
 )
 
+jax_py_test(
+    name = "profiler_session_test",
+    srcs = ["profiler_session_test.py"],
+    deps = [
+        "//jax",
+        "//jax/_src:profiler",
+        "//jax/_src:test_util",
+    ] + py_deps("absl/testing"),
+)
+
 jax_multiplatform_test(
     name = "pytorch_interoperability_test",
     srcs = ["pytorch_interoperability_test.py"],
