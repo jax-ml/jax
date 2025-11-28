@@ -20,17 +20,19 @@ import math
 
 from absl.testing import absltest
 from absl.testing import parameterized
+import hypothesis as hp
+import hypothesis.strategies as hps
 import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic import sc_core
+from jax._src.state import discharge as state_discharge
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas import tpu_sc as plsc
 import jax.numpy as jnp
 import numpy as np
-import hypothesis as hp
-import hypothesis.strategies as hps
+
 
 jtu.setup_hypothesis()
 jax.config.parse_flags_with_absl()
@@ -1175,6 +1177,29 @@ class VectorSubcoreTest(PallasSCTest):
                          jnp.full((num_subcores, 8), 7.),
                          x)
     np.testing.assert_array_equal(kernel(x), expected)
+
+  @parameterized.named_parameters(
+      ("barrier", lambda _: plsc.subcore_barrier()),
+      ("debug_print", lambda vec: pl.debug_print('test', vec)),
+  )
+  def test_effect_discharge(self, effectful_op):
+    x = jnp.arange(self.sc_info.num_lanes)
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+    )
+    def stateful(refs):
+      def body(x_ref, o_ref):
+        def with_scratch(scratch_ref):
+          pltpu.sync_copy(x_ref, scratch_ref)
+          scratch_ref[...] = scratch_ref[...] + 1
+          effectful_op(scratch_ref[...])
+          pltpu.sync_copy(scratch_ref, o_ref)
+        pl.run_scoped(with_scratch, pltpu.VMEM(x.shape, x.dtype))
+      pl.core_map(mesh)(lambda: body(*refs))
+
+    _, out = jax.jit(state_discharge.run_state(stateful))(
+        (x, jnp.empty_like(x)))
+    np.testing.assert_array_equal(out, x + 1)
 
   def test_parallel_loop_effects(self):
     chunk_size = 8

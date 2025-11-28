@@ -444,6 +444,7 @@ class MemoryEffect(jax_core.Effect):
 
 
 effects.control_flow_allowed_effects.add_type(MemoryEffect)
+effects.lowerable_effects.add_type(MemoryEffect)
 _memory_effect = MemoryEffect()
 
 barrier_p = jax_core.Primitive("barrier")
