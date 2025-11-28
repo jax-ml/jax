@@ -29,9 +29,8 @@ from jax import lax
 from jax import numpy as jnp
 from jax import export
 from jax._src.shard_map import shard_map
-from jax.sharding import NamedSharding
-from jax.sharding import Mesh
-from jax.sharding import PartitionSpec as P
+from jax.sharding import (NamedSharding, Mesh, PartitionSpec as P,
+                          reshard)
 from jax import tree_util
 
 from jax._src import config
@@ -1490,6 +1489,86 @@ class JaxExportTest(jtu.JaxTestCase):
                        res_r.addressable_shards[i].index)
       self.assertAllClose(res_jax.addressable_shards[i].data,
                           res_r.addressable_shards[i].data)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_unreduced_einsum_basic(self, mesh):
+    np_inp = np.arange(4).reshape(2, 2)
+    x = jax.device_put(np_inp, P(None, 'x'))
+    y = jax.device_put(np_inp, P('x', None))
+
+    @jax.jit
+    def f(x, y):
+      out = jnp.einsum('ab,bc->ac', x, y,
+                       out_sharding=P(None, None, unreduced={'x'}))
+      self.assertEqual(out.aval.sharding.spec, P(None, None, unreduced={'x'}))
+      return out
+
+    exported = get_exported(f)(x, y)
+    out = exported.call(x, y)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
+    self.assertEqual(out.shape, (2, 2))
+    self.assertEqual(out.sharding.shard_shape(out.shape), (2, 2))
+
+    expected_shards = [np.array([[0, 0], [0, 2]]), np.array([[2, 3], [6, 9]])]
+    for s, es in zip(out.addressable_shards, expected_shards):
+      self.assertEqual(s.data.shape, (2, 2))
+      self.assertArraysEqual(s.data, es)
+
+    reshard_out = reshard(out, P(None, None))
+    self.assertArraysEqual(reshard_out, np_inp @ np_inp)
+
+  @jtu.parameterized_filterable(
+    kwargs=[
+      dict(testcase_name=name, spec1=spec1, spec2=spec2,
+           out_spec=out_spec, collective_name=collective_name)
+      for name, spec1, spec2, out_spec, collective_name in [
+        ("x_y", P("x", None), P(None, "y"), P("x", "y"), None),
+        ("x_None", P("x", None), P(None, None), P("x", None), None),
+        ("contracting2", P("x", "y"), P(None, None), P("x", None), "all-gather"),
+        ("fsdp", P("x", None), P("x", None), P("x", None), "all-gather"),
+        ("half_tp", P(None, "y"), P(None, "y"), P(None, "y"), "all-gather")
+      ]
+  ])
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_explicit_sharding_dot_general(self, spec1, spec2, out_spec, collective_name, mesh):
+    def check_wsc_in_lowered(text):
+      if config.use_shardy_partitioner.value:
+        self.assertIn('sdy.sharding_constraint', text)
+      else:
+        self.assertIn('@Sharding', text)
+
+    np_inp1 = np.arange(16.).reshape(8, 2)
+    arr1 = jax.device_put(np_inp1, NamedSharding(mesh, spec1))
+    arr2 = jax.device_put(np_inp1.T, NamedSharding(mesh, spec2))
+
+    def f(x, y):
+      out = x @ y
+      self.assertEqual(out.aval.sharding.spec, out_spec)
+      return out
+
+    exported = get_exported(jax.jit(f))(arr1, arr2)
+    out = exported.call(arr1, arr2)
+    self.assertArraysEqual(out, np_inp1 @ np_inp1.T)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+
+    lowered = jax.jit(exported.call).lower(arr1, arr2)
+    check_wsc_in_lowered(lowered.as_text())
+
+    compiled_text = lowered.compile().as_text()
+    if collective_name is not None:
+      self.assertIn(collective_name, compiled_text)
+
+    @jax.jit
+    def g(x, y):
+      out = f(x, y)
+      return jnp.sum(out)
+
+    g = jax.jit(jax.grad(g, argnums=(0, 1)))
+    exported_g = get_exported(g)(arr1, arr2)
+    out = exported_g.call(arr1, arr2)
+    self.assertEqual(out[0].sharding, arr1.sharding)
+    self.assertEqual(out[1].sharding, arr2.sharding)
 
   @jtu.parameterized_filterable(
     kwargs=[
