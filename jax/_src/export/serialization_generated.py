@@ -75,9 +75,17 @@ class MemorySpace(object):
     Any = 3
 
 
+class AxisType(object):
+    Missing = 0
+    Auto = 1
+    Explicit = 2
+    Manual = 3
+
+
 class ShardingKind(object):
     unspecified = 0
     hlo_sharding = 1
+    named_sharding = 2
 
 
 class DisabledSafetyCheckKind(object):
@@ -221,6 +229,346 @@ def PyTreeDefEnd(builder):
 
 
 
+class AbstractMesh(object):
+    __slots__ = ['_tab']
+
+    @classmethod
+    def GetRootAs(cls, buf, offset=0):
+        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
+        x = AbstractMesh()
+        x.Init(buf, n + offset)
+        return x
+
+    @classmethod
+    def GetRootAsAbstractMesh(cls, buf, offset=0):
+        """This method is deprecated. Please switch to GetRootAs."""
+        return cls.GetRootAs(buf, offset)
+    # AbstractMesh
+    def Init(self, buf, pos):
+        self._tab = flatbuffers.table.Table(buf, pos)
+
+    # AbstractMesh
+    def AxisSizes(self, j):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        if o != 0:
+            a = self._tab.Vector(o)
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 4))
+        return 0
+
+    # AbstractMesh
+    def AxisSizesAsNumpy(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        if o != 0:
+            return self._tab.GetVectorAsNumpy(flatbuffers.number_types.Uint32Flags, o)
+        return 0
+
+    # AbstractMesh
+    def AxisSizesLength(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # AbstractMesh
+    def AxisSizesIsNone(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        return o == 0
+
+    # AbstractMesh
+    def AxisNames(self, j):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        if o != 0:
+            a = self._tab.Vector(o)
+            return self._tab.String(a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 4))
+        return ""
+
+    # AbstractMesh
+    def AxisNamesLength(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # AbstractMesh
+    def AxisNamesIsNone(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        return o == 0
+
+    # AbstractMesh
+    def AxisTypes(self, j):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            a = self._tab.Vector(o)
+            return self._tab.Get(flatbuffers.number_types.Int8Flags, a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 1))
+        return 0
+
+    # AbstractMesh
+    def AxisTypesAsNumpy(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            return self._tab.GetVectorAsNumpy(flatbuffers.number_types.Int8Flags, o)
+        return 0
+
+    # AbstractMesh
+    def AxisTypesLength(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # AbstractMesh
+    def AxisTypesIsNone(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        return o == 0
+
+def AbstractMeshStart(builder):
+    builder.StartObject(3)
+
+def AbstractMeshAddAxisSizes(builder, axisSizes):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(axisSizes), 0)
+
+def AbstractMeshStartAxisSizesVector(builder, numElems):
+    return builder.StartVector(4, numElems, 4)
+
+def AbstractMeshAddAxisNames(builder, axisNames):
+    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(axisNames), 0)
+
+def AbstractMeshStartAxisNamesVector(builder, numElems):
+    return builder.StartVector(4, numElems, 4)
+
+def AbstractMeshAddAxisTypes(builder, axisTypes):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(axisTypes), 0)
+
+def AbstractMeshStartAxisTypesVector(builder, numElems):
+    return builder.StartVector(1, numElems, 1)
+
+def AbstractMeshEnd(builder):
+    return builder.EndObject()
+
+
+
+class PartitionSpecOneAxis(object):
+    __slots__ = ['_tab']
+
+    @classmethod
+    def GetRootAs(cls, buf, offset=0):
+        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
+        x = PartitionSpecOneAxis()
+        x.Init(buf, n + offset)
+        return x
+
+    @classmethod
+    def GetRootAsPartitionSpecOneAxis(cls, buf, offset=0):
+        """This method is deprecated. Please switch to GetRootAs."""
+        return cls.GetRootAs(buf, offset)
+    # PartitionSpecOneAxis
+    def Init(self, buf, pos):
+        self._tab = flatbuffers.table.Table(buf, pos)
+
+    # PartitionSpecOneAxis
+    def Axes(self, j):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        if o != 0:
+            a = self._tab.Vector(o)
+            return self._tab.String(a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 4))
+        return ""
+
+    # PartitionSpecOneAxis
+    def AxesLength(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # PartitionSpecOneAxis
+    def AxesIsNone(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        return o == 0
+
+def PartitionSpecOneAxisStart(builder):
+    builder.StartObject(1)
+
+def PartitionSpecOneAxisAddAxes(builder, axes):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(axes), 0)
+
+def PartitionSpecOneAxisStartAxesVector(builder, numElems):
+    return builder.StartVector(4, numElems, 4)
+
+def PartitionSpecOneAxisEnd(builder):
+    return builder.EndObject()
+
+
+
+class PartitionSpec(object):
+    __slots__ = ['_tab']
+
+    @classmethod
+    def GetRootAs(cls, buf, offset=0):
+        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
+        x = PartitionSpec()
+        x.Init(buf, n + offset)
+        return x
+
+    @classmethod
+    def GetRootAsPartitionSpec(cls, buf, offset=0):
+        """This method is deprecated. Please switch to GetRootAs."""
+        return cls.GetRootAs(buf, offset)
+    # PartitionSpec
+    def Init(self, buf, pos):
+        self._tab = flatbuffers.table.Table(buf, pos)
+
+    # PartitionSpec
+    def Partitions(self, j):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        if o != 0:
+            x = self._tab.Vector(o)
+            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+            x = self._tab.Indirect(x)
+            obj = PartitionSpecOneAxis()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # PartitionSpec
+    def PartitionsLength(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # PartitionSpec
+    def PartitionsIsNone(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        return o == 0
+
+    # PartitionSpec
+    def Reduced(self, j):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        if o != 0:
+            a = self._tab.Vector(o)
+            return self._tab.String(a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 4))
+        return ""
+
+    # PartitionSpec
+    def ReducedLength(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # PartitionSpec
+    def ReducedIsNone(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        return o == 0
+
+    # PartitionSpec
+    def Unreduced(self, j):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            a = self._tab.Vector(o)
+            return self._tab.String(a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 4))
+        return ""
+
+    # PartitionSpec
+    def UnreducedLength(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # PartitionSpec
+    def UnreducedIsNone(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        return o == 0
+
+def PartitionSpecStart(builder):
+    builder.StartObject(3)
+
+def PartitionSpecAddPartitions(builder, partitions):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(partitions), 0)
+
+def PartitionSpecStartPartitionsVector(builder, numElems):
+    return builder.StartVector(4, numElems, 4)
+
+def PartitionSpecAddReduced(builder, reduced):
+    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(reduced), 0)
+
+def PartitionSpecStartReducedVector(builder, numElems):
+    return builder.StartVector(4, numElems, 4)
+
+def PartitionSpecAddUnreduced(builder, unreduced):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(unreduced), 0)
+
+def PartitionSpecStartUnreducedVector(builder, numElems):
+    return builder.StartVector(4, numElems, 4)
+
+def PartitionSpecEnd(builder):
+    return builder.EndObject()
+
+
+
+class NamedSharding(object):
+    __slots__ = ['_tab']
+
+    @classmethod
+    def GetRootAs(cls, buf, offset=0):
+        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
+        x = NamedSharding()
+        x.Init(buf, n + offset)
+        return x
+
+    @classmethod
+    def GetRootAsNamedSharding(cls, buf, offset=0):
+        """This method is deprecated. Please switch to GetRootAs."""
+        return cls.GetRootAs(buf, offset)
+    # NamedSharding
+    def Init(self, buf, pos):
+        self._tab = flatbuffers.table.Table(buf, pos)
+
+    # NamedSharding
+    def Mesh(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+        if o != 0:
+            x = self._tab.Indirect(o + self._tab.Pos)
+            obj = AbstractMesh()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # NamedSharding
+    def Spec(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+        if o != 0:
+            x = self._tab.Indirect(o + self._tab.Pos)
+            obj = PartitionSpec()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
+    # NamedSharding
+    def MemoryKind(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
+def NamedShardingStart(builder):
+    builder.StartObject(3)
+
+def NamedShardingAddMesh(builder, mesh):
+    builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(mesh), 0)
+
+def NamedShardingAddSpec(builder, spec):
+    builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(spec), 0)
+
+def NamedShardingAddMemoryKind(builder, memoryKind):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(memoryKind), 0)
+
+def NamedShardingEnd(builder):
+    return builder.EndObject()
+
+
+
 class AbstractValue(object):
     __slots__ = ['_tab']
 
@@ -355,8 +703,18 @@ class Sharding(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
         return o == 0
 
+    # Sharding
+    def NamedSharding(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            x = self._tab.Indirect(o + self._tab.Pos)
+            obj = NamedSharding()
+            obj.Init(self._tab.Bytes, x)
+            return obj
+        return None
+
 def ShardingStart(builder):
-    builder.StartObject(2)
+    builder.StartObject(3)
 
 def ShardingAddKind(builder, kind):
     builder.PrependInt8Slot(0, kind, 0)
@@ -366,6 +724,9 @@ def ShardingAddHloShardingProto(builder, hloShardingProto):
 
 def ShardingStartHloShardingProtoVector(builder, numElems):
     return builder.StartVector(1, numElems, 1)
+
+def ShardingAddNamedSharding(builder, namedSharding):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(namedSharding), 0)
 
 def ShardingEnd(builder):
     return builder.EndObject()
