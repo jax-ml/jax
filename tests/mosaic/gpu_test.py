@@ -1245,8 +1245,7 @@ class TCGen05Test(TestCase):
       (jnp.float16, 1),
       (jnp.float16, 2),
       (jnp.float8_e5m2, 4),
-      # TODO(apaszke): Enable. LLVM lowering doesn't like 4 bits yet.
-      # (jnp.float4_e2m1fn, 8),
+      (jnp.float4_e2m1fn, 8),
   ])
   def test_load_store_tmem_native(self, jax_dtype, packing):
     # TODO(bchetioui): add a test for int8 with a native layout with vector
