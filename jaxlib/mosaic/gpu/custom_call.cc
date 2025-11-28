@@ -602,6 +602,12 @@ struct KernelCache {
     static absl::NoDestructor<KernelCache> cache;
     return *cache;
   }
+
+  KernelCache() = default;
+  // KernelCache is neither copyable nor movable.
+  KernelCache(const KernelCache&) = delete;
+  KernelCache(KernelCache&&) = delete;
+
   absl::Mutex mutex;
   absl::flat_hash_map<CacheKey, CompiledKernel> kernels ABSL_GUARDED_BY(mutex);
 };
