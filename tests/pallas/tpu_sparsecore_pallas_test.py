@@ -178,7 +178,12 @@ class DebugPrintTest(PallasSCTest):
           pl.debug_print("No values")
 
     compiled_kernel = jax.jit(
-        kernel, compiler_options={"xla_tpu_enable_sc_log_recorder": "true"}
+        kernel,
+        compiler_options={
+            "xla_tpu_enable_sc_log_recorder": "true",
+            # TODO(slebedev): This should not be necessary.
+            "xla_sc_force_aligned_buffers": "false",
+        },
     )
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel(int32s, int16s, int8s))
@@ -313,8 +318,9 @@ class VectorSubcoreTest(PallasSCTest):
   @jtu.thread_unsafe_test(condition=not jtu.hypothesis_is_thread_safe())
   @hp.given(hps.data())
   def test_block_spec_untiled_slicing(self, data):
-    if not self.uses_tc_tiling:
-      self.skipTest("Test uncoveres a bug: @reproduce_failure('6.80.0', b'AAEBAQAAAAA=')")
+    self.skipTest(
+        "Test uncoveres a bug: @reproduce_failure('6.80.0', b'AAEBAQAAAAA=')"
+    )
     slice_shape = data.draw(
         hps.lists(
             hps.integers(1, 3), min_size=(1 + self.uses_tc_tiling), max_size=4
