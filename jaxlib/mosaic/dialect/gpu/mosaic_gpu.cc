@@ -566,6 +566,54 @@ absl::StatusOr<llvm::SmallVector<int64_t, 8>> TileOffset(
   return result;
 }
 
+// Untiles the trailing `tiling_rank` dimensions in `offsets`.
+absl::StatusOr<llvm::SmallVector<int64_t, 8>> UntileOffset(
+    llvm::ArrayRef<int64_t> offsets, llvm::ArrayRef<int64_t> tiling) {
+  int64_t tiling_rank = tiling.size();
+  if (offsets.size() < 2 * tiling_rank) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Offsets to untile have lower rank than twice the "
+                     "tiling rank: ",
+                     offsets.size(), " < ", 2 * tiling_rank));
+  }
+
+  for (int64_t tiling_offset : offsets.take_back(tiling_rank)) {
+    if (tiling_offset != 0) {
+      return absl::UnimplementedError(
+          "Can not untile offset when offset is not tile-aligned.");
+    }
+  }
+
+  int64_t num_untiled_dims = offsets.size() - 2 * tiling_rank;
+  llvm::SmallVector<int64_t, 8> result;
+  for (int64_t i = 0; i < num_untiled_dims; ++i) {
+    result.push_back(offsets[i]);
+  }
+  for (int64_t i = 0; i < tiling_rank; ++i) {
+    result.push_back(offsets[i + num_untiled_dims] * tiling[i]);
+  }
+
+  return result;
+}
+
+llvm::SmallVector<int64_t, 4> DelinearizeOffset(
+    int64_t linear_offset, llvm::ArrayRef<int64_t> strides) {
+  llvm::SmallVector<int64_t, 4> delinearized_offset(strides.size(), 0);
+  llvm::SmallVector<std::pair<int64_t, int64_t>, 4> stride_index_pairs;
+  for (int64_t i = 0; i < strides.size(); ++i) {
+    stride_index_pairs.push_back({strides[i], i});
+  }
+  std::sort(stride_index_pairs.begin(), stride_index_pairs.end(),
+            [](const auto& a, const auto& b) { return a.first > b.first; });
+
+  int64_t remaining_offset = linear_offset;
+  for (auto [stride, idx] : stride_index_pairs) {
+    delinearized_offset[idx] = remaining_offset / stride;
+    remaining_offset %= stride;
+  }
+  return delinearized_offset;
+}
+
 absl::StatusOr<MemRefType> TileMemRefTypeImpl(MemRefType source_type,
                                               llvm::ArrayRef<int32_t> tiling) {
   llvm::ArrayRef<int64_t> source_shape = source_type.getShape();
@@ -578,23 +626,8 @@ absl::StatusOr<MemRefType> TileMemRefTypeImpl(MemRefType source_type,
   if (offset == mlir::ShapedType::kDynamic) {
     tiled_offset = offset;
   } else {
-    llvm::SmallVector<int64_t, 4> delinearized_offset(strides.size(), 0);
-    llvm::SmallVector<std::pair<int64_t, int64_t>, 4> stride_index_pairs;
-    for (int64_t i = 0; i < strides.size(); ++i) {
-      stride_index_pairs.push_back({strides[i], i});
-    }
-    std::sort(stride_index_pairs.begin(), stride_index_pairs.end(),
-              [](const auto& a, const auto& b) { return a.first > b.first; });
-
-    int64_t remaining_offset = offset;
-    for (auto [stride, idx] : stride_index_pairs) {
-      delinearized_offset[idx] = remaining_offset / stride;
-      remaining_offset %= stride;
-    }
-
     TF_ASSIGN_OR_RETURN(auto tiled_delinearized_offset,
-                        TileOffset(delinearized_offset, tiling));
-
+                        TileOffset(DelinearizeOffset(offset, strides), tiling));
     tiled_offset = 0;
     for (int64_t i = 0; i < tiled_strides.size(); ++i) {
       tiled_offset += tiled_delinearized_offset[i] * tiled_strides[i];
@@ -642,6 +675,122 @@ absl::StatusOr<MemRefType> TileMemRefTypeImpl(MemRefType source_type,
   }
 
   inferredReturnTypes.push_back(*result);
+  return llvm::success();
+}
+
+::llvm::LogicalResult UntileShapeOp::inferReturnTypes(
+    mlir::MLIRContext* context, std::optional<mlir::Location> location,
+    mlir::ValueRange operands, mlir::DictionaryAttr attributes,
+    mlir::OpaqueProperties properties, mlir::RegionRange regions,
+    llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  auto fail = [&location](absl::string_view message) -> llvm::LogicalResult {
+    if (location.has_value()) {
+      return mlir::emitError(*location) << message;
+    }
+    return llvm::failure();
+  };
+  MemRefType tiled_type = llvm::cast<MemRefType>(operands.front().getType());
+  llvm::ArrayRef<int64_t> tiled_shape = tiled_type.getShape();
+  int64_t tiling_rank = properties.as<Properties*>()->getTilingRank().getInt();
+
+  if (tiled_shape.size() < 2 * tiling_rank) {
+    return fail(
+        absl::StrCat("The tiled shape must have at least twice many dimensions "
+                     "as the tiling, but got ",
+                     tiled_shape.size(), " < ", tiling_rank * 2));
+  }
+
+  if (!tiled_type.isStrided()) {
+    return fail("The source memref must have a strided layout.");
+  }
+
+  auto [tiled_strides, offset] = tiled_type.getStridesAndOffset();
+  int64_t num_untiled_dims = tiled_shape.size() - 2 * tiling_rank;
+  llvm::ArrayRef<int64_t> tiling(
+      tiled_shape.data() + num_untiled_dims + tiling_rank, tiling_rank);
+
+  llvm::SmallVector<int64_t, 8> result_shape;
+  for (int64_t i = 0; i < num_untiled_dims; ++i) {
+    result_shape.push_back(tiled_shape[i]);
+  }
+  for (int64_t i = 0; i < tiling_rank; ++i) {
+    result_shape.push_back(tiled_shape[num_untiled_dims + i] *
+                           tiled_shape[num_untiled_dims + tiling_rank + i]);
+  }
+
+  // Compute the result strides.
+  llvm::SmallVector<int64_t, 8> result_strides;
+  {
+    for (int64_t i = 0; i < num_untiled_dims; ++i) {
+      result_strides.push_back(tiled_strides[i]);
+    }
+
+    llvm::ArrayRef<int64_t> tile_strides(
+        tiled_strides.data() + num_untiled_dims, tiling_rank);
+    llvm::ArrayRef<int64_t> tiling_strides(
+        tiled_strides.data() + num_untiled_dims + tiling_rank, tiling_rank);
+    llvm::SmallVector<std::pair<int64_t, int64_t>, 4> tiling_stride_index;
+    tiling_stride_index.reserve(tiling_rank);
+    for (int64_t i = 0; i < tiling_rank; ++i) {
+      tiling_stride_index.push_back({tiling_strides[i], i});
+    }
+    std::sort(tiling_stride_index.begin(), tiling_stride_index.end(),
+              [](const auto& a, const auto& b) { return a.first > b.first; });
+    llvm::SmallVector<int64_t, 4> to_ordered_inv(tiling_rank);
+    for (int64_t j = 0; j < tiling_rank; ++j) {
+      to_ordered_inv[j] = tiling_stride_index[j].second;
+    }
+
+    llvm::SmallVector<int64_t, 4> to_ordered(tiling_rank);
+    for (int64_t j = 0; j < tiling_rank; ++j) {
+      to_ordered[to_ordered_inv[j]] = j;
+    }
+
+    llvm::SmallVector<int64_t, 4> outer_ordered(tiling_rank);
+    llvm::SmallVector<int32_t, 4> tiling_ordered(tiling_rank);
+    for (int64_t j = 0; j < tiling_rank; ++j) {
+      outer_ordered[j] = tile_strides[to_ordered_inv[j]];
+      tiling_ordered[j] = tiling[to_ordered_inv[j]];
+    }
+
+    llvm::SmallVector<int64_t, 4> ordered_original_strides(tiling_rank);
+    ordered_original_strides[tiling_rank - 1] = 1;
+    for (int64_t j = tiling_rank - 2; j >= 0; --j) {
+      ordered_original_strides[j] = ordered_original_strides[j + 1] *
+                                    (outer_ordered[j] / outer_ordered[j + 1]) *
+                                    tiling_ordered[j + 1];
+    }
+
+    for (int64_t i = 0; i < tiling_rank; ++i) {
+      result_strides.push_back(ordered_original_strides[to_ordered[i]]);
+    }
+  }
+
+  int64_t untiled_offset = 0;
+  if (offset == mlir::ShapedType::kDynamic) {
+    untiled_offset = offset;
+  } else if (offset != 0) {
+    absl::StatusOr<llvm::SmallVector<int64_t, 4>>
+        untiled_delinearized_offset_or =
+            UntileOffset(DelinearizeOffset(offset, tiled_strides), tiling);
+    if (!untiled_delinearized_offset_or.ok()) {
+      return fail(untiled_delinearized_offset_or.status().message());
+    }
+    auto untiled_delinearized_offset = *untiled_delinearized_offset_or;
+    untiled_offset = 0;
+    for (int64_t i = 0; i < result_strides.size(); ++i) {
+      CHECK_EQ(untiled_delinearized_offset.size(), result_strides.size());
+      untiled_offset += untiled_delinearized_offset[i] * result_strides[i];
+    }
+  }
+
+  MemRefType result_type = MemRefType::get(
+      result_shape, tiled_type.getElementType(),
+      mlir::StridedLayoutAttr::get(tiled_type.getContext(), untiled_offset,
+                                   result_strides),
+      tiled_type.getMemorySpace());
+
+  inferredReturnTypes.push_back(result_type);
   return llvm::success();
 }
 
