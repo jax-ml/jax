@@ -260,3 +260,43 @@ def logsf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
     - :func:`jax.scipy.stats.beta.logpdf`
   """
   return lax.log(sf(x, a, b, loc, scale))
+
+
+def ppf(q: ArrayLike, a: ArrayLike, b: ArrayLike,
+        loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  r"""Beta percent point function (inverse of CDF).
+
+  JAX implementation of :obj:`scipy.stats.beta` ``ppf``.
+
+  The percent point function is defined as the inverse of the cumulative
+  distribution function:
+
+  .. math::
+
+     f_{ppf}(q, a, b) = f_{cdf}^{-1}(q, a, b)
+
+  where :math:`f_{cdf}` is the cumulative distribution function,
+  :func:`jax.scipy.stats.beta.cdf`.
+
+  Args:
+    q: arraylike, probability values in [0, 1]
+    a: arraylike, distribution shape parameter
+    b: arraylike, distribution shape parameter
+    loc: arraylike, distribution offset parameter
+    scale: arraylike, distribution scale parameter
+
+  Returns:
+    array of ppf values.
+
+  See Also:
+    - :func:`jax.scipy.stats.beta.cdf`
+    - :func:`jax.scipy.stats.beta.pdf`
+    - :func:`jax.scipy.stats.beta.sf`
+    - :func:`jax.scipy.stats.beta.logcdf`
+    - :func:`jax.scipy.stats.beta.logpdf`
+    - :func:`jax.scipy.special.betaincinv`
+  """
+  from jax._src.scipy.special import betaincinv
+  q, a, b, loc, scale = promote_args_inexact("beta.ppf", q, a, b, loc, scale)
+  x = betaincinv(a, b, q)
+  return loc + scale * x
