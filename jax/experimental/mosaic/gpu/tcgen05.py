@@ -420,8 +420,6 @@ def mma(
       )
   if is_sparse:
     a_sparse_metadata = cast(TMEMRef, a_sparse_metadata)
-    if collective:
-      raise NotImplementedError("Collective sparse MMA unsupported")
     if n % 32:
       raise ValueError(f"Sparse MMA requires N to be divisible by 32, got: {n}")
     if a_sparse_metadata.shape != (m, k // 2):
@@ -1577,7 +1575,9 @@ def async_copy_scales_smem_to_tmem(
     )
 
 
-def async_copy_sparse_metadata_smem_to_tmem(smem_ref: ir.Value, tmem_ref: TMEMRef) -> None:
+def async_copy_sparse_metadata_smem_to_tmem(
+    smem_ref: ir.Value, tmem_ref: TMEMRef, collective: bool = False
+) -> None:
   i8 = ir.IntegerType.get_signless(8)
   i32 = ir.IntegerType.get_signless(32)
   smem_ty = ir.MemRefType(smem_ref.type)
@@ -1616,4 +1616,7 @@ def async_copy_sparse_metadata_smem_to_tmem(smem_ref: ir.Value, tmem_ref: TMEMRe
     # The "core matrix" here is the same as in MMA: 8x(16 bytes).
     desc = mma_utils.encode_descriptor(load_ptr, 0, 8 * 16, swizzle=None)
     ptr = _tmem_addr_to_ptr(store_ptr)
-    nvvm.tcgen05_cp(nvvm.Tcgen05CpShape.SHAPE_128x128b, ptr, desc)
+    nvvm.tcgen05_cp(
+        nvvm.Tcgen05CpShape.SHAPE_128x128b, ptr, desc,
+        group=nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1
+    )
