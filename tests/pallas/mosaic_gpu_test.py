@@ -2439,7 +2439,7 @@ class PallasCallTest(PallasTest):
     optimized = (
         self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane
         or layout != plgpu.Layout.TCGEN05_TMEM_NATIVE
-    )
+    ) and layout != plgpu.Layout.TCGEN05_M64_COLLECTIVE_NATIVE
 
     shape = (128, 128) if "tcgen05" in layout.name.lower() else (64, 128)
     dtype = jnp.float32
@@ -2451,10 +2451,14 @@ class PallasCallTest(PallasTest):
 
     if layout == plgpu.Layout.TCGEN05_M64_COLLECTIVE:
       layout = plgpu.Layout.TCGEN05_M64_COLLECTIVE(128)
-    if layout == plgpu.Layout.WG_STRIDED:
+    elif layout == plgpu.Layout.TCGEN05_M64_COLLECTIVE_NATIVE:
+      layout = plgpu.Layout.TCGEN05_M64_COLLECTIVE_NATIVE(128)
+      if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
+        self.skipTest("Need to add support for optimized= for stores")
+    elif layout == plgpu.Layout.WG_STRIDED:
       layout = plgpu.Layout.WG_STRIDED(shape, 2)
       transforms = ()
-    if layout == plgpu.Layout.SMEM_GMEM_COPY:
+    elif layout == plgpu.Layout.SMEM_GMEM_COPY:
       layout = plgpu.Layout.SMEM_GMEM_COPY(shape, jnp.float32, swizzle=128)
 
     @functools.partial(
@@ -3403,7 +3407,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
     transforms = self.default_transforms(dtype=jnp.float32)
     @functools.partial(
         self.kernel,
-        out_shape=jnp.zeros((128, 128), jnp.float32),
+        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.float32),
         scratch_shapes=[
             plgpu.TMEM((128, 128), jnp.float32),
             plgpu.SMEM((128, 128), jnp.float32, transforms=transforms),
@@ -3429,11 +3433,42 @@ class PallasCallSm100ATest(PallasSm100ATest):
     x_result = jax.block_until_ready(kernel(x))
     np.testing.assert_array_equal(x_result, x + 1)
 
+  @parameterized.parameters(
+      plgpu.Layout.TCGEN05_M64_COLLECTIVE(160),
+      plgpu.Layout.TCGEN05_M64_COLLECTIVE_NATIVE(160)
+  )
+  def test_tmem_store_load_collective(self, layout):
+    self.skip_if_wg_semantics()  # TiledLayout replication not supported yet.
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((64, 160), jnp.float32),
+        cluster=(2,),
+        cluster_names=("cluster",),
+        scratch_shapes=[
+            plgpu.TMEM(
+                (64, 160), jnp.float32, collective=True,
+                layout=plgpu.TMEMLayout.M64_COLLECTIVE_LAYOUT(160),
+            ),
+        ],
+    )
+    def kernel(x_ref, y_ref, tmem_ref):
+      x_val = plgpu.load(x_ref, (), layout=layout, optimized=False)
+      plgpu.async_store_tmem(tmem_ref, x_val + 1)
+      plgpu.commit_tmem()
+      # We don't wait for the load to complete, because we never overwrite
+      # tmem_ref.
+      y_ref[...] = plgpu.async_load_tmem(tmem_ref, layout=layout)
+
+    x = jax.random.uniform(
+        jax.random.key(0), shape=(64, 160), dtype=jnp.float32)
+    x_result = jax.block_until_ready(kernel(x))
+    np.testing.assert_array_equal(x_result, x + 1)
+
   def test_tmem_column_slicing(self):
     transforms = self.default_transforms(dtype=jnp.float32)
     @functools.partial(
         self.kernel,
-        out_shape=jnp.zeros((128, 128), jnp.float32),
+        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.float32),
         scratch_shapes=[
             plgpu.TMEM((128, 256), jnp.float32),
             plgpu.SMEM((128, 128), jnp.float32, transforms=transforms),
