@@ -23,6 +23,7 @@ limitations under the License.
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -642,12 +643,13 @@ absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
   if (use_custom_barrier) {
     return absl::UnimplementedError("Custom barrier is not supported on GPUs.");
   }
-  if (reinterpret_cast<const uintptr_t>(kernel_hash.data()) %
-          alignof(KernelHash) ||
-      kernel_hash.size() != sizeof(KernelHash)) {
-    return absl::InvalidArgumentError("Misaligned opaque pointer");
+  if (kernel_hash.size() != sizeof(KernelHash)) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("Kernel hash size is %d bytes, expected %d bytes",
+                        kernel_hash.size(), sizeof(KernelHash)));
   }
-  auto hash = *reinterpret_cast<const KernelHash*>(kernel_hash.data());
+  KernelHash hash;
+  std::memcpy(hash.data(), kernel_hash.data(), sizeof(KernelHash));
   CUcontext ctx;
   if (auto result = cuCtxGetCurrent(&ctx); result != CUDA_SUCCESS) {
     const char* error;
