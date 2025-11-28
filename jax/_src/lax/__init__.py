@@ -314,3 +314,4 @@ from jax._src.lax.parallel import (
 from jax._src.lax.ann import (
   approx_top_k_p as approx_top_k_p
 )
+from jax._src.lax.scaled_dot import scaled_dot as scaled_dot
