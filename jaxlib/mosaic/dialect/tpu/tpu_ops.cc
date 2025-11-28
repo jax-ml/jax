@@ -338,10 +338,13 @@ LogicalResult MemRefSqueezeOp::verify() {
 
   auto source_shape = source_type.getShape();
   auto target_shape = target_type.getShape();
-  auto squeezed_or =
-      computeSqueezedDimsChecked(*this, source_shape, target_shape);
-  if (failed(squeezed_or)) {
-    return failure();
+  FAILUREOR_ASSIGN_OR_RETURN(
+      auto squeezed,
+      computeSqueezedDimsChecked(*this, source_shape, target_shape));
+  if (squeezed.empty() && source_shape != target_shape) {
+    return emitOpError(
+        "Source and target shapes must be the same if no dimensions are "
+        "squeezed.");
   }
 
   auto source_layout = source_type.getLayout();
@@ -359,7 +362,7 @@ LogicalResult MemRefSqueezeOp::verify() {
     }
     SmallVector<int64_t> target_strides;
     for (auto [i, stride] : llvm::enumerate(source_strides)) {
-      if (!llvm::is_contained(*squeezed_or, i)) {
+      if (!llvm::is_contained(squeezed, i)) {
         target_strides.push_back(stride);
       }
     }
@@ -369,49 +372,44 @@ LogicalResult MemRefSqueezeOp::verify() {
       return emitOpError("Layout mismatch: got ")
              << target_layout << ", expected " << expected_layout << ".";
     }
-  }
-
-  auto erase_layout_op = getInput().getDefiningOp<tpu::EraseLayoutOp>();
-  if (!erase_layout_op) {
+    return success();
+  } else if (!isa<TiledLayoutAttr>(source_layout) &&
+             !isa<TiledLayoutAttr>(target_layout)) {
+    // TODO(slebedev): Remove this branch once we migrate to TPU dialect layout
+    // attribute on SC.
     return success();
   }
 
-  auto layout_ref = erase_layout_op.getOperand();
-  MemRefType layout_ty = getMemRefType(layout_ref);
-  auto layout_attr = dyn_cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
-  if (!layout_attr) {
-    return emitOpError(
-        "Input from EraseLayoutOp is expected to have a TiledLayoutAttr.");
-  }
-  auto &squeezed = squeezed_or.value();
-  if (squeezed.empty() && source_shape != target_shape) {
-    return failure();
-  }
-
-  auto tiles = layout_attr.getTiles();
-  if (tiles.size() == 1) {
-    auto tile = layout_attr.getTiles().front();
-    auto tile_dims = tile.dimensions();
-    int first_tiled = source_shape.size() - tile_dims.size();
-    for (int dim : squeezed) {
-      if (dim >= first_tiled) {
-        int tile_idx = dim - first_tiled;
-        if (tile_idx < 0 || tile_idx >= static_cast<int>(tile_dims.size())) {
-          return emitOpError() << "Internal error: tile index out of bounds.";
-        }
-        if (tile_dims[tile_idx] != 1) {
-          return emitOpError()
-                 << "All tiled squeezed dimensions must be of size 1.";
+  auto tiles = cast<TiledLayoutAttr>(source_layout).getTiles();
+  switch (tiles.size()) {
+    case 0:
+      break;
+    case 1: {
+      auto tile = tiles.front();
+      auto tile_dims = tile.dimensions();
+      int first_tiled = source_shape.size() - tile_dims.size();
+      for (int dim : squeezed) {
+        if (dim >= first_tiled) {
+          int tile_idx = dim - first_tiled;
+          if (tile_idx < 0 || tile_idx >= static_cast<int>(tile_dims.size())) {
+            return emitOpError() << "Internal error: tile index out of bounds.";
+          }
+          if (tile_dims[tile_idx] != 1) {
+            return emitOpError()
+                   << "All tiled squeezed dimensions must be of size 1.";
+          }
         }
       }
+      break;
     }
-  } else {
-    auto first_tile = tiles.front();
-    for (int dim : squeezed) {
-      int first_tiled = source_shape.size() - first_tile.dimensions().size();
-      if (dim >= first_tiled) {
-        return emitOpError() << "When multiple tiles are present, no tiled "
-                                "dimensions can be squeezed.";
+    default: {
+      auto first_tile = tiles.front();
+      for (int dim : squeezed) {
+        int first_tiled = source_shape.size() - first_tile.dimensions().size();
+        if (dim >= first_tiled) {
+          return emitOpError() << "When multiple tiles are present, no tiled "
+                                  "dimensions can be squeezed.";
+        }
       }
     }
   }
