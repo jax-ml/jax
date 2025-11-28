@@ -108,6 +108,7 @@ class NamedSharding(JSharding.Sharding):
   Args:
     mesh: A :class:`jax.sharding.Mesh` object.
     spec: A :class:`jax.sharding.PartitionSpec` object.
+    memory_kind: A string indicating the memory kind of the sharding.
 
   Examples:
 
