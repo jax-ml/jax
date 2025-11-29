@@ -2070,5 +2070,111 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             atol=tol)
     self._CompileAndCheck(lax_fun, args_maker, atol=tol)
 
+  @genNamedParametersNArgs(4)
+  def testGammaPpf(self, shapes, dtypes):
+    rng = jtu.rand_uniform(self.rng(), low=0.05, high=0.95)
+    rng_positive = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.gamma.ppf
+    lax_fun = lsp_stats.gamma.ppf
+
+    def args_maker():
+      q = rng(shapes[0], dtypes[0])
+      a = rng_positive(shapes[1], dtypes[1])
+      loc = rng_positive(shapes[2], dtypes[2])
+      scale = rng_positive(shapes[3], dtypes[3])
+      return [q, a, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-3, rtol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker, rtol=1e-3)
+
+  def testGammaPpfEdgeCases(self):
+    """Test edge cases for gamma ppf"""
+    # Test q=0 should give 0
+    self.assertEqual(float(lsp_stats.gamma.ppf(0.0, 1.0)), 0.0)
+    
+    # Test q=1 should give inf
+    self.assertTrue(np.isinf(float(lsp_stats.gamma.ppf(1.0, 1.0))))
+    
+    # Test inversion property: ppf(cdf(x)) ≈ x
+    x_vals = jnp.array([0.5, 1.0, 2.0, 5.0])
+    a = 2.0
+    cdfs = lsp_stats.gamma.cdf(x_vals, a)
+    x_recovered = lsp_stats.gamma.ppf(cdfs, a)
+    self.assertAllClose(x_vals, x_recovered, rtol=1e-4, atol=1e-4)
+
+  def testGammaPpfGradients(self):
+    """Test that gamma ppf gradients work correctly"""
+    q = jnp.array([0.1, 0.5, 0.9])
+    a = jnp.array(2.0)
+    
+    # Test gradient w.r.t. q
+    def ppf_q(q_val):
+      return lsp_stats.gamma.ppf(q_val, a).sum()
+    
+    grad_fn = jax.grad(ppf_q)
+    grad_val = grad_fn(q)
+    
+    # Gradient should be positive (ppf is increasing in q)
+    self.assertTrue(jnp.all(grad_val > 0))
+    
+    # Should be finite
+    self.assertTrue(jnp.all(jnp.isfinite(grad_val)))
+
+  @genNamedParametersNArgs(5)
+  def testBetaPpf(self, shapes, dtypes):
+    rng = jtu.rand_uniform(self.rng(), low=0.05, high=0.95)
+    rng_positive = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.beta.ppf
+    lax_fun = lsp_stats.beta.ppf
+
+    def args_maker():
+      q = rng(shapes[0], dtypes[0])
+      a = rng_positive(shapes[1], dtypes[1])
+      b = rng_positive(shapes[2], dtypes[2])
+      loc = rng(shapes[3], dtypes[3])
+      scale = rng_positive(shapes[4], dtypes[4])
+      return [q, a, b, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-3, rtol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker, rtol=1e-3)
+
+  def testBetaPpfEdgeCases(self):
+    """Test edge cases for beta ppf"""
+    # Test q=0 should give 0
+    self.assertEqual(float(lsp_stats.beta.ppf(0.0, 2.0, 3.0)), 0.0)
+    
+    # Test q=1 should give 1
+    self.assertAlmostEqual(float(lsp_stats.beta.ppf(1.0, 2.0, 3.0)), 1.0, places=5)
+    
+    # Test inversion property: ppf(cdf(x)) ≈ x
+    x_vals = jnp.array([0.1, 0.3, 0.5, 0.7, 0.9])
+    a, b = 2.0, 5.0
+    cdfs = lsp_stats.beta.cdf(x_vals, a, b)
+    x_recovered = lsp_stats.beta.ppf(cdfs, a, b)
+    self.assertAllClose(x_vals, x_recovered, rtol=1e-3, atol=1e-3)
+
+  def testBetaPpfGradients(self):
+    """Test that beta ppf gradients work correctly"""
+    q = jnp.array([0.1, 0.5, 0.9])
+    a, b = 2.0, 5.0
+    
+    # Test gradient w.r.t. q
+    def ppf_q(q_val):
+      return lsp_stats.beta.ppf(q_val, a, b).sum()
+    
+    grad_fn = jax.grad(ppf_q)
+    grad_val = grad_fn(q)
+    
+    # Gradient should be positive (ppf is increasing in q)
+    self.assertTrue(jnp.all(grad_val > 0))
+    
+    # Should be finite
+    self.assertTrue(jnp.all(jnp.isfinite(grad_val)))
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
