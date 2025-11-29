@@ -819,7 +819,7 @@ class _IndexUpdateRef:
   def get(self, *, indices_are_sorted: bool = False, unique_indices: bool = False,
           mode: str | lax_slicing.GatherScatterMode | None = None,
           fill_value: ArrayLike | None = None,
-          out_sharding: Sharding | PartitionSpec | None = None,
+          out_sharding: NamedSharding | PartitionSpec | None = None,
           wrap_negative_indices: bool = True):
     """Equivalent to ``x[idx]``.
 
@@ -843,7 +843,7 @@ class _IndexUpdateRef:
   def set(self, values: ArrayLike, *, indices_are_sorted: bool = False,
           unique_indices: bool = False,
           mode: str | lax_slicing.GatherScatterMode | None = None,
-          out_sharding: Sharding | PartitionSpec | None = None,
+          out_sharding: NamedSharding | PartitionSpec | None = None,
           wrap_negative_indices: bool = True) -> None:
     """Pure equivalent of ``x[idx] = y``.
 
@@ -888,7 +888,7 @@ class _IndexUpdateRef:
   def add(self, values: ArrayLike, *,
           indices_are_sorted: bool = False, unique_indices: bool = False,
           mode: str | lax_slicing.GatherScatterMode | None = None,
-          out_sharding: Sharding | PartitionSpec | None = None,
+          out_sharding: NamedSharding | PartitionSpec | None = None,
           wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] += y``.
 

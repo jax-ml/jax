@@ -29,6 +29,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import enum
 import typing
+from types import EllipsisType
 from typing import Any, Protocol, Union
 
 from jax._src.basearray import (
@@ -106,3 +107,7 @@ class DLDeviceType(enum.IntEnum):
   kDLCPU = 1
   kDLCUDA = 2
   kDLROCM = 10
+
+AnyInt = int | np.integer
+StaticIndex = AnyInt | slice | EllipsisType
+Index = StaticIndex | None | Sequence[AnyInt] | Array | np.ndarray

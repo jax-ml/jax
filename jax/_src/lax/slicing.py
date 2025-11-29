@@ -1149,7 +1149,7 @@ def dynamic_slice_in_dim(operand: Array | np.ndarray,
 
 
 def dynamic_index_in_dim(operand: Array | np.ndarray,
-                         index: int | Array,
+                         index: ArrayLike,
                          axis: int = 0, keepdims: bool = True,
                          *,
                          allow_negative_indices: bool = True) -> Array:
