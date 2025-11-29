@@ -54,7 +54,7 @@ expected_hlos = [
     (c_name,),
     ("all-gather", "f8e4m3fn[256,1024]", "replica_groups=[2,2]<=[4]", c_name),
     (c_name,),
-    ("all-gather", "f8e4m3fn[2,512,1024]", "replica_groups=[2,2]<=[4]", c_name),
+    ("all-gather", "replica_groups=[2,2]<=[4]", "f8e4m3fn[2,512,1024]", c_name),
     ("all-gather", "f8e4m3fn[2,512,512]", "replica_groups=[2,2]<=[4]", c_name),
     ("all-gather", "f8e4m3fn[2,256,1024]", "replica_groups=[2,2]<=[2,2]", c_name,),
 ]
