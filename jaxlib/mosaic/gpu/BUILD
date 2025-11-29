@@ -347,8 +347,12 @@ cc_test(
     srcs = ["custom_call_test.cc"],
     tags = ["requires-gpu-sm90"],
     deps = [
-        ":custom_call",
+        ":mosaic_gpu_support",
         "//testing/base/public:gunit_main",
+        "@com_google_absl//absl/base:log_severity",
+        "@com_google_absl//absl/log:globals",
+        "@com_google_absl//absl/log:scoped_mock_log",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@xla//xla/hlo/builder:xla_computation",

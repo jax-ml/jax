@@ -498,9 +498,11 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
 class CompiledKernel {
  public:
   CompiledKernel(std::unique_ptr<mlir::ExecutionEngine> engine, void* ctx,
-                 MosaicHostFunc* host_launch, bool is_comm_used)
+                 CUmodule module, MosaicHostFunc* host_launch,
+                 bool is_comm_used)
       : engine_(std::move(engine)),
         ctx_(ctx),
+        module_(module),
         host_launch_(host_launch),
         is_comm_used_(is_comm_used) {}
 
@@ -508,9 +510,12 @@ class CompiledKernel {
     return std::make_tuple(ctx_, host_launch_, is_comm_used_);
   }
 
+  CUmodule module() const { return module_; }
+
  private:
   std::unique_ptr<mlir::ExecutionEngine> engine_;
   void* ctx_;  // TODO(apaszke): Destroy this properly
+  CUmodule module_;
   MosaicHostFunc* host_launch_;
   bool is_comm_used_;
 };
@@ -591,6 +596,7 @@ absl::StatusOr<CompiledKernel> CompileAndInit(llvm::StringRef module) {
   void*** init_args[2] = {&module_ptr_ptr, &kernel_ptr_ptr};
   reinterpret_cast<MosaicInitFunc*>(*init)(init_args);
   return CompiledKernel(std::move(maybe_engine.value().first), kernel_ptr,
+                        reinterpret_cast<CUmodule>(module_ptr),
                         reinterpret_cast<MosaicHostFunc*>(*host), is_comm_used);
 }
 
@@ -612,11 +618,45 @@ struct KernelCache {
   absl::flat_hash_map<CacheKey, CompiledKernel> kernels ABSL_GUARDED_BY(mutex);
 };
 
+struct CustomCallState {
+  ~CustomCallState() {
+    KernelCache& cache = KernelCache::Global();
+    absl::MutexLock lock(cache.mutex);
+    for (const CacheKey& key : cache_keys) {
+      auto handle = cache.kernels.extract(key);
+      CHECK(!handle.empty()) << "Cache key not found";
+      CUcontext ctx = reinterpret_cast<CUcontext>(key.second);
+      cuCtxSetCurrent(ctx);
+      const CompiledKernel& kernel = handle.mapped();
+      if (auto result = cuModuleUnload(kernel.module());
+          result != CUDA_SUCCESS) {
+        const char* error;
+        cuGetErrorString(result, &error);
+        LOG(ERROR) << "Failed to unload module: " << error;
+      } else {
+        VLOG(5) << "Successfully unloaded GPU module";
+      }
+    }
+  }
+
+  // This holds one key per device.
+  std::vector<CacheKey> cache_keys;
+};
+
+static absl::StatusOr<std::unique_ptr<CustomCallState>> InstantiateState() {
+  // TODO(b/452513034): Ideally we would compile the module here.
+  // Sadly we need to acquire a lock on LLVM command line options which is
+  // already held by XLA causing a deadlock.
+  // See `GpuCompiler::CompileToBackendResult`.
+  return std::make_unique<CustomCallState>();
+}
+
 // Each compiled kernel has a unique init func, and each kernel is used from
 // a single HLO module. So it should be safe to not include the CUDA context
 // in the key.
 absl::StatusOr<CompiledKernel*> CachedCompileAndInit(CacheKey key,
-                                                     llvm::StringRef module) {
+                                                     llvm::StringRef module,
+                                                     CustomCallState* state) {
   KernelCache& cache = KernelCache::Global();
 
   {
@@ -630,17 +670,17 @@ absl::StatusOr<CompiledKernel*> CachedCompileAndInit(CacheKey key,
   // We released the reader lock, another thread might have initialized it.
   if (cache.kernels.find(key) == cache.kernels.end()) {
     tsl::profiler::TraceMe trace("Compilation cache miss");
-    auto compiled = CompileAndInit(module);
-    if (!compiled.ok()) {
-      return compiled.status();
-    }
-    cache.kernels.insert_or_assign(key, std::move(*compiled));
+    TF_ASSIGN_OR_RETURN(CompiledKernel compiled, CompileAndInit(module));
+    VLOG(5) << "Successfully compiled and initialized Mosaic GPU kernel";
+    cache.kernels.insert_or_assign(key, std::move(compiled));
+    state->cache_keys.push_back(key);
   }
   return &cache.kernels.at(key);
 }
 
 absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
                               ffi::RemainingRets results,
+                              CustomCallState* state,
                               std::string_view kernel_hash,
                               std::string_view module, bool use_custom_barrier,
                               xla::RunId run_id) {
@@ -665,7 +705,7 @@ absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
   }
   CacheKey key(hash, reinterpret_cast<uintptr_t>(ctx));
   TF_ASSIGN_OR_RETURN(auto compiled_kernel,
-                      CachedCompileAndInit(key, module));
+                      CachedCompileAndInit(key, module, state));
   auto ctx_kernel_comm = compiled_kernel->GetHostLaunch();
   bool is_comm_used = std::get<2>(ctx_kernel_comm);
 
@@ -700,20 +740,24 @@ absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
   return absl::OkStatus();
 }
 
+XLA_FFI_DEFINE_HANDLER(kInstantiateState, InstantiateState,
+                       ffi::Ffi::BindInstantiate());
+
 XLA_FFI_DEFINE_HANDLER(kMosaicGpuExecute, MosaicGpuExecute,
                        ffi::Ffi::Bind<ffi::ExecutionStage::kExecute>()
                            .Ctx<xla::ffi::PlatformStream<gpuStream_t>>()
                            .RemainingArgs()
                            .RemainingRets()
+                           .Ctx<xla::ffi::State<CustomCallState>>()
                            .Attr<std::string_view>("kernel_hash")
                            .Attr<std::string_view>("module")
                            .Attr<bool>("use_custom_barrier")
                            .Ctx<xla::RunId>(),
-                           {ffi::Traits::kCmdBufferCompatible});
+                       {ffi::Traits::kCmdBufferCompatible});
 
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "mosaic_gpu_v2", "CUDA",
                          {
-                             /*instantiate=*/nullptr,
+                             /*instantiate=*/kInstantiateState,
                              /*prepare=*/nullptr,
                              /*initialize=*/nullptr,
                              /*execute=*/kMosaicGpuExecute,
