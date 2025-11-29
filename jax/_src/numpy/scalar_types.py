@@ -37,6 +37,11 @@ _PUBLIC_MODULE_NAME = "jax.numpy"
 class _ScalarMeta(type):
   dtype: np.dtype
 
+  @property
+  def __numpy_dtype__(self) -> np.dtype:
+    # __numpy_dtype__ protocol added in NumPy v2.4.0.
+    return self.dtype
+
   def __hash__(self) -> int:
     return hash(self.dtype.type)
 
