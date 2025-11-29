@@ -693,7 +693,12 @@ def standardize(x: ArrayLike,
     # when used in neural network normalization layers
     variance = jnp.mean(
         jnp.square(x), axis, keepdims=True, where=where) - jnp.square(mean)
-  return jnp.subtract(x, jnp.asarray(mean)) * lax.rsqrt(jnp.asarray(variance) + epsilon)
+    # Because we're using a less accurate variance definition, it may return
+    # negative values. This is problematic for the rsqrt, so we clip to 0.
+    # Note that this clipping only matters when the variance is vanishingly
+    # small compared to the mean of x, so the gradient should be unaffected.
+    variance = jnp.clip(variance, 0)
+  return jnp.subtract(x, mean) * lax.rsqrt(variance + epsilon)
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
 @api.jit(static_argnames=("num_classes", "dtype", "axis"))

@@ -645,6 +645,12 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
     self.assertAllClose(out_masked, out_filtered)
 
+  def testStandardizeNegativeVariance(self):
+    # Regression test for https://github.com/google/jax/issues/30426
+    x = jnp.array([-11., -11., -11.]) + 3e-6
+    result = jax.nn.standardize(x)
+    self.assertFalse(jnp.any(jnp.isnan(result)))
+
   def testOneHot(self):
     actual = nn.one_hot(jnp.array([0, 1, 2]), 3)
     expected = jnp.array([[1., 0., 0.],
