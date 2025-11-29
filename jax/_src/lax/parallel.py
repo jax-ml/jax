@@ -2364,6 +2364,29 @@ ad.deflinear2(psum_invariant_p, _psum_invariant_transpose_rule)
 
 ########################### pvary ##################################
 
+core.pvary_p.def_impl(lambda *args, axes: args)
+mlir.register_lowering(core.pvary_p, lambda ctx, *x, axes: x)
+
+def _pvary_abstract_eval(*args, axes):
+  if not config._check_vma.value:
+    return args
+  _check_axis_names(axes, 'pvary')
+  check_unreduced_args(args, 'pvary')
+  assert isinstance(axes, tuple)
+  arg_vma = [a.vma for a in args]
+  for a in arg_vma:
+    # If there is intersection between arg_vma and axes, error
+    if set(axes) & a:
+      raise ValueError(
+          "pvary is a invariant->variant collective. This means that the axis"
+          " names mentioned in `axes` passed to `pvary` must not be present in"
+          f" `jax.typeof(inp).vma`. Got axes={axes} and"
+          f" jax.typeof(inp).vma={a}")
+  return [a.update(sharding=a.sharding.update(mesh=get_abstract_mesh()),
+                   vma=a.vma.union(frozenset(axes)))
+          for a in args]
+core.pvary_p.def_abstract_eval(_pvary_abstract_eval)
+
 def _pvary_transpose_rule(cts, *args, axes):
   def f(ct, arg):
     assert ad.is_undefined_primal(arg)
@@ -2373,6 +2396,13 @@ def _pvary_transpose_rule(cts, *args, axes):
   nonzero_in_cts = psum_invariant_p.bind(*nonzero_out_cts, axes=axes)
   return tree_util.tree_unflatten(treedef, nonzero_in_cts)
 ad.deflinear2(core.pvary_p, _pvary_transpose_rule)
+
+def _pvary_batcher(vals_in, dims_in, *, axes):
+  if any(type(axis) is int for axis in axes):
+    raise NotImplementedError
+  vals_out = core.pvary_p.bind(*vals_in, axes=axes)
+  return vals_out, dims_in
+batching.primitive_batchers[core.pvary_p] = _pvary_batcher
 
 ####################### all_gather_reduced ###########################
 
@@ -2626,7 +2656,11 @@ def preduced(x, axis_name):
   if not axes:
     return x
   x_flat, treedef = tree_util.tree_flatten(x)
-  out_flat = preduced_p.bind(*x_flat, axes=axes)
+  cur_mesh = get_abstract_mesh()
+  new_axes = axes if cur_mesh.empty else core.order_wrt_mesh(cur_mesh, axes)
+  assert set(new_axes) == set(axes)
+  del axes
+  out_flat = preduced_p.bind(*x_flat, axes=new_axes)
   return tree_util.tree_unflatten(treedef, out_flat)
 
 preduced_p = core.Primitive('preduced')

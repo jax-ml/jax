@@ -178,10 +178,10 @@ def standard_abstract_eval(
     if isinstance(a, state.AbstractRef):
       raise ValueError(f'Attempting to pass a Ref {a} to a primitive: '
                        f'{prim} -- did you forget to unpack ([...]) the ref?')
-    if not isinstance(a, core.UnshapedArray):
+    if not isinstance(a, core.ShapedArray):
       raise ValueError(f'Attempting to pass an unexpected type {a} to a '
                        f'primitive: {prim}')
-  assert all(isinstance(aval, core.UnshapedArray) for aval in avals), avals
+  assert all(isinstance(aval, core.ShapedArray) for aval in avals), avals
   assert not prim.multiple_results
   weak_type = weak_type_rule(*avals, **kwargs)
   least_specialized = type(max(avals, key=_get_array_abstraction_level))
@@ -204,8 +204,6 @@ def standard_abstract_eval(
     ty = (core.ShapedArray if all(type(d) is int for d in shape)
           else core.DShapedArray)
     return ty(shape, dtype_rule(*avals, **kwargs), weak_type)
-  elif least_specialized is core.UnshapedArray:
-    return core.UnshapedArray(dtype_rule(*avals, **kwargs), weak_type=weak_type)
   else:
     raise TypeError(avals, least_specialized)
 
@@ -213,7 +211,7 @@ def standard_multi_result_abstract_eval(
     prim, shape_rule, dtype_rule, weak_type_rule, sharding_rule, vma_rule,
     *avals, **kwargs):
   assert prim.multiple_results
-  assert all(isinstance(aval, core.UnshapedArray) for aval in avals), avals
+  assert all(isinstance(aval, core.ShapedArray) for aval in avals), avals
   least_specialized = max(map(type, avals), key=_get_array_abstraction_level)
   weak_types = weak_type_rule(*avals, **kwargs)
   if least_specialized is core.ShapedArray:
@@ -232,12 +230,6 @@ def standard_multi_result_abstract_eval(
                      out_vmas, out_mem_spaces)]
     core.check_avals_context_mesh(out_avals, prim.name)
     return out_avals
-  elif least_specialized is core.UnshapedArray:
-    out_dtypes = dtype_rule(*avals, **kwargs)
-    if isinstance(weak_types, bool):
-      weak_types = (weak_types,) * len(out_dtypes)
-    return [core.UnshapedArray(dtype, weak_type=weak_type)
-            for dtype, weak_type in zip(out_dtypes, weak_types)]
   else:
     raise TypeError(avals, least_specialized)
 

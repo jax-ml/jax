@@ -1989,50 +1989,6 @@ def physical_element_aval(edtype: dtypes.ExtendedDType) -> ShapedArray:
 def _dtype_object(dtype):
   return dtype if isinstance(dtype, dtypes.ExtendedDType) else np.dtype(dtype)
 
-class UnshapedArray(AbstractValue):
-  __slots__ = ['dtype', 'weak_type']
-  array_abstraction_level = 4
-
-  def __init__(self, dtype, weak_type=False):
-    # Is it silly to initialize this object and then complain that we should
-    # never create one? Yes. But otherwise pytype complains.
-    self.dtype = _dtype_object(dtype)
-    self.weak_type = weak_type
-    raise Exception("We should never create an UnshapedArray object")
-
-  def __eq__(self, other):
-    return (type(self) is type(other) and self.dtype == other.dtype and
-            self.weak_type == other.weak_type)
-
-  def __ne__(self, other):
-    return not self == other
-
-  def __hash__(self):
-    # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
-    # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
-    # the unique character code via hash(self.dtype.char)
-    return hash((self.dtype, self.weak_type))
-
-  def __repr__(self):
-    return '{}({}{})'.format(self.__class__.__name__, self.str_short(),
-                             ", weak_type=True" if self.weak_type else "")
-
-  def __str__(self):
-    return '{}{}'.format("~" if self.weak_type else "", self.str_short())
-
-  _bool    = concretization_function_error(bool)
-  _int     = concretization_function_error(int, True)
-  _float   = concretization_function_error(float, True)
-  _complex = concretization_function_error(complex, True)
-  _hex     = concretization_function_error(hex)
-  _oct     = concretization_function_error(oct)
-  _index   = concretization_function_error(operator.index)
-
-  def str_short(self, short_dtypes=False, mesh_axis_types=False) -> str:
-    return dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
-
-  def update_weak_type(self, weak_type):
-    return self.update(weak_type=weak_type)
 
 def _canonicalize_dimension(dim: DimSize) -> DimSize:
   # Dimensions are most commonly integral (by far), so we check that first.
@@ -2274,9 +2230,9 @@ def get_memory_space(memory_space):
   return memory_space
 
 
-class ShapedArray(UnshapedArray):
+class ShapedArray(AbstractValue):
   # inherits slots from parent
-  __slots__ = ['shape', 'sharding', 'vma', 'memory_space']
+  __slots__ = ['shape', 'dtype', 'weak_type', 'sharding', 'vma', 'memory_space']
   array_abstraction_level = 2
 
   def __init__(self, shape, dtype, weak_type=False, *, sharding=None,
@@ -2336,6 +2292,17 @@ class ShapedArray(UnshapedArray):
     return hash((self.shape, self.dtype, self.weak_type, self.sharding,
                  self.vma, self.memory_space))
 
+  def __ne__(self, other):
+    return not self == other
+
+  def __repr__(self):
+    wt_str = ", weak_type=True" if self.weak_type else ""
+    return f'ShapedArray({self.str_short()}{wt_str})'
+
+  def __str__(self):
+    wt_str = "~" if self.weak_type else ""
+    return f'{wt_str}{self.str_short()}'
+
   def to_tangent_aval(self):
     return ShapedArray(
         self.shape, primal_dtype_to_tangent_dtype(self.dtype),
@@ -2362,6 +2329,17 @@ class ShapedArray(UnshapedArray):
 
   def update_vma(self, vma):
     return self.update(vma=vma)
+
+  def update_weak_type(self, weak_type):
+    return self.update(weak_type=weak_type)
+
+  _bool    = concretization_function_error(bool)
+  _int     = concretization_function_error(int, True)
+  _float   = concretization_function_error(float, True)
+  _complex = concretization_function_error(complex, True)
+  _hex     = concretization_function_error(hex)
+  _oct     = concretization_function_error(oct)
+  _index   = concretization_function_error(operator.index)
 
 
 def _get_shape_sharding_str(shape, spec):
@@ -2430,48 +2408,23 @@ def primal_sharding_to_cotangent_sharding(sharding):
 ############################## pvary #################################
 
 # Invariant -> Variant no-op cast
-
 def pvary(x, axis_name):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
     return x
   xs, treedef = tree_flatten(x)
-  ys = pvary_p.bind(*xs, axes=axes)
+  # TODO(yashkatariya): Maybe move `order_wrt_mesh` to pvary_transpose_rule?
+  # Across hosts we should have the same order of axes during lowering time and
+  # pvary_p transposes to psum_invariant_p.
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  new_axes = axes if cur_mesh.empty else order_wrt_mesh(cur_mesh, axes)
+  assert set(new_axes) == set(axes)
+  del axes
+  ys = pvary_p.bind(*xs, axes=new_axes)
   return tree_unflatten(treedef, ys)
 
 pvary_p = Primitive('pvary')
 pvary_p.multiple_results = True
-pvary_p.def_impl(lambda *args, axes: args)
-
-def _pvary_abstract_eval(*args, axes):
-  if not config._check_vma.value:
-    return args
-  check_unreduced_args(args, 'pvary')
-  assert isinstance(axes, tuple)
-  arg_vma = [a.vma for a in args]
-  for a in arg_vma:
-    # If there is intersection between arg_vma and axes, error
-    if set(axes) & a:
-      raise ValueError(
-          "pvary is a invariant->variant collective. This means that the axis"
-          " names mentioned in `axes` passed to `pvary` must not be present in"
-          f" `jax.typeof(inp).vma`. Got axes={axes} and"
-          f" jax.typeof(inp).vma={a}")
-  return [a.update(sharding=a.sharding.update(mesh=mesh_lib.get_abstract_mesh()),
-                   vma=a.vma.union(frozenset(axes)))
-          for a in args]
-pvary_p.def_abstract_eval(_pvary_abstract_eval)
-
-def check_unreduced_args(args, name):
-  for a in args:
-    if a.sharding.spec.unreduced:
-      raise ValueError(
-          f"{name} cannot accept args which are unreduced. Got"
-          f" {a.str_short(True)}")
-    if a.sharding.spec.reduced:
-      raise ValueError(
-          f"{name} cannot accept args which are reduced. Got"
-          f" {a.str_short(True)}")
 
 ####################### reduced_vary_cast #############################
 
@@ -2488,6 +2441,17 @@ reduced_vary_cast_p = Primitive('reduced_vary_cast_p')
 reduced_vary_cast_p.multiple_results = True
 
 #######################################################################
+
+def check_unreduced_args(args, name):
+  for a in args:
+    if a.sharding.spec.unreduced:
+      raise ValueError(
+          f"{name} cannot accept args which are unreduced. Got"
+          f" {a.str_short(True)}")
+    if a.sharding.spec.reduced:
+      raise ValueError(
+          f"{name} cannot accept args which are reduced. Got"
+          f" {a.str_short(True)}")
 
 def standard_insert_pvary(*args):
   if not config._check_vma.value:
@@ -2541,8 +2505,8 @@ def standard_vma_rule(prim_name, *avals, **kwargs) -> frozenset[AxisName]:
 # as jaxpr type annotations), or DBIdx/InDBIdx/OutDBIdx (when used in InputType
 # or OutputType). We could reduce this polymorphism if it seems cleaner, though
 # it's kind of convenient!
-class DShapedArray(UnshapedArray):
-  __slots__ = ['shape']
+class DShapedArray(AbstractValue):
+  __slots__ = ['shape', 'dtype', 'weak_type']
   shape: tuple[AxisSize, ...]  # noqa: F821
   array_abstraction_level: int = 3
 
@@ -2593,12 +2557,26 @@ class DShapedArray(UnshapedArray):
     # We don't hash the contents of the shape because it may contain tracers.
     return hash((len(self.shape), self.dtype, self.weak_type))
 
+  def __ne__(self, other):
+    return not self == other
+
   def to_tangent_aval(self):
     return DShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
                         self.weak_type)
 
   def update_vma(self, vma):
     return self
+
+  def update_weak_type(self, weak_type):
+    return self.update(weak_type=weak_type)
+
+  _bool    = concretization_function_error(bool)
+  _int     = concretization_function_error(int, True)
+  _float   = concretization_function_error(float, True)
+  _complex = concretization_function_error(complex, True)
+  _hex     = concretization_function_error(hex)
+  _oct     = concretization_function_error(oct)
+  _index   = concretization_function_error(operator.index)
 
 
 class DArray:

@@ -2734,13 +2734,13 @@ Val = Any
 def pad_jaxpr(jaxpr: Jaxpr, consts: Sequence[Const]
               ) -> tuple[Jaxpr, list[Const]]:
   bounds = {v: v.aval.dtype.bound for v in jaxpr.invars
-            if isinstance(v.aval, core.UnshapedArray) and
+            if isinstance(v.aval, (core.ShapedArray, core.DShapedArray)) and
             type(v.aval.dtype) is core.bint and not v.aval.shape}
   idxs = {v: DBIdx(i) for i, v in enumerate(jaxpr.invars)}
 
   def substitute(aval: AbstractValue) -> AbstractValue:
-    if (isinstance(aval, core.UnshapedArray) and type(aval.dtype) is core.bint
-        and not aval.shape):
+    if (isinstance(aval, (core.ShapedArray, core.DShapedArray))
+        and type(aval.dtype) is core.bint and not aval.shape):
       return ShapedArray((), dtypes.scalar_type_to_dtype(int))
     elif isinstance(aval, DShapedArray):
       shape = [bounds.get(d, idxs.get(d, d)) for d in aval.shape]  # type: ignore

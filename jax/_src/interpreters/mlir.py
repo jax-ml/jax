@@ -3294,7 +3294,3 @@ def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
   context = make_ir_context()
   with context:
     return ir.Module.parse(refined_module_str)
-
-########################### pvary ##################################
-
-register_lowering(core.pvary_p, lambda ctx, *x, axes: x)

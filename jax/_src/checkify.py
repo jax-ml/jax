@@ -536,7 +536,8 @@ def check_lowering_rule(ctx, *args, err_tree, debug):
       operands=args,
       operand_avals=list(ctx.avals_in),
       result_avals=list(ctx.avals_out),
-      has_side_effect=True)
+      has_side_effect=True,
+      returns_token=False)
   return out_op
 
 def check_lowering_rule_unsupported(*a, debug, **k):

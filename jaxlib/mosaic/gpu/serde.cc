@@ -66,8 +66,8 @@ LogicalResult vector_extractelement_upgrade(Operation* op, int version,
     b.setInsertionPointAfter(op);
     Value vec = op->getOperand(0);
     Value position = op->getOperand(1);
-    Value extracted_value = b.create<mlir::vector::ExtractOp>(
-        op->getLoc(), vec, ArrayRef<mlir::OpFoldResult>{position});
+    Value extracted_value = mlir::vector::ExtractOp::create(
+        b, op->getLoc(), vec, ArrayRef<mlir::OpFoldResult>{position});
 
     op->replaceAllUsesWith(llvm::SmallVector<Value>{extracted_value});
     op->erase();
@@ -88,9 +88,9 @@ LogicalResult vector_insertelement_upgrade(Operation* op, int version,
     Value destination = op->getOperand(1);
     Value position = op->getOperand(2);
 
-    Value inserted_value = b.create<mlir::vector::InsertOp>(
-        op->getLoc(), source, destination,
-        ArrayRef<mlir::OpFoldResult>{position});
+    Value inserted_value =
+        mlir::vector::InsertOp::create(b, op->getLoc(), source, destination,
+                                       ArrayRef<mlir::OpFoldResult>{position});
     op->replaceAllUsesWith(llvm::SmallVector<Value>{inserted_value});
     op->erase();
     erased = true;

@@ -711,6 +711,13 @@ def _export_lowered(
   else:
     out_avals_flat = lowered.compile_args["out_avals"]  # type: ignore
 
+  # out_avals come from the Jaxpr, and do not always reflect the out_shardings
+  # specification.
+  out_avals_flat = tuple(
+      aval.update(memory_space=core.mem_kind_to_space(s.memory_kind))
+      if not isinstance(s, sharding_impls.UnspecifiedValue) else aval
+      for aval, s in zip(out_avals_flat, lowering.compile_args["out_shardings"]))
+
   # Log and then check the module.
   logmsg = (f"fun_name={fun_name} version={version} "
             f"lowering_platforms={lowering._platforms} "  # type: ignore[unused-ignore,attribute-error]

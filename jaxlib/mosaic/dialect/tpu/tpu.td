@@ -1533,57 +1533,7 @@ def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mli
   let options = [Option<"total_devices", "total-devices", "int", "", "">];
 }
 
-def CanonicalizeMosaicPass : Pass<"tpu-canonicalize-mosaic", "::mlir::func::FuncOp"> {
-  let dependentDialects = [
-    "::mlir::arith::ArithDialect",
-    "::mlir::func::FuncDialect",
-    "::mlir::memref::MemRefDialect",
-    "::mlir::scf::SCFDialect",
-    "::mlir::vector::VectorDialect",
-    "::mlir::tpu::TPUDialect",
-  ];
-  let constructor = "::mlir::tpu::createCanonicalizeMosaicPass()";
-  let options = [
-    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
-    Option<"compatibility_mode", "compatibility-mode", "bool", /*default=*/"1", "">,
-    Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
-    Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
-  ];
-}
 
-def InferVectorLayoutPass : Pass<"tpu-infer-vector-layout", "::mlir::func::FuncOp"> {
-  let dependentDialects = [
-    "::mlir::arith::ArithDialect",
-    "::mlir::func::FuncDialect",
-    "::mlir::memref::MemRefDialect",
-    "::mlir::scf::SCFDialect",
-    "::mlir::vector::VectorDialect",
-    "::mlir::tpu::TPUDialect",
-  ];
-  let constructor = "::mlir::tpu::createInferVectorLayoutPass()";
-  let options = [
-    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
-    Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
-    Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
-    Option<"shape_invariant_numerics", "shape-invariant-numerics", "bool", /*default=*/"false", "">
-  ];
-}
-
-def RelayoutInsertionPass : Pass<"tpu-relayout-insertion", "::mlir::func::FuncOp"> {
-  let dependentDialects = [
-    "::mlir::arith::ArithDialect",
-    "::mlir::func::FuncDialect",
-    "::mlir::tpu::TPUDialect",
-  ];
-  let constructor = "::mlir::tpu::createRelayoutInsertionPass()";
-  let options = [
-    // If hardware_generation is not set, the default value of -1 will crash on
-    // runOnOperation.
-    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
-    Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
-    Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
-  ];
-}
 
 def ApplyVectorLayoutPass : Pass<"tpu-apply-vector-layout", "::mlir::func::FuncOp"> {
   let dependentDialects = [

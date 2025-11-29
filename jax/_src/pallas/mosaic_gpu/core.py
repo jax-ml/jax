@@ -388,7 +388,10 @@ def _ref_group_size(refs: _GPUMemoryRefTree) -> int:
       raise NotImplementedError(f"Unsupported dtype: {ref.dtype}")
     ref_bits = math.prod(ref.shape) * nbits
     if ref_bits % 8:
-      raise ValueError("Only byte-aligned shapes are supported.")
+      raise ValueError(
+          "Only byte-aligned shapes are supported. Got shape:"
+          f" {ref.dtype}{ref.shape}"
+      )
     size += ref_bits // 8
   return size
 
@@ -449,7 +452,10 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
           raise NotImplementedError(f"Unsupported dtype: {ref.dtype}")
         ref_bits = math.prod(ref.shape) * nbits
         if ref_bits % 8:
-          raise ValueError("Only byte-aligned shapes are supported.")
+          raise ValueError(
+              "Only byte-aligned shapes are supported. Got shape:"
+              f" {ref.dtype}{ref.shape}"
+          )
         byte_offset += ref_bits // 8
       union_bytes = max(union_bytes, byte_offset)
     assert union_bytes == ref_union.shape[0]
@@ -676,9 +682,16 @@ class UntileRef(state_types.Transform):
     for idx, tile in zip(tiled_idxs, self.tiling):
       if isinstance(idx, slice):
         if idx.step is not None and idx.step != 1:
-          raise NotImplementedError("Strided slices unsupported")
-        if (idx.start is not None and idx.start % tile) or (idx.stop is not None and idx.stop % tile):
-          raise ValueError("Non-empty slices must be tile aligned")
+          raise NotImplementedError(
+              f"Strided slices unsupported. Got stride: {idx.step}"
+          )
+        if (idx.start is not None and idx.start % tile) or (
+            idx.stop is not None and idx.stop % tile
+        ):
+          raise ValueError(
+              f"Expected slice start ({idx.start}) and slice stop ({idx.stop})"
+              f" to be divisible by the tile size ({tile})"
+          )
         idxs_after_tiling.append(slice(idx.start // tile, idx.stop // tile))
       elif isinstance(idx, mgpu.DynamicSlice):
         if idx.length % tile:
@@ -1276,10 +1289,12 @@ class Mesh:
           "num_threads and thread_name must be either both set or both None,"
           f" got {self}"
       )
-    if self.num_threads is not None and self.num_threads > 2048 // 128:
+    max_mosaic_threads = 2048 // 128
+    if self.num_threads is not None and self.num_threads > max_mosaic_threads:
       raise ValueError(
           "Requested too many CUDA threads per block. Each Mosaic thread"
-          " corresponds to 128 CUDA threads."
+          f" corresponds to 128 CUDA threads. At most {max_mosaic_threads}"
+          f" are supported, got {self}"
       )
     object.__setattr__(self, "grid", tuple(self.grid))
     object.__setattr__(self, "grid_names", tuple(self.grid_names))
@@ -1417,7 +1432,7 @@ class SomeLayout:
 
 @dataclasses.dataclass(frozen=True)
 class ParameterizedLayout(SomeLayout):
-  layout_cls: Layout
+  layout_cls: Layout | TMEMLayout
   args: Sequence[Any]
   kwargs: Any
 
@@ -1458,6 +1473,7 @@ class Layout(SomeLayout, enum.Enum):
   TCGEN05_TRANSPOSED = enum.auto()
   TCGEN05_M64_COLLECTIVE = enum.auto()
   TCGEN05_TMEM_NATIVE = enum.auto()
+  TCGEN05_M64_COLLECTIVE_NATIVE = enum.auto()
 
   SMEM_GMEM_COPY = enum.auto()
   TMA_GATHER_INDICES = enum.auto()
@@ -1510,6 +1526,8 @@ class Layout(SomeLayout, enum.Enum):
         return mgpu.TMEM_NATIVE_LAYOUT
       case Layout.TCGEN05_M64_COLLECTIVE:
         return tcgen05.fa_m64_collective_layout(*args, **kwargs)  # pytype: disable=missing-parameter
+      case Layout.TCGEN05_M64_COLLECTIVE_NATIVE:
+        return tcgen05.tmem_m64_collective_layout(*args, **kwargs).as_tiled_layout()  # pytype: disable=missing-parameter
       case Layout.SMEM_GMEM_COPY:
         normalize_args = lambda shape, dtype, swizzle: (shape, dtype, swizzle)
         shape, dtype, swizzle = normalize_args(*args, **kwargs)
@@ -1533,15 +1551,22 @@ Layout.TCGEN05_TMEM_NATIVE_ROW = Layout.TCGEN05_TMEM_NATIVE.reduce(1)
 
 class TMEMLayout(enum.Enum):
   """Layout for TMEM references."""
+  # TODO(apaszke): Remove the layout suffix.
   SCALES_LAYOUT = enum.auto()
   SPARSE_METADATA_LAYOUT = enum.auto()
+  M64_COLLECTIVE_LAYOUT = enum.auto()
 
-  def to_mgpu(self) -> tcgen05.TMEMLayout:
+  def __call__(self, *args, **kwargs) -> ParameterizedLayout:
+    return ParameterizedLayout(self, args, kwargs)
+
+  def to_mgpu(self, *args, **kwargs) -> tcgen05.TMEMLayout:
     match self:
       case TMEMLayout.SCALES_LAYOUT:
-        return tcgen05.scales_layout()
+        return tcgen05.scales_layout(*args, **kwargs)
       case TMEMLayout.SPARSE_METADATA_LAYOUT:
-        return tcgen05.sparse_meta_layout()
+        return tcgen05.sparse_meta_layout(*args, **kwargs)
+      case TMEMLayout.M64_COLLECTIVE_LAYOUT:
+        return tcgen05.tmem_m64_collective_layout(*args, **kwargs)  # pytype: disable=missing-parameter
 
 
 def TryClusterCancelResult(

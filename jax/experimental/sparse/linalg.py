@@ -547,7 +547,7 @@ def _spsolve_cpu_lowering(ctx, data, indices, indptr, b, tol, reorder):
 
   result, _, _ = mlir.emit_python_callback(
       ctx, _callback, None, args, ctx.avals_in, ctx.avals_out,
-      has_side_effect=False)
+      has_side_effect=False, returns_token=False)
   return result
 
 
