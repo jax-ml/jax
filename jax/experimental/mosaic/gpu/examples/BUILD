@@ -71,3 +71,13 @@ jax_multiplatform_test(
         "//jax:mosaic_gpu",
     ] + py_deps("numpy"),
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+)

@@ -471,3 +471,39 @@ alias(
     actual = "//jax/example_libraries:stax",
     visibility = ["//visibility:public"],
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+)
+
+genrule(
+    name = "jax_py_sources",
+    srcs = [
+        ":py_sources",
+        "//jax/_src:py_sources",
+        "//jax/_src/lib:py_sources",
+        "//jax/_src/pallas:py_sources",
+        "//jax/_src/pallas/fuser:py_sources",
+        "//jax/_src/pallas/mosaic:py_sources",
+        "//jax/_src/pallas/mosaic/interpret:py_sources",
+        "//jax/_src/pallas/mosaic_gpu:py_sources",
+        "//jax/_src/pallas/triton:py_sources",
+        "//jax/experimental:py_sources",
+        "//jax/experimental/array_serialization:py_sources",
+        "//jax/experimental/jax2tf:py_sources",
+        "//jax/experimental/mosaic/gpu/examples:py_sources",
+        "//jax/experimental/pallas/ops/gpu:py_sources",
+        "//jax/extend:py_sources",
+        "//jax/extend/mlir:py_sources",
+        "//jax/extend/mlir/dialects:py_sources",
+        "//jax/tools:py_sources",
+    ],
+    outs = ["jax_py_sources.txt"],
+    cmd = "(for f in $(SRCS); do echo $$f; done) | sort -u > $@",
+)

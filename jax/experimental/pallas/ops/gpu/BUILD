@@ -33,3 +33,14 @@ filegroup(
     name = "mgpu_ops",
     srcs = glob(["*_mgpu.py"]),
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+    visibility = ["//jax:__pkg__"],
+)

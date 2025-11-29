@@ -57,3 +57,8 @@ py_library_providing_imports_info(
     data = [":pjrt_c_api_gpu_plugin.so"],
     lib_rule = pytype_library,
 )
+
+filegroup(
+    name = "cuda_plugin_so",
+    srcs = [":pjrt_c_api_gpu_plugin.so"],
+)

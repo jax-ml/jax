@@ -46,13 +46,13 @@ if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
 fi
 
 if [[ "$JAXCI_BUILD_JAXLIB" == "false" ]]; then
-  WHEEL_SIZE_TESTS=""
+  WHEEL_TESTS=""
 else
-  WHEEL_SIZE_TESTS="//jaxlib/tools:jaxlib_wheel_size_test"
+  WHEEL_TESTS="//jaxlib/tools:jaxlib_wheel_size_test //jaxlib/tools:jaxlib_wheel_imports_test"
 fi
 
 if [[ "$JAXCI_BUILD_JAX" != "false" ]]; then
-  WHEEL_SIZE_TESTS="$WHEEL_SIZE_TESTS //:jax_wheel_size_test"
+  WHEEL_TESTS="$WHEEL_TESTS //:jax_wheel_size_test //:jax_wheel_imports_test"
 fi
 
 if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
@@ -107,7 +107,7 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     --test_output=errors \
     --color=yes \
     -- \
-    $WHEEL_SIZE_TESTS \
+    $WHEEL_TESTS \
     //tests:cpu_tests //tests:backend_independent_tests \
     //jax/experimental/jax2tf/tests:jax2tf_test_cpu \
     //tests/multiprocess:cpu_tests \

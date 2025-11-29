@@ -753,3 +753,16 @@ filegroup(
     ),
     visibility = ["//jax:internal"],
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+            "mosaic/gpu/test_util.py",
+            "sparse/test_util.py",
+            "slab/*",
+        ],
+    ),
+)
