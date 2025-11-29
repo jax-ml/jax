@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import sys
 from typing import Any, Union
+import warnings
 
 from jax._src import literals
 from jax._src.lib import xla_client as xc
@@ -59,6 +60,16 @@ class Array:
 
   __slots__ = ['__weakref__']
   __hash__ = None
+
+  # TODO(jakevdp): set __numpy_dtype__ = None after deprecation period.
+  @property
+  def __numpy_dtype__(self) -> np.dtype:
+    # __numpy_dtype__ protocol added in NumPy v2.4.0.
+    warnings.warn(
+      "Implicit conversion of an array to a dtype is deprecated;"
+      " rather than dtype=arr use dtype=arr.dtype. In the future"
+      " this will result in an error.", DeprecationWarning, stacklevel=2)
+    return self.dtype
 
   @property
   def dtype(self) -> np.dtype:
