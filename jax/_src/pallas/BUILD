@@ -66,3 +66,12 @@ py_library(
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
+
+py_test(
+    name = "cost_estimate_test",
+    srcs = ["cost_estimate_test.py"],
+    deps = [
+        ":pallas",
+        "//jax",
+    ] + py_deps("absl/testing"),
+)
