@@ -125,9 +125,11 @@ class JaxAotTest(jtu.JaxTestCase):
     self.assertNotRegex(stablehlo, r"sine.* loc")
 
     hlo = lowered.as_text("hlo", debug_info=True)
-    self.assertRegex(hlo, r"sine.*metadata=.*source_file=.*")
+    self.assertRegex(hlo, r'sine.*metadata=.*[stack_frame_id|source_file]=.*')
     hlo = lowered.as_text("hlo")
-    self.assertNotRegex(hlo, r"sine.*metadata=.*source_file=.*")
+    self.assertNotRegex(
+        hlo, r'sine.*metadata=.*[stack_frame_id|source_file]=.*'
+    )
 
   def test_constants_in_lowering_in_aot(self):
     const_size = 100
