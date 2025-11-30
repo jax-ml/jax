@@ -81,8 +81,8 @@ class CompatTest(bctu.CompatTestBase):
     def add_one(x_ref, o_ref):
       o_ref[...] = x_ref[...] + 1
 
-    data = self.load_testdata(mosaic_gpu_add_one.data_2025_11_27)
-    self.run_one_test(add_one, data)
+    data = self.load_testdata(mosaic_gpu_add_one.data_2025_04_22)
+    self.run_one_test(add_one, data, expect_current_custom_calls=["mosaic_gpu_v2"])
 
   def test_mosaic_gpu_kernel_add_one(self):
     if not jtu.is_cuda_compute_capability_at_least("9.0"):

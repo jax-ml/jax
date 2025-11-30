@@ -330,6 +330,8 @@ cc_library(
         "@xla//xla/backends/gpu:ffi",
         "@xla//xla/ffi",
         "@xla//xla/ffi:ffi_api",
+        "@xla//xla/service:custom_call_status",
+        "@xla//xla/service:custom_call_target_registry",
         "@xla//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
         "@xla//xla/service/llvm_ir:llvm_command_line_options",
         "@xla//xla/stream_executor/cuda:assemble_compilation_provider",

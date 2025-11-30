@@ -115,6 +115,8 @@ limitations under the License.
 #include "xla/executable_run_options.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
+#include "xla/service/custom_call_status.h"
+#include "xla/service/custom_call_target_registry.h"
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/stream_executor/cuda/assemble_compilation_provider.h"
@@ -638,6 +640,40 @@ absl::StatusOr<CompiledKernel*> CachedCompileAndInit(CacheKey key,
   }
   return &cache.kernels.at(key);
 }
+
+void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
+                         size_t opaque_len, XlaCustomCallStatus* status) {
+  // Forward-compatible version using the legacy FFI API
+  if (reinterpret_cast<uintptr_t>(opaque) % alignof(KernelHash)) {
+    fprintf(stderr, "Misaligned opaque pointer\n");
+    abort();
+  }
+  auto hash = *reinterpret_cast<KernelHash*>(opaque);
+  CUcontext ctx;
+  if (cuCtxGetCurrent(&ctx) != CUDA_SUCCESS) {
+    fprintf(stderr, "Failed to get current CUDA context\n");
+    abort();
+  }
+  CacheKey key(hash, reinterpret_cast<uintptr_t>(ctx));
+  auto compiled_kernel = CachedCompileAndInit(key, opaque + sizeof(KernelHash));
+  if (!compiled_kernel.ok()) {
+    XlaCustomCallStatusSetFailure(status,
+                                  compiled_kernel.status().message().data(),
+                                  compiled_kernel.status().message().size());
+    return;
+  }
+  auto ctx_kernel_comm = (*compiled_kernel)->GetHostLaunch();
+  bool is_comm_used = std::get<2>(ctx_kernel_comm);
+  void* args[4] = {&std::get<0>(ctx_kernel_comm), &stream, &buffers};
+  if (is_comm_used) {
+    mosaic::gpu::NvshmemApi::Default().barrier_all_on_stream(
+        reinterpret_cast<cudaStream_t>(stream));
+  }
+  std::get<1>(ctx_kernel_comm)(args);
+}
+
+XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,
+                                         "CUDA");
 
 absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
                               ffi::RemainingRets results,
