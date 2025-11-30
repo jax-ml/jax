@@ -661,10 +661,10 @@ def standardize(x: ArrayLike,
 
   .. math::
 
-     x_{std} = \frac{x - \langle x\rangle}{\sqrt{\langle(x - \langle x\rangle)^2\rangle + \epsilon}}
+     x_{std} = \frac{x - \langle x\rangle}{\sqrt{\max(\langle(x - \langle x\rangle)^2\rangle, \epsilon)}}
 
   where :math:`\langle x\rangle` indicates the mean of :math:`x`, and :math:`\epsilon` is
-  a small correction factor introduced to avoid division by zero.
+  a small correction factor used as a lower bound on the variance to avoid division by zero.
 
   Args:
     x: input array to be standardized.
@@ -674,8 +674,8 @@ def standardize(x: ArrayLike,
       then ``x.mean(axis, where=where)`` will be used.
     variance: optionally specify the variance used for standardization. If not
       specified, then ``x.var(axis, where=where)`` will be used.
-    epsilon: correction factor added to variance to avoid division by zero; defaults
-      to ``1E-5``.
+    epsilon: correction factor used as a lower bound on variance to avoid division by zero;
+      defaults to ``1E-5``.
     where: optional boolean mask specifying which elements to use when computing
       the mean and variance.
 
@@ -693,8 +693,8 @@ def standardize(x: ArrayLike,
     # when used in neural network normalization layers
     variance = jnp.mean(
         jnp.square(x), axis, keepdims=True, where=where) - jnp.square(mean)
-  return jnp.subtract(x, jnp.asarray(mean)) * lax.rsqrt(jnp.asarray(variance) + epsilon)
-
+  return jnp.subtract(x, jnp.asarray(mean)) * lax.rsqrt(jnp.maximum(jnp.asarray(variance), epsilon))
+    
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
 @api.jit(static_argnames=("num_classes", "dtype", "axis"))
 def _one_hot(x: Array, num_classes: int, *,
