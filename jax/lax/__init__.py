@@ -386,7 +386,7 @@ from jax._src.lax.parallel import (
   ragged_all_to_all_p as ragged_all_to_all_p,
 )
 from jax._src.core import (
-    pvary as pvary,
+    pvary as _deprecated_pvary,
 )
 from jax._src.lax.other import (
   conv_general_dilated_local as conv_general_dilated_local,
@@ -408,18 +408,25 @@ _deprecations = {
     # Added on July 24th 2025.
     "zeros_like_array": (
         (
-            "jax.lax.zeros_like_array is deprecated. Use jax.numpy.zeros_like instead."
+            "jax.lax.zeros_like_array is deprecated. Use jax.numpy.zeros_like"
+            " instead."
         ),
         _deprecated_zeros_like_array,
+    ),
+    # Added on Dec 1, 2025
+    "pvary": (
+        "jax.lax.pvary is deprecated. Use `jax.lax.pcast(..., to='varying')",
+        _deprecated_pvary,
     ),
 }
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
   zeros_like_array = _deprecated_zeros_like_array
+  pvary = _deprecated_pvary
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
-del _deprecated_zeros_like_array
+del _deprecated_zeros_like_array, _deprecated_pvary
 del _typing
