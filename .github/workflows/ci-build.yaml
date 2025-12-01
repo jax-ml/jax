@@ -29,7 +29,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Python 3.11
-        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c  # v6.0.0
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548  # v6.1.0
         with:
           python-version: 3.11
       - run: python -m pip install pre-commit
@@ -70,7 +70,7 @@ jobs:
         apt update
         apt install -y libssl-dev
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c  # v6.0.0
+      uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548  # v6.1.0
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
@@ -109,7 +109,7 @@ jobs:
       with:
         persist-credentials: false
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c  # v6.0.0
+      uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548  # v6.1.0
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
@@ -145,7 +145,7 @@ jobs:
         apt update
         apt install -y libssl-dev libsqlite3-dev build-essential
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c  # v6.0.0
+      uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548  # v6.1.0
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
@@ -167,7 +167,7 @@ jobs:
       with:
         persist-credentials: false
     - name: Set up Python
-      uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c  # v6.0.0
+      uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548  # v6.1.0
       with:
         python-version: 3.12
     - name: Install JAX
