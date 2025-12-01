@@ -1594,11 +1594,11 @@ class VectorSubcoreTest(PallasSCTest):
         in_specs=(jax.P("x", None),),
         out_specs=jax.P("x", None),
         mesh=mesh,
-        check_vma=False,
+        check_vma=True,
     )
     def f(x):
       @self.kernel(
-          out_shape=x,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype, vma={"x"}),
           mesh=plsc.VectorSubcoreMesh(
               core_axis_name="core", subcore_axis_name="subcore", num_cores=1
           ),
