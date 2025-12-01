@@ -2518,7 +2518,8 @@ def _gather_lowering_rule(
   )
   # During lowering jnp.take_along_axis to lax.gather, we append extra dimension
   # to the end of the indices array. We should reshape it back to the original
-  # shape before lowering to Mosaic and rely on MLIR CSE to remove the reshapes.
+  # shape before lowering to Mosaic and rely on MLIR canonicalization to remove
+  # the reshapes.
   assert indices_aval.shape == in_aval.shape + (1,)
   recovered_indices = vector.shape_cast(
       ir.VectorType.get(in_aval.shape, indices.type.element_type),
@@ -2528,8 +2529,6 @@ def _gather_lowering_rule(
   del fill_value
   if (
       slice_sizes == (1, 1)
-      and not unique_indices
-      and not indices_are_sorted
       and mode
       in (
           lax.GatherScatterMode.FILL_OR_DROP,

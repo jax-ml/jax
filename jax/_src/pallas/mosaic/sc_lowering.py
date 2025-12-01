@@ -36,6 +36,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import memref
+from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic import core as tpu_core
@@ -902,6 +903,74 @@ def _sort_lowering_rule(
       results.append(sorted_keys)
     results.append(sorted_value)
   return tuple(results)
+
+
+@register_lowering_rule(
+    lax.gather_p, kernel_types=[tpu_core.KernelType.SC_VECTOR_SUBCORE]
+)
+def _gather_lowering_rule(
+    ctx: LoweringRuleContext,
+    x,
+    indices,
+    *,
+    dimension_numbers,
+    slice_sizes,
+    unique_indices,
+    indices_are_sorted,
+    mode,
+    fill_value,
+):
+
+  in_aval, indices_aval = ctx.avals_in
+  out_aval, = ctx.avals_out
+
+  if len(in_aval.shape) != 1:
+    raise NotImplementedError("Only 1D gather is supported")
+  if in_aval.shape != indices_aval.shape[:-1] != out_aval.shape:
+    raise ValueError(
+        "Shape mismatch in input, indices and output:"
+        f" {in_aval.shape}, {indices_aval.shape[:-1]}, {out_aval.shape}"
+    )
+
+  # During lowering jnp.take_along_axis to lax.gather, we append extra dimension
+  # to the end of the indices array. We should reshape it back to the original
+  # shape before lowering to Mosaic and rely on MLIR canonicalization to remove
+  # the reshapes.
+  assert indices_aval.shape == in_aval.shape + (1,)
+  recovered_indices = vector.shape_cast(
+      ir.VectorType.get(in_aval.shape, indices.type.element_type),
+      indices,
+  )
+  # Note: current support for lax.gather is still very limited.
+  del fill_value
+  if slice_sizes == (1,) and mode == lax.GatherScatterMode.PROMISE_IN_BOUNDS:
+    if dimension_numbers == lax.GatherDimensionNumbers(
+        offset_dims=(),
+        collapsed_slice_dims=(0,),
+        start_index_map=(0,),
+        operand_batching_dims=(),
+        start_indices_batching_dims=(),
+    ):
+      return tpu.dynamic_gather(x, recovered_indices, [0])
+  raise NotImplementedError("Unsupported gather")
+
+
+@register_lowering_rule(
+    lax.rev_p, kernel_types=[tpu_core.KernelType.SC_VECTOR_SUBCORE]
+)
+def _rev_lowering_rule(ctx: LoweringRuleContext, x, dimensions):
+  del ctx  # Unused.
+  if dimensions != (0,):
+    raise NotImplementedError(f"Invalid dimensions for SC lax.rev: {dimensions}")
+  i32 = ir.IntegerType.get_signless(32)
+  vec_dim = sc_core.get_sparse_core_info().num_lanes
+  cdim = arith.constant(i32, ir.IntegerAttr.get(i32, vec_dim - 1))
+  cdim_vec = vector.broadcast(ir.VectorType.get((vec_dim,), cdim.type), cdim)
+  return tpu.dynamic_gather(
+      x,
+      arith.subi(cdim_vec, tpu.iota(cdim_vec.type, dimensions=[0])),
+      dimensions=[0],
+  )
 
 
 def _default_tile_strides(

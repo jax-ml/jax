@@ -1632,6 +1632,42 @@ class VectorSubcoreTest(PallasSCTest):
     )(x)
     np.testing.assert_array_equal(result, jnp.exp(x))
 
+  @parameterized.product(dtype=[np.int32, np.float32])
+  def test_vector_gather(self, dtype):
+    if not jtu.if_cloud_tpu_at_least(2025, 12, 2):
+      self.skipTest("Test requires a newer libtpu")
+
+    vec_dim = self.sc_info.num_lanes
+    x = np.arange(vec_dim, dtype=dtype)
+    indices = np.random.randint(0, vec_dim, size=vec_dim, dtype=np.int32)
+    indices[[0, -2]] = 2  # Verify non-unique works.
+    indices[1] = -2  # Verify negative indices work.
+
+    @self.vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, indices_ref, out_ref):
+      out_ref[...] = x_ref[...][indices_ref[...]]
+
+    np.testing.assert_array_equal(kernel(x, indices), x[indices])
+
+  @parameterized.product(dtype=[np.int32, np.float32])
+  def test_rev_and_sort_desc(self, dtype):
+    if not jtu.if_cloud_tpu_at_least(2025, 12, 2):
+      self.skipTest("Test requires a newer libtpu")
+
+    vec_dim = self.sc_info.num_lanes
+    keys = np.arange(vec_dim, dtype=dtype)
+    np.random.shuffle(keys)
+
+    @self.vector_subcore_kernel(out_shape=(keys, keys))
+    def kernel(x_ref, o1_ref, o2_ref):
+      o1_ref[...] = jnp.sort(x_ref[...], descending=True)
+      o2_ref[...] = jnp.flip(x_ref[...], axis=-1)
+
+    sorted_desc, reversed_keys = kernel(keys)  # pylint: disable=unpacking-non-sequence
+    np.testing.assert_array_equal(
+        sorted_desc, jnp.arange(vec_dim, dtype=dtype)[::-1])
+    np.testing.assert_array_equal(reversed_keys, keys[::-1])
+
   @parameterized.product(
       keys_dtype=[np.int32, np.float32],
       values_dtypes=[(), (np.int32,), (np.float32, np.int32)],
