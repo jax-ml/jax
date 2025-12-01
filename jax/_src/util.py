@@ -319,10 +319,10 @@ def register_cache(cache: Any, for_what: str):
 
   Args:
     cache: an object supporting `cache_clear()`, `cache_info()`, and
-    `cache_keys()`, like the result of `functools.lru_cache()`.
+      `cache_keys()`, like the result of `functools.lru_cache()`.
     for_what: a string to identify what this cache is used for. This is
-     used for debugging.
-"""
+       used for debugging.
+  """
   _caches[cache] = for_what
 
 def clear_all_caches():

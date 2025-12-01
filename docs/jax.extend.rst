@@ -11,6 +11,7 @@ Modules
 .. toctree::
   :maxdepth: 1
 
+  jax.extend.backend
   jax.extend.core
   jax.extend.linear_util
   jax.extend.mlir
