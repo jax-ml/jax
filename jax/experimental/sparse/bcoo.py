@@ -1415,7 +1415,7 @@ def _bcoo_sum_duplicates_impl(data, indices, *, spinfo, nse):
     nse = 1 if props.n_sparse == 0 else nse_batched.max()
   indices_out = _adjust_indices_nse(indices_out, nse=nse, shape=spinfo.shape)
   if props.n_sparse == 0:
-    data = data.sum(props.n_batch, keepdims=True)
+    data = data.sum(props.n_batch, keepdims=True, dtype=data.dtype)
   data_out = jnp.empty((*map(max, indices.shape[:props.n_batch], data.shape[:props.n_batch]),
                         nse, *data.shape[props.n_batch + 1:]), dtype=data.dtype)
   permute = lambda d_out, m, d: d_out.at[m].add(d, mode='drop')
@@ -1536,8 +1536,8 @@ def _bcoo_sum_duplicates_jvp(primals, tangents, *, spinfo, nse):
                      "jit, vmap, and other transformations requiring abstract evaluation.")
   indices_out = _adjust_indices_nse(indices_out, nse=nse, shape=spinfo.shape)
   if props.n_sparse == 0:
-    data = data.sum(props.n_batch, keepdims=True)
-    data_dot = data_dot.sum(props.n_batch, keepdims=True)
+    data = data.sum(props.n_batch, keepdims=True, dtype=data.dtype)
+    data_dot = data_dot.sum(props.n_batch, keepdims=True, dtype=data_dot.dtype)
   data_out = jnp.empty((*map(max, indices.shape[:props.n_batch], data.shape[:props.n_batch]),
                         nse, *data.shape[props.n_batch + 1:]), dtype=data.dtype)
   data_dot_out = data_out
@@ -1558,9 +1558,7 @@ _bcoo_sum_duplicates_hlo = mlir.lower_fun(
 
 ad.primitive_jvps[bcoo_sum_duplicates_p] = _bcoo_sum_duplicates_jvp
 batching.primitive_batchers[bcoo_sum_duplicates_p] = _bcoo_sum_duplicates_batching_rule
-# TODO(phawkins): caching this primitive seems to cause x64 context problems.
-mlir.register_lowering(bcoo_sum_duplicates_p, _bcoo_sum_duplicates_hlo,
-                       cacheable=False)
+mlir.register_lowering(bcoo_sum_duplicates_p, _bcoo_sum_duplicates_hlo)
 
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
