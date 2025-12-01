@@ -47,6 +47,7 @@ Functions
   debug_check
   debug_print
   dot
+  get_global
   loop
   max_contiguous
   multiple_of

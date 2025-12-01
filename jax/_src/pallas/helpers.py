@@ -36,6 +36,19 @@ empty = api.named_call(lax.empty)
 
 @api.named_call
 def empty_like(x: object):
+  """Create an empty PyTree of possibly uninitialized values.
+
+  Args:
+    x: A PyTree with leaves specifying the shape and dtype of
+      the uninitialized object.
+
+  Returns:
+    A PyTree with the same structure as ``x``, but with uninitialized
+    values.
+
+  See Also:
+    :func:`jax.lax.empty`
+  """
   return tree_util.tree_map(lambda leaf: empty(leaf.shape, leaf.dtype), x)
 
 

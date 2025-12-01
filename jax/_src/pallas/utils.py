@@ -45,6 +45,14 @@ def cdiv(a: jax_typing.Array, b: jax_typing.Array) -> jax_typing.Array:
   ...
 
 def cdiv(a: int | jax_typing.Array, b: int | jax_typing.Array) -> int | jax_typing.Array:
+  """Computes the ceiling division of a divided by b.
+
+  Examples:
+    >>> cdiv(8, 2)
+    4
+    >>> cdiv(9, 2)  # 9 / 2 = 4.5, which rounds up to 5
+    5
+  """
   if isinstance(a, int) and isinstance(b, int):
     return (a + b - 1) // b
   return lax.div(a + (b - 1), b)

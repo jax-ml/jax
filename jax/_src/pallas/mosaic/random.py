@@ -171,13 +171,13 @@ def sample_block(sampler_fn: SampleFnType,
                  **kwargs) -> jax.Array:
   """Samples a block of random values with invariance guarantees.
 
-  `sample_block` allows the sampling of identical blocks of random values
+  ``sample_block`` allows the sampling of identical blocks of random values
   across kernels with different block shapes and iteration orders. Each call
   to `sample_block` returns a `block_size`-shaped array of random samples
   corresponding to the `block_index`.
 
-  `tile_size` should be chosen such that it is a divisor to all block sizes
-  one needs to be invariant to. The larger the `tile_size`, the more
+  ``tile_size`` should be chosen such that it is a divisor to all block sizes
+  one needs to be invariant to. The larger the ``tile_size``, the more
   efficient the sampling process will be and therefore the best choice is
   typically the greatest common divisor between all possible block sizes.
 
@@ -186,7 +186,7 @@ def sample_block(sampler_fn: SampleFnType,
       random samples.
     global_key: The global key to use for sampling.
     block_size: The shape of an individual block.
-    tile_size: The shape of a `tile`, which is the smallest unit at
+    tile_size: The shape of a ``tile``, which is the smallest unit at
       which samples are generated. This should be selected to be a divisor
       of all block sizes one needs to be invariant to.
     total_size: The total size of the array to sample.
@@ -195,8 +195,8 @@ def sample_block(sampler_fn: SampleFnType,
     **kwargs: Additional arguments to pass to the sampler_fn.
 
   Returns:
-    A `block_size` shaped array of samples for the current block corresponding
-    to `block_index`.
+    A ``block_size`` shaped array of samples for the current block corresponding
+    to ``block_index``.
   """
   if len(block_size) != len(tile_size):
     raise ValueError(f"block_size ({len(block_size)}) and tile_size "

@@ -1079,6 +1079,18 @@ batching.fancy_primitive_batchers[addupdate_p] = _addupdate_vmap
 broadcast_to_p = core.Primitive('broadcast_to')
 
 def broadcast_to(a: Array, shape: tuple[int, ...]) -> Array:
+  """Broadcasts an array to a new shape.
+
+  Args:
+    a: The array to broadcast.
+    shape: The desired shape to broadcast to.
+
+  Returns:
+    An array of shape ``shape``.
+
+  See Also:
+    :func:`jax.numpy.broadcast_to`
+  """
   import jax.numpy as jnp  # pytype: disable=import-error
   a = jnp.asarray(a)
   if a.shape == shape:
