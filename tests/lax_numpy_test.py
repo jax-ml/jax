@@ -2737,7 +2737,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     n=[0, 1, 2],
   )
   def testDiff(self, shape, dtype, n, axis, prepend, append):
-    self.skipTest("TODO(b/462744937): XLA:GPU bug from recent LLVM integrate.")
     prepend = np.zeros(shape, dtype=dtype) if prepend == 0 else prepend
     append = np.zeros(shape, dtype=dtype) if append == 0 else append
     rng = jtu.rand_default(self.rng())
