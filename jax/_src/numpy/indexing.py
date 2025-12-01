@@ -39,10 +39,11 @@ from jax._src.numpy import error as jnp_error
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
+from jax._src.partition_spec import PartitionSpec
 from jax._src.pjit import auto_axes
 from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
 from jax._src.tree_util import tree_flatten
-from jax._src.typing import Array, ArrayLike, StaticScalar
+from jax._src.typing import Array, ArrayLike, Index, StaticScalar
 from jax._src.util import canonicalize_axis, safe_zip, set_module, tuple_update
 
 export = set_module('jax.numpy')
@@ -528,8 +529,11 @@ def _is_contiguous_slice(idx):
           (idx.stop is None or _is_integer_index(idx.stop)) and
           (idx.step is None or (_is_integer_index(idx.step) and idx.step == 1)))
 
-def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None,
-                                      out_sharding=None) -> Array | None:
+def _attempt_rewriting_take_via_slice(
+    arr: Array,
+    idx: Index | tuple[Index, ...], *,
+    mode: str | slicing.GatherScatterMode | None,
+    out_sharding: NamedSharding | PartitionSpec | None = None) -> Array | None:
   # attempt to compute _rewriting_take via lax.slice(); return None if not possible.
   idx = idx if isinstance(idx, tuple) else (idx,)
 
@@ -561,7 +565,7 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None,
   # TODO(yashkatariya): fix dynamic_slice with sharding
   is_sharded = (isinstance(arr, array.ArrayImpl) and
                 not dispatch.is_single_device_sharding(arr.sharding))
-  has_partial_slices = any(idx[i].indices(arr.shape[i]) != (0, arr.shape[i], 1)
+  has_partial_slices = any(idx[i].indices(arr.shape[i]) != (0, arr.shape[i], 1)  # type: ignore[union-attr]
                            for i in contiguous_slices)
   if is_sharded and (int_indices or has_partial_slices):
     return None
@@ -629,9 +633,16 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None,
   return arr
 
 
-def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
-                   mode=None, fill_value=None, normalize_indices=True,
-                   out_sharding=None):
+def rewriting_take(
+    arr: Array,
+    idx: Index | tuple[Index, ...], *,
+    indices_are_sorted: bool = False,
+    unique_indices: bool = False,
+    mode: str | slicing.GatherScatterMode | None = None,
+    fill_value: ArrayLike | None = None,
+    normalize_indices: bool = True,
+    out_sharding: NamedSharding | PartitionSpec | None = None,
+) -> Array:
   # Computes arr[idx].
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and broadcast_in_dim.
@@ -640,7 +651,7 @@ def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
   # in the simplest cases: i.e. non-dynamic arrays indexed with integers and slices.
   # TODO(jakevdp): lower to slice even when normalize_indices is False
   if normalize_indices:
-    result = _attempt_rewriting_take_via_slice(arr, idx, mode, out_sharding)
+    result = _attempt_rewriting_take_via_slice(arr, idx, mode=mode, out_sharding=out_sharding)
     if result is not None:
       return result
 
@@ -653,6 +664,7 @@ def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
           dtypes.issubdtype(aval.dtype, np.integer) and
           not dtypes.issubdtype(aval.dtype, dtypes.bool_) and
           isinstance(arr.shape[0], int)):
+        assert isinstance(idx, (int, Array))
         return slicing.dynamic_index_in_dim(arr, idx, keepdims=False)
 
   treedef, static_idx, dynamic_idx = split_index_for_jit(idx, arr.shape)
