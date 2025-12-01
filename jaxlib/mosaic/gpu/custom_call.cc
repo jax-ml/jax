@@ -675,7 +675,7 @@ void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,
                                          "CUDA");
 
-absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
+absl::Status MosaicGpuExecute(cudaStream_t stream, ffi::RemainingArgs inputs,
                               ffi::RemainingRets results,
                               std::string_view kernel_hash,
                               std::string_view module,
@@ -729,8 +729,7 @@ absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
   void* args[4] = {&std::get<0>(ctx_kernel_comm), &stream, &buffers_ptr};
 
   if (is_comm_used) {
-    mosaic::gpu::NvshmemApi::Default().barrier_all_on_stream(
-        reinterpret_cast<cudaStream_t>(stream));
+    mosaic::gpu::NvshmemApi::Default().barrier_all_on_stream(stream);
   }
   std::get<1>(ctx_kernel_comm)(args);
   return absl::OkStatus();
@@ -738,7 +737,7 @@ absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
 
 XLA_FFI_DEFINE_HANDLER(kMosaicGpuExecute, MosaicGpuExecute,
                        ffi::Ffi::Bind<ffi::ExecutionStage::kExecute>()
-                           .Ctx<xla::ffi::PlatformStream<gpuStream_t>>()
+                           .Ctx<xla::ffi::PlatformStream<cudaStream_t>>()
                            .RemainingArgs()
                            .RemainingRets()
                            .Attr<std::string_view>("kernel_hash")
