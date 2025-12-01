@@ -1522,28 +1522,4 @@ def TPU_LogBufferOp : TPU_Op<"log_buffer"> {
   let hasVerifier = 1;
 }
 
-def ApplyVectorLayoutPass : Pass<"tpu-apply-vector-layout", "::mlir::func::FuncOp"> {
-  let dependentDialects = [
-    "::mlir::arith::ArithDialect",
-    "::mlir::func::FuncDialect",
-    "::mlir::vector::VectorDialect",
-    "::mlir::tpu::TPUDialect",
-  ];
-  let constructor = "::mlir::tpu::createApplyVectorLayoutPass()";
-  let options = [
-    // If hardware_generation is not set, the default value of -1 will crash on
-    // runOnOperation.
-    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
-    Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
-    Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
-    Option<"mxu_contracting_size", "mxu-contracting-size", "int", /*default=*/"128", "">,
-    Option<"mxu_noncontracting_size", "mxu-noncontracting-size", "int", /*default=*/"128", "">,
-    Option<"max_sublanes_in_scratch", "max-sublanes-in-scratch", "int", /*default=*/"0", "">,
-    Option<"vmem_banks", "vmem-banks", "int", /*default=*/"-1", "">,
-    Option<"max_shuffle_sublane_offset", "max-shuffle-sublane-offset", "int", /*default=*/"-1", "Max sublane offset per shuffled load/store">,
-    Option<"shape_invariant_numerics", "shape-invariant-numerics", "bool", /*default=*/"false", "">
-  ];
-}
-
-
 #endif  // TPU_ATTRS
