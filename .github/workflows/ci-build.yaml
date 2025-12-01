@@ -199,6 +199,6 @@ jobs:
       with:
         python-version: '3.14'
     - run: |
-        pip install uv~=0.5.30
-        uv pip install --system ty
-    - run: uv run ty check .
+        pip install uv~=0.9.14
+        uv pip install --pre ty==0.0.1a29
+    - run: uv run ty check jax
