@@ -317,6 +317,45 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     actual, _ = jax.scipy.sparse.linalg.bicgstab(A, b)
     self.assertAllClose(expected, actual)
 
+  @jax.default_matmul_precision("highest")
+  def test_bicgstab_numerical_stability_regression(self):
+    """Regression test for issue #32978.
+
+    Tests BiCGStab numerical stability with matrix structures that can cause
+    breakdown in the p_i update step. The original formula
+    beta * (p - omega * q) could lead to catastrophic cancellation on GPU,
+    while the reformulated version with intermediate gamma variable provides
+    better numerical stability.
+
+    This test uses a structure similar to finite element stiffness matrices
+    where the issue was originally observed, with tight tolerances and
+    multiple iterations to exercise the numerical properties of the algorithm.
+    """
+    if not config.enable_x64.value:
+      raise unittest.SkipTest("requires x64 mode")
+
+    # Use float64 precision as in the original issue report
+    rng = jtu.rand_default(self.rng())
+    n = 50
+
+    # Create a symmetric positive definite matrix similar to FEM problems.
+    # Use a structure that requires multiple BiCGStab iterations to converge.
+    A_base = rng((n, n), jnp.float64)
+    A = posify(A_base) + 0.1 * jnp.eye(n)
+
+    # Create a non-trivial solution
+    solution = jnp.arange(1, n + 1, dtype=np.float64)
+    b = matmul_high_precision(A, solution)
+
+    # Solve with tight tolerance to require multiple iterations
+    x, _ = jax.scipy.sparse.linalg.bicgstab(
+        A, b, tol=1e-10, atol=1e-10, maxiter=200
+    )
+
+    # Verify solution accuracy - if the solver experienced numerical breakdown,
+    # this check would fail due to poor convergence
+    self.assertAllClose(x, solution, rtol=1e-5, atol=1e-5)
+
   # GMRES
   @jtu.sample_product(
     shape=[(3, 3)],
