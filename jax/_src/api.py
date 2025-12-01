@@ -2092,12 +2092,12 @@ def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
           pvary_applications = []
           if left := tangent_aval.vma - primal_aval.vma:
             pvary_applications.append(
-                f"applying `jax.lax.pvary(..., {tuple(left)})` to the primal"
-                " value passed to `jax.linearize`")
+                f"applying `jax.lax.pcast(..., {tuple(left)}, to='varying')` to"
+                " the primal value passed to `jax.linearize`")
           if left := primal_aval.vma - tangent_aval.vma:
             pvary_applications.append(
-                f"applying `jax.lax.pvary(..., {tuple(left)})` to the tangent"
-                " value passed to the callable `f_jvp` returned by"
+                f"applying `jax.lax.pcast(..., {tuple(left)}, to='varying')` to"
+                " the tangent value passed to the callable `f_jvp` returned by"
                 " `jax.linearize`")
           extra_msg = " \nThis might be fixed by:\n" + "\n".join(
               f"  * {d};" for d in pvary_applications)

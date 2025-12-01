@@ -2821,3 +2821,56 @@ ad.deflinear2(core.reduced_vary_cast_p, _reduced_vary_cast_transpose_rule)
 def _reduced_vary_cast_batcher(vals_in, dims_in, *, axes):
   raise NotImplementedError
 batching.primitive_batchers[core.reduced_vary_cast_p] = _reduced_vary_cast_batcher
+
+################################## pcast #############################
+
+def _get_from(aval, axes: tuple[AxisName, ...]) -> str:
+  vma = aval.vma
+  unreduced = aval.sharding.spec.unreduced
+  reduced = aval.sharding.spec.reduced
+  vma_ur = vma | unreduced | reduced
+  assert not (vma & unreduced & reduced)  # intersection is empty
+
+  out = set()
+  for a in axes:
+    if a in vma:
+      out.add('varying')
+    elif a in unreduced:
+      out.add('unreduced')
+    elif a in reduced:
+      out.add('reduced')
+    else:
+      assert a not in vma_ur
+      out.add('invarying')
+
+  if len(out) > 1:
+    raise ValueError(
+        "`jax.lax.pcast` can only accept axis_name which corresponds to one of"
+        " varying, unreduced, reduced or invarying state of the input. Got"
+        f" input type: {aval}, axes: {axes} and input state: {out}")
+  o, = out
+  return o
+
+
+_pcast_funcs = {
+    ('invarying', 'varying'): core.pvary,
+    ('invarying', 'reduced'): preduced,
+    ('varying', 'unreduced'): vary_unreduced_cast,
+    ('reduced', 'varying'): core.reduced_vary_cast,
+}
+
+_allowed_to = {'unreduced', 'reduced', 'varying'}
+
+def pcast(x, axis_name, *, to: str):
+  axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
+  if not axis_name:
+    return x
+
+  if to not in _allowed_to:
+    raise ValueError(
+        f'Got unexpected `to` value. Allowed `to` values are: {_allowed_to}')
+  from_ = _get_from(core.typeof(x), axes)
+  func = _pcast_funcs.get((from_.lower(), to.lower()), None)
+  if func is None:
+    raise ValueError(f"Unsupported pcast from={from_}, {to=}")
+  return func(x, axes)

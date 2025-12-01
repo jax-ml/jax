@@ -434,8 +434,9 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
                      + f'  * {diffs[-1]}.\n')
 
     pvary_applications = [
-        f'applying `jax.lax.pvary(..., {tuple(out_aval.vma - in_aval.vma)})` '
-        f'to the initial carry value corresponding to {component(path)}'
+        f'applying `jax.lax.pcast(..., {tuple(out_aval.vma - in_aval.vma)},'
+        " to='varying')` to the initial carry value corresponding to"
+        f' {component(path)}'
         for path, in_aval, out_aval in zip(paths, in_avals, out_avals)
         if not core.typematch(in_aval, out_aval) and
         isinstance(in_aval, ShapedArray) and isinstance(out_aval, ShapedArray)
