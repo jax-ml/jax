@@ -2994,7 +2994,7 @@ def random_insert_pvary(name, key, *args):
       raise TypeError(
           f"{name} requires all arguments to have matching type. Got key type:"
           f" {core.typeof(key)} vs arg type: {core.typeof(a)}. Use"
-          " jax.lax.pvary(...) to make them match. If your key is less varying"
-          " than arg, watch out for key-reuse problems.")
+          " jax.lax.pcast(..., to='varying') to make them match. If your key is"
+          " less varying than arg, watch out for key-reuse problems.")
     out.append(a)
   return key, out

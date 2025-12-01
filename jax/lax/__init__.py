@@ -360,7 +360,7 @@ from jax._src.lax.parallel import (
   all_gather_reduced as all_gather_reduced,
   unreduced_psum_scatter as unreduced_psum_scatter,
   unreduced_psum as unreduced_psum,
-  preduced as preduced,
+  pcast as pcast,
   all_gather_p as all_gather_p,
   all_to_all as all_to_all,
   all_to_all_p as all_to_all_p,

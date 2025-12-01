@@ -367,8 +367,8 @@ def _check_branch_outputs(
                      + f'\n  * {diffs[-1]}.\n')
 
     pvary_applications = [
-        f'applying `jax.lax.pvary(..., {tuple(a1.vma - a2.vma)})` '
-        f'to the output of {n}{component(p)}'
+        f"applying `jax.lax.pcast(..., {tuple(a1.vma - a2.vma)}, to='varying')` "
+        f"to the output of {n}{component(p)}"
         for p, aval1, aval2 in zip(paths, out_avals1, out_avals2)
         for n, a1, a2 in [(name1, aval2, aval1), (name2, aval1, aval2)]
         if not core.typematch(a1, a2) and
