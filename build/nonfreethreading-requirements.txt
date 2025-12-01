@@ -8,8 +8,7 @@ numpy>=2.3.2; python_version>="3.14"
 # compression.zstd, and we'll use that if available.
 zstandard; python_version<"3.14"
 
-# TODO(phawkins): enable tensorstore once it ships a 3.14 wheel.
-tensorstore; python_version<"3.14"
+tensorstore
 
 # For jax2tf_test
 tensorflow; python_version<"3.14"
