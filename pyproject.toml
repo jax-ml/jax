@@ -161,4 +161,12 @@ max-complexity = 18
 "docs/autodidax.ipynb" = ["F811"]
 
 [tool.ty.src]
-include = ["jax/_src/dtypes.py"]
+include = [
+    "jax/_src/abstract_arrays.py",
+    "jax/_src/ad_util.py",
+    "jax/_src/api_util.py",
+    "jax/_src/basearray.py",
+    "jax/_src/blocked_sampler.py",
+    "jax/_src/buffer_callback.py",
+    "jax/_src/dtypes.py",
+]

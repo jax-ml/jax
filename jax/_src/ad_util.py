@@ -52,7 +52,7 @@ def add_abstract(x, y):
 
 def zeros_like_aval(aval: core.AbstractValue) -> Array:
   if hasattr(aval, 'vspace_zero'):  # TODO(mattjj,dougalm): revise away hasattr
-    return aval.vspace_zero()
+    return aval.vspace_zero()  # ty: ignore[call-non-callable]
   return aval_zeros_likers[type(aval)](aval)
 aval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
 
