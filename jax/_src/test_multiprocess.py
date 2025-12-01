@@ -93,7 +93,7 @@ _ENABLE_MEGASCALE = absl.flags.DEFINE_bool(
 
 _HEARTBEAT_TIMEOUT = absl.flags.DEFINE_integer(
     "heartbeat_timeout",
-    3,
+    5,
     "Timeout in seconds for heartbeat checks. Set to a higher number when"
     " running under sanitizers.",
 )
