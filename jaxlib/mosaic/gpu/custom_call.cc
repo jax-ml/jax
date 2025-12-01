@@ -678,8 +678,8 @@ XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,
 absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
                               ffi::RemainingRets results,
                               std::string_view kernel_hash,
-                              std::string_view module, bool use_custom_barrier,
-                              xla::RunId run_id) {
+                              std::string_view module,
+                              bool use_custom_barrier) {
   // Updated version using the new FFI API supporting custom barrier
   // for distributed kernels
   if (use_custom_barrier) {
@@ -743,9 +743,8 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuExecute, MosaicGpuExecute,
                            .RemainingRets()
                            .Attr<std::string_view>("kernel_hash")
                            .Attr<std::string_view>("module")
-                           .Attr<bool>("use_custom_barrier")
-                           .Ctx<xla::RunId>(),
-                           {ffi::Traits::kCmdBufferCompatible});
+                           .Attr<bool>("use_custom_barrier"),
+                       {ffi::Traits::kCmdBufferCompatible});
 
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "mosaic_gpu_v2", "CUDA",
                          {
