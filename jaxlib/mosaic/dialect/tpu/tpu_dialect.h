@@ -76,9 +76,6 @@ std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
 std::unique_ptr<OperationPass<func::FuncOp>> createApplyVectorLayoutPass(
     const ApplyVectorLayoutContext &ctx = ApplyVectorLayoutContext{});
 
-std::unique_ptr<OperationPass<func::FuncOp>>
-createLogicalToPhysicalDeviceIdPass(int64_t total_devices);
-
 #define GEN_PASS_DECL_MOSAICSERDEPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 

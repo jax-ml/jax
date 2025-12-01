@@ -1522,19 +1522,6 @@ def TPU_LogBufferOp : TPU_Op<"log_buffer"> {
   let hasVerifier = 1;
 }
 
-
-def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mlir::func::FuncOp"> {
-  let dependentDialects = [
-    "::mlir::func::FuncDialect",
-    "::mlir::memref::MemRefDialect",
-    "::mlir::tpu::TPUDialect",
-  ];
-  let constructor = "::mlir::tpu::createLogicalToPhysicalDeviceIdPass(-1)";
-  let options = [Option<"total_devices", "total-devices", "int", "", "">];
-}
-
-
-
 def ApplyVectorLayoutPass : Pass<"tpu-apply-vector-layout", "::mlir::func::FuncOp"> {
   let dependentDialects = [
     "::mlir::arith::ArithDialect",
