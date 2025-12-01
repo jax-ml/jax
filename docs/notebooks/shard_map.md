@@ -448,28 +448,29 @@ With `check_vma=True` (the default) it raises an exception, while with
 behavior.
 
 Sometimes we want to treat a value that is unvarying over a mesh axis as
-varying over that mesh axis. That's what `jax.lax.pvary` does:
+varying over that mesh axis. That's what `jax.lax.pcast` does:
 
 ```{code-cell}
 @jax.shard_map(mesh=mesh, in_specs=P(), out_specs=None)
 def f(x):
   print(jax.typeof(x))  # f32[6]
-  y = jax.lax.pvary(x, 'i')
+  y = jax.lax.pcast(x, 'i', to='varying')
   print(jax.typeof(y))  # f32[6]{i}
 
 x = jnp.arange(6.)
 f(x)
 ```
 
-Think of `jax.lax.pvary` as applying a type cast: it's a no-op at runtime,
+Think of `jax.lax.pcast(..., to='varying')` as applying a
+type cast: it's a no-op at runtime,
 though under reverse-mode autodiff it transposes to a `jax.lax.psum` (see
 [JEP](https://docs.jax.dev/en/latest/jep/17111-shmap-transpose.html)). That
 makes sense because they do opposite things to the VMA: where `y: f32[3]{i} =
-jax.lax.pvary(x: f32[3], 'i')`, we correspondingly have `x_grad: f32[3] =
-jax.lax.psum(y_grad: f32[3]{i}, 'i')`.
+jax.lax.pcast(x: f32[3], 'i', to='varying')`,
+we correspondingly have `x_grad: f32[3] = jax.lax.psum(y_grad: f32[3]{i}, 'i')`.
 
-JAX implicitly inserts `jax.lax.pvary` calls in many cases, especially for
-binary operations:
+JAX implicitly inserts `jax.lax.pcast(..., to='varying')` calls in many cases,
+especially for binary operations:
 
 ```{code-cell}
 @jax.shard_map(mesh=mesh, in_specs=(P('i'), P()), out_specs=P('i'))
@@ -483,12 +484,14 @@ print(jax.make_jaxpr(f)(x, y))
 
 In a jaxpr, the multiplication operation requires the VMA types of its
 arguments to match, but for convenience the `jax.numpy` and `jax.lax` APIs
-automatically apply `jax.lax.pvary` to make argument VMA types agree.
+automatically apply `jax.lax.pcast(..., to='varying')` to make argument VMA
+types agree. In a jaxpr, these `jax.lax.pcast` calls show up as `pvary` since
+`jax.lax.pcast(..., to='varying')` dispatches to `lax.pvary`.
 
 <a name="scan-vma"></a>
 
 In some cases, like with `jax.lax.scan`, you might need to apply
-`jax.lax.pvary` yourself to ensure VMA types match as required. For example,
+`jax.lax.pcast` yourself to ensure VMA types match as required. For example,
 this code raises an error:
 
 ```{code-cell}
@@ -512,7 +515,7 @@ except Exception as e:
   print(e)
 ```
 
-To make the types match, we need to apply `jax.lax.pvary` to some arguments to
+To make the types match, we need to apply `jax.lax.pcast` to some arguments to
 the `scan`:
 
 ```{code-cell}
@@ -525,7 +528,7 @@ def f(x, y):
     c1, c2 = carry
     return (c2, c1), ()  # swap the carry
 
-  y = jax.lax.pvary(y, 'i')  # apply pvary to fix the error
+  y = jax.lax.pcast(y, 'i', to='varying')  # apply pcast to fix the error
   (x_, y_), _ = jax.lax.scan(body, (x, y), (), length=2)
   return x_, y_
 
