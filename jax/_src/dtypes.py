@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import abc
+import builtins
 import dataclasses
 import functools
 import types
@@ -86,7 +87,7 @@ class ExtendedDType(StrictABC):
   """Abstract Base Class for extended dtypes"""
   @property
   @abc.abstractmethod
-  def type(self) -> type: ...
+  def type(self) -> builtins.type: ...
 
 
 # fp8 support
@@ -634,7 +635,7 @@ def isdtype(dtype: DTypeLike, kind: str | DTypeLike | tuple[str | DTypeLike, ...
     True or False
   """
   the_dtype = np.dtype(dtype)
-  kind_tuple: tuple[str | DTypeLike, ...] = (
+  kind_tuple: tuple[str | DTypeLike, ...] = (  # ty: ignore[invalid-assignment]
     kind if isinstance(kind, tuple) else (kind,)
   )
   options: set[DType] = set()
@@ -914,7 +915,7 @@ def check_valid_dtype(dtype: DType) -> None:
     raise TypeError(f"Dtype {dtype} is not a valid JAX array "
                     "type. Only arrays of numeric types are supported by JAX.")
 
-def _maybe_canonicalize_explicit_dtype(dtype: DType, fun_name: str) -> DType:
+def _maybe_canonicalize_explicit_dtype(dtype: DType, fun_name: str | None) -> DType:
   "Canonicalizes explicitly requested dtypes, per explicit_x64_dtypes."
   allow = config.explicit_x64_dtypes.value
   if allow == config.ExplicitX64Mode.ALLOW or config.enable_x64.value:

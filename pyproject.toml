@@ -159,3 +159,6 @@ max-complexity = 18
 "docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb" = ["F811"]
 "docs/jep/9407-type-promotion.ipynb" = ["F811"]
 "docs/autodidax.ipynb" = ["F811"]
+
+[tool.ty.src]
+include = ["jax/_src/dtypes.py"]
