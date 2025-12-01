@@ -93,7 +93,7 @@ def main(_: Sequence[str]) -> None:
   jax.distributed.initialize(coordinator_address="localhost:8000",
                              process_id=_PROCESS_ID.value,
                              num_processes=_NUM_PROCESSES.value,
-                             local_device_ids=[process_id],
+                             local_device_ids=[_PROCESS_ID.value],
                              heartbeat_timeout_seconds=10)
   print(f'{jax.devices()=}')
   print(f'{jax.local_devices()=}')

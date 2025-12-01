@@ -344,12 +344,6 @@ raise an exception.
 
 See :ref:`part3` for details on how atomicity is implemented.
 
-Sharding Arrays
-^^^^^^^^^^^^^^^
-
-TODO: Double check if ``jax.device_put`` works when some machines have
-failed. If not, explain what to do instead.
-
 Part 2: Examples
 ----------------
 
