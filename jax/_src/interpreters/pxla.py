@@ -1025,7 +1025,7 @@ def _cast_to_shaped_array(aval: core.AbstractValue) -> ShapedArray:
 @dataclasses.dataclass
 class UnloadedPmapExecutable:
   compiled: Any
-  backend: xb.XlaBackend
+  backend: xc.Client
   local_input_avals: Sequence[core.AbstractValue]
   input_shardings: Sequence[JSharding]
   local_output_avals: Sequence[ShapedArray]
@@ -2963,7 +2963,7 @@ def maybe_concretize_mesh(sharding, da: xc.DeviceList):
 class UnloadedMeshExecutable:
   xla_executable: Any
   device_list: xc.DeviceList
-  backend: xb.XlaBackend
+  backend: xc.Client
   input_avals: Sequence[ShapedArray]
   input_shardings: Sequence[JSharding]
   output_avals: Sequence[ShapedArray]
@@ -3019,7 +3019,7 @@ class UnloadedMeshExecutable:
                host_callbacks: list[Any],
                keepalive: Any,
                kept_var_idx: set[int],
-               backend: xb.XlaBackend,
+               backend: xc.Client,
                device_list: xc.DeviceList | None,
                committed: bool,
                in_layouts: MaybeLayout,

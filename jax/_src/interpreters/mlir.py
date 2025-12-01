@@ -689,7 +689,7 @@ class ModuleContext:
   # exporting.
   platforms: Sequence[str]
   # See ModuleContext.get_backend() for backend and platforms usage.
-  backend: xb.XlaBackend | None
+  backend: xc.Client | None
   axis_context: AxisContext
   keepalives: list[Any]
   channel_iterator: Iterator[int]
@@ -715,7 +715,7 @@ class ModuleContext:
       self,
       *,
       platforms: Sequence[str],
-      backend: xb.XlaBackend | None,
+      backend: xc.Client | None,
       axis_context: AxisContext,
       keepalives: list[Any],
       channel_iterator: Iterator[int],
@@ -752,7 +752,7 @@ class ModuleContext:
     self.all_default_mem_kind = all_default_mem_kind
     self.lowering_parameters = lowering_parameters
 
-  def get_backend(self, optional: bool = False) -> xb.XlaBackend | None:
+  def get_backend(self, optional: bool = False) -> xc.Client | None:
     if len(self.platforms) > 1:
       if optional:
         return None
@@ -1202,7 +1202,7 @@ def lower_jaxpr_to_module(
     ordered_effects: list[core.Effect],
     # See ModuleContext.get_backend() for backend and platforms usage.
     platforms: Sequence[str],
-    backend: xb.XlaBackend | None,
+    backend: xc.Client | None,
     axis_context: AxisContext,
     donated_args: Sequence[bool],
     replicated_args: Sequence[bool] | None = None,
@@ -3081,7 +3081,7 @@ RECV_FROM_HOST_TYPE = 3
 def build_mlir_module_helper(
     closed_jaxpr: core.ClosedJaxpr, *, name: str,
     platforms: Sequence[str],
-    backend: xb.XlaBackend | None,
+    backend: xc.Client | None,
     axis_context: AxisContext) -> ir.Module:
   """Helper to generate pmap-style XLA computations for custom partitioners."""
   unlowerable_effects = effects_lib.lowerable_effects.filter_not_in(

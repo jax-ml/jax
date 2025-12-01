@@ -52,6 +52,7 @@ from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
 
+from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import cf
@@ -187,7 +188,7 @@ class LoweringContext:
   kernel_type: tpu_core.KernelType
   traceback_caches: mlir.TracebackCaches
   forward_compatible: bool
-  backend: xla_bridge.XlaBackend | None
+  backend: xla_client.Client | None
   dynamic_shape_replacement_fn: DynamicShapeReplacementFn
 
   def replace(self, **changes: Any) -> LoweringContext:

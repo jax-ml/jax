@@ -58,8 +58,6 @@ except ImportError as e:
 
 traceback_util.register_exclusion(__file__)
 
-XlaBackend = xla_client.Client
-
 # The platforms in this set will force forward compatibility for lowering.
 FORCE_FORWARD_COMPAT_LOWERING_PLATFORMS: set[str] = set()
 

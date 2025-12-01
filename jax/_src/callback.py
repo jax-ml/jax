@@ -680,7 +680,7 @@ _xla_shape_handlers[core.AbstractToken] = lambda _: xc.Shape.token_shape()
 
 
 def _emit_tpu_python_callback(
-    backend: xb.XlaBackend,
+    backend: xc.Client,
     ctx: mlir.LoweringRuleContext,
     callback,
     token: Any | None,
@@ -795,7 +795,7 @@ def emit_python_callback(
           f"Partitioned callback not implemented on {platform} backend.")
     if result_avals:
       raise ValueError("Partitioned callback not supported with return values.")
-  backend: xb.XlaBackend = cast(xb.XlaBackend, ctx.module_context.get_backend())
+  backend: xc.Client = cast(xc.Client, ctx.module_context.get_backend())
   result_shapes = [_aval_to_xla_shape(aval) for aval in result_avals]
   operand_shapes = [_aval_to_xla_shape(aval) for aval in operand_avals]
 
