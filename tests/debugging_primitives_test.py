@@ -452,7 +452,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       return ad_checkpoint.checkpoint_name(jnp.exp(z), "w")
 
     # Policy that saves everything so the debug callback will be saved
-    f = ad_checkpoint.checkpoint(f_, policy=ad_checkpoint.everything_saveable)
+    f = jax.checkpoint(f_, policy=ad_checkpoint.everything_saveable)
 
     with jtu.capture_stdout() as output:
       jax.grad(f)(2.)
@@ -463,7 +463,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
 
     # Policy that saves nothing so everything gets rematerialized, including the
     # debug callback
-    f = ad_checkpoint.checkpoint(f_, policy=ad_checkpoint.nothing_saveable)
+    f = jax.checkpoint(f_, policy=ad_checkpoint.nothing_saveable)
 
     with jtu.capture_stdout() as output:
       jax.grad(f)(2.)
@@ -472,7 +472,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     self.assertEqual(output(), "y: 3.0, z: 6.0\n" * 2)
 
     # Policy that does not save `z` so we will need to rematerialize the print
-    f = ad_checkpoint.checkpoint(
+    f = jax.checkpoint(
         f_, policy=ad_checkpoint.save_any_names_but_these("z"))
 
     with jtu.capture_stdout() as output:
@@ -490,7 +490,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       return policy
 
     # Policy that saves everything but `y`
-    f = ad_checkpoint.checkpoint(
+    f = jax.checkpoint(
         f_, policy=save_everything_but_these_names("y"))
 
     with jtu.capture_stdout() as output:
@@ -501,7 +501,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     self.assertEqual(output(), "y: 3.0, z: 6.0\n")
 
     # Policy that saves everything but `y` and `z`
-    f = ad_checkpoint.checkpoint(
+    f = jax.checkpoint(
         f_, policy=save_everything_but_these_names("y", "z"))
 
     with jtu.capture_stdout() as output:
