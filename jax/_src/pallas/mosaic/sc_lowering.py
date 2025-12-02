@@ -58,7 +58,7 @@ MemorySpace = tpu_core.MemorySpace
 
 class GlobalAllocations:
   """Hands out global allocations sequentially during lowering."""
-  def __init__(self, allocations: dict[pallas_core.MemoryRef, list[Any]]):
+  def __init__(self, allocations: dict[pallas_core.MemoryRef, list[ir.Value]]):
     self._allocations = {k: list(v) for k, v in allocations.items()}
 
   def next_allocation(self, what: state.AbstractRef | pallas_core.TransformedRef) -> Any:

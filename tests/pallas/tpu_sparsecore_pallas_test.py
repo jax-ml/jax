@@ -1571,6 +1571,9 @@ class VectorSubcoreTest(PallasSCTest):
           pltpu.VMEM_SHARED(shape[1:], jnp.int32))
       @pl.when(subcore_id == 0)
       def _():
+        shared_scratch_ref2 = pl.get_global(pltpu.VMEM_SHARED(shape, jnp.int32))
+        pltpu.sync_copy(
+            x_ref.at[subcore_id], shared_scratch_ref2.at[subcore_id])
         pltpu.sync_copy(x_ref.at[subcore_id], shared_scratch_ref)
         pltpu.sync_copy(shared_scratch_ref, o_ref.at[subcore_id])
 

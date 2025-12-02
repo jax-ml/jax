@@ -242,6 +242,10 @@ class MemoryRef:
   def shape(self):
     return self.inner_aval.shape
 
+  def __lt__(self, other):
+    return (self.shape, self.dtype, self.memory_space) < (
+        other.shape, other.dtype, other.memory_space)
+
 
 class MemorySpace(enum.Enum):
   """Logical, device-agnostic memory spaces.
