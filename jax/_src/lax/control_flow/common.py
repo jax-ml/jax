@@ -43,6 +43,7 @@ def _typecheck_param(prim, param, name, msg_required, pred):
     msg = sep.join([msg, param_str])
     raise core.JaxprTypeError(msg)
 
+# TODO(dougalm): this is a silly wrapper now. Delete it.
 @weakref_lru_cache
 def _initial_style_open_jaxpr(fun: Callable,
                               in_tree: PyTreeDef,
@@ -51,6 +52,7 @@ def _initial_style_open_jaxpr(fun: Callable,
   jaxpr, out_tree, consts = pe.trace_to_jaxpr(fun, in_tree, in_avals, debug_info)
   return jaxpr, consts, out_tree
 
+# TODO(dougalm): Delete. Make `trace_to_jaxpr` do the jaxpr-closing thing instead.
 @weakref_lru_cache
 def _initial_style_jaxpr(fun: Callable,
                          in_tree: PyTreeDef,
