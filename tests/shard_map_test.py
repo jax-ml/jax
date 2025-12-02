@@ -2598,7 +2598,7 @@ class ShardMapTest(jtu.JaxTestCase):
       def ag(a):
         self.assertEqual(a.aval.vma, {'seq'})
         self.assertEqual(a.aval.sharding.spec.unreduced, frozenset())
-        out = lax.all_gather(a, axis_name='seq', tiled=True, to='reduced')
+        out = lax.all_gather_reduced(a, axis_name='seq', tiled=True)
         self.assertEqual(out.aval.vma, frozenset())
         self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
         self.assertEqual(out.aval.sharding.spec.reduced, {'seq'})
@@ -2618,7 +2618,7 @@ class ShardMapTest(jtu.JaxTestCase):
       def rs(a):
         self.assertEqual(a.aval.vma, frozenset())
         self.assertEqual(a.aval.sharding.spec.unreduced, {'data', 'seq'})
-        out = lax.psum_scatter(a, axis_name='seq', tiled=True)
+        out = lax.unreduced_psum_scatter(a, axis_name='seq', tiled=True)
         self.assertEqual(out.aval.vma, {'seq'})
         self.assertEqual(out.aval.sharding.spec.unreduced, {'data'})
         return out
@@ -2628,7 +2628,7 @@ class ShardMapTest(jtu.JaxTestCase):
       def ar(a):
         self.assertEqual(a.aval.vma, {'seq'})
         self.assertEqual(a.aval.sharding.spec.unreduced, {'data'})
-        out = lax.psum(a, axis_name='data')
+        out = lax.unreduced_psum(a, axis_name='data')
         self.assertEqual(out.aval.vma, {'seq'})
         self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
         return out
@@ -2684,7 +2684,7 @@ class ShardMapTest(jtu.JaxTestCase):
       self.assertEqual(a.aval.vma, {'seq'})
       self.assertEqual(a.aval.sharding.spec.unreduced, frozenset())
       self.assertEqual(a.aval.sharding.spec.reduced, {'data'})
-      out = lax.all_gather(a, axis_name='seq', tiled=True, to='reduced')
+      out = lax.all_gather_reduced(a, axis_name='seq', tiled=True)
       self.assertEqual(out.aval.vma, frozenset())
       self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
       self.assertEqual(out.aval.sharding.spec.reduced, {'seq', 'data'})
@@ -2727,7 +2727,7 @@ class ShardMapTest(jtu.JaxTestCase):
     def ar(x):
       self.assertEqual(x.aval.vma, frozenset())
       self.assertEqual(x.aval.sharding.spec.unreduced, {'x'})
-      out = jax.lax.psum(x, 'x')
+      out = jax.lax.unreduced_psum(x, 'x')
       self.assertEqual(out.aval.vma, frozenset())
       self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
       return out
@@ -2797,7 +2797,7 @@ class ShardMapTest(jtu.JaxTestCase):
     def ag(a):
       self.assertEqual(a.aval.vma, {'seq'})
       self.assertEqual(a.aval.sharding.spec.unreduced, frozenset())
-      out = lax.all_gather(a, axis_name='seq', tiled=True, to='reduced')
+      out = lax.all_gather_reduced(a, axis_name='seq', tiled=True)
       self.assertEqual(out.aval.vma, frozenset())
       self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
       self.assertEqual(out.aval.sharding.spec.reduced, {'seq'})
@@ -2834,7 +2834,7 @@ class ShardMapTest(jtu.JaxTestCase):
     def rs(a):
       self.assertEqual(a.aval.vma, frozenset())
       self.assertEqual(a.aval.sharding.spec.unreduced, {'x'})
-      out = lax.psum_scatter(a, axis_name='x', tiled=True)
+      out = lax.unreduced_psum_scatter(a, axis_name='x', tiled=True)
       self.assertEqual(out.aval.vma, {'x'})
       self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
       return out
@@ -4469,7 +4469,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return jax.lax.pcast(a, ('x', 'y'), to='reduced')
 
     with self.assertRaisesRegex(
-        ValueError, "jax.lax.pcast can only accept axis_name which"):
+        ValueError, "`jax.lax.pcast` can only accept axis_name which"):
       f(arr1, arr2)
 
   @parameterized.named_parameters(

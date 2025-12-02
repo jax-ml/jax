@@ -121,20 +121,6 @@ def psum(x, axis_name, *, axis_index_groups=None):
      [20 22 24 26]
      [20 22 24 26]]
   """
-  axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
-  if not axes:
-    return x
-  def bind(leaf):
-    from_ = _get_from(core.typeof(leaf), axes, 'jax.lax.psum')
-    if from_ == 'unreduced':
-      if axis_index_groups is not None:
-        raise NotImplementedError
-      return unreduced_psum(leaf, axes)
-    else:
-      return _psum(leaf, axes, axis_index_groups=axis_index_groups)
-  return tree_util.tree_map(bind, x)
-
-def _psum(x, axis_name, *, axis_index_groups):
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
   if not axis_name:
@@ -1625,8 +1611,7 @@ def insert_collective_pvary(axis_name, x):
   x = pvary(x, tuple(n for n in names_union if n not in aval.vma))
   return x
 
-def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False,
-               to: str = 'varying'):
+def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
   """Gather values of x across all replicas.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -1690,22 +1675,6 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False,
    [[12 13 14 15]
     [ 4  5  6  7]]]
   """
-  _allowed_ag_to = {'varying', 'reduced'}
-  if to not in _allowed_ag_to:
-    raise ValueError(
-        "Got unexpected `to` value for `jax.lax.all_gather`. Allowed `to`"
-        f" values are: {_allowed_ag_to}")
-  if to == 'varying':
-    return _all_gather(x, axis_name, axis_index_groups=axis_index_groups,
-                       axis=axis, tiled=tiled)
-  else:
-    assert to == 'reduced'
-    if axis_index_groups is not None:
-      raise NotImplementedError
-    return all_gather_reduced(x, axis_name, axis=axis, tiled=tiled)
-
-
-def _all_gather(x, axis_name, *, axis_index_groups, axis, tiled):
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
   if not axis_name:
@@ -2162,22 +2131,6 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
    [12 14]
    [16 18]]
   """
-  axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
-  if not axes:
-    return x
-  def bind(leaf):
-    from_ = _get_from(core.typeof(leaf), axes, 'jax.lax.psum_scatter')
-    if from_ == 'unreduced':
-      if axis_index_groups is not None:
-        raise NotImplementedError
-      return unreduced_psum_scatter(
-          leaf, axes, scatter_dimension=scatter_dimension, tiled=tiled)
-    else:
-      return _psum_scatter(leaf, axes, scatter_dimension=scatter_dimension,
-                           axis_index_groups=axis_index_groups, tiled=tiled)
-  return tree_util.tree_map(bind, x)
-
-def _psum_scatter(x, axis_name, *, scatter_dimension, axis_index_groups, tiled):
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
   if not axis_name:
@@ -2791,7 +2744,7 @@ batching.primitive_batchers[core.reduced_vary_cast_p] = _reduced_vary_cast_batch
 
 ################################## pcast #############################
 
-def _get_from(aval, axes: tuple[AxisName, ...], name) -> str:
+def _get_from(aval, axes: tuple[AxisName, ...]) -> str:
   vma = aval.vma
   unreduced = aval.sharding.spec.unreduced
   reduced = aval.sharding.spec.reduced
@@ -2812,7 +2765,7 @@ def _get_from(aval, axes: tuple[AxisName, ...], name) -> str:
 
   if len(out) > 1:
     raise ValueError(
-        f"{name} can only accept axis_name which corresponds to one of"
+        "`jax.lax.pcast` can only accept axis_name which corresponds to one of"
         " varying, unreduced, reduced or invarying state of the input. Got"
         f" input type: {aval}, axes: {axes} and input state: {out}")
   o, = out
@@ -2826,22 +2779,18 @@ _pcast_funcs = {
     ('reduced', 'varying'): core.reduced_vary_cast,
 }
 
-_allowed_pcast_to = {'unreduced', 'reduced', 'varying'}
+_allowed_to = {'unreduced', 'reduced', 'varying'}
 
 def pcast(x, axis_name, *, to: str):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
     return x
 
-  if to not in _allowed_pcast_to:
+  if to not in _allowed_to:
     raise ValueError(
-        "Got unexpected `to` value. Allowed `to` values are:"
-        f" {_allowed_pcast_to}")
-
-  def bind(leaf):
-    from_ = _get_from(core.typeof(leaf), axes, 'jax.lax.pcast')
-    func = _pcast_funcs.get((from_, to), None)
-    if func is None:
-      raise ValueError(f"Unsupported pcast from={from_}, {to=}")
-    return func(leaf, axes)
-  return tree_util.tree_map(bind, x)
+        f'Got unexpected `to` value. Allowed `to` values are: {_allowed_to}')
+  from_ = _get_from(core.typeof(x), axes)
+  func = _pcast_funcs.get((from_.lower(), to.lower()), None)
+  if func is None:
+    raise ValueError(f"Unsupported pcast from={from_}, {to=}")
+  return func(x, axes)
