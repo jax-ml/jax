@@ -16,6 +16,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Deprecations
+  * `jax.lax.pvary` has been deprecated.
+    Please use `jax.lax.pcast(..., to='varying')` as the replacement.
+
 * Changes:
   * jax's `Tracer` no longer inherits from `jax.Array` at runtime. However,
     `jax.Array` now uses a custom metaclass such `isinstance(x, Array)` is true
