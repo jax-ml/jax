@@ -261,7 +261,7 @@ class NameStackTransformationTest(jtu.JaxTestCase):
     self.assertIn('jit(g)', hlo_text)
     self.assertIn('transpose(jvp(jit(f)))', hlo_text)
 
-  def test_remat_appears_in_hlo(self):
+  def test_re_materalization_appears_in_hlo(self):
     @ad_checkpoint.remat
     def f(x):
       return jnp.sin(x)
