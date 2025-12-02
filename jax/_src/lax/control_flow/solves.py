@@ -27,6 +27,7 @@ from jax._src import linear_util as lu
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (tree_flatten, treedef_children, tree_leaves,
@@ -36,7 +37,6 @@ import numpy as np
 
 from jax._src.lax.control_flow.common import (
     _check_tree,
-    _initial_style_jaxpr,
     )
 
 _map = safe_map
@@ -95,7 +95,7 @@ def custom_root(f: Callable,
   guess_flat, in_args_tree = tree_flatten((initial_guess,))
   guess_avals = tuple(_map(core.get_aval, guess_flat))
   f_debug = api_util.debug_info("custom_root", f, (initial_guess,), {})
-  f_jaxpr, f_consts, out_tree = _initial_style_jaxpr(
+  f_jaxpr, out_tree, f_consts = pe.trace_to_jaxpr(
       f, in_args_tree, guess_avals, f_debug)
 
   in_tree, = treedef_children(in_args_tree)
@@ -104,7 +104,7 @@ def custom_root(f: Callable,
   solve_debug = api_util.debug_info("custom_root solve", solve,
                                     (f, initial_guess), {},
                                     static_argnums=(0,))
-  solve_jaxpr, solve_consts, solution_tree = _initial_style_jaxpr(
+  solve_jaxpr, solution_tree, solve_consts = pe.trace_to_jaxpr(
       partial(solve, f), in_args_tree, guess_avals, solve_debug)
   _check_tree("solve", "initial_guess", solution_tree, in_tree, has_aux)
 
@@ -114,7 +114,7 @@ def custom_root(f: Callable,
 
   linearize_and_solve_dbg = api_util.debug_info("custom_root tangent_solve",
       tangent_solve, (initial_guess, initial_guess), {})
-  l_and_s_jaxpr, l_and_s_consts, out_tree = _initial_style_jaxpr(
+  l_and_s_jaxpr, out_tree, l_and_s_consts = pe.trace_to_jaxpr(
       linearize_and_solve, treedef_tuple((in_tree,) * 2), guess_avals * 2,
       linearize_and_solve_dbg)
   _check_tree("tangent_solve", "x", out_tree, in_tree, False)
@@ -268,7 +268,7 @@ def custom_linear_solve(
   matvec_debug = api_util.debug_info("custom_linear_solve",
                                      matvec, (b,), {})
   # no auxiliary data assumed for matvec
-  matvec_jaxpr, matvec_consts, out_tree = _initial_style_jaxpr(
+  matvec_jaxpr, out_tree, matvec_consts = pe.trace_to_jaxpr(
       _shape_checked(matvec, "matvec", False), in_args_tree, b_avals,
       matvec_debug)
   _check_tree("matvec", "b", out_tree, tree, False)
@@ -276,7 +276,7 @@ def custom_linear_solve(
   solve_debug = api_util.debug_info("custom_linear_solve solve",
                                     solve, (matvec, b), {},
                                     static_argnums=(0,))
-  solve_jaxpr, solve_consts, out_tree = _initial_style_jaxpr(
+  solve_jaxpr, out_tree, solve_consts = pe.trace_to_jaxpr(
       _shape_checked(partial(solve, matvec), "solve", has_aux), in_args_tree, b_avals,
       solve_debug)
   _check_tree("solve", "b", out_tree, tree, has_aux)
@@ -294,11 +294,11 @@ def custom_linear_solve(
       vecmat_consts = matvec_consts
     else:
       vecmat = _transpose_one_output(matvec, b)
-      vecmat_jaxpr, vecmat_consts, out_tree = _initial_style_jaxpr(
+      vecmat_jaxpr, out_tree, vecmat_consts = pe.trace_to_jaxpr(
           vecmat, in_args_tree, b_avals, transpose_solve_debug)
       assert out_tree == tree
 
-    tr_solve_jaxpr, tr_solve_consts, out_tree = _initial_style_jaxpr(
+    tr_solve_jaxpr, out_tree, tr_solve_consts = pe.trace_to_jaxpr(
         _shape_checked(partial(transpose_solve, vecmat), "transpose_solve", has_aux),
         in_args_tree, b_avals, transpose_solve_debug)
     _check_tree("transpose_solve", "b", out_tree, tree, has_aux)
