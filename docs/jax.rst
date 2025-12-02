@@ -14,6 +14,7 @@ Subpackages
    jax.lax
    jax.random
    jax.sharding
+   jax.ad_checkpoint
    jax.debug
    jax.dlpack
    jax.distributed
