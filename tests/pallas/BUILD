@@ -425,6 +425,7 @@ jax_multiplatform_test(
         "tpu_v5e",
         "tpu_v5p",
     ],
+    env = {"XLA_FLAGS": "--xla_tpu_enable_mlir_verifier=ALL"},
     shard_count = 8,
     deps = [
         "//jax:extend",
@@ -1354,6 +1355,7 @@ jax_multiplatform_test(
         "tpu_v5p",
         "tpu_v6e",
     ],
+    env = {"XLA_FLAGS": "--xla_tpu_enable_mlir_verifier=ALL"},
     shard_count = 6,
     deps = [
         "//jax/experimental:pallas",
@@ -1379,6 +1381,7 @@ jax_multiplatform_test(
         "tpu_v6e",
         "cpu",  # Just to make sure we at least check the shard_count in presubmit.
     ],
+    env = {"XLA_FLAGS": "--xla_tpu_enable_mlir_verifier=ALL"},
     shard_count = 3,
     deps = [
         "//jax:pallas",
@@ -1404,6 +1407,7 @@ jax_multiplatform_test(
         "tpu_v5p_x4",
         "tpu_v6e_x8",
     ],
+    env = {"XLA_FLAGS": "--xla_tpu_enable_mlir_verifier=ALL"},
     deps = [
         "//jax:mesh_utils",
         "//jax/experimental:pallas_tpu",
