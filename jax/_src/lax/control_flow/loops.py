@@ -281,8 +281,9 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     init_flat, init_tree = tree_flatten(init)
     in_flat, in_tree = tree_flatten((init, xs))
     carry_avals = tuple(_map(core.get_aval, init_flat))
-    jaxpr, consts, out_tree = _initial_style_jaxpr(
+    open_jaxpr, out_tree, consts = pe.trace_to_jaxpr(
         f, in_tree, (*carry_avals, *x_avals), debug_info=dbg_body)
+    jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(open_jaxpr))
     if config.mutable_array_checks.value:
       _check_no_aliased_closed_over_refs(dbg_body, (*jaxpr.consts, *consts), in_flat)
     out_tree_children = out_tree.children()
@@ -299,6 +300,9 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   # may not match the output despite being compatible by virtue of their weak type.
   # To do this, we compute the jaxpr in two passes: first with the raw inputs, and if
   # necessary, a second time with modified init values.
+  # TODO(dougalm): this two-pass stuff is expensive (exponential in scan nesting
+  # depth) and incomplete (because in the general case it takes more than two passes).
+  # Let's get rid of it, perhaps after getting rid of weak types altogether.
   init_flat, carry_avals, carry_avals_out, init_tree, *rest = _create_jaxpr(init)
   new_init_flat, changed = _promote_weak_typed_inputs(init_flat, carry_avals, carry_avals_out)
   if changed:

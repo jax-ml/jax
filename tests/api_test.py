@@ -7904,6 +7904,31 @@ class InputSavedVJPTest(jtu.JaxTestCase):
     ans, = vjp(1.0)
     self.assertIsInstance(ans, jax.Array)
 
+class TracebackTest(jtu.JaxTestCase):
+  # These tests are to catch regressions in Python traceback sizes. Our
+  # second-order APIs can be nested arbitrarily and if each one adds a dozen
+  # stack frames then we can end up with very deep tracebacks. We expect the
+  # particular `expected_depth` constants in these tests to change from time to
+  # time. We just want to know when it happens and what caused it.
+
+  def cur_depth(self):
+    return len(inspect.stack())
+
+  def assertExpectedDepth(self, init_depth, expected_depth):
+    # `+ 1` is for the `assertExpectedDepth` stack frame itself
+    self.assertEqual(self.cur_depth() - init_depth, expected_depth + 1)
+
+  def test_scan_traceback(self):
+    expected_depth = 5
+    init_depth = self.cur_depth()
+
+    def f(c, x):
+      frames = inspect.stack()
+      self.assertExpectedDepth(init_depth, expected_depth)
+      return (c, ())
+
+    jax.lax.scan(f, 0, jnp.arange(4))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

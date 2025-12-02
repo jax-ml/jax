@@ -2394,6 +2394,7 @@ def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
   store.store(out_zeros)
   return [*out_primals, *out_nz_tangents]
 
+@weakref_lru_cache
 def trace_to_jaxpr(
     fun: Callable,
     in_tree: PyTreeDef,
