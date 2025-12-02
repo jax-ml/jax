@@ -1201,7 +1201,21 @@ log_compiles = bool_state(
     help=('Log a message each time `jit` or `pmap` compiles an XLA '
           'computation. Logging is performed with `logging`. When this '
           'option is set, the log level is WARNING; otherwise the level is '
-          'DEBUG.'))
+          'DEBUG.\n'
+          '\n'
+          'Example::\n'
+          '\n'
+          '  import jax\n'
+          '\n'
+          '  @jax.jit\n'
+          '  def f(x):\n'
+          '    y = x * 2\n'
+          '    return y\n'
+          '\n'
+          '  x = jax.numpy.array([1, 2, 3])\n'
+          '  with jax.log_compiles():\n'
+          '    x = f(x) # compile 1\n'
+          '    x = f(x) # no compile\n'))
 
 explain_cache_misses = bool_state(
     name='jax_explain_cache_misses',
