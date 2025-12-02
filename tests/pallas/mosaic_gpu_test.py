@@ -1201,7 +1201,7 @@ class PallasCallTest(PallasTest):
     self.assertEqual(output(), "It works!\n")
 
   def test_print_wgmma_tiled_layout(self):
-    shape = (128, 64)
+    shape = (64, 64)
     size = math.prod(shape)
 
     @functools.partial(
