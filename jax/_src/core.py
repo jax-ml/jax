@@ -44,7 +44,7 @@ from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
 from jax._src import linear_util as lu
-from jax._src.tree_util import tree_flatten, tree_unflatten
+from jax._src.tree_util import tree_map
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, cache,
@@ -2412,7 +2412,6 @@ def pvary(x, axis_name):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
     return x
-  xs, treedef = tree_flatten(x)
   # TODO(yashkatariya): Maybe move `order_wrt_mesh` to pvary_transpose_rule?
   # Across hosts we should have the same order of axes during lowering time and
   # pvary_p transposes to psum_invariant_p.
@@ -2420,11 +2419,9 @@ def pvary(x, axis_name):
   new_axes = axes if cur_mesh.empty else order_wrt_mesh(cur_mesh, axes)
   assert set(new_axes) == set(axes)
   del axes
-  ys = pvary_p.bind(*xs, axes=new_axes)
-  return tree_unflatten(treedef, ys)
+  return tree_map(lambda leaf: pvary_p.bind(leaf, axes=new_axes), x)
 
 pvary_p = Primitive('pvary')
-pvary_p.multiple_results = True
 
 ####################### reduced_vary_cast #############################
 
@@ -2433,12 +2430,9 @@ def reduced_vary_cast(x, axis_name):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
     return x
-  x_flat, treedef = tree_flatten(x)
-  out_flat = reduced_vary_cast_p.bind(*x_flat, axes=axes)
-  return tree_unflatten(treedef, out_flat)
+  return tree_map(lambda leaf: reduced_vary_cast_p.bind(leaf, axes=axes), x)
 
 reduced_vary_cast_p = Primitive('reduced_vary_cast_p')
-reduced_vary_cast_p.multiple_results = True
 
 #######################################################################
 

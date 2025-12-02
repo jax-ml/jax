@@ -492,8 +492,9 @@ class MapTrace(core.Trace):
       return self.process_axis_index(**params)  # pytype: disable=missing-parameter
     if primitive is parallel.psum_p:
       f = HashableFunction(
-          lambda *xs: parallel.psum(
-            xs, axis_name=params['axes'], axis_index_groups=params['axis_index_groups']),
+          lambda x: parallel.psum(
+            x, axis_name=params['axes'],
+            axis_index_groups=params['axis_index_groups']),
           (primitive, tuple(params.items())))
     else:
       f = HashableFunction(lambda *args: primitive.bind(*args, **params),
