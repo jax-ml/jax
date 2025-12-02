@@ -74,7 +74,7 @@ Optimizer Initialization
 
 When it comes to setting up the optimizer state, things are a little less straightforward than when we built the model parameters. The `Adam optimizer <https://arxiv.org/abs/1412.6980>`_ requires that, for each parameter, we keep track of three optimization states: ``mu``, ``nu``, and ``count``. The simplest of these is ``count``, which stores the number of training steps we have performed. This is just a scalar used to de-bias the Adam updates. The ``mu`` and ``nu`` states will be arrays of the same shape, dtype, and sharding as the accompanying parameter ``param`` [#zeros_like]_
 
-.. tagged-block:: the-training-cookbook.py get-adam-state
+.. tagged-block:: the-training-cookbook.py init-adam-state
 
 When we use :func:`jax.tree.map`, it iterates over the items in ``train_state.params``. For each parameter, it creates a corresponding Adam state, resulting in a new nested dictionary that mirrors the structure of ``train_state.params``. Each leaf in this new structure contains the optimizer state for the corresponding parameter.
 
@@ -105,15 +105,15 @@ By supplying this function to :func:`jax.value_and_grad`, we transform it into a
 
 .. tagged-block:: the-training-cookbook.py train-step 9
 
-Examining the call signature of the function ``adam_apply`` gives us a hint:
+Examining the call signature of the function ``adam_update`` gives us a hint:
 
-.. tagged-block:: the-training-cookbook.py adam-apply
+.. tagged-block:: the-training-cookbook.py adam-update
 
-Because ``train_state.params`` is the first argument, :func:`jax.tree.map` uses its tree structure to guide the mapping process.[#prefix_tree]_ This means that ``train_state.opt`` is traversed only as deep as the leaves of ``train_state.params``. The optimizer state for each parameter is therefore passed in as a complete subtree, which allows us to easily access all relevant states (like ``mu`` and ``nu``) for a given ``param`` inside ``adam_apply``.
+Because ``train_state.params`` is the first argument, :func:`jax.tree.map` uses its tree structure to guide the mapping process.[#prefix_tree]_ This means that ``train_state.opt`` is traversed only as deep as the leaves of ``train_state.params``. The optimizer state for each parameter is therefore passed in as a complete subtree, which allows us to easily access all relevant states (like ``mu`` and ``nu``) for a given ``param`` inside ``adam_update``.
 
 .. tip::
 
-    If we wished to use different optimization algorithms and states on different parameters in our model (or freeze some parameters), we could achieve this by modifying the body of ``adam_apply`` and replacing :func:`jax.tree.map` with :func:`jax.tree_util.tree_map_with_path`, which allows the operand function to customize its behavior depending on the parameter.
+    If we wished to use different optimization algorithms and states on different parameters in our model (or freeze some parameters), we could achieve this by modifying the body of ``adam_update`` and replacing :func:`jax.tree.map` with :func:`jax.tree_util.tree_map_with_path`, which allows the operand function to customize its behavior depending on the parameter.
 
 The Training Loop
 -----------------
