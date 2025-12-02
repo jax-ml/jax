@@ -2779,7 +2779,7 @@ def _rem_lowering_rule(ctx: LoweringRuleContext, x, y):
   raise NotImplementedError(aval_out.dtype)
 
 
-@register_lowering_rule(lax.abs_p)
+@register_lowering_rule(lax.abs_p, kernel_types=[*tpu_core.KernelType])
 def _abs_lowering_rule(ctx: LoweringRuleContext, x):
   (aval_out,) = ctx.avals_out
   if jnp.issubdtype(aval_out.dtype, jnp.integer):
@@ -2789,7 +2789,9 @@ def _abs_lowering_rule(ctx: LoweringRuleContext, x):
   raise NotImplementedError(aval_out.dtype)
 
 
-@register_lowering_rule(lax.neg_p, ensure_mlir_values=False)
+@register_lowering_rule(
+    lax.neg_p, kernel_types=[*tpu_core.KernelType], ensure_mlir_values=False
+)
 def _neg_lowering_rule(ctx: LoweringRuleContext, x):
   (x_aval,) = ctx.avals_in
   new_ctx = ctx.replace(

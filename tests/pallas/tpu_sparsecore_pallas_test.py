@@ -1614,14 +1614,16 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(f(x), x)
 
-  def test_exp(self):
+  @parameterized.named_parameters(
+      ("exp", jnp.exp), ("neg", lambda x: -x), ("abs", jnp.abs))
+  def test_unary_ops(self, op):
     if not jtu.if_cloud_tpu_at_least(2025, 11, 30):
       self.skipTest("Test requires a newer libtpu")
 
     x = jnp.arange(8, dtype=jnp.float32)
 
     def sc_exp_kernel(x_hbm_ref, out_ref):
-      out_ref[...] = jnp.exp(x_hbm_ref[...])
+      out_ref[...] = op(x_hbm_ref[...])
 
     result = pl.pallas_call(
         sc_exp_kernel,
@@ -1630,7 +1632,7 @@ class VectorSubcoreTest(PallasSCTest):
             ),
         out_shape=x,
     )(x)
-    np.testing.assert_array_equal(result, jnp.exp(x))
+    np.testing.assert_array_equal(result, op(x))
 
   @parameterized.product(dtype=[np.int32, np.float32])
   def test_vector_gather(self, dtype):
