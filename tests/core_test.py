@@ -448,15 +448,11 @@ class JaxprTypeChecks(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    lax_control_flow._initial_style_open_jaxpr.cache_clear()
-    lax_control_flow._initial_style_jaxpr.cache_clear()
     lax_control_flow.common._dedup_consts.cache_clear()
     lax_control_flow.common._pad_constvars.cache_clear()
 
   def tearDown(self):
     super().tearDown()
-    lax_control_flow._initial_style_open_jaxpr.cache_clear()
-    lax_control_flow._initial_style_jaxpr.cache_clear()
     lax_control_flow.common._dedup_consts.cache_clear()
     lax_control_flow.common._pad_constvars.cache_clear()
 

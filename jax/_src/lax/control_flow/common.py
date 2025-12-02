@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 import os
 from functools import partial
 from typing import Any
@@ -27,7 +27,7 @@ from jax._src import linear_util as lu
 from jax._src.util import weakref_lru_cache, safe_map
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (equality_errors_pytreedef, tree_map,
-                                tree_unflatten, keystr, PyTreeDef)
+                                tree_unflatten, keystr)
 
 map, unsafe_map = safe_map, map
 
@@ -43,78 +43,54 @@ def _typecheck_param(prim, param, name, msg_required, pred):
     msg = sep.join([msg, param_str])
     raise core.JaxprTypeError(msg)
 
-# TODO(dougalm): this is a silly wrapper now. Delete it.
-@weakref_lru_cache
-def _initial_style_open_jaxpr(fun: Callable,
-                              in_tree: PyTreeDef,
-                              in_avals: Sequence[core.AbstractValue | core.AvalQDD],
-                              debug_info: core.DebugInfo):
-  jaxpr, out_tree, consts = pe.trace_to_jaxpr(fun, in_tree, in_avals, debug_info)
-  return jaxpr, consts, out_tree
-
-# TODO(dougalm): Delete. Make `trace_to_jaxpr` do the jaxpr-closing thing instead.
-@weakref_lru_cache
-def _initial_style_jaxpr(fun: Callable,
-                         in_tree: PyTreeDef,
-                         in_avals: Sequence[core.AbstractValue],
-                         debug_info: core.DebugInfo) -> tuple[core.ClosedJaxpr, Sequence[Any], PyTreeDef]:
-  jaxpr, consts, out_tree = _initial_style_open_jaxpr(
-      fun, in_tree, in_avals, debug_info)
-  closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
-  return closed_jaxpr, consts, out_tree
-
-def _initial_style_jaxprs_with_common_consts(
-    funs: Sequence[Callable],
-    in_tree: PyTreeDef, in_avals: Sequence[core.AbstractValue | core.AvalQDD],
-    debug_infos: Sequence[core.DebugInfo]):
-  jaxpr_data = [_initial_style_open_jaxpr(fn, in_tree, in_avals, debug_info)
-                for fn, debug_info in zip(funs, debug_infos)]
-  if not jaxpr_data: return [], [], []
-  jaxprs, all_consts, all_out_trees = zip(*jaxpr_data)
-
+# TODO(dougalm): this seems way too complicated. Why not allow different consts for each
+# branch of a switch?
+def _merge_common_consts(
+    jaxprs: Sequence[core.ClosedJaxpr],
+    all_consts: Sequence[Sequence[Any]]
+    ) -> tuple[Sequence[core.ClosedJaxpr], Sequence[Any]]:
   # Jaxprs must share consts, so we concat consts and pad the jaxprs' constvars.
   lens = map(len, all_consts)
   consts = [c for cs in all_consts for c in cs]
   avalqdds = tuple(map(core.cur_aval_qdd, consts))
-  jaxprs = [_pad_constvars(jaxpr, avalqdds[:sum(lens[:i])], avalqdds[sum(lens[:i+1]):])
-            for i, jaxpr in enumerate(jaxprs)]
+  num_constss = [len(cs) for cs in all_consts]
+  jaxprs = [_pad_constvars(jaxpr, num_consts, avalqdds[:sum(lens[:i])], avalqdds[sum(lens[:i+1]):])
+            for i, (jaxpr, num_consts) in enumerate(zip(jaxprs, num_constss))]
   # De-duplicate shared constants.
   const_ids = tuple(id(c) for c in consts)
   seen = set()
-  consts = [c for c in consts if id(c) not in seen and not seen.add(id(c))]  # type: ignore
-  jaxprs = [_dedup_consts(jaxpr, const_ids) for jaxpr in jaxprs]
-
-  closed_jaxprs = [pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
-                   for jaxpr in jaxprs]
-  return closed_jaxprs, consts, all_out_trees
+  dd_consts = [c for c in consts if id(c) not in seen and not seen.add(id(c))]  # type: ignore
+  jaxprs = [_dedup_consts(jaxpr, len(consts), const_ids) for jaxpr in jaxprs]
+  return jaxprs, dd_consts
 
 @weakref_lru_cache
-def _pad_constvars(jaxpr: core.Jaxpr, left: tuple[core.AvalQDD, ...],
-                   right: tuple[core.AbstractValue, ...]) -> core.Jaxpr:
+def _pad_constvars(jaxpr: core.ClosedJaxpr, num_consts: int,
+                   left: tuple[core.AvalQDD, ...],
+                   right: tuple[core.AbstractValue, ...]) -> core.ClosedJaxpr:
   def make_var(aq):
     return core.Var(aq.aval, initial_qdd=aq.qdd, final_qdd=aq.qdd)
-  constvars = [*map(make_var, left), *jaxpr.constvars, *map(make_var, right)]
-  effs = pe._renumber_effects([*constvars, *jaxpr.invars],
-                              [*jaxpr.constvars, *jaxpr.invars], jaxpr.effects)
-  jaxpr = jaxpr.replace(constvars=constvars, effects=effs)
-  config.enable_checks.value and core.check_jaxpr(jaxpr)
+  invars = [*map(make_var, left), *jaxpr.invars[:num_consts],
+            *map(make_var, right), *jaxpr.invars[num_consts:]]
+  effs = pe._renumber_effects(invars, jaxpr.invars, jaxpr.effects)
+  jaxpr = jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(invars=invars, effects=effs))
+  config.enable_checks.value and core.check_jaxpr(jaxpr.jaxpr)
   return jaxpr
 
 @weakref_lru_cache
-def _dedup_consts(jaxpr, const_ids):
+def _dedup_consts(jaxpr, num_consts, const_ids):
   newvars = {}
   canonicalize = {v: newvars.setdefault(constid, v)
-                  for constid, v in zip(const_ids, jaxpr.constvars)}
+                  for constid, v in zip(const_ids, jaxpr.invars[:num_consts])}
   eqns = [e.replace(invars=[canonicalize.get(x, x) if isinstance(x, core.Var)
                             else x for x in e.invars]) for e in jaxpr.eqns]
   outvars = [canonicalize.get(x, x) if isinstance(x, core.Var) else x
              for x in jaxpr.outvars]
-  constvars = list(newvars.values())
-  effs = pe._renumber_effects(
-      [*constvars, *jaxpr.invars],
-      [*map(canonicalize.get, jaxpr.constvars), *jaxpr.invars], jaxpr.effects)
-  jaxpr = jaxpr.replace(constvars=constvars, eqns=eqns, outvars=outvars,
-                        effects=effs)
+  invars = [*list(newvars.values()), *jaxpr.invars[num_consts:]]
+  effs = pe._renumber_effects(invars,
+      [*map(canonicalize.get, jaxpr.invars[:num_consts]), *jaxpr.invars[num_consts:]],
+      jaxpr.effects)
+  jaxpr = jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(invars=invars, eqns=eqns, outvars=outvars,
+                        effects=effs))
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr
 

@@ -50,7 +50,7 @@ from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import windowed_reductions
 from jax._src.lax.control_flow.common import (
-    _avals_short, _initial_style_jaxpr, _prune_zeros, _typecheck_param,
+    _avals_short, _prune_zeros, _typecheck_param,
     _make_closed_jaxpr)
 from jax._src.lax.other import logaddexp
 from jax._src.pjit import auto_axes, PartitionSpec as P, reshard
@@ -281,9 +281,9 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     init_flat, init_tree = tree_flatten(init)
     in_flat, in_tree = tree_flatten((init, xs))
     carry_avals = tuple(_map(core.get_aval, init_flat))
-    open_jaxpr, out_tree, consts = pe.trace_to_jaxpr(
+    jaxpr, out_tree = pe.trace_to_jaxpr(
         f, in_tree, (*carry_avals, *x_avals), debug_info=dbg_body)
-    jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(open_jaxpr))
+    jaxpr, consts = pe.separate_consts(jaxpr)
     if config.mutable_array_checks.value:
       _check_no_aliased_closed_over_refs(dbg_body, (*jaxpr.consts, *consts), in_flat)
     out_tree_children = out_tree.children()
@@ -1712,11 +1712,11 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
     init_vals, in_tree = tree_flatten((init_val,))
     init_avals = tuple(_map(core.get_aval, init_vals))
     cond_dbg = api_util.debug_info("while_cond", cond_fun, (init_val,), {})
-    cond_jaxpr, cond_consts, cond_tree = _initial_style_jaxpr(
-        cond_fun, in_tree, init_avals, cond_dbg)
+    cond_jaxpr, cond_tree = pe.trace_to_jaxpr(cond_fun, in_tree, init_avals, cond_dbg)
+    cond_jaxpr, cond_consts = pe.separate_consts(cond_jaxpr)
     body_dbg = api_util.debug_info("while_body", body_fun, (init_val,), {})
-    body_jaxpr, body_consts, body_tree = _initial_style_jaxpr(
-        body_fun, in_tree, init_avals, body_dbg)
+    body_jaxpr, body_tree = pe.trace_to_jaxpr(body_fun, in_tree, init_avals, body_dbg)
+    body_jaxpr, body_consts = pe.separate_consts(body_jaxpr)
     if not treedef_is_leaf(cond_tree) or len(cond_jaxpr.out_avals) != 1:
       msg = "cond_fun must return a boolean scalar, but got pytree {}."
       raise TypeError(msg.format(cond_tree))

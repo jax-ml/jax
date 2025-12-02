@@ -885,6 +885,11 @@ def move_envvars(jaxpr: Jaxpr, which: tuple[bool, ...]) -> Jaxpr:
   return jaxpr.replace(constvars=constvars, invars=[*envvars, *jaxpr.invars])
 
 @weakref_lru_cache
+def separate_consts(jaxpr: ClosedJaxpr) -> tuple[ClosedJaxpr, list[Any]]:
+  """Moves the constvars to the start of invars and returns the consts explicitly."""
+  return ClosedJaxpr(convert_constvars_jaxpr(jaxpr.jaxpr), []), jaxpr.consts
+
+@weakref_lru_cache
 def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
   """Moves the constvars to the start of invars."""
   config.enable_checks.value and core.check_jaxpr(jaxpr)
@@ -2400,7 +2405,7 @@ def trace_to_jaxpr(
     in_tree: PyTreeDef,
     in_avals_flat: Sequence[AbstractValue | core.AvalQDD],
     debug_info: core.DebugInfo
-) -> tuple[Jaxpr, PyTreeDef, list[Any]]:
+) -> tuple[ClosedJaxpr, PyTreeDef]:
   config.enable_checks.value and debug_info.assert_arg_names(len(in_avals_flat))
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(debug_info, parent_trace=parent_trace)
@@ -2424,8 +2429,7 @@ def trace_to_jaxpr(
     del trace, fun, in_tracers_flat, in_tracers, out_tracers, ans, ans_flat
 
   config.enable_checks.value and core.check_jaxpr(jaxpr)
-  return jaxpr, out_tree, consts
-
+  return ClosedJaxpr(jaxpr, consts), out_tree
 
 # TODO(dougalm): remove in favor of `trace_to_jaxpr`
 @profiler.annotate_function
