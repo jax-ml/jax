@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import sys
-from typing import Any, Union
+from typing import Any, Union, TYPE_CHECKING
 
 from jax._src import literals
 from jax._src.lib import xla_client as xc
@@ -171,8 +171,8 @@ class Array:
     """
     raise NotImplementedError
 
-
-Array = use_cpp_class(xc.Array)(Array)
+if not TYPE_CHECKING:
+  Array = use_cpp_class(xc.Array)(Array)
 Array.__module__ = "jax"
 
 
