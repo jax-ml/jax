@@ -173,6 +173,7 @@ static auto init = []() -> int {
   AssignKernelFn<TridiagonalSolver<ffi::DataType::C64>>(cgtsv_);
   AssignKernelFn<TridiagonalSolver<ffi::DataType::C128>>(zgtsv_);
 
+  lapack_kernels_initialized = true;
   return 0;
 }();
 

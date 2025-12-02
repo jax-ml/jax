@@ -48,6 +48,8 @@ XLA_FFI_REGISTER_ENUM_ATTR_DECODING(jax::schur::Sort);
 
 namespace jax {
 
+bool lapack_kernels_initialized = false;
+
 template <typename T>
 inline T CastNoOverflow(int64_t value, std::string_view source = __FILE__) {
   auto result = MaybeCastNoOverflow<T>(value, source);

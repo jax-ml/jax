@@ -30,6 +30,8 @@ limitations under the License.
 
 namespace jax {
 
+extern bool lapack_kernels_initialized;
+
 struct MatrixParams {
   enum class Side : char { kLeft = 'L', kRight = 'R' };
   enum class UpLo : char { kLower = 'L', kUpper = 'U' };

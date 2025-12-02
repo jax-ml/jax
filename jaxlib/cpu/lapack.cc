@@ -27,6 +27,9 @@ using ::xla::ffi::DataType;
 
 void GetLapackKernelsFromScipy() {
   static absl::once_flag initialized;
+  if (lapack_kernels_initialized) {
+    return;
+  }
   // For reasons I'm not entirely sure of, if the import_ call is done inside
   // the call_once scope, we sometimes observe deadlocks in the test suite.
   // However it probably doesn't do much harm to just import them a second time,

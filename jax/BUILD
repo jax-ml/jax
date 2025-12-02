@@ -245,7 +245,7 @@ py_library_providing_imports_info(
         "//jax/_src:xla_metadata",
         "//jax/_src:xla_metadata_lib",
         "//jax/_src/lib",
-    ] + py_deps("numpy") + py_deps("scipy") + py_deps("opt_einsum") + py_deps("flatbuffers") + jax_extra_deps,
+    ] + py_deps("numpy") + py_deps("opt_einsum") + py_deps("flatbuffers") + jax_extra_deps,
 )
 
 pytype_strict_library(
