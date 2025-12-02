@@ -124,6 +124,7 @@ def warn(deprecation_id: str, message: str, stacklevel: int) -> None:
 # Register a number of deprecations: we do this here to ensure they're
 # always registered by the time `accelerate` and `is_acelerated` are called.
 register('default-dtype-bits-config')
+register('jax-checkpoint-concrete')
 register('jax-lax-dot-positional-args')
 register('jax-lib-module')
 register('jax-nn-one-hot-float-input')
