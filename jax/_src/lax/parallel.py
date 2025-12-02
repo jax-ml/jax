@@ -121,7 +121,8 @@ def psum(x, axis_name, *, axis_index_groups=None):
      [20 22 24 26]
      [20 22 24 26]]
   """
-  axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
+  axes = ((axis_name,) if not isinstance(axis_name, (tuple, list)) else
+          tuple(axis_name))
   if not axes:
     return x
   def bind(leaf):
