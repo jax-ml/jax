@@ -399,6 +399,8 @@ rediraffe_redirects = {
   "advanced_guide.rst": "advanced_guides.rst",
   "user_guides.rst": "advanced_guides.rst",
   "working_with_pytrees.md": "pytrees.md",
+  "notebooks/Distributed_arrays_and_automatic_parallelization.md": "notebooks/parallel.md",
+  "notebooks/sharding.md": "notebooks/parallel.md",
 }
 
 from jupyter_client.provisioning import KernelProvisionerFactory

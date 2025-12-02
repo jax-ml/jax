@@ -445,7 +445,6 @@ For a worked-out example, we recommend reading through
 This tutorial serves as a brief introduction of sharded and parallel computation in JAX.
 
 To learn about each SPMD method in-depth, check out these docs:
-- {doc}`../notebooks/Distributed_arrays_and_automatic_parallelization`
-- {doc}`../notebooks/explicit-sharding`
+- {doc}`../notebooks/parallel`
 - {doc}`../notebooks/shard_map`
 - {doc}`../the-training-cookbook`
