@@ -5266,6 +5266,86 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     expected = jax.lax.broadcasted_iota(dtype, shape, dimension)
     self.assertArraysEqual(kernel(), expected)
 
+  @parameterized.parameters(
+      ((4, 64, 128), [[0], [1], [2]], (4, 64, 128), False),
+      ((4, 64, 128), [[0], [1, 2], [3]], (4, 4, 16, 128), False),
+      ((4, 8, 16, 128), [[0], [1], [2, 3], [4]], (4, 8, 2, 8, 128), False),
+      ((4, 64, 128), [[0, 1], [2], [3]], (2, 2, 64, 128), True),
+  )
+  def test_memref_expand_shape(
+      self, input_shape, reassociation, output_shape, has_transforms
+  ):
+    def body(
+        ctx: launch_context.LaunchContext,
+        in_gmem_ref: ir.Value,
+        out_gmem_ref: ir.Value,
+        smem: list[ir.Value],
+    ):
+      del ctx
+      in_smem_ref, tma_barrier = smem
+
+      zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
+      # GMEM -> SMEM
+      operand_elt_type = ir.MemRefType(in_gmem_ref.type).element_type
+      bytes = utils.bytewidth(operand_elt_type) * math.prod(input_shape)
+      tma_barrier.arrive_expect_tx(bytes)
+      mgpu_dialect.async_load(
+          source=in_gmem_ref,
+          destination=in_smem_ref,
+          barrier=tma_barrier.as_barrier_memref(),
+          indices=[zero_i32] * len(input_shape),
+          slice_lengths=input_shape,
+          collective=ir.ArrayAttr.get([]),
+      )
+      tma_barrier.wait()
+
+      # ExpandShape
+      expanded_smem_ref = memref.expand_shape(
+          result=ir.MemRefType.get(
+              output_shape,
+              in_smem_ref.type.element_type,
+              memory_space=in_smem_ref.type.memory_space,
+          ),
+          src=in_smem_ref,
+          reassociation=reassociation,
+          output_shape=[],
+          static_output_shape=output_shape,
+      )
+
+      if has_transforms:
+        transforms = [
+            mgpu_dialect.TileTransformAttr.get((32,)),
+            mgpu_dialect.SwizzleTransformAttr.get(64),
+        ]
+        expanded_smem_ref = mgpu_dialect.with_transforms(
+            expanded_smem_ref, transforms=ir.ArrayAttr.get(transforms),
+        )
+
+      # SMEM -> GMEM
+      mgpu_dialect.async_store(
+          source=expanded_smem_ref,
+          destination=out_gmem_ref,
+          indices=[zero_i32] * len(output_shape),
+          slice_lengths=output_shape,
+      )
+      nvvm.cp_async_bulk_wait_group(0)
+
+    el_type = jnp.bfloat16
+    in_jax_shape = jax.ShapeDtypeStruct(input_shape, el_type)
+    result_jax_shape = jax.ShapeDtypeStruct(output_shape, el_type)
+
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(in_jax_shape),
+        out_shape=result_jax_shape,
+        smem_scratch_shape=[in_jax_shape, core.TMABarrier(1)],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+    x = self.prng.uniform(0, 10, input_shape).astype(el_type)
+    self.assertArraysEqual(kernel(x), x.reshape(output_shape))
+
 
 class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
 

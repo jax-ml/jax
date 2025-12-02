@@ -308,8 +308,6 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x), jnp.sum(x))
 
   def test_reshape(self):
-    self.skip_if_wg_semantics()  # Can't infer transforms for `memref.expand_shape`.
-
     shape1, shape2 = (128,), (2, 16, 4)
 
     @functools.partial(

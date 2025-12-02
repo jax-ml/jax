@@ -2123,6 +2123,57 @@ class LayoutInferenceTest(parameterized.TestCase):
     mgpu.infer_layout(self.module)
     self.checkInTmemLayouts(op, [layout])
 
+  @parameterized.parameters(
+      ((32, 64, 128), [[0], [1], [2]], (32, 64, 128), False),
+      ((32, 64, 128), [[0], [1, 2], [3]], (32, 4, 16, 128), False),
+      ((32, 64, 128), [[0, 1], [2], [3]], (4, 8, 64, 128), True),
+      (
+          (ir.ShapedType.get_dynamic_size(), 64, 128),
+          [[0, 1], [2], [3]],
+          (
+              ir.ShapedType.get_dynamic_size(),
+              ir.ShapedType.get_dynamic_size(),
+              64,
+              128,
+          ),
+          True,
+      ),
+  )
+  def test_infer_layout_for_memref_expand_shape_op(self, input_shape, reassociation, output_shape, has_transforms):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(
+          input_shape, ir.BF16Type.get(), memory_space=mgpu.utils.smem()
+      )
+      [in_ref, idx] = undefs(ref_ty, ir.IndexType.get())
+
+      if has_transforms:
+        transforms = ir.ArrayAttr.get([
+            mgpu.dialect.TileTransformAttr.get((32, 32)),
+            mgpu.dialect.SwizzleTransformAttr.get(64),
+        ])
+        in_ref = mgpu.dialect.with_transforms(in_ref, transforms)
+      else:
+        transforms = []
+
+      dynamic_output_sizes = [
+          idx
+          for size in output_shape
+          if size == ir.ShapedType.get_dynamic_size()
+      ]
+
+      op = memref.ExpandShapeOp(
+          result=ref_ty,
+          src=in_ref,
+          reassociation=reassociation,
+          output_shape=dynamic_output_sizes,
+          static_output_shape=output_shape,
+      )
+    mgpu.infer_layout(self.module)
+    [in_transform] = inference_utils.in_transforms(op)
+    self.assertSequenceEqual(in_transform, transforms)
+    [out_transform] = inference_utils.out_transforms(op)
+    self.assertSequenceEqual(out_transform, transforms)
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

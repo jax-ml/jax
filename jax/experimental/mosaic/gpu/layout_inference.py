@@ -1513,6 +1513,34 @@ def _memref_transpose_op_constraint_system(
   return system, {source_var: [source], dest_var: [dest]}, []
 
 
+@_add_constraint_system_derivation_rule(memref.ExpandShapeOp)
+def _memref_expand_shape_op_equation_system(
+    ctx: DerivationContext,
+    op: memref.ExpandShapeOp,
+) -> tuple[cs.ConstraintSystem, ValueSitesForVariable, list[Hint]]:
+  if utils.is_memref_transposed(ir.MemRefType(op.src.type)):
+    raise NotImplementedError(
+        "Transposed memrefs are not supported in ExpandShapeOp."
+    )
+
+  source = ValueSite(op, VariableType.OPERAND, 0)
+  dest = ValueSite(op, VariableType.RESULT, 0)
+  var = ctx.producer_ref(source)
+
+  reverse_tiling_multiple = []
+  for dim, idx in zip(
+      reversed(op.static_output_shape), reversed(op.reassociation)
+  ):
+    if ir.ShapedType.is_dynamic_size(dim) or len(idx) > 1:
+      # For simplicity, we only support tiling non-expanded static dimensions.
+      # These limitations could be lifted later if needed.
+      break
+    reverse_tiling_multiple.append(dim)
+
+  constraints = [cs.Divides(var, tuple(reversed(reverse_tiling_multiple)))]
+  return cs.ConstraintSystem(constraints=constraints), {var: [source, dest]}, []
+
+
 # `memref.load` and `memref.store` are used to load barrier phases which are
 # scalars---the rule needn't do anything interesting, but we need to have it.
 @_add_constraint_system_derivation_rule(memref.LoadOp)
