@@ -36,7 +36,6 @@ from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
 from jax import lax
 import jax.scipy.linalg
 from jax import random
-from jax.ad_checkpoint import checkpoint as new_checkpoint
 import jax.numpy as jnp
 from jax._src import api as src_api
 from jax._src import array
@@ -1856,7 +1855,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
           ('', jax.remat),
-          ('_new', new_checkpoint),
+          ('_new', jax.checkpoint),
       ])
   def testAxisIndexRemat(self, remat):
     # https://github.com/jax-ml/jax/issues/2716
@@ -2181,7 +2180,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
           ('', jax.remat),
-          ('_new', new_checkpoint),
+          ('_new', jax.checkpoint),
       ])
   def test_remat_of_pmap(self, remat):
     f = remat(jax.pmap(lambda x: jnp.sin(jnp.sin(x))))
@@ -2196,7 +2195,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
           ('', jax.remat),
-          ('_new', new_checkpoint),
+          ('_new', jax.checkpoint),
       ])
   def test_remat_of_pmap_policy(self, remat):
     g = jax.pmap(lambda x: jnp.sin(jnp.sin(x)))

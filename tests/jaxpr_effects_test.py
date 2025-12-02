@@ -20,7 +20,6 @@ import jax
 from jax import api_util
 import jax.numpy as jnp
 from jax import lax
-from jax._src import ad_checkpoint
 from jax._src import callback as cb
 from jax._src import dispatch
 from jax._src import config
@@ -199,7 +198,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
 
   def test_new_remat_allows_certain_effects(self):
     remat_effect = RematEffect()
-    @ad_checkpoint.checkpoint
+    @jax.checkpoint
     def f(x):
       x, = effect_p.bind(x, effect=remat_effect)
       return x

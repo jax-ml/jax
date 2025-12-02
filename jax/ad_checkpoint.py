@@ -13,14 +13,36 @@
 # limitations under the License.
 
 from jax._src.ad_checkpoint import (
-  checkpoint as checkpoint,
+  checkpoint as _deprecated_checkpoint,
   checkpoint_policies as checkpoint_policies,
   checkpoint_name as checkpoint_name,
   print_saved_residuals as print_saved_residuals,
-  remat as remat,
 )
 from jax._src.interpreters.partial_eval import (
   Recompute as Recompute,
   Saveable as Saveable,
   Offloadable as Offloadable,
 )
+
+_deprecations = {
+  # Added for v0.8.2
+  "checkpoint": (
+    "jax.ad_checkpoint.checkpoint is deprecated; use jax.checkpoint instead.",
+    _deprecated_checkpoint
+  ),
+  "remat": (
+    "jax.ad_checkpoint.remat is deprecated; use jax.remat instead.",
+    _deprecated_checkpoint
+  ),
+}
+
+import typing as _typing
+if _typing.TYPE_CHECKING:
+  checkpoint = _deprecated_checkpoint
+  remat = _deprecated_checkpoint
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing
+del _deprecated_checkpoint

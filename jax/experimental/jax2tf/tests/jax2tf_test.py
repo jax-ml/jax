@@ -831,7 +831,7 @@ class Jax2TfTest(JaxToTfTestCase):
       x3 = jnp.sin(x2)
       x4 = jnp.sin(x3)
       return x4
-    remat_f = ad_checkpoint.checkpoint(f)
+    remat_f = jax.checkpoint(f)
 
     # The computation of grad_f computes "sin" 5 times, 3 for the forward pass
     # and then to rematerialize "x2" and "x3" in the backward pass.
@@ -844,7 +844,7 @@ class Jax2TfTest(JaxToTfTestCase):
     def f(x):
       y = 2 * x
 
-      @ad_checkpoint.checkpoint
+      @jax.checkpoint
       def g():
         return y
 

@@ -37,7 +37,7 @@ from jax import random
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src.util import unzip2, split_list
-from jax.ad_checkpoint import checkpoint as new_checkpoint, checkpoint_policies
+from jax import checkpoint_policies
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
 from jax._src import dispatch
@@ -71,7 +71,7 @@ def cond_with_new_checkpoint(pred, true_fun, false_fun, op, *args):
     true_fun = lambda op: _true_fun(op[1])
   index = lax.convert_element_type(pred, np.int32)
   fn = lambda index, op: lax.switch(index, [false_fun, true_fun], op)
-  return new_checkpoint(fn)(index, op)
+  return jax.checkpoint(fn)(index, op)
 
 COND_IMPLS = [
     (lax.cond, 'cond'),
@@ -81,13 +81,13 @@ COND_IMPLS = [
 
 
 # We wanted to try all scan tests with the scan partial evaluation rule that
-# happens under ad_checkpoint.checkpoint, so we make a scan wrapper which
-# wraps a ad_checkpoint.checkpoint around the computation.
+# happens under jax.checkpoint, so we make a scan wrapper which
+# wraps a jax.checkpoint around the computation.
 def scan_with_new_checkpoint(f, *args, **kwargs):
-  return new_checkpoint(partial(lax.scan, f, **kwargs),
+  return jax.checkpoint(partial(lax.scan, f, **kwargs),
                         policy=checkpoint_policies.nothing_saveable)(*args)
 def scan_with_new_checkpoint2(f, *args, **kwargs):
-  return new_checkpoint(partial(lax.scan, f, **kwargs),
+  return jax.checkpoint(partial(lax.scan, f, **kwargs),
                         policy=checkpoint_policies.everything_saveable)(*args)
 
 SCAN_IMPLS_WITH_FOR = [
@@ -100,7 +100,7 @@ SCAN_IMPLS_WITH_FOR = [
 ]
 
 def while_loop_new_checkpoint(cond_fun, body_fun, init_val):
-  return new_checkpoint(partial(lax.while_loop, cond_fun, body_fun))(init_val)
+  return jax.checkpoint(partial(lax.while_loop, cond_fun, body_fun))(init_val)
 
 WHILE_LOOP_IMPLS = [
     (lax.while_loop, 'while_loop'),
@@ -2768,7 +2768,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
           ('', None),
-          ('new_remat', new_checkpoint),
+          ('new_remat', jax.checkpoint),
       ])
   def test_scan_vjp_forwards_extensive_residuals(self, remat):
     # https://github.com/jax-ml/jax/issues/4510

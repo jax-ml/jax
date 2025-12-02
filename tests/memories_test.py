@@ -28,9 +28,8 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.layout import Layout as DLL, Format
 from jax._src import config
-from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
-from jax.ad_checkpoint import Offloadable, remat, Recompute
+from jax.ad_checkpoint import checkpoint_name, Offloadable, Recompute
 from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
     NamedSharding, SingleDeviceSharding, GSPMDSharding, PartitionSpec as P)
@@ -1009,7 +1008,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
       x = jnp.sin(x)
       return x
 
-    @functools.partial(remat, policy=policy)
+    @functools.partial(jax.remat, policy=policy)
     def f(x):
       x = g(x)
       return jnp.sum(x)
@@ -1998,7 +1997,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     def policy(prim, *avals, **params):
       return Offloadable(src="device", dst="pinned_host")
 
-    @functools.partial(remat, policy=policy)
+    @functools.partial(jax.remat, policy=policy)
     def f(x):
       x = jnp.sin(x)
       x = jnp.sin(x)
@@ -2049,7 +2048,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
         names_which_can_be_saved=["y"], names_which_can_be_offloaded=["z", "w"],
         offload_src='device', offload_dst='pinned_host')
 
-    @functools.partial(remat, policy=policy)
+    @functools.partial(jax.remat, policy=policy)
     def f(x):
       def g(ys, _):
         y, _ = ys
@@ -2095,7 +2094,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
         names_which_can_be_saved=["y"], names_which_can_be_offloaded=["z", "w"],
         offload_src='device', offload_dst='pinned_host')
 
-    @functools.partial(remat, policy=policy)
+    @functools.partial(jax.remat, policy=policy)
     def f(x):
       def g(ys, _):
         y, _ = ys
@@ -2129,7 +2128,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     policy = jax.checkpoint_policies.offload_dot_with_no_batch_dims(
         "device", "pinned_host")
 
-    @functools.partial(new_checkpoint, policy=policy)
+    @functools.partial(jax.checkpoint, policy=policy)
     def f(x):
       x = jnp.einsum('ij,jk->ik', x, x, precision=lax.Precision.HIGHEST)
       x = jnp.sin(x)
@@ -2167,7 +2166,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
         return Offloadable("device", "pinned_host")
       return Recompute
 
-    @functools.partial(remat, policy=policy)
+    @functools.partial(jax.remat, policy=policy)
     def test_fn(x):
       # Need any primitive with multiple outputs and a non-trivial grad.
       x1, _ = jax.lax.approx_max_k(x, k=2)

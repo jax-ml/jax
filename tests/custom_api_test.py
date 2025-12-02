@@ -30,7 +30,6 @@ import jax.numpy as jnp
 from jax import float0, grad, jit
 from jax import lax
 from jax import tree_util
-from jax.ad_checkpoint import checkpoint as new_checkpoint
 import jax.custom_batching
 import jax.custom_derivatives
 import jax.custom_transpose
@@ -889,15 +888,15 @@ class CustomJVPTest(jtu.JaxTestCase):
     def g(x):
       return f(f(x))
 
-    ans = api.grad(api.grad(new_checkpoint(g)))(2.)
+    ans = api.grad(api.grad(jax.checkpoint(g)))(2.)
     expected = api.grad(api.grad(g))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = api.grad(new_checkpoint(api.grad(g)))(2.)
+    ans = api.grad(jax.checkpoint(api.grad(g)))(2.)
     expected = api.grad(api.grad(g))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = api.grad(api.grad(api.grad(new_checkpoint(g))))(2.)
+    ans = api.grad(api.grad(api.grad(jax.checkpoint(g))))(2.)
     expected = api.grad(api.grad(api.grad(g)))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 

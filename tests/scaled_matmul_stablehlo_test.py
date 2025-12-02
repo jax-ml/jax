@@ -850,7 +850,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
 
     # First check that with "nothing_saveable" policy, the backwards pass
     # recomputes the scaled matmul.
-    nothing_saved_f = jax.ad_checkpoint.checkpoint(
+    nothing_saved_f = jax.checkpoint(
         f, policy=jax.checkpoint_policies.nothing_saveable)
     _, nothing_saved_f_vjp = jax.vjp(nothing_saved_f, input)
     jaxpr = str(nothing_saved_f_vjp.jaxpr)
@@ -860,7 +860,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
 
     # With "checkpoint_dots" policy, the backwards pass should reuse
     # the scaled matmul from the forward pass, so it should be missing from vjp.
-    saved_dots_f = jax.ad_checkpoint.checkpoint(
+    saved_dots_f = jax.checkpoint(
         f, policy=jax.checkpoint_policies.checkpoint_dots)
     _, saved_dots_f_vjp = jax.vjp(saved_dots_f, input)
     jaxpr = str(saved_dots_f_vjp.jaxpr)
@@ -886,7 +886,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
 
     # Verify that scaled_matmul without batch dimensions
     # will be saved (i.e., not recomputed on backward pass).
-    checkpointed_f = jax.ad_checkpoint.checkpoint(
+    checkpointed_f = jax.checkpoint(
         f, policy=jax.checkpoint_policies.dots_with_no_batch_dims_saveable)
     _, dot_saved_f_vjp = jax.vjp(checkpointed_f, input)
     jaxpr = str(dot_saved_f_vjp.jaxpr)
