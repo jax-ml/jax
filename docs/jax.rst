@@ -265,6 +265,8 @@ Miscellaneous
     clear_caches
     typeof
 
+.. _checkpoint-policies:
+
 Checkpoint policies
 -------------------
 
