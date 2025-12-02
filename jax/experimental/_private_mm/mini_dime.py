@@ -264,7 +264,7 @@ def send_or_recv(
                     )
                     cupy.cuda.ExternalStream(ready_events_stream).wait_event(event)
                     jax_sda = jnp.array(
-                        jax._src.lib.xla_client._xla.dlpack_managed_tensor_to_buffer(
+                        jax._src.lib.xla_client._jax.dlpack_managed_tensor_to_buffer(
                             cpy_arr.toDlpack(),
                             x_device,
                             ready_events_stream,

@@ -176,19 +176,14 @@ absl::StatusOr<std::string> PyDeserializePortableArtifact(
 void BuildMlirSubmodule(nb::module_& m) {
   nb::module_ mlir_module = m.def_submodule("mlir", "MLIR/XLA integration");
 
-  mlir_module.attr("_XlaComputation") = m.attr("XlaComputation");
+  // mlir_module.attr("_XlaComputation") = m.attr("XlaComputation");
 
   mlir_module.def("hlo_to_stablehlo", xla::ValueOrThrowWrapper(HloToStableHlo),
                   nb::arg("computation"));
 
   mlir_module.def("xla_computation_to_mlir_module",
                   xla::ValueOrThrowWrapper(PyXlaComputationToMlirModule),
-                  nb::arg("computation"),
-                  nb::sig(
-                      // clang-format off
-                      "def xla_computation_to_mlir_module(computation: _XlaComputation) -> str"
-                      // clang-format on
-                      ));
+                  nb::arg("computation"));
   mlir_module.def(
       "mlir_module_to_xla_computation",
       [](const nb::bytes& bytecode, bool use_tuple_args, bool return_tuple) {
@@ -197,29 +192,11 @@ void BuildMlirSubmodule(nb::module_& m) {
             return_tuple));
       },
       nb::arg("mlir_module"), nb::arg("use_tuple_args") = false,
-      nb::arg("return_tuple") = false,
-      nb::sig(
-          // clang-format off
-      "def mlir_module_to_xla_computation("
-      "mlir_module: bytes, "
-      "use_tuple_args: bool = ..., "
-      "return_tuple: bool = ..."
-      ") -> _XlaComputation"
-          // clang-format on
-          ));
+      nb::arg("return_tuple") = false);
   mlir_module.def("mlir_module_to_xla_computation",
                   xla::ValueOrThrowWrapper(PyMlirModuleToXlaComputation),
                   nb::arg("mlir_module"), nb::arg("use_tuple_args") = false,
-                  nb::arg("return_tuple") = false,
-                  nb::sig(
-                      // clang-format off
-      "def mlir_module_to_xla_computation("
-      "mlir_module: str, "
-      "use_tuple_args: bool = ..., "
-      "return_tuple: bool = ..."
-      ") -> _XlaComputation"
-                      // clang-format on
-                      ));
+                  nb::arg("return_tuple") = false);
   mlir_module.def(
       "mhlo_to_stablehlo",
       [](const nb::bytes& bytecode) {

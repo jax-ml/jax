@@ -19,7 +19,7 @@ from absl.testing import absltest
 
 from jax.jaxlib import xla_client
 
-config = xla_client._xla.config
+config = xla_client._jax.config
 
 
 class ConfigTest(absltest.TestCase):

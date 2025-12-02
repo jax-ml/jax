@@ -25,7 +25,12 @@ import os
 import threading
 from typing import Any, Protocol, Union
 
-from jaxlib import _jax as _xla
+try:
+  from jaxlib import _xla as _xla
+except ImportError:
+  from jaxlib import _jax as _xla  # type: ignore
+
+from jaxlib import _jax
 
 # Note this module does *not* depend on any Python protocol buffers. The XLA
 # Python bindings are currently packaged both as part of jaxlib and as part
@@ -39,7 +44,7 @@ from jaxlib import _jax as _xla
 # Pylint has false positives for type annotations.
 # pylint: disable=invalid-sequence-index
 
-ifrt_programs = _xla.ifrt_programs
+ifrt_programs = _jax.ifrt_programs
 
 # Just an internal arbitrary increasing number to help with backward-compatible
 # changes. In JAX, reference this via jax._src.lib.jaxlib_extension_version.
@@ -53,7 +58,7 @@ _version = 388  # Add ArrayMeta
 # ifrt changes.
 # lives in xla/python/version.h.
 # In JAX, reference this via jax._src.lib.ifrt_version.
-_ifrt_version = _xla.ifrt_version_number
+_ifrt_version = _jax.ifrt_version_number
 
 xla_platform_names = {
     'cpu': 'Host',
@@ -76,9 +81,9 @@ def make_cpu_client(
     get_global_topology_timeout_minutes=None,
     transfer_server_factory=None,
 ) -> Client:
-  register_custom_call_handler('cpu', _xla.register_custom_call_target)
-  register_custom_type_handler('cpu', _xla.register_custom_type)
-  return _xla.get_tfrt_cpu_client(
+  register_custom_call_handler('cpu', _jax.register_custom_call_target)
+  register_custom_type_handler('cpu', _jax.register_custom_type)
+  return _jax.get_tfrt_cpu_client(
       asynchronous=asynchronous,
       distributed_client=distributed_client,
       node_id=node_id,
@@ -91,38 +96,38 @@ def make_cpu_client(
   )
 
 
-DeviceTopology = _xla.DeviceTopology
-get_topology_for_devices = _xla.get_topology_for_devices
+DeviceTopology = _jax.DeviceTopology
+get_topology_for_devices = _jax.get_topology_for_devices
 
 
 def make_tfrt_tpu_c_api_device_topology(
     topology_name: str = '', **kwargs
 ) -> DeviceTopology:
   """Creates a PJRT C API TopologyDescription."""
-  return _xla.get_default_c_api_topology('tpu', topology_name, dict(**kwargs))
+  return _jax.get_default_c_api_topology('tpu', topology_name, dict(**kwargs))
 
 
 def make_c_api_device_topology(
     c_api: Any, topology_name: str = '', **kwargs
 ) -> DeviceTopology:
   """Creates a PJRT C API TopologyDescription."""
-  return _xla.get_c_api_topology(c_api, topology_name, dict(**kwargs))
+  return _jax.get_c_api_topology(c_api, topology_name, dict(**kwargs))
 
 
 def pjrt_plugin_loaded(plugin_name: str) -> bool:
-  return _xla.pjrt_plugin_loaded(plugin_name)
+  return _jax.pjrt_plugin_loaded(plugin_name)
 
 
 def load_pjrt_plugin_dynamically(plugin_name: str, library_path: str) -> Any:
-  return _xla.load_pjrt_plugin(plugin_name, library_path, c_api=None)
+  return _jax.load_pjrt_plugin(plugin_name, library_path, c_api=None)
 
 
 def load_pjrt_plugin_with_c_api(plugin_name: str, c_api: Any) -> None:
-  _xla.load_pjrt_plugin(plugin_name, None, c_api)
+  _jax.load_pjrt_plugin(plugin_name, None, c_api)
 
 
 def pjrt_plugin_initialized(plugin_name: str) -> bool:
-  return _xla.pjrt_plugin_initialized(plugin_name)
+  return _jax.pjrt_plugin_initialized(plugin_name)
 
 
 def initialize_pjrt_plugin(plugin_name: str) -> None:
@@ -133,14 +138,14 @@ def initialize_pjrt_plugin(plugin_name: str) -> None:
   Args:
     plugin_name: the name of the PJRT plugin.
   """
-  _xla.initialize_pjrt_plugin(plugin_name)
+  _jax.initialize_pjrt_plugin(plugin_name)
 
 
 def make_c_api_client(
     plugin_name: str,
     options: _NameValueMapping | None = None,
-    distributed_client: _xla.DistributedRuntimeClient | None = None,
-    transfer_server_factory: _xla.TransferServerInterfaceFactory | None = None,
+    distributed_client: _jax.DistributedRuntimeClient | None = None,
+    transfer_server_factory: _jax.TransferServerInterfaceFactory | None = None,
 ):
   """Creates a PJRT C API client for a PJRT plugin.
 
@@ -157,7 +162,7 @@ def make_c_api_client(
   """
   if options is None:
     options = {}
-  return _xla.get_c_api_client(
+  return _jax.get_c_api_client(
       plugin_name,
       options,
       distributed_client,
@@ -291,10 +296,10 @@ def computation_count():
   '''Returns the number of computations per replica.'''
 """
 
-Device = _xla.Device
+Device = _jax.Device
 CompileOptions = _xla.CompileOptions
 
-HostBufferSemantics = _xla.HostBufferSemantics
+HostBufferSemantics = _jax.HostBufferSemantics
 
 # An Executable is a C++ class that duck types with the following API:
 # class Executable:
@@ -323,21 +328,21 @@ HostBufferSemantics = _xla.HostBufferSemantics
 
 
 XlaComputation = _xla.XlaComputation
-Client = _xla.Client
-Memory = _xla.Memory
-Array = _xla.Array
-ArrayImpl = _xla.ArrayImpl
-LoadedExecutable = _xla.LoadedExecutable
-Executable = _xla.Executable
-DeviceList = _xla.DeviceList
+Client = _jax.Client
+Memory = _jax.Memory
+Array = _jax.Array
+ArrayImpl = _jax.ArrayImpl
+LoadedExecutable = _jax.LoadedExecutable
+Executable = _jax.Executable
+DeviceList = _jax.DeviceList
 OpSharding = _xla.OpSharding
 HloSharding = _xla.HloSharding
-Sharding = _xla.Sharding
-NamedSharding = _xla.NamedSharding
-SingleDeviceSharding = _xla.SingleDeviceSharding
-PmapSharding = _xla.PmapSharding
-GSPMDSharding = _xla.GSPMDSharding
-PjRtLayout = _xla.PjRtLayout
+Sharding = _jax.Sharding
+NamedSharding = _jax.NamedSharding
+SingleDeviceSharding = _jax.SingleDeviceSharding
+PmapSharding = _jax.PmapSharding
+GSPMDSharding = _jax.GSPMDSharding
+PjRtLayout = _jax.PjRtLayout
 AutotuneCacheMode = _xla.AutotuneCacheMode
 
 
@@ -512,43 +517,43 @@ def register_custom_type_handler(
       del _custom_type_id[xla_platform_name]
 
 
-register_custom_call_partitioner = _xla.register_custom_call_partitioner
-encode_inspect_sharding_callback = _xla.encode_inspect_sharding_callback
-hlo_sharding_util = _xla.hlo_sharding_util
+register_custom_call_partitioner = _jax.register_custom_call_partitioner
+encode_inspect_sharding_callback = _jax.encode_inspect_sharding_callback
+hlo_sharding_util = _jax.hlo_sharding_util
 register_custom_call_as_batch_partitionable = (
-    _xla.register_custom_call_as_batch_partitionable
+    _jax.register_custom_call_as_batch_partitionable
 )
 
 
-Traceback = _xla.Traceback
-Frame = _xla.Frame
+Traceback = _jax.Traceback
+Frame = _jax.Frame
 
 
 @contextlib.contextmanager
 def execution_stream_id(new_id: int):
   """Context manager that overwrites and restores the current thread's execution_stream_id."""
-  saved = _xla.get_execution_stream_id()
-  _xla.set_execution_stream_id(new_id)
+  saved = _jax.get_execution_stream_id()
+  _jax.set_execution_stream_id(new_id)
   try:
     yield
   finally:
-    _xla.set_execution_stream_id(saved)
+    _jax.set_execution_stream_id(saved)
 
 
-XlaRuntimeError = _xla.JaxRuntimeError
+XlaRuntimeError = _jax.JaxRuntimeError
 
 # Perform one last garbage collection of deferred Python references. This is
 # mostly to keep ASAN happy.
-atexit.register(_xla.collect_garbage)
+atexit.register(_jax.collect_garbage)
 
-array_result_handler = _xla.array_result_handler
+array_result_handler = _jax.array_result_handler
 batched_copy_array_to_devices_with_sharding = (
-    _xla.batched_copy_array_to_devices_with_sharding
+    _jax.batched_copy_array_to_devices_with_sharding
 )
-batched_device_put = _xla.batched_device_put
-reorder_shards = _xla.reorder_shards
-batched_block_until_ready = _xla.batched_block_until_ready
-check_and_canonicalize_memory_kind = _xla.check_and_canonicalize_memory_kind
+batched_device_put = _jax.batched_device_put
+reorder_shards = _jax.reorder_shards
+batched_block_until_ready = _jax.batched_block_until_ready
+check_and_canonicalize_memory_kind = _jax.check_and_canonicalize_memory_kind
 Layout = _xla.Layout
-custom_call_targets = _xla.custom_call_targets
-ArrayCopySemantics = _xla.ArrayCopySemantics
+custom_call_targets = _jax.custom_call_targets
+ArrayCopySemantics = _jax.ArrayCopySemantics

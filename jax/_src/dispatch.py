@@ -64,7 +64,7 @@ BACKEND_COMPILE_EVENT = "/jax/core/compile/backend_compile_duration"
 
 traceback_util.register_exclusion(__file__)
 
-xe = xc._xla
+xe = xc._jax
 
 Backend = xe.Client
 Device = xc.Device

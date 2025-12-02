@@ -33,7 +33,7 @@ from jax._src.util import safe_zip, cache, tuple_delete
 from jax._src.lib import xla_client as xc
 
 zip, unsafe_zip = safe_zip, zip
-config_ext = xc._xla.config
+config_ext = xc._jax.config
 
 MeshAxisName = Any
 ResourceAxisName = Hashable

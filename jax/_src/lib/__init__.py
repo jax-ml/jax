@@ -122,7 +122,7 @@ import jaxlib._ifrt_proxy as ifrt_proxy  # noqa: F401
 
 # XLA garbage collection: see https://github.com/jax-ml/jax/issues/14882
 def _xla_gc_callback(*args):
-  xla_client._xla.collect_garbage()
+  xla_client._jax.collect_garbage()
 gc.callbacks.append(_xla_gc_callback)
 
 cuda_versions: ModuleType | None

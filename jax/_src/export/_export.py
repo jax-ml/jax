@@ -209,7 +209,7 @@ class Exported:
 
   def mlir_module(self) -> str:
     """A string representation of the ``mlir_module_serialized``."""
-    return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
+    return xla_client._jax.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
 
   def __str__(self):
     # This is called to make a MLIR source location when we call an Exported, and we
@@ -829,7 +829,7 @@ def _module_to_bytecode(module: ir.Module) -> bytes:
   # StableHLO features from failing on older hardware.
   target_version = hlo.get_version_from_compatibility_requirement(
     hlo.StablehloCompatibilityRequirement.WEEK_4)
-  module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
+  module_serialized = xla_client._jax.mlir.serialize_portable_artifact(  # type: ignore
       mlir_str, target_version, xb.get_backend().serialize_with_sdy)
   return module_serialized
 

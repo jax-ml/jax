@@ -219,7 +219,7 @@ def _pprof_profile(
     "sample_type": sample_type,
     "sample": samples,
   })
-  return gzip.compress(xla_client._xla.json_to_pprof_profile(json_profile))
+  return gzip.compress(xla_client._jax.json_to_pprof_profile(json_profile))
 
 
 def pprof_equation_profile(jaxpr: core.Jaxpr, *,

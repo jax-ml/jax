@@ -94,6 +94,7 @@ pytype_strict_library(
         "//jaxlib/triton",
         "@xla//xla/python:_profile_data",
         "@xla//xla/python:_profiler",
+        "@xla//xla/python:_xla",
     ],
 )
 
@@ -120,6 +121,7 @@ pytype_library(
         "//jaxlib/cpu:_sparse",
         "//jaxlib/mlir:ir",
         "//jaxlib/mlir:stablehlo_dialect",
+        "@xla//xla/python:_xla",
     ],
 )
 
@@ -180,6 +182,7 @@ pywrap_library(
         "//jaxlib/mlir/_mlir_libs:_triton_ext",
         "@xla//xla/python:_profile_data",
         "@xla//xla/python:_profiler",
+        "@xla//xla/python:_xla",
     ],
 )
 
@@ -327,6 +330,7 @@ nanobind_pywrap_extension(
     additional_stubgen_deps = [
         "//third_party/py/numpy",
         "//jaxlib/mlir:ir",
+        "@xla//xla/python:_xla",
     ],
     enable_stub_generation = True,
     pytype_deps = py_deps(["numpy"]),
@@ -414,6 +418,7 @@ nanobind_pywrap_extension(
         "@xla//xla/python/pjrt_ifrt:xla_ifrt",
         "@xla//xla/tsl/concurrency:ref_count",
         "@xla//xla/tsl/distributed_runtime/preemption:preemption_sync_manager",
+        "@xla//xla/tsl/platform:errors",
         "@xla//xla/tsl/platform:logging",
         "@xla//xla/tsl/platform:status",
         "@xla//xla/tsl/platform:statusor",
@@ -1409,7 +1414,10 @@ pytype_strict_library(
     deps = py_deps([
         "numpy",
         "ml_dtypes",
-    ]) + [":_jax"],
+    ]) + [
+        ":_jax",
+        "@xla//xla/python:_xla",
+    ],
 )
 
 py_strict_test(

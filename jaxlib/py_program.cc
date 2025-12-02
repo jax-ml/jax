@@ -268,9 +268,6 @@ absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeColocatedPythonProgram(
 
 void BuildIfrtProgramsSubmodule(nanobind::module_& m) {
   auto sub_module = m.def_submodule("ifrt_programs");
-  sub_module.attr("_CompileOptions") = m.attr("CompileOptions");
-  sub_module.attr("_Device") = m.attr("Device");
-  sub_module.attr("_DeviceList") = m.attr("DeviceList");
 
   nb::class_<ifrt::Program> ifrt_program_base_class(sub_module, "Program");
   nb::class_<ifrt::CompileOptions> ifrt_compile_options_base_class(
@@ -291,9 +288,9 @@ void BuildIfrtProgramsSubmodule(nanobind::module_& m) {
             "def make_colocated_python_program("
             "name: str, "
             "picked_function: bytes, "
-            "devices: typing.Sequence[_Device] | _DeviceList, "
+            "devices: typing.Sequence[jax.jaxlib._jax.Device] | jax.jaxlib._jax.DeviceList, "
             "input_avals: Sequence[typing.Any], "
-            "output_avals: Sequence[Any]"
+            "output_avals: Sequence[typing.Any]"
             ") -> Program"
             // clang-format on
           ))
@@ -309,10 +306,10 @@ void BuildIfrtProgramsSubmodule(nanobind::module_& m) {
           nb::sig(
             // clang-format off
             "def make_xla_compile_options("
-            "options: _CompileOptions, "
-            "executable_devices: Sequence[_Device], "
+            "options: CompileOptions, "
+            "executable_devices: Sequence[jax.jaxlib._jax.Device], "
             "host_callbacks: Sequence[typing_extensions.CapsuleType]"
-            ") -> CompileOptions"
+            ") -> jaxlib._xla.CompileOptions"
             // clang-format on
           ))
       .def("make_colocated_python_compile_options",

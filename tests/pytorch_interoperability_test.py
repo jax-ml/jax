@@ -63,7 +63,7 @@ class DLPackTest(jtu.JaxTestCase):
     regex_str = (r'UNIMPLEMENTED: Only DLPack tensors with trivial \(compact\) '
                  r'striding are supported')
     with self.assertRaisesRegex(RuntimeError, regex_str):
-      xla_client._xla.dlpack_managed_tensor_to_buffer(
+      xla_client._jax.dlpack_managed_tensor_to_buffer(
           y, client.devices()[0], None)
 
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)

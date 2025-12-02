@@ -292,21 +292,12 @@ Args:
 
   nb::module_ hlo_sharding_util_m = m.def_submodule(
       "hlo_sharding_util", "Utilities for manipulating HloSharding.");
-  hlo_sharding_util_m.attr("_HloSharding") = m.attr("HloSharding");
   hlo_sharding_util_m.def(
       "PartiallyReplicateTiledShardingOnDims",
       [](const xla::HloSharding& sharding, std::vector<int64_t> dims) {
         return xla::hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(
             sharding, dims);
-      },
-      nb::sig(
-          // clang-format off
-          "def PartiallyReplicateTiledShardingOnDims("
-          "sharding: _HloSharding, "
-          "dims: typing.Sequence[int], /"
-          ") -> _HloSharding"
-          // clang-format on
-          ));
+      });
 
   m.def(
       "register_custom_call_as_batch_partitionable",

@@ -30,7 +30,7 @@ from jax._src.api_util import debug_info, flatten_fun_nokwargs, flatten_axes
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir import ir
 
-config_ext = xla_client._xla.config
+config_ext = xla_client._jax.config
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
