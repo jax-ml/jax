@@ -7914,21 +7914,96 @@ class TracebackTest(jtu.JaxTestCase):
   def cur_depth(self):
     return len(inspect.stack())
 
+  def test_traceback_test(self):
+    expected_depth_foo = 1
+    expected_depth_bar = 2
+    init_depth = self.cur_depth()
+    def foo():
+      self.assertExpectedDepth(init_depth, expected_depth_foo)
+      def bar():
+        self.assertExpectedDepth(init_depth, expected_depth_bar)
+      bar()
+
+    foo()
+
   def assertExpectedDepth(self, init_depth, expected_depth):
-    # `+ 1` is for the `assertExpectedDepth` stack frame itself
-    self.assertEqual(self.cur_depth() - init_depth, expected_depth + 1)
+    # `- 1` is for the `assertExpectedDepth` stack frame itself
+    self.assertEqual(self.cur_depth() - init_depth - 1, expected_depth)
 
   def test_scan_traceback(self):
     expected_depth = 5
     init_depth = self.cur_depth()
 
     def f(c, x):
-      frames = inspect.stack()
       self.assertExpectedDepth(init_depth, expected_depth)
       return (c, ())
 
     jax.lax.scan(f, 0, jnp.arange(4))
 
+  def test_cond_traceback(self):
+    if sys.version_info < (3, 14):
+      # Fails because 3.11 adds an extra stack frame due to a list comprehension
+      self.skipTest("Expected failure.")
+    expected_depth = 8
+    init_depth = self.cur_depth()
+
+    def f():
+      self.assertExpectedDepth(init_depth, expected_depth)
+
+    lax.cond(True, f, lambda: None)
+
+  def test_jit_traceback(self):
+    # TODO(dougalm): improve this! jit can (and should) be nested a lot.
+    expected_depth = 14
+    init_depth = self.cur_depth()
+    @jit
+    def foo(x):
+      self.assertExpectedDepth(init_depth, expected_depth)
+      return x
+    foo(1)
+
+  def test_grad_traceback(self):
+    # TODO(dougalm): improve this
+    expected_depth = 13
+    init_depth = self.cur_depth()
+
+    def foo(x):
+      self.assertExpectedDepth(init_depth, expected_depth)
+      return x
+
+    grad(foo)(1.0)
+
+  def test_vmap_traceback(self):
+    # TODO(dougalm): improve this
+    expected_depth = 8
+    init_depth = self.cur_depth()
+
+    def foo(x):
+      self.assertExpectedDepth(init_depth, expected_depth)
+      return x
+
+    jax.vmap(foo)(np.arange(3))
+
+  def test_custom_vjp_traceback(self):
+    # TODO(dougalm): improve this
+    expected_depth_f = 11
+    expected_depth_f_fwd = 22
+    expected_depth_f_rev = 13
+    init_depth = self.cur_depth()
+    @jax.custom_vjp
+    def f(x):
+      self.assertExpectedDepth(init_depth, expected_depth_f)
+      return x
+    def f_fwd(x):
+      self.assertExpectedDepth(init_depth, expected_depth_f_fwd)
+      return x, None
+    def f_rev(_, g):
+      self.assertExpectedDepth(init_depth, expected_depth_f_rev)
+      return (g,)
+    f.defvjp(f_fwd, f_rev)
+
+    f(1.0)
+    grad(f)(1.0)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
