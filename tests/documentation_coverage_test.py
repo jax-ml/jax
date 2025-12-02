@@ -81,7 +81,13 @@ MODULES_TO_SKIP = [
   "jax.collect_profile",  # fails when xprof is not available.
   "jax.core",  # internal tools, not documented.
   "jax.example_libraries",  # TODO(jakevdp): un-skip these.
-  "jax.extend",  # TODO(jakevdp): un-skip these.
+  "jax.extend.core.primitives",
+  "jax.extend.ifrt_programs",
+  "jax.extend.mlir.dialects",
+  "jax.extend.mlir.ir",
+  "jax.extend.mlir.passmanager",
+  "jax.extend.sharding",
+  "jax.extend.source_info_util",
   "jax.experimental",  # Many non-public submodules.
   "jax.interpreters",  # internal tools, not documented.
   "jax.jaxlib", # internal tools, not documented.

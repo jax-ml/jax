@@ -11,5 +11,6 @@
   threefry2x32_p
   threefry_2x32
   threefry_prng_impl
+  random_seed
   rbg_prng_impl
   unsafe_rbg_prng_impl
