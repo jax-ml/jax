@@ -15,12 +15,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 import dataclasses
+import functools
 import inspect
 import random
 import threading
 from typing import Any
-from collections.abc import Callable, Sequence
 
 import jax
 from jax._src import api
@@ -31,7 +32,8 @@ from jax._src.lib import xla_client as xc
 from jax._src.traceback_util import api_boundary
 from jax._src.util import wraps
 from jax.experimental.colocated_python import func_backend
-from jax.experimental.colocated_python.serialization import _deserialize_specs, _make_specs_for_serialized_specs, _serialize, _serialize_specs
+from jax.experimental.colocated_python.serialization import _deserialize, _deserialize_specs, _make_specs_for_serialized_specs, _serialize, _serialize_specs
+from jax.extend.backend import register_backend_cache as jax_register_backend_cache
 from jax.extend.ifrt_programs import ifrt_programs
 
 ShapeDtypeStructTree = Any  # PyTree[api.ShapeDtypeStruct]
@@ -186,12 +188,14 @@ def _compile_to_executable(
     # TODO(hyeontaek): Implement colocated Python support in McJAX and remove
     # this fallback path.
     if "PjRtCompiler requires an HloProgram" in str(e):
-      return fun
+      return _deserialize(pickled_function)[0]
     raise
 
 
 def _make_output_specs_and_push_result_fun(
-    info: FunctionInfo, specialization: Specialization, uid: int
+    info: FunctionInfo,
+    specialization: Specialization,
+    uid: int,
 ) -> Callable[..., Any]:
   """Creates a function that computes output specs and pushes the result to the result store."""
   assert specialization.in_specs_treedef is not None
@@ -226,7 +230,9 @@ def _make_output_specs_and_push_result_fun(
 
 
 def _make_pop_result_fun(
-    info: FunctionInfo, specialization: Specialization, uid: int
+    info: FunctionInfo,
+    specialization: Specialization,
+    uid: int,
 ) -> Callable[..., Any]:
   """Makes a function that pops results from the result store."""
   assert specialization.out_specs_treedef is not None
@@ -259,7 +265,8 @@ def _make_pop_result_fun(
 
 
 def _make_async_execution_fun(
-    info: FunctionInfo, specialization: Specialization
+    info: FunctionInfo,
+    specialization: Specialization,
 ) -> Callable[..., Any]:
   """Makes a function that asynchronously executes the function."""
   assert specialization.in_specs_treedef is not None
@@ -280,9 +287,9 @@ def _make_async_execution_fun(
   )
 
 
-@jax._src.util.cache(max_size=None)
-def _get_specialized_func(
-    info: FunctionInfo, specialization: Specialization
+def _uncached_get_specialized_func(
+    info: FunctionInfo,
+    specialization: Specialization,
 ) -> Callable[..., Any]:
   """Returns a specialized function for the given specialization."""
   util.test_event("colocated_python_func._get_specialized_func")
@@ -302,9 +309,14 @@ def _get_specialized_func(
       if async_execution_func is None:
         if specialization.out_specs_treedef is None:
           if specialization.out_specs_fn is None:
-            serialized_out_specs = _make_output_specs_and_push_result_fun(
-                info, specialization, uid
-            )(*args, **kwargs)
+            output_specs_and_push_result_fun = (
+                _make_output_specs_and_push_result_fun(
+                    info, specialization, uid
+                )
+            )
+            serialized_out_specs = output_specs_and_push_result_fun(
+                *args, **kwargs
+            )
 
             # Waits for the output_specs. This may block.
             out_specs_treedef, out_specs_leaves = _deserialize_specs(
@@ -319,6 +331,13 @@ def _get_specialized_func(
             )
             async_execution_func = _make_async_execution_fun(
                 info, specialization
+            )
+
+            # Hold the PyExecutable until async_execution_fun is called at
+            # least once, so the number of _OBJECT_STORE references at the
+            # backend does not drop to 0.
+            async_execution_func.output_specs_and_push_result_fun = (
+                output_specs_and_push_result_fun
             )
 
             return _make_pop_result_fun(info, specialization, uid)()
@@ -348,9 +367,203 @@ def _get_specialized_func(
 
     # Asynchronous execution runs outside of the mutex to allow concurrent
     # execution for inline executors.
-    return async_execution_func(*args, **kwargs)
+    result = async_execution_func(*args, **kwargs)
+    with mutex:
+      async_execution_func.output_specs_and_push_result_fun = None
+    return result
 
   return specialized_func
+
+
+class _CachedGetSpecializedFunction:
+  """Manages cached versions of `_uncached_get_specialized_func`.
+
+  This class holds a collection of caches, each identified by a unique ID, and
+  presents itself as a single cache to JAX's `register_backend_cache`. One can
+  clear individual caches identified by the UID, using the `cache_remove(uid)`
+  method. JAX's `clear_backend_cache()` will clear all caches.
+  """
+
+  def __init__(self):
+    self._lock = threading.Lock()
+    self._caches: dict[int, Any] = {}
+    jax_register_backend_cache(self, "colocated_python_specialized_func_cache")
+
+  def cache_clear(self):
+    self._caches.clear()
+
+  def cache_remove(self, held_by: int):
+    try:
+      self._caches.pop(held_by)
+    except KeyError:
+      pass
+
+  def get(self, held_by: int) -> Callable[..., Any]:
+    with self._lock:
+      try:
+        return self._caches[held_by]
+      except KeyError:
+        cache = functools.cache(_uncached_get_specialized_func)
+        self._caches[held_by] = cache
+        return cache
+
+
+_SINGLETON_CACHED_GET_SPECIALIZED_FUNCTION = _CachedGetSpecializedFunction()
+
+
+class _CachedColocatedFunctionMaker:
+  """Function maker for colocated Python functions.
+
+  Generated functions are stored (cached) indefinitely so that they can be
+  reused, until the cache is dropped.
+  """
+
+  def __init__(self, held_by: int | None):
+    self.held_by = held_by
+    if held_by is None:
+      self._get_specialized_func = jax._src.util.cache(
+          max_size=None, trace_context_in_key=False
+      )(_uncached_get_specialized_func)
+    else:
+      self._get_specialized_func = (
+          _SINGLETON_CACHED_GET_SPECIALIZED_FUNCTION.get(held_by)
+      )
+
+  def __del__(self):
+    if self.held_by is not None:
+      _SINGLETON_CACHED_GET_SPECIALIZED_FUNCTION.cache_remove(self.held_by)
+
+  def _make_callable(
+      self,
+      info: FunctionInfo,
+      specialization: Specialization,
+  ):
+    """Internal implementation of make_callable."""
+
+    def specialize(
+        in_specs: ShapeDtypeStructTree | None = None,
+        out_specs_fn: Callable[..., ShapeDtypeStructTree] | None = None,
+        devices: Sequence[jax.Device] | None = None,
+    ):
+      """Returns a colocated Python callable with extra specialization.
+
+      Args:
+        in_specs: Optionally specifies the expected input specs. Input specs are
+          expressed as a `PyTree[ShapeDtypeStruct]` for `(args, kwargs)` of a
+          function call.
+        out_specs_fn: Optionally specifies a function that computes the output
+          specs from input specs. If unspecified, colocated Python will compute
+          the output specs during the very first execution, and this execution
+          will be synchronous.
+        devices: Optionally specifies the devices to execute the function on.
+          Must be provided if `in_specs` has no leaves because devices cannot be
+          inferred from input specs or arguments.
+
+      Returns:
+        A colocated Python callable with extra specialization.
+      """
+      # TODO(hyeontaek): Allow unspecified devices for zero-leaf `in_specs` if
+      # `out_specs_fn(in_specs)` returns at least one leaf that we can use for
+      # inferring `devices`.
+      if in_specs is None:
+        in_specs_leaves, in_specs_treedef = None, None
+      else:
+        in_specs_leaves_list, in_specs_treedef = tree_util.tree_flatten(
+            in_specs
+        )
+        in_specs_leaves = tuple(in_specs_leaves_list)
+      return self._make_callable(
+          info,
+          specialization.update(
+              in_specs_treedef=in_specs_treedef,
+              in_specs_leaves=in_specs_leaves,
+              out_specs_fn=out_specs_fn,
+              devices=devices,
+          ),
+      )
+
+    @api_boundary
+    def __call__(*args, **kwargs):
+      """Executes the given Python function on the same devices as the arguments or as specialized.
+
+      If the callable has not been specialized with output shapes and shardings
+      (see `specialize` above), the very first call will run synchronously to
+      discover output shapes and shardings, and will run asynchronously after.
+      If
+      specialized with output shapes and shardings, every execution of the
+      callable will be asynchronous.
+      """
+      args_leaves, in_specs_treedef = tree_util.tree_flatten((args, kwargs))
+
+      in_specs_leaves = tuple(_get_spec(x) for x in args_leaves)
+      if specialization.in_specs_treedef is None:
+        # Allow input polymorphism by applying input_specs specialization
+        # temporarily for this call.
+        return self._make_callable(
+            info,
+            specialization.update(
+                in_specs_treedef=in_specs_treedef,
+                in_specs_leaves=in_specs_leaves,
+            ),
+        )(*args, **kwargs)
+
+      if specialization.devices is None:
+        devices = _infer_devices_from_args(args_leaves)
+        if devices is None:
+          raise ValueError(
+              "No devices found. colocated_python function without input"
+              " arguments must be first specialized with devices."
+          )
+        # Allow device polymorphism by applying devices specialization temporarily
+        # for this call.
+        return self._make_callable(
+            info,
+            specialization.update(devices=devices),
+        )(*args, **kwargs)
+
+      # Assertion is added to silence mypy error: Unsupported operand types for !=
+      # ("PyTreeDef" and "None")  [operator]
+      assert isinstance(specialization.in_specs_treedef, tree_util.PyTreeDef)
+
+      # If input_specs is known, verify that it matches actual inputs.
+      if (
+          specialization.in_specs_treedef != in_specs_treedef
+          or specialization.in_specs_leaves != in_specs_leaves
+      ):
+        raise ValueError(
+            "Input specs in specialization and input specs of arguments must"
+            " have the same pytree structure, but they have the following"
+            " structural differences:\n"
+            + (
+                "\n".join(
+                    f"   - {tree_util.keystr(path)} is a {thing1} in value 1"
+                    f" and a {thing2} in  value 2, so {explanation}.\n"
+                    for path, thing1, thing2, explanation in tree_util.equality_errors_pytreedef(
+                        specialization.in_specs_treedef, in_specs_treedef
+                    )
+                )
+            )
+        )
+
+      return self._get_specialized_func(info, specialization)(*args, **kwargs)
+
+    __call__ = wraps(info.fun)(__call__)
+    __call__.specialize = specialize
+    return __call__
+
+  def make_callable(
+      self,
+      fun: Callable[..., Any],
+      fun_sourceinfo: str | None,
+      fun_signature: inspect.Signature | None,
+  ):
+    """Makes a colocated Python callable."""
+    return self._make_callable(
+        FunctionInfo(fun, fun_sourceinfo, fun_signature), Specialization()
+    )
+
+
+_DEFAULT_FUNCTION_MAKER = _CachedColocatedFunctionMaker(None)
 
 
 def make_callable(
@@ -358,112 +571,6 @@ def make_callable(
     fun_sourceinfo: str | None,
     fun_signature: inspect.Signature | None,
 ):
-  """Makes a colocated Python callable."""
-  return _make_callable(
-      FunctionInfo(fun, fun_sourceinfo, fun_signature), Specialization()
+  return _DEFAULT_FUNCTION_MAKER.make_callable(
+      fun, fun_sourceinfo, fun_signature
   )
-
-
-def _make_callable(info: FunctionInfo, specialization: Specialization):
-  """Internal implementation of make_callable."""
-
-  def specialize(
-      in_specs: ShapeDtypeStructTree | None = None,
-      out_specs_fn: Callable[..., ShapeDtypeStructTree] | None = None,
-      devices: Sequence[jax.Device] | None = None,
-  ):
-    """Returns a colocated Python callable with extra specialization.
-
-    Args:
-      in_specs: Optionally specifies the expected input specs. Input specs are
-        expressed as a `PyTree[ShapeDtypeStruct]` for `(args, kwargs)` of a
-        function call.
-      out_specs_fn: Optionally specifies a function that computes the output
-        specs from input specs. If unspecified, colocated Python will compute
-        the output specs during the very first execution, and this execution
-        will be synchronous.
-      devices: Optionally specifies the devices to execute the function on. Must
-        be provided if `in_specs` has no leaves because devices cannot be
-        inferred from input specs or arguments.
-
-    Returns:
-      A colocated Python callable with extra specialization.
-    """
-    # TODO(hyeontaek): Allow unspecified devices for zero-leaf `in_specs` if
-    # `out_specs_fn(in_specs)` returns at least one leaf that we can use for
-    # inferring `devices`.
-    if in_specs is None:
-      in_specs_leaves, in_specs_treedef = None, None
-    else:
-      in_specs_leaves_list, in_specs_treedef = tree_util.tree_flatten(in_specs)
-      in_specs_leaves = tuple(in_specs_leaves_list)
-    return _make_callable(
-        info,
-        specialization.update(
-            in_specs_treedef=in_specs_treedef,
-            in_specs_leaves=in_specs_leaves,
-            out_specs_fn=out_specs_fn,
-            devices=devices,
-        ),
-    )
-
-  @api_boundary
-  def __call__(*args, **kwargs):
-    """Executes the given Python function on the same devices as the arguments or as specialized.
-
-    If the callable has not been specialized with output shapes and shardings
-    (see `specialize` above), the very first call will run synchronously to
-    discover output shapes and shardings, and will run asynchronously after. If
-    specialized with output shapes and shardings, every execution of the
-    callable will be asynchronous.
-    """
-    args_leaves, in_specs_treedef = tree_util.tree_flatten((args, kwargs))
-
-    in_specs_leaves = tuple(_get_spec(x) for x in args_leaves)
-    if specialization.in_specs_treedef is None:
-      # Allow input polymorphism by applying input_specs specialization
-      # temporarily for this call.
-      return _make_callable(
-          info,
-          specialization.update(
-              in_specs_treedef=in_specs_treedef,
-              in_specs_leaves=in_specs_leaves,
-          ),
-      )(*args, **kwargs)
-
-    if specialization.devices is None:
-      devices = _infer_devices_from_args(args_leaves)
-      if devices is None:
-        raise ValueError(
-            "No devices found. colocated_python function without input"
-            " arguments must be first specialized with devices."
-        )
-      # Allow device polymorphism by applying devices specialization temporarily
-      # for this call.
-      return _make_callable(info, specialization.update(devices=devices))(
-          *args, **kwargs
-      )
-
-    # Assertion is added to silence mypy error: Unsupported operand types for !=
-    # ("PyTreeDef" and "None")  [operator]
-    assert isinstance(specialization.in_specs_treedef, tree_util.PyTreeDef)
-
-    # If input_specs is known, verify that it matches actual inputs.
-    if (specialization.in_specs_treedef != in_specs_treedef
-        or specialization.in_specs_leaves != in_specs_leaves):
-      raise ValueError(
-          "Input specs in specialization and input specs of arguments must have"
-          " the same pytree structure, but they have the following structural"
-          " differences:\n"
-          + ("\n".join(
-                f"   - {tree_util.keystr(path)} is a {thing1} in value 1 and"
-                f" a {thing2} in  value 2, so {explanation}.\n"
-                for path, thing1, thing2, explanation in tree_util.equality_errors_pytreedef(
-                    specialization.in_specs_treedef, in_specs_treedef
-                ))))
-
-    return _get_specialized_func(info, specialization)(*args, **kwargs)
-
-  __call__ = wraps(info.fun)(__call__)
-  __call__.specialize = specialize
-  return __call__
