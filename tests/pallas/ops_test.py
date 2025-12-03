@@ -2764,8 +2764,6 @@ class OpsInterpretTest(OpsTest):
   INTERPRET = True
 
   def test_debug_print(self):
-    if jtu.is_cloud_tpu():
-      self.skipTest("TODO: b/465504705")
 
     @functools.partial(
         self.pallas_call,

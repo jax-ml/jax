@@ -527,8 +527,6 @@ class MultiHostDebuggingTest(jt_multiprocess.MultiProcessTest):
       self.assertEqual(output(), "")
 
   def test_print_in_multihost_shard_map(self):
-    if jtu.is_cloud_tpu():
-      self.skipTest("TODO: b/465504705")
 
     devices = jax.devices()
     mesh = jax.sharding.Mesh(devices, ("i",))
@@ -554,6 +552,7 @@ class MultiHostDebuggingTest(jt_multiprocess.MultiProcessTest):
 
     lines = [f"{i}" for i in local_x] + [""]
     self._assert_lines_equal(output(), "\n".join(lines))
+
 
 if __name__ == "__main__":
   jt_multiprocess.main()

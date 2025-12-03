@@ -53,7 +53,6 @@ with_pure_and_io_callbacks = parameterized.named_parameters(
 )
 
 
-@unittest.skipIf(jtu.is_cloud_tpu(), "TODO: b/465504705")
 class PythonCallbackTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -670,7 +669,6 @@ class PythonCallbackTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(x, result)
 
 
-@unittest.skipIf(jtu.is_cloud_tpu(), "TODO: b/465504705")
 class PureCallbackTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -1152,8 +1150,6 @@ class IOCallbackTest(jtu.JaxTestCase):
     dispatch.runtime_tokens.clear()
 
   def test_io_callback_can_mutate_state(self):
-    if jtu.is_cloud_tpu():
-      self.skipTest("TODO: b/465504705")
 
     x = 0
     def cb():
@@ -1171,8 +1167,6 @@ class IOCallbackTest(jtu.JaxTestCase):
     self.assertEqual(x, 2)
 
   def test_io_callback_can_be_batched_if_unordered(self):
-    if jtu.is_cloud_tpu():
-      self.skipTest("TODO: b/465504705")
 
     _mut = 0
     def cb(x):
@@ -1282,9 +1276,6 @@ class IOCallbackTest(jtu.JaxTestCase):
   def test_can_use_io_callback_in_pjit(
       self, *, ordered: bool, with_sharding: bool
   ):
-    if jtu.is_cloud_tpu():
-      self.skipTest("TODO: b/465504705")
-
     devices = jax.devices()
     mesh = jax.sharding.Mesh(np.array(devices), ['dev'])
 
@@ -1345,9 +1336,6 @@ class IOCallbackTest(jtu.JaxTestCase):
   @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
                       category=DeprecationWarning)
   def test_sequence_pjit_io_callback_ordered(self):
-    if jtu.is_cloud_tpu():
-      self.skipTest("TODO: b/465504705")
-
     if jtu.is_device_tpu(7, 'x'):
       self.skipTest('TODO(b/453664256): Failing on TPU 7x.')
 
@@ -1409,8 +1397,6 @@ class IOCallbackTest(jtu.JaxTestCase):
          single_device=True)
   )
   def test_can_shard_io_callback_manually(self, single_device: bool):
-    if jtu.is_cloud_tpu():
-      self.skipTest("TODO: b/465504705")
 
     devices = jax.devices()
     if single_device:
@@ -1444,9 +1430,6 @@ class IOCallbackTest(jtu.JaxTestCase):
       np.testing.assert_array_equal(shard[0] + 1, shard[1])
 
   def test_batching_with_side_effects(self):
-    # https://github.com/jax-ml/jax/issues/20628#issuecomment-2050800195
-    if jtu.is_cloud_tpu():
-      self.skipTest("TODO: b/465504705")
 
     x_lst = []
     def append_x(x):
@@ -1464,8 +1447,6 @@ class IOCallbackTest(jtu.JaxTestCase):
 
   def test_batching_with_side_effects_while_loop(self):
     # https://github.com/jax-ml/jax/issues/20628#issuecomment-2050921219
-    if jtu.is_cloud_tpu():
-      self.skipTest("TODO: b/465504705")
 
     x_lst = []
     def append_x(x):

@@ -4241,8 +4241,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
               in_shardings=NamedSharding(mesh, P(P.UNCONSTRAINED, 'x')))
 
   def test_empty_io_callback_under_shard_map(self):
-    if jtu.is_cloud_tpu():
-      self.skipTest("TODO: b/465504705")
 
     mesh = jtu.create_mesh((4,), 'i')
 
