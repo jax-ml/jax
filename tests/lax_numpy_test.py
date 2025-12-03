@@ -6316,6 +6316,11 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     for name in names:
       jnp_fun = getattr(jnp, name)
       np_fun = getattr(np, name)
+      if isinstance(getattr(np, name), np.ufunc):
+        # Skip all `np.ufunc`s since many of the missing ufunc keywords may not
+        # be relevant for JAX. However, args such as `axis` and `keepdims` may
+        # be useful to `matmul` and others.
+        continue
       if name in ['histogram', 'histogram2d', 'histogramdd']:
         # numpy 1.24 re-orders the density and weights arguments.
         # TODO(jakevdp): migrate histogram APIs to match newer numpy versions.
@@ -6332,6 +6337,12 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       if name == "reshape":
         # Similar issue to clip: we'd need logic specific to the NumPy version
         # because of the change in argument name from `newshape` to `shape`.
+        continue
+      if name == "asarray":
+        # The order of the `device` and `copy` kwargs are swapped between jnp
+        # and np.
+        # jnp.asarray: a, dtype, order, copy, device, out_sharding
+        # np.asarray: a, dtype, order, device, copy, like
         continue
       # Note: can't use inspect.getfullargspec for some functions due to numpy issue
       # https://github.com/numpy/numpy/issues/12225
