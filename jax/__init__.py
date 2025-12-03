@@ -136,6 +136,7 @@ from jax._src.sharding_impls import NamedSharding as NamedSharding
 from jax._src.sharding_impls import make_mesh as make_mesh
 from jax._src.sharding_impls import set_mesh as set_mesh
 from jax._src.partition_spec import P as P
+from jax._src.pjit import reshard as reshard
 
 from jax._src.shard_map import shard_map as shard_map
 from jax._src.shard_map import smap as smap

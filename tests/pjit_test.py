@@ -29,6 +29,7 @@ import concurrent.futures
 
 import jax
 import jax.numpy as jnp
+from jax import reshard
 from jax._src import core
 from jax._src import config
 from jax._src import dispatch
@@ -42,7 +43,7 @@ from jax._src.lax import lax as lax_internal
 from jax.lax import with_sharding_constraint
 from jax._src import prng
 from jax.sharding import (PartitionSpec as P, Mesh, auto_axes, explicit_axes,
-                          reshard, AbstractDevice)
+                          AbstractDevice)
 from jax.experimental import multihost_utils
 from jax._src.shard_map import shard_map
 from jax._src.compilation_cache import is_persistent_cache_enabled
