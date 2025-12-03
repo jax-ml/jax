@@ -191,7 +191,6 @@ common:cuda_common --repo_env TF_NEED_CUDA=1
 common:cuda_common --repo_env TF_NCCL_USE_STUB=1
 common:cuda_common --@local_config_cuda//:enable_cuda
 common:cuda_common --@local_config_cuda//cuda:include_cuda_libs=true
-common:cuda_common --@cuda_driver//:include_cuda_umd_libs=true
 
 # Force the linker to set RPATH, not RUNPATH. When resolving dynamic libraries,
 # ld.so prefers in order: RPATH, LD_LIBRARY_PATH, RUNPATH. JAX sets RPATH to
@@ -218,7 +217,8 @@ common:cuda --config=cuda12
 
 # This config is used for building targets with CUDA/NVSHMEM libraries from stubs.
 common:cuda_libraries_from_stubs --@local_config_cuda//cuda:include_cuda_libs=false
-common:cuda_libraries_from_stubs --@cuda_driver//:include_cuda_umd_libs=false
+
+common:hermetic_cuda_umd --@cuda_driver//:include_cuda_umd_libs=true
 
 # common CUDA and other C++ targets with Clang
 common:build_cuda_with_clang --@local_config_cuda//:cuda_compiler=clang

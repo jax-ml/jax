@@ -122,6 +122,7 @@ bazel test --config=$TEST_CONFIG \
       --action_env=NCCL_DEBUG=WARN \
       --color=yes \
       --config=cuda_libraries_from_stubs \
+      --config=hermetic_cuda_umd \
       //tests:gpu_tests //tests:backend_independent_tests \
       //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests
 
@@ -147,6 +148,7 @@ bazel test --config=$TEST_CONFIG \
       --action_env=NCCL_DEBUG=WARN \
       --color=yes \
       --config=cuda_libraries_from_stubs \
+      --config=hermetic_cuda_umd \
       //tests:gpu_tests //tests/pallas:gpu_tests \
       //tests/multiprocess:gpu_tests
 

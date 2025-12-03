@@ -76,6 +76,7 @@ jobs:
             bazel test \
             --config=ci_linux_x86_64_cuda \
             --config=ci_rbe_cache \
+            --config=hermetic_cuda_umd \
             --repo_env=HERMETIC_PYTHON_VERSION="3.14" \
             --repo_env=HERMETIC_CUDNN_VERSION="9.11.0" \
             --repo_env=HERMETIC_CUDA_UMD_VERSION="13.0.0" \
@@ -120,6 +121,7 @@ jobs:
             bazel test \
             --config=ci_linux_x86_64_cuda \
             --config=ci_rbe_cache \
+            --config=hermetic_cuda_umd \
             --repo_env=HERMETIC_PYTHON_VERSION="3.14" \
             --repo_env=HERMETIC_CUDNN_VERSION="9.11.0" \
             --repo_env=HERMETIC_CUDA_UMD_VERSION="13.0.0" \
