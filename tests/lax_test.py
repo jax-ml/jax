@@ -3782,6 +3782,16 @@ class LaxTest(jtu.JaxTestCase):
 
     jax.grad(loss)(jnp.ones((3,)))
 
+  def test_no_complex_to_real_cast_warning_in_transpose(self):
+    # https://github.com/jax-ml/jax/issues/33521
+    def f(x, y):
+      return jax.lax.dot(x, y).real
+
+    x = jnp.arange(5, dtype='float32')
+    y = jnp.arange(5, dtype='complex64')
+    with self.assertNoWarnings():
+      jax.jacobian(f)(x, y)
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
