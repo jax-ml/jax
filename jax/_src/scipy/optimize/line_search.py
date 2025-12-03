@@ -193,14 +193,22 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
     )
     state = state._replace(
         **_binary_replace(
+            lo_to_j & ~hi_to_lo,
+            state._asdict(),
+            dict(
+                a_rec=state.a_lo,
+                phi_rec=state.phi_lo,
+            ),
+        ),
+    )
+    state = state._replace(
+        **_binary_replace(
             lo_to_j,
             state._asdict(),
             dict(
                 a_lo=a_j,
                 phi_lo=phi_j,
                 dphi_lo=dphi_j,
-                a_rec=state.a_lo,
-                phi_rec=state.phi_lo,
             ),
         ),
     )
