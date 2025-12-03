@@ -1204,7 +1204,9 @@ class PallasCallTest(PallasTest):
     self.assertEqual(output(), "It works!\n")
 
   def test_print_wgmma_tiled_layout(self):
-    shape = (128, 64)
+    # The default printf buffer on some smaller GPUs (e.g. Thor) only has space for
+    # 4096 threads to printf (short) messages. Keep this shape below that.
+    shape = (128, 32)
     size = math.prod(shape)
 
     @functools.partial(

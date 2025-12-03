@@ -545,9 +545,11 @@ skip_if_triton_exceeds_shared_memory = functools.partial(
 )
 
 def get_cuda_nonportable_max_cluster_size():
-  if device_kind_match("GB10$"):
-    # 12 is the nonportable maximum cluster size on DGX Spark,
-    # determined by querying cuOccupancyMaxPotentialClusterSize.
+  # Per-device nonportable maximum cluster sizes for Jetson Thor and DGX
+  # Spark (GB10) determined by querying cuOccupancyMaxPotentialClusterSize
+  if device_kind_match("Thor$"):
+    return 8
+  elif device_kind_match("GB10$"):
     return 12
   # 16 is the nonportable maximum cluster size on:
   # - Hopper: https://docs.nvidia.com/cuda/hopper-tuning-guide/index.html#:~:text=cluster%20size%20of-,16,-by%20opting%20in
