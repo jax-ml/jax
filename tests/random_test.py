@@ -654,8 +654,14 @@ class KeyArrayTest(jtu.JaxTestCase):
 
     self.assertFalse(jnp.issubdtype(key.dtype, np.integer))
     self.assertFalse(jnp.issubdtype(key.dtype, np.number))
-    with self.assertRaisesRegex(TypeError, "Cannot interpret"):
-      jnp.issubdtype(key, dtypes.prng_key)
+    if jtu.numpy_version() < (2, 4, 0):
+      with self.assertRaisesRegex(TypeError, "Cannot interpret"):
+        jnp.issubdtype(key, dtypes.prng_key)
+    else:
+      with jtu.ignore_warning(category=DeprecationWarning,
+                              message="Implicit conversion of an array to a dtype"):
+        with self.assertRaisesRegex(ValueError, "Could not convert Array"):
+          jnp.issubdtype(key, dtypes.prng_key)
 
   @skipIf(not config.enable_custom_prng.value, 'relies on typed key upgrade flag')
   def test_construction_upgrade_flag(self):
