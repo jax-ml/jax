@@ -2400,7 +2400,7 @@ def trace_to_jaxpr(
     in_tree: PyTreeDef,
     in_avals_flat: Sequence[AbstractValue | core.AvalQDD],
     debug_info: core.DebugInfo
-) -> tuple[ClosedJaxpr, PyTreeDef, list[Any]]:
+) -> tuple[Jaxpr, PyTreeDef, list[Any]]:
   config.enable_checks.value and debug_info.assert_arg_names(len(in_avals_flat))
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(debug_info, parent_trace=parent_trace)
@@ -2424,8 +2424,6 @@ def trace_to_jaxpr(
     del trace, fun, in_tracers_flat, in_tracers, out_tracers, ans, ans_flat
 
   config.enable_checks.value and core.check_jaxpr(jaxpr)
-  # TODO(dougalm): remove this once we merge Jaxpr and ClosedJaxpr
-  jaxpr = close_jaxpr(convert_constvars_jaxpr(jaxpr))
   return jaxpr, out_tree, consts
 
 
