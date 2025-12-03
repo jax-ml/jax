@@ -1758,6 +1758,7 @@ def _swap_lowering_rule_wg(
         "Transforms are not yet implemented for warpgroup semantics"
     )
   assert isinstance(x_smem, ir.Value)
+  value = _ensure_ir_value(value, ctx.avals_in[1].dtype)
   if shape:
     old_value = mgpu.dialect.vector_load(x_smem)
     mgpu.dialect.vector_store(value, x_smem)

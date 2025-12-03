@@ -1322,6 +1322,17 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
     np.testing.assert_array_equal(kernel(x), x * 2)
 
+  def test_swap_scalar_constant(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+    )
+    def kernel(o_ref):
+      o_ref[...] = jnp.array(42)
+
+    np.testing.assert_array_equal(kernel(), jnp.array(42, jnp.int32))
+
   def test_check(self):
     self.skip_if_wg_semantics()
 
