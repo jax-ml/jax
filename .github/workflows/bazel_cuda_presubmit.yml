@@ -73,6 +73,9 @@ jobs:
             - python: "3.14"
               enable-x64: 1
               jaxlib-version: "pypi_latest"
+            # Exclude CUDA 12 on jaxlib head because it's too slow.
+            - cuda-version: "12"
+              jaxlib-version: "head"
     name: "Bazel single accelerator ${{ format('{0}', 'CUDA tests') }}"
 # End Presubmit Naming Check github-cuda-presubmits
     with:
