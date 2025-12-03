@@ -3485,7 +3485,7 @@ def _delta(dtype: DTypeLike, shape: Shape, axes: Sequence[int]) -> Array:
 def _tri(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
   offset = asarray(core.dimension_as_value(offset))
-  if not dtypes.issubdtype(offset, np.integer):
+  if not dtypes.issubdtype(offset.dtype, np.integer):
     raise TypeError(f"offset must be an integer, got {offset!r}")
   shape_dtype = lax_utils.int_dtype_for_shape(shape, signed=True)
   if (
