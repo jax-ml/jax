@@ -73,11 +73,12 @@ parser.add_argument(
 parser.add_argument(
     "--nvidia_wheel_versions_data",
     default=None,
-    required=True,
+    required=False,
     help="NVIDIA wheel versions data",
 )
 args = parser.parse_args()
-
+if args.enable_cuda and not args.nvidia_wheel_versions_data:
+  parser.error('argument --nvidia_wheel_versions_data is required for CUDA builds')
 r = runfiles.Create()
 
 
