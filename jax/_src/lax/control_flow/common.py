@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 import os
 from functools import partial
 from typing import Any
@@ -27,7 +27,7 @@ from jax._src import linear_util as lu
 from jax._src.util import weakref_lru_cache, safe_map
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (equality_errors_pytreedef, tree_map,
-                                tree_unflatten, keystr, PyTreeDef)
+                                tree_unflatten, keystr)
 
 map, unsafe_map = safe_map, map
 
@@ -73,7 +73,7 @@ def _pad_constvars(jaxpr: core.ClosedJaxpr, num_consts: int,
             *map(make_var, right), *jaxpr.invars[num_consts:]]
   effs = pe._renumber_effects(invars, jaxpr.invars, jaxpr.effects)
   jaxpr = jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(invars=invars, effects=effs))
-  config.enable_checks.value and core.check_jaxpr(jaxpr)
+  config.enable_checks.value and core.check_jaxpr(jaxpr.jaxpr)
   return jaxpr
 
 @weakref_lru_cache

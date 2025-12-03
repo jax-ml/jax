@@ -18,7 +18,6 @@ import collections
 from collections.abc import Callable, Sequence
 import functools
 from functools import partial
-import inspect
 import itertools
 import operator
 from typing import Any, TypeVar
