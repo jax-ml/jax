@@ -396,6 +396,9 @@ common:rbe --spawn_strategy=remote,worker,standalone,local
 common:rbe --remote_download_toplevel
 test:rbe --test_env=USER=anon
 
+common:rbe_cpu_pool --repo_env=REMOTE_GPU_TESTING=0
+common:rbe_gpu_pool --repo_env=REMOTE_GPU_TESTING=1
+
 # RBE configs for Linux x86
 # Set the remote worker pool
 common:rbe_linux_x86_64_base --remote_instance_name=projects/tensorflow-testing/instances/default_instance
@@ -416,7 +419,7 @@ common:rbe_linux_x86_64 --config=rbe_linux_x86_64_base
 common:rbe_linux_x86_64 --config=ci_linux_x86_64
 
 common:rbe_linux_x86_64_cuda_common --config=rbe_linux_x86_64_base
-common:rbe_linux_x86_64_cuda_common --repo_env=REMOTE_GPU_TESTING=1
+common:rbe_linux_x86_64_cuda_common --config=rbe_gpu_pool
 
 common:rbe_linux_x86_64_cuda12 --config=rbe_linux_x86_64_cuda_common
 common:rbe_linux_x86_64_cuda12 --config=ci_linux_x86_64_cuda12
