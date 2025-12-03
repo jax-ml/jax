@@ -72,11 +72,7 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
       ("sharded_dim_1", 1),
   )
   @jtu.ignore_warning(category=DeprecationWarning)
-  def test_default_pmap_sharding(self, sharded_dim):
-    if jax.config.jax_pmap_shmap_merge:
-      self.skipTest("Does not apply for pmap shard_map merge")
-
-    n = jax.local_device_count()
+  def test_default_pmap_sharding(self, sharded_dim):    n = jax.local_device_count()
     shape = (n, 1) if sharded_dim == 0 else (1, n)
 
     ps = jax.sharding.PmapSharding.default(shape, sharded_dim)
