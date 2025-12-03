@@ -33,6 +33,7 @@ from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import lowering as tc_lowering
+from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import sc_lowering
 from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
@@ -632,6 +633,72 @@ def _reduce_sum_lowering_rule(
     raise NotImplementedError(f"SC reduce_sum: axes={axes} must be (0,).")
   return vector.extract(
       _cumsum_lowering_rule(ctx, x, 0, reverse=False), [], [vec_dim - 1])
+
+
+masked_sort_p = jax_core.Primitive("masked_sort")
+masked_sort_p.multiple_results = True
+
+@masked_sort_p.def_abstract_eval
+def _masked_sort_abstract_eval(keys, values, *maybe_mask, descending):
+  del descending  # Unused.
+  supported_shape = (sc_core.get_sparse_core_info().num_lanes,)
+  if keys.dtype not in (jnp.int32, jnp.float32):
+    raise NotImplementedError(
+        f"sort_key_val: keys dtype {keys.dtype} should be int32 or float32")
+  if keys.shape != supported_shape:
+    raise ValueError(f"keys shape {keys.shape} must be {supported_shape}")
+  if jnp.dtype(values.dtype).itemsize != 4:
+    raise NotImplementedError(
+        f"sort_key_val: values dtype {values.dtype} should be 32 bits")
+  if values.shape != supported_shape:
+    raise ValueError(f"values shape {values.shape} must be {supported_shape}")
+  if maybe_mask:
+    [mask] = maybe_mask
+    if not jnp.issubdtype(mask.dtype, jnp.bool):
+      raise TypeError(f"mask dtype {mask.dtype} is not boolean")
+    if mask.shape != supported_shape:
+      raise ValueError(f"mask shape {mask.shape} must be {supported_shape}")
+  return keys, values, *maybe_mask
+
+@sc_lowering.register_lowering_rule(masked_sort_p)
+def _masked_sort_lowering_rule(
+    ctx: sc_lowering.LoweringRuleContext, keys, values, *maybe_mask, descending):
+  del ctx  # Unused.
+  if maybe_mask:
+    [mask] = maybe_mask
+  else:
+    mask_type = ir.VectorType.get(
+        [sc_core.get_sparse_core_info().num_lanes],
+        ir.IntegerType.get_signless(1))
+    mask = arith.constant(mask_type, ir.DenseElementsAttr.get_splat(
+        mask_type, ir.BoolAttr.get(True)))
+  out_mask, sorted_keys, sorted_values = tpu.sort(
+      mask.type, keys.type, values.type, keys, values, mask=mask,
+      descending=descending
+  )
+  if maybe_mask:
+    return sorted_keys, sorted_values, out_mask
+  return sorted_keys, sorted_values
+
+def sort_key_val(
+    keys: jax.Array, values: jax.Array, *,
+    mask: jax.Array | None = None, descending: bool = False
+) -> jax.Array:
+  """Sorts keys and values, pushing invalid elements to the last positions.
+
+  Args:
+    keys: An array of integers or floats.
+    values: An array of values corresponding to the keys.
+    mask: An optional array of booleans, which specifies which elements of
+      `keys` and `values` are valid. If `None`, all elements are valid.
+    descending: Whether to sort in descending order.
+
+  Returns:
+    sorted_keys, sorted_values, [output_mask]: The sorted keys and values, and,
+    if a mask was given, the corresponding mask for output keys and values.
+  """
+  maybe_mask = () if mask is None else (mask,)
+  return masked_sort_p.bind(keys, values, *maybe_mask, descending=descending)
 
 
 parallel_loop_p = jax_core.Primitive("parallel_loop")
