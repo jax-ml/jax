@@ -201,11 +201,15 @@ def MosaicGPU_TMAReduction : I32EnumAttr<"TMAReduction",
       I32EnumAttrCase<"Add", 0, "add">,
       I32EnumAttrCase<"Min", 1, "min">,
       I32EnumAttrCase<"Max", 2, "max">,
-      I32EnumAttrCase<"Inc", 3, "inc">,
-      I32EnumAttrCase<"Dec", 4, "dec">,
-      I32EnumAttrCase<"And", 5, "and">,
-      I32EnumAttrCase<"Or", 6, "or">,
-      I32EnumAttrCase<"Xor", 7, "xor">
+      I32EnumAttrCase<"Smin", 3, "smin">,
+      I32EnumAttrCase<"Smax", 4, "smax">,
+      I32EnumAttrCase<"Umin", 5, "umin">,
+      I32EnumAttrCase<"Umax", 6, "umax">,
+      I32EnumAttrCase<"Inc", 7, "inc">,
+      I32EnumAttrCase<"Dec", 8, "dec">,
+      I32EnumAttrCase<"And", 9, "and">,
+      I32EnumAttrCase<"Or", 10, "or">,
+      I32EnumAttrCase<"Xor", 11, "xor">
     ]>{
   let cppNamespace = "::mosaic_gpu";
 }
