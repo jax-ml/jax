@@ -420,6 +420,8 @@ common:rbe_linux_x86_64 --config=ci_linux_x86_64
 
 common:rbe_linux_x86_64_cuda_common --config=rbe_linux_x86_64_base
 common:rbe_linux_x86_64_cuda_common --config=rbe_gpu_pool
+# Update UMD version when RBE CUDA driver is updated.
+common:rbe_linux_x86_64_cuda_common --repo_env=HERMETIC_CUDA_UMD_VERSION="13.0.1"
 
 common:rbe_linux_x86_64_cuda12 --config=rbe_linux_x86_64_cuda_common
 common:rbe_linux_x86_64_cuda12 --config=ci_linux_x86_64_cuda12
