@@ -47,6 +47,10 @@ class Array:
   @property
   def dtype(self) -> np.dtype: ...
 
+  # TODO(jakevdp) set to None after deprecation period.
+  @property
+  def __numpy_dtype__(self) -> np.dtype: ...
+
   @property
   def ndim(self) -> int: ...
 
