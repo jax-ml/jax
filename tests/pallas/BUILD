@@ -425,10 +425,10 @@ jax_multiplatform_test(
     ],
     shard_count = 8,
     deps = [
-        "//jax:extend",
         "//jax:mesh_utils",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
+        "//jax/extend",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -453,9 +453,9 @@ jax_multiplatform_test(
     ),
     shard_count = 8,
     deps = [
-        "//jax:extend",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
+        "//jax/extend",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -483,10 +483,10 @@ jax_multiplatform_test(
         "multiaccelerator",
     ],
     deps = [
-        "//jax:extend",
         "//jax:pallas_mosaic_gpu",
         "//jax/_src:test_multiprocess",
         "//jax/experimental:pallas_experimental_gpu_ops",
+        "//jax/extend",
     ] + py_deps([
         "portpicker",
         "absl/testing",
@@ -522,10 +522,10 @@ jax_multiplatform_test(
     enable_backends = ["tpu"],
     tags = ["multiaccelerator"],
     deps = [
-        "//jax:extend",
         "//jax:mesh_utils",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
+        "//jax/extend",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -556,10 +556,10 @@ jax_multiplatform_test(
         "notsan",  # Times out.
     ],
     deps = [
-        "//jax:extend",
         "//jax:mesh_utils",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
+        "//jax/extend",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -623,8 +623,8 @@ jax_multiplatform_test(
         "notsan",
     ],
     deps = [
-        "//jax:extend",
         "//jax:pallas_tpu",
+        "//jax/extend",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -773,9 +773,9 @@ jax_multiplatform_test(
     ],
     shard_count = 10,
     deps = [
-        "//jax:extend",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
+        "//jax/extend",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -1260,10 +1260,10 @@ jax_multiplatform_test(
         "multiaccelerator",
     ],
     deps = [
-        "//jax:extend",
         "//jax:pallas_mosaic_gpu",
         "//jax/_src:test_multiprocess",
         "//jax/experimental:pallas_experimental_gpu_ops",
+        "//jax/extend",
     ] + py_deps([
         "portpicker",
         "absl/testing",

@@ -271,7 +271,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "extend_test",
     srcs = ["extend_test.py"],
-    deps = ["//jax:extend"] + py_deps("absl/testing"),
+    deps = ["//jax/extend"] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
