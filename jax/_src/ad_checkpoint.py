@@ -26,6 +26,7 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import effects
@@ -45,6 +46,7 @@ from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix,
     tree_map)
+from jax._src.typing import DeprecatedArg
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
 
@@ -202,7 +204,7 @@ checkpoint_policies = types.SimpleNamespace(
 def checkpoint(fun: Callable, *, prevent_cse: bool = True,
                policy: Callable[..., bool] | None = None,
                static_argnums: int | tuple[int, ...] = (),
-               concrete: bool = False) -> Callable:
+               concrete: bool | DeprecatedArg = DeprecatedArg()) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
   The :func:`jax.checkpoint` decorator, aliased to :func:`jax.remat`, provides a
@@ -256,8 +258,8 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
       returns a boolean indicating whether the corresponding output value(s) can
       be saved as residuals (or instead must be recomputed in the (co)tangent
       computation if needed).
-    concrete: Optional boolean; deprecated. Passing a non-False value will
-      result in NotImplementedError.
+    concrete: Optional boolean; deprecated. Will raise a DeprecationWarning if
+      used, and passing True will result in a NotImplementedError.
 
   Returns:
     A function (callable) with the same input/output behavior as ``fun`` but
@@ -345,11 +347,16 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
   ``jax.ensure_compile_time_eval``), it may be easier to compute some values
   outside the :func:`jax.checkpoint`-decorated function and then close over them.
   """
-  if concrete:
-    raise NotImplementedError(
-      "The concrete option to jax.checkpoint has been deprecated. In its"
-      " place please use ``static_argnums``; for details refer to"
-      " https://docs.jax.dev/en/latest/jep/11830-new-remat-checkpoint.html.")
+  if not isinstance(concrete, DeprecatedArg):
+    concrete_msg = (
+        "The `concrete` option to `jax.checkpoint` has been deprecated."
+        " In its place please use `static_argnums`; for details refer to"
+        " https://docs.jax.dev/en/latest/jep/11830-new-remat-checkpoint.html."
+    )
+    deprecations.warn("jax-checkpoint-concrete", concrete_msg, stacklevel=2)
+    if concrete:
+      raise NotImplementedError(concrete_msg)
+
   if isinstance(static_argnums, int):
     static_argnums = static_argnums,
   if isinstance(prevent_cse, list):
@@ -383,7 +390,7 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
 def remat(fun: Callable, *, prevent_cse: bool = True,
           policy: Callable[..., bool] | None = None,
           static_argnums: int | tuple[int, ...] = (),
-          concrete: bool = False) -> Callable:
+          concrete: bool | DeprecatedArg = DeprecatedArg()) -> Callable:
   """Alias of :func:`jax.checkpoint`."""
   return checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
                     static_argnums=static_argnums, concrete=concrete)
