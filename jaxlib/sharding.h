@@ -232,7 +232,7 @@ class GSPMDSharding : public Sharding {
   bool IsOpShardingReplicated() const {
     // For JAX, shardings with 1 device are considered as replicated in its
     // semantics so that downstream things continue to work.
-    if (hlo_sharding_.tile_assignment().num_elements() == 1) {
+    if (hlo_sharding_.num_devices() == 1) {
       return true;
     }
     return hlo_sharding().IsReplicated();
