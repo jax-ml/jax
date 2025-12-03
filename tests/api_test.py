@@ -5374,6 +5374,14 @@ class APITest(jtu.JaxTestCase):
 
     jax.vmap(f)(jnp.arange(3.))  # don't crash
 
+  def test_sharding_attr_on_tracer_error(self):
+    @jax.jit
+    def f(x):
+      with self.assertRaisesRegex(AttributeError, 'typeof'):
+        x.sharding
+
+    f(jnp.arange(2.))
+
 
 class RematTest(jtu.JaxTestCase):
 

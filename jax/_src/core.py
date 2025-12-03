@@ -1064,8 +1064,8 @@ class Tracer(TracerBase, metaclass=TracerMeta):
 
     if name == 'sharding':
       raise AttributeError(
-        f"The 'sharding' attribute is not available on {self._error_repr()}."
-        f"{self._origin_msg()}")
+        f"The 'sharding' attribute is not available on {self._error_repr()}. "
+        "To query sharding information on tracers, use `jax.typeof(x)`.")
 
     try:
       attr = getattr(self.aval, name)
