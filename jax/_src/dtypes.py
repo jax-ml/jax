@@ -995,7 +995,11 @@ def dtype(x: Any) -> DType:
     dt = x.dtype
   else:
     try:
-      dt = np.result_type(x)
+      with warnings.catch_warnings():
+        # Ignore warning associated with __numpy_dtype__ change in NumPy 2.4.
+        # TODO(jakevdp): remove this warning context after change is finalized.
+        warnings.simplefilter("ignore", DeprecationWarning)
+        dt = np.result_type(x)
     except TypeError as err:
       raise TypeError(f"Cannot determine dtype of {x}") from err
   if dt not in _jax_dtype_set and not issubdtype(dt, extended):

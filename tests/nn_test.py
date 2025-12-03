@@ -856,7 +856,7 @@ class NNInitializersTest(jtu.JaxTestCase):
     val = initializer(rng, shape, dtype)
 
     self.assertEqual(shape, jnp.shape(val))
-    self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), jnp.dtype(val))
+    self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), val.dtype)
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
@@ -872,7 +872,7 @@ class NNInitializersTest(jtu.JaxTestCase):
     val = initializer(rng, shape)
 
     self.assertEqual(shape, jnp.shape(val))
-    self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), jnp.dtype(val))
+    self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), val.dtype)
 
   def testVarianceScalingMultiAxis(self):
     rng = random.PRNGKey(0)
