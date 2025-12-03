@@ -749,7 +749,16 @@ def _get_ref_and_transforms(ref):
 
 
 def make_async_copy(src_ref, dst_ref, sem) -> AsyncCopyDescriptor:
-  """Issues a DMA copying from src_ref to dst_ref."""
+  """Creates a description of an asynchronous copy operation.
+
+  Args:
+    src_ref: The source Reference.
+    dst_ref: The destination Reference.
+    sem: The semaphore used to track completion of the copy.
+
+  Returns:
+    An AsyncCopyDescriptor.
+  """
   src_ref, src_transforms = _get_ref_and_transforms(src_ref)
   dst_ref, dst_transforms = _get_ref_and_transforms(dst_ref)
   sem, sem_transforms = _get_ref_and_transforms(sem)
@@ -835,6 +844,7 @@ def async_remote_copy(
     device_id,
     device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH,
 ) -> AsyncCopyDescriptor:
+  """Issues a remote DMA copying from src_ref to dst_ref."""
   copy_descriptor = make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem,
                                            device_id, device_id_type)
   copy_descriptor.start()
@@ -1029,7 +1039,7 @@ def with_memory_space_constraint(
 ) -> jax.Array:
   """Constrains the memory space of an array.
 
-  This primitive does not change the value of `x`, but it constrains the
+  This primitive does not change the value of ``x``, but it constrains the
   memory space where it should be allocated. This is useful to force
   Pallas to allocate an array in a specific memory space.
 
@@ -1042,7 +1052,7 @@ def with_memory_space_constraint(
     memory_space: The memory space to constrain to.
 
   Returns:
-    The array `x` with the memory space constraint.
+    The array ``x`` with the memory space constraint.
   """
   if memory_space in {tpu_core.MemorySpace.ANY, pl_core.MemorySpace.ANY}:
     return x

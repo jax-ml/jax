@@ -101,7 +101,7 @@ class semaphore_dtype(dtypes.extended):
   """Common dtype for all kinds of semaphore dtypes.
 
   This is an abstract class that should never be instantiated, but rather
-  exists for the sake of `jnp.issubdtype`.
+  exists for the sake of ``jnp.issubdtype``.
   """
 
 class semaphore(semaphore_dtype):
@@ -359,7 +359,7 @@ class Blocked:
 class BoundedSlice:
   """Allows to specify a bounded slice of a dimension.
 
-  Specifically, the index_map need to return a `pl.Slice/pl.ds` for this
+  Specifically, the index_map need to return a ``pl.Slice/pl.ds`` for this
   dimension. The start and size may be dynamic, as long as the size <=
   block_size.
   """

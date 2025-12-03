@@ -64,11 +64,11 @@ batching.ragged_prop_rules[program_id_p] = batching.ragged_mask_no_op_rule
 def program_id(axis: int) -> jax_typing.Array:
   """Returns the kernel execution position along the given axis of the grid.
 
-  For example, with a 2D `grid` in the kernel execution corresponding to the
-  grid coordinates `(1, 2)`,
-  `program_id(axis=0)` returns `1` and `program_id(axis=1)` returns `2`.
+  For example, with a 2D ``grid`` in the kernel execution corresponding to the
+  grid coordinates ``(1, 2)``,
+  ``program_id(axis=0)`` returns ``1`` and ``program_id(axis=1)`` returns ``2``.
 
-  The returned value is an array of shape `()` and dtype `int32`.
+  The returned value is an array of shape ``()`` and dtype ``int32``.
 
   Args:
     axis: the axis of the grid along which to count the program.
@@ -350,6 +350,8 @@ max_contiguous_p.def_impl(lambda x, **_: x)
 mlir.register_lowering(max_contiguous_p, lambda _, x, **__: [x])
 
 def max_contiguous(x, values):
+  """A compiler hint that asserts the ``values`` first values of ``x`` are contiguous.
+  """
   if not isinstance(values, (list, tuple)):
     values = (values,)
   return max_contiguous_p.bind(x, values=tuple(values))
@@ -364,6 +366,18 @@ multiple_of_p.def_impl(lambda x, **_: x)
 mlir.register_lowering(multiple_of_p, lambda _, x, **__: [x])
 
 def multiple_of(x: jax_typing.Array, values: Sequence[int] | int) -> jax_typing.Array:
+  """A compiler hint that asserts a value is a static multiple of another.
+
+  Note that misusing this function, such as asserting ``x`` is a multiple of
+  ``N`` when it is not, can result in undefined behavior.
+
+  Args:
+    x: The input array.
+    values: A set of static divisors that ``x`` is a multiple of.
+
+  Returns:
+    A copy of ``x``.
+  """
   values = (values,) if isinstance(values, int) else tuple(values)
   return multiple_of_p.bind(x, values=values)
 
@@ -713,6 +727,24 @@ def _handle_small(dtype: jax_typing.DTypeLike):
 
 def dot(a, b, trans_a: bool = False, trans_b: bool = False,
         allow_tf32: bool | None = None, precision=None):
+  """Computes the dot product of two arrays.
+
+  The inputs can optionally be transposed before computing the
+  product. Depending on the hardware, this can be cheaper than
+  computing the transpose beforehand.
+
+  Args:
+    a: The left-hand size of the dot product, of shape ``(..., N)``.
+    b: The right-hand size of the dot product, of shape ``(...N, M)``.
+    trans_a: Whether to transpose ``a`` before the product.
+    trans_b: Whether to transpose ``b`` before the product.
+    allow_tf32: Whether to use tf32 precision.
+      Mutually exclusive with ``precision``.
+    precision: Specifies the precision of the dot product.
+
+  See Also:
+    :func:`jax.numpy.dot`
+  """
   if (a.ndim != 2) or (b.ndim != 2):
     raise ValueError("`a` and `b` must be 2D arrays.")
   lhs_contract_dim = 0 if trans_a else 1
@@ -837,9 +869,9 @@ def run_scoped(
   to allocate for each argument. Each backend has its own set of reference
   types in addition to :class:`jax.experimental.pallas.MemoryRef`.
 
-  When `collective_axes` is specified, the same allocation will be returned for
+  When ``collective_axes`` is specified, the same allocation will be returned for
   all programs that only differ in their program ids along the collective axes.
-  It is an error not to call the same `run_scoped` in all programs along that
+  It is an error not to call the same ``run_scoped`` in all programs along that
   axis.
   """
   if not isinstance(collective_axes, tuple):
@@ -974,12 +1006,12 @@ jax_core._ref_allocating_primitives.add(get_global_p)
 def get_global(what: pallas_core.ScratchShape) -> jax_typing.Array:
   """Returns a global reference that persists across all kernel invocations.
 
-  Each call to get_global returns a different and unique reference, but one that
+  Each call to ``get_global`` returns a different and unique reference, but one that
   is stable across invocations of the kernel body.
 
   Args:
     what: The reference type to allocate. Each backend has its own set of
-      reference types (e.g., `plgpu.SemaphoreType.REGULAR` for GPU).
+      reference types (e.g., :class:`jax.experimental.pallas.mosaic_gpu.SemaphoreType` for GPU).
 
   Example::
 
@@ -1064,7 +1096,15 @@ semaphore_read_p = jax_core.Primitive("semaphore_read")
 semaphore_read_p.multiple_results = False
 
 
-def semaphore_read(sem_or_view):
+def semaphore_read(sem_or_view) -> jax_typing.Array:
+  """Reads the value of a semaphore.
+
+  Args:
+    sem_or_view: A Ref (or view) representing a semaphore.
+
+  Returns:
+    A scalar Array containing the value of the semaphore.
+  """
   ref, transforms = _get_ref_and_transforms(sem_or_view)
   args = [ref, transforms]
   flat_args, args_tree = tree_util.tree_flatten(args)
@@ -1107,6 +1147,24 @@ def semaphore_signal(
     device_id_type: DeviceIdType = DeviceIdType.MESH,
     core_index: int | jax_typing.Array | None = None,
 ):
+  """Increments the value of a semaphore.
+
+  This operation can also be performed remotely if ``device_id`` is specified,
+  in which ``sem_or_view`` refers to a Ref located on another device.
+  Note that it is assumed that ``sem_or_view`` is already allocated
+  (e.g. through the proper use of barriers), or else this operation could
+  result in undefined behavior.
+
+  Args:
+    sem_or_view: A Ref (or view) representing a semaphore.
+    inc: The value to increment by.
+    device_id (optional): Specifies which device to signal.
+      If not specified, ``sem_or_view`` is assumed to be local.
+    device_id_type (optional): The format in which
+      ``device_id`` should be specified.
+    core_index (optional): If on a multi-core device,
+      specifies which core to signal.
+  """
   ref, transforms = _get_ref_and_transforms(sem_or_view)
   inc = jnp.asarray(inc, dtype=jnp.int32)
   args = [ref, transforms, inc, device_id, core_index]
@@ -1208,6 +1266,14 @@ semaphore_wait_p.multiple_results = True
 def semaphore_wait(
     sem_or_view, value: int | jax_typing.Array = 1, *, decrement: bool = True
 ):
+  """Blocks execution of the current thread until a semaphore reaches a value.
+
+  Args:
+    sem_or_view: A Ref (or view) representing a semaphore.
+    value: The target value that the semaphore should reach before unblocking.
+    decrement: Whether to decrement the value of the semaphore after
+      a successful wait.
+  """
   ref, transforms = _get_ref_and_transforms(sem_or_view)
   value = jnp.asarray(value, dtype=jnp.int32)
   args = [ref, transforms, value, decrement]

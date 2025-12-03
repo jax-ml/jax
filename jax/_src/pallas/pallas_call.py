@@ -1668,7 +1668,10 @@ def pallas_call(
     backend: Backend | None = None,
     metadata: dict[str, str] | None = None,
 ) -> Callable[..., Any]:
-  """Invokes a Pallas kernel on some inputs.
+  """Entry point for creating a Pallas kernel.
+
+  In contrast to :func:`jax.experimental.pallas.kernel`, this entry point
+  assumes that the kernel will be executed over a ``grid``.
 
   See `Pallas Quickstart <https://docs.jax.dev/en/latest/pallas/quickstart.html>`_.
 

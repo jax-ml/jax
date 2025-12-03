@@ -154,6 +154,7 @@ class TpuInfo:
 
 
 def is_tpu_device() -> bool:
+  """Returns whether the current device is a TPU."""
   return core.get_device_kind() in {
       "TPU v2",
       "TPU v3",
