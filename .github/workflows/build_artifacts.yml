@@ -115,7 +115,7 @@ jobs:
     name: "${{ inputs.artifact }},
             ${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
             (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||
-            (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py ${{ inputs.python }} ${{ (contains(inputs.artifact, 'cuda') && format(', cuda {0}', inputs.cuda-version)) || '' }}, clone main XLA=${{ inputs.clone_main_xla }}"
+            (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py ${{ inputs.python }}${{ (contains(inputs.artifact, 'cuda') && format(', cuda {0}', inputs.cuda-version)) || '' }}, clone main XLA=${{ inputs.clone_main_xla }}"
 
     # Map the job outputs to step outputs
     outputs:
