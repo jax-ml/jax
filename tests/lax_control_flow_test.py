@@ -53,25 +53,14 @@ jax.config.parse_flags_with_absl()
 # provides a lax.cond-compatible interface to a two-branch lax.switch. Several
 # tests in this file are parameterized such that they either call into lax.cond
 # or into this function.
-def cond_via_switch(pred, true_fun, false_fun, op, *args):
-  if len(args) > 0:
-    assert len(args) == 1
-    true_op, _true_fun, false_op, _false_fun = true_fun, false_fun, op, args[0]
-    op = (false_op, true_op)
-    false_fun = lambda op: _false_fun(op[0])
-    true_fun = lambda op: _true_fun(op[1])
+def cond_via_switch(pred, true_fun, false_fun, *args):
   index = lax.convert_element_type(pred, np.int32)
-  return lax.switch(index, [false_fun, true_fun], op)
+  return lax.switch(index, [false_fun, true_fun], *args)
 
-def cond_with_new_checkpoint(pred, true_fun, false_fun, op, *args):
-  if args:
-    true_op, _true_fun, false_op, _false_fun = true_fun, false_fun, op, args[0]
-    op = (false_op, true_op)
-    false_fun = lambda op: _false_fun(op[0])
-    true_fun = lambda op: _true_fun(op[1])
+def cond_with_new_checkpoint(pred, true_fun, false_fun, *args):
   index = lax.convert_element_type(pred, np.int32)
-  fn = lambda index, op: lax.switch(index, [false_fun, true_fun], op)
-  return jax.checkpoint(fn)(index, op)
+  fn = lambda index, *args: lax.switch(index, [false_fun, true_fun], *args)
+  return jax.checkpoint(fn)(index, *args)
 
 COND_IMPLS = [
     (lax.cond, 'cond'),
@@ -171,8 +160,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    lax_control_flow._initial_style_open_jaxpr.cache_clear()
-    lax_control_flow._initial_style_jaxpr.cache_clear()
     lax_control_flow.common._dedup_consts.cache_clear()
     lax_control_flow.common._pad_constvars.cache_clear()
 
@@ -1000,8 +987,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
           lax.lt(x, 2),
           lambda x: lax.mul(2, x),
           lambda x: cond(lax.lt(x, 5),
-                         x, lambda x: lax.mul(3, x),
-                         4, lambda y: lax.mul(y, x)),
+                         lambda x, _: lax.mul(3, x),
+                         lambda _, y: lax.mul(y, x), x, 4),
           x)
 
     self.assertEqual(cfun(1), 2)
@@ -1121,9 +1108,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testCondBatched(self):
     def fun(x, y, z):
       pred = lax.lt(x, 3)
-      true_fun = lambda y: y
-      false_fun = lambda z: lax.neg(z)
-      return lax.cond(pred, y, true_fun, z, false_fun)
+      true_fun = lambda y, _: y
+      false_fun = lambda _, z: lax.neg(z)
+      return lax.cond(pred, true_fun, false_fun, y, z)
 
     # these cases stay as cond
     x = jnp.array(2)
@@ -1287,7 +1274,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return 2. * x
 
     def fun(x):
-      return cond(x < 3, None, lambda _: 2., x, lambda x: 2. * x)
+      return cond(x < 3, lambda _: 2., lambda x: 2. * x, x)
 
     x = 3.14
     ans = jax.jvp(fun, (x,), (x,))
@@ -1445,7 +1432,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return 2. * x
 
     def fun(x):
-      return cond(x < 3, None, lambda _: 2., x, lambda x: 2. * x)
+      return cond(x < 3, lambda _: 2., lambda x: 2. * x, x)
 
     x = 3.14
     ans = jax.grad(fun)(x)
@@ -1475,8 +1462,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def fun(x, y):
       return cond(
           x < 3,
-          None, lambda _: 2. * jnp.sin(y),
-          x,  lambda x: 2. * x)
+          lambda _: 2. * jnp.sin(y),
+          lambda x: 2. * x,
+          x)
 
     y = 5.8
     x = 3.14
@@ -1665,7 +1653,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testIssue1263(self):
     def f(rng, x):
       cond = random.bernoulli(rng)
-      return lax.cond(cond, x, lambda x: x, jnp.abs(x) - 1., lambda x: x)
+      return lax.cond(cond, lambda x, _: x, lambda _, x: x, x, jnp.abs(x) - 1.)
 
     def body_fn(i, state):
       rng, x = state
@@ -1680,8 +1668,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testIssue514(self):
     # just check this doesn't crash
     lax.cond(True,
-            (0, 0), lambda x: (x[0], 0),
-            (1, 1), lambda x: x)
+             lambda x, _: (x[0], 0),
+             lambda _, x: x,
+             (0, 0), (1, 1))
 
   def testIssue649(self):
     from jax import lax
@@ -2388,8 +2377,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     elif loop == "fori_inside_cond":
       func = lambda x: lax.cond(
           True,
-          x, lambda x: lax.fori_loop(x, x + 2., lambda i, c: c * 2., x),
-          1., lambda x: x)
+          lambda x, _: lax.fori_loop(x, x + 2., lambda i, c: c * 2., x),
+          lambda _, x: x,
+          x, 1.)
     elif loop == "fori_inside_scan":
       func = lambda x: lax.scan(
           lambda c, x: (lax.fori_loop(x, x + 2., lambda i, c1: c1 * c, x), None),
@@ -2561,7 +2551,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def test_disable_jit_cond_with_vmap(self):
     # https://github.com/jax-ml/jax/issues/3093
     def fn(t):
-      return lax.cond(t > 0, 0, lambda x: 0, 0, lambda x: 1)
+      return lax.cond(t > 0, lambda x, _: 0, lambda _, x: 1, 0, 0)
     fn = jax.vmap(fn)
 
     with jax.disable_jit():
