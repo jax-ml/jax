@@ -624,9 +624,13 @@ def TPU_RepeatOp : TPU_Op<"repeat", [Pure]> {
 
 def TPU_BroadcastInSublanesOp : TPU_Op<"broadcast_in_sublanes", [Pure]> {
   let description = [{
-    For each sublane `i`, broadcasts the value in lane `lane + i` along the entire
-    sublane. If `lane + i` is not in [0, lane_count), then the value in sublane `i`
-    is not defined (can be anything).
+    For each sublane `i`, broadcasts the value in lane `lane + i` along the
+    entire sublane. For packed type, imagine the data is compressed unpacked
+    along sublane dimension, and the sublane count is multiplied by the packing
+    factor.
+    For example, for i16 with sublane count 8, `i` above is in [0, 8 * 2).
+    If `lane + i` is not in [0, lane_count), then the value in sublane `i` is
+    not defined (can be anything).
   }];
   let arguments = (ins
     TPU_Vreg:$source,  // All sublanes should be equal.
