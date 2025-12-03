@@ -61,6 +61,23 @@ class PallasCostEstimateTest(jtu.JaxTestCase):
     self.assertEqual(cost.transcendentals, 0)
     self.assertEqual(cost.bytes_accessed, 4*(b*m*k + b*n*k + b*m*n))
 
+  @parameterized.parameters(
+      ((10, 11, 12), (11, 12), "abc,bc->a"),
+      ((10, 11, 12), (13, 11, 12), "abc,dbc->ad"),
+      ((10, 11, 12), (9, 10, 11, 12), "abc,dabc->d"),
+  )
+  def test_einsum(self, a_shape, b_shape, pattern):
+    a = jnp.ones(a_shape, dtype=jnp.float32)
+    b = jnp.ones(b_shape, dtype=jnp.float32)
+    def matmul(a, b):
+      return jnp.einsum(pattern, a, b)
+    cost = cost_estimate.estimate_cost(
+        matmul,
+        jax.ShapeDtypeStruct(a_shape, jnp.float32),
+        jax.ShapeDtypeStruct(b_shape, jnp.float32))
+    xla_flops = jax.jit(matmul).lower(a, b).compile().cost_analysis()['flops']
+    self.assertEqual(cost.flops, int(xla_flops))
+
   def test_attention(self):
     qk_dim = 16
     v_dim = 4

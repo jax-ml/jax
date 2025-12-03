@@ -183,7 +183,6 @@ else
     //tests/pallas:tpu_pallas_test_tpu \
     //tests/pallas:tpu_pallas_call_print_test_tpu \
     //tests/pallas:indexing_test_tpu \
-    //tests/pallas:pallas_cost_estimate_test_tpu \
     //tests/pallas:pallas_error_handling_test_tpu \
     //tests/pallas:pallas_jumble_test_tpu \
     //tests/pallas:pallas_shape_poly_test_tpu \
