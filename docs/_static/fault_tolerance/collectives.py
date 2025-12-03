@@ -23,11 +23,11 @@ def main(_: Sequence[str]) -> None:
   )
   print(f'{jax.devices()=}')
   print(f'{jax.local_devices()=}')
+
+  n = jax.device_count()
+  jax.set_mesh(jax.make_mesh((n,), ("i",)))
+  x = jax.device_put(jnp.arange(n), jax.P("i"))
   while True:
-    mesh = jax.make_mesh((4,), ("i",))
-    spec = jax.sharding.PartitionSpec("i")
-    sharding = jax.sharding.NamedSharding(mesh, spec)
-    x = jax.device_put(jnp.array([1., 2., 3., 4.]), sharding)
     print(jnp.sum(x))
     time.sleep(1)
 

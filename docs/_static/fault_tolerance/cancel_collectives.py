@@ -32,13 +32,12 @@ def main(_: Sequence[str]) -> None:
 
   # Don't do this. Use live_devices instead.
   from jax.experimental.multihost_utils import _live_devices
-  _live_devices(jax.devices())
+  _live_devices(jax._src.distributed.global_state.client, jax.devices())
 
+  n = jax.device_count()
+  jax.set_mesh(jax.make_mesh((n,), ("i",)))
+  x = jax.device_put(jnp.arange(n), jax.P("i"))
   while True:
-    mesh = jax.make_mesh((4,), ("i",))
-    spec = jax.sharding.PartitionSpec("i")
-    sharding = jax.sharding.NamedSharding(mesh, spec)
-    x = jax.device_put(jnp.array([1., 2., 3., 4.]), sharding)
     print(jnp.sum(x))
     time.sleep(1)
 

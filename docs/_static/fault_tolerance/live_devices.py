@@ -36,16 +36,14 @@ def main(_: Sequence[str]) -> None:
       with live_devices(jax.devices()) as devices:
         print(f'{devices=}')
         n = len(devices)
-        mesh = jax.make_mesh((n,), ("i",), devices=devices)
-        spec = jax.sharding.PartitionSpec("i")
-        sharding = jax.sharding.NamedSharding(mesh, spec)
-        x = jax.device_put(jnp.arange(n), sharding)
+        jax.set_mesh(jax.make_mesh((n,), ("i",), devices=devices))
+        x = jax.device_put(jnp.arange(n), jax.P("i"))
         print(jnp.sum(x))
-        time.sleep(1)
     except Exception as e:
       print('FAIL:', e)
     else:
       print('PASS')
+    time.sleep(1)
 
 
 if __name__ == "__main__":

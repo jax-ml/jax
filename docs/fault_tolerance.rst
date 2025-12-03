@@ -124,7 +124,7 @@ processes perform a collective ``jnp.sum`` in every iteration of the loop.
 
 .. literalinclude:: _static/fault_tolerance/collectives.py
     :language: python
-    :emphasize-lines: 27-31
+    :emphasize-lines: 27-32
     :linenos:
 
 In the highlighted code above, the processes create an array ``x`` sharded
@@ -176,7 +176,7 @@ Below, we edit ``example.py`` to call ``live_devices``.
 
 .. literalinclude:: _static/fault_tolerance/live_devices.py
     :language: python
-    :emphasize-lines: 34-48
+    :emphasize-lines: 34-46
     :linenos:
 
 In the highlighted code above, we call ``live_devices`` with all devices
