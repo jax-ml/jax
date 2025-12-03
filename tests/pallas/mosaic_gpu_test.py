@@ -654,7 +654,6 @@ class PallasCallTest(PallasTest):
 
   @parameterized.parameters(jnp.bfloat16, jnp.float16, jnp.float32)
   def test_copy_smem_to_gmem_reduction(self, dtype):
-    self.skip_if_wg_semantics()  # Reduction not implemented.
     @functools.partial(
         self.pallas_call,
         grid=(200,),

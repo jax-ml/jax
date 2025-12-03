@@ -248,6 +248,13 @@ def _copy_smem_to_gmem_lowering(
         "GMEM refs with peer ids are not supported in warpgroup lowering."
     )
   assert not copy_params.get("gmem_transform")
+  if reduction_op is not None:
+    reduction_op_attr = getattr(
+        mgpu.dialect.TMAReduction, reduction_op.capitalize()
+    )
+  else:
+    reduction_op_attr = None
+
   mgpu.dialect.async_store(
       src,
       dst,
@@ -255,6 +262,7 @@ def _copy_smem_to_gmem_lowering(
       slice_lengths,
       predicate=predicate,
       commit_group=commit_group,  # type: ignore[call-arg]
+      reduction_op=reduction_op_attr,
   )
   return ()
 

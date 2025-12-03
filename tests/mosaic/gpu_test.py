@@ -5346,6 +5346,59 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     x = self.prng.uniform(0, 10, input_shape).astype(el_type)
     self.assertArraysEqual(kernel(x), x.reshape(output_shape))
 
+  @parameterized.parameters(jnp.float32, jnp.bfloat16, jnp.float16)
+  def test_async_store_add_reduction(self, dtype):
+    shape = (8, 128)
+
+    def body(ctx, src, dst, smem):
+      del ctx
+      smem_ref, tma_barrier = smem
+      i32 = ir.IntegerType.get_signless(32)
+      zero = arith.constant(i32, 0)
+      indices = [zero, zero]
+      slice_lengths = smem_ref.type.shape
+
+      tma_barrier.arrive_expect_tx(
+          utils.bitwidth(smem_ref.type.element_type) * math.prod(shape) // 8
+      )
+
+      mgpu_dialect.async_load(
+          source=src,
+          destination=smem_ref,
+          barrier=tma_barrier.as_barrier_memref(),
+          indices=indices,
+          slice_lengths=slice_lengths,
+          collective=ir.ArrayAttr.get([]),
+      )
+
+      tma_barrier.wait()
+
+      mgpu_dialect.async_store(
+          source=smem_ref,
+          destination=dst,
+          indices=indices,
+          slice_lengths=slice_lengths,
+          reduction_op=mgpu_dialect.TMAReduction.Add,
+      )
+      nvvm.cp_async_bulk_wait_group(0)
+
+    src = jnp.ones(shape, dtype=dtype)
+    dst = jnp.ones(shape, dtype=dtype)
+
+    jax_shape = jax.ShapeDtypeStruct(shape, dtype)
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(jax_shape,),
+        out_shape=(),
+        inout_shape=(jax_shape,),
+        smem_scratch_shape=[jax_shape, core.TMABarrier(1)],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    np.testing.assert_array_equal(kernel(src, dst)[0], src + dst)
+
 
 class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
 

@@ -195,6 +195,21 @@ def MosaicGPU_SwizzlingMode : I32EnumAttr<"SwizzlingMode",
   let cppNamespace = "::mosaic_gpu";
 }
 
+def MosaicGPU_TMAReduction : I32EnumAttr<"TMAReduction",
+    "Reduction operation for TMA.",
+    [
+      I32EnumAttrCase<"Add", 0, "add">,
+      I32EnumAttrCase<"Min", 1, "min">,
+      I32EnumAttrCase<"Max", 2, "max">,
+      I32EnumAttrCase<"Inc", 3, "inc">,
+      I32EnumAttrCase<"Dec", 4, "dec">,
+      I32EnumAttrCase<"And", 5, "and">,
+      I32EnumAttrCase<"Or", 6, "or">,
+      I32EnumAttrCase<"Xor", 7, "xor">
+    ]>{
+  let cppNamespace = "::mosaic_gpu";
+}
+
 def TileTransformAttr : MosaicGPU_Attr<"TileTransform", "tile"> {
   let parameters = (ins ArrayRefParameter<"int32_t", "tiling">:$tiling);
   let summary = "Specifies a transform that tiles suffix dimensions of a memref in SMEM.";
@@ -345,6 +360,10 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
 
     The `predicate` allows scheduling the transfer conditionally. The async copy
     is always scheduled by at most a single lane in the warpgroup.
+
+    The `reduction_op` attribute can be provided to perform a reduction when
+    storing to GMEM. For example, using `add` will add the SMEM values to
+    existing values in GMEM.
   }];
 
   let arguments = (ins
@@ -355,7 +374,8 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
 
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
-    DefaultValuedOptionalAttr<BoolAttr, "true">:$commit_group
+    DefaultValuedOptionalAttr<BoolAttr, "true">:$commit_group,
+    OptionalAttr<MosaicGPU_TMAReduction>:$reduction_op
   );
 
   let assemblyFormat = [{

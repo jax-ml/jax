@@ -991,6 +991,11 @@ def _mgpu_async_store_op_lowering_rule(
   # flatten -> async_copy -> unflatted here, as long as flattened size is a
   # multiple of 16.
 
+  if store_op.reduction_op is not None:
+    reduction_op = mgpu.TMAReduction(store_op.reduction_op.value).name.lower()
+  else:
+    reduction_op = None
+
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=unwrapped_source,
@@ -1000,6 +1005,7 @@ def _mgpu_async_store_op_lowering_rule(
       gmem_transform=transforms,
       predicate=ctx.single_thread_per_warpgroup_predicate,
       arrive=store_op.commit_group,
+      reduction_op=reduction_op,
   )
   return []
 
