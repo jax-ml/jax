@@ -44,7 +44,7 @@ from jax._src.mesh import empty_concrete_mesh
 from jax._src.sharding import Sharding
 from jax._src.tree_util import broadcast_prefix, tree_flatten, tree_unflatten
 from jax._src.sharding_impls import (
-    PmapSharding, SingleDeviceSharding,
+    PmapSharding, SingleDeviceSharding, NamedSharding,
     device_replica_id_map, hashed_index, num_addressable_indices,
     local_to_global_shape, _internal_use_concrete_mesh)  # pyformat: disable
 from jax._src.typing import ArrayLike, DLDeviceType, DTypeLike, ExtendedDType
@@ -284,9 +284,6 @@ class ArrayImpl(basearray.Array):
   def committed(self) -> bool:
     return self._committed
 
-  def __str__(self):
-    return str(self._value)
-
   def __len__(self):
     try:
       return self.shape[0]
@@ -394,11 +391,13 @@ class ArrayImpl(basearray.Array):
   def __repr__(self):
     prefix = 'Array('
     if self.aval is not None and self.aval.weak_type:
-      dtype_str = f'dtype={self.dtype.name}, weak_type=True)'
+      dtype_str = f'dtype={self.dtype.name}, weak_type=True'
     else:
-      dtype_str = f'dtype={self.dtype.name})'
+      dtype_str = f'dtype={self.dtype.name}'
 
-    if self.is_fully_addressable or self.is_fully_replicated:
+    if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
+      return f"Array(shape={self.shape}, {dtype_str}, sharding={self.sharding})"
+    elif self.is_fully_addressable or self.is_fully_replicated:
       line_width = np.get_printoptions()["linewidth"]
       if self.size == 0:
         s = f"[], shape={self.shape}"
@@ -409,11 +408,19 @@ class ArrayImpl(basearray.Array):
                             separator=', ', max_line_width=line_width)
       last_line_len = len(s) - s.rfind('\n') + 1
       sep = ' '
-      if last_line_len + len(dtype_str) + 1 > line_width:
+      if last_line_len + len(dtype_str) + 2 > line_width:
         sep = ' ' * len(prefix)
-      return f"{prefix}{s},{sep}{dtype_str}"
+      return f"{prefix}{s},{sep}{dtype_str})"
     else:
-      return f"{prefix}shape={self.shape}, {dtype_str}"
+      return f"{prefix}shape={self.shape}, {dtype_str})"
+
+  def __str__(self):
+    if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
+      return repr(self)
+    elif self.is_fully_addressable or self.is_fully_replicated:
+      return str(self._value)  # doesn't print Array(...)
+    else:
+      return repr(self)
 
   @property
   def is_fully_addressable(self) -> bool:

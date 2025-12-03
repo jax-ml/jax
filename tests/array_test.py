@@ -882,6 +882,13 @@ class JaxArrayTest(jtu.JaxTestCase):
       jax.make_array_from_single_device_arrays(
           shape, s, [arr], dtype=jnp.float32)
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_unreduced_printing(self, mesh):
+    x = jax.device_put(jnp.arange(8., dtype='float32'), P('x'))
+    x = jax.lax.reduce_sum(x, [0], out_sharding=P(unreduced={'x'}))
+    self.assertIn('nreduced', str(x.sharding))
+    self.assertIn('Array(shape=(), dtype=float32, sharding=', str(x))
+
 
 class ShardingTest(jtu.JaxTestCase):
 
