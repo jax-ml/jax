@@ -63,7 +63,7 @@ def threefry_2x32_count(key,
     offset = prng_utils.compute_scalar_offset(
         counts_idx, unpadded_shape, block_shape)
     counts_lo = prng_utils.blocked_iota(block_size, unpadded_shape)
-    counts_lo = counts_lo + offset
+    counts_lo = counts_lo + offset.astype(jnp.uint32)
     counts_lo = counts_lo.astype(jnp.uint32)
     # TODO(justinfu): Support hi bits on count.
     counts_hi = jnp.zeros_like(counts_lo)

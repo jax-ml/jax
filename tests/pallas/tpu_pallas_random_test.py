@@ -197,7 +197,7 @@ class PRNGTest(jtu.JaxTestCase):
           key, shape=o_ref[0, ...].shape, minval=0.0, maxval=1.0
       )
 
-      key = jax_random.fold_in(key, 2)
+      key = jax_random.fold_in(key, jnp.uint32(2))
       o_ref[1, ...] = jax_random.uniform(
           key, shape=o_ref[1, ...].shape, minval=0.0, maxval=1.0
       )
@@ -243,7 +243,7 @@ class PRNGTest(jtu.JaxTestCase):
     self.assertGreaterEqual(jnp.max(y), jnp.min(y))
 
 
-class BlockInvarianceTest(parameterized.TestCase):
+class BlockInvarianceTest(jtu.JaxTestCase):
 
   def setUp(self):
     if not jtu.test_device_matches(["tpu"]):
@@ -290,7 +290,7 @@ class BlockInvarianceTest(parameterized.TestCase):
     np.testing.assert_array_equal(result_16x128, result_32x256)
 
 
-class ThreefryTest(parameterized.TestCase):
+class ThreefryTest(jtu.JaxTestCase):
 
   def setUp(self):
     if not jtu.test_device_matches(["tpu"]):
@@ -373,7 +373,7 @@ class ThreefryTest(parameterized.TestCase):
     np.testing.assert_array_equal(jax_gen, pl_gen)
 
 
-class PhiloxTest(parameterized.TestCase):
+class PhiloxTest(jtu.JaxTestCase):
 
   def setUp(self):
     if not jtu.test_device_matches(["tpu"]):
