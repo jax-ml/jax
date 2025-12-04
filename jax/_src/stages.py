@@ -402,8 +402,12 @@ class Traced(Stage):
   A traced computation is ready for lowering. This class carries the
   traced representation with the remaining information needed to later
   lower, compile, and execute it.
+
+  Provides access to both the hijax (high-level) and lojax (low-level)
+  representations via `.jaxpr` and `.lojax` properties respectively.
   """
-  __slots__ = ['_meta_tys_flat', '_params', '_in_tree', 'out_tree', '_consts']
+  __slots__ = ['_meta_tys_flat', '_params', '_in_tree', 'out_tree', '_consts',
+               '_lojax']
 
   def __init__(self, meta_tys_flat, params, in_tree, out_tree, consts):
     self._meta_tys_flat = meta_tys_flat
@@ -411,6 +415,7 @@ class Traced(Stage):
     self._in_tree = in_tree
     self.out_tree = out_tree
     self._consts = consts
+    self._lojax = None
 
   jaxpr = property(lambda self: self._params['jaxpr'])
   fun_name = property(lambda self: self._params['name'])
@@ -422,12 +427,18 @@ class Traced(Stage):
   def out_avals(self):
     return tree_unflatten(self.out_tree, self.jaxpr.out_avals)
 
-  def fall(self):
+  @property
+  def lojax(self) -> LoJax:
+    if self._lojax is not None:
+      return self._lojax
+
     if not self.jaxpr.is_high:
-      return Fallen(self._meta_tys_flat, self._params, self._in_tree,
-                    self.out_tree, (self._in_tree, self.jaxpr.in_avals),
-                    (self.out_tree, self.jaxpr.out_avals),
-                    self._consts)
+      self._lojax = LoJax(
+          self._meta_tys_flat, self._params, self._in_tree, self.out_tree,
+          (self._in_tree, self.jaxpr.in_avals),
+          (self.out_tree, self.jaxpr.out_avals),
+          self._consts)
+      return self._lojax
 
     # TODO(mattjj): when pmap is deleted, merge with pjit.py BUILD rule
     from jax._src.interpreters import partial_eval as pe  # type:ignore
@@ -448,16 +459,32 @@ class Traced(Stage):
                    for mty, aq in zip(self._meta_tys_flat, hi_jaxpr.in_aval_qdds)
                    for lo_ty in (mty.aval.lo_ty_qdd(aq.qdd)
                                  if mty.aval.has_qdd else mty.aval.lo_ty())]
-    return Fallen(lo_meta_tys, params, in_tree, out_tree,
-                  (self._in_tree, hi_jaxpr.final_aval_qdds),
-                  (self.out_tree, hi_jaxpr.out_avals),
-                  self._consts)
+    self._lojax = LoJax(
+        lo_meta_tys, params, in_tree, out_tree,
+        (self._in_tree, hi_jaxpr.final_aval_qdds),
+        (self.out_tree, hi_jaxpr.out_avals),
+        self._consts)
+    return self._lojax
 
   def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
             _private_parameters: mlir.LoweringParameters | None = None):
     """Lower to compiler input, returning a ``Lowered`` instance."""
-    return self.fall().lower(lowering_platforms=lowering_platforms,
-                             _private_parameters=_private_parameters)
+    lo = self.lojax
+    if _private_parameters is None:
+      _private_parameters = mlir.LoweringParameters()
+    try:
+      from jax._src.pjit import _resolve_and_lower  # type: ignore
+      lowering = _resolve_and_lower(
+          lo._meta_tys_flat, **lo._params, lowering_platforms=lowering_platforms,
+          lowering_parameters=_private_parameters, pgle_profiler=None)
+    except DeviceAssignmentMismatchError as e:
+      fails, = e.args
+      msg = _device_assignment_mismatch_error(
+          lo._params['name'], fails, lo._meta_tys_flat, 'jit',
+          lo.jaxpr.debug_info.safe_arg_names(len(lo.jaxpr.in_avals)))
+      raise ValueError(msg) from None
+    return Lowered(lowering, lo.args_info, lo.out_tree,
+                   in_types=lo._in_types, out_types=lo._out_types)
 
 
 def lojax_expand_params(jaxpr, params):
@@ -474,8 +501,7 @@ def lojax_pytree(hi_avals, tree):
   return tree_structure(tree_unflatten(tree, lo_avals))
 
 
-class Fallen(Stage):
-  """True leader of the Decepticons."""
+class LoJax:
   __slots__ = ['_meta_tys_flat', '_params', '_in_tree', 'out_tree',
                '_consts', '_in_types', '_out_types']
 
@@ -495,28 +521,6 @@ class Fallen(Stage):
   out_info = property(_traced_out_info)
   _num_consts = property(lambda self: len(self._consts))
 
-  @property
-  def out_avals(self):
-    return tree_unflatten(self.out_tree, self.jaxpr.out_avals)
-
-  def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
-            _private_parameters: mlir.LoweringParameters | None = None):
-    """Lower to compiler input, returning a ``Lowered`` instance."""
-    if _private_parameters is None:
-      _private_parameters = mlir.LoweringParameters()
-    try:
-      from jax._src.pjit import _resolve_and_lower  # type: ignore
-      lowering = _resolve_and_lower(
-          self._meta_tys_flat, **self._params, lowering_platforms=lowering_platforms,
-          lowering_parameters=_private_parameters, pgle_profiler=None)
-    except DeviceAssignmentMismatchError as e:
-      fails, = e.args
-      msg = _device_assignment_mismatch_error(
-          self._params['name'], fails, self._meta_tys_flat, 'jit',
-          self.jaxpr.debug_info.safe_arg_names(len(self.jaxpr.in_avals)))
-      raise ValueError(msg) from None
-    return Lowered(lowering, self.args_info, self.out_tree,
-                   in_types=self._in_types, out_types=self._out_types)
 
 
 class Lowered(Stage):
