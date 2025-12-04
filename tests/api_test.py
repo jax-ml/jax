@@ -416,12 +416,20 @@ class JitTest(jtu.BufferDonationTestCase):
   # Jit and Donate arguments
 
   def test_donate_argnames_signature_fail(self):
+    class NoSignature:
+      @property
+      def __signature__(self):
+        raise TypeError("no signature")
+      def __call__(self, *args, **kwargs):
+        return None
+    fun = NoSignature()
+
     inp = np.arange(4)
     with self.assertRaisesRegex(
         ValueError,
         "Getting the signature of function.*failed. Pass donate_argnums "
         "instead of donate_argnames."):
-      jax.jit(np.dot, donate_argnames='a')(inp, inp)
+      jax.jit(fun, donate_argnames='a')(inp, inp)
 
   @parameterized.named_parameters(
       ("argnums", "donate_argnums", (0, 1)),
