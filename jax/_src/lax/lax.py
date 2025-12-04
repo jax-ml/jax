@@ -3546,17 +3546,12 @@ def stop_gradient(x: T) -> T:
     the applicability of ``stop_gradient``.
   """
   def stop(x):
-    # only bind primitive on inexact dtypes, to avoid some staging
     if dtypes.issubdtype(core.get_aval(x).dtype, dtypes.extended):
       return x
-    elif (dtypes.issubdtype(_dtype(x), np.floating) or
-        dtypes.issubdtype(_dtype(x), np.complexfloating)):
-      # break abstractions to support legacy leaked tracer use cases
-      if isinstance(x, ad.JVPTracer):
-        return stop(x.primal)
-      return ad_util.stop_gradient_p.bind(x)
+    elif isinstance(x, ad.JVPTracer):
+      return stop(x.primal)
     else:
-      return x
+      return ad_util.stop_gradient_p.bind(x)
   return tree_util.tree_map(stop, x)
 
 def reduce_precision(operand: float | ArrayLike,
