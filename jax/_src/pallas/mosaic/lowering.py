@@ -3670,7 +3670,6 @@ def _alloc_value(
 ) -> ir.Value:
   if isinstance(aval, state.AbstractRef):
     if jnp.issubdtype(aval.dtype, pallas_core.semaphore_dtype):
-      assert aval.memory_space == TPUMemorySpace.SEMAPHORE
       memref_type = aval_to_ir_type(
           ctx.lowering_context.dynamic_shape_replacement_fn,
           aval,

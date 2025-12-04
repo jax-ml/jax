@@ -856,6 +856,17 @@ def wrap_with_transforms(f, transforms, *args):
 run_scoped_p = jax_core.Primitive("run_scoped")
 run_scoped_p.multiple_results = True
 
+def _run_scoped_is_high(*avals, jaxpr, **params):
+  del avals, params
+  return jaxpr.is_high
+run_scoped_p.is_high = _run_scoped_is_high  # type: ignore[method-assign]
+
+def _run_scoped_to_lojax(*args, jaxpr, **params):
+  closed_hi_jaxpr = jax_core.ClosedJaxpr(jaxpr, args)
+  closed_lo_jaxpr = pe.lower_jaxpr(closed_hi_jaxpr)
+  consts = closed_lo_jaxpr.consts
+  return run_scoped_p.bind(*consts, jaxpr=closed_lo_jaxpr.jaxpr, **params)
+run_scoped_p.to_lojax = _run_scoped_to_lojax
 
 def run_scoped(
     f: Callable[..., Any],

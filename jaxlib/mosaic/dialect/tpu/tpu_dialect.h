@@ -77,7 +77,7 @@ LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,
 // vector ops. This functions inverts the layout erasure applied to the value.
 MemRefType getMemRefType(Value value);
 
-bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel = 8);
+bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel = 128);
 
 DotDimensionNumbersAttr defaultDimensionNumbers(Builder &builder,
                                                 bool transpose_lhs,
