@@ -35,7 +35,7 @@ class MultiBackendTest(jtu.JaxTestCase):
   @jtu.ignore_warning(category=DeprecationWarning,
                       message="backend and device argument")
   def testMultiBackend(self, backend):
-    if backend not in ('cpu', jtu.device_under_test(), None):
+    if backend not in ('cpu', None) and not jtu.test_device_matches([backend]):
       raise SkipTest("Backend is not CPU or the device under test")
     @jax.jit(backend=backend)
     def fun(x, y):
@@ -46,8 +46,11 @@ class MultiBackendTest(jtu.JaxTestCase):
     z_host = np.matmul(x, y)
     z = fun(x, y)
     self.assertAllClose(z, z_host, rtol=1e-2)
-    correct_platform = backend if backend else jtu.device_under_test()
-    self.assertEqual(list(z.devices())[0].platform, correct_platform)
+    platform = list(z.devices())[0].platform
+    if backend:
+      self.assertEqual(platform, backend)
+    else:
+      self.assertTrue(jtu.test_device_matches([platform]))
 
   @jtu.sample_product(
     ordering=[('cpu', None), ('gpu', None), ('tpu', None), (None, None)]
@@ -56,7 +59,7 @@ class MultiBackendTest(jtu.JaxTestCase):
                       message="backend and device argument")
   def testMultiBackendNestedJit(self, ordering):
     outer, inner = ordering
-    if outer not in ('cpu', jtu.device_under_test(), None):
+    if outer not in ('cpu', None) and not jtu.test_device_matches([outer]):
       raise SkipTest("Backend is not CPU or the device under test")
     @jax.jit(backend=outer)
     def fun(x, y):
@@ -73,7 +76,11 @@ class MultiBackendTest(jtu.JaxTestCase):
     z = fun(x, y)
     self.assertAllClose(z, z_host, rtol=1e-2)
     correct_platform = outer if outer else jtu.device_under_test()
-    self.assertEqual(list(z.devices())[0].platform, correct_platform)
+    platform = list(z.devices())[0].platform
+    if outer:
+      self.assertEqual(platform, outer)
+    else:
+      self.assertTrue(jtu.test_device_matches([platform]))
 
   @jtu.sample_product(
     ordering=[('cpu', 'gpu'), ('gpu', 'cpu'), ('cpu', 'tpu'), ('tpu', 'cpu'),
@@ -84,9 +91,9 @@ class MultiBackendTest(jtu.JaxTestCase):
                       message="backend and device argument")
   def testMultiBackendNestedJitConflict(self, ordering):
     outer, inner = ordering
-    if outer not in ('cpu', jtu.device_under_test(), None):
+    if outer not in ('cpu', None) and not jtu.test_device_matches([outer]):
       raise SkipTest("Backend is not CPU or the device under test")
-    if inner not in ('cpu', jtu.device_under_test(), None):
+    if inner not in ('cpu', None) and not jtu.test_device_matches([inner]):
       raise SkipTest("Backend is not CPU or the device under test")
     if outer is None and inner == jtu.device_under_test():
       raise SkipTest("(None, device) is allowed")
