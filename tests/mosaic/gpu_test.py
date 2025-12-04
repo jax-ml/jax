@@ -5267,10 +5267,10 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     self.assertArraysEqual(kernel(), expected)
 
   @parameterized.parameters(
-      ((4, 64, 128), [[0], [1], [2]], (4, 64, 128), False),
-      ((4, 64, 128), [[0], [1, 2], [3]], (4, 4, 16, 128), False),
-      ((4, 8, 16, 128), [[0], [1], [2, 3], [4]], (4, 8, 2, 8, 128), False),
-      ((4, 64, 128), [[0, 1], [2], [3]], (2, 2, 64, 128), True),
+      ((4, 64, 64), [[0], [1], [2]], (4, 64, 64), False),
+      ((4, 64, 64), [[0], [1, 2], [3]], (4, 4, 16, 64), False),
+      ((4, 8, 16, 64), [[0], [1], [2, 3], [4]], (4, 8, 2, 8, 64), False),
+      ((4, 64, 64), [[0, 1], [2], [3]], (2, 2, 64, 64), True),
   )
   def test_memref_expand_shape(
       self, input_shape, reassociation, output_shape, has_transforms
