@@ -33,6 +33,7 @@ from jax._src import state
 from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives as pallas_primitives
+from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
@@ -274,21 +275,7 @@ UNARY_FUNCTIONS = [
 ]
 
 
-class PallasBaseTest(jtu.JaxTestCase):
-  INTERPRET = False
-
-  def setUp(self):
-    if not self.INTERPRET:
-      if jtu.device_under_test() == "cpu":
-        self.skipTest("Only interpret mode supported on CPU")
-      if (jtu.test_device_matches(["cuda"]) and
-          not jtu.is_cuda_compute_capability_at_least("8.0")):
-        self.skipTest("Only works on GPUs with capability >= sm80")
-      if (jtu.test_device_matches(["cuda"]) and use_mosaic_gpu and
-          not jtu.is_cuda_compute_capability_at_least("9.0")):
-        self.skipTest("Mosaic GPU requires capability >= sm90")
-
-    super().setUp()
+class PallasBaseTest(ptu.PallasTest):
 
   @classmethod
   def pallas_call(cls, *args, **kwargs):
@@ -715,6 +702,9 @@ class OpsTest(PallasBaseTest):
         or from_dtype in {"int2", "uint2"}
     ):
       self.skipTest("sub-byte casts are buggy on GPU")  # b/391292861
+    if self.INTERPRET and (to_dtype in {"int2", "uint2"} or
+                           from_dtype in {"int2", "uint2"}):
+      self.skipTest("Test fails on CPU.")
     if from_dtype == "float16" or to_dtype == "float16" and not sut_is_mosaic_gpu:
       self.skipTest("float16 is only supported with Mosaic GPU")
     if sut_is_mosaic_gpu:

@@ -34,6 +34,7 @@ from jax._src import shard_map
 from jax._src import state
 from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
+from jax._src.pallas import pallas_test_util as ptu
 from jax._src.pallas.mosaic import error_handling
 from jax._src.state import discharge as state_discharge
 from jax._src.state import utils as state_utils
@@ -90,19 +91,7 @@ def wrap_init(f: Callable, nr_args: int):
       debug_info=api_util.debug_info("state_test", f, (0,) * nr_args, {}))
 
 
-class PallasBaseTest(jtu.JaxTestCase):
-  INTERPRET: bool = False
-
-  def setUp(self):
-    if not jtu.test_device_matches(['tpu']) and not self.INTERPRET:
-      self.skipTest('Test requires TPUs, or interpret mode')
-    super().setUp()
-
-  def pallas_call(self, *args, **kwargs):
-    return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
-
-
-class TPUPipelineModeTest(PallasBaseTest):
+class TPUPipelineModeTest(ptu.PallasTPUTest):
 
   @parameterized.parameters(
       (pl.Buffered(2), pl.Buffered(2)),
@@ -154,7 +143,7 @@ class TPUPipelineModeTest(PallasBaseTest):
     np.testing.assert_allclose(z, x + y)
 
 
-class PallasCallScalarPrefetchTest(PallasBaseTest):
+class PallasCallScalarPrefetchTest(ptu.PallasTPUTest):
   def test_trivial_scalar_prefetch(self):
     def body(_, x_ref, o_ref):
       o_ref[...] = x_ref[...]
@@ -585,7 +574,7 @@ class PallasCallScalarPrefetchInterpretTest(PallasCallScalarPrefetchTest):
   INTERPRET: bool = True
 
 
-class PallasCallDynamicGridTest(PallasBaseTest):
+class PallasCallDynamicGridTest(ptu.PallasTPUTest):
 
   def test_can_query_grid_statically_via_num_programs(self):
 
@@ -835,7 +824,7 @@ class PallasCallDynamicGridInterpretTest(PallasCallDynamicGridTest):
   INTERPRET = True
 
 
-class PallasCallDMATest(PallasBaseTest):
+class PallasCallDMATest(ptu.PallasTPUTest):
 
   def setUp(self):
     super().setUp()
@@ -1876,7 +1865,7 @@ class PallasCallDMAInterpretTest(PallasCallDMATest):
     np.testing.assert_array_equal(results, expected)
 
 
-class PallasCallTest(PallasBaseTest):
+class PallasCallTest(ptu.PallasTPUTest):
 
   @parameterized.parameters([
       dict(shape=shape, dty=dty)
@@ -2702,7 +2691,7 @@ class PallasCallTest(PallasBaseTest):
     np.testing.assert_array_equal(z, jnp.where(condlist, choicelist, 0))
 
 
-class PallasScalarIOpsTest(PallasBaseTest):
+class PallasScalarIOpsTest(ptu.PallasTPUTest):
 
   @staticmethod
   def parameterized_integer_types(func):
@@ -2823,7 +2812,7 @@ class PallasScalarIOpsTest(PallasBaseTest):
     self._integer_ops_canonicalization_helper(kernel, 1 ^ 2, dtype)
 
 
-class PallasUXTest(PallasBaseTest):
+class PallasUXTest(ptu.PallasTPUTest):
 
   def test_mlir_location(self):
     # Make sure that MLIR locations are correctly propagated to primitives.
@@ -2841,7 +2830,7 @@ class PallasUXTest(PallasBaseTest):
       mosaic.as_tpu_kernel = as_tpu_kernel
 
 
-class PallasMegacoreTest(PallasBaseTest):
+class PallasMegacoreTest(ptu.PallasTPUTest):
 
   def test_megacore_splitting(self):
     # We want to make sure a 3-sized dimension is split across megacore
@@ -2877,7 +2866,7 @@ class PallasMegacoreTest(PallasBaseTest):
     )
 
 
-class PallasCallVmapTest(PallasBaseTest):
+class PallasCallVmapTest(ptu.PallasTPUTest):
 
   def test_scratch_input_vmap(self):
     """Test that vmapp-ing a kernel with scratch inputs works correctly."""
@@ -2914,7 +2903,7 @@ class PallasCallVmapTest(PallasBaseTest):
     np.testing.assert_array_equal(out, out_ref, strict=True)
 
 
-class PallasCallDynamicDMATest(PallasBaseTest):
+class PallasCallDynamicDMATest(ptu.PallasTPUTest):
 
   def setUp(self):
     super().setUp()
@@ -2978,7 +2967,7 @@ class PallasCallDynamicDMATest(PallasBaseTest):
     np.testing.assert_array_equal(out, expected)
 
 
-class PallasCallRefTransformTest(PallasBaseTest):
+class PallasCallRefTransformTest(ptu.PallasTPUTest):
 
   @parameterized.product(slice_first=[True, False])
   def test_dma_bitcasted_ref(self, slice_first):
@@ -3151,7 +3140,7 @@ class PallasCallRefTransformTest(PallasBaseTest):
     np.testing.assert_array_equal(y, x[8:16, :128])
 
 
-class PallasCallTraceTest(PallasBaseTest):
+class PallasCallTraceTest(ptu.PallasTPUTest):
 
   @jtu.thread_unsafe_test()  # stdout redirection is not thread safe
   def test_trace_start_stop_match(self):
@@ -3201,7 +3190,7 @@ class PallasCallTraceTest(PallasBaseTest):
     self.assertEqual(num_stop, 2)
 
 
-class PallasCallTPUBooleanTest(PallasBaseTest):
+class PallasCallTPUBooleanTest(ptu.PallasTPUTest):
   """Tests for loading/storing from bool memrefs on TPUs.
 
   We specifically test bools because they have special handling.
@@ -3330,7 +3319,7 @@ class PallasCallTPUBooleanInterpretTest(PallasCallTPUBooleanTest):
   INTERPRET: bool = True
 
 
-class PallasCallTPUCheckifyTest(PallasBaseTest):
+class PallasCallTPUCheckifyTest(ptu.PallasTPUTest):
   @parameterized.parameters((2,), (5,), (6,), (7,))
   def test_checkify_with_scalar_prefetch(self, threshold):
     def body(scalar_ref, x_ref, o_ref):
@@ -3434,7 +3423,7 @@ class PallasCallTPUCheckifyInterpretTest(PallasCallTPUCheckifyTest):
   INTERPRET: bool = True
 
 
-class PrettyPrintingTest(PallasBaseTest):
+class PrettyPrintingTest(ptu.PallasTPUTest):
 
   @parameterized.parameters(
       (
@@ -3480,7 +3469,7 @@ class PrettyPrintingTest(PallasBaseTest):
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
 
-class MiscellaneousTest(PallasBaseTest):
+class MiscellaneousTest(ptu.PallasTPUTest):
   """Tests for reported bugs. Only pass in interpret mode unless fixed."""
 
   def test_casting_bool_to_i8(self):
@@ -4162,7 +4151,7 @@ class MiscellaneousInterpretTest(MiscellaneousTest):
     np.testing.assert_array_equal(result, np.ones((1,), dtype=jnp.float32))
 
 
-class PallasKernelMetadataTest(PallasBaseTest):
+class PallasKernelMetadataTest(ptu.PallasTPUTest):
 
   @parameterized.parameters(
       (dict(foo='bar'),),

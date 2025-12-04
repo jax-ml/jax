@@ -61,6 +61,7 @@ jax_multiplatform_test(
         "//jax:pallas_gpu_ops",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
+        "//jax/_src/pallas:pallas_test_util",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -143,6 +144,7 @@ jax_multiplatform_test(
         "//jax:pallas_gpu",  # build_cleaner: keep
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
+        "//jax/_src/pallas:pallas_test_util",
     ] + py_deps([
         "absl/testing:flagsaver",
         "absl/testing",
@@ -187,6 +189,7 @@ jax_multiplatform_test(
         "//jax:pallas_gpu",  # build_cleaner: keep
         "//jax:pallas_mosaic_gpu",  # build_cleaner: keep
         "//jax:pallas_tpu",
+        "//jax/_src/pallas:pallas_test_util",
     ] + py_deps([
         "absl/testing:flagsaver",
         "absl/testing",
@@ -418,7 +421,10 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_test",
     srcs = ["tpu_pallas_test.py"],
-    enable_backends = ["tpu"],
+    enable_backends = [
+        "tpu",
+        "cpu",
+    ],
     enable_configs = [
         "tpu_v5e",
         "tpu_v5p",
@@ -428,6 +434,7 @@ jax_multiplatform_test(
         "//jax:mesh_utils",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
+        "//jax/_src/pallas:pallas_test_util",
         "//jax/extend",
     ] + py_deps([
         "absl/testing",
@@ -455,6 +462,7 @@ jax_multiplatform_test(
     deps = [
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
+        "//jax/_src/pallas:pallas_test_util",
         "//jax/extend",
     ] + py_deps([
         "absl/testing",
@@ -499,16 +507,14 @@ jax_multiplatform_test(
     srcs = [
         "tpu_ops_test.py",
     ],
-    enable_backends = [
-        "cpu",
-        "tpu",
-    ],
+    enable_backends = ["tpu"],
     shard_count = 8,
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
+        "//jax/_src/pallas:pallas_test_util",
     ] + py_deps([
         "absl/testing",
         "hypothesis",
@@ -757,6 +763,7 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:pallas_tpu_ops",
+        "//jax/_src/pallas:pallas_test_util",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -775,6 +782,7 @@ jax_multiplatform_test(
     deps = [
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
+        "//jax/_src/pallas:pallas_test_util",
         "//jax/extend",
     ] + py_deps([
         "absl/testing",

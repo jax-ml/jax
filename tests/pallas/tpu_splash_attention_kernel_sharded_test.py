@@ -20,11 +20,16 @@ from absl.testing import absltest, parameterized
 import jax
 from jax import random
 from jax._src import test_util as jtu
+from jax._src.pallas import pallas_test_util as ptu
+from jax._src.shard_map import shard_map
+from jax.experimental.pallas.ops.tpu.splash_attention import (
+    CausalMask,
+    MultiHeadMask,
+    SegmentIds,
+    make_splash_mha,
+)
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel as splash
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
-from jax.experimental.pallas.ops.tpu.splash_attention import (
-    CausalMask, MultiHeadMask, SegmentIds, make_splash_mha)
-from jax._src.shard_map import shard_map
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec
 import numpy as np
@@ -35,14 +40,10 @@ jax.config.parse_flags_with_absl()
 
 
 @jtu.with_config(jax_traceback_filtering="off")
-class PallasBaseTest(jtu.JaxTestCase):
-  INTERPRET = False
+class PallasBaseTest(ptu.PallasTPUTest):
 
   def setUp(self):
     super().setUp()
-    if not jtu.is_device_tpu():
-      self.skipTest("Test requires TPU.")
-
     if len(jax.devices()) < 4:
       self.skipTest("This test requires at least 4 devices.")
 

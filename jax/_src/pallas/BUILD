@@ -66,3 +66,15 @@ py_library(
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
+
+py_library(
+    name = "pallas_test_util",
+    testonly = True,
+    srcs = [
+        "pallas_test_util.py",
+    ],
+    deps = [
+        ":pallas",
+        "//jax/_src:test_util",
+    ],
+)

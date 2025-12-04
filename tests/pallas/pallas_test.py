@@ -33,6 +33,7 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import hijax
 from jax._src import test_util as jtu
+from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
 import jax.export
 import jax.numpy as jnp
@@ -92,26 +93,7 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
   return matmul_kernel(x, y)
 
 
-@jtu.with_config(jax_traceback_filtering="off")
-class PallasBaseTest(jtu.JaxTestCase):
-  INTERPRET = False
-
-  def setUp(self):
-    if jtu.test_device_matches(["cpu"]) and not self.INTERPRET:
-      self.skipTest("On CPU the test works only in interpret mode")
-    if (jtu.test_device_matches(["cuda"]) and
-        not jtu.is_cuda_compute_capability_at_least("8.0")):
-      self.skipTest("Only works on GPU with capability >= sm80")
-    if sys.platform == "win32" and not self.INTERPRET:
-      self.skipTest("Only works on non-Windows platforms")
-
-    super().setUp()
-
-  def pallas_call(self, *args, **kwargs):
-    return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
-
-
-class PallasCallTest(PallasBaseTest):
+class PallasCallTest(ptu.PallasTest):
 
   def test_add_one(self):
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
@@ -757,7 +739,7 @@ class PallasCallInterpretTest(PallasCallTest):
   INTERPRET = True
 
 
-class PallasCallElementIndexingTest(PallasBaseTest):
+class PallasCallElementIndexingTest(ptu.PallasTest):
 
   def test_block_spec_element(self):
     def show_program_ids(
@@ -893,7 +875,7 @@ class PallasCallElementIndexingInterpretTest(PallasCallElementIndexingTest):
   INTERPRET = True
 
 
-class PallasCallBoundedSliceIndexingTest(PallasBaseTest):
+class PallasCallBoundedSliceIndexingTest(ptu.PallasTest):
 
   def setUp(self):
     super().setUp()
@@ -922,7 +904,7 @@ class PallasCallBoundedSliceIndexingTest(PallasBaseTest):
           ),
       )(x)
 
-class ApiErrorTest(PallasBaseTest):
+class ApiErrorTest(ptu.PallasTest):
   def test_pallas_call_kernel_args_mismatch(self):
     a = np.arange(256, dtype=np.int32)
     f = self.pallas_call(lambda x_ref: None,  # Missing o_ref
@@ -1174,7 +1156,7 @@ class ApiErrorInterpretTest(ApiErrorTest):
   INTERPRET = True
 
 
-class PallasCallInputOutputAliasingTest(PallasBaseTest):
+class PallasCallInputOutputAliasingTest(ptu.PallasTest):
 
   def test_vector_input_output_aliasing(self):
     # Input needs to be big so it doesn't fit in VMEM
@@ -1285,11 +1267,11 @@ class PallasCallInputOutputAliasingTest(PallasBaseTest):
       print(x_vector)
 
 
-class PallasCallInputOutputAliasingInterpretTest(PallasBaseTest):
+class PallasCallInputOutputAliasingInterpretTest(ptu.PallasTest):
   INTERPRET = True
 
 
-class PallasControlFlowTest(PallasBaseTest):
+class PallasControlFlowTest(ptu.PallasTest):
 
   def setUp(self):
     super().setUp()
@@ -2078,7 +2060,7 @@ AD_TEST_CASES = [
 ]
 
 
-class PallasCallAutodifferentiationTest(PallasBaseTest):
+class PallasCallAutodifferentiationTest(ptu.PallasTest):
 
   def setUp(self):
     super().setUp()
@@ -2193,7 +2175,7 @@ class PallasCallAutodifferentiationInterpretTest(PallasCallAutodifferentiationTe
   INTERPRET = True
 
 
-class PallasOutOfBoundsInterpretTest(PallasBaseTest):
+class PallasOutOfBoundsInterpretTest(ptu.PallasTest):
   INTERPRET = True
 
   def test_interpret_mode_out_of_bounds_access(self):
@@ -2273,7 +2255,7 @@ class PallasOutOfBoundsInterpretTest(PallasBaseTest):
       np.testing.assert_allclose(out, expected, atol=atol, rtol=rtol)
 
 
-class PallasCheckifyTest(PallasBaseTest):
+class PallasCheckifyTest(ptu.PallasTest):
   INTERPRET = False
 
   def test_basic_runtime_assert(self):
@@ -2453,7 +2435,7 @@ class PallasCheckifyInterpretTest(PallasCheckifyTest):
   INTERPRET = True
 
 
-class PallasCallNamedGridTest(PallasBaseTest):
+class PallasCallNamedGridTest(ptu.PallasTest):
   def test_named_grid(self):
 
     def kernel(x_ref, y_ref):
@@ -2553,7 +2535,7 @@ class PallasCallNamedGridTest(PallasBaseTest):
     )
 
 
-class SymbolicPallasTest(PallasBaseTest):
+class SymbolicPallasTest(ptu.PallasTest):
 
   def test_simple_symbolic_matmul_export(self):
     if jtu.test_device_matches(["gpu"]):
@@ -2747,7 +2729,7 @@ def index_to_lojax(xt: jax.Ref) -> jax.Array:
 index_p.to_lojax = index_to_lojax
 
 
-class PallasHiJaxTest(PallasBaseTest):
+class PallasHiJaxTest(ptu.PallasTest):
 
   def test_pass_weird_tuple_into_pallas_call(self):
 

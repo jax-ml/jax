@@ -20,6 +20,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
+from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
@@ -32,20 +33,8 @@ P = jax.sharding.PartitionSpec
 partial = functools.partial
 
 
-class PallasBaseTest(jtu.JaxTestCase):
-  INTERPRET: bool = False
-
-  def setUp(self):
-    if not jtu.test_device_matches(['tpu']) and not self.INTERPRET:
-      self.skipTest('Test requires TPUs, or interpret mode')
-    super().setUp()
-
-  def pallas_call(self, *args, **kwargs):
-    return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
-
-
 @jtu.thread_unsafe_test_class()  # debug print test is not thread safe
-class PallasCallPrintTest(PallasBaseTest):
+class PallasCallPrintTest(ptu.PallasTPUTest):
 
   def test_debug_print(self):
     @functools.partial(

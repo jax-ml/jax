@@ -22,6 +22,7 @@ import jax
 from jax import lax
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -76,22 +77,8 @@ def rand(
   raise NotImplementedError(f"Unsupported random data generation for {dtype=}")
 
 
-class PallasBaseTest(jtu.JaxTestCase):
-  INTERPRET = False
-
-  def setUp(self):
-    if not jtu.test_device_matches(["tpu"]):
-      self.skipTest("Test only supported on TPU.")
-
-    super().setUp()
-
-  @classmethod
-  def pallas_call(cls, *args, **kwargs):
-    return pl.pallas_call(*args, interpret=cls.INTERPRET, **kwargs)
-
-
 @jtu.thread_unsafe_test_class(condition=not jtu.hypothesis_is_thread_safe())
-class OpsTest(PallasBaseTest):
+class OpsTest(ptu.PallasTPUTest):
 
   @parameterized.product(
       from_dtype=_JAX_DTYPES,
@@ -882,6 +869,7 @@ class OpsTest(PallasBaseTest):
     )(packed)
 
     np.testing.assert_array_equal(result, expected)
+
 
 if __name__ == "__main__":
   absltest.main()

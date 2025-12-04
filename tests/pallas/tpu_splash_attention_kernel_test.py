@@ -22,18 +22,17 @@ import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
+import hypothesis as hp
+import hypothesis.strategies as hps
 import jax
 from jax import random
 from jax._src import test_util as jtu
+from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel as splash
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
 from jax.experimental.pallas.ops.tpu.splash_attention.splash_attention_mask_info import process_mask
 import jax.numpy as jnp
 import numpy as np
-
-
-import hypothesis as hp
-import hypothesis.strategies as hps
 
 
 jax.config.parse_flags_with_absl()
@@ -304,13 +303,10 @@ def attn_logits_soft_cap_strategy() -> hps.SearchStrategy[float | None]:
 
 
 @jtu.with_config(jax_traceback_filtering="off")
-class PallasBaseTest(jtu.JaxTestCase):
-  INTERPRET = False
+class PallasBaseTest(ptu.PallasTPUTest):
 
   def setUp(self):
     if not self.INTERPRET:
-      if not jtu.test_device_matches(["tpu"]):
-        self.skipTest("Only interpret mode supported on non-TPU")
       # TODO(b/327487669): selectively re-enable tests that works on TPU v3.
       if not jtu.is_device_tpu_at_least(4):
         self.skipTest("Not supported on TPU generations <= 3")
