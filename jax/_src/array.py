@@ -910,14 +910,14 @@ def make_array_from_process_local_data(
     >>> assert output_global_array.addressable_data(0).shape == per_device_shape
     >>> assert output_global_array.shape == global_shape
 
-  NB: While most shardings are uniform, It is possible to design am exotic
+  NB: While most shardings are uniform, It is possible to design an exotic
   sharding mesh where each process's  devices will be arranged in a non-grid
   like pattern in some dimensions, or for indices to overlap non-trivially.
   Such sharding is called "non-uniform" in those dimensions. In that case,
   the global shape along those directions must match local shape as there is
   no meaningful way to represent all needed
   per-process data in non-overlapping fashion. For example for global_shape 4x4
-  if sharding looks like this:
+  if sharding looks like this::
 
       0123
       2103
@@ -925,7 +925,7 @@ def make_array_from_process_local_data(
       4567
 
   with 4 processes, containing devices (0,1), (2, 3), (4, 5), (6, 7) respectively.
-  Then the data for each host look like
+  Then the data for each host look like::
 
       xx..    ..xx     ....    ....
       .xx.    x..x     ....    ....
@@ -939,7 +939,7 @@ def make_array_from_process_local_data(
   In this case user must provide global_shape explicitly and for
   local_shape=(2, 4), potentially valid global shapes are (2, 4) and (4, 4).
 
-  On the other hand for sharding:
+  On the other hand for sharding::
 
       0213   x.x.  .x.x.  ....  ....
       0213   x.x.  .x.x.  ....  ....
