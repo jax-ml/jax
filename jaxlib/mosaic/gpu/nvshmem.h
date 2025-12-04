@@ -54,6 +54,11 @@ class NvshmemApi {
     return nvshmemx_cumodule_init(module);
   }
 
+  int cumodule_finalize(CUmodule module) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return nvshmemx_cumodule_finalize(module);
+  }
+
   void barrier_all_on_stream(cudaStream_t stream) {
     nvshmemx_barrier_all_on_stream(stream);
   }
@@ -78,11 +83,13 @@ class NvshmemApi {
 
     NVSHMEM_SET_FN(nvshmemx_barrier_all_on_stream)
     NVSHMEM_SET_FN(nvshmemx_cumodule_init)
+    NVSHMEM_SET_FN(nvshmemx_cumodule_finalize)
     NVSHMEM_SET_FN(nvshmemx_init_status)
   }
 
   int (*nvshmemx_barrier_all_on_stream)(cudaStream_t);
   int (*nvshmemx_cumodule_init)(CUmodule);
+  int (*nvshmemx_cumodule_finalize)(CUmodule);
   int (*nvshmemx_init_status)();
 
   std::mutex mutex_;
