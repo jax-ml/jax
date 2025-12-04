@@ -1886,7 +1886,7 @@ def _discharge_internal_refs(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
 class SemanticallyEqualShardings:
 
   def __init__(self, shardings: tuple[GSPMDSharding | UnspecifiedValue, ...],
-               avals: tuple[core.AbstractValue]):
+               avals: Sequence[core.AbstractValue]):
     gspmd_shardings = [
         s if (isinstance(s, (UnspecifiedValue, AUTO)) or
               (isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh)))
@@ -1894,7 +1894,6 @@ class SemanticallyEqualShardings:
         for s, a in zip(shardings, avals)]
     self._gspmd_shardings = gspmd_shardings
     self.shardings = shardings
-    self.avals = avals
 
   def __hash__(self):
     return hash(tuple(
@@ -2374,7 +2373,14 @@ def lower_sharding_computation(
       out_shardings, global_out_avals, device_assignment,
       propagated_out_mem_kinds)
 
-  # 2. Build up the HLO
+  global_in_avals = [core.update_aval_with_sharding(a, sh)
+                     if isinstance(a, core.ShapedArray) else a
+                     for a, sh in zip(global_in_avals, in_shardings)]
+  global_out_avals = [core.update_aval_with_sharding(a, sh)
+                      if isinstance(a, core.ShapedArray) else a
+                      for a, sh in zip(global_out_avals, out_shardings)]
+
+  ############################ Build up the stableHLO ######################
 
   abstract_mesh = None
   if prim_requires_devices:

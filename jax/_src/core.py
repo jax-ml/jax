@@ -1759,15 +1759,12 @@ def mem_space_to_kind(mem_space: MemorySpace) -> str:
 @cache(max_size=4096,
        trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
 def update_aval_with_sharding(aval, sharding, vma=None):
-  if vma is None:
-    vma = aval.vma
   if isinstance(sharding, NamedSharding):
-    return aval.update(
-        sharding=NamedSharding(
-            sharding.mesh.abstract_mesh,
-            sharding.spec._normalized_spec_for_aval(aval.ndim)),
-        vma=vma, memory_space=mem_kind_to_space(sharding.memory_kind))
-  return aval.update(vma=vma)
+    s = NamedSharding(sharding.mesh.abstract_mesh,
+                      sharding.spec._normalized_spec_for_aval(aval.ndim))
+    return aval.update(sharding=s, vma=aval.vma if vma is None else vma,
+                       memory_space=mem_kind_to_space(sharding.memory_kind))
+  return aval if vma is None else aval.update(vma=vma)
 
 
 # We have three flavors of abstractification APIs here which each used to have

@@ -840,14 +840,13 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompile(self):
-    @partial(pjit,
-             in_shardings=P(('x', 'y'),),
-             out_shardings=P(('x', 'y'),))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    x = jnp.arange(64).reshape(8, 8)
+
+    @partial(pjit, in_shardings=P(('x', 'y')), out_shardings=P(('x', 'y')))
     def f(x, y):
       return x @ y
 
-    shape = (8, 8)
-    x = jnp.arange(math.prod(shape)).reshape(shape)
     expected = x @ (x + 1)
 
     lowered = f.lower(x, x + 1)
@@ -855,9 +854,11 @@ class PJitTest(jtu.BufferDonationTestCase):
     actual = compiled(x, x + 1)
 
     self.assertEqual(lowered.in_avals, compiled.in_avals)
-    self.assertEqual(
-        lowered.in_avals,
-        ((core.ShapedArray(x.shape, x.dtype, weak_type=False),) * 2, {}))
+
+    abs_mesh = mesh.abstract_mesh
+    exp_aval = core.ShapedArray(x.shape, x.dtype,
+                                sharding=NamedSharding(abs_mesh, P()))
+    self.assertEqual(lowered.in_avals, ((exp_aval,) * 2, {}))
 
     splits = np.split(expected, 4)
     self.assertAllClose(np.asarray(actual.addressable_shards[0].data), splits[0],
@@ -9743,6 +9744,70 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jax.jit(jax.grad(g))(params, inputs)
     self.assertEqual(out.sharding,
                      NamedSharding(mesh, P(None, None, unreduced={'x'})))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_out_aval_matches_out_sharding(self, mesh):
+    arr = jnp.arange(8)
+
+    @jax.jit(out_shardings=P('x'))
+    def f(x):
+      return x * 2
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+    self.assertEqual(out.aval.sharding, NamedSharding(mesh.abstract_mesh, P('x')))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_out_aval_matches_out_sharding_override(self, mesh):
+    arr = jax.device_put(jnp.arange(8).reshape(4, 2), P('x', None))
+
+    @jax.jit(out_shardings=P('x', 'y'))
+    def f(x):
+      return x * 2
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertEqual(out.aval.sharding,
+                     NamedSharding(mesh.abstract_mesh, P('x', 'y')))
+
+    @jax.jit
+    def g(x):
+      return x * 2
+
+    out = g(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertEqual(out.aval.sharding,
+                     NamedSharding(mesh.abstract_mesh, P('x', None)))
+
+  @jtu.with_explicit_mesh((2,), 'x', axis_types=(AxisType.Auto,))
+  def test_out_aval_auto_mode(self, mesh):
+    arr = jax.device_put(jnp.arange(8).reshape(4, 2), P('x'))
+
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    out = f(arr)
+    self.assertEqual(out.aval.sharding.mesh, mesh.abstract_mesh)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_in_aval_matches_in_sharding(self, mesh):
+    arr = np.arange(8)
+
+    @jax.jit(in_shardings=P('x'), out_shardings=P('x'))
+    def f(x):
+      return x * 2
+
+    lowered = f.lower(arr)
+    l_in_aval = lowered.in_avals[0][0]
+    self.assertEqual(l_in_aval.sharding,
+                     NamedSharding(mesh.abstract_mesh, P('x')))
+
+    compiled = lowered.compile()
+    c_in_aval = compiled.in_avals[0][0]
+    self.assertEqual(c_in_aval.sharding,
+                     NamedSharding(mesh.abstract_mesh, P('x')))
+    compiled(arr)  # doesn't crash
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

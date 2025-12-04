@@ -378,7 +378,7 @@ def _traced_args_info(self):
 
 def _traced_out_info(self):
   out_shardings = [None if isinstance(s, UnspecifiedValue) else s
-                    for s in self._params['out_shardings']]
+                   for s in self._params['out_shardings']]
   out_layouts = [None if isinstance(l, AutoLayout) else l
                  for l in self._params['out_layouts']]
   out = []
@@ -550,6 +550,20 @@ class Lowered(Stage):
     self._out_types = out_types  # type: ignore
 
   @property
+  def in_avals(self):
+    in_avals_ = self._lowering.compile_args.get("global_in_avals", None)
+    if in_avals_ is None:  # For old pmap code i.e. PmapComputation
+      return tree_util.tree_map(lambda x: x._aval, self.args_info)
+    kept_var_idx = self._lowering.compile_args["kept_var_idx"]
+    non_dce_avals = self._lowering.compile_args["all_args_info"].in_avals
+    if self.in_tree.num_leaves > len(in_avals_):
+      iter_in_avals = iter(in_avals_)
+      in_avals_ = [
+          next(iter_in_avals) if i in kept_var_idx
+          else a for i, a in zip(range(self.in_tree.num_leaves), non_dce_avals)]
+    return self.in_tree.unflatten(in_avals_)
+
+  @property
   def out_info(self):  # PyTree of OutInfo
     out_avals = self._lowering.compile_args["global_out_avals"]
     out_shardings = self._lowering.compile_args["out_shardings"]
@@ -712,6 +726,17 @@ class Compiled(Stage):
       return self._executable.memory_analysis()
     except NotImplementedError:
       return None
+
+  @property
+  def in_avals(self):
+    in_avals_ = self._executable.in_avals
+    if self.in_tree.num_leaves > len(in_avals_):
+      iter_in_avals = iter(in_avals_)
+      non_dce_avals = self._executable._all_args_info.in_avals
+      in_avals_ = [
+          next(iter_in_avals) if i in self._executable._kept_var_idx
+          else a for i, a in zip(range(self.in_tree.num_leaves), non_dce_avals)]
+    return self.in_tree.unflatten(in_avals_)
 
   @property
   def out_info(self):  # PyTree of jax.ShapeDtypeStruct

@@ -1284,7 +1284,6 @@ pxla.shard_arg_handlers[ArrayImpl] = _array_shard_arg
 
 
 def _array_global_result_handler(global_aval, out_sharding, committed):
-  global_aval = core.update_aval_with_sharding(global_aval, out_sharding)
   if global_aval.dtype == dtypes.float0:
     return lambda _: np.zeros(global_aval.shape, dtypes.float0)
   if dtypes.issubdtype(global_aval.dtype, dtypes.extended):
