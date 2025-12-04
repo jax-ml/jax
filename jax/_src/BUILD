@@ -1085,6 +1085,7 @@ pytype_strict_library(
         ":traceback_util",
         ":xla_bridge",
         "//jax/_src/lib",
+        "//jaxlib:_jax",
     ],
 )
 

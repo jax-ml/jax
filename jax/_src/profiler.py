@@ -140,12 +140,23 @@ def start_trace(
     # fail and no TPU operations will be included in the profile.
     xla_bridge.get_backend()
 
-    if profiler_options is None:
-      _profile_state.profile_session = _profiler.ProfilerSession()
-    else:
-      _profile_state.profile_session = _profiler.ProfilerSession(
-          profiler_options
-      )
+    options = profiler_options
+    if options is None:
+      options = ProfileOptions()
+    try:
+      import jax  # type: ignore
+      options.jax_version = jax.__version__
+    except ImportError:
+      logger.warning("Could not import jax to get version information.")
+      options.jax_version = "unknown"
+    try:
+      import jaxlib  # type: ignore
+      options.jaxlib_version = jaxlib.__version__
+    except ImportError:
+      logger.warning("Could not import jaxlib to get version information.")
+      options.jaxlib_version = "unknown"
+
+    _profile_state.profile_session = _profiler.ProfilerSession(options)
     _profile_state.create_perfetto_link = create_perfetto_link
     _profile_state.create_perfetto_trace = (
         create_perfetto_trace or create_perfetto_link)
