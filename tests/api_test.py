@@ -7215,10 +7215,10 @@ class JaxprTest(jtu.JaxTestCase):
   def test_cond(self):
     def f(x):
       return lax.cond(x >= 0.,
+                      lambda xt, _: xt + x,
+                      lambda _, xf: xf - x,
                       x + 1.,
-                      lambda xt: xt + x,
-                      x + 2.,
-                      lambda xf: xf - x)
+                      x + 2.)
     expected = """{ lambda ; a:f32[]. let
     b:bool[] = ge a 0.0:f32[]
     c:f32[] = add a 1.0:f32[]
@@ -7949,10 +7949,10 @@ class TracebackTest(jtu.JaxTestCase):
     jax.lax.scan(f, 0, jnp.arange(4))
 
   def test_cond_traceback(self):
-    if sys.version_info < (3, 14):
+    if sys.version_info < (3, 13):
       # Fails because 3.11 adds an extra stack frame due to a list comprehension
       self.skipTest("Expected failure.")
-    expected_depth = 8
+    expected_depth = 4
     init_depth = self.cur_depth()
 
     def f():

@@ -18,7 +18,6 @@ import collections
 from collections.abc import Callable, Sequence
 import functools
 from functools import partial
-import inspect
 import itertools
 import operator
 from typing import Any, TypeVar
@@ -53,7 +52,7 @@ from jax._src.lib.mlir.dialects import hlo
 import numpy as np
 
 from jax._src.lax.control_flow.common import (
-    _avals_short, _typecheck_param, _initial_style_jaxprs_with_common_consts,
+    _avals_short, _typecheck_param, _merge_common_consts,
     _make_closed_jaxpr, _prune_zeros)
 
 map, unsafe_map = safe_map, map
@@ -149,8 +148,11 @@ def _switch_internal(
   if config.mutable_array_checks.value:
     api_util.check_no_aliased_ref_args(lambda: dbgs[0], ops_avals, ops)
 
-  jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
-      branches, ops_tree, ops_avals, dbgs)
+  jaxprs_, out_trees = zip(*[pe.trace_to_jaxpr(
+      branch, ops_tree, ops_avals, dbg) for branch, dbg in zip(branches, dbgs)])
+  jaxprs_, all_consts = zip(*[pe.separate_consts(j) for j in jaxprs_])
+  jaxprs, consts = _merge_common_consts(jaxprs_, all_consts)
+
   if config.mutable_array_checks.value:
     api_util._check_no_aliased_closed_over_refs(dbgs[0], (*jaxprs[0].consts, *consts), ops)
   for i, (out_tree, jaxpr) in enumerate(zip(out_trees[1:], jaxprs[1:])):
@@ -184,7 +186,7 @@ def _switch_internal(
   return tree_unflatten(out_trees[0], out)
 
 @partial(api_boundary, repro_api_name="jax_cond")
-def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
+def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
           operand=_no_operand_sentinel):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
@@ -224,7 +226,12 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
     pytree (nested Python tuple/list/dict) thereof.
   """
   if not (callable(true_fun) and callable(false_fun)):
-    raise TypeError("lax.cond: true_fun and false_fun arguments should be callable.")
+    # try falling back to the old, deprecated version of `cond`
+    if callable(false_fun) and len(operands) == 2 and callable(operands[1]):
+      x_true, f_true, x_false, f_false = true_fun, false_fun, *operands
+      return cond(pred, lambda x, _: f_true(x), lambda _, x: f_false(x), x_true, x_false)
+    else:
+      raise TypeError("lax.cond: true_fun and false_fun arguments should be callable.")
   if operand is not _no_operand_sentinel:
     if operands:
       raise TypeError("if 'operand' keyword is passed then no positional "
@@ -270,14 +277,18 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   if config.mutable_array_checks.value:
     api_util.check_no_aliased_ref_args(lambda: dbg_true_fun, ops_avals, ops)
   dbg_false_fun = api_util.debug_info("cond", false_fun, operands, {})
-  jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
-      (true_fun, false_fun), ops_tree, ops_avals,
-      [dbg_true_fun, dbg_false_fun])
-  true_jaxpr, false_jaxpr = jaxprs
+
+  true_jaxpr_, out_tree = pe.trace_to_jaxpr(
+      true_fun, ops_tree, ops_avals, dbg_true_fun)
+  true_jaxpr_, true_consts = pe.separate_consts(true_jaxpr_)
+  false_jaxpr_, false_out_tree = pe.trace_to_jaxpr(
+      false_fun, ops_tree, ops_avals, dbg_false_fun)
+  false_jaxpr_, false_consts = pe.separate_consts(false_jaxpr_)
+  (true_jaxpr, false_jaxpr), consts = _merge_common_consts(
+      (true_jaxpr_, false_jaxpr_), (true_consts, false_consts))
   if config.mutable_array_checks.value:
     api_util._check_no_aliased_closed_over_refs(dbg_true_fun, (*true_jaxpr.consts, *consts), ops)
 
-  out_tree, false_out_tree = out_trees
   if any(isinstance(out_aval, AbstractRef) for out_aval in
          true_jaxpr.out_avals + false_jaxpr.out_avals):
     raise ValueError("Cannot return `Ref`s from `cond`.")
@@ -398,48 +409,6 @@ def _check_branch_outputs(
 def _capitalize(s):
   # s.capitalize() converts s[1:] to lowercase which we don't want.
   return s[0].capitalize() + s[1:]
-
-@api_boundary
-@functools.wraps(_cond)
-def cond(*args, **kwargs):
-  # detect an attempt to call the former, deprecated cond
-  try:
-    ba = inspect.signature(_cond_with_per_branch_args).bind(*args, **kwargs)
-  except TypeError:
-    pass
-  else:
-    assert not ba.kwargs  # no catch-all **kwargs in _cond_with_per_branch
-    _, true_operand, true_fun, false_operand, false_fun = ba.args
-    if callable(true_operand) and callable(true_fun):
-      # treat this as modern cond (with two operands)
-      return _cond(*args, **kwargs)
-    if callable(true_fun) and callable(false_fun):
-      return _cond_with_per_branch_args(*ba.args)
-
-  return _cond(*args, **kwargs)
-
-@partial(api_boundary, repro_api_name="jax_cond_with_per_branch_args")
-def _cond_with_per_branch_args(pred,
-                               true_operand, true_fun: Callable,
-                               false_operand, false_fun: Callable):
-  """Conditionally apply ``true_fun`` or ``false_fun``.
-
-  Has equivalent semantics to this Python implementation::
-
-    def cond(pred, true_operand, true_fun, false_operand, false_fun):
-      if pred:
-        return true_fun(true_operand)
-      else:
-        return false_fun(false_operand)
-
-  Pred has to be a scalar type, collection types (list, tuple) are not supported
-  """
-  if not (callable(true_fun) and callable(false_fun)):
-    raise TypeError("lax.cond: true_fun and false_fun arguments should be callable.")
-  return _cond(pred,
-               lambda op: true_fun(op[0]),
-               lambda op: false_fun(op[1]),
-               (true_operand, false_operand))
 
 def _join_cond_effects(branches: Sequence[core.ClosedJaxpr]) -> effects.Effects:
   joined_effects = set()
