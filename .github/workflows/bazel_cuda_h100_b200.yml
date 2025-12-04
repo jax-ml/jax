@@ -41,10 +41,10 @@ jobs:
         uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46
         with:
           files: |
-            jax/jax/_src/pallas/mosaic_gpu/**
-            jax/jax/experimental/mosaic/gpu/**
-            jax/jaxlib/mosaic/dialect/gpu/**
-            jax/jaxlib/mosaic/gpu/**
+            jax/_src/pallas/mosaic_gpu/**
+            jax/experimental/mosaic/gpu/**
+            jaxlib/mosaic/dialect/gpu/**
+            jaxlib/mosaic/gpu/**
             .github/workflows/bazel_cuda_h100_b200.yml
       - name: List all changed files
         env:
