@@ -438,7 +438,8 @@ def annotate(f: WrappedFun, in_type: core.InputType | None) -> WrappedFun:
   if in_type is None:
     return f
   _check_input_type(in_type)
-  return WrappedFun(f.f, f.f_transformed, f.transforms, f.stores, f.params, in_type, f.debug_info)
+  return WrappedFun(f.f, f.f_transformed, f.transforms, f.stores, f.params,
+                    in_type, f.debug_info.with_unknown_names())
 
 def _check_input_type(in_type: core.InputType) -> None:
   # Check that in_type is syntactically well-formed
