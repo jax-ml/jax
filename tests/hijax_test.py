@@ -587,6 +587,36 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(jax.vmap(f)(xs), xs**3)
     self.assertEqual(jax.grad(f)(2.0), 12.0)
 
+  @parameterized.parameters([False, True])
+  def test_newstyle_hiprimitive_vjp_non_float_input(self, jit):
+
+    class Slice(VJPHiPrimitive):
+      def __init__(self, x_aval):
+        assert x_aval.ndim == 1
+        self.in_avals = (x_aval, core.ShapedArray((), jnp.int32))
+        self.out_aval = core.ShapedArray((), x_aval.dtype)
+        self.params = dict()
+        super().__init__()
+
+      def expand(self, x, idx):
+        return x[idx]
+
+      def vjp_fwd(self, x, idx):
+        return self(x, idx), idx
+
+      def vjp_bwd_retval(self, res, t):
+        return jnp.zeros_like(self.in_avals[0]).at[res].set(t), None
+
+    f = lambda x, idx: Slice(jax.typeof(x))(x, idx)
+    if jit:
+      f = jax.jit(f)
+
+    xs = jnp.arange(3.0)
+    self.assertEqual(f(xs, 2), 2.0)
+    self.assertAllClose(jax.grad(f)(xs, 0), jnp.array([1.0, 0.0, 0.0]))
+    self.assertAllClose(jax.grad(f)(xs, 1), jnp.array([0.0, 1.0, 0.0]))
+    self.assertAllClose(jax.grad(f)(xs, 2), jnp.array([0.0, 0.0, 1.0]))
+
   def test_newstyle_hiprimitive_defines_both_types_of_vjp_error(self):
     class RaiseToStaticPower(VJPHiPrimitive):
       def __init__(self, in_aval, *, power):

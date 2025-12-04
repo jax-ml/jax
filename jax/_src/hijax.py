@@ -355,7 +355,12 @@ class VJPHiPrimitive:
 
   def vjp_bwd(self, res, outgrad, *arg_accums):
     args_grad = self.vjp_bwd_retval(res, outgrad)
-    tree_map(lambda acc, leaf_grad: acc.accum(leaf_grad), arg_accums, args_grad)
+
+    def acc_grad(acc, leaf_grad):
+      if isinstance(acc, ad.ValAccum):
+        acc.accum(leaf_grad)
+
+    tree_map(acc_grad, arg_accums, args_grad)
 
   def vjp_bwd_retval(self, res, outgrad):
     # Classic API: returns values instead of using accumulators
@@ -415,7 +420,7 @@ def _call_hi_primitive_batcher(axis_data, args_flat, dims_flat, prim):
 batching.fancy_primitive_batchers[call_hi_primitive_p] = _call_hi_primitive_batcher
 
 def _call_hi_primitive_linearize(nz_in, *args_flat, prim):
-  assert all(nz_in)
+  del nz_in  # Unused.
   args = tree_unflatten(prim.in_tree, args_flat)
   ans, residuals = prim.vjp_fwd(*args)
   # TODO(dougalm): does the fwd/bwd API force us to assume the nzs_out are all False
@@ -427,6 +432,10 @@ def _call_hi_primitive_linearize(nz_in, *args_flat, prim):
 
 def fake_linear_op(prim, rs, *tangents):
   residuals_flat, residuals_tree = tree_flatten(rs)
+  tangents = [
+      ad_util.zeros_like_aval(t.aval) if type(t) is ad_util.Zero else t
+      for t in tangents
+  ]
   return call_hi_primitive_linearized_p.bind(*residuals_flat, *tangents,
                                              residuals_tree=residuals_tree, prim=prim)
 
