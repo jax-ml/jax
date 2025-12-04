@@ -666,8 +666,10 @@ class OpsTest(PallasBaseTest):
     shape = (8, 128)
     if to_dtype in {"int2", "uint2"}:
       # Make sure #rows is a least the packing factor of int2.
-      # TODO(b/343490729): XLA convert(f32[16, 128]) fails on v5p.
-      shape = (32, 128)
+      # TODO: b/343490729 - XLA convert(f32[16, 128]) fails on v5p.
+      # TODO: b/459440496 - Support more shapes for int2. The number of rows is
+      # required to be an even multiple of 128.
+      shape = (128, 128)
     x = data.draw(hnp.arrays(from_dtype, shape, elements=elements))
     x = jnp.asarray(x)
     def kernel(x_ref, y_ref):
