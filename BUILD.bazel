@@ -32,6 +32,7 @@ wheel_sources(
         "//jax",
         "//jax:compilation_cache",
         "//jax:experimental",
+        "//jax/example_libraries:example_libraries",
         "//jax:experimental_colocated_python",
         "//jax:experimental_sparse",
         "//jax:experimental_buffer_callback",

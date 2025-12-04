@@ -20,6 +20,14 @@ package(
 )
 
 pytype_strict_library(
+    name = "example_libraries",
+    srcs = [
+        "__init__.py",
+    ],
+    visibility = ["//jax:internal"],
+)
+
+pytype_strict_library(
     name = "stax",
     srcs = [
         "stax.py",
