@@ -79,3 +79,13 @@ pytype_strict_library(
         "//jax/_src:source_info_util",
     ],
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+)

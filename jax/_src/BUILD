@@ -1586,3 +1586,13 @@ pytype_strict_library(
     srcs = ["ref.py"],
     deps = [":core"],
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+)

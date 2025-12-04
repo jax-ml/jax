@@ -44,3 +44,13 @@ pytype_strict_library(
     srcs = ["passmanager.py"],
     deps = if_building_jaxlib(["//jaxlib/mlir:pass_manager"]),
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+)

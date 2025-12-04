@@ -79,3 +79,14 @@ py_library(
         "//visibility:public",
     ],
 )
+
+filegroup(
+    name = "py_sources",
+    srcs = glob(
+        ["**/*.py"],
+        exclude = [
+            "*_test.py",
+        ],
+    ),
+    visibility = ["//jaxlib/tools:__pkg__"],
+)
