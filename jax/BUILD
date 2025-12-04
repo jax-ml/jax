@@ -254,19 +254,6 @@ pytype_strict_library(
 )
 
 # Public JAX libraries below this point.
-# TODO(phawkins): remove this target in favor of the finer-grained targets in jax/extend/...
-pytype_strict_library(
-    name = "extend",
-    visibility = [":jax_extend_users"],
-    deps = [
-        "//jax/extend",
-        "//jax/extend:backend",
-        "//jax/extend:core",
-        "//jax/extend:linear_util",
-        "//jax/extend:random",
-        "//jax/extend:source_info_util",
-    ],
-)
 
 # Aliases of experimental targets.
 # TODO(dsuo): remove these aliases/targets.
