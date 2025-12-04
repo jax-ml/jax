@@ -39,11 +39,3 @@ pytype_strict_library(
         "//jax/_src:util",
     ] + py_deps("numpy"),
 )
-
-# TODO(dsuo): Remove this filegroup once experimental aliases from jax/BUILD are
-# removed.
-filegroup(
-    name = "jax_example_libraries",
-    srcs = glob(["*.py"]),
-    visibility = ["//jax:internal"],
-)

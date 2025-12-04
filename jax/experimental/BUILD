@@ -584,7 +584,9 @@ pytype_strict_library(
     # be used in new code. Use jax.shard_map instead.
     name = "shard_map",
     srcs = ["shard_map.py"],
-    visibility = jax_visibility("experimental/shard_map"),
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("experimental/shard_map"),
     deps = [
         "//jax",
         "//jax/_src:mesh",
@@ -738,20 +740,5 @@ filegroup(
         "scheduling_groups.py",
         "shard_map.py",
     ],
-    visibility = ["//jax:internal"],
-)
-
-filegroup(
-    name = "jax_experimental",
-    srcs = glob(
-        [
-            "*.py",
-        ],
-        exclude = [
-            "buffer_callback.py",
-            "mental/mosaic/gpu/*.py",
-            "serialize_executable.py",
-        ],
-    ),
     visibility = ["//jax:internal"],
 )
