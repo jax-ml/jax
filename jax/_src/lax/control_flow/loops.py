@@ -406,7 +406,7 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
     else:
       diffs = [f'{component(path)} is a {thing1} but the corresponding component '
                f'of the carry output is a {thing2}, so {explanation}'
-               for path, thing1, thing2, explanation
+               for path, thing1, thing2, explanation, _, _
                in equality_errors(in_carry, out_carry)]
       if len(diffs) == 0:
         return  # the trees may have different aux data, but structures are same
