@@ -78,17 +78,23 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
       jax.block_until_ready(compiled_kernel(x))
     self.assertIn('It works!', get_output())
 
-  def test_debug_print_with_values(self):
+  @parameterized.product(dtype=[jnp.int32, jnp.float32])
+  def test_debug_print_with_values(self, dtype):
     @functools.partial(
         self.pallas_call,
         in_specs=(pl.BlockSpec(memory_space=pltpu.SMEM),),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )
     def kernel(x_ref, o_ref):
-      pl.debug_print('BEGIN1 x[0] == {}', x_ref[0])
-      pl.debug_print('BEGIN2 x[0] == {} ; x[1] == {} ; END', x_ref[0], x_ref[1])
+      if dtype == jnp.int32:
+        pl.debug_print('BEGIN1 x[0] == {}', x_ref[0])
+        pl.debug_print(
+            'BEGIN2 x[0] == {} ; x[1] == {} ; END', x_ref[0], x_ref[1]
+        )
+      else:
+        pl.debug_print('BEGIN1 x[0] == ', x_ref[0])
 
-    x = jnp.array([42, 24]).astype(jnp.int32)
+    x = jnp.array([42, 24], dtype=dtype)
     compiled_kernel = (
         jax.jit(kernel)
         .lower(x)
@@ -97,8 +103,11 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel(x))
     output = get_output()
-    self.assertIn('BEGIN1 x[0] == 42', output)
-    self.assertIn('BEGIN2 x[0] == 42 ; x[1] == 24 ; END', output)
+    if dtype == jnp.int32:
+      self.assertIn('BEGIN1 x[0] == 42', output)
+      self.assertIn('BEGIN2 x[0] == 42 ; x[1] == 24 ; END', output)
+    else:
+      self.assertIn('BEGIN1 x[0] == f32[] 42', output)
 
   @parameterized.named_parameters(
       (f"{'_'.join(map(str, shape))}_{dtype.__name__}", shape, dtype)
