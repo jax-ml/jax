@@ -9,7 +9,7 @@ on:
     branches:
       - main
     paths:
-      - '**workflows/metal_plugin_ci.yml'
+      - '.github/workflows/metal_plugin_ci.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -31,7 +31,7 @@ jobs:
         with:
           path: jax
           persist-credentials: false
-      - name: Setup build and test enviroment
+      - name: Setup build and test environment
         run: |
           rm -rf ${GITHUB_WORKSPACE}/jax-metal-venv
           python3 -m venv ${GITHUB_WORKSPACE}/jax-metal-venv
