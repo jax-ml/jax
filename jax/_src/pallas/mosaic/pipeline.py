@@ -406,7 +406,7 @@ class BufferedRefBase:
 
 # TODO(justinfu): Refactor and rename slot fields to reflect cumulative values
 # instead of slot index.
-@tree_util.register_pytree_node_class
+@tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class BufferedRef(BufferedRefBase):
   """A helper class to automate VMEM double buffering in pallas pipelines.
@@ -443,9 +443,9 @@ class BufferedRef(BufferedRefBase):
     swap: Tracks whether the BufferedRef slots need to be swapped before next
       copy.
   """
-  _spec: pl.BlockSpec       # static metadata
-  dtype: Any                # static metadata
-  _buffer_type: BufferType  # static metadata
+  _spec: pl.BlockSpec = dataclasses.field(metadata=dict(static=True))
+  dtype: Any = dataclasses.field(metadata=dict(static=True))
+  _buffer_type: BufferType = dataclasses.field(metadata=dict(static=True))
   window_ref: ArrayRef | None
   accum_ref: ArrayRef | None
   copy_in_slot: ArrayRef | None
@@ -501,32 +501,6 @@ class BufferedRef(BufferedRefBase):
     if not self.is_buffered:
       raise ValueError("buffer count is undefined")
     return self.window_ref.shape[0]  # type: ignore[union-attr]
-
-  def tree_flatten(self):
-    return (
-        (
-            self.window_ref,
-            self.accum_ref,
-            self.copy_in_slot,
-            self.wait_in_slot,
-            self.copy_out_slot,
-            self.wait_out_slot,
-            self._copy_in_slot_reg,
-            self._wait_in_slot_reg,
-            self._copy_out_slot_reg,
-            self._wait_out_slot_reg,
-            self.next_fetch_smem,
-            self.next_fetch_sreg,
-            self.sem_recvs,
-            self.sem_sends,
-            self.swap,
-        ),
-        (self._spec, self.dtype, self._buffer_type),
-    )
-
-  @classmethod
-  def tree_unflatten(cls, meta, data):
-    return cls(*meta, *data)
 
   @staticmethod
   def buffer_types() -> type[BufferType]:
