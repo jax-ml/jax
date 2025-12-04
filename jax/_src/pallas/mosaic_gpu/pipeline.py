@@ -59,8 +59,15 @@ def _get_block_size(
       raise NotImplementedError(f"Unsupported block size type: {type(bd)}")
 
 def _get_block_shape(spec: pallas_core.BlockSpec):
-  assert spec.block_shape is not None
-  return tuple(_get_block_size(bd) for bd in spec.block_shape)
+  if spec.block_shape is None:
+    raise ValueError("Block shape must be specified.")
+
+  block_shape = tuple(
+      _get_block_size(bd)
+      for bd in spec.block_shape
+      if not (bd is None or isinstance(bd, pl.Squeezed))
+  )
+  return block_shape
 
 
 map_brefs = functools.partial(
@@ -84,18 +91,27 @@ class BufferedRef:
       return self.gmem_ref
     return self.smem_ref.at[slot]
 
-  def compute_gmem_slice(self, grid_indices) -> tuple[pl.Slice, ...]:
+  def compute_gmem_slice(self, grid_indices) -> tuple[pl.Slice | jax.Array, ...]:
     index_map = self.spec.index_map
     assert index_map is not None
     # We don't allow Python scalars here, because they are interpreted
     # differently depending on the x32/x64 mode.
     assert all(i.dtype == jnp.dtype(jnp.int32) for i in grid_indices)
-    sizes = _get_block_shape(self.spec)
+
+    def _make_block_slice(block_index: jax.Array, bd: pl.BlockDim):
+      match bd:
+        case int():
+          return pl.Slice(block_index * bd, bd)
+        case pl.Blocked(block_size):
+          return pl.Slice(block_index * block_size, block_size)
+        case None | pl.Squeezed():
+          return block_index
+        case _:
+          raise ValueError(f"Unsupported block dimension type: {bd}")
+
     return tuple(
-        pl.Slice(idx * size, size)  # type: ignore[arg-type]
-        for idx, size in zip(
-            index_map(*grid_indices), sizes  # type: ignore[arg-type]
-        )
+        _make_block_slice(bd, idx)
+        for bd, idx in zip(index_map(*grid_indices), self.spec.block_shape)
     )
 
   def copy_in(self, slot, grid_indices, barrier_ref, barrier_slot=None):
@@ -176,6 +192,10 @@ def _in_smem(spec: pallas_core.BlockSpec) -> bool:
 class _Slice:
   start: int | jax.Array
   size: int | jax.Array
+
+  @classmethod
+  def from_val(cls, s: pl.Slice| jax.Array):
+    return cls(s.start, s.size) if isinstance(s, pl.Slice) else cls(s, 1)
 
   def __eq__(self, other: _Slice) -> jax.Array:  # type: ignore
     return lax.bitwise_and(self.start == other.start, self.size == other.size)
@@ -372,7 +392,7 @@ def emit_pipeline(
           continue
         assert last_store_slices[idx] is not None
         new_store_slices[idx] = tuple(
-            _Slice(s.start, s.size) for s in bref.compute_gmem_slice(indices)
+            _Slice.from_val(s) for s in bref.compute_gmem_slice(indices)
         )
         are_same_slices = map(
             lambda old, new: old == new,
@@ -690,7 +710,7 @@ def emit_pipeline_warp_specialized(
       slots = max_concurrent_steps if has_seq_dim else 1
       smem_allocs.append(
           gpu_core.SMEM(
-              (slots, *spec.block_shape),   # type: ignore
+              (slots, *_get_block_shape(spec)),   # type: ignore
               gmem_ref.dtype,
               transforms=getattr(spec, "transforms", ()),
           )
@@ -880,7 +900,7 @@ def emit_pipeline_warp_specialized(
             continue
           assert last_store_slices[idx] is not None
           new_store_slices[idx] = tuple(
-              _Slice(s.start, s.size) for s in bref.compute_gmem_slice(indices)
+              _Slice.from_val(s) for s in bref.compute_gmem_slice(indices)
           )
           are_same_slices = map(
               lambda old, new: old == new,
