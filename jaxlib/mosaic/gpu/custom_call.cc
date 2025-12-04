@@ -641,9 +641,10 @@ absl::StatusOr<CompiledKernel*> CachedCompileAndInit(CacheKey key,
   return &cache.kernels.at(key);
 }
 
+// TODO(b/464203195): Backward-compatible version using the legacy FFI
+// API. Remove once backward compatibility window has passed.
 void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
                          size_t opaque_len, XlaCustomCallStatus* status) {
-  // Forward-compatible version using the legacy FFI API
   if (reinterpret_cast<uintptr_t>(opaque) % alignof(KernelHash)) {
     fprintf(stderr, "Misaligned opaque pointer\n");
     abort();
@@ -680,8 +681,6 @@ absl::Status MosaicGpuExecute(cudaStream_t stream, ffi::RemainingArgs inputs,
                               std::string_view kernel_hash,
                               std::string_view module,
                               bool use_custom_barrier) {
-  // Updated version using the new FFI API supporting custom barrier
-  // for distributed kernels
   if (use_custom_barrier) {
     return absl::UnimplementedError("Custom barrier is not supported on GPUs.");
   }
