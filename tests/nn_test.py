@@ -27,6 +27,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes as _dtypes
 from jax._src import test_util as jtu
+from jax._src.cpu_lib_ops.fused_attention_cpu  import can_use_cpu_fused_attention
 from jax._src.cudnn.scaled_matmul_stablehlo import (
     quantize,
     shape_normalization,
@@ -103,6 +104,10 @@ def create_mxfp8_configs_if_available():
 
   return [nn.get_scaled_dot_general_config("mxfp8") for _ in range(3)]
 
+def _check_onednn_backend(fn, *args, **kwargs):
+  lowered = jax.jit(fn).lower(*args, **kwargs)
+  hlo = lowered.as_text('stablehlo', debug_info=True)
+  return '@__onednn$fMHA' in hlo
 
 @jtu.with_config(jax_legacy_prng_key="allow",
                  jax_numpy_dtype_promotion="standard")
@@ -379,6 +384,50 @@ class NNFunctionsTest(jtu.JaxTestCase):
     _, dbias_ref, _ = bwd_ref(x, bias, mask)
     _, dbias_ans, _ = bwd_ans(x, bias, mask)
     self.assertAllClose(dbias_ans, dbias_ref, rtol=0.1, atol=0.1)
+
+  # Dot product attention with onednn
+  @parameterized.named_parameters([
+      dict(
+          testcase_name=f"dtype_{dtype.__name__}_mode_{mode}_batch_{batch}_group_{group}_qLen_{q_len}",
+          dtype=dtype,
+          causal_mode=mode,
+          group_num=group,
+          query_seq_len=q_len,
+          batch_size=batch,
+      )
+      for dtype in [jnp.float32, jnp.bfloat16]
+      for mode in ['is_causal', 'is_mask', None]
+      for group in [1, 2, 4]
+      for q_len in [256, 1]
+      for batch in [1,2]
+  ])
+  def testDotProductAttentionOneDNN(self, dtype, causal_mode, group_num, query_seq_len, batch_size):
+    if not can_use_cpu_fused_attention(dtype):
+      raise unittest.SkipTest("Skipping as Dot product attention is not compatible.")
+    sdpa = nn.dot_product_attention
+    B, S, T, N, H, G = batch_size, 256, query_seq_len, 8, 256, group_num
+    keys = random.split(random.PRNGKey(0), 4)
+    Q = random.normal(keys[0], (B, T, N, H), dtype)
+    K = random.normal(keys[1], (B, S, N // G, H), dtype)
+    V = random.normal(keys[2], (B, S, N // G, H), dtype)
+    causal_mask = None
+    is_causal = causal_mode == 'is_causal'
+    if causal_mode == 'is_mask':
+      custom_mask = jnp.tril(jnp.ones((T, S), dtype=jnp.bool_))
+      causal_mask = custom_mask[None, None, :, :]
+    sdpa_ref = jax.jit(partial(sdpa, is_causal=is_causal, implementation=None))
+    sdpa_ans = jax.jit(partial(sdpa, is_causal=is_causal, implementation='cpu_fused_attention'))
+
+    K_ref = jnp.repeat(K, G, axis=2) if G != 1 else K
+    V_ref = jnp.repeat(V, G, axis=2) if G != 1 else V
+    out_ref = sdpa_ref(Q, K_ref, V_ref, bias=None, mask=causal_mask)
+    self.assertTrue(_check_onednn_backend(sdpa_ans, Q, K, V, None, causal_mask))
+
+    try:
+      out_ans = sdpa_ans(Q, K, V, None, causal_mask)
+      self.assertAllClose(out_ref, out_ans, atol=1e-2, rtol=1e-2)
+    except Exception as e:
+      self.fail(f"testDotProductAttentionOneDNN failed : {e}")
 
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), order=4,
