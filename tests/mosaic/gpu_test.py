@@ -5348,6 +5348,10 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
   @parameterized.parameters(jnp.float32, jnp.bfloat16, jnp.float16)
   def test_async_store_add_reduction(self, dtype):
+    # TODO(b/415721295):Remove after the minimal jaxlib version is 0.8.2.
+    if not hasattr(mgpu_dialect, "TMAReduction"):
+      self.skipTest("TMAReduction op is required.")
+
     shape = (8, 128)
 
     def body(ctx, src, dst, smem):

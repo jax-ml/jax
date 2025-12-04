@@ -991,7 +991,8 @@ def _mgpu_async_store_op_lowering_rule(
   # flatten -> async_copy -> unflatted here, as long as flattened size is a
   # multiple of 16.
 
-  if store_op.reduction_op is not None:
+  # TODO(b/415721295):Simplify, after the minimal jaxlib version is 0.8.2.
+  if hasattr(mgpu, "TMAReduction") and store_op.reduction_op is not None:
     reduction_op = mgpu.TMAReduction(store_op.reduction_op.value).name.lower()
   else:
     reduction_op = None
