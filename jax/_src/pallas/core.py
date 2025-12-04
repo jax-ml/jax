@@ -482,6 +482,7 @@ class BlockSpec:
   index_map: Callable[..., Any] | None = None
   memory_space: Any | None = dataclasses.field(kw_only=True, default=None)
   pipeline_mode: Buffered | None = None
+  tiling: tuple[int, ...] | None = None
 
   def __post_init__(self):
     if self.index_map is not None:
@@ -630,6 +631,7 @@ class BlockSpec:
         array_aval=array_aval,
         origin=origin,
         pipeline_mode=self.pipeline_mode,
+        tiling=self.tiling,
         debug=debug,
     )
     mapping.check_invariants()
@@ -672,6 +674,7 @@ class BlockMapping:
   origin: OriginStr
   transforms: Sequence[MemoryRefTransform] = ()
   pipeline_mode: Buffered | None = None
+  tiling: tuple[int, ...] | None = None
   debug: bool = False
 
   def check_invariants(self) -> None:
@@ -753,6 +756,7 @@ class BlockMapping:
         index_map,
         memory_space=self.block_aval.memory_space,
         pipeline_mode=self.pipeline_mode,
+        tiling=self.tiling,
     )
 
   def to_lojax(
