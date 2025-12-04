@@ -670,7 +670,7 @@ def static_slice(arr: Array, idx: StaticIndex | tuple[StaticIndex, ...]):
   for axis, (ind, size) in enumerate(safe_zip(idx, arr.shape)):
     if isinstance(ind, (int, np.integer)):
       if not (-size <= ind < size):
-        raise IndexError(f"index {ind} out of bounds for axis {axis}  with size {size}")
+        raise IndexError(f"index {ind} out of bounds for axis {axis} with size {size}")
       if ind < 0:
         ind += size
       start_indices.append(ind)
@@ -701,6 +701,29 @@ def static_slice(arr: Array, idx: StaticIndex | tuple[StaticIndex, ...]):
   return result
 
 
+def validate_static_indices(
+    arr: Array,
+    idx: Index | tuple[Index, ...], *,
+    normalize_indices: bool) -> None:
+  """Perform bounds-checks for static indices.
+
+  Raises an IndexError if any static indices are out-of-bounds.
+  """
+  # TODO(jakevdp): expand_bool_indices is expensive; do this more efficiently.
+  idx = idx if isinstance(idx, tuple) else (idx,)
+  idx = _expand_bool_indices(idx, arr.shape)
+  idx_tup = tuple(i for i in _canonicalize_tuple_index(arr.ndim, idx)
+                  if i is not None and not isinstance(i, bool))
+  def norm_index(i, size):
+    return i + size if normalize_indices and i < 0 else i
+  if len(idx_tup) != arr.ndim:
+    raise RuntimeError(f"Error for {idx=} and {arr.shape=}: processed {idx_tup=}")
+  for axis, (i, size) in enumerate(safe_zip(idx_tup, arr.shape)):
+    if isinstance(i, (int, np.integer)) and (norm_index(i, size) < 0 or i >= size):
+      raise IndexError(f"index {i} out of bounds for axis {axis} with size {size}"
+                       f" ({normalize_indices=})")
+
+
 class IndexingStrategy(enum.Enum):
   AUTO = 'auto'
   GATHER = 'gather'
@@ -725,6 +748,9 @@ def rewriting_take(
 
   if not isinstance(strategy, IndexingStrategy):
     raise TypeError(f"Expected strategy to be IndexingStrategy; got {strategy}")
+
+  if config.check_static_indices.value and (mode is None or slicing.GatherScatterMode.from_any(mode) == slicing.GatherScatterMode.PROMISE_IN_BOUNDS):
+    validate_static_indices(arr, idx, normalize_indices=normalize_indices)
 
   if strategy == IndexingStrategy.STATIC_SLICE:
     if not normalize_indices:
