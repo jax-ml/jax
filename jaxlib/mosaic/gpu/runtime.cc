@@ -20,6 +20,18 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "jaxlib/mosaic/gpu/nvshmem.h"
 
+namespace {
+template <typename... Args>
+void abort_on_error(CUresult result, const char* fmt, Args&&... args) {
+  if (result != CUDA_SUCCESS) {
+    const char *ptr = nullptr;
+    cuGetErrorString(result, &ptr);
+    fprintf(stderr, fmt, std::forward<Args>(args)..., ptr);
+    abort();
+  }
+}
+}
+
 extern "C" {
 
 void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
@@ -159,27 +171,18 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
     fprintf(stderr, "Unsupported swizzle: %ld\n", swizzle_bytes);
     abort();
   }
-  CUresult result = cuTensorMapEncodeTiled(
+  abort_on_error(
+    cuTensorMapEncodeTiled(
       tma_desc, data_type, rank, base_addr, tma_sizes, tma_strides,
       tma_window_shape, element_strides, CU_TENSOR_MAP_INTERLEAVE_NONE, swizzle,
-      CU_TENSOR_MAP_L2_PROMOTION_NONE, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
-  if (result != CUDA_SUCCESS) {
-    const char *ptr = nullptr;
-    cuGetErrorString(result, &ptr);
-    fprintf(stderr, "cuTensorMapEncodeTiled failed: %s\n", ptr);
-    abort();
-  }
+      CU_TENSOR_MAP_L2_PROMOTION_NONE, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE),
+    "cuTensorMapEncodeTiled failed: %s\n");
 }
 
 void* mosaic_gpu_module_load(void *data) {
   CUmodule module = nullptr;
-  if (auto result = cuModuleLoadData(&module, data); result != CUDA_SUCCESS) {
-    const char *ptr = nullptr;
-    cuGetErrorString(result, &ptr);
-    fprintf(stderr, "cuModuleLoadData failed: %s\n", ptr);
-    abort();
-  }
-
+  abort_on_error(cuModuleLoadData(&module, data),
+                 "cuModuleLoadData failed: %s\n");
   {  // Set the NVSHMEM state if it's used by the module.
     CUdeviceptr ptr = 0;
     size_t size = 0;
@@ -200,41 +203,23 @@ void* mosaic_gpu_module_load(void *data) {
 void *mosaic_gpu_get_function(CUmodule module, const char *name,
                               int32_t smem_bytes, int32_t cluster_size) {
   CUfunction function = nullptr;
-  CUresult result = cuModuleGetFunction(&function, module, name);
-  if (result != CUDA_SUCCESS) {
-    const char *ptr = nullptr;
-    cuGetErrorString(result, &ptr);
-    fprintf(stderr,
-            "Failed to retrieve function pointer to kernel \"%s\", "
-            "cuModuleGetFunction failed: %s\n",
-            name, ptr);
-    abort();
-  }
+  abort_on_error(
+    cuModuleGetFunction(&function, module, name),
+    "Failed to retrieve function pointer to kernel \"%s\", "
+    "cuModuleGetFunction failed: %s\n", name);
   if (smem_bytes) {
-    result = cuFuncSetAttribute(
-        function, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, smem_bytes);
-    if (result != CUDA_SUCCESS) {
-      const char *ptr = nullptr;
-      cuGetErrorString(result, &ptr);
-      fprintf(stderr,
-              "Failed to set maximum dynamic shared memory size for kernel "
-              "\"%s\" to %d bytes, cuFuncSetAttribute failed: %s\n",
-              name, smem_bytes, ptr);
-      abort();
-    }
+    abort_on_error(
+      cuFuncSetAttribute(
+        function, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, smem_bytes),
+      "Failed to set maximum dynamic shared memory size for kernel \"%s\" "
+      "to %d bytes, cuFuncSetAttribute failed: %s\n", name, smem_bytes);
   }
   if (cluster_size > 8) {
-    result = cuFuncSetAttribute(
-        function, CU_FUNC_ATTRIBUTE_NON_PORTABLE_CLUSTER_SIZE_ALLOWED, 1);
-    if (result != CUDA_SUCCESS) {
-      const char *ptr = nullptr;
-      cuGetErrorString(result, &ptr);
-      fprintf(stderr,
-              "Failed to set allowed cluster size for kernel \"%s\" to %d, "
-              "cuFuncSetAttribute failed: %s\n",
-              name, cluster_size, ptr);
-      abort();
-    }
+    abort_on_error(
+      cuFuncSetAttribute(
+        function, CU_FUNC_ATTRIBUTE_NON_PORTABLE_CLUSTER_SIZE_ALLOWED, 1),
+      "Failed to set allowed cluster size for kernel \"%s\" to %d, "
+      "cuFuncSetAttribute failed: %s\n", name, cluster_size);
   }
   return function;
 }
@@ -270,11 +255,18 @@ void mosaic_gpu_launch_kernel(CUfunction function, uint32_t grid_x,
     config.numAttrs = 1;
   }
   CUresult result = cuLaunchKernelEx(&config, function, params, nullptr);
-  if (result != CUDA_SUCCESS) {
-    const char *ptr = nullptr;
-    cuGetErrorString(result, &ptr);
-    fprintf(stderr, "cuLaunchKernel failed: %s\n", ptr);
+  if (result == CUDA_ERROR_INVALID_CLUSTER_SIZE) {
+    int max_cluster_size;
+    abort_on_error(cuOccupancyMaxPotentialClusterSize(&max_cluster_size,
+                                                      function, &config),
+                   "cuOccupancyMaxPotentialClusterSize failed: %s\n");
+    fprintf(stderr,
+            "cuLaunchKernel failed with invalid cluster size (%d, %d, %d)"
+            ": maximum is %d\n", cluster_x, cluster_y, cluster_z,
+            max_cluster_size);
     abort();
+  } else {
+    abort_on_error(result, "cuLaunchKernelEx: %s\n");
   }
 }
 }
