@@ -807,7 +807,7 @@ def backends() -> dict[str, xla_client.Client]:
         err_msg = f"Unable to initialize backend '{platform}': {err}"
         if fail_quietly:
           _backend_errors[platform] = str(err)
-          logger.info(err_msg)
+          # logger.info(err_msg)
         else:
           if config.jax_platforms.value:
             err_msg += " (set JAX_PLATFORMS='' to automatically choose an available backend)"
