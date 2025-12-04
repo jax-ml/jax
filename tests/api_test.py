@@ -7970,7 +7970,7 @@ class TracebackTest(jtu.JaxTestCase):
 
   def test_jit_traceback(self):
     # TODO(dougalm): improve this! jit can (and should) be nested a lot.
-    expected_depth = 14
+    expected_depth = 13
     init_depth = self.cur_depth()
     @jit
     def foo(x):
@@ -7980,7 +7980,7 @@ class TracebackTest(jtu.JaxTestCase):
 
   def test_grad_traceback(self):
     # TODO(dougalm): improve this
-    expected_depth = 13
+    expected_depth = 12
     init_depth = self.cur_depth()
 
     def foo(x):
@@ -7991,7 +7991,7 @@ class TracebackTest(jtu.JaxTestCase):
 
   def test_vmap_traceback(self):
     # TODO(dougalm): improve this
-    expected_depth = 8
+    expected_depth = 7
     init_depth = self.cur_depth()
 
     def foo(x):
@@ -8002,9 +8002,9 @@ class TracebackTest(jtu.JaxTestCase):
 
   def test_custom_vjp_traceback(self):
     # TODO(dougalm): improve this
-    expected_depth_f = 11
-    expected_depth_f_fwd = 22
-    expected_depth_f_rev = 13
+    expected_depth_f = 10
+    expected_depth_f_fwd = 20
+    expected_depth_f_rev = 12
     init_depth = self.cur_depth()
     @jax.custom_vjp
     def f(x):

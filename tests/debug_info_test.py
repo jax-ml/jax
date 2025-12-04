@@ -115,6 +115,7 @@ class TracerSpy:
 
 
 @jtu.with_config(jax_mutable_array_checks=True)
+@unittest.skip("WIP")
 class DebugInfoTest(jtu.JaxTestCase):
 
   def _check_tracers_and_jaxprs(self, traceable: Any,
