@@ -22,6 +22,7 @@ from typing import NamedTuple
 import numpy as np
 
 from jax._src import api
+from jax._src import dtypes
 from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.numpy import linalg as jnp_linalg
@@ -112,7 +113,7 @@ def _minimize_lbfgs(
     Optimization results.
   """
   d = len(x0)
-  dtype = np.dtype(x0)
+  dtype = dtypes.dtype(x0)
 
   # ensure there is at least one termination condition
   if (maxiter is None) and (maxfun is None) and (maxgrad is None):
