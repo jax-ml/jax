@@ -880,20 +880,6 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "lax_metal_test",
-    srcs = ["lax_metal_test.py"],
-    enable_backends = ["metal"],
-    tags = ["notap"],
-    deps = [
-        "//jax/_src:internal_test_util",
-        "//jax/_src:lax_reference",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
     name = "lax_autodiff_test",
     srcs = ["lax_autodiff_test.py"],
     shard_count = {
