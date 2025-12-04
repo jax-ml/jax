@@ -1157,6 +1157,15 @@ check_tracer_leaks = bool_state(
           'to disable any debuggers while leak checking is enabled.'))
 checking_leaks = functools.partial(check_tracer_leaks, True)
 
+check_static_indices = bool_state(
+    name='jax_check_static_indices',
+    default=False,
+    help=('Turn on bounds checks for static indices during array indexing operations.'
+          ' These will only be checked when indexing mode is PROMISE_IN_BOUNDS, which'
+          ' is the default for gather-type operations.'),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
 
 captured_constants_warn_bytes = int_state(
     name='jax_captured_constants_warn_bytes',
