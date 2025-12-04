@@ -1476,6 +1476,33 @@ class CustomJVPTest(jtu.JaxTestCase):
     ans, = f_vjp(1.)
     self.assertAllClose(ans, 1./2, check_dtypes=False)
 
+  def test_ensure_compile_time_eval(self):
+    @jax.custom_jvp
+    def f(x):
+      assert x == 0.  # concrete!
+      return x
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      (x,), (x_dot,) = primals, tangents
+      assert x == 0.  # concrete!
+
+    @jax.jit
+    def g():
+      with jax.ensure_compile_time_eval():
+        return f(0.)
+
+    g()  # don't crash
+
+    # TODO(mattjj): do we want to support autodiff here too?
+    # def h(x):
+    #   @jax.jit
+    #   def hh():
+    #     with jax.ensure_compile_time_eval():
+    #       return f(x)
+    #   return hh()
+
+    # jax.grad(h)(0.)  # don't crash
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
