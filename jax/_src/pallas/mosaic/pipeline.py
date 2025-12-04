@@ -54,9 +54,6 @@ PipelineBlockSpecs = Union[Sequence[pallas_core.BlockSpec], Any]
 PipelineRefs = Union[Sequence[REF], Any]
 
 
-# TODO(sharadmv): make this a parameter and make it queryable from the Device.
-_TILING = (8, 128)
-
 def _broadcast_pytree_to(from_pytree, to_pytree):
   """Broadcast a prefix pytree to a given full tree."""
   proxy = object()
@@ -79,22 +76,30 @@ def _broadcast_pytree_to(from_pytree, to_pytree):
 def _get_tpu_generation() -> int:
   return tpu_info.get_tpu_info().generation
 
-def _make_tiling(shape: tuple[int, ...], dtype: np.dtype) -> tuple[int, ...]:
-  # For a n-dimensional shape, returns (8, 128) for the last 2 dimensions
+
+def _make_tiling(
+    shape: tuple[int, ...], dtype: np.dtype, tiling: tuple[int, ...]
+) -> tuple[int, ...]:
+  if len(shape) < len(tiling):
+    raise ValueError(
+        f"Shape must have at least {len(tiling)} dimensions: {shape=}"
+    )
+  if len(tiling) != 2:
+    raise ValueError(f"Tiling must be 2D: {tiling=}")
+
+  # For an n-dimensional shape, returns the tiling for the last 2 dimensions
   # and 1 for the leading n - 2. For example, (256, 256) -> (8, 128) and
   # (2, 3, 128, 128) -> (1, 1, 8, 128).
-  if len(shape) < 2:
-    raise ValueError(f"Shape must have at least 2 dimensions: {shape=}")
   leading_dims, final_dims = shape[:-2], shape[-2:]
-  # We want to find the minimum power of 2 that fits the second-minor dimension
-  # of shape, with maximum value 8.
+  # We want to find the minimum power of 2 that fits the second-minor
+  # dimension of shape, with maximum value equal to ``tiling[0]``.
   second_minor, _ = final_dims
   packing = 4 // dtype.itemsize
-  max_tiling = _TILING[0]
+  max_tiling = tiling[0]
   second_minor_tiling = (1 + int(_get_tpu_generation() < 4)) * packing
   while second_minor_tiling < min(second_minor, max_tiling):
     second_minor_tiling *= 2
-  return (*(1,) * len(leading_dims), second_minor_tiling, _TILING[1])
+  return (*(1,) * len(leading_dims), second_minor_tiling, tiling[1])
 
 
 def _round_up_to_nearest_multiple(
@@ -269,6 +274,11 @@ class BufferedRefBase:
     raise NotImplementedError()
 
   @property
+  def tiling(self):
+    tiling = getattr(self.spec, "tiling", None)
+    return tiling if tiling is not None else (8, 128)
+
+  @property
   def buffer_type(self) -> BufferType:
     raise NotImplementedError()
 
@@ -382,7 +392,7 @@ class BufferedRefBase:
     if len(src_shape) < 2:
       raise NotImplementedError("Must use >1D values.")
 
-    tiling = _make_tiling(src_shape, src_dtype)
+    tiling = _make_tiling(src_shape, src_dtype, self.tiling)
     block_indices = self.compute_index(*grid_indices)
     return tuple(
         _make_block_slice(bi, bs, ss, t)
