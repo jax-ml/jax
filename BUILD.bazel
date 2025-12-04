@@ -124,6 +124,7 @@ genrule(
         "//jax/experimental/mosaic/gpu/examples:flash_attention.py",
         "//jax/experimental/mosaic/gpu/examples:matmul.py",
         "//jax/_src:test_multiprocess",
+        "//jax/_src/pallas:pallas_test_util",
     ],
     outs = ["wheel_additives.zip"],
     cmd = "$(location @bazel_tools//tools/zip:zipper) c $@ $(SRCS)",
