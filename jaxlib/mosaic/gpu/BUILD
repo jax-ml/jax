@@ -154,6 +154,7 @@ cc_library(
         "launch_lowering.h",
         "passes.h",
     ],
+    features = ["asan_runtime_closure_feature"],
     deps = [
         ":dump",
         "//jaxlib/mosaic:pass_boilerplate",
