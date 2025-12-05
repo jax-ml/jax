@@ -48,6 +48,7 @@ def create_descriptor(
     # Soft deprecated. Use small tiling instead.
     large_tile: tuple[int, int] | None = None,
     mma_bytewidth_k: int = 32,
+    split_const: bool = False,
 ):
   ref_ty = ir.MemRefType(ref.type)
   element_bitwidth = utils.bitwidth(ref_ty.element_type)
@@ -183,6 +184,7 @@ def create_descriptor(
       leading_byte_offset=leading_byte_offset,
       stride_byte_offset=stride_byte_offset,
       swizzle=swizzle,
+      split_const=split_const,
   )
 
   mn_tiles_per_group, rem = divmod(mn_group_size, mn_tiling)
@@ -221,7 +223,9 @@ def encode_descriptor(
     stride_byte_offset: int,
     swizzle: int | mgpu_dialect.SwizzlingMode | None,
     const_init: int = 0,
+    split_const: bool = False,
 ):
+  i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
   if isinstance(ref_arg.type, ir.MemRefType):
     ptr = utils.memref_ptr(ref_arg, 3)
@@ -246,7 +250,18 @@ def encode_descriptor(
       const_init
       | (encode_addr(leading_byte_offset) << 16)
       | (encode_addr(stride_byte_offset) << 32)
+      | (swizzle_encoding << 62)
   )
-  desc = llvm.or_(arith.shli(c(swizzle_encoding), c(62)), c(desc_const))
-  desc = llvm.or_(encoded_base_addr, desc)
-  return desc
+  if split_const:
+    # The encoded base addr fits within a single 32-bit register.
+    return arith.trunci(i32, encoded_base_addr), desc_const
+  else:
+    # The desc_const frequently has the MSB set, leading to errors when trying
+    # to create ir.IntegerAttr through the MLIR python bindings... This should
+    # be easy enough for LLVM to constant fold away.
+    if desc_const >> 63:
+      desc_val = c(desc_const & 0xFFFFFFFF)
+      desc_val = llvm.or_(desc_val, arith.shli(c(desc_const >> 32), c(32)))
+    else:
+      desc_val = c(desc_const)
+    return llvm.or_(encoded_base_addr, desc_val)

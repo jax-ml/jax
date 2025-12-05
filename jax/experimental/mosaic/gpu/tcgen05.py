@@ -447,6 +447,7 @@ def mma(
         group_size=(m_group_elems, k_group_elems // (1 + is_sparse)),
         logical_k_major=False,
         mma_bytewidth_k=32,
+        split_const=True,
     )
   else:
     a_fastest = mma_utils.Dim.K
@@ -462,6 +463,7 @@ def mma(
       group_size=(k_group_elems, n_group_elems),
       logical_k_major=True,
       mma_bytewidth_k=64 if is_sparse else 32,
+      split_const=True,
   )
 
   if is_scaled and utils.bitwidth(mma_element_type) == 4:
@@ -496,9 +498,9 @@ def mma(
       a_mk = a.slice(slice(None), utils.ds(ki * a_k_group_elems, a_k_group_elems)).address
     else:
       a_offset = mi * a_m_group_stride + ki * a_k_group_stride
-      a_mk = arith.addi(a_desc_base, utils.c(mma_utils.encode_addr(a_offset), i64))
+      a_mk = (a_desc_base[0], a_desc_base[1] + mma_utils.encode_addr(a_offset))
     b_offset = ni * b_n_group_stride + ki * b_k_group_stride
-    b_nk = arith.addi(b_desc_base, utils.c(mma_utils.encode_addr(b_offset), i64))
+    b_nk = (b_desc_base[0], b_desc_base[1] + mma_utils.encode_addr(b_offset))
     if a_sparse_addr_base is not None:
       if n_groups != 1 or m_groups != 1:
         raise NotImplementedError("A sparse metadata address calculation for multiple tiles")
@@ -559,8 +561,8 @@ def mma(
 
 def _do_mma(
     d_addr: ir.Value,
-    a_desc_or_addr: ir.Value,  # TMEM address if a_k_stride is None
-    b_desc: ir.Value,
+    a_desc_or_addr: tuple[ir.Value, int] | ir.Value,  # TMEM address if a_k_stride is None
+    b_desc: tuple[ir.Value, int],
     a_transpose: bool,
     b_transpose: bool,
     a_k_strides: tuple[tuple[int, ...], tuple[int, ...]] | None,
@@ -638,14 +640,12 @@ def _do_mma(
 
   num_cta = 2 if collective else 1
   a_in_tmem = a_k_strides is None
-  a_ptx = "[$1]" if a_in_tmem else "$1"
-  a_ptx_constraint = "r" if a_in_tmem else "l"
+  a_ptx = "[a_desc]" if a_in_tmem else "a_desc"
   sparse_mod = ".sp" if is_sparse else ""
   sparse_meta_ptx = "[$5], " if is_sparse else ""
   extra_constraints += ",r" if is_sparse else ""
   sparse_addr: tuple[Any, ...] = ()
   scales_addrs: tuple[Any, ...] = ()
-  assert a_desc_or_addr.type == ir.IntegerType.get_signless(32 if a_in_tmem else 64)
   def _get_offset(idx: int, idx_tiling: tuple[int, ...], strides: tuple[int, ...]):
     assert len(idx_tiling) + 1 == len(strides)
     idxs = []
@@ -654,7 +654,7 @@ def _do_mma(
       idx = idx % t
     idxs.append(idx)
     offset = sum(i * s for i, s in zip(idxs, strides, strict=True))
-    return arith.constant(i64, offset >> 4)
+    return offset >> 4
   for k_step in range(k // instr_k):
     if is_scaled:
       assert scale_steps is not None
@@ -696,20 +696,32 @@ def _do_mma(
       )
     if a_in_tmem:
       cols_per_k_group = instr_k // packing // (1 + is_sparse)
-      a_desc_or_addr_instr = arith.addi(
-          a_desc_or_addr, arith.constant(i32, k_step * cols_per_k_group)
-      )
+      a_offset = k_step * cols_per_k_group
+      assert isinstance(a_desc_or_addr, ir.Value)
+      assert a_desc_or_addr.type == ir.IntegerType.get_signless(32)
+      a_enc_addr_base = a_desc_or_addr
     else:
       assert a_k_idx_tiling is not None and a_k_strides is not None
-      a_desc_or_addr_instr = arith.addi(
-          a_desc_or_addr, _get_offset(k_step, a_k_idx_tiling, a_k_strides)
-      )
-    b_desc_instr = arith.addi(b_desc, _get_offset(k_step, b_k_idx_tiling, b_k_strides))
+      a_enc_addr_base, a_offset = a_desc_or_addr
+      a_offset += _get_offset(k_step, a_k_idx_tiling, a_k_strides)
+    b_enc_addr_base, b_offset = b_desc
+    b_offset += _get_offset(k_step, b_k_idx_tiling, b_k_strides)
+    a_offset_low, a_offset_high = a_offset & 0xFFFFFFFF, a_offset >> 32
+    b_offset_low, b_offset_high = b_offset & 0xFFFFFFFF, b_offset >> 32
     llvm.inline_asm(
         ir.Type.parse("!llvm.void"),
-        [d_addr, a_desc_or_addr_instr, b_desc_instr, i_desc, accumulate, *scales_addrs, *sparse_addr],
-        f"tcgen05.mma{sparse_mod}.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, $2, {sparse_meta_ptx}$3, {extra_ptx}$4;",
-        f"r,{a_ptx_constraint},l,r,b" + extra_constraints,
+        [d_addr, a_enc_addr_base, b_enc_addr_base, i_desc, accumulate, *scales_addrs, *sparse_addr],
+        f"""{{
+            .reg .b32 a_desc_low, a_desc_high, b_desc_low, b_desc_high;
+            .reg {".b32" if a_in_tmem else ".b64"} a_desc;
+            .reg .b64 b_desc;
+            add.s32 a_desc_low, $1, {a_offset_low};
+            add.s32 b_desc_low, $2, {b_offset_low};
+            mov.b64 b_desc, {{b_desc_low, {b_offset_high}}};
+            {"mov.b32 a_desc, a_desc_low;" if a_in_tmem else f"mov.b64 a_desc, {{a_desc_low, {a_offset_high}}};"}
+            tcgen05.mma{sparse_mod}.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, b_desc, {sparse_meta_ptx}$3, {extra_ptx}$4;
+        }}""",
+        "r,r,r,r,b" + extra_constraints,
         has_side_effects=True,
     )
     accumulate = arith.constant(i1, 1)
