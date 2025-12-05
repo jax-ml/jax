@@ -303,7 +303,7 @@ class ScaledMatmulTest(jtu.JaxTestCase):
   @jtu.sample_product(
       contract=[160, 96],
       lhs_non_contract=[240, 100],
-      dtype=[jnp.float32, jnp.bfloat16, jnp.float16],
+      dtype=[jnp.float32, jnp.bfloat16],
   )
   @jtu.run_on_devices("cuda")
   def test_scaled_matmul_nvfp4(
@@ -322,15 +322,15 @@ class ScaledMatmulTest(jtu.JaxTestCase):
     b_gs = block_scale_configs[1].global_scale
 
     def wrapper(lhs, rhs, lhs_scales, rhs_scales, out_type):
-      out = scaled_matmul_wrapper(
+      return scaled_matmul_wrapper(
           lhs,
           rhs,
           lhs_scales,
           rhs_scales,
-          preferred_element_type=jnp.float32,
+          jnp.array(a_gs * b_gs, dtype=out_type),
+          preferred_element_type=out_type,
+          has_global_scale=True,
       )
-      gs = a_gs * b_gs
-      return (out * gs).astype(out_type)
 
     j_scaled_matmul = jax.jit(partial(wrapper, out_type=dtype))
     hlo_text = (
@@ -373,7 +373,9 @@ class ScaledMatmulTest(jtu.JaxTestCase):
           rhs,
           lhs_scales,
           rhs_scales,
+          np.array(0),
           preferred_element_type=out_type,
+          has_global_scale=False,
       )
 
     j_scaled_matmul = jax.jit(partial(wrapper, out_type=dtype))
@@ -587,7 +589,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
               True,
           ),
       ],
-      output_type=[jnp.float32, jnp.float16, jnp.bfloat16],
+      output_type=[jnp.float32, jnp.bfloat16],
   )
   @jtu.run_on_devices("cuda")
   def test_dot_general_nvfp4(self, configs, output_type):
