@@ -394,6 +394,7 @@ class MemRefTest(TestCase):
       ("un", (1, 10, 1), (1, 5, 2, 1,)),
       ("to_scalar", (1, 1, 1), ()),
       ("from_scalar", (), (1, 1, 1)),
+      ("arbitrary", (2 * 5, 7 * 3), (2, 7, 5, 3)),
   )
   def test_reshape(self, inp_shape, out_shape):
     def kernel(ctx, inp, out, _):
