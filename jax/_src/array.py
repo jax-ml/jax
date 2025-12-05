@@ -388,7 +388,7 @@ class ArrayImpl(basearray.Array):
   def is_fully_replicated(self) -> bool:
     return self.sharding.is_fully_replicated
 
-  def __repr__(self):
+  def _repr(self, is_str):
     prefix = 'Array('
     if self.aval is not None and self.aval.weak_type:
       dtype_str = f'dtype={self.dtype.name}, weak_type=True'
@@ -398,6 +398,8 @@ class ArrayImpl(basearray.Array):
     if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
       return f"Array(shape={self.shape}, {dtype_str}, sharding={self.sharding})"
     elif self.is_fully_addressable or self.is_fully_replicated:
+      if is_str:
+        return str(self._value)
       line_width = np.get_printoptions()["linewidth"]
       if self.size == 0:
         s = f"[], shape={self.shape}"
@@ -414,13 +416,11 @@ class ArrayImpl(basearray.Array):
     else:
       return f"{prefix}shape={self.shape}, {dtype_str})"
 
+  def __repr__(self):
+    return self._repr(False)
+
   def __str__(self):
-    if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
-      return repr(self)
-    elif self.is_fully_addressable or self.is_fully_replicated:
-      return str(self._value)  # doesn't print Array(...)
-    else:
-      return repr(self)
+    return self._repr(True)
 
   @property
   def is_fully_addressable(self) -> bool:
