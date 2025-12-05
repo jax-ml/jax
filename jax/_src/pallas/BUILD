@@ -69,7 +69,6 @@ py_library(
 
 py_library(
     name = "pallas_test_util",
-    testonly = True,
     srcs = [
         "pallas_test_util.py",
     ],
