@@ -1764,7 +1764,7 @@ def pjit_staging_rule(trace, source_info, *args, **params):
                   out_layouts=out_layouts)
     outvars = map(trace.frame.newvar, _out_type(jaxpr))
     eqn = core.new_jaxpr_eqn(
-      [arg.var for arg in args], outvars, jit_p, params,
+      [arg.val for arg in args], outvars, jit_p, params,
       jaxpr.effects, source_info)
     trace.frame.add_eqn(eqn)
     out_tracers = [pe.DynamicJaxprTracer(trace, v.aval, v, source_info)
