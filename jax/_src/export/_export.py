@@ -65,7 +65,7 @@ zip = util.safe_zip
 DType = Any
 Shape = core.Shape
 # The values of input and output sharding from the lowering.
-LoweringSharding = Union[sharding.Sharding, pxla.UnspecifiedValue]
+LoweringSharding = Union[sharding.BaseSharding, pxla.UnspecifiedValue]
 HloSharding = xla_client.HloSharding
 
 # The minimum and maximum supported calling convention version.
@@ -218,7 +218,7 @@ class Exported:
 
   def in_shardings_jax(
     self,
-    mesh: mesh_lib.Mesh) -> Sequence[sharding.Sharding | None]:
+    mesh: mesh_lib.Mesh) -> Sequence[sharding.BaseSharding | None]:
     """Creates Shardings corresponding to ``self.in_shardings_hlo``.
 
     The Exported object stores ``in_shardings_hlo`` as HloShardings, which are
@@ -258,7 +258,7 @@ class Exported:
 
   def out_shardings_jax(
       self,
-      mesh: mesh_lib.Mesh) -> Sequence[sharding.Sharding | None]:
+      mesh: mesh_lib.Mesh) -> Sequence[sharding.BaseSharding | None]:
     """Creates Shardings corresponding to ``self.out_shardings_hlo``.
 
     See documentation for in_shardings_jax.

@@ -50,7 +50,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.monitoring import record_scalar, record_event_duration_secs, record_event_time_span
 from jax._src.partition_spec import PartitionSpec
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 from jax._src.sharding_impls import (
     NamedSharding, SingleDeviceSharding, GSPMDSharding,
     is_single_device_sharding)
@@ -255,7 +255,7 @@ def jaxpr_has_prim_requiring_devices(jaxpr: core.Jaxpr) -> bool:
 
 @util.weakref_lru_cache
 def get_intermediate_shardings(
-    jaxpr: core.Jaxpr) -> Sequence[tuple[Sharding, SourceInfo]]:
+    jaxpr: core.Jaxpr) -> Sequence[tuple[BaseSharding, SourceInfo]]:
   from jax._src import shard_map  # pytype: disable=import-error
 
   out = []
@@ -280,7 +280,7 @@ def get_intermediate_shardings(
     elif eqn.primitive is device_put_p:
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
       out.extend((s, source_info) for s in eqn.params['devices']
-                 if isinstance(s, Sharding) and s.memory_kind is not None)
+                 if isinstance(s, BaseSharding) and s.memory_kind is not None)
   for subjaxpr in core.subjaxprs(jaxpr):
     out.extend(get_intermediate_shardings(subjaxpr))
   return out
@@ -397,7 +397,7 @@ class _DeferredShardArg:
   """
 
   x: Any
-  s: Sharding
+  s: BaseSharding
   aval: core.AbstractValue
   committed: bool
   copy_semantics: ArrayCopySemantics
@@ -410,7 +410,7 @@ class _DeferredShardArg:
 def _device_put_sharding_impl(
     x: Any,
     aval: core.ShapedArray,
-    device: Device | Sharding | None,
+    device: Device | BaseSharding | None,
     copy: ArrayCopySemantics,
 ):
   from jax.experimental import multihost_utils  # pytype: disable=import-error
@@ -422,7 +422,7 @@ def _device_put_sharding_impl(
     x_is_jax_array = False
     x_is_fully_addressable, x_sharding = None, None
 
-  if isinstance(device, Sharding):
+  if isinstance(device, BaseSharding):
     s = device
     s_is_fully_addressable = s.is_fully_addressable
     if (getattr(x, 'sharding', None) == s and getattr(x, '_committed', False)
@@ -516,8 +516,8 @@ def _device_put_sharding_impl(
 
 
 def _device_put_impl(
-    x, *, device: Device | Sharding | Format | None,
-    src: Device | Sharding | Format | None, copy: ArrayCopySemantics, aval):
+    x, *, device: Device | BaseSharding | Format | None,
+    src: Device | BaseSharding | Format | None, copy: ArrayCopySemantics, aval):
   if aval is None:
     try:
       aval = core.abstractify(x)
@@ -536,7 +536,7 @@ def _device_put_impl(
     x_dll = x.format.layout if hasattr(x, 'format') else None
     if dll is None and l.sharding is None:
       return _device_put_sharding_impl(x, aval, l.sharding, copy)
-    if (not isinstance(l.sharding, Sharding) or
+    if (not isinstance(l.sharding, BaseSharding) or
         not isinstance(dll, (Layout, type(None)))):
       raise ValueError(
           "sharding and layout in `Layout` instance should be"
@@ -557,8 +557,8 @@ def _device_put_impl(
 
 def _batched_device_put_impl(
     *xs,
-    devices: Sequence[Device | Sharding | Format | None],
-    srcs: Sequence[Device | Sharding | Format | None],
+    devices: Sequence[Device | BaseSharding | Format | None],
+    srcs: Sequence[Device | BaseSharding | Format | None],
     copy_semantics: Sequence[ArrayCopySemantics],
     dst_avals: Sequence[core.ShapedArray | None]):
   ys = []
@@ -587,8 +587,8 @@ def _batched_device_put_impl(
 
 def batched_device_put_impl(
     *xs,
-    devices: Sequence[Device | Sharding | Format | None],
-    srcs: Sequence[Device | Sharding | Format | None],
+    devices: Sequence[Device | BaseSharding | Format | None],
+    srcs: Sequence[Device | BaseSharding | Format | None],
     copy_semantics: Sequence[ArrayCopySemantics]):
   return _batched_device_put_impl(
       *xs, devices=devices, srcs=srcs, copy_semantics=copy_semantics,
@@ -615,7 +615,7 @@ partial_eval.const_fold_rules[device_put_p] = _device_put_folding_rule
 def update_dp_aval(aval, d):
   if not isinstance(aval, core.ShapedArray):
     return aval
-  if isinstance(d, Sharding):
+  if isinstance(d, BaseSharding):
     aval = (aval.update(sharding=aval.sharding.update(mesh=d.mesh.abstract_mesh,
                                                       spec=d.spec))
             if isinstance(d, NamedSharding) else aval.update(sharding=None))
@@ -671,9 +671,9 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
   if ctx.module_context.all_default_mem_kind:
     return xs
   def lower(x, device, aval, out_aval):
-    if ((isinstance(device, Sharding) and device.memory_kind is not None) or
+    if ((isinstance(device, BaseSharding) and device.memory_kind is not None) or
         isinstance(device, core.MemorySpace)):
-      if isinstance(device, Sharding):
+      if isinstance(device, BaseSharding):
         if config.use_shardy_partitioner.value:
           x = mlir.wrap_with_sharding_op(
               ctx, x, out_aval,

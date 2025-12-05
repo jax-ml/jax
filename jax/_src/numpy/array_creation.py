@@ -26,7 +26,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.numpy.array_constructors import asarray
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.typing import Array, ArrayLike, DuckTypedArray, DTypeLike
 from jax._src.util import canonicalize_axis, set_module
@@ -47,7 +47,7 @@ def canonicalize_shape(shape: Any, context: str="") -> core.Shape:
 
 @export
 def zeros(shape: Any, dtype: DTypeLike | None = None, *,
-          device: xc.Device | Sharding | None = None,
+          device: xc.Device | BaseSharding | None = None,
           out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an array full of zeros.
 
@@ -96,7 +96,7 @@ def zeros(shape: Any, dtype: DTypeLike | None = None, *,
 
 @export
 def ones(shape: Any, dtype: DTypeLike | None = None, *,
-         device: xc.Device | Sharding | None = None,
+         device: xc.Device | BaseSharding | None = None,
          out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an array full of ones.
 
@@ -145,7 +145,7 @@ def ones(shape: Any, dtype: DTypeLike | None = None, *,
 
 @export
 def empty(shape: Any, dtype: DTypeLike | None = None, *,
-          device: xc.Device | Sharding | None = None,
+          device: xc.Device | BaseSharding | None = None,
           out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an empty array.
 
@@ -200,7 +200,7 @@ def _check_forgot_shape_tuple(name, shape, dtype) -> str | None:  # type: ignore
 @export
 def full(shape: Any, fill_value: ArrayLike,
          dtype: DTypeLike | None = None, *,
-         device: xc.Device | Sharding | None = None) -> Array:
+         device: xc.Device | BaseSharding | None = None) -> Array:
   """Create an array full of a specified value.
 
   JAX implementation of :func:`numpy.full`.
@@ -252,7 +252,7 @@ def full(shape: Any, fill_value: ArrayLike,
 def zeros_like(a: ArrayLike | DuckTypedArray,
                dtype: DTypeLike | None = None,
                shape: Any = None, *,
-               device: xc.Device | Sharding | None = None,
+               device: xc.Device | BaseSharding | None = None,
                out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an array full of zeros with the same shape and dtype as an array.
 
@@ -301,7 +301,7 @@ def zeros_like(a: ArrayLike | DuckTypedArray,
 def ones_like(a: ArrayLike | DuckTypedArray,
               dtype: DTypeLike | None = None,
               shape: Any = None, *,
-              device: xc.Device | Sharding | None = None,
+              device: xc.Device | BaseSharding | None = None,
               out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an array of ones with the same shape and dtype as an array.
 
@@ -350,7 +350,7 @@ def ones_like(a: ArrayLike | DuckTypedArray,
 def empty_like(prototype: ArrayLike | DuckTypedArray,
                dtype: DTypeLike | None = None,
                shape: Any = None, *,
-               device: xc.Device | Sharding | None = None) -> Array:
+               device: xc.Device | BaseSharding | None = None) -> Array:
   """Create an empty array with the same shape and dtype as an array.
 
   JAX implementation of :func:`numpy.empty_like`. Because XLA cannot create
@@ -399,7 +399,7 @@ def empty_like(prototype: ArrayLike | DuckTypedArray,
 def full_like(a: ArrayLike | DuckTypedArray,
               fill_value: ArrayLike, dtype: DTypeLike | None = None,
               shape: Any = None, *,
-              device: xc.Device | Sharding | None = None) -> Array:
+              device: xc.Device | BaseSharding | None = None) -> Array:
   """Create an array full of a specified value with the same shape and dtype as an array.
 
   JAX implementation of :func:`numpy.full_like`.
@@ -460,31 +460,31 @@ def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, retstep: Literal[False] = False,
              dtype: DTypeLike | None = None,
              axis: int = 0,
-             *, device: xc.Device | Sharding | None = None) -> Array: ...
+             *, device: xc.Device | BaseSharding | None = None) -> Array: ...
 @overload
 def linspace(start: ArrayLike, stop: ArrayLike, num: int,
              endpoint: bool, retstep: Literal[True],
              dtype: DTypeLike | None = None,
              axis: int = 0,
-             *, device: xc.Device | Sharding | None = None) -> tuple[Array, Array]: ...
+             *, device: xc.Device | BaseSharding | None = None) -> tuple[Array, Array]: ...
 @overload
 def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, *, retstep: Literal[True],
              dtype: DTypeLike | None = None,
              axis: int = 0,
-             device: xc.Device | Sharding | None = None) -> tuple[Array, Array]: ...
+             device: xc.Device | BaseSharding | None = None) -> tuple[Array, Array]: ...
 @overload
 def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, retstep: bool = False,
              dtype: DTypeLike | None = None,
              axis: int = 0,
-             *, device: xc.Device | Sharding | None = None) -> Array | tuple[Array, Array]: ...
+             *, device: xc.Device | BaseSharding | None = None) -> Array | tuple[Array, Array]: ...
 @export
 def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, retstep: bool = False,
              dtype: DTypeLike | None = None,
              axis: int = 0,
-             *, device: xc.Device | Sharding | None = None) -> Array | tuple[Array, Array]:
+             *, device: xc.Device | BaseSharding | None = None) -> Array | tuple[Array, Array]:
   """Return evenly-spaced numbers within an interval.
 
   JAX implementation of :func:`numpy.linspace`.
@@ -552,7 +552,8 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
               endpoint: bool = True, retstep: bool = False,
               dtype: DTypeLike | None = None,
               axis: int = 0,
-              *, device: xc.Device | Sharding | None = None) -> Array | tuple[Array, Array]:
+              *, device: xc.Device | BaseSharding | None = None
+              ) -> Array | tuple[Array, Array]:
   """Implementation of linspace differentiable in start and stop args."""
   if num < 0:
     raise ValueError(f"Number of samples, {num}, must be non-negative.")

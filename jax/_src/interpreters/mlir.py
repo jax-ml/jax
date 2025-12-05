@@ -55,7 +55,7 @@ from jax._src.lib.mlir import dialects, ir, passmanager
 from jax._src.lib.mlir.dialects import func as func_dialect, hlo
 from jax._src.mesh import AxisType
 from jax._src.partition_spec import PartitionSpec
-from jax._src.sharding import Sharding as JSharding
+from jax._src.sharding import BaseSharding as JSharding
 from jax._src.sharding_impls import ( AUTO, NamedSharding,
                                      SdyArray, SdyArrayList,
                                      modify_sdy_sharding_wrt_axis_types)

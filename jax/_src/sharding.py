@@ -32,7 +32,7 @@ XLADeviceAssignment = Sequence[Device]
 
 @cache(max_size=4096, trace_context_in_key=False)
 def _addressable_devices_indices_map(
-    sharding: Sharding, global_shape: Shape) -> Mapping[Device, Index | None]:
+    sharding: BaseSharding, global_shape: Shape) -> Mapping[Device, Index | None]:
   global_map = sharding.devices_indices_map(global_shape)
   if sharding.is_fully_addressable:
     return global_map
@@ -41,7 +41,7 @@ def _addressable_devices_indices_map(
 
 @cache(max_size=4096, trace_context_in_key=False)
 def common_devices_indices_map(
-    s: Sharding, global_shape: Shape) -> Mapping[Device, Index]:
+    s: BaseSharding, global_shape: Shape) -> Mapping[Device, Index]:
   s.shard_shape(global_shape)  # raises a good error message
   hlo_sharding = s._to_xla_hlo_sharding(len(global_shape))
   if (xc.OpSharding.Type.UNREDUCED in hlo_sharding.subgroup_types() or
@@ -82,7 +82,7 @@ def _common_shard_shape(self, global_shape: Shape) -> Shape:
 
 
 @use_cpp_class(xc.Sharding)
-class Sharding:
+class BaseSharding:
   """Describes how a :class:`jax.Array` is laid out across devices.
   """
 
@@ -125,7 +125,7 @@ class Sharding:
     """Returns the memory kind of the sharding."""
     raise NotImplementedError('Subclasses should implement this method.')
 
-  def with_memory_kind(self, kind: str) -> Sharding:
+  def with_memory_kind(self, kind: str):
     """Returns a new Sharding instance with the specified memory kind."""
     raise NotImplementedError('Subclasses should implement this method')
 
@@ -196,7 +196,8 @@ class Sharding:
     """
     return _common_shard_shape(self, global_shape)
 
-  def is_equivalent_to(self: Sharding, other: Sharding, ndim: int) -> bool:
+  def is_equivalent_to(self: BaseSharding, other: BaseSharding,
+                       ndim: int) -> bool:
     """Returns ``True`` if two shardings are equivalent.
 
     Two shardings are equivalent if they place the same logical array shards on

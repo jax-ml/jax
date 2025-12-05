@@ -49,7 +49,7 @@ from jax._src.shard_map import shard_map
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax.experimental import primal_tangent_dtype
 from jax._src import array
-from jax._src.sharding import Sharding, common_devices_indices_map
+from jax._src.sharding import BaseSharding, common_devices_indices_map
 from jax._src import op_shardings
 from jax._src import sharding_impls
 from jax._src.sharding_impls import (
@@ -74,7 +74,7 @@ def create_array(global_shape, global_mesh, mesh_axes, global_data=None,
   if global_data is None:
     global_data = np.arange(
         math.prod(global_shape), dtype=dtype).reshape(global_shape)
-  sharding = (mesh_axes if isinstance(mesh_axes, Sharding) else
+  sharding = (mesh_axes if isinstance(mesh_axes, BaseSharding) else
               NamedSharding(global_mesh, mesh_axes))
   return array.make_array_from_callback(
       global_shape, sharding, lambda idx: global_data[idx]), global_data
@@ -1104,8 +1104,8 @@ class PJitTest(jtu.BufferDonationTestCase):
 
       with self.assertRaisesRegex(
           ValueError,
-          r"One of with_sharding_constraint.*Sharding "
-          r"NamedSharding.*PartitionSpec\(None, 'mdl', None, None\).*\) is only "
+          r"One of with_sharding_constraint.* "
+          r"Sharding.*PartitionSpec\(None, 'mdl', None, None\).*\) is only "
           "valid for values of rank at least 4, but was applied to a value of rank 1"):
         pjit_f(jnp.array([1, 2, 3]))
 

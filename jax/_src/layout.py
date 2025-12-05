@@ -18,7 +18,7 @@ from typing import Union
 
 import numpy as np
 from jax._src.dtypes import iinfo, issubdtype
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 from jax._src.named_sharding import AUTO as AutoSharding
 from jax._src.util import tuple_insert
 from jax._src.lib import xla_client as xc
@@ -102,7 +102,7 @@ class Layout:
 
 
 LayoutOptions = Union[Layout, None, AutoLayout]  # pytype: disable=invalid-annotation
-ShardingOptions = Union[Sharding, None, AutoSharding]
+ShardingOptions = Union[BaseSharding, None, AutoSharding]
 
 
 class Format:
@@ -129,7 +129,7 @@ class Format:
           f' type {type(layout)}'
       )
     if not isinstance(
-        sharding, (Sharding, type(None), AutoSharding)):
+        sharding, (BaseSharding, type(None), AutoSharding)):
       raise TypeError(
           'Invalid value received for the sharding argument. Expected values'
           ' are `None`, `pjit.AUTO` or an instance of `jax.Sharding`. Got'

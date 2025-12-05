@@ -15,9 +15,11 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
-from jax._src.sharding import Sharding as Sharding
-from jax._src.sharding_impls import (
+from jax._src.named_sharding import (
+    Sharding as Sharding,
     NamedSharding as NamedSharding,
+)
+from jax._src.sharding_impls import (
     SingleDeviceSharding as SingleDeviceSharding,
     PmapSharding as _deprecated_PmapSharding,
     set_mesh as set_mesh,

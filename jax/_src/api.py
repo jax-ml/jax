@@ -67,7 +67,7 @@ from jax._src.api_util import (
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 from jax._src.mesh import get_concrete_mesh
 from jax._src.sharding_impls import (PmapSharding, PartitionSpec as P,
                                      NamedSharding)
@@ -2702,7 +2702,7 @@ def make_jaxpr(
     make_jaxpr_f.__name__ = f"make_jaxpr({fun.__name__})"
   return make_jaxpr_f
 
-def _infer_src_sharding(src, x) -> Sharding | None:
+def _infer_src_sharding(src, x) -> BaseSharding | None:
   if src is not None:
     return src  # pytype: disable=bad-return-type
   if isinstance(x, array.ArrayImpl):
@@ -2719,7 +2719,7 @@ def _check_string_compatible_sharding(s):
   """Checks if target devices are compatible with string arrays."""
   if isinstance(s, xc.Device) and s.device_kind == "cpu":
     return
-  if (isinstance(s, Sharding)
+  if (isinstance(s, BaseSharding)
       and s._internal_device_list[0].device_kind == "cpu"):
     return
   raise TypeError(
@@ -2730,7 +2730,7 @@ def _check_string_compatible_sharding(s):
 @util.cache(max_size=2048, trace_context_in_key=False)
 def _check_sharding(aval, s):
   if (s is not None and
-      not isinstance(s, (xc.Device, Sharding, Format, core.MemorySpace))):
+      not isinstance(s, (xc.Device, BaseSharding, Format, core.MemorySpace))):
     raise ValueError(
         "`jax.device_put` only accepts `None`, `jax.sharding.Sharding`,"
         " `jax.Device`, `Format`, `jax.memory.Space` or a pytree of these"
@@ -2738,7 +2738,7 @@ def _check_sharding(aval, s):
   if isinstance(aval, core.ShapedArray) and dtypes.is_string_dtype(aval.dtype):
     _check_string_compatible_sharding(s)
 
-  if isinstance(s, Sharding):
+  if isinstance(s, BaseSharding):
     if isinstance(aval, core.AbstractToken):
       aval = core.get_token_aval()
     if not isinstance(s, PmapSharding):
@@ -2758,8 +2758,8 @@ def pspec_to_sharding(name, val):
 
 def device_put(
     x,
-    device: None | xc.Device | Sharding | P | Format | Any = None,
-    *, src: None | xc.Device | Sharding | P | Format | Any = None,
+    device: None | xc.Device | BaseSharding | P | Format | Any = None,
+    *, src: None | xc.Device | BaseSharding | P | Format | Any = None,
     donate: bool | Any = False, may_alias: bool | None | Any = None):
   """Transfers ``x`` to ``device``.
 
@@ -2796,13 +2796,13 @@ def device_put(
   with config.explicit_device_put_scope():
     x_flat, treedef = tree_flatten(x)
     if (device is None or
-        isinstance(device, (xc.Device, Sharding, core.MemorySpace))):
+        isinstance(device, (xc.Device, BaseSharding, core.MemorySpace))):
       device_flat = [device] * len(x_flat)
     else:
       device_flat = flatten_axes("device_put device", treedef, device)
 
     if (src is None or
-        isinstance(src, (xc.Device, Sharding, core.MemorySpace))):
+        isinstance(src, (xc.Device, BaseSharding, core.MemorySpace))):
       src_flat = [_infer_src_sharding(src, xf) for xf in x_flat]
     else:
       src_flat = flatten_axes("device_put source", treedef, src)

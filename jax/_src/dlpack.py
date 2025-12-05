@@ -25,7 +25,7 @@ from jax._src.lib import _jax
 from jax._src.lib import xla_client
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import scalar_types as jnp_types
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 from jax._src.typing import Array, DLDeviceType, DTypeLike
 
 import numpy as np
@@ -195,7 +195,7 @@ def _is_tensorflow_tensor(external_array):
   )
 
 def from_dlpack(external_array,
-                device: _jax.Device | Sharding | None = None,
+                device: _jax.Device | BaseSharding | None = None,
                 copy: bool | None = None):
   """Returns a :class:`~jax.Array` representation of a DLPack tensor.
 
@@ -227,7 +227,7 @@ def from_dlpack(external_array,
     is later modified in-place, it may lead to undefined behavior when using
     the associated JAX array.
   """
-  if isinstance(device, Sharding):
+  if isinstance(device, BaseSharding):
     device_set = device.device_set
     if len(device_set) > 1:
       raise ValueError(

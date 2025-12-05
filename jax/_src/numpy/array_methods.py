@@ -48,7 +48,7 @@ from jax._src.numpy import tensor_contractions
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
 from jax._src.pjit import PartitionSpec
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
 from jax._src.ops import scatter
 from jax._src.typing import Array, ArrayLike, DimSize, DTypeLike, Shape, StaticScalar
@@ -114,7 +114,7 @@ def _argsort(self: Array, axis: int | None = -1, *, kind: None = None, order: No
                            stable=stable, descending=descending)
 
 def _astype(self: Array, dtype: DTypeLike | None, copy: bool = False,
-            device: xc.Device | Sharding | None = None) -> Array:
+            device: xc.Device | BaseSharding | None = None) -> Array:
   """Copy the array and cast to a specified dtype.
 
   This is implemented via :func:`jax.lax.convert_element_type`, which may
@@ -396,7 +396,7 @@ def _take(self: Array, indices: ArrayLike, axis: int | None = None, out: None = 
   return indexing.take(self, indices, axis=axis, out=out, mode=mode, unique_indices=unique_indices,
                        indices_are_sorted=indices_are_sorted, fill_value=fill_value)
 
-def _to_device(self: Array, device: xc.Device | Sharding, *,
+def _to_device(self: Array, device: xc.Device | BaseSharding, *,
                stream: int | Any | None = None):
   """Return a copy of the array on the specified device
 

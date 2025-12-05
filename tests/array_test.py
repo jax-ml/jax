@@ -997,7 +997,7 @@ class ShardingTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        r"Sharding NamedSharding.*PartitionSpec\(None, 'mdl', None, None\).*\)"
+        r"Sharding.*PartitionSpec\(None, 'mdl', None, None\).*\)"
         ' is only valid for values of rank at least 4, but was applied to a'
         ' value of rank 2'):
       mps.check_compatible_aval(shape)

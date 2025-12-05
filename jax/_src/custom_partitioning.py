@@ -45,7 +45,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 
 
 def _resolve_kwargs(fun, args, kwargs):
@@ -143,7 +143,7 @@ def _custom_partitioning_propagate_user_sharding(user_sharding, shape,
 
 
 def _to_hlo_sharding(sharding, num_dimensions):
-  if not isinstance(sharding, Sharding):
+  if not isinstance(sharding, BaseSharding):
     raise ValueError("Custom Partitioning rules must return Sharding.")
   return sharding._to_xla_hlo_sharding(num_dimensions)
 

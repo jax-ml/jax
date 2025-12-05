@@ -61,7 +61,7 @@ from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding,
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
@@ -777,7 +777,7 @@ def _create_sharding_for_array(mesh, x, name, api_name):
     if api_name == 'jit' or mesh.empty:
       return UNSPECIFIED
     return sharding_impls.cached_named_sharding(mesh, PartitionSpec())
-  if isinstance(x, (AUTO, UnspecifiedValue, Sharding)):
+  if isinstance(x, (AUTO, UnspecifiedValue, BaseSharding)):
     return x
   if mesh.empty:
     raise RuntimeError(
@@ -1206,7 +1206,7 @@ def _check_and_canonicalize_out_shardings(
     debug_info: core.DebugInfo,
     device_or_backend_set):
   orig_out_shardings = tree_unflatten(out_shardings_treedef, out_shardings_leaves)
-  if isinstance(orig_out_shardings, (UnspecifiedValue, Sharding)):
+  if isinstance(orig_out_shardings, (UnspecifiedValue, BaseSharding)):
     out_shardings_flat = (orig_out_shardings,) * len(out_avals)
   else:
     out_shardings_flat = flatten_axis_resources(
@@ -1462,7 +1462,7 @@ def finalize_arg_sharding(arg_s, committed):
       # If the arg has a PmapSharding, then reshard it unconditionally.
       return UNSPECIFIED if isinstance(arg_s, PmapSharding) else arg_s
     else:
-      assert isinstance(arg_s, Sharding)
+      assert isinstance(arg_s, BaseSharding)
       if dispatch.is_single_device_sharding(arg_s):
         return UNSPECIFIED
       raise NotImplementedError('Having uncommitted Array sharded on '
@@ -2550,7 +2550,7 @@ core.pp_eqn_rules[jit_p] = _pjit_pp_rule
 
 # -------------------- with_sharding_constraint --------------------
 
-def check_shardings_are_auto(s: Sharding) -> None:
+def check_shardings_are_auto(s: BaseSharding) -> None:
   if not isinstance(s, NamedSharding):
     return
   mesh = s.mesh.abstract_mesh

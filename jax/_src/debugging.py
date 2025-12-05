@@ -49,7 +49,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy import lax_numpy as jnp
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 from jax._src.sharding_impls import (
     NamedSharding, PartitionSpec as P, parse_flatten_op_sharding)
 from jax._src.state import discharge as state_discharge
@@ -741,7 +741,7 @@ def make_color_iter(color_map, num_rows, num_cols):
     yield color_map(color_values[idx])
     idx = (idx + num_colors // 2 + bool(num_colors % 2 == 0)) % num_colors
 
-def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
+def visualize_sharding(shape: Sequence[int], sharding: BaseSharding, *,
                        use_color: bool = True, scale: float = 1.,
                        min_width: int = 9, max_width: int = 80,
                        color_map: ColorMap | None = None):
@@ -860,7 +860,7 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
     table.add_row(*col)
   console.print(table, end='\n\n')
 
-def inspect_array_sharding(value, *, callback: Callable[[Sharding], None]):
+def inspect_array_sharding(value, *, callback: Callable[[BaseSharding], None]):
   """Enables inspecting array sharding inside JIT-ted functions.
 
   This function, when provided with a Pytree of arrays, calls back with each of

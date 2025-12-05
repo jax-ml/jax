@@ -26,7 +26,7 @@ from jax._src.util import safe_zip
 from jax._src.numpy.util import ensure_arraylike, promote_dtypes_inexact
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import ufuncs, reductions
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
 Shape = Sequence[int]
@@ -1155,7 +1155,7 @@ def irfft2(a: ArrayLike, s: Shape | None = None, axes: Sequence[int] = (-2,-1),
 
 
 def fftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
-            device: xla_client.Device | Sharding | None = None) -> Array:
+            device: xla_client.Device | BaseSharding | None = None) -> Array:
   """Return sample frequencies for the discrete Fourier transform.
 
   JAX implementation of :func:`numpy.fft.fftfreq`. Returns frequencies appropriate
@@ -1198,7 +1198,7 @@ def fftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
 
 
 def rfftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
-             device: xla_client.Device | Sharding | None = None) -> Array:
+             device: xla_client.Device | BaseSharding | None = None) -> Array:
   """Return sample frequencies for the discrete Fourier transform.
 
   JAX implementation of :func:`numpy.fft.fftfreq`. Returns frequencies appropriate
