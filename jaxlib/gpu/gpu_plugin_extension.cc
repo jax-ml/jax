@@ -48,9 +48,6 @@ namespace {
 struct TritonCompilationResult {
   std::string asm_text;
   int64_t smem_bytes;
-  int cluster_dim_x;
-  int cluster_dim_y;
-  int cluster_dim_z;
 };
 
 absl::StatusOr<TritonCompilationResult> CompileTritonToASM(
@@ -77,9 +74,6 @@ absl::StatusOr<TritonCompilationResult> CompileTritonToASM(
   return TritonCompilationResult{
       .asm_text = asm_text,
       .smem_bytes = args.out_smem_bytes,
-      .cluster_dim_x = args.out_cluster_dim_x,
-      .cluster_dim_y = args.out_cluster_dim_y,
-      .cluster_dim_z = args.out_cluster_dim_z,
   };
 }
 
@@ -240,10 +234,7 @@ void BuildGpuPluginExtension(nanobind::module_& m) {
 
   nb::class_<TritonCompilationResult>(m, "TritonCompilationResult")
       .def_ro("asm", &TritonCompilationResult::asm_text)
-      .def_ro("smem_bytes", &TritonCompilationResult::smem_bytes)
-      .def_ro("cluster_dim_x", &TritonCompilationResult::cluster_dim_x)
-      .def_ro("cluster_dim_y", &TritonCompilationResult::cluster_dim_y)
-      .def_ro("cluster_dim_z", &TritonCompilationResult::cluster_dim_z);
+      .def_ro("smem_bytes", &TritonCompilationResult::smem_bytes);
 
   m.def("compile_triton_to_asm",
         [](nb::capsule c_api, nb::bytes module, std::string_view arch_name,
