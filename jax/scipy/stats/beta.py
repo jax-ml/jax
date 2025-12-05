@@ -21,5 +21,6 @@ from jax._src.scipy.stats.beta import (
   logpdf as logpdf,
   logsf as logsf,
   pdf as pdf,
+  ppf as ppf,
   sf as sf,
 )
