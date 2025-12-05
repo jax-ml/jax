@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import enum
 from functools import partial
+import itertools
 import operator
 import string
 from typing import Any, NamedTuple, cast
@@ -82,7 +83,7 @@ class IndexType(enum.Enum):
       if dtypes.issubdtype(idx.dtype, np.integer):
         return cls.ARRAY
       else:
-        raise IndexError(
+        raise TypeError(
           f"Indexer must have integer or boolean type, got indexer with type {idx.dtype}")
     elif isinstance(idx, (float, complex, Sequence)):
       idx_aval = api.eval_shape(array_constructors.asarray, idx)
@@ -91,7 +92,7 @@ class IndexType(enum.Enum):
       elif dtypes.issubdtype(idx_aval.dtype, np.integer):
         return cls.ARRAY
       else:
-        raise IndexError(
+        raise TypeError(
           f"Indexer must have integer or boolean type, got indexer with type {idx_aval.dtype}")
     elif isinstance(idx, str):
       raise IndexError(f"JAX does not support string indexing; got {idx=}")
@@ -117,6 +118,30 @@ class ParsedIndex(NamedTuple):
       if normed_idx < 0 or i >= size:
         raise IndexError(f"index {i} out of bounds for axis {axis} with size {size}"
                          f" ({normalize_indices=})")
+
+  def expand_bool_indices(self, dim_number: int) -> list[ParsedIndex]:
+    """
+    Returns a new parsed index list, with boolean indices expanded
+    and replaced by integer array indices.
+    """
+    if self.typ != IndexType.BOOLEAN:
+      return [self]
+    if not core.is_concrete(self.idx):
+      # TODO(mattjj): improve this error by tracking _why_ the indices are not concrete
+      raise errors.NonConcreteBooleanIndexError(core.get_aval(self.idx))
+    assert isinstance(self.idx, (bool, np.ndarray, Array, list))
+    if np.ndim(self.idx) == 0:
+      # Scalar booleans
+      assert self.consumed_axes == ()
+      return [ParsedIndex(idx=bool(self.idx), typ=self.typ, consumed_axes=(), shape=self.shape)]
+    idx_shape = np.shape(self.idx)
+    expected_shape = [self.shape[i] for i in self.consumed_axes]
+    if not all(s1 in (0, s2) for s1, s2 in zip(idx_shape, expected_shape)):
+      raise IndexError("boolean index did not match shape of indexed array in index"
+                       f" {dim_number}: got {idx_shape}, expected {expected_shape}")
+    expanded_indices = np.where(np.asarray(self.idx))
+    return [ParsedIndex(idx=i, typ=IndexType.ARRAY, consumed_axes=(axis,), shape=self.shape)
+            for i, axis in safe_zip(expanded_indices, self.consumed_axes)]
 
 
 def parse_indices(
@@ -1316,49 +1341,10 @@ def _is_boolean_index(i):
 
 def _expand_bool_indices(idx, shape):
   """Converts concrete bool indexes into advanced integer indexes."""
-  out = []
-  total_dims = len(shape)
-  num_ellipsis = sum(e is Ellipsis for e in idx)
-  if num_ellipsis > 1:
-    raise IndexError("an index can only have a single ellipsis ('...')")
-  elif num_ellipsis == 1:
-    total_dims = sum(np.ndim(e) if _is_boolean_index(e) else 1 for e in idx
-                     if e is not None and e is not Ellipsis)
-  ellipsis_offset = 0
-  newaxis_offset = 0
-  for dim_number, i in enumerate(idx):
-    try:
-      abstract_i = core.get_aval(i)
-    except TypeError:
-      abstract_i = None
-    if _is_boolean_index(i):
-      if isinstance(i, list):
-        i = lax_numpy.array(i)
-        abstract_i = core.get_aval(i)
-
-      if not core.is_concrete(i):
-        # TODO(mattjj): improve this error by tracking _why_ the indices are not concrete
-        raise errors.NonConcreteBooleanIndexError(abstract_i)
-      elif np.ndim(i) == 0:
-        out.append(bool(i))
-      else:
-        i_shape = np.shape(i)
-        start = len(out) + ellipsis_offset - newaxis_offset
-        expected_shape = shape[start: start + np.ndim(i)]
-        if len(i_shape) != len(expected_shape):
-          raise IndexError(f"too many boolean indices at index {dim_number}: got mask of shape "
-                           f"{i_shape}, but only {len(expected_shape)} dimensions remain.")
-        if not all(s1 in (0, s2) for s1, s2 in zip(i_shape, expected_shape)):
-          raise IndexError("boolean index did not match shape of indexed array in index "
-                           f"{dim_number}: got {i_shape}, expected {expected_shape}")
-        out.extend(np.where(i))
-    else:
-      out.append(i)
-    if i is Ellipsis:
-      ellipsis_offset = len(shape) - total_dims - 1
-    if i is None:
-      newaxis_offset += 1
-  return tuple(out)
+  # TODO(jakevdp): pass parsed indices here rather than re-parsing.
+  parsed_idx = parse_indices(idx, shape)
+  expanded = (pidx.expand_bool_indices(i) for i, pidx in enumerate(parsed_idx))
+  return tuple(pidx.idx for pidx in itertools.chain.from_iterable(expanded))
 
 
 def _is_slice_element_none_or_constant_or_symbolic(elt):

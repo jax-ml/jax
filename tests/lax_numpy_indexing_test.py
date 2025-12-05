@@ -1330,11 +1330,11 @@ class IndexingTest(jtu.JaxTestCase):
   def testWrongNumberOfIndices(self):
     with self.assertRaisesRegex(
         IndexError,
-        "Too many indices: 0-dimensional array indexed with 1 regular index."):
+        "too many indices for array: array is 0-dimensional, but 1 were indexed"):
       jnp.array(1)[0]
     with self.assertRaisesRegex(
         IndexError,
-        "Too many indices: 1-dimensional array indexed with 2 regular indices."):
+        "too many indices for array: array is 1-dimensional, but 2 were indexed"):
       jnp.zeros(3)[:, 5]
 
   @jtu.sample_product(shape=[(), (1,)])
