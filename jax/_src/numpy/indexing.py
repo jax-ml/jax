@@ -15,6 +15,8 @@
 # pytype: skip-file
 """Indexing code for jax.numpy."""
 
+from __future__ import annotations
+
 import enum
 from functools import partial
 import operator
@@ -36,6 +38,7 @@ from jax._src import literals
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
+from jax._src.numpy import array_constructors
 from jax._src.numpy import einsum
 from jax._src.numpy import error as jnp_error
 from jax._src.numpy import lax_numpy
@@ -49,6 +52,132 @@ from jax._src.typing import Array, ArrayLike, Index, StaticIndex, StaticScalar
 from jax._src.util import canonicalize_axis, safe_zip, set_module, tuple_update
 
 export = set_module('jax.numpy')
+
+
+# Internal utilities for parsing and validating NumPy-style indices.
+
+class IndexType(enum.Enum):
+  """Enum for tracking the type of an index."""
+  NONE = "none"
+  SLICE = "slice"
+  ELLIPSIS = "ellipsis"
+  INTEGER = "integer"
+  BOOLEAN = "boolean"
+  ARRAY = "array"
+
+  @classmethod
+  def from_index(cls, idx: Index) -> IndexType:
+    """Create an IndexType enum from a supported JAX array index."""
+    if idx is None:
+      return cls.NONE
+    elif idx is Ellipsis:
+      return cls.ELLIPSIS
+    elif isinstance(idx, slice):
+      return cls.SLICE
+    elif _is_integer_index(idx):
+      return cls.INTEGER
+    elif _is_boolean_index(idx):
+      return cls.BOOLEAN
+    elif isinstance(idx, (Array, np.ndarray)):
+      if dtypes.issubdtype(idx.dtype, np.integer):
+        return cls.ARRAY
+      else:
+        raise IndexError(
+          f"Indexer must have integer or boolean type, got indexer with type {idx.dtype}")
+    elif isinstance(idx, (float, complex, Sequence)):
+      idx_aval = api.eval_shape(array_constructors.asarray, idx)
+      if idx_aval.dtype == bool:
+        return cls.BOOLEAN
+      elif dtypes.issubdtype(idx_aval.dtype, np.integer):
+        return cls.ARRAY
+      else:
+        raise IndexError(
+          f"Indexer must have integer or boolean type, got indexer with type {idx_aval.dtype}")
+    elif isinstance(idx, str):
+      raise IndexError(f"JAX does not support string indexing; got {idx=}")
+    else:
+      raise IndexError("only integers, slices (`:`), ellipsis (`...`), newaxis (`None`)"
+                       f" and integer or boolean arrays are valid indices. Got {idx}")
+
+
+class ParsedIndex(NamedTuple):
+  """Structure for tracking an indexer parsed within the context of an array shape."""
+  idx: Index
+  typ: IndexType
+  consumed_axes: tuple[int, ...]
+  shape: tuple[int, ...]
+
+  def static_bounds_check(self, *, normalize_indices=True):
+    """Perform a bounds check in the case of a static integer index."""
+    if self.typ == IndexType.INTEGER:
+      i = operator.index(self.idx)
+      axis, = self.consumed_axes
+      size = self.shape[axis]
+      normed_idx = i + size if normalize_indices and i < 0 else i
+      if normed_idx < 0 or i >= size:
+        raise IndexError(f"index {i} out of bounds for axis {axis} with size {size}"
+                         f" ({normalize_indices=})")
+
+
+def parse_indices(
+    indices: tuple[Index, ...],
+    shape: tuple[int, ...],
+) -> list[ParsedIndex]:
+  """Parse indices in the context of an array shape.
+
+  Args:
+    indices: a tuple of user-supplied indices to be parsed.
+    shape: the shape of the array being indexed.
+
+  Returns:
+    The list of parsed indices stored in :class:`ParsedIndex` objects.
+    This list will have the same length as ``indices``.
+
+  Raises:
+    IndexError: if any unrecognized index types are present or if there
+      are too many indices, or too many ellipses.
+  """
+  # 1. go through indices to count the number of consumed dimensions.
+  # This is required to determine the effect of any ellipses.
+  dimensions_consumed: list[int] = []
+  ellipses_indices: list[int] = []
+  index_types: list[IndexType] = []
+  for i, idx in enumerate(indices):
+    typ = IndexType.from_index(idx)
+    index_types.append(typ)
+
+    if typ == IndexType.NONE:
+      dimensions_consumed.append(0)
+    elif typ == IndexType.ELLIPSIS:
+      # We don't yet know how many dimensions are consumed, so set to zero
+      # for now and update later.
+      dimensions_consumed.append(0)
+      ellipses_indices.append(i)
+    elif typ == IndexType.BOOLEAN:
+      dimensions_consumed.append(np.ndim(idx))  # type: ignore[arg-type]
+    elif typ in [IndexType.INTEGER, IndexType.ARRAY, IndexType.SLICE]:
+      dimensions_consumed.append(1)
+    else:
+      raise IndexError(f"Unrecognized index type: {typ}")
+
+  # 2. Validate the consumed dimensions and ellipses.
+  if len(ellipses_indices) > 1:
+    raise IndexError("an index can only have a single ellipsis ('...')")
+  total_consumed = sum(dimensions_consumed)
+  if total_consumed > len(shape):
+    raise IndexError(f"too many indices for array: array is {len(shape)}-dimensional,"
+                     f" but {total_consumed} were indexed")
+  if ellipses_indices:
+    dimensions_consumed[ellipses_indices[0]] = len(shape) - total_consumed
+
+  # 3. Generate the final sequence of parsed indices.
+  result: list[ParsedIndex] = []
+  current_dim = 0
+  for idx, typ, n_consumed in safe_zip(indices, index_types, dimensions_consumed):
+    consumed_axes = tuple(range(current_dim, current_dim + n_consumed))
+    current_dim += len(consumed_axes)
+    result.append(ParsedIndex(idx, typ, consumed_axes, shape))
+  return result
 
 
 @export
@@ -709,19 +838,12 @@ def validate_static_indices(
 
   Raises an IndexError if any static indices are out-of-bounds.
   """
-  # TODO(jakevdp): expand_bool_indices is expensive; do this more efficiently.
-  idx = idx if isinstance(idx, tuple) else (idx,)
-  idx = _expand_bool_indices(idx, arr.shape)
-  idx_tup = tuple(i for i in _canonicalize_tuple_index(arr.ndim, idx)
-                  if i is not None and not isinstance(i, bool))
-  def norm_index(i, size):
-    return i + size if normalize_indices and i < 0 else i
-  if len(idx_tup) != arr.ndim:
-    raise RuntimeError(f"Error for {idx=} and {arr.shape=}: processed {idx_tup=}")
-  for axis, (i, size) in enumerate(safe_zip(idx_tup, arr.shape)):
-    if isinstance(i, (int, np.integer)) and (norm_index(i, size) < 0 or i >= size):
-      raise IndexError(f"index {i} out of bounds for axis {axis} with size {size}"
-                       f" ({normalize_indices=})")
+  # TODO(jakevdp) generate parsed_idx in caller for reuse.
+  idx_tup = eliminate_deprecated_list_indexing(idx)
+  parsed_idx = parse_indices(idx_tup, arr.shape)
+
+  for parsed in parsed_idx:
+    parsed.static_bounds_check(normalize_indices=normalize_indices)
 
 
 class IndexingStrategy(enum.Enum):
