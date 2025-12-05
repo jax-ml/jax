@@ -195,13 +195,16 @@ LogicalResult nvvm_mbarrier_try_wait_parity_shared_upgrade(Operation* op,
 LogicalResult nvvm_mbarrier_arrive_expect_tx_shared_upgrade(Operation* op,
                                                             int version,
                                                             bool& erased) {
-  // https://github.com/llvm/llvm-project/commit/7eeae8e41d7827d84de12df7b5ecfab3058900cb
+  // https://github.com/llvm/llvm-project/commit/fddf7b0510e5df7a08c512a177ea9c1ec4307718
   if (version < 6) {
-    mlir::OpBuilder b(op->getParentRegion());
+    mlir::ImplicitLocOpBuilder b(op->getLoc(), op->getParentRegion());
     b.setInsertionPointAfter(op);
-    mlir::NVVM::MBarrierArriveExpectTxOp::create(
-        b, op->getLoc(), op->getOperand(0), op->getOperand(1),
-        op->getNumOperands() < 3 ? Value{} : op->getOperand(2));
+    auto new_op = mlir::NVVM::MBarrierArriveExpectTxOp::create(
+        b, op->getResultTypes(), op->getOperand(0), op->getOperand(1),
+        mlir::NVVM::MemScopeKind::CTA,
+        /*relaxed=*/false,
+        op->getNumOperands() < 3 ? mlir::Value{} : op->getOperand(2));
+    op->replaceAllUsesWith(new_op);
     op->erase();
     erased = true;
   }

@@ -1158,6 +1158,7 @@ class LaunchContext:
       if arrive:
         arrive_predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
         nvvm.mbarrier_arrive_expect_tx(
+            None,
             barrier_ptr,
             transfer_bytes,
             predicate=arrive_predicate,
@@ -1289,7 +1290,7 @@ class LaunchContext:
           )
           arrive_predicate = arith.andi(predicate, first_block)
           nvvm.mbarrier_arrive_expect_tx(
-              barrier_ptr, transfer_bytes, predicate=arrive_predicate
+              None, barrier_ptr, transfer_bytes, predicate=arrive_predicate
           )
         rank = len(slice_shape)
         idx_operands = ",".join(f"${i}" for i in range(4, 4 + rank))
@@ -1310,7 +1311,7 @@ class LaunchContext:
       else:
         if arrive:
           nvvm.mbarrier_arrive_expect_tx(
-              barrier_ptr, transfer_bytes, predicate=predicate
+              None, barrier_ptr, transfer_bytes, predicate=predicate
           )
         if collective_size > 1:
           multicast_mask = arith.trunci(
