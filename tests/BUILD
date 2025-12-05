@@ -62,13 +62,13 @@ jax_multiplatform_test(
     enable_configs = ["tpu_v3_x4"],
     deps = [
         "//jax:experimental",
-        "//jax:pallas",
-        "//jax:pallas_gpu",
-        "//jax:pallas_gpu_ops",
-        "//jax:pallas_tpu",
-        "//jax:pallas_tpu_ops",
         "//jax/_src:custom_transpose",
         "//jax/_src:shard_map",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_gpu",
+        "//jax/experimental:pallas_gpu_ops",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_ops",
     ] + py_deps([
         "numpy",
         "absl/testing",
@@ -173,7 +173,7 @@ jax_multiplatform_test(
         "gpu",
     ],
     deps = [
-        "//jax:experimental_buffer_callback",
+        "//jax/experimental:buffer_callback",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -347,7 +347,7 @@ jax_multiplatform_test(
     # using matplotlib plots
     # env = {"LOBPCG_EMIT_DEBUG_PLOTS": "1"},
     deps = [
-        "//jax:experimental_sparse",
+        "//jax/experimental:sparse",
     ] + py_deps([
         "matplotlib",
         "absl/testing",
@@ -485,8 +485,8 @@ jax_multiplatform_test(
         "multiaccelerator",
     ],
     deps = [
-        "//jax:experimental_profiler",
-        "//jax:experimental_serialize_executable",
+        "//jax/experimental:profiler",
+        "//jax/experimental:serialize_executable",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -547,9 +547,9 @@ jax_multiplatform_test(
     srcs = ["aot_test.py"],
     tags = ["multiaccelerator"],
     deps = [
-        "//jax:experimental_pjit",
-        "//jax:experimental_serialize_executable",
-        "//jax:experimental_topologies",
+        "//jax/experimental:pjit",
+        "//jax/experimental:serialize_executable",
+        "//jax/experimental:topologies",
     ] + py_deps([
         "numpy",
         "absl/testing",
@@ -614,8 +614,8 @@ jax_multiplatform_test(
         "gpu": 2,
     },
     deps = [
-        "//jax:jet",
-        "//jax:stax",
+        "//jax/example_libraries:stax",
+        "//jax/experimental:jet",
         "//jax/extend:core",
     ] + py_deps([
         "absl/testing",
@@ -1085,7 +1085,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "optimizers_test",
     srcs = ["optimizers_test.py"],
-    deps = ["//jax:optimizers"] + py_deps([
+    deps = ["//jax/example_libraries:optimizers"] + py_deps([
         "absl/testing",
         "numpy",
     ]),
@@ -1457,8 +1457,8 @@ jax_multiplatform_test(
         "notsan",
     ],  # Test times out under asan/msan/tsan.
     deps = [
-        "//jax:experimental_sparse",
-        "//jax:sparse_test_util",
+        "//jax/experimental:sparse",
+        "//jax/experimental:sparse_test_util",
     ] + py_deps([
         "scipy",
         "absl/testing",
@@ -1505,8 +1505,8 @@ jax_multiplatform_test(
         "notsan",
     ],  # Test times out under asan/msan/tsan.
     deps = [
-        "//jax:experimental_sparse",
-        "//jax:sparse_test_util",
+        "//jax/experimental:sparse",
+        "//jax/experimental:sparse_test_util",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -1533,8 +1533,8 @@ jax_multiplatform_test(
         "tpu": 10,
     },
     deps = [
-        "//jax:experimental_sparse",
-        "//jax:sparse_test_util",
+        "//jax/experimental:sparse",
+        "//jax/experimental:sparse_test_util",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -1592,7 +1592,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "stax_test",
     srcs = ["stax_test.py"],
-    deps = ["//jax:stax"] + py_deps([
+    deps = ["//jax/example_libraries:stax"] + py_deps([
         "absl/testing",
         "numpy",
     ]),
@@ -1720,7 +1720,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "ode_test",
     srcs = ["ode_test.py"],
-    deps = ["//jax:ode"] + py_deps([
+    deps = ["//jax/experimental:ode"] + py_deps([
         "absl/testing",
         "numpy",
         "scipy",
@@ -1948,7 +1948,7 @@ jax_multiplatform_test(
     name = "colocated_python_test",
     srcs = ["colocated_python_test.py"],
     deps = [
-        "//jax:experimental_colocated_python",
+        "//jax/experimental:colocated_python",
         "//jax/extend:ifrt_programs",
     ] + py_deps([
         "absl/testing",
@@ -1968,7 +1968,7 @@ jax_multiplatform_test(
     enable_backends = ["gpu"],
     shard_count = 15,
     deps = [
-        "//jax:rnn",
+        "//jax/experimental:rnn",
     ] + py_deps([
         "absl/testing",
         "numpy",

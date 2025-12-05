@@ -35,7 +35,7 @@ jax_multiplatform_test(
     enable_configs = ["gpu_h100"],
     tags = ["notap"],
     deps = [
-        "//jax:mosaic_gpu",
+        "//jax/experimental:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:matmul",
         "//third_party/py/google_benchmark",
     ] + py_deps("absl/testing") + py_deps("numpy"),

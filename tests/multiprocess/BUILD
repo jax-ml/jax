@@ -88,8 +88,8 @@ jax_multiprocess_test(
     ],
     main = "colocated_python_test.py",
     deps = [
-        "//jax:experimental_colocated_python",
         "//jax/_src:test_multiprocess",
+        "//jax/experimental:colocated_python",
     ],
 )
 

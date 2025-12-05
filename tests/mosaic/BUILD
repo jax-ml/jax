@@ -52,7 +52,7 @@ jax_multiplatform_test(
         "noasan",  # Times out.
     ],
     deps = [
-        "//jax:mosaic_gpu",
+        "//jax/experimental:mosaic_gpu",
         "//jax/experimental:mosaic_gpu_test_util",
     ] + py_deps([
         "absl/testing",
@@ -74,7 +74,7 @@ jax_multiplatform_test(
         "noasan",  # ASAN is unsupported.
     ],
     deps = [
-        "//jax:mosaic_gpu",
+        "//jax/experimental:mosaic_gpu",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -93,7 +93,7 @@ jax_multiplatform_test(
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     tags = ["multiaccelerator"],
     deps = [
-        "//jax:mosaic_gpu",
+        "//jax/experimental:mosaic_gpu",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -116,8 +116,8 @@ jax_multiplatform_test(
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
-        "//jax:mosaic_gpu",
         "//jax/_src:test_multiprocess",
+        "//jax/experimental:mosaic_gpu",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -130,8 +130,8 @@ jax_py_test(
     tags = ["gpu_mlir_deviceless_test"],
     deps = [
         "//jax",
-        "//jax:mosaic_gpu",
         "//jax/_src:test_util",
+        "//jax/experimental:mosaic_gpu",
     ] + py_deps("absl/testing"),
 )
 
@@ -140,8 +140,8 @@ jax_py_test(
     srcs = ["gpu_constraints_test.py"],
     deps = [
         "//jax",
-        "//jax:mosaic_gpu",
         "//jax/_src:test_util",
+        "//jax/experimental:mosaic_gpu",
     ] + py_deps("absl/testing"),
 )
 
@@ -152,8 +152,8 @@ jax_py_test(
     tags = ["gpu_mlir_deviceless_test"],
     deps = [
         "//jax",
-        "//jax:mosaic_gpu",
         "//jax/_src:test_util",
+        "//jax/experimental:mosaic_gpu",
         "//jax/experimental:mosaic_gpu_test_util",
     ] + py_deps("absl/testing"),
 )
@@ -171,7 +171,7 @@ jax_multiplatform_test(
         "noasan",
     ],
     deps = [
-        "//jax:mosaic_gpu",
+        "//jax/experimental:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:matmul",
         "//jax/experimental/mosaic/gpu/examples:matmul_blackwell",
     ] + py_deps([
@@ -196,7 +196,7 @@ jax_multiplatform_test(
         "notap",
     ],
     deps = [
-        "//jax:mosaic_gpu",
+        "//jax/experimental:mosaic_gpu",
     ] + py_deps([
         "numpy",
         "absl/testing",
@@ -216,7 +216,7 @@ jax_multiplatform_test(
         "noasan",  # Remove the tag once the CUPTI issue is fixed.
     ],
     deps = [
-        "//jax:mosaic_gpu",
+        "//jax/experimental:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:flash_attention",
     ] + py_deps("absl/testing"),
 )
@@ -234,6 +234,6 @@ jax_multiplatform_test(
         "nomsan",
     ],
     deps = [
-        "//jax:mosaic_gpu",
+        "//jax/experimental:mosaic_gpu",
     ] + py_deps("absl/testing"),
 )

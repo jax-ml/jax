@@ -35,7 +35,7 @@ py_library(
     srcs = ["matmul.py"],
     deps = [
         "//jax",
-        "//jax:mosaic_gpu",
+        "//jax/experimental:mosaic_gpu",
     ],
 )
 
@@ -44,7 +44,7 @@ py_library(
     srcs = ["matmul_blackwell.py"],
     deps = [
         "//jax",
-        "//jax:mosaic_gpu",
+        "//jax/experimental:mosaic_gpu",
     ],
 )
 
@@ -53,7 +53,7 @@ py_library(
     srcs = ["flash_attention.py"],
     deps = [
         "//jax",
-        "//jax:mosaic_gpu",
+        "//jax/experimental:mosaic_gpu",
     ],
 )
 
@@ -68,6 +68,6 @@ jax_multiplatform_test(
         "notap",
     ],
     deps = [
-        "//jax:mosaic_gpu",
+        "//jax/experimental:mosaic_gpu",
     ] + py_deps("numpy"),
 )
