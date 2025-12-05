@@ -2756,9 +2756,6 @@ class OpsInterpretTest(OpsTest):
   INTERPRET = True
 
   def test_debug_print(self):
-    if jtu.is_cloud_tpu():
-      self.skipTest("TODO: b/465504705")
-
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
