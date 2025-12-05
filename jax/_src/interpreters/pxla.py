@@ -2253,6 +2253,7 @@ def lower_sharding_computation(
   jaxpr = closed_jaxpr.jaxpr
   global_in_avals = closed_jaxpr.in_avals
   global_out_avals = closed_jaxpr.out_avals
+  print(jaxpr)
 
   if lowering_parameters.hoist_constants_as_args:
     (const_args, global_in_avals, in_shardings, in_layouts, donated_invars,

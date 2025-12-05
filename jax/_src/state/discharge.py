@@ -38,7 +38,8 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.state import indexing
-from jax._src.state.primitives import addupdate_p, get_p, swap_p, pin, unpin
+from jax._src.state.primitives import (
+    addupdate_p, get_p, swap_p, pin, unpin, dup_p, pud_p)
 from jax._src.state.types import (
     AbstractRef, RefBitcaster, RefEffect, RefReshaper, get_ref_aval_from_value,
     uninitialized,)
@@ -189,6 +190,13 @@ def register_partial_discharge_rule(prim: core.Primitive):
   return register
 
 
+poison_p = core.Primitive('poison')
+poison_p.def_abstract_eval(lambda x: x)
+mlir.register_lowering(poison_p, lambda _, *x: x)
+
+def _create_token():
+  return lax.empty((1,), 'int32')  # pallas token lol
+
 def _eval_jaxpr_discharge_state(
     jaxpr: core.Jaxpr, should_discharge: Sequence[bool], consts: Sequence[Any],
     *args: Any):
@@ -214,6 +222,14 @@ def _eval_jaxpr_discharge_state(
         if config.refs_to_pins.value:
           ans = pin(ans)
         refs_to_discharge.add(id(outvar.aval))
+      elif eqn.primitive is dup_p:
+        [invar], outvars = eqn.invars, eqn.outvars
+        val = poison_p.bind(env.read(invar))
+        ans = [(val, _create_token()) for _ in outvars]
+        refs_to_discharge.update([id(v.aval) for v in outvars])
+      elif eqn.primitive is pud_p:
+        vals, toks = unzip2(map(env.read, eqn.invars))
+        ans, _ = lax.optimization_barrier((vals[0], toks))
       elif eqn.primitive is core.freeze_p:
         [invar], [outvar] = eqn.invars, eqn.outvars
         ans = env.read(invar)
@@ -246,8 +262,7 @@ def _eval_jaxpr_discharge_state(
         # we assume any higher-order primitives inside of the jaxpr are *not*
         # stateful.
         subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
-        ans = eqn.primitive.bind(*subfuns, *map(env.read, eqn.invars),
-                                **bind_params)
+        ans = eqn.primitive.bind(*subfuns, *map(env.read, eqn.invars), **bind_params)
     if eqn.primitive.multiple_results:
       foreach(env.write, eqn.outvars, ans)
     else:
