@@ -3621,3 +3621,11 @@ def _delay_lowering(ctx: LoweringRuleContext, nanos):
     nanos = _i32_constant(nanos)
   mgpu.nanosleep(nanos)
   return []
+
+
+@register_lowering_rule(lax.reshape_p, mgpu.LoweringSemantics.Lane)
+def _reshape_lowering(ctx: LoweringRuleContext, x, new_sizes, dimensions, sharding):
+  del ctx, sharding
+  if dimensions is not None:
+    raise NotImplementedError("Reshape with dimension permutation not implemented.")
+  return x.reshape(new_sizes)
