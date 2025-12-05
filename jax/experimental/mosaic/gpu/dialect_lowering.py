@@ -1339,7 +1339,7 @@ def _mgpu_arrive_expect_tx_op_lowering_rule(
   barrier = utils.DialectBarrierRef.from_barrier_memref(
       arrive_expect_tx_op.barrier
   )
-  nvvm.mbarrier_arrive_expect_tx(None, barrier.get_ptr(), bytes)
+  utils.nvvm_mbarrier_arrive_expect_tx(barrier.get_ptr(), bytes)
 
   return []
 
