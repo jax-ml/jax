@@ -3731,6 +3731,32 @@ class MiscellaneousTest(ptu.PallasTPUTest):
         out, np.zeros((8, 8, 2, 128), dtype=jnp.float32)
     )
 
+  @parameterized.parameters(
+      (3, 1, 2048, jnp.bfloat16),
+      (5, 1, 4096, jnp.int8),
+  )
+  def test_1d_tiling_major_minor_transpose(self, q, m, n, dtype):
+    if not jtu.is_cloud_tpu_at_least(2025, 12, 10):
+      self.skipTest('Needs a newer libTPU')
+
+    in_shape = (q, n)
+    mid_shape = (q, m, n)
+    out_shape = (m, q, n)
+    x = np.arange(np.prod(in_shape), dtype=dtype).reshape(in_shape)
+
+    def kernel(x_ref, o_ref):
+      x = x_ref[...]
+      x = jnp.reshape(x, mid_shape)
+      o_ref[...] = jnp.transpose(x, axes=(1, 0, 2))
+
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(out_shape, dtype),
+    )(x)
+    np.testing.assert_array_equal(
+        result, np.transpose(x.reshape(mid_shape), axes=(1, 0, 2))
+    )
+
   # (q, m, n) -> (q, m * n) where n % 128 == 0
   @parameterized.parameters(
       (q, m, n, dtype)
