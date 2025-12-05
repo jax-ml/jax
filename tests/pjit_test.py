@@ -1544,6 +1544,11 @@ class ArrayPjitTest(jtu.JaxTestCase):
         self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
       self.assertArraysEqual(out._value, expected_matrix_mul)
 
+  def test_empty_mesh_to_out_sharding(self):
+    sharding = jax.NamedSharding(mesh_lib.empty_concrete_mesh, P())
+    with self.assertRaisesRegex(ValueError, "got an empty NamedSharding"):
+      jax.jit(lambda x: x, out_shardings=sharding)(jnp.ones((32,)))
+
   def test_numpy_array_input_assume_fully_replicated(self):
     input_shape = (8, 2)
     global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))

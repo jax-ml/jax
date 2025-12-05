@@ -472,7 +472,6 @@ MeshAxisName = Any
 
 def prepare_axis_resources(axis_resources, arg_name,
                            allow_unconstrained_dims=False):
-  # PyTrees don't treat None values as leaves, so we use an is_leaf function.
   entries, treedef = tree_util.tree_flatten(
       axis_resources, is_leaf=lambda x: x is None)
   what = f"{arg_name} leaf specifications"
@@ -485,6 +484,9 @@ def prepare_axis_resources(axis_resources, arg_name,
       if isinstance(entry, PmapSharding):
         raise ValueError(f'One of {what} got sharding {entry} which is not '
                          'allowed.')
+      if isinstance(entry, NamedSharding) and entry.mesh.empty:
+        raise ValueError(f'One of {what} got an empty NamedSharding: {entry} '
+                         'which is not allowed.')
       if (not allow_unconstrained_dims and isinstance(entry, NamedSharding) and
           PartitionSpec.UNCONSTRAINED in entry.spec):
         raise ValueError(
