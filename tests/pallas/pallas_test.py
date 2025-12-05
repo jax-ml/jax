@@ -1188,7 +1188,7 @@ class PallasCallInputOutputAliasingTest(ptu.PallasTest):
     self.assertEqual(mem_analysis.temp_size_in_bytes, 0)
 
   def test_scalar_input_output_aliasing(self):
-    if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
+    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(
         2025, 10, 7
     ):
       self.skipTest("Requires libtpu built after 2025-10-07")
@@ -1221,7 +1221,7 @@ class PallasCallInputOutputAliasingTest(ptu.PallasTest):
       print(x)
 
   def test_mixed_scalar_vector_input_output_aliasing(self):
-    if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
+    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(
         2025, 10, 7
     ):
       self.skipTest("Requires libtpu built after 2025-10-07")

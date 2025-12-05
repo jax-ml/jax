@@ -5025,7 +5025,7 @@ class RaggedTest(jtu.JaxTestCase):
       {"m": 10, "k": 9, "n": 8, "num_groups": 2},
   )
   def test_ragged_dot_small_m(self, m, k, n, num_groups):
-    if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
+    if not jtu.is_cloud_tpu_at_least(2025, 10, 14):
       self.skipTest("Requires libtpu built after 2025-10-14")
     lhs_shape = (m, k)
     rhs_shape = (num_groups, k, n)

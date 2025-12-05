@@ -9580,7 +9580,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_reduced_sin_fwd_mul_bwd(self, mesh):
-    if not jtu.if_cloud_tpu_at_least(2025, 11, 7):
+    if not jtu.is_cloud_tpu_at_least(2025, 11, 7):
       self.skipTest('Requires libtpu built after 2025-11-6')
 
     np_inp1 = np.arange(8.).reshape(4, 2)

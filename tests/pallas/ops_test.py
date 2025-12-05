@@ -1462,7 +1462,7 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("TPU only test")
 
-    if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
+    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(
         2025, 10, 5
     ):
       self.skipTest("Requires libtpu built after 2025-10-05")
@@ -1522,7 +1522,7 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("TPU only test")
 
-    if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
+    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(
         2025, 11, 30
     ):
       self.skipTest("Requires libtpu built after 2025-11-30")
@@ -1585,7 +1585,7 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("TPU only test")
 
-    if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
+    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(
         2025, 10, 5
     ):
       self.skipTest("Requires libtpu built after 2025-10-05")

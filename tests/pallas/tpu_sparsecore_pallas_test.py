@@ -549,7 +549,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   def test_gather_1d_with_dynamically_sized_2d_ref(self):
     self.skip_if_tc_tiling()
-    if not jtu.if_cloud_tpu_at_least(2025, 10, 22):
+    if not jtu.is_cloud_tpu_at_least(2025, 10, 22):
       self.skipTest("Needs a newer libtpu")
 
     x = jnp.arange(16)
@@ -770,7 +770,7 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_store_scatter_2d(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 10, 31):
+    if not jtu.is_cloud_tpu_at_least(2025, 10, 31):
       self.skipTest("Needs a newer libtpu")
 
     num_steps = 4
@@ -1093,7 +1093,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(sizes=[[1, 1], [2, 2], [1, 1, 1, 1]])
   def test_split_concatenate(self, sizes):
-    if not jtu.if_cloud_tpu_at_least(2025, 10, 26):
+    if not jtu.is_cloud_tpu_at_least(2025, 10, 26):
       self.skipTest("Test requires a newer libtpu")
 
     shape = (sum(sizes), 8)
@@ -1384,7 +1384,7 @@ class VectorSubcoreTest(PallasSCTest):
       kernel(x)
 
   def test_multiple_of(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 10, 16):
+    if not jtu.is_cloud_tpu_at_least(2025, 10, 16):
       self.skipTest("Test requires a newer libtpu")
 
     x = jnp.arange(16)
@@ -1426,7 +1426,7 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(), expected)
 
   def test_barrier_via_pallas_call(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 11, 22):
+    if not jtu.is_cloud_tpu_at_least(2025, 11, 22):
       self.skipTest("Test requires a newer libtpu")
 
     mesh = plsc.VectorSubcoreMesh(
@@ -1620,7 +1620,7 @@ class VectorSubcoreTest(PallasSCTest):
   @parameterized.named_parameters(
       ("exp", jnp.exp), ("neg", lambda x: -x), ("abs", jnp.abs))
   def test_unary_ops(self, op):
-    if not jtu.if_cloud_tpu_at_least(2025, 11, 30):
+    if not jtu.is_cloud_tpu_at_least(2025, 11, 30):
       self.skipTest("Test requires a newer libtpu")
 
     x = jnp.arange(8, dtype=jnp.float32)
@@ -1639,7 +1639,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[np.int32, np.float32])
   def test_vector_gather(self, dtype):
-    if not jtu.if_cloud_tpu_at_least(2025, 12, 2):
+    if not jtu.is_cloud_tpu_at_least(2025, 12, 2):
       self.skipTest("Test requires a newer libtpu")
 
     vec_dim = self.sc_info.num_lanes
@@ -1656,7 +1656,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[np.int32, np.float32])
   def test_rev_and_sort_desc(self, dtype):
-    if not jtu.if_cloud_tpu_at_least(2025, 12, 2):
+    if not jtu.is_cloud_tpu_at_least(2025, 12, 2):
       self.skipTest("Test requires a newer libtpu")
 
     vec_dim = self.sc_info.num_lanes
@@ -1678,7 +1678,7 @@ class VectorSubcoreTest(PallasSCTest):
       values_dtypes=[(), (np.int32,), (np.float32, np.int32)],
   )
   def test_sort(self, keys_dtype, values_dtypes):
-    if not jtu.if_cloud_tpu_at_least(2025, 11, 30):
+    if not jtu.is_cloud_tpu_at_least(2025, 11, 30):
       self.skipTest("Test requires a newer libtpu")
 
     vec_dim = self.sc_info.num_lanes
