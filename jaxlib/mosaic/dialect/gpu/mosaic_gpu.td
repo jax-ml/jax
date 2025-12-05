@@ -490,7 +490,7 @@ def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", []> {
 }
 
 
-def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", []> {
+def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", [Pure]> {
   let summary = "Constructs an SMEM MemRef with the requested type that begins at the specified SMEM offset address.";
 
   let arguments = (ins I32:$offset);
