@@ -1083,8 +1083,8 @@ class BarrierRef:
     elif ir.IndexType.isinstance(bytes.type):
       i32 = ir.IntegerType.get_signless(32)
       bytes = arith.index_cast(i32, bytes)
-    nvvm.mbarrier_arrive_expect_tx(
-        None, self.get_ptr(), bytes, predicate=predicate
+    nvvm_mbarrier_arrive_expect_tx(
+        self.get_ptr(), bytes, predicate=predicate
     )
 
   def get_ptr(self):
@@ -2000,3 +2000,10 @@ def nanosleep(nanos: ir.Value):
       "r",
       has_side_effects=True,
   )
+
+
+def nvvm_mbarrier_arrive_expect_tx(barrier: ir.Value, expect_tx: ir.Value, predicate: ir.Value | None = None):
+  try:
+    return nvvm.mbarrier_arrive_expect_tx(None, barrier, expect_tx, predicate=predicate)  # type: ignore
+  except TypeError:
+    return nvvm.mbarrier_arrive_expect_tx(barrier, expect_tx, predicate=predicate)  # pytype: disable=missing-parameter
