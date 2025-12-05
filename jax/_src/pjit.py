@@ -46,10 +46,9 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.core import typeof, cur_qdd
 from jax._src.api_util import (
-  argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
-  donation_vector, check_callable, resolve_argnums,
-  argnames_partial_except, debug_info, check_no_aliased_ref_args,
-  _check_no_aliased_closed_over_refs)
+  argnums_partial_except, flatten_axes, flatten_fun3, flatten_fun_nokwargs,
+  donation_vector, check_callable, resolve_argnums, argnames_partial_except,
+  debug_info, check_no_aliased_ref_args, _check_no_aliased_closed_over_refs)
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
 from jax._src.interpreters import ad
@@ -500,7 +499,7 @@ def _infer_params_impl(
   del kwargs
 
   explicit_args, in_tree = tree_flatten((dyn_args, dyn_kwargs))
-  flat_fun, out_tree = flatten_fun(f, in_tree)
+  flat_fun, out_tree_and_result_paths = flatten_fun3(f, in_tree)
 
   if (ji.donate_argnums or ji.donate_argnames) and not config.debug_nans.value:
     donated_invars = donation_vector(ji.donate_argnums, ji.donate_argnames, in_tree)
@@ -550,6 +549,7 @@ def _infer_params_impl(
 
   jaxpr, consts, out_avals = _create_pjit_jaxpr(
       flat_fun, in_type, qdd_token, IgnoreKey(ji.inline))
+
   if config.mutable_array_checks.value:
     _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), explicit_args)
   _qdd_cache_update(flat_fun, in_type, qdd_token, consts,
@@ -557,7 +557,7 @@ def _infer_params_impl(
 
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
       out_shardings_treedef, out_shardings_leaves, ji.out_layouts_treedef,
-      ji.out_layouts_leaves, HashableFunction(out_tree, closure=()),
+      ji.out_layouts_leaves, HashableFunction(lambda: out_tree_and_result_paths()[0], closure=()),
       tuple(out_avals), jaxpr.jaxpr._debug_info, device_or_backend_set)
 
   assert len(explicit_args) == len(in_shardings_flat) == len(in_layouts_flat)
@@ -576,6 +576,11 @@ def _infer_params_impl(
   assert (len(in_shardings_flat) == len(in_layouts_flat) ==
           len(donated_invars) == len(consts) + len(args_flat))
 
+  out_tree, result_paths = out_tree_and_result_paths()
+  result_paths = tuple(f"result{lu._clean_keystr_arg_names(path)}"
+                       for path in result_paths)
+  jaxpr.jaxpr._debug_info = jaxpr.debug_info._replace(result_paths=result_paths)
+
   params = dict(
       jaxpr=jaxpr,
       in_shardings=in_shardings_flat,
@@ -589,8 +594,9 @@ def _infer_params_impl(
       inline=ji.inline,
       compiler_options_kvs=ji.compiler_options_kvs,
   )
+
   return (PjitParams(consts, params, in_avals,
-                     in_tree, out_tree(), dbg.safe_arg_names(len(in_avals))),
+                     in_tree, out_tree, dbg.safe_arg_names(len(in_avals))),
           args_flat)
 
 
@@ -1051,7 +1057,7 @@ def diff_tracing_cache_keys(
         if t[0] != ot[0]:
           unavailable(f"fun_transforms[{i}] transform", t, ot)
           continue
-        if t_name == "flatten_fun":
+        if t_name == "flatten_fun3":
           explain_in_tree_diff(t[1][0], ot[1][0])
           continue
         if t_name == "_argnums_partial":

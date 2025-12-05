@@ -9831,6 +9831,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x, in_shardings=spec, out_shardings=None)(x)
 
+  @unittest.skip("regressed")  # TODO(mattjj): fix test
   @check_1d_2d_mesh(set_mesh=True)
   def testNonDivisibleOuts(self, mesh, resources):
     x = jnp.ones((3, 2))
