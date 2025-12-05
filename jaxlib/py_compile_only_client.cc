@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
+#include "xla/python/version.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/python/lib/core/numpy.h"
@@ -78,11 +79,18 @@ absl::StatusOr<nb_class_ptr<PyExecutable>> CompileOnlyPyClient::CompileUnloaded(
 
     auto xla_options = std::make_unique<ifrt::XlaCompileOptions>(
         options, std::move(executable_devices));
+#if JAX_IFRT_VERSION_NUMBER >= 38
+    TF_ASSIGN_OR_RETURN(
+        ifrt_executable,
+        ifrt::PjRtExecutable::Create(std::move(module), std::move(options),
+                                     *ifrt_client->topology().description()));
+#else
     TF_ASSIGN_OR_RETURN(auto executable,
                         PjRtCompile(std::move(options), module,
                                     *ifrt_client->topology().description()));
     TF_ASSIGN_OR_RETURN(ifrt_executable,
                         ifrt::PjRtExecutable::Create(std::move(executable)));
+#endif
   }
   return make_nb_class<PyExecutable>(ifrt_executable);
 }

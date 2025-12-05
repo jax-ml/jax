@@ -93,6 +93,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/service/platform_util.h"  // IWYU pragma: keep
 #include "xla/service/spmd/shardy/utils.h"  // IWYU pragma: keep
 #include "xla/shape.h"
@@ -504,11 +505,18 @@ PyClient::CompileAndLoadIfrtProgram(
         client->ifrt_client()->GetTopologyForDevices(executable_devices));
     auto xla_options = std::make_unique<ifrt::XlaCompileOptions>(
         options, std::move(executable_devices));
+#if JAX_IFRT_VERSION_NUMBER >= 38
+    TF_ASSIGN_OR_RETURN(
+        executable_ref,
+        ifrt::PjRtExecutable::Create(std::move(module), std::move(options),
+                                     *topology->description()));
+#else
     TF_ASSIGN_OR_RETURN(
         auto pjrt_executable,
         PjRtCompile(std::move(options), module, *topology->description()));
     TF_ASSIGN_OR_RETURN(executable_ref, ifrt::PjRtExecutable::Create(
                                             std::move(pjrt_executable)));
+#endif
   }
   return make_nb_class<PyExecutable>(executable_ref);
 }
