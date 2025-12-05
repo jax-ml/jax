@@ -67,10 +67,8 @@ from jax._src.sharding import Sharding as JSharding
 from jax._src.mesh import (AbstractMesh, Mesh, get_abstract_mesh,
                            get_concrete_mesh)
 from jax._src.sharding_impls import (
-    ArrayMapping, ArrayMappingOrAutoOrUnspecified, AUTO, UnspecifiedValue,
-    get_array_mapping as _get_array_mapping, array_mapping_to_axis_resources,
-    SingleDeviceSharding, GSPMDSharding, NamedSharding,
-    PartitionSpec as P)
+    ArrayMapping, AUTO, UnspecifiedValue, array_mapping_to_axis_resources,
+    SingleDeviceSharding, GSPMDSharding, NamedSharding, PartitionSpec as P)
 from jax._src.util import (safe_map, safe_zip, partition_list, wrap_name,
                            tuple_update, tuple_delete, distributed_debug_log,
                            unzip2, HashableFunction, weakref_lru_cache,
@@ -3420,7 +3418,3 @@ def batch_spec(spec, dim, val):
     spec += (None,) * too_short
   new_partitions = tuple_insert(spec, dim, val)  # type: ignore
   return PartitionSpec(*new_partitions)
-
-def get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
-  pspec = sharding_impls.prepare_axis_resources(pspec, "pspec to array_mapping")
-  return _get_array_mapping(pspec)
