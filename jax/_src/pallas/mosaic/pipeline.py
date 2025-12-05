@@ -39,6 +39,7 @@ import numpy as np
 
 SMEM = tpu_core.MemorySpace.SMEM
 VMEM = tpu_core.MemorySpace.VMEM
+HBM = tpu_core.MemorySpace.HBM
 ANY = tpu_core.MemorySpace.ANY
 REF = pallas_core.MemoryRef
 GridDimensionSemantics = tpu_core.GridDimensionSemantics
@@ -53,9 +54,6 @@ CondVal = Union[jax.Array, bool]
 PipelineBlockSpecs = Union[Sequence[pallas_core.BlockSpec], Any]
 PipelineRefs = Union[Sequence[REF], Any]
 
-
-# TODO(sharadmv): make this a parameter and make it queryable from the Device.
-_TILING = (8, 128)
 
 def _broadcast_pytree_to(from_pytree, to_pytree):
   """Broadcast a prefix pytree to a given full tree."""
@@ -79,22 +77,39 @@ def _broadcast_pytree_to(from_pytree, to_pytree):
 def _get_tpu_generation() -> int:
   return tpu_info.get_tpu_info().generation
 
-def _make_tiling(shape: tuple[int, ...], dtype: np.dtype) -> tuple[int, ...]:
-  # For a n-dimensional shape, returns (8, 128) for the last 2 dimensions
-  # and 1 for the leading n - 2. For example, (256, 256) -> (8, 128) and
-  # (2, 3, 128, 128) -> (1, 1, 8, 128).
-  if len(shape) < 2:
-    raise ValueError(f"Shape must have at least 2 dimensions: {shape=}")
-  leading_dims, final_dims = shape[:-2], shape[-2:]
-  # We want to find the minimum power of 2 that fits the second-minor dimension
-  # of shape, with maximum value 8.
-  second_minor, _ = final_dims
-  packing = 4 // dtype.itemsize
-  max_tiling = _TILING[0]
-  second_minor_tiling = (1 + int(_get_tpu_generation() < 4)) * packing
-  while second_minor_tiling < min(second_minor, max_tiling):
-    second_minor_tiling *= 2
-  return (*(1,) * len(leading_dims), second_minor_tiling, _TILING[1])
+
+def _make_tiling(
+    shape: tuple[int, ...], dtype: np.dtype, tiling: tuple[int, ...] | None
+) -> tuple[int, ...]:
+  has_explicit_tiling = tiling is not None
+  if tiling is None:
+    tiling = (8, 128)
+
+  if len(shape) < len(tiling):
+    raise ValueError(
+        f"Shape must have at least {len(tiling)} dimensions: {shape=}"
+    )
+
+  # For an n-dimensional shape, returns the tiling for the last ``len(tiling)``
+  # dimensions and 1 for the leading dims. For example:
+  # - 2D tiling: (256, 256) -> (8, 128) and (2, 3, 128, 128) -> (1, 1, 8, 128).
+  # - 1D tiling: (16,) -> (8,) and (2, 3, 8) -> (1, 1, 8).
+  tiling_rank = len(tiling)
+  leading_dims, final_dims = shape[:-tiling_rank], shape[-tiling_rank:]
+  if not has_explicit_tiling:
+    # We want to find the minimum power of 2 that fits the second-minor
+    # dimension of shape, with maximum value equal to ``tiling[0]``.
+    second_minor, _ = final_dims
+    packing = 4 // dtype.itemsize
+    max_tiling = tiling[0]
+    second_minor_tiling = (1 + int(_get_tpu_generation() < 4)) * packing
+    while second_minor_tiling < min(second_minor, max_tiling):
+      second_minor_tiling *= 2
+    return (*(1,) * len(leading_dims), second_minor_tiling, tiling[1])
+  else:
+    if tiling_rank not in (1, 2):
+      raise ValueError(f"Tiling must be 1D or 2D: {tiling=}")
+    return (*(1,) * len(leading_dims), *tiling)
 
 
 def _round_up_to_nearest_multiple(
@@ -269,6 +284,14 @@ class BufferedRefBase:
     raise NotImplementedError()
 
   @property
+  def tiling(self) -> tuple[int, ...] | None:
+    """Returns first level tiling for this buffered ref."""
+    if result := getattr(self.spec, "tiling", None):
+      # ``BlockSpec`` guarantees that ``tiling`` is non-empty.
+      return result[0]
+    return None
+
+  @property
   def buffer_type(self) -> BufferType:
     raise NotImplementedError()
 
@@ -379,10 +402,7 @@ class BufferedRefBase:
     # Suppose A is now (601, 600), instead of picking a (88, 256)-sized block
     # for the last iteration on that dimension, we will pick the next highest
     # tile multiple, i.e. (96, 256).
-    if len(src_shape) < 2:
-      raise NotImplementedError("Must use >1D values.")
-
-    tiling = _make_tiling(src_shape, src_dtype)
+    tiling = _make_tiling(src_shape, src_dtype, self.tiling)
     block_indices = self.compute_index(*grid_indices)
     return tuple(
         _make_block_slice(bi, bs, ss, t)
@@ -532,13 +552,13 @@ class BufferedRef(BufferedRefBase):
       accum_ref = VMEM(block_shape, dtype)
     else:
       accum_ref = None
-    if source_memory_space == VMEM:
-      # We don't need to do any double-buffering in the case that our pipeline
-      # reference is already in VMEM, we just need allocate the accumulation
-      # buffer and we will refer to the original reference slices directly.
-      if spec.memory_space not in (VMEM, None):
-        raise ValueError(
-            f"Cannot hold a non-buffered ref in {spec.memory_space=}")
+    buffer_memory_space = (
+          VMEM if spec.memory_space is None else spec.memory_space)
+    if buffer_memory_space not in (SMEM, VMEM, HBM):
+      raise ValueError(
+          f"Unsupported buffer memory space: {buffer_memory_space}"
+      )
+    if source_memory_space is buffer_memory_space:
       return cls(
           _spec=spec,
           dtype=dtype,
@@ -560,12 +580,6 @@ class BufferedRef(BufferedRefBase):
           swap=None,
       )
     else:
-      buffer_memory_space = (
-          VMEM if spec.memory_space is None else spec.memory_space)
-      if buffer_memory_space not in (SMEM, VMEM):
-        raise ValueError(
-            f"Unsupported buffer memory space: {buffer_memory_space}"
-        )
       if use_lookahead and grid_rank is None:
         raise ValueError(
             "grid_rank must be specified when use_lookahead is True."
@@ -1279,7 +1293,7 @@ class Scheduler:
     # Currently this is based on the iteration, but if we want to support
     # lookahead this will depend on whether the lookahead reached the end.
     if not buffered_ref.is_buffered:
-      return False
+      return jnp.bool(False)
     return self.step >= (self.num_steps - buffered_ref.buffer_count + 1)
 
   def has_changed(self, buffered_ref):

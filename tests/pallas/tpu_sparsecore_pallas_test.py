@@ -1844,8 +1844,40 @@ class ScalarSubcoreTestWithTCTiling(TCTilingMixin, ScalarSubcoreTest):
 
 class PipelineTest(PallasSCTest):
 
-  def test_basic(self):
-    self.skip_if_tc_tiling()
+  def test_explicit_tiling_1d(self):
+    self.skip_if_tc_tiling("The test uses SC tiling.")
+
+    num_steps = 4
+    x = jnp.arange(num_steps * 8)
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=x,
+        in_specs=(pl.BlockSpec(memory_space=pltpu.HBM),),
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        grid=(1, 1),
+        debug=True,
+        compiler_params=pltpu.CompilerParams(
+            dimension_semantics=["core_parallel", "subcore_parallel"],
+            kernel_type=pltpu.KernelType.SC_VECTOR_SUBCORE,
+        ),
+    )
+    def kernel(x_hbm_ref, o_hbm_ref):
+      spec = plsc.BlockSpec((8,), lambda i: (i,), tiling=[(8,)])
+
+      @functools.partial(
+          pltpu.emit_pipeline, grid=(num_steps,), in_specs=spec, out_specs=spec
+      )
+      def pipeline(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + 1
+
+      pipeline(x_hbm_ref, o_hbm_ref)
+
+    np.testing.assert_array_equal(kernel(x), x + 1)
+
+  def test_explicit_tiling_2d(self):
+    self.skip_if_tc_tiling("The test uses SC tiling.")
+
     num_steps = 16
     x = jnp.arange(num_steps * 8).reshape(-1, 8)
 
@@ -1855,11 +1887,13 @@ class PipelineTest(PallasSCTest):
         out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
     )
     def kernel(x_hbm_ref, o_hbm_ref):
+      spec = plsc.BlockSpec((2, 8), lambda i: (i, 0), tiling=[(8,)])
+
       @functools.partial(
           pltpu.emit_pipeline,
           grid=(num_steps // 2,),
-          in_specs=pl.BlockSpec((2, 8), lambda i: (i, 0)),
-          out_specs=pl.BlockSpec((2, 8), lambda i: (i, 0)),
+          in_specs=spec,
+          out_specs=spec,
       )
       def pipeline(x_ref, o_ref):
         o_ref[...] = x_ref[...] + 1
@@ -1870,7 +1904,37 @@ class PipelineTest(PallasSCTest):
 
 
 class PipelineTestWithTCTiling(TCTilingMixin, PipelineTest):
-  pass
+
+  def test_explicit_tiling(self):
+    num_steps = 16
+    x = jnp.arange(num_steps * 8 * 128).reshape(-1, 8, 128)
+
+    @self.vector_subcore_kernel(
+        out_shape=x,
+        in_specs=(pl.BlockSpec(memory_space=pltpu.HBM),),
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_hbm_ref, o_hbm_ref):
+      spec = plsc.BlockSpec(
+          (pl.Squeezed(), 8, 128), lambda i: (i, 0, 0), tiling=[(8, 128)]
+      )
+
+      @functools.partial(
+          pltpu.emit_pipeline,
+          grid=(num_steps,),
+          in_specs=[spec],
+          out_specs=[spec],
+      )
+      def pipeline(x_ref, o_ref):
+        @pl.loop(0, 8)
+        def _(i):
+          @pl.loop(0, 128, step=8)
+          def _(j):
+            o_ref[i, pl.ds(j, 8)] = x_ref[i, pl.ds(j, 8)] + 1
+
+      pipeline(x_hbm_ref, o_hbm_ref)
+
+    np.testing.assert_array_equal(kernel(x), x + 1)
 
 
 if __name__ == "__main__":
