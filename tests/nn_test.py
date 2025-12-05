@@ -791,6 +791,27 @@ class NNFunctionsTest(jtu.JaxTestCase):
         atol=1e-3,
     )
 
+  def testDotProductAttention_localWindowSizeWithoutMask(self):
+    dtype = jnp.float32
+    B, S, T, N, H = 2, 128, 128, 4, 32
+    keys = random.split(random.PRNGKey(0), 3)
+    Q = random.normal(keys[0], (B, T, N, H), dtype)
+    K = random.normal(keys[1], (B, S, N, H), dtype)
+    V = random.normal(keys[2], (B, S, N, H), dtype)
+
+    output_large_window = nn.dot_product_attention(
+        Q, K, V, mask=None, local_window_size=(32, 32)
+    )
+
+    output_small_window = nn.dot_product_attention(
+        Q, K, V, mask=None, local_window_size=(1, 1)
+    )
+
+    self.assertFalse(
+        jnp.allclose(output_large_window, output_small_window),
+        "Attention output should differ with different local_window_size, even without a mask.",
+    )
+
 
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",

@@ -880,7 +880,7 @@ def _get_padding_mask_encoded(T, q_seqlen):
 
 def _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen,
                  local_window_size):
-  if mask is None and not is_causal and q_seqlen is None and kv_seqlen is None:
+  if mask is None and not is_causal and q_seqlen is None and kv_seqlen is None and local_window_size is None:
     return logits
 
   combined_mask = jnp.ones_like(logits, dtype=bool)
