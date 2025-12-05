@@ -116,7 +116,6 @@ limitations under the License.
 #include "xla/hlo/builder/lib/approx_topk_shape.h"
 #include "xla/pjrt/c_api_client/pjrt_c_api_client.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
-#include "xla/pjrt/distributed/preemption/preemption_sync_manager.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_api.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -581,30 +580,6 @@ NB_MODULE(_jax, m) {
   aux::RegisterTransferServerTypes(m);
 #endif  // defined(__linux__)
 
-#if JAX_IFRT_VERSION_NUMBER >= 38
-  nb::class_<xla::PreemptionSyncManager> preemption_sync_manager(
-      m, "PreemptionSyncManager");
-  preemption_sync_manager
-      .def(
-          "initialize",
-          [](xla::PreemptionSyncManager& manager,
-             xla::DistributedRuntimeClient* client) {
-            xla::CoordinationServiceAgent* agent =
-                xla::ValueOrThrow(client->GetCoordinationServiceAgent());
-            xla::ThrowIfError(manager.Initialize(agent));
-          },
-          nb::arg("distributed_client"))
-      .def("reached_sync_point",
-           [](xla::PreemptionSyncManager& manager, int step_counter) {
-             return manager.ReachedSyncPoint(step_counter);
-           })
-      .def("shutdown", [](xla::PreemptionSyncManager& manager) {
-        nb::gil_scoped_release gil_release;
-        manager.Shutdown();
-      });
-  m.def("create_preemption_sync_manager",
-        []() { return xla::CreatePreemptionSyncManager(); });
-#else
   nb::class_<tsl::PreemptionSyncManager> preemption_sync_manager(
       m, "PreemptionSyncManager");
   preemption_sync_manager
@@ -627,7 +602,6 @@ NB_MODULE(_jax, m) {
       });
   m.def("create_preemption_sync_manager",
         []() { return tsl::CreatePreemptionSyncManager(); });
-#endif
 
   nb::class_<xla::DistributedRuntimeService> distributed_runtime_service(
       m, "DistributedRuntimeService");
@@ -923,6 +897,7 @@ NB_MODULE(_jax, m) {
 
   nb::class_<xla::ifrt::TransferServerInterfaceFactory>(
       m, "TransferServerInterfaceFactory");
+
 
   m.def("is_asan", IsAsan);
   m.def("is_msan", IsMsan);

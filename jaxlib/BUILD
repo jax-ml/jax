@@ -397,7 +397,6 @@ nanobind_pywrap_extension(
         "@xla//xla/pjrt/distributed:key_value_store_interface",
         "@xla//xla/pjrt/distributed:protocol_proto_cc",
         "@xla//xla/pjrt/distributed:service",
-        "@xla//xla/pjrt/distributed/preemption:preemption_sync_manager",
         "@xla//xla/pjrt/plugin/xla_cpu:cpu_client_options",
         "@xla//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
         "@xla//xla/python:logging",
