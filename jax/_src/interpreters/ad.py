@@ -828,7 +828,9 @@ class JVPTracer(Tracer):
     self.tangent = tangent
 
   def _short_repr(self):
-    return f"GradTracer<{self.aval}>"
+    pp = lambda x: x._short_repr() if isinstance(x, Tracer) else str(x)
+    primal, tangent = pp(self.primal), pp(self.tangent)
+    return f'JVPTracer({primal=!s}, {tangent=!s})'
 
   @property
   def aval(self):
@@ -1172,6 +1174,11 @@ class LinearizeTracer(Tracer):
     self._trace = trace
     self.primal = primal
     self.tangent = tangent
+
+  def _short_repr(self):
+    pp = lambda x: x._short_repr() if isinstance(x, Tracer) else str(x)
+    primal, tangent = pp(self.primal), typeof(self.tangent).str_short(True)
+    return f"GradTracer({primal=!s}, typeof(tangent)={tangent!s})"
 
   @property
   def aval(self):

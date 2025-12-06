@@ -543,7 +543,7 @@ class Partial(functools.partial):
   >>> print_zero()
   0
   >>> call_func(print_zero)  # doctest:+ELLIPSIS
-  JitTracer<~int32[]>
+  JitTracer(~int32[])
   """
 
   def __new__(klass, func, *args, **kw):

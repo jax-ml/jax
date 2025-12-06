@@ -411,19 +411,19 @@ class CoreTest(jtu.JaxTestCase):
     x_repr = ""
 
     jax.jit(f)(jnp.arange(10.0, dtype='float32'))
-    self.assertEqual(x_repr, "JitTracer<float32[10]>")
+    self.assertEqual(x_repr, "JitTracer(float32[10])")
 
     jax.vmap(f)(jnp.arange(20, dtype='int32'))
-    self.assertEqual(x_repr, "VmapTracer<int32[]>")
+    self.assertEqual(x_repr, "VmapTracer(aval=int32[], batched=int32[20])")
 
     jax.grad(f)(jnp.float16(1.0))
-    self.assertRegex(x_repr, r"(Grad)|(Linearize)Tracer<float16\[\]>")
+    self.assertEqual(x_repr, "GradTracer(primal=1.0, typeof(tangent)=f16[])")
 
-    jax.jacrev(f)(jnp.arange(12, dtype='float32'))
-    self.assertRegex(x_repr, r"(Grad)|(Linearize)Tracer<float32\[12\]>")
+    jax.jacrev(f)(jnp.arange(4, dtype='float32'))
+    self.assertEqual(x_repr, "GradTracer(primal=[0. 1. 2. 3.], typeof(tangent)=f32[4])")
 
-    jax.jacfwd(f)(jnp.arange(14, dtype='float32'))
-    self.assertRegex(x_repr, r"(Grad)|(Linearize)Tracer<float32\[14\]>")
+    jax.jacfwd(f)(jnp.arange(3, dtype='float32'))
+    self.assertEqual(x_repr, "JVPTracer(primal=[0. 1. 2.], tangent=VmapTracer(aval=float32[3], batched=float32[3,3]))")
 
   def test_verbose_tracer_reprs(self):
     # Verbose reprs, avaiable via tracer._pretty_print()
