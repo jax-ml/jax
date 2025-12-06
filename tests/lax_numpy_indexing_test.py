@@ -1330,11 +1330,11 @@ class IndexingTest(jtu.JaxTestCase):
   def testWrongNumberOfIndices(self):
     with self.assertRaisesRegex(
         IndexError,
-        "Too many indices: 0-dimensional array indexed with 1 regular index."):
+        "too many indices for array: array is 0-dimensional, but 1 were indexed"):
       jnp.array(1)[0]
     with self.assertRaisesRegex(
         IndexError,
-        "Too many indices: 1-dimensional array indexed with 2 regular indices."):
+        "too many indices for array: array is 1-dimensional, but 2 were indexed"):
       jnp.zeros(3)[:, 5]
 
   @jtu.sample_product(shape=[(), (1,)])
@@ -1858,8 +1858,9 @@ class ValidateIndicesTest(jtu.JaxTestCase):
       ((2, 3), np.index_exp[..., -4], IndexError, "index -4 out of bounds for axis 1 with size 3"),
       ((2, 3, 5), np.index_exp[3, :, 0], IndexError, "index 3 out of bounds for axis 0 with size 2"),
       ((2, 3, 5), np.index_exp[:5, :, 6], IndexError, "index 6 out of bounds for axis 2 with size 5"),
+      ((2, 3, 5), np.index_exp[:, [1, 2], 6], IndexError, "index 6 out of bounds for axis 2 with size 5"),
       ((2, 3, 5), np.index_exp[np.arange(3), 6, None], IndexError, "index 6 out of bounds for axis 1 with size 3"),
-      ((2, 3), (1, 2, 3), IndexError, "Too many indices: 2-dimensional array indexed with 3 regular indices"),
+      ((2, 3), (1, 2, 3), IndexError, "too many indices for array: array is 2-dimensional, but 3 were indexed"),
   )
   def test_out_of_bound_indices(self, shape, idx, err, msg):
     """Test that out-of-bound indexing """

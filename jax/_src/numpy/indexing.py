@@ -15,8 +15,11 @@
 # pytype: skip-file
 """Indexing code for jax.numpy."""
 
+from __future__ import annotations
+
 import enum
 from functools import partial
+import itertools
 import operator
 import string
 from typing import Any, NamedTuple, cast
@@ -36,6 +39,7 @@ from jax._src import literals
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
+from jax._src.numpy import array_constructors
 from jax._src.numpy import einsum
 from jax._src.numpy import error as jnp_error
 from jax._src.numpy import lax_numpy
@@ -49,6 +53,156 @@ from jax._src.typing import Array, ArrayLike, Index, StaticIndex, StaticScalar
 from jax._src.util import canonicalize_axis, safe_zip, set_module, tuple_update
 
 export = set_module('jax.numpy')
+
+
+# Internal utilities for parsing and validating NumPy-style indices.
+
+class IndexType(enum.Enum):
+  """Enum for tracking the type of an index."""
+  NONE = "none"
+  SLICE = "slice"
+  ELLIPSIS = "ellipsis"
+  INTEGER = "integer"
+  BOOLEAN = "boolean"
+  ARRAY = "array"
+
+  @classmethod
+  def from_index(cls, idx: Index) -> IndexType:
+    """Create an IndexType enum from a supported JAX array index."""
+    if idx is None:
+      return cls.NONE
+    elif idx is Ellipsis:
+      return cls.ELLIPSIS
+    elif isinstance(idx, slice):
+      return cls.SLICE
+    elif _is_integer_index(idx):
+      return cls.INTEGER
+    elif _is_boolean_index(idx):
+      return cls.BOOLEAN
+    elif isinstance(idx, (Array, np.ndarray)):
+      if dtypes.issubdtype(idx.dtype, np.integer):
+        return cls.ARRAY
+      else:
+        raise TypeError(
+          f"Indexer must have integer or boolean type, got indexer with type {idx.dtype}")
+    elif isinstance(idx, (float, complex, Sequence)):
+      idx_aval = api.eval_shape(array_constructors.asarray, idx)
+      if idx_aval.dtype == bool:
+        return cls.BOOLEAN
+      elif dtypes.issubdtype(idx_aval.dtype, np.integer):
+        return cls.ARRAY
+      else:
+        raise TypeError(
+          f"Indexer must have integer or boolean type, got indexer with type {idx_aval.dtype}")
+    elif isinstance(idx, str):
+      raise IndexError(f"JAX does not support string indexing; got {idx=}")
+    else:
+      raise IndexError("only integers, slices (`:`), ellipsis (`...`), newaxis (`None`)"
+                       f" and integer or boolean arrays are valid indices. Got {idx}")
+
+
+class ParsedIndex(NamedTuple):
+  """Structure for tracking an indexer parsed within the context of an array shape."""
+  idx: Index
+  typ: IndexType
+  consumed_axes: tuple[int, ...]
+  shape: tuple[int, ...]
+
+  def static_bounds_check(self, *, normalize_indices=True):
+    """Perform a bounds check in the case of a static integer index."""
+    if self.typ == IndexType.INTEGER:
+      i = operator.index(self.idx)
+      axis, = self.consumed_axes
+      size = self.shape[axis]
+      normed_idx = i + size if normalize_indices and i < 0 else i
+      if normed_idx < 0 or i >= size:
+        raise IndexError(f"index {i} out of bounds for axis {axis} with size {size}"
+                         f" ({normalize_indices=})")
+
+  def expand_bool_indices(self, dim_number: int) -> list[ParsedIndex]:
+    """
+    Returns a new parsed index list, with boolean indices expanded
+    and replaced by integer array indices.
+    """
+    if self.typ != IndexType.BOOLEAN:
+      return [self]
+    if not core.is_concrete(self.idx):
+      # TODO(mattjj): improve this error by tracking _why_ the indices are not concrete
+      raise errors.NonConcreteBooleanIndexError(core.get_aval(self.idx))
+    assert isinstance(self.idx, (bool, np.ndarray, Array, list))
+    if np.ndim(self.idx) == 0:
+      # Scalar booleans
+      assert self.consumed_axes == ()
+      return [ParsedIndex(idx=bool(self.idx), typ=self.typ, consumed_axes=(), shape=self.shape)]
+    idx_shape = np.shape(self.idx)
+    expected_shape = [self.shape[i] for i in self.consumed_axes]
+    if not all(s1 in (0, s2) for s1, s2 in zip(idx_shape, expected_shape)):
+      raise IndexError("boolean index did not match shape of indexed array in index"
+                       f" {dim_number}: got {idx_shape}, expected {expected_shape}")
+    expanded_indices = np.where(np.asarray(self.idx))
+    return [ParsedIndex(idx=i, typ=IndexType.ARRAY, consumed_axes=(axis,), shape=self.shape)
+            for i, axis in safe_zip(expanded_indices, self.consumed_axes)]
+
+
+def parse_indices(
+    indices: tuple[Index, ...],
+    shape: tuple[int, ...],
+) -> list[ParsedIndex]:
+  """Parse indices in the context of an array shape.
+
+  Args:
+    indices: a tuple of user-supplied indices to be parsed.
+    shape: the shape of the array being indexed.
+
+  Returns:
+    The list of parsed indices stored in :class:`ParsedIndex` objects.
+    This list will have the same length as ``indices``.
+
+  Raises:
+    IndexError: if any unrecognized index types are present or if there
+      are too many indices, or too many ellipses.
+  """
+  # 1. go through indices to count the number of consumed dimensions.
+  # This is required to determine the effect of any ellipses.
+  dimensions_consumed: list[int] = []
+  ellipses_indices: list[int] = []
+  index_types: list[IndexType] = []
+  for i, idx in enumerate(indices):
+    typ = IndexType.from_index(idx)
+    index_types.append(typ)
+
+    if typ == IndexType.NONE:
+      dimensions_consumed.append(0)
+    elif typ == IndexType.ELLIPSIS:
+      # We don't yet know how many dimensions are consumed, so set to zero
+      # for now and update later.
+      dimensions_consumed.append(0)
+      ellipses_indices.append(i)
+    elif typ == IndexType.BOOLEAN:
+      dimensions_consumed.append(np.ndim(idx))  # type: ignore[arg-type]
+    elif typ in [IndexType.INTEGER, IndexType.ARRAY, IndexType.SLICE]:
+      dimensions_consumed.append(1)
+    else:
+      raise IndexError(f"Unrecognized index type: {typ}")
+
+  # 2. Validate the consumed dimensions and ellipses.
+  if len(ellipses_indices) > 1:
+    raise IndexError("an index can only have a single ellipsis ('...')")
+  total_consumed = sum(dimensions_consumed)
+  if total_consumed > len(shape):
+    raise IndexError(f"too many indices for array: array is {len(shape)}-dimensional,"
+                     f" but {total_consumed} were indexed")
+  if ellipses_indices:
+    dimensions_consumed[ellipses_indices[0]] = len(shape) - total_consumed
+
+  # 3. Generate the final sequence of parsed indices.
+  result: list[ParsedIndex] = []
+  current_dim = 0
+  for idx, typ, n_consumed in safe_zip(indices, index_types, dimensions_consumed):
+    consumed_axes = tuple(range(current_dim, current_dim + n_consumed))
+    current_dim += len(consumed_axes)
+    result.append(ParsedIndex(idx, typ, consumed_axes, shape))
+  return result
 
 
 @export
@@ -709,19 +863,12 @@ def validate_static_indices(
 
   Raises an IndexError if any static indices are out-of-bounds.
   """
-  # TODO(jakevdp): expand_bool_indices is expensive; do this more efficiently.
-  idx = idx if isinstance(idx, tuple) else (idx,)
-  idx = _expand_bool_indices(idx, arr.shape)
-  idx_tup = tuple(i for i in _canonicalize_tuple_index(arr.ndim, idx)
-                  if i is not None and not isinstance(i, bool))
-  def norm_index(i, size):
-    return i + size if normalize_indices and i < 0 else i
-  if len(idx_tup) != arr.ndim:
-    raise RuntimeError(f"Error for {idx=} and {arr.shape=}: processed {idx_tup=}")
-  for axis, (i, size) in enumerate(safe_zip(idx_tup, arr.shape)):
-    if isinstance(i, (int, np.integer)) and (norm_index(i, size) < 0 or i >= size):
-      raise IndexError(f"index {i} out of bounds for axis {axis} with size {size}"
-                       f" ({normalize_indices=})")
+  # TODO(jakevdp) generate parsed_idx in caller for reuse.
+  idx_tup = eliminate_deprecated_list_indexing(idx)
+  parsed_idx = parse_indices(idx_tup, arr.shape)
+
+  for parsed in parsed_idx:
+    parsed.static_bounds_check(normalize_indices=normalize_indices)
 
 
 class IndexingStrategy(enum.Enum):
@@ -1194,49 +1341,10 @@ def _is_boolean_index(i):
 
 def _expand_bool_indices(idx, shape):
   """Converts concrete bool indexes into advanced integer indexes."""
-  out = []
-  total_dims = len(shape)
-  num_ellipsis = sum(e is Ellipsis for e in idx)
-  if num_ellipsis > 1:
-    raise IndexError("an index can only have a single ellipsis ('...')")
-  elif num_ellipsis == 1:
-    total_dims = sum(np.ndim(e) if _is_boolean_index(e) else 1 for e in idx
-                     if e is not None and e is not Ellipsis)
-  ellipsis_offset = 0
-  newaxis_offset = 0
-  for dim_number, i in enumerate(idx):
-    try:
-      abstract_i = core.get_aval(i)
-    except TypeError:
-      abstract_i = None
-    if _is_boolean_index(i):
-      if isinstance(i, list):
-        i = lax_numpy.array(i)
-        abstract_i = core.get_aval(i)
-
-      if not core.is_concrete(i):
-        # TODO(mattjj): improve this error by tracking _why_ the indices are not concrete
-        raise errors.NonConcreteBooleanIndexError(abstract_i)
-      elif np.ndim(i) == 0:
-        out.append(bool(i))
-      else:
-        i_shape = np.shape(i)
-        start = len(out) + ellipsis_offset - newaxis_offset
-        expected_shape = shape[start: start + np.ndim(i)]
-        if len(i_shape) != len(expected_shape):
-          raise IndexError(f"too many boolean indices at index {dim_number}: got mask of shape "
-                           f"{i_shape}, but only {len(expected_shape)} dimensions remain.")
-        if not all(s1 in (0, s2) for s1, s2 in zip(i_shape, expected_shape)):
-          raise IndexError("boolean index did not match shape of indexed array in index "
-                           f"{dim_number}: got {i_shape}, expected {expected_shape}")
-        out.extend(np.where(i))
-    else:
-      out.append(i)
-    if i is Ellipsis:
-      ellipsis_offset = len(shape) - total_dims - 1
-    if i is None:
-      newaxis_offset += 1
-  return tuple(out)
+  # TODO(jakevdp): pass parsed indices here rather than re-parsing.
+  parsed_idx = parse_indices(idx, shape)
+  expanded = (pidx.expand_bool_indices(i) for i, pidx in enumerate(parsed_idx))
+  return tuple(pidx.idx for pidx in itertools.chain.from_iterable(expanded))
 
 
 def _is_slice_element_none_or_constant_or_symbolic(elt):
