@@ -69,7 +69,7 @@ traceback_util.register_exclusion(__file__)
 zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map
 
-config_ext = xla_client._xla.config
+config_ext = xla_client._jax.config
 
 PyTree = Any
 

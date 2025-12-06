@@ -82,7 +82,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 
-config_ext = xc._xla.config
+config_ext = xc._jax.config
 
 
 traceback_util.register_exclusion(__file__)
@@ -3113,7 +3113,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
   >>> print(out.dtype)
   float32
   """
-  if type(fun) is xc._xla.PjitFunction:
+  if type(fun) is xc._jax.PjitFunction:
     return fun.trace(*args, **kwargs).out_info  # type: ignore
   try: hash(fun)
   except TypeError: fun = partial(fun)
@@ -3281,7 +3281,7 @@ def clear_backends():
   util.clear_all_caches()
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
-  xc._xla.PjitFunctionCache.clear_all()
+  xc._jax.PjitFunctionCache.clear_all()
 
 @atexit.register
 def clean_up():
@@ -3312,7 +3312,7 @@ def clear_caches():
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
   pjit._infer_params_cached.cache_clear()
-  xc._xla.PjitFunctionCache.clear_all()
+  xc._jax.PjitFunctionCache.clear_all()
 
   # Clear all C++ compiled executable caches for pmap
   for fun in _pmap_cache_clears:

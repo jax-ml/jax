@@ -858,7 +858,7 @@ PyType_Slot PyClient::slots_[] = {
               "self, "
               "computation: object, "
               "executable_devices: DeviceList, "
-              "compile_options: CompileOptions = ..."
+              "compile_options: jaxlib._xla.CompileOptions = ..."
               ") -> Executable"
               // clang-format on
               ))
@@ -883,7 +883,7 @@ PyType_Slot PyClient::slots_[] = {
               "self, "
               "computation: object, "
               "executable_devices: DeviceList, "
-              "compile_options: CompileOptions = ..., "
+              "compile_options: jaxlib._xla.CompileOptions = ..., "
               "host_callbacks: Sequence[typing_extensions.CapsuleType] = ..."
               ") -> LoadedExecutable"
               // clang-format on
@@ -909,7 +909,7 @@ PyType_Slot PyClient::slots_[] = {
               "self, "
               "computation: object, "
               "executable_devices: DeviceList, "
-              "compile_options: CompileOptions = ..., "
+              "compile_options: jaxlib._xla.CompileOptions = ..., "
               "host_callbacks: Sequence[Callable[..., typing.Any]] = ..."
               ") -> LoadedExecutable"
               // clang-format on

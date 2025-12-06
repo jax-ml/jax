@@ -112,7 +112,9 @@ limitations under the License.
 #include "jaxlib/pytree.h"
 #include "jaxlib/sharding.h"
 #include "jaxlib/traceback.h"
+#if JAX_IFRT_VERSION_NUMBER < 38
 #include "jaxlib/xla_compiler.h"
+#endif  // JAX_IFRT_VERSION_NUMBER < 38
 #include "xla/hlo/builder/lib/approx_topk_shape.h"
 #include "xla/pjrt/c_api_client/pjrt_c_api_client.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
@@ -128,6 +130,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/tsl/distributed_runtime/preemption/preemption_sync_manager.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status.h"
 #include "tsl/platform/platform.h"
 
@@ -187,6 +190,8 @@ NB_MODULE(_jax, m) {
   nb::set_leak_warnings(false);
 
   tsl::ImportNumpy();
+  nb::module_::import_(
+      "jaxlib._xla");
 
   // Exceptions
   nb::exception<xla::XlaRuntimeError> xla_runtime_error(m, "JaxRuntimeError",
@@ -197,7 +202,9 @@ NB_MODULE(_jax, m) {
       "are instances of this class.");
 
   // Must be before PyClient.compile.
+#if JAX_IFRT_VERSION_NUMBER < 38
   xla::BuildXlaCompilerSubmodule(m);
+#endif  // JAX_IFRT_VERSION_NUMBER < 38
 
   PyDevice::Register(m);
   PyMemorySpace::Register(m);
@@ -898,7 +905,6 @@ NB_MODULE(_jax, m) {
   nb::class_<xla::ifrt::TransferServerInterfaceFactory>(
       m, "TransferServerInterfaceFactory");
 
-
   m.def("is_asan", IsAsan);
   m.def("is_msan", IsMsan);
   m.def("is_tsan", IsTsan);
@@ -954,6 +960,23 @@ NB_MODULE(_jax, m) {
   m.def("set_typed_float_type", &SetTypedFloatType);
   m.def("set_typed_complex_type", &SetTypedComplexType);
   m.def("set_typed_ndarray_type", &SetTypedNdArrayType);
+
+  m.def(
+      "hlo_module_cost_analysis",
+      xla::ValueOrThrowWrapper([](PyClient* client,
+                                  const xla::HloModule& module)
+                                   -> absl::StatusOr<nb::dict> {
+        TF_ASSIGN_OR_RETURN(auto analysis,
+                            client->pjrt_client()->GetHloCostAnalysis());
+        TF_RETURN_IF_ERROR(module.entry_computation()->Accept(analysis.get()));
+
+        // Convert from HloCostAnalysis::Properties to a standard map.
+        nb::dict ret;
+        analysis->properties().ForEach([&](std::string_view key, float val) {
+          ret[nb::str(key.data(), key.size())] = nb::cast(val);
+        });
+        return ret;
+      }));
 }  // NOLINT(readability/fn_size)
 
 }  // namespace jax
