@@ -214,6 +214,8 @@ std::string shapeToString(const T &shape) {
   return os.str();
 }
 
+// Computes contiguous (row-major) tile strides for a given shape and tiling.
+// Strides are in units of tiles.
 SmallVector<int64_t> ComputeTileStrides(absl::Span<const int64_t> shape,
                                         absl::Span<const int64_t> tiling);
 
