@@ -9811,6 +9811,16 @@ class ShardingInTypesTest(jtu.JaxTestCase):
                      NamedSharding(mesh.abstract_mesh, P('x')))
     compiled(arr)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_c64_to_f32_view_rountrip(self, mesh):
+    x = jnp.zeros((128, 64), dtype=jnp.complex64, out_sharding=P(('x')))
+    y = jax.jit(lambda _x: _x.view(jnp.float32))(x)
+    self.assertEqual(y.sharding, NamedSharding(mesh, P('x', None)))
+
+    x = jnp.zeros((128, 64), dtype=jnp.float32, out_sharding=P(('x')))
+    y = jax.jit(lambda _x: _x.view(jnp.complex64))(x)
+    self.assertEqual(y.sharding, NamedSharding(mesh, P('x', None)))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
