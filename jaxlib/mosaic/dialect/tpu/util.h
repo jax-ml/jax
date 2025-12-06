@@ -226,7 +226,7 @@ inline SmallVector<int64_t> ComputeTileStrides(
 
 // Computes the dimensions that were squeezed from the source shape to match the
 // target shape. Returns the dimensions in increasing order.
-FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
+FailureOr<SmallVector<int64_t>> computeSqueezedDimsChecked(
     Operation *op, ArrayRef<int64_t> source_shape,
     ArrayRef<int64_t> target_shape);
 
