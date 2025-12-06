@@ -1687,7 +1687,7 @@ class DynamicJaxprTracer(core.Tracer):
     self.parent = parent
 
   def _short_repr(self):
-    return f"JitTracer<{self.aval}>"
+    return f"JitTracer({self.aval})"
 
   def cur_qdd(self):
     return self.mutable_qdd.cur_val
