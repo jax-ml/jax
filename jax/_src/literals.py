@@ -51,6 +51,9 @@ class TypedFloat(float):
   def __repr__(self):
     return f'TypedFloat({float(self)}, dtype={self.dtype.name})'
 
+  def __str__(self):
+    return str(float(self))
+
   def __getnewargs__(self):
     return (float(self), self.dtype)
 

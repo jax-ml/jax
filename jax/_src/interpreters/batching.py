@@ -23,6 +23,7 @@ import numpy as np
 
 from jax._src import config
 from jax._src import core
+from jax._src.core import typeof
 from jax._src import source_info_util
 from jax._src import linear_util as lu
 from jax._src.partition_spec import PartitionSpec as P
@@ -406,7 +407,7 @@ class BatchTracer(Tracer):
     self.source_info = source_info
 
   def _short_repr(self):
-    return f"VmapTracer<{self.aval}>"
+    return f"VmapTracer(aval={self.aval}, batched={typeof(self.val)})"
 
   @property
   def aval(self):
