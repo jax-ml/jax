@@ -2617,6 +2617,7 @@ class APITest(jtu.JaxTestCase):
     transpose = api.linear_transpose(f, 1j)
     actual, = transpose(3 + 4j)
     expected = -5 + 10j
+    expected = -5 + 10j
     self.assertEqual(actual, expected)
 
   def test_linear_transpose_zeros(self):
