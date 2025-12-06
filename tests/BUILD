@@ -2089,6 +2089,18 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "export_serialization_back_compat_test",
+    srcs = ["export_serialization_back_compat_test.py"],
+    tags = [],
+    deps = [
+        "//jax/_src:internal_export_back_compat_test_data",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "fused_attention_stablehlo_test",
     srcs = ["fused_attention_stablehlo_test.py"],
     enable_backends = ["gpu"],
