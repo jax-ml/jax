@@ -26,6 +26,7 @@ py_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        "//jax/experimental/mosaic/gpu/cc:ext",
         "//jaxlib/mlir",
         "//jaxlib/mlir/_mlir_libs:_mosaic_gpu_ext",
     ],

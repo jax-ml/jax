@@ -240,7 +240,10 @@ pytype_strict_library(
 py_library_providing_imports_info(
     name = "mosaic_gpu",
     srcs = glob(
-        include = ["mosaic/gpu/*.py"],
+        include = [
+            "mosaic/gpu/*.py",
+            "mosaic/gpu/cc/*.py",
+        ],
         exclude = ["mosaic/gpu/test_util.py"],
     ),
     data = if_cuda_is_configured([
@@ -265,6 +268,7 @@ py_library_providing_imports_info(
         "//jax/_src:stages",
         "//jax/_src:util",
         "//jax/_src/lib",
+        "//jax/experimental/mosaic/gpu/cc:ext",
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",
         "//jaxlib/mlir:control_flow_dialect",
