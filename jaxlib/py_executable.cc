@@ -545,6 +545,12 @@ void PyLoadedExecutable::Register(nb::module_& m) {
       .def("get_hlo_text",
            xla::ValueOrThrowWrapper(
                &PyLoadedExecutable::GetHumanReadableProgramText))
+      .def("serialize",
+           [](const PyLoadedExecutable& exec) -> nb::bytes {
+             std::string serialized =
+                 xla::ValueOrThrow(exec.ifrt_loaded_executable()->Serialize());
+             return nb::bytes(serialized.data(), serialized.size());
+           })
       .def("size_of_generated_code_in_bytes",
            &PyLoadedExecutable::SizeOfGeneratedCodeInBytes)
       .def(
