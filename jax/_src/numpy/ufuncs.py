@@ -2524,15 +2524,16 @@ def floor_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """
   x1, x2 = promote_args_numeric("floor_divide", x1, x2)
   jnp_error._set_error_if_divide_by_zero(x2)
-  dtype = x1.dtype
-  if dtypes.issubdtype(dtype, np.unsignedinteger):
-    return lax.div(x1, x2)
-  elif dtypes.issubdtype(dtype, np.integer):
-    quotient = lax.div(x1, x2)
-    select = logical_and(lax.sign(x1) != lax.sign(x2), lax.rem(x1, x2) != 0)
-    # TODO(mattjj): investigate why subtracting a scalar was causing promotion
-    return _where(select, quotient - 1, quotient)
-  elif dtypes.issubdtype(dtype, np.complexfloating):
+  zero = _lax_const(x2, 0)
+  one = _lax_const(x2, 1)
+  x2_safe = _where(x2 == 0, one, x2)
+  if dtypes.issubdtype(x2.dtype, np.unsignedinteger):
+    return _where(x2 == 0, zero, lax.div(x1, x2_safe))
+  elif dtypes.issubdtype(x2.dtype, np.integer):
+    quotient = _where(x2 == 0, zero, lax.div(x1, x2_safe))
+    select = (x2 != 0) & (lax.sign(x1) != lax.sign(x2)) & (lax.rem(x1, x2) != 0)
+    return _where(select, lax.sub(quotient, one), quotient)
+  elif dtypes.issubdtype(x2.dtype, np.complexfloating):
     raise TypeError("floor_divide does not support complex-valued inputs")
   else:
     return _float_divmod(x1, x2)[0]
@@ -2585,7 +2586,7 @@ def divmod(x1: ArrayLike, x2: ArrayLike, /) -> tuple[Array, Array]:
 def _float_divmod(x1: ArrayLike, x2: ArrayLike) -> tuple[Array, Array]:
   # see float_divmod in floatobject.c of CPython
   mod = lax.rem(x1, x2)
-  div = lax.div(lax.sub(x1, mod), x2)
+  div = lax.div(_where(lax._isnan(mod), x1, lax.sub(x1, mod)), x2)
 
   ind = lax.bitwise_and(mod != 0, lax.sign(x2) != lax.sign(mod))
   mod = lax.select(ind, mod + x2, mod)
