@@ -120,7 +120,12 @@ _scaled_matmul_p.def_abstract_eval(_scaled_matmul_abstract)
 mlir.register_lowering(
     _scaled_matmul_p,
     _scaled_matmul_gpu_lowering,
-    platform="gpu",
+    platform="cuda",
+)
+mlir.register_lowering(
+    _scaled_matmul_p,
+    _scaled_matmul_gpu_lowering,
+    platform="rocm",
 )
 
 _scaled_matmul_p_wrapper = core.Primitive("scaled_matmul_wrapper")
