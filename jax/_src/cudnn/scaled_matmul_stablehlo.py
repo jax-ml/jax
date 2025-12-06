@@ -66,7 +66,7 @@ def _scaled_matmul_impl(a, b, a_scale, b_scale, preferred_element_type):
   )
 
 
-def _scaled_matmul_cuda_lowering(
+def _scaled_matmul_gpu_lowering(
     ctx, a, b, a_scales, b_scales, preferred_element_type
   ):
   lhs_type = ir.RankedTensorType(a.type)
@@ -119,8 +119,8 @@ _scaled_matmul_p.def_abstract_eval(_scaled_matmul_abstract)
 
 mlir.register_lowering(
     _scaled_matmul_p,
-    _scaled_matmul_cuda_lowering,
-    platform="cuda",
+    _scaled_matmul_gpu_lowering,
+    platform="gpu",
 )
 
 _scaled_matmul_p_wrapper = core.Primitive("scaled_matmul_wrapper")
