@@ -95,10 +95,10 @@ Pallas exposes all levels of the TPU memory hierarchy to users. The following ta
 
 | Pallas Enum | TPU Memory Space | Type (DRAM/SRAM) |
 | --- | --- | --- |
-| `pltpu.MemorySpace.ANY` | HBM (usually) or VMEM | DRAM |
-| `pltpu.MemorySpace.VMEM` | VMEM | SRAM |
-| `pltpu.MemorySpace.SMEM` | SMEM | SRAM |
-| `pltpu.MemorySpace.SEMAPHORE` | Semaphore | SRAM |
+| `pltpu.ANY` | HBM (usually) or VMEM | DRAM |
+| `pltpu.VMEM` | VMEM | SRAM |
+| `pltpu.SMEM` | SMEM | SRAM |
+| `pltpu.SEMAPHORE` | Semaphore | SRAM |
 
 - `MemorySpace.VMEM` denotes vector SRAM. It is the default memory space if nothing is specified.
 - `MemorySpace.SMEM` denotes scalar SRAM. Only scalar loads and stores can be performed to/from SMEM.
@@ -129,9 +129,9 @@ def hbm_vmem_kernel(x_hbm_ref, out_vmem_ref, scratch_vmem_ref):
 
 x = jax.random.uniform(jax.random.key(0), (8, 128), jnp.float32)
 out = pl.pallas_call(hbm_vmem_kernel,
-  in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY)],
+  in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
   out_shape=jax.ShapeDtypeStruct((1, 128), jnp.float32),
-  scratch_shapes=(pltpu.MemorySpace.VMEM(shape=(1, 128), dtype=jnp.float32),)
+  scratch_shapes=(pltpu.VMEM(shape=(1, 128), dtype=jnp.float32),)
 )(x)
 
 np.testing.assert_allclose(out, x[0:1] + 1)
@@ -229,12 +229,12 @@ def dynamic_block_example_kernel(x_hbm, slices_hbm, o_hbm, slices_smem):
 x = jax.random.uniform(jax.random.key(0), (8, 128), jnp.float32)
 slices = jnp.array([[0, 2], [2, 3], [3, 5], [5, 8]], dtype=jnp.int32)
 
-hbm_block_spec = pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY)
+hbm_block_spec = pl.BlockSpec(memory_space=pltpu.ANY)
 out = pl.pallas_call(dynamic_block_example_kernel,
                in_specs=[hbm_block_spec, hbm_block_spec],
                out_specs=hbm_block_spec,
                out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-               scratch_shapes=(pltpu.MemorySpace.SMEM(slices.shape, jnp.int32),)
+               scratch_shapes=(pltpu.SMEM(slices.shape, jnp.int32),)
               )(x, slices)
 
 np.testing.assert_allclose(x, out)

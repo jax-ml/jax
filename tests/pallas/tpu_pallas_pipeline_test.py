@@ -139,7 +139,7 @@ class PallasCallPipelineTest(parameterized.TestCase):
     out = pl.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 512), jnp.int32),
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
     )()
     np.testing.assert_allclose(out, jnp.full_like(out, 42))
 
@@ -268,9 +268,9 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         copy_kernel,
         out_shape=jax.ShapeDtypeStruct(x.shape, jnp.int32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pltpu.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
     )
     result = fn(x)
     np.testing.assert_allclose(result, x)
@@ -319,10 +319,10 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         matmul_kernel,
         out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pltpu.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
     )
     result = fn(x, y)
     np.testing.assert_allclose(result, x @ y, atol=5e-5)
@@ -362,10 +362,10 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         grid=(2,),
         out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pltpu.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=(pltpu.PARALLEL,)
         ),
@@ -416,10 +416,10 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         copy_kernel,
         out_shape=jax.ShapeDtypeStruct((len(in_block_indices) * 128, 128), jnp.int32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.SMEM),
+            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
     )
     result = fn(x, jnp.array(in_block_indices))
 
@@ -469,10 +469,10 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         copy_kernel,
         out_shape=jax.ShapeDtypeStruct((1024, 128), jnp.int32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.SMEM),
+            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
     )
     result = fn(x, jnp.array(out_block_indices))
 
@@ -530,9 +530,9 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         copy_kernel,
         out_shape=jax.ShapeDtypeStruct(x.shape, jnp.int32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pltpu.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
     )
     result = fn(x)
     np.testing.assert_allclose(result, x)
@@ -608,10 +608,10 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         copy_kernel,
         out_shape=jax.ShapeDtypeStruct((blk_len * 2 * 128, 128), jnp.int32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.SMEM),
+            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
         scratch_shapes = [pltpu.SMEM((1,), dtype=jnp.int32)]
     )
     result = jax.block_until_ready(fn(x, jnp.array(in_block_indices)))
@@ -680,9 +680,9 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         copy_kernel,
         out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pltpu.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
     )
     result = fn(x)
     expected = 0
@@ -725,10 +725,10 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         matmul_kernel,
         out_shape=jax.ShapeDtypeStruct((M, N), jnp.float32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pltpu.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
         scratch_shapes=inner_allocs,
     )
     result = fn(x, y)
