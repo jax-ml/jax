@@ -2238,6 +2238,7 @@ class ShapedArray(AbstractValue):
     self.shape = canonicalize_shape(shape)
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
+    # The sharding.memory_kind should not be relied upon, used memory_space.
     self.sharding = get_sharding(sharding, self.shape)
     # short for varying_manual_axes. See docs at
     # https://docs.jax.dev/en/latest/notebooks/shard_map.html#tracking-how-values-vary-over-manual-mesh-axes-and-check-vma-true
