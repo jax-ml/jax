@@ -5989,9 +5989,23 @@ def _arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
       start = ceil_(start).astype(int)
     return lax.broadcasted_iota(dtype, (start,), 0, out_sharding=out_sharding)  # type: ignore[arg-type]
   else:
-    if step is None and start == 0 and stop is not None:
-      return lax.broadcasted_iota(dtype, (np.ceil(stop).astype(int),), 0,
-                                  out_sharding=out_sharding)
+    if step is None and stop is not None:
+      # Skip optimization if start or stop is complex (ceil doesn't support complex)
+      start_dtype = _dtype(start)
+      stop_dtype = _dtype(stop)
+      if (dtypes.issubdtype(start_dtype, np.complexfloating) or
+          dtypes.issubdtype(stop_dtype, np.complexfloating)):
+        return array(np.arange(start, stop=stop, step=step, dtype=dtype),
+                     device=out_sharding)
+      # Use iota + offset instead of creating a constant array
+      size = int(np.ceil(stop - start))
+      if size <= 0:
+        return array([], dtype=dtype, device=out_sharding)
+      result = lax.broadcasted_iota(dtype, (size,), 0, out_sharding=out_sharding)
+      if start != 0:
+        # Add offset if start is non-zero
+        result = lax.add(result, lax.convert_element_type(start, dtype))
+      return result
     return array(np.arange(start, stop=stop, step=step, dtype=dtype),
                  device=out_sharding)
 
