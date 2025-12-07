@@ -965,3 +965,16 @@ def _remat_state_discharge_rule(
                 for a in in_avals]
   assert next(ref_vals_, None) is None
   return new_invals, out_vals
+
+
+def _remat_forwarding_rule(eqn):
+  if isinstance(eqn, pe.TracingEqn):
+    return [None] * len(eqn.outvars), eqn
+  jaxpr = eqn.params['jaxpr']
+  in_fwd: list[int | None] = pe._jaxpr_forwarding(jaxpr)
+  jaxpr = pe.prune_jaxpr_outputs(jaxpr, [f is None for f in in_fwd])
+  new_outvars = [v for v, f in zip(eqn.outvars, in_fwd) if f is None]
+  new_params = dict(eqn.params, jaxpr=jaxpr)
+  new_eqn = eqn.replace(params=new_params, outvars=new_outvars)
+  return in_fwd, new_eqn
+pe.forwarding_rules[remat_p] = _remat_forwarding_rule

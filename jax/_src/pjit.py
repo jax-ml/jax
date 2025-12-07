@@ -1759,7 +1759,8 @@ def pjit_staging_rule(trace, source_info, *args, **params):
   jaxpr = params['jaxpr']
   if config.dynamic_shapes.value:
     jaxpr, in_fwd, out_shardings, out_layouts = _pjit_forwarding(
-        jaxpr, params['out_shardings'], params['out_layouts'])
+        jaxpr, params['out_shardings'], params['out_layouts'],
+        params['donated_invars'])
     params = dict(params, jaxpr=jaxpr, out_shardings=out_shardings,
                   out_layouts=out_layouts)
     outvars = map(trace.frame.newvar, _out_type(jaxpr))
@@ -1790,10 +1791,12 @@ def pjit_staging_rule(trace, source_info, *args, **params):
 pe.custom_staging_rules[jit_p] = pjit_staging_rule
 
 
-def _pjit_forwarding(jaxpr, out_shardings, out_layouts):
+def _pjit_forwarding(jaxpr, out_shardings, out_layouts, donated_invars):
   in_fwd: list[int | None] = pe._jaxpr_forwarding(jaxpr.jaxpr)
-  in_fwd = [fwd if isinstance(os, UnspecifiedValue) and ol is None else None
-            for fwd, os, ol in zip(in_fwd, out_shardings, out_layouts)]
+  in_fwd = [f if isinstance(os, UnspecifiedValue) and ol is None else None
+            for f, os, ol in zip(in_fwd, out_shardings, out_layouts)]
+  donated_ = {i for i, d in enumerate(donated_invars) if d}
+  in_fwd = [f if f is None or f not in donated_ else None for f in in_fwd]
   keep = [f is None for f in in_fwd]
   jaxpr = pe.prune_closed_jaxpr_outputs(jaxpr, keep)
   out_shardings = tuple(o for o, k in zip(out_shardings, keep) if k)
@@ -1801,16 +1804,16 @@ def _pjit_forwarding(jaxpr, out_shardings, out_layouts):
   return jaxpr, in_fwd, out_shardings, out_layouts
 
 def pjit_forwarding_rule(eqn):
-  if not config.dynamic_shapes.value:
+  if isinstance(eqn, pe.TracingEqn):
     return [None] * len(eqn.outvars), eqn
   jaxpr, in_fwd, out_shardings, out_layouts = _pjit_forwarding(
-      eqn.params['jaxpr'], eqn.params['out_shardings'], eqn.params['out_layouts'])
+      eqn.params['jaxpr'], eqn.params['out_shardings'], eqn.params['out_layouts'],
+      eqn.params['donated_invars'])
   new_outvars = [v for v, f in zip(eqn.outvars, in_fwd) if f is None]
   new_params = dict(eqn.params, jaxpr=jaxpr, out_shardings=out_shardings,
                     out_layouts=out_layouts)
   new_eqn = eqn.replace(params=new_params, outvars=new_outvars)
   return in_fwd, new_eqn
-# TODO(mattjj): Remove pjit_forwarding_rule and also in staging rule.
 pe.forwarding_rules[jit_p] = pjit_forwarding_rule
 
 
