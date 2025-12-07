@@ -89,6 +89,10 @@ cc_library(
     srcs = ["dialect/tpu/transforms/serde.cc"],
     hdrs = ["dialect/tpu/transforms/serde.h"],
     # compatible with libtpu
+    visibility = [
+        "//jax/experimental:mosaic_users",
+        "//third_party/py/torch_tpu/ops:__subpackages__",
+    ],
     deps = [
         ":pass_boilerplate",
         ":serde",
