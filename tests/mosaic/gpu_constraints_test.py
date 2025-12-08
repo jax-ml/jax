@@ -127,11 +127,9 @@ class ConstraintSystemTest(parameterized.TestCase):
   ):
     v0, v1, v2, v3 = V(0), V(1), V(2), V(3)
     layout = RL(mgpu.WGSplatFragLayout((1, 1)))
-    least_replicated = cs.LeastReplicated((v2, v3))
-    most_replicated = cs.MostReplicated((least_replicated,))
     system = cs.ConstraintSystem(
         assignments={v0: layout},
-        constraints=[Eq(v1, most_replicated)],
+        constraints=[Eq(v1, v2), cs.Relayout(v2, v3)],
     )
     self.assertSequenceEqual(system.unknowns(), [v1, v2, v3])
 
@@ -163,112 +161,6 @@ class ConstraintSystemTest(parameterized.TestCase):
     self.assertSequenceEqual(system0.unknowns(), [v0])
     self.assertSequenceEqual(system1.unknowns(), [v1])
     self.assertSequenceEqual(system_intersection.unknowns(), [v0, v1])
-
-  def test_reduce_extracts_most_replicated_expression_correctly(self):
-    v0 = V(0)
-    shape = (1, 128)
-    layout0 = RL(mgpu.WGSplatFragLayout(shape))
-    layout1 = RL(mgpu.WGStridedFragLayout(shape, vec_size=1))
-    with self.subTest("most-replicated-expression-exists"):
-      system = cs.ConstraintSystem(
-          constraints=[Eq(v0, cs.MostReplicated((layout0, layout1)))],
-      )
-      self.assertEqual(
-          cs.reduce(system),
-          cs.ConstraintSystem(assignments={v0: layout0}),
-      )
-
-    with self.subTest("most-replicated-expression-is-unique-expression"):
-      system = cs.ConstraintSystem(
-          constraints=[Eq(v0, cs.MostReplicated((layout0,)))],
-      )
-      self.assertEqual(
-          cs.reduce(system),
-          cs.ConstraintSystem(assignments={v0: layout0}),
-      )
-
-    with self.subTest("most-replicated-expression-does-not-exist"):
-      system = cs.ConstraintSystem(
-          constraints=[Eq(v0, cs.MostReplicated((layout1, v0)))],
-      )
-      self.assertEqual(cs.reduce(system), system)
-
-  def test_reduce_extracts_least_replicated_expression_correctly(self):
-    v0 = V(0)
-    shape = (1, 128)
-    layout0 = RL(mgpu.WGSplatFragLayout(shape))
-    layout1 = RL(mgpu.WGStridedFragLayout(shape, vec_size=1))
-    with self.subTest("least-replicated-expression-exists"):
-      system = cs.ConstraintSystem(
-          constraints=[Eq(v0, cs.LeastReplicated([layout0, layout1]))],
-      )
-      self.assertEqual(
-          cs.reduce(system),
-          cs.ConstraintSystem(assignments={v0: layout1}),
-      )
-
-    with self.subTest("least-replicated-expression-is-unique-expression"):
-      system = cs.ConstraintSystem(
-          constraints=[Eq(v0, cs.LeastReplicated((layout0,)))],
-      )
-      self.assertEqual(
-          cs.reduce(system),
-          cs.ConstraintSystem(assignments={v0: layout0}),
-      )
-
-    with self.subTest("least-replicated-expression-does-not-exist"):
-      system = cs.ConstraintSystem(
-          constraints=[Eq(v0, cs.LeastReplicated((layout0, v0)))],
-      )
-      self.assertEqual(cs.reduce(system), system)
-
-  def test_reduce_most_replicated_expression_reduces_compatible_layouts(self):
-    splat_layout = RL(mgpu.WGSplatFragLayout((128, 64)))
-    tiled_layout = RL(mgpu.WGMMA_LAYOUT)
-    self.assertEqual(
-        cs.reduce_expression(
-            cs.MostReplicated((splat_layout, tiled_layout)),
-            {},
-        ),
-        splat_layout,
-    )
-
-  def test_reduce_most_replicated_expression_is_unsatisfiable_for_incompatible_layouts(
-      self,
-  ):
-    splat_layout = RL(mgpu.WGSplatFragLayout((1, 2)))
-    tiled_layout = RL(mgpu.WGMMA_LAYOUT)
-    self.assertIsInstance(
-        cs.reduce_expression(
-            cs.MostReplicated((splat_layout, tiled_layout)),
-            {},
-        ),
-        cs.Unsatisfiable,
-    )
-
-  def test_reduce_least_replicated_expression_reduces_compatible_layouts(self):
-    splat_layout = RL(mgpu.WGSplatFragLayout((128, 64)))
-    tiled_layout = RL(mgpu.WGMMA_LAYOUT)
-    self.assertEqual(
-        cs.reduce_expression(
-            cs.LeastReplicated((splat_layout, tiled_layout)),
-            {},
-        ),
-        tiled_layout,
-    )
-
-  def test_reduce_least_replicated_expression_is_unsatisfiable_for_incompatible_layouts(
-      self,
-  ):
-    splat_layout = RL(mgpu.WGSplatFragLayout((1, 2)))
-    tiled_layout = RL(mgpu.WGMMA_LAYOUT)
-    self.assertIsInstance(
-        cs.reduce_expression(
-            cs.LeastReplicated((splat_layout, tiled_layout)),
-            {},
-        ),
-        cs.Unsatisfiable,
-    )
 
   @parameterized.named_parameters(
       ("reduce_to_row_layout", (1,), mgpu.WGMMA_ROW_LAYOUT),

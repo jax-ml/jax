@@ -1811,7 +1811,6 @@ class PallasCallTest(PallasTest):
       ],
   )
   def test_transposed_layout(self, layouts):
-    self.skip_if_wg_semantics()  # TiledLayout replication not supported.
     layout, transposed_layout = layouts
     dtype = jnp.dtype(jnp.float16)
     shape = (256, 192)
@@ -3417,7 +3416,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
       plgpu.Layout.TCGEN05, plgpu.Layout.TCGEN05_TMEM_NATIVE
   )
   def test_tmem_load_layout(self, layout):
-    self.skip_if_wg_semantics()  # TiledLayout replication not supported yet.
     transforms = self.default_transforms(dtype=jnp.float32)
     @functools.partial(
         self.kernel,
@@ -3452,7 +3450,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
       plgpu.Layout.TCGEN05_M64_COLLECTIVE_NATIVE(160)
   )
   def test_tmem_store_load_collective(self, layout):
-    self.skip_if_wg_semantics()  # TiledLayout replication not supported yet.
+    self.skip_if_wg_semantics()  # Failed to infer a possible set of layouts.
     @functools.partial(
         self.kernel,
         out_shape=jax.ShapeDtypeStruct((64, 160), jnp.float32),
