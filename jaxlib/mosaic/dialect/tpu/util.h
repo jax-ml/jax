@@ -301,6 +301,8 @@ std::optional<int64_t> getIntConst(Value v);
 // results.
 SmallVector<Operation *> getNontrivialTransitiveUsers(Value v);
 
+bool hasVectorOperandsOrResults(Operation& op);
+
 // Return a mod b for a, b > 0, but adjusted to return b when a mod b == 0 such
 // that the result is strictly positive.
 template <typename U, typename V>
