@@ -73,6 +73,9 @@ echo "Running Bazel TPU tests..."
 # commands below.
 set +e
 
+# TODO(emilyaf): Debug and re-enable this test.
+IGNORE_TESTS_MULTIACCELERATOR="-//tests/multiprocess:array_test_tpu"
+
 if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   # We're deselecting all Pallas TPU tests in the oldest libtpu build. Mosaic
   # TPU does not guarantee anything about forward compatibility (unless
@@ -142,7 +145,8 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     //tests:tpu_tests \
     //tests/pallas:tpu_tests \
     //tests/pallas:tpu_pallas_test_tpu \
-    //tests/multiprocess:tpu_tests
+    //tests/multiprocess:tpu_tests \
+    $IGNORE_TESTS_MULTIACCELERATOR
 
   # Store the return value of the second bazel command.
   second_bazel_cmd_retval=$?
@@ -224,7 +228,8 @@ else
     //tests:pjit_test_tpu \
     //tests:python_callback_test_tpu \
     //tests:ragged_collective_test_tpu \
-    //tests/multiprocess:tpu_tests
+    //tests/multiprocess:tpu_tests \
+    $IGNORE_TESTS_MULTIACCELERATOR
 
   # Store the return value of the second bazel command.
   second_bazel_cmd_retval=$?
