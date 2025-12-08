@@ -7,7 +7,7 @@ ways to contribute, including:
 
 - Answering questions on JAX's [discussions page](https://github.com/jax-ml/jax/discussions)
 - Improving or expanding JAX's [documentation](https://docs.jax.dev/)
-- Contributing to JAX's [code-base](https://github.com/jax-ml/jax/)
+- Contributing to JAX's [code-base](https://github.com/jax-ml/jax)
 - Contributing in any of the above ways to the broader ecosystem of [libraries built on JAX](https://github.com/jax-ml/jax#neural-network-libraries)
 
 The JAX project follows [Google's Open Source Community Guidelines](https://opensource.google/conduct/).
