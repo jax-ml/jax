@@ -1654,6 +1654,56 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x, indices), x[indices])
 
+  @parameterized.product(
+      keys_dtype=[np.int32, np.float32],
+      values_dtype=[np.int32, np.float32],
+      use_mask=[False, True],
+      descending=[False, True],
+  )
+  def test_sort_key_val(self, keys_dtype, values_dtype, use_mask, descending):
+    if not jtu.is_cloud_tpu_at_least(2025, 12, 2):
+      self.skipTest("Test requires a newer libtpu")
+
+    vec_dim = self.sc_info.num_lanes
+    keys = np.arange(vec_dim, dtype=keys_dtype)
+    np.random.shuffle(keys)
+    keys[3] = keys[1]  # Verify sort stability.
+    values = np.arange(vec_dim, dtype=values_dtype)
+    np.random.shuffle(values)
+    mask = np.random.choice([True, False], size=vec_dim) if use_mask else None
+    maybe_mask_arg = (mask.astype(jnp.int32),) if use_mask else ()
+
+    @self.vector_subcore_kernel(out_shape=(keys, values, *maybe_mask_arg))
+    def kernel(*args):
+      if use_mask:
+        mask_ref, *args, o_mask_ref = args
+        mask = mask_ref[...].astype(jnp.bool)
+      else:
+        mask, o_mask_ref = None, None
+      keys_ref, values_ref, o_keys_ref, o_vals_ref = args
+      o_keys_ref[...], o_vals_ref[...], *maybe_out_mask = plsc.sort_key_val(
+          keys_ref[...], values_ref[...], mask=mask, descending=descending)
+      if use_mask:
+        [out_mask] = maybe_out_mask
+        o_mask_ref[...] = out_mask.astype(jnp.int32)
+
+    out_keys, out_values, *maybe_out_mask = kernel(
+        *maybe_mask_arg, keys, values)
+
+    keys_arg = keys
+    if descending:
+      keys_arg = -keys_arg
+    if use_mask:
+      keys_arg = jnp.where(mask, keys_arg, 100)
+    _, gt_keys = jax.lax.sort_key_val(keys_arg, keys)
+    _, gt_values = jax.lax.sort_key_val(keys_arg, values)
+    if use_mask:
+      [out_mask] = maybe_out_mask
+      gt_out_mask = jnp.arange(vec_dim) < mask.sum()
+      np.testing.assert_array_equal(out_mask, gt_out_mask.astype(jnp.int32))
+    np.testing.assert_array_equal(out_keys, gt_keys)
+    np.testing.assert_array_equal(out_values, gt_values)
+
   @parameterized.product(dtype=[np.int32, np.float32])
   def test_rev_and_sort_desc(self, dtype):
     if not jtu.is_cloud_tpu_at_least(2025, 12, 2):
