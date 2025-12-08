@@ -55,8 +55,6 @@ Shape = tuple[int, ...]
 Device = xc.Device
 Index = tuple[slice, ...]
 XLADeviceAssignment = tuple[Device, ...]
-# TODO(yashkatariya): Remove this after 3 months of deprecation.
-XLACompatibleSharding = jsharding.Sharding
 
 
 def hashed_index(x) -> int:
@@ -103,7 +101,7 @@ def _unpickle_single_device_sharding(device, memory_kind):
 
 
 @use_cpp_class(xc.SingleDeviceSharding)
-class SingleDeviceSharding(jsharding.Sharding):
+class SingleDeviceSharding(jsharding.BaseSharding):
   """A :class:`Sharding` that places its data on a single device.
 
   Args:
@@ -192,7 +190,7 @@ def pmap_sharding_devices_indices_map(
 
 
 @use_cpp_class(xc.PmapSharding)
-class PmapSharding(jsharding.Sharding):
+class PmapSharding(jsharding.BaseSharding):
   """Describes a sharding used by :func:`jax.pmap`."""
   devices: np.ndarray
   sharding_spec: sharding_specs.ShardingSpec
@@ -356,7 +354,7 @@ def _unpickle_gspmd_sharding(devices, op_sharding, memory_kind):
   return GSPMDSharding(devices, op_sharding, memory_kind=memory_kind)
 
 @use_cpp_class(xc.GSPMDSharding)
-class GSPMDSharding(jsharding.Sharding):
+class GSPMDSharding(jsharding.BaseSharding):
   _devices: xc.DeviceList
   _hlo_sharding: xc.HloSharding
   _memory_kind: str | None
@@ -480,7 +478,7 @@ def prepare_axis_resources(axis_resources, arg_name,
   for entry in entries:
     if isinstance(entry, (UnspecifiedValue, AUTO)) or entry is None:
       new_entries.append(entry)
-    elif isinstance(entry, jsharding.Sharding):
+    elif isinstance(entry, jsharding.BaseSharding):
       if isinstance(entry, PmapSharding):
         raise ValueError(f'One of {what} got sharding {entry} which is not '
                          'allowed.')
@@ -733,7 +731,8 @@ class NonUniformShardingError(ValueError):
 
 @util.cache(max_size=4096, trace_context_in_key=False)
 def get_process_index_and_count(
-    tensor_sharding: jsharding.Sharding, dim: int, ndims: int) -> tuple[int, int]:
+    tensor_sharding: jsharding.BaseSharding, dim: int, ndims: int
+    ) -> tuple[int, int]:
   """Get current process index and number of unique processes for given dimension.
 
   This function facilitates mapping of process-level data to individual
@@ -848,7 +847,8 @@ def get_process_index_and_count(
 
 
 def local_to_global_shape(
-    sharding: jsharding.Sharding, local_shape: Shape) -> tuple[int | None, ...]:
+    sharding: jsharding.BaseSharding, local_shape: Shape
+    ) -> tuple[int | None, ...]:
   """Computes the global shape given the per process if possible.
 
   The returned shape will have the size of the global tensor in that dimension
@@ -907,7 +907,8 @@ def local_to_global_shape(
 
 
 def num_addressable_indices(
-    tensor_sharding: jsharding.Sharding, dim: int, global_shape: Shape) -> int:
+    tensor_sharding: jsharding.BaseSharding, dim: int, global_shape: Shape
+    ) -> int:
   """Returns the number of indices for given dimension this host has access to.
 
   Each host can have multiple number of devices that are spanning
@@ -958,7 +959,7 @@ def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
   new_op_sharding.tile_assignment_dimensions = tad
   return xc.HloSharding.from_proto(new_op_sharding)
 
-def is_single_device_sharding(sharding: jsharding.Sharding) -> bool:
+def is_single_device_sharding(sharding: jsharding.BaseSharding) -> bool:
   # Special case PmapSharding here because PmapSharding maps away an axis
   # and needs to be handled separately.test_pjit_single_device_sharding_add
   return sharding.num_devices == 1 and not isinstance(sharding, PmapSharding)
@@ -984,7 +985,8 @@ def make_key_array_phys_sharding(aval, sharding):
         sharding._internal_device_list, physical_hlo_sharding(aval, hlos))
 
 
-def physical_sharding(aval, sharding: jsharding.Sharding) -> jsharding.Sharding:
+def physical_sharding(aval, sharding: jsharding.BaseSharding
+                      ) -> jsharding.BaseSharding:
   return make_key_array_phys_sharding(aval, sharding)
 
 
@@ -1001,7 +1003,7 @@ def get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding):
   return GSPMDSharding(phys_sharding._internal_device_list,
                        xc.HloSharding.from_proto(logical_op_sharding))
 
-def check_replicated_trailing_dims(sharding: jsharding.Sharding,
+def check_replicated_trailing_dims(sharding: jsharding.BaseSharding,
                                    logical_shape, dtype):
   if isinstance(sharding, PmapSharding):
     return
@@ -1017,7 +1019,8 @@ def check_replicated_trailing_dims(sharding: jsharding.Sharding,
         f" sharding: {sharding}, partitions: {partitions}, "
         f"num_trailing_dims: {num_trailing_dims}")
 
-def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
+def logical_sharding(logical_shape, dtype, phys_sharding
+                     ) -> jsharding.BaseSharding:
   # The trailing dims should always be replicated.
   # TODO(yashkatariya): Maybe remove this check or do this at the pxla level?
   check_replicated_trailing_dims(phys_sharding, logical_shape, dtype)

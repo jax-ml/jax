@@ -66,7 +66,7 @@ from jax._src.lax.utils import (
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 from jax._src.sharding_impls import (
     PmapSharding, NamedSharding, PartitionSpec as P, canonicalize_sharding, flatten_spec)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DType, DTypeLike, Shape
@@ -1662,7 +1662,7 @@ def _convert_element_type(
     operand: ArrayLike | literals.TypedNdArray,
     new_dtype: DType | None = None,
     weak_type: bool = False,
-    sharding: Sharding | None = None,
+    sharding: BaseSharding | None = None,
     warn_on_complex_to_real_cast: bool = True):
   if hasattr(operand, '__jax_array__'):
     operand = operand.__jax_array__()
@@ -1699,7 +1699,7 @@ def _convert_element_type(
   else:
     assert isinstance(new_dtype, DType), new_dtype
 
-  if sharding is not None and not isinstance(sharding, Sharding):
+  if sharding is not None and not isinstance(sharding, BaseSharding):
     raise ValueError(f'{sharding=} must be an instance of jax.sharding.Sharding')
 
   if (warn_on_complex_to_real_cast and
@@ -3380,7 +3380,7 @@ def tie_in(x: Any, y: T) -> T:
   return y
 
 def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
-         sharding: Sharding | None = None) -> Array:
+         sharding: BaseSharding | None = None) -> Array:
   """Returns an array of `shape` filled with `fill_value`.
 
   Args:
@@ -3596,7 +3596,8 @@ def expand_dims(array: ArrayLike, dimensions: Sequence[int]) -> Array:
 
 def full_like(x: ArrayLike | DuckTypedArray,
               fill_value: ArrayLike, dtype: DTypeLike | None = None,
-              shape: Shape | None = None, sharding: Sharding | None = None) -> Array:
+              shape: Shape | None = None, sharding: BaseSharding | None = None
+              ) -> Array:
   """Create a full array like np.full based on the example array `x`.
 
   Args:

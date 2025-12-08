@@ -25,7 +25,7 @@ from jax._src import config
 from jax._src import dtypes as _dtypes
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 
 
 __array_api_version__ = '2024.12'
@@ -83,7 +83,7 @@ class ArrayNamespaceInfo:
   def capabilities(self):
     return self._capabilities
 
-  def default_dtypes(self, *, device: xc.Device | Sharding | None = None):
+  def default_dtypes(self, *, device: xc.Device | BaseSharding | None = None):
     # Array API supported dtypes are device-independent in JAX
     del device
     return {
@@ -95,7 +95,7 @@ class ArrayNamespaceInfo:
 
   def dtypes(
       self, *,
-      device: xc.Device | Sharding | None = None,
+      device: xc.Device | BaseSharding | None = None,
       kind: str | tuple[str, ...] | None = None):
     # Array API supported dtypes are device-independent in JAX
     del device

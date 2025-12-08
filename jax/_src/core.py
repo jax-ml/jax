@@ -53,7 +53,7 @@ from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            weakref_cache_key_types, set_module)
 import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 from jax._src.layout import Format, AutoLayout
 from jax._src.memory import Space as MemorySpace
 from jax._src.lib import _jax
@@ -3715,11 +3715,12 @@ class ShapeDtypeStruct:
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
     self.dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-    if sharding is not None and not isinstance(sharding, (Sharding, Format, P)):
+    if (sharding is not None and
+        not isinstance(sharding, (BaseSharding, Format, P))):
       raise ValueError(
-          "sharding should be an instance of `jax.sharding.Sharding`, "
-          "`jax.sharding.PartitionSpec` or"
-          f" `jax.experimental.layout.Format`. Got {sharding} of type"
+          "sharding should be an instance of `jax.Sharding`,"
+          " `jax.sharding.SingleDeviceSharding`, `jax.sharding.PartitionSpec`"
+          f" or `jax.experimental.layout.Format`. Got {sharding} of type"
           f" {type(sharding)}.")
     if (isinstance(sharding, Format) and
         isinstance(sharding.layout, AutoLayout)):
@@ -3805,7 +3806,7 @@ class ShapeDtypeStruct:
   def update(self, **kwargs):
     if 'sharding' in kwargs:
       s = kwargs['sharding']
-      if self._dll is not None and isinstance(s, Sharding):
+      if self._dll is not None and isinstance(s, BaseSharding):
         raise ValueError(
             f"You are updating ShapeDtypeStruct with a {type(s)} when the"
             f" original ShapeDtypeStruct had a concrete layout {self.format}."

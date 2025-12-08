@@ -79,15 +79,15 @@ ArrayMappingOrAutoOrUnspecified = Union[ArrayMapping, AUTO, UnspecifiedValue]
 
 
 def _unpickle_named_sharding(mesh, spec, memory_kind, logical_device_ids):
-  return NamedSharding(mesh, spec, memory_kind=memory_kind,
+  return Sharding(mesh, spec, memory_kind=memory_kind,
                        _logical_device_ids=logical_device_ids)
 
 
 @use_cpp_class(xc.NamedSharding)
-class NamedSharding(JSharding.Sharding):
-  r"""A :class:`NamedSharding` expresses sharding using named axes.
+class Sharding(JSharding.BaseSharding):
+  r"""A :class:`Sharding` expresses sharding using named axes.
 
-  A :class:`NamedSharding` is a pair of a :class:`Mesh` of devices and
+  A :class:`Sharding` is a pair of a :class:`Mesh` of devices and
   :class:`PartitionSpec` which describes how to shard an array across that
   mesh.
 
@@ -115,7 +115,7 @@ class NamedSharding(JSharding.Sharding):
     >>> from jax.sharding import PartitionSpec as P
     >>> mesh = Mesh(np.array(jax.devices()).reshape(2, 4), ('x', 'y'))
     >>> spec = P('x', 'y')
-    >>> named_sharding = jax.sharding.NamedSharding(mesh, spec)
+    >>> named_sharding = jax.sharding.Sharding(mesh, spec)
 
   .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
   .. _Explicit Sharding:  https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
@@ -141,7 +141,7 @@ class NamedSharding(JSharding.Sharding):
     ldi = ('' if self._logical_device_ids is None else
            f', logical_device_ids={self._logical_device_ids}')
     mesh_repr = f"{str(self.mesh)}"
-    return f'NamedSharding(mesh={mesh_repr}, spec={self.spec}{mem}{ldi})'
+    return f'Sharding(mesh={mesh_repr}, spec={self.spec}{mem}{ldi})'
 
   def __reduce__(self):
     return (_unpickle_named_sharding,
@@ -160,7 +160,7 @@ class NamedSharding(JSharding.Sharding):
 
   @use_cpp_method()
   def __eq__(self, other):
-    if not isinstance(other, NamedSharding):
+    if not isinstance(other, Sharding):
       return False
     if self is other:
       return True
@@ -175,7 +175,7 @@ class NamedSharding(JSharding.Sharding):
       extra_msg = (' For scalars the PartitionSpec should be P()'
                    if len(aval_shape) == 0 else '')
       raise ValueError(
-          f"Sharding {self} is only valid for values of rank at least "
+          f"{self} is only valid for values of rank at least "
           f"{len(self.spec)}, but was applied to a value of rank "
           f"{len(aval_shape)}.{extra_msg}")
 
@@ -217,7 +217,7 @@ class NamedSharding(JSharding.Sharding):
       raise ValueError('addressable_devices is not implemented for '
                        '`jax.sharding.AbstractMesh`.')
     # Override addressable devices because there is a high chance that the mesh
-    # across multiple NamedSharding objects will be the same.
+    # across multiple Sharding objects will be the same.
     return self.mesh._local_devices_set
 
   @functools.cached_property
@@ -239,14 +239,14 @@ class NamedSharding(JSharding.Sharding):
     return frozenset(self.mesh.axis_names) - (
         flat_spec | self.spec.unreduced | self.spec.reduced)
 
-  def with_memory_kind(self, kind: str) -> NamedSharding:
+  def with_memory_kind(self, kind: str) -> Sharding:
     return self.update(memory_kind=kind)
 
-  def update(self, **kwargs) -> NamedSharding:
+  def update(self, **kwargs) -> Sharding:
     spec = kwargs.pop("spec", self.spec)
     if not isinstance(spec, PartitionSpec):
       spec = PartitionSpec(*spec)
-    return NamedSharding(
+    return Sharding(
         mesh=kwargs.pop("mesh", self.mesh),
         spec=spec,
         memory_kind=kwargs.pop("memory_kind", self.memory_kind),
@@ -273,7 +273,9 @@ class NamedSharding(JSharding.Sharding):
                     logical_device_ids=self._logical_device_ids,
                     unreduced_axes=self.spec.unreduced)
 
-NamedSharding.__module__ = 'jax.sharding'
+Sharding.__module__ = 'jax.sharding'
+
+NamedSharding = Sharding
 
 def flatten_spec(spec):
   out = []
@@ -479,7 +481,7 @@ def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
 
 @cache(max_size=128, trace_context_in_key=False)
 def check_pspec(mesh, spec, _manual_axes=frozenset()):
-  _check_unique_resources(spec, "NamedSharding spec", mesh)
+  _check_unique_resources(spec, "Sharding spec", mesh)
   _check_mesh_resource_axis(mesh, spec)
   _check_mesh_unreduced(mesh, spec)
 

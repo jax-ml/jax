@@ -1199,12 +1199,10 @@ class InspectShardingTest(jtu.JaxTestCase):
     self.assertTrue(is_called)
 
   def test_inspect_sharding_is_called_in_jit(self):
-
     is_called = False
     def _cb(sd):
       nonlocal is_called
       is_called = True
-      self.assertIsInstance(sd, jax.sharding.Sharding)
       self.assertLen(sd.device_set, 1)
 
     def f_(x):

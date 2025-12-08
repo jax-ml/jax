@@ -66,7 +66,7 @@ from jax._src.util import (
     canonicalize_axis as _canonicalize_axis,
     canonicalize_axis_tuple as _canonicalize_axis_tuple,
     ceil_of_ratio, safe_zip, set_module, unzip2)
-from jax._src.sharding import Sharding
+from jax._src.sharding import BaseSharding
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.mesh import get_abstract_mesh
 from jax._src.pjit import auto_axes
@@ -5291,7 +5291,7 @@ def atleast_3d(*arys: ArrayLike) -> Array | list[Array]:
 @export
 def astype(x: ArrayLike, dtype: DTypeLike | None,
            /, *, copy: bool = False,
-           device: xc.Device | Sharding | None = None) -> Array:
+           device: xc.Device | BaseSharding | None = None) -> Array:
   """Convert an array to a specified dtype.
 
   JAX implementation of :func:`numpy.astype`.
@@ -5572,7 +5572,7 @@ def fromiter(*args, **kwargs):
 
 
 @export
-def from_dlpack(x: Any, /, *, device: xc.Device | Sharding | None = None,
+def from_dlpack(x: Any, /, *, device: xc.Device | BaseSharding | None = None,
                 copy: bool | None = None) -> Array:
   """Construct a JAX array via DLPack.
 
@@ -5752,7 +5752,7 @@ def fromstring(string: str, dtype: DTypeLike = float, count: int = -1, *, sep: s
 def eye(N: DimSize, M: DimSize | None = None,
         k: int | ArrayLike = 0,
         dtype: DTypeLike | None = None,
-        *, device: xc.Device | Sharding | None = None) -> Array:
+        *, device: xc.Device | BaseSharding | None = None) -> Array:
   """Create a square or rectangular identity matrix
 
   JAX implementation of :func:`numpy.eye`.
@@ -5866,7 +5866,7 @@ def identity(n: DimSize, dtype: DTypeLike | None = None) -> Array:
 @export
 def arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
            step: ArrayLike | None = None, dtype: DTypeLike | None = None,
-           *, device: xc.Device | Sharding | None = None,
+           *, device: xc.Device | BaseSharding | None = None,
            out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an array of evenly-spaced values.
 
