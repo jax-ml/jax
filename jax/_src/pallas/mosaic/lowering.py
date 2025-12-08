@@ -672,6 +672,13 @@ def _check_block_mappings(
           "only blocks having the same block shape as the array shape "
           "and a trivial index_map (returning all 0s)." + err_details())
 
+    if bm.tiling is not None:
+      raise ValueError(
+          "The Pallas TPU lowering currently does not support custom tilings."
+          " Please use the default tiling by omitting the tiling argument."
+          + err_details()
+      )
+
     unmapped_bs = pallas_core._get_block_shape(physical_block_shape)
     bs0, as0 = unmapped_bs[-1], physical_array_shape[-1]
     if rank >= 2:
