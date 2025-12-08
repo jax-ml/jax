@@ -65,7 +65,6 @@ def undefs(*tys: ir.Type) -> list[ir.Value]:
 
 
 V = cs.Variable
-H = layout_inference.Hint
 E = cs.Equals
 RL = cs.RegisterLayout
 
@@ -76,7 +75,6 @@ def _undef_constraint_system(
 ) -> tuple[
     cs.ConstraintSystem,
     layout_inference.ValueSitesForVariable,
-    list[layout_inference.Hint],
 ]:
   del ctx
   # This rule is only called if the single output of the undef op is a vector or
@@ -84,7 +82,7 @@ def _undef_constraint_system(
   result = layout_inference.ValueSite(
       op, layout_inference.VariableType.RESULT, 0
   )
-  return cs.ConstraintSystem(), {cs.Variable(result): [result]}, []
+  return cs.ConstraintSystem(), {cs.Variable(result): [result]}
 
 
 class LayoutInferenceTest(parameterized.TestCase):
@@ -289,7 +287,8 @@ class LayoutInferenceTest(parameterized.TestCase):
       cast = mgpu.dialect.LayoutCastOp(add.result, wgmma_layout)
 
     mgpu.infer_layout(self.module)
-    self.checkOutLayouts(add, [splat_layout])
+    # The layout of `add` may be either WGMMA or SPLAT.
+    self.checkOutLayouts(add, [wgmma_layout])
     self.checkInLayouts(cast, [wgmma_layout])
     self.checkOutLayouts(cast, [wgmma_layout])
 
@@ -668,27 +667,22 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInLayouts(op, [wgmma_layout])
     self.checkOutLayouts(op, [wgmma_row_layout])
 
-  def test_hint_and_constraint_extraction_works_correctly(self):
+  def test_constraint_extraction_works_correctly(self):
     layout = mgpu.WGMMA_ROW_LAYOUT
     with ir.InsertionPoint(self.module.body):
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))
       lc = layout_cast(x.result, layouts.to_layout_attr(layout)).owner.opview
 
     ctx = layout_inference.DerivationContext()
-    x_system, x_mapping, _ = _undef_constraint_system(ctx, x)
-    lc_system, lc_mapping, _ = layout_inference._layout_cast_constraint_system(
+    _, x_mapping = _undef_constraint_system(ctx, x)
+    _, lc_mapping = layout_inference._layout_cast_constraint_system(
         ctx, lc
     )
-    assignments = x_system.assignments | lc_system.assignments
-    hints, [constraint] = layout_inference.derive_hints_and_constraints(
+    [constraint] = layout_inference.derive_relayout_constraints(
         x_mapping | lc_mapping
     )
-    [hint_cst] = layout_inference.reduce_hints(hints, assignments)
-
     [x_variable] = x_mapping.keys()
     [lc_variable] = lc_mapping.keys()
-    self.assertEqual(hint_cst.variable, x_variable)
-    self.assertEqual(hint_cst.expression, RL(layout))
     self.assertEqual(constraint, cs.Relayout(x_variable, lc_variable))
 
   @parameterized.parameters(*layout_inference.MemorySpace)
@@ -718,34 +712,14 @@ class LayoutInferenceTest(parameterized.TestCase):
       )
       o_var = cs.Variable(o)
 
-      hints, relayouts = layout_inference.derive_hints_and_constraints(
+      relayouts = layout_inference.derive_relayout_constraints(
           layout_inference.ValueSitesForVariable({r_var: [r], o_var: [o]})
       )
 
       if memory_space == layout_inference.MemorySpace.REG:
-        hint0 = layout_inference.Hint(r_var, cs.MostReplicated((o_var,)))
-        hint1 = layout_inference.Hint(
-            o_var, cs.MostReplicated((cs.LeastReplicated((r_var,)),))
-        )
-
-        self.assertEqual(hints, [hint0, hint1])
         self.assertEqual(relayouts, [cs.Relayout(r_var, o_var)])
       else:
-        self.assertEmpty(hints)
         self.assertEmpty(relayouts)
-
-  def test_unambiguous_hints_are_used_to_assign_variables_correctly(self):
-    v0 = V(0)
-    assignments, _ = layout_inference.find_assignments_for(
-        {v0},
-        cs.ConstraintSystem(),
-        # Voluntarily use conflicting hints to check that we use one of them
-        # deterministically. This may require updating if we decide to change
-        # the traversal order in the future.
-        [H(v0, RL(mgpu.WGMMA_ROW_LAYOUT)), H(v0, RL(mgpu.WGMMA_COL_LAYOUT))],
-        fuel=1000,
-    )
-    self.assertEqual(assignments, {v0: RL(mgpu.WGMMA_ROW_LAYOUT)})
 
   def test_find_assignments_for_is_transferable_constraints_is_deterministic(
       self,
@@ -758,7 +732,6 @@ class LayoutInferenceTest(parameterized.TestCase):
     assignments, _ = layout_inference.find_assignments_for(
         {v0},
         cs.ConstraintSystem(constraints=[constraint]),
-        [],
         fuel=1000,
     )
     # Another valid layout is TMEM_NATIVE_LAYOUT but TCGEN05_LAYOUT is tried
@@ -780,76 +753,9 @@ class LayoutInferenceTest(parameterized.TestCase):
                 E(variable, RL(mgpu.WGMMA_COL_LAYOUT)),
             ]
         ),
-        hints=[],
         fuel=1000,
     )
     self.assertIsInstance(assignments, cs.Unsatisfiable)
-
-  def test_hint_that_would_make_system_unsatisfiable_is_not_used_in_solution(self):
-    with ir.InsertionPoint(self.module.body):
-      ty = ir.VectorType.get((32, 4), ir.BF16Type.get())
-      op0, op1 = [llvm.mlir_undef(ty).owner.opview for _ in range(2)]
-    [kv0] = layout_inference.vector_value_sites(op0)
-    [kv1] = layout_inference.vector_value_sites(op1)
-    v0, v1 = cs.Variable(kv0), cs.Variable(kv1)
-    splat_layout = RL(mgpu.WGSplatFragLayout((3, 128)))
-    assignments, _ = layout_inference.find_assignments_for(
-        {v0},
-        cs.ConstraintSystem(
-            constraints=[
-                E(
-                    v0,
-                    cs.MostReplicated(
-                        [v1, RL(mgpu.WGStridedFragLayout((3, 128), vec_size=1))]
-                    ),
-                )
-            ]
-        ),
-        # The first hint would make the system unsatisfiable, but the second
-        # hint should be used to find a solution.
-        hints=[H(v1, RL(mgpu.WGMMA_LAYOUT)), H(v1, splat_layout)],
-        fuel=1000,
-    )
-    self.assertEqual(assignments, {v0: splat_layout})
-
-  def test_hint_can_be_chosen_when_constant_exists_in_least_replicated_expression(self):
-    v0, v1 = V(0), V(1)
-    layout = RL(mgpu.WGMMA_LAYOUT)
-    assignment = layout_inference.extract_variable_assignment_from_hint(
-        H(v0, cs.LeastReplicated([layout, v1])),
-    )
-    self.assertEqual(assignment, (v0, layout))
-
-  def test_hint_cannot_be_chosen_when_constant_exists_in_most_replicated_expression(self):
-    v0, v1 = V(0), V(1)
-    layout = RL(mgpu.WGSplatFragLayout((1, 128)))
-    assignment = layout_inference.extract_variable_assignment_from_hint(
-        H(v0, cs.MostReplicated([layout, v1])),
-    )
-    self.assertEqual(assignment, (v0, layout))
-
-  def test_hint_is_still_extracted_when_underlying_expression_is_unsatisfiable(self):
-    v0, v1 = V(0), V(1)
-    layout0 = RL(mgpu.WGSplatFragLayout((1, 128)))
-    layout1 = RL(mgpu.WGStridedFragLayout((1, 256), vec_size=2))
-    hint_expr = cs.LeastReplicated([layout0, cs.MostReplicated([layout1, v1])])
-    self.assertIsInstance(
-        cs.reduce_expression(hint_expr, {v1: layout1}), cs.Unsatisfiable
-    )
-    _, expr = layout_inference.extract_variable_assignment_from_hint(
-        H(v0, hint_expr))
-    self.assertIsNotNone(expr)
-
-  def test_least_replicated_hint_is_still_resolved_when_all_known_choices_are_replicated(
-      self,
-  ):
-    v0, v1 = V(0), V(1)
-    layout0 = RL(mgpu.WGSplatFragLayout((1, 128)))
-    layout1 = RL(mgpu.WGSplatFragLayout((1, 129)))
-    assignment = layout_inference.extract_variable_assignment_from_hint(
-        H(v0, cs.LeastReplicated([v1, layout0, layout1])),
-    )
-    self.assertIsNotNone(assignment)
 
   def test_vector_broadcast_from_scalar_infers_splat_layout(self):
     shape = (128,)
@@ -1196,7 +1102,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     def conjure(constraints) -> list[tuple[cs.Variable, cs.Constant]]:
       system = cs.ConstraintSystem(constraints=constraints)
-      return list(layout_inference.conjure_assignment({var}, system, []))
+      return list(layout_inference.conjure_assignment({var}, system))
 
     # Yield only empty tiling with no constraints.
     with self.subTest("no_constraints_yield_empty_tiling"):
@@ -1246,8 +1152,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           ],
       )
 
-  def test_conjure_orders_hints_correctly(self):
-    # Create a var to use in the constraint system.
+  def test_conjure_tries_high_priority_assignments_first(self):
     shape = (128, 128)
     f32 = ir.F32Type.get()
     [val] = undefs(ir.VectorType.get(shape, f32))
@@ -1258,23 +1163,23 @@ class LayoutInferenceTest(parameterized.TestCase):
     )
     var = cs.Variable(value_site)
 
-    hints = [
-        layout_inference.Hint(
+    constraints = [
+        cs.Relayout(
             var,
             cs.RegisterLayout(fa.WGSplatFragLayout((128, 128))),
         ),
-        layout_inference.Hint(
+        cs.Relayout(
             var,
             cs.RegisterLayout(fa.WGMMA_LAYOUT),
         ),
-        layout_inference.Hint(
+        cs.Relayout(
             var,
             cs.RegisterLayout(fa.WGStridedFragLayout(shape, vec_size=4)),
         ),
     ]
 
-    system = cs.ConstraintSystem()
-    ordered = list(layout_inference.conjure_assignment({var}, system, hints))
+    system = cs.ConstraintSystem(constraints=constraints)
+    ordered = list(layout_inference.conjure_assignment({var}, system))
     expected = [
         (var, cs.RegisterLayout(fa.WGMMA_LAYOUT)),
         (var, cs.RegisterLayout(fa.WGSplatFragLayout((128, 128)))),
