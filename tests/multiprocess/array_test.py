@@ -23,8 +23,6 @@ from jax._src import array
 from jax._src import sharding_impls
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
-from jax._src import xla_bridge as xb
-from jax._src.lib import xla_client as xc
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 import numpy as np
@@ -979,12 +977,6 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
       np.testing.assert_array_equal(shard.data, x[shard.index])
 
   def test_cross_host_transfer_batched(self):
-    backend = xb.get_backend()
-    if "cuda" in backend.platform_version:
-      self.skipTest(
-          "The CUDA plugin does not support batched cross-host transfers."
-      )
-
     num_arrays = 3
     xs = []
     for i in range(1, num_arrays + 1):
@@ -1010,10 +1002,7 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
         P("x"))
 
     ys = jax.device_put(xs, src_sharding)
-    copy_semantics = xc.ArrayCopySemantics.ALWAYS_COPY
-    zs = xc.batched_copy_array_to_devices_with_sharding(
-        ys, [dst_sharding._internal_device_list] * num_arrays,
-        [dst_sharding] * num_arrays, [copy_semantics] * num_arrays)
+    zs = jax.device_put(ys, dst_sharding)
     for (x, z) in zip(xs, zs):
       if jax.process_index() == dst_pid:
         self.assertLen(z.addressable_shards, n_local)
