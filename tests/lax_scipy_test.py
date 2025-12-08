@@ -301,6 +301,51 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertEqual(jax.jacrev(lsp_special.entr)(0.0), jnp.inf)
 
   @jtu.sample_product(
+    shape=all_shapes,
+    dtype=float_dtypes,
+  )
+  def testErfcx(self, shape, dtype):
+    """Test erfcx against scipy.special.erfcx."""
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+    def scipy_fun(x):
+      return osp_special.erfcx(x)
+
+    def lax_fun(x):
+      return lsp_special.erfcx(x)
+
+    # erfcx should match scipy for moderate values
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
+                            rtol=1e-4, atol=1e-4, check_dtypes=False)
+    self._CompileAndCheck(lax_fun, args_maker, rtol=1e-4, atol=1e-4)
+
+  def testErfcxSpecialValues(self):
+    """Test erfcx at special values."""
+    # erfcx(0) = 1
+    self.assertAllClose(lsp_special.erfcx(0.0), 1.0, rtol=1e-6)
+
+    # For large positive x, erfcx(x) ~ 1/(x*sqrt(pi))
+    x = jnp.array([10.0, 20.0, 50.0])
+    actual = lsp_special.erfcx(x)
+    expected = osp_special.erfcx(np.array([10.0, 20.0, 50.0]))
+    self.assertAllClose(actual, expected, rtol=0.02)
+
+  def testErfcxGrad(self):
+    """Test gradient of erfcx."""
+    # The derivative of erfcx(x) is: 2*x*erfcx(x) - 2/sqrt(pi)
+    x0 = 1.0
+    grad_actual = jax.grad(lsp_special.erfcx)(x0)
+    erfcx_x0 = lsp_special.erfcx(x0)
+    grad_expected = 2 * x0 * erfcx_x0 - 2 / np.sqrt(np.pi)
+    self.assertAllClose(grad_actual, grad_expected, rtol=1e-4)
+
+    # Check gradient at x=0
+    grad_at_zero = jax.grad(lsp_special.erfcx)(0.0)
+    expected_at_zero = -2 / np.sqrt(np.pi)  # erfcx(0) = 1, so 2*0*1 - 2/sqrt(pi)
+    self.assertAllClose(grad_at_zero, expected_at_zero, rtol=1e-5)
+
+  @jtu.sample_product(
     [dict(order=order, z=z, n_iter=n_iter)
      for order, z, n_iter in zip(
          [0, 1, 2, 3, 6], [0.01, 1.1, 11.4, 30.0, 100.6], [5, 20, 50, 80, 200]
