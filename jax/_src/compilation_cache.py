@@ -261,7 +261,10 @@ def put_executable_and_time(
                " since cache is disabled/not initialized", cache_key)
     return
 
-  serialized_executable = backend.serialize_executable(executable)
+  if hasattr(executable, "serialize") or xla_client._version >= 389:
+    serialized_executable = executable.serialize()
+  else:
+    serialized_executable = backend.serialize_executable(executable)
   executable_and_time = combine_executable_and_time(
       serialized_executable, compile_time)
   executable_and_time = compress_executable(executable_and_time)
