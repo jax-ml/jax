@@ -6,8 +6,8 @@ Everyone can contribute to JAX, and we value everyone's contributions. There are
 ways to contribute, including:
 
 - Answering questions on JAX's [discussions page](https://github.com/jax-ml/jax/discussions)
-- Improving or expanding JAX's [documentation](http://docs.jax.dev/)
-- Contributing to JAX's [code-base](http://github.com/jax-ml/jax/)
+- Improving or expanding JAX's [documentation](https://docs.jax.dev)
+- Contributing to JAX's [code-base](https://github.com/jax-ml/jax)
 - Contributing in any of the above ways to the broader ecosystem of [libraries built on JAX](https://github.com/jax-ml/jax#neural-network-libraries)
 
 The JAX project follows [Google's Open Source Community Guidelines](https://opensource.google/conduct/).
@@ -49,7 +49,7 @@ Follow these steps to contribute code:
    For more information, see the {ref}`pr-checklist` below.
 
 2. Fork the JAX repository by clicking the **Fork** button on the
-   [repository page](http://www.github.com/jax-ml/jax). This creates
+   [repository page](https://github.com/jax-ml/jax). This creates
    a copy of the JAX repository in your own account.
 
 3. Install Python >= 3.11 locally in order to run tests.
