@@ -3769,6 +3769,133 @@ class PallasCallSm100ATest(PallasSm100ATest):
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
   @parameterized.product(
+      m=[256],
+      n=[256],
+      scale_jax_dtype=[jnp.float8_e8m0fnu, jnp.float8_e4m3fn],
+  )
+  def test_collective_scaled_matmul(self, m, n, scale_jax_dtype):
+    self.skip_if_wg_semantics()
+
+    in_jax_dtype = jnp.float4_e2m1fn
+    out_jax_dtype = jnp.float32
+    scale_block = 32 if scale_jax_dtype == jnp.float8_e8m0fnu else 16
+    swizzle = 128
+    k_steps = 2
+    swizzle_elems = 8 * swizzle // dtypes.itemsize_bits(in_jax_dtype)
+    k = swizzle_elems * k_steps
+    tiling = (8, swizzle_elems)
+    transforms = (
+        plgpu.TilingTransform(tiling), plgpu.SwizzleTransform(swizzle)
+    )
+    out_transforms = self.default_transforms(dtype=out_jax_dtype)
+
+    m_block = m // 2
+    n_block = n // 2
+
+    def kernel(lhs_gmem, rhs_gmem, lhs_scales_gmem, rhs_scales_gmem, out_gmem,
+               lhs_smem, rhs_smem, lhs_scales_smem, rhs_scales_smem, out_smem,
+               tma_barrier, mma_barrier,
+               acc_tmem, lhs_scales_tmem, rhs_scales_tmem):
+      plgpu.copy_gmem_to_smem(lhs_gmem, lhs_smem, tma_barrier,
+                              collective_axes="x", partitioned_axis=0)
+      plgpu.copy_gmem_to_smem(rhs_gmem, rhs_smem, tma_barrier,
+                              collective_axes="x", partitioned_axis=0)
+      plgpu.copy_gmem_to_smem(lhs_scales_gmem, lhs_scales_smem, tma_barrier,
+                              collective_axes="x", partitioned_axis=0)
+      # RHS scales are replicated (multicast)
+      plgpu.copy_gmem_to_smem(rhs_scales_gmem, rhs_scales_smem, tma_barrier,
+                              collective_axes="x", partitioned_axis=None)
+      cluster_idx = lax.axis_index("x")
+
+      @pl.when(cluster_idx == 0)
+      def _leader_block():
+        plgpu.barrier_wait(tma_barrier)
+        plgpu.async_copy_scales_to_tmem(lhs_scales_smem, lhs_scales_tmem, collective_axis="x")
+        plgpu.async_copy_scales_to_tmem(rhs_scales_smem, rhs_scales_tmem, collective_axis="x")
+        plgpu.tcgen05_mma(
+            acc_tmem,
+            lhs_smem,
+            plgpu.transpose_ref(rhs_smem, (1, 0)),
+            mma_barrier,
+            a_scale=lhs_scales_tmem,
+            b_scale=rhs_scales_tmem,
+            accumulate=False,
+            collective_axis="x"
+        )
+      plgpu.barrier_wait(mma_barrier)
+
+      out_smem[...] = plgpu.async_load_tmem(acc_tmem)
+      plgpu.commit_smem()
+      slice_out = pl.ds(cluster_idx * m_block, m_block)
+      plgpu.copy_smem_to_gmem(out_smem, out_gmem.at[slice_out, :])
+      plgpu.wait_smem_to_gmem(0)
+
+    scratch_shapes = [
+        plgpu.SMEM((m_block, k), in_jax_dtype, transforms=transforms),
+        plgpu.SMEM((n_block, k), in_jax_dtype, transforms=transforms),
+        plgpu.SMEM((m_block // 128, k // (scale_block * 4), 32, 16), scale_jax_dtype),
+        plgpu.SMEM((n // 128, k // (scale_block * 4), 32, 16), scale_jax_dtype),
+        plgpu.SMEM((m_block, n), out_jax_dtype, transforms=out_transforms),
+        plgpu.Barrier(num_arrivals=4),
+        plgpu.Barrier(orders_tensor_core=True),
+        plgpu.TMEM((m_block, n), out_jax_dtype, collective=True),
+        plgpu.TMEM((m_block, k // scale_block), scale_jax_dtype,
+                   layout=plgpu.TMEMLayout.SCALES_LAYOUT, collective=True),
+        plgpu.TMEM((n, k // scale_block), scale_jax_dtype,
+                   layout=plgpu.TMEMLayout.SCALES_LAYOUT, collective=True),
+    ]
+
+    f = self.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((m, n), out_jax_dtype),
+        grid=(1,),
+        grid_names=("_",),
+        cluster=(2,),
+        cluster_names=("x",),
+        scratch_shapes=scratch_shapes,
+    )
+
+    x = jax.random.uniform(jax.random.key(1), shape=(m, k), dtype=jnp.float32).astype(in_jax_dtype)
+    y = jax.random.uniform(jax.random.key(2), shape=(n, k), dtype=jnp.float32).astype(in_jax_dtype)
+
+    ka, kb = jax.random.split(jax.random.key(1234), 2)
+    if scale_jax_dtype == jnp.float8_e8m0fnu:
+      x_scale = jax.lax.bitcast_convert_type(
+          jax.random.randint(ka, (m, k // scale_block), 122, 132, dtype=jnp.uint8),
+          scale_jax_dtype
+      )
+      y_scale = jax.lax.bitcast_convert_type(
+          jax.random.randint(kb, (n, k // scale_block), 122, 132, dtype=jnp.uint8),
+          scale_jax_dtype
+      )
+    else:
+      x_scale = jnp.abs(
+          jax.random.normal(ka, (m, k // scale_block), dtype=jnp.float32).astype(scale_jax_dtype)
+      )
+      y_scale = jnp.abs(
+          jax.random.normal(kb, (n, k // scale_block), dtype=jnp.float32).astype(scale_jax_dtype)
+      )
+
+    def format_scales(scales):
+      mn, k = scales.shape
+      assert mn % 128 == 0 and k % 4 == 0
+      return (
+          scales.reshape(mn // 128, 4, 32, k // 4, 4)
+          .transpose(0, 3, 2, 1, 4)
+          .reshape(mn // 128, k // 4, 32, 16)
+      )
+
+    result = f(x, y, format_scales(x_scale), format_scales(y_scale))
+
+    x_logical_scale = jnp.repeat(x_scale, scale_block, axis=1).astype(jnp.float32)
+    y_logical_scale = jnp.repeat(y_scale, scale_block, axis=1).astype(jnp.float32)
+    expected = jnp.dot(
+        x.astype(jnp.float32) * x_logical_scale,
+        (y.astype(jnp.float32) * y_logical_scale).T,
+    )
+    np.testing.assert_allclose(result, expected, rtol=1e-3)
+
+  @parameterized.product(
       m=[128],
       n=[128, 256],
       dtype=[jnp.float16],

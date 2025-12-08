@@ -1760,11 +1760,10 @@ class TCGen05Test(TestCase):
 
   @parameterized.product(
     m=(256,),
-    n=(64, 128, 256),
+    n=(256,),
     scale_jax_dtype=(jnp.float8_e8m0fnu, jnp.float8_e4m3fn),
   )
   def test_mma_block_scaled_collective(self, m, n, scale_jax_dtype):
-    m, n = 256, 256
     in_jax_dtype = jnp.float4_e2m1fn
     out_jax_dtype = jnp.float32
     scale_block = 32 if scale_jax_dtype == jnp.float8_e8m0fnu else 16
