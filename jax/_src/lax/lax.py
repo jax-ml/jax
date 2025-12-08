@@ -8184,12 +8184,17 @@ _INT_DTYPES = {
 }
 
 
-def _sort_abstract_eval(*args, **kwargs):
-  args = tuple(args)
-  if any(arg.shape != args[0].shape for arg in args[1:]):
-    shapes = " ".join(str(a.shape) for a in args)
+def _sort_abstract_eval(*avals, **kwargs):
+  avals = tuple(avals)
+  if any(arg.shape != avals[0].shape for arg in avals[1:]):
+    shapes = " ".join(str(a.shape) for a in avals)
     raise TypeError(f"Arguments to sort must have equal shapes, got: {shapes}")
-  return args
+  non_empty_s = [a.sharding for a in avals if not a.sharding.mesh.empty]
+  if any(s != non_empty_s[0] for s in non_empty_s[1:]):
+    shardings = " ".join(str(s) for s in non_empty_s)
+    raise core.ShardingTypeError(
+        f'Arguments to sort must have equal shardings, got: {shardings}')
+  return avals
 
 
 def _canonicalize_float_for_sort(x):
@@ -8287,7 +8292,9 @@ def _sort_batch_rule(batched_args, batch_dims, *, dimension, is_stable, num_keys
   for arg, bdim in zip(batched_args, batch_dims):
     if bdim is None:
       dims = np.delete(np.arange(prototype_arg.ndim), new_bdim)
-      new_args.append(broadcast_in_dim(arg, prototype_arg.shape, dims))
+      new_args.append(broadcast_in_dim(
+          arg, prototype_arg.shape, dims,
+          out_sharding=core.typeof(prototype_arg).sharding))
     else:
       new_args.append(batching.moveaxis(arg, bdim, new_bdim))
   new_dimension = dimension + (new_bdim <= dimension)
