@@ -472,57 +472,45 @@ def erfcx(x: ArrayLike) -> Array:
   """
   x, = promote_args_inexact("erfcx", x)
   # For numerical stability, we use different approaches for different regions:
-  # - For x < 0: erfcx(x) = exp(x^2) * erfc(x) = exp(x^2) * (2 - erfc(-x))
-  #   Since erfc(-x) for x < 0 is close to 2, this can be computed directly.
-  # - For small positive x: direct computation is numerically stable.
-  # - For large positive x: erfc(x) underflows but exp(x^2) overflows,
-  #   so we use asymptotic expansion or other stable methods.
+  # - For x < 0 or small positive x: direct computation exp(x^2) * erfc(x)
+  # - For large positive x: asymptotic expansion to avoid overflow/underflow
   #
-  # A stable approach is to use the identity:
-  #   erfcx(x) = exp(x^2) * erfc(x)
-  # For large positive x, we can use an asymptotic expansion, but for simplicity
-  # and compatibility with existing JAX primitives, we use the following approach:
-  #
-  # For x >= 0: erfcx(x) = exp(x^2 + log(erfc(x)))
-  # where we need to handle log(erfc(x)) carefully for large x.
-  #
-  # A numerically robust implementation uses the fact that:
-  #   log(erfc(x)) ≈ -x^2 - log(x * sqrt(pi)) for large x
-  # which gives erfcx(x) ≈ 1 / (x * sqrt(pi)) for large x.
-  #
-  # We use a threshold-based approach for numerical stability.
-
-  # For x < 0, erfc(x) = 2 - erfc(-x), and both exp(x^2) and erfc(x) are
-  # well-behaved, so we can compute directly.
-  # For x >= 0, we need more care for large x.
-
-  # Use the direct formula with log-sum-exp trick for stability
-  # erfcx(x) = exp(x^2) * erfc(x)
-  # = exp(x^2 + log(erfc(x)))
-  #
-  # But we also need to handle the case where erfc(x) == 0 (underflow)
-  # For very large x, use asymptotic: erfcx(x) ~ 1/(x*sqrt(pi))
+  # The asymptotic expansion of erfcx(x) for large x is:
+  #   erfcx(x) = 1/(x*sqrt(pi)) * (1 - 1/(2*x^2) + 3/(4*x^4) - 15/(8*x^6) + ...)
+  # This series is derived from the asymptotic expansion of erfc(x).
 
   dtype = lax.dtype(x)
   sqrt_pi = _lax_const(x, np.sqrt(np.pi))
 
-  # Threshold beyond which erfc(x) underflows to zero
-  # For float32: erfc(x) underflows around x ≈ 10
-  # For float64: erfc(x) underflows around x ≈ 27
+  # Threshold beyond which we switch to asymptotic expansion
+  # Chosen to balance accuracy: direct computation starts losing precision here
+  # due to erfc(x) approaching underflow
   threshold = _lax_const(x, 26.0) if dtype == np.float64 else _lax_const(x, 9.0)
 
-  # For x < threshold, compute directly (erfc won't underflow significantly)
-  # erfcx(x) = exp(x^2) * erfc(x)
+  # Direct computation for x < threshold
   x_sq = lax.mul(x, x)
   erfc_x = lax.erfc(x)
-
-  # Direct computation (valid for moderate x)
   direct_result = lax.mul(lax.exp(x_sq), erfc_x)
 
-  # Asymptotic expansion for large positive x:
-  # erfcx(x) ≈ 1/(x*sqrt(pi)) * (1 - 1/(2*x^2) + 3/(4*x^4) - ...)
-  # For simplicity, use first-order approximation
-  asymptotic_result = lax.div(_lax_const(x, 1.0), lax.mul(x, sqrt_pi))
+  # Asymptotic expansion for large positive x (higher-order for accuracy):
+  # erfcx(x) ≈ 1/(x*sqrt(pi)) * (1 - 1/(2*x^2) + 3/(4*x^4) - 15/(8*x^6) + ...)
+  #
+  # Let t = 1/(2*x^2), then the series becomes:
+  # erfcx(x) ≈ 1/(x*sqrt(pi)) * (1 - t + 3*t^2 - 15*t^3 + ...)
+  #
+  # Using 4th order terms for good accuracy (error < 1e-8 for x > 26)
+  inv_2x_sq = lax.div(_lax_const(x, 0.5), x_sq)  # t = 1/(2*x^2)
+
+  # Horner's method for polynomial evaluation: 1 - t + 3*t^2 - 15*t^3 + 105*t^4
+  # Coefficients: 1, -1, 3, -15, 105 (from asymptotic series)
+  # poly = 1 + t*(-1 + t*(3 + t*(-15 + t*105)))
+  poly = _lax_const(x, 105.0)
+  poly = lax.add(lax.mul(poly, inv_2x_sq), _lax_const(x, -15.0))
+  poly = lax.add(lax.mul(poly, inv_2x_sq), _lax_const(x, 3.0))
+  poly = lax.add(lax.mul(poly, inv_2x_sq), _lax_const(x, -1.0))
+  poly = lax.add(lax.mul(poly, inv_2x_sq), _lax_const(x, 1.0))
+
+  asymptotic_result = lax.div(poly, lax.mul(x, sqrt_pi))
 
   # Choose based on threshold
   result = jnp.where(x > threshold, asymptotic_result, direct_result)
