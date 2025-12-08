@@ -604,6 +604,7 @@ for op in [
     arith.XOrIOp,
     mlir_math.ExpOp,
     mlir_math.Exp2Op,
+    mlir_math.SinOp,
     mlir_math.LogOp,
     mlir_math.RsqrtOp,
     mlir_math.TanhOp,
