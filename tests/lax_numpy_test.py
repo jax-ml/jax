@@ -4869,6 +4869,42 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(len(jaxpr.jaxpr.eqns), num_eqs)
     self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.iota_p)
 
+  @jtu.sample_product(specify_device=[True, False])
+  def testArangeJaxprNonZeroStart(self, specify_device):
+    device = jax.devices()[-1] if specify_device else None
+    jaxpr = jax.make_jaxpr(lambda: jnp.arange(1, 5, device=device))()
+    # Non-zero start should produce iota + add (+ device_put if device specified)
+    num_eqs = 3 if device is not None else 2
+    self.assertEqual(len(jaxpr.jaxpr.eqns), num_eqs)
+    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.iota_p)
+    self.assertEqual(jaxpr.jaxpr.eqns[1].primitive, lax.add_p)
+
+  @jtu.sample_product(
+      dtype=[np.int32, np.float32],
+      iteration=range(10)
+  )
+  def testArangeRandomValues(self, dtype, iteration):
+    del iteration  # not needed: each test case gets its own random seed.
+    rng = jtu.rand_default(self.rng())
+    start = rng((), dtype)
+    stop = rng((), dtype)
+    jax_result = jnp.arange(start, stop, dtype=dtype)
+    np_result = np.arange(start, stop, dtype=dtype)
+    self.assertAllClose(jax_result, np_result)
+
+  def testArangeComplex(self):
+    test_cases = [
+      (1+2j, 5+3j),
+      (0+0j, 5+0j),
+      (1.0+0j, 5.0+0j),
+      (0, 5, 1+1j),
+    ]
+    for args in test_cases:
+      with self.subTest(args=args):
+        jax_result = jnp.arange(*args)
+        np_result = np.arange(*args)
+        self.assertArraysEqual(jax_result, np_result)
+
   def testIssue830(self):
     a = jnp.arange(4, dtype=jnp.complex64)
     self.assertEqual(a.dtype, jnp.complex64)
