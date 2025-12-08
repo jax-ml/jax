@@ -8189,7 +8189,9 @@ def _sort_abstract_eval(*avals, **kwargs):
   if any(arg.shape != avals[0].shape for arg in avals[1:]):
     shapes = " ".join(str(a.shape) for a in avals)
     raise TypeError(f"Arguments to sort must have equal shapes, got: {shapes}")
-  non_empty_s = [a.sharding for a in avals if not a.sharding.mesh.empty]
+  non_empty_s = [
+      a.sharding for a in avals
+      if not a.sharding.mesh.empty and a.sharding.mesh._any_axis_explicit]
   if any(s != non_empty_s[0] for s in non_empty_s[1:]):
     shardings = " ".join(str(s) for s in non_empty_s)
     raise core.ShardingTypeError(
