@@ -352,6 +352,52 @@ class PmapSharding(jsharding.Sharding):
 PmapSharding.__module__ = 'jax.sharding'
 
 
+def default_pmap_sharding(
+    shape: Shape,
+    sharded_dim: int | None = 0,
+    devices: Sequence[xc.Device] | None = None,
+) -> NamedSharding | PmapSharding:
+  """Creates a NamedSharding equivalent to PmapSharding.default.
+
+  This function provides the same sharding semantics as PmapSharding.default
+  but returns a NamedSharding when jax_pmap_shmap_merge is enabled, which is
+  compatible with the shard_map-based pmap implementation.
+
+  Args:
+    shape: The shape of the input array.
+    sharded_dim: Dimension the input array is sharded on. Defaults to 0.
+      If None, the array is fully replicated.
+    devices: Optional sequence of devices to use. If omitted, uses
+      jax.local_devices().
+
+  Returns:
+    A NamedSharding if jax_pmap_shmap_merge is enabled, otherwise a
+    PmapSharding.
+  """
+  if not config.pmap_shmap_merge.value:
+    return PmapSharding.default(shape, sharded_dim=sharded_dim, devices=devices)
+
+  if sharded_dim is None:
+    if devices is None:
+      raise ValueError("One of sharded_dim or devices must be set.")
+    mesh = mesh_lib.Mesh(np.array(devices), ('i',))
+    return NamedSharding(mesh, PartitionSpec())
+
+  if len(shape) == 0:
+    raise ValueError("shape must be non-empty for sharded_dim != None")
+
+  num_ways_sharded = shape[sharded_dim]
+
+  if devices is None:
+    pmap_devices = np.array(xb.local_devices()[:num_ways_sharded])
+  else:
+    pmap_devices = np.array(devices)
+
+  mesh = mesh_lib.Mesh(pmap_devices, ('i',))
+  spec_list = [None] * len(shape)
+  spec_list[sharded_dim] = 'i'
+  return NamedSharding(mesh, PartitionSpec(*spec_list))
+
 def _unpickle_gspmd_sharding(devices, op_sharding, memory_kind):
   return GSPMDSharding(devices, op_sharding, memory_kind=memory_kind)
 
