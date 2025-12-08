@@ -327,6 +327,26 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInLayouts(bcast, [in_layout])
     self.checkOutLayouts(bcast, [out_layout])
 
+  # TODO(allanrenucci): Turn into a positive test. This is currently not
+  # implemented. The test checks we fail gracefully.
+  @parameterized.parameters(True, False)
+  def test_cant_infer_reduced_strided_layout(self, hint_on_input):
+    with ir.InsertionPoint(self.module.body):
+      [x] = undefs(ir.VectorType.get((128,), ir.F32Type.get()))
+      if hint_on_input:
+        layout = mgpu.WGStridedFragLayout.from_shaped_type(x.type)
+        x = layout_cast(x, layout)
+      out_type = ir.VectorType.get((128, 128), ir.F32Type.get())
+      out = mgpu.dialect.broadcast_in_dim(out_type, x, [0])
+      if not hint_on_input:
+        layout = mgpu.WGStridedFragLayout.from_shaped_type(out.type)
+        layout_cast(out, layout)
+
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts"
+    ):
+      mgpu.infer_layout(self.module)
+
   @parameterized.parameters(
       (1, mgpu.WGMMA_LAYOUT, None, None),
       (0, mgpu.WGMMA_LAYOUT, None, None),

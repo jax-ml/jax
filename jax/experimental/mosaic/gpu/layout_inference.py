@@ -1042,12 +1042,12 @@ def _vector_reduction_constraint_system(
   return cs.ConstraintSystem(), {in_variable: [in_variable.key]}, []
 
 
-def _reduction_constraint_and_hint(
+def _reduction_constraints_and_hint(
     larger: cs.Variable,
     smaller: cs.Variable,
     larger_shape: tuple[int, ...],
     reduction_dims: tuple[int, ...],
-) -> tuple[cs.Constraint, Hint]:
+) -> tuple[list[cs.Constraint], Hint]:
   reduce_expr = cs.Reduce(larger, reduction_dims)
   # There are always many options for broadcasting a layout, so we can only
   # derive a broadcast hint in the out_variable -> source_variable direction.
@@ -1056,7 +1056,12 @@ def _reduction_constraint_and_hint(
   )
   broadcast_expr = cs.BroadcastInDim(smaller, broadcast_dims, larger_shape)
   broadcast_hint = Hint(variable=larger, expression=broadcast_expr)
-  return cs.Equals(lhs=smaller, rhs=reduce_expr), broadcast_hint
+  constraints = [
+      cs.Equals(lhs=smaller, rhs=reduce_expr),
+      # TODO(allanrenucci): Remove once we support reduction of strided layouts.
+      cs.NotOfType(larger, fa.WGStridedFragLayout),
+  ]
+  return constraints, broadcast_hint
 
 
 @_add_constraint_system_derivation_rule(vector.MultiDimReductionOp)
@@ -1071,7 +1076,7 @@ def _multi_dim_reduction_constraint_system(
   source_variable = cs.Variable(source)
   out_variable = cs.Variable(out)
 
-  reduction_constraint, broadcast_hint = _reduction_constraint_and_hint(
+  reduction_constraints, broadcast_hint = _reduction_constraints_and_hint(
       source_variable,
       out_variable,
       tuple(ir.ShapedType(op.source.type).shape),
@@ -1081,7 +1086,7 @@ def _multi_dim_reduction_constraint_system(
   # strided layouts from being chosen---since trying to reduce a strided layout
   # may cause us to raise an Exception at the moment.
   return (
-      cs.ConstraintSystem(constraints=[reduction_constraint]),
+      cs.ConstraintSystem(constraints=reduction_constraints),
       {source_variable: [source], out_variable: [acc, out]},
       [broadcast_hint],
   )
@@ -1100,12 +1105,12 @@ def _broadcast_in_dim_constraint_system(
       i for i in range(len(out_shape)) if i not in op.broadcast_dimensions
   )
 
-  reduction_constraint, broadcast_hint = _reduction_constraint_and_hint(
+  reduction_constraints, broadcast_hint = _reduction_constraints_and_hint(
       out_variable, source_variable, out_shape, reduction_dims
   )
 
   return (
-      cs.ConstraintSystem(constraints=[reduction_constraint]),
+      cs.ConstraintSystem(constraints=reduction_constraints),
       {
           source_variable: [source_variable.key],
           out_variable: [out_variable.key],
