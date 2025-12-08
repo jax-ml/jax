@@ -1083,7 +1083,7 @@ class OpsTest(PallasBaseTest):
       for fn, dtype in itertools.product(*args)
   )
   def test_elementwise(self, fn, dtype):
-    if fn is not jnp.sin or dtype == "float64":
+    if fn not in (jnp.sin, jnp.cos) or dtype == "float64":
       self.skip_if_mosaic_gpu()
 
     if not jax.config.x64_enabled and jnp.dtype(dtype).itemsize == 8:

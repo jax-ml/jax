@@ -1100,6 +1100,7 @@ for op, unary_impl, is_signed in [
     (mlir_math.ExpOp, fa.FragmentedArray.exp, None),
     (mlir_math.Exp2Op, fa.FragmentedArray.exp2, None),
     (mlir_math.SinOp, fa.FragmentedArray.sin, None),
+    (mlir_math.CosOp, fa.FragmentedArray.cos, None),
     (mlir_math.LogOp, fa.FragmentedArray.log, None),
     (mlir_math.TanhOp, fa.FragmentedArray.tanh, None),
 ]:
