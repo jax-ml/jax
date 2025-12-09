@@ -227,9 +227,7 @@ else
     //tests:layout_test_tpu \
     //tests:pjit_test_tpu \
     //tests:python_callback_test_tpu \
-    //tests:ragged_collective_test_tpu \
-    //tests/multiprocess:tpu_tests \
-    $IGNORE_TESTS_MULTIACCELERATOR
+    //tests:ragged_collective_test_tpu
 
   # Store the return value of the second bazel command.
   second_bazel_cmd_retval=$?
