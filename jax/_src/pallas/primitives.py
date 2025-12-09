@@ -1350,11 +1350,26 @@ def _device_id_dict_to_mesh(mesh_context: pallas_utils.MeshInfo, device_id_dict,
         )
       axes_dimensions = [mesh_axis_sizes[name] for name in axis]
       for axis_index, axis_name in enumerate(axis):
-        axis_size = arith.constant(i32, mesh_axis_sizes[axis_name])
-        minor_divisor = arith.constant(
-            i32, math.prod(axes_dimensions[axis_index + 1 :])
-        )
-        device_idx = arith.remsi(arith.divsi(idx, minor_divisor), axis_size)
+        axis_size = mesh_axis_sizes[axis_name]
+        inner_mesh_size = math.prod(axes_dimensions[axis_index + 1 :])
+        minor_divisor = arith.constant(i32, inner_mesh_size)
+
+        # Fast path for power of 2s
+        if inner_mesh_size & (inner_mesh_size - 1) == 0:
+          shift_len = (inner_mesh_size & -inner_mesh_size).bit_length() - 1
+          partial_device_idx = arith.shrui(idx, arith.constant(i32, shift_len))
+        else:
+          partial_device_idx = arith.divsi(idx, minor_divisor)
+
+        if axis_size & (axis_size - 1) == 0:
+          device_idx = arith.andi(
+              partial_device_idx,
+              arith.constant(i32, mesh_axis_sizes[axis_name] - 1),
+          )
+        else:
+          device_idx = arith.remsi(
+              partial_device_idx, arith.constant(i32, axis_size)
+          )
         physical_axis_dict[axis_name] = device_idx
     else:
       physical_axis_dict[axis] = idx
