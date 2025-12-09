@@ -50,13 +50,17 @@ class MemoryRef(pallas_core.MemoryRef):
   ):
     super().__init__(jax_core.ShapedArray(shape, dtype), memory_space)
 
-    for tile in tiling or ():
-      if len(tile) > len(shape):
+    match tiling:
+      case ():
+        raise ValueError("Tiling must be non-empty")
+      case first_tile, *_ if len(first_tile) > len(shape):
         raise ValueError(
-            f"Tile rank must not exceed shape rank: {tile=} vs {shape=}"
+            "Shape rank must be at least as big as the tiling rank. Got"
+            f" {shape=} and {tiling=}."
         )
 
-    object.__setattr__(self, "tiling", tiling)
+    if tiling is not None:
+      object.__setattr__(self, "tiling", tuple(map(tuple, tiling)))
 
   def get_ref_aval(self) -> state.TransformedRef | state.AbstractRef:
     # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
@@ -106,7 +110,7 @@ class BlockSpec(pallas_core.BlockSpec):
   See also:
     :class:`jax.experimental.pallas.BlockSpec`
   """
-
+  tiling: Tiling | None = None
   indexed_by: int | None = None
   indexed_dim: int | None = None
 
@@ -115,6 +119,9 @@ class BlockSpec(pallas_core.BlockSpec):
       raise ValueError(
           "indexed_by and indexed_dim must both be set or both unset"
       )
+
+    if self.tiling is not None:
+      object.__setattr__(self, "tiling", tuple(map(tuple, self.tiling)))
 
   def to_block_mapping(
       self,
