@@ -92,6 +92,13 @@ else
     rbe_config=rbe_${os}_${arch}
 fi
 
+# If the RUNNER_TEMP env is defined we will add that as a bep.json output for parsing out the invocation id
+if [[ -v RUNNER_TEMP ]]; then
+  OUTPUT_BEP="--build_event_json_file=$RUNNER_TEMP/bazel-out.json"
+else
+  OUTPUT_BEP=""
+fi 
+
 bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     --build_runfile_links=false \
     --config=$rbe_config \
@@ -100,6 +107,7 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAX \
+    $OUTPUT_BEP \
     $test_strategy \
     --test_env=JAX_NUM_GENERATED_CASES=25 \
     --test_env=JAX_SKIP_SLOW_TESTS=true \
@@ -113,3 +121,12 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     //tests/multiprocess:cpu_tests \
     //jax/experimental/jax2tf/tests/multiprocess:cpu_tests \
     $IGNORE_TESTS
+
+if [[ -v OUTPUT_BEP ]]; then
+  id="$(grep -m1 -oE '[0-9a-f-]{36}' $OUTPUT_BEP)"   # or use jq if you know the exact path
+  if [[ -v id ]]; then
+    echo "https://your-bes-viewer.example.com/invocation/$id"
+  else
+    echo "Could not parse build id from the invocation" 
+  fi
+fi
