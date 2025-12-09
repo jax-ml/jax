@@ -2472,12 +2472,34 @@ class FragmentedArray:
     match self.layout:
       case WGSplatFragLayout() | WGStridedFragLayout():
         new_layout = dataclasses.replace(self.layout, shape=shape)
+        return FragmentedArray(
+            _registers=self.registers,
+            _layout=new_layout,
+            _is_signed=self.is_signed,
+        )
+      case TiledLayout():
+        base_tile_shape = self.layout.base_tile_shape
+        tiled_rank = len(base_tile_shape)
+        assert tiled_rank > 1, "Not implemented"
+        if (
+            self.shape[-tiled_rank + 1 :] != shape[-tiled_rank + 1 :]
+            or self.shape[-tiled_rank] % base_tile_shape[0]
+            or shape[-tiled_rank] % base_tile_shape[0]
+        ):
+          raise ValueError(
+              "Reshapes of arrays with tiled layouts are only allowed when"
+              " they don't change all but the majormost tiled dimension, and"
+              " when the majormost tiled dimension is divisible by the tiling"
+              f" in both source and destination. Reshaping {self.shape} to"
+              f" {shape}, with base tiling {base_tile_shape} "
+          )
+        return FragmentedArray(
+            _registers=self.registers.reshape(self.layout.registers_shape(shape)),
+            _layout=self.layout,
+            _is_signed=self.is_signed,
+        )
       case _:
         raise NotImplementedError(self.layout)
-
-    return FragmentedArray(
-        _registers=self.registers, _layout=new_layout, _is_signed=self.is_signed
-    )
 
   def broadcast_minor(self, n) -> FragmentedArray:
     if len(self.shape) != 1:

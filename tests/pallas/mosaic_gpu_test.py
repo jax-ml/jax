@@ -2564,6 +2564,18 @@ class PallasCallTest(PallasTest):
     )()
     np.testing.assert_array_equal(y, np.ones((), dtype=np.int32))
 
+  def test_tiled_reshape(self):
+    x_shape = (6, 64, 16)
+    y_shape = (2, 64 * 3, 16)
+    def body(x_ref, y_ref):
+      x = plgpu.load(x_ref, (), layout=plgpu.Layout.WGMMA, optimized=False)
+      y_ref[...] = x.reshape(y_ref.shape)
+
+    x = jnp.arange(math.prod(x_shape), dtype=jnp.bfloat16).reshape(x_shape)
+    y = plgpu.kernel(
+        body, out_shape=jax.ShapeDtypeStruct(y_shape, jnp.bfloat16)
+    )(x)
+    np.testing.assert_array_equal(y, x.reshape(y_shape))
 
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def setUp(self):
