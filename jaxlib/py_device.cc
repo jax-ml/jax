@@ -40,6 +40,7 @@ limitations under the License.
 #include "jaxlib/py_memory_space.h"
 #include "jaxlib/python_ref_manager.h"
 #include "xla/pjrt/status_casters.h"
+#include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/nb_helpers.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
@@ -278,12 +279,13 @@ PyType_Slot PyDevice::slots_[] = {
         }
         try {
           auto device = nb::cast<PyDevice*>(nb::handle(self));
-          auto name = nb::cast<std::string_view>(nb::handle(key));
-          const auto& attrs = device->device_->Attributes().map();
-          auto it = attrs.find(name);
-          if (it != attrs.end()) {
-            auto result = std::visit([](auto&& v) { return nb::cast(v.value); },
-                                     it->second);
+          auto name = nb::cast<std::string>(nb::handle(key));
+          auto value =
+              device->device_->Attributes().Get<xla::ifrt::AttributeMap::Value>(
+                  name);
+          if (value.ok()) {
+            auto result =
+                std::visit([](auto&& v) { return nb::cast(v.value); }, *value);
             return result.release().ptr();
           }
           PyErr_SetNone(PyExc_AttributeError);

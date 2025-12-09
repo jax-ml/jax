@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
@@ -911,11 +912,12 @@ NB_MODULE(_jax, m) {
       .def("__getattr__",
            [](xla::ifrt::Topology& topology,
               std::string_view name) -> nb::object {
-             const auto& attrs = topology.Attributes().map();
-             auto it = attrs.find(name);
-             if (it != attrs.end()) {
+             auto value =
+                 topology.Attributes().Get<xla::ifrt::AttributeMap::Value>(
+                     std::string(name));
+             if (value.ok()) {
                return std::visit([](auto&& v) { return nb::cast(v.value); },
-                                 it->second);
+                                 *value);
              }
              throw nb::attribute_error(
                  absl::StrCat("Unknown attribute ", name).c_str());
