@@ -138,8 +138,6 @@ jobs:
             exit 1
           fi
       # Halt for testing
-      - name: Show TPU
-        run: python -c "import jax; print(jax.devices())"
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
