@@ -63,6 +63,7 @@ from jax._src.mesh import get_abstract_mesh, get_concrete_mesh
 from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
   standard_primitive)
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -9246,10 +9247,14 @@ class BIntRules:
     else:
       phys_sharding = out_sharding
     phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
-
-    def handler(bufs):
-      return core.DArray(aval, phys_handler(bufs))
-    return handler
+    if jaxlib_extension_version >= 390:
+      def handler(arr):
+        return core.DArray(aval, arr)
+      return phys_handler.wrap(handler)
+    else:
+      def handler(bufs):
+        return core.DArray(aval, phys_handler(bufs))
+      return handler
 
 
 core.bint._rules = BIntRules

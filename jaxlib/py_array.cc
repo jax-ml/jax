@@ -584,18 +584,21 @@ PyArray PyArray::MakeFromIfrtArrayAndSharding(nb_class_ptr<PyClient> py_client,
                  std::move(ifrt_array), committed, skip_checks);
 }
 
-PyArrayResultHandler::PyArrayResultHandler(nb::object aval, nb::object sharding,
-                                           bool committed, bool skip_checks)
+PyArrayResultHandler::PyArrayResultHandler(
+    nb::object aval, nb::object sharding, bool committed, bool skip_checks,
+    std::vector<nanobind::callable> wrappers)
     : aval_(std::move(aval)),
       sharding_(std::move(sharding)),
       committed_(committed),
-      skip_checks_(skip_checks) {
+      skip_checks_(skip_checks),
+      wrappers_(std::move(wrappers)) {
   weak_type_ = nb::cast<bool>(aval_.attr("weak_type"));
   dtype_ = nb::cast<xla::nb_dtype>(aval_.attr("dtype"));
   shape_ = nb::cast<std::vector<int64_t>>(aval_.attr("shape"));
 }
 
-PyArray PyArrayResultHandler::Call(absl::Span<const PyArray> py_arrays) const {
+nanobind::object PyArrayResultHandler::Call(
+    absl::Span<const PyArray> py_arrays) const {
   auto py_device_list = GetPyDeviceList(sharding_);
   if (!py_device_list.ok()) {
     throw nb::value_error(
@@ -610,15 +613,20 @@ PyArray PyArrayResultHandler::Call(absl::Span<const PyArray> py_arrays) const {
               xla::Future<>());
 }
 
-PyArray PyArrayResultHandler::Call(nb_class_ptr<PyClient> py_client,
-                                   ifrt::ArrayRef ifrt_array,
-                                   xla::Future<> result_status) const {
-  return PyArray(aval_, weak_type_, dtype_, shape_, sharding_,
-                 std::move(py_client), std::move(ifrt_array), committed_,
-                 skip_checks_, std::move(result_status));
+nanobind::object PyArrayResultHandler::Call(nb_class_ptr<PyClient> py_client,
+                                            ifrt::ArrayRef ifrt_array,
+                                            xla::Future<> result_status) const {
+  nanobind::object result =
+      PyArray(aval_, weak_type_, dtype_, shape_, sharding_,
+              std::move(py_client), std::move(ifrt_array), committed_,
+              skip_checks_, std::move(result_status));
+  for (auto& cb : wrappers_) {
+    result = cb(std::move(result));
+  }
+  return result;
 }
 
-PyArray PyArrayResultHandler::Call(PyArray py_array) const {
+nanobind::object PyArrayResultHandler::Call(PyArray py_array) const {
   return Call(py_array.py_client(), tsl::FormRef(py_array.ifrt_array()),
               xla::Future<>());
 }
@@ -2364,7 +2372,14 @@ absl::Status PyArray::Register(nb::module_& m) {
                     .c_str());
           },
           nb::sig(
-              "def __call__(self, arg: Array | Sequence[Array], /) -> Array"));
+              "def __call__(self, arg: Array | Sequence[Array], /) -> Array"))
+      .def("wrap", [](const PyArrayResultHandler& self, nb::callable wrapper) {
+        auto wrappers = self.wrappers();
+        wrappers.push_back(std::move(wrapper));
+        return make_nb_class<PyArrayResultHandler>(
+            self.aval(), self.sharding(), self.committed(), self.skip_checks(),
+            std::move(wrappers));
+      });
 
   return absl::OkStatus();
 }
