@@ -128,7 +128,7 @@ if [[ -n "$OUTPUT_BEP_FILE" ]]; then
   url="$(grep -m1 -o 'https://source\.cloud\.google\.com/results/invocations/[a-zA-Z0-9-]*' $OUTPUT_BEP_FILE)" || true # don't allow a pipe fail on this
   if [[ -n "$url" ]]; then
     echo "BES link: $url" >> $GITHUB_STEP_SUMMARY
-    echo "::notice:: BES link: [$url]($url)"
+    echo "::notice:: BES link: $url"
   else
     echo "Could not parse build id from the invocation" 
   fi
