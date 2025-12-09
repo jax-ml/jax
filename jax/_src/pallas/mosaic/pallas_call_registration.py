@@ -62,7 +62,7 @@ def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
 
 
 def _get_memory_space_from_aval(
-    out_aval: jax_core.AbstractValue,
+    out_aval: jax_core.AbstractValue, kernel_type: tpu_core.KernelType
 ) -> tpu_custom_call.MemorySpace | None:
   if not isinstance(out_aval, jax_core.ShapedArray):
     raise ValueError("Memory spaces not defined for non-ShapedArrays")
@@ -84,20 +84,29 @@ def _get_memory_space_from_aval(
     case tpu_core.MemorySpace.SMEM:
       return tpu_custom_call.MemorySpace.SMEM
     case tpu_core.MemorySpace.SEMAPHORE:
-      return tpu_custom_call.MemorySpace.SEMAPHORE_MEM
+      match kernel_type:
+        case tpu_core.KernelType.SC_SCALAR_SUBCORE:
+          return tpu_custom_call.MemorySpace.SC_SCALAR_SEMAPHORE_MEM
+        case tpu_core.KernelType.TC:
+          return tpu_custom_call.MemorySpace.SEMAPHORE_MEM
+        case _:
+          raise ValueError(f"Invalid kernel type for semaphore: {kernel_type}")
     case tpu_core.MemorySpace.HOST:
       return tpu_custom_call.MemorySpace.HOST
   return None
 
 
 def _get_memory_spaces_from_avals(
-    avals: Sequence[jax_core.AbstractValue],
+    avals: Sequence[jax_core.AbstractValue], kernel_type: tpu_core.KernelType
 ) -> tuple[tpu_custom_call.MemorySpace | None, ...] | None:
   memory_spaces = None
   if any(
       isinstance(aval, pallas_core.ShapedArrayWithMemorySpace) for aval in avals
   ):
-    memory_spaces = tuple(map(_get_memory_space_from_aval, avals))
+    memory_spaces = tuple(
+        _get_memory_space_from_aval(aval, kernel_type=kernel_type)
+        for aval in avals
+    )
   return memory_spaces
 
 
@@ -140,7 +149,7 @@ def pallas_call_tpu_lowering_rule(
   mlir_ctx.load_all_available_dialects()
   tpu.register_dialect(mlir_ctx)
 
-  match mosaic_params.kernel_type:
+  match (kernel_type := mosaic_params.kernel_type):
     case tpu_core.KernelType.TC:
       lower_jaxpr_to_module = lowering.lower_jaxpr_to_module
     case tpu_core.KernelType.SC_SCALAR_SUBCORE | tpu_core.KernelType.SC_VECTOR_SUBCORE:
@@ -191,7 +200,9 @@ def pallas_call_tpu_lowering_rule(
   # Dynamic grid bounds have to go at the front.
   dynamic_grid_args, args = in_nodes[:num_dyn_bounds], in_nodes[num_dyn_bounds:]
   kernel_ctx = ctx.replace(avals_in=kernel_in_avals, avals_out=kernel_out_avals)
-  output_memory_spaces = _get_memory_spaces_from_avals(out_avals)
+  output_memory_spaces = _get_memory_spaces_from_avals(
+      out_avals, kernel_type=kernel_type
+  )
   input_memory_spaces = None
   if any(
       isinstance(aval, pallas_core.ShapedArrayWithMemorySpace)
@@ -202,7 +213,9 @@ def pallas_call_tpu_lowering_rule(
       raise NotImplementedError(
           "Dynamic grid bounds are not supported when specifying memory spaces for inputs."
       )
-    input_memory_spaces = _get_memory_spaces_from_avals(ctx.avals_in)
+    input_memory_spaces = _get_memory_spaces_from_avals(
+        ctx.avals_in, kernel_type=kernel_type
+    )
   if cost_estimate is not None:
     mosaic_cost_estimate = cast(
         tpu_custom_call.CostEstimate, dataclasses.asdict(cost_estimate)

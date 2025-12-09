@@ -330,7 +330,10 @@ def lower_jaxpr_to_func(
       mosaic_grid_mapping.block_mappings,
   ):
     d = {}
-    if str(arg.type.memory_space) == "#tpu.memory_space<hbm>":
+    if (
+        str(arg.type.memory_space) == "#tpu.memory_space<hbm>"
+        or str(arg.type.memory_space) == "#tpu.memory_space<semaphore_mem>"
+    ):
       d["sc.persistent"] = ir.UnitAttr.get()
     if isinstance(bm, sc_core.BlockMapping) and bm.indexed_by is not None:
       d["sc.indexed_by"] = mlir.i32_attr(bm.indexed_by)

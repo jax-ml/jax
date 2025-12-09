@@ -1923,5 +1923,67 @@ class PipelineTestWithTCTiling(TCTilingMixin, PipelineTest):
   pass
 
 
+class PallasSparsecoreAsyncTest(PallasSCTest):
+
+  @parameterized.product(
+      shape=[
+          (8, 128),
+          (8, 256),
+          (8, 512),
+          (8, 1024),
+          (16, 128),
+          (16, 256),
+          (16, 512),
+          (16, 1024),
+          # TODO(sharadmv): These shapes fail right now.
+          # (64, 8),
+      ],
+      dtype=[jnp.int32, jnp.float32, jnp.bfloat16],
+  )
+  def test_basic_async_kernel(self, shape, dtype):
+    if not jtu.is_cloud_tpu_at_least(2025, 12, 8):
+      self.skipTest("Need newer libtpu")
+    x = jnp.arange(shape[0] * shape[1], dtype=dtype).reshape(shape)
+
+    @jax.jit
+    def foo(x):
+      sc_mesh = plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
+
+      sem = pl.pallas_call(
+          lambda _: None,
+          out_shape=pltpu.SemaphoreType.DMA(()),
+          out_specs=pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
+          compiler_params=pltpu.CompilerParams(
+              dimension_semantics=["core_parallel"],
+              kernel_type=pltpu.KernelType.SC_SCALAR_SUBCORE,
+          ),
+      )()
+
+      sem_ref = jax.new_ref(sem, memory_space=pltpu.SEMAPHORE)
+      y_ref = pl.empty_ref_like(pltpu.HBM(x.shape, x.dtype))
+      x_ref = jax.new_ref(x)
+
+      run_kernel = pl.core_map(mesh=sc_mesh)
+
+      @run_kernel
+      def _():
+        pltpu.make_async_copy(x_ref, y_ref, sem_ref).start()
+
+      @run_kernel
+      def _():
+        pltpu.make_async_copy(x_ref, y_ref, sem_ref).wait()
+
+      return y_ref[...]
+
+    o = jax.block_until_ready(foo(x))
+    np.testing.assert_array_equal(o, x)
+
+
+class PallasSparsecoreAsyncTestWithTCTiling(
+    TCTilingMixin, PallasSparsecoreAsyncTest
+):
+  pass
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
