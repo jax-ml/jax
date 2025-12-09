@@ -5983,6 +5983,14 @@ def _arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
   dtype = dtypes.jax_dtype(dtype)
 
   if iscomplexobj(start) or iscomplexobj(stop) or iscomplexobj(step):
+    deprecations.warn(
+      "jax-numpy-arange-complex",
+      (
+        "Passing complex start/stop/step to jnp.arange is deprecated;"
+        " in the future this will result in a ValueError."
+      ),
+      stacklevel=3
+    )
     # Complex arange is poorly defined; fall back to NumPy here.
     # TODO(jakevdp): deprecate the complex case.
     return array(np.arange(start, stop, step, dtype=dtype), device=out_sharding)

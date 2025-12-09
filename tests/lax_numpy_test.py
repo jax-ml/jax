@@ -46,6 +46,7 @@ from jax.test_util import check_grads
 from jax._src import array
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
@@ -4892,18 +4893,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_result = np.arange(start, stop, dtype=dtype)
     self.assertAllClose(jax_result, np_result)
 
-  def testArangeComplex(self):
-    test_cases = [
+  @parameterized.parameters(
       (1+2j, 5+3j),
       (0+0j, 5+0j),
       (1.0+0j, 5.0+0j),
       (0, 5, 1+1j),
-    ]
-    for args in test_cases:
-      with self.subTest(args=args):
+  )
+  def testArangeComplex(self, *args):
+    dep_id = "jax-numpy-arange-complex"
+    msg = "Passing complex start/stop/step to jnp.arange is deprecated"
+    if deprecations.is_accelerated(dep_id):
+      with self.assertRaisesRegex(ValueError, msg):
         jax_result = jnp.arange(*args)
-        np_result = np.arange(*args)
-        self.assertArraysEqual(jax_result, np_result)
+    else:
+      with self.assertWarnsRegex(DeprecationWarning, msg):
+        jax_result = jnp.arange(*args)
+      np_result = np.arange(*args)
+      self.assertArraysEqual(jax_result, np_result)
 
   def testIssue830(self):
     a = jnp.arange(4, dtype=jnp.complex64)
