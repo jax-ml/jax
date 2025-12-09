@@ -670,7 +670,8 @@ class UntileRef(state_types.Transform):
       self, dtype: jnp.dtype, shape: tuple[int, ...]
   ) -> tuple[tuple[int, ...], state_types.Transform]:
     del dtype
-    raise NotImplementedError("Reshapes don't commute with transposes.")
+    # TODO(slebedev): Support this.
+    raise NotImplementedError("Reshapes don't commute with tiling.")
 
   def untransform_index(
       self, dtype: jnp.dtype | ir.Type, idxs: tuple[Index, ...]

@@ -862,7 +862,7 @@ class LaunchContext:
     if max(slice_shape) > 256:
       raise ValueError(
           "Async copies only support copying <=256 elements along each"
-          " dimension"
+          f" dimension, got {tuple(slice_shape)}"
       )
     if (zeroth_bw := slice_shape[-1] * element_bitwidth) % 128 != 0:
       raise ValueError(
@@ -1019,7 +1019,7 @@ class LaunchContext:
       raise ValueError(
           "Expected the SMEM reference to have the same shape as the"
           f" transformed slice: {tuple(smem_ref_ty.shape)} !="
-          f" {slice_shape[len(squeezed_dims):]}"
+          f" {tuple(slice_shape[len(squeezed_dims):])}"
       )
 
     if implementation == AsyncCopyImplementation.CP_ASYNC:
