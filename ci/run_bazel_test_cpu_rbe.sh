@@ -125,7 +125,7 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
 if [[ -v OUTPUT_BEP ]]; then
   id="$(grep -m1 -oE '[0-9a-f-]{36}' $OUTPUT_BEP)"   # or use jq if you know the exact path
   if [[ -v id ]]; then
-    echo "https://your-bes-viewer.example.com/invocation/$id"
+    echo "https://source.cloud.google.com/results/invocations/$id"
   else
     echo "Could not parse build id from the invocation" 
   fi
