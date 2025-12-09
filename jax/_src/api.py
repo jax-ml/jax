@@ -1345,7 +1345,13 @@ def pmap(
     donate_argnums: int | Iterable[int] = (),
     global_arg_shapes: tuple[tuple[int, ...], ...] | None = None,
   ) -> Any:
-  """Parallel map with support for collective operations.
+  """Old way of doing parallel map. Use :py:func:`jax.shard_map` instead.
+
+  .. note::
+    While :py:func:`jax.pmap` works, you should probably use
+    :py:func:`jax.shard_map` or ``jax.smap`` instead. shard_map supports more
+    efficient autodiff, and is more composable in the multi-controller setting.
+    See https://docs.jax.dev/en/latest/notebooks/shard_map.html for examples.
 
   .. note::
     :py:func:`pmap` is now implemented in terms of :py:func:`jit` and
@@ -1509,26 +1515,6 @@ def pmap(
   collective operations, like :func:`jax.lax.psum`, can refer to it. Axis names
   are important particularly in the case of nested :py:func:`pmap` functions,
   where collective operations can operate over distinct axes:
-
-  >>> from functools import partial
-  >>> import jax
-  >>>
-  >>> @partial(pmap, axis_name='rows')
-  ... @partial(pmap, axis_name='cols')
-  ... def normalize(x):
-  ...   row_normed = x / jax.lax.psum(x, 'rows')
-  ...   col_normed = x / jax.lax.psum(x, 'cols')
-  ...   doubly_normed = x / jax.lax.psum(x, ('rows', 'cols'))
-  ...   return row_normed, col_normed, doubly_normed
-  >>>
-  >>> x = jnp.arange(8.).reshape((4, 2))
-  >>> row_normed, col_normed, doubly_normed = normalize(x)  # doctest: +SKIP
-  >>> print(row_normed.sum(0))  # doctest: +SKIP
-  [ 1.  1.]
-  >>> print(col_normed.sum(1))  # doctest: +SKIP
-  [ 1.  1.  1.  1.]
-  >>> print(doubly_normed.sum((0, 1)))  # doctest: +SKIP
-  1.0
 
   On multi-process platforms, collective operations operate over all devices,
   including those on other processes. For example, assuming the following code
