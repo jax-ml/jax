@@ -24,7 +24,7 @@ import abc
 from collections.abc import Sequence
 import dataclasses
 import math
-from typing import Any, Callable, assert_never, final
+from typing import Any, assert_never, final
 
 from . import fragmented_array as fa
 from . import launch_context as lc
@@ -87,22 +87,6 @@ class SMEMTiling(Constant):
 
 
 @dataclasses.dataclass(frozen=True)
-class LeastReplicated:
-  expressions: tuple[Expression, ...]
-
-  def __post_init__(self):
-    assert len(self.expressions) >= 1
-
-
-@dataclasses.dataclass(frozen=True)
-class MostReplicated:
-  expressions: tuple[Expression, ...]
-
-  def __post_init__(self):
-    assert len(self.expressions) >= 1
-
-
-@dataclasses.dataclass(frozen=True)
 class Reduce:
   expression: Expression
   axes: tuple[int, ...]
@@ -136,69 +120,11 @@ class Transpose:
 Expression = (
     Variable
     | Constant
-    | LeastReplicated
-    | MostReplicated
     | Reduce
     | BroadcastInDim
     | Reshape
     | Transpose
 )
-
-
-def reduce_replicated_expression(
-    input_expr: LeastReplicated | MostReplicated,
-    assignments: dict[Variable, Constant],
-    reducer: Callable[[fa.FragmentedLayout, fa.FragmentedLayout], fa.FragmentedLayout | None]
-) -> Expression | Unsatisfiable:
-  assert input_expr.expressions
-
-  new_expressions: list[Expression] = []
-  # Use a set to eliminate duplicates, but preserve the order.
-  seen: set[Expression] = set()
-  for expr in input_expr.expressions:
-    reduced_expr = reduce_expression(expr, assignments)
-    if isinstance(reduced_expr, Unsatisfiable):
-      return Unsatisfiable()
-    if reduced_expr in seen:
-      continue
-    new_expressions.append(reduced_expr)
-    seen.add(reduced_expr)
-
-  if len(new_expressions) == 1:
-    return new_expressions[0]
-
-  consts = []
-  unknowns = []
-  for e in new_expressions:
-    if not isinstance(e, Constant):
-      unknowns.append(e)
-      continue
-    if not isinstance(e, RegisterLayout):
-      raise ValueError(
-          f"Reduction of non-register layout constant is not supported: {e}"
-      )
-    consts.append(e)
-
-  if consts:
-    const_red, *consts = consts
-    red = const_red
-    for cst in consts:
-      red_value = reducer(red.value, cst.value)
-      if red_value is None:
-        # The layouts are not compatible up to replication, this expression
-        # cannot be simplified.
-        return Unsatisfiable()
-      red = RegisterLayout(red_value)
-  else:
-    red = None
-
-  constructor = type(input_expr)
-  if red is not None:
-    if unknowns:
-      return constructor((red, *unknowns))
-    return red
-
-  return constructor(tuple(unknowns))
 
 
 def reduce_broadcast_expression(
@@ -314,14 +240,6 @@ def reduce_expression(
       return expr
     case Variable():
       return assignments.get(expr, expr)
-    case MostReplicated():
-      return reduce_replicated_expression(
-          expr, assignments, layouts_lib.join_layouts
-      )
-    case LeastReplicated():
-      return reduce_replicated_expression(
-          expr, assignments, layouts_lib.meet_layouts
-      )
     case Reduce(expression=expr, axes=axes):
       reduced_expr = reduce_expression(expr, assignments)
       match reduced_expr:
@@ -640,12 +558,6 @@ class ConstraintSystem:
             free_variables.append(expr)
         case Constant():
           ...
-        case MostReplicated(expressions=expressions):
-          for e in expressions:
-            extract_variables(e)
-        case LeastReplicated(expressions=expressions):
-          for e in expressions:
-            extract_variables(e)
         case Reduce(expression=e):
           extract_variables(e)
         case BroadcastInDim(expression=e):
