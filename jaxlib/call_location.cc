@@ -124,9 +124,14 @@ void PopulateCallLocation(xla::ifrt::ExecuteOptions& options,
   }
 
   if (!call_location_str.empty()) {
+    // Simplify this to use AttributeMap::Set().
     xla::ifrt::AttributeMap::Map attrs_map;
     if (options.custom_options.has_value()) {
-      attrs_map = options.custom_options->map();
+      options.custom_options->ForEach(
+          [&](const std::string& key,
+              const xla::ifrt::AttributeMap::Value& value) {
+            attrs_map.insert({key, value});
+          });
     }
     attrs_map.insert(
         {std::string(xla::ifrt::PjRtCompatibleLoadedExecutable::kCallLocation),
