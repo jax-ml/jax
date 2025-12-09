@@ -3812,6 +3812,30 @@ class FragmentedArrayTest(TestCase):
     out_ref = jax.lax.broadcast_in_dim(inp, (m, n), (1,))
     np.testing.assert_array_equal(result, out_ref)
 
+  @parameterized.parameters(*mtu.RegisterLayout)
+  def test_broadcast_splat(self, layout):
+    out_shape = (128, 128)
+
+    def body(ctx, out_ref, scratch):
+      del ctx, scratch
+      c42 = arith.constant(ir.IntegerType.get_signless(32), 42)
+      arr = mgpu.FragmentedArray.splat(c42, (128,), is_signed=True)
+      out_layout = layout.to_mgpu(out_shape, jnp.int32)
+      result = arr.broadcast_in_dim(out_shape, (0,), out_layout)
+      result.store_untiled(out_ref, optimized=False)
+
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(),
+        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.int32),
+        smem_scratch_shape=[],
+    )
+    np.testing.assert_array_equal(
+        kernel(), np.full(out_shape, 42, dtype=np.int32)
+    )
+
   def test_warp_tree_reduce(self):
     def kernel(ctx, out, *_):
       del ctx

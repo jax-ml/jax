@@ -1301,9 +1301,8 @@ class FragmentedArray:
       raise NotImplementedError(
           f"Cannot convert from {self.layout} to {new_layout}"
       )
-    [reg] = self.registers.flat
     return type(self).splat(
-        reg, self.shape, new_layout, is_signed=self.is_signed
+        self.registers.item(), self.shape, new_layout, is_signed=self.is_signed
     )
 
   def _pointwise(
@@ -2502,15 +2501,9 @@ class FragmentedArray:
             f" {shape[target_dim]} in shape after broadcast"
         )
     if isinstance(self.layout, WGSplatFragLayout):
-      if isinstance(layout, WGSplatFragLayout):
-        if layout.shape != shape:
-          raise ValueError(
-              f"Layout shape {layout.shape} does not match broadcast shape {shape}"
-          )
-        return FragmentedArray(
-            _registers=self.registers, _layout=layout, _is_signed=self.is_signed,
-        )
-      # TODO: Support splat to other layouts
+      return type(self).splat(
+        self.registers.item(), shape, layout, is_signed=self.is_signed
+      )
     if not isinstance(self.layout, TiledLayout) or not isinstance(layout, TiledLayout):
       raise NotImplementedError(self.layout, layout)
     if any(d1 >= d2 for d1, d2 in zip(source_dimensions, source_dimensions[1:])):
