@@ -132,3 +132,4 @@ if [[ -n "$OUTPUT_BEP_FILE" ]]; then
   else
     echo "Could not parse build id from the invocation" 
   fi
+fi
