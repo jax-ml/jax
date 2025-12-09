@@ -6328,6 +6328,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'frombuffer': ['like'],
       'fromfunction': ['like'],
       'frompyfunc': ['kwargs'],
+      'fromstring': ['like'],
       'load': ['mmap_mode', 'allow_pickle', 'fix_imports', 'encoding', 'max_header_size'],
       'nanpercentile': ['weights'],
       'nanquantile': ['weights'],
