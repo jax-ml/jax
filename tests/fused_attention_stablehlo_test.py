@@ -264,6 +264,8 @@ def sdpa_train_fp8(
   return out[0], (query_grad, key_grad, value_grad)
 
 
+@jtu.ignore_warning(category=DeprecationWarning,
+                    message='`with mesh:` context manager')
 class DotProductAttentionTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()

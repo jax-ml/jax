@@ -1248,8 +1248,6 @@ class JaxTestCase(parameterized.TestCase):
     'jax_legacy_prng_key': 'error',
   }
 
-
-
   def setUp(self):
     super().setUp()
     self.enterContext(assert_global_configs_unchanged())
