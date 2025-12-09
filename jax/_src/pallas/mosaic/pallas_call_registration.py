@@ -46,8 +46,7 @@ def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
   after loading from a memref inside of the kernel.
   """
   assert isinstance(
-      x, (jax.Array, jax_core.ShapedArray, jax_core.DShapedArray,
-          state_types.AbstractLinVal)
+      x, (jax.Array, jax_core.ShapedArray, state_types.AbstractLinVal)
   ), type(x)
   if isinstance(x, jax.Array):
     if dtypes.issubdtype(x.dtype, jax.numpy.bool_):

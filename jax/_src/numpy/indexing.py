@@ -765,20 +765,6 @@ def rewriting_take(
     if result is not None:
       return result
 
-  # otherwise, strategy is GATHER or SCATTER
-
-  # TODO(mattjj,dougalm): expand dynamic shape indexing support
-  if config.dynamic_shapes.value and arr.ndim > 0:
-    try: aval = core.get_aval(idx)
-    except: pass
-    else:
-      if (isinstance(aval, core.DShapedArray) and aval.shape == () and
-          dtypes.issubdtype(aval.dtype, np.integer) and
-          not dtypes.issubdtype(aval.dtype, dtypes.bool_) and
-          isinstance(arr.shape[0], int)):
-        assert isinstance(idx, (int, Array))
-        return slicing.dynamic_index_in_dim(arr, idx, keepdims=False)
-
   treedef, static_idx, dynamic_idx = split_index_for_jit(idx, arr.shape)
   internal_gather = partial(
       _gather, treedef=treedef, static_idx=static_idx,

@@ -84,30 +84,6 @@ jax_py_test(
 )
 
 jax_multiplatform_test(
-    name = "pallas_jumble_test",
-    srcs = [
-        "pallas_jumble_test.py",
-    ],
-    disable_configs = [
-        "gpu_v100",
-        "gpu_v100_x32",
-        "gpu_a100",
-        "gpu_p100",
-        "gpu_p100_x32",
-        "gpu_h100",
-        "gpu_b200",
-    ],
-    deps = [
-        "//jax/experimental:pallas",
-        "//jax/experimental:pallas_tpu",
-        "//jax/experimental:pallas_tpu_ops",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
     name = "ops_test",
     srcs = [
         "ops_test.py",

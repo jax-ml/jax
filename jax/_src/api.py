@@ -172,7 +172,6 @@ def jit(
   device: xc.Device | None = ...,
   backend: str | None = ...,
   inline: bool = ...,
-  abstracted_axes: Any | None = ...,
   compiler_options: dict[str, Any] | None = ...,
 ) -> pjit.JitWrapped: ...
 
@@ -189,7 +188,6 @@ def jit(
   device: xc.Device | None = ...,
   backend: str | None = ...,
   inline: bool = ...,
-  abstracted_axes: Any | None = ...,
   compiler_options: dict[str, Any] | None = ...,
 ) -> Callable[[Callable], pjit.JitWrapped]: ...
 
@@ -205,7 +203,6 @@ def jit(
   device: xc.Device | None = None,
   backend: str | None = None,
   inline: bool = False,
-  abstracted_axes: Any | None = None,
   compiler_options: dict[str, Any] | None = None,
 ) -> pjit.JitWrapped | Callable[[Callable], pjit.JitWrapped]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
@@ -350,8 +347,7 @@ def jit(
       static_argnums=static_argnums, static_argnames=static_argnames,
       donate_argnums=donate_argnums, donate_argnames=donate_argnames,
       keep_unused=keep_unused, device=device, backend=backend, inline=inline,
-      abstracted_axes=abstracted_axes, compiler_options=compiler_options,
-      use_resource_env=False)
+      compiler_options=compiler_options, use_resource_env=False)
   if isinstance(fun, NotSpecified):
     return lambda fun: pjit.make_jit(fun, **kwds)
   else:
@@ -2563,13 +2559,13 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   return Partial(transposed_fun, const)
 
 
-def _flat_axes_specs(abstracted_axes, *args, **kwargs
+def _flat_axes_specs(*args, **kwargs
                      ) -> list[pe.AbstractedAxesSpec]:
   if kwargs: raise NotImplementedError
   def ax_leaf(l):
     return (isinstance(l, dict) and all_leaves(l.values()) or
             isinstance(l, tuple) and all_leaves(l, lambda x: x is None))
-  return broadcast_prefix(abstracted_axes, args, ax_leaf)
+  return broadcast_prefix(args, ax_leaf)
 
 
 @overload
@@ -2578,7 +2574,6 @@ def make_jaxpr(
     static_argnums: int | Iterable[int] = (),
     axis_env: Sequence[tuple[AxisName, int]] | None = None,
     return_shape: Literal[False] = ...,
-    abstracted_axes: Any | None = None,
 ) -> Callable[..., core.ClosedJaxpr]:
   ...
 
@@ -2588,7 +2583,6 @@ def make_jaxpr(
     static_argnums: int | Iterable[int] = (),
     axis_env: Sequence[tuple[AxisName, int]] | None = None,
     return_shape: Literal[True] = ...,
-    abstracted_axes: Any | None = None,
 ) -> Callable[..., tuple[core.ClosedJaxpr, Any]]:
   ...
 
@@ -2598,7 +2592,6 @@ def make_jaxpr(
     static_argnums: int | Iterable[int] = (),
     axis_env: Sequence[tuple[AxisName, int]] | None = None,
     return_shape: bool = False,
-    abstracted_axes: Any | None = None,
 ) -> Callable[..., core.ClosedJaxpr | tuple[core.ClosedJaxpr, Any]]:
   """Create a function that returns the jaxpr of ``fun`` given example args.
 
@@ -2666,8 +2659,7 @@ def make_jaxpr(
   @api_boundary
   def make_jaxpr_f(*args, **kwargs):
     with core.extend_axis_env_nd(axis_env or []):
-      traced = jit(fun, static_argnums=static_argnums,
-                   abstracted_axes=abstracted_axes).trace(*args, **kwargs)
+      traced = jit(fun, static_argnums=static_argnums).trace(*args, **kwargs)
     # `jit` converts tracers in consts to args but `make_jaxpr` callers expect
     # consts not to be converted.
     num_consts = traced._num_consts

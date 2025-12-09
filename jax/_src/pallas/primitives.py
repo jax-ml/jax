@@ -39,7 +39,6 @@ from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import util
 from jax._src.interpreters import ad
-from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -59,7 +58,6 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 program_id_p = jax_core.Primitive("program_id")
-batching.ragged_prop_rules[program_id_p] = batching.ragged_mask_no_op_rule
 
 def program_id(axis: int) -> jax_typing.Array:
   """Returns the kernel execution position along the given axis of the grid.

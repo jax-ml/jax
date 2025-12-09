@@ -1785,16 +1785,6 @@ bcoo_cusparse_lowering = bool_state(
     default=False,
     help=('Enables lowering BCOO ops to cuSparse.'))
 
-# TODO(mattjj): remove this flag when we ensure we only succeed at trace-staging
-# if the intended backend can handle lowering the result
-dynamic_shapes = bool_state(
-    name='jax_dynamic_shapes',
-    default=False,
-    help=('Enables experimental features for staging out computations with '
-          'dynamic shapes.'),
-    include_in_jit_key=True,
-    include_in_trace_context=True)
-
 # This is for stackless backward compat with e.g. equinox
 eager_constant_folding = bool_state(
     name='eager_constant_folding',

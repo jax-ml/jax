@@ -43,7 +43,6 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import helpers as pallas_helpers
 from jax._src.pallas import hlo_interpreter
 from jax._src.pallas import primitives
 from jax._src.state import discharge as state_discharge
@@ -329,17 +328,12 @@ ad.primitive_jvps[pallas_call_p] = _pallas_call_jvp_rule
 def _batch_block_mapping(
     grid_mapping: GridMapping,
     axis_size: int,
-    for_ragged: bool,
     aval: jax_core.ShapedArray,
     dim: int | batching.NotMapped,
     block_mapping: BlockMapping,
-    ragged_axis_values,
 ) -> BlockMapping:
   def _block_map_function(new_idx, *args):
-    if for_ragged:
-      drop_last_args = args[:-1]
-    else:
-      drop_last_args = args
+    drop_last_args = args
 
     indices = jax_core.eval_jaxpr(
         block_mapping.index_map_jaxpr.jaxpr,
@@ -352,26 +346,9 @@ def _batch_block_mapping(
       unflat_indices = (unflat_indices,)
     unflat_indices = list(unflat_indices)
     if dim is not batching.not_mapped:
-      if isinstance(dim, batching.RaggedAxis):
-        assert for_ragged, "Ragged axis not supported for non-ragged batching."
-        stacked_axis = dim.stacked_axis
-        unflat_indices.insert(stacked_axis, new_idx)
-      else:
-        unflat_indices.insert(dim, new_idx)
+      unflat_indices.insert(dim, new_idx)
     return tuple(unflat_indices)
   idx_avals = [pallas_core.index_map_grid_aval, *block_mapping.index_map_jaxpr.in_avals]
-
-  if for_ragged:
-    if isinstance(dim, batching.RaggedAxis):
-      assert for_ragged, "Ragged axis not supported for non-ragged batching."
-      _, _, _, lengths_aval = ragged_axis_values
-      idx_avals = [*idx_avals, lengths_aval]
-    else:
-      i32_aval_memref = state.AbstractRef(
-          jax_core.ShapedArray(([axis_size]), jnp.int32),
-          pallas_core.MemorySpace.INDEX,
-      )
-      idx_avals = [*idx_avals, i32_aval_memref]
 
   block_mapping_flat_fn, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(_block_map_function,
@@ -387,23 +364,10 @@ def _batch_block_mapping(
     new_block_shape = shape
     new_array_aval = block_mapping.array_aval
   else:
-    if isinstance(dim, batching.RaggedAxis):
-      assert for_ragged, "Ragged axis not supported for non-ragged batching."
-      new_block_shape = shape
-      stacked_axis = dim.stacked_axis
-      new_block_shape = tuple_insert(
-          new_block_shape, stacked_axis, pallas_core.squeezed
-      )
-    else:
-      new_block_shape = tuple_insert(shape, dim, pallas_core.squeezed)
+    new_block_shape = tuple_insert(shape, dim, pallas_core.squeezed)
 
     array_shape = block_mapping.array_aval.shape
-    if isinstance(dim, batching.RaggedAxis):
-      assert for_ragged, "Ragged axis not supported for non-ragged batching."
-      stacked_axis = dim.stacked_axis
-      array_shape = tuple_insert(array_shape, stacked_axis, axis_size)
-    else:
-      array_shape = tuple_insert(array_shape, dim, axis_size)
+    array_shape = tuple_insert(array_shape, dim, axis_size)
 
     new_array_aval = jax_core.ShapedArray(
         array_shape, block_mapping.array_aval.dtype
@@ -437,12 +401,6 @@ def _broadcast_input_output_aliases(
   for input_index, _ in input_output_aliases:
     dim = dims_[input_index]
     dims_[input_index] = 0
-    if isinstance(dim, batching.RaggedAxis):
-      stacked_axis = dim.stacked_axis
-      if stacked_axis != 0:
-        raise NotImplementedError("Ragged aliasing on non 0 dim NYI")
-      return tuple(args_), tuple(dims_)
-
     if dim is batching.not_mapped:
       args_[input_index] = batching.broadcast(
           args_[input_index], axis_size, 0, None)
@@ -585,16 +543,8 @@ def _pallas_call_batching_rule(
       return x
     return jnp.squeeze(x, axis=bdim)
 
-  def get_size(i, x, d):
-    if not isinstance(d, batching.RaggedAxis):
-      return x.shape[d]
-    return x.aval.shape[d.stacked_axis]
-
-  (axis_size,) = {
-      get_size(i=i, x=x, d=d)
-      for i, (x, d) in enumerate(zip(args, dims))
-      if d is not batching.not_mapped
-  }
+  axis_size, = {x.shape[d] for i, (x, d) in enumerate(zip(args, dims))
+                if d is not batching.not_mapped}
   if axis_size == 1:
     # Why are we even vmapping?
     args = map(_maybe_squeeze_out_bdim, args, dims)
@@ -702,30 +652,7 @@ def _pallas_call_batching_rule(
       args, dims, input_output_aliases=input_output_aliases, axis_size=axis_size
   )
 
-  # Each dim either has data about its ragged axis, or None
-  ragged_axis_values = []
-  for d in dims:
-    if isinstance(d, batching.RaggedAxis):
-      stacked_axis, ragged_axis_dim, ragged_axis_length = (
-          batching._ragged_axis_parts(d)
-      )
-      aval = jax_core.get_aval(ragged_axis_length).update(dtype=jnp.int32)
-      if isinstance(aval, jax_core.DShapedArray):
-        aval = jax_core.ShapedArray(aval.shape, aval.dtype, aval.weak_type)
-      lengths_aval = state.AbstractRef(
-          aval,
-          pallas_core.MemorySpace.INDEX,
-      )
-      # TODO(mvoz): Give this its own type
-      ragged_axis_values.append(
-          (stacked_axis, ragged_axis_dim, ragged_axis_length, lengths_aval)
-      )
-    else:
-      ragged_axis_values.append(None)  # type: ignore[arg-type]
-
   all_dims = list(dims) + [0] * grid_mapping.num_outputs
-  ragged_axis_values = ragged_axis_values + [None] * grid_mapping.num_outputs
-
   num_index_operands = grid_mapping.num_index_operands
   num_scratch_operands = grid_mapping.num_scratch_operands
 
@@ -739,34 +666,16 @@ def _pallas_call_batching_rule(
           _batch_block_mapping,
           grid_mapping,
           axis_size,
-          any(ragged_axis_values),
       ),
       avals_to_batch,
       all_dims[num_index_operands:],
       block_mappings,
-      ragged_axis_values[num_index_operands:],
   )
 
   index_map_tree_args, index_map_tree_kwargs = grid_mapping.index_map_tree.unflatten(
       grid_mapping.index_map_avals)
   assert not index_map_tree_kwargs
   batched_index_map_args = (pallas_core.index_map_grid_aval,) + index_map_tree_args
-
-  lengths_aval = None  # type: ignore[assignment]
-
-  # Check all the ragged axis values, ensure their raggedness pattern
-  # is identical (consider moving this check up!)
-  for rav in ragged_axis_values:
-    if rav is not None:
-      if lengths_aval is None:
-        lengths_aval = rav[3]
-      else:
-        assert lengths_aval == rav[3], "NYI - different lengths in ragged batch"
-
-  if lengths_aval:
-    batched_index_map_args = batched_index_map_args + (lengths_aval,)
-    num_index_operands += 1
-
   batched_index_map_avals, batched_index_map_tree = tree_util.tree_flatten(
       (batched_index_map_args, {}))
 
@@ -791,261 +700,6 @@ def _pallas_call_batching_rule(
   else:
     batched_cost_estimate = None
 
-  # Start the ragged handling code
-  # Here, we:
-  #  - Rewrite the indexer to save memory (skip indices outside the ragged bounds)
-  #  - Rewrite the kernel to save compute (skip elements outside the ragged bounds)
-  #  - Update various internal structures/metadata to account for the new
-  #    block spec.
-  #  - Set the hacky flag of ragged_originating on the mapping, to signal to
-  #    the lowering code to treat mapped dimensions as part of the user grid.
-  if lengths_aval:
-    batched_grid_mapping = batched_grid_mapping.replace(
-        get_grid_indices=lambda indices, maybe_include_mapped_dims: indices,
-        local_grid_env=lambda loop_idx, grid: tuple(
-            pallas_core.GridAxis(idx, b) for (idx, b) in zip(loop_idx, grid)
-        ),
-    )
-
-    # Note - on zero filling counterfactuals
-    # A debug util to produce a counterfactual version of the when
-    # gating, where for all values that don't pass the @when check,
-    # we write 0s. This is useful for debugging, as certain lowering paths
-    # like mosaic will write the last data as passthrough, leading to
-    # potentially confusing results.
-    block_mapped_dim_idxs = []
-    for block_mapping in batched_grid_mapping.block_mappings:
-      mapped_dim_idxs = []
-      for i, d in enumerate(block_mapping.block_shape):
-        if isinstance(d, pallas_core.Squeezed):
-          mapped_dim_idxs.append(i)
-        else:
-          mapped_dim_idxs.append(None)  # type: ignore[arg-type]
-      block_mapped_dim_idxs.append(mapped_dim_idxs)
-
-    mapped_dim_idx = None
-    for rav, mapped_dim_idxs in zip(ragged_axis_values, block_mapped_dim_idxs):
-      if rav is not None:
-        stacked_axis = rav[0]
-        if mapped_dim_idx is None:
-          mapped_dim_idx = mapped_dim_idxs[stacked_axis]
-          if mapped_dim_idxs[stacked_axis] is None:
-            raise ValueError(
-                f"Expected mapped dim to be {stacked_axis}, but got"
-                f" {mapped_dim_idxs[stacked_axis]}"
-            )
-        else:
-          assert mapped_dim_idx == mapped_dim_idxs[stacked_axis], (
-              f"Different mapped dims - expected {mapped_dim_idx}, but got"
-              f" {mapped_dim_idxs[stacked_axis]}"
-          )
-
-    # This is the blockspec size of the dimension
-    block_shapes = [b.block_shape for b in batched_grid_mapping.block_mappings]
-
-    # Parse out the operations from the jaxpr to determine how to mask the output
-    # NOTE! while this *could* be a default dict of None, and None is sound, as
-    # it denotes that there is no raggedness for the given var, we explicitly
-    # do not do this, so as to get better signal on implementation of rules
-    # A misimplemented rule that does not account for new vars being introduced
-    # will result in an error on the next op using the new var. The benefit of
-    # of forcing implementers to account for all outputs and intermediaries is
-    # a very nice one.
-
-    var_to_raggedness = {}
-    for invar, rav in zip(jaxpr.invars, ragged_axis_values):
-      var_to_raggedness[invar] = rav
-
-    for eqn in jaxpr.eqns:
-      prim = eqn.primitive
-      if prim not in batching.ragged_prop_rules:
-        raise NotImplementedError(f"Not implemented - ragged prop for {prim}")
-      rule = batching.ragged_prop_rules[prim]
-
-      invar_raggedness = [
-          (
-              var_to_raggedness.get(invar, None)
-              if isinstance(invar, jax_core.Var)
-              else None
-          )
-          for invar in eqn.invars
-      ]
-      try:
-        invar_raggedness, outvar_raggedness = rule(
-            eqn.params, invar_raggedness, eqn.outvars  # type: ignore[arg-type]
-        )
-      except Exception as e:
-        raise RuntimeError(
-            f"Failed to run rule for {prim}. invars: {eqn.invars}, outvars:"
-            f" {eqn.outvars}. Underlying reason: {e}"
-        ) from e
-
-      for invar, rav in zip(eqn.invars, invar_raggedness):  # type: ignore[assignment]
-        if isinstance(invar, jax_core.Var):
-          var_to_raggedness[invar] = rav
-      for outvar, rav in zip(eqn.outvars, outvar_raggedness):
-        if isinstance(outvar, jax_core.Var):
-          var_to_raggedness[outvar] = rav
-
-    for pos, invar in enumerate(jaxpr.invars):
-      ragged_axis_values[pos] = var_to_raggedness[invar]
-
-    per_input_ragged_axis_dim: list[int | None] = []
-    for rav in ragged_axis_values:
-      if rav is not None:
-        per_input_ragged_axis_dim.append(rav[1])
-      else:
-        per_input_ragged_axis_dim.append(None)
-
-    def when_wrapped_kernel(lengths_ref, *args, **kwargs):
-      b_idx = primitives.program_id(mapped_dim_idx)
-
-      b_len = lengths_ref[b_idx]
-      run_kernel = jnp.array(True)
-      for i, _ in enumerate(args):
-        ragged_axis_dim = per_input_ragged_axis_dim[i]
-        if ragged_axis_dim is None:
-          continue
-        arg_i_idx = (
-            primitives.program_id(ragged_axis_dim)
-            * pallas_core.get_block_dim_size(block_shapes[i][ragged_axis_dim])
-        )
-        run_kernel = jnp.logical_and(run_kernel, arg_i_idx < b_len)
-
-      # TODO(mvoz): Unimplemented primitive in pallas
-      # b_len_mod = jnp.equal(jnp.mod(b_len, val_at_ragged_dim), 0)
-      # checkify.check(b_len_mod, "b_len % val_at_ragged_dim != 0")
-
-      @pallas_helpers.when(run_kernel)
-      def f():
-        # Important! This allows us to trace the inner kernel with the correct
-        # grid to preserve user program_id semantics. Ex: program_id(0) will
-        # always be analogous to program_id(1) in the outer kernel.
-        with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
-          jax_core.eval_jaxpr(jaxpr, (), *args, **kwargs)
-
-    kernel_avals = [lengths_aval] + [v.aval for v in jaxpr.invars]
-    flat_kernel_avals, kernel_in_tree = tree_util.tree_flatten(
-        list(kernel_avals)
-    )
-
-    def _rewrite_index_jaxpr(enumerate_batched_block_mapping):
-      arg_pos, batched_block_mapping = enumerate_batched_block_mapping
-      indexer_avals = [
-          v.aval for v in batched_block_mapping.index_map_jaxpr.jaxpr.invars
-      ]
-      flat_indexer_avals, indexer_in_tree = tree_util.tree_flatten(
-          list(indexer_avals)
-      )
-
-      def index_rewrite_kernel(*indexer_args):
-        ragged_axis_dim = per_input_ragged_axis_dim[arg_pos]
-
-        # the problem here seems to be that we are rnning this for all inputs, per input, because they each have an indexer - which means
-        # that the indexer for output isn't getting written - before, it always was
-
-        lengths_ref = indexer_args[-1]
-        rest_indexer_args = indexer_args[:-1]
-        # Lengths are always the last argument of the indexer.
-        # lengths_ref = args[-1]
-        # Invariant: Stacked axis is enforced to be the mapped axis above.
-        b_idx = indexer_args[mapped_dim_idx]
-
-        nargs = list(rest_indexer_args)
-
-        if ragged_axis_dim is not None:
-          val_at_ragged_dim = pallas_core.get_block_dim_size(
-              batched_block_mapping.block_shape[ragged_axis_dim])
-
-          # The current index into the ragged dimension.
-          # Invariant: There is only one ragged dimension, enforced above.
-          i_idx = indexer_args[ragged_axis_dim]
-
-          # grid space -> element space
-          i_len = i_idx * val_at_ragged_dim
-
-          # The length of the current batch.
-          b_len = lengths_ref[b_idx]
-
-          # Have we reached the end of the current batch?
-          not_done = i_len < b_len
-
-          am_last_batch = b_idx == axis_size - 1
-          last_good_block = lax.div(b_len, val_at_ragged_dim) - 1
-
-          # The logic below can be thought of as:
-          #  if index_oob_ragged:
-          #    if not last_batch:
-          #      batch_idx += 1
-          #      ragged_idx = 0
-          #    else:
-          #      ragged_idx = last_good_block
-          #
-          # wherein we find the next good block by incrementing the batch index
-          # and setting the ragged index to 0 if we are not in the last batch.
-          # Otherwise, we set the ragged index to the last good block.
-          b_next = jnp.where(
-              not_done, b_idx, jnp.where(am_last_batch, b_idx, b_idx + 1)
-          )
-          i_next = jnp.where(
-              not_done, i_idx, jnp.where(am_last_batch, last_good_block, 0)
-          )
-          nargs[ragged_axis_dim] = i_next
-          nargs[mapped_dim_idx] = b_next
-
-        nargs = nargs + [lengths_ref]
-        return jax_core.eval_jaxpr(
-            batched_block_mapping.index_map_jaxpr.jaxpr,
-            batched_block_mapping.index_map_jaxpr.consts,
-            *nargs,
-        )
-      index_jaxpr, _ = _trace_kernel_to_jaxpr(
-          index_rewrite_kernel,
-          batched_block_mapping.index_map_jaxpr.jaxpr.debug_info,
-          batched_grid_mapping,
-          tuple(flat_indexer_avals),
-          indexer_in_tree,
-          tuple(() for _ in flat_indexer_avals),
-          indexer=True,
-      )
-
-      batched_block_mapping = batched_block_mapping.replace(
-          index_map_jaxpr=pe.close_jaxpr(index_jaxpr)
-      )
-      return batched_block_mapping
-
-    # Important! This allows us to trace the outer kernel with the correct grid
-    # to enable accessing the batch program_id.
-    with pallas_core.tracing_grid_env(batched_grid_mapping.grid, ()):
-      batched_block_mappings = map(
-          _rewrite_index_jaxpr, enumerate(batched_block_mappings)
-      )
-
-      batched_grid_mapping = batched_grid_mapping.replace(
-          block_mappings=tuple(batched_block_mappings),
-      )
-
-      jaxpr, consts = _trace_kernel_to_jaxpr(
-          when_wrapped_kernel,
-          jaxpr.debug_info,
-          batched_grid_mapping,
-          tuple(flat_kernel_avals),
-          kernel_in_tree,
-          tuple(() for _ in flat_kernel_avals),
-      )
-      if consts:
-        raise NotImplementedError("consts not supported in pallas_call")
-
-    # We need to rewrite the input_output_aliases here, the initial call
-    # to broadcast is done, and we have inserted a new input (lengths), so
-    # there's an off-by-one here now.
-    new_input_output_aliases = []
-    for k, v in input_output_aliases:
-      new_input_output_aliases.append((k + 1, v))
-    input_output_aliases = tuple(new_input_output_aliases)
-
-    # assert ragged_axis_length is not None
-    args = (ragged_axis_length, *args)
   assert all(isinstance(aval, jax_core.ShapedArray) for aval in out_avals)
 
   batched_out_avals = []
@@ -1887,18 +1541,6 @@ def _pallas_call(
             f"[0, {len(flat_out_avals)})")
       in_aval = flat_in_avals[i_idx]
       out_aval = flat_out_avals[o_idx]
-      if isinstance(in_aval, jax_core.DShapedArray):
-        new_shape = []
-        for d in in_aval.shape:
-          if isinstance(d, int):
-            new_shape.append(d)
-          else:
-            new_shape.append(d.dtype.bound)
-
-        in_aval = jax_core.ShapedArray(
-            tuple(new_shape), in_aval.dtype, in_aval.weak_type
-        )
-
       if in_aval.shape != out_aval.shape or in_aval.dtype != out_aval.dtype:
         raise ValueError(
             f"input_output_aliases contains the mapping '{i_idx}:{o_idx}' "

@@ -1229,8 +1229,9 @@ class Jax2TfTest(JaxToTfTestCase):
         self.fail(f"{op.name} does not start with {scope_name}.")
 
   def test_name_scope_polymorphic(self):
-    if not config.dynamic_shapes.value:
-      self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
+    self.skipTest("no more dynamic shapes")
+    # if not config.dynamic_shapes.value:
+    #   self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
 
     def func_jax(x, y):
       return jnp.sin(x) + jnp.cos(y)

@@ -999,7 +999,6 @@ pxla.register_initial_style_primitive(cond_p)
 core.custom_typechecks[cond_p] = partial(_cond_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[cond_p] = _cond_partial_eval_custom
 pe.dce_rules[cond_p] = _cond_dce_rule
-batching.ragged_prop_rules[cond_p] = batching.ragged_mask_assert_no_op_rule
 
 def _cond_is_high(*_, branches, **__) -> bool:
   return any(j.jaxpr.is_high for j in branches)
