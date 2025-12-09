@@ -324,8 +324,37 @@ class CoreMapTest(jtu.JaxTestCase):
       return kernel(x)
 
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
-    with self.assertRaisesRegex(Exception, "core_map .* captures constants"):
+    with self.assertRaisesRegex(
+        Exception, "core_map .* captures non-scalar constants"
+    ):
       f(x)
+
+  def test_capture_scalar(self):
+    @jax.jit
+    def f(x, i):
+      @pl.kernel(out_shape=jax.ShapeDtypeStruct(x.shape[1:], jnp.int32),
+                 mesh=pltpu.create_tensorcore_mesh("x", num_cores=1))
+      def kernel(x_ref, out_ref):
+        pltpu.sync_copy(x_ref.at[i], out_ref)
+      return kernel(x)
+
+    x = jnp.arange(4 * 8 * 128, dtype=jnp.int32).reshape((4, 8, 128))
+    for i in range(x.shape[0]):
+      out = f(x, i)
+      np.testing.assert_array_equal(out, x[i])
+
+    @jax.jit
+    def g(x, i):
+      @pl.kernel(out_shape=jax.ShapeDtypeStruct((2, *x.shape[1:]), jnp.int32),
+                 mesh=pltpu.create_tensorcore_mesh("x", num_cores=1))
+      def kernel(x_ref, out_ref):
+        pltpu.sync_copy(x_ref.at[pl.ds(i, 2)], out_ref)
+      return kernel(x)
+
+    x = jnp.arange(4 * 8 * 128, dtype=jnp.int32).reshape((4, 8, 128))
+    for i in range(3):
+      out = g(x, i)
+      np.testing.assert_array_equal(out, x[i:i+2])
 
   def test_kernel_helper_with_scratch(self):
     mesh = pltpu.create_tensorcore_mesh("x")

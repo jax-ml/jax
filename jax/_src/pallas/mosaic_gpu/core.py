@@ -1368,6 +1368,11 @@ def _gpu_mesh_discharge_rule(
     )
   if not compiler_params:
     compiler_params = CompilerParams()
+  sa_avals = [a for a in in_avals if isinstance(a, jax_core.ShapedArray)]
+  if sa_avals:
+    raise NotImplementedError(
+        f"Cannot close over values in core_map: {sa_avals}"
+    )
   return pallas_core.default_mesh_discharge_rule(
       in_avals,
       out_avals,
