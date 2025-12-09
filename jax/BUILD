@@ -459,7 +459,7 @@ alias(
 alias(
     name = "experimental_transfer",
     actual = "//jax/experimental:transfer",
-    visibility = [":internal"],
+    visibility = ["//jax/experimental:experimental_transfer_users"],
 )
 
 # Aliases of example_library targets.
