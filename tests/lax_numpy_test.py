@@ -6254,43 +6254,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
             'trapz',
             'typename'}
 
-    # symbols removed in NumPy 2.0
-    skip |= {'add_docstring',
-             'add_newdoc',
-             'add_newdoc_ufunc',
-             'alltrue',
-             'asfarray',
-             'byte_bounds',
-             'compare_chararrays',
-             'cumproduct',
-             'deprecate',
-             'deprecate_with_doc',
-             'disp',
-             'fastCopyAndTranspose',
-             'find_common_type',
-             'get_array_wrap',
-             'geterrobj',
-             'issctype',
-             'issubclass_',
-             'issubsctype',
-             'lookfor',
-             'mat',
-             'maximum_sctype',
-             'msort',
-             'obj2sctype',
-             'product',
-             'recfromcsv',
-             'recfromtxt',
-             'round_',
-             'safe_eval',
-             'sctype2char',
-             'set_numeric_ops',
-             'set_string_function',
-             'seterrobj',
-             'sometrue',
-             'source',
-             'who'}
-
     self.assertEmpty(skip.intersection(dir(jnp)))
 
     names = (name for name in dir(np) if not (name.startswith('_') or name in skip))
