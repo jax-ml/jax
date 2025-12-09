@@ -1138,6 +1138,8 @@ class PureCallbackTest(jtu.JaxTestCase):
     self.assertEqual(count(), 1)
 
 
+@jtu.ignore_warning(category=DeprecationWarning,
+                    message='`with mesh:` context manager')
 class IOCallbackTest(jtu.JaxTestCase):
 
   def setUp(self):

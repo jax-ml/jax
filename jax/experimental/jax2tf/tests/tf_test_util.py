@@ -188,6 +188,8 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       self.assertGreaterEqual(version,
                               export.minimum_supported_calling_convention_version)
       self.enter_context(config.jax_export_calling_convention_version(version))
+      self.enter_context(jtu.ignore_warning(
+          category=DeprecationWarning, message='`with mesh:` context manager'))
     logging.info(
       "Using JAX serialization version %s (export.max_version %s, tf.XlaCallModule max version %s)",
       version,
