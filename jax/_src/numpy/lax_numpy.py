@@ -36,7 +36,6 @@ from typing import Any, IO, Literal, Protocol, TypeVar, Union, overload
 import numpy as np
 
 from jax._src import api
-from jax._src import config
 from jax._src import core
 from jax._src import deprecations
 from jax._src import dtypes
@@ -143,7 +142,8 @@ def iscomplexobj(x: Any) -> bool:
     >>> jnp.iscomplexobj(jnp.array([0, 1+2j]))
     True
   """
-  if x is None:
+  # Check for int here to avoid potential overflow in jnp.array below.
+  if x is None or isinstance(x, int):
     return False
   try:
     typ = x.dtype.type
@@ -5954,60 +5954,56 @@ def arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
 def _arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
             step: ArrayLike | None = None, dtype: DTypeLike | None = None,
             out_sharding: NamedSharding | None = None) -> Array:
+  # Validate inputs
   if dtype is not None:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "arange")
-  if not config.dynamic_shapes.value:
-    util.check_arraylike("arange", start)
-    if stop is None and step is None:
-      start = core.concrete_or_error(None, start, "It arose in the jnp.arange argument 'stop'")
-    else:
-      start = core.concrete_or_error(None, start, "It arose in the jnp.arange argument 'start'")
-  util.check_arraylike_or_none("arange", None, stop, step)
+  util.check_arraylike_or_none("arange", start, stop, step)
+
+  # Ensure start/stop/step are concrete
+  start_name = "stop" if stop is None and step is None else "start"
+  start = core.concrete_or_error(None, start, f"It arose in the jnp.arange argument '{start_name}'")
   stop = core.concrete_or_error(None, stop, "It arose in the jnp.arange argument 'stop'")
   step = core.concrete_or_error(None, step, "It arose in the jnp.arange argument 'step'")
-  start_name = "stop" if stop is None and step is None else "start"
+
+  # Ensure start/stop/step are scalars
   for name, val in [(start_name, start), ("stop", stop), ("step", step)]:
     if val is not None and np.ndim(val) != 0:
       raise ValueError(f"jax.numpy.arange: arguments must be scalars; got {name}={val}")
+
+  # Handle symbolic dimensions
   if any(core.is_symbolic_dim(v) for v in (start, stop, step)):
-    # Some dynamic shapes
-    if stop is None and step is None:
-      stop = start
-      start = 0
-      step = 1
-    elif stop is not None and step is None:
+    if stop is None:
+      start, stop = 0, start
+    if step is None:
       step = 1
     return _arange_dynamic(start, stop, step, dtype or dtypes.default_int_dtype())
+
   if dtype is None:
-    dtype = result_type(start, *(x for x in [stop, step] if x is not None))
+    dtype = dtypes.result_type(start, *(x for x in [stop, step] if x is not None))
   dtype = dtypes.jax_dtype(dtype)
-  if stop is None and step is None:
-    start_dtype = _dtype(start)
-    if (not dtypes.issubdtype(start_dtype, np.integer) and
-        not dtypes.issubdtype(start_dtype, dtypes.extended)):
-      ceil_ = ufuncs.ceil if isinstance(start, core.Tracer) else np.ceil
-      start = ceil_(start).astype(int)
-    return lax.broadcasted_iota(dtype, (start,), 0, out_sharding=out_sharding)  # type: ignore[arg-type]
+
+  if iscomplexobj(start) or iscomplexobj(stop) or iscomplexobj(step):
+    # Complex arange is poorly defined; fall back to NumPy here.
+    # TODO(jakevdp): deprecate the complex case.
+    return array(np.arange(start, stop, step, dtype=dtype), device=out_sharding)
+
+  if step is not None:
+    # arange(N, M, K): when step is specified, fall back to NumPy.
+    return array(np.arange(start, stop, step, dtype=dtype), device=out_sharding)
+
+  if stop is None:
+    start, stop = 0, start
+
+  if start == 0:
+    # arange(M) or arange(0, M)
+    size = max(0, int(np.ceil(stop)))
+    return lax.broadcasted_iota(dtype, (size,), 0, out_sharding=out_sharding)
+
   else:
-    if step is None and stop is not None:
-      # Skip optimization if start or stop is complex (ceil doesn't support complex)
-      start_dtype = _dtype(start)
-      stop_dtype = _dtype(stop)
-      if (dtypes.issubdtype(start_dtype, np.complexfloating) or
-          dtypes.issubdtype(stop_dtype, np.complexfloating)):
-        return array(np.arange(start, stop=stop, step=step, dtype=dtype),
-                     device=out_sharding)
-      # Use iota + offset instead of creating a constant array
-      size = int(np.ceil(stop - start))
-      if size <= 0:
-        return array([], dtype=dtype, device=out_sharding)
-      result = lax.broadcasted_iota(dtype, (size,), 0, out_sharding=out_sharding)
-      if start != 0:
-        # Add offset if start is non-zero
-        result = lax.add(result, lax.convert_element_type(start, dtype))
-      return result
-    return array(np.arange(start, stop=stop, step=step, dtype=dtype),
-                 device=out_sharding)
+    # arange(N, M)
+    size = max(0, int(np.ceil(stop - start)))
+    return lax.add(lax.convert_element_type(start, dtype),
+                   lax.broadcasted_iota(dtype, (size,), 0, out_sharding=out_sharding))
 
 
 def _arange_dynamic(
