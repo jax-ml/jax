@@ -93,7 +93,7 @@ else
 fi
 
 # If the RUNNER_TEMP env is defined we will add that as a bep.json output for parsing out the invocation id
-if [[ -v RUNNER_TEMP ]]; then
+if [[ -n "$RUNNER_TEMP" ]]; then
   OUTPUT_BEP_FILE="$RUNNER_TEMP/bazel-out.json"
   OUTPUT_BEP="--build_event_json_file=$OUTPUT_BEP_FILE"
 
@@ -124,13 +124,11 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     //jax/experimental/jax2tf/tests/multiprocess:cpu_tests \
     $IGNORE_TESTS
 
-if [[ -v OUTPUT_BEP ]]; then
-  id="$(grep -m1 -oE '[0-9a-f-]{36}' $OUTPUT_BEP_FILE)"   # or use jq if you know the exact path
-  if [[ -v id ]]; then
-    echo "https://source.cloud.google.com/results/invocations/$id"
-    echo "BES link for $GITHUB_JOB is https://source.cloud.google.com/results/invocations/$id" >> $GITHUB_STEP_SUMMARY
-    
+if [[ -n "$OUTPUT_BEP_FILE" ]]; then
+  url="$(grep -m1 -o 'https://source\.cloud\.google\.com/results/invocations/[a-zA-Z0-9-]*' $OUTPUT_BEP_FILE)" || true # don't allow a pipe fail on this
+  if [[ -n "$url" ]]; then
+    echo "BES link: $url" >> $GITHUB_STEP_SUMMARY
+    echo "::notice:: BES link: $url"
   else
     echo "Could not parse build id from the invocation" 
   fi
-fi
