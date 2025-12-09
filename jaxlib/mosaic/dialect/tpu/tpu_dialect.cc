@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 
+#include <algorithm>
+#include <cassert>
 #include <cstdint>
 #include <optional>
 #include <utility>
@@ -23,14 +25,16 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep.
+#include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinAttributeInterfaces.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep.
@@ -215,32 +219,210 @@ Attribute TiledLayoutAttr::parse(AsmParser &parser, Type type) {
 }
 
 AffineMap TiledLayoutAttr::getAffineMap() const {
-  AffineMap map =
-      AffineMap::getMultiDimIdentityMap(getTileStrides().size(), getContext());
   SmallVector<AffineExpr, 8> exprs;
-  for (const xla::Tile &tile : getTiles()) {
-    exprs.clear();
-    auto dimensions = tile.dimensions();
-    int64_t untiled_dims = map.getNumResults() - dimensions.size();
-    if (untiled_dims < 0) {
-      LOG(FATAL) << "Invalid TiledLayoutAttr: Number of dims must be larger "
-                    "or equal to the rank of the tile";
-    }
-    for (int64_t i = 0; i < untiled_dims; ++i) {
-      exprs.push_back(getAffineDimExpr(i, getContext()));
-    }
-    for (int i = 0; i < dimensions.size(); ++i) {
-      exprs.push_back(getAffineDimExpr(untiled_dims + i, getContext())
-                          .floorDiv(dimensions[i]));
-    }
-    for (int i = 0; i < dimensions.size(); ++i) {
-      exprs.push_back(getAffineDimExpr(untiled_dims + i, getContext()) %
-                      dimensions[i]);
-    }
-    auto tile_map = AffineMap::get(map.getNumResults(), 0, exprs, getContext());
-    map = tile_map.compose(map);
+  for (int64_t i = 0; i < getRank(); ++i) {
+    exprs.push_back(getAffineDimExpr(i, getContext()));
   }
-  return map;
+  for (const xla::Tile& tile : getTiles()) {
+    SmallVector<AffineExpr, 8> new_exprs;
+    auto dimensions = tile.dimensions();
+    int64_t untiled_rank = exprs.size() - dimensions.size();
+    assert(untiled_rank >= 0);
+    for (int64_t i = 0; i < untiled_rank; ++i) {
+      new_exprs.push_back(exprs[i]);
+    }
+    for (int64_t i = 0; i < dimensions.size(); ++i) {
+      new_exprs.push_back(exprs[untiled_rank + i].floorDiv(dimensions[i]));
+    }
+    for (int64_t i = 0; i < dimensions.size(); ++i) {
+      new_exprs.push_back(exprs[untiled_rank + i] % dimensions[i]);
+    }
+    exprs = std::move(new_exprs);
+  }
+  int64_t num_symbols = 0;
+  AffineExpr result = getAffineConstantExpr(0, getContext());
+  SmallVector<int64_t> strides = getExpandedStrides();
+  assert(strides.size() == exprs.size());
+  for (int64_t i = 0; i < exprs.size(); ++i) {
+    AffineExpr stride_expr =
+        ShapedType::isDynamic(strides[i])
+            ? getAffineSymbolExpr(num_symbols++, getContext())
+            : getAffineConstantExpr(strides[i], getContext());
+    result = result + exprs[i] * stride_expr;
+  }
+  return AffineMap::get(getRank(), num_symbols, result);
+}
+
+namespace {
+int64_t getUntiledRank(ArrayRef<xla::Tile> tiles, const int64_t rank) {
+  // Note: This implementation does not assume there is no nested tiling across
+  // the first level of tiling, though this is enforced by the verifier.
+  int64_t untiled_rank = rank;
+  int64_t tiled_rank = rank;
+  for (const xla::Tile& tile : tiles) {
+    const int64_t tile_ndims = tile.dimensions().size();
+    untiled_rank = std::min(untiled_rank, tiled_rank - tile_ndims);
+    tiled_rank += tile_ndims;
+  }
+  return untiled_rank;
+}
+}  // namespace
+
+int64_t TiledLayoutAttr::getUntiledRank() const {
+  return mlir::tpu::getUntiledRank(getTiles(), getRank());
+}
+
+namespace {
+FailureOr<SmallVector<int64_t>> getExpandedShape(
+    const ArrayRef<int64_t> untiled_shape, const ArrayRef<xla::Tile> tiles,
+    const bool require_alignment) {
+  SmallVector<int64_t> shape(untiled_shape);
+  for (const xla::Tile& tile : tiles) {
+    const int64_t tile_ndims = tile.dimensions().size();
+    const llvm::ArrayRef<int64_t> tiled_shape =
+        llvm::ArrayRef(shape).take_back(tile_ndims);
+    llvm::SmallVector<int64_t> new_tiled_shape(2 * tile_ndims);
+    for (int64_t i = 0; i < tile_ndims; ++i) {
+      if (require_alignment && (ShapedType::isDynamic(tiled_shape[i]) ||
+                                tiled_shape[i] % tile.dimension(i) != 0)) {
+        return failure();
+      }
+      if (ShapedType::isDynamic(tiled_shape[i])) {
+        new_tiled_shape[i] = ShapedType::kDynamic;
+      } else {
+        new_tiled_shape[i] =
+            llvm::divideCeil(tiled_shape[i], tile.dimension(i));
+      }
+      new_tiled_shape[tile_ndims + i] = tile.dimension(i);
+    }
+    shape.pop_back_n(tile_ndims);
+    shape.append(new_tiled_shape);
+  }
+  return shape;
+}
+}  // namespace
+
+SmallVector<int64_t> TiledLayoutAttr::getDefaultTileStrides(
+    const ArrayRef<xla::Tile> tiles, const ArrayRef<int64_t> shape) {
+  SmallVector<int64_t> strides(shape.size());
+  int64_t stride = 1;
+  const xla::Tile* const first_tile = tiles.empty() ? nullptr : &tiles.front();
+  const int64_t first_tile_rank =
+      first_tile == nullptr ? 0 : first_tile->dimensions().size();
+  for (int64_t d = shape.size() - 1; d >= 0; --d) {
+    assert(!ShapedType::isDynamic(shape[d]));
+    strides[d] = stride;
+    if (d >= shape.size() - first_tile_rank) {
+      assert(first_tile != nullptr);
+      const int64_t tile_d = d - (shape.size() - first_tile_rank);
+      stride *= llvm::divideCeil(shape[d], first_tile->dimension(tile_d));
+    } else {
+      stride *= shape[d];
+    }
+  }
+  return strides;
+}
+
+bool TiledLayoutAttr::tilesAreKnownContiguous(
+    const ArrayRef<int64_t> shape) const {
+  const ArrayRef<xla::Tile> tiles = getTiles();
+  const ArrayRef<int64_t> tile_strides = getTileStrides();
+  int64_t stride = 1;
+  const xla::Tile* const first_tile = tiles.empty() ? nullptr : &tiles.front();
+  const int64_t first_tile_rank =
+      first_tile == nullptr ? 0 : first_tile->dimensions().size();
+  for (int64_t d = shape.size() - 1; d >= 0; --d) {
+    int64_t size_tiles;
+    if (d >= shape.size() - first_tile_rank &&
+        shape[d] != ShapedType::kDynamic) {
+      assert(first_tile != nullptr);
+      const int64_t tile_d = d - (shape.size() - first_tile_rank);
+      size_tiles = llvm::divideCeil(shape[d], first_tile->dimension(tile_d));
+    } else {
+      size_tiles = shape[d];
+    }
+    // Dimensions with only one element/tile can have any stride.
+    if (stride != tile_strides[d] && size_tiles != 1) {
+      return false;
+    }
+    if (d == 0) {
+      break;
+    }
+    // When any dimension other than the leading one has a dynamic size, we
+    // cannot guarantee that there are no gaps.
+    if (size_tiles == ShapedType::kDynamic) {
+      return false;
+    }
+    stride *= size_tiles;
+  }
+  return true;
+}
+
+SmallVector<int64_t> TiledLayoutAttr::getExpandedShape(
+    ArrayRef<int64_t> untiled_shape) const {
+  // getExpandedShape should never fail without require_alignment
+  return *mlir::tpu::getExpandedShape(untiled_shape, getTiles(),
+                                      /*require_alignment=*/false);
+}
+
+SmallVector<int64_t> TiledLayoutAttr::getExpandedStrides() const {
+  if (getTiles().empty()) {
+    return SmallVector<int64_t>(getTileStrides());
+  }
+  SmallVector<int64_t> strides(getTileStrides());
+  // Expand front tile
+  const xla::Tile& first_tile = getTiles().front();
+  const FailureOr<SmallVector<int64_t>> failure_or_expanded_tile =
+      mlir::tpu::getExpandedShape(first_tile.dimensions(),
+                                  getTiles().drop_front(),
+                                  /*require_alignment=*/true);
+  // Verification should ensure this:
+  assert(succeeded(failure_or_expanded_tile));
+  const SmallVector<int64_t>& expanded_tile = *failure_or_expanded_tile;
+  strides.resize_for_overwrite(getRank() + expanded_tile.size());
+  int64_t first_tile_size = llvm::product_of(first_tile.dimensions());
+  int64_t tile_size = 1;
+  for (int64_t d = strides.size() - 1; d >= 0; --d) {
+    if (d >= getRank()) {
+      const int64_t new_stride = tile_size;
+      tile_size *= expanded_tile[d - getRank()];
+      strides[d] = new_stride;
+    } else {
+      strides[d] *= first_tile_size;
+    }
+  }
+  return strides;
+}
+
+LogicalResult TiledLayoutAttr::verify(
+    function_ref<InFlightDiagnostic()> emitError,
+    const llvm::ArrayRef<xla::Tile> tiles,
+    const llvm::ArrayRef<int64_t> tile_strides) {
+  if (llvm::any_of(tile_strides, ShapedType::isDynamic)) {
+    return emitError() << "Not implemented: Dynamic tile strides";
+  }
+  if (tiles.empty()) {
+    return success();
+  }
+  const int64_t rank = tile_strides.size();
+  const xla::Tile& first_tile = tiles.front();
+  const int64_t first_tile_rank = first_tile.dimensions().size();
+  // The interpretation of tile strides is unclear if there is nested tiling
+  // across first tiles (e.g. T(8, 128)(2, 4, 64)), and this has no applications
+  // anyway.
+  if (mlir::tpu::getUntiledRank(tiles, rank) != rank - first_tile_rank) {
+    return emitError() << "Not implemented: Nested tiling across first tiles";
+  }
+  // Check that nested tiles evenly divide previous tiles (so they don't add any
+  // padding or change the tile size)
+  if (failed(mlir::tpu::getExpandedShape(first_tile.dimensions(),
+                                         tiles.drop_front(),
+                                         /*require_alignment=*/true))) {
+    return emitError() << "Not implemented: Nested tiles must evenly divide "
+                       << "the first tile " << first_tile.ToString()
+                       << " but they do not (would add padding)";
+  }
+  return success();
 }
 
 MemRefType getMemRefType(Value value) {
