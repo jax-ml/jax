@@ -32,9 +32,16 @@ operations.
    :maxdepth: 1
 
    notebooks/autodiff_cookbook
-   notebooks/Custom_derivative_rules_for_Python_code
    notebooks/autodiff_remat
-   advanced-autodiff
+
+.. toctree::
+   :caption: Advanced automatic differentiation
+   :maxdepth: 1
+
+   higher-order
+   jacobian-vector-products
+   complex-differentiation
+   notebooks/Custom_derivative_rules_for_Python_code
 
 .. toctree::
    :maxdepth: 1
