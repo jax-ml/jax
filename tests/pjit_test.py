@@ -749,10 +749,9 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(z, x[jnp.newaxis] + y)
     self.assertAllClose(w, x)
     self.assertEqual(
-        z.sharding._to_xla_hlo_sharding(z.ndim).tile_assignment_dimensions(),
-        [1, 2])
-    self.assertEqual(
-        w.sharding._to_xla_hlo_sharding(w.ndim).tile_assignment_dimensions(), [2])
+        z.sharding._to_xla_hlo_sharding(z.ndim).dimensions(), [1, 2]
+    )
+    self.assertEqual(w.sharding._to_xla_hlo_sharding(w.ndim).dimensions(), [2])
 
   @jtu.with_mesh([('x', 2)])
   def testVMapShardingConstraint(self):
@@ -767,7 +766,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     constraint_eqn, = pjit_eqn.params['jaxpr'].eqns
     op = constraint_eqn.params['sharding']._to_xla_hlo_sharding(x.ndim)
     self.assertTrue(op.is_tiled())
-    self.assertListEqual(op.tile_assignment_dimensions(), [1, 2])
+    self.assertListEqual(op.dimensions(), [1, 2])
     self.assertListEqual(op.tile_assignment_devices(), [0, 1])
     self.assertFalse(op_shardings.is_hlo_sharding_replicated(op))
 
@@ -787,7 +786,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     constraint_eqn, = pjit_eqn.params['jaxpr'].eqns
     op = constraint_eqn.params['sharding']._to_xla_hlo_sharding(x.ndim)
     self.assertTrue(op.is_tiled())
-    self.assertListEqual(op.tile_assignment_dimensions(), [2, 1])
+    self.assertListEqual(op.dimensions(), [2, 1])
     self.assertListEqual(op.tile_assignment_devices(), [0, 1])
     self.assertFalse(op_shardings.is_hlo_sharding_replicated(op))
 
@@ -10193,7 +10192,7 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual(hs3, xc.HloSharding.iota_tile((4, 2)))
     self.assertEqual(hs1.num_devices(), 4)
     self.assertEqual(hs1.num_dimensions(), 2)
-    self.assertEqual(hs1.tile_assignment_dimensions(), [2, 2])
+    self.assertEqual(hs1.dimensions(), [2, 2])
     self.assertEqual(hs1.tile_assignment_devices(), [0, 1, 2, 3])
     self.assertTrue(hs1.is_tiled())
     self.assertFalse(hs1.replicate_on_last_tile_dim())
@@ -10445,7 +10444,7 @@ class UtilTest(jtu.JaxTestCase):
     self.assertFalse(hs3.is_manual())
     self.assertFalse(hs3.is_replicated())
     self.assertEqual(hs3.num_dimensions(), 2)
-    self.assertEqual(hs3.tile_assignment_dimensions(), [3, 3])
+    self.assertEqual(hs3.dimensions(), [3, 3])
     self.assertEqual(hs3.num_devices(), 9)
     self.assertEqual(hs3.tile_assignment_devices(), list(range(0, 9)))
     self.assertEqual(
