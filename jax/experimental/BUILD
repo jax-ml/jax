@@ -696,7 +696,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "transfer",
     srcs = ["transfer.py"],
-    visibility = ["//jax:internal"],
+    visibility = [
+        ":experimental_transfer_users",
+        "//jax:internal",
+    ],
     deps = [
         "//jax",
         "//jax/_src:util",
