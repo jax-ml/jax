@@ -23,8 +23,8 @@ To add a new test:
   * Create a new test method, with a function to be serialized that exercises
     the feature you want to test, and a call to self.export_and_serialize.
     You can follow the model of the tests below, which are parameterized by
-    the test data. Use `None` for the test data to signal that you want to
-    use a fresh serialization.
+    the testdata. Use only `None` for the testdata parameter to signal that
+    you want to use a current serialization and not a saved one.
   * Run the test. This will save the serialized data in
     TEST_UNDECLARED_OUTPUTS_DIR (or "/tmp/back_compat_testdata" if not set).
   * Copy the test data defined in the output file, to the file
@@ -55,6 +55,7 @@ except (ModuleNotFoundError, ImportError):
 
 import jax
 from jax._src import config
+from jax._src import core
 from jax._src.export import _export
 from jax._src.export.serialization import _SERIALIZATION_VERSION
 from jax.sharding import PartitionSpec as P
@@ -62,6 +63,7 @@ from jax._src import test_util as jtu
 
 from jax._src.internal_test_util.export_back_compat_test_data import export_with_specified_sharding
 from jax._src.internal_test_util.export_back_compat_test_data import export_with_unspecified_sharding
+from jax._src.internal_test_util.export_back_compat_test_data import export_with_memory_space
 
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -75,6 +77,7 @@ class CompatTest(jtu.JaxTestCase):
 
   def export_and_serialize(self, fun, *args,
                            vjp_order=0,
+                           platforms=None,
                            **kwargs) -> bytearray:
     """Export and serialize a function.
 
@@ -82,7 +85,7 @@ class CompatTest(jtu.JaxTestCase):
     "/tmp/back_compat_testdata" if not set) and should be copied as explained
     in the module docstring.
     """
-    exp = _export.export(fun)(*args, **kwargs)
+    exp = _export.export(fun, platforms=platforms)(*args, **kwargs)
     serialized = exp.serialize(vjp_order=vjp_order)
     updated_testdata = f"""
     # Paste to the test data file (see export_serialization_back_compat_test.py module docstring)
@@ -98,7 +101,8 @@ class CompatTest(jtu.JaxTestCase):
                            "/tmp/back_compat_testdata")
     if not os.path.exists(output_dir):
       os.makedirs(output_dir)
-    output_file = os.path.join(output_dir, f"export_{self._testMethodName}.py")
+    output_file_basename = f"export_{self._testMethodName.replace('test_', '')}.py"
+    output_file = os.path.join(output_dir, output_file_basename)
     logging.info("Writing the updated serialized Exported at %s", output_file)
     with open(output_file, "w") as f:
       f.write(updated_testdata)
@@ -161,6 +165,39 @@ class CompatTest(jtu.JaxTestCase):
       self.assertAllClose(out, a * 2.)
       self.assertEqual(out.addressable_shards[0].index, (slice(0, 8), slice(None)))
       self.assertEqual(out.addressable_shards[1].index, (slice(8, 16), slice(None)))
+
+
+  @jtu.parameterized_filterable(
+    kwargs=[
+      dict(testdata=testdata,
+      testcase_name=("current" if testdata is None
+                     else f"v{testdata['serialization_version']}"))
+      for testdata in [None, *export_with_memory_space.serializations]
+    ]
+  )
+  def test_with_memory_space(self, testdata: dict[str, Any] | None):
+    # This test is based on export_test.py::test_memory_space_from_arg
+    mesh = jtu.create_mesh((2,), "x")
+    with jax.set_mesh(mesh):
+      shd = jax.sharding.NamedSharding(mesh, P("x", None),
+                                       memory_kind="pinned_host")
+      a = jax.device_put(np.ones((2, 3), dtype=np.float32), shd)
+      f = jax.jit(lambda x: x)
+
+      if testdata is None:
+        serialized = self.export_and_serialize(
+            f, a, platforms=("tpu", "cuda"))
+      else:
+        serialized = testdata["exported_serialized"]
+
+    exported = _export.deserialize(serialized)
+    self.assertEqual(exported.in_avals[0].memory_space, core.MemorySpace.Host)
+    self.assertEqual(exported.out_avals[0].memory_space, core.MemorySpace.Host)
+
+    if jtu.device_under_test() in ("tpu", "gpu"):
+      b = exported.call(a)
+      self.assertEqual(b.aval.memory_space, core.MemorySpace.Host)
+      self.assertEqual(b.sharding, a.sharding)
 
 
 if __name__ == "__main__":
