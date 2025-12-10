@@ -960,7 +960,7 @@ grad(f, holomorphic=True)(A)
 
 ## More advanced autodiff
 
-In this notebook, we worked through some easy, and then progressively more complicated, applications of automatic differentiation in JAX. We hope you now feel that taking derivatives in JAX is easy and powerful.  
+In this notebook, we worked through some easy, and then progressively more complicated, applications of automatic differentiation in JAX. We hope you now feel that taking derivatives in JAX is easy and powerful. For more details, check out the ["Advanced automatic differentiation" section in the JAX advanced guides](https://jax.readthedocs.io/en/latest/advanced_guides.html).
 
 There's a whole world of other autodiff tricks and functionality out there. Topics we didn't cover, but hope to in an "Advanced Autodiff Cookbook" include:
 

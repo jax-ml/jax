@@ -321,7 +321,7 @@ assert api.jit(lambda x, y: square_add_prim(x, y),
 
 ### Forward differentiation
 
-JAX implements forward differentiation in the form of a Jacobian-Vector Product (JVP) (you can learn more about it in {ref}`advanced-autodiff`).
+JAX implements forward differentiation in the form of a Jacobian-Vector Product (JVP) (you can learn more about it in {ref}`advanced-guides-jvp-vjp`).
 
 If you attempt to compute the `jvp` function, you'll get an error because you have not yet told JAX how to differentiate the `multiply_add` primitive.
 
