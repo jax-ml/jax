@@ -30,8 +30,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src.traceback_util import api_boundary
-from jax._src.tree_util import (tree_flatten, treedef_children, tree_leaves,
-                                tree_unflatten, treedef_tuple)
+from jax._src.tree_util import tree_leaves, FlatTree
 from jax._src.util import split_list, safe_map
 import numpy as np
 
@@ -92,23 +91,22 @@ def custom_root(f: Callable,
     The result of calling solve(f, initial_guess) with gradients defined via
     implicit differentiation assuming ``f(solve(f, initial_guess)) == 0``.
   """
-  guess_flat, in_args_tree = tree_flatten((initial_guess,))
-  guess_avals = tuple(_map(core.get_aval, guess_flat))
+  guess_flat = FlatTree.flatten(initial_guess)
+  guess_avals = guess_flat.map(core.get_aval)
   f_debug = api_util.debug_info("custom_root", f, (initial_guess,), {})
-  f_jaxpr, out_tree = pe.trace_to_jaxpr(
-      f, in_args_tree, guess_avals, f_debug)
+  args_avals = FlatTree.pack(((guess_avals,),{}))
+  f_jaxpr, out_avals = pe.trace_to_jaxpr(f, args_avals, f_debug)
   f_jaxpr, f_consts = pe.separate_consts(f_jaxpr)
 
-  in_tree, = treedef_children(in_args_tree)
-  _check_tree("f", "initial_guess", out_tree, in_tree, False)
+  _check_tree("f", "initial_guess", out_avals.tree, guess_avals.tree, False)
 
   solve_debug = api_util.debug_info("custom_root solve", solve,
                                     (f, initial_guess), {},
                                     static_argnums=(0,))
-  solve_jaxpr, solution_tree = pe.trace_to_jaxpr(
-      partial(solve, f), in_args_tree, guess_avals, solve_debug)
+  solve_jaxpr, solution_avals = pe.trace_to_jaxpr(
+      partial(solve, f), args_avals, solve_debug)
   solve_jaxpr, solve_consts = pe.separate_consts(solve_jaxpr)
-  _check_tree("solve", "initial_guess", solution_tree, in_tree, has_aux)
+  _check_tree("solve", "initial_guess", solution_avals.tree, guess_flat.tree, has_aux)
 
   def linearize_and_solve(x, b):
     unchecked_zeros, f_jvp = api.linearize(f, x)
@@ -116,19 +114,21 @@ def custom_root(f: Callable,
 
   linearize_and_solve_dbg = api_util.debug_info("custom_root tangent_solve",
       tangent_solve, (initial_guess, initial_guess), {})
-  l_and_s_jaxpr, out_tree = pe.trace_to_jaxpr(
-      linearize_and_solve, treedef_tuple((in_tree,) * 2), guess_avals * 2,
-      linearize_and_solve_dbg)
+
+
+  linearize_and_solve_avals = FlatTree.pack(((guess_avals, guess_avals), {}))
+  l_and_s_jaxpr, out_avals = pe.trace_to_jaxpr(
+      linearize_and_solve, linearize_and_solve_avals, linearize_and_solve_dbg)
   l_and_s_jaxpr, l_and_s_consts = pe.separate_consts(l_and_s_jaxpr)
-  _check_tree("tangent_solve", "x", out_tree, in_tree, False)
+  _check_tree("tangent_solve", "x", out_avals.tree, guess_flat.tree, False)
 
   all_consts = [f_consts, solve_consts, l_and_s_consts]
   const_lengths = _RootTuple(*_map(len, all_consts))
   jaxprs = _RootTuple(f_jaxpr, solve_jaxpr, l_and_s_jaxpr)
 
   solution_flat = _custom_root(
-      const_lengths, jaxprs, *(_flatten(all_consts) + guess_flat))
-  return tree_unflatten(solution_tree, solution_flat)
+      const_lengths, jaxprs, *_flatten(all_consts), *guess_flat)
+  return solution_avals.update_from_list(solution_flat).unflatten()
 
 
 @partial(custom_derivatives.custom_jvp, nondiff_argnums=(0, 1))
@@ -198,8 +198,8 @@ def _flatten(args):
 
 
 def _check_shapes(func_name, expected_name, actual, expected):
-  actual_shapes = _map(np.shape, tree_leaves(actual))
-  expected_shapes = _map(np.shape, tree_leaves(expected))
+  actual_shapes = _map(np.shape, actual)
+  expected_shapes = _map(np.shape, expected)
   if actual_shapes != expected_shapes:
     raise ValueError(
         f"{func_name}() output shapes must match {expected_name}, "
@@ -250,20 +250,19 @@ def custom_linear_solve(
   if transpose_solve is None and symmetric:
     transpose_solve = solve
 
-  b_flat, in_args_tree = tree_flatten((b,))
-  b_avals = tuple(_map(core.get_aval, b_flat))
-
-  tree, = treedef_children(in_args_tree)
+  b_flat = FlatTree.flatten(b)
+  b_avals = b_flat.map(core.get_aval)
+  tree = b_flat.tree
 
   def _shape_checked(fun, name, has_aux):
     def f(x):
       y = fun(x)
-      _check_shapes(name, "b", y, b_flat)
+      _check_shapes(name, "b", tree_leaves(y), b_flat)
       return y
 
     def f_aux(x):
       y, aux = fun(x)
-      _check_shapes(name, "b", y, b_flat)
+      _check_shapes(name, "b", tree_leaves(y), b_flat)
       return y, aux
 
     return f_aux if has_aux else f
@@ -271,20 +270,21 @@ def custom_linear_solve(
   matvec_debug = api_util.debug_info("custom_linear_solve",
                                      matvec, (b,), {})
   # no auxiliary data assumed for matvec
-  matvec_jaxpr, out_tree = pe.trace_to_jaxpr(
-      _shape_checked(matvec, "matvec", False), in_args_tree, b_avals,
+  args_avals = FlatTree.pack(((b_avals,),{}))
+  matvec_jaxpr, out_avals = pe.trace_to_jaxpr(
+      _shape_checked(matvec, "matvec", False), args_avals,
       matvec_debug)
   matvec_jaxpr, matvec_consts = pe.separate_consts(matvec_jaxpr)
-  _check_tree("matvec", "b", out_tree, tree, False)
+  _check_tree("matvec", "b", out_avals.tree, tree, False)
 
   solve_debug = api_util.debug_info("custom_linear_solve solve",
                                     solve, (matvec, b), {},
                                     static_argnums=(0,))
-  solve_jaxpr, out_tree = pe.trace_to_jaxpr(
-      _shape_checked(partial(solve, matvec), "solve", has_aux), in_args_tree, b_avals,
+  solve_jaxpr, out_avals = pe.trace_to_jaxpr(
+      _shape_checked(partial(solve, matvec), "solve", has_aux), args_avals,
       solve_debug)
   solve_jaxpr, solve_consts = pe.separate_consts(solve_jaxpr)
-  _check_tree("solve", "b", out_tree, tree, has_aux)
+  _check_tree("solve", "b", out_avals.tree, tree, has_aux)
 
   if transpose_solve is None:
     vecmat_jaxpr = tr_solve_jaxpr = None
@@ -299,27 +299,27 @@ def custom_linear_solve(
       vecmat_consts = matvec_consts
     else:
       vecmat = _transpose_one_output(matvec, b)
-      vecmat_jaxpr, out_tree = pe.trace_to_jaxpr(
-          vecmat, in_args_tree, b_avals, transpose_solve_debug)
+      vecmat_jaxpr, out_avals = pe.trace_to_jaxpr(
+          vecmat, args_avals, transpose_solve_debug)
       vecmat_jaxpr, vecmat_consts = pe.separate_consts(vecmat_jaxpr)
-      assert out_tree == tree
+      assert out_avals.tree == tree
 
-    tr_solve_jaxpr, out_tree = pe.trace_to_jaxpr(
+    tr_solve_jaxpr, out_avals = pe.trace_to_jaxpr(
         _shape_checked(partial(transpose_solve, vecmat), "transpose_solve", has_aux),
-        in_args_tree, b_avals, transpose_solve_debug)
+        args_avals, transpose_solve_debug)
     tr_solve_jaxpr, tr_solve_consts = pe.separate_consts(tr_solve_jaxpr)
-    _check_tree("transpose_solve", "b", out_tree, tree, has_aux)
+    _check_tree("transpose_solve", "b", out_avals.tree, tree, has_aux)
 
   all_consts = [matvec_consts, vecmat_consts, solve_consts, tr_solve_consts]
   const_lengths = _LinearSolveTuple(*_map(len, all_consts))
   jaxprs = _LinearSolveTuple(
       matvec_jaxpr, vecmat_jaxpr, solve_jaxpr, tr_solve_jaxpr)
 
-  args = _flatten(all_consts) + b_flat
+  args = _flatten(all_consts) + list(b_flat)
   args = core.standard_insert_pvary(*args)
   out_flat = linear_solve_p.bind(*args, const_lengths=const_lengths, jaxprs=jaxprs)
 
-  return tree_unflatten(out_tree, out_flat)
+  return out_avals.update_from_list(out_flat).unflatten()
 
 
 def _linear_solve_abstract_eval(*args, const_lengths, jaxprs):

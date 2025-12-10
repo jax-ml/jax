@@ -24,7 +24,7 @@ from typing import Any, TypeVar
 
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_flatten_with_path, keystr,
-    equality_errors_pytreedef)
+    equality_errors_pytreedef, FlatTree)
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import config
@@ -142,23 +142,23 @@ def _switch_internal(
 
   dbgs = [api_util.debug_info("switch", branch, operands, {})
           for branch in branches]
-  ops, ops_tree = tree_flatten(operands)
-  ops_avals = tuple(map(core.get_aval, ops))
+  args = FlatTree.flatten((operands, {}))
+  avals = args.map(core.get_aval)
 
   if config.mutable_array_checks.value:
-    api_util.check_no_aliased_ref_args(lambda: dbgs[0], ops_avals, ops)
+    api_util.check_no_aliased_ref_args(lambda: dbgs[0], list(avals), list(args))
 
-  jaxprs_, out_trees = zip(*[pe.trace_to_jaxpr(
-      branch, ops_tree, ops_avals, dbg) for branch, dbg in zip(branches, dbgs)])
+  jaxprs_, out_avalss = zip(*[pe.trace_to_jaxpr(branch, avals, dbg)
+                             for branch, dbg in zip(branches, dbgs)])
   jaxprs_, all_consts = zip(*[pe.separate_consts(j) for j in jaxprs_])
   jaxprs, consts = _merge_common_consts(jaxprs_, all_consts)
 
   if config.mutable_array_checks.value:
-    api_util._check_no_aliased_closed_over_refs(dbgs[0], (*jaxprs[0].consts, *consts), ops)
-  for i, (out_tree, jaxpr) in enumerate(zip(out_trees[1:], jaxprs[1:])):
+    api_util._check_no_aliased_closed_over_refs(dbgs[0], (*jaxprs[0].consts, *consts), list(args))
+  for i, (out_avals, jaxpr) in enumerate(zip(out_avalss[1:], jaxprs[1:])):
     _check_branch_outputs(
         "switch", "branch 0", f"branch{i+1}", branches[0], branches[i+1],
-        out_trees[0], out_tree, jaxprs[0].out_avals, jaxpr.out_avals)
+        out_avalss[0], out_avals)
   # prune passthrough outputs
   fwds = [pe._jaxpr_forwarding(jaxpr.jaxpr) for jaxpr in jaxprs]
   in_fwd = [xs[0] if len(set(xs)) == 1 else None for xs in zip(*fwds)]
@@ -174,16 +174,16 @@ def _switch_internal(
   params = dict(branches=tuple(jaxprs))
   if branches_platforms is not None:
     params["branches_platforms"] = branches_platforms
-  out = cond_p.bind(index, *consts, *ops, **params)
+  out = cond_p.bind(index, *consts, *args, **params)
   out_ = iter(out)
 
-  all_inputs = [*consts, *ops]
+  all_inputs = [*consts, *args]
   out = [
     next(out_) if fwd is None else lax.asarray(all_inputs[fwd])
     for fwd in in_fwd
   ]
   assert next(out_, None) is None
-  return tree_unflatten(out_trees[0], out)
+  return out_avalss[0].update_from_list(out).unflatten()
 
 @partial(api_boundary, repro_api_name="jax_cond")
 def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
@@ -267,35 +267,33 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
     else:
       return false_fun(*operands)
 
-  ops, ops_tree = tree_flatten(operands)
-  ops_avals = tuple(map(core.get_aval, ops))
-  ops_avals = tuple(core.AvalQDD(a, cur_qdd(x)) if a.has_qdd  # type: ignore
-                    else a for a, x in zip(ops_avals, ops))
-
-
-  dbg_true_fun = api_util.debug_info("cond", true_fun, operands, {})
+  args = FlatTree.flatten((operands, {}))
+  avals = args.map(core.get_aval)
+  avals = avals.map2(
+      lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a,
+      args)
+  dbg_true = api_util.debug_info("cond", true_fun, operands, {})
   if config.mutable_array_checks.value:
-    api_util.check_no_aliased_ref_args(lambda: dbg_true_fun, ops_avals, ops)
-  dbg_false_fun = api_util.debug_info("cond", false_fun, operands, {})
+    api_util.check_no_aliased_ref_args(lambda: dbg_true, list(avals), list(args))
+  dbg_false = api_util.debug_info("cond", false_fun, operands, {})
 
-  true_jaxpr_, out_tree = pe.trace_to_jaxpr(
-      true_fun, ops_tree, ops_avals, dbg_true_fun)
+  true_jaxpr_, out_avals = pe.trace_to_jaxpr(true_fun, avals, dbg_true)
   true_jaxpr_, true_consts = pe.separate_consts(true_jaxpr_)
-  false_jaxpr_, false_out_tree = pe.trace_to_jaxpr(
-      false_fun, ops_tree, ops_avals, dbg_false_fun)
+  false_jaxpr_, false_out_avals = pe.trace_to_jaxpr(false_fun, avals, dbg_false)
   false_jaxpr_, false_consts = pe.separate_consts(false_jaxpr_)
   (true_jaxpr, false_jaxpr), consts = _merge_common_consts(
       (true_jaxpr_, false_jaxpr_), (true_consts, false_consts))
   if config.mutable_array_checks.value:
-    api_util._check_no_aliased_closed_over_refs(dbg_true_fun, (*true_jaxpr.consts, *consts), ops)
+    api_util._check_no_aliased_closed_over_refs(
+        dbg_true, (*true_jaxpr.consts, *consts), list(args))
 
   if any(isinstance(out_aval, AbstractRef) for out_aval in
          true_jaxpr.out_avals + false_jaxpr.out_avals):
     raise ValueError("Cannot return `Ref`s from `cond`.")
 
   _check_branch_outputs(
-      'cond', 'true_fun', 'false_fun', true_fun, false_fun, out_tree,
-      false_out_tree, true_jaxpr.out_avals, false_jaxpr.out_avals)
+      'cond', 'true_fun', 'false_fun',
+      true_fun, false_fun, out_avals, false_out_avals)
 
   # prune passthrough outputs
   true_fwds = pe._jaxpr_forwarding(true_jaxpr.jaxpr)
@@ -315,24 +313,23 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   false_jaxpr = replace_jaxpr_effects(false_jaxpr, joined_effects)
   true_jaxpr = replace_jaxpr_effects(true_jaxpr, joined_effects)
 
-  out = cond_p.bind(index, *consts, *ops, branches=(false_jaxpr, true_jaxpr))
+  out = cond_p.bind(index, *consts, *args, branches=(false_jaxpr, true_jaxpr))
   out_ = iter(out)
 
-  all_inputs = [*consts, *ops]
+  all_inputs = [*consts, *args]
   out = [
     next(out_) if fwd is None else lax.asarray(all_inputs[fwd])
     for fwd in in_fwd
   ]
   assert next(out_, None) is None
-  return tree_unflatten(out_tree, out)
+  return out_avals.update_from_list(out).unflatten()
 
 def _check_branch_outputs(
-    api_name, name1, name2, f1, f2, out_tree1, out_tree2, out_avals1,
-    out_avals2) -> None:
+    api_name, name1, name2, f1, f2, out_avals1, out_avals2) -> None:
   info1 = api_util.fun_sourceinfo(f1)
   info2 = api_util.fun_sourceinfo(f2)
   try:
-    outs1 = tree_unflatten(out_tree1, out_avals1)
+    outs1 = out_avals1.unflatten()
   except:
     paths = [None] * len(out_avals1)
     component = lambda _: ''
@@ -341,11 +338,11 @@ def _check_branch_outputs(
     paths, _ = unzip2(leaves_and_paths)  # type: ignore
     component = lambda p: f' at path {keystr(p)}' if p else ''
 
-  if out_tree1 != out_tree2:
+  if out_avals1.tree != out_avals2.tree:
     diffs = [f'{name1} output{component(p)} is a {thing1} but '
              f'{name2} output{component(p)} is a {thing2}, so {expl}'
              for p, thing1, thing2, expl
-             in equality_errors_pytreedef(out_tree1, out_tree2)]
+             in equality_errors_pytreedef(out_avals1.tree, out_avals2.tree)]
 
     if len(diffs) == 0:
       return  # the trees may have different aux data, but structures are same

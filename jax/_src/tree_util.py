@@ -34,10 +34,15 @@ export = set_module('jax.tree_util')
 traceback_util.register_exclusion(__file__)
 
 T = TypeVar("T")
+T1 = TypeVar("T1")
+T2 = TypeVar("T2")
+T3 = TypeVar("T3")
+T4 = TypeVar("T4")
 Typ = TypeVar("Typ", bound=type[Any])
 H = TypeVar("H", bound=Hashable)
 
 Leaf = Any
+PyTree = Any
 PyTreeDef = pytree.PyTreeDef
 
 default_registry = pytree.default_registry()
@@ -1336,3 +1341,114 @@ def _prefix_error(
      f"{prefix_tree_keys} and {full_tree_keys}")
   for k, t1, t2 in zip(prefix_tree_keys, prefix_tree_children, full_tree_children):
     yield from _prefix_error((*key_path, k), t1, t2)
+
+# === flat tree ===
+
+class FlatTree:
+  """A FlatTree stores a treedef and a flat list of values. It's meant to be
+  isomorphic to the corresponding pytree but we can map over it more easily.
+  Compared to `tree_map`, FlatTree.map has these benefits:
+    1. It doesn't touch user flatten/unflatten code (which shouldn't have side
+       effects but sometimes does in practice).
+    2. It can be faster, because it skips the recursive traversal.
+    3. It actually obeys the functor rules. For example,
+       `flat_tree.map(lambda x: (f(x), g(x))).unzip2()[0]` will give
+       the same result as `flat_tree.map(f)`, whereas in the `tree_map` version
+       the tuple-returning function would change the tree structure and `unzip`
+       wouldn't be able to recover it.
+  """
+  def __init__(self, vals:Sequence[T], treedef:PyTreeDef):
+    assert isinstance(treedef, pytree.PyTreeDef)
+    self.tree = treedef
+    self.vals = list(vals)
+
+  def map(self, f:Callable[[T1], T2]) -> FlatTree[T2]:
+    ans_vals = []
+    for x in self.vals:
+      ans_vals.append(f(x))
+    return FlatTree(ans_vals, self.tree)
+
+  def map2(
+      self:FlatTree[T1], f:Callable[[T1, T2], T3],
+      t2:FlatTree[T2]) -> FlatTree[T3]:
+
+    n = len(self)
+    assert len(t2) == n
+    ans_vals = []
+    for x1, x2 in zip(self.vals, t2.vals):
+      ans_vals.append(f(x1, x2))
+    return FlatTree(ans_vals, self.tree)
+
+  def map3(
+      self:FlatTree[T1], f:Callable[[T1, T2, T3], T4],
+      t2:FlatTree[T2], t3:FlatTree[T3]) -> FlatTree[T4]:
+    n = len(self)
+    assert len(t2) == n and len(t3) == n
+    ans_vals = []
+    for x1, x2, x3 in zip(self.vals, t2.vals, t3.vals):
+      ans_vals.append(f(x1, x2, x3))
+    return FlatTree(ans_vals, self.tree)
+
+  def zip(self, t2:FlatTree[T2]) -> FlatTree[tuple[T1, T2]]:
+    assert False
+
+  def unzip2(self:FlatTree[tuple[T1, T2]]) -> tuple[FlatTree[T1], FlatTree[T2]]:
+    ys = []
+    zs = []
+    for y, z in self.vals:
+      ys.append(y)
+      zs.append(z)
+    return FlatTree(ys, self.tree), FlatTree(zs, self.tree)
+
+  # TODO: add map3, zip3, unzip3 etc. as needed
+
+  @staticmethod
+  def pack(tree):
+    # We could generalize this to arbitrary pytrees of FlatTree but tuples/dicts
+    # are sufficient for now.
+    if isinstance(tree, FlatTree):
+      return tree
+    elif isinstance(tree, tuple):
+      vals = []
+      trees = []
+      for child_tree in tree:
+        child = FlatTree.pack(child_tree)
+        vals.extend(child.vals)
+        trees.append(child.tree)
+      return FlatTree(vals, treedef_tuple(trees))
+    elif isinstance(tree, dict):
+      # only empty case handled for now
+      if tree == {}:
+        return FlatTree.flatten({})
+      else:
+        assert False
+    else:
+      assert False
+
+  def unpack(self:FlatTree[tuple]) -> tuple[FlatTree]:
+    # TODO: this is O(N) not O(1) (with N as the number of leaves). If it
+    # becomes a problem we can fix it with a fancier data tree.
+    trees = treedef_children(self.tree)
+    children = []
+    offset = 0
+    for tree in trees:
+      new_offset = offset + tree.num_leaves
+      children.append(FlatTree(self.vals[offset:new_offset], tree))
+      offset = new_offset
+    return tuple(children)
+
+  @staticmethod
+  def flatten(tree: PyTree) -> FlatTree:
+    return FlatTree(*tree_flatten(tree))
+
+  def unflatten(self) -> PyTree:
+    return tree_unflatten(self.tree, self.vals)
+
+  def update_from_list(self, new_vals:list[T1]) -> FlatTree[T1]:
+    return FlatTree(new_vals, self.tree)
+
+  def __len__(self):
+    return self.tree.num_leaves
+
+  def __iter__(self):
+    return self.vals.__iter__()
