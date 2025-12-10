@@ -20,6 +20,7 @@ from jax._src.sharding_impls import (
     NamedSharding as NamedSharding,
     SingleDeviceSharding as SingleDeviceSharding,
     PmapSharding as _deprecated_PmapSharding,
+    default_pmap_sharding as default_pmap_sharding,
     set_mesh as set_mesh,
     get_mesh as get_mesh,
 )
