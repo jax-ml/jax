@@ -2451,8 +2451,15 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
     wrapped_fun = lu.wrap_init(f, params,
         debug_info=api_util.debug_info("lower_fun", fun, args, {}))
 
-    jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic(wrapped_fun,
-                                                               ctx.avals_in)
+    jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic(
+        wrapped_fun, ctx.avals_in)
+
+    if any(isinstance(e, core.InternalMutableArrayEffect) for e in jaxpr.effects):
+      from jax._src.interpreters import pxla  # type: ignore
+      closed_jaxpr = core.ClosedJaxpr(jaxpr, consts_for_constvars)
+      closed_jaxpr = pxla._discharge_internal_refs(closed_jaxpr)
+      jaxpr, consts_for_constvars = closed_jaxpr.jaxpr, closed_jaxpr.consts
+
     # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?
 
     if ctx.platforms is not None:
