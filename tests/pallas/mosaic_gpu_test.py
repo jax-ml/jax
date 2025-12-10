@@ -2563,6 +2563,23 @@ class PallasCallTest(PallasTest):
     )()
     np.testing.assert_array_equal(y, np.ones((), dtype=np.int32))
 
+  def test_replicated_layout(self):
+    shape = (32,)
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+    )
+    def kernel(src_ref, dst_ref):
+      layout = plgpu.Layout.TILED(
+        plgpu.Tiling(((32,), (1,))),
+        warp_dims=(plgpu.Replicated(4),),
+        lane_dims=(-2,),
+        vector_dim=-1,
+      )
+      dst_ref[...] = plgpu.load(src_ref, (), layout=layout)
+    src = jnp.arange(shape[0], dtype=jnp.float32)
+    np.testing.assert_array_equal(kernel(src), src)
+
 
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def setUp(self):
