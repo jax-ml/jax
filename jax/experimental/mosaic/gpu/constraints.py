@@ -490,10 +490,9 @@ Constraint = Equals | Relayout | NotOfType | IsTransferable | Divides
 
 def reduce_constraint(
     constraint: Constraint, assignments: dict[Variable, Constant]
-) -> Constraint | Tautological | Unsatisfiable:
+) -> Constraint | Unsatisfiable:
   """Reduces a constraint."""
 
-  new_constraint: Constraint
   match constraint:
     case Equals(lhs=lhs, rhs=rhs):
       lhs_red = reduce_expression(lhs, assignments)
@@ -502,7 +501,7 @@ def reduce_constraint(
       rhs_red = reduce_expression(rhs, assignments)
       if isinstance(rhs_red, Unsatisfiable):
         return Unsatisfiable()
-      new_constraint = Equals(lhs_red, rhs_red)
+      return Equals(lhs_red, rhs_red)
     case Relayout(source=source, target=target):
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
@@ -510,30 +509,25 @@ def reduce_constraint(
           target_red, Unsatisfiable
       ):
         return Unsatisfiable()
-      new_constraint = Relayout(source_red, target_red)
+      return Relayout(source_red, target_red)
     case NotOfType(expr=expr, type=type):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
-      new_constraint = NotOfType(expr_red, type)
+      return NotOfType(expr_red, type)
     case IsTransferable(source=source, target=target, shape=shape):
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
       if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
         return Unsatisfiable()
-      new_constraint = IsTransferable(source_red, target_red, shape)
+      return IsTransferable(source_red, target_red, shape)
     case Divides(expr=expr, tiling_multiple=tiling_multiple):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
-      new_constraint = Divides(expr_red, tiling_multiple)
+      return Divides(expr_red, tiling_multiple)
     case _ as never:
       assert_never(never)
-
-  constraint_holds = new_constraint.holds()
-  if constraint_holds is None:
-    return new_constraint
-  return Tautological() if constraint_holds else Unsatisfiable()
 
 
 @dataclasses.dataclass
@@ -618,10 +612,6 @@ class Unsatisfiable:
 
   def __and__(self, other: ConstraintSystem | Unsatisfiable) -> Unsatisfiable:
     return self
-
-
-class Tautological:
-  ...
 
 
 def non_splat_variables(
@@ -832,11 +822,16 @@ def _reduce_system_once(
         if not try_assign(var, cst):
           return Unsatisfiable()
         changed = True
-      case Tautological():
-        changed = True
       case _ as new_constraint:
-        changed |= new_constraint != constraint
-        constraints.append(new_constraint)
+        assert isinstance(new_constraint, Constraint)  # make pytype happy
+        match new_constraint.holds():
+          case None:
+            constraints.append(new_constraint)
+            changed |= new_constraint != constraint
+          case False:
+            return Unsatisfiable()
+          case True:
+            changed = True
 
   new_constraints = merge_divides_constraints(constraints)
   changed |= len(new_constraints) != len(constraints)
