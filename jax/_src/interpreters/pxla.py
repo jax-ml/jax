@@ -58,6 +58,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 from jax._src.layout import Layout, AutoLayout, Format
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
@@ -1363,20 +1364,29 @@ class ExecuteReplicated:
         input_bufs = self._add_tokens_to_inputs(input_bufs)
         results = self.xla_executable.execute_sharded(input_bufs, with_tokens=True)
 
-        result_token_bufs = results.disassemble_prefix_into_single_device_arrays(
-            len(self.ordered_effects))
+        if jaxlib_extension_version >= 391:
+          result_token_bufs = results.consume_with_handlers(
+              [lambda xs: xs] * len(self.ordered_effects), strict=False)
+        else:
+          result_token_bufs = results.disassemble_prefix_into_single_device_arrays(
+              len(self.ordered_effects))
         sharded_runtime_token = results.consume_token()
         self._handle_token_bufs(result_token_bufs, sharded_runtime_token)
       else:
         results = self.xla_executable.execute_sharded(input_bufs)
 
-      if dispatch.needs_check_special():
+      if jaxlib_extension_version >= 391 or not dispatch.needs_check_special():
+        handlers = self.out_handler.handlers
+        if dispatch.needs_check_special():
+          special_check = functools.partial(
+              dispatch.check_special_array, self.name)
+          handlers = [h.pre_wrap(special_check) for h in handlers]
+        out = results.consume_with_handlers(handlers)
+      else:
         out_arrays = results.disassemble_into_single_device_arrays()
         for arrays in out_arrays:
           dispatch.check_special(self.name, arrays)
         out = self.out_handler(out_arrays)
-      else:
-        out = results.consume_with_handlers(self.out_handler.handlers)
 
       if (self.pgle_profiler is not None and self.pgle_profiler.is_running()
           and len(out) > 0):

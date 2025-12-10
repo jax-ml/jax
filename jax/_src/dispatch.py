@@ -299,6 +299,15 @@ def check_special(name: str, bufs: Sequence[basearray.Array]) -> None:
     for buf in bufs:
       _check_special(name, buf.dtype, buf)
 
+
+def check_special_array(name: str, arr: array.ArrayImpl) -> array.ArrayImpl:
+  if needs_check_special():
+    if dtypes.issubdtype(arr.dtype, np.inexact):
+      for buf in arr._arrays:
+        _check_special(name, buf.dtype, buf)
+  return arr
+
+
 def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
   if dtypes.issubdtype(dtype, np.inexact):
     if config.debug_nans.value and np.any(np.isnan(np.asarray(buf))):
