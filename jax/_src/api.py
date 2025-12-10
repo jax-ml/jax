@@ -68,7 +68,7 @@ from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
-from jax._src.mesh import get_concrete_mesh
+from jax._src.mesh import get_concrete_mesh, get_abstract_mesh
 from jax._src.sharding_impls import (PmapSharding, PartitionSpec as P,
                                      NamedSharding)
 from jax._src.layout import Format
@@ -1191,6 +1191,9 @@ def vmap(fun: F,
                   _mapped_axis_size(fun, in_tree, args_flat, in_axes_flat, "vmap"))
     explicit_mesh_axis = _mapped_axis_spec(args_flat, in_axes_flat)
     if spmd_axis_name is not None and explicit_mesh_axis is not None:
+      spmd_axis_name = (
+          tuple(core.remove_size_one_mesh_axis(P(spmd_axis_name), get_abstract_mesh()))
+          if config.remove_size_one_mesh_axis_from_type.value else spmd_axis_name)
       if spmd_axis_name == explicit_mesh_axis:
         spmd_axis_name = None
       else:
