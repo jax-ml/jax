@@ -13,6 +13,9 @@
 # limitations under the License.
 
 
+import os
+import sysconfig
+
 from functools import reduce, partial
 
 from absl.testing import absltest
@@ -30,6 +33,26 @@ from jax.experimental.jet import jet, fact, zero_series
 from jax import lax
 
 jax.config.parse_flags_with_absl()
+
+
+# TODO(b/456211935): Remove this once jtu.is_tsan works properly.
+def _is_tsan() -> bool:
+  """Checks if the Python runtime was compiled with Thread Sanitizer (TSAN)."""
+  for var_name in ("CFLAGS", "LDFLAGS", "PY_CFLAGS",
+                   "PY_LDFLAGS", "CONFIG_ARGS"):
+    val = sysconfig.get_config_var(var_name)
+    if val and "-fsanitize=thread" in val:
+      return True
+
+  return False
+
+
+_IS_TSAN_FREETHREADING_RBE = (
+    bool(os.getenv("IS_JAX_RBE"))
+    and jtu.is_free_threading_active()
+    and _is_tsan()
+)
+
 
 def jvp_taylor(fun, primals, series):
   # Computes the Taylor series the slow way, with nested jvp.
@@ -289,6 +312,8 @@ class JetTest(jtu.JaxTestCase):
                                               atol=5e-3)
   @jtu.skip_on_devices("tpu")
   def test_logistic(self):   self.unary_check(lax.logistic, lims=[-100, 100], order=5)
+  @unittest.skipIf(_IS_TSAN_FREETHREADING_RBE,
+                   "Consumes too much RAM under FT TSAN: b/456211935")
   @jtu.skip_on_devices("tpu")
   def test_expit2(self):     self.expit_check(lims=[-500, 500], order=5)
   @jtu.skip_on_devices("tpu")
@@ -413,6 +438,8 @@ class JetTest(jtu.JaxTestCase):
       return jax.grad(f)(x, eps)
     jet(g, (1.,), ([1.],))  # doesn't crash
 
+  @unittest.skipIf(_IS_TSAN_FREETHREADING_RBE,
+                   "Consumes too much RAM under FT TSAN: b/456211935")
   def test_scatter_add(self):
     # very basic test from https://github.com/jax-ml/jax/issues/5365
     def f(x):
