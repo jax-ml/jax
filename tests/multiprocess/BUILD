@@ -107,8 +107,9 @@ jax_multiprocess_test(
     srcs = ["host_callback_test.py"],
     main = "host_callback_test.py",
     deps = [
-        "//jax:experimental",
         "//jax/_src:test_multiprocess",
+        "//jax/experimental",
+        "//jax/experimental:multihost_utils",
     ],
 )
 

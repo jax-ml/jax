@@ -574,7 +574,6 @@ jax_multiplatform_test(
         "tpu_v5p",
     ],
     deps = [
-        "//jax:experimental",
         "//jax/experimental:pallas_tpu",
     ] + py_deps([
         "absl/testing",
@@ -640,7 +639,6 @@ jax_multiplatform_test(
     ],
     enable_backends = ["cpu"],
     deps = [
-        "//jax:experimental",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
     ] + py_deps([
@@ -656,7 +654,7 @@ jax_multiplatform_test(
     ],
     enable_backends = ["cpu"],
     deps = [
-        "//jax:experimental",
+        "//jax/experimental",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
     ] + py_deps([
@@ -1139,7 +1137,6 @@ jax_multiplatform_test(
         "notap",
     ],
     deps = [
-        "//jax:experimental",
         "//jax/_src:test_multiprocess",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_experimental_gpu_ops",
@@ -1186,7 +1183,6 @@ jax_multiplatform_test(
         "notap",
     ],
     deps = [
-        "//jax:experimental",
         "//jax/_src:test_multiprocess",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_experimental_gpu_ops",
@@ -1215,7 +1211,6 @@ jax_multiplatform_test(
         "notap",
     ],
     deps = [
-        "//jax:experimental",
         "//jax/_src:test_multiprocess",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_experimental_gpu_ops",
