@@ -1907,7 +1907,7 @@ class PallasCallTest(PallasTest):
     y = jax.lax.iota(jnp.float32, 128) * 3
     np.testing.assert_array_equal(kernel(x, y), x + y)
 
-  def test_smem_aliasing_works(self):
+  def test_smem_aliasing_works_basic(self):
     self.skip_if_wg_semantics()
 
     in_shape = (2, 256)
@@ -1938,17 +1938,16 @@ class PallasCallTest(PallasTest):
                         plgpu.SMEM(
                             (128,),
                             jnp.float32,
-                            transforms=(plgpu.TilingTransform((64,)),),
-                    ),
+                            transforms=(plgpu.TilingTransform((64,)),)),
                     ]
                 ],
             )
         ],
     )
     def kernel(x_ref, o_ref128, aliased_ref):
-      smem_ref256, _, smem_ref128 = aliased_ref
+      smem_ref256, [_, [smem_ref128]] = aliased_ref
       # Ensure that extraction via index works the same as unfolding.
-      smem_ref128_2 = aliased_ref[2]
+      smem_ref128_2 = aliased_ref[1][1][0]
       self.assertIsInstance(smem_ref128, state_types.TransformedRef)
       self.assertIsInstance(smem_ref128_2, state_types.TransformedRef)
       self.assertIs(smem_ref128.ref, smem_ref128_2.ref)
@@ -2005,7 +2004,7 @@ class PallasCallTest(PallasTest):
         ],
     )
     def kernel(x_ref, o_refi4, aliased_ref):
-      _, smem_refi8, _, smem_refi4 = aliased_ref
+      [_, smem_refi8], [_, smem_refi4] = aliased_ref
       smem_refi8[...] = x_ref[...]
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(smem_refi4, o_refi4)
@@ -3415,7 +3414,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
         thread_name="x",
     )
     def kernel(x_ref, y_ref, aliased_ref, smem_ref, barrier_ref):
-      tmem_128x32a, tmem_128x32b, tmem_128x64 = aliased_ref
+      [tmem_128x32a, tmem_128x32b], tmem_128x64 = aliased_ref
       plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)
       plgpu.barrier_wait(barrier_ref)
       # Test tmem_128x32 a and b
@@ -4268,7 +4267,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
       plgpu.barrier_wait(tma_barrier)
       plgpu.copy_gmem_to_smem(b_gmem, b_smem, tma_barrier)
       plgpu.barrier_wait(tma_barrier)
-      acc_128, lhs_128, lhs_64, acc_64, _ = aliased_refs
+      [acc_128, lhs_128], [lhs_64, acc_64], _ = aliased_refs
 
       # Do 128x128 @ 128x128 matmul
       plgpu.async_store_tmem(lhs_128, plgpu.load(a_smem, (), layout=plgpu.Layout.TCGEN05))
@@ -4305,21 +4304,27 @@ class PallasCallSm100ATest(PallasSm100ATest):
 
     f = self.kernel(
         kernel,
-        out_shape=[jax.ShapeDtypeStruct(shape, dtype),
-                   jax.ShapeDtypeStruct(shape, dtype)],
+        out_shape=[
+            jax.ShapeDtypeStruct(shape, dtype),
+            jax.ShapeDtypeStruct(shape, dtype),
+        ],
         scratch_shapes=[
-          plgpu.SMEM(shape, dtype, transforms=transforms),  # a_smem
-          plgpu.SMEM(shape, dtype, transforms=transforms),  # b_smem
-          plgpu.SMEM(shape, dtype, transforms=transforms),  # out_smem
-          plgpu.Barrier(),  # tma_barrier
-          plgpu.Barrier(orders_tensor_core=True),  # mma_barrier
-          plgpu.RefUnion(   # aliased_refs
-            [plgpu.TMEM((128, 128), jnp.float32), # acc
-              plgpu.TMEM((128, 128), dtype, packed=True)],  # lhs
-            [plgpu.TMEM((128, 64), dtype, packed=True),  # lhs
-             plgpu.TMEM((128, 128), jnp.float32)],  # acc
-             plgpu.TMEM((128, 128), jnp.float32)  # unused
-          ),
+            plgpu.SMEM(shape, dtype, transforms=transforms),  # a_smem
+            plgpu.SMEM(shape, dtype, transforms=transforms),  # b_smem
+            plgpu.SMEM(shape, dtype, transforms=transforms),  # out_smem
+            plgpu.Barrier(),  # tma_barrier
+            plgpu.Barrier(orders_tensor_core=True),  # mma_barrier
+            plgpu.RefUnion(  # aliased_refs
+                [
+                    plgpu.TMEM((128, 128), jnp.float32),  # acc
+                    plgpu.TMEM((128, 128), dtype, packed=True),  # lhs
+                ],
+                [
+                    plgpu.TMEM((128, 64), dtype, packed=True),  # lhs
+                    plgpu.TMEM((128, 128), jnp.float32),  # acc
+                ],
+                plgpu.TMEM((128, 128), jnp.float32),  # unused
+            ),
         ],
     )
     x = jax.random.uniform(jax.random.key(0), shape=shape, dtype=dtype)
