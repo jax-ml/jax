@@ -598,11 +598,10 @@ class ValAccum(GradAccum):
   def freeze(self):
     return self.val
 
-# class NullAccum(GradAccum):
-#   aval: core.AbstractValue
-#   def __init__(self, aval): self.aval = aval
-#   def accum(self, x): return
-#   def freeze(self): assert False
+class NullAccum(GradAccum):
+  def __init__(self): pass
+  def accum(self, x): return
+  def freeze(self): assert False
 
 fancy_transposes: dict[core.Primitive, Callable] = {}
 
