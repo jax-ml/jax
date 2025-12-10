@@ -142,9 +142,12 @@ def iscomplexobj(x: Any) -> bool:
     >>> jnp.iscomplexobj(jnp.array([0, 1+2j]))
     True
   """
-  # Check for int here to avoid potential overflow in jnp.array below.
-  if x is None or isinstance(x, int):
+  # Fast path for common types.
+  if isinstance(x, (complex, np.complexfloating)):
+    return True
+  if x is None or isinstance(x, (bool, int, float, str, np.generic)):
     return False
+  # Fall back to dtype attribute lookup.
   try:
     typ = x.dtype.type
   except AttributeError:
