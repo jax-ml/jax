@@ -8006,6 +8006,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return x.at[i].set(x_j, out_sharding=jax.typeof(x).sharding)
     f2(x,i,j)  # doesn't crash
 
+  # TODO(b/467679041): SIGILL in libtpu nightly with freethreaded Python.
+  @jtu.skip_on_devices("tpu")
   @jtu.with_explicit_mesh((4, 2), ('x', 'y'))
   def test_conv_general_dilated(self, mesh):
     arr = jax.device_put(np.zeros((16, 128, 8)), P('x', 'y'))
