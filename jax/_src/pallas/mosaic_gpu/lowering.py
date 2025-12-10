@@ -1717,9 +1717,12 @@ def _swap_lowering_rule(
           layout=value.layout,
       )
       value.store_tiled(x_smem, swizzle=swizzle)
-    case ():
+    case () | (gpu_core.TransposeRef((1, 0)),):
+      transposed = bool(transforms)
       match value.layout:
         case mgpu.TiledLayout():
+          if transposed:
+            x_smem = mgpu.memref_transpose(x_smem, (1, 0))
           old_value = mgpu.FragmentedArray.load_untiled(
               x_smem,
               layout=value.layout,
@@ -1728,6 +1731,8 @@ def _swap_lowering_rule(
           )
           value.store_untiled(x_smem, optimized=False)
         case _:
+          if transposed:
+            raise NotImplementedError(f"Unsupported transforms: {transforms}")
           old_value = mgpu.FragmentedArray.load_strided(
               x_smem, is_signed=mgpu_utils.is_signed(v_aval.dtype)
           )

@@ -1056,12 +1056,6 @@ class PallasCallTest(PallasTest):
     def is_transposed(layout):
       return layout == plgpu.Layout.WGMMA_TRANSPOSED
 
-    if (
-        self.LOWERING_SEMANTICS == mgpu.LoweringSemantics.Lane
-        and is_transposed(dst_layout)
-    ):
-      self.skipTest("Not implemented: transposed, not tiled")
-
     shape, dtype = (128, 128), jnp.float32
 
     @functools.partial(
