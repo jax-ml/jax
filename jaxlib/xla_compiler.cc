@@ -1330,9 +1330,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
           nb::lock_self())
       .def(
           "num_devices",
-          [](const xla::HloSharding& self) {
-            return self.tile_assignment().num_elements();
-          },
+          [](const xla::HloSharding& self) { return self.num_devices(); },
           nb::lock_self())
       .def(
           "num_dimensions",
@@ -1356,9 +1354,8 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def(
           "tile_assignment_devices",
           [](const xla::HloSharding& self) {
-            auto span =
-                absl::MakeConstSpan(self.tile_assignment().array().data(),
-                                    self.tile_assignment().num_elements());
+            auto span = absl::MakeConstSpan(
+                self.tile_assignment().array().data(), self.num_devices());
             CHECK(span.data());
             return span;
           },
