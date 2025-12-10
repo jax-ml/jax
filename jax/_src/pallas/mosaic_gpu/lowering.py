@@ -1860,6 +1860,14 @@ def _broadcast_in_dim_lowering_rule(
   if (isinstance(x.layout, mgpu.WGSplatFragLayout) and
       broadcast_dimensions == tuple(range(rank_diff, rank_diff + x_aval.ndim))):
     return x.broadcast(shape)
+  if (
+      isinstance(x.layout, mgpu.WGStridedFragLayout)
+      and broadcast_dimensions == tuple(range(rank_diff, y_aval.ndim))
+  ):
+    new_layout = mgpu.WGStridedFragLayout(
+        shape=y_aval.shape, vec_size=x.layout.vec_size
+    )
+    return x.broadcast_in_dim(y_aval.shape, broadcast_dimensions, new_layout)
   if not isinstance(layout := x.layout, mgpu.TiledLayout):
     raise NotImplementedError(f"Unsupported layout: {x.layout}")
   if any(d1 >= d2 for d1, d2 in zip(broadcast_dimensions[:-1], broadcast_dimensions[1:])):

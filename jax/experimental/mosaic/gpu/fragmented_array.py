@@ -2504,6 +2504,20 @@ class FragmentedArray:
       return type(self).splat(
         self.registers.item(), shape, layout, is_signed=self.is_signed
       )
+    if isinstance(self.layout, WGStridedFragLayout) and isinstance(layout, WGStridedFragLayout):
+      new_dims = set(range(len(shape))) - set(source_dimensions)
+      vec_match = self.layout.vec_size == layout.vec_size
+      broadcast_dim_match = new_dims == set(range(len(new_dims)))
+      assert layout.shape == shape, (layout.shape, shape)
+      if vec_match and broadcast_dim_match:
+        return FragmentedArray(
+            _registers=np.tile(
+                self.registers,
+                np.prod(shape[:len(new_dims)]),
+            ),
+            _layout=layout,
+            _is_signed=self.is_signed,
+        )
     if not isinstance(self.layout, TiledLayout) or not isinstance(layout, TiledLayout):
       raise NotImplementedError(self.layout, layout)
     if any(d1 >= d2 for d1, d2 in zip(source_dimensions, source_dimensions[1:])):

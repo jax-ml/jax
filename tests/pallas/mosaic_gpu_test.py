@@ -2407,6 +2407,22 @@ class PallasCallTest(PallasTest):
         shape, plgpu.Layout.TCGEN05_TMEM_NATIVE, axis=1, hint=False
     )
 
+  def test_broadcast_in_dim_wg_strided_majormost_dim(self):
+    self.skip_if_wg_semantics()
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((256, 128), jnp.float32),
+    )
+    def kernel(x_ref, y_ref):
+      to_be_broadcasted = plgpu.load(
+          x_ref, (), layout=plgpu.Layout.WG_STRIDED((128,), 1)
+      )
+      broadcasted = lax.broadcast_in_dim(to_be_broadcasted, (256, 128), (1,))
+      y_ref[...] = broadcasted
+
+    result = jax.random.uniform(jax.random.key(0), shape=(128,), dtype=jnp.float32)
+    np.testing.assert_array_equal(kernel(result), jnp.broadcast_to(result[None,:], (256, 128)))
+
   def test_broadcast_in_dim_tcgen05_native_layout(self):
     @functools.partial(
         self.kernel,
