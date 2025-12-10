@@ -129,6 +129,7 @@ if [[ -n "$OUTPUT_BEP_FILE" ]]; then
   if [[ -n "$url" ]]; then
     echo "BES link: $url" >> $GITHUB_STEP_SUMMARY
     echo "::notice:: BES link: $url"
+
   else
     echo "Could not parse build id from the invocation" 
   fi

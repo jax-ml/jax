@@ -94,3 +94,5 @@ jobs:
       - name: "Bazel CPU tests with build_jaxlib=${{ format('{0}', inputs.build_jaxlib) }}"
         timeout-minutes: 60
         run: ./ci/run_bazel_test_cpu_rbe.sh
+      - name: "Print BES link"
+        run: ./ci/print_bes_link.sh
