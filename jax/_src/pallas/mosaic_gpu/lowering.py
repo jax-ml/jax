@@ -2217,6 +2217,14 @@ def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
   return res
 
 
+@register_lowering_rule(lax.clamp_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(lax.clamp_p, mgpu.LoweringSemantics.Warpgroup)
+def _clamp_lowering_rule(ctx: LoweringRuleContext, l, x, u):
+  return _lower_fun(
+      lambda l, x, u: lax.min(lax.max(x, l), u), multiple_results=False
+  )(ctx, l, x, u)
+
+
 @register_lowering_rule(lax.square_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.square_p, mgpu.LoweringSemantics.Warpgroup)
 def _square_lowering_rule(ctx: LoweringRuleContext, x):

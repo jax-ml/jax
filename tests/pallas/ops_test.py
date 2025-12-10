@@ -1017,6 +1017,29 @@ class OpsTest(PallasBaseTest):
     expected = lax.is_finite(x)
     self.assertArraysEqual(out, expected)
 
+  @parameterized.parameters(jnp.float32, jnp.bfloat16, jnp.int32, jnp.int16)
+  def test_clamp(self, dtype):
+    if dtype == jnp.int16 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("int16 is not supported on TPU")
+
+    k1, k2, k3 = random.split(jax.random.key(0), num=3)
+    if jnp.issubdtype(dtype, jnp.floating):
+      lo_ = random.normal(k1, (8, 128), dtype=dtype)
+      hi_ = random.normal(k2, (8, 128), dtype=dtype)
+      x = random.normal(k3, (8, 128), dtype=dtype)
+    else:
+      lo_ = random.randint(k1, (8, 128), -100, 100, dtype=dtype)
+      hi_ = random.randint(k2, (8, 128), -100, 100, dtype=dtype)
+      x = random.randint(k3, (8, 128), -100, 100, dtype=dtype)
+    lo = jnp.minimum(lo_, hi_)
+    hi = jnp.maximum(lo_, hi_)
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((8, 128), dtype),
+    )
+    def kernel(lo_ref, x_ref, hi_ref, o_ref):
+      o_ref[...] = lax.clamp(lo_ref[...], x_ref[...], hi_ref[...])
+    np.testing.assert_array_equal(kernel(lo, x, hi), lax.clamp(lo, x, hi))
+
   @parameterized.named_parameters(
       (dtype.__name__, dtype)
       for dtype in (jnp.float32, jnp.float16, jnp.bfloat16)
