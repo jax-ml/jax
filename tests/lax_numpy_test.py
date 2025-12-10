@@ -3613,6 +3613,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np.iscomplexobj, jnp.iscomplexobj, args_maker)
     self._CompileAndCheck(jnp.iscomplexobj, args_maker)
 
+  @parameterized.parameters(
+      None, bool(1), int(1), float(1), complex(1),
+      np.int32(0), np.float32(1), np.complex64(1),
+      (np.arange(5),)
+  )
+  def testIsComplexObjTransferGuard(self, val):
+    with jax.transfer_guard("disallow"):
+      jnp.iscomplexobj(val)
+
   def testIsClose(self):
     c_isclose = jax.jit(jnp.isclose)
     c_isclose_nan = jax.jit(partial(jnp.isclose, equal_nan=True))
@@ -4910,6 +4919,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         jax_result = jnp.arange(*args)
       np_result = np.arange(*args)
       self.assertArraysEqual(jax_result, np_result)
+
+  @parameterized.parameters(int, float, np.int32, np.float32)
+  def testArangeTransferGuard(self, typ):
+    # Ensure that simple arange calls avoid host-to-device transfer.
+    with jax.transfer_guard("disallow"):
+      jnp.arange(typ(5))
 
   def testIssue830(self):
     a = jnp.arange(4, dtype=jnp.complex64)
