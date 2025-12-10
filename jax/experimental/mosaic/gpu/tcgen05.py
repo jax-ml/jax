@@ -666,7 +666,7 @@ def _do_mma(
           scale_id, scale_id, a_transpose, b_transpose
       )
       assert m == 128
-      assert n % 128 == 0
+      assert (n * num_cta) % 128 == 0
       # A scales are sharded, B scales are replicated across CTAs.
       a_scale_addr_offset = arith.constant(i32, k_step // scale_steps * 4)
       b_scale_addr_offset = arith.constant(i32, k_step // scale_steps * n // 32 * num_cta)
