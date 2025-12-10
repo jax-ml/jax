@@ -27,6 +27,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.api import vjp3
 from jax._src.util import safe_map, safe_zip
+from jax._src.interpreters import mlir
 from jax.sharding import NamedSharding, PartitionSpec as P, AxisType
 import jax.numpy as jnp
 
@@ -1030,6 +1031,28 @@ class MutableArrayTest(jtu.JaxTestCase):
     ref = jax.new_ref(jnp.array([1, 2, 3]))
     y = ref[None]
     self.assertEqual(y.shape, (1, 3))
+
+  def test_what_if_you_lower_fun_something_with_internal_effects(self):
+    bjp_p = core.Primitive('bjp')
+
+    @bjp_p.def_abstract_eval
+    def _(aval):
+      return aval
+
+    def lowering(x):
+      x_ref = jax.new_ref(x)
+      x_ref[...] += 1
+      x_ref[...] += -1
+      return jax.freeze(x_ref)
+
+    mlir.register_lowering(bjp_p, mlir.lower_fun(lowering, multiple_results=False))
+
+    @jax.jit
+    def f(x):
+      return bjp_p.bind(x)
+
+    f(3.)  # don't crash
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
