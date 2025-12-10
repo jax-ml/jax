@@ -389,25 +389,29 @@ class IsTransferable:
 
     Returns `None` if the constraint can't be checked.
     """
-    source = self.source
-    target = self.target
 
-    if isinstance(source, TMEMLayout) and isinstance(target, RegisterLayout):
-      return self._is_valid_tmem_transfer(source.value, target.value)
-    if isinstance(target, TMEMLayout) and isinstance(source, RegisterLayout):
-      return self._is_valid_tmem_transfer(target.value, source.value)
-    if isinstance(source, TMEMLayout) and isinstance(target, TMEMLayout):
-      return source == target
-    if isinstance(source, SMEMTiling) and isinstance(target, RegisterLayout):
-      return self._is_valid_smem_transfer(source.value, target.value)
-    if isinstance(target, SMEMTiling) and isinstance(source, RegisterLayout):
-      return self._is_valid_smem_transfer(target.value, source.value)
-    if isinstance(target, Constant) and isinstance(source, Constant):
-      source_type = type(source).__name__
-      target_type = type(target).__name__
-      raise NotImplementedError(f"Unsupported transfer: {source_type} -> {target_type}")
+    assert self.source != self.target, (
+        "IsTransferable constraints within the same memory space are not"
+        " supported."
+    )
 
-    return None
+    match self.source, self.target:
+      case TMEMLayout(value=src), RegisterLayout(value=dst):
+        return self._is_valid_tmem_transfer(src, dst)
+      case RegisterLayout(value=src), TMEMLayout(value=dst):
+        return self._is_valid_tmem_transfer(dst, src)
+      case SMEMTiling(value=src), RegisterLayout(value=dst):
+        return self._is_valid_smem_transfer(src, dst)
+      case RegisterLayout(value=src), SMEMTiling(value=dst):
+        return self._is_valid_smem_transfer(dst, src)
+      case Constant(), Constant():
+        source_type = type(self.source).__name__
+        target_type = type(self.target).__name__
+        raise NotImplementedError(
+            f"Unsupported transfer: {source_type} -> {target_type}"
+        )
+      case _:
+        return None
 
   def __str__(self):
     return f"IsTransferable({self.source}  ⟶ {self.target})"
