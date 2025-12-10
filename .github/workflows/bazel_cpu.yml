@@ -95,4 +95,6 @@ jobs:
         timeout-minutes: 60
         run: ./ci/run_bazel_test_cpu_rbe.sh
       - name: "Print BES link"
+        env:
+          OUTPUT_BEP_FILE: ${{ env.OUTPUT_BEP_FILE }}
         run: ./ci/print_bes_link.sh
