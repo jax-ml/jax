@@ -1365,6 +1365,27 @@ def _get_sds(aval: jax_core.AbstractValue):
 core_map_p = jax_core.Primitive("core_map")
 core_map_p.multiple_results = True
 
+def _core_map_is_high(*avals, jaxpr, **params):
+  del avals, params
+  return jaxpr.is_high
+core_map_p.is_high = _core_map_is_high  # type: ignore[method-assign]
+
+def _core_map_to_lojax(*consts, jaxpr, mesh, **params):
+  closed_hi_jaxpr = jax_core.ClosedJaxpr(jaxpr, consts)
+  with (
+      tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
+      jax_core.extend_axis_env_nd(mesh.shape.items()),
+  ):
+    closed_lo_jaxpr = pe.lower_jaxpr(closed_hi_jaxpr)
+  assert not closed_lo_jaxpr.is_high
+  return core_map_p.bind(
+      *closed_lo_jaxpr.consts,
+      jaxpr=closed_lo_jaxpr.jaxpr,
+      mesh=mesh,
+      **params,
+  )
+core_map_p.to_lojax = _core_map_to_lojax
+
 
 def core_map(
     mesh,

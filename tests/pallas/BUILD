@@ -538,6 +538,7 @@ jax_multiplatform_test(
         "notsan",  # Times out.
     ],
     deps = [
+        "//jax/experimental:hijax",
         "//jax/experimental:mesh_utils",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",

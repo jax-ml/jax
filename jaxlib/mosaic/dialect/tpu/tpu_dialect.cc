@@ -475,6 +475,15 @@ MemRefType getMemRefType(Value value) {
   return cast<MemRefType>(value.getType());
 }
 
+template <typename Op>
+bool checkBothOperandsDivisible(Value value, int64_t divisor, int64_t fuel) {
+  if (auto op = value.getDefiningOp<Op>()) {
+    return isGuaranteedDivisible(op.getLhs(), divisor, fuel / 2) &&
+           isGuaranteedDivisible(op.getRhs(), divisor, (fuel + 1) / 2);
+  }
+  return false;
+}
+
 bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
   if (fuel <= 0) {
     return false;
@@ -497,9 +506,16 @@ bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
   if (auto cast_op = value.getDefiningOp<arith::IndexCastOp>()) {
     return isGuaranteedDivisible(cast_op.getOperand(), divisor, fuel - 1);
   }
-  if (auto add_op = value.getDefiningOp<arith::AddIOp>()) {
-    return isGuaranteedDivisible(add_op.getRhs(), divisor, fuel / 2) &&
-           isGuaranteedDivisible(add_op.getLhs(), divisor, (fuel + 1) / 2);
+  if (checkBothOperandsDivisible<arith::AddIOp>(value, divisor, fuel) ||
+      checkBothOperandsDivisible<arith::SubIOp>(value, divisor, fuel) ||
+      checkBothOperandsDivisible<arith::RemSIOp>(value, divisor, fuel) ||
+      checkBothOperandsDivisible<arith::MinSIOp>(value, divisor, fuel)) {
+    return true;
+  }
+  if (auto select_op = value.getDefiningOp<arith::SelectOp>()) {
+    return isGuaranteedDivisible(select_op.getTrueValue(), divisor, fuel / 2) &&
+           isGuaranteedDivisible(select_op.getFalseValue(), divisor,
+                                 (fuel + 1) / 2);
   }
   return false;
 }
