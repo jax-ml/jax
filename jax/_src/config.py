@@ -31,7 +31,7 @@ from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
 from jax._src import logging_config
 
-config_ext = xla_client._xla.config
+config_ext = xla_client._jax.config
 
 logger = logging.getLogger(__name__)
 

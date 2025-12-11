@@ -49,7 +49,7 @@ from jax._src.partition_spec import PartitionSpec
 from jax._src.util import safe_zip, use_cpp_class, use_cpp_method
 import numpy as np
 
-config_ext = xc._xla.config
+config_ext = xc._jax.config
 
 Shape = tuple[int, ...]
 Device = xc.Device
