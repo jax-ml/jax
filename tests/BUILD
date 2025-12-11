@@ -2071,6 +2071,15 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "export_serialization_back_compat_test",
     srcs = ["export_serialization_back_compat_test.py"],
+    enable_backends = [
+        "cpu",
+        "gpu",
+        "tpu",
+    ],
+    enable_configs = [
+        "tpu_v3_x4",
+        "gpu_h100x2",
+    ],
     tags = [],
     deps = [
         "//jax/_src:internal_export_back_compat_test_data",

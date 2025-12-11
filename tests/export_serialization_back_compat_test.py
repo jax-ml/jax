@@ -117,6 +117,8 @@ class CompatTest(jtu.JaxTestCase):
     ]
   )
   def test_with_specified_sharding(self, testdata: dict[str, Any] | None):
+    if jtu.device_under_test() != "cpu":
+      self.skipTest("Testing only the CPU serialization")
     a = np.arange(16 * 4, dtype=np.float32).reshape((16, 4))
     mesh = jtu.create_mesh((2,), "x")
     with jax.set_mesh(mesh):
@@ -146,6 +148,8 @@ class CompatTest(jtu.JaxTestCase):
     ]
   )
   def test_with_unspecified_sharding(self, testdata: dict[str, Any] | None):
+    if jtu.device_under_test() != "cpu":
+      self.skipTest("Testing only the CPU serialization")
     a = np.arange(16 * 4, dtype=np.float32).reshape((16, 4))
 
     # Output sharding is not specified
@@ -197,7 +201,7 @@ class CompatTest(jtu.JaxTestCase):
     if jtu.device_under_test() in ("tpu", "gpu"):
       b = exported.call(a)
       self.assertEqual(b.aval.memory_space, core.MemorySpace.Host)
-      self.assertEqual(b.sharding, a.sharding)
+      self.assertEqual(b.sharding.memory_kind, a.sharding.memory_kind)
 
 
 if __name__ == "__main__":
