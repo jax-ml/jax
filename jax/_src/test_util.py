@@ -1554,7 +1554,7 @@ def with_explicit_mesh(sizes, names, axis_types=None, iota_order=False):
 def create_mesh(mesh_shape, axis_names, iota_order=False, axis_types=None):
   size = math.prod(mesh_shape)
   if len(xla_bridge.devices()) < size:
-    raise unittest.SkipTest(f"Test requires {size} global devices.")
+    raise unittest.SkipTest(f"Test requires {size} global devices and found {len(xla_bridge.devices())}.")
   if iota_order:
     devices = sorted(xla_bridge.devices(), key=lambda d: d.id)
     mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
