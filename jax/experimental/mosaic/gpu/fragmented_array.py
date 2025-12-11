@@ -681,6 +681,11 @@ class WGStridedFragLayout:
       raise ValueError(f"Shape {shape} is not compatible with {self}")
     return (math.prod(self.shape) // (WARPGROUP_SIZE * self.vec_size),)
 
+  def can_broadcast_to(self, shape) -> bool:
+    """Check that the shape can be broadcast."""
+    ones = [i for i, elem in enumerate(shape) if elem == 1]
+    return list(range(len(ones))) == ones
+
   def shape_from_registers_shape(
       self, shape: tuple[int, ...]
   ) -> tuple[int, ...]:
@@ -2447,6 +2452,20 @@ class FragmentedArray:
     )
 
   def broadcast(self, shape) -> FragmentedArray:
+    if isinstance(self.layout, WGStridedFragLayout):
+      if not self.layout.can_broadcast_to(shape):
+        raise NotImplementedError(
+            f"Only major-most broadcast is implemented. Layout: {self.layout},"
+            f" to shape: {shape}."
+        )
+
+      one_dims = [i for i, elem in enumerate(self.shape) if elem == 1]
+      assert list(range(len(one_dims))) == one_dims, (one_dims,)
+      return FragmentedArray(
+          _registers=np.tile(self.registers, np.prod(shape[:len(one_dims)])),
+          _layout=WGStridedFragLayout(shape, self.layout.vec_size),
+          _is_signed=self.is_signed,
+      )
     if not isinstance(self.layout, WGSplatFragLayout):
       raise NotImplementedError(self.layout)
 

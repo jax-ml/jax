@@ -2416,6 +2416,38 @@ class PallasCallTest(PallasTest):
     result = jax.random.uniform(jax.random.key(0), shape=(128,), dtype=jnp.float32)
     np.testing.assert_array_equal(kernel(result), jnp.broadcast_to(result[None,:], (256, 128)))
 
+  @parameterized.parameters(
+      ((64, 128),),
+      ((2, 32, 128),),
+  )
+  def test_broadcast_wg_strided_majormost_dim(self, out_shape):
+    self.skip_if_wg_semantics()
+    num_major_dims = len(out_shape) - 1
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
+    )
+    def kernel(x_ref, side_load_ref, y_ref):
+      x_strided = plgpu.load(
+          x_ref, (), layout=plgpu.Layout.WG_STRIDED((128,), vec_size=1)
+      )
+      side_load_strided = plgpu.load(
+          side_load_ref, (), layout=plgpu.Layout.WG_STRIDED(out_shape, vec_size=1)
+      )
+      if num_major_dims == 1:
+        x_expanded = x_strided[None, :]
+      else:
+        x_expanded = x_strided[None, None, :]
+      y_ref[...] = x_expanded + side_load_strided[...]
+
+    inp = jax.random.uniform(jax.random.key(0), shape=(128,), dtype=jnp.float32)
+    side_load = jax.random.uniform(jax.random.key(1), shape=out_shape, dtype=jnp.float32)
+    if num_major_dims == 1:
+      expected = jnp.broadcast_to(inp[None, ...], out_shape)
+    else:
+      expected = jnp.broadcast_to(inp[None, None, ...], out_shape)
+    np.testing.assert_array_equal(kernel(inp, side_load), jnp.broadcast_to(expected + side_load, out_shape))
+
   def test_broadcast_in_dim_tcgen05_native_layout(self):
     @functools.partial(
         self.kernel,
