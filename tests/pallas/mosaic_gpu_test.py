@@ -3251,6 +3251,36 @@ class PallasCallSm90ATest(PallasSm90ATest):
     )
     np.testing.assert_allclose(f(a, b), out_ref, rtol=1e-3)
 
+  def test_load_store_wgmma_transposed(self):
+    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
+      self.skipTest("Doesn't work in WG semantics")
+    transforms = (plgpu.TilingTransform((8, 16)),
+                  plgpu.SwizzleTransform(64))
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([8, 64], jnp.float32),
+        in_specs=[
+            pl.BlockSpec(memory_space=plgpu.GMEM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        scratch_shapes=[
+            plgpu.SMEM((8, 64), jnp.float32, transforms=transforms),
+            plgpu.Barrier(),
+        ],
+    )
+    def kernel(x_gmem, o_ref, x_smem, barrier):
+      plgpu.copy_gmem_to_smem(x_gmem, x_smem, barrier)
+      plgpu.barrier_wait(barrier)
+      x = plgpu.load(x_smem.T, (), layout=plgpu.Layout.WGMMA_TRANSPOSED)
+      x_smem.T[...] = x + 1
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(x_smem, o_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jax.random.uniform(jax.random.key(42), shape=(8, 64), dtype=jnp.float32)
+    result = kernel(x)
+    np.testing.assert_array_equal(result, x + 1)
+
 
 class PallasCallSm90AWGTest(
     PallasCallSm90ATest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
