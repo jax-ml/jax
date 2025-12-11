@@ -674,7 +674,9 @@ def check_symbolic_scope_errors(fun_jax, args_specs, kwargs_specs):
 
 
 def to_named_sharding_with_abstract_mesh(
-    s: LoweringSharding, aval: core.ShapedArray) -> NamedSharding | None:
+    s: LoweringSharding,
+    aval: core.ShapedArray,
+    mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh | None) -> NamedSharding | None:
   # We store and serialize all shardings as NamedShardings with abstract mesh,
   # even if they are SingleDeviceShardings.
   if isinstance(s, sharding_impls.UnspecifiedValue):
@@ -687,6 +689,16 @@ def to_named_sharding_with_abstract_mesh(
       mesh_lib.empty_abstract_mesh,
       sharding_impls.PartitionSpec(*([None] *aval.ndim)),
       memory_kind=s.memory_kind)
+
+  if isinstance(s, sharding_impls.GSPMDSharding):
+    assert mesh is not None
+    assert mesh.size == len(s.device_set), (mesh, s)
+    return sharding_impls.cached_named_sharding(
+      mesh,
+      sharding_impls.parse_flatten_op_sharding(
+        s._to_xla_hlo_sharding(aval.ndim), mesh)[0],  # type: ignore
+      memory_kind=s.memory_kind)
+
   assert False, f"Unsupported sharding: {s}"
 
 def named_to_hlo_sharding(s: NamedSharding | None,
@@ -759,13 +771,6 @@ def _export_lowered(
   else:
     out_avals_flat = lowered.compile_args["out_avals"]  # type: ignore
 
-  # out_avals come from the Jaxpr, and do not always reflect the out_shardings
-  # specification, e.g., for the memory space.
-  out_avals_flat = tuple(
-      aval.update(memory_space=core.mem_kind_to_space(s.memory_kind))
-      if not isinstance(s, sharding_impls.UnspecifiedValue) else aval
-      for aval, s in zip(out_avals_flat, lowering.compile_args["out_shardings"]))
-
   # Log and then check the module.
   logmsg = (f"fun_name={fun_name} version={version} "
             f"lowering_platforms={lowering._platforms} "  # type: ignore[unused-ignore,attribute-error]
@@ -790,18 +795,6 @@ def _export_lowered(
                                          module_kept_var_idx,
                                          len(args_avals_flat))
 
-  in_named_shardings = tuple(
-    to_named_sharding_with_abstract_mesh(s, aval)
-    for s, aval in zip(all_in_shardings, args_avals_flat))
-
-  out_named_shardings = tuple(
-    to_named_sharding_with_abstract_mesh(s, aval)
-    for s, aval in zip(lowering.compile_args["out_shardings"], out_avals_flat))
-
-  device_assignment = lowering._device_list  # type: ignore
-  if _device_assignment_for_internal_jax2tf_use_only is not None:
-    _device_assignment_for_internal_jax2tf_use_only[0] = device_assignment
-
   cur_mesh = None
   if config.use_shardy_partitioner.value:
     for sharding in itertools.chain.from_iterable([
@@ -811,6 +804,18 @@ def _export_lowered(
         break
     if cur_mesh and isinstance(cur_mesh, mesh_lib.Mesh):
       cur_mesh = cur_mesh.abstract_mesh
+
+  in_named_shardings = tuple(
+    to_named_sharding_with_abstract_mesh(s, aval, cur_mesh)
+    for s, aval in zip(all_in_shardings, args_avals_flat))
+
+  out_named_shardings = tuple(
+    to_named_sharding_with_abstract_mesh(s, aval, cur_mesh)
+    for s, aval in zip(lowering.compile_args["out_shardings"], out_avals_flat))
+
+  device_assignment = lowering._device_list  # type: ignore
+  if _device_assignment_for_internal_jax2tf_use_only is not None:
+    _device_assignment_for_internal_jax2tf_use_only[0] = device_assignment
 
   def _get_exported_vjp(exp_primal: Exported) -> Exported:
     # Turn the primal jaxpr into a function, in preparation for exporting
