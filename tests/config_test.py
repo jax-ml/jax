@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -20,6 +22,8 @@ from jax._src import test_util as jtu
 from jax._src.cloud_tpu_init import cloud_tpu_init
 
 jax.config.parse_flags_with_absl()
+os.environ['JAX_TEST_ENUM_CONFIG_FROM_ENV_VAR'] = 'yyy'
+os.environ['JAX_TEST_ENUM_FLAG_FROM_ENV_VAR'] = 'yyy'
 
 
 jax_test_bool_config = config.bool_state(
@@ -30,6 +34,20 @@ jax_test_bool_config = config.bool_state(
 
 jax_test_enum_config = config.enum_state(
     name='jax_test_enum_config',
+    enum_values=['default', 'xxx', 'yyy'],
+    default='default',
+    help='Configuration only used for tests.',
+)
+
+jax_test_enum_config_via_env_var = config.enum_state(
+    name='jax_test_enum_config_from_env_var',
+    enum_values=['default', 'xxx', 'yyy'],
+    default='default',
+    help='Configuration only used for tests.',
+)
+
+jax_test_enum_flag_via_env_var = config.enum_flag(
+    name='jax_test_enum_flag_from_env_var',
     enum_values=['default', 'xxx', 'yyy'],
     default='default',
     help='Configuration only used for tests.',
@@ -122,6 +140,11 @@ class ConfigTest(jtu.JaxTestCase):
       cloud_tpu_init()
       self.assertEqual(config.jax_platforms.value, 'platform_A')
 
+  def test_config_state_setting_via_env_var(self):
+    self.assertEqual(jax_test_enum_config_via_env_var.value, 'yyy')
+
+  def test_config_flag_setting_via_env_var(self):
+    self.assertEqual(jax_test_enum_flag_via_env_var.value, 'yyy')
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
