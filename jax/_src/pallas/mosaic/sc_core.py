@@ -152,7 +152,7 @@ class BlockMapping(pallas_core.BlockMapping):
 def get_sparse_core_info() -> tpu_info.SparseCoreInfo:
   """Returns the SparseCore information for the current device."""
   return tpu_info.get_tpu_info().sparse_core or tpu_info.SparseCoreInfo(
-      num_cores=0, num_subcores=0, num_lanes=0
+      num_cores=0, num_subcores=0, num_lanes=0, dma_granule_size_bytes=0,
   )
 
 
