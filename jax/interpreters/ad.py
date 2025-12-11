@@ -46,24 +46,11 @@ from jax._src.interpreters.ad import (
 )
 
 
-def _deprecated_backward_pass(jaxpr, reduce_axes, transform_stack,
-                              consts, primals_in, cotangents_in):
-  if reduce_axes:
-    raise NotImplementedError("reduce_axes on ad.backward_pass is deprecated")
-  del reduce_axes
-  return _src_ad.backward_pass(
-      jaxpr, transform_stack, consts, primals_in, cotangents_in)
-
-
 _deprecations = {
     # Deprecated for JAX v0.7.1; finalize in JAX v0.9.0.
     "zeros_like_p": (
         "jax.interpreters.ad.zeros_like_p is deprecated in JAX v0.7.1. It has been unused since v0.4.24.",
         _src_ad_util.zeros_like_p,
-    ),
-    "backward_pass": (
-        "jax.interpreters.ad.backward_pass is deprecated.",
-        _deprecated_backward_pass
     ),
     "bilinear_transpose": (
         "jax.interpreters.ad.bilinear_transpose is deprecated.",
@@ -80,10 +67,6 @@ _deprecations = {
     "call_transpose_param_updaters": (
         "jax.interpreters.ad.call_transpose_param_updaters is deprecated.",
         _src_ad.call_transpose_param_updaters,
-    ),
-    "closed_backward_pass": (
-        "jax.interpreters.ad.closed_backward_pass is deprecated.",
-        _src_ad.closed_backward_pass,
     ),
     "custom_lin_p": (
         "jax.interpreters.ad.custom_lin_p is deprecated.",
@@ -161,12 +144,10 @@ _deprecations = {
 
 import typing
 if typing.TYPE_CHECKING:
-  backward_pass = _deprecated_backward_pass
   bilinear_transpose = _src_ad.bilinear_transpose
   call_param_updaters = _src_ad.call_param_updaters
   call_transpose = _src_ad.call_transpose
   call_transpose_param_updaters = _src_ad.call_transpose_param_updaters
-  closed_backward_pass = _src_ad.closed_backward_pass
   custom_lin_p = _src_ad.custom_lin_p
   defjvp_zero = _src_ad.defjvp_zero
   f_jvp_traceable = _src_ad.f_jvp_traceable

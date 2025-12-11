@@ -4065,7 +4065,7 @@ def _unbroadcast(aval, x):
   if (core.definitely_equal_shape(aval.shape, x_shape) and
       aval.sharding == core.typeof(x).sharding):
     return x
-  assert not aval.shape or len(x_shape) == len(aval.shape)
+  assert not aval.shape or len(x_shape) == len(aval.shape), breakpoint()
   if not aval.shape:
     return reduce_sum(x, list(range(len(x_shape))))
   else:

@@ -320,132 +320,6 @@ def vjp(traceable: lu.WrappedFun, primals, has_aux=False):
   else:
     return out_primals, vjp_, aux
 
-# NOTE: The FIXMEs below are caused by primal/tangent mixups (type
-# errors if you will)
-def backward_pass(jaxpr: core.Jaxpr, transform_stack,
-                  consts, primals_in, cotangents_in):
-  if all(type(ct) is Zero for ct in cotangents_in) and not jaxpr.effects:
-    return map(lambda v: Zero(v.aval), jaxpr.invars)
-
-  def write_cotangent(prim, v, ct):
-    # assert v not in primal_env
-    assert ct is not Zero, (prim, v.aval)  # check for an old harmless type error
-    if ct is None or type(v) is Literal:
-      return
-    if type(ct) is Zero:
-      # FIXME: This triggers a lot of failures!
-      # assert v.aval == ct.aval, (prim, v.aval, ct.aval)
-      return
-    ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
-
-  def read_cotangent(v):
-    return ct_env.pop(v, Zero(v.aval.to_tangent_aval()))
-
-  def read_primal(v):
-    if type(v) is Literal:
-      return v.val
-    else:
-      a = v.aval
-      return primal_env.get(v, UndefinedPrimal(a))
-
-  def write_primal(v, val):
-    if not is_undefined_primal(val):
-      primal_env[v] = val
-
-  primal_env: dict[Any, Any] = {}
-  foreach(write_primal, jaxpr.constvars, consts)
-  foreach(write_primal, jaxpr.invars, primals_in)
-
-  # Start with a forward pass to evaluate any side-effect-free JaxprEqns that
-  # only operate on primals. This is required to support primitives with
-  # linearization rules that include computations on the residuals.
-  lin_eqns = []
-  dangling_refs = set()
-  for eqn in jaxpr.eqns:
-    if eqn.primitive is core.ref_p:
-      dangling_refs.add(eqn.outvars[0])
-    if eqn.primitive is core.freeze_p:
-      dangling_refs.remove(eqn.invars[0])  # type: ignore
-    # TODO (dfm): The effects check is probably stricter than necessary.
-    # Consider adding an allowlist of effects here.
-    if jaxpr.effects or any(
-        type(x) is not Literal and x not in primal_env for x in eqn.invars):
-      lin_eqns.append(eqn)
-      continue
-    subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
-    name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
-    with source_info_util.user_context(
-        eqn.source_info.traceback, name_stack=name_stack), eqn.ctx.manager:
-      ans = eqn.primitive.bind(*subfuns, *map(read_primal, eqn.invars), **bind_params)
-    if eqn.primitive.multiple_results:
-      foreach(write_primal, eqn.outvars, ans)
-    else:
-      write_primal(eqn.outvars[0], ans)
-
-  for v in dangling_refs:
-    write_primal(v, core.new_ref(zeros_like_aval(v.aval.inner_aval)))  # type: ignore
-
-  ct_env: dict[Any, Any] = {}
-  ctx = (source_info_util.transform_name_stack('transpose') if transform_stack
-         else contextlib.nullcontext())
-  with ctx:
-    foreach(partial(write_cotangent, 'outvars'), jaxpr.outvars, cotangents_in)
-    for eqn in lin_eqns[::-1]:
-      if eqn.primitive.ref_primitive:
-        if eqn.primitive is core.ref_p:
-          val_var, = eqn.invars
-          ref_var, = eqn.outvars
-          ref = read_primal(ref_var)
-          ct_out = core.freeze(ref)
-          write_cotangent(eqn.primitive, val_var, ct_out)
-        elif eqn.primitive is core.freeze_p:
-          val_var, = eqn.outvars
-          ref_var, = eqn.invars   # type: ignore
-          ct_in = instantiate_zeros(read_cotangent(val_var))
-          write_primal(ref_var, core.new_ref(ct_in))
-        continue
-
-      invals = map(read_primal, eqn.invars)
-      if eqn.primitive.multiple_results:
-        cts_in = map(read_cotangent, eqn.outvars)
-      else:
-        cts_in, = map(read_cotangent, eqn.outvars)
-      name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
-      with source_info_util.user_context(
-          eqn.source_info.traceback, name_stack=name_stack), eqn.ctx.manager:
-        if eqn.primitive.call_primitive or eqn.primitive.map_primitive:
-          cts_in_avals = [v.aval for v in eqn.outvars]
-          params = dict(eqn.params)
-          call_jaxpr = params.pop('call_jaxpr')
-          cts_out = get_primitive_transpose(eqn.primitive)(
-              params, call_jaxpr, invals, cts_in, cts_in_avals)
-        else:
-          try:
-            cts_out = get_primitive_transpose(eqn.primitive)(
-                cts_in, *invals, **eqn.params)
-          except core.ShardingTypeError as e:
-            extra_msg = ("This is a potential JAX bug. Please file an issue at"
-                         " https://github.com/jax-ml/jax/issues")
-            if extra_msg in str(e):
-              raise
-            raise core.ShardingTypeError(f"{str(e)}\n{extra_msg}") from e
-          except (FloatingPointError, ZeroDivisionError) as e:
-            msg = "When differentiating the code at the top of the callstack:"
-            if msg not in e.args[0]:
-              e.args = e.args[0] + f'\n{msg}',
-            e.args = e.args[0] + f'\n{source_info_util.summarize(eqn.source_info)}',
-            raise e from None
-        cts_out = [Zero(v.aval) for v in eqn.invars] if cts_out is Zero else cts_out
-        # FIXME: Some invars correspond to primals!
-        foreach(partial(write_cotangent, eqn.primitive), eqn.invars, cts_out)
-
-  cotangents_out = map(read_cotangent, jaxpr.invars)
-  return cotangents_out
-
-def closed_backward_pass(jaxpr: core.ClosedJaxpr, transform_stack,
-                         primals_in, cotangents_in):
-  return backward_pass(jaxpr.jaxpr, transform_stack, jaxpr.consts,
-                       primals_in, cotangents_in)
 
 class UndefinedPrimal:
   __slots__ = ['aval']
@@ -637,6 +511,14 @@ def accum_typeof(x):
     return x.aval
   else:
     return core.typeof(x)
+
+# TOOD(mattjj): this is for for backward (get it?) compatibility. Remove, maybe.
+def backward_pass(jaxpr, transform_stack: bool, consts, primals_in, cts_in):
+  primals_in = [ValAccum(x.aval) if isinstance(x, UndefinedPrimal) else x
+                for x in primals_in]
+  backward_pass3(jaxpr, transform_stack, consts, primals_in, cts_in)
+  return [x.freeze() if isinstance(x, ValAccum) else None
+          for x in primals_in]
 
 
 @lu.transformation_with_aux2
@@ -1312,41 +1194,53 @@ def traceable(f, store, in_tree, *primals_and_tangents):
   return out_flat
 
 
-def call_transpose(primitive, params, call_jaxpr: core.Jaxpr, args, ct, _):
-  if isinstance(call_jaxpr, core.ClosedJaxpr):
-    call_jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
-  else:
-    consts = ()
-  all_args, in_treedef = tree_flatten((consts, args, ct))
-  fun = lu.hashable_partial(
-      lu.wrap_init(backward_pass, debug_info=call_jaxpr.debug_info),
-      call_jaxpr, False)
-  fun, out_tree = flatten_fun_nokwargs(fun, in_treedef)
+def call_transpose(primitive, cts, *args, call_jaxpr, **params):
+  if call_jaxpr.constvars: raise NotImplementedError
+  primals_ctrefs, specs = project_accums(args)
+  flat_args, treedef = tree_flatten((primals_ctrefs, cts))
+  cell = lambda: None
+
+  @partial(lu.wrap_init, debug_info=call_jaxpr.debug_info.with_unknown_names())
+  def transposed(*flat_args):
+    primals_ctrefs, cts = tree_unflatten(treedef, flat_args)
+    args = unproject_accums(specs, primals_ctrefs)
+    backward_pass3(call_jaxpr, False, (), args, cts)
+    cts_out = [x.freeze() if isinstance(x, ValAccum) else None for x in args]
+    cts_out, cell.out_tree = tree_flatten(cts_out)  # type: ignore
+    return cts_out
+
   update_params = call_transpose_param_updaters.get(primitive)
   if update_params:
-    params = update_params(params, map(is_undefined_primal, args),
-                           [type(x) is not Zero for x in ct])
-  out_flat = primitive.bind(fun, *all_args, **params)
-  return tree_unflatten(out_tree(), out_flat)
-primitive_transposes[core.call_p] = partial(call_transpose, call_p)
+    params = update_params(params, [isinstance(x, GradAccum) for x in args],
+                           [type(x) is not Zero for x in cts])
 
+  out_flat = primitive.bind(transposed, *flat_args, **params)
+  for x, ct in zip(args, tree_unflatten(cell.out_tree, out_flat)):  # type: ignore
+    if isinstance(x, ValAccum): x.accum(ct)
+fancy_transposes[core.call_p] = partial(call_transpose, call_p)
 
-def _closed_call_transpose(params, jaxpr, args, ct, cts_in_avals):
-  jaxpr_, consts = jaxpr.jaxpr, jaxpr.consts
+def _closed_call_transpose(ct, *args, call_jaxpr, **params):
+  jaxpr_, consts = call_jaxpr.jaxpr, call_jaxpr.consts
   jaxpr_ = pe.convert_constvars_jaxpr(jaxpr_)
-  return call_transpose(core.closed_call_p, params, jaxpr_, (*consts, *args),
-                        ct, cts_in_avals)
-primitive_transposes[core.closed_call_p] = _closed_call_transpose
+  call_transpose(core.closed_call_p, ct, *consts, *args, call_jaxpr=jaxpr_,
+                 **params)
+fancy_transposes[core.closed_call_p] = _closed_call_transpose
 
 
 @lu.transformation_with_aux2
 def nonzero_outputs(f, store, *args, **kwargs):
   results = f(*args, **kwargs)
-  store.store([type(r) is not Zero for r in results])
+  store.store([not isinstance(r, (Zero, type(None))) for r in results])
   return results
 
+# TODO(mattjj): delete this when the original pmap implementation is removed
 def map_transpose(primitive: core.Primitive, params,
                   call_jaxpr: core.Jaxpr, args, ct, _):
+  # TODO(mattjj): we should unmap any Zeros in ct according to out_axes, but
+  # this code path is not long for this world...
+  args = [x if type(x) is not UndefinedPrimal else
+          UndefinedPrimal(core.mapped_aval(params['axis_size'], ax, x.aval))
+          for x, ax in zip(args, params['in_axes'])]
   all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
   # TODO(necula): use the right debug_info for the backwards pass
   fun = lu.hashable_partial(lu.wrap_init(
@@ -1383,7 +1277,7 @@ def map_transpose(primitive: core.Primitive, params,
     print("Invalid nan value encountered in the backward pass of a jax.jit "
           "function. Calling the de-optimized backward pass.")
     try:
-      _ = backward_pass(call_jaxpr, False, {}, args, ct)
+      _ = backward_pass(call_jaxpr, False, (), args, ct)
     except (FloatingPointError, ZeroDivisionError) as e2:
       raise e2 from None
     else:
