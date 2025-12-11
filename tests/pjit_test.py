@@ -7268,23 +7268,27 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "Only one of spmd_axis_name or arrays sharded on.*spmd_axis_name"):
         f(arr)
 
+  @parameterized.parameters(
+      (('x', 'y', 'z'), ('x', 'y')),
+      (('x', 'z'), 'x')
+  )
   @config.remove_size_one_mesh_axis_from_type(True)
-  @jtu.with_explicit_mesh((2, 1), ('x', 'y'))
-  def test_spmd_axis_name_explicit_mode_assert_remove_one_size(self, mesh):
-    np_inp = np.arange(16).reshape(8, 2)
-    arr = jax.device_put(np_inp, NamedSharding(mesh, P(('x', 'y'), None)))
+  @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))
+  def test_spmd_axis_name_explicit_mode_assert_remove_one_size(
+      self, in_spec, out_spec, mesh):
+    np_inp = np.arange(16).reshape(4, 2, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P(in_spec, None)))
 
     @jax.jit
-    @partial(jax.vmap, spmd_axis_name=('x', 'y'))
+    @partial(jax.vmap, spmd_axis_name=in_spec)
     def f(x):
-      # breakpoint()
-      self.assertEqual(x.aval.sharding.spec, P(None))
+      self.assertEqual(x.aval.sharding.spec, P(None, None))
       out = x * 2
-      self.assertEqual(out.aval.sharding.spec, P(None))
+      self.assertEqual(out.aval.sharding.spec, P(None, None))
       return out
 
     out = f(arr)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(out_spec, None, None)))
     self.assertArraysEqual(out, np_inp * 2)
 
   @jtu.with_explicit_mesh((2,), ('x',))

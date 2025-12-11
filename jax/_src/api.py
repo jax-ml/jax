@@ -1192,7 +1192,7 @@ def vmap(fun: F,
     explicit_mesh_axis = _mapped_axis_spec(args_flat, in_axes_flat)
     if spmd_axis_name is not None and explicit_mesh_axis is not None:
       spmd_axis_name = (
-          tuple(core.remove_size_one_mesh_axis(P(spmd_axis_name), get_abstract_mesh()))
+          tuple(*core.remove_size_one_mesh_axis(P(spmd_axis_name), get_abstract_mesh()))
           if config.remove_size_one_mesh_axis_from_type.value else spmd_axis_name)
       if spmd_axis_name == explicit_mesh_axis:
         spmd_axis_name = None
