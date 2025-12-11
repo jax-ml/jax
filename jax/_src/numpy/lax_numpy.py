@@ -4557,7 +4557,8 @@ def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
       except along the specified axis. If a single array is given it will be
       treated equivalently to `arrays = unstack(arrays)`, but the implementation
       will avoid explicit unstacking.
-    axis: specify the axis along which to concatenate.
+    axis: specify the axis along which to concatenate. If None, the arrays are
+      flattened before concatenation.
     dtype: optional dtype of the resulting array. If not specified, the dtype
       will be determined via type promotion rules described in :ref:`type-promotion`.
 
