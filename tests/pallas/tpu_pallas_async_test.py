@@ -37,7 +37,7 @@ Future = Any
 
 def make_async_copy(target_memory_space=None):
   if target_memory_space is None:
-    target_memory_space = pltpu.ANY
+    target_memory_space = pl.ANY
   @jax.named_call
   def copy_start(x: jax.Array) -> tuple[jax.Array, Future]:
 
@@ -53,10 +53,10 @@ def make_async_copy(target_memory_space=None):
             pltpu.SemaphoreType.DMA(()),
         ),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
         out_specs=(
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
             pl.BlockSpec(memory_space=target_memory_space),
             pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
         ),
@@ -76,7 +76,7 @@ def make_async_copy(target_memory_space=None):
         copy_done_kernel,
         out_shape=target_memory_space(x.shape, x.dtype),  # out
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
             pl.BlockSpec(memory_space=target_memory_space),
             pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
         ],
@@ -109,11 +109,11 @@ def make_async_slice(index: int):
             pltpu.SemaphoreType.DMA(()),
         ),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
         out_specs=(
-            pl.BlockSpec(memory_space=pltpu.ANY),
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
             pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
         ),
         input_output_aliases={0: 0},
@@ -129,11 +129,11 @@ def make_async_slice(index: int):
         async_slice_done_kernel,
         out_shape=(jax.ShapeDtypeStruct(x.shape[1:], x.dtype)),  # out
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.ANY),
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
             pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
         ],
-        out_specs=(pl.BlockSpec(memory_space=pltpu.ANY)),
+        out_specs=(pl.BlockSpec(memory_space=pl.ANY)),
         input_output_aliases={1: 0},
     )(x, out, sem)
     return out
@@ -164,11 +164,11 @@ def make_async_dynamic_slice(index: jax.Array):
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=1,
             in_specs=[
-                pl.BlockSpec(memory_space=pltpu.ANY),
+                pl.BlockSpec(memory_space=pl.ANY),
             ],
             out_specs=(
-                pl.BlockSpec(memory_space=pltpu.ANY),
-                pl.BlockSpec(memory_space=pltpu.ANY),
+                pl.BlockSpec(memory_space=pl.ANY),
+                pl.BlockSpec(memory_space=pl.ANY),
                 pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
             ),
         ),
@@ -185,11 +185,11 @@ def make_async_dynamic_slice(index: jax.Array):
         async_dslice_done_kernel,
         out_shape=(jax.ShapeDtypeStruct(x.shape[1:], x.dtype)),  # out
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.ANY),
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
             pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
         ],
-        out_specs=(pl.BlockSpec(memory_space=pltpu.ANY)),
+        out_specs=(pl.BlockSpec(memory_space=pl.ANY)),
         input_output_aliases={1: 0},
     )(x, out, sem)
     return out
@@ -441,8 +441,8 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
     copy = pl.pallas_call(
         copy_kernel,
         out_shape=jax.ShapeDtypeStruct((xlocal, ylocal), jnp.float32),
-        in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY),],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         scratch_shapes=[pltpu.SemaphoreType.DMA] * 3,
     )
 
@@ -544,7 +544,7 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
 def make_async_remote_copy(axis_name: str, direction: str = 'right',
                            target_memory_space=None):
   if target_memory_space is None:
-    target_memory_space = pltpu.ANY
+    target_memory_space = pl.ANY
   @jax.named_call
   def copy_start(x: jax.Array) -> tuple[jax.Array, Future]:
 
@@ -579,10 +579,10 @@ def make_async_remote_copy(axis_name: str, direction: str = 'right',
             pltpu.SemaphoreType.DMA(()),  # recv_sem
         ),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
         out_specs=(
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
             pl.BlockSpec(memory_space=target_memory_space),
             pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
             pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
@@ -606,10 +606,10 @@ def make_async_remote_copy(axis_name: str, direction: str = 'right',
         send_done_kernel,
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),  # out
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
             pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         input_output_aliases={0: 0},
     )(x, send_sem)
     return x
@@ -626,7 +626,7 @@ def make_async_remote_copy(axis_name: str, direction: str = 'right',
         send_done_kernel,
         out_shape=target_memory_space(x.shape, x.dtype),  # out
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
             pl.BlockSpec(memory_space=target_memory_space),
             pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
         ],
@@ -675,16 +675,16 @@ def make_bidi_collective_permute(axis_name: str):
         copy_start_kernel,
         out_shape=(
             jax.ShapeDtypeStruct(x.shape, x.dtype),  # aliased x
-            pltpu.ANY(x.shape, x.dtype),  # out
+            pl.ANY(x.shape, x.dtype),  # out
             (pltpu.SemaphoreType.DMA(()),) * 2,  # left_sems
             (pltpu.SemaphoreType.DMA(()),) * 2,  # right_sems
         ),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
         out_specs=(
-            pl.BlockSpec(memory_space=pltpu.ANY),
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
             (pl.BlockSpec(memory_space=pltpu.SEMAPHORE),) * 2,
             (pl.BlockSpec(memory_space=pltpu.SEMAPHORE),) * 2,
         ),
@@ -716,11 +716,11 @@ def make_bidi_collective_permute(axis_name: str):
         send_done_kernel,
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),  # out
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
             pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
             pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         input_output_aliases={0: 0},
     )(x, send_left_sem, send_right_sem)
     return x
@@ -747,12 +747,12 @@ def make_bidi_collective_permute(axis_name: str):
         recv_done_kernel,
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),  # out
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.ANY),
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
             pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
             pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         input_output_aliases={0: 0},
     )(out, x, recv_left_sem, recv_right_sem)
     return out

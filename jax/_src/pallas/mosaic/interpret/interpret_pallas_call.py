@@ -527,9 +527,7 @@ def _allocate_semaphores(
 TPU_MEMORY_SPACE_IDXS: dict[
     mosaic_core.MemorySpace | pallas_core.MemorySpace | None, int
 ] = {v: i for i, v in enumerate(mosaic_core.MemorySpace)}
-TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY] = TPU_MEMORY_SPACE_IDXS[
-    mosaic_core.MemorySpace.ANY
-]
+TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY] = len(TPU_MEMORY_SPACE_IDXS)
 TPU_MEMORY_SPACE_NAMES = {
     i: v.value for i, v in enumerate(mosaic_core.MemorySpace)
 }
@@ -1211,8 +1209,7 @@ def _to_jaxpr(flat_fun, in_avals):
   return new_jaxpr
 
 def _is_any(memory_space):
-  return ((memory_space == mosaic_core.MemorySpace.ANY) or
-          (memory_space == pallas_core.MemorySpace.ANY))
+  return memory_space is pallas_core.MemorySpace.ANY
 
 def _is_float(dtype):
   return jnp.issubdtype(dtype, jnp.floating)
@@ -1228,7 +1225,7 @@ class Placeholder:
 
 def _get_memory_space_and_raise_if_hbm(aval, primitive_name, message=None):
   memory_space = aval.memory_space
-  if memory_space in [mosaic_core.MemorySpace.HBM, mosaic_core.MemorySpace.ANY]:
+  if memory_space in [mosaic_core.MemorySpace.HBM, pallas_core.MemorySpace.ANY]:
     if message is None:
       message = (
           f'{primitive_name}: Buffers with a memory space of HBM or ANY cannot'
@@ -1520,10 +1517,10 @@ def _interpret_jaxpr(
         ) = jax.tree.unflatten(eqn.params['tree'], eqn.invars)
         src_memory_space = getattr(orig_src_ref.aval, 'memory_space', None)
         if src_memory_space is None:
-          src_memory_space = mosaic_core.MemorySpace.ANY
+          src_memory_space = pallas_core.MemorySpace.ANY
         dst_memory_space = getattr(orig_dst_ref.aval, 'memory_space', None)
         if dst_memory_space is None:
-          dst_memory_space = mosaic_core.MemorySpace.ANY
+          dst_memory_space = pallas_core.MemorySpace.ANY
         callback.io_callback(
             functools.partial(dma_start, source_info=eqn.source_info),
             (),
@@ -1796,7 +1793,6 @@ def _remove_memory_space_abstract_eval(x):
     if (
         x.memory_space is None
         or x.memory_space is pallas_core.MemorySpace.ANY
-        or x.memory_space is mosaic_core.MemorySpace.ANY
         or x.memory_space is mosaic_core.MemorySpace.HBM
     ):
       return jax_core.ShapedArray(x.shape, x.dtype)
@@ -2025,7 +2021,7 @@ def interpret_pallas_call(
             jax.ShapeDtypeStruct((), jnp.int16),
             device_id,
             None,  # local_core_id
-            TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY],
+            TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY],
             input_args[i],
             ordered=True,
         )
@@ -2060,7 +2056,7 @@ def interpret_pallas_call(
               jax.ShapeDtypeStruct((), jnp.int16),
               device_id,
               None,  # local_core_id
-              TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY],
+              TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY],
               padded_val,
               ordered=True,
           )
@@ -2300,7 +2296,7 @@ def interpret_pallas_call(
               jax.ShapeDtypeStruct(input_var.aval.shape, input_var.aval.dtype),
               device_id,
               core_index,
-              TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY],
+              TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY],
               input_buffer_ids[index],
               (transform,),
               cur_block_indices[index],
@@ -2369,7 +2365,7 @@ def interpret_pallas_call(
               (),
               device_id,
               core_index,
-              TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY],
+              TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY],
               output_buffer_ids[index],
               (transform,),
               kernel_output_val,
@@ -2488,7 +2484,7 @@ def interpret_pallas_call(
           val,
           device_id,
           0,  # local_core_id
-          TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY],
+          TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY],
           output_buffer_id,
           (
               indexing.NDIndexer.from_indices_shape(

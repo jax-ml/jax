@@ -21,7 +21,7 @@ import dataclasses
 import functools
 import operator
 import string
-from typing import Any, Protocol, Self, TypeVar, cast
+from typing import Any, Literal, Protocol, Self, TypeVar, cast
 
 import jax
 from jax import api_util
@@ -34,8 +34,8 @@ from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import debugging
 from jax._src import dtypes
-from jax._src import literals
 from jax._src import linear_util as lu
+from jax._src import literals
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
 from jax._src import prng
@@ -51,7 +51,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
-
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -89,6 +88,7 @@ TPUMemorySpace = tpu_core.MemorySpace
 AnyMemorySpace = pallas_core.MemorySpace | TPUMemorySpace
 VMEM = TPUMemorySpace.VMEM
 SMEM = TPUMemorySpace.SMEM
+ANY = pallas_core.MemorySpace.ANY
 # Booleans are stored as the following type in memrefs.
 BOOL_MEMREF_TYPE = np.dtype('int32')
 
@@ -249,10 +249,11 @@ class LoweringRuleContext:
     return is_cloud_tpu_older_than(year, month, day, backend)
 
 
-def _memory_space_to_tpu_memory_space(memory_space: AnyMemorySpace | None
-                                      ) -> TPUMemorySpace:
+def _memory_space_to_tpu_memory_space(
+    memory_space: AnyMemorySpace | None,
+) -> TPUMemorySpace | Literal[ANY]:
   if memory_space == jax_core.MemorySpace.Device:
-    return TPUMemorySpace.ANY
+    return ANY
 
   match memory_space:
     case None:
@@ -261,7 +262,7 @@ def _memory_space_to_tpu_memory_space(memory_space: AnyMemorySpace | None
       return TPUMemorySpace.VMEM
     case pallas_core.MemorySpace.ANY:
       # Map the general ANY memory space to TPU ANY memory space
-      return TPUMemorySpace.ANY
+      return ANY
     case pallas_core.MemorySpace.HOST:
       return TPUMemorySpace.HOST
     case (
@@ -415,9 +416,6 @@ def _get_arg_type(
   memory_space = None
   if isinstance(aval, state.AbstractRef):
     memory_space = _memory_space_to_tpu_memory_space(aval.memory_space)
-    # We assume unannotated memory refs are in VMEM
-    if memory_space is None:
-      memory_space = TPUMemorySpace.VMEM
   return aval_to_ir_type(
       dynamic_shape_replacement_fn, aval, shape=shape, memory_space=memory_space
   )
@@ -663,10 +661,8 @@ def _check_block_mappings(
           "rank >= 1. " + err_details())
 
     if (
-        (memory_space == tpu_core.MemorySpace.ANY
-         or memory_space == tpu_core.MemorySpace.HBM)
-        and not bm.has_trivial_window()
-    ):
+        memory_space is ANY or memory_space == tpu_core.MemorySpace.HBM
+    ) and not bm.has_trivial_window():
       raise ValueError(
           "The Pallas TPU lowering currently supports in memory space ANY "
           "only blocks having the same block shape as the array shape "
@@ -804,7 +800,7 @@ def lower_jaxpr_to_module(
       tpu_memory_space = _memory_space_to_tpu_memory_space(
           bm.block_aval.memory_space)
       if (
-          tpu_memory_space == tpu_core.MemorySpace.ANY
+          tpu_memory_space is ANY
           or tpu_memory_space == tpu_core.MemorySpace.HBM
           or tpu_memory_space == tpu_core.MemorySpace.SEMAPHORE
       ):

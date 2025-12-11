@@ -20,7 +20,7 @@ from contextlib import contextmanager
 import dataclasses
 import enum
 import functools
-from typing import Any, Union
+from typing import Any, Literal, Union
 
 import jax
 from jax import lax
@@ -30,8 +30,8 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as primitives
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import helpers as tpu_helpers
-from jax._src.pallas.mosaic import tpu_info
 from jax._src.pallas.mosaic import primitives as tpu_primitives
+from jax._src.pallas.mosaic import tpu_info
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -39,7 +39,7 @@ import numpy as np
 
 SMEM = tpu_core.MemorySpace.SMEM
 VMEM = tpu_core.MemorySpace.VMEM
-ANY = tpu_core.MemorySpace.ANY
+ANY = pallas_core.MemorySpace.ANY
 REF = pallas_core.MemoryRef
 GridDimensionSemantics = tpu_core.GridDimensionSemantics
 PARALLEL = tpu_core.PARALLEL
@@ -507,11 +507,17 @@ class BufferedRef(BufferedRefBase):
     return BufferType
 
   @classmethod
-  def create(cls, spec: pl.BlockSpec, dtype, buffer_type, buffer_count,
-             needs_swap_ref=True,
-             grid_rank=None,
-             use_lookahead=False,
-             source_memory_space: tpu_core.MemorySpace = ANY) -> BufferedRef:
+  def create(
+      cls,
+      spec: pl.BlockSpec,
+      dtype,
+      buffer_type,
+      buffer_count,
+      needs_swap_ref=True,
+      grid_rank=None,
+      use_lookahead=False,
+      source_memory_space: tpu_core.MemorySpace | Literal[ANY] = ANY,  # type: ignore[valid-type]
+  ) -> BufferedRef:
     """Create a BufferedRef.
 
     Args:

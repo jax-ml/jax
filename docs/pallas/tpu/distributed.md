@@ -235,9 +235,9 @@ grid_spec = pltpu.PrefetchScalarGridSpec(
     num_scalar_prefetch=0,
     # MemorySpace.ANY will (usually) place the tensor in HBM.
     in_specs=[
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        pl.BlockSpec(memory_space=pl.ANY),
     ],
-    out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+    out_specs=pl.BlockSpec(memory_space=pl.ANY),
     scratch_shapes=(
         # We allocate DMA semaphores in scratch memory.
         [pltpu.SemaphoreType.DMA] * 2
@@ -357,9 +357,9 @@ grid_spec = pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
                 # MemorySpace.ANY will (usually) place the tensor in HBM.
-                pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+                pl.BlockSpec(memory_space=pl.ANY),
             ],
-            out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            out_specs=pl.BlockSpec(memory_space=pl.ANY),
             scratch_shapes=(
               # DMA semaphores are allocated in scratch memory.
               # We allocated one semaphore for a local HBM-VMEM copy,
@@ -709,7 +709,7 @@ grid_spec = pltpu.PrefetchScalarGridSpec(
         # Our output lives in VMEM
         pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
         # Our double-buffer lives in HBM
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        pl.BlockSpec(memory_space=pl.ANY),
     ],
     grid=(num_devices,),
     scratch_shapes=(
@@ -1023,7 +1023,7 @@ grid_spec = pltpu.PrefetchScalarGridSpec(
     ],
     out_specs=[
         pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        pl.BlockSpec(memory_space=pl.ANY),
     ],
     grid=(num_devices, 2),
     scratch_shapes=(
@@ -1410,11 +1410,11 @@ out_shape = (
 grid_spec = pltpu.PrefetchScalarGridSpec(
     num_scalar_prefetch=0,
     in_specs=[
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        pl.BlockSpec(memory_space=pl.ANY),
     ],
     out_specs=[
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        pl.BlockSpec(memory_space=pl.ANY),
+        pl.BlockSpec(memory_space=pl.ANY),
     ],
     grid=(num_devices, 2),
     scratch_shapes=(
