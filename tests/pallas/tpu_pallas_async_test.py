@@ -441,8 +441,8 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
     copy = pl.pallas_call(
         copy_kernel,
         out_shape=jax.ShapeDtypeStruct((xlocal, ylocal), jnp.float32),
-        in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.ANY),],
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
         scratch_shapes=[pltpu.SemaphoreType.DMA] * 3,
     )
 

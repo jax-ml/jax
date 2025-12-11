@@ -230,7 +230,7 @@ from jax.experimental.pallas import tpu as pltpu
 
 def iota(size: int):
   return pl.pallas_call(iota_kernel,
-                        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.SMEM),
+                        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
                         out_shape=jax.ShapeDtypeStruct((size,), jnp.int32),
                         grid=(size,))()
 iota(8)
