@@ -9843,6 +9843,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     y = jax.jit(lambda _x: _x.view(jnp.complex64))(x)
     self.assertEqual(y.sharding, NamedSharding(mesh, P('x', None)))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_jnp_ones_mesh_ctx_aval(self, mesh):
+    @jax.jit
+    def f():
+      out = jnp.ones((2,))
+      self.assertEqual(out.aval.sharding.mesh, mesh.abstract_mesh)
+      self.assertEqual(out.aval.sharding.spec, P(None))
+      return out
+
+    self.assertEqual(f().sharding, NamedSharding(mesh, P(None)))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 @jtu.ignore_warning(category=DeprecationWarning,
