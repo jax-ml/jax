@@ -84,7 +84,7 @@ def _stack(arrs: Sequence[Array], axis: int=0) -> Array:
 
 def _promote_weak_typed_input(
     in_val:Any, in_aval:AbstractValue, out_aval:AbstractValue
-    ) -> tuple[AbstractValue, bool]:
+    ) -> tuple[Any, bool]:
   if getattr(in_aval, 'weak_type', False) and not core.typematch(in_aval, out_aval):
     new_dtype = dtypes.result_type(in_val, out_aval)
     return lax.convert_element_type(in_val, new_dtype), True
@@ -228,7 +228,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     return carry, stacked_y
 
   if config.mutable_array_checks.value:
-    check_no_aliased_ref_args(lambda: dbg_body, list(args), list(args_avals))
+    check_no_aliased_ref_args(lambda: dbg_body, list(args_avals), list(args))
 
   x_avals = xs_avals.map(lambda aval: core.mapped_aval(length, 0, aval))
   def _create_jaxpr(carry_avals):
@@ -252,6 +252,8 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   if config.mutable_array_checks.value:
     _check_no_aliased_closed_over_refs(dbg_body, consts, list(args))
   carry_out_avals, ys_avals = out_avals.unpack()
+  if len(carry_out_avals) != len(init_avals):
+    _check_carry_type('scan body', f, init_avals, carry_out_avals)
   init, changed = init.map3(
      _promote_weak_typed_input,
      init_avals, carry_out_avals).unzip2()
@@ -277,7 +279,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   if unroll < 0:
     raise ValueError("`unroll` must be a `bool` or a non-negative `int`.")
 
-  args_flat = (*init.vals, *xs.vals)
+  args_flat = [*init.vals, *xs.vals]
 
   # If the body forwards an input carry to an output carry, that input is
   # read-only and can be moved to be a const. Doing so can lead to efficiency
@@ -381,18 +383,18 @@ def _check_carry_type(name, body_fun, in_carry, out_carry):
                            if p else 'the input carry')
   if in_carry.tree != out_carry.tree:
     try:
-      out_carry = out_carry.unflatten()
+      out_carry_unflat = out_carry.unflatten()
     except:
-      out_carry = None
+      out_carry_unflat = None
 
-    if out_carry is None:
+    if out_carry_unflat is None:
       differences = (f'the input tree structure is:\n{in_carry.tree}\n' +
                      f'the output tree structure is:\n{out_carry.tree}\n')
     else:
       diffs = [f'{component(path)} is a {thing1} but the corresponding component '
                f'of the carry output is a {thing2}, so {explanation}'
                for path, thing1, thing2, explanation
-               in equality_errors(in_carry, out_carry)]
+               in equality_errors(in_carry.unflatten(), out_carry.unflatten())]
       if len(diffs) == 0:
         return  # the trees may have different aux data, but structures are same
       elif len(diffs) == 1:
@@ -1709,7 +1711,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
 
   cond_dbg = api_util.debug_info("while_cond", cond_fun, (init_val,), {})
   body_dbg = api_util.debug_info("while_body", body_fun, (init_val,), {})
-  init_val = FlatTree.flatten(init_val)
+  init_val = FlatTree.flatten(init_val)  # type: ignore
   init_aval = init_val.map(core.get_aval)
 
   # The body input and output avals must match exactly. However, we want to account for
@@ -1718,6 +1720,10 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   # To do this, we compute the jaxpr in two passes: first with the raw inputs, and if
   # necessary, a second time with modified init values.
   cond_jaxpr, body_jaxpr, body_out_avals = _create_jaxpr(init_aval)
+  if len(body_out_avals) != len(init_aval):
+    _check_carry_type('while_loop body', body_fun, init_aval, body_out_avals)
+    assert False, "shouldn't get here"
+
   init_val, changed = init_val.map3(
       _promote_weak_typed_input,
       init_aval, body_out_avals).unzip2()
@@ -1749,7 +1755,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   _, keep_cond_carry = split_list(keep_cond, [len(cond_consts)])
   move_to_const = _map(operator.not_, keep_cond_carry)
 
-  init_vals = list(init_val)
+  init_vals = list(init_val)  # type: ignore
   if any(move_to_const):
     cond_jaxpr = pe.close_jaxpr(cond_jaxpr_)
     body_jaxpr = pe.prune_closed_jaxpr_outputs(

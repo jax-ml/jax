@@ -34,10 +34,6 @@ export = set_module('jax.tree_util')
 traceback_util.register_exclusion(__file__)
 
 T = TypeVar("T")
-T1 = TypeVar("T1")
-T2 = TypeVar("T2")
-T3 = TypeVar("T3")
-T4 = TypeVar("T4")
 Typ = TypeVar("Typ", bound=type[Any])
 H = TypeVar("H", bound=Hashable)
 
@@ -1357,20 +1353,18 @@ class FlatTree:
        the tuple-returning function would change the tree structure and `unzip`
        wouldn't be able to recover it.
   """
-  def __init__(self, vals:Sequence[T], treedef:PyTreeDef):
+  def __init__(self, vals:Sequence, treedef:PyTreeDef):
     assert isinstance(treedef, pytree.PyTreeDef)
     self.tree = treedef
-    self.vals = list(vals)
+    self.vals = tuple(vals)
 
-  def map(self, f:Callable[[T1], T2]) -> FlatTree[T2]:
+  def map(self, f:Callable) -> FlatTree:
     ans_vals = []
     for x in self.vals:
       ans_vals.append(f(x))
     return FlatTree(ans_vals, self.tree)
 
-  def map2(
-      self:FlatTree[T1], f:Callable[[T1, T2], T3],
-      t2:FlatTree[T2]) -> FlatTree[T3]:
+  def map2(self:FlatTree, f:Callable, t2:FlatTree) -> FlatTree:
 
     n = len(self)
     assert len(t2) == n
@@ -1380,8 +1374,7 @@ class FlatTree:
     return FlatTree(ans_vals, self.tree)
 
   def map3(
-      self:FlatTree[T1], f:Callable[[T1, T2, T3], T4],
-      t2:FlatTree[T2], t3:FlatTree[T3]) -> FlatTree[T4]:
+      self:FlatTree, f:Callable, t2:FlatTree, t3:FlatTree) -> FlatTree:
     n = len(self)
     assert len(t2) == n and len(t3) == n
     ans_vals = []
@@ -1389,10 +1382,10 @@ class FlatTree:
       ans_vals.append(f(x1, x2, x3))
     return FlatTree(ans_vals, self.tree)
 
-  def zip(self, t2:FlatTree[T2]) -> FlatTree[tuple[T1, T2]]:
+  def zip(self, t2:FlatTree) -> FlatTree:
     assert False
 
-  def unzip2(self:FlatTree[tuple[T1, T2]]) -> tuple[FlatTree[T1], FlatTree[T2]]:
+  def unzip2(self:FlatTree) -> tuple[FlatTree, FlatTree]:
     ys = []
     zs = []
     for y, z in self.vals:
@@ -1425,7 +1418,7 @@ class FlatTree:
     else:
       assert False
 
-  def unpack(self:FlatTree[tuple]) -> tuple[FlatTree]:
+  def unpack(self:FlatTree) -> tuple[FlatTree, ...]:
     # TODO: this is O(N) not O(1) (with N as the number of leaves). If it
     # becomes a problem we can fix it with a fancier data tree.
     trees = treedef_children(self.tree)
@@ -1444,7 +1437,7 @@ class FlatTree:
   def unflatten(self) -> PyTree:
     return tree_unflatten(self.tree, self.vals)
 
-  def update_from_list(self, new_vals:list[T1]) -> FlatTree[T1]:
+  def update_from_list(self, new_vals:list) -> FlatTree:
     return FlatTree(new_vals, self.tree)
 
   def __len__(self):
@@ -1452,3 +1445,11 @@ class FlatTree:
 
   def __iter__(self):
     return self.vals.__iter__()
+
+  def __eq__(self, other):
+    return (isinstance(other, FlatTree)
+            and self.vals == other.vals
+            and self.tree == other.tree)
+
+  def __hash__(self):
+    return hash((self.vals, self.tree))

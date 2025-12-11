@@ -2292,9 +2292,9 @@ def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
 @weakref_lru_cache
 def trace_to_jaxpr(
     fun: Callable,
-    in_avals: FlatTree[AbstractValue | core.AvalQDD],  # (args, kwargs) pair
+    in_avals: FlatTree,  # (args, kwargs) pair
     debug_info: core.DebugInfo
-) -> tuple[ClosedJaxpr, PyTreeDef]:
+) -> tuple[ClosedJaxpr, FlatTree]:
   config.enable_checks.value and debug_info.assert_arg_names(len(in_avals))
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(debug_info, parent_trace=parent_trace)
