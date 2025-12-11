@@ -474,6 +474,46 @@ For more on pseudo random numbers in JAX, see the [Pseudorandom numbers tutorial
 
 +++
 
+## Debugging
+
+Debugging JAX code can be challenging due to its functional programming model and the fact that JAX code is often transformed via JIT compilation or vectorization. However, JAX provides several tools to help with debugging.
+
+- For simple inspection, use [`jax.debug.print`](https://docs.jax.dev/en/latest/_autosummary/jax.debug.print.html). Unlike Python's built-in `print`, which executed at trace-time, before runtime values exist, `jax.debug.print` will print the actual traced (dynamic) array values during JIT-compiled execution.
+- For logging, use [`jax.debug.callback`](https://docs.jax.dev/en/latest/_autosummary/jax.debug.callback.html) which enables you to pass in a Python function that can be called inside of a staged JAX program.
+
+For example:
+
+```{code-cell} ipython3
+from jax import debug
+
+def log_value(x):
+  # This could be an actual logging call; we'll use
+  # print() for demonstration
+  print("log:", x)
+
+@jax.jit
+def f(x):
+  debug.callback(log_value, x)
+  return x
+
+f(1.0);
+```
+
+The debug callback is compatible with vmap:
+
+```{code-cell} ipython3
+x = jnp.arange(5.0)
+jax.vmap(f)(x);
+```
+
+And is also compatible with grad and other autodiff transformations:
+
+```{code-cell} ipython3
+jax.grad(f)(1.0);
+```
+
+For more details, see [Introduction to debugging](https://docs.jax.dev/en/latest/debugging.html).
+
 ---
 
 This is just a taste of what JAX can do. We're really excited to see what you do with it!
