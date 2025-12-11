@@ -556,7 +556,7 @@ print(grad(grad(jnp.sqrt))(2.))
 
 +++ {"id": "HowvqayEuy-H"}
 
-A limitation to this approach is that the argument `f` can't close over any values involved in differentiation. That is, you might notice that we kept the parameter `a` explicit in the argument list of `fixed_point`. For this use case, consider using the low-level primitive `lax.custom_root`, which allows for atives in closed-over variables with custom root-finding functions.
+A limitation to this approach is that the argument `f` can't close over any values involved in differentiation. That is, you might notice that we kept the parameter `a` explicit in the argument list of `fixed_point`. For this use case, consider using the low-level primitive `lax.custom_root`, which allows for derivatives in closed-over variables with custom root-finding functions.
 
 +++ {"id": "Dr0aNkBslfQf"}
 
