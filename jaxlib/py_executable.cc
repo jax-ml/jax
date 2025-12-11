@@ -100,6 +100,10 @@ uint64_t GetBaseLaunchId(std::optional<std::string> fingerprint,
     ret += executable->devices()->fingerprint();
   }
 #endif
+  VLOG(1) << "Get base launch id: " << ret << " from fingerprint: "
+          << (fingerprint.has_value()
+                  ? absl::StrCat(tsl::Fingerprint64(*fingerprint))
+                  : "<nullopt>");
   return ret;
 }
 
@@ -540,7 +544,7 @@ int32_t PyLoadedExecutable::GetNextLaunchId() {
     launch_id = absl::bit_cast<int32_t>(it->second++);
   }
   VLOG(1) << "Launching executable " << ifrt_loaded_executable_->name()
-          << " with launch ID: " << launch_id;
+          << " with launch ID: " << launch_id << " key: " << launch_id_key_;
 #if JAX_IFRT_VERSION_NUMBER >= 37
   VLOG(2) << "Executable devices for launch ID " << launch_id << ": "
           << (ifrt_loaded_executable_->devices().has_value()
