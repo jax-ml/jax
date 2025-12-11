@@ -2830,6 +2830,8 @@ _pcast_funcs = {
 _allowed_pcast_to = {'unreduced', 'reduced', 'varying'}
 
 def pcast(x, axis_name, *, to: str):
+  if isinstance(axis_name, (set, frozenset)):
+    raise TypeError(f"{axis_name=} must be a tuple or a str. Got {axis_name}")
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
     return x

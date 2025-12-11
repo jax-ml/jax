@@ -2275,6 +2275,24 @@ class ShardMapTest(jtu.JaxTestCase):
     f(jnp.arange(8.))
     jax.grad(lambda x: f(x).sum())(jnp.arange(8.))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_pcast_axis_name_is_not_set(self, mesh):
+    def f(axis_name_type, x):
+      with self.assertRaisesRegex(TypeError, 'must be a tuple or a str'):
+        if axis_name_type == 'str':
+          jax.lax.pcast(x, {'x'}, to='varying')
+        elif axis_name_type == 'aval.vma':
+          jax.lax.pcast(x, x.aval.vma, to='varying')
+
+    jax.shard_map(partial(f, 'str'), mesh=mesh, in_specs=P(),
+                  out_specs=None)(np.arange(8.))
+    jax.shard_map(partial(f, 'aval.vma'), mesh=mesh, in_specs=P(),
+                  out_specs=None)(np.arange(8.))
+    jax.jit(jax.shard_map(partial(f, 'str'), mesh=mesh, in_specs=P(),
+                          out_specs=None))(np.arange(8.))
+    jax.jit(jax.shard_map(partial(f, 'aval.vma'), mesh=mesh, in_specs=P(),
+                          out_specs=None))(np.arange(8.))
+
   def test_rewrite_binops(self):
     mesh = jtu.create_mesh((4,), ('x',))
 
