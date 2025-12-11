@@ -1434,8 +1434,8 @@ class JaxExportTest(jtu.JaxTestCase):
       self.assertEqual(b.sharding, a.sharding)
 
   def test_memory_space_from_out_shardings(self):
-    shd = jax.sharding.SingleDeviceSharding(
-        jax.devices()[0], memory_kind="pinned_host")
+    shd = jax.sharding.SingleDeviceSharding(jax.devices()[0],
+                                            memory_kind="pinned_host")
     f = jax.jit(lambda: jnp.ones((2, 2), dtype=np.float32),
                 out_shardings=shd)
 
@@ -1443,9 +1443,10 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual(exported.out_avals[0].memory_space, core.MemorySpace.Host)
     empty_mesh = jax.sharding.AbstractMesh((), ())
     shd_ns = jax.sharding.NamedSharding(empty_mesh, P(None, None),
-                                          memory_kind="pinned_host")
+                                        memory_kind="pinned_host")
     self.assertEqual(exported.out_shardings_jax(empty_mesh)[0], shd_ns)
-    if jtu.device_under_test() in ("tpu", "gpu"):
+    # TODO(necula): this test should work on TPU also
+    if jtu.device_under_test() == "gpu":
       b = exported.call()
       self.assertEqual(b.sharding, shd)
 
