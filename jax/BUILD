@@ -302,27 +302,9 @@ alias(
 )
 
 alias(
-    name = "pallas_fuser",
-    actual = "//jax/experimental:pallas_fuser",
-    visibility = jax_visibility("pallas_fuser_deprecated_alias"),
-)
-
-alias(
-    name = "pallas_mosaic_gpu",
-    actual = "//jax/experimental:pallas_mosaic_gpu",
-    visibility = jax_visibility("pallas_mosaic_gpu_deprecated_alias"),
-)
-
-alias(
     name = "pallas_tpu",
     actual = "//jax/experimental:pallas_tpu",
     visibility = jax_visibility("pallas_tpu_deprecated_alias"),
-)
-
-alias(
-    name = "experimental_transfer",
-    actual = "//jax/experimental:transfer",
-    visibility = jax_visibility("experimental_transfer_deprecated_alias"),
 )
 
 alias(
