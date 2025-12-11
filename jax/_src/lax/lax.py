@@ -6728,10 +6728,8 @@ def _split_transpose_rule(cotangents, operand, *, sizes, axis):
   assert ad.is_undefined_primal(operand)
   if all(type(t) is ad_util.Zero for t in cotangents):
     return ad_util.Zero(operand.aval),
-  cotangents = [
-    _zeros(t.aval) if type(t) is ad_util.Zero else t
-    for t in cotangents
-  ]
+  cotangents = [t.instantiate() if type(t) is ad_util.Zero else t
+                for t in cotangents]
   return concatenate(cotangents, dimension=axis),
 
 def _split_batch_rule(batched_args, batch_dims, *, sizes, axis):

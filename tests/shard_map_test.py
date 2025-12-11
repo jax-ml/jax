@@ -4679,6 +4679,22 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out2.sharding,
                      NamedSharding(mesh, P(None, unreduced={'x'})))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_split_with_unused_result_in_shardmap(self, mesh):
+    arr = jax.device_put(jnp.ones(8), P('x'))
+
+    @jax.shard_map(in_specs=P('x'), out_specs=P('x'))
+    def f(x):
+      a, _ = jnp.split(x, 2, axis=0)  # Important that one result is unused.
+      return a
+
+    def g(x):
+      a = f(x)
+      b = 0.1 * a.mean(keepdims=True)
+      return b.squeeze(0)
+
+    jax.jit(jax.grad(g))(arr)  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str
