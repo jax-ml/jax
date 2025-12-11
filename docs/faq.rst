@@ -325,7 +325,8 @@ as arguments to JIT-compiled functions, without any special annotations.
 .. _faq-jax-vs-numpy:
 
 Is JAX faster than NumPy?
-~~~~~~~~~~~~~~~~~~~~~~~~~
+-------------------------
+
 One question users frequently attempt to answer with such benchmarks is whether JAX
 is faster than NumPy; due to the difference in the two packages, there is not a
 simple answer.
