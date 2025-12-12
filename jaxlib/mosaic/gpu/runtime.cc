@@ -47,7 +47,7 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
 
   CUtensorMapDataType data_type;
   int64_t elem_bitwidth;
-  // types are defined in: LaunchContext._get_tma_desc()
+  // types are defined in: launch_context._tma_dma_type()
   if (elem_type == 8){
     // this is for int2s
     data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
@@ -77,7 +77,13 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
   } else if (elem_type == 7){
     data_type = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16;
     elem_bitwidth = 16;
-  } else{
+  } else if (elem_type == 9){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_INT32;
+    elem_bitwidth = 32;
+  } else if (elem_type == 10){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_INT64;
+    elem_bitwidth = 64;
+  }  else{
     fprintf(stderr, "Unsupported element type: %ld \n", elem_type);
     abort();
   }
