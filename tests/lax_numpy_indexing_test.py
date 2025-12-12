@@ -237,6 +237,11 @@ ADVANCED_INDEXING_TESTS = [
     IndexSpec(shape=(3,), indexer=np.array([0, 1, 0]), out_shape=(3,)),
     IndexSpec(shape=(3, 4, 5), indexer=np.array([ 0, -1]), out_shape=(2, 4, 5)),
   ]),
+  ("TupleOfEmptyList", [
+    IndexSpec(shape=(3, 4), indexer=([],), out_shape=(0, 4)),
+    IndexSpec(shape=(3, 4), indexer=([], 0), out_shape=(0,)),
+    IndexSpec(shape=(3, 4), indexer=([], []), out_shape=(0,)),
+  ]),
   ("TupleOfListsOfPythonInts", [
     IndexSpec(shape=(3, 4, 5), indexer=([0, 1],), out_shape=(2, 4, 5)),
     IndexSpec(shape=(3, 4, 5), indexer=([[0], [-1]], [[2, 3, 0, 3]]),
