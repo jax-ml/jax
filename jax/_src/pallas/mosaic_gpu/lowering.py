@@ -2408,8 +2408,14 @@ def _reshape_lowering_rule(
   if sharding is not None:
     raise NotImplementedError("Not implemented: sharding")
   [x_aval] = ctx.avals_in
-  x = _ensure_fa(x, x_aval.dtype)
-  return x.reshape(new_sizes)
+  return _ensure_fa(x, x_aval.dtype).reshape(new_sizes)
+
+
+@register_lowering_rule(lax.squeeze_p, mgpu.LoweringSemantics.Lane)
+def _squeeze_lowering_rule(ctx: LoweringRuleContext, x, dimensions):
+  [x_aval] = ctx.avals_in
+  [y_aval] = ctx.avals_out
+  return _ensure_fa(x, x_aval.dtype).reshape(y_aval.shape)
 
 
 def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):

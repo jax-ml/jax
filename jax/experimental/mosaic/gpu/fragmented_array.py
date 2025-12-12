@@ -1729,8 +1729,8 @@ class FragmentedArray:
     if any(is_squeezed):
       raise NotImplementedError("Integer indexing not implemented (only slicing allowed)")
     base_tile_shape = self.layout.base_tile_shape
-    if len(base_tile_shape) != len(self.shape):
-      raise NotImplementedError("Tiling has different rank than array")
+    if untiled_rank := len(self.shape) - len(base_tile_shape):
+      base_tile_shape = (1,) * untiled_rank + base_tile_shape
     if any(b % t for b, t in zip(base_idx, base_tile_shape, strict=True)):
       raise ValueError(
           "Base indices of array slices must be aligned to the beginning of a"

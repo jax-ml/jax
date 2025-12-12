@@ -337,6 +337,21 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(math.prod(shape1)).reshape(shape1).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x.reshape(shape2))
 
+  def test_slice_untiled_dim(self):
+    self.skip_if_wg_semantics()
+    shape = (2, 3, 64, 8)
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct(shape[2:], jnp.float32),
+    )
+    def kernel(x_ref, out_ref):
+      y = plgpu.load(x_ref, (), layout=plgpu.Layout.WGMMA, optimized=False)[1, 1]
+      out_ref[...] = y
+
+    x = jnp.arange(math.prod(shape)).reshape(shape).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x[1, 1])
+
   def test_add_xy_indexed(self):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct([128], jnp.float32)
@@ -2835,6 +2850,7 @@ class PallasCallWGTest(
         pallas_primitives.delay_p,
         checkify.check_p,
         lax.reshape_p,
+        lax.squeeze_p,
     }
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)
