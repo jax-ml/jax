@@ -1586,3 +1586,23 @@ pytype_strict_library(
     srcs = ["ref.py"],
     deps = [":core"],
 )
+
+pytype_strict_library(
+    name = "device_kernels",
+    srcs = ["device_kernels.py"],
+    deps = [
+        ":core",
+        ":typing",
+        ":interpreter_mlir",
+        ":ffi",
+        ":hashable_array",
+        ":ad",
+        ":batching",
+        ":dispatch",
+        ":effects",
+        ":util",
+        ":xla_bridge",
+        ":xla_client",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
