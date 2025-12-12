@@ -96,5 +96,5 @@ jobs:
         run: ./ci/run_bazel_test_cpu_rbe.sh
       - name: "Print BES link"
         env:
-          OUTPUT_BEP_FILE: ${{ env.OUTPUT_BEP_FILE }}
+          BES_URL: ${{ env.BES_URL }}
         run: ./ci/print_bes_link.sh
