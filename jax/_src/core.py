@@ -3448,20 +3448,8 @@ class ShapeDtypeStruct:
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
     self.dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-    if sharding is not None and not isinstance(sharding, (Sharding, Format, P)):
-      raise ValueError(
-          "sharding should be an instance of `jax.sharding.Sharding`, "
-          "`jax.sharding.PartitionSpec` or"
-          f" `jax.experimental.layout.Format`. Got {sharding} of type"
-          f" {type(sharding)}.")
-    if (isinstance(sharding, Format) and
-        isinstance(sharding.layout, AutoLayout)):
-      raise TypeError(
-          "`Layout.AUTO` cannot be used in place of a device-local"
-          f" layout in a `ShapeDtypeStruct`. Got {sharding}")
-    self._sharding = (sharding.sharding if isinstance(sharding, Format)
-                      else sharding)
-    self._dll = sharding.layout if isinstance(sharding, Format) else None
+    self._dll = None  # will be set by the sharding setter.
+    self._sharding = sharding  # using the setter defined below.
     self.weak_type = weak_type
     if vma is not None and not isinstance(vma, (set, frozenset)):
       raise TypeError(
@@ -3487,6 +3475,25 @@ class ShapeDtypeStruct:
       return NamedSharding(cur_mesh, self._sharding)
     else:
       return self._sharding
+
+  @sharding.setter
+  def sharding(self, sharding):
+    if sharding is not None and not isinstance(sharding, (Sharding, Format, P)):
+      raise ValueError(
+          "sharding should be an instance of `jax.sharding.Sharding`, "
+          "`jax.sharding.PartitionSpec` or"
+          f" `jax.experimental.layout.Format`. Got {sharding} of type"
+          f" {type(sharding)}."
+      )
+    if isinstance(sharding, Format) and isinstance(sharding.layout, AutoLayout):
+      raise TypeError(
+          "`Layout.AUTO` cannot be used in place of a device-local"
+          f" layout in a `ShapeDtypeStruct`. Got {sharding}"
+      )
+    self._sharding = (
+        sharding.sharding if isinstance(sharding, Format) else sharding
+    )
+    self._dll = sharding.layout if isinstance(sharding, Format) else None
 
   @property
   def format(self):
