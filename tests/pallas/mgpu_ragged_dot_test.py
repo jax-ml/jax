@@ -23,6 +23,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
 from jax.experimental.pallas.ops.gpu import blackwell_ragged_dot_mgpu
+from jax.experimental.pallas.ops.gpu import blackwell_transposed_ragged_dot_mgpu
 from jax.experimental.pallas.ops.gpu import ragged_dot_mgpu
 from jax.experimental.pallas.ops.gpu import transposed_ragged_dot_mgpu
 import jax.numpy as jnp
@@ -223,6 +224,56 @@ class RaggedDotSm100aTestCase(jtu.JaxTestCase):
         collective=True,
     )
     out = blackwell_ragged_dot_mgpu.ragged_dot_kernel(
+        lhs,
+        rhs,
+        group_sizes=group_sizes,
+        config=tuning_config,
+    )
+    out_ref = jax.lax.ragged_dot(lhs, rhs, group_sizes=group_sizes,
+                                 preferred_element_type=dtype)
+    np.testing.assert_allclose(out, out_ref, atol=1e-3, rtol=1e-3)
+
+
+  @parameterized.product(
+      grid_tile_width=(1, 8, 16),
+      grid_minor_dim=(0, 1),
+      max_concurrent_steps=(2, 4),
+      num_groups=(1, 3, 16),
+      tile_k=(64, 128)
+  )
+  def test_transposed_ragged_dot(
+      self,
+      grid_tile_width,
+      grid_minor_dim,
+      max_concurrent_steps,
+      num_groups,
+      tile_k,
+  ):
+    # Kernel does not support other tiling on M and N dimensions currently.
+    tile_m = 128
+    tile_n = 128
+
+    lhs_smem_size = tile_k * tile_m * max_concurrent_steps * 2
+    rhs_smem_size = tile_k * tile_n * max_concurrent_steps * 2
+    # B200 SMEM limit is 228kB.
+    if lhs_smem_size + rhs_smem_size > 228_000:
+      self.skipTest("This configuration requires too much SMEM.")
+
+    dtype = jnp.float16
+    m, k, n = 16 * 1024, 2048, 16 * 1024
+    lhs, rhs, group_sizes = sample_inputs(
+        random.key(1234), m, k, n, num_groups, dtype, transposed=True
+    )
+    tuning_config = blackwell_transposed_ragged_dot_mgpu.TuningConfig(
+        tile_m=tile_m,
+        tile_n=tile_n,
+        tile_k=tile_k,
+        grid_tile_width=grid_tile_width,
+        grid_minor_dim=grid_minor_dim,
+        max_concurrent_steps=max_concurrent_steps,
+        collective=True,
+    )
+    out = blackwell_transposed_ragged_dot_mgpu.ragged_dot_kernel(
         lhs,
         rhs,
         group_sizes=group_sizes,
