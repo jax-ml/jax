@@ -16,16 +16,16 @@ bazel_dep(name = "rules_python", version = "1.6.1")
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
   module_name = "rules_ml_toolchain",
-  urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/29d54c875da37e74b8548924ed30e78cb28126b9.tar.gz"],
-  strip_prefix = "rules_ml_toolchain-29d54c875da37e74b8548924ed30e78cb28126b9",
+  urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/f13852164b6fe240f8a989a744221a51e0d485cd.tar.gz"],
+  strip_prefix = "rules_ml_toolchain-f13852164b6fe240f8a989a744221a51e0d485cd",
 )
 
 # TODO: use a released version when available
 bazel_dep(name = "xla")
 archive_override(
   module_name = "xla",
-  urls = ["https://github.com/openxla/xla/archive/f5d6d1aae38dfa3de44c057064ec7609b9a390af.tar.gz"],
-  strip_prefix = "xla-f5d6d1aae38dfa3de44c057064ec7609b9a390af",
+  urls = ["https://github.com/openxla/xla/archive/2fba06ced7e3a3321da176acd0b717bb32e4716f.tar.gz"],
+  strip_prefix = "xla-2fba06ced7e3a3321da176acd0b717bb32e4716f",
 )
 
 # TODO: upstream, otherwise we have to duplicate the patches in jax
