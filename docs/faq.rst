@@ -138,7 +138,7 @@ on GitHub.
 How to use ``jit`` with methods?
 --------------------------------
 
-Moved to :ref:`jax-jit-with-class-methods`.
+Moved to :ref:`jax-jit-class-methods`.
 
 .. _faq-jax-vs-numpy:
 
