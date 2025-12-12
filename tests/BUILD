@@ -1238,9 +1238,6 @@ jax_multiplatform_test(
             "notsan",  # Times out
         ],
     },
-    env = {
-        "XLA_FLAGS": "--xla_cpu_use_xnnpack=false",  # TODO(b/454581761): Reenable once we switch to YNNPACK.
-    },
     shard_count = 4,
     deps = py_deps([
         "absl/testing",
