@@ -1381,8 +1381,6 @@ def _shard_map_batch(
     in_specs, out_specs_thunk, check_vma: bool, manual_axes: frozenset
     ) -> Sequence[batching.BatchTracer]:
   in_vals, in_dims = unzip2(map(trace.to_batch_info, in_tracers))
-  if any(isinstance(d, batching.RaggedAxis) for d in in_dims):
-    raise NotImplementedError
   spmd_axis_name = trace.axis_data.spmd_name
   explicit_mesh_axis = trace.axis_data.explicit_mesh_axis
   if spmd_axis_name is not None:

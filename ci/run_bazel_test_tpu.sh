@@ -188,7 +188,6 @@ else
     //tests/pallas:tpu_pallas_call_print_test_tpu \
     //tests/pallas:indexing_test_tpu \
     //tests/pallas:pallas_error_handling_test_tpu \
-    //tests/pallas:pallas_jumble_test_tpu \
     //tests/pallas:pallas_shape_poly_test_tpu \
     //tests/pallas:tpu_all_gather_test_tpu \
     //tests/pallas:tpu_fusible_matmul_test_tpu \
@@ -227,9 +226,7 @@ else
     //tests:layout_test_tpu \
     //tests:pjit_test_tpu \
     //tests:python_callback_test_tpu \
-    //tests:ragged_collective_test_tpu \
-    //tests/multiprocess:tpu_tests \
-    $IGNORE_TESTS_MULTIACCELERATOR
+    //tests:ragged_collective_test_tpu
 
   # Store the return value of the second bazel command.
   second_bazel_cmd_retval=$?

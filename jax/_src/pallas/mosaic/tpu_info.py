@@ -20,8 +20,8 @@ from typing import Callable
 
 from jax import numpy as jnp
 from jax._src import dtypes
-from jax._src.pallas.mosaic import core
 from jax._src import util as jax_util
+from jax._src.pallas.mosaic import core
 
 
 class ChipVersionBase:
@@ -41,12 +41,15 @@ class ChipVersion(ChipVersionBase, enum.Enum):
   def __str__(self) -> str:
     return self.value
 
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class SparseCoreInfo:
   """SparseCore-specific information."""
+
   num_cores: int
   num_subcores: int
   num_lanes: int
+  dma_granule_size_bytes: int
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -122,10 +125,7 @@ class TpuInfo:
             or (lhs_dt in {U4, S4} and rhs_dt in {U4, S4})
         )
       case 7:
-        return (
-            lhs_dt in {F32, BF16}
-            and rhs_dt in {F32, BF16}
-        ) or (
+        return (lhs_dt in {F32, BF16} and rhs_dt in {F32, BF16}) or (
             lhs_dt in {F32, BF16, F8E5M2, F8E4M3FN}
             and rhs_dt in {F8E5M2, F8E4M3FN}
         )
@@ -171,6 +171,7 @@ def is_tpu_device() -> bool:
 
 
 registry: dict[str, Callable[[], TpuInfo]] = {}
+
 
 @jax_util.cache(trace_context_in_key=True)
 def get_tpu_info() -> TpuInfo:
@@ -302,7 +303,12 @@ def get_tpu_info() -> TpuInfo:
           int8_ops_per_second=int(9.18e14 // num_chip_cores),
           fp8_ops_per_second=0,  # Not Available
           int4_ops_per_second=int(1.84e15 // num_chip_cores),
-          sparse_core=SparseCoreInfo(num_cores=4, num_subcores=16, num_lanes=8),
+          sparse_core=SparseCoreInfo(
+              num_cores=4,
+              num_subcores=16,
+              num_lanes=8,
+              dma_granule_size_bytes=32,
+          ),
       )
     case "TPU v6 lite" | "TPU v6e":  # 1 TensorCore per chip
       return TpuInfo(
@@ -321,29 +327,39 @@ def get_tpu_info() -> TpuInfo:
           int8_ops_per_second=int(1.84e15),
           fp8_ops_per_second=int(9.20e14),
           int4_ops_per_second=int(3.68e15),
-          sparse_core=SparseCoreInfo(num_cores=2, num_subcores=16, num_lanes=8),
+          sparse_core=SparseCoreInfo(
+              num_cores=2,
+              num_subcores=16,
+              num_lanes=8,
+              dma_granule_size_bytes=32,
+          ),
       )
     case "TPU7x":
       num_cores = core.get_num_device_cores()
       num_chip_cores = 2
       return TpuInfo(
-        chip_version=ChipVersion.TPU_7X,
-        generation=7,
-        num_cores=num_cores,
-        num_lanes=128,
-        num_sublanes=8,
-        mxu_column_size=256,
-        vmem_capacity_bytes=64 * 1024 * 1024,  # 64 MiB per core
-        cmem_capacity_bytes=0,
-        smem_capacity_bytes=1024 * 1024,  # 1 MiB per core
-        hbm_capacity_bytes=206_000_000_000 // num_chip_cores,
-        mem_bw_bytes_per_second=int(7.40e12 // num_chip_cores),
-        bf16_ops_per_second=int(2.31e15 // num_chip_cores),
-        int8_ops_per_second=0,  # Not Available
-        fp8_ops_per_second=int(4.60e15 // num_chip_cores),
-        int4_ops_per_second=0,  # Not Available
-        sparse_core=SparseCoreInfo(num_cores=4, num_subcores=16, num_lanes=16),
-    )
+          chip_version=ChipVersion.TPU_7X,
+          generation=7,
+          num_cores=num_cores,
+          num_lanes=128,
+          num_sublanes=8,
+          mxu_column_size=256,
+          vmem_capacity_bytes=64 * 1024 * 1024,  # 64 MiB per core
+          cmem_capacity_bytes=0,
+          smem_capacity_bytes=1024 * 1024,  # 1 MiB per core
+          hbm_capacity_bytes=206_000_000_000 // num_chip_cores,
+          mem_bw_bytes_per_second=int(7.40e12 // num_chip_cores),
+          bf16_ops_per_second=int(2.31e15 // num_chip_cores),
+          int8_ops_per_second=0,  # Not Available
+          fp8_ops_per_second=int(4.60e15 // num_chip_cores),
+          int4_ops_per_second=0,  # Not Available
+          sparse_core=SparseCoreInfo(
+              num_cores=4,
+              num_subcores=16,
+              num_lanes=16,
+              dma_granule_size_bytes=64,
+          ),
+      )
     case _ as d:
       if d in registry:
         return registry[d]()

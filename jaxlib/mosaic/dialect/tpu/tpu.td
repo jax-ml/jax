@@ -168,13 +168,39 @@ def TPU_VectorLayoutAttr : TPU_Attr<"VectorLayout", "vpad"> {
 def TPU_TiledLayoutAttr
   : TPU_Attr<"TiledLayout", "tiled",
              [DeclareAttrInterfaceMethods<MemRefLayoutAttrInterface>]> {
-  let description = [{TODO}];
+  let description = [{
+    This attribute represents tiled layouts in memrefs.
+
+    Multiple levels of tiling are supported with the following restriction:
+    - Additional levels of tiling may not add any padding.
+    - Additional levels of tiling may not tile previously untiled dimensions,
+      that is, they cannot tile across first-level tiles.
+
+    Tile strides encode the stride when moving along a given dimension. They
+    must have the same rank as the shape and must be decreasing with increasing
+    dimension number. For tiled dimensions, the stride applies only when moving
+    across first-level tiles. The strides are in units of the size of the first
+    tile, or 1 if there are no tiles.
+  }];
   let parameters = (ins
     ArrayRefParameter<"::xla::Tile", "">:$tiles,
     ArrayRefParameter<"int64_t", "">:$tile_strides
   );
+  let extraClassDeclaration = [{
+    static ::llvm::SmallVector<int64_t> getDefaultTileStrides(::llvm::ArrayRef<::xla::Tile> tiles, ::llvm::ArrayRef<int64_t> shape);
+    bool tilesAreKnownContiguous(::llvm::ArrayRef<int64_t> shape) const;
+
+    int64_t getRank() const {
+      return getTileStrides().size();
+    }
+    int64_t getUntiledRank() const;
+
+    ::llvm::SmallVector<int64_t> getExpandedShape(::llvm::ArrayRef<int64_t> shape) const;
+    ::llvm::SmallVector<int64_t> getExpandedStrides() const;
+  }];
 
   let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
 }
 
 def TPU_MemorySpace : I32EnumAttr<"MemorySpace", "Memory space", [

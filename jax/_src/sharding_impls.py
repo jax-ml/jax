@@ -193,7 +193,6 @@ def pmap_sharding_devices_indices_map(
 
 @use_cpp_class(xc.PmapSharding)
 class PmapSharding(jsharding.Sharding):
-  """Describes a sharding used by :func:`jax.pmap`."""
   devices: np.ndarray
   sharding_spec: sharding_specs.ShardingSpec
   _internal_device_list: xc.DeviceList

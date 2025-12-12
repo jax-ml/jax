@@ -152,7 +152,7 @@ class BlockMapping(pallas_core.BlockMapping):
 def get_sparse_core_info() -> tpu_info.SparseCoreInfo:
   """Returns the SparseCore information for the current device."""
   return tpu_info.get_tpu_info().sparse_core or tpu_info.SparseCoreInfo(
-      num_cores=0, num_subcores=0, num_lanes=0
+      num_cores=0, num_subcores=0, num_lanes=0, dma_granule_size_bytes=0,
   )
 
 
@@ -219,6 +219,11 @@ def _scalar_subcore_mesh_discharge_rule(
     compiler_params = tpu_core.CompilerParams()
   if compiler_params.dimension_semantics is not None:
     raise ValueError("ScalarSubcoreMesh does not support dimension_semantics=")
+  sa_avals = [a for a in in_avals if isinstance(a, jax_core.ShapedArray)]
+  if sa_avals:
+    raise NotImplementedError(
+        f"Cannot close over values in core_map: {sa_avals}"
+    )
   return pallas_core.default_mesh_discharge_rule(
       in_avals,
       out_avals,

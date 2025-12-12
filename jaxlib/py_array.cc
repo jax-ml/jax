@@ -2373,13 +2373,22 @@ absl::Status PyArray::Register(nb::module_& m) {
           },
           nb::sig(
               "def __call__(self, arg: Array | Sequence[Array], /) -> Array"))
-      .def("wrap", [](const PyArrayResultHandler& self, nb::callable wrapper) {
-        auto wrappers = self.wrappers();
-        wrappers.push_back(std::move(wrapper));
-        return make_nb_class<PyArrayResultHandler>(
-            self.aval(), self.sharding(), self.committed(), self.skip_checks(),
-            std::move(wrappers));
-      });
+      .def("wrap",
+           [](const PyArrayResultHandler& self, nb::callable wrapper) {
+             auto wrappers = self.wrappers();
+             wrappers.push_back(std::move(wrapper));
+             return make_nb_class<PyArrayResultHandler>(
+                 self.aval(), self.sharding(), self.committed(),
+                 self.skip_checks(), std::move(wrappers));
+           })
+      .def("pre_wrap",
+           [](const PyArrayResultHandler& self, nb::callable wrapper) {
+             auto wrappers = self.wrappers();
+             wrappers.insert(wrappers.begin(), std::move(wrapper));
+             return make_nb_class<PyArrayResultHandler>(
+                 self.aval(), self.sharding(), self.committed(),
+                 self.skip_checks(), std::move(wrappers));
+           });
 
   return absl::OkStatus();
 }

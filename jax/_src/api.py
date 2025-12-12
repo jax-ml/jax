@@ -68,7 +68,7 @@ from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
-from jax._src.mesh import get_concrete_mesh
+from jax._src.mesh import get_concrete_mesh, get_abstract_mesh
 from jax._src.sharding_impls import (PmapSharding, PartitionSpec as P,
                                      NamedSharding)
 from jax._src.layout import Format
@@ -172,7 +172,6 @@ def jit(
   device: xc.Device | None = ...,
   backend: str | None = ...,
   inline: bool = ...,
-  abstracted_axes: Any | None = ...,
   compiler_options: dict[str, Any] | None = ...,
 ) -> pjit.JitWrapped: ...
 
@@ -189,7 +188,6 @@ def jit(
   device: xc.Device | None = ...,
   backend: str | None = ...,
   inline: bool = ...,
-  abstracted_axes: Any | None = ...,
   compiler_options: dict[str, Any] | None = ...,
 ) -> Callable[[Callable], pjit.JitWrapped]: ...
 
@@ -205,7 +203,6 @@ def jit(
   device: xc.Device | None = None,
   backend: str | None = None,
   inline: bool = False,
-  abstracted_axes: Any | None = None,
   compiler_options: dict[str, Any] | None = None,
 ) -> pjit.JitWrapped | Callable[[Callable], pjit.JitWrapped]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
@@ -350,8 +347,7 @@ def jit(
       static_argnums=static_argnums, static_argnames=static_argnames,
       donate_argnums=donate_argnums, donate_argnames=donate_argnames,
       keep_unused=keep_unused, device=device, backend=backend, inline=inline,
-      abstracted_axes=abstracted_axes, compiler_options=compiler_options,
-      use_resource_env=False)
+      compiler_options=compiler_options, use_resource_env=False)
   if isinstance(fun, NotSpecified):
     return lambda fun: pjit.make_jit(fun, **kwds)
   else:
@@ -1195,6 +1191,9 @@ def vmap(fun: F,
                   _mapped_axis_size(fun, in_tree, args_flat, in_axes_flat, "vmap"))
     explicit_mesh_axis = _mapped_axis_spec(args_flat, in_axes_flat)
     if spmd_axis_name is not None and explicit_mesh_axis is not None:
+      spmd_axis_name = (
+          tuple(*core.remove_size_one_mesh_axis(P(spmd_axis_name), get_abstract_mesh()))
+          if config.remove_size_one_mesh_axis_from_type.value else spmd_axis_name)
       if spmd_axis_name == explicit_mesh_axis:
         spmd_axis_name = None
       else:
@@ -1345,7 +1344,13 @@ def pmap(
     donate_argnums: int | Iterable[int] = (),
     global_arg_shapes: tuple[tuple[int, ...], ...] | None = None,
   ) -> Any:
-  """Parallel map with support for collective operations.
+  """Old way of doing parallel map. Use :py:func:`jax.shard_map` instead.
+
+  .. note::
+    While :py:func:`jax.pmap` works, you should probably use
+    :py:func:`jax.shard_map` or ``jax.smap`` instead. shard_map supports more
+    efficient autodiff, and is more composable in the multi-controller setting.
+    See https://docs.jax.dev/en/latest/notebooks/shard_map.html for examples.
 
   .. note::
     :py:func:`pmap` is now implemented in terms of :py:func:`jit` and
@@ -1509,26 +1514,6 @@ def pmap(
   collective operations, like :func:`jax.lax.psum`, can refer to it. Axis names
   are important particularly in the case of nested :py:func:`pmap` functions,
   where collective operations can operate over distinct axes:
-
-  >>> from functools import partial
-  >>> import jax
-  >>>
-  >>> @partial(pmap, axis_name='rows')
-  ... @partial(pmap, axis_name='cols')
-  ... def normalize(x):
-  ...   row_normed = x / jax.lax.psum(x, 'rows')
-  ...   col_normed = x / jax.lax.psum(x, 'cols')
-  ...   doubly_normed = x / jax.lax.psum(x, ('rows', 'cols'))
-  ...   return row_normed, col_normed, doubly_normed
-  >>>
-  >>> x = jnp.arange(8.).reshape((4, 2))
-  >>> row_normed, col_normed, doubly_normed = normalize(x)  # doctest: +SKIP
-  >>> print(row_normed.sum(0))  # doctest: +SKIP
-  [ 1.  1.]
-  >>> print(col_normed.sum(1))  # doctest: +SKIP
-  [ 1.  1.  1.  1.]
-  >>> print(doubly_normed.sum((0, 1)))  # doctest: +SKIP
-  1.0
 
   On multi-process platforms, collective operations operate over all devices,
   including those on other processes. For example, assuming the following code
@@ -2577,13 +2562,13 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   return Partial(transposed_fun, const)
 
 
-def _flat_axes_specs(abstracted_axes, *args, **kwargs
+def _flat_axes_specs(*args, **kwargs
                      ) -> list[pe.AbstractedAxesSpec]:
   if kwargs: raise NotImplementedError
   def ax_leaf(l):
     return (isinstance(l, dict) and all_leaves(l.values()) or
             isinstance(l, tuple) and all_leaves(l, lambda x: x is None))
-  return broadcast_prefix(abstracted_axes, args, ax_leaf)
+  return broadcast_prefix(args, ax_leaf)
 
 
 @overload
@@ -2592,7 +2577,6 @@ def make_jaxpr(
     static_argnums: int | Iterable[int] = (),
     axis_env: Sequence[tuple[AxisName, int]] | None = None,
     return_shape: Literal[False] = ...,
-    abstracted_axes: Any | None = None,
 ) -> Callable[..., core.ClosedJaxpr]:
   ...
 
@@ -2602,7 +2586,6 @@ def make_jaxpr(
     static_argnums: int | Iterable[int] = (),
     axis_env: Sequence[tuple[AxisName, int]] | None = None,
     return_shape: Literal[True] = ...,
-    abstracted_axes: Any | None = None,
 ) -> Callable[..., tuple[core.ClosedJaxpr, Any]]:
   ...
 
@@ -2612,7 +2595,6 @@ def make_jaxpr(
     static_argnums: int | Iterable[int] = (),
     axis_env: Sequence[tuple[AxisName, int]] | None = None,
     return_shape: bool = False,
-    abstracted_axes: Any | None = None,
 ) -> Callable[..., core.ClosedJaxpr | tuple[core.ClosedJaxpr, Any]]:
   """Create a function that returns the jaxpr of ``fun`` given example args.
 
@@ -2680,8 +2662,7 @@ def make_jaxpr(
   @api_boundary
   def make_jaxpr_f(*args, **kwargs):
     with core.extend_axis_env_nd(axis_env or []):
-      traced = jit(fun, static_argnums=static_argnums,
-                   abstracted_axes=abstracted_axes).trace(*args, **kwargs)
+      traced = jit(fun, static_argnums=static_argnums).trace(*args, **kwargs)
     # `jit` converts tracers in consts to args but `make_jaxpr` callers expect
     # consts not to be converted.
     num_consts = traced._num_consts

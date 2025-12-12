@@ -184,7 +184,7 @@ def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
         f"No dtype_to_ir_type handler for dtype: {dtype}") from err
   return ir_type_factory()
 
-def _array_ir_types(aval: core.ShapedArray | core.DShapedArray) -> ir.Type:
+def _array_ir_types(aval: core.ShapedArray) -> ir.Type:
   aval = core.physical_aval(aval)  # type: ignore
   if not core.is_constant_shape(aval.shape):
     return _dynamic_array_ir_types(aval)  # type: ignore
@@ -209,7 +209,6 @@ def aval_to_ir_type(aval: core.AbstractValue) -> IrTypes:
 
 ir_type_handlers[core.ShapedArray] = _array_ir_types
 ir_type_handlers[core.AbstractToken] = lambda _: hlo.TokenType.get()
-ir_type_handlers[core.DShapedArray] = _dynamic_array_ir_types
 
 # This is a backwards compatibility shim for external users of jax.mlir apis.
 def aval_to_ir_types(aval: core.AbstractValue) -> tuple[ir.Type, ...]:
@@ -974,27 +973,23 @@ def sharded_aval(aval: core.AbstractValue,
     return aval
   if isinstance(aval, core.AbstractToken):
     return aval
-  if not isinstance(aval, (core.ShapedArray, core.DShapedArray)):
+  if not isinstance(aval, core.ShapedArray):
     raise NotImplementedError
   return aval.update(sharding.shard_shape(aval.shape), sharding=None)  # type: ignore
 
 
 def eval_dynamic_shape(ctx: LoweringRuleContext,
                        shape: core.Shape) -> tuple[int | Value, ...]:
-  if config.dynamic_shapes.value:
-    assert ctx.axis_size_env is not None
-    return tuple(ctx.axis_size_env.get(d, d) for d in shape)  # type: ignore
-  else:
-    ctx = ctx.replace(
-        primitive="eval_dynamic_shape",
-        avals_in=[core.dim_value_aval()] * len(ctx.module_context.shape_poly_state.dim_vars),
-        tokens_out=None)
+  ctx = ctx.replace(
+      primitive="eval_dynamic_shape",
+      avals_in=[core.dim_value_aval()] * len(ctx.module_context.shape_poly_state.dim_vars),
+      tokens_out=None)
 
-    res = lower_fun(
-        partial(core.evaluate_shape, shape, ctx.module_context.shape_poly_state.dim_vars),
-        multiple_results=True)(ctx, *ctx.dim_var_values)
-    return tuple(operator.index(d) if core.is_constant_dim(d) else d_ir
-                 for d, d_ir in zip(shape, flatten_ir_values(res)))
+  res = lower_fun(
+      partial(core.evaluate_shape, shape, ctx.module_context.shape_poly_state.dim_vars),
+      multiple_results=True)(ctx, *ctx.dim_var_values)
+  return tuple(operator.index(d) if core.is_constant_dim(d) else d_ir
+               for d, d_ir in zip(shape, flatten_ir_values(res)))
 
 # TODO: replace usage of eval_dynamic_shape_as_vals with eval_dynamic_shape_as_ivals
 def eval_dynamic_shape_as_vals(ctx: LoweringRuleContext,
@@ -1083,7 +1078,7 @@ def _to_physical_op_sharding(
   assert isinstance(sharding, JSharding)
   if isinstance(aval, AbstractRef):
     return _to_physical_op_sharding(ctx, aval.inner_aval, sharding)
-  assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
+  assert isinstance(aval, core.ShapedArray)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     sharding = sharding_impls.physical_sharding(aval, sharding)
     aval = core.physical_aval(aval)
@@ -1288,16 +1283,12 @@ def lower_jaxpr_to_module(
   # Create a keepalives list that will be mutated during the lowering.
   keepalives: list[Any] = []
   host_callbacks: list[Any] = []
+  # Find the dimension variables
+  all_dim_poly = [d for aval in sharded_in_avals if hasattr(aval, "shape")
+                  for d in aval.shape if not core.is_constant_dim(d)]
+  dim_vars = tuple(sorted(functools.reduce(lambda acc, new: acc.union(new._get_vars()),
+                                           all_dim_poly, set())))
 
-  dim_vars: Sequence[str]
-  if not config.dynamic_shapes.value:
-    # Find the dimension variables
-    all_dim_poly = [d for aval in sharded_in_avals if hasattr(aval, "shape")
-                    for d in aval.shape if not core.is_constant_dim(d)]
-    dim_vars = tuple(sorted(functools.reduce(lambda acc, new: acc.union(new._get_vars()),
-                                             all_dim_poly, set())))
-  else:
-    dim_vars = ()
 
   ctx = ModuleContext(backend=backend,
                       platforms=platforms, axis_context=axis_context,
@@ -1974,7 +1965,7 @@ def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
   # For example: if the key.shape is (8, 2) and key_data(key).shape is (8, 2, 2),
   # then the sharding will be P(P.UNCONSTRAINED, P.UNCONSTRAINED, None).
   # The below custom call achieves the sharding like above example.
-  assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
+  assert isinstance(aval, core.ShapedArray)
   if config.use_shardy_partitioner.value:
     physical_ndim = core.physical_aval(aval).ndim
     s = SdyArray(
@@ -2065,8 +2056,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
           eqn.ctx.manager):
       # TODO(mattjj, phawkins): support caching for dynamic shapes.
       can_cache_lowering = (
-          eqn.primitive not in _uncacheable_primitives and
-          not config.dynamic_shapes.value)
+          eqn.primitive not in _uncacheable_primitives)
       if can_cache_lowering:
         loc = source_info_to_location(ctx, None, eqn_name_stack,
                                       eqn.source_info.traceback)
@@ -2077,10 +2067,6 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
       else:
         # If we cannot cache the lowering, lower inline.
         axis_size_env = None
-        if config.dynamic_shapes.value:
-          axis_size_env = {d: read(d)
-                           for a in avals_in if type(a) is core.DShapedArray
-                           for d in a.shape if type(d) is core.Var}
         rule_ctx = LoweringRuleContext(
             module_context=ctx, primitive=eqn.primitive,
             name_stack=eqn_name_stack,
@@ -2465,26 +2451,16 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
     wrapped_fun = lu.wrap_init(f, params,
         debug_info=api_util.debug_info("lower_fun", fun, args, {}))
 
-    if config.dynamic_shapes.value:
-      # We might be applying this function to arguments with dynamic shapes,
-      # i.e. there might be Vars in the shape tuples of ctx.avals_in. In that
-      # case, we need to form a jaxpr with leading binders for those axis size
-      # arguments (by computing an InputType and using trace_to_jaxpr_dynamic2),
-      # and we need to call jaxpr_subcomp with these arguments made explicit.
-      assert ctx.axis_size_env is not None
-      args = (*ctx.axis_size_env.values(), *args)
-      idx = {d: core.DBIdx(i) for i, d in enumerate(ctx.axis_size_env)}
-      i32_aval = core.ShapedArray((), np.dtype('int32'))
-      implicit_args = [(i32_aval, False)] * len(ctx.axis_size_env)
-      explicit_args = [(a.update(shape=tuple(idx.get(d, d) for d in a.shape))  # type: ignore
-                        if type(a) is core.DShapedArray else a, True)
-                      for a in ctx.avals_in]
-      wrapped_fun = lu.annotate(wrapped_fun, (*implicit_args, *explicit_args))
-      jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic2(wrapped_fun)
-    else:
-      jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic(wrapped_fun,
-                                                                  ctx.avals_in)
-      # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?
+    jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic(
+        wrapped_fun, ctx.avals_in)
+
+    if any(isinstance(e, core.InternalMutableArrayEffect) for e in jaxpr.effects):
+      from jax._src.interpreters import pxla  # type: ignore
+      closed_jaxpr = core.ClosedJaxpr(jaxpr, consts_for_constvars)
+      closed_jaxpr = pxla._discharge_internal_refs(closed_jaxpr)
+      jaxpr, consts_for_constvars = closed_jaxpr.jaxpr, closed_jaxpr.consts
+
+    # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?
 
     if ctx.platforms is not None:
       sub_context = ctx.module_context.replace(platforms=ctx.platforms)

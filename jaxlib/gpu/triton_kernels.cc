@@ -315,17 +315,16 @@ class ModuleImage {
       ABSL_GUARDED_BY(mutex_);
 };
 
-Kernel::Kernel(std::string kernel_name, uint32_t num_warps,
+Kernel::Kernel(std::string kernel_name, uint32_t num_warps, uint32_t num_ctas,
                uint32_t shared_mem_bytes, std::string ptx, std::string ttir,
-               int compute_capability, uint32_t cluster_dim_0,
-               uint32_t cluster_dim_1, uint32_t cluster_dim_2)
+               int compute_capability)
     : kernel_name_(std::move(kernel_name)),
       block_dim_x_(num_warps * kNumThreadsPerWarp),
+      num_ctas_(num_ctas),
       shared_mem_bytes_(shared_mem_bytes),
       ptx_(std::move(ptx)),
       ttir_(std::move(ttir)),
-      compute_capability_(compute_capability),
-      cluster_dims_{cluster_dim_0, cluster_dim_1, cluster_dim_2} {}
+      compute_capability_(compute_capability) {}
 
 absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
                             void** params) {
@@ -362,9 +361,7 @@ absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
 
   JAX_ASSIGN_OR_RETURN(gpuFunction_t kernel,
                        module_image_->GetFunctionForContext(context));
-  const uint32_t cluster_size =
-      cluster_dims_[0] * cluster_dims_[1] * cluster_dims_[2];
-  if (cluster_size <= 1) {
+  if (num_ctas_ == 1) {
     return JAX_AS_STATUS(gpuLaunchKernel(
         kernel, grid[0], grid[1], grid[2], block_dim_x_,
         /*blockDimY=*/1, /*blockDimZ=*/1, shared_mem_bytes_, stream, params,
@@ -372,16 +369,16 @@ absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
   }
   CUlaunchAttribute launch_attrs[2];
   launch_attrs[0].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
-  launch_attrs[0].value.clusterDim.x = cluster_dims_[0];
-  launch_attrs[0].value.clusterDim.y = cluster_dims_[1];
-  launch_attrs[0].value.clusterDim.z = cluster_dims_[2];
+  launch_attrs[0].value.clusterDim.x = num_ctas_;
+  launch_attrs[0].value.clusterDim.y = 1;
+  launch_attrs[0].value.clusterDim.z = 1;
   launch_attrs[1].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_SCHEDULING_POLICY_PREFERENCE;
   launch_attrs[1].value.clusterSchedulingPolicyPreference =
       CU_CLUSTER_SCHEDULING_POLICY_SPREAD;
   CUlaunchConfig launch_config = {
-      /*gridDimX=*/grid[0] * cluster_dims_[0],
-      /*gridDimY=*/grid[1] * cluster_dims_[1],
-      /*gridDimZ=*/grid[2] * cluster_dims_[2],
+      /*gridDimX=*/grid[0] * num_ctas_,
+      /*gridDimY=*/grid[1],
+      /*gridDimZ=*/grid[2],
       /*blockDimX=*/block_dim_x_,
       /*blockDimY=*/1,
       /*blockDimZ=*/1,
@@ -396,23 +393,23 @@ absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
 }
 
 /*static*/ Kernel Kernel::FromProto(const jax_triton::TritonKernel& proto) {
-  return Kernel(proto.kernel_name(), proto.num_warps(),
+  // Use 1 as default value if not specified in already serialized kernels.
+  int num_ctas = proto.has_num_ctas() ? proto.num_ctas() : 1;
+
+  return Kernel(proto.kernel_name(), proto.num_warps(), num_ctas,
                 proto.shared_mem_bytes(), proto.ptx(), proto.ttir(),
-                proto.compute_capability(), proto.cluster_dim_0(),
-                proto.cluster_dim_1(), proto.cluster_dim_2());
+                proto.compute_capability());
 }
 
 jax_triton::TritonKernel Kernel::ToProto() const {
   jax_triton::TritonKernel proto;
   proto.set_kernel_name(kernel_name_);
   proto.set_num_warps(block_dim_x_ / kNumThreadsPerWarp);
+  proto.set_num_ctas(num_ctas_);
   proto.set_shared_mem_bytes(shared_mem_bytes_);
   proto.set_ptx(ptx_);
   proto.set_ttir(ttir_);
   proto.set_compute_capability(compute_capability_);
-  proto.set_cluster_dim_0(cluster_dims_[0]);
-  proto.set_cluster_dim_1(cluster_dims_[1]);
-  proto.set_cluster_dim_2(cluster_dims_[2]);
   return proto;
 }
 

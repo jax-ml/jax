@@ -115,7 +115,6 @@ jax_multiplatform_test(
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_experimental_enable_nvshmem=true"},
     tags = ["multiaccelerator"],
     deps = [
-        "//jax:experimental",
         "//jax/_src:test_multiprocess",
         "//jax/experimental:mosaic_gpu",
     ] + py_deps([

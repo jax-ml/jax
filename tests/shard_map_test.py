@@ -2275,6 +2275,24 @@ class ShardMapTest(jtu.JaxTestCase):
     f(jnp.arange(8.))
     jax.grad(lambda x: f(x).sum())(jnp.arange(8.))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_pcast_axis_name_is_not_set(self, mesh):
+    def f(axis_name_type, x):
+      with self.assertRaisesRegex(TypeError, 'must be a tuple or a str'):
+        if axis_name_type == 'str':
+          jax.lax.pcast(x, {'x'}, to='varying')
+        elif axis_name_type == 'aval.vma':
+          jax.lax.pcast(x, x.aval.vma, to='varying')
+
+    jax.shard_map(partial(f, 'str'), mesh=mesh, in_specs=P(),
+                  out_specs=None)(np.arange(8.))
+    jax.shard_map(partial(f, 'aval.vma'), mesh=mesh, in_specs=P(),
+                  out_specs=None)(np.arange(8.))
+    jax.jit(jax.shard_map(partial(f, 'str'), mesh=mesh, in_specs=P(),
+                          out_specs=None))(np.arange(8.))
+    jax.jit(jax.shard_map(partial(f, 'aval.vma'), mesh=mesh, in_specs=P(),
+                          out_specs=None))(np.arange(8.))
+
   def test_rewrite_binops(self):
     mesh = jtu.create_mesh((4,), ('x',))
 
@@ -4660,6 +4678,22 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out1.sharding, NamedSharding(mesh, P('x')))
     self.assertEqual(out2.sharding,
                      NamedSharding(mesh, P(None, unreduced={'x'})))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_split_with_unused_result_in_shardmap(self, mesh):
+    arr = jax.device_put(jnp.ones(8), P('x'))
+
+    @jax.shard_map(in_specs=P('x'), out_specs=P('x'))
+    def f(x):
+      a, _ = jnp.split(x, 2, axis=0)  # Important that one result is unused.
+      return a
+
+    def g(x):
+      a = f(x)
+      b = 0.1 * a.mean(keepdims=True)
+      return b.squeeze(0)
+
+    jax.jit(jax.grad(g))(arr)  # doesn't crash
 
 
 class FunSpec(NamedTuple):

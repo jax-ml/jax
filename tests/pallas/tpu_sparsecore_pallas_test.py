@@ -1925,6 +1925,11 @@ class PipelineTestWithTCTiling(TCTilingMixin, PipelineTest):
 
 class PallasSparsecoreAsyncTest(PallasSCTest):
 
+  def setUp(self):
+    super().setUp()
+    if not jtu.is_cloud_tpu_at_least(2025, 12, 14):
+      self.skipTest("Needs a newer libtpu")
+
   @parameterized.product(
       shape=[
           (8, 128),

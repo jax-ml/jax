@@ -46,6 +46,7 @@ from jax.test_util import check_grads
 from jax._src import array
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
@@ -3612,6 +3613,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np.iscomplexobj, jnp.iscomplexobj, args_maker)
     self._CompileAndCheck(jnp.iscomplexobj, args_maker)
 
+  @parameterized.parameters(
+      None, bool(1), int(1), float(1), complex(1),
+      np.int32(0), np.float32(1), np.complex64(1),
+      (np.arange(5),)
+  )
+  def testIsComplexObjTransferGuard(self, val):
+    with jax.transfer_guard("disallow"):
+      jnp.iscomplexobj(val)
+
   def testIsClose(self):
     c_isclose = jax.jit(jnp.isclose)
     c_isclose_nan = jax.jit(partial(jnp.isclose, equal_nan=True))
@@ -4892,18 +4902,29 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_result = np.arange(start, stop, dtype=dtype)
     self.assertAllClose(jax_result, np_result)
 
-  def testArangeComplex(self):
-    test_cases = [
+  @parameterized.parameters(
       (1+2j, 5+3j),
       (0+0j, 5+0j),
       (1.0+0j, 5.0+0j),
       (0, 5, 1+1j),
-    ]
-    for args in test_cases:
-      with self.subTest(args=args):
+  )
+  def testArangeComplex(self, *args):
+    dep_id = "jax-numpy-arange-complex"
+    msg = "Passing complex start/stop/step to jnp.arange is deprecated"
+    if deprecations.is_accelerated(dep_id):
+      with self.assertRaisesRegex(ValueError, msg):
         jax_result = jnp.arange(*args)
-        np_result = np.arange(*args)
-        self.assertArraysEqual(jax_result, np_result)
+    else:
+      with self.assertWarnsRegex(DeprecationWarning, msg):
+        jax_result = jnp.arange(*args)
+      np_result = np.arange(*args)
+      self.assertArraysEqual(jax_result, np_result)
+
+  @parameterized.parameters(int, float, np.int32, np.float32)
+  def testArangeTransferGuard(self, typ):
+    # Ensure that simple arange calls avoid host-to-device transfer.
+    with jax.transfer_guard("disallow"):
+      jnp.arange(typ(5))
 
   def testIssue830(self):
     a = jnp.arange(4, dtype=jnp.complex64)
@@ -6254,43 +6275,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
             'trapz',
             'typename'}
 
-    # symbols removed in NumPy 2.0
-    skip |= {'add_docstring',
-             'add_newdoc',
-             'add_newdoc_ufunc',
-             'alltrue',
-             'asfarray',
-             'byte_bounds',
-             'compare_chararrays',
-             'cumproduct',
-             'deprecate',
-             'deprecate_with_doc',
-             'disp',
-             'fastCopyAndTranspose',
-             'find_common_type',
-             'get_array_wrap',
-             'geterrobj',
-             'issctype',
-             'issubclass_',
-             'issubsctype',
-             'lookfor',
-             'mat',
-             'maximum_sctype',
-             'msort',
-             'obj2sctype',
-             'product',
-             'recfromcsv',
-             'recfromtxt',
-             'round_',
-             'safe_eval',
-             'sctype2char',
-             'set_numeric_ops',
-             'set_string_function',
-             'seterrobj',
-             'sometrue',
-             'source',
-             'who'}
-
     self.assertEmpty(skip.intersection(dir(jnp)))
 
     names = (name for name in dir(np) if not (name.startswith('_') or name in skip))
@@ -6328,6 +6312,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'frombuffer': ['like'],
       'fromfunction': ['like'],
       'frompyfunc': ['kwargs'],
+      'fromstring': ['like'],
       'load': ['mmap_mode', 'allow_pickle', 'fix_imports', 'encoding', 'max_header_size'],
       'nanpercentile': ['weights'],
       'nanquantile': ['weights'],

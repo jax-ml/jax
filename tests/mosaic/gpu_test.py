@@ -3796,16 +3796,43 @@ class FragmentedArrayTest(TestCase):
     )(inp)
     np.testing.assert_array_equal(result, inp)
 
-  @parameterized.parameters((128, 128), (128, 64), (64, 128))
-  def test_broadcast_major(self, m, n):
+  @parameterized.parameters(
+      (128, 128), (64, 128), (64, 256)
+  )
+  def test_broadcast_in_dim_major_strided(self, m, n):
+    dtype = jnp.float16
+    def kernel(ctx, gmem_input, gmem_output, _):
+      t = mgpu.FragmentedArray.load_strided(
+          gmem_input, vec_size=1
+      )
+      t.broadcast_in_dim((m, n), (1,),
+          mgpu.WGStridedFragLayout(shape=(m, n), vec_size=1),
+      ).store_untiled(gmem_output, optimized=False)
+
+    inp = self.prng.uniform(-1, 1, (n,)).astype(dtype)
+    out_shape = jax.ShapeDtypeStruct((m, n), dtype)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (inp,), out_shape, inp
+    )(inp)
+    out_ref = jax.lax.broadcast_in_dim(inp, (m, n), (1,))
+    np.testing.assert_array_equal(result, out_ref)
+
+  @parameterized.parameters(
+      (128, 128), (128, 64), (64, 128)
+  )
+  def test_broadcast_in_dim_major_wgmma(self, m, n):
+    dtype = jnp.float16
+
     def kernel(ctx, gmem_input, gmem_output, _):
       t = mgpu.FragmentedArray.load_untiled(
           gmem_input, layout=mgpu.WGMMA_COL_LAYOUT, optimized=False
       )
-      t.broadcast_in_dim((m, n), (1,), mgpu.WGMMA_LAYOUT).store_untiled(gmem_output, optimized=False)
+      t.broadcast_in_dim(
+          (m, n), (1,), mgpu.WGMMA_LAYOUT
+      ).store_untiled(gmem_output, optimized=False)
 
-    inp = self.prng.uniform(-1, 1, (n,)).astype(jnp.float16)
-    out_shape = jax.ShapeDtypeStruct((m, n), jnp.float16)
+    inp = self.prng.uniform(-1, 1, (n,)).astype(dtype)
+    out_shape = jax.ShapeDtypeStruct((m, n), dtype)
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (inp,), out_shape, inp
     )(inp)

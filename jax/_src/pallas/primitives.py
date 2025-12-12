@@ -39,7 +39,6 @@ from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import util
 from jax._src.interpreters import ad
-from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -59,7 +58,6 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 program_id_p = jax_core.Primitive("program_id")
-batching.ragged_prop_rules[program_id_p] = batching.ragged_mask_no_op_rule
 
 def program_id(axis: int) -> jax_typing.Array:
   """Returns the kernel execution position along the given axis of the grid.
@@ -856,6 +854,17 @@ def wrap_with_transforms(f, transforms, *args):
 run_scoped_p = jax_core.Primitive("run_scoped")
 run_scoped_p.multiple_results = True
 
+def _run_scoped_is_high(*avals, jaxpr, **params):
+  del avals, params
+  return jaxpr.is_high
+run_scoped_p.is_high = _run_scoped_is_high  # type: ignore[method-assign]
+
+def _run_scoped_to_lojax(*args, jaxpr, **params):
+  closed_hi_jaxpr = jax_core.ClosedJaxpr(jaxpr, args)
+  closed_lo_jaxpr = pe.lower_jaxpr(closed_hi_jaxpr)
+  consts = closed_lo_jaxpr.consts
+  return run_scoped_p.bind(*consts, jaxpr=closed_lo_jaxpr.jaxpr, **params)
+run_scoped_p.to_lojax = _run_scoped_to_lojax
 
 def run_scoped(
     f: Callable[..., Any],

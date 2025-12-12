@@ -19,7 +19,6 @@ import atexit
 from collections.abc import Sequence
 import dataclasses
 from functools import partial
-import itertools
 import logging
 import threading
 import time
@@ -286,24 +285,6 @@ def get_intermediate_shardings(
   return out
 
 
-def jaxpr_has_bints(jaxpr: core.Jaxpr) -> bool:
-  return (any(type(v.aval.dtype) is core.bint for v in jaxpr.invars
-              if isinstance(v.aval, (core.ShapedArray, core.DShapedArray))) or
-          any(_is_bint_axis_size(d)
-              for j in itertools.chain([jaxpr], core.subjaxprs(jaxpr))
-              for e in j.eqns for v in e.outvars
-              if isinstance(v.aval, core.DShapedArray) for d in v.aval.shape))
-
-def _is_bint_axis_size(d: core.AxisSize) -> bool:
-  if isinstance(d, core.DArray):
-    assert not d.shape
-    return type(d.dtype) is core.bint
-  elif isinstance(d, core.Var):
-    return (isinstance(d.aval, core.DShapedArray) and
-            type(d.aval.dtype) is core.bint)
-  return False
-
-
 def check_arg(arg: Any):
   if not (isinstance(arg, core.Tracer) or core.valid_jaxtype(arg)):
     raise TypeError(f"Argument '{arg}' of type {type(arg)} is not a valid "
@@ -317,6 +298,15 @@ def check_special(name: str, bufs: Sequence[basearray.Array]) -> None:
   if needs_check_special():
     for buf in bufs:
       _check_special(name, buf.dtype, buf)
+
+
+def check_special_array(name: str, arr: array.ArrayImpl) -> array.ArrayImpl:
+  if needs_check_special():
+    if dtypes.issubdtype(arr.dtype, np.inexact):
+      for buf in arr._arrays:
+        _check_special(name, buf.dtype, buf)
+  return arr
+
 
 def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
   if dtypes.issubdtype(dtype, np.inexact):

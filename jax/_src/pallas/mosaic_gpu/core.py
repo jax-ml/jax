@@ -431,7 +431,8 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
     union_bytes = 0
     for ref_group in ref_union.refs:
       byte_offset = 0
-      for ref in jax.tree.leaves(ref_group):
+      def unflatten(ref):
+        nonlocal byte_offset
         byte_offset = align_to(byte_offset, SMEM_ALIGNMENT)
         assert isinstance(ref, state.AbstractRef) or isinstance(
             ref, pallas_core.TransformedRef
@@ -439,10 +440,8 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
         if not isinstance(ref, pallas_core.TransformedRef):
           ref = pallas_core.TransformedRef(ref, transforms=())
         transform = ExtractAliasedRef.from_transformed_ref(ref, byte_offset)
-        flat_refs.append(
-            pallas_core.TransformedRef(
-                ref_union, transforms=(transform, *ref.transforms)
-            )
+        result = pallas_core.TransformedRef(
+            ref_union, transforms=(transform, *ref.transforms)
         )
         if jnp.issubdtype(ref.dtype, jnp.integer):
           nbits = jnp.iinfo(ref.dtype).bits
@@ -457,13 +456,16 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
               f" {ref.dtype}{ref.shape}"
           )
         byte_offset += ref_bits // 8
+        return result
+      flat_refs.append(jax.tree.map(unflatten, ref_group))
       union_bytes = max(union_bytes, byte_offset)
     assert union_bytes == ref_union.shape[0]
   elif ref_union.memory_space == TMEM:
     union_cols = 0
     for ref_group in ref_union.refs:
       col_offset = 0
-      for ref in jax.tree.leaves(ref_group):
+      def unflatten(ref):
+        nonlocal col_offset
         col_offset = align_to(col_offset, TMEM_COL_ALIGNMENT)
         if not isinstance(ref, pallas_core.TransformedRef):
           ref = pallas_core.TransformedRef(ref, transforms=())
@@ -471,12 +473,12 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
                                          dtypes.itemsize_bits(ref.dtype))
         transform = ExtractAliasedRef.from_transformed_ref(
             ref, col_offset, layout=ref.layout)
-        flat_refs.append(
-            pallas_core.TransformedRef(
-                ref_union, transforms=(transform, *ref.transforms)
-            )
+        result = pallas_core.TransformedRef(
+            ref_union, transforms=(transform, *ref.transforms)
         )
         col_offset += ncols
+        return result
+      flat_refs.append(jax.tree.map(unflatten, ref_group))
       union_cols = max(union_cols, col_offset)
     assert union_cols == ref_union.shape[1], (union_cols, ref_union.shape[1])
   else:
@@ -670,7 +672,8 @@ class UntileRef(state_types.Transform):
       self, dtype: jnp.dtype, shape: tuple[int, ...]
   ) -> tuple[tuple[int, ...], state_types.Transform]:
     del dtype
-    raise NotImplementedError("Reshapes don't commute with transposes.")
+    # TODO(slebedev): Support this.
+    raise NotImplementedError("Reshapes don't commute with tiling.")
 
   def untransform_index(
       self, dtype: jnp.dtype | ir.Type, idxs: tuple[Index, ...]
@@ -1367,6 +1370,11 @@ def _gpu_mesh_discharge_rule(
     )
   if not compiler_params:
     compiler_params = CompilerParams()
+  sa_avals = [a for a in in_avals if isinstance(a, jax_core.ShapedArray)]
+  if sa_avals:
+    raise NotImplementedError(
+        f"Cannot close over values in core_map: {sa_avals}"
+    )
   return pallas_core.default_mesh_discharge_rule(
       in_avals,
       out_avals,
