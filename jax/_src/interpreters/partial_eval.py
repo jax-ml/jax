@@ -1050,7 +1050,8 @@ def _partial_eval_jaxpr_custom_cached(
     return x
 
   def has_effects(effects) -> bool:
-    return bool({e for e in effects if not isinstance(e, core.NamedAxisEffect)})
+    not_really_effects = (core.NamedAxisEffect, core.InternalMutableArrayEffect)
+    return any(not isinstance(e, not_really_effects) for e in effects)
 
   known_eqns, staged_eqns = [], []
   foreach(write, in_unknowns, in_inst, jaxpr.invars)
