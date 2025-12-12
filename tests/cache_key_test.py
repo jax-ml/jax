@@ -165,8 +165,6 @@ class CacheKeyTest(jtu.JaxTestCase):
 
   # TODO(phawkins): this test flakes if test concurrency is enabled.
   @jtu.thread_unsafe_test()
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message='`with mesh:` context manager')
   def test_custom_partitioning_ptr_removal(self):
     def _partition(mesh, arg_shapes, result_shape):
       arg_shardings = jax.tree.map(lambda x: x.sharding, arg_shapes)

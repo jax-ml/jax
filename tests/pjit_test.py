@@ -95,9 +95,8 @@ def check_1d_2d_mesh(f, set_mesh):
     ))(jtu.with_mesh_from_kwargs(f) if set_mesh else f)
 
 
+# TODO(skye): make the buffer donation utils part of JaxTestCase
 @jtu.pytest_mark_if_available('multiaccelerator')
-@jtu.ignore_warning(category=DeprecationWarning,
-                    message='`with mesh:` context manager')
 class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.with_mesh([('x', 1)])
@@ -1492,8 +1491,6 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
-@jtu.ignore_warning(category=DeprecationWarning,
-                    message='`with mesh:` context manager')
 class ArrayPjitTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -9860,8 +9857,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
-@jtu.ignore_warning(category=DeprecationWarning,
-                    message='`with mesh:` context manager')
 class PJitErrorTest(jtu.JaxTestCase):
 
   @check_1d_2d_mesh(set_mesh=True)

@@ -381,8 +381,6 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
     for out in list(result):
       np.testing.assert_array_equal(out(x), expected_out)
 
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message='`with mesh:` context manager')
   def test_fully_sharded_on_all_devices(self):
     if jax.local_device_count() > 1:
       self.skipTest("This test only works with 1 process per device.")
