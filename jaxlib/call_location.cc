@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/base/no_destructor.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
@@ -31,10 +32,10 @@ limitations under the License.
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
-#include "jaxlib/traceback.h"
 #include "jaxlib/py_user_context.h"
-#include "xla/python/ifrt/executable.h"
+#include "jaxlib/traceback.h"
 #include "xla/python/ifrt/attribute_map.h"
+#include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
 
@@ -124,19 +125,9 @@ void PopulateCallLocation(xla::ifrt::ExecuteOptions& options,
   }
 
   if (!call_location_str.empty()) {
-    // Simplify this to use AttributeMap::Set().
-    xla::ifrt::AttributeMap::Map attrs_map;
-    if (options.custom_options.has_value()) {
-      options.custom_options->ForEach(
-          [&](const std::string& key,
-              const xla::ifrt::AttributeMap::Value& value) {
-            attrs_map.insert({key, value});
-          });
-    }
-    attrs_map.insert(
-        {std::string(xla::ifrt::PjRtCompatibleLoadedExecutable::kCallLocation),
-         xla::ifrt::AttributeMap::StringValue(std::move(call_location_str))});
-    options.custom_options.emplace(std::move(attrs_map));
+    CHECK_OK(options.custom_options->Set(
+        std::string(xla::ifrt::PjRtCompatibleLoadedExecutable::kCallLocation),
+        std::move(call_location_str)));
   }
 }
 
