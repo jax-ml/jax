@@ -2471,12 +2471,34 @@ class FragmentedArray:
     match self.layout:
       case WGSplatFragLayout() | WGStridedFragLayout():
         new_layout = dataclasses.replace(self.layout, shape=shape)
+        return FragmentedArray(
+            _registers=self.registers,
+            _layout=new_layout,
+            _is_signed=self.is_signed,
+        )
+      case TiledLayout():
+        base_tile_shape = self.layout.base_tile_shape
+        assert base_tile_shape
+        old_shape_suffix = self.shape[-len(base_tile_shape):]
+        new_shape_suffix = shape[-len(base_tile_shape):]
+        # We already know that old_shape_suffix[0] is divisible by
+        # base_tile_shape[0].
+        if (
+            old_shape_suffix[1:] != new_shape_suffix[1:]
+            or new_shape_suffix[0] % base_tile_shape[0]
+        ):
+          raise ValueError(
+              f"Can't reshape {self.shape} to {shape} with a tiled layout with"
+              f" base tile of {base_tile_shape}"
+          )
+        new_registers_shape = self.layout.registers_shape(shape)
+        return FragmentedArray(
+            _registers=self.registers.reshape(new_registers_shape),
+            _layout=self.layout,
+            _is_signed=self.is_signed,
+        )
       case _:
         raise NotImplementedError(self.layout)
-
-    return FragmentedArray(
-        _registers=self.registers, _layout=new_layout, _is_signed=self.is_signed
-    )
 
   def broadcast_minor(self, n) -> FragmentedArray:
     if len(self.shape) != 1:

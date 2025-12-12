@@ -2399,6 +2399,19 @@ def _log_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
   return math_dialect.log(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
 
 
+@register_lowering_rule(lax.reshape_p, mgpu.LoweringSemantics.Lane)
+def _reshape_lowering_rule(
+    ctx: LoweringRuleContext, x, new_sizes, dimensions, sharding
+):
+  if dimensions is not None:
+    raise NotImplementedError("Not implemented: dimensions")
+  if sharding is not None:
+    raise NotImplementedError("Not implemented: sharding")
+  [x_aval] = ctx.avals_in
+  x = _ensure_fa(x, x_aval.dtype)
+  return x.reshape(new_sizes)
+
+
 def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):
   [x_aval] = ctx.avals_in
   match x.layout:
