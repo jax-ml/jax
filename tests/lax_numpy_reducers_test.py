@@ -1098,5 +1098,91 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       [eqn.primitive for eqn in jaxpr2.eqns],
       [reduce_sum_p, div_p])
 
+
+  def testWeightedQuantile(self):
+    shape = (4, 3, 5, 6)
+    axis = 2
+    dtype = jnp.float32
+    rng = jtu.rand_default(self.rng())
+    w_rng = jtu.rand_positive(self.rng())
+
+    def args_maker():
+      return [rng(shape, dtype),
+              jnp.array([0.25, 0.5, 0.75], dtype=dtype),
+              w_rng(shape, dtype)]
+
+    def np_fun(data, q, weights):
+      return np.quantile(data, q, axis=axis, weights=weights, method='inverted_cdf')
+
+    def jnp_fun(data, q, weights):
+      return jnp.quantile(data, q, axis=axis, weights=weights, method='inverted_cdf')
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=1e-5, atol=1e-5)
+    self._CompileAndCheck(jnp_fun, args_maker, rtol=1e-5, atol=1e-5)
+
+  def testWeightedNanQuantile(self):
+    shape = (4, 3, 5)
+    axis = 2
+    dtype = jnp.float32
+    rng = jtu.rand_some_nan(self.rng())
+    w_rng = jtu.rand_positive(self.rng())
+
+    def args_maker():
+      return [rng(shape, dtype),
+              jnp.array([0.25, 0.5, 0.75], dtype=dtype),
+              w_rng(shape, dtype)]
+
+    def np_fun(data, q, weights):
+      return np.nanquantile(data, q, axis=axis, weights=weights, method='inverted_cdf')
+
+    def jnp_fun(data, q, weights):
+      return jnp.nanquantile(data, q, axis=axis, weights=weights, method='inverted_cdf')
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=1e-5, atol=1e-5)
+    self._CompileAndCheck(jnp_fun, args_maker, rtol=1e-5, atol=1e-5)
+
+  def testWeightedPercentile(self):
+    shape = (4, 5, 6)
+    axis = 1
+    dtype = jnp.float32
+    rng = jtu.rand_default(self.rng())
+    w_rng = jtu.rand_positive(self.rng())
+
+    def args_maker():
+      return [rng(shape, dtype),
+              jnp.array([25, 50, 75], dtype=dtype),
+              w_rng(shape, dtype)]
+
+    def np_fun(data, q, weights):
+      return np.percentile(data, q, axis=axis, weights=weights, method='inverted_cdf')
+
+    def jnp_fun(data, q, weights):
+      return jnp.percentile(data, q, axis=axis, weights=weights, method='inverted_cdf')
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=1e-5, atol=1e-5)
+    self._CompileAndCheck(jnp_fun, args_maker, rtol=1e-5, atol=1e-5)
+
+  def testWeightedNanPercentile(self):
+    shape = (5, 6)
+    axis = 0
+    dtype = jnp.float32
+    rng = jtu.rand_some_nan(self.rng())
+    w_rng = jtu.rand_positive(self.rng())
+
+    def args_maker():
+      return [rng(shape, dtype),
+              jnp.array([25, 50, 75], dtype=dtype),
+              w_rng(shape, dtype)]
+
+    def np_fun(data, q, weights):
+      return np.nanpercentile(data, q, axis=axis, weights=weights, method='inverted_cdf')
+
+    def jnp_fun(data, q, weights):
+      return jnp.nanpercentile(data, q, axis=axis, weights=weights, method='inverted_cdf')
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=1e-5, atol=1e-5)
+    self._CompileAndCheck(jnp_fun, args_maker, rtol=1e-5, atol=1e-5)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

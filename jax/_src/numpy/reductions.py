@@ -1,3 +1,4 @@
+
 # Copyright 2022 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -2479,13 +2480,20 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
                     " v0.8.0. Use method instead.")
   return _quantile(lax.asarray(a), lax.asarray(q), axis, method, weights, keepdims, True)
 
+
 def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
-              method: str,weights: ArrayLike | None, keepdims: bool, squash_nans: bool) -> Array:
-  if method not in ["linear", "lower", "higher", "midpoint", "nearest","inverted_cdf"]:
-    raise ValueError("method can only be 'linear', 'lower', 'higher', 'midpoint', 'nearest' or 'inverted_cdf'")
+              method: str, weights: ArrayLike | None,
+              keepdims: bool, squash_nans: bool) -> Array:
+  if method not in ["linear", "lower", "higher", "midpoint", "nearest", "inverted_cdf"]:
+    raise ValueError("method can only be 'linear', 'lower', 'higher', 'midpoint', 'nearest', or 'inverted_cdf'")
+
+  if weights is not None and method != "inverted_cdf":
+    raise NotImplementedError("Weighted quantiles are currently only supported for method='inverted_cdf'")
+
   a, = promote_dtypes_inexact(a)
   if weights is not None:
     weights, = promote_dtypes_inexact(ensure_arraylike("quantile", weights))
+
   keepdim = []
   if dtypes.issubdtype(a.dtype, np.complexfloating):
     raise ValueError("quantile does not support complex input, as the operation is poorly defined.")
@@ -2521,6 +2529,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
 
   q_shape = q.shape
   q_ndim = q.ndim
+  original_q = q
   if q_ndim > 1:
     raise ValueError(f"q must be have rank <= 1, got shape {q.shape}")
 
@@ -2529,133 +2538,128 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
   if squash_nans:
     a = _where(lax._isnan(a), np.nan, a) # Ensure nans are positive so they sort to the end.
     if weights is not None:
-        weights = _where(lax._isnan(a), 0, weights)
-        a, weights = lax.sort_key_val(a, weights, dimension=axis)
+      weights = _where(lax._isnan(a), 0, weights)
+
+    if weights is None:
+      a = lax.sort(a, dimension=axis)
     else:
-        a = lax.sort(a, dimension=axis)
+      a, weights = lax.sort_key_val(a, weights, dimension=axis)
 
-    if method != "inverted_cdf":
-        counts = sum(lax.bitwise_not(lax._isnan(a)), axis=axis, dtype=q.dtype, keepdims=keepdims)
-        shape_after_reduction = counts.shape
-        q = lax.expand_dims(
-          q, tuple(range(q_ndim, len(shape_after_reduction) + q_ndim)))
-        counts = lax.expand_dims(counts, tuple(range(q_ndim)))
-        q = lax.mul(q, lax.sub(counts, lax._const(q, 1)))
-        low = lax.floor(q)
-        high = lax.ceil(q)
-        high_weight = lax.sub(q, low)
-        low_weight = lax.sub(lax._const(high_weight, 1), high_weight)
+    counts = sum(lax.bitwise_not(lax._isnan(a)), axis=axis, dtype=q.dtype, keepdims=keepdims)
+    shape_after_reduction = counts.shape
+    q = lax.expand_dims(
+      q, tuple(range(q_ndim, len(shape_after_reduction) + q_ndim)))
+    counts = lax.expand_dims(counts, tuple(range(q_ndim)))
+    q = lax.mul(q, lax.sub(counts, lax._const(q, 1)))
+    low = lax.floor(q)
+    high = lax.ceil(q)
+    high_weight = lax.sub(q, low)
+    low_weight = lax.sub(lax._const(high_weight, 1), high_weight)
 
-        low = lax.max(lax._const(low, 0), lax.min(low, counts - 1))
-        high = lax.max(lax._const(high, 0), lax.min(high, counts - 1))
-        low = lax.convert_element_type(low, int)
-        high = lax.convert_element_type(high, int)
-        out_shape = q_shape + shape_after_reduction
-        index = [lax.broadcasted_iota(int, out_shape, dim + q_ndim)
-                for dim in range(len(shape_after_reduction))]
-        if keepdims:
-          index[axis] = low
-        else:
-          index.insert(axis, low)
-        low_value = a[tuple(index)]
-        index[axis] = high
-        high_value = a[tuple(index)]
+    low = lax.max(lax._const(low, 0), lax.min(low, counts - 1))
+    high = lax.max(lax._const(high, 0), lax.min(high, counts - 1))
+    low = lax.convert_element_type(low, int)
+    high = lax.convert_element_type(high, int)
+    out_shape = q_shape + shape_after_reduction
+    index = [lax.broadcasted_iota(int, out_shape, dim + q_ndim)
+             for dim in range(len(shape_after_reduction))]
+    if keepdims:
+      index[axis] = low
+    else:
+      index.insert(axis, low)
+    low_value = a[tuple(index)]
+    index[axis] = high
+    high_value = a[tuple(index)]
   else:
     with config.debug_nans(False):
       a = _where(any(lax._isnan(a), axis=axis, keepdims=True), np.nan, a)
+
     if weights is not None:
-      a, weights = lax.sort_key_val(a, weights, dimension=axis)
-    else:
+      weights = _where(lax._isnan(a), 0, weights)
+
+    if weights is None:
       a = lax.sort(a, dimension=axis)
+    else:
+      a, weights = lax.sort_key_val(a, weights, dimension=axis)
 
-    if method != "inverted_cdf":
-        n = lax.convert_element_type(a_shape[axis], lax._dtype(q))
-        q = lax.mul(q, n - 1)
-        low = lax.floor(q)
-        high = lax.ceil(q)
-        high_weight = lax.sub(q, low)
-        low_weight = lax.sub(lax._const(high_weight, 1), high_weight)
+    n = lax.convert_element_type(a_shape[axis], lax._dtype(q))
+    q = lax.mul(q, n - 1)
+    low = lax.floor(q)
+    high = lax.ceil(q)
+    high_weight = lax.sub(q, low)
+    low_weight = lax.sub(lax._const(high_weight, 1), high_weight)
 
-        low = lax.clamp(lax._const(low, 0), low, n - 1)
-        high = lax.clamp(lax._const(high, 0), high, n - 1)
-        low = lax.convert_element_type(low, int)
-        high = lax.convert_element_type(high, int)
+    low = lax.clamp(lax._const(low, 0), low, n - 1)
+    high = lax.clamp(lax._const(high, 0), high, n - 1)
+    low = lax.convert_element_type(low, int)
+    high = lax.convert_element_type(high, int)
 
-        slice_sizes = list(a_shape)
-        slice_sizes[axis] = 1
-        dnums = lax_slicing.GatherDimensionNumbers(
-          offset_dims=tuple(range(
-            q_ndim,
-            len(a_shape) + q_ndim if keepdims else len(a_shape) + q_ndim - 1)),
-          collapsed_slice_dims=() if keepdims else (axis,),
-          start_index_map=(axis,))
-        low_value = lax_slicing.gather(a, low[..., None], dimension_numbers=dnums,
-                                      slice_sizes=slice_sizes)
-        high_value = lax_slicing.gather(a, high[..., None], dimension_numbers=dnums,
-                                        slice_sizes=slice_sizes)
-        if q_ndim == 1:
-          low_weight = lax.broadcast_in_dim(low_weight, low_value.shape,
-                                            broadcast_dimensions=(0,))
-          high_weight = lax.broadcast_in_dim(high_weight, high_value.shape,
-                                            broadcast_dimensions=(0,))
+    slice_sizes = list(a_shape)
+    slice_sizes[axis] = 1
+    dnums = lax_slicing.GatherDimensionNumbers(
+      offset_dims=tuple(range(
+        q_ndim,
+        len(a_shape) + q_ndim if keepdims else len(a_shape) + q_ndim - 1)),
+      collapsed_slice_dims=() if keepdims else (axis,),
+      start_index_map=(axis,))
+    low_value = lax_slicing.gather(a, low[..., None], dimension_numbers=dnums,
+                                   slice_sizes=slice_sizes)
+    high_value = lax_slicing.gather(a, high[..., None], dimension_numbers=dnums,
+                                    slice_sizes=slice_sizes)
+    if q_ndim == 1:
+      low_weight = lax.broadcast_in_dim(low_weight, low_value.shape,
+                                        broadcast_dimensions=(0,))
+      high_weight = lax.broadcast_in_dim(high_weight, high_value.shape,
+                                         broadcast_dimensions=(0,))
+
   if method == "inverted_cdf":
     if weights is None:
-      raise ValueError("weights must be provided when method is 'inverted_cdf'")
+      raise ValueError("weights must be provided when method='inverted_cdf'")
 
-    # Weights are already sorted and reshaped alongside 'a'
-    accum_weights = cumsum(weights, axis)
+    accum = cumsum(weights, axis=axis)
+    total = sum(weights, axis=axis, keepdims=True)
+    total_exp = lax.expand_dims(total, tuple(range(q_ndim)))
+    q_exp = lax.expand_dims(original_q, tuple(range(1, total.ndim + 1)))
+    target = lax.mul(q_exp, total_exp)
+    accum_exp = accum
+    if q_ndim > 0:
+        accum_exp = lax.expand_dims(accum, tuple(range(q_ndim)))
 
-    # Calculate total weight (last element of cumsum along axis)
-    # We slice to keep dimensions for broadcasting or use reduction
-    total_weight = accum_weights[..., -1]
+    pred = lax.ge(accum_exp, target)
+    search_axis = axis + q_ndim
+    idx = lax.argmax(pred, search_axis, np.int32)
+    idx_expanded = lax.expand_dims(idx, (search_axis,))
+    out_shape = idx_expanded.shape
+    index_components = []
 
-    # Handle q broadcasting: q * total_weight
-    # If q is 1D (Q,), we need to broadcast it against total_weight (..., 1, ...)
-    # The result 'target' should enable comparison with accum_weights (..., N, ...)
-    # We want output shape (Q, ...) so we put Q dim first if q_ndim=1.
+    for i in range(a.ndim):
+        current_out_dim = q_ndim + i
+        if i == axis:
+            index_components.append(idx_expanded)
+        else:
+            iota = lax.broadcasted_iota(np.int32, out_shape, current_out_dim)
+            index_components.append(iota)
 
-    target = lax.mul(q, total_weight)
+    gather_indices = lax.concatenate(
+        [lax.expand_dims(c, (c.ndim,)) for c in index_components],
+        dimension=len(out_shape)
+    )
 
-    if q_ndim == 1:
-      # target currently has shape (Q, ...) after the broadcast_in_dim above.
-      # We need shape (Q, ..., 1) so it can be compared to accum_weights_b (shape (1, ..., N))
-      target = lax.expand_dims(target, (-1,))
+    dnums = lax_slicing.GatherDimensionNumbers(
+        offset_dims=(),
+        collapsed_slice_dims=tuple(range(a.ndim)),
+        start_index_map=tuple(range(a.ndim))
+    )
 
-      # accum_weights needs a leading Q-dim for broadcasting
-      accum_weights_b = lax.expand_dims(accum_weights, (0,))
+    result = lax_slicing.gather(
+        a,
+        gather_indices,
+        dimension_numbers=dnums,
+        slice_sizes=(1,) * a.ndim
+    )
 
-      # now both have same rank and are broadcast-compatible: (Q, ..., 1) vs (1, ..., N)
-      pred = lax.ge(accum_weights_b, target)
-
-      # argmax across the axis shifted by the leading Q-dim
-      idx = lax.argmax(pred, axis + 1, np.int32)
-
-      # gather as before (make sure gather dnums and slice sizes match shapes)
-      dnums = lax_slicing.GatherDimensionNumbers(
-          offset_dims=tuple(range(0, idx.ndim - (0 if keepdims else 1))),
-          collapsed_slice_dims=() if keepdims else (axis,),
-          start_index_map=(axis,)
-      )
-      slice_sizes = list(a.shape)
-      slice_sizes[axis] = 1
-
-      result = lax_slicing.gather(a, idx[..., None], dimension_numbers=dnums, slice_sizes=slice_sizes)
-
-
-    else:
-        # q is scalar
-        pred = lax.ge(accum_weights, target)
-        idx = lax.argmax(pred, axis, np.int32)
-
-        slice_sizes = list(a.shape)
-        slice_sizes[axis] = 1
-        dnums = lax_slicing.GatherDimensionNumbers(
-          offset_dims=tuple(range(len(a_shape) if keepdims else len(a_shape) - 1)),
-          collapsed_slice_dims=() if keepdims else (axis,),
-          start_index_map=(axis,))
-
-        result = lax_slicing.gather(a, idx[..., None], dimension_numbers=dnums, slice_sizes=slice_sizes)
-
+    if not keepdims:
+        result = lax.squeeze(result, dimensions=(search_axis,))
   elif method == "linear":
     result = lax.add(lax.mul(low_value.astype(q.dtype), low_weight),
                      lax.mul(high_value.astype(q.dtype), high_weight))
@@ -2672,7 +2676,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     raise ValueError(f"{method=!r} not recognized")
   if keepdims and keepdim:
     if q_ndim > 0:
-      keepdim = [np.shape(q)[0], *keepdim]
+      keepdim = [np.shape(original_q)[0], *keepdim]
     result = result.reshape(keepdim)
   return lax.convert_element_type(result, a.dtype)
 
