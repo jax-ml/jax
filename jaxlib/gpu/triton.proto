@@ -10,9 +10,8 @@ message TritonKernel {
   string ptx = 4;
   string ttir = 5;
   uint32 compute_capability = 6;
-  uint32 cluster_dim_0 = 7;
-  uint32 cluster_dim_1 = 8;
-  uint32 cluster_dim_2 = 9;
+
+  reserved 7, 8, 9;
 }
 
 message TritonKernelCall {
