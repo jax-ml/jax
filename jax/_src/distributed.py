@@ -44,6 +44,15 @@ _ENABLE_RECOVERABILITY = config.bool_state(
     ),
 )
 
+_ENABLE_PREEMPTION_SERVICE = config.bool_state(
+    name='jax_enable_preemption_service',
+    default=True,
+    help=(
+        "Enables the preemption service. See"
+        " multihost_utils.reached_preemption_sync_point for details."
+    ),
+)
+
 class State:
   process_id: int = 0
   num_processes: int = 1
@@ -188,6 +197,8 @@ class State:
       self.service = None
 
   def initialize_preemption_sync_manager(self):
+    if not _ENABLE_PREEMPTION_SERVICE.value:
+      return
     if self.preemption_sync_manager is not None:
       raise RuntimeError(
           'Preemption sync manager should only be initialized once.')
