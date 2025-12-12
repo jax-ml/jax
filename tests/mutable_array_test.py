@@ -1053,6 +1053,34 @@ class MutableArrayTest(jtu.JaxTestCase):
 
     f(3.)  # don't crash
 
+  def test_remat_while_loop_residuals(self):
+    @jax.custom_vjp
+    def ra2a(x):
+      return jax.freeze(jax.new_ref(x))
+
+    def ra2a_fwd(x):
+      o = ra2a(x)
+      return o, ()
+
+    def ra2a_bwd(res, g):
+      return (ra2a(g),)
+
+    ra2a.defvjp(ra2a_fwd, ra2a_bwd)
+
+    @jax.jit
+    @jax.remat
+    def f(x):
+
+      def g(x):
+        def body(carry):
+          i, x = carry
+          x = ra2a(x)
+          return i + 1, x
+        return jax.lax.while_loop(lambda x: x[0] < 5, body, (0, x))[1]
+      return g(x)
+
+    jax.linearize(f, 5.)  # don't crash
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
