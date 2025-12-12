@@ -63,6 +63,7 @@ from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
+from jax._src.lib import ifrt_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -9718,6 +9719,33 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "reduced on"):
       jax.jit(jax.shard_map(f, out_specs=P()))(arr1, arr2)
 
+  @parameterized.parameters(
+      ((8,), P('x'), P(None, unreduced={'x'})),
+      ((4, 2), P('x', 'y'), P(None, None, unreduced={'x', 'y'})),
+      ((4, 2), P('x', 'y'), P('x', None, unreduced={'y'})),
+      ((4, 2), P('x', 'y'), P(None, 'y', unreduced={'x'})),
+      ((4, 2), P('x', None), P(None, None, unreduced={'x'})),
+      ((4, 2), P('y', None), P(None, None, unreduced={'y'})),
+      ((4, 2), P(('x', 'y'), None), P(None, None, unreduced={'x', 'y'})),
+      ((4, 4), P(None, ('x', 'y')), P(None, None, unreduced={'x', 'y'})),
+      # TODO(yashkatariya): Enable this after collectives + S->U cast is enabled.
+      # ((4, 2), P('x', 'y'), P(None, 'x', unreduced={'y'})),
+      # ((4, 2), P('x', 'y'), P('y', None, unreduced={'x'})),
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_sharded_unreduced_roundtrip(self, shape, orig_spec, un_spec, mesh):
+    if ifrt_version < 40:
+      self.skipTest('Requires ifrt_version >= 40')
+    np1 = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np1, orig_spec)
+
+    arr2 = reshard(arr, un_spec)
+    self.assertEqual(arr2.sharding, NamedSharding(mesh, un_spec))
+
+    arr3 = reshard(arr2, orig_spec)
+    self.assertArraysEqual(arr, arr3)
+    self.assertEqual(arr.sharding, arr3.sharding)
+
   @parameterized.named_parameters(
       ('mul', jax.lax.mul),
       ('add', jax.lax.add),
@@ -9746,6 +9774,71 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out1.sharding, NamedSharding(mesh, P('x')))
     self.assertEqual(out2.sharding,
                      NamedSharding(mesh, P(None, unreduced={'x'})))
+
+    if ifrt_version >= 40:
+      arr3 = jax.device_put(np1, P(None))
+      ex_out1, ex_out2 = jax.jit(jax.grad(g, argnums=(0, 1)))(arr1, arr3)
+      self.assertArraysEqual(reshard(out1, P()), ex_out1)
+      self.assertArraysEqual(reshard(out2, P()), ex_out2)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reduced_reshard_unreduced_bwd(self, mesh):
+    if ifrt_version < 40:
+      self.skipTest('Requires ifrt_version >= 40')
+    np1 = np.arange(4.)
+    arr = jax.device_put(np1, P(None, reduced={'x'}))
+
+    @jax.jit
+    def f(x):
+      return jax.reshard(x, P('x'))
+
+    out = f(arr)
+    self.assertArraysEqual(out, np1)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+    @jax.jit
+    def g(x):
+      return f(x).sum()
+
+    out = jax.jit(jax.grad(g))(arr)
+    ex_data = [np.array([1., 1., 0., 0.]), np.array([1., 1., 0., 0.]),
+               np.array([0., 0., 1., 1.]), np.array([0., 0., 1., 1.])]
+    for s, d in zip(out.addressable_shards, ex_data):
+      self.assertArraysEqual(s.data, d)
+
+    arr2 = jax.device_put(np1, P(None))
+    expected_out = jax.jit(jax.grad(g))(arr2)
+    self.assertArraysEqual(reshard(out, P()), expected_out)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reduced_reshard_unreduced_bwd_sharded(self, mesh):
+    if ifrt_version < 40:
+      self.skipTest('Requires ifrt_version >= 40')
+    np1 = np.arange(8.).reshape(4, 2)
+    arr = jax.device_put(np1, P('x', None, reduced={'y'}))
+
+    @jax.jit
+    def f(x):
+      return jax.reshard(x, P('x', 'y'))
+
+    out = f(arr)
+    self.assertArraysEqual(out, np1)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+    @jax.jit
+    def g(x):
+      return f(x).sum()
+
+    out = jax.jit(jax.grad(g))(arr)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P('x', None, unreduced={'y'})))
+
+    arr2 = jax.device_put(np1, P('x', None))
+    expected_out = jax.jit(jax.grad(g))(arr2)
+    self.assertEqual(expected_out.sharding, NamedSharding(mesh, P('x', None)))
+
+    self.assertArraysEqual(reshard(out, P('x', None)), expected_out)
+    self.assertArraysEqual(reshard(out, P()), reshard(expected_out, P()))
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_reduced_at_get_out_sharding(self, mesh):
