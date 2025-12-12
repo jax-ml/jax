@@ -38,7 +38,8 @@ from jax._src import state
 from jax._src import util
 from jax._src.api_util import (
     check_no_aliased_ref_args, _check_no_aliased_closed_over_refs)
-from jax._src.core import ShapedArray, typeof, cur_qdd, ClosedJaxpr
+from jax._src.core import (
+  ShapedArray, typeof, cur_qdd, ClosedJaxpr, AbstractValue)
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -66,8 +67,8 @@ from jax._src.util import (
     split_list_checked, unzip2, weakref_lru_cache, subs_list)
 from jax._src import xla_bridge as xb
 from jax._src.tree_util import (
-    keystr, tree_flatten, tree_flatten_with_path, tree_map, tree_unflatten,
-    treedef_is_leaf)
+    keystr, tree_flatten, tree_map, tree_unflatten,
+    treedef_is_leaf, FlatTree, tree_leaves_with_path)
 import numpy as np
 
 _map = safe_map
@@ -81,29 +82,14 @@ BooleanNumeric = Any  # A bool, or a Boolean array.
 def _stack(arrs: Sequence[Array], axis: int=0) -> Array:
   return lax.concatenate([lax.expand_dims(arr, (axis,)) for arr in arrs], dimension=axis)
 
-def _promote_weak_typed_inputs(in_vals, in_avals, out_avals):
-  """Promote weakly-typed in_vals to be compatible with out_avals.
-
-  Args:
-    in_vals : flattened list of input values.
-    in_avals : corresponding list of avals.
-    out_avals : list of target output avals.
-  Returns:
-    in_vals_new : flattened list of modified in_vals with no weak types.
-    changed : bool; true if in_vals required modification.
-  """
-  if len(in_vals) != len(in_avals) or len(in_avals) != len(out_avals):
-    # Calling function is responsible for catching this.
-    return in_vals, False
-  weak_mismatches = [i for i, (a1, a2) in enumerate(zip(in_avals, out_avals))
-                    if getattr(a1, 'weak_type', False) and not core.typematch(a1, a2)]
-  if not weak_mismatches:
-    return in_vals, False
-  for i in weak_mismatches:
-    new_dtype = dtypes.result_type(in_vals[i], out_avals[i])
-    in_vals[i] = lax.convert_element_type(in_vals[i], new_dtype)
-  return in_vals, True
-
+def _promote_weak_typed_input(
+    in_val:Any, in_aval:AbstractValue, out_aval:AbstractValue
+    ) -> tuple[Any, bool]:
+  if getattr(in_aval, 'weak_type', False) and not core.typematch(in_aval, out_aval):
+    new_dtype = dtypes.result_type(in_val, out_aval)
+    return lax.convert_element_type(in_val, new_dtype), True
+  else:
+    return in_val, False
 
 ### scan
 
@@ -215,8 +201,135 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   """
   if not callable(f):
     raise TypeError("lax.scan: f argument should be a callable.")
-  xs_flat, xs_tree = tree_flatten(xs)
 
+  dbg_body = api_util.debug_info("scan", f, (init, xs), {})
+  init = FlatTree.flatten(init)
+  xs = FlatTree.flatten(xs)
+  args = FlatTree.pack((init, xs))
+
+  args_avals = args.map(core.get_aval)
+  init_avals, xs_avals = args_avals.unpack()
+
+  length = _infer_scan_length(list(xs), list(xs_avals), length)
+
+  if config.disable_jit.value:
+    if length == 0:
+      raise ValueError("zero-length scan is not supported in disable_jit() "
+                       "mode because the output type is unknown.")
+    carry = init.unflatten()
+    ys = []
+    maybe_reversed = reversed if reverse else lambda x: x
+    for i in maybe_reversed(range(length)):
+      xs_slice = xs.map(lambda x: slicing.index_in_dim(x, i, keepdims=False))
+      carry, y = f(carry, xs_slice.unflatten())
+      ys.append(y)
+    stack = lambda *ys: _stack(ys)
+    stacked_y = tree_map(stack, *maybe_reversed(ys))
+    return carry, stacked_y
+
+  if config.mutable_array_checks.value:
+    check_no_aliased_ref_args(lambda: dbg_body, list(args_avals), list(args))
+
+  x_avals = xs_avals.map(lambda aval: core.mapped_aval(length, 0, aval))
+  def _create_jaxpr(carry_avals):
+    new_arg_avals = FlatTree.pack(((carry_avals, x_avals), {}))
+    jaxpr, out_avals = pe.trace_to_jaxpr(f, new_arg_avals, dbg_body)
+    jaxpr, consts = pe.separate_consts(jaxpr)
+    if len(out_avals.unpack()) != 2:
+      msg = "scan body output must be a pair, got {}."
+      raise TypeError(msg.format(out_avals.unflatten()))
+    return jaxpr, out_avals, consts
+
+  # The carry input and output avals must match exactly. However, we want to account for
+  # the case when init contains weakly-typed values (e.g. Python scalars), with avals that
+  # may not match the output despite being compatible by virtue of their weak type.
+  # To do this, we compute the jaxpr in two passes: first with the raw inputs, and if
+  # necessary, a second time with modified init values.
+  # TODO(dougalm): this two-pass stuff is expensive (exponential in scan nesting
+  # depth) and incomplete (because in the general case it takes more than two passes).
+  # Let's get rid of it, perhaps after getting rid of weak types altogether.
+  jaxpr, out_avals, consts = _create_jaxpr(init_avals)
+  if config.mutable_array_checks.value:
+    _check_no_aliased_closed_over_refs(dbg_body, consts, list(args))
+  carry_out_avals, ys_avals = out_avals.unpack()
+  if len(carry_out_avals) != len(init_avals):
+    _check_carry_type('scan body', f, init_avals, carry_out_avals)
+  init, changed = init.map3(
+     _promote_weak_typed_input,
+     init_avals, carry_out_avals).unzip2()
+  num_carry, num_xs, num_ys = len(init), len(xs), len(ys_avals)
+  if any(changed):
+    init_avals = init.map(core.get_aval)
+    jaxpr, out_avals, consts = _create_jaxpr(init_avals)
+    carry_out_avals, ys_avals = out_avals.unpack()
+
+  _check_carry_type('scan body', f, init_avals, carry_out_avals)
+
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(jaxpr.effects)
+  if disallowed_effects:
+    raise NotImplementedError(
+        f'Effects not supported in `scan`: {disallowed_effects}')
+
+  unroll = core.concrete_or_error(
+      None, unroll,
+      "The `unroll` argument to `scan` expects a concrete `int` or `bool` "
+      "value.")
+  if isinstance(unroll, bool):
+    unroll = max(length, 1) if unroll else 1
+  if unroll < 0:
+    raise ValueError("`unroll` must be a `bool` or a non-negative `int`.")
+
+  args_flat = [*init.vals, *xs.vals]
+
+  # If the body forwards an input carry to an output carry, that input is
+  # read-only and can be moved to be a const. Doing so can lead to efficiency
+  # wins, e.g. if the scan is inside a cond with a batched predicate.
+  num_ys = len(jaxpr.out_avals) - num_carry
+  carry_fwd, ext_fwd = split_list(pe._jaxpr_forwarding(jaxpr.jaxpr), [num_carry])
+  move_to_const = [len(consts) + i == f for i, f in enumerate(carry_fwd)]
+  if any(move_to_const):
+    jaxpr = pe.prune_closed_jaxpr_outputs(
+        jaxpr, [not m for m in move_to_const] + [True] * num_ys)
+    jaxpr = pe.move_binders_to_front(
+        jaxpr, [False] * len(consts) + move_to_const + [False] * num_xs)
+    args_flat, new_consts = partition_list(move_to_const + [False] * num_xs, args_flat)
+    consts = [*new_consts, *consts]
+    num_carry -= len(new_consts)
+
+  # When an extensive output is forwarded from an extensive input, we can
+  # avoid copying it by pruning it from the jaxpr and forwarding manually. We
+  # don't need to update the indexing based on the optimization above since it
+  # doesn't change the total number of consts and carries combined, and
+  # `ext_fwd` already only includes the extensive outputs. But, we do remove
+  # the number of consts from the index since we're going to use it to index
+  # into `in_flat`, which doesn't include consts.
+  ext_to_ext_fwd = [
+      in_idx - len(consts) if in_idx is not None and
+      in_idx >= num_carry + len(consts) else None for in_idx in ext_fwd]
+  jaxpr = pe.prune_closed_jaxpr_outputs(
+      jaxpr, [True] * num_carry + [i is None for i in ext_to_ext_fwd])
+
+  out = scan_p.bind(*consts, *args_flat,
+                    reverse=reverse, length=length, jaxpr=jaxpr,
+                    num_consts=len(consts), num_carry=num_carry,
+                    linear=(False,) * (len(consts) + len(args_flat)),
+                    unroll=unroll, _split_transpose=_split_transpose)
+
+  # Apply input to output forwarding that was computed above.
+  carry_out, out = split_list(out, [num_carry])
+  out_ = iter(out)
+  out = [next(out_) if f is None else _maybe_put(args_flat[f]) for f in ext_to_ext_fwd]
+  assert next(out_, None) is None
+  out = [*carry_out, *out]
+
+  if any(move_to_const):
+    out = pe.merge_lists(move_to_const + [False] * num_ys, out, new_consts)
+
+  return out_avals.update_from_list(out).unflatten()
+
+def _infer_scan_length(
+    xs_flat: list[Any], xs_avals: list[AbstractValue],
+    length: int | None) -> int:
   try:
     lengths = [x.shape[0] for x in xs_flat]
   except AttributeError as err:
@@ -225,15 +338,13 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
       msg.format(', '.join(str(x) for x in xs_flat
                            if not hasattr(x, 'shape')))) from err
 
-  xs_avals = [core.get_aval(x) for x in xs_flat]
-
   if not all(a.sharding.spec[0] is None for a in xs_avals):
     raise ValueError('0th dimension of all xs should be replicated. Got '
                      f'{", ".join(str(a.sharding.spec) for a in xs_avals)}')
 
   if length is not None:
     try:
-      length = int(length)
+      return int(length)
     except core.ConcretizationTypeError as err:
       msg = ('The `length` argument to `scan` expects a concrete `int` value.'
              ' For scan-like iteration with a dynamic length, use `while_loop`'
@@ -252,134 +363,13 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
       msg = "scan got no values to scan over and `length` not provided."
       raise ValueError(msg)
     else:
-      length, = unique_lengths
-
-  if config.disable_jit.value:
-    if length == 0:
-      raise ValueError("zero-length scan is not supported in disable_jit() "
-                       "mode because the output type is unknown.")
-    carry = init
-    ys = []
-    maybe_reversed = reversed if reverse else lambda x: x
-    for i in maybe_reversed(range(length)):
-      xs_slice = [slicing.index_in_dim(x, i, keepdims=False) for x in xs_flat]
-      carry, y = f(carry, tree_unflatten(xs_tree, xs_slice))
-      ys.append(y)
-    stack = lambda *ys: _stack(ys)
-    stacked_y = tree_map(stack, *maybe_reversed(ys))
-    return carry, stacked_y
-
-  x_avals = [core.mapped_aval(length, 0, aval) for aval in xs_avals]
-  dbg_body = api_util.debug_info("scan", f, (init, xs), {})
-
-  if config.mutable_array_checks.value:
-    in_flat, in_tree = tree_flatten((init, xs))
-    in_avals = tuple(_map(core.get_aval, in_flat))
-    check_no_aliased_ref_args(lambda: dbg_body, in_avals, in_flat)
-
-  def _create_jaxpr(init):
-    init_flat, init_tree = tree_flatten(init)
-    in_flat, in_tree = tree_flatten((init, xs))
-    carry_avals = tuple(_map(core.get_aval, init_flat))
-    jaxpr, out_tree = pe.trace_to_jaxpr(
-        f, in_tree, (*carry_avals, *x_avals), debug_info=dbg_body)
-    jaxpr, consts = pe.separate_consts(jaxpr)
-    if config.mutable_array_checks.value:
-      _check_no_aliased_closed_over_refs(dbg_body, (*jaxpr.consts, *consts), in_flat)
-    out_tree_children = out_tree.children()
-    if len(out_tree_children) != 2:
-      msg = "scan body output must be a pair, got {}."
-      raise TypeError(msg.format(tree_unflatten(out_tree, jaxpr.out_avals)))
-
-    carry_avals_out, _ = split_list(jaxpr.out_avals, [out_tree_children[0].num_leaves])
-    return (init_flat, carry_avals, carry_avals_out, init_tree, in_flat, jaxpr,
-            consts, out_tree, out_tree_children)
-
-  # The carry input and output avals must match exactly. However, we want to account for
-  # the case when init contains weakly-typed values (e.g. Python scalars), with avals that
-  # may not match the output despite being compatible by virtue of their weak type.
-  # To do this, we compute the jaxpr in two passes: first with the raw inputs, and if
-  # necessary, a second time with modified init values.
-  # TODO(dougalm): this two-pass stuff is expensive (exponential in scan nesting
-  # depth) and incomplete (because in the general case it takes more than two passes).
-  # Let's get rid of it, perhaps after getting rid of weak types altogether.
-  init_flat, carry_avals, carry_avals_out, init_tree, *rest = _create_jaxpr(init)
-  new_init_flat, changed = _promote_weak_typed_inputs(init_flat, carry_avals, carry_avals_out)
-  if changed:
-    init = tree_unflatten(init_tree, new_init_flat)
-    init_flat, carry_avals, carry_avals_out, init_tree, *rest = _create_jaxpr(init)
-  in_flat, jaxpr, consts, out_tree, out_tree_children = rest
-  num_carry = len(init_flat)
-  num_xs = len(x_avals)
-  num_ys = len(jaxpr.out_avals) - num_carry
-  del init_flat
-
-  _check_carry_type('scan body', f, init, out_tree_children[0], carry_avals_out)
-  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(jaxpr.effects)
-  if disallowed_effects:
-    raise NotImplementedError(
-        f'Effects not supported in `scan`: {disallowed_effects}')
-
-  unroll = core.concrete_or_error(
-      None, unroll,
-      "The `unroll` argument to `scan` expects a concrete `int` or `bool` "
-      "value.")
-  if isinstance(unroll, bool):
-    unroll = max(length, 1) if unroll else 1
-  if unroll < 0:
-    raise ValueError("`unroll` must be a `bool` or a non-negative `int`.")
-
-  # If the body forwards an input carry to an output carry, that input is
-  # read-only and can be moved to be a const. Doing so can lead to efficiency
-  # wins, e.g. if the scan is inside a cond with a batched predicate.
-  carry_fwd, ext_fwd = split_list(pe._jaxpr_forwarding(jaxpr.jaxpr), [num_carry])
-  move_to_const = [len(consts) + i == f for i, f in enumerate(carry_fwd)]
-  if any(move_to_const):
-    jaxpr = pe.prune_closed_jaxpr_outputs(
-        jaxpr, [not m for m in move_to_const] + [True] * num_ys)
-    jaxpr = pe.move_binders_to_front(
-        jaxpr, [False] * len(consts) + move_to_const + [False] * num_xs)
-    in_flat, new_consts = partition_list(move_to_const + [False] * num_xs, in_flat)
-    consts = [*new_consts, *consts]
-    num_carry -= len(new_consts)
-
-  # When an extensive output is forwarded from an extensive input, we can
-  # avoid copying it by pruning it from the jaxpr and forwarding manually. We
-  # don't need to update the indexing based on the optimization above since it
-  # doesn't change the total number of consts and carries combined, and
-  # `ext_fwd` already only includes the extensive outputs. But, we do remove
-  # the number of consts from the index since we're going to use it to index
-  # into `in_flat`, which doesn't include consts.
-  ext_to_ext_fwd = [
-      in_idx - len(consts) if in_idx is not None and
-      in_idx >= num_carry + len(consts) else None for in_idx in ext_fwd]
-  jaxpr = pe.prune_closed_jaxpr_outputs(
-      jaxpr, [True] * num_carry + [i is None for i in ext_to_ext_fwd])
-
-  out = scan_p.bind(*consts, *in_flat,
-                    reverse=reverse, length=length, jaxpr=jaxpr,
-                    num_consts=len(consts), num_carry=num_carry,
-                    linear=(False,) * (len(consts) + len(in_flat)),
-                    unroll=unroll, _split_transpose=_split_transpose)
-
-  # Apply input to output forwarding that was computed above.
-  carry_out, out = split_list(out, [num_carry])
-  out_ = iter(out)
-  out = [next(out_) if f is None else _maybe_put(in_flat[f]) for f in ext_to_ext_fwd]
-  assert next(out_, None) is None
-  out = [*carry_out, *out]
-
-  if any(move_to_const):
-    out = pe.merge_lists(move_to_const + [False] * num_ys, out, new_consts)
-
-  return tree_unflatten(out_tree, out)
-
+      return list(unique_lengths)[0]
 
 def _capitalize(s):
   # s.capitalize() converts s[1:] to lowercase which we don't want.
   return s[0].capitalize() + s[1:]
 
-def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
+def _check_carry_type(name, body_fun, in_carry, out_carry):
   try:
     sig = inspect.signature(body_fun)
   except (ValueError, TypeError):
@@ -391,23 +381,20 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
   else:
     component = lambda p: (f'the input carry at path {keystr(p)}'
                            if p else 'the input carry')
-  leaves_and_paths, in_carry_tree = tree_flatten_with_path(in_carry)
-  paths, in_carry_flat = unzip2(leaves_and_paths)
-  in_avals = _map(core.get_aval, in_carry_flat)
-  if in_carry_tree != out_carry_tree:
+  if in_carry.tree != out_carry.tree:
     try:
-      out_carry = tree_unflatten(out_carry_tree, out_avals)
+      out_carry_unflat = out_carry.unflatten()
     except:
-      out_carry = None
+      out_carry_unflat = None
 
-    if out_carry is None:
-      differences = (f'the input tree structure is:\n{in_carry_tree}\n' +
-                     f'the output tree structure is:\n{out_carry_tree}\n')
+    if out_carry_unflat is None:
+      differences = (f'the input tree structure is:\n{in_carry.tree}\n' +
+                     f'the output tree structure is:\n{out_carry.tree}\n')
     else:
       diffs = [f'{component(path)} is a {thing1} but the corresponding component '
                f'of the carry output is a {thing2}, so {explanation}'
                for path, thing1, thing2, explanation
-               in equality_errors(in_carry, out_carry)]
+               in equality_errors(in_carry.unflatten(), out_carry.unflatten())]
       if len(diffs) == 0:
         return  # the trees may have different aux data, but structures are same
       elif len(diffs) == 1:
@@ -421,12 +408,14 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
         f"{differences}\n"
         "Revise the function so that the carry output has the same pytree "
         "structure as the carry input.")
-  if not all(_map(core.typematch, in_avals, out_avals)):
+  if not all(_map(core.typematch, in_carry, out_carry)):
+    # TODO(dougalm): add a way to get paths paths without roundtripping
+    paths, _ = unzip2(tree_leaves_with_path(in_carry.unflatten()))
     diffs = [f'{component(path)} has type {in_aval.str_short()}'
              ' but the corresponding output carry component has type '
              f'{out_aval.str_short()}'
              f'{core.aval_mismatch_extra(in_aval, out_aval)}'
-             for path, in_aval, out_aval in zip(paths, in_avals, out_avals)
+             for path, in_aval, out_aval in zip(paths, in_carry, out_carry)
              if not core.typematch(in_aval, out_aval)]
 
     if len(diffs) == 0:
@@ -441,7 +430,7 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
         f'applying `jax.lax.pcast(..., {tuple(out_aval.vma - in_aval.vma)},'
         " to='varying')` to the initial carry value corresponding to"
         f' {component(path)}'
-        for path, in_aval, out_aval in zip(paths, in_avals, out_avals)
+        for path, in_aval, out_aval in zip(paths, in_carry, out_carry)
         if not core.typematch(in_aval, out_aval) and
         isinstance(in_aval, ShapedArray) and isinstance(out_aval, ShapedArray)
         and in_aval.vma != out_aval.vma and out_aval.vma - in_aval.vma]
@@ -1704,42 +1693,48 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
       # transformation on it), so we fall back to the primitive version.
       pass
 
-  def _create_jaxpr(init_val):
-    init_vals, in_tree = tree_flatten((init_val,))
-    init_avals = tuple(_map(core.get_aval, init_vals))
-    cond_dbg = api_util.debug_info("while_cond", cond_fun, (init_val,), {})
-    cond_jaxpr, cond_tree = pe.trace_to_jaxpr(cond_fun, in_tree, init_avals, cond_dbg)
-    cond_jaxpr, cond_consts = pe.separate_consts(cond_jaxpr)
-    body_dbg = api_util.debug_info("while_body", body_fun, (init_val,), {})
-    body_jaxpr, body_tree = pe.trace_to_jaxpr(body_fun, in_tree, init_avals, body_dbg)
-    body_jaxpr, body_consts = pe.separate_consts(body_jaxpr)
-    if not treedef_is_leaf(cond_tree) or len(cond_jaxpr.out_avals) != 1:
+  def _create_jaxpr(init_avals):
+    args_avals = FlatTree.pack(((init_avals,), {}))
+    cond_jaxpr, cond_out_avals = pe.trace_to_jaxpr(cond_fun, args_avals, cond_dbg)
+    body_jaxpr, body_out_avals = pe.trace_to_jaxpr(body_fun, args_avals, body_dbg)
+    if not treedef_is_leaf(cond_out_avals.tree) or len(cond_jaxpr.out_avals) != 1:
       msg = "cond_fun must return a boolean scalar, but got pytree {}."
-      raise TypeError(msg.format(cond_tree))
+      raise TypeError(msg.format(cond_out_avals.tree))
+
     pred_aval = cond_jaxpr.out_avals[0]
     if (not isinstance(pred_aval, ShapedArray)
         or ShapedArray(pred_aval.shape, pred_aval.dtype) != ShapedArray((), np.bool_)):
       msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
       raise TypeError(msg.format(cond_jaxpr.out_avals))
-    return init_vals, init_avals, body_jaxpr, in_tree, cond_jaxpr, cond_consts, body_consts, body_tree
+
+    return cond_jaxpr, body_jaxpr, body_out_avals
+
+  cond_dbg = api_util.debug_info("while_cond", cond_fun, (init_val,), {})
+  body_dbg = api_util.debug_info("while_body", body_fun, (init_val,), {})
+  init_val = FlatTree.flatten(init_val)  # type: ignore
+  init_aval = init_val.map(core.get_aval)
 
   # The body input and output avals must match exactly. However, we want to account for
   # the case when init contains weakly-typed values (e.g. Python scalars), with avals that
   # may not match the output despite being compatible by virtue of their weak type.
   # To do this, we compute the jaxpr in two passes: first with the raw inputs, and if
   # necessary, a second time with modified init values.
-  init_vals, init_avals, body_jaxpr, in_tree, *rest = _create_jaxpr(init_val)
-  new_init_vals, changed = _promote_weak_typed_inputs(
-      init_vals, init_avals, body_jaxpr.out_avals)
-  new_init_val, = tree_unflatten(in_tree, new_init_vals)
-  if changed:
-    init_vals, init_avals, body_jaxpr, in_tree, *rest = _create_jaxpr(new_init_val)
-  cond_jaxpr, cond_consts, body_consts, body_tree = rest
+  cond_jaxpr, body_jaxpr, body_out_avals = _create_jaxpr(init_aval)
+  if len(body_out_avals) != len(init_aval):
+    _check_carry_type('while_loop body', body_fun, init_aval, body_out_avals)
+    assert False, "shouldn't get here"
 
-  in_tree_children = in_tree.children()
-  assert len(in_tree_children) == 1
-  _check_carry_type('while_loop body', body_fun, new_init_val, body_tree,
-                    body_jaxpr.out_avals)
+  init_val, changed = init_val.map3(
+      _promote_weak_typed_input,
+      init_aval, body_out_avals).unzip2()
+  if any(changed):
+    init_aval = init_val.map(core.get_aval)
+    cond_jaxpr, body_jaxpr, body_out_avals = _create_jaxpr(init_aval)
+
+  cond_jaxpr, cond_consts = pe.separate_consts(cond_jaxpr)
+  body_jaxpr, body_consts = pe.separate_consts(body_jaxpr)
+  _check_carry_type('while_loop body', body_fun, init_aval, body_out_avals)
+
   if not all(not v.aval.has_qdd or v.initial_qdd == v.final_qdd for v in
              body_jaxpr.jaxpr.invars):
     raise TypeError("type-changing mutations not allowed in while_loop body")
@@ -1760,6 +1755,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   _, keep_cond_carry = split_list(keep_cond, [len(cond_consts)])
   move_to_const = _map(operator.not_, keep_cond_carry)
 
+  init_vals = list(init_val)  # type: ignore
   if any(move_to_const):
     cond_jaxpr = pe.close_jaxpr(cond_jaxpr_)
     body_jaxpr = pe.prune_closed_jaxpr_outputs(
@@ -1776,7 +1772,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   if any(move_to_const):
     outs = pe.merge_lists(move_to_const, outs, new_body_consts)
 
-  return tree_unflatten(body_tree, outs)
+  return body_out_avals.update_from_list(outs).unflatten()
 
 
 def _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts, cond_nconsts

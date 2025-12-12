@@ -47,7 +47,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.tree_util import tree_flatten
-from jax._src.tree_util import tree_map
+from jax._src.tree_util import tree_map, FlatTree
 from jax._src.tree_util import tree_unflatten
 from jax._src.typing import Array
 from jax._src.util import (as_hashable_function, split_list, safe_map, safe_zip,
@@ -770,11 +770,11 @@ def jaxpr_to_checkify_jaxpr(
     return (error, out), error_effects
 
   debug_info = jaxpr.jaxpr.debug_info.with_unknown_names()
-  checked_jaxpr, full_out_tree = pe.trace_to_jaxpr(
-      fun_wrapped, None, flat_err_and_in_vals, debug_info)
-  out_tree, error_effects_treedef = full_out_tree.children()
-  error_effects = error_effects_treedef.unflatten(()).val
-  return checked_jaxpr, out_tree, error_effects
+  args_avals = FlatTree.flatten((flat_err_and_in_vals, {}))
+  checked_jaxpr, full_out_avals = pe.trace_to_jaxpr(fun_wrapped, args_avals, debug_info)
+  out_avals, error_effects = full_out_avals.unpack()
+  error_effects = error_effects.unflatten().val
+  return checked_jaxpr, out_avals.tree, error_effects
 
 def cond_error_check(error: Error, enabled_errors, index, *ops,
                      branches, **params):
@@ -856,9 +856,10 @@ def checkify_while_body_jaxpr(
     lax.dce_sink(cond_f(*c_consts, *out))
     return out
   c_consts_avals = cond_jaxpr.in_avals[:c_consts_num]
+
   jaxpr, _ = pe.trace_to_jaxpr(
-      new_body_f, None,
-      (*c_consts_avals, *body_jaxpr.in_avals),
+      new_body_f,
+      FlatTree.flatten(((*c_consts_avals, *body_jaxpr.in_avals), {})),
       debug_info=body_jaxpr.jaxpr.debug_info.with_unknown_names())
   err_vals, err_tree = jtu.tree_flatten(error)
   err_vals = map(core.get_aval, err_vals)
@@ -1010,8 +1011,8 @@ def shard_map_error_check(
 
   with core.extend_axis_env_nd(mesh.shape.items()), config._check_vma(check_vma):
     checked_jaxpr, _ = pe.trace_to_jaxpr(
-        expand_errors_leading_dim, None,
-        tuple(checked_jaxpr.in_avals),
+        expand_errors_leading_dim,
+        FlatTree.flatten((tuple(checked_jaxpr.in_avals), {})),
         debug_info=checked_jaxpr.jaxpr.debug_info)
 
   # Update shard_map params to account for extra error values.
@@ -1238,15 +1239,15 @@ def checkify(f: Callable[..., Out],
   @traceback_util.api_boundary
   def checked_fun(*args, **kwargs):
     # close over all arguments so they're not turned into abstract values.
-    in_tree = jtu.tree_structure(())
+    in_avals = FlatTree.flatten(((), {}))
     closed_f = lambda: f(*args, **kwargs)
     # stage:
     debug_info = api_util.debug_info("checkify", f, args, kwargs).with_unknown_names()
-    jaxpr_, out_tree = pe.trace_to_jaxpr(closed_f, in_tree, (), debug_info)
+    jaxpr_, out_avals = pe.trace_to_jaxpr(closed_f, in_avals, debug_info)
     jaxpr, consts = pe.separate_consts(jaxpr_)
     # checkify:
     error, out_flat = checkify_jaxpr(jaxpr, errors, init_error, *consts)
-    return error, jtu.tree_unflatten(out_tree, out_flat)
+    return error, out_avals.update_from_list(out_flat).unflatten()
   return checked_fun
 
 def check(pred: Bool, msg: str,

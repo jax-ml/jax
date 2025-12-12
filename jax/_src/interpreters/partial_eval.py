@@ -43,8 +43,7 @@ from jax._src.core import (
     mapped_aval, unmapped_aval, get_referent, JaxprEqnContext, typeof)
 from jax._src.source_info_util import SourceInfo
 from jax._src.state.types import AbstractRef, ReadEffect
-from jax._src.tree_util import (PyTreeDef, treedef_tuple,
-                                tree_flatten, tree_unflatten)
+from jax._src.tree_util import PyTreeDef, treedef_tuple, FlatTree
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            as_hashable_function, weakref_lru_cache,
@@ -2293,35 +2292,34 @@ def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
 @weakref_lru_cache
 def trace_to_jaxpr(
     fun: Callable,
-    in_tree: PyTreeDef | None,
-    in_avals_flat: tuple[AbstractValue | core.AvalQDD, ...],
+    in_avals: FlatTree,  # (args, kwargs) pair
     debug_info: core.DebugInfo
-) -> tuple[ClosedJaxpr, PyTreeDef]:
-  config.enable_checks.value and debug_info.assert_arg_names(len(in_avals_flat))
+) -> tuple[ClosedJaxpr, FlatTree]:
+  config.enable_checks.value and debug_info.assert_arg_names(len(in_avals))
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(debug_info, parent_trace=parent_trace)
   # Name stacks are reset because the name stacks on jaxpr equations should be
   # rooted at the enclosing jaxpr.
   with core.ensure_no_leaks(trace), source_info_util.reset_name_stack():
     source_info = source_info_util.current()
-    in_tracers = map(partial(trace.new_arg, source_info=source_info),
-                          in_avals_flat)
+    in_tracers = in_avals.map(partial(trace.new_arg, source_info=source_info))
     with core.set_current_trace(trace):
-      if in_tree is not None:
-        in_tracers = tree_unflatten(in_tree, in_tracers)
-      ans = fun(*in_tracers)
-      debug_info = debug_info.set_result_paths(ans)
-      ans_flat, out_tree = tree_flatten(ans)
+      args, kwargs = in_tracers.unflatten()
+      ans_pytree = fun(*args, **kwargs)
+      debug_info = debug_info.set_result_paths(ans_pytree)
+      ans = FlatTree.flatten(ans_pytree)
+      del ans_pytree, args, kwargs
 
-    _check_returned_jaxtypes(debug_info, ans_flat)
-    out_tracers = map(partial(trace.to_jaxpr_tracer, source_info=source_info), ans_flat)
-    _check_no_returned_refs(debug_info, out_tracers)
-    jaxpr, consts = trace.frame.to_jaxpr(trace, out_tracers, debug_info,
+    _check_returned_jaxtypes(debug_info, list(ans))
+    out_tracers = ans.map(partial(trace.to_jaxpr_tracer, source_info=source_info))
+    out_avals = out_tracers.map(lambda t: t.aval)
+    _check_no_returned_refs(debug_info, list(out_tracers))
+    jaxpr, consts = trace.frame.to_jaxpr(trace, list(out_tracers), debug_info,
                                          source_info)
-    del trace, fun, in_tracers, out_tracers, ans, ans_flat
+    del trace, fun, in_tracers, out_tracers, ans
 
   config.enable_checks.value and core.check_jaxpr(jaxpr)
-  return ClosedJaxpr(jaxpr, consts), out_tree
+  return ClosedJaxpr(jaxpr, consts), out_avals
 
 # TODO(dougalm): remove in favor of `trace_to_jaxpr`
 @profiler.annotate_function
