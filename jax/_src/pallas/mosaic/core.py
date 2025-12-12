@@ -102,6 +102,8 @@ class CompilerParams(pallas_core.CompilerParams):
     skip_device_barrier: Skip the default device barrier for the kernel.
     allow_collective_id_without_custom_barrier: Allow the use of collective_id
       without a custom barrier.
+    use_tc_tiling_on_sc: Use TensorCore tiling for SparseCore. This flag is
+      only used for ``SC_*_SUBCORE`` kernels.
   """
   BACKEND: ClassVar[pallas_core.Backend] = "mosaic_tpu"
   dimension_semantics: tuple[DimensionSemantics, ...] | None = None
@@ -117,6 +119,7 @@ class CompilerParams(pallas_core.CompilerParams):
   skip_device_barrier: bool = False
   allow_collective_id_without_custom_barrier: bool = False
   shape_invariant_numerics: bool = True
+  use_tc_tiling_on_sc: bool | None = None
 
   def __init__(
       self,
@@ -133,7 +136,16 @@ class CompilerParams(pallas_core.CompilerParams):
       skip_device_barrier: bool = False,
       allow_collective_id_without_custom_barrier: bool = False,
       shape_invariant_numerics: bool = True,
+      use_tc_tiling_on_sc: bool = False,
   ):
+    if use_tc_tiling_on_sc is not None and kernel_type not in (
+        KernelType.SC_SCALAR_SUBCORE,
+        KernelType.SC_VECTOR_SUBCORE,
+    ):
+      raise ValueError(
+          "use_tc_tiling_on_sc= is only supported for SC_*_SUBCORE kernels"
+      )
+
     object.__setattr__(
         self,
         "dimension_semantics",
@@ -165,6 +177,7 @@ class CompilerParams(pallas_core.CompilerParams):
     object.__setattr__(
         self, "shape_invariant_numerics", shape_invariant_numerics
     )
+    object.__setattr__(self, "use_tc_tiling_on_sc", use_tc_tiling_on_sc)
 
   # Replace is a method, not a field.
   replace = dataclasses.replace

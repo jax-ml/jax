@@ -2097,13 +2097,13 @@ class PallasCallTest(ptu.PallasTPUTest):
     self.assertIn('tpu_custom_call', str(exported_module))
     self.assertIn('cost_estimate', str(exported_module))
     # The exported module string encodes " as \22.
-    self.assertIn(f'flops\\22: {batch_size * flops}', str(exported_module))
+    self.assertIn(f'flops\\22:{batch_size * flops}', str(exported_module))
     self.assertIn(
-        f'transcendentals\\22: {batch_size * transcendentals}',
+        f'transcendentals\\22:{batch_size * transcendentals}',
         str(exported_module),
     )
     self.assertIn(
-        f'bytes_accessed\\22: {batch_size * bytes_accessed}',
+        f'bytes_accessed\\22:{batch_size * bytes_accessed}',
         str(exported_module),
     )
 
@@ -4201,7 +4201,10 @@ class PallasKernelMetadataTest(ptu.PallasTPUTest):
       )(x, y)
 
     hlo = f.lower(x, y).compile().as_text()
-    self.assertIn(json.dumps(metadata), hlo)
+    self.assertIn(
+        json.dumps(metadata, sort_keys=True, indent=0, separators=(',', ':')),
+        hlo,
+    )
 
 
 if __name__ == '__main__':
