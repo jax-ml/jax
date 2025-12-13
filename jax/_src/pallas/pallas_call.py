@@ -115,7 +115,8 @@ def _pallas_call_abstract_eval(
     raise ValueError(f"input pinned buffers without input_output_aliases:"
                      f"{missing}")
   outin_aliases = {out_idx: in_idx for in_idx, out_idx in inout_aliases.items()}
-  out_avals = [jax_core.ShapedArray(a.shape, a.dtype, a.weak_type)
+  out_avals = [jax_core.ShapedArray(a.shape, a.dtype, a.weak_type,
+                                    sharding=a.sharding)
                if isinstance(a, pallas_core.ShapedArrayWithMemorySpace) else
                avals[outin_aliases[out_idx]] if out_idx in outin_aliases
                else a for out_idx, a in enumerate(out_avals)]
@@ -1155,7 +1156,8 @@ def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
         return jax_core.ShapedArray(
             shape=out_shape.shape, dtype=out_shape.dtype,
             sharding=jax_core.get_cur_mesh_sharding(), vma=out_shape.vma)
-      return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype)
+      return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype,
+                                  sharding=jax_core.get_cur_mesh_sharding())
     case pallas_core.MemoryRef():
       return out_shape.get_array_aval()
     case hijax.HiType():
