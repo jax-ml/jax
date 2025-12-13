@@ -508,5 +508,50 @@ class ProfilerTest(unittest.TestCase):
         unittest.mock.ANY,
     )
 
+  @unittest.skipIf(
+      not (portpicker and _pywrap_profiler_plugin),
+      "Test requires xprof and portpicker",
+  )
+  def test_continuous_profiling_with_snapshots(self):
+    port = portpicker.pick_unused_port()
+    jax.profiler.start_server(port)
+
+    logdir = absltest.get_default_test_tmpdir()
+    shutil.rmtree(logdir, ignore_errors=True)
+
+    stop_workload = threading.Event()
+    workload_started = threading.Event()
+
+    def workload():
+      workload_started.set()
+      y = jnp.zeros((5, 5))
+      while not stop_workload.is_set():
+        y = jnp.dot(y, y)
+
+    workload_thread = threading.Thread(target=workload)
+    workload_thread.start()
+    workload_started.wait()
+
+    _pywrap_profiler_plugin.start_continuous_profiling(f"localhost:{port}", {})
+
+    num_snapshots = 3
+    for _ in range(num_snapshots):
+      time.sleep(1)
+      _pywrap_profiler_plugin.get_snapshot(f"localhost:{port}", logdir)
+
+    stop_workload.set()
+    workload_thread.join()
+    jax.profiler.stop_server()
+
+    self.assertEqual(
+        len(
+            glob.glob(
+                os.path.join(logdir, "plugins", "profile", "*", "*.xplane.pb")
+            )
+        ),
+        num_snapshots,
+    )
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
