@@ -151,6 +151,7 @@ from jax._src.numpy.lax_numpy import (
     split as split,
     squeeze as squeeze,
     stack as stack,
+    pad_and_stack as pad_and_stack,
     swapaxes as swapaxes,
     tile as tile,
     trace as trace,
