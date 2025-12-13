@@ -379,11 +379,14 @@ def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
 
 @dataclasses.dataclass(frozen=True)
 class _DeferredShardArg:
-  """Deferred call to `pxla.shard_args`.
+  """Deferred call to `pxla.shard_args` (if `cross_host_transfer=False`) or
+   `xc.batched_copy_array_to_devices_with_sharding`
+   (if `cross_host_transfer=True`).
 
   Per-array impls return this object instead of a result array to indicate a
-  deferred `shard_args` call. `_batched_device_put_impl` then batches all
-  `_DeferredShardArg` objects into a single `shard_args` call.
+  deferred `shard_args` call. `_batched_device_put_impl` then batches
+  `_DeferredShardArg` objects into a single `shard_args` or
+  `xc.batched_copy_array_to_devices_with_sharding` call.
   """
 
   x: Any
@@ -391,11 +394,11 @@ class _DeferredShardArg:
   aval: core.AbstractValue
   committed: bool
   copy_semantics: ArrayCopySemantics
+  cross_host_transfer: bool
 
   def result_handler(self, shard_arg_result):
     return pxla.global_aval_to_result_handler(
         self.aval, self.s, self.committed)(shard_arg_result)
-
 
 def _device_put_sharding_impl(
     x: Any,
@@ -434,9 +437,7 @@ def _device_put_sharding_impl(
 
     if (x_is_jax_array and x._committed and xla_bridge.process_count() > 1
         and _is_supported_cross_host_transfer(x.ndim, x_sharding, s)):
-      return xc.batched_copy_array_to_devices_with_sharding(
-          [x], [s._internal_device_list], [s],  # pytype: disable=attribute-error
-          [copy])[0]
+      return _DeferredShardArg(x, s, aval, True, copy, True)
 
     if not s_is_fully_addressable:
       # If both the source and target shardings are not fully addressable and
@@ -473,13 +474,13 @@ def _device_put_sharding_impl(
                   f"{type(x)} passed to device_put is not the same on each"
                   " process. Make sure you are passing the same value of"
                   f" {type(x)} on each process."))
-        return _DeferredShardArg(x, s, aval, True, copy)
+        return _DeferredShardArg(x, s, aval, True, copy, False)
       # TODO(yashkatariya,mattjj): Link to a doc about McJAX and jax.Array.
       raise ValueError(
           "device_put's second argument must be a Device or a Sharding which"
           f" represents addressable devices, but got {s}. Please pass device or"
           " Sharding which represents addressable devices.")
-    return _DeferredShardArg(x, s, aval, True, copy)
+    return _DeferredShardArg(x, s, aval, True, copy, False)
 
   # Only `Device` exists below. `Sharding` instance is handled above.
   if x_is_jax_array:
@@ -491,7 +492,7 @@ def _device_put_sharding_impl(
       if copy == ArrayCopySemantics.REUSE_INPUT:
         return x
       else:
-        return _DeferredShardArg(x, x_sharding, aval, x.committed, copy)
+        return _DeferredShardArg(x, x_sharding, aval, x.committed, copy, False)
     elif is_single_device_sharding(x_sharding):
       device = x_sharding._device_assignment[0] if device is None else device
       if copy == ArrayCopySemantics.ALWAYS_COPY:
@@ -502,7 +503,7 @@ def _device_put_sharding_impl(
 
   sh = SingleDeviceSharding(pxla.get_default_device()
                             if device is None else device)
-  return _DeferredShardArg(x, sh, aval, device is not None, copy)
+  return _DeferredShardArg(x, sh, aval, device is not None, copy, False)
 
 
 def _device_put_impl(
@@ -552,27 +553,53 @@ def _batched_device_put_impl(
     copy_semantics: Sequence[ArrayCopySemantics],
     dst_avals: Sequence[core.ShapedArray | None]):
   ys = []
+
+  # Used to batch transfers when _device_put_impl returns a _DeferredShardArg
+  # with cross_host_transfer=False.
   dsa_indices, dsa_xs, dsa_shardings, dsa_copy_semantics = [], [], [], []
+  # Used to batch transfers when _device_put_impl returns a _DeferredShardArg
+  # with cross_host_transfer=True.
+  dca_indices, dca_xs, dca_shardings, dca_device_lists, dca_copy_semantics = (
+    [], [], [], [], [])
+
   for i, (x, device, src, cp, aval) in enumerate(
       zip(xs, devices, srcs, copy_semantics, dst_avals)):
     y = _device_put_impl(x, device=device, src=src, copy=cp, aval=aval)
     if isinstance(y, _DeferredShardArg):
-      dsa_indices.append(i)
-      dsa_xs.append(y.x)
-      dsa_shardings.append(y.s)
-      dsa_copy_semantics.append(y.copy_semantics)
+      if y.cross_host_transfer:
+        dca_indices.append(i)
+        dca_xs.append(y.x)
+        dca_shardings.append(y.s)
+        dca_device_lists.append(y.s._internal_device_list) # pytype: disable=attribute-error
+        dca_copy_semantics.append(y.copy_semantics)
+      else:
+        dsa_indices.append(i)
+        dsa_xs.append(y.x)
+        dsa_shardings.append(y.s)
+        dsa_copy_semantics.append(y.copy_semantics)
     ys.append(y)
 
+  # Batch shard_arg / batched_copy_array_to_devices_with_sharding calls. Helps
+  # improve efficiency for backends that support efficient batch transfer.
+  def _populate_batched_results(indices, results):
+    for i, result in zip(indices, results):
+      assert isinstance(ys[i], _DeferredShardArg)
+      ys[i] = result
+
   if dsa_xs:
-    # Batch shard_arg calls. Helps improve efficiency for backends that support
-    # efficient batch transfer.
     # device_put handles `Format` via a different path, so just pass `None` as
     # the layout here.
     shard_arg_results = pxla.shard_args(dsa_shardings, [None] * len(dsa_xs),
                                         dsa_copy_semantics, dsa_xs)
-    for i, shard_arg_result in zip(dsa_indices, shard_arg_results):
-      assert isinstance(ys[i], _DeferredShardArg)
-      ys[i] = ys[i].result_handler(shard_arg_result)
+    handled_results = (ys[i].result_handler(shard_arg_result)
+      for i, shard_arg_result in zip(dsa_indices, shard_arg_results))
+    _populate_batched_results(dsa_indices, handled_results)
+
+  if dca_xs:
+    copy_array_results = xc.batched_copy_array_to_devices_with_sharding(
+      dca_xs, dca_device_lists, dca_shardings, dca_copy_semantics)
+    _populate_batched_results(dca_indices, copy_array_results)
+
   return ys
 
 def batched_device_put_impl(
