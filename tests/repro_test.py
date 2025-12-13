@@ -2157,7 +2157,8 @@ class ReproTest(jtu.JaxTestCase):
           interpret=interpret,
           debug=debug,
           in_specs=[
-              pl.BlockSpec((bm, x.shape[1]), lambda i, _: (i, 0)),
+              pl.BlockSpec((bm, x.shape[1]), lambda i, _: (i, 0),
+                           memory_space=pltpu.MemorySpace.SMEM),
               pl.BlockSpec((y.shape[0], bn), lambda _, j: (0, j)),
           ],
           out_specs=pl.BlockSpec((bm, bn), lambda i, j: (i, j)),

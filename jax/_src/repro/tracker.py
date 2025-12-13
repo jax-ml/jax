@@ -267,7 +267,8 @@ class Func:
     # For calls to USER functions, the invocation from which we emit a body
     self.function_def: Union["FunctionDef", None] = None
     # For calls to USER functions, we store a pre-processor for (args, kwargs)
-    self.preprocess_args: Callable[[Args, KW  ], tuple[Args, KWArgs]] = lambda args, kwargs: (args, kwargs)
+    self.preprocess_args: Callable[[Args, KWArgs], tuple[Args, KWArgs]] = \
+      lambda args, kwargs: (args, kwargs)
 
     if _thread_local_state.flags.log_calls_to(self.fun):
       logging.info(f"Created {self} for {self.fun_info}")

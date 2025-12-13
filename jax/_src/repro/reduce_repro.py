@@ -101,6 +101,25 @@ def test_repro(repro_fun) -> bool:
       return False
 
 """
+  # For Anselm 12/12/2025
+  test_repro_source = """
+import re
+
+_expected = re.compile(r"Argument .UndefinedPrimal\\(Ref.* is not a valid JAX type")
+from jax._src import config
+
+def test_repro(repro_fun) -> bool:
+  with config.enable_checks(True):
+    try:
+      repro_fun()
+    except TypeError as e:
+      if _expected.search(str(e)):
+        return True
+      raise
+    else:
+      return False
+
+"""
   # if not FLAGS.repro_test_file:
   #   raise ValueError("Must specify a --repro_test_file")
   # with open(FLAGS.repro_test_file, "r") as f:

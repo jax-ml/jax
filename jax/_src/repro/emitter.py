@@ -339,7 +339,8 @@ def initialize_operand_emitter_pallas():
   def emit_BlockSpec(ctx: "EmitFunctionDefContext", v: pallas_core.BlockSpec) -> str:
     index_map = ctx.traverse_value_atom(v.index_map)
     res = (f"pallas_core.BlockSpec(block_shape={v.block_shape}, "
-           f"index_map={index_map}, memory_space={v.memory_space}, "
+           f"index_map={index_map}, "
+           f"memory_space={ctx.traverse_value(v.memory_space)}, "
            f"pipeline_mode={v.pipeline_mode})")
     return ctx.named_value(res, prefix="bs")
 
