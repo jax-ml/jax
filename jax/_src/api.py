@@ -2308,7 +2308,7 @@ def _saved_input_vjpfun(res_spec, filtered_tree, in_tree, out_tree, out_known,
   cts_flat, out_tree_ = tree_flatten(ct)
   if out_tree_ != out_tree:
     raise ValueError(f"unexpected tree structure of argument to vjp function: "
-                     f"got {out_tree}, but expected to match {out_tree_}")
+                     f"got {out_tree_}, but expected to match {out_tree}")
   for arg, aval in zip(cts_flat, out_primal_avals):
     ct_aval = shaped_abstractify(arg)
     ct_aval_expected = aval.to_cotangent_aval()
