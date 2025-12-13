@@ -73,6 +73,7 @@ jobs:
       - name: Run Bazel single B200 CUDA Tests
         run: |
             nvidia-smi
+
             bazel test \
             --config=ci_linux_x86_64_cuda \
             --config=ci_rbe_cache \
@@ -118,6 +119,7 @@ jobs:
       - name: Run Bazel multiple H100 CUDA Tests
         run: |
             nvidia-smi
+
             bazel test \
             --config=ci_linux_x86_64_cuda \
             --config=ci_rbe_cache \
