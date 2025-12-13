@@ -381,7 +381,7 @@ class LayoutTest(jtu.JaxTestCase):
     arr = jax.device_put(inp, s)
 
     # Create a custom layout instead of using `arr.layout` to test the API.
-    custom_dll = Layout(major_to_minor=(0, 1))
+    custom_dll = Layout(major_to_minor=(0, 1), tiling=((16, 128),))
 
     @jax.jit
     def f(x):
