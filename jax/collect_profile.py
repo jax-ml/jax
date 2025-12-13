@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 import argparse
 import gzip
 import os
@@ -39,10 +40,16 @@ profiler server has started, you can run `collect_profile` to trace the executio
 for a provided duration. The trace file will be dumped into a directory
 (determined by `--log_dir`) and by default, a Perfetto UI link will be generated
 to view the resulting trace.
+
+Common tracer options (with defaults):
+  --host_tracer_level=2         Profiler host tracer level.
+  --device_tracer_level=1       Profiler device tracer level.
+  --python_tracer_level=1       Profiler Python tracer level.
 """
 _GRPC_PREFIX = 'grpc://'
 DEFAULT_NUM_TRACING_ATTEMPTS = 3
-parser = argparse.ArgumentParser(description=_DESCRIPTION)
+parser = argparse.ArgumentParser(description=_DESCRIPTION,
+                                 formatter_class=argparse.RawTextHelpFormatter)
 parser.add_argument("--log_dir", default=None,
                     help=("Directory to store log files. "
                           "Uses a temporary directory if none provided."),
@@ -56,22 +63,22 @@ parser.add_argument("--no_perfetto_link",
 parser.add_argument("--host", default="127.0.0.1",
                     help="Host to collect trace. Defaults to 127.0.0.1",
                     type=str)
-parser.add_argument("--host_tracer_level", default=2,
-                    help="Profiler host tracer level", type=int)
-parser.add_argument("--device_tracer_level", default=1,
-                    help="Profiler device tracer level", type=int)
-parser.add_argument("--python_tracer_level", default=1,
-                    help="Profiler Python tracer level", type=int)
 
-def collect_profile(port: int, duration_in_ms: int, host: str,
-                    log_dir: os.PathLike | str | None, host_tracer_level: int,
-                    device_tracer_level: int, python_tracer_level: int,
-                    no_perfetto_link: bool):
-  options = {
-      "host_tracer_level": host_tracer_level,
-      "device_tracer_level": device_tracer_level,
-      "python_tracer_level": python_tracer_level,
+def collect_profile(
+    port: int,
+    duration_in_ms: int,
+    host: str,
+    log_dir: os.PathLike | str | None,
+    no_perfetto_link: bool,
+    xprof_options: dict[str, Any] | None = None,):
+  options: dict[str, Any] = {
+      "host_tracer_level": 2,
+      "device_tracer_level": 1,
+      "python_tracer_level": 1,
   }
+  if xprof_options:
+    options.update(xprof_options)
+
   IS_GCS_PATH = str(log_dir).startswith("gs://")
   log_dir_ = pathlib.Path(log_dir if log_dir is not None else tempfile.mkdtemp())
   str_log_dir = log_dir if IS_GCS_PATH else str(log_dir_)
@@ -116,10 +123,53 @@ def _strip_prefix(s, prefix):
 def _strip_addresses(addresses, prefix):
   return ','.join([_strip_prefix(s, prefix) for s in addresses.split(',')])
 
-def main(args):
-  collect_profile(args.port, args.duration_in_ms, args.host, args.log_dir,
-                  args.host_tracer_level, args.device_tracer_level,
-                  args.python_tracer_level, args.no_perfetto_link)
+def _parse_xprof_flags(unknown_flags: list[str]) -> dict[str, Any]:
+  parsed: dict[str, Any] = {}
+  i = 0
+  while i < len(unknown_flags):
+    arg = unknown_flags[i]
+    if not arg.startswith('--'):
+      raise ValueError(f"Unknown positional argument encountered: {arg}")
+
+    key = arg[2:]
+    if "=" in key:
+      key, value_str = key.split("=", 1)
+      i += 1
+    elif i + 1 < len(unknown_flags) and not unknown_flags[i + 1].startswith('--'):
+      value_str = unknown_flags[i + 1]
+      i += 2
+    else:
+      parsed[key] = True
+      i += 1
+      continue
+
+    value_lower = value_str.lower()
+    if value_lower in {'true', 't', 'yes', 'y'}:
+      parsed[key] = True
+    elif value_lower in {'false', 'f', 'no', 'n'}:
+      parsed[key] = False
+    else:
+      try:
+        parsed[key] = int(value_str, 0)
+      except ValueError:
+        try:
+          parsed[key] = float(value_str)
+        except ValueError:
+          parsed[key] = value_str  # Keep as string
+  return parsed
+
+
+def main(known_args, unknown_flags):
+  xprof_options = _parse_xprof_flags(unknown_flags)
+  collect_profile(
+      known_args.port,
+      known_args.duration_in_ms,
+      known_args.host,
+      known_args.log_dir,
+      known_args.no_perfetto_link,
+      xprof_options,
+  )
 
 if __name__ == "__main__":
-  main(parser.parse_args())
+  known_args, unknown_flags = parser.parse_known_args()
+  main(known_args, unknown_flags)
