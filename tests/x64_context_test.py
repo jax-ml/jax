@@ -264,6 +264,15 @@ class X64ContextTests(jtu.JaxTestCase):
       self.assertEqual(grad(grad(g))(5.).dtype, jnp.float64)
       self.assertEqual(grad(grad(grad(g)))(5.).dtype, jnp.float64)
 
+  @config.explicit_x64_dtypes("error")
+  def test_promotion(self):
+    with config.explicit_x64_dtypes("allow"):
+      x = jnp.array(1, jnp.int64)
+    # This should not raise an error. Users are free to use x64 types outside of
+    # an x64 context.
+    y = x + 1
+    self.assertEqual(y.dtype, jnp.int64)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
