@@ -7,7 +7,7 @@ jupytext:
     format_version: 0.13
     jupytext_version: 1.16.4
 kernelspec:
-  display_name: Python 3
+  display_name: jax-dev
   language: python
   name: python3
 ---
@@ -284,6 +284,191 @@ print(new_jax_array)
 +++ {"id": "sTjJ3WuaDyqU"}
 
 For more details on indexed array updates, see the [documentation for the `.at` property](https://docs.jax.dev/en/latest/_autosummary/jax.numpy.ndarray.at.html#jax.numpy.ndarray.at).
+
++++
+
+(jax-jit-class-methods)=
+## 🔪 Using `jax.jit` with class methods
+
+Most examples of [`jax.jit`](https://docs.jax.dev/en/latest/_autosummary/jax.jit.html) concern decorating stand-alone Python functions, but decorating a method within a class introduces some complication. For example, consider the following simple class, where we've used a standard `jax.jit` annotation on a method:
+
+```{code-cell} ipython3
+import jax.numpy as jnp
+from jax import jit
+
+class CustomClass:
+  def __init__(self, x: jnp.ndarray, mul: bool):
+    self.x = x
+    self.mul = mul
+
+  @jit  # <---- How to do this correctly?
+  def calc(self, y):
+    if self.mul:
+      return self.x * y
+    return y
+```
+
+However, this approach will result in an error when you attempt to call this method:
+
+```{code-cell} ipython3
+:tags: [raises-exception]
+
+c = CustomClass(2, True)
+c.calc(3)
+```
+
+The problem is that the first argument to the function is `self`, which has type `CustomClass`, and JAX does not know how to handle this type. There are three basic strategies we might use in this case, and we'll discuss them below.
+
++++
+
+### Strategy 1: JIT-compiled helper function
+
+The most straightforward approach is to create a helper function external to the class that can be JIT-decorated in the normal way. For example:
+
+```{code-cell} ipython3
+from functools import partial
+
+class CustomClass:
+  def __init__(self, x: jnp.ndarray, mul: bool):
+    self.x = x
+    self.mul = mul
+
+  def calc(self, y):
+    return _calc(self.mul, self.x, y)
+
+@partial(jit, static_argnums=0)
+def _calc(mul, x, y):
+  if mul:
+    return x * y
+  return y
+```
+
+The result will work as expected:
+
+```{code-cell} ipython3
+c = CustomClass(2, True)
+print(c.calc(3))
+```
+
+The benefit of such an approach is that it is simple, explicit, and it avoids the need to teach JAX how to handle objects of type `CustomClass`. However, you may wish to keep all the method logic in the same place.
+
++++
+
+### Strategy 2: Marking `self` as static
+
+Another common pattern is to use `static_argnums` to mark the `self` argument as static. But this must be done with care to avoid unexpected results. You may be tempted to simply do this:
+
+```{code-cell} ipython3
+class CustomClass:
+  def __init__(self, x: jnp.ndarray, mul: bool):
+    self.x = x
+    self.mul = mul
+
+  # WARNING: this example is broken, as we'll see below. Don't copy & paste!
+  @partial(jit, static_argnums=0)
+  def calc(self, y):
+    if self.mul:
+      return self.x * y
+    return y
+```
+
+If you call the method, it will no longer raise an error:
+
+```{code-cell} ipython3
+c = CustomClass(2, True)
+print(c.calc(3))
+```
+
+However, there is a catch: if you mutate the object after the first method call, the subsequent method call may return an incorrect result:
+
+```{code-cell} ipython3
+c.mul = False
+print(c.calc(3))  # Should print 3
+```
+
+Why is this? When you mark an object as static, it will effectively be used as a dictionary key in JIT's internal compilation cache, meaning its hash (i.e. `hash(obj)`) equality (i.e. `obj1 == obj2`) and object identity (i.e. `obj1 is obj2`) will be assumed to have consistent behavior. The default `__hash__` for a custom object is its object ID, and so JAX has no way of knowing that a mutated object should trigger a re-compilation.
+
+You can partially address this by defining an appropriate `__hash__` and `__eq__` methods for your object; for example:
+
+```{code-cell} ipython3
+class CustomClass:
+  def __init__(self, x: jnp.ndarray, mul: bool):
+    self.x = x
+    self.mul = mul
+
+  @partial(jit, static_argnums=0)
+  def calc(self, y):
+    if self.mul:
+      return self.x * y
+    return y
+
+  def __hash__(self):
+    return hash((self.x, self.mul))
+
+  def __eq__(self, other):
+    return (isinstance(other, CustomClass) and
+            (self.x, self.mul) == (other.x, other.mul))
+```
+
+(see the [`object.__hash__`](https://docs.python.org/3/reference/datamodel.html#object.__hash__) documentation for more discussion of the requirements
+when overriding `__hash__`).
+
+This should work correctly with JIT and other transforms **so long as you never mutate your object**. Mutations of objects used as hash keys lead to several subtle problems, which is why for example mutable Python containers (e.g. [`dict`](https://docs.python.org/3/library/stdtypes.html#dict), [`list`](https://docs.python.org/3/library/stdtypes.html#list)) don't define `__hash__`, while their immutable counterparts (e.g. [`tuple`](https://docs.python.org/3/library/stdtypes.html#tuple)) do.
+
+If your class relies on in-place mutations (such as setting `self.attr = ...` within its methods), then your object is not really "static" and marking it as such may lead to problems. Fortunately, there's another option for this case.
+
++++
+
+### Strategy 3: Making `CustomClass` a PyTree
+
+The most flexible approach to correctly JIT-compiling a class method is to register the type as a custom PyTree object; see [Custom pytree nodes](https://docs.jax.dev/en/latest/custom_pytrees.html#pytrees-custom-pytree-nodes). This lets you specify exactly which components of the class should be treated as static and which should be
+treated as dynamic. Here's how it might look:
+
+```{code-cell} ipython3
+class CustomClass:
+  def __init__(self, x: jnp.ndarray, mul: bool):
+    self.x = x
+    self.mul = mul
+
+  @jit
+  def calc(self, y):
+    if self.mul:
+      return self.x * y
+    return y
+
+  def _tree_flatten(self):
+    children = (self.x,)  # arrays / dynamic values
+    aux_data = {'mul': self.mul}  # static values
+    return (children, aux_data)
+
+  @classmethod
+  def _tree_unflatten(cls, aux_data, children):
+    return cls(*children, **aux_data)
+
+from jax import tree_util
+tree_util.register_pytree_node(CustomClass,
+                               CustomClass._tree_flatten,
+                               CustomClass._tree_unflatten)
+```
+
+This is certainly more involved, but it solves all the issues associated with the simpler approaches used above:
+
+```{code-cell} ipython3
+c = CustomClass(2, True)
+print(c.calc(3))
+```
+
+```{code-cell} ipython3
+c.mul = False  # mutation is detected
+print(c.calc(3))
+```
+
+```{code-cell} ipython3
+c = CustomClass(jnp.array(2), True)  # non-hashable x is supported
+print(c.calc(3))
+```
+
+So long as your `tree_flatten` and `tree_unflatten` functions correctly handle all relevant attributes in the class, you should be able to use objects of this type directly as arguments to JIT-compiled functions, without any special annotations.
 
 +++ {"id": "oZ_jE2WAypdL"}
 
