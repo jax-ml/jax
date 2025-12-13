@@ -558,7 +558,18 @@ class Call:
       call = _thread_local_state.call_stack[-1]
       result = res if exc is None else None
 
-      call.result = call.normalizer_ctx.normalize_value(result, call.is_function_def)
+      # Watch for USER functions returning functions that are not already
+      # wrapped. For now, we handle only tuple results.
+      if call.is_function_def and isinstance(res, tuple):
+        wrapped_res = tuple(
+          wrap_callable(f, is_user=True) if (
+            callable(f) and not isinstance(f, Func)) else f
+          for f in res)
+      else:
+        wrapped_res = res
+
+      call.result = call.normalizer_ctx.normalize_value(wrapped_res,
+                                                        call.is_function_def)
       call.log_end_call(result, exc)
 
       _thread_local_state.call_stack.pop()
@@ -579,7 +590,7 @@ class Call:
         if _thread_local_state.flags.check_repro_emit:
           check_repro_emit(call)
 
-      return res
+      return wrapped_res
     except Exception as e:
       # Exceptions here are bad, because they break the call_stack invariants
       logging.error(f"Exception caught in the exit handler: {type(e)}: {e}\n{traceback.format_exc()}")
@@ -1251,6 +1262,20 @@ def jax_vjp_trampoline(real_boundary_fun: Callable):
 boundary_trampolines["jax.vjp"] = jax_vjp_trampoline
 
 
+def jax_custom_gradient_trampoline(real_boundary_fun: Callable):
+  from jax._src.repro.repro_api import jax_custom_gradient_call
+
+  def custom_gradient_trampoline(f: Callable):
+    def custom_gradient_call_trampoline(*args, **kwargs):
+      return jax_custom_gradient_call(f, *args, **kwargs)
+    return custom_gradient_call_trampoline
+
+  custom_gradient_trampoline.real_boundary_fun = real_boundary_fun
+  return custom_gradient_trampoline
+
+boundary_trampolines["jax.custom_gradient"] = jax_custom_gradient_trampoline
+
+
 def jax_saved_input_vjp_trampoline(real_boundary_fun: Callable):
   from jax._src.repro.repro_api import jax_saved_input_vjp
 
@@ -1262,6 +1287,8 @@ def jax_saved_input_vjp_trampoline(real_boundary_fun: Callable):
 
 boundary_trampolines["jax.experimental.saved_input_vjp"] = jax_saved_input_vjp_trampoline
 
+
+# TODO(necula): we should not need to mention Flax here
 boundary_trampolines["flax.core.axes_scan.scan"] = partial(generic_trampoline, "flax_axes_scan")
 
 
@@ -1331,4 +1358,6 @@ TODO:
   because users can pass, e.g., Flax modules, which are callables, and are also
   pytree. The solution is to declare the callables, by way of
   repro_map_func_args, repro_map_fun_res.
+* had to wrap the callable result of USER functions, as USER function. This
+  was needed to handle jax.custom_gradient, because it return a user function.
 """

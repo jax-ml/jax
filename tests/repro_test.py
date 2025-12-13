@@ -1807,6 +1807,20 @@ class ReproTest(jtu.JaxTestCase):
 
     self.collect_and_check(top)
 
+  def test_custom_gradient(self):
+    @jax.custom_gradient
+    def my_f(x):
+      z = x ** 2
+      def my_f_vjp(g):
+        return (g * z,)
+      return z * x, my_f_vjp
+
+    def top():
+      return jax.jit(jax.value_and_grad(my_f))(3.)
+
+    #res = top()
+    self.collect_and_check(top)
+
   def test_remat_custom_jvp_policy(self):
     @jax.custom_jvp
     def sin(x):

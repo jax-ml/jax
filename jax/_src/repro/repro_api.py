@@ -127,6 +127,11 @@ def jax_vjp(f: Callable, *primals, has_aux=False, reduce_axes=()):
     return out, traceback_util.repro.boundary(f_vjp, is_user=False)
 
 
+@partial(traceback_util.repro.boundary, api_name="jax_custom_gradient_call")
+def jax_custom_gradient_call(f: Callable, *args, **kwargs):
+  from jax._src import custom_derivatives  # type: ignore
+  return repro_bypass_wrapper(custom_derivatives.custom_gradient)(f)(*args, **kwargs)
+
 @partial(traceback_util.repro.boundary, api_name="jax_saved_input_vjp")
 def jax_saved_input_vjp(f: Callable, which, *primals, allow_unused=True, allow_opaque=True):
   from jax._src import api  # type: ignore
