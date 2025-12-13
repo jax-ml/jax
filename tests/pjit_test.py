@@ -9751,6 +9751,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   def test_sharded_unreduced_roundtrip(self, shape, orig_spec, un_spec, mesh):
     if ifrt_version < 40:
       self.skipTest('Requires ifrt_version >= 40')
+    if not jtu.is_cloud_tpu_at_least(2025, 12, 15):
+      self.skipTest('Requires libtpu built after 2025-12-15')
     np1 = np.arange(math.prod(shape)).reshape(shape)
     arr = jax.device_put(np1, orig_spec)
 
@@ -9767,6 +9769,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   @jtu.with_explicit_mesh((2,), 'x')
   def test_one_input_sharded_another_reduced(self, func, mesh):
+    if ifrt_version < 40:
+      self.skipTest('Requires ifrt_version >= 40')
+    if not jtu.is_cloud_tpu_at_least(2025, 12, 15):
+      self.skipTest('Requires libtpu built after 2025-12-15')
     np1 = np.arange(8.)
     arr1 = jax.device_put(np1, P('x'))
     arr2 = jax.device_put(np1, P(None, reduced={'x'}))
@@ -9790,16 +9796,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out2.sharding,
                      NamedSharding(mesh, P(None, unreduced={'x'})))
 
-    if ifrt_version >= 40:
-      arr3 = jax.device_put(np1, P(None))
-      ex_out1, ex_out2 = jax.jit(jax.grad(g, argnums=(0, 1)))(arr1, arr3)
-      self.assertArraysEqual(reshard(out1, P()), ex_out1)
-      self.assertArraysEqual(reshard(out2, P()), ex_out2)
+    arr3 = jax.device_put(np1, P(None))
+    ex_out1, ex_out2 = jax.jit(jax.grad(g, argnums=(0, 1)))(arr1, arr3)
+    self.assertArraysEqual(reshard(out1, P()), ex_out1)
+    self.assertArraysEqual(reshard(out2, P()), ex_out2)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduced_reshard_unreduced_bwd(self, mesh):
     if ifrt_version < 40:
       self.skipTest('Requires ifrt_version >= 40')
+    if not jtu.is_cloud_tpu_at_least(2025, 12, 15):
+      self.skipTest('Requires libtpu built after 2025-12-15')
     np1 = np.arange(4.)
     arr = jax.device_put(np1, P(None, reduced={'x'}))
 
@@ -9829,6 +9836,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   def test_reduced_reshard_unreduced_bwd_sharded(self, mesh):
     if ifrt_version < 40:
       self.skipTest('Requires ifrt_version >= 40')
+    if not jtu.is_cloud_tpu_at_least(2025, 12, 15):
+      self.skipTest('Requires libtpu built after 2025-12-15')
     np1 = np.arange(8.).reshape(4, 2)
     arr = jax.device_put(np1, P('x', None, reduced={'y'}))
 

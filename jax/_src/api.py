@@ -2257,8 +2257,10 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
   res_spec = [RSpec(id_map[id(r)], True) if id(r) in id_map else
               RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)  # type: ignore
               for r in residuals]
+  out_primal_avals = map(shaped_abstractify, out_primals_flat)
   f_vjp = Partial(partial(_saved_input_vjpfun, res_spec, filt_tree, in_tree,
-                          out_tree(), out_known, jaxpr), opaque_residuals)
+                          out_tree(), out_known, jaxpr, out_primal_avals),
+                  opaque_residuals)
 
   if not allow_unused and not set(id_map).issubset(res_ids := {id(r) for r in residuals}):
     unused = [(i, core.get_aval(x)) for i, (x, w) in enumerate(zip(primals, which))
@@ -2284,7 +2286,8 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
   return out_primals, f_vjp
 
 def _saved_input_vjpfun(res_spec, filtered_tree, in_tree, out_tree, out_known,
-                        jaxpr, opaque_residuals, ct, *saved_primals):
+                        jaxpr, out_primal_avals, opaque_residuals, ct,
+                        *saved_primals):
   primals_filtered, filtered_tree_ = tree_flatten(saved_primals)
   if filtered_tree != filtered_tree_:
     raise ValueError(
@@ -2303,7 +2306,20 @@ def _saved_input_vjpfun(res_spec, filtered_tree, in_tree, out_tree, out_known,
                for i in res_spec]
   dummy_args = [ad.UndefinedPrimal(v.aval) for v in jaxpr.invars]
   cts_flat, out_tree_ = tree_flatten(ct)
-  assert out_tree_ == out_tree
+  if out_tree_ != out_tree:
+    raise ValueError(f"unexpected tree structure of argument to vjp function: "
+                     f"got {out_tree}, but expected to match {out_tree_}")
+  for arg, aval in zip(cts_flat, out_primal_avals):
+    ct_aval = shaped_abstractify(arg)
+    ct_aval_expected = aval.to_cotangent_aval()
+    if (not core.typecompat(ct_aval, ct_aval_expected) and
+        not _temporary_dtype_exception(ct_aval, ct_aval_expected)):
+      raise ValueError(
+          "unexpected JAX type (e.g. shape/dtype) for argument to vjp function: "
+          f"got {ct_aval.str_short()}, but expected {ct_aval_expected.str_short()} "
+          f"because the corresponding output of the function had JAX type "
+          f"{aval.str_short()}")
+
   cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
   arg_cts = ad.backward_pass(jaxpr, True, residuals, dummy_args, cts_flat)
   return tree_unflatten(in_tree, map(ad.instantiate_zeros, arg_cts))

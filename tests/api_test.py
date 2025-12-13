@@ -7865,6 +7865,21 @@ class InputSavedVJPTest(jtu.JaxTestCase):
     x_grad, w_grad = f2_sivjp(y_grad, w)
     self.assertAllClose(x_grad, 2. * y_grad @ w.T)
 
+  def test_fsdp_error(self):
+    # see https://github.com/jax-ml/jax/pull/27017 for why this is called "fsdp"
+    def f2(x, w):
+      x = 1. * x
+      x = x @ w
+      x = 2. * x
+      return x
+
+    x = jnp.ones((3, 4))
+    w = jnp.ones((4, 4))
+    y, f2_sivjp = api.si_vjp(f2, [False, True], x, w)
+    y_grad = jnp.ones((2, 4))
+    with self.assertRaisesRegex(ValueError, "unexpected JAX type"):
+      f2_sivjp(y_grad, w)
+
   def test_fsdp_vjp3(self):
     # see https://github.com/jax-ml/jax/pull/27017 for why this is called "fsdp"
     def f2(x, w):
