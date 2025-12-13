@@ -3428,6 +3428,14 @@ def eqn_effects(jaxpr):
 
 # ------------------- ShapeDtypeStruct -------------------
 
+def _check_sharding(sharding, shape):
+  if sharding is None:
+    return
+  if isinstance(sharding, P):
+    sharding._check_compatible_wrt_shape(shape)
+  else:
+    sharding.check_compatible_aval(shape)
+
 @set_module("jax")
 class ShapeDtypeStruct:
   """A container for the shape, dtype, and other static attributes of an array.
@@ -3461,6 +3469,7 @@ class ShapeDtypeStruct:
           f" layout in a `ShapeDtypeStruct`. Got {sharding}")
     self._sharding = (sharding.sharding if isinstance(sharding, Format)
                       else sharding)
+    _check_sharding(self._sharding, self.shape)
     self._dll = sharding.layout if isinstance(sharding, Format) else None
     self.weak_type = weak_type
     if vma is not None and not isinstance(vma, (set, frozenset)):

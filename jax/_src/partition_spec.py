@@ -163,6 +163,15 @@ class PartitionSpec:
       out.extend([None] * (ndim - len(out)))
     return self.update(partitions=out)
 
+  def _check_compatible_wrt_shape(self, shape):
+    if len(shape) < len(self._partitions):
+      extra_msg = (' For scalars the PartitionSpec should be P()'
+                   if len(shape) == 0 else '')
+      raise ValueError(
+          f"PartitionSpec {self} is only valid for values of rank at least "
+          f"{len(self._partitions)}, but was applied to a value of rank "
+          f"{len(shape)}.{extra_msg}")
+
 PartitionSpec.__module__ = 'jax.sharding'
 
 P = PartitionSpec

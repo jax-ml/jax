@@ -4967,6 +4967,21 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out = jnp.zeros_like(val)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
+  def test_sds_incompatible_sharding(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    with self.assertRaisesRegex(
+        ValueError,
+        "only valid for values of rank at least 3, but was applied to a value "
+        "of rank 2"):
+      jax.ShapeDtypeStruct((128, 128), jnp.float32,
+                           sharding=NamedSharding(mesh, P(None, 'x', None)))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "only valid for values of rank at least 3, but was applied to a value "
+        "of rank 2"):
+      jax.ShapeDtypeStruct((128, 128), jnp.float32, sharding=P(None, 'x', None))
+
 
 class ShardingInTypesTest(jtu.JaxTestCase):
 
