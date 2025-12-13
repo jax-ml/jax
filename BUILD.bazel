@@ -140,6 +140,7 @@ genrule(
     srcs = [
         "//jax/_src:internal_test_harnesses",
         "//jax/_src:internal_test_util",
+        "//jax/_src:gpu_test_util",
         "//jax/_src:internal_export_back_compat_test_util",
         "//jax/_src:internal_export_back_compat_test_data",
         "//jax/experimental/jax2tf/tests:tf_test_util",
