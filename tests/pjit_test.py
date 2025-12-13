@@ -38,7 +38,6 @@ from jax._src import test_util as jtu
 from jax._src import dtypes
 from jax import stages
 from jax import lax
-from jax._src.api import vjp3
 from jax._src.lax import lax as lax_internal
 from jax.lax import with_sharding_constraint
 from jax._src import prng
@@ -1308,12 +1307,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(y)
     self.assertNotDeleted(z)
     self.assertArraysEqual(a, x * 2)
-
-  def test_basic_vjp3(self):
-    f = jax.jit(lambda x: jnp.sin(jnp.sin(x)))
-    _, f_vjp = vjp3(f, 1.)
-    g, = f_vjp(1.0)
-    self.assertAllClose(g, jnp.cos(jnp.sin(1.)) * jnp.cos(1.), check_dtypes=False)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

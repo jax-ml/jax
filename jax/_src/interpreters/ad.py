@@ -26,7 +26,7 @@ from jax._src import config
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_flatten, tree_unflatten,
-                                register_pytree_node, Partial, PyTreeDef)
+                                register_pytree_node, PyTreeDef)
 from jax._src import mesh as mesh_lib
 from jax._src import core
 from jax._src import source_info_util
@@ -302,23 +302,6 @@ def linearize(traceable: lu.WrappedFun, *primals, **kwargs):
   else:
     return out_primals_consts, out_tangents_pvals, jaxpr, consts, aux()
 
-def vjp(traceable: lu.WrappedFun, primals, has_aux=False):
-  if not has_aux:
-    out_primals, pvals, jaxpr, consts = linearize(traceable, *primals)
-  else:
-    out_primals, pvals, jaxpr, consts, aux = linearize(traceable, *primals, has_aux=True)
-
-  def unbound_vjp(pvals, jaxpr, consts, *cts):
-    cts = tuple(ct for ct, pval in zip(cts, pvals) if not pval.is_known())
-    dummy_args = [UndefinedPrimal(v.aval) for v in jaxpr.invars]
-    arg_cts = backward_pass(jaxpr, True, consts, dummy_args, cts)
-    return map(instantiate_zeros, arg_cts)
-
-  vjp_ =  Partial(partial(unbound_vjp, pvals, jaxpr), consts)
-  if not has_aux:
-    return out_primals, vjp_
-  else:
-    return out_primals, vjp_, aux
 
 # NOTE: The FIXMEs below are caused by primal/tangent mixups (type
 # errors if you will)

@@ -2212,31 +2212,6 @@ def vjp(
       fun, debug_info=debug_info("vjp", fun, primals, {}))
   return _vjp(wrapped_fun, *primals, has_aux=has_aux)
 
-def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
-  """Variant of vjp() that takes an lu.WrappedFun."""
-  if config.vjp3.value:
-    return _vjp3(fun, *primals, has_aux=has_aux)
-  primals_flat, in_tree = tree_flatten(primals)
-  primals_flat = [canonicalize_value(v) if not isinstance(v, core.Tracer) else v
-                  for v in primals_flat]
-  for arg in primals_flat: dispatch.check_arg(arg)
-  if not has_aux:
-    flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
-    out_primals, vjp = ad.vjp(flat_fun, primals_flat)
-    out_tree = out_tree()
-  else:
-    flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, in_tree)
-    out_primals, vjp, aux = ad.vjp(flat_fun, primals_flat, has_aux=True)
-    out_tree, aux_tree = out_aux_trees()
-  out_primal_avals = map(shaped_abstractify, out_primals)
-  out_primal_py = tree_unflatten(out_tree, out_primals)
-  vjp_py = Partial(partial(_vjp_pullback_wrapper, fun.__name__,
-                           out_primal_avals, (out_tree, in_tree)), vjp)
-  if not has_aux:
-    return out_primal_py, vjp_py
-  else:
-    return out_primal_py, vjp_py, tree_unflatten(aux_tree, aux)
-
 @partial(api_boundary, repro_api_name="jax.experimental.saved_input_vjp")
 def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
                     allow_unused: bool = True, allow_opaque: bool = True):
@@ -2332,12 +2307,7 @@ class RSpec:
 si_vjp = saved_input_vjp
 
 
-def vjp3(f, *primals, has_aux=False):
-  dbg = debug_info("vjp", f, primals, {})
-  fun = lu.wrap_init(f, debug_info=dbg)
-  return _vjp3(fun, *primals, has_aux=has_aux)
-
-def _vjp3(fun, *primals, has_aux=False):
+def _vjp(fun, *primals, has_aux=False):
   canon = lambda x: x if isinstance(x, core.Tracer) else canonicalize_value(x)
   primals = tree_map(canon, primals)
   primals_flat, in_tree = tree_flatten(primals)

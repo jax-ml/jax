@@ -25,7 +25,6 @@ import jax
 from jax._src import core
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.api import vjp3
 from jax._src.util import safe_map, safe_zip
 from jax._src.interpreters import mlir
 from jax.sharding import NamedSharding, PartitionSpec as P, AxisType
@@ -524,8 +523,8 @@ class MutableArrayTest(jtu.JaxTestCase):
 
     grads_ref = core.new_ref(jnp.float32(0.))
     x = jnp.float32(1.)
-    _, f_vjp, *maybe_aux = vjp3(lambda x: primal(grads_ref, x), x,
-                               has_aux=has_aux)
+    _, f_vjp, *maybe_aux = jax.vjp(
+        lambda x: primal(grads_ref, x), x, has_aux=has_aux)
     _ = f_vjp(jnp.float32(1.))
     self.assertAllClose(grads_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
     if has_aux:
@@ -553,7 +552,7 @@ class MutableArrayTest(jtu.JaxTestCase):
     stash_grads.defvjp(stash_grads_fwd, stash_grads_bwd)
 
     stash_ref = core.new_ref(jnp.float32(0.))
-    _, f_vjp = vjp3(lambda x: primal(stash_ref, x), jnp.float32(1.))
+    _, f_vjp = jax.vjp(lambda x: primal(stash_ref, x), jnp.float32(1.))
     grads_val, = f_vjp(jnp.float32(1.))
     self.assertAllClose(stash_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
     self.assertAllClose(grads_val, jnp.cos(jnp.sin(1.)) * jnp.cos(1.),
@@ -561,7 +560,7 @@ class MutableArrayTest(jtu.JaxTestCase):
 
     stash_ref = core.new_ref(jnp.float32(0.))
     grads_ref = core.new_ref(jnp.float32(0.))
-    _, f_vjp = vjp3(lambda x: primal(stash_ref, x), jnp.float32(1.))
+    _, f_vjp = jax.vjp(lambda x: primal(stash_ref, x), jnp.float32(1.))
     _ = f_vjp.with_refs(grads_ref)(jnp.float32(1.))
     self.assertAllClose(stash_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
     self.assertAllClose(grads_ref[...], jnp.cos(jnp.sin(1.)) * jnp.cos(1.),
@@ -849,7 +848,7 @@ class MutableArrayTest(jtu.JaxTestCase):
       grad_acc = jax.new_ref(jnp.zeros_like(Ws))               # CHANGED
 
       def process_mubatch(_, xs):
-        loss, f_vjp = vjp3(lambda Ws: mubatch_loss(Ws, xs), Ws)  # CHANGED
+        loss, f_vjp = jax.vjp(lambda Ws: mubatch_loss(Ws, xs), Ws)  # CHANGED
         f_vjp.with_refs(grad_acc)(jnp.ones_like(loss))           # CHANGED
         return (), loss
 
@@ -924,7 +923,7 @@ class MutableArrayTest(jtu.JaxTestCase):
     self.assertAllClose(y, 3.14, check_dtypes=False)
 
     # this exercises the fallback path, not a fancy transpose
-    _, f_vjp = vjp3(lambda x: f(jax.new_ref(x)), 3.14)
+    _, f_vjp = jax.vjp(lambda x: f(jax.new_ref(x)), 3.14)
     g, = f_vjp(1.)
     self.assertAllClose(g, 1., check_dtypes=False)
 
@@ -969,7 +968,7 @@ class MutableArrayTest(jtu.JaxTestCase):
       return z.sum()
 
     grad_accum = jax.new_ref(jnp.zeros(5))
-    _, f_vjp = vjp3(f, jnp.ones(5))
+    _, f_vjp = jax.vjp(f, jnp.ones(5))
     _, = f_vjp.with_refs(grad_accum)(1.)
     self.assertAllClose(grad_accum[...], jnp.arange(5.))
 
@@ -978,7 +977,7 @@ class MutableArrayTest(jtu.JaxTestCase):
     def grad_via_ref(f):
       def wrapper(*args):
         grad_accum = jax.tree.map(lambda x: jax.new_ref(jnp.zeros_like(x)), args)
-        out, f_vjp = vjp3(f, *args)
+        out, f_vjp = jax.vjp(f, *args)
         f_vjp.with_refs(*grad_accum)(jnp.ones_like(out))
         return jax.tree.map(lambda x: jax.freeze(x), grad_accum)
       return wrapper

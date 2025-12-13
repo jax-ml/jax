@@ -1833,12 +1833,6 @@ mutable_array_checks = bool_state(
     help='Enable error checks for mutable arrays that rule out aliasing.',
     include_in_trace_context=True)
 
-vjp3 = bool_state(
-    name='jax_vjp3',
-    default=True,
-    upgrade=True,
-    help='Use new backward-pass code in jax.vjp')
-
 refs_to_pins = bool_state(
     name='jax_refs_to_pins',
     default=False,

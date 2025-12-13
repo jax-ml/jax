@@ -1472,7 +1472,7 @@ class CustomJVPTest(jtu.JaxTestCase):
       (x, y), (x_dot, y_dot) = primals, tangents
       del y_dot  # ignore lol
       return div(x, y), div(x_dot, y)
-    _, f_vjp = api.vjp3(lambda x: div(x, 2.), 1.)
+    _, f_vjp = api.vjp(lambda x: div(x, 2.), 1.)
     ans, = f_vjp(1.)
     self.assertAllClose(ans, 1./2, check_dtypes=False)
 
