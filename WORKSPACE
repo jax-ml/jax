@@ -1,6 +1,7 @@
+load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
+
 # The XLA commit is determined by third_party/xla/revision.bzl.
 load("//third_party/xla:workspace.bzl", jax_xla_workspace = "repo")
-load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 
 jax_xla_workspace()
 
@@ -12,15 +13,15 @@ load("@xla//:workspace3.bzl", "xla_workspace3")
 
 xla_workspace3()
 
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
-
 # Initialize Hermetic toolchains
 # Details: https://github.com/google-ml-infra/rules_ml_toolchain
 tf_http_archive(
     name = "rules_ml_toolchain",
-    sha256 = "7f00b3e94bbca1a4737ded6b9ed5358f6d1c86430c2ec97c90081343c0482f18",
-    strip_prefix = "rules_ml_toolchain-29d54c875da37e74b8548924ed30e78cb28126b9",
-    urls = tf_mirror_urls("https://github.com/google-ml-infra/rules_ml_toolchain/archive/29d54c875da37e74b8548924ed30e78cb28126b9.tar.gz"),
+    sha256 = "b0cd4ce2c8f932fe0953369fcff86d2675302c5c767fd62b4c697bf8b37f0d36",
+    strip_prefix = "rules_ml_toolchain-a005f7efcdb10ceff87b1479586e367e4037a908",
+    urls = tf_mirror_urls(
+        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/a005f7efcdb10ceff87b1479586e367e4037a908.tar.gz",
+    ),
 )
 
 load(
