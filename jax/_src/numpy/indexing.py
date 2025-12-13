@@ -783,10 +783,12 @@ def rewriting_take(
 # @api.jit(static_argnums=(1, 2))
 def _gather(arr, dynamic_idx, *, treedef, static_idx, indices_are_sorted,
             unique_indices, mode, fill_value, normalize_indices):
+  parsed_mode = slicing.GatherScatterMode.from_any(mode)
   idx = merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = index_to_gather(
+  indexer = index_to_gather(  # shared with _scatter_update
       np.shape(arr), idx, core.typeof(arr).sharding,
-      normalize_indices=normalize_indices)  # shared with _scatter_update
+      normalize_indices=normalize_indices,
+      raise_on_oob=(parsed_mode == slicing.GatherScatterMode.BOUNDS_CHECK))
   jnp_error._check_precondition_oob_gather(arr.shape, indexer.gather_indices)
   y = arr
 
@@ -902,7 +904,9 @@ def _aval_or_none(x):
     return None
 
 def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
-                    x_sharding, normalize_indices: bool = True) -> _Indexer:
+                    x_sharding, *,
+                    normalize_indices: bool = True,
+                    raise_on_oob: bool = False) -> _Indexer:
   # Convert sequences to arrays
   idx = tuple(lax_numpy.asarray(i, dtype=None if i else int)
               if isinstance(i, Sequence) else i for i in idx)
@@ -946,6 +950,24 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
       x_spec.insert(i, None)
     x_shape = tuple(x_shape)
     x_spec = tuple(x_spec)
+
+  # TODO(jakevdp): for efficiency, we should handle normalize_indices just once here.
+  #                Also, we need to normalize indices statically where possible.
+
+  if raise_on_oob:
+    idx_no_nones = [ind for ind in idx if ind is not None]
+    assert len(idx_no_nones) == len(x_shape)
+    def _check_static_index_in_bounds(ind, axis_num):
+      if not isinstance(ind, (int, np.integer)):
+        return
+      user_ind = ind
+      if normalize_indices:
+        ind = ind + x_shape[axis_num] if ind < 0 else ind
+      if not (0 <= ind < x_shape[axis_num]):
+        raise IndexError(f"index {user_ind} is out of bounds for axis {axis_num}"
+                         f" with size {x_shape[axis_num]}")
+    for axis_num, ind in enumerate(idx_no_nones):
+      _check_static_index_in_bounds(ind, axis_num)
 
   # Check for advanced indexing:
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing

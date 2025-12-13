@@ -299,11 +299,16 @@ class GatherScatterMode(enum.Enum):
     performed. In practice, with the current XLA implementation this means
     that out-of-bounds gathers will be clamped but out-of-bounds scatters will
     be discarded. Gradients will not be correct if indices are out-of-bounds.
+  BOUNDS_CHECK:
+    When possible, an error will be raised for out-of-bound indices (for example, when
+    indices are :term:`static` or when used with :mod:`jax.experimental.checkify`).
+    Otherwise, behavior is identical to FILL_OR_DROP.
   """
   CLIP = enum.auto()
   FILL_OR_DROP = enum.auto()
   PROMISE_IN_BOUNDS = enum.auto()
   ONE_HOT = enum.auto()
+  BOUNDS_CHECK = enum.auto()
 
   @staticmethod
   def from_any(s: str | GatherScatterMode | None) -> GatherScatterMode:
@@ -317,6 +322,8 @@ class GatherScatterMode(enum.Enum):
       return GatherScatterMode.PROMISE_IN_BOUNDS
     if s == "one_hot":
       return GatherScatterMode.ONE_HOT
+    if s == "bounds_check":
+      return GatherScatterMode.BOUNDS_CHECK
     else:
       raise ValueError(f'Unknown gather mode "{s}"')
 
@@ -404,7 +411,7 @@ def gather(operand: ArrayLike, start_indices: ArrayLike,
   if mode is None:
     mode = GatherScatterMode.PROMISE_IN_BOUNDS
   parsed_mode = GatherScatterMode.from_any(mode)
-  if parsed_mode == GatherScatterMode.FILL_OR_DROP:
+  if parsed_mode in [GatherScatterMode.BOUNDS_CHECK, GatherScatterMode.FILL_OR_DROP]:
     if fill_value is None:
       dtype = _dtype(operand)
       if dtypes.issubdtype(dtype, np.inexact):
@@ -2323,7 +2330,7 @@ def _gather_lower(ctx, operand, indices, *,
         indices_are_sorted=indices_are_sorted, mode=mode,
         fill_value=fill_value)]
 
-  if mode == GatherScatterMode.FILL_OR_DROP:
+  if mode in [GatherScatterMode.BOUNDS_CHECK, GatherScatterMode.FILL_OR_DROP]:
     gather_fill_fn = mlir.lower_fun(_gather_fill, multiple_results=False)
     return gather_fill_fn(
         ctx, operand, indices,

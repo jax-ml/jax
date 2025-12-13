@@ -1255,6 +1255,41 @@ class IndexingTest(jtu.JaxTestCase):
       x.at[idx].get(mode="fill", fill_value=7),
       jnp.array([7, 7, 1, 2, 1, 4, 5, 7, 7, 7], jnp.int32))
 
+  @parameterized.parameters(
+    ((2, 3), 4, "index 4 is out of bounds for axis 0 with size 2"),
+    ((2, 3), (0, 4), "index 4 is out of bounds for axis 1 with size 3"),
+    ((2, 3), (-1, 4), "index 4 is out of bounds for axis 1 with size 3"),
+    ((2, 3, 5), (..., -10), "index -10 is out of bounds for axis 2 with size 5"),
+    ((3,), (-4, None), "index -4 is out of bounds for axis 0 with size 3"),
+  )
+  def testBoundsCheck(self, shape, idx, msg):
+    x = jnp.zeros(shape)
+
+    # Note: in both cases here we avoid passing idx to the function
+    # in order for it to remain static.
+    def f_gather(x):
+      return x.at[idx].get(mode="bounds_check")
+
+    def f_scatter(x):
+      return x.at[idx].set(0.0, mode="bounds_check")
+
+    with self.subTest("gather"):
+      with self.assertRaisesRegex(IndexError, msg):
+        f_gather(x)
+
+    with self.subTest("gather-jit"):
+      with self.assertRaisesRegex(IndexError, msg):
+        jax.jit(f_gather)(x)
+
+    with self.subTest("scatter"):
+      with self.assertRaisesRegex(IndexError, msg):
+        f_scatter(x)
+
+    with self.subTest("scatter-jit"):
+      with self.assertRaisesRegex(IndexError, msg):
+        jax.jit(f_scatter)(x)
+
+
   def testIndexingWeakTypes(self):
     x = lax_internal._convert_element_type(jnp.arange(5), dtypes.dtype(float),
                                            weak_type=True)
