@@ -22,7 +22,6 @@ limitations under the License.
 #include <utility>
 
 #include "absl/hash/hash.h"
-#include "absl/log/log.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
