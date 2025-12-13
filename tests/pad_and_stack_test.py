@@ -1,7 +1,4 @@
-
 """Tests for jax.numpy.pad_and_stack."""
-
-from functools import partial
 
 import numpy as np
 
@@ -19,7 +16,7 @@ class PadAndStackTest(jtu.JaxTestCase):
   """Tests for jnp.pad_and_stack function."""
 
   def _numpy_pad_and_stack(
-      self, arrays, axis=-1, padding_value=0, min_size=None, stack_axis=0
+    self, arrays, axis=-1, padding_value=0, min_size=None, stack_axis=0
   ):
     """NumPy reference implementation."""
     if not arrays:
@@ -58,25 +55,27 @@ class PadAndStackTest(jtu.JaxTestCase):
     return np.stack(padded_arrays, axis=stack_axis)
 
   @parameterized.named_parameters(
-      dict(
-          testcase_name="1d_basic",
-          arrays=[np.array([1, 2, 3]), np.array([4, 5]), np.array([6])],
-          expected_shape=(3, 3),
-      ),
-      dict(
-          testcase_name="2d_axis0",
-          arrays=[np.array([[1, 2]]), np.array([[3, 4], [5, 6]])],
-          axis=0,
-          expected_shape=(2, 2, 2),
-      ),
-      dict(
-          testcase_name="with_min_size",
-          arrays=[np.array([1, 2]), np.array([3])],
-          min_size=5,
-          expected_shape=(2, 5),
-      ),
+    dict(
+      testcase_name="1d_basic",
+      arrays=[np.array([1, 2, 3]), np.array([4, 5]), np.array([6])],
+      expected_shape=(3, 3),
+    ),
+    dict(
+      testcase_name="2d_axis0",
+      arrays=[np.array([[1, 2]]), np.array([[3, 4], [5, 6]])],
+      axis=0,
+      expected_shape=(2, 2, 2),
+    ),
+    dict(
+      testcase_name="with_min_size",
+      arrays=[np.array([1, 2]), np.array([3])],
+      min_size=5,
+      expected_shape=(2, 5),
+    ),
   )
-  def test_basic_functionality(self, arrays, expected_shape, axis=-1, min_size=None):
+  def test_basic_functionality(
+    self, arrays, expected_shape, axis=-1, min_size=None
+  ):
     """Test basic pad_and_stack functionality."""
     jax_arrays = [jnp.asarray(arr) for arr in arrays]
     result = jnp.pad_and_stack(jax_arrays, axis=axis, min_size=min_size)
@@ -113,6 +112,7 @@ class PadAndStackTest(jtu.JaxTestCase):
 
   def test_jit_compatible(self):
     """Test JIT compilation with min_size."""
+
     @jax.jit
     def fn(arrays):
       return jnp.pad_and_stack(arrays, min_size=5)
