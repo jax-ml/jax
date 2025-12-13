@@ -2207,6 +2207,19 @@ jax_py_test(
     ]),
 )
 
+jax_multiplatform_test(
+    name = "deviceless_aot_test",
+    srcs = ["deviceless_aot_test.py"],
+    enable_backends = ["gpu"],
+    tags = ["notap"],  # TODO(emilyaf): Enable this.
+    deps = [
+        "//third_party/py/jax:experimental_serialize_executable",
+        "//third_party/py/jax:experimental_topologies",
+    ] + py_deps([
+        "absl/testing",
+    ]),
+)
+
 exports_files(
     [
         "api_test.py",
