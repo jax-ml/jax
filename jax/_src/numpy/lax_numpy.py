@@ -4482,6 +4482,132 @@ def unstack(x: ArrayLike, /, *, axis: int = 0) -> tuple[Array, ...]:
 
 
 @export
+def pad_and_stack(
+    arrays: Sequence[ArrayLike],
+    axis: int = -1,
+    padding_value: ArrayLike = 0,
+    min_size: int | None = None,
+    stack_axis: int = 0,
+) -> Array:
+  """Pad arrays to equal size along specified axis and stack them.
+
+  This is a convenience function for the common pattern of padding variable-length
+  arrays to the same size and then stacking them. JAX does not support true ragged
+  arrays due to XLA's static shape requirements, so this function provides a
+  convenient workaround for common use cases like handling variable-length sequences.
+
+  Args:
+    arrays: Sequence of arrays to pad and stack. Arrays must have compatible
+      shapes except along the padding axis.
+    axis: Axis along which to pad arrays. Default is -1 (last dimension).
+    padding_value: Value to use for padding. Default is 0.
+    min_size: Minimum size for the padded dimension. If specified, the output
+      will have at least this size along the padding axis. Useful for JIT
+      compilation when the target size needs to be known statically.
+    stack_axis: Axis along which to stack the padded arrays. Default is 0.
+
+  Returns:
+    Array containing the padded and stacked input arrays.
+
+  Raises:
+    ValueError: If arrays have incompatible shapes or if axis parameters are invalid.
+
+  See Also:
+    :func:`jax.numpy.pad`: Pad a single array.
+    :func:`jax.numpy.stack`: Stack arrays along a new axis.
+    :func:`jax.numpy.concatenate`: Concatenate arrays along existing axes.
+
+  Examples:
+    Basic usage with 1D arrays of different lengths:
+
+    >>> arrays = [jnp.array([1, 2, 3]), jnp.array([4, 5]), jnp.array([6])]
+    >>> result = jnp.pad_and_stack(arrays)
+    >>> print(result)
+    [[1 2 3]
+     [4 5 0]
+     [6 0 0]]
+
+    Padding along a different axis with custom padding value:
+
+    >>> arrays = [jnp.array([[1, 2]]), jnp.array([[3, 4], [5, 6]])]
+    >>> result = jnp.pad_and_stack(arrays, axis=0, padding_value=-1)
+    >>> print(result)
+    [[[ 1  2]
+      [-1 -1]]
+     [[ 3  4]
+      [ 5  6]]]
+
+    Using min_size for JIT compatibility:
+
+    >>> @jax.jit
+    ... def process_arrays(arrays):
+    ...     padded = jnp.pad_and_stack(arrays, min_size=10)
+    ...     return padded.sum(axis=1)
+    >>> arrays = [jnp.array([1, 2]), jnp.array([3, 4, 5])]
+    >>> result = process_arrays(arrays)
+    >>> print(result)
+    [3 12]
+
+  Notes:
+    This function works with JAX transformations like ``jit``, ``grad``, and ``vmap``.
+    The ``min_size`` parameter is particularly useful for JIT compilation as it
+    ensures the output shape is statically known.
+  """
+  if not arrays:
+    raise ValueError("Need at least one array to pad and stack.")
+
+  # Convert all arrays to JAX arrays
+  arrays = [asarray(arr) for arr in arrays]
+
+  # Validate axis parameter
+  first_array = arrays[0]
+  axis = _canonicalize_axis(axis, first_array.ndim)
+  stack_axis = _canonicalize_axis(stack_axis, first_array.ndim + 1)
+
+  # Validate that arrays have compatible shapes except along padding axis
+  base_shape = list(first_array.shape)
+  for i, arr in enumerate(arrays):
+    if arr.ndim != first_array.ndim:
+      raise ValueError(
+        f"All arrays must have same number of dimensions. "
+        f"Array 0 has {first_array.ndim} dims, array {i} has {arr.ndim} dims."
+      )
+
+    current_shape = list(arr.shape)
+    for dim in range(first_array.ndim):
+      if dim != axis and current_shape[dim] != base_shape[dim]:
+        raise ValueError(
+          f"All arrays must have same shape except along padding axis. "
+          f"Array 0 has shape {tuple(base_shape)}, array {i} has shape {tuple(current_shape)}."
+        )
+
+  # Determine target size for padding
+  current_sizes = [arr.shape[axis] for arr in arrays]
+  max_size = max(current_sizes) if current_sizes else 0
+
+  if min_size is not None:
+    if min_size < 0:
+      raise ValueError("min_size must be non-negative.")
+    target_size = max(max_size, min_size)
+  else:
+    target_size = max_size
+
+  # Pad each array to target_size
+  padded_arrays = []
+  for arr in arrays:
+    current_size = arr.shape[axis]
+    if current_size < target_size:
+      pad_width = [(0, 0)] * arr.ndim
+      pad_width[axis] = (0, target_size - current_size)
+      padded = pad(arr, pad_width, constant_values=padding_value)
+    else:
+      padded = arr
+    padded_arrays.append(padded)
+
+  return stack(padded_arrays, axis=stack_axis)
+
+
+@export
 def tile(A: ArrayLike, reps: DimSize | Sequence[DimSize]) -> Array:
   """Construct an array by repeating ``A`` along specified dimensions.
 
