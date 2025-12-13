@@ -78,6 +78,9 @@ class ReproFlags:
   fake_array_threshold = 128
   collect_last_top_call = False
 
+  # Inline the runtime files in the emitted repro
+  inline_runtime = False
+
   # Check that the repro can be emitted, even in implicit mode when there
   # are no errors.
   check_repro_emit = False
@@ -118,6 +121,8 @@ class ReproFlags:
           self.save_repro_on_uncaught_exception = fvalue_to_bool()
         elif f == "check_repro_emit":
           self.check_repro_emit = fvalue_to_bool()
+        elif f == "inline_runtime":
+          self.inline_runtime = fvalue_to_bool()
         else:
           raise NotImplementedError(f"--jax_repro_flags: {f}")
 

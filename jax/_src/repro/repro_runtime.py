@@ -65,7 +65,6 @@ from jax._src.interpreters import mlir  # type: ignore  # noqa: F401
 from jax._src.lib import xla_client  # type: ignore  # noqa: F401
 from jax._src.random import resolve_prng_impl  # type: ignore  # noqa: F401
 
-from jax._src.repro.repro_api import *  # type: ignore  # noqa: F401,F403
 
 # TODO: this is how we print numpy arrays for now, using the built-in
 # repr

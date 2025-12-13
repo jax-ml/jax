@@ -860,8 +860,33 @@ class collector:
 
 import jax
 from jax._src import config
-from jax._src.repro.repro_runtime import *
+"""
+    if tracker._thread_local_state.flags.inline_runtime:
+      this_src_dir = os.path.dirname(__file__)
+      preamble += f"""
 
+### Start inlined repro_runtime.py:
+"""
+      with open(os.path.join(this_src_dir, "repro_runtime.py")) as f:
+        preamble += f.read()
+      preamble += """
+### End inlined repro_runtime.py
+### Start inlined repro_api.py:
+"""
+      with open(os.path.join(this_src_dir, "repro_api.py")) as f:
+        preamble += f.read()
+      preamble += """
+### End inlined repro_api.py
+
+"""
+    else:
+      preamble += """
+from jax._src.repro.repro_runtime import *  # type: ignore  # noqa: F401,F403
+from jax._src.repro.repro_api import *  # type: ignore  # noqa: F401,F403
+
+"""
+
+    preamble += f"""
 # Use the same number of devices as in the repro collection context
 request_cpu_devices({xla_bridge.local_device_count()})
 

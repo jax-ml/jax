@@ -907,6 +907,19 @@ class ReproTest(jtu.JaxTestCase):
     with tracker.flags_override(fake_array_threshold=x.size + 1):
       self.collect_and_check(f, x)
 
+  def test_inline_runtime(self):
+    @jax.jit
+    def f():
+      x = jnp.zeros((16, 16, 16), dtype=np.int32)
+      return jnp.sum(x)
+
+    with tracker.flags_override(inline_runtime=True):
+      repro_source = self.collect_and_check(f)
+      self.assertNotIn("repro_runtime import", repro_source)
+      self.assertNotIn("repro_api import", repro_source)
+      self.assertIn("Start inlined repro_runtime.py", repro_source)
+      self.assertIn("Start inlined repro_api.py", repro_source)
+
   def test_shared_constants(self):
 
     def f():
