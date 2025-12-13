@@ -413,6 +413,7 @@ def _emap_impl(fun: lu.WrappedFun, *args,
   platform = xb.get_backend(backend).platform
   donate_argnums = (1,) if platform in {"cuda", "rocm", "tpu"} else ()
   new_outvals = []
+  assert len(out_axes_src) == len(out_axes), breakpoint()
   for out_axis_src, out_axis, outval in zip(out_axes_src, out_axes, outvals):
     with api.disable_jit(False):
       donate_argnums_ = donate_argnums

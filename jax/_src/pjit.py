@@ -46,9 +46,9 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.core import typeof, cur_qdd
 from jax._src.api_util import (
-  argnums_partial_except, flatten_axes, flatten_fun3, flatten_fun_nokwargs,
-  donation_vector, check_callable, resolve_argnums, argnames_partial_except,
-  debug_info, check_no_aliased_ref_args, _check_no_aliased_closed_over_refs)
+  argnums_partial_except, flatten_axes, flatten_fun3, donation_vector,
+  check_callable, resolve_argnums, argnames_partial_except, debug_info,
+  check_no_aliased_ref_args, _check_no_aliased_closed_over_refs)
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
 from jax._src.interpreters import ad
@@ -2221,81 +2221,6 @@ def _pjit_partial_eval_custom_params_updater(
 pe.partial_eval_jaxpr_custom_rules[jit_p] = \
     partial(pe.closed_call_partial_eval_custom_rule, 'jaxpr',
             _pjit_partial_eval_custom_params_updater)
-
-
-@lu.cache
-def _pjit_transpose_trace(fun: lu.WrappedFun,
-                          in_avals: Sequence[core.AbstractValue]):
-  transpose_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
-  transpose_jaxpr = core.ClosedJaxpr(transpose_jaxpr, consts)
-  return transpose_jaxpr
-
-
-def _pjit_transpose(cts_in, *primals_in,
-                    jaxpr: core.ClosedJaxpr,
-                    in_shardings, out_shardings, in_layouts, out_layouts,
-                    donated_invars, ctx_mesh, name, keep_unused, inline,
-                    compiler_options_kvs):
-  def prune_type(ty, xs, maybe_zeros):
-    return tuple(x for x, mz in zip(xs, maybe_zeros) if type(mz) is not ty)
-
-  dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  body = lu.wrap_init(ad.closed_backward_pass, debug_info=dbg)
-  body = lu.hashable_partial(body, jaxpr, False)
-  primals_and_nz_cts_in, in_treedef = tree_flatten((primals_in, cts_in))
-  body, cts_out_treedef_thunk = flatten_fun_nokwargs(body, in_treedef)
-
-  transpose_in_shardings = (
-    *prune_type(ad.UndefinedPrimal, in_shardings, primals_in),
-    *prune_type(ad.Zero, out_shardings, cts_in)
-  )
-  transpose_in_layouts = (
-    *prune_type(ad.UndefinedPrimal, in_layouts, primals_in),
-    *prune_type(ad.Zero, out_layouts, cts_in)
-  )
-  global_cts_in_avals = tuple(
-      core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd else a
-      for x in primals_and_nz_cts_in)
-
-  transpose_jaxpr = _pjit_transpose_trace(body, global_cts_in_avals)
-  cts_out_treedef = cts_out_treedef_thunk()
-  transpose_out_shardings = prune_type(
-      ad.Zero,
-      in_shardings,
-      tree_unflatten(cts_out_treedef, [object()] * cts_out_treedef.num_leaves))
-  transpose_out_layouts = prune_type(
-      ad.Zero,
-      in_layouts,
-      tree_unflatten(cts_out_treedef, [object()] * cts_out_treedef.num_leaves))
-
-  try:
-    nz_cts_out = jit_p.bind(
-        *primals_and_nz_cts_in,
-        jaxpr=transpose_jaxpr,
-        in_shardings=transpose_in_shardings,
-        out_shardings=transpose_out_shardings,
-        in_layouts=transpose_in_layouts,
-        out_layouts=transpose_out_layouts,
-        donated_invars=(False,) * len(primals_and_nz_cts_in),
-        ctx_mesh=ctx_mesh,
-        name=name,
-        keep_unused=keep_unused,
-        inline=inline,
-        compiler_options_kvs=compiler_options_kvs)
-  except api_util.InternalFloatingPointError as e:
-    print("Invalid nan value encountered in the backward pass of a jax.jit "
-          "function. Calling the de-optimized backward pass.")
-    try:
-      _ = ad.closed_backward_pass(jaxpr, None, primals_in, cts_in)
-    except (FloatingPointError, ZeroDivisionError) as e2:
-      raise e2 from None  # great
-    else:
-      # If control reaches this line, we got a NaN on the output of `compiled`
-      # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
-      api_util._raise_no_nan_in_deoptimized(e)
-
-  return tree_unflatten(cts_out_treedef, nz_cts_out)
-ad.primitive_transposes[jit_p] = _pjit_transpose
 
 
 def _pjit_transpose_fancy(

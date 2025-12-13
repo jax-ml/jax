@@ -2075,8 +2075,8 @@ class DynamicJaxprTrace(core.Trace):
                    params):
     source_info = source_info_util.current()
     to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
-    in_type = (tuple(get_aval(t) for t in in_tracers)
-               if f.in_type is None else f.in_type)
+    in_type = (tuple(get_aval(t) for t in in_tracers) if f.in_type is None
+               else f.in_type)
     f.in_type = None
     assert in_type is not None
     in_tracers = map(to_jaxpr_tracer, in_tracers)
