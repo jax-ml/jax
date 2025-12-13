@@ -1121,6 +1121,7 @@ mlir.register_lowering(ad.custom_lin_p, ad.raise_custom_vjp_error_on_jvp,
                        cacheable=False)
 
 
+@partial(traceback_util.api_boundary, repro_api_name="jax.custom_gradient")
 def custom_gradient(fun):
   """Convenience function for defining custom VJP rules (aka custom gradients).
 

@@ -1189,6 +1189,7 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
+        ":traceback_util",
         ":tree_util",
         ":util",
     ],
