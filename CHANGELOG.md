@@ -21,6 +21,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     Please use `jax.lax.pcast(..., to='varying')` as the replacement.
   * Complex arguments passed to {func}`jax.numpy.arange` now result in a
     deprecation warning, because the output is poorly-defined.
+  * All symbols in {mod}`jax.interpreters.pxla` are deprecated. These are
+    primarily JAX internal APIs, and users should not rely on them.
 
 * Changes:
   * jax's `Tracer` no longer inherits from `jax.Array` at runtime. However,

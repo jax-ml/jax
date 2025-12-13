@@ -20,12 +20,12 @@ import unittest
 from absl.testing import absltest, parameterized
 import jax
 from jax import lax
-from jax.interpreters import pxla
 from jax._src import ad_checkpoint
 from jax._src import config
 from jax._src import debugging
 from jax._src import dispatch
 from jax._src import test_util as jtu
+from jax._src.interpreters import pxla
 from jax.sharding import PartitionSpec as P
 import jax.numpy as jnp
 import numpy as np
@@ -1106,7 +1106,8 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     """)
     self.assertEqual(output(), expected)
 
-  @jtu.ignore_warning(category=DeprecationWarning)
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message='jax.sharding.PmapSharding is deprecated')
   def test_visualize_pmap_sharding(self):
     ss = pxla.ShardingSpec(
         sharding=(pxla.Unstacked(8),),

@@ -26,10 +26,10 @@ except ImportError:
 
 import jax
 from jax import numpy as jnp
-from jax.interpreters import pxla
 from jax._src import config
 from jax._src import literals
 from jax._src import test_util as jtu
+from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import GSPMDSharding
 
@@ -196,7 +196,8 @@ class PickleTest(jtu.JaxTestCase):
         )
         self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
-  @jtu.ignore_warning(category=DeprecationWarning)
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message='jax.sharding.PmapSharding is deprecated')
   def test_pickle_pmap_sharding(self):
     ss = pxla.ShardingSpec(
         sharding=(pxla.Unstacked(8),),
