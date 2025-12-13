@@ -112,6 +112,7 @@ exports_files([
     "LICENSE",
     "version.py",
     "py.typed",
+    "oss/pyproject.toml",
 ])
 
 # Packages that have access to JAX-internal implementation details.
