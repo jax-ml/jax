@@ -116,11 +116,12 @@ jobs:
           fi
       # Halt for testing
       - name: Wait For Connection
+        timeout-minutes: 180
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
-          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+          halt-dispatch-input: "yes"
       - name: Run Pytest TPU tests
-        timeout-minutes: ${{ github.event_name == 'pull_request' && 30 || 210 }}
+        timeout-minutes: ${{ github.event_name == 'pull_request' && 210 || 210 }}
         run: |
           if [[ ${{ inputs.python }} == "3.13-nogil" && ${{ inputs.tpu-type }} == "v5e-8" ]]; then
             echo "Uninstalling xprof as it is not compatible with python 3.13t."

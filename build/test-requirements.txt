@@ -12,3 +12,4 @@ rich
 matplotlib
 auditwheel
 scipy-stubs
+# pytest-timeout
