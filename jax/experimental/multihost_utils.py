@@ -226,7 +226,10 @@ def reached_preemption_sync_point(step_id: int) -> bool:
     return False
   sync_manager = distributed.global_state.preemption_sync_manager
   if sync_manager is None:
-    raise RuntimeError("Preemption sync manager has not been initialized.")
+    raise RuntimeError(
+        "Preemption sync manager has not been initialized. Make sure the"
+        " 'jax_enable_preemption_service' config is enabled."
+    )
   return sync_manager.reached_sync_point(step_id)
 
 
