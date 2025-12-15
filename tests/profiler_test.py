@@ -32,6 +32,7 @@ import jax.profiler
 import jax._src.test_util as jtu
 
 from jax._src import profiler
+from jax._src.lib import ifrt_version
 from jax import jit
 
 
@@ -507,6 +508,21 @@ class ProfilerTest(unittest.TestCase):
         unittest.mock.ANY,
         unittest.mock.ANY,
     )
+
+  def test_advanced_configuration_getter(self):
+    if ifrt_version < 41:
+      self.skipTest("advanced_configuration getter is newly added")
+
+    options = jax.profiler.ProfileOptions()
+    advanced_config = {
+        "tpu_trace_mode": "TRACE_COMPUTE",
+        "tpu_num_sparse_cores_to_trace": 1,
+        "enableFwThrottleEvent": True,
+    }
+    options.advanced_configuration = advanced_config
+    returned_config = options.advanced_configuration
+    self.assertDictEqual(returned_config, advanced_config)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
