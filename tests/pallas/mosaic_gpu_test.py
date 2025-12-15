@@ -339,10 +339,6 @@ class PallasCallTest(PallasTest):
   def test_reshape_splat(self):
     shape = (1, 1, 1)
 
-    # TODO(allanrenucci): Fix swap_p lowering for scalars under Lane semantics.
-    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
-      self.skipTest("Not supported under Lane semantics")
-
     @functools.partial(
         self.kernel,
         out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),

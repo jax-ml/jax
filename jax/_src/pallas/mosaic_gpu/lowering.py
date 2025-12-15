@@ -1708,16 +1708,17 @@ def _swap_lowering_rule(
 
   if ctx.module_ctx.auto_barriers:
     barrier()  # Make sure reads have completed before we write.
+
   match transforms:
-    case _ if not ctx.avals_out[0].shape:  # Scalar case.
+    case _ if math.prod(ctx.avals_out[0].shape) == 1:  # Scalar case.
+      zero_idx = _ir_constant(0, ir.IndexType.get())
+      indices = [zero_idx] * len(ctx.avals_out[0].shape)
       old_value = mgpu.FragmentedArray.splat(
-          memref_dialect.load(x_smem, []),
+          memref_dialect.load(x_smem, indices),
           shape=(),
           is_signed=mgpu_utils.is_signed(v_aval.dtype),
       )
-      memref_dialect.store(
-          _ensure_ir_value(value, ctx.avals_out[0].dtype), x_smem, []
-      )
+      value.store_untiled(x_smem)
     case (
         gpu_core.UnswizzleRef(swizzle),
         gpu_core.UntileRef(tiling),
