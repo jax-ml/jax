@@ -152,6 +152,7 @@ Operators
     rng_uniform
     round
     rsqrt
+    scaled_dot
     scatter
     scatter_add
     scatter_apply
