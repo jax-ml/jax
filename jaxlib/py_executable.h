@@ -103,7 +103,8 @@ class PyExecuteResults {
 
   std::vector<nanobind::object> ConsumeWithHandlers(
       std::vector<std::variant<const PyArrayResultHandler*, nanobind::object>>
-          out_handlers);
+          out_handlers,
+      bool strict);
 
   std::vector<xla::ifrt::ArrayRef> Consume();
 

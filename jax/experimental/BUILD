@@ -15,6 +15,7 @@
 load(
     "//jaxlib:jax.bzl",
     "buffer_callback_internal_users",
+    "experimental_transfer_users",
     "if_cuda_is_configured",
     "jax_visibility",
     "mosaic_gpu_internal_users",
@@ -39,6 +40,12 @@ package_group(
     name = "buffer_callback_users",
     includes = ["//jax:internal"],
     packages = buffer_callback_internal_users,
+)
+
+package_group(
+    name = "experimental_transfer_users",
+    includes = ["//jax:internal"],
+    packages = experimental_transfer_users,
 )
 
 package_group(
@@ -117,11 +124,13 @@ pytype_strict_library(
         "//jax",
         "//jax/_src:api",
         "//jax/_src:api_util",
+        "//jax/_src:config",
         "//jax/_src:traceback_util",
         "//jax/_src:tree_util",
         "//jax/_src:util",
         "//jax/_src:xla_bridge",
         "//jax/_src/lib",
+        "//jax/extend:backend",
         "//jax/extend:ifrt_programs",
     ] + py_deps("numpy") + py_deps("cloudpickle"),
 )
@@ -582,7 +591,9 @@ pytype_strict_library(
     # be used in new code. Use jax.shard_map instead.
     name = "shard_map",
     srcs = ["shard_map.py"],
-    visibility = jax_visibility("experimental/shard_map"),
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("experimental/shard_map"),
     deps = [
         "//jax",
         "//jax/_src:mesh",
@@ -685,7 +696,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "transfer",
     srcs = ["transfer.py"],
-    visibility = ["//jax:internal"],
+    visibility = [
+        ":experimental_transfer_users",
+        "//jax:internal",
+    ],
     deps = [
         "//jax",
         "//jax/_src:util",
@@ -736,20 +750,5 @@ filegroup(
         "scheduling_groups.py",
         "shard_map.py",
     ],
-    visibility = ["//jax:internal"],
-)
-
-filegroup(
-    name = "jax_experimental",
-    srcs = glob(
-        [
-            "*.py",
-        ],
-        exclude = [
-            "buffer_callback.py",
-            "mental/mosaic/gpu/*.py",
-            "serialize_executable.py",
-        ],
-    ),
     visibility = ["//jax:internal"],
 )

@@ -538,6 +538,7 @@ class HijaxTest(jtu.JaxTestCase):
 
     if jit:
       f = jax.jit(f)
+      self.assertEqual(f.lower(2.0).compile()(2.0), 8.0)
 
     self.assertEqual(f(2.0), 8.0)
     xs = jnp.arange(3.0)

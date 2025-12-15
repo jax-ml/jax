@@ -23,7 +23,7 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax.ad_checkpoint import checkpoint
+from jax import checkpoint
 from jax._src import test_util as jtu
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp

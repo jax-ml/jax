@@ -34,6 +34,7 @@ from jax._src import dtypes
 from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import jaxlib_extension_version
 
 config.parse_flags_with_absl()
 
@@ -872,6 +873,8 @@ class EArrayTest(jtu.JaxTestCase):
         phys_aval = core.physical_aval(aval)
         phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
         phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
+        if jaxlib_extension_version >= 390:
+          return phys_handler.wrap(lambda arr: earray.EArray(aval, arr))
         return lambda bufs: earray.EArray(aval, phys_handler(bufs))
 
     @dataclasses.dataclass(frozen=True)

@@ -101,6 +101,7 @@ class MemorySpace(enum.Enum):
   SEMAPHORE_MEM = enum.auto()
   SMEM = enum.auto()
   HOST = enum.auto()
+  SC_SCALAR_SEMAPHORE_MEM = enum.auto()
 
   @property
   def color(self) -> int:
@@ -110,6 +111,8 @@ class MemorySpace(enum.Enum):
       return 1
     elif self == MemorySpace.SEMAPHORE_MEM:
       return 2
+    elif self == MemorySpace.SC_SCALAR_SEMAPHORE_MEM:
+      return 8
     elif self == MemorySpace.SMEM:
       return 4
     elif self == MemorySpace.HOST:
@@ -322,7 +325,8 @@ def _tpu_custom_call_lowering(
   result_types = [mlir.aval_to_ir_type(aval) for aval in out_avals]
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
-    if axis_context.manual_axes != frozenset(axis_context.mesh.axis_names):
+    if (axis_context.manual_axes and
+        axis_context.manual_axes != frozenset(axis_context.mesh.axis_names)):
       raise NotImplementedError(
           "Mosaic kernels cannot be automatically partitioned. Please wrap the"
           " call in a shard_map."

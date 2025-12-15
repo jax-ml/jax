@@ -36,6 +36,19 @@ empty = api.named_call(lax.empty)
 
 @api.named_call
 def empty_like(x: object):
+  """Create an empty PyTree of possibly uninitialized values.
+
+  Args:
+    x: A PyTree with leaves specifying the shape and dtype of
+      the uninitialized object.
+
+  Returns:
+    A PyTree with the same structure as ``x``, but with uninitialized
+    values.
+
+  See Also:
+    :func:`jax.lax.empty`
+  """
   return tree_util.tree_map(lambda leaf: empty(leaf.shape, leaf.dtype), x)
 
 
@@ -188,24 +201,28 @@ def kernel(body: Callable | api.NotSpecified = api.NotSpecified(),  # pylint: di
   This is a convenience wrapper around ``core_map`` for executing a kernel
   over a mesh and ``run_scoped`` for allocating scratch memory.
 
-  If ``body`` is provided, this function behaves as a decorator::
+  If ``body`` is provided, this function behaves as a decorator:
 
-  def kernel_body(in_ref, out_ref):
-    ...
-  kernel = pl.kernel(kernel_body, out_shape=...)
+  .. code-block:: python
+
+    def kernel_body(in_ref, out_ref):
+      ...
+    kernel = pl.kernel(kernel_body, out_shape=...)
 
   If ``body`` is omitted, this function behaves as a decorator factory and
-  will return a decorator that can be used to annotate a kernel body::
+  will return a decorator that can be used to annotate a kernel body:
 
-  @pl.kernel(out_shape=...)
-  def kernel(in_ref, out_ref):
-    ...
+  .. code-block:: python
+
+    @pl.kernel(out_shape=...)
+    def kernel(in_ref, out_ref):
+      ...
 
   Args:
     body: The body of the kernel. If provided, this function behaves as a
       decorator, and if omitted, this function behaves as a decorator factory.
     out_shape: The shape of the output. Should be a PyTree of
-      ``jax.ShapeDtypeStruct`` or ``jax.Array``s.
+      ``jax.ShapeDtypeStruct`` or ``jax.Array`` s.
     mesh: The mesh to run the kernel on.
     scratch_shapes: The shapes of the scratch arrays.
     compiler_params: The compiler parameters to pass to the backend.

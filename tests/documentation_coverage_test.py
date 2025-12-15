@@ -51,7 +51,8 @@ def jax_docs_dir() -> str:
 
 
 UNDOCUMENTED_APIS = {
-  'jax': ['NamedSharding', 'P', 'Ref', 'Shard', 'ad_checkpoint', 'api_util', 'checkpoint_policies', 'core', 'custom_derivatives', 'custom_transpose', 'debug_key_reuse', 'device_put_replicated', 'device_put_sharded', 'effects_barrier', 'example_libraries', 'explain_cache_misses', 'experimental', 'extend', 'float0', 'freeze', 'fwd_and_bwd', 'host_count', 'host_id', 'host_ids', 'interpreters', 'jax', 'jax2tf_associative_scan_reductions', 'legacy_prng_key', 'lib', 'make_user_context', 'new_ref', 'no_execution', 'numpy_dtype_promotion', 'remat', 'remove_size_one_mesh_axis_from_type', 'softmax_custom_jvp', 'threefry_partitionable', 'tools', 'transfer_guard_device_to_device', 'transfer_guard_device_to_host', 'transfer_guard_host_to_device', 'version'],
+  'jax': ['NamedSharding', 'P', 'Ref', 'Shard', 'reshard', 'ad_checkpoint', 'api_util', 'checkpoint_policies', 'core', 'custom_derivatives', 'custom_transpose', 'debug_key_reuse', 'device_put_replicated', 'device_put_sharded', 'effects_barrier', 'example_libraries', 'explain_cache_misses', 'experimental', 'extend', 'float0', 'freeze', 'fwd_and_bwd', 'host_count', 'host_id', 'host_ids', 'interpreters', 'jax', 'jax2tf_associative_scan_reductions', 'legacy_prng_key', 'lib', 'make_user_context', 'new_ref', 'no_execution', 'numpy_dtype_promotion', 'remat', 'remove_size_one_mesh_axis_from_type', 'softmax_custom_jvp', 'threefry_partitionable', 'tools', 'transfer_guard_device_to_device', 'transfer_guard_device_to_host', 'transfer_guard_host_to_device', 'version'],
+  'jax.ad_checkpoint': ['checkpoint', 'checkpoint_policies', 'print_saved_residuals', 'remat', 'Offloadable', 'Recompute', 'Saveable'],
   'jax.custom_batching': ['custom_vmap', 'sequential_vmap'],
   'jax.custom_derivatives': ['CustomVJPPrimal', 'SymbolicZero', 'closure_convert', 'custom_gradient', 'custom_jvp', 'custom_jvp_call_p', 'custom_vjp', 'custom_vjp_call_p', 'custom_vjp_primal_tree_values', 'linear_call', 'remat_opt_p', 'zero_from_primal'],
   'jax.custom_transpose': ['custom_transpose'],
@@ -59,7 +60,7 @@ UNDOCUMENTED_APIS = {
   'jax.distributed': ['is_initialized'],
   'jax.dtypes': ['extended', 'finfo', 'iinfo'],
   'jax.ffi': ['build_ffi_lowering_function', 'include_dir', 'register_ffi_target_as_batch_partitionable', 'register_ffi_type_id'],
-  'jax.lax': ['unreduced_psum', 'dce_sink', 'conv_transpose_shape_tuple', 'reduce_window_shape_tuple', 'preduced', 'conv_general_permutations', 'conv_general_shape_tuple', 'pbroadcast', 'padtype_to_pads', 'conv_shape_tuple', 'unreduced_psum_scatter', 'create_token', 'dtype', 'shape_as_value', 'all_gather_reduced', 'pvary', *(name for name in dir(jax.lax) if name.endswith('_p'))],
+  'jax.lax': ['pcast', 'unreduced_psum', 'dce_sink', 'conv_transpose_shape_tuple', 'reduce_window_shape_tuple', 'conv_general_permutations', 'conv_general_shape_tuple', 'pbroadcast', 'padtype_to_pads', 'conv_shape_tuple', 'unreduced_psum_scatter', 'create_token', 'dtype', 'shape_as_value', 'all_gather_reduced', 'pvary', *(name for name in dir(jax.lax) if name.endswith('_p'))],
   'jax.lax.linalg': [api for api in dir(jax.lax.linalg) if api.endswith('_p')],
   'jax.memory': ['Space'],
   'jax.monitoring': ['clear_event_listeners', 'record_event', 'record_event_duration_secs', 'record_event_time_span', 'record_scalar', 'register_event_duration_secs_listener', 'register_event_listener', 'register_event_time_span_listener', 'register_scalar_listener', 'unregister_event_duration_listener', 'unregister_event_listener', 'unregister_event_time_span_listener', 'unregister_scalar_listener'],
@@ -75,13 +76,18 @@ UNDOCUMENTED_APIS = {
 # A list of modules to skip entirely, either because they cannot be imported
 # or because they are not expected to be documented.
 MODULES_TO_SKIP = [
-  "jax.ad_checkpoint",  # internal tools, not documented.
   "jax.api_util",  # internal tools, not documented.
   "jax.cloud_tpu_init",  # deprecated in JAX v0.8.1
   "jax.collect_profile",  # fails when xprof is not available.
   "jax.core",  # internal tools, not documented.
   "jax.example_libraries",  # TODO(jakevdp): un-skip these.
-  "jax.extend",  # TODO(jakevdp): un-skip these.
+  "jax.extend.core.primitives",
+  "jax.extend.ifrt_programs",
+  "jax.extend.mlir.dialects",
+  "jax.extend.mlir.ir",
+  "jax.extend.mlir.passmanager",
+  "jax.extend.sharding",
+  "jax.extend.source_info_util",
   "jax.experimental",  # Many non-public submodules.
   "jax.interpreters",  # internal tools, not documented.
   "jax.jaxlib", # internal tools, not documented.

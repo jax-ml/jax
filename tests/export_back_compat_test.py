@@ -1006,8 +1006,8 @@ class CompatTest(bctu.CompatTestBase):
     )
 
 
-@jtu.with_config(jax_use_shardy_partitioner=True)
 class ShardyCompatTest(bctu.CompatTestBase):
+
   def test_shardy_sharding_ops_with_different_meshes(self):
     # Tests whether we can save and load a module with meshes that have the
     # same axis sizes (and same order) but different axis names.
@@ -1044,8 +1044,6 @@ class ShardyCompatTest(bctu.CompatTestBase):
         self.run_one_test(
             func, self.load_testdata(data),
             expect_current_custom_calls=custom_call_targets_override)
-
-
 
 
 if __name__ == "__main__":

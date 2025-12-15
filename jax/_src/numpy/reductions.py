@@ -202,7 +202,7 @@ def _cast_to_numeric(operand: Array) -> Array:
   return promote_dtypes_numeric(operand)[0]
 
 def _require_integer(arr: Array) -> Array:
-  if not dtypes.isdtype(arr, ("bool", "integral")):
+  if not dtypes.isdtype(arr.dtype, ("bool", "integral")):
     raise ValueError(f"integer argument required; got dtype={arr.dtype}")
   return arr
 

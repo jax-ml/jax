@@ -431,7 +431,7 @@ def is_sanitized():
 # built at least `date``.
 # TODO(b/327203806): after libtpu adds a XLA version and the oldest support
 # libtpu contains the XLA version, remove using built time to skip tests.
-def if_cloud_tpu_at_least(year: int, month: int, day: int):
+def is_cloud_tpu_at_least(year: int, month: int, day: int):
   date = datetime.date(year, month, day)
   if not is_cloud_tpu():
     return True
@@ -545,9 +545,11 @@ skip_if_triton_exceeds_shared_memory = functools.partial(
 )
 
 def get_cuda_nonportable_max_cluster_size():
-  if device_kind_match("GB10$"):
-    # 12 is the nonportable maximum cluster size on DGX Spark,
-    # determined by querying cuOccupancyMaxPotentialClusterSize.
+  # Per-device nonportable maximum cluster sizes for Jetson Thor and DGX
+  # Spark (GB10) determined by querying cuOccupancyMaxPotentialClusterSize
+  if device_kind_match("Thor$"):
+    return 8
+  elif device_kind_match("GB10$"):
     return 12
   # 16 is the nonportable maximum cluster size on:
   # - Hopper: https://docs.nvidia.com/cuda/hopper-tuning-guide/index.html#:~:text=cluster%20size%20of-,16,-by%20opting%20in
@@ -1246,8 +1248,6 @@ class JaxTestCase(parameterized.TestCase):
     'jax_legacy_prng_key': 'error',
   }
 
-
-
   def setUp(self):
     super().setUp()
     self.enterContext(assert_global_configs_unchanged())
@@ -1339,14 +1339,16 @@ class JaxTestCase(parameterized.TestCase):
                             rtol=rtol, canonicalize_dtypes=canonicalize_dtypes,
                             err_msg=err_msg)
     elif is_sequence(actual) and not hasattr(actual, '__array__'):
-      self.assertTrue(is_sequence(desired) and not hasattr(desired, '__array__'))
+      self.assertTrue(is_sequence(desired) and not hasattr(desired, '__array__'),
+                      msg=f"Expected sequence, got {desired}")
       self.assertEqual(len(actual), len(desired))
       for actual_elt, desired_elt in zip(actual, desired):
         self.assertAllClose(actual_elt, desired_elt, check_dtypes=check_dtypes, atol=atol,
                             rtol=rtol, canonicalize_dtypes=canonicalize_dtypes,
                             err_msg=err_msg)
     elif hasattr(actual, '__array__') or np.isscalar(actual):
-      self.assertTrue(hasattr(desired, '__array__') or np.isscalar(desired))
+      self.assertTrue(hasattr(desired, '__array__') or np.isscalar(desired),
+                      msg=f"Expected array-like, got {desired}")
       if check_dtypes:
         self.assertDtypesMatch(actual, desired, canonicalize_dtypes=canonicalize_dtypes)
       actual = np.asarray(actual)
@@ -1554,7 +1556,7 @@ def with_explicit_mesh(sizes, names, axis_types=None, iota_order=False):
 def create_mesh(mesh_shape, axis_names, iota_order=False, axis_types=None):
   size = math.prod(mesh_shape)
   if len(xla_bridge.devices()) < size:
-    raise unittest.SkipTest(f"Test requires {size} global devices.")
+    raise unittest.SkipTest(f"Test requires {size} global devices and found {len(xla_bridge.devices())}.")
   if iota_order:
     devices = sorted(xla_bridge.devices(), key=lambda d: d.id)
     mesh_devices = np.array(devices[:size]).reshape(mesh_shape)

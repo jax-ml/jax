@@ -429,7 +429,7 @@ async def main():
     if args.python_version.endswith("-ft"):
       freethreaded = True
       bazel_command_base.append(
-        "--@rules_python//python/config_settings:py_freethreaded='yes'"
+        "--@rules_python//python/config_settings:py_freethreaded=\"yes\""
       )
 
   # Enable verbose failures.
@@ -516,8 +516,8 @@ async def main():
     wheel_build_command_base.append("--config=nonccl")
 
   clang_path = ""
-  clang_local = args.clang_path or (not utils.is_linux_x86_64(arch, os_name)
-                                    and not utils.is_linux_aarch64(arch, os_name))
+  clang_local = args.clang_path or not (utils.is_linux_x86_64(arch, os_name)
+                                    or utils.is_linux_aarch64(arch, os_name))
   if clang_local:
     if utils.is_linux(os_name):
       wheel_build_command_base.append("--config=linux_clang_local")

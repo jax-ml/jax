@@ -161,7 +161,10 @@ def debug_print(fmt, *args, uniform=True, scope=None):
       index = ir.IndexType.get()
       vec_ty = ir.VectorType(arg.type)
       if len(vec_ty.shape) > 1:
-        raise NotImplementedError(vec_ty)
+        raise NotImplementedError(
+            "2D+ vectors are not supported in debug_print:"
+            f" {vec_ty}"
+        )
       vec_args = [
           vector.extract(
               arg,
@@ -679,7 +682,11 @@ def memref_reshape(
 
   ref_ty = ir.MemRefType(ref.type)
   if math.prod(ref_ty.shape) != math.prod(shape):
-    raise ValueError("Cannot reshape to a different size")
+    raise ValueError(
+        f"Cannot reshape to a different size. Ref shape: {ref_ty.shape} (size:"
+        f" {math.prod(ref_ty.shape)}), new shape: {shape} (size:"
+        f" {math.prod(shape)})"
+    )
   if not all(dim > 0 for dim in shape):
     raise ValueError(
         "Shapes must havbe only positive dimensions (no -1 or 0 dimensions"
@@ -715,6 +722,18 @@ def memref_reshape(
         (), ref_ty.element_type, new_layout, ref_ty.memory_space
     )
     return memref.collapse_shape(result_ty, ref, [])
+  # For contiguous refs we can do arbitrary reshapes easily.
+  strides, _ = ref_ty.get_strides_and_offset()
+  if all(
+      d == 1 or s1 == s2
+      for d, s1, s2 in zip(
+          ref_ty.shape,
+          get_contiguous_strides(ref_ty.shape),
+          strides,
+          strict=True,
+      )
+  ):
+    return memref_unfold(memref_fold(ref, 0, ref_ty.rank), 0, shape)
   return _reshape(ref, src_shape, dst_shape)
 
 
@@ -1064,7 +1083,9 @@ class BarrierRef:
     elif ir.IndexType.isinstance(bytes.type):
       i32 = ir.IntegerType.get_signless(32)
       bytes = arith.index_cast(i32, bytes)
-    nvvm.mbarrier_arrive_expect_tx(self.get_ptr(), bytes, predicate=predicate)
+    nvvm_mbarrier_arrive_expect_tx(
+        self.get_ptr(), bytes, predicate=predicate
+    )
 
   def get_ptr(self):
     i64 = ir.IntegerType.get_signless(64)
@@ -1500,7 +1521,11 @@ class Partition1D:
 
 def tile_shape(shape, tiling):
   if len(tiling) > len(shape):
-    raise ValueError
+    raise ValueError(
+        "Expected tiling to be at most rank of shape. Got tiling:"
+        f" {tiling} (rank: {len(tiling)}) and shape {shape} (rank:"
+        f" {len(shape)})."
+    )
   if not tiling:
     return shape
   tiling_rank = len(tiling)
@@ -1565,7 +1590,10 @@ def memref_ptr(memref_arg, memory_space=None):
       assert elem_bitwidth.bit_count() == 1
       packing = 8 // elem_bitwidth
       if static_offset % packing != 0:
-        raise ValueError
+        raise ValueError(
+            f"{memref_ty} {static_offset=} is not divisible by"
+            f" {packing=}`"
+        )
       offset_bytes = c(static_offset // packing, i64)
     else:
       offset_bits = llvm.mul(
@@ -1779,7 +1807,7 @@ def ceil_div(x: int, y: int):
 def vector_slice(v: ir.Value, s: slice):
   v_ty = ir.VectorType(v.type)
   if len(v_ty.shape) != 1:
-    raise NotImplementedError(v_ty)
+    raise NotImplementedError(f"Only 1D vectors are supported {v_ty}")
   [v_len] = v_ty.shape
   slice_length = len(range(v_len)[s])
   return vector.extract_strided_slice(
@@ -1792,34 +1820,34 @@ def vector_slice(v: ir.Value, s: slice):
 
 
 def vector_concat(vectors: Sequence[ir.Value]) -> ir.Value:
-  index = ir.IndexType.get()
   if not vectors:
     raise ValueError("Cannot concatenate an empty list of vectors")
   vty = vectors[0].type
   if not ir.VectorType.isinstance(vty):
     raise ValueError("Cannot concatenate non-vector values")
+  vty = ir.VectorType(vty)
   if vty.rank != 1:
     raise NotImplementedError("Only 1D vectors are supported")
   for v in vectors:
     if v.type != vty:
       raise ValueError("Cannot concatenate vectors of different types")
-  result = llvm.mlir_undef(
-      ir.VectorType.get((vty.shape[0] * len(vectors),), vty.element_type)
-  )
-  offset = 0
-  for v in vectors:
-    for i in range(vty.shape[0]):
-      elem = vector.extract(
-          v, dynamic_position=[], static_position=ir.DenseI64ArrayAttr.get([i])
-      )
-      result = vector.insert(
-          elem,
-          result,
-          dynamic_position=[],
-          static_position=ir.DenseI64ArrayAttr.get([offset + i]),
-      )
-    offset += vty.shape[0]
-  return result
+  return _vector_concat_rec(vectors)
+
+
+def _vector_concat_rec(vectors: Sequence[ir.Value]) -> ir.Value:
+  match vectors:
+    case [v]:
+      return v
+    case [v, w]:
+      [v_len] = ir.VectorType(v.type).shape
+      [w_len] = ir.VectorType(w.type).shape
+      mask = ir.DenseI64ArrayAttr.get(list(range(v_len + w_len)))
+      return vector.shuffle(*vectors, mask=mask)
+    case _:
+      assert vectors
+      l = _vector_concat_rec(vectors[: len(vectors) // 2])
+      r = _vector_concat_rec(vectors[len(vectors) // 2 :])
+      return _vector_concat_rec([l, r])
 
 
 def is_known_divisible(value, divisor, max_depth=10) -> bool:
@@ -1972,3 +2000,10 @@ def nanosleep(nanos: ir.Value):
       "r",
       has_side_effects=True,
   )
+
+
+def nvvm_mbarrier_arrive_expect_tx(barrier: ir.Value, expect_tx: ir.Value, predicate: ir.Value | None = None):
+  try:
+    return nvvm.mbarrier_arrive_expect_tx(None, barrier, expect_tx, predicate=predicate)  # type: ignore
+  except TypeError:
+    return nvvm.mbarrier_arrive_expect_tx(barrier, expect_tx, predicate=predicate)  # pytype: disable=missing-parameter

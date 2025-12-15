@@ -420,8 +420,6 @@ def mma(
       )
   if is_sparse:
     a_sparse_metadata = cast(TMEMRef, a_sparse_metadata)
-    if collective:
-      raise NotImplementedError("Collective sparse MMA unsupported")
     if n % 32:
       raise ValueError(f"Sparse MMA requires N to be divisible by 32, got: {n}")
     if a_sparse_metadata.shape != (m, k // 2):
@@ -449,6 +447,7 @@ def mma(
         group_size=(m_group_elems, k_group_elems // (1 + is_sparse)),
         logical_k_major=False,
         mma_bytewidth_k=32,
+        split_const=True,
     )
   else:
     a_fastest = mma_utils.Dim.K
@@ -464,6 +463,7 @@ def mma(
       group_size=(k_group_elems, n_group_elems),
       logical_k_major=True,
       mma_bytewidth_k=64 if is_sparse else 32,
+      split_const=True,
   )
 
   if is_scaled and utils.bitwidth(mma_element_type) == 4:
@@ -498,9 +498,9 @@ def mma(
       a_mk = a.slice(slice(None), utils.ds(ki * a_k_group_elems, a_k_group_elems)).address
     else:
       a_offset = mi * a_m_group_stride + ki * a_k_group_stride
-      a_mk = arith.addi(a_desc_base, utils.c(mma_utils.encode_addr(a_offset), i64))
+      a_mk = (a_desc_base[0], a_desc_base[1] + mma_utils.encode_addr(a_offset))
     b_offset = ni * b_n_group_stride + ki * b_k_group_stride
-    b_nk = arith.addi(b_desc_base, utils.c(mma_utils.encode_addr(b_offset), i64))
+    b_nk = (b_desc_base[0], b_desc_base[1] + mma_utils.encode_addr(b_offset))
     if a_sparse_addr_base is not None:
       if n_groups != 1 or m_groups != 1:
         raise NotImplementedError("A sparse metadata address calculation for multiple tiles")
@@ -561,8 +561,8 @@ def mma(
 
 def _do_mma(
     d_addr: ir.Value,
-    a_desc_or_addr: ir.Value,  # TMEM address if a_k_stride is None
-    b_desc: ir.Value,
+    a_desc_or_addr: tuple[ir.Value, int] | ir.Value,  # TMEM address if a_k_stride is None
+    b_desc: tuple[ir.Value, int],
     a_transpose: bool,
     b_transpose: bool,
     a_k_strides: tuple[tuple[int, ...], tuple[int, ...]] | None,
@@ -640,14 +640,12 @@ def _do_mma(
 
   num_cta = 2 if collective else 1
   a_in_tmem = a_k_strides is None
-  a_ptx = "[$1]" if a_in_tmem else "$1"
-  a_ptx_constraint = "r" if a_in_tmem else "l"
+  a_ptx = "[a_desc]" if a_in_tmem else "a_desc"
   sparse_mod = ".sp" if is_sparse else ""
   sparse_meta_ptx = "[$5], " if is_sparse else ""
   extra_constraints += ",r" if is_sparse else ""
   sparse_addr: tuple[Any, ...] = ()
   scales_addrs: tuple[Any, ...] = ()
-  assert a_desc_or_addr.type == ir.IntegerType.get_signless(32 if a_in_tmem else 64)
   def _get_offset(idx: int, idx_tiling: tuple[int, ...], strides: tuple[int, ...]):
     assert len(idx_tiling) + 1 == len(strides)
     idxs = []
@@ -656,7 +654,7 @@ def _do_mma(
       idx = idx % t
     idxs.append(idx)
     offset = sum(i * s for i, s in zip(idxs, strides, strict=True))
-    return arith.constant(i64, offset >> 4)
+    return offset >> 4
   for k_step in range(k // instr_k):
     if is_scaled:
       assert scale_steps is not None
@@ -698,20 +696,32 @@ def _do_mma(
       )
     if a_in_tmem:
       cols_per_k_group = instr_k // packing // (1 + is_sparse)
-      a_desc_or_addr_instr = arith.addi(
-          a_desc_or_addr, arith.constant(i32, k_step * cols_per_k_group)
-      )
+      a_offset = k_step * cols_per_k_group
+      assert isinstance(a_desc_or_addr, ir.Value)
+      assert a_desc_or_addr.type == ir.IntegerType.get_signless(32)
+      a_enc_addr_base = a_desc_or_addr
     else:
       assert a_k_idx_tiling is not None and a_k_strides is not None
-      a_desc_or_addr_instr = arith.addi(
-          a_desc_or_addr, _get_offset(k_step, a_k_idx_tiling, a_k_strides)
-      )
-    b_desc_instr = arith.addi(b_desc, _get_offset(k_step, b_k_idx_tiling, b_k_strides))
+      a_enc_addr_base, a_offset = a_desc_or_addr
+      a_offset += _get_offset(k_step, a_k_idx_tiling, a_k_strides)
+    b_enc_addr_base, b_offset = b_desc
+    b_offset += _get_offset(k_step, b_k_idx_tiling, b_k_strides)
+    a_offset_low, a_offset_high = a_offset & 0xFFFFFFFF, a_offset >> 32
+    b_offset_low, b_offset_high = b_offset & 0xFFFFFFFF, b_offset >> 32
     llvm.inline_asm(
         ir.Type.parse("!llvm.void"),
-        [d_addr, a_desc_or_addr_instr, b_desc_instr, i_desc, accumulate, *scales_addrs, *sparse_addr],
-        f"tcgen05.mma{sparse_mod}.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, $2, {sparse_meta_ptx}$3, {extra_ptx}$4;",
-        f"r,{a_ptx_constraint},l,r,b" + extra_constraints,
+        [d_addr, a_enc_addr_base, b_enc_addr_base, i_desc, accumulate, *scales_addrs, *sparse_addr],
+        f"""{{
+            .reg .b32 a_desc_low, a_desc_high, b_desc_low, b_desc_high;
+            .reg {".b32" if a_in_tmem else ".b64"} a_desc;
+            .reg .b64 b_desc;
+            add.s32 a_desc_low, $1, {a_offset_low};
+            add.s32 b_desc_low, $2, {b_offset_low};
+            mov.b64 b_desc, {{b_desc_low, {b_offset_high}}};
+            {"mov.b32 a_desc, a_desc_low;" if a_in_tmem else f"mov.b64 a_desc, {{a_desc_low, {a_offset_high}}};"}
+            tcgen05.mma{sparse_mod}.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, b_desc, {sparse_meta_ptx}$3, {extra_ptx}$4;
+        }}""",
+        "r,r,r,r,b" + extra_constraints,
         has_side_effects=True,
     )
     accumulate = arith.constant(i1, 1)
@@ -900,6 +910,11 @@ class TMEMLayout(fa.TiledLayout):
         layout.lane_dims,
         layout.vector_dim,
         _check_canonical=False,
+    )
+
+  def as_tiled_layout(self) -> fa.TiledLayout:
+    return fa.TiledLayout(
+        self.tiling, self.warp_dims, self.lane_dims, self.vector_dim
     )
 
 
@@ -1115,13 +1130,13 @@ class TMEMRef:
     )
 
   def load(self, layout: fa.TiledLayout | None = None, is_signed: bool | None = None) -> fa.FragmentedArray:
-    if utils.bitwidth(self.dtype) not in {16, 32}:
-      raise NotImplementedError(f"Unsupported dtype: {self.dtype}")
     packing = self.packing
     if layout is None:
       layout = _infer_tmem_load_registers_layout(
           self.layout, self.shape[1], packing
       )
+    bitwidth = utils.bitwidth(self.dtype)
+    has_default_layout = self.layout == tmem_default_layout(packing=packing)
     regs_shape = layout.registers_shape(self.shape)
     if regs_shape[0] != 1:  # We'll need to issue multiple loads below.
       raise NotImplementedError("Loading multiple row tiles")
@@ -1129,9 +1144,33 @@ class TMEMRef:
       registers = _load_32xcols(
           self.address, self.shape[1], self.dtype, packing
       ).T.reshape(regs_shape)
-    elif layout == TMEM_NATIVE_LAYOUT and self.layout == tmem_default_layout(packing=packing):
+    elif layout == self.layout.as_tiled_layout() and packing * bitwidth == 32:
+      assert len(layout.base_tile_shape) == 2
+      # We could allow replicated dims in the input, but we'd need to divide the
+      # split factor computed below by the replication factor of the input.
+      assert not any(isinstance(d, fa.Replicated) for d in layout.warp_dims)
+      assert not any(isinstance(d, fa.Replicated) for d in layout.lane_dims)
+      warp_split_factor = math.prod(
+          d.times if isinstance(d, fa.Replicated) else 1
+          for d in layout.remove_dimension(1).warp_dims
+      )
+      lane_split_factor = math.prod(
+          d.times if isinstance(d, fa.Replicated) else 1
+          for d in layout.remove_dimension(1).lane_dims
+      )
+      split_factor = warp_split_factor * lane_split_factor
       registers = _load_32xcols_native(
-          self.address, self.shape[1], self.dtype, packing
+          self.address, self.shape[1] // split_factor, self.dtype, packing, packing
+      ).reshape(regs_shape)
+    # TODO(apaszke): Support the case where we have a long vector length in the
+    # FA more generally, not just for 2x32b.
+    # 16-bit types are special, because the store instruction can unpack them.
+    elif layout == TMEM_NATIVE_LAYOUT and has_default_layout and (
+        (bitwidth == 16 and packing == 1)
+        or (bitwidth == 32 and layout.vector_length == 2)
+    ):
+      registers = _load_32xcols_native(
+          self.address, self.shape[1], self.dtype, packing, TMEM_NATIVE_LAYOUT.vector_length
       ).reshape(regs_shape)
     elif layout == fa.WGMMA_LAYOUT and self.layout == tmem_half_lane_layout(self.shape[1], packing=packing):
       # Load half the columns, since they are folded over lanes.
@@ -1157,8 +1196,6 @@ class TMEMRef:
     )
 
   def store(self, value: fa.FragmentedArray):
-    if utils.bitwidth(self.dtype) not in {8, 16, 32}:
-      raise NotImplementedError(f"Unsupported dtype: {self.dtype}")
     if not isinstance(value, fa.FragmentedArray):
       raise TypeError(f"TMEM stores expect a FragmentedArray, got: {value}")
     if value.shape != self.shape:
@@ -1171,27 +1208,38 @@ class TMEMRef:
           f"Stored array has dtype {value.mlir_dtype}, but TMEM has dtype"
           f" {self.dtype}"
       )
+    if not isinstance(value.layout, fa.TiledLayout):
+      raise TypeError(f"Stored array has layout {value.layout}, but TMEM stores expect a TiledLayout")
     packing = self.packing
     has_default_layout = self.layout == tmem_default_layout(packing=packing)
+    bitwidth = utils.bitwidth(self.dtype)
     if value.layout == LAYOUT and has_default_layout:
       _store_32xcols(
           self.address, value.registers.T.reshape((4, -1)), packing
       )
-    elif (
-        utils.bitwidth(self.dtype) == 8
-        and value.layout == fa.tmem_native_layout(vector_length=packing)
-        and has_default_layout
+    elif value.layout == self.layout.as_tiled_layout() and packing * bitwidth == 32:
+      _store_32xcols_native(self.address, value.registers.reshape(-1), packing)
+    # TODO(apaszke): Support the case where we have a long vector length in the
+    # FA more generally, not just for 2x32b.
+    # TODO(apaszke): Support a wider range of layouts when dealing with unpacking.
+    # 16-bit types are special, because the store instruction can unpack them.
+    elif value.layout == TMEM_NATIVE_LAYOUT and has_default_layout and (
+        (bitwidth == 16 and packing == 1)
+        or (bitwidth == 32 and value.layout.vector_length == 2)
     ):
       _store_32xcols_native(self.address, value.registers.reshape(-1), packing)
-    elif value.layout == TMEM_NATIVE_LAYOUT and has_default_layout:
-      _store_32xcols_native(
-          self.address, value.registers.reshape(-1), packing
-      )
-    elif value.layout == fa.WGMMA_LAYOUT and self.layout == tmem_half_lane_layout(self.shape[1], packing=packing):
+    elif (
+        value.layout == fa.WGMMA_LAYOUT
+        and self.layout == tmem_half_lane_layout(self.shape[1], packing=packing)
+    ):
       registers = value.registers.T.reshape(2, -1)
       registers = np.concatenate(np.split(registers, 2, axis=1), axis=0)
       _store_32xcols(self.address, registers, packing)
-    elif value.layout == fa_m64_collective_layout(self.shape[1]) and self.layout == tmem_m64_collective_layout(self.shape[1], packing=packing):
+    elif value.layout == fa_m64_collective_layout(
+        self.shape[1]
+    ) and self.layout == tmem_m64_collective_layout(
+        self.shape[1], packing=packing
+    ):
       _store_32xcols(self.address, value.registers.reshape(4, -1), packing)
     else:
       raise ValueError(
@@ -1306,37 +1354,49 @@ def _store_32xcols(base_addr, vector_regs, tmem_packing) -> None:
 def _store_32xcols_native(base_addr, vector_regs, tmem_packing) -> None:
   i32 = ir.IntegerType.get_signless(32)
   assert vector_regs.ndim == 1
-  cols = len(vector_regs) * TMEM_NATIVE_LAYOUT.vector_length
   vec_ty = ir.VectorType(vector_regs.flat[0].type)
-  reg_packing = 64 // utils.bitwidth(vec_ty)
-  store_atom_shape = (32, reg_packing)
+  [vector_length] = vec_ty.shape
   elt_bitwidth = utils.bitwidth(vec_ty.element_type)
+  reg_packing = 32 // elt_bitwidth
+  store_atom_shape = (32, reg_packing)
+  # TODO(apaszke): More general register splitting code, not just 2x32b.
   if reg_packing == 1:
-    # Transform data such that each reg is 32 bits wide.
-    assert elt_bitwidth == 32, elt_bitwidth
-    regs = [None] * cols
-    c0 = arith.constant(i32, 0)
-    c1 = arith.constant(i32, 1)
-    for idx, vreg in enumerate(vector_regs):
-      regs[2 * idx] = llvm.extractelement(vreg, c0)
-      regs[2 * idx + 1] = llvm.extractelement(vreg, c1)
+    if vector_length == 2:
+      # Transform data such that each reg is 32 bits wide.
+      regs = [None] * (len(vector_regs) * 2)
+      c0 = arith.constant(i32, 0)
+      c1 = arith.constant(i32, 1)
+      for idx, vreg in enumerate(vector_regs):
+        regs[2 * idx] = llvm.extractelement(vreg, c0)
+        regs[2 * idx + 1] = llvm.extractelement(vreg, c1)
+    else:
+      regs = [utils.bitcast(r, i32) for r in vector_regs]
     assert tmem_packing == 1
     unpack = False
   elif reg_packing == 2:
+    assert vector_length == 2
     # In this case, registers are already packed into 32-bit registers.
-    regs = vector_regs
+    regs = [utils.bitcast(r, i32) for r in vector_regs]
     if elt_bitwidth == 16:
       assert 1 <= tmem_packing <= 2
       unpack = tmem_packing == 1
     else:
-      if tmem_packing == 1:
+      if tmem_packing == 1 and elt_bitwidth != 32:
         raise NotImplementedError(
             f"Unsupported packing: {tmem_packing} for element type {elt_bitwidth}"
         )
       assert tmem_packing == 32 // elt_bitwidth
       unpack = False
   else:
-    raise NotImplementedError(reg_packing)
+    if tmem_packing != reg_packing:
+      raise NotImplementedError(
+          f"Only {reg_packing} packing supported for bitwidth {elt_bitwidth},"
+          f" but got TMEM packing of {tmem_packing}"
+      )
+    assert utils.bitwidth(vec_ty) == 32
+    regs = [utils.bitcast(r, i32) for r in vector_regs]
+    unpack = False
+  cols = len(regs) * reg_packing
   it = _transfer_32xcols(base_addr, cols, store_atom_shape, tmem_packing, reg_packing)
   for addr_row_col, instr_num, lane_step, num_slice in it:
     assert lane_step == 0
@@ -1393,21 +1453,23 @@ def _load_32xcols(base_addr, cols, dtype, tmem_packing) -> np.ndarray:
   return vector_regs
 
 
-def _load_32xcols_native(base_addr, cols, dtype, tmem_packing) -> np.ndarray:
+def _load_32xcols_native(base_addr, cols, dtype, tmem_packing, vector_length) -> np.ndarray:
   i32 = ir.IntegerType.get_signless(32)
-  vec_ty = ir.VectorType.get((2,), dtype)
+  vec_ty = ir.VectorType.get((vector_length,), dtype)
   reg_packing = 32 // utils.bitwidth(dtype)
+  assert vector_length % reg_packing == 0
   load_shape = "32x32b"
-  if reg_packing == 1:
-    load_atom_shape = (32, 1)
-    assert tmem_packing == 1
-    pack = False
-  elif reg_packing == 2:
-    load_atom_shape = (32, 2)
+  load_atom_shape = (32, reg_packing)
+  if reg_packing == 2:
     assert 1 <= tmem_packing <= 2
     pack = tmem_packing == 1
   else:
-    raise NotImplementedError(reg_packing)
+    if tmem_packing != reg_packing:
+      raise NotImplementedError(
+          f"Only {reg_packing} supported for element type {dtype}, but got"
+          f" TMEM packing of {tmem_packing}"
+      )
+    pack = False
 
   it = _transfer_32xcols(base_addr, cols, load_atom_shape, tmem_packing, reg_packing)
   c0 = arith.constant(i32, 0)
@@ -1416,13 +1478,12 @@ def _load_32xcols_native(base_addr, cols, dtype, tmem_packing) -> np.ndarray:
   for addr_row_col, instr_num, lane_step, num_slice in it:
     assert lane_step == 0, lane_step
     instr_regs = _tmem_load(addr_row_col, load_shape, instr_num, pack)
-    if reg_packing == 1:
+    if reg_packing == 1 and vector_length == 2:
       regs[num_slice] = [llvm.bitcast(dtype, r) for r in instr_regs]
     else:
-      assert reg_packing == 2
-      regs[num_slice] = [llvm.bitcast(vec_ty, r) for r in instr_regs]
+      regs[num_slice] = [utils.bitcast(r, vec_ty) for r in instr_regs]
 
-  if reg_packing == 1:
+  if reg_packing == 1 and vector_length == 2:
     vector_regs = np.ndarray((cols // 2,), dtype=object)
     undef = llvm.mlir_undef(vec_ty)
     for idx in range(vector_regs.size):
@@ -1430,10 +1491,9 @@ def _load_32xcols_native(base_addr, cols, dtype, tmem_packing) -> np.ndarray:
       vreg = llvm.insertelement(high_undef, regs[2 * idx + 1], c1)
       vector_regs[idx] = vreg
   else:
-    assert reg_packing == 2
+    assert vector_length == reg_packing
     vector_regs = np.asarray(regs, dtype=object)
 
-  assert vector_regs.shape == (cols // TMEM_NATIVE_LAYOUT.vector_length,)
   return vector_regs
 
 
@@ -1527,7 +1587,9 @@ def async_copy_scales_smem_to_tmem(
     )
 
 
-def async_copy_sparse_metadata_smem_to_tmem(smem_ref: ir.Value, tmem_ref: TMEMRef) -> None:
+def async_copy_sparse_metadata_smem_to_tmem(
+    smem_ref: ir.Value, tmem_ref: TMEMRef, collective: bool = False
+) -> None:
   i8 = ir.IntegerType.get_signless(8)
   i32 = ir.IntegerType.get_signless(32)
   smem_ty = ir.MemRefType(smem_ref.type)
@@ -1566,4 +1628,7 @@ def async_copy_sparse_metadata_smem_to_tmem(smem_ref: ir.Value, tmem_ref: TMEMRe
     # The "core matrix" here is the same as in MMA: 8x(16 bytes).
     desc = mma_utils.encode_descriptor(load_ptr, 0, 8 * 16, swizzle=None)
     ptr = _tmem_addr_to_ptr(store_ptr)
-    nvvm.tcgen05_cp(nvvm.Tcgen05CpShape.SHAPE_128x128b, ptr, desc)
+    nvvm.tcgen05_cp(
+        nvvm.Tcgen05CpShape.SHAPE_128x128b, ptr, desc,
+        group=nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1
+    )

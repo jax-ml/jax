@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-import functools
 from functools import partial
 import logging
 from typing import Any
@@ -27,6 +26,7 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import effects
@@ -46,6 +46,7 @@ from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix,
     tree_map)
+from jax._src.typing import DeprecatedArg
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
 
@@ -203,7 +204,7 @@ checkpoint_policies = types.SimpleNamespace(
 def checkpoint(fun: Callable, *, prevent_cse: bool = True,
                policy: Callable[..., bool] | None = None,
                static_argnums: int | tuple[int, ...] = (),
-               ) -> Callable:
+               concrete: bool | DeprecatedArg = DeprecatedArg()) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
   The :func:`jax.checkpoint` decorator, aliased to :func:`jax.remat`, provides a
@@ -257,6 +258,8 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
       returns a boolean indicating whether the corresponding output value(s) can
       be saved as residuals (or instead must be recomputed in the (co)tangent
       computation if needed).
+    concrete: Optional boolean; deprecated. Will raise a DeprecationWarning if
+      used, and passing True will result in a NotImplementedError.
 
   Returns:
     A function (callable) with the same input/output behavior as ``fun`` but
@@ -344,6 +347,16 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
   ``jax.ensure_compile_time_eval``), it may be easier to compute some values
   outside the :func:`jax.checkpoint`-decorated function and then close over them.
   """
+  if not isinstance(concrete, DeprecatedArg):
+    concrete_msg = (
+        "The `concrete` option to `jax.checkpoint` has been deprecated."
+        " In its place please use `static_argnums`; for details refer to"
+        " https://docs.jax.dev/en/latest/jep/11830-new-remat-checkpoint.html."
+    )
+    deprecations.warn("jax-checkpoint-concrete", concrete_msg, stacklevel=2)
+    if concrete:
+      raise NotImplementedError(concrete_msg)
+
   if isinstance(static_argnums, int):
     static_argnums = static_argnums,
   if isinstance(prevent_cse, list):
@@ -373,7 +386,14 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
     return tree_unflatten(out_tree, out_flat)
   return fun_remat
 
-remat = checkpoint  # alias
+
+def remat(fun: Callable, *, prevent_cse: bool = True,
+          policy: Callable[..., bool] | None = None,
+          static_argnums: int | tuple[int, ...] = (),
+          concrete: bool | DeprecatedArg = DeprecatedArg()) -> Callable:
+  """Alias of :func:`jax.checkpoint`."""
+  return checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
+                    static_argnums=static_argnums, concrete=concrete)
 
 # This function is similar to api_util.argnums_partial, except the error
 # messages are specific to jax.remat (and thus more actionable), the
@@ -666,7 +686,7 @@ def _insert_reduce_precision(jaxpr: core.Jaxpr, num_res: int) -> core.Jaxpr:
   used_vars = {x for e in jaxpr.eqns for x in e.invars if isinstance(x, core.Var)}
   invars, constvars, eqns = jaxpr.invars[:], jaxpr.constvars[:], jaxpr.eqns[:]
   for v in res_vars:
-    if (not isinstance(v.aval, core.UnshapedArray) or
+    if (not isinstance(v.aval, core.ShapedArray) or
         not dtypes.issubdtype(v.aval.dtype, np.inexact)):
       continue
     if v not in used_vars:
@@ -825,7 +845,8 @@ def remat_dce(used_outputs: list[bool], eqn: core.JaxprEqn
 pe.dce_rules[remat_p] = remat_dce
 
 def _has_effects(effects) -> bool:
-  return bool({e for e in effects if not isinstance(e, core.NamedAxisEffect)})
+  not_really_effects = (core.NamedAxisEffect, core.InternalMutableArrayEffect)
+  return any(not isinstance(e, not_really_effects) for e in effects)
 
 
 def remat_expansion(
@@ -876,6 +897,46 @@ mlir.register_lowering(remat_p, _remat_lowering)
 
 
 def checkpoint_name(x, name):
+  """Identifies a value with a name within :func:`jax.checkpoint`.
+
+  This function acts as an identity function at runtime (returning ``x``
+  unchanged) but attaches a string name to the value in the JAX trace.
+  These names can be targeted by specific checkpointing policies (see
+  :ref:`checkpoint-policies`) to control which intermediate values
+  are saved during the forward pass and which are recomputed during the
+  backward pass.
+
+  Args:
+    x: array or PyTree of arrays to be named.
+    name: A string name to associate with the value ``x``.
+
+  Returns:
+    The input ``x``, unchanged.
+
+  See Also:
+    - :func:`jax.checkpoint` (alias: :func:`jax.remat`): decorator to
+      enable checkpointing.
+    - :mod:`jax.checkpoint_policies`: a namespace containing policies
+      that use names marked via ``checkpoint_name`` to determine behavior.
+
+  Example:
+    >>> import jax
+    >>> import jax.numpy as jnp
+    >>> from jax.ad_checkpoint import checkpoint_name
+
+    >>> # Define a function where we explicitly name an intermediate value
+    >>> def f(x):
+    ...   y = jnp.sin(x)
+    ...   z = checkpoint_name(y, "my_intermediate")
+    ...   return jnp.cos(z)
+
+    >>> # Use a policy that saves only the named value
+    >>> policy = jax.checkpoint_policies.save_only_these_names("my_intermediate")
+    >>> f_checkpointed = jax.checkpoint(f, policy=policy)
+
+    For further examples, see the `remat example notebook
+    <https://docs.jax.dev/en/latest/notebooks/autodiff_remat.html>`_.
+  """
   return tree_map(partial(name_p.bind, name=name), x)
 
 name_p.def_impl(lambda x, *, name: x)
@@ -892,66 +953,6 @@ def name_batcher(args, dims, *, name):
   (x,), (d,) = args, dims
   return name_p.bind(x, name=name), d
 batching.primitive_batchers[name_p] = name_batcher
-
-
-@functools.wraps(checkpoint)
-def checkpoint_wrapper(
-    fun: Callable,
-    *,
-    concrete: bool = False,
-    prevent_cse: bool = True,
-    static_argnums: int | tuple[int, ...] = (),
-    policy: Callable[..., bool] | None = None,
-) -> Callable:
-  if concrete:
-    msg = ("The 'concrete' option to jax.checkpoint / jax.remat is deprecated; "
-           "in its place, you can use its `static_argnums` option, and if "
-           "necessary the `jax.ensure_compile_time_eval()` context manager.\n"
-           "\n"
-           "For example, if using `concrete=True` for an `is_training` flag:\n"
-           "\n"
-           "  from functools import partial\n"
-           "\n"
-           "  @partial(jax.checkpoint, concrete=True)\n"
-           "  def foo(x, is_training):\n"
-           "    if is_training:\n"
-           "      return f(x)\n"
-           "    else:\n"
-           "      return g(x)\n"
-           "\n"
-           "replace it with a use of `static_argnums`:\n"
-           "\n"
-           "  @partial(jax.checkpoint, static_argnums=(1,))\n"
-           "  def foo(x, is_training):\n"
-           "    ...\n"
-           "\n"
-           "If jax.numpy operations need to be performed on static arguments, "
-           "we can use the `jax.ensure_compile_time_eval()` context manager. "
-           "For example, we can replace this use of `concrete=True`\n:"
-           "\n"
-           "  @partial(jax.checkpoint, concrete=True)\n"
-           "  def foo(x, y):\n"
-           "    if y > 0:\n"
-           "      return f(x)\n"
-           "    else:\n"
-           "      return g(x)\n"
-           "\n"
-           "with this combination of `static_argnums` and "
-           "`jax.ensure_compile_time_eval()`:\n"
-           "\n"
-           "  @partial(jax.checkpoint, static_argnums=(1,))\n"
-           "  def foo(x, y):\n"
-           "    with jax.ensure_compile_time_eval():\n"
-           "      y_pos = y > 0\n"
-           "    if y_pos:\n"
-           "      return f(x)\n"
-           "    else:\n"
-           "      return g(x)\n"
-           "\n"
-           "See https://docs.jax.dev/en/latest/jep/11830-new-remat-checkpoint.html\n")
-    raise NotImplementedError(msg)
-  return checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
-                    static_argnums=static_argnums)
 
 
 @discharge.register_discharge_rule(remat_p)

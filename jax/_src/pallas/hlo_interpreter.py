@@ -411,9 +411,6 @@ def pallas_call_hlo_interpret(
   # to catch OOB accesses.
   for carry_element in carry:
     aval = carry_element.aval
-    if isinstance(aval, jax_core.DShapedArray):
-      aval = jax_core.ShapedArray(aval.shape, aval.dtype)
-      carry_element.aval = aval
 
   carry = map(_pad_to_block_dimension, carry, block_shapes)
   carry.extend(scratch_values)

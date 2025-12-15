@@ -34,18 +34,6 @@ from jax._src.interpreters.partial_eval import (
 
 _deprecations = {
   # Deprecated for JAX v0.7.1; finalize in JAX v0.9.0.
-  "AbstractedAxesSpec": (
-    "jax.interpreters.partial_eval.AbstractedAxesSpec is deprecated.",
-    _pe_src.AbstractedAxesSpec,
-  ),
-  "AbstractedAxisName": (
-    "jax.interpreters.partial_eval.AbstractedAxisName is deprecated.",
-    _pe_src.AbstractedAxisName,
-  ),
-  "BoundedAxisSize": (
-    "jax.interpreters.partial_eval.BoundedAxisSize is deprecated.",
-    _pe_src.BoundedAxisSize,
-  ),
   "Const": (
     "jax.interpreters.partial_eval.Const is deprecated.",
     _pe_src.Const,
@@ -130,10 +118,6 @@ _deprecations = {
     "jax.interpreters.partial_eval.abstract_eval_fun is deprecated.",
     _pe_src.abstract_eval_fun,
   ),
-  "call_padding_rule": (
-    "jax.interpreters.partial_eval.call_padding_rule is deprecated.",
-    _pe_src.call_padding_rule,
-  ),
   "call_param_updaters": (
     "jax.interpreters.partial_eval.call_param_updaters is deprecated.",
     _pe_src.call_param_updaters,
@@ -178,10 +162,6 @@ _deprecations = {
     "jax.interpreters.partial_eval.custom_staging_rules is deprecated.",
     _pe_src.custom_staging_rules,
   ),
-  "def_trivial_padding": (
-    "jax.interpreters.partial_eval.def_trivial_padding is deprecated.",
-    _pe_src.def_trivial_padding,
-  ),
   "forwarding_rules": (
     "jax.interpreters.partial_eval.forwarding_rules is deprecated.",
     _pe_src.forwarding_rules,
@@ -189,10 +169,6 @@ _deprecations = {
   "has_effects": (
     "jax.interpreters.partial_eval.has_effects is deprecated.",
     _pe_src.has_effects,
-  ),
-  "infer_lambda_input_type": (
-    "jax.interpreters.partial_eval.infer_lambda_input_type is deprecated.",
-    _pe_src.infer_lambda_input_type,
   ),
   "instantiate_const_at": (
     "jax.interpreters.partial_eval.instantiate_const_at is deprecated.",
@@ -213,14 +189,6 @@ _deprecations = {
   "new_eqn_recipe": (
     "jax.interpreters.partial_eval.new_eqn_recipe is deprecated.",
     _pe_src.new_eqn_recipe,
-  ),
-  "pad_jaxpr": (
-    "jax.interpreters.partial_eval.pad_jaxpr is deprecated.",
-    _pe_src.pad_jaxpr,
-  ),
-  "padding_rules": (
-    "jax.interpreters.partial_eval.padding_rules is deprecated.",
-    _pe_src.padding_rules,
   ),
   "partial_eval_jaxpr_custom": (
     "jax.interpreters.partial_eval.partial_eval_jaxpr_custom is deprecated.",
@@ -245,10 +213,6 @@ _deprecations = {
   "recipe_to_eqn": (
     "jax.interpreters.partial_eval.recipe_to_eqn is deprecated.",
     _pe_src.recipe_to_eqn,
-  ),
-  "trace_to_jaxpr_dynamic2": (
-    "jax.interpreters.partial_eval.trace_to_jaxpr_dynamic2 is deprecated.",
-    _pe_src.trace_to_jaxpr_dynamic2,
   ),
   "trace_to_subjaxpr_nounits": (
     "jax.interpreters.partial_eval.trace_to_subjaxpr_nounits is deprecated.",
@@ -289,7 +253,6 @@ if typing.TYPE_CHECKING:
   TracerAsName = _pe_src.TracerAsName
   TracerId = _pe_src.TracerId
   abstract_eval_fun = _pe_src.abstract_eval_fun
-  call_padding_rule = _pe_src.call_padding_rule
   call_param_updaters = _pe_src.call_param_updaters
   call_partial_eval_custom_rule = _pe_src.call_partial_eval_custom_rule
   call_partial_eval_rules = _pe_src.call_partial_eval_rules
@@ -301,7 +264,6 @@ if typing.TYPE_CHECKING:
   convert_envvars_to_constvars = _pe_src.convert_envvars_to_constvars
   convert_invars_to_constvars = _pe_src.convert_invars_to_constvars
   custom_staging_rules = _pe_src.custom_staging_rules
-  def_trivial_padding = _pe_src.def_trivial_padding
   forwarding_rules = _pe_src.forwarding_rules
   has_effects = _pe_src.has_effects
   infer_lambda_input_type = _pe_src.infer_lambda_input_type
@@ -310,8 +272,6 @@ if typing.TYPE_CHECKING:
   move_binders_to_back = _pe_src.move_binders_to_back
   move_binders_to_front = _pe_src.move_binders_to_front
   new_eqn_recipe = _pe_src.new_eqn_recipe
-  pad_jaxpr = _pe_src.pad_jaxpr
-  padding_rules = _pe_src.padding_rules
   partial_eval_jaxpr_custom = _pe_src.partial_eval_jaxpr_custom
   partial_eval_jaxpr_custom_rule_not_implemented = _pe_src.partial_eval_jaxpr_custom_rule_not_implemented
   partial_eval_jaxpr_nounits = _pe_src.partial_eval_jaxpr_nounits

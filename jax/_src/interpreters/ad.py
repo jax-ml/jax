@@ -26,7 +26,7 @@ from jax._src import config
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_flatten, tree_unflatten,
-                                register_pytree_node, Partial, PyTreeDef)
+                                register_pytree_node, PyTreeDef)
 from jax._src import mesh as mesh_lib
 from jax._src import core
 from jax._src import source_info_util
@@ -51,18 +51,12 @@ def identity(x): return x
 
 def _update_annotation(
     f: lu.WrappedFun,
-    orig_type: tuple[tuple[core.AbstractValue, bool], ...] | None,
-    explicit_nonzeros: list[bool]
+    orig_type: tuple[core.AbstractValue, ...] | None,
+    nonzeros: list[bool]
   ) -> lu.WrappedFun:
   if orig_type is None:
     return f
-  # By convention, `explicit_nonzeros` only accounts for explicit arguments.
-  assert len(explicit_nonzeros) == sum(explicit for _, explicit in orig_type)
-  # Implicit arguments never have tangents, so generate the tangent part of the
-  # type annotation from explicit arguments only.
-  explicit_avals = [aval for aval, explicit in orig_type if explicit]
-  tan_types = [(aval.to_tangent_aval(), True)
-               for nz, aval in zip(explicit_nonzeros, explicit_avals) if nz]
+  tan_types = [aval.to_tangent_aval() for nz, aval in zip(nonzeros, orig_type) if nz]
   return lu.annotate(f, (*orig_type, *tan_types))
 
 def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True,
@@ -308,23 +302,6 @@ def linearize(traceable: lu.WrappedFun, *primals, **kwargs):
   else:
     return out_primals_consts, out_tangents_pvals, jaxpr, consts, aux()
 
-def vjp(traceable: lu.WrappedFun, primals, has_aux=False):
-  if not has_aux:
-    out_primals, pvals, jaxpr, consts = linearize(traceable, *primals)
-  else:
-    out_primals, pvals, jaxpr, consts, aux = linearize(traceable, *primals, has_aux=True)
-
-  def unbound_vjp(pvals, jaxpr, consts, *cts):
-    cts = tuple(ct for ct, pval in zip(cts, pvals) if not pval.is_known())
-    dummy_args = [UndefinedPrimal(v.aval) for v in jaxpr.invars]
-    arg_cts = backward_pass(jaxpr, True, consts, dummy_args, cts)
-    return map(instantiate_zeros, arg_cts)
-
-  vjp_ =  Partial(partial(unbound_vjp, pvals, jaxpr), consts)
-  if not has_aux:
-    return out_primals, vjp_
-  else:
-    return out_primals, vjp_, aux
 
 # NOTE: The FIXMEs below are caused by primal/tangent mixups (type
 # errors if you will)
@@ -343,11 +320,6 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
       # assert v.aval == ct.aval, (prim, v.aval, ct.aval)
       return
     ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
-    # TODO(mattjj): add back these checks for dynamic shapes
-    # if config.enable_checks.value:
-    #   ct_aval = core.get_aval(ct_env[v])
-    #   joined_aval = core.lattice_join(v.aval, ct_aval).strip_weak_type()
-    #   assert v.aval.strip_weak_type() == joined_aval, (prim, v.aval, ct_aval)
 
   def read_cotangent(v):
     return ct_env.pop(v, Zero(v.aval.to_tangent_aval()))
@@ -357,9 +329,6 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
       return v.val
     else:
       a = v.aval
-      if type(a) is core.DShapedArray:
-        shape = [primal_env[d] if type(d) is core.Var else d for d in a.shape]
-        a = a.update(shape=tuple(shape))
       return primal_env.get(v, UndefinedPrimal(a))
 
   def write_primal(v, val):
@@ -612,11 +581,10 @@ class ValAccum(GradAccum):
   def freeze(self):
     return self.val
 
-# class NullAccum(GradAccum):
-#   aval: core.AbstractValue
-#   def __init__(self, aval): self.aval = aval
-#   def accum(self, x): return
-#   def freeze(self): assert False
+class NullAccum(GradAccum):
+  def __init__(self): pass
+  def accum(self, x): return
+  def freeze(self): assert False
 
 fancy_transposes: dict[core.Primitive, Callable] = {}
 
@@ -828,7 +796,9 @@ class JVPTracer(Tracer):
     self.tangent = tangent
 
   def _short_repr(self):
-    return f"GradTracer<{self.aval}>"
+    pp = lambda x: x._short_repr() if isinstance(x, Tracer) else str(x)
+    primal, tangent = pp(self.primal), pp(self.tangent)
+    return f'JVPTracer({primal=!s}, {tangent=!s})'
 
   @property
   def aval(self):
@@ -1173,6 +1143,11 @@ class LinearizeTracer(Tracer):
     self.primal = primal
     self.tangent = tangent
 
+  def _short_repr(self):
+    pp = lambda x: x._short_repr() if isinstance(x, Tracer) else str(x)
+    primal, tangent = pp(self.primal), typeof(self.tangent).str_short(True)
+    return f"GradTracer({primal=!s}, typeof(tangent)={tangent!s})"
+
   @property
   def aval(self):
     return get_aval(self.primal)
@@ -1334,15 +1309,6 @@ def call_transpose(primitive, params, call_jaxpr: core.Jaxpr, args, ct, _):
   if update_params:
     params = update_params(params, map(is_undefined_primal, args),
                            [type(x) is not Zero for x in ct])
-  if config.dynamic_shapes.value:
-    # TODO(mattjj,dougalm): handle consts, for now assume just args
-    which_lin = [is_undefined_primal(x) for x in args]
-    res_invars, _ = partition_list(which_lin, call_jaxpr.invars)
-    new_invars = [*res_invars, *call_jaxpr.outvars]
-    dbidx_map = {v: core.DBIdx(i) for i, v in enumerate(new_invars)}
-    in_type = [(v.aval.update(shape=tuple(dbidx_map.get(d, d) for d in v.aval.shape))  # type: ignore[arg-type]
-                if type(v.aval) is core.DShapedArray else v.aval, True) for v in new_invars]
-    fun = lu.annotate(fun, tuple(in_type))
   out_flat = primitive.bind(fun, *all_args, **params)
   return tree_unflatten(out_tree(), out_flat)
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)

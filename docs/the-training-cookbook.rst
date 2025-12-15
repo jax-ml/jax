@@ -109,7 +109,7 @@ Examining the call signature of the function ``adam_apply`` gives us a hint:
 
 .. tagged-block:: the-training-cookbook.py adam-apply
 
-Because ``train_state.params`` is the first argument, :func:`jax.tree.map` uses its tree structure to guide the mapping process.[#prefix_tree]_ This means that ``train_state.opt`` is traversed only as deep as the leaves of ``train_state.params``. The optimizer state for each parameter is therefore passed in as a complete subtree, which allows us to easily access all relevant states (like ``mu`` and ``nu``) for a given ``param`` inside ``adam_apply``.
+Because ``train_state.params`` is the first argument, :func:`jax.tree.map` uses its tree structure to guide the mapping process. [#prefix_tree]_ This means that ``train_state.opt`` is traversed only as deep as the leaves of ``train_state.params``. The optimizer state for each parameter is therefore passed in as a complete subtree, which allows us to easily access all relevant states (like ``mu`` and ``nu``) for a given ``param`` inside ``adam_apply``.
 
 .. tip::
 
@@ -286,7 +286,7 @@ The drawback of data-parallel sharding is that we have to keep multiple, full, r
 
 .. code-block:: python
 
-    mesh = jax.sharding.Mesh(jax.devices(), ('fsdp',))
+    mesh = jax.make_mesh((128*4,), ("fsdp",))
 
 *Parameter Shardings:*
 
@@ -323,8 +323,8 @@ If our model is large enough and structured appropriately, it becomes beneficial
 *Mesh:*
 
 .. code-block:: python
-
-    mesh = jax.sharding.Mesh(np.array(jax.devices()).reshape(128, 4), ("fsdp", "tensor"))
+ 
+    mesh = jax.make_mesh((128,4), ("fsdp", "tensor"))
 
 *Parameter Shardings:*
 

@@ -22,7 +22,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
-from jax._src import ad_checkpoint
 
 jax.config.parse_flags_with_absl()
 
@@ -261,8 +260,8 @@ class NameStackTransformationTest(jtu.JaxTestCase):
     self.assertIn('jit(g)', hlo_text)
     self.assertIn('transpose(jvp(jit(f)))', hlo_text)
 
-  def test_remat_appears_in_hlo(self):
-    @ad_checkpoint.remat
+  def test_re_materalization_appears_in_hlo(self):
+    @jax.remat
     def f(x):
       return jnp.sin(x)
 

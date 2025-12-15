@@ -557,9 +557,10 @@ def _view(self: Array, dtype: DTypeLike | None = None, type: None = None) -> Arr
   if lax_numpy.issubdtype(self.dtype, np.complexfloating):
     new_shape = (*self.shape[:-1], self.shape[-1] * 2)
     new_dtype = lax_numpy.finfo(self.dtype).dtype
-    self = (array_creation.zeros(new_shape, new_dtype)
-             .at[..., 0::2].set(self.real)
-             .at[..., 1::2].set(self.imag))
+    new_sharding = core.typeof(self).sharding
+    self = (array_creation.zeros(new_shape, new_dtype, out_sharding=new_sharding)
+            .at[..., 0::2].set(self.real)
+            .at[..., 1::2].set(self.imag))
     return _view(self, dtype)
 
   if dtype == bool:
@@ -819,7 +820,7 @@ class _IndexUpdateRef:
   def get(self, *, indices_are_sorted: bool = False, unique_indices: bool = False,
           mode: str | lax_slicing.GatherScatterMode | None = None,
           fill_value: ArrayLike | None = None,
-          out_sharding: Sharding | PartitionSpec | None = None,
+          out_sharding: NamedSharding | PartitionSpec | None = None,
           wrap_negative_indices: bool = True):
     """Equivalent to ``x[idx]``.
 
@@ -843,7 +844,7 @@ class _IndexUpdateRef:
   def set(self, values: ArrayLike, *, indices_are_sorted: bool = False,
           unique_indices: bool = False,
           mode: str | lax_slicing.GatherScatterMode | None = None,
-          out_sharding: Sharding | PartitionSpec | None = None,
+          out_sharding: NamedSharding | PartitionSpec | None = None,
           wrap_negative_indices: bool = True) -> None:
     """Pure equivalent of ``x[idx] = y``.
 
@@ -888,7 +889,7 @@ class _IndexUpdateRef:
   def add(self, values: ArrayLike, *,
           indices_are_sorted: bool = False, unique_indices: bool = False,
           mode: str | lax_slicing.GatherScatterMode | None = None,
-          out_sharding: Sharding | PartitionSpec | None = None,
+          out_sharding: NamedSharding | PartitionSpec | None = None,
           wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] += y``.
 
@@ -1211,7 +1212,6 @@ def _set_array_abstract_methods(basearray):
 def register_jax_array_methods():
   """Call this function once to register methods of JAX arrays"""
   _set_shaped_array_attributes(core.ShapedArray)
-  _set_shaped_array_attributes(core.DShapedArray)
 
   _set_array_base_attributes(ArrayImpl, exclude={'__getitem__'})
   _set_tracer_aval_forwarding(core.Tracer, exclude={*_impl_only_array_methods, "at"})

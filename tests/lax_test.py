@@ -48,6 +48,7 @@ from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
+from jax._src.lib import jaxlib_extension_version
 from jax._src.util import safe_zip
 from jax._src.tree_util import tree_map
 
@@ -3766,6 +3767,22 @@ class LaxTest(jtu.JaxTestCase):
     cts = vjp_fn(jnp.ones((8,), dtype=jnp.float8_e4m3fn))  # Don't crash
     self.assertEqual(cts[0].dtype, jnp.bfloat16)
 
+  def test_stop_gradient_on_ints(self):
+    # https://github.com/jax-ml/jax/issues/33689
+    @jax.custom_gradient
+    def f(x):
+        def fbwd(g):
+            return jnp.ones_like(x)
+        return (x, jnp.round(x).astype(jnp.int32)), fbwd
+
+    def loss(x):
+        y, i = f(x)
+        y_nograd, i_nograd = jax.lax.stop_gradient((y, i))
+        self.assertEqual(type(y_nograd), type(i_nograd))
+        return jnp.sum(f(y)[0])
+
+    jax.grad(loss)(jnp.ones((3,)))
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
@@ -3976,14 +3993,13 @@ class FooTyRules:
 
   @staticmethod
   def global_sharded_result_handler(aval, out_sharding, committed):
-    def handler(arr):
-      from jax._src.array import ArrayImpl
-      if isinstance(arr, ArrayImpl):
-        buf, = arr._arrays
-      else:
-        buf, = arr
-      return FooArray(aval.shape, buf)
-    return handler
+    phys_sharding = out_sharding  # unlike KeyTyRules, assume same shape
+    phys_aval = core.physical_aval(aval)
+    phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
+    phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
+    if jaxlib_extension_version >= 390:
+      return phys_handler.wrap(lambda arr: FooArray(aval.shape, arr))
+    return lambda bufs: FooArray(aval.shape, phys_handler(bufs))
 
 
 class FooTy(dtypes.ExtendedDType):
@@ -5009,7 +5025,7 @@ class RaggedTest(jtu.JaxTestCase):
       {"m": 10, "k": 9, "n": 8, "num_groups": 2},
   )
   def test_ragged_dot_small_m(self, m, k, n, num_groups):
-    if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
+    if not jtu.is_cloud_tpu_at_least(2025, 10, 14):
       self.skipTest("Requires libtpu built after 2025-10-14")
     lhs_shape = (m, k)
     rhs_shape = (num_groups, k, n)

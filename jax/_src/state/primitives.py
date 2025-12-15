@@ -70,7 +70,6 @@ traceback_util.register_exclusion(__file__)
 get_p = core.Primitive("get")
 get_p.is_effectful = lambda params: True  # type: ignore
 get_p.def_impl(partial(dispatch.apply_primitive, get_p))
-batching.ragged_prop_rules[get_p] = batching.ragged_mask_transfer_identity
 
 get_p.is_high = lambda ref_aval, *_, tree: ref_aval.is_high  # type: ignore
 def _get_to_lojax(ref, *idx, tree):
@@ -191,16 +190,6 @@ def _swap_to_lojax(ref, val, *idx, tree):
   return val_ty.raise_val(*outs)
 swap_p.to_lojax = _swap_to_lojax  # type: ignore
 
-
-def swap_ragged_prop_rule(eqn_params, invar_raggedness, outvars):
-  assert len(invar_raggedness) == 2
-  invar_raggedness_lhs = invar_raggedness[0]
-  invar_raggedness_rhs = invar_raggedness[1]
-
-  return [invar_raggedness_rhs, invar_raggedness_lhs], [None]
-
-
-batching.ragged_prop_rules[swap_p] = swap_ragged_prop_rule
 
 @partial(traceback_util.api_boundary, repro_api_name="jax.ref.swap")
 def ref_swap(
@@ -1079,6 +1068,18 @@ batching.fancy_primitive_batchers[addupdate_p] = _addupdate_vmap
 broadcast_to_p = core.Primitive('broadcast_to')
 
 def broadcast_to(a: Array, shape: tuple[int, ...]) -> Array:
+  """Broadcasts an array to a new shape.
+
+  Args:
+    a: The array to broadcast.
+    shape: The desired shape to broadcast to.
+
+  Returns:
+    An array of shape ``shape``.
+
+  See Also:
+    :func:`jax.numpy.broadcast_to`
+  """
   import jax.numpy as jnp  # pytype: disable=import-error
   a = jnp.asarray(a)
   if a.shape == shape:

@@ -36,4 +36,5 @@ from jax._src.hijax import (
 )
 from jax._src.state import (
     AbstractRef as AbstractRef,
+    TransformedRef as TransformedRef
 )

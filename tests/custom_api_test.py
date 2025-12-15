@@ -30,7 +30,6 @@ import jax.numpy as jnp
 from jax import float0, grad, jit
 from jax import lax
 from jax import tree_util
-from jax.ad_checkpoint import checkpoint as new_checkpoint
 import jax.custom_batching
 import jax.custom_derivatives
 import jax.custom_transpose
@@ -889,15 +888,15 @@ class CustomJVPTest(jtu.JaxTestCase):
     def g(x):
       return f(f(x))
 
-    ans = api.grad(api.grad(new_checkpoint(g)))(2.)
+    ans = api.grad(api.grad(jax.checkpoint(g)))(2.)
     expected = api.grad(api.grad(g))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = api.grad(new_checkpoint(api.grad(g)))(2.)
+    ans = api.grad(jax.checkpoint(api.grad(g)))(2.)
     expected = api.grad(api.grad(g))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = api.grad(api.grad(api.grad(new_checkpoint(g))))(2.)
+    ans = api.grad(api.grad(api.grad(jax.checkpoint(g))))(2.)
     expected = api.grad(api.grad(api.grad(g)))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -1473,9 +1472,36 @@ class CustomJVPTest(jtu.JaxTestCase):
       (x, y), (x_dot, y_dot) = primals, tangents
       del y_dot  # ignore lol
       return div(x, y), div(x_dot, y)
-    _, f_vjp = api.vjp3(lambda x: div(x, 2.), 1.)
+    _, f_vjp = api.vjp(lambda x: div(x, 2.), 1.)
     ans, = f_vjp(1.)
     self.assertAllClose(ans, 1./2, check_dtypes=False)
+
+  def test_ensure_compile_time_eval(self):
+    @jax.custom_jvp
+    def f(x):
+      assert x == 0.  # concrete!
+      return x
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      (x,), (x_dot,) = primals, tangents
+      assert x == 0.  # concrete!
+
+    @jax.jit
+    def g():
+      with jax.ensure_compile_time_eval():
+        return f(0.)
+
+    g()  # don't crash
+
+    # TODO(mattjj): do we want to support autodiff here too?
+    # def h(x):
+    #   @jax.jit
+    #   def hh():
+    #     with jax.ensure_compile_time_eval():
+    #       return f(x)
+    #   return hh()
+
+    # jax.grad(h)(0.)  # don't crash
 
 
 class CustomVJPTest(jtu.JaxTestCase):

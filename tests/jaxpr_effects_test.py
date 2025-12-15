@@ -20,7 +20,6 @@ import jax
 from jax import api_util
 import jax.numpy as jnp
 from jax import lax
-from jax._src import ad_checkpoint
 from jax._src import callback as cb
 from jax._src import dispatch
 from jax._src import config
@@ -109,7 +108,7 @@ def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out
 
   out_op, token_out, _ = cb.emit_python_callback(
       ctx, callback, token_in, list(args), list(ctx.avals_in),
-      list(ctx.avals_out), has_side_effect=True)
+      list(ctx.avals_out), has_side_effect=True, returns_token=True)
   if token_out:
     ctx.set_tokens_out(ctx.tokens_in.update_tokens(mlir.TokenSet({effect:
       token_out})))
@@ -199,7 +198,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
 
   def test_new_remat_allows_certain_effects(self):
     remat_effect = RematEffect()
-    @ad_checkpoint.checkpoint
+    @jax.checkpoint
     def f(x):
       x, = effect_p.bind(x, effect=remat_effect)
       return x

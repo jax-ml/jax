@@ -53,12 +53,7 @@ SerT = TypeVar("SerT")
 # Version 5, November 23rd, 2025, adds serialization for aval memory_space,
 #   upgrade num_devices to a 32 bit value.
 #   This version is backwards compatible with Version 2 to 4.
-# TODO(necula): we cannot really store the actual serialization_version
-# in the flatbuffer because prior to 11/25/2025 deserializers checked
-# if the version is 2 or 3. I have now removed that check, but for the
-# sake of old deserializers we can only store version 3. Starting
-# on January 2026 we can store the actual version.
-_SERIALIZATION_VERSION = 3
+_SERIALIZATION_VERSION = 5
 
 def serialize(exp: _export.Exported, vjp_order: int = 0) -> bytearray:
   """Serializes an Exported.
@@ -125,13 +120,19 @@ def _serialize_exported(
     vjp = _serialize_exported(builder, exp.vjp(), vjp_order - 1)
 
   ser_flatbuf.ExportedStart(builder)
-  ser_flatbuf.ExportedAddSerializationVersion(builder, _SERIALIZATION_VERSION)
+  # TODO(necula): we cannot really store the actual serialization_version
+  # in the flatbuffer because prior to 11/25/2025 deserializers checked
+  # if the version is 2 or 3. I have now removed that check, but for the
+  # sake of old deserializers we can only store version 3. Starting
+  # on January 2026 we can store the actual version.
+  ser_flatbuf.ExportedAddSerializationVersion(builder, 3)
   ser_flatbuf.ExportedAddFunctionName(builder, fun_name)
   ser_flatbuf.ExportedAddInTree(builder, in_tree)
   ser_flatbuf.ExportedAddInAvals(builder, in_avals)
   ser_flatbuf.ExportedAddOutTree(builder, out_tree)
   ser_flatbuf.ExportedAddOutAvals(builder, out_avals)
   ser_flatbuf.ExportedAddNrDevices(builder, exp.nr_devices)
+  ser_flatbuf.ExportedAddNrDevicesShort(builder, exp.nr_devices)  # For forward compatibility, can remove after January 2026
   ser_flatbuf.ExportedAddInShardings(builder, in_shardings)
   ser_flatbuf.ExportedAddOutShardings(builder, out_shardings)
   ser_flatbuf.ExportedAddPlatforms(builder, platforms)

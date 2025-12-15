@@ -379,8 +379,8 @@ def check_is_flash_attention(
     else:
         # bf16/fp16 attention conditions
         # Check the head dim.
-        is_on_hopper = is_cuda_compute_capability_equal("9.0")
-        H_max = 256 if is_on_hopper else 128
+        is_hopper_or_later = check_compute_capability("9.0")
+        H_max = 256 if is_hopper_or_later else 128
         # check if multi-head latent attention is needed
         is_mla = qH != vH
         if not (qH <= H_max and qH % 8 == 0):

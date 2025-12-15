@@ -41,10 +41,10 @@ jobs:
         uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46
         with:
           files: |
-            jax/jax/_src/pallas/mosaic_gpu/**
-            jax/jax/experimental/mosaic/gpu/**
-            jax/jaxlib/mosaic/dialect/gpu/**
-            jax/jaxlib/mosaic/gpu/**
+            jax/_src/pallas/mosaic_gpu/**
+            jax/experimental/mosaic/gpu/**
+            jaxlib/mosaic/dialect/gpu/**
+            jaxlib/mosaic/gpu/**
             .github/workflows/bazel_cuda_h100_b200.yml
       - name: List all changed files
         env:
@@ -76,6 +76,7 @@ jobs:
             bazel test \
             --config=ci_linux_x86_64_cuda \
             --config=ci_rbe_cache \
+            --config=hermetic_cuda_umd \
             --repo_env=HERMETIC_PYTHON_VERSION="3.14" \
             --repo_env=HERMETIC_CUDNN_VERSION="9.11.0" \
             --repo_env=HERMETIC_CUDA_UMD_VERSION="13.0.0" \
@@ -120,6 +121,7 @@ jobs:
             bazel test \
             --config=ci_linux_x86_64_cuda \
             --config=ci_rbe_cache \
+            --config=hermetic_cuda_umd \
             --repo_env=HERMETIC_PYTHON_VERSION="3.14" \
             --repo_env=HERMETIC_CUDNN_VERSION="9.11.0" \
             --repo_env=HERMETIC_CUDA_UMD_VERSION="13.0.0" \

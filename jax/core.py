@@ -21,7 +21,6 @@ from jax._src.core import (
   Atom as Atom,
   CallPrimitive as CallPrimitive,
   DebugInfo as DebugInfo,
-  DShapedArray as DShapedArray,
   DropVar as DropVar,
   Effect as Effect,
   Effects as Effects,
@@ -39,7 +38,6 @@ from jax._src.core import (
   unsafe_am_i_under_a_jit as unsafe_am_i_under_a_jit_DO_NOT_USE,  # noqa: F401
   unsafe_am_i_under_a_vmap as unsafe_am_i_under_a_vmap_DO_NOT_USE,  # noqa: F401
   unsafe_get_axis_names as unsafe_get_axis_names_DO_NOT_USE,  # noqa: F401
-  UnshapedArray as UnshapedArray,
   Value as Value,
   abstract_token as abstract_token,
   aval_mapping_handlers as aval_mapping_handlers,
@@ -54,7 +52,7 @@ from jax._src.core import (
   eval_jaxpr as eval_jaxpr,
   find_top_trace as find_top_trace,
   gensym as gensym,
-  get_aval as get_aval,
+  get_aval as _deprecated_get_aval,
   is_concrete as is_concrete,
   is_constant_dim as is_constant_dim,
   is_constant_shape as is_constant_shape,
@@ -77,3 +75,21 @@ from jax._src.core import (
   unmapped_aval as unmapped_aval,
   valid_jaxtype as valid_jaxtype,
 )
+
+_deprecations = {
+  # Added for v0.8.2
+  "get_aval": (
+    "jax.core.get_aval is deprecated; use jax.typeof instead.",
+    _deprecated_get_aval
+  ),
+}
+
+import typing as _typing
+if _typing.TYPE_CHECKING:
+  get_aval = _deprecated_get_aval
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing
+del _deprecated_get_aval

@@ -20,9 +20,16 @@ from absl.testing import absltest, parameterized
 import jax
 from jax import random
 from jax._src import test_util as jtu
+from jax._src.pallas import pallas_test_util as ptu
+from jax._src.shard_map import shard_map
+from jax.experimental.pallas.ops.tpu.splash_attention import (
+    CausalMask,
+    MultiHeadMask,
+    SegmentIds,
+    make_splash_mha,
+)
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel as splash
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
-from jax._src.shard_map import shard_map
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec
 import numpy as np
@@ -33,14 +40,10 @@ jax.config.parse_flags_with_absl()
 
 
 @jtu.with_config(jax_traceback_filtering="off")
-class PallasBaseTest(jtu.JaxTestCase):
-  INTERPRET = False
+class PallasBaseTest(ptu.PallasTPUTest):
 
   def setUp(self):
     super().setUp()
-    if not jtu.is_device_tpu():
-      self.skipTest("Test requires TPU.")
-
     if len(jax.devices()) < 4:
       self.skipTest("This test requires at least 4 devices.")
 
@@ -217,6 +220,62 @@ class SplashAttentionShardingTest(PallasBaseTest):
     self.assertAllClose(dq, dq_ref, atol=5e-2)
     self.assertAllClose(dk, dk_ref, atol=5e-2)
     self.assertAllClose(dv, dv_ref, atol=5e-2)
+
+  def test_splash_explicit_vmap_one_mesh_axis(self):
+    mesh = jax.make_mesh((4,), ("dp",))
+
+    NUM_HEADS = 4
+    SEQ_LEN = 256
+    HEAD_DIM = 64
+    d_model = NUM_HEADS * HEAD_DIM
+
+    key = jax.random.key(0)
+    input_sharding = jax.NamedSharding(mesh, jax.P("dp", None, None))
+    x_seq = jax.random.normal(key, (4, SEQ_LEN, d_model), dtype=jnp.bfloat16)
+    x_seq = jax.device_put(x_seq, input_sharding)
+
+    def make_splash_kernel_with_shard_map(mesh):
+      mask = MultiHeadMask([CausalMask(shape=(SEQ_LEN, SEQ_LEN))
+                            for _ in range(NUM_HEADS)])
+      splash_spec = jax.P(None, None)
+      sspec = jax.NamedSharding(mesh, splash_spec)
+
+      kernel = make_splash_mha(mask, head_shards=1, q_seq_shards=1)
+      kspec = kernel.manual_sharding_spec(sspec)
+
+      @jax.shard_map(
+          mesh=mesh,
+          in_specs=(kspec, splash_spec, splash_spec, splash_spec, jax.P()),
+          out_specs=splash_spec,
+          check_vma=False,
+      )
+      def splash_sharded(kernel, q, k, v, segment_ids):
+        return kernel(q, k, v, segment_ids=segment_ids)
+
+      return splash_sharded, kernel
+
+    def attention_fn_with_shmap(splash_sharded, kernel, x_seq):
+      s = x_seq.shape[0]
+      q, k, v = jnp.ones((3, NUM_HEADS, s, HEAD_DIM), out_sharding=jax.P())
+      segment_ids = SegmentIds(q=jnp.zeros((s,)), kv=jnp.zeros((s,)))
+      scale = HEAD_DIM ** -0.25
+      out = splash_sharded(kernel, q * scale, k * scale, v, segment_ids)
+      return out
+
+    splash_sharded, kernel = make_splash_kernel_with_shard_map(mesh)
+
+    @jax.jit
+    def step(x_seq):
+      def loss_fn(x_seq):
+        attn_fn = partial(attention_fn_with_shmap, splash_sharded, kernel)
+        out = jax.vmap(attn_fn)(x_seq)
+        return out.sum()
+
+      loss, grads = jax.value_and_grad(loss_fn)(x_seq)
+      return loss, grads
+
+    with jax.set_mesh(mesh):
+      step(x_seq)  # doesn't crash
 
 
 if __name__ == "__main__":

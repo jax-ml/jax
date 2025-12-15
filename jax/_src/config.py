@@ -1157,6 +1157,15 @@ check_tracer_leaks = bool_state(
           'to disable any debuggers while leak checking is enabled.'))
 checking_leaks = functools.partial(check_tracer_leaks, True)
 
+check_static_indices = bool_state(
+    name='jax_check_static_indices',
+    default=False,
+    help=('Turn on bounds checks for static indices during array indexing operations.'
+          ' These will only be checked when indexing mode is PROMISE_IN_BOUNDS, which'
+          ' is the default for gather-type operations.'),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
 
 captured_constants_warn_bytes = int_state(
     name='jax_captured_constants_warn_bytes',
@@ -1776,16 +1785,6 @@ bcoo_cusparse_lowering = bool_state(
     default=False,
     help=('Enables lowering BCOO ops to cuSparse.'))
 
-# TODO(mattjj): remove this flag when we ensure we only succeed at trace-staging
-# if the intended backend can handle lowering the result
-dynamic_shapes = bool_state(
-    name='jax_dynamic_shapes',
-    default=False,
-    help=('Enables experimental features for staging out computations with '
-          'dynamic shapes.'),
-    include_in_jit_key=True,
-    include_in_trace_context=True)
-
 # This is for stackless backward compat with e.g. equinox
 eager_constant_folding = bool_state(
     name='eager_constant_folding',
@@ -1833,12 +1832,6 @@ mutable_array_checks = bool_state(
     upgrade=True,
     help='Enable error checks for mutable arrays that rule out aliasing.',
     include_in_trace_context=True)
-
-vjp3 = bool_state(
-    name='jax_vjp3',
-    default=True,
-    upgrade=True,
-    help='Use new backward-pass code in jax.vjp')
 
 refs_to_pins = bool_state(
     name='jax_refs_to_pins',

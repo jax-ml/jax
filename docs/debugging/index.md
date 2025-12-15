@@ -8,7 +8,7 @@ Table of contents:
 
 * [Interactive inspection with `jax.debug`](print_breakpoint)
 * [Functional error checks with jax.experimental.checkify](checkify_guide)
-* [Throwing Python errors with JAX’s debug flags](flags)
+* [Throwing Python errors with JAX’s debug flags](./flags)
 * [Attaching XLA metadata with `set_xla_metadata`](xla_metadata)
 
 ## Interactive inspection with `jax.debug`
@@ -86,7 +86,7 @@ Complete guide [here](checkify_guide)
 
 ## Throwing Python errors with JAX's debug flags
 
-Complete guide [here](flags)
+Complete guide [here](./flags)
 
 **Summary:** Enable the `jax_debug_nans` flag to automatically detect when NaNs are produced in `jax.jit`-compiled code (but not in `jax.pmap` or `jax.pjit`-compiled code) and enable the `jax_disable_jit` flag to disable JIT-compilation, enabling use of traditional Python debugging tools like `print` and `pdb`.
 
@@ -99,7 +99,7 @@ def f(x, y):
 jax.jit(f)(0., 0.)  # ==> raises FloatingPointError exception!
 ```
 
-[Read more](flags).
+[Read more](./flags).
 
 ## Attaching XLA Metadata with `set_xla_metadata`
 
@@ -140,7 +140,7 @@ ENTRY main.5 {
 
 print_breakpoint
 checkify_guide
-flags
+./flags
 xla_metadata
 ```
 

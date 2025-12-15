@@ -27,16 +27,17 @@ from jax._src import dtypes
 from jax._src.state.types import AbstractRef
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, treedef_children,
-    generate_key_paths, broadcast_prefix, prefix_errors, none_leaf_registry,
-    broadcast_flattened_prefix_with_treedef)
+    tree_flatten_with_path, generate_key_paths, broadcast_prefix, prefix_errors,
+    none_leaf_registry, broadcast_flattened_prefix_with_treedef)
 from jax._src import linear_util as lu
 from jax._src.util import (safe_map, WrapKwArgs, Hashable, HashableFunction,
-                           Unhashable, safe_zip as zip)
+                           Unhashable, safe_zip, unzip2)
 from jax._src import traceback_util
 
 traceback_util.register_exclusion(__file__)
 
-map = safe_map
+map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
 
 def _ensure_index(x: Any) -> int | tuple[int, ...]:
   """Ensure x is either an index or a tuple of indices."""
@@ -73,6 +74,16 @@ def flatten_fun(f: Callable, store: lu.Store,
   ans = f(*py_args, **py_kwargs)
   ans, out_tree = tree_flatten(ans)
   store.store(out_tree)
+  return ans
+
+@lu.transformation_with_aux2
+def flatten_fun3(f: Callable, store: lu.Store,
+                in_tree: PyTreeDef, *args_flat):
+  py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
+  ans = f(*py_args, **py_kwargs)
+  paths_and_ans, out_tree = tree_flatten_with_path(ans)
+  paths, ans = unzip2(paths_and_ans)
+  store.store((out_tree, paths))
   return ans
 
 def apply_flat_fun(fun, io_tree, *py_args):

@@ -6,8 +6,8 @@ Everyone can contribute to JAX, and we value everyone's contributions. There are
 ways to contribute, including:
 
 - Answering questions on JAX's [discussions page](https://github.com/jax-ml/jax/discussions)
-- Improving or expanding JAX's [documentation](http://docs.jax.dev/)
-- Contributing to JAX's [code-base](http://github.com/jax-ml/jax/)
+- Improving or expanding JAX's [documentation](https://docs.jax.dev)
+- Contributing to JAX's [code-base](https://github.com/jax-ml/jax)
 - Contributing in any of the above ways to the broader ecosystem of [libraries built on JAX](https://github.com/jax-ml/jax#neural-network-libraries)
 
 The JAX project follows [Google's Open Source Community Guidelines](https://opensource.google/conduct/).
@@ -30,6 +30,15 @@ Agreement (CLA)](https://cla.developers.google.com/), in which contributors agre
 contribution is an original work of authorship. This doesn’t prohibit the use of coding
 assistance tools, but what’s submitted does need to be a contributor's original creation.
 
+In the JAX project, a main concern with AI-generated contributions is that
+**low-quality AI-generated code imposes a disproportionate review cost**.
+Since the team's capacity for code review is limited, we have a higher bar
+for accepting AI-generated contributions compared to those written by a human.
+
+A loose rule of thumb: if the team needs to spend more time reviewing a
+contribution than the contributor spends generating it, then the contribution
+is probably not helpful to the project, and we will likely reject it.
+
 ## Contributing code using pull requests
 
 We do all of our development using git, so basic knowledge is assumed.
@@ -40,7 +49,7 @@ Follow these steps to contribute code:
    For more information, see the {ref}`pr-checklist` below.
 
 2. Fork the JAX repository by clicking the **Fork** button on the
-   [repository page](http://www.github.com/jax-ml/jax). This creates
+   [repository page](https://github.com/jax-ml/jax). This creates
    a copy of the JAX repository in your own account.
 
 3. Install Python >= 3.11 locally in order to run tests.
@@ -59,7 +68,7 @@ Follow these steps to contribute code:
    changes.
 
    ```bash
-   git remote add upstream https://www.github.com/jax-ml/jax
+   git remote add upstream https://github.com/jax-ml/jax.git
    ```
 
 6. Create a branch where you will develop from:

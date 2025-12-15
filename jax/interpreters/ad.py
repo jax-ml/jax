@@ -41,7 +41,6 @@ from jax._src.interpreters.ad import (
   primitive_jvps as primitive_jvps,
   primitive_transposes as primitive_transposes,
   reducing_transposes as reducing_transposes,
-  vjp as vjp,
   zeros_like_aval as zeros_like_aval,
 )
 

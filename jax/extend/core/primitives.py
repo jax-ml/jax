@@ -15,6 +15,11 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
+from jax._src.ad_checkpoint import (
+  name_p as name_p,
+  remat_p as remat_p,
+)
+
 from jax._src.ad_util import stop_gradient_p as stop_gradient_p
 
 from jax._src.core import (

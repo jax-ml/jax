@@ -991,6 +991,12 @@ def _mgpu_async_store_op_lowering_rule(
   # flatten -> async_copy -> unflatted here, as long as flattened size is a
   # multiple of 16.
 
+  # TODO(b/415721295):Simplify, after the minimal jaxlib version is 0.8.2.
+  if hasattr(mgpu, "TMAReduction") and store_op.reduction_op is not None:
+    reduction_op = mgpu.TMAReduction(store_op.reduction_op.value).name.lower()
+  else:
+    reduction_op = None
+
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=unwrapped_source,
@@ -1000,6 +1006,7 @@ def _mgpu_async_store_op_lowering_rule(
       gmem_transform=transforms,
       predicate=ctx.single_thread_per_warpgroup_predicate,
       arrive=store_op.commit_group,
+      reduction_op=reduction_op,
   )
   return []
 
@@ -1092,6 +1099,8 @@ for op, unary_impl, is_signed in [
     (mlir_math.RsqrtOp, fa.FragmentedArray.rsqrt, None),
     (mlir_math.ExpOp, fa.FragmentedArray.exp, None),
     (mlir_math.Exp2Op, fa.FragmentedArray.exp2, None),
+    (mlir_math.SinOp, fa.FragmentedArray.sin, None),
+    (mlir_math.CosOp, fa.FragmentedArray.cos, None),
     (mlir_math.LogOp, fa.FragmentedArray.log, None),
     (mlir_math.TanhOp, fa.FragmentedArray.tanh, None),
 ]:
@@ -1332,7 +1341,7 @@ def _mgpu_arrive_expect_tx_op_lowering_rule(
   barrier = utils.DialectBarrierRef.from_barrier_memref(
       arrive_expect_tx_op.barrier
   )
-  nvvm.mbarrier_arrive_expect_tx(barrier.get_ptr(), bytes)
+  utils.nvvm_mbarrier_arrive_expect_tx(barrier.get_ptr(), bytes)
 
   return []
 
@@ -1654,6 +1663,49 @@ def _memref_transpose_op_lowering_rule(
 
   wrapped_ref = wrap_transformed_memref(
       new_transpose_op.result, op.result.type, out_transforms
+  )
+  return [wrapped_ref]
+
+
+@_register_lowering(memref.ExpandShapeOp)
+def _memref_expand_shape_op_lowering_rule(
+    ctx: LoweringContext, op: memref.ExpandShapeOp
+) -> Sequence[ir.Value]:
+  del ctx
+
+  in_transforms = inference_utils.in_transforms(op)[0]
+  unwrapped_in_ref = unwrap_transformed_memref(op.src, in_transforms)
+  in_transformed_ty = ir.MemRefType(unwrapped_in_ref.type)
+
+  out_transforms = inference_utils.out_transforms(op)[0]
+  _, transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
+  out_transformed_ty = transformed_smem_ref_type(op.result.type, transforms)
+
+  reassociation = list(op.reassociation)
+  num_tiling_dims = len(in_transformed_ty.shape) - len(op.src.type.shape)
+
+  # We don't currently allow expanding tiled dimensions. So to compute the
+  # reassociation on the lowered types, we just need to backfill the original
+  # one with the number of missing dimensions.
+  if num_tiling_dims > 0 and any(
+      len(x) > 1 for x in reassociation[-num_tiling_dims:]
+  ):
+    raise NotImplementedError("Expanding tiled dimensions is not supported.")
+
+  start_index = len(op.static_output_shape)
+  for i in range(start_index, start_index + num_tiling_dims):
+    reassociation.append([i])
+
+  new_expand_shape_op = memref.ExpandShapeOp(
+      out_transformed_ty,
+      unwrapped_in_ref,
+      reassociation,
+      output_shape=op.output_shape,
+      static_output_shape=out_transformed_ty.shape,
+  )
+
+  wrapped_ref = wrap_transformed_memref(
+      new_expand_shape_op.result, op.result.type, out_transforms
   )
   return [wrapped_ref]
 

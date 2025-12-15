@@ -14,6 +14,7 @@ Classes
    CompilerParams
    MemorySpace
    Layout
+   SemaphoreType
    SwizzleTransform
    TilingTransform
    TransposeTransform

@@ -107,6 +107,14 @@ def conv_general_dilated(
     preferred_element_type: Optional. Either ``None``, which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
+    out_sharding: Optional. Specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html>`_
+      for more details.
 
   Returns:
     An array containing the convolution result.
@@ -293,6 +301,13 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
 
   This function directly calculates a fractionally strided conv rather than
   indirectly calculating the gradient (transpose) of a forward convolution.
+
+  Notes:
+    TensorFlow/Keras Compatibility: By default, JAX does NOT reverse the
+    kernel's spatial dimensions. This differs from TensorFlow's "Conv2DTranspose"
+    and similar frameworks, which flip spatial axes and swap input/output channels.
+
+    To match TensorFlow/Keras behavior, set "transpose_kernel=True" .
 
   Args:
     lhs: a rank `n+2` dimensional input array.

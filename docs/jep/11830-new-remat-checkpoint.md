@@ -1,5 +1,7 @@
 # `jax.remat` / `jax.checkpoint` changes: what you need to know
 
+This document discusses changes made to `jax.checkpoint` (a.k.a. `jax.remat`)
+that were finalized in JAX v0.3.17, released in August 2022.
 
 ## Contents
 

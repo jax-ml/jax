@@ -47,6 +47,10 @@ class Array:
   @property
   def dtype(self) -> np.dtype: ...
 
+  # TODO(jakevdp) set to None after deprecation period.
+  @property
+  def __numpy_dtype__(self) -> np.dtype: ...
+
   @property
   def ndim(self) -> int: ...
 
@@ -287,16 +291,16 @@ class _IndexUpdateHelper:
 class _IndexUpdateRef:
   def get(self, indices_are_sorted: bool = False, unique_indices: bool = False,
           mode: str | None = None, fill_value: StaticScalar | None = None,
-          out_sharding: Sharding | P | None = None,
+          out_sharding: NamedSharding | P | None = None,
           wrap_negative_indices: bool = True) -> Array: ...
   def set(self, values: Any,
           indices_are_sorted: bool = False, unique_indices: bool = False,
           mode: str | None = None, fill_value: StaticScalar | None = None,
-          out_sharding: Sharding | P | None = None,
+          out_sharding: NamedSharding | P | None = None,
           wrap_negative_indices: bool = True) -> Array: ...
   def add(self, values: Any, indices_are_sorted: bool = False,
           unique_indices: bool = False, mode: str | None = None,
-          out_sharding: Sharding | P | None = None,
+          out_sharding: NamedSharding | P | None = None,
           wrap_negative_indices: bool = True) -> Array: ...
   def subtract(self, values: Any, *, indices_are_sorted: bool = False,
                unique_indices: bool = False, mode: str | None = None,

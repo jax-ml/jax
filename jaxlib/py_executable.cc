@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/python/ifrt/user_context_status_util.h"
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
+#include "xla/python/version.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
@@ -89,9 +90,20 @@ uint64_t GetBaseLaunchId(std::optional<std::string> fingerprint,
   // Pmap and replicated executables for example will only populate the local
   // device to the loaded executable and all devices will have different devices
   // fingerprints.
+#if JAX_IFRT_VERSION_NUMBER >= 37
+  if (std::optional<ifrt::DeviceListRef> device_list = executable->devices();
+      device_list.has_value() && !(*device_list)->IsFullyAddressable()) {
+    ret += (*device_list)->fingerprint();
+  }
+#else
   if (!executable->devices()->IsFullyAddressable()) {
     ret += executable->devices()->fingerprint();
   }
+#endif
+  VLOG(1) << "Get base launch id: " << ret << " from fingerprint: "
+          << (fingerprint.has_value()
+                  ? absl::StrCat(tsl::Fingerprint64(*fingerprint))
+                  : "<nullopt>");
   return ret;
 }
 
@@ -248,16 +260,34 @@ PyExecuteResults::DisassemblePrefixIntoSingleDeviceArrays(size_t n) {
 
 std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
     std::vector<std::variant<const PyArrayResultHandler*, nb::object>>
-        out_handlers) {
+        out_handlers,
+    bool strict) {
   std::vector<nb::object> outputs;
-  auto ifrt_arrays = Consume();
-  int num_output_buffers = ifrt_arrays.size();
-  outputs.reserve(num_output_buffers);
-  if (out_handlers.size() != num_output_buffers) {
-    throw nb::value_error(
-        absl::StrCat("Mismatch between out_handlers and num_results: ",
-                     out_handlers.size(), " vs ", num_output_buffers)
-            .c_str());
+  int num_output_buffers = out_handlers.size();
+  std::vector<xla::ifrt::ArrayRef> ifrt_arrays;
+  if (strict) {
+    if (out_handlers.size() != ifrt_arrays_.size()) {
+      throw nb::value_error(
+          absl::StrCat("Mismatch between out_handlers and num_results: ",
+                       out_handlers.size(), " vs ", ifrt_arrays_.size())
+              .c_str());
+    }
+    ifrt_arrays = Consume();
+  } else {
+    if (out_handlers.size() > ifrt_arrays_.size()) {
+      throw nb::value_error(
+          absl::StrCat("Mismatch between out_handlers and num_results: ",
+                       out_handlers.size(), " > ", ifrt_arrays_.size())
+              .c_str());
+    }
+    CheckNotDisassembled();
+    ifrt_arrays.reserve(ifrt_arrays_.size() - num_output_buffers);
+    for (size_t i = num_output_buffers; i < ifrt_arrays_.size(); ++i) {
+      ifrt_arrays.push_back(std::move(ifrt_arrays_[i]));
+    }
+    ifrt_arrays_.erase(ifrt_arrays_.begin() + ifrt_arrays_.size(),
+                       ifrt_arrays_.end());
+    std::swap(ifrt_arrays_, ifrt_arrays);
   }
   for (int buffer_id = 0; buffer_id < num_output_buffers; ++buffer_id) {
     auto& handler = out_handlers[buffer_id];
@@ -297,7 +327,8 @@ void PyExecuteResults::Register(nb::module_& m) {
            &PyExecuteResults::DisassembleIntoSingleDeviceArrays)
       .def("disassemble_prefix_into_single_device_arrays",
            &PyExecuteResults::DisassemblePrefixIntoSingleDeviceArrays)
-      .def("consume_with_handlers", &PyExecuteResults::ConsumeWithHandlers)
+      .def("consume_with_handlers", &PyExecuteResults::ConsumeWithHandlers,
+           nb::arg("out_handlers"), nb::arg("strict") = true)
       .def("consume_token", &PyExecuteResults::ConsumeToken);
 }
 
@@ -513,9 +544,16 @@ int32_t PyLoadedExecutable::GetNextLaunchId() {
     launch_id = absl::bit_cast<int32_t>(it->second++);
   }
   VLOG(1) << "Launching executable " << ifrt_loaded_executable_->name()
-          << " with launch ID: " << launch_id;
+          << " with launch ID: " << launch_id << " key: " << launch_id_key_;
+#if JAX_IFRT_VERSION_NUMBER >= 37
+  VLOG(2) << "Executable devices for launch ID " << launch_id << ": "
+          << (ifrt_loaded_executable_->devices().has_value()
+                  ? (*ifrt_loaded_executable_->devices())->DebugString()
+                  : "<nullopt>");
+#else
   VLOG(2) << "Executable devices for launch ID " << launch_id << ": "
           << ifrt_loaded_executable_->devices()->DebugString();
+#endif
   return launch_id;
 }
 
@@ -530,6 +568,12 @@ void PyLoadedExecutable::Register(nb::module_& m) {
       .def("get_hlo_text",
            xla::ValueOrThrowWrapper(
                &PyLoadedExecutable::GetHumanReadableProgramText))
+      .def("serialize",
+           [](const PyLoadedExecutable& exec) -> nb::bytes {
+             std::string serialized =
+                 xla::ValueOrThrow(exec.ifrt_loaded_executable()->Serialize());
+             return nb::bytes(serialized.data(), serialized.size());
+           })
       .def("size_of_generated_code_in_bytes",
            &PyLoadedExecutable::SizeOfGeneratedCodeInBytes)
       .def(

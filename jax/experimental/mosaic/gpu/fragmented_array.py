@@ -1301,9 +1301,8 @@ class FragmentedArray:
       raise NotImplementedError(
           f"Cannot convert from {self.layout} to {new_layout}"
       )
-    [reg] = self.registers.flat
     return type(self).splat(
-        reg, self.shape, new_layout, is_signed=self.is_signed
+        self.registers.item(), self.shape, new_layout, is_signed=self.is_signed
     )
 
   def _pointwise(
@@ -1730,8 +1729,8 @@ class FragmentedArray:
     if any(is_squeezed):
       raise NotImplementedError("Integer indexing not implemented (only slicing allowed)")
     base_tile_shape = self.layout.base_tile_shape
-    if len(base_tile_shape) != len(self.shape):
-      raise NotImplementedError("Tiling has different rank than array")
+    if untiled_rank := len(self.shape) - len(base_tile_shape):
+      base_tile_shape = (1,) * untiled_rank + base_tile_shape
     if any(b % t for b, t in zip(base_idx, base_tile_shape, strict=True)):
       raise ValueError(
           "Base indices of array slices must be aligned to the beginning of a"
@@ -2472,12 +2471,34 @@ class FragmentedArray:
     match self.layout:
       case WGSplatFragLayout() | WGStridedFragLayout():
         new_layout = dataclasses.replace(self.layout, shape=shape)
+        return FragmentedArray(
+            _registers=self.registers,
+            _layout=new_layout,
+            _is_signed=self.is_signed,
+        )
+      case TiledLayout():
+        base_tile_shape = self.layout.base_tile_shape
+        assert base_tile_shape
+        old_shape_suffix = self.shape[-len(base_tile_shape):]
+        new_shape_suffix = shape[-len(base_tile_shape):]
+        # We already know that old_shape_suffix[0] is divisible by
+        # base_tile_shape[0].
+        if (
+            old_shape_suffix[1:] != new_shape_suffix[1:]
+            or new_shape_suffix[0] % base_tile_shape[0]
+        ):
+          raise ValueError(
+              f"Can't reshape {self.shape} to {shape} with a tiled layout with"
+              f" base tile of {base_tile_shape}"
+          )
+        new_registers_shape = self.layout.registers_shape(shape)
+        return FragmentedArray(
+            _registers=self.registers.reshape(new_registers_shape),
+            _layout=self.layout,
+            _is_signed=self.is_signed,
+        )
       case _:
         raise NotImplementedError(self.layout)
-
-    return FragmentedArray(
-        _registers=self.registers, _layout=new_layout, _is_signed=self.is_signed
-    )
 
   def broadcast_minor(self, n) -> FragmentedArray:
     if len(self.shape) != 1:
@@ -2502,15 +2523,23 @@ class FragmentedArray:
             f" {shape[target_dim]} in shape after broadcast"
         )
     if isinstance(self.layout, WGSplatFragLayout):
-      if isinstance(layout, WGSplatFragLayout):
-        if layout.shape != shape:
-          raise ValueError(
-              f"Layout shape {layout.shape} does not match broadcast shape {shape}"
-          )
+      return type(self).splat(
+        self.registers.item(), shape, layout, is_signed=self.is_signed
+      )
+    if isinstance(self.layout, WGStridedFragLayout) and isinstance(layout, WGStridedFragLayout):
+      new_dims = set(range(len(shape))) - set(source_dimensions)
+      vec_match = self.layout.vec_size == layout.vec_size
+      broadcast_dim_match = new_dims == set(range(len(new_dims)))
+      assert layout.shape == shape, (layout.shape, shape)
+      if vec_match and broadcast_dim_match:
         return FragmentedArray(
-            _registers=self.registers, _layout=layout, _is_signed=self.is_signed,
+            _registers=np.tile(
+                self.registers,
+                np.prod(shape[:len(new_dims)]),
+            ),
+            _layout=layout,
+            _is_signed=self.is_signed,
         )
-      # TODO: Support splat to other layouts
     if not isinstance(self.layout, TiledLayout) or not isinstance(layout, TiledLayout):
       raise NotImplementedError(self.layout, layout)
     if any(d1 >= d2 for d1, d2 in zip(source_dimensions, source_dimensions[1:])):
@@ -2695,7 +2724,9 @@ class FragmentedArray:
         _load_fun=functools.partial(
             utils.multimem_load_reduce, reduction=reduction, is_signed=is_signed
         ),
-        _f8_as_i8=False,
+        # multimem_load_reduce supports vectors of narrow floats, so we don't
+        # need to do any casting.
+        _narrow_float_as_int=False,
     )
 
   @classmethod
@@ -2754,7 +2785,13 @@ class FragmentedArray:
     else:
       stores = self.transfer_tiled(ref, swizzle, layout, shape, optimized)
       for get, _update, _idx, ptr in stores:
-        llvm.store(get(self.registers), ptr)
+        reg = get(self.registers)
+        reg_ty = ir.VectorType(reg.type)
+        element_bitwidth = utils.bitwidth(reg_ty.element_type)
+        if ir.FloatType.isinstance(reg_ty.element_type) and element_bitwidth <= 8:
+          narrow_int = ir.IntegerType.get_signless(element_bitwidth)
+          reg = vector.bitcast(ir.VectorType.get(reg_ty.shape, narrow_int), reg)
+        llvm.store(reg, ptr)
 
   @classmethod
   def load_tiled(
@@ -2766,7 +2803,7 @@ class FragmentedArray:
       layout: FragmentedLayout = WGMMA_LAYOUT,
       optimized: bool = True,
       _load_fun: Callable[[ir.VectorType, ir.Value], ir.Value] = llvm.load,
-      _f8_as_i8: bool = True,
+      _narrow_float_as_int: bool = True,
   ) -> FragmentedArray:
     if not isinstance(layout, TiledLayout):
       raise NotImplementedError(layout)
@@ -2782,17 +2819,18 @@ class FragmentedArray:
     reg_ty = ir.VectorType.get((layout.vector_length,), dtype)
     zero = vector.broadcast(reg_ty, c(0, dtype))
     registers = np.full(layout.registers_shape(shape), zero, dtype=object)
-    is_f8 = ir.FloatType.isinstance(dtype) and utils.bitwidth(dtype) == 8
-    i8 = ir.IntegerType.get_signless(8)
-    # f8 data types are not handled by the LLVM dialect, so we need to
-    # transfer them as i8 and bitcast them back to f8.
+    is_narrow_float = ir.FloatType.isinstance(dtype) and utils.bitwidth(dtype) <= 8
+    narrow_int = ir.IntegerType.get_signless(utils.bitwidth(dtype))
+    # Narrow floats are not supported by LLVM, so we need to transfer them as
+    # narrow ints and bitcast back to the desired type.
     transfer_ty = ir.VectorType.get(
-        (layout.vector_length,), i8 if is_f8 and _f8_as_i8 else dtype
+        (layout.vector_length,),
+        narrow_int if is_narrow_float and _narrow_float_as_int else dtype
     )
     loads = cls.transfer_tiled(ref, swizzle, layout, shape, optimized)
     for _get, update, _idx, ptr in loads:
       loaded_reg = _load_fun(transfer_ty, ptr)
-      if is_f8 and _f8_as_i8:
+      if is_narrow_float and _narrow_float_as_int:
         loaded_reg = vector.bitcast(reg_ty, loaded_reg)
       update(registers, loaded_reg)
     return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
@@ -2957,10 +2995,9 @@ class FragmentedArray:
     swizzle_group_transfers = 128 // transfer_bytes
     swizzle_groups_per_block = swizzle // 16
     swizzle_block_transfers = swizzle_groups_per_block * swizzle_group_transfers
-    is_f8 = ir.FloatType.isinstance(dtype) and element_bits == 8
-    i8 = ir.IntegerType.get_signless(8)
-    if is_f8:
-      transfer_dtype = ir.VectorType.get((vector_length,), i8)
+    if ir.FloatType.isinstance(dtype) and element_bits <= 8:
+      narrow_int = ir.IntegerType.get_signless(element_bits)
+      transfer_dtype = ir.VectorType.get((vector_length,), narrow_int)
     else:
       transfer_dtype = ir.VectorType.get((vector_length,), dtype)
 
@@ -3053,13 +3090,9 @@ class FragmentedArray:
         return tuple(reg_tiled_idx)
       reg_idxs = [mem_idx_to_reg_idx(idx) for idx in indices.tolist()]
       def get_register(regs, reg_idxs=reg_idxs):
-        def cast_if_f8(x):
-          if is_f8:
-            return vector.bitcast(transfer_dtype, x)
-          return x
         # f8 data types are not handled by the LLVM dialect, so we need to
         # transfer them as i8 and bitcast them back to f8.
-        return plan.select([cast_if_f8(regs[reg_idx]) for reg_idx in reg_idxs])
+        return plan.select([regs[reg_idx] for reg_idx in reg_idxs])
       def update_registers(regs, new, reg_idxs=reg_idxs):
         # TODO(apaszke): If the staggering forms a permutation with a small
         # cycle length, then instead of blending at each step we could construct

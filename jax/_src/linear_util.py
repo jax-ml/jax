@@ -77,7 +77,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import traceback_util
 from jax._src.tree_util import KeyPath, generate_key_paths, keystr
-from jax._src.util import HashableFunction, curry, fun_name, register_cache
+from jax._src.util import curry, fun_name, register_cache
 
 
 traceback_util.register_exclusion(__file__)
@@ -405,13 +405,8 @@ def wrap_init(f: Callable, params=None, *, debug_info: DebugInfo) -> WrappedFun:
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
   params_dict = {} if params is None else params
   params = () if params is None else tuple(sorted(params.items()))
+  debug_info = debug_info._replace(result_paths=None)
   fun = WrappedFun(f, partial(f, **params_dict), (), (), params, None, debug_info)
-  if debug_info.result_paths is initial_result_paths:
-    fun, result_paths_thunk = _get_result_paths_thunk(fun)
-    debug_info = debug_info._replace(
-        result_paths=HashableFunction(result_paths_thunk, closure=()))
-  fun = WrappedFun(fun.f, fun.f_transformed, fun.transforms, fun.stores,
-                   fun.params, fun.in_type, debug_info)
   return fun
 
 
@@ -421,54 +416,18 @@ def _clean_keystr_arg_names(k: KeyPath) -> str:
   res = keystr(k)
   return _re_clean_keystr_arg_names.sub(r"\1", res)
 
-@transformation_with_aux2
-def _get_result_paths_thunk(_fun: Callable, _store: Store, *args, **kwargs):
-  ans = _fun(*args, **kwargs)
-  result_paths = tuple(f"result{_clean_keystr_arg_names(path)}" for path, _ in generate_key_paths(ans))
-  if _store:
-    # In some instances a lu.WrappedFun is called multiple times, e.g.,
-    # the bwd function in a custom_vjp
-    assert _store.val == result_paths, (_store, result_paths)
-  else:
-    _store.store(result_paths)
-  return ans
-
 def annotate(f: WrappedFun, in_type: core.InputType | None) -> WrappedFun:
   assert f.in_type is None
   if in_type is None:
     return f
   _check_input_type(in_type)
-  return WrappedFun(f.f, f.f_transformed, f.transforms, f.stores, f.params, in_type, f.debug_info)
+  return WrappedFun(f.f, f.f_transformed, f.transforms, f.stores, f.params,
+                    in_type, f.debug_info)
 
 def _check_input_type(in_type: core.InputType) -> None:
   # Check that in_type is syntactically well-formed
-  assert type(in_type) is tuple and all(type(e) is tuple for e in in_type)
-  assert all(isinstance(a, core.AbstractValue) and type(b) is bool
-             for a, b in in_type)
-
-  def valid_size(d) -> bool:
-    if isinstance(d, core.DBIdx) and type(d.val) is int and d.val >= 0:
-      return True
-    return (isinstance(d, (int, core.DBIdx, core.DArray)) and
-            (not isinstance(d, core.DArray) or type(d) is core.bint and not d.shape))
-  assert all(valid_size(d) for a, _ in in_type if type(a) is core.DShapedArray
-             for d in a.shape)
-
-  # Check that all DBIdx point to positions to the left of the input on which
-  # they appear.
-  assert all(d.val < i for i, (aval, _) in enumerate(in_type)
-             if isinstance(aval, core.DShapedArray) for d in aval.shape
-             if isinstance(d, core.DBIdx))
-
-  # Check that all implicit arguments have at least one DBIdx pointing to them.
-  provided = [e for _, e in in_type]
-  for aval, _ in in_type:
-    if type(aval) is core.DShapedArray:
-      for d in aval.shape:
-        if isinstance(d, core.DBIdx):
-          provided[d.val] = True
-  assert all(provided)
-
+  assert type(in_type) is tuple
+  assert all(isinstance(a, core.AbstractValue) for a in in_type)
 
 def cache(call: Callable, *,
           explain: Callable[[WrappedFun, bool, dict, tuple, float], None] | None = None):

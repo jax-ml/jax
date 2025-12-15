@@ -718,7 +718,7 @@ def _eltwise_usage_rule(
   return [used_out]
 
 
-def _bcast_block_spec(
+def _pull_bcast_block_spec(
     block_spec: pallas_core.BlockSpec, i: int
 ) -> pallas_core.BlockSpec:
   def new_index_map(*args):
@@ -739,6 +739,21 @@ def _bcast_block_spec(
       block_spec.block_shape, i, bcast_dim_block_shape
   )
   return pallas_core.BlockSpec(new_block_shape, new_index_map)
+
+
+def _push_bcast_block_spec(
+    block_spec: pallas_core.BlockSpec,
+    i: int,
+    size: int,
+) -> pallas_core.BlockSpec:
+
+  bcast_dim_block_shape = size
+  if isinstance(block_spec.block_shape[i], pallas_core.Element):
+    bcast_dim_block_shape = pallas_core.Element(size)
+  new_block_shape = util.tuple_update(  # pytype: disable=wrong-arg-types
+      block_spec.block_shape, i, bcast_dim_block_shape
+  )
+  return pallas_core.BlockSpec(new_block_shape, block_spec.index_map)
 
 
 def _binop_usage_rule(prim, ctx, used_out: set[Usage]):
@@ -782,9 +797,9 @@ def _binop_pull_rule(prim, ctx: PullRuleContext, block_spec):
       zip(left_aval.shape, right_aval.shape, strict=True)
   ):
     if l == 1 and r != 1:
-      l_block_spec = _bcast_block_spec(l_block_spec, i)
+      l_block_spec = _pull_bcast_block_spec(l_block_spec, i)
     if r == 1 and l != 1:
-      r_block_spec = _bcast_block_spec(r_block_spec, i)
+      r_block_spec = _pull_bcast_block_spec(r_block_spec, i)
 
   return [l_block_spec, r_block_spec]
 
@@ -2117,6 +2132,23 @@ def _binop_push_rule(
   left_aval, right_aval = ctx.avals_in
   assert isinstance(left_aval, core.ShapedArray)
   assert isinstance(right_aval, core.ShapedArray)
+  if not right_aval.shape:
+    return left_block_spec
+  if not left_aval.shape:
+    return right_block_spec
+  lhs_has_block_spec = left_block_spec is not pallas_core.no_block_spec
+  rhs_has_block_spec = right_block_spec is not pallas_core.no_block_spec
+  if not (lhs_has_block_spec ^ rhs_has_block_spec):
+    # We can only do a push if one of the block specs is unspecified
+    # or they are identical.
+    if left_block_spec is right_block_spec:
+      return left_block_spec
+    raise ValueError('Illegal binary push. One of the block specs must be no_block_spec.')
+  for l, r in zip(left_aval.shape, right_aval.shape, strict=True):
+    if l == 1 and r != 1 and lhs_has_block_spec:
+      raise ValueError('Cannot propagate block spec through LHS broadcast.')
+    if r == 1 and l != 1 and rhs_has_block_spec:
+      raise ValueError('Cannot propagate block spec through RHS broadcast.')
   if left_block_spec is pallas_core.no_block_spec:
     return right_block_spec
   if right_block_spec is pallas_core.no_block_spec:
@@ -2231,7 +2263,6 @@ def _custom_call_hi_primitive_push_block_spec_rule(
     ctx: PullRuleContext, *block_specs, prim
 ):
   return prim.push_block_spec_rule(ctx, block_specs)
-
 
 
 @register_push_block_spec_rule(pjit.jit_p)

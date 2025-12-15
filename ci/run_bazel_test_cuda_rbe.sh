@@ -67,6 +67,7 @@ bazel test --config=rbe_linux_x86_64_cuda${JAXCI_CUDA_VERSION} \
       --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
       --color=yes \
       $cuda_libs_flag \
+      --config=hermetic_cuda_umd \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
       --//jax:build_jax=$JAXCI_BUILD_JAX \
       //tests:gpu_tests //tests:backend_independent_tests \

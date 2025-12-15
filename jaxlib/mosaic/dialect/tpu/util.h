@@ -172,6 +172,9 @@ int8_t getTypeBitwidth(Type ty) {
       return width;
     }
   }
+  if (isa<Float8EXMYType>(ty)) {
+    return 8;
+  }
   return ty.getIntOrFloatBitWidth();
 }
 
@@ -297,6 +300,8 @@ std::optional<int64_t> getIntConst(Value v);
 // `tpu.bitcast` and unary element-wise operations are excluded from the
 // results.
 SmallVector<Operation *> getNontrivialTransitiveUsers(Value v);
+
+bool hasVectorOperandsOrResults(Operation& op);
 
 // Return a mod b for a, b > 0, but adjusted to return b when a mod b == 0 such
 // that the result is strictly positive.

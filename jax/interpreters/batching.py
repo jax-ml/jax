@@ -54,18 +54,6 @@ _deprecations = {
     "jax.interpreters.batching.BatchingRule is deprecated.",
     _src_batching.BatchingRule,
   ),
-  "Jumble": (
-    "jax.interpreters.batching.Jumble is deprecated.",
-    _src_batching.Jumble,
-  ),
-  "JumbleAxis": (
-    "jax.interpreters.batching.JumbleAxis is deprecated.",
-    _src_batching.JumbleAxis,
-  ),
-  "JumbleTy": (
-    "jax.interpreters.batching.JumbleTy is deprecated.",
-    _src_batching.JumbleTy,
-  ),
   "Elt": (
     "jax.interpreters.batching.Elt is deprecated.",
     _src_batching.Elt,
@@ -78,10 +66,6 @@ _deprecations = {
     "jax.interpreters.batching.GetIdx is deprecated.",
     _src_batching.GetIdx,
   ),
-  "IndexedAxisSize": (
-    "jax.interpreters.batching.IndexedAxisSize is deprecated.",
-    _src_batching.IndexedAxisSize,
-  ),
   "MakeIotaHandler": (
     "jax.interpreters.batching.MakeIotaHandler is deprecated.",
     _src_batching.MakeIotaHandler,
@@ -93,10 +77,6 @@ _deprecations = {
   "NotMapped": (
     "jax.interpreters.batching.NotMapped is deprecated.",
     _src_batching.NotMapped,
-  ),
-  "RaggedAxis": (
-    "jax.interpreters.batching.RaggedAxis is deprecated.",
-    _src_batching.RaggedAxis,
   ),
   "ToEltHandler": (
     "jax.interpreters.batching.ToEltHandler is deprecated.",
@@ -130,10 +110,6 @@ _deprecations = {
     "jax.interpreters.batching.batch_jaxpr is deprecated. It is an internal API.",
     _src_batching.batch_jaxpr,
   ),
-  "batch_jaxpr2": (
-    "jax.interpreters.batching.batch_jaxpr2 is deprecated. It is an internal API.",
-    _src_batching.batch_jaxpr2,
-  ),
   "batch_jaxpr_axes": (
     "jax.interpreters.batching.batch_jaxpr_axes is deprecated. It is an internal API.",
     _src_batching.batch_jaxpr_axes,
@@ -161,10 +137,6 @@ _deprecations = {
   "is_vmappable": (
     "jax.interpreters.batching.is_vmappable is deprecated. It is an internal API.",
     _src_batching.is_vmappable,
-  ),
-  "jumble_axis": (
-    "jax.interpreters.batching.jumble_axis is deprecated. It is an internal API.",
-    _src_batching.jumble_axis,
   ),
   "make_iota": (
     "jax.interpreters.batching.make_iota is deprecated. It is an internal API.",
@@ -224,17 +196,12 @@ if _typing.TYPE_CHECKING:
   BatchTrace = _src_batching.BatchTrace
   BatchTracer = _src_batching.BatchTracer
   BatchingRule = _src_batching.BatchingRule
-  Jumble = _src_batching.Jumble
-  JumbleAxis = _src_batching.JumbleAxis
-  JumbleTy = _src_batching.JumbleTy
   Elt = _src_batching.Elt
   FromEltHandler = _src_batching.FromEltHandler
   GetIdx = _src_batching.GetIdx
-  IndexedAxisSize = _src_batching.IndexedAxisSize
   MakeIotaHandler = _src_batching.MakeIotaHandler
   MapSpec = _src_batching.MapSpec
   NotMapped = _src_batching.NotMapped
-  RaggedAxis = _src_batching.RaggedAxis
   ToEltHandler = _src_batching.ToEltHandler
   Vmappable = _src_batching.Vmappable
   Zero = _src_batching.Zero
@@ -243,7 +210,6 @@ if _typing.TYPE_CHECKING:
   batch_custom_jvp_subtrace = _src_batching.batch_custom_jvp_subtrace
   batch_custom_vjp_bwd = _src_batching.batch_custom_vjp_bwd
   batch_jaxpr = _src_batching.batch_jaxpr
-  batch_jaxpr2 = _src_batching.batch_jaxpr2
   batch_jaxpr_axes = _src_batching.batch_jaxpr_axes
   batch_subtrace = _src_batching.batch_subtrace
   broadcast_batcher = _src_batching.broadcast_batcher
@@ -251,7 +217,6 @@ if _typing.TYPE_CHECKING:
   from_elt = _src_batching.from_elt
   from_elt_handlers = _src_batching.from_elt_handlers
   is_vmappable = _src_batching.is_vmappable
-  jumble_axis = _src_batching.jumble_axis
   make_iota = _src_batching.make_iota
   make_iota_handlers = _src_batching.make_iota_handlers
   matchaxis = _src_batching.matchaxis

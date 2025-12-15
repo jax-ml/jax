@@ -68,7 +68,7 @@ from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
-from jax._src.mesh import get_concrete_mesh
+from jax._src.mesh import get_concrete_mesh, get_abstract_mesh
 from jax._src.sharding_impls import (PmapSharding, PartitionSpec as P,
                                      NamedSharding)
 from jax._src.layout import Format
@@ -172,7 +172,6 @@ def jit(
   device: xc.Device | None = ...,
   backend: str | None = ...,
   inline: bool = ...,
-  abstracted_axes: Any | None = ...,
   compiler_options: dict[str, Any] | None = ...,
 ) -> pjit.JitWrapped: ...
 
@@ -189,7 +188,6 @@ def jit(
   device: xc.Device | None = ...,
   backend: str | None = ...,
   inline: bool = ...,
-  abstracted_axes: Any | None = ...,
   compiler_options: dict[str, Any] | None = ...,
 ) -> Callable[[Callable], pjit.JitWrapped]: ...
 
@@ -205,7 +203,6 @@ def jit(
   device: xc.Device | None = None,
   backend: str | None = None,
   inline: bool = False,
-  abstracted_axes: Any | None = None,
   compiler_options: dict[str, Any] | None = None,
 ) -> pjit.JitWrapped | Callable[[Callable], pjit.JitWrapped]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
@@ -350,8 +347,7 @@ def jit(
       static_argnums=static_argnums, static_argnames=static_argnames,
       donate_argnums=donate_argnums, donate_argnames=donate_argnames,
       keep_unused=keep_unused, device=device, backend=backend, inline=inline,
-      abstracted_axes=abstracted_axes, compiler_options=compiler_options,
-      use_resource_env=False)
+      compiler_options=compiler_options, use_resource_env=False)
   if isinstance(fun, NotSpecified):
     return lambda fun: pjit.make_jit(fun, **kwds)
   else:
@@ -393,7 +389,7 @@ def disable_jit(disable: bool = True):
   ...   return y + 3
   ...
   >>> print(f(jax.numpy.array([1, 2, 3])))
-  Value of y is JitTracer<int32[3]>
+  Value of y is JitTracer(int32[3])
   [5 7 9]
 
   Here ``y`` has been abstracted by :py:func:`jit` to a :py:class:`ShapedArray`,
@@ -1195,6 +1191,9 @@ def vmap(fun: F,
                   _mapped_axis_size(fun, in_tree, args_flat, in_axes_flat, "vmap"))
     explicit_mesh_axis = _mapped_axis_spec(args_flat, in_axes_flat)
     if spmd_axis_name is not None and explicit_mesh_axis is not None:
+      spmd_axis_name = (
+          tuple(*core.remove_size_one_mesh_axis(P(spmd_axis_name), get_abstract_mesh()))
+          if config.remove_size_one_mesh_axis_from_type.value else spmd_axis_name)
       if spmd_axis_name == explicit_mesh_axis:
         spmd_axis_name = None
       else:
@@ -1345,7 +1344,13 @@ def pmap(
     donate_argnums: int | Iterable[int] = (),
     global_arg_shapes: tuple[tuple[int, ...], ...] | None = None,
   ) -> Any:
-  """Parallel map with support for collective operations.
+  """Old way of doing parallel map. Use :py:func:`jax.shard_map` instead.
+
+  .. note::
+    While :py:func:`jax.pmap` works, you should probably use
+    :py:func:`jax.shard_map` or ``jax.smap`` instead. shard_map supports more
+    efficient autodiff, and is more composable in the multi-controller setting.
+    See https://docs.jax.dev/en/latest/notebooks/shard_map.html for examples.
 
   .. note::
     :py:func:`pmap` is now implemented in terms of :py:func:`jit` and
@@ -1509,26 +1514,6 @@ def pmap(
   collective operations, like :func:`jax.lax.psum`, can refer to it. Axis names
   are important particularly in the case of nested :py:func:`pmap` functions,
   where collective operations can operate over distinct axes:
-
-  >>> from functools import partial
-  >>> import jax
-  >>>
-  >>> @partial(pmap, axis_name='rows')
-  ... @partial(pmap, axis_name='cols')
-  ... def normalize(x):
-  ...   row_normed = x / jax.lax.psum(x, 'rows')
-  ...   col_normed = x / jax.lax.psum(x, 'cols')
-  ...   doubly_normed = x / jax.lax.psum(x, ('rows', 'cols'))
-  ...   return row_normed, col_normed, doubly_normed
-  >>>
-  >>> x = jnp.arange(8.).reshape((4, 2))
-  >>> row_normed, col_normed, doubly_normed = normalize(x)  # doctest: +SKIP
-  >>> print(row_normed.sum(0))  # doctest: +SKIP
-  [ 1.  1.]
-  >>> print(col_normed.sum(1))  # doctest: +SKIP
-  [ 1.  1.  1.  1.]
-  >>> print(doubly_normed.sum((0, 1)))  # doctest: +SKIP
-  1.0
 
   On multi-process platforms, collective operations operate over all devices,
   including those on other processes. For example, assuming the following code
@@ -2092,12 +2077,12 @@ def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
           pvary_applications = []
           if left := tangent_aval.vma - primal_aval.vma:
             pvary_applications.append(
-                f"applying `jax.lax.pvary(..., {tuple(left)})` to the primal"
-                " value passed to `jax.linearize`")
+                f"applying `jax.lax.pcast(..., {tuple(left)}, to='varying')` to"
+                " the primal value passed to `jax.linearize`")
           if left := primal_aval.vma - tangent_aval.vma:
             pvary_applications.append(
-                f"applying `jax.lax.pvary(..., {tuple(left)})` to the tangent"
-                " value passed to the callable `f_jvp` returned by"
+                f"applying `jax.lax.pcast(..., {tuple(left)}, to='varying')` to"
+                " the tangent value passed to the callable `f_jvp` returned by"
                 " `jax.linearize`")
           extra_msg = " \nThis might be fixed by:\n" + "\n".join(
               f"  * {d};" for d in pvary_applications)
@@ -2227,31 +2212,6 @@ def vjp(
       fun, debug_info=debug_info("vjp", fun, primals, {}))
   return _vjp(wrapped_fun, *primals, has_aux=has_aux)
 
-def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
-  """Variant of vjp() that takes an lu.WrappedFun."""
-  if config.vjp3.value:
-    return _vjp3(fun, *primals, has_aux=has_aux)
-  primals_flat, in_tree = tree_flatten(primals)
-  primals_flat = [canonicalize_value(v) if not isinstance(v, core.Tracer) else v
-                  for v in primals_flat]
-  for arg in primals_flat: dispatch.check_arg(arg)
-  if not has_aux:
-    flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
-    out_primals, vjp = ad.vjp(flat_fun, primals_flat)
-    out_tree = out_tree()
-  else:
-    flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, in_tree)
-    out_primals, vjp, aux = ad.vjp(flat_fun, primals_flat, has_aux=True)
-    out_tree, aux_tree = out_aux_trees()
-  out_primal_avals = map(shaped_abstractify, out_primals)
-  out_primal_py = tree_unflatten(out_tree, out_primals)
-  vjp_py = Partial(partial(_vjp_pullback_wrapper, fun.__name__,
-                           out_primal_avals, (out_tree, in_tree)), vjp)
-  if not has_aux:
-    return out_primal_py, vjp_py
-  else:
-    return out_primal_py, vjp_py, tree_unflatten(aux_tree, aux)
-
 @partial(api_boundary, repro_api_name="jax.experimental.saved_input_vjp")
 def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
                     allow_unused: bool = True, allow_opaque: bool = True):
@@ -2272,8 +2232,10 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
   res_spec = [RSpec(id_map[id(r)], True) if id(r) in id_map else
               RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)  # type: ignore
               for r in residuals]
+  out_primal_avals = map(shaped_abstractify, out_primals_flat)
   f_vjp = Partial(partial(_saved_input_vjpfun, res_spec, filt_tree, in_tree,
-                          out_tree(), out_known, jaxpr), opaque_residuals)
+                          out_tree(), out_known, jaxpr, out_primal_avals),
+                  opaque_residuals)
 
   if not allow_unused and not set(id_map).issubset(res_ids := {id(r) for r in residuals}):
     unused = [(i, core.get_aval(x)) for i, (x, w) in enumerate(zip(primals, which))
@@ -2299,7 +2261,8 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
   return out_primals, f_vjp
 
 def _saved_input_vjpfun(res_spec, filtered_tree, in_tree, out_tree, out_known,
-                        jaxpr, opaque_residuals, ct, *saved_primals):
+                        jaxpr, out_primal_avals, opaque_residuals, ct,
+                        *saved_primals):
   primals_filtered, filtered_tree_ = tree_flatten(saved_primals)
   if filtered_tree != filtered_tree_:
     raise ValueError(
@@ -2318,7 +2281,20 @@ def _saved_input_vjpfun(res_spec, filtered_tree, in_tree, out_tree, out_known,
                for i in res_spec]
   dummy_args = [ad.UndefinedPrimal(v.aval) for v in jaxpr.invars]
   cts_flat, out_tree_ = tree_flatten(ct)
-  assert out_tree_ == out_tree
+  if out_tree_ != out_tree:
+    raise ValueError(f"unexpected tree structure of argument to vjp function: "
+                     f"got {out_tree_}, but expected to match {out_tree}")
+  for arg, aval in zip(cts_flat, out_primal_avals):
+    ct_aval = shaped_abstractify(arg)
+    ct_aval_expected = aval.to_cotangent_aval()
+    if (not core.typecompat(ct_aval, ct_aval_expected) and
+        not _temporary_dtype_exception(ct_aval, ct_aval_expected)):
+      raise ValueError(
+          "unexpected JAX type (e.g. shape/dtype) for argument to vjp function: "
+          f"got {ct_aval.str_short()}, but expected {ct_aval_expected.str_short()} "
+          f"because the corresponding output of the function had JAX type "
+          f"{aval.str_short()}")
+
   cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
   arg_cts = ad.backward_pass(jaxpr, True, residuals, dummy_args, cts_flat)
   return tree_unflatten(in_tree, map(ad.instantiate_zeros, arg_cts))
@@ -2331,12 +2307,7 @@ class RSpec:
 si_vjp = saved_input_vjp
 
 
-def vjp3(f, *primals, has_aux=False):
-  dbg = debug_info("vjp", f, primals, {})
-  fun = lu.wrap_init(f, debug_info=dbg)
-  return _vjp3(fun, *primals, has_aux=has_aux)
-
-def _vjp3(fun, *primals, has_aux=False):
+def _vjp(fun, *primals, has_aux=False):
   canon = lambda x: x if isinstance(x, core.Tracer) else canonicalize_value(x)
   primals = tree_map(canon, primals)
   primals_flat, in_tree = tree_flatten(primals)
@@ -2577,13 +2548,13 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   return Partial(transposed_fun, const)
 
 
-def _flat_axes_specs(abstracted_axes, *args, **kwargs
+def _flat_axes_specs(*args, **kwargs
                      ) -> list[pe.AbstractedAxesSpec]:
   if kwargs: raise NotImplementedError
   def ax_leaf(l):
     return (isinstance(l, dict) and all_leaves(l.values()) or
             isinstance(l, tuple) and all_leaves(l, lambda x: x is None))
-  return broadcast_prefix(abstracted_axes, args, ax_leaf)
+  return broadcast_prefix(args, ax_leaf)
 
 
 @overload
@@ -2592,7 +2563,6 @@ def make_jaxpr(
     static_argnums: int | Iterable[int] = (),
     axis_env: Sequence[tuple[AxisName, int]] | None = None,
     return_shape: Literal[False] = ...,
-    abstracted_axes: Any | None = None,
 ) -> Callable[..., core.ClosedJaxpr]:
   ...
 
@@ -2602,7 +2572,6 @@ def make_jaxpr(
     static_argnums: int | Iterable[int] = (),
     axis_env: Sequence[tuple[AxisName, int]] | None = None,
     return_shape: Literal[True] = ...,
-    abstracted_axes: Any | None = None,
 ) -> Callable[..., tuple[core.ClosedJaxpr, Any]]:
   ...
 
@@ -2612,7 +2581,6 @@ def make_jaxpr(
     static_argnums: int | Iterable[int] = (),
     axis_env: Sequence[tuple[AxisName, int]] | None = None,
     return_shape: bool = False,
-    abstracted_axes: Any | None = None,
 ) -> Callable[..., core.ClosedJaxpr | tuple[core.ClosedJaxpr, Any]]:
   """Create a function that returns the jaxpr of ``fun`` given example args.
 
@@ -2680,8 +2648,7 @@ def make_jaxpr(
   @api_boundary
   def make_jaxpr_f(*args, **kwargs):
     with core.extend_axis_env_nd(axis_env or []):
-      traced = jit(fun, static_argnums=static_argnums,
-                   abstracted_axes=abstracted_axes).trace(*args, **kwargs)
+      traced = jit(fun, static_argnums=static_argnums).trace(*args, **kwargs)
     # `jit` converts tracers in consts to args but `make_jaxpr` callers expect
     # consts not to be converted.
     num_consts = traced._num_consts

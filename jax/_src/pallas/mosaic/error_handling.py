@@ -36,7 +36,7 @@ FRAME_PATTERN = re.compile(
     r'( to (?P<endlineno>[0-9]+)?:(?P<endcolno>[0-9]+))?\)'
 )
 MLIR_ERR_PREFIX = (
-    'Pallas encountered an internal verification error.'
+    'Pallas encountered an internal verification error. '
     'Please file a bug at https://github.com/jax-ml/jax/issues. '
     'Error details: '
 )

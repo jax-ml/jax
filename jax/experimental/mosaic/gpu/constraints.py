@@ -24,7 +24,7 @@ import abc
 from collections.abc import Sequence
 import dataclasses
 import math
-from typing import Any, Callable, assert_never, final
+from typing import Any, assert_never, final
 
 from . import fragmented_array as fa
 from . import launch_context as lc
@@ -87,22 +87,6 @@ class SMEMTiling(Constant):
 
 
 @dataclasses.dataclass(frozen=True)
-class LeastReplicated:
-  expressions: tuple[Expression, ...]
-
-  def __post_init__(self):
-    assert len(self.expressions) >= 1
-
-
-@dataclasses.dataclass(frozen=True)
-class MostReplicated:
-  expressions: tuple[Expression, ...]
-
-  def __post_init__(self):
-    assert len(self.expressions) >= 1
-
-
-@dataclasses.dataclass(frozen=True)
 class Reduce:
   expression: Expression
   axes: tuple[int, ...]
@@ -136,69 +120,11 @@ class Transpose:
 Expression = (
     Variable
     | Constant
-    | LeastReplicated
-    | MostReplicated
     | Reduce
     | BroadcastInDim
     | Reshape
     | Transpose
 )
-
-
-def reduce_replicated_expression(
-    input_expr: LeastReplicated | MostReplicated,
-    assignments: dict[Variable, Constant],
-    reducer: Callable[[fa.FragmentedLayout, fa.FragmentedLayout], fa.FragmentedLayout | None]
-) -> Expression | Unsatisfiable:
-  assert input_expr.expressions
-
-  new_expressions: list[Expression] = []
-  # Use a set to eliminate duplicates, but preserve the order.
-  seen: set[Expression] = set()
-  for expr in input_expr.expressions:
-    reduced_expr = reduce_expression(expr, assignments)
-    if isinstance(reduced_expr, Unsatisfiable):
-      return Unsatisfiable()
-    if reduced_expr in seen:
-      continue
-    new_expressions.append(reduced_expr)
-    seen.add(reduced_expr)
-
-  if len(new_expressions) == 1:
-    return new_expressions[0]
-
-  consts = []
-  unknowns = []
-  for e in new_expressions:
-    if not isinstance(e, Constant):
-      unknowns.append(e)
-      continue
-    if not isinstance(e, RegisterLayout):
-      raise ValueError(
-          f"Reduction of non-register layout constant is not supported: {e}"
-      )
-    consts.append(e)
-
-  if consts:
-    const_red, *consts = consts
-    red = const_red
-    for cst in consts:
-      red_value = reducer(red.value, cst.value)
-      if red_value is None:
-        # The layouts are not compatible up to replication, this expression
-        # cannot be simplified.
-        return Unsatisfiable()
-      red = RegisterLayout(red_value)
-  else:
-    red = None
-
-  constructor = type(input_expr)
-  if red is not None:
-    if unknowns:
-      return constructor((red, *unknowns))
-    return red
-
-  return constructor(tuple(unknowns))
 
 
 def reduce_broadcast_expression(
@@ -314,14 +240,6 @@ def reduce_expression(
       return expr
     case Variable():
       return assignments.get(expr, expr)
-    case MostReplicated():
-      return reduce_replicated_expression(
-          expr, assignments, layouts_lib.join_layouts
-      )
-    case LeastReplicated():
-      return reduce_replicated_expression(
-          expr, assignments, layouts_lib.meet_layouts
-      )
     case Reduce(expression=expr, axes=axes):
       reduced_expr = reduce_expression(expr, assignments)
       match reduced_expr:
@@ -471,25 +389,29 @@ class IsTransferable:
 
     Returns `None` if the constraint can't be checked.
     """
-    source = self.source
-    target = self.target
 
-    if isinstance(source, TMEMLayout) and isinstance(target, RegisterLayout):
-      return self._is_valid_tmem_transfer(source.value, target.value)
-    if isinstance(target, TMEMLayout) and isinstance(source, RegisterLayout):
-      return self._is_valid_tmem_transfer(target.value, source.value)
-    if isinstance(source, TMEMLayout) and isinstance(target, TMEMLayout):
-      return source == target
-    if isinstance(source, SMEMTiling) and isinstance(target, RegisterLayout):
-      return self._is_valid_smem_transfer(source.value, target.value)
-    if isinstance(target, SMEMTiling) and isinstance(source, RegisterLayout):
-      return self._is_valid_smem_transfer(target.value, source.value)
-    if isinstance(target, Constant) and isinstance(source, Constant):
-      source_type = type(source).__name__
-      target_type = type(target).__name__
-      raise NotImplementedError(f"Unsupported transfer: {source_type} -> {target_type}")
+    assert self.source != self.target, (
+        "IsTransferable constraints within the same memory space are not"
+        " supported."
+    )
 
-    return None
+    match self.source, self.target:
+      case TMEMLayout(value=src), RegisterLayout(value=dst):
+        return self._is_valid_tmem_transfer(src, dst)
+      case RegisterLayout(value=src), TMEMLayout(value=dst):
+        return self._is_valid_tmem_transfer(dst, src)
+      case SMEMTiling(value=src), RegisterLayout(value=dst):
+        return self._is_valid_smem_transfer(src, dst)
+      case RegisterLayout(value=src), SMEMTiling(value=dst):
+        return self._is_valid_smem_transfer(dst, src)
+      case Constant(), Constant():
+        source_type = type(self.source).__name__
+        target_type = type(self.target).__name__
+        raise NotImplementedError(
+            f"Unsupported transfer: {source_type} -> {target_type}"
+        )
+      case _:
+        return None
 
   def __str__(self):
     return f"IsTransferable({self.source}  ⟶ {self.target})"
@@ -568,10 +490,9 @@ Constraint = Equals | Relayout | NotOfType | IsTransferable | Divides
 
 def reduce_constraint(
     constraint: Constraint, assignments: dict[Variable, Constant]
-) -> Constraint | Tautological | Unsatisfiable:
+) -> Constraint | Unsatisfiable:
   """Reduces a constraint."""
 
-  new_constraint: Constraint
   match constraint:
     case Equals(lhs=lhs, rhs=rhs):
       lhs_red = reduce_expression(lhs, assignments)
@@ -580,7 +501,7 @@ def reduce_constraint(
       rhs_red = reduce_expression(rhs, assignments)
       if isinstance(rhs_red, Unsatisfiable):
         return Unsatisfiable()
-      new_constraint = Equals(lhs_red, rhs_red)
+      return Equals(lhs_red, rhs_red)
     case Relayout(source=source, target=target):
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
@@ -588,30 +509,25 @@ def reduce_constraint(
           target_red, Unsatisfiable
       ):
         return Unsatisfiable()
-      new_constraint = Relayout(source_red, target_red)
+      return Relayout(source_red, target_red)
     case NotOfType(expr=expr, type=type):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
-      new_constraint = NotOfType(expr_red, type)
+      return NotOfType(expr_red, type)
     case IsTransferable(source=source, target=target, shape=shape):
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
       if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
         return Unsatisfiable()
-      new_constraint = IsTransferable(source_red, target_red, shape)
+      return IsTransferable(source_red, target_red, shape)
     case Divides(expr=expr, tiling_multiple=tiling_multiple):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
-      new_constraint = Divides(expr_red, tiling_multiple)
+      return Divides(expr_red, tiling_multiple)
     case _ as never:
       assert_never(never)
-
-  constraint_holds = new_constraint.holds()
-  if constraint_holds is None:
-    return new_constraint
-  return Tautological() if constraint_holds else Unsatisfiable()
 
 
 @dataclasses.dataclass
@@ -640,12 +556,6 @@ class ConstraintSystem:
             free_variables.append(expr)
         case Constant():
           ...
-        case MostReplicated(expressions=expressions):
-          for e in expressions:
-            extract_variables(e)
-        case LeastReplicated(expressions=expressions):
-          for e in expressions:
-            extract_variables(e)
         case Reduce(expression=e):
           extract_variables(e)
         case BroadcastInDim(expression=e):
@@ -702,10 +612,6 @@ class Unsatisfiable:
 
   def __and__(self, other: ConstraintSystem | Unsatisfiable) -> Unsatisfiable:
     return self
-
-
-class Tautological:
-  ...
 
 
 def non_splat_variables(
@@ -916,11 +822,16 @@ def _reduce_system_once(
         if not try_assign(var, cst):
           return Unsatisfiable()
         changed = True
-      case Tautological():
-        changed = True
       case _ as new_constraint:
-        changed |= new_constraint != constraint
-        constraints.append(new_constraint)
+        assert isinstance(new_constraint, Constraint)  # make pytype happy
+        match new_constraint.holds():
+          case None:
+            constraints.append(new_constraint)
+            changed |= new_constraint != constraint
+          case False:
+            return Unsatisfiable()
+          case True:
+            changed = True
 
   new_constraints = merge_divides_constraints(constraints)
   changed |= len(new_constraints) != len(constraints)

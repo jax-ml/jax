@@ -645,6 +645,12 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
     self.assertAllClose(out_masked, out_filtered)
 
+  def testStandardizeNegativeVariance(self):
+    # Regression test for https://github.com/google/jax/issues/30426
+    x = jnp.array([-11., -11., -11.]) + 3e-6
+    result = jax.nn.standardize(x)
+    self.assertFalse(jnp.any(jnp.isnan(result)))
+
   def testOneHot(self):
     actual = nn.one_hot(jnp.array([0, 1, 2]), 3)
     expected = jnp.array([[1., 0., 0.],
@@ -785,6 +791,27 @@ class NNFunctionsTest(jtu.JaxTestCase):
         atol=1e-3,
     )
 
+  def testDotProductAttention_localWindowSizeWithoutMask(self):
+    dtype = jnp.float32
+    B, S, T, N, H = 2, 128, 128, 4, 32
+    keys = random.split(random.PRNGKey(0), 3)
+    Q = random.normal(keys[0], (B, T, N, H), dtype)
+    K = random.normal(keys[1], (B, S, N, H), dtype)
+    V = random.normal(keys[2], (B, S, N, H), dtype)
+
+    output_large_window = nn.dot_product_attention(
+        Q, K, V, mask=None, local_window_size=(32, 32)
+    )
+
+    output_small_window = nn.dot_product_attention(
+        Q, K, V, mask=None, local_window_size=(1, 1)
+    )
+
+    self.assertFalse(
+        jnp.allclose(output_large_window, output_small_window),
+        "Attention output should differ with different local_window_size, even without a mask.",
+    )
+
 
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
@@ -850,7 +877,7 @@ class NNInitializersTest(jtu.JaxTestCase):
     val = initializer(rng, shape, dtype)
 
     self.assertEqual(shape, jnp.shape(val))
-    self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), jnp.dtype(val))
+    self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), val.dtype)
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
@@ -866,7 +893,7 @@ class NNInitializersTest(jtu.JaxTestCase):
     val = initializer(rng, shape)
 
     self.assertEqual(shape, jnp.shape(val))
-    self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), jnp.dtype(val))
+    self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), val.dtype)
 
   def testVarianceScalingMultiAxis(self):
     rng = random.PRNGKey(0)

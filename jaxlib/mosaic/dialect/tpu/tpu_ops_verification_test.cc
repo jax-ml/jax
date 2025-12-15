@@ -145,6 +145,14 @@ class TpuOpsVerificationTest : public ::testing::Test {
         .getResult();
   }
 
+  Value ConstantF32Vector(ArrayRef<int64_t> shape, ArrayRef<float> values) {
+    auto ty = VectorType::get(shape, builder().getF32Type());
+    return Create<arith::ConstantOp>(
+               /*result=*/ty,
+               /*value=*/DenseElementsAttr::get(ty, values))
+        .getResult();
+  }
+
   ImplicitLocOpBuilder& builder() { return builder_; }
 
  private:
@@ -1201,6 +1209,65 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
       /*dst=*/AllocaI32({64, 256, 128}, MemorySpace::kVmem));
 
   ASSERT_OK(VerifyOp(wait));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, SortVerificationWorks) {
+  Value keys = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Value values = ConstantI32Vector(/*shape=*/{8}, /*values=*/{2});
+  Type mask_ty = VectorType::get({8}, builder().getI1Type());
+  Type keys_ty = keys.getType();
+  Type values_ty = values.getType();
+  auto sort =
+      Create<SortOp>(/*result_types=*/TypeRange{mask_ty, keys_ty, values_ty},
+                     /*keys=*/keys, /*values=*/values,
+                     /*mask=*/nullptr,
+                     /*descending=*/builder().getBoolAttr(false));
+  ASSERT_OK(VerifyOp(sort));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, SortF32KeysVerificationWorks) {
+  Value keys = ConstantF32Vector(/*shape=*/{8}, /*values=*/{1.0f});
+  Value values = ConstantI32Vector(/*shape=*/{8}, /*values=*/{2});
+  Type mask_ty = VectorType::get({8}, builder().getI1Type());
+  Type keys_ty = keys.getType();
+  Type values_ty = values.getType();
+  auto sort =
+      Create<SortOp>(/*result_types=*/TypeRange{mask_ty, keys_ty, values_ty},
+                     /*keys=*/keys, /*values=*/values,
+                     /*mask=*/nullptr,
+                     /*descending=*/builder().getBoolAttr(false));
+  ASSERT_OK(VerifyOp(sort));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, SortKeyValShapeMismatch) {
+  Value keys = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Value values = ConstantI32Vector(/*shape=*/{16}, /*values=*/{2});
+  Type mask_ty = VectorType::get({8}, builder().getI1Type());
+  Type keys_ty = keys.getType();
+  Type values_ty = values.getType();
+  auto sort =
+      Create<SortOp>(/*result_types=*/TypeRange{mask_ty, keys_ty, values_ty},
+                     /*keys=*/keys, /*values=*/values,
+                     /*mask=*/nullptr,
+                     /*descending=*/builder().getBoolAttr(false));
+  ASSERT_THAT(VerifyOp(sort),
+              StatusIs(_, HasSubstr("Key and value shapes must match")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, SortResultTypeMismatch) {
+  Value keys = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Value values = ConstantI32Vector(/*shape=*/{8}, /*values=*/{2});
+  Type mask_ty = VectorType::get({8}, builder().getI1Type());
+  Type keys_ty = keys.getType();
+  Type f32_ty = VectorType::get({8}, builder().getF32Type());
+  auto sort =
+      Create<SortOp>(/*result_types=*/TypeRange{mask_ty, keys_ty, f32_ty},
+                     /*keys=*/keys, /*values=*/values,
+                     /*mask=*/nullptr,
+                     /*descending=*/builder().getBoolAttr(false));
+  ASSERT_THAT(
+      VerifyOp(sort),
+      StatusIs(_, HasSubstr("Value and sorted_value types must match")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,

@@ -16,9 +16,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from functools import partial
-from types import EllipsisType
 from typing import Any
 import warnings
 
@@ -37,15 +36,11 @@ from jax._src.numpy import reductions
 from jax._src.numpy.util import check_arraylike, promote_dtypes
 from jax._src.pjit import auto_axes
 from jax._src.sharding_impls import NamedSharding
-from jax._src.typing import Array, ArrayLike
+from jax._src.typing import Array, ArrayLike, Index
 
 
-SingleIndex = int | slice | Sequence[int] | Array | EllipsisType | None
-Index = SingleIndex | tuple[SingleIndex, ...]
-Scalar = complex | float | int | np.number
-
-
-def _scatter_update(x: ArrayLike, idx: Index, y: ArrayLike, scatter_op: Callable[..., Array],
+def _scatter_update(x: ArrayLike, idx: Index | tuple[Index, ...],
+                    y: ArrayLike, scatter_op: Callable[..., Array],
                     indices_are_sorted: bool, unique_indices: bool,
                     mode: slicing.GatherScatterMode | str | None = None, normalize_indices: bool = True,
                     out_sharding: NamedSharding | None = None):

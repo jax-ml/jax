@@ -20,6 +20,7 @@ load(
     "jax_extend_internal_users",
     "jax_extra_deps",
     "jax_internal_packages",
+    "jax_visibility",
     "py_deps",
     "py_library_providing_imports_info",
     "pytype_library",
@@ -245,7 +246,7 @@ py_library_providing_imports_info(
         "//jax/_src:xla_metadata",
         "//jax/_src:xla_metadata_lib",
         "//jax/_src/lib",
-    ] + py_deps("numpy") + py_deps("scipy") + py_deps("opt_einsum") + py_deps("flatbuffers") + jax_extra_deps,
+    ] + py_deps("numpy") + py_deps("opt_einsum") + py_deps("flatbuffers") + jax_extra_deps,
 )
 
 pytype_strict_library(
@@ -254,220 +255,60 @@ pytype_strict_library(
 )
 
 # Public JAX libraries below this point.
-# TODO(phawkins): remove this target in favor of the finer-grained targets in jax/extend/...
-pytype_strict_library(
-    name = "extend",
-    visibility = [":jax_extend_users"],
-    deps = [
-        "//jax/extend",
-        "//jax/extend:backend",
-        "//jax/extend:core",
-        "//jax/extend:linear_util",
-        "//jax/extend:random",
-        "//jax/extend:source_info_util",
-    ],
-)
 
 # Aliases of experimental targets.
 # TODO(dsuo): remove these aliases/targets.
-py_library_providing_imports_info(
+pytype_strict_library(
     name = "experimental",
-    srcs = [
-        "//jax/example_libraries:jax_example_libraries",
-        "//jax/experimental:jax_experimental",
-    ],
-    visibility = ["//visibility:public"],
-    # NOTE: Exclude mosaic_gpu, serialize_executable, and buffer_callback.
+    visibility = jax_visibility("experimental_deprecated_alias"),
     deps = [
         ":jax",
-        "//jax/_src:buffer_callback",
-    ] + py_deps("absl/logging") + py_deps("numpy"),
-)
-
-alias(
-    name = "experimental_buffer_callback",
-    actual = "//jax/experimental:buffer_callback",
-    visibility = ["//jax/experimental:buffer_callback_users"],
-)
-
-alias(
-    name = "experimental_colocated_python",
-    actual = "//jax/experimental:colocated_python",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "experimental_compute_on",
-    actual = "//jax/experimental:compute_on",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "compilation_cache",
-    actual = "//jax/experimental:compilation_cache",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "jet",
-    actual = "//jax/experimental:jet",
-    visibility = ["//visibility:public"],
+        "//jax/example_libraries:optimizers",
+        "//jax/example_libraries:stax",
+        "//jax/experimental",
+        "//jax/experimental:checkify",
+        "//jax/experimental:compute_on",
+        "//jax/experimental:custom_dce",
+        "//jax/experimental:custom_partitioning",
+        "//jax/experimental:fused",
+        "//jax/experimental:hijax",
+        "//jax/experimental:jet",
+        "//jax/experimental:layout",
+        "//jax/experimental:mesh_utils",
+        "//jax/experimental:multihost_utils",
+        "//jax/experimental:ode",
+        "//jax/experimental:pjit",
+        "//jax/experimental:profiler",
+        "//jax/experimental:rnn",
+        "//jax/experimental:scheduling_groups",
+        "//jax/experimental:shard_alike",
+        "//jax/experimental:shard_map",
+        "//jax/experimental:topologies",
+        "//jax/experimental:transfer",
+        "//jax/experimental:xla_metadata",
+    ],
 )
 
 alias(
     name = "mesh_utils",
     actual = "//jax/experimental:mesh_utils",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "experimental_mesh_utils",
-    actual = "//jax/experimental:mesh_utils",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "mosaic",
-    actual = "//jax/experimental:mosaic",
-    visibility = ["//jax/experimental:mosaic_users"],
-)
-
-alias(
-    name = "mosaic_gpu",
-    actual = "//jax/experimental:mosaic_gpu",
-    visibility = ["//jax/experimental:mosaic_gpu_users"],
-)
-
-alias(
-    name = "experimental_multihost_utils",
-    actual = "//jax/experimental:multihost_utils",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "ode",
-    actual = "//jax/experimental:ode",
-    visibility = ["//visibility:public"],
+    visibility = jax_visibility("mesh_utils_deprecated_alias"),
 )
 
 alias(
     name = "pallas",
     actual = "//jax/experimental:pallas",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "pallas_fuser",
-    actual = "//jax/experimental:pallas_fuser",
-    visibility = ["//jax/experimental:pallas_fuser_users"],
-)
-
-alias(
-    name = "pallas_gpu",
-    actual = "//jax/experimental:pallas_gpu",
-    visibility = ["//jax/experimental:pallas_gpu_users"],
-)
-
-alias(
-    name = "pallas_gpu_ops",
-    actual = "//jax/experimental:pallas_gpu_ops",
-    visibility = ["//jax/experimental:pallas_gpu_users"],
-)
-
-alias(
-    name = "pallas_mosaic_gpu",
-    actual = "//jax/experimental:pallas_mosaic_gpu",
-    visibility = ["//jax/experimental:mosaic_gpu_users"],
+    visibility = jax_visibility("pallas_deprecated_alias"),
 )
 
 alias(
     name = "pallas_tpu",
     actual = "//jax/experimental:pallas_tpu",
-    visibility = ["//visibility:public"],
+    visibility = jax_visibility("pallas_tpu_deprecated_alias"),
 )
 
-alias(
-    name = "pallas_tpu_ops",
-    actual = "//jax/experimental:pallas_tpu_ops",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "pallas_triton",
-    actual = "//jax/experimental:pallas_triton",
-    visibility = ["//jax/experimental:pallas_gpu_users"],
-)
-
-alias(
-    name = "pallas_experimental_gpu_ops",
-    actual = "//jax/experimental:pallas_experimental_gpu_ops",
-    visibility = ["//jax/experimental:mosaic_gpu_users"],
-)
-
-alias(
-    name = "experimental_profiler",
-    actual = "//jax/experimental:profiler",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "experimental_pjit",
-    actual = "//jax/experimental:pjit",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "rnn",
-    actual = "//jax/experimental:rnn",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "experimental_serialize_executable",
-    actual = "//jax/experimental:serialize_executable",
-    visibility = ["//jax/experimental:serialize_executable_users"],
-)
-
-alias(
-    name = "source_mapper",
-    actual = "//jax/experimental:source_mapper",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "experimental_sparse",
-    actual = "//jax/experimental:sparse",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "sparse_test_util",
-    actual = "//jax/experimental:sparse_test_util",
-    visibility = [":internal"],
-)
-
-alias(
-    name = "experimental_topologies",
-    actual = "//jax/experimental:topologies",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "experimental_transfer",
-    actual = "//jax/experimental:transfer",
-    visibility = [":internal"],
-)
-
-# Aliases of example_library targets.
-# TODO(dsuo): remove these aliases.
 alias(
     name = "optimizers",
     actual = "//jax/example_libraries:optimizers",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "stax",
-    actual = "//jax/example_libraries:stax",
-    visibility = ["//visibility:public"],
+    visibility = jax_visibility("optimizers_deprecated_alias"),
 )

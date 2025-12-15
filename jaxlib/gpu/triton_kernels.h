@@ -38,10 +38,9 @@ class ModuleImage;
 
 class Kernel {
  public:
-  Kernel(std::string kernel_name, uint32_t num_warps, uint32_t shared_mem_bytes,
-         std::string ptx, std::string ttir, int compute_capability,
-         uint32_t cluster_dim_0, uint32_t cluster_dim_1,
-         uint32_t cluster_dim_2);
+  Kernel(std::string kernel_name, uint32_t num_warps, uint32_t num_ctas,
+         uint32_t shared_mem_bytes, std::string ptx, std::string ttir,
+         int compute_capability);
 
   absl::Status Launch(gpuStream_t stream, uint32_t grid[3], void** params);
 
@@ -54,11 +53,11 @@ class Kernel {
  private:
   std::string kernel_name_;
   uint32_t block_dim_x_;
+  uint32_t num_ctas_;
   uint32_t shared_mem_bytes_;
   std::string ptx_;
   std::string ttir_;
   int compute_capability_;
-  uint32_t cluster_dims_[3];
 
   ModuleImage* module_image_ = nullptr;
 };
@@ -107,8 +106,7 @@ class AutotunedKernelCall {
 
   AutotunedKernelCall(
       std::string name, std::vector<Config> configs,
-      std::vector<std::tuple<size_t,
-      size_t, size_t>> input_output_aliases);
+      std::vector<std::tuple<size_t, size_t, size_t>> input_output_aliases);
 
   static absl::StatusOr<KernelCall> Autotune(AutotunedKernelCall kernel_call,
                                              gpuStream_t stream,

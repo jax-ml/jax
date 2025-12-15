@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
@@ -116,6 +117,7 @@ limitations under the License.
 #include "xla/hlo/builder/lib/approx_topk_shape.h"
 #include "xla/pjrt/c_api_client/pjrt_c_api_client.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
+#include "xla/pjrt/distributed/preemption/preemption_sync_manager.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_api.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -575,11 +577,35 @@ NB_MODULE(_jax, m) {
   Traceback::Register(m);
   BuildMlirSubmodule(m);
   BuildCustomCallShardingPybindAPI(m);
-  BuildFfiSubmodule(m);
+  RegisterFfiApis(m);
 #if defined(__linux__)
   aux::RegisterTransferServerTypes(m);
 #endif  // defined(__linux__)
 
+#if JAX_IFRT_VERSION_NUMBER >= 39
+  nb::class_<xla::PreemptionSyncManager> preemption_sync_manager(
+      m, "PreemptionSyncManager");
+  preemption_sync_manager
+      .def(
+          "initialize",
+          [](xla::PreemptionSyncManager& manager,
+             xla::DistributedRuntimeClient* client) {
+            xla::CoordinationServiceAgent* agent =
+                xla::ValueOrThrow(client->GetCoordinationServiceAgent());
+            xla::ThrowIfError(manager.Initialize(agent));
+          },
+          nb::arg("distributed_client"))
+      .def("reached_sync_point",
+           [](xla::PreemptionSyncManager& manager, int step_counter) {
+             return manager.ReachedSyncPoint(step_counter);
+           })
+      .def("shutdown", [](xla::PreemptionSyncManager& manager) {
+        nb::gil_scoped_release gil_release;
+        manager.Shutdown();
+      });
+  m.def("create_preemption_sync_manager",
+        []() { return xla::CreatePreemptionSyncManager(); });
+#else
   nb::class_<tsl::PreemptionSyncManager> preemption_sync_manager(
       m, "PreemptionSyncManager");
   preemption_sync_manager
@@ -602,6 +628,7 @@ NB_MODULE(_jax, m) {
       });
   m.def("create_preemption_sync_manager",
         []() { return tsl::CreatePreemptionSyncManager(); });
+#endif
 
   nb::class_<xla::DistributedRuntimeService> distributed_runtime_service(
       m, "DistributedRuntimeService");
@@ -885,11 +912,12 @@ NB_MODULE(_jax, m) {
       .def("__getattr__",
            [](xla::ifrt::Topology& topology,
               std::string_view name) -> nb::object {
-             const auto& attrs = topology.Attributes().map();
-             auto it = attrs.find(name);
-             if (it != attrs.end()) {
+             auto value =
+                 topology.Attributes().Get<xla::ifrt::AttributeMap::Value>(
+                     std::string(name));
+             if (value.ok()) {
                return std::visit([](auto&& v) { return nb::cast(v.value); },
-                                 it->second);
+                                 *value);
              }
              throw nb::attribute_error(
                  absl::StrCat("Unknown attribute ", name).c_str());
@@ -897,7 +925,6 @@ NB_MODULE(_jax, m) {
 
   nb::class_<xla::ifrt::TransferServerInterfaceFactory>(
       m, "TransferServerInterfaceFactory");
-
 
   m.def("is_asan", IsAsan);
   m.def("is_msan", IsMsan);

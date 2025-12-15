@@ -9,7 +9,6 @@ portpicker
 pytest<9.0  # Works around https://github.com/pytest-dev/pytest/issues/13895
 pytest-xdist
 rich
-# TODO(phawkins): enable matplotlib once it ships a 3.14 wheel.
-matplotlib; python_version<"3.14"
+matplotlib
 auditwheel
 scipy-stubs

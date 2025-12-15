@@ -359,13 +359,22 @@ class PyArray : public nanobind::object {
 class PyArrayResultHandler {
  public:
   PyArrayResultHandler(nanobind::object aval, nanobind::object sharding,
-                       bool committed, bool skip_checks);
+                       bool committed, bool skip_checks,
+                       std::vector<nanobind::callable> wrappers = {});
 
-  PyArray Call(absl::Span<const PyArray> py_arrays) const;
-  PyArray Call(PyArray py_array) const;
+  nanobind::object Call(absl::Span<const PyArray> py_arrays) const;
+  nanobind::object Call(PyArray py_array) const;
 
-  PyArray Call(nb_class_ptr<PyClient> py_client, xla::ifrt::ArrayRef ifrt_array,
-               xla::Future<> result_status = xla::Future<>()) const;
+  nanobind::object Call(nb_class_ptr<PyClient> py_client,
+                        xla::ifrt::ArrayRef ifrt_array,
+                        xla::Future<> result_status = xla::Future<>()) const;
+
+  const std::vector<nanobind::callable>& wrappers() const { return wrappers_; }
+
+  nanobind::object aval() const { return aval_; }
+  nanobind::object sharding() const { return sharding_; }
+  bool committed() const { return committed_; }
+  bool skip_checks() const { return skip_checks_; }
 
  private:
   nanobind::object aval_;
@@ -376,6 +385,7 @@ class PyArrayResultHandler {
 
   xla::nb_dtype dtype_;
   std::vector<int64_t> shape_;
+  std::vector<nanobind::callable> wrappers_;
 };
 
 absl::StatusOr<nanobind::object> CudaArrayInterfaceToBuffer(

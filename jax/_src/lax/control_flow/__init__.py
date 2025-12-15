@@ -50,11 +50,8 @@ from jax._src.lax.control_flow.solves import (
 # Private utilities used elsewhere in JAX
 # TODO(sharadmv): lift them into a more common place
 from jax._src.lax.control_flow.common import (
-    _initial_style_open_jaxpr as _initial_style_open_jaxpr,
-    _initial_style_jaxpr as _initial_style_jaxpr,
-    _initial_style_jaxprs_with_common_consts as _initial_style_jaxprs_with_common_consts,
     _check_tree_and_avals as _check_tree_and_avals,
-
+    _merge_common_consts as _merge_common_consts,
 )
 # TODO(mattjj): fix dependent library which expects optimization_barrier_p here
 from jax._src.lax.lax import optimization_barrier_p as optimization_barrier_p

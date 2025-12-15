@@ -82,6 +82,10 @@ proto_library(
 cc_proto_library(
     name = "triton_cc_proto",
     compatible_with = None,
+    visibility = [
+        "//jax:internal",
+        "//third_party/py/enzyme_ad:__subpackages__",
+    ],
     deps = [":triton_proto"],
 )
 

@@ -15,7 +15,6 @@
 """Layout utilities."""
 
 import re
-from typing import assert_never
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
@@ -222,118 +221,6 @@ def splat_is_compatible_with_tiled(
   # dimension in the base tile shape.
   s1, s2 = l1.shape, l2.base_tile_shape
   return all(d1 % d2 == 0 for d1, d2 in zip(s1, s2))
-
-
-def meet_layouts(
-    layout1: fa.FragmentedLayout, layout2: fa.FragmentedLayout
-) -> fa.FragmentedLayout | None:
-  """Returns the "meet" of two layouts that are compatible up to replication.
-
-  The "meet" of the two layouts is the most replicated layout that is still
-  less replicated than the arguments.
-
-  This is the dual of `join_layouts`.
-
-  Returns:
-    The "meet" of the two layouts if both layouts are compatible up to
-    replication.
-
-  Raises:
-    ValueError: if the two layouts are not compatible up to replication.
-  """
-  if layout1 == layout2:
-    return layout1
-
-  match (layout1, layout2):
-    case (fa.WGSplatFragLayout(), _):
-      if isinstance(layout2, fa.TiledLayout):
-        if splat_is_compatible_with_tiled(layout1, layout2):
-          return layout2
-      elif layout1.shape == layout2.shape:
-        return layout2
-    case (_, fa.WGSplatFragLayout()):
-      if isinstance(layout1, fa.TiledLayout):
-        if splat_is_compatible_with_tiled(layout2, layout1):
-          return layout1
-      elif layout1.shape == layout2.shape:
-        return layout1
-    case (fa.TiledLayout(), fa.TiledLayout()):
-      # TODO(bchetioui): handle `TiledLayout` replication.
-      raise NotImplementedError("TiledLayout replication not supported yet")
-
-  # Layouts are not compatible up to replication.
-  return None
-
-# NOTE: We say that two layouts are compatible up to replication if the two
-# layouts satisfy at least one of the following conditions together:
-#
-# - The two layouts are equal;
-# - One of the layouts is a `WGSplatFragLayout`, and
-#   * The other layout is a `WGStridedFragLayout` with the same shape;
-#   * The other layout is a `TiledLayout` that can be used to tile the shape
-#     embedded in the `WGSplatFragLayout`.
-#
-# If any of these conditions hold, then we are always able to substitute one
-# layout with the other without having to reorder any data in the underlying
-# array---i.e. a relayout is free.
-#
-# Note that there are other combinations of layouts for which relayout is free,
-# but we voluntarily narrowed down our definition to span a small, useful
-# subset.
-
-def join_layouts(
-    layout1: fa.FragmentedLayout, layout2: fa.FragmentedLayout
-) -> fa.FragmentedLayout | None:
-  """Returns the "join" of two layouts that are compatible up to replication.
-
-  The "join" of the two layouts is the least replicated layout that is still
-  more replicated than the arguments.
-
-  This is the dual of `meet_layouts`.
-
-  Returns:
-    The "join" of the two layouts if both layouts are compatible up to
-    replication.
-
-  Raises:
-    ValueError: if the two layouts are not compatible up to replication.
-  """
-  if layout1 == layout2:
-    return layout1
-
-  match (layout1, layout2):
-    case (fa.WGSplatFragLayout(), _):
-      if isinstance(layout2, fa.TiledLayout):
-        if splat_is_compatible_with_tiled(layout1, layout2):
-          return layout1
-      elif layout1.shape == layout2.shape:
-        return layout1
-    case (_, fa.WGSplatFragLayout()):
-      if isinstance(layout1, fa.TiledLayout):
-        if splat_is_compatible_with_tiled(layout2, layout1):
-          return layout2
-      elif layout1.shape == layout2.shape:
-        return layout2
-    case (fa.TiledLayout(), fa.TiledLayout()):
-      # TODO(bchetioui): handle `TiledLayout` replication.
-      raise NotImplementedError("TiledLayout replication not supported yet")
-
-  # Layouts are not compatible up to replication.
-  return None
-
-
-def has_any_replication(layout: fa.FragmentedLayout) -> bool:
-  match layout:
-    case fa.WGSplatFragLayout():
-      return True
-    case fa.WGStridedFragLayout():
-      return False
-    case fa.TiledLayout():
-      is_warp_replicated = any(isinstance(d, fa.Replicated) for d in layout.warp_dims)
-      is_lane_replicated = any(isinstance(d, fa.Replicated) for d in layout.lane_dims)
-      return is_warp_replicated or is_lane_replicated
-    case _ as unreachable:
-      return assert_never(unreachable)  # pytype: disable=wrong-arg-types
 
 
 _tile_transform_attr_pattern = re.compile(

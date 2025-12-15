@@ -5,6 +5,7 @@ package jax_triton;
 message TritonKernel {
   string kernel_name = 1;  // Kernel function name within module.
   uint32 num_warps = 2;
+  optional uint32 num_ctas = 10;
   uint32 shared_mem_bytes = 3;
   string ptx = 4;
   string ttir = 5;

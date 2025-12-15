@@ -862,7 +862,7 @@ class LaunchContext:
     if max(slice_shape) > 256:
       raise ValueError(
           "Async copies only support copying <=256 elements along each"
-          " dimension"
+          f" dimension, got {tuple(slice_shape)}"
       )
     if (zeroth_bw := slice_shape[-1] * element_bitwidth) % 128 != 0:
       raise ValueError(
@@ -1019,7 +1019,7 @@ class LaunchContext:
       raise ValueError(
           "Expected the SMEM reference to have the same shape as the"
           f" transformed slice: {tuple(smem_ref_ty.shape)} !="
-          f" {slice_shape[len(squeezed_dims):]}"
+          f" {tuple(slice_shape[len(squeezed_dims):])}"
       )
 
     if implementation == AsyncCopyImplementation.CP_ASYNC:
@@ -1157,7 +1157,7 @@ class LaunchContext:
 
       if arrive:
         arrive_predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
-        nvvm.mbarrier_arrive_expect_tx(
+        utils.nvvm_mbarrier_arrive_expect_tx(
             barrier_ptr,
             transfer_bytes,
             predicate=arrive_predicate,
@@ -1288,7 +1288,7 @@ class LaunchContext:
               arith.CmpIPredicate.eq, self.cluster_idx(collective), c(0, index),
           )
           arrive_predicate = arith.andi(predicate, first_block)
-          nvvm.mbarrier_arrive_expect_tx(
+          utils.nvvm_mbarrier_arrive_expect_tx(
               barrier_ptr, transfer_bytes, predicate=arrive_predicate
           )
         rank = len(slice_shape)
@@ -1309,7 +1309,7 @@ class LaunchContext:
         )
       else:
         if arrive:
-          nvvm.mbarrier_arrive_expect_tx(
+          utils.nvvm_mbarrier_arrive_expect_tx(
               barrier_ptr, transfer_bytes, predicate=predicate
           )
         if collective_size > 1:

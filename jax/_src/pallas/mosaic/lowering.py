@@ -52,6 +52,7 @@ from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
 
+from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import cf
@@ -187,7 +188,7 @@ class LoweringContext:
   kernel_type: tpu_core.KernelType
   traceback_caches: mlir.TracebackCaches
   forward_compatible: bool
-  backend: xla_bridge.XlaBackend | None
+  backend: xla_client.Client | None
   dynamic_shape_replacement_fn: DynamicShapeReplacementFn
 
   def replace(self, **changes: Any) -> LoweringContext:
@@ -2518,7 +2519,8 @@ def _gather_lowering_rule(
   )
   # During lowering jnp.take_along_axis to lax.gather, we append extra dimension
   # to the end of the indices array. We should reshape it back to the original
-  # shape before lowering to Mosaic and rely on MLIR CSE to remove the reshapes.
+  # shape before lowering to Mosaic and rely on MLIR canonicalization to remove
+  # the reshapes.
   assert indices_aval.shape == in_aval.shape + (1,)
   recovered_indices = vector.shape_cast(
       ir.VectorType.get(in_aval.shape, indices.type.element_type),
@@ -2528,8 +2530,6 @@ def _gather_lowering_rule(
   del fill_value
   if (
       slice_sizes == (1, 1)
-      and not unique_indices
-      and not indices_are_sorted
       and mode
       in (
           lax.GatherScatterMode.FILL_OR_DROP,
@@ -2779,7 +2779,7 @@ def _rem_lowering_rule(ctx: LoweringRuleContext, x, y):
   raise NotImplementedError(aval_out.dtype)
 
 
-@register_lowering_rule(lax.abs_p)
+@register_lowering_rule(lax.abs_p, kernel_types=[*tpu_core.KernelType])
 def _abs_lowering_rule(ctx: LoweringRuleContext, x):
   (aval_out,) = ctx.avals_out
   if jnp.issubdtype(aval_out.dtype, jnp.integer):
@@ -2789,7 +2789,9 @@ def _abs_lowering_rule(ctx: LoweringRuleContext, x):
   raise NotImplementedError(aval_out.dtype)
 
 
-@register_lowering_rule(lax.neg_p, ensure_mlir_values=False)
+@register_lowering_rule(
+    lax.neg_p, kernel_types=[*tpu_core.KernelType], ensure_mlir_values=False
+)
 def _neg_lowering_rule(ctx: LoweringRuleContext, x):
   (x_aval,) = ctx.avals_in
   new_ctx = ctx.replace(
