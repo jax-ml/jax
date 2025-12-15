@@ -1753,12 +1753,16 @@ def _swap_lowering_rule(
           layout=value.layout,
       )
       value.store_tiled(x_smem, swizzle=swizzle)
-    case () | (gpu_core.TransposeRef((1, 0)),):
+    case () | (gpu_core.TransposeRef(),):
       transposed = bool(transforms)
       match value.layout:
         case mgpu.TiledLayout():
           if transposed:
-            x_smem = mgpu.memref_transpose(x_smem, (1, 0))
+            assert isinstance(
+                transforms[0], gpu_core.TransposeRef
+            )  # silence pytype
+            permutation = transforms[0].permutation
+            x_smem = mgpu.memref_transpose(x_smem, permutation)
           old_value = mgpu.FragmentedArray.load_untiled(
               x_smem,
               layout=value.layout,
