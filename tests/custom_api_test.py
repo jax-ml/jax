@@ -4591,6 +4591,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertEqual(str(jaxpr), str(jaxpr_ref))
 
   @parameterized.named_parameters(
+    ("0", 0),
     ("1", 1),
     ("8", 4),
     ("12", 8),
@@ -4607,6 +4608,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(y, x**2)
 
   @parameterized.named_parameters(
+    ("0", 0),
     ("1", 1),
     ("8", 4),
     ("12", 8),

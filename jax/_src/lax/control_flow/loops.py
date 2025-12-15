@@ -2708,7 +2708,10 @@ def _batch_and_remainder(x, batch_size: int):
   leaves, treedef = tree_flatten(x)
   if not leaves:
     return x, None
-  num_batches, remainder = divmod(leaves[0].shape[0], batch_size)
+  if batch_size == 0:
+    num_batches, remainder = 0, leaves[0].shape[0]
+  else:
+    num_batches, remainder = divmod(leaves[0].shape[0], batch_size)
   batch_elems = num_batches * batch_size
   if num_batches == 0:
     remainder_leaves = [_remainder_leaf(leaf, batch_elems) for leaf in leaves]
@@ -2748,6 +2751,8 @@ def map(f, xs, *, batch_size: int | None = None):
   version of ``map`` or as a memory-efficient version of ``vmap``. If the axis is not
   divisible by the batch size, the remainder is processed in a separate ``vmap`` and
   concatenated to the result.
+
+  ``batch_size=0`` is equivalent to applying a ``vmap``. That is, it uses a full batch.
 
     >>> x = jnp.ones((10, 3, 4))
     >>> def f(x):
