@@ -2213,8 +2213,8 @@ jax_multiplatform_test(
     enable_backends = ["gpu"],
     tags = ["notap"],  # TODO(emilyaf): Enable this.
     deps = [
-        "//third_party/py/jax:experimental_serialize_executable",
-        "//third_party/py/jax:experimental_topologies",
+        "//jax/experimental:serialize_executable",
+        "//jax/experimental:topologies",
     ] + py_deps([
         "absl/testing",
     ]),
