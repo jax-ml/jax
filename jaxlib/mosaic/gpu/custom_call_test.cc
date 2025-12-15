@@ -19,6 +19,9 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/base/log_severity.h"
+#include "absl/log/globals.h"
+#include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
@@ -36,6 +39,7 @@ limitations under the License.
 namespace {
 
 using ::absl_testing::IsOk;
+using ::testing::_;
 
 absl::Status ExecuteSync(xla::PjRtLoadedExecutable* executable) {
   std::vector<xla::PjRtBuffer*> no_buffers;
@@ -65,16 +69,16 @@ ENTRY main {
     custom_call_target="mosaic_gpu_v2", api_version=API_VERSION_TYPED_FFI
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          xla::ParseAndReturnUnverifiedModule(kHloModule));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       xla::ParseAndReturnUnverifiedModule(kHloModule));
 
   std::string tmp_path = testing::TempDir();
   tsl::setenv("XLA_FLAGS", absl::StrCat("--xla_dump_to=", tmp_path).c_str(),
               /*overwrite=*/true);
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
-                          xla::GetXlaPjrtGpuClient(/*options=*/{}));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<xla::PjRtLoadedExecutable> executable,
       client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
                              /*options=*/{}));
@@ -132,6 +136,147 @@ TEST(CustomCallTest, LegacyCustomCall) {
       client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
                              /*options=*/{}));
   EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+}
+
+absl::string_view TestMGPUHloModule() {
+  // Dumped from the following JAX program:
+  //
+  // ```
+  // @functools.partial(
+  //     plgpu.pallas_call,
+  //     out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+  //     out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+  // )
+  // def kernel(o_ref):
+  //   o_ref[...] = jnp.array(42)
+  // ```
+  return R"hlo(
+    HloModule test
+
+    ENTRY main {
+      ROOT result = s32[] custom-call(), custom_call_target="mosaic_gpu_v2", api_version=API_VERSION_TYPED_FFI, backend_config={kernel_hash = "\90\C7\1F$\92=c\9D\E4\A8\15\B1Y\9B.\02\B4\B0\0B\16\C5Ol\D4\ED\CDdA-\C9\D77", module = "ML\EFR\01MLIR\00\01O\0D\01\03\05\07\09\0B\01\03\0D\037\0F\11\13\15\17\19\1B\1D\1F!#%')+-/13579;=?AC\03\12\02\C9\1D\01\BB\0F\13\0B\0B\0F\13\13\13\13\0B\07\0B\0B\13\13\0B\0F\13\13\13e\1B\0B\0F\0B\0B#\0B\0B\0B\0B;\0B\0B\0B\0B\0B\0B\0B#\0B\0B\07\0B\13\0F\0F\13\13\13\0F\13\13\0B\133\133\133U\1B\0B\C3\0B\13\13\13\13\13\13\13\13\13\17\17\17\0B\0F\1F\0F\0B\0B\13\13\0B\0B\0F\0B\0F\0B\17\0B\05\03a\07\09y111\09\03Y\0B\03U\01\15\0F\07\0F\0B\0B\1B/\17\13;\05\07)yQ\07\03E\02\AE\0A\1D3\15\03\03\9B\C5\05E\05G\11\05\01\03\03\07]\03\03\19\BF\03\03\19\C1\03\03\19\C3\05I\1F\05K\05M\03\03\07\9D\03\03\A5\09\05O\11\01\11\03\03\07\9F\03\03\07\A1\03\03\A3\C7affine_map<(d0) -> (d0)>\00\03\05-/\131\05Q\11\05\19\05S\05U\03\07\1F7\139;=\0D\0D\05W\05Y\05[\03\0DA!CEG\BB\13IK\09M\09\05]\05_\0D\19\05a\05c\05e\05g\03\07\1FQSU\13W\0D\0F\05i\0F\05k\03\03\07[\11\01\A9\11\01\01\03\03\07a\11\03\02\04\03\03\07e\11\03\05\03\03\07\09\03\03k\09\05m\03\03\17o#\05\03\11\00\00\00\00\00\00\00\00\03\03\17s#\05\03\11\01\00\00\00\00\00\00\00\03\03\17w#\05\03\11\02\00\00\00\00\00\00\00affine_map<() -> ()>\00\03\05}\7F\81\09\05o#\01\17Y\01\00\00\00\01\00\00\00\01\00\00\00\01\00\00\00\01\00\00\00\01\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\05q\17\05%O\17\05%]\17\05%k\17\05%\E1\17\05%\EF\17\05%\FD\17\05%\81\17\05%\9B\17\05%\B5\17\05%&\02\17\05%f\02\17\05%\9E\02\05s\11\01\15\11\01\D0\FF\FF\FF?\11\01}\05u\05w\03\03\07!\03\03\AB\AD\05y\01\01\1D\B1\B3\05{\1D\B5\B7\05}\17\B9\06\03\0D\05\7F#llvm.linkage<external>\00#gpu.address_space<workgroup>\00#gpu<dim x>\00#gpu<dim y>\00#gpu<dim z>\00#arith.overflow<none>\00#nvvm<shfl_kind idx>\00\01\02\02\03\01\02\04\01\09\01A\17\BD\03\01\09)\05\11\15\15\05\05\15\15\05\15\01\05\05\15\15\01\15\01\01y\17\BD\03\00\FF\FF\FF\FF\FF\FF\FF\FF\09)!llvm.ptr\00!llvm.struct<(ptr, ptr, i64)>\00!llvm.array<0 x i8>\00!gpu.async.token\00\04Z\0C\05\01\11\01+\07\03\01\0D\17\11\015\07\01\1F\11\01?\07\01\17\11\01O\07\03\1F;\05\15\01\15\01\05\03\15Y\03\01\05\03\15\0B\03\01\05\03\01_\03\03\05\03\15c\03\03!\03\01g\03\05#\02\01\03\17\0F\06\01\03\1B\03\01%\07\01i\03\15\03\03\11\07\01m\03\17\05\0F\13\11\07\01q\03\17\05\15\13\11\07\01u\03\17\05\17\0D\0F\06\01\03\11\03\19'\17\01{\03\1B\11\11\0B\0B\0B\09\0B\0B\07\05\03\C1\C6\02\19\03\83\03\85\03\87\03\89\03\8B\03\8D\03\8F\03\91\03\93\03\95\03\97\03\99\19\02\01\03\07\09\03\01\0D\03\03\03\06\01\03\01\039\0B\03\01\0D\03\03\03\06\01\03\01\03=\09\03\01\0F\03\03\03\06\01\03\01\03A\07\07\01\03\03\01\05C?\0D\07\01\03\03\01\05;E\0B\03\01\0F\03\03\03\06\01\03\01\03I\07\07\01\03\03\01\05?K\09\03\01\11\03\03\03\06\01\03\01\03O\07\07\01\03\03\01\05QM\0D\07\01\03\03\01\05GS\0B\03\01\11\03\03\03\06\01\03\01\03W\07\07\01\03\03\01\05MY\05\03\01\1B\03\01\13\06\01\03\01\05U]\05\03\01#\03\01\05\03\01\0B\03\01\05\03\01%\03\01\1B\07\01'\03\01\09a_ce\05\03\01\0B\03\01\15\07\01\1D\03\07\05gi\1D\06\01\03\07\05k7\19\02\01\03\07\09\03\01\0D\03\03\03\06\01\03\01\03q\0B\03\01\0D\03\03\03\06\01\03\01\03u\09\03\01\0F\03\03\03\06\01\03\01\03y\07\07\01\03\03\01\05{w\0D\07\01\03\03\01\05s}\0B\03\01\0F\03\03\03\06\01\03\01\03\81\07\07\01\03\03\01\05w\83\09\03\01\11\03\03\03\06\01\03\01\03\87\07\07\01\03\03\01\05\89\85\0D\07\01\03\03\01\05\7F\8B\0B\03\01\11\03\03\03\06\01\03\01\03\8F\07\07\01\03\03\01\05\85\91\05\03\01\1B\03\01\13\06\01\03\01\05\8D\95\05\03\01#\03\01\05\03\01\0B\03\01\05\03\01%\03\01\1B\07\01'\03\01\09\99\97\9B\9D\05\03\01\A7\03\01+\06\01\03\01\05\9F\A1\05\03\01\0B\03\01\15\07\01\1D\03\07\05\A3\A5\1D\06\01\03\07\05\A7o\09\03\01\0D\03\03\03\06\01\03\01\03\AB\0B\03\01\0D\03\03\03\06\01\03\01\03\AF\09\03\01\0F\03\03\03\06\01\03\01\03\B3\07\07\01\03\03\01\05\B5\B1\0D\07\01\03\03\01\05\AD\B7\0B\03\01\0F\03\03\03\06\01\03\01\03\BB\07\07\01\03\03\01\05\B1\BD\09\03\01\11\03\03\03\06\01\03\01\03\C1\07\07\01\03\03\01\05\C3\BF\0D\07\01\03\03\01\05\B9\C5\0B\03\01\11\03\03\03\06\01\03\01\03\C9\07\07\01\03\03\01\05\BF\CB\05\03\01\1B\03\01\13\06\01\03\01\05\C7\CF\05\03\01\0B\03\01\15\07\01\1D\03\07\05\D1\D3-\02\01\03\13\03\06\01\03\03\03\07/\06\01\03\0B\05\D7\D9\0F\07\01\A9\03\0B\03\DB1\00\013\00\015\04\AF\05\05\1B7\00\01)\00\01\06\03\01\05\01\00\9E\0E\81g\0B\0D\17\15\0B\1D/)\13%-\19\1B\1F\11\19\17\11\1F3\19\0F5\1D\15\13\13\0D\05\1F\1B\193\195\19\19\17\15!'#\17\1F!\15\17\19#G\17\1D\1D\17\1F#\0F\0B\0D\09\0B%\11builtin\00stable_mosaic_gpu\00llvm\00gpu\00arith\00nvvm\00module\00arith.index_cast\00arith.constant\00arith.muli\00gpu.thread_id\00gpu.block_dim\00arith.addi\00builtin.unrealized_conversion_cast\00llvm.insertvalue\00arith.shrui\00arith.cmpi\00func.func\00nvvm.elect.sync\00nvvm.shfl.sync\00arith.andi\00llvm.mlir.global\00llvm.mlir.constant\00llvm.mlir.undef\00llvm.load\00gpu.launch\00func.return\00arith.remui\00gpu.dynamic_shared_memory\00memref.view\00nvvm.fence.mbarrier.init\00gpu.barrier\00memref.store\00gpu.terminator\00-\00value\00sym_name\00position\00dimension\00function_type\00stable_mosaic_gpu.version\00kernel\00pallas_call\00mosaic_gpu_init_tma_desc\00sym_visibility\00private\00addr_space\00global_type\00linkage\00global_scratch\00unnamed_addr\00visibility_\00llvm.emit_c_interface\00kernel_mosaic_gpu\00ordering\00operandSegmentSizes\00workgroup_attributions\00overflowFlags\00kind\00predicate\00transforms\00swap:\00swap\00third_party/py/jax/tests/pallas/mosaic_gpu_test.py\00", use_custom_barrier = false}
+    }
+  )hlo";
+}
+
+TEST(CustomCallTest, UnloadGPUModule) {
+  ASSERT_OK_AND_ASSIGN(
+      auto module, xla::ParseAndReturnUnverifiedModule(TestMGPUHloModule()));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                             /*options=*/{}));
+
+  absl::SetVLogLevel("custom_call", 5);
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    "Successfully compiled and initialized Mosaic GPU kernel"))
+        .Times(1);
+    log.StartCapturingLogs();
+    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  }
+
+  {
+    // The second execution the compilation should be cached.
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    "Successfully compiled and initialized Mosaic GPU kernel"))
+        .Times(0);
+    log.StartCapturingLogs();
+    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  }
+
+  {
+    // GPU module should be unloaded when the executable is destroyed.
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Successfully unloaded GPU module"))
+        .Times(1);
+    log.StartCapturingLogs();
+    executable.reset();
+  }
+}
+
+TEST(CustomCallTest, GPUModuleIsOnlyUnloadedWhenAllExecutablesAreDestroyed) {
+  ASSERT_OK_AND_ASSIGN(
+      auto module, xla::ParseAndReturnUnverifiedModule(TestMGPUHloModule()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable1,
+      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                             /*options=*/{}));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable2,
+      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                             /*options=*/{}));
+
+  EXPECT_THAT(ExecuteSync(executable1.get()), IsOk());
+  EXPECT_THAT(ExecuteSync(executable2.get()), IsOk());
+
+  absl::SetVLogLevel("custom_call", 5);
+  {
+    // executable2 still holds a reference to the GPU module.
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Successfully unloaded GPU module"))
+        .Times(0);
+    log.StartCapturingLogs();
+    executable1.reset();
+  }
+  EXPECT_THAT(ExecuteSync(executable2.get()), IsOk());
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Successfully unloaded GPU module"))
+        .Times(1);
+    log.StartCapturingLogs();
+    executable2.reset();
+  }
+}
+
+TEST(CustomCallTest, GPUModuleIsRecompiledAfterExpiration) {
+  ASSERT_OK_AND_ASSIGN(
+      auto module, xla::ParseAndReturnUnverifiedModule(TestMGPUHloModule()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                             /*options=*/{}));
+
+  EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Successfully unloaded GPU module"))
+        .Times(1);
+    log.StartCapturingLogs();
+    executable.reset();
+  }
+
+  ASSERT_OK_AND_ASSIGN(
+      executable, client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                                         /*options=*/{}));
+
+  {
+    // executable was destroyed and the module was unloaded. We re-compile the
+    // kernel.
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    "Successfully compiled and initialized Mosaic GPU kernel"))
+        .Times(1);
+    log.StartCapturingLogs();
+    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  }
 }
 
 }  // namespace
