@@ -59,38 +59,83 @@ def _round_half_to_posinf(a: Array) -> Array:
   return a if dtypes.issubdtype(a.dtype, np.integer) else lax.floor(a + 0.5)
 
 
-def _nearest_indices_and_weights(coordinate: Array) -> list[tuple[Array, ArrayLike]]:
+def _filter_index_and_weight(coordinate: Array, even: bool = False) -> tuple[Array, Array]:
+  lower = jnp.floor(coordinate + 0.5 if even else coordinate)
+  lower_dist = coordinate - lower
+  # (index, dist to lower knot)
+  return (lower.astype(np.int32), lower_dist)
+
+
+def _nearest_indices_and_weights(coordinate: Array) -> list[tuple[Array, Array]]:
   index = _round_half_to_posinf(coordinate).astype(np.int32)
   weight = coordinate.dtype.type(1)
   return [(index, weight)]
 
 
-def _linear_indices_and_weights(coordinate: Array) -> list[tuple[Array, ArrayLike]]:
-  lower = jnp.floor(coordinate)
-  upper_weight = coordinate - lower
-  lower_weight = 1 - upper_weight
-  index = lower.astype(np.int32)
-  return [(index, lower_weight), (index + 1, upper_weight)]
+def _linear_indices_and_weights(coordinate: Array) -> list[tuple[Array, Array]]:
+  (index, lower_dist) = _filter_index_and_weight(coordinate)
+  return [(index, 1 - lower_dist), (index + 1, lower_dist)]
 
 
-def _cubic_indices_and_weights(coordinate: Array) -> list[tuple[Array, ArrayLike]]:
-  lower = jnp.floor(coordinate)
-  index = lower.astype(np.int32)
-  t = coordinate - lower  # 0-1
+def _quadratic_indices_and_weights(coordinate: Array) -> list[tuple[Array, Array]]:
+  (index, t) = _filter_index_and_weight(coordinate, even=True)
+  # t from -0.5 to 0.5
+  return [
+    (index - 1, 0.5 * (0.5 - t)**2),
+    (index,     0.75 - t * t),
+    (index + 1, 0.5 * (t + 0.5)**2),
+  ]
+
+
+def _cubic_indices_and_weights(coordinate: Array) -> list[tuple[Array, Array]]:
+  (index, t) = _filter_index_and_weight(coordinate)
   t1 = 1 - t
-  ret = [
+  return [
     (index - 1, t1 * t1 * t1 / 6.),
     (index,     (4. + 3. * t * t * (t - 2.0)) / 6.),
     (index + 1, (4. + 3. * t1 * t1 * (t1 - 2.0)) / 6.),
     (index + 2, t * t * t / 6.),
   ]
-  return ret
 
 
-_INTERP_FNS: dict[int, Callable[[Array], list[tuple[Array, ArrayLike]]]] = {
+def _quartic_indices_and_weights(coordinate: Array) -> list[tuple[Array, Array]]:
+  (index, t) = _filter_index_and_weight(coordinate, even=True)
+  t_sq = t**2
+  y = t + 1
+  t1 = 1 - t
+  return [
+    (index - 2, (0.5 - t)**4 / 24.0),
+    (index - 1, y * (y * (y * (5.0 - y) / 6.0 - 1.25) + 5.0 / 24.0) + 55.0 / 96.0),
+    (index,     t_sq * (t_sq * 0.25 - 0.625) + 115.0 / 192.0),
+    (index + 1, t1 * (t1 * (t1 * (5.0 - t1) / 6.0 - 1.25) + 5.0 / 24.0) + 55.0 / 96.0),
+    (index + 2, (t + 0.5)**4 / 24.0),
+  ]
+
+
+def _quintic_indices_and_weights(coordinate: Array) -> list[tuple[Array, Array]]:
+  (index, t) = _filter_index_and_weight(coordinate)
+  t1 = 1 - t
+  t_sq = t * t
+  t1_sq = t1 * t1
+  y = t + 1
+  y1 = t1 + 1
+  return [
+    (index - 2, t1 * t1_sq * t1_sq / 120.0),
+    (index - 1, y * (y * (y * (y * (y / 24.0 - 0.375) + 1.25) - 1.75) + 0.625) + 0.425),
+    (index,     t_sq * (t_sq * (0.25 - t / 12.0) - 0.5) + 0.55),
+    (index + 1, t1_sq * (t1_sq * (0.25 - t1 / 12.0) - 0.5) + 0.55),
+    (index + 2, y1 * (y1 * (y1 * (y1 * (y1 / 24.0 - 0.375) + 1.25) - 1.75) + 0.625) + 0.425),
+    (index + 3, t * t_sq * t_sq / 120.0),
+  ]
+
+
+_INTERP_FNS: dict[int, Callable[[Array], list[tuple[Array, Array]]]] = {
   0: _nearest_indices_and_weights,
   1: _linear_indices_and_weights,
+  2: _quadratic_indices_and_weights,
   3: _cubic_indices_and_weights,
+  4: _quartic_indices_and_weights,
+  5: _quintic_indices_and_weights,
 }
 
 

@@ -58,7 +58,7 @@ class NdimageTest(jtu.JaxTestCase):
      ]
     ],
     [dict(order=order, prefilter=prefilter)
-     for order in [0, 1, 3]
+     for order in list(range(6))
      for prefilter in ([False] if order > 1 else [True])
     ],
     shape=[(5,), (3, 4), (3, 4, 5)],
@@ -101,7 +101,7 @@ class NdimageTest(jtu.JaxTestCase):
     c = [np.linspace(0, 5, num=3)]
     with self.assertRaisesRegex(
       NotImplementedError, 'does not yet support order'):
-      lsp_ndimage.map_coordinates(x, c, order=2, prefilter=False)
+      lsp_ndimage.map_coordinates(x, c, order=7, prefilter=False)
     with self.assertRaisesRegex(
         NotImplementedError, 'does not yet support mode'):
       lsp_ndimage.map_coordinates(x, c, order=1, mode='grid-wrap')
@@ -110,15 +110,15 @@ class NdimageTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=float_dtypes + int_dtypes,
-    order=[0, 1],
+    order=[0, 1, 2, 3],
   )
   def testMapCoordinatesRoundHalf(self, dtype, order):
-    x = np.arange(-3, 3, dtype=dtype)
+    x = np.arange(-3, 8, 2, dtype=dtype)
     c = np.array([[.5, 1.5, 2.5, 3.5]])
     def args_maker():
       return x, c
 
-    lsp_op = lambda x, c: lsp_ndimage.map_coordinates(x, c, order=order, prefilter=False)
+    lsp_op = lambda x, c: lsp_ndimage.map_coordinates(x, c, order=order, prefilter=False, mode='constant')
     osp_op = lambda x, c: osp_ndimage.map_coordinates(x, c, order=order, prefilter=False, mode='grid-constant')
 
     with jtu.strict_promotion_if_dtypes_match([dtype, c.dtype]):
