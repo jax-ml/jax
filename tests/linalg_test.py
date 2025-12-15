@@ -85,7 +85,9 @@ def _random_invertible(rng, shape, dtype):
 
 def osp_linalg_toeplitz(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarray:
   """scipy.linalg.toeplitz with v1.17+ batching semantics."""
-  if scipy_version >= (1, 17, 0):
+  # scipy 1.17 doesn't support zero batch size: https://github.com/scipy/scipy/pull/24151
+  zero_batch = (0 in c.shape[:-1]) or (r is not None and 0 in r.shape[:-1])
+  if scipy_version >= (1, 17, 0) and not zero_batch:
     return scipy.linalg.toeplitz(c, r)
   elif r is None:
     c = np.atleast_1d(c)
