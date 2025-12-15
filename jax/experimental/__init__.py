@@ -21,10 +21,6 @@
 # experimental features and as a result, more flexibility to manage their status
 # and lifetimes.
 
-from jax._src.api import (
-  saved_input_vjp as saved_input_vjp,
-  si_vjp as si_vjp
-)
 from jax._src.callback import (
   io_callback as io_callback
 )

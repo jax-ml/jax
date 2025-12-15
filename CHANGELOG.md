@@ -37,6 +37,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     For the moment, during Python type checking, we continue to declare `Tracer`
     as a subclass of `Array`, however we expect to remove this in a future
     release.
+  * `jax.experimental.si_vjp` has been deleted.
+    `jax.vjp` subsumes it's functionality.
 
 ## JAX 0.8.1 (November 18, 2025)
 
