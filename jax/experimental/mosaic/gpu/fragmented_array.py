@@ -2462,7 +2462,7 @@ class FragmentedArray:
         _is_signed=self.is_signed,
     )
 
-  def reshape(self, shape) -> FragmentedArray:
+  def reshape(self, shape: tuple[int, ...]) -> FragmentedArray:
     if self.shape == shape:
       return self
     if math.prod(shape) != math.prod(self.shape):

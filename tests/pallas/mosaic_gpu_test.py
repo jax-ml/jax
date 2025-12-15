@@ -323,7 +323,6 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x), x.reshape(shape2))
 
   def test_reshape_tiled(self):
-    self.skip_if_wg_semantics()
     shape1, shape2 = (6 * 64, 8), (2, 3, 64, 8)
 
     @functools.partial(
@@ -331,11 +330,30 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct(shape2, jnp.float32),
     )
     def kernel(x_ref, out_ref):
-      y = plgpu.load(x_ref, (), layout=plgpu.Layout.WGMMA, optimized=False).reshape(shape2)
-      out_ref[...] = y
+      x = plgpu.load(x_ref, (), layout=plgpu.Layout.WGMMA, optimized=False)
+      out_ref[...] = x.reshape(shape2)
 
     x = jnp.arange(math.prod(shape1)).reshape(shape1).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x.reshape(shape2))
+
+  def test_reshape_splat(self):
+    shape = (1, 1, 1)
+
+    # TODO(allanrenucci): Fix swap_p lowering for scalars under Lane semantics.
+    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
+      self.skipTest("Not supported under Lane semantics")
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+    )
+    def kernel(out_ref):
+      x = jnp.array(42, dtype=jnp.float32)
+      out_ref[...] = x.reshape(shape)
+
+    np.testing.assert_array_equal(
+        kernel(), jnp.array(42, dtype=jnp.float32).reshape(shape)
+    )
 
   def test_slice_untiled_dim(self):
     self.skip_if_wg_semantics()
@@ -2849,7 +2867,6 @@ class PallasCallWGTest(
         pallas_primitives.semaphore_read_p,
         pallas_primitives.delay_p,
         checkify.check_p,
-        lax.reshape_p,
         lax.squeeze_p,
     }
 
