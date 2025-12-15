@@ -31,6 +31,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     For the moment, during Python type checking, we continue to declare `Tracer`
     as a subclass of `Array`, however we expect to remove this in a future
     release.
+  * {func}`jax.export` now supports explicit sharding. This required a new
+    export serialization format version that includes the NamedSharding,
+    including the abstract mesh, and the partition spec. As part of this
+    change we have added a restriction in the use of exported modules: when
+    calling them the abstract mesh must match the one used at export time,
+    including the axis names. Previously, only the number of the devices
+    mattered.
 
 ## JAX 0.8.1 (November 18, 2025)
 
