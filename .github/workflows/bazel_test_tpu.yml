@@ -122,21 +122,8 @@ jobs:
           mkdir -p $(pwd)/dist
           $JAXCI_PYTHON -m pip install --upgrade pip
           echo "Download the wheel into a local directory"
-          # TODO(ybaturina): Remove this once the libtpu wheel is updated.
           if [[ "${{ inputs.libtpu-version-type }}" == "nightly" ]]; then
-            version=""
-            suffix=""
-            full_python_version="${{ inputs.python }}"
-
-            if [[ "$full_python_version" == *-* ]]; then
-              version="${full_python_version%%-*}"
-              suffix="t"
-            else
-              version="$full_python_version"
-              suffix=""
-            fi
-            version_no_dots="${version//./}"
-            wget -P $(pwd)/dist https://storage.googleapis.com/libtpu-nightly-releases/wheels/libtpu/libtpu-0.0.31.dev20251209+nightly-cp${version_no_dots}-cp${version_no_dots}${suffix}-manylinux_2_31_x86_64.whl
+            $JAXCI_PYTHON -m pip download -d $(pwd)/dist --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
           elif [[ "${{ inputs.libtpu-version-type }}" == "pypi_latest" ]]; then
             echo "Using latest libtpu from PyPI"
             $JAXCI_PYTHON -m pip download -d $(pwd)/dist libtpu
