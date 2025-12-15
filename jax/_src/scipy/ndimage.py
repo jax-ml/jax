@@ -55,8 +55,12 @@ def _round_half_away_from_zero(a: Array) -> Array:
   return a if dtypes.issubdtype(a.dtype, np.integer) else lax.round(a)
 
 
+def _round_half_to_posinf(a: Array) -> Array:
+  return a if dtypes.issubdtype(a.dtype, np.integer) else lax.floor(a + 0.5)
+
+
 def _nearest_indices_and_weights(coordinate: Array) -> list[tuple[Array, ArrayLike]]:
-  index = _round_half_away_from_zero(coordinate).astype(np.int32)
+  index = _round_half_to_posinf(coordinate).astype(np.int32)
   weight = coordinate.dtype.type(1)
   return [(index, weight)]
 
@@ -67,6 +71,27 @@ def _linear_indices_and_weights(coordinate: Array) -> list[tuple[Array, ArrayLik
   lower_weight = 1 - upper_weight
   index = lower.astype(np.int32)
   return [(index, lower_weight), (index + 1, upper_weight)]
+
+
+def _cubic_indices_and_weights(coordinate: Array) -> list[tuple[Array, ArrayLike]]:
+  lower = jnp.floor(coordinate)
+  index = lower.astype(np.int32)
+  t = coordinate - lower  # 0-1
+  t1 = 1 - t
+  ret = [
+    (index - 1, t1 * t1 * t1 / 6.),
+    (index,     (4. + 3. * t * t * (t - 2.0)) / 6.),
+    (index + 1, (4. + 3. * t1 * t1 * (t1 - 2.0)) / 6.),
+    (index + 2, t * t * t / 6.),
+  ]
+  return ret
+
+
+_INTERP_FNS: dict[int, Callable[[Array], list[tuple[Array, ArrayLike]]]] = {
+  0: _nearest_indices_and_weights,
+  1: _linear_indices_and_weights,
+  3: _cubic_indices_and_weights,
+}
 
 
 @functools.partial(api.jit, static_argnums=(2, 3, 4))
@@ -91,13 +116,11 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
   else:
     is_valid = lambda index, size: True
 
-  if order == 0:
-    interp_fun = _nearest_indices_and_weights
-  elif order == 1:
-    interp_fun = _linear_indices_and_weights
-  else:
+  interp_fun = _INTERP_FNS.get(int(order))
+  if interp_fun is None:
     raise NotImplementedError(
-        'jax.scipy.ndimage.map_coordinates currently requires order<=1')
+        'jax.scipy.ndimage.map_coordinates does not yet support order {}. '
+        'Currently supported orders are {}.'.format(int(order), set(_INTERP_FNS)))
 
   valid_1d_interpolations = []
   for coordinate, size in zip(coordinate_arrs, input_arr.shape):
@@ -127,7 +150,7 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
 
 def map_coordinates(
     input: ArrayLike, coordinates: Sequence[ArrayLike], order: int,
-    mode: str = 'constant', cval: ArrayLike = 0.0,
+    mode: str = 'constant', cval: ArrayLike = 0.0, prefilter: bool = True,
 ):
   """
   Map the input array to new coordinates using interpolation.
@@ -145,6 +168,7 @@ def map_coordinates(
 
       * 0: Nearest-neighbor
       * 1: Linear
+      * 3: Cubic
 
     mode: Points outside the boundaries of the input are filled according to the given mode.
       JAX supports one of ``('constant', 'nearest', 'mirror', 'wrap', 'reflect')``. Note the
@@ -156,6 +180,8 @@ def map_coordinates(
       ones, for backwards compatibility reasons. Default is 'constant'.
     cval: Value used for points outside the boundaries of the input if ``mode='constant'``
       Default is 0.0.
+    prefilter: Determines if the array is prefiltered with :func:`spline_prefilter` before
+      use. The default is `True`. Only has an effect for ``order > 1``.
 
   Returns:
     The interpolated values at the specified coordinates.
@@ -177,4 +203,7 @@ def map_coordinates(
     This function interprets the ``mode`` argument as documented by SciPy, but
     not as implemented by SciPy.
   """
+  if order > 1 and prefilter:
+    raise NotImplementedError()
+
   return _map_coordinates(input, coordinates, order, mode, cval)
