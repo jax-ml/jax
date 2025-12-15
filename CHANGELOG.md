@@ -25,6 +25,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `call_impl`, `get_aval`, `mapped_aval`, `subjaxprs`, `set_current_trace`,
     `take_current_trace`, `traverse_jaxpr_params`, `unmapped_aval`,
     `AbstractToken`,  and `TraceTag`.
+  * All symbols in {mod}`jax.interpreters.pxla` are deprecated. These are
+    primarily JAX internal APIs, and users should not rely on them.
 
 * Changes:
   * jax's `Tracer` no longer inherits from `jax.Array` at runtime. However,
