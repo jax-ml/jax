@@ -235,3 +235,41 @@ def logsf(x: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) 
     - :func:`jax.scipy.stats.gamma.logpdf`
   """
   return lax.log(sf(x, a, loc, scale))
+
+
+def ppf(q: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  r"""Gamma percent point function (inverse of CDF).
+
+  JAX implementation of :obj:`scipy.stats.gamma` ``ppf``.
+
+  The percent point function is defined as the inverse of the cumulative
+  distribution function:
+
+  .. math::
+
+     f_{ppf}(q, a) = f_{cdf}^{-1}(q, a)
+
+  where :math:`f_{cdf}` is the cumulative distribution function,
+  :func:`jax.scipy.stats.gamma.cdf`.
+
+  Args:
+    q: arraylike, probability values in [0, 1]
+    a: arraylike, distribution shape parameter
+    loc: arraylike, distribution offset parameter
+    scale: arraylike, distribution scale parameter
+
+  Returns:
+    array of ppf values.
+
+  See Also:
+    - :func:`jax.scipy.stats.gamma.cdf`
+    - :func:`jax.scipy.stats.gamma.pdf`
+    - :func:`jax.scipy.stats.gamma.sf`
+    - :func:`jax.scipy.stats.gamma.logcdf`
+    - :func:`jax.scipy.stats.gamma.logpdf`
+    - :func:`jax.scipy.special.gammaincinv`
+  """
+  from jax._src.scipy.special import gammaincinv
+  q, a, loc, scale = promote_args_inexact("gamma.ppf", q, a, loc, scale)
+  x = gammaincinv(a, q)
+  return loc + scale * x

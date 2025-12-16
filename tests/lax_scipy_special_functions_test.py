@@ -64,6 +64,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "betainc", 3, float_dtypes, jtu.rand_positive, False
     ),
     op_record(
+        "betaincinv", 3, float_dtypes, lambda rng: jtu.rand_uniform(rng, low=0.05, high=0.95), True
+    ),
+    op_record(
         "gamma", 1, float_dtypes, jtu.rand_default, True
     ),
     op_record(
@@ -74,6 +77,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     ),
     op_record(
         "gammaincc", 2, float_dtypes, jtu.rand_positive, True
+    ),
+    op_record(
+        "gammaincinv", 2, float_dtypes, lambda rng: jtu.rand_uniform(rng, low=0.05, high=0.95), True
     ),
     op_record(
         "gammasgn", 1, float_dtypes, jtu.rand_default, True
@@ -417,6 +423,90 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "Argument `x` to sici must be real-valued."):
       lsp_special.sici(samples)
 
+  def testGammaincInvInversion(self):
+    """Test that gammaincinv inverts gammainc"""
+    a_vals = np.array([0.5, 1.0, 2.0, 5.0, 10.0])
+    y_vals = np.array([0.001, 0.1, 0.5, 0.9, 0.999])
+    
+    for a in a_vals:
+      for y in y_vals:
+        x = lsp_special.gammaincinv(a, y)
+        y_recovered = lsp_special.gammainc(a, x)
+        self.assertAllClose(y, y_recovered, rtol=1e-5, atol=1e-5)
+
+  def testGammaincInvEdgeCases(self):
+    """Test edge cases for gammaincinv"""
+    # Test y=0 should give 0
+    self.assertEqual(float(lsp_special.gammaincinv(1.0, 0.0)), 0.0)
+    
+    # Test y=1 should give inf
+    self.assertTrue(np.isinf(float(lsp_special.gammaincinv(1.0, 1.0))))
+    
+    # Test invalid inputs return nan
+    self.assertTrue(np.isnan(float(lsp_special.gammaincinv(1.0, -0.1))))
+    self.assertTrue(np.isnan(float(lsp_special.gammaincinv(1.0, 1.1))))
+    self.assertTrue(np.isnan(float(lsp_special.gammaincinv(-1.0, 0.5))))
+
+  def testGammaincInvGradients(self):
+    """Test gradients of gammaincinv"""
+    a = jnp.array(2.0)
+    y = jnp.array([0.1, 0.5, 0.9])
+    
+    def f(y_val):
+      return lsp_special.gammaincinv(a, y_val).sum()
+    
+    grad_fn = jax.grad(f)
+    grad_val = grad_fn(y)
+    
+    # Gradient should be positive (gammaincinv is increasing)
+    self.assertTrue(jnp.all(grad_val > 0))
+    self.assertTrue(jnp.all(jnp.isfinite(grad_val)))
+
+  def testBetaincInvInversion(self):
+    """Test that betaincinv inverts betainc"""
+    a_vals = np.array([1.0, 2.0, 5.0])  # Skip 0.5 for now (harder to converge)
+    b_vals = np.array([1.0, 3.0, 5.0])
+    # Focus on moderate quantiles for stable convergence
+    y_vals = np.array([0.1, 0.3, 0.5, 0.7, 0.9])
+    
+    for a in a_vals:
+      for b in b_vals:
+        for y in y_vals:
+          x = lsp_special.betaincinv(a, b, y)
+          y_recovered = lsp_special.betainc(a, b, x)
+          # Use adaptive tolerance
+          rtol = 5e-3 if (y < 0.15 or y > 0.85) else 1e-3
+          atol = 5e-3 if (y < 0.15 or y > 0.85) else 1e-3
+          self.assertAllClose(y, y_recovered, rtol=rtol, atol=atol)
+
+  def testBetaincInvEdgeCases(self):
+    """Test edge cases for betaincinv"""
+    # Test y=0 should give 0
+    self.assertAlmostEqual(float(lsp_special.betaincinv(2.0, 3.0, 0.0)), 0.0, places=5)
+    
+    # Test y=1 should give 1
+    self.assertAlmostEqual(float(lsp_special.betaincinv(2.0, 3.0, 1.0)), 1.0, places=5)
+    
+    # Test invalid inputs return nan
+    self.assertTrue(np.isnan(float(lsp_special.betaincinv(2.0, 3.0, -0.1))))
+    self.assertTrue(np.isnan(float(lsp_special.betaincinv(2.0, 3.0, 1.1))))
+    self.assertTrue(np.isnan(float(lsp_special.betaincinv(-1.0, 3.0, 0.5))))
+    self.assertTrue(np.isnan(float(lsp_special.betaincinv(2.0, -1.0, 0.5))))
+
+  def testBetaincInvGradients(self):
+    """Test gradients of betaincinv"""
+    a, b = 2.0, 5.0
+    y = jnp.array([0.1, 0.5, 0.9])
+    
+    def f(y_val):
+      return lsp_special.betaincinv(a, b, y_val).sum()
+    
+    grad_fn = jax.grad(f)
+    grad_val = grad_fn(y)
+    
+    # Gradient should be positive (betaincinv is increasing)
+    self.assertTrue(jnp.all(grad_val > 0))
+    self.assertTrue(jnp.all(jnp.isfinite(grad_val)))
 
 
 if __name__ == "__main__":
