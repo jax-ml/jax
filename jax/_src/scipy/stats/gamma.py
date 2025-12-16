@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax import lax
-import jax.numpy as jnp
+import numpy as np
+
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
+from jax._src.scipy.special import gammaln, xlogy, gammainc, gammaincc
 from jax._src.typing import Array, ArrayLike
-from jax.scipy.special import gammaln, xlogy, gammainc, gammaincc
 
 
 def logpdf(x: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
@@ -57,7 +59,7 @@ def logpdf(x: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1)
   log_linear_term = lax.sub(xlogy(lax.sub(a, one), y), y)
   shape_terms = lax.add(gammaln(a), lax.log(scale))
   log_probs = lax.sub(log_linear_term, shape_terms)
-  return jnp.where(ok, log_probs, -jnp.inf)
+  return jnp.where(ok, log_probs, -np.inf)
 
 
 def pdf(x: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
@@ -129,7 +131,7 @@ def cdf(x: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) ->
     lax.clamp(
       _lax_const(x, 0),
       lax.div(lax.sub(x, loc), scale),
-      _lax_const(x, jnp.inf),
+      _lax_const(x, np.inf),
     )
   )
 

@@ -26,17 +26,18 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src.state.types import AbstractRef
 from jax._src.tree_util import (
-    PyTreeDef, tree_flatten, tree_unflatten, tree_map,
-    treedef_children, generate_key_paths, broadcast_prefix,
-    prefix_errors, _replace_nones)
+    PyTreeDef, tree_flatten, tree_unflatten, treedef_children,
+    tree_flatten_with_path, generate_key_paths, broadcast_prefix, prefix_errors,
+    none_leaf_registry, broadcast_flattened_prefix_with_treedef)
 from jax._src import linear_util as lu
 from jax._src.util import (safe_map, WrapKwArgs, Hashable, HashableFunction,
-                           Unhashable, safe_zip as zip)
+                           Unhashable, safe_zip, unzip2)
 from jax._src import traceback_util
 
 traceback_util.register_exclusion(__file__)
 
-map = safe_map
+map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
 
 def _ensure_index(x: Any) -> int | tuple[int, ...]:
   """Ensure x is either an index or a tuple of indices."""
@@ -73,6 +74,16 @@ def flatten_fun(f: Callable, store: lu.Store,
   ans = f(*py_args, **py_kwargs)
   ans, out_tree = tree_flatten(ans)
   store.store(out_tree)
+  return ans
+
+@lu.transformation_with_aux2
+def flatten_fun3(f: Callable, store: lu.Store,
+                in_tree: PyTreeDef, *args_flat):
+  py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
+  ans = f(*py_args, **py_kwargs)
+  paths_and_ans, out_tree = tree_flatten_with_path(ans)
+  paths, ans = unzip2(paths_and_ans)
+  store.store((out_tree, paths))
   return ans
 
 def apply_flat_fun(fun, io_tree, *py_args):
@@ -248,15 +259,19 @@ def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
     result.append(i % num_args)  # Resolve negative
   return tuple(result)
 
+def _split_args(static_argnums, args, allow_invalid):
+  static_argnums = _ensure_inbounds(allow_invalid, len(args), static_argnums)
+  dyn_argnums = tuple(i for i in range(len(args)) if i not in static_argnums)
+  dyn_args = tuple(args[i] for i in dyn_argnums)
+  return static_argnums, dyn_argnums, dyn_args
 
 def argnums_partial_except(f: lu.WrappedFun, static_argnums: tuple[int, ...],
                            args: tuple[Any, ...], *, allow_invalid: bool):
   "Version of ``argnums_partial`` that checks hashability of static_argnums."
   if not static_argnums:
     return f, args
-  static_argnums = _ensure_inbounds(allow_invalid, len(args), static_argnums)
-  dyn_argnums = tuple(i for i in range(len(args)) if i not in static_argnums)
-  dyn_args = tuple(args[i] for i in dyn_argnums)
+  static_argnums, dyn_argnums, dyn_args = _split_args(
+      static_argnums, args, allow_invalid)
 
   fixed_args = []
   for i in sorted(static_argnums):
@@ -394,13 +409,10 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
   # leaves, i.e. the Nones are to be considered leaves) that is a tree prefix of
   # the given treedef, build a complete axis spec tree with the same structure
   # and return the flattened result
-  # TODO(mattjj,phawkins): improve this implementation
-  proxy = object()
-  dummy = tree_unflatten(treedef, [SENTINEL] * treedef.num_leaves)
-  axes = []
-  add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
+  axis_tree_leaves, axis_treedef = none_leaf_registry.flatten(axis_tree)
   try:
-    tree_map(add_leaves, _replace_nones(proxy, axis_tree), dummy)
+    axes = broadcast_flattened_prefix_with_treedef(
+        axis_tree_leaves, axis_treedef, treedef)
   except ValueError:
     if kws:
       # if keyword arguments are included in the tree, we make adapt the error
@@ -423,7 +435,6 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
     raise ValueError(f"{name} specification must be a tree prefix of the "
                      f"corresponding value, got specification {axis_tree} "
                      f"for value tree {treedef}.{hint}") from None
-  axes = [None if a is proxy else a for a in axes]
   assert len(axes) == treedef.num_leaves
   return axes
 
@@ -598,20 +609,23 @@ def debug_info(
     *,
     static_argnums: Sequence[int] = (),
     static_argnames: Sequence[str] = (),
-    result_paths_thunk: Callable[[], tuple[str, ...]] | None = None,
+    result_paths_thunk: Callable[[], tuple[str, ...]] | core.InitialResultPaths = core.initial_result_paths,
     # TODO(necula): check if we really need this, e.g., to speed up tracing?
     sourceinfo: str | None = None,
     signature: inspect.Signature | None = None,
 ) -> core.DebugInfo:
-  """Constructd core.DebugInfo for a function given example args and kwargs.
+  """Construct core.DebugInfo for a function given example args and kwargs.
 
-  `args` and `kwargs` are example positional and keyword arguments, users with
-  `inspect.Signature` to get the names of argments. The arguments that are
+  `args` and `kwargs` are example positional and keyword arguments, used with
+  `inspect.Signature` to get the names of arguments. The arguments that are
   considered static for tracing purposes should be included, and designated
   using `static_argnums` and `static_argnames`.
 
   See docstring for linear_util.DebugInfo.
   """
+  res = getattr(fun, "__fun_debug_info__", None)
+  if res is not None:
+    return res
   if sourceinfo is None:
     sourceinfo = fun_sourceinfo(fun)
   if signature is None:
@@ -627,25 +641,15 @@ def fun_signature(fun: Callable) -> inspect.Signature | None:
   except (ValueError, TypeError):
     return None
 
-def save_wrapped_fun_sourceinfo(wrapper: Callable,
-                                wrapped: Callable | core.DebugInfo) -> None:
-  # Prefer this to functools.wraps because it does not create a reference to
-  # the wrapped function.
-  if isinstance(wrapped, core.DebugInfo):
-    func_src_info = wrapped.func_src_info
-  elif callable(wrapped):
-    func_src_info = fun_sourceinfo(wrapped)
-  else:
-    assert False, wrapped  # Unreachable
-  setattr(wrapper, "__fun_sourceinfo__", func_src_info)
+def save_wrapped_fun_debug_info(wrapper: Callable,
+                                dbg: core.DebugInfo) -> None:
+  setattr(wrapper, "__fun_debug_info__", dbg)
 
 _fun_name_re = re.compile(r"(?:<built-in function (\S+)>)")
 
 # TODO(mattjj): make this function internal to this module
 def fun_sourceinfo(fun: Callable) -> str:
   # See DebugInfo.fun_src_info
-  res = getattr(fun, "__fun_sourceinfo__", None)
-  if res is not None: return res
   while isinstance(fun, partial):
     fun = fun.func
   fun = inspect.unwrap(fun)
@@ -675,7 +679,7 @@ def _non_static_arg_names(fn_signature: inspect.Signature | None,
 
   If the `fn_signature` is given then we get from it the names of the
   top-level arguments. In other cases, including when the `args` and `kwargs`
-  do not match the signature, we use names like `args[0[]`, `args[1]`, etc.
+  do not match the signature, we use names like `args[0]`, `args[1]`, etc.
   """
   # Use the same argument parsing as jit: positional followed by kwargs
   # sorted by keys.
@@ -717,16 +721,6 @@ def _non_static_arg_names(fn_signature: inspect.Signature | None,
                for path, l in generate_key_paths(x) if l is not static)
 
 
-def hoist_obj_attrs(f, flat_args):
-  idxs, objs, flat_args_ = [], [], []
-  for i, x in enumerate(flat_args):
-    if type(x) in _class_with_attrs:
-      objs.append(_HashableByObjectId(x))
-    else:
-      idxs.append(i)
-      flat_args_.append(x)
-  return _argnums_partial(f, tuple(idxs), tuple(objs)), flat_args_
-
 class _HashableByObjectId:
   __slots__ = ['val']
   def __init__(self, val):
@@ -736,22 +730,21 @@ class _HashableByObjectId:
   def __eq__(self, other):
     return self.val is other.val
 
-def register_class_with_attrs(t: type) -> None:
-  _class_with_attrs.add(t)
-_class_with_attrs: set[type] = set()
-
 # TODO(mattjj): make this function faster
-def _check_no_aliased_ref_args(dbg: core.DebugInfo, avals, args):
+def check_no_aliased_ref_args(dbg_fn: Callable[[], core.DebugInfo],
+                              maybe_avals, args) -> None:
   assert config.mutable_array_checks.value
   refs: dict[int, int] = {}
-  for i, (a, x) in enumerate(zip(avals, args)):
+  for i, (a, x) in enumerate(zip(maybe_avals, args)):
     if (isinstance(a, AbstractRef) and
         (dup_idx := refs.setdefault(id(core.get_referent(x)), i)) != i):
+      dbg = dbg_fn()
       raise ValueError(
         "only one reference to a mutable array may be passed as an argument "
         f"to a function, but when tracing {dbg.func_src_info} for {dbg.traced_for} "
         f"the mutable array reference of type {a.str_short()} appeared at both "
-        f"{dbg.arg_names[dup_idx]} and {dbg.arg_names[i]}."
+        f"{dbg.arg_names[dup_idx] if dbg.arg_names is not None else 'unknown'} "
+        f"and {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'}."
         if dbg else
         f"at both flat index {dup_idx} and flat index {i}") from None
 

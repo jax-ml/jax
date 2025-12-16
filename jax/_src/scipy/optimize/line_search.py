@@ -17,16 +17,19 @@ from __future__ import annotations
 from typing import NamedTuple
 from functools import partial
 
+from jax._src import api
+from jax._src import dtypes
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.numpy.util import promote_dtypes_inexact
-import jax.numpy as jnp
-import jax
-from jax import lax
+from jax._src.typing import Array
+
 
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
 
 
 def _cubicmin(a, fa, fpa, b, fb, c, fc):
-  dtype = jnp.result_type(a, fa, fpa, b, fb, c, fc)
+  dtype = dtypes.result_type(a, fa, fpa, b, fb, c, fc)
   C = fpa
   db = b - a
   dc = c - a
@@ -59,23 +62,23 @@ def _binary_replace(replace_bit, original_dict, new_dict, keys=None):
 
 
 class _ZoomState(NamedTuple):
-  done: bool | jax.Array
-  failed: bool | jax.Array
-  j: int | jax.Array
-  a_lo: float | jax.Array
-  phi_lo: float | jax.Array
-  dphi_lo: float | jax.Array
-  a_hi: float | jax.Array
-  phi_hi: float | jax.Array
-  dphi_hi: float | jax.Array
-  a_rec: float | jax.Array
-  phi_rec: float | jax.Array
-  a_star: float | jax.Array
-  phi_star: float | jax.Array
-  dphi_star: float | jax.Array
-  g_star: float | jax.Array
-  nfev: int | jax.Array
-  ngev: int | jax.Array
+  done: bool | Array
+  failed: bool | Array
+  j: int | Array
+  a_lo: float | Array
+  phi_lo: float | Array
+  dphi_lo: float | Array
+  a_hi: float | Array
+  phi_hi: float | Array
+  dphi_hi: float | Array
+  a_rec: float | Array
+  phi_rec: float | Array
+  a_star: float | Array
+  phi_star: float | Array
+  dphi_star: float | Array
+  g_star: float | Array
+  nfev: int | Array
+  ngev: int | Array
 
 
 def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
@@ -118,7 +121,7 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
 
     # This will cause the line search to stop, and since the Wolfe conditions
     # are not satisfied the minimization should stop too.
-    threshold = jnp.where((jnp.finfo(dalpha.dtype).bits < 64), 1e-5, 1e-10)
+    threshold = jnp.where((dtypes.finfo(dalpha.dtype).bits < 64), 1e-5, 1e-10)
     state = state._replace(failed=state.failed | (dalpha <= threshold))
 
     # Cubmin is sometimes nan, though in this case the bounds check will fail.
@@ -190,14 +193,22 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
     )
     state = state._replace(
         **_binary_replace(
+            lo_to_j & ~hi_to_lo,
+            state._asdict(),
+            dict(
+                a_rec=state.a_lo,
+                phi_rec=state.phi_lo,
+            ),
+        ),
+    )
+    state = state._replace(
+        **_binary_replace(
             lo_to_j,
             state._asdict(),
             dict(
                 a_lo=a_j,
                 phi_lo=phi_j,
                 dphi_lo=dphi_j,
-                a_rec=state.a_lo,
-                phi_rec=state.phi_lo,
             ),
         ),
     )
@@ -215,18 +226,18 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
 
 
 class _LineSearchState(NamedTuple):
-  done: bool | jax.Array
-  failed: bool | jax.Array
-  i: int | jax.Array
-  a_i1: float | jax.Array
-  phi_i1: float | jax.Array
-  dphi_i1: float | jax.Array
-  nfev: int | jax.Array
-  ngev: int | jax.Array
-  a_star: float | jax.Array
-  phi_star: float | jax.Array
-  dphi_star: float | jax.Array
-  g_star: jax.Array
+  done: bool | Array
+  failed: bool | Array
+  i: int | Array
+  a_i1: float | Array
+  phi_i1: float | Array
+  dphi_i1: float | Array
+  nfev: int | Array
+  ngev: int | Array
+  a_star: float | Array
+  phi_star: float | Array
+  dphi_star: float | Array
+  g_star: Array
 
 
 class _LineSearchResults(NamedTuple):
@@ -243,15 +254,15 @@ class _LineSearchResults(NamedTuple):
     g_k: final gradient value
     status: integer end status
   """
-  failed: bool | jax.Array
-  nit: int | jax.Array
-  nfev: int | jax.Array
-  ngev: int | jax.Array
-  k: int | jax.Array
-  a_k: int | jax.Array
-  f_k: jax.Array
-  g_k: jax.Array
-  status: bool | jax.Array
+  failed: bool | Array
+  nit: int | Array
+  nfev: int | Array
+  ngev: int | Array
+  k: int | Array
+  a_k: int | Array
+  f_k: Array
+  g_k: Array
+  status: bool | Array
 
 
 def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,
@@ -275,7 +286,7 @@ def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,
   xk, pk = promote_dtypes_inexact(xk, pk)
   def restricted_func_and_grad(t):
     t = jnp.array(t, dtype=pk.dtype)
-    phi, g = jax.value_and_grad(f)(xk + t * pk)
+    phi, g = api.value_and_grad(f)(xk + t * pk)
     dphi = jnp.real(_dot(g, pk))
     return phi, dphi, g
 
@@ -409,7 +420,7 @@ def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,
   # Step sizes which are too small causes the optimizer to get stuck with a
   # direction of zero in <64 bit mode - avoid with a floor on minimum step size.
   alpha_k = jnp.asarray(state.a_star)
-  alpha_k = jnp.where((jnp.finfo(alpha_k.dtype).bits != 64)
+  alpha_k = jnp.where((dtypes.finfo(alpha_k.dtype).bits != 64)
                     & (jnp.abs(alpha_k) < 1e-8),
                       jnp.sign(alpha_k) * 1e-8,
                       alpha_k)

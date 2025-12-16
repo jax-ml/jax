@@ -17,7 +17,6 @@ import platform
 
 from absl import logging
 from absl.testing import absltest
-
 from jax import version
 from jax._src import compiler
 from jax._src import config
@@ -36,18 +35,14 @@ class XlaBridgeTest(jtu.JaxTestCase):
   def test_set_device_assignment_no_partition(self):
     compile_options = compiler.get_compile_options(
         num_replicas=4, num_partitions=1, device_assignment=[0, 1, 2, 3])
-    expected_device_assignment = ("Computations: 1 Replicas: 4\nComputation 0: "
-                                  "0 1 2 3 \n")
-    self.assertEqual(compile_options.device_assignment.__repr__(),
-                     expected_device_assignment)
+    self.assertEqual(compile_options.device_assignment.replica_count(), 4)
+    self.assertEqual(compile_options.device_assignment.computation_count(), 1)
 
   def test_set_device_assignment_with_partition(self):
     compile_options = compiler.get_compile_options(
         num_replicas=2, num_partitions=2, device_assignment=[[0, 1], [2, 3]])
-    expected_device_assignment = ("Computations: 2 Replicas: 2\nComputation 0: "
-                                  "0 2 \nComputation 1: 1 3 \n")
-    self.assertEqual(compile_options.device_assignment.__repr__(),
-                     expected_device_assignment)
+    self.assertEqual(compile_options.device_assignment.replica_count(), 2)
+    self.assertEqual(compile_options.device_assignment.computation_count(), 2)
 
   def test_set_fdo_profile(self):
     compile_options = compiler.get_compile_options(
@@ -228,6 +223,20 @@ class XlaBridgeTest(jtu.JaxTestCase):
       with mock.patch.object(xc, "pjrt_plugin_initialized", autospec=True):
         xb._backend_factories["foo"].factory()
     mock_make.assert_called_once()
+
+  def test_num_cpu_devices_update(self):
+    xb.devices()
+
+    current_val = config.config.jax_num_cpu_devices
+
+    config.update("jax_num_cpu_devices", current_val)
+
+    with self.assertRaisesRegex(
+        RuntimeError,
+        "jax_num_cpu_devices config should be updated before backends are"
+        " initialized",
+    ):
+      config.update("jax_num_cpu_devices", current_val + 2)
 
 
 class GetBackendTest(jtu.JaxTestCase):

@@ -157,13 +157,13 @@ class PgleTest(jtu.JaxTestCase):
 
       with config.pgle_profiling_runs(2), config.enable_pgle(True):
         # Run 1: Module should be compiled without FDO. Two modules are expected
-        # One is the funtion f, the other one is multi slice module
-        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+        # One is the function f, the other one is multi slice module
+        with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)
 
         # Run 2: Second PGLE run. Profile should be empty.
-        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)
         fdo_profiles_before_pgle = self.get_fdo_profiles(dump_dir)
@@ -175,7 +175,7 @@ class PgleTest(jtu.JaxTestCase):
             os.path.getsize(os.path.join(dump_dir, fdo_profiles_before_pgle[0])), 0)
 
         # Run 3: The module should be recompiled with FDO profiles
-        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)
         fdo_profiles_after_pgle = self.get_fdo_profiles(dump_dir)
@@ -190,7 +190,7 @@ class PgleTest(jtu.JaxTestCase):
             )
 
         # Run 4: Fast-path should be used after PGLE is done
-        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertLess(cache_miss_count(), 2)
 
@@ -319,7 +319,7 @@ class PgleTest(jtu.JaxTestCase):
 
         monitoring.register_event_listener(check_if_cache_hit)
         f(x)
-        monitoring._unregister_event_listener_by_callback(check_if_cache_hit)
+        monitoring.unregister_event_listener(check_if_cache_hit)
 
         self.assertGreater(cache_hit, 0)
 
@@ -448,7 +448,7 @@ class PgleTest(jtu.JaxTestCase):
 
         monitoring.register_event_listener(check_if_cache_hit)
         f(x)
-        monitoring._unregister_event_listener_by_callback(check_if_cache_hit)
+        monitoring.unregister_event_listener(check_if_cache_hit)
         self.assertGreater(cache_hit, 0)
 
         # Run 5: `g` was only executed once and did not get re-compiled with PGLE, so
@@ -459,7 +459,7 @@ class PgleTest(jtu.JaxTestCase):
           cache_hit = 0
           monitoring.register_event_listener(check_if_cache_hit)
           g(x)
-          monitoring._unregister_event_listener_by_callback(check_if_cache_hit)
+          monitoring.unregister_event_listener(check_if_cache_hit)
           self.assertEqual(cache_hit, 1)
           if len(w) != 1:
             print("Warnings:", [str(w_) for w_ in w], flush=True)
@@ -510,22 +510,26 @@ class PgleTest(jtu.JaxTestCase):
 
       # This is ugly, but it does not seem possible to get the AutoPGLE-recompiled
       # executable text (.lower(x).compile().as_text() or similar).
-      def get_new_hlo():
-        additions = set(os.listdir(dump_dir)) - get_new_hlo.seen_files
-        get_new_hlo.seen_files |= additions
-        new_hlos = list(filter(lambda f: f.endswith("_gpu_after_optimizations.txt"), additions))
-        assert len(new_hlos) == 1
-        with open(os.path.join(dump_dir, new_hlos[0]), "r") as ifile:
+      def get_new_files():
+        additions = set(os.listdir(dump_dir)) - get_new_files.seen_files
+        get_new_files.seen_files |= additions
+        new_files = list(filter(lambda f: f.endswith('debug_options'), additions))
+        assert len(new_files) == 1
+        with open(os.path.join(dump_dir, new_files[0])) as ifile:
           return ifile.read()
 
-      get_new_hlo.seen_files = set()
+      get_new_files.seen_files = set()
 
       # Run 1
       self.assertArraysEqual(f(x), expected)
-      self.assertNotIn("command_buffer", get_new_hlo()) # b/376647494 workaround
+      self.assertNotIn(
+          'xla_gpu_enable_command_buffer: 1', get_new_files()
+      )  # b/376647494 workaround
       # Run 2
       self.assertArraysEqual(f(x), expected)
-      self.assertIn("command_buffer", get_new_hlo()) # workaround disabled
+      self.assertIn(
+          'xla_gpu_enable_command_buffer', get_new_files()
+      )  # workaround disabled
 
     api.clear_caches()
     pjit._pgle_profiler_dict.clear()

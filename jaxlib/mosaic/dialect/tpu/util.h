@@ -25,6 +25,7 @@ limitations under the License.
 #include <type_traits>
 #include <utility>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Compiler.h"
@@ -161,7 +162,7 @@ class Print {
 std::ostream &operator<<(std::ostream &os, Print p);
 
 template <bool adjust_bool = false>
-FailureOr<int8_t> getTypeBitwidth(Type ty) {
+int8_t getTypeBitwidth(Type ty) {
   if (auto integer_ty = dyn_cast<IntegerType>(ty)) {
     const unsigned width = integer_ty.getWidth();
     if constexpr (adjust_bool) {
@@ -171,23 +172,25 @@ FailureOr<int8_t> getTypeBitwidth(Type ty) {
       return width;
     }
   }
-  if (isa<IntegerType, Float32Type, BFloat16Type, Float8E5M2Type,
-          Float8E4M3FNType, Float8E4M3B11FNUZType>(ty)) {
-    return ty.getIntOrFloatBitWidth();
+  if (isa<Float8EXMYType>(ty)) {
+    return 8;
   }
-  return emitError(UnknownLoc::get(ty.getContext()),
-                   "Unsupported type in mosaic dialect: ")
-         << ty;
+  return ty.getIntOrFloatBitWidth();
 }
 
 // Returns the bitwidth of the element type. The function works for both
 // scalar and vector types.
 template <bool adjust_bool = false>
-inline FailureOr<int8_t> getElementTypeBitwidth(Type ty) {
+inline int8_t getElementTypeBitwidth(Type ty) {
   if (auto vty = dyn_cast<VectorType>(ty)) {
     return getTypeBitwidth<adjust_bool>(vty.getElementType());
   }
   return getTypeBitwidth<adjust_bool>(ty);
+}
+
+template <bool adjust_bool = false>
+inline int8_t getElementTypeBitwidth(MemRefType ty) {
+  return getElementTypeBitwidth<adjust_bool>(ty.getElementType());
 }
 
 template <typename T>
@@ -220,6 +223,13 @@ inline SmallVector<int64_t> ComputeTileStrides(
                                   memref_ty.getShape().size());
   return ComputeTileStrides(shape, tiling);
 }
+
+// Computes the dimensions that were squeezed from the source shape to match the
+// target shape. Returns the dimensions in increasing order.
+FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
+    Operation *op, ArrayRef<int64_t> source_shape,
+    ArrayRef<int64_t> target_shape);
+
 // Assuming MKN matmul - This function must only be called after
 // canonicalization passes.
 //
@@ -285,10 +295,22 @@ inline arith::ConstantOp I32Const(int32_t value, ArrayRef<int64_t> shape,
 
 std::optional<int64_t> getIntConst(Value v);
 
-// Returns true if the product of up to `shape.size() - 1` minor-most dimensions
-// in `shape` equals `target_size`. The major-most dimension is not considered.
-// Precondition: `shape` has at least 2 dimensions.
-bool canFoldMinorDimsToSize(ArrayRef<int64_t> shape, int64_t target_size);
+// Recursively finds all non-trivial users of a given value, including those
+// accessed via `tpu.bitcast` or unary elementwise operations. However,
+// `tpu.bitcast` and unary element-wise operations are excluded from the
+// results.
+SmallVector<Operation *> getNontrivialTransitiveUsers(Value v);
+
+bool hasVectorOperandsOrResults(Operation& op);
+
+// Return a mod b for a, b > 0, but adjusted to return b when a mod b == 0 such
+// that the result is strictly positive.
+template <typename U, typename V>
+auto positiveMod(U a, V b) {
+  DCHECK_GT(a, 0);
+  DCHECK_GT(b, 0);
+  return (a - 1) % b + 1;
+}
 
 }  // namespace mlir::tpu
 

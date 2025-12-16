@@ -45,7 +45,7 @@ Here are more specific examples of each pattern.
 
 ### Direct usage
 Jax can be directly imported and utilized to build models “from scratch” as shown across this website,
-for example in [JAX Tutorials](https://docs.jax.dev/en/latest/tutorials.html)
+for example in {ref}`JAX 101 Tutorials <jax-101>`
 or [Neural Network with JAX](https://docs.jax.dev/en/latest/notebooks/neural_network_with_tfds_data.html).
 This may be the best option if you are unable to find prebuilt code
 for your particular challenge, or if you're looking to reduce the number

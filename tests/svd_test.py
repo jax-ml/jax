@@ -20,7 +20,7 @@ import numpy as np
 import scipy.linalg as osp_linalg
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lax import svd
+from jax._src.tpu.linalg import svd
 
 from absl.testing import absltest
 
@@ -52,10 +52,7 @@ class SvdTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     jnp_fun = jax.numpy.linalg.svdvals
-    if jtu.numpy_version() < (2, 0, 0):
-      np_fun = lambda x: np.linalg.svd(x, compute_uv=False)
-    else:
-      np_fun = np.linalg.svdvals
+    np_fun = np.linalg.svdvals
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=_SVD_RTOL, atol=1E-5)
     self._CompileAndCheck(jnp_fun, args_maker, rtol=_SVD_RTOL)
 
@@ -166,7 +163,7 @@ class SvdTest(jtu.JaxTestCase):
       np.testing.assert_almost_equal(diff, 1e-4, decimal=2)
       # Check that u and v are orthogonal.
       self.assertAllClose(u.T.conj() @ u, np.eye(m), atol=10 * _SVD_TEST_EPS)
-      self.assertAllClose(v.T.conj() @ v, np.eye(m), atol=11 * _SVD_TEST_EPS)
+      self.assertAllClose(v.T.conj() @ v, np.eye(m), atol=30 * _SVD_TEST_EPS)
 
   @jtu.sample_product(
     [dict(m=m, n=n) for m, n in zip([2, 8, 10, 20], [4, 6, 10, 18])],

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest
 from collections import namedtuple
 from functools import partial
 import gc
@@ -32,7 +31,7 @@ from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import util
 from jax._src import test_util as jtu
-from jax._src.core import ShapedArray, DBIdx
+from jax._src.core import ShapedArray
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import control_flow as lax_control_flow
 
@@ -361,6 +360,15 @@ class CoreTest(jtu.JaxTestCase):
           'This BatchTracer with object id'):
       g_vmap(jnp.ones((1, )))
 
+  def test_aval_str_short_mem_space(self):
+    aval = core.ShapedArray((8,), jnp.float32,
+                            memory_space=jax.memory.Space.Host)
+    self.assertEqual(aval.str_short(True), "f32<host>[8]")
+
+    aval = core.ShapedArray((8,), jnp.float32,
+                            memory_space=jax.memory.Space.Device)
+    self.assertEqual(aval.str_short(True), "f32[8]")
+
   def test_dropvar_avals(self):
     def f(x):
       def body(c, _):
@@ -394,21 +402,58 @@ class CoreTest(jtu.JaxTestCase):
     self.assertLen(e1.outvars, 1)  # only primal out, no residuals
     self.assertEqual(e1.outvars[0].aval.shape, (3, 3))  # only primal out shape
 
+  def test_tracer_reprs(self):
+    def f(x):
+      nonlocal x_repr
+      x_repr = repr(x)
+      return x.sum()
+    x_repr = ""
+
+    jax.jit(f)(jnp.arange(10.0, dtype='float32'))
+    self.assertEqual(x_repr, "JitTracer(float32[10])")
+
+    jax.vmap(f)(jnp.arange(20, dtype='int32'))
+    self.assertEqual(x_repr, "VmapTracer(aval=int32[], batched=int32[20])")
+
+    jax.grad(f)(jnp.float16(1.0))
+    self.assertEqual(x_repr, "GradTracer(primal=1.0, typeof(tangent)=f16[])")
+
+    jax.jacrev(f)(jnp.arange(4, dtype='float32'))
+    self.assertEqual(x_repr, "GradTracer(primal=[0. 1. 2. 3.], typeof(tangent)=f32[4])")
+
+    jax.jacfwd(f)(jnp.arange(3, dtype='float32'))
+    self.assertEqual(x_repr, "JVPTracer(primal=[0. 1. 2.], tangent=VmapTracer(aval=float32[3], batched=float32[3,3]))")
+
+  def test_verbose_tracer_reprs(self):
+    # Verbose reprs, avaiable via tracer._pretty_print()
+    def f(x):
+      nonlocal x_repr
+      x_repr = x._pretty_print(verbose=True).format()
+      return x.sum()
+    x_repr = ""
+
+    jax.jit(f)(jnp.arange(10.0, dtype='float32'))
+    self.assertRegex(x_repr, r"^Traced<float32\[10\]>with<DynamicJaxprTrace>")
+
+    jax.vmap(f)(jnp.arange(20, dtype='int32'))
+    self.assertRegex(x_repr, r"^Traced<int32\[\]>with<BatchTrace>")
+
+    jax.grad(f)(jnp.float16(1.0))
+    self.assertRegex(x_repr, r"^Traced<float16\[\]>with<(JVP)|(Linearize)Trace>")
+
 
 @jtu.with_config(jax_pprint_use_color=False)
 class JaxprTypeChecks(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    lax_control_flow._initial_style_open_jaxpr.cache_clear()
-    lax_control_flow._initial_style_jaxpr.cache_clear()
-    lax_control_flow.common._pad_jaxpr_constvars.cache_clear()
+    lax_control_flow.common._dedup_consts.cache_clear()
+    lax_control_flow.common._pad_constvars.cache_clear()
 
   def tearDown(self):
     super().tearDown()
-    lax_control_flow._initial_style_open_jaxpr.cache_clear()
-    lax_control_flow._initial_style_jaxpr.cache_clear()
-    lax_control_flow.common._pad_jaxpr_constvars.cache_clear()
+    lax_control_flow.common._dedup_consts.cache_clear()
+    lax_control_flow.common._pad_constvars.cache_clear()
 
   def test_check_jaxpr_correct(self):
     jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr
@@ -550,203 +595,6 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     jaxpr = make_jaxpr(f)(1.).jaxpr
     assert isinstance(jaxpr.eqns[-1].outvars[0], core.DropVar)
     core.check_jaxpr(jaxpr)
-
-  @jtu.thread_unsafe_test()  # in-place mutation of possibly-cached jaxpr
-  def test_jaxpr_undefined_eqn_invar(self):
-    jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr
-    cos = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cos')
-    cos.invars[0] = core.gensym(suffix='_test')(cos.invars[0].aval)
-    self.assertRaisesRegex(
-        core.JaxprTypeError,
-        r"Variable '.+_test' not defined\n\nin equation:",
-        lambda: core.check_jaxpr(jaxpr))
-
-
-@jtu.with_config(jax_dynamic_shapes=True)
-class DynamicShapesTest(jtu.JaxTestCase):
-
-  def test_staging_basic(self):
-    n = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
-    a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
-    b = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
-
-    def f(x, y):
-      return x, y
-
-    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(f,
-                   debug_info=debug_info("test", f, (1, 2), {})),
-      [n, a, b], keep_inputs=[False, True, True])
-
-    self.assertLen(jaxpr.invars, 3)
-    self.assertEqual((jaxpr.invars[0],), jaxpr.invars[1].aval.shape)
-    self.assertEqual((jaxpr.invars[0],), jaxpr.invars[2].aval.shape)
-
-    self.assertLen(jaxpr.outvars, 2)
-    self.assertEqual((jaxpr.invars[0],), jaxpr.outvars[0].aval.shape)
-    self.assertEqual((jaxpr.invars[0],), jaxpr.outvars[1].aval.shape)
-
-  @unittest.skip('This test does not work with nested pjit and DShapedArray')
-  def test_staging_nested(self):
-    n = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
-    a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
-    b = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
-
-    def f(x, y):
-      @jax.jit
-      def g(x, y, z, w):
-        return (x, w)
-      return g(x, y, x, y)
-
-    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(f,
-                   debug_info=debug_info("test", f, (0, 1), {})),
-        [n, a, b], keep_inputs=[False, True, True])
-
-    self.assertLen(jaxpr.invars, 1 + 2)  # one axis size var, two other inputs
-    self.assertEqual((jaxpr.invars[0],), jaxpr.invars[1].aval.shape)
-    self.assertEqual((jaxpr.invars[0],), jaxpr.invars[2].aval.shape)
-
-    self.assertLen(jaxpr.outvars, 2)
-    self.assertEqual((jaxpr.invars[0],), jaxpr.outvars[0].aval.shape)
-    self.assertEqual((jaxpr.invars[0],), jaxpr.outvars[1].aval.shape)
-
-    self.assertLen(jaxpr.eqns, 1)
-    eqn = jaxpr.eqns[0]
-    self.assertIsInstance(eqn.primitive, core.CallPrimitive)
-    inner_jaxpr = eqn.params['call_jaxpr']
-    self.assertIsInstance(inner_jaxpr, core.Jaxpr)
-
-    self.assertLen(inner_jaxpr.invars, 1 + 4)  # one axis size var
-    self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[1].aval.shape)
-    self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[2].aval.shape)
-    self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[3].aval.shape)
-    self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[4].aval.shape)
-
-  @unittest.skip('This test does not work with nested pjit and DShapedArray')
-  def test_staging_nested_including_shape_arg(self):
-    n = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
-    a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
-    b = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
-
-    def f(x, y):
-      @jax.jit
-      def g(_, x, y, z, w):
-        return (x, w)
-      return g(x.shape[0], x, y, x, y)
-
-    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(f,
-                     debug_info=debug_info("test", f, (1, 2), {})),
-        [n, a, b], keep_inputs=[False, True, True])
-
-    # { lambda ; a:i32[] b:f32[a] c:f32[a]. let
-    #     d:f32[a] e:f32[a] = xla_call[
-    #       call_jaxpr={ lambda ; f:i32[] g:i32[] h:f32[f] i:f32[f] j:f32[f] k:f32[f]. let
-    #
-    #         in (h, k) }
-    #       name=g
-    #     ] a a b c b c
-    #   in (d, e) }
-
-    self.assertLen(jaxpr.eqns, 1)
-    eqn = jaxpr.eqns[0]
-    self.assertIsInstance(eqn.primitive, core.CallPrimitive)
-    inner_jaxpr = eqn.params['call_jaxpr']
-    self.assertIsInstance(inner_jaxpr, core.Jaxpr)
-
-    self.assertLen(inner_jaxpr.invars, 1 + 4)  # one axis size var
-    self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[1].aval.shape)
-    self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[2].aval.shape)
-    self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[3].aval.shape)
-    self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[4].aval.shape)
-
-  def test_staging_primitive_applications(self):
-    n = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
-    a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
-    b = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
-
-    def f(x, y):
-      z = lax.mul(x, y)
-      w = lax.sin(z)
-      u = lax.reduce_sum(w, [0])
-      return (u,)
-
-    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(f,
-                     debug_info=debug_info("test", f, (1, 2), {})),
-        [n, a, b], keep_inputs=[False, True, True])
-
-    self.assertLen(jaxpr.invars, 1 + 2)  # one axis size var, two other inputs
-    self.assertLen(jaxpr.eqns, 3)
-    self.assertLen(jaxpr.eqns[0].outvars, 1)
-    self.assertEqual(jaxpr.eqns[0].outvars[0].aval.shape,
-                     jaxpr.invars[1].aval.shape)
-
-    self.assertLen(jaxpr.outvars, 1)
-    self.assertEqual(jaxpr.outvars[0].aval.shape, ())
-
-  @unittest.skip('This test does not work with nested pjit and DShapedArray')
-  def test_typecheck_staging_nested(self):
-    n = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
-    m = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
-    a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
-    b = core.DShapedArray((DBIdx(1),), jnp.dtype('float32'), weak_type=False)
-
-    def f(a, b):
-      @jax.jit
-      def g(x): return x
-      return g(a),
-
-    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(f,
-                     debug_info=debug_info("test", f, (1, 2), {})),
-        [n, m, a, b], keep_inputs=[False, False, True, True])
-    # { lambda ; a:i32[] b:i32[] c:f32[a] d:f32[b]. let
-    #     e:f32[a] = xla_call[
-    #       call_jaxpr={ lambda ; f:i32[] g:f32[f]. let  in (g,) }
-    #       name=g
-    #     ] a c
-    #   in (e,) }
-    core.check_jaxpr(jaxpr)  # no problems here...
-
-    # Let's introduce a type error by applying the called jaxpr to arguments
-    # with types which aren't consistent with its input binders:
-    _, _, c, d = jaxpr.invars
-    jaxpr.eqns[0].invars[1] = d
-    # { lambda ; a:i32[] b:i32[] c:f32[a] d:f32[b]. let
-    #     e:f32[a] = xla_call[
-    #       call_jaxpr={ lambda ; f:i32[] g:f32[f]. let  in (g,) }
-    #       name=g
-    #     ] a d   !!! type error here !!!
-    #   in (e,) }
-    with self.assertRaisesRegex(TypeError, "passes operand"):
-      core.check_jaxpr(jaxpr)
-
-    # Restore the original jaxpr:
-    jaxpr.eqns[0].invars[1] = c
-    core.check_jaxpr(jaxpr)  # no problems here...
-
-    # Let's introduce another type error by setting the call result let binders
-    # to have the wrong type:
-    jaxpr.eqns[0].outvars[0] = core.Var('', d.aval)
-    # { lambda ; a:i32[] b:i32[] c:f32[a] d:f32[b]. let
-    #     e:f32[b] = xla_call[   !!! type error here !!!
-    #       call_jaxpr={ lambda ; f:i32[] g:f32[f]. let  in (g,) }
-    #       name=g
-    #     ] a c
-    #   in (h,) }
-    with self.assertRaisesRegex(TypeError, "inconsistently typed as"):
-      core.check_jaxpr(jaxpr)
-
-  def test_check_jaxpr_key_reuse(self):
-    with config.debug_key_reuse(True):
-      def f(seed):
-        key = jax.random.key(seed)
-        return jax.random.uniform(key) + jax.random.normal(key)
-      with jax.enable_checks(True):
-        with self.assertRaises(jax.errors.KeyReuseError):
-          jax.jit(f)(0)
 
 
 if __name__ == '__main__':

@@ -54,7 +54,7 @@ def conv_general_dilated_patches(
   Docstring below adapted from `jax.lax.conv_general_dilated`.
 
   See Also:
-    https://www.tensorflow.org/xla/operation_semantics#conv_convolution
+    https://www.openxla.org/xla/operation_semantics#conv_convolution
 
   Args:
     lhs: a rank `n+2` dimensional input array.
@@ -141,7 +141,7 @@ def conv_general_dilated_local(
   spatial location. Docstring below adapted from `jax.lax.conv_general_dilated`.
 
   See Also:
-    https://www.tensorflow.org/xla/operation_semantics#conv_convolution
+    https://www.openxla.org/xla/operation_semantics#conv_convolution
 
   Args:
     lhs: a rank `n+2` dimensional input array.

@@ -93,7 +93,7 @@ export JAX_PGLE_AGGREGATION_PERCENTILE=85
 
 # Right now the auto PGLE profile collection doesn't work with command buffer.
 # If the command buffer is enabled, Auto PGLE will disable it during profile
-# colletion and enable it back after the recompilation. If you need to have a
+# collection and enable it back after the recompilation. If you need to have a
 # consistent command buffer logic with and with PGLE profile you can disable it
 # manually:
 export XLA_FLAGS="${XLA_FLAGS} --xla_gpu_enable_command_buffer=''"
@@ -256,9 +256,10 @@ Run the real workflow, if you found these loggings in the running log, it means 
 
 ### Pipeline Parallelism on GPU
 
-XLA implements SPMD-based pipeline parallelism optimizations. This is a scaling technique
-where the forward and backward pass are split into multiple pipeline stages.
-Each device (or device group) processes the result of the previous
+#### Using XLA Flags
+XLA implements SPMD-based pipeline parallelism optimizations. This is a scaling
+technique where the forward and backward pass are split into multiple pipeline
+stages. Each device (or device group) processes the result of the previous
 pipeline stage (or the pipeline input) and sends its partial result to the next
 stage until the end of the pipeline is reached. This optimization works best
 when the latency of the computation is larger than communication. At compile
@@ -371,7 +372,7 @@ def while_body(carry, i):
       (NUM_DEVICES, 1, CONTRACTING_DIM_SIZE, NON_CONTRACTING_DIM_SIZE),
   )
 
-  # Colelctive permute on the "back edge" passes data to the first device.
+  # Collective permute on the "back edge" passes data to the first device.
   bwd_edge_data = cycle_back(bwd_edge_data)
 
   # Update output buffer. We do this after reading from it to avoid the data
@@ -406,7 +407,7 @@ def entry_computation(weights, input_buffer, mesh):
   dummy_data = jax.device_put(
       dummy_data,
       sharding.NamedSharding(
-          mesh, sharding.PartitionSpec("the_one_and_only_axis")
+          mesh, sharding.PartitionSpec("x")
       ),
   )
 
@@ -427,7 +428,7 @@ def main(_):
   # Create mesh.
   mesh = sharding.Mesh(
       mesh_utils.create_device_mesh([NUM_DEVICES]),
-      axis_names=["the_one_and_only_axis"],
+      axis_names=["x"],
   )
 
   # Init weights.
@@ -440,7 +441,7 @@ def main(_):
   weights = jax.device_put(
       weights,
       sharding.NamedSharding(
-          mesh, sharding.PartitionSpec("the_one_and_only_axis")
+          mesh, sharding.PartitionSpec("x")
       ),
   )
 
@@ -467,7 +468,7 @@ def main(_):
   input_buffer = jax.device_put(
       input_buffer,
       sharding.NamedSharding(
-          mesh, sharding.PartitionSpec("the_one_and_only_axis")
+          mesh, sharding.PartitionSpec("x")
       ),
   )
 
@@ -475,6 +476,227 @@ def main(_):
   output_buffer = entry_computation(weights, input_buffer, mesh)
   print(f"output_buffer = \n{output_buffer}")
 ```
+
+#### Using `psend` and `precv`
+
+The JAX example above lowers to `collective-permute` HLO instructions, which are
+are implemented through `ncclSend` and `ncclRecv` on GPU. For users who want
+more granular control over the ordering of collectives, they can use
+`jax.lax.psend` and `jax.lax.precv` directly. Syntactically, these two functions
+are analogous to their HLO counterparts. Users should keep in mind that their
+program will deadlock when the source-target pairs in a *single* `psend` or
+`precv` form a cycle, and when `psend` is not matched by `precv` and
+vice-versa.
+
+If cycles are required in the device communication pattern, deadlocks can be
+avoided by making sure that (1) no single `psend` or `precv` function's
+source-target pairs contain a cycle, and that (2) a fake data dependency
+is inserted to sequentialize the send/recv pairs. No collective can be scheduled
+between `psend`/`precv` paris, which can only be controlled through
+`jax.lax.optimization_barrier` at the JAX level. The test case
+`test_psend_precv_basic_with_no_deadlock_cycle` in the file
+[`shard_map_test.py`](https://github.com/jax-ml/jax/blob/main/tests/shard_map_test.py) is one such example.
+
+The pipeline parallelism example in the previous section uses the
+`--xla_gpu_experimental_pipeline_parallelism_opt_level` XLA flag. The same
+program can be rewritten using `psend` and `precv` without the flag, if manually
+pipelined.
+
+```
+## same setup and imports
+def while_body(carry, i):
+  (
+      weights,
+      input_buffer,
+      output_buffer,
+      prev_compute_res,
+      prev_stage_slice_fwd,
+      prev_stage_slice_bwd,
+  ) = carry
+
+  # Read input data from input buffer.
+  input_slice = jax.lax.dynamic_slice(
+      input_buffer,
+      (0, (i + 0) % NUM_MICROBATCHES, 0, 0),
+      (1, 1, CONTRACTING_DIM_SIZE, NON_CONTRACTING_DIM_SIZE),
+  )
+
+  # send_fwd
+  fwd_send_token = jax.lax.psend(
+      prev_compute_res,
+      axis_name="x",
+      perm=[(0, 1), (1, 2), (2, 3)],
+  )
+
+  # Select compute argument based on device and pipeline cycle
+  compute_argument = select_on_first_device(
+      select_on_first_cycle(i, input_slice, prev_stage_slice_bwd),
+      prev_stage_slice_fwd,
+  ).reshape((1, CONTRACTING_DIM_SIZE, NON_CONTRACTING_DIM_SIZE))
+
+  tmp = compute_argument
+  for _ in range(COMPUTE_INTENSITY):
+    tmp = jax.lax.dot_general(weights, tmp, (((2,), (1,)), ((0,), (0,))))
+  compute_result = tmp.reshape(
+      (1, 1, CONTRACTING_DIM_SIZE, NON_CONTRACTING_DIM_SIZE)
+  )
+
+  buffer_slice_for_bwd_ppermute = jax.lax.dynamic_slice(
+      output_buffer,
+      (0, (i + 1) % NUM_MICROBATCHES, 0, 0),
+      (1, 1, CONTRACTING_DIM_SIZE, NON_CONTRACTING_DIM_SIZE),
+  )
+
+  # make sure ppermute is scheduled after send_fwd
+  buffer_slice_for_bwd_ppermute_after_send_fwd, _ = (
+      jax.lax.optimization_barrier(
+          (buffer_slice_for_bwd_ppermute, fwd_send_token)
+      )
+  )
+  # ppermute_bwd
+  ppermute_bwd_data = jax.lax.ppermute(
+      buffer_slice_for_bwd_ppermute_after_send_fwd,
+      axis_name="x",
+      perm=[(3, 0)],
+  )
+
+  # make sure recv is scheduled after ppermute
+  precv_token, _ = jax.lax.optimization_barrier(
+      (jax.lax.create_token(), ppermute_bwd_data)
+  )
+
+  # recv_fwd, matches the send_fwd in the next iteration
+  fwd_recv_data = jax.lax.precv(
+      precv_token,
+      out_shape=jax.ShapeDtypeStruct(
+          input_slice.shape, input_slice.dtype
+      ),
+      axis_name="x",
+      perm=[(0, 1), (1, 2), (2, 3)],
+  )
+  update_output_buffer = jax.lax.dynamic_update_slice(
+      output_buffer,
+      compute_result,
+      (0, (i + 2) % NUM_MICROBATCHES, 0, 0),
+  )
+  carry = (
+      weights,
+      input_buffer,
+      update_output_buffer,
+      compute_result,
+      fwd_recv_data,
+      ppermute_bwd_data,
+  )
+  return carry, i
+
+
+def entry_computation(
+    weights, input_buffer, dummy_data, mesh
+):
+
+  # Init output buffer.
+  output_buffer = jnp.zeros_like(input_buffer)
+
+  # Start pipeline.
+  dummy_slice_fwd = jax.lax.precv(
+      jax.lax.create_token(),
+      jax.ShapeDtypeStruct(dummy_data.shape, dummy_data.dtype),
+      axis_name="x",
+      perm=[(0, 1), (1, 2), (2, 3)],
+  )
+
+  carry = (
+      weights,
+      input_buffer,
+      output_buffer,
+      dummy_slice_fwd,
+      dummy_data,
+      dummy_data,
+  )
+
+  num_iterations = NUM_CIRC_REPEATS * NUM_MICROBATCHES + NUM_DEVICES - 1
+  carry, _ = jax.lax.scan(while_body, carry, xs=jnp.arange(num_iterations))
+
+  _ = jax.lax.psend(
+      carry[3],
+      axis_name="x",
+      perm=[(0, 1), (1, 2), (2, 3)],
+  )
+
+  _, _, output_buffer, _, _, _ = carry
+
+  return output_buffer
+
+
+def main(_):
+
+  # Expect constant number of devices.
+  assert NUM_DEVICES == jax.local_device_count()
+
+  # Create mesh.
+  mesh = Mesh(
+      mesh_utils.create_device_mesh([NUM_DEVICES]),
+      axis_names=["x"],
+  )
+  # Init weights.
+  weights = 1.0 / CONTRACTING_DIM_SIZE
+  weights = jax.lax.broadcast_in_dim(
+      weights,
+      shape=(NUM_DEVICES, CONTRACTING_DIM_SIZE, CONTRACTING_DIM_SIZE),
+      broadcast_dimensions=(),
+  )
+  weights = jax.device_put(
+      weights, NamedSharding(mesh, P("x"))
+  )
+  # Init input.
+  random_key = jax.random.key(0)
+  input_buffer = jax.random.uniform(
+      random_key,
+      shape=(
+          NUM_MICROBATCHES,
+          CONTRACTING_DIM_SIZE,
+          NON_CONTRACTING_DIM_SIZE,
+      ),
+  )
+  input_buffer = jax.lax.broadcast_in_dim(
+      input_buffer,
+      shape=(
+          NUM_DEVICES,
+          NUM_MICROBATCHES,
+          CONTRACTING_DIM_SIZE,
+          NON_CONTRACTING_DIM_SIZE,
+      ),
+      broadcast_dimensions=[1, 2, 3],
+  )
+
+  input_buffer = jax.device_put(
+      input_buffer,
+      NamedSharding(mesh, P("x")),
+  )
+  # Init dummy data for forward and backward edge passed through the while
+  # loop.
+  dummy_slice = jnp.zeros(
+      shape=(NUM_DEVICES, 1, CONTRACTING_DIM_SIZE, NON_CONTRACTING_DIM_SIZE)
+  ).astype(jnp.float32)
+  dummy_data = jax.device_put(
+      dummy_slice,
+      NamedSharding(mesh, P("x")),
+  )
+
+  entry = partial(entry_computation, mesh=mesh)
+
+  output_buffer = jax.jit(
+      jax.shard_map(
+          entry,
+          mesh=mesh,
+          in_specs=P("x"),
+          out_specs=P("x"),
+          check_vma=False,
+      )
+  )(weights, input_buffer, dummy_data)
+  print(f"output_buffer = \n{output_buffer}")
+```
+
 ## NCCL flags
 
 These Nvidia NCCL flag values may be useful for single-host multi-device

@@ -14,20 +14,19 @@
 
 from __future__ import annotations
 
-from functools import partial
 import operator
 
 import numpy as np
 
-from jax import jit
-from jax import lax
+from jax._src import api
 from jax._src import dtypes
 from jax._src import core
-from jax._src.lax import lax as lax_internal
+from jax._src.lax import control_flow
+from jax._src.lax import lax
+from jax._src.numpy.array_creation import full, ones, zeros
 from jax._src.numpy.lax_numpy import (
     arange, argmin, array, atleast_1d, concatenate, convolve,
-    diag, finfo, full, ones, roll, trim_zeros,
-    trim_zeros_tol, vander, zeros)
+    diag, finfo, roll, trim_zeros, trim_zeros_tol, vander)
 from jax._src.numpy.tensor_contractions import dot, outer
 from jax._src.numpy.ufuncs import maximum, true_divide, sqrt
 from jax._src.numpy.reductions import all
@@ -41,7 +40,7 @@ from jax._src.util import set_module
 export = set_module('jax.numpy')
 
 
-@jit
+@api.jit
 def _roots_no_zeros(p: Array) -> Array:
   # build companion matrix and find its eigenvalues (the roots)
   if p.size < 2:
@@ -51,7 +50,7 @@ def _roots_no_zeros(p: Array) -> Array:
   return linalg.eigvals(A)
 
 
-@jit
+@api.jit
 def _roots_with_zeros(p: Array, num_leading_zeros: Array | int) -> Array:
   # Avoid lapack errors when p is all zero
   p = _where(len(p) == num_leading_zeros, 1.0, p)
@@ -124,7 +123,7 @@ def roots(p: ArrayLike, *, strip_zeros: bool = True) -> Array:
 
 
 @export
-@partial(jit, static_argnames=('deg', 'rcond', 'full', 'cov'))
+@api.jit(static_argnames=('deg', 'rcond', 'full', 'cov'))
 def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
             full: bool = False, w: ArrayLike | None = None, cov: bool = False
             ) -> Array | tuple[Array, ...]:
@@ -280,7 +279,7 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
 
   if full:
     assert rcond is not None
-    return c, resids, rank, s, lax_internal.asarray(rcond)
+    return c, resids, rank, s, lax.asarray(rcond)
   elif cov:
     Vbase = linalg.inv(dot(lhs.T, lhs))
     Vbase /= outer(scale, scale)
@@ -304,7 +303,7 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
     return c
 
 @export
-@jit
+@api.jit
 def poly(seq_of_zeros: ArrayLike) -> Array:
   r"""Returns the coefficients of a polynomial for the given sequence of roots.
 
@@ -387,7 +386,7 @@ def poly(seq_of_zeros: ArrayLike) -> Array:
 
 
 @export
-@partial(jit, static_argnames=['unroll'])
+@api.jit(static_argnames=['unroll'])
 def polyval(p: ArrayLike, x: ArrayLike, *, unroll: int = 16) -> Array:
   r"""Evaluates the polynomial at specific values.
 
@@ -446,12 +445,12 @@ def polyval(p: ArrayLike, x: ArrayLike, *, unroll: int = 16) -> Array:
   del p, x
   shape = lax.broadcast_shapes(p_arr.shape[1:], x_arr.shape)
   y = lax.full_like(x_arr, 0, shape=shape, dtype=x_arr.dtype)
-  y, _ = lax.scan(lambda y, p: (y * x_arr + p, None), y, p_arr, unroll=unroll)  # type: ignore[misc]
+  y, _ = control_flow.scan(lambda y, p: (y * x_arr + p, None), y, p_arr, unroll=unroll)  # type: ignore[misc]
   return y
 
 
 @export
-@jit
+@api.jit
 def polyadd(a1: ArrayLike, a2: ArrayLike) -> Array:
   r"""Returns the sum of the two polynomials.
 
@@ -509,7 +508,7 @@ def polyadd(a1: ArrayLike, a2: ArrayLike) -> Array:
 
 
 @export
-@partial(jit, static_argnames=('m',))
+@api.jit(static_argnames=('m',))
 def polyint(p: ArrayLike, m: int = 1, k: int | ArrayLike | None = None) -> Array:
   r"""Returns the coefficients of the integration of specified order of a polynomial.
 
@@ -578,7 +577,7 @@ def polyint(p: ArrayLike, m: int = 1, k: int | ArrayLike | None = None) -> Array
 
 
 @export
-@partial(jit, static_argnames=('m',))
+@api.jit(static_argnames=('m',))
 def polyder(p: ArrayLike, m: int = 1) -> Array:
   r"""Returns the coefficients of the derivative of specified order of a polynomial.
 
@@ -756,7 +755,7 @@ def polydiv(u: ArrayLike, v: ArrayLike, *, trim_leading_zeros: bool = False) -> 
 
 
 @export
-@jit
+@api.jit
 def polysub(a1: ArrayLike, a2: ArrayLike) -> Array:
   r"""Returns the difference of two polynomials.
 

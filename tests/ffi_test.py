@@ -22,17 +22,16 @@ from absl.testing import parameterized
 
 import jax
 from jax import lax
-import jax.extend as jex
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dispatch
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
-from jax._src.layout import DeviceLocalLayout
+from jax._src.layout import Layout
 from jax._src.lib import lapack
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lax import linalg as lax_linalg_internal
@@ -60,7 +59,7 @@ class FfiTest(jtu.JaxTestCase):
   @parameterized.parameters([
     (tuple(range(3)), tuple(range(3))),
     (None, tuple(reversed(range(3)))),
-    (DeviceLocalLayout(tuple(range(3))), tuple(reversed(range(3)))),
+    (Layout(tuple(range(3))), tuple(reversed(range(3)))),
   ])
   def test_lowering_layouts(self, layout_spec, expected_layout):
     # Regression test to ensure that the lowering rule properly captures
@@ -87,15 +86,56 @@ class FfiTest(jtu.JaxTestCase):
     pattern = rf"result_layouts = \[dense<\[{expected}\]>"
     self.assertRegex(text, pattern)
 
-  @parameterized.parameters([
-      (True, mlir.ir.BoolAttr.get),
-      (1, mlir.i64_attr),
-      (5.0, lambda x: mlir.ir.FloatAttr.get(mlir.ir.F64Type.get(), x)),
-      ("param", mlir.ir.StringAttr.get),
-      (np.float32(0.5),
-       lambda x: mlir.ir.FloatAttr.get(mlir.ir.F32Type.get(), x)),
-  ])
-  def test_params(self, param, expected_builder):
+  # Concise helpers to every test instance below in one line.
+  _arr = lambda value, dtype=None: np.array(value, dtype=dtype)
+  _ftens1 = lambda et: f"dense<1.000000e+00> : tensor<{et}>"
+  _itens1 = lambda et: f"dense<1> : tensor<{et}>"
+
+  @parameterized.parameters(
+      (_arr(1, dtypes.int2), _itens1("i2")),
+      (_arr(1, dtypes.int4), _itens1("i4")),
+      (_arr(1, dtypes.uint2), _itens1("ui2")),
+      (_arr(1, dtypes.uint4), _itens1("ui4")),
+      (_arr(1, np.int16), _itens1("i16")),
+      (_arr(1, np.int32), _itens1("i32")),
+      (_arr(1, np.int64), _itens1("i64")),
+      (_arr(1, np.int8), _itens1("i8")),
+      (_arr(1, np.uint16), _itens1("ui16")),
+      (_arr(1, np.uint32), _itens1("ui32")),
+      (_arr(1, np.uint64), _itens1("ui64")),
+      (_arr(1, np.uint8), _itens1("ui8")),
+      (_arr(1.0, dtypes.bfloat16), _ftens1("bf16")),
+      (_arr(1.0, dtypes.float4_e2m1fn), _ftens1("f4E2M1FN")),
+      (_arr(1.0, dtypes.float8_e3m4), _ftens1("f8E3M4")),
+      (_arr(1.0, dtypes.float8_e4m3), _ftens1("f8E4M3")),
+      (_arr(1.0, dtypes.float8_e4m3b11fnuz), _ftens1("f8E4M3B11FNUZ")),
+      (_arr(1.0, dtypes.float8_e4m3fn), _ftens1("f8E4M3FN")),
+      (_arr(1.0, dtypes.float8_e4m3fnuz), _ftens1("f8E4M3FNUZ")),
+      (_arr(1.0, dtypes.float8_e5m2), _ftens1("f8E5M2")),
+      (_arr(1.0, dtypes.float8_e5m2fnuz), _ftens1("f8E5M2FNUZ")),
+      (_arr(1.0, dtypes.float8_e8m0fnu), _ftens1("f8E8M0FNU")),
+      (_arr(1.0, np.bool), "dense<true> : tensor<i1>"),
+      (_arr(1.0, np.float16), _ftens1("f16")),
+      (_arr(1.0, np.float32), _ftens1("f32")),
+      (_arr(1.0, np.float64), _ftens1("f64")),
+      (dtypes.bfloat16(1.0), "1.000000e+00 : bf16"),
+      (np.bool(False), "false"),
+      (np.bool(True), "true"),
+      (np.float16(1.0), "1.000000e+00 : f16"),
+      (np.float32(1.0), "1.000000e+00 : f32"),
+      (np.float64(1.0), "1.000000e+00 : f64"),
+      (np.int16(1), "1 : i16"),
+      (np.int32(1), "1 : i32"),
+      (np.int64(1), "1 : i64"),
+      (np.int8(1), "1 : i8"),
+      (np.uint16(1), "1 : ui16"),
+      (np.uint32(1), "1 : ui32"),
+      (np.uint64(1), "1 : ui64"),
+      (np.uint8(1), "1 : ui8"),
+      (np.zeros((), dtype=dtypes.float0), "dense<false> : tensor<i1>"),
+      ("param", '"param"'),
+  )
+  def test_params(self, param, expected_str):
     def fun(x):
       return jax.ffi.ffi_call("test_ffi", x)(x, param=param)
 
@@ -103,13 +143,10 @@ class FfiTest(jtu.JaxTestCase):
     # serialized with the appropriate type.
     module = jax.jit(fun).lower(0.5).compiler_ir("stablehlo")
     op = self.find_custom_call_in_module(module)
-    config = op.attributes["mhlo.backend_config"]
-    self.assertIsInstance(config, mlir.ir.DictAttr)
-    self.assertIn("param", config)
-    with mlir.make_ir_context(), mlir.ir.Location.unknown():
-      expected = expected_builder(param)
-    self.assertEqual(type(config["param"]), type(expected))
-    self.assertTrue(expected.type.isinstance(config["param"].type))
+    conf = op.attributes["mhlo.backend_config"]
+    self.assertIsInstance(conf, mlir.ir.DictAttr)
+    self.assertIn("param", conf)
+    self.assertEqual(str(conf["param"]), expected_str)
 
   def test_token(self):
     def fun():
@@ -152,7 +189,7 @@ class FfiTest(jtu.JaxTestCase):
     def fun(x):
       return jax.ffi.ffi_call("test_ffi", x)(x, non_hashable_arg={"a": 1})
 
-    self.assertIn("HashableDict", str(jax.make_jaxpr(fun)(jnp.ones(5))))
+    self.assertIn("FrozenDict", str(jax.make_jaxpr(fun)(jnp.ones(5))))
     hlo = jax.jit(fun).lower(jnp.ones(5)).as_text()
     self.assertIn("non_hashable_arg = {a = 1", hlo)
 
@@ -255,7 +292,7 @@ class FfiTest(jtu.JaxTestCase):
       jax.jit(fun).lower(jnp.ones(5)).as_text()
 
   def test_allow_x64(self):
-    if config.enable_x64.value:
+    if not config.enable_x64.value:
       self.skipTest("Requires enable_x64=False")
     def fun():
       return jax.ffi.ffi_call("test", jax.ShapeDtypeStruct((), np.int64))()
@@ -263,10 +300,10 @@ class FfiTest(jtu.JaxTestCase):
 
   def test_invalid_result_type(self):
     with self.assertRaisesRegex(
-        ValueError, "All elements of result_shape_dtypes.*position 0"):
+        TypeError, "Cannot interpret value of type.*"):
       jax.ffi.ffi_call("test", None)()
     with self.assertRaisesRegex(
-        ValueError, "All elements of result_shape_dtypes.*position 1"):
+        TypeError, "Cannot interpret value of type.*"):
       jax.ffi.ffi_call("test", (jax.ShapeDtypeStruct((), np.float32), ()))()
 
   @jtu.run_on_devices("gpu", "cpu")
@@ -282,20 +319,13 @@ class FfiTest(jtu.JaxTestCase):
     jax.jit(f)(x)  # neither does JIT
     self.assertNotIn("all-gather", jax.jit(f).lower(x).compile().as_text())
 
-  @jtu.run_on_devices("gpu", "cpu")
-  @jtu.ignore_warning(category=DeprecationWarning)
-  def test_extend_import_shim(self):
-    if deprecations.is_accelerated_attribute(jex.ffi, "ffi_call"):
-      self.skipTest("FFI call deprecation is accelerated.")
-    ffi_call_geqrf(jnp.ones((4, 5), dtype=np.float32), _use_extend=True)
-
   def test_extended_dtype_lowering(self):
     def f(x):
       return jax.ffi.ffi_call("edtype", (), has_side_effect=True)(x)
     jax.jit(f).lower(jax.random.key(0))   # doesn't crash
 
 
-def ffi_call_geqrf(x, _use_extend=False, **kwargs):
+def ffi_call_geqrf(x, **kwargs):
   if jtu.test_device_matches(["cpu"]):
     lapack._lapack.initialize()
 
@@ -311,8 +341,7 @@ def ffi_call_geqrf(x, _use_extend=False, **kwargs):
         rocm="hipsolver_geqrf_ffi",
         cuda="cusolver_geqrf_ffi",
     )[platform]
-    f = jex.ffi.ffi_call if _use_extend else jax.ffi.ffi_call
-    return f(
+    return jax.ffi.ffi_call(
         target_name, output_types, input_output_aliases={0: 0},
         input_layouts=[x_major_to_minor],
         output_layouts=[x_major_to_minor, None],

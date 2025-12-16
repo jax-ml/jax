@@ -21,7 +21,6 @@ import jax
 from jax import numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import xla_client
 from jax._src.pallas.mosaic import error_handling
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
@@ -155,7 +154,7 @@ class PallasErrorHandlingTest(jtu.JaxTestCase):
     # Having a block size that is too small should raise a suggestion
     # to increase the block size.
     with self.assertRaisesRegex(
-        xla_client.XlaRuntimeError,
+        jax.errors.JaxRuntimeError,
         r"Try changing your kernel block shape to \([0-9,\s]+\) to align with"
         " the XLA layout",
     ):

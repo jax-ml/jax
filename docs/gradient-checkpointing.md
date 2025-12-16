@@ -49,7 +49,7 @@ x = jnp.ones(4)
 # Inspect the 'residual' values to be saved on the forward pass
 # if you were to evaluate `jax.grad(f)(W1, W2, W3, x)`
 from jax.ad_checkpoint import print_saved_residuals
-jax.ad_checkpoint.print_saved_residuals(f, W1, W2, W3, x)
+print_saved_residuals(f, W1, W2, W3, x)
 ```
 
 By applying {func}`jax.checkpoint` to sub-functions, as a decorator or at specific application sites, you force JAX not to save any of that sub-function's residuals. Instead, only the inputs of a {func}`jax.checkpoint`-decorated function might be saved, and any residuals consumed on the backward pass are re-computed from those inputs as needed:
@@ -61,7 +61,7 @@ def f2(W1, W2, W3, x):
   x = jax.checkpoint(g)(W3, x)
   return x
 
-jax.ad_checkpoint.print_saved_residuals(f2, W1, W2, W3, x)
+print_saved_residuals(f2, W1, W2, W3, x)
 ```
 
 Here, the values of two `sin` applications are saved because they are arguments
@@ -73,7 +73,7 @@ To control which values are saveable without having to edit the definition of th
 
 ```{code-cell}
 f3 = jax.checkpoint(f, policy=jax.checkpoint_policies.dots_with_no_batch_dims_saveable)
-jax.ad_checkpoint.print_saved_residuals(f3, W1, W2, W3, x)
+print_saved_residuals(f3, W1, W2, W3, x)
 ```
 
 You can also use policies to refer to intermediate values you name using {func}`jax.ad_checkpoint.checkpoint_name`:
@@ -88,7 +88,7 @@ def f4(W1, W2, W3, x):
   return x
 
 f4 = jax.checkpoint(f4, policy=jax.checkpoint_policies.save_only_these_names('a'))
-jax.ad_checkpoint.print_saved_residuals(f4, W1, W2, W3, x)
+print_saved_residuals(f4, W1, W2, W3, x)
 ```
 
 When playing around with these toy examples, you can get a closer look at what's going on using a custom `print_fwd_bwd` utility defined in this notebook:
@@ -205,7 +205,7 @@ Using words, this alternative implementation doesn't compute `g_vjp`, or the res
 
 The cost you pay is redundant work: in `f_bwd2` you must re-evaluate `g(x)` as part of `jax.vjp(g, x)` just to discard its value (in the underscore variable on the line `_, g_vjp = jax.vjp(g, x)`).
 
-You can get this VJP behavior in autodiff &#151; without having to write VJP functions directly &#151; by instead using {func}`jax.checkpoint` in an alternative definition of the original function `f`:
+You can get this VJP behavior in autodiff --- without having to write VJP functions directly --- by instead using {func}`jax.checkpoint` in an alternative definition of the original function `f`:
 
 ```{code-cell}
 def f_checkpoint(x):
@@ -288,7 +288,7 @@ As shown so far, using {func}`jax.checkpoint` switches from one extreme to anoth
 
 To operate between these two extremes, saving some things and not others, you can carefully place {func}`jax.checkpoint` decorators on sub-functions. But that requires editing the function to be differentiated, e.g. model code, which may be inconvenient. It can also be hard to experiment with variations.
 
-So an alternative is to use the `policy` argument to {func}`jax.checkpoint`. A policy is a callable (i.e. a function) which takes as input a type-level specification of a first order primitive application and returns a boolean indicating whether the corresponding output value(s) are allowed to be saved as residuals (or instead must be recomputed in the (co)tangent computation as needed). To write robust code, a policy should be selected from the attributes on {func}`jax.checkpoint_policies`, like {func}`jax.checkpoint_policies.dots_with_no_batch_dims_saveable`, since the API for writing custom policy callables is considered internal.
+So an alternative is to use the `policy` argument to {func}`jax.checkpoint`. A policy is a callable (i.e. a function) which takes as input a type-level specification of a first order primitive application and returns a boolean indicating whether the corresponding output value(s) are allowed to be saved as residuals (or instead must be recomputed in the (co)tangent computation as needed). To write robust code, a policy should be selected from the attributes on {obj}`jax.checkpoint_policies`, like {func}`jax.checkpoint_policies.dots_with_no_batch_dims_saveable`, since the API for writing custom policy callables is considered internal.
 
 For example, consider this function to be differentiated:
 
@@ -359,7 +359,7 @@ Another policy which refers to names is `jax.checkpoint_policies.save_only_these
 You may consider offloading to CPU memory instead of recomputing when checkpointing to save accelerator memory. `jax.checkpoint_policies.offload_dot_with_no_batch_dims` can offload the results of matrix multiplications with no batch dimensions to the CPU.
 
 ```{code-cell}
-from jax.ad_checkpoint import checkpoint
+from jax import checkpoint
 
 def checkpoint_offload_dot_with_no_batch_dims(self):
   policy = jax.checkpoint_policies.offload_dot_with_no_batch_dims(
@@ -380,7 +380,8 @@ def checkpoint_offload_dot_with_no_batch_dims(self):
 One of JAX's checkpoint policies allows specified checkpoint names to be offloaded to CPUs. This policy is implemented through `jax.checkpoint_policies.save_and_offload_only_these_names`, which has four arguments: `names_which_can_be_saved`, `names_which_can_be_offloaded`, the offloading source, and destination. Names listed in `names_which_can_be_saved` are kept on the device, names listed in `names_which_can_be_offloaded` are moved to CPU memory, and other names or operations without names are recomputed. For example, if we have checkpoint names `y`, `z`, and `w`, `y` can be saved on the device, `z` can be offloaded to CPU memory, and `w` can be recomputed.
 
 ```{code-cell}
-from jax.ad_checkpoint import checkpoint, checkpoint_name
+from jax import checkpoint
+from jax.ad_checkpoint import checkpoint_name
 from jax._src import test_util as jtu
 
 def checkpoint_names_saved_offloaded_recomputed(self):
@@ -411,22 +412,7 @@ The code defines a function `f` that which applies checkpointing with a custom p
 
 #### List of policies
 
-The policies are:
-* `everything_saveable` (the default strategy, as if `jax.checkpoint` were not being used at all)
-* `nothing_saveable` (i.e. rematerialize everything, as if a custom policy were not being used at all)
-* `dots_saveable` or its alias `checkpoint_dots`
-* `dots_with_no_batch_dims_saveable` or its alias `checkpoint_dots_with_no_batch_dims`
-* `save_anything_but_these_names` (save any values except for the output of
-  `checkpoint_name` with any of the names given)
-* `save_any_names_but_these` (save only named values, i.e. any outputs of
-  `checkpoint_name`, except for those with the names given)
-* `save_only_these_names` (save only named values, and only among the names
-  given)
-* `offload_dot_with_no_batch_dims` same as `dots_with_no_batch_dims_saveable`,
-  but offload to CPU memory instead of recomputing.
-* `save_and_offload_only_these_names` same as `save_only_these_names`, but
-  offload to CPU memory instead of recomputing.
-* `save_from_both_policies(policy_1, policy_2)` (like a logical `or`, so that a residual is saveable if it is saveable according to `policy_1` _or_ `policy_2`)
+The policies can be found [here](https://docs.jax.dev/en/latest/jax.html#checkpoint-policies).
 
 Policies only indicate what is saveable; a value is only saved if it's actually needed by the backward pass.
 
@@ -515,7 +501,7 @@ def net(params: ParamsList, x: jnp.ndarray):
 Instead, iterate over the layer application with {func}`jax.lax.scan`:
 
 ```{code-cell}
-params = [(jnp.array([[0.5, 0.5], [1., 1.]]), jnp.array([0.5, 0.5])), 
+params = [(jnp.array([[0.5, 0.5], [1., 1.]]), jnp.array([0.5, 0.5])),
           (jnp.array([[0.5, 0.5], [1., 1.]]), jnp.array([0.5, 0.5]))]
 
 all_weights = jnp.stack([W for W, _ in params])

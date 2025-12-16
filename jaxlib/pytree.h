@@ -37,7 +37,7 @@ limitations under the License.
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pytree.pb.h"
 
-namespace xla {
+namespace jax {
 
 enum class PyTreeKind {
   kLeaf,        // An opaque leaf node
@@ -303,15 +303,15 @@ class PyTreeDef {
   // to implement `PyTreeDef.__setstate__`.
   void FromPickle(nanobind::object pickleable);
 
-  void SerializeTo(jax::PyTreeDefProto& result) const;
+  void SerializeTo(PyTreeDefProto& result) const;
 
   static nb_class_ptr<PyTreeDef> DeserializeFrom(
-      nb_class_ptr<PyTreeRegistry> registry, const jax::PyTreeDefProto& input);
+      nb_class_ptr<PyTreeRegistry> registry, const PyTreeDefProto& input);
 
   std::optional<std::pair<nanobind::object, nanobind::object>> GetNodeData()
       const;
 
-  static nb_class_ptr<PyTreeDef> MakeFromNodeDataAndChildren(
+  static nb_class_ptr<PyTreeDef> FromNodeDataAndChildren(
       nb_class_ptr<PyTreeRegistry> registry,
       std::optional<std::pair<nanobind::object, nanobind::object>> node_data,
       nanobind::iterable children);
@@ -368,8 +368,8 @@ class PyTreeDef {
 
   template <typename T>
   void FlattenImpl(nanobind::handle handle, T& leaves,
-                   const std::optional<nanobind::callable>& leaf_predicate,
-                   std::optional<std::vector<nanobind::object>>& keypath);
+                   std::optional<std::vector<nanobind::object>>& keypath,
+                   const std::optional<nanobind::callable>& leaf_predicate);
 
   template <typename T>
   nanobind::object UnflattenImpl(T leaves) const;
@@ -403,6 +403,6 @@ H AbslHashValue(H h, const PyTreeDef& t) {
 
 void BuildPytreeSubmodule(nanobind::module_& m);
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_PYTREE_H_

@@ -16,7 +16,7 @@ limitations under the License.
 
 #include <memory>
 #include <string>
-#include <utility>
+#include <string_view>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/strings/strip.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/TargetParser/Triple.h"
 
 namespace mosaic::gpu {
 
@@ -37,9 +38,10 @@ absl::StatusOr<std::string> GetSmVersion(int major, int minor) {
   std::string sm_base = absl::StrCat("sm_", major, minor);
 
   const std::string triple = "nvptx64-nvidia-cuda";
+  const llvm::Triple target_triple(triple);
   std::string error;
   const llvm::Target* target =
-      llvm::TargetRegistry::lookupTarget(triple, error);
+      llvm::TargetRegistry::lookupTarget(target_triple, error);
   if (target == nullptr) {
     return absl::InternalError(absl::StrFormat(
         "Failed to lookup LLVM target based on triple %s: %s", triple, error));
@@ -51,7 +53,7 @@ absl::StatusOr<std::string> GetSmVersion(int major, int minor) {
   {
     // generic subtarget
     std::unique_ptr<const llvm::MCSubtargetInfo> subtarget_info{
-        target->createMCSubtargetInfo(triple, "", "")};
+        target->createMCSubtargetInfo(target_triple, "", "")};
     if (subtarget_info == nullptr) {
       return absl::InternalError(absl::StrFormat(
           "Failed to get generic LLVM subtarget info for triple %s", triple));
@@ -70,16 +72,17 @@ absl::StatusOr<std::string> GetSmVersion(int major, int minor) {
 
 absl::StatusOr<int> GetLatestLlvmPtxIsaVersion() {
   const std::string triple = "nvptx64-nvidia-cuda";
+  const llvm::Triple target_triple(triple);
   std::string error;
   const llvm::Target* target =
-      llvm::TargetRegistry::lookupTarget(triple, error);
+      llvm::TargetRegistry::lookupTarget(target_triple, error);
   if (target == nullptr) {
     return absl::InternalError(absl::StrFormat(
         "Failed to lookup LLVM target based on triple %s: %s", triple, error));
   }
   // generic subtarget
   std::unique_ptr<const llvm::MCSubtargetInfo> subtarget_info{
-      target->createMCSubtargetInfo(triple, "", "")};
+      target->createMCSubtargetInfo(target_triple, "", "")};
   if (subtarget_info == nullptr) {
     return absl::InternalError(absl::StrFormat(
         "Failed to get generic LLVM subtarget info for triple %s", triple));
@@ -87,7 +90,7 @@ absl::StatusOr<int> GetLatestLlvmPtxIsaVersion() {
   int llvm_latest_version = 0;
   for (const llvm::SubtargetFeatureKV& feature :
        subtarget_info->getAllProcessorFeatures()) {
-    absl::string_view version_string = feature.Key;
+    std::string_view version_string = feature.Key;
     if (absl::ConsumePrefix(&version_string, "ptx")) {
       int version;
       if (!absl::SimpleAtoi(version_string, &version)) {

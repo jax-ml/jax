@@ -22,23 +22,25 @@ on:
 # document and enforce the permissions here.
 permissions:
   contents: read
+
+env:
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+
 jobs:
   cloud-tpu-test:
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
-        jaxlib-version: ["head", "pypi_latest", "nightly", "nightly+oldest_supported_libtpu"]
+        jaxlib-version: ["head", "pypi_latest", "nightly"]
         tpu: [
           {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
           {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
-          {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"}
+          {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"},
+          {type: "v7x-8", cores: "8", runner: "linux-x86-tpu7x-224-4tpu"}
         ]
-        python-version: ["3.10"]
-        # Exclude v6e-8 tests for nightly+oldest_supported_libtpu and pypi_latest for resource constraints.
+        python-version: ["3.11"]
+        # Exclude v6e-8 tests for pypi_latest for resource constraints.
         exclude:
-          - tpu:
-              type: "v6e-8"
-            jaxlib-version: "nightly+oldest_supported_libtpu"
           - tpu:
               type: "v6e-8"
             jaxlib-version: "pypi_latest"
@@ -56,12 +58,12 @@ jobs:
       # https://opensource.google/documentation/reference/github/services#actions
       # mandates using a specific commit for non-Google actions. We use
       # https://github.com/sethvargo/ratchet to pin specific versions.
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
         with:
           persist-credentials: false
       # Checkout XLA at head, if we're building jaxlib at head.
       - name: Checkout XLA at head
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
         if: ${{ matrix.jaxlib-version == 'head' }}
         with:
           repository: openxla/xla
@@ -114,8 +116,8 @@ jobs:
           $PYTHON -c 'import jax; print("jax version:", jax.__version__)'
           $PYTHON -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
           strings /usr/local/lib/"$PYTHON"/dist-packages/libtpu/libtpu.so | grep 'Built on'
-          $PYTHON -c 'import jax; print("libtpu version:",
-            jax.lib.xla_bridge.get_backend().platform_version)'
+          $PYTHON -c 'import jax.extend; print("libtpu version:",
+            jax.extend.backend.get_backend().platform_version)'
       - name: Run tests
         env:
           JAX_PLATFORMS: tpu,cpu
@@ -130,11 +132,11 @@ jobs:
           fi
           # Run single-accelerator tests in parallel
           JAX_ENABLE_TPU_XDIST=true $PYTHON -m pytest -n=${{ matrix.tpu.cores }} --tb=short \
-            --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
+            --deselect=tests/pallas/tpu_pallas_call_print_test.py::PallasCallPrintTest \
             --maxfail=20 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
           # Run Pallas printing tests, which need to run with I/O capturing disabled.
           TPU_STDERR_LOG_LEVEL=0 $PYTHON -m pytest -s \
-            tests/pallas/tpu_pallas_test.py::PallasCallPrintTest
+            tests/pallas/tpu_pallas_call_print_test.py::PallasCallPrintTest
           # Run multi-accelerator across all chips
           $PYTHON -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
       - name: Send chat on failure

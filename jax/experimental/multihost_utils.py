@@ -18,19 +18,21 @@ from __future__ import annotations
 from functools import partial, lru_cache
 import zlib
 
+import contextlib
 from typing import Any
 import jax
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import core
+from jax._src import dtypes
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src import array
 from jax._src import sharding_impls
 from jax._src.interpreters import pxla
-from jax.interpreters import xla
 from jax._src import pjit as pjit_lib
+from jax._src import prng
 from jax.sharding import PartitionSpec as P
 from jax._src import distributed
 from jax._src.util import safe_zip
@@ -39,8 +41,8 @@ from jax._src.lib import xla_client
 import numpy as np
 
 
-def _psum(x: Any) -> Any:
-  return jax.tree.map(partial(jnp.sum, axis=0), x)
+def _psum(xs: Any) -> Any:
+  return jax.tree.map(lambda x: jnp.sum(x, dtype=x.dtype, axis=0), xs)
 
 
 def broadcast_one_to_all(in_tree: Any, is_source: bool | None = None) -> Any:
@@ -80,15 +82,10 @@ def broadcast_one_to_all(in_tree: Any, is_source: bool | None = None) -> Any:
     return jax.device_get(x.addressable_data(0))
 
   in_tree = jax.tree.map(pre_jit, in_tree)
-  out_tree = jax.jit(_psum, out_shardings=jax.sharding.NamedSharding(
-      global_mesh, P()))(in_tree)
+  with jax.set_mesh(global_mesh):
+    out_tree = jax.jit(_psum, out_shardings=P())(in_tree)
+
   return jax.tree.map(post_jit, out_tree)
-
-
-def sync_global_devices(name: str):
-  """Creates a barrier across all hosts/devices."""
-  h = np.uint32(zlib.crc32(name.encode()))
-  assert_equal(h, f"sync_global_devices name mismatch ('{name}')")
 
 
 # Identity function is at the top level so that `process_allgather` doesn't
@@ -99,8 +96,12 @@ def _identity_fn(x):
 
 def _handle_array_process_allgather(inp, tiled):
   if isinstance(inp, array.ArrayImpl) and not inp.is_fully_addressable:
+    if not tiled:
+      raise ValueError(
+          'Gathering global non-fully-addressable arrays only supports'
+          ' tiled=True')
     if isinstance(inp.sharding, sharding_impls.NamedSharding):
-      reps = inp.sharding.with_spec(P())
+      reps = inp.sharding.update(spec=P())
     else:
       reps = sharding_impls.GSPMDSharding.get_replicated(
           inp.sharding._device_assignment, memory_kind=inp.sharding.memory_kind)
@@ -122,15 +123,15 @@ def _handle_array_process_allgather(inp, tiled):
       host_np_arr = np.expand_dims(host_np_arr, axis=0)
 
     aval = core.ShapedArray(host_np_arr.shape, host_np_arr.dtype)
+    pspec = sharding_impls.prepare_axis_resources(pspec, "pspec to array_mapping")
     global_aval = pxla.mesh_local_to_global(
-        global_mesh, pxla.get_array_mapping(pspec), aval)
+        global_mesh, sharding_impls.get_array_mapping(pspec), aval)
 
     bufs = [jax.device_put(host_np_arr, d) for d in jax.local_devices()]
     global_arr = array.make_array_from_single_device_arrays(
         global_aval.shape, s, bufs)
-    out = jax.jit(_identity_fn,
-                  out_shardings=jax.NamedSharding(global_mesh, P()))(global_arr)
-
+    with jax.set_mesh(global_mesh):
+      out = jax.jit(_identity_fn, out_shardings=P())(global_arr)
   return np.asarray(out.addressable_data(0))
 
 
@@ -158,13 +159,29 @@ def process_allgather(in_tree: Any, tiled: bool = False) -> Any:
   return jax.tree.map(_pjit, in_tree)
 
 
+def sync_global_devices(name: str):
+  """Creates a barrier across all hosts/devices."""
+  h = np.uint32(zlib.crc32(name.encode()))
+  assert_equal(h, f"sync_global_devices name mismatch ('{name}')")
+
+
 def assert_equal(in_tree, fail_message: str = ''):
   """Verifies that all the hosts have the same tree of values."""
-  expected = broadcast_one_to_all(in_tree)
-  if not jax.tree_util.tree_all(
-      jax.tree_util.tree_map(lambda *x: np.all(np.equal(*x)), in_tree, expected)):
+  def concat_in_tree(x):
+    if isinstance(x, array.ArrayImpl) and not x.is_fully_addressable:
+      return np.asarray(x.addressable_data(0))
+    else:
+      x = np.asarray(x)
+      if x.ndim == 0:
+        x = np.expand_dims(x, axis=0)
+      return np.concat([x] * jax.process_count())
+
+  out = process_allgather(in_tree, tiled=True)
+  expected_in_tree = jax.tree.map(concat_in_tree, in_tree)
+  if not jax.tree.all(
+      jax.tree.map(lambda *x: np.all(np.equal(*x)), expected_in_tree, out)):
     raise AssertionError(
-        f'{fail_message} Expected: {expected}; got: {in_tree}.')
+        f'{fail_message}. Expected: {out}; got: {in_tree}.')
 
 
 def reached_preemption_sync_point(step_id: int) -> bool:
@@ -203,13 +220,16 @@ def reached_preemption_sync_point(step_id: int) -> bool:
     after some hosts are preempted.
 
   Raises:
-    RuntimeError: if preemption sync manager has not been inititialized.
+    RuntimeError: if preemption sync manager has not been initialized.
   """
   if distributed.global_state.client is None:
     return False
   sync_manager = distributed.global_state.preemption_sync_manager
   if sync_manager is None:
-    raise RuntimeError("Preemption sync manager has not been initialized.")
+    raise RuntimeError(
+        "Preemption sync manager has not been initialized. Make sure the"
+        " 'jax_enable_preemption_service' config is enabled."
+    )
   return sync_manager.reached_sync_point(step_id)
 
 
@@ -220,13 +240,15 @@ def _flatten_pspecs(name, in_tree, pspecs_thunk):
 
 @lru_cache
 def _local_to_global_aval(local_aval, mesh, pspec):
-  return pxla.mesh_local_to_global(mesh, pxla.get_array_mapping(pspec),
-                                   local_aval)
+  pspec = sharding_impls.prepare_axis_resources(pspec, "pspec to array_mapping")
+  return pxla.mesh_local_to_global(
+      mesh, sharding_impls.get_array_mapping(pspec), local_aval)
 
 @lru_cache
 def _global_to_local_aval(global_aval, mesh, pspec):
-  return pxla.mesh_global_to_local(mesh, pxla.get_array_mapping(pspec),
-                                   global_aval)
+  pspec = sharding_impls.prepare_axis_resources(pspec, "pspec to array_mapping")
+  return pxla.mesh_global_to_local(
+      mesh, sharding_impls.get_array_mapping(pspec), global_aval)
 
 
 def host_local_array_to_global_array_impl(
@@ -238,9 +260,14 @@ def host_local_array_to_global_array_impl(
   # If the Array is not fully addressable i.e. not host local, return it.
   if isinstance(arr, array.ArrayImpl) and not arr.is_fully_addressable:
     return arr
-  if isinstance(arr, array.ArrayImpl) and isinstance(
-      arr.sharding, jax.sharding.PmapSharding):
+  if (isinstance(arr, array.ArrayImpl) and isinstance(
+      arr.sharding, jax.sharding.PmapSharding)) or not hasattr(arr, 'shape'):
     arr = np.array(arr)
+  if arr.dtype == dtypes.float0:
+    arr = np.zeros(arr.shape, dtype=np.dtype(bool))
+  dtype = arr.dtype
+  if is_prng_key_array := isinstance(arr, prng.PRNGKeyArray):
+    arr = arr._base_array
 
   local_sharding = jax.sharding.NamedSharding(global_mesh.local_mesh, pspec)
 
@@ -251,17 +278,20 @@ def host_local_array_to_global_array_impl(
       arr.sharding.is_equivalent_to(local_sharding, arr.ndim)):
     arrays = [x.data for x in arr.addressable_shards]
   else:
-    arr = xla.canonicalize_dtype(arr)
+    arr = dtypes.canonicalize_value(arr)
     arrays = [
-        arr[index]
-        for d, index in local_sharding.devices_indices_map(arr.shape).items()]
+        arr[i] for i in local_sharding.devices_indices_map(arr.shape).values()
+    ]
 
   global_aval = _local_to_global_aval(
       core.ShapedArray(arr.shape, arr.dtype), global_mesh, pspec)
 
-  return pxla.batched_device_put(
+  out = pxla.batched_device_put(
       global_aval, jax.sharding.NamedSharding(global_mesh, pspec),
       arrays, list(global_mesh.local_mesh.devices.flat))
+  if is_prng_key_array:
+    return prng.PRNGKeyArray(dtype._impl, out)
+  return out
 
 
 def host_local_array_to_global_array(
@@ -328,7 +358,7 @@ def host_local_array_to_global_array(
   >>>
   >>> host_local_output = multihost_utils.global_array_to_host_local_array(global_out, mesh, out_pspecs) # doctest: +SKIP
 
-  Please note ths function requires global mesh to be a continuous mesh, meaning
+  Please note this function requires global mesh to be a continuous mesh, meaning
   that  devices that belong to each host should form a subcube in this mesh.
   To move local data to global array with non-continuous mesh use
   jax.make_array_from_callback or jax.make_array_from_single_device_arrays
@@ -366,11 +396,13 @@ ad.deflinear2(host_local_array_to_global_array_p,
                   host_local_array_to_global_array_p.bind(ct, **params),))
 
 def ltg_batcher(insert_axis, axis_data, vals_in, dims_in, global_mesh, pspec):
+  del insert_axis
   x, = vals_in
   d, = dims_in
   new_parts = None if axis_data.spmd_name is None else axis_data.spmd_name
   new_pspec = list(pspec)
-  new_pspec.insert(d, new_parts)
+  if d is not None:
+    new_pspec.insert(d, new_parts)
   new_pspec = P(*new_pspec)
   y = host_local_array_to_global_array_p.bind(
       x, global_mesh=global_mesh, pspec=new_pspec)
@@ -392,6 +424,13 @@ def global_array_to_host_local_array_impl(
   # If the Array is already fully addressable i.e. host local, return it.
   if isinstance(arr, array.ArrayImpl) and arr.is_fully_addressable:
     return arr
+  if not hasattr(arr, 'shape'):
+    arr = np.array(arr)
+  if arr.dtype == dtypes.float0:
+    arr = np.zeros(arr.shape, dtype=np.dtype(bool))
+  dtype = arr.dtype
+  if is_prng_key_array := isinstance(arr, prng.PRNGKeyArray):
+    arr = arr._base_array
 
   global_sharding = jax.sharding.NamedSharding(global_mesh, pspec)
   local_sharding = jax.sharding.NamedSharding(global_mesh.local_mesh, pspec)
@@ -404,16 +443,19 @@ def global_array_to_host_local_array_impl(
     else:
       resharded_array = jax.device_put(arr, global_sharding)
       arrays = resharded_array._arrays
-    return array.ArrayImpl(local_aval, local_sharding, arrays, committed=True)
+    out = array.ArrayImpl(local_aval, local_sharding, arrays, committed=True)
+    if is_prng_key_array:
+      return prng.PRNGKeyArray(dtype._impl, out)
+    return out
   else:
     # numpy array can show up here during AD.
-    arr = xla.canonicalize_dtype(arr)
+    arr = dtypes.canonicalize_value(arr)
     arrays = [
-        arr[index]
-        for d, index in local_sharding.devices_indices_map(arr.shape).items()]
-    return pxla.batched_device_put(
-        local_aval, local_sharding, arrays,
-        list(global_mesh.local_mesh.devices.flat))
+        arr[i] for i in local_sharding.devices_indices_map(arr.shape).values()
+    ]
+  return pxla.batched_device_put(
+      local_aval, local_sharding, arrays,
+      list(global_mesh.local_mesh.devices.flat))
 
 
 def global_array_to_host_local_array(
@@ -477,15 +519,55 @@ def _gtl_lowering(ctx, x, *, global_mesh, pspec):
 mlir.register_lowering(global_array_to_host_local_array_p, _gtl_lowering)
 
 
-def live_devices(devices: list[xla_client.Device]) -> list[xla_client.Device]:
-  """Returns the subset of the provided devices that are live and healthy.
+def _live_devices(client, devices: list[xla_client.Device]) -> dict[xla_client.Device, int]:
+  """Returns the subset of the provided devices that are live and healthy."""
+  process_ids = {d.process_index for d in devices}
+  if xla_bridge.process_index() not in process_ids:
+    # A process can only participate in an live_devices call if it hosts some of
+    # the provided devices.
+    raise ValueError('Provided devices do not have any local devices.')
 
-  This API is under active development and is not stable.
+  live_process_ids = client.get_live_nodes(list(process_ids))
+  return {
+      d: live_process_ids[d.process_index]
+      for d in devices
+      if d.process_index in live_process_ids
+  }
 
-  `live_devices` is a low-level fault tolerance primitive that can be used to
-  implement fault tolerant multi-process JAX programs.
 
-  Barrier Semantics
+class _LiveDevices:
+  """A context manager for atomically running code on the set of live devices.
+
+  THIS API IS UNDER ACTIVE DEVELOPMENT AND IS NOT STABLE.
+
+  # Overview
+
+  `live_devices` is a low-level primitive that can be used to make
+  multi-controller JAX programs fault tolerant. A multi-controller JAX program
+  runs across many devices, and the machines that host these devices might fail.
+  `live_devices` is a context manager that yields the current set of healthy
+  devices, allowing you to run JAX code on the healthy devices while ignoring
+  the failed ones.
+
+  Concretely, `live_devices` is a context manager. You provide it the set of
+  devices you are interested in, and it yields the subset of these devices that
+  are live. In the body of the `with` statement, you can execute arbitrary JAX
+  code using the set of live devices.
+
+  # Example Usage
+
+      try:
+        with jax.live_devices(jax.devices()) as devices:
+          # Run JAX code here with devices.
+          pass
+      except:
+        # A device died while executing the with statement above.
+        pass
+      else:
+        # The with statement executed successfully.
+        pass
+
+  # Barrier Semantics
 
   It's important that every process agrees on which devices are live to avoid
   the processes' behavior from diverging. For example, imagine a set of
@@ -493,19 +575,19 @@ def live_devices(devices: list[xla_client.Device]) -> list[xla_client.Device]:
   should be participating in the AllGather. This is buggy.
 
   To ensure that every process agrees on the set of live devices, the
-  `live_devices` function has barrier-like semantics. Consider an invocation
-  `live_devices(devices)` where `devices` includes devices across a set of
-  processes P. The invocation acts as a barrier, waiting for every process in P
-  to call `live_devices(devices)`. Afterwards, `live_devices` returns the same
-  set of live devices `A` to all the processes in P. This ensures that every
-  process agrees on the set of live devices.
+  `live_devices` context manager has barrier-like semantics. Consider an
+  invocation `with live_devices(devices)` where `devices` includes devices
+  across a set of processes P. The invocation acts as a barrier, waiting for
+  every process in P to call `with live_devices(devices)`. Afterwards,
+  `live_devices` returns the same set of live devices `A` to all the processes
+  in P. This ensures that every process agrees on the set of live devices.
 
   `live_devices` does not actually act as a barrier for *every* process in P
   because some processes in P might have failed. Instead, the `live_devices`
   function waits only for the processes with a device in the returned set of
   live devices A.
 
-  An Example
+  # An Example
 
   Imagine we have four processes, each with two devices:
 
@@ -514,11 +596,39 @@ def live_devices(devices: list[xla_client.Device]) -> list[xla_client.Device]:
     Process C: Devices 5 and 6
     Process D: Devices 7 and 8
 
-  Further imagine that process D fails and that every process calls
-  `live_devices(jax.devices())`. The invocation returns devices 1, 2, 3, 4, 5,
+  Further imagine that process D fails and that every process calls `with
+  live_devices(jax.devices())`. The invocation returns devices 1, 2, 3, 4, 5,
   and 6. Because these devices are hosted by processes A, B, and C, the call to
   `live_devices` acts as a barrier across processes A, B, and C. Process D,
   which failed, is ignored.
+
+  # Atomicity
+
+  `live_devices` also provides the following transaction-like atomicity
+  property. When a process exits the body of a `with jax.live_devices(...) as
+  devices:` block, there are two possibilities.
+
+    1. All processes in `devices` successfully executed all code in the block
+       without any exceptions being raised.
+    2. All processes in `devices` did not successfully execute the code in the
+       block, and all the processes will raise an exception.
+
+  Consider the following code.
+
+      try:
+        with jax.live_devices(...) as devices:
+          pass
+      except:
+        pass # A
+      else:
+        pass # B
+
+  The atomicity property says that either every process with devices in
+  `devices` will enter the except branch (A) or every process with devices in
+  `devices` will enter the else branch (B). It is impossible for some processes
+  to enter A and others to enter B.
+
+  TODO: mwhittaker - Link to formal live devices semantics.
 
   Args:
     devices: A list of devices. The provided devices must include at least one
@@ -531,26 +641,37 @@ def live_devices(devices: list[xla_client.Device]) -> list[xla_client.Device]:
     RuntimeError: If the distributed runtime was not initialized.
     ValueError: If no local devices are provided.
   """
-  client = distributed.global_state.client
-  if client is None:
-    raise RuntimeError('Distributed JAX not initialized.')
 
-  if not devices:
-    # TODO(mwhittaker): Make devices optional. If it's not provided, use
-    # jax.devices() as a default.
-    raise ValueError('No devices provided.')
+  def __init__(self):
+    self.devices = None
 
-  process_ids = {d.process_index for d in devices}
-  if xla_bridge.process_index() not in process_ids:
-    # A process can only participate in an live_devices call if it hosts some
-    # of the provided devices.
-    raise ValueError('Provided devices do not have any local devices.')
+  @contextlib.contextmanager
+  def __call__(self, devices):
+    client = distributed.global_state.client
+    if client is None:
+      raise RuntimeError('Distributed JAX not initialized.')
 
-  if len(process_ids) == 1:
-    # If the provided devices are hosted by a single process (this one), then we
-    # don't have to perform any distributed computation. We know our local
-    # devices are all live.
-    return devices
+    if not devices:
+      # TODO(mwhittaker): Make devices optional. If it's not provided, use
+      # jax.devices() as a default.
+      raise ValueError('No devices provided.')
 
-  live_process_ids = client.get_live_nodes(list(process_ids))
-  return [d for d in devices if d.process_index in live_process_ids]
+    if self.devices is None:
+      self.devices = _live_devices(client, devices)
+    exception = None
+    try:
+      alive = list(self.devices.keys())
+      alive.sort(key=lambda d: d.id)
+      yield alive
+    except Exception as e:
+      exception = e
+    finally:
+      old_devices = self.devices
+      new_devices = _live_devices(client, devices)
+      self.devices = new_devices
+      if exception:
+        raise exception
+      if not old_devices.items() <= new_devices.items():
+        raise ValueError(f'{old_devices} is not a subset of {new_devices}')
+
+live_devices = _LiveDevices()

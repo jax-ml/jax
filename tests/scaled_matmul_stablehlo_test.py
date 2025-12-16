@@ -19,6 +19,7 @@ import re
 import numpy as np
 import jax
 import jax.numpy as jnp
+import jax.ad_checkpoint
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec, NamedSharding
 from jax._src import config
@@ -43,17 +44,19 @@ input_shardings = [
     ((None, "dp", "tp"), (None, "dp", "tp")),
     ((None, "tp", None), (None, "tp", None)),
     ((None, None, "tp"), (None, "tp", None)),
+    ((None, ("dp", "tp"), None), (None, ("dp"), None)),
 ]
 c_name = "__cudnn$blockScaledDot"
 expected_hlos = [
     (c_name, "all-reduce", "f32[1,512,512]", "replica_groups={{0,1},{2,3}}"),
-    ("all-gather", "f8e4m3fn[1,512,512]", "replica_groups=[2,2]<=[4]", c_name),
-    ("all-gather", "f8e4m3fn[1,512,512]", "replica_groups=[2,2]<=[4]", c_name),
+    ("all-gather", "f8e4m3fn[512,512]", "replica_groups=[2,2]<=[4]", c_name),
+    ("all-gather", "f8e4m3fn[512,512]", "replica_groups=[2,2]<=[4]", c_name),
     (c_name,),
-    ("all-gather", "f8e4m3fn[1,256,1024]", "replica_groups=[2,2]<=[4]", c_name),
-    (c_name, "reduce-scatter", "f32[2,256,512]", "replica_groups={{0,1},{2,3}}"),
+    ("all-gather", "f8e4m3fn[256,1024]", "replica_groups=[2,2]<=[4]", c_name),
+    (c_name,),
     ("all-gather", "f8e4m3fn[2,512,1024]", "replica_groups=[2,2]<=[4]", c_name),
     ("all-gather", "f8e4m3fn[2,512,512]", "replica_groups=[2,2]<=[4]", c_name),
+    ("all-gather", "f8e4m3fn[2,256,1024]", "replica_groups=[2,2]<=[2,2]", c_name,),
 ]
 expected_output_spec = [
     PartitionSpec('dp',),
@@ -61,10 +64,18 @@ expected_output_spec = [
     PartitionSpec('dp', None, 'tp'),
     PartitionSpec('dp', None, 'tp'),
     PartitionSpec('dp', 'tp', None),
-    PartitionSpec(None, 'dp', 'tp'),
+    PartitionSpec(None, 'dp'),
     PartitionSpec(None, 'tp', None),
     PartitionSpec(None, None, 'tp'),
+    PartitionSpec(None, ('dp', 'tp'), None),
 ]
+
+# The GSPMD sharding logic inserts additional reduce-scatters which don't exist
+# in Shardy.
+if not config.use_shardy_partitioner.value:
+    expected_output_spec[5] = PartitionSpec(None, 'dp', 'tp')
+    expected_hlos[5] += ("reduce-scatter", "f32[2,256,512]", "replica_groups={{0,1},{2,3}}")
+
 sharding_configs = {
     input_sharding: (hlo, output_spec)
     for input_sharding, hlo, output_spec in zip(input_shardings,
@@ -155,24 +166,44 @@ def shard_and_device_put(
 
   return a, b, in_shardings
 
-def create_nvfp4_configs(global_scale=None):
+def create_nvfp4_configs(tensors, enable_grad_clip=False):
   if _dtypes.float4_e2m1fn is None:
     return None
-  g_one_scale = jnp.ones((1, ), dtype=jnp.float32)
-  nvfp4_config = BlockScaleConfig(
-        mode='nvfp4',
-        block_size=16,
-        data_type=jnp.float4_e2m1fn,
-        scale_type=jnp.float8_e4m3fn,
-        global_scale=g_one_scale if global_scale is None else global_scale,
-        infer_only=False
-  )
 
-  return [nvfp4_config for _ in range(3)]
+  DATA_TYPE = jnp.float4_e2m1fn
+  SCALE_TYPE = jnp.float8_e4m3fn
 
-def update_global_scale(config, new_global_scale):
-  config.global_scale = new_global_scale
-  return config
+  def get_global_scale(tensor):
+    # If we have a tensor, compute the global scale from its maximum value.
+    # Otherwise, use the default.
+    if tensor is None:
+      return jnp.array(1, dtype=jnp.float32)
+
+    # Compute maximum absolute values for scaling
+    amax = jnp.max(jnp.abs(tensor)).astype(jnp.float32)
+    amax *= 0.9 if enable_grad_clip else 1.0
+
+    data_max = jnp.finfo(DATA_TYPE).max.astype(jnp.float32)
+    scale_max = jnp.finfo(SCALE_TYPE).max.astype(jnp.float32)
+    return amax / (data_max * scale_max)
+
+  def make_config(tensor):
+    return BlockScaleConfig(
+          mode='nvfp4',
+          block_size=16,
+          data_type=DATA_TYPE,
+          scale_type=SCALE_TYPE,
+          global_scale=get_global_scale(tensor),
+          infer_only=False
+    )
+
+  return [make_config(tensor) for tensor in tensors]
+
+def dequantize_nvfp4_tensor(x, scale, output_type, config):
+  x_reshaped = x.astype(output_type).reshape(-1, 16)
+  scale_reshaped = scale.astype(output_type).reshape(-1, 1)
+  scaled = x_reshaped * scale_reshaped * config.global_scale.astype(output_type)
+  return scaled.reshape(x.shape)
 
 def generate_nvfp4_quantized_tensors(dot_config, output_type, enable_grad_clip=False):
   k1, k2 = jax.random.split(jax.random.key(0), 2)
@@ -188,54 +219,21 @@ def generate_nvfp4_quantized_tensors(dot_config, output_type, enable_grad_clip=F
   b = shape_normalization(b_raw, b_dn)
 
   # Initialize NVFP4 configurations
-  block_scale_configs_nvfp4 = create_nvfp4_configs()
-
-  # Compute maximum absolute values for scaling
-  amax_a = jnp.max(jnp.abs(a)).astype(jnp.float32)
-  amax_b = jnp.max(jnp.abs(b)).astype(jnp.float32)
-
-  # To emulate calibrated amax
-  amax_sf = 0.9 if enable_grad_clip else 1.0
-  amax_a *= amax_sf
-  amax_b *= amax_sf
-
-  # Update global scales
-  data_max = jnp.finfo(block_scale_configs_nvfp4[0].data_type).max.astype(
-      jnp.float32
-  )
-  scale_max = jnp.finfo(block_scale_configs_nvfp4[0].scale_type).max.astype(
-      jnp.float32
-  )
-
-  block_scale_configs_nvfp4[0] = update_global_scale(
-      block_scale_configs_nvfp4[0], amax_a / (data_max * scale_max))
-  block_scale_configs_nvfp4[1] = update_global_scale(
-      block_scale_configs_nvfp4[1], amax_b / (data_max * scale_max))
+  a_cfg, b_cfg, out_cfg = create_nvfp4_configs([a, b, None], enable_grad_clip)
 
   # Quantize tensors
-  a_nvfp4, a_scale = quantize(a, block_scale_configs_nvfp4[0])
-  b_nvfp4, b_scale = quantize(b, block_scale_configs_nvfp4[1])
+  a_nvfp4, a_scale = quantize(a, a_cfg)
+  b_nvfp4, b_scale = quantize(b, b_cfg)
 
   # Reshape and scale quantized tensors
-  def reshape_and_scale(x, scale, global_scale, bs, k):
-    reshaped = x.astype(output_type).reshape(*bs, k // 16, 16)
-    scaled = reshaped * jnp.expand_dims(scale.astype(output_type), -1)
-    return scaled.reshape(*bs, k) * global_scale.astype(output_type)
-
-  *bs_a, k_a = a_nvfp4.shape
-  *bs_b, k_b = b_nvfp4.shape
-  assert k_a == k_b
-
-  a_dequantized = reshape_and_scale(
-      a_nvfp4, a_scale, block_scale_configs_nvfp4[0].global_scale, bs_a, k_a)
-  b_dequantized = reshape_and_scale(
-      b_nvfp4, b_scale, block_scale_configs_nvfp4[1].global_scale, bs_b, k_b)
+  a_dequantized = dequantize_nvfp4_tensor(a_nvfp4, a_scale, output_type, a_cfg)
+  b_dequantized = dequantize_nvfp4_tensor(b_nvfp4, b_scale, output_type, b_cfg)
 
   return (
       (a_raw, b_raw),
       (a_dequantized, b_dequantized),
       (a_nvfp4, b_nvfp4, a_scale, b_scale),
-      block_scale_configs_nvfp4
+      [a_cfg, b_cfg, out_cfg]
   )
 
 def create_mxfp8_configs():
@@ -275,16 +273,9 @@ class ScaledMatmulTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
     try:
-      cudnn_version = check_cudnn_version()
+      check_cudnn_version()
     except RuntimeError as e:
       self.skipTest(str(e))
-      return
-    if _dtypes.float8_e8m0fnu is None:
-      self.skipTest("Requries >= ml_dtypes 0.5.0 to support float8_e8m0fnu")
-    if _dtypes.float4_e2m1fn is None:
-      self.skipTest("Requries >= ml_dtypes 0.5.0 to support float4_e2m1fn")
-    if cudnn_version < 90700:
-      self.skipTest("Requires >= cuDNN 9.7.0")
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("Requires at least Blackwell arch")
 
@@ -468,14 +459,9 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
     try:
-      cudnn_version = check_cudnn_version()
+      check_cudnn_version()
     except RuntimeError as e:
       self.skipTest(str(e))
-      return
-    if _dtypes.float8_e8m0fnu is None:
-      self.skipTest("Requries >= ml_dtypes 0.5.0 to support float8_e8m0fnu")
-    if cudnn_version < 90700:
-      self.skipTest("Requires >= cuDNN 9.7.0")
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("Requires at least Blackwell arch")
 
@@ -494,24 +480,35 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
     output_type = jnp.float32
     k1, k2 = jax.random.split(jax.random.key(0), 2)
 
-    a = jax.random.uniform(k1, shape, minval=-1.0, dtype=output_type)
+    a = jax.random.uniform(k1, shape, minval=1.0, maxval=8.0, dtype=output_type)
 
-    block_scale_configs_nvfp4 = create_nvfp4_configs()
-    data_max = jnp.finfo(jnp.float4_e2m1fn).max.astype(jnp.float32)
-    scale_max = jnp.finfo(jnp.float8_e4m3fn).max.astype(jnp.float32)
-    amax_a = jnp.max(jnp.abs(a)).astype(jnp.float32) / (data_max * scale_max)
-    block_scale_configs_nvfp4[0] = update_global_scale(
-        block_scale_configs_nvfp4[0], jnp.asarray(amax_a, jnp.float32)
-    )
+    config, = create_nvfp4_configs([a])
 
     def fn(a):
-      a_nvfp4, a_scale = quantize(a, block_scale_configs_nvfp4[0])
+      a_nvfp4, a_scale = quantize(a, config)
       return a_nvfp4, a_scale
 
     out_q, scale = jax.jit(fn)(a)
     out_q_ref, scale_ref = fn(a)
     self.assertArraysAllClose(out_q, out_q_ref, rtol=1e-5, atol=1e-5)
     self.assertArraysAllClose(scale, scale_ref, rtol=1e-5, atol=1e-5)
+
+    # Verify the quantization is close to the original.
+    self.assertArraysAllClose(dequantize_nvfp4_tensor(out_q, scale, output_type, config),
+                              a, rtol=0.2, atol=0.5)
+
+  @jtu.sample_product(value=[1e6, 1/4096])
+  @jtu.run_on_devices("cuda")
+  def test_quantize_requires_global_scale(self, value):
+    output_type = jnp.float32
+    k1, k2 = jax.random.split(jax.random.key(0), 2)
+
+    a = jnp.array([value]*16)
+    config, = create_nvfp4_configs([a])
+    out_q, scale = quantize(a, config)
+    # Without an adjusted global scale, the values clip at 2688/0.
+    self.assertArraysEqual(dequantize_nvfp4_tensor(out_q, scale, output_type, config),
+                           jnp.array([value]*16, dtype=output_type))
 
   @jtu.sample_product(
       enable_grad_clip=[True, False],
@@ -836,6 +833,74 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
     self.assertArraysAllClose(x_grad, x_grad_ref, rtol=1e-2, atol=1e1)
     self.assertArraysAllClose(w_grad, w_grad_ref, rtol=1e-2, atol=1e1)
 
+  @jtu.run_on_devices("cuda")
+  def test_remat_checkpoint_dots(self):
+    input = jnp.ones((1, 128, 128))
+    config = create_nvfp4_configs([input])[0]
+
+    def f(x):
+      x = jnp.sin(x)
+      x = scaled_dot_general_wrapper(
+        x, x,
+        configs=[config, config],
+        dimension_numbers=(([2], [2]), ([0], [0])),
+        preferred_element_type=jnp.float32,
+      )
+      return jnp.sin(x)
+
+    # First check that with "nothing_saveable" policy, the backwards pass
+    # recomputes the scaled matmul.
+    nothing_saved_f = jax.checkpoint(
+        f, policy=jax.checkpoint_policies.nothing_saveable)
+    _, nothing_saved_f_vjp = jax.vjp(nothing_saved_f, input)
+    jaxpr = str(nothing_saved_f_vjp.jaxpr)
+    self.assertEqual(jaxpr.count(' scaled_matmul_wrapper'), 1)
+    # Check that the custom backward for scaled_matmul is used.
+    self.assertEqual(jaxpr.count('bwd=scaled_dot_bwd'), 1)
+
+    # With "checkpoint_dots" policy, the backwards pass should reuse
+    # the scaled matmul from the forward pass, so it should be missing from vjp.
+    saved_dots_f = jax.checkpoint(
+        f, policy=jax.checkpoint_policies.checkpoint_dots)
+    _, saved_dots_f_vjp = jax.vjp(saved_dots_f, input)
+    jaxpr = str(saved_dots_f_vjp.jaxpr)
+    self.assertEqual(jaxpr.count(' scaled_matmul_wrapper'), 0)
+    # Check that the custom backward for scaled_matmul is used.
+    self.assertEqual(jaxpr.count('bwd=scaled_dot_bwd'), 1)
+
+  @jtu.run_on_devices("cuda")
+  def test_remat_checkpoint_dots_with_no_batch_dims(self):
+    input = jnp.ones((1, 128, 128))
+    batched_input = jnp.ones((16, 128, 128))
+    config = create_nvfp4_configs([input])[0]
+
+    def f(x):
+      x = jnp.sin(x)
+      x = scaled_dot_general_wrapper(
+        x, x,
+        configs=[config, config],
+        dimension_numbers=(([2], [2]), ([0], [0])),
+        preferred_element_type=jnp.float32,
+      )
+      return jnp.sin(x)
+
+    # Verify that scaled_matmul without batch dimensions
+    # will be saved (i.e., not recomputed on backward pass).
+    checkpointed_f = jax.checkpoint(
+        f, policy=jax.checkpoint_policies.dots_with_no_batch_dims_saveable)
+    _, dot_saved_f_vjp = jax.vjp(checkpointed_f, input)
+    jaxpr = str(dot_saved_f_vjp.jaxpr)
+    self.assertEqual(jaxpr.count(' scaled_matmul_wrapper'), 0)
+    # Check that the custom backward for scaled_matmul is used.
+    self.assertEqual(jaxpr.count('bwd=scaled_dot_bwd'), 1)
+
+    # Scaled matmuls with batch dimensions will be recomputed
+    # on backward pass. Let's verify that here.
+    _, dot_not_saved_f_vjp = jax.vjp(checkpointed_f, batched_input)
+    jaxpr = str(dot_not_saved_f_vjp.jaxpr)
+    self.assertEqual(jaxpr.count(' scaled_matmul_wrapper'), 1)
+    # Check that the custom backward for scaled_matmul is used.
+    self.assertEqual(jaxpr.count('bwd=scaled_dot_bwd'), 1)
 
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())

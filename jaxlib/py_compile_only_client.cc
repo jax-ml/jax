@@ -20,11 +20,11 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/statusor.h"
-#include "absl/strings/str_format.h"
-#include "absl/strings/string_view.h"
 #include "llvm/Support/Casting.h"
+#include "mlir-c/IR.h"
+#include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
+#include "mlir/CAPI/IR.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
@@ -33,104 +33,106 @@ limitations under the License.
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device_list.h"
-#include "xla/pjrt/mlir_to_hlo.h"
+#include "jaxlib/py_executable.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/compile_only_ifrt/client.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/hlo/hlo_program.h"
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/version.h"
-#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/python/lib/core/numpy.h"
-#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
+namespace ifrt = xla::ifrt;
 namespace nb = nanobind;
 
-namespace xla {
+namespace jax {
 
-namespace {
-
-class CompileOnlyPyClient : public PyClient {
- public:
-  using PyClient::PyClient;
-
-  static nb_class_ptr<PyClient> Make(
-      std::shared_ptr<ifrt::PjRtTopology> topology) {
-    auto client =
-        nb::borrow<nb_class_ptr<PyClient>>(make_nb_class<CompileOnlyPyClient>(
-            std::make_unique<CompileOnlyIfRtClient>(std::move(topology))));
-    CompileOnlyPyClient::Initialize(client);
-    return client;
-  }
-
-  absl::StatusOr<ifrt::ExecutableRef> CompileUnloaded(
-      absl::string_view mlir_module, ifrt::DeviceListRef executable_devices,
-      CompileOptions options, std::vector<nb::capsule> host_callbacks) {
-    if (!host_callbacks.empty()) {
-      return Unimplemented(
-          "Compiling with host_callbacks not available with compile-only "
-          "client.");
-    }
-    nb::gil_scoped_release gil_release;
-    mlir::MLIRContext context;
-    TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                        ParseMlirModuleString(mlir_module, context));
-    auto* ifrt_client =
-        llvm::dyn_cast_or_null<CompileOnlyIfRtClient>(this->ifrt_client());
-    CHECK(ifrt_client) << "CompileOnlyPyClient requires ifrt_client be a "
-                          "CompileOnlyIfRtClient";
-    auto xla_options = std::make_unique<ifrt::XlaCompileOptions>(
-        options, std::move(executable_devices));
-    TF_ASSIGN_OR_RETURN(auto executable,
-                        PjRtCompile(std::move(options), module.get(),
-                                    *ifrt_client->topology().description()));
-    TF_ASSIGN_OR_RETURN(auto ifrt_executable,
-                        ifrt::PjRtExecutable::Create(std::move(executable)));
-    return ifrt::ExecutableRef(std::move(ifrt_executable));
-  }
-
- private:
-  static void Initialize(nb_class_ptr<PyClient> client) {
-    PyClient::Initialize(client);
-  }
-};
-
-}  // namespace
-
-nb_class_ptr<PyClient> MakeCompileOnlyClient(
-    std::shared_ptr<ifrt::PjRtTopology> topology) {
-  return CompileOnlyPyClient::Make(std::move(topology));
+nb_class_ptr<PyClient> CompileOnlyPyClient::Make(
+    std::shared_ptr<xla::ifrt::PjRtTopology> topology) {
+  auto client =
+      nb::borrow<nb_class_ptr<PyClient>>(make_nb_class<CompileOnlyPyClient>(
+          std::make_unique<xla::CompileOnlyIfRtClient>(std::move(topology))));
+  CompileOnlyPyClient::Initialize(client);
+  return client;
 }
 
-void RegisterCompileOnlyClient(nb::module_& m) {
+absl::StatusOr<nb_class_ptr<PyExecutable>> CompileOnlyPyClient::CompileUnloaded(
+    MlirModule mlir_module, xla::ifrt::DeviceListRef executable_devices,
+    xla::CompileOptions options) {
+  mlir::ModuleOp module = unwrap(mlir_module);
+  mlir::OwningOpRef<mlir::ModuleOp> clone(module.clone());
+  module = *clone;
+  ifrt::ExecutableRef ifrt_executable;
+  {
+    nb::gil_scoped_release gil_release;
+    auto* ifrt_client =
+        llvm::dyn_cast_or_null<xla::CompileOnlyIfRtClient>(this->ifrt_client());
+    CHECK(ifrt_client) << "CompileOnlyPyClient requires ifrt_client be a "
+                          "xla::CompileOnlyIfRtClient";
+
+    auto xla_options = std::make_unique<ifrt::XlaCompileOptions>(
+        options, std::move(executable_devices));
+#if JAX_IFRT_VERSION_NUMBER >= 42
+    TF_ASSIGN_OR_RETURN(
+        ifrt_executable,
+        ifrt_client->GetDefaultCompiler()->Compile(
+            std::make_unique<xla::ifrt::HloProgram>(std::move(module)),
+            ifrt_client->topology(), std::move(xla_options)));
+#elif JAX_IFRT_VERSION_NUMBER >= 38
+    TF_ASSIGN_OR_RETURN(
+        ifrt_executable,
+        ifrt::PjRtExecutable::Create(std::move(module), std::move(options),
+                                     *ifrt_client->topology().description()));
+#else
+    TF_ASSIGN_OR_RETURN(auto executable,
+                        PjRtCompile(std::move(options), module,
+                                    *ifrt_client->topology().description()));
+    TF_ASSIGN_OR_RETURN(ifrt_executable,
+                        ifrt::PjRtExecutable::Create(std::move(executable)));
+#endif
+  }
+  return make_nb_class<PyExecutable>(ifrt_executable);
+}
+
+void CompileOnlyPyClient::Initialize(nb_class_ptr<PyClient> client) {
+  PyClient::Initialize(client);
+}
+
+void CompileOnlyPyClient::Register(nb::module_& m) {
   nb::class_<CompileOnlyPyClient, PyClient>(m, "CompileOnlyPyClient")
       .def(
           "compile",
-          [](CompileOnlyPyClient& self, nb::bytes mlir_module,
-             jax::PyDeviceList& py_executable_devices, CompileOptions options,
+          [](CompileOnlyPyClient& self, MlirModule mlir_module,
+             PyDeviceList& py_executable_devices, xla::CompileOptions options,
              std::vector<nb::capsule> host_callbacks) {
             ifrt::DeviceListRef executable_devices =
-                ValueOrThrow(py_executable_devices.ifrt_device_list());
-            return ValueOrThrow(self.CompileUnloaded(
-                absl::string_view(mlir_module.c_str(), mlir_module.size()),
-                std::move(executable_devices), std::move(options),
-                std::move(host_callbacks)));
+                xla::ValueOrThrow(py_executable_devices.ifrt_device_list());
+            return xla::ValueOrThrow(
+                self.CompileUnloaded(mlir_module, std::move(executable_devices),
+                                     std::move(options)));
           },
           nb::arg("computation"), nb::arg("executable_devices"),
-          nb::arg("compile_options") = CompileOptions(),
-          nb::arg("host_callbacks") = std::vector<nb::capsule>())
-      .def("compile",
-           ValueOrThrowWrapper(&CompileOnlyPyClient::CompileUnloaded),
-           nb::arg("computation"), nb::arg("executable_devices"),
-           nb::arg("compile_options") = CompileOptions(),
-           nb::arg("host_callbacks") = std::vector<nb::capsule>());
+          nb::arg("compile_options") = xla::CompileOptions(),
+          nb::arg("host_callbacks") = std::vector<nb::capsule>(),
+          nb::sig(
+              // clang-format off
+              "def compile("
+              "self, "
+              "computation: object, "
+              "executable_devices: DeviceList, "
+              "compile_options: CompileOptions = ..., "
+              "host_callbacks: Sequence[typing_extensions.CapsuleType] = ..."
+              ") -> Executable"
+              // clang-format on
+              ));
 }
 
-}  // namespace xla
+}  // namespace jax

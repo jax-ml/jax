@@ -26,7 +26,9 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/status/statusor.h"
 #include "nanobind/nanobind.h"
+#include "jaxlib/cached_py_object.h"
 #include "jaxlib/nb_class_ptr.h"
+#include "jaxlib/partition_spec.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device_list.h"
 #include "jaxlib/sharded_device_array.h"
@@ -49,37 +51,30 @@ class Sharding {
 
   virtual ~Sharding() = default;
 
-  static int SafeNumDevices(nanobind::handle sharding);
+  int num_devices() const { return num_devices_; }
 
  private:
-  std::optional<int> num_devices_;
+  int num_devices_;
 };
 
-// Gets `jax::PyDeviceList` from a JAX Sharding.
-absl::StatusOr<xla::nb_class_ptr<jax::PyDeviceList>> GetPyDeviceList(
+// Gets `PyDeviceList` from a JAX Sharding.
+absl::StatusOr<nb_class_ptr<PyDeviceList>> GetPyDeviceList(
     nanobind::handle sharding);
 
 // Checks if the memory kind is valid, and canonicalizes the
 // memory kind to default memory on backends that support memories.
 nanobind::object CheckAndCanonicalizeMemoryKind(
     nanobind::object memory_kind,
-    const xla::nb_class_ptr<PyDeviceList>& device_list);
-
-// Returns a hash that may sometimes return different hashes for equal values.
-// It is not a correct implementation of `__hash__` in python, but it's fine
-// for jit/pjit dispatch since it only causes spurious cache misses.
-size_t ShardingHash(nanobind::handle sharding);
-
-bool ShardingEqual(nanobind::handle a, nanobind::handle b);
+    const nb_class_ptr<PyDeviceList>& device_list);
 
 class NamedSharding : public Sharding {
  public:
-  NamedSharding(nanobind::object mesh, nanobind::object spec,
+  NamedSharding(nanobind::object mesh, nb_class_ptr<PartitionSpec> spec,
                 nanobind::object memory_kind,
                 nanobind::object logical_device_ids);
 
   const nanobind::object& mesh() const { return mesh_; }
-  const nanobind::object& spec() const { return spec_; }
+  const nb_class_ptr<PartitionSpec>& spec() const { return spec_; }
   const nanobind::object& memory_kind() const { return memory_kind_; }
   const nanobind::object& logical_device_ids() const {
     return logical_device_ids_;
@@ -88,7 +83,7 @@ class NamedSharding : public Sharding {
   static nanobind::handle type() { return type_; }
   static void InitializeType();
 
-  absl::StatusOr<xla::nb_class_ptr<PyDeviceList>> internal_device_list() const {
+  absl::StatusOr<nb_class_ptr<PyDeviceList>> internal_device_list() const {
     if (internal_device_list_) {
       return *internal_device_list_;
     }
@@ -97,12 +92,18 @@ class NamedSharding : public Sharding {
         "`jax.sharding.AbstractMesh`");
   }
 
+  bool operator==(const NamedSharding& other) const;
+
+  bool Eq(const nanobind::object& other) const;  // Python __eq__
+  nanobind::int_ Hash() const;                   // Python __hash__
+
  private:
   nanobind::object mesh_;
-  nanobind::object spec_;
+  nb_class_ptr<PartitionSpec> spec_;
   nanobind::object memory_kind_;
   nanobind::object logical_device_ids_;
-  std::optional<xla::nb_class_ptr<PyDeviceList>> internal_device_list_;
+  std::optional<nb_class_ptr<PyDeviceList>> internal_device_list_;
+  mutable CachedPyObject hash_;
   static PyObject* type_;
 };
 
@@ -112,7 +113,7 @@ class SingleDeviceSharding : public Sharding {
       nanobind::object device, nanobind::object memory_kind = nanobind::none());
 
   // Used only in C++ to accelerate `PyArray::MakeFromSingleDeviceArray()`.
-  SingleDeviceSharding(xla::nb_class_ptr<xla::PyClient> client,
+  SingleDeviceSharding(nb_class_ptr<PyClient> client,
                        xla::ifrt::DeviceListRef device_list,
                        nanobind::object memory_kind);
 
@@ -122,14 +123,14 @@ class SingleDeviceSharding : public Sharding {
   static nanobind::handle type() { return type_; }
   static void InitializeType();
 
-  xla::nb_class_ptr<PyDeviceList> internal_device_list() const {
+  nb_class_ptr<PyDeviceList> internal_device_list() const {
     return internal_device_list_;
   }
 
  private:
   nanobind::object device_;
   nanobind::object memory_kind_;
-  xla::nb_class_ptr<PyDeviceList> internal_device_list_;
+  nb_class_ptr<PyDeviceList> internal_device_list_;
 
   static PyObject* type_;
 };
@@ -149,30 +150,42 @@ class PmapSharding : public Sharding {
   static nanobind::handle type() { return type_; }
   static void InitializeType();
 
-  xla::nb_class_ptr<PyDeviceList> internal_device_list() const {
+  nb_class_ptr<PyDeviceList> internal_device_list() const {
     return internal_device_list_;
   }
 
  private:
   xla::nb_numpy_ndarray devices_;
   ShardingSpec sharding_spec_;
-  xla::nb_class_ptr<PyDeviceList> internal_device_list_;
+  nb_class_ptr<PyDeviceList> internal_device_list_;
   static PyObject* type_;
 };
 
 class GSPMDSharding : public Sharding {
  public:
   GSPMDSharding(nanobind::sequence devices, xla::OpSharding op_sharding,
-                nanobind::object memory_kind, nanobind::object device_list)
+                nanobind::object memory_kind)
+      : GSPMDSharding(
+            make_nb_class<PyDeviceList>(nanobind::tuple(devices)),
+            xla::ValueOrThrow(xla::HloSharding::FromProto(op_sharding)),
+            std::move(memory_kind)) {}
+
+  GSPMDSharding(nanobind::sequence devices, xla::HloSharding op_sharding,
+                nanobind::object memory_kind)
+      : GSPMDSharding(make_nb_class<PyDeviceList>(nanobind::tuple(devices)),
+                      std::move(op_sharding), std::move(memory_kind)) {}
+
+  GSPMDSharding(nb_class_ptr<PyDeviceList> devices, xla::OpSharding op_sharding,
+                nanobind::object memory_kind)
       : GSPMDSharding(
             std::move(devices),
             xla::ValueOrThrow(xla::HloSharding::FromProto(op_sharding)),
-            std::move(memory_kind), std::move(device_list)) {}
+            std::move(memory_kind)) {}
 
-  GSPMDSharding(nanobind::sequence devices, xla::HloSharding op_sharding,
-                nanobind::object memory_kind, nanobind::object device_list);
+  GSPMDSharding(nb_class_ptr<PyDeviceList> devices,
+                xla::HloSharding op_sharding, nanobind::object memory_kind);
 
-  const nanobind::tuple& devices() const { return devices_; }
+  nb_class_ptr<PyDeviceList> devices() const { return devices_; }
   const nanobind::object& memory_kind() const { return memory_kind_; }
 
   size_t Hash() {
@@ -193,7 +206,7 @@ class GSPMDSharding : public Sharding {
            this->memory_kind().equal(other.memory_kind());
   }
 
-  xla::nb_class_ptr<PyDeviceList> internal_device_list() const {
+  nb_class_ptr<PyDeviceList> internal_device_list() const {
     return internal_device_list_;
   }
 
@@ -225,11 +238,11 @@ class GSPMDSharding : public Sharding {
     return hlo_sharding().IsReplicated();
   }
 
-  nanobind::tuple devices_;
+  nb_class_ptr<PyDeviceList> devices_;
   xla::HloSharding hlo_sharding_;
   nanobind::object memory_kind_;
   std::optional<size_t> hash_;
-  xla::nb_class_ptr<PyDeviceList> internal_device_list_;
+  nb_class_ptr<PyDeviceList> internal_device_list_;
 
   static PyObject* type_;
 };

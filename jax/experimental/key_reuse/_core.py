@@ -35,6 +35,8 @@ from jax._src import traceback_util
 from jax._src import util
 from jax._src.ad_checkpoint import remat_p
 from jax._src.debugging import debug_callback_p
+from jax._src.effects import Effect
+from jax._src.hashable_array import HashableArray
 from jax._src.interpreters import partial_eval as pe
 from jax._src.util import weakref_lru_cache
 
@@ -212,13 +214,13 @@ def key_reuse_signature_from_eqn(eqn: core.JaxprEqn) -> KeyReuseSignature:
       return sig.signature(eqn)
     else:
       raise TypeError(
-        f"Unrecognized key reuse sigature of type {type(sig)}: {sig}")
+        f"Unrecognized key reuse signature of type {type(sig)}: {sig}")
   else:
     return unknown_signature(eqn)
 
 
 def key_reuse_signature_from_primitive(prim, *args, **params):
-  if prim == pjit.pjit_p:
+  if prim == pjit.jit_p:
     return jaxpr_type_signature(params['jaxpr'].jaxpr)
   if prim not in key_reuse_signatures:
     # TODO(jakevdp) should we generate an unknown signature here?
@@ -231,12 +233,13 @@ def key_reuse_signature_from_primitive(prim, *args, **params):
     return jaxpr_type_signature(jaxpr)
   else:
     raise TypeError(
-      f"Unrecognized key reuse sigature of type {type(sig)}: {sig}")
+      f"Unrecognized key reuse signature of type {type(sig)}: {sig}")
 
 
+consume_effect = Effect()
 consume_p = core.Primitive("consume")
 consume_p.def_impl(lambda x: x)
-consume_p.def_abstract_eval(lambda x: x)
+consume_p.def_effectful_abstract_eval(lambda x: (x, {consume_effect}))
 batching.defvectorized(consume_p)
 mlir.register_lowering(
     consume_p,
@@ -246,10 +249,11 @@ def consume(key):
   """Consume the key and return a consumed copy."""
   return consume_p.bind(key)
 
+assert_effect = Effect()
 
 assert_consumed_value_p = core.Primitive("assert_consumed_value")
 assert_consumed_value_p.def_impl(lambda x, *, value: x)
-assert_consumed_value_p.def_abstract_eval(lambda x, *, value: x)
+assert_consumed_value_p.def_effectful_abstract_eval(lambda x, *, value: (x, {assert_effect}))
 batching.defvectorized(assert_consumed_value_p)
 mlir.register_lowering(
     assert_consumed_value_p,
@@ -257,16 +261,16 @@ mlir.register_lowering(
 
 def assert_unconsumed(key):
   """Assert that a key is unconsumed"""
-  assert_consumed_value_p.bind(key, value=False)
+  assert_consumed_value_p.bind(key, value=HashableArray(False))
 
 def assert_consumed(key, value=True):
   """Assert that a key is consumed"""
-  assert_consumed_value_p.bind(key, value=value)
+  assert_consumed_value_p.bind(key, value=HashableArray(value))
 
 
 def _check_consumed_value(eqn, consumed):
   """Extra check for use with assert_consumed_value_p"""
-  expected =  eqn.params['value']
+  expected = eqn.params['value'].val
   if not np.all(consumed == expected):
     if np.all(expected):
       raise AssertionError(f"Expected key to be consumed in {eqn}")
@@ -401,7 +405,7 @@ def function_type_signature(fun: Callable[..., Any], *args: Any) -> KeyReuseSign
       lu.wrap_init(fun,
                    debug_info=api_util.debug_info("key_reuse", fun, args, {})),
       in_tree)
-  jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
+  jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
   return jaxpr_type_signature(jaxpr)
 
 
@@ -415,7 +419,7 @@ def check_key_reuse(fun: Callable[..., Any], /, *args: Any) -> None:
   function_type_signature(fun, *args)
 
 
-#----------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------
 # key reuse rules for particular primitives:
 
 @dynamic_key_reuse_signature
@@ -450,7 +454,7 @@ key_reuse_signatures[lax.concatenate_p] = _concatenate_signature
 def _pjit_key_type_signature(eqn):
   return jaxpr_type_signature(eqn.params['jaxpr'].jaxpr)
 
-key_reuse_signatures[pjit.pjit_p] = _pjit_key_type_signature
+key_reuse_signatures[pjit.jit_p] = _pjit_key_type_signature
 
 @dynamic_key_reuse_signature
 def _shard_map_type_signature(eqn):
@@ -576,8 +580,8 @@ def call_impl_with_key_reuse_checks(prim: core.Primitive, raw_impl: Callable[...
     # TODO(jakevdp): should we use an unknown signature here?
     return raw_impl(*args, **kwargs)
   signature = key_reuse_signature_from_primitive(prim, *args, **kwargs)
-  funcname = "jit-compiled function" if prim == pjit.pjit_p else str(prim)
-  consts = kwargs['jaxpr'].consts if prim == pjit.pjit_p else []
+  funcname = "jit-compiled function" if prim == pjit.jit_p else str(prim)
+  consts = kwargs['jaxpr'].consts if prim == pjit.jit_p else []
   signature.check_signature(*args, *consts, funcname=funcname)
   result = raw_impl(*args, **kwargs)
   signature.update_consumption([*args, *consts], result if prim.multiple_results else [result])

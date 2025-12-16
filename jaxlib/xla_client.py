@@ -43,7 +43,11 @@ ifrt_programs = _xla.ifrt_programs
 
 # Just an internal arbitrary increasing number to help with backward-compatible
 # changes. In JAX, reference this via jax._src.lib.jaxlib_extension_version.
-_version = 346
+#
+# Please suffix the version number with a brief description of your change
+# in a comment. The goal here is to force a merge conflict if two changes
+# attempt to grab the same version number.
+_version = 391  # ResultHandler.pre_wrap
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -68,9 +72,12 @@ def make_cpu_client(
     num_nodes=1,
     collectives=None,
     num_devices=None,
+    get_local_topology_timeout_minutes=None,
+    get_global_topology_timeout_minutes=None,
+    transfer_server_factory=None,
 ) -> Client:
   register_custom_call_handler('cpu', _xla.register_custom_call_target)
-  register_custom_type_id_handler('cpu', _xla.register_custom_type_id)
+  register_custom_type_handler('cpu', _xla.register_custom_type)
   return _xla.get_tfrt_cpu_client(
       asynchronous=asynchronous,
       distributed_client=distributed_client,
@@ -78,6 +85,9 @@ def make_cpu_client(
       num_nodes=num_nodes,
       collectives=collectives,
       num_devices=num_devices,
+      get_local_topology_timeout_minutes=get_local_topology_timeout_minutes,
+      get_global_topology_timeout_minutes=get_global_topology_timeout_minutes,
+      transfer_server_factory=transfer_server_factory,
   )
 
 
@@ -108,7 +118,7 @@ def load_pjrt_plugin_dynamically(plugin_name: str, library_path: str) -> Any:
 
 
 def load_pjrt_plugin_with_c_api(plugin_name: str, c_api: Any) -> None:
-  return _xla.load_pjrt_plugin(plugin_name, None, c_api)
+  _xla.load_pjrt_plugin(plugin_name, None, c_api)
 
 
 def pjrt_plugin_initialized(plugin_name: str) -> bool:
@@ -130,6 +140,7 @@ def make_c_api_client(
     plugin_name: str,
     options: _NameValueMapping | None = None,
     distributed_client: _xla.DistributedRuntimeClient | None = None,
+    transfer_server_factory: _xla.TransferServerInterfaceFactory | None = None,
 ):
   """Creates a PJRT C API client for a PJRT plugin.
 
@@ -146,7 +157,12 @@ def make_c_api_client(
   """
   if options is None:
     options = {}
-  return _xla.get_c_api_client(plugin_name, options, distributed_client)
+  return _xla.get_c_api_client(
+      plugin_name,
+      options,
+      distributed_client,
+      transfer_server_factory,
+  )
 
 
 def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
@@ -156,7 +172,7 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
     A dictionary of plugin options.
   """
 
-  options = {}
+  options: dict[str, Any] = {}
   options['platform_name'] = 'cuda'
   allocator = os.getenv('XLA_PYTHON_CLIENT_ALLOCATOR', 'default').lower()
   memory_fraction = os.getenv('XLA_CLIENT_MEM_FRACTION', '')
@@ -186,6 +202,10 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
     options['preallocate'] = preallocate not in ('false', 'False', '0')
   if collective_memory_size:
     options['collective_memory_size'] = int(collective_memory_size) * (1 << 20)
+  abort = os.getenv('XLA_PYTHON_CLIENT_ABORT_COLLECTIVES_ON_FAILURE', '0')
+  options['abort_collectives_on_failure'] = bool(int(abort))
+  use_trft_gpu_client = os.getenv('XLA_PYTHON_CLIENT_USE_TFRT_GPU_CLIENT', '0')
+  options['use_tfrt_gpu_client'] = bool(int(use_trft_gpu_client))
   return options
 
 
@@ -308,6 +328,7 @@ Memory = _xla.Memory
 Array = _xla.Array
 ArrayImpl = _xla.ArrayImpl
 LoadedExecutable = _xla.LoadedExecutable
+Executable = _xla.Executable
 DeviceList = _xla.DeviceList
 OpSharding = _xla.OpSharding
 HloSharding = _xla.HloSharding
@@ -335,8 +356,8 @@ def LoadedExecutable_execute_with_token(self, arguments, device=None):
   )
 
 
-LoadedExecutable.execute = LoadedExecutable_execute
-LoadedExecutable.execute_with_token = LoadedExecutable_execute_with_token
+LoadedExecutable.execute = LoadedExecutable_execute  # type: ignore[method-assign]
+LoadedExecutable.execute_with_token = LoadedExecutable_execute_with_token  # type: ignore[method-assign]
 
 
 class CustomCallTargetTraits(enum.IntFlag):
@@ -432,7 +453,7 @@ def register_custom_call_handler(
 
 class CustomTypeIdHandler(Protocol):
 
-  def __call__(self, name: str, capsule: Any) -> None:
+  def __call__(self, type_name: str, type_id: Any, /) -> None:
     ...
 
 
@@ -441,7 +462,7 @@ _custom_type_id: dict[str, Any] = {}
 _custom_type_id_lock = threading.Lock()
 
 
-def register_custom_type_id(
+def register_custom_type(
     type_name: str,
     type_id: Any,
     platform: str = 'cpu',
@@ -463,7 +484,7 @@ def register_custom_type_id(
       )
 
 
-def register_custom_type_id_handler(
+def register_custom_type_handler(
     platform: str, handler: CustomTypeIdHandler
 ) -> None:
   """Register a custom type id handler and use it to register existing type ids.
@@ -504,17 +525,17 @@ Frame = _xla.Frame
 
 
 @contextlib.contextmanager
-def tracebacks(enabled=True):
-  """Context manager that enables or disables traceback collection."""
-  saved = Traceback.enabled
-  Traceback.enabled = enabled
+def execution_stream_id(new_id: int):
+  """Context manager that overwrites and restores the current thread's execution_stream_id."""
+  saved = _xla.get_execution_stream_id()
+  _xla.set_execution_stream_id(new_id)
   try:
     yield
   finally:
-    Traceback.enabled = saved
+    _xla.set_execution_stream_id(saved)
 
 
-XlaRuntimeError = _xla.XlaRuntimeError
+XlaRuntimeError = _xla.JaxRuntimeError
 
 # Perform one last garbage collection of deferred Python references. This is
 # mostly to keep ASAN happy.

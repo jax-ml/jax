@@ -112,7 +112,7 @@ class DecodeAttentionTest(PallasBaseTest):
     k = random.normal(k2, (batch_size, seq_len, head_dim), dtype=jnp.float16)
     v = random.normal(k3, (batch_size, seq_len, head_dim), dtype=jnp.float16)
 
-    o, *res = decode_attention.mqa(
+    outputs = decode_attention.mqa(
         q,
         k,
         v,
@@ -122,7 +122,7 @@ class DecodeAttentionTest(PallasBaseTest):
         normalize_output=normalize_output,
         interpret=self.INTERPRET,
     )
-    o_ref, *res_ref = decode_attention.mqa_reference(
+    outputs_ref = decode_attention.mqa_reference(
         q,
         k,
         v,
@@ -131,12 +131,17 @@ class DecodeAttentionTest(PallasBaseTest):
         return_residuals=return_residuals,
         normalize_output=normalize_output
     )
-    np.testing.assert_allclose(o, o_ref, atol=0.05)
+
     if return_residuals:
-      l, m = res[0]
-      l_ref, m_ref = res_ref[0]
+      o, (l, m) = outputs
+      o_ref, (l_ref, m_ref) = outputs_ref
       np.testing.assert_allclose(l, l_ref, atol=0.05)
       np.testing.assert_allclose(m, m_ref, atol=0.05)
+    else:
+      o = outputs
+      o_ref = outputs_ref
+    np.testing.assert_allclose(o, o_ref, atol=0.05)
+    self.assertTupleEqual(o.shape, q.shape)
 
   @parameterized.named_parameters(*[
       (
@@ -163,6 +168,7 @@ class DecodeAttentionTest(PallasBaseTest):
           kwargs,
       ) in [
           (1, 1024, 16, 4, 64, {}),
+          (2, 1024, 16, 4, 64, {}),
           (1, 1024, 16, 16, 64, {}),
           (1, 1024, 32, 32, 64, {}),
       ]
@@ -196,7 +202,7 @@ class DecodeAttentionTest(PallasBaseTest):
     v = random.normal(
         k3, (batch_size, seq_len, num_kv_heads, head_dim), dtype=jnp.float16
     )
-    o, *res = decode_attention.gqa(
+    outputs = decode_attention.gqa(
         q,
         k,
         v,
@@ -206,7 +212,7 @@ class DecodeAttentionTest(PallasBaseTest):
         normalize_output=normalize_output,
         interpret=self.INTERPRET,
     )
-    o_ref, *res_ref = decode_attention.gqa_reference(
+    outputs_ref = decode_attention.gqa_reference(
         q,
         k,
         v,
@@ -215,12 +221,16 @@ class DecodeAttentionTest(PallasBaseTest):
         return_residuals=return_residuals,
         normalize_output=normalize_output
     )
-    np.testing.assert_allclose(o, o_ref, atol=0.05)
     if return_residuals:
-      l, m = res[0]
-      l_ref, m_ref = res_ref[0]
+      o, (l, m) = outputs
+      o_ref, (l_ref, m_ref) = outputs_ref
       np.testing.assert_allclose(l, l_ref, atol=0.05)
       np.testing.assert_allclose(m, m_ref, atol=0.05)
+    else:
+      o = outputs
+      o_ref = outputs_ref
+    np.testing.assert_allclose(o, o_ref, atol=0.05)
+    self.assertTupleEqual(o.shape, q.shape)
 
 
 class DecodeAttentionInterpretTest(DecodeAttentionTest):

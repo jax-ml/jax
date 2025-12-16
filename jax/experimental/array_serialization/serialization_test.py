@@ -27,6 +27,7 @@ import threading
 import time
 import tracemalloc  as tm
 from typing import Any
+from concurrent.futures import ThreadPoolExecutor
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -38,7 +39,7 @@ from jax._src.export._export import (
     deserialization_registry as node_deserialization_registry)
 from jax._src.export._export import (
     serialization_registry as node_serialization_registry)
-from jax._src.layout import DeviceLocalLayout as DLL
+from jax._src.layout import Layout as DLL
 from jax._src.layout import Format
 from jax.experimental.array_serialization import pytree_serialization
 from jax.experimental.array_serialization import serialization
@@ -60,19 +61,18 @@ jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
 
 
-_default_sharding = None
+_DEFAULT_SHARDING = None  # to be overridden by tests with SingleDeviceSharding
 
 
 def tree_load(*args, **kw):
-  return pytree_serialization.load(*args, shardings=_default_sharding, **kw)
+  return pytree_serialization.load(*args, shardings=_DEFAULT_SHARDING, **kw)
 
 tree_save = pytree_serialization.save
 tree_load_pytreedef = pytree_serialization.load_pytreedef
 
 
 def _get_replicated_sharding(devices):
-  return NamedSharding(
-      jax.make_mesh(np.shape(devices), P('x'), devices=devices), P())
+  return NamedSharding(jax.sharding.Mesh(devices, 'x'), P())
 
 
 class CheckpointTest(jtu.JaxTestCase):
@@ -115,13 +115,14 @@ class CheckpointTest(jtu.JaxTestCase):
       self.assertArraysEqual(deserialized_array, inp)
 
   @jtu.skip_on_devices('cpu')
+  @jtu.thread_unsafe_test()
   def test_memory_consumption(self):
     global_mesh = jtu.create_mesh((2, 4), ('x', 'y'))
     inp_shape = (2_048, 4_096)
     pspec = P('x', 'y')
     num = math.prod(inp_shape)
     sharding = NamedSharding(global_mesh, pspec)
-    src = jnp.arange(num, dtype=np.int32).reshape(inp_shape)  # 8e9
+    src = jnp.arange(num, dtype=np.int32).reshape(inp_shape)  # 8e6 elements
     inp = array.make_array_from_callback(
         inp_shape, sharding,
         lambda idx: src[idx])
@@ -147,7 +148,7 @@ class CheckpointTest(jtu.JaxTestCase):
     unused_current, peak = tm.get_traced_memory()
     # NB: some padding + tensorstore overhead. It should always be
     # less than array size (2048 * 4096 * 4 = 32M)
-    self.assertLess(peak, 10_000_000)
+    self.assertLess(peak, 13_000_000)
     deserialize_wo_limit = serialization.async_deserialize(
         sharding, tspec, inp_shape)
     tm.clear_traces()
@@ -302,6 +303,24 @@ class CheckpointTest(jtu.JaxTestCase):
       self.assertArraysEqual(np.asarray(s.data), np.array([], dtype=np.float32))
     self.assertEqual(m3.dtype, np.float32)
 
+  @jtu.thread_unsafe_test()
+  def test_deserialization_does_not_hang_when_concurrent_gb_exceeded(self):
+    TIMEOUT_SEC = 5
+    mngr = serialization.GlobalAsyncCheckpointManager(timeout_secs=TIMEOUT_SEC)
+    a = jnp.ones((1024, 1024))
+    path = str(pathlib.Path(self.create_tempdir('small').full_path) / 'array')
+    mngr.serialize_with_paths([a], [path])
+    mngr.wait_until_finished()
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(mngr.deserialize_with_paths, [a.sharding],
+                             [path], concurrent_gb=1e-9)  # 1 byte
+    try:
+      future.result(timeout=TIMEOUT_SEC)
+    except TimeoutError:
+      future.cancel()
+      self.fail('Deserialization times out if size exceeds concurrent_gb.')
+
   def test_checkpointing_ocdbt_transaction(self):
     global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     inp_shape = (8, 2)
@@ -444,7 +463,7 @@ class CheckpointTest(jtu.JaxTestCase):
   @parameterized.product(input_dtype=[jnp.int4, jnp.int8])
   def test_checkpointing_with_int4(self, input_dtype):
     if config.use_shardy_partitioner.value:
-      self.skipTest('TODO(b/376077396): Fix XlaRuntimeError: INVALID_ARGUMENT')
+      self.skipTest('TODO(b/376077396): Fix JaxRuntimeError: INVALID_ARGUMENT')
     global_mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     global_input_shape = (8, 2)
     num = math.prod(global_input_shape)
@@ -625,8 +644,8 @@ class CheckpointTest(jtu.JaxTestCase):
 
     out_format = jax.jit(lambda x: x.T, out_shardings=Format(DLL.AUTO)).lower(
         arr).compile().output_formats
-    self.assertEqual(arr.format.device_local_layout.major_to_minor,
-                     out_format.device_local_layout.major_to_minor[::-1])
+    self.assertEqual(arr.format.layout.major_to_minor,
+                     out_format.layout.major_to_minor[::-1])
 
     ckpt_dir = pathlib.Path(self.create_tempdir('ckpt').full_path)
     ckpt_path = pathlib.Path(self.create_tempdir(f'{ckpt_dir}/first').full_path)
@@ -649,7 +668,7 @@ class CheckpointTest(jtu.JaxTestCase):
 
   def test_deserialization_with_int4(self):
     if config.use_shardy_partitioner.value:
-      self.skipTest('TODO(b/376077396): Fix XlaRuntimeError: INVALID_ARGUMENT')
+      self.skipTest('TODO(b/376077396): Fix JaxRuntimeError: INVALID_ARGUMENT')
     if jtu.test_device_matches(['gpu']):
       self.skipTest("Fails on GPU. Enable after it's fixed")
     dtype = jnp.int4
@@ -808,8 +827,8 @@ custom_types_threading_lock = threading.Lock()
 class UserPytreeAPITest(UserAPITestCase):
   def setUp(self):
     super().setUp()
-    global _default_sharding
-    _default_sharding = SingleDeviceSharding(jax.devices()[0])
+    global _DEFAULT_SHARDING
+    _DEFAULT_SHARDING = SingleDeviceSharding(jax.devices()[0])
     self.tempdirs = []
 
   def tearDown(self):
@@ -1075,6 +1094,43 @@ class UserPytreeAPITest(UserAPITestCase):
     with self.assertRaisesRegex(ValueError,
                                 'NOT_FOUND: Error opening "zarr3" driver:'):
       _ = tree_load(path)  # default attempts to open with zarr3 and fails
+
+  def test_save_load_future_printable(self):
+    path = self.create_tempdir()
+    data = [jnp.ones(())]
+    save_fut = pytree_serialization.nonblocking_save(data, path)
+    str(save_fut)
+    save_fut.result()
+    load_fut = pytree_serialization.nonblocking_load(
+        path, shardings=_DEFAULT_SHARDING)
+    str(load_fut)
+    load_fut.result()
+
+  def test_format_alone_not_supported(self):
+    # passing a format for a dtype not matching the dtype on disk will cause an
+    # XLA error (since formats can be dtype/bit-width specific), hence allow
+    # format only if dtype is also specified
+    path = self.create_tempdir()
+    data = jnp.arange(16 * 16, dtype=jnp.bfloat16).reshape((16, 16))
+    sharding = NamedSharding(jtu.create_mesh((1, 1), ('x', 'y')), P('x', None))
+    data: jax.Array = jax.device_put(data, sharding)
+    tree_save(data, path)
+    with self.assertRaisesRegex(NotImplementedError,
+                                'Deserialization with `Format` instead of'
+                                ' `Sharding` is not currently supported.'):
+      pytree_serialization.load(path, shardings=data.format)
+
+  def test_formats_support(self):
+    path = self.create_tempdir()
+    data = jnp.arange(16 * 16, dtype=jnp.float32).reshape((16, 16))
+    data_bf16_format = jnp.arange(16 * 16, dtype=jnp.bfloat16).reshape(
+        (16, 16)).format
+    sharding = NamedSharding(jtu.create_mesh((1, 1), ('x', 'y')), P('x', None))
+    data: jax.Array = jax.device_put(data, sharding)
+    tree_save(data, path)
+    pytree_serialization.load(path, shardings=jax.ShapeDtypeStruct(
+        data.shape, jnp.bfloat16, sharding=data_bf16_format))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

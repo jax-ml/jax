@@ -20,16 +20,14 @@ contains only tests that use shard_map.
 
 from absl.testing import absltest
 from absl.testing import parameterized
-
 import jax
 from jax import lax
-from jax._src import test_util as jtu
-import jax._src.pallas.mosaic.interpret as mosaic_interpret
-from jax.experimental import pallas as pl
 from jax._src import shard_map
+from jax._src import test_util as jtu
+from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_interpret
+from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
-
 import numpy as np
 
 jax.config.parse_flags_with_absl()
@@ -44,6 +42,10 @@ P = jax.sharding.PartitionSpec
 class InterpretDistributedTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
+
+    if not jtu.test_device_matches(['cpu']):
+      self.skipTest('CPU-only test')
+
     if jax.device_count() < 4:
       self.skipTest(f'requires at least 4 devices, found {jax.device_count()}')
 
@@ -53,7 +55,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
   def test_right_permute_example(self, dma_execution_mode, detect_races):
     num_devices = jax.device_count()
     partition = P(None, 'x')
-    mesh = jax.make_mesh((num_devices,), ('x',))
+    mesh = jtu.create_mesh((num_devices,), ('x',))
     sharding = jax.sharding.NamedSharding(mesh, partition)
 
     # Create an input array that shards the last dimension across
@@ -92,7 +94,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     out_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
     grid_spec = pltpu.PrefetchScalarGridSpec(
         num_scalar_prefetch=0,
-        # TPUMemorySpace.ANY will (usually) place the tensor in HBM.
+        # MemorySpace.ANY will (usually) place the tensor in HBM.
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.ANY),
         ],
@@ -106,8 +108,8 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         right_permute_kernel,
         out_shape=out_shape,
         grid_spec=grid_spec,
-        compiler_params=pltpu.TPUCompilerParams(collective_id=13),
-        interpret=pltpu.TPUInterpretParams(
+        compiler_params=pltpu.CompilerParams(collective_id=13),
+        interpret=pltpu.InterpretParams(
             dma_execution_mode=dma_execution_mode, detect_races=detect_races),
     )
     # Wrap the kernel within a shard_map to call.
@@ -139,7 +141,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
   def test_all_gather_example(self, dma_execution_mode, detect_races):
     num_devices = jax.device_count()
     partition = P('x', None)
-    mesh = jax.make_mesh((num_devices,), ('x',))
+    mesh = jtu.create_mesh((num_devices,), ('x',))
     sharding = jax.sharding.NamedSharding(mesh, partition)
 
     # Create an input array that shards the first dimension across
@@ -206,7 +208,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     grid_spec = pltpu.PrefetchScalarGridSpec(
       num_scalar_prefetch=0,
       in_specs=[
-        # TPUMemorySpace.ANY will (usually) place the tensor in HBM.
+        # MemorySpace.ANY will (usually) place the tensor in HBM.
         pl.BlockSpec(memory_space=pltpu.ANY),
       ],
       out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
@@ -228,9 +230,9 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       all_gather_kernel,
       out_shape=out_shape,
       grid_spec=grid_spec,
-      interpret=pltpu.TPUInterpretParams(
+      interpret=pltpu.InterpretParams(
           dma_execution_mode=dma_execution_mode, detect_races=detect_races),
-      compiler_params=pltpu.TPUCompilerParams(collective_id=0),
+      compiler_params=pltpu.CompilerParams(collective_id=0),
     )
 
     # Wrap the kernel within a shard_map to call.
@@ -262,7 +264,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
   def test_all_reduce_sum_example(self, dma_execution_mode, detect_races):
     num_devices = jax.device_count()
     partition = P(None, 'x')
-    mesh = jax.make_mesh((num_devices,), ('x',))
+    mesh = jtu.create_mesh((num_devices,), ('x',))
     sharding = jax.sharding.NamedSharding(mesh, partition)
 
     input_arr = jax.random.uniform(
@@ -388,9 +390,9 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       all_reduce_kernel,
       out_shape=out_shape,
       grid_spec=grid_spec,
-      interpret=pltpu.TPUInterpretParams(
+      interpret=pltpu.InterpretParams(
           dma_execution_mode=dma_execution_mode, detect_races=detect_races),
-      compiler_params=pltpu.TPUCompilerParams(collective_id=0),
+      compiler_params=pltpu.CompilerParams(collective_id=0),
     )
 
     pallas_result = jax.jit(
@@ -423,7 +425,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
   def test_reduce_scatter_sum_example(self, dma_execution_mode, detect_races):
     num_devices = jax.device_count()
     partition = P(None, 'x')
-    mesh = jax.make_mesh((num_devices,), ('x',))
+    mesh = jtu.create_mesh((num_devices,), ('x',))
     sharding = jax.sharding.NamedSharding(mesh, partition)
 
     # We need a block size of (16, 128) to ensure that a half-slice is at least
@@ -672,9 +674,9 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         reduce_scatter_kernel,
         out_shape=out_shape,
         grid_spec=grid_spec,
-        interpret=pltpu.TPUInterpretParams(
+        interpret=pltpu.InterpretParams(
             dma_execution_mode=dma_execution_mode, detect_races=True),
-        compiler_params=pltpu.TPUCompilerParams(collective_id=7),
+        compiler_params=pltpu.CompilerParams(collective_id=7),
       )(input_arr)[0]
 
     pallas_result = jax.jit(
@@ -717,7 +719,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       self.skipTest('pallas.emit_pipeline + x64 is not currently supported')
     num_devices = jax.device_count()
     partition = P(None, 'x')
-    mesh = jax.make_mesh((num_devices,), ('x',))
+    mesh = jtu.create_mesh((num_devices,), ('x',))
     sharding = jax.sharding.NamedSharding(mesh, partition)
 
     # We pick a large outer kernel block size that we do not want to place
@@ -976,9 +978,9 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         reduce_scatter_kernel,
         out_shape=out_shape,
         grid_spec=grid_spec,
-        interpret=pltpu.TPUInterpretParams(
+        interpret=pltpu.InterpretParams(
             dma_execution_mode=dma_execution_mode, detect_races=detect_races),
-        compiler_params=pltpu.TPUCompilerParams(collective_id=19),
+        compiler_params=pltpu.CompilerParams(collective_id=19),
       )(input_arr)[0]
 
     pallas_result = jax.jit(
@@ -1064,7 +1066,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
               ],
               out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
               scratch_shapes=[pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.DMA],
-              interpret=pltpu.TPUInterpretParams(
+              interpret=pltpu.InterpretParams(
                   dma_execution_mode='eager',
                   detect_races=True,
               ),
@@ -1082,6 +1084,67 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     run(jnp.array([[0, 1], [1, 2], [3, 2], [3, 0]], jnp.int32)).block_until_ready()
     self.assertTrue(mosaic_interpret.races.races_found)
 
+  @parameterized.parameters(1, 2, 4)
+  def test_shard_map_of_core_map(self, num_cores):
+    num_devices = jax.device_count()
+    partition = P('x', None)
+    mesh = jtu.create_mesh((num_devices,), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, partition)
+
+    core_mesh = pltpu.create_tensorcore_mesh('core', num_cores=num_cores)
+    interpret = pltpu.InterpretParams(detect_races=True)
+
+    @jax.jit
+    def f(x):
+      y = jnp.zeros_like(x)
+      def inner(refs):
+        x_ref, y_ref = refs
+        @pl.core_map(core_mesh, interpret=interpret)
+        def _():
+          num_cores = jax.lax.axis_size('core')
+          slc_size = 16 // num_cores
+          def alloc(x_vmem_ref, y_vmem_ref, dma_sem, sem):
+            # Barrier so we deadlock unless the core_map is actually parallel.
+            for i in range(num_cores):
+              pl.semaphore_signal(sem, 1, core_index=i)
+            pl.semaphore_wait(sem, num_cores)
+
+            core_index = jax.lax.axis_index('core')
+            slc = pl.ds(core_index * slc_size, slc_size)
+            pltpu.async_copy(
+                x_ref.at[slc],
+                x_vmem_ref,
+                dma_sem,
+            ).wait()
+            y = (x_vmem_ref[...] + num_cores * jax.lax.axis_index('x')
+                 + core_index + 1)
+            y_vmem_ref[...] = y
+            pltpu.async_copy(y_vmem_ref, y_ref.at[slc], dma_sem).wait()
+          pl.run_scoped(
+              alloc,
+              pltpu.VMEM((slc_size, 128), x_ref.dtype),
+              pltpu.VMEM((slc_size, 128), y_ref.dtype),
+              pltpu.SemaphoreType.DMA,
+              pltpu.SemaphoreType.REGULAR,
+          )
+      _, y = pl.run_state(inner)((x, y))
+      return y
+
+    x = jnp.arange(num_devices * 16 * 128, dtype=jnp.int32).reshape((-1, 128))
+    y = jax.jit(
+        shard_map.shard_map(f,
+            mesh=mesh,
+            in_specs=partition,
+            out_specs=partition,
+            check_vma=False,
+        )
+    )(x).block_until_ready()
+    expected_out = (
+        x.reshape((num_devices, num_cores, -1, 128)) + 1
+        + jnp.arange(num_devices, dtype=jnp.int32)[..., None, None, None] * num_cores
+        + jnp.arange(num_cores, dtype=jnp.int32)[None, ..., None, None]
+    ).reshape(x.shape)
+    np.testing.assert_array_equal(y, expected_out)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -29,10 +29,11 @@ pytype_strict_library(
     deps = [
         ":backend",
         ":core",
-        ":ffi",
         ":linear_util",
         ":random",
+        ":sharding",
         ":source_info_util",
+        "//jax/extend/mlir",
     ],
 )
 
@@ -42,53 +43,58 @@ py_library_providing_imports_info(
     lib_rule = pytype_strict_library,
     deps = [
         "//jax",
-        "//jax:abstract_arrays",
-        "//jax:ad",
-        "//jax:ad_util",
-        "//jax:api",
-        "//jax:core",
-        "//jax:custom_derivatives",
+        "//jax/_src:abstract_arrays",
+        "//jax/_src:ad",
+        "//jax/_src:ad_util",
+        "//jax/_src:api",
+        "//jax/_src:core",
+        "//jax/_src:custom_derivatives",
+        "//jax/_src:lax",
+        "//jax/_src:random",
     ],
 )
 
 pytype_strict_library(
     name = "linear_util",
     srcs = ["linear_util.py"],
-    deps = ["//jax:core"],
+    deps = ["//jax/_src:core"],
 )
 
 pytype_strict_library(
     name = "backend",
     srcs = ["backend.py"],
     deps = [
-        "//jax",
-        "//jax:api",
-        "//jax:xla_bridge",
+        "//jax/_src:api",
+        "//jax/_src:compiler",
+        "//jax/_src:util",
+        "//jax/_src:xla_bridge",
+        "//jax/_src/lib",
     ],
 )
 
 pytype_strict_library(
     name = "random",
     srcs = ["random.py"],
-    deps = ["//jax"],
+    deps = [
+        "//jax",
+        "//jax/_src:extend_src",
+        "//jax/_src:random",
+    ],
 )
 
 pytype_strict_library(
     name = "sharding",
     srcs = ["sharding.py"],
-    deps = ["//jax:sharding_impls"],
+    deps = [
+        "//jax/_src:sharding_impls",
+        "//jax/_src/lib",
+    ],
 )
 
 pytype_strict_library(
     name = "source_info_util",
     srcs = ["source_info_util.py"],
-    deps = ["//jax:source_info_util"],
-)
-
-pytype_strict_library(
-    name = "ffi",
-    srcs = ["ffi.py"],
-    deps = ["//jax"],
+    deps = ["//jax/_src:source_info_util"],
 )
 
 pytype_strict_library(

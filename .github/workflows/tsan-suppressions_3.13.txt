@@ -34,9 +34,10 @@ race:scal_k_
 race:gemm_beta
 race:gemm_oncopy
 
-# https://github.com/python/cpython/issues/132245
-race:split_keys_entry_added
-race_top:dict_dict_merge
-
 # https://github.com/python/cpython/issues/132214
+# Fixed in Python 3.15, but not backported to 3.13, 3.14.
 race:type_update_dict
+
+# https://github.com/python/cpython/issues/126907
+# Fixed in Python 3.14, but not backported to 3.13
+race:atexit_register

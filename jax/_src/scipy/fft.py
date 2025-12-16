@@ -17,16 +17,21 @@ from __future__ import annotations
 from collections.abc import Sequence
 from functools import partial
 import math
+import operator
 
-from jax import lax
-import jax.numpy as jnp
-from jax._src.util import canonicalize_axis
-from jax._src.numpy.util import promote_dtypes_complex, promote_dtypes_inexact
+import numpy as np
+
+from jax._src import lax
+from jax._src import numpy as jnp
+from jax._src.numpy import fft as jnp_fft
+from jax._src.numpy.util import (
+    promote_dtypes_complex, promote_dtypes_inexact, ensure_arraylike)
+from jax._src.util import canonicalize_axis, canonicalize_axis_tuple
 from jax._src.typing import Array
 
 def _W4(N: int, k: Array) -> Array:
   N_arr, k = promote_dtypes_complex(N, k)
-  return jnp.exp(-.5j * jnp.pi * k / N_arr)
+  return jnp.exp(-.5j * np.pi * k / N_arr)
 
 def _dct_interleave(x: Array, axis: int) -> Array:
   v0 = lax.slice_in_dim(x, None, None, 2, axis)
@@ -97,6 +102,8 @@ def dct(x: Array, type: int = 2, n: int | None = None,
      [-1.75  0.73  1.01 -2.18]
      [ 1.33 -1.05 -2.34 -0.07]]
   """
+  x = ensure_arraylike("idctn", x)
+
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
   if norm is not None and norm not in ['backward', 'ortho']:
@@ -110,7 +117,7 @@ def dct(x: Array, type: int = 2, n: int | None = None,
 
   N = x.shape[axis]
   v = _dct_interleave(x, axis)
-  V = jnp.fft.fft(v, axis=axis)
+  V = jnp_fft.fft(v, axis=axis)
   k = lax.expand_dims(jnp.arange(N, dtype=V.real.dtype), [a for a in range(x.ndim) if a != axis])
   out = V * _W4(N, k)
   out = 2 * out.real
@@ -123,7 +130,7 @@ def _dct2(x: Array, axes: Sequence[int], norm: str | None) -> Array:
   axis1, axis2 = map(partial(canonicalize_axis, num_dims=x.ndim), axes)
   N1, N2 = x.shape[axis1], x.shape[axis2]
   v = _dct_interleave(_dct_interleave(x, axis1), axis2)
-  V = jnp.fft.fftn(v, axes=axes)
+  V = jnp_fft.fftn(v, axes=axes)
   k1 = lax.expand_dims(jnp.arange(N1, dtype=V.dtype),
                        [a for a in range(x.ndim) if a != axis1])
   k2 = lax.expand_dims(jnp.arange(N2, dtype=V.dtype),
@@ -197,14 +204,22 @@ def dctn(x: Array, type: int = 2,
     ...   print(jax.scipy.fft.dctn(x, s=[2, 4]))
     [[  9.36  11.23   2.12 -10.97]
      [ 11.57   5.86  -1.37  -1.58]]
-"""
+  """
+  x = ensure_arraylike("idctn", x)
+
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
   if norm is not None and norm not in ['backward', 'ortho']:
     raise ValueError(f"jax.scipy.fft.dctn: {norm=!r} is not implemented")
 
-  if axes is None:
-    axes = range(x.ndim)
+  if s is not None:
+    try:
+      s = list(s)
+    except TypeError:
+      assert not isinstance(s, Sequence)
+      s = [operator.index(s)]
+
+  axes = canonicalize_axis_tuple(axes, x.ndim)
 
   if len(axes) == 1:
     return dct(x, n=s[0] if s is not None else None, axis=axes[0], norm=norm)
@@ -224,7 +239,7 @@ def dctn(x: Array, type: int = 2,
 
 
 def idct(x: Array, type: int = 2, n: int | None = None,
-        axis: int = -1, norm: str | None = None) -> Array:
+         axis: int = -1, norm: str | None = None) -> Array:
   """Computes the inverse discrete cosine transform of the input
 
   JAX implementation of :func:`scipy.fft.idct`.
@@ -287,6 +302,8 @@ def idct(x: Array, type: int = 2, n: int | None = None,
     >>> jnp.allclose(x, jax.scipy.fft.idct(x_dct))
     Array(True, dtype=bool)
   """
+  x = ensure_arraylike("idct", x)
+
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
   if norm is not None and norm not in ['backward', 'ortho']:
@@ -310,7 +327,7 @@ def idct(x: Array, type: int = 2, n: int | None = None,
   x = x / (_W4(N, k))
   x = x * 2 * N
 
-  x = jnp.fft.ifft(x, axis=axis)
+  x = jnp_fft.ifft(x, axis=axis)
   # convert back to reals..
   out = _dct_deinterleave(x.real, axis)
   return out
@@ -386,13 +403,21 @@ def idctn(x: Array, type: int = 2,
     >>> jnp.allclose(x, jax.scipy.fft.idctn(x_dctn))
     Array(True, dtype=bool)
   """
+  x = ensure_arraylike("idctn", x)
+
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
   if norm is not None and norm not in ['backward', 'ortho']:
     raise ValueError(f"jax.scipy.fft.idctn: {norm=!r} is not implemented")
 
-  if axes is None:
-    axes = range(x.ndim)
+  if s is not None:
+    try:
+      s = list(s)
+    except TypeError:
+      assert not isinstance(s, Sequence)
+      s = [operator.index(s)]
+
+  axes = canonicalize_axis_tuple(axes, x.ndim)
 
   if len(axes) == 1:
     return idct(x, n=s[0] if s is not None else None, axis=axes[0], norm=norm)

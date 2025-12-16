@@ -46,7 +46,7 @@ class GroupInfo:
     """Get the group info for the current block."""
 
     tile = jnp.int32(tile)
-    group_boundaries = [group_lengths[i] for i in range(group_lengths.shape[0])]
+    group_boundaries = [group_lengths[i] for i in range(len(group_lengths))]
 
     # We usually only have very few groups, so we unroll the loop processing
     # them. Normally we'd break out of the loop early, once we'd have found our
@@ -89,16 +89,6 @@ class GroupInfo:
     )
 
 
-def _find_swizzle(dim_size_bits: int, what: str):
-  for swizzle_bytes in (128, 64, 32, 16):
-    if dim_size_bits % (swizzle_bytes * 8) == 0:
-      return swizzle_bytes
-  raise ValueError(
-      f"No valid out swizzle for {what}: its minor dimension has"
-      f" {dim_size_bits} bits, which is not a multiple of 128"
-  )
-
-
 def ragged_dot(
     lhs,  # (M, K)
     rhs,  # (G, K, N)
@@ -109,18 +99,18 @@ def ragged_dot(
     block_k: int,
     max_concurrent_steps: int,
     grid_block_n: int,
+    transpose_rhs: bool = False,
+    load_group_sizes_to_register: bool = True,
 ) -> jax.Array:
   if lhs.dtype != rhs.dtype:
     raise NotImplementedError(
         f"lhs and rhs must have the same dtype, got {lhs.dtype} and {rhs.dtype}"
     )
-
-  elem_bits = jnp.finfo(lhs.dtype).bits
-  swizzle = _find_swizzle(elem_bits * block_k, "lhs")
-  swizzle_elems = swizzle * 8 // elem_bits
-
   m, k = lhs.shape
   g, k2, n = rhs.shape
+
+  if transpose_rhs:
+    k2, n = n, k2
 
   if group_sizes.shape[0] != g:
     raise ValueError(
@@ -134,56 +124,53 @@ def ragged_dot(
     raise ValueError(f"k={k} must be a multiple of block_k={block_k}")
 
   def body(rows_per_expert_gmem, lhs_gmem, rhs_gmem, o_gmem):
-    grid = (
-        grid_block_n,
-        pl.cdiv(m, block_m) + g - 1,
-        pl.cdiv(n, grid_block_n * block_n),
-    )
+    grid_m = pl.cdiv(m, block_m) + g - 1
+    grid_n = pl.cdiv(n, block_n)
+    grid = (grid_m * grid_n,)
+    if load_group_sizes_to_register:
+      rows_per_expert = [rows_per_expert_gmem[i] for i in range(len(rows_per_expert_gmem))]
+    else:
+      rows_per_expert = rows_per_expert_gmem
 
-    @functools.partial(
-        plgpu.nd_loop, grid, init_val=None, collective_axes="sm"
-    )
-    def mn_loop(idx, _):  # pylint: disable=unused-variable
-      block_ni, mi, remainder_ni = idx
-      ni = block_ni * pl.cdiv(n, block_n * grid_block_n) + remainder_ni
+    @plgpu.nd_loop(grid, collective_axes="sm")
+    def mn_loop(loop_info: plgpu.NDLoopInfo):  # pylint: disable=unused-variable
+      mi, ni = plgpu.planar_snake(
+          loop_info.index[0],
+          (grid_m, grid_n),
+          1,
+          grid_block_n,
+      )
       group_info = GroupInfo.create(rows_per_expert_gmem, block_m, mi)
 
       def acc_scope(acc_ref):
-        transforms = (
-            plgpu.TilingTransform((8, swizzle_elems)),
-            plgpu.SwizzleTransform(swizzle),
-        )
         plgpu.emit_pipeline(
-            lambda _, lhs_smem, rhs_smem: plgpu.wgmma(acc_ref, lhs_smem, rhs_smem),
+            lambda _, lhs_smem, rhs_smem: plgpu.wgmma(
+                acc_ref,
+                lhs_smem,
+                plgpu.transpose_ref(rhs_smem, (1, 0)) if transpose_rhs else rhs_smem,
+            ),
             grid=(k // block_k,),
             in_specs=[
                 plgpu.BlockSpec(
                     (block_m, block_k),
                     lambda k: (group_info.block, k),
-                    transforms=transforms,
+                    delay_release=1,
                 ),
                 plgpu.BlockSpec(
-                    (block_k, block_n), lambda k: (k, ni), transforms=transforms
+                    (block_n, block_k) if transpose_rhs else (block_k, block_n),
+                    lambda k: (ni, k) if transpose_rhs else (k, ni),
+                    delay_release=1,
                 ),
             ],
             max_concurrent_steps=max_concurrent_steps,
-            delay_release=1,
         )(lhs_gmem, rhs_gmem.at[group_info.group_id])
         return acc_ref[...]
 
       acc = pl.run_scoped(acc_scope, plgpu.ACC((block_m, block_n)))
 
-      store_transforms = (
-          plgpu.TilingTransform((1, swizzle_elems)),
-          plgpu.SwizzleTransform(swizzle)
-      )
       @functools.partial(
           pl.run_scoped,
-          o_smem=plgpu.SMEM(
-              (block_m, block_n),
-              dtype=o_gmem.dtype,
-              transforms=store_transforms,
-          )
+          o_smem=plgpu.SMEM((block_m, block_n), dtype=o_gmem.dtype)
       )
       def store_scope(o_smem):  # pylint: disable=unused-variable
         o_smem[...] = acc.astype(o_smem.dtype)
@@ -251,73 +238,92 @@ def ragged_dot(
       out_shape=jax.ShapeDtypeStruct((m, n), lhs.dtype),
       grid=(num_sms,),
       grid_names=("sm",),
+      compiler_params=plgpu.CompilerParams(
+          lowering_semantics=plgpu.LoweringSemantics.Warpgroup,
+      ),
   )
   return kernel(group_sizes, lhs, rhs)
 
 
 def main(unused_argv):
-  m, k, n, num_groups = 16 * 1024, 2048, 16 * 1024, 16
-  kx, ky, kz = random.split(random.key(1234), num=3)
+  for transpose_rhs in [False, True]:
+    m, k, n, num_groups = 16 * 1024, 2048, 16 * 1024, 16
+    kx, ky, kz = random.split(random.key(1234), num=3)
 
-  lhs = jax.random.normal(kx, (m, k), jnp.float16)
-  rhs = jax.random.normal(ky, (num_groups, k, n), jnp.float16)
-  group_boundaries = jax.lax.sort(
-      jax.random.randint(kz, (num_groups - 1,), 0, m, jnp.int32)
-  )
-  group_starts = lax.concatenate(
-      [jnp.array([0], dtype=jnp.int32), group_boundaries], 0
-  )
-  group_ends = lax.concatenate(
-      [group_boundaries, jnp.array([m], dtype=jnp.int32)], 0
-  )
-  group_sizes = group_ends - group_starts
-  assert group_sizes.shape == (num_groups,)
-
-  block_m = block_n = (64, 128, 192)
-  block_k = (64,)
-  max_concurrent_steps = (2, 4, 5, 6)
-  grid_block_n = (1, 2, 4, 8, 16)
-  configs = itertools.product(
-      block_m, block_n, block_k, max_concurrent_steps, grid_block_n
-  )
-  names = (
-      "block_m", "block_n", "block_k", "max_concurrent_steps", "grid_block_n"
-  )
-  best_runtime = float("inf")
-  best_kwargs = {}
-  for config in configs:
-    kwargs = dict(zip(names, config))
-    if n % (kwargs["grid_block_n"] * kwargs["block_n"]):
-      continue
-    try:
-      f = functools.partial(ragged_dot, group_sizes=group_sizes, **kwargs)
-      _, runtime = profiler.measure(f, mode="cupti")(lhs, rhs)
-    except ValueError as e:
-      if "Mosaic GPU kernel exceeds available shared memory" not in str(e):
-        raise
-      runtime = float("inf")
-    # Enable this to get more detailed information.
+    lhs = jax.random.normal(kx, (m, k), jnp.float16)
+    if transpose_rhs:
+      rhs = jax.random.normal(ky, (num_groups, n, k), jnp.float16)
     else:
-      print(" ".join(f"{k}={v}" for k, v in kwargs.items()), int(runtime * 1000))
-    if runtime < best_runtime:  # pytype: disable=unsupported-operands
-      best_runtime = runtime
-      best_kwargs = kwargs
-  if not best_kwargs:
-    raise ValueError("No valid configuration found")
+      rhs = jax.random.normal(ky, (num_groups, k, n), jnp.float16)
+    group_boundaries = jax.lax.sort(
+        jax.random.randint(kz, (num_groups - 1,), 0, m, jnp.int32)
+    )
+    group_starts = lax.concatenate(
+        [jnp.array([0], dtype=jnp.int32), group_boundaries], 0
+    )
+    group_ends = lax.concatenate(
+        [group_boundaries, jnp.array([m], dtype=jnp.int32)], 0
+    )
+    group_sizes = group_ends - group_starts
+    assert group_sizes.shape == (num_groups,)
 
-  ref, ref_runtime = profiler.measure(jax.lax.ragged_dot)(
-      lhs, rhs, group_sizes=group_sizes
-  )
-  result = ragged_dot(lhs, rhs, group_sizes=group_sizes, **best_kwargs)
-  np.testing.assert_allclose(result, ref, atol=1e-3, rtol=1e-3)
+    block_m = block_n = (64, 128, 192)
+    block_k = (64,)
+    max_concurrent_steps = (2, 4, 5, 6)
+    grid_block_n = (1, 2, 4, 8, 16)
+    configs = itertools.product(
+        block_m, block_n, block_k, max_concurrent_steps, grid_block_n
+    )
+    names = (
+        "block_m", "block_n", "block_k", "max_concurrent_steps", "grid_block_n"
+    )
+    best_runtime = float("inf")
+    best_kwargs = {}
+    for config in configs:
+      kwargs = dict(zip(names, config))
+      if n % (kwargs["grid_block_n"] * kwargs["block_n"]):
+        continue
+      try:
+        f = functools.partial(
+            ragged_dot, group_sizes=group_sizes, transpose_rhs=transpose_rhs,
+            **kwargs
+        )
+        _, runtime = profiler.measure(f)(lhs, rhs)
+      except ValueError as e:
+        if "Mosaic GPU kernel exceeds available shared memory" not in str(e):
+          raise
+        runtime = float("inf")
+      # Enable this to get more detailed information.
+      else:
+        print(" ".join(f"{k}={v}" for k, v in kwargs.items()), int(runtime * 1000))
+      if runtime < best_runtime:  # pytype: disable=unsupported-operands
+        best_runtime = runtime
+        best_kwargs = kwargs
+    if not best_kwargs:
+      raise ValueError("No valid configuration found")
 
-  tflops = float(2 * k * m * n) / (best_runtime / 1e3) / 1e12
-  ref_tflops = float(2 * k * m * n) / (ref_runtime / 1e3) / 1e12
-  print(
-      "Best parameters: ", " ".join(f"{k}={v}" for k, v in best_kwargs.items())
-  )
-  print(f"Kernel:    {best_runtime * 1000:.1f} us = {tflops:.1f} TFLOPS")
-  print(f"Reference: {ref_runtime * 1000:.1f} us = {ref_tflops:.1f} TFLOPS")
+    def ref_ragged_dot(lhs, rhs, group_sizes):
+      if transpose_rhs:
+        rhs = jnp.transpose(rhs, (0, 2, 1))
+      return jax.lax.ragged_dot(lhs, rhs, group_sizes=group_sizes)
+
+    ref, ref_runtime = profiler.measure(ref_ragged_dot)(
+        lhs, rhs, group_sizes=group_sizes
+    )
+    result = ragged_dot(
+        lhs, rhs, group_sizes=group_sizes, transpose_rhs=transpose_rhs,
+        **best_kwargs
+    )
+    np.testing.assert_allclose(result, ref, atol=1e-3, rtol=1e-3)
+
+    tflops = float(2 * k * m * n) / (best_runtime / 1e3) / 1e12
+    ref_tflops = float(2 * k * m * n) / (ref_runtime / 1e3) / 1e12
+    print(f"Transpose RHS: {transpose_rhs}")
+    print(
+        "Best parameters: ", " ".join(f"{k}={v}" for k, v in best_kwargs.items())
+    )
+    print(f"Kernel:    {best_runtime * 1000:.1f} us = {tflops:.1f} TFLOPS")
+    print(f"Reference: {ref_runtime * 1000:.1f} us = {ref_tflops:.1f} TFLOPS")
 
 
 if __name__ == "__main__":

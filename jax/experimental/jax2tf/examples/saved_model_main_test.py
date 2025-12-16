@@ -27,6 +27,7 @@ config.parse_flags_with_absl()
 FLAGS = flags.FLAGS
 
 
+@jtu.thread_unsafe_test_class()
 class SavedModelMainTest(tf_test_util.JaxToTfTestCase):
 
   def setUp(self):
@@ -47,9 +48,11 @@ class SavedModelMainTest(tf_test_util.JaxToTfTestCase):
   def test_train_and_save_full(self,
                                model="mnist_flax",
                                serving_batch_size=-1):
+    self.skipTest("no more dynamic shapes")
     if (serving_batch_size == -1 and
-        config.jax2tf_default_native_serialization.value and
-        not config.dynamic_shapes.value):
+        config.jax2tf_default_native_serialization.value
+        # and not config.dynamic_shapes.value
+        ):
       self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
     FLAGS.model = model
     FLAGS.model_classifier_layer = True

@@ -22,7 +22,6 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "xla/ffi/api/ffi.h"
-#include "xla/service/custom_call_status.h"
 
 // Underlying function pointers (i.e., KERNEL_CLASS::Fn) are initialized either
 // by the nanobind wrapper that links them to an existing SciPy lapack instance,
@@ -30,6 +29,8 @@ limitations under the License.
 // directly to lapack for use in a pure C++ context.
 
 namespace jax {
+
+extern bool lapack_kernels_initialized;
 
 struct MatrixParams {
   enum class Side : char { kLeft = 'L', kRight = 'R' };
@@ -100,20 +101,6 @@ static_assert(
 
 //== Triangular System Solver ==//
 
-// lapack trsm
-
-template <typename T>
-struct Trsm {
-  using FnType = void(char* side, char* uplo, char* transa, char* diag,
-                      lapack_int* m, lapack_int* n, T* alpha, T* a,
-                      lapack_int* lda, T* b, lapack_int* ldb);
-
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-};
-
-// FFI Kernel
-
 template <::xla::ffi::DataType dtype>
 struct TriMatrixEquationSolver {
   using ValueType = ::xla::ffi::NativeType<dtype>;
@@ -123,11 +110,13 @@ struct TriMatrixEquationSolver {
                       lapack_int* ldb);
 
   inline static FnType* fn = nullptr;
-  static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, ::xla::ffi::Buffer<dtype> y,
-      ::xla::ffi::RemainingArgs, ::xla::ffi::ResultBuffer<dtype> y_out,
-      MatrixParams::Side side, MatrixParams::UpLo uplo,
-      MatrixParams::Transpose trans_x, MatrixParams::Diag diag);
+  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> x,
+                                  ::xla::ffi::Buffer<dtype> y,
+                                  ::xla::ffi::ResultBuffer<dtype> y_out,
+                                  MatrixParams::Side side,
+                                  MatrixParams::UpLo uplo,
+                                  MatrixParams::Transpose trans_x,
+                                  MatrixParams::Diag diag);
 };
 
 //== LU Decomposition ==//
@@ -490,31 +479,6 @@ struct EigenvalueDecompositionComplex {
 
 //== Schur Decomposition ==//
 
-// lapack gees
-
-template <typename T>
-struct RealGees {
-  using FnType = void(char* jobvs, char* sort, bool (*select)(T, T),
-                      lapack_int* n, T* a, lapack_int* lda, lapack_int* sdim,
-                      T* wr, T* wi, T* vs, lapack_int* ldvs, T* work,
-                      lapack_int* lwork, bool* bwork, lapack_int* info);
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-};
-
-template <typename T>
-struct ComplexGees {
-  using FnType = void(char* jobvs, char* sort, bool (*select)(T), lapack_int* n,
-                      T* a, lapack_int* lda, lapack_int* sdim, T* w, T* vs,
-                      lapack_int* ldvs, T* work, lapack_int* lwork,
-                      typename T::value_type* rwork, bool* bwork,
-                      lapack_int* info);
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-};
-
-// FFI Kernel
-
 template <::xla::ffi::DataType dtype>
 struct SchurDecomposition {
   static_assert(!::xla::ffi::IsComplexType<dtype>(),
@@ -595,32 +559,6 @@ struct HessenbergDecomposition {
 
 //== Tridiagonal Reduction                                           ==//
 //== Reduces a Symmetric/Hermitian square matrix to tridiagonal form ==//
-
-template <typename T>
-struct real_type {
-  typedef T type;
-};
-template <typename T>
-struct real_type<std::complex<T>> {
-  typedef T type;
-};
-
-// lapack sytrd/hetrd
-
-template <typename T>
-struct Sytrd {
-  using FnType = void(char* uplo, lapack_int* n, T* a, lapack_int* lda,
-                      typename real_type<T>::type* d,
-                      typename real_type<T>::type* e, T* tau, T* work,
-                      lapack_int* lwork, lapack_int* info);
-
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-
-  static int64_t Workspace(lapack_int lda, lapack_int n);
-};
-
-// FFI Kernel
 
 template <::xla::ffi::DataType dtype>
 struct TridiagonalReduction {

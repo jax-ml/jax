@@ -12,10 +12,11 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: choice
-        default: "linux-x86-n2-16"
+        default: "linux-x86-n4-16"
         options:
-        - "linux-x86-n2-16"
+        - "linux-x86-n4-16"
         - "linux-arm64-t2a-48"
+        - "linux-arm64-c4a-16"
         - "windows-x86-n2-16"
       artifact:
         description: "Which JAX artifact to build?"
@@ -31,10 +32,19 @@ on:
         type: choice
         default: "3.12"
         options:
-        - "3.10"
         - "3.11"
         - "3.12"
         - "3.13"
+        - "3.13-ft"
+        - "3.14"
+        - "3.14-ft"
+      cuda-version:
+        description: "Which cuda version should the artifact be built for?"
+        type: choice
+        default: "12"
+        options:
+        - "12"
+        - "13"
       clone_main_xla:
         description: "Should latest XLA be used?"
         type: choice
@@ -54,7 +64,7 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: string
-        default: "linux-x86-n2-16"
+        default: "linux-x86-n4-16"
       artifact:
         description: "Which JAX artifact to build?"
         type: string
@@ -63,6 +73,10 @@ on:
         description: "Which python version should the artifact be built for?"
         type: string
         default: "3.12"
+      cuda-version:
+        description: "Which cuda version should the artifact be built for?"
+        type: string
+        default: "12"
       clone_main_xla:
         description: "Should latest XLA be used?"
         type: string
@@ -90,32 +104,47 @@ jobs:
     runs-on: ${{ inputs.runner }}
 
     container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest') ||
-                   (contains(inputs.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') ||
+                   (contains(inputs.runner, 'linux-arm64') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-arm64:latest') ||
                    (contains(inputs.runner, 'windows-x86') && null) }}
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
+      JAXCI_CUDA_VERSION: "${{ inputs.cuda-version }}"
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
 
     name: "${{ inputs.artifact }},
             ${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
             (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||
-            (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py ${{ inputs.python }}, clone main XLA=${{ inputs.clone_main_xla }}"
+            (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py ${{ inputs.python }}${{ (contains(inputs.artifact, 'cuda') && format(', cuda {0}', inputs.cuda-version)) || '' }}, clone main XLA=${{ inputs.clone_main_xla }}"
 
     # Map the job outputs to step outputs
     outputs:
       gcs_upload_uri: ${{ steps.store-gcs-upload-uri.outputs.gcs_upload_uri }}
 
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           persist-credentials: false
-      - name: Enable RBE if building on Linux x86 or Windows x86
-        if: contains(inputs.runner, 'linux-x86') || contains(inputs.runner, 'windows-x86')
-        run: echo "JAXCI_BUILD_ARTIFACT_WITH_RBE=1" >> $GITHUB_ENV
-      - name: Enable Bazel remote cache (with writes enabled) if building on Linux Aarch64
-        if: contains(inputs.runner, 'linux-arm64')
-        run: echo "JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE=1" >> $GITHUB_ENV
+      - name: Configure Build Environment
+        shell: bash
+        run: |
+          RUNNER_TYPE="${{ inputs.runner }}"
+          ARTIFACT_TYPE="${{ inputs.artifact }}"
+
+          # Enable RBE if building on Linux or Windows x86
+          if [[ "${RUNNER_TYPE}" == *linux-x86* || "${RUNNER_TYPE}" == *windows-x86* || ("${RUNNER_TYPE}" == *linux-arm64* && "${ARTIFACT_TYPE}" == "jaxlib") ]]; then
+            echo "JAXCI_BUILD_ARTIFACT_WITH_RBE=1" >> $GITHUB_ENV
+          fi
+
+          # Set bazel output base on Windows runner machine
+          if [[ "${RUNNER_TYPE}" == *windows-x86* ]]; then
+            echo "JAXCI_BAZEL_OUTPUT_BASE=C:\actions-runner\_work\bazel_output_base" >> $GITHUB_ENV
+          fi
+
+          # Enable Bazel remote cache (with writes enabled) if building on Linux Aarch64
+          if [[ "${RUNNER_TYPE}" == *linux-arm64* ]]; then
+            echo "JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE=1" >> $GITHUB_ENV
+          fi
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c

@@ -18,17 +18,18 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/types/span.h"
+#include "xla/future.h"
 #include "xla/python/ifrt/array.h"
 
-namespace xla {
+namespace jax {
 
 // Waits until future is ready but will cancel if ctrl-c is pressed.
-void BlockUntilReadyWithCancel(xla::PjRtFuture<>& future);
+void BlockUntilReadyWithCancel(xla::Future<>& future);
 
 // Requests if given buffers are ready, awaits for results and returns OK if
 // all of the buffers are ready or the last non-ok status.
-absl::Status AwaitBuffersReady(absl::Span<ifrt::Array* const> ifrt_arrays);
+absl::Status AwaitBuffersReady(absl::Span<xla::ifrt::Array* const> ifrt_arrays);
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_UTIL_H_

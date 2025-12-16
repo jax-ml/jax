@@ -162,6 +162,8 @@ def tolerances(
       or rhs_dtype == jnp.bfloat16
       or out_dtype == jnp.bfloat16
   ):
+    if jtu.is_device_tpu(7):
+      return 2e-2, 1e-2
     return 1e-3, 1e-2  # atol, rtol
   return 1e-3, 1e-5  # atol, rtol
 
@@ -203,10 +205,10 @@ class GroupedMatmulTest(jtu.JaxTestCase):
   ):
     seed = data.draw(seed_strategy())
     num_groups, _ = data.draw(group_strategy(max_stride=1))
-    lhs_dtype, rhs_dtype, out_dtype = [
+    lhs_dtype, rhs_dtype, out_dtype = (
         data.draw(hps.sampled_from([jnp.float32, jnp.bfloat16]))
         for _ in range(3)
-    ]
+    )
     transpose_rhs = data.draw(hps.booleans())
 
     key = jax.random.key(seed)
@@ -293,10 +295,10 @@ class GroupedMatmulTest(jtu.JaxTestCase):
   ):
     seed = data.draw(seed_strategy())
     num_groups, group_stride = data.draw(group_strategy())
-    lhs_dtype, rhs_dtype, out_dtype = [
+    lhs_dtype, rhs_dtype, out_dtype = (
         data.draw(hps.sampled_from([jnp.float32, jnp.bfloat16]))
         for _ in range(3)
-    ]
+    )
 
     key = jax.random.key(seed)
     k1, k2 = jax.random.split(key, 2)

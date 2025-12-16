@@ -13,7 +13,10 @@
 # limitations under the License.
 
 import datetime
-from numpy import array, int32
+import numpy as np
+
+array = np.array
+int32 = np.int32
 
 # Pasted from the test output (see export_back_compat_test_util.py module docstring)
 data_2025_04_01 = dict(

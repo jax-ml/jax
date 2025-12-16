@@ -50,7 +50,7 @@ def attn_forward_kernel(
     # Load q: it will stay in L1 throughout. Indices form a matrix because we
     # read, compute, and write all in 2d chunks. 1 element ~= 1 CUDA thread index.
     # q tile has shape [block_h, head_dim].
-    q = pl.load(q_ref, (q_slice, pl.ds(None)), mask=q_mask)
+    q = plgpu.load(q_ref.at[q_slice, :], mask=q_mask)
 
     def _dot(a, b):
       # if a.shape[0] == 1:
@@ -66,7 +66,7 @@ def attn_forward_kernel(
       o_prev, m_prev, l_prev = carry
       curr_k_slice = pl.ds(start_k * block_k, block_k)
 
-      k = pl.load(k_ref, (curr_k_slice, slice(None)))
+      k = k_ref[curr_k_slice, :]
       qk = _dot(q, k.T)  # [block_h, block_k]
       if sm_scale != 1.0:
         qk *= sm_scale  # [block_h, block_k]
@@ -86,7 +86,7 @@ def attn_forward_kernel(
       )  # Use m_next instead of m_curr to avoid a correction on l_curr
       l_curr = s_curr.sum(axis=-1)
       l_next = l_prev_corr + l_curr
-      v = pl.load(v_ref, (curr_k_slice, slice(None)))
+      v = v_ref[curr_k_slice, :]
       o_curr = _dot(s_curr.astype(v.dtype), v)
 
       # flash2 unscaled_o
@@ -106,10 +106,10 @@ def attn_forward_kernel(
 
   start_idx = split_k_seq_len * prog_j
   if start_idx_ref is not None:
-    start_idx = jnp.maximum(start_idx, pl.load(start_idx_ref, ()))
+    start_idx = jnp.maximum(start_idx, start_idx_ref[()])
   kv_seq_len = (prog_j + 1) * split_k_seq_len  # lower bound on actual k_seq_len
   if kv_seq_len_ref is not None:
-    kv_seq_len = jnp.minimum(kv_seq_len, pl.load(kv_seq_len_ref, ()))
+    kv_seq_len = jnp.minimum(kv_seq_len, kv_seq_len_ref[()])
 
   if start_idx_ref is None and kv_seq_len is None:
     o, m_i, l_i = _compute(start_idx, kv_seq_len, o, m_i, l_i)
@@ -122,10 +122,10 @@ def attn_forward_kernel(
   if residual_refs:
     l_ref, m_ref = residual_refs
     vec_q_mask = q_mask.reshape(-1) if q_mask is not None else None
-    pl.store(l_ref, q_slice, l_i, mask=vec_q_mask)
-    pl.store(m_ref, q_slice, m_i, mask=vec_q_mask)
+    plgpu.store(l_ref.at[q_slice], l_i, mask=vec_q_mask)
+    plgpu.store(m_ref.at[q_slice], m_i, mask=vec_q_mask)
   o = o.astype(o_ref.dtype)
-  pl.store(o_ref, (q_slice, pl.ds(None)), o, mask=q_mask)
+  plgpu.store(o_ref.at[q_slice, :], o, mask=q_mask)
 
 
 def decode_attn_unbatched(
@@ -359,16 +359,18 @@ def gqa(
       normalize_output=normalize_output,
   )
   with_kv_heads = jax.vmap(inner)
-  o, *res = jax.vmap(with_kv_heads)(
+  outputs = jax.vmap(with_kv_heads)(
       q_reshaped, k_transposed, v_transposed, start_idx, kv_seq_len
   )
-  o = o.reshape(batch_size, q_heads, head_dim)
   if return_residuals:
-    l, m = res[0]
+    o, (l, m) = outputs
+    o = o.reshape(batch_size, q_heads, head_dim)
     l = l.reshape(batch_size, q_heads)
     m = m.reshape(batch_size, q_heads)
     return o, (l, m)
   else:
+    o = outputs
+    o = o.reshape(batch_size, q_heads, head_dim)  # pytype: disable=attribute-error
     return o
 
 

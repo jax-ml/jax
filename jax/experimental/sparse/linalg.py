@@ -24,14 +24,14 @@ import jax.numpy as jnp
 
 from jax.experimental import sparse
 from jax.interpreters import mlir
-from jax.interpreters import xla
 
 from jax._src import core
+from jax._src import dispatch
 from jax._src import ffi
 from jax._src.interpreters import ad
 
 import numpy as np
-from scipy.sparse import csr_matrix, linalg
+import scipy.sparse
 
 
 def lobpcg_standard(
@@ -264,7 +264,7 @@ def _check_inputs(A, X):
 
 
 def _mm(a, b, precision=jax.lax.Precision.HIGHEST):
-  return jax.lax.dot(a, b, (precision, precision))
+  return jax.lax.dot(a, b, precision=(precision, precision))
 
 def _generate_diagnostics(prev_XPR, X, P, R, theta, converged, adj_resid):
   k = X.shape[1]
@@ -542,12 +542,12 @@ def _spsolve_cpu_lowering(ctx, data, indices, indptr, b, tol, reorder):
   args = [data, indices, indptr, b]
 
   def _callback(data, indices, indptr, b, **kwargs):
-    A = csr_matrix((data, indices, indptr), shape=(b.size, b.size))
-    return (linalg.spsolve(A, b).astype(b.dtype),)
+    A = scipy.sparse.csr_matrix((data, indices, indptr), shape=(b.size, b.size))
+    return (scipy.sparse.linalg.spsolve(A, b).astype(b.dtype),)
 
   result, _, _ = mlir.emit_python_callback(
       ctx, _callback, None, args, ctx.avals_in, ctx.avals_out,
-      has_side_effect=False)
+      has_side_effect=False, returns_token=False)
   return result
 
 
@@ -589,7 +589,7 @@ def _spsolve_transpose(ct, data, indices, indptr, b, **kwds):
 
 
 spsolve_p = core.Primitive('spsolve')
-spsolve_p.def_impl(functools.partial(xla.apply_primitive, spsolve_p))
+spsolve_p.def_impl(functools.partial(dispatch.apply_primitive, spsolve_p))
 spsolve_p.def_abstract_eval(_spsolve_abstract_eval)
 ad.defjvp(spsolve_p, _spsolve_jvp_lhs, None, None, _spsolve_jvp_rhs)
 ad.primitive_transposes[spsolve_p] = _spsolve_transpose

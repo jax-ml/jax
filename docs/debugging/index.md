@@ -8,7 +8,8 @@ Table of contents:
 
 * [Interactive inspection with `jax.debug`](print_breakpoint)
 * [Functional error checks with jax.experimental.checkify](checkify_guide)
-* [Throwing Python errors with JAX’s debug flags](flags)
+* [Throwing Python errors with JAX’s debug flags](./flags)
+* [Attaching XLA metadata with `set_xla_metadata`](xla_metadata)
 
 ## Interactive inspection with `jax.debug`
 
@@ -85,7 +86,7 @@ Complete guide [here](checkify_guide)
 
 ## Throwing Python errors with JAX's debug flags
 
-Complete guide [here](flags)
+Complete guide [here](./flags)
 
 **Summary:** Enable the `jax_debug_nans` flag to automatically detect when NaNs are produced in `jax.jit`-compiled code (but not in `jax.pmap` or `jax.pjit`-compiled code) and enable the `jax_disable_jit` flag to disable JIT-compilation, enabling use of traditional Python debugging tools like `print` and `pdb`.
 
@@ -98,7 +99,40 @@ def f(x, y):
 jax.jit(f)(0., 0.)  # ==> raises FloatingPointError exception!
 ```
 
-[Read more](flags).
+[Read more](./flags).
+
+## Attaching XLA Metadata with `set_xla_metadata`
+
+Complete guide [here](xla_metadata)
+
+**Summary:** `set_xla_metadata` allows you to attach metadata to operations in your JAX code. This metadata is passed down to the XLA compiler as `frontend_attributes` and can be used to enable compiler-level debugging tools, such as the XLA-TPU debugger.
+
+**Note:** `set_xla_metadata` is an experimental feature and its API is subject to change.
+
+```python
+import jax
+import jax.numpy as jnp
+from jax.experimental.xla_metadata import set_xla_metadata
+
+# Tagging an individual operation
+def value_tagging(x):
+  y = jnp.sin(x)
+  z = jnp.cos(x)
+  return set_xla_metadata(y * z, breakpoint=True)
+
+print(jax.jit(value_tagging).lower(1.0).as_text("hlo"))
+```
+Results in:
+```
+ENTRY main.5 {
+  x.1 = f32[] parameter(0)
+  sin.2 = f32[] sine(x.1)
+  cos.3 = f32[] cosine(x.1)
+  ROOT mul.4 = f32[] multiply(sin.2, cos.3), frontend_attributes={breakpoint="true"}
+}
+```
+
+[Read more](xla_metadata).
 
 ```{toctree}
 :caption: Read more
@@ -106,6 +140,7 @@ jax.jit(f)(0., 0.)  # ==> raises FloatingPointError exception!
 
 print_breakpoint
 checkify_guide
-flags
+./flags
+xla_metadata
 ```
 

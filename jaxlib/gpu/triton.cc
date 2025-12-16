@@ -23,7 +23,6 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/pair.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
@@ -46,8 +45,8 @@ namespace jax::JAX_GPU_NAMESPACE {
 
 NB_MODULE(_triton, m) {
   nb::class_<Kernel>(m, "TritonKernel")
-      .def(nb::init<std::string, uint32_t, uint32_t, std::string, std::string,
-                    int, uint32_t, uint32_t, uint32_t>());
+      .def(nb::init<std::string, uint32_t, uint32_t, uint32_t, std::string,
+                    std::string, int>());
 
   nb::class_<KernelCall::Parameter>(m, "TritonParameter");
 
@@ -150,27 +149,25 @@ NB_MODULE(_triton, m) {
           return major * 10 + minor;
         }));
 
-  m.def(
-      "get_arch_details",
-      ValueOrThrowWrapper([](int device) -> absl::StatusOr<absl::string_view> {
+  m.def("get_arch_details",
+        ValueOrThrowWrapper([](int device) -> absl::StatusOr<std::string_view> {
 #ifdef JAX_GPU_HIP
-        hipDeviceProp_t prop;
-        hipGetDeviceProperties(&prop, 0);
-        return prop.gcnArchName;
+          hipDeviceProp_t prop;
+          hipGetDeviceProperties(&prop, 0);
+          return prop.gcnArchName;
 #else
-        return absl::UnimplementedError("Not a HIP GPU");
+          return absl::UnimplementedError("Not a HIP GPU");
 #endif
-      }));
+        }));
 
   m.def("get_serialized_metadata",
-        ValueOrThrowWrapper(
-            [](nb::bytes opaque) -> absl::StatusOr<nb::bytes> {
-              JAX_ASSIGN_OR_RETURN(
-                  std::string metadata,
-                  GetTritonKernelCallSerializedMetadata(
-                      absl::string_view(opaque.c_str(), opaque.size())));
-              return nb::bytes(metadata.c_str(), metadata.size());
-            }));
+        ValueOrThrowWrapper([](nb::bytes opaque) -> absl::StatusOr<nb::bytes> {
+          JAX_ASSIGN_OR_RETURN(
+              std::string metadata,
+              GetTritonKernelCallSerializedMetadata(
+                  std::string_view(opaque.c_str(), opaque.size())));
+          return nb::bytes(metadata.c_str(), metadata.size());
+        }));
 }
 
 }  // namespace jax::JAX_GPU_NAMESPACE

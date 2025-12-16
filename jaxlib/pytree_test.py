@@ -57,7 +57,7 @@ registry.register_dataclass_node(Custom, ["a"], ["b"])
 
 class PyTreeTest(absltest.TestCase):
 
-  def roundtrip(self, example):
+  def roundtrip_proto(self, example):
     original = registry.flatten(example)[1]
     self.assertEqual(
         pytree.PyTreeDef.deserialize_using_proto(
@@ -68,21 +68,21 @@ class PyTreeTest(absltest.TestCase):
 
   def testSerializeDeserializeNoPickle(self):
     o = object()
-    self.roundtrip(({"a": o, "b": o}, [o, (o, o), None]))
+    self.roundtrip_proto(({"a": o, "b": o}, [o, (o, o), None]))
 
   def testSerializeWithFallback(self):
     o = object()
     with self.assertRaises(ValueError):
-      self.roundtrip({"a": ExampleType(field0=o, field1=o)})
+      self.roundtrip_proto({"a": ExampleType(field0=o, field1=o)})
 
   def testRegisteredType(self):
     o = object()
     with self.assertRaises(ValueError):
-      self.roundtrip({"a": ExampleType2(field0=o, field1=o)})
+      self.roundtrip_proto({"a": ExampleType2(field0=o, field1=o)})
 
   def roundtrip_node_data(self, example):
     original = registry.flatten(example)[1]
-    restored = pytree.PyTreeDef.make_from_node_data_and_children(
+    restored = pytree.PyTreeDef.from_node_data_and_children(
         registry, original.node_data(), original.children()
     )
     self.assertEqual(restored, original)
@@ -106,7 +106,7 @@ class PyTreeTest(absltest.TestCase):
   def testDataclassMakeFromNodeData(self):
     c = Custom(1, "a")
     c_leafs, c_tree = registry.flatten(c)
-    c_tree2 = c_tree.make_from_node_data_and_children(
+    c_tree2 = pytree.PyTreeDef.from_node_data_and_children(
         registry, c_tree.node_data(), c_tree.children()
     )
     self.assertEqual(c_tree2.unflatten(c_leafs), c)

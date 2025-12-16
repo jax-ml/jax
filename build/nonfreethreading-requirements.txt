@@ -1,11 +1,14 @@
 numpy~=2.0.0; python_version<="3.12"
 numpy~=2.1.0; python_version=="3.13"
-numpy>=2.2.6; python_version>="3.14"
+numpy>=2.3.2; python_version>="3.14"
 
 # These packages have not released free-threaded wheels.
-zstandard
+
+# zstandard is available in the Python 3.14 standard library as
+# compression.zstd, and we'll use that if available.
+zstandard; python_version<"3.14"
+
 tensorstore
 
-# portpicker is architecture independent, but it depends on psutil which has not
-# released a 3.13-ft wheel.
-portpicker
+# For jax2tf_test
+tensorflow; python_version<"3.14"

@@ -18,6 +18,7 @@ import re
 import types
 from jax._src import compiler
 from jax._src import traceback_util
+from jax._src.lib import _jax
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 
@@ -35,7 +36,7 @@ FRAME_PATTERN = re.compile(
     r'( to (?P<endlineno>[0-9]+)?:(?P<endcolno>[0-9]+))?\)'
 )
 MLIR_ERR_PREFIX = (
-    'Pallas encountered an internal verification error.'
+    'Pallas encountered an internal verification error. '
     'Please file a bug at https://github.com/jax-ml/jax/issues. '
     'Error details: '
 )
@@ -55,9 +56,9 @@ class VerificationError(MosaicError):
 
 
 def _handle_xla_runtime_error(
-    base_err: xla_client.XlaRuntimeError,
+    base_err: _jax.JaxRuntimeError,
 ) -> MosaicError | None:
-  """Reformats XLARuntimeError to include a Python traceback."""
+  """Reformats JaxRuntimeError to include a Python traceback."""
   if 'Mosaic' not in str(base_err):
     return None
   try:

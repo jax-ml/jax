@@ -23,40 +23,29 @@ from typing import Any, Protocol, TypeVar
 
 from jax._src import ad_util
 from jax._src import api_util
+from jax._src import config
 from jax._src import core
+from jax._src import literals
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import tree_util
+from jax._src import custom_derivatives
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.state import indexing
-from jax._src.state.primitives import addupdate_p, get_p, swap_p
+from jax._src.state.primitives import addupdate_p, get_p, swap_p, pin, unpin
 from jax._src.state.types import (
-    AbstractRef,
-    RefBitcaster,
-    RefEffect,
-    RefReshaper,
-    get_ref_aval_from_value,
-    uninitialized,
-)
+    AbstractRef, RefBitcaster, RefEffect, RefReshaper, get_ref_aval_from_value,
+    uninitialized,)
 from jax._src.state.utils import bitcast, hoist_consts_to_refs
 from jax._src.typing import Array
-from jax._src.util import (
-    foreach,
-    merge_lists,
-    partition_list,
-    safe_map,
-    safe_zip,
-    split_dict,
-    split_list,
-    unzip2,
-    weakref_lru_cache,
-)
+from jax._src.util import (foreach, safe_map, safe_zip, split_list, unzip2,
+                           weakref_lru_cache)
 import numpy as np
 
 ## JAX utilities
@@ -67,15 +56,29 @@ PyTreeDef = tree_util.PyTreeDef
 
 ## Discharging state
 
-# Let's say we have a jaxpr that takes in `Ref`s and outputs regular JAX values
-# (`Ref`s should never be outputs from jaxprs). We'd like to convert that jaxpr
-# into a "pure" jaxpr that takes in and outputs values and no longer has the
-# `Read/Write/Accum` effects.
 
-def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any], * ,
-                    should_discharge: bool | Sequence[bool] = True
-                    ) -> tuple[core.Jaxpr, list[Any]]:
-  """Converts a jaxpr that takes in `Ref`s into one that doesn't."""
+def discharge_state(
+    jaxpr: core.Jaxpr,
+    consts: Sequence[Any],
+    *,
+    should_discharge: bool | Sequence[bool] = True,
+) -> tuple[core.Jaxpr, Sequence[Any]]:
+  """Converts a stateful jaxpr into a pure one.
+
+  Discharging replaces ``Ref`` inputs with regular values, threads updates
+  through the computation, and returns updated ``Ref``s as additional outputs.
+
+  Args:
+    jaxpr: A stateful jaxpr with ``Ref`` inputs.
+    consts: Constants for the jaxpr.
+    should_discharge: Whether to discharge each ``Ref`` input. If a single bool,
+      applies to all inputs.
+
+  Returns:
+    A tuple of ``(new_jaxpr, new_consts)`` where ``new_jaxpr`` is a jaxpr with
+    no ``Read``/``Write``/``Accum`` effects. Discharged ``Ref`` inputs become
+    regular value inputs, and their updated values are appended to the outputs.
+  """
   if isinstance(should_discharge, bool):
     should_discharge = [should_discharge] * len(jaxpr.invars)
   in_avals = [v.aval.inner_aval
@@ -83,9 +86,25 @@ def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any], * ,
               else v.aval for v, d in zip(jaxpr.invars, should_discharge)]
   eval_jaxpr = lu.wrap_init(partial(_eval_jaxpr_discharge_state, jaxpr,
                                     should_discharge, consts),
-                            debug_info=jaxpr.debug_info)
-  new_jaxpr, _ , new_consts, () = pe.trace_to_jaxpr_dynamic(eval_jaxpr, in_avals)
+                            debug_info=jaxpr.debug_info.with_unknown_names())
+  new_jaxpr, _ , new_consts = pe.trace_to_jaxpr_dynamic(eval_jaxpr, in_avals)
   return new_jaxpr, new_consts
+
+# TODO(mattjj): migrate callers to discharge_state2 for caching
+def discharge_state2(jaxpr: core.ClosedJaxpr,
+                     should_discharge: bool | Sequence[bool] = True,
+                     ) -> core.ClosedJaxpr:
+  if isinstance(should_discharge, bool):
+    should_discharge = (should_discharge,) * len(jaxpr.in_avals)
+  return _discharge_state2(jaxpr, tuple(should_discharge))
+
+@weakref_lru_cache
+def _discharge_state2(jaxpr: core.ClosedJaxpr,
+                      should_discharge: tuple[bool, ...],
+                      ) -> core.ClosedJaxpr:
+  jaxpr_, consts = discharge_state(jaxpr.jaxpr, jaxpr.consts,
+                                   should_discharge=should_discharge)
+  return core.ClosedJaxpr(jaxpr_, consts)
 
 @dataclasses.dataclass
 class Environment:
@@ -100,37 +119,68 @@ class Environment:
   def write(self, v: core.Var, val: Any) -> None:
     self.env[v] = val
 
+
 class DischargeRule(Protocol):
 
-  def __call__(self, in_avals: Sequence[core.AbstractValue],
-      out_avals: Sequence[core.AbstractValue], *args: Any,
-      **params: Any) -> tuple[Sequence[Any | None], Sequence[Any]]:
-    ...
+  def __call__(
+      self,
+      in_avals: Sequence[core.AbstractValue],
+      out_avals: Sequence[core.AbstractValue],
+      *args: Any,
+      **params: Any,
+  ) -> tuple[Sequence[Any | None], Any | Sequence[Any]]:
+    """Discharge rule for a primitive.
+
+    See :func:`discharge_state` for an explanation of what discharge means.
+
+    Args:
+      in_avals: Input abstract values.
+      out_avals: Output abstract values.
+      *args: Input values.
+      **params: Primitive parameters.
+
+    Returns:
+      A tuple of ``(new_invals, new_outvals)`` where:
+
+      * ``new_invals`` contains updated values for discharged ``Ref`` inputs,
+        or ``None`` if the input is not a ``Ref`` or was not updated.
+      * ``new_outvals`` is the primitive's output. A sequence if the primitive
+        has multiple results, otherwise a single value.
+    """
+
 
 _discharge_rules: dict[core.Primitive, DischargeRule] = {}
 
-class PartialDischargeRule(Protocol):
-  """A partial discharge rule.
-
-  Exactly like a discharge rule only it accepts a `should_discharge`
-  argument that indicates which inputs should be discharged and the
-  return value returns a tuple of which the first element is the new
-  inputs or none but only the ones that correspond to `True` entries
-  in `should_charge`.
-  """
-
-  def __call__(self, should_discharge: Sequence[bool],
-      in_avals: Sequence[core.AbstractValue],
-      out_avals: Sequence[core.AbstractValue], *args: Any,
-      **params: Any) -> tuple[Sequence[Any | None], Sequence[Any]]:
-    ...
-
-_partial_discharge_rules: dict[core.Primitive, PartialDischargeRule] = {}
 
 def register_discharge_rule(prim: core.Primitive):
   def register(f: DischargeRule):
     _discharge_rules[prim] = f
+
   return register
+
+
+class PartialDischargeRule(Protocol):
+  """Discharge rule that supports selective discharging of ``Ref`` inputs.
+
+  Generalizes :class:`DischargeRule` by accepting a ``should_discharge``
+  argument that specifies which ``Ref`` inputs to discharge. The returned
+  ``new_invals`` must contain a non-``None`` value if and only if the
+  corresponding ``Ref`` was discharged.
+  """
+
+  def __call__(
+      self,
+      should_discharge: Sequence[bool],
+      in_avals: Sequence[core.AbstractValue],
+      out_avals: Sequence[core.AbstractValue],
+      *args: Any,
+      **params: Any,
+  ) -> tuple[Sequence[Any | None], Any | Sequence[Any]]:
+    ...
+
+
+_partial_discharge_rules: dict[core.Primitive, PartialDischargeRule] = {}
+
 
 def register_partial_discharge_rule(prim: core.Primitive):
   def register(f: PartialDischargeRule):
@@ -152,31 +202,31 @@ def _eval_jaxpr_discharge_state(
                        if d and isinstance(v.aval, AbstractRef)}
 
   for eqn in jaxpr.eqns:
-    name_stack = (
-        source_info_util.current_name_stack() + eqn.source_info.name_stack
-    )
+    name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
     traceback = eqn.source_info.traceback
     with source_info_util.user_context(
         traceback, name_stack=name_stack), eqn.ctx.manager:
       should_discharge = [id(v.aval) in refs_to_discharge for v in eqn.invars]
-      if eqn.primitive is core.mutable_array_p:
+      if eqn.primitive is core.ref_p:
         [invar], [outvar] = eqn.invars, eqn.outvars
         ans = env.read(invar)
+        if config.refs_to_pins.value:
+          ans = pin(ans)
         refs_to_discharge.add(id(outvar.aval))
       elif eqn.primitive is core.freeze_p:
         [invar], [outvar] = eqn.invars, eqn.outvars
         ans = env.read(invar)
+        if config.refs_to_pins.value:
+          ans = unpin(ans)
         refs_to_discharge.remove(id(invar.aval))
-      elif (any(should_discharge)
-            or core.internal_mutable_array_effect in eqn.effects
-        ):
+      elif any(should_discharge) or core.internal_mutable_array_effect in eqn.effects:
         if eqn.primitive in _partial_discharge_rules:
           rule: DischargeRule = partial(_partial_discharge_rules[eqn.primitive], should_discharge)
         elif eqn.primitive in _discharge_rules:
           rule = _discharge_rules[eqn.primitive]
         else:
-          raise NotImplementedError("No state discharge rule implemented for "
-              f"primitive: {eqn.primitive}")
+          raise NotImplementedError(
+              f"No state discharge rule implemented for primitive: {eqn.primitive}")
         invals = map(env.read, eqn.invars)
         in_avals = [v.aval for v in eqn.invars]
         out_avals = [v.aval for v in eqn.outvars]
@@ -359,7 +409,7 @@ def _convert_to_gather_arrays(indexer: indexing.NDIndexer) -> tuple[Array, ...]:
       diff = len(total_shape) - idx_in_shape_after_indexing - 1
       arr = arr.reshape(arr.shape + (1,) * diff)
       arrs.append(arr)
-    elif isinstance(idxer, (np.ndarray, Array)):
+    elif isinstance(idxer, (np.ndarray, Array, literals.TypedNdArray)):
       diff = n_idxers - 1 - last_int_index_idx
       arr = idxer.reshape(idxer.shape + (1,) * diff)
       arrs.append(arr)
@@ -525,6 +575,8 @@ def _addupdate_discharge_rule(
 
 def _addupdate_discharge(x, val, idx, tree):
   transforms = tree_util.tree_unflatten(tree, idx)
+  if not transforms:
+    return x + val
   if len(transforms) > 1:
     raise NotImplementedError("Only single indexer is supported.")
   indexer = transforms[0]
@@ -582,6 +634,26 @@ def _closed_call_discharge_rule(
 
 run_state_p = core.Primitive("run_state")
 run_state_p.multiple_results = True
+
+def _run_state_is_high(*_, jaxpr, **__):
+  return jaxpr.is_high
+run_state_p.is_high = _run_state_is_high  # type: ignore
+
+def _run_state_to_lojax(*args, jaxpr, is_initialized, **params):
+  assert not jaxpr.constvars
+  closed_jaxpr = core.ClosedJaxpr(jaxpr, ())
+  arg_avals = map(core.typeof, args)
+  args, is_initialized = unzip2(
+      (lo_val, is_init) for a, x, is_init in zip(arg_avals, args, is_initialized)
+      for lo_val in (a.read_loval(x) if a.has_qdd else a.lower_val(x)))
+  lo_jaxpr = pe.lower_jaxpr(closed_jaxpr)
+  all_outs = run_state_p.bind(*lo_jaxpr.consts, *args, jaxpr=lo_jaxpr.jaxpr,
+                              is_initialized=is_initialized, **params)
+  out_mut, lo_outs = split_list(all_outs, [pe.num_himuts_out(jaxpr)])
+  pe.apply_himut(jaxpr, args, out_mut)
+  return pe.raise_lo_outs(arg_avals, lo_outs)
+run_state_p.to_lojax = _run_state_to_lojax
+
 
 def _default_initialization(x):
   assert hasattr(x, 'shape')
@@ -686,390 +758,6 @@ def _run_state_jvp(primals: Sequence[Any], tangents: Sequence[Any], *,
   return out_primals, out_tangents
 ad.primitive_jvps[run_state_p] = _run_state_jvp
 
-_save_everything = lambda *_, **__: True
-
-def _convert_outputs_to_writes(
-    jaxpr: core.Jaxpr) -> tuple[core.Jaxpr, list[core.ShapedArray]]:
-  assert not jaxpr.constvars, "Jaxpr shouldn't have constvars."
-
-  in_avals = [v.aval for v in jaxpr.invars]
-  def eval_jaxpr(*refs):
-    # We split the refs into the original input refs and the dummy residual
-    # refs.
-    orig_refs, residual_refs = split_list(refs, [len(in_avals)])
-    residual_vals = core.eval_jaxpr(jaxpr, (), *orig_refs)
-    for res_ref, res_val in zip(residual_refs, residual_vals):
-      res_ref[...] = res_val
-    return []
-  res_ref_avals = [AbstractRef(v.aval) if not isinstance(v.aval, AbstractRef)
-                   else v.aval for v in jaxpr.outvars]
-  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(eval_jaxpr,
-                   debug_info=jaxpr.debug_info),
-      [*in_avals, *res_ref_avals])
-  assert not consts
-  return jaxpr, [core.ShapedArray(a.shape, a.dtype) for a in res_ref_avals]
-
-def _convert_inputs_to_reads(num_res: int, jaxpr: core.Jaxpr) -> core.Jaxpr:
-  assert not jaxpr.constvars, "Jaxpr should not have constvars"
-
-  def eval_jaxpr(*refs):
-    residual_refs, orig_refs = split_list(refs, [num_res])
-    residual_vals = [r[...] for r in residual_refs]
-    () = core.eval_jaxpr(jaxpr, (), *residual_vals, *orig_refs)
-    return []
-
-  res_val_avals, orig_ref_avals = \
-      split_list([v.aval for v in jaxpr.invars], [num_res])
-  res_ref_avals = [AbstractRef(aval) if not isinstance(aval, AbstractRef) else
-                   aval for aval in res_val_avals]
-  jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(eval_jaxpr,
-                   debug_info=jaxpr.debug_info),
-      [*res_ref_avals, *orig_ref_avals])
-  return jaxpr
-
-def _run_state_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
-                            jaxpr: core.Jaxpr, which_linear: tuple[bool, ...],
-                            is_initialized: tuple[bool, ...]):
-  if not all(is_initialized):
-    raise NotImplementedError(
-        "Uninitialized Refs are not supported in partial_eval."
-    )
-  num_inputs = len(tracers)
-  assert num_inputs == len(jaxpr.invars)
-  in_unknowns = [not t.pval.is_known() for t in tracers]
-  # We first need to run a fixpoint to determine which of the `Ref`s are unknown
-  # after running the for loop. We want to use the jaxpr to determine which
-  # `Ref`s are unknown after executing the for loop body given which `Ref`s are
-  # unknown before. However, the jaxpr has no outputs. Instead, we discharge
-  # the body and run the fixpoint with the discharged jaxpr. We can do this
-  # because the outputs of the jaxpr are one-to-one with the inputs.
-  discharged_jaxpr_, discharged_consts = discharge_state(jaxpr, ())
-  discharged_jaxpr = pe.convert_constvars_jaxpr(discharged_jaxpr_)
-  for _ in range(num_inputs):
-    jaxpr_in_unknowns = [False] * len(discharged_consts) + in_unknowns
-    _, _, out_unknowns, out_inst, _, _ = pe.partial_eval_jaxpr_stateful(
-        discharged_jaxpr, jaxpr_in_unknowns, jaxpr_in_unknowns,
-          in_unknowns, False, _save_everything)
-    # assert out_inst == out_unknowns
-    out_unknowns = list(out_unknowns)
-    if out_unknowns == in_unknowns:
-      break
-    in_unknowns = map(operator.or_, in_unknowns, out_unknowns)
-  else:
-    raise Exception("Invalid fixpoint")
-  del out_unknowns  # redundant since it's the same as `in_unknowns`
-  tracers = tuple(trace.instantiate_const(t) if uk else t
-                  for t, uk in zip(tracers, in_unknowns))
-
-  # We use `partial_eval_jaxpr_stateful` here because it won't remove effectful
-  # primitives like `get`/`set`.
-  jaxpr_known_resout, jaxpr_unknown_resin_, _, _, num_res_out, num_res_ref = \
-        pe.partial_eval_jaxpr_stateful(jaxpr, in_unknowns, in_inst=in_unknowns,
-                                     ensure_out_unknowns=[], ensure_out_inst=[],
-                                     saveable=_save_everything)
-  # # `partial_eval_jaxpr_stateful` will give us jaxprs that have hybrid `Ref`
-  # and regular valued input/outputs. However, we'd like to bind these jaxprs to
-  # a `for`, which expects only `Ref` inputs and no output. We need to convert
-  # both of these jaxprs into ones that are compatible with `for`.
-
-  # `jaxpr_known_resout` is a jaxpr that maps from all the input `Refs`
-  # to output residual values (none of them should be `Ref`s). We'll need to
-  # convert the output residual values into `Ref`s that are initially empty
-  # `Ref`s that are written to at the end of the jaxpr.
-  num_res = num_res_out + num_res_ref
-
-  num_invars = len(jaxpr_known_resout.invars) - num_res_ref
-  _, res_ref_avals = split_list(
-      [v.aval for v in jaxpr_known_resout.invars], [num_invars])
-  res_avals = [a.inner_aval for a in res_ref_avals]  # pytype: disable=attribute-error
-  jaxpr_known, new_res_avals = _convert_outputs_to_writes(jaxpr_known_resout)
-  # We now run the known jaxpr to obtain our residual values.
-  known_tracers, _ = partition_list(in_unknowns, tracers)
-  known_which_linear, _ = partition_list(in_unknowns, which_linear)
-  known_vals = [t.pval.get_known() for t in known_tracers]
-  all_res_avals = [*res_avals, *new_res_avals]
-  empty_res = map(ad_util.zeros_like_aval, all_res_avals)
-  jaxpr_known_args = [*known_vals, *empty_res]
-
-  jaxpr_known_which_linear = (*known_which_linear, *(False,) * num_res)
-  out_flat = run_state_p.bind(*jaxpr_known_args, jaxpr=jaxpr_known,
-                              which_linear=jaxpr_known_which_linear,
-                              # TODO(sharadmv): compute this in the general case
-                              is_initialized=(True,) * len(jaxpr_known.invars))
-  known_outputs, residuals = split_list(out_flat, [len(known_tracers)])
-  residuals = map(trace.new_instantiated_const, residuals)
-  ref_res, nonref_res = split_list(residuals, [num_res_ref])
-
-  # Now we handle the `jaxpr_unknown` that expects residual values as inputs.
-  # This jaxpr is the output of `partial_eval_jaxpr_stateful` that marks which
-  # inputs are actually used.
-  # `partial_eval_jaxpr_stateful` doesn't remove extra inputs/outputs for you
-  # so we use `dce_jaxpr` here to do that.
-  # To make it compatible with `for`, we need to convert those residual values
-  # into `Ref`s.
-  jaxpr_unknown = _convert_inputs_to_reads(len(new_res_avals),
-                                           jaxpr_unknown_resin_)
-  _, unknown_tracers = partition_list(in_unknowns, tracers)
-  _, uk_which_linear = partition_list(in_unknowns, which_linear)
-  unknown_which_linear = (False,) * num_res + tuple(uk_which_linear)
-  unknown_inputs = [*nonref_res, *ref_res, *unknown_tracers]
-  # Outputs match inputs so we construct output tracers that look like the input
-  # tracers.
-  res_ref_unknown_outputs = [
-      pe.JaxprTracer(trace, pe.PartialVal.unknown(t.aval), None)
-      for t in unknown_inputs]
-  name_stack = source_info_util.current_name_stack()[len(trace.name_stack):]
-  source = source_info_util.current().replace(name_stack=name_stack)
-
-  assert len(unknown_inputs) == len(res_ref_unknown_outputs)
-  assert len(unknown_inputs) == len(jaxpr_unknown.invars)
-  uk_params = dict(jaxpr=jaxpr_unknown, which_linear=unknown_which_linear,
-                   # TODO(sharadmv); compute this in the general case
-                   is_initialized=(True,) * len(jaxpr_unknown.invars))
-  _, eqn_effects = run_state_p.abstract_eval(*[v.aval for v in unknown_inputs],
-                                             **uk_params)
-  eqn = pe.new_eqn_recipe(trace, unknown_inputs, res_ref_unknown_outputs,
-                          run_state_p, uk_params,
-                          eqn_effects, source)
-  for t in res_ref_unknown_outputs: t.recipe = eqn
-  _, unknown_outputs = split_list(res_ref_unknown_outputs, [num_res])
-  return merge_lists(in_unknowns, known_outputs, unknown_outputs)
-pe.custom_partial_eval_rules[run_state_p] = _run_state_partial_eval
-
-def _run_state_partial_eval_custom(
-    saveable: Callable[..., pe.RematCases_],
-    in_unknowns: Sequence[bool],
-    in_inst: Sequence[bool],
-    eqn: core.JaxprEqn):
-  if not any(in_unknowns):
-    return eqn, None, in_unknowns, [False] * len(in_unknowns), []
-  jaxpr, which_linear, is_initialized = split_dict(
-      eqn.params, ["jaxpr", "which_linear", "is_initialized"]
-  )
-  if not all(is_initialized):
-    raise NotImplementedError(
-        "Uninitialized Refs are not supported in partial_eval_custom."
-    )
-  num_inputs = len(eqn.invars)
-  # We first need to run a fixpoint to determine which of the `Ref`s are unknown
-  # after running the for loop. However, the jaxpr has no outputs. Instead, we
-  # discharge the body and run the fixpoint with the discharged jaxpr. We can do
-  # this because the outputs of the discharged jaxpr are one-to-one with the
-  # inputs.
-  discharged_jaxpr, discharged_consts = discharge_state(jaxpr, ())
-  discharged_jaxpr = discharged_jaxpr.replace(
-      invars=discharged_jaxpr.constvars + discharged_jaxpr.invars,
-      constvars=[])
-  in_unknowns, in_inst = list(in_unknowns), list(in_inst)
-  out_unknowns, out_inst =  in_unknowns, in_unknowns
-  for _ in range(num_inputs):
-    jaxpr_in_unknowns = [False] * len(discharged_consts) + in_unknowns
-    _, _, out_unknowns, out_inst, _, _ = pe.partial_eval_jaxpr_stateful(
-        discharged_jaxpr,
-        in_unknowns=jaxpr_in_unknowns,
-        in_inst=jaxpr_in_unknowns,
-        ensure_out_unknowns=in_unknowns,
-        ensure_out_inst=in_unknowns,
-        saveable=saveable)
-    out_unknowns = list(out_unknowns)
-    if out_unknowns == in_unknowns:
-      break
-    in_unknowns = map(operator.or_, in_unknowns, out_unknowns)
-  else:
-    if num_inputs > 0:
-      raise Exception("Invalid fixpoint")
-  del out_unknowns # Redundant since it's the same as `in_unknowns`
-  new_inst = [x for x, already, inst in zip(eqn.invars, in_inst, out_inst)
-              if type(x) is core.Var and inst and not already]
-
-  # We use `partial_eval_jaxpr_stateful` here because it won't remove effectful
-  # primitives like `get`/`set`.
-  jaxpr_known_resout, jaxpr_staged_resin_, _, _, num_res_out, num_res_ref = \
-        pe.partial_eval_jaxpr_stateful(jaxpr, in_unknowns,
-            in_unknowns, [], [], saveable)
-  num_res = num_res_ref + num_res_out
-  # `partial_eval_jaxpr_stateful` will give us jaxprs that have hybrid `Ref` and
-  # non-Ref input/outputs. However, we'd like to bind these jaxprs to a
-  # `for`, which expects only `Ref` inputs and no output. We need to convert
-  # both of these jaxprs into ones that are compatible with `for`.
-  # TODO(sharadmv,mattjj): implement "passthrough" optimization.
-
-  # `jaxpr_known_resout` is a jaxpr that maps from all the input `Refs`
-  # to output residual values (none of them should be `Ref`s). We'll need to
-  # convert the output residual values into `Ref`s that are initially empty
-  # `Ref`s that are written to at the end of the jaxpr.
-  jaxpr_known, res_avals = _convert_outputs_to_writes(jaxpr_known_resout)
-
-  # In a stateful partial_eval, the residuals should be `Ref`s.
-  res_avals = map(AbstractRef, res_avals)
-
-  known_invars, staged_invars = partition_list(in_unknowns, eqn.invars)
-  known_outvars, staged_outvars = partition_list(in_unknowns, eqn.outvars)
-  newvar = core.gensym()
-  _, res_ref_avals = split_list([v.aval for v in jaxpr_known_resout.invars],
-                                [len(known_invars)])
-  nonref_resvars = map(newvar, res_avals)
-  ref_resvars = map(newvar, res_ref_avals)
-  known_out_resvars = map(newvar, [*res_ref_avals, *res_avals])
-
-  known_which_linear, _ = partition_list(in_unknowns, which_linear)
-  jaxpr_known_which_linear = (*known_which_linear, *(False,) * num_res)
-  known_and_res_invars = [*known_invars, *ref_resvars, *nonref_resvars]
-
-  known_params = dict(jaxpr=jaxpr_known, which_linear=jaxpr_known_which_linear,
-                      # TODO(sharadmv): compute this in the general case
-                      is_initialized=(True,) * len(jaxpr_known.invars))
-  _, known_effects = run_state_p.abstract_eval(
-      *[v.aval for v in known_and_res_invars], **known_params)
-  eqn_known = pe.new_jaxpr_eqn(known_and_res_invars,
-                               [*known_outvars, *known_out_resvars],
-                               run_state_p, known_params,
-                               known_effects, eqn.source_info, eqn.ctx)
-
-  jaxpr_staged = _convert_inputs_to_reads(len(res_avals), jaxpr_staged_resin_)
-
-  _, staged_which_linear = partition_list(in_unknowns, which_linear)
-  which_linear_unknown = (*[False] * num_res, *staged_which_linear)
-  staged_params = dict(jaxpr=jaxpr_staged, which_linear=which_linear_unknown,
-                       # TODO(sharadmv): compute this in the general case
-                       is_initialized=(True,) * len(jaxpr_staged.invars))
-  rejiggered_resvars = [*nonref_resvars, *ref_resvars]
-  _, staged_invars = partition_list(in_unknowns, eqn.invars)
-  res_staged_invars = [*rejiggered_resvars, *staged_invars]
-  _, staged_effects = run_state_p.abstract_eval(
-      *[v.aval for v in res_staged_invars], **staged_params)
-  _, staged_outvars = partition_list(in_unknowns, eqn.outvars)
-  if num_res:
-
-    def staged(*args):
-      out = run_state_p.bind(*args, **staged_params)
-      return out[num_res:]
-    staged_call_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(staged, debug_info=jaxpr_staged.debug_info),
-        [v.aval for v in res_staged_invars])
-    eqn_staged = pe.new_jaxpr_eqn(res_staged_invars,
-                                  staged_outvars,
-                                  core.closed_call_p,
-                                  dict(call_jaxpr=pe.close_jaxpr(staged_call_jaxpr)),
-                                  staged_effects, eqn.source_info, eqn.ctx)
-    assert len(res_staged_invars) == len(staged_call_jaxpr.invars)
-    assert len(staged_outvars) == len(staged_call_jaxpr.outvars)
-  else:
-    eqn_staged = pe.new_jaxpr_eqn(staged_invars,
-                                  staged_outvars,
-                                  run_state_p,
-                                  staged_params,
-                                  staged_effects, eqn.source_info, eqn.ctx)
-  new_vars = [*new_inst, *nonref_resvars, *ref_resvars]
-  return eqn_known, eqn_staged, in_unknowns, in_unknowns, new_vars
-pe.partial_eval_jaxpr_custom_rules[run_state_p] = _run_state_partial_eval_custom
-
-def _transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: Sequence[bool],
-                     is_initialized: tuple[bool, ...]) -> tuple[core.Jaxpr, Any]:
-  if not all(is_initialized):
-    raise NotImplementedError(
-        "Uninitialized Refs are not supported in transpose."
-    )
-  def trans(*args):
-    # First we want to run the computation to read all the residual refs. We can
-    # do that by using partial evaluation with all linear inputs unknown.
-    res_jaxpr_, tangent_jaxpr_, *_, num_res_out, num_res_ref = \
-        pe.partial_eval_jaxpr_stateful(jaxpr, which_linear, in_inst=which_linear,
-                                       ensure_out_inst=[],
-                                       ensure_out_unknowns=[],
-                                       saveable=_save_everything)
-
-    num_unknown = sum(which_linear)
-    num_known = len(jaxpr.invars) - num_unknown
-    res_args, _ = partition_list(which_linear, args)
-    res_jaxpr_avals = [v.aval for v in res_jaxpr_.invars]
-    _, res_avals = split_list(res_jaxpr_avals, [num_known])
-    res_avals = [a.inner_aval for a in res_avals]  # pytype: disable=attribute-error
-    all_avals = [*res_avals, *[v.aval for v in res_jaxpr_.outvars]]
-    empty_res = map(ad.zeros_like_aval, all_avals)
-    res_jaxpr, _ = _convert_outputs_to_writes(res_jaxpr_)
-    res = run_state_p.bind(
-        *res_args,
-        *empty_res,
-        jaxpr=res_jaxpr,
-        which_linear=(False,) * (len(res_args) + len(empty_res)),
-        # TODO(sharadmv): compute this in the general case
-        is_initialized=(True,) * len(res_jaxpr.invars),
-    )
-    res = res[len(res_args):]
-    ref_res_, nonref_res_ = split_list(res, [num_res_ref])
-
-    # Now that we have residual values, we run the tangent jaxpr. It takes as
-    # input the residuals, the loop index, and all the refs (at least, the ones
-    # that are used in the body). Luckily, `tangent_jaxpr_` has all known and
-    # unknown inputs!
-    tangent_jaxpr, used_inputs = pe.dce_jaxpr(tangent_jaxpr_, [])
-    used_res, used_cts = split_list(used_inputs, [len(res)])
-    used_nonref_res, used_ref_res = split_list(used_res, [num_res_out])
-    _, nonref_res = partition_list(used_nonref_res, nonref_res_)
-    _, ref_res = partition_list(used_ref_res, ref_res_)
-    primals_args = [*nonref_res, *ref_res]
-    _, tangent_args = partition_list(which_linear, args)
-    _, ct_args = partition_list(used_cts, tangent_args)
-    ad.backward_pass(tangent_jaxpr, False, (), (*primals_args, *ct_args), ())
-    return []
-  jaxpr_trans, _, consts, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(trans,
-                   debug_info=jaxpr.debug_info),
-      [v.aval for v in jaxpr.invars])
-  return jaxpr_trans, consts
-
-def _run_state_transpose(in_cts, *args, jaxpr: core.Jaxpr,
-                         which_linear: tuple[bool, ...],
-                         is_initialized: tuple[bool, ...]):
-  if not all(is_initialized):
-    raise NotImplementedError(
-        "Uninitialized Refs are not supported in transpose."
-    )
-  # if any in_ct is nonzero, we definitely want it in args_ (and the
-  # corresponding x in args could be an undefined primal, but doesn't have to be)
-  # for non-res stuff:
-  #   getting and setting => (nonzero ct, UndefinedPrimal arg)
-  #   just setting =>        (nonzero ct, not UndefinedPrimal, dummy value)
-  #   just getting =>        (zero ct   , UndefinedPrimal arg)
-  # for res stuff:
-  #                          (zero ct   , not UndefinedPrimal)
-  assert any(which_linear)
-  transpose_args = []
-  for x, ct in zip(args, in_cts):
-    if   type(ct) is     ad_util.Zero and not ad.is_undefined_primal(x):
-      # this is a residual, take x!
-      transpose_args.append(x)
-    elif type(ct) is     ad_util.Zero and     ad.is_undefined_primal(x):
-      # the loop was 'just getting', plug in a zero
-      transpose_args.append(ad_util.zeros_like_aval(x.aval))
-    elif type(ct) is not ad_util.Zero and not ad.is_undefined_primal(x):
-      # the loop was 'just setting', grab that cotangent! x is dummy
-      transpose_args.append(ct)
-    elif type(ct) is not ad_util.Zero and     ad.is_undefined_primal(x):
-      # the loop was 'getting and setting', grab that cotangent!
-      transpose_args.append(ct)
-  jaxpr_transpose_, consts = _transpose_jaxpr(
-      jaxpr, which_linear, is_initialized
-  )
-  jaxpr_transpose = hoist_consts_to_refs(jaxpr_transpose_)
-  which_linear = (*[False] * len(consts), *which_linear)
-  const_all_outs = run_state_p.bind(
-      *consts,
-      *transpose_args,
-      jaxpr=jaxpr_transpose,
-      which_linear=which_linear,
-      # TODO(sharadmv): compute this in the general case
-      is_initialized=(True,) * len(jaxpr_transpose.invars),
-  )
-  _, all_outs = split_list(const_all_outs, [len(consts)])
-  ct_outs = [ct if ad.is_undefined_primal(x) else None
-             for x, ct in zip(args, all_outs)]
-  return ct_outs
-ad.primitive_transposes[run_state_p] = _run_state_transpose
-
 @register_discharge_rule(run_state_p)
 def _run_state_discharge_rule(in_avals: Sequence[core.AbstractValue],
                               out_avals: Sequence[core.AbstractValue],
@@ -1102,7 +790,7 @@ def _initial_style_jaxpr(fun: Callable,
   fun_, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(fun, debug_info=debug),
       tree_util.treedef_tuple((in_tree,)))
-  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, in_avals)
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun_, in_avals)
   return jaxpr, consts, out_tree_thunk()
 
 
@@ -1148,11 +836,25 @@ def run_state_reference(f: Callable[..., None]):
     return in_tree.unflatten(out_flat)
   return wrapped
 
-
-@register_discharge_rule(pjit.pjit_p)
+@register_discharge_rule(pjit.jit_p)
 def _pjit_state_discharge_rule(
     in_avals, out_avals, *args, jaxpr, in_shardings, out_shardings,
     in_layouts, out_layouts, **params):
+  if not (any(isinstance(e, RefEffect) for e in jaxpr.effects)
+          or any(isinstance(a, AbstractRef) for a in jaxpr.in_avals)):
+    # Only internal ref effects
+    jaxpr_ = discharge_state2(jaxpr)
+    out = pjit.jit_p.bind(
+        *args,
+        jaxpr=jaxpr_,
+        in_shardings=in_shardings,
+        out_shardings=out_shardings,
+        in_layouts=in_layouts,
+        out_layouts=out_layouts,
+        **params,
+    )
+    new_invals = [None] * len(in_avals)
+    return new_invals, out
   if not all(isinstance(s, sharding_impls.UnspecifiedValue) for s in (*in_shardings, *out_shardings)):
     raise NotImplementedError
 
@@ -1160,22 +862,42 @@ def _pjit_state_discharge_rule(
           all(l is None for l in out_layouts)):
     raise NotImplementedError
 
-  jaxpr, consts = jaxpr.jaxpr, jaxpr.consts
-  num_outs = len(jaxpr.outvars)
-  discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)
-  discharged_closed_jaxpr = core.ClosedJaxpr(discharged_jaxpr, discharged_consts)
-  new_in_shardings = (sharding_impls.UNSPECIFIED,) * len(discharged_jaxpr.invars)
-  new_out_shardings = (sharding_impls.UNSPECIFIED,) * len(discharged_jaxpr.outvars)
-  new_in_layouts = (None,) * len(discharged_jaxpr.invars)
-  new_out_layouts = (None,) * len(discharged_jaxpr.outvars)
-  out_and_ref_vals = pjit.pjit_p.bind(
-      *args, jaxpr=discharged_closed_jaxpr, in_shardings=new_in_shardings,
+  discharged_jaxpr = discharge_state2(jaxpr)
+  new_in_shardings = (sharding_impls.UNSPECIFIED,) * len(discharged_jaxpr.in_avals)
+  new_out_shardings = (sharding_impls.UNSPECIFIED,) * len(discharged_jaxpr.out_avals)
+  new_in_layouts = (None,) * len(discharged_jaxpr.in_avals)
+  new_out_layouts = (None,) * len(discharged_jaxpr.out_avals)
+  out_and_ref_vals = pjit.jit_p.bind(
+      *args, jaxpr=discharged_jaxpr, in_shardings=new_in_shardings,
       out_shardings=new_out_shardings, in_layouts=new_in_layouts,
       out_layouts=new_out_layouts, **params)
-  out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
+  out_vals, ref_vals = split_list(out_and_ref_vals, [len(jaxpr.out_avals)])
   ref_vals_iter = iter(ref_vals)
   new_invals = tuple(next(ref_vals_iter) if isinstance(aval, AbstractRef)
                      else None for aval in in_avals)
   sentinel = object()
   assert next(ref_vals_iter, sentinel) is sentinel
   return new_invals, out_vals
+
+
+@register_discharge_rule(custom_derivatives.custom_vjp_call_p)
+def custom_vjp_call_discharge(in_avals, out_avals, *args, call_jaxpr,
+                              fwd_jaxpr_thunk, bwd, out_trees, symbolic_zeros,
+                              num_consts):
+  # Discharge happens after all AD is done, so we can discard the AD rules.
+  del fwd_jaxpr_thunk, bwd, out_trees, symbolic_zeros, num_consts
+  dis_jaxpr, dis_consts = discharge_state(call_jaxpr.jaxpr, call_jaxpr.consts)
+  outs = _eval_jaxpr_ad_error(dis_jaxpr, dis_consts, args)
+  out_vals, ref_vals = split_list(outs, [len(call_jaxpr.out_avals)])
+  ref_vals_ = iter(ref_vals)
+  new_invals = [next(ref_vals_) if isinstance(aval, AbstractRef) else None
+                for aval in in_avals]
+  assert next(ref_vals_, None) is None
+  return new_invals, out_vals
+
+@partial(custom_derivatives.custom_jvp, nondiff_argnums=(0,))
+def _eval_jaxpr_ad_error(dis_jaxpr, consts, args):
+  return core.eval_jaxpr(dis_jaxpr, consts, *args)
+@_eval_jaxpr_ad_error.defjvp
+def _eval_jaxpr_ad_error_jvp(*_):
+  raise Exception("should be unreachable, AD after discharge")

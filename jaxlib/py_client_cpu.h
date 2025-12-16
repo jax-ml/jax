@@ -18,11 +18,11 @@ limitations under the License.
 
 #include "xla/ffi/api/ffi.h"
 
-namespace xla {
+namespace jax {
 
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kCpuTransposePlanCacheInstantiate);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kXlaFfiPythonCpuCallback);
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_PY_CLIENT_CPU_H_

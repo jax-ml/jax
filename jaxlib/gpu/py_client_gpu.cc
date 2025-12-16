@@ -21,6 +21,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -31,7 +32,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "include/dlpack/dlpack.h"
 #include "nanobind/nanobind.h"
@@ -55,13 +55,24 @@ namespace JAX_GPU_NAMESPACE {
 
 struct GpuTransposePlanCache {
   static xla::ffi::TypeId id;
+  static xla::ffi::TypeInfo info;
+
   explicit GpuTransposePlanCache(int capacity) : cache(capacity) {}
   xla::TransposePlanCache cache;
 };
+
 xla::ffi::TypeId GpuTransposePlanCache::id = {};
+xla::ffi::TypeInfo GpuTransposePlanCache::info =
+    xla::ffi::MakeTypeInfo<GpuTransposePlanCache>();
 
 XLA_FFI_REGISTER_TYPE(xla::ffi::GetXlaFfiApi(), "GpuTransposePlanCache",
-                      &GpuTransposePlanCache::id);
+                      &GpuTransposePlanCache::id, &GpuTransposePlanCache::info);
+
+std::pair<xla::ffi::TypeId*, const xla::ffi::TypeInfo*>
+GpuTransposePlanCacheTypeInfo() {
+  return std::make_pair(&GpuTransposePlanCache::id,
+                        &GpuTransposePlanCache::info);
+}
 
 static xla::ffi::ErrorOr<std::unique_ptr<GpuTransposePlanCache>>
 GpuTransposePlanCacheInstantiate(uint64_t index) {
@@ -71,6 +82,7 @@ GpuTransposePlanCacheInstantiate(uint64_t index) {
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kGpuTransposePlanCacheInstantiate, GpuTransposePlanCacheInstantiate,
     xla::ffi::Ffi::BindInstantiate().Attr<uint64_t>("index"));
+
 xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
                                         xla::FfiLoadedHostCallbacks* callbacks,
                                         GpuTransposePlanCache* transpose_cache,
@@ -152,18 +164,19 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
     PyTuple_SET_ITEM(host_input_arrays.ptr(), i, array.inc_ref().ptr());
   }
 
-  xla::EnterHostCallback();
   // TODO(dsuo): Change this to use the Python vectorcall protocol, which allows
   // you to avoid constructing a tuple for the arguments.
   nb::tuple result_tuple;
-  try {
-    auto result_object = callback(*nb::borrow<nb::args>(host_input_arrays));
-    result_tuple = nb::cast<nb::tuple>(result_object);
-  } catch (nb::python_error& e) {
-    return xla::ffi::Error::Internal(
-        absl::StrFormat("CpuCallback error calling callback: %s", e.what()));
+  {
+    xla::HostCallbackScope scope;
+    try {
+      auto result_object = callback(*nb::borrow<nb::args>(host_input_arrays));
+      result_tuple = nb::cast<nb::tuple>(result_object);
+    } catch (nb::python_error& e) {
+      return xla::ffi::Error::Internal(
+          absl::StrFormat("CpuCallback error calling callback: %s", e.what()));
+    }
   }
-  xla::LeaveHostCallback();
 
   std::vector<void*> temp_buffers;
   for (size_t i = 0; i < rets.size(); ++i) {
@@ -271,9 +284,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     (jax::XlaBufferCallback<kDLROCM>),
 #endif
     xla::ffi::Ffi::Bind()
+        .Ctx<xla::ffi::Context>()
         .Ctx<xla::ffi::DeviceOrdinal>()
-        .Ctx<xla::ffi::FfiApi>()
-        .Ctx<xla::ffi::FfiExecutionContext>()
         .Ctx<xla::ffi::UserData<xla::FfiLoadedHostCallbacks>>()
         .Attr<uint64_t>("index")
         .RemainingArgs()
@@ -287,9 +299,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     (jax::XlaBufferCallback<kDLROCM>),
 #endif
     xla::ffi::Ffi::Bind()
+        .Ctx<xla::ffi::Context>()
         .Ctx<xla::ffi::DeviceOrdinal>()
-        .Ctx<xla::ffi::FfiApi>()
-        .Ctx<xla::ffi::FfiExecutionContext>()
         .Ctx<xla::ffi::UserData<xla::FfiLoadedHostCallbacks>>()
         .Attr<uint64_t>("index")
         .RemainingArgs()

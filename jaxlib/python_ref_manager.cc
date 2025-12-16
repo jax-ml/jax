@@ -26,8 +26,9 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
+#include "tsl/profiler/lib/traceme.h"
 
-namespace xla {
+namespace jax {
 
 namespace nb = nanobind;
 
@@ -58,14 +59,14 @@ PythonRefManager::ManageReferences(absl::Span<nb::object> objects) {
 }
 
 void PythonRefManager::AddGarbage(nb::object garbage) {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   // We want to collect arbitrary python garbage (e.g., buffers) aggressively.
   garbage_count_.fetch_add(100, std::memory_order_relaxed);
   python_garbage_.push_back(std::move(garbage));
 }
 
 void PythonRefManager::AddGarbage(absl::Span<nb::object> garbage) {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   // We want to collect arbitrary python garbage (e.g., buffers) aggressively.
   garbage_count_.fetch_add(100, std::memory_order_relaxed);
   for (nb::object& o : garbage) {
@@ -75,7 +76,7 @@ void PythonRefManager::AddGarbage(absl::Span<nb::object> garbage) {
 
 void PythonRefManager::AddGarbage(
     absl::Span<std::pair<PyCodeObject*, int> const> garbage) {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   // We don't care about collecting stack frame objects often. We grab a lot of
   // tracebacks and the code objects are most likely live for the entire
   // process.
@@ -87,9 +88,10 @@ void PythonRefManager::AddGarbage(
 
 void PythonRefManager::CollectGarbage() {
   // TODO(phawkins): we should CHECK(PyGILState_Check());
+  tsl::profiler::TraceMe traceme("PythonRefManager::CollectGarbage");
   std::deque<nanobind::object> garbage;
   {
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(mu_);
     garbage_count_ = 0;
     garbage.swap(python_garbage_);
   }
@@ -103,4 +105,4 @@ PythonRefManager* GlobalPyRefManager() {
   return static_ref_manager;
 }
 
-}  // namespace xla
+}  // namespace jax

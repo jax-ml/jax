@@ -41,7 +41,6 @@ def convert_and_save_model(
     input_signatures: Sequence[tf.TensorSpec],
     polymorphic_shapes: str | None = None,
     with_gradient: bool = False,
-    enable_xla: bool = True,
     compile_model: bool = True,
     saved_model_options: tf.saved_model.SaveOptions | None = None):
   """Convert a JAX function and saves a SavedModel.
@@ -80,8 +79,6 @@ def convert_and_save_model(
       corresponding input shapes.
     with_gradient: the value to use for the `with_gradient` parameter for
       `jax2tf.convert`.
-    enable_xla: the value to use for the `enable_xla` parameter for
-      `jax2tf.convert`.
     compile_model: use TensorFlow jit_compiler on the SavedModel. This
       is needed if the SavedModel will be used for TensorFlow serving.
     polymorphic_shapes: if given then it will be used as the
@@ -99,8 +96,7 @@ def convert_and_save_model(
   tf_fn = jax2tf.convert(
     jax_fn,
     with_gradient=with_gradient,
-    polymorphic_shapes=[None, polymorphic_shapes],
-    enable_xla=enable_xla)
+    polymorphic_shapes=[None, polymorphic_shapes])
 
   # Create tf.Variables for the parameters. If you want more useful variable
   # names, you can use `tree.map_structure_with_path` from the `dm-tree` package

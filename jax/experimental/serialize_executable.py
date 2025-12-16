@@ -20,7 +20,7 @@ import io
 
 import jax
 from jax._src.lib import xla_client as xc
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def serialize(compiled: jax.stages.Compiled):
@@ -33,8 +33,12 @@ def serialize(compiled: jax.stages.Compiled):
                                 '_unloaded_executable', None)
   if unloaded_executable is None:
     raise ValueError("Compilation does not support serialization")
+  if getattr(unloaded_executable, 'mut', None) and unloaded_executable.mut.in_mut:
+    raise ValueError("can't serialize with a closed-over mutable array ref")
   args_info_flat, in_tree = jax.tree_util.tree_flatten(compiled.args_info)
-
+  # TODO(necula): deal with constants in serialized executables
+  if compiled._params.const_args:
+    raise NotImplementedError("serialize_executables with const_args")
   with io.BytesIO() as file:
     _JaxPjrtPickler(file).dump(
         (unloaded_executable, args_info_flat, compiled._no_kwargs))
@@ -69,9 +73,9 @@ def deserialize_and_load(serialized,
   args_info = in_tree.unflatten(args_info_flat)
 
   loaded_compiled_obj = unloaded_executable.load()
-
+  # TODO(necula): deal with constants in serialized executables
   return jax.stages.Compiled(
-      loaded_compiled_obj, args_info, out_tree, no_kwargs=no_kwargs)
+      loaded_compiled_obj, [], args_info, out_tree, no_kwargs=no_kwargs)
 
 
 class _JaxPjrtPickler(pickle.Pickler):

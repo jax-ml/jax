@@ -16,7 +16,7 @@
 # Set up the build environment for JAX CI jobs. This script depends on the
 # "JAXCI_" environment variables set or sourced in the build script.
 
-# Pre-emptively mark the JAX git directory as safe. This is necessary for JAX CI
+# Preemptively mark the JAX git directory as safe. This is necessary for JAX CI
 # jobs running on Linux runners in GitHub Actions. Without this, git complains
 # that the directory has dubious ownership and refuses to run any commands.
 # Avoid running on Windows runners as git runs into issues with not being able
@@ -31,6 +31,9 @@ fi
 function clone_main_xla() {
   echo "Cloning XLA at HEAD to $(pwd)/xla"
   git clone --depth=1 https://github.com/openxla/xla.git $(pwd)/xla
+  cd $(pwd)/xla
+  echo "XLA commit: $(git log -1 --format=%H)"
+  cd ..
   export JAXCI_XLA_GIT_DIR=$(pwd)/xla
 }
 

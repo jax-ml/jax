@@ -14,13 +14,15 @@
 
 """Layout & transform inference convenience utils."""
 
-from collections.abc import Callable, Sequence
-import enum
+from collections.abc import Sequence
 from functools import partial
-import itertools
 from typing import cast, Union
 
 from jax._src.lib.mlir import ir
+
+from . import fragmented_array as fa
+from . import tcgen05
+from . import utils
 
 MlirOperation = Union[ir.Operation, ir.OpView]
 
@@ -68,11 +70,70 @@ def out_transforms(op: MlirOperation) -> Sequence[ir.Attribute]:
   return op.attributes["out_transforms"]  # type: ignore
 
 
+def in_tmem_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
+  """Returns the in_tmem_layouts attribute of the given operation.
+
+  Raises:
+    ValueError: If the operation does not have an in_tmem_layouts attribute.
+  """
+  if "in_tmem_layouts" not in op.attributes:
+    raise ValueError(f"{op} does not have an in_tmem_layouts attribute.")
+  return op.attributes["in_tmem_layouts"]  # type: ignore
+
+
+def out_tmem_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
+  """Returns the out_tmem_layouts attribute of the given operation.
+
+  Raises:
+    ValueError: If the operation does not have an out_tmem_layouts attribute.
+  """
+  if "out_tmem_layouts" not in op.attributes:
+    raise ValueError(f"{op} does not have an out_tmem_layouts attribute.")
+  return op.attributes["out_tmem_layouts"]  # type: ignore
+
+
+def should_have_in_tmem_layout(op: MlirOperation) -> bool:
+  """Returns 'true' if the operation operands should be assigned a TMEM layout."""
+  return any(
+      ir.MemRefType.isinstance(v.type) and utils.is_tmem_ref(v)
+      for v in op.operands
+  )
+
+
+def should_have_out_tmem_layout(op: MlirOperation) -> bool:
+  """Returns 'true' if the operation results should be assigned a TMEM layout."""
+  return any(
+      ir.MemRefType.isinstance(v.type) and utils.is_tmem_ref(v)
+      for v in op.results
+  )
+
+
+def should_have_tmem_layout(op: MlirOperation) -> bool:
+  """Returns 'true' if the operation should be assigned a TMEM layout."""
+  return should_have_in_tmem_layout(op) or should_have_out_tmem_layout(op)
+
+
+def has_in_tmem_layouts_set(op: MlirOperation) -> bool:
+  return "in_tmem_layouts" in op.attributes
+
+
+def has_out_tmem_layouts_set(op: MlirOperation) -> bool:
+  return "out_tmem_layouts" in op.attributes
+
+
+def should_have_in_layout(op: MlirOperation) -> bool:
+  """Returns 'true' if the operation operands should be assigned a layout."""
+  return any(ir.VectorType.isinstance(v.type) for v in op.operands)
+
+
+def should_have_out_layout(op: MlirOperation) -> bool:
+  """Returns 'true' if the operation results should be assigned a layout."""
+  return any(ir.VectorType.isinstance(v.type) for v in op.results)
+
+
 def should_have_layout(op: MlirOperation) -> bool:
   """Returns 'true' if the operation should be assigned a layout."""
-
-  is_array = lambda v: ir.VectorType.isinstance(v.type)
-  return any(map(is_array, itertools.chain(op.operands, op.results)))  # type: ignore
+  return should_have_in_layout(op) or should_have_out_layout(op)
 
 
 def has_in_layouts_set(op: MlirOperation) -> bool:
@@ -135,16 +196,30 @@ in_transforms_for_operand = partial(
     _in_attr_for_operand, attr_name="in_transforms"
 )
 
+
+def should_have_in_transforms(op: ir.OpView) -> bool:
+  """Returns 'True' if the operation should be assigned in transforms."""
+  return any(map(is_transformable_smem_memref, op.operands))
+
+
+def should_have_out_transforms(op: ir.OpView) -> bool:
+  """Returns 'True' if the operation should be assigned out transforms."""
+  return any(map(is_transformable_smem_memref, op.results))
+
+
+def should_have_transforms(op: ir.OpView) -> bool:
+  """Returns 'True' if the operation should be assigned in/out transforms."""
+  return should_have_in_transforms(op) or should_have_out_transforms(op)
+
+
 def is_transformable_smem_memref(v: ir.Value) -> bool:
   """Whether the value is a memref in SMEM on which transforms should be applied."""
   barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
-  smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
   return (
       ir.MemRefType.isinstance(v.type)
       # barriers have no business being transformed
       and v.type.element_type != barrier_ty  # pylint: disable=attribute-error
-      and v.type.memory_space is not None  # pylint: disable=attribute-error
-      and v.type.memory_space == smem  # pylint: disable=attribute-error
+      and utils.is_smem_ref(v)
   )
 
 
@@ -207,25 +282,23 @@ def value_transforms(value: ir.Value) -> ir.Attribute | None:
   return _value_attr(value, "transforms")
 
 
-class TraversalOrder(enum.Enum):
-  """Traversal orders with respect to the data flow for IR."""
-
-  FORWARD = 1
-  BACKWARDS = 2
-
-
-def traverse_op(
-    op: ir.OpView,
-    callback: Callable[[ir.OpView], None],
-    traversal_order: TraversalOrder = TraversalOrder.FORWARD,
-):
-  """Traverses the operation and applies the callback in the given order."""
-  for region in op.operation.regions:
-    for block in region:
-      if traversal_order == TraversalOrder.FORWARD:
-        ops_to_traverse = list(block)
-      else:
-        ops_to_traverse = reversed(list(block))  # type: ignore
-      for block_op in ops_to_traverse:
-        traverse_op(block_op, callback, traversal_order)
-  callback(op)
+def is_mma_layout(layout: fa.FragmentedLayout) -> bool:
+  if not isinstance(layout, fa.TiledLayout):
+    return False
+  if layout in {
+      fa.WGMMA_LAYOUT,
+      fa.WGMMA_LAYOUT_ACC_32BIT,
+      fa.WGMMA_LAYOUT_UPCAST_2X,
+      fa.WGMMA_LAYOUT_UPCAST_4X,
+      fa.WGMMA_TRANSPOSED_LAYOUT,
+      fa.WGMMA_LAYOUT_8BIT,
+      fa.TCGEN05_LAYOUT,
+      fa.TCGEN05_TRANSPOSED_LAYOUT,
+  }:
+    return True
+  if len(layout.tiling.tiles[0]) != 2:
+    return False
+  columns = layout.tiling.tiles[0][1]
+  return columns % 16 == 0 and (
+      layout == tcgen05.fa_m64_collective_layout(columns)
+  )

@@ -14,6 +14,7 @@
 
 from absl.testing import absltest
 from absl.testing import parameterized
+import functools
 import jax
 from jax import random as jax_random
 from jax._src import test_util as jtu
@@ -27,7 +28,6 @@ import jax.numpy as jnp
 import numpy as np
 
 P = jax.sharding.PartitionSpec
-
 
 jax.config.parse_flags_with_absl()
 
@@ -47,15 +47,15 @@ class PRNGTest(jtu.JaxTestCase):
     else:
       key = jax.random.key(42, impl="rbg")
     key = jax.random.split(key, 10)
-    batched_key = plrandom.to_pallas_key(key)
+    batched_key = pltpu.to_pallas_key(key)
     batched_key_data = jax.random.key_data(batched_key)
-    vmapped_key = jax.vmap(plrandom.to_pallas_key)(key)
+    vmapped_key = jax.vmap(pltpu.to_pallas_key)(key)
     vmapped_key_data = jax.random.key_data(vmapped_key)
     np.testing.assert_array_equal(batched_key_data, vmapped_key_data)
 
   def test_pallas_key_raise_not_implemented_outside_of_kernel(self):
     key = jax_random.key(0, impl="rbg")
-    pallas_key = plrandom.to_pallas_key(key)
+    pallas_key = pltpu.to_pallas_key(key)
     # Using a pallas key outside of a kernel should raise an error when
     # trying to lower TPU-specific ops to XLA.
     # TODO(justinfu): Make this error more specific to pallas PRNG usage.
@@ -105,41 +105,54 @@ class PRNGTest(jtu.JaxTestCase):
     self.assertLessEqual(jnp.max(result), np.iinfo(jnp.int32).max)
     self.assertGreaterEqual(jnp.min(result), np.iinfo(jnp.int32).min)
 
-  def test_stateful_uniform_sample(self):
+  @parameterized.parameters(
+      (pltpu.stateful_uniform, jnp.float32),
+      (pltpu.stateful_normal, jnp.float32),
+  )
+  def test_stateful_sample(self, generator, dtype):
     # Test stateful RNG using the jax.random API wrappers.
     def body(key_ref, o_ref):
-      plrandom.set_seed(key_ref[...])
-      o_ref[...] = plrandom.uniform(
-          shape=o_ref[...].shape, minval=0.0, maxval=1.0)
+      pltpu.prng_seed(key_ref[...])
+      o_ref[...] = generator(shape=o_ref[...].shape)
 
     rbg_key = jax_random.key(0, impl="rbg")
-    key = plrandom.to_pallas_key(rbg_key)
-    o_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    key = pltpu.to_pallas_key(rbg_key)
+    o_shape = jax.ShapeDtypeStruct((8, 128), dtype)
     result = pl.pallas_call(
         body,
         in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
         out_shape=o_shape,
     )(key)
-    self.assertGreaterEqual(jnp.min(result), 0)
-    self.assertLessEqual(jnp.max(result), 1.0)
+    # Check that the numbers are different.
+    self.assertGreaterEqual(jnp.max(result), jnp.min(result))
 
-  def test_stateless_uniform_sample(self):
+  @parameterized.parameters(
+      (jax_random.uniform, jnp.float32, None),
+      (jax_random.uniform, jnp.float32, (1, 1)),
+      (jax_random.normal, jnp.float32, None),
+      (jax_random.bits, jnp.uint32, None),
+  )
+  def test_stateless_sample(self, generator, dtype, key_shape):
     # Test keyed RNG using the jax.random API.
     def body(key_ref, o_ref):
-      o_ref[...] = jax_random.uniform(
-          key_ref[...], shape=o_ref[...].shape, minval=0.0, maxval=1.0
+      if key_shape:
+        key_ref = key_ref.at[*((0,) * len(key_shape))]
+      o_ref[...] = generator(
+          key_ref[...], shape=o_ref[...].shape
       )
 
     rbg_key = jax_random.key(0, impl="rbg")
-    key = plrandom.to_pallas_key(rbg_key)
-    o_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    key = pltpu.to_pallas_key(rbg_key)
+    if key_shape:
+      key = jnp.reshape(key, key_shape)
+    o_shape = jax.ShapeDtypeStruct((8, 128), dtype)
     result = pl.pallas_call(
         body,
         in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
         out_shape=o_shape,
     )(key)
-    self.assertGreaterEqual(jnp.min(result), 0)
-    self.assertLessEqual(jnp.max(result), 1.0)
+    # Check that the numbers are different.
+    self.assertGreaterEqual(jnp.max(result), jnp.min(result))
 
   def test_key_data(self):
     def body(key_ref, o_ref):
@@ -147,7 +160,7 @@ class PRNGTest(jtu.JaxTestCase):
       o_ref[0, 0] = x0
       o_ref[0, 1] = x1
     rbg_key = jax_random.key(0, impl="rbg")
-    key = plrandom.to_pallas_key(rbg_key)
+    key = pltpu.to_pallas_key(rbg_key)
     expected_key_data = jax.random.key_data(key)
     o_shape = jax.ShapeDtypeStruct(expected_key_data.shape,
                                    expected_key_data.dtype)
@@ -159,6 +172,23 @@ class PRNGTest(jtu.JaxTestCase):
     )(key)
     self.assertArraysEqual(result, expected_key_data)
 
+  def test_squeezed_blockspec(self):
+    @functools.partial(
+        pl.pallas_call,
+        grid=(),
+        in_specs=[
+            pl.BlockSpec((pl.squeezed,), lambda: (0,), memory_space=pltpu.SMEM)
+        ],
+        out_specs=pl.BlockSpec((8, 128)),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(key_ref, o_ref):
+      o_ref[...] = jax_random.uniform(key_ref[...], shape=o_ref.shape)
+
+    # Just make sure this does not crash.
+    k = pltpu.to_pallas_key(jax_random.key(0, impl="rbg"))
+    kernel(k[None])
+
   def test_fold_in(self):
     # Test that folding in a value results in different random numbers.
     def body(key_ref, o_ref):
@@ -167,13 +197,13 @@ class PRNGTest(jtu.JaxTestCase):
           key, shape=o_ref[0, ...].shape, minval=0.0, maxval=1.0
       )
 
-      key = jax_random.fold_in(key, 2)
+      key = jax_random.fold_in(key, jnp.uint32(2))
       o_ref[1, ...] = jax_random.uniform(
           key, shape=o_ref[1, ...].shape, minval=0.0, maxval=1.0
       )
 
     rbg_key = jax_random.key(0, impl="rbg")
-    key = plrandom.to_pallas_key(rbg_key)
+    key = pltpu.to_pallas_key(rbg_key)
     o_shape = jax.ShapeDtypeStruct((2, 8, 128), jnp.float32)
     result = pl.pallas_call(
         body,
@@ -184,8 +214,36 @@ class PRNGTest(jtu.JaxTestCase):
     result_b = result[1]
     np.testing.assert_array_compare(np.not_equal, result_a, result_b)
 
+  def test_key_in_core_map(self):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Fails on TPU <= v3")
 
-class BlockInvarianceTest(parameterized.TestCase):
+    def main(refs):
+      key_hbm, o_ref = refs
+      @pl.core_map(pltpu.create_tensorcore_mesh('core'))
+      def _():
+        @functools.partial(pl.run_scoped,
+                          key_smem=pltpu.SMEM((), key_hbm.dtype),
+                          o_vmem=pltpu.VMEM(o_ref.shape, o_ref.dtype))
+        def _scoped(key_smem, o_vmem):
+          pltpu.sync_copy(key_hbm, key_smem)
+          o_vmem[...] = jax_random.uniform(
+              key_smem[...], shape=o_ref.shape, minval=0.0, maxval=1.0
+          )
+          pltpu.sync_copy(o_vmem, o_ref)
+
+    @jax.jit
+    def f(rng_key):
+      y = jnp.zeros((8, 128), dtype=jnp.float32)
+      _, y = pl.run_state(main)((rng_key, y))
+      return y
+
+    key = pltpu.to_pallas_key(jax_random.key(0, impl="rbg"))
+    y = f(key)
+    self.assertGreaterEqual(jnp.max(y), jnp.min(y))
+
+
+class BlockInvarianceTest(jtu.JaxTestCase):
 
   def setUp(self):
     if not jtu.test_device_matches(["tpu"]):
@@ -197,7 +255,7 @@ class BlockInvarianceTest(parameterized.TestCase):
     def make_kernel_body(index_map):
       def body(key_ref, o_ref):
         key = key_ref[...]
-        samples = plrandom.sample_block(
+        samples = pltpu.sample_block(
             jax.random.uniform,
             key,
             block_size=o_ref[...].shape,
@@ -232,37 +290,34 @@ class BlockInvarianceTest(parameterized.TestCase):
     np.testing.assert_array_equal(result_16x128, result_32x256)
 
 
-class ThreefryTest(parameterized.TestCase):
+class ThreefryTest(jtu.JaxTestCase):
 
   def setUp(self):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Need TPU devices")
     super().setUp()
 
-  @parameterized.parameters(
-      ((8, 128),),
-      ((32, 256),),
-      ((4, 16, 128),),
+  @parameterized.product(
+      shape=((8, 128), (32, 256), (4, 16, 128)),
+      generator_and_dtype=((jax_random.uniform, jnp.float32),
+                           (jax_random.normal, jnp.float32),
+                           (jax_random.bits, jnp.uint32))
   )
-  def test_uniform_matches_jax_threefry(self, shape):
+  def test_pallas_matches_jax_threefry(self, shape, generator_and_dtype):
+    generator, dtype = generator_and_dtype
     def body(key_ref, o_ref):
-      key = jax.random.wrap_key_data(key_ref[0, ...], impl='threefry2x32')
-      o_ref[...] = jax_random.uniform(
-          key, shape=o_ref[...].shape, minval=0.0, maxval=1.0
-      )
+      key = key_ref[...]
+      o_ref[...] = generator(key, shape=o_ref[...].shape)
 
-    threefry_key = jax_random.key(0, impl="threefry2x32").reshape((1,))
-    o_shape = jax.ShapeDtypeStruct(shape, jnp.float32)
+    threefry_key = jax_random.key(0, impl="threefry2x32")
+    o_shape = jax.ShapeDtypeStruct(shape, dtype)
     with jax.threefry_partitionable(True):
-      # TODO(justinfu): support passing keys into VMEM.
       result = pl.pallas_call(
           body,
           in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
           out_shape=o_shape,
-      )(jax.random.key_data(threefry_key))
-      jax_result = jax_random.uniform(
-          threefry_key[0], shape=o_shape.shape, minval=0.0, maxval=1.0
-      )
+      )(threefry_key)
+      jax_result = generator(threefry_key, shape=o_shape.shape)
     np.testing.assert_array_equal(result, jax_result)
 
   @parameterized.parameters(
@@ -270,7 +325,7 @@ class ThreefryTest(parameterized.TestCase):
       ((137, 275),),  # Non block-aligned shape
       ((4, 512, 512),),  # Greater than 2D shape
       ((34,),),  # 1D
-      (tuple(),),  # 0D
+      ((),),  # 0D
   )
   def test_threefry_kernel_matches_jax_threefry(self, shape):
     with jax.threefry_partitionable(True):
@@ -291,7 +346,11 @@ class ThreefryTest(parameterized.TestCase):
       self.skipTest("Need at least 2 devices")
     num_devices = jax.device_count()
     partition = P("x")
-    mesh = jax.make_mesh((num_devices,), ("x",))
+    mesh = jax.make_mesh(
+        (num_devices,),
+        ("x",),
+        axis_types=(jax.sharding.AxisType.Auto,),
+    )
     sharding = jax.sharding.NamedSharding(mesh, partition)
 
     with jax.threefry_partitionable(True):
@@ -314,19 +373,32 @@ class ThreefryTest(parameterized.TestCase):
     np.testing.assert_array_equal(jax_gen, pl_gen)
 
 
-class PhiloxTest(parameterized.TestCase):
+class PhiloxTest(jtu.JaxTestCase):
 
   def setUp(self):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Need TPU devices")
     super().setUp()
 
+  @parameterized.product(
+      x=[0x1, 0x10000, 0xabcdef],
+      y=[0x1, 0x10000, 0xabcdef],
+  )
+  def test_mul_hi_lo(self, x, y):
+    x = jnp.uint32(x)
+    y = jnp.uint32(y)
+    hi, lo = philox.mul32_hi_lo(x, y)
+    with jax.enable_x64():
+      result = (hi.astype(jnp.uint64) << 32) + lo.astype(jnp.uint64)
+      ref = x.astype(jnp.uint64) * y.astype(jnp.uint64)
+      self.assertEqual(result, ref)
+
   @parameterized.parameters(
       ((512, 512),),
       ((137, 275),),  # Non block-aligned shape
       ((4, 512, 512),),  # Greater than 2D shape
       ((34,),),  # 1D
-      (tuple(),),  # 0D
+      ((),),  # 0D
   )
   def test_generate_uniform(self, shape):
     key = jax_random.key(0, impl="pallas_philox4x32")

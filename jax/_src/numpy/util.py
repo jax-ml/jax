@@ -14,31 +14,34 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from functools import partial
 from typing import Any, overload
-
+import math
 import warnings
+
+import numpy as np
 
 from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
+from jax._src import literals
 from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import SingleDeviceSharding
-from jax._src.util import safe_zip, safe_map, set_module
+from jax._src.util import safe_zip, safe_map, set_module, canonicalize_axis_tuple
+from jax._src.sharding import Sharding
+from jax._src.sharding_impls import (NamedSharding, PartitionSpec as P,
+                                     canonicalize_sharding)
 from jax._src.typing import (
     Array, ArrayLike, DimSize, Shape, SupportsNdim, SupportsShape, SupportsSize)
-from jax.sharding import Sharding
-
-import numpy as np
 
 zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map
 
 export = set_module('jax.numpy')
 
-_dtype = partial(dtypes.dtype, canonicalize=True)
+_dtype = dtypes.dtype
+
 
 def promote_shapes(fun_name: str, *args: ArrayLike) -> list[Array]:
   """Apply NumPy-style broadcasting, making args shape-compatible for lax.py."""
@@ -46,23 +49,16 @@ def promote_shapes(fun_name: str, *args: ArrayLike) -> list[Array]:
     return [lax.asarray(arg) for arg in args]
   else:
     shapes = [np.shape(arg) for arg in args]
-    if config.dynamic_shapes.value:
-      # With dynamic shapes we don't support singleton-dimension broadcasting;
-      # we instead broadcast out to the full shape as a temporary workaround.
-      # TODO(mattjj): revise this workaround
-      res_shape = lax.broadcast_shapes(*shapes)  # Can raise an error!
-      return [_broadcast_to(arg, res_shape) for arg, shp in zip(args, shapes)]
+    if all(len(shapes[0]) == len(s) for s in shapes[1:]):
+      return [lax.asarray(arg) for arg in args]  # no need for rank promotion, so rely on lax promotion
+    nonscalar_ranks = {len(shp) for shp in shapes if shp}
+    if len(nonscalar_ranks) < 2:
+      return [lax.asarray(arg) for arg in args]  # rely on lax scalar promotion
     else:
-      if all(len(shapes[0]) == len(s) for s in shapes[1:]):
-        return [lax.asarray(arg) for arg in args]  # no need for rank promotion, so rely on lax promotion
-      nonscalar_ranks = {len(shp) for shp in shapes if shp}
-      if len(nonscalar_ranks) < 2:
-        return [lax.asarray(arg) for arg in args]  # rely on lax scalar promotion
-      else:
-        if config.numpy_rank_promotion.value != "allow":
-          _rank_promotion_warning_or_error(fun_name, shapes)
-        result_rank = len(lax.broadcast_shapes(*shapes))
-        return [lax.broadcast_to_rank(arg, result_rank) for arg in args]
+      if config.numpy_rank_promotion.value != "allow":
+        _rank_promotion_warning_or_error(fun_name, shapes)
+      result_rank = len(lax.broadcast_shapes(*shapes))
+      return [lax.broadcast_to_rank(arg, result_rank) for arg in args]
 
 
 def _rank_promotion_warning_or_error(fun_name: str, shapes: Sequence[Shape]):
@@ -86,8 +82,7 @@ def promote_dtypes(*args: ArrayLike) -> list[Array]:
   if len(args) < 2:
     return [lax.asarray(arg) for arg in args]
   else:
-    to_dtype, weak_type = dtypes._lattice_result_type(*args)
-    to_dtype = dtypes.canonicalize_dtype(to_dtype, allow_extended_dtype=True)
+    to_dtype, weak_type = dtypes.lattice_result_type(*args)
     return [lax._convert_element_type(x, to_dtype, weak_type) for x in args]
 
 
@@ -95,8 +90,7 @@ def promote_dtypes_inexact(*args: ArrayLike) -> list[Array]:
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to an inexact type."""
-  to_dtype, weak_type = dtypes._lattice_result_type(*args)
-  to_dtype = dtypes.canonicalize_dtype(to_dtype, allow_extended_dtype=True)
+  to_dtype, weak_type = dtypes.lattice_result_type(*args)
   to_dtype_inexact = dtypes.to_inexact_dtype(to_dtype)  # type: ignore[arg-type]
   return [lax._convert_element_type(x, to_dtype_inexact, weak_type)
           for x in args]
@@ -106,8 +100,7 @@ def promote_dtypes_numeric(*args: ArrayLike) -> list[Array]:
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to a numeric (non-bool) type."""
-  to_dtype, weak_type = dtypes._lattice_result_type(*args)
-  to_dtype = dtypes.canonicalize_dtype(to_dtype)
+  to_dtype, weak_type = dtypes.lattice_result_type(*args)
   to_dtype_numeric = dtypes.to_numeric_dtype(to_dtype)
   return [lax._convert_element_type(x, to_dtype_numeric, weak_type)
           for x in args]
@@ -117,15 +110,16 @@ def promote_dtypes_complex(*args: ArrayLike) -> list[Array]:
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to a complex type."""
-  to_dtype, weak_type = dtypes._lattice_result_type(*args)
-  to_dtype = dtypes.canonicalize_dtype(to_dtype)
+  to_dtype, weak_type = dtypes.lattice_result_type(*args)
   to_dtype_complex = dtypes.to_complex_dtype(to_dtype)
   return [lax._convert_element_type(x, to_dtype_complex, weak_type)
           for x in args]
 
 
+_arraylike_types = (np.ndarray, Array, literals.TypedNdArray)
+
 def _arraylike(x: ArrayLike) -> bool:
-  return (isinstance(x, np.ndarray) or isinstance(x, Array) or
+  return (isinstance(x, _arraylike_types) or
           hasattr(x, '__jax_array__') or np.isscalar(x))
 
 
@@ -247,14 +241,7 @@ def promote_args_inexact(fun_name: str, *args: ArrayLike) -> list[Array]:
   return promote_shapes(fun_name, *promote_dtypes_inexact(*args))
 
 
-def canonicalize_device_to_sharding(device: xc.Device | Sharding | None
-                                    ) -> Sharding | None:
-  if isinstance(device, xc.Device):
-    return SingleDeviceSharding(device)
-  return device
-
-
-@partial(api.jit, inline=True)
+@api.jit(inline=True)
 def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
   """Like Numpy's broadcast_arrays but doesn't return views."""
   avals = [core.shaped_abstractify(arg) for arg in args]
@@ -275,7 +262,8 @@ def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
   # check that shape is concrete
   shape = core.canonicalize_shape(shape)  # type: ignore[arg-type]
   arr_shape = np.shape(arr)
-  if core.definitely_equal_shape(arr_shape, shape):
+  if (core.definitely_equal_shape(arr_shape, shape) and
+      (sharding is None or core.typeof(arr).sharding == sharding)):
     return arr
   elif len(shape) < len(arr_shape):
     raise ValueError(f"Cannot broadcast to shape with fewer dimensions: {arr_shape=} {shape=}")
@@ -315,12 +303,24 @@ def _where(condition: ArrayLike, x: ArrayLike, y: ArrayLike) -> Array:
     is_always_empty = False  # can fail with dynamic shapes
   return lax.select(condition, x_arr, y_arr) if not is_always_empty else x_arr
 
-
-def normalize_device_to_sharding(device: xc.Device | Sharding | None) -> Sharding | None:
+def canonicalize_device_to_sharding(device: xc.Device | Sharding | None
+                                    ) -> Sharding | None:
   if isinstance(device, xc.Device):
     return SingleDeviceSharding(device)
-  else:
-    return device
+  return device
+
+def choose_device_or_out_sharding(device: xc.Device | Sharding | None,
+                                  out_sharding: NamedSharding | P | None,
+                                  name: str) -> Sharding | NamedSharding | None:
+  if device is not None and out_sharding is not None:
+    raise ValueError(
+        f"Only one of `device` or `out_sharding` can be set. Got {device=} and"
+        f" {out_sharding=}")
+  if device is not None and out_sharding is None:
+    return canonicalize_device_to_sharding(device)
+  if device is None and out_sharding is not None:
+    return canonicalize_sharding(out_sharding, name)
+  return None
 
 
 @export
@@ -412,7 +412,7 @@ def shape(a: ArrayLike | SupportsShape) -> tuple[int, ...]:
 
 
 @export
-def size(a: ArrayLike | SupportsSize | SupportsShape, axis: int | None = None) -> int:
+def size(a: ArrayLike | SupportsSize | SupportsShape, axis: int | Sequence[int] | None = None) -> int:
   """Return number of elements along a given axis.
 
   JAX implementation of :func:`numpy.size`. Unlike ``np.size``, this function
@@ -422,8 +422,8 @@ def size(a: ArrayLike | SupportsSize | SupportsShape, axis: int | None = None) -
   Args:
     a: array-like object, or any object with a ``size`` attribute when ``axis`` is not
       specified, or with a ``shape`` attribute when ``axis`` is specified.
-    axis: optional integer along which to count elements. By default, return
-      the total number of elements.
+    axis: optional integer or sequence of integers indicating which axis or axes to count
+      elements along. ``None`` (the default) returns the total number of elements.
 
   Returns:
     An integer specifying the number of elements in ``a``.
@@ -439,6 +439,10 @@ def size(a: ArrayLike | SupportsSize | SupportsShape, axis: int | None = None) -
     6
     >>> jnp.size(y, axis=1)
     3
+    >>> jnp.size(y, axis=(1,))
+    3
+    >>> jnp.size(y, axis=(0, 1))
+    6
 
     This also works for scalars:
 
@@ -450,12 +454,9 @@ def size(a: ArrayLike | SupportsSize | SupportsShape, axis: int | None = None) -
     >>> y.size
     6
   """
-  if (axis is None and hasattr(a, "size")) or (axis is not None and hasattr(a, "shape")):
-    # NumPy dispatches to a.size/a.shape if available.
-    return np.size(a, axis=axis)  # type: ignore[arg-type]
-  # Deprecation warning added 2025-2-20.
   check_arraylike("size", a, emit_warning=True)
-  if hasattr(a, "__jax_array__"):
-    a = a.__jax_array__()
-  # NumPy dispatches to a.size/a.shape if available.
-  return np.size(a, axis=axis)  # type: ignore[arg-type]
+  if axis is None and hasattr(a, "size"):
+    return a.size
+  _shape = shape(a)  # type: ignore[arg-type]
+  axis = canonicalize_axis_tuple(axis, len(_shape), allow_duplicate=False)
+  return math.prod(_shape[i] for i in axis)

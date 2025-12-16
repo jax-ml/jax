@@ -172,6 +172,28 @@ class BufferCallbackTest(jtu.JaxTestCase):
     )
     jax.block_until_ready(fun(data))
 
+  @jtu.run_on_devices("cpu")
+  def test_buffer_callback_multi_mesh(self):
+    def no_op(*args, **kwargs):
+      pass
+
+    @jax.jit
+    def f(x, y):
+      z = x * y
+      output_shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
+      buffer_call = buffer_callback.buffer_callback(
+          no_op, output_shape, command_buffer_compatible=True)
+      return buffer_call((z,))
+
+    mesh1 = jtu.create_mesh((1, 1), ('a', 'b'))
+    mesh2 = jtu.create_mesh((1, 1), ('x', 'y'))
+
+    x = jax.device_put(
+        jnp.ones((32, 32)), jax.NamedSharding(mesh1, jax.P('a', 'b')))
+    y = jax.device_put(
+        jnp.ones((32, 32)), jax.NamedSharding(mesh2, jax.P('x', 'y')))
+    f(x, y)  # doesn't crash
+
   def test_side_effect(self):
     def callback(*_):
       nonlocal called

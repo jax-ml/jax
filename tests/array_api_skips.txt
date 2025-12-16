@@ -77,3 +77,7 @@ array_api_tests/test_special_cases.py::test_iop[__ifloordiv__(x1_i < 0 and x2_i 
 array_api_tests/test_special_cases.py::test_binary[floor_divide(isfinite(x1_i) and x1_i < 0 and x2_i is +infinity) -> -0]
 array_api_tests/test_special_cases.py::test_iop[__ifloordiv__(isfinite(x1_i) and x1_i > 0 and x2_i is -infinity) -> -0]
 array_api_tests/test_special_cases.py::test_iop[__ifloordiv__(isfinite(x1_i) and x1_i < 0 and x2_i is +infinity) -> -0]
+
+# TODO(b/440163737): tanh(inf) not returning 1.0
+array_api_tests/test_special_cases.py::test_unary[tanh(x_i is -infinity) -> -1]
+array_api_tests/test_special_cases.py::test_unary[tanh(x_i is +infinity) -> +1]

@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from typing import Any, TypeVar, overload
+from typing import Any, TypeVar
 
 from jax._src import tree_util
 
@@ -155,21 +155,9 @@ def map(f: Callable[..., Any],
   return tree_util.tree_map(f, tree, *rest, is_leaf=is_leaf)
 
 
-@overload
 def reduce(function: Callable[[T, Any], T],
            tree: Any,
-           *,
-           is_leaf: Callable[[Any], bool] | None = None) -> T:
-    ...
-@overload
-def reduce(function: Callable[[T, Any], T],
-           tree: Any,
-           initializer: T,
-           is_leaf: Callable[[Any], bool] | None = None) -> T:
-    ...
-def reduce(function: Callable[[T, Any], T],
-           tree: Any,
-           initializer: Any = tree_util.no_initializer,
+           initializer: T | tree_util.Unspecified = tree_util.Unspecified(),
            is_leaf: Callable[[Any], bool] | None = None) -> T:
   """Call reduce() over the leaves of a tree.
 
@@ -191,11 +179,64 @@ def reduce(function: Callable[[T, Any], T],
     >>> jax.tree.reduce(operator.add, [1, (2, 3), [4, 5, 6]])
     21
 
+  Notes:
+    **Tip**: You can exclude leaves from the reduction by first mapping them to
+    ``None`` using :func:`jax.tree.map`. This causes them to not be counted as
+    leaves after that.
+
   See Also:
+    - :func:`jax.tree.reduce_associative`
     - :func:`jax.tree.leaves`
     - :func:`jax.tree.map`
   """
   return tree_util.tree_reduce(function, tree, initializer, is_leaf=is_leaf)
+
+
+def reduce_associative(
+    operation: Callable[[T, T], T],
+    tree: Any,
+    *,
+    identity: T | tree_util.Unspecified = tree_util.Unspecified(),
+    is_leaf: Callable[[Any], bool] | None = None,
+) -> T:
+  """Perform a reduction over a pytree with an associative binary operation.
+
+  This function exploits the fact that the operation is associative to perform
+  the reduction in parallel (logarithmic depth).
+
+  Args:
+    operation: the associative binary operation
+    tree: the pytree to reduce
+    identity: the identity element of the associative binary operation.
+      This is used only when the tree is empty. It is optional otherwise.
+    is_leaf: an optionally specified function that will be called at each
+      flattening step. It should return a boolean, which indicates whether the
+      flattening should traverse the current object, or if it should be stopped
+      immediately, with the whole subtree being treated as a leaf.
+
+  Returns:
+    result: the reduced value
+
+  Examples:
+    >>> import jax
+    >>> import operator
+    >>> jax.tree.reduce_associative(operator.add, [1, (2, 3), [4, 5, 6]])
+    21
+
+  Notes:
+    **Tip**: You can exclude leaves from the reduction by first mapping them to
+    ``None`` using :func:`jax.tree.map`. This causes them to not be counted as
+    leaves after that.
+
+  See Also:
+    - :func:`jax.tree.reduce`
+  """
+  return tree_util.tree_reduce_associative(
+      operation,
+      tree,
+      identity=identity,
+      is_leaf=is_leaf,
+  )
 
 
 def structure(tree: Any,
@@ -287,7 +328,8 @@ def unflatten(treedef: tree_util.PyTreeDef,
 
 
 def flatten_with_path(
-    tree: Any, is_leaf: Callable[[Any], bool] | None = None
+    tree: Any, is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
 ) -> tuple[list[tuple[tree_util.KeyPath, Any]], tree_util.PyTreeDef]:
   """Flattens a pytree like ``tree_flatten``, but also returns each leaf's key path.
 
@@ -313,11 +355,12 @@ def flatten_with_path(
     - :func:`jax.tree.map_with_path`
     - :func:`jax.tree_util.register_pytree_with_keys`
   """
-  return tree_util.tree_flatten_with_path(tree, is_leaf)
+  return tree_util.tree_flatten_with_path(tree, is_leaf, is_leaf_takes_path)
 
 
 def leaves_with_path(
-    tree: Any, is_leaf: Callable[[Any], bool] | None = None
+    tree: Any, is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
 ) -> list[tuple[tree_util.KeyPath, Any]]:
   """Gets the leaves of a pytree like ``tree_leaves`` and returns each leaf's key path.
 
@@ -338,14 +381,15 @@ def leaves_with_path(
     - :func:`jax.tree.flatten_with_path`
     - :func:`jax.tree_util.register_pytree_with_keys`
   """
-  return tree_util.tree_leaves_with_path(tree, is_leaf)
+  return tree_util.tree_leaves_with_path(tree, is_leaf, is_leaf_takes_path)
 
 
 def map_with_path(
     f: Callable[..., Any],
     tree: Any,
     *rest: Any,
-    is_leaf: Callable[[Any], bool] | None = None,
+    is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
 ) -> Any:
   """Maps a multi-input function over pytree key path and args to produce a new pytree.
 
@@ -377,12 +421,14 @@ def map_with_path(
     - :func:`jax.tree.leaves_with_path`
     - :func:`jax.tree_util.register_pytree_with_keys`
   """
-  return tree_util.tree_map_with_path(f, tree, *rest, is_leaf=is_leaf)
+  return tree_util.tree_map_with_path(
+      f, tree, *rest, is_leaf=is_leaf, is_leaf_takes_path=is_leaf_takes_path
+  )
 
 
 def broadcast(prefix_tree: Any, full_tree: Any,
               is_leaf: Callable[[Any], bool] | None = None
-              ) -> list[Any]:
+              ) -> Any:
   """Broadcasts a tree prefix into the full structure of a given tree.
 
     Args:

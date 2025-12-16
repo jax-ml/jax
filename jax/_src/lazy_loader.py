@@ -48,7 +48,7 @@ def attach(package_name: str, submodules: Sequence[str]) -> tuple[
       # for this ``name``.
       setattr(sys.modules[owner_name], name, value)
       return value
-    raise AttributeError(f"module '{package_name}' has no attribute '{name}")
+    raise AttributeError(f"module '{package_name}' has no attribute '{name}'")
 
   def __dir__() -> list[str]:
     return __all__

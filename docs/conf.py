@@ -84,13 +84,16 @@ extensions = [
     'jax_list_config_options',
     'sphinx_design',
     'sphinxext.rediraffe',
+    'source_include',
+    'sphinxcontrib.mermaid'
 ]
 
 intersphinx_mapping = {
     'array_api': ('https://data-apis.org/array-api/2023.12/', None),
     'python': ('https://docs.python.org/3/', None),
     'numpy': ('https://numpy.org/doc/stable/', None),
-    'scipy': ('https://docs.scipy.org/doc/scipy/reference/', None),
+    # TODO(phawkins,jakevdp): revert to stable scipy docs when it is up again.
+    'scipy': ('https://scipy.github.io/devdocs/', None),
 }
 
 suppress_warnings = [
@@ -135,13 +138,16 @@ exclude_patterns = [
     'notebooks/*.md',
     'pallas/quickstart.md',
     'pallas/pipelining.md',
+    'pallas/gpu/pipelining.md',
     'pallas/tpu/pipelining.md',
     'pallas/tpu/distributed.md',
     'pallas/tpu/sparse.md',
     'pallas/tpu/matmul.md',
+    'pallas/tpu/core_map.md',
     'jep/9407-type-promotion.md',
     'autodidax.md',
     'autodidax2_part1.md',
+    'array_refs.md',
     'sharded-computation.md',
     'ffi.ipynb',
 ]
@@ -206,6 +212,8 @@ html_css_files = [
 # -- Options for myst ----------------------------------------------
 myst_heading_anchors = 3  # auto-generate 3 levels of heading anchors
 myst_enable_extensions = ['dollarmath']
+myst_ref_domains = ["py"]
+myst_all_links_external = False
 nb_execution_mode = "force"
 nb_execution_allow_errors = False
 nb_merge_streams = True
@@ -226,15 +234,19 @@ nb_execution_excludepatterns = [
     # TODO(jakevdp): enable execution on the following if possible:
     'notebooks/Distributed_arrays_and_automatic_parallelization.*',
     'notebooks/autodiff_remat.*',
+    # Example only gives the specific output demonstrated on some platforms
+    'notebooks/layout.*',
     # Fails on readthedocs with Kernel Died
     'notebooks/convolutions.ipynb',
     # Requires accelerators
     'pallas/quickstart.*',
     'pallas/pipelining.*',
+    'pallas/gpu/pipelining.*',
     'pallas/tpu/pipelining.*',
     'pallas/tpu/distributed.*',
     'pallas/tpu/sparse.*',
     'pallas/tpu/matmul.*',
+    'pallas/tpu/core_map.*',
     'distributed_data_loading.*',
     'notebooks/host-offloading.*',
 ]
@@ -365,19 +377,24 @@ def linkcode_resolve(domain, info):
 
 # Generate redirects from deleted files to new sources
 rediraffe_redirects = {
-    'notebooks/quickstart.md': 'quickstart.md',
-    'jax-101/01-jax-basics.md': 'key-concepts.md',
-    'jax-101/02-jitting.md': 'jit-compilation.md',
-    'jax-101/03-vectorization.md': 'automatic-vectorization.md',
-    'jax-101/04-advanced-autodiff.md': 'automatic-differentiation.md',
-    'jax-101/05-random-numbers.md': 'random-numbers.md',
-    'jax-101/05.1-pytrees.md': 'working-with-pytrees.md',
-    'jax-101/06-parallelism.md': 'sharded-computation.md',
-    'jax-101/07-state.md': 'stateful-computations.md',
-    'jax-101/08-pjit.rst': 'sharded-computation.md',
-    'jax-101/index.rst': 'tutorials.rst',
-    'notebooks/external_callbacks.md': 'external-callbacks.md',
-    'notebooks/How_JAX_primitives_work.md': 'jax-primitives.md',
-    'jax.extend.ffi.rst': 'jax.ffi.rst',
-    'Custom_Operation_for_GPUs.md': 'ffi.md',
+  "jax-101/01-jax-basics.md": "key-concepts.md",
+  "jax-101/02-jitting.md": "jit-compilation.md",
+  "jax-101/03-vectorization.md": "automatic-vectorization.md",
+  "jax-101/04-advanced-autodiff.md": "automatic-differentiation.md",
+  "jax-101/05-random-numbers.md": "random-numbers.md",
+  "jax-101/05.1-pytrees.md": "pytrees.md",
+  "jax-101/06-parallelism.md": "sharded-computation.md",
+  "jax-101/07-state.md": "stateful-computations.md",
+  "jax-101/08-pjit.rst": "sharded-computation.md",
+  "jax-101/index.rst": "jax-101.rst",
+  "tutorials.rst": "jax-101.rst",
+  "notebooks/external_callbacks.md": "external-callbacks.md",
+  "notebooks/How_JAX_primitives_work.md": "jax-primitives.md",
+  "jax.extend.ffi.rst": "jax.ffi.rst",
+  "Custom_Operation_for_GPUs.md": "ffi.md",
+  "notebooks/quickstart.md": "quickstart.md",
+  "quickstart.md": "notebooks/thinking_in_jax.md",
+  "advanced_guide.rst": "advanced_guides.rst",
+  "user_guides.rst": "advanced_guides.rst",
+  "working_with_pytrees.md": "pytrees.md",
 }

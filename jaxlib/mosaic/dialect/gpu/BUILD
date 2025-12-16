@@ -18,10 +18,12 @@ load(
     "gentbl_filegroup",
     "td_library",
 )
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//jax:mosaic_gpu_users"],
+    default_visibility = ["//jax/experimental:mosaic_gpu_users"],
 )
 
 td_library(
@@ -31,6 +33,7 @@ td_library(
     deps = [
         "@llvm-project//mlir:BasicPtxBuilderIntTdFiles",
         "@llvm-project//mlir:BuiltinDialectTdFiles",
+        "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
         "@llvm-project//mlir:InferTypeOpInterfaceTdFiles",
         "@llvm-project//mlir:LLVMOpsTdFiles",
         "@llvm-project//mlir:OpBaseTdFiles",
@@ -88,6 +91,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:ControlFlowInterfaces",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
@@ -111,7 +115,6 @@ cc_test(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:BufferizationInterfaces",
         "@llvm-project//mlir:DataLayoutInterfaces",
@@ -187,7 +190,9 @@ cc_library(
         ":mosaic_gpu_inc_gen",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIR",
+        "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LLVMIRTransforms",
         "@llvm-project//mlir:Support",
     ],
 )
@@ -212,7 +217,9 @@ cc_library(
         ":mosaic_gpu_inc_gen",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIRObjects",
+        "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LLVMIRTransforms",
         "@llvm-project//mlir:Support",
     ],
     alwayslink = True,

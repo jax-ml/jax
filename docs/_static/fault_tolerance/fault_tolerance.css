@@ -1,0 +1,283 @@
+.cluster {
+  margin: 1em;
+  font-size: smaller;
+	position: relative;
+	height: 20em;
+}
+
+.server-box {
+	position: absolute;
+	top: 0%;
+	left: 0%;
+  width: 100%;
+	display: flex;
+  align-items: flex-start;
+}
+
+.proc-box {
+	display: flex;
+	flex-direction: column;
+	max-width: 33%;
+  transform: translate(0%, -100%);
+}
+
+.p0-box {
+	position: absolute;
+	top: 100%;
+	left: 0%;
+}
+
+.p1-box {
+	position: absolute;
+	top: 100%;
+	left: 35%;
+}
+
+.p2-box {
+	position: absolute;
+	top: 100%;
+	left: 70%;
+}
+
+.proc-box div {
+	margin: 1pt;
+}
+
+.proc-box button {
+	margin: 1pt;
+}
+
+.server {
+  padding: 0.5em;
+	border: 2pt solid black;
+	background-color: #FEEFC3;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	text-align: center;
+	font-weight: bold;
+	z-index: 99;
+}
+
+.proc {
+	border: 2pt solid black;
+	border-radius: 50%;
+	width: 2rem;
+	height: 2rem;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-weight: bold;
+	z-index: 99;
+}
+
+.p0 {
+  background-color: #D2E3FC;
+}
+
+.p1 {
+  background-color: #FAD2CF;
+}
+
+.p2 {
+  background-color: #CEEAD6;
+}
+
+.alive {
+  color: green;
+}
+
+.dead {
+  color: red;
+}
+
+.failed {
+  background-color: gray;
+}
+
+.msg {
+	position: absolute;
+	animation-timing-function: linear;
+  font-size: large;
+  z-index: -1;
+}
+
+.p0_to_pserver {
+	animation-duration: 1s;
+	animation-name: p0_to_pserver_keyframes;
+}
+
+.p1_to_pserver {
+	animation-duration: 1.5s;
+	animation-name: p1_to_pserver_keyframes;
+}
+
+.p2_to_pserver {
+	animation-duration: 2.0s;
+	animation-name: p2_to_pserver_keyframes;
+}
+
+.pserver_to_p0 {
+	animation-duration: 1s;
+	animation-name: pserver_to_p0_keyframes;
+}
+
+.pserver_to_p1 {
+	animation-duration: 1.5s;
+	animation-name: pserver_to_p1_keyframes;
+}
+
+.pserver_to_p2 {
+	animation-duration: 2.0s;
+	animation-name: pserver_to_p2_keyframes;
+}
+
+@keyframes p0_to_pserver_keyframes {
+	from { top: 75%; left: 1%; }
+	to { top: 0%; left: 1%; }
+}
+
+@keyframes p1_to_pserver_keyframes {
+	from { top: 75%; left: 36%; }
+	to { top: 0%; left: 1%; }
+}
+
+@keyframes p2_to_pserver_keyframes {
+	from { top: 75%; left: 71%; }
+	to { top: 0%; left: 1%; }
+}
+
+@keyframes pserver_to_p0_keyframes {
+	from { top: 0%; left: 1%; }
+	to { top: 75%; left: 1%; }
+}
+
+@keyframes pserver_to_p1_keyframes {
+	from { top: 0%; left: 1%; }
+	to { top: 75%; left: 36%; }
+}
+
+@keyframes pserver_to_p2_keyframes {
+	from { top: 0%; left: 1%; }
+	to { top: 75%; left: 71%; }
+}
+
+.p0_to_pserver_tall {
+	animation-duration: 1s;
+	animation-name: p0_to_pserver_keyframes_tall;
+}
+
+.p1_to_pserver_tall {
+	animation-duration: 1.5s;
+	animation-name: p1_to_pserver_keyframes_tall;
+}
+
+.p2_to_pserver_tall {
+	animation-duration: 2.0s;
+	animation-name: p2_to_pserver_keyframes_tall;
+}
+
+.pserver_to_p0_tall {
+	animation-duration: 1s;
+	animation-name: pserver_to_p0_keyframes_tall;
+}
+
+.pserver_to_p1_tall {
+	animation-duration: 1.5s;
+	animation-name: pserver_to_p1_keyframes_tall;
+}
+
+.pserver_to_p2_tall {
+	animation-duration: 2.0s;
+	animation-name: pserver_to_p2_keyframes_tall;
+}
+
+@keyframes p0_to_pserver_keyframes_tall {
+	from { top: 55%; left: 1%; }
+	to { top: 0%; left: 1%; }
+}
+
+@keyframes p1_to_pserver_keyframes_tall {
+	from { top: 55%; left: 36%; }
+	to { top: 0%; left: 1%; }
+}
+
+@keyframes p2_to_pserver_keyframes_tall {
+	from { top: 55%; left: 71%; }
+	to { top: 0%; left: 1%; }
+}
+
+@keyframes pserver_to_p0_keyframes_tall {
+	from { top: 0%; left: 1%; }
+	to { top: 55%; left: 1%; }
+}
+
+@keyframes pserver_to_p1_keyframes_tall {
+	from { top: 0%; left: 1%; }
+	to { top: 55%; left: 36%; }
+}
+
+@keyframes pserver_to_p2_keyframes_tall {
+	from { top: 0%; left: 1%; }
+	to { top: 55%; left: 71%; }
+}
+
+
+.svgbox {
+	margin-bottom: 1.15em;
+}
+
+.svgbox svg {
+	margin-left: auto;
+	margin-right: auto;
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+.svgbox svg .proc {
+	font-family: monospace;
+	dominant-baseline: middle;
+	text-anchor: middle;
+}
+
+.svgbox svg .proc-axis {
+	stroke: gray;
+	stroke-width: 0.5;
+	stroke-linecap: round;
+}
+
+.svgbox svg .event {
+	dominant-baseline: middle;
+	text-anchor: middle;
+	stroke: black;
+}
+
+.svgbox svg .p0-color {
+	stroke: #D2E3FC;
+}
+
+.svgbox svg .p1-color {
+	stroke: #FAD2CF;
+}
+
+.svgbox svg .p2-color {
+	stroke: #CEEAD7;
+}
+
+.svgbox svg .rpc {
+	stroke-width: 12;
+	stroke-linecap: round;
+}
+
+.svgbox svg .reply {
+	font-family: monospace;
+	font-size: smaller;
+	dominant-baseline: middle;
+	text-anchor: middle;
+}
+
+.svgbox svg .snapshot {
+	stroke-width: 2;
+	stroke: red;
+}

@@ -19,7 +19,7 @@ LAX decompositions for special functions into their StableHLO counterparts.
 
 from enum import Enum
 import numpy as np
-from functools import partial
+from functools import partial, reduce as _reduce
 
 from jax._src import core
 from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
@@ -29,8 +29,8 @@ from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
                               reduce, select, sign, sqrt, square,
                               standard_naryop, standard_unop, sub,
                               _const, _dtype,
-                              _float, _nary_lower_hlo, _ones, _isnan, _reduce)
-from jax._src.lax.control_flow import while_loop
+                              _float, _nary_lower_hlo, _ones, _isnan)
+from jax._src.lax.control_flow.loops import while_loop
 
 from jax._src import dtypes
 from jax._src.interpreters import ad

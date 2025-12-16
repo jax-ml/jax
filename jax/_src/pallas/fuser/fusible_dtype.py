@@ -18,7 +18,8 @@ import abc
 import dataclasses
 import functools
 import itertools as it
-from typing import Any, Sequence, TypeVar
+from typing import Any, TypeVar
+from collections.abc import Sequence
 
 import jax
 from jax._src import api_util
@@ -73,13 +74,13 @@ unpack_dtype_p.multiple_results = True
 def unpack_dtype_abstract_eval(x):
   if dtypes.issubdtype(x.dtype, FusibleElementDType):
     return x.dtype.abstract_unpack(x)
-  elif isinstance(x.dtype, pallas_core.AbstractMemoryRef):
+  elif isinstance(x.dtype, state.AbstractRef):
     raise NotImplementedError()
   raise ValueError("Attempted to unpack non-fusion dtype: {dtype}")
 
 
 def unpack(x):
-  return unpack_dtype_p.bind(x)
+  return tuple(unpack_dtype_p.bind(x))
 
 
 class FusibleElementDType(dtypes.extended):
@@ -121,7 +122,15 @@ class FusionDType(dtypes.ExtendedDType, metaclass=abc.ABCMeta):
     return str(self)
 
   @abc.abstractmethod
-  def pull_block_spec_one_step(self, *args, **kwargs):
+  def pull_block_spec_one_step(self, aval_out, *args, **kwargs):
+    raise NotImplementedError()
+
+  @abc.abstractmethod
+  def unpack_push_block_spec(self, aval_in, *args, **kwargs):
+    raise NotImplementedError()
+
+  @abc.abstractmethod
+  def unpack_pull_block_spec(self, aval_in, *args, **kwargs):
     raise NotImplementedError()
 
 
@@ -136,8 +145,8 @@ def physicalize(f):
     wrapped_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
         lu.wrap_init(f, debug_info=debug_info), treedef
     )
-    avals = [core.ShapedArray(a.shape, a.dtype) for a in flattened_args]
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
+    avals = [core.get_aval(a) for a in flattened_args]
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
     new_jaxpr = physicalize_closed_jaxpr(core.ClosedJaxpr(jaxpr, consts))
     out_flat = core.eval_jaxpr(
         new_jaxpr.jaxpr, new_jaxpr.consts, *flattened_args
@@ -155,18 +164,20 @@ def physicalize_closed_jaxpr(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
   flat_avals, treedef = tree_util.tree_flatten(in_avals)
   debug_info = api_util.debug_info("physicalize_closed_jaxpr", fun, (), {})
   wrapped_fun, _ = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(fun, debug_info=debug_info), treedef
+      lu.wrap_init(fun, debug_info=debug_info.with_unknown_names()), treedef
   )
-  new_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, flat_avals)
+  new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, flat_avals)
   assert len(new_jaxpr.constvars) == len(consts), "Mismatched consts"
   return core.ClosedJaxpr(new_jaxpr, consts)
 
 
 def _physical_aval(aval):
   if isinstance(aval, core.ShapedArray):
+    if isinstance(aval.dtype, FusionDType):
+      return aval.dtype.abstract_unpack(aval)
     return core.ShapedArray(aval.shape, aval.dtype)
   if isinstance(aval, state.AbstractRef):
-    if isinstance(aval.dtype, FusionDType):
+    if _is_fusion_type(aval):
       unpacked = aval.dtype.abstract_unpack(aval.inner_aval)
       return tuple(aval.update(inner_aval=u) for u in unpacked)
     return aval
@@ -183,12 +194,11 @@ def physicalize_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
   const_avals = [_physical_aval(v.aval) for v in jaxpr.constvars]
   flat_avals, treedef = jax.tree.flatten((const_avals, in_avals))
   debug_info = api_util.debug_info(
-      "physicalize_jaxpr", _flat_jaxpr_eval, (), {}
-  )
+      "physicalize_jaxpr", _flat_jaxpr_eval, (const_avals, in_avals), {})
   wrapped_fun, _ = api_util.flatten_fun_nokwargs(
       lu.wrap_init(_flat_jaxpr_eval, debug_info=debug_info), treedef
   )
-  new_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, flat_avals)
+  new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, flat_avals)
   assert not consts
   new_jaxpr = pe.convert_invars_to_constvars(
       new_jaxpr, len(tree_util.tree_leaves(const_avals))
@@ -236,11 +246,10 @@ def physicalize_interp(
         eqn.ctx.manager,
     ):
       # need to check types and then invoke the correct rule.
-      in_types = [aval.dtype for aval in avals_in]  # pytype: disable=attribute-error
       ctx = Context(
           avals_in=avals_in, avals_out=[var.aval for var in eqn.outvars]
       )
-      custom_rule = _phys_find_rule(eqn.primitive, in_types)
+      custom_rule = _phys_find_rule(eqn.primitive, avals_in)
       if custom_rule:
         outvals = custom_rule(ctx, *invals, **eqn.params)
       else:
@@ -248,7 +257,7 @@ def physicalize_interp(
         outvals = eqn.primitive.bind(*subfuns, *invals, **bind_params)
 
     if eqn.primitive.multiple_results:
-      assert len(outvals) == len(eqn.outvars)
+      assert len(outvals) == len(eqn.outvars), eqn
       foreach(write_env, eqn.outvars, outvals)
     else:
       write_env(eqn.outvars[0], outvals)
@@ -256,11 +265,21 @@ def physicalize_interp(
   return map(read_env, jaxpr.outvars)
 
 
-def _phys_find_rule(primitive, types: Sequence[dtypes.DType]):
+def _is_fusion_type(aval: core.AbstractValue):
+  """Returns whether an aval is an array containing fusion types."""
+  return (
+      isinstance(aval, (core.ShapedArray, state.AbstractRef))
+      and hasattr(aval, 'dtype')
+      and isinstance(aval.dtype, FusionDType)
+  )
+
+
+def _phys_find_rule(primitive, avals: Sequence[core.AbstractValue]):
   """Finds the physicalization rule for a primitive."""
   if primitive in _physicalize_rules:
     return _physicalize_rules[primitive]
-  fusion_types = {type_ for type_ in types if isinstance(type_, FusionDType)}
+
+  fusion_types = {aval.dtype for aval in avals if _is_fusion_type(aval)}  # pytype: disable=attribute-error
   if len(fusion_types) == 0:
     return None
   elif len(fusion_types) > 1:
@@ -275,10 +294,8 @@ def _phys_find_rule(primitive, types: Sequence[dtypes.DType]):
 
 
 def _assert_no_fusion_types(avals: Sequence[core.AbstractValue]):
-  for aval in avals:
-    if isinstance(aval, (core.ShapedArray, state.AbstractRef)):
-      if isinstance(aval.dtype, FusionDType):
-        raise NotImplementedError(f"Fusion type found in avals: {avals}")
+  if any(_is_fusion_type(aval) for aval in avals):
+    raise NotImplementedError(f"Fusion type found in avals: {avals}")
 
 
 def _pallas_call_physicalize_rule(
@@ -288,10 +305,13 @@ def _pallas_call_physicalize_rule(
   _assert_no_fusion_types(ctx.avals_out)
   with grid_mapping.trace_env():
     new_jaxpr = physicalize_closed_jaxpr(core.ClosedJaxpr(jaxpr, ()))
-  num_new_vals = len(new_jaxpr.jaxpr.invars) - len(jaxpr.invars)
-  grid_mapping = grid_mapping.replace(
-      num_scratch_operands=grid_mapping.num_scratch_operands + num_new_vals
-  )
+  if diff := len(new_jaxpr.jaxpr.invars) - len(jaxpr.invars):
+    num_scratch_avals = len(grid_mapping.scratch_avals) + diff
+    new_scratch_avals = tuple(v.aval for v in
+                              new_jaxpr.jaxpr.invars[-num_scratch_avals:])
+    grid_mapping = grid_mapping.replace(
+        scratch_avals=new_scratch_avals
+    )
   return pallas_call.pallas_call_p.bind(
       *args, jaxpr=new_jaxpr.jaxpr, grid_mapping=grid_mapping, **kwargs
   )
@@ -400,11 +420,20 @@ _physicalize_rules[jax.lax.scan_p] = _scan_rule
 
 
 def _while_rule(
-    ctx: Context, *args, body_jaxpr, cond_jaxpr, body_nconsts, **params
+    ctx: Context, *args, body_jaxpr, cond_jaxpr, body_nconsts,
+    cond_nconsts, **params
 ):
   _assert_no_fusion_types(ctx.avals_out)
   cond_avals = [v.aval for v in cond_jaxpr.jaxpr.invars]
-  _assert_no_fusion_types(cond_avals)
+  _, cond_in_avals = util.split_list(cond_avals, [cond_nconsts])
+  _assert_no_fusion_types(cond_in_avals)
+  new_cond_jaxpr = physicalize_closed_jaxpr(cond_jaxpr)
+  new_num_cond_consts = (
+      cond_nconsts
+      + len(new_cond_jaxpr.jaxpr.invars)
+      - len(cond_jaxpr.jaxpr.invars)
+  )
+
   body_avals = [v.aval for v in body_jaxpr.jaxpr.invars]
   _, body_in_avals = util.split_list(body_avals, [body_nconsts])
   _assert_no_fusion_types(body_in_avals)
@@ -415,15 +444,25 @@ def _while_rule(
       - len(body_jaxpr.jaxpr.invars)
   )
   flat_args = tree_util.tree_leaves(args)
-  assert len(flat_args) == len(new_body_jaxpr.jaxpr.invars), (
-      f"Length mismatch: {len(flat_args)=} !="
+  cond_consts, body_consts, flat_args = util.split_list(
+      flat_args, [new_num_cond_consts, new_num_body_consts]
+  )
+  assert len(flat_args) + len(body_consts) == len(
+      new_body_jaxpr.jaxpr.invars), (
+      f"Length mismatch: {len(flat_args) + len(body_consts)} !="
       f" {len(new_body_jaxpr.jaxpr.invars)=}"
   )
+  assert len(flat_args) + len(cond_consts) == len(
+      new_cond_jaxpr.jaxpr.invars), (
+      f"Length mismatch: {len(flat_args) + len(cond_consts)} !="
+      f" {len(new_cond_jaxpr.jaxpr.invars)=}"
+  )
   return jax.lax.while_p.bind(
-      *flat_args,
+      *(cond_consts + body_consts + flat_args),
       body_jaxpr=new_body_jaxpr,
-      cond_jaxpr=cond_jaxpr,
+      cond_jaxpr=new_cond_jaxpr,
       body_nconsts=new_num_body_consts,
+      cond_nconsts=new_num_cond_consts,
       **params,
   )
 
@@ -448,7 +487,7 @@ _physicalize_rules[unpack_dtype_p] = _unpack_rule
 
 def _swap_rule(ctx: Context, ref, val, *args, tree):
   ref_aval, *_ = ctx.avals_in
-  if not isinstance(ref_aval.dtype, FusionDType):
+  if not _is_fusion_type(ref_aval):
     return state_primitives.swap_p.bind(ref, val, *args, tree=tree)
   return ref_aval.dtype.swap(ref, val, *args, tree=tree)
 
@@ -458,7 +497,7 @@ _physicalize_rules[state_primitives.swap_p] = _swap_rule
 
 def _get_rule(ctx: Context, ref, *args, tree):
   ref_aval, *_ = ctx.avals_in
-  if not isinstance(ref_aval.dtype, FusionDType):
+  if not _is_fusion_type(ref_aval):
     return state_primitives.get_p.bind(ref, *args, tree=tree)
   return ref_aval.dtype.get(ref, *args, tree=tree)
 
@@ -468,8 +507,7 @@ _physicalize_rules[state_primitives.get_p] = _get_rule
 
 @block_spec.register_eval_rule(pack_dtype_p)
 def _pack_dtype_eval_rule(eval_ctx: block_spec.KernelEvalContext, *args, dtype):
-  del eval_ctx
-  return pack_dtype_p.bind(*args, dtype=dtype)
+  return dtype.pack_eval_rule(eval_ctx, *args)
 
 
 @block_spec.register_pull_block_spec_rule(pack_dtype_p)
@@ -479,8 +517,38 @@ def _pack_dtype_pull_rule(
     *,
     dtype: FusionDType,
 ):
-  del ctx
-  return dtype.pull_block_spec_one_step(block_spec)  # pytype: disable=attribute-error
+  aval_out = ctx.avals_out[0]
+  return dtype.pull_block_spec_one_step(aval_out, block_spec)  # pytype: disable=attribute-error
+
+
+@block_spec.register_push_block_spec_rule(unpack_dtype_p)
+def _unpack_dtype_push_rule(
+    ctx: block_spec.PushRuleContext,
+    block_spec: pallas_core.BlockSpec,
+):
+  aval_in = ctx.avals_in[0]
+  assert isinstance(aval_in, core.ShapedArray)
+  assert isinstance(aval_in.dtype, FusionDType), aval_in.dtype
+  return aval_in.dtype.unpack_push_block_spec(aval_in, block_spec)  # pytype: disable=attribute-error
+
+
+@block_spec.register_pull_block_spec_rule(unpack_dtype_p)
+def _unpack_dtype_pull_rule(
+    ctx: block_spec.PushRuleContext,
+    block_specs: pallas_core.BlockSpec,
+):
+  aval_in = ctx.avals_in[0]
+  assert isinstance(aval_in, core.ShapedArray)
+  assert isinstance(aval_in.dtype, FusionDType), aval_in.dtype
+  return aval_in.dtype.unpack_pull_block_spec(aval_in, *block_specs)
+
+
+@block_spec.register_eval_rule(unpack_dtype_p)
+def _unpack_dtype_eval_rule(eval_ctx: block_spec.KernelEvalContext, *args):
+  aval_in = eval_ctx.avals_in[0]
+  assert isinstance(aval_in, core.ShapedArray)
+  assert isinstance(aval_in.dtype, FusionDType), aval_in.dtype
+  return aval_in.dtype.unpack_eval_rule(eval_ctx, *args)
 
 
 def _fusible_physicalize_rule(

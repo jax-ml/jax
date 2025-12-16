@@ -15,7 +15,11 @@
 # ruff: noqa
 
 import datetime
-from numpy import array, float32, uint32
+import numpy as np
+
+array = np.array
+float32 = np.float32
+uint32 = np.uint32
 
 
 # Pasted from the test output (see back_compat_test.py module docstring)

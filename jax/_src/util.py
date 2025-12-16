@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Iterable, Iterator, Sequence
+import dataclasses
 import functools
 from functools import partial
 import itertools as it
 import logging
 import math
 import operator
-from typing import (Any, Generic, SupportsIndex, TypeVar, overload, TYPE_CHECKING, cast)
+from typing import (Any, Generic, SupportsIndex, Type, TypeVar, overload, TYPE_CHECKING, cast)
 import weakref
 
 import numpy as np
@@ -43,32 +44,36 @@ T1 = TypeVar("T1")
 T2 = TypeVar("T2")
 T3 = TypeVar("T3")
 
-# safe_zip cannot yet be fully annotated, so we use a strategy similar
-# to that used for builtins.zip in python/typeshed. This supports
-# return types matching input types for up to three arguments.
-@overload
-def safe_zip(__arg1: Iterable[T1], /) -> list[tuple[T1]]: ...
-@overload
-def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], /) -> list[tuple[T1, T2]]: ...
-@overload
-def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3], /) -> list[tuple[T1, T2, T3]]: ...
-@overload
-def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], /, *args) -> list[tuple[Any, ...]]: ...
 
-def safe_zip(*args):
-  """
-  Like builtin :func:`zip`, but with additional safety checks.
+if TYPE_CHECKING:
+  # safe_zip cannot yet be fully annotated, so we use a strategy similar
+  # to that used for builtins.zip in python/typeshed. This supports
+  # return types matching input types for up to three arguments.
+  @overload
+  def safe_zip(__arg1: Iterable[T1], /) -> list[tuple[T1]]: ...
+  @overload
+  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], /) -> list[tuple[T1, T2]]: ...
+  @overload
+  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3], /) -> list[tuple[T1, T2, T3]]: ...
+  @overload
+  def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], /, *args) -> list[tuple[Any, ...]]: ...
 
-  The differences from :func:`zip` are:
+  def safe_zip(*args):
+    """
+    Like builtin :func:`zip`, but with additional safety checks.
 
-  - :func:`safe_zip` checks that at least one argument is provided.
-  - :func:`safe_zip` checks that all arguments have the same length.
-  - :func:`safe_zip` returns an eagerly-evaluated list instead of a
-    lazily-evaluated iterator.
-  """
-  if not args:
-    raise TypeError("safe_zip requires at least 1 argument.")
-  return list(zip(*args, strict=True))
+    The differences from :func:`zip` are:
+
+    - :func:`safe_zip` checks that at least one argument is provided.
+    - :func:`safe_zip` checks that all arguments have the same length.
+    - :func:`safe_zip` returns an eagerly-evaluated list instead of a
+      lazily-evaluated iterator.
+    """
+    if not args:
+      raise TypeError("safe_zip requires at least 1 argument.")
+    return list(zip(*args, strict=True))
+else:
+  safe_zip = jaxlib_utils.safe_zip
 
 
 if TYPE_CHECKING:
@@ -76,16 +81,16 @@ if TYPE_CHECKING:
   # to that used for builtins.map in python/typeshed. This supports
   # checking input types for the callable with up to three arguments.
   @overload
-  def safe_map(f: Callable[[T1], T], __arg1: Iterable[T1]) -> list[T]: ...
+  def safe_map(f: Callable[[T1], T], __arg1: Iterable[T1], /) -> list[T]: ...
 
   @overload
-  def safe_map(f: Callable[[T1, T2], T], __arg1: Iterable[T1], __arg2: Iterable[T2]) -> list[T]: ...
+  def safe_map(f: Callable[[T1, T2], T], __arg1: Iterable[T1], __arg2: Iterable[T2], /) -> list[T]: ...
 
   @overload
-  def safe_map(f: Callable[[T1, T2, T3], T], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> list[T]: ...
+  def safe_map(f: Callable[[T1, T2, T3], T], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3], /) -> list[T]: ...
 
   @overload
-  def safe_map(f: Callable[..., T], __arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> list[T]: ...
+  def safe_map(f: Callable[..., T], __arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], /, *args) -> list[T]: ...
 
   def safe_map(f, *args):
     args = list(map(list, args))
@@ -99,16 +104,16 @@ else:
 
 if TYPE_CHECKING:
   @overload
-  def foreach(f: Callable[[T1], Any], __arg1: Iterable[T1]) -> None: ...
+  def foreach(f: Callable[[T1], Any], __arg1: Iterable[T1], /) -> None: ...
 
   @overload
-  def foreach(f: Callable[[T1, T2], Any], __arg1: Iterable[T1], __arg2: Iterable[T2]) -> None: ...
+  def foreach(f: Callable[[T1, T2], Any], __arg1: Iterable[T1], __arg2: Iterable[T2], /) -> None: ...
 
   @overload
-  def foreach(f: Callable[[T1, T2, T3], Any], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> None: ...
+  def foreach(f: Callable[[T1, T2, T3], Any], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3], /) -> None: ...
 
   @overload
-  def foreach(f: Callable[..., Any], __arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> None: ...
+  def foreach(f: Callable[..., Any], __arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], /, *args) -> None: ...
 
   def foreach(f, *args):
     safe_map(f, *args)
@@ -278,36 +283,55 @@ def split_merge(
 
   return lhs, rhs, merge
 
-def _ignore(): return None
 
-
-def cache(max_size=4096, trace_context_in_key=True):
-  def wrap(f):
-    @functools.lru_cache(max_size)
-    def cached(_, *args, **kwargs):
-      return f(*args, **kwargs)
-
-    @functools.wraps(f)
-    def wrapper(*args, **kwargs):
-      if config.check_tracer_leaks.value:
+def cache(max_size=4096, trace_context_in_key: bool | Callable = True):
+  if trace_context_in_key:
+    trace_context = (trace_context_in_key if callable(trace_context_in_key)
+                     else config.trace_context)
+    def wrap(f):
+      @functools.lru_cache(max_size)
+      def cached(_, *args, **kwargs):
         return f(*args, **kwargs)
-      return cached(config.trace_context() if trace_context_in_key else _ignore(),
-                    *args, **kwargs)
 
-    wrapper.cache_clear = cached.cache_clear
-    wrapper.cache_info = cached.cache_info
-    cache_clearing_funs.add(wrapper.cache_clear)
-    return wrapper
+      @functools.wraps(f)
+      def wrapper(*args, **kwargs):
+        if config.check_tracer_leaks.value:
+          return f(*args, **kwargs)
+        return cached(trace_context(), *args, **kwargs)
+
+      wrapper.cache_clear = cached.cache_clear
+      wrapper.cache_info = cached.cache_info
+      register_cache(wrapper, str(f))
+      return wrapper
+  else:
+    def wrap(f):
+      wrapper = functools.lru_cache(max_size)(f)
+      register_cache(wrapper, str(f))
+      return wrapper
   return wrap
 
-cache_clearing_funs = weakref.WeakSet()  # type: ignore
+# Maps caches to the name of the callable they apply to. All caches in
+# this dictionary support `cache_clear()`.
+_caches: weakref.WeakKeyDictionary[Any, str] = weakref.WeakKeyDictionary()
+
+def register_cache(cache: Any, for_what: str):
+  """Registers a cache with JAX's cache management.
+
+  Args:
+    cache: an object supporting `cache_clear()`, `cache_info()`, and
+      `cache_keys()`, like the result of `functools.lru_cache()`.
+    for_what: a string to identify what this cache is used for. This is
+       used for debugging.
+  """
+  _caches[cache] = for_what
 
 def clear_all_caches():
-  global cache_clearing_funs
-  for clear in cache_clearing_funs:
-    clear()
+  for cache in list(_caches.keys()):
+    cache.cache_clear()
 
 memoize = cache(max_size=None)
+
+def _ignore(): return None
 
 def weakref_lru_cache(call: Callable, maxsize=2048,
                       trace_context_in_key: bool = True):
@@ -315,21 +339,144 @@ def weakref_lru_cache(call: Callable, maxsize=2048,
   Least recently used cache decorator with weakref support.
 
   The cache will take a weakref to the first argument of the wrapped function
-  and strong refs to all subsequent operations. In all other respects it should
-  behave similar to `functools.lru_cache`.
+  and strong refs to all other arguments. In all other respects it should
+  behave similar to `functools.lru_cache`. The cache is thread local.
   """
-  global _weakref_lru_caches
   cached_call = _weakref_lru_cache.weakref_lru_cache(
       config.trace_context if trace_context_in_key else _ignore, call, maxsize
   )
-  _weakref_lru_caches.add(cached_call)
+  register_cache(cached_call, str(call))
   return cached_call
 
-_weakref_lru_caches = weakref.WeakSet()  # type: ignore
 
-def clear_all_weakref_lru_caches():
-  for cached_call in _weakref_lru_caches:
-    cached_call.cache_clear()
+@dataclasses.dataclass(frozen=True, slots=True, weakref_slot=True)
+class MultiWeakRefCacheKey:
+  weakrefs: tuple[weakref.ref, ...]  # Used only when len(weakrefs) >= 2
+
+
+class MultiWeakRefPlaceholder:
+  # Stands for an arg/kwarg that was replaced with a weakref
+  pass
+_multi_weakref_placeholder = MultiWeakRefPlaceholder()
+
+# The types of arguments for which `multi_weakref_lru_cache` should keep
+# weak references.
+weakref_cache_key_types: set[Type] = set()
+def is_weakref_cache_key_type(v):
+  return callable(v) or (type(v) in weakref_cache_key_types)
+
+
+def multi_weakref_lru_cache(
+      call: Callable, *,
+      maxsize=2048,
+      trace_context_in_key: bool = True):
+    """
+    Least recently used cache decorator with weakref support.
+
+    Similar to `weakref_lru_cache`, except that it keeps weak references
+    to all positional and keyword arguments for which
+    `is_weakref_cache_key_type()` is true, and strong references to
+    other arguments. The cache entry is removed if any of the weakref
+    arguments dies.
+    """
+    # Keep strong references to the MultiWeakRefCacheKeys that resulted in
+    # cache misses, and are cache keys. Indexed by id. Only keys with all
+    # included weakrefs live are present.
+    id_to_key: dict[int, MultiWeakRefCacheKey] = {}
+    # For each `wr: weakref.ref` present in `key: MultiWeakRefCacheKey` we have
+    # `id(key) in weakref_to_key_ids[wr]`.
+    weakref_to_key_ids: dict[weakref.ref, set[int]] = {}
+
+    def remove_weakref(wr: weakref.ref):
+      key_ids = weakref_to_key_ids.get(wr, set())
+      for key_id in key_ids:
+        try:
+          del id_to_key[key_id]
+        except KeyError:
+          pass
+      try:
+        del weakref_to_key_ids[wr]
+      except KeyError:
+        pass
+
+    def weakrefs_to_sentinel(v, acc: list[Any]):
+      if type(v) is tuple:
+        return tuple(weakrefs_to_sentinel(v1, acc) for v1 in v)
+      elif type(v) is dict:
+        return {k: weakrefs_to_sentinel(v1, acc) for k, v1 in v.items()}
+      elif is_weakref_cache_key_type(v):
+        acc.append(v)
+        return _multi_weakref_placeholder
+      else:
+        return v
+
+    def sentinel_to_referrents(v,
+                               it: Iterator[weakref.ref],
+                               key_id: int | None):
+      # key_id is not None iff we use a MultiWeakRefCacheKey (>= 2 weakrefs)
+      if type(v) is tuple:
+        return tuple(sentinel_to_referrents(v1, it, key_id) for v1 in v)
+      elif type(v) is dict:
+        return {k: sentinel_to_referrents(v1, it, key_id)
+                for k, v1 in v.items()}
+      elif v is _multi_weakref_placeholder:
+        wr = next(it)
+        if key_id is not None:
+          weakref_to_key_ids.setdefault(wr, set()).add(key_id)
+        return wr()
+      else:
+        return v
+
+    def cache_miss(key: MultiWeakRefCacheKey | MultiWeakRefPlaceholder | Any,
+                   *args, **kwargs):
+      if isinstance(key, MultiWeakRefCacheKey):  # had at least 2 weakrefs
+        # We know `key` is in `cached_call` cache, so store strong references
+        key_id = id(key)
+        id_to_key[key_id] = key
+        orig_args, orig_kwargs = sentinel_to_referrents(
+            (args, kwargs), iter(key.weakrefs), key_id)
+      elif key is _multi_weakref_placeholder:  # had 0 weakrefs
+        orig_args = args
+        orig_kwargs = kwargs
+      else:  # had 1 weakref, we had put it first as the `key`
+        orig_args, orig_kwargs = sentinel_to_referrents(
+            (args, kwargs), iter([weakref.ref(key)]), None)
+      return call(*orig_args, **orig_kwargs)
+
+
+    cached_call = _weakref_lru_cache.weakref_lru_cache(
+        config.trace_context if trace_context_in_key else _ignore,
+        cache_miss, maxsize
+    )
+    register_cache(cached_call, str(call))
+
+    @functools.wraps(call)
+    def wrapper(*orig_args, **orig_kwargs):
+      acc_weakrefs: list[Any] = []
+      args, kwargs = weakrefs_to_sentinel((orig_args, orig_kwargs),
+                                          acc_weakrefs)
+      nr_weakrefs = len(acc_weakrefs)
+      if nr_weakrefs == 0:
+        return cached_call(_multi_weakref_placeholder,
+                           *orig_args, **orig_kwargs)
+      elif nr_weakrefs == 1:
+        # Put the single weakref first, and skip the MultiWeakRefCacheKey
+        return cached_call(acc_weakrefs[0],
+                           *args, **kwargs)
+      else:
+        value_to_weakref = {v: weakref.ref(v, remove_weakref)
+                            for v in set(acc_weakrefs)}
+        key = MultiWeakRefCacheKey(weakrefs=tuple(value_to_weakref[v]
+                                                  for v in acc_weakrefs))
+        return cached_call(key, *args, **kwargs)
+
+    wrapper.cache_info = cached_call.cache_info
+    wrapper.cache_clear = cached_call.cache_clear
+    wrapper.cache_keys = cached_call.cache_keys
+    wrapper._multi_weakref_id_to_key = id_to_key  # stays alive as long as wrapper
+    wrapper._multi_weakref_to_key_ids = weakref_to_key_ids
+    return wrapper
+
 
 class Unhashable:
   __slots__ = ["val"]
@@ -364,17 +511,19 @@ class WrapKwArgs:
   def __eq__(self, other):
     return self.val == other.val
 
-def wrap_name(name: str, transform_name: str) -> str:
-  return transform_name + '(' + name + ')'
+def wrap_name(transform_name: str, name: str) -> str:
+  return f"{transform_name}({name})"
 
-def fun_name(fun: Callable) -> str:
+
+def fun_name(fun: Callable, default_name: str = "<unnamed function>") -> str:
   name = getattr(fun, "__name__", None)
   if name is not None:
     return name
   if isinstance(fun, partial):
     return fun_name(fun.func)
   else:
-    return "<unnamed function>"
+    return default_name
+
 
 def fun_qual_name(fun: Callable) -> str:
   qual_name = getattr(fun, "__qualname__", None)
@@ -392,6 +541,17 @@ def canonicalize_axis(axis: SupportsIndex, num_dims: int) -> int:
   if axis < 0:
     axis = axis + num_dims
   return axis
+
+def canonicalize_axis_tuple(axis: int | Sequence[int] | None, ndim: int, allow_duplicate: bool = False) -> tuple[int, ...]:
+  if axis is None:
+    return tuple(range(ndim))
+  if isinstance(axis, Sequence):
+    axis = tuple(canonicalize_axis(i, ndim) for i in axis)
+    if not allow_duplicate and len(set(axis)) != len(axis):
+      raise ValueError(f"repeated axis: {axis}")
+    return axis
+  else:
+    return (canonicalize_axis(axis, ndim),)
 
 def moveaxis(x: Array, src: int | Sequence[int], dst: int | Sequence[int]) -> Array:
   if src == dst:
@@ -640,14 +800,6 @@ def use_cpp_method(is_enabled: bool = True) -> Callable[[T], T]:
   return decorator
 
 
-try:
-  # numpy 1.25.0 or newer
-  NumpyComplexWarning: type[Warning] = np.exceptions.ComplexWarning
-except AttributeError:
-  # legacy numpy
-  NumpyComplexWarning = np.ComplexWarning
-
-
 class StrictABCMeta(abc.ABCMeta):
   """A variant of `abc.ABCMeta` which does not allow virtual subclasses.
 
@@ -674,8 +826,7 @@ def test_event(name: str, *args) -> None:
     return
   test_event_listener(name, *args)
 
-if hasattr(jaxlib_utils, "Mutex"):
-  Mutex = jaxlib_utils.Mutex
+Mutex = jaxlib_utils.Mutex
 
 
 def pprint_bytes(num_bytes: int | float) -> str:
@@ -685,3 +836,9 @@ def pprint_bytes(num_bytes: int | float) -> str:
   exponent = min(math.floor(math.log(num_bytes, 1000)), len(prefixes) - 1)
   scaled_value = num_bytes / (1000**exponent)
   return f"{scaled_value:.2f}{prefixes[exponent]}B"
+
+if hasattr(jaxlib_utils, "install_failure_signal_handler"):
+  install_failure_signal_handler = jaxlib_utils.install_failure_signal_handler
+else:
+  def install_failure_signal_handler(call_previous_handler: bool = True):
+    pass

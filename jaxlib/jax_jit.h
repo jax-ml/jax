@@ -23,6 +23,7 @@ limitations under the License.
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -31,67 +32,20 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "jaxlib/py_values.h"
-#include "jaxlib/python_ref_manager.h"
 #include "jaxlib/pytree.h"
-#include "jaxlib/sharding.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/tsl/platform/logging.h"
 
 namespace jax {
 
-// Flags, such as JIT disable and the x64 mode, are controlled by:
-// - a global flag value, e.g., associated to --jax_enable_x64
-// - possibly a thread-local value, which initially is std::nullopt and
-//   overrides the global value if set. The thread-local state is
-//   used to implement context managers that locally override the global state.
-struct JitState {
-  ~JitState() {
-    if (extra_jit_context) {
-      // We likely do not hold the GIL if this JitState is thread-local, so we
-      // hand the Python object to the global reference manager to destroy.
-      nanobind::object o = std::move(*extra_jit_context);
-      xla::GlobalPyRefManager()->AddGarbage(absl::MakeSpan(&o, 1));
-      extra_jit_context = std::nullopt;
-    }
-  }
-
-  std::optional<bool> disable_jit;
-  std::optional<bool> enable_x64;
-
-  // Used to manually set the default device jax should use. May be unset even
-  // in global state, indicating there is no manual override.
-  // TODO(skyewm): make this a C++ type when all JAX backends support a single
-  // C++ device interface
-  std::optional<nanobind::object> default_device;
-
-  // Extra context that should be included in the JIT cache key. Must be
-  // hashable and have an equality defined.
-  std::optional<nanobind::object> extra_jit_context;
-
-  // A callback that, if present, is called when a JITted function is executed
-  // from cache. May be unset even in global state.
-  std::optional<nanobind::callable> post_hook;
-};
-
-JitState& GlobalJitState();
-
-// Requires the GIL.
-JitState& ThreadLocalJitState();
-
-// Getters for JitState fields that first look in thread-local state, then
-// fallback to global state.
+void InitializeThreadLocalState();
 bool GetDisableJit();
 bool GetEnableX64();
-
-// TODO(skyewm): return a C++ type when all JAX backends support a single C++
-// device interface
-std::optional<nanobind::object> GetDefaultDevice();
 std::optional<nanobind::callable> GetPostHook();
 
 // An ArgumentSignature describes the static arguments to a function call, and
@@ -101,11 +55,11 @@ struct ArgumentSignature {
   // A PyTreeDef for each dynamic argument, positional arguments first
   // followed by keyword arguments. Keyword arguments are in the order given
   // by dynamic_arg_names.
-  absl::InlinedVector<xla::PyTreeDef, 2> dynamic_arg_treedefs;
+  absl::InlinedVector<PyTreeDef, 2> dynamic_arg_treedefs;
 
   // Dynamic keyword argument names. Interned, and sorted by the keyword
   // name. Interned values are safe to compare by pointer.
-  std::vector<nanobind::object> dynamic_arg_names;
+  std::vector<nanobind::str> dynamic_arg_names;
 
   // Static arguments. Contains the positional arguments sorted in argument
   // order, followed by static keyword arguments in the order given by
@@ -113,7 +67,7 @@ struct ArgumentSignature {
   std::vector<nanobind::object> static_args;
 
   // Static keyword argument names. Interned, and sorted by keyword name.
-  std::vector<nanobind::object> static_arg_names;
+  std::vector<nanobind::str> static_arg_names;
 
   bool operator==(const ArgumentSignature& other) const;
   bool operator!=(const ArgumentSignature& other) const {
@@ -142,8 +96,8 @@ H AbslHashValue(H h, const ArgumentSignature& s) {
       throw std::invalid_argument(absl::StrCat(
           "Non-hashable static arguments are not supported. An error occurred "
           "while trying to hash an object of type ",
-          nanobind::cast<absl::string_view>(nanobind::str(static_arg.type())),
-          ", ", nanobind::cast<absl::string_view>(nanobind::str(static_arg)),
+          nanobind::cast<std::string_view>(nanobind::str(static_arg.type())),
+          ", ", nanobind::cast<std::string_view>(nanobind::str(static_arg)),
           ". The error was:\n", e.what(), "\n"));
     }
     h = H::combine(std::move(h), hash);
@@ -173,7 +127,7 @@ absl::Status ParseArguments(
     absl::Span<PyObject* const> keyword_args, nanobind::handle kwnames,
     absl::Span<int const> static_argnums,
     absl::Span<nanobind::str const> static_argnames,
-    xla::PyTreeRegistry* pytree_registry, ArgumentSignature& signature,
+    PyTreeRegistry* pytree_registry, ArgumentSignature& signature,
     absl::InlinedVector<nanobind::object, 2>& flat_dynamic_args);
 
 // The signature of Python jitted function call, partitioned into:
@@ -187,13 +141,13 @@ absl::Status ParseArguments(
 // (a) equality (delegated to Python) of the static arguments.
 struct CallSignature {
   // Not part of the signature, but we need it for error messages.
-  absl::string_view function_name;
+  std::string_view function_name;
 
   ArgumentSignature arg_signature;
 
   // Shape and dtype for both the dynamic positional arguments and the keyword
   // arguments (sorted by keyword name).
-  absl::InlinedVector<xla::PyArgSignature, 2> dynamic_arg_signatures;
+  absl::InlinedVector<PyArgSignature, 2> dynamic_arg_signatures;
 
   // The sharding of the jax.Array arguments.
   std::vector<nanobind::object> dynamic_arg_shardings;
@@ -207,17 +161,15 @@ struct CallSignature {
   // we may have multiple executables depending on the devices the data is on.
   // This is not the case for PMAP, and is set to `nullptr`.
   xla::PjRtDevice* device = nullptr;
-  bool jax_enable_x64;
-
-  // For JIT on PJIT, we need to fallback to python whenever default_device
-  // changes.
-  std::optional<nanobind::object> default_device;
-
-  // Opaque additional context that should be included as part of the cache key.
-  std::optional<nanobind::object> global_extra_jit_context;
-  std::optional<nanobind::object> thread_local_extra_jit_context;
 
   std::vector<nanobind::object> configs;
+
+  // Cached hash of the signature. Must be filled in using `absl::HashOf` as
+  // part of CallSignature construction. The hash computation happens in a C++
+  // exception-safe context, which simplifies using `CallSignature` as a key in
+  // a non-exception-safe container because `Hash()` would never throw when used
+  // inside the container implementation.
+  size_t cached_hash;
 
   bool operator==(const CallSignature& other) const;
   bool operator!=(const CallSignature& other) const {
@@ -225,7 +177,21 @@ struct CallSignature {
   }
 
   std::string DebugString() const;
+
+  struct Hash {
+    size_t operator()(const CallSignature& s) const noexcept {
+      return s.cached_hash;
+    }
+  };
 };
+
+// A hash and equality for shardings that may sometimes return different hashes
+// for equal values, and may sometimes return "not equal" for equal values.
+// These are not correct implementations of `__hash__` and `__eq__` in python,
+// but they are fine for jit/pjit dispatch since they only causes spurious cache
+// misses.
+size_t HashShardingForJit(nanobind::handle sharding);
+bool EqualShardingsForJit(nanobind::handle a, nanobind::handle b);
 
 template <typename H>
 H AbslHashValue(H h, const CallSignature& s) {
@@ -239,9 +205,9 @@ H AbslHashValue(H h, const CallSignature& s) {
 
   // TODO(chky): For now, we are only hashing the pointer of shardings to avoid
   // slow python hashing function. Consider implementing hashing function and
-  // equality checks in C++ in jax::Sharding and use those here.
+  // equality checks in C++ in Sharding and use those here.
   for (const auto& sharding : s.dynamic_arg_shardings) {
-    h = H::combine(std::move(h), ShardingHash(sharding));
+    h = H::combine(std::move(h), HashShardingForJit(sharding));
   }
 
   for (const auto& layout : s.dynamic_arg_layouts) {
@@ -250,7 +216,7 @@ H AbslHashValue(H h, const CallSignature& s) {
     }
   }
 
-  h = H::combine(std::move(h), s.committed_args, s.device, s.jax_enable_x64);
+  h = H::combine(std::move(h), s.committed_args, s.device);
 
   // We do not hash the extra_jit_context fields since calling Python hash
   // functions is expensive (~300ns) and we don't expect a large number of

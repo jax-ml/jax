@@ -1,5 +1,4 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
-load("@rules_python//python:defs.bzl", "py_library")
 
 # Copyright 2023 The JAX Authors.
 #
@@ -14,14 +13,16 @@ load("@rules_python//python:defs.bzl", "py_library")
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-load("//jaxlib:jax.bzl", "mosaic_extension_deps")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_python//python:defs.bzl", "py_library")
 
 licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
     default_visibility = [
-        "//jax:mosaic_users",
+        "//jax/experimental:mosaic_users",
     ],
 )
 
@@ -45,35 +46,85 @@ cc_library(
         "dialect/tpu/tpu_ops.cc",
         "dialect/tpu/util.cc",
         "dialect/tpu/vreg_util.cc",
-        ":extension_srcs",
-    ] + glob([
-        "dialect/tpu/transforms/*.cc",
-    ]),
+    ],
     hdrs = [
         "dialect/tpu/array_util.h",
         "dialect/tpu/layout.h",
         "dialect/tpu/tpu_dialect.h",
         "dialect/tpu/util.h",
         "dialect/tpu/vreg_util.h",
-    ] + glob([
-        "dialect/tpu/transforms/*.h",
-    ]),
+    ],
     # compatible with libtpu
     deps = [
-        ":pass_boilerplate",
-        ":serde",
         ":tpu_inc_gen",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:CommonFolders",
+        "@llvm-project//mlir:DataLayoutInterfaces",
+        "@llvm-project//mlir:Dialect",
+        "@llvm-project//mlir:DialectUtils",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MathDialect",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:VectorDialect",
+        "@xla//xla:array",
+        "@xla//xla:shape_util",
+        "@xla//xla/tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "tpu_serde_pass",
+    srcs = ["dialect/tpu/transforms/serde.cc"],
+    hdrs = ["dialect/tpu/transforms/serde.h"],
+    # compatible with libtpu
+    deps = [
+        ":pass_boilerplate",
+        ":serde",
+        ":tpu_dialect",
+        ":tpu_inc_gen",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:ControlFlowDialect",
+        "@llvm-project//mlir:DataLayoutInterfaces",
+        "@llvm-project//mlir:Dialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MathDialect",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:SCFDialect",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:VectorDialect",
+    ],
+)
+
+cc_library(
+    name = "tpu_linalg_vectorization_pass",
+    srcs = ["dialect/tpu/transforms/linalg_vectorization.cc"],
+    hdrs = ["dialect/tpu/transforms/linalg_vectorization.h"],
+    # compatible with libtpu
+    deps = [
+        ":pass_boilerplate",
+        ":serde",
+        ":tpu_dialect",
+        ":tpu_inc_gen",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:CommonFolders",
         "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:Dialect",
@@ -90,29 +141,57 @@ cc_library(
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:VectorDialect",
         "@llvm-project//mlir:VectorTransforms",
-        "@tsl//tsl/platform:statusor",
-        "@xla//xla:array",
-        "@xla//xla:shape_util",
-        "@xla//xla:util",
-        "@xla//xla/tsl/platform:errors",
-        "@xla//xla/tsl/platform:statusor",
-    ] + mosaic_extension_deps,
+    ],
 )
 
 gentbl_cc_library(
     name = "tpu_inc_gen",
     # compatible with libtpu
     tbl_outs = {
-        "dialect/tpu/tpu_ops.h.inc": ["-gen-op-decls"],
-        "dialect/tpu/tpu_ops.cc.inc": ["-gen-op-defs"],
-        "dialect/tpu/tpu_dialect.h.inc": ["-gen-dialect-decls"],
-        "dialect/tpu/tpu_dialect.cc.inc": ["-gen-dialect-defs"],
-        "dialect/tpu/tpu_enums.h.inc": ["-gen-enum-decls"],
-        "dialect/tpu/tpu_enums.cc.inc": ["-gen-enum-defs"],
-        "dialect/tpu/tpu_attr_defs.h.inc": ["-gen-attrdef-decls"],
-        "dialect/tpu/tpu_attr_defs.cc.inc": ["-gen-attrdef-defs"],
-        "dialect/tpu/tpu_type_defs.h.inc": ["-gen-typedef-decls"],
-        "dialect/tpu/tpu_type_defs.cc.inc": ["-gen-typedef-defs"],
+        "dialect/tpu/tpu_ops.h.inc": [
+            "-gen-op-decls",
+            "-dialect=tpu",
+        ],
+        "dialect/tpu/tpu_ops.cc.inc": [
+            "-gen-op-defs",
+            "-dialect=tpu",
+        ],
+        "dialect/tpu/tpu_dialect.h.inc": [
+            "-gen-dialect-decls",
+            "-dialect=tpu",
+        ],
+        "dialect/tpu/tpu_dialect.cc.inc": [
+            "-gen-dialect-defs",
+            "-dialect=tpu",
+        ],
+        "dialect/tpu/tpu_enums.h.inc": [
+            "-gen-enum-decls",
+            "-dialect=tpu",
+        ],
+        "dialect/tpu/tpu_enums.cc.inc": [
+            "-gen-enum-defs",
+            "-dialect=tpu",
+        ],
+        "dialect/tpu/tpu_attr_defs.h.inc": [
+            "-gen-attrdef-decls",
+            "-dialect=tpu",
+            "--attrdefs-dialect=tpu",
+        ],
+        "dialect/tpu/tpu_attr_defs.cc.inc": [
+            "-gen-attrdef-defs",
+            "-dialect=tpu",
+            "--attrdefs-dialect=tpu",
+        ],
+        "dialect/tpu/tpu_type_defs.h.inc": [
+            "-gen-typedef-decls",
+            "-dialect=tpu",
+            "--typedefs-dialect=tpu",
+        ],
+        "dialect/tpu/tpu_type_defs.cc.inc": [
+            "-gen-typedef-defs",
+            "-dialect=tpu",
+            "--typedefs-dialect=tpu",
+        ],
         "dialect/tpu/tpu_passes.h.inc": [
             "-gen-pass-decls",
             "-name=TPU",
@@ -127,8 +206,8 @@ gentbl_cc_library(
         ],
     },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
-    td_file = "dialect/tpu/tpu.td",
-    deps = [":tpu_td_files"],
+    td_file = "dialect/tpu/tpu_ops.td",
+    deps = [":tpu_ops_td_files"],
 )
 
 td_library(
@@ -138,6 +217,18 @@ td_library(
     ],
     # compatible with libtpu
     deps = [
+        "@llvm-project//mlir:BuiltinDialectTdFiles",
+    ],
+)
+
+td_library(
+    name = "tpu_ops_td_files",
+    srcs = [
+        "dialect/tpu/tpu_ops.td",
+    ],
+    # compatible with libtpu
+    deps = [
+        ":tpu_td_files",
         "@llvm-project//mlir:BuiltinDialectTdFiles",
         "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
         "@llvm-project//mlir:InferTypeOpInterfaceTdFiles",
@@ -166,14 +257,12 @@ cc_library(
     deps = [
         ":tpu_dialect",
         ":tpu_inc_gen",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
+        ":tpu_serde_pass",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIR",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
-        "@xla//xla:array",
     ],
 )
 
@@ -195,14 +284,12 @@ cc_library(
     deps = [
         ":tpu_dialect",
         ":tpu_inc_gen",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
+        ":tpu_serde_pass",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:CAPIIRObjects",
+        "@llvm-project//mlir:CAPIIR",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
-        "@xla//xla:array",
     ],
     alwayslink = True,
 )
@@ -240,6 +327,7 @@ cc_test(
         "//testing/base/public:gunit_main",
         "@com_google_absl//absl/status",
         "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:Support",

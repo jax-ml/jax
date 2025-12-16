@@ -604,6 +604,17 @@ class PythonCallbackTest(jtu.JaxTestCase):
     x = np.arange(8, dtype=dtype)
     np.testing.assert_array_equal(jax.jit(f)(x), np.arange(8, dtype=dtype))
 
+  def test_pure_callback_sequential_vmap_method_eval_jaxpr(self):
+    def f(x):
+      return jax.pure_callback(
+          lambda x: x, jax.ShapeDtypeStruct(shape=(), dtype=jnp.float32),
+          x, vmap_method="sequential")
+
+    jaxpr = jax.make_jaxpr(lambda: jax.vmap(f)(
+        jnp.zeros(100, dtype=jnp.float32)))()
+    with jax.ensure_compile_time_eval():
+      jax.core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts)  # doesn't crash
+
   @parameterized.parameters("int2", "int4", "uint2", "uint4", "float4_e2m1fn")
   def test_subbyte_results(self, dtype: str):
     if "2" in dtype and jtu.test_device_matches(["tpu"]):
@@ -1114,6 +1125,18 @@ class PureCallbackTest(jtu.JaxTestCase):
       result += fun(jnp.ones((500, 500), jnp.complex64))[1]
     jax.block_until_ready(result)  # doesn't deadlock
 
+  def test_pure_callback_fastpath(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/31319
+    @jax.jit
+    def f(x):
+      return jax.pure_callback(lambda x: x, x, x)
+
+    x = jax.numpy.arange(5.0)
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      f(x)
+      f(x)
+    self.assertEqual(count(), 1)
+
 
 class IOCallbackTest(jtu.JaxTestCase):
 
@@ -1160,6 +1183,8 @@ class IOCallbackTest(jtu.JaxTestCase):
     self.assertEqual(_mut, 8)
 
   def test_cannot_call_ordered_io_in_pmap(self):
+    if config.pmap_shmap_merge.value:
+      self.skipTest("Test does not raise under pmap_shmap_merge=True")
     def f(x):
       return io_callback(
           lambda x: x, jax.ShapeDtypeStruct((), jnp.int32), x, ordered=True)
@@ -1244,6 +1269,8 @@ class IOCallbackTest(jtu.JaxTestCase):
       for ordered in [True, False]
       for with_sharding in [True, False]
   )
+  @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
+                      category=DeprecationWarning)
   def test_can_use_io_callback_in_pjit(
       self, *, ordered: bool, with_sharding: bool
   ):
@@ -1304,7 +1331,12 @@ class IOCallbackTest(jtu.JaxTestCase):
     else:
       self.assertIn(f"{{maximal device={callback_device_index}}}", stablehlo_ir)
 
+  @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
+                      category=DeprecationWarning)
   def test_sequence_pjit_io_callback_ordered(self):
+    if jtu.is_device_tpu(7, 'x'):
+      self.skipTest('TODO(b/453664256): Failing on TPU 7x.')
+
     # A sequence of pairs of calls to pjit(io_callback(ordered=True)) with each
     # pair on a different device assignment.
     _collected: list[int] = []

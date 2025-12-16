@@ -35,12 +35,12 @@ class _JAXErrorMixin:
 
 @export
 class JAXTypeError(_JAXErrorMixin, TypeError):
-  pass
+  """JAX-specific :class:`TypeError`"""
 
 
 @export
 class JAXIndexError(_JAXErrorMixin, IndexError):
-  pass
+  """JAX-specific :class:`IndexError`"""
 
 
 @export
@@ -503,7 +503,7 @@ class TracerBoolConversionError(ConcretizationTypeError):
 
     In this case, the error occurs because Python's built-in ``min`` function is not
     compatible with JAX transforms. This can be fixed by replacing it with
-    ``jnp.minumum``:
+    ``jnp.minimum``:
 
       >>> @jit
       ... def func(x):

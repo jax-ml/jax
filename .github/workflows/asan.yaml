@@ -14,11 +14,16 @@ on:
     paths:
       - '**/workflows/asan.yaml'
 permissions: {}
+
+env:
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+  PIP_INDEX_URL: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+
 jobs:
   asan:
     # Don't execute in fork due to runner type
     if: github.repository == 'jax-ml/jax'
-    runs-on: linux-x86-n2-64
+    runs-on: linux-x86-n4-64
     container:
       image: index.docker.io/library/ubuntu@sha256:b359f1067efa76f37863778f7b6d0e8d911e3ee8efa807ad01fbf5dc1ef9006b # ratchet:ubuntu:24.04
     strategy:
@@ -38,11 +43,11 @@ jobs:
             zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git \
             libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
             libffi-dev liblzma-dev
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           path: jax
           persist-credentials: false
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           repository: python/cpython
           path: cpython
@@ -74,8 +79,7 @@ jobs:
           cd jax
           python build/build.py build --wheels=jaxlib --verbose \
             --bazel_options=--color=yes \
-            --bazel_options=--copt=-fsanitize=address \
-            --clang_path=/usr/bin/clang-18
+            --bazel_options=--copt=-fsanitize=address
           uv pip install dist/jaxlib-*.whl \
             -e .
       - name: Run tests

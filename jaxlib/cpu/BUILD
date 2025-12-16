@@ -14,6 +14,7 @@
 
 # JAX is Autograd and XLA
 
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load(
     "//jaxlib:jax.bzl",
     "nanobind_extension",
@@ -32,6 +33,7 @@ cc_library(
     name = "lapack_kernels",
     srcs = ["lapack_kernels.cc"],
     hdrs = ["lapack_kernels.h"],
+    # compatible with libtpu
     copts = ["-fexceptions"],
     features = ["-use_header_modules"],
     deps = [
@@ -42,13 +44,13 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_status",
     ],
 )
 
 cc_library(
     name = "lapack_kernels_using_lapack",
     srcs = ["lapack_kernels_using_lapack.cc"],
+    # compatible with libtpu
     deps = [":lapack_kernels"],
     alwayslink = 1,
 )
@@ -81,6 +83,7 @@ nanobind_extension(
 cc_library(
     name = "cpu_kernels",
     srcs = ["cpu_kernels.cc"],
+    # compatible with libtpu
     visibility = ["//visibility:public"],
     deps = [
         ":lapack_kernels",
@@ -88,7 +91,6 @@ cc_library(
         ":sparse_kernels",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_target_registry",
     ],
     alwayslink = 1,
 )
@@ -97,6 +99,7 @@ cc_library(
     name = "sparse_kernels",
     srcs = ["sparse_kernels.cc"],
     hdrs = ["sparse_kernels.h"],
+    # compatible with libtpu
     deps = [
         "@eigen_archive//:eigen3",
         "@xla//xla/ffi/api:ffi",

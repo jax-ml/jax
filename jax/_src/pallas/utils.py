@@ -15,13 +15,16 @@
 """Pallas utility functions."""
 
 from __future__ import annotations
-from typing import overload
+import dataclasses
+from typing import Any, overload
 
-import jax
-from jax import lax
+from jax._src.lax import lax
 from jax._src import core as jax_core
+from jax._src import dtypes
+from jax._src import typing as jax_typing
+
 from jax._src.util import split_list
-import jax.numpy as jnp
+from jax._src import numpy as jnp
 import numpy as np
 
 
@@ -30,21 +33,29 @@ def cdiv(a: int, b: int) -> int:
   ...
 
 @overload
-def cdiv(a: int, b: jax.Array) -> jax.Array:
+def cdiv(a: int, b: jax_typing.Array) -> jax_typing.Array:
   ...
 
 @overload
-def cdiv(a: jax.Array, b: int) -> jax.Array:
+def cdiv(a: jax_typing.Array, b: int) -> jax_typing.Array:
   ...
 
 @overload
-def cdiv(a: jax.Array, b: jax.Array) -> jax.Array:
+def cdiv(a: jax_typing.Array, b: jax_typing.Array) -> jax_typing.Array:
   ...
 
-def cdiv(a: int | jax.Array, b: int | jax.Array) -> int | jax.Array:
+def cdiv(a: int | jax_typing.Array, b: int | jax_typing.Array) -> int | jax_typing.Array:
+  """Computes the ceiling division of a divided by b.
+
+  Examples:
+    >>> cdiv(8, 2)
+    4
+    >>> cdiv(9, 2)  # 9 / 2 = 4.5, which rounds up to 5
+    5
+  """
   if isinstance(a, int) and isinstance(b, int):
     return (a + b - 1) // b
-  return lax.div(a + b - 1, b)
+  return lax.div(a + (b - 1), b)
 
 
 def strides_from_shape(shape: tuple[int, ...]) -> tuple[int, ...]:
@@ -62,10 +73,6 @@ def next_power_of_2(x: int) -> int:
     raise ValueError("`next_power_of_2` requires a non-negative integer.")
   return 1 if x == 0 else 2 ** (x - 1).bit_length()
 
-def dtype_bitwidth(dtype: np.dtype | jnp.dtype) -> int:
-  if jnp.issubdtype(dtype, jnp.integer):
-    return jnp.iinfo(dtype).bits
-  return np.dtype(dtype).itemsize * 8
 
 def pattern_match_scan_to_fori_loop(
     jaxpr: jax_core.Jaxpr, num_consts: int, num_carry: int
@@ -110,9 +117,9 @@ def pattern_match_scan_to_fori_loop(
 
 
 def pattern_match_while_to_fori_loop(
-    cond_jaxpr: jax_core.Jaxpr,
+    cond_jaxpr: jax_core.ClosedJaxpr,
     cond_nconsts: int,
-    body_jaxpr: jax_core.Jaxpr,
+    body_jaxpr: jax_core.ClosedJaxpr,
     body_nconsts: int,
 ) -> tuple[jax_core.Jaxpr | None, str | None]:
   # Try to pattern match to fori loop.
@@ -168,10 +175,23 @@ def pattern_match_while_to_fori_loop(
       *jaxpr.invars[body_nconsts + 2 :],
   )
   new_outvars = tuple(jaxpr.outvars[2:])
+  if jaxpr.debug_info.arg_names is not None:
+    new_arg_names = (*jaxpr.debug_info.arg_names[:body_nconsts],
+                     "",
+                     *jaxpr.debug_info.arg_names[body_nconsts + 2:])
+  else:
+    new_arg_names = None
+  if jaxpr.debug_info.result_paths is not None:
+    new_result_paths = jaxpr.debug_info.result_paths[2:]
+  else:
+    new_result_paths = None
+
   jaxpr = jaxpr.replace(
       eqns=jaxpr.eqns[:eqn_index] + jaxpr.eqns[eqn_index + 1 :],
       invars=new_invars,
       outvars=new_outvars,
+      debug_info=jaxpr.debug_info._replace(arg_names=new_arg_names,
+                                           result_paths=new_result_paths)
   )
   return jaxpr, None
 
@@ -313,7 +333,7 @@ def nextafter_lowering_helper(x, y):
       jnp.float64, jnp.uint64, np.float64, np.uint64, np.int64,
   )
 
-  bitwidth = dtype_bitwidth(x.dtype)
+  bitwidth = dtypes.itemsize_bits(x.dtype)
 
   x_as_int = x.view(jnp_uint)
   y_as_int = y.view(jnp_uint)
@@ -380,3 +400,20 @@ def nextafter_lowering_helper(x, y):
 
   # Cast back to the original type.
   return result.view(jnp_float)
+
+
+@dataclasses.dataclass(frozen=True)
+class MeshInfo:
+  mesh_shape: tuple[int, ...]
+  axis_names: tuple[str, ...]
+  mesh_strides: tuple[int, ...]
+
+  @staticmethod
+  def from_mesh(mesh: Any) -> MeshInfo:
+    # We need mesh <-> logical translation tables. Since the logical IDs are
+    # just linearized versions of the mesh IDs, we create those tables.
+    mesh_strides = strides_from_shape(tuple(
+        mesh.shape[a] for a in mesh.axis_names
+    ))
+    mesh_shape = tuple(mesh.shape.values())
+    return MeshInfo(mesh_shape, mesh.axis_names, mesh_strides)

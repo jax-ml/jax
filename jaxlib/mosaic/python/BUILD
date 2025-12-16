@@ -45,7 +45,7 @@ gentbl_filegroup(
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = ":tpu_python.td",
     deps = [
-        "//jaxlib/mosaic:tpu_td_files",
+        "//jaxlib/mosaic:tpu_ops_td_files",
         "@llvm-project//mlir:OpBaseTdFiles",
     ],
 )

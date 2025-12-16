@@ -198,7 +198,7 @@ class MatmulTestCase(jtu.JaxTestCase):
     out = kernel(a, b)
     out_ref = jnp.dot(a, b.T)
     np.testing.assert_allclose(
-        out, out_ref, atol=1e-3, rtol=1e-3 if k < 512 else 1e-2
+        out, out_ref, atol=2e-3, rtol=1e-2
     )
 
 

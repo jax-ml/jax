@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
@@ -20,6 +21,12 @@ from jax._src.cloud_tpu_init import cloud_tpu_init
 
 jax.config.parse_flags_with_absl()
 
+
+jax_test_bool_config = config.bool_state(
+    name='jax_test_bool_config',
+    default=True,
+    help='Configuration only used for tests.',
+)
 
 jax_test_enum_config = config.enum_state(
     name='jax_test_enum_config',
@@ -29,31 +36,50 @@ jax_test_enum_config = config.enum_state(
 )
 
 
+class InvalidBool:
+  def __bool__(self):
+    raise ValueError("invalid bool")
+
+
 class ConfigTest(jtu.JaxTestCase):
-  def test_config_setting_via_update(self):
-    self.assertEqual(jax_test_enum_config.value, 'default')
+  @parameterized.named_parameters(
+      {"testcase_name": "_enum", "config_name": "jax_test_enum_config",
+       "config_obj": jax_test_enum_config, "default": "default", "val1": "xxx",
+       "val2": "yyy"},
+      {"testcase_name": "_bool", "config_name": "jax_test_bool_config",
+       "config_obj": jax_test_bool_config, "default": True, "val1": False,
+       "val2": True},
+  )
+  def test_config_setting_via_update(self, config_name, config_obj, default, val1, val2):
+    self.assertEqual(config_obj.value, default)
 
-    jax.config.update('jax_test_enum_config', 'xxx')
-    self.assertEqual(jax_test_enum_config.value, 'xxx')
+    jax.config.update(config_name, val1)
+    self.assertEqual(config_obj.value, val1)
 
-    jax.config.update('jax_test_enum_config', 'yyy')
-    self.assertEqual(jax_test_enum_config.value, 'yyy')
+    jax.config.update(config_name, val2)
+    self.assertEqual(config_obj.value, val2)
 
-    jax.config.update('jax_test_enum_config', 'default')
-    self.assertEqual(jax_test_enum_config.value, 'default')
+    jax.config.update(config_name, default)
+    self.assertEqual(config_obj.value, default)
 
-  def test_config_setting_via_context(self):
-    self.assertEqual(jax_test_enum_config.value, 'default')
+  @parameterized.named_parameters(
+      {"testcase_name": "_enum", "config_obj": jax_test_enum_config,
+       "default": "default", "val1": "xxx", "val2": "yyy"},
+      {"testcase_name": "_bool", "config_obj": jax_test_bool_config,
+       "default": True, "val1": False, "val2": True},
+  )
+  def test_config_setting_via_context(self, config_obj, default, val1, val2):
+    self.assertEqual(config_obj.value, default)
 
-    with jax_test_enum_config('xxx'):
-      self.assertEqual(jax_test_enum_config.value, 'xxx')
+    with config_obj(val1):
+      self.assertEqual(config_obj.value, val1)
 
-      with jax_test_enum_config('yyy'):
-        self.assertEqual(jax_test_enum_config.value, 'yyy')
+      with config_obj(val2):
+        self.assertEqual(config_obj.value, val2)
 
-      self.assertEqual(jax_test_enum_config.value, 'xxx')
+      self.assertEqual(config_obj.value, val1)
 
-    self.assertEqual(jax_test_enum_config.value, 'default')
+    self.assertEqual(config_obj.value, default)
 
   def test_config_update_validation(self):
     self.assertEqual(jax_test_enum_config.value, 'default')
@@ -68,6 +94,20 @@ class ConfigTest(jtu.JaxTestCase):
       with jax_test_enum_config('invalid'):
         pass
     self.assertEqual(jax_test_enum_config.value, 'default')
+
+  def test_bool_config_update_validation(self):
+    self.assertEqual(jax_test_bool_config.value, True)
+    with self.assertRaisesRegex(ValueError, "invalid bool"):
+      jax.config.update('jax_test_bool_config', InvalidBool())
+    # Error should raise before changing the value
+    self.assertEqual(jax_test_bool_config.value, True)
+
+  def test_bool_config_context_validation(self):
+    self.assertEqual(jax_test_bool_config.value, True)
+    with self.assertRaisesRegex(ValueError, "invalid bool"):
+      with jax_test_bool_config(InvalidBool()):
+        pass
+    self.assertEqual(jax_test_bool_config.value, True)
 
   def test_cloud_tpu_init(self):
     if not jtu.is_cloud_tpu():

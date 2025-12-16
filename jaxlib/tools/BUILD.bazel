@@ -16,8 +16,10 @@
 
 load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load("@cuda_cudart//:version.bzl", cuda_major_version = "VERSION")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
+load("@rules_python//python:py_binary.bzl", "py_binary")
 load(
     "@xla//third_party/py:py_import.bzl",
     "py_import",
@@ -56,101 +58,8 @@ pytype_strict_library(
         "build_utils.py",
         ":platform_tags_py",
     ],
+    deps = ["@xla//third_party/py:setup_py_nvidia_dependencies_util"],
 )
-
-py_binary(
-    name = "build_wheel",
-    srcs = ["build_wheel.py"],
-    data = [
-        "LICENSE.txt",
-        "//jaxlib",
-        "//jaxlib:README.md",
-        "//jaxlib:_jax",
-        "//jaxlib:jaxlib_binaries",
-        "//jaxlib:setup.py",
-        "//jaxlib:xla_client.py",
-        "@xla//xla/ffi/api:api.h",
-        "@xla//xla/ffi/api:c_api.h",
-        "@xla//xla/ffi/api:ffi.h",
-    ],
-    deps = [
-        ":build_utils",
-        "@bazel_tools//tools/python/runfiles",
-        "@pypi//build",
-        "@pypi//setuptools",
-        "@pypi//wheel",
-    ],
-)
-
-jax_py_test(
-    name = "build_wheel_test",
-    srcs = ["build_wheel_test.py"],
-    data = [":build_wheel"],
-    deps = [
-        "@bazel_tools//tools/python/runfiles",
-    ],
-)
-
-py_binary(
-    name = "build_gpu_plugin_wheel",
-    srcs = ["build_gpu_plugin_wheel.py"],
-    data = [
-        "LICENSE.txt",
-    ] + if_cuda([
-        "//jaxlib:version",
-        "//jaxlib/cuda:cuda_gpu_support",
-        "//jax_plugins/cuda:pjrt_c_api_gpu_plugin.so",
-        "//jax_plugins/cuda:pyproject.toml",
-        "//jax_plugins/cuda:setup.py",
-        "//jax_plugins/cuda:__init__.py",
-        "@local_config_cuda//cuda:cuda-nvvm",
-    ]) + if_rocm([
-        "//jaxlib:version",
-        "//jaxlib/rocm:rocm_gpu_support",
-        "//jax_plugins/rocm:pjrt_c_api_gpu_plugin.so",
-        "//jax_plugins/rocm:pyproject.toml",
-        "//jax_plugins/rocm:setup.py",
-        "//jax_plugins/rocm:__init__.py",
-    ]),
-    deps = [
-        ":build_utils",
-        "@bazel_tools//tools/python/runfiles",
-        "@pypi//build",
-        "@pypi//setuptools",
-        "@pypi//wheel",
-    ],
-)
-
-py_binary(
-    name = "build_gpu_kernels_wheel",
-    srcs = ["build_gpu_kernels_wheel.py"],
-    data = [
-        "LICENSE.txt",
-    ] + if_cuda([
-        "//jaxlib:version",
-        "//jaxlib/mosaic/gpu:mosaic_gpu",
-        "//jaxlib/cuda:cuda_plugin_extension",
-        "//jaxlib/cuda:cuda_gpu_support",
-        "//jax_plugins/cuda:plugin_pyproject.toml",
-        "//jax_plugins/cuda:plugin_setup.py",
-        "@local_config_cuda//cuda:cuda-nvvm",
-    ]) + if_rocm([
-        "//jaxlib:version",
-        "//jaxlib/rocm:rocm_plugin_extension",
-        "//jaxlib/rocm:rocm_gpu_support",
-        "//jax_plugins/rocm:plugin_pyproject.toml",
-        "//jax_plugins/rocm:plugin_setup.py",
-    ]),
-    deps = [
-        ":build_utils",
-        "@bazel_tools//tools/python/runfiles",
-        "@pypi//build",
-        "@pypi//setuptools",
-        "@pypi//wheel",
-    ],
-)
-
-# Targets and configurations for the new wheel build rules.
 
 # Platform configurations.
 
@@ -327,7 +236,7 @@ wheel_sources(
 )
 
 jax_wheel(
-    name = "jax_cuda_plugin_wheel",
+    name = "jax_cuda12_plugin_wheel",
     enable_cuda = True,
     no_abi = False,
     # TODO(b/371217563) May use hermetic cuda version here.
@@ -338,7 +247,18 @@ jax_wheel(
 )
 
 jax_wheel(
-    name = "jax_cuda_plugin_wheel_editable",
+    name = "jax_cuda13_plugin_wheel",
+    enable_cuda = True,
+    no_abi = False,
+    # TODO(b/371217563) May use hermetic cuda version here.
+    platform_version = "13",
+    source_files = [":jax_plugin_sources"],
+    wheel_binary = ":build_gpu_kernels_wheel_tool",
+    wheel_name = "jax_cuda13_plugin",
+)
+
+jax_wheel(
+    name = "jax_cuda12_plugin_wheel_editable",
     editable = True,
     enable_cuda = True,
     # TODO(b/371217563) May use hermetic cuda version here.
@@ -346,6 +266,17 @@ jax_wheel(
     source_files = [":jax_plugin_sources"],
     wheel_binary = ":build_gpu_kernels_wheel_tool",
     wheel_name = "jax_cuda12_plugin",
+)
+
+jax_wheel(
+    name = "jax_cuda13_plugin_wheel_editable",
+    editable = True,
+    enable_cuda = True,
+    # TODO(b/371217563) May use hermetic cuda version here.
+    platform_version = "13",
+    source_files = [":jax_plugin_sources"],
+    wheel_binary = ":build_gpu_kernels_wheel_tool",
+    wheel_name = "jax_cuda13_plugin",
 )
 
 jax_wheel(
@@ -414,7 +345,7 @@ wheel_sources(
 )
 
 jax_wheel(
-    name = "jax_cuda_pjrt_wheel",
+    name = "jax_cuda12_pjrt_wheel",
     enable_cuda = True,
     no_abi = True,
     # TODO(b/371217563) May use hermetic cuda version here.
@@ -425,7 +356,18 @@ jax_wheel(
 )
 
 jax_wheel(
-    name = "jax_cuda_pjrt_wheel_editable",
+    name = "jax_cuda13_pjrt_wheel",
+    enable_cuda = True,
+    no_abi = True,
+    # TODO(b/371217563) May use hermetic cuda version here.
+    platform_version = "13",
+    source_files = [":jax_pjrt_sources"],
+    wheel_binary = ":build_gpu_plugin_wheel_tool",
+    wheel_name = "jax_cuda13_pjrt",
+)
+
+jax_wheel(
+    name = "jax_cuda12_pjrt_wheel_editable",
     editable = True,
     enable_cuda = True,
     # TODO(b/371217563) May use hermetic cuda version here.
@@ -433,6 +375,17 @@ jax_wheel(
     source_files = [":jax_pjrt_sources"],
     wheel_binary = ":build_gpu_plugin_wheel_tool",
     wheel_name = "jax_cuda12_pjrt",
+)
+
+jax_wheel(
+    name = "jax_cuda13_pjrt_wheel_editable",
+    editable = True,
+    enable_cuda = True,
+    # TODO(b/371217563) May use hermetic cuda version here.
+    platform_version = "13",
+    source_files = [":jax_pjrt_sources"],
+    wheel_binary = ":build_gpu_plugin_wheel_tool",
+    wheel_name = "jax_cuda13_pjrt",
 )
 
 jax_wheel(
@@ -456,20 +409,27 @@ jax_wheel(
 )
 
 # Py_import targets.
+cuda_suffix = "_cu12" if cuda_major_version == "12" else ""
+
 filegroup(
     name = "nvidia_wheel_deps",
     srcs = [
-        "@pypi_nvidia_cublas_cu12//:whl",
-        "@pypi_nvidia_cuda_cupti_cu12//:whl",
-        "@pypi_nvidia_cuda_nvcc_cu12//:whl",
-        "@pypi_nvidia_cuda_runtime_cu12//:whl",
-        "@pypi_nvidia_cudnn_cu12//:whl",
-        "@pypi_nvidia_cufft_cu12//:whl",
-        "@pypi_nvidia_cusolver_cu12//:whl",
-        "@pypi_nvidia_cusparse_cu12//:whl",
-        "@pypi_nvidia_nccl_cu12//:whl",
-        "@pypi_nvidia_nvjitlink_cu12//:whl",
-    ],
+        "@pypi_nvidia_cublas{cuda}//:pkg".format(cuda = cuda_suffix),
+        "@pypi_nvidia_cuda_cupti{cuda}//:pkg".format(cuda = cuda_suffix),
+        "@pypi_nvidia_cuda_nvcc{cuda}//:pkg".format(cuda = cuda_suffix),
+        "@pypi_nvidia_cuda_nvrtc{cuda}//:pkg".format(cuda = cuda_suffix),
+        "@pypi_nvidia_cuda_runtime{cuda}//:pkg".format(cuda = cuda_suffix),
+        "@pypi_nvidia_cudnn_cu{cuda}//:pkg".format(cuda = cuda_major_version),
+        "@pypi_nvidia_cufft{cuda}//:pkg".format(cuda = cuda_suffix),
+        "@pypi_nvidia_cusolver{cuda}//:pkg".format(cuda = cuda_suffix),
+        "@pypi_nvidia_cusparse{cuda}//:pkg".format(cuda = cuda_suffix),
+        "@pypi_nvidia_nccl_cu{cuda}//:pkg".format(cuda = cuda_major_version),
+        "@pypi_nvidia_nvjitlink{cuda}//:pkg".format(cuda = cuda_suffix),
+        "@pypi_nvidia_nvshmem_cu{cuda}//:pkg".format(cuda = cuda_major_version),
+    ] + ([
+        "@pypi_nvidia_nvvm{cuda}//:pkg".format(cuda = cuda_suffix),
+        "@pypi_nvidia_cuda_crt{cuda}//:pkg".format(cuda = cuda_suffix),
+    ] if cuda_major_version == "13" else []),
 )
 
 # The flag configures whether to add the pypi NVIDIA CUDA deps to py_import.
@@ -493,27 +453,73 @@ py_import(
 
 py_import(
     name = "jax_cuda_plugin_py_import",
-    wheel = ":jax_cuda_plugin_wheel",
+    wheel = ":jax_cuda{cuda}_plugin_wheel".format(cuda = cuda_major_version),
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
 py_import(
     name = "jax_cuda_pjrt_py_import",
-    wheel = ":jax_cuda_pjrt_wheel",
+    wheel = ":jax_cuda{cuda}_pjrt_wheel".format(cuda = cuda_major_version),
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
 # The targets below are used for GPU tests with `--//jax:build_jaxlib=false`.
 py_import(
     name = "pypi_jax_cuda_plugin_with_cuda_deps",
-    wheel = "@pypi_jax_cuda12_plugin//:whl",
+    wheel = "@pypi_jax_cuda{cuda}_plugin//:whl".format(cuda = cuda_major_version),
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
 py_import(
     name = "pypi_jax_cuda_pjrt_with_cuda_deps",
-    wheel = "@pypi_jax_cuda12_pjrt//:whl",
+    wheel = "@pypi_jax_cuda{cuda}_pjrt//:whl".format(cuda = cuda_major_version),
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
+)
+
+# Mosaic GPU
+
+py_binary(
+    name = "build_mosaic_wheel_tool",
+    srcs = ["build_mosaic_wheel.py"],
+    main = "build_mosaic_wheel.py",
+    deps = [
+        ":build_utils",
+        "@bazel_tools//tools/python/runfiles",
+        "@pypi//build",
+        "@pypi//setuptools",
+        "@pypi//wheel",
+    ],
+)
+
+wheel_sources(
+    name = "mosaic_sources",
+    static_srcs = [
+        "LICENSE.txt",
+        "//jaxlib/mosaic/gpu/wheel:mosaic_gpu.so",
+        "//jaxlib/mosaic/gpu/wheel:setup.py",
+        "//jaxlib/mosaic/gpu/wheel:__init__.py",
+        "//jaxlib:version",
+    ],
+)
+
+jax_wheel(
+    name = "mosaic_gpu_wheel_cuda12",
+    enable_cuda = True,
+    no_abi = True,
+    platform_version = "12",
+    source_files = [":mosaic_sources"],
+    wheel_binary = ":build_mosaic_wheel_tool",
+    wheel_name = "mosaic_gpu_cuda12",
+)
+
+jax_wheel(
+    name = "mosaic_gpu_wheel_cuda13",
+    enable_cuda = True,
+    no_abi = True,
+    platform_version = "13",
+    source_files = [":mosaic_sources"],
+    wheel_binary = ":build_mosaic_wheel_tool",
+    wheel_name = "mosaic_gpu_cuda13",
 )
 
 # Wheel tests.
@@ -542,7 +548,7 @@ verify_manylinux_compliance_test(
     test_tags = [
         "manual",
     ],
-    wheel = ":jax_cuda_plugin_wheel",
+    wheel = ":jax_cuda{cuda}_plugin_wheel".format(cuda = cuda_major_version),
     x86_64_compliance_tag = X86_64_MANYLINUX_TAG,
 )
 
@@ -553,7 +559,18 @@ verify_manylinux_compliance_test(
     test_tags = [
         "manual",
     ],
-    wheel = ":jax_cuda_pjrt_wheel",
+    wheel = ":jax_cuda{cuda}_pjrt_wheel".format(cuda = cuda_major_version),
+    x86_64_compliance_tag = X86_64_MANYLINUX_TAG,
+)
+
+verify_manylinux_compliance_test(
+    name = "mosaic_gpu_manylinux_compliance_test",
+    aarch64_compliance_tag = AARCH64_MANYLINUX_TAG,
+    ppc64le_compliance_tag = PPC64LE_MANYLINUX_TAG,
+    test_tags = [
+        "manual",
+    ],
+    wheel = ":mosaic_gpu_wheel_cuda{cuda}".format(cuda = cuda_major_version),
     x86_64_compliance_tag = X86_64_MANYLINUX_TAG,
 )
 
@@ -576,10 +593,10 @@ pytype_test(
     name = "jax_cuda_plugin_wheel_size_test",
     srcs = [":wheel_size_test.py"],
     args = [
-        "--wheel-path=$(location :jax_cuda_plugin_wheel)",
+        "--wheel-path=$(location :jax_cuda{cuda}_plugin_wheel)".format(cuda = cuda_major_version),
         "--max-size-mib=20",
     ],
-    data = [":jax_cuda_plugin_wheel"],
+    data = [":jax_cuda{cuda}_plugin_wheel".format(cuda = cuda_major_version)],
     main = "wheel_size_test.py",
     tags = [
         "manual",
@@ -591,10 +608,25 @@ pytype_test(
     name = "jax_cuda_pjrt_wheel_size_test",
     srcs = [":wheel_size_test.py"],
     args = [
-        "--wheel-path=$(location :jax_cuda_pjrt_wheel)",
-        "--max-size-mib=120",
+        "--wheel-path=$(location :jax_cuda{cuda}_pjrt_wheel)".format(cuda = cuda_major_version),
+        "--max-size-mib=150",
     ],
-    data = [":jax_cuda_pjrt_wheel"],
+    data = [":jax_cuda{cuda}_pjrt_wheel".format(cuda = cuda_major_version)],
+    main = "wheel_size_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+)
+
+pytype_test(
+    name = "mosaic_gpu_wheel_size_test",
+    srcs = [":wheel_size_test.py"],
+    args = [
+        "--wheel-path=$(location :mosaic_gpu_wheel_cuda{cuda})".format(cuda = cuda_major_version),
+        "--max-size-mib=40",
+    ],
+    data = [":mosaic_gpu_wheel_cuda{cuda}".format(cuda = cuda_major_version)],
     main = "wheel_size_test.py",
     tags = [
         "manual",

@@ -21,7 +21,6 @@ from absl.testing import parameterized
 
 import numpy as np
 import scipy.linalg
-import scipy.special
 import scipy.stats
 
 import jax
@@ -70,9 +69,8 @@ class RandomTestBase(jtu.JaxTestCase):
       samples = samples.astype('float32')
     # kstest fails for infinities starting in scipy 1.12
     # (https://github.com/scipy/scipy/issues/20386)
-    # TODO(jakevdp): remove this logic if/when fixed upstream.
     scipy_version = jtu.parse_version(scipy.__version__)
-    if scipy_version >= (1, 12) and np.issubdtype(samples.dtype, np.floating):
+    if scipy_version < (1, 14) and np.issubdtype(samples.dtype, np.floating):
       samples = np.array(samples, copy=True)
       samples[np.isposinf(samples)] = 0.01 * np.finfo(samples.dtype).max
       samples[np.isneginf(samples)] = 0.01 * np.finfo(samples.dtype).min
@@ -1015,7 +1013,7 @@ class DistributionsTest(RandomTestBase):
   def testIssue756(self):
     key = self.make_key(0)
     w = random.normal(key, ())
-    self.assertEqual(w.dtype, dtypes.canonicalize_dtype(jnp.float_))
+    self.assertEqual(w.dtype, dtypes.default_float_dtype())
 
   def testIssue1789(self):
     def f(x):
@@ -1156,7 +1154,7 @@ class DistributionsTest(RandomTestBase):
     max = np.iinfo(dtype).max
     key = lambda: self.make_key(1701)
     shape = (10,)
-    if np.iinfo(dtype).bits < np.iinfo(dtypes.canonicalize_dtype(int)).bits:
+    if np.iinfo(dtype).bits < np.iinfo(dtypes.default_int_dtype()).bits:
       expected = random.randint(key(), shape, min, max + 1, dtype)
       self.assertArraysEqual(expected, random.randint(key(), shape, min - 12345, max + 12345, dtype))
     else:
@@ -1441,6 +1439,21 @@ class DistributionsTest(RandomTestBase):
     with self.assertNoWarnings():
       jax.random.key_data(keys())
       jax.random.key_impl(keys())
+
+  @jtu.sample_product(
+    dtype=['int8', 'uint8', 'int16', 'uint16']
+  )
+  def test_randint_narrow_int_bias(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/27702
+    key = self.make_key(7534892)
+    n_samples = 100_000
+    n_bins = 100
+    data = jax.random.randint(key, (n_samples,), 0, n_bins, dtype=dtype)
+
+    # Check that counts within each bin are consistent with a uniform distribution:
+    # i.e. counts are poisson-distributed about the average count per bin.
+    counts = jnp.bincount(data, length=n_bins).astype(float)
+    self._CheckKolmogorovSmirnovCDF(counts, scipy.stats.poisson(n_samples / n_bins).cdf)
 
 
 def get_energy_distance(samples_1, samples_2):

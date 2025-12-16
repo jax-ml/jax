@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <complex>
-
 #include "absl/base/call_once.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/cpu/lapack_kernels.h"
@@ -29,6 +27,9 @@ using ::xla::ffi::DataType;
 
 void GetLapackKernelsFromScipy() {
   static absl::once_flag initialized;
+  if (lapack_kernels_initialized) {
+    return;
+  }
   // For reasons I'm not entirely sure of, if the import_ call is done inside
   // the call_once scope, we sometimes observe deadlocks in the test suite.
   // However it probably doesn't do much harm to just import them a second time,
@@ -45,10 +46,6 @@ void GetLapackKernelsFromScipy() {
       return nb::cast<nb::capsule>(blas_capi[name]).data();
     };
 
-    AssignKernelFn<Trsm<float>>(blas_ptr("strsm"));
-    AssignKernelFn<Trsm<double>>(blas_ptr("dtrsm"));
-    AssignKernelFn<Trsm<std::complex<float>>>(blas_ptr("ctrsm"));
-    AssignKernelFn<Trsm<std::complex<double>>>(blas_ptr("ztrsm"));
     AssignKernelFn<TriMatrixEquationSolver<DataType::F32>>(blas_ptr("strsm"));
     AssignKernelFn<TriMatrixEquationSolver<DataType::F64>>(blas_ptr("dtrsm"));
     AssignKernelFn<TriMatrixEquationSolver<DataType::C64>>(blas_ptr("ctrsm"));
@@ -112,10 +109,6 @@ void GetLapackKernelsFromScipy() {
     AssignKernelFn<EigenvalueDecompositionComplex<DataType::C128>>(
         lapack_ptr("zgeev"));
 
-    AssignKernelFn<RealGees<float>>(lapack_ptr("sgees"));
-    AssignKernelFn<RealGees<double>>(lapack_ptr("dgees"));
-    AssignKernelFn<ComplexGees<std::complex<float>>>(lapack_ptr("cgees"));
-    AssignKernelFn<ComplexGees<std::complex<double>>>(lapack_ptr("zgees"));
     AssignKernelFn<SchurDecomposition<DataType::F32>>(lapack_ptr("sgees"));
     AssignKernelFn<SchurDecomposition<DataType::F64>>(lapack_ptr("dgees"));
     AssignKernelFn<SchurDecompositionComplex<DataType::C64>>(
@@ -132,10 +125,6 @@ void GetLapackKernelsFromScipy() {
     AssignKernelFn<HessenbergDecomposition<DataType::C128>>(
         lapack_ptr("zgehrd"));
 
-    AssignKernelFn<Sytrd<float>>(lapack_ptr("ssytrd"));
-    AssignKernelFn<Sytrd<double>>(lapack_ptr("dsytrd"));
-    AssignKernelFn<Sytrd<std::complex<float>>>(lapack_ptr("chetrd"));
-    AssignKernelFn<Sytrd<std::complex<double>>>(lapack_ptr("zhetrd"));
     AssignKernelFn<TridiagonalReduction<DataType::F32>>(lapack_ptr("ssytrd"));
     AssignKernelFn<TridiagonalReduction<DataType::F64>>(lapack_ptr("dsytrd"));
     AssignKernelFn<TridiagonalReduction<DataType::C64>>(lapack_ptr("chetrd"));
@@ -150,23 +139,6 @@ void GetLapackKernelsFromScipy() {
 
 nb::dict Registrations() {
   nb::dict dict;
-  dict["blas_strsm"] = EncapsulateFunction(Trsm<float>::Kernel);
-  dict["blas_dtrsm"] = EncapsulateFunction(Trsm<double>::Kernel);
-  dict["blas_ctrsm"] = EncapsulateFunction(Trsm<std::complex<float>>::Kernel);
-  dict["blas_ztrsm"] = EncapsulateFunction(Trsm<std::complex<double>>::Kernel);
-  dict["lapack_sgees"] = EncapsulateFunction(RealGees<float>::Kernel);
-  dict["lapack_dgees"] = EncapsulateFunction(RealGees<double>::Kernel);
-  dict["lapack_cgees"] =
-      EncapsulateFunction(ComplexGees<std::complex<float>>::Kernel);
-  dict["lapack_zgees"] =
-      EncapsulateFunction(ComplexGees<std::complex<double>>::Kernel);
-  dict["lapack_ssytrd"] = EncapsulateFunction(Sytrd<float>::Kernel);
-  dict["lapack_dsytrd"] = EncapsulateFunction(Sytrd<double>::Kernel);
-  dict["lapack_chetrd"] =
-      EncapsulateFunction(Sytrd<std::complex<float>>::Kernel);
-  dict["lapack_zhetrd"] =
-      EncapsulateFunction(Sytrd<std::complex<double>>::Kernel);
-
   dict["lapack_strsm_ffi"] = EncapsulateFunction(lapack_strsm_ffi);
   dict["lapack_dtrsm_ffi"] = EncapsulateFunction(lapack_dtrsm_ffi);
   dict["lapack_ctrsm_ffi"] = EncapsulateFunction(lapack_ctrsm_ffi);

@@ -840,7 +840,7 @@ to `export.symbolic_shape` share a scope and
 can be mixed up in arithmetic operations. The result would
 also share the same scope.
 
-You can re-use scopes:
+You can reuse scopes:
 
 ```python
 a, = export.symbolic_shape("a,", constraints=("a >= 8",))
@@ -1441,7 +1441,7 @@ may be slightly different for small matrices.
 Applies to non-native serialization only.
 
 Operations like ``jax.numpy.cumsum`` are lowered by JAX differently based
-on the platform. For TPU, the lowering uses the [HLO ReduceWindow](https://www.tensorflow.org/xla/operation_semantics#reducewindow)
+on the platform. For TPU, the lowering uses the [HLO ReduceWindow](https://www.openxla.org/xla/operation_semantics#reducewindow)
 operation, which has an efficient implementation for the cases when the
 reduction function is associative. For CPU and GPU, JAX uses an alternative
 lowering using [associative scans](https://github.com/jax-ml/jax/blob/f08bb50bfa9f6cf2de1f3f78f76e1aee4a78735d/jax/_src/lax/control_flow.py#L2801).
@@ -1467,7 +1467,7 @@ For most JAX primitives there is a natural TensorFlow op that fits the needed se
 There are a few (listed in [no_xla_limitations.md](g3doc/no_xla_limitations.md)) JAX primitives
 for which there is no single TensorFlow op with matching semantics.
 This is not so surprising, because JAX primitives have been designed
-to be compiled to [HLO ops](https://www.tensorflow.org/xla/operation_semantics),
+to be compiled to [HLO ops](https://www.openxla.org/xla/operation_semantics),
 while the corresponding TensorFlow ops are sometimes higher-level.
 For the cases when there is no matching canonical TensorFlow op,
 we use a set of special TensorFlow ops that are thin wrappers over HLO ops
@@ -1509,7 +1509,7 @@ deterministic PRNG](https://github.com/jax-ml/jax/blob/main/docs/design_notes/pr
 and it has an internal JAX primitive for it.
 This primitive is at the moment lowered to a soup of tf.bitwise operations,
 which has a clear performance penalty. We plan to look into using the
-HLO [RNGBitGenerator](https://www.tensorflow.org/xla/operation_semantics#rngbitgenerator)
+HLO [RNGBitGenerator](https://www.openxla.org/xla/operation_semantics#rngbitgenerator)
 (exposed as a TFXLA op), which does implement
 the same basic Threefry algorithm as JAX’s PRNG, although that would
 result in different results than JAX’s PRNG.

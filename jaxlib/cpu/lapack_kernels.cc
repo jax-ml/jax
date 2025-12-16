@@ -18,9 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cmath>
 #include <complex>
-#include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -33,7 +31,6 @@ limitations under the License.
 #include "jaxlib/ffi_helpers.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
-#include "xla/service/custom_call_status.h"
 
 static_assert(sizeof(jax::lapack_int) == sizeof(int32_t),
               "Expected LAPACK integers to be 32-bit");
@@ -50,6 +47,8 @@ XLA_FFI_REGISTER_ENUM_ATTR_DECODING(jax::schur::ComputationMode);
 XLA_FFI_REGISTER_ENUM_ATTR_DECODING(jax::schur::Sort);
 
 namespace jax {
+
+bool lapack_kernels_initialized = false;
 
 template <typename T>
 inline T CastNoOverflow(int64_t value, std::string_view source = __FILE__) {
@@ -70,68 +69,11 @@ void CopyIfDiffBuffer(ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out) {
 
 //== Triangular System Solver ==//
 
-// lapack trsm
-
-template <typename T>
-typename Trsm<T>::FnType* Trsm<T>::fn = nullptr;
-
-template <typename T>
-void Trsm<T>::Kernel(void* out, void** data, XlaCustomCallStatus*) {
-  int32_t left_side = *reinterpret_cast<int32_t*>(data[0]);
-  int32_t lower = *reinterpret_cast<int32_t*>(data[1]);
-  int32_t trans_a = *reinterpret_cast<int32_t*>(data[2]);
-  int32_t diag = *reinterpret_cast<int32_t*>(data[3]);
-  int m = *reinterpret_cast<int32_t*>(data[4]);
-  int n = *reinterpret_cast<int32_t*>(data[5]);
-  int batch = *reinterpret_cast<int32_t*>(data[6]);
-  T* alpha = reinterpret_cast<T*>(data[7]);
-  T* a = reinterpret_cast<T*>(data[8]);
-  T* b = reinterpret_cast<T*>(data[9]);
-
-  T* x = reinterpret_cast<T*>(out);
-  if (x != b) {
-    std::memcpy(x, b,
-                static_cast<int64_t>(batch) * static_cast<int64_t>(m) *
-                    static_cast<int64_t>(n) * sizeof(T));
-  }
-
-  char cside = left_side ? 'L' : 'R';
-  char cuplo = lower ? 'L' : 'U';
-  char ctransa = 'N';
-  if (trans_a == 1) {
-    ctransa = 'T';
-  } else if (trans_a == 2) {
-    ctransa = 'C';
-  }
-  char cdiag = diag ? 'U' : 'N';
-  int lda = left_side ? m : n;
-  int ldb = m;
-
-  int64_t x_plus = static_cast<int64_t>(m) * static_cast<int64_t>(n);
-  int64_t a_plus = static_cast<int64_t>(lda) * static_cast<int64_t>(lda);
-
-  for (int i = 0; i < batch; ++i) {
-    fn(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb);
-    x += x_plus;
-    a += a_plus;
-  }
-}
-
-template struct Trsm<float>;
-template struct Trsm<double>;
-template struct Trsm<std::complex<float>>;
-template struct Trsm<std::complex<double>>;
-
-// FFI Kernel
-
 template <ffi::DataType dtype>
 ffi::Error TriMatrixEquationSolver<dtype>::Kernel(
-    ffi::Buffer<dtype> x, ffi::Buffer<dtype> y,
-    // TODO(b/397715595): Remove RemainingArgs no earlier than 180 days after
-    // the release of JAX 0.5.2.
-    ffi::RemainingArgs, ffi::ResultBuffer<dtype> y_out, MatrixParams::Side side,
-    MatrixParams::UpLo uplo, MatrixParams::Transpose trans_x,
-    MatrixParams::Diag diag) {
+    ffi::Buffer<dtype> x, ffi::Buffer<dtype> y, ffi::ResultBuffer<dtype> y_out,
+    MatrixParams::Side side, MatrixParams::UpLo uplo,
+    MatrixParams::Transpose trans_x, MatrixParams::Diag diag) {
   CopyIfDiffBuffer(y, y_out);
   FFI_ASSIGN_OR_RETURN((auto [batch_count, y_rows, y_cols]),
                        SplitBatch2D(y.dimensions()));
@@ -1064,138 +1006,6 @@ template struct EigenvalueDecompositionComplex<ffi::DataType::C128>;
 
 //== Schur Decomposition ==//
 
-// lapack gees
-
-template <typename T>
-typename RealGees<T>::FnType* RealGees<T>::fn = nullptr;
-
-template <typename T>
-void RealGees<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
-  int b = *(reinterpret_cast<int32_t*>(data[0]));
-  int n_int = *(reinterpret_cast<int32_t*>(data[1]));
-  int64_t n = n_int;
-  char jobvs = *(reinterpret_cast<uint8_t*>(data[2]));
-  char sort = *(reinterpret_cast<uint8_t*>(data[3]));
-
-  const T* a_in = reinterpret_cast<T*>(data[4]);
-
-  // bool* select (T, T) = reinterpret_cast<bool* (T, T)>(data[5]);
-  bool (*select)(T, T) = nullptr;
-
-  void** out = reinterpret_cast<void**>(out_tuple);
-  T* a_out = reinterpret_cast<T*>(out[0]);
-
-  T* wr_out = reinterpret_cast<T*>(out[1]);
-  T* wi_out = reinterpret_cast<T*>(out[2]);
-  T* vs_out = reinterpret_cast<T*>(out[3]);
-  int* sdim_out = reinterpret_cast<int*>(out[4]);
-  int* info_out = reinterpret_cast<int*>(out[5]);
-
-  bool* b_work = (sort != 'N') ? (new bool[n]) : nullptr;
-
-  T work_query;
-  int lwork = -1;
-  fn(&jobvs, &sort, select, &n_int, a_out, &n_int, sdim_out, wr_out, wi_out,
-     vs_out, &n_int, &work_query, &lwork, b_work, info_out);
-  ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&work_query, sizeof(work_query));
-  lwork = static_cast<int>(work_query);
-  T* work = new T[lwork];
-
-  size_t a_size = static_cast<int64_t>(n) * static_cast<int64_t>(n) * sizeof(T);
-  if (a_out != a_in) {
-    std::memcpy(a_out, a_in, static_cast<int64_t>(b) * a_size);
-  }
-
-  for (int i = 0; i < b; ++i) {
-    fn(&jobvs, &sort, select, &n_int, a_out, &n_int, sdim_out, wr_out, wi_out,
-       vs_out, &n_int, work, &lwork, b_work, info_out);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(a_out, a_size);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(sdim_out, sizeof(int));
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(wr_out, sizeof(T) * n);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(wi_out, sizeof(T) * n);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(vs_out, sizeof(T) * n * n);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_out, sizeof(int));
-
-    a_in += n * n;
-    a_out += n * n;
-    wr_out += n;
-    wi_out += n;
-    vs_out += n * n;
-    ++sdim_out;
-    ++info_out;
-  }
-  delete[] work;
-  delete[] b_work;
-}
-
-template <typename T>
-typename ComplexGees<T>::FnType* ComplexGees<T>::fn = nullptr;
-
-template <typename T>
-void ComplexGees<T>::Kernel(void* out_tuple, void** data,
-                            XlaCustomCallStatus*) {
-  int b = *(reinterpret_cast<int32_t*>(data[0]));
-  int n_int = *(reinterpret_cast<int32_t*>(data[1]));
-  int64_t n = n_int;
-  char jobvs = *(reinterpret_cast<uint8_t*>(data[2]));
-  char sort = *(reinterpret_cast<uint8_t*>(data[3]));
-
-  const T* a_in = reinterpret_cast<T*>(data[4]);
-
-  // bool* select (T, T) = reinterpret_cast<bool* (T, T)>(data[5]);
-  bool (*select)(T) = nullptr;
-
-  void** out = reinterpret_cast<void**>(out_tuple);
-  T* a_out = reinterpret_cast<T*>(out[0]);
-  typename T::value_type* r_work =
-      reinterpret_cast<typename T::value_type*>(out[1]);
-  T* w_out = reinterpret_cast<T*>(out[2]);
-  T* vs_out = reinterpret_cast<T*>(out[3]);
-  int* sdim_out = reinterpret_cast<int*>(out[4]);
-  int* info_out = reinterpret_cast<int*>(out[5]);
-
-  bool* b_work = (sort != 'N') ? (new bool[n]) : nullptr;
-
-  T work_query;
-  int lwork = -1;
-  fn(&jobvs, &sort, select, &n_int, a_out, &n_int, sdim_out, w_out, vs_out,
-     &n_int, &work_query, &lwork, r_work, b_work, info_out);
-  ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&work_query, sizeof(work_query));
-  lwork = static_cast<int>(work_query.real());
-  T* work = new T[lwork];
-
-  if (a_out != a_in) {
-    std::memcpy(a_out, a_in,
-                static_cast<int64_t>(b) * static_cast<int64_t>(n) *
-                    static_cast<int64_t>(n) * sizeof(T));
-  }
-
-  for (int i = 0; i < b; ++i) {
-    fn(&jobvs, &sort, select, &n_int, a_out, &n_int, sdim_out, w_out, vs_out,
-       &n_int, work, &lwork, r_work, b_work, info_out);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(w_out, sizeof(T) * n);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(vs_out, sizeof(T) * n * n);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_out, sizeof(int));
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(sdim_out, sizeof(int));
-
-    a_in += n * n;
-    a_out += n * n;
-    w_out += n;
-    vs_out += n * n;
-    ++info_out;
-    ++sdim_out;
-  }
-  delete[] work;
-  delete[] b_work;
-}
-
-template struct RealGees<float>;
-template struct RealGees<double>;
-template struct ComplexGees<std::complex<float>>;
-template struct ComplexGees<std::complex<double>>;
-
-// FFI Kernel
-
 template <ffi::DataType dtype>
 ffi::Error SchurDecomposition<dtype>::Kernel(
     ffi::Buffer<dtype> x, schur::ComputationMode mode, schur::Sort sort,
@@ -1423,67 +1233,6 @@ template struct HessenbergDecomposition<ffi::DataType::C128>;
 
 //== Tridiagonal Reduction ==//
 
-// lapack sytrd/hetrd
-
-template <typename T>
-typename Sytrd<T>::FnType* Sytrd<T>::fn = nullptr;
-
-template <typename T>
-void Sytrd<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
-  int32_t n = *reinterpret_cast<int32_t*>(data[0]);
-  int32_t lower = *reinterpret_cast<int32_t*>(data[1]);
-  int32_t lda = *reinterpret_cast<int32_t*>(data[2]);
-  int32_t batch = *reinterpret_cast<int32_t*>(data[3]);
-  int32_t lwork = *reinterpret_cast<int32_t*>(data[4]);
-  T* a = reinterpret_cast<T*>(data[5]);
-
-  void** out = reinterpret_cast<void**>(out_tuple);
-  T* a_out = reinterpret_cast<T*>(out[0]);
-  typedef typename real_type<T>::type Real;
-  Real* d = reinterpret_cast<Real*>(out[1]);
-  Real* e = reinterpret_cast<Real*>(out[2]);
-  T* tau = reinterpret_cast<T*>(out[3]);
-  int* info = reinterpret_cast<int*>(out[4]);
-  T* work = reinterpret_cast<T*>(out[5]);
-
-  if (a_out != a) {
-    std::memcpy(a_out, a,
-                static_cast<int64_t>(batch) * static_cast<int64_t>(n) *
-                    static_cast<int64_t>(n) * sizeof(T));
-  }
-
-  char cuplo = lower ? 'L' : 'U';
-
-  int64_t a_plus = static_cast<int64_t>(lda) * static_cast<int64_t>(n);
-
-  for (int i = 0; i < batch; ++i) {
-    fn(&cuplo, &n, a_out, &lda, d, e, tau, work, &lwork, info);
-    a_out += a_plus;
-    d += n;
-    e += n - 1;
-    tau += n - 1;
-    ++info;
-  }
-}
-
-template <typename T>
-int64_t Sytrd<T>::Workspace(lapack_int lda, lapack_int n) {
-  char cuplo = 'L';
-  T work = 0;
-  lapack_int lwork = -1;
-  lapack_int info = 0;
-  fn(&cuplo, &n, nullptr, &lda, nullptr, nullptr, nullptr, &work, &lwork,
-     &info);
-  return info == 0 ? static_cast<int64_t>(std::real(work)) : -1;
-}
-
-template struct Sytrd<float>;
-template struct Sytrd<double>;
-template struct Sytrd<std::complex<float>>;
-template struct Sytrd<std::complex<double>>;
-
-// FFI Kernel
-
 template <ffi::DataType dtype>
 ffi::Error TridiagonalReduction<dtype>::Kernel(
     ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
@@ -1598,7 +1347,6 @@ template struct TridiagonalSolver<ffi::DataType::C128>;
       ::xla::ffi::Ffi::Bind()                            \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)     \
           .Arg<::xla::ffi::Buffer<data_type>>(/*y*/)     \
-          .RemainingArgs()                               \
           .Ret<::xla::ffi::Buffer<data_type>>(/*y_out*/) \
           .Attr<MatrixParams::Side>("side")              \
           .Attr<MatrixParams::UpLo>("uplo")              \

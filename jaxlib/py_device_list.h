@@ -33,7 +33,7 @@ namespace jax {
 // Device list with various caching and direct access to IFRT DeviceList.
 class PyDeviceList {
  public:
-  PyDeviceList(xla::nb_class_ptr<xla::PyClient> py_client,
+  PyDeviceList(nb_class_ptr<PyClient> py_client,
                xla::ifrt::DeviceListRef device_list);
   explicit PyDeviceList(nanobind::tuple py_device_assignment);
   ~PyDeviceList();
@@ -49,27 +49,28 @@ class PyDeviceList {
   }
 
   // These two methods are safe to call from C++ without GIL.
-  xla::nb_class_ptr<xla::PyClient> py_client() const { return py_client_; }
+  nb_class_ptr<PyClient> py_client() const { return py_client_; }
   absl::StatusOr<xla::ifrt::DeviceListRef> ifrt_device_list() const;
 
   int Len() const;                      // Requires the GIL in GIL mode.
   nanobind::object GetItem(int index);  // Requires the GIL in GIL mode.
 
   // Requires the GIL in GIL mode. Acquires the self lock in non-GIL mode.
-  static xla::nb_class_ptr<PyDeviceList> AddressableDeviceList(
-      xla::nb_class_ptr<PyDeviceList> self);
+  static nb_class_ptr<PyDeviceList> AddressableDeviceList(
+      nb_class_ptr<PyDeviceList> self);
 
   // Requires the GIL in GIL mode. Acquires the self lock in non-GIL mode.
   static absl::StatusOr<nanobind::object> DefaultMemoryKind(
-      xla::nb_class_ptr<PyDeviceList> self);
+      nb_class_ptr<PyDeviceList> self);
 
   // Requires the GIL in GIL mode. Acquires the self lock in non-GIL mode.
-  static absl::StatusOr<nanobind::tuple> MemoryKinds(
-      xla::nb_class_ptr<PyDeviceList> self);
+  static absl::StatusOr<
+      nanobind::typed<nanobind::tuple, nanobind::str, nanobind::ellipsis>>
+  MemoryKinds(nb_class_ptr<PyDeviceList> self);
 
   // go/pywald-pybind-annotation BEGIN
   // refs {
-  //   module_path: "third_party/py/jax/jaxlib/xla.cc"
+  //   module_path: "third_party/py/jax/jaxlib/py_device_list.cc"
   //   module_arg {}
   // }
   // go/pywald-pybind-annotation END
@@ -88,10 +89,8 @@ class PyDeviceList {
 
   int64_t Hash();  // Mutates hash_, needs self lock.
 
-  static bool Equal(xla::nb_class_ptr<PyDeviceList> self,
-                    nanobind::handle other);
-  static bool NotEqual(xla::nb_class_ptr<PyDeviceList> self,
-                       nanobind::handle other);
+  static bool Equal(nb_class_ptr<PyDeviceList> self, nanobind::handle other);
+  static bool NotEqual(nb_class_ptr<PyDeviceList> self, nanobind::handle other);
 
   // Finds the memory kind info from an addressable device. Requires the GIL
   // or self lock.
@@ -107,9 +106,12 @@ class PyDeviceList {
   // Requires the self lock or GIL.
   const std::set<int>& ProcessIndices();
 
+  // Requires the self lock or GIL.
+  const std::string& DeviceKind();
+
   // Valid only if `device_list_` contains `xla::ifrt::DeviceList` and
   // non-empty.
-  xla::nb_class_ptr<xla::PyClient> py_client_;
+  nb_class_ptr<PyClient> py_client_;
 
   // Either C++ `ifrt::DeviceList` or Python duck-type devices.
   // TODO(hyeontaek): Remove support for Python duck-type devices once all
@@ -125,9 +127,11 @@ class PyDeviceList {
   // Populated on demand. Guarded by the object's self lock.
   std::optional<bool> is_fully_addressable_;
   // Populated on demand. Guarded by the object's self lock.
-  std::optional<xla::nb_class_ptr<PyDeviceList>> addressable_device_list_;
+  std::optional<nanobind::object> addressable_device_list_;
   // Populated on demand. Guarded by the object's self lock.
   std::optional<std::set<int>> process_indices_;
+  // Populated on demand. Guarded by the object's self lock.
+  std::optional<std::string> device_kind_;
 
   struct MemoryKindInfo {
     nanobind::object default_memory_kind;

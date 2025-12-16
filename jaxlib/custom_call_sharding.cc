@@ -22,13 +22,13 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
@@ -49,7 +49,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
-namespace xla {
+namespace jax {
 
 namespace nb = ::nanobind;
 
@@ -68,19 +68,19 @@ class PyCustomCallPartitionerCallbacks {
     };
     callbacks_.partition = +[](JAX_CustomCallPartitioner_Callbacks* self,
                                JAX_CustomCallPartitioner_Partition_Args* args) {
-      jax::PopulateResults(GetSelfPtr(self)->CallPartition(args), args);
+      PopulateResults(GetSelfPtr(self)->CallPartition(args), args);
     };
     callbacks_.infer_sharding =
         +[](JAX_CustomCallPartitioner_Callbacks* self,
             JAX_CustomCallPartitioner_InferShardingFromOperands_Args* args) {
-          jax::PopulateResults(
-              GetSelfPtr(self)->CallInferShardingFromOperands(args), args);
+          PopulateResults(GetSelfPtr(self)->CallInferShardingFromOperands(args),
+                          args);
         };
     callbacks_.propagate_user_sharding =
         +[](JAX_CustomCallPartitioner_Callbacks* self,
             JAX_CustomCallPartitioner_PropagateUserSharding_Args* args) {
-          jax::PopulateResults(
-              GetSelfPtr(self)->CallPropagateUserSharding(args), args);
+          PopulateResults(GetSelfPtr(self)->CallPropagateUserSharding(args),
+                          args);
         };
   }
 
@@ -90,14 +90,14 @@ class PyCustomCallPartitionerCallbacks {
     if (args->header.api_version != 0) {
       return absl::InternalError("API version mismatch.");
     }
-    TF_ASSIGN_OR_RETURN(auto args_tuple, jax::ReadArgs(args));
+    TF_ASSIGN_OR_RETURN(auto args_tuple, ReadArgs(args));
     std::vector<xla::Shape> shapes = std::move(std::get<0>(args_tuple));
     std::vector<std::optional<xla::HloSharding>> shardings =
         std::move(std::get<1>(args_tuple));
     xla::Shape result_shape = std::move(std::get<2>(args_tuple));
     std::optional<xla::HloSharding> result_sharding =
         std::move(std::get<3>(args_tuple));
-    absl::string_view backend_config = std::move(std::get<4>(args_tuple));
+    std::string_view backend_config = std::move(std::get<4>(args_tuple));
 
     {
       nb::gil_scoped_acquire gil;
@@ -106,9 +106,9 @@ class PyCustomCallPartitionerCallbacks {
             partition_(shapes, shardings, result_shape, result_sharding,
                        nb::bytes(backend_config.data(), backend_config.size()));
         try {
-          auto [ir, arg_shardings, result_sharding] = nb::cast<
-              std::tuple<nb::bytes, std::vector<HloSharding>, HloSharding>>(
-              py_result);
+          auto [ir, arg_shardings, result_sharding] =
+              nb::cast<std::tuple<nb::bytes, std::vector<xla::HloSharding>,
+                                  xla::HloSharding>>(py_result);
           if (arg_shardings.size() != args->num_args) {
             return xla::Internal(
                 "Shardings returned from partitioning: lengths must match: %d "
@@ -122,7 +122,7 @@ class PyCustomCallPartitionerCallbacks {
           return xla::Internal(
               "Shardings returned from partitioning: expected "
               "Tuple[bytes, List[HloSharding], HloSharding] got: %s",
-              nb::cast<absl::string_view>(nb::repr(py_result)));
+              nb::cast<std::string_view>(nb::repr(py_result)));
         }
       } catch (const nb::python_error& e) {
         return xla::Internal("custom_partitioner: %s", e.what());
@@ -135,14 +135,14 @@ class PyCustomCallPartitionerCallbacks {
     if (args->header.api_version != 0) {
       return absl::InternalError("API version mismatch.");
     }
-    TF_ASSIGN_OR_RETURN(auto args_tuple, jax::ReadArgs(args));
+    TF_ASSIGN_OR_RETURN(auto args_tuple, ReadArgs(args));
     std::vector<xla::Shape> arg_shapes = std::move(std::get<0>(args_tuple));
     std::vector<std::optional<xla::HloSharding>> arg_shardings =
         std::move(std::get<1>(args_tuple));
     xla::Shape result_shape = std::move(std::get<2>(args_tuple));
-    absl::string_view backend_config = std::move(std::get<3>(args_tuple));
+    std::string_view backend_config = std::move(std::get<3>(args_tuple));
 
-    std::optional<HloSharding> result;
+    std::optional<xla::HloSharding> result;
     nb::gil_scoped_acquire gil;
     try {
       auto py_result = infer_sharding_from_operands_(
@@ -151,7 +151,7 @@ class PyCustomCallPartitionerCallbacks {
       if (py_result.is_none()) {
         return std::nullopt;
       }
-      return nb::cast<HloSharding>(py_result);
+      return nb::cast<xla::HloSharding>(py_result);
     } catch (const nb::python_error& e) {
       return xla::Internal("custom_partitioner: %s", e.what());
     }
@@ -162,10 +162,10 @@ class PyCustomCallPartitionerCallbacks {
     if (args->header.api_version != 0) {
       return absl::InternalError("API version mismatch.");
     }
-    TF_ASSIGN_OR_RETURN(auto args_tuple, jax::ReadArgs(args));
+    TF_ASSIGN_OR_RETURN(auto args_tuple, ReadArgs(args));
     xla::HloSharding result_sharding = std::move(std::get<0>(args_tuple));
     xla::Shape result_shape = std::move(std::get<1>(args_tuple));
-    absl::string_view backend_config = std::move(std::get<2>(args_tuple));
+    std::string_view backend_config = std::move(std::get<2>(args_tuple));
 
     nb::gil_scoped_acquire gil;
     try {
@@ -173,7 +173,7 @@ class PyCustomCallPartitionerCallbacks {
       // The user is used when the custom call returns a Tuple and
       // the user is a get-tuple-element. In this case we must update only
       // part of the sharding spec.
-      auto result = nb::cast<HloSharding>(prop_user_sharding_(
+      auto result = nb::cast<xla::HloSharding>(prop_user_sharding_(
           result_sharding, result_shape,
           nb::bytes(backend_config.data(), backend_config.size())));
       return result;
@@ -200,7 +200,7 @@ class PyCustomCallPartitionerCallbacks {
 namespace {
 
 void CallInspectSharding(void* obj, JAX_InspectSharding_Callback_Args* args) {
-  std::optional<xla::HloSharding> arg = jax::InspectShardingReadArgs(args);
+  std::optional<xla::HloSharding> arg = InspectShardingReadArgs(args);
   if (!arg.has_value()) {
     return;
   }
@@ -208,7 +208,7 @@ void CallInspectSharding(void* obj, JAX_InspectSharding_Callback_Args* args) {
     nb::gil_scoped_acquire gil;
     nb::handle(reinterpret_cast<PyObject*>(obj))(*std::move(arg));
   } catch (const nb::python_error& e) {
-    jax::InspectShardingSetError(args, std::string(e.what()));
+    InspectShardingSetError(args, std::string(e.what()));
   }
 }
 
@@ -228,12 +228,12 @@ void BuildCustomCallShardingPybindAPI(nb::module_& m) {
         c_fns->can_side_effecting_have_replicated_sharding =
             can_side_effecting_have_replicated_sharding;
         if (!c_api.has_value()) {
-          RegisterCustomCallPartitioner(
-              name, jax::CreateCApiCustomCallPartitioner(c_fns));
+          RegisterCustomCallPartitioner(name,
+                                        CreateCApiCustomCallPartitioner(c_fns));
           return;
         }
 
-        if (absl::string_view(c_api->name()) != "pjrt_c_api") {
+        if (std::string_view(c_api->name()) != "pjrt_c_api") {
           throw absl::InvalidArgumentError(
               "Argument to register_custom_call_partitioner was not a "
               "pjrt_c_api capsule.");
@@ -257,7 +257,8 @@ void BuildCustomCallShardingPybindAPI(nb::module_& m) {
                 ->register_custom_partitioner(&args);
         std::unique_ptr<PJRT_Error, pjrt::PJRT_ErrorDeleter> error_ptr(
             error, pjrt::MakeErrorDeleter(c_api_value));
-        ThrowIfError(pjrt::PjrtErrorToStatus(error_ptr.get(), c_api_value));
+        xla::ThrowIfError(
+            pjrt::PjrtErrorToStatus(error_ptr.get(), c_api_value));
       },
       R"(Registers a partitioner for a custom-call operation.
 
@@ -291,12 +292,21 @@ Args:
 
   nb::module_ hlo_sharding_util_m = m.def_submodule(
       "hlo_sharding_util", "Utilities for manipulating HloSharding.");
+  hlo_sharding_util_m.attr("_HloSharding") = m.attr("HloSharding");
   hlo_sharding_util_m.def(
       "PartiallyReplicateTiledShardingOnDims",
-      [](const HloSharding& sharding, std::vector<int64_t> dims) {
-        return hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(
+      [](const xla::HloSharding& sharding, std::vector<int64_t> dims) {
+        return xla::hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(
             sharding, dims);
-      });
+      },
+      nb::sig(
+          // clang-format off
+          "def PartiallyReplicateTiledShardingOnDims("
+          "sharding: _HloSharding, "
+          "dims: typing.Sequence[int], /"
+          ") -> _HloSharding"
+          // clang-format on
+          ));
 
   m.def(
       "register_custom_call_as_batch_partitionable",
@@ -306,7 +316,7 @@ Args:
               target_name, std::make_unique<xla::CustomCallBatchPartitioner>());
           return;
         }
-        if (absl::string_view(c_api->name()) != "pjrt_c_api") {
+        if (std::string_view(c_api->name()) != "pjrt_c_api") {
           throw absl::InvalidArgumentError(
               "Argument to register_custom_call_partitioner was not a "
               "pjrt_c_api capsule.");
@@ -326,7 +336,8 @@ Args:
         PJRT_Error* error = extension->register_batch_partitionable(&args);
         std::unique_ptr<PJRT_Error, pjrt::PJRT_ErrorDeleter> error_ptr(
             error, pjrt::MakeErrorDeleter(c_api_value));
-        ThrowIfError(pjrt::PjrtErrorToStatus(error_ptr.get(), c_api_value));
+        xla::ThrowIfError(
+            pjrt::PjrtErrorToStatus(error_ptr.get(), c_api_value));
       },
       R"(Registers a custom call as batch partitionable.
 
@@ -343,4 +354,4 @@ Args:
       nb::arg("target_name"), nb::arg("c_api").none() = std::nullopt);
 }
 
-}  // namespace xla
+}  // namespace jax

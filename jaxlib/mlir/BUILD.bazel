@@ -47,7 +47,6 @@ symlink_inputs(
     symlinked_inputs = {"srcs": {
         ".": [
             "@llvm-project//mlir/python:IRPyFiles",
-            "@llvm-project//mlir/python:IRPyIFiles",
         ],
     }},
     deps = [
@@ -216,7 +215,6 @@ symlink_inputs(
     symlinked_inputs = {"srcs": {
         ".": [
             "@llvm-project//mlir/python:PassManagerPyFiles",
-            "@llvm-project//mlir/python:PassManagerPyIFiles",
         ],
     }},
     deps = [
@@ -235,6 +233,20 @@ symlink_inputs(
         ":ir",
         ":mlir",
         "//jaxlib/mlir/_mlir_libs:_sdy",
+    ],
+)
+
+symlink_inputs(
+    name = "mpmd_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@shardy//shardy/integrations/python/ir/mpmd:mpmd_ops_py_files"],
+    }},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+        "//jaxlib/mlir/_mlir_libs:_sdyMpmd",
     ],
 )
 

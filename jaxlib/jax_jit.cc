@@ -29,15 +29,16 @@ limitations under the License.
 #include <Python.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/base/attributes.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
@@ -45,7 +46,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
@@ -53,6 +53,8 @@ limitations under the License.
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/config.h"
+#include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_values.h"
 #include "jaxlib/pytree.h"
 #include "jaxlib/sharding.h"
@@ -74,82 +76,58 @@ namespace nb = nanobind;
 
 namespace {
 
-// `thread_local_state.extra_jit_context` is set from Python. It's done when
-// loading the Python jax modules on the main-thread. For other threads, we
-// need to initialize the field the first time we access `thread_local_state`.
+nb_class_ptr<Config>& disable_jit_state = *new nb_class_ptr<Config>();
+nb_class_ptr<Config>& enable_x64_state = *new nb_class_ptr<Config>();
+nb_class_ptr<Config>& post_hook_state = *new nb_class_ptr<Config>();
+
+// Callback called the first time the C++ jit accesses thread-local state.
 nb::object& initialize_local_state = *new nb::object();
 
 }  // namespace
 
-JitState& GlobalJitState() {
-  // Protected by the GIL.
-  static JitState& global_state = *new JitState();
-  return global_state;
-}
-
-JitState& ThreadLocalJitState() {
-  // TODO(phawkins): Google style guide forbids thread-local values with
-  // non-trivial destructors.
-  ABSL_CONST_INIT thread_local JitState thread_local_state;  // NOLINT
-  DCHECK(PyGILState_Check());
-  if (thread_local_state.extra_jit_context == std::nullopt) {
-    CHECK(initialize_local_state.ptr() != nullptr);
-    // Avoids reentrant calls to the initialization function.
-    thread_local_state.extra_jit_context = nb::none();
+void InitializeThreadLocalState() {
+  thread_local bool initialized = false;
+  if (!initialized) {
+    initialized = true;
+    // Set the flag first to avoid reentrant calls to the initialization
+    // function.
     initialize_local_state();
   }
-  return thread_local_state;
 }
 
 bool GetDisableJit() {
-  auto& global_state = GlobalJitState();
-  auto& thread_local_state = ThreadLocalJitState();
-  CHECK(global_state.disable_jit.has_value());
-  return thread_local_state.disable_jit.value_or(*global_state.disable_jit);
+  if (!disable_jit_state.ptr()) {
+    throw std::runtime_error("disable_jit_state is not set");
+  }
+  return nb::cast<bool>(disable_jit_state->Get());
 }
 
 bool GetEnableX64() {
-  auto& global_state = GlobalJitState();
-  auto& thread_local_state = ThreadLocalJitState();
-  CHECK(global_state.enable_x64.has_value());
-  return thread_local_state.enable_x64.value_or(*global_state.enable_x64);
-}
-
-std::optional<nb::object> GetDefaultDevice() {
-  auto& global_state = GlobalJitState();
-  auto& thread_local_state = ThreadLocalJitState();
-  return thread_local_state.default_device.has_value()
-             ? thread_local_state.default_device
-             : global_state.default_device;
+  if (!enable_x64_state.ptr()) {
+    throw std::runtime_error("enable_x64_state is not set");
+  }
+  bool out = nb::cast<bool>(enable_x64_state->Get());
+  return out;
 }
 
 std::optional<nb::callable> GetPostHook() {
-  auto& global_state = GlobalJitState();
-  auto& thread_local_state = ThreadLocalJitState();
-  return thread_local_state.post_hook.has_value() ? thread_local_state.post_hook
-                                                  : global_state.post_hook;
-}
-
-static std::string OptionalDebugString(
-    const std::optional<nb::object> optional) {
-  if (optional.has_value()) {
-    return nb::cast<std::string>(nb::str(optional.value()));
-  } else {
-    return "None";
+  if (!post_hook_state.ptr()) {
+    throw std::runtime_error("post_hook_state is not set");
   }
+  return nb::cast<std::optional<nb::callable>>(post_hook_state->Get());
 }
 
 std::string ArgumentSignature::DebugString() const {
   auto py_object_formatter = [](std::string* out, const nb::object& o) {
-    out->append(nb::cast<absl::string_view>(nb::str(o)));
+    out->append(nb::cast<std::string_view>(nb::str(o)));
   };
-  auto treedef_formatter = [](std::string* out, const xla::PyTreeDef& d) {
+  auto treedef_formatter = [](std::string* out, const PyTreeDef& d) {
     out->append(d.ToString());
   };
   return absl::StrFormat(
       "static args (positional + keyword): [%s], "
       "static arg keyword names: [%s], "
-      "dynamic arg signatures (positional + keyword): [%s]"
+      "dynamic arg signatures (positional + keyword): [%s], "
       "dynamic arg shardings: [%s]",
       absl::StrJoin(static_args, ",", py_object_formatter),
       absl::StrJoin(static_arg_names, ",", py_object_formatter),
@@ -182,8 +160,8 @@ bool ArgumentSignature::operator==(const ArgumentSignature& other) const {
               "static arguments should be comparable using __eq__."
               "The following error was raised when comparing two objects of "
               "types ",
-              nb::cast<absl::string_view>(nb::str(a.type())), " and ",
-              nb::cast<absl::string_view>(nb::str(b.type())),
+              nb::cast<std::string_view>(nb::str(a.type())), " and ",
+              nb::cast<std::string_view>(nb::str(b.type())),
               ". The error was:\n", e.what()));
         }
       });
@@ -191,10 +169,9 @@ bool ArgumentSignature::operator==(const ArgumentSignature& other) const {
 
 std::string CallSignature::DebugString() const {
   auto py_object_formatter = [](std::string* out, const nb::object& o) {
-    out->append(nb::cast<absl::string_view>(nb::str(o)));
+    out->append(nb::cast<std::string_view>(nb::str(o)));
   };
-  auto signature_formatter = [](std::string* out,
-                                const xla::PyArgSignature& s) {
+  auto signature_formatter = [](std::string* out, const PyArgSignature& s) {
     out->append(s.DebugString());
   };
   auto layout_formatter = [](std::string* out,
@@ -208,6 +185,14 @@ std::string CallSignature::DebugString() const {
   auto bool_formatter = [](std::string* out, bool o) {
     out->append(o ? "true" : "false");
   };
+  std::vector<std::string> config_names = JitConfigNames();
+  std::vector<std::string> config_strs;
+  config_strs.reserve(configs.size());
+  for (int i = 0; i < configs.size(); ++i) {
+    config_strs.push_back(absl::StrFormat(
+        "%s: %s", i < config_names.size() ? config_names[i] : "unknown",
+        nb::cast<std::string_view>(nb::str(configs[i]))));
+  }
   return absl::StrFormat(
       "arg signature: %s\n"
       "dynamic arg signatures (positional + keyword): %s\n"
@@ -215,10 +200,6 @@ std::string CallSignature::DebugString() const {
       "dynamic arg layouts: %s\n"
       "committed args: %s\n"
       "device: %s\n"
-      "default_device: %s\n"
-      "jax_enable_x64: %d\n"
-      "global_extra_jit_context: %s\n"
-      "thread_local_extra_jit_context: %s\n"
       "configs: %s\n",
       arg_signature.DebugString(),
       absl::StrJoin(dynamic_arg_signatures, ", ", signature_formatter),
@@ -226,10 +207,78 @@ std::string CallSignature::DebugString() const {
       absl::StrJoin(dynamic_arg_layouts, ", ", layout_formatter),
       absl::StrJoin(committed_args, ",", bool_formatter),
       device != nullptr ? device->DebugString() : "nullptr",
-      OptionalDebugString(default_device), jax_enable_x64,
-      OptionalDebugString(global_extra_jit_context),
-      OptionalDebugString(thread_local_extra_jit_context),
-      absl::StrJoin(configs, ", ", py_object_formatter));
+      absl::StrJoin(config_strs, ", "));
+}
+
+size_t HashShardingForJit(nb::handle sharding) {
+  auto type = sharding.type();
+
+  if (type.is(NamedSharding::type())) {
+    const auto* named_sharding = nb::inst_ptr<NamedSharding>(sharding);
+    return absl::Hash<void*>()(named_sharding->mesh().ptr());
+  }
+
+  if (type.is(GSPMDSharding::type())) {
+    auto* gspmd_sharding = nb::inst_ptr<GSPMDSharding>(sharding);
+    return gspmd_sharding->Hash();
+  }
+
+  if (type.is(SingleDeviceSharding::type())) {
+    auto* single_device_sharding = nb::inst_ptr<SingleDeviceSharding>(sharding);
+    return absl::Hash<void*>()(single_device_sharding->device().ptr());
+  }
+
+  try {
+    return nb::hash(sharding);
+  } catch (const nb::python_error& e) {
+    // Gracefully handle non-hashable sharding. We cannot let a C++ exception
+    // escape because this hash function may have been called from a code that
+    // disables C++ exception support.
+    return 0;
+  }
+}
+
+bool EqualShardingsForJit(nb::handle a, nb::handle b) {
+  if (a.ptr() == b.ptr()) {
+    return true;
+  }
+
+  auto a_type = a.type();
+  auto b_type = b.type();
+
+  if (!a_type.is(b_type)) {
+    return false;
+  }
+
+  if (a_type.is(NamedSharding::type())) {
+    auto* a_named_sharding = nb::inst_ptr<const NamedSharding>(a);
+    auto* b_named_sharding = nb::inst_ptr<const NamedSharding>(b);
+    return a_named_sharding->mesh().ptr() == b_named_sharding->mesh().ptr() &&
+           *a_named_sharding->spec() == *b_named_sharding->spec() &&
+           a_named_sharding->memory_kind().equal(
+               b_named_sharding->memory_kind()) &&
+           a_named_sharding->logical_device_ids().equal(
+               b_named_sharding->logical_device_ids());
+  }
+
+  if (a_type.is(GSPMDSharding::type())) {
+    auto* a_gspmd_sharding = nb::inst_ptr<const GSPMDSharding>(a);
+    auto* b_gspmd_sharding = nb::inst_ptr<const GSPMDSharding>(b);
+    return *a_gspmd_sharding == *b_gspmd_sharding;
+  }
+
+  if (a_type.is(SingleDeviceSharding::type())) {
+    auto* a_single_device_sharding =
+        nb::inst_ptr<const SingleDeviceSharding>(a);
+    auto* b_single_device_sharding =
+        nb::inst_ptr<const SingleDeviceSharding>(b);
+    return a_single_device_sharding->device().ptr() ==
+               b_single_device_sharding->device().ptr() &&
+           a_single_device_sharding->memory_kind().equal(
+               b_single_device_sharding->memory_kind());
+  }
+
+  return a.equal(b);
 }
 
 bool CallSignature::operator==(const CallSignature& other) const {
@@ -242,33 +291,18 @@ bool CallSignature::operator==(const CallSignature& other) const {
   if (device != other.device) {
     return false;
   }
-  if (jax_enable_x64 != other.jax_enable_x64) {
-    return false;
-  }
   if (committed_args != other.committed_args) {
     return false;
   }
   return
       // `==` on py:objects is the Python `is`. We need equal.
       absl::c_equal(dynamic_arg_shardings, other.dynamic_arg_shardings,
-                    ShardingEqual) &&
+                    EqualShardingsForJit) &&
       absl::c_equal(dynamic_arg_layouts, other.dynamic_arg_layouts,
                     [](const std::shared_ptr<const xla::PjRtLayout>& a,
                        const std::shared_ptr<const xla::PjRtLayout>& b) {
                       return (a && b) ? *a == *b : a == b;
                     }) &&
-      (global_extra_jit_context.has_value() ==
-       other.global_extra_jit_context.has_value()) &&
-      (!global_extra_jit_context.has_value() ||
-       global_extra_jit_context->equal(*other.global_extra_jit_context)) &&
-      (default_device.has_value() == other.default_device.has_value()) &&
-      (!default_device.has_value() ||
-       default_device->equal(*other.default_device)) &&
-      (thread_local_extra_jit_context.has_value() ==
-       other.thread_local_extra_jit_context.has_value()) &&
-      (!thread_local_extra_jit_context.has_value() ||
-       thread_local_extra_jit_context->equal(
-           *other.thread_local_extra_jit_context)) &&
       configs.size() == other.configs.size() &&
       absl::c_equal(
           configs, other.configs,
@@ -281,8 +315,8 @@ absl::Status ParseArguments(
     absl::Span<PyObject* const> positional_args,
     absl::Span<PyObject* const> keyword_args, nb::handle kwnames,
     absl::Span<int const> static_argnums,
-    absl::Span<nb::str const> static_argnames,
-    xla::PyTreeRegistry* pytree_registry, ArgumentSignature& signature,
+    absl::Span<nb::str const> static_argnames, PyTreeRegistry* pytree_registry,
+    ArgumentSignature& signature,
     absl::InlinedVector<nanobind::object, 2>& flat_dynamic_args) {
   tsl::profiler::TraceMe traceme("ParseArguments");
 
@@ -297,7 +331,7 @@ absl::Status ParseArguments(
     // Positional arguments.
     for (int i = 0; i < positional_args.size(); ++i) {
       signature.dynamic_arg_treedefs.emplace_back(pytree_registry);
-      xla::PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
+      PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
       pytree_def.Flatten(nb::handle(positional_args[i]), flat_dynamic_args);
     }
   } else {
@@ -311,7 +345,7 @@ absl::Status ParseArguments(
                          return t >= 0 ? i == t : i == t + num_positional_args;
                        }) == static_argnums.end()) {
         signature.dynamic_arg_treedefs.emplace_back(pytree_registry);
-        xla::PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
+        PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
         pytree_def.Flatten(positional_args[i], flat_dynamic_args);
       } else {
         signature.static_args.emplace_back(
@@ -324,7 +358,7 @@ absl::Status ParseArguments(
   if (!keyword_args.empty()) {
     std::vector<std::pair<nb::handle, nb::handle>> kwargs(keyword_args.size());
     // We first intern the keys, then sort them (by name, as in the Python path)
-    // (see also xla::PyTreeDef::Flatten) and then create the signatures.
+    // (see also PyTreeDef::Flatten) and then create the signatures.
     // TODO(jblespiau): We should be able to sort the keys by interned-key
     // pointers, but this requires the Python compilation to do the same.
     for (int i = 0; i < keyword_args.size(); ++i) {
@@ -354,14 +388,14 @@ absl::Status ParseArguments(
     for (int i = 0; i < keyword_args.size(); ++i) {
       if (kwarg_is_static(kwargs[i].first)) {
         signature.static_arg_names.push_back(
-            nb::steal<nb::object>(kwargs[i].first));
+            nb::steal<nb::str>(kwargs[i].first));
         signature.static_args.push_back(
             nb::borrow<nb::object>(kwargs[i].second));
       } else {
         signature.dynamic_arg_names.push_back(
-            nb::steal<nb::object>(kwargs[i].first));
+            nb::steal<nb::str>(kwargs[i].first));
         signature.dynamic_arg_treedefs.emplace_back(pytree_registry);
-        xla::PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
+        PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
         pytree_def.Flatten(nb::handle(kwargs[i].second.ptr()),
                            flat_dynamic_args);
       }
@@ -373,73 +407,78 @@ absl::Status ParseArguments(
 void BuildJaxjitSubmodule(nb::module_& m) {
   nb::module_ jitlib = m.def_submodule("jax_jit", "Jax C++ jit library");
 
-  nb::class_<JitState> jit_state_(jitlib, "JitState");
-  jit_state_.def_rw("disable_jit", &JitState::disable_jit, nb::arg().none());
-  jit_state_.def_rw("enable_x64", &JitState::enable_x64, nb::arg().none());
-  jit_state_.def_rw("default_device", &JitState::default_device,
-                    nb::arg().none());
-  jit_state_.def_rw("extra_jit_context", &JitState::extra_jit_context,
-                    nb::arg().none());
-  jit_state_.def_rw("post_hook", &JitState::post_hook, nb::arg().none());
+  jitlib.attr("_Config") = m.attr("config").attr("Config");
+  jitlib.attr("_PyTreeDef") = m.attr("pytree").attr("PyTreeDef");
+  jitlib.attr("_PyTreeRegistry") = m.attr("pytree").attr("PyTreeRegistry");
 
   jitlib.def(
-      "global_state", [&]() { return &GlobalJitState(); },
-      nb::rv_policy::reference);
+      "set_disable_jit_state",
+      [](nb_class_ptr<Config> config) { disable_jit_state = config; },
+      nb::sig("def set_disable_jit_state(config: _Config) -> None"));
   jitlib.def(
-      "thread_local_state", [&]() { return &ThreadLocalJitState(); },
-      nb::rv_policy::reference);
+      "set_enable_x64_state",
+      [](nb_class_ptr<Config> config) { enable_x64_state = config; },
+      nb::sig("def set_enable_x64_state(config: _Config) -> None"));
+  jitlib.def(
+      "set_post_hook_state",
+      [](nb_class_ptr<Config> config) { post_hook_state = config; },
+      nb::sig("def set_post_hook_state(config: _Config) -> None"));
 
   jitlib.def(
-      "swap_thread_local_state_disable_jit",
-      [&](std::optional<bool> value) -> std::optional<bool> {
-        auto tls = &ThreadLocalJitState();
-        auto result = tls->disable_jit;
-        tls->disable_jit = value;
-        return result;
-      },
-      nb::arg("value").none(), nb::rv_policy::reference);
+      "set_thread_local_state_initialization_callback",
+      [](nb::object f) { initialize_local_state = f; },
+      nb::sig("def set_thread_local_state_initialization_callback("
+              "f: typing.Callable[[], None]) -> None"));
 
-  jitlib.def("get_enable_x64", &GetEnableX64);
-  jitlib.def("set_thread_local_state_initialization_callback",
-             [](nb::object f) { initialize_local_state = f; });
-
-  nb::class_<xla::PyArgSignature> arg_signature(jitlib, "PyArgSignature");
+  nb::class_<PyArgSignature> arg_signature(jitlib, "PyArgSignature");
   arg_signature
       .def_prop_ro(
           "dtype",
-          [](const xla::PyArgSignature& sig) {
+          [](const PyArgSignature& sig) {
             return xla::ValueOrThrow(xla::PrimitiveTypeToNbDtype(sig.dtype));
           })
       .def_prop_ro("shape",
-                   [](const xla::PyArgSignature& sig) {
+                   [](const PyArgSignature& sig) {
                      return xla::SpanToNbTuple(absl::MakeConstSpan(sig.shape));
                    })
-      .def_ro("weak_type", &xla::PyArgSignature::weak_type);
+      .def_ro("weak_type", &PyArgSignature::weak_type);
   jitlib.def("_ArgSignatureOfValue",
-             xla::ValueOrThrowWrapper(xla::PyArgSignatureOfValue));
-
-  jitlib.def("_is_float0", &xla::IsFloat0);
+             xla::ValueOrThrowWrapper(PyArgSignatureOfValue));
 
   nb::class_<ArgumentSignature> argument_signature(jitlib, "ArgumentSignature");
   argument_signature.def_ro("static_args", &ArgumentSignature::static_args)
       .def_ro("static_arg_names", &ArgumentSignature::static_arg_names)
       .def_ro("dynamic_arg_names", &ArgumentSignature::dynamic_arg_names)
-      .def_ro("dynamic_arg_treedefs", &ArgumentSignature::dynamic_arg_treedefs)
+      .def_ro(
+          "dynamic_arg_treedefs", &ArgumentSignature::dynamic_arg_treedefs,
+          nb::sig(
+              "def dynamic_arg_treedefs(self) -> typing.Sequence[_PyTreeDef]"))
       .def("__repr__", &ArgumentSignature::DebugString)
       .def("__str__", &ArgumentSignature::DebugString)
       .def("__hash__",
            [](const ArgumentSignature& s) { return absl::HashOf(s); })
-      .def("__eq__", [](const ArgumentSignature& a,
-                        const ArgumentSignature& b) { return a == b; })
-      .def("__ne__", [](const ArgumentSignature& a,
-                        const ArgumentSignature& b) { return a != b; });
+      .def(
+          "__eq__",
+          [](const ArgumentSignature& a, nb::object b) {
+            return nb::isinstance<ArgumentSignature>(b) &&
+                   a == nb::cast<ArgumentSignature>(b);
+          },
+          nb::is_operator())
+      .def(
+          "__ne__",
+          [](const ArgumentSignature& a, nb::object b) {
+            return !nb::isinstance<ArgumentSignature>(b) ||
+                   a != nb::cast<ArgumentSignature>(b);
+          },
+          nb::is_operator());
 
   jitlib.def(
       "parse_arguments",
       [](nb::sequence positional_args, nb::sequence keyword_args,
-         nb::tuple kwnames, absl::Span<int const> static_argnums,
+         nb::typed<nb::tuple, nb::str, nb::ellipsis> kwnames,
+         absl::Span<int const> static_argnums,
          absl::Span<nb::str const> static_argnames,
-         xla::PyTreeRegistry* pytree_registry) {
+         PyTreeRegistry* pytree_registry) {
         ArgumentSignature signature;
         absl::InlinedVector<nanobind::object, 2> flat_dynamic_args;
         nb::object positional_args_seq = nb::steal(PySequence_Fast(
@@ -478,6 +517,18 @@ void BuildJaxjitSubmodule(nb::module_& m) {
       nb::arg("positional_args"), nb::arg("keyword_args"), nb::arg("kwnames"),
       nb::arg("static_argnums"), nb::arg("static_argnames"),
       nb::arg("pytree_registry"),
+      nb::sig(
+          // clang-format off
+        "def parse_arguments("
+        "positional_args: Sequence[object], "
+        "keyword_args: Sequence[object], "
+        "kwnames: tuple[str, ...], "
+        "static_argnums: Sequence[int], "
+        "static_argnames: Sequence[str], "
+        "pytree_registry: _PyTreeRegistry"
+        ") -> tuple[ArgumentSignature, list[object]]"
+          // clang-format on
+          ),
       R"doc(Parses the arguments to a function as jax.jit would.
 
 Returns a ArgumentSignature and the flattened dynamic arguments.

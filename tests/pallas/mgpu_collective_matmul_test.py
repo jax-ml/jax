@@ -14,7 +14,6 @@
 # ==============================================================================
 """Test different parameterizations of our Mosaic GPU collective matmul."""
 
-import contextlib
 import functools
 import os
 
@@ -27,7 +26,6 @@ from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
 from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.pallas.ops.gpu import collective_matmul_mgpu
-from jax.experimental import shard
 import jax.numpy as jnp
 import numpy as np
 
@@ -46,59 +44,68 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
         not jtu.is_cuda_compute_capability_equal("9.0")):
       self.skipTest("Only works on GPU with capability sm90a")
     if not mgpu.supports_cross_device_collectives():
-      self.skipTest("NVSHMEM library unavailable.")
+      if "FAIL_ON_NVSHMEM_UNAVAILABLE" in os.environ:
+        raise ValueError("NVSHMEM library unavailable.")
+      else:
+        self.skipTest("NVSHMEM library unavailable.")
     if jax.process_count() == 1:
       self.skipTest("Test requires multiple processes.")
     if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
       self.skipTest("NVSHMEM doesn't work with the platform allocator.")
-    context_stack = contextlib.ExitStack()
-    self.addCleanup(context_stack.close)
-    context_stack.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
+    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
     num_devices = jax.device_count()
     mesh = jax.make_mesh(
         (num_devices,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
     )
-    context_stack.enter_context(jax.sharding.use_mesh(mesh))
+    self.enter_context(jax.set_mesh(mesh))
 
   @parameterized.product(
-      m_shard=(1024, 8192),
-      n_shard=(64, 128, 192),
-      k=(256, 8192),
-      block_m=(64, 128, 192),
-      block_n=(64, 128, 192),
-      block_k=(64, 128),
+      m_shard=(3072,),
+      n_shard=(256, 576),
+      k=(4096,),
+      tile_m=(64, 128, 192),
+      tile_n=(64, 128, 192),
+      tile_k=(64, 128),
+      grid_minor_dim=(collective_matmul_mgpu.MatmulDimension.N,),
+      grid_tile_width=(1,),
+      wg_dimension=(collective_matmul_mgpu.MatmulDimension.N,),
       max_concurrent_steps=(2, 4),
-      dtype=(jnp.float16, jnp.bfloat16),
+      dtype=(jnp.bfloat16,),
   )
   def test_all_gather_lhs_matmul(
       self,
       m_shard,
       n_shard,
       k,
-      block_m,
-      block_n,
-      block_k,
+      tile_m,
+      tile_n,
+      tile_k,
       max_concurrent_steps,
+      grid_minor_dim,
+      grid_tile_width,
+      wg_dimension,
       dtype,
   ):
     num_devices = jax.device_count()
-    lhs_smem_size = block_m * block_k * max_concurrent_steps * 2
-    rhs_smem_size = block_k * block_n * max_concurrent_steps * 2
-    # H100 SMEM limit is 228kB.
-    if lhs_smem_size + rhs_smem_size > 228_000:
-      self.skipTest("This configuration requires too much SMEM.")
-    if n_shard != block_n:
-      self.skipTest("n_shard must be equal to block_n for now.")
-    if n_shard % block_n:
-      self.skipTest("n_shard must be divisble by block_n for now.")
-    if m_shard % block_m:
+    epi_tile_size = 64 * 64
+    num_epi_tiles = tile_m * tile_n // epi_tile_size
+    cta_tile_m = tile_m * (1 + (wg_dimension == collective_matmul_mgpu.MatmulDimension.M))
+    cta_tile_n = tile_n * (1 + (wg_dimension == collective_matmul_mgpu.MatmulDimension.N))
+    if (
+        (cta_tile_m + cta_tile_n) * tile_k * max_concurrent_steps
+        + 2 * min(2, num_epi_tiles) * epi_tile_size
+    ) * 2 > 228000:
+      self.skipTest("Tile too big to fit into SMEM")
+    if n_shard % cta_tile_n:
+      self.skipTest("n_shard must be divisible by block_n for now.")
+    if m_shard % cta_tile_m:
       self.skipTest("m_shard must be divisible by block_m for now.")
 
     k1, k2 = random.split(random.key(1234), num=2)
     lhs = random.normal(k1, (num_devices * m_shard, k), dtype)
     rhs = random.normal(k2, (k, num_devices * n_shard), dtype)
-    lhs = shard.reshard(lhs, P("x", None))
-    rhs = shard.reshard(rhs, P(None, "x"))
+    lhs = jax.sharding.reshard(lhs, P("x", None))
+    rhs = jax.sharding.reshard(rhs, P(None, "x"))
 
     def run(body):
       out = jax.jit(
@@ -111,18 +118,24 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
       )(out)
       return out
 
+    ref_out = run(lambda x, y: lax.all_gather(x, "x", axis=0, tiled=True) @ y)
+    config = collective_matmul_mgpu.TuningConfig(
+        tile_m=tile_m,
+        tile_n=tile_n,
+        tile_k=tile_k,
+        max_concurrent_steps=max_concurrent_steps,
+        grid_minor_dim=grid_minor_dim,
+        grid_tile_width=grid_tile_width,
+        wg_dimension=wg_dimension,
+    )
     out = run(
         functools.partial(
             collective_matmul_mgpu.all_gather_lhs_matmul,
             axis_name="x",
-            block_m=block_m,
-            block_n=block_n,
-            block_k=block_k,
-            max_concurrent_steps=max_concurrent_steps,
+            config=config,
             dtype=dtype,
         )
     )
-    ref_out = run(lambda x, y: lax.all_gather(x, "x", axis=0, tiled=True) @ y)
     np.testing.assert_allclose(out, ref_out)
 
 

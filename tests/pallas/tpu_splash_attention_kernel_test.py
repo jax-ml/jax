@@ -22,18 +22,17 @@ import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
+import hypothesis as hp
+import hypothesis.strategies as hps
 import jax
 from jax import random
 from jax._src import test_util as jtu
+from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel as splash
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
 from jax.experimental.pallas.ops.tpu.splash_attention.splash_attention_mask_info import process_mask
 import jax.numpy as jnp
 import numpy as np
-
-
-import hypothesis as hp
-import hypothesis.strategies as hps
 
 
 jax.config.parse_flags_with_absl()
@@ -209,7 +208,9 @@ def sequence_length_strategy(draw: Draw) -> tuple[int, int]:
 def attention_strategy(draw: Draw) -> tuple[int, int, int, np.dtype]:
   q_seq_len, kv_seq_len = draw(sequence_length_strategy())
   head_dim_qk, head_dim_v = draw(
-      hps.sampled_from([(128, 128), (256, 256), (192, 128)])
+      hps.sampled_from(
+          [(64, 64), (128, 192), (128, 128), (256, 256), (192, 128)]
+      )
   )
   if q_seq_len >= 4096 and kv_seq_len >= 4096:
     # Do not draw bfloat16 on longer sequence lengths, as this increases
@@ -302,13 +303,10 @@ def attn_logits_soft_cap_strategy() -> hps.SearchStrategy[float | None]:
 
 
 @jtu.with_config(jax_traceback_filtering="off")
-class PallasBaseTest(jtu.JaxTestCase):
-  INTERPRET = False
+class PallasBaseTest(ptu.PallasTPUTest):
 
   def setUp(self):
     if not self.INTERPRET:
-      if not jtu.test_device_matches(["tpu"]):
-        self.skipTest("Only interpret mode supported on non-TPU")
       # TODO(b/327487669): selectively re-enable tests that works on TPU v3.
       if not jtu.is_device_tpu_at_least(4):
         self.skipTest("Not supported on TPU generations <= 3")
@@ -570,6 +568,7 @@ class SplashAttentionTest(PallasBaseTest):
       downcast_smem_data=(False, True),
       use_fused_bwd_kernel=(False, True),
       use_dynamic_mask=(False, True),
+      use_sinks=(False, True),
   )
   @hp.given(hps.data())
   def test_splash_attention_bwd(
@@ -579,11 +578,12 @@ class SplashAttentionTest(PallasBaseTest):
       downcast_smem_data,
       use_fused_bwd_kernel,
       use_dynamic_mask,
+      use_sinks,
       data,
   ):
     seed = data.draw(seed_strategy())
     key = random.key(seed)
-    k1, k2, k3, k4 = random.split(key, 4)
+    k1, k2, k3, k4, k_sinks = random.split(key, 5)
 
     (
         q_seq_len,
@@ -610,6 +610,10 @@ class SplashAttentionTest(PallasBaseTest):
       v = random.uniform(
           k3, (num_kv_heads, kv_seq_len, head_dim_v), dtype=dtype
       )
+    if use_sinks:
+      sinks = 1.0 * random.uniform(k_sinks, (num_q_heads,), dtype=dtype)
+    else:
+      sinks = None
 
     segment_ids = None
     if is_segmented:
@@ -622,7 +626,7 @@ class SplashAttentionTest(PallasBaseTest):
       mask = jnp.array(mask[:, :, :])
     block_sizes = data.draw(
         block_sizes_strategy(q_seq_len, kv_seq_len, include_bwd_blocks=True,
-                            use_fused_bwd_kernel=use_fused_bwd_kernel)
+                             use_fused_bwd_kernel=use_fused_bwd_kernel)
     )
     if is_mqa:
       attn_ref = splash.make_masked_mqa_reference(mask, backward_impl="custom")
@@ -642,7 +646,10 @@ class SplashAttentionTest(PallasBaseTest):
           attn_logits_soft_cap=attn_logits_soft_cap,
           interpret=self.INTERPRET,
       )
-    o, attn_vjp = jax.vjp(attn, q, k, v, segment_ids)
+    if use_sinks:
+      o, attn_vjp = jax.vjp(attn, q, k, v, segment_ids, sinks)
+    else:
+      o, attn_vjp = jax.vjp(attn, q, k, v, segment_ids)
     q32, k32, v32 = jax.tree.map(
         lambda x: x.astype(jnp.float32), (q, k, v)
     )
@@ -651,44 +658,50 @@ class SplashAttentionTest(PallasBaseTest):
         k32,
         v32,
         segment_ids,
+        sinks=sinks,
         save_residuals=True,
         attn_logits_soft_cap=attn_logits_soft_cap,
     )
     self._assert_allclose(o, o_ref, atol=3e-3, rtol=3e-3)
 
     do = random.uniform(k4, o.shape, dtype=o.dtype)
-    dq, dk, dv, _ = attn_vjp(do)
+    if use_sinks:
+      dq, dk, dv, _, dsinks = attn_vjp(do)
+    else:
+      dq, dk, dv, _ = attn_vjp(do)
+      dsinks = None
     def bwd(
-        mask, q, k, v, segment_ids, o, logsumexp, do
+        mask, q, k, v, segment_ids, sinks, o, logsumexp, do
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
-      _, dq, dk, dv, _ = splash._attention_reference_custom_bwd(
+      _, dq, dk, dv, _, dsinks = splash._attention_reference_custom_bwd(
           splash.DEFAULT_MASK_VALUE,
           False,
           "flash",
           attn_logits_soft_cap,
-          (mask, q, k, v, segment_ids, o, logsumexp),
+          (mask, q, k, v, segment_ids, sinks, o, logsumexp),
           do,
       )
-      return dq, dk, dv
+      return dq, dk, dv, dsinks
 
     is_grouped = not is_mqa and num_kv_heads < num_q_heads
     assert num_q_heads % num_kv_heads == 0
     head_multiplier = num_q_heads // num_kv_heads
     if is_mqa:
-      bwd = jax.vmap(bwd, in_axes=(0, 0, None, None, None, 0, 0, 0))
+      bwd = jax.vmap(bwd, in_axes=(0, 0, None, None, None, 0, 0, 0, 0))
     else:
-      bwd = jax.vmap(bwd, in_axes=(0, 0, 0, 0, None, 0, 0, 0))
+      bwd = jax.vmap(bwd, in_axes=(0, 0, 0, 0, None, 0, 0, 0, 0))
       # Interleave the KV heads to match the corresponding Q heads.
       if is_grouped:
         k32 = jnp.repeat(k32, head_multiplier, axis=0)
         v32 = jnp.repeat(v32, head_multiplier, axis=0)
 
-    dq_ref, dk_ref, dv_ref = bwd(
+    dq_ref, dk_ref, dv_ref, dsinks_ref = bwd(
         mask[:, :, :],
         q32,
         k32,
         v32,
         segment_ids,
+        sinks,
         o.astype(jnp.float32),
         logsumexp,
         do.astype(jnp.float32),
@@ -706,6 +719,8 @@ class SplashAttentionTest(PallasBaseTest):
     self._assert_allclose(dv, dv_ref, atol=2e-2, rtol=3e-2)
     self._assert_allclose(dq, dq_ref, atol=2e-2, rtol=3e-2)
     self._assert_allclose(dk, dk_ref, atol=2e-2, rtol=3e-2)
+    if use_sinks:
+      self._assert_allclose(dsinks, dsinks_ref, atol=5e-3, rtol=3e-2)
 
   def test_grid_shrinking(self):
     """Make sure that grid shrinking does not change the attention output."""

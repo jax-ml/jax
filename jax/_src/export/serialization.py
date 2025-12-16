@@ -19,7 +19,7 @@ from __future__ import annotations
 import types
 from collections.abc import Callable, Sequence
 from functools import partial
-from typing import TypeVar
+from typing import Any, TypeVar
 
 try:
   import flatbuffers
@@ -31,7 +31,6 @@ except ImportError as e:
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import prng
 from jax._src import tree_util
 from jax._src.export import serialization_generated as ser_flatbuf
 from jax._src.export import _export
@@ -51,7 +50,10 @@ SerT = TypeVar("SerT")
 #   This version is backwards compatible with Version 2.
 # Version 4, April 7th, 2025, adds serialization for PRNGs key types.
 #   This version is backwards compatible with Version 2 and 3.
-_SERIALIZATION_VERSION = 2
+# Version 5, November 23rd, 2025, adds serialization for aval memory_space,
+#   upgrade num_devices to a 32 bit value.
+#   This version is backwards compatible with Version 2 to 4.
+_SERIALIZATION_VERSION = 5
 
 def serialize(exp: _export.Exported, vjp_order: int = 0) -> bytearray:
   """Serializes an Exported.
@@ -118,13 +120,19 @@ def _serialize_exported(
     vjp = _serialize_exported(builder, exp.vjp(), vjp_order - 1)
 
   ser_flatbuf.ExportedStart(builder)
-  ser_flatbuf.ExportedAddSerializationVersion(builder, _SERIALIZATION_VERSION)
+  # TODO(necula): we cannot really store the actual serialization_version
+  # in the flatbuffer because prior to 11/25/2025 deserializers checked
+  # if the version is 2 or 3. I have now removed that check, but for the
+  # sake of old deserializers we can only store version 3. Starting
+  # on January 2026 we can store the actual version.
+  ser_flatbuf.ExportedAddSerializationVersion(builder, 3)
   ser_flatbuf.ExportedAddFunctionName(builder, fun_name)
   ser_flatbuf.ExportedAddInTree(builder, in_tree)
   ser_flatbuf.ExportedAddInAvals(builder, in_avals)
   ser_flatbuf.ExportedAddOutTree(builder, out_tree)
   ser_flatbuf.ExportedAddOutAvals(builder, out_avals)
   ser_flatbuf.ExportedAddNrDevices(builder, exp.nr_devices)
+  ser_flatbuf.ExportedAddNrDevicesShort(builder, exp.nr_devices)  # For forward compatibility, can remove after January 2026
   ser_flatbuf.ExportedAddInShardings(builder, in_shardings)
   ser_flatbuf.ExportedAddOutShardings(builder, out_shardings)
   ser_flatbuf.ExportedAddPlatforms(builder, platforms)
@@ -158,10 +166,6 @@ def _serialize_array(
 
 def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   serialization_version = exp.SerializationVersion()
-  if serialization_version not in [2, 3]:
-    raise NotImplementedError(
-        f"deserialize unsupported version {serialization_version}"
-    )
 
   fun_name = exp.FunctionName().decode("utf-8")
   in_tree = tree_util.tree_structure(
@@ -178,7 +182,10 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   out_avals = _deserialize_tuple(
       exp.OutAvalsLength, exp.OutAvals, deser_aval
   )
-  nr_devices = exp.NrDevices()
+  # TODO(necula): remove the fallback to NrDevicesShort and mark
+  # the field "deprecated" once we abandon the old
+  # serialization format (6 months after 11/24/2025).
+  nr_devices = exp.NrDevices() or exp.NrDevicesShort()
   in_shardings = _deserialize_tuple(
       exp.InShardingsLength, exp.InShardings, _deserialize_sharding
   )
@@ -267,8 +274,14 @@ def _serialize_pytreedef(
   elif node_type is dict:
     kind = ser_flatbuf.PyTreeDefKind.dict
     assert len(node_data[1]) == len(children)
+    def serialize_key(builder, k):
+      if not isinstance(k, str):
+        raise TypeError(
+            "Serialization is supported only for dictionaries with string keys."
+            f" Found key {k} of type {type(k)}.")
+      return builder.CreateString(k)
     children_names_vector_offset = _serialize_array(
-        builder, lambda b, s: b.CreateString(s), node_data[1]
+        builder, serialize_key, node_data[1]
     )
   elif node_type in _export.serialization_registry:
     kind = ser_flatbuf.PyTreeDefKind.custom
@@ -364,15 +377,24 @@ _dtype_to_dtype_kind = {
     dtypes._float8_e4m3_dtype: ser_flatbuf.DType.f8_e4m3,
     dtypes._float8_e8m0fnu_dtype: ser_flatbuf.DType.f8_e8m0fnu,
     dtypes._float4_e2m1fn_dtype: ser_flatbuf.DType.f4_e2m1fn,
-
-    prng.KeyTy(prng.prngs["threefry2x32"]): ser_flatbuf.DType.key_fry,
-    prng.KeyTy(prng.prngs["rbg"]): ser_flatbuf.DType.key_rbg,
-    prng.KeyTy(prng.prngs["unsafe_rbg"]): ser_flatbuf.DType.key_unsafe_rbg,
 }
 
 _dtype_kind_to_dtype = {
     kind: dtype for dtype, kind in _dtype_to_dtype_kind.items()
 }
+
+
+def register_dtype_kind(dtype: Any, kind: int):
+  _dtype_to_dtype_kind[dtype] = kind
+  _dtype_kind_to_dtype[kind] = dtype
+
+
+_memory_space_to_enum = {
+    core.MemorySpace.Device: ser_flatbuf.MemorySpace.Device,
+    core.MemorySpace.Host: ser_flatbuf.MemorySpace.Host,
+    core.MemorySpace.Any: ser_flatbuf.MemorySpace.Any,
+}
+_memory_space_from_enum = {v: k for k, v in _memory_space_to_enum.items()}
 
 
 def _serialize_aval(
@@ -389,6 +411,7 @@ def _serialize_aval(
   ser_flatbuf.AbstractValueAddKind(builder, aval_kind)
   ser_flatbuf.AbstractValueAddShape(builder, shape_vector_offset)
   ser_flatbuf.AbstractValueAddDtype(builder, _dtype_to_dtype_kind[aval.dtype])
+  ser_flatbuf.AbstractValueAddMemorySpace(builder, _memory_space_to_enum[aval.memory_space])
   return ser_flatbuf.AbstractValueEnd(builder)
 
 
@@ -403,7 +426,8 @@ def _deserialize_aval(aval: ser_flatbuf.AbstractValue,
         ),
         scope=scope
     )
-    return core.ShapedArray(shape, dtype)
+    mem_space = aval.MemorySpace() or ser_flatbuf.MemorySpace.Device
+    return core.ShapedArray(shape, dtype, memory_space=_memory_space_from_enum[mem_space])
   else:
     assert False, aval_kind
 

@@ -57,10 +57,10 @@ class BlockSizes:
     return BlockSizes(
         block_q=128,
         block_k=128,
-        block_q_dkv=128,
-        block_kv_dkv=128,
-        block_q_dq=128,
-        block_kv_dq=128,
+        block_q_dkv=32,
+        block_kv_dkv=32,
+        block_q_dq=32,
+        block_kv_dq=32,
     )
 
   @property
@@ -108,11 +108,9 @@ def mha_forward_kernel(
   # q tile has shape [block_q, head_dim_padded], head_dim_padded >= head_dim.
   curr_q_slice = pl.dslice(start_q * block_q, block_q)
   head_mask = (jnp.arange(head_dim_padded) < head_dim)[None, :]
-  q = pl.load(q_ref, (slice(None), slice(None)), mask=head_mask, other=0.0)
+  q = plgpu.load(q_ref, mask=head_mask, other=0.0)
   q_segment_ids = (
-      None
-      if segment_ids_ref is None
-      else pl.load(segment_ids_ref, (curr_q_slice,))
+      None if segment_ids_ref is None else segment_ids_ref[curr_q_slice]
   )
   # In FlashAttention algorithm 1 there are 2 loops: slow over tiles of kv (size
   # (Bc == block_k here), and fast over blocks of q (size Br == block_q here).
@@ -122,7 +120,7 @@ def mha_forward_kernel(
     o_prev, m_prev, l_prev = carry
     curr_k_slice = pl.dslice(start_k * block_k, block_k)
 
-    k = pl.load(k_ref, (curr_k_slice, slice(None)), mask=head_mask, other=0.0)
+    k = plgpu.load(k_ref.at[curr_k_slice, :], mask=head_mask, other=0.0)
     qk = pl.dot(q, k.T)   # [block_q, block_k]
 
     # Scale logits to convert from base-2 to the natural log domain.
@@ -140,7 +138,7 @@ def mha_forward_kernel(
     if causal or segment_ids_ref is not None:
       mask = None
       if segment_ids_ref is not None:
-        kv_segment_ids = pl.load(segment_ids_ref, (curr_k_slice,))
+        kv_segment_ids = segment_ids_ref[curr_k_slice]
         mask = segment_mask(q_segment_ids, kv_segment_ids)
       if causal:
         span_q = start_q * block_q + jnp.arange(block_q)
@@ -162,7 +160,7 @@ def mha_forward_kernel(
     l_curr = s_curr.sum(axis=-1)
     l_next = l_prev_corr + l_curr
     o_prev_corr = correction[:, None] * o_prev
-    v = pl.load(v_ref, (curr_k_slice, slice(None)), mask=head_mask)
+    v = plgpu.load(v_ref.at[curr_k_slice, :], mask=head_mask)
     o_curr = pl.dot(s_curr.astype(v.dtype), v)
 
     o_next = o_prev_corr + o_curr
@@ -183,8 +181,7 @@ def mha_forward_kernel(
     lse_ref = residual_refs[0]
     lse_ref[...] = m_i + jnp.log2(l_i)
   # Write output to dram.
-  pl.store(o_ref, (slice(None), slice(o.shape[-1])), o.astype(o_ref.dtype),
-           mask=head_mask)
+  plgpu.store(o_ref.at[:, : o.shape[-1]], o.astype(o_ref.dtype), mask=head_mask)
 
 def segment_mask(
     q_segment_ids: jax.Array,
@@ -328,8 +325,8 @@ def _mha_forward(
 def _preprocess_backward_kernel(out_ref, dout_ref, delta_ref, head_dim: int):
   # load
   head_mask = (jnp.arange(out_ref.shape[-1]) < head_dim)[None, :]
-  o = pl.load(out_ref, (slice(None), slice(None)), mask=head_mask, other=0.0)
-  do = pl.load(dout_ref, (slice(None), slice(None)), mask=head_mask, other=0.0)
+  o = plgpu.load(out_ref, mask=head_mask, other=0.0)
+  do = plgpu.load(dout_ref, mask=head_mask, other=0.0)
   # compute
   delta = jnp.sum(o * do, axis=1)
   # write-back
@@ -402,20 +399,18 @@ def mha_backward_kernel(
   dk = jnp.zeros([block_kv_dkv, head_dim_padded], dtype=jnp.float32)
 
   head_mask = (jnp.arange(head_dim_padded) < head_dim)[None, :]
-  v = pl.load(v_ref, (curr_k_slice, slice(None)), mask=head_mask, other=0.0)
-  k = pl.load(k_ref, (curr_k_slice, slice(None)), mask=head_mask, other=0.0)
+  v = plgpu.load(v_ref.at[curr_k_slice, :], mask=head_mask, other=0.0)
+  k = plgpu.load(k_ref.at[curr_k_slice, :], mask=head_mask, other=0.0)
   span_k = start_k * block_kv_dkv + jnp.arange(block_kv_dkv)
   kv_segment_ids = (
-      None
-      if segment_ids_ref is None
-      else pl.load(segment_ids_ref, (curr_k_slice,))
+      None if segment_ids_ref is None else segment_ids_ref[curr_k_slice]
   )
 
   def inner_loop_dkdv(start_q, carry):
     dv, dk = carry
     curr_q_slice = pl.dslice(start_q * block_q_dkv, block_q_dkv)
 
-    q = pl.load(q_ref, (curr_q_slice, slice(None)), mask=head_mask, other=0.0)
+    q = plgpu.load(q_ref.at[curr_q_slice, :], mask=head_mask, other=0.0)
     qk = pl.dot(q, k.T)
     qk_scale = math.log2(math.e)
     if sm_scale != 1.:
@@ -425,7 +420,7 @@ def mha_backward_kernel(
     if causal or segment_ids_ref is not None:
       mask = None
       if segment_ids_ref is not None:
-        q_segment_ids = pl.load(segment_ids_ref, (curr_q_slice,))
+        q_segment_ids = segment_ids_ref[curr_q_slice]
         mask = segment_mask(q_segment_ids, kv_segment_ids)
 
       if causal:
@@ -436,10 +431,11 @@ def mha_backward_kernel(
         )
       qk = jnp.where(mask, qk, DEFAULT_MASK_VALUE)
 
-    lse = pl.load(lse_ref, (curr_q_slice,))
-    di = pl.load(delta_ref, (curr_q_slice,))
-    do = pl.load(do_scaled_ref, (curr_q_slice, slice(None)), mask=head_mask,
-                 other=0.0)
+    lse = lse_ref[curr_q_slice]
+    di = delta_ref[curr_q_slice]
+    do = plgpu.load(
+        do_scaled_ref.at[curr_q_slice, :], mask=head_mask, other=0.0
+    )
 
     p = jnp.exp2(qk - lse[:, None])
     dv = dv + pl.dot(p.astype(do.dtype).T, do)
@@ -456,10 +452,12 @@ def mha_backward_kernel(
   dv, dk = lax.fori_loop(
       lower_bound, pl.cdiv(q_seq_len, block_q_dkv), inner_loop_dkdv, (dv, dk)
   )
-  pl.store(dv_ref, (slice(None), slice(dv.shape[-1])), dv.astype(dv_ref.dtype),
-           mask=head_mask)
-  pl.store(dk_ref, (slice(None), slice(dk.shape[-1])), dk.astype(dk_ref.dtype),
-           mask=head_mask)
+  plgpu.store(
+      dv_ref.at[:, : dv.shape[-1]], dv.astype(dv_ref.dtype), mask=head_mask
+  )
+  plgpu.store(
+      dk_ref.at[:, : dk.shape[-1]], dk.astype(dk_ref.dtype), mask=head_mask
+  )
 
   # Scan #2: dQ
   #   1. Load a block of Q of size (block_q_dq, head_dim) in SMEM.
@@ -470,21 +468,18 @@ def mha_backward_kernel(
   span_q = start_q * block_q_dq + jnp.arange(block_q_dq)
   dq = jnp.zeros([block_q_dq, head_dim_padded], dtype=jnp.float32)
 
-  q = pl.load(q_ref, (curr_q_slice, slice(None)), mask=head_mask, other=0.0)
+  q = plgpu.load(q_ref.at[curr_q_slice, :], mask=head_mask, other=0.0)
   q_segment_ids = (
-      None
-      if segment_ids_ref is None
-      else pl.load(segment_ids_ref, (curr_q_slice,))
+      None if segment_ids_ref is None else segment_ids_ref[curr_q_slice]
   )
-  lse = pl.load(lse_ref, (curr_q_slice,))
-  do = pl.load(do_scaled_ref, (curr_q_slice, slice(None)), mask=head_mask,
-               other=0.0)
-  di = pl.load(delta_ref, (curr_q_slice,))
+  lse = lse_ref[curr_q_slice]
+  do = plgpu.load(do_scaled_ref.at[curr_q_slice, :], mask=head_mask, other=0.0)
+  di = delta_ref[curr_q_slice]
 
   def inner_loop_dq(start_k, dq):
     curr_k_slice = pl.dslice(start_k * block_kv_dq, block_kv_dq)
-    k = pl.load(k_ref, (curr_k_slice, slice(None)), mask=head_mask, other=0.0)
-    v = pl.load(v_ref, (curr_k_slice, slice(None)), mask=head_mask, other=0.0)
+    k = plgpu.load(k_ref.at[curr_k_slice, :], mask=head_mask, other=0.0)
+    v = plgpu.load(v_ref.at[curr_k_slice, :], mask=head_mask, other=0.0)
 
     qk = pl.dot(q, k.T)
     qk_scale = math.log2(math.e)
@@ -495,7 +490,7 @@ def mha_backward_kernel(
     if causal or segment_ids_ref is not None:
       mask = None
       if segment_ids_ref is not None:
-        kv_segment_ids = pl.load(segment_ids_ref, (curr_k_slice,))
+        kv_segment_ids = segment_ids_ref[curr_k_slice]
         mask = segment_mask(q_segment_ids, kv_segment_ids)
 
       if causal:
@@ -523,8 +518,9 @@ def mha_backward_kernel(
     upper_bound = pl.cdiv(kv_seq_len, block_kv_dq)
 
   dq = lax.fori_loop(0, upper_bound, inner_loop_dq, (dq))
-  pl.store(dq_ref, (slice(None), slice(dq.shape[-1])), dq.astype(dq_ref.dtype),
-           mask=head_mask)
+  plgpu.store(
+      dq_ref.at[:, : dq.shape[-1]], dq.astype(dq_ref.dtype), mask=head_mask
+  )
 
 
 def _mha_backward(sm_scale: float, causal: bool, block_sizes: BlockSizes,

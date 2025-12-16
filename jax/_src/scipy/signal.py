@@ -23,17 +23,21 @@ import warnings
 
 import numpy as np
 
-import jax
-import jax.numpy.fft
-import jax.numpy as jnp
-from jax import lax
+from jax._src import api
 from jax._src import core
 from jax._src import dtypes
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.lax.lax import PrecisionLike
+from jax._src.numpy import fft as jnp_fft
 from jax._src.numpy import linalg
 from jax._src.numpy.util import (
-    check_arraylike, promote_dtypes_inexact, promote_dtypes_complex)
+    check_arraylike,
+    ensure_arraylike,
+    promote_dtypes_complex,
+    promote_dtypes_inexact,
+)
 from jax._src.third_party.scipy import signal_helper
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import canonicalize_axis, tuple_delete, tuple_insert
@@ -108,7 +112,7 @@ def fftconvolve(in1: ArrayLike, in2: ArrayLike, mode: str = "full",
   if any(in1.shape[i] != in2.shape[i] for i in mapped_axes):
     raise ValueError(f"mapped axes must have same shape; got {in1.shape=} {in2.shape=} {axes=}")
   for ax in sorted(mapped_axes):
-    _fftconvolve = jax.vmap(_fftconvolve, in_axes=ax, out_axes=ax)
+    _fftconvolve = api.vmap(_fftconvolve, in_axes=ax, out_axes=ax)
   return _fftconvolve(in1, in2)
 
 def _fftconvolve_unbatched(in1: Array, in2: Array, mode: str) -> Array:
@@ -126,13 +130,16 @@ def _fftconvolve_unbatched(in1: Array, in2: Array, mode: str) -> Array:
     if swap:
       in1, in2 = in2, in1
 
-  if jnp.iscomplexobj(in1):
-    fft, ifft = jnp.fft.fftn, jnp.fft.ifftn
+  if (all(s1 == 1 or s2 == 1 for s1, s2 in zip(in1.shape, in2.shape))):
+    conv = in1 * in2
   else:
-    fft, ifft = jnp.fft.rfftn, jnp.fft.irfftn
-  sp1 = fft(in1, fft_shape)
-  sp2 = fft(in2, fft_shape)
-  conv = ifft(sp1 * sp2, fft_shape)
+    if jnp.iscomplexobj(in1):
+      fft, ifft = jnp.fft.fftn, jnp.fft.ifftn
+    else:
+      fft, ifft = jnp.fft.rfftn, jnp.fft.irfftn
+    sp1 = fft(in1, fft_shape)
+    sp2 = fft(in2, fft_shape)
+    conv = ifft(sp1 * sp2, fft_shape)
 
   if mode == "full":
     out_shape = full_shape
@@ -148,7 +155,7 @@ def _fftconvolve_unbatched(in1: Array, in2: Array, mode: str) -> Array:
   return lax.dynamic_slice(conv, start_indices, out_shape)
 
 
-# Note: we do not re-use the code from jax.numpy.convolve here, because the handling
+# Note: we do not reuse the code from jax.numpy.convolve here, because the handling
 # of padding differs slightly between the two implementations (particularly for
 # mode='same').
 def _convolve_nd(in1: Array, in2: Array, mode: str, *, precision: PrecisionLike) -> Array:
@@ -319,7 +326,7 @@ def convolve2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fill
   """
   if boundary != 'fill' or fillvalue != 0:
     raise NotImplementedError("convolve2d() only supports boundary='fill', fillvalue=0")
-  if jnp.ndim(in1) != 2 or jnp.ndim(in2) != 2:
+  if np.ndim(in1) != 2 or np.ndim(in2) != 2:
     raise ValueError("convolve2d() only supports 2-dimensional inputs.")
   return _convolve_nd(in1, in2, mode, precision=precision)
 
@@ -454,7 +461,7 @@ def correlate2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fil
   """
   if boundary != 'fill' or fillvalue != 0:
     raise NotImplementedError("correlate2d() only supports boundary='fill', fillvalue=0")
-  if jnp.ndim(in1) != 2 or jnp.ndim(in2) != 2:
+  if np.ndim(in1) != 2 or np.ndim(in2) != 2:
     raise ValueError("correlate2d() only supports 2-dimensional inputs.")
 
   swap = all(s1 <= s2 for s1, s2 in zip(in1.shape, in2.shape))
@@ -567,8 +574,8 @@ def _fft_helper(x: Array, win: Array, detrend_func: Callable[[Array], Array],
   else:
     step = nperseg - noverlap
     starts = jnp.arange(signal_length - nperseg + 1, step=step)
-    slice_func = partial(jax.lax.dynamic_slice_in_dim, operand=x, slice_size=nperseg, axis=-1)
-    result = jax.vmap(slice_func, out_axes=-2)(start_index=starts)
+    slice_func = partial(lax.dynamic_slice_in_dim, operand=x, slice_size=nperseg, axis=-1)
+    result = api.vmap(slice_func, out_axes=-2)(start_index=starts)
 
   # Detrend each data segment individually
   result = detrend_func(result)
@@ -580,9 +587,9 @@ def _fft_helper(x: Array, win: Array, detrend_func: Callable[[Array], Array],
 
   # Perform the fft on last axis. Zero-pads automatically
   if sides == 'twosided':
-    return jax.numpy.fft.fft(result, n=nfft)
+    return jnp_fft.fft(result, n=nfft)
   else:
-    return jax.numpy.fft.rfft(result.real, n=nfft)
+    return jnp_fft.rfft(result.real, n=nfft)
 
 
 def odd_ext(x: Array, n: int, axis: int = -1) -> Array:
@@ -789,9 +796,9 @@ def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
     sides = 'twosided'
 
   if sides == 'twosided':
-    freqs = jax.numpy.fft.fftfreq(nfft_int, 1/fs, dtype=freq_dtype)
+    freqs = jnp_fft.fftfreq(nfft_int, 1/fs, dtype=freq_dtype)
   elif sides == 'onesided':
-    freqs = jax.numpy.fft.rfftfreq(nfft_int, 1/fs, dtype=freq_dtype)
+    freqs = jnp_fft.rfftfreq(nfft_int, 1/fs, dtype=freq_dtype)
 
   # Perform the windowed FFTs
   result = _fft_helper(x, win, detrend_func,
@@ -1030,16 +1037,16 @@ def _overlap_and_add(x: Array, step_size: int) -> Array:
   x = x.reshape((flat_batchsize, nframes, nstep_per_segment, step_size))
 
   # For obtaining shifted signals, this routine reinterprets flattened array
-  # with a shrinked axis.  With appropriate truncation/ padding, this operation
+  # with a shrunken axis.  With appropriate truncation/ padding, this operation
   # pushes the last padded elements of the previous row to the head of the
   # current row.
   # See implementation of `overlap_and_add` in Tensorflow for details.
   x = x.transpose((0, 2, 1, 3))  # x: (B, S, N, T)
   x = jnp.pad(x, ((0, 0), (0, 0), (0, nframes), (0, 0)))  # x: (B, S, N*2, T)
-  shrinked = x.shape[2] - 1
+  shrunken = x.shape[2] - 1
   x = x.reshape((flat_batchsize, -1))
-  x = x[:, :(nstep_per_segment * shrinked * step_size)]
-  x = x.reshape((flat_batchsize, nstep_per_segment, shrinked * step_size))
+  x = x[:, :(nstep_per_segment * shrunken * step_size)]
+  x = x.reshape((flat_batchsize, nstep_per_segment, shrunken * step_size))
 
   # Finally, sum shifted segments, and truncate results to the output_size.
   x = x.sum(axis=1)[:, :output_size]
@@ -1095,7 +1102,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
     [1. 2. 3. 2. 1. 0. 1. 2.]
   """
   # Input validation
-  check_arraylike("istft", Zxx)
+  Zxx = ensure_arraylike("istft", Zxx)
   if Zxx.ndim < 2:
     raise ValueError('Input stft must be at least 2d!')
   freq_axis = canonicalize_axis(freq_axis, Zxx.ndim)
@@ -1103,8 +1110,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
   if freq_axis == time_axis:
     raise ValueError('Must specify differing time and frequency axes!')
 
-  Zxx = jnp.asarray(Zxx, dtype=jax.dtypes.canonicalize_dtype(
-    dtypes.to_complex_dtype(Zxx.dtype)))
+  Zxx = jnp.asarray(Zxx, dtype=dtypes.to_complex_dtype(Zxx.dtype))
 
   n_default = (2 * (Zxx.shape[freq_axis] - 1) if input_onesided
                else Zxx.shape[freq_axis])
@@ -1138,19 +1144,19 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
     Zxx = jnp.transpose(Zxx, outer_idxs + (freq_axis, time_axis))
 
   # Perform IFFT
-  ifunc = jax.numpy.fft.irfft if input_onesided else jax.numpy.fft.ifft
+  ifunc = jnp_fft.irfft if input_onesided else jnp_fft.ifft
   # xsubs: [..., T, N], N is the number of frames, T is the frame length.
   xsubs = ifunc(Zxx, axis=-2, n=nfft)[..., :nperseg_int, :]
 
   # Get window as array
   if isinstance(window, str) and window == 'hann':
     # Implement the default case without scipy
-    win = jnp.array([1.0]) if nperseg_int == 1 else jnp.sin(jnp.linspace(0, jnp.pi, nperseg_int, endpoint=False)) ** 2
+    win = jnp.array([1.0]) if nperseg_int == 1 else jnp.sin(jnp.linspace(0, np.pi, nperseg_int, endpoint=False)) ** 2
     win = win.astype(xsubs.dtype)
   elif isinstance(window, (str, tuple)):
     # TODO(jakevdp): implement get_window() in JAX to remove optional scipy dependency
     try:
-      from scipy.signal import get_window
+      from scipy.signal import get_window  # pytype: disable=import-error
     except ImportError as err:
       raise ImportError(f"scipy must be available to use {window=}") from err
     win = get_window(window, nperseg_int)

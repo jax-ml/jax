@@ -23,19 +23,21 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
-#include "xla/pjrt/pjrt_future.h"
+#include "xla/future.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/client.h"
-#include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/value.h"
 #include "xla/python/version.h"
 #include "xla/tsl/concurrency/async_value.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/util.h"
 
-namespace xla {
+namespace ifrt = xla::ifrt;
 
-void BlockUntilReadyWithCancel(xla::PjRtFuture<>& future) {
+namespace jax {
+
+void BlockUntilReadyWithCancel(xla::Future<>& future) {
   future.BlockUntilReady([](tsl::AsyncValue* value) {
     auto state = std::make_shared<absl::Notification>();
     value->AndThen([state]() { state->Notify(); });
@@ -56,7 +58,7 @@ absl::Status AwaitBuffersReady(absl::Span<ifrt::Array* const> ifrt_arrays) {
     return absl::OkStatus();
   }
 
-  ifrt::Future<> future;
+  tsl::Future<> future;
   if (ifrt_arrays.size() == 1) {
     future = ifrt_arrays[0]->GetReadyFuture();
   } else {
@@ -73,11 +75,11 @@ absl::Status AwaitBuffersReady(absl::Span<ifrt::Array* const> ifrt_arrays) {
   if (!s.ok()) {
     // Fix up error string because some clients rely on it.
     if (s.message() == "GetReadyFuture() called on deleted or donated buffer") {
-      s = InvalidArgument(
+      s = xla::InvalidArgument(
           "BlockHostUntilReady() called on deleted or donated buffer");
     }
   }
   return s;
 }
 
-}  // namespace xla
+}  // namespace jax

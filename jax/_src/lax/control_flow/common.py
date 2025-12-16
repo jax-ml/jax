@@ -15,26 +15,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 import os
 from functools import partial
 from typing import Any
 
-from jax._src import api_util
-from jax._src import core
-from jax._src import linear_util as lu
-from jax._src.lax import lax
-from jax._src import effects
 from jax._src import ad_util
-from jax._src import state
-from jax._src.util import weakref_lru_cache, safe_map, partition_list
+from jax._src import core
+from jax._src import config
+from jax._src import linear_util as lu
+from jax._src.util import weakref_lru_cache, safe_map
 from jax._src.interpreters import partial_eval as pe
-from jax.tree_util import tree_map, tree_unflatten, keystr, PyTreeDef
-from jax._src.tree_util import equality_errors_pytreedef
+from jax._src.tree_util import (equality_errors_pytreedef, tree_map,
+                                tree_unflatten, keystr)
 
 map, unsafe_map = safe_map, map
-
-effects.control_flow_allowed_effects.add_type(lax.InOutFeedEffect)
 
 
 def _typecheck_param(prim, param, name, msg_required, pred):
@@ -48,155 +43,56 @@ def _typecheck_param(prim, param, name, msg_required, pred):
     msg = sep.join([msg, param_str])
     raise core.JaxprTypeError(msg)
 
-@weakref_lru_cache
-def _initial_style_open_jaxpr(fun: Callable,
-                              in_tree: PyTreeDef,
-                              in_avals: Sequence[core.AbstractValue],
-                              debug_info: core.DebugInfo):
-  wrapped_fun, out_tree = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(fun, debug_info=debug_info),
-      in_tree)
-  jaxpr, _, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
-      wrapped_fun, in_avals)
-  return jaxpr, consts, out_tree(), attrs_tracked
+# TODO(dougalm): this seems way too complicated. Why not allow different consts for each
+# branch of a switch?
+def _merge_common_consts(
+    jaxprs: Sequence[core.ClosedJaxpr],
+    all_consts: Sequence[Sequence[Any]]
+    ) -> tuple[Sequence[core.ClosedJaxpr], Sequence[Any]]:
+  # Jaxprs must share consts, so we concat consts and pad the jaxprs' constvars.
+  lens = map(len, all_consts)
+  consts = [c for cs in all_consts for c in cs]
+  avalqdds = tuple(map(core.cur_aval_qdd, consts))
+  num_constss = [len(cs) for cs in all_consts]
+  jaxprs = [_pad_constvars(jaxpr, num_consts, avalqdds[:sum(lens[:i])], avalqdds[sum(lens[:i+1]):])
+            for i, (jaxpr, num_consts) in enumerate(zip(jaxprs, num_constss))]
+  # De-duplicate shared constants.
+  const_ids = tuple(id(c) for c in consts)
+  seen = set()
+  dd_consts = [c for c in consts if id(c) not in seen and not seen.add(id(c))]  # type: ignore
+  jaxprs = [_dedup_consts(jaxpr, len(consts), const_ids) for jaxpr in jaxprs]
+  return jaxprs, dd_consts
 
 @weakref_lru_cache
-def _initial_style_jaxpr(fun: Callable,
-                         in_tree: PyTreeDef,
-                         in_avals: Sequence[core.AbstractValue],
-                         debug_info: core.DebugInfo):
-  jaxpr, consts, out_tree, () = _initial_style_open_jaxpr(
-      fun, in_tree, in_avals, debug_info)
-  closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
-  return closed_jaxpr, consts, out_tree
-
-def _initial_style_jaxpr_attrs(fun: Callable,
-                               in_tree: PyTreeDef,
-                               in_avals: Sequence[core.AbstractValue],
-                               debug_info: core.DebugInfo):
-  jaxpr, consts, out_tree, attrs_tracked = _initial_style_open_jaxpr(
-      fun, in_tree, in_avals, debug_info)
-  closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
-  return closed_jaxpr, consts, out_tree, attrs_tracked
-
-def _initial_style_jaxprs_with_common_consts(
-    funs: Sequence[Callable],
-    in_tree: PyTreeDef, in_avals: Sequence[core.AbstractValue],
-    debug_infos: Sequence[core.DebugInfo]):
-  # When staging the branches of a conditional into jaxprs, constants are
-  # extracted from each branch and converted to jaxpr arguments. To use the
-  # staged jaxprs as the branches to a conditional *primitive*, we need for
-  # their (input) signatures to match. This function "joins" the staged jaxprs:
-  # for each one, it makes another that accepts *all* constants, but only uses
-  # those that it needs (dropping the rest).
-  jaxpr_data = [_initial_style_open_jaxpr(fn, in_tree, in_avals, debug_info)
-                for fn, debug_info in zip(funs, debug_infos)]
-  if not jaxpr_data:
-    return [], [], []
-
-  jaxprs, all_consts, all_out_trees, all_attrs_tracked = zip(*jaxpr_data)
-  all_const_avals = [map(core.get_aval, consts) for consts in all_consts]
-
-  # TODO(sharadmv,mattjj): we could dedup *all consts* instead of just the Refs.
-
-  # We don't want two different Refs in a jaxpr's input to refer to the same
-  # Ref in the caller. We call this the "Ref aliasing problem" and it introduces
-  # difficulties when discharging Refs and when reasoning about programs with
-  # state effects. When unifying the arguments to each branch in a cond,
-  # however, we might naively pass the same Ref in multiple times.
-  #
-  # Here we dedup any `Ref`s that were closed over across the branches and
-  # pad out constants used across different branches.
-  # Let's consider an example case. For the following branch jaxprs, we will
-  # produce the following const lists, where `t_` indicates a tracer (a Ref).
-  # { lambda x:i32[] a:Ref{float64[]} c:Ref[float64[]}; . let
-  #    a[] <- 1.0
-  #    c[] <- 3.14
-  #   in () }
-
-  # { lambda  d:Ref[float64[]} b:Ref{float64[]} y:i32[]; . let
-  #     d[] <- 6.28
-  #     b[] <- 2.0
-  #   in () }
-  # consts = [[0, t_e, t_f], [t_g, t_e, 1]]
-  #
-  # Notice how `t_e` is duplicated. To deduplicate the `Ref`s we first
-  # 1) Detecting duplicate `Ref` tracers. We keep track of duplicates in
-  #    `tracer_id_to_canonical_id.` We store the deduped `Ref` tracers in a
-  #    list called `canonical_refs`. We remove the `Ref`s from the consts.
-  #    We should have the following lists:
-  #    canonical_refs = [t_e, t_f, t_g]
-  #    consts = [[0], [1]]
-  # 2) We need to munge the branch jaxprs to take in *all* the canonical Refs
-  #    and ignore the ones it doesn't actually use. We do this by keeping track
-  #    for each jaxpr for each of its input Refs which canonical_ref it
-  #    corresponds to, producing the following list:
-  #    canonical_ref_indices = [[0, 1], [2, 0]]
-  #
-  # Afterwards, we proceed by rewriting the jaxprs to be the following:
-  # { lambda a:Ref{float64[]} c:Ref[float64[]} b_:Ref{float64[]} x:i32[]; . let
-  #    a[] <- 1.0
-  #    c[] <- 3.14
-  #   in () }
-  # { lambda b:Ref{float64[]} _:Ref{float64[]} d:Ref{float64[]} y:i32[]; . let
-  #     d[] <- 6.28
-  #     b[] <- 2.0
-  #   in () }
-  canonical_ref_indices = []
-  canonical_non_ref_indices = []
-  canonical_refs: list[Any] = []
-  canonical_non_refs: list[Any] = []
-  tracer_id_to_canonical_ref_id = {}
-  tracer_id_to_canonical_non_ref_id = {}
-  canonical_ref_avals = []
-  canonical_non_ref_avals = []
-  for consts, consts_avals in zip(all_consts, all_const_avals):
-    ref_indices = []
-    non_ref_indices = []
-    for c, aval in zip(consts, consts_avals):
-      tracer_id = id(c)
-      if isinstance(aval, state.AbstractRef):
-        if tracer_id not in tracer_id_to_canonical_ref_id:
-          canonical_id = len(canonical_refs)
-          canonical_refs.append(c)
-          tracer_id_to_canonical_ref_id[tracer_id] = canonical_id
-          canonical_ref_avals.append(aval)
-        canonical_id = tracer_id_to_canonical_ref_id[tracer_id]
-        ref_indices.append(canonical_id)
-      else:
-        if tracer_id not in tracer_id_to_canonical_non_ref_id:
-          canonical_id = len(canonical_non_refs)
-          canonical_non_refs.append(c)
-          tracer_id_to_canonical_non_ref_id[tracer_id] = canonical_id
-          canonical_non_ref_avals.append(aval)
-        canonical_id = tracer_id_to_canonical_non_ref_id[tracer_id]
-        non_ref_indices.append(canonical_id)
-    canonical_ref_indices.append(tuple(ref_indices))
-    canonical_non_ref_indices.append(tuple(non_ref_indices))
-
-  consts = [*canonical_refs, *canonical_non_refs]
-  jaxprs = tuple(_pad_jaxpr_constvars(jaxpr, i, (*canonical_ref_avals,), (*canonical_ref_indices,), (*canonical_non_ref_avals,), (*canonical_non_ref_indices,))
-                 for i, jaxpr in enumerate(jaxprs))
-  return jaxprs, consts, all_out_trees
+def _pad_constvars(jaxpr: core.ClosedJaxpr, num_consts: int,
+                   left: tuple[core.AvalQDD, ...],
+                   right: tuple[core.AbstractValue, ...]) -> core.ClosedJaxpr:
+  def make_var(aq):
+    return core.Var(aq.aval, initial_qdd=aq.qdd, final_qdd=aq.qdd)
+  invars = [*map(make_var, left), *jaxpr.invars[:num_consts],
+            *map(make_var, right), *jaxpr.invars[num_consts:]]
+  effs = pe._renumber_effects(invars, jaxpr.invars, jaxpr.effects)
+  jaxpr = jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(invars=invars, effects=effs))
+  config.enable_checks.value and core.check_jaxpr(jaxpr.jaxpr)
+  return jaxpr
 
 @weakref_lru_cache
-def _pad_jaxpr_constvars(jaxpr, i, canonical_ref_avals, canonical_ref_indices,
-                         canonical_non_ref_avals, canonical_non_ref_indices):
-  is_ref = [isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars]
-  nonref_constvars, ref_constvars = partition_list(is_ref, jaxpr.constvars)
-  newvar = core.gensym(suffix='_')
-  padded_ref_constvars  = map(newvar, canonical_ref_avals)
-  padded_non_ref_constvars  = map(newvar, canonical_non_ref_avals)
-  for canonical_id, ref_var in zip(canonical_ref_indices[i], ref_constvars):
-    padded_ref_constvars[canonical_id] = ref_var
-  for canonical_id, non_ref_var in zip(canonical_non_ref_indices[i], nonref_constvars):
-    padded_non_ref_constvars[canonical_id] = non_ref_var
-  constvars = [*padded_ref_constvars, *padded_non_ref_constvars]
-  jaxpr = jaxpr.replace(constvars=constvars)
-  effects = pe.make_jaxpr_effects(jaxpr.constvars, jaxpr.invars,
-                                  jaxpr.outvars, jaxpr.eqns)
-  jaxpr = jaxpr.replace(effects=effects)
-  return core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+def _dedup_consts(jaxpr, num_consts, const_ids):
+  newvars = {}
+  canonicalize = {v: newvars.setdefault(constid, v)
+                  for constid, v in zip(const_ids, jaxpr.invars[:num_consts])}
+  eqns = [e.replace(invars=[canonicalize.get(x, x) if isinstance(x, core.Var)
+                            else x for x in e.invars]) for e in jaxpr.eqns]
+  outvars = [canonicalize.get(x, x) if isinstance(x, core.Var) else x
+             for x in jaxpr.outvars]
+  invars = [*list(newvars.values()), *jaxpr.invars[num_consts:]]
+  effs = pe._renumber_effects(invars,
+      [*map(canonicalize.get, jaxpr.invars[:num_consts]), *jaxpr.invars[num_consts:]],
+      jaxpr.effects)
+  jaxpr = jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(invars=invars, eqns=eqns, outvars=outvars,
+                        effects=effs))
+  config.enable_checks.value and core.check_jaxpr(jaxpr)
+  return jaxpr
 
 def _check_tree_and_avals(what1, tree1, avals1, what2, tree2, avals2):
   """Raises TypeError if (tree1, avals1) does not match (tree2, avals2).
@@ -244,13 +140,8 @@ def _prune_zeros(ts):
 
 def _make_closed_jaxpr(traceable: lu.WrappedFun,
                        in_avals: Sequence[core.AbstractValue]):
-  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(traceable, in_avals)
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(traceable, in_avals)
   return core.ClosedJaxpr(jaxpr, consts)
-
-def _make_closed_jaxpr_attrs(traceable: lu.WrappedFun, in_avals: Sequence[core.AbstractValue]):
-  jaxpr, _, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(traceable, in_avals)
-  return core.ClosedJaxpr(jaxpr, consts), attrs_tracked
-
 
 def _show_diff(array1, array2):
   if core.typematch(array1, array2):

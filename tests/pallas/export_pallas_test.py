@@ -20,7 +20,9 @@ from absl.testing import absltest
 import jax
 from jax import export
 from jax._src import test_util as jtu
+from jax._src.pallas import pallas_call as pallas_call_lib
 from jax.experimental import pallas as pl
+
 import numpy as np
 try:
   from jax._src.lib import triton
@@ -31,18 +33,20 @@ except ImportError:
 jax.config.parse_flags_with_absl()
 
 
-class ExportTest(jtu.JaxTestCase):
+class ExportTestWithTriton(jtu.JaxTestCase):
 
   def setUp(self):
     if sys.platform == "win32":
       self.skipTest("Only works on non-Windows platforms")
-
+    self.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(False))
     super().setUp()
 
+  def _check_cuda_export(self, exp):
+    self.assertRegex(
+        exp.mlir_module(),
+        r"stablehlo.custom_call @__gpu\$xla\.gpu\.triton.+name\s*=\s*\"my_custom_kernel_name\"")
+
   def test_cross_platform(self):
-    # TODO(apaszke): Remove after 12 weeks have passed.
-    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
-      self.skipTest("Requires libtpu built after 2024-12-19")
     def add_vectors_kernel(x_ref, y_ref, o_ref):
       x, y = x_ref[...], y_ref[...]
       o_ref[...] = x + y
@@ -83,9 +87,24 @@ class ExportTest(jtu.JaxTestCase):
           exp.mlir_module(),
           r"stablehlo.custom_call @tpu_custom_call.+kernel_name\s*=\s*\"my_custom_kernel_name\"")
     if "cuda" in platforms:
-      self.assertRegex(
-          exp.mlir_module(),
-          r"stablehlo.custom_call @__gpu\$xla\.gpu\.triton.+name\s*=\s*\"my_custom_kernel_name\"")
+      self._check_cuda_export(exp)
+
+
+class ExportTestWithMosaicGpu(ExportTestWithTriton):
+
+  def setUp(self):
+    # TODO(b/432678342): remove once this is fixed.
+    if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest(
+          "LLVM seems to care about the compute capability if a GPU is present"
+      )
+    super().setUp()
+    self.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(True))
+
+  def _check_cuda_export(self, exp):
+    self.assertRegex(
+        exp.mlir_module(),
+        r"stablehlo.custom_call @mosaic_gpu_v2.*my_custom_kernel_name")
 
 
 if __name__ == '__main__':

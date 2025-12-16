@@ -6,8 +6,8 @@ Everyone can contribute to JAX, and we value everyone's contributions. There are
 ways to contribute, including:
 
 - Answering questions on JAX's [discussions page](https://github.com/jax-ml/jax/discussions)
-- Improving or expanding JAX's [documentation](http://docs.jax.dev/)
-- Contributing to JAX's [code-base](http://github.com/jax-ml/jax/)
+- Improving or expanding JAX's [documentation](https://docs.jax.dev)
+- Contributing to JAX's [code-base](https://github.com/jax-ml/jax)
 - Contributing in any of the above ways to the broader ecosystem of [libraries built on JAX](https://github.com/jax-ml/jax#neural-network-libraries)
 
 The JAX project follows [Google's Open Source Community Guidelines](https://opensource.google/conduct/).
@@ -23,6 +23,22 @@ For other proposals, we ask that you first open a GitHub
 [Discussion](https://github.com/jax-ml/jax/discussions)
 to seek feedback on your planned contribution.
 
+## Can I contribute AI generated code?
+
+All submissions to Google Open Source projects need to follow Google's [Contributor License
+Agreement (CLA)](https://cla.developers.google.com/), in which contributors agree that their
+contribution is an original work of authorship. This doesn’t prohibit the use of coding
+assistance tools, but what’s submitted does need to be a contributor's original creation.
+
+In the JAX project, a main concern with AI-generated contributions is that
+**low-quality AI-generated code imposes a disproportionate review cost**.
+Since the team's capacity for code review is limited, we have a higher bar
+for accepting AI-generated contributions compared to those written by a human.
+
+A loose rule of thumb: if the team needs to spend more time reviewing a
+contribution than the contributor spends generating it, then the contribution
+is probably not helpful to the project, and we will likely reject it.
+
 ## Contributing code using pull requests
 
 We do all of our development using git, so basic knowledge is assumed.
@@ -30,13 +46,13 @@ We do all of our development using git, so basic knowledge is assumed.
 Follow these steps to contribute code:
 
 1. Sign the [Google Contributor License Agreement (CLA)](https://cla.developers.google.com/).
-   For more information, see the Pull Request Checklist below.
+   For more information, see the {ref}`pr-checklist` below.
 
 2. Fork the JAX repository by clicking the **Fork** button on the
-   [repository page](http://www.github.com/jax-ml/jax). This creates
+   [repository page](https://github.com/jax-ml/jax). This creates
    a copy of the JAX repository in your own account.
 
-3. Install Python >= 3.10 locally in order to run tests.
+3. Install Python >= 3.11 locally in order to run tests.
 
 4. `pip` installing your fork from source. This allows you to modify the code
    and immediately test it out:
@@ -52,7 +68,7 @@ Follow these steps to contribute code:
    changes.
 
    ```bash
-   git remote add upstream https://www.github.com/jax-ml/jax
+   git remote add upstream https://github.com/jax-ml/jax.git
    ```
 
 6. Create a branch where you will develop from:
@@ -79,6 +95,12 @@ Follow these steps to contribute code:
 
    ```bash
    pytest -n auto tests/
+   ```
+
+   Run them in 64-bit mode as well, by setting the environment variable `JAX_ENABLE_X64=True`:
+
+   ```bash
+   JAX_ENABLE_X64=True pytest -n auto tests/
    ```
 
    JAX's test suite is quite large, so if you know the specific test file that covers your
@@ -192,3 +214,109 @@ not available via standard GitHub CI. Detailed results of these tests are not pu
 viewable, but the JAX maintainer assigned to your PR will communicate with you regarding
 any failures these might uncover; it's not uncommon, for example, that numerical tests
 need different tolerances on TPU than on CPU.
+
+### Wheel sources update
+
+If a new python package or a new file is added to the wheel, one of the
+following Bazel targets should be updated:
+
+[jax wheel sources](https://github.com/jax-ml/jax/blob/0080c5c934d9e3668c93d88e2b94f66e05f9d8d8/BUILD.bazel#L29)
+
+[jaxlib wheel sources](https://github.com/jax-ml/jax/blob/0080c5c934d9e3668c93d88e2b94f66e05f9d8d8/jaxlib/tools/BUILD.bazel#L151)
+
+[jax CUDA plugin wheel sources](https://github.com/jax-ml/jax/blob/0080c5c934d9e3668c93d88e2b94f66e05f9d8d8/jaxlib/tools/BUILD.bazel#L210)
+
+[jax CUDA pjrt wheel sources](https://github.com/jax-ml/jax/blob/0080c5c934d9e3668c93d88e2b94f66e05f9d8d8/jaxlib/tools/BUILD.bazel#L318)
+
+1. A static source addition: add to `static_srcs` list.
+
+   Example: add `//:file.txt` to `jax` wheel.
+
+   ```
+   wheel_sources(
+      name = "jax_sources",
+      data_srcs = [...],
+      py_srcs = [...],
+      static_srcs = [
+         ...
+         "//:file.txt"
+      ],
+   )
+   ```
+
+2. A platform-dependent source addition: add to `data_srcs` list.
+
+   Example: add a `cc_library` target `//:cc_target` to `jax` wheel.
+
+   ```
+   wheel_sources(
+      name = "jax_sources",
+      data_srcs = [
+         ...
+         "//:cc_target"
+      ],
+      py_srcs = [...],
+      static_srcs = [...],
+   )
+   ```
+
+   If the existing targets in `data_srcs` already have a transitive
+   dependency on `//:cc_target`, you don't need to add it explicitly.
+
+3. A new python package addition: create `__init__.py` file and Bazel python
+rule target with `__init__.py` in sources, add it to `py_srcs` list.
+
+   Example: add a new package `jax.test_package` to `jax` wheel:
+
+   The content of the file `jax/test_package/BUILD`:
+
+   ```
+   pytype_strict_library(
+      name = "init",
+      srcs = ["__init__.py"],
+      visibility = ["//visibility:public"],
+   )
+   ```
+
+   ```
+   wheel_sources(
+      name = "jax_sources",
+      data_srcs = [...],
+      py_srcs = [
+         ...
+         "//jax/test_package:init",
+      ],
+      static_srcs = [...],
+   )
+   ```
+
+4. A new python source addition to existing package: create/update Bazel python
+rule target with the new file in sources, add it to `py_srcs` list.
+
+   Example: add a new file `jax/test_package/example.py` to `jax` wheel:
+
+   The content of the file `jax/test_package/BUILD`:
+
+   ```
+   pytype_strict_library(
+      name = "example",
+      srcs = ["__init__.py",
+               "example.py"],
+      visibility = ["//visibility:public"],
+   )
+   ```
+
+   ```
+   wheel_sources(
+      name = "jax_sources",
+      data_srcs = [...],
+      py_srcs = [
+         ...
+         "//jax/test_package:example",
+      ],
+      static_srcs = [...],
+   )
+   ```
+
+   If the existing targets in `py_srcs` already have a transitive
+   dependency on `example.py`, you don't need to add it explicitly.

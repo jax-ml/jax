@@ -29,7 +29,7 @@ class GpuMemoryAllocationTest(absltest.TestCase):
   @jtu.skip_under_pytest("Test must run in an isolated process")
   @unittest.skipIf(
       "XLA_PYTHON_CLIENT_ALLOCATOR" in os.environ,
-      "Test does not work if the python client allocator has been overriden",
+      "Test does not work if the python client allocator has been overridden",
   )
   def test_gpu_memory_allocation(self):
     falsey_values = ("0", "False", "false")

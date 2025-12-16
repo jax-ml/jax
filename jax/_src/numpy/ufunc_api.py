@@ -17,21 +17,23 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from functools import partial
 import math
 import operator
 from typing import Any
 
-import jax
+import numpy as np
+
+from jax._src import api
 from jax._src.typing import Array, ArrayLike, DTypeLike
-from jax._src.lax import lax as lax_internal
+from jax._src.lax import control_flow
+from jax._src.lax import slicing
+from jax._src.lax import lax
 from jax._src.numpy import indexing
-import jax._src.numpy.lax_numpy as jnp
+from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.reductions import _moveaxis
 from jax._src.numpy.util import check_arraylike, _broadcast_to, _where
 from jax._src.numpy.vectorize import vectorize
 from jax._src.util import canonicalize_axis, set_module
-import numpy as np
 
 
 export = set_module("jax.numpy")
@@ -90,7 +92,7 @@ class ufunc:
            [ 5,  6,  7,  8,  9],
            [ 6,  7,  8,  9, 10]], dtype=int32)
 
-    The :meth:`ufunc.reduce` method perfoms a reduction over the array.
+    The :meth:`ufunc.reduce` method performs a reduction over the array.
     For example, :meth:`jnp.add.reduce` is equivalent to ``jnp.sum``:
 
     >>> jnp.add.reduce(x)
@@ -110,7 +112,7 @@ class ufunc:
     Array([101,   2,   3,   4,   5], dtype=int32)
 
     And the :meth:`ufunc.reduceat` method performs a number of ``reduce``
-    operations bewteen specified indices of an array; for ``jnp.add`` the
+    operations between specified indices of an array; for ``jnp.add`` the
     operation is similar to :func:`jax.ops.segment_sum`:
 
     >>> jnp.add.reduceat(x, jnp.array([0, 2]))
@@ -179,11 +181,11 @@ class ufunc:
     call = self.__static_props['call'] or self._call_vectorized
     return call(*args)
 
-  @partial(jax.jit, static_argnames=['self'])
+  @api.jit(static_argnames=['self'])
   def _call_vectorized(self, *args):
     return vectorize(self._func)(*args)
 
-  @partial(jax.jit, static_argnames=['self', 'axis', 'dtype', 'out', 'keepdims'])
+  @api.jit(static_argnames=['self', 'axis', 'dtype', 'out', 'keepdims'])
   def reduce(self, a: ArrayLike, axis: int | None = 0,
              dtype: DTypeLike | None = None,
              out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
@@ -249,8 +251,8 @@ class ufunc:
       if self.identity is None and initial is None:
         raise ValueError(f"reduction operation {self.__name__!r} does not have an identity, "
                          "so to use a where mask one has to specify 'initial'.")
-      if lax_internal._dtype(where) != bool:
-        raise ValueError(f"where argument must have dtype=bool; got dtype={lax_internal._dtype(where)}")
+      if lax._dtype(where) != bool:
+        raise ValueError(f"where argument must have dtype=bool; got dtype={lax._dtype(where)}")
     reduce = self.__static_props['reduce'] or self._reduce_via_scan
     return reduce(a, axis=axis, dtype=dtype, keepdims=keepdims, initial=initial, where=where)
 
@@ -258,11 +260,11 @@ class ufunc:
                        keepdims: bool = False, initial: ArrayLike | None = None,
                        where: ArrayLike | None = None) -> Array:
     assert self.nin == 2 and self.nout == 1
-    arr = lax_internal.asarray(arr)
+    arr = lax.asarray(arr)
     if initial is None:
       initial = self.identity
     if dtype is None:
-      dtype = jax.eval_shape(self._func, lax_internal._one(arr), lax_internal._one(arr)).dtype
+      dtype = api.eval_shape(self._func, lax._one(arr), lax._one(arr)).dtype
     if where is not None:
       where = _broadcast_to(where, arr.shape)
     if isinstance(axis, tuple):
@@ -290,8 +292,10 @@ class ufunc:
       if where is not None:
         where = _moveaxis(where, axis, 0)
 
-    if initial is None and arr.shape[0] == 0:
-      raise ValueError("zero-size array to reduction operation {self.__name__} which has no ideneity")
+    if arr.shape[0] == 0:
+      if initial is None:
+        raise ValueError(f"zero-size array to reduction operation {self.__name__} which has no identity")
+      return lax.full(final_shape, initial, dtype)
 
     def body_fun(i, val):
       if where is None:
@@ -306,15 +310,15 @@ class ufunc:
     else:
       start_index = 0
       start_value = initial
-    start_value = _broadcast_to(lax_internal.asarray(start_value).astype(dtype), arr.shape[1:])
+    start_value = _broadcast_to(lax.asarray(start_value).astype(dtype), arr.shape[1:])
 
-    result = jax.lax.fori_loop(start_index, arr.shape[0], body_fun, start_value)
+    result = control_flow.fori_loop(start_index, arr.shape[0], body_fun, start_value)
 
     if keepdims:
       result = result.reshape(final_shape)
     return result
 
-  @partial(jax.jit, static_argnames=['self', 'axis', 'dtype'])
+  @api.jit(static_argnames=['self', 'axis', 'dtype'])
   def accumulate(self, a: ArrayLike, axis: int = 0, dtype: DTypeLike | None = None,
                  out: None = None) -> Array:
     """Accumulate operation derived from binary ufunc.
@@ -376,24 +380,26 @@ class ufunc:
                            dtype: DTypeLike | None = None) -> Array:
     assert self.nin == 2 and self.nout == 1
     check_arraylike(f"{self.__name__}.accumulate", arr)
-    arr = lax_internal.asarray(arr)
+    arr = lax.asarray(arr)
 
     if dtype is None:
-      dtype = jax.eval_shape(self._func, lax_internal._one(arr), lax_internal._one(arr)).dtype
+      dtype = api.eval_shape(self._func, lax._one(arr), lax._one(arr)).dtype
 
     if axis is None or isinstance(axis, tuple):
       raise ValueError("accumulate does not allow multiple axes")
     axis = canonicalize_axis(axis, np.ndim(arr))
 
+    if arr.size == 0:
+      return lax.full(arr.shape, 0, dtype)
     arr = _moveaxis(arr, axis, 0)
     def scan_fun(carry, _):
       i, x = carry
       y = _where(i == 0, arr[0].astype(dtype), self(x.astype(dtype), arr[i].astype(dtype)))
       return (i + 1, y), y
-    _, result = jax.lax.scan(scan_fun, (0, arr[0].astype(dtype)), None, length=arr.shape[0])
+    _, result = control_flow.scan(scan_fun, (0, arr[0].astype(dtype)), None, length=arr.shape[0])
     return _moveaxis(result, 0, axis)
 
-  @partial(jax.jit, static_argnums=[0], static_argnames=['inplace'])
+  @api.jit(static_argnums=[0], static_argnames=['inplace'])
   def at(self, a: ArrayLike, indices: Any, b: ArrayLike | None = None, /, *,
          inplace: bool = True) -> Array:
     """Update elements of an array via the specified unary or binary ufunc.
@@ -440,15 +446,15 @@ class ufunc:
   def _at_via_scan(self, a: ArrayLike, indices: Any, *args: Any) -> Array:
     assert len(args) in {0, 1}
     check_arraylike(f"{self.__name__}.at", a, *args)
-    dtype = jax.eval_shape(self._func, lax_internal._one(a), *(lax_internal._one(arg) for arg in args)).dtype
-    a = lax_internal.asarray(a).astype(dtype)
-    args = tuple(lax_internal.asarray(arg).astype(dtype) for arg in args)
+    dtype = api.eval_shape(self._func, lax._one(a), *(lax._one(arg) for arg in args)).dtype
+    a = lax.asarray(a).astype(dtype)
+    args = tuple(lax.asarray(arg).astype(dtype) for arg in args)
     indices = indexing.eliminate_deprecated_list_indexing(indices)
     if not indices:
       return a
 
     shapes = [np.shape(i) for i in indices if not isinstance(i, slice)]
-    shape = shapes and jax.lax.broadcast_shapes(*shapes)
+    shape = shapes and lax.broadcast_shapes(*shapes)
     if not shape:
       return a.at[indices].set(self(a.at[indices].get(), *args))
 
@@ -462,10 +468,10 @@ class ufunc:
       idx = tuple(ind if isinstance(ind, slice) else ind[i] for ind in indices)
       a = a.at[idx].set(self(a.at[idx].get(), *(arg[i] for arg in args)))
       return (i + 1, a), x
-    carry, _ = jax.lax.scan(scan_fun, (0, a), None, len(indices[0]))  # type: ignore[arg-type]
+    carry, _ = control_flow.scan(scan_fun, (0, a), None, len(indices[0]))  # type: ignore[arg-type]
     return carry[1]
 
-  @partial(jax.jit, static_argnames=['self', 'axis', 'dtype'])
+  @api.jit(static_argnames=['self', 'axis', 'dtype'])
   def reduceat(self, a: ArrayLike, indices: Any, axis: int = 0,
                dtype: DTypeLike | None = None, out: None = None) -> Array:
     """Reduce an array between specified indices via a binary ufunc.
@@ -517,7 +523,7 @@ class ufunc:
   def _reduceat_via_scan(self, a: ArrayLike, indices: Any, axis: int = 0,
                          dtype: DTypeLike | None = None) -> Array:
     check_arraylike(f"{self.__name__}.reduceat", a, indices)
-    a = lax_internal.asarray(a)
+    a = lax.asarray(a)
     idx_tuple = indexing.eliminate_deprecated_list_indexing(indices)
     assert len(idx_tuple) == 1
     indices = idx_tuple[0]
@@ -531,17 +537,17 @@ class ufunc:
       raise ValueError("reduceat requires a single integer axis.")
     axis = canonicalize_axis(axis, a.ndim)
     out = indexing.take(a, indices, axis=axis)
-    ind = jax.lax.expand_dims(jnp.append(indices, a.shape[axis]),
-                              list(np.delete(np.arange(out.ndim), axis)))
-    ind_start = jax.lax.slice_in_dim(ind, 0, ind.shape[axis] - 1, axis=axis)
-    ind_end = jax.lax.slice_in_dim(ind, 1, ind.shape[axis], axis=axis)
+    ind = lax.expand_dims(jnp.append(indices, a.shape[axis]),
+                                   list(np.delete(np.arange(out.ndim), axis)))
+    ind_start = slicing.slice_in_dim(ind, 0, ind.shape[axis] - 1, axis=axis)
+    ind_end = slicing.slice_in_dim(ind, 1, ind.shape[axis], axis=axis)
     def loop_body(i, out):
       return _where((i > ind_start) & (i < ind_end),
-                    self(out, indexing.take(a, jax.lax.expand_dims(i, (0,)), axis=axis)),
+                    self(out, indexing.take(a, lax.expand_dims(i, (0,)), axis=axis)),
                     out)
-    return jax.lax.fori_loop(0, a.shape[axis], loop_body, out)
+    return control_flow.fori_loop(0, a.shape[axis], loop_body, out)
 
-  @partial(jax.jit, static_argnums=[0])
+  @api.jit(static_argnums=[0])
   def outer(self, A: ArrayLike, B: ArrayLike, /) -> Array:
     """Apply the function to all pairs of values in ``A`` and ``B``.
 
@@ -572,7 +578,7 @@ class ufunc:
        [ 10  20  30  40  50  60  70  80  90 100]]
 
       For input arrays with ``N`` and ``M`` dimensions respectively, the output
-      will have dimesion ``N + M``:
+      will have dimension ``N + M``:
 
       >>> x = jnp.ones((1, 3, 5))
       >>> y = jnp.ones((2, 4))
@@ -584,8 +590,8 @@ class ufunc:
     if self.nout != 1:
       raise ValueError("outer only supported for functions returning a single value")
     check_arraylike(f"{self.__name__}.outer", A, B)
-    _ravel = lambda A: jax.lax.reshape(A, (np.size(A),))
-    result = jax.vmap(jax.vmap(self, (None, 0)), (0, None))(_ravel(A), _ravel(B))
+    _ravel = lambda A: lax.reshape(A, (np.size(A),))
+    result = api.vmap(api.vmap(self, (None, 0)), (0, None))(_ravel(A), _ravel(B))
     return result.reshape(*np.shape(A), *np.shape(B))
 
 

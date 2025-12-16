@@ -13,4 +13,4 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-include "jaxlib/mosaic/dialect/tpu/tpu.td"
+include "jaxlib/mosaic/dialect/tpu/tpu_ops.td"

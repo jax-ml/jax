@@ -1,7 +1,5 @@
 # Cloud TPU CI (presubmit)
-#
-# This job currently runs as a non-blocking presubmit. It is experimental and is currently being
-# tested to get to a stable state before we enable it as a blocking presubmit.
+
 name: CI - Cloud TPU (presubmit)
 
 on:
@@ -32,33 +30,19 @@ concurrency:
   cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
 
 jobs:
-  build-jax-artifacts:
+  run-bazel-test-tpu:
     if: github.event.repository.fork == false
-    uses: ./.github/workflows/build_artifacts.yml
-    strategy:
-        fail-fast: false # don't cancel all jobs on failure
-        matrix:
-            artifact: ["jax", "jaxlib"]
-    with:
-        runner: "linux-x86-n2-16"
-        artifact: ${{ matrix.artifact }}
-        python: "3.10"
-        clone_main_xla: 1
-        upload_artifacts_to_gcs: true
-        gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
-
-  run-pytest-tpu:
-    if: github.event.repository.fork == false
-    needs: [build-jax-artifacts]
-    uses: ./.github/workflows/pytest_tpu.yml
+    uses: ./.github/workflows/bazel_test_tpu.yml
     # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "TPU test (jaxlib=head)"
     with:
-      runner: "linux-x86-ct5lp-224-8tpu"
+      runner: "linux-x86-ct6e-180-8tpu"
       cores: "8"
-      tpu-type: "v5e-8"
-      python: "3.10"
+      tpu-type: "v6e-8"
+      python: "3.14-nogil"
       libtpu-version-type: "nightly"
-      gcs_download_uri: ${{ needs.build-jax-artifacts.outputs.gcs_upload_uri }}
-      halt-for-connection: ${{ inputs.halt-for-connection || false }}
+      halt-for-connection: false
+      build_jaxlib: "true"
+      build_jax: "true"
+      clone_main_xla: 1
     # End Presubmit Naming Check github-tpu-presubmits

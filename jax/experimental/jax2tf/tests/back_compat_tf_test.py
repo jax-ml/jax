@@ -77,7 +77,7 @@ class CompatTensoflowTest(bctu.CompatTestBase):
     # for the whole directory.
     @tf.function(autograph=False, jit_compile=True)
     def tf_func(the_input):  # Use recognizable names for input and result
-      res = jax2tf.convert(func, native_serialization=True)(the_input)
+      res = jax2tf.convert(func)(the_input)
       return tf.identity(res, name="the_result")
 
     self.tf_func = tf_func

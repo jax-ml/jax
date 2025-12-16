@@ -18,9 +18,9 @@ from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import logging
-from typing import Any
+from typing import Any, cast
 
-import jax
+from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -35,13 +35,11 @@ from jax._src import xla_bridge as xb
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.interpreters import xla
-from jax._src.lax.control_flow.loops import map as lax_map
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import SdyArray, SdyArrayList, SdyDim, SingleDeviceSharding
-from jax._src.typing import DeprecatedArg
+from jax._src.typing import Array, DeprecatedArg
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -67,7 +65,7 @@ class _FlatCallback:
   callback_func: Callable[..., Any]
   in_tree: tree_util.PyTreeDef  # (args, kwargs) pytree for `callback_func`.
 
-  def __call__(self, *flat_args: jax.Array) -> Sequence[jax.Array]:
+  def __call__(self, *flat_args: Array) -> Sequence[Array]:
     args, kwargs = tree_util.tree_unflatten(self.in_tree, flat_args)
     return tree_util.tree_leaves(self.callback_func(*args, **kwargs))
 
@@ -81,15 +79,15 @@ def pure_callback_impl(
 ):
   del sharding, vmap_method, result_avals
   try:
-    cpu_device, *_ = jax.local_devices(backend="cpu")
+    cpu_device, *_ = xb.local_devices(backend="cpu")
   except RuntimeError as e:
     raise RuntimeError(
         "jax.pure_callback failed to find a local CPU device to place the"
         " inputs on. Make sure \"cpu\" is listed in --jax_platforms or the"
         " JAX_PLATFORMS environment variable."
     ) from e
-  args = jax.device_put(args, cpu_device)
-  with jax.default_device(cpu_device):
+  args = api.device_put(args, cpu_device)
+  with config.default_device(cpu_device):
     try:
       return tree_util.tree_map(np.asarray, callback(*args))
     except BaseException:
@@ -136,6 +134,17 @@ batching.primitive_batchers[pure_callback_p] = functools.partial(
     ffi.ffi_batching_rule, pure_callback_p
 )
 
+def _get_sdy_array_list_for_callbacks(avals: Sequence[core.ShapedArray]) -> SdyArrayList:
+  """Returns an SdyArrayList with `max(1, len(avals))` replicated shardings."""
+  ndims = [0]
+  if avals:
+    ndims = [x.ndim for x in avals if isinstance(x, core.ShapedArray)]
+  return SdyArrayList([
+      SdyArray(
+          mesh_shape=(),
+          dim_shardings=[SdyDim(axes=[], is_open=False)] * ndim,
+          logical_device_ids=()) for ndim in ndims])
+
 
 def _callback_op_sharding(
     axis_context, sharding: SingleDeviceSharding | None, avals_out
@@ -154,16 +163,7 @@ def _callback_op_sharding(
           " computations"
       )
     if config.use_shardy_partitioner.value:
-      ndim = 0
-      if avals_out and isinstance(avals_out[0], core.ShapedArray):
-        ndim = avals_out[0].ndim
-      op_sharding = SdyArrayList([
-          SdyArray(
-              mesh_shape=(),
-              dim_shardings=[
-                  SdyDim(axes=[], is_open=False)
-              ] * ndim,
-              logical_device_ids=())])
+      op_sharding = _get_sdy_array_list_for_callbacks(avals_out)
     else:
       op_sharding = xc.OpSharding()  # type: ignore[assignment]
       op_sharding.type = xc.OpSharding.Type.MANUAL
@@ -238,12 +238,15 @@ def pure_callback_lowering(
       ctx.avals_in,
       ctx.avals_out,
       has_side_effect=False,
+      returns_token=False,
       sharding=op_sharding,
   )
   return result
 
 
-mlir.register_lowering(pure_callback_p, pure_callback_lowering)
+# TODO(phawkins): On TPU, these have an embedded channel ID that should be
+# unique for each callback. Caching defeats this.
+mlir.register_lowering(pure_callback_p, pure_callback_lowering, cacheable=False)
 
 def _check_shape_dtype(shape_dtype):
   dt = np.dtype(shape_dtype.dtype)
@@ -424,15 +427,15 @@ def io_callback_impl(
 ):
   del result_avals, sharding, ordered
   try:
-    cpu_device, *_ = jax.local_devices(backend="cpu")
+    cpu_device, *_ = xb.local_devices(backend="cpu")
   except RuntimeError as e:
     raise RuntimeError(
         "jax.io_callback failed to find a local CPU device to place the"
         " inputs on. Make sure \"cpu\" is listed in --jax_platforms or the"
         " JAX_PLATFORMS environment variable."
     ) from e
-  args = jax.device_put(args, cpu_device)
-  with jax.default_device(cpu_device):
+  args = api.device_put(args, cpu_device)
+  with config.default_device(cpu_device):
     try:
       return tree_util.tree_map(np.asarray, callback(*args))
     except BaseException:
@@ -472,6 +475,7 @@ ad.primitive_transposes[io_callback_p] = io_callback_transpose_rule
 def io_callback_batching_rule(
     args, dims, callback, result_avals, sharding, ordered
 ):
+  from jax._src.lax.control_flow.loops import map as lax_map  # pytype: disable=import-error
   if ordered:
     raise ValueError("Cannot `vmap` ordered IO callback.")
   is_batched = [d is not batching.not_mapped for d in dims]
@@ -511,6 +515,7 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
         ctx.avals_in,
         ctx.avals_out,
         has_side_effect=True,
+        returns_token=True,
         sharding=op_sharding,
     )
     ctx.set_tokens_out(mlir.TokenSet({_OrderedIOEffect: token}))
@@ -523,13 +528,14 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
         ctx.avals_in,
         ctx.avals_out,
         has_side_effect=True,
+        returns_token=False,
         sharding=op_sharding,
     )
   return result
 
-
-mlir.register_lowering(io_callback_p, io_callback_lowering)
-
+# TODO(phawkins): On TPU, these have an embedded channel ID that should be
+# unique for each callback. Caching defeats this.
+mlir.register_lowering(io_callback_p, io_callback_lowering, cacheable=False)
 
 def io_callback(
     callback: Callable[..., Any],
@@ -638,7 +644,7 @@ def receive_from_host(
     if config.use_shardy_partitioner.value:
       assert isinstance(sharding, SdyArrayList)
       assert len(sharding.shardings) >= 1
-       # `RecvOp`'s last argument is a `TokenType`. Since Shardy requires the
+      # `RecvOp`'s last argument is a `TokenType`. Since Shardy requires the
       # number of shardings to match the number of results, but JAX only sees
       # the array result, we need to add an equivalent sharding for the token.
       # Note that even if a function returns N results, we will end up with N
@@ -653,7 +659,6 @@ def receive_from_host(
   # Token should be at the end of the results
   result, token = recv_op.results
   return token, result
-
 
 
 def _aval_to_xla_shape(aval: core.AbstractValue) -> xc.Shape:
@@ -675,7 +680,7 @@ _xla_shape_handlers[core.AbstractToken] = lambda _: xc.Shape.token_shape()
 
 
 def _emit_tpu_python_callback(
-    backend: xb.XlaBackend,
+    backend: xc.Client,
     ctx: mlir.LoweringRuleContext,
     callback,
     token: Any | None,
@@ -685,6 +690,7 @@ def _emit_tpu_python_callback(
     result_avals: Sequence[core.ShapedArray],
     result_shapes: Sequence[xc.Shape],
     *,
+    returns_token: bool,
     sharding: SdyArrayList | xc.OpSharding | None = None,
 ) -> tuple[Sequence[ir.Value], Any]:
   token = token or hlo.create_token()
@@ -716,13 +722,28 @@ def _emit_tpu_python_callback(
 
   recv_channels = []
   outputs = []
-  for result_aval in result_avals:
+  if returns_token and not result_avals:
+    # If the caller expects a token, we need at least one result so that the
+    # token from the recv is used as an indication that the callback is
+    # complete. Without this, we would only wait for the send to finish.
+    callback_without_results = _wrapped_callback
+    def _wrapped_callback(*args):  # pylint: disable=function-redefined
+      callback_without_results(*args)
+      return 0.0,
+    dummy_recv_aval = core.ShapedArray((), np.float32)
+    result_shapes = [_aval_to_xla_shape(dummy_recv_aval)]
     channel = ctx.module_context.new_channel()
-    assert isinstance(result_aval, core.ShapedArray)
-    token, out = receive_from_host(channel, token, result_aval,
-                                   callback.__name__, sharding=sharding)
-    outputs.append(out)
+    token, _ = receive_from_host(
+        channel, token, dummy_recv_aval, callback.__name__, sharding=sharding)
     recv_channels.append(channel)
+  else:
+    for result_aval in result_avals:
+      channel = ctx.module_context.new_channel()
+      assert isinstance(result_aval, core.ShapedArray)
+      token, out = receive_from_host(channel, token, result_aval,
+                                     callback.__name__, sharding=sharding)
+      outputs.append(out)
+      recv_channels.append(channel)
   ifrt_callback = backend.make_python_callback_from_host_send_and_recv(
       _wrapped_callback, operand_shapes, result_shapes, send_channels,
       recv_channels, pickle_util.dumps)
@@ -739,6 +760,7 @@ def emit_python_callback(
     result_avals: Sequence[core.ShapedArray],
     *,
     has_side_effect: bool,
+    returns_token: bool = True,
     partitioned: bool = False,
     sharding: SdyArrayList | xc.OpSharding | None = None,
 ) -> tuple[Sequence[mlir.IrValues], Any, Any]:
@@ -752,6 +774,7 @@ def emit_python_callback(
     operand_avals: The abstract values of the operands.
     result_avals: The abstract values of the results.
     has_side_effect: Whether the callback has side effects.
+    returns_token: Whether the callback should return a token.
     partitioned: If True, then `callback` is called on local shards only. If
       False, then `callback` is called on all shards.
     sharding: The sharding of the callback.
@@ -768,11 +791,11 @@ def emit_python_callback(
         f"`EmitPythonCallback` not supported on {platform} backend.")
   if partitioned:
     if platform not in {"cpu", "cuda", "rocm"}:
-      raise ValueError(
-          f"Partitioned callback not supported on {platform} backend.")
+      raise NotImplementedError(
+          f"Partitioned callback not implemented on {platform} backend.")
     if result_avals:
       raise ValueError("Partitioned callback not supported with return values.")
-  backend = ctx.module_context.get_backend()
+  backend: xc.Client = cast(xc.Client, ctx.module_context.get_backend())
   result_shapes = [_aval_to_xla_shape(aval) for aval in result_avals]
   operand_shapes = [_aval_to_xla_shape(aval) for aval in operand_avals]
 
@@ -785,7 +808,7 @@ def emit_python_callback(
           "Mismatched number of outputs from callback. "
           "Expected: {}, Actual: {}".format(len(result_avals), len(out_vals)))
     # Handle Python literals, and custom arrays, e.g., tf.Tensor.
-    out_vals = tuple(xla.canonicalize_dtype(np.asarray(a)) for a in out_vals)
+    out_vals = tuple(dtypes.canonicalize_value(np.asarray(a)) for a in out_vals)
     for i, (out_val, out_aval) in enumerate(zip(out_vals, result_avals)):
       if out_val.shape != out_aval.shape:
         raise RuntimeError(
@@ -818,7 +841,7 @@ def emit_python_callback(
         backend, ctx, _wrapped_callback,  token,
         operands, operand_avals, operand_shapes,
         non_empty_result_avals, non_empty_result_shapes,
-        sharding=sharding)
+        returns_token=returns_token, sharding=sharding)
     non_empty_outputs_iter = iter(non_empty_outputs)
     outputs = [
         mlir.ir_constant(np.zeros(result_aval.shape, dtype=result_aval.dtype))

@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as np
 
-from jax import lax
-import jax.numpy as jnp
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
@@ -47,11 +48,11 @@ def logpdf(x: ArrayLike, c: ArrayLike) -> Array:
   return jnp.where(
     lax.gt(c, _lax_const(c, 0)) & lax.lt(c, _lax_const(c, 1)),
     jnp.where(
-      lax.ge(x, _lax_const(x, 0)) & lax.le(x, _lax_const(x, jnp.pi * 2)),
-      jnp.log(1 - c * c) - jnp.log(2 * jnp.pi) - jnp.log(1 + c * c - 2 * c * jnp.cos(x)),
-      -jnp.inf,
+      lax.ge(x, _lax_const(x, 0)) & lax.le(x, _lax_const(x, np.pi * 2)),
+      jnp.log(1 - c * c) - jnp.log(2 * np.pi) - jnp.log(1 + c * c - 2 * c * jnp.cos(x)),
+      -np.inf,
     ),
-    jnp.nan,
+    np.nan,
   )
 
 

@@ -78,10 +78,10 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src.numpy.indexing import take_along_axis
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.lax import lax
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func
@@ -239,9 +239,17 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
          "approx_top_k with aggregate_to_topk=False not yet implemented when "
          f"either the `k` ({k}) or the "
          f" reduction dimension size ({reduction_input_size}) are symbolic")
+  operand_s = operand.sharding
+  if operand_s.spec[reduction_dimension] is not None:
+    raise core.ShardingTypeError(
+        f"reduction dimension {reduction_dimension} in operand"
+        f" {operand.str_short()} should be unsharded i.e. the spec of that dim"
+        " should be `None`.")
   return (operand.update(shape=dims, dtype=operand.dtype,
-                         weak_type=operand.weak_type, vma=operand.vma),
-          operand.update(shape=dims, dtype=np.dtype(np.int32), vma=operand.vma))
+                         weak_type=operand.weak_type, vma=operand.vma,
+                         sharding=operand_s),
+          operand.update(shape=dims, dtype=np.dtype(np.int32), vma=operand.vma,
+                         sharding=operand_s))
 
 def _get_init_val_literal(op_type, is_max_k):
   return np.array(-np.inf if is_max_k else np.inf, dtype=op_type)
@@ -379,12 +387,7 @@ def _approx_top_k_jvp(primals, tangents, *, k, reduction_dimension,
     rank = len(arg_shape)
     if reduction_dimension < 0:
       reduction_dimension += rank
-    iotas = [
-        lax.broadcasted_iota(arg_out.dtype, arg_shape, i) for i in range(rank)
-    ]
-    idx = tuple(
-        arg_out if i == reduction_dimension else iotas[i] for i in range(rank))
-    tangent_out = tangent[idx]
+    tangent_out = take_along_axis(tangent, arg_out, axis=reduction_dimension)
   return (val_out, arg_out), (tangent_out, ad_util.Zero.from_primal_value(arg_out))
 
 

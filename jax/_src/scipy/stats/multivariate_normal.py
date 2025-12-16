@@ -16,8 +16,10 @@ from functools import partial
 
 import numpy as np
 
-from jax import lax
-from jax import numpy as jnp
+from jax._src import lax
+from jax._src import numpy as jnp
+from jax._src.numpy import einsum as jnp_einsum
+from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import promote_dtypes_inexact
 from jax._src.typing import Array, ArrayLike
 
@@ -58,17 +60,17 @@ def logpdf(x: ArrayLike, mean: ArrayLike, cov: ArrayLike, allow_singular: None =
     n = mean.shape[-1]
     if not np.shape(cov):
       y = x - mean
-      return (-1/2 * jnp.einsum('...i,...i->...', y, y) / cov
+      return (-1/2 * jnp_einsum.einsum('...i,...i->...', y, y) / cov
               - n/2 * (jnp.log(2*np.pi) + jnp.log(cov)))
     else:
       if cov.ndim < 2 or cov.shape[-2:] != (n, n):
         raise ValueError("multivariate_normal.logpdf got incompatible shapes")
       L = lax.linalg.cholesky(cov)
-      y = jnp.vectorize(
+      y = jnp_vectorize.vectorize(
         partial(lax.linalg.triangular_solve, lower=True, transpose_a=True),
         signature="(n,n),(n)->(n)"
       )(L, x - mean)
-      return (-1/2 * jnp.einsum('...i,...i->...', y, y) - n/2 * jnp.log(2*np.pi)
+      return (-1/2 * jnp_einsum.einsum('...i,...i->...', y, y) - n/2 * jnp.log(2*np.pi)
               - jnp.log(L.diagonal(axis1=-1, axis2=-2)).sum(-1))
 
 

@@ -24,8 +24,9 @@ import sys
 import subprocess
 import glob
 from collections.abc import Sequence
-from jaxlib.tools import platform_tags
 
+from jaxlib.tools import platform_tags
+import third_party.py.setup_py_nvidia_dependencies_util as util
 
 MAIN_RUNFILES_DIR = "__main__/"
 
@@ -41,9 +42,25 @@ def create_wheel_sources_map(wheel_sources, root_packages):
     return wheel_sources_map
   for source in wheel_sources:
     for package in root_packages:
+      # Dealing with source files from the main repo
       if source.startswith("{}/".format(package)):
         wheel_sources_map[source] = source
         continue
+      # Dealing with source files from external repos
+      # e.g. external/xla/xla/ffi/api/c_api.h
+      # which should map to xla/ffi/api/c_api.h
+      if source.startswith("external/"):
+        parts = source.split("/", 2)
+        if len(parts) == 3:
+          wheel_sources_map[parts[2]] = source
+          continue
+        else:
+          raise RuntimeError(
+              "Unexpected external source format: {}".format(source)
+          )
+      # Dealing with generated source
+      # e.g. bazel-out/k8-opt/bin/jaxlib/mlir/_mlir_libs/_jax_mlir_ext.py
+      # which should map to jaxlib/mlir/_mlir_libs/_jax_mlir_ext.py
       root_package_ind = source.find("/{}/".format(package))
       if root_package_ind >= 0:
         wheel_sources_map[source[root_package_ind + 1:]] = source
@@ -153,13 +170,16 @@ def build_editable(
   shutil.copytree(sources_path, output_path)
 
 
-def update_setup_with_cuda_version(file_dir: pathlib.Path, cuda_version: str):
+def update_setup_with_cuda_and_nvidia_wheel_versions(
+    file_dir: pathlib.Path, cuda_version: str, nvidia_wheel_versions_data: str
+):
   src_file = file_dir / "setup.py"
   with open(src_file) as f:
     content = f.read()
-  content = content.replace(
-      "cuda_version = 0  # placeholder", f"cuda_version = {cuda_version}"
+  content = util.get_setup_py_content_with_nvidia_wheel_versions(
+      content, cuda_version, nvidia_wheel_versions_data
   )
+
   with open(src_file, "w") as f:
     f.write(content)
 

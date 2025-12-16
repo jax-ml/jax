@@ -642,6 +642,7 @@ def rms_norm_partition(eps, mesh, args_info, result_info):
 rms_norm_partitioned.def_partition(
     infer_sharding_from_operands=rms_norm_infer_sharding_from_operands,
     partition=rms_norm_partition,
+    sharding_rule="... i -> ... j",
 )
 
 output = jax.jit(rms_norm_partitioned, out_shardings=batch_shd)(x_batch_shd)

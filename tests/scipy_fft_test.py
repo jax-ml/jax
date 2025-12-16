@@ -88,9 +88,6 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     axis=[-1, 0],
     norm=[None, 'ortho', 'backward'],
   )
-  # TODO(phawkins): these tests are failing on T4 GPUs in CI with a
-  # CUDA_ERROR_ILLEGAL_ADDRESS.
-  @jtu.skip_on_devices("cuda")
   def testiDct(self, shape, dtype, n, axis, norm):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
@@ -108,9 +105,6 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     dtype=real_dtypes,
     norm=[None, 'ortho', 'backward'],
   )
-  # TODO(phawkins): these tests are failing on T4 GPUs in CI with a
-  # CUDA_ERROR_ILLEGAL_ADDRESS.
-  @jtu.skip_on_devices("cuda")
   def testiDctn(self, shape, dtype, s, axes, norm):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
@@ -129,6 +123,21 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     expected = osp_fft.idct(x, n=n, type=2)
     actual = jsp_fft.idct(x, n=n, type=2)
     self.assertArraysAllClose(actual, expected, atol=1e-14)
+
+  @jtu.sample_product(func=['idctn', 'dctn'])
+  def testDctnShape(self, func):
+    # Regression test for https://github.com/jax-ml/jax/issues/31836
+    x = np.arange(10.0).reshape(5, 2)
+    kwds = dict(type=2, s=(12, 7), axes=(-2, -1))
+
+    osp_func = getattr(osp_fft, func)
+    jsp_func = getattr(jsp_fft, func)
+
+    expected = osp_func(x, **kwds)
+    actual = jsp_func(x, **kwds)
+    rtol = {np.float64: 1E-12, np.float32: 1E-4}
+    self.assertArraysAllClose(actual, expected, rtol=rtol)
+
 
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())

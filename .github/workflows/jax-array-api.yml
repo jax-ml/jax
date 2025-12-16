@@ -10,11 +10,16 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  # Don't cancel in-progress jobs for main branches.
+  cancel-in-progress: ${{ github.ref != 'main' }}
 permissions: {}
+
+env:
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+
 jobs:
   build:
-    runs-on: linux-x86-n2-16
+    runs-on: linux-x86-n4-16
     container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
     strategy:
       matrix:
@@ -23,15 +28,14 @@ jobs:
       PYTHON: "python${{ matrix.python-version }}"
     steps:
     - name: Checkout jax
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
       with:
         persist-credentials: false
     - name: Checkout array-api-tests
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
       with:
         repository: data-apis/array-api-tests
-        # TODO(jakevdp) update this to a stable release/tag when available.
-        ref: 'c847143beb8d769bde5dbcc063fe19ed7acc2f9b'  # Latest commit as of 2025-05-12
+        ref: '2025.05.23'
         submodules: 'true'
         path: 'array-api-tests'
         persist-credentials: false

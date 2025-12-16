@@ -16,12 +16,15 @@ from __future__ import annotations
 
 from typing import overload, Literal
 
-import jax
-from jax import lax
-from jax import numpy as jnp
+from jax._src import config
+from jax._src.lax import lax
+from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy import reductions
+from jax._src.numpy import ufuncs
 from jax._src.numpy.reductions import _reduction_dims, Axis
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
+
 import numpy as np
 
 # The definition of logsumexp is shared between jax.nn and jax.scipy, and
@@ -67,18 +70,21 @@ def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
   Returns:
     Either an array ``result`` or a pair of arrays ``(result, sign)``, depending
     on the value of the ``return_sign`` argument.
+
+  See also:
+    :func:`jax.nn.logmeanexp`
   """
   if where is not None:
     a = jnp.where(where, a, 0)
   if b is not None:
     a_arr, b_arr = promote_args_inexact("logsumexp", a, b)
-    a_arr = jnp.where(b_arr != 0, a_arr, -jnp.inf)
+    a_arr = jnp.where(b_arr != 0, a_arr, -np.inf)
   else:
     a_arr, = promote_args_inexact("logsumexp", a)
     b_arr = a_arr  # for type checking
   pos_dims, dims = _reduction_dims(a_arr, axis)
-  amax = jnp.max(a_arr.real, axis=dims, keepdims=keepdims, where=where, initial=-jnp.inf)
-  amax = lax.stop_gradient(lax.select(jnp.isfinite(amax), amax, lax.full_like(amax, 0)))
+  amax = reductions.max(a_arr.real, axis=dims, keepdims=keepdims, where=where, initial=-np.inf)
+  amax = lax.stop_gradient(lax.select(ufuncs.isfinite(amax), amax, lax.full_like(amax, 0)))
   amax_with_dims = amax if keepdims else lax.expand_dims(amax, pos_dims)
 
   exp_a = lax.exp(lax.sub(a_arr, amax_with_dims.astype(a_arr.dtype)))
@@ -93,6 +99,6 @@ def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
   if return_sign:
     return (out, sign)
   if b is not None and not np.issubdtype(out.dtype, np.complexfloating):
-    with jax.debug_nans(False):
+    with config.debug_nans(False):
       out = jnp.where(sign < 0, jnp.array(np.nan, dtype=out.dtype), out)
   return out

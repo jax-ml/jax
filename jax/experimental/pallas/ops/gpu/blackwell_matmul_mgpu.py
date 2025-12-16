@@ -13,8 +13,11 @@
 # limitations under the License.
 """Matrix Multiplication kernel for Blackwell GPUs."""
 import dataclasses
+import enum
 import functools
 import itertools
+import statistics
+
 import jax
 from jax import lax
 from jax._src import test_util as jtu  # noqa: F401
@@ -24,24 +27,21 @@ import jax.experimental.pallas.mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
 
+class MatmulDimension(enum.IntEnum):
+  M = 0
+  N = 1
+
 
 @dataclasses.dataclass(frozen=True)
 class TuningConfig:
-  block_m: int
-  block_n: int
-  block_k: int
+  tile_m: int
+  tile_n: int
+  tile_k: int
   max_concurrent_steps: int
   collective: bool
-
-
-def _find_swizzle(dim_size_bits: int):
-  """Finds the largest swizzle that fits the dimension size."""
-  for swizzle_bytes in (128, 64, 32, 16):
-    if dim_size_bits % (swizzle_bytes * 8) == 0:
-      return swizzle_bytes
-  raise ValueError(
-      f"Dimension size has {dim_size_bits} bits, which is not a multiple of 128"
-  )
+  epilogue_tile_n: int = 64
+  grid_minor_dim: MatmulDimension = MatmulDimension.N
+  grid_tile_width: int = 1
 
 
 def matmul_kernel(a, b, config: TuningConfig):
@@ -57,170 +57,279 @@ def matmul_kernel(a, b, config: TuningConfig):
         f"Matmul LHS and RHS have incompatible shapes {a.shape} vs {b.shape}"
     )
   collective = config.collective
+  tile_m, tile_n, tile_k = (config.tile_m, config.tile_n, config.tile_k)
+  epilogue_tile_n = config.epilogue_tile_n
+  if tile_n % epilogue_tile_n != 0:
+    raise ValueError(
+        f"{tile_n=} must be divisible by {epilogue_tile_n=}"
+    )
+  block_tile_m = tile_m
+  block_tile_n = tile_n
   if collective:
-    raise ValueError("Collective matmul is not supported yet.")
-  block_m, block_n, block_k = (config.block_m, config.block_n, config.block_k)
-  swizzle = _find_swizzle(block_k * jnp.dtype(dtype).itemsize * 8)
+    tile_m *= 2
+    tile_n *= 2
+  swizzle = plgpu.find_swizzle(tile_k * jnp.dtype(dtype).itemsize * 8)
   swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
   transforms = (
       plgpu.TilingTransform((8, swizzle_elems)),
       plgpu.SwizzleTransform(swizzle),
   )
-  block_lhs = (block_m, block_k)
-  block_rhs = (block_k, block_n)
-  block_out = (block_m, block_n)
-  if m % block_m != 0:
-    raise ValueError(f"{m=} must be divisible by {block_m=}")
-  if n % block_n != 0:
-    raise ValueError(f"{n=} must be divisible by {block_n=}")
-  if k % block_k != 0:
-    raise ValueError(f"{k=} must be divisible by {block_k=}")
-  m_iters = m // block_m
-  n_iters = n // block_n
-  k_iters = k // block_k
+  out_swizzle = plgpu.find_swizzle(epilogue_tile_n * jnp.dtype(dtype).itemsize * 8)
+  out_swizzle_elems = out_swizzle // jnp.dtype(dtype).itemsize
+  out_transforms = (
+      plgpu.TilingTransform((8, out_swizzle_elems)),
+      plgpu.SwizzleTransform(out_swizzle),
+  )
+  if m % tile_m != 0:
+    raise ValueError(f"{m=} must be divisible by {tile_m=}")
+  if n % tile_n != 0:
+    raise ValueError(f"{n=} must be divisible by {tile_n=}")
+  if k % tile_k != 0:
+    raise ValueError(f"{k=} must be divisible by {tile_k=}")
+  m_iters = m // tile_m
+  n_iters = n // tile_n
+  k_iters = k // tile_k
   max_concurrent_steps = config.max_concurrent_steps
+
+  TMA_WARP = 0
+  MMA_WARP = 1
+  COMPUTE_WG = 0
+  STORE_WG = 1
 
   def kernel(a_gmem, b_gmem, out_gmem,
              a_smem, b_smem, acc_tmem, acc_smem,
-             a_tma_barrier, b_tma_barrier, consumed_barrier):
-    m_index = lax.axis_index("m")
-    n_index = lax.axis_index("n")
-    slice_m = pl.ds(m_index * block_m, block_m)
-    slice_n = pl.ds(n_index * block_n, block_n)
-    acc_slice_m = pl.ds(m_index * block_m, block_m)
-    acc_slice_n = pl.ds(n_index * block_n, block_n)
+             ab_tma_barrier, store_done_barrier, mma_done_barrier,
+             consumed_barrier):
+    wg_idx = lax.axis_index("wg")
+    cluster_idx = lax.axis_index("x")
+    is_lead_block = cluster_idx == 0
 
-    @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-    def _per_warp():
-      warp_id = lax.axis_index("warp")
+    @plgpu.dynamic_scheduling_loop(grid_names=("mn_linear",), thread_axis="wg")
+    def mn_loop(loop_info: plgpu.NDLoopInfo):  # pylint: disable=unused-variable
+      (lin_idx,) = loop_info.index
+      local_index = loop_info.local_index
+      m_index, n_index = plgpu.planar_snake(
+          lin_idx,
+          (m_iters, n_iters),
+          config.grid_minor_dim,
+          config.grid_tile_width,
+      )
+      block_m_index = m_index * 2 + cluster_idx if collective else m_index
 
-      @pl.when(warp_id == 0)
-      def _memory():
-        def _loop_body(ki, _):
-          slot = lax.rem(ki, max_concurrent_steps)
+      block_slice_m = pl.ds(block_m_index * block_tile_m, block_tile_m)
+      slice_m = pl.ds(m_index * tile_m, tile_m)
+      slice_n = pl.ds(n_index * tile_n, tile_n)
+      acc_slot = lax.rem(local_index, jnp.int32(2))
 
-          @pl.when(ki >= max_concurrent_steps)
-          def _():
-            plgpu.barrier_wait(consumed_barrier.at[slot])
+      @pl.when(wg_idx == COMPUTE_WG)
+      def _():
+        @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
+        def _per_warp():
+          warp_id = lax.axis_index("warp")
+          @pl.when(warp_id == TMA_WARP)
+          def _memory():
+            def _loop_body(ki, _):
+              slice_k = pl.ds(ki * tile_k, tile_k)
+              slot = lax.rem(ki, max_concurrent_steps)
+              @pl.when(jnp.logical_or(ki >= max_concurrent_steps,
+                                      local_index > 0))
+              def _():
+                plgpu.barrier_wait(consumed_barrier.at[slot])
+              plgpu.copy_gmem_to_smem(
+                  a_gmem.at[slice_m, slice_k],
+                  a_smem.at[slot],
+                  ab_tma_barrier.at[slot],
+                  partitioned_axis=0 if collective else None,
+                  collective_axes="x" if collective else None,
+              )
+              plgpu.copy_gmem_to_smem(
+                  b_gmem.at[slice_k, slice_n],
+                  b_smem.at[slot],
+                  ab_tma_barrier.at[slot],
+                  partitioned_axis=1 if collective else None,
+                  collective_axes="x" if collective else None,
+              )
+            lax.fori_loop(0, k_iters, _loop_body, None)
 
-          slice_k = pl.ds(ki * block_k, block_k)
-          plgpu.copy_gmem_to_smem(
-              a_gmem.at[slice_m, slice_k],
-              a_smem.at[slot],
-              a_tma_barrier.at[slot],
-          )
-          plgpu.copy_gmem_to_smem(
-              b_gmem.at[slice_k, slice_n],
-              b_smem.at[slot],
-              b_tma_barrier.at[slot],
-          )
+          @pl.when(jnp.logical_and(warp_id == MMA_WARP, local_index > 1))
+          def _wait_store():
+            plgpu.barrier_wait(store_done_barrier.at[acc_slot])
+          @pl.when(jnp.logical_and(warp_id == MMA_WARP, is_lead_block))
+          def _compute():
+            def _loop_body(ki, _):
+              slot = lax.rem(ki, max_concurrent_steps)
+              plgpu.barrier_wait(ab_tma_barrier.at[slot])
 
-        lax.fori_loop(0, k_iters, _loop_body, None)
+              is_last_iter = ki >= k_iters - 1
+              acc_tmem_slice = acc_tmem.at[:, pl.ds(acc_slot * tile_n, tile_n)]
+              plgpu.tcgen05_mma(
+                  acc_tmem_slice,
+                  a_smem.at[slot],
+                  b_smem.at[slot],
+                  consumed_barrier.at[slot],
+                  accumulate=(ki > 0),
+                  collective_axis="x" if collective else None,
+              )
+              @pl.when(is_last_iter)
+              def _():
+                plgpu.tcgen05_commit_arrive(
+                    mma_done_barrier.at[acc_slot],
+                    collective_axis="x" if collective else None,
+                )
 
-      @pl.when(warp_id == 1)
-      def _compute():
-        def _loop_body(ki, _):
-          slot = lax.rem(ki, max_concurrent_steps)
-          plgpu.barrier_wait(a_tma_barrier.at[slot])
-          plgpu.barrier_wait(b_tma_barrier.at[slot])
-          is_last_iter = ki >= k_iters - 1
-          barrier_slot = lax.select_n(is_last_iter,
-                                      slot, max_concurrent_steps)
-          plgpu.tcgen05_mma(
-              acc_tmem,
-              a_smem.at[slot],
-              b_smem.at[slot],
-              consumed_barrier.at[barrier_slot],
-              accumulate=(ki > 0),
-          )
-        lax.fori_loop(0, k_iters, _loop_body, None)
+            lax.fori_loop(0, k_iters, _loop_body, None)
 
-    plgpu.barrier_wait(consumed_barrier.at[max_concurrent_steps])
-    acc_smem[...] = acc_tmem[...].astype(dtype)
-    plgpu.commit_smem()
-    plgpu.copy_smem_to_gmem(
-        acc_smem, out_gmem.at[acc_slice_m, acc_slice_n]
+      @pl.when(wg_idx == STORE_WG)
+      def _():
+        plgpu.wait_smem_to_gmem(0, wait_read_only=True)
+        plgpu.barrier_wait(mma_done_barrier.at[acc_slot])
+        acc_tmem_slot = acc_tmem.at[:, pl.ds(acc_slot * tile_n, tile_n)]
+        step_out_gmem = out_gmem.at[block_slice_m, slice_n]
+        for ni in range(tile_n // epilogue_tile_n):
+          acc_smem_ni = acc_smem.at[ni % 2]
+          ni_col_slice = pl.ds(ni * epilogue_tile_n, epilogue_tile_n)
+          acc_smem_ni[...] = plgpu.async_load_tmem(
+              acc_tmem_slot.at[:, ni_col_slice]
+          ).astype(dtype)
+          plgpu.commit_smem()
+          plgpu.copy_smem_to_gmem(acc_smem_ni, step_out_gmem.at[:, ni_col_slice])
+          plgpu.wait_smem_to_gmem(1, wait_read_only=True)
+        plgpu.wait_load_tmem()  # Load must complete before we continue.
+        plgpu.barrier_arrive(store_done_barrier.at[acc_slot])
+
+  if collective:
+    store_done_barrier = plgpu.ClusterBarrier(
+        collective_axes=("x",),
+        num_arrivals=1,
+        num_barriers=2,
+        orders_tensor_core=True,
     )
-    plgpu.wait_smem_to_gmem(0)
-
+  else:
+    store_done_barrier = plgpu.Barrier(  # type: ignore
+        num_arrivals=1, num_barriers=2, orders_tensor_core=True
+    )
   f = plgpu.kernel(
       kernel,
       out_shape=jax.ShapeDtypeStruct((m, n), dtype),
-      grid=(m_iters, n_iters),
-      grid_names=("m", "n"),
-      # TODO(justinfu): Add collective support.
-      cluster_names=(),
-      cluster=(),
-      scratch_shapes=(   # type: ignore
-        plgpu.SMEM(
-            (max_concurrent_steps, *block_lhs), dtype, transforms=transforms
-        ),
-        plgpu.SMEM(
-            (max_concurrent_steps, *block_rhs), dtype, transforms=transforms
-        ),
-        plgpu.TMEM(block_out, jnp.float32, collective=collective),
-        plgpu.SMEM(block_out, dtype, transforms=transforms),
-        plgpu.Barrier(
-            num_arrivals=1, num_barriers=max_concurrent_steps
-        ),
-        plgpu.Barrier(
-            num_arrivals=1, num_barriers=max_concurrent_steps
-        ),
-        plgpu.Barrier(
-            num_arrivals=1,
-            num_barriers=max_concurrent_steps + 1,
-            for_tensor_core=True,
-        ),
-      )
+      grid=(m_iters * n_iters,),
+      grid_names=("mn_linear",),
+      num_threads=2,
+      thread_name="wg",
+      cluster_names=("x",),
+      cluster=(1 + collective,),
+      scratch_shapes=dict(
+          a_smem=plgpu.SMEM(
+              (max_concurrent_steps, block_tile_m, tile_k),
+              dtype,
+              transforms=transforms,
+          ),
+          b_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_k, block_tile_n),
+              dtype,
+              transforms=transforms,
+          ),
+          acc_tmem=plgpu.TMEM(
+              (block_tile_m, tile_n * 2), jnp.float32, collective=collective
+          ),
+          acc_smem=plgpu.SMEM(
+              (2, block_tile_m, epilogue_tile_n),
+              dtype,
+              transforms=out_transforms,
+          ),
+          ab_tma_barrier=plgpu.Barrier(
+              num_arrivals=2, num_barriers=max_concurrent_steps
+          ),
+          store_done_barrier=store_done_barrier,
+          mma_done_barrier=plgpu.Barrier(
+              num_arrivals=1, num_barriers=2, orders_tensor_core=True
+          ),
+          consumed_barrier=plgpu.Barrier(
+              num_arrivals=1,
+              num_barriers=max_concurrent_steps,
+              orders_tensor_core=True,
+          ),
+      ),
   )
   return f(a, b)
 
 
 def main(_) -> None:
-  problem_it = itertools.product(
-      (1024, 4096, 8192), (1024, 4096, 8192), (1024, 8192)
-  )
+  problem_it = [(4096, 8192, 4096)]
   for M, N, K in problem_it:
     print(f"==== {M=} {N=} {K=} ====")
     matmul_flops = 2 * M * N * K
     peak_flops = 2.25e15  # f16 TensorCore peak = 2250 TFLOPS
-    a = jax.random.uniform(jax.random.key(0), (M, K), jnp.bfloat16)
-    b = jax.random.uniform(jax.random.key(1), (K, N), jnp.bfloat16)
+    a = jax.random.uniform(jax.random.key(1), (M, K), jnp.float16, -1, 1)
+    b = jax.random.uniform(jax.random.key(2), (K, N), jnp.float16, -1, 1)
     tuning_it = itertools.product(
-        (128,), (128, 256), (64, 128), (2, 3, 4), (False,)
+        (128,),  # tile_m
+        (128, 256),  # tile_n
+        (64,),  # tile_k
+        MatmulDimension,  # grid_minor_dim
+        (1, 4, 8, 12, 16),  # grid_tile_width
+        (2, 4, 6),  # max_concurrent_steps
+        (False, True),  # collective
+        (32,),  # epilogue_tile_n
     )
     best_util = -float("inf")
-    for (block_m, block_n, block_k,
-         max_concurrent_steps, collective) in tuning_it:
+    expected = jnp.dot(a, b, precision=jax.lax.DotAlgorithmPreset.F16_F16_F32)
+    for (tile_m, tile_n, tile_k, grid_minor_dim, grid_tile_width,
+         max_concurrent_steps, collective, epilogue_tile_n) in tuning_it:
+      # Only N <= 128 are supported for collective MMAs
+      if collective and tile_n > 128:
+        continue
       config = TuningConfig(
-          block_m=block_m,
-          block_n=block_n,
-          block_k=block_k,
+          tile_m=tile_m,
+          tile_n=tile_n,
+          tile_k=tile_k,
           max_concurrent_steps=max_concurrent_steps,
           collective=collective,
+          epilogue_tile_n=epilogue_tile_n,
+          grid_minor_dim=grid_minor_dim,
+          grid_tile_width=grid_tile_width,
       )
+      if collective:
+        tile_m *= 2
+        tile_n *= 2
       try:
-        out, runtime_ms = profiler.measure(
-            functools.partial(matmul_kernel, config=config)
+        out, runtimes_ms = profiler.measure(
+            functools.partial(matmul_kernel, config=config), iterations=10
         )(a, b)
+        assert runtimes_ms is not None
+        runtime_ms = statistics.median(runtimes_ms)
       except ValueError as e:
-        if "exceeds available shared memory" in e.args[0]:
+        if ("exceeds available shared memory" in e.args[0] or
+            "Accumulator layout mismatch:" in e.args[0]):
+          # Accumulator layout mismatch triggers for tile_n=256 on some configs.
           continue
         raise
-      if M * N * K <= 1024 * 1024 * 1024:
-        expected = a @ b
-        np.testing.assert_allclose(out, expected)
       runtime_us = runtime_ms * 1e3   # type: ignore
       optimal_time = matmul_flops / peak_flops * 1e6  # us
       achieved_tc_util = optimal_time / runtime_us * 100
       if achieved_tc_util > best_util:
+        np.testing.assert_allclose(out, expected)
         best_util = achieved_tc_util
       print(
-          f"{block_m=} {block_n=} {block_k=} {max_concurrent_steps=}:  "
+          f"{tile_m=} {tile_n=} {tile_k=} {max_concurrent_steps=} "
+          f"{grid_minor_dim=} {grid_tile_width=} "
+          f"{epilogue_tile_n=} "
+          f"{collective=} : "
           f"{runtime_us:<7.1f}us"
           f" = {achieved_tc_util:4.1f}% TC utilization"
       )
     print(f"\tBest utilization: {best_util:4.1f}%")
+    _, runtimes_ms = profiler.measure(
+        functools.partial(
+            jnp.dot, precision=jax.lax.DotAlgorithmPreset.F16_F16_F32
+        ),
+        iterations=10,
+    )(a, b)
+    assert runtimes_ms is not None
+    runtime_ms = statistics.median(runtimes_ms)
+    runtime_us = runtime_ms * 1e3   # type: ignore
+    optimal_time = matmul_flops / peak_flops * 1e6  # us
+    achieved_tc_util = optimal_time / runtime_us * 100
+    print(f"\tReference: {achieved_tc_util:4.1f}%")
 
 
 if __name__ == "__main__":

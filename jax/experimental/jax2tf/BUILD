@@ -38,7 +38,6 @@ py_library(
     name = "jax2tf_internal",
     srcs = [
         "call_tf.py",
-        "impl_no_xla.py",
         "jax2tf.py",
     ],
     # TODO: b/255503696: enable pytype

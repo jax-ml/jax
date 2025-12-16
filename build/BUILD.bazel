@@ -13,8 +13,8 @@
 # limitations under the License.
 # ==============================================================================
 
-load("@python//:defs.bzl", "compile_pip_requirements")
 load("@python_version_repo//:py_version.bzl", "REQUIREMENTS")
+load("@rules_python//python:pip.bzl", "compile_pip_requirements")
 load("@rules_python//python:py_library.bzl", "py_library")
 load("//jaxlib:jax.bzl", "all_py_deps")
 
@@ -23,6 +23,7 @@ licenses(["notice"])
 COMMON_REQUIREMENTS = [
     "requirements.in",
     "test-requirements.txt",
+    "nvidia-requirements.txt",
 ]
 
 # It isn't possible to constraint based on free-threaded vs non-free threaded
@@ -31,6 +32,7 @@ COMMON_REQUIREMENTS = [
 FREETHREADING_REQUIREMENTS = COMMON_REQUIREMENTS + [
     "freethreading-requirements.txt",
 ]
+
 NON_FREETHREADING_REQUIREMENTS = COMMON_REQUIREMENTS + [
     "nonfreethreading-requirements.txt",
 ]
@@ -43,14 +45,15 @@ COMBOS = [
 [
     compile_pip_requirements(
         name = "requirements" + suffix,
+        srcs = requirements,
         extra_args = [
             "--allow-unsafe",
             "--build-isolation",
             "--rebuild",
+            "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
         ],
-        srcs = requirements,
-        requirements_txt = REQUIREMENTS,
         generate_hashes = True,
+        requirements_txt = REQUIREMENTS,
     )
     for suffix, requirements in COMBOS
 ]
@@ -58,16 +61,17 @@ COMBOS = [
 [
     compile_pip_requirements(
         name = "requirements_nightly" + suffix,
+        srcs = requirements,
         extra_args = [
             "--allow-unsafe",
             "--build-isolation",
+            "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
             "--extra-index-url=https://pypi.anaconda.org/scientific-python-nightly-wheels/simple",
             "--pre",
             "--upgrade",
         ],
-        srcs = requirements,
-        requirements_txt = REQUIREMENTS,
         generate_hashes = False,
+        requirements_txt = REQUIREMENTS,
     )
     for suffix, requirements in COMBOS
 ]
@@ -75,20 +79,24 @@ COMBOS = [
 [
     compile_pip_requirements(
         name = "requirements_dev" + suffix,
+        srcs = requirements,
         extra_args = [
             "--allow-unsafe",
             "--build-isolation",
             "--upgrade",
             "--rebuild",
+            "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
         ],
-        srcs = requirements,
-        requirements_txt = REQUIREMENTS,
         generate_hashes = False,
+        requirements_txt = REQUIREMENTS,
     )
     for suffix, requirements in COMBOS
 ]
 
 py_library(
     name = "all_py_deps",
-    deps = all_py_deps(["zstandard", "tensorstore"]),
+    deps = all_py_deps([
+        "zstandard",
+        "tensorstore",
+    ]),
 )

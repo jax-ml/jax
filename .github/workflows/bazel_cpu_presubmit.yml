@@ -1,0 +1,88 @@
+name: CI - Bazel CPU tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        required: true
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - 'release/**'
+permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # Don't cancel in-progress jobs for main/release branches.
+  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
+
+jobs:
+  build-jax-artifact:
+    uses: ./.github/workflows/build_artifacts.yml
+    name: "Build jax artifact"
+    with:
+        # Note that since jax is a pure python package, the runner OS and Python values do not
+        # matter. In addition, cloning main XLA also has no effect.
+        runner: "linux-x86-n4-16"
+        artifact: "jax"
+        upload_artifacts_to_gcs: false
+
+  build-jaxlib-artifact:
+    uses: ./.github/workflows/build_artifacts.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+            # Runner OS and Python values need to match the matrix stategy in the CPU tests job
+            runner: ["linux-x86-n4-16", "linux-arm64-c4a-16", "windows-x86-n2-16"]
+            artifact: ["jaxlib"]
+            python: ["3.14"]
+    # Note: For reasons unknown, Github actions groups jobs with the same top-level name in the
+    # dashboard only if we use an expression in the "name" field. Otherwise, it appends the matrix
+    # values to the name and creates a separate entry for each matrix combination.
+    name: "Build ${{ format('{0}', 'jaxlib') }} artifacts"
+    with:
+        runner: ${{ matrix.runner }}
+        artifact: ${{ matrix.artifact }}
+        python: ${{ matrix.python }}
+        clone_main_xla: 1
+        upload_artifacts_to_gcs: false
+
+  run_tests:
+    if: github.event.repository.fork == false
+    uses: ./.github/workflows/bazel_cpu.yml
+# Begin Presubmit Naming Check - name modification requires internal check to be updated
+    strategy:
+      matrix:
+        python: ["3.11", "3.14"]
+        runner: ["linux-x86-n4-16", "linux-arm64-c4a-16", "windows-x86-n2-16"]
+        enable-x64: [1, 0]
+        exclude:
+            # Exclude x64=1 on the oldest Python and x64=0 on the newest Python. As long as we have
+            # coverage for one of each, we don't need to run both.
+            - python: "3.11"
+              enable-x64: 1
+            - python: "3.14"
+              enable-x64: 0
+            # Only test a single Python version on Arm64 and Windows as we don't run the tests.
+            - python: "3.11"
+              runner: "linux-arm64-c4a-16"
+            - python: "3.11"
+              runner: "windows-x86-n2-16"
+    name: "Bazel CPU ${{ (contains(matrix.runner, 'linux-x86') && 'tests' || 'build only') }}"
+# End Presubmit Naming Check github-cpu-presubmits
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      halt-for-connection: ${{ inputs.halt-for-connection }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      build_jaxlib: 'true'
+      build_jax: 'true'
+      bazel_command: ${{ (contains(matrix.runner, 'linux-x86') && 'test') || 'build' }}

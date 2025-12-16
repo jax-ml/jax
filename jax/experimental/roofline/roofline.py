@@ -14,13 +14,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol, Sequence
+from typing import Any, Protocol
+from collections.abc import Callable, Sequence
 import numpy as np
+from absl import logging
 
 import jax.numpy as jnp
 from jax.sharding import NamedSharding
 from jax._src import api
 from jax._src import core
+from jax._src import prng
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
@@ -34,6 +37,7 @@ from jax._src.shard_map import shard_map, shard_map_p
 
 ShapeDtypeStructTree = Any
 Specs = Any
+ValidRooflineDtype = np.dtype | prng.KeyTy
 
 map = util.safe_map
 
@@ -53,14 +57,16 @@ class RooflineRuleContext:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RooflineShape:
   shape: tuple[int, ...]
-  dtype: np.dtype
+  dtype: ValidRooflineDtype
 
   @classmethod
-  def from_aval(cls, aval: core.AbstractValue) -> "RooflineShape":
+  def from_aval(cls, aval: core.AbstractValue) -> RooflineShape:
     if not isinstance(aval, core.ShapedArray):
       raise TypeError(f"Expected ShapedArray, got {type(aval)}.")
-    if not isinstance(aval.dtype, np.dtype):
-      raise TypeError(f"Expected numpy dtype, got {type(aval.dtype)}.")
+    if not isinstance(aval.dtype, ValidRooflineDtype):
+      raise TypeError(
+          f"Expected numpy or prng.KeyTy dtype, got {type(aval.dtype)}."
+      )
     return cls(shape=aval.shape, dtype=aval.dtype)
 
   @property
@@ -87,10 +93,10 @@ class RooflineResult:
   unfused_hbm_bytes: int = 0
 
   @classmethod
-  def zeros(cls) -> "RooflineResult":
+  def zeros(cls) -> RooflineResult:
     return cls()
 
-  def __add__(self, other: "RooflineResult") -> "RooflineResult":
+  def __add__(self, other: RooflineResult) -> RooflineResult:
     def merge_ici_dicts(d1: dict[str, int], d2: dict[str, int]) -> dict[str, int]:
       return {k: d1.get(k, 0) + d2.get(k, 0) for k in set(d1) | set(d2)}
 
@@ -104,7 +110,7 @@ class RooflineResult:
         unfused_hbm_bytes=self.unfused_hbm_bytes + other.unfused_hbm_bytes,
     )
 
-  def __mul__(self, constant: int | float) -> "RooflineResult":
+  def __mul__(self, constant: int | float) -> RooflineResult:
     return RooflineResult(
         flops=int(self.flops * constant),
         unfused_flops=int(self.unfused_flops * constant),
@@ -115,7 +121,7 @@ class RooflineResult:
         unfused_hbm_bytes=int(self.unfused_hbm_bytes * constant),
     )
 
-  def __rmul__(self, constant: int | float) -> "RooflineResult":
+  def __rmul__(self, constant: int | float) -> RooflineResult:
     return self.__mul__(constant)
 
 
@@ -136,7 +142,7 @@ def _roofline_interpreter(
   pin_lhs_in_vmem: bool = False,
   pin_rhs_in_vmem: bool = False,
 ) -> RooflineResult:
-  name_stack = source_info_util.new_name_stack(util.wrap_name(f_name, "roofline"))
+  name_stack = source_info_util.new_name_stack(util.wrap_name("roofline", f_name))
 
   result = RooflineResult.zeros()
 
@@ -159,10 +165,8 @@ def _roofline_interpreter(
     else:
       return v.aval
 
-  def calculate_peak_hbm_bytes() -> int:
-    return int(
-      sum(np.prod(shape.shape) * shape.dtype.itemsize for shape in env.values())
-    )
+  def sum_bytes(shapes: Sequence[RooflineShape]) -> int:
+    return sum(shape.bytes for shape in shapes)
 
   jaxpr = jaxpr.jaxpr if isinstance(jaxpr, core.ClosedJaxpr) else jaxpr
   make_roofline_shape = lambda x: RooflineShape.from_aval(aval(x))
@@ -173,6 +177,10 @@ def _roofline_interpreter(
   )
   foreach(write, jaxpr.invars, map(make_roofline_shape, jaxpr.invars))
   last_used = core.last_used(jaxpr)
+
+  current_hbm_bytes = sum_bytes(list(env.values()))
+  peak_hbm_bytes = current_hbm_bytes
+
   for eqn in jaxpr.eqns:
     source_info = eqn.source_info.replace(
       name_stack=name_stack + eqn.source_info.name_stack
@@ -182,19 +190,29 @@ def _roofline_interpreter(
     ):
       if "jaxpr" in eqn.params:
         result += _roofline_interpreter(
-          util.wrap_name(f_name, eqn.primitive.name),
+          util.wrap_name(eqn.primitive.name, f_name),
           eqn.params["jaxpr"],
           mesh,
           pin_lhs_in_vmem=pin_lhs_in_vmem,
           pin_rhs_in_vmem=pin_rhs_in_vmem,
         )
+      elif "call_jaxpr" in eqn.params:
+        # Used for custom_jvp_call_p. Recursively calculates roofline result for
+        # all primitives in the custom function.
+        result += _roofline_interpreter(
+          util.wrap_name(eqn.primitive.name, f_name),
+          eqn.params['call_jaxpr'],
+          mesh,
+          pin_lhs_in_vmem=pin_lhs_in_vmem,
+          pin_rhs_in_vmem=pin_rhs_in_vmem,
+        )
+      elif eqn.primitive not in _rooflines:
+        msg = f"No roofline rule for {eqn.primitive}, skipping..."
+        for attr in dir(eqn):
+          if not attr.startswith("_"):
+            msg += f"\n{attr}: {getattr(eqn, attr)}"
+        logging.warning(msg)
       else:
-        if eqn.primitive not in _rooflines:
-          msg = f"No roofline rule for {eqn.primitive}."
-          for attr in dir(eqn):
-            if not attr.startswith("_"):
-              msg += f"\n{attr}: {getattr(eqn, attr)}"
-          raise NotImplementedError(msg)
         rule = _rooflines[eqn.primitive]
         result += rule(
           RooflineRuleContext(
@@ -211,10 +229,22 @@ def _roofline_interpreter(
           **eqn.params,
         )
 
-      foreach(write, eqn.outvars, map(make_roofline_shape, eqn.outvars))
-      core.clean_up_dead_vars(eqn, env, last_used)
-      result += RooflineResult(peak_hbm_bytes=calculate_peak_hbm_bytes())
+      # Add bytes for the newly-created output variables.
+      outvar_shapes = map(make_roofline_shape, eqn.outvars)
+      current_hbm_bytes += sum_bytes(outvar_shapes)
+      foreach(write, eqn.outvars, outvar_shapes)
 
+      # Remove bytes for the no-longer-needed input variables.
+      removed_shapes = [
+          env[v] for v in eqn.invars
+          if not isinstance(v, core.Literal) and last_used[v] is eqn
+      ]
+      current_hbm_bytes -= sum_bytes(removed_shapes)
+      core.clean_up_dead_vars(eqn, env, last_used)
+
+      peak_hbm_bytes = max(peak_hbm_bytes, current_hbm_bytes)
+
+  result += RooflineResult(peak_hbm_bytes=peak_hbm_bytes)
   return result
 
 

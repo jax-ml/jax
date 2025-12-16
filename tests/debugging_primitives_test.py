@@ -13,18 +13,19 @@
 # limitations under the License.
 import collections
 import functools
+import logging
 import textwrap
 import unittest
 
 from absl.testing import absltest, parameterized
 import jax
 from jax import lax
-from jax.experimental import pjit
-from jax.interpreters import pxla
 from jax._src import ad_checkpoint
+from jax._src import config
 from jax._src import debugging
 from jax._src import dispatch
 from jax._src import test_util as jtu
+from jax._src.interpreters import pxla
 from jax.sharding import PartitionSpec as P
 import jax.numpy as jnp
 import numpy as np
@@ -90,9 +91,7 @@ class DebugCallbackTest(jtu.JaxTestCase):
 
     def mean(forest):
       norm = 1.0 / len(forest)
-      add = lambda a, b: a + b
-      m = norm * functools.reduce(add, forest)
-      return m
+      return norm * sum(forest)
 
     post_mean = mean(tuple(run(x) for x in inputs))
     jax.block_until_ready(post_mean)  # This shouldn't deadlock.
@@ -442,8 +441,6 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     with jtu.capture_stdout() as output:
       jax.linear_transpose(f, 1.)(1.)
       jax.effects_barrier()
-    # `debug_print` should be dropped by `partial_eval` because of no
-    # output data-dependence.
     self.assertEqual(output(), "")
 
   @jtu.sample_product(ordered=[False, True])
@@ -455,7 +452,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       return ad_checkpoint.checkpoint_name(jnp.exp(z), "w")
 
     # Policy that saves everything so the debug callback will be saved
-    f = ad_checkpoint.checkpoint(f_, policy=ad_checkpoint.everything_saveable)
+    f = jax.checkpoint(f_, policy=ad_checkpoint.everything_saveable)
 
     with jtu.capture_stdout() as output:
       jax.grad(f)(2.)
@@ -466,7 +463,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
 
     # Policy that saves nothing so everything gets rematerialized, including the
     # debug callback
-    f = ad_checkpoint.checkpoint(f_, policy=ad_checkpoint.nothing_saveable)
+    f = jax.checkpoint(f_, policy=ad_checkpoint.nothing_saveable)
 
     with jtu.capture_stdout() as output:
       jax.grad(f)(2.)
@@ -475,7 +472,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     self.assertEqual(output(), "y: 3.0, z: 6.0\n" * 2)
 
     # Policy that does not save `z` so we will need to rematerialize the print
-    f = ad_checkpoint.checkpoint(
+    f = jax.checkpoint(
         f_, policy=ad_checkpoint.save_any_names_but_these("z"))
 
     with jtu.capture_stdout() as output:
@@ -493,7 +490,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       return policy
 
     # Policy that saves everything but `y`
-    f = ad_checkpoint.checkpoint(
+    f = jax.checkpoint(
         f_, policy=save_everything_but_these_names("y"))
 
     with jtu.capture_stdout() as output:
@@ -504,7 +501,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     self.assertEqual(output(), "y: 3.0, z: 6.0\n")
 
     # Policy that saves everything but `y` and `z`
-    f = ad_checkpoint.checkpoint(
+    f = jax.checkpoint(
         f_, policy=save_everything_but_these_names("y", "z"))
 
     with jtu.capture_stdout() as output:
@@ -786,6 +783,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       b3: 2
       """))
 
+
 @jtu.thread_unsafe_test_class()  # printing isn't thread-safe
 class DebugPrintParallelTest(jtu.JaxTestCase):
 
@@ -797,12 +795,20 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     self.assertDictEqual(_count(text1.split("\n")), _count(text2.split("\n")))
 
   def test_ordered_print_not_supported_in_pmap(self):
-
     @jax.pmap
     def f(x):
       debug_print("{}", x, ordered=True)
-    with self.assertRaisesRegex(
-        ValueError, "Ordered effects not supported in `pmap`."):
+    if config.pmap_shmap_merge.value:
+      if jax.device_count() == 1:
+        self.skipTest("This test won't raise with 1 device.")
+      if jtu.device_under_test() == "gpu":
+        self.skipTest("Test does not raise under GPU.")
+      if jtu.device_under_test() == "tpu" and jtu.get_tpu_version() > 3:
+        self.skipTest("Test does not raise under TPU v4+.")
+      regex = "The following ordered effects are not supported for more than 1 device:*"
+    else:
+      regex = "Ordered effects not supported in `pmap`."
+    with self.assertRaisesRegex(ValueError, regex):
       f(jnp.arange(jax.local_device_count()))
 
   def test_unordered_print_works_in_pmap(self):
@@ -827,15 +833,15 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self._assertLinesEqual(output(), "hello: 0\nhello: 1\nhello: 2\nhello: 3\n")
 
-  def test_unordered_print_with_pjit(self):
+  def test_unordered_print_with_jit(self):
     def f(x):
       debug_print("{}", x, ordered=False)
       return x
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
     spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
     out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-    f = pjit.pjit(f, in_shardings=spec, out_shardings=out_spec)
-    with mesh:
+    f = jax.jit(f, in_shardings=spec, out_shardings=out_spec)
+    with jax.set_mesh(mesh):
       with jtu.capture_stdout() as output:
         f(np.arange(8, dtype=jnp.int32))
         jax.effects_barrier()
@@ -845,24 +851,24 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       y = x.dot(x)
       debug_print("{}", y, ordered=False)
       return y
-    f2 = pjit.pjit(f2, in_shardings=spec, out_shardings=out_spec)
-    with jax.sharding.Mesh(np.array(jax.devices()), ['dev']):
+    f2 = jax.jit(f2, in_shardings=spec, out_shardings=out_spec)
+    with jax.set_mesh(mesh):
       with jtu.capture_stdout() as output:
         f2(np.arange(8, dtype=jnp.int32))
         jax.effects_barrier()
       self.assertEqual(output(), "140\n")
 
-  def test_nested_pjit_debug_print(self):
+  def test_nested_jit_debug_print(self):
     def f(x):
       debug_print("{}", x)
       return x
 
     with jtu.capture_stdout() as output:
-      pjit.pjit(pjit.pjit(f))(jnp.arange(8))
+      jax.jit(jax.jit(f))(jnp.arange(8))
       jax.effects_barrier()
     self.assertEqual(output(), "[0 1 2 3 4 5 6 7]\n")
 
-  def test_unordered_print_of_pjit_of_while(self):
+  def test_unordered_print_of_jit_of_while(self):
     def f(x):
       def cond(carry):
         i, *_ = carry
@@ -876,8 +882,8 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
     spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
-    f = pjit.pjit(f, in_shardings=spec, out_shardings=spec)
-    with mesh:
+    f = jax.jit(f, in_shardings=spec, out_shardings=spec)
+    with jax.set_mesh(mesh):
       with jtu.capture_stdout() as output:
         f(np.arange(8, dtype=jnp.int32))
         jax.effects_barrier()
@@ -1100,6 +1106,8 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     """)
     self.assertEqual(output(), expected)
 
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message='jax.sharding.PmapSharding is deprecated')
   def test_visualize_pmap_sharding(self):
     ss = pxla.ShardingSpec(
         sharding=(pxla.Unstacked(8),),
@@ -1167,7 +1175,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
 
 class InspectShardingTest(jtu.JaxTestCase):
 
-  def test_inspect_sharding_is_called_in_pjit(self):
+  def test_inspect_sharding_is_called_in_jit_sharded(self):
 
     if jtu.is_cloud_tpu():
       raise unittest.SkipTest("Inspect sharding is not supported on libtpu.")
@@ -1186,8 +1194,8 @@ class InspectShardingTest(jtu.JaxTestCase):
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
     spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
     out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-    f = pjit.pjit(f, in_shardings=spec, out_shardings=out_spec)
-    with mesh:
+    f = jax.jit(f, in_shardings=spec, out_shardings=out_spec)
+    with jax.set_mesh(mesh):
       f(np.arange(8, dtype=jnp.int32))
     self.assertTrue(is_called)
 
@@ -1230,23 +1238,6 @@ class InspectShardingTest(jtu.JaxTestCase):
 
     f(arr)
 
-  def test_inspect_sharding_3d_pjit(self):
-    def _cb(sd):
-      self.assertIsInstance(sd, jax.sharding.NamedSharding)
-      self.assertLen(sd.device_set, 2)
-
-    def f_(x):
-      debugging.inspect_array_sharding(x, callback=_cb)
-      return jnp.square(x)
-
-    f = pjit.pjit(f_)
-    mesh = jtu.create_mesh((2,), ('x'))
-    s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
-    arr = jax.device_put(np.arange(8).reshape(2, 2, 2), s)
-
-    with mesh:
-      f(arr)
-
 
 def _get_output_set(output, num_lines):
   """Return a set of strings where each string is num_lines."""
@@ -1277,13 +1268,13 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     def f_(x):
       debug_print("hello: {x}", x=x, partitioned=True)
 
-    f = pjit.pjit(f_)
+    f = jax.jit(f_)
     mesh = jtu.create_mesh((1, 1, 2,), ("x", "y", "z"))
     s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x", "y", "z"))
     arr = jax.device_put(np.arange(24).reshape(2, 3, 4), s)
 
     with jtu.capture_stdout() as output:
-      with mesh:
+      with jax.set_mesh(mesh):
         f(arr)
       jax.effects_barrier()
 
@@ -1307,19 +1298,31 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     }
     self.assertEqual(_get_output_set(output, 7), expected)
 
+  def test_partitioned_debug_callback_compute(self):
+    def f(x):
+      debug_print("hello: {x}", x=x.sum(), partitioned=True)
+
+    mesh = jtu.create_mesh((2,), ("x",))
+    arr = jax.device_put(np.arange(8), jax.NamedSharding(mesh, jax.P("x")))
+
+    with jtu.capture_stdout() as output:
+      with jax.set_mesh(mesh):
+        f(arr)
+      jax.effects_barrier()
+
   def test_debug_print_batching(self):
     @jax.vmap
     def f_(x):
       debug_print("hello: {}", x, partitioned=True)
 
-    f = pjit.pjit(f_)
+    f = jax.jit(f_)
     mesh = jtu.create_mesh((1, 1, 2), ("x", "y", "z"))
     s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x", "y", "z"))
     arr = np.arange(24).reshape(2, 3, 4)
     arr = jax.device_put(arr, s)
 
     with jtu.capture_stdout() as output:
-      with mesh:
+      with jax.set_mesh(mesh):
         f(arr)
       jax.effects_barrier()
 
@@ -1349,7 +1352,7 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     def f_(x, y):
       debug_print("hello: {} {}", x, y, partitioned=True)
 
-    f = pjit.pjit(f_)
+    f = jax.jit(f_)
     mesh = jtu.create_mesh((2,), ("x"))
     s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
     x = np.arange(4).reshape(2, 2)
@@ -1358,7 +1361,7 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     y = jax.device_put(y, s)
 
     with jtu.capture_stdout() as output:
-      with mesh:
+      with jax.set_mesh(mesh):
         f(x, y)
       jax.effects_barrier()
 
@@ -1371,20 +1374,42 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
 
     self.assertEqual(_get_output_set(output, 1), expected)
 
+  def test_debug_print_with_logging(self):
+    logger_name = "jax._src.debugging"
+    jax_logger = logging.getLogger(logger_name)
+    class RecordHandler(logging.Handler):
+      def __init__(self):
+        logging.Handler.__init__(self)
+        self.records = []
+      def emit(self, record):
+        self.records.append(record)
+    record_handler = RecordHandler()
+    jax_logger.handlers.append(record_handler)
+
+    def log_fn(x):
+      x = x * x
+      jax.debug.log("x={}", x)
+      return x * x
+
+    self.assertEqual(jax.jit(log_fn)(2), 16)
+    jax_logger.removeHandler(record_handler)
+    self.assertEqual(record_handler.records[0].msg, "x=4")
+
+
   def test_debug_print_with_nested_vmap(self):
     @jax.vmap
     @jax.vmap
     def f_(x):
       debug_print("hello: {}", x, partitioned=True)
 
-    f = pjit.pjit(f_)
+    f = jax.jit(f_)
     mesh = jtu.create_mesh((1, 1, 2), ("x", "y", "z"))
     s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x", "y", "z"))
     arr = np.arange(24).reshape(2, 3, 4)
     arr = jax.device_put(arr, s)
 
     with jtu.capture_stdout() as output:
-      with mesh:
+      with jax.set_mesh(mesh):
         f(arr)
       jax.effects_barrier()
 

@@ -9,6 +9,7 @@ sphinx-remove-toctrees
 sphinx-design
 sphinxext-rediraffe
 myst-nb>=1.0.0
+sphinxcontrib-mermaid
 
 # Packages used for CI tests.
 flatbuffers
@@ -22,4 +23,5 @@ pooch
 numpy
 rich[jupyter]
 cmake
+cloudpickle
 .[ci]  # Install jax from the current directory; jaxlib from pypi.

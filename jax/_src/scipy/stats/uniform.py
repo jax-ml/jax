@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax import lax
-from jax import numpy as jnp
-from jax.numpy import where, inf, logical_or
+import numpy as np
+
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.typing import Array, ArrayLike
 from jax._src.numpy.util import promote_args_inexact
 
@@ -48,9 +49,9 @@ def logpdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   """
   x, loc, scale = promote_args_inexact("uniform.logpdf", x, loc, scale)
   log_probs = lax.neg(lax.log(scale))
-  return where(logical_or(lax.gt(x, lax.add(loc, scale)),
-                          lax.lt(x, loc)),
-               -inf, log_probs)
+  return jnp.where(jnp.logical_or(lax.gt(x, lax.add(loc, scale)),
+                                  lax.lt(x, loc)),
+                   -np.inf, log_probs)
 
 
 def pdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
@@ -140,8 +141,8 @@ def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     - :func:`jax.scipy.stats.uniform.logpdf`
   """
   q, loc, scale = promote_args_inexact("uniform.ppf", q, loc, scale)
-  return where(
+  return jnp.where(
     jnp.isnan(q) | (q < 0) | (q > 1),
-    jnp.nan,
+    np.nan,
     lax.add(loc, lax.mul(scale, q))
   )

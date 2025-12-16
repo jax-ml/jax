@@ -18,14 +18,13 @@ import collections
 from collections.abc import Callable, Sequence
 import functools
 from functools import partial
-import inspect
 import itertools
 import operator
 from typing import Any, TypeVar
 
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_flatten_with_path, keystr,
-    equality_errors_pytreedef)
+    equality_errors_pytreedef, FlatTree)
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import config
@@ -38,25 +37,26 @@ from jax._src import source_info_util
 from jax._src import util
 from jax._src.state.discharge import register_partial_discharge_rule, discharge_state
 from jax._src.state.types import AbstractRef, RefEffect
-from jax._src.core import replace_jaxpr_effects
+from jax._src.core import replace_jaxpr_effects, typeof, cur_qdd
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import xla
+from jax._src.interpreters import pxla
 from jax._src.lax import lax
 from jax._src.traceback_util import api_boundary
 from jax._src.typing import ArrayLike
-from jax._src.util import safe_map, split_list, partition_list, unzip2
+from jax._src.util import safe_map, safe_zip, split_list, partition_list, unzip2
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 import numpy as np
 
 from jax._src.lax.control_flow.common import (
-    _avals_short, _typecheck_param, _initial_style_jaxprs_with_common_consts,
+    _avals_short, _typecheck_param, _merge_common_consts,
     _make_closed_jaxpr, _prune_zeros)
 
 map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
 
 
 # For backward compatibility with a previous switch/cond calling convention,
@@ -78,7 +78,7 @@ def switch(index, branches: Sequence[Callable], *operands,
       return branches[index](*operands)
 
   Internally this wraps XLA's `Conditional
-  <https://www.tensorflow.org/xla/operation_semantics#conditional>`_
+  <https://www.openxla.org/xla/operation_semantics#conditional>`_
   operator. However, when transformed with :func:`~jax.vmap` to operate over a
   batch of predicates, ``cond`` is converted to :func:`~jax.lax.select`.
 
@@ -142,20 +142,23 @@ def _switch_internal(
 
   dbgs = [api_util.debug_info("switch", branch, operands, {})
           for branch in branches]
-  ops, ops_tree = tree_flatten(operands)
-  ops_avals = tuple(map(core.get_aval, ops))
+  args = FlatTree.flatten((operands, {}))
+  avals = args.map(core.get_aval)
 
   if config.mutable_array_checks.value:
-    api_util._check_no_aliased_ref_args(dbgs[0], ops_avals, ops)
+    api_util.check_no_aliased_ref_args(lambda: dbgs[0], list(avals), list(args))
 
-  jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
-      branches, ops_tree, ops_avals, dbgs)
+  jaxprs_, out_avalss = zip(*[pe.trace_to_jaxpr(branch, avals, dbg)
+                             for branch, dbg in zip(branches, dbgs)])
+  jaxprs_, all_consts = zip(*[pe.separate_consts(j) for j in jaxprs_])
+  jaxprs, consts = _merge_common_consts(jaxprs_, all_consts)
+
   if config.mutable_array_checks.value:
-    api_util._check_no_aliased_closed_over_refs(dbgs[0], (*jaxprs[0].consts, *consts), ops)
-  for i, (out_tree, jaxpr) in enumerate(zip(out_trees[1:], jaxprs[1:])):
+    api_util._check_no_aliased_closed_over_refs(dbgs[0], (*jaxprs[0].consts, *consts), list(args))
+  for i, (out_avals, jaxpr) in enumerate(zip(out_avalss[1:], jaxprs[1:])):
     _check_branch_outputs(
         "switch", "branch 0", f"branch{i+1}", branches[0], branches[i+1],
-        out_trees[0], out_tree, jaxprs[0].out_avals, jaxpr.out_avals)
+        out_avalss[0], out_avals)
   # prune passthrough outputs
   fwds = [pe._jaxpr_forwarding(jaxpr.jaxpr) for jaxpr in jaxprs]
   in_fwd = [xs[0] if len(set(xs)) == 1 else None for xs in zip(*fwds)]
@@ -171,24 +174,24 @@ def _switch_internal(
   params = dict(branches=tuple(jaxprs))
   if branches_platforms is not None:
     params["branches_platforms"] = branches_platforms
-  out = cond_p.bind(index, *consts, *ops, **params)
+  out = cond_p.bind(index, *consts, *args, **params)
   out_ = iter(out)
 
-  all_inputs = [*consts, *ops]
+  all_inputs = [*consts, *args]
   out = [
     next(out_) if fwd is None else lax.asarray(all_inputs[fwd])
     for fwd in in_fwd
   ]
   assert next(out_, None) is None
-  return tree_unflatten(out_trees[0], out)
+  return out_avalss[0].update_from_list(out).unflatten()
 
-
-def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
+@partial(api_boundary, repro_api_name="jax_cond")
+def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
           operand=_no_operand_sentinel):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
   Wraps XLA's `Conditional
-  <https://www.tensorflow.org/xla/operation_semantics#conditional>`_
+  <https://www.openxla.org/xla/operation_semantics#conditional>`_
   operator.
 
   Provided arguments are correctly typed, ``cond()`` has equivalent
@@ -223,7 +226,12 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
     pytree (nested Python tuple/list/dict) thereof.
   """
   if not (callable(true_fun) and callable(false_fun)):
-    raise TypeError("lax.cond: true_fun and false_fun arguments should be callable.")
+    # try falling back to the old, deprecated version of `cond`
+    if callable(false_fun) and len(operands) == 2 and callable(operands[1]):
+      x_true, f_true, x_false, f_false = true_fun, false_fun, *operands
+      return cond(pred, lambda x, _: f_true(x), lambda _, x: f_false(x), x_true, x_false)
+    else:
+      raise TypeError("lax.cond: true_fun and false_fun arguments should be callable.")
   if operand is not _no_operand_sentinel:
     if operands:
       raise TypeError("if 'operand' keyword is passed then no positional "
@@ -259,28 +267,33 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
     else:
       return false_fun(*operands)
 
-  ops, ops_tree = tree_flatten(operands)
-  ops_avals = tuple(map(core.get_aval, ops))
-
-  dbg_true_fun = api_util.debug_info("cond", true_fun, operands, {})
+  args = FlatTree.flatten((operands, {}))
+  avals = args.map(core.get_aval)
+  avals = avals.map2(
+      lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a,
+      args)
+  dbg_true = api_util.debug_info("cond", true_fun, operands, {})
   if config.mutable_array_checks.value:
-    api_util._check_no_aliased_ref_args(dbg_true_fun, ops_avals, ops)
-  dbg_false_fun = api_util.debug_info("cond", false_fun, operands, {})
-  jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
-      (true_fun, false_fun), ops_tree, ops_avals,
-      [dbg_true_fun, dbg_false_fun])
-  true_jaxpr, false_jaxpr = jaxprs
-  if config.mutable_array_checks.value:
-    api_util._check_no_aliased_closed_over_refs(dbg_true_fun, (*true_jaxpr.consts, *consts), ops)
+    api_util.check_no_aliased_ref_args(lambda: dbg_true, list(avals), list(args))
+  dbg_false = api_util.debug_info("cond", false_fun, operands, {})
 
-  out_tree, false_out_tree = out_trees
+  true_jaxpr_, out_avals = pe.trace_to_jaxpr(true_fun, avals, dbg_true)
+  true_jaxpr_, true_consts = pe.separate_consts(true_jaxpr_)
+  false_jaxpr_, false_out_avals = pe.trace_to_jaxpr(false_fun, avals, dbg_false)
+  false_jaxpr_, false_consts = pe.separate_consts(false_jaxpr_)
+  (true_jaxpr, false_jaxpr), consts = _merge_common_consts(
+      (true_jaxpr_, false_jaxpr_), (true_consts, false_consts))
+  if config.mutable_array_checks.value:
+    api_util._check_no_aliased_closed_over_refs(
+        dbg_true, (*true_jaxpr.consts, *consts), list(args))
+
   if any(isinstance(out_aval, AbstractRef) for out_aval in
          true_jaxpr.out_avals + false_jaxpr.out_avals):
     raise ValueError("Cannot return `Ref`s from `cond`.")
 
   _check_branch_outputs(
-      'cond', 'true_fun', 'false_fun', true_fun, false_fun, out_tree,
-      false_out_tree, true_jaxpr.out_avals, false_jaxpr.out_avals)
+      'cond', 'true_fun', 'false_fun',
+      true_fun, false_fun, out_avals, false_out_avals)
 
   # prune passthrough outputs
   true_fwds = pe._jaxpr_forwarding(true_jaxpr.jaxpr)
@@ -300,24 +313,23 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   false_jaxpr = replace_jaxpr_effects(false_jaxpr, joined_effects)
   true_jaxpr = replace_jaxpr_effects(true_jaxpr, joined_effects)
 
-  out = cond_p.bind(index, *consts, *ops, branches=(false_jaxpr, true_jaxpr))
+  out = cond_p.bind(index, *consts, *args, branches=(false_jaxpr, true_jaxpr))
   out_ = iter(out)
 
-  all_inputs = [*consts, *ops]
+  all_inputs = [*consts, *args]
   out = [
     next(out_) if fwd is None else lax.asarray(all_inputs[fwd])
     for fwd in in_fwd
   ]
   assert next(out_, None) is None
-  return tree_unflatten(out_tree, out)
+  return out_avals.update_from_list(out).unflatten()
 
 def _check_branch_outputs(
-    api_name, name1, name2, f1, f2, out_tree1, out_tree2, out_avals1,
-    out_avals2) -> None:
+    api_name, name1, name2, f1, f2, out_avals1, out_avals2) -> None:
   info1 = api_util.fun_sourceinfo(f1)
   info2 = api_util.fun_sourceinfo(f2)
   try:
-    outs1 = tree_unflatten(out_tree1, out_avals1)
+    outs1 = out_avals1.unflatten()
   except:
     paths = [None] * len(out_avals1)
     component = lambda _: ''
@@ -326,11 +338,11 @@ def _check_branch_outputs(
     paths, _ = unzip2(leaves_and_paths)  # type: ignore
     component = lambda p: f' at path {keystr(p)}' if p else ''
 
-  if out_tree1 != out_tree2:
+  if out_avals1.tree != out_avals2.tree:
     diffs = [f'{name1} output{component(p)} is a {thing1} but '
              f'{name2} output{component(p)} is a {thing2}, so {expl}'
              for p, thing1, thing2, expl
-             in equality_errors_pytreedef(out_tree1, out_tree2)]
+             in equality_errors_pytreedef(out_avals1.tree, out_avals2.tree)]
 
     if len(diffs) == 0:
       return  # the trees may have different aux data, but structures are same
@@ -363,8 +375,8 @@ def _check_branch_outputs(
                      + f'\n  * {diffs[-1]}.\n')
 
     pvary_applications = [
-        f'applying `jax.lax.pvary(..., {tuple(a1.vma - a2.vma)})` '
-        f'to the output of {n}{component(p)}'
+        f"applying `jax.lax.pcast(..., {tuple(a1.vma - a2.vma)}, to='varying')` "
+        f"to the output of {n}{component(p)}"
         for p, aval1, aval2 in zip(paths, out_avals1, out_avals2)
         for n, a1, a2 in [(name1, aval2, aval1), (name2, aval1, aval2)]
         if not core.typematch(a1, a2) and
@@ -394,47 +406,6 @@ def _check_branch_outputs(
 def _capitalize(s):
   # s.capitalize() converts s[1:] to lowercase which we don't want.
   return s[0].capitalize() + s[1:]
-
-@api_boundary
-@functools.wraps(_cond)
-def cond(*args, **kwargs):
-  # detect an attempt to call the former, deprecated cond
-  try:
-    ba = inspect.signature(_cond_with_per_branch_args).bind(*args, **kwargs)
-  except TypeError:
-    pass
-  else:
-    assert not ba.kwargs  # no catch-all **kwargs in _cond_with_per_branch
-    _, true_operand, true_fun, false_operand, false_fun = ba.args
-    if callable(true_operand) and callable(true_fun):
-      # treat this as modern cond (with two operands)
-      return _cond(*args, **kwargs)
-    if callable(true_fun) and callable(false_fun):
-      return _cond_with_per_branch_args(*ba.args)
-
-  return _cond(*args, **kwargs)
-
-def _cond_with_per_branch_args(pred,
-                               true_operand, true_fun: Callable,
-                               false_operand, false_fun: Callable):
-  """Conditionally apply ``true_fun`` or ``false_fun``.
-
-  Has equivalent semantics to this Python implementation::
-
-    def cond(pred, true_operand, true_fun, false_operand, false_fun):
-      if pred:
-        return true_fun(true_operand)
-      else:
-        return false_fun(false_operand)
-
-  Pred has to be a scalar type, collection types (list, tuple) are not supported
-  """
-  if not (callable(true_fun) and callable(false_fun)):
-    raise TypeError("lax.cond: true_fun and false_fun arguments should be callable.")
-  return _cond(pred,
-               lambda op: true_fun(op[0]),
-               lambda op: false_fun(op[1]),
-               (true_operand, false_operand))
 
 def _join_cond_effects(branches: Sequence[core.ClosedJaxpr]) -> effects.Effects:
   joined_effects = set()
@@ -490,18 +461,23 @@ def _cond_batching_rule(axis_data, args, dims, *, branches, **params):
     raise NotImplementedError(
         "IO effect not supported in vmap-of-cond.")
 
+  if "branches_platforms" in params and (index_dim is not batching.not_mapped):
+    # If we end up with a mapped index for a platform_dependent cond, we can
+    # replace the index with a fresh call to platform_index. See #29329.
+    index = platform_index_p.bind(platforms=params["branches_platforms"])
+    index_dim = batching.not_mapped
 
   if index_dim is not batching.not_mapped:
-    assert "branches_platforms" not in params, (
-        "The index of a cond with branches_platforms should be a "
-        "platform_index and should never be mapped")
     # Convert to a lax.select. While we could get away with not broadcasting
     # some operands yet, because all outputs must be broadcast together anyway
     # for the select we broadcast the input operands for simplicity and leave
     # optimizations to XLA.
     # TODO(mattjj,frostig): assumes branches are side-effect-free, revise!
     index, *ops = (
-        batching.bdim_at_front(x, d, axis_data.size) for x, d in zip(args, dims))
+        batching.bdim_at_front(x, d, axis_data.size,
+                               mesh_axis=axis_data.explicit_mesh_axis)
+        for x, d in zip(args, dims)
+    )
 
     in_batched  = [True] * len(branches[0].in_avals)
     out_batched = [True] * len(branches[0].out_avals)
@@ -537,6 +513,46 @@ def _cond_batching_rule(axis_data, args, dims, *, branches, **params):
                       **params)
     return out, out_dims
 
+def _cond_linearize(nzs, *primals_in, branches, **params):
+  idx_nz, *nzs = nzs
+  assert not idx_nz
+  nzs_out = [ad.linearize_jaxpr(jaxpr, nzs, allow_fwds=False)[2]
+             for jaxpr in branches]
+  nzs_out = map(any, zip(*nzs_out))
+  primal_jaxprs, tangent_jaxprs, branch_res_avals = [], [], []
+  for jaxpr in branches:
+    primal_jaxpr, num_res_out, _, _, tangent_jaxpr = \
+        ad.linearize_jaxpr(jaxpr, nzs, instantiate=nzs_out, allow_fwds=False)
+    res_avals = primal_jaxpr.out_avals[len(primal_jaxpr.out_avals)-num_res_out:]
+    primal_jaxprs.append(primal_jaxpr)
+    tangent_jaxprs.append(tangent_jaxpr)
+    branch_res_avals.append(res_avals)
+
+  all_res_avals, res_avals_per_branch = _merge_branch_residuals(branch_res_avals)
+  num_res = len(all_res_avals)
+  primal_jaxprs = _join_cond_outputs(
+      primal_jaxprs, all_res_avals, res_avals_per_branch, len(nzs_out))
+  tangent_jaxprs = _join_cond_pe_staged_jaxpr_inputs(
+      tangent_jaxprs, all_res_avals, res_avals_per_branch)
+  tangent_avals_out = [a.to_tangent_aval() for a in jaxpr.out_avals]
+
+  primals_res_out = cond_p.bind(*primals_in, branches=primal_jaxprs, **params)
+  primals, res = split_list(primals_res_out, [len(nzs_out)])
+
+  def tangent_fun(res, *tangents_in):
+    nz_tangents_in = [t for t in tangents_in if not isinstance(t, ad.Zero)]
+    nz_tangents_out = cond_p.bind(*res, *nz_tangents_in,
+                                  branches=tangent_jaxprs, **params)
+    nz_tangents_out_ = iter(nz_tangents_out)
+    tangents_out = [next(nz_tangents_out_) if nz else ad.Zero(aval)
+                   for (aval, nz) in zip(tangent_avals_out, nzs_out)]
+    assert next(nz_tangents_out_, None) is None
+    return tangents_out
+
+  idx, *_ = primals_in
+  return primals, nzs_out, [idx, *res], tangent_fun
+
+
 def _cond_jvp(primals, tangents, *, branches, **params):
   nonzeros = [type(t) is not ad_util.Zero for t in tangents]
 
@@ -558,12 +574,13 @@ def _cond_jvp(primals, tangents, *, branches, **params):
                     **params)
   out_primals, out_tangents = split_list(out, [len(out_nz)])
   out_tangents_iter = iter(out_tangents)
-  out_tangents = [next(out_tangents_iter) if nz else ad_util.Zero.from_primal_value(p)
+  out_tangents = [next(out_tangents_iter) if nz else
+                  ad_util.Zero.from_primal_value(p)
                   for p, nz in zip(out_primals, out_nz)]
   return out_primals, out_tangents
 
 def _cond_partial_eval(trace, *tracers, branches, **params):
-  in_unknowns = [t.pval[0] is not None for t in tracers]
+  in_unknowns = [not t.pval.is_known() for t in tracers]
   index_uk, *ops_uk = in_unknowns
   if any(isinstance(eff, RefEffect) for branch in branches for eff in
       branch.jaxpr.effects):
@@ -677,8 +694,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
              for j in branches_known[1:])
 
   # Create residual variables.
-  newvar = core.gensym()
-  res_binders = map(newvar, all_res_avals)
+  res_binders = map(core.Var, all_res_avals)
 
   # Build the known eqn.
   ins_known, _ = partition_list(unks_in, eqn.invars)  # includes index invar
@@ -742,7 +758,7 @@ def _merge_branch_residuals(branch_res_avals):
 # residual outputs that it does not populate.
 def _join_cond_outputs(jaxprs: Sequence[core.ClosedJaxpr],
                        all_res_avals, res_aval_indices_per_jaxpr,
-                       num_non_res_outputs):
+                       num_non_res_outputs) -> tuple[core.ClosedJaxpr, ...]:
   def augment_jaxpr(jaxpr: core.ClosedJaxpr,
                     res_indices):
     def f_aug(*args):
@@ -760,11 +776,10 @@ def _join_cond_outputs(jaxprs: Sequence[core.ClosedJaxpr],
 # This function augments branch inputs to agree with the merged residual format:
 # each branch is made to accept all residuals, even though it will ignore those
 # that it does not read.
-def _join_cond_pe_staged_jaxpr_inputs(jaxprs: Sequence[core.ClosedJaxpr],
-                                      all_res_avals,
-                                      res_aval_indices_per_jaxpr):
-  newvar = core.gensym(suffix='_')
-  all_res_vars = map(newvar, all_res_avals)
+def _join_cond_pe_staged_jaxpr_inputs(
+    jaxprs: Sequence[core.ClosedJaxpr], all_res_avals,
+    res_aval_indices_per_jaxpr) -> tuple[core.ClosedJaxpr, ...]:
+  all_res_vars = map(core.Var, all_res_avals)
 
   def augment_jaxpr(jaxpr: core.ClosedJaxpr, res_indices) -> core.ClosedJaxpr:
     num_res = len(res_indices)
@@ -847,8 +862,7 @@ def _cond_transpose(cts, *args, branches, **params):
       branch.jaxpr.effects):
     raise NotImplementedError("State effect not supported in cond transpose.")
 
-  branches_trans = tuple(
-      _transpose_cond_jaxpr(jaxpr, num_res) for jaxpr in branches)
+  branches_trans = [_transpose_cond_jaxpr(jaxpr, num_res) for jaxpr in branches]
   lin_in_avals = [a.strip_weak_type() for a, l in zip(in_avals, linear) if l]
   assert all(core.typematch(out_aval, lin_in_aval)
              for jaxpr in branches_trans
@@ -857,14 +871,50 @@ def _cond_transpose(cts, *args, branches, **params):
   res = ops[:num_res]
   cts = map(ad.instantiate_zeros, cts)
 
-  out = cond_p.bind(index, *res, *cts, branches=branches_trans,
-                    **params)
+  out = cond_p.bind(index, *res, *cts, branches=tuple(branches_trans), **params)
   assert all(map(core.typecheck, lin_in_avals, out))
 
   out_iter = iter(out)
   out = [next(out_iter) if l else None for l in linear]
   assert next(out_iter, None) is None
   return [None] + out
+
+def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
+  assert not isinstance(index, ad.GradAccum)
+  primals_ctrefs, specs = ad.project_accums(args)
+  in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
+  in_avals = tuple(core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd  # type: ignore
+                   else a for x in in_flat)
+  trans_branches, out_trees = unzip2(
+      _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, (False,) * len(args))
+      for j in branches)
+  out_nzs = [[not isinstance(x, ad.Zero) for x in tree_unflatten(t, j.out_avals)]
+             for t, j in zip(out_trees, trans_branches)]
+  out_nz = tuple(map(partial(functools.reduce, operator.or_), zip(*out_nzs)))
+  trans_branches, out_trees = unzip2(
+      _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, out_nz) for j in branches)
+  out_tree, = set(out_trees)
+  cts_out = cond_p.bind(index, *in_flat, branches=(*trans_branches,), **params)
+  for x, ct in zip(args, tree_unflatten(out_tree, cts_out)):
+    if isinstance(x, ad.ValAccum): x.accum(ct)
+
+@util.weakref_lru_cache
+def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out):
+  cell = lambda: None
+  maybe_inst = lambda x, inst: ad.instantiate_zeros(x) if inst else x
+  def transposed(*in_flat):
+    primals_ctrefs, cts_in = tree_unflatten(in_tree, in_flat)
+    args = ad.unproject_accums(specs, primals_ctrefs)
+    ad.backward_pass3(jaxpr.jaxpr, False, jaxpr.consts, args, cts_in)
+    cts_out = [maybe_inst(x.freeze(), inst) if isinstance(x, ad.ValAccum)
+               else None for x, inst in zip(args, inst_out)]
+    cts_out, cell.out_tree = tree_flatten(cts_out)  # type: ignore
+    return cts_out
+  dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
+  trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+      lu.wrap_init(transposed, debug_info=dbg), in_avals)
+  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # type: ignore
+
 
 def _cond_typecheck(bind_time, *in_atoms, branches, **params):
   del params
@@ -938,13 +988,47 @@ cond_p.def_impl(partial(dispatch.apply_primitive, cond_p))
 cond_p.def_effectful_abstract_eval(_cond_abstract_eval)
 ad.primitive_jvps[cond_p] = _cond_jvp
 ad.primitive_transposes[cond_p] = _cond_transpose
+ad.primitive_linearizations[cond_p] = _cond_linearize
+ad.fancy_transposes[cond_p] = _cond_transpose_fancy
 pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.fancy_primitive_batchers[cond_p] = _cond_batching_rule
-xla.register_initial_style_primitive(cond_p)
+pxla.register_initial_style_primitive(cond_p)
 core.custom_typechecks[cond_p] = partial(_cond_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[cond_p] = _cond_partial_eval_custom
 pe.dce_rules[cond_p] = _cond_dce_rule
-batching.ragged_prop_rules[cond_p] = batching.ragged_mask_assert_no_op_rule
+
+def _cond_is_high(*_, branches, **__) -> bool:
+  return any(j.jaxpr.is_high for j in branches)
+cond_p.is_high = _cond_is_high  # type: ignore
+
+def _cond_to_lojax(pred, *hi_args, branches):
+  jaxpr = branches[0]
+  lo_branches = tuple(pe.lower_jaxpr(j) for j in branches)
+  lo_args = [lo_val for aval, x in zip(branches[0].in_aval_qdds, hi_args)
+             for lo_val in (aval.read_loval(x) if aval.has_qdd
+                            else aval.lower_val(x))]
+  all_outs = cond_p.bind(pred, *lo_args, branches=lo_branches)
+  lo_muts_out = sum(len(aval.lo_ty()) for aval in branches[0].final_aval_qdds if aval.has_qdd)
+  out_mut, lo_outs = split_list(all_outs, [lo_muts_out])
+
+  # collect and apply mutations
+  out_mut_ = iter(out_mut)
+  in_idx = {v: i for i, v in enumerate(jaxpr.jaxpr.invars)}
+
+  for v in jaxpr.jaxpr.invars:
+    if v.final_qdd is not None:
+      qdd = v.final_qdd
+      lo_vals = itertools.islice(out_mut_, len(v.aval.lo_ty_qdd(qdd)))
+      v.aval.update_from_loval(qdd, hi_args[in_idx[v]], *lo_vals)
+
+  lo_outs_ = iter(lo_outs)
+
+  hi_outs = [t.raise_val(*itertools.islice(lo_outs_, len(t.lo_ty())))
+             for t in jaxpr.out_avals]
+  assert next(lo_outs_, None) is None
+  return hi_outs
+
+cond_p.to_lojax = _cond_to_lojax
 
 def _cond_lowering(ctx, index, *args, branches,
                    **params):
@@ -997,11 +1081,14 @@ def _cond_lowering(ctx, index, *args, branches,
   for i, jaxpr in enumerate(branches):
     branch = case_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
-      consts = [mlir.ir_constant(xla.canonicalize_dtype(x)) for x in jaxpr.consts]
+      consts = [
+          mlir.ir_constant(x, aval=var.aval)
+          for x, var in zip(jaxpr.consts, jaxpr.jaxpr.constvars)
+      ]
       out_vals, tokens_out = mlir.jaxpr_subcomp(
           ctx.module_context, jaxpr.jaxpr, name_stack.extend(f'branch_{i}_fun'),
           tokens_in, consts, *args,
-          dim_var_values=ctx.dim_var_values)
+          dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering)
       out_tokens = [tokens_out.get(eff) for eff in ordered_effects]
       out_vals = [*out_tokens, *out_vals]
       hlo.return_(mlir.flatten_ir_values(out_vals))
@@ -1018,33 +1105,28 @@ mlir.register_lowering(cond_p, _cond_lowering)
 def _cond_state_discharge_rule(should_discharge, in_avals, out_avals, index, *args,
                                branches, **params):
   assert not should_discharge[0], "Can't discharge the index."
-  discharged_branches = tuple(
-      discharge_state(branch.jaxpr, (), should_discharge=should_discharge[1:])[0]
-      for branch in branches
-  )
+  discharged_branches, discharged_consts = unzip2(
+      discharge_state(branch.jaxpr, branch.consts, should_discharge=should_discharge[1:])
+      for branch in branches)
   # Don't thread the ref values through the cond if they never change.
   forwarded_outvars = None
   for branch in discharged_branches:
     invar_pos = {v: i for i, v in enumerate(branch.invars)}
     branch_forwarding = [
         invar_pos.get(v, None) if isinstance(v, core.Var) else None
-        for v in branch.outvars[len(out_avals) :]
-    ]
+        for v in branch.outvars[len(out_avals) :]]
     if forwarded_outvars is None:
       forwarded_outvars = branch_forwarding
     else:
       forwarded_outvars = [
           i if i == j else None
-          for i, j in zip(forwarded_outvars, branch_forwarding)
-      ]
+          for i, j in zip(forwarded_outvars, branch_forwarding)]
   assert forwarded_outvars is not None
   all_outvars_fwd = [None] * len(out_avals) + forwarded_outvars
-  new_branches = tuple(
-      core.ClosedJaxpr(
+  new_branches = tuple(core.ClosedJaxpr(
           branch.replace(outvars=[v for v, fwd in zip(branch.outvars, all_outvars_fwd)
-                                  if fwd is None]), ())
-      for branch in discharged_branches
-  )
+                                  if fwd is None]), consts)
+      for branch, consts in zip(discharged_branches, discharged_consts))
   out_vals_no_fwd = cond_p.bind(index, *args, branches=new_branches,
                                 **params)
   out_vals, out_ref_vals_no_fwd = util.split_list(out_vals_no_fwd, [len(out_avals)])

@@ -16,8 +16,296 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Deprecations
+  * `jax.lax.pvary` has been deprecated.
+    Please use `jax.lax.pcast(..., to='varying')` as the replacement.
+  * Complex arguments passed to {func}`jax.numpy.arange` now result in a
+    deprecation warning, because the output is poorly-defined.
+  * From {mod}`jax.core` a number of symbols are newly deprecated including:
+    `call_impl`, `get_aval`, `mapped_aval`, `subjaxprs`, `set_current_trace`,
+    `take_current_trace`, `traverse_jaxpr_params`, `unmapped_aval`,
+    `AbstractToken`,  and `TraceTag`.
+  * All symbols in {mod}`jax.interpreters.pxla` are deprecated. These are
+    primarily JAX internal APIs, and users should not rely on them.
+
+* Changes:
+  * jax's `Tracer` no longer inherits from `jax.Array` at runtime. However,
+    `jax.Array` now uses a custom metaclass such `isinstance(x, Array)` is true
+    if an object `x` represents a traced `Array`. Only some `Tracer`s represent
+    `Array`s, so it is not correct for `Tracer` to inherit from `Array`.
+
+    For the moment, during Python type checking, we continue to declare `Tracer`
+    as a subclass of `Array`, however we expect to remove this in a future
+    release.
+  * `jax.experimental.si_vjp` has been deleted.
+    `jax.vjp` subsumes it's functionality.
+
+## JAX 0.8.1 (November 18, 2025)
+
+* New features:
+
+  * {func}`jax.jit` now supports the decorator factory pattern; i.e instead of
+    writing
+    ```
+    @functools.partial(jax.jit, static_argnames=['n'])
+    def f(x, n):
+      ...
+    ```
+    you may write
+    ```
+    @jax.jit(static_argnames=['n'])
+    def f(x, n):
+      ...
+    ```
+
+* Changes:
+
+  * {func}`jax.lax.linalg.eigh` now accepts an `implementation` argument to
+    select between QR (CPU/GPU), Jacobi (GPU/TPU), and QDWH (TPU)
+    implementations. The `EighImplementation` enum is publicly exported from
+    {mod}`jax.lax.linalg`.
+
+  * {func}`jax.lax.linalg.svd` now implements an `algorithm` that uses the polar
+    decomposition on CUDA GPUs. This is also an alias for the existing algorithm
+    on TPUs.
+
+* Bug fixes:
+
+  * Fixed a bug introduced in JAX 0.7.2 where eigh failed for large matrices on
+    GPU (({jax-issue}`#33062`).
+
+* Deprecations:
+  * `jax.sharding.PmapSharding` is now deprecated. Please use
+    `jax.NamedSharding` instead.
+  * `jx.device_put_replicated` is now deprecated. Please use `jax.device_put`
+    with the appropriate sharding instead.
+  * `jax.device_put_sharded` is now deprecated. Please use `jax.device_put` with
+    the appropriate sharding instead.
+  * Default `axis_types` of `jax.make_mesh` will change in JAX v0.9.0 to return
+  `jax.sharding.AxisType.Explicit`. Leaving axis_types unspecified will raise a
+  `DeprecationWarning`.
+  * {mod}`jax.cloud_tpu_init` and its contents were deprecated. There is no reason for a user to import or use the contents of this module; JAX handles this for you automatically if needed.
+
+## JAX 0.8.0 (October 15, 2025)
+
+* Breaking changes:
+
+  * JAX is changing the default `jax.pmap` implementation to one implemented in
+    terms of `jax.jit` and `jax.shard_map`. `jax.pmap` is in maintenance mode
+    and we encourage all new code to use `jax.shard_map` directly. See the
+    [migration guide](https://docs.jax.dev/en/latest/migrate_pmap.html) for
+    more information.
+  * The `auto=` parameter of `jax.experimental.shard_map.shard_map` has been
+    removed. This means that `jax.experimental.shard_map.shard_map` no longer
+    supports nesting. If you want to nest shard_map calls, please use
+    `jax.shard_map`.
+  * JAX no longer allows passing objects that support `__jax_array__` directly
+    to, e.g. `jit`-ed functions. Call `jax.numpy.asarray` on them first.
+  * {func}`jax.numpy.cov` is now returns NaN for empty arrays ({jax-issue}`#32305`),
+    and matches NumPy 2.2 behavior for single-row design matrices ({jax-issue}`#32308`).
+  * JAX no longer accepts `Array` values where a `dtype` value is expected. Call
+    `.dtype` on these values first.
+  * The deprecated function {func}`jax.interpreters.mlir.custom_call` was
+    removed.
+  * The `jax.util`, `jax.extend.ffi`, and `jax.experimental.host_callback`
+    modules have been removed. All public APIs within these modules were
+    deprecated and removed in v0.7.0 or earlier.
+  * The deprecated symbol {obj}`jax.custom_derivatives.custom_jvp_call_jaxpr_p`
+    was removed.
+  * `jax.experimental.multihost_utils.process_allgather` raises an error when
+    the input is a jax.Array and not fully-addressable and `tiled=False`. To fix
+    this, pass `tiled=True` to your `process_allgather` invocation.
+  * from {mod}`jax.experimental.compilation_cache`, the deprecated symbols
+    `is_initialized` and `initialize_cache` were removed.
+  * The deprecated function {func}`jax.interpreters.xla.canonicalize_dtype`
+    was removed.
+  * {mod}`jaxlib.hlo_helpers` has been removed. Use {mod}`jax.ffi` instead.
+  * The option `jax_cpu_enable_gloo_collectives` has been removed. Use
+    `jax_cpu_collectives_implementation` instead.
+  * The previously-deprecated `interpolation` argument to
+    {func}`jax.numpy.percentile` and {func}`jax.numpy.quantile` has been
+    removed; use `method` instead.
+  * The JAX-internal `for_loop` primitive was removed. Its functionality,
+    reading from and writing to refs in the loop body, is now directly
+    supported by {func}`jax.lax.fori_loop`. If you need help updating your
+    code, please file a bug.
+  * {func}`jax.numpy.trimzeros` now errors for non-1D input.
+  * The `where` argument to {func}`jax.numpy.sum` and other reductions is now
+    required to be boolean. Non-boolean values have resulted in a
+    `DeprecationWarning` since JAX v0.5.0.
+  * The deprecated functions in {mod} `jax.dlpack`, {mod} `jax.errors`, {mod}
+    `jax.lib.xla_bridge`, {mod} `jax.lib.xla_client`, and {mod}
+    `jax.lib.xla_extension` were removed.
+  * `jax.interpreters.mlir.dense_bool_array` was removed. Use MLIR APIs to
+    construct attributes instead.
+
+* Changes
+  * {func}`jax.numpy.linalg.eig` now returns a namedtuple (with attributes
+    `eigenvalues` and `eigenvectors`) instead of a plain tuple.
+  * {func}`jax.grad` and {func}`jax.vjp` will now round always primals to
+    `float32` if `float64` mode is not enabled.
+  * {func}`jax.dlpack.from_dlpack` now accepts arrays with non-default layouts,
+    for example, transposed.
+  * The default nonsymmetric eigendecomposition on NVIDIA GPUs now uses
+    cusolver. The magma and LAPACK implementations are still available via the
+    new `implementation` argument to {func}`jax.lax.linalg.eig`
+    ({jax-issue}`#27265`). The `use_magma` argument is now deprecated in favor
+    of `implementation`.
+  * {func}`jax.numpy.trim_zeros` now follows NumPy 2.2 in supporting
+    multi-dimensional inputs.
+
+* Deprecations
+  * {func}`jax.experimental.enable_x64` and {func}`jax.experimental.disable_x64`
+    are deprecated in favor of the new non-experimental context manager
+    {func}`jax.enable_x64`.
+  * {func}`jax.experimental.shard_map.shard_map` is deprecated; going forward use
+    {func}`jax.shard_map`.
+  * {func}`jax.experimental.pjit.pjit` is deprecated; going forward use
+    {func}`jax.jit`.
+
+## JAX 0.7.2 (September 16, 2025)
+
+* Breaking changes:
+
+  * {func}`jax.dlpack.from_dlpack` no longer accepts a DLPack capsule. This
+    behavior was deprecated and is now removed. The function must be called
+    with an array implementing `__dlpack__` and `__dlpack_device__`.
+
+* Changes
+  * The minimum supported NumPy version is now 2.0. Since SciPy 1.13 is required
+    for NumPy 2.0 support, the minimum supported SciPy version is now 1.13.
+
+  * JAX now represents constants in its internal jaxpr representation as a
+    `TypedNdArray`, which is a private JAX type that duck types as a
+    `numpy.ndarray`. This type may be exposed to users via `custom_jvp` rules,
+    for example, and may break code that uses `isinstance(x, np.ndarray)`. If
+    this breaks your code, you may convert these arrays to classic NumPy arrays
+    using `np.asarray(x)`.
+
+* Bug fixes
+  * `arr.view(dtype=None)` now returns the array unchanged, matching NumPy's
+    semantics. Previously it returned the array with a float dtype.
+  * `jax.random.randint` now produces a less-biased distribution for 8-bit and
+    16-bit integer types ({jax-issue}`#27742`). To restore the previous biased
+    behavior, you may temporarily set the `jax_safer_randint` configuration to
+    `False`, but note this is a temporary config that will be removed in a
+    future release.
+
+* Deprecations:
+  * The parameters `enable_xla` and `native_serialization` for `jax2tf.convert`
+    are deprecated and will be removed in a future version of JAX. These were
+    used for jax2tf with non-native serialization, which has been now removed.
+  * Setting the config state `jax_pmap_no_rank_reduction` to `False` is
+    deprecated. By default, `jax_pmap_no_rank_reduction` will be set to `True`
+    and `jax.pmap` shards will not have their rank reduced, keeping the same
+    rank as their enclosing array.
+
+## JAX 0.7.1 (August 20, 2025)
+
+* New features
+  * JAX now ships Python 3.14 and 3.14t wheels.
+  * JAX now ships Python 3.13t and 3.14t wheels on Mac. Previously we only
+    offered free-threading builds on Linux.
+
+* Changes
+  * Exposed `jax.set_mesh` which acts as a global setter and a context manager.
+    Removed `jax.sharding.use_mesh` in favor of `jax.set_mesh`.
+  * JAX is now built using CUDA 12.9. All versions of CUDA 12.1 or newer remain
+    supported.
+  * {func}`jax.lax.dot` now implements the general dot product via the optional
+    ``dimension_numbers`` argument.
+
+* Deprecations:
+
+  * {func}`jax.lax.zeros_like_array` is deprecated. Please use
+    {func}`jax.numpy.zeros_like` instead.
+  * Attempting to import {mod}`jax.experimental.host_callback` now results in
+    a `DeprecationWarning`, and will result in an `ImportError` starting in JAX
+    v0.8.0. Its APIs have raised `NotImplementedError` since JAX version 0.4.35.
+  * In {func}`jax.lax.dot`, passing the ``precision`` and ``preferred_element_type``
+    arguments by position is deprecated. Pass them by explicit keyword instead.
+  * Several dozen internal APIs have been deprecated from {mod}`jax.interpreters.ad`,
+    {mod}`jax.interpreters.batching`, and {mod}`jax.interpreters.partial_eval`; they
+    are used rarely if ever outside JAX itself, and most are deprecated without any
+    public replacement.
+
+
+## JAX 0.7.0 (July 22, 2025)
+
+* New features:
+  * Added `jax.P` which is an alias for `jax.sharding.PartitionSpec`.
+  * Added {func}`jax.tree.reduce_associative`.
+  * The {attr}`jax.numpy.ndarray.at` indexing methods now support a `wrap_negative_indices`
+    argument, which defaults to `True` to match the current behavior ({jax-issue}`#29434`).
+
+* Breaking changes:
+  * JAX is migrating from GSPMD to Shardy by default. See the
+    [migration guide](https://docs.jax.dev/en/latest/shardy_jax_migration.html)
+    for more information.
+  * JAX autodiff is switching to using direct linearization by default (instead of
+    implementing linearization via JVP and partial eval).
+    See [migration guide](https://docs.jax.dev/en/latest/direct_linearize_migration.html)
+    for more information.
+  * `jax.stages.OutInfo` has been replaced with `jax.ShapeDtypeStruct`.
+  * {func}`jax.jit` now requires `fun` to be passed by position, and additional
+    arguments to be passed by keyword. Doing otherwise will result in an error
+    starting in v0.7.x. This raised a DeprecationWarning in v0.6.x.
+  * The minimum Python version is now 3.11. 3.11 will remain the minimum
+    supported version until July 2026.
+  * Layout API renames:
+    * `Layout`, `.layout`, `.input_layouts` and `.output_layouts` have been
+      renamed to `Format`, `.format`, `.input_formats` and `.output_formats`
+    * `DeviceLocalLayout`, `.device_local_layout` have been renamed to `Layout`
+      and `.layout`
+  * `jax.experimental.shard` module has been deleted and all the APIs have been
+    moved to the `jax.sharding` endpoint. So use `jax.sharding.reshard`,
+    `jax.sharding.auto_axes` and `jax.sharding.explicit_axes` instead of their
+    experimental endpoints.
+  * `lax.infeed` and `lax.outfeed` were removed, after being deprecated in
+    JAX 0.6. The `transfer_to_infeed` and `transfer_from_outfeed` methods were
+    also removed the `Device` objects.
+  * The `jax.extend.core.primitives.pjit_p` primitive has been renamed to
+    `jit_p`, and its `name` attribute has changed from `"pjit"` to `"jit"`.
+    This affects the string representations of jaxprs. The same primitive is no
+    longer exported from the `jax.experimental.pjit` module.
+  * The (undocumented) function `jax.extend.backend.add_clear_backends_callback`
+    has been removed. Users should use `jax.extend.backend.register_backend_cache`
+    instead.
+  * `out_sharding` arg added to `x.at[y].set` and `x.at[y].add`. Previous
+    behavior propagating operand sharding removed. Please use
+    `x.at[y].set/add(z, out_sharding=jax.typeof(x).sharding)` to retain previous
+    behavior if scatter op requires collectives.
+
+* Deprecations:
+  * {obj}`jax.dlpack.SUPPORTED_DTYPES` is deprecated; please use the new
+    {func}`jax.dlpack.is_supported_dtype` function.
+  * {func}`jax.scipy.special.sph_harm` has been deprecated following a similar
+    deprecation in SciPy; use {func}`jax.scipy.special.sph_harm_y` instead.
+  * From {mod}`jax.interpreters.xla`, the previously deprecated symbols
+    `abstractify` and `pytype_aval_mappings` have been removed.
+  * {func}`jax.interpreters.xla.canonicalize_dtype` is deprecated. For
+    canonicalizing dtypes, prefer {func}`jax.dtypes.canonicalize_dtype`.
+    For checking whether an object is a valid jax input, prefer
+    {func}`jax.core.valid_jaxtype`.
+  * From {mod}`jax.core`, the previously deprecated symbols `AxisName`,
+    `ConcretizationTypeError`, `axis_frame`, `call_p`, `closed_call_p`,
+    `get_type`, `trace_state_clean`, `typematch`, and `typecheck` have been
+    removed.
+  * From {mod}`jax.lib.xla_client`, the previously deprecated symbols
+    `DeviceAssignment`, `get_topology_for_devices`, and `mlir_api_version`
+    have been removed.
+  * `jax.extend.ffi` was removed after being deprecated in v0.5.0.
+    Use {mod}`jax.ffi` instead.
+  * {func}`jax.lib.xla_bridge.get_compile_options` is deprecated, and replaced by
+    {func}`jax.extend.backend.get_compile_options`.
+
+## JAX 0.6.2 (June 17, 2025)
+
 * New features:
   * Added {func}`jax.tree.broadcast` which implements a pytree prefix broadcasting helper.
+
+* Changes
+  * The minimum NumPy version is 1.26 and the minimum SciPy version is 1.12.
 
 ## JAX 0.6.1 (May 21, 2025)
 
@@ -27,7 +315,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 * Changes
   * Additional checking for the versions of CUDA package dependencies was
-    reenabled, having been accidentally disabled in a previous release.
+    re-enabled, having been accidentally disabled in a previous release.
   * JAX nightly packages are now published to artifact registry. To install
     these packages, see the [JAX installation guide](https://docs.jax.dev/en/latest/installation.html#jax-nightly-installation).
   * `jax.sharding.PartitionSpec` no longer inherits from a tuple.
@@ -229,7 +517,7 @@ to signify this.
       developers at this point. So it is difficult for us to fix this kind of
       problem even if we wanted to.
 
-    We are open to readding support for Mac x86 if the community is willing
+    We are open to re-adding support for Mac x86 if the community is willing
     to help support that platform: in particular, we would need the JAX test
     suite to pass cleanly on Mac x86 before we could ship releases again.
 
@@ -346,7 +634,7 @@ This is a patch release of jax 0.4.36. Only "jax" was released at this version.
     for information on migrating to the new API.
   * The `initial` argument to {func}`jax.nn.softmax` and {func}`jax.nn.log_softmax`
     has been removed, after being deprecated in v0.4.27.
-  * Calling `np.asarray` on typed PRNG keys (i.e. keys produced by :func:`jax.random.key`)
+  * Calling `np.asarray` on typed PRNG keys (i.e. keys produced by {func}`jax.random.key`)
     now raises an error. Previously, this returned a scalar object array.
   * The following deprecated methods and functions in {mod}`jax.export` have
     been removed:
@@ -454,7 +742,7 @@ This is a patch release of jax 0.4.36. Only "jax" was released at this version.
   * `jax_pmap_no_rank_reduction` flag is set to `True` by default.
     * array[0] on a pmap result now introduces a reshape (use array[0:1]
       instead).
-    * The per-shard shape (accessable via jax_array.addressable_shards or
+    * The per-shard shape (accessible via jax_array.addressable_shards or
       jax_array.addressable_data(0)) now has a leading (1, ...). Update code
       that directly accesses shards accordingly. The rank of the per-shard-shape
       now matches that of the global shape which is the same behavior as jit.
@@ -837,7 +1125,7 @@ See the 0.4.33 release notes for more details.
     positional-only, following deprecation of the keywords in JAX v0.4.21.
   * Non-array arguments to functions in {mod}`jax.lax.linalg` now must be
     specified by keyword. Previously, this raised a DeprecationWarning.
-  * Array-like arguments are now required in several :func:`jax.numpy` APIs,
+  * Array-like arguments are now required in several {func}`jax.numpy` APIs,
     including {func}`~jax.numpy.apply_along_axis`,
     {func}`~jax.numpy.apply_over_axes`, {func}`~jax.numpy.inner`,
     {func}`~jax.numpy.outer`, {func}`~jax.numpy.cross`,
@@ -1356,7 +1644,7 @@ See the 0.4.33 release notes for more details.
     https://docs.jax.dev/en/latest/deprecation.html
   * JAX now requires NumPy 1.22 or newer as per
     https://docs.jax.dev/en/latest/deprecation.html
-  * Passing optional arguments to {func}`jax.numpy.ndarray.at` by position is
+  * Passing optional arguments to {attr}`jax.numpy.ndarray.at` by position is
     no longer supported, after being deprecated in JAX version 0.4.7.
     For example, instead of `x.at[i].get(True)`, use `x.at[i].get(indices_are_sorted=True)`
   * The following `jax.Array` methods have been removed, after being deprecated
@@ -1456,7 +1744,7 @@ See the 0.4.33 release notes for more details.
 
 * Deprecations
   * `jax.abstract_arrays` and its contents are now deprecated. See related
-    functionality in :mod:`jax.core`.
+    functionality in {mod}`jax.core`.
   * `jax.numpy.alltrue`: use `jax.numpy.all`. This follows the deprecation
     of `numpy.alltrue` in NumPy version 1.25.0.
   * `jax.numpy.sometrue`: use `jax.numpy.any`. This follows the deprecation
@@ -1510,7 +1798,7 @@ See the 0.4.33 release notes for more details.
     dict of string stat names with int values, e.g. `"bytes_in_use"`, or None if
     the platform doesn't support memory statistics. The exact stats returned may
     vary across platforms. Currently only implemented on Cloud TPU.
-  * Readded support for the Python buffer protocol (`memoryview`) on CPU
+  * Re-added support for the Python buffer protocol (`memoryview`) on CPU
     devices.
 
 ## jax 0.4.10 (May 11, 2023)
@@ -1601,7 +1889,7 @@ See the 0.4.33 release notes for more details.
     for which it is an alias.
   * The type `jax.interpreters.pxla.ShardedDeviceArray` is deprecated. Use
     `jax.Array` instead.
-  * Passing additional arguments to {func}`jax.numpy.ndarray.at` by position is deprecated.
+  * Passing additional arguments to {attr}`jax.numpy.ndarray.at` by position is deprecated.
     For example, instead of `x.at[i].get(True)`, use `x.at[i].get(indices_are_sorted=True)`
   * `jax.interpreters.xla.device_put` is deprecated. Please use `jax.device_put`.
   * `jax.interpreters.pxla.device_put` is deprecated. Please use `jax.device_put`.
@@ -1686,7 +1974,7 @@ Changes:
     * `jax.interpreters.pxla.Mesh`: use `jax.sharding.Mesh`.
     * `jax.interpreters.pxla.PartitionSpec`: use `jax.sharding.PartitionSpec`.
 * Breaking Changes
-  * the `initial` argument to reduction functions like :func:`jax.numpy.sum`
+  * the `initial` argument to reduction functions like {func}`jax.numpy.sum`
     is now required to be a scalar, consistent with the corresponding NumPy API.
     The previous behavior of broadcasting the output against non-scalar `initial`
     values was an unintentional implementation detail ({jax-issue}`#14446`).
@@ -1930,7 +2218,7 @@ Changes:
     Please upgrade to NumPy 1.20 or newer.
 * Changes
   * Added {mod}`jax.debug` that includes utilities for runtime value debugging such at {func}`jax.debug.print` and {func}`jax.debug.breakpoint`.
-  * Added new documentation for [runtime value debugging](debugging/index)
+  * Added new documentation for [runtime value debugging](https://github.com/jax-ml/jax/blob/7ac8181cce087d8bcd564d07e19f5067cb5d9d3b/docs/debugging/index.md)
 * Deprecations
   * {func}`jax.mask` {func}`jax.shapecheck` APIs have been removed.
     See {jax-issue}`#11557`.
@@ -2012,7 +2300,7 @@ Changes:
     traces as an alternative to the TensorBoard UI.
   * Added a `jax.named_scope` context manager that adds profiler metadata to
     Python programs (similar to `jax.named_call`).
-  * In scatter-update operations (i.e. :attr:`jax.numpy.ndarray.at`), unsafe implicit
+  * In scatter-update operations (i.e. {attr}`jax.numpy.ndarray.at`), unsafe implicit
     dtype casts are deprecated, and now result in a `FutureWarning`.
     In a future release, this will become an error. An example of an unsafe implicit
     cast is `jnp.zeros(4, dtype=int).at[0].set(1.5)`, in which `1.5` previously was

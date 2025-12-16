@@ -17,11 +17,11 @@ import unittest
 from absl.testing import absltest
 
 import jax
-import jax.dlpack
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
+import jax.dlpack
 import jax.numpy as jnp
 
 config.parse_flags_with_absl()
@@ -64,7 +64,7 @@ class DLPackTest(jtu.JaxTestCase):
                  r'striding are supported')
     with self.assertRaisesRegex(RuntimeError, regex_str):
       xla_client._xla.dlpack_managed_tensor_to_buffer(
-          y, client, client)
+          y, client.devices()[0], None)
 
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
   def testJaxToTorch(self, shape, dtype):
@@ -107,18 +107,19 @@ class DLPackTest(jtu.JaxTestCase):
       else:
         self.assertAllClose(np, y.cpu().numpy())
 
-  @jtu.ignore_warning(message="Calling from_dlpack with a DLPack tensor",
-                      category=DeprecationWarning)
   def testTorchToJaxInt64(self):
     # See https://github.com/jax-ml/jax/issues/11895
     x = jax.dlpack.from_dlpack(
-        torch.utils.dlpack.to_dlpack(torch.ones((2, 3), dtype=torch.int64)))
+        torch.ones((2, 3), dtype=torch.int64))
     dtype_expected = jnp.int64 if config.enable_x64.value else jnp.int32
     self.assertEqual(x.dtype, dtype_expected)
 
+  def testTorchToJaxNondefaultLayout(self):
+    x = torch.arange(4).reshape(2, 2).T
+    x = x.cuda() if jtu.test_device_matches(["gpu"]) else x
+    self.assertAllClose(x.cpu().numpy(), jax.dlpack.from_dlpack(x))
+
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
-  @jtu.ignore_warning(message="Calling from_dlpack with a DLPack tensor",
-                      category=DeprecationWarning)
   def testTorchToJax(self, shape, dtype):
     if not config.enable_x64.value and dtype in [
         jnp.int64,
@@ -134,8 +135,7 @@ class DLPackTest(jtu.JaxTestCase):
     else:
       x = torch.tensor(x_np)
     x = x.cuda() if jtu.test_device_matches(["gpu"]) else x
-    x = x.contiguous()
-    y = jax.dlpack.from_dlpack(torch.utils.dlpack.to_dlpack(x))
+    y = jax.dlpack.from_dlpack(x)
     self.assertAllClose(x_np, y)
 
     # Verify the resulting value can be passed to a jit computation.
@@ -158,7 +158,6 @@ class DLPackTest(jtu.JaxTestCase):
     else:
       x = torch.tensor(x_np)
     x = x.cuda() if jtu.test_device_matches(["gpu"]) else x
-    x = x.contiguous()
     y = jax.dlpack.from_dlpack(x)
     self.assertAllClose(x_np, y)
 

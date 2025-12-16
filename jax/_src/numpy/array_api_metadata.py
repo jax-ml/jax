@@ -21,12 +21,11 @@ from __future__ import annotations
 
 from types import ModuleType
 
-import jax
-from jax._src.sharding import Sharding
-from jax._src.lib import xla_client as xc
 from jax._src import config
 from jax._src import dtypes as _dtypes
 from jax._src import xla_bridge as xb
+from jax._src.lib import xla_client as xc
+from jax._src.sharding import Sharding
 
 
 __array_api_version__ = '2024.12'
@@ -40,7 +39,8 @@ def __array_namespace__(self, *, api_version: None | str = None) -> ModuleType:
   if api_version is not None and api_version != __array_api_version__:
     raise ValueError(f"{api_version=!r} is not available; "
                      f"available versions are: {[__array_api_version__]}")
-  return jax.numpy
+  import jax.numpy  # pytype: disable=import-error
+  return jax.numpy  # pytype: disable=module-attr
 
 
 def __array_namespace_info__() -> ArrayNamespaceInfo:
@@ -77,7 +77,7 @@ class ArrayNamespaceInfo:
   def devices(self):
     out = [None]  # None indicates "uncommitted"
     for backend in xb.backends():
-        out.extend(jax.devices(backend))
+        out.extend(xb.devices(backend))
     return out
 
   def capabilities(self):
@@ -86,16 +86,11 @@ class ArrayNamespaceInfo:
   def default_dtypes(self, *, device: xc.Device | Sharding | None = None):
     # Array API supported dtypes are device-independent in JAX
     del device
-    default_dtypes = {
-      "real floating": "f",
-      "complex floating": "c",
-      "integral": "i",
-      "indexing": "i",
-    }
     return {
-      dtype_name: _dtypes.canonicalize_dtype(
-        _dtypes._default_types.get(kind)
-      ) for dtype_name, kind in default_dtypes.items()
+      "real floating": _dtypes.default_float_dtype(),
+      "complex floating": _dtypes.default_complex_dtype(),
+      "integral": _dtypes.default_int_dtype(),
+      "indexing": _dtypes.default_int_dtype(),
     }
 
   def dtypes(

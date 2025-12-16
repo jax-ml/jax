@@ -72,6 +72,40 @@ Mutation has not historically been supported in JAX -- `jax.Array`s are immutabl
 `Ref`s are new (experimental) types that allow mutation under certain circumstances.
 We can interpret writing to a `Ref` as mutating its underlying buffer.
 
+**Indexing and Slicing `Ref`s with `.at`**
+
+In addition to accessing the entire underlying buffer through a reference, it
+is possible to also access only a slice by using the `.at` property. Using
+`x_ref.at[slice]` does not immediately read or write data; it
+creates a new `Ref` object that points to a slice of the original buffer. For
+example `ref.at[0:128]` creates a view of the first 128 elements; `ref.at[::2]`
+creates a strided view.
+
+Once you have a new `Ref` that represents a slice you can read it or write to it
+with the usual syntax. Here is a simple example:
+
+```{code-cell} ipython3
+def add_sliced_kernel(x_ref, y_ref, o_ref):
+  small_mid = x_ref.shape[0] // 2
+
+  x_left = x_ref.at[:small_mid]
+  x_right = x_ref.at[small_mid:]
+  y_left = y_ref.at[:small_mid]
+  y_right = y_ref.at[small_mid:]
+
+  # The output shape is (4*small_mid).
+  large_mid = 2*small_mid
+  o_ref.at[:large_mid][:small_mid] = x_left[...] + y_left[...]
+  o_ref.at[:large_mid][small_mid:] = x_left[...] + y_right[...]
+  o_ref.at[large_mid:][:small_mid] = x_right[...] + y_left[...]
+  o_ref.at[large_mid:][small_mid:] = x_right[...] + y_right[...]
+```
+
+Note that using `x_ref.at[slice][...]` is equivalent to `x_ref[slice]`. The
+`.at` is useful if you want to compose multiple slices (e.g.
+`x_ref.at[block_slice][thread_slice]`) or if need to pass a slice to a subkernel
+function that takes a `Ref`.
+
 +++
 
 So we've written what we call a "kernel", which we define as a program that will
@@ -186,7 +220,7 @@ iota(8)
 ```
 
 TPUs distinguish between vector and scalar memory spaces and in this case the
-output must be placed in scalar memory (`TPUMemorySpace.SMEM`) since `i` is
+output must be placed in scalar memory (`MemorySpace.SMEM`) since `i` is
 a scalar. For more details read {ref}`tpu_and_its_memory_spaces`.
 To call the above kernel on TPU, run:
 
@@ -196,7 +230,7 @@ from jax.experimental.pallas import tpu as pltpu
 
 def iota(size: int):
   return pl.pallas_call(iota_kernel,
-                        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+                        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.SMEM),
                         out_shape=jax.ShapeDtypeStruct((size,), jnp.int32),
                         grid=(size,))()
 iota(8)

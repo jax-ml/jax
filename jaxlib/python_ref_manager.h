@@ -29,7 +29,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 
-namespace xla {
+namespace jax {
 
 // Class that manages destruction of Python objects.
 //
@@ -103,6 +103,6 @@ class PythonRefManager {
 // leak. This behavior is similar to `tensorflow::ClearDecRefCache()`.
 PythonRefManager* GlobalPyRefManager();
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_PYTHON_REF_MANAGER_H_

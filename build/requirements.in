@@ -4,7 +4,7 @@
 scipy>=1.13.1; python_version<="3.12"
 scipy>=1.15.2; python_version>="3.13"
 
-ml_dtypes>=0.4.0
+ml_dtypes>=0.5.3
 etils[epath]
 opt-einsum
 
@@ -16,14 +16,17 @@ wheel
 # JAX's own libraries. We include these in the requirements so you can
 # bazel test without building jaxlib and without manually updating the
 # the requirements files.
-jaxlib==0.6.1
+jaxlib
 
-# The with-cuda extra also includes NVIDIA's pip packages.
-jax-cuda12-plugin[with-cuda]==0.6.1 ; sys_platform == "linux"
-jax-cuda12-pjrt==0.6.1 ; sys_platform == "linux"
+jax-cuda12-plugin; sys_platform == "linux" and python_version<"3.14"
+jax-cuda13-plugin
+jax-cuda12-pjrt; sys_platform == "linux"
+jax-cuda13-pjrt
 
 # TPU dependencies
-libtpu ; sys_platform == "linux" and platform_machine == "x86_64"
+libtpu; sys_platform == "linux" and platform_machine == "x86_64"
 
-# For Mosaic GPU collectives
-nvidia-nvshmem-cu12>=3.2.5 ; sys_platform == "linux"
+# Colorama is only needed on windows. Pip-compile ignores platform-specific
+# requirements therefore we include it unconditionally here so that the lockfile
+# regeneration always includes it.
+colorama>=0.4.4

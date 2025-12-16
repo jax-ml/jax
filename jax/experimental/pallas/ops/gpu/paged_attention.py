@@ -33,7 +33,9 @@ def paged_attention_kernel(
     # inputs
     q_ref,  # [block_h, head_dim]
     k_pages_ref,  # [total_num_pages, page_size, head_dim]
+    k_scales_pages_ref,  # [total_num_pages, page_size]
     v_pages_ref,  # [total_num_pages, page_size, head_dim]
+    v_scales_pages_ref,  # [total_num_pages, page_size]
     block_tables_ref,  # [pages_per_partition]
     lengths_ref,  # [1]
     # outputs
@@ -52,7 +54,7 @@ def paged_attention_kernel(
 
   def _compute(start_page_idx, end_page_idx, o, m_i, l_i):
     q_slice = pl.ds(0, block_h)
-    q = pl.load(q_ref, (q_slice, slice(None)))
+    q = q_ref[q_slice, :]
 
     # Loop over blocks of pages to process a entire page sequence partition.
     # Grid loops over q blocks over num_heads.
@@ -62,10 +64,19 @@ def paged_attention_kernel(
       block_tables_slice = pl.ds(
           start_k * pages_per_compute_block, pages_per_compute_block
       )
-      block_tables = pl.load(block_tables_ref, block_tables_slice)
+      block_tables = block_tables_ref[block_tables_slice]
       k = k_pages_ref[block_tables].reshape(block_k, head_dim)
       v = v_pages_ref[block_tables].reshape(block_k, head_dim)
+      if k_scales_pages_ref is not None:
+        # dynamic lhs quantized dot is not currently implemented
+        # so we cast rhs to the lhs dtype
+        k = k.astype(q.dtype)
       uncapped_logits = pl.dot(q, k.T)  # [block_h, block_k]
+      if k_scales_pages_ref is not None:
+        # k_scales_pages_ref are one per head
+        # they're laid out across the output dimension, so scale output
+        k_scale = k_scales_pages_ref[block_tables].reshape((1, block_k))
+        uncapped_logits *= k_scale.astype(uncapped_logits.dtype)
       if attn_logits_soft_cap is not None:
         logits = jnp.tanh(uncapped_logits / attn_logits_soft_cap)
         logits = logits * attn_logits_soft_cap
@@ -92,6 +103,14 @@ def paged_attention_kernel(
       l_curr = s_curr.sum(axis=-1)
       l_next = l_prev_corr + l_curr
       o_prev_corr = correction[:, None] * o_prev
+      if v_scales_pages_ref is not None:
+        # v_scales are 1 per head
+        # they're laid out across the reduction dimension, so scale lhs
+        v_scale = v_scales_pages_ref[block_tables].reshape((1, block_k))
+        s_curr *= v_scale.astype(s_curr.dtype)
+        # dynamic lhs quantized dot is not currently implemented
+        # so we cast rhs to the lhs dtype
+        v = v.astype(s_curr.dtype)
       o_curr = pl.dot(s_curr.astype(v.dtype), v)
 
       o_next = o_prev_corr + o_curr
@@ -134,6 +153,8 @@ def paged_attention_unbatched(
     v_pages: jax.Array,  #  [num_kv_heads, total_num_pages, page_size, head_dim]
     block_tables: jax.Array,  #  [pages_per_sequence]
     lengths: jax.Array | None,  #  [1]
+    k_scales_pages: jax.Array | None = None,  # [num_kv_heads, total_num_pages, page_size]
+    v_scales_pages: jax.Array | None = None,  # [num_kv_heads, total_num_pages, page_size]
     *,
     block_h: int,
     pages_per_compute_block: int,
@@ -179,6 +200,19 @@ def paged_attention_unbatched(
       mask_value=mask_value,
       attn_logits_soft_cap=attn_logits_soft_cap,
   )
+  # set up quantization scales
+  if k_scales_pages is not None:
+    assert k_scales_pages.shape == (num_kv_heads, total_num_pages, page_size)
+    k_scales_spec = pl.BlockSpec((None, total_num_pages, page_size),
+                                 lambda h, i, k: (h, 0, 0))
+  else:
+    k_scales_spec = None
+  if v_scales_pages is not None:
+    assert v_scales_pages.shape == (num_kv_heads, total_num_pages, page_size)
+    v_scales_spec = pl.BlockSpec((None, total_num_pages, page_size),
+                                 lambda h, i, k: (h, 0, 0))
+  else:
+    v_scales_spec = None
 
   o, l, m = pl.pallas_call(
       kernel,
@@ -191,10 +225,12 @@ def paged_attention_unbatched(
               (None, total_num_pages, page_size, head_dim),
               lambda h, i, k: (h, 0, 0, 0),
           ),  # k_pages
+          k_scales_spec,  # k_pages_scale
           pl.BlockSpec(
               (None, total_num_pages, page_size, head_dim),
               lambda h, i, k: (h, 0, 0, 0),
           ),  # v_pages
+          v_scales_spec,  # v_pages_scale
           pl.BlockSpec(
               (None, pages_per_partition), lambda h, i, k: (k, 0)
           ),  # block_tables
@@ -226,7 +262,7 @@ def paged_attention_unbatched(
           num_warps=num_warps, num_stages=num_stages
       ),
       name=f"paged_attention_{block_h=}_{pages_per_compute_block=}",
-  )(q_reshaped, k_pages, v_pages, block_tables, lengths)
+  )(q_reshaped, k_pages, k_scales_pages, v_pages, v_scales_pages, block_tables, lengths)
 
   if q_heads_per_kv_head % block_h:
     o = o[..., :q_heads_per_kv_head, :]
@@ -265,6 +301,8 @@ def paged_attention(
     v_pages: jax.Array,
     block_tables: jax.Array,
     lengths: jax.Array | None,
+    k_scales_pages: jax.Array | None = None,
+    v_scales_pages: jax.Array | None = None,
     *,
     block_h: int = 16,
     pages_per_compute_block: int = 8,
@@ -286,6 +324,8 @@ def paged_attention(
       should be in the range of [0, total_num_pages), indicating where to locate
       the page in `k_pages` or `v_pages`.
     lengths: A i32[batch_size] jax.Array the length of each example.
+    k_scales_pages: A [num_kv_heads, total_num_pages, page_size] jax.Array.
+    v_scales_pages: A [num_kv_heads, total_num_pages, page_size] jax.Array.
     block_h: int The block size that partitions the number of head groups.
     pages_per_compute_block: int The maximum number of blocks per compute block.
     k_splits: int Number of partitions used to parallelize key-value sequence
@@ -342,12 +382,14 @@ def paged_attention(
       attn_logits_soft_cap=attn_logits_soft_cap,
   )
 
-  o = jax.vmap(impl, (0, None, None, 0, 0), 0)(
+  o = jax.vmap(impl, (0, None, None, 0, 0, None, None), 0)(
       q,
       k_pages,
       v_pages,
       block_tables,
       lengths[..., None] if lengths is not None else None,
+      k_scales_pages,
+      v_scales_pages,
   )
 
   return o

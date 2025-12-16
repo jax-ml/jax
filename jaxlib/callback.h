@@ -29,13 +29,13 @@ limitations under the License.
 #include "xla/python/nb_numpy.h"
 #include "xla/xla_data.pb.h"
 
-namespace xla {
+namespace jax {
 
 class CpuCallback {
  public:
   struct Arg {
     xla::PrimitiveType type;               // XLA type
-    nb_dtype dtype;                        // NumPy type, for array types.
+    xla::nb_dtype dtype;                   // NumPy type, for array types.
     absl::InlinedVector<int64_t, 4> dims;  // Dimensions, for array types.
     std::vector<int64_t> strides;          // Byte strides, for array types.
     size_t size_in_bytes;                  // Size of the array in bytes.
@@ -71,7 +71,7 @@ class CpuCallback {
 
   xla::TransposePlanCache& transpose_cache() { return transpose_cache_; }
 
-  absl::Status PrepareAndCall(void* result, void** arg_ptrs);
+  absl::Status PrepareAndCall(void** result, void** arg_ptrs);
 
   absl::StatusOr<nanobind::tuple> Call(nanobind::tuple args);
 
@@ -82,6 +82,6 @@ class CpuCallback {
   xla::TransposePlanCache transpose_cache_;
 };
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_CALLBACK_H_

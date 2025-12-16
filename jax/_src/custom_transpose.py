@@ -29,7 +29,7 @@ from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import xla
+from jax._src.interpreters import pxla
 from jax._src.tree_util import (tree_flatten, tree_leaves, tree_map,
                                 tree_structure, treedef_tuple, tree_unflatten,
                                 PyTreeDef)
@@ -105,7 +105,7 @@ class custom_transpose:
                                        (res_arg, out_types), {})                             )
     out_flat = custom_transpose_p.bind(flat_fun, *args_flat,
                                        transpose=transpose_wrapped,
-                                       out_types=out_types_flat,
+                                       out_types=tuple(out_types_flat),
                                        lin_tree=lin_tree,
                                        res_tree=res_tree,
                                        out_tree=out_tree)
@@ -247,4 +247,4 @@ ad.primitive_transposes[custom_transpose_p] = custom_transpose_transpose_rule
 mlir.register_lowering(
     custom_transpose_p,
     mlir.lower_fun(custom_transpose_lowering, multiple_results=True))
-xla.register_initial_style_primitive(custom_transpose_p)
+pxla.register_initial_style_primitive(custom_transpose_p)

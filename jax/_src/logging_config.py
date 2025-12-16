@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import logging
-import os
 import sys
+from jax._src.lib import utils
 
 # Example log message:
 # DEBUG:2023-06-07 00:14:40,280:jax._src.xla_bridge:590: Initializing backend 'cpu'
@@ -22,7 +22,6 @@ logging_formatter = logging.Formatter(
     "{levelname}:{asctime}:{name}:{lineno}: {message}", style='{')
 
 _logging_level_set: dict[str, int] = {}
-_default_TF_CPP_MIN_LOG_LEVEL = os.environ.get("TF_CPP_MIN_LOG_LEVEL", "1")
 
 _jax_logger_handler = logging.StreamHandler(sys.stderr)
 _jax_logger_handler.setFormatter(logging_formatter)
@@ -48,19 +47,17 @@ _tf_cpp_map = {
     'DEBUG': 0,
 }
 
-def _set_TF_CPP_MIN_LOG_LEVEL(logging_level: str | None = None):
+def _set_cpp_min_log_level(logging_level: str | None = None):
   if logging_level in (None, "NOTSET"):
-    # resetting to user-default TF_CPP_MIN_LOG_LEVEL
-    # this is typically "1", but if the user overrode it, it can be != "1"
-    os.environ["TF_CPP_MIN_LOG_LEVEL"] = _default_TF_CPP_MIN_LOG_LEVEL
-  else:
-    # set cpp runtime logging level if the level is anything but NOTSET
-    if logging_level not in _tf_cpp_map:
-      raise ValueError(f"Attempting to set log level \"{logging_level}\" which"
-                       f" isn't one of the supported:"
-                       f" {list(_tf_cpp_map.keys())}.")
-    # config the CPP logging level 0 - debug, 1 - info, 2 - warning, 3 - error
-    os.environ["TF_CPP_MIN_LOG_LEVEL"] = str(_tf_cpp_map[logging_level])
+    return
+  # set cpp runtime logging level if the level is anything but NOTSET
+  if logging_level not in _tf_cpp_map:
+    raise ValueError(f"Attempting to set log level \"{logging_level}\" which"
+                      f" isn't one of the supported:"
+                      f" {list(_tf_cpp_map.keys())}.")
+  # config the CPP logging level 0 - debug, 1 - info, 2 - warning, 3 - error
+  log_level = _tf_cpp_map[logging_level]
+  utils.absl_set_min_log_level(log_level)
 
 def update_logging_level_global(logging_level: str | None) -> None:
   # remove previous handlers
@@ -69,7 +66,7 @@ def update_logging_level_global(logging_level: str | None) -> None:
     logger.removeHandler(_jax_logger_handler)
     logger.setLevel(level)
   _logging_level_set.clear()
-  _set_TF_CPP_MIN_LOG_LEVEL(logging_level)
+  _set_cpp_min_log_level(logging_level)
 
   if logging_level is None:
     return

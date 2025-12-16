@@ -36,47 +36,77 @@ source "ci/utilities/setup_build_environment.sh"
 
 # Print all the installed packages
 echo "Installed packages:"
-"$JAXCI_PYTHON" -m uv pip list
+"$JAXCI_PYTHON" -m uv pip freeze
 
 "$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
 
 nvidia-smi
 
-# Set up all test environment variables
+# ==============================================================================
+# Set up the generic test environment variables
+# ==============================================================================
 export PY_COLORS=1
 export JAX_SKIP_SLOW_TESTS=true
 export NCCL_DEBUG=WARN
 export TF_CPP_MIN_LOG_LEVEL=0
-export JAX_ENABLE_64="$JAXCI_ENABLE_X64"
+export JAX_ENABLE_X64="$JAXCI_ENABLE_X64"
 
-# Set the number of processes to min(num_cpu_cores, gpu_count * $max_tests_per_gpu, total_ram_gb / 6)
-# We calculate max_tests_per_gpu as memory_per_gpu_gb / 2gb
-# Calculate gpu_count * max_tests_per_gpu
+# ==============================================================================
+# Calculate the optimal number of parallel processes for pytest
+# This will be the minimum of: GPU capacity, CPU core count, and a system RAM limit.
+# ==============================================================================
+
 export gpu_count=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
-export memory_per_gpu_gb=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits --id=0)
-export memory_per_gpu_gb=$((memory_per_gpu_gb / 1024))
-# Allow 2 GB of GPU RAM per test
-export max_tests_per_gpu=$((memory_per_gpu_gb / 2))
+echo "Number of GPUs detected: $gpu_count"
+
+echo "Assuming all GPUs are the same model and have the same amount of memory"
+export gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader --id=0)
+echo "Detected GPU type: $gpu_name"
+
+export memory_per_gpu_mib=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits --id=0)
+echo "Reported memory per GPU: $memory_per_gpu_mib MiB"
+
+# Convert effective memory from MiB to GiB.
+export memory_per_gpu_gib=$((memory_per_gpu_mib / 1024))
+echo "Effective memory per GPU: $memory_per_gpu_gib GiB"
+
+# Allow 2 GiB of GPU RAM per test.
+export max_tests_per_gpu=$((memory_per_gpu_gib / 2))
+echo "Max tests per GPU (assuming 2GiB/test): $max_tests_per_gpu"
+
 export num_processes=$((gpu_count * max_tests_per_gpu))
+echo "Initial number of processes based on GPU capacity: $num_processes"
 
-# Calculate num_cpu_cores
 export num_cpu_cores=$(nproc)
+echo "Number of CPU cores available: $num_cpu_cores"
 
-# Calculate total_ram_gb / 6
-export total_ram_gb=$(awk '/MemTotal/ {printf "%.0f", $2/1048576}' /proc/meminfo)
-export host_memory_limit=$((total_ram_gb / 6))
+# Reads total memory from /proc/meminfo (in KiB) and converts to GiB.
+export total_ram_gib=$(awk '/MemTotal/ {printf "%.0f", $2/1048576}' /proc/meminfo)
+echo "Total system RAM: $total_ram_gib GiB"
+
+# Set a safety limit for system RAM usage, e.g., 1/6th of total.
+export host_memory_limit=$((total_ram_gib / 6))
+echo "Host memory process limit (1/6th of total RAM): $host_memory_limit"
 
 if [[ $num_cpu_cores -lt $num_processes ]]; then
   num_processes=$num_cpu_cores
+  echo "Adjusting num_processes to match CPU core count: $num_processes"
 fi
 
 if [[ $host_memory_limit -lt $num_processes ]]; then
   num_processes=$host_memory_limit
+  echo "Adjusting num_processes to match host memory limit: $num_processes"
 fi
 
+echo "Final number of processes to run: $num_processes"
+
+export JAX_ENABLE_CUDA_XDIST="$gpu_count"
 export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 export XLA_FLAGS=--xla_gpu_force_compilation_parallelism=1
-# End of test environment variable setup
+
+# ==============================================================================
+# Run tests
+# ==============================================================================
 
 echo "Running CUDA tests..."
 "$JAXCI_PYTHON" -m pytest -n $num_processes --tb=short --maxfail=20 \

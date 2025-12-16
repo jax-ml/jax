@@ -21,7 +21,7 @@ import functools
 from functools import partial
 import operator as op
 import textwrap
-from typing import Any, TypeVar, overload
+from typing import Any, TypeVar
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
@@ -38,6 +38,7 @@ Typ = TypeVar("Typ", bound=type[Any])
 H = TypeVar("H", bound=Hashable)
 
 Leaf = Any
+PyTree = Any
 PyTreeDef = pytree.PyTreeDef
 
 default_registry = pytree.default_registry()
@@ -123,7 +124,7 @@ def treedef_tuple(treedefs: Iterable[PyTreeDef]) -> PyTreeDef:
   See Also:
     - :func:`jax.tree_util.treedef_children`
   """
-  return pytree.tuple(default_registry, list(treedefs))
+  return pytree.treedef_tuple(default_registry, list(treedefs))
 
 
 @export
@@ -420,42 +421,53 @@ _registry: dict[type[Any], _RegistryEntry] = {
     type(None): _RegistryEntry(lambda z: ((), None), lambda _, xs: None),
 }
 
-def _replace_nones(sentinel, tree):
-  """Replaces ``None`` in ``tree`` with ``sentinel``."""
-  leaves, treedef = none_leaf_registry.flatten(tree)
-  leaves = map(lambda x: sentinel if x is None else x, leaves)
-  return treedef.unflatten(leaves)
 
-
-no_initializer = object()
-
-
-@overload
-def tree_reduce(function: Callable[[T, Any], T],
-                tree: Any,
-                *,
-                is_leaf: Callable[[Any], bool] | None = None) -> T:
-    ...
-
-
-@overload
-def tree_reduce(function: Callable[[T, Any], T],
-                tree: Any,
-                initializer: T,
-                is_leaf: Callable[[Any], bool] | None = None) -> T:
-    ...
+class Unspecified:
+  pass
 
 
 @export
 def tree_reduce(function: Callable[[T, Any], T],
                 tree: Any,
-                initializer: Any = no_initializer,
+                initializer: T | Unspecified = Unspecified(),
                 is_leaf: Callable[[Any], bool] | None = None) -> T:
   """Alias of :func:`jax.tree.reduce`."""
-  if initializer is no_initializer:
+  if isinstance(initializer, Unspecified):
     return functools.reduce(function, tree_leaves(tree, is_leaf=is_leaf))
   else:
     return functools.reduce(function, tree_leaves(tree, is_leaf=is_leaf), initializer)
+
+
+def _parallel_reduce(
+    sequence: list[T],
+    operation: Callable[[T, T], T],
+    identity: T | Unspecified = Unspecified(),
+) -> T:
+  length = len(sequence)
+  if length == 0:
+    if isinstance(identity, Unspecified):
+      raise TypeError("Must specify identity for parallel reduction of empty sequence.")
+    return identity
+  elif length == 1:
+    return sequence[0]
+  else:
+    index = length // 2
+    a = _parallel_reduce(sequence[:index], operation, identity)
+    b = _parallel_reduce(sequence[index:], operation, identity)
+    return operation(a, b)
+
+
+@export
+def tree_reduce_associative(
+    operation: Callable[[T, T], T],
+    tree: Any,
+    *,
+    identity: T | Unspecified = Unspecified(),
+    is_leaf: Callable[[Any], bool] | None = None,
+) -> T:
+  """Alias of :func:`jax.tree.reduce_associative`."""
+  sequence = tree_leaves(tree, is_leaf=is_leaf)
+  return _parallel_reduce(sequence, operation, identity)
 
 
 @export
@@ -532,7 +544,7 @@ class Partial(functools.partial):
   >>> print_zero()
   0
   >>> call_func(print_zero)  # doctest:+ELLIPSIS
-  Traced<~int32[]>with<DynamicJaxprTrace...>
+  JitTracer(~int32[])
   """
 
   def __new__(klass, func, *args, **kw):
@@ -563,7 +575,7 @@ register_pytree_node(
 @export
 def tree_broadcast(prefix_tree: Any, full_tree: Any,
                    is_leaf: Callable[[Any], bool] | None = None
-                  ) -> list[Any]:
+                  ) -> Any:
   """Alias of :func:`jax.tree.broadcast`."""
   broadcast_leaves = broadcast_prefix(prefix_tree, full_tree, is_leaf=is_leaf)
   return tree_structure(full_tree).unflatten(broadcast_leaves)
@@ -579,9 +591,9 @@ def broadcast_prefix(prefix_tree: Any, full_tree: Any,
       prefix_tree: a pytree that is a tree prefix of full_tree.
       full_tree: a pytree with the structure to broadcast the prefix leaves into.
       is_leaf: an optionally specified function that will be called at each
-        flattening step. It should return a boolean, with true stopping the
-        traversal and the whole subtree being treated as a leaf, and false
-        indicating the flattening should traverse the current object.
+        flattening step for prefix_tree. It should return a boolean, with true
+        stopping the traversal and the whole subtree being treated as a leaf,
+        and false indicating the flattening should traverse the current object.
 
     Returns:
       A list of leaves matching the expected count for the full tree,
@@ -597,6 +609,68 @@ def broadcast_prefix(prefix_tree: Any, full_tree: Any,
       e, *_ = prefix_errors(prefix_tree, full_tree)
       raise e('broadcast_prefix prefix_tree') from None
   return result
+
+
+# broadcast_flattened_prefix_with_treedef is not exported
+def broadcast_flattened_prefix_with_treedef(
+    prefix_leaves: list[Any],
+    prefix_treedef: PyTreeDef,
+    full_treedef: PyTreeDef,
+) -> list[Any]:
+  """Broadcasts tree prefix leaves into the full set of leaves for a given full treedef.
+
+    Args:
+      prefix_leaves: the leaves of a pytree that is a tree prefix
+        of full_treedef.
+      prefix_treedef: the PyTreeDef of a pytree that is a tree prefix of
+        full_treedef.
+      full_treedef: a PyTreeDef with the structure to broadcast the prefix
+        leaves into.
+
+    Returns:
+      A list of leaves matching the expected count for the full tree,
+      with each leaf of prefix tree being duplicated to match the count of
+      its corresponding subtree.
+  """
+  # NOTE: At the moment, `broadcast_flattened_prefix_with_treedef` is only
+  # called from `api_util.flatten_axes`, which replaces any raised exception
+  # with its own exception and error message.  The errors raised from this
+  # function should probably be improved before this function is used in
+  # more places.
+  #
+  # TODO(jburnim): Merge `broadcast_prefix` with this function?
+  # prefix_leaves, prefix_treedef = tree_flatten(prefix_tree, is_leaf)
+  ret = []
+
+  # TODO(jburnim): Should this traversal be done in C++?
+  def _broadcast(broadcast_fn, leaf_start, leaf_end, prefix_treedef, treedef):
+    if treedef_is_strict_leaf(prefix_treedef):
+      # We have encountered a leaf in the prefix, so we repeat the prefix leaf
+      # for each leaf in the corresponding part of the tree.
+      assert (leaf_end - leaf_start) == 1
+      ret.extend(prefix_leaves[leaf_start:leaf_end] * treedef.num_leaves)
+      return
+
+    if treedef_is_strict_leaf(treedef):
+      raise ValueError('`prefix_treedef` is not a prefix of `full_treedef`')
+
+    prefix_node_data = prefix_treedef.node_data()
+    node_data = treedef.node_data()
+    if prefix_node_data != node_data:
+      raise ValueError(f'expected {node_data}, got {prefix_node_data}')
+
+    prefix_i = leaf_start
+    for prefix_child, tree_child in zip(
+        prefix_treedef.children(), treedef.children(), strict=True):
+      broadcast_fn(broadcast_fn, prefix_i, prefix_i + prefix_child.num_leaves,
+                   prefix_child, tree_child,
+      )
+      prefix_i += prefix_child.num_leaves
+
+  # Pass _broadcast as arg to avoid it being a free variable within its own
+  # closure, which creates a reference cycle.
+  _broadcast(_broadcast, 0, len(prefix_leaves), prefix_treedef, full_treedef)
+  return ret
 
 
 # flatten_one_level is not exported.
@@ -922,7 +996,7 @@ def register_dataclass(
   registries use the optimized C++ dataclass builtin instead of the argument
   functions.
 
-  See :ref:`extending-pytrees` for more information about registering pytrees.
+  See :ref:`pytrees-custom-pytree-nodes` for more information about registering pytrees.
 
   Args:
     nodetype: a Python type to treat as an internal pytree node. This is assumed
@@ -931,7 +1005,7 @@ def register_dataclass(
       as keywords to the class constructor to create a copy of the object.
       All defined attributes should be listed among ``meta_fields`` or ``data_fields``.
     meta_fields: metadata field names: these are attributes which will be treated as
-      {term}`static` when this pytree is passed to :func:`jax.jit`. ``meta_fields`` is
+      :term:`static` when this pytree is passed to :func:`jax.jit`. ``meta_fields`` is
       optional only if ``nodetype`` is a dataclass, in which case individual fields can
       be marked static via :func:`dataclasses.field` (see examples below).
       Metadata fields *must* be static, hashable, immutable objects, as these objects
@@ -1126,34 +1200,38 @@ def register_static(cls: type[H]) -> type[H]:
 
 @export
 def tree_flatten_with_path(
-    tree: Any, is_leaf: Callable[[Any], bool] | None = None
+    tree: Any, is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
 ) -> tuple[list[tuple[KeyPath, Any]], PyTreeDef]:
   """Alias of :func:`jax.tree.flatten_with_path`."""
-  return default_registry.flatten_with_path(tree, is_leaf)
+  is_leaf_with_kp: Callable[[Any, Any], bool] | None = is_leaf
+  if not is_leaf_takes_path and is_leaf is not None:
+    is_leaf_with_kp = lambda _, x: is_leaf(x)
+  return default_registry.flatten_with_path(tree, is_leaf_with_kp)
 
 
 @export
 def tree_leaves_with_path(
-    tree: Any, is_leaf: Callable[[Any], bool] | None = None
+    tree: Any, is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
 ) -> list[tuple[KeyPath, Any]]:
   """Alias of :func:`jax.tree.leaves_with_path`."""
-  return tree_flatten_with_path(tree, is_leaf)[0]
-
-
-# generate_key_paths is not exported.
-def generate_key_paths(
-    tree: Any, is_leaf: Callable[[Any], bool] | None = None
-) -> list[tuple[KeyPath, Any]]:
-  return tree_leaves_with_path(tree, is_leaf)
-_generate_key_paths = generate_key_paths  # alias for backward compat
+  return tree_flatten_with_path(tree, is_leaf, is_leaf_takes_path)[0]
+generate_key_paths = tree_leaves_with_path
 
 
 @export
-def tree_map_with_path(f: Callable[..., Any],
-                       tree: Any, *rest: Any,
-                       is_leaf: Callable[[Any], bool] | None = None) -> Any:
+def tree_map_with_path(
+    f: Callable[..., Any],
+    tree: Any,
+    *rest: Any,
+    is_leaf: Callable[..., bool] | None = None,
+    is_leaf_takes_path: bool = False,
+) -> Any:
   """Alias of :func:`jax.tree.map_with_path`."""
-  keypath_leaves, treedef = tree_flatten_with_path(tree, is_leaf)
+  keypath_leaves, treedef = tree_flatten_with_path(
+      tree, is_leaf, is_leaf_takes_path
+  )
   keypath_leaves = list(zip(*keypath_leaves))
   all_keypath_leaves = keypath_leaves + [treedef.flatten_up_to(r) for r in rest]
   return treedef.unflatten(f(*xs) for xs in zip(*all_keypath_leaves))
@@ -1259,3 +1337,119 @@ def _prefix_error(
      f"{prefix_tree_keys} and {full_tree_keys}")
   for k, t1, t2 in zip(prefix_tree_keys, prefix_tree_children, full_tree_children):
     yield from _prefix_error((*key_path, k), t1, t2)
+
+# === flat tree ===
+
+class FlatTree:
+  """A FlatTree stores a treedef and a flat list of values. It's meant to be
+  isomorphic to the corresponding pytree but we can map over it more easily.
+  Compared to `tree_map`, FlatTree.map has these benefits:
+    1. It doesn't touch user flatten/unflatten code (which shouldn't have side
+       effects but sometimes does in practice).
+    2. It can be faster, because it skips the recursive traversal.
+    3. It actually obeys the functor rules. For example,
+       `flat_tree.map(lambda x: (f(x), g(x))).unzip2()[0]` will give
+       the same result as `flat_tree.map(f)`, whereas in the `tree_map` version
+       the tuple-returning function would change the tree structure and `unzip`
+       wouldn't be able to recover it.
+  """
+  def __init__(self, vals:Sequence, treedef:PyTreeDef):
+    assert isinstance(treedef, pytree.PyTreeDef)
+    self.tree = treedef
+    self.vals = tuple(vals)
+
+  def map(self, f:Callable) -> FlatTree:
+    ans_vals = []
+    for x in self.vals:
+      ans_vals.append(f(x))
+    return FlatTree(ans_vals, self.tree)
+
+  def map2(self:FlatTree, f:Callable, t2:FlatTree) -> FlatTree:
+
+    n = len(self)
+    assert len(t2) == n
+    ans_vals = []
+    for x1, x2 in zip(self.vals, t2.vals):
+      ans_vals.append(f(x1, x2))
+    return FlatTree(ans_vals, self.tree)
+
+  def map3(
+      self:FlatTree, f:Callable, t2:FlatTree, t3:FlatTree) -> FlatTree:
+    n = len(self)
+    assert len(t2) == n and len(t3) == n
+    ans_vals = []
+    for x1, x2, x3 in zip(self.vals, t2.vals, t3.vals):
+      ans_vals.append(f(x1, x2, x3))
+    return FlatTree(ans_vals, self.tree)
+
+  def zip(self, t2:FlatTree) -> FlatTree:
+    assert False
+
+  def unzip2(self:FlatTree) -> tuple[FlatTree, FlatTree]:
+    ys = []
+    zs = []
+    for y, z in self.vals:
+      ys.append(y)
+      zs.append(z)
+    return FlatTree(ys, self.tree), FlatTree(zs, self.tree)
+
+  # TODO: add map3, zip3, unzip3 etc. as needed
+
+  @staticmethod
+  def pack(tree):
+    # We could generalize this to arbitrary pytrees of FlatTree but tuples/dicts
+    # are sufficient for now.
+    if isinstance(tree, FlatTree):
+      return tree
+    elif isinstance(tree, tuple):
+      vals = []
+      trees = []
+      for child_tree in tree:
+        child = FlatTree.pack(child_tree)
+        vals.extend(child.vals)
+        trees.append(child.tree)
+      return FlatTree(vals, treedef_tuple(trees))
+    elif isinstance(tree, dict):
+      # only empty case handled for now
+      if tree == {}:
+        return FlatTree.flatten({})
+      else:
+        assert False
+    else:
+      assert False
+
+  def unpack(self:FlatTree) -> tuple[FlatTree, ...]:
+    # TODO: this is O(N) not O(1) (with N as the number of leaves). If it
+    # becomes a problem we can fix it with a fancier data tree.
+    trees = treedef_children(self.tree)
+    children = []
+    offset = 0
+    for tree in trees:
+      new_offset = offset + tree.num_leaves
+      children.append(FlatTree(self.vals[offset:new_offset], tree))
+      offset = new_offset
+    return tuple(children)
+
+  @staticmethod
+  def flatten(tree: PyTree) -> FlatTree:
+    return FlatTree(*tree_flatten(tree))
+
+  def unflatten(self) -> PyTree:
+    return tree_unflatten(self.tree, self.vals)
+
+  def update_from_list(self, new_vals:list) -> FlatTree:
+    return FlatTree(new_vals, self.tree)
+
+  def __len__(self):
+    return self.tree.num_leaves
+
+  def __iter__(self):
+    return self.vals.__iter__()
+
+  def __eq__(self, other):
+    return (isinstance(other, FlatTree)
+            and self.vals == other.vals
+            and self.tree == other.tree)
+
+  def __hash__(self):
+    return hash((self.vals, self.tree))

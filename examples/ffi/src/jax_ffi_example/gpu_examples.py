@@ -16,8 +16,10 @@ import jax
 from jax_ffi_example import _gpu_examples
 import jax.numpy as jnp
 
+
+jax.ffi.register_ffi_type(
+    "state", _gpu_examples.state_type(), platform="CUDA")
 jax.ffi.register_ffi_target("state", _gpu_examples.handler(), platform="CUDA")
-jax.ffi.register_ffi_type_id("state", _gpu_examples.type_id(), platform="CUDA")
 
 
 def read_state():

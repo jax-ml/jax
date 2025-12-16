@@ -16,8 +16,11 @@
 
 import re
 
+from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
+
 from . import fragmented_array as fa
+from . import launch_context
 
 
 _splat_fragmented_layout_attr_pattern = re.compile(
@@ -96,7 +99,7 @@ def is_strided_fragmented_layout(attr: ir.Attribute) -> bool:
 
 _tiled_layout_attr_pattern = re.compile(
     r"^#mosaic_gpu.TiledLayout<\[(?P<tiling>.*)\],"
-    r" warp_dim\s*=\s*(?P<warp_dim>.+),"
+    r" warp_dims\s*=\s*\[(?P<warp_dims>.*)\],"
     r" lane_dims\s*=\s*\[(?P<lane_dims>.*)\],"
     r" vector_dim\s*=\s*(?P<vector_dim>[-\d]+)>$"
 )
@@ -114,13 +117,15 @@ def to_tiled_layout_attr(
 
   tile_str = lambda tile: "[" + ", ".join(str(d) for d in tile) + "]"
   tiling = "[" + ", ".join(tile_str(tile) for tile in layout.tiling.tiles) + "]"
+  warp_dims = (
+      "[" + ",".join(_int_or_replicated(d) for d in layout.warp_dims) + "]"
+  )
   lane_dims = (
       "[" + ",".join(_int_or_replicated(d) for d in layout.lane_dims) + "]"
   )
 
   return ir.Attribute.parse(
-      f"#mosaic_gpu.TiledLayout<{tiling},"
-      f" warp_dim={_int_or_replicated(layout.warp_dim)},"
+      f"#mosaic_gpu.TiledLayout<{tiling}, warp_dims={warp_dims},"
       f" lane_dims={lane_dims}, vector_dim={layout.vector_dim}>"
   )
 
@@ -163,7 +168,10 @@ def from_tiled_layout_attr(
   tiles = tuple(tuple(map(int, ts.split(","))) for ts in tile_strings)
   return fa.TiledLayout(
       tiling=fa.Tiling(tiles),
-      warp_dim=_int_or_replicated(match.group("warp_dim")),
+      warp_dims=tuple(
+          _int_or_replicated(s.strip())
+          for s in match.group("warp_dims").split(",")
+      ),
       lane_dims=tuple(
           _int_or_replicated(s.strip())
           for s in match.group("lane_dims").split(",")
@@ -176,13 +184,7 @@ def is_tiled_layout(attr: ir.Attribute) -> bool:
   return bool(_tiled_layout_attr_pattern.search(str(attr)))
 
 
-def to_layout_attr(
-    layout: (
-        fa.WGSplatFragLayout
-        | fa.WGStridedFragLayout
-        | fa.TiledLayout
-    ),
-) -> ir.Attribute:
+def to_layout_attr(layout: fa.FragmentedLayout) -> ir.Attribute:
   """Constructs an MLIR attribute that corresponds to the given layout."""
   match layout:
     case fa.WGSplatFragLayout():
@@ -197,13 +199,7 @@ def to_layout_attr(
       )
 
 
-def from_layout_attr(
-    attr: ir.Attribute,
-) -> (
-    fa.WGSplatFragLayout
-    | fa.WGStridedFragLayout
-    | fa.TiledLayout
-):
+def from_layout_attr(attr: ir.Attribute) -> fa.FragmentedLayout:
   """Constructs a layout from an MLIR attribute."""
   if is_splat_fragmented_layout(attr):
     return from_splat_fragmented_layout_attr(attr)
@@ -215,3 +211,69 @@ def from_layout_attr(
     raise NotImplementedError(
         f"Unsupported layout for conversion from MLIR attribute: {attr}"
     )
+
+
+def splat_is_compatible_with_tiled(
+    l1: fa.WGSplatFragLayout, l2: fa.TiledLayout
+) -> bool:
+  # A splat layout is compatible with a tiled layout up to replication if each
+  # dimension in the shape of the splat layout is divisible by the corresponding
+  # dimension in the base tile shape.
+  s1, s2 = l1.shape, l2.base_tile_shape
+  return all(d1 % d2 == 0 for d1, d2 in zip(s1, s2))
+
+
+_tile_transform_attr_pattern = re.compile(
+    r"^#mosaic_gpu.tile<[^>]+>$"
+)
+
+
+def is_tile_transform(attr: ir.Attribute) -> bool:
+  return bool(_tile_transform_attr_pattern.search(str(attr)))
+
+
+_transpose_transform_attr_pattern = re.compile(
+    r"^#mosaic_gpu.transpose<[^>]+>$"
+)
+
+
+def is_transpose_transform(attr: ir.Attribute) -> bool:
+  return bool(_transpose_transform_attr_pattern.search(str(attr)))
+
+
+_swizzle_transform_attr_pattern = re.compile(
+    r"^#mosaic_gpu.swizzle<[^>]+>$"
+)
+
+def is_swizzle_transform(attr: ir.Attribute) -> bool:
+  return bool(_swizzle_transform_attr_pattern.search(str(attr)))
+
+
+def to_transform_attr(
+    transform: launch_context.MemRefTransform | mgpu.SwizzlingMode,
+) -> ir.Attribute:
+  if isinstance(transform, launch_context.TileTransform):
+    return mgpu.TileTransformAttr.get(transform.tiling)
+  elif isinstance(transform, launch_context.TransposeTransform):
+    return mgpu.TransposeTransformAttr.get(transform.permutation)
+  elif isinstance(transform, mgpu.SwizzlingMode):
+    return mgpu.SwizzleTransformAttr.get(transform)
+  else:
+    raise NotImplementedError(f"Unsupported transform {transform}")
+
+
+def from_transform_attr(
+    transform: ir.Attribute,
+) -> launch_context.MemRefTransform | mgpu.SwizzlingMode:
+  if is_tile_transform(transform):
+    return launch_context.TileTransform(
+        mgpu.TileTransformAttr(transform).tiling
+    )
+  elif is_transpose_transform(transform):
+    return launch_context.TransposeTransform(
+        mgpu.TransposeTransformAttr(transform).permutation
+    )
+  elif is_swizzle_transform(transform):
+    return mgpu.SwizzlingMode(mgpu.SwizzleTransformAttr(transform).swizzle)
+  else:
+    raise NotImplementedError(f"Unsupported transform {transform}")

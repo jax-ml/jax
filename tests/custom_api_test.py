@@ -30,7 +30,6 @@ import jax.numpy as jnp
 from jax import float0, grad, jit
 from jax import lax
 from jax import tree_util
-from jax.ad_checkpoint import checkpoint as new_checkpoint
 import jax.custom_batching
 import jax.custom_derivatives
 import jax.custom_transpose
@@ -42,7 +41,6 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
-from jax._src import deprecations
 from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
 
@@ -330,7 +328,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertRaises(UnexpectedTracerError, lambda: api.jvp(f, (3.,), (1.,)))
     self.assertRaises(UnexpectedTracerError, lambda: api.grad(f)(3.))
 
-  def test_nondiff_arg(self):
+  def test_nondiff_argnums(self):
     @partial(jax.custom_jvp, nondiff_argnums=(0,))
     def app(f, x):
       return f(x)
@@ -345,6 +343,21 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     ans = api.jvp(lambda x: app(lambda y: 2 * y, x), (1.,), (1.,))
     expected = (2., 3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_nondiff_argnames(self):
+    @partial(jax.custom_jvp, nondiff_argnames=('f',))
+    def app(f, x):
+      return f(x)
+
+    def app_jvp(f, primals, tangents):
+      (x,), (t,) = primals, tangents
+      return app(f, x), 3 * t
+
+    app.defjvp(app_jvp)
+
+    ans = app(lambda x: 2 * x, 1)
+    expected = 2
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_nondiff_arg_jit_tracer(self):
@@ -875,15 +888,15 @@ class CustomJVPTest(jtu.JaxTestCase):
     def g(x):
       return f(f(x))
 
-    ans = api.grad(api.grad(new_checkpoint(g)))(2.)
+    ans = api.grad(api.grad(jax.checkpoint(g)))(2.)
     expected = api.grad(api.grad(g))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = api.grad(new_checkpoint(api.grad(g)))(2.)
+    ans = api.grad(jax.checkpoint(api.grad(g)))(2.)
     expected = api.grad(api.grad(g))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = api.grad(api.grad(api.grad(new_checkpoint(g))))(2.)
+    ans = api.grad(api.grad(api.grad(jax.checkpoint(g))))(2.)
     expected = api.grad(api.grad(api.grad(g)))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -1350,6 +1363,25 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(
         api.jvp(f1, (x, y), (0.0, 1.0)), (f1(x, y), -0.5 * jnp.sin(y)))
 
+  def test_dce_symbolic_zeros(self):
+    # https://github.com/jax-ml/jax/issues/31448
+    @jax.custom_jvp
+    def f(x):
+      return x
+
+    @partial(f.defjvp, symbolic_zeros=True)
+    def f_jvp(primals, tangents):
+      x, = primals
+      tx, = tangents
+      return f(x), tx
+
+    @jax.jacfwd
+    @jax.jacrev
+    def f_wrapped(x):
+        return jax.jit(f)((x, 3.))
+
+    f_wrapped(jnp.zeros(2))  # doesn't crash
+
   def test_resolve_kwargs_error_message(self):
     @jax.custom_jvp
     def f(x, y, *, z=None):
@@ -1431,6 +1463,45 @@ class CustomJVPTest(jtu.JaxTestCase):
         """).strip()
     self.assertEqual(actual, expected)
 
+  def test_custom_jvp_transpose_vjp3(self):
+    @jax.custom_jvp
+    def div(x, y):
+      return x / y
+    @div.defjvp
+    def sin_jvp(primals, tangents):
+      (x, y), (x_dot, y_dot) = primals, tangents
+      del y_dot  # ignore lol
+      return div(x, y), div(x_dot, y)
+    _, f_vjp = api.vjp(lambda x: div(x, 2.), 1.)
+    ans, = f_vjp(1.)
+    self.assertAllClose(ans, 1./2, check_dtypes=False)
+
+  def test_ensure_compile_time_eval(self):
+    @jax.custom_jvp
+    def f(x):
+      assert x == 0.  # concrete!
+      return x
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      (x,), (x_dot,) = primals, tangents
+      assert x == 0.  # concrete!
+
+    @jax.jit
+    def g():
+      with jax.ensure_compile_time_eval():
+        return f(0.)
+
+    g()  # don't crash
+
+    # TODO(mattjj): do we want to support autodiff here too?
+    # def h(x):
+    #   @jax.jit
+    #   def hh():
+    #     with jax.ensure_compile_time_eval():
+    #       return f(x)
+    #   return hh()
+
+    # jax.grad(h)(0.)  # don't crash
 
 
 class CustomVJPTest(jtu.JaxTestCase):
@@ -1655,7 +1726,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     expected = 2. * jnp.cos(jnp.arange(3.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_nondiff_arg(self):
+  def test_nondiff_argnums(self):
     @partial(jax.custom_vjp, nondiff_argnums=(0,))
     def app(f, x):
       return f(x)
@@ -1671,6 +1742,44 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     ans = api.value_and_grad(lambda x: app(lambda y: 2 * y, x))(1.)
     expected = (2., jnp.cos(1.))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_nondiff_argnames(self):
+    @partial(jax.custom_vjp, nondiff_argnames=('f',))
+    def app(f, x):
+      return f(x)
+    def app_fwd(f, x):
+      return app(f, x), jnp.cos(x)
+    def app_rev(f, cos_x, g):
+      return (cos_x * g,)
+    app.defvjp(app_fwd, app_rev)
+
+    ans = app(lambda x: 2 * x, 1)
+    expected = 2
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.value_and_grad(lambda x: app(lambda y: 2 * y, x))(1.)
+    expected = (2., jnp.cos(1.))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_nondiff_argnums_argnames(self):
+    @partial(jax.custom_vjp, nondiff_argnums=(0,), nondiff_argnames=('g',))
+    def app(f, g, x):
+      return f(x) + g(x)
+    def app_fwd(f, g, x):
+      return app(f, g, x), jnp.cos(x)
+    def app_rev(f, g, cos_x, v):
+      return (cos_x * v,)
+    app.defvjp(app_fwd, app_rev)
+
+    f = lambda x: 2 * x
+    g = lambda x: 2 * x
+    ans = app(f, g, 1)
+    expected = 4
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.value_and_grad(lambda x: app(f, g, x))(1.)
+    expected = (4., jnp.cos(1.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_closed_over_jit_tracer(self):
@@ -2862,23 +2971,6 @@ class CustomVJPTest(jtu.JaxTestCase):
         r'output\[1\] the bwd rule produced an output of shape/dtype float..\[3\]'):
       jax.grad(lambda x, y: foo(x, y * y).sum(), 1)(jnp.ones(3), jnp.ones(4))
 
-  def test_bwd_rule_shape_mismatch_disable(self):
-    # TODO(mattjj): remove this test when the config option is removed
-    @jax.custom_vjp
-    def foo(x, y):
-      return x
-
-    def foo_fwd(x, y):
-      return x, None
-
-    def foo_bwd(_, g):
-      return jnp.zeros(3), jnp.zeros(3)
-
-    foo.defvjp(foo_fwd, foo_bwd)
-
-    with config.custom_vjp_disable_shape_check(True):
-      jax.grad(lambda x, y: foo(x, y).sum(), 1)(jnp.ones(3), jnp.ones(4))
-
   def test_bwd_rule_can_produce_list_or_tuple(self):
     @jax.custom_vjp
     def f(x, y):
@@ -2901,7 +2993,7 @@ class CustomVJPTest(jtu.JaxTestCase):
       return np.array([1.0])*x
 
     def fwd(x):
-      return np.array([2.0])*x*x/np.array([1.0]), (x,)
+      return np.array([2.0])*x*x/np.array([1.0]), (2 * x,)
 
     x = jnp.linspace(0, 5.0, 10)
     fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
@@ -2915,7 +3007,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     def fun(x):
       return (np.array([1.0])*x)[0]
     def fwd(x):
-      return (np.array([2.0])*x*x/np.array([1.0]))[0], (x,)
+      return (np.array([2.0])*x*x/np.array([1.0]))[0], (2 * x,)
     x = jnp.linspace(0, 5.0, 10)
     fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
         fun, api_util.debug_info("custom_vjp fun", fun, (x,), {}),
@@ -2927,7 +3019,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     def fun(x):
       return x
     def fwd(x):
-      return x*x, (x,)
+      return x*x, (2 * x,)
 
     x = jnp.linspace(0, 5.0, 10)
     fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
@@ -2944,7 +3036,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     def fun(x):
       return x**2
     def fwd_(x):
-      return x*x, (x,)
+      return x*x, (2 * x,)
 
     fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
         fun, api_util.debug_info("custom_vjp fun", fun, (3.2,), {}),
@@ -3140,6 +3232,35 @@ class CustomVJPTest(jtu.JaxTestCase):
               bwd=f_bwd
               call_jaxpr={ lambda ; c:f32[1]. let d:f32[1] = add c 1.0:f32[] in (d,) }
               fwd=f_fwd
+              symbolic_zeros=False
+            ] a
+          in (b,) }
+        """).strip()
+    self.assertEqual(actual, expected)
+
+  def test_custom_lin_pretty_print(self):
+    @jax.custom_vjp
+    def f(x):
+      return x + 1
+
+    def f_fwd(x):
+      return f(x), ()
+
+    def f_bwd(_, g):
+      return g
+    f.defvjp(f_fwd, f_bwd)
+
+    x = jnp.array([4.2], dtype=jnp.float32)
+    jaxpr = jax.make_jaxpr(lambda x: jax.jvp(f, (x,), (x,)))(x)
+    jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [False, True])
+    actual = jaxpr.pretty_print(use_color=False)
+    expected = textwrap.dedent(
+        """
+        { lambda ; a:f32[1]. let
+            b:f32[1] = custom_lin[
+              bwd=f_bwd
+              in_zeros=[False]
+              num_res=0
               symbolic_zeros=False
             ] a
           in (b,) }
@@ -3638,19 +3759,6 @@ class CustomTransposeTest(jtu.JaxTestCase):
     self.assertAllClose(f_t(x), jax.jit(f_t)(x))
     self.assertAllClose(f_(x), g_(x))
     self.assertAllClose(f_t(x), g_t(x))
-
-  def test_jit_signature_deprecation(self):
-    fun = lambda x: x
-    if deprecations.is_accelerated('jax-jit-positional-args'):
-      with self.assertRaisesRegex(TypeError, r'jit\(\) got some positional-only arguments passed as keyword arguments.*'):
-        jax.jit(fun=fun)
-      with self.assertRaisesRegex(TypeError, r'jit\(\) takes 1 positional argument but 2 were given.*'):
-        jax.jit(fun, None)
-    else:
-      with self.assertWarnsRegex(DeprecationWarning, r'jax\.jit: passing fun by keyword is deprecated.*'):
-        jax.jit(fun=fun)
-      with self.assertWarnsRegex(DeprecationWarning, r'jax\.jit: passing optional arguments by position is deprecated.*'):
-        jax.jit(fun, None)
 
   def test_cond(self):
     def f(x, y):
@@ -4466,6 +4574,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertEqual(str(jaxpr), str(jaxpr_ref))
 
   @parameterized.named_parameters(
+    ("0", 0),
     ("1", 1),
     ("8", 4),
     ("12", 8),
@@ -4482,6 +4591,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(y, x**2)
 
   @parameterized.named_parameters(
+    ("0", 0),
     ("1", 1),
     ("8", 4),
     ("12", 8),

@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import functools
-from typing import Any, Callable, NamedTuple
+from typing import Any, NamedTuple
+from collections.abc import Callable
+import dataclasses
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -29,18 +31,37 @@ from jax._src import test_util as jtu
 config.parse_flags_with_absl()
 
 
-@functools.partial(jax.tree_util.register_dataclass,
-                   data_fields=['x'],
-                   meta_fields=[])
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass
 class JaxArrayWrapper:
   """Class that provides a __jax_array__ method."""
   x: ArrayLike
 
-  def __init__(self, x: ArrayLike):
-    self.x = x
+  def __jax_array__(self) -> jax.Array:
+    return jnp.asarray(self.x)
+
+
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass
+class NumpyArrayWrapper:
+  """Pytree that provides an __array__ method."""
+  x: ArrayLike
+
+  def __array__(self, dtype=None, copy=None) -> jax.Array:
+    return np.asarray(self.x, dtype=dtype, copy=copy)
+
+
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass
+class JaxArrayWrapperWithErroringNumpyArray:
+  """Pytree that provides an __array__ method which fails."""
+  x: ArrayLike
 
   def __jax_array__(self) -> jax.Array:
     return jnp.asarray(self.x)
+
+  def __array__(self, dtype=None, copy=None) -> jax.Array:
+    raise ValueError("__array__ method should not be called.")
 
 
 class DuckTypedArrayWithErroringJaxArray:
@@ -531,6 +552,25 @@ class JaxArrayTests(jtu.JaxTestCase):
     wrapped = fun(*wrapped_args, **kwargs)
 
     self.assertAllClose(wrapped, expected, atol=0, rtol=0)
+
+  @jtu.sample_product(
+      api=['array', 'asarray'],
+      test_class=[
+          JaxArrayWrapper,
+          NumpyArrayWrapper,
+          JaxArrayWrapperWithErroringNumpyArray,
+      ],
+  )
+  def test_array_creation(self, api, test_class):
+    """Test pytrees with __jax_array__ and/or __array__ methods."""
+    fun = getattr(jnp, api)
+    x = np.arange(5, dtype='float32')
+
+    expected = fun(x)
+    actual = fun(test_class(x))
+
+    self.assertIsInstance(actual, jax.Array)
+    self.assertAllClose(actual, expected, atol=0, rtol=0)
 
   @parameterized.named_parameters(
     {'testcase_name': func.__name__, 'func': func}

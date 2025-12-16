@@ -18,11 +18,10 @@ from collections.abc import Sequence
 
 import jax
 from jax.experimental import mesh_utils
-from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
 from jax._src import xla_bridge as xb
 
-Device = xc.Device
+Device = _jax.Device
 
 
 class TopologyDescription:
@@ -45,8 +44,8 @@ def get_topology_desc(
     )
   try:
     topology = xb.make_pjrt_topology(platform, topology_name, **kwargs)
-    return TopologyDescription(topology._make_compile_only_devices())
-  except _jax.XlaRuntimeError as e:
+    return TopologyDescription(topology._make_compile_only_devices())  # pytype: disable=attribute-error
+  except _jax.JaxRuntimeError as e:
     msg, *_ = e.args
     if msg.startswith("UNIMPLEMENTED"):
       raise NotImplementedError(msg) from e

@@ -39,8 +39,6 @@ nb::bytes BuildRnnDescriptor(int input_size, int hidden_size, int num_layers,
 
 nb::dict Registrations() {
   nb::dict dict;
-  dict[JAX_GPU_PREFIX "dnn_rnn"] = EncapsulateFunction(RNNForward);
-  dict[JAX_GPU_PREFIX "dnn_rnn_bwd"] = EncapsulateFunction(RNNBackward);
   dict[JAX_GPU_PREFIX "dnn_rnn_ffi"] = EncapsulateFfiHandler(RNNForwardFfi);
   dict[JAX_GPU_PREFIX "dnn_rnn_bwd_ffi"] =
       EncapsulateFfiHandler(RNNBackwardFfi);

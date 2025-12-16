@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -26,7 +27,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/cord.h"
-#include "absl/strings/string_view.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
@@ -63,17 +63,18 @@ limitations under the License.
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 
-namespace xla {
-
+namespace ifrt = ::xla::ifrt;
 namespace nb = ::nanobind;
+
+namespace jax {
 
 namespace {
 
 // Gets `ifrt::DeviceList` from a sequence of JAX devices.
 absl::StatusOr<ifrt::DeviceListRef> GetDeviceList(nb::sequence devices) {
   ifrt::DeviceListRef ifrt_device_list;
-  if (devices.type().is(jax::PyDeviceList::type())) {
-    return nb::cast<const jax::PyDeviceList*>(devices)->ifrt_device_list();
+  if (devices.type().is(PyDeviceList::type())) {
+    return nb::cast<const PyDeviceList*>(devices)->ifrt_device_list();
   } else {
     auto py_devices = nb::cast<std::vector<nb_class_ptr<PyDevice>>>(devices);
     if (py_devices.empty()) {
@@ -93,8 +94,8 @@ absl::StatusOr<ifrt::DeviceListRef> GetDeviceList(nb::sequence devices) {
 // Gets `xla::HloSharding` from a JAX Sharding.
 xla::HloSharding GetXlaHloSharding(nb::handle sharding,
                                    int64_t num_dimensions) {
-  if (sharding.type().is(jax::GSPMDSharding::type())) {
-    return nb::cast<jax::GSPMDSharding*>(sharding)->hlo_sharding();
+  if (sharding.type().is(GSPMDSharding::type())) {
+    return nb::cast<GSPMDSharding*>(sharding)->hlo_sharding();
   } else {
     return nb::cast<xla::HloSharding>(
         sharding.attr("_to_xla_hlo_sharding")(num_dimensions));
@@ -103,26 +104,25 @@ xla::HloSharding GetXlaHloSharding(nb::handle sharding,
 
 // Gets `ifrt::DeviceList` from a JAX Sharding.
 absl::StatusOr<ifrt::DeviceListRef> GetIfrtDeviceList(nb::handle sharding) {
-  if (sharding.type().is(jax::NamedSharding::type())) {
+  if (sharding.type().is(NamedSharding::type())) {
     TF_ASSIGN_OR_RETURN(
         auto ns_device_list,
-        nb::cast<const jax::NamedSharding*>(sharding)->internal_device_list());
+        nb::cast<const NamedSharding*>(sharding)->internal_device_list());
     return ns_device_list->ifrt_device_list();
-  } else if (sharding.type().is(jax::SingleDeviceSharding::type())) {
-    return nb::cast<const jax::SingleDeviceSharding*>(sharding)
+  } else if (sharding.type().is(SingleDeviceSharding::type())) {
+    return nb::cast<const SingleDeviceSharding*>(sharding)
         ->internal_device_list()
         ->ifrt_device_list();
-  } else if (sharding.type().is(jax::PmapSharding::type())) {
-    return nb::cast<const jax::PmapSharding*>(sharding)
+  } else if (sharding.type().is(PmapSharding::type())) {
+    return nb::cast<const PmapSharding*>(sharding)
         ->internal_device_list()
         ->ifrt_device_list();
-  } else if (sharding.type().is(jax::GSPMDSharding::type())) {
-    return nb::cast<const jax::GSPMDSharding*>(sharding)
+  } else if (sharding.type().is(GSPMDSharding::type())) {
+    return nb::cast<const GSPMDSharding*>(sharding)
         ->internal_device_list()
         ->ifrt_device_list();
   } else {
-    return nb::cast<const jax::PyDeviceList*>(
-               sharding.attr("_internal_device_list"))
+    return nb::cast<const PyDeviceList*>(sharding.attr("_internal_device_list"))
         ->ifrt_device_list();
   }
 }
@@ -143,9 +143,9 @@ absl::StatusOr<ifrt::ShardingRef> GetIfrtSharding(nb::handle sharding,
                                                   int64_t num_dimensions) {
   auto ifrt_memory_kind = GetIfrtMemoryKind(sharding);
   ifrt::ShardingRef ifrt_sharding;
-  if (sharding.type().is(jax::SingleDeviceSharding::type())) {
+  if (sharding.type().is(SingleDeviceSharding::type())) {
     TF_ASSIGN_OR_RETURN(auto ifrt_device_list,
-                        nb::cast<const jax::SingleDeviceSharding*>(sharding)
+                        nb::cast<const SingleDeviceSharding*>(sharding)
                             ->internal_device_list()
                             ->ifrt_device_list());
     return ifrt::SingleDeviceSharding::Create(
@@ -169,7 +169,7 @@ absl::StatusOr<std::vector<ifrt::ArraySpec>> GetIfrtArraySpecs(
     ifrt::Shape ifrt_shape(nb::cast<std::vector<int64_t>>(aval.attr("shape")));
     TF_ASSIGN_OR_RETURN(
         auto ifrt_dtype,
-        DtypeToIfRtDType(nb::cast<nb_dtype>(aval.attr("dtype"))));
+        DtypeToIfRtDType(nb::cast<xla::nb_dtype>(aval.attr("dtype"))));
     TF_ASSIGN_OR_RETURN(
         auto ifrt_sharding,
         GetIfrtSharding(aval.attr("sharding"), ifrt_shape.dims().size()));
@@ -204,10 +204,10 @@ MakePluginCompileOptions() {
 }
 
 absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeHloProgram(
-    absl::string_view mlir_module) {
+    std::string_view mlir_module) {
   auto context = std::make_unique<mlir::MLIRContext>();
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      ParseMlirModuleString(mlir_module, *context));
+                      xla::ParseMlirModuleString(mlir_module, *context));
   return std::make_unique<xla::ifrt::HloProgram>(std::move(context),
                                                  std::move(module));
 }
@@ -220,11 +220,11 @@ absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeHloProgramFromString(
 absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeHloProgramFromBytes(
     nb::bytes mlir_module) {
   return MakeHloProgram(
-      absl::string_view(mlir_module.c_str(), mlir_module.size()));
+      std::string_view(mlir_module.c_str(), mlir_module.size()));
 }
 
 absl::StatusOr<std::unique_ptr<ifrt::CompileOptions>> MakeXlaCompileOptions(
-    CompileOptions options, jax::PyDeviceList& py_executable_devices,
+    xla::CompileOptions options, PyDeviceList& py_executable_devices,
     std::vector<nb::capsule> host_callbacks) {
   std::vector<tsl::RCReference<ifrt::LoadedHostCallback>>
       ifrt_loaded_host_callbacks;
@@ -243,16 +243,16 @@ absl::StatusOr<std::unique_ptr<ifrt::CompileOptions>> MakeXlaCompileOptions(
       std::move(ifrt_loaded_host_callbacks));
 }
 
-constexpr absl::string_view kColocatedPythonProgramType =
+constexpr std::string_view kColocatedPythonProgramType =
     "jax_colocated_python_v0.0.1";
 
 absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeColocatedPythonProgram(
     std::string name, nb::bytes picked_function, nb::sequence devices,
     nb::sequence input_avals, nb::sequence output_avals) {
   auto ifrt_serialized_program_text = absl::MakeCordFromExternal(
-      absl::string_view(reinterpret_cast<const char*>(picked_function.data()),
-                        picked_function.size()),
-      /*releaser=*/[picked_function](absl::string_view) mutable {
+      std::string_view(reinterpret_cast<const char*>(picked_function.data()),
+                       picked_function.size()),
+      /*releaser=*/[picked_function](std::string_view) mutable {
         GlobalPyRefManager()->AddGarbage(std::move(picked_function));
       });
   TF_ASSIGN_OR_RETURN(auto ifrt_device_list, GetDeviceList(devices));
@@ -268,29 +268,57 @@ absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeColocatedPythonProgram(
 
 void BuildIfrtProgramsSubmodule(nanobind::module_& m) {
   auto sub_module = m.def_submodule("ifrt_programs");
+  sub_module.attr("_CompileOptions") = m.attr("CompileOptions");
+  sub_module.attr("_Device") = m.attr("Device");
+  sub_module.attr("_DeviceList") = m.attr("DeviceList");
+
   nb::class_<ifrt::Program> ifrt_program_base_class(sub_module, "Program");
   nb::class_<ifrt::CompileOptions> ifrt_compile_options_base_class(
       sub_module, "CompileOptions");
   sub_module
-      .def("make_hlo_program", ValueOrThrowWrapper(MakeHloProgramFromString),
+      .def("make_hlo_program",
+           xla::ValueOrThrowWrapper(MakeHloProgramFromString),
            nb::arg("mlir_module"))
-      .def("make_hlo_program", ValueOrThrowWrapper(MakeHloProgramFromBytes),
+      .def("make_hlo_program",
+           xla::ValueOrThrowWrapper(MakeHloProgramFromBytes),
            nb::arg("mlir_module"))
       .def("make_colocated_python_program",
-           ValueOrThrowWrapper(MakeColocatedPythonProgram), nb::arg("name"),
-           nb::arg("pickled_function"), nb::arg("devices"),
-           nb::arg("input_avals"), nb::arg("output_avals"))
+           xla::ValueOrThrowWrapper(MakeColocatedPythonProgram),
+           nb::arg("name"), nb::arg("pickled_function"), nb::arg("devices"),
+           nb::arg("input_avals"), nb::arg("output_avals"),
+          nb::sig(
+            // clang-format off
+            "def make_colocated_python_program("
+            "name: str, "
+            "picked_function: bytes, "
+            "devices: typing.Sequence[_Device] | _DeviceList, "
+            "input_avals: Sequence[typing.Any], "
+            "output_avals: Sequence[Any]"
+            ") -> Program"
+            // clang-format on
+          ))
       .def("make_plugin_program",
-           ValueOrThrowWrapper(MakePluginProgramFromString), nb::arg("data"))
+           xla::ValueOrThrowWrapper(MakePluginProgramFromString),
+           nb::arg("data"))
       .def("make_plugin_program",
-           ValueOrThrowWrapper(MakePluginProgramFromBytes), nb::arg("data"))
+           xla::ValueOrThrowWrapper(MakePluginProgramFromBytes),
+           nb::arg("data"))
       .def("make_xla_compile_options",
-           ValueOrThrowWrapper(MakeXlaCompileOptions), nb::arg("options"),
-           nb::arg("executable_devices"), nb::arg("host_callbacks"))
+           xla::ValueOrThrowWrapper(MakeXlaCompileOptions), nb::arg("options"),
+           nb::arg("executable_devices"), nb::arg("host_callbacks"),
+          nb::sig(
+            // clang-format off
+            "def make_xla_compile_options("
+            "options: _CompileOptions, "
+            "executable_devices: Sequence[_Device], "
+            "host_callbacks: Sequence[typing_extensions.CapsuleType]"
+            ") -> CompileOptions"
+            // clang-format on
+          ))
       .def("make_colocated_python_compile_options",
-           ValueOrThrowWrapper(MakeColocatedPythonCompileOptions))
+           xla::ValueOrThrowWrapper(MakeColocatedPythonCompileOptions))
       .def("make_plugin_compile_options",
-           ValueOrThrowWrapper(MakePluginCompileOptions));
+           xla::ValueOrThrowWrapper(MakePluginCompileOptions));
 }
 
-}  // namespace xla
+}  // namespace jax

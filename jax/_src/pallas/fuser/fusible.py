@@ -13,12 +13,15 @@
 # limitations under the License.
 
 """Fusible primitive."""
+from functools import partial
 from typing import Any
 
 import jax
 from jax._src import api_util
 from jax._src import core as jax_core
+from jax._src.interpreters import batching
 from jax._src import linear_util as lu
+from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import mlir
@@ -33,10 +36,11 @@ def _make_trivial_fusion(x: jax.Array) -> fusion_lib.Fusion:
   return fusion_lib.Fusion(
       func=lambda: x,
       in_type=((), {}),
-      out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      out_type=jax.typeof(x),
   )
 
 
+@partial(api_boundary, repro_api_name="fuser.fusible")
 def fusible(f=None, *, output_fusion_prefix: Any = True):
   def decorator(f):
     def wrapper(*args):
@@ -50,7 +54,7 @@ def fusible(f=None, *, output_fusion_prefix: Any = True):
           lu.wrap_init(wrapped, debug_info=debug_info), in_tree
       )
       flat_avals = [jax_core.get_aval(x) for x in flat_args]
-      jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
       out_tree = out_tree_thunk()
       out = fusible_p.bind(
           *consts,
@@ -84,3 +88,20 @@ mlir.register_lowering(fusible_p, mlir.lower_fun(fusible_p.impl))
 def _(*args, jaxpr, **kwargs):
   del args, kwargs
   return [v.aval for v in jaxpr.outvars], jaxpr.effects
+
+
+def _fusible_trivial_batching_rule(axis_data, args, dims, **kwargs):
+  if axis_data.size != 1:
+    raise NotImplementedError('fusible does not support non-trivial batching')
+
+  unbatched_args = tuple(
+      a if (d is batching.not_mapped or d is None) else a[d]
+      for a, d in zip(args, dims, strict=True)
+  )
+  out_unbatched = fusible_p.bind(*unbatched_args, **kwargs)
+  out = tuple(o[None] for o in out_unbatched)
+
+  return out, (0,) * len(out)
+
+
+batching.fancy_primitive_batchers[fusible_p] = _fusible_trivial_batching_rule

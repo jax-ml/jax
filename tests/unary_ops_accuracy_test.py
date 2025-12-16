@@ -14,7 +14,8 @@
 
 """Unit test for result accuracy for unary ops."""
 
-from typing import Any, Callable, NamedTuple, Union
+from typing import Any, NamedTuple
+from collections.abc import Callable
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -22,7 +23,6 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import lax
-from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 import jax.numpy as jnp
@@ -33,8 +33,8 @@ config.parse_flags_with_absl()
 
 
 class TolerancePair(NamedTuple):
-  high: Union[lax.Tolerance, lax.AccuracyMode] = lax.AccuracyMode.DEFAULT
-  low: Union[lax.Tolerance, lax.AccuracyMode] = lax.AccuracyMode.DEFAULT
+  high: lax.Tolerance | lax.AccuracyMode = lax.AccuracyMode.DEFAULT
+  low: lax.Tolerance | lax.AccuracyMode = lax.AccuracyMode.DEFAULT
 
 
 def make_unary_test_cases(
@@ -373,7 +373,7 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
   )
   def test_low_tol(self, op, x, **kwargs):
     with self.assertRaisesRegex(
-        _jax.XlaRuntimeError, "impl_type.ok()"
+        jax.errors.JaxRuntimeError, "impl_type.ok()"
     ):
       op(x, accuracy=lax.Tolerance(atol=1e-60, rtol=1e-60, ulps=0))
 

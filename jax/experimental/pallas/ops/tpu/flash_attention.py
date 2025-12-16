@@ -383,12 +383,11 @@ def _flash_attention_kernel_single_batch(
 
   @pl.when(should_run)
   def run():
-    @pl.loop(0, block_k_major // block_k, unroll=True)
-    def _body(i):
+    @pl.loop(0, block_k_major, step=block_k, unroll=True)
+    def _body(start_k):
       m_prev = m_scratch_ref[batch_idx]
       l_prev = l_scratch_ref[batch_idx]
       q = q_tile_ref[batch_idx]  # [block_q, head_dim]
-      start_k = i * block_k
       k = k_tile_ref[
           (*batch_idx, pl.dslice(start_k, block_k), slice(None))
       ]  # [block_k, head_dim]
@@ -767,7 +766,7 @@ def _flash_attention_impl(
       ),
       out_shape=out_shape,
       debug=debug,
-      compiler_params=pltpu.TPUCompilerParams(
+      compiler_params=pltpu.CompilerParams(
           dimension_semantics=(
               "parallel",
               "parallel",
@@ -1130,7 +1129,7 @@ def _flash_attention_bwd_dkv(
         ),
         out_shape=out_shapes,
         debug=debug,
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
                 dimension_semantics=(
                     "parallel",
                     "parallel",
@@ -1465,7 +1464,7 @@ def _flash_attention_bwd_dq(
         ),
         out_shape=out_shapes,
         debug=debug,
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
                 dimension_semantics=(
                     "parallel",
                     "parallel",

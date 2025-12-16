@@ -19,33 +19,27 @@ import collections
 from collections.abc import Sequence
 import dataclasses
 import enum
-import functools
 from typing import Any, ClassVar, Literal
+from collections.abc import Mapping
 
 import jax
-from jax._src import core as jax_core
-from jax._src import util
-from jax._src.pallas import core as pallas_core
 import jax.numpy as jnp
+from jax.extend import backend as jex_backend
+from jax._src import core as jax_core
+from jax._src import linear_util as lu
+from jax._src import state
+from jax._src import util
+from jax._src.frozen_dict import FrozenDict
+from jax._src.interpreters import partial_eval as pe
+from jax._src.pallas import core as pallas_core
 import numpy as np
 
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
-partial = functools.partial
-Grid = pallas_core.Grid
-TupleGrid = pallas_core.TupleGrid
-BlockSpec = pallas_core.BlockSpec
-BlockSpecTree = pallas_core.BlockSpecTree
-GridMapping = pallas_core.GridMapping
-NoBlockSpec = pallas_core.NoBlockSpec
-ScratchShapeTree = pallas_core.ScratchShapeTree
-AbstractMemoryRef = pallas_core.AbstractMemoryRef
 no_block_spec = pallas_core.no_block_spec
-_convert_block_spec_to_block_mapping = pallas_core._convert_block_spec_to_block_mapping
 _out_shape_to_aval_mapping = pallas_core._out_shape_to_aval_mapping
-split_list = util.split_list
 
 
 class KernelType(enum.Enum):
@@ -56,17 +50,33 @@ class KernelType(enum.Enum):
 
 class GridDimensionSemantics(enum.Enum):
   PARALLEL = "parallel"
+  CORE_PARALLEL = "core_parallel"
+  SUBCORE_PARALLEL = "subcore_parallel"
   ARBITRARY = "arbitrary"
 
 PARALLEL = GridDimensionSemantics.PARALLEL
+CORE_PARALLEL = GridDimensionSemantics.CORE_PARALLEL
+SUBCORE_PARALLEL = GridDimensionSemantics.SUBCORE_PARALLEL
 ARBITRARY = GridDimensionSemantics.ARBITRARY
 
 
-DimensionSemantics = Literal["parallel", "arbitrary"] | GridDimensionSemantics
+DimensionSemantics = (
+    Literal["parallel", "core_parallel", "subcore_parallel", "arbitrary"]
+    | GridDimensionSemantics
+)
+
+
+class SideEffectType(enum.Enum):
+  # No side effects, can be deduplicated / removed if unused.
+  PURE = "pure"
+  # Cannot be deduplicated, but can be removed if unused.
+  DATAFLOW_SIDE_EFFECTING = "dataflow_side_effecting"
+  # Cannot be deduplicated or removed.
+  SIDE_EFFECTING = "side_effecting"
 
 
 @dataclasses.dataclass(frozen=True)
-class TPUCompilerParams(pallas_core.CompilerParams):
+class CompilerParams(pallas_core.CompilerParams):
   """Mosaic TPU compiler parameters.
 
   Attributes:
@@ -81,40 +91,108 @@ class TPUCompilerParams(pallas_core.CompilerParams):
     collective_id: Indicates which barrier semaphore to use for the kernel. Note
       that using the same collective_id does not guarantee that the same barrier
       semaphore will be allocated between kernels.
+    has_side_effects: Set to True to prevent kernel being CSEd by XLA.
+    flags: A dictionary of command line flags for the kernel.
     internal_scratch_in_bytes: The size of the internal scratch space used by
       Mosaic.
-    flags: A dictionary of command line flags for the kernel.
     serialization_format: The serialization format for the kernel body.
+    kernel_type: Specify if the kernel is meant to run on TensorCore or one of
+      the SparseCores
     disable_bounds_checks: Disable bounds checks in the kernel.
+    skip_device_barrier: Skip the default device barrier for the kernel.
+    allow_collective_id_without_custom_barrier: Allow the use of collective_id
+      without a custom barrier.
+    use_tc_tiling_on_sc: Use TensorCore tiling for SparseCore. This flag is
+      only used for ``SC_*_SUBCORE`` kernels.
   """
   BACKEND: ClassVar[pallas_core.Backend] = "mosaic_tpu"
-  dimension_semantics: Sequence[DimensionSemantics] | None = None
-  allow_input_fusion: Sequence[bool] | None = None
+  dimension_semantics: tuple[DimensionSemantics, ...] | None = None
+  allow_input_fusion: tuple[bool, ...] | None = None
   vmem_limit_bytes: int | None = None
   collective_id: int | None = None
-  has_side_effects: bool = False
+  has_side_effects: bool | SideEffectType = False
   flags: dict[str, Any] | None = None
   internal_scratch_in_bytes: int | None = None
   serialization_format: int = 1
   kernel_type: KernelType = KernelType.TC
   disable_bounds_checks: bool = False
+  skip_device_barrier: bool = False
+  allow_collective_id_without_custom_barrier: bool = False
+  shape_invariant_numerics: bool = True
+  use_tc_tiling_on_sc: bool | None = None
+
+  def __init__(
+      self,
+      dimension_semantics: Sequence[DimensionSemantics] | None = None,
+      allow_input_fusion: Sequence[bool] | None = None,
+      vmem_limit_bytes: int | None = None,
+      collective_id: int | None = None,
+      has_side_effects: bool | SideEffectType = False,
+      flags: Mapping[str, Any] | None = None,
+      internal_scratch_in_bytes: int | None = None,
+      serialization_format: int = 1,
+      kernel_type: KernelType = KernelType.TC,
+      disable_bounds_checks: bool = False,
+      skip_device_barrier: bool = False,
+      allow_collective_id_without_custom_barrier: bool = False,
+      shape_invariant_numerics: bool = True,
+      use_tc_tiling_on_sc: bool | None = None,
+  ):
+    object.__setattr__(
+        self,
+        "dimension_semantics",
+        None if dimension_semantics is None else tuple(dimension_semantics),
+    )
+    object.__setattr__(
+        self,
+        "allow_input_fusion",
+        None if allow_input_fusion is None else tuple(allow_input_fusion),
+    )
+    object.__setattr__(self, "vmem_limit_bytes", vmem_limit_bytes)
+    object.__setattr__(self, "collective_id", collective_id)
+    object.__setattr__(self, "has_side_effects", has_side_effects)
+    object.__setattr__(
+        self, "flags", None if flags is None else FrozenDict(flags)
+    )
+    object.__setattr__(
+        self, "internal_scratch_in_bytes", internal_scratch_in_bytes
+    )
+    object.__setattr__(self, "serialization_format", serialization_format)
+    object.__setattr__(self, "kernel_type", kernel_type)
+    object.__setattr__(self, "disable_bounds_checks", disable_bounds_checks)
+    object.__setattr__(self, "skip_device_barrier", skip_device_barrier)
+    object.__setattr__(
+        self,
+        "allow_collective_id_without_custom_barrier",
+        allow_collective_id_without_custom_barrier,
+    )
+    object.__setattr__(
+        self, "shape_invariant_numerics", shape_invariant_numerics
+    )
+    object.__setattr__(self, "use_tc_tiling_on_sc", use_tc_tiling_on_sc)
 
   # Replace is a method, not a field.
   replace = dataclasses.replace
 
-class TPUMemorySpace(enum.Enum):
+class MemorySpace(enum.Enum):
   ANY = "any"  # TODO(b/368401328): Remove this and just use pl.ANY.
   VMEM = "vmem"
+  VMEM_SHARED = "vmem_shared"
   SMEM = "smem"
   CMEM = "cmem"
   SEMAPHORE = "semaphore_mem"
+  HBM = "hbm"
+  HOST = "host"
 
   def __str__(self) -> str:
     return self.value
 
-  def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
-    # A convenience function for constructing MemoryRef types.
-    return pallas_core.MemoryRef(shape, dtype, self)
+  def from_type(self, ty):
+    return pallas_core.MemoryRef(ty, memory_space=self)
+
+  def __call__(self, shape: Sequence[int], dtype: jnp.dtype):
+    # A convenience function for constructing MemoryRef types of ShapedArrays.
+    return self.from_type(jax_core.ShapedArray(tuple(shape), dtype))
 
 class dma_semaphore(pallas_core.semaphore_dtype): pass
 
@@ -135,12 +213,13 @@ class SemaphoreType(enum.Enum):
       dtype = pallas_core.BarrierSemaphore()
     else:
       dtype = pallas_core.Semaphore()
-    return pallas_core.MemoryRef(shape, dtype, TPUMemorySpace.SEMAPHORE)
+    return pallas_core.MemoryRef(jax_core.ShapedArray(shape, dtype),
+                                 MemorySpace.SEMAPHORE)
 
   def get_array_aval(self) -> pallas_core.ShapedArrayWithMemorySpace:
     return self(()).get_array_aval()
 
-  def get_ref_aval(self) -> AbstractMemoryRef:
+  def get_ref_aval(self) -> state.AbstractRef:
     return self(()).get_ref_aval()
 
 @dataclasses.dataclass(frozen=True)
@@ -155,18 +234,18 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
   def __init__(
       self,
       num_scalar_prefetch: int,
-      grid: Grid = (),
-      in_specs: BlockSpecTree = no_block_spec,
-      out_specs: BlockSpecTree = no_block_spec,
-      scratch_shapes: ScratchShapeTree = ()
+      grid: pallas_core.Grid = (),
+      in_specs: pallas_core.BlockSpecTree = no_block_spec,
+      out_specs: pallas_core.BlockSpecTree = no_block_spec,
+      scratch_shapes: pallas_core.ScratchShapeTree = ()
   ):
     super().__init__(grid, in_specs, out_specs, scratch_shapes)
     self.num_scalar_prefetch = num_scalar_prefetch
     self.scratch_shapes = tuple(scratch_shapes)
 
   def _make_scalar_ref_aval(self, aval):
-    return AbstractMemoryRef(jax_core.ShapedArray(aval.shape, aval.dtype),
-                             TPUMemorySpace.SMEM)
+    return state.AbstractRef(jax_core.ShapedArray(aval.shape, aval.dtype),
+                             MemorySpace.SMEM)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -179,6 +258,17 @@ class TensorCoreMesh:
   """A mesh of TensorCores."""
   devices: np.ndarray
   axis_names: Sequence[str]
+
+  def __init__(self, devices: np.ndarray, axis_names: Sequence[str]):
+    devices = np.copy(devices)
+    devices.setflags(write=False)
+    object.__setattr__(self, "devices", devices)
+    object.__setattr__(self, "axis_names", tuple(axis_names))
+
+  def __hash__(self) -> int:
+    return hash(
+        (self.devices.shape, tuple(np.ravel(self.devices)), self.axis_names)
+    )
 
   @property
   def backend(self) -> str:
@@ -202,7 +292,11 @@ def create_tensorcore_mesh(
     raise ValueError('cannot specify both devices and num_cores')
   if num_cores is None:
     if devices is None:
-      devices = jax.devices()
+      abstract_device = jax.sharding.get_abstract_mesh().abstract_device
+      if abstract_device is None:
+        devices = [jax.devices()[0]]
+      else:
+        devices = [abstract_device]
     num_cores = devices[0].num_cores
   return TensorCoreMesh(
       np.array([TensorCore(i) for i in range(num_cores)]),
@@ -221,20 +315,77 @@ def _tensorcore_mesh_discharge_rule(
     debug: bool,
     cost_estimate: pallas_core.CostEstimate | None,
     name: str,
+    metadata: FrozenDict[str, str] | None,
 ):
   assert isinstance(mesh, TensorCoreMesh)
-  if compiler_params and not isinstance(compiler_params, TPUCompilerParams):
+  if compiler_params and not isinstance(compiler_params, CompilerParams):
     raise ValueError(
-        "compiler_params must be a pltpu.TPUCompilerParams"
+        "compiler_params must be a pltpu.CompilerParams"
     )
   if not compiler_params:
-    compiler_params = TPUCompilerParams()
+    compiler_params = CompilerParams()
   if len(mesh.shape) > 1:
     raise NotImplementedError("Mesh must be 1D")
   if compiler_params.dimension_semantics is not None:
     raise ValueError(
         "dimension_semantics must be None for TensorCoreMesh"
     )
+  num_cores = len(mesh.devices)
+  if num_cores > 1:
+    # Since each core will have its own VMEM, we currently disallow VMEM inputs
+    # and outputs since other ops might not agree on how they are sharded across
+    # cores by the (core-mapped) kernel.
+    if any(
+        pallas_core.get_memory_space_aval(aval) == MemorySpace.VMEM
+        for aval in in_avals
+    ):
+      raise NotImplementedError(
+          "TensorCoreMesh does not support VMEM inputs/outputs when there are"
+          " >1 cores. Use HBM or ANY instead."
+      )
+  def allowed_aval(aval):
+    if isinstance(aval, state.AbstractRef):
+      return True
+    if isinstance(aval, jax_core.ShapedArray):
+      # Only scalars are allowed.
+      return not aval.shape
+    return False
+  assert all(allowed_aval(v.aval) for v in jaxpr.constvars + jaxpr.invars)
+
+  is_scalar_const = [
+      isinstance(v.aval, jax_core.ShapedArray) and not v.aval.shape
+      for v in jaxpr.constvars
+  ]
+  if any(is_scalar_const):
+    # Rewrite body jaxpr to take in scalar values as Refs.
+    def new_body(*args):
+      args = [
+          a[0] if is_scalar else a
+          for a, is_scalar in zip(args, is_scalar_const)
+      ]
+      return jax_core.eval_jaxpr(jaxpr, args)
+    # TODO(sharadmv): Remove this once Mosaic support passing scalars as values.
+    new_trace_avals = [
+        state.AbstractRef(  # pylint: disable=g-long-ternary
+            jax_core.ShapedArray((1,), v.aval.dtype),
+            memory_space=MemorySpace.SMEM,
+        )
+        if is_scalar
+        else v.aval
+        for v, is_scalar in zip(jaxpr.constvars, is_scalar_const)
+    ]
+    new_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+        lu.wrap_init(
+            new_body, debug_info=jaxpr.debug_info.with_unknown_names()
+        ),
+        new_trace_avals,
+    )
+    jaxpr = new_jaxpr.replace(invars=[], constvars=new_jaxpr.invars)
+    args = tuple(
+        a[None] if is_scalar else a
+        for a, is_scalar in zip(args, is_scalar_const)
+    )
+    in_avals, out_avals = util.split_list(new_trace_avals, [len(in_avals)])
   return pallas_core.default_mesh_discharge_rule(
       in_avals,
       out_avals,
@@ -248,6 +399,8 @@ def _tensorcore_mesh_discharge_rule(
       interpret=interpret,
       cost_estimate=cost_estimate,
       name=name,
+      metadata=metadata,
+      scratch_shapes=[],
   )
 
 pallas_core._core_map_mesh_rules[TensorCoreMesh] = (
@@ -264,3 +417,14 @@ def _convert_semaphore_type_to_aval(
 pallas_core._out_shape_to_aval_mapping[SemaphoreType] = (
     _convert_semaphore_type_to_aval
 )
+
+
+def get_device_kind() -> str:
+  if abstract_device := jax.sharding.get_abstract_mesh().abstract_device:
+    return abstract_device.device_kind
+  return jex_backend.get_default_device().device_kind
+
+def get_num_device_cores() -> int:
+  if abstract_device := jax.sharding.get_abstract_mesh().abstract_device:
+    return abstract_device.num_cores
+  return jex_backend.get_default_device().num_cores

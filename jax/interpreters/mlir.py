@@ -33,26 +33,23 @@ from jax._src.interpreters.mlir import (
   aval_to_ir_type as aval_to_ir_type,
   aval_to_ir_types as aval_to_ir_types,
   core_call_lowering as core_call_lowering,
-  custom_call as _custom_call,
   dense_bool_elements as dense_bool_elements,
-  dense_bool_array as dense_bool_array,
   dense_int_array as dense_int_array,
   dense_int_elements as dense_int_elements,
   dtype_to_ir_type as dtype_to_ir_type,
   flatten_ir_types as flatten_ir_types,
-  flatten_ir_values as flatten_lowering_ir_args,  # TODO(phawkins): remove me  # noqa: F401
   flatten_ir_values as flatten_ir_values,
   unflatten_ir_values_like_types as unflatten_ir_values_like_types,
   i32_attr as i32_attr,
   i64_attr as i64_attr,
   ir as ir,
+  ir_attribute as ir_attribute,
   ir_constant as ir_constant,
   ir_type_handlers as ir_type_handlers,
   jaxpr_subcomp as jaxpr_subcomp,
   lower_fun as lower_fun,
   lower_jaxpr_to_fun as lower_jaxpr_to_fun,
   lower_jaxpr_to_module as lower_jaxpr_to_module,
-  lowerable_effects as lowerable_effects,
   make_ir_context as make_ir_context,
   merge_mlir_modules as merge_mlir_modules,
   module_to_bytecode as module_to_bytecode,
@@ -70,6 +67,7 @@ from jax._src.sharding_impls import (
   SPMDAxisContext as SPMDAxisContext,
   ShardingContext as ShardingContext,
 )
+from jax._src.effects import lowerable_effects as lowerable_effects
 
 
 # TODO(dsuo): Temporarily maintain symbols related to callback lowering for sake
@@ -81,19 +79,21 @@ from jax._src.callback import (
 _deprecations = {
     # Added Apr 7 2025
     "custom_call": (
-        "mlir.custom_call is deprecated; use the APIs provided by jax.ffi instead.",
-        _custom_call,
+        (
+            "mlir.custom_call was removed in JAX v0.8.0; use the APIs provided"
+            " by jax.ffi instead."
+        ),
+        None,
     )
 }
 
 import typing as _typing
 
 if _typing.TYPE_CHECKING:
-  custom_call = _custom_call
+  pass
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
 
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del _typing
-del _custom_call

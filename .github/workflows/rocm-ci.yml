@@ -16,7 +16,7 @@ jobs:
     env:
       BASE_IMAGE: "ubuntu:22.04"
       TEST_IMAGE: ubuntu-jax-upstream-${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
-      PYTHON_VERSION: "3.10"
+      PYTHON_VERSION: "3.11"
       ROCM_VERSION: "6.3.3"
       WORKSPACE_DIR: workdir_${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
     steps:
@@ -31,7 +31,7 @@ jobs:
       - name: Print system info
         run: |
           rocm-smi
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
         with:
           path: ${{ env.WORKSPACE_DIR }}
           persist-credentials: false
@@ -46,7 +46,7 @@ jobs:
             dist_docker \
             --image-tag $TEST_IMAGE
       - name: Archive jax wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: rocm_jax_r${{ env.ROCM_VERSION }}_py${{ env.PYTHON_VERSION  }}_id${{ github.run_id }}
           path: ${{ env.WORKSPACE_DIR }}/dist/*.whl

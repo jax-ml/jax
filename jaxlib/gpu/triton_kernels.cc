@@ -40,7 +40,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/triton.pb.h"
@@ -50,6 +49,7 @@ limitations under the License.
 
 #ifdef JAX_GPU_CUDA
 #include "xla/stream_executor/cuda/cuda_asm_compiler.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #endif  // JAX_GPU_CUDA
 
 #ifdef JAX_GPU_HIP
@@ -111,7 +111,7 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
       *new absl::flat_hash_map<decltype(key), std::unique_ptr<ModuleImage>>
           ABSL_GUARDED_BY(mutex);
 
-  absl::MutexLock lock(&mutex);
+  absl::MutexLock lock(mutex);
   auto it = module_images.find(key);
   if (it != module_images.end()) return it->second.get();
 
@@ -125,9 +125,17 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
   // TODO(cjfj): Support `TRITON_PTXAS_PATH` environment variable?
   int cc_major = compute_capability / 10;
   int cc_minor = compute_capability % 10;
+
+  bool has_accelerated_features = cc_major >= 9;
+  using FeatureExtension =
+      stream_executor::CudaComputeCapability::FeatureExtension;
+  const stream_executor::CudaComputeCapability cc(
+      cc_major, cc_minor,
+      has_accelerated_features ? FeatureExtension::kAcceleratedFeatures
+                               : FeatureExtension::kNone);
   JAX_ASSIGN_OR_RETURN(
       std::vector<uint8_t> module_image,
-      stream_executor::CompileGpuAsm(cc_major, cc_minor, ptx.data(),
+      stream_executor::CompileGpuAsm(cc, std::string(ptx),
                                      stream_executor::GpuAsmOpts{}));
 #endif
 
@@ -158,7 +166,7 @@ absl::StatusOr<float> Benchmark(gpuStream_t stream, KernelCall& kernel_call,
   return elapsed_ms;
 }
 
-absl::StatusOr<KernelCall*> GetKernelCall(absl::string_view opaque,
+absl::StatusOr<KernelCall*> GetKernelCall(std::string_view opaque,
                                           gpuStream_t stream, void** buffers) {
   static absl::Mutex mutex;
   static auto& kernel_calls =
@@ -168,7 +176,7 @@ absl::StatusOr<KernelCall*> GetKernelCall(absl::string_view opaque,
 
   {
     // Fast path uses reader lock (as hash map look-up is relatively slow).
-    absl::ReaderMutexLock lock(&mutex);
+    absl::ReaderMutexLock lock(mutex);
     auto it = kernel_calls.find(opaque);
     if (ABSL_PREDICT_TRUE(it != kernel_calls.end())) {
       JAX_RETURN_IF_ERROR(it->second.status());
@@ -180,7 +188,7 @@ absl::StatusOr<KernelCall*> GetKernelCall(absl::string_view opaque,
     return absl::InvalidArgumentError("Opaque data is empty.");
   }
 
-  absl::MutexLock lock(&mutex);
+  absl::MutexLock lock(mutex);
 
   auto get_kernel_call = [&]() -> absl::StatusOr<std::unique_ptr<KernelCall>> {
     // The opaque data is a zlib compressed protobuf.
@@ -229,7 +237,7 @@ class ModuleImage {
         shared_mem_bytes_(shared_mem_bytes) {}
 
   absl::StatusOr<gpuFunction_t> GetFunctionForContext(gpuContext_t context) {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     auto it = functions_.find(context);
     if (ABSL_PREDICT_TRUE(it != functions_.end())) {
       return it->second;
@@ -307,17 +315,16 @@ class ModuleImage {
       ABSL_GUARDED_BY(mutex_);
 };
 
-Kernel::Kernel(std::string kernel_name, uint32_t num_warps,
+Kernel::Kernel(std::string kernel_name, uint32_t num_warps, uint32_t num_ctas,
                uint32_t shared_mem_bytes, std::string ptx, std::string ttir,
-               int compute_capability, uint32_t cluster_dim_0,
-               uint32_t cluster_dim_1, uint32_t cluster_dim_2)
+               int compute_capability)
     : kernel_name_(std::move(kernel_name)),
       block_dim_x_(num_warps * kNumThreadsPerWarp),
+      num_ctas_(num_ctas),
       shared_mem_bytes_(shared_mem_bytes),
       ptx_(std::move(ptx)),
       ttir_(std::move(ttir)),
-      compute_capability_(compute_capability),
-      cluster_dims_{cluster_dim_0, cluster_dim_1, cluster_dim_2} {}
+      compute_capability_(compute_capability) {}
 
 absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
                             void** params) {
@@ -354,9 +361,7 @@ absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
 
   JAX_ASSIGN_OR_RETURN(gpuFunction_t kernel,
                        module_image_->GetFunctionForContext(context));
-  const uint32_t cluster_size =
-      cluster_dims_[0] * cluster_dims_[1] * cluster_dims_[2];
-  if (cluster_size <= 1) {
+  if (num_ctas_ == 1) {
     return JAX_AS_STATUS(gpuLaunchKernel(
         kernel, grid[0], grid[1], grid[2], block_dim_x_,
         /*blockDimY=*/1, /*blockDimZ=*/1, shared_mem_bytes_, stream, params,
@@ -364,16 +369,16 @@ absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
   }
   CUlaunchAttribute launch_attrs[2];
   launch_attrs[0].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
-  launch_attrs[0].value.clusterDim.x = cluster_dims_[0];
-  launch_attrs[0].value.clusterDim.y = cluster_dims_[1];
-  launch_attrs[0].value.clusterDim.z = cluster_dims_[2];
+  launch_attrs[0].value.clusterDim.x = num_ctas_;
+  launch_attrs[0].value.clusterDim.y = 1;
+  launch_attrs[0].value.clusterDim.z = 1;
   launch_attrs[1].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_SCHEDULING_POLICY_PREFERENCE;
   launch_attrs[1].value.clusterSchedulingPolicyPreference =
       CU_CLUSTER_SCHEDULING_POLICY_SPREAD;
   CUlaunchConfig launch_config = {
-      /*gridDimX=*/grid[0] * cluster_dims_[0],
-      /*gridDimY=*/grid[1] * cluster_dims_[1],
-      /*gridDimZ=*/grid[2] * cluster_dims_[2],
+      /*gridDimX=*/grid[0] * num_ctas_,
+      /*gridDimY=*/grid[1],
+      /*gridDimZ=*/grid[2],
       /*blockDimX=*/block_dim_x_,
       /*blockDimY=*/1,
       /*blockDimZ=*/1,
@@ -388,23 +393,23 @@ absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
 }
 
 /*static*/ Kernel Kernel::FromProto(const jax_triton::TritonKernel& proto) {
-  return Kernel(proto.kernel_name(), proto.num_warps(),
+  // Use 1 as default value if not specified in already serialized kernels.
+  int num_ctas = proto.has_num_ctas() ? proto.num_ctas() : 1;
+
+  return Kernel(proto.kernel_name(), proto.num_warps(), num_ctas,
                 proto.shared_mem_bytes(), proto.ptx(), proto.ttir(),
-                proto.compute_capability(), proto.cluster_dim_0(),
-                proto.cluster_dim_1(), proto.cluster_dim_2());
+                proto.compute_capability());
 }
 
 jax_triton::TritonKernel Kernel::ToProto() const {
   jax_triton::TritonKernel proto;
   proto.set_kernel_name(kernel_name_);
   proto.set_num_warps(block_dim_x_ / kNumThreadsPerWarp);
+  proto.set_num_ctas(num_ctas_);
   proto.set_shared_mem_bytes(shared_mem_bytes_);
   proto.set_ptx(ptx_);
   proto.set_ttir(ttir_);
   proto.set_compute_capability(compute_capability_);
-  proto.set_cluster_dim_0(cluster_dims_[0]);
-  proto.set_cluster_dim_1(cluster_dims_[1]);
-  proto.set_cluster_dim_2(cluster_dims_[2]);
   return proto;
 }
 
@@ -516,8 +521,10 @@ absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
   // pointer.
   // TODO: b/381242007 - Allocate a proper buffer if we want to use
   // device-side TMA APIs.
-  void* scratch_ptr = nullptr;  // Alive until kernel_.Launch returns.
-  params.push_back(&scratch_ptr);
+  void* tma_descriptor_buffer = nullptr;  // Alive until kernel_.Launch returns.
+  params.push_back(&tma_descriptor_buffer);
+  void* profiling_buffer = nullptr;  // Alive until kernel_.Launch returns.
+  params.push_back(&profiling_buffer);
 
   return kernel_.Launch(stream, grid_, params.data());
 }
@@ -705,11 +712,11 @@ void TritonKernelCall(gpuStream_t stream, void** buffers, const char* opaque,
   absl::Status result = [=] {
     JAX_ASSIGN_OR_RETURN(
         KernelCall * kernel_call,
-        GetKernelCall(absl::string_view(opaque, opaque_len), stream, buffers));
+        GetKernelCall(std::string_view(opaque, opaque_len), stream, buffers));
     return kernel_call->Launch(stream, buffers);
   }();
   if (!result.ok()) {
-    absl::string_view msg = result.message();
+    std::string_view msg = result.message();
     XlaCustomCallStatusSetFailure(status, msg.data(), msg.length());
   }
 }

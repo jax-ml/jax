@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import sys
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -597,6 +599,10 @@ class SplashAttentionMaskTest(jtu.JaxTestCase):
     self.assertNotIn(mask_diff_shape, mask_set)
 
   def test_using_logical_operators_raises_exception(self):
+    if sys.version_info == (3, 14, 0, "candidate", 1):
+      # Fails due to Python bug on 3.14.0rc1
+      # https://github.com/python/cpython/issues/137288
+      self.skipTest("Expected failure.")
     mask_1 = mask_lib.NumpyMask(
         mask_lib.make_random_mask((256, 256), 0.5, seed=1)
     )

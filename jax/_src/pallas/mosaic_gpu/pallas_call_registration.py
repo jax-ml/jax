@@ -23,15 +23,16 @@ from typing import cast
 import warnings
 
 import jax
-from jax import lax
 from jax._src import config
 from jax._src import core as jax_core
+from jax._src import frozen_dict
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering
 from jax.experimental.mosaic import gpu as mgpu
+import jax.numpy as jnp
 import numpy as np
 
 
@@ -47,7 +48,10 @@ def pallas_call_lowering(
     compiler_params: dict[str, pallas_core.CompilerParams],
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
+    metadata: frozen_dict.FrozenDict[str, str] | None,
+    name: str | None,
 ):
+  del metadata, name  # TODO(sharadmv): Add metadata to HLO.
   debug_info = jaxpr.debug_info
   del interpret, out_avals
   if grid_mapping.num_dynamic_grid_bounds:
@@ -100,7 +104,7 @@ def pallas_call_lowering(
     # We guarantee zero-initialization of the GMEM scratch at the moment, which
     # is important for semaphores.
     def zero_init_gmem_scratch():
-      return [lax.zeros_like_array(s) for s in lowering_result.gmem_scratch_shapes]
+      return [jnp.zeros_like(s) for s in lowering_result.gmem_scratch_shapes]
     scratch_args = mlir.lower_fun(
         zero_init_gmem_scratch, multiple_results=True
     )(ctx.replace(avals_in=()))
@@ -111,19 +115,19 @@ def pallas_call_lowering(
       out_types=lowering_result.new_out_shapes,
       inout_types=(),
       input_output_aliases=input_output_aliases,
-      use_custom_barrier=False, # False until we add get_barrier_semaphore() feature
+      # False until we add get_barrier_semaphore() feature.
+      use_custom_barrier=False,
   )
-  if (prof_ctx := lowering_result.profiler_context) is not None:
+  if (prof_spec := lowering_result.profiler_spec) is not None:
     *outs, prof_buffer = outs
-    if (dump_path := prof_ctx.dump_path) == "sponge":
-      dump_path = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR")  # type: ignore
     out_file = os.path.join(
-        dump_path, f"{mlir.sanitize_name(debug_info.func_name)}-{time.time_ns()}-trace.json"
+        prof_spec.dump_path,
+        f"{mlir.sanitize_name(debug_info.func_name)}-{time.time_ns()}-trace.json",
     )
     def dump_profile(prof_buffer):
       try:
         with open(out_file, "x") as f:
-          prof_ctx.spec.dump(
+          prof_spec.dump(
               prof_buffer,
               f,
               grid=lowering_result.grid,

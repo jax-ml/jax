@@ -11,13 +11,67 @@ For the overall JAX change log see [here](https://docs.jax.dev/en/latest/changel
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## Unreleased
+## Released with jax 0.8.1
+
+* New features:
+
+  * Added {func}`jax.experimental.pallas.tpu.get_tpu_info` to get TPU hardware information.
+
+* Deprecations
+
+  * `pl.max_contiguous` has been moved to {mod}`jax.experimental.pallas.triton`.
+    Accessing it via {mod}`jax.experimental.pallas` is deprecated.
+  * `pl.swap` is deprecated and will be removed in a future release. Use
+    indexing or backend-specific loading/storing APIs instead.
+
+* Removals
+
+  * Removed the previously deprecated
+    {class}`jax.experimental.pallas.tpu.TPUCompilerParams`,
+    {class}`jax.experimental.pallas.tpu.TPUMemorySpace`,
+    {class}`jax.experimental.pallas.tpu.TritonCompilerParams`.
+
+## Released with jax 0.7.1
+
+* New features:
+
+  * `pltpu.make_async_remote_copy` and `pltpu.semaphore_signal`'s `device_id`
+    argument now allows user to pass in a dictionary that only specifies the
+    device index along the communication axis, instead of the full coordinates.
+    It also supports TPU core id index.
+  * `jax.debug.print` now works in Pallas kernels and is the recommended way to
+    print.
+
+* Deprecations
+
+  * `pl.atomic_*` APIs have been moved to {mod}`jax.experimental.pallas.triton`.
+    Accessing them via {mod}`jax.experimental.pallas` is deprecated.
+  * `pl.load` and `pl.store` are deprecated. Use indexing or backend-specific
+    loading/storing APIs instead.
+
+## Released with jax 0.7.0
+
+* New functionality
+
+  * Added a new decorator {func}`jax.experimental.pallas.loop` which allows
+    to write stateless loops as functions.
+  * Added new multiple buffering and lookahead functionality to
+    {func}`jax.experimental.pallas.tpu.emit_pipeline`. Input buffers can now
+    be multiple-buffered with more than 2 buffers and support a lookahead option
+    to fetch blocks that are an arbitrary number of grid iterations ahead
+    rather than the immediate next iterations. Additionally, pipeline state
+    can now be held in registers to reduce scalar memory usage.
 
 * Deprecations
 
   * {class}`jax.experimental.pallas.triton.TritonCompilerParams` has been
     renamed to {class}`jax.experimental.pallas.triton.CompilerParams`. The
     old name is deprecated and will be removed in a future release.
+  * {class}`jax.experimental.pallas.tpu.TPUCompilerParams`
+    and {class}`jax.experimental.pallas.tpu.TPUMemorySpace` have been
+    renamed to {class}`jax.experimental.pallas.tpu.CompilerParams`
+    and {class}`jax.experimental.pallas.tpu.MemorySpace`. The
+    old names are deprecated and will be removed in a future release.
 
 ## Released with jax 0.6.1
 

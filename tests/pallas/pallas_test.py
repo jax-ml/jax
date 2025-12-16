@@ -1,4 +1,3 @@
-import contextlib
 # Copyright 2023 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,10 @@ import contextlib
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
+import contextlib
+import dataclasses
 import functools
 import itertools
 import math
@@ -20,23 +22,24 @@ import os
 import re
 import sys
 
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
-
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
-import jax.export
 from jax import lax
 from jax import random
 from jax._src import checkify
 from jax._src import config
+from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src import hijax
 from jax._src import test_util as jtu
-from jax._src.lax.control_flow.for_loop import for_loop
-from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
+from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
+import jax.export
 import jax.numpy as jnp
 import numpy as np
+
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
 if sys.platform != "win32":
   from jax.experimental.pallas import tpu as pltpu
@@ -59,52 +62,8 @@ def smem_on_tpu():
     return None
 
 
-intx = dtypes.canonicalize_dtype(jnp.int64)
-floatx = dtypes.canonicalize_dtype(jnp.float64)
-
-
-@functools.partial(jax.jit, static_argnames=["bm", "bn", "gm", "bk",
-                                             "interpret", "debug"])
-def matmul(x, y, *, bm, bn, gm, bk, interpret, debug=False):
-  m, n, k = x.shape[0], y.shape[1], x.shape[1]
-  @functools.partial(
-      pl.pallas_call, out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
-      interpret=interpret,
-      debug=debug,
-      grid=pl.cdiv(m, bm) * pl.cdiv(n, bn))
-  def matmul_kernel(x_ref, y_ref, o_ref):
-    pid = pl.program_id(axis=0).astype(intx)
-    num_pid_m = m // bm
-    num_pid_n = n // bn
-    num_pid_in_group = gm * num_pid_n
-    group_id = lax.div(pid, num_pid_in_group)
-    first_pid_m = group_id * gm
-    group_size_m = jnp.minimum(num_pid_m - first_pid_m, gm)
-    pid_m = first_pid_m + lax.rem(pid, group_size_m)
-    pid_n = lax.div(lax.rem(pid, num_pid_in_group), group_size_m)
-    idx_m = pid_m * bm + jnp.arange(bm)
-    idx_n = pid_n * bn + jnp.arange(bn)
-    idx_m = pl.max_contiguous(pl.multiple_of(idx_m, bm), bm)
-    idx_n = pl.max_contiguous(pl.multiple_of(idx_n, bn), bn)
-    acc = jnp.zeros((bm, bn), dtype=jnp.float32)
-    def body(i, acc_ref):
-      idx_k = i * bk + jnp.arange(bk)
-      x_idx = (
-          jax.lax.broadcast_in_dim(idx_m, (bm, bk), (0,)),
-          jax.lax.broadcast_in_dim(idx_k, (bm, bk), (1,)))
-      y_idx = (
-          jax.lax.broadcast_in_dim(idx_k, (bk, bn), (0,)),
-          jax.lax.broadcast_in_dim(idx_n, (bk, bn), (1,)))
-      x_block, y_block = x_ref[x_idx], y_ref[y_idx]
-      out = pl.dot(x_block, y_block)
-      acc_ref[:, :] += out
-    acc = for_loop(k // bk, body, acc).astype(o_ref.dtype)
-    o_idx = (
-        jax.lax.broadcast_in_dim(idx_m, (bm, bn), (0,)),
-        jax.lax.broadcast_in_dim(idx_n, (bm, bn), (1,)),
-        )
-    o_ref[o_idx] = acc
-  return matmul_kernel(x, y)
+intx = dtypes.default_int_dtype()
+floatx = dtypes.default_float_dtype()
 
 
 @functools.partial(jax.jit, static_argnames=["bm", "bn", "bk",
@@ -125,36 +84,16 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
   )
   def matmul_kernel(x_ref, y_ref, o_ref):
     acc = jnp.zeros(o_ref.shape, dtype=jnp.float32)
-    def body(i, acc_ref):
+    def body(i, acc):
       x_block = x_ref[:, pl.ds(i * bk, bk)]
       y_block = y_ref[pl.ds(i * bk, bk), :]
-      acc_ref[:, :] += pl.dot(x_block, y_block)
-    acc = for_loop(k // bk, body, acc).astype(o_ref.dtype)
+      return acc + pl.dot(x_block, y_block)
+    acc = lax.fori_loop(0, k // bk, body, acc).astype(o_ref.dtype)
     o_ref[:, :] = acc
   return matmul_kernel(x, y)
 
 
-@jtu.with_config(jax_traceback_filtering="off")
-class PallasBaseTest(jtu.JaxTestCase):
-  INTERPRET = False
-
-  def setUp(self):
-    if jtu.test_device_matches(["cpu"]) and not self.INTERPRET:
-      self.skipTest("On CPU the test works only in interpret mode")
-    if (jtu.test_device_matches(["cuda"]) and
-        not jtu.is_cuda_compute_capability_at_least("8.0")):
-      self.skipTest("Only works on GPU with capability >= sm80")
-    if sys.platform == "win32" and not self.INTERPRET:
-      self.skipTest("Only works on non-Windows platforms")
-
-    super().setUp()
-    _trace_kernel_to_jaxpr.cache_clear()
-
-  def pallas_call(self, *args, **kwargs):
-    return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
-
-
-class PallasCallTest(PallasBaseTest):
+class PallasCallTest(ptu.PallasTest):
 
   def test_add_one(self):
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
@@ -494,7 +433,9 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(o_ref_shape, (4,))
     self.assertAllClose(pids[0:4], np.array([0] * 4, dtype=np.int32))
 
-  def test_hoisted_consts(self):
+  def test_const_args(self):
+    if config.use_simplified_jaxpr_constants.value:
+      self.skipTest("TODO: decide if we want to keep these errors")
     # See https://github.com/jax-ml/jax/issues/21557.
     # to_store will be hoisted as a constant. Choose distinct shapes from in/outs.
     to_store = np.arange(128, dtype=np.float32).reshape((1, 128))
@@ -532,32 +473,6 @@ class PallasCallTest(PallasBaseTest):
 
   @parameterized.named_parameters(*[
     (f"m_{m}_n_{n}_k_{k}_dtype_{dtype}_bm_{block_size_m}_"
-     f"bn_{block_size_n}_bk_{block_size_k}_gm_{group_size_m}", m, n, k, dtype,
-     block_size_m, block_size_n, block_size_k, group_size_m)
-      for m in [512, 1024]
-      for k in [512]
-      for n in [512, 1024]
-      for dtype in ["float32", "float16"]
-      for block_size_m in [64, 128]
-      for block_size_n in [64, 128]
-      for block_size_k in [32]
-      for group_size_m in [8]
-      if block_size_m <= m and block_size_n <= n and block_size_k <= k
-    ])
-  def test_matmul(self, m, n, k, dtype, bm, bn, bk, gm):
-    if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
-      self.skipTest("On TPU the test works only in interpret mode")
-    k1, k2 = random.split(random.key(0))
-    x = random.normal(k1, (m, k), dtype=dtype)
-    y = random.normal(k2, (k, n), dtype=dtype)
-    out = matmul(x, y, bm=bm, bn=bn, bk=bk, gm=gm,
-                 interpret=self.INTERPRET)
-    expected = jnp.matmul(
-            x, y, preferred_element_type=jnp.float32).astype(dtype)
-    np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
-
-  @parameterized.named_parameters(*[
-    (f"m_{m}_n_{n}_k_{k}_dtype_{dtype}_bm_{block_size_m}_"
      f"bn_{block_size_n}_bk_{block_size_k}", m, n, k, dtype,
      block_size_m, block_size_n, block_size_k)
       for m in [512, 1024]
@@ -581,38 +496,6 @@ class PallasCallTest(PallasBaseTest):
             x, y, preferred_element_type=jnp.float32).astype(dtype)
     np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
 
-  @parameterized.named_parameters(*(
-      dict(testcase_name=f"{batch_size}_{size}_{block_size}_{dtype}",
-           batch_size=batch_size, size=size, block_size=block_size, dtype=dtype)
-      for batch_size in [1, 2, 4, 23]
-      for size in [1, 2, 129, 255, 256]
-      for block_size in [1, 2, 32, 64, 128, 256]
-      for dtype in ["float32"]
-      if size < block_size
-  ))
-  def test_softmax(self, batch_size, size, block_size, dtype):
-    if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
-      self.skipTest("On TPU the test works only in interpret mode")
-    @functools.partial(self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((batch_size, size), dtype),
-        grid=batch_size)
-    def softmax(x_ref, o_ref):
-      row_idx = pl.program_id(0)
-      x_idx = jnp.arange(block_size)
-      row_idxs = (row_idx, x_idx)
-      mask = x_idx < x_ref.shape[1]
-      row = pl.load(x_ref, row_idxs, mask=mask, other=-float("inf"))
-      row_minus_max = row - jnp.max(row, axis=0)
-      numerator = jnp.exp(row_minus_max)
-      denominator = jnp.sum(numerator, axis=0)
-      softmax_output = numerator / denominator
-      pl.store(o_ref, row_idxs, softmax_output, mask=mask)
-
-    key = random.key(0)
-    x = random.normal(key, [batch_size, size], dtype=dtype)
-    np.testing.assert_allclose(softmax(x), jax.nn.softmax(x, axis=-1),
-        atol=1e-5, rtol=1e-5)
-
   def test_unused_ref(self):
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("On TPU the test works only in interpret mode")
@@ -629,32 +512,6 @@ class PallasCallTest(PallasBaseTest):
     key = random.key(0)
     x = random.normal(key, (m, n))
     np.testing.assert_allclose(dummy(x), jnp.ones_like(x), atol=1e-5, rtol=1e-5)
-
-  def test_with_input_output_aliasing(self):
-    if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
-      self.skipTest("On TPU the test works only in interpret mode")
-    def add_inplace_kernel(_, o_ref, *, block_size):
-      pid = pl.program_id(axis=0)  # we use a 1d launch grid so axis is 0
-      block_start = pid * block_size
-      offsets = block_start + jnp.arange(block_size, dtype=jnp.int32)
-      mask = offsets < o_ref.shape[0]
-      x = pl.load(o_ref, (offsets,), mask=mask)
-      output = x + 1
-      pl.store(o_ref, (offsets,), output, mask=mask)
-
-    grid = (8,)
-    size = 8
-    dtype = "float32"
-    k1 = random.key(0)
-    block_size = 1
-    x = random.normal(k1, [size], dtype=dtype)
-    kernel = functools.partial(add_inplace_kernel, block_size=block_size)
-    out = self.pallas_call(
-        kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        grid=grid, input_output_aliases={0: 0})(x)
-    expected = x + 1
-    np.testing.assert_allclose(out, expected)
 
   def test_using_pallas_slice(self):
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
@@ -691,6 +548,22 @@ class PallasCallTest(PallasBaseTest):
     x = jnp.array(0., dtype=jnp.float32)
     self.assertEqual(f(x), 2.)
     self.assertEqual(trace_count, 1)
+
+  def test_pallas_call_under_disable_jit(self):
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((8,), jnp.float32),
+    )
+    def add_one(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.
+
+    x = jnp.arange(8, dtype=jnp.float32)
+
+    result = add_one(x)
+    np.testing.assert_array_equal(result, x + 1.)
+
+    with jax.disable_jit():
+      result = add_one(x)
+      np.testing.assert_array_equal(result, x + 1.)
 
   @parameterized.parameters(
       ("float32", None),
@@ -820,6 +693,8 @@ class PallasCallTest(PallasBaseTest):
   def test_float8_e4m3b11fnuz_dot(self, transpose):
     if not jtu.test_device_matches(["tpu"]) or not jtu.is_device_tpu_at_least(5):
       self.skipTest("`float8_e4m3b11fnuz` dot only supported on TPU.")
+    if jtu.is_device_tpu(7, "x"):
+      self.skipTest("Unsupported type for matmul.")
 
     dtype = jnp.float8_e4m3b11fnuz
     x = jax.random.normal(jax.random.key(0), (2048, 1024), dtype=jnp.bfloat16)
@@ -864,7 +739,7 @@ class PallasCallInterpretTest(PallasCallTest):
   INTERPRET = True
 
 
-class PallasCallElementIndexingTest(PallasBaseTest):
+class PallasCallElementIndexingTest(ptu.PallasTest):
 
   def test_block_spec_element(self):
     def show_program_ids(
@@ -1000,7 +875,7 @@ class PallasCallElementIndexingInterpretTest(PallasCallElementIndexingTest):
   INTERPRET = True
 
 
-class PallasCallBoundedSliceIndexingTest(PallasBaseTest):
+class PallasCallBoundedSliceIndexingTest(ptu.PallasTest):
 
   def setUp(self):
     super().setUp()
@@ -1029,7 +904,7 @@ class PallasCallBoundedSliceIndexingTest(PallasBaseTest):
           ),
       )(x)
 
-class ApiErrorTest(PallasBaseTest):
+class ApiErrorTest(ptu.PallasTest):
   def test_pallas_call_kernel_args_mismatch(self):
     a = np.arange(256, dtype=np.int32)
     f = self.pallas_call(lambda x_ref: None,  # Missing o_ref
@@ -1157,6 +1032,8 @@ class ApiErrorTest(PallasBaseTest):
       f(a)
 
   def test_pallas_call_index_map_captures_consts(self):
+    if config.use_simplified_jaxpr_constants.value:
+      self.skipTest("TODO: decide if we want to keep these errors")
     a = np.arange(256, dtype=np.int32)
     index_map_result = np.array([0], dtype=np.int32)
     f = self.pallas_call(lambda x_ref, o1_ref: None,
@@ -1254,46 +1131,34 @@ class ApiErrorTest(PallasBaseTest):
     y = random.normal(key2, (k, n), dtype=jnp.float32)
     with self.assertRaisesRegex(
         ValueError,
-        r" Attempting to pass a Ref"
-        r" MemRef<None>{float32\[8,32\]}"
-        r" to a primitive: dot_general - did you forget to unpack \(\[...\]\)"
+        r"Attempting to pass a Ref"
+        r" Ref{float32\[8,32\]}"
+        r" to a primitive: dot_general -- did you forget to unpack \(\[...\]\)"
         r" the ref?",
     ):
       dot_general_kernel(x, y)
 
-  def test_jax_disable_jit(self):
-    def add_vectors_kernel(x_ref, y_ref, o_ref):
-      x, y = x_ref[...], y_ref[...]
-      o_ref[...] = x + y
+  def test_pallas_error_for_writing_ref_to_ref(self):
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref
 
-    @jax.jit
-    def add_vectors(x: jax.Array, y: jax.Array) -> jax.Array:
-      return self.pallas_call(
-          add_vectors_kernel, out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype)
-      )(x, y)
-
-    # Prove kernel works fine without disable_jit.
-    add_vectors(jnp.arange(8), jnp.arange(8))
-
+    x = jnp.ones((8, 128), dtype=jnp.float32)
     with self.assertRaisesRegex(
-        NotImplementedError, "pallas_call not supported with disable_jit."
+        ValueError, "Cannot store a Ref into another Ref",
     ):
-      with jax.disable_jit():
-        add_vectors(jnp.arange(8.0), jnp.arange(8.0))
-
-    with jax.disable_jit():
-      # We instructed the user to do this, so this should not raise an error.
-      with jax.disable_jit(False):
-        add_vectors(jnp.arange(8.0), jnp.arange(8.0))
+      kernel(x)
 
 
 class ApiErrorInterpretTest(ApiErrorTest):
   INTERPRET = True
 
 
-class PallasCallInputOutputAliasingTest(PallasBaseTest):
+class PallasCallInputOutputAliasingTest(ptu.PallasTest):
 
-  def test_basic_input_output_aliasing(self):
+  def test_vector_input_output_aliasing(self):
     # Input needs to be big so it doesn't fit in VMEM
     size = 1024
     if jtu.is_device_cuda():
@@ -1322,12 +1187,91 @@ class PallasCallInputOutputAliasingTest(PallasBaseTest):
     self.assertEqual(mem_analysis.alias_size_in_bytes, expected_num_bytes)
     self.assertEqual(mem_analysis.temp_size_in_bytes, 0)
 
+  def test_scalar_input_output_aliasing(self):
+    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(
+        2025, 10, 7
+    ):
+      self.skipTest("Requires libtpu built after 2025-10-07")
 
-class PallasCallInputOutputAliasingInterpretTest(PallasBaseTest):
+    x = jnp.array([41.0], dtype=jnp.float32)
+    expected = x + 1.0
+
+    def kernel(x_ref, y_ref):
+      y_ref[0] = x_ref[0] + 1.0
+
+    shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
+    scalar_smem_spec = pl.BlockSpec(
+        block_shape=(1,), index_map=lambda *_: (0,), memory_space=pltpu.SMEM
+    )
+
+    @functools.partial(jax.jit, donate_argnums=(0,))
+    def f(x_in):
+      return self.pallas_call(
+          kernel,
+          out_shape=shape,
+          in_specs=[scalar_smem_spec],
+          out_specs=scalar_smem_spec,
+          grid=(1,),
+          input_output_aliases={0: 0},
+      )(x_in)
+
+    o = f(x)
+    np.testing.assert_array_equal(o, expected)
+    with self.assertRaisesRegex(RuntimeError, "Array has been deleted"):
+      print(x)
+
+  def test_mixed_scalar_vector_input_output_aliasing(self):
+    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(
+        2025, 10, 7
+    ):
+      self.skipTest("Requires libtpu built after 2025-10-07")
+
+    x_scalar = jnp.array([41.0], dtype=jnp.float32)
+    x_vector = jnp.arange(1024, dtype=jnp.float32).reshape((8, 128))
+    expected_scalar = x_scalar + 1.0
+    expected_vector = x_vector + 1.0
+
+    def kernel(scalar_in_ref, vector_in_ref, scalar_out_ref, vector_out_ref):
+      scalar_out_ref[0] = scalar_in_ref[0] + 1.0
+      vector_out_ref[:] = vector_in_ref[:] + 1.0
+
+    scalar_shape = jax.ShapeDtypeStruct(x_scalar.shape, x_scalar.dtype)
+    vector_shape = jax.ShapeDtypeStruct(x_vector.shape, x_vector.dtype)
+    scalar_spec = pl.BlockSpec(
+        block_shape=(1,), index_map=lambda *_: (0,), memory_space=pltpu.SMEM
+    )
+    vector_spec = pl.BlockSpec(
+        block_shape=x_vector.shape, index_map=lambda *_: (0,) * x_vector.ndim
+    )
+
+    @functools.partial(jax.jit, donate_argnums=(0, 1))
+    def f(x_scalar_in, x_vector_in):
+      return self.pallas_call(
+          kernel,
+          out_shape=(scalar_shape, vector_shape),
+          in_specs=[scalar_spec, vector_spec],
+          out_specs=[scalar_spec, vector_spec],
+          grid=(1,),
+          input_output_aliases={
+              0: 0,
+              1: 1,
+          },
+      )(x_scalar_in, x_vector_in)
+
+    o_scalar, o_vector = f(x_scalar, x_vector)
+    np.testing.assert_array_equal(o_scalar, expected_scalar)
+    np.testing.assert_array_equal(o_vector, expected_vector)
+    with self.assertRaisesRegex(RuntimeError, "Array has been deleted"):
+      print(x_scalar)
+    with self.assertRaisesRegex(RuntimeError, "Array has been deleted"):
+      print(x_vector)
+
+
+class PallasCallInputOutputAliasingInterpretTest(ptu.PallasTest):
   INTERPRET = True
 
 
-class PallasControlFlowTest(PallasBaseTest):
+class PallasControlFlowTest(ptu.PallasTest):
 
   def setUp(self):
     super().setUp()
@@ -1636,6 +1580,28 @@ class PallasControlFlowTest(PallasBaseTest):
       jax.value_and_grad(lambda params, x: f(program, params, x).sum())(
           params, x)
 
+  @parameterized.product(start=[0, 1, 2], stop=[6, 7, 8], step=[None, 3])
+  def test_loop(self, start, stop, step):
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((128,), jnp.int32)
+    )
+    def f(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+
+      @pl.loop(
+          jnp.int32(start),
+          jnp.int32(stop),
+          **{} if step is None else dict(step=jnp.astype(step, jnp.int32)),
+      )
+      def _(i):
+        y_ref[...] += i
+
+    x = jnp.zeros((128,), jnp.int32)
+    np.testing.assert_array_equal(
+        f(x), jnp.full_like(x, sum(range(start, stop, step or 1)))
+    )
+
   def test_fori_loop_simple(self):
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("TODO: error on TPU")
@@ -1927,6 +1893,34 @@ class PallasControlFlowTest(PallasBaseTest):
     # 3 -> 6 -> 12 -> 24
     np.testing.assert_array_equal(reduced, 1024 * 24)
 
+  def test_vector_1d_slice_carry_while_loop(self):
+    """Tests lowering of a while_loop which carries a sliced vector quantity."""
+    if jtu.test_device_matches(["gpu"]) and not self.INTERPRET:
+      self.skipTest("TODO: slice not implemented on GPU")
+
+    def kernel(x_ref, r_ref):
+
+      def cond(v):
+        return v[0] < 16
+
+      def body(v):
+        return jnp.concatenate([v, v])[1:101] * 2
+
+      r_ref[:] = jax.lax.while_loop(cond, body, x_ref[:])
+
+    x = jnp.full((100,), 3, dtype=jnp.int32)
+    fn = pl.pallas_call(
+        kernel,
+        grid=(1,),
+        in_specs=[pl.BlockSpec((100,), lambda i: (0,))],
+        out_specs=pl.BlockSpec((100,), lambda i: (0,)),
+        out_shape=jax.ShapeDtypeStruct((100,), jnp.int32),
+    )
+    r = fn(x)
+    reduced = jnp.sum(r)
+    # 3 -> 6 -> 12 -> 24
+    np.testing.assert_array_equal(reduced, 100 * 24)
+
   @parameterized.named_parameters(
       ('1x128', (1, 128)),
       ('2x128', (2, 128)),
@@ -2066,7 +2060,7 @@ AD_TEST_CASES = [
 ]
 
 
-class PallasCallAutodifferentiationTest(PallasBaseTest):
+class PallasCallAutodifferentiationTest(ptu.PallasTest):
 
   def setUp(self):
     super().setUp()
@@ -2181,7 +2175,7 @@ class PallasCallAutodifferentiationInterpretTest(PallasCallAutodifferentiationTe
   INTERPRET = True
 
 
-class PallasOutOfBoundsInterpretTest(PallasBaseTest):
+class PallasOutOfBoundsInterpretTest(ptu.PallasTest):
   INTERPRET = True
 
   def test_interpret_mode_out_of_bounds_access(self):
@@ -2261,7 +2255,7 @@ class PallasOutOfBoundsInterpretTest(PallasBaseTest):
       np.testing.assert_allclose(out, expected, atol=atol, rtol=rtol)
 
 
-class PallasCheckifyTest(PallasBaseTest):
+class PallasCheckifyTest(ptu.PallasTest):
   INTERPRET = False
 
   def test_basic_runtime_assert(self):
@@ -2441,7 +2435,7 @@ class PallasCheckifyInterpretTest(PallasCheckifyTest):
   INTERPRET = True
 
 
-class PallasCallNamedGridTest(PallasBaseTest):
+class PallasCallNamedGridTest(ptu.PallasTest):
   def test_named_grid(self):
 
     def kernel(x_ref, y_ref):
@@ -2541,7 +2535,7 @@ class PallasCallNamedGridTest(PallasBaseTest):
     )
 
 
-class SymbolicPallasTest(PallasBaseTest):
+class SymbolicPallasTest(ptu.PallasTest):
 
   def test_simple_symbolic_matmul_export(self):
     if jtu.test_device_matches(["gpu"]):
@@ -2620,6 +2614,176 @@ class SymbolicPallasTest(PallasBaseTest):
 
 class PallasCallNamedGridInterpretTest(PallasCallNamedGridTest):
   INTERPRET = True
+
+
+@dataclasses.dataclass(frozen=True)
+class WeirdTuple:
+  x0: jax.Array
+  x1: jax.Array
+
+
+@dataclasses.dataclass(frozen=True)
+class WeirdTupleTy(hijax.HiType):
+  x0_aval: jax_core.ShapedArray
+  x1_aval: jax_core.ShapedArray
+
+  @property
+  def shape(self) -> tuple[int, ...]:
+    return self.x0_aval.shape
+
+  @property
+  def dtype(self) -> jnp.dtype:
+    return self.x0_aval.dtype
+
+  def update(self, *, shape: tuple[int, ...]) -> WeirdTupleTy:
+    return dataclasses.replace(
+        self, x0_aval=self.x0_aval.update(shape=shape),
+        x1_aval=self.x1_aval.update(shape=shape[1:])
+    )
+
+  def lo_ty(self) -> list[jax_core.ShapedArray]:
+    return [self.x0_aval, self.x1_aval]
+
+  def lower_val(self, hi_val: WeirdTuple) -> list[jax.Array]:
+    return [hi_val.x0, hi_val.x1]
+
+  def raise_val(self, x0, x1) -> WeirdTuple:
+    return WeirdTuple(x0, x1)
+
+  def lower_block_spec(self, block_spec: pl.BlockSpec):
+    x1_block_spec = block_spec.replace(block_shape=block_spec.block_shape[1:],
+                                       index_map=lambda *args: (0,))
+    return [block_spec, x1_block_spec]
+
+hijax.register_hitype(
+    WeirdTuple, lambda t: WeirdTupleTy(jax.typeof(t.x0), jax.typeof(t.x1))
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class SlicedArray:
+  x: jax.Array  # any shape/dtype
+  s: jax.Array  # i32[]
+
+  @property
+  def shape(self) -> tuple[int, ...]:
+    return self.x.shape[1:]
+
+  @property
+  def dtype(self) -> jnp.dtype:
+    return self.x.dtype
+
+
+@dataclasses.dataclass(frozen=True)
+class SlicedArrayTy(hijax.HiType):
+  pre_sliced_aval: jax_core.ShapedArray
+
+  @property
+  def shape(self) -> tuple[int, ...]:
+    return self.pre_sliced_aval.shape[1:]
+
+  @property
+  def dtype(self) -> jnp.dtype:
+    return self.pre_sliced_aval.dtype
+
+  def update(self, *, shape: tuple[int, ...]) -> WeirdTupleTy:
+    return dataclasses.replace(
+        self,
+        pre_sliced_aval=self.pre_sliced_aval.update(
+            shape=(self.pre_sliced_aval.shape[0],) + shape
+        ),
+    )
+
+  def lo_ty(self) -> list[jax_core.ShapedArray]:
+    return [self.pre_sliced_aval, jax_core.ShapedArray((1,), jnp.int32)]
+
+  def lower_val(self, hi_val: SlicedArray) -> list[jax.Array]:
+    return [hi_val.x, hi_val.s]
+
+  def raise_val(self, x, s) -> WeirdTuple:
+    return SlicedArray(x, s)
+
+  def lower_block_spec(self, block_spec: pl.BlockSpec):
+    def index_map(*args):
+      idx = block_spec.index_map(*args)
+      return 0, *idx
+    new_block_shape = (pl.Blocked(self.pre_sliced_aval.shape[0]), *block_spec.block_shape)
+    x_block_spec = block_spec.replace(index_map=index_map, block_shape=new_block_shape)
+    return [x_block_spec, pl.BlockSpec(memory_space=pltpu.SMEM)]
+
+hijax.register_hitype(
+    SlicedArray, lambda t: SlicedArrayTy(jax.typeof(t.x))
+)
+
+index_p = jax_core.Primitive('index_p')
+index_p.is_high = lambda *_: True
+index_p.def_abstract_eval(lambda xt: jax_core.ShapedArray(xt.shape, xt.dtype))
+
+
+def index_to_lojax(xt: jax.Ref) -> jax.Array:
+  assert isinstance(xt, jax.Ref)
+  x_ref = xt._refs.x
+  s_ref = xt._refs.s
+  s = s_ref[0]
+  return x_ref[s]
+index_p.to_lojax = index_to_lojax
+
+
+class PallasHiJaxTest(ptu.PallasTest):
+
+  def test_pass_weird_tuple_into_pallas_call(self):
+
+    xt = WeirdTuple(x0=jnp.ones((8, 8)), x1=jnp.zeros((8,)))
+
+    def kernel(xt_ref, ot_ref):
+      xt = xt_ref[...]
+      ot_ref[...] = xt
+
+    ot = self.pallas_call(kernel, out_shape=jax.typeof(xt))(xt)
+    self.assertArraysEqual(ot.x0, xt.x0)
+    self.assertArraysEqual(ot.x1, xt.x1)
+
+  def test_pass_sliced_array_into_pallas_call(self):
+
+    xs = SlicedArray(
+        x=jnp.arange(8 * 16 * 128).reshape(8, 16, 128),
+        s=jnp.array([2], jnp.int32),
+    )
+
+    def kernel(xs_ref, o_ref):
+      x = index_p.bind(xs_ref)
+      o_ref[...] = x
+
+    o = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(xs.shape, xs.dtype),
+        in_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
+        out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+        grid=(2,)
+    )(xs)
+    self.assertArraysEqual(o, xs.x[xs.s[0]])
+
+  def test_pass_hi_type_with_aliasing(self):
+
+    xs = SlicedArray(
+        x=jnp.arange(8 * 16 * 128).reshape(8, 16, 128),
+        s=jnp.array([2], jnp.int32),
+    )
+
+    def kernel(xs_ref, o_ref):
+      o_ref[...] = xs_ref[...]
+
+    @jax.jit
+    def f(xs):
+      return self.pallas_call(
+          kernel, out_shape=jax.typeof(xs),
+          in_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
+          out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+          grid=(2,),
+          input_output_aliases={0: 0}
+      )(xs)
+    os = f(xs)
+    self.assertArraysEqual(os.x, xs.x)
+    self.assertArraysEqual(os.s, xs.s)
 
 
 if __name__ == "__main__":

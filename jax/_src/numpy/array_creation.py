@@ -13,24 +13,23 @@
 # limitations under the License.
 
 import types
-from functools import partial
 import operator
 from typing import Any, Literal, overload
 
 import numpy as np
 
-import jax
-from jax import lax
-from jax._src.api import jit
+from jax._src import api
 from jax._src import core
 from jax._src import dtypes
-from jax._src.lax import lax as lax_internal
+from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
+from jax._src.numpy.array_constructors import asarray
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
+from jax._src.sharding import Sharding
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.typing import Array, ArrayLike, DuckTypedArray, DTypeLike
 from jax._src.util import canonicalize_axis, set_module
-from jax.sharding import Sharding
 
 
 export = set_module('jax.numpy')
@@ -48,7 +47,8 @@ def canonicalize_shape(shape: Any, context: str="") -> core.Shape:
 
 @export
 def zeros(shape: Any, dtype: DTypeLike | None = None, *,
-          device: xc.Device | Sharding | None = None) -> Array:
+          device: xc.Device | Sharding | None = None,
+          out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an array full of zeros.
 
   JAX implementation of :func:`numpy.zeros`.
@@ -58,10 +58,15 @@ def zeros(shape: Any, dtype: DTypeLike | None = None, *,
     dtype: optional dtype for the created array; defaults to float32 or float64
       depending on the X64 configuration (see :ref:`default-dtypes`).
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
-      to which the created array will be committed.
+      to which the created array will be committed. This argument exists for
+      compatibility with the :ref:`python-array-api`.
+    out_sharding: (optional) :class:`~jax.sharding.PartitionSpec` or :class:`~jax.NamedSharding`
+      representing the sharding of the created array (see `explicit sharding`_ for more details).
+      This argument exists for consistency with other array creation routines across JAX.
+      Specifying both ``out_sharding`` and ``device`` will result in an error.
 
   Returns:
-    Array of the specified shape and dtype, on the specified device if specified.
+    Array of the specified shape and dtype, with the given device/sharding if specified.
 
   See also:
     - :func:`jax.numpy.zeros_like`
@@ -75,18 +80,24 @@ def zeros(shape: Any, dtype: DTypeLike | None = None, *,
     >>> jnp.zeros((2, 3), dtype=bool)
     Array([[False, False, False],
            [False, False, False]], dtype=bool)
+
+  .. _explicit sharding: https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
   """
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   if (m := _check_forgot_shape_tuple("zeros", shape, dtype)): raise TypeError(m)
-  dtypes.check_user_dtype_supported(dtype, "zeros")
+  dtype = dtypes.check_and_canonicalize_user_dtype(
+      float if dtype is None else dtype, "zeros")
   shape = canonicalize_shape(shape)
-  return lax.full(shape, 0, dtypes.jax_dtype(dtype), sharding=util.normalize_device_to_sharding(device))
+  sharding = util.choose_device_or_out_sharding(
+      device, out_sharding, 'jnp.zeros')
+  return lax.full(shape, 0, dtype, sharding=sharding)
 
 
 @export
 def ones(shape: Any, dtype: DTypeLike | None = None, *,
-         device: xc.Device | Sharding | None = None) -> Array:
+         device: xc.Device | Sharding | None = None,
+         out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an array full of ones.
 
   JAX implementation of :func:`numpy.ones`.
@@ -96,10 +107,15 @@ def ones(shape: Any, dtype: DTypeLike | None = None, *,
     dtype: optional dtype for the created array; defaults to float32 or float64
       depending on the X64 configuration (see :ref:`default-dtypes`).
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
-      to which the created array will be committed.
+      to which the created array will be committed. This argument exists for
+      compatibility with the :ref:`python-array-api`.
+    out_sharding: (optional) :class:`~jax.sharding.PartitionSpec` or :class:`~jax.NamedSharding`
+      representing the sharding of the created array (see `explicit sharding`_ for more details).
+      This argument exists for consistency with other array creation routines across JAX.
+      Specifying both ``out_sharding`` and ``device`` will result in an error.
 
   Returns:
-    Array of the specified shape and dtype, on the specified device if specified.
+    Array of the specified shape and dtype, with the given device/sharding if specified.
 
   See also:
     - :func:`jax.numpy.ones_like`
@@ -113,18 +129,24 @@ def ones(shape: Any, dtype: DTypeLike | None = None, *,
     >>> jnp.ones((2, 3), dtype=bool)
     Array([[ True,  True,  True],
            [ True,  True,  True]], dtype=bool)
+
+  .. _explicit sharding: https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
   """
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   if (m := _check_forgot_shape_tuple("ones", shape, dtype)): raise TypeError(m)
   shape = canonicalize_shape(shape)
-  dtypes.check_user_dtype_supported(dtype, "ones")
-  return lax.full(shape, 1, dtypes.jax_dtype(dtype), sharding=util.normalize_device_to_sharding(device))
+  dtype = dtypes.check_and_canonicalize_user_dtype(
+      float if dtype is None else dtype, "ones")
+  sharding = util.choose_device_or_out_sharding(
+      device, out_sharding, 'jnp.ones')
+  return lax.full(shape, 1, dtype, sharding=sharding)
 
 
 @export
 def empty(shape: Any, dtype: DTypeLike | None = None, *,
-          device: xc.Device | Sharding | None = None) -> Array:
+          device: xc.Device | Sharding | None = None,
+          out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an empty array.
 
   JAX implementation of :func:`numpy.empty`. Because XLA cannot create an
@@ -136,10 +158,15 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
     dtype: optional dtype for the created array; defaults to float32 or float64
       depending on the X64 configuration (see :ref:`default-dtypes`).
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
-      to which the created array will be committed.
+      to which the created array will be committed. This argument exists for
+      compatibility with the :ref:`python-array-api`.
+    out_sharding: (optional) :class:`~jax.sharding.PartitionSpec` or :class:`~jax.NamedSharding`
+      representing the sharding of the created array (see `explicit sharding`_ for more details).
+      This argument exists for consistency with other array creation routines across JAX.
+      Specifying both ``out_sharding`` and ``device`` will result in an error.
 
   Returns:
-    Array of the specified shape and dtype, on the specified device if specified.
+    Array of the specified shape and dtype, with the given device/sharding if specified.
 
   See also:
     - :func:`jax.numpy.empty_like`
@@ -153,10 +180,13 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
     >>> jnp.empty((2, 3), dtype=bool)
     Array([[False, False, False],
            [False, False, False]], dtype=bool)
+
+  .. _explicit sharding: https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
   """
   if (m := _check_forgot_shape_tuple("empty", shape, dtype)): raise TypeError(m)
-  dtypes.check_user_dtype_supported(dtype, "empty")
-  return zeros(shape, dtype, device=device)
+  dtype = dtypes.check_and_canonicalize_user_dtype(
+      float if dtype is None else dtype, "empty")
+  return zeros(shape, dtype, device=device, out_sharding=out_sharding)
 
 
 def _check_forgot_shape_tuple(name, shape, dtype) -> str | None:  # type: ignore
@@ -205,22 +235,25 @@ def full(shape: Any, fill_value: ArrayLike,
     Array([[0, 1, 2],
            [0, 1, 2]], dtype=int32)
   """
-  dtypes.check_user_dtype_supported(dtype, "full")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "full")
   util.check_arraylike("full", fill_value)
 
   if np.ndim(fill_value) == 0:
     shape = canonicalize_shape(shape)
-    return lax.full(shape, fill_value, dtype, sharding=util.normalize_device_to_sharding(device))
+    return lax.full(shape, fill_value, dtype,
+                    sharding=util.canonicalize_device_to_sharding(device))
   else:
-    return jax.device_put(
-        util._broadcast_to(jax.numpy.asarray(fill_value, dtype=dtype), shape), device)
+    return api.device_put(
+        util._broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
 
 @export
 def zeros_like(a: ArrayLike | DuckTypedArray,
                dtype: DTypeLike | None = None,
                shape: Any = None, *,
-               device: xc.Device | Sharding | None = None) -> Array:
+               device: xc.Device | Sharding | None = None,
+               out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an array full of zeros with the same shape and dtype as an array.
 
   JAX implementation of :func:`numpy.zeros_like`.
@@ -255,17 +288,21 @@ def zeros_like(a: ArrayLike | DuckTypedArray,
     if hasattr(a, '__jax_array__'):
       a = a.__jax_array__()
     util.check_arraylike("zeros_like", a)
-  dtypes.check_user_dtype_supported(dtype, "zeros_like")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "zeros_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
-  return lax.full_like(a, 0, dtype, shape, sharding=util.normalize_device_to_sharding(device))
+  sharding = util.choose_device_or_out_sharding(
+      device, out_sharding, "jnp.zeros_like")
+  return lax.full_like(a, 0, dtype, shape, sharding=sharding)
 
 
 @export
 def ones_like(a: ArrayLike | DuckTypedArray,
               dtype: DTypeLike | None = None,
               shape: Any = None, *,
-              device: xc.Device | Sharding | None = None) -> Array:
+              device: xc.Device | Sharding | None = None,
+              out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an array of ones with the same shape and dtype as an array.
 
   JAX implementation of :func:`numpy.ones_like`.
@@ -300,10 +337,13 @@ def ones_like(a: ArrayLike | DuckTypedArray,
     if hasattr(a, '__jax_array__'):
       a = a.__jax_array__()
     util.check_arraylike("ones_like", a)
-  dtypes.check_user_dtype_supported(dtype, "ones_like")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "ones_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
-  return lax.full_like(a, 1, dtype, shape, sharding=util.normalize_device_to_sharding(device))
+  sharding = util.choose_device_or_out_sharding(
+      device, out_sharding, "jnp.ones_like")
+  return lax.full_like(a, 1, dtype, shape, sharding=sharding)
 
 
 @export
@@ -347,10 +387,12 @@ def empty_like(prototype: ArrayLike | DuckTypedArray,
     if hasattr(prototype, '__jax_array__'):
       prototype = prototype.__jax_array__()
     util.check_arraylike("ones_like", prototype)
-  dtypes.check_user_dtype_supported(dtype, "ones_like")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "ones_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
-  return lax.full_like(prototype, 0, dtype, shape, sharding=util.normalize_device_to_sharding(device))
+  return lax.full_like(prototype, 0, dtype, shape,
+                       sharding=util.canonicalize_device_to_sharding(device))
 
 
 @export
@@ -400,16 +442,18 @@ def full_like(a: ArrayLike | DuckTypedArray,
     util.check_arraylike("full_like", a, fill_value)
     if hasattr(a, '__jax_array__'):
       a = a.__jax_array__()
-  dtypes.check_user_dtype_supported(dtype, "full_like")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "full_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
   if np.ndim(fill_value) == 0:
-    return lax.full_like(a, fill_value, dtype, shape, sharding=util.normalize_device_to_sharding(device))
+    return lax.full_like(a, fill_value, dtype, shape,
+                         sharding=util.canonicalize_device_to_sharding(device))
   else:
     shape = np.shape(a) if shape is None else shape  # type: ignore[arg-type]
     dtype = dtypes.result_type(a) if dtype is None else dtype
-    return jax.device_put(
-        util._broadcast_to(jax.numpy.asarray(fill_value, dtype=dtype), shape), device)
+    return api.device_put(
+        util._broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
 @overload
 def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
@@ -503,21 +547,21 @@ def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.linspace")
   return _linspace(start, stop, num, endpoint, retstep, dtype, axis, device=device)
 
-@partial(jit, static_argnames=('num', 'endpoint', 'retstep', 'dtype', 'axis', 'device'))
+@api.jit(static_argnames=('num', 'endpoint', 'retstep', 'dtype', 'axis', 'device'))
 def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
               endpoint: bool = True, retstep: bool = False,
               dtype: DTypeLike | None = None,
               axis: int = 0,
               *, device: xc.Device | Sharding | None = None) -> Array | tuple[Array, Array]:
   """Implementation of linspace differentiable in start and stop args."""
-  dtypes.check_user_dtype_supported(dtype, "linspace")
   if num < 0:
     raise ValueError(f"Number of samples, {num}, must be non-negative.")
   start, stop = util.ensure_arraylike("linspace", start, stop)
 
   if dtype is None:
     dtype = dtypes.to_inexact_dtype(dtypes.result_type(start, stop))
-  dtype = dtypes.jax_dtype(dtype)
+  else:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "linspace")
   computation_dtype = dtypes.to_inexact_dtype(dtype)
   start = start.astype(computation_dtype)
   stop = stop.astype(computation_dtype)
@@ -529,13 +573,13 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   bounds_shape.insert(axis, 1)
   div = (num - 1) if endpoint else num
   if num > 1:
-    delta: Array = lax.convert_element_type(stop - start, computation_dtype) / jax.numpy.array(div, dtype=computation_dtype)
+    delta: Array = lax.convert_element_type(stop - start, computation_dtype) / asarray(div, dtype=computation_dtype)
     iota_shape = [1,] * len(bounds_shape)
     iota_shape[axis] = div
     # This approach recovers the endpoints with float32 arithmetic,
     # but can lead to rounding errors for integer outputs.
     real_dtype = dtypes.finfo(computation_dtype).dtype
-    step = lax.iota(real_dtype, div).reshape(iota_shape) / jax.numpy.array(div, real_dtype)
+    step = lax.iota(real_dtype, div).reshape(iota_shape) / asarray(div, real_dtype)
     step = step.astype(computation_dtype)
     out = (broadcast_start.reshape(bounds_shape) * (1 - step) +
       broadcast_stop.reshape(bounds_shape) * step)
@@ -545,7 +589,7 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
                             canonicalize_axis(axis, out.ndim))
 
   elif num == 1:
-    delta = jax.numpy.asarray(np.nan if endpoint else stop - start, dtype=computation_dtype)
+    delta = asarray(np.nan if endpoint else stop - start, dtype=computation_dtype)
     out = broadcast_start.reshape(bounds_shape)
   else:  # num == 0 degenerate case, match numpy behavior
     empty_shape = list(lax.broadcast_shapes(np.shape(start), np.shape(stop)))
@@ -557,7 +601,7 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
     out = lax.floor(out)
 
   sharding = util.canonicalize_device_to_sharding(device)
-  result = lax_internal._convert_element_type(out, dtype, sharding=sharding)
+  result = lax._convert_element_type(out, dtype, sharding=sharding)
   return (result, delta) if retstep else result
 
 
@@ -629,15 +673,15 @@ def logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.logspace")
   return _logspace(start, stop, num, endpoint, base, dtype, axis)
 
-@partial(jit, static_argnames=('num', 'endpoint', 'dtype', 'axis'))
+@api.jit(static_argnames=('num', 'endpoint', 'dtype', 'axis'))
 def _logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
               endpoint: bool = True, base: ArrayLike = 10.0,
               dtype: DTypeLike | None = None, axis: int = 0) -> Array:
   """Implementation of logspace differentiable in start and stop args."""
-  dtypes.check_user_dtype_supported(dtype, "logspace")
   if dtype is None:
     dtype = dtypes.to_inexact_dtype(dtypes.result_type(start, stop))
-  dtype = dtypes.jax_dtype(dtype)
+  else:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "logspace")
   computation_dtype = dtypes.to_inexact_dtype(dtype)
   start, stop = util.ensure_arraylike("logspace", start, stop)
   start = start.astype(computation_dtype)
@@ -700,14 +744,14 @@ def geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool =
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.geomspace")
   return _geomspace(start, stop, num, endpoint, dtype, axis)
 
-@partial(jit, static_argnames=('num', 'endpoint', 'dtype', 'axis'))
+@api.jit(static_argnames=('num', 'endpoint', 'dtype', 'axis'))
 def _geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool = True,
                dtype: DTypeLike | None = None, axis: int = 0) -> Array:
   """Implementation of geomspace differentiable in start and stop args."""
-  dtypes.check_user_dtype_supported(dtype, "geomspace")
   if dtype is None:
     dtype = dtypes.to_inexact_dtype(dtypes.result_type(start, stop))
-  dtype = dtypes.jax_dtype(dtype)
+  else:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "geomspace")
   computation_dtype = dtypes.to_inexact_dtype(dtype)
   start, stop = util.ensure_arraylike("geomspace", start, stop)
   start = start.astype(computation_dtype)

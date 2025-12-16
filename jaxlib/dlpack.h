@@ -27,7 +27,7 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/xla_data.pb.h"
 
-namespace xla {
+namespace jax {
 
 // If take_ownership is true, ownership of the buffer is handed to DLPack, and
 // the receiver may mutate the buffer as they see fit. Otherwise PjRt retains
@@ -40,19 +40,15 @@ absl::StatusOr<nanobind::capsule> BufferToDLPackManagedTensor(
     nanobind::handle buffer, std::optional<std::intptr_t> stream);
 
 absl::StatusOr<nanobind::object> DLPackManagedTensorToBuffer(
-    const nanobind::capsule& tensor,
-    std::optional<nb_class_ptr<PyClient>> cpu_client,
-    std::optional<nb_class_ptr<PyClient>> gpu_client);
-
-absl::StatusOr<nanobind::object> DLPackManagedTensorToBuffer(
-    const nanobind::capsule& tensor, ifrt::Device* device,
-    nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream);
+    const nanobind::capsule& tensor, xla::ifrt::Device* device,
+    nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream,
+    std::optional<bool> copy);
 
 // Converts a PrimitiveType to the nanobind specific implementation of
 // DLDataType.
 absl::StatusOr<nanobind::dlpack::dtype> PrimitiveTypeToNbDLDataType(
-    PrimitiveType type);
+    xla::PrimitiveType type);
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_DLPACK_H_

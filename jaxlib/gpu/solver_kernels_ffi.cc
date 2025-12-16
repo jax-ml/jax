@@ -18,7 +18,6 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string_view>
 
 #if JAX_GPU_HAVE_64_BIT
@@ -51,8 +50,6 @@ namespace JAX_GPU_NAMESPACE {
 
 namespace ffi = ::xla::ffi;
 
-#if JAX_GPU_HAVE_64_BIT
-
 // Map an FFI buffer element type to the appropriate GPU solver type.
 inline absl::StatusOr<gpuDataType> SolverDataType(ffi::DataType dataType,
                                                   std::string_view func) {
@@ -70,8 +67,6 @@ inline absl::StatusOr<gpuDataType> SolverDataType(ffi::DataType dataType,
           "Unsupported dtype %s in %s", absl::FormatStreamed(dataType), func));
   }
 }
-
-#endif
 
 #define SOLVER_DISPATCH_IMPL(impl, ...)           \
   switch (dataType) {                             \
@@ -394,6 +389,112 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(OrgqrFfi, OrgqrDispatch,
                                   .Ret<ffi::AnyBuffer>()  // out
 );
 
+// Cholesky decomposition: potrf
+
+template <typename T>
+ffi::Error PotrfImpl(int64_t batch, int64_t size, gpuStream_t stream,
+                     ffi::ScratchAllocator& scratch, bool lower,
+                     ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
+                     ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(size));
+  FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
+
+  gpusolverFillMode_t uplo =
+      lower ? GPUSOLVER_FILL_MODE_LOWER : GPUSOLVER_FILL_MODE_UPPER;
+
+  FFI_ASSIGN_OR_RETURN(int lwork,
+                       solver::PotrfBufferSize<T>(handle.get(), uplo, n));
+  FFI_ASSIGN_OR_RETURN(auto workspace,
+                       AllocateWorkspace<T>(scratch, lwork, "potrf"));
+
+  auto a_data = static_cast<T*>(a.untyped_data());
+  auto out_data = static_cast<T*>(out->untyped_data());
+  auto info_data = info->typed_data();
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  int out_step = n * n;
+  for (auto i = 0; i < batch; ++i) {
+    FFI_RETURN_IF_ERROR_STATUS(solver::Potrf<T>(handle.get(), uplo, n, out_data,
+                                                workspace, lwork, info_data));
+    out_data += out_step;
+    ++info_data;
+  }
+  return ffi::Error::Success();
+}
+
+template <typename T>
+ffi::Error PotrfBatchedImpl(int64_t batch, int64_t size, gpuStream_t stream,
+                            ffi::ScratchAllocator& scratch, bool lower,
+                            ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
+                            ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(size));
+  FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
+  FFI_ASSIGN_OR_RETURN(auto batch_ptrs,
+                       AllocateWorkspace<T*>(scratch, batch, "batched potrf"));
+
+  gpusolverFillMode_t uplo =
+      lower ? GPUSOLVER_FILL_MODE_LOWER : GPUSOLVER_FILL_MODE_UPPER;
+
+  auto a_data = a.untyped_data();
+  auto out_data = out->untyped_data();
+  auto info_data = info->typed_data();
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  MakeBatchPointersAsync(stream, out_data, batch_ptrs, batch,
+                         sizeof(T) * n * n);
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpuGetLastError());
+
+  FFI_RETURN_IF_ERROR_STATUS(solver::PotrfBatched<T>(
+      handle.get(), uplo, n, batch_ptrs, n, info_data, batch));
+
+  return ffi::Error::Success();
+}
+
+ffi::Error PotrfDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
+                         bool lower, ffi::AnyBuffer a,
+                         ffi::Result<ffi::AnyBuffer> out,
+                         ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  auto dataType = a.element_type();
+  if (dataType != out->element_type()) {
+    return ffi::Error::InvalidArgument(
+        "The input and output to potrf must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(a.dimensions()));
+  if (rows != cols) {
+    return ffi::Error::InvalidArgument(
+        "The input matrix to potrf must be square");
+  }
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, rows, cols}, "out", "potrf"));
+  FFI_RETURN_IF_ERROR(CheckShape(info->dimensions(), batch, "info", "potrf"));
+  if (batch > 1) {
+    SOLVER_DISPATCH_IMPL(PotrfBatchedImpl, batch, rows, stream, scratch, lower,
+                         a, out, info);
+  } else {
+    SOLVER_DISPATCH_IMPL(PotrfImpl, batch, rows, stream, scratch, lower, a, out,
+                         info);
+  }
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in potrf", absl::FormatStreamed(dataType)));
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PotrfFfi, PotrfDispatch,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Attr<bool>("lower")
+                                  .Arg<ffi::AnyBuffer>()         // a
+                                  .Ret<ffi::AnyBuffer>()         // out
+                                  .Ret<ffi::Buffer<ffi::S32>>()  // info
+);
+
 // Symmetric (Hermitian) eigendecomposition:
 // * Jacobi algorithm: syevj/heevj (batches of matrices up to 32)
 // * QR algorithm: syevd/heevd
@@ -402,6 +503,16 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(OrgqrFfi, OrgqrDispatch,
 // size and the algorithm selected by the user via the `algorithm` attribute.
 
 #if JAX_GPU_HAVE_64_BIT
+
+absl::StatusOr<bool> IsSyevBatchedSupported() {
+  int version;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverGetVersion(&version)));
+  // According to
+  // https://docs.nvidia.com/cuda/archive/12.6.2/cuda-toolkit-release-notes/index.html
+  // syevBatched is supported since CUDA 12.6.2, where CUSOLVER
+  // version is 11.7.1.
+  return version >= 11701;
+}
 
 ffi::Error Syevd64Impl(int64_t batch, int64_t n, gpuStream_t stream,
                        ffi::ScratchAllocator& scratch, bool lower,
@@ -423,16 +534,39 @@ ffi::Error Syevd64Impl(int64_t batch, int64_t n, gpuStream_t stream,
       params_cleanup(
           params, [](gpusolverDnParams_t p) { gpusolverDnDestroyParams(p); });
 
+  int64_t batch_step = 1;
+  FFI_ASSIGN_OR_RETURN(bool is_batched_syev_supported,
+                       IsSyevBatchedSupported());
+  if (is_batched_syev_supported && n > 0) {
+    int64_t matrix_size = n * n * ffi::ByteWidth(dataType);
+    batch_step =
+        std::max(int64_t(1), std::numeric_limits<int>::max() / matrix_size);
+    if (batch_step >= 32 * 1024) {
+      batch_step = 32 * 1024;
+    }
+  }
   size_t workspaceInBytesOnDevice, workspaceInBytesOnHost;
-  JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnXsyevd_bufferSize(
-      handle.get(), params, jobz, uplo, n, aType, /*a=*/nullptr, n, wType,
-      /*w=*/nullptr, aType, &workspaceInBytesOnDevice,
-      &workspaceInBytesOnHost));
+  if (is_batched_syev_supported) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnXsyevBatched_bufferSize(
+        handle.get(), params, jobz, uplo, n, aType, /*a=*/nullptr, n, wType,
+        /*w=*/nullptr, aType, &workspaceInBytesOnDevice,
+        &workspaceInBytesOnHost, std::min(batch, batch_step)));
+  } else {
+    if (batch_step != 1) {
+      return ffi::Error(
+          ffi::ErrorCode::kInternal,
+          "Syevd64Impl: batch_step != 1 but batched syev is not supported");
+    }
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnXsyevd_bufferSize(
+        handle.get(), params, jobz, uplo, n, aType, /*a=*/nullptr, n, wType,
+        /*w=*/nullptr, aType, &workspaceInBytesOnDevice,
+        &workspaceInBytesOnHost));
+  }
 
   auto maybe_workspace = scratch.Allocate(workspaceInBytesOnDevice);
   if (!maybe_workspace.has_value()) {
     return ffi::Error(ffi::ErrorCode::kResourceExhausted,
-                      "Unable to allocate device workspace for syevd");
+                      "Unable to allocate device workspace for syevBatched");
   }
   auto workspaceOnDevice = maybe_workspace.value();
   auto workspaceOnHost =
@@ -447,17 +581,31 @@ ffi::Error Syevd64Impl(int64_t batch, int64_t n, gpuStream_t stream,
         out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
   }
 
-  size_t out_step = n * n * ffi::ByteWidth(dataType);
-  size_t w_step = n * ffi::ByteWidth(ffi::ToReal(dataType));
+  size_t out_step = n * n * ffi::ByteWidth(dataType) * batch_step;
+  size_t w_step = n * ffi::ByteWidth(ffi::ToReal(dataType)) * batch_step;
 
-  for (auto i = 0; i < batch; ++i) {
-    JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnXsyevd(
-        handle.get(), params, jobz, uplo, n, aType, out_data, n, wType, w_data,
-        aType, workspaceOnDevice, workspaceInBytesOnDevice,
-        workspaceOnHost.get(), workspaceInBytesOnHost, info_data));
+  for (int64_t i = 0; i < batch; i += batch_step) {
+    size_t batch_size = static_cast<size_t>(std::min(batch_step, batch - i));
+    if (is_batched_syev_supported && batch_step > 1) {
+      JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnXsyevBatched(
+          handle.get(), params, jobz, uplo, n, aType, out_data, n, wType,
+          w_data, aType, workspaceOnDevice, workspaceInBytesOnDevice,
+          workspaceOnHost.get(), workspaceInBytesOnHost, info_data,
+          batch_size));
+    } else {
+      if (batch_step != 1) {
+        return ffi::Error(
+            ffi::ErrorCode::kInternal,
+            "Syevd64Impl: batch_step != 1 but batched syev is not supported");
+      }
+      JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnXsyevd(
+          handle.get(), params, jobz, uplo, n, aType, out_data, n, wType,
+          w_data, aType, workspaceOnDevice, workspaceInBytesOnDevice,
+          workspaceOnHost.get(), workspaceInBytesOnHost, info_data));
+    }
     out_data += out_step;
     w_data += w_step;
-    ++info_data;
+    info_data += batch_step;
   }
 
   return ffi::Error::Success();
@@ -1000,6 +1148,139 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdjFfi, GesvdjDispatch,
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
 
+// Singular Value Decomposition: gesvdp (Polar decomposition)
+
+#ifdef JAX_GPU_CUDA
+
+ffi::Error GesvdpImpl(int64_t batch, int64_t m, int64_t n, gpuStream_t stream,
+                      ffi::ScratchAllocator& scratch, bool compute_uv,
+                      bool econ, ffi::AnyBuffer a,
+                      ffi::Result<ffi::AnyBuffer> out,
+                      ffi::Result<ffi::AnyBuffer> s,
+                      ffi::Result<ffi::AnyBuffer> u,
+                      ffi::Result<ffi::AnyBuffer> v,
+                      ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
+  gpusolverEigMode_t job =
+      compute_uv ? GPUSOLVER_EIG_MODE_VECTOR : GPUSOLVER_EIG_MODE_NOVECTOR;
+  auto dataType = a.element_type();
+  FFI_ASSIGN_OR_RETURN(auto aType, SolverDataType(dataType, "gesvdp"));
+  FFI_ASSIGN_OR_RETURN(auto sType, SolverDataType(s->element_type(), "gesvdp"));
+
+  gpusolverDnParams_t params;
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnCreateParams(&params));
+  std::unique_ptr<gpusolverDnParams, void (*)(gpusolverDnParams_t)>
+      params_cleanup(
+          params, [](gpusolverDnParams_t p) { gpusolverDnDestroyParams(p); });
+
+  size_t workspaceInBytesOnDevice, workspaceInBytesOnHost;
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnXgesvdp_bufferSize(
+      handle.get(), params, job, econ ? 1 : 0, m, n, aType,
+      /*a=*/nullptr, m, sType, /*s=*/nullptr, aType, /*u=*/nullptr, m, aType,
+      /*v=*/nullptr, n, aType, &workspaceInBytesOnDevice,
+      &workspaceInBytesOnHost));
+
+  auto maybe_workspace = scratch.Allocate(workspaceInBytesOnDevice);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error(ffi::ErrorCode::kResourceExhausted,
+                      "Unable to allocate device workspace for gesvd");
+  }
+  auto workspaceOnDevice = maybe_workspace.value();
+  auto workspaceOnHost =
+      std::unique_ptr<char[]>(new char[workspaceInBytesOnHost]);
+
+  const char* a_data = static_cast<const char*>(a.untyped_data());
+  char* out_data = static_cast<char*>(out->untyped_data());
+  char* s_data = static_cast<char*>(s->untyped_data());
+  char* u_data = static_cast<char*>(u->untyped_data());
+  char* v_data = static_cast<char*>(v->untyped_data());
+  int* info_data = info->typed_data();
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  size_t out_step = m * n * ffi::ByteWidth(dataType);
+  size_t s_step = std::min(m, n) * ffi::ByteWidth(ffi::ToReal(dataType));
+  size_t u_step = 0;
+  size_t v_step = 0;
+  if (compute_uv) {
+    u_step = m * (econ ? std::min(m, n) : m) * ffi::ByteWidth(dataType);
+    v_step = n * (econ ? std::min(m, n) : n) * ffi::ByteWidth(dataType);
+  }
+
+  // TODO(phawkins): figure out a useful way to plumb out h_err.
+  double h_err;
+  for (auto i = 0; i < batch; ++i) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnXgesvdp(
+        handle.get(), params, job, econ ? 1 : 0, m, n, aType, out_data, m,
+        sType, s_data, aType, u_data, m, aType, v_data, n, aType,
+        workspaceOnDevice, workspaceInBytesOnDevice, workspaceOnHost.get(),
+        workspaceInBytesOnHost, info_data, &h_err));
+    out_data += out_step;
+    s_data += s_step;
+    u_data += u_step;
+    v_data += v_step;
+    ++info_data;
+  }
+
+  return ffi::Error::Success();
+}
+
+ffi::Error GesvdpDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
+                          bool full_matrices, bool compute_uv, ffi::AnyBuffer a,
+                          ffi::Result<ffi::AnyBuffer> out,
+                          ffi::Result<ffi::AnyBuffer> s,
+                          ffi::Result<ffi::AnyBuffer> u,
+                          ffi::Result<ffi::AnyBuffer> v,
+                          ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  auto dataType = a.element_type();
+  if (out->element_type() != dataType ||
+      s->element_type() != ffi::ToReal(dataType) ||
+      u->element_type() != dataType || v->element_type() != dataType) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to gesvdp must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, m, n]), SplitBatch2D(a.dimensions()));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, m, n}, "out", "gesvdp"));
+  int64_t k = std::min(m, n);
+  FFI_RETURN_IF_ERROR(CheckShape(s->dimensions(), {batch, k}, "s", "gesvdp"));
+  if (compute_uv) {
+    if (full_matrices) {
+      FFI_RETURN_IF_ERROR(
+          CheckShape(u->dimensions(), {batch, m, m}, "u", "gesvdp"));
+      FFI_RETURN_IF_ERROR(
+          CheckShape(v->dimensions(), {batch, n, n}, "v", "gesvdp"));
+    } else {
+      FFI_RETURN_IF_ERROR(
+          CheckShape(u->dimensions(), {batch, m, k}, "u", "gesvdp"));
+      FFI_RETURN_IF_ERROR(
+          CheckShape(v->dimensions(), {batch, n, k}, "v", "gesvdp"));
+    }
+  }
+  FFI_RETURN_IF_ERROR(CheckShape(info->dimensions(), batch, "info", "gesvdp"));
+
+  return GesvdpImpl(batch, m, n, stream, scratch, compute_uv, !full_matrices, a,
+                    out, s, u, v, info);
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdpFfi, GesvdpDispatch,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Attr<bool>("full_matrices")
+                                  .Attr<bool>("compute_uv")
+                                  .Arg<ffi::AnyBuffer>()         // a
+                                  .Ret<ffi::AnyBuffer>()         // out
+                                  .Ret<ffi::AnyBuffer>()         // s
+                                  .Ret<ffi::AnyBuffer>()         // u
+                                  .Ret<ffi::AnyBuffer>()         // v
+                                  .Ret<ffi::Buffer<ffi::S32>>()  // info
+);
+
+#endif  // JAX_GPU_CUDA
+
 // csrlsvqr: Linear system solve via Sparse QR
 
 template <typename T>
@@ -1172,6 +1453,132 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(SytrdFfi, SytrdDispatch,
                                   .Ret<ffi::AnyBuffer>()         // tau
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
+
+// General eigenvalue decomposition: geev
+
+#if JAX_GPU_HAVE_SOLVER_GEEV
+
+ffi::Error GeevImpl(gpuStream_t stream, ffi::ScratchAllocator scratch,
+                    bool left, bool right, ffi::AnyBuffer a,
+                    ffi::Result<ffi::AnyBuffer> out,
+                    ffi::Result<ffi::AnyBuffer> w,
+                    ffi::Result<ffi::AnyBuffer> vl,
+                    ffi::Result<ffi::AnyBuffer> vr,
+                    ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  auto dataType = a.element_type();
+  if (dataType != vr->element_type()) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to geev must have the same element type");
+  }
+  if (dataType != w->element_type() &&
+      !(dataType == ffi::F32 && w->element_type() == ffi::C64) &&
+      !(dataType == ffi::F64 && w->element_type() == ffi::C128)) {
+    return ffi::Error::InvalidArgument(
+        "The eigenvector output type of geev must match the input type or "
+        "be its complex counterpart.");
+  }
+
+  FFI_ASSIGN_OR_RETURN((auto [batch, m, n]), SplitBatch2D(a.dimensions()));
+  if (m != n) {
+    return ffi::Error::InvalidArgument(
+        "The input matrix to geev must be square");
+  }
+  int w_len;
+  if (w->element_type() == ffi::F32 || w->element_type() == ffi::F64) {
+    w_len = 2 * n;
+    FFI_RETURN_IF_ERROR(
+        CheckShape(w->dimensions(), {batch, 2 * n}, "w", "geev"));
+  } else {
+    FFI_RETURN_IF_ERROR(CheckShape(w->dimensions(), {batch, n}, "w", "geev"));
+    w_len = n;
+  }
+  if (left) {
+    FFI_RETURN_IF_ERROR(
+        CheckShape(vl->dimensions(), {batch, n, n}, "vl", "geev"));
+  }
+  if (right) {
+    FFI_RETURN_IF_ERROR(
+        CheckShape(vr->dimensions(), {batch, n, n}, "vr", "geev"));
+  }
+  FFI_RETURN_IF_ERROR(CheckShape(info->dimensions(), batch, "info", "geev"));
+
+  FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
+  FFI_ASSIGN_OR_RETURN(auto aType, SolverDataType(dataType, "geev"));
+  FFI_ASSIGN_OR_RETURN(auto wType, SolverDataType(w->element_type(), "geev"));
+
+  // At the time of writing, cusolver only supports computing right
+  // eigenvectors, but has the option for left eigenvectors in its API. Let us
+  // assume that they intend to add support for left eigenvectors in the future.
+  gpusolverEigMode_t jobvl =
+      left ? GPUSOLVER_EIG_MODE_VECTOR : GPUSOLVER_EIG_MODE_NOVECTOR;
+  gpusolverEigMode_t jobvr =
+      right ? GPUSOLVER_EIG_MODE_VECTOR : GPUSOLVER_EIG_MODE_NOVECTOR;
+
+  gpusolverDnParams_t params;
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnCreateParams(&params));
+  std::unique_ptr<gpusolverDnParams, void (*)(gpusolverDnParams_t)>
+      params_cleanup(
+          params, [](gpusolverDnParams_t p) { gpusolverDnDestroyParams(p); });
+
+  size_t workspaceInBytesOnDevice, workspaceInBytesOnHost;
+  JAX_FFI_RETURN_IF_GPU_ERROR(cusolverDnXgeev_bufferSize(
+      handle.get(), params, jobvl, jobvr, n, aType, /*a=*/nullptr, n, wType,
+      /*w=*/nullptr, aType, /*vl=*/nullptr, n, aType, /*vr=*/nullptr, n, aType,
+      &workspaceInBytesOnDevice, &workspaceInBytesOnHost));
+
+  auto maybe_workspace = scratch.Allocate(workspaceInBytesOnDevice);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error(ffi::ErrorCode::kResourceExhausted,
+                      "Unable to allocate device workspace for syevd");
+  }
+  auto workspaceOnDevice = maybe_workspace.value();
+  auto workspaceOnHost =
+      std::unique_ptr<char[]>(new char[workspaceInBytesOnHost]);
+
+  const char* a_data = static_cast<const char*>(a.untyped_data());
+  char* out_data = static_cast<char*>(out->untyped_data());
+  char* w_data = static_cast<char*>(w->untyped_data());
+  char* vl_data = static_cast<char*>(vl->untyped_data());
+  char* vr_data = static_cast<char*>(vr->untyped_data());
+  int* info_data = info->typed_data();
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  size_t out_step = n * n * ffi::ByteWidth(dataType);
+  size_t w_step = w_len * ffi::ByteWidth(w->element_type());
+
+  for (auto i = 0; i < batch; ++i) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnXgeev(
+        handle.get(), params, jobvl, jobvr, n, aType, out_data, n, wType,
+        w_data, aType, vl_data, n, aType, vr_data, n, aType, workspaceOnDevice,
+        workspaceInBytesOnDevice, workspaceOnHost.get(), workspaceInBytesOnHost,
+        info_data));
+    out_data += out_step;
+    w_data += w_step;
+    vr_data += out_step;
+    ++info_data;
+  }
+
+  return ffi::Error::Success();
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(GeevFfi, GeevImpl,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Attr<bool>("left")
+                                  .Attr<bool>("right")
+                                  .Arg<ffi::AnyBuffer>()         // a
+                                  .Ret<ffi::AnyBuffer>()         // out
+                                  .Ret<ffi::AnyBuffer>()         // w
+                                  .Ret<ffi::AnyBuffer>()         // vl
+                                  .Ret<ffi::AnyBuffer>()         // vr
+                                  .Ret<ffi::Buffer<ffi::S32>>()  // info
+);
+
+#endif  // JAX_GPU_HAVE_SOLVER_GEEV
 
 #undef SOLVER_DISPATCH_IMPL
 #undef SOLVER_BLAS_DISPATCH_IMPL

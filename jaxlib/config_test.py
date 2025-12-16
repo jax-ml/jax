@@ -25,7 +25,11 @@ config = xla_client._xla.config
 class ConfigTest(absltest.TestCase):
 
   def testBasic(self):
-    c = config.Config(1)
+    if xla_client._version >= 376:
+      c = config.Config("test", 1)
+      self.assertEqual(c.name, "test")
+    else:
+      c = config.Config(1)
     self.assertEqual(c.value, 1)
     self.assertEqual(c.get_global(), 1)
     self.assertEqual(c.get_local(), config.unset)
@@ -51,7 +55,10 @@ class ConfigTest(absltest.TestCase):
     self.assertEqual(c.get_local(), config.unset)
 
   def testThreading(self):
-    c = config.Config(1)
+    if xla_client._version >= 376:
+      c = config.Config("test", 1)
+    else:
+      c = config.Config(1)
 
     def Body():
       for i in range(100):

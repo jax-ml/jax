@@ -119,7 +119,7 @@ on this lattice, which generates the following binary promotion table:
     for t1 in types:
       out += "<tr><td>{}</td>".format(name(t1))
       for t2 in types:
-        t, weak_type = dtypes._lattice_result_type(t1, t2)
+        t, weak_type = dtypes.lattice_result_type(t1, t2)
         if weak_type:
           t = type(t.type(0).item())
         different = jnp.bfloat16 in (t1, t2) or jnp.promote_types(t1, t2) is not np.promote_types(t1, t2)

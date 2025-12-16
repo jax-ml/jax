@@ -17,7 +17,7 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: string
-        default: "linux-x86-n2-16"
+        default: "linux-x86-n4-16"
       python:
         description: "Which python version should the artifact be built for?"
         type: string
@@ -26,8 +26,8 @@ on:
         description: "Should x64 mode be enabled?"
         type: string
         default: "0"
-      download-jax-only-from-gcs:
-        description: "Whether to download only the jax wheel from GCS (e.g for testing a jax only release)"
+      skip-download-jaxlib-from-gcs:
+        description: "Whether to skip downloading the jaxlib artifact from GCS (e.g for testing a jax only release)"
         default: '0'
         type: string
       gcs_download_uri:
@@ -38,7 +38,17 @@ on:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
         default: 'no'
+      max-processes:
+        description: 'The value to set for `--maxprocesses` when running pytest. Leave empty to use max processes.'
+        type: string
+        default: ''
+
 permissions: {}
+
+env:
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+  PIP_INDEX_URL: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+
 jobs:
   run-tests:
     defaults:
@@ -47,7 +57,7 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest') ||
-                   (contains(inputs.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') ||
+                   (contains(inputs.runner, 'linux-arm64') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-arm64:latest') ||
                    (contains(inputs.runner, 'windows-x86') && null) }}
 
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
@@ -58,84 +68,24 @@ jobs:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_PYTHON: "python${{ inputs.python }}"
       JAXCI_ENABLE_X64: "${{ inputs.enable-x64 }}"
+      MAX_PROCESSES: ${{ inputs.max-processes }}
 
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           persist-credentials: false
-      - name: Set env vars for use in artifact download URL
-        run: |
-          os=$(uname -s | awk '{print tolower($0)}')
-          arch=$(uname -m)
-
-          # Adjust os and arch for Windows
-          if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
-            os="win"
-            arch="amd64"
-          fi
-
-          # Get the major and minor version of Python.
-          # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.10, then python_major_minor=310
-          # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13-nogil, then python_major_minor=313t
-          python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')
-
-          echo "OS=${os}" >> $GITHUB_ENV
-          echo "ARCH=${arch}" >> $GITHUB_ENV
-          # Python wheels follow a naming convention: standard wheels use the pattern
-          # `*-cp<py_version>-cp<py_version>-*`, while free-threaded wheels use
-          # `*-cp<py_version>-cp<py_version>t-*`.
-          echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
-      - name: Download wheels from GCS (non-Windows runs)
-        id: download-wheel-artifacts-nw
-        # Set continue-on-error to true to prevent actions from failing the workflow if this step
-        # fails. Instead, we verify the outcome in the step below so that we can print a more
-        # informative error message.
-        continue-on-error: true
-        if: ${{ !contains(inputs.runner, 'windows-x86') }}
-        run: |
-          mkdir -p $(pwd)/dist
-          gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
-
-          if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
-            echo "JAX only release. Only downloading the jax wheel from the release bucket."
-          else
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
-          fi
-      - name: Download wheels from GCS (Windows runs)
-        id: download-wheel-artifacts-w
-        # Set continue-on-error to true to prevent actions from failing the workflow if this step
-        # fails. Instead, we verify the outcome in step below so that we can print a more
-        # informative error message.
-        continue-on-error: true
-        if: ${{ contains(inputs.runner, 'windows-x86') }}
-        shell: cmd
-        run: |
-          mkdir dist
-          @REM Use `call` so that we can run sequential gcloud storage commands on Windows
-          @REM See https://github.com/GoogleCloudPlatform/gsutil/issues/233#issuecomment-196150652
-          call gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl dist/
-
-          if "${{ inputs.download-jax-only-from-gcs }}"=="1" (
-            echo "JAX only release. Only downloading the jax wheel from the release bucket."
-          ) else (
-            call gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
-          )
-      - name: Skip the test run if the wheel artifacts were not downloaded successfully
-        if: steps.download-wheel-artifacts-nw.outcome == 'failure' || steps.download-wheel-artifacts-w.outcome == 'failure'
-        run: |
-          echo "Failed to download wheel artifacts from GCS. Please check if the wheels were"
-          echo "built successfully by the artifact build jobs and are available in the GCS bucket."
-          echo "Skipping the test run."
-          exit 1
+      - name: Download JAX CPU wheels
+        uses: ./.github/actions/download-jax-cpu-wheels
+        with:
+          runner: ${{ inputs.runner }}
+          python: ${{ inputs.python }}
+          skip-download-jaxlib-from-gcs: ${{ inputs.skip-download-jaxlib-from-gcs }}
+          gcs_download_uri: ${{ inputs.gcs_download_uri }}
       - name: Install Python dependencies
         run: |
           $JAXCI_PYTHON -m pip install uv~=0.5.30
-          $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
 
-          # CPU Pytests crash with NumPy 2.2+ on Linux Aarch64; b/399168632
-          if [[ $OS == "linux" && $ARCH == "aarch64" ]]; then
-            $JAXCI_PYTHON -m uv pip install numpy~=2.1.0
-          fi
+          $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c

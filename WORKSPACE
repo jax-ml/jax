@@ -1,7 +1,43 @@
-# The XLA commit is determined by third_party/xla/workspace.bzl.
+load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
+
+# The XLA commit is determined by third_party/xla/revision.bzl.
 load("//third_party/xla:workspace.bzl", jax_xla_workspace = "repo")
 
 jax_xla_workspace()
+
+load("@xla//:workspace4.bzl", "xla_workspace4")
+
+xla_workspace4()
+
+load("@xla//:workspace3.bzl", "xla_workspace3")
+
+xla_workspace3()
+
+# Initialize Hermetic toolchains
+# Details: https://github.com/google-ml-infra/rules_ml_toolchain
+tf_http_archive(
+    name = "rules_ml_toolchain",
+    sha256 = "e9842de3fefb5a120d3b1647d3a09e6e7071e8df8d1cd2dfe6f66ee31fd2595e",
+    strip_prefix = "rules_ml_toolchain-cb79a8fc8dcf3f75743dcd9b3418a70c884a7269",
+    urls = tf_mirror_urls(
+        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/cb79a8fc8dcf3f75743dcd9b3418a70c884a7269.tar.gz",
+    ),
+)
+
+load(
+    "@rules_ml_toolchain//cc/deps:cc_toolchain_deps.bzl",
+    "cc_toolchain_deps",
+)
+
+cc_toolchain_deps()
+
+register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
+
+register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_cuda")
+
+register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64")
+
+register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64_cuda")
 
 # Initialize hermetic Python
 load("@xla//third_party/py:python_init_rules.bzl", "python_init_rules")
@@ -14,6 +50,7 @@ python_init_repositories(
     default_python_version = "system",
     local_wheel_dist_folder = "../dist",
     local_wheel_inclusion_list = [
+        "libtpu*",
         "ml_dtypes*",
         "ml-dtypes*",
         "numpy*",
@@ -25,7 +62,6 @@ python_init_repositories(
     ],
     local_wheel_workspaces = ["//jaxlib:jax.bzl"],
     requirements = {
-        "3.10": "//build:requirements_lock_3_10.txt",
         "3.11": "//build:requirements_lock_3_11.txt",
         "3.12": "//build:requirements_lock_3_12.txt",
         "3.13": "//build:requirements_lock_3_13.txt",
@@ -47,25 +83,6 @@ load("@pypi//:requirements.bzl", "install_deps")
 
 install_deps()
 
-# Optional, to facilitate testing against newest versions of Python
-load("@xla//third_party/py:python_repo.bzl", "custom_python_interpreter")
-
-custom_python_interpreter(
-    name = "python_dev",
-    strip_prefix = "Python-{version_variant}",
-    urls = ["https://www.python.org/ftp/python/{version}/Python-{version_variant}.tgz"],
-    version = "3.13.0",
-    version_variant = "3.13.0rc2",
-)
-
-load("@xla//:workspace4.bzl", "xla_workspace4")
-
-xla_workspace4()
-
-load("@xla//:workspace3.bzl", "xla_workspace3")
-
-xla_workspace3()
-
 load("@xla//:workspace2.bzl", "xla_workspace2")
 
 xla_workspace2()
@@ -82,6 +99,12 @@ load("//third_party/flatbuffers:workspace.bzl", flatbuffers = "repo")
 
 flatbuffers()
 
+load("//:test_shard_count.bzl", "test_shard_count_repository")
+
+test_shard_count_repository(
+    name = "test_shard_count",
+)
+
 load("//jaxlib:jax_python_wheel.bzl", "jax_python_wheel_repository")
 
 jax_python_wheel_repository(
@@ -92,7 +115,13 @@ jax_python_wheel_repository(
 
 load(
     "@xla//third_party/py:python_wheel.bzl",
+    "nvidia_wheel_versions_repository",
     "python_wheel_version_suffix_repository",
+)
+
+nvidia_wheel_versions_repository(
+    name = "nvidia_wheel_versions",
+    versions_source = "//build:nvidia-requirements.txt",
 )
 
 python_wheel_version_suffix_repository(
@@ -100,7 +129,7 @@ python_wheel_version_suffix_repository(
 )
 
 load(
-    "@xla//third_party/gpus/cuda/hermetic:cuda_json_init_repository.bzl",
+    "@rules_ml_toolchain//gpu/cuda:cuda_json_init_repository.bzl",
     "cuda_json_init_repository",
 )
 
@@ -112,7 +141,7 @@ load(
     "CUDNN_REDISTRIBUTIONS",
 )
 load(
-    "@xla//third_party/gpus/cuda/hermetic:cuda_redist_init_repositories.bzl",
+    "@rules_ml_toolchain//gpu/cuda:cuda_redist_init_repositories.bzl",
     "cuda_redist_init_repositories",
     "cudnn_redist_init_repository",
 )
@@ -126,22 +155,42 @@ cudnn_redist_init_repository(
 )
 
 load(
-    "@xla//third_party/gpus/cuda/hermetic:cuda_configure.bzl",
+    "@rules_ml_toolchain//gpu/cuda:cuda_configure.bzl",
     "cuda_configure",
 )
 
 cuda_configure(name = "local_config_cuda")
 
 load(
-    "@xla//third_party/nccl/hermetic:nccl_redist_init_repository.bzl",
+    "@rules_ml_toolchain//gpu/nccl:nccl_redist_init_repository.bzl",
     "nccl_redist_init_repository",
 )
 
 nccl_redist_init_repository()
 
 load(
-    "@xla//third_party/nccl/hermetic:nccl_configure.bzl",
+    "@rules_ml_toolchain//gpu/nccl:nccl_configure.bzl",
     "nccl_configure",
 )
 
 nccl_configure(name = "local_config_nccl")
+
+load(
+    "@rules_ml_toolchain//gpu/nvshmem:nvshmem_json_init_repository.bzl",
+    "nvshmem_json_init_repository",
+)
+
+nvshmem_json_init_repository()
+
+load(
+    "@nvshmem_redist_json//:distributions.bzl",
+    "NVSHMEM_REDISTRIBUTIONS",
+)
+load(
+    "@rules_ml_toolchain//gpu/nvshmem:nvshmem_redist_init_repository.bzl",
+    "nvshmem_redist_init_repository",
+)
+
+nvshmem_redist_init_repository(
+    nvshmem_redistributions = NVSHMEM_REDISTRIBUTIONS,
+)

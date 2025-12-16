@@ -16,7 +16,6 @@
 
 import os
 
-import contextlib
 import numpy as np
 from absl.testing import absltest, parameterized
 from jax._src import config
@@ -50,9 +49,7 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
     if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_equal("9.0")):
       self.skipTest("Only works on GPU with capability sm90a")
-    context_stack = contextlib.ExitStack()
-    context_stack.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
-    self.addCleanup(context_stack.close)
+    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
 
   @parameterized.product(
       batch_size=(1, 4),
@@ -84,6 +81,7 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
       save_residuals,
       causal,
   ):
+    assert cuda_versions is not None
     cuda_runtime_version = cuda_versions.cuda_runtime_get_version()
     # TODO(pobudzey): Undo when we upgrade to cuda 12.9.1.
     if causal and (cuda_runtime_version >= 12080 and cuda_runtime_version < 12091):

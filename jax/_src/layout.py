@@ -19,7 +19,8 @@ from typing import Union
 import numpy as np
 from jax._src.dtypes import iinfo, issubdtype
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import AUTO as AutoSharding
+from jax._src.named_sharding import AUTO as AutoSharding
+from jax._src.util import tuple_insert
 from jax._src.lib import xla_client as xc
 
 Shape = tuple[int, ...]
@@ -30,47 +31,57 @@ class AutoLayout:
     return "AUTO"
 
 
-class DeviceLocalLayout:
+class Layout:
   major_to_minor: tuple[int, ...]
-  _tiling: tuple[tuple[int, ...], ...] | None
-  _sub_byte_element_size_in_bits: int
+  tiling: tuple[tuple[int, ...], ...] | None
+  sub_byte_element_size_in_bits: int
 
   AUTO = AutoLayout()
 
   def __init__(self, major_to_minor: tuple[int, ...],
-                _tiling: tuple[tuple[int, ...], ...] | None = None,
-                _sub_byte_element_size_in_bits: int = 0):
+                tiling: tuple[tuple[int, ...], ...] | None = None,
+                sub_byte_element_size_in_bits: int = 0):
     self.major_to_minor = tuple(major_to_minor)
-    self._tiling = None if _tiling is None else tuple(map(tuple, _tiling))
-    self._sub_byte_element_size_in_bits = _sub_byte_element_size_in_bits
+    self.tiling = None if tiling is None else tuple(map(tuple, tiling))
+    self._sub_byte_element_size_in_bits = sub_byte_element_size_in_bits
 
   @staticmethod
   def from_pjrt_layout(pjrt_layout: xc.PjRtLayout):
     xla_layout = pjrt_layout._xla_layout()
-    return DeviceLocalLayout(xla_layout.minor_to_major()[::-1],  # pytype: disable=wrong-arg-types
-                             xla_layout.tiling(),  # type: ignore[arg-type]
-                             xla_layout.element_size_in_bits())
+    return Layout(xla_layout.minor_to_major()[::-1],  # pytype: disable=wrong-arg-types
+                  xla_layout.tiling(),  # type: ignore[arg-type]
+                  xla_layout.element_size_in_bits())
 
   def __repr__(self):
     return (
-        f'DeviceLocalLayout(major_to_minor={self.major_to_minor},'
-        f' _tiling={self._tiling},'
-        f' _sub_byte_element_size_in_bits={self._sub_byte_element_size_in_bits})'
+        f'Layout(major_to_minor={self.major_to_minor},'
+        f' tiling={self.tiling},'
+        f' sub_byte_element_size_in_bits={self._sub_byte_element_size_in_bits})'
     )
 
   def __hash__(self):
-    return hash((self.major_to_minor, self._tiling,
+    return hash((self.major_to_minor, self.tiling,
                   self._sub_byte_element_size_in_bits))
 
   def __eq__(self, other):
-    if not isinstance(other, DeviceLocalLayout):
+    if not isinstance(other, Layout):
       return False
     return (self.major_to_minor == other.major_to_minor and
-            self._tiling == other._tiling and
+            self.tiling == other.tiling and
             self._sub_byte_element_size_in_bits == other._sub_byte_element_size_in_bits)
 
+  def update(self, **kwargs):
+    if 'major_to_minor' not in kwargs:
+      kwargs['major_to_minor'] = self.major_to_minor
+    if 'tiling' not in kwargs:
+      kwargs['tiling'] = self.tiling
+    if 'sub_byte_element_size_in_bits' not in kwargs:
+      kwargs['sub_byte_element_size_in_bits'] = self._sub_byte_element_size_in_bits
+    return Layout(kwargs['major_to_minor'], kwargs['tiling'],
+                  kwargs['sub_byte_element_size_in_bits'])
+
   def _to_xla_layout(self, dtype) -> xc.Layout:
-    if self._tiling is None:
+    if self.tiling is None:
       xla_layout = xc.Layout(self.major_to_minor[::-1])
     else:
       if self._sub_byte_element_size_in_bits != 0:
@@ -79,7 +90,7 @@ class DeviceLocalLayout:
         sub_byte_size = iinfo(dtype).bits if iinfo(dtype).bits < 8 else 0
       else:
         sub_byte_size = 0
-      xla_layout = xc.Layout(self.major_to_minor[::-1], self._tiling,
+      xla_layout = xc.Layout(self.major_to_minor[::-1], self.tiling,
                               sub_byte_size)
     return xla_layout
 
@@ -90,32 +101,32 @@ class DeviceLocalLayout:
           f' Got major_to_minor={self.major_to_minor} and shape={aval_shape}')
 
 
-LayoutOptions = Union[DeviceLocalLayout, None, AutoLayout]  # pytype: disable=invalid-annotation
+LayoutOptions = Union[Layout, None, AutoLayout]  # pytype: disable=invalid-annotation
 ShardingOptions = Union[Sharding, None, AutoSharding]
 
 
 class Format:
-  __slots__ = ['device_local_layout', 'sharding']
+  __slots__ = ['layout', 'sharding']
 
-  def __init__(self, device_local_layout: LayoutOptions = None,
+  def __init__(self, layout: LayoutOptions = None,
                sharding: ShardingOptions = None):
     # If layout is concrete and sharding is not, error.
-    if (isinstance(device_local_layout, DeviceLocalLayout) and
+    if (isinstance(layout, Layout) and
         (sharding is None or isinstance(sharding, AutoSharding))):
       raise ValueError(
           'Sharding has to be concrete when layout is of type'
-          f' {type(device_local_layout)}. Please pass a'
+          f' {type(layout)}. Please pass a'
           ' `jax.sharding.NamedSharding` or'
           ' `jax.sharding.SingleDeviceSharding` to the sharding argument. Got'
           f' sharding {sharding}'
       )
     if not isinstance(
-        device_local_layout, (DeviceLocalLayout, type(None), AutoLayout)):
+        layout, (Layout, type(None), AutoLayout)):
       raise TypeError(
-          'Invalid value received for the device_local_layout argument.'
-          ' Expected values are `None`, `DeviceLocalLayout.AUTO` or an'
-          f' instance of `DeviceLocalLayout`. Got {device_local_layout} of'
-          f' type {type(device_local_layout)}'
+          'Invalid value received for the layout argument.'
+          ' Expected values are `None`, `Layout.AUTO` or an'
+          f' instance of `Layout`. Got {layout} of'
+          f' type {type(layout)}'
       )
     if not isinstance(
         sharding, (Sharding, type(None), AutoSharding)):
@@ -124,24 +135,24 @@ class Format:
           ' are `None`, `pjit.AUTO` or an instance of `jax.Sharding`. Got'
           f' {sharding} of type {type(sharding)}')
 
-    self.device_local_layout = device_local_layout
+    self.layout = layout
     self.sharding = sharding
 
-  @property
-  def dll(self):
-    return self.device_local_layout
-
   def __repr__(self):
-    return (f'Layout(device_local_layout={self.device_local_layout},'
-            f' sharding={self.sharding})')
+    return f'Format(layout={self.layout}, sharding={self.sharding})'
 
   def __hash__(self):
-    return hash((self.device_local_layout, self.sharding))
+    return hash((self.layout, self.sharding))
 
   def __eq__(self, other):
     if not isinstance(other, Format):
       return False
-    return (self.device_local_layout == other.device_local_layout and
+    return (self.layout == other.layout and
             self.sharding == other.sharding)
 
-Layout = Format  # TODO(frostig, yashkatariya): remove this alias
+
+def get_layout_for_vmap(dim: int, layout: Layout) -> Layout:
+  # Make the new dim major-most and shift all other dims by 1 in major_to_minor
+  new_m2m = tuple(m + 1 for m in layout.major_to_minor)
+  vmapped_major_to_minor = tuple_insert(new_m2m, dim, 0)
+  return layout.update(major_to_minor=vmapped_major_to_minor)

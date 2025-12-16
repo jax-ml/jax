@@ -28,6 +28,7 @@ from jax._src import test_util as jtu
 jax.config.parse_flags_with_absl()
 
 
+@jtu.thread_unsafe_test_class()
 class SavedModelTest(tf_test_util.JaxToTfTestCase):
 
   def setUp(self):

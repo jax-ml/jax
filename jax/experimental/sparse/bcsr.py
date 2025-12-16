@@ -40,7 +40,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src.lax.lax import DotDimensionNumbers, _dot_general_batch_dim_nums
-from jax._src.lib import gpu_sparse
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -790,16 +789,14 @@ mlir.register_lowering(
     bcsr_dot_general_p, _bcsr_dot_general_default_lowering)
 dispatch.simple_impl(bcsr_dot_general_p)
 
-if gpu_sparse.cuda_is_supported:
-  mlir.register_lowering(bcsr_dot_general_p,
-                          partial(_bcsr_dot_general_gpu_lowering,
-                                  target_name_prefix='cu'),
-                          platform='cuda')
-if gpu_sparse.rocm_is_supported:
-  mlir.register_lowering(bcsr_dot_general_p,
-                          partial(_bcsr_dot_general_gpu_lowering,
-                                  target_name_prefix='hip'),
-                          platform='rocm')
+mlir.register_lowering(bcsr_dot_general_p,
+                        partial(_bcsr_dot_general_gpu_lowering,
+                                target_name_prefix='cu'),
+                        platform='cuda')
+mlir.register_lowering(bcsr_dot_general_p,
+                        partial(_bcsr_dot_general_gpu_lowering,
+                                target_name_prefix='hip'),
+                        platform='rocm')
 
 
 if _lowerings.has_cpu_sparse:

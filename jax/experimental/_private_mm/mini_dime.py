@@ -51,7 +51,7 @@ import jax
 import jax.numpy as jnp
 from jax._src import array
 from jax._src.lib import _jax
-from jax._src.op_shardings import are_op_shardings_equal
+from jax._src.op_shardings import are_hlo_shardings_equal
 
 
 def _get_nccl_dtype_and_count(arr, count=None):
@@ -145,7 +145,7 @@ def shardings_are_compatible(
 ):
     # NOTE: Variant of `jax.sharding.Sharding.is_equivalent_to` that skips _internal_device_list check
     return (
-        are_op_shardings_equal(
+        are_hlo_shardings_equal(
             self._to_xla_hlo_sharding(ndim), other._to_xla_hlo_sharding(ndim)
         )
         # and self._internal_device_list == other._internal_device_list  # type: ignore

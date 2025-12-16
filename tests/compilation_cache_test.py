@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from functools import partial
+import glob
 import logging
 import math
 import os
@@ -43,7 +43,6 @@ from jax._src import test_warning_util
 from jax._src import xla_bridge
 from jax._src.compilation_cache_interface import CacheInterface
 from jax._src.lib import xla_client as xc
-from jax.experimental.pjit import pjit
 from jax.sharding import PartitionSpec as P
 import numpy as np
 
@@ -191,7 +190,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
 
   def test_pmap(self):
     f = pmap(lambda x: x - lax.psum(x, "i"), axis_name="i")
-    x = np.arange(jax.device_count(), dtype=np.int64)
+    x = np.arange(jax.device_count(), dtype=np.int32)
     f(x)
     self.assertEqual(count_cache_items(), 1)
     x = np.arange(jax.device_count(), dtype=np.float32)
@@ -199,12 +198,64 @@ class CompilationCacheTest(CompilationCacheTestCase):
     self.assertEqual(count_cache_items(), 2)
     # TODO: create a test for calling pmap with the same input more than once
 
+  def test_pmap_with_consts(self):
+    const = jnp.array([42, 43], dtype=np.int32)
+    clear_cache()
+    f = pmap(lambda x: x - lax.psum(x, "i") + const[0], axis_name="i")
+    x = np.arange(jax.device_count(), dtype=np.int32)
+    self.assertAllClose(f(x), x - np.sum(x, dtype=np.int32) + np.int32(42))
+    self.assertEqual(count_cache_items(), 1)
+
+    const1 = jnp.array([142, 143], dtype=np.int32)  # another const
+    f1 = pmap(lambda x: x - lax.psum(x, "i") + const1[0], axis_name="i")
+    expected_compilations = 0 if config.use_simplified_jaxpr_constants.value else 1
+    self.assertCacheMisses(lambda: f1(x),
+                           lowering=1,
+                           compilation_after_persistent_cache_miss=expected_compilations)
+    self.assertAllClose(f1(x), x - np.sum(x, dtype=np.int32) + np.int32(142))
+    self.assertEqual(count_cache_items(), 1 + expected_compilations)
+
   def test_jit(self):
     f = jit(lambda x: x * x)
-    f(1)
+    self.assertCacheMisses(lambda: f(1), lowering=1,
+                           compilation_after_persistent_cache_miss=1)
     self.assertEqual(count_cache_items(), 1)
+    f1 = jit(lambda x: x * x)
+    self.assertCacheMisses(lambda: f1(2), lowering=1,
+                           compilation_after_persistent_cache_miss=0)
     f(1.0)
     self.assertEqual(count_cache_items(), 2)
+
+  def test_jit_sharded(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    with jax.set_mesh(mesh):
+      @jax.jit(in_shardings=(P("x"), P("x")), out_shardings=None)
+      def f(x, y):
+        return x + y
+
+      shape = (8, 8)
+      x = np.arange(math.prod(shape), dtype=np.int64).reshape(shape)
+      f(x, x + 1)
+      self.assertEqual(count_cache_items(), 1)
+      x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+      f(x, x + 1)
+      self.assertEqual(count_cache_items(), 2)
+
+  def test_jit_with_constants(self):
+    const = jnp.array([42, 43])  #  A distinctive shape
+    clear_cache()
+    f = jit(lambda x: x * const[0])
+    self.assertAllClose(f(2), 2 * 42)
+    self.assertEqual(count_cache_items(), 1)
+
+    const1 = jnp.array([142, 143])  # The closed over const can be different
+    f1 = jit(lambda x: x * const1[0])
+    expected_compilations = 0 if config.use_simplified_jaxpr_constants.value else 1
+    self.assertCacheMisses(
+        lambda: f1(3), lowering=1,
+        compilation_after_persistent_cache_miss=expected_compilations)
+    self.assertAllClose(f1(3), 3 * 142)
+    self.assertEqual(count_cache_items(), 1 + expected_compilations)
 
   def test_set_cache_dir_after_backends_init(self):
     # This a regression test for #25768
@@ -260,20 +311,6 @@ class CompilationCacheTest(CompilationCacheTestCase):
         f(1)
         self.assertEqual(count_cache_items(), 1)
 
-  @jtu.with_mesh([("x", 2)])
-  def test_pjit(self):
-    @partial(pjit, in_shardings=(P("x"), P("x")), out_shardings=None)
-    def f(x, y):
-      return x + y
-
-    shape = (8, 8)
-    x = np.arange(math.prod(shape), dtype=np.int64).reshape(shape)
-    f(x, x + 1)
-    self.assertEqual(count_cache_items(), 1)
-    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
-    f(x, x + 1)
-    self.assertEqual(count_cache_items(), 2)
-
   def test_cache_write_warning(self):
     f = jit(lambda x: x * x)
 
@@ -291,7 +328,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
     self.assertIn(
         (
             "Error writing persistent compilation cache entry "
-            "for 'jit__lambda_': RuntimeError: test error"
+            "for 'jit__lambda': RuntimeError: test error"
         ),
         str(w[0].message),
     )
@@ -306,7 +343,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
       test_warning_util.record_warnings() as w,
     ):
       mock_get.side_effect = RuntimeError("test error")
-      # Calling assertEqual with the jitted f will generate two PJIT
+      # Calling assertEqual with the jitted f will generate two JIT
       # executables: Equal and the lambda function itself.
       self.assertEqual(f(2).item(), 4)
     if len(w) != 1:
@@ -315,7 +352,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
     self.assertIn(
         (
             "Error reading persistent compilation cache entry "
-            "for 'jit__lambda_': RuntimeError: test error"
+            "for 'jit__lambda': RuntimeError: test error"
         ),
         str(w[0].message),
     )
@@ -611,6 +648,35 @@ class CompilationCacheTest(CompilationCacheTestCase):
         self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_enable_llvm_module_compilation_parallelism, False)
         self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_per_fusion_autotune_cache_dir, f"jax-cache{s}xla_gpu_per_fusion_autotune_cache_dir")
         self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_experimental_autotune_cache_mode, xc.AutotuneCacheMode.UPDATE)
+
+  @jtu.skip_on_devices("tpu") # TPU backend does not dump on deserialize
+  def test_dump_on_cache_hit(self):
+    previous_counts = Counter(_counts)
+    with (
+      config.persistent_cache_min_compile_time_secs(0),
+      config.persistent_cache_min_entry_size_bytes(0),
+      tempfile.TemporaryDirectory() as dump_dir1,
+      tempfile.TemporaryDirectory() as dump_dir2
+    ):
+      jit(lambda x: x + 1, compiler_options={"xla_dump_to": dump_dir1})(1)
+      self.assertEqual(
+        _counts["/jax/compilation_cache/cache_hits"],
+        previous_counts["/jax/compilation_cache/cache_hits"],
+      )
+      jit(lambda x: x + 1, compiler_options={"xla_dump_to": dump_dir2, "xla_dump_hlo_as_proto": True, "xla_dump_hlo_as_text": True})(1)
+      self.assertEqual(
+          _counts["/jax/compilation_cache/cache_hits"],
+          previous_counts["/jax/compilation_cache/cache_hits"] + 1,
+      1)
+      dump1_files = glob.glob(os.path.join(dump_dir1, "*after_optimizations.txt"))
+      dump2_files = glob.glob(os.path.join(dump_dir2, "*after_optimizations.txt"))
+      self.assertEqual(len(dump1_files), 1)
+      self.assertEqual(len(dump2_files), 1)
+      with (open(dump1_files[0]) as file1, open(dump2_files[0]) as file2):
+        self.assertEqual(file1.read(), file2.read())
+      dump2_pbs = glob.glob(os.path.join(dump_dir2, "*after_optimizations.hlo.pb"))
+      self.assertEqual(len(dump2_pbs), 1)
+
 
 @jtu.with_config(
     jax_enable_compilation_cache=False,

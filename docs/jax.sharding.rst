@@ -16,9 +16,6 @@ Classes
 .. autoclass:: NamedSharding
    :members:
    :show-inheritance:
-.. autoclass:: PmapSharding
-   :members:
-   :show-inheritance:
 .. autoclass:: PartitionSpec
    :members:
 .. autoclass:: Mesh
