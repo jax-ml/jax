@@ -138,7 +138,7 @@ class NdimageTest(jtu.JaxTestCase):
   @jtu.sample_product(
     order=[3, 4, 5],
     mode=['reflect', 'wrap', 'mirror'],
-    shape=[(5,), (3, 4), (3, 4, 5)],
+    shape=[(5,), (3, 4), (3, 1, 4)],
     dtype=float_dtypes,
   )
   def testSplineFilter(self, order, mode, shape, dtype):

@@ -417,4 +417,6 @@ def spline_filter1d(
                      "and use mode 'mirror'".format(mode))
   input = jnp.asarray(input)
   axis = util.canonicalize_axis(axis, input.ndim)
+  if input.shape[axis] < 2:
+    return input
   return _spline_filter1d(input, order, axis, mode)
