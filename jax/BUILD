@@ -288,27 +288,3 @@ pytype_strict_library(
         "//jax/experimental:xla_metadata",
     ],
 )
-
-alias(
-    name = "mesh_utils",
-    actual = "//jax/experimental:mesh_utils",
-    visibility = jax_visibility("mesh_utils_deprecated_alias"),
-)
-
-alias(
-    name = "pallas",
-    actual = "//jax/experimental:pallas",
-    visibility = jax_visibility("pallas_deprecated_alias"),
-)
-
-alias(
-    name = "pallas_tpu",
-    actual = "//jax/experimental:pallas_tpu",
-    visibility = jax_visibility("pallas_tpu_deprecated_alias"),
-)
-
-alias(
-    name = "optimizers",
-    actual = "//jax/example_libraries:optimizers",
-    visibility = jax_visibility("optimizers_deprecated_alias"),
-)
