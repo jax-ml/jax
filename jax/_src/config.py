@@ -1819,13 +1819,6 @@ disable_vmap_shmap_error = bool_state(
     upgrade=False,
     help='Temporary workaround to disable an error check in vmap-of-shmap.')
 
-# TODO(mattjj): remove once we land mutable array plumbing, or face great shame
-custom_vjp_disable_shape_check = bool_state(
-    name='jax_custom_vjp_disable_shape_check',
-    default=False,
-    upgrade=True,
-    help='Disable the check from #19009 to enable some custom_vjp hacks.')
-
 mutable_array_checks = bool_state(
     name='jax_mutable_array_checks',
     default=True,

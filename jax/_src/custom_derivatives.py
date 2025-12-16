@@ -966,8 +966,7 @@ def _flatten_bwd(f: Callable,
     else:
       if (not core.typecompat(a.to_tangent_aval(), a_ := core.get_aval(ct)) and
           not _ref_typecompat(a.to_tangent_aval(), a_) and
-          not (_temporary_dtype_exception(a, a_) or
-               _temporary_shape_exception(a, a_))):
+          not _temporary_dtype_exception(a, a_)):
         msg = ("Custom VJP bwd rule must produce an output with the same "
                "shape/dtypes as the args tuple of the primal function, but at "
                f"output{keystr(kp)} the bwd rule produced an output of "
@@ -990,9 +989,6 @@ def _temporary_dtype_exception(a, a_) -> bool:
              dtypes.issubdtype(a.dtype, dtypes.np.inexact)))
   return False
 
-# TODO(mattjj): remove both these exceptions to cotangent compatibility check
-def _temporary_shape_exception(a, a_) -> bool:
-  return config.custom_vjp_disable_shape_check.value
 
 class CustomVJPCallPrimitive(core.Primitive):
   multiple_results = True
