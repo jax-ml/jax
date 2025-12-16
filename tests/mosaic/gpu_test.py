@@ -5397,29 +5397,57 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     x = self.prng.uniform(0, 10, input_shape).astype(el_type)
     self.assertArraysEqual(kernel(x), x.reshape(output_shape))
 
-  @parameterized.parameters(jnp.float32, jnp.bfloat16, jnp.float16)
-  def test_async_store_add_reduction(self, dtype):
-    # TODO(b/415721295):Remove after the minimal jaxlib version is 0.8.2.
+  @parameterized.product(
+      dtype=(jnp.int32, jnp.int64, jnp.uint32, jnp.uint64, jnp.float32, jnp.float16, jnp.bfloat16),
+      reduction_op=("add", "min", "max", "inc", "dec", "and", "or", "xor"),
+  )
+  def test_async_store_reduction(self, dtype, reduction_op):
+    # TODO(b/415721295):Clean up after the minimal jaxlib version is 0.8.2.
     if not hasattr(mgpu_dialect, "TMAReduction"):
-      self.skipTest("TMAReduction op is required.")
+      self.skipTest("The mgpu_dialect.TMAReduction attribute is required.")
+
+    if reduction_op in ("min", "max"):
+      if dtype in (jnp.int32, jnp.int64):
+        reduction_op = "s" + reduction_op
+      elif dtype in (jnp.uint32, jnp.uint64):
+        reduction_op = "u" + reduction_op
+
+    if reduction_op in ("smin", "smax", "umin", "umax") and not hasattr(mgpu_dialect.TMAReduction, "Smin"):
+      self.skipTest("The Smin/Smax/Umin/Umax reduction types are required.")
+
+    if (
+        not launch_context._is_tma_reduction_op_supported(
+            reduction_op,
+            utils.dtype_to_ir_type(dtype),
+        )
+        or (
+            dtype in (jnp.uint32, jnp.uint64)
+            and reduction_op in ("smin", "smax")
+        )
+        or (
+            dtype in (jnp.int32, jnp.int64) and reduction_op in ("umin", "umax")
+        )
+        or dtype == jnp.int32 and reduction_op in ("inc", "dec")
+    ):
+      self.skipTest("TMA does not support this reduction op for this dtype")
 
     shape = (8, 128)
 
     def body(ctx, src, dst, smem):
       del ctx
-      smem_ref, tma_barrier = smem
+      src_smem_ref, tma_barrier = smem
       i32 = ir.IntegerType.get_signless(32)
       zero = arith.constant(i32, 0)
       indices = [zero, zero]
-      slice_lengths = smem_ref.type.shape
+      slice_lengths = src_smem_ref.type.shape
 
       tma_barrier.arrive_expect_tx(
-          utils.bitwidth(smem_ref.type.element_type) * math.prod(shape) // 8
+          utils.bitwidth(src_smem_ref.type.element_type) * math.prod(shape) // 8
       )
 
       mgpu_dialect.async_load(
           source=src,
-          destination=smem_ref,
+          destination=src_smem_ref,
           barrier=tma_barrier.as_barrier_memref(),
           indices=indices,
           slice_lengths=slice_lengths,
@@ -5428,31 +5456,60 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
       tma_barrier.wait()
 
+      reduction_attr = getattr(
+          mgpu_dialect.TMAReduction, reduction_op.capitalize()
+      )
+
       mgpu_dialect.async_store(
-          source=smem_ref,
+          source=src_smem_ref,
           destination=dst,
           indices=indices,
           slice_lengths=slice_lengths,
-          reduction_op=mgpu_dialect.TMAReduction.Add,
+          reduction_op=reduction_attr,
       )
       nvvm.cp_async_bulk_wait_group(0)
 
-    src = jnp.ones(shape, dtype=dtype)
-    dst = jnp.ones(shape, dtype=dtype)
+    prng_key = jax.random.key(1234)
+    k0, k1 = jax.random.split(prng_key, 2)
+    if dtype in (jnp.bfloat16, jnp.float16, jnp.float32):
+      src = jax.random.uniform(k0, shape, dtype, -10, 10)
+      dst = jax.random.uniform(k1, shape, dtype, -10, 10)
+    else:
+      src = jax.random.randint(k0, shape, -10, 10).astype(dtype)
+      dst = jax.random.randint(k1, shape, -10, 10).astype(dtype)
+
+    if reduction_op == "add":
+      expected = src + dst
+    elif reduction_op in ("min", "smin", "umin"):
+      expected = jnp.minimum(src, dst)
+    elif reduction_op in ("max", "smax", "umax"):
+      expected = jnp.maximum(src, dst)
+    elif reduction_op == "and":
+      expected = src & dst
+    elif reduction_op == "or":
+      expected = src | dst
+    elif reduction_op == "xor":
+      expected = src ^ dst
+    elif reduction_op == "inc":
+      expected = jnp.where(dst >= src, 0, dst + 1)
+    elif reduction_op == "dec":
+      expected = jnp.where((dst == 0) | (dst > src), src, dst - 1)
+    else:
+      raise ValueError(f"Unsupported reduction op: {reduction_op}")
 
     jax_shape = jax.ShapeDtypeStruct(shape, dtype)
     kernel = mgpu.as_gpu_kernel(
         body,
         grid=(1, 1, 1),
         block=(128, 1, 1),
-        in_shape=(jax_shape,),
+        in_shape=(jax_shape),
         out_shape=(),
         inout_shape=(jax_shape,),
         smem_scratch_shape=[jax_shape, core.TMABarrier(1)],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
 
-    np.testing.assert_array_equal(kernel(src, dst)[0], src + dst)
+    np.testing.assert_array_equal(kernel(src, dst)[0], expected)
 
 
 class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
