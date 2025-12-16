@@ -34,14 +34,10 @@ float_dtypes = jtu.dtypes.floating
 int_dtypes = jtu.dtypes.integer
 
 
-def _fixed_ref_map_coordinates(input, coordinates, order, mode, cval=0.0, prefilter=True):
-  fixed_mode = {
+def _fix_scipy_mode(mode):
+  return {
     'constant': 'grid-constant', 'wrap': 'grid-wrap'
   }.get(mode, mode)
-
-  return osp_ndimage.map_coordinates(
-    input, coordinates, order=order, mode=fixed_mode, cval=cval, prefilter=prefilter
-  )
 
 
 class NdimageTest(jtu.JaxTestCase):
@@ -80,10 +76,10 @@ class NdimageTest(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     lsp_op = lambda x, c: lsp_ndimage.map_coordinates(
         x, c, order=order, mode=mode, cval=cval, prefilter=prefilter)
-    impl_fun = (osp_ndimage.map_coordinates if impl == "original"
-                else _fixed_ref_map_coordinates)
-    osp_op = lambda x, c: impl_fun(
-        x, c, order=order, mode=mode, cval=cval, prefilter=prefilter)
+
+    scipy_mode = _fix_scipy_mode(mode) if impl == 'fixed' else mode
+    osp_op = lambda x, c: osp_ndimage.map_coordinates(
+      x, c, order=order, mode=scipy_mode, cval=cval, prefilter=prefilter)
 
     with jtu.strict_promotion_if_dtypes_match([dtype, int if round_ else coords_dtype]):
       if dtype in float_dtypes:
@@ -138,6 +134,43 @@ class NdimageTest(jtu.JaxTestCase):
     # analytical gradient of (x - (x - delta)) ** 2 is 2 * delta
     self.assertAllClose(grad(loss)(0.5), 1.0, check_dtypes=False)
     self.assertAllClose(grad(loss)(1.0), 2.0, check_dtypes=False)
+
+  @jtu.sample_product(
+    order=[3, 4, 5],
+    mode=['reflect', 'wrap', 'mirror'],
+    shape=[(5,), (3, 4), (3, 4, 5)],
+    dtype=float_dtypes,
+  )
+  def testSplineFilter(self, order, mode, shape, dtype):
+    rng = jtu.rand_uniform(self.rng(), low=-0.5, high=0.5)
+
+    def args_maker():
+      return (rng(shape, dtype=dtype),)
+
+    lsp_op = lambda arr: lsp_ndimage.spline_filter(arr, order=order, mode=mode)
+    osp_op = lambda arr: osp_ndimage.spline_filter(arr, order=order, output=dtype, mode=_fix_scipy_mode(mode))
+
+    self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=1e-2)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis)
+     for shape in [(5,), (3, 4), (3, 4, 5)]
+     for axis in range(len(shape))
+    ],
+    order=[3, 4, 5],
+    mode=['reflect', 'wrap', 'mirror'],
+    dtype=float_dtypes,
+  )
+  def testSplineFilter1D(self, order, mode, shape, axis, dtype):
+    rng = jtu.rand_uniform(self.rng(), low=-0.5, high=0.5)
+
+    def args_maker():
+      return (rng(shape, dtype=dtype),)
+
+    lsp_op = lambda arr: lsp_ndimage.spline_filter1d(arr, order=order, axis=axis, mode=mode)
+    osp_op = lambda arr: osp_ndimage.spline_filter1d(arr, order=order, axis=axis, output=dtype, mode=_fix_scipy_mode(mode))
+
+    self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=1e-2)
 
 
 if __name__ == "__main__":
