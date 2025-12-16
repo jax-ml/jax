@@ -607,31 +607,15 @@ def _broadcasted_iota_op_lowering_rule(
 
 
 @_register_lowering(vector.BroadcastOp)
-def _vector_splat_op_lowering_rule(
-    _: LoweringContext, vector_splat_op: vector.BroadcastOp
-) -> Sequence[ir.Value]:
-
-  out_vec_ty = ir.VectorType(vector_splat_op.aggregate.type)
-  fragmented_array = fa.FragmentedArray.splat(
-      vector_splat_op.input,
-      tuple(out_vec_ty.shape),
-      layouts.from_layout_attr(vector_splat_op.attributes["out_layouts"][0]),
-      is_signed=_default_is_signed(out_vec_ty.element_type),
-  )
-  return [fragmented_array_to_ir(fragmented_array, out_vec_ty)]
-
-
-@_register_lowering(vector.BroadcastOp)
 def _vector_broadcast_op_lowering_rule(
-    _: LoweringContext, vector_broadcast_op: vector.BroadcastOp
+    _: LoweringContext, op: vector.BroadcastOp
 ) -> Sequence[ir.Value]:
-
-  out_vec_ty = ir.VectorType(vector_broadcast_op.vector.type)
+  out_vec_ty = ir.VectorType(op.vector.type)
   fragmented_array = fa.FragmentedArray.splat(
-      vector_broadcast_op.source,
+      op.source,
       tuple(out_vec_ty.shape),
       layouts.from_layout_attr(
-          vector_broadcast_op.attributes["out_layouts"][0]
+          op.attributes["out_layouts"][0]
       ),
       is_signed=_default_is_signed(out_vec_ty.element_type),
   )
