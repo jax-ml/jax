@@ -1502,10 +1502,10 @@ output: [ 0.1  0.2  3.  -0.2]
     x = jnp.asarray(x)
     a = jnp.asarray(a)
 
-    return jnp.where(x >= 0, x, a * x)
-    prelu.defjvps(
-    lambda g, ans, x, a: lax.select(x >= 0, g, a * g),       # f'(x) = 1 if x>= 0
-    lambda g, ans, x, a: lax.select(x < 0, x * g, lax.full_like(g, 0))  # f'(x) = a if x<0
+    return jnp.maximum(x, 0) + a * jnp.minimum(x, 0) # This approach is more idiomatical because it avoids boolean masking.
+    #prelu.defjvps(
+    #lambda g, ans, x, a: lax.select(x >= 0, g, a * g),       # f'(x) = 1 if x>= 0
+    #lambda g, ans, x, a: lax.select(x < 0, x * g, lax.full_like(g, 0))  # f'(x) = a if x<0
 )
    
     
