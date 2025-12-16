@@ -196,7 +196,7 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
 def map_coordinates(
     input: ArrayLike, coordinates: Sequence[ArrayLike], order: int,
     mode: str = 'constant', cval: ArrayLike = 0.0, prefilter: bool = True,
-):
+) -> Array:
   """
   Map the input array to new coordinates using interpolation.
 
@@ -209,12 +209,8 @@ def map_coordinates(
     input: N-dimensional input array from which values are interpolated.
     coordinates: length-N sequence of arrays specifying the coordinates
       at which to evaluate the interpolated values
-    order: The order of interpolation. JAX supports the following:
-
-      * 0: Nearest-neighbor
-      * 1: Linear
-      * 3: Cubic
-
+    order: The order of interpolation. JAX supports orders 0-5, where 0 is nearest-neighbor
+      interpolation, 1 is linear interpolation, 3 is cubic interpolation, etc.
     mode: Points outside the boundaries of the input are filled according to the given mode.
       JAX supports one of ``('constant', 'nearest', 'mirror', 'wrap', 'reflect')``. Note the
       ``'wrap'`` mode in JAX behaves as ``'grid-wrap'`` mode in SciPy, and ``'constant'``
@@ -249,6 +245,173 @@ def map_coordinates(
     not as implemented by SciPy.
   """
   if order > 1 and prefilter:
-    raise NotImplementedError()
+    if mode in ('nearest', 'constant'):
+      raise NotImplementedError("requires prepadding")
+    input = spline_filter(jnp.asarray(input).astype(float), order, mode)
 
   return _map_coordinates(input, coordinates, order, mode, cval)
+
+
+def _init_mirror_causal(arr: Array, z: float) -> Array:
+  idx = jnp.arange(0, arr.size - 1)
+  z_n = z**(arr.size - 1)
+  return (
+    jnp.sum(z**idx * (arr[:-1] + z_n * arr[-2::-1]))
+  ) / (1 - z_n**2)
+
+def _init_mirror_anticausal(arr: Array, z: float) -> Array:
+  return z / (z**2 - 1) * (z * arr[-2] + arr[-1])
+
+def _init_wrap_causal(arr: Array, z: float) -> Array:
+  idx = jnp.arange(1, arr.size)
+  return (
+    arr[0] + jnp.sum(z**idx * arr[:0:-1])
+  ) / (1 - z**arr.size)
+
+def _init_wrap_anticausal(arr: Array, z: float) -> Array:
+  idx = jnp.arange(1, arr.size)
+  return (
+    arr[-1] + jnp.sum(z**idx * arr[:-1])
+  ) * z / (z**arr.size - 1)
+
+def _init_reflect_causal(arr: Array, z: float) -> Array:
+  idx = jnp.arange(arr.size)
+  z_n = z**arr.size
+  return arr[0] + z / (1 - z_n**2) * jnp.sum(z**idx * (arr + z_n * arr[::-1]))
+
+def _init_reflect_anticausal(arr: Array, z: float) -> Array:
+  return z / (z - 1) * arr[-1]
+
+_SPLINE_BOUNDARY_FNS: dict[str, tuple[Callable[[Array, float], Array], Callable[[Array, float], Array]]] = {
+  'reflect': (_init_reflect_causal, _init_reflect_anticausal),
+  'wrap': (_init_wrap_causal, _init_wrap_anticausal),
+  'mirror': (_init_mirror_causal, _init_mirror_anticausal),
+  # closest b.c. to nearest
+  'nearest': (_init_reflect_causal, _init_reflect_anticausal),
+  # default to mirror boundary
+  'constant': (_init_mirror_causal, _init_mirror_anticausal),
+}
+
+_SPLINE_FILTER_POLES: dict[int, list[float]] = {
+  2: [-0.171572875253809902396622551580603843],
+  3: [-0.267949192431122706472553658494127633],
+  4: [-0.361341225900220177092212841325675255, -0.013725429297339121360331226939128204],
+  5: [-0.430575347099973791851434783493520110, -0.043096288203264653822712376822550182],
+}
+
+
+@functools.partial(api.jit, static_argnums=(1, 2, 3))
+def _spline_filter1d(
+    input: Array, order: int, axis: int, mode: str = 'mirror',
+) -> Array:
+  from jax._src.lax.control_flow.loops import associative_scan
+
+  poles = _SPLINE_FILTER_POLES.get(order)
+  if poles is None:
+    raise ValueError("Spline order '{}' not supported for pre-filtering".format(order))
+
+  (causal_fn, anticausal_fn) = _SPLINE_BOUNDARY_FNS.get(mode, (None, None))
+  if causal_fn is None or anticausal_fn is None:
+    raise ValueError("Boundary mode '{}' not supported for pre-filtering".format(mode))
+
+  gain = functools.reduce(operator.mul, (
+    (1.0 - z) * (1.0 - 1.0 / z) for z in poles
+  ))
+  arr = input * gain
+
+  # compose an affine transform (y = k*x + b)
+  # t1 @ t0 => y = (k0*k1)*x + (b0 + k0*b1)
+  def compose_affine(t1: tuple[Array, Array], t0: tuple[Array, Array]) -> tuple[Array, Array]:
+    return (t0[0] * t1[0], t0[1] + t0[0]*t1[1])
+
+  #import jax
+
+  for z in poles:
+    #jax.debug.print("pole: {}", z)
+    # causal
+    init = jnp.apply_along_axis(lambda arr: jnp.array([causal_fn(arr, z)]), axis, arr)
+    #jax.debug.print("causal init: {}", init)
+    arr_rest = lax.slicing.slice_in_dim(arr, 1, None, axis=axis)
+    K, B = associative_scan(compose_affine, (jnp.full_like(arr_rest, z), arr_rest), axis=axis)
+    arr = lax.concatenate([init, K * jnp.squeeze(init, axis) + B], axis)
+    #jax.debug.print("after causal: {}", arr)
+
+    # anticausal
+    init = jnp.apply_along_axis(lambda arr: jnp.array([anticausal_fn(arr, z)]), axis, arr)
+    #jax.debug.print("anticausal init: {}", init)
+    arr_rest = lax.slicing.slice_in_dim(arr, None, -1, axis=axis)
+    K, B = associative_scan(compose_affine, (jnp.full_like(arr_rest, z), -z * arr_rest), axis=axis, reverse=True)
+    arr = lax.concatenate([K * jnp.squeeze(init, axis) + B, init], axis)
+    #jax.debug.print("after anticausal: {}", arr)
+
+  if dtypes.issubdtype(input.dtype, np.integer):
+    arr = _round_half_away_from_zero(arr)
+  return arr.astype(input.dtype)
+
+
+def spline_filter(
+    input: ArrayLike,
+    order: int = 3,
+    mode: str = 'mirror',
+) -> Array:
+  """
+  Applies a multidimensional spline pre-filter.
+
+  JAX implementation of :func:`scipy.ndimage.spline_filter`.
+
+  Given an input array, this function pre-calculates the B-spline coefficients
+  for an interpolation with the given order and boundary conditions. These
+  coefficients can then be consumed by interpolation functions with ``prefilter=False``.
+
+  Args:
+    input: N-dimensional input array for which prefiltering is performed
+    order: The order of the spline. Supported orders are 2-5.
+    mode: Boundary mode to use. See :func:`map_coordinates` for more details.
+      Modes 'nearest' and 'constant' cannot be used, as they have no analytic
+      solution for the prefilter. Instead, pad the array by the filter size
+      prior to pre-filtering.
+
+  Returns:
+    An array of B-spline coefficients with the same shape and dtype as ``input``.
+  """
+  arr = jnp.asarray(input)
+
+  for ax in range(arr.ndim):
+    arr = spline_filter1d(arr, order, ax, mode)
+  return arr
+
+
+def spline_filter1d(
+    input: ArrayLike,
+    order: int = 3,
+    axis: int = -1,
+    mode: str = 'mirror',
+) -> Array:
+  """
+  Applies a one-dimensional spline pre-filter.
+
+  JAX implementation of :func:`scipy.ndimage.spline_filter1d`.
+
+  Given an input array, this function pre-calculates the B-spline coefficients
+  for an interpolation with the given order and boundary conditions along the given axis.
+  These coefficients can then be consumed by interpolation functions with ``prefilter=False``.
+
+  Args:
+    input: N-dimensional input array for which prefiltering is performed
+    order: The order of the spline. Supported orders are 2-5.
+    axis: Axis to apply the spline filter along.
+    mode: Boundary mode to use. See :func:`map_coordinates` for more details.
+      Modes 'nearest' and 'constant' cannot be used, as they have no analytic
+      solution for the prefilter. Instead, pad the array by the filter size
+      prior to pre-filtering.
+
+  Returns:
+    An array of B-spline coefficients with the same shape and dtype as ``input``.
+  """
+  if mode in ('nearest', 'constant'):
+    raise ValueError("Boundary mode '{}' has no exact filter. "
+                     "Instead, pad the array by the filter size "
+                     "and use mode 'mirror'".format(mode))
+  input = jnp.asarray(input)
+  axis = util.canonicalize_axis(axis, input.ndim)
+  return _spline_filter1d(input, order=order, axis=axis, mode=mode)

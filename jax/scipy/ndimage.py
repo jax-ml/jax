@@ -17,4 +17,6 @@
 
 from jax._src.scipy.ndimage import (
   map_coordinates as map_coordinates,
+  spline_filter as spline_filter,
+  spline_filter1d as spline_filter1d,
 )
