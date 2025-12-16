@@ -208,11 +208,6 @@ def pallas_call_tpu_lowering_rule(
       isinstance(aval, pallas_core.ShapedArrayWithMemorySpace)
       for aval in ctx.avals_in
   ):
-    # TODO(sharadmv): Support dynamic grid bounds.
-    if num_dyn_bounds != 0:
-      raise NotImplementedError(
-          "Dynamic grid bounds are not supported when specifying memory spaces for inputs."
-      )
     input_memory_spaces = _get_memory_spaces_from_avals(
         ctx.avals_in, kernel_type=kernel_type
     )

@@ -684,6 +684,33 @@ class PallasCallDynamicGridTest(ptu.PallasTPUTest):
         dynamic_kernel(jnp.int32(4)), np.full(shape, 42.0, np.float32)
     )
 
+  def test_dynamic_grid_scalar_input_with_input_memory_space(self):
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Needs a newer TPU')
+    shape = (8, 128)
+    result_ty = jax.ShapeDtypeStruct(shape, jnp.float32)
+
+    def kernel(scalar_input_ref, output_ref):
+      output_ref[...] = jnp.full_like(output_ref, scalar_input_ref[0, 0])
+
+    @jax.jit
+    def dynamic_kernel(steps):
+      scalar_input = jnp.array([[42]], dtype=jnp.int32)
+      scalar_input = pltpu.with_memory_space_constraint(
+          scalar_input, pltpu.VMEM
+      )
+      return self.pallas_call(
+          kernel,
+          out_shape=result_ty,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(shape, lambda i: (0, 0)),
+          grid=(steps * 2,),
+      )(scalar_input)
+
+    np.testing.assert_array_equal(
+        dynamic_kernel(jnp.int32(4)), np.full(shape, 42.0, np.float32)
+    )
+
   def test_vmap_trivial_dynamic_grid(self):
     shape = (8, 128)
     result_ty = jax.ShapeDtypeStruct(shape, jnp.float32)
