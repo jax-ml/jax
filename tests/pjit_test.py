@@ -7275,11 +7275,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         f(arr)
 
   @parameterized.parameters(
-      (('x', 'y', 'z'), ('x', 'y')),
-      (('x', 'z'), 'x')
+      (('data', 'model', 'stage'), ('data', 'model')),
+      (('data', 'stage'), 'data')
   )
   @config.remove_size_one_mesh_axis_from_type(True)
-  @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))
+  @jtu.with_explicit_mesh((2, 2, 1), ('data', 'model', 'stage'))
   def test_spmd_axis_name_explicit_mode_assert_remove_one_size(
       self, in_spec, out_spec, mesh):
     np_inp = np.arange(16).reshape(4, 2, 2)
