@@ -47,15 +47,15 @@ class NdimageTest(jtu.JaxTestCase):
      for mode in ['wrap', 'constant', 'nearest', 'mirror', 'reflect']
      for cval in ([0, -1] if mode == 'constant' else [0])
     ],
-    [dict(impl=impl, rng_factory=rng_factory)
-     for impl, rng_factory in [
-       #("original", partial(jtu.rand_uniform, low=0, high=1)),
-       ("fixed", partial(jtu.rand_uniform, low=-0.75, high=1.75)),
-     ]
-    ],
-    [dict(order=order, prefilter=prefilter)
+    [dict(order=order, prefilter=prefilter, impl=impl, rng_factory=rng_factory)
      for order in list(range(6))
-     for prefilter in ([False] if order > 1 else [True])
+     for prefilter in ([False, True] if order > 1 else [True])
+     for impl, rng_factory in ([
+       ("original", partial(jtu.rand_uniform, low=0, high=1)),
+       ("fixed", partial(jtu.rand_uniform, low=-0.75, high=1.75)),
+     ] if order < 2 else [
+       ("fixed", partial(jtu.rand_uniform, low=-0.75, high=1.75))
+      ])
     ],
     shape=[(5,), (3, 4), (3, 4, 5)],
     coords_shape=[(7,), (2, 3, 4)],
@@ -85,8 +85,8 @@ class NdimageTest(jtu.JaxTestCase):
       if dtype in float_dtypes:
         epsilon = max(dtypes.finfo(dtypes.canonicalize_dtype(d)).eps
                       for d in [dtype, coords_dtype])
-        self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=100*epsilon)
-      elif order > 1 and round_:
+        self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=1e-3 if order > 3 else 100*epsilon)
+      elif order > 1:
         # output often falls exactly on 1/2, susceptible to rounding errors
         self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, atol=1, rtol=0)
       else:
@@ -171,6 +171,24 @@ class NdimageTest(jtu.JaxTestCase):
     osp_op = lambda arr: osp_ndimage.spline_filter1d(arr, order=order, axis=axis, output=dtype, mode=_fix_scipy_mode(mode))
 
     self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=1e-2)
+
+  def testSplineFilterErrors(self):
+    x = np.arange(5.0)
+    with self.assertRaisesRegex(
+      ValueError, r"Spline order '7' not supported for pre-filtering"):
+      lsp_ndimage.spline_filter(x, order=7)
+    with self.assertRaisesRegex(
+        ValueError, r"Boundary mode 'fail' not supported for pre-filtering"):
+      lsp_ndimage.spline_filter(x, order=3, mode='fail')
+
+  def testSplineFilter1DErrors(self):
+    x = np.arange(5.0)
+    with self.assertRaisesRegex(
+      ValueError, r"Spline order '7' not supported for pre-filtering"):
+      lsp_ndimage.spline_filter1d(x, order=7)
+    with self.assertRaisesRegex(
+        ValueError, r"Boundary mode 'fail' not supported for pre-filtering"):
+      lsp_ndimage.spline_filter1d(x, order=3, mode='fail')
 
 
 if __name__ == "__main__":

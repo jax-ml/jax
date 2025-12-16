@@ -139,11 +139,11 @@ _INTERP_FNS: dict[int, Callable[[Array], list[tuple[Array, Array]]]] = {
 }
 
 
-@functools.partial(api.jit, static_argnums=(2, 3, 4))
-def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
-                     order: int, mode: str, cval: ArrayLike) -> Array:
+@functools.partial(api.jit, static_argnums=(3, 4, 5, 6))
+def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike], n_pad: int,
+                     dtype: type[np.dtype], order: int, mode: str, cval: ArrayLike) -> Array:
   input_arr = jnp.asarray(input)
-  coordinate_arrs = [jnp.asarray(c) for c in coordinates]
+  coordinate_arrs = [jnp.asarray(c) + n_pad for c in coordinates]
   cval = jnp.asarray(cval, input_arr.dtype)
 
   if len(coordinates) != input_arr.ndim:
@@ -188,9 +188,9 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
       contribution = jnp.where(all_valid, input_arr[indices], cval)
     outputs.append(_nonempty_prod(weights) * contribution)  # type: ignore
   result = _nonempty_sum(outputs)
-  if dtypes.issubdtype(input_arr.dtype, np.integer):
+  if dtypes.issubdtype(dtype, np.integer):
     result = _round_half_away_from_zero(result)
-  return result.astype(input_arr.dtype)
+  return result.astype(dtype)
 
 
 def map_coordinates(
@@ -244,12 +244,22 @@ def map_coordinates(
     This function interprets the ``mode`` argument as documented by SciPy, but
     not as implemented by SciPy.
   """
+
+  input = jnp.asarray(input)
+  dtype = input.dtype
+
+  n_pad = 0
   if order > 1 and prefilter:
     if mode in ('nearest', 'constant'):
-      raise NotImplementedError("requires prepadding")
-    input = spline_filter(jnp.asarray(input).astype(float), order, mode)
+      n_pad = 12
+      if mode == 'nearest':
+        input = jnp.pad(input, n_pad, 'edge')
+      else:
+        input = jnp.pad(input, n_pad, 'constant', constant_values=cval)
+      mode = 'mirror'
+    input = spline_filter(input.astype(float), order, mode)
 
-  return _map_coordinates(input, coordinates, order, mode, cval)
+  return _map_coordinates(input, coordinates, n_pad, dtype, order, mode, cval)
 
 
 def _init_mirror_causal(arr: Array, z: float) -> Array:
@@ -324,25 +334,18 @@ def _spline_filter1d(
   def compose_affine(t1: tuple[Array, Array], t0: tuple[Array, Array]) -> tuple[Array, Array]:
     return (t0[0] * t1[0], t0[1] + t0[0]*t1[1])
 
-  #import jax
-
   for z in poles:
-    #jax.debug.print("pole: {}", z)
     # causal
     init = jnp.apply_along_axis(lambda arr: jnp.array([causal_fn(arr, z)]), axis, arr)
-    #jax.debug.print("causal init: {}", init)
     arr_rest = lax.slicing.slice_in_dim(arr, 1, None, axis=axis)
     K, B = associative_scan(compose_affine, (jnp.full_like(arr_rest, z), arr_rest), axis=axis)
     arr = lax.concatenate([init, K * init + B], axis)
-    #jax.debug.print("after causal: {}", arr)
 
     # anticausal
     init = jnp.apply_along_axis(lambda arr: jnp.array([anticausal_fn(arr, z)]), axis, arr)
-    #jax.debug.print("anticausal init: {}", init)
     arr_rest = lax.slicing.slice_in_dim(arr, None, -1, axis=axis)
     K, B = associative_scan(compose_affine, (jnp.full_like(arr_rest, z), -z * arr_rest), axis=axis, reverse=True)
     arr = lax.concatenate([K * init + B, init], axis)
-    #jax.debug.print("after anticausal: {}", arr)
 
   if dtypes.issubdtype(input.dtype, np.integer):
     arr = _round_half_away_from_zero(arr)
