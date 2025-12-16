@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import functools
+import json
 import os
 import tempfile
 from absl.testing import absltest
@@ -808,6 +809,75 @@ class VerificationTest(jtu.JaxTestCase):
       )(jnp.ones((8, 128, 128), jnp.float32))
       jax.config.update('jax_pallas_dump_promela_to', previous_config)
       self.assertNotEmpty(os.listdir(tmpdir))
+
+
+class PallasKernelMetadataDistributedTest(parameterized.TestCase):
+
+  @parameterized.product(
+      axis_names=[['x', 'y'], [('x', 'y')], ['x'], ['y']],
+      op=['copy', 'signal'],
+  )
+  def test_mesh_axes_metadata_is_preserved(self, axis_names, op):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Remote async copy only supported on TPU v4+')
+    if len(jax.devices()) < 4:
+      self.skipTest('Not enough devices')
+    devices = np.array(jax.devices()[:4]).reshape((2, 2))
+    mesh = jax.sharding.Mesh(devices, ('x', 'y'))
+
+    def kernel(x_ref, out_ref):
+      def body(send_sem, recv_sem, sem):
+        if len(jax.tree.leaves(axis_names)) > 0:
+          device_id = {a: 0 for a in axis_names}
+          if op == 'copy':
+            pltpu.async_remote_copy(
+                x_ref,
+                out_ref,
+                send_sem,
+                recv_sem,
+                device_id=device_id,
+            ).wait()
+          else:
+            pl.semaphore_signal(sem, device_id=device_id)
+        else:
+          out_ref[...] = x_ref[...]
+      pl.run_scoped(
+          body,
+          send_sem=pltpu.SemaphoreType.DMA,
+          recv_sem=pltpu.SemaphoreType.DMA,
+          sem=pltpu.SemaphoreType.REGULAR,
+      )
+
+    @functools.partial(
+        jax.jit,
+        out_shardings=jax.sharding.NamedSharding(
+            mesh, jax.sharding.PartitionSpec('x', 'y')
+        ),
+    )
+    @functools.partial(
+        jax.shard_map,
+        mesh=mesh,
+        in_specs=jax.sharding.PartitionSpec('x', 'y'),
+        out_specs=jax.sharding.PartitionSpec('x', 'y'),
+        check_vma=False,
+    )
+    def f(x):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((1, 1, 1, 128), jnp.float32),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+      )(x)
+
+    x = jnp.zeros((2, 2, 1, 128), dtype=jnp.float32)
+    hlo = f.lower(x).compile().as_text()
+    axis_names_text = json.dumps(
+        json.dumps(sorted(jax.tree.leaves(axis_names)))
+    )
+    self.assertIn(
+        f'"mesh_axes":{axis_names_text}',
+        hlo,
+    )
 
 
 if __name__ == '__main__':

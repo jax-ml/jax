@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import dataclasses
+import json
 from typing import cast
 
 import jax
@@ -273,6 +274,24 @@ def pallas_call_tpu_lowering_rule(
         if mosaic_params.use_tc_tiling_on_sc
         else tpu_custom_call.Tiling.SPARSE_CORE
     )
+  dict_metadata = dict(metadata) if metadata is not None else {}
+  del metadata
+  if jax_mesh is not None:
+    mesh_axes = {
+        e.name
+        for e in jaxpr.effects
+        if isinstance(e, jax_core.NamedAxisEffect)
+        # Filter for only device mesh axis name effects
+        and e.name in jax_mesh.axis_names
+    }
+    # Only put mesh axes in metadata if there are any.
+    if mesh_axes:
+      if "mesh_axes" in dict_metadata:
+        raise ValueError("Metadata already contains mesh axes.")
+      mesh_axes_list = list(mesh_axes)
+      if all(isinstance(a, str) for a in mesh_axes):
+        mesh_axes_list = sorted(mesh_axes)  # type: ignore
+      dict_metadata["mesh_axes"] = json.dumps(mesh_axes_list)
   out_nodes = mosaic.lower_module_to_custom_call(
       kernel_ctx,
       *dynamic_grid_args,
@@ -292,7 +311,7 @@ def pallas_call_tpu_lowering_rule(
       output_memory_spaces=output_memory_spaces,
       disable_bounds_checks=mosaic_params.disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
-      metadata=dict(metadata) if metadata is not None else None,
+      metadata=dict_metadata,
       skip_device_barrier=mosaic_params.skip_device_barrier,
       allow_collective_id_without_custom_barrier=mosaic_params.allow_collective_id_without_custom_barrier,
       shape_invariant_numerics=mosaic_params.shape_invariant_numerics,

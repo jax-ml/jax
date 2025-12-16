@@ -362,6 +362,8 @@ def _get_dma_effects(
     dst_transforms_avals,
     dst_sem_transforms_avals,
     src_sem_aval,
+    device_id_aval,
+    device_id_type,
 ):
   n_src_transforms = len(tree_util.tree_leaves(src_transforms_avals))
   n_dst_transforms = len(tree_util.tree_leaves(dst_transforms_avals))
@@ -377,6 +379,15 @@ def _get_dma_effects(
         1 + n_src_transforms + 1 + n_dst_transforms + 1 + n_dst_sem_transforms
     )
     effs.add(state.WriteEffect(src_sem_index))
+  if device_id_aval is not None:
+    if device_id_type is primitives.DeviceIdType.MESH and isinstance(
+        device_id_aval, dict
+    ):
+      for k in device_id_aval:
+        if not isinstance(k, tuple):
+          k = (k,)
+        for k_ in k:
+          effs.add(jax_core.NamedAxisEffect(k_))
   return effs
 
 
@@ -471,6 +482,8 @@ def _dma_start_abstract_eval(*args, tree, device_id_type, priority, add):
       dst_transforms_avals,
       dst_sem_transforms_avals,
       src_sem_aval,
+      device_id_aval,
+      device_id_type,
   )
 
 def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
@@ -734,7 +747,6 @@ dma_wait_p.to_lojax = _dma_wait_to_lojax
 
 @dma_wait_p.def_effectful_abstract_eval
 def _dma_wait_abstract_eval(*args, tree, device_id_type):
-  del device_id_type
   (
       src_ref_aval,
       src_transforms_avals,
@@ -751,6 +763,8 @@ def _dma_wait_abstract_eval(*args, tree, device_id_type):
       dst_transforms_avals,
       dst_sem_transforms_avals,
       src_sem_aval,
+      device_id_aval,
+      device_id_type,
   )
 
 def _dma_wait_pp_eqn(eqn: jax_core.JaxprEqn,
