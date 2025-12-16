@@ -73,18 +73,19 @@ def _scatter_update(x: ArrayLike, idx: Index | tuple[Index, ...],
 
   # XLA gathers and scatters are very similar in structure; the scatter logic
   # is more or less a transpose of the gather equivalent.
-  treedef, static_idx, dynamic_idx = indexing.split_index_for_jit(idx, x.shape)
+  indexer = indexing.NDIndexer.from_raw_indices(idx, x.shape).expand_bool_indices()
+  dynamic_idx, treedef = tree_util.tree_flatten(indexer)
 
   internal_scatter = partial(
       _scatter_impl, scatter_op=scatter_op, treedef=treedef,
-      static_idx=static_idx, indices_are_sorted=indices_are_sorted,
+      indices_are_sorted=indices_are_sorted,
       unique_indices=unique_indices, mode=mode,
       normalize_indices=normalize_indices)
   if out_sharding is not None:
     return auto_axes(internal_scatter, out_sharding=out_sharding,
                      axes=out_sharding.mesh.explicit_axes  # type: ignore
                      )(x, y, dynamic_idx)
-  return internal_scatter(x, y, dynamic_idx)
+  return internal_scatter(x, y, tuple(dynamic_idx))
 
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
@@ -92,7 +93,7 @@ def _scatter_update(x: ArrayLike, idx: Index | tuple[Index, ...],
 # @jit(static_argnums=(2, 3, 4))
 def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
                   scatter_op: Callable[..., Array],
-                  treedef: tree_util.PyTreeDef, static_idx: tuple[Any, ...],
+                  treedef: tree_util.PyTreeDef,
                   indices_are_sorted: bool, unique_indices: bool,
                   mode: slicing.GatherScatterMode | str | None, normalize_indices: bool):
   dtype = lax.dtype(x)
@@ -107,9 +108,8 @@ def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
       "In future JAX releases this will result in an error.",
       FutureWarning)
 
-  idx = indexing.merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = indexing.index_to_gather(np.shape(x), idx, core.typeof(x).sharding,
-                                     normalize_indices=normalize_indices)
+  general_indexer = tree_util.tree_unflatten(treedef, dynamic_idx)
+  indexer = general_indexer.to_gather(core.typeof(x).sharding, normalize_indices=normalize_indices)
 
   # Avoid calling scatter if the slice shape is empty, both as a fast path and
   # to handle cases like zeros(0)[array([], int32)].
