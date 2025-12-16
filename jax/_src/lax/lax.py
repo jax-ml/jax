@@ -8515,7 +8515,36 @@ class PaddingType(enum.Enum):
 
 
 def padtype_to_pads(in_shape, window_shape, window_strides, padding):
-  """Convert padding string to list of pairs of pad values."""
+  """Convert a padding specification to a list of pad value pairs.
+
+  This utility resolves abstract convolution padding modes into concrete
+  per-dimension integer padding values based on the input and window geometry.
+
+  Args:
+    in_shape: Sequence of integers specifying the input spatial shape.
+    window_shape: Sequence of integers specifying the kernel/window spatial shape.
+    window_strides: Sequence of integers specifying the spatial strides.
+    padding: Either a padding string (``'SAME'``, ``'SAME_LOWER'``, or ``'VALID'``)
+      or a ``PaddingType`` enum value. Other values will result in an error.
+
+  Returns:
+    A list of ``(low, high)`` integer tuples, one for each spatial dimension,
+    specifying the padding to apply before and after each dimension.
+
+  Raises:
+    RuntimeError: If ``padding`` is a string but not one of the supported values.
+    TypeError: If ``padding`` is not a supported string or ``PaddingType`` value.
+
+  Notes:
+    - ``'VALID'``: Returns zero padding ``(0, 0)`` for all dimensions.
+    - ``'SAME'``: Pads such that the output spatial shape is computed via
+      ceiling division of ``in_shape`` by ``window_strides``. If the required
+      padding amount is odd, the extra padding is added to the **end**
+      (high side) of the dimension.
+    - ``'SAME_LOWER'``: Similar to ``'SAME'``, but if the required padding
+      amount is odd, the extra padding is added to the **start**
+      (low side) of the dimension.
+  """
 
   if isinstance(padding, str):
     mapping = {
@@ -8526,7 +8555,7 @@ def padtype_to_pads(in_shape, window_shape, window_strides, padding):
     try:
       padding = mapping[padding.upper()]
     except KeyError as err:
-      msg = "Unrecognized padding type: expected 'VALID' or 'SAME', got {}."
+      msg = "Unrecognized padding type: expected 'VALID', 'SAME', or 'SAME_LOWER', got {}."
       raise RuntimeError(msg.format(padding)) from err
 
   if padding == PaddingType.SAME or padding == PaddingType.SAME_LOWER:
@@ -8543,7 +8572,10 @@ def padtype_to_pads(in_shape, window_shape, window_strides, padding):
           (pad_size - pad_size // 2, pad_size // 2) for pad_size in pad_sizes
       ]
     # Avoids verbose numpy scalars in jaxprs.
-    return [p.item() if isinstance(p, np.generic) else p for p in pads]
+    return [
+      tuple(x.item() if isinstance(x, np.generic) else x for x in p)
+      for p in pads
+    ]
   elif padding == PaddingType.VALID:
     return [(0, 0)] * len(in_shape)
   else:
