@@ -985,7 +985,7 @@ def _ref_typecompat(a, a_):
 def _temporary_dtype_exception(a, a_) -> bool:
   if isinstance(a, core.ShapedArray) and isinstance(a_, core.ShapedArray):
     return (a.shape == a_.shape and
-            core.typematch(a, a_, only_sharding_check=True) and
+            core.typematch(a, a_, only_shape_shd_check=True) and
             (dtypes.issubdtype(a_.dtype, dtypes.extended) or
              dtypes.issubdtype(a.dtype, dtypes.np.inexact)))
   return False

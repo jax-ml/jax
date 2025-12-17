@@ -321,7 +321,7 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
       return
     ct_aval = typeof(ct)
     ct_aval_expected = v.aval.to_cotangent_aval()  # type: ignore
-    if not core.typematch(ct_aval, ct_aval_expected, only_sharding_check=True):
+    if not core.typematch(ct_aval, ct_aval_expected, only_shape_shd_check=True):
       raise ValueError(
           f"Input primal JAX type to {prim.name} is {v.aval.str_short()}. Hence"
           f" the expected cotangent type is {ct_aval_expected.str_short()} but"
@@ -593,7 +593,7 @@ class ValAccum(GradAccum):
 def ct_check(primal, ct):
   ct_aval = ct.aval if type(ct) is Zero else typeof(ct)
   ct_aval_expected = primal.aval.to_cotangent_aval()  # type: ignore
-  if not core.typematch(ct_aval, ct_aval_expected, only_sharding_check=True):
+  if not core.typematch(ct_aval, ct_aval_expected, only_shape_shd_check=True):
     # TODO(yashkatariya, mattjj): Add primitive name here for
     # better error message?
     raise ValueError(
