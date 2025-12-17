@@ -255,14 +255,12 @@ class BatchTrace(Trace):
           and p in skippable_batchers
           and not any(self.axis_data.name == axis_name
                       for axis_name in skippable_batchers[p](params))):
-        # no-op shortcut
         return p.bind_with_trace(self.parent_trace, vals_in, params)
       else:
         with core.set_current_trace(self.parent_trace):
           val_out, dim_out = fancy_primitive_batchers[p](
               self.axis_data, vals_in, dims_in, **params)
     elif args_not_mapped:
-      # no-op shortcut
       return p.bind_with_trace(self.parent_trace, vals_in, params)
     elif p in primitive_batchers:
       with core.set_current_trace(self.parent_trace):
@@ -657,8 +655,6 @@ BatchingRule = Callable[
     ...,
     tuple[Any, Union[int, None, tuple[Union[int, None], ...]]]
 ]
-primitive_batchers : dict[core.Primitive, BatchingRule] = {}
-# "fancy" primitive batchers just take a extra leading `AxisData` and "trace type" args
 fancy_primitive_batchers: dict[core.Primitive, Callable] = {}
 
 # backwards compat shim. TODO: delete
@@ -667,8 +663,20 @@ class AxisPrimitiveBatchersProxy:
     def wrapped(axis_data, vals, dims, **params):
       return batcher(axis_data.size, axis_data.name, None, vals, dims, **params)
     fancy_primitive_batchers[prim] = wrapped
-
 axis_primitive_batchers = AxisPrimitiveBatchersProxy()
+
+class PrimitiveBatchersProxy:
+  def __setitem__(self, prim, batcher):
+    def wrapped(axis_data, vals, dims, **params):
+      if all(d is None for d in dims):
+        o = prim.bind(*vals, **params)
+        return (o, [None] * len(o)) if prim.multiple_results else (o, None)
+      return batcher(vals, dims, **params)
+    fancy_primitive_batchers[prim] = wrapped
+
+  def __delitem__(self, prim):
+    del fancy_primitive_batchers[prim]
+primitive_batchers = PrimitiveBatchersProxy()
 
 
 # Presence in this table allows fancy batchers to be skipped by batch traces for
