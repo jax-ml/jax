@@ -39,6 +39,8 @@ from jax._src.pallas.mosaic import primitives as mosaic_primitives
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
 from jax._src.pallas.mosaic.interpret.race_detection_state import RaceDetectionState
+from jax._src.pallas.mosaic.interpret.thread_map import thread_map
+import jax._src.pallas.mosaic.interpret.utils as interpret_utils
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
@@ -58,7 +60,7 @@ zip, unsafe_zip = safe_zip, zip
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class InterpretParams:
+class InterpretParams(interpret_utils.InterpretParams):
   """Parameters for TPU interpret mode.
 
   TPU interpret mode is a way run Pallas TPU kernels on CPU, while simulating
@@ -71,35 +73,16 @@ class InterpretParams:
   :func:`jax.experimental.pallas.pallas_call` or
   :func:`jax.experimental.pallas.core_map`.
 
+  NOTE: If an exception is raised while interpreting a kernel, you must call
+  :func:`reset_tpu_interpret_mode_state` before using TPU interpret mode
+  again in the same process.
+
   Attributes:
     dma_execution_mode:  If "eager", DMAs are executed as soon as they are
       issued.  If "on_wait", DMA reads or writes are only executed when a device
       is waiting on a DMA semaphore that will be signaled when the read or write
       is complete.
       Default: "on_wait".
-    detect_races: If True, a dynamic, happens-before race detector will be used
-      to detect data races during kernel interpretation.  If any races are
-      detected, a message will be printed and `races.races_found` will be set to
-      True.
-      Default: False.
-    out_of_bounds_reads: If "raise", an exception will be raised on any
-      out-of-bounds read of a buffer.  If "uninitialized_value", any parts of
-      the read that are out-of-bounds will return the value used to fill
-      uninitialized memory, which can be configured via the
-      "uninitialized_memory".  NOTE: If an exception is raised while
-      interpreting a kernel, you must call
-      :func:`reset_tpu_interpret_mode_state` before using TPU interpret mode
-      again in the same process.
-      Default: "raise".
-    skip_floating_point_ops: If True, operations that produce only floating
-      point values will not be interpreted; instead, their results will be
-      replaced with arrays all of `jnp.inf`. Additionally any floating point
-      operands to any operation will be replaced with (arrays of) `jnp.inf`.
-      Default: False.
-    uninitialized_memory: If "nan", allocated buffers are initialized to contain
-      all NaNs (or to their maximum possible value for integers). If "zero",
-      allocated buffers are initialized to all zeros.
-      Default: "nan".
     random_seed: Seed for random number generator used during interpretation.
       Currently random numbers are used to randomize the grid coordinates along
       dimensions with 'parallel' semantics.
@@ -112,33 +95,25 @@ class InterpretParams:
       along grid dimensions with 'parallel' semantics and - the mapping of grid
       points to local (i.e. per-device) cores.
       Default: None.
-    num_cores_per_device: The number of cores per device.
-      Default: 1.
     allow_hbm_allocation_in_run_scoped: If `True`, allows the allocation of HBM
       buffers (which are then shared across the cores in a device) in
       `run_scoped`. While this behavior can be enabled in the interpreter,
       allocating HBM buffers with `run_scoped` is not supported when executing
       Pallas kernels on a real TPU.
       Default: `False`.
-    vector_clock_size: The number of entries in the vector clocks. This should
-      be an integer bigger then the total number of cores, i.e. bigger than
-      `number of devices * num_cores_per_device`. If `None`, the vector clock
-      size that is used in the interpreter will default to twice the total
-      number of cores.
-      Default: None.
   """
+
   dma_execution_mode: Literal["eager", "on_wait"] = "on_wait"
-  detect_races: bool = False
-  out_of_bounds_reads: Literal["raise", "uninitialized"] = "raise"
-  skip_floating_point_ops: bool = False
-  uninitialized_memory: Literal["nan", "zero"] = "nan"
   random_seed: int | None = None
   grid_point_recorder: (
       Callable[[tuple[np.int32, ...], np.int32], None] | None
   ) = None
-  num_cores_per_device: int = 1
   allow_hbm_allocation_in_run_scoped: bool = False
-  vector_clock_size: int | None = None
+
+  @property
+  def num_cores_per_device(self) -> int:
+    return self.num_cores_or_threads_per_device
+
 
 @contextlib.contextmanager
 def force_tpu_interpret_mode(params: InterpretParams = InterpretParams()):
@@ -167,26 +142,12 @@ def set_tpu_interpret_mode(params: InterpretParams = InterpretParams()):
   config.pallas_tpu_interpret_mode_context_manager.set_global(params)  # type: ignore[arg-type]
 
 
-class Counter:
-  """A simple counter that is thread-safe."""
-
-  def __init__(self, initial_value: int):
-    self.value = initial_value
-    self.lock = threading.Lock()
-
-  def get_next(self):
-    with self.lock:
-      result = self.value
-      self.value += 1
-    return result
-
-
 # TODO(jburnim): Do we want to support multiple instances of SharedMemory?
 # Maybe for running multiple distinct interpreted computations in parallel?
 _shared_memory: memory.SharedMemory | None = None
 _shared_memory_init_lock = threading.Lock()
 races: RaceDetectionState | None = None
-dma_id_counter: Counter | None = None
+dma_id_counter: interpret_utils.Counter | None = None
 
 def reset_tpu_interpret_mode_state():
   """Resets all global, shared state used by TPU interpret mode.
@@ -218,23 +179,6 @@ def _clear_shared_memory():
     _shared_memory = None
 
 
-def _get_vector_clock_size(
-    num_devices, num_cores_per_device, *, interpret_params
-) -> int:
-  """Returns the number of vector clocks to use.`"""
-  num_cores = num_devices * num_cores_per_device
-  if interpret_params.vector_clock_size is not None:
-    if num_cores >= interpret_params.vector_clock_size:
-      raise ValueError(
-          f'Vector clock size ({interpret_params.vector_clock_size}) must be '
-          f'greater than the total number of cores ({num_cores}).'
-      )
-    return interpret_params.vector_clock_size
-  else:
-    # Default the vector clock size to twice the total number of cores.
-    return 2 * num_cores
-
-
 def _initialize_shared_memory(
     device_id, num_devices, num_cores_per_device, *, interpret_params
 ):
@@ -247,11 +191,9 @@ def _initialize_shared_memory(
 
   with _shared_memory_init_lock:
     if _shared_memory is None:
-      vector_clock_size = _get_vector_clock_size(
-          num_devices, num_cores_per_device, interpret_params=interpret_params
-      )
+      vector_clock_size = interpret_params.get_vector_clock_size(num_devices)
       races = RaceDetectionState(num_cores=num_cores)
-      dma_id_counter = Counter(100)
+      dma_id_counter = interpret_utils.Counter(100)
       _shared_memory = memory.SharedMemory(
           num_devices=num_devices,
           num_cores_per_device=num_cores_per_device,
@@ -273,31 +215,16 @@ def _initialize_shared_memory(
   assert _shared_memory.num_cores == num_cores
 
 
-def _update_clocks(low_global_core_id, high_global_core_id):
-  """Synchronizes the vector clocks for the cores with ids in the range between the two arguments."""
-  shared_memory = _get_shared_memory()
-  # Despite only updating the vector clocks for some cores, we still need to
-  # hold the global lock to ensure that no other devices are concurrently
-  # accessing the same vector clocks.
-  with shared_memory.lock:
-    for c in shared_memory.clocks[low_global_core_id + 1 : high_global_core_id]:
-      vc.update_vector_clock(shared_memory.clocks[low_global_core_id], c)
-    for c in shared_memory.clocks[low_global_core_id + 1 : high_global_core_id]:
-      vc.update_vector_clock(c, shared_memory.clocks[low_global_core_id])
-
-
 def _update_clocks_for_device_barrier(device_id):
   """Synchronizes the vector clocks for the cores on the given device."""
   shared_memory = _get_shared_memory()
-  low_core_id = device_id * shared_memory.num_cores_per_device
-  high_core_id = (device_id + 1) * shared_memory.num_cores_per_device
-  _update_clocks(low_core_id, high_core_id)
+  shared_memory.update_clocks_for_device_barrier(device_id)
 
 
 def _update_clocks_for_global_barrier():
   """Synchronizes all vector clocks."""
   shared_memory = _get_shared_memory()
-  _update_clocks(0, shared_memory.num_cores)
+  shared_memory.update_clocks(0, shared_memory.num_cores)
 
 
 def _barrier(device_id):
@@ -322,7 +249,8 @@ def _check_for_revisiting(device_id, local_core_id, loop_idx, output_blocks):
   except:
     raise ValueError('Advanced indexers are not supported on TPU')
   output_ranges = [
-      _to_range(b) if b is not None else None for b in output_blocks
+      interpret_utils.to_range(b) if b is not None else None
+      for b in output_blocks
   ]
 
   shared_memory = _get_shared_memory()
@@ -548,60 +476,6 @@ def get_barrier_semaphore(device_id, collective_id):
   return np.int16(collective_id)
 
 
-def _transform_slice_or_index(slice_or_idx):
-  if isinstance(slice_or_idx, int):
-    return slice_or_idx
-  else:
-    start = int(slice_or_idx.start)
-    size = int(slice_or_idx.size)
-    stride = int(slice_or_idx.stride)
-    return slice(start, start + size * stride, stride)
-
-
-def _compose_slice_or_index(slice_or_idx1, slice_or_idx2):
-  ret = []
-  i = 0
-  j = 0
-  while True:
-    if i == len(slice_or_idx1):
-      ret.extend(slice_or_idx2[j:])
-      return tuple(ret)
-    elif j == len(slice_or_idx2):
-      ret.extend(slice_or_idx1[i:])
-      return tuple(ret)
-    elif isinstance(slice_or_idx1[i], int):
-      ret.append(slice_or_idx1[i])
-      i += 1
-    elif isinstance(slice_or_idx2[j], int):
-      ret.append(
-          slice_or_idx1[i].start + slice_or_idx2[j] * slice_or_idx1[i].step
-      )
-      i += 1
-      j += 1
-    else:
-      ret.append(
-          slice(
-              slice_or_idx1[i].start
-              + slice_or_idx2[j].start * slice_or_idx1[i].step,
-              slice_or_idx1[i].start
-              + slice_or_idx2[j].stop * slice_or_idx1[i].step,
-              slice_or_idx1[i].step * slice_or_idx2[j].step,
-          )
-      )
-      i += 1
-      j += 1
-
-
-def _to_range(transforms) -> tuple[slice | int, ...]:
-  ret = ()
-  for transform in transforms:
-    # For now, assume only NDIndexer transforms.
-    ret = _compose_slice_or_index(
-        ret, tuple(_transform_slice_or_index(i) for i in transform.indices)
-    )
-  return ret
-
-
 def _to_int(x: int | Array | None) -> int | None:
   """Converts a value to an integer, or returns None if the value is None."""
   if x is None:
@@ -649,7 +523,7 @@ def get(
   global_core_id = shared_memory.get_global_core_id(device_id, local_core_id)
 
   key = (memory_space, buffer_id, device_id, local_core_id_for_buffer)
-  read_range = _to_range(transforms)
+  read_range = interpret_utils.to_range(transforms)
   ret, (shape, dtype), clock_ = shared_memory.get_buffer_content(
       key, read_range, global_core_id
   )
@@ -702,7 +576,9 @@ def get(
     # out_of_bounds_reads == "uninitialized"
     uninit_array = np.full(
         full_read_shape,
-        _uninitialized_value(dtype, shared_memory.uninitialized_memory),
+        interpret_utils.get_uninitialized_value(
+            dtype, shared_memory.uninitialized_memory
+        ),
         dtype=dtype,
     )
     if ret is None:
@@ -771,7 +647,7 @@ def store(
   global_core_id = shared_memory.get_global_core_id(device_id, local_core_id)
 
   key = (memory_space, buffer_id, device_id, local_core_id_for_buffer)
-  write_range = _to_range(transforms)
+  write_range = interpret_utils.to_range(transforms)
   in_bounds, (shape, _), clock_ = shared_memory.store_buffer_content(
       key, write_range, val, global_core_id
   )
@@ -842,7 +718,7 @@ def swap(
   global_core_id = shared_memory.get_global_core_id(device_id, local_core_id)
 
   key = (memory_space, buffer_id, device_id, local_core_id_for_buffer)
-  read_write_range = _to_range(transforms)
+  read_write_range = interpret_utils.to_range(transforms)
   ret, (shape, _), clock = shared_memory.swap_buffer_content(
       key, read_write_range, val, mask, global_core_id
   )
@@ -1184,74 +1060,6 @@ def _compute_transformed_shape_and_dtype(shape, dtype, transforms):
     dtype = transform.transform_dtype(dtype)
   return shape, dtype
 
-# TODO(sharadmv): De-dup this w/ the impl in primitives.py.
-def _device_id_dict_to_mesh(device_id_dict, axis_sizes, axis_indices):
-  physical_axis_dict = {}
-  axis_names = axis_sizes.keys()
-  for axis, idx in device_id_dict.items():
-    if isinstance(axis, tuple) and any(a in axis_names for a in axis):
-      if not all(a in axis_names for a in axis):
-        raise NotImplementedError(
-            f"{axis} mixes JAX mesh and Pallas mesh grid axes"
-        )
-      axes_dimensions = [axis_sizes[name] for name in axis]
-      for axis_index, axis_name in enumerate(axis):
-        axis_size = axis_sizes[axis_name]
-        inner_mesh_size = math.prod(axes_dimensions[axis_index + 1 :])
-        minor_divisor = inner_mesh_size
-
-        # Fast path for power of 2s
-        if inner_mesh_size & (inner_mesh_size - 1) == 0:
-          shift_len = (inner_mesh_size & -inner_mesh_size).bit_length() - 1
-          partial_device_idx = idx >> shift_len
-        else:
-          partial_device_idx = idx // minor_divisor
-
-        if axis_size & (axis_size - 1) == 0:
-          device_idx = partial_device_idx & (axis_size - 1)
-        else:
-          device_idx = partial_device_idx % axis_size
-        physical_axis_dict[axis_name] = device_idx
-    else:
-      physical_axis_dict[axis] = idx
-  device_id = []
-  for axis in axis_names:
-    if axis in physical_axis_dict:
-      device_id.append(physical_axis_dict[axis])
-    else:
-      device_id.append(axis_indices[axis])
-  non_mesh_axes = {
-      k: v
-      for k, v in physical_axis_dict.items()
-      if k not in axis_names
-  }
-  return tuple(device_id), non_mesh_axes
-
-def _device_coords_to_logical_id(device_coords, axis_sizes, axis_indices):
-  if isinstance(device_coords, dict):
-    device_coords, non_mesh_axes = _device_id_dict_to_mesh(
-        device_coords, axis_sizes, axis_indices)
-    if non_mesh_axes:
-      raise NotImplementedError(non_mesh_axes)
-  if not isinstance(device_coords, tuple):
-    device_coords = (device_coords,)
-  assert len(device_coords) == len(axis_sizes)
-  sizes = list(axis_sizes.values())
-  ret = 0
-  for i in range(len(device_coords)):
-    ret += device_coords[i] * math.prod(sizes[i+1:])
-  return ret
-
-def _device_id_to_logical(device_id, device_id_type, axis_sizes,
-                          axis_indices):
-  if device_id is None:
-    return None
-  if device_id_type == primitives.DeviceIdType.MESH:
-    return _device_coords_to_logical_id(device_id, axis_sizes, axis_indices)
-  elif device_id_type == primitives.DeviceIdType.LOGICAL:
-    return device_id
-  else:
-    raise ValueError(f'Unsupported device ID type: {device_id_type}')
 
 @lu.cache
 def _to_jaxpr(flat_fun, in_avals):
@@ -1263,16 +1071,8 @@ def _is_any(memory_space):
   return ((memory_space == mosaic_core.MemorySpace.ANY) or
           (memory_space == pallas_core.MemorySpace.ANY))
 
-def _is_float(dtype):
-  return jnp.issubdtype(dtype, jnp.floating)
 
 _SENTINEL = jnp.inf
-
-@dataclasses.dataclass(frozen=True)
-class Placeholder:
-  """Placeholder for use in `_interpret_jaxpr` below instead of putting a concrete value into `env`."""
-  shape: tuple[int, ...]
-  dtype: jnp.dtype
 
 
 def _get_memory_space_and_raise_if_hbm(aval, primitive_name, message=None):
@@ -1299,23 +1099,14 @@ def _interpret_jaxpr(
     compiler_params,
     interpret_params
 ):
-  env = {}
-
-  def read(var):
-    if isinstance(var, jax_core.Literal):
-      result = var.val
-    else:
-      result = env[var]
-    if isinstance(result, Placeholder):
-      result = jax.lax.full(result.shape, _SENTINEL, result.dtype)
-    return result
-
-  def write(var, value):
-    if interpret_params.skip_floating_point_ops and _is_float(value.dtype):
-      value = Placeholder(value.shape, value.dtype)
-    env[var] = value
-
-  jax._src.util.safe_map(write, jaxpr.constvars + jaxpr.invars, args)
+  sentinel_for_floating_point_values = (
+      _SENTINEL if interpret_params.skip_floating_point_ops else None
+  )
+  env = interpret_utils.JaxprEnv(
+      vars=jaxpr.constvars + jaxpr.invars,
+      values=args,
+      sentinel_for_floating_point_values=sentinel_for_floating_point_values,
+  )
 
   # TODO(jburnim): Clean up and finish this evaluation loop.  For example:
   #  - Replace the big if-statement with a dictionary of rules.
@@ -1339,9 +1130,7 @@ def _interpret_jaxpr(
       # not need to do any reads if `interpret_params.skip_floating_point_ops`
       # is True. If this is the case, we want to avoid materializing the read
       # array into the jaxpr when this function is traced.
-      deferred_invals = functools.partial(
-          jax._src.util.safe_map, read, eqn.invars
-      )
+      deferred_invals = functools.partial(env.read_many, eqn.invars)
 
       if prim is primitives.load_p:
         (ref, transforms, mask, _) = jax.tree.unflatten(
@@ -1487,8 +1276,8 @@ def _interpret_jaxpr(
                     device_id,
                     local_core_id,
                     TPU_MEMORY_SPACE_IDXS[memory_space],
-                    _uninitialized_array(
-                        v.aval.shape, v.aval.dtype, interpret_params
+                    interpret_params.get_uninitialized_array(
+                        v.aval.shape, v.aval.dtype
                     ),
                     ordered=True,
                 )
@@ -1563,7 +1352,7 @@ def _interpret_jaxpr(
             src_sem_transforms,
             target_device_id,
         ) = jax.tree.unflatten(eqn.params['tree'], deferred_invals())
-        target_device_id = _device_id_to_logical(
+        target_device_id = interpret_utils._device_id_to_logical(
             target_device_id, eqn.params['device_id_type'], axis_sizes,
             axis_indices)
         (orig_src_ref, _, orig_dst_ref, *_
@@ -1629,7 +1418,7 @@ def _interpret_jaxpr(
       elif prim is primitives.semaphore_signal_p:
         sem, sem_transforms, inc, target_device_id, core_index = (
             jax.tree.unflatten(eqn.params['args_tree'], deferred_invals()))
-        target_device_id = _device_id_to_logical(
+        target_device_id = interpret_utils._device_id_to_logical(
             target_device_id, eqn.params['device_id_type'], axis_sizes,
             axis_indices)
         callback.io_callback(
@@ -1669,7 +1458,7 @@ def _interpret_jaxpr(
 
       else:
         if interpret_params.skip_floating_point_ops and all(
-            _is_float(ovar.aval.dtype) for ovar in eqn.outvars
+            interpret_utils.is_float(ovar.aval.dtype) for ovar in eqn.outvars
         ):
           # Skip `prim.bind` since `prim` only produces floating-point values.
           # It is safe to populate `out` with avals since mapping `write` over
@@ -1683,9 +1472,9 @@ def _interpret_jaxpr(
           out = prim.bind(*subfuns, *deferred_invals(), **bind_params)
 
       out = out if prim.multiple_results else [out]
-      jax._src.util.safe_map(write, eqn.outvars, out)
+      env.write_many(eqn.outvars, out)
 
-  return jax._src.util.safe_map(read, jaxpr.outvars)
+  return env.read_many(jaxpr.outvars)
 
 def _compute_start_indices(
     block_mapping, loop_idx, *args,
@@ -1890,106 +1679,10 @@ def _get_grid_point(
     grid_point.append(li if jnp.size(coords) == 0 else coords[li])
   return jnp.array(grid_point, dtype=np.int32)
 
-def _uninitialized_value(dtype, uninitialized_memory: Literal['nan', 'zero']):
-  if uninitialized_memory == 'nan':
-    if jnp.issubdtype(dtype, jnp.floating):
-      return np.nan
-    elif jnp.issubdtype(dtype, jnp.integer):
-      return jnp.iinfo(dtype).max
-    elif jnp.issubdtype(dtype, jnp.bool):
-      return True
-  if uninitialized_memory == 'zero':
-    return 0
-  raise NotImplementedError(
-    uninitialized_memory + ' + ' + str(dtype))
-
-def _uninitialized_array(shape, dtype, interpret_params):
-  return jnp.full(
-      shape,
-      _uninitialized_value(dtype, interpret_params.uninitialized_memory),
-      dtype,
-  )
-
-def _pad_to_block_dimension(value, block_shape, interpret_params):
-  """Pads values so the shape evenly divides into block dimensions.
-
-  For example, if values has a shape of (33, 2, 5) with a block_shape of
-  (32, 2, 4), this function will pad the value of shape to (64, 2, 8).
-
-  Args:
-    value: Array to be padded.
-    block_shape: Block shapes to use for padding. If None, no padding will
-      be performed.
-
-  Returns:
-    A padded array.
-  """
-  padded_shape = tuple(
-      ((v - 1) // b + 1) * b for v, b in zip(value.shape, block_shape)
-  )
-  if padded_shape != value.shape:
-    pad_width = tuple((0, a-b) for a, b in zip(padded_shape, value.shape))
-    pad_value = _uninitialized_array((), value.dtype, interpret_params)
-    value = jnp.pad(value, pad_width, constant_values=pad_value)
-  return value
 
 def get_interpret_effects():
   return {callback._OrderedIOEffect}
 
-def _thread_map(f, num_threads):
-  if num_threads == 1:
-    f(jnp.int32(0))
-    return
-
-  def _f(core_index):
-    f(core_index)
-    return ()
-  jaxpr = jax.make_jaxpr(_f)(jnp.int32(0))
-
-  _call_threadmap_callback(jaxpr.jaxpr, num_threads, *jaxpr.consts)
-
-def _run_jaxpr(jaxpr, consts, *args):
-  def _run(jaxpr, consts, *args):
-    jax_core.eval_jaxpr(jaxpr, consts, *args)
-  traced = jax.jit(_run, static_argnums=(0,)).trace(jaxpr, consts, *args)
-  traced.lower().compile()(consts, *args)
-  return
-
-import concurrent.futures
-
-def _thread_map_callback(jaxpr, num_threads, consts):
-  num_threads = int(num_threads)
-  threads = []
-  with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-    for i in range(num_threads):
-      threads.append(
-        executor.submit(_run_jaxpr, jaxpr, consts, jnp.int32(i)))
-    exceptions = []
-    for i in range(num_threads):
-      try:
-        threads[i].result()
-      except Exception as e:
-        exceptions.append(e)
-  if exceptions:
-    # TODO(jburnim): Use ExceptionGroup once JAX requires Python 3.11.
-    # raise ExceptionGroup('Exceptions raised during _thread_map', exceptions)
-    raise exceptions[0]
-
-def _call_threadmap_callback(jaxpr, num_threads, *consts):
-  # NOTE: At runtime, _thread_map_callback will lower and compile the
-  # given jaxpr.  (JAX's caches should ensure the jaxpr is only lowered and
-  # compiled once.)
-  #
-  # TODO(jburnim): Would it be worth trying to lower/compile the jaxpr at
-  # lowering/compilation time?  E.g., by using a custom primitive here, could
-  # we lower/compile jaxpr at lowering time, and then pass the compiled
-  # function to the callback?
-  return callback.io_callback(
-      functools.partial(_thread_map_callback, jaxpr),
-      (),
-      num_threads,
-      consts,
-      ordered=True)
 
 def interpret_pallas_call(
     *args,
@@ -2014,7 +1707,8 @@ def interpret_pallas_call(
     # that users don't have to specify it in the InterpretParams.
     assert len(mesh.shape) == 1
     interpret_params = dataclasses.replace(
-        interpret_params, num_cores_per_device=mesh.devices.shape[0])
+        interpret_params, num_cores_or_threads_per_device=mesh.devices.shape[0]
+    )
 
   args = [remove_memory_space_p.bind(a) for a in args]
   # args contains: *dynamic_grid_sizes, *index, *inputs.  (No consts?)
@@ -2034,8 +1728,9 @@ def interpret_pallas_call(
   num_devices = functools.reduce(
       jnp.multiply, axis_sizes.values(), jnp.int32(1))
   axis_indices = {k: lax.axis_index(k) for k in axis_sizes.keys()}
-  device_id = _device_coords_to_logical_id(
-      tuple(axis_indices.values()), axis_sizes, axis_indices)
+  device_id = interpret_utils.device_coords_to_logical_id(
+      tuple(axis_indices.values()), axis_sizes, axis_indices
+  )
   callback.io_callback(
       functools.partial(
           _initialize_shared_memory, interpret_params=interpret_params
@@ -2058,7 +1753,7 @@ def interpret_pallas_call(
   ]
   num_inputs = grid_mapping.num_inputs
   input_args = [
-      _pad_to_block_dimension(a, bs, interpret_params)
+      interpret_params.pad_to_block_dimension(a, bs)
       for a, bs in zip(input_args, block_shapes[:num_inputs])
   ]
 
@@ -2099,11 +1794,11 @@ def interpret_pallas_call(
       output_buffer_shapes.append(input_args[oi_alias_map[i]].shape)
       output_vals.append(input_args[oi_alias_map[i]])
     else:
-      out_val = _uninitialized_array(bm.array_aval.shape,
-                                     bm.array_aval.dtype,
-                                     interpret_params)
-      padded_val = _pad_to_block_dimension(
-          out_val, output_block_shapes[i], interpret_params
+      out_val = interpret_params.get_uninitialized_array(
+          bm.array_aval.shape, bm.array_aval.dtype
+      )
+      padded_val = interpret_params.pad_to_block_dimension(
+          out_val, output_block_shapes[i]
       )
       output_buffer_ids.append(
           callback.io_callback(
@@ -2172,8 +1867,8 @@ def interpret_pallas_call(
               device_id,
               None,  # local_core_id,
               TPU_MEMORY_SPACE_IDXS[var.aval.memory_space],
-              _uninitialized_array(
-                  var.aval.shape, var.aval.dtype, interpret_params
+              interpret_params.get_uninitialized_array(
+                  var.aval.shape, var.aval.dtype
               ),
               ordered=True,
           )
@@ -2522,7 +2217,7 @@ def interpret_pallas_call(
       _update_clocks_for_device_barrier, (), device_id, ordered=True
   )
 
-  _thread_map(_execute_grid_for_core, interpret_params.num_cores_per_device)
+  thread_map(_execute_grid_for_core, interpret_params.num_cores_per_device)
 
   # TODO(jburnim): Should we only create happens-before here from the other
   # # cores to core 0?

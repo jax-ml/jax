@@ -572,3 +572,20 @@ class SharedMemory:
               mask[in_bounds_idx], value[in_bounds_idx], raw_result
           )
           return result.copy(), shape_and_dtype, clock
+
+  def update_clocks(self, low_global_core_id, high_global_core_id):
+    """Synchronizes the vector clocks for the cores with ids in the range between the two arguments."""
+    # Despite only updating the vector clocks for some cores, we still need to
+    # hold the global lock to ensure that no other devices are concurrently
+    # accessing the same vector clocks.
+    with self.lock:
+      for c in self.clocks[low_global_core_id + 1 : high_global_core_id]:
+        vc.update_vector_clock(self.clocks[low_global_core_id], c)
+      for c in self.clocks[low_global_core_id + 1 : high_global_core_id]:
+        vc.update_vector_clock(c, self.clocks[low_global_core_id])
+
+  def update_clocks_for_device_barrier(self, device_id):
+    """Synchronizes the vector clocks for the cores on the given device."""
+    low_core_id = device_id * self.num_cores_per_device
+    high_core_id = (device_id + 1) * self.num_cores_per_device
+    self.update_clocks(low_core_id, high_core_id)

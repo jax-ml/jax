@@ -33,6 +33,8 @@ py_library(
     deps = [
         ":race_detection_state",
         ":shared_memory",
+        ":thread_map",
+        ":utils",
         ":vector_clock",
         "//jax",
         "//jax/_src:api",
@@ -78,4 +80,24 @@ pytype_strict_library(
         ":vector_clock",
         "//jax/_src:source_info_util",
     ],
+)
+
+pytype_strict_library(
+    name = "thread_map",
+    srcs = ["thread_map.py"],
+    deps = [
+        "//jax",
+        "//jax/_src:callback",
+    ],
+)
+
+pytype_strict_library(
+    name = "utils",
+    srcs = ["utils.py"],
+    deps = [
+        "//jax",
+        "//jax/_src:core",
+        "//jax/_src:util",
+        "//jax/_src/pallas",
+    ] + py_deps("numpy"),
 )

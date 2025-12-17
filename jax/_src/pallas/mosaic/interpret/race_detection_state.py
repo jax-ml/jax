@@ -116,9 +116,9 @@ class RaceDetectionState:
       # between real device IDs vs. DMA IDs.
       print(
           f'RACE DETECTED\n  read of {buffer_key}[{rnge}] from {device_id},'
-          f' {local_core_id}, {user_frame}\n  write of'
+          f' {local_core_id}, {user_frame}\n  clock: {clock}\n  write of'
           f' {buffer_key}[{write_range}] from {write_device_id},'
-          f' {write_local_core_id} {write_frame}'
+          f' {write_local_core_id} {write_frame}\n  clock: {write_clock}\n'
       )
       with self.lock:
         self.races_found = True
@@ -158,9 +158,9 @@ class RaceDetectionState:
       # between real device IDs vs. DMA IDs.
       print(
           f'RACE DETECTED\n  write of {buffer_key}[{rnge}] from {device_id},'
-          f' {local_core_id}, {user_frame}\n  write of'
+          f' {local_core_id}, {user_frame}\n  clock: {clock}\n  write of'
           f' {buffer_key}[{write_range}] from {write_device_id},'
-          f' {write_local_core_id}, {write_frame}'
+          f' {write_local_core_id}, {write_frame}\n  clock: {write_clock}\n'
       )
       with self.lock:
         self.races_found = True
@@ -178,9 +178,9 @@ class RaceDetectionState:
       # between real device IDs vs. DMA IDs.
       print(
           f'RACE DETECTED\n  write of {buffer_key}[{rnge}] from {device_id},'
-          f' {local_core_id}, {user_frame}\n  read of'
+          f' {local_core_id}, {user_frame}\n  clock: {clock}\n  read of'
           f' {buffer_key}[{read_range}] from {read_device_id},'
-          f' {read_local_core_id}, {read_frame}'
+          f' {read_local_core_id}, {read_frame}\n  clock: {read_clock}\n'
       )
       with self.lock:
         self.races_found = True

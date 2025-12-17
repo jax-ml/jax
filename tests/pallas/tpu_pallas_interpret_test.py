@@ -862,7 +862,7 @@ class InterpretTest(jtu.JaxTestCase):
               dimension_semantics=('parallel',),
           ),
           interpret=pltpu.InterpretParams(
-              num_cores_per_device=2,
+              num_cores_or_threads_per_device=2,
               detect_races=False,
           ),
       )(x)
@@ -872,7 +872,7 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_allclose(y, 2.0 * x)
 
     with pltpu.force_tpu_interpret_mode(pltpu.InterpretParams(
-        num_cores_per_device=1,
+        num_cores_or_threads_per_device=1,
         detect_races=True,
     )):
       y = f(x).block_until_ready()
@@ -881,7 +881,7 @@ class InterpretTest(jtu.JaxTestCase):
     self.assertEqual(trace_count[0], 2)
 
     with pltpu.force_tpu_interpret_mode(pltpu.InterpretParams(
-        num_cores_per_device=2,
+        num_cores_or_threads_per_device=2,
         detect_races=True,
     )):
       y = f(x).block_until_ready()
@@ -913,7 +913,7 @@ class InterpretTest(jtu.JaxTestCase):
             pltpu.VMEM((8, 128), x.dtype),
         ],
         interpret=pltpu.InterpretParams(
-            num_cores_per_device=2,
+            num_cores_or_threads_per_device=2,
             detect_races=True,
         ),
         compiler_params=pltpu.CompilerParams(
@@ -948,7 +948,7 @@ class InterpretTest(jtu.JaxTestCase):
           out_specs=pl.BlockSpec((8, 128), lambda i, j: (i, j)),
           interpret=pltpu.InterpretParams(
               random_seed=12345,
-              num_cores_per_device=num_cores_per_device,
+              num_cores_or_threads_per_device=num_cores_per_device,
               grid_point_recorder=grid_point_recorder,
               detect_races=True,
           ),
