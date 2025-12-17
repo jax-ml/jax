@@ -296,7 +296,7 @@ def count_events(event):
 count_device_put = count_events("batched_device_put")
 count_device_put_fast_path_hit = count_events("batched_copy_array")
 count_pjit_cpp_cache_miss = count_events("jit_cpp_cache_miss")
-count_jit_tracing_cache_miss = count_events("create_pjit_jaxpr")
+count_jit_tracing_cache_miss = count_events("trace_to_jaxpr")
 count_aot_jit_cpp_cache_miss = count_events("stages_compiled_call")
 count_jit_and_pmap_lowerings = count_events("lower_jaxpr_to_module")
 count_jit_compilation_cache_miss = count_events("pxla_cached_compilation")

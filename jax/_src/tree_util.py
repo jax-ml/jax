@@ -18,7 +18,7 @@ from collections.abc import Callable, Hashable, Iterable, Sequence
 import dataclasses
 import difflib
 import functools
-from functools import partial
+from functools import partial, cached_property
 import operator as op
 import textwrap
 from typing import Any, TypeVar
@@ -1360,37 +1360,29 @@ class FlatTree:
        the tuple-returning function would change the tree structure and `unzip`
        wouldn't be able to recover it.
   """
-  def __init__(self, vals:Sequence, treedef:PyTreeDef):
+  # `FlatTree` constructor is private. Use `FlatTree.flatten` instead
+  def __init__(self, vals, treedef:PyTreeDef, statics):
     assert isinstance(treedef, pytree.PyTreeDef)
     self.tree = treedef
+    if not isinstance(vals, tuple):
+      vals = tuple(vals)
     self.vals = tuple(vals)
+    self.statics = statics  # tree-prefix tuple-dict-tree of bools
 
   def map(self, f:Callable) -> FlatTree:
-    ans_vals = []
-    for x in self.vals:
-      ans_vals.append(f(x))
-    return FlatTree(ans_vals, self.tree)
+    return self.update(f(x) for x in self.vals)
 
   def map2(self:FlatTree, f:Callable, t2:FlatTree) -> FlatTree:
-
     n = len(self)
     assert len(t2) == n
-    ans_vals = []
-    for x1, x2 in zip(self.vals, t2.vals):
-      ans_vals.append(f(x1, x2))
-    return FlatTree(ans_vals, self.tree)
+    return self.update(f(x1, x2) for x1, x2 in zip(self.vals, t2.vals))
 
   def map3(
       self:FlatTree, f:Callable, t2:FlatTree, t3:FlatTree) -> FlatTree:
     n = len(self)
     assert len(t2) == n and len(t3) == n
-    ans_vals = []
-    for x1, x2, x3 in zip(self.vals, t2.vals, t3.vals):
-      ans_vals.append(f(x1, x2, x3))
-    return FlatTree(ans_vals, self.tree)
-
-  def zip(self, t2:FlatTree) -> FlatTree:
-    assert False
+    return self.update(f(x1, x2, x3)
+                       for x1, x2, x3 in zip(self.vals, t2.vals, t3.vals))
 
   def unzip2(self:FlatTree) -> tuple[FlatTree, FlatTree]:
     ys = []
@@ -1398,9 +1390,9 @@ class FlatTree:
     for y, z in self.vals:
       ys.append(y)
       zs.append(z)
-    return FlatTree(ys, self.tree), FlatTree(zs, self.tree)
+    return self.update(ys), self.update(zs)
 
-  # TODO: add map3, zip3, unzip3 etc. as needed
+  # TODO: add other helpers like map3, zip, unzip3 etc. as needed
 
   @staticmethod
   def pack(tree):
@@ -1411,11 +1403,13 @@ class FlatTree:
     elif isinstance(tree, tuple):
       vals = []
       trees = []
+      staticss = []
       for child_tree in tree:
         child = FlatTree.pack(child_tree)
         vals.extend(child.vals)
         trees.append(child.tree)
-      return FlatTree(vals, treedef_tuple(trees))
+        staticss.append(child.statics)
+      return FlatTree(vals, treedef_tuple(trees), tuple(staticss))
     elif isinstance(tree, dict):
       # only empty case handled for now
       if tree == {}:
@@ -1431,23 +1425,72 @@ class FlatTree:
     trees = treedef_children(self.tree)
     children = []
     offset = 0
-    for tree in trees:
+    for i, tree in enumerate(trees):
+      statics = False if isinstance(self.statics, bool) else self.statics[i]
       new_offset = offset + tree.num_leaves
-      children.append(FlatTree(self.vals[offset:new_offset], tree))
+      children.append(FlatTree(self.vals[offset:new_offset], tree, statics))
       offset = new_offset
     return tuple(children)
 
   @staticmethod
   def flatten(tree: PyTree) -> FlatTree:
-    return FlatTree(*tree_flatten(tree))
+    vals, tree = tree_flatten(tree)
+    return FlatTree(vals, tree, False)
+
+  @staticmethod
+  def flatten_static_argnums(args, static_argnums):
+    if not static_argnums:
+      return FlatTree.flatten(args)
+    else:
+      assert isinstance(args, tuple)
+      num_args = len(args)
+      static_argnums = [i % num_args if i < 0 else i for i in static_argnums]
+      statics = tuple(i in static_argnums for i, _ in enumerate(args))
+      tree_with_statics = tuple(
+          Static(x) if static else x for static, x in zip(statics, args))
+      vals, treedef = tree_flatten(tree_with_statics)
+      return FlatTree(vals, treedef, statics=statics)
+
+  @staticmethod
+  def flatten_static_argnames(kwargs, static_argnames):
+    if not static_argnames:
+      return FlatTree.flatten(kwargs)
+    else:
+      assert isinstance(kwargs, dict)
+      statics = {k : k in static_argnames for k, _ in kwargs.items()}
+      tree_with_statics = {k : Static(v) if statics[k] else v
+                           for k, v in kwargs.items()}
+      vals, treedef = tree_flatten(tree_with_statics)
+      return FlatTree(vals, treedef, statics=statics)
+
+  @staticmethod
+  def flatten_static_argnums_argnames(
+      args, kwargs, static_argnums, static_argnames):
+    return FlatTree.pack((
+        FlatTree.flatten_static_argnums(args, static_argnums),
+        FlatTree.flatten_static_argnames(kwargs, static_argnames)))
 
   def unflatten(self) -> PyTree:
-    return tree_unflatten(self.tree, self.vals)
+    pytree = tree_unflatten(self.tree, self.vals)
+    return unwrap_statics(pytree, self.statics)
 
-  def update_from_list(self, new_vals:list) -> FlatTree:
-    return FlatTree(new_vals, self.tree)
+  def update(self, new_vals) -> FlatTree:
+    # `new_vals` can be a generator because `FlatTree` forces it to a tuple
+    new = FlatTree(new_vals, self.tree, self.statics)
+    assert len(self.vals) == len(new.vals)
+    return new
+
+  @cached_property
+  def paths(self) -> FlatTree:
+    # TODO(dougalm): find a way to do this without roundtripping
+    paths, _ = unzip2(tree_leaves_with_path(self.unflatten()))
+    return self.update(paths)
 
   def __len__(self):
+    return self.len
+
+  @cached_property
+  def len(self):
     return self.tree.num_leaves
 
   def __iter__(self):
@@ -1460,3 +1503,35 @@ class FlatTree:
 
   def __hash__(self):
     return hash((self.vals, self.tree))
+
+def unwrap_statics(pytree, statics):
+  if statics is False:
+    return pytree
+  elif statics is True:
+    return pytree.val  # pytree should be a `Static` object
+  elif isinstance(pytree, tuple):
+    return tuple(unwrap_statics(p, s) for p, s in zip(pytree, statics))
+  elif isinstance(pytree, dict):
+    return {k : unwrap_statics(p, statics[k]) for k, p in pytree.items()}
+  else:
+    assert False, "unreachable"
+
+@register_static
+@dataclasses.dataclass(frozen=True)
+class Static:
+  val: Any
+
+
+def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
+                     ) -> tuple[int, ...]:
+  """Ensure argnum is within bounds. Also resolves negative argnums."""
+  result = []
+  for i in argnums:
+    if i >= num_args and allow_invalid: continue
+    if not -num_args <= i < num_args:
+      raise ValueError(
+          "Positional argument indices, e.g. for `static_argnums`, must have "
+          "value greater than or equal to -len(args) and less than len(args), "
+          f"but got value {i} for len(args) == {num_args}.")
+    result.append(i % num_args)  # Resolve negative
+  return tuple(result)
