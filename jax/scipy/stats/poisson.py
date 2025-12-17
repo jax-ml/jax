@@ -19,4 +19,5 @@ from jax._src.scipy.stats.poisson import (
   logpmf as logpmf,
   pmf as pmf,
   cdf as cdf,
+  entropy as entropy
 )
