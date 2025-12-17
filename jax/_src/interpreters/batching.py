@@ -255,18 +255,13 @@ class BatchTrace(Trace):
           and p in skippable_batchers
           and not any(self.axis_data.name == axis_name
                       for axis_name in skippable_batchers[p](params))):
-        # no-op shortcut
         return p.bind_with_trace(self.parent_trace, vals_in, params)
       else:
         with core.set_current_trace(self.parent_trace):
           val_out, dim_out = fancy_primitive_batchers[p](
               self.axis_data, vals_in, dims_in, **params)
     elif args_not_mapped:
-      # no-op shortcut
       return p.bind_with_trace(self.parent_trace, vals_in, params)
-    elif p in primitive_batchers:
-      with core.set_current_trace(self.parent_trace):
-        val_out, dim_out = primitive_batchers[p](vals_in, dims_in, **params)
     else:
       raise NotImplementedError(f"Batching rule for '{p}' not implemented")
     src = source_info_util.current()
@@ -657,8 +652,6 @@ BatchingRule = Callable[
     ...,
     tuple[Any, Union[int, None, tuple[Union[int, None], ...]]]
 ]
-primitive_batchers : dict[core.Primitive, BatchingRule] = {}
-# "fancy" primitive batchers just take a extra leading `AxisData` and "trace type" args
 fancy_primitive_batchers: dict[core.Primitive, Callable] = {}
 
 # backwards compat shim. TODO: delete
@@ -667,36 +660,47 @@ class AxisPrimitiveBatchersProxy:
     def wrapped(axis_data, vals, dims, **params):
       return batcher(axis_data.size, axis_data.name, None, vals, dims, **params)
     fancy_primitive_batchers[prim] = wrapped
-
 axis_primitive_batchers = AxisPrimitiveBatchersProxy()
+
+# backwards compat shim. TODO: delete
+class PrimitiveBatchersProxy:
+  def __setitem__(self, prim, batcher):
+    def wrapped(axis_data, vals, dims, **params):
+      del axis_data
+      if all(d is None for d in dims):
+        o = prim.bind(*vals, **params)
+        return (o, [None] * len(o)) if prim.multiple_results else (o, None)
+      return batcher(vals, dims, **params)
+    fancy_primitive_batchers[prim] = wrapped
+
+  def __delitem__(self, prim):
+    del fancy_primitive_batchers[prim]
+primitive_batchers = PrimitiveBatchersProxy()
 
 
 # Presence in this table allows fancy batchers to be skipped by batch traces for
-# irrelevant axes. The Callable takes the params and returns a list of relevant
-# axes.
+# irrelevant axes. The Callable takes params and returns a list of relevant axes
+# TODO(yashkatariya): remove this
 skippable_batchers : dict[core.Primitive, Callable] = {}
 
 def defvectorized(prim):
-  primitive_batchers[prim] = partial(vectorized_batcher, prim)
+  fancy_primitive_batchers[prim] = partial(vectorized_batcher, prim)
 
-def vectorized_batcher(prim, batched_args, batch_dims, **params):
+def vectorized_batcher(prim, axis_data, batched_args, batch_dims, **params):
+  assert not prim.multiple_results
+  if all(d is None for d in batch_dims):
+    return prim.bind(*batched_args, **params), None
   assert all(batch_dims[0] == bd for bd in batch_dims[1:]), batch_dims
   return prim.bind(*batched_args, **params), batch_dims[0]
 
 def defbroadcasting(prim):
-  primitive_batchers[prim] = partial(broadcast_batcher, prim)
+  fancy_primitive_batchers[prim] = partial(broadcast_batcher, prim)
 
-def broadcast_batcher(prim, args, dims, **params):
-  """Process a primitive with built-in broadcasting.
-
-  Args:
-    args: the possibly-batched arguments
-    dims: list or tuple of the same length as `args`, where each
-      entry indicates the batching state of the corresponding entry to `args`:
-      either an int indicating the batch dimension, or else `not_mapped`
-      indicating no batching.
-  """
+def broadcast_batcher(prim, axis_data, args, dims, **params):
   assert len(args) > 1
+  if all(d is None for d in dims):
+    o = prim.bind(*args, **params)
+    return (o, [None] * len(o)) if prim.multiple_results else (o, None)
   shape, dim = next((x.shape, d) for x, d in zip(args, dims)
                     if d is not not_mapped)
   if all(core.definitely_equal_shape(shape, x.shape) and d == dim
@@ -725,9 +729,12 @@ def _handle_scalar_broadcasting(nd, x, d):
     return lax.expand_dims(x, tuple(range(np.ndim(x), nd)))
 
 def defreducer(prim, ident):
-  primitive_batchers[prim] = partial(reducer_batcher, prim, ident)
+  fancy_primitive_batchers[prim] = partial(reducer_batcher, prim, ident)
 
-def reducer_batcher(prim, ident, batched_args, batch_dims, axes, **params):
+def reducer_batcher(prim, ident, axis_data, batched_args, batch_dims, axes,
+                    **params):
+  if all(d is None for d in batch_dims):
+    return prim.bind(*batched_args, axes=axes, **params), None
   def out_axis(axes, axis):
     return int(list(np.delete(np.arange(operand.ndim), axes)).index(axis))
   operand, = batched_args
