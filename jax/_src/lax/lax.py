@@ -2696,7 +2696,7 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
     operand: an array
     shape: the shape of the target array
     broadcast_dimensions: to which dimension in the target shape each dimension
-      of the operand shape corresponds to.  That is, dimension i of the operand
+      of the operand shape corresponds to. That is, dimension i of the operand
       becomes dimension broadcast_dimensions[i] of the result.
 
   Returns:
@@ -2705,15 +2705,18 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
   See Also:
     jax.lax.broadcast : simpler interface to add new leading dimensions.
   """
-  # TODO(dfm): Re-write this as a "reshard" when only the sharding changes.
   out_sharding = canonicalize_sharding(out_sharding, 'broadcast_in_dim')
   if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions) and
       isinstance(operand, Array) and out_sharding is None):
     return operand
+  operand_aval = core.typeof(operand)
+  if (operand_aval.shape == shape and
+      list(broadcast_dimensions) == list(range(operand_aval.ndim)) and
+      out_sharding is not None and operand_aval.sharding != out_sharding):
+    return pjit.reshard(operand, out_sharding)
   return broadcast_in_dim_p.bind(
       operand, shape=tuple(shape),
-      broadcast_dimensions=tuple(broadcast_dimensions),
-      sharding=out_sharding)
+      broadcast_dimensions=tuple(broadcast_dimensions), sharding=out_sharding)
 
 def broadcast_to_rank(x: ArrayLike, rank: int) -> Array:
   """Adds leading dimensions of ``1`` to give ``x`` rank ``rank``."""

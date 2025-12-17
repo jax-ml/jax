@@ -5399,6 +5399,23 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ValueError, "For primitive.*context mesh.*aval mesh"):
       f(arr1, arr2)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_no_op_broadcast_except_for_sharding_change(self, mesh):
+    arr = jnp.arange(8.).reshape(4, 2)
+
+    @jax.jit
+    def f(x):
+      out = jax.lax.broadcast_in_dim(x, (4, 2), [0, 1], out_sharding=P('x'))
+      self.assertEqual(out.aval.sharding.spec, P('x', None))
+      return out
+
+    out = f(arr)
+    self.assertArraysEqual(out, arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+    out_g = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P(None, None)))
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_sin_unop(self, mesh):
     np_inp = np.arange(16.).reshape(8, 2)
