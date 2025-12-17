@@ -263,31 +263,26 @@ def map_coordinates(
 
 
 def _init_mirror_causal(arr: Array, z: float) -> Array:
-  idx = jnp.arange(0, arr.size - 1, dtype=arr.dtype)
+  idx = jnp.arange(0, arr.size, dtype=arr.dtype)
   z_n = z**(arr.dtype.type(arr.size) - 1)
   return (
-    jnp.sum(z**idx * (arr[:-1] + z_n * arr[:0:-1]))
+    jnp.sum(z**idx[:-2] * arr[1:-1]) + jnp.sum(z**idx * arr[::-1]) * z_n/z
   ) / (1 - z_n**2)
 
 def _init_mirror_anticausal(arr: Array, z: float) -> Array:
-  return z / (z**2 - 1) * (z * arr[-2] + arr[-1])
+  return (z * arr[-2] + z**2 * arr[-1]) / (z**2 - 1)
 
 def _init_wrap_causal(arr: Array, z: float) -> Array:
-  idx = jnp.arange(1, arr.size, dtype=arr.dtype)
-  return (
-    arr[0] + jnp.sum(z**idx * arr[:0:-1])
-  ) / (1 - z**arr.size)
+  idx = jnp.arange(0, arr.size, dtype=arr.dtype)
+  return jnp.sum(z**idx * arr[::-1]) / (1 - z**arr.size)
 
 def _init_wrap_anticausal(arr: Array, z: float) -> Array:
-  idx = jnp.arange(1, arr.size, dtype=arr.dtype)
-  return (
-    arr[-1] + jnp.sum(z**idx * arr[:-1])
-  ) * z / (z**arr.size - 1)
+  return -z * _init_wrap_causal(arr[::-1], z)
 
 def _init_reflect_causal(arr: Array, z: float) -> Array:
   idx = jnp.arange(arr.size, dtype=arr.dtype)
   z_n = z**arr.dtype.type(arr.size)
-  return arr[0] + z / (1 - z_n**2) * jnp.sum(z**idx * (arr + z_n * arr[::-1]))
+  return jnp.sum(z**idx * (arr + z_n * arr[::-1])) / (1 - z_n**2)
 
 def _init_reflect_anticausal(arr: Array, z: float) -> Array:
   return z / (z - 1) * arr[-1]
@@ -337,15 +332,13 @@ def _spline_filter1d(
   for z in poles:
     # causal
     init = jnp.apply_along_axis(lambda arr: jnp.array([causal_fn(arr, z)]), axis, arr)
-    arr_rest = lax.slicing.slice_in_dim(arr, 1, None, axis=axis)
-    K, B = associative_scan(compose_affine, (jnp.full_like(arr_rest, z), arr_rest), axis=axis)
-    arr = lax.concatenate([init, K * init + B], axis)
+    K, B = associative_scan(compose_affine, (jnp.full_like(arr, z), arr), axis=axis)
+    arr = K * init + B
 
     # anticausal
     init = jnp.apply_along_axis(lambda arr: jnp.array([anticausal_fn(arr, z)]), axis, arr)
-    arr_rest = lax.slicing.slice_in_dim(arr, None, -1, axis=axis)
-    K, B = associative_scan(compose_affine, (jnp.full_like(arr_rest, z), -z * arr_rest), axis=axis, reverse=True)
-    arr = lax.concatenate([K * init + B, init], axis)
+    K, B = associative_scan(compose_affine, (jnp.full_like(arr, z), -z * arr), axis=axis, reverse=True)
+    arr = K * init + B
 
   if dtypes.issubdtype(input.dtype, np.integer):
     arr = _round_half_away_from_zero(arr)
