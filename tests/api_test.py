@@ -3648,6 +3648,7 @@ class APITest(jtu.JaxTestCase):
       logging.set_verbosity(prev_level)
     self.assertGreaterEqual(len(l.output), 3)  # 3 lines
     self.assertTrue(any('Finished tracing' in line for line in l.output))
+    breakpoint()
     self.assertTrue(any('Compiling jit(f)' in line for line in l.output))
     self.assertTrue(any('Finished XLA compilation' in line for line in l.output))
 
@@ -7922,8 +7923,8 @@ class TracebackTest(jtu.JaxTestCase):
     lax.cond(True, f, lambda: None)
 
   def test_jit_traceback(self):
-    # TODO(dougalm): improve this! jit can (and should) be nested a lot.
-    expected_depth = 13
+    # TODO(dougalm): shoud be able to get this down to 2 or 3
+    expected_depth = 5
     init_depth = self.cur_depth()
     @jit
     def foo(x):
