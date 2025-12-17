@@ -334,7 +334,6 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj,
 def _hash_platform(hash_obj, backend):
   _hash_string(hash_obj, backend.platform)
   _hash_string(hash_obj, backend.platform_version)
-  _hash_string(hash_obj, backend.runtime_type)
 
 
 def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
