@@ -47,6 +47,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
@@ -2304,13 +2305,21 @@ absl::Status PyArray::Register(nb::module_& m) {
       nb::is_method());
   type.attr("platform") = nb::cpp_function(
       [](PyArray self) {
-        if (self.ifrt_array()->client()->platform_name() == "cuda" ||
-            self.ifrt_array()->client()->platform_name() == "rocm") {
+#if JAX_IFRT_VERSION_NUMBER >= 44
+        const xla::ifrt::DeviceListRef& devices =
+            self.ifrt_array()->sharding().devices();
+        absl::string_view platform_name =
+            devices->devices().front()->PlatformName();
+#else
+        absl::string_view platform_name =
+            self.ifrt_array()->client()->platform_name();
+#endif
+        if (platform_name == "cuda" || platform_name == "rocm") {
           return std::string_view("gpu");
         } else {
-          return self.ifrt_array()->client()->platform_name();
+          return platform_name;
         }
-      },
+    },
       nb::is_method());
   type.attr("is_ready") = nb::cpp_function(
       [](PyArray self) { return xla::ValueOrThrow(self.IsReady()); },

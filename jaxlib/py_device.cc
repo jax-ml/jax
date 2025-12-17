@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
@@ -45,6 +46,7 @@ limitations under the License.
 #include "xla/python/nb_helpers.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
+#include "xla/python/version.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -68,11 +70,15 @@ std::string_view PyDevice::platform() const {
   // but we haven't yet updated JAX clients that
   // expect "gpu". Migrate users and remove this
   // code.
-  if (client_->platform_name() == "cuda" ||
-      client_->platform_name() == "rocm") {
+#if JAX_IFRT_VERSION_NUMBER >= 44
+  absl::string_view platform_name = device_->PlatformName();
+#else
+  absl::string_view platform_name = client_->platform_name();
+#endif
+  if (platform_name == "cuda" || platform_name == "rocm") {
     return std::string_view("gpu");
   } else {
-    return client_->platform_name();
+    return platform_name;
   }
 }
 
