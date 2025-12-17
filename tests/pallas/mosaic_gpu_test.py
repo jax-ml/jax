@@ -4972,6 +4972,35 @@ class PipelineTest(PallasTest):
         kernel_fn(), jnp.tile(jnp.repeat(jnp.arange(num_steps), 64), (64, 1))
     )
 
+  @parameterized.parameters((pl.Squeezed(),), (None,))
+  def test_emit_with_squeezed_dim(self, squeezed_dim):
+
+    shape = (16, 256)
+    num_steps = shape[0]
+
+    def kernel(x_gmem, o_gmem):
+      plgpu.emit_pipeline(
+          kernel_body,
+          in_specs=[pl.BlockSpec((squeezed_dim, shape[1]), lambda i: (i, 0))],
+          out_specs=[pl.BlockSpec((squeezed_dim, shape[1]), lambda i: (i, 0))],
+          grid=(num_steps,),
+          max_concurrent_steps=2,
+      )(x_gmem, o_gmem)
+
+    def kernel_body(_, in_smem, o_smem):
+      assert in_smem.shape == (shape[1],)
+      assert o_smem.shape == (shape[1],)
+      o_smem[...] = in_smem[...] + 1
+
+    kernel_fn = self.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct((16, 256), jnp.int32),
+    )
+    x = jnp.arange(16 * 256, dtype=jnp.int32).reshape(16, 256)
+    np.testing.assert_array_equal(kernel_fn(x), x + 1)
+
 
 class PipelineWGTest(
     PipelineTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
@@ -5660,6 +5689,38 @@ class WarpSpecializedPipelineTest(PallasTest):
         ptx(),
     )
     np.testing.assert_array_equal(y, np.stack([x + 1.0, x + 1.0]))
+
+  @parameterized.parameters((pl.Squeezed(),), (None,))
+  def test_emit_with_squeezed_dim(self, squeezed_dim):
+    self.skip_if_wg_semantics()
+
+    shape = (16, 256)
+    num_steps = shape[0]
+
+    def kernel(x_gmem, o_gmem):
+      plgpu.emit_pipeline_warp_specialized(
+          kernel_body,
+          in_specs=[pl.BlockSpec((squeezed_dim, shape[1]), lambda i: (i, 0))],
+          out_specs=[pl.BlockSpec((squeezed_dim, shape[1]), lambda i: (i, 0))],
+          grid=(num_steps,),
+          max_concurrent_steps=2,
+          num_compute_wgs=1,
+          memory_registers=40,
+          wg_axis="wg",
+      )(x_gmem, o_gmem)
+
+    def kernel_body(_, in_smem, o_smem):
+      o_smem[...] = in_smem[...] + 1
+
+    kernel_fn = self.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((16, 256), jnp.int32),
+        num_threads=2,
+        thread_name="wg",
+    )
+    x = jnp.arange(16 * 256, dtype=jnp.int32).reshape(16, 256)
+    np.testing.assert_array_equal(kernel_fn(x), x + 1)
+
 
 
 class WarpSpecializedPipelineWGTest(
