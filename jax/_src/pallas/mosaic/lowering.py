@@ -3393,7 +3393,8 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
 
 
 @register_lowering_rule(pjit.reshard_p)
-def _reshard_lowering_rule(ctx: LoweringRuleContext, x, dst_sharding):
+def _reshard_lowering_rule(ctx: LoweringRuleContext, x, *, dst_sharding,
+                           concrete_mesh):
   return x
 
 
