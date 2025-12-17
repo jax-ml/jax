@@ -97,6 +97,7 @@ def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
                   mode: slicing.GatherScatterMode | str | None, normalize_indices: bool):
   dtype = lax.dtype(x)
   weak_type = dtypes.is_weakly_typed(x)
+  parsed_mode = slicing.GatherScatterMode.from_any(mode)
 
   if not dtypes.safe_to_cast(y, x):
     # TODO(jakevdp): change this to an error after the deprecation period.
@@ -108,8 +109,10 @@ def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
       FutureWarning)
 
   idx = indexing.merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = indexing.index_to_gather(np.shape(x), idx, core.typeof(x).sharding,
-                                     normalize_indices=normalize_indices)
+  indexer = indexing.index_to_gather(
+      np.shape(x), idx, core.typeof(x).sharding,
+      normalize_indices=normalize_indices,
+      raise_on_oob=(parsed_mode == slicing.GatherScatterMode.BOUNDS_CHECK))
 
   # Avoid calling scatter if the slice shape is empty, both as a fast path and
   # to handle cases like zeros(0)[array([], int32)].
