@@ -2968,7 +2968,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        r'output\[1\] the bwd rule produced an output of shape/dtype float..\[3\]'):
+        r'output\[1\] the bwd rule produced an output of type float..\[3\]'):
       jax.grad(lambda x, y: foo(x, y * y).sum(), 1)(jnp.ones(3), jnp.ones(4))
 
   def test_bwd_rule_can_produce_list_or_tuple(self):

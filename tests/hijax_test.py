@@ -171,8 +171,15 @@ class HiTup:
 @dataclass(frozen=True)
 class TupTy(HiType):
   tys: tuple[Ty]
+
   def __repr__(self):
     return 'Tup{' + ','.join(a.str_short() for a in self.tys) + '}'
+
+  def __hash__(self):
+    return hash(self.tys)
+
+  def __eq__(self, other):
+    return self.tys == other.tys
 
   def lo_ty(self):
     return list(self.tys)
@@ -188,6 +195,9 @@ class TupTy(HiType):
 
   def to_tangent_aval(self):
     return TupTy(tuple(ty.to_tangent_aval() for ty in self.tys))
+
+  def normalize(self):
+    return TupTy(tuple(ty.normalize() for ty in self.tys))
 
 register_hitype(HiTup, lambda t: TupTy(tuple(map(typeof, t.elts))))
 

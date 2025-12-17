@@ -2694,40 +2694,51 @@ def reshard(xs, out_shardings):
           f'and have a nonempty mesh. Got sharding {s}.'
       )
     ds = ds.update(spec=ds.spec._normalized_spec_for_aval(x_aval.ndim))  # pytype: disable=attribute-error
-    out_flat.append(reshard_p.bind(x, dst_sharding=ds))
+    cmesh = (s.mesh if (isinstance(s, NamedSharding) and
+                        isinstance(s.mesh, mesh_lib.Mesh))
+             else None)
+    out_flat.append(reshard_p.bind(x, dst_sharding=ds, concrete_mesh=cmesh))
   return tree_unflatten(treedef, out_flat)
 
 reshard_p = core.Primitive('reshard')
 reshard_p.skip_canonicalization = True
 
-def _reshard_abstract_eval(aval, dst_sharding):
+def _reshard_abstract_eval(aval, *, dst_sharding, concrete_mesh):
   assert isinstance(aval, core.ShapedArray)
   if aval.sharding == dst_sharding:
     return aval
   return aval.update(sharding=dst_sharding)
 reshard_p.def_abstract_eval(_reshard_abstract_eval)
 
-def _reshard_impl(x, dst_sharding):
-  return dispatch.apply_primitive(reshard_p, x, dst_sharding=dst_sharding)
+def _reshard_impl(x, *, dst_sharding, concrete_mesh):
+  thunk = lambda: dispatch.apply_primitive(
+      reshard_p, x, dst_sharding=dst_sharding, concrete_mesh=concrete_mesh)
+  if concrete_mesh is None:
+    return thunk()
+  else:
+    with sharding_impls.set_mesh(concrete_mesh):
+      return thunk()
 reshard_p.def_impl(_reshard_impl)
 
-def _reshard_transpose_rule(ct, x, dst_sharding):
+def _reshard_transpose_rule(ct, x, *, dst_sharding, concrete_mesh):
   assert ad.is_undefined_primal(x)
   out_sharding = x.aval.to_cotangent_aval().sharding
   with mesh_lib.use_abstract_mesh(out_sharding.mesh):
-    x_bar = reshard_p.bind(ct, dst_sharding=out_sharding)
+    x_bar = reshard_p.bind(ct, dst_sharding=out_sharding,
+                           concrete_mesh=concrete_mesh)
     return [x_bar]
 ad.deflinear2(reshard_p, _reshard_transpose_rule)
 
-def _reshard_transpose_fancy(ct, x, dst_sharding):
+def _reshard_transpose_fancy(ct, x, *, dst_sharding, concrete_mesh):
   assert isinstance(x, ad.GradAccum)
   out_sharding = x.aval.to_cotangent_aval().sharding
   with mesh_lib.use_abstract_mesh(out_sharding.mesh):
-    x_bar = reshard_p.bind(ct, dst_sharding=out_sharding)
+    x_bar = reshard_p.bind(ct, dst_sharding=out_sharding,
+                           concrete_mesh=concrete_mesh)
     x.accum(x_bar)
 ad.fancy_transposes[reshard_p] = _reshard_transpose_fancy
 
-def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding):
+def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding, concrete_mesh):
   aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
   if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
@@ -2738,12 +2749,13 @@ def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding):
   return [mlir.lower_with_sharding_in_types(ctx, x_node, aval_out, proto)]
 mlir.register_lowering(reshard_p, _reshard_hlo_lowering)
 
-def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding):
+def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding, concrete_mesh):
   x, = vals_in
   d, = dims_in
   vmapped_dst_sharding = batching.get_sharding_for_vmap(
       axis_data, dst_sharding, d)
-  y = reshard_p.bind(x, dst_sharding=vmapped_dst_sharding)
+  y = reshard_p.bind(x, dst_sharding=vmapped_dst_sharding,
+                     concrete_mesh=concrete_mesh)
   return y, d
 batching.fancy_primitive_batchers[reshard_p] = _reshard_batcher
 batching.skippable_batchers[reshard_p] = lambda _: ()

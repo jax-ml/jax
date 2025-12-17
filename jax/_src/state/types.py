@@ -555,7 +555,12 @@ class AbstractRef(core.AbstractValue):
   __str__ = __repr__
 
   def to_tangent_aval(self):
-    return AbstractRef(self.inner_aval.to_tangent_aval(), self.memory_space, kind=self.kind)
+    return AbstractRef(self.inner_aval.to_tangent_aval(), self.memory_space,
+                       kind=self.kind)
+
+  def to_cotangent_aval(self):
+    return AbstractRef(self.inner_aval.to_cotangent_aval(), self.memory_space,
+                       kind=self.kind)
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.inner_aval == other.inner_aval

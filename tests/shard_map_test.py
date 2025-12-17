@@ -2492,11 +2492,10 @@ class ShardMapTest(jtu.JaxTestCase):
     def g(x):
       return f(f(x))
 
-    y, grad = jax.value_and_grad(lambda x: g(x).sum())(jnp.ones(4))
-    # first psum sums, second psum multiplies by 4
-    self.assertAllClose(y, (jnp.ones(4) * 4).sum(), check_dtypes=False)
-    # two psums on the backward pass, each one multiplies by 4
-    self.assertAllClose(grad, jnp.ones(4) * 4 * 4, check_dtypes=False)
+    with self.assertRaisesRegex(
+        ValueError,
+        "Custom VJP bwd rule must produce an output with the same type"):
+      jax.value_and_grad(lambda x: g(x).sum())(jnp.ones(4))
 
   def test_repeated_psum_allowed(self):
     # https://github.com/jax-ml/jax/issues/19175
@@ -3809,6 +3808,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     def g(x):
       self.assertEqual(x.aval.vma, frozenset())
+      self.assertEqual(x.aval.sharding.spec, P(None))
       if use_axis_name:
         out = jax.shard_map(jnp.cos, in_specs=P('y'), out_specs=P('y'),
                             axis_names={'y'})(x)
@@ -3818,7 +3818,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return out.sum()
 
     out = jax.jit(jax.vmap(jax.grad(g)))(arr)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
   def test_get_check_rep(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
@@ -4761,6 +4761,21 @@ class ShardMapTest(jtu.JaxTestCase):
       return b.squeeze(0)
 
     jax.jit(jax.grad(g))(arr)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_shmap_primal_type_match_ct_type(self, mesh):
+    arr = jax.device_put(np.arange(8.), P('x'))
+
+    @jax.jit
+    @jax.shard_map(in_specs=P(), out_specs=P('x'))
+    def f(x):
+      return x * 2
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+    out_g = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P('x')))
 
 
 class FunSpec(NamedTuple):

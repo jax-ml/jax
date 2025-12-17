@@ -964,14 +964,14 @@ def _flatten_bwd(f: Callable,
         raise ValueError(msg)
       results.append(Zero(ct.aval))
     else:
-      if (not core.typecompat(a.to_tangent_aval(), a_ := core.get_aval(ct)) and
-          not _ref_typecompat(a.to_tangent_aval(), a_) and
-          not _temporary_dtype_exception(a, a_)):
+      if (not core.typecompat(a.to_cotangent_aval(), a_ := core.get_aval(ct))
+          and not _ref_typecompat(a.to_cotangent_aval(), a_)
+          and not _temporary_dtype_exception(a.to_cotangent_aval(), a_)):
         msg = ("Custom VJP bwd rule must produce an output with the same "
-               "shape/dtypes as the args tuple of the primal function, but at "
+               "type as the args tuple of the primal function, but at "
                f"output{keystr(kp)} the bwd rule produced an output of "
-               f"shape/dtype {a_.str_short()} corresponding "
-               f"to an input of shape/dtype {a.str_short()}"
+               f"type {a_.str_short()} corresponding "
+               f"to an input of type {a.str_short()}"
                f"{core.aval_mismatch_extra(a, a_)}")
         raise ValueError(msg)
       results.append(ct)
@@ -979,12 +979,13 @@ def _flatten_bwd(f: Callable,
 
 def _ref_typecompat(a, a_):
   return (isinstance(a, AbstractRef) and
-          core.typecompat(a.to_tangent_aval().inner_aval, a_))
+          core.typecompat(a.to_cotangent_aval().inner_aval, a_))
 
 # TODO(mattjj): remove both these exceptions to cotangent compatibility check
 def _temporary_dtype_exception(a, a_) -> bool:
   if isinstance(a, core.ShapedArray) and isinstance(a_, core.ShapedArray):
     return (a.shape == a_.shape and
+            core.typematch(a, a_, only_sharding_check=True) and
             (dtypes.issubdtype(a_.dtype, dtypes.extended) or
              dtypes.issubdtype(a.dtype, dtypes.np.inexact)))
   return False

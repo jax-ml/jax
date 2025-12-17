@@ -9439,13 +9439,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       ws = reshard(ws, P())
       return jax.tree.map(lambda W, g: W - g * 0.01, ws, grad_acc)
 
-    if use_custom_vjp:
-      ws = tuple(jax.device_put(jnp.ones((4, 4)), P()) for _ in range(4))
-    else:
-      # Mark `w` with `reduced={'x'}` so that on the bwd pass we will induce
-      # an `unreduced={'x'}`.
-      ws = tuple(jax.device_put(jnp.ones((4, 4)), P(reduced={'x'}))
-                 for _ in range(4))
+    ws = tuple(jax.device_put(jnp.ones((4, 4)), P(reduced={'x'}))
+                for _ in range(4))
     xs = jax.device_put(jnp.ones((2, 2, 4)), P(None, 'x', None))
 
     step(ws, xs)  # doesn't crash
@@ -9529,15 +9524,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return jax.tree.map(
           lambda W, g: W - g * 0.01, stacked_ws, stacked_grad_acc)
 
-    if use_custom_vjp:
-      ws = tuple(jax.device_put(jnp.ones((4, 4), dtype=jnp.float32), P())
-                 for _ in range(4))
-    else:
-      # Mark `w` with `reduced={'x'}` so that on the bwd pass we will induce
-      # an `unreduced={'x'}`.
-      ws = tuple(jax.device_put(jnp.ones((4, 4), dtype=jnp.float32),
-                                P(reduced={'x'}))
-                 for _ in range(4))
+    ws = tuple(jax.device_put(jnp.ones((4, 4), dtype=jnp.float32),
+                              P(reduced={'x'}))
+                for _ in range(4))
 
     xs = jax.device_put(jnp.ones((2, 4, 4), dtype=jnp.bfloat16),
                         P(None, 'x', None))
@@ -9964,6 +9953,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return out
 
     self.assertEqual(f().sharding, NamedSharding(mesh, P(None)))
+
+  def test_reshard_no_mesh_ctx(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    with self.assertRaisesRegex(
+        ValueError, "cannot contain axis names that are of type Auto"):
+      reshard(np.arange(8), NamedSharding(mesh, P('x')))
+
+    mesh = jtu.create_mesh((2,), 'x', axis_types=(AxisType.Explicit,))
+    out = reshard(np.arange(8), NamedSharding(mesh, P('x')))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+    self.assertArraysEqual(out, np.arange(8))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

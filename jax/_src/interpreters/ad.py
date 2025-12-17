@@ -71,7 +71,7 @@ def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True,
 def jvpfun(f: Callable, instantiate, transform_stack, primals, tangents):
   tag = core.TraceTag()
   tangents = [Zero.from_primal_value(t) if not isinstance(t, Zero)
-              and isinstance(core.typeof(t), core.ShapedArray)
+              and isinstance(typeof(t), core.ShapedArray)
               and dtype(t) == float0 else t for t in tangents]
   ctx = (source_info_util.transform_name_stack('jvp') if transform_stack
          else contextlib.nullcontext())
@@ -237,7 +237,7 @@ def direct_linearize(traceable: lu.WrappedFun, primals, kwargs, *,
     tangent_trace = pe.DynamicJaxprTrace(dbg, auto_dce=True)
     tangents = [tangent_trace.new_arg(get_aval(p).to_tangent_aval(), source_info) for p in primals]
     tangents = [Zero.from_primal_value(t) if not isinstance(t, Zero)
-                and isinstance(core.typeof(t), core.ShapedArray)
+                and isinstance(typeof(t), core.ShapedArray)
                 and dtype(t) == float0 else t for t in tangents]
     linearize_trace = LinearizeTrace(parent_trace, tangent_trace, tag=tag)
     tangent_trace.tag = linearize_trace.tag
@@ -319,6 +319,13 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
       # FIXME: This triggers a lot of failures!
       # assert v.aval == ct.aval, (prim, v.aval, ct.aval)
       return
+    ct_aval = typeof(ct)
+    ct_aval_expected = v.aval.to_cotangent_aval()  # type: ignore
+    if not core.typematch(ct_aval, ct_aval_expected, only_sharding_check=True):
+      raise ValueError(
+          f"Input primal JAX type to {prim.name} is {v.aval.str_short()}. Hence"
+          f" the expected cotangent type is {ct_aval_expected.str_short()} but"
+          f" got {ct_aval.str_short()}")
     ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
 
   def read_cotangent(v):
@@ -548,6 +555,7 @@ class RefAccum(GradAccum):
 
   def accum(self, x):
     assert x is not Zero
+    ct_check(self, x)
     if isinstance(x, Zero) or x is None:
       return
     elif self.ref is None:
@@ -575,11 +583,24 @@ class ValAccum(GradAccum):
     self.val = Zero(aval) if val is None else val
 
   def accum(self, x):
+    ct_check(self, x)
     if x is not None:
       self.val = add_tangents(self.val, x)
 
   def freeze(self):
     return self.val
+
+def ct_check(primal, ct):
+  ct_aval = ct.aval if type(ct) is Zero else typeof(ct)
+  ct_aval_expected = primal.aval.to_cotangent_aval()  # type: ignore
+  if not core.typematch(ct_aval, ct_aval_expected, only_sharding_check=True):
+    # TODO(yashkatariya, mattjj): Add primitive name here for
+    # better error message?
+    raise ValueError(
+        f"Input primal JAX type to VJP function is"
+        f" {primal.aval.str_short()}. Hence the expected"
+        f" cotangent type is {ct_aval_expected.str_short()} but"
+        f" got {ct_aval.str_short()}")
 
 class NullAccum(GradAccum):
   def __init__(self): pass
@@ -619,7 +640,7 @@ def accum_typeof(x):
   if isinstance(x, GradAccum):
     return x.aval
   else:
-    return core.typeof(x)
+    return typeof(x)
 
 
 @lu.transformation_with_aux2
@@ -647,7 +668,7 @@ class JVPTrace(Trace):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if (all(type(t) is Zero for t in tangents_in) and
         primitive is not core.ref_p and
-        not any(isinstance(core.typeof(x), AbstractRef) for x in primals_in)):
+        not any(isinstance(typeof(x), AbstractRef) for x in primals_in)):
       return primitive.bind_with_trace(self.parent_trace, primals_in, params)
     jvp = primitive_jvps.get(primitive)
     if not jvp:
@@ -779,7 +800,7 @@ class JVPTrace(Trace):
 
 def maybe_jvp_tracer(trace, primal, tangent):
   if (type(tangent) is Zero or
-      isinstance(core.typeof(tangent), core.ShapedArray)
+      isinstance(typeof(tangent), core.ShapedArray)
       and dtype(tangent) == float0):
     return primal
   else:
@@ -871,7 +892,7 @@ class LinearizeTrace(Trace):
     tangent_nzs = [type(t) is not Zero for t in tangents_in]
     if (all(type(t) is Zero for t in tangents_in) and
         primitive is not core.ref_p and
-        not any(isinstance(core.typeof(x), AbstractRef) for x in primals_in)):
+        not any(isinstance(typeof(x), AbstractRef) for x in primals_in)):
       return primitive.bind_with_trace(self.parent_trace, primals_in, params)
     fallback = partial(fallback_linearize_rule, primitive)
     lin = primitive_linearizations.get(primitive, fallback)
