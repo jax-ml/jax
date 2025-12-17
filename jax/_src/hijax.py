@@ -92,9 +92,16 @@ class HiType(core.AbstractValue):
   # autodiff interface
   def to_tangent_aval(self) -> HiType:
     assert False, "must override"
+
+  # Subclasses should override if the cotangent type is a function of primal
+  # type. For example, CT unreduced = reduced and vice-versa.
+  def to_cotangent_aval(self) -> HiType:
+    return self.to_tangent_aval()
+
   # the next two are required if this type is itself a tangent type
   def vspace_zero(self) -> HiVal:
     assert False, "must override"
+
   def vspace_add(self, x: HiVal, y: HiVal) -> HiVal:
     assert False, "must override"
 
@@ -126,6 +133,11 @@ class MutableHiType(core.AbstractValue):
   # autodiff interface
   def to_tangent_aval(self) -> HiType:
     assert False, "must override"
+
+  # Subclasses should override if the cotangent type is a function of primal
+  # type. For example, CT unreduced = reduced and vice-versa.
+  def to_cotangent_aval(self) -> HiType:
+    return self.to_tangent_aval()
 
 def register_hitype(val_cls, typeof_fn) -> None:
   core.pytype_aval_mappings[val_cls] = typeof_fn

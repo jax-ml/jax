@@ -2332,9 +2332,7 @@ def _vjp_check_ct_avals(cts, primal_avals):
   # TODO(mattjj): improve this error  by flattening with keys in the first place
   for ct, aval in zip(cts, primal_avals):
     ct_aval = typeof(ct)
-    ct_aval_expected = (
-        aval.to_cotangent_aval() if hasattr(aval, 'to_cotangent_aval') else
-        aval.to_tangent_aval())
+    ct_aval_expected = aval.to_cotangent_aval()
     if (not core.typecompat(ct_aval, ct_aval_expected) and
         not _temporary_dtype_exception(ct_aval, ct_aval_expected)):
       raise ValueError(

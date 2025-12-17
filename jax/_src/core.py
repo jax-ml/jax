@@ -1654,6 +1654,9 @@ class AbstractValue:
   def to_tangent_aval(self):
     raise NotImplementedError("must override")
 
+  def to_cotangent_aval(self):
+    raise NotImplementedError("must override")
+
   # TODO(dougalm): deprecate this alias
   def at_least_vspace(self):
     return self.to_tangent_aval()
@@ -2619,6 +2622,7 @@ accum_grad_in_ref_p.def_impl(lambda x: x)  # type: ignore
 class AbstractToken(AbstractValue):
   def str_short(self, short_dtypes=False, mesh_axis_types=False): return 'Tok'
   def to_tangent_aval(self): return self
+  def to_cotangent_aval(self): return self
 abstract_token: AbstractToken = AbstractToken()
 
 # Singleton shaped array used by all abstract tokens when shape/dtype is needed.
