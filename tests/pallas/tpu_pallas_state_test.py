@@ -119,8 +119,8 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
 
       x = pl.pallas_call(
           functools.partial(copy_kernel, x_ref, y_ref),
-          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
-          out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
           scratch_shapes=[pltpu.SemaphoreType.DMA],
           out_shape=jax.ShapeDtypeStruct(x_ref.shape, x_ref.dtype),
           input_output_aliases={0: 0},

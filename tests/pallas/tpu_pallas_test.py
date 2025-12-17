@@ -1753,7 +1753,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
             kernel,
             out_shape=array,
             in_specs=[
-                pl.BlockSpec(memory_space=pltpu.ANY),
+                pl.BlockSpec(memory_space=pl.ANY),
                 pl.BlockSpec(memory_space=pltpu.VMEM),
                 pl.BlockSpec(memory_space=pltpu.SMEM),
                 pl.BlockSpec(memory_space=pltpu.SMEM),
@@ -1761,7 +1761,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
             scratch_shapes=[
                 pltpu.SemaphoreType.DMA,
             ],
-            out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+            out_specs=pl.BlockSpec(memory_space=pl.ANY),
             input_output_aliases={0: 0},
         )(array, data, index, size)
 
@@ -1960,7 +1960,7 @@ class PallasCallTest(ptu.PallasTPUTest):
       return pl.pallas_call(
           kernel,
           out_shape=jax.ShapeDtypeStruct(src.shape, jnp.float32),
-          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
           scratch_shapes=[pltpu.SemaphoreType.DMA],
           out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
       )(src)
@@ -2954,9 +2954,9 @@ class PallasCallDynamicDMATest(ptu.PallasTPUTest):
         grid_spec=pltpu.PrefetchScalarGridSpec(
           num_scalar_prefetch=0,
           in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM),
-                    pl.BlockSpec(memory_space=pltpu.ANY),
-                    pl.BlockSpec(memory_space=pltpu.ANY)],
-          out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+                    pl.BlockSpec(memory_space=pl.ANY),
+                    pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
           scratch_shapes=[pltpu.SemaphoreType.DMA]
         ),
         out_shape=o,
@@ -2982,9 +2982,9 @@ class PallasCallDynamicDMATest(ptu.PallasTPUTest):
         grid_spec=pltpu.PrefetchScalarGridSpec(
           num_scalar_prefetch=0,
           in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM),
-                    pl.BlockSpec(memory_space=pltpu.ANY),
-                    pl.BlockSpec(memory_space=pltpu.ANY)],
-          out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+                    pl.BlockSpec(memory_space=pl.ANY),
+                    pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
           scratch_shapes=[pltpu.SemaphoreType.DMA]
         ),
         out_shape=o,

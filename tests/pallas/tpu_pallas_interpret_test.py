@@ -123,7 +123,7 @@ class InterpretTest(jtu.JaxTestCase):
               jax.ShapeDtypeStruct((16, 256), jnp.float32),
           ],
           grid=(4, 4),
-          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
           out_specs=[
               pl.BlockSpec((4, 128), lambda i, j: (i, j // 2)),
               pl.BlockSpec((4, 128), lambda i, j: (j // 2, i % 2)),
@@ -253,7 +253,7 @@ class InterpretTest(jtu.JaxTestCase):
           kernel,
           out_shape=jax.ShapeDtypeStruct((8, 128,), jnp.float32),
           out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
-          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
           scratch_shapes=[pltpu.SemaphoreType.DMA],
           interpret=pltpu.InterpretParams(
               out_of_bounds_reads=out_of_bounds_reads),
@@ -398,7 +398,7 @@ class InterpretTest(jtu.JaxTestCase):
     y = pl.pallas_call(
         kernel_without_race,
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
         scratch_shapes=[
             pltpu.VMEM(x.shape, x.dtype),
             pltpu.SemaphoreType.DMA,
@@ -413,7 +413,7 @@ class InterpretTest(jtu.JaxTestCase):
     pl.pallas_call(
         kernel_with_race,
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
         scratch_shapes=[
             pltpu.VMEM(x.shape, x.dtype),
             pltpu.SemaphoreType.DMA,
@@ -1191,7 +1191,7 @@ class InterpretTest(jtu.JaxTestCase):
             ],
         )
 
-  @parameterized.parameters(pltpu.MemorySpace.HBM, pltpu.MemorySpace.ANY)
+  @parameterized.parameters(pltpu.MemorySpace.HBM, pl.ANY)
   def test_referencing_hbm_raises(self, disallowed_memory_space):
     def jax_load_and_store(in_ref, o_ref):
       o_ref[...] = in_ref[...]

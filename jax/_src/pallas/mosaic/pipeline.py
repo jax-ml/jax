@@ -20,7 +20,7 @@ from contextlib import contextmanager
 import dataclasses
 import enum
 import functools
-from typing import Any, Union
+from typing import Any, Literal, Union
 
 import jax
 from jax import core as jax_core
@@ -40,7 +40,7 @@ import jax.numpy as jnp
 
 SMEM = tpu_core.MemorySpace.SMEM
 VMEM = tpu_core.MemorySpace.VMEM
-ANY = tpu_core.MemorySpace.ANY
+ANY = pallas_core.MemorySpace.ANY
 REF = pallas_core.MemoryRef
 GridDimensionSemantics = tpu_core.GridDimensionSemantics
 PARALLEL = tpu_core.PARALLEL
@@ -541,11 +541,17 @@ class BufferedRef(BufferedRefBase):
     return BufferType
 
   @classmethod
-  def create(cls, spec: pl.BlockSpec, dtype_or_type, buffer_type, buffer_count,
-             needs_swap_ref=True,
-             grid_rank=None,
-             use_lookahead=False,
-             source_memory_space: tpu_core.MemorySpace = ANY) -> BufferedRef:
+  def create(
+      cls,
+      spec: pl.BlockSpec,
+      dtype_or_type,
+      buffer_type,
+      buffer_count,
+      needs_swap_ref=True,
+      grid_rank=None,
+      use_lookahead=False,
+      source_memory_space: tpu_core.MemorySpace | Literal[ANY] = ANY,  # type: ignore[valid-type]
+  ) -> BufferedRef:
     """Create a BufferedRef.
 
     Args:

@@ -46,7 +46,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
 
   @parameterized.named_parameters(
       ('vmem', pltpu.VMEM),
-      ('hbm', pltpu.ANY),
+      ('hbm', pl.ANY),
   )
   def test_basic_remote_vmem_dma(self, mem):
     # Implements very simple collective permute
@@ -119,8 +119,8 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     def body(x):
       return pl.pallas_call(
           kernel,
-          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
-          out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
           out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
       )(x)
 
@@ -513,7 +513,7 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
     grid_spec = pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
-                pl.BlockSpec(memory_space=pltpu.ANY),
+                pl.BlockSpec(memory_space=pl.ANY),
             ],
             scratch_shapes=(
                 [pltpu.SemaphoreType.DMA] * 2

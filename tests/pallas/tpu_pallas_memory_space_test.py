@@ -41,7 +41,7 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
       (pltpu.VMEM, 1),
       (pltpu.SMEM, 4),
       (pltpu.HBM, 0),
-      (pltpu.ANY, None),
+      (pl.ANY, None),
   )
   def test_basic_input_memory_space_constraint(self, memory_space, color):
     def kernel(x_ref, y_ref):
@@ -52,7 +52,7 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
           kernel,
           out_shape=x,
           in_specs=[pl.BlockSpec(memory_space=memory_space)],
-          out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
       )(x)
 
     @jax.jit
@@ -79,7 +79,7 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
       (pltpu.VMEM, 1),
       (pltpu.SMEM, 4),
       (pltpu.HBM, 0),
-      (pltpu.ANY, None),
+      (pl.ANY, None),
       (pltpu.HOST, 5),
   )
   def test_basic_output_memory_space_constraint(self, memory_space, color):
@@ -94,7 +94,7 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
       return pl.pallas_call(
           kernel,
           out_shape=out_shape_ctor(x.shape, x.dtype),
-          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
           out_specs=pl.BlockSpec(memory_space=memory_space),
       )(x)
 
@@ -138,7 +138,7 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
       (pltpu.VMEM, 1),
       (pltpu.SMEM, 4),
       (pltpu.HBM, 0),
-      (pltpu.ANY, None),
+      (pl.ANY, None),
   )
   def test_basic_ref_memory_space_constraint(self, memory_space, color):
     @jax.jit

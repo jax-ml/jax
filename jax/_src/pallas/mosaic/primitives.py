@@ -1154,7 +1154,7 @@ def with_memory_space_constraint(
   Returns:
     The array ``x`` with the memory space constraint.
   """
-  if memory_space in {tpu_core.MemorySpace.ANY, pl_core.MemorySpace.ANY}:
+  if memory_space is pl_core.MemorySpace.ANY:
     return x
   if memory_space not in {
       tpu_core.MemorySpace.HBM,

@@ -73,10 +73,6 @@ def _get_memory_space_from_aval(
   # If we are passed an aval with an explicit memory space tag, we use it
   # to constrain the memory space.
   match out_aval.memory_space:
-    case None:
-      return None
-    case tpu_core.MemorySpace.ANY:
-      return None
     case tpu_core.MemorySpace.HBM:
       return tpu_custom_call.MemorySpace.HBM
     case tpu_core.MemorySpace.VMEM:
