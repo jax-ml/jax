@@ -5402,6 +5402,10 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       reduction_op=("add", "min", "max", "inc", "dec", "and", "or", "xor"),
   )
   def test_async_store_reduction(self, dtype, reduction_op):
+
+    if not config.enable_x64.value and dtype in (jnp.int64, jnp.uint64):
+      self.skipTest("x64 support is disabled")
+
     # TODO(b/415721295):Clean up after the minimal jaxlib version is 0.8.2.
     if not hasattr(mgpu_dialect, "TMAReduction"):
       self.skipTest("The mgpu_dialect.TMAReduction attribute is required.")
