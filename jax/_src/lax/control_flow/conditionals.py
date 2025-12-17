@@ -836,49 +836,6 @@ def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
   return [True, *used_inputs], new_eqn
 
 
-def _transpose_cond_jaxpr(jaxpr: core.ClosedJaxpr,
-                          num_res: int):
-  res_avals, primal_avals = split_list(jaxpr.in_avals, [num_res])
-
-  def transposed(*args):
-    res, cts_out = split_list(args, [num_res])
-    primals = res + [ad.UndefinedPrimal(aval) for aval in primal_avals]
-    cts_in = ad.backward_pass(
-        jaxpr.jaxpr, False, jaxpr.consts, primals, cts_out)
-    _, cts_in = split_list(cts_in, [num_res])
-    return map(ad.instantiate_zeros, cts_in)
-
-  return _make_closed_jaxpr(lu.wrap_init(transposed,
-                                         debug_info=jaxpr.jaxpr.debug_info),
-                            res_avals + jaxpr.out_avals)
-
-def _cond_transpose(cts, *args, branches, **params):
-  index, *ops = args
-  assert type(index) is not ad.UndefinedPrimal
-  linear = [type(x) is ad.UndefinedPrimal for x in ops]
-  in_avals = branches[0].in_avals
-  num_res = len(ops) - sum(linear)
-  if any(isinstance(eff, RefEffect) for branch in branches for eff in
-      branch.jaxpr.effects):
-    raise NotImplementedError("State effect not supported in cond transpose.")
-
-  branches_trans = [_transpose_cond_jaxpr(jaxpr, num_res) for jaxpr in branches]
-  lin_in_avals = [a.strip_weak_type() for a, l in zip(in_avals, linear) if l]
-  assert all(core.typematch(out_aval, lin_in_aval)
-             for jaxpr in branches_trans
-             for out_aval, lin_in_aval in zip(jaxpr.out_avals, lin_in_avals))
-
-  res = ops[:num_res]
-  cts = map(ad.instantiate_zeros, cts)
-
-  out = cond_p.bind(index, *res, *cts, branches=tuple(branches_trans), **params)
-  assert all(map(core.typecheck, lin_in_avals, out))
-
-  out_iter = iter(out)
-  out = [next(out_iter) if l else None for l in linear]
-  assert next(out_iter, None) is None
-  return [None] + out
-
 def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
   assert not isinstance(index, ad.GradAccum)
   primals_ctrefs, specs = ad.project_accums(args)
@@ -987,7 +944,6 @@ cond_p.skip_canonicalization = True
 cond_p.def_impl(partial(dispatch.apply_primitive, cond_p))
 cond_p.def_effectful_abstract_eval(_cond_abstract_eval)
 ad.primitive_jvps[cond_p] = _cond_jvp
-ad.primitive_transposes[cond_p] = _cond_transpose
 ad.primitive_linearizations[cond_p] = _cond_linearize
 ad.fancy_transposes[cond_p] = _cond_transpose_fancy
 pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval

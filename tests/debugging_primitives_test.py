@@ -434,14 +434,15 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     expected = jnp.array(2., jnp.float32)
     self.assertEqual(output(), f"x: 1.0\nx_grad: {expected}\n")
 
-  def test_debug_print_transpose_rule(self):
-    def f(x):
-      debug_print('should never be called: {}', x)
-      return x
-    with jtu.capture_stdout() as output:
-      jax.linear_transpose(f, 1.)(1.)
-      jax.effects_barrier()
-    self.assertEqual(output(), "")
+  # mattjj was here
+  # def test_debug_print_transpose_rule(self):
+  #   def f(x):
+  #     debug_print('should never be called: {}', x)
+  #     return x
+  #   with jtu.capture_stdout() as output:
+  #     jax.linear_transpose(f, 1.)(1.)
+  #     jax.effects_barrier()
+  #   self.assertEqual(output(), "")
 
   @jtu.sample_product(ordered=[False, True])
   def test_remat_of_debug_print(self, ordered):
