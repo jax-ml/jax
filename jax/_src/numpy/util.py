@@ -242,15 +242,15 @@ def promote_args_inexact(fun_name: str, *args: ArrayLike) -> list[Array]:
 
 
 @api.jit(inline=True)
-def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
+def _broadcast_arrays(*args: ArrayLike) -> tuple[Array, ...]:
   """Like Numpy's broadcast_arrays but doesn't return views."""
   avals = [core.shaped_abstractify(arg) for arg in args]
   shapes = [a.shape for a in avals]
   if not shapes or all(core.definitely_equal_shape(shapes[0], s) for s in shapes):
-    return [lax.asarray(arg) for arg in args]
+    return tuple(lax.asarray(arg) for arg in args)
   result_shape = lax.broadcast_shapes(*shapes)
   result_sharding = lax.broadcast_shardings(*avals)
-  return [_broadcast_to(arg, result_shape, result_sharding) for arg in args]
+  return tuple(_broadcast_to(arg, result_shape, result_sharding) for arg in args)
 
 
 def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
