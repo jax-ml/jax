@@ -421,12 +421,12 @@ class RefAccum(GradAccum):
 
   def accum(self, x):
     assert x is not Zero
-    ct_check(self, x)
     if isinstance(x, Zero) or x is None:
       return
-    elif self.ref is None:
+    if self.ref is None:
       self.ref = core.new_ref(x)
     else:
+      ct_check(self, x)
       self.ref.addupdate(x)
 
   def freeze(self):
@@ -449,8 +449,8 @@ class ValAccum(GradAccum):
     self.val = Zero(aval) if val is None else val
 
   def accum(self, x):
-    ct_check(self, x)
     if x is not None:
+      ct_check(self, x)
       self.val = add_tangents(self.val, x)
 
   def freeze(self):
