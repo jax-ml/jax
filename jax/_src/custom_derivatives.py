@@ -945,7 +945,7 @@ def _flatten_bwd(f: Callable,
     if ct is zero or getattr(a.to_tangent_aval(), 'dtype') == dtypes.float0:
       results.append(Zero(a.to_tangent_aval()))
     elif type(ct) is SymbolicZero:
-      if not core.typecompat(a.to_tangent_aval(), a_ := ct.aval):
+      if not core.typecompat(a.to_cotangent_aval(), a_ := ct.aval):
         msg = ("Custom VJP bwd rule produced a SymbolicZero with a shape/dtype "
                "that does not match the corresponding input tangent shape/dtype: "
                f"at output{keystr(kp)} the SymbolicZero had shape/dtype "
