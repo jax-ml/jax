@@ -178,11 +178,14 @@ absl::StatusOr<std::vector<int64_t>> GetByteStrides(const DLTensor& dl_tensor) {
   return strides;
 }
 
-absl::StatusOr<std::unique_ptr<xla::PjRtBuffer>> MakePjrtBuffer(
-    xla::PjRtDevice& device, ::DLManagedTensor* dlmt, const xla::Shape& shape,
-    xla::PrimitiveType element_type, absl::Span<int64_t const> dimensions,
-    std::optional<bool> copy = std::nullopt,
-    std::optional<std::intptr_t> stream = std::nullopt) {
+// Makes a PjRtBuffer from a DLPack tensor. Returns a pair where the second
+// element is true if a copy actually happened.
+absl::StatusOr<std::pair<std::unique_ptr<xla::PjRtBuffer>, bool>>
+MakePjrtBuffer(xla::PjRtDevice& device, ::DLManagedTensor* dlmt,
+               const xla::Shape& shape, xla::PrimitiveType element_type,
+               absl::Span<int64_t const> dimensions,
+               std::optional<bool> copy = std::nullopt,
+               std::optional<std::intptr_t> stream = std::nullopt) {
   std::function<void()> on_delete_callback;
   if (dlmt->deleter) {
     on_delete_callback = [dlmt]() { dlmt->deleter(dlmt); };
@@ -204,7 +207,8 @@ absl::StatusOr<std::unique_ptr<xla::PjRtBuffer>> MakePjrtBuffer(
         stream);
     if (!(result.status().code() == absl::StatusCode::kInvalidArgument &&
           fallback_to_copy)) {
-      return result;
+      TF_RETURN_IF_ERROR(result.status());
+      return std::make_pair(*std::move(result), false);
     }
   }
 
@@ -217,10 +221,13 @@ absl::StatusOr<std::unique_ptr<xla::PjRtBuffer>> MakePjrtBuffer(
   TF_ASSIGN_OR_RETURN(auto* memory_space, device.default_memory_space());
 
   // Create a copy.
-  return device.client()->BufferFromHostBuffer(
-      data, element_type, dimensions, byte_strides,
-      xla::PjRtClient::HostBufferSemantics::kMutableZeroCopy,
-      on_delete_callback, memory_space, /*device_layout=*/nullptr);
+  TF_ASSIGN_OR_RETURN(
+      auto buffer,
+      device.client()->BufferFromHostBuffer(
+          data, element_type, dimensions, byte_strides,
+          xla::PjRtClient::HostBufferSemantics::kMutableZeroCopy,
+          on_delete_callback, memory_space, /*device_layout=*/nullptr));
+  return std::make_pair(std::move(buffer), true);
 }
 
 }  // namespace
@@ -365,9 +372,13 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
   xla::Shape shape = xla::ShapeUtil::MakeShapeWithDenseLayout(
       element_type, dimensions, minor_to_major);
 
-  TF_ASSIGN_OR_RETURN(auto pjrt_buffer,
+  TF_ASSIGN_OR_RETURN(auto pjrt_buffer_and_copied,
                       MakePjrtBuffer(*device->pjrt_device(), dlmt, shape,
                                      element_type, dimensions, copy, stream));
+  if (pjrt_buffer_and_copied.second) {
+    // A PjRtBuffer uses a default layout if it has been created using copy.
+    has_custom_layout = false;
+  }
 
   // We have taken ownership of the array inside the capsule; make sure the
   // capsule it cannot be used again.
@@ -383,7 +394,8 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
   PyUserContextScope user_context_scope;
   TF_ASSIGN_OR_RETURN(
       auto ifrt_array,
-      ifrt_client->CreatePjRtArray(std::move(pjrt_buffer), has_custom_layout));
+      ifrt_client->CreatePjRtArray(std::move(pjrt_buffer_and_copied.first),
+                                   has_custom_layout));
   return PyArray::MakeFromSingleDeviceArray(std::move(client),
                                             std::move(ifrt_array), false, true);
 }
