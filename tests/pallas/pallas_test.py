@@ -43,10 +43,12 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
 if sys.platform != "win32":
   from jax.experimental.pallas import tpu as pltpu
-  from jax.experimental.pallas import triton as plgpu
+  from jax.experimental.pallas import triton as pltriton
+  from jax.experimental.pallas import mosaic_gpu as plmgpu
 else:
   pltpu = None
-  plgpu = None
+  pltriton = None
+  plmgpu = None
 
 
 # TODO(sharadmv): Update signatures of pallas_call to correct inputs/outputs.
@@ -94,6 +96,46 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
 
 
 class PallasCallTest(ptu.PallasTest):
+
+  def test_pallas_call_infers_backend_from_compiler_params(self):
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("Only works on GPU.")
+    if not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest("Only works on a GPU with capability >= sm90")
+
+    triton_params = pltriton.CompilerParams(
+        num_warps=2,
+        num_stages=1,
+    )
+    mosaic_gpu_params = plmgpu.CompilerParams()
+
+    pallas_call = functools.partial(
+        pl.pallas_call,
+        grid=(1,),
+        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.float32),
+    )
+    def add_one(x_ref, o_ref):
+      x = x_ref[:]
+      # Use a Pallas/Mosaic GPU-specific primitive to trigger a failure when
+      # using a different backend.
+      plmgpu.print_layout("x: {}", x)
+      o_ref[:] = x + 1
+
+    add_one_mgpu = pallas_call(add_one, compiler_params=mosaic_gpu_params)
+    add_one_triton = pallas_call(add_one, compiler_params=triton_params)
+
+    x = jnp.ones((128, 128), jnp.float32)
+
+    # Running on the Mosaic GPU backend should be fine.
+    self.assertArraysEqual(add_one_mgpu(x), x + 1)
+
+    # But Triton doesn't have the required primitive, so it should fail to
+    # lower.
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Unimplemented primitive in Pallas GPU lowering: print_layout."
+    ):
+      add_one_triton(x)
 
   def test_add_one(self):
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:

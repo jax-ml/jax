@@ -1406,6 +1406,9 @@ def pallas_call(
           "If `grid_spec` is specified, then `scratch_shapes` must "
           f"be `()`. It is {scratch_shapes}")
   del grid, in_specs, out_specs
+  # We can infer a backend from compiler_params if it is not specified.
+  if backend is None and isinstance(compiler_params, pallas_core.CompilerParams):
+    backend = compiler_params.BACKEND
   return _pallas_call(
       kernel,
       out_shape,
