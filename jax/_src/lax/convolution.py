@@ -861,7 +861,37 @@ def _reshape_axis_out_of(src, size1, x):
 
 
 def conv_shape_tuple(lhs_shape, rhs_shape, strides, pads, batch_group_count=1):
-  """Compute the shape tuple of a conv given input shapes in canonical order."""
+  """Compute output shape of a convolution with canonical dimension order.
+
+  Performs shape inference assuming canonical layout where dimensions are ordered
+  as ``(batch, features, spatial...)``. This function only computes the output
+  shape; it does not create or validate arrays.
+
+  Args:
+    lhs_shape: Input shape ``(batch, in_features, *spatial_dims)``.
+    rhs_shape: Kernel shape ``(out_features, in_features, *spatial_dims)``.
+    strides: Stride for each spatial dimension. Should have length matching the
+      number of spatial dimensions (``len(lhs_shape) - 2``).
+    pads: Either a padding mode string (e.g., ``'SAME'``, ``'VALID'``,
+      ``'SAME_LOWER'``) or explicit ``(low, high)`` padding pairs for each
+      spatial dimension.
+    batch_group_count: Number of batch groups. When greater than 1, the input
+      batch size is assumed to be divisible by this value, and the output batch
+      dimension is reduced accordingly. Default: 1.
+
+  Returns:
+    Output shape tuple ``(out_batch, out_features, *spatial_dims_out)``, where
+    spatial dimensions are computed via stride and padding.
+
+  Raises:
+    TypeError: If the number of explicit padding pairs does not match the number
+      of spatial dimensions.
+    ValueError: If padding results in a negative effective spatial dimension.
+
+  Notes:
+    Feature dimension compatibility (``lhs_shape[1]`` vs ``rhs_shape[1]``) is not
+    validated. For non-canonical layouts, use ``conv_general_shape_tuple``.
+  """
   if isinstance(pads, str):
     pads = lax.padtype_to_pads(lhs_shape[2:], rhs_shape[2:], strides, pads)
   if len(pads) != len(lhs_shape) - 2:
