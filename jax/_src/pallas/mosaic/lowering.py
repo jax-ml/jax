@@ -342,6 +342,8 @@ def aval_to_ir_type(
   if isinstance(aval, state.AbstractRef):
     if shape is None:
       shape = aval.shape
+    if memory_space is None:
+      memory_space = aval.memory_space
     memspace = _memory_space_to_mosaic_attribute(memory_space)
     shape = dynamic_shape_replacement_fn(shape)
     return ir.MemRefType.get(shape,
