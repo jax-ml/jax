@@ -514,6 +514,20 @@ def _batch_with_explicit_loop(
 
   return result, (0,) * len(result)
 
+squeeze2_p = jax_core.Primitive("squeeze2")
+
+@squeeze2_p.def_abstract_eval
+def _squeeze2_abstract_eval(x, *, axis):
+  shape = list(x.shape)
+  if shape[axis] != 1:
+    raise ValueError(f"Expected axis {axis} to be 1, but got {shape[axis]}")
+  return x.update(shape=(shape[:axis] + shape[axis + 1 :]))
+
+def _squeeze2_lowering(ctx, x, *, axis):
+  del axis
+  return [mlir.reshape(ctx, x, aval_out=ctx.avals_out[0])]
+mlir.register_lowering(squeeze2_p, _squeeze2_lowering)
+
 
 def _pallas_call_batching_rule(
     args,
@@ -542,7 +556,7 @@ def _pallas_call_batching_rule(
   ) -> jax_typing.Array:
     if bdim is batching.not_mapped:
       return x
-    return jnp.squeeze(x, axis=bdim)
+    return squeeze2_p.bind(x, axis=bdim)
 
   axis_size, = {x.shape[d] for i, (x, d) in enumerate(zip(args, dims))
                 if d is not batching.not_mapped}
