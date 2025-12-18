@@ -40,6 +40,7 @@ import jax.numpy as jnp
 
 SMEM = tpu_core.MemorySpace.SMEM
 VMEM = tpu_core.MemorySpace.VMEM
+HBM = tpu_core.MemorySpace.HBM
 ANY = pallas_core.MemorySpace.ANY
 REF = pallas_core.MemoryRef
 GridDimensionSemantics = tpu_core.GridDimensionSemantics
@@ -582,13 +583,13 @@ class BufferedRef(BufferedRefBase):
       accum_ref = VMEM.from_type(ty.update(shape=block_shape))
     else:
       accum_ref = None
-    if source_memory_space == VMEM:
-      # We don't need to do any double-buffering in the case that our pipeline
-      # reference is already in VMEM, we just need allocate the accumulation
-      # buffer and we will refer to the original reference slices directly.
-      if spec.memory_space not in (VMEM, None):
-        raise ValueError(
-            f"Cannot hold a non-buffered ref in {spec.memory_space=}")
+    buffer_memory_space = (
+          VMEM if spec.memory_space is None else spec.memory_space)
+    if buffer_memory_space not in (SMEM, VMEM, HBM):
+      raise ValueError(
+          f"Unsupported buffer memory space: {buffer_memory_space}"
+      )
+    if source_memory_space is buffer_memory_space:
       return cls(
           _spec=spec,
           _buffer_type=buffer_type,
@@ -609,12 +610,6 @@ class BufferedRef(BufferedRefBase):
           swap=None,
       )
     else:
-      buffer_memory_space = (
-          VMEM if spec.memory_space is None else spec.memory_space)
-      if buffer_memory_space not in (SMEM, VMEM):
-        raise ValueError(
-            f"Unsupported buffer memory space: {buffer_memory_space}"
-        )
       if use_lookahead and grid_rank is None:
         raise ValueError(
             "grid_rank must be specified when use_lookahead is True."
@@ -1335,7 +1330,7 @@ class Scheduler:
     # Currently this is based on the iteration, but if we want to support
     # lookahead this will depend on whether the lookahead reached the end.
     if not buffered_ref.is_buffered:
-      return False
+      return jnp.bool(False)
     return self.step >= (self.num_steps - buffered_ref.buffer_count + 1)
 
   def has_changed(self, buffered_ref):

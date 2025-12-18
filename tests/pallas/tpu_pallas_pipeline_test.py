@@ -148,6 +148,31 @@ class PallasCallPipelineTest(parameterized.TestCase):
     )()
     np.testing.assert_allclose(out, jnp.full_like(out, 42))
 
+  def test_hbm_output(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 512), jnp.int32),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_hbm_ref, o_hbm_ref):
+      @functools.partial(
+          pltpu.emit_pipeline,
+          grid=(4,),
+          in_specs=pl.BlockSpec((8, 128), lambda i: (0, i)),
+          out_specs=pl.BlockSpec(
+              (8, 512), lambda i: (0, 0), memory_space=pltpu.HBM
+          ),
+      )
+      def pipeline(x_ref, o_ref):
+        i = pl.program_id(0)
+        pltpu.sync_copy(x_ref, o_ref.at[:, pl.ds(i * 128, 128)])
+
+      pipeline(x_hbm_ref, o_hbm_ref)
+
+    x = jnp.arange(8 * 512).reshape(8, 512)
+    np.testing.assert_allclose(kernel(x), x)
+
   @parameterized.product(
       no_pipelining=[False, True],
   )
