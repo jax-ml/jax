@@ -457,6 +457,8 @@ class ValAccum(GradAccum):
     return self.val
 
 def ct_check(primal, ct):
+  if config.disable_bwd_checks.value:
+    return
   ct_aval = ct.aval if type(ct) is Zero else typeof(ct)
   ct_aval_expected = primal.aval.to_cotangent_aval()  # type: ignore
   if not core.typematch(ct_aval, ct_aval_expected, only_shape_shd_check=True):

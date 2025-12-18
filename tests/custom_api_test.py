@@ -2971,6 +2971,23 @@ class CustomVJPTest(jtu.JaxTestCase):
         r'output\[1\] the bwd rule produced an output of type float..\[3\]'):
       jax.grad(lambda x, y: foo(x, y * y).sum(), 1)(jnp.ones(3), jnp.ones(4))
 
+  def test_bwd_rule_shape_mismatch_disable(self):
+    # TODO(mattjj): remove this test when the config option is removed
+    @jax.custom_vjp
+    def foo(x, y):
+      return x
+
+    def foo_fwd(x, y):
+      return x, None
+
+    def foo_bwd(_, g):
+      return jnp.zeros(3), jnp.zeros(3)
+
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    with config.disable_bwd_checks(True):
+      jax.grad(lambda x, y: foo(x, y).sum(), 1)(jnp.ones(3), jnp.ones(4))
+
   def test_bwd_rule_can_produce_list_or_tuple(self):
     @jax.custom_vjp
     def f(x, y):
