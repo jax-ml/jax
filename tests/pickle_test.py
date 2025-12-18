@@ -14,6 +14,7 @@
 
 import copy
 import pickle
+import sys
 import unittest
 
 from absl.testing import absltest
@@ -124,6 +125,8 @@ class PickleTest(jtu.JaxTestCase):
     self.assertIsInstance(y, type(x))
     self.assertEqual(x.aval, y.aval)
 
+  @unittest.skipIf(sys.version_info[:2] == (3, 11),
+                   "cannot pickle: b/470129766")
   @jtu.sample_product(prng_name=['threefry2x32', 'rbg', 'unsafe_rbg'])
   def testPickleOfKeyArray(self, prng_name):
     with jax.default_prng_impl(prng_name):
