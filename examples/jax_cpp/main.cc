@@ -106,7 +106,7 @@ int main(int argc, char** argv) {
 
   // Get result.
   std::shared_ptr<xla::Literal> result_literal =
-      results[0][0]->ToLiteralSync().value();
+      results[0][0]->ToLiteral().Await().value();
   LOG(INFO) << "result = " << *result_literal;
   return 0;
 }
