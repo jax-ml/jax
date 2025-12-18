@@ -956,7 +956,8 @@ def _flatten_bwd(f: Callable,
         raise ValueError(msg)
       results.append(Zero(ct.aval))
     else:
-      if (not core.typecompat(a.to_cotangent_aval(), a_ := core.get_aval(ct))
+      if (not config.disable_bwd_checks.value and
+          not core.typecompat(a.to_cotangent_aval(), a_ := core.get_aval(ct))
           and not _ref_typecompat(a.to_cotangent_aval(), a_)
           and not _temporary_dtype_exception(a.to_cotangent_aval(), a_)):
         msg = ("Custom VJP bwd rule must produce an output with the same "

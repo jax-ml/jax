@@ -1832,6 +1832,13 @@ refs_to_pins = bool_state(
     upgrade=True,
     help='Lower refs to pinned buffers in HLO.')
 
+# TODO(mattjj, yashkatariya): remove once we land box plumbing
+disable_bwd_checks = bool_state(
+    name='jax_disable_bwd_checks',
+    default=False,
+    upgrade=True,
+    help='Disables all bwd pass checks')
+
 xla_runtime_errors = bool_state(
     name='jax_experimental_unsafe_xla_runtime_errors',
     default=False,
