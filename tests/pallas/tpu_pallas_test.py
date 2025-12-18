@@ -4263,11 +4263,11 @@ class MiscellaneousInterpretTest(MiscellaneousTest):
     def kernel(o):
       @functools.partial(pl.run_scoped,
                          sem=pltpu.SemaphoreType.DMA,
-                         x=pltpu.MemorySpace.VMEM((1,), jnp.float32))
+                         x=pltpu.VMEM((1,), jnp.float32))
       def _(sem, x):
         x[...] = jnp.ones_like(x)
         @functools.partial(pl.run_scoped,
-                           y=pltpu.MemorySpace.VMEM((1, 1,), jnp.float32))
+                           y=pltpu.VMEM((1, 1,), jnp.float32))
         def _(y):
           pltpu.async_copy(x, y.at[0], sem).wait()
           o[...] = y[0]

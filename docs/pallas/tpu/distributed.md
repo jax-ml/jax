@@ -703,11 +703,11 @@ grid_spec = pltpu.PrefetchScalarGridSpec(
     num_scalar_prefetch=0,
     in_specs=[
         # Our input lives in VMEM
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.VMEM),
     ],
     out_specs=[
         # Our output lives in VMEM
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.VMEM),
         # Our double-buffer lives in HBM
         pl.BlockSpec(memory_space=pl.ANY),
     ],
@@ -1019,10 +1019,10 @@ out_shape = (
 grid_spec = pltpu.PrefetchScalarGridSpec(
     num_scalar_prefetch=0,
     in_specs=[
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.VMEM),
     ],
     out_specs=[
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.VMEM),
         pl.BlockSpec(memory_space=pl.ANY),
     ],
     grid=(num_devices, 2),

@@ -854,7 +854,7 @@ class InterpretTest(jtu.JaxTestCase):
           kernel,
           grid=(2,),
           out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-          in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM)],
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
           scratch_shapes=[
               pltpu.VMEM(x.shape, x.dtype),
           ],
@@ -1191,7 +1191,7 @@ class InterpretTest(jtu.JaxTestCase):
             ],
         )
 
-  @parameterized.parameters(pltpu.MemorySpace.HBM, pl.ANY)
+  @parameterized.parameters(pltpu.HBM, pl.ANY)
   def test_referencing_hbm_raises(self, disallowed_memory_space):
     def jax_load_and_store(in_ref, o_ref):
       o_ref[...] = in_ref[...]
@@ -1220,7 +1220,7 @@ class InterpretTest(jtu.JaxTestCase):
           jax_load_and_store,
           jnp.zeros((8, 128), jnp.float32),
           in_memory_space=disallowed_memory_space,
-          out_memory_space=pltpu.MemorySpace.VMEM,
+          out_memory_space=pltpu.VMEM,
       )
     pltpu.reset_tpu_interpret_mode_state()
 
@@ -1234,7 +1234,7 @@ class InterpretTest(jtu.JaxTestCase):
           pallas_load_and_store,
           jnp.zeros((8, 128), jnp.float32),
           in_memory_space=disallowed_memory_space,
-          out_memory_space=pltpu.MemorySpace.VMEM,
+          out_memory_space=pltpu.VMEM,
       )
     pltpu.reset_tpu_interpret_mode_state()
 
@@ -1247,7 +1247,7 @@ class InterpretTest(jtu.JaxTestCase):
       kernel_call(
           jax_load_and_store,
           jnp.zeros((8, 128), jnp.float32),
-          in_memory_space=pltpu.MemorySpace.VMEM,
+          in_memory_space=pltpu.VMEM,
           out_memory_space=disallowed_memory_space,
       )
     pltpu.reset_tpu_interpret_mode_state()
@@ -1261,8 +1261,8 @@ class InterpretTest(jtu.JaxTestCase):
       kernel_call(
           pallas_load_and_store,
           jnp.zeros((8, 128), jnp.float32),
-          in_memory_space=pltpu.MemorySpace.VMEM,
-          out_memory_space=pltpu.MemorySpace.HBM,
+          in_memory_space=pltpu.VMEM,
+          out_memory_space=pltpu.HBM,
       )
     pltpu.reset_tpu_interpret_mode_state()
 

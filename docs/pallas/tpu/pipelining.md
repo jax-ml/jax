@@ -96,9 +96,9 @@ Pallas exposes all levels of the TPU memory hierarchy to users. The following ta
 | Pallas Enum | TPU Memory Space | Type (DRAM/SRAM) |
 | --- | --- | --- |
 | `pl.ANY` | HBM (usually) or VMEM | DRAM |
-| `pltpu.MemorySpace.VMEM` | VMEM | SRAM |
-| `pltpu.MemorySpace.SMEM` | SMEM | SRAM |
-| `pltpu.MemorySpace.SEMAPHORE` | Semaphore | SRAM |
+| `pltpu.VMEM` | VMEM | SRAM |
+| `pltpu.SMEM` | SMEM | SRAM |
+| `pltpu.SEMAPHORE` | Semaphore | SRAM |
 
 - `MemorySpace.VMEM` denotes vector SRAM. It is the default memory space if nothing is specified.
 - `MemorySpace.SMEM` denotes scalar SRAM. Only scalar loads and stores can be performed to/from SMEM.
@@ -131,7 +131,7 @@ x = jax.random.uniform(jax.random.key(0), (8, 128), jnp.float32)
 out = pl.pallas_call(hbm_vmem_kernel,
   in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
   out_shape=jax.ShapeDtypeStruct((1, 128), jnp.float32),
-  scratch_shapes=(pltpu.MemorySpace.VMEM(shape=(1, 128), dtype=jnp.float32),)
+  scratch_shapes=(pltpu.VMEM(shape=(1, 128), dtype=jnp.float32),)
 )(x)
 
 np.testing.assert_allclose(out, x[0:1] + 1)
@@ -234,7 +234,7 @@ out = pl.pallas_call(dynamic_block_example_kernel,
                in_specs=[hbm_block_spec, hbm_block_spec],
                out_specs=hbm_block_spec,
                out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-               scratch_shapes=(pltpu.MemorySpace.SMEM(slices.shape, jnp.int32),)
+               scratch_shapes=(pltpu.SMEM(slices.shape, jnp.int32),)
               )(x, slices)
 
 np.testing.assert_allclose(x, out)

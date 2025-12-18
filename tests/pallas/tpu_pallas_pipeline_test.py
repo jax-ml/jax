@@ -422,7 +422,7 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         out_shape=jax.ShapeDtypeStruct((len(in_block_indices) * 128, 128), jnp.int32),
         in_specs=[
             pl.BlockSpec(memory_space=pl.ANY),
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.SMEM),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
         ],
         out_specs=pl.BlockSpec(memory_space=pl.ANY),
     )
@@ -475,7 +475,7 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         out_shape=jax.ShapeDtypeStruct((1024, 128), jnp.int32),
         in_specs=[
             pl.BlockSpec(memory_space=pl.ANY),
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.SMEM),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
         ],
         out_specs=pl.BlockSpec(memory_space=pl.ANY),
     )
@@ -614,7 +614,7 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         out_shape=jax.ShapeDtypeStruct((blk_len * 2 * 128, 128), jnp.int32),
         in_specs=[
             pl.BlockSpec(memory_space=pl.ANY),
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.SMEM),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
         ],
         out_specs=pl.BlockSpec(memory_space=pl.ANY),
         scratch_shapes = [pltpu.SMEM((1,), dtype=jnp.int32)]
@@ -2433,9 +2433,9 @@ class PipelineHijaxTest(parameterized.TestCase):
 
     out = pl.pallas_call(
         kernel,
-        in_specs=(pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),),
+        in_specs=(pl.BlockSpec(memory_space=pl.ANY),),
         out_shape=out_ty,
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
     )(inp)
 
     np.testing.assert_allclose(out.x0, inp.x0)
