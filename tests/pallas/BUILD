@@ -1432,3 +1432,18 @@ jax_multiplatform_test(
         "numpy",
     ]),
 )
+
+jax_multiplatform_test(
+    name = "tpu_trace_value_test",
+    srcs = ["tpu_trace_value_test.py"],
+    enable_backends = ["tpu"],
+    enable_configs = [
+        "tpu_7x",
+    ],
+    deps = [
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_tpu",
+    ] + py_deps([
+        "absl/testing",
+    ]),
+)
