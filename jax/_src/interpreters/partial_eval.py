@@ -690,11 +690,16 @@ def new_eqn_recipe(trace: JaxprTrace,
     assert ("donated_invars" in params and
             len(params["donated_invars"]) == len(params["call_jaxpr"].invars))
   out_avals = [t.aval for t in out_tracers]
-  ctx = ctx or JaxprEqnContext(
-      config.compute_on_context_manager.value,
-      config.threefry_partitionable.value,
-      xla_metadata_lib.current_xla_metadata(),
-  )
+  if ctx is None:
+    relayout_constraints = None
+    if core._get_relayout_constraints_callback is not None:
+      relayout_constraints = core._get_relayout_constraints_callback()
+    ctx = JaxprEqnContext(
+        config.compute_on_context_manager.value,
+        config.threefry_partitionable.value,
+        xla_metadata_lib.current_xla_metadata(),
+        relayout_constraints,
+    )
   return JaxprEqnRecipe(next(trace.counter), tuple(in_tracers), map(ref, out_tracers),
                         out_avals, primitive, params, effects, source_info,
                         ctx)
@@ -1944,10 +1949,15 @@ class DynamicJaxprTrace(core.Trace):
   def make_eqn(self, in_tracers, out_avals, primitive, params,
                effects, source_info=None, ctx = None):
     source_info = source_info or source_info_util.new_source_info()
-    ctx = ctx or JaxprEqnContext(
-        config.compute_on_context_manager.value,
-        config.threefry_partitionable.value,
-        xla_metadata_lib.current_xla_metadata())
+    if ctx is None:
+      relayout_constraints = None
+      if core._get_relayout_constraints_callback is not None:
+        relayout_constraints = core._get_relayout_constraints_callback()
+      ctx = JaxprEqnContext(
+          config.compute_on_context_manager.value,
+          config.threefry_partitionable.value,
+          xla_metadata_lib.current_xla_metadata(),
+          relayout_constraints)
     outvars = map(self.frame.newvar, out_avals)
     if config.enable_checks.value:
       assert all(isinstance(x, DynamicJaxprTracer) for x in in_tracers)

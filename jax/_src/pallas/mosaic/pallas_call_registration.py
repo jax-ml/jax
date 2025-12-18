@@ -156,6 +156,18 @@ def pallas_call_tpu_lowering_rule(
       )
 
   with mlir_ctx, ir.Location.unknown(mlir_ctx):
+    # Extract relayout constraints from JaxprEqnContext if available.
+    relayout_constraints = None
+    if (ctx.jaxpr_eqn_ctx is not None and
+        ctx.jaxpr_eqn_ctx.relayout_constraints is not None):
+      constraints = ctx.jaxpr_eqn_ctx.relayout_constraints
+      relayout_constraints = {
+          "allow_scratch_roundtrip": constraints.allow_scratch_roundtrip,
+          "allow_pack_unpack": constraints.allow_pack_unpack,
+          "allow_rotation_emulation": constraints.allow_rotation_emulation,
+          "allow_implicit_dim_change": constraints.allow_implicit_dim_change,
+      }
+
     mosaic_module = lower_jaxpr_to_module(
         ctx,
         grid_mapping,
@@ -164,6 +176,7 @@ def pallas_call_tpu_lowering_rule(
         kernel_type=kernel_type,
         mesh=jax_mesh,
         dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
+        relayout_constraints=relayout_constraints,
     )
 
   if debug:
