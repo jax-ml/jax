@@ -9982,6 +9982,31 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
     self.assertArraysEqual(out, np.arange(8))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_sub_custom_jvp(self, mesh):
+    np1 = np.arange(2 * 1024, dtype=np.float32).reshape(4, 16, 16, -1)
+    arr1 = jax.device_put(np1, P("x", None))
+    arr2 = jax.device_put(np1, P("x", None))
+
+    def f(logits, labels):
+      labels = jnp.astype(labels, logits.dtype)
+      log_p = jax.nn.log_sigmoid(logits)
+      log_not_p = jax.nn.log_sigmoid(-logits)
+      return -labels * log_p - (1.0 - labels) * log_not_p
+
+    @jax.jit
+    def g(pl, tl):
+      x = pl - jnp.mean(tl)
+      y = tl - jnp.mean(pl)
+      loss_on_fake = jnp.mean(f(x, jnp.zeros_like(pl)))
+      loss_on_real = jnp.mean(f(y, jnp.ones_like(tl)))
+      disc_loss = loss_on_fake + loss_on_real
+      gen_loss = jnp.mean(f(x, jnp.ones_like(pl)))
+      gen_loss += jnp.mean(f(y, jnp.zeros_like(tl)))
+      return disc_loss, gen_loss
+
+    jax.jit(jax.grad(lambda t1, t2: g(t1, t2)[0]))(arr1, arr2)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
