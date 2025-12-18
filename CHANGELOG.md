@@ -16,6 +16,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.8.2 (December 18, 2025)
+
 * Deprecations
   * `jax.lax.pvary` has been deprecated.
     Please use `jax.lax.pcast(..., to='varying')` as the replacement.
