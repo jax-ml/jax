@@ -1419,6 +1419,11 @@ class AddExplicitMeshAxisNamesContextManager:
   def __exit__(self, exc_type, exc_value, traceback):
     trace_ctx.set_axis_env(self.prev)
 
+  def __call__(self, fun):
+    def newfun(*args, **kwargs):
+      with self:
+        return fun(*args, **kwargs)
+    return newfun
 add_explicit_mesh_axis_names = AddExplicitMeshAxisNamesContextManager
 
 

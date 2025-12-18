@@ -19,6 +19,7 @@ from collections.abc import Callable, Mapping, Sequence
 import contextlib
 import enum
 from functools import partial, reduce
+import math
 import types
 from typing import Any
 
@@ -42,19 +43,15 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.mesh import get_abstract_mesh
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import hlo_interpreter
 from jax._src.pallas import primitives
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
-from jax._src.util import (
-    safe_map,
-    safe_zip,
-    split_list,
-    tuple_insert,
-    unzip2,
-)
+from jax._src.util import safe_map, safe_zip, split_list, tuple_insert, unzip2
 from jax._src import numpy as jnp
+from jax._src.shard_map import shard_map, P
 
 
 map, unsafe_map = safe_map, map
@@ -115,13 +112,26 @@ def _pallas_call_abstract_eval(
     raise ValueError(f"input pinned buffers without input_output_aliases:"
                      f"{missing}")
   outin_aliases = {out_idx: in_idx for in_idx, out_idx in inout_aliases.items()}
+
+  # Make sure we don't return ShapedArrayWithMemorySpace to the outside world.
   out_avals = [jax_core.ShapedArray(a.shape, a.dtype, a.weak_type,
                                     sharding=a.sharding)
                if isinstance(a, pallas_core.ShapedArrayWithMemorySpace) else
                avals[outin_aliases[out_idx]] if out_idx in outin_aliases
                else a for out_idx, a in enumerate(out_avals)]
 
-  # Make sure we don't return ShapedArrayWithMemorySpace to the outside world.
+  # TODO(mattjj,yashkatariya): if we hide vmapped away mesh axes, use this:
+  # if not (all(a.sharding.mesh.are_all_axes_manual for a in avals) and
+  #         all(a.sharding.mesh.are_all_axes_manual for a in out_avals) and
+  #         get_abstract_mesh().are_all_axes_manual):
+  #   raise ValueError("pallas_call requires all mesh axes to be Manual, "
+  #                    f"got {get_abstract_mesh().axis_types}")
+  # NOTE(mattjj,yashkatariya): this doesn't catch auto-mode non-manual axes...
+  if not (all(p is None for a in avals for p in a.sharding.spec) and
+          all(p is None for a in out_avals for p in a.sharding.spec)):
+    raise ValueError("pallas_call requires all mesh axes to be Manual, "
+                     f"got {get_abstract_mesh().axis_types}")
+
   return out_avals, effs
 
 
@@ -516,6 +526,7 @@ def _batch_with_explicit_loop(
 
 
 def _pallas_call_batching_rule(
+    axis_data,
     args,
     dims,
     *,
@@ -544,11 +555,19 @@ def _pallas_call_batching_rule(
       return x
     return jnp.squeeze(x, axis=bdim)
 
-  axis_size, = {x.shape[d] for i, (x, d) in enumerate(zip(args, dims))
-                if d is not batching.not_mapped}
+  # this is the _global_ axis size if axis_data.explicit_mesh_axis is not None
+  # we want to convert it to the local axis size
+  axis_size = axis_data.size
+  ema = axis_data.explicit_mesh_axis
+  if ema:
+    mesh_size = math.prod(get_abstract_mesh().shape[i] for i in ema)
+    axis_size, ragged = divmod(axis_size, mesh_size)
+    assert not ragged
+
   if axis_size == 1:
     # Why are we even vmapping?
     args = map(_maybe_squeeze_out_bdim, args, dims)
+    if ema: raise NotImplementedError("yash")
     out = pallas_call_p.bind(
         *args,
         jaxpr=jaxpr,
@@ -584,6 +603,7 @@ def _pallas_call_batching_rule(
   elif any(bdim is not batching.not_mapped for bdim in dynamic_grid_dims):
     # TODO(amagni, sharadmv): Explore possibility of batching dynamic grid
     # bounds.
+    if ema: raise NotImplementedError("yash")
     return _batch_with_explicit_loop(
         args=dynamic_grid_args + args,
         dims=dynamic_grid_dims + dims,
@@ -621,6 +641,7 @@ def _pallas_call_batching_rule(
     else:
       # TODO(amagni,sharadmv,apaszke): enable efficient batching over
       # prefetched scalar args.
+      if ema: raise NotImplementedError("yash")
       return _batch_with_explicit_loop(
           args=scalar_args + args,
           dims=scalar_bdims + bdims,
@@ -645,7 +666,7 @@ def _pallas_call_batching_rule(
   # How should we pick output dimensions? This actually matters because XLA
   # can't optimize our pallas kernels, and this layout impacts performance. For
   # now, because `vmap` doesn't really offer a way of inferring good output
-  # dimensions. For now, we just use 0.
+  # dimensions, we just use 0.
   # TODO(sharadmv): explore inferring better output dimensions via a heuristic
   # TODO(sharadmv): explore a long term solution to output dim inference
 
@@ -710,26 +731,35 @@ def _pallas_call_batching_rule(
     batched_out_avals.append(aval.update(shape=shape, sharding=sharding))
   batched_out_avals = tuple(batched_out_avals)
 
-  out = pallas_call_p.bind(
-      *dynamic_grid_args,
-      *args,
-      jaxpr=jaxpr,
-      grid_mapping=batched_grid_mapping,
-      mesh=mesh,
-      input_output_aliases=input_output_aliases,
-      debug=debug,
-      interpret=interpret,
-      compiler_params=compiler_params,
-      cost_estimate=batched_cost_estimate,
-      out_avals=batched_out_avals,
-      backend=backend,
-      metadata=metadata,
-      name=name,
-  )
+  bind = partial(
+      pallas_call_p.bind, jaxpr=jaxpr, grid_mapping=batched_grid_mapping,
+      mesh=mesh, input_output_aliases=input_output_aliases, debug=debug,
+      interpret=interpret, compiler_params=compiler_params,
+      cost_estimate=batched_cost_estimate, out_avals=batched_out_avals,
+      backend=backend, metadata=metadata, name=name)
+
+  if ema:
+    # TODO all batching rules should probably be in outer mesh ctx
+    bind = remove_explicit(ema)(shard_map(bind, out_specs=P(ema), axis_names=set(ema)))
+
+  out = bind(*dynamic_grid_args, *args)
   return out, (0,) * len(out)
 
 
-batching.primitive_batchers[pallas_call_p] = _pallas_call_batching_rule
+@contextlib.contextmanager
+def remove_explicit(ema):
+  prev = jax_core.trace_ctx.axis_env
+  assert set(prev.explicit_mesh_axis_names) == set(ema)
+  new = jax_core.AxisEnv(prev.axis_sizes, prev.spmd_axis_names, set())
+  try:
+    jax_core.trace_ctx.set_axis_env(new)
+    yield
+  finally:
+    jax_core.trace_ctx.set_axis_env(prev)
+
+
+batching.fancy_primitive_batchers[pallas_call_p] = _pallas_call_batching_rule
+batching.skippable_batchers[pallas_call_p] = lambda _: ()
 
 
 def checkify_pallas_kernel_body_jaxpr(

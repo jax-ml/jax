@@ -339,6 +339,7 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _smap):
   if not axis_names:
     axis_names = mesh_axis_names_wo_vmap
   if not axis_names.issubset(mesh_axis_names_wo_vmap):
+    breakpoint()
     raise ValueError(
         f"jax.shard_map requires axis_names={axis_names} to be a subset of "
         f"mesh.axis_names={mesh_axis_names_wo_vmap}")
