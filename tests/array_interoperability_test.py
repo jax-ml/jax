@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import unittest
+import warnings
 
 from absl.testing import absltest
 import numpy as np
@@ -34,7 +35,13 @@ except ImportError:
   cupy = None
 
 try:
-  import tensorflow as tf
+  # TODO(b/470156950): Remove this once a proper fix is in place
+  with warnings.catch_warnings():
+    warnings.filterwarnings("ignore",
+                            category=FutureWarning,
+                            message=".*np.object.*")
+    import tensorflow as tf
+
   tf_version = tuple(
     int(x) for x in tf.version.VERSION.split("-")[0].split("."))
 except ImportError:
