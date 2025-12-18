@@ -660,6 +660,10 @@ class AxisPrimitiveBatchersProxy:
     def wrapped(axis_data, vals, dims, **params):
       return batcher(axis_data.size, axis_data.name, None, vals, dims, **params)
     fancy_primitive_batchers[prim] = wrapped
+
+  def __getitem__(self, prim):
+    return fancy_primitive_batchers[prim]
+
 axis_primitive_batchers = AxisPrimitiveBatchersProxy()
 
 # backwards compat shim. TODO: delete
@@ -675,6 +679,10 @@ class PrimitiveBatchersProxy:
 
   def __delitem__(self, prim):
     del fancy_primitive_batchers[prim]
+
+  def __getitem__(self, prim):
+    return fancy_primitive_batchers[prim]
+
 primitive_batchers = PrimitiveBatchersProxy()
 
 
