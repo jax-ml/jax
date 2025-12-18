@@ -4777,6 +4777,22 @@ class ShardMapTest(jtu.JaxTestCase):
     out_g = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
     self.assertEqual(out_g.sharding, NamedSharding(mesh, P('x')))
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_mix_manual_explicit_partial(self, mesh):
+    arr = jax.device_put(np.arange(16).reshape(8, 2), P(('x', 'y'), None))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P('x'), axis_names={'x'})
+    def f(x):
+      self.assertEqual(x.shape, (4, 2))
+      self.assertEqual(x.aval.sharding.spec, P('y', None))
+      self.assertEqual(x.aval.vma, {'x'})
+      return x * 2
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(('x', 'y'), None)))
+    self.assertArraysEqual(out, arr * 2)
+
 
 class FunSpec(NamedTuple):
   name: str

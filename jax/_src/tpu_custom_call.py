@@ -337,8 +337,9 @@ def _tpu_custom_call_lowering(
   result_types = [mlir.aval_to_ir_type(aval) for aval in out_avals]
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
+    manual_axes = axis_context.manual_axes | set(axis_context.mesh.manual_axes)
     if (axis_context.manual_axes and
-        axis_context.manual_axes != frozenset(axis_context.mesh.axis_names)):
+        manual_axes != frozenset(axis_context.mesh.axis_names)):
       raise NotImplementedError(
           "Mosaic kernels cannot be automatically partitioned. Please wrap the"
           " call in a shard_map."

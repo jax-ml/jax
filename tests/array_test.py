@@ -1400,11 +1400,8 @@ class ShardingTest(jtu.JaxTestCase):
     out = aval.update(sharding=NamedSharding(mesh, P(('a', 'b'), 'c', 'd')))
     self.assertEqual(out.sharding.spec, P(('a', 'b'), None, None, None))
 
-    with self.assertRaisesRegex(
-        ValueError,
-        'Tuple subset of `PartitionSpec` cannot contain `Manual` mixed with'
-        ' `Auto` or `Explicit`'):
-      aval.update(sharding=NamedSharding(mesh, P(('a', 'd'), 'b', 'c')))
+    out = aval.update(sharding=NamedSharding(mesh, P(('a', 'd'), 'b', 'c')))
+    self.assertEqual(out.sharding.spec, P('a', 'b', None, None))
 
   def test_aval_str_short(self):
     mesh = AbstractMesh(
