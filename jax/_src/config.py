@@ -1249,27 +1249,6 @@ random_seed_offset = int_state(
     include_in_trace_context=True,
 )
 
-def _safer_randint_deprecation(new_val):
-  if not new_val:
-    deprecations.warn(
-      'safer-randint-config',
-      (
-        'The jax_safer_randint configuration is deprecated in JAX v0.7.2'
-        ' and will be removed in JAX v0.9.0.'
-      ),
-      stacklevel=4
-    )
-
-# TODO(jakevdp): remove this flag.
-safer_randint = bool_state(
-    name='jax_safer_randint',
-    default=True,
-    help='Use a safer randint algorithm for 8-bit and 16-bit dtypes.',
-    include_in_jit_key=True,
-    upgrade=True,
-    validator=_safer_randint_deprecation
-)
-
 class LegacyPrngKeyState(enum.StrEnum):
   ALLOW = 'allow'
   WARN = 'warn'
