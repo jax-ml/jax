@@ -437,7 +437,6 @@ py_library_providing_imports_info(
         ":core",
         ":custom_derivatives",
         ":custom_partitioning_sharding_rule",
-        ":deprecations",
         ":dtypes",
         ":effects",
         ":ffi",

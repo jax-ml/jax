@@ -34,7 +34,6 @@ from jax._src import api_util
 from jax._src import array
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
@@ -2411,6 +2410,7 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike,
              preferred_element_type=preferred_element_type, out_sharding=out_sharding)
 
 
+# TODO(jakevdp): replace `*args`` with `*` in v0.10.0
 def dot(lhs: ArrayLike, rhs: ArrayLike, *args,
         dimension_numbers: DotDimensionNumbers | None = None,
         precision: PrecisionLike = None,
@@ -2465,30 +2465,12 @@ def dot(lhs: ArrayLike, rhs: ArrayLike, *args,
   .. _stablehlo.dot_general: https://openxla.org/stablehlo/spec#dot_general
   .. _DotGeneral: https://www.openxla.org/xla/operation_semantics#dotgeneral
   """
-  # TODO(jakevdp): keyword warning added for JAX v0.7.1; finalize this for v0.9.0.
   if args:
-    deprecations.warn(
-      "jax-lax-dot-positional-args",
-      (
-        "jax.lax.dot: passing precision or preferred_element_type by position"
-        " is deprecated; pass them by keyword instead."
-      ),
-      stacklevel=2
+    raise TypeError(
+      f"dot() takes 2 positional arguments but {2 + len(args)} were given."
+      " Passing precision or preferred_element_type by position is not allowed"
+      " as of JAX v0.9.0; pass them by keyword instead."
     )
-    # Prior to merging dot and dot_general, dot() had two additional positional args:
-    # `precision` and `preferred_element_type`.
-    if len(args) == 1:
-      if precision is not None:
-        raise TypeError("jax.lax.dot got multiple values for argument 'precision'")
-      precision, = args
-    elif len(args) == 2:
-      if precision is not None:
-        raise TypeError("jax.lax.dot got multiple values for argument 'precision'")
-      if preferred_element_type is not None:
-        raise TypeError("jax.lax.dot got multiple values for argument 'preferred_element_type'")
-      precision, preferred_element_type = args
-    else:
-      raise TypeError("Too many positional arguments passed to jax.lax.dot.")
   del args
 
   lhs_shape = np.shape(lhs)

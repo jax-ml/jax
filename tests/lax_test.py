@@ -38,7 +38,6 @@ from jax.interpreters import batching
 from jax._src import array
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import lax_reference
 from jax._src import test_util as jtu
@@ -1107,25 +1106,9 @@ class LaxTest(jtu.JaxTestCase):
   def testDotPositionalArgumentDeprecation(self):
     lhs = jnp.arange(5.0)
     rhs = jnp.arange(5.0)
-    msg = "jax.lax.dot: passing precision or preferred_element_type by position"
-    multiple_args_msg = "jax.lax.dot got multiple values for argument"
 
-    with self.assertDeprecationWarnsOrRaises("jax-lax-dot-positional-args", msg):
-      lax.dot(lhs, rhs, lax.Precision.DEFAULT, jnp.float32)
-
-    with self.assertDeprecationWarnsOrRaises("jax-lax-dot-positional-args", msg):
-      with self.assertRaises(TypeError):
-        lax.dot(lhs, rhs, lax.Precision.DEFAULT, precision=lax.Precision.DEFAULT)
-
-    if deprecations.is_accelerated("jax-lax-dot-positional-args"):
-      with self.assertRaisesRegex(ValueError, msg):
-        lax.dot(lhs, rhs, lax.Precision.DEFAULT, jnp.float32,
-                preferred_element_type=jnp.float32)
-    else:
-      with self.assertWarnsRegex(DeprecationWarning, msg):
-        with self.assertRaisesRegex(TypeError, multiple_args_msg):
-          lax.dot(lhs, rhs, lax.Precision.DEFAULT, jnp.float32,
-                  preferred_element_type=jnp.float32)
+    with self.assertRaisesRegex(TypeError, r"dot\(\) takes 2 positional arguments"):
+      lax.dot(lhs, rhs, lax.Precision.DEFAULT)
 
   @parameterized.parameters([
       (algorithm, dtype)
