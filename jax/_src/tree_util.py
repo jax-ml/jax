@@ -1521,6 +1521,10 @@ def unwrap_statics(pytree, statics):
 class Static:
   val: Any
 
+  def __eq__(self, other):
+    return (type(other) is Static and type(self.val) is type(other.val) and 
+            self.val == other.val)
+
 
 def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
                      ) -> tuple[int, ...]:
