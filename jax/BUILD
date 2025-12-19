@@ -28,7 +28,7 @@ load(
 )
 
 package(
-    default_applicable_licenses = [":license"],
+    default_applicable_licenses = [],
     default_visibility = [":internal"],
 )
 
