@@ -6407,7 +6407,7 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(res[2][0].shape, ())
     self.assertEqual(res[2][1], "from the argument y")
     self.assertEqual(res[3][0].shape, ())
-    self.assertStartsWith(res[3][1], "output of jitted function 'f'")
+    self.assertStartsWith(res[3][1], "output of jitted function 'RematTest")
     self.assertEqual(res[4][0].shape, ())
 
   @parameterized.named_parameters(
