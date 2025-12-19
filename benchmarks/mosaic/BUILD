@@ -22,7 +22,7 @@ load(
 licenses(["notice"])
 
 package(
-    default_applicable_licenses = [],
+    default_applicable_licenses = ["//jax:license"],
     default_visibility = ["//visibility:private"],
 )
 

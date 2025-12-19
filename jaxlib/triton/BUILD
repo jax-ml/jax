@@ -19,7 +19,7 @@ load("//jaxlib:jax.bzl", "if_windows", "pytype_strict_library")
 licenses(["notice"])
 
 package(
-    default_applicable_licenses = [],
+    default_applicable_licenses = ["//jax:license"],
     default_visibility = ["//jax:internal"],
 )
 

@@ -18,7 +18,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 load("//jaxlib:jax.bzl", "py_deps", "pytype_strict_library")
 
 package(
-    default_applicable_licenses = [],
+    default_applicable_licenses = ["//jax:license"],
     default_visibility = [
         "//jax:internal",
     ],
