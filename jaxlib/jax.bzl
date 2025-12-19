@@ -138,11 +138,13 @@ jax2tf_deps = []
 
 def pytype_library(name, pytype_srcs = None, **kwargs):
     _ = pytype_srcs  # @unused
+    kwargs.pop("lazy_imports", None)
     py_library(name = name, **kwargs)
 
 def pytype_strict_library(name, pytype_srcs = [], **kwargs):
     data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
+    new_kwargs.pop("lazy_imports", None)
     py_library(name = name, data = data, **new_kwargs)
 
 py_strict_library = py_library
@@ -151,6 +153,7 @@ py_strict_test = py_test
 def py_library_providing_imports_info(*, name, lib_rule = py_library, pytype_srcs = [], **kwargs):
     data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
+    new_kwargs.pop("lazy_imports", None)
     lib_rule(name = name, data = data, **new_kwargs)
 
 def py_extension(name, srcs, copts, deps, linkopts = []):

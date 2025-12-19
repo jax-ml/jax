@@ -154,6 +154,7 @@ py_library_providing_imports_info(
         ],
         # TODO(dsuo): Consider moving these files out of experimental if they're in the public API.
     ) + ["//jax/experimental:jax_public"],
+    lazy_imports = True,
     lib_rule = pytype_library,
     pytype_srcs = glob(
         [
