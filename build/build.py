@@ -233,7 +233,7 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
         Hermetic NCCL version to use. Default is to use the version specified
         in the .bazelrc.
         """,
-  )  
+  )
 
   cuda_group.add_argument(
       "--cuda_compute_capabilities",
