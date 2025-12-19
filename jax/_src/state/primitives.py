@@ -1115,9 +1115,11 @@ def _ref_lin(nzs, x, *, memory_space, kind):
   nz, = nzs
   x_ref = core.ref_p.bind(x, memory_space=memory_space, kind=kind)
   def mut_lin(_, x_dot):
+    if kind == 'anselm_ref':
+      return ad.Zero(AbstractRef(core.typeof(x_dot)))
     zero = ad_util.instantiate(x_dot)
     return core.ref_p.bind(zero, memory_space=memory_space, kind=kind)
-  return x_ref, True, None, mut_lin
+  return x_ref, kind != 'anselm_ref', None, mut_lin
 
 ad.primitive_jvps[core.ref_p] = _ref_jvp
 ad.primitive_linearizations[core.ref_p] = _ref_lin

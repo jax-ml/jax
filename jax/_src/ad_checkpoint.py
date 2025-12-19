@@ -735,6 +735,7 @@ def remat_transpose(out_cts, *args, jaxpr, prevent_cse, **params):
   # TODO(mattjj): avoid round-tripping into UndefinedPrimals
   args_ = [ad.UndefinedPrimal(x.aval) if isinstance(x, ad.ValAccum) else x
            for x in args]
+  if any(isinstance(x, ad.GradAccum) for x in args_): raise NotImplementedError
 
   assert not jaxpr.constvars
   in_linear = [ad.is_undefined_primal(x) for x in args_]
