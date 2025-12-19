@@ -1854,7 +1854,7 @@ def is_known_divisible(value, divisor, max_depth=10) -> bool:
   """Returns True if the value is statically known to be divisible by the divisor."""
   if divisor == 1:
     return True
-  if max_depth < 0 or not isinstance(value.owner, ir.Operation):
+  if max_depth < 0 or not isinstance(value.owner, ir.OpView):
     return False
 
   new_depth = max_depth - 1

@@ -187,7 +187,7 @@ def _default_tmem_layout_for_variable(
 ) -> tcgen05.TMEMLayout | None:
   """Returns a default TMEM layout for the given variable, if one is defined."""
   value = variable.key.value
-  parent = value.owner.opview
+  parent = value.owner
   if isinstance(parent, mgpu.TmemAllocOp):
     return tcgen05._infer_tmem_layout(
         tuple(value.type.shape), parent.collective, packing=1
@@ -768,8 +768,8 @@ def dynamic_gcd(a: int, b: ir.Value) -> int:
     raise ValueError("a must be strictly positive")
   if not ir.IntegerType.isinstance(b.type) and not ir.IndexType.isinstance(b.type):
     raise ValueError(f"Expected an integer dynamic value, got a {b.type}")
-  if isinstance(b.owner, ir.Operation) and isinstance(b.owner.opview, arith.ConstantOp):
-    return math.gcd(a, b.owner.opview.literal_value)
+  if isinstance(b.owner, arith.ConstantOp):
+    return math.gcd(a, b.owner.literal_value)
   running_gcd = 1
   for factor in prime_decomposition(a):
     if utils.is_known_divisible(b, running_gcd * factor):
@@ -1804,9 +1804,9 @@ def producer_result(operand: ValueSite) -> ValueSite:
   assert operand.type == VariableType.OPERAND
   value = operand.value
   producer = value.owner
-  if isinstance(producer, ir.Operation):
+  if isinstance(producer, ir.OpView):
     index = list(producer.results).index(value)
-    return ValueSite(producer.opview, VariableType.RESULT, index)
+    return ValueSite(producer, VariableType.RESULT, index)
 
   if isinstance(producer, ir.Block):
     index = list(producer.arguments).index(value)
@@ -1825,7 +1825,7 @@ def consumer_operands(result: ValueSite) -> Sequence[ValueSite]:
   # The layout can also be chosen from the layout of the consumers of the
   # results.
   for use in result.value.uses:
-    consumer = use.owner.opview  # pytype: disable=attribute-error
+    consumer = use.owner
     index = use.operand_number
     consumer_operands.append(ValueSite(consumer, VariableType.OPERAND, index))
   return consumer_operands

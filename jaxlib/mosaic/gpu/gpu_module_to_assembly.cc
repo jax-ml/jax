@@ -94,8 +94,9 @@ std::optional<SmallVector<char, 0>> ModuleToAssembly::moduleToObject(
                                << triple << ", can't optimize with LLVM\n";
     return std::nullopt;
   }
-  std::optional<std::string> ptx = translateToISA(llvm_module, **machine);
-  if (!ptx) {
+  llvm::FailureOr<std::string> ptx = translateModuleToISA(
+      llvm_module, **machine, [&]() { return getOperation().emitError(); });
+  if (failed(ptx)) {
     getOperation().emitError() << "Failed translating the module to PTX.";
     return std::nullopt;
   }

@@ -2291,6 +2291,9 @@ def _platforms_for_eqn(ctx: LoweringRuleContext) -> tuple[str, ...]:
   return tuple(_platforms_for_eqn_ctx(ctx.jaxpr_eqn_ctx) or
                ctx.platforms or ctx.module_context.platforms)
 
+def _get_owner(v: ir.Value):
+  owner = v.owner
+  return owner.operation if isinstance(owner, ir.OpView) else owner
 
 def lower_per_platform(ctx: LoweringRuleContext,
                        description: str,
@@ -2367,11 +2370,11 @@ def lower_per_platform(ctx: LoweringRuleContext,
   if len(kept_rules) == 1:
     output = kept_rules[0](ctx, *rule_args, **rule_kwargs)
     foreach(
-        lambda o: wrap_compute_type_in_place(ctx, o.owner),
+        lambda o: wrap_compute_type_in_place(ctx, _get_owner(o)),
         filter(_is_not_block_argument, flatten_ir_values(output)),
     )
     foreach(
-        lambda o: wrap_xla_metadata_in_place(ctx, o.owner),
+        lambda o: wrap_xla_metadata_in_place(ctx, _get_owner(o)),
         flatten_ir_values(output),
     )
     return output
@@ -2412,11 +2415,11 @@ def lower_per_platform(ctx: LoweringRuleContext,
         raise ValueError("Output of translation rule must be iterable: "
                         f"{description}, got output {output}") from e
       foreach(
-          lambda o: wrap_compute_type_in_place(ctx, o.owner),
+          lambda o: wrap_compute_type_in_place(ctx, _get_owner(o)),
           filter(_is_not_block_argument, out_nodes),
       )
       foreach(
-          lambda o: wrap_xla_metadata_in_place(ctx, o.owner),
+          lambda o: wrap_xla_metadata_in_place(ctx, _get_owner(o)),
           out_nodes,
       )
       if inner_ctx.tokens_out is not None:
@@ -2610,11 +2613,11 @@ def wrap_compute_type_in_place(ctx: LoweringRuleContext, op: ir.Operation) -> No
         "_xla_stream_annotation": ir.StringAttr.get(stream),
         "inlineable": ir.StringAttr.get("false"),
       }
-      op.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
+      op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
     else:
       dict_attr = {"_xla_compute_type": ir.StringAttr.get(
           map_compute_type(ctx.jaxpr_eqn_ctx.compute_type))}
-      op.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
+      op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
 
 
 def wrap_xla_metadata_in_place(ctx: LoweringRuleContext, op: ir.Operation) -> None:
@@ -2659,7 +2662,7 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
       out = hlo.broadcast_in_dim(
           aval_to_ir_type(aval_out), op,
           dense_int_array(broadcast_dimensions))
-    wrap_compute_type_in_place(ctx, out.owner)
+    wrap_compute_type_in_place(ctx, _get_owner(out))
     return out
 
 def multi_broadcast_in_dim(ctx: LoweringRuleContext,
