@@ -522,7 +522,7 @@ class HijaxTest(jtu.JaxTestCase):
       def expand(self, x):
         return x ** self.power
 
-      def vjp_fwd(self, x):
+      def vjp_fwd(self, nzs_in, x):
         ans = self(x)
         return (ans, x)
 
@@ -570,7 +570,7 @@ class HijaxTest(jtu.JaxTestCase):
       def expand(self, x):
         return x ** self.power
 
-      def vjp_fwd(self, x):
+      def vjp_fwd(self, nzs_in, x):
         ans = self(x)
         return (ans, x)
 
@@ -671,7 +671,7 @@ class HijaxTest(jtu.JaxTestCase):
         qvalue = jnp.round(x / scale).astype(jnp.int8)
         return QArray(qvalue, scale)
 
-      def vjp_fwd(self, x):
+      def vjp_fwd(self, nzs_in, x):
         return self(x), None
 
       def vjp_bwd_retval(self, _, g):
@@ -688,7 +688,7 @@ class HijaxTest(jtu.JaxTestCase):
       def expand(self, qx):
         return qx.qvalue * qx.scale
 
-      def vjp_fwd(self, qx):
+      def vjp_fwd(self, nzs_in, qx):
         return self(qx), None
 
       def vjp_bwd_retval(self, _, g):
@@ -699,6 +699,69 @@ class HijaxTest(jtu.JaxTestCase):
 
     x = jax.random.normal(jax.random.key(0), (3, 3), dtype='float32')
     g = jax.grad(f)(x)
+
+  def test_symbolic_zeros(self):
+
+    class Mul(VJPHiPrimitive):
+      def __init__(self, aval):
+        self.in_avals = (aval, aval)
+        self.out_aval = aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x, y):
+        return x * y
+
+      def vjp_fwd(self, nzs_in, x, y):
+        assert list(nzs_in) == list(nzs_in_)  # defined below
+        ans = self(x, y)
+        return ans, (x, y)
+
+      def vjp_bwd(self, res, g, x_acc, y_acc):
+        assert list(nzs_in_) == [not isinstance(x_acc, ad.NullAccum),
+                                 not isinstance(y_acc, ad.NullAccum)]
+        x, y = res
+        x_acc.accum(g * y)
+        y_acc.accum(x * g)
+
+    def mul(x, y):
+      return Mul(typeof(x))(x, y)
+
+    nzs_in_ = (True, False)
+    self.assertAllClose(jax.grad(mul)(2., 3.), 3., check_dtypes=False)
+
+    nzs_in_ = (False, True)
+    self.assertAllClose(jax.grad(mul, 1)(2., 3.), 2., check_dtypes=False)
+
+  def test_symbolic_zeros_retval(self):
+
+    class Mul(VJPHiPrimitive):
+      def __init__(self, aval):
+        self.in_avals = (aval, aval)
+        self.out_aval = aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x, y):
+        return x * y
+
+      def vjp_fwd(self, nzs_in, x, y):
+        assert list(nzs_in) == list(nzs_in_)  # defined below
+        ans = self(x, y)
+        return ans, (x, y)
+
+      def vjp_bwd_retval(self, res, g):
+        x, y = res
+        return (g * y, x * g)
+
+    def mul(x, y):
+      return Mul(typeof(x))(x, y)
+
+    nzs_in_ = (True, False)
+    self.assertAllClose(jax.grad(mul)(2., 3.), 3., check_dtypes=False)
+
+    nzs_in_ = (False, True)
+    self.assertAllClose(jax.grad(mul, 1)(2., 3.), 2., check_dtypes=False)
 
 
 class BoxTest(jtu.JaxTestCase):

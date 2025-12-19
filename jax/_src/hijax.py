@@ -24,9 +24,12 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import partial_eval as pe
 from jax._src import ad_util
 from jax._src.util import safe_zip, safe_map, split_list
-from jax._src.tree_util import tree_flatten, tree_unflatten, tree_leaves, tree_map
+from jax._src.tree_util import (
+    tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
+    broadcast_prefix)
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
@@ -361,7 +364,7 @@ class VJPHiPrimitive:
   def expand(self, *args):
     raise NotImplementedError(f"subclass {type(self)} must implement `expand`")
 
-  def vjp_fwd(self, *args):
+  def vjp_fwd(self, nzs_in, *args):
     raise NotImplementedError(f"for grad support, subclass {type(self)} must "
                               "implement `vjp_fwd`")
 
@@ -388,8 +391,13 @@ class VJPHiPrimitive:
     return tree_unflatten(self.out_tree, ans_flat)
 
   def check(self, *arg_tys):
-    # subclass can optionally override this to add checking logic
-    return
+    return  # subclass can optionally override this to add checking logic
+
+  def staging(self, trace, source_info, *args):
+    args_flat = tree_leaves_checked(self.in_tree, args)
+    ans_flat = trace.default_process_primitive(
+        call_hi_primitive_p, args_flat, dict(prim=self), source_info)
+    return tree_unflatten(self.out_tree, ans_flat)
 
   def __repr__(self):
     return f"{self.__class__.__name__}[{self.params}]"
@@ -400,11 +408,6 @@ class VJPHiPrimitive:
   def __eq__(self, other):
     return type(self) is type(other) and self.params == other.params
 
-def tree_leaves_checked(treedef_expected, tree):
-  flat_vals, treedef_actual = tree_flatten(tree)
-  assert treedef_actual == treedef_expected
-  return flat_vals
-
 call_hi_primitive_p = core.Primitive("call_hi_primitive")
 call_hi_primitive_p.multiple_results = True
 call_hi_primitive_p.is_high = lambda *args, prim: True  # type: ignore
@@ -412,9 +415,17 @@ call_hi_primitive_p.is_high = lambda *args, prim: True  # type: ignore
 def _call_hi_primitive_abstract_eval(*_args, prim):
   return prim.out_avals_flat
 
+def _call_hi_primitive_staging(trace, source_info, *args_flat, prim):
+  trace.frame.is_high = True
+  args = tree_unflatten(prim.in_tree, args_flat)
+  ans = prim.staging(trace, source_info, *args)
+  return tree_leaves_checked(prim.out_tree, ans)
+pe.custom_staging_rules[call_hi_primitive_p] = _call_hi_primitive_staging
+
 def _call_hi_primitive_to_lojax(*args_flat, prim):
   args = tree_unflatten(prim.in_tree, args_flat)
-  return tree_leaves_checked(prim.out_tree, prim.expand(*args))
+  ans = prim.expand(*args)
+  return tree_leaves_checked(prim.out_tree, ans)
 call_hi_primitive_p.to_lojax = _call_hi_primitive_to_lojax
 
 def _call_hi_primitive_batcher(axis_data, args_flat, dims_flat, prim):
@@ -428,20 +439,21 @@ batching.fancy_primitive_batchers[call_hi_primitive_p] = _call_hi_primitive_batc
 
 def _call_hi_primitive_linearize(nz_in_flat, *args_flat, prim):
   args = tree_unflatten(prim.in_tree, args_flat)
-  ans, residuals = prim.vjp_fwd(*args)
-  # TODO(dougalm): does the fwd/bwd API force us to assume the nzs_out are all False
-  # (except in the case that all the nzs_in are True, which is handled in
-  # LinearizeTrace.ProcessPrimitive)?
+  nzs_in = tree_unflatten(prim.in_tree, nz_in_flat)
+  ans, residuals, *maybe_nzs_out = prim.vjp_fwd(nzs_in, *args)
   ans_flat = tree_leaves_checked(prim.out_tree, ans)
-  nzs_out = [True for _ in ans_flat]
-  return (ans_flat, nzs_out, residuals, partial(fake_linear_op, prim, nz_in_flat))
+  nzs_out = True if maybe_nzs_out == [] else maybe_nzs_out[0]
+  nzs_out_flat = broadcast_prefix(nzs_out, ans)
+  linearized = partial(fake_linear_op, prim, nz_in_flat)
+  return (ans_flat, nzs_out_flat, residuals, linearized)
 
 def fake_linear_op(prim, nz_in_flat, rs, *tangents):
   residuals_flat, residuals_tree = tree_flatten(rs)
-  tangents_flat, _ = tree_flatten(tangents)  # prune symbolic zeros
+  assert nz_in_flat == [not isinstance(t, ad_util.Zero) for t in tangents]
+  nz_tangents = tree_leaves(tangents)
   return call_hi_primitive_linearized_p.bind(
-      *residuals_flat, *tangents_flat,
-      residuals_tree=residuals_tree, nz_in_flat=tuple(nz_in_flat), prim=prim)
+      *residuals_flat, *nz_tangents, residuals_tree=residuals_tree, prim=prim,
+      nz_in_flat=tuple(nz_in_flat))
 
 ad.primitive_linearizations[call_hi_primitive_p] = _call_hi_primitive_linearize
 

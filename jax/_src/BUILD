@@ -1186,6 +1186,7 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
+        ":partial_eval",
         ":tree_util",
         ":util",
     ],
