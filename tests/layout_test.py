@@ -16,6 +16,7 @@ import math
 from functools import partial
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import numpy as np
 
 import jax
@@ -719,6 +720,65 @@ class LayoutTest(jtu.JaxTestCase):
     out = jax.eval_shape(f, arr)
     self.assertEqual(out.format, l)
     self.assertEqual(out.sharding, s)
+
+  def test_valid_custom_layout_after_copy_across_clients(self):
+    if jax._src.lib.ifrt_version < 45:
+      self.skipTest('Only works for JAX_IFRT_VERSION_NUMBER >= 45')
+    if not jtu.test_device_matches(['tpu']):
+      self.skipTest('Only works for TPU')
+
+    custom_dll = Layout(major_to_minor=(1, 0))
+
+    cpu_sharding = jax.sharding.SingleDeviceSharding(
+        jax.local_devices(backend='cpu')[0])
+    cpu_format = Format(custom_dll, cpu_sharding)
+    cpu_array = jax.device_put(np.ones((128, 8)), cpu_format)
+
+    mesh = jtu.create_mesh((1, 1), ('x', 'y'))
+    tpu_sharding = jax.sharding.NamedSharding(mesh, P())
+    tpu_format = Format(custom_dll, tpu_sharding)
+
+    copied_tpu_array = jax.device_put(cpu_array, tpu_format.sharding)
+    canonical_tpu_array = jax.device_put(np.ones((128, 8)), tpu_format)
+    self.assertEqual(
+        copied_tpu_array.format.layout, canonical_tpu_array.format.layout)
+
+  @parameterized.named_parameters(
+      ('device_to_pinned_host', 'device', 'pinned_host'),
+      ('pinned_host_to_device', 'pinned_host', 'device'),
+      ('device_to_unpinned_host', 'device', 'unpinned_host'),
+      ('unpinned_host_to_device', 'unpinned_host', 'device'),
+      ('pinned_host_to_unpinned_host', 'pinned_host', 'unpinned_host'),
+      ('unpinned_host_to_pinned_host', 'unpinned_host', 'pinned_host'),
+  )
+  def test_valid_layout_after_copy_across_memories(
+      self, src_memory_kind, dst_memory_kind):
+    if not jtu.test_device_matches(['tpu']):
+      self.skipTest('Only works for TPU')
+    custom_dll = Layout(major_to_minor=(1, 0))
+
+    mesh = jtu.create_mesh((1, 1), ('x', 'y'))
+    src_tpu_sharding = jax.sharding.NamedSharding(
+        mesh, P(), memory_kind=src_memory_kind)
+    dst_tpu_sharding = jax.sharding.NamedSharding(
+        mesh, P(), memory_kind=dst_memory_kind)
+
+    # TPU unpinned_host memories do not support custom layouts.
+    if src_memory_kind == 'unpinned_host':
+      src_tpu_format = src_tpu_sharding
+    else:
+      src_tpu_format = Format(custom_dll, src_tpu_sharding)
+    if dst_memory_kind == 'unpinned_host':
+      dst_tpu_format = dst_tpu_sharding
+    else:
+      dst_tpu_format = Format(custom_dll, dst_tpu_sharding)
+
+    tpu_array = jax.device_put(np.ones((128, 8)), src_tpu_format)
+
+    copied_tpu_array = jax.device_put(tpu_array, dst_tpu_sharding)
+    canonical_tpu_array = jax.device_put(np.ones((128, 8)), dst_tpu_format)
+    self.assertEqual(
+        copied_tpu_array.format.layout, canonical_tpu_array.format.layout)
 
 
 if __name__ == '__main__':
