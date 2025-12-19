@@ -289,7 +289,6 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
   cpp_pjitted_f._fun = fun
   cpp_pjitted_f._jit_info = jit_info
   cpp_jitted_f_class = type(cpp_pjitted_f)
-  # TODO(necula): make clear_cache private, no need to have it part of the API
   cpp_jitted_f_class.clear_cache = jit_evict_fn
   cpp_jitted_f_class.lower = jit_lower
   cpp_jitted_f_class.trace = jit_trace
@@ -312,7 +311,7 @@ def jit_eval_shape(jit_func, *args, **kwargs):
 
 def jit_evict_fn(self):
   self._clear_cache()
-
+  pe.trace_to_jaxpr.cache_clear()
 
 def _split_layout_and_sharding(entries):
   entries_flat, treedef = tree_flatten(entries, is_leaf=lambda x: x is None)
