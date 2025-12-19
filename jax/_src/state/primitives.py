@@ -1116,7 +1116,8 @@ def _ref_lin(nzs, x, *, memory_space, kind):
   x_ref = core.ref_p.bind(x, memory_space=memory_space, kind=kind)
   def mut_lin(_, x_dot):
     if kind == 'anselm_ref':
-      return ad.Zero(AbstractRef(core.typeof(x_dot)))
+      aval = x_dot.aval if type(x_dot) is ad.Zero else core.typeof(x_dot)
+      return ad.Zero(AbstractRef(aval))
     zero = ad_util.instantiate(x_dot)
     return core.ref_p.bind(zero, memory_space=memory_space, kind=kind)
   return x_ref, kind != 'anselm_ref', None, mut_lin
