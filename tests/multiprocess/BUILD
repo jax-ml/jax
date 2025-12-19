@@ -176,6 +176,15 @@ jax_multiprocess_test(
 )
 
 jax_multiprocess_test(
+    name = "thread_guard_test",
+    srcs = ["thread_guard_test.py"],
+    main = "thread_guard_test.py",
+    deps = [
+        "//jax/_src:test_multiprocess",
+    ],
+)
+
+jax_multiprocess_test(
     name = "tpu_device_test",
     srcs = ["tpu_device_test.py"],
     enable_backends = ["tpu"],

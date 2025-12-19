@@ -20,14 +20,21 @@ limitations under the License.
 #include "jaxlib/guard_lib.h"
 
 #include <optional>
+#include <sstream>
 #include <string>
+#include <thread>  // NOLINT
 
 #include "absl/base/attributes.h"
+#include "absl/base/const_init.h"
 #include "absl/functional/function_ref.h"
+#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/synchronization/mutex.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
+#include "xla/pjrt/status_casters.h"
+#include "xla/python/ifrt/device_list.h"
 #include "xla/util.h"
 
 namespace jax {
@@ -104,6 +111,9 @@ TransferGuardAction GetTransferGuardActionForDeviceToHost() {
       thread_local_state.explicit_device_get);
 }
 
+// Guards the global state's thread ID.
+ABSL_CONST_INIT absl::Mutex thread_id_mu(absl::kConstInit);
+
 }  // namespace
 
 absl::Status ApplyTransferGuardToHostToDevice(
@@ -157,6 +167,65 @@ GarbageCollectionGuardLevel GetGarbageCollectArrayGuard() {
           kDefaultGarbageCollectionGuardLevel));
 }
 
+absl::Status CheckThreadGuard(xla::ifrt::DeviceListRef devices) {
+  absl::MutexLock lock(thread_id_mu);
+  // If the thread id is not set, then the thread guard is not enabled.
+  if (!global_state.thread_id.has_value()) {
+    return absl::OkStatus();
+  }
+
+  // Detect if the devices span multiple processes; the thread guard applies
+  // only to multi-process operations.
+  // TODO(emilyaf): Allow disjoint subsets of devices in different threads.
+  bool is_multiprocess = false;
+  int first_process_index = devices->devices()[0]->ProcessIndex();
+  for (const auto& device : devices->devices()) {
+    if (device->ProcessIndex() != first_process_index) {
+      is_multiprocess = true;
+      break;
+    }
+  }
+  if (!is_multiprocess) {
+    return absl::OkStatus();
+  }
+
+  // The thread guard is active, so check that the current thread is the owner.
+  std::thread::id current_thread_id = std::this_thread::get_id();
+  if (current_thread_id != global_state.thread_id.value()) {
+    std::stringstream ss_current, ss_owner;
+    ss_current << current_thread_id;
+    ss_owner << global_state.thread_id.value();
+    return xla::FailedPrecondition(
+        "A multi-process JAX operation was called from thread %s. This is not "
+        "allowed because the thread guard was set in thread %s.",
+        ss_current.str(), ss_owner.str());
+  }
+  return absl::OkStatus();
+}
+
+absl::Status UpdateThreadGuardGlobalState(std::optional<bool> set_thread_id) {
+  absl::MutexLock lock(thread_id_mu);
+  // If set_thread_id is true, then the thread guard context was entered and the
+  // thread id should be set. If the thread ID is already set, then a thread
+  // guard is nested, which is allowed only in the same thread.
+  // If set_thread_id is false or nullopt, the thread guard context was exited
+  // and the thread id should be cleared.
+  if (set_thread_id.has_value() && set_thread_id.value()) {
+    if (global_state.thread_id.has_value()) {
+      if (global_state.thread_id.value() != std::this_thread::get_id()) {
+        return xla::FailedPrecondition(
+            "The thread guard's global thread ID is already set. Nested thread "
+            "guards in different threads are not supported.");
+      }
+    } else {
+      global_state.thread_id = std::this_thread::get_id();
+    }
+  } else {
+    global_state.thread_id = std::nullopt;
+  }
+  return absl::OkStatus();
+}
+
 void BuildGuardSubmodule(nb::module_& m) {
   nb::module_ glib =
       m.def_submodule("guard_lib", "Jax support library for guards");
@@ -192,6 +261,9 @@ void BuildGuardSubmodule(nb::module_& m) {
   glib.def(
       "thread_local_state", [&]() { return &thread_local_state; },
       nb::rv_policy::reference);
+  glib.def("update_thread_guard_global_state",
+           xla::ThrowIfErrorWrapper(UpdateThreadGuardGlobalState),
+           nb::arg().none());
 }
 
 }  // namespace jax

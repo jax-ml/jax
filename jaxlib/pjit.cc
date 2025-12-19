@@ -809,6 +809,13 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   PopulateCallLocation(execute_options,
                        xla::ifrt::UserContextScope::current().get());
 
+  // Check if the thread guard is active and should prevent execution.
+  // Skipped for portable executables.
+  if (cache_entry->executable->ifrt_executable()->devices().has_value()) {
+    TF_RETURN_IF_ERROR(CheckThreadGuard(
+        *cache_entry->executable->ifrt_executable()->devices()));
+  }
+
   // A vector of [num_outputs].
   std::vector<xla::ifrt::ArrayRef> output_arrays;
   {

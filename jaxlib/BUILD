@@ -670,9 +670,13 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
         "@nanobind",
         "@xla//xla:util",
+        "@xla//xla/pjrt:status_casters",
+        "@xla//xla/python/ifrt",
     ],
 )
 

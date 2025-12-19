@@ -29,6 +29,7 @@ from jax._src import deprecations
 from jax._src.lib import _jax
 from jax._src.lib import guard_lib
 from jax._src.lib import jax_jit
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src import logging_config
 
@@ -2002,6 +2003,20 @@ array_garbage_collection_guard = optional_enum_state(
         guard_lib.thread_local_state(), 'garbage_collect_array', val
     ),
 )
+
+if jaxlib_extension_version >= 392:
+  thread_guard = bool_state(
+      name='jax_thread_guard',
+      default=False,
+      help=(
+          'If True, an error will be raised at runtime if a multi-process JAX '
+          'operation is called from a thread other than the one in which the '
+          'thread guard was set. This is useful for detecting cases where '
+          'threads may schedule operations in different orders in different '
+          'processes, leading to non-deterministic crashes.'
+      ),
+      update_thread_local_hook=guard_lib.update_thread_guard_global_state,
+  )
 
 # TODO(nbasile): Remove hasattr checks after jaxlib 0.8.1 release
 if hasattr(_jax, 'RuntimeTracebackMode'):

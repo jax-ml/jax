@@ -18,11 +18,13 @@ limitations under the License.
 
 #include <optional>
 #include <string>
+#include <thread>  // NOLINT
 
 // placeholder for index annotation headers
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "nanobind/nanobind.h"
+#include "xla/python/ifrt/device_list.h"
 
 namespace jax {
 
@@ -72,6 +74,7 @@ struct GuardState {
   bool explicit_device_get = false;
 
   std::optional<GarbageCollectionGuardLevel> garbage_collect_array;
+  std::optional<std::thread::id> thread_id;
 };
 
 // Resulting action for a transfer given the transfer guard level and the
@@ -106,6 +109,14 @@ absl::Status ApplyTransferGuardToDeviceToHost(
 // Returns the garbage collection guard level for "jax.Array" objects.
 // REQUIRES: Python GIL.
 GarbageCollectionGuardLevel GetGarbageCollectArrayGuard();
+
+// Updates the global thread guard state either by setting the thread ID or by
+// resetting the thread ID to null. A global mutex ensures the update is atomic.
+absl::Status UpdateThreadGuardGlobalState(std::optional<bool> set_thread_id);
+
+// Checks if the thread guard should prevent execution. A global mutex ensures
+// the thread ID is read atomically.
+absl::Status CheckThreadGuard(xla::ifrt::DeviceListRef devices);
 
 // The function to call in `xla.cc` to add the bindings for this module.
 void BuildGuardSubmodule(nanobind::module_& m);
