@@ -2441,6 +2441,19 @@ def _squeeze_lowering_rule(ctx: LoweringRuleContext, x, dimensions):
   return _ensure_fa(x, x_aval.dtype).reshape(y_aval.shape)
 
 
+@register_lowering_rule(lax.squeeze_p, mgpu.LoweringSemantics.Warpgroup)
+def _squeeze_lowering_rule_wg(ctx: LoweringRuleContext, x, dimensions):
+  [x_aval] = ctx.avals_in
+  [y_aval] = ctx.avals_out
+  x = _ensure_ir_value(x, x_aval.dtype)
+  if y_aval.ndim == 0:  # scalar
+    # TODO(allanrenucci): Lower to `vector.extract` once we support scalar
+    # results in MGPU dialect lowering.
+    raise NotImplementedError("Squeeze to scalar is not supported.")
+  res_ty = ir.VectorType.get(y_aval.shape, ir.VectorType(x.type).element_type)
+  return vector_dialect.shape_cast(res_ty, x)
+
+
 def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):
   [x_aval] = ctx.avals_in
   match x.layout:

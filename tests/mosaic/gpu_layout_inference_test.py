@@ -1979,6 +1979,31 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module)
 
+  def test_infer_layout_for_vector_extract(self):
+    layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
+    with ir.InsertionPoint(self.module.body):
+      i16 = ir.IntegerType.get_signless(16)
+      src_ty = ir.VectorType.get([2, 3, 64, 8], i16)
+      [src] = undefs(src_ty)
+      src = mgpu.dialect.layout_cast(src, layout)
+      op = vector.ExtractOp(src, dynamic_position=[], static_position=[1, 1])
+    mgpu.infer_layout(self.module)
+    self.checkInLayouts(op, [layout])
+    self.checkOutLayouts(op, [layout])
+
+  def test_infer_layout_for_vector_extract_fails_if_not_dividing_result_shape(self):
+    layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
+    with ir.InsertionPoint(self.module.body):
+      i16 = ir.IntegerType.get_signless(16)
+      src_ty = ir.VectorType.get([64, 64], i16)
+      [src] = undefs(src_ty)
+      src = mgpu.dialect.layout_cast(src, layout)
+      vector.extract(src, dynamic_position=[], static_position=[0])
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts."
+    ):
+      mgpu.infer_layout(self.module)
+
   def test_infer_tmem_layout_for_slice_tmem_op(self):
     # in and out layouts can be different.
     in_layout = layouts.to_layout_attr(tcgen05.tmem_default_layout(packing=1))

@@ -1103,6 +1103,31 @@ def _extract_strided_slice_constraint_system(
   )
 
 
+@_add_constraint_system_derivation_rule(vector.ExtractOp)
+def _vector_extract_constraint_system(
+    ctx: DerivationContext, op: vector.ExtractOp
+) -> tuple[cs.ConstraintSystem, ValueSitesForVariable]:
+  del ctx
+  if not ir.VectorType.isinstance(op.result.type):
+    raise NotImplementedError("Scalar element extraction is not supported.")
+  if op.dynamic_position:
+    raise NotImplementedError("Only slicing with static indices allowed.")
+  operand = ValueSite(op, VariableType.OPERAND, 0)
+  result = ValueSite(op, VariableType.RESULT, 0)
+  variable = cs.Variable(operand)
+  constraints = [
+      cs.Divides(variable, tuple(op.result.type.shape)),
+      # TODO(allanrenucci): Remove once vectors with splat and strided layouts
+      # can be sliced.
+      cs.NotOfType(variable, fa.WGSplatFragLayout),
+      cs.NotOfType(variable, fa.WGStridedFragLayout),
+  ]
+  return (
+      cs.ConstraintSystem(constraints=constraints),
+      {variable: [operand, result]},
+  )
+
+
 @_add_constraint_system_derivation_rule(mgpu.CustomPrimitiveOp)
 def _custom_primitive_constraint_system(
     ctx: DerivationContext,

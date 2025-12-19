@@ -108,6 +108,22 @@ def _get_linearized_cuda_grid_index():
   return fn()
 
 
+def _array_splat(value, shape: tuple[int, ...]):
+  """Same as `jnp.full(shape, value, jnp.float32)` but implemented using `inline_mgpu`.
+
+  This is useful to prevent the result from being optimized away.
+  """
+  @plgpu.inline_mgpu(
+      return_type=plgpu.ShapeDtypeStruct(
+          shape, jnp.float32, layout=plgpu.Layout.WG_SPLAT(shape)
+      ),
+  )
+  def fn(_):
+    ir_value = mgpu.c(value, ir.F32Type.get())
+    return mgpu.FragmentedArray.splat(ir_value, shape)
+  return fn()
+
+
 class PallasTestMetaclass(parameterized.TestGeneratorMetaclass):
 
   def __new__(mcs, *args, lowering_semantics=plgpu.LoweringSemantics.Lane):
@@ -352,7 +368,6 @@ class PallasCallTest(PallasTest):
     )
 
   def test_slice_untiled_dim(self):
-    self.skip_if_wg_semantics()
     shape = (2, 3, 64, 8)
 
     @functools.partial(
@@ -360,11 +375,23 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct(shape[2:], jnp.float32),
     )
     def kernel(x_ref, out_ref):
-      y = plgpu.load(x_ref, (), layout=plgpu.Layout.WGMMA, optimized=False)[1, 1]
-      out_ref[...] = y
+      x = plgpu.load(x_ref, (), layout=plgpu.Layout.WGMMA, optimized=False)
+      out_ref[...] = x[1, 1]
 
     x = jnp.arange(math.prod(shape)).reshape(shape).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x[1, 1])
+
+  def test_squeeze_to_scalar(self):
+    self.skip_if_wg_semantics()  # Scalar element extraction is not supported for `vector.extract`.
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((), jnp.float32),
+    )
+    def kernel(out_ref):
+      x  = _array_splat(42, (1, 1, 1))
+      out_ref[...] = lax.squeeze(x, dimensions=(0, 1, 2))
+
+    np.testing.assert_array_equal(kernel(), jnp.array(42, dtype=jnp.float32))
 
   def test_add_xy_indexed(self):
     @functools.partial(
@@ -2863,7 +2890,6 @@ class PallasCallWGTest(
         pallas_primitives.semaphore_read_p,
         pallas_primitives.delay_p,
         checkify.check_p,
-        lax.squeeze_p,
     }
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)
