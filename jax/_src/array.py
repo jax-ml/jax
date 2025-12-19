@@ -376,9 +376,14 @@ class ArrayImpl(basearray.Array):
       raise TypeError("iteration over a 0-d array")  # same as numpy error
     else:
       assert self.is_fully_replicated or self.is_fully_addressable
-      if dispatch.is_single_device_sharding(self.sharding) or self.is_fully_replicated:
+      if dispatch.is_single_device_sharding(self.sharding):
         return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())
       elif isinstance(self.sharding, PmapSharding):
+        return (self[i] for i in range(self.shape[0]))
+      elif self.is_fully_replicated:
+        # For fully replicated multi-device arrays, use indexing to preserve
+        # the sharding (device set). _unstack doesn't preserve sharding
+        # through JIT compilation.
         return (self[i] for i in range(self.shape[0]))
       else:
         # TODO(yashkatariya): Don't bounce to host and use `_chunk_iter` path

@@ -1228,10 +1228,25 @@ log_checkpoint_residuals = bool_state(
           'partially evaluated (e.g. for autodiff), printing what residuals '
           'are saved.'))
 
+def _pmap_shmap_merge_hook(val):
+  if not val:
+    import warnings
+    warnings.warn(
+        'jax_pmap_shmap_merge=False is no longer supported. '
+        'This flag will be ignored and the value will remain True.',
+        DeprecationWarning, stacklevel=4)
+    # Force the value back to True. We might be in initialization, so we
+    # catch AttributeError which is raised if the option is not yet registered.
+    try:
+      config.update('jax_pmap_shmap_merge', True)
+    except AttributeError:
+      pass
+
 pmap_shmap_merge = bool_state(
     name='jax_pmap_shmap_merge',
     default=True,
     upgrade=True,
+    update_global_hook=_pmap_shmap_merge_hook,
     help='If True, pmap and shard_map API will be merged.')
 
 
@@ -1742,7 +1757,7 @@ traceback_filtering = enum_state(
     name = 'jax_traceback_filtering',
     enum_values=["off", "tracebackhide", "remove_frames", "quiet_remove_frames",
                  "auto"],
-    default="auto",
+    default="off",
     help="Controls how JAX filters internal frames out of tracebacks. Valid values are:\n"
          "- ``off``: disables traceback filtering.\n"
          "- ``auto``: use ``tracebackhide`` if running under a sufficiently "
