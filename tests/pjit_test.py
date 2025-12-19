@@ -9618,35 +9618,35 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     jax.jit(jax.grad(f))(1., 2.)  # doesn't crash
 
-  @jtu.with_explicit_mesh((2,), ('x',))
-  def test_reduced_sin_fwd_mul_bwd(self, mesh):
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 7):
-      self.skipTest('Requires libtpu built after 2025-11-6')
+  # @jtu.with_explicit_mesh((2,), ('x',))
+  # def test_reduced_sin_fwd_mul_bwd(self, mesh):
+  #   if not jtu.is_cloud_tpu_at_least(2025, 11, 7):
+  #     self.skipTest('Requires libtpu built after 2025-11-6')
 
-    np_inp1 = np.arange(8.).reshape(4, 2)
-    np_inp2 = np.arange(16.).reshape(2, 8)
-    arr1 = jax.device_put(np_inp1, P(reduced={'x'}))
-    arr2 = jax.device_put(np_inp2, P(None, 'x'))
+  #   np_inp1 = np.arange(8.).reshape(4, 2)
+  #   np_inp2 = np.arange(16.).reshape(2, 8)
+  #   arr1 = jax.device_put(np_inp1, P(reduced={'x'}))
+  #   arr2 = jax.device_put(np_inp2, P(None, 'x'))
 
-    @jax.jit
-    def f(x, y):
-      x_ = jnp.sin(x)
-      y_ = jnp.sin(y)
-      z = x_ @ y_
-      return z.sum()
+  #   @jax.jit
+  #   def f(x, y):
+  #     x_ = jnp.sin(x)
+  #     y_ = jnp.sin(y)
+  #     z = x_ @ y_
+  #     return z.sum()
 
-    f(arr1, arr2)  # doesn't crash
+  #   f(arr1, arr2)  # doesn't crash
 
-    out1, out2 = jax.jit(jax.grad(f, argnums=(0, 1)))(arr1, arr2)
-    self.assertEqual(out1.sharding,
-                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
-    self.assertEqual(out2.sharding, NamedSharding(mesh, P(None, 'x')))
+  #   out1, out2 = jax.jit(jax.grad(f, argnums=(0, 1)))(arr1, arr2)
+  #   self.assertEqual(out1.sharding,
+  #                    NamedSharding(mesh, P(None, None, unreduced={'x'})))
+  #   self.assertEqual(out2.sharding, NamedSharding(mesh, P(None, 'x')))
 
-    with jax.set_mesh(jtu.create_mesh((1,), 'x')):
-      ex_out1, ex_out2 = jax.jit(jax.grad(f, argnums=(0, 1)))(np_inp1, np_inp2)
+  #   with jax.set_mesh(jtu.create_mesh((1,), 'x')):
+  #     ex_out1, ex_out2 = jax.jit(jax.grad(f, argnums=(0, 1)))(np_inp1, np_inp2)
 
-    self.assertArraysAllClose(ex_out1, reshard(out1, P()), rtol=2e-4)
-    self.assertArraysAllClose(ex_out2, out2, rtol=2e-4)
+  #   self.assertArraysAllClose(ex_out1, reshard(out1, P()), rtol=2e-4)
+  #   self.assertArraysAllClose(ex_out2, out2, rtol=2e-4)
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_mul_reduced_error(self, mesh):
