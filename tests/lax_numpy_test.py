@@ -5789,13 +5789,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp.logaddexp2, args_maker, rtol=tol, atol=tol)
 
   def testDefaultDtypes(self):
-    precision = config.default_dtype_bits.value
-    assert precision in ['32', '64']
     self.assertEqual(jnp.bool_, np.bool_)
-    self.assertEqual(jnp.int_, np.int32 if precision == '32' else np.int64)
-    self.assertEqual(jnp.uint, np.uint32 if precision == '32' else np.uint64)
-    self.assertEqual(jnp.float_, np.float32 if precision == '32' else np.float64)
-    self.assertEqual(jnp.complex_, np.complex64 if precision == '32' else np.complex128)
+    self.assertEqual(jnp.int_, np.int64)
+    self.assertEqual(jnp.uint, np.uint64)
+    self.assertEqual(jnp.float_, np.float64)
+    self.assertEqual(jnp.complex_, np.complex128)
 
   def testFromBuffer(self):
     buf = b'\x01\x02\x03'

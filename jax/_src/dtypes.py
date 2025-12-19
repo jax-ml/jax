@@ -184,20 +184,10 @@ _intn_dtypes = [
 
 # Default types.
 bool_ = np.bool_
-int_: type[Any]
-uint: type[Any]
-float_: type[Any]
-complex_: type[Any]
-if config.default_dtype_bits.value == '32':
-  int_ = np.int32
-  uint = np.uint32
-  float_ = np.float32
-  complex_ = np.complex64
-else:
-  int_ = np.int64
-  uint = np.uint64
-  float_ = np.float64
-  complex_ = np.complex128
+int_: type[Any] = np.int64
+uint: type[Any] = np.uint64
+float_: type[Any] = np.float64
+complex_: type[Any] = np.complex128
 
 
 # Default dtypes. These are intended to have the same semantics as, say,
@@ -206,33 +196,23 @@ else:
 
 
 def default_int_dtype() -> DType:
-  return (
-      np.dtype(np.int64)
-      if config.enable_x64.value and config.default_dtype_bits.value == '64'
-      else np.dtype(np.int32)
-  )
+  return np.dtype(np.int64) if config.enable_x64.value else np.dtype(np.int32)
 
 
 def default_uint_dtype() -> DType:
-  return (
-      np.dtype(np.uint64)
-      if config.enable_x64.value and config.default_dtype_bits.value == '64'
-      else np.dtype(np.uint32)
-  )
+  return np.dtype(np.uint64) if config.enable_x64.value else np.dtype(np.uint32)
 
 
 def default_float_dtype() -> DType:
   return (
-      np.dtype(np.float64)
-      if config.enable_x64.value and config.default_dtype_bits.value == '64'
-      else np.dtype(np.float32)
+      np.dtype(np.float64) if config.enable_x64.value else np.dtype(np.float32)
   )
 
 
 def default_complex_dtype() -> DType:
   return (
       np.dtype(np.complex128)
-      if config.enable_x64.value and config.default_dtype_bits.value == '64'
+      if config.enable_x64.value
       else np.dtype(np.complex64)
   )
 

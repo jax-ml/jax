@@ -131,8 +131,7 @@ def to_default_dtype(arr: ArrayLike) -> np.ndarray:
   """Convert a value to an array with JAX's default dtype.
 
   This is generally used for type conversions of values returned by numpy functions,
-  to make their dtypes take into account the state of the ``jax_enable_x64`` and
-  ``jax_default_dtype_bits`` flags.
+  to make their dtypes take into account the state of the ``jax_enable_x64`` flag.
   """
   arr = np.asarray(arr)
   dtype_fn = _dtypes.default_types.get(arr.dtype.kind)
@@ -143,8 +142,7 @@ def with_jax_dtype_defaults(func: Callable[..., Any], use_defaults: bool = True)
 
   This is generally used to wrap numpy functions within tests, in order to make
   their default output dtypes match those of corresponding JAX functions, taking
-  into account the state of the ``jax_enable_x64`` and ``jax_default_dtype_bits``
-  flags.
+  into account the state of the ``jax_enable_x64`` flag.
 
   Args:
     use_defaults : whether to convert any given output to the default dtype. May be

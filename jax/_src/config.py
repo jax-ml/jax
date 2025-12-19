@@ -23,6 +23,7 @@ import logging
 import os
 import sys
 from typing import Any, Generic, NoReturn, Optional, Protocol, Type, TypeVar, cast
+import warnings
 
 from jax._src import deprecations
 from jax._src.lib import _jax
@@ -1527,25 +1528,23 @@ remove_custom_partitioning_ptr_from_cache_key = bool_state(
           'what they are trying to achieve should set it.'),
 )
 
-def _default_dtype_bits_deprecation(new_val):
-  if new_val != '64':
-    deprecations.warn(
-      'default-dtype-bits-config',
-      (
-        'The jax_default_dtype_bits configuration is deprecated in JAX v0.7.1'
-        ' and will be removed in JAX v0.9.0.'
-      ),
-      stacklevel=4
-    )
+def _default_dtype_bits_deprecation(val):
+  if val != '_default':
+    warnings.warn(
+        (
+          'The jax_default_dtype_bits configuration is deprecated in JAX v0.7.1'
+          ' and has no effect as of JAX v0.9.0. It will be removed in JAX v0.10.0.'
+        ),
+        category=DeprecationWarning,
+        stacklevel=4)
 
 
 default_dtype_bits = enum_state(
     name='jax_default_dtype_bits',
-    enum_values=['32', '64'],
-    default='64',
-    help=('[deprecated]. This flag was an experiment in allowing users to specify the'
-          ' default bit width. It was never fully supported or tested. It will '
-          ' have no effect after JAX v0.9.0, and be removed entirely in JAX v0.10.0.'),
+    enum_values=['_default', '32', '64'],
+    default='_default',
+    help=('[deprecated]. This has no effect starting with JAX v0.9.0, and'
+          ' will be removed in JAX v0.10.0.'),
     extra_validator=_default_dtype_bits_deprecation)
 
 

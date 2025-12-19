@@ -102,7 +102,7 @@ float64 = double = _make_scalar_type(np.float64)
 complex64 = csingle = _make_scalar_type(np.complex64)
 complex128 = cdouble = _make_scalar_type(np.complex128)
 
-int_ = int32 if dtypes.int_ == np.int32 else int64
-uint = uint32 if dtypes.uint == np.uint32 else uint64
-float_: Any = float32 if dtypes.float_ == np.float32 else float64
-complex_ = complex64 if dtypes.complex_ == np.complex64 else complex128
+int_ = int64
+uint = uint64
+float_ = float64
+complex_ = complex128
