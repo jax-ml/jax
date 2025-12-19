@@ -19,7 +19,7 @@ kernelspec:
 
 In this tutorial, you will learn how to control JAX automatic differentiation's saved values using {func}`jax.checkpoint` (also known as {func}`jax.remat`), which can be particularly helpful in machine learning.
 
-If you are new to automatic differentiation (autodiff) or need to refresh your memory, JAX has {ref}`automatic-differentiation` and {ref}`advanced-autodiff` tutorials.
+If you are new to automatic differentiation (autodiff) or need to refresh your memory, JAX has an {ref}`automatic-differentiation` tutorial and several {ref}`Advanced automatic differentiation guides <advanced_guides>`.
 
 **TL;DR** Use the {func}`jax.checkpoint` decorator (aliased as {func}`jax.remat`) with {func}`jax.grad` to control which intermediates are saved on the forward pass versus the recomputed intermediates on the backward pass, trading off memory and FLOPs.
 
@@ -144,7 +144,7 @@ print_fwd_bwd(f3, W1, W2, W3, x)
 
 ### Let's think step by step
 
-**Note:** It may help to check out the {ref}`advanced-autodiff` tutorial prior to continuing here.
+**Note:** It may help to check out the {ref}`"Advanced automatic differentiation" guides <advanced_guides>` prior to continuing here.
 
 #### `jax.checkpoint` fundamentals
 
