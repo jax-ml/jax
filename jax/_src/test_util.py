@@ -262,13 +262,6 @@ def event_listener(name, *args):
   elif name == "batched_device_put_end":
     thread_local_state.nested_device_put_count -= 1
 
-  elif name == "pjit._infer_params_impl":
-    # For infer_params, we collect per-function data, but only while a context
-    # manager is active.
-    infer_counts = thread_local_state.infer_params_fun_counts
-    if infer_counts is not None:
-      (fun,) = args
-      infer_counts[fun] += 1
   elif name == "lower_jaxpr_to_fun":
     # For infer_params, we collect per-function data, but only while a context
     # manager is active.
