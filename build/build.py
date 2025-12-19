@@ -627,7 +627,7 @@ async def main():
       logging.debug("Hermetic NCCL version: %s", args.nccl_version)
       wheel_build_command_base.append(
           f"--repo_env=HERMETIC_NCCL_VERSION={args.nccl_version}"
-      )      
+      )
     if args.cuda_compute_capabilities:
       logging.debug(
           "Hermetic CUDA compute capabilities: %s",
