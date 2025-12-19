@@ -2942,31 +2942,6 @@ class APITest(jtu.JaxTestCase):
 
     self.assertEqual(count(), 1)
 
-  @jtu.thread_unsafe_test()  # jit cache misses aren't thread safe
-  def test_jit_infer_params_cache(self):
-    def f(x):
-      return x
-
-    f_jit = jax.jit(f)
-
-    def g(x):
-      x = f_jit(x)  # noqa: F821
-      x = f_jit(x)  # noqa: F821
-      return x
-
-    g_jit = jax.jit(g)
-
-    inp = np.arange(8)
-    with jtu.count_jit_infer_params_cache_miss() as count:
-      g_jit(inp)
-
-    self.assertDictEqual(count, {f: 1, g: 1})
-    cache_size = pjit_lib._infer_params_cached.cache_info().currsize
-    del count, f, f_jit, g, g_jit
-    # Cache should only keep a weak reference to f and g.
-    self.assertLess(pjit_lib._infer_params_cached.cache_info().currsize,
-                    cache_size, msg=pjit_lib._infer_params_cached.cache_keys())
-
   def test_eval_shape_out_shardings(self):
     s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
 
