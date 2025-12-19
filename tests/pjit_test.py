@@ -363,6 +363,21 @@ class PJitTest(jtu.BufferDonationTestCase):
     jax.tree.map(self.assertDeleted, y_tree)
     jax.tree.map(self.assertNotDeleted, z_tree)
 
+
+  @jtu.run_on_devices('cpu', 'gpu', 'tpu')
+  def testBufferDonationWithConstants(self):
+    const = jnp.arange(4, dtype=np.float32)
+
+    @partial(jax.jit, donate_argnums=(0,))
+    def fun_with_const(carry, x):  # carry is donated, but it is also const
+      carry += const
+      return carry, x
+
+    zeros = np.zeros(const.shape, dtype=const.dtype)
+    carry_out, res = fun_with_const(const, zeros)
+    jax.tree.map(self.assertDeleted, const)
+
+
   @jtu.run_on_devices('tpu', 'cpu', 'gpu')
   def testBufferDonationWithOutputShardingInference(self):
     mesh = jtu.create_mesh((2,), 'x')

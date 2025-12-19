@@ -2160,7 +2160,6 @@ def hoist_constants_as_args(
     ca_layouts = pjit.const_args_layouts(const_args, const_arg_avals,
                                           ca_shardings)
     in_layouts = ca_layouts + in_layouts  # type: ignore
-
     donated_invars = (False,) * num_const_args + donated_invars
     kept_var_idx = set(range(num_const_args)).union(
         {kv + num_const_args for kv in kept_var_idx})

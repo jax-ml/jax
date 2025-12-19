@@ -26,6 +26,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src import ad_util
 from jax._src.util import safe_zip, safe_map, split_list
+from jax._src import traceback_util
 from jax._src.tree_util import tree_flatten, tree_unflatten, tree_leaves, tree_map
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -382,6 +383,8 @@ class VJPHiPrimitive:
     raise NotImplementedError(f"for jvp support, subclass {type(self)} must "
                               "implement `jvp`")
 
+  @partial(traceback_util.api_boundary,
+           repro_api_name="hijax.VJPHiPrimitive.__call__.trampoline")
   def __call__(self, *args):
     args_flat = tree_leaves_checked(self.in_tree, args)
     ans_flat = call_hi_primitive_p.bind(*args_flat, prim=self)
