@@ -72,4 +72,5 @@ bazel test --config=rbe_linux_x86_64_cuda${JAXCI_CUDA_VERSION} \
       --//jax:build_jax=$JAXCI_BUILD_JAX \
       //tests:gpu_tests //tests:backend_independent_tests \
       //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests \
+      //jaxlib/tools:check_gpu_wheel_sources_test \
       $WHEEL_SIZE_TESTS

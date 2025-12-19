@@ -115,8 +115,6 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     -- \
     //tests:tpu_tests \
     //tests/pallas:tpu_tests \
-    //tests/pallas:tpu_pallas_test_tpu \
-    //tests/pallas:ops_test_tpu \
     $IGNORE_TESTS
 
   # Store the return value of the first bazel command.
@@ -144,7 +142,6 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     -- \
     //tests:tpu_tests \
     //tests/pallas:tpu_tests \
-    //tests/pallas:tpu_pallas_test_tpu \
     //tests/multiprocess:tpu_tests \
     $IGNORE_TESTS_MULTIACCELERATOR
 
@@ -177,6 +174,7 @@ else
     --verbose_failures \
     --test_output=errors \
     -- \
+    //jaxlib/tools:check_tpu_wheel_sources_test \
     //tests/pallas:ops_test_tpu \
     //tests/pallas:export_back_compat_pallas_test_tpu \
     //tests/pallas:export_pallas_test_tpu \

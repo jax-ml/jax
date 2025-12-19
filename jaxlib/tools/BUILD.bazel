@@ -31,6 +31,8 @@ load(
 load(
     "//jaxlib:jax.bzl",
     "PLATFORM_TAGS_DICT",
+    "compare_srcs_and_test_deps_test",
+    "get_test_suite_list",
     "if_pypi_cuda_wheel_deps",
     "jax_py_test",
     "jax_wheel",
@@ -631,5 +633,94 @@ pytype_test(
     tags = [
         "manual",
         "notap",
+    ],
+)
+
+_IGNORED_INIT_PY_FILES = [
+    # This file is copied as `__init__.py` in the root wheel folder.
+    "jaxlib/__init__.py",
+    # These files are not included in the JAX wheel because they belong to LLVM.
+    "jaxlib/mlir/__init__.py",
+    "jaxlib/mlir/dialects/__init__.py",
+    "jaxlib/mlir/extras/__init__.py",
+    # These files do not exist in the sources.
+    "jaxlib/mosaic/dialect/gpu/__init__.py",
+    "jaxlib/mosaic/python/__init__.py",
+]
+
+compare_srcs_and_test_deps_test(
+    name = "check_cpu_wheel_sources_test",
+    testonly = True,
+    ignored_init_py_files = _IGNORED_INIT_PY_FILES,
+    tags = [
+        "manual",
+        "notap",
+    ],
+    tests = [
+        "//jax/experimental/jax2tf/tests:jax2tf_test_cpu",
+    ] + get_test_suite_list(
+        backends = ["cpu"],
+        paths = [
+            "jax/experimental/jax2tf/tests/multiprocess",
+            "tests",
+            "tests/mosaic",
+            "tests/multiprocess",
+            "tests/pallas",
+        ],
+    ),
+    wheel_additives = ["//:wheel_additives"],
+    wheel_sources = [
+        ":jaxlib_sources",
+        "//:jax_sources",
+    ],
+)
+
+compare_srcs_and_test_deps_test(
+    name = "check_gpu_wheel_sources_test",
+    testonly = True,
+    ignored_init_py_files = _IGNORED_INIT_PY_FILES,
+    tags = [
+        "manual",
+        "notap",
+    ],
+    tests = get_test_suite_list(
+        backends = ["gpu"],
+        paths = [
+            "jax/experimental/jax2tf/tests/multiprocess",
+            "tests",
+            "tests/mosaic",
+            "tests/multiprocess",
+            "tests/pallas",
+        ],
+    ),
+    wheel_additives = ["//:wheel_additives"],
+    wheel_sources = [
+        ":jaxlib_sources",
+        "//:jax_sources",
+        ":jax_plugin_sources",
+        ":jax_pjrt_sources",
+    ],
+)
+
+compare_srcs_and_test_deps_test(
+    name = "check_tpu_wheel_sources_test",
+    testonly = True,
+    ignored_init_py_files = _IGNORED_INIT_PY_FILES,
+    tags = [
+        "manual",
+        "notap",
+    ],
+    tests = get_test_suite_list(
+        backends = ["tpu"],
+        paths = [
+            "tests",
+            "tests/multiprocess",
+            "tests/pallas",
+        ],
+    ),
+    wheel_additives = ["//:wheel_additives"],
+    wheel_sources = [
+        ":jaxlib_sources",
+        "//:jax_sources",
     ],
 )

@@ -112,4 +112,5 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     //jax/experimental/jax2tf/tests:jax2tf_test_cpu \
     //tests/multiprocess:cpu_tests \
     //jax/experimental/jax2tf/tests/multiprocess:cpu_tests \
+    //jaxlib/tools:check_cpu_wheel_sources_test \
     $IGNORE_TESTS
