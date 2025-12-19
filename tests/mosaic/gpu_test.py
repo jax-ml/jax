@@ -3839,6 +3839,29 @@ class FragmentedArrayTest(TestCase):
     out_ref = jax.lax.broadcast_in_dim(inp, (m, n), (1,))
     np.testing.assert_array_equal(result, out_ref)
 
+  @parameterized.parameters(
+      ((128), (4, 128)),
+      ((1, 128), (2, 128)),
+      ((1, 128), (4, 128)),
+      ((1, 256), (2, 256)),
+      ((128, ), (1, 3, 1, 2, 4, 128)),
+      ((1, 1, 128,), (1, 3, 1, 2, 4, 128)),
+      ((1, 1, 1, 1, 1, 128,), (1, 3, 1, 2, 4, 128)),
+      ((2, 4, 128,), (1, 3, 1, 2, 4, 128)),
+      ((1, 1, 1, 2, 4, 128,), (1, 3, 1, 2, 4, 128)),
+      ((2, 8, 8), (2, 8, 8)),
+  )
+  def test_broadcast_major_strided(self, in_shape, out_shape):
+    dtype = jnp.float16
+    def kernel(ctx, gmem_input, gmem_output, _):
+      t = mgpu.FragmentedArray.load_strided(gmem_input, vec_size=1)
+      t.broadcast(out_shape).store_untiled(gmem_output, optimized=False)
+    inp = self.prng.uniform(-1, 1, in_shape).astype(dtype)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (inp,), jax.ShapeDtypeStruct(out_shape, dtype), inp
+    )(inp)
+    np.testing.assert_array_equal(result, jnp.broadcast_to(inp, out_shape))
+
   @parameterized.parameters(*mtu.RegisterLayout)
   def test_broadcast_splat(self, layout):
     out_shape = (128, 128)

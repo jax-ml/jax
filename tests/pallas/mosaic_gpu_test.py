@@ -2486,6 +2486,32 @@ class PallasCallTest(PallasTest):
     result = jax.random.uniform(jax.random.key(0), shape=(128,), dtype=jnp.float32)
     np.testing.assert_array_equal(kernel(result), jnp.broadcast_to(result[None,:], (256, 128)))
 
+  @parameterized.parameters(
+      ((4, 128),),
+      ((2, 4, 128),),
+  )
+  def test_broadcast_wg_strided_majormost_dim(self, out_shape):
+    self.skip_if_wg_semantics()  # Lowering not implemented.
+    dtype = jnp.float32
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct(out_shape, dtype)
+    )
+    def kernel(x_ref, side_load_ref, y_ref):
+      x_strided = plgpu.load(
+          x_ref, (), layout=plgpu.Layout.WG_STRIDED((128,), vec_size=1)
+      )
+      side_load_strided = plgpu.load(
+          side_load_ref, (), layout=plgpu.Layout.WG_STRIDED(out_shape, vec_size=1)
+      )
+      for _ in range(len(out_shape) - 1):
+        x_strided = x_strided[None, ...]
+      y_ref[...] = x_strided + side_load_strided[...]
+
+    inp = jax.random.uniform(jax.random.key(0), (128,), dtype)
+    side_load = jax.random.uniform(jax.random.key(1), out_shape, dtype)
+    np.testing.assert_array_equal(kernel(inp, side_load),
+                                  jnp.broadcast_to(inp, out_shape) + side_load)
+
   def test_broadcast_in_dim_tcgen05_native_layout(self):
     @functools.partial(
         self.kernel,

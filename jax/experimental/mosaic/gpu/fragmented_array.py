@@ -2454,6 +2454,38 @@ class FragmentedArray:
     )
 
   def broadcast(self, shape) -> FragmentedArray:
+    if isinstance(self.layout, WGStridedFragLayout):
+      src_shape, dst_shape = self.layout.shape, shape
+      if len(src_shape) > len(dst_shape):
+        raise ValueError(
+            f"Shape length mismatch. Expected len({src_shape}) <= len({dst_shape})"
+        )
+      if not all(s == 1 or s == d for s, d in zip(src_shape[::-1], dst_shape[::-1])):
+        raise ValueError(
+            "Can broadcast if all source dimensions match trailing target"
+            " dimensions by being equal or set to 1. Broadcasting from"
+            f" {src_shape} to {dst_shape}"
+        )
+      rank_diff = len(dst_shape) - len(src_shape)
+      src_shape = tuple([1] * rank_diff + list(src_shape))
+
+      assert len(src_shape) == len(dst_shape), (src_shape, dst_shape)
+      len_suffix = next(
+          (i for i in range(len(src_shape)) if src_shape[~i] != dst_shape[~i]),
+          len(src_shape)
+      )
+      if len_suffix > 0 and all(x == 1 for x in src_shape[:-len_suffix]):
+        return FragmentedArray(
+            _registers=np.tile(self.registers, np.prod(dst_shape[:-len_suffix])),
+            _layout=WGStridedFragLayout(shape, self.layout.vec_size),
+            _is_signed=self.is_signed,
+        )
+
+      raise NotImplementedError(
+          "Only major-most broadcast for WGStridedFragLayout is implemented."
+          f" Broadcasting from: {src_shape}, to: {dst_shape}."
+      )
+
     if not isinstance(self.layout, WGSplatFragLayout):
       raise NotImplementedError(self.layout)
 
