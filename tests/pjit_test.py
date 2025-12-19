@@ -62,7 +62,6 @@ from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
-from jax._src.lib import ifrt_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -9620,8 +9619,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_reduced_sin_fwd_mul_bwd(self, mesh):
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 7):
-      self.skipTest('Requires libtpu built after 2025-11-6')
 
     np_inp1 = np.arange(8.).reshape(4, 2)
     np_inp2 = np.arange(16.).reshape(2, 8)
@@ -9748,10 +9745,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_sharded_unreduced_roundtrip(self, shape, orig_spec, un_spec, mesh):
-    if ifrt_version < 40:
-      self.skipTest('Requires ifrt_version >= 40')
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 15):
-      self.skipTest('Requires libtpu built after 2025-12-15')
     np1 = np.arange(math.prod(shape)).reshape(shape)
     arr = jax.device_put(np1, orig_spec)
 
@@ -9768,10 +9761,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   @jtu.with_explicit_mesh((2,), 'x')
   def test_one_input_sharded_another_reduced(self, func, mesh):
-    if ifrt_version < 40:
-      self.skipTest('Requires ifrt_version >= 40')
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 15):
-      self.skipTest('Requires libtpu built after 2025-12-15')
     np1 = np.arange(8.)
     arr1 = jax.device_put(np1, P('x'))
     arr2 = jax.device_put(np1, P(None, reduced={'x'}))
@@ -9802,10 +9791,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduced_reshard_unreduced_bwd(self, mesh):
-    if ifrt_version < 40:
-      self.skipTest('Requires ifrt_version >= 40')
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 15):
-      self.skipTest('Requires libtpu built after 2025-12-15')
     np1 = np.arange(4.)
     arr = jax.device_put(np1, P(None, reduced={'x'}))
 
@@ -9833,10 +9818,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduced_reshard_unreduced_bwd_sharded(self, mesh):
-    if ifrt_version < 40:
-      self.skipTest('Requires ifrt_version >= 40')
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 15):
-      self.skipTest('Requires libtpu built after 2025-12-15')
     np1 = np.arange(8.).reshape(4, 2)
     arr = jax.device_put(np1, P('x', None, reduced={'y'}))
 

@@ -531,8 +531,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   def test_gather_1d_with_dynamically_sized_2d_ref(self):
     self.skip_if_tc_tiling()
-    if not jtu.is_cloud_tpu_at_least(2025, 10, 22):
-      self.skipTest("Needs a newer libtpu")
 
     x = jnp.arange(16)
     indices = jax.random.permutation(
@@ -752,8 +750,6 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_store_scatter_2d(self):
-    if not jtu.is_cloud_tpu_at_least(2025, 10, 31):
-      self.skipTest("Needs a newer libtpu")
 
     num_steps = 4
     x = jnp.arange(num_steps * 8).reshape(num_steps, 8)
@@ -1075,8 +1071,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(sizes=[[1, 1], [2, 2], [1, 1, 1, 1]])
   def test_split_concatenate(self, sizes):
-    if not jtu.is_cloud_tpu_at_least(2025, 10, 26):
-      self.skipTest("Test requires a newer libtpu")
 
     shape = (sum(sizes), 8)
     x = jnp.arange(math.prod(shape)).reshape(-1, 8)
@@ -1366,9 +1360,6 @@ class VectorSubcoreTest(PallasSCTest):
       kernel(x)
 
   def test_multiple_of(self):
-    if not jtu.is_cloud_tpu_at_least(2025, 10, 16):
-      self.skipTest("Test requires a newer libtpu")
-
     x = jnp.arange(16)
 
     @self.vector_subcore_kernel(out_shape=x)
@@ -1408,9 +1399,6 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(), expected)
 
   def test_barrier_via_pallas_call(self):
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 22):
-      self.skipTest("Test requires a newer libtpu")
-
     self.skip_if_tc_tiling()
 
     mesh = plsc.VectorSubcoreMesh(
@@ -1605,9 +1593,6 @@ class VectorSubcoreTest(PallasSCTest):
       ("exp", jnp.exp), ("neg", lambda x: -x), ("abs", jnp.abs)
   )
   def test_unary_ops(self, op):
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 30):
-      self.skipTest("Test requires a newer libtpu")
-
     x = jnp.arange(8, dtype=jnp.float32)
 
     @self.vector_subcore_kernel(out_shape=x)
@@ -1618,9 +1603,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[np.int32, np.float32])
   def test_vector_gather(self, dtype):
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 2):
-      self.skipTest("Test requires a newer libtpu")
-
     vec_dim = self.sc_info.num_lanes
     x = np.arange(vec_dim, dtype=dtype)
     indices = np.random.randint(0, vec_dim, size=vec_dim, dtype=np.int32)
@@ -1640,9 +1622,6 @@ class VectorSubcoreTest(PallasSCTest):
       descending=[False, True],
   )
   def test_sort_key_val(self, keys_dtype, values_dtype, use_mask, descending):
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 2):
-      self.skipTest("Test requires a newer libtpu")
-
     vec_dim = self.sc_info.num_lanes
     keys = np.arange(vec_dim, dtype=keys_dtype)
     np.random.shuffle(keys)
@@ -1685,9 +1664,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[np.int32, np.float32])
   def test_rev_and_sort_desc(self, dtype):
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 2):
-      self.skipTest("Test requires a newer libtpu")
-
     vec_dim = self.sc_info.num_lanes
     keys = np.arange(vec_dim, dtype=dtype)
     np.random.shuffle(keys)
@@ -1707,9 +1683,6 @@ class VectorSubcoreTest(PallasSCTest):
       values_dtypes=[(), (np.int32,), (np.float32, np.int32)],
   )
   def test_sort(self, keys_dtype, values_dtypes):
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 30):
-      self.skipTest("Test requires a newer libtpu")
-
     vec_dim = self.sc_info.num_lanes
     keys = np.arange(vec_dim, dtype=keys_dtype)
     np.random.shuffle(keys)
@@ -1906,8 +1879,6 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
 
   def setUp(self):
     super().setUp()
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 14):
-      self.skipTest("Needs a newer libtpu")
 
   @parameterized.product(
       shape=[
@@ -1925,8 +1896,6 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
       dtype=[jnp.int32, jnp.float32, jnp.bfloat16],
   )
   def test_basic_async_kernel(self, shape, dtype):
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 8):
-      self.skipTest("Need newer libtpu")
     x = jnp.arange(shape[0] * shape[1], dtype=dtype).reshape(shape)
 
     @jax.jit

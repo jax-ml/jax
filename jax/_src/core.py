@@ -895,7 +895,7 @@ def _aval_property(name):
   return property(lambda self: getattr(self.aval, name))
 
 
-if TYPE_CHECKING or jaxlib_extension_version < 388:
+if TYPE_CHECKING:
   # We want Python type checkers to accept `some_tracer: jax.Array`, even though
   # tracers can represent non-arrays. That is, ideally we would only accept that
   # annotation when the Tracer instance has a ShapedArray aval, but we can't

@@ -1928,12 +1928,6 @@ class PallasCallTest(ptu.PallasTPUTest):
     reduce_value = jnp.sum(jnp.full(shape, x), dtype=dty)
     np.testing.assert_allclose(z, reduce_value)
 
-    if not jtu.is_cloud_tpu_at_least(2025, 10, 12):
-      self.skipTest(
-          'New CompilerParams shape_invariant_numerics was added on Oct 12,'
-          ' 2025'
-      )
-
     @jax.jit
     def reduce_with_shape_invariant_numerics():
       return self.pallas_call(
@@ -2038,12 +2032,6 @@ class PallasCallTest(ptu.PallasTPUTest):
     dilated_x = jnp.broadcast_to(x, (m, m))
     expected = reduce_func(dilated_x, axis=reduced_dims).reshape(red_shape)
     np.testing.assert_allclose(y, expected)
-
-    if not jtu.is_cloud_tpu_at_least(2025, 10, 12):
-      self.skipTest(
-          'New CompilerParams shape_invariant_numerics was added on Oct 12,'
-          ' 2025'
-      )
 
     @jax.jit
     def reduce_with_shape_invariant_numerics(x):
@@ -2169,8 +2157,6 @@ class PallasCallTest(ptu.PallasTPUTest):
       pl.Buffered(2),
   ])
   def test_vmem_oom_error_message_basics(self, pmode: pl.Buffered):
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 12):
-      self.skipTest('Support added on Nov 12, 2025')
 
     if jtu.is_device_tpu(version=5, variant='e') or jtu.is_device_tpu(
         version=6, variant='e'
@@ -2232,8 +2218,6 @@ class PallasCallTest(ptu.PallasTPUTest):
   ):
     if jax.device_count() > 1:
       self.skipTest("Test only works with a single device.")
-    if not jtu.is_cloud_tpu_at_least(2025, 10, 14):
-      self.skipTest('Support added on Oct 14, 2025')
 
     def body(s_ref, x_hbm_ref, o_hbm_ref, vmem_scratch_ref):
       del s_ref, vmem_scratch_ref
@@ -2283,8 +2267,6 @@ class PallasCallTest(ptu.PallasTPUTest):
   def test_automatic_single_buffering(self,):
     if self.INTERPRET:
       self.skipTest('OOM tests need us to compile the kernels')
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 12):
-      self.skipTest('Support added on Oct 14, 2025')
 
     def body(*_):
       pass  # We only want to compile the kernel.
@@ -2577,9 +2559,6 @@ class PallasCallTest(ptu.PallasTPUTest):
     def kernel(x_ref, y_ref):
       y_ref[0] = x_ref[0] + x_ref[0]
 
-    if not jtu.is_cloud_tpu_at_least(2025, 9, 13):
-      self.skipTest('Scalar integer addition support was added on Sep 13, 2025')
-
     x = jnp.asarray([3], dtype=dtype)
 
     if dtype in [jnp.int32, jnp.uint32]:
@@ -2616,9 +2595,6 @@ class PallasCallTest(ptu.PallasTPUTest):
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...] + x_ref[...]
 
-    if not jtu.is_cloud_tpu_at_least(2025, 9, 15):
-      self.skipTest('Descriptive message was added on Sep 15, 2025')
-
     x = jnp.full((128, 16), 7, dtype=dtype)
 
     if dtype in [jnp.int32, jnp.uint32, jnp.int16, jnp.uint16]:
@@ -2650,9 +2626,6 @@ class PallasCallTest(ptu.PallasTPUTest):
     def kernel(x_ref, y_ref):
       y_ref[0] = jnp.maximum(x_ref[0], x_ref[1])
 
-    if not jtu.is_cloud_tpu_at_least(2025, 9, 20):
-      self.skipTest('Support added on Sep 20, 2025')
-
     x = jnp.asarray([242, 87], dtype=dtype)
 
     y = pl.pallas_call(
@@ -2671,9 +2644,6 @@ class PallasCallTest(ptu.PallasTPUTest):
   def test_min_operation(self, dtype):
     def kernel(x_ref, y_ref):
       y_ref[0] = jnp.minimum(x_ref[0], x_ref[1])
-
-    if not jtu.is_cloud_tpu_at_least(2025, 9, 20):
-      self.skipTest('Support added on Sep 20, 2025')
 
     x = jnp.asarray([242, 87], dtype=dtype)
 
@@ -2700,9 +2670,6 @@ class PallasCallTest(ptu.PallasTPUTest):
   def test_bool_select_operation(self, dtype):
     def kernel(condlist, choicelist, out_ref):
       out_ref[...] = jnp.where(condlist[...], choicelist[...], 0)
-
-    if not jtu.is_cloud_tpu_at_least(2025, 10, 15):
-      self.skipTest('Support added on Oct 15, 2025')
 
     if dtype in [jnp.int4, jnp.uint4] and not jtu.is_device_tpu_at_least(4):
       self.skipTest('i4 is not supported on TPU generations <= 3')
@@ -2741,9 +2708,6 @@ class PallasScalarIOpsTest(ptu.PallasTPUTest):
 
   def _integer_ops_canonicalization_helper(self, kernel, result, dtype):
     """For integer scalar ops, only i1 and i32 are supported."""
-    if not jtu.is_cloud_tpu_at_least(2025, 9, 27):
-      self.skipTest('Error message was changed on Sep 27, 2025')
-
     x = jnp.arange(3, dtype=dtype)
 
     if dtype in [jnp.int32, jnp.uint32]:
@@ -3502,8 +3466,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_casting_bool_to_i8(self):
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest("Operation not supported on this TPU version.")
-    if not jtu.is_cloud_tpu_at_least(2025, 9, 12):
-      self.skipTest("Needs a newer libtpu")
 
     def greater_than(x: jax.Array, y: jax.Array):
       def kernel(x_ref, y_ref, out_ref):
@@ -3545,8 +3507,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(out, np.stack([x, y], axis=1))
 
   def test_lane_to_chunk_reshape_bf16(self):
-    if not jtu.is_cloud_tpu_at_least(2025, 7, 12):
-      self.skipTest('Needs a newer libTPU')
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('Operation not supported on this TPU version.')
     x = np.arange(256 * 1024, dtype=jnp.bfloat16).reshape(1, 256, 1024)
@@ -3617,12 +3577,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_roll_partial_with_static_shift(
       self, shape: tuple[int, int], shift: int, axis: int
   ):
-    if (
-        not jtu.is_cloud_tpu_at_least(2025, 7, 19)
-        and shape[0] % 8
-        and axis == 0
-    ):
-      self.skipTest('Needs a newer libtpu for non-sublane-aligned shape')
     x = np.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
 
     def kernel(x_ref, out_ref):
@@ -3654,8 +3608,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )(x)
 
   def test_retiling1(self):
-    if not jtu.is_cloud_tpu_at_least(2025, 7, 2):
-      self.skipTest('Needs a newer libtpu')
     x = np.arange(1024, dtype=jnp.bfloat16).reshape(1024)
 
     def kernel(x_ref, out_ref):
@@ -3684,8 +3636,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(out, np.reshape(x[:, 7, :], (1, 8, 128)))
 
   def test_sublane_adding_shape_cast_f32(self):
-    if not jtu.is_cloud_tpu_at_least(2025, 7, 12):
-      self.skipTest('Needs a newer libTPU')
     x = np.arange(8 * 128, dtype=jnp.float32).reshape(8, 128)
 
     def kernel(x_ref, out_ref):
@@ -3698,8 +3648,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(out, np.reshape(x, (8, 1, 128)))
 
   def test_sublane_adding_shape_cast_bf16(self):
-    if not jtu.is_cloud_tpu_at_least(2025, 7, 12):
-      self.skipTest('Needs a newer libTPU')
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('Operation not supported on this TPU version.')
     x = np.arange(8 * 128, dtype=jnp.bfloat16).reshape(8, 128)
@@ -3742,9 +3690,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(out, np.zeros((8, 2, 128), dtype=jnp.float32))
 
   def test_transpose(self):
-    if not jtu.is_cloud_tpu_at_least(2025, 9, 19):
-      self.skipTest('Needs a newer libTPU')
-
     x = np.zeros((8, 2, 8, 128), dtype=jnp.float32)
 
     def kernel(x_ref, out_ref):
@@ -3763,9 +3708,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       (5, 1, 4096, jnp.int8),
   )
   def test_1d_tiling_major_minor_transpose(self, q, m, n, dtype):
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 10):
-      self.skipTest('Needs a newer libTPU')
-
     in_shape = (q, n)
     mid_shape = (q, m, n)
     out_shape = (m, q, n)
@@ -3799,8 +3741,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_two_minor_dims_to_R2(self, q, m, n, dtype):
-    if not jtu.is_cloud_tpu_at_least(2025, 7, 12):
-      self.skipTest('Needs a newer libTPU')
     if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
         dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
     ):
@@ -3835,8 +3775,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_two_minor_dims_to_R3(self, q, m, n, k, dtype):
-    if not jtu.is_cloud_tpu_at_least(2025, 7, 12):
-      self.skipTest('Needs a newer libTPU')
     if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
         dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
     ):
@@ -3941,8 +3879,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_four_minor_dims_to_R2(self, p, q, m, n, k, dtype):
-    if not jtu.is_cloud_tpu_at_least(2025, 7, 12):
-      self.skipTest('Needs a newer libTPU')
     if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
         dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
     ):
@@ -3971,8 +3907,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_two_minor_dims_preserve_rank(self, q, m, n, k, dtype):
-    if not jtu.is_cloud_tpu_at_least(2025, 7, 12):
-      self.skipTest('Needs a newer libTPU')
     if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
         dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
     ):
@@ -4013,8 +3947,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_fold_two_leading_dims_and_two_minor_dims_R4_to_R2(
       self, q, m, n, k, dtype
   ):
-    if not jtu.is_cloud_tpu_at_least(2025, 7, 12):
-      self.skipTest('Needs a newer libTPU')
     if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
         dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
     ):
@@ -4046,8 +3978,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_unfold_leading_dim_and_fold_two_minor_dims_R3_to_R3(
       self, q, m, n, k, dtype
   ):
-    if not jtu.is_cloud_tpu_at_least(2025, 7, 12):
-      self.skipTest('Needs a newer libTPU')
     if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
         dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
     ):
@@ -4081,8 +4011,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_unfold_leading_and_minor_dims_R2_to_R4(
       self, q, m, n, k, dtype
   ):
-    if not jtu.is_cloud_tpu_at_least(2025, 7, 12):
-      self.skipTest('Needs a newer libTPU')
     if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
         dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
     ):
@@ -4112,8 +4040,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_fold_leading_dims_and_unfold_minor_dim(
       self, q, m, n, k, dtype
   ):
-    if not jtu.is_cloud_tpu_at_least(2025, 7, 12):
-      self.skipTest('Needs a newer libTPU')
     if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
         dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
     ):
@@ -4141,8 +4067,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_fold_middle_dims(self, q, m, n, k, dtype):
-    if not jtu.is_cloud_tpu_at_least(2025, 7, 12):
-      self.skipTest('Needs a newer libTPU')
     if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
         dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
     ):
@@ -4170,8 +4094,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_unfold_middle_dims(self, q, m, n, k, dtype):
-    if not jtu.is_cloud_tpu_at_least(2025, 7, 12):
-      self.skipTest('Needs a newer libTPU')
     if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
         dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
     ):
@@ -4188,8 +4110,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
 
   @parameterized.parameters([jnp.int8, jnp.bfloat16, jnp.float32])
   def test_reshape_shift_factor_from_minor_to_major(self, dtype):
-    if not jtu.is_cloud_tpu_at_least(2025, 7, 12):
-      self.skipTest('Needs a newer libTPU')
     if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
         dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
     ):
@@ -4210,9 +4130,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       dtype=[jnp.float32, jnp.bfloat16, jnp.float8_e4m3fn],
   )
   def test_reshape_fold_minormost_dim(self, dtype):
-    if not jtu.is_cloud_tpu_at_least(2025, 10, 22):
-      self.skipTest('Needs a newer libTPU')
-
     packing = 32 // (8 * np.dtype(dtype).itemsize)
     in_shape = (8 * packing, 128)
     out_shape = (1, math.prod(in_shape))
@@ -4231,8 +4148,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_dynamic_grid_with_smem_output(self):
     if self.INTERPRET:
       self.skipTest('Fail on interpreter.')
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 3):
-      self.skipTest('Needs a newer libTPU')
 
     def body(_, o_ref):
       o_ref[0] = lax.cond(
