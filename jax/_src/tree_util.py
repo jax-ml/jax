@@ -94,6 +94,13 @@ def tree_leaves(tree: Any,
 
 
 @export
+def tree_leaves_checked(treedef_expected: PyTreeDef, tree: Any) -> list[Leaf]:
+  flat_vals, treedef_actual = tree_flatten(tree)
+  assert treedef_actual == treedef_expected
+  return flat_vals
+
+
+@export
 def tree_structure(tree: Any,
                    is_leaf: None | (Callable[[Any],
                                               bool]) = None) -> PyTreeDef:
