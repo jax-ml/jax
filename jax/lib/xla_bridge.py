@@ -22,27 +22,4 @@ _deps.warn(
     ),
     stacklevel=4
 )
-
-_deprecations = {
-    # Finalized in JAX v0.8.0; remove these messages in v0.9.0.
-    "get_backend": (
-        (
-            "jax.lib.xla_bridge.get_backend is deprecated and will be removed"
-            " in JAX v0.8.0; use jax.extend.backend.get_backend, and please"
-            " note that you must `import jax.extend` explicitly."
-        ),
-        None,
-    ),
-    "get_compile_options": (
-        (
-            "jax.lib.xla_bridge.get_compile_options is deprecated in JAX v0.7.0"
-            " and will be removed in JAX v0.8.0. Use"
-            " jax.extend.backend.get_compile_options, and please note that you"
-            " must `import jax.extend` explicitly."
-        ),
-        None,
-    ),
-}
-
-__getattr__ = _deps.deprecation_getattr(__name__, _deprecations)
 del _deps

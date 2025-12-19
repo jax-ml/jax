@@ -16,30 +16,3 @@ from jax._src.compilation_cache import (
   set_cache_dir as set_cache_dir,
   reset_cache as reset_cache,
 )
-
-_deprecations = {
-    # Finalized for v0.8.0; remove in v0.9.0
-    "is_initialized": (
-        (
-            "compilation_cache.is_initialized was deprecated in JAX v0.4.24 and"
-            " removed in JAX v0.8.0."
-        ),
-        None,
-    ),
-    "initialize_cache": (
-        (
-            "compilation_cache.initialize_cache was deprecated in JAX v0.4.24 and"
-            " removed in JAX v0.8.0. use compilation_cache.set_cache_dir instead."
-        ),
-        None,
-    ),
-}
-
-import typing as _typing
-if _typing.TYPE_CHECKING:
-  pass
-else:
-  from jax._src.deprecations import deprecation_getattr
-  __getattr__ = deprecation_getattr(__name__, _deprecations)
-  del deprecation_getattr
-del _typing
