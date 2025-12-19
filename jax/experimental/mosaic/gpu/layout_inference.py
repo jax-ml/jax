@@ -1108,8 +1108,14 @@ def _vector_extract_constraint_system(
     ctx: DerivationContext, op: vector.ExtractOp
 ) -> tuple[cs.ConstraintSystem, ValueSitesForVariable]:
   del ctx
-  if not ir.VectorType.isinstance(op.result.type):
-    raise NotImplementedError("Scalar element extraction is not supported.")
+  if not ir.VectorType.isinstance(op.result.type):  # scalar result
+    operand = ValueSite(op, VariableType.OPERAND, 0)
+    variable = cs.Variable(operand)
+    layout = fa.WGSplatFragLayout(tuple(op.source.type.shape))
+    # We only support indexing for splat layout.
+    assignments = {variable: cs.RegisterLayout(layout)}
+    return cs.ConstraintSystem(assignments), {variable: [operand]}
+
   if op.dynamic_position:
     raise NotImplementedError("Only slicing with static indices allowed.")
   operand = ValueSite(op, VariableType.OPERAND, 0)

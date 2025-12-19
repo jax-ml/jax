@@ -382,7 +382,6 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x), x[1, 1])
 
   def test_squeeze_to_scalar(self):
-    self.skip_if_wg_semantics()  # Scalar element extraction is not supported for `vector.extract`.
     @functools.partial(
         self.kernel,
         out_shape=jax.ShapeDtypeStruct((), jnp.float32),

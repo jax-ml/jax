@@ -4149,6 +4149,28 @@ class FragmentedArrayTest(TestCase):
     )(x)
     np.testing.assert_array_equal(y, x)
 
+  @parameterized.parameters(
+      ((32, 32), (0, 5)),
+      ((32, 128), (3,)),
+      ((32, 32, 128), (slice(1, 3), 0)),
+  )
+  def test_splat_indexing(self, shape, indices):
+    def _kernel(ctx, out_ref, scratch):
+      del ctx, scratch
+      splat = mgpu.FragmentedArray.splat(c(1.0, ir.F32Type.get()), shape)
+      splat[indices].store_untiled(out_ref)
+
+    expected = np.ones(shape, dtype=jnp.float32)[indices]
+    kernel = mgpu.as_gpu_kernel(
+        _kernel,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(),
+        out_shape=expected,
+        smem_scratch_shape=(),
+    )
+    np.testing.assert_array_equal(kernel(), expected)
+
 
 class ProfilerTest(TestCase, jtu.JaxTestCase):
 

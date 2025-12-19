@@ -2447,11 +2447,12 @@ def _squeeze_lowering_rule_wg(ctx: LoweringRuleContext, x, dimensions):
   [y_aval] = ctx.avals_out
   x = _ensure_ir_value(x, x_aval.dtype)
   if y_aval.ndim == 0:  # scalar
-    # TODO(allanrenucci): Lower to `vector.extract` once we support scalar
-    # results in MGPU dialect lowering.
-    raise NotImplementedError("Squeeze to scalar is not supported.")
-  res_ty = ir.VectorType.get(y_aval.shape, ir.VectorType(x.type).element_type)
-  return vector_dialect.shape_cast(res_ty, x)
+    return vector_dialect.extract(
+        x, dynamic_position=[], static_position=[0] * x_aval.ndim
+    )
+  else:
+    res_ty = ir.VectorType.get(y_aval.shape, ir.VectorType(x.type).element_type)
+    return vector_dialect.shape_cast(res_ty, x)
 
 
 def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):

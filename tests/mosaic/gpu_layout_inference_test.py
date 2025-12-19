@@ -1991,6 +1991,16 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInLayouts(op, [layout])
     self.checkOutLayouts(op, [layout])
 
+  def test_infer_layout_for_vector_extract_to_scalar(self):
+    with ir.InsertionPoint(self.module.body):
+      i16 = ir.IntegerType.get_signless(16)
+      src_ty = ir.VectorType.get([64, 8], i16)
+      [src] = undefs(src_ty)
+      op = vector.ExtractOp(src, dynamic_position=[], static_position=[1, 1])
+    mgpu.infer_layout(self.module)
+    self.checkInLayouts(op, [mgpu.WGSplatFragLayout(tuple(src_ty.shape))])
+    self.assertNotIn("out_layouts", op.attributes)
+
   def test_infer_layout_for_vector_extract_fails_if_not_dividing_result_shape(self):
     layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
     with ir.InsertionPoint(self.module.body):

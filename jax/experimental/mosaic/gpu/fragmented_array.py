@@ -1725,9 +1725,12 @@ class FragmentedArray:
     )
 
   def __getitem__(self, idx) -> FragmentedArray:
+    base_idx, slice_shape, is_squeezed = utils.parse_indices(idx, self.shape)
+    if isinstance(self.layout, WGSplatFragLayout):
+      shape = tuple(d for d, s in zip(slice_shape, is_squeezed) if not s)
+      return self.splat(self.registers.item(), shape, is_signed=self.is_signed)
     if not isinstance(self.layout, TiledLayout):
       raise NotImplementedError("Only arrays with tiled layouts can be sliced")
-    base_idx, slice_shape, is_squeezed = utils.parse_indices(idx, self.shape)
     if any(isinstance(idx, ir.Value) for idx in base_idx):
       raise ValueError("Only slicing with static indices allowed")
     if any(is_squeezed):

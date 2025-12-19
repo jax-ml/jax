@@ -664,11 +664,17 @@ def _vector_extract_op_lowering_rule(
     ctx: LoweringContext, op: vector.ExtractOp
 ) -> Sequence[ir.Value]:
   del ctx
-  if not ir.VectorType.isinstance(op.result.type):
-    raise NotImplementedError("Scalar element extraction is not supported.")
   if op.dynamic_position:
     raise NotImplementedError("Only slicing with static indices allowed.")
+
   [in_layout] = inference_utils.in_layouts(op)
+  a = _fragmented_array_from_ir(op.source, in_layout)
+
+  if not ir.VectorType.isinstance(op.result.type):  # scalar result
+    result = a[tuple(op.static_position)]
+    assert isinstance(result.layout, fa.WGSplatFragLayout)
+    return [result.registers.item()]
+
   [out_layout] = inference_utils.out_layouts(op)
   assert in_layout == out_layout
   a = _fragmented_array_from_ir(op.source, in_layout)
