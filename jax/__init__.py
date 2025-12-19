@@ -208,41 +208,6 @@ _deprecations = {
     "jax.device_put_sharded is deprecated; use jax.device_put instead.",
     _deprecated_device_put_sharded
   ),
-  # Finalized 2025-03-25; remove after 2025-06-25
-  "treedef_is_leaf": (
-    "jax.treedef_is_leaf was removed in JAX v0.6.0: use jax.tree_util.treedef_is_leaf.",
-    None
-  ),
-  "tree_flatten": (
-    "jax.tree_flatten was removed in JAX v0.6.0: use jax.tree.flatten (jax v0.4.25 or newer) "
-    "or jax.tree_util.tree_flatten (any JAX version).",
-    None
-  ),
-  "tree_leaves": (
-    "jax.tree_leaves was removed in JAX v0.6.0: use jax.tree.leaves (jax v0.4.25 or newer) "
-    "or jax.tree_util.tree_leaves (any JAX version).",
-    None
-  ),
-  "tree_structure": (
-    "jax.tree_structure was removed in JAX v0.6.0: use jax.tree.structure (jax v0.4.25 or newer) "
-    "or jax.tree_util.tree_structure (any JAX version).",
-    None
-  ),
-  "tree_transpose": (
-    "jax.tree_transpose was removed in JAX v0.6.0: use jax.tree.transpose (jax v0.4.25 or newer) "
-    "or jax.tree_util.tree_transpose (any JAX version).",
-    None
-  ),
-  "tree_unflatten": (
-    "jax.tree_unflatten was removed in JAX v0.6.0: use jax.tree.unflatten (jax v0.4.25 or newer) "
-    "or jax.tree_util.tree_unflatten (any JAX version).",
-    None
-  ),
-  "tree_map": (
-    "jax.tree_map was removed in JAX v0.6.0: use jax.tree.map (jax v0.4.25 or newer) "
-    "or jax.tree_util.tree_map (any JAX version).",
-    None
-  ),
 }
 
 import typing as _typing
