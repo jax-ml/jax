@@ -2675,9 +2675,15 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
     out_aval = core.ShapedArray(
         out_shape, op_aval.dtype, sharding=out_sharding)  # type: ignore
     if core.definitely_equal_shape(op_aval_shape, out_shape):
-      out.append(op if op_aval_sharding == out_sharding else
-                 lower_with_sharding_in_types(ctx, op, out_aval))
+      if op_aval_sharding.spec.unreduced or op_aval_sharding.spec.reduced:
+        out.append(op)
+      elif op_aval_sharding == out_sharding:
+        out.append(op)
+      else:
+        out.append(lower_with_sharding_in_types(ctx, op, out_aval))
     else:
+      if op_aval_sharding.spec.unreduced or op_aval_sharding.spec.reduced:
+        raise NotImplementedError()
       assert len(op_aval_shape) <= len(out_shape), (op_aval_shape, out_shape)
       broadcast_dimensions = list(range(len(out_shape) - len(op_aval_shape), len(out_shape)))
       b_out = broadcast_in_dim(
