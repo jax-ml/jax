@@ -193,6 +193,21 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike], n_pad: 
   return result.astype(dtype)
 
 
+def _pad_and_prefilter(
+    input: Array, order: int, mode: str, cval: ArrayLike
+) -> tuple[Array, int]:
+  if mode in ('nearest', 'constant'):
+    n_pad = 12  # same as scipy
+    if mode == 'nearest':
+      input, mode = jnp.pad(input, n_pad, 'edge'), 'reflect'
+    else:
+      input, mode = jnp.pad(input, n_pad, 'constant', constant_values=cval), 'mirror'
+  else:
+    n_pad = 0
+
+  return spline_filter(input.astype(float), order, mode), n_pad
+
+
 def map_coordinates(
     input: ArrayLike, coordinates: Sequence[ArrayLike], order: int,
     mode: str = 'constant', cval: ArrayLike = 0.0, prefilter: bool = True,
@@ -248,16 +263,10 @@ def map_coordinates(
   input = jnp.asarray(input)
   dtype = input.dtype
 
-  n_pad = 0
   if order > 1 and prefilter:
-    if mode in ('nearest', 'constant'):
-      n_pad = 12
-      if mode == 'nearest':
-        input = jnp.pad(input, n_pad, 'edge')
-      else:
-        input = jnp.pad(input, n_pad, 'constant', constant_values=cval)
-      mode = 'mirror'
-    input = spline_filter(input.astype(float), order, mode)
+    input, n_pad = _pad_and_prefilter(input, order, mode, cval)
+  else:
+    n_pad = 0
 
   return _map_coordinates(input, coordinates, n_pad, dtype, order, mode, cval)
 
