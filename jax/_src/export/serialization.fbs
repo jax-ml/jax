@@ -22,6 +22,9 @@
 
 namespace jax_export.serialization;
 
+file_identifier "JAXE";
+file_extension "jax_exported";
+
 enum PyTreeDefKind: byte {
   leaf = 0,
   none = 1,
