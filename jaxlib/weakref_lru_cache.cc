@@ -113,6 +113,8 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
 
   nb::object Call(nb::object weakref_key, nb::args args, nb::kwargs kwargs);
 
+  void EvictWeakref(nb::object weakref_key);
+
   std::vector<nb::object> GetKeys();
 
   struct CacheInfo {
@@ -208,6 +210,8 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
     return value.cache;
   }
 
+  WeakrefCacheKey MakeWeakrefKey(const nb::object& weakref_key);
+
   nb::callable cache_context_fn_;
   nb::callable fn_;
   std::shared_ptr<Cache::LRUList> lru_list_;
@@ -226,17 +230,8 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
   static int tp_clear(PyObject* self);
 };
 
-nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
-                                 nb::kwargs kwargs)
-    ABSL_NO_THREAD_SAFETY_ANALYSIS {
-  nb::object context = cache_context_fn_();
-
-  // We precompute all of the hash values needed by the various maps rather
-  // than computing them during the std::unordered_map insertions. At the very
-  // least, MSVC's std::unordered_map has undefined behavior if the hash
-  // function throws an exception
-  // (https://learn.microsoft.com/en-us/cpp/standard-library/unordered-map-class?view=msvc-170#emplace).
-  Key key(context, args, kwargs);
+WeakrefLRUCache::WeakrefCacheKey WeakrefLRUCache::MakeWeakrefKey(
+    const nb::object& weakref_key) {
   size_t wrcache_hash = static_cast<size_t>(nb::hash(weakref_key));
 
   // No hash computations after this point.
@@ -267,7 +262,31 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
         cache->entries_.erase(it);
       });
   nb::weakref weakref = nb::weakref(weakref_key, weakref_gc_callback);
-  WeakrefCacheKey wrcache_key{weakref, wrcache_hash};
+  return WeakrefCacheKey{std::move(weakref), wrcache_hash};
+}
+
+void WeakrefLRUCache::EvictWeakref(nb::object weakref_key) {
+  auto it = entries_.find(MakeWeakrefKey(weakref_key));
+  if (it == entries_.end()) {
+    return;
+  }
+  // Create temp-var to avoid re-entrant erase.
+  auto tmp = std::move(it->second);
+  entries_.erase(it);
+}
+
+nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
+                                 nb::kwargs kwargs)
+    ABSL_NO_THREAD_SAFETY_ANALYSIS {
+  nb::object context = cache_context_fn_();
+  // We precompute all of the hash values needed by the various maps rather
+  // than computing them during the std::unordered_map insertions. At the very
+  // least, MSVC's std::unordered_map has undefined behavior if the hash
+  // function throws an exception
+  // (https://learn.microsoft.com/en-us/cpp/standard-library/unordered-map-class?view=msvc-170#emplace).
+  Key key(context, args, kwargs);
+  auto wrcache_key = MakeWeakrefKey(weakref_key);
+
   std::shared_ptr<Cache> cache_ptr = GetCache(wrcache_key);
   Cache& cache = *cache_ptr;
   ++total_queries_;
@@ -420,6 +439,7 @@ NB_MODULE(weakref_lru_cache, m) {
                                   nb::is_weak_referenceable(),
                                   nb::type_slots(WeakrefLRUCache::slots_))
           .def("__call__", &WeakrefLRUCache::Call, nb::lock_self())
+          .def("evict_weakref", &WeakrefLRUCache::EvictWeakref, nb::lock_self())
           .def("cache_keys", &WeakrefLRUCache::GetKeys, nb::lock_self())
           .def("cache_info", &WeakrefLRUCache::GetCacheInfo, nb::lock_self())
           .def("cache_clear", &WeakrefLRUCache::Clear, nb::lock_self());

@@ -14,6 +14,7 @@
 # ==============================================================================
 
 import gc
+import random
 import threading
 import time
 import weakref
@@ -279,6 +280,38 @@ class WeakrefLRUCacheTest(absltest.TestCase):
     with self.assertRaisesRegex(RecursionError, "Reentrant call"):
       for _ in range(100):
         cache(wrkey, ReentrantKey())
+
+  def testEvictWeakref(self):
+    dtor_list = []
+
+    class NoisyDestructor:
+
+      def __init__(self, v):
+        self.v = v
+
+      def __del__(self):
+        dtor_list.append(self.v)
+
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x, y: NoisyDestructor(y)
+    )
+
+    class WRKey:
+      pass
+
+    N = 100
+    expected_deletes = []
+    plan = list(range(N)) * 2
+    random.shuffle(plan)
+    keys = [None] * N
+    for i in plan:
+      if keys[i] is None:
+        keys[i] = WRKey()
+        cache(keys[i], i)
+      else:
+        cache.evict_weakref(keys[i])
+        expected_deletes.append(i)
+        self.assertEqual(dtor_list, expected_deletes)
 
 
 if __name__ == "__main__":
