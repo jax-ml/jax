@@ -311,7 +311,9 @@ def jit_eval_shape(jit_func, *args, **kwargs):
 
 def jit_evict_fn(self):
   self._clear_cache()
-  pe.trace_to_jaxpr.cache_clear()
+  # TODO(mattjj): use cl/846898750 to clear just for this function
+  # pe.trace_to_jaxpr.cache_clear()
+
 
 def _split_layout_and_sharding(entries):
   entries_flat, treedef = tree_flatten(entries, is_leaf=lambda x: x is None)
