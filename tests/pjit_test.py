@@ -62,6 +62,7 @@ from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
+from jax._src.lib import ifrt_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -9691,6 +9692,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   @jtu.with_explicit_mesh((2,), 'x')
   def test_both_inputs_reduced(self, func, mesh):
+    if ifrt_version < 46:
+      self.skipTest('Requires ifrt_version >= 46')
+    if not jtu.is_cloud_tpu_at_least(2025, 12, 22):
+      self.skipTest('Requires libtpu built after 2025-12-22')
     arr1 = jax.device_put(np.arange(8.), P(reduced={'x'}))
     arr2 = jax.device_put(np.arange(8.), P(reduced={'x'}))
 
@@ -9704,6 +9709,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
                      NamedSharding(mesh, P(None, unreduced={'x'})))
     self.assertEqual(out2.sharding,
                      NamedSharding(mesh, P(None, unreduced={'x'})))
+
+    arr3 = jax.device_put(np.arange(8.), P())
+    arr4 = jax.device_put(np.arange(8.), P())
+    ex_out1, ex_out2 = jax.jit(jax.grad(f, argnums=(0, 1)))(arr3, arr4)
+    self.assertArraysEqual(reshard(out1, P()), ex_out1)
+    self.assertArraysEqual(reshard(out2, P()), ex_out2)
 
   @parameterized.named_parameters(
       ('mul', jax.lax.mul),
@@ -9745,6 +9756,57 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_sharded_unreduced_roundtrip(self, shape, orig_spec, un_spec, mesh):
+    np1 = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np1, orig_spec)
+
+    arr2 = reshard(arr, un_spec)
+    self.assertEqual(arr2.sharding, NamedSharding(mesh, un_spec))
+
+    arr3 = reshard(arr2, orig_spec)
+    self.assertArraysEqual(arr, arr3)
+    self.assertEqual(arr.sharding, arr3.sharding)
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_scalar_to_unreduced(self, mesh):
+    if ifrt_version < 46:
+      self.skipTest('Requires ifrt_version >= 46')
+    if not jtu.is_cloud_tpu_at_least(2025, 12, 22):
+      self.skipTest('Requires libtpu built after 2025-12-22')
+    inp = jnp.array(1)
+    for s in inp.addressable_shards:
+      self.assertArraysEqual(s.data, inp)
+
+    out = reshard(inp, P(unreduced={'x'}))
+    expected_out = [inp, jnp.array(0)]
+    for s, ex_out in zip(out.addressable_shards, expected_out):
+      self.assertArraysEqual(s.data, ex_out)
+
+    out2 = reshard(out, P())
+    for s, inp_s in zip(out2.addressable_shards, inp.addressable_shards):
+      self.assertArraysEqual(s.data, inp_s.data)
+
+  @parameterized.parameters(
+      ((4,), P(None), P(None, unreduced={'x'})),
+      ((4,), P(None), P(None, unreduced={'y'})),
+      ((4,), P(None), P(None, unreduced={'x', 'y'})),
+      ((4, 2), P(None, None), P(None, None, unreduced={'x'})),
+      ((4, 2), P(None, None), P(None, None, unreduced={'y'})),
+      ((4, 2), P(None, None), P(None, None, unreduced={'x', 'y'})),
+      ((4, 4), P('x', None), P('x', None, unreduced={'y'})),
+      ((4, 4), P(None, 'y'), P(None, 'y', unreduced={'x'})),
+      ((4, 4), P('x', None), P(None, None, unreduced={'x', 'y'})),
+      ((4, 4), P('y', None), P(None, None, unreduced={'x', 'y'})),
+      ((4, 4), P('x', 'y'), P(None, None, unreduced={'x', 'y', 'z'})),
+      ((4, 4), P('x', 'z'), P(None, None, unreduced={'x', 'y', 'z'})),
+      ((4, 4), P(('x', 'z'), 'y'), P(None, None, unreduced={'x', 'y', 'z'})),
+      ((4, 4), P(('x', 'z'), 'y'), P(None, None, unreduced={'y', 'z'})),
+  )
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
+  def test_replicated_unreduced_roundtrip(self, shape, orig_spec, un_spec, mesh):
+    if ifrt_version < 46:
+      self.skipTest('Requires ifrt_version >= 46')
+    if not jtu.is_cloud_tpu_at_least(2025, 12, 22):
+      self.skipTest('Requires libtpu built after 2025-12-22')
     np1 = np.arange(math.prod(shape)).reshape(shape)
     arr = jax.device_put(np1, orig_spec)
 
