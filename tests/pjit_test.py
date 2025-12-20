@@ -9799,10 +9799,13 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       ((4, 4), P('x', 'y'), P(None, None, unreduced={'x', 'y', 'z'})),
       ((4, 4), P('x', 'z'), P(None, None, unreduced={'x', 'y', 'z'})),
       ((4, 4), P(('x', 'z'), 'y'), P(None, None, unreduced={'x', 'y', 'z'})),
-      ((4, 4), P(('x', 'z'), 'y'), P(None, None, unreduced={'y', 'z'})),
+      ((4, 4), P(('x', 'z'), 'y'), P('x', None, unreduced={'y', 'z'})),
+      ((4, 4), P('z', 'y'), P(None, None, unreduced={'y', 'z'})),
+      ((4, 4), P('z', 'y'), P(None, None, unreduced={'x', 'y', 'z'})),
   )
   @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
-  def test_replicated_unreduced_roundtrip(self, shape, orig_spec, un_spec, mesh):
+  def test_replicated_sharded_unreduced_roundtrip(
+      self, shape, orig_spec, un_spec, mesh):
     if ifrt_version < 46:
       self.skipTest('Requires ifrt_version >= 46')
     if not jtu.is_cloud_tpu_at_least(2025, 12, 22):
