@@ -2375,7 +2375,7 @@ def cumulative_prod(
 @api.jit(static_argnames=('axis', 'overwrite_input', 'keepdims', 'method'))
 def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
              weights: ArrayLike | None = None, out: None = None, overwrite_input: bool = False, method: str = "linear",
-             keepdims: bool = False, *, interpolation: DeprecatedArg = DeprecatedArg()) -> Array:
+             keepdims: bool = False) -> Array:
   """Compute the quantile of the data along the specified axis.
 
   JAX implementation of :func:`numpy.quantile`.
@@ -2417,10 +2417,6 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
   if overwrite_input or out is not None:
     raise ValueError("jax.numpy.quantile does not support overwrite_input=True "
                      "or out != None")
-  # TODO(jakevdp): remove the interpolation argument in JAX v0.9.0
-  if not isinstance(interpolation, DeprecatedArg):
-    raise TypeError("quantile() argument interpolation was removed in JAX"
-                    " v0.8.0. Use method instead.")
   return _quantile(lax.asarray(a), lax.asarray(q), weights, axis, method, keepdims, False)
 
 
@@ -2428,7 +2424,7 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
 @api.jit(static_argnames=('axis', 'overwrite_input', 'keepdims', 'method'))
 def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
                 weights: ArrayLike | None = None, out: None = None, overwrite_input: bool = False, method: str = "linear",
-                keepdims: bool = False, *, interpolation: DeprecatedArg = DeprecatedArg()) -> Array:
+                keepdims: bool = False) -> Array:
   """Compute the quantile of the data along the specified axis, ignoring NaNs.
 
   JAX implementation of :func:`numpy.nanquantile`.
@@ -2472,10 +2468,6 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
     msg = ("jax.numpy.nanquantile does not support overwrite_input=True or "
            "out != None")
     raise ValueError(msg)
-  # TODO(jakevdp): remove the interpolation argument in JAX v0.9.0
-  if not isinstance(interpolation, DeprecatedArg):
-    raise TypeError("nanquantile() argument interpolation was removed in JAX"
-                    " v0.8.0. Use method instead.")
   return _quantile(lax.asarray(a), lax.asarray(q), weights, axis, method, keepdims, True)
 
 def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
