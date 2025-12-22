@@ -12,21 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from absl.testing import absltest, parameterized
 from unittest import SkipTest
-from jax._src import test_util as jtu
+from absl.testing import absltest, parameterized
 import jax
-import jax.numpy as jnp
+from jax._src import test_util as jtu
 from jax._src.cudnn import cudnn_fusion
+import jax.numpy as jnp
 
 
 jax.config.parse_flags_with_absl()
 
 
 class CudnnFusionTest(jtu.JaxTestCase):
+
   def setUp(self):
-    if (not jtu.test_device_matches(["cuda"]) or
-        not jtu.is_cuda_compute_capability_at_least("8.0")):
+    if not jtu.test_device_matches(
+        ["cuda"]
+    ) or not jtu.is_cuda_compute_capability_at_least("8.0"):
       self.skipTest("Only works on >= sm80 GPUs")
     super().setUp()
 
@@ -38,11 +40,11 @@ class CudnnFusionTest(jtu.JaxTestCase):
 
     batch_size = 2
     if mode == "pmap" and jax.device_count() < batch_size:
-        raise SkipTest("pmap test requires 2 GPUs")
+      raise SkipTest("pmap test requires 2 GPUs")
 
     @cudnn_fusion
     def comp1(x, y, z):
-        return jnp.float32(jax.lax.batch_matmul(jnp.bfloat16(x), y)) + z
+      return jnp.float32(jax.lax.batch_matmul(jnp.bfloat16(x), y)) + z
 
     k = jax.random.key(0)
     s = batch_size, 16, 16
@@ -61,7 +63,14 @@ class CudnnFusionTest(jtu.JaxTestCase):
     self.assertIn('custom_call_target="__cudnn$fusion"', hlo)
     self.assertIn("called_computations=", hlo)
 
-    compiled = lowered.compile({"xla_gpu_cublas_fallback": False})
+    compiled = lowered.compile({
+        # Disable Cublas to make sure CuDNN is used.
+        "xla_gpu_cublas_fallback": False,
+        # Enable CuDNN fusions.
+        "xla_gpu_cudnn_gemm_fusion_level": 2,
+        # Disable autotuning to pick first config to ensure CuDNN is always used.
+        "xla_gpu_autotune_level": 0,
+    })
     hlo_after_opt = compiled.as_text()
 
     self.assertIn("kind=kCustom", hlo_after_opt)
@@ -70,5 +79,5 @@ class CudnnFusionTest(jtu.JaxTestCase):
     self.assertAllClose(compiled(x, y, z), fn(x, y, z))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
