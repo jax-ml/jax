@@ -2384,6 +2384,10 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
     a: N-dimensional array input.
     q: scalar or 1-dimensional array specifying the desired quantiles. ``q``
       should contain floating-point values between ``0.0`` and ``1.0``.
+    weights: optional array of weights associated with the values in ``a``.
+      Each value in ``a`` contributes to the quantile according to its
+      associated weight. The weights array must be broadcastable to the same
+      shape as ``a``. Only works with ``method="inverted_cdf"``.
     axis: optional axis or tuple of axes along which to compute the quantile
     out: not implemented by JAX; will error if not None
     overwrite_input: not implemented by JAX; will error if not False
@@ -2412,6 +2416,13 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
 
     >>> jnp.quantile(x, q, method='nearest')
     Array([2., 4., 7.], dtype=float32)
+
+    Computing weighted quantiles:
+
+    >>> x = jnp.array([1, 2, 3, 4, 5])
+    >>> weights = jnp.array([1, 1, 2, 1, 1])
+    >>> jnp.quantile(x, 0.5, weights=weights, method='inverted_cdf')
+    Array(3., dtype=float32)
   """
   a, q = ensure_arraylike("quantile", a, q)
   if overwrite_input or out is not None:
@@ -2433,6 +2444,10 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
     a: N-dimensional array input.
     q: scalar or 1-dimensional array specifying the desired quantiles. ``q``
       should contain floating-point values between ``0.0`` and ``1.0``.
+    weights: optional array of weights associated with the values in ``a``.
+      Each value in ``a`` contributes to the quantile according to its
+      associated weight. The weights array must be broadcastable to the same
+      shape as ``a``. Only works with ``method="inverted_cdf"``.
     axis: optional axis or tuple of axes along which to compute the quantile
     out: not implemented by JAX; will error if not None
     overwrite_input: not implemented by JAX; will error if not False
@@ -2462,6 +2477,13 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
     Array([nan, nan, nan], dtype=float32)
     >>> jnp.nanquantile(x, q)
     Array([1.5, 3. , 4.5], dtype=float32)
+
+    Computing weighted quantiles while ignoring NaNs:
+
+    >>> x = jnp.array([1, 2, jnp.nan, 4, 5])
+    >>> weights = jnp.array([1, 1, 1, 2, 1])
+    >>> jnp.nanquantile(x, 0.5, weights=weights, method='inverted_cdf')
+    Array(3.5, dtype=float32)
   """
   a, q = ensure_arraylike("nanquantile", a, q)
   if overwrite_input or out is not None:
@@ -2680,6 +2702,10 @@ def percentile(a: ArrayLike, q: ArrayLike,
     a: N-dimensional array input.
     q: scalar or 1-dimensional array specifying the desired quantiles. ``q``
       should contain integer or floating point values between ``0`` and ``100``.
+    weights: optional array of weights associated with the values in ``a``.
+      Each value in ``a`` contributes to the quantile according to its
+      associated weight. The weights array must be broadcastable to the same
+      shape as ``a``. Only works with ``method="inverted_cdf"``.
     axis: optional axis or tuple of axes along which to compute the quantile
     out: not implemented by JAX; will error if not None
     overwrite_input: not implemented by JAX; will error if not False
@@ -2708,6 +2734,13 @@ def percentile(a: ArrayLike, q: ArrayLike,
 
     >>> jnp.percentile(x, q, method='nearest')
     Array([1., 3., 4.], dtype=float32)
+
+    Computing weighted percentiles:
+
+    >>> x = jnp.array([1, 2, 3, 4, 5])
+    >>> weights = jnp.array([1, 1, 2, 1, 1])
+    >>> jnp.percentile(x, 50, weights=weights, method='inverted_cdf')
+    Array(3., dtype=float32)
   """
   a, q = ensure_arraylike("percentile", a, q)
   q, = promote_dtypes_inexact(q)
@@ -2729,6 +2762,10 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
     a: N-dimensional array input.
     q: scalar or 1-dimensional array specifying the desired quantiles. ``q``
       should contain integer or floating point values between ``0`` and ``100``.
+    weights: optional array of weights associated with the values in ``a``.
+      Each value in ``a`` contributes to the quantile according to its
+      associated weight. The weights array must be broadcastable to the same
+      shape as ``a``. Only works with ``method="inverted_cdf"``.
     axis: optional axis or tuple of axes along which to compute the quantile
     out: not implemented by JAX; will error if not None
     overwrite_input: not implemented by JAX; will error if not False
@@ -2759,6 +2796,13 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
     Array([nan, nan, nan], dtype=float32)
     >>> jnp.nanpercentile(x, q)
     Array([1.5, 3. , 4.5], dtype=float32)
+
+    Computing weighted percentiles while ignoring NaNs:
+
+    >>> x = jnp.array([1, 2, jnp.nan, 4, 5])
+    >>> weights = jnp.array([1, 1, 1, 2, 1])
+    >>> jnp.nanpercentile(x, 50, weights=weights, method='inverted_cdf')
+    Array(3.5, dtype=float32)
   """
   a, q = ensure_arraylike("nanpercentile", a, q)
   q, = promote_dtypes_inexact(q)
