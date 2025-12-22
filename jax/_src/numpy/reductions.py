@@ -2417,7 +2417,7 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
   if overwrite_input or out is not None:
     raise ValueError("jax.numpy.quantile does not support overwrite_input=True "
                      "or out != None")
-  return _quantile(lax.asarray(a), lax.asarray(q), weights, axis, method, keepdims, False)
+  return _quantile(lax.asarray(a), lax.asarray(q), axis, method, keepdims, False, weights)
 
 
 @export
@@ -2468,7 +2468,7 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
     msg = ("jax.numpy.nanquantile does not support overwrite_input=True or "
            "out != None")
     raise ValueError(msg)
-  return _quantile(lax.asarray(a), lax.asarray(q), weights, axis, method, keepdims, True)
+  return _quantile(lax.asarray(a), lax.asarray(q), axis, method, keepdims, True, weights)
 
 def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
               method: str, keepdims: bool, squash_nans: bool, weights: ArrayLike | None = None) -> Array:
@@ -2480,7 +2480,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     if dtypes.issubdtype(weights.dtype, np.complexfloating):
       raise ValueError("Weights cannot be complex types.")
     if method != "inverted_cdf":
-      raise NotImplementedError(f"{method} doesn't support weights. Only method 'inverted_idf' supports weights.")
+      raise NotImplementedError(f"{method} doesn't support weights. Only method 'inverted_cdf' supports weights.")
     a, weights = promote_dtypes_inexact(a, weights)
     if weights.shape != a.shape:
       if axis is None:
@@ -2671,7 +2671,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
 def percentile(a: ArrayLike, q: ArrayLike,
                axis: int | tuple[int, ...] | None = None,
                out: None = None, overwrite_input: bool = False, method: str = "linear",
-               weights: ArrayLike | None = None, keepdims: bool = False, *, interpolation: DeprecatedArg = DeprecatedArg()) -> Array:
+               weights: ArrayLike | None = None, keepdims: bool = False) -> Array:
   """Compute the percentile of the data along the specified axis.
 
   JAX implementation of :func:`numpy.percentile`.
@@ -2720,7 +2720,7 @@ def percentile(a: ArrayLike, q: ArrayLike,
 def nanpercentile(a: ArrayLike, q: ArrayLike,
                   axis: int | tuple[int, ...] | None = None,
                   out: None = None, overwrite_input: bool = False, method: str = "linear",
-                  weights: ArrayLike | None = None, keepdims: bool = False, *, interpolation: DeprecatedArg = DeprecatedArg()) -> Array:
+                  weights: ArrayLike | None = None, keepdims: bool = False) -> Array:
   """Compute the percentile of the data along the specified axis, ignoring NaN values.
 
   JAX implementation of :func:`numpy.nanpercentile`.
