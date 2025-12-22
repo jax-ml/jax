@@ -758,28 +758,31 @@ class OpsTest(ptu.PallasTPUTest):
   def _pack_unpack_elementwise_test_data(
       self, shape, unpacked_dtype, packed_dtype):
     """Generates data for test_pack_elementwise and test_unpack_elementwise."""
-    bitwidth = dtypes.itemsize_bits(packed_dtype)
-    num_sources = 32 // bitwidth
-    if unpacked_dtype == jnp.int32:
+    unpacked_bitwidth = dtypes.itemsize_bits(unpacked_dtype)
+    packed_bitwidth = dtypes.itemsize_bits(packed_dtype)
+    num_sources = unpacked_bitwidth // packed_bitwidth
+    if jnp.issubdtype(unpacked_dtype, jnp.integer):
       stacked_sources = jax.random.randint(
           jax.random.key(0),
           (num_sources, *shape),
           minval=-1000,
           maxval=1000,
-          dtype=unpacked_dtype,
-      )
+          dtype=jnp.int32,
+      ).astype(unpacked_dtype)
     else:
       stacked_sources = jax.random.uniform(
           jax.random.key(0), (num_sources, *shape), dtype=unpacked_dtype
       )
     stacked_results = (
         stacked_sources.astype(packed_dtype)
-        .view(getattr(jnp, f"uint{bitwidth}"))
-        .astype(jnp.uint32)
+        .view(getattr(jnp, f"uint{packed_bitwidth}"))
+        .astype(getattr(jnp, f"uint{unpacked_bitwidth}"))
     )
-    shifts = jnp.arange(num_sources, dtype=jnp.uint32) * bitwidth
+    shifts = jnp.arange(num_sources, dtype=jnp.uint32) * packed_bitwidth
     shifts = jnp.expand_dims(shifts, axis=tuple(range(1, stacked_results.ndim)))
-    packed_data = jnp.bitwise_or.reduce(stacked_results << shifts, axis=0)
+    packed_data = jnp.bitwise_or.reduce(
+        stacked_results.astype(jnp.uint32) << shifts, axis=0
+    ).astype(getattr(jnp, f"uint{unpacked_bitwidth}"))
     return stacked_sources, packed_data
 
   @parameterized.product(
@@ -788,6 +791,8 @@ class OpsTest(ptu.PallasTPUTest):
           (jnp.int32, jnp.int16),
           (jnp.int32, jnp.int8),
           (jnp.int32, jnp.int4),
+          (jnp.int16, jnp.int8),
+          (jnp.int8, jnp.int4),
       ],
       shape=[(8, 128), (2, 15, 300)],
   )
@@ -795,9 +800,15 @@ class OpsTest(ptu.PallasTPUTest):
     unpacked_dtype, packed_dtype = config
     if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("Requires TPU v5+")
+    if dtypes.itemsize_bits(
+        unpacked_dtype
+    ) != 32 and not jtu.is_cloud_tpu_at_least(2026, 1, 2):
+      self.skipTest("Test requires libtpu from 2026/01/02 or later")
 
-    bitwidth = dtypes.itemsize_bits(packed_dtype)
-    num_sources = 32 // bitwidth
+    src_bitwidth = dtypes.itemsize_bits(unpacked_dtype)
+    tgt_bitwidth = dtypes.itemsize_bits(packed_dtype)
+    num_sources = src_bitwidth // tgt_bitwidth
+    output_dtype = getattr(jnp, f"uint{src_bitwidth}")
 
     def kernel(xs_ref, o_ref):
       xs = [xs_ref[i] for i in range(num_sources)]
@@ -809,7 +820,7 @@ class OpsTest(ptu.PallasTPUTest):
 
     result = self.pallas_call(
         kernel,
-        out_shape=jax.ShapeDtypeStruct(shape, jnp.uint32),
+        out_shape=jax.ShapeDtypeStruct(shape, output_dtype),
     )(stacked_sources)
 
     np.testing.assert_array_equal(result, expected)

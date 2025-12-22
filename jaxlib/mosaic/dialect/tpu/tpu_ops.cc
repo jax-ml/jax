@@ -2042,9 +2042,19 @@ LogicalResult PackElementwiseOp::verify() {
     return emitOpError("At least one source is required");
   }
   const auto src_vty = cast<VectorType>(getSources().front().getType());
-  if (failed(verifyElementwisePacking(*this, src_vty.getElementType(),
-                                      getTargetType()))) {
-    return failure();
+  if (getElementTypeBitwidth(src_vty) != getElementTypeBitwidth(getType())) {
+    return emitOpError("All sources must have the same bitwidth as the result");
+  }
+  if (!getType().getElementType().isSignlessInteger()) {
+    return emitOpError("Output type must be a signless integer type");
+  }
+
+  auto src_elem_ty = src_vty.getElementType();
+  auto tgt_elem_ty = getTargetType();
+  if (!(src_elem_ty.isF32() && tgt_elem_ty.isBF16()) &&
+      !(src_elem_ty.isSignlessInteger() && tgt_elem_ty.isSignlessInteger())) {
+    return emitOpError(
+        "Only packing f32 -> bf16 and integer -> integer is supported");
   }
   const int packing_factor =
       getElementTypeBitwidth(src_vty) / getTypeBitwidth(getTargetType());

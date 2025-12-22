@@ -1079,6 +1079,7 @@ def _stochastic_round_abstract_eval(x, random_bits, *, target_dtype):
     )
   return jax_core.ShapedArray(x.shape, target_dtype)
 
+
 def _get_elementwise_packing_factor(unpacked_dtype, packed_dtype):
   unpacked_bitwidth = dtypes.itemsize_bits(unpacked_dtype)
   packed_bitwidth = dtypes.itemsize_bits(packed_dtype)
@@ -1105,13 +1106,22 @@ def _pack_elementwise_abstract_eval(*xs, packed_dtype):
     raise ValueError("All sources must have the same shape")
   if not all(x.dtype == first.dtype for x in xs):
     raise ValueError("All sources must have the same dtype")
+  if not (first.dtype == jnp.float32 and packed_dtype == jnp.bfloat16) and not (
+      jnp.issubdtype(first.dtype, jnp.integer)
+      and jnp.issubdtype(packed_dtype, jnp.integer)
+  ):
+    raise ValueError(
+        "Only f32 -> bf16 and int -> int are supported. Got"
+        f" {first.dtype} and {packed_dtype}"
+    )
   packing_factor = _get_elementwise_packing_factor(first.dtype, packed_dtype)
   if len(xs) != packing_factor:
     raise ValueError(
         "The number of sources must match the packing factor "
         f"({packing_factor}), got {len(xs)}"
     )
-  return jax_core.ShapedArray(first.shape, jnp.uint32)
+  out_dtype = jnp.dtype(f"uint{dtypes.itemsize_bits(first.dtype)}")
+  return jax_core.ShapedArray(first.shape, out_dtype)
 
 
 unpack_elementwise_p = jax_core.Primitive("unpack_elementwise")

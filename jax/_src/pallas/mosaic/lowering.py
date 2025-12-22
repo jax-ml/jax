@@ -3593,7 +3593,7 @@ def _stochastic_round_lowering_rule(
   return tpu.stochastic_convert(out_type, x, random_bits)
 
 
-def _check_elementwise_packing_dtypes(unpacked_dtype, packed_dtype):
+def _check_elementwise_unpack_dtypes(unpacked_dtype, packed_dtype):
   if unpacked_dtype == jnp.float32 and packed_dtype == jnp.bfloat16:
     return
   if unpacked_dtype == jnp.int32 and packed_dtype in [
@@ -3611,11 +3611,9 @@ def _pack_elementwise_lowering_rule(
     ctx: LoweringRuleContext, *xs, packed_dtype
 ):
   in_aval = ctx.avals_in[0]
-  _check_elementwise_packing_dtypes(in_aval.dtype, packed_dtype)
+  out_aval = ctx.avals_out[0]
   packed_ir_type = _dtype_to_ir_type(packed_dtype)
-  out_type = ir.VectorType.get(
-      in_aval.shape, _dtype_to_ir_type(jnp.uint32)
-  )
+  out_type = ir.VectorType.get(in_aval.shape, _dtype_to_ir_type(out_aval.dtype))
   return tpu.pack_elementwise(out_type, xs, target_type=packed_ir_type)
 
 
@@ -3624,7 +3622,7 @@ def _unpack_elementwise_lowering_rule(
     ctx: LoweringRuleContext, x, index, packed_dtype, unpacked_dtype
 ):
   in_aval = ctx.avals_in[0]
-  _check_elementwise_packing_dtypes(unpacked_dtype, packed_dtype)
+  _check_elementwise_unpack_dtypes(unpacked_dtype, packed_dtype)
   out_type = ir.VectorType.get(
       in_aval.shape, _dtype_to_ir_type(unpacked_dtype)
   )

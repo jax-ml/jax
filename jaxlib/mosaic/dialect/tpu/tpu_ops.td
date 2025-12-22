@@ -754,14 +754,20 @@ def TPU_PackElementwiseOp : TPU_Op<"pack_elementwise", [Pure, SameTypeOperands, 
     The number of `sources` must equal the packing factor, which is the ratio of
     the element bitwidth of the `sources` to the element bitwidth of the
     `target_type`. Elements from the `sources` are interleaved and packed into
-    each word of the `output`, ordered from lowest to highest bits,
-    corresponding to their order in the `sources`.
+    the `output`, ordered from lowest to highest bits, corresponding to their
+    order in the `sources`.  The `output` is then bitcasted to the signless
+    integer type of the same bitwidth as the `sources`.
+
+    Note that for integer packing, the bits in `sources` that exceed the
+    bitwidth of the `target_type` are just truncated.
+    For example, given the `sources` are int8 xxxx'1001 and yyyy'0011,
+    `target_type` is int4, the output will be 0011'1001.
   }];
   let arguments = (ins
-    Variadic<VectorOfNonZeroRankOf<[F32, I32]>>:$sources,
+    Variadic<VectorOfNonZeroRankOf<[F32, AnyInteger]>>:$sources,
     TypeAttr:$target_type
   );
-  let results = (outs VectorOfNonZeroRankOf<[I32]>:$output);
+  let results = (outs VectorOfNonZeroRankOf<[AnyInteger]>:$output);
   let assemblyFormat = [{ $sources attr-dict `:` type($sources) `->` type($output) }];
   let hasVerifier = 1;
 }
