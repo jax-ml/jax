@@ -39,7 +39,24 @@ from . import utils
 
 TMA_DESCRIPTOR_BYTES = 128
 TMA_DESCRIPTOR_ALIGNMENT = 64
-TMAReductionOp = Literal["add", "min", "max", "inc", "dec", "and", "or", "xor"]
+TMAReductionOp = Literal[
+    "add",
+    "min",
+    "max",
+    "inc",
+    "dec",
+    "and",
+    "or",
+    "xor",
+    "umin",
+    "umax",
+    "smin",
+    "smax",
+]
+
+def _reduction_op_to_ptx(reduction_op: TMAReductionOp) -> str:
+  # convert [s|u]min|max to min|max
+  return reduction_op[-3:]
 
 c = utils.c  # This is too common to fully qualify.
 
@@ -426,6 +443,81 @@ def _find_kernel_argument_for_gmem_ref(
   return gmem_ref
 
 
+def _is_tma_reduction_op_supported(
+    reduction_op: TMAReductionOp | None, dtype: ir.Type,
+) -> bool:
+  """Returns whether the given TMA reduction op supports the given dtype.
+
+  This function essentially implements the table at:
+  https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-reduce-async-bulk-tensor
+  with the following differences:
+  - For `add` reductions, we also support int64, treating it as uint64.
+  - For `and`, `or`, and `xor` reductions, we support signed integer types.
+  - For `inc` and `dec` reductions, we support both signed and unsigned i32
+    treating both as unsigned.
+  """
+  i32 = ir.IntegerType.get_signless(32)
+  i64 = ir.IntegerType.get_signless(64)
+  f16 = ir.F16Type.get()
+  f32 = ir.F32Type.get()
+  bf16 = ir.BF16Type.get()
+
+  match reduction_op:
+    case None:
+      return True
+    case "add":
+      return dtype in (f16, f32, bf16, i32, i64)
+    case "max" | "min":
+      return dtype in (f16, bf16)
+    case "umax" | "umin" | "smax" | "smin":
+      return dtype in (i32, i64)
+    case "inc" | "dec":
+      return dtype == i32
+    case "and" | "or" | "xor":
+      return dtype in (i32, i64)
+
+
+def _tma_dma_type(
+    element_type: ir.Type,
+    reduction_op: TMAReductionOp | None,
+) -> int:
+  """Returns the TMA DMA type for the given element type and signedness."""
+  if ir.IntegerType.isinstance(element_type):
+    bitwidth = utils.bitwidth_impl(element_type)
+    if bitwidth == 2:
+      tma_dtype = 8
+    elif bitwidth == 4:
+      tma_dtype = 0
+    elif bitwidth == 8:
+      tma_dtype = 1
+    elif bitwidth == 16:
+      tma_dtype = 2
+    elif bitwidth == 32:
+      tma_dtype = 9 if reduction_op in ("smin", "smax") else 3
+    elif bitwidth == 64:
+      tma_dtype = 10 if reduction_op in ("smin", "smax") else 4
+    else:
+      raise ValueError(f"Unsupported integer bitwidth: {bitwidth}")
+  elif ir.F16Type.isinstance(element_type):
+    tma_dtype = 5
+  elif ir.F32Type.isinstance(element_type):
+    tma_dtype = 6
+  elif ir.BF16Type.isinstance(element_type):
+    tma_dtype = 7
+  # We treat narrow floats as integers
+  elif ir.Float8E5M2Type.isinstance(element_type):
+    tma_dtype = 1
+  elif ir.Float8E4M3FNType.isinstance(element_type):
+    tma_dtype = 1
+  elif ir.Float8E8M0FNUType.isinstance(element_type):
+    tma_dtype = 1
+  elif ir.Float4E2M1FNType.isinstance(element_type):
+    tma_dtype = 0
+  else:
+    raise ValueError(f"unsupported TMA dtype {element_type}")
+  return tma_dtype
+
+
 class AsyncCopyImplementation(enum.Enum):
   TMA = enum.auto()
   CP_ASYNC = enum.auto()
@@ -438,7 +530,7 @@ class LaunchContext:
   cluster_size: tuple[int, int, int]
   profiler: OnDeviceProfiler | None = None
   tma_descriptors: dict[
-      tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...], Any],
+      tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...], Any, int],
       ir.Value,
   ] = dataclasses.field(default_factory=dict, init=False)
   is_device_collective: bool = False
@@ -512,10 +604,11 @@ class LaunchContext:
       reduction_op: TMAReductionOp | None,
   ):
     gmem_ref = _find_kernel_argument_for_gmem_ref(gmem_ref)
+    tma_dtype = _tma_dma_type(ir.MemRefType(gmem_ref.type).element_type, reduction_op)
     # Using ir.Values in cache keys is a little sketchy, but I think it should
     # be fine. Having it in the key will keep it alive, and if comparison and
     # hashing is by identity then it should work out.
-    tma_desc_key = (gmem_ref, transformed_slice_shape, swizzle, gmem_transform, gmem_peer_id)
+    tma_desc_key = (gmem_ref, transformed_slice_shape, swizzle, gmem_transform, gmem_peer_id, tma_dtype)
     if (tma_desc := self.tma_descriptors.get(tma_desc_key, None)) is None:
       i32 = ir.IntegerType.get_signless(32)
       i64 = ir.IntegerType.get_signless(64)
@@ -580,43 +673,6 @@ class LaunchContext:
         )
         # TODO(apaszke): Better verification (e.g. slice is non-zero)
         # TODO(apaszke): We always know strides statically.
-        if isinstance(ref_ty.element_type, ir.IntegerType):
-          if reduction_op is not None:
-            raise ValueError(
-                f"TMA with reduction_op={reduction_op} is not supported with Integers"
-            )
-          bitwidth = utils.bitwidth_impl(ref_ty.element_type)
-          if bitwidth == 2:
-            tma_dtype = 8
-          elif bitwidth == 4:
-            tma_dtype = 0
-          elif bitwidth == 8:
-            tma_dtype = 1
-          elif bitwidth == 16:
-            tma_dtype = 2
-          elif bitwidth == 32:
-            tma_dtype = 3
-          elif bitwidth == 64:
-            tma_dtype = 4
-          else:
-            raise ValueError(f"Unsupported integer bitwidth: {bitwidth}")
-        elif ir.F16Type.isinstance(ref_ty.element_type):
-          tma_dtype = 5
-        elif ir.F32Type.isinstance(ref_ty.element_type):
-          tma_dtype = 6
-        elif ir.BF16Type.isinstance(ref_ty.element_type):
-          tma_dtype = 7
-        # We treat narrow floats as integers
-        elif ir.Float8E5M2Type.isinstance(ref_ty.element_type):
-          tma_dtype = 1
-        elif ir.Float8E4M3FNType.isinstance(ref_ty.element_type):
-          tma_dtype = 1
-        elif ir.Float8E8M0FNUType.isinstance(ref_ty.element_type):
-          tma_dtype = 1
-        elif ir.Float4E2M1FNType.isinstance(ref_ty.element_type):
-          tma_dtype = 0
-        else:
-          raise ValueError(f"unsupported TMA dtype {ref_ty.element_type}")
         dtype_or_bitwidth = c(tma_dtype, i64)
         args = [
             host_ptr,
@@ -953,16 +1009,10 @@ class LaunchContext:
     if reduction_op is not None:
       if implementation != AsyncCopyImplementation.TMA:
         raise ValueError("Only the TMA implementation supports reductions")
-      if not any(
-          t.isinstance(element_type)
-          for t in (ir.F32Type, ir.BF16Type, ir.F16Type)
-      ):
+      if not _is_tma_reduction_op_supported(reduction_op, element_type):
         raise ValueError(
-            "TMA with reduction is only supported with f32, f16 and bf16"
-        )
-      if reduction_op != "add":
-        raise ValueError(
-            "TMA with reduction is only supported with add operation"
+            f"Reduction op {reduction_op} not supported by the TMA"
+            f" implementation for element type {element_type}"
         )
 
     if src_ref_ty.memory_space is None and utils.is_smem_ref(dst_ref_ty):
@@ -1329,7 +1379,7 @@ class LaunchContext:
         llvm.inline_asm(
           ir.Type.parse("!llvm.void"),
           [predicate,smem_ptr,tma_desc,*rev_dyn_base_indices],
-          f"@$0 cp.reduce.async.bulk.tensor.{rank}d.global.shared::cta.{reduction_op}.tile.bulk_group [$2,{{{idx_operands}}}], [$1];",
+          f"@$0 cp.reduce.async.bulk.tensor.{rank}d.global.shared::cta.{_reduction_op_to_ptx(reduction_op)}.tile.bulk_group [$2,{{{idx_operands}}}], [$1];",
           "b,r,l" + ",r" * rank,
           has_side_effects=True,
         )

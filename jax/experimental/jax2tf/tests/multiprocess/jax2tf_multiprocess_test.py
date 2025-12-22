@@ -22,9 +22,15 @@ from jax._src import test_util as jtu
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
 import unittest
+import warnings
 
 try:
-  import tensorflow as tf
+  # TODO(b/470156950): Remove this once a proper fix is in place
+  with warnings.catch_warnings():
+    warnings.filterwarnings("ignore",
+                            category=FutureWarning,
+                            message=".*np.object.*")
+    import tensorflow as tf
   from jax.experimental import jax2tf
   from jax.experimental.jax2tf.tests import tf_test_util
   JaxToTfTestCase = tf_test_util.JaxToTfTestCase

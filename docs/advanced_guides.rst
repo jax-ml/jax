@@ -32,9 +32,8 @@ operations.
    :maxdepth: 1
 
    notebooks/autodiff_cookbook
-   notebooks/Custom_derivative_rules_for_Python_code
    notebooks/autodiff_remat
-   advanced-autodiff
+   advanced_autodiff
 
 .. toctree::
    :maxdepth: 1
@@ -43,7 +42,6 @@ operations.
    errors
    debugging
    debugging/index
-   debugging/flags
    transfer_guard
 
 .. toctree::

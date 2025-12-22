@@ -123,7 +123,7 @@ class InterpretTest(jtu.JaxTestCase):
               jax.ShapeDtypeStruct((16, 256), jnp.float32),
           ],
           grid=(4, 4),
-          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
           out_specs=[
               pl.BlockSpec((4, 128), lambda i, j: (i, j // 2)),
               pl.BlockSpec((4, 128), lambda i, j: (j // 2, i % 2)),
@@ -253,7 +253,7 @@ class InterpretTest(jtu.JaxTestCase):
           kernel,
           out_shape=jax.ShapeDtypeStruct((8, 128,), jnp.float32),
           out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
-          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
           scratch_shapes=[pltpu.SemaphoreType.DMA],
           interpret=pltpu.InterpretParams(
               out_of_bounds_reads=out_of_bounds_reads),
@@ -398,7 +398,7 @@ class InterpretTest(jtu.JaxTestCase):
     y = pl.pallas_call(
         kernel_without_race,
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
         scratch_shapes=[
             pltpu.VMEM(x.shape, x.dtype),
             pltpu.SemaphoreType.DMA,
@@ -413,7 +413,7 @@ class InterpretTest(jtu.JaxTestCase):
     pl.pallas_call(
         kernel_with_race,
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
         scratch_shapes=[
             pltpu.VMEM(x.shape, x.dtype),
             pltpu.SemaphoreType.DMA,
@@ -854,7 +854,7 @@ class InterpretTest(jtu.JaxTestCase):
           kernel,
           grid=(2,),
           out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-          in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM)],
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
           scratch_shapes=[
               pltpu.VMEM(x.shape, x.dtype),
           ],
@@ -862,7 +862,7 @@ class InterpretTest(jtu.JaxTestCase):
               dimension_semantics=('parallel',),
           ),
           interpret=pltpu.InterpretParams(
-              num_cores_per_device=2,
+              num_cores_or_threads_per_device=2,
               detect_races=False,
           ),
       )(x)
@@ -872,7 +872,7 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_allclose(y, 2.0 * x)
 
     with pltpu.force_tpu_interpret_mode(pltpu.InterpretParams(
-        num_cores_per_device=1,
+        num_cores_or_threads_per_device=1,
         detect_races=True,
     )):
       y = f(x).block_until_ready()
@@ -881,7 +881,7 @@ class InterpretTest(jtu.JaxTestCase):
     self.assertEqual(trace_count[0], 2)
 
     with pltpu.force_tpu_interpret_mode(pltpu.InterpretParams(
-        num_cores_per_device=2,
+        num_cores_or_threads_per_device=2,
         detect_races=True,
     )):
       y = f(x).block_until_ready()
@@ -913,7 +913,7 @@ class InterpretTest(jtu.JaxTestCase):
             pltpu.VMEM((8, 128), x.dtype),
         ],
         interpret=pltpu.InterpretParams(
-            num_cores_per_device=2,
+            num_cores_or_threads_per_device=2,
             detect_races=True,
         ),
         compiler_params=pltpu.CompilerParams(
@@ -948,7 +948,7 @@ class InterpretTest(jtu.JaxTestCase):
           out_specs=pl.BlockSpec((8, 128), lambda i, j: (i, j)),
           interpret=pltpu.InterpretParams(
               random_seed=12345,
-              num_cores_per_device=num_cores_per_device,
+              num_cores_or_threads_per_device=num_cores_per_device,
               grid_point_recorder=grid_point_recorder,
               detect_races=True,
           ),
@@ -1191,7 +1191,7 @@ class InterpretTest(jtu.JaxTestCase):
             ],
         )
 
-  @parameterized.parameters(pltpu.MemorySpace.HBM, pltpu.MemorySpace.ANY)
+  @parameterized.parameters(pltpu.HBM, pl.ANY)
   def test_referencing_hbm_raises(self, disallowed_memory_space):
     def jax_load_and_store(in_ref, o_ref):
       o_ref[...] = in_ref[...]
@@ -1220,7 +1220,7 @@ class InterpretTest(jtu.JaxTestCase):
           jax_load_and_store,
           jnp.zeros((8, 128), jnp.float32),
           in_memory_space=disallowed_memory_space,
-          out_memory_space=pltpu.MemorySpace.VMEM,
+          out_memory_space=pltpu.VMEM,
       )
     pltpu.reset_tpu_interpret_mode_state()
 
@@ -1234,7 +1234,7 @@ class InterpretTest(jtu.JaxTestCase):
           pallas_load_and_store,
           jnp.zeros((8, 128), jnp.float32),
           in_memory_space=disallowed_memory_space,
-          out_memory_space=pltpu.MemorySpace.VMEM,
+          out_memory_space=pltpu.VMEM,
       )
     pltpu.reset_tpu_interpret_mode_state()
 
@@ -1247,7 +1247,7 @@ class InterpretTest(jtu.JaxTestCase):
       kernel_call(
           jax_load_and_store,
           jnp.zeros((8, 128), jnp.float32),
-          in_memory_space=pltpu.MemorySpace.VMEM,
+          in_memory_space=pltpu.VMEM,
           out_memory_space=disallowed_memory_space,
       )
     pltpu.reset_tpu_interpret_mode_state()
@@ -1261,8 +1261,8 @@ class InterpretTest(jtu.JaxTestCase):
       kernel_call(
           pallas_load_and_store,
           jnp.zeros((8, 128), jnp.float32),
-          in_memory_space=pltpu.MemorySpace.VMEM,
-          out_memory_space=pltpu.MemorySpace.HBM,
+          in_memory_space=pltpu.VMEM,
+          out_memory_space=pltpu.HBM,
       )
     pltpu.reset_tpu_interpret_mode_state()
 

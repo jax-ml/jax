@@ -895,7 +895,7 @@ def _aval_property(name):
   return property(lambda self: getattr(self.aval, name))
 
 
-if TYPE_CHECKING or jaxlib_extension_version < 388:
+if TYPE_CHECKING:
   # We want Python type checkers to accept `some_tracer: jax.Array`, even though
   # tracers can represent non-arrays. That is, ideally we would only accept that
   # annotation when the Tracer instance has a ShapedArray aval, but we can't
@@ -1652,6 +1652,9 @@ class AbstractValue:
   has_qdd = False
 
   def to_tangent_aval(self):
+    raise NotImplementedError("must override")
+
+  def to_cotangent_aval(self):
     raise NotImplementedError("must override")
 
   # TODO(dougalm): deprecate this alias
@@ -2619,6 +2622,7 @@ accum_grad_in_ref_p.def_impl(lambda x: x)  # type: ignore
 class AbstractToken(AbstractValue):
   def str_short(self, short_dtypes=False, mesh_axis_types=False): return 'Tok'
   def to_tangent_aval(self): return self
+  def to_cotangent_aval(self): return self
 abstract_token: AbstractToken = AbstractToken()
 
 # Singleton shaped array used by all abstract tokens when shape/dtype is needed.
@@ -3080,7 +3084,8 @@ def typecompat(aval_ref: AbstractValue, aval: AbstractValue) -> bool:
   except TypeError:
     return False
 
-def typematch(t1: AbstractValue, t2: AbstractValue) -> bool:
+def typematch(t1: AbstractValue, t2: AbstractValue,
+              only_shape_shd_check: bool = False) -> bool:
   """Determine whether `t1` and `t2` are equivalent. Ignores weak_type."""
   t1 = t1.normalize()
   t2 = t2.normalize()
@@ -3088,24 +3093,29 @@ def typematch(t1: AbstractValue, t2: AbstractValue) -> bool:
   if t1 == t2:
     return True
   elif isinstance(t1, ShapedArray) and isinstance(t2, ShapedArray):
-    cmp = (t1.dtype == t2.dtype and definitely_equal_shape(t1.shape, t2.shape)
-           and t1.vma == t2.vma and t1.memory_space == t2.memory_space)  # type: ignore
-    # TODO(yashkatariya): Expand this to Manual and Auto mode.
-    # See https://github.com/jax-ml/jax/issues/26474
-    if (not t1.sharding.mesh.empty and not t2.sharding.mesh.empty and
-        (t1.sharding.mesh._any_axis_explicit or
-         t2.sharding.mesh._any_axis_explicit)):
-      sh_eq = t1.sharding == t2.sharding
-    else:
-      sh_eq = True
-    return cmp and sh_eq
+    if only_shape_shd_check:
+      return cmp_shape_sharding_vma(t1, t2)
+    return (t1.dtype == t2.dtype and cmp_shape_sharding_vma(t1, t2) and
+            t1.memory_space == t2.memory_space)
   elif isinstance(t1, AbstractRef) and isinstance(t2, AbstractRef):
     # We want to use the regular typecheck for ShapedArray here.
-    return (typematch(t1.inner_aval, t2.inner_aval) and  # type: ignore
+    return (typematch(t1.inner_aval, t2.inner_aval, only_shape_shd_check) and  # type: ignore
             (t1.memory_space is None or t2.memory_space is None or  # type: ignore
              t1.memory_space == t2.memory_space))  # type: ignore
   else:
     return False
+
+def cmp_shape_sharding_vma(t1, t2):
+  # TODO(yashkatariya): Expand this to Manual and Auto mode.
+  # See https://github.com/jax-ml/jax/issues/26474
+  if (not t1.sharding.mesh.empty and not t2.sharding.mesh.empty and
+      (t1.sharding.mesh._any_axis_explicit or
+        t2.sharding.mesh._any_axis_explicit)):
+    shd_eq = t1.sharding == t2.sharding
+  else:
+    shd_eq = True
+  return (shd_eq and definitely_equal_shape(t1.shape, t2.shape) and
+          t1.vma == t2.vma)
 
 def aval_mismatch_extra(a1: AbstractValue, a2: AbstractValue) -> str:
   assert not typematch(a1, a2)
@@ -3428,6 +3438,14 @@ def eqn_effects(jaxpr):
 
 # ------------------- ShapeDtypeStruct -------------------
 
+def _check_sharding(sharding, shape):
+  if sharding is None:
+    return
+  if isinstance(sharding, P):
+    sharding._check_compatible_wrt_shape(shape)
+  else:
+    sharding.check_compatible_aval(shape)
+
 @set_module("jax")
 class ShapeDtypeStruct:
   """A container for the shape, dtype, and other static attributes of an array.
@@ -3461,6 +3479,7 @@ class ShapeDtypeStruct:
           f" layout in a `ShapeDtypeStruct`. Got {sharding}")
     self._sharding = (sharding.sharding if isinstance(sharding, Format)
                       else sharding)
+    _check_sharding(self._sharding, self.shape)
     self._dll = sharding.layout if isinstance(sharding, Format) else None
     self.weak_type = weak_type
     if vma is not None and not isinstance(vma, (set, frozenset)):

@@ -2492,11 +2492,10 @@ class ShardMapTest(jtu.JaxTestCase):
     def g(x):
       return f(f(x))
 
-    y, grad = jax.value_and_grad(lambda x: g(x).sum())(jnp.ones(4))
-    # first psum sums, second psum multiplies by 4
-    self.assertAllClose(y, (jnp.ones(4) * 4).sum(), check_dtypes=False)
-    # two psums on the backward pass, each one multiplies by 4
-    self.assertAllClose(grad, jnp.ones(4) * 4 * 4, check_dtypes=False)
+    with self.assertRaisesRegex(
+        ValueError,
+        "Custom VJP bwd rule must produce an output with the same type"):
+      jax.value_and_grad(lambda x: g(x).sum())(jnp.ones(4))
 
   def test_repeated_psum_allowed(self):
     # https://github.com/jax-ml/jax/issues/19175
@@ -3809,6 +3808,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     def g(x):
       self.assertEqual(x.aval.vma, frozenset())
+      self.assertEqual(x.aval.sharding.spec, P(None))
       if use_axis_name:
         out = jax.shard_map(jnp.cos, in_specs=P('y'), out_specs=P('y'),
                             axis_names={'y'})(x)
@@ -3818,7 +3818,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return out.sum()
 
     out = jax.jit(jax.vmap(jax.grad(g)))(arr)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
   def test_get_check_rep(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
@@ -4664,7 +4664,6 @@ class ShardMapTest(jtu.JaxTestCase):
 
     out = f(arr1, arr2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None)))
-
     with jax.set_mesh(empty_concrete_mesh):
       ex_out = np.sum([func(s.data, np2) for s in arr1.addressable_shards],
                       axis=0)
@@ -4678,6 +4677,121 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out1.sharding, NamedSharding(mesh, P('x')))
     self.assertEqual(out2.sharding,
                      NamedSharding(mesh, P(None, unreduced={'x'})))
+
+    arr3 = jax.device_put(np2, P(None))
+    ex_out1, ex_out2 = jax.jit(jax.grad(g, argnums=(0, 1)))(arr1, arr3)
+    self.assertArraysEqual(out1, ex_out1)
+    self.assertArraysEqual(jax.reshard(out2, P()), ex_out2)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_reduced_pcast_fwd_unreduced_bwd(self, mesh):
+    np1 = np.arange(8.)
+    arr = jax.device_put(np1, P(None, reduced={'x'}))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P('x'))
+    def f(x):
+      return jax.lax.pcast(x, 'x', to='varying')
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+    self.assertArraysEqual(out, np.concat([np1, np1], axis=0))
+
+    @jax.jit
+    def g(x):
+      return f(x).sum()
+
+    out = jax.jit(jax.grad(g))(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+
+    arr2 = jax.device_put(np1, P(None))
+    ex_out = jax.jit(jax.grad(g))(arr2)
+    self.assertArraysEqual(jax.reshard(out, P()), ex_out)
+
+  @parameterized.named_parameters(
+      ('mul', jax.lax.mul),
+      ('add', jax.lax.add),
+  )
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_one_input_sharded_another_reduced_shmap_no_psum(self, func, mesh):
+    np1 = np.arange(16.)
+    np2 = np.arange(8.)
+    arr1 = jax.device_put(np1, P('x'))
+    arr2 = jax.device_put(np2, P(None, reduced={'x'}))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P('x'))
+    def f(x, y):
+      z = func(x, y)
+      return z
+
+    out = f(arr1, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+    with jax.set_mesh(empty_concrete_mesh):
+      ex_out = [func(s.data, np2) for s in arr1.addressable_shards]
+    for s, e in zip(out.addressable_shards, ex_out):
+      self.assertArraysEqual(s.data, e)
+
+    @jax.jit
+    def g(x, y):
+      return f(x, y).sum()
+
+    out1, out2 = jax.jit(jax.grad(g, argnums=(0, 1)))(arr1, arr2)
+    self.assertEqual(out1.sharding, NamedSharding(mesh, P('x')))
+    self.assertEqual(out2.sharding,
+                     NamedSharding(mesh, P(None, unreduced={'x'})))
+
+    arr3 = jax.device_put(np2, P(None))
+    ex_out1, ex_out2 = jax.jit(jax.grad(g, argnums=(0, 1)))(arr1, arr3)
+    self.assertArraysEqual(out1, ex_out1)
+    self.assertArraysEqual(jax.reshard(out2, P()), ex_out2)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_split_with_unused_result_in_shardmap(self, mesh):
+    arr = jax.device_put(jnp.ones(8), P('x'))
+
+    @jax.shard_map(in_specs=P('x'), out_specs=P('x'))
+    def f(x):
+      a, _ = jnp.split(x, 2, axis=0)  # Important that one result is unused.
+      return a
+
+    def g(x):
+      a = f(x)
+      b = 0.1 * a.mean(keepdims=True)
+      return b.squeeze(0)
+
+    jax.jit(jax.grad(g))(arr)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_shmap_primal_type_match_ct_type(self, mesh):
+    arr = jax.device_put(np.arange(8.), P('x'))
+
+    @jax.jit
+    @jax.shard_map(in_specs=P(), out_specs=P('x'))
+    def f(x):
+      return x * 2
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+    out_g = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P('x')))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_mix_manual_explicit_partial(self, mesh):
+    arr = jax.device_put(np.arange(16).reshape(8, 2), P(('x', 'y'), None))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P('x'), axis_names={'x'})
+    def f(x):
+      self.assertEqual(x.shape, (4, 2))
+      self.assertEqual(x.aval.sharding.spec, P('y', None))
+      self.assertEqual(x.aval.vma, {'x'})
+      return x * 2
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(('x', 'y'), None)))
+    self.assertArraysEqual(out, arr * 2)
 
 
 class FunSpec(NamedTuple):

@@ -232,10 +232,11 @@ cc_library(
         "-Wl,--export-dynamic-symbol='mosaic_gpu_*'",
         "-Wl,--export-dynamic-symbol='nvshmem_my_pe'",
         "-Wl,--export-dynamic-symbol='nvshmem_ptr'",
-        "-Wl,--export-dynamic-symbol='nvshmemx_mc_ptr'",
         "-Wl,--export-dynamic-symbol='nvshmemx_barrier_all_on_stream'",
+        "-Wl,--export-dynamic-symbol='nvshmemx_cumodule_finalize'",
         "-Wl,--export-dynamic-symbol='nvshmemx_cumodule_init'",
         "-Wl,--export-dynamic-symbol='nvshmemx_init_status'",
+        "-Wl,--export-dynamic-symbol='nvshmemx_mc_ptr'",
     ],
     deps = [
         ":nvshmem",

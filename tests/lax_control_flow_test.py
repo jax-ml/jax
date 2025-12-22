@@ -41,7 +41,6 @@ from jax import checkpoint_policies
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
 from jax._src import dispatch
-from jax._src.api import vjp3
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -2777,10 +2776,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     # ==> Yes, we don't want to change autodiff const behavior. We must make
     # these tessts pass under use_simplified_jaxpr_constants.
     if not config.use_simplified_jaxpr_constants.value:
-      if config.vjp3.value:
-        ext_res, = vjp_fun.args_res
-      else:
-        *_, ext_res = vjp_fun.args[0].args[0]
+      ext_res, = vjp_fun.args_res
       self.assertIs(ext_res, x)
 
     if remat is not None:
@@ -2790,10 +2786,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     x = rng.randn(32, 2, 32).astype('float32')  # numpy.ndarray, not Array
     _, vjp_fun = jax.vjp(cumprod, x)
     if not config.use_simplified_jaxpr_constants.value:
-      if config.vjp3.value:
-        ext_res, *_ = vjp_fun.opaque_residuals
-      else:
-        *_, ext_res = vjp_fun.args[0].args[0]
+      ext_res, *_ = vjp_fun.opaque_residuals
       self.assertIsInstance(ext_res, jax.Array)
 
   def test_scan_vmap_collectives(self):
@@ -3498,14 +3491,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def f(x):
       return jax.lax.cond(True, jnp.sin, lambda x: x, x)
 
-    _, f_vjp = vjp3(f, 1.)
+    _, f_vjp = jax.vjp(f, 1.)
     g, = f_vjp(1.0)
     self.assertAllClose(g, jnp.cos(1.), check_dtypes=False)
 
     def h(x):
       return jax.lax.cond(True, jnp.sin, lambda x: 1., x)
 
-    _, h_vjp = vjp3(h, 1.)
+    _, h_vjp = jax.vjp(h, 1.)
     g, = h_vjp(1.0)
     self.assertAllClose(g, jnp.cos(1.), check_dtypes=False)
 

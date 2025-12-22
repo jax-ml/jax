@@ -19,6 +19,7 @@ import math
 import os
 import re
 import unittest
+import warnings
 
 from absl import logging
 from absl.testing import absltest, parameterized
@@ -40,7 +41,12 @@ from jax.sharding import PartitionSpec as P
 
 import numpy as np
 try:
-  import tensorflow as tf
+  # TODO(b/470156950): Remove this once a proper fix is in place
+  with warnings.catch_warnings():
+    warnings.filterwarnings("ignore",
+                            category=FutureWarning,
+                            message=".*np.object.*")
+    import tensorflow as tf
   from jax.experimental import jax2tf
   from jax.experimental.jax2tf.tests import tf_test_util
   JaxToTfTestCase = tf_test_util.JaxToTfTestCase

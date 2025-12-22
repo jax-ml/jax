@@ -16,13 +16,19 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.8.2 (December 18, 2025)
+
 * Deprecations
   * `jax.lax.pvary` has been deprecated.
     Please use `jax.lax.pcast(..., to='varying')` as the replacement.
-  * `with mesh:` context manager has been deprecated.
-    Please use `with jax.set_mesh(mesh):` instead.
   * Complex arguments passed to {func}`jax.numpy.arange` now result in a
     deprecation warning, because the output is poorly-defined.
+  * From {mod}`jax.core` a number of symbols are newly deprecated including:
+    `call_impl`, `get_aval`, `mapped_aval`, `subjaxprs`, `set_current_trace`,
+    `take_current_trace`, `traverse_jaxpr_params`, `unmapped_aval`,
+    `AbstractToken`,  and `TraceTag`.
+  * All symbols in {mod}`jax.interpreters.pxla` are deprecated. These are
+    primarily JAX internal APIs, and users should not rely on them.
 
 * Changes:
   * jax's `Tracer` no longer inherits from `jax.Array` at runtime. However,
@@ -33,6 +39,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     For the moment, during Python type checking, we continue to declare `Tracer`
     as a subclass of `Array`, however we expect to remove this in a future
     release.
+  * `jax.experimental.si_vjp` has been deleted.
+    `jax.vjp` subsumes it's functionality.
 
 ## JAX 0.8.1 (November 18, 2025)
 

@@ -616,10 +616,14 @@ class WGSplatFragLayout:
   def can_broadcast_to(self, shape) -> bool:
     """Check that the shape can be broadcast.
 
-    Only dimensions of size 1 can be broadcast. All other dimensions
-    must be the same as the argument shape.
+    All source dimensions must match the target's trailing dimensions by
+    equality or being set to 1 (i.e. we can broadcast 1-sized dimensions or
+    create new leading dimensions).
     """
-    return all(dim1 == dim2 or dim1 == 1 for dim1, dim2 in zip(self.shape[::-1], shape[::-1]))
+    return len(self.shape) <= len(shape) and all(
+        dim1 == dim2 or dim1 == 1
+        for dim1, dim2 in zip(self.shape[::-1], shape[::-1])
+    )
 
   def registers_element_type(self, t: ir.Type) -> ir.Type:
     return t
@@ -1721,16 +1725,19 @@ class FragmentedArray:
     )
 
   def __getitem__(self, idx) -> FragmentedArray:
+    base_idx, slice_shape, is_squeezed = utils.parse_indices(idx, self.shape)
+    if isinstance(self.layout, WGSplatFragLayout):
+      shape = tuple(d for d, s in zip(slice_shape, is_squeezed) if not s)
+      return self.splat(self.registers.item(), shape, is_signed=self.is_signed)
     if not isinstance(self.layout, TiledLayout):
       raise NotImplementedError("Only arrays with tiled layouts can be sliced")
-    base_idx, slice_shape, is_squeezed = utils.parse_indices(idx, self.shape)
     if any(isinstance(idx, ir.Value) for idx in base_idx):
       raise ValueError("Only slicing with static indices allowed")
     if any(is_squeezed):
       raise NotImplementedError("Integer indexing not implemented (only slicing allowed)")
     base_tile_shape = self.layout.base_tile_shape
-    if len(base_tile_shape) != len(self.shape):
-      raise NotImplementedError("Tiling has different rank than array")
+    if untiled_rank := len(self.shape) - len(base_tile_shape):
+      base_tile_shape = (1,) * untiled_rank + base_tile_shape
     if any(b % t for b, t in zip(base_idx, base_tile_shape, strict=True)):
       raise ValueError(
           "Base indices of array slices must be aligned to the beginning of a"
@@ -2447,6 +2454,38 @@ class FragmentedArray:
     )
 
   def broadcast(self, shape) -> FragmentedArray:
+    if isinstance(self.layout, WGStridedFragLayout):
+      src_shape, dst_shape = self.layout.shape, shape
+      if len(src_shape) > len(dst_shape):
+        raise ValueError(
+            f"Shape length mismatch. Expected len({src_shape}) <= len({dst_shape})"
+        )
+      if not all(s == 1 or s == d for s, d in zip(src_shape[::-1], dst_shape[::-1])):
+        raise ValueError(
+            "Can broadcast if all source dimensions match trailing target"
+            " dimensions by being equal or set to 1. Broadcasting from"
+            f" {src_shape} to {dst_shape}"
+        )
+      rank_diff = len(dst_shape) - len(src_shape)
+      src_shape = tuple([1] * rank_diff + list(src_shape))
+
+      assert len(src_shape) == len(dst_shape), (src_shape, dst_shape)
+      len_suffix = next(
+          (i for i in range(len(src_shape)) if src_shape[~i] != dst_shape[~i]),
+          len(src_shape)
+      )
+      if len_suffix > 0 and all(x == 1 for x in src_shape[:-len_suffix]):
+        return FragmentedArray(
+            _registers=np.tile(self.registers, np.prod(dst_shape[:-len_suffix])),
+            _layout=WGStridedFragLayout(shape, self.layout.vec_size),
+            _is_signed=self.is_signed,
+        )
+
+      raise NotImplementedError(
+          "Only major-most broadcast for WGStridedFragLayout is implemented."
+          f" Broadcasting from: {src_shape}, to: {dst_shape}."
+      )
+
     if not isinstance(self.layout, WGSplatFragLayout):
       raise NotImplementedError(self.layout)
 
@@ -2462,7 +2501,7 @@ class FragmentedArray:
         _is_signed=self.is_signed,
     )
 
-  def reshape(self, shape) -> FragmentedArray:
+  def reshape(self, shape: tuple[int, ...]) -> FragmentedArray:
     if self.shape == shape:
       return self
     if math.prod(shape) != math.prod(self.shape):
@@ -2471,12 +2510,34 @@ class FragmentedArray:
     match self.layout:
       case WGSplatFragLayout() | WGStridedFragLayout():
         new_layout = dataclasses.replace(self.layout, shape=shape)
+        return FragmentedArray(
+            _registers=self.registers,
+            _layout=new_layout,
+            _is_signed=self.is_signed,
+        )
+      case TiledLayout():
+        base_tile_shape = self.layout.base_tile_shape
+        assert base_tile_shape
+        old_shape_suffix = self.shape[-len(base_tile_shape):]
+        new_shape_suffix = shape[-len(base_tile_shape):]
+        # We already know that old_shape_suffix[0] is divisible by
+        # base_tile_shape[0].
+        if (
+            old_shape_suffix[1:] != new_shape_suffix[1:]
+            or new_shape_suffix[0] % base_tile_shape[0]
+        ):
+          raise ValueError(
+              f"Can't reshape {self.shape} to {shape} with a tiled layout with"
+              f" base tile of {base_tile_shape}"
+          )
+        new_registers_shape = self.layout.registers_shape(shape)
+        return FragmentedArray(
+            _registers=self.registers.reshape(new_registers_shape),
+            _layout=self.layout,
+            _is_signed=self.is_signed,
+        )
       case _:
         raise NotImplementedError(self.layout)
-
-    return FragmentedArray(
-        _registers=self.registers, _layout=new_layout, _is_signed=self.is_signed
-    )
 
   def broadcast_minor(self, n) -> FragmentedArray:
     if len(self.shape) != 1:

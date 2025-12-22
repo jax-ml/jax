@@ -19,7 +19,7 @@ import threading
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
-from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_interpret
+from jax._src.pallas.mosaic.interpret.thread_map import thread_map
 
 
 jax.config.parse_flags_with_absl()
@@ -61,8 +61,11 @@ class InterpretThreadMapTest(jtu.JaxTestCase):
       del core_index
       jax.experimental.io_callback(_barrier, (), ordered=True)
 
-    mosaic_interpret._thread_map(f, 8)
+    thread_map(f, 8)
     self.assertEqual(max_concurrent_calls[0], 8)
+    # `thread_map` returns only after all threads have completed, so the final
+    # value of `concurrent_calls` should be zero.
+    self.assertEqual(concurrent_calls[0], 0)
 
 
 if __name__ == '__main__':

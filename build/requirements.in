@@ -18,7 +18,7 @@ wheel
 # the requirements files.
 jaxlib
 
-jax-cuda12-plugin; sys_platform == "linux" and python_version<"3.14"
+jax-cuda12-plugin; sys_platform == "linux"
 jax-cuda13-plugin
 jax-cuda12-pjrt; sys_platform == "linux"
 jax-cuda13-pjrt

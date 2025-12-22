@@ -22,7 +22,6 @@ limitations under the License.
 #include <utility>
 
 #include "absl/hash/hash.h"
-#include "absl/log/log.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
@@ -31,6 +30,7 @@ limitations under the License.
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
@@ -46,6 +46,7 @@ limitations under the License.
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.cc.inc"
 #include "jaxlib/mosaic/dialect/tpu/tpu_enums.cc.inc"
+#include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "xla/layout.h"
 
 // This is a bit unclean, but we need to squat the xla namespace to make sure
@@ -122,9 +123,50 @@ struct MemRefCastEraseLayout : public OpRewritePattern<memref::CastOp> {
   }
 };
 
+// Rewrites memref.dim(tpu.memref_squeeze(x)) to memref.dim(x) with the
+// dimension index adjusted to account for squeezed dimensions.
+struct MemRefDimOfSqueeze : public OpRewritePattern<memref::DimOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(memref::DimOp dim_op,
+                                PatternRewriter& rewriter) const override {
+    auto squeeze_op = dim_op.getSource().getDefiningOp<MemRefSqueezeOp>();
+    if (!squeeze_op) {
+      return failure();
+    }
+    const std::optional<int64_t> maybe_dim =
+        getConstantIntValue(dim_op.getDimension());
+    if (!maybe_dim) {
+      return failure();
+    }
+    const int64_t dim = *maybe_dim;
+    MemRefType result_type = squeeze_op.getType();
+    if (dim < 0 || result_type.getRank() <= dim) {
+      return dim_op.emitWarning("Dimension index is out of bounds");
+    }
+    if (result_type.getDimSize(dim) != ShapedType::kDynamic) {
+      return failure();
+    }
+    MemRefType source_type = getMemRefType(squeeze_op.getInput());
+    FAILUREOR_ASSIGN_OR_RETURN(
+        SmallVector<int> squeezed,
+        computeSqueezedDimsChecked(squeeze_op, source_type.getShape(),
+                                   result_type.getShape()));
+    int64_t source_dim = dim;
+    for (int squeezed_dim : squeezed) {
+      if (squeezed_dim <= source_dim) {
+        ++source_dim;
+      }
+    }
+    rewriter.replaceOpWithNewOp<memref::DimOp>(dim_op, squeeze_op.getInput(),
+                                               source_dim);
+    return success();
+  }
+};
+
 void TPUDialect::getCanonicalizationPatterns(RewritePatternSet& results) const
 /*override*/ {
-  results.add<MemRefCastEraseLayout>(getContext());
+  results.add<MemRefCastEraseLayout, MemRefDimOfSqueeze>(getContext());
 }
 
 FailureOr<CoreType> GetCoreTypeOfParentFunc(Operation &op) {
@@ -432,6 +474,15 @@ MemRefType getMemRefType(Value value) {
   return cast<MemRefType>(value.getType());
 }
 
+template <typename Op>
+bool checkBothOperandsDivisible(Value value, int64_t divisor, int64_t fuel) {
+  if (auto op = value.getDefiningOp<Op>()) {
+    return isGuaranteedDivisible(op.getLhs(), divisor, fuel / 2) &&
+           isGuaranteedDivisible(op.getRhs(), divisor, (fuel + 1) / 2);
+  }
+  return false;
+}
+
 bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
   if (fuel <= 0) {
     return false;
@@ -454,9 +505,16 @@ bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
   if (auto cast_op = value.getDefiningOp<arith::IndexCastOp>()) {
     return isGuaranteedDivisible(cast_op.getOperand(), divisor, fuel - 1);
   }
-  if (auto add_op = value.getDefiningOp<arith::AddIOp>()) {
-    return isGuaranteedDivisible(add_op.getRhs(), divisor, fuel / 2) &&
-           isGuaranteedDivisible(add_op.getLhs(), divisor, (fuel + 1) / 2);
+  if (checkBothOperandsDivisible<arith::AddIOp>(value, divisor, fuel) ||
+      checkBothOperandsDivisible<arith::SubIOp>(value, divisor, fuel) ||
+      checkBothOperandsDivisible<arith::RemSIOp>(value, divisor, fuel) ||
+      checkBothOperandsDivisible<arith::MinSIOp>(value, divisor, fuel)) {
+    return true;
+  }
+  if (auto select_op = value.getDefiningOp<arith::SelectOp>()) {
+    return isGuaranteedDivisible(select_op.getTrueValue(), divisor, fuel / 2) &&
+           isGuaranteedDivisible(select_op.getFalseValue(), divisor,
+                                 (fuel + 1) / 2);
   }
   return false;
 }

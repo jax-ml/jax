@@ -60,6 +60,7 @@ jax_multiplatform_test(
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_gpu",
         "//jax/experimental:pallas_gpu_ops",
+        "//jax/experimental:pallas_mosaic_gpu",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",
     ] + py_deps([
@@ -538,6 +539,7 @@ jax_multiplatform_test(
         "notsan",  # Times out.
     ],
     deps = [
+        "//jax/experimental:hijax",
         "//jax/experimental:mesh_utils",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",

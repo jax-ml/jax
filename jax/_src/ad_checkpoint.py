@@ -731,27 +731,30 @@ pe.partial_eval_jaxpr_custom_rules[remat_p] = \
     partial(pe.call_partial_eval_custom_rule, 'jaxpr',
             remat_partial_eval_custom_params_updater)
 
-def remat_transpose(out_cts, *in_primals, jaxpr, prevent_cse, **params):
+def remat_transpose(out_cts, *args, jaxpr, prevent_cse, **params):
+  # TODO(mattjj): avoid round-tripping into UndefinedPrimals
+  args_ = [ad.UndefinedPrimal(x.aval) if isinstance(x, ad.ValAccum) else x
+           for x in args]
+  if any(isinstance(x, ad.GradAccum) for x in args_): raise NotImplementedError
+
   assert not jaxpr.constvars
-  in_linear = [ad.is_undefined_primal(x) for x in in_primals]
+  in_linear = [ad.is_undefined_primal(x) for x in args_]
   out_zeros = [type(ct) is ad_util.Zero for ct in out_cts]
   transposed_jaxpr_, in_zeros = transpose_jaxpr(
       pe.close_jaxpr(jaxpr), in_linear, out_zeros)
   transposed_jaxpr, consts = transposed_jaxpr_.jaxpr, transposed_jaxpr_.consts
   transposed_jaxpr = pe.convert_constvars_jaxpr(transposed_jaxpr)
-  args, _ = tree_flatten((in_primals, out_cts))
+  flat_args, _ = tree_flatten((args_, out_cts))
   if isinstance(prevent_cse, tuple):
     prevent_cse_, _ = partition_list(in_linear, prevent_cse)
     prevent_cse = tuple(prevent_cse_) + (True,) * (len(out_zeros) - sum(out_zeros))
-  in_cts_nz = remat_p.bind(*consts, *args, jaxpr=transposed_jaxpr,
+  in_cts_nz = remat_p.bind(*consts, *flat_args, jaxpr=transposed_jaxpr,
                            prevent_cse=prevent_cse, **params)
   in_cts_nz_, in_zeros_ = iter(in_cts_nz), iter(in_zeros)
-  in_cts = [None if not ad.is_undefined_primal(x) else
-            ad_util.Zero(x.aval) if next(in_zeros_) else next(in_cts_nz_)
-            for x in in_primals]
-  assert next(in_cts_nz_, None) is next(in_zeros_, None) is None
-  return in_cts
-ad.primitive_transposes[remat_p] = remat_transpose
+  for x in args:
+    if isinstance(x, ad.ValAccum) and not next(in_zeros_):
+      x.accum(next(in_cts_nz_))
+ad.fancy_transposes[remat_p] = remat_transpose
 
 # TODO(mattjj): move this to ad.py
 def transpose_jaxpr(jaxpr: core.ClosedJaxpr, in_linear: bool | Sequence[bool],
@@ -845,7 +848,8 @@ def remat_dce(used_outputs: list[bool], eqn: core.JaxprEqn
 pe.dce_rules[remat_p] = remat_dce
 
 def _has_effects(effects) -> bool:
-  return bool({e for e in effects if not isinstance(e, core.NamedAxisEffect)})
+  not_really_effects = (core.NamedAxisEffect, core.InternalMutableArrayEffect)
+  return any(not isinstance(e, not_really_effects) for e in effects)
 
 
 def remat_expansion(

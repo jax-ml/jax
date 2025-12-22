@@ -426,8 +426,8 @@ class LayoutInferenceTest(parameterized.TestCase):
         add = layout_cast(arith.addf(loop_a, loop_b), layout)
 
         transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 64)),
-          mgpu.dialect.SwizzleTransformAttr.get(128),
+            mgpu.dialect.TileTransformAttr.get((8, 32)),
+            mgpu.dialect.SwizzleTransformAttr.get(64),
         ])
         loop_ref = mgpu.dialect.with_transforms(loop_ref, transforms)
 
@@ -624,7 +624,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
 
     with ir.InsertionPoint(self.module.body):
-      ty = ir.VectorType.get((32, 4), ir.BF16Type.get())
+      ty = ir.VectorType.get((64, 16), ir.BF16Type.get())
       lhs, rhs = undefs(ty, ty)
       optimization_barrier = mgpu.dialect.OptimizationBarrierOp([lhs, rhs])
       lhs, rhs = optimization_barrier.results
@@ -1209,6 +1209,9 @@ class LayoutInferenceTest(parameterized.TestCase):
       lhs_in_registers=(False, True),
   )
   def test_infer_transforms_for_wgmma_op(self, swizzle, dtype, lhs_in_registers):
+    if swizzle == mgpu.dialect.SwizzlingMode.kNoSwizzle:
+      self.skipTest("kNoSwizzle is not supported by this test.")
+
     swizzle_elems = swizzle // np.dtype(dtype).itemsize
     m = 64
     # Note: `group_m` and `group_k` should be coprime with 2 for the test to be
@@ -1286,6 +1289,9 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_transforms_for_tcgen05_mma_op(
       self, swizzle_lhs, swizzle_rhs, dtype, lhs_in_tmem
   ):
+    if mgpu.dialect.SwizzlingMode.kNoSwizzle in (swizzle_lhs, swizzle_rhs):
+      self.skipTest("kNoSwizzle is not supported by this test.")
+
     swizzle_elems_lhs = swizzle_lhs // np.dtype(dtype).itemsize
     swizzle_elems_rhs = swizzle_rhs // np.dtype(dtype).itemsize
     m = 128
@@ -1979,6 +1985,41 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module)
 
+  def test_infer_layout_for_vector_extract(self):
+    layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
+    with ir.InsertionPoint(self.module.body):
+      i16 = ir.IntegerType.get_signless(16)
+      src_ty = ir.VectorType.get([2, 3, 64, 8], i16)
+      [src] = undefs(src_ty)
+      src = mgpu.dialect.layout_cast(src, layout)
+      op = vector.ExtractOp(src, dynamic_position=[], static_position=[1, 1])
+    mgpu.infer_layout(self.module)
+    self.checkInLayouts(op, [layout])
+    self.checkOutLayouts(op, [layout])
+
+  def test_infer_layout_for_vector_extract_to_scalar(self):
+    with ir.InsertionPoint(self.module.body):
+      i16 = ir.IntegerType.get_signless(16)
+      src_ty = ir.VectorType.get([64, 8], i16)
+      [src] = undefs(src_ty)
+      op = vector.ExtractOp(src, dynamic_position=[], static_position=[1, 1])
+    mgpu.infer_layout(self.module)
+    self.checkInLayouts(op, [mgpu.WGSplatFragLayout(tuple(src_ty.shape))])
+    self.assertNotIn("out_layouts", op.attributes)
+
+  def test_infer_layout_for_vector_extract_fails_if_not_dividing_result_shape(self):
+    layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
+    with ir.InsertionPoint(self.module.body):
+      i16 = ir.IntegerType.get_signless(16)
+      src_ty = ir.VectorType.get([64, 64], i16)
+      [src] = undefs(src_ty)
+      src = mgpu.dialect.layout_cast(src, layout)
+      vector.extract(src, dynamic_position=[], static_position=[0])
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts."
+    ):
+      mgpu.infer_layout(self.module)
+
   def test_infer_tmem_layout_for_slice_tmem_op(self):
     # in and out layouts can be different.
     in_layout = layouts.to_layout_attr(tcgen05.tmem_default_layout(packing=1))
@@ -2098,6 +2139,42 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertSequenceEqual(in_transform, transforms)
     [out_transform] = inference_utils.out_transforms(op)
     self.assertSequenceEqual(out_transform, transforms)
+
+  def test_layout_cast_incompatible_with_vector_shape_is_unsatisfiable(self):
+    with ir.InsertionPoint(self.module.body):
+      [vec] = undefs(ir.VectorType.get((4, 4), ir.BF16Type.get()))
+      mgpu.dialect.layout_cast(vec, layouts.to_layout_attr(fa.WGMMA_LAYOUT))
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts"
+    ):
+      mgpu.infer_layout(self.module)
+
+  def test_tmem_layout_cast_incompatible_with_ref_shape_is_unsatisfiable(self):
+    with ir.InsertionPoint(self.module.body):
+      f32 = ir.F32Type.get()
+      ref_ty = ir.MemRefType.get((4, 4), f32, memory_space=mgpu.utils.tmem())
+      [ref] = undefs(ref_ty)
+      mgpu.dialect.tmem_layout_cast(
+          ref, layouts.to_layout_attr(mgpu.TMEM_NATIVE_LAYOUT)
+      )
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts"
+    ):
+      mgpu.infer_layout(self.module)
+
+  def test_with_transforms_incompatible_with_smem_shape_is_unsatisfiable(self):
+    with ir.InsertionPoint(self.module.body):
+      f32 = ir.F32Type.get()
+      ref_ty = ir.MemRefType.get((4, 4), f32, memory_space=mgpu.utils.smem())
+      [ref] = undefs(ref_ty)
+      transforms = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((8, 2)),
+      ])
+      mgpu.dialect.with_transforms(ref, transforms)
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts"
+    ):
+      mgpu.infer_layout(self.module)
 
 
 if __name__ == "__main__":

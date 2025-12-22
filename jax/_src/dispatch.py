@@ -396,6 +396,25 @@ class _DeferredShardArg:
     return pxla.global_aval_to_result_handler(
         self.aval, self.s, self.committed)(shard_arg_result)
 
+@dataclasses.dataclass(frozen=True)
+class _DeferredCrossHostTransferArg:
+  """Deferred call to `xc.batched_copy_array_to_devices_with_sharding` for
+  cross-host data transfers.
+
+  Per-array impls return this object instead of a result array to indicate a
+  deferred `batched_copy_array_to_devices_with_sharding` call for a cross-host
+  data transfer. `_batched_device_put_impl` then batches all
+  `_DeferredCrossHostTransferArg` objects into a single
+  `_batched_device_put_impl` call.
+
+  For any _DeferredCrossHostTransferArg, _is_supported_cross_host_transfer(
+  x.ndim, x.sharding, dst_sharding) == True.
+  """
+
+  x: array.ArrayImpl
+  dst_sharding: Sharding
+  copy_semantics: ArrayCopySemantics
+
 
 def _device_put_sharding_impl(
     x: Any,
@@ -434,9 +453,7 @@ def _device_put_sharding_impl(
 
     if (x_is_jax_array and x._committed and xla_bridge.process_count() > 1
         and _is_supported_cross_host_transfer(x.ndim, x_sharding, s)):
-      return xc.batched_copy_array_to_devices_with_sharding(
-          [x], [s._internal_device_list], [s],  # pytype: disable=attribute-error
-          [copy])[0]
+      return _DeferredCrossHostTransferArg(x, s, copy)
 
     if not s_is_fully_addressable:
       # If both the source and target shardings are not fully addressable and
@@ -552,7 +569,14 @@ def _batched_device_put_impl(
     copy_semantics: Sequence[ArrayCopySemantics],
     dst_avals: Sequence[core.ShapedArray | None]):
   ys = []
+
+  # Used to batch transfers when _device_put_impl returns a _DeferredShardArg.
   dsa_indices, dsa_xs, dsa_shardings, dsa_copy_semantics = [], [], [], []
+  # Used to batch transfers when _device_put_impl returns a
+  # _DeferredCrossHostTransferArg.
+  dca_indices, dca_xs, dca_shardings, dca_device_lists, dca_copy_semantics = \
+    [], [], [], [], []
+
   for i, (x, device, src, cp, aval) in enumerate(
       zip(xs, devices, srcs, copy_semantics, dst_avals)):
     y = _device_put_impl(x, device=device, src=src, copy=cp, aval=aval)
@@ -561,11 +585,17 @@ def _batched_device_put_impl(
       dsa_xs.append(y.x)
       dsa_shardings.append(y.s)
       dsa_copy_semantics.append(y.copy_semantics)
+    elif isinstance(y, _DeferredCrossHostTransferArg):
+      dca_indices.append(i)
+      dca_xs.append(y.x)
+      dca_shardings.append(y.dst_sharding)
+      dca_device_lists.append(y.dst_sharding._internal_device_list) # pytype: disable=attribute-error
+      dca_copy_semantics.append(y.copy_semantics)
     ys.append(y)
 
+  # Batch shard_arg / batched_copy_array_to_devices_with_sharding calls. Helps
+  # improve efficiency for backends that support efficient batch transfer.
   if dsa_xs:
-    # Batch shard_arg calls. Helps improve efficiency for backends that support
-    # efficient batch transfer.
     # device_put handles `Format` via a different path, so just pass `None` as
     # the layout here.
     shard_arg_results = pxla.shard_args(dsa_shardings, [None] * len(dsa_xs),
@@ -573,6 +603,13 @@ def _batched_device_put_impl(
     for i, shard_arg_result in zip(dsa_indices, shard_arg_results):
       assert isinstance(ys[i], _DeferredShardArg)
       ys[i] = ys[i].result_handler(shard_arg_result)
+  if dca_xs:
+    copy_array_results = xc.batched_copy_array_to_devices_with_sharding(
+      dca_xs, dca_device_lists, dca_shardings, dca_copy_semantics)
+    for i, copy_array_result in zip(dca_indices, copy_array_results):
+      assert isinstance(ys[i], _DeferredCrossHostTransferArg)
+      ys[i] = copy_array_result
+
   return ys
 
 def batched_device_put_impl(

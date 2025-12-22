@@ -275,11 +275,3 @@ Read more in [](debugging/flags).
 ## Next steps
 
 Check out the {ref}`advanced-debugging` to learn more about debugging in JAX.
-
-```{toctree}
-:hidden:
-
-debugging/print_breakpoint
-debugging/checkify_guide
-debugging/flags
-```

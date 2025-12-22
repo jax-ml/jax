@@ -14,6 +14,7 @@
 
 import copy
 import pickle
+import sys
 import unittest
 
 from absl.testing import absltest
@@ -26,10 +27,10 @@ except ImportError:
 
 import jax
 from jax import numpy as jnp
-from jax.interpreters import pxla
 from jax._src import config
 from jax._src import literals
 from jax._src import test_util as jtu
+from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import GSPMDSharding
 
@@ -124,6 +125,8 @@ class PickleTest(jtu.JaxTestCase):
     self.assertIsInstance(y, type(x))
     self.assertEqual(x.aval, y.aval)
 
+  @unittest.skipIf(sys.version_info[:2] == (3, 11),
+                   "cannot pickle: b/470129766")
   @jtu.sample_product(prng_name=['threefry2x32', 'rbg', 'unsafe_rbg'])
   def testPickleOfKeyArray(self, prng_name):
     with jax.default_prng_impl(prng_name):
@@ -196,7 +199,8 @@ class PickleTest(jtu.JaxTestCase):
         )
         self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
-  @jtu.ignore_warning(category=DeprecationWarning)
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message='jax.sharding.PmapSharding is deprecated')
   def test_pickle_pmap_sharding(self):
     ss = pxla.ShardingSpec(
         sharding=(pxla.Unstacked(8),),

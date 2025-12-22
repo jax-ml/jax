@@ -17,11 +17,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import dataclasses
-import functools
 import inspect
 import random
 import threading
 from typing import Any
+import uuid
+import weakref
 
 import jax
 from jax._src import api
@@ -375,40 +376,153 @@ def _uncached_get_specialized_func(
   return specialized_func
 
 
-class _CachedGetSpecializedFunction:
-  """Manages cached versions of `_uncached_get_specialized_func`.
+class _SpecializedCollection:
+  """Collection of specialized functions for a single unspecialized function.
 
-  This class holds a collection of caches, each identified by a unique ID, and
-  presents itself as a single cache to JAX's `register_backend_cache`. One can
-  clear individual caches identified by the UID, using the `cache_remove(uid)`
-  method. JAX's `clear_backend_cache()` will clear all caches.
+  The `get()` method retrieves the specialized function for the provided input
+  spec, either by looking up a cache or by compiling the specialized function.
+
+  Looking up a cache with an input spec as a key can be slow, because
+  `Sharding`'s equivalence comparison is slow. Instead, we maintain two caches
+  for the same value: we use the ID of the sharding object (via `WeakSpec`) as
+  the key in one cache, and the corresponding strong references to the sharding
+  object (via `StrongSpec`) as the key in another cache. Looking up the
+  `WeakSpec`-keyed cache is fast. Note that the ID integer in the `WeakSpec`
+  cache will remain valid as long as a strong-ref exists in the `StrongSpec`
+  cache.
+
+  The `StrongSpec`-keyed cache is unbounded, while the `WeakSpec`-keyed cache
+  is LRU(1): if there is a miss in the `WeakSpec` cache but a hit in the
+  `StrongSpec` cache, the strong-ref is the `StrongSpec` cache and the ID
+  integer in the `WeakSpec` cache are both updated.
   """
 
+  @dataclasses.dataclass(slots=True, unsafe_hash=True)
+  class WeakSpec:
+    """WeakSpec stores just the `id()` of the input spec sharding."""
+
+    dtypes: tuple[jax.numpy.dtype, ...]
+    shapes: tuple[tuple[int, ...], ...]
+    sharding_ids: tuple[int, ...]
+    treedef: tree_util.PyTreeDef
+
+    def __init__(
+        self, args_leaves: Sequence[jax.Array], treedef: tree_util.PyTreeDef
+    ):
+      self.dtypes = tuple(x.dtype for x in args_leaves)
+      self.shapes = tuple(x.shape for x in args_leaves)
+      self.sharding_ids = tuple(id(x.sharding) for x in args_leaves)
+      self.treedef = treedef
+
+  @dataclasses.dataclass(slots=True, unsafe_hash=True)
+  class StrongSpec:
+    """StrongSpec stores the full input spec sharding."""
+
+    in_specs_treedef: tree_util.PyTreeDef | None = None
+    in_specs_leaves: tuple[api.ShapeDtypeStruct, ...] | None = None
+
+    def __init__(
+        self, args_leaves: Sequence[jax.Array], pytreedef: tree_util.PyTreeDef
+    ):
+      self.in_specs_leaves = tuple(_get_spec(x) for x in args_leaves)
+      self.in_specs_treedef = pytreedef
+
   def __init__(self):
+    CompiledId = int
+
+    self._weak_to_id: dict[_SpecializedCollection.WeakSpec, CompiledId] = {}
+    self._id_to_weak: dict[CompiledId, _SpecializedCollection.WeakSpec] = {}
+    self._strong_to_id: dict[_SpecializedCollection.StrongSpec, CompiledId] = {}
+    self._id_to_compiled: dict[CompiledId, Callable[..., Any]] = {}
+
+    self._counter = 0
+    self._mu = threading.Lock()
+
+  def get(
+      self,
+      args_leaves: Sequence[jax.Array],
+      pytreedef: tree_util.PyTreeDef,
+      func_info: FunctionInfo,
+      specialization: Specialization,
+  ) -> Callable[..., Any]:
+    # TODO(hyeontaek): Allow Python values in args_leaves, similar to the todo
+    # in _get_spec().
+
+    # Attempt fast-path cache hit.
+    weak_spec = _SpecializedCollection.WeakSpec(args_leaves, pytreedef)
+    compiled_id = self._weak_to_id.get(weak_spec)
+    if compiled_id is not None:
+      return self._id_to_compiled[compiled_id]
+
+    with self._mu:
+      # Attempt slow-path cache hit.
+      strong_spec = _SpecializedCollection.StrongSpec(args_leaves, pytreedef)
+      compiled_id = self._strong_to_id.pop(strong_spec, None)
+      if compiled_id is not None:
+        # Update the caches so that the fast-path cache stores the `id()` of the
+        # shardings presented by the current invocation.
+        old_weak = self._id_to_weak.pop(compiled_id)
+        del self._weak_to_id[old_weak]
+
+        self._strong_to_id[strong_spec] = compiled_id
+        self._weak_to_id[weak_spec] = compiled_id
+        self._id_to_weak[compiled_id] = weak_spec
+
+        return self._id_to_compiled[compiled_id]
+
+      # Cache-miss: compile.
+      if specialization.devices is None:
+        result = _uncached_get_specialized_func(
+            func_info,
+            specialization.update(
+                in_specs_treedef=strong_spec.in_specs_treedef,
+                in_specs_leaves=strong_spec.in_specs_leaves,
+                devices=_infer_devices_from_args(args_leaves),
+            ),
+        )
+      else:
+        result = _uncached_get_specialized_func(
+            func_info,
+            specialization.update(
+                in_specs_treedef=strong_spec.in_specs_treedef,
+                in_specs_leaves=strong_spec.in_specs_leaves,
+            ),
+        )
+
+      compiled_id = self._counter
+      self._counter += 1
+
+      self._weak_to_id[weak_spec] = compiled_id
+      self._strong_to_id[strong_spec] = compiled_id
+      self._id_to_weak[compiled_id] = weak_spec
+      self._id_to_compiled[compiled_id] = result
+      return result
+
+
+class _JaxSecondLevelCaches:
+  """Manages second-level caches registered as a single cache with JAX."""
+
+  def __init__(self, name: str):
     self._lock = threading.Lock()
-    self._caches: dict[int, Any] = {}
-    jax_register_backend_cache(self, "colocated_python_specialized_func_cache")
+    self._callbacks: dict[int, Callable[..., Any]] = {}
+    jax_register_backend_cache(self, name)
 
   def cache_clear(self):
-    self._caches.clear()
+    """Meant to be invoked by JAX internals."""
+    for callback in self._callbacks.values():
+      callback()
+    self._callbacks.clear()
 
-  def cache_remove(self, held_by: int):
+  def register_second_level(
+      self, uid: int, cache_clear_callback: Callable[..., Any]
+  ):
+    self._callbacks[uid] = cache_clear_callback
+
+  def remove_second_level(self, uid: int):
     try:
-      self._caches.pop(held_by)
+      self._callbacks.pop(uid)
     except KeyError:
       pass
-
-  def get(self, held_by: int) -> Callable[..., Any]:
-    with self._lock:
-      try:
-        return self._caches[held_by]
-      except KeyError:
-        cache = functools.cache(_uncached_get_specialized_func)
-        self._caches[held_by] = cache
-        return cache
-
-
-_SINGLETON_CACHED_GET_SPECIALIZED_FUNCTION = _CachedGetSpecializedFunction()
 
 
 class _CachedColocatedFunctionMaker:
@@ -418,20 +532,32 @@ class _CachedColocatedFunctionMaker:
   reused, until the cache is dropped.
   """
 
+  JAX_CACHE = _JaxSecondLevelCaches("colocated_python_specialized_func_cache")
+
   def __init__(self, held_by: int | None):
-    self.held_by = held_by
-    if held_by is None:
-      self._get_specialized_func = jax._src.util.cache(
-          max_size=None, trace_context_in_key=False
-      )(_uncached_get_specialized_func)
-    else:
-      self._get_specialized_func = (
-          _SINGLETON_CACHED_GET_SPECIALIZED_FUNCTION.get(held_by)
-      )
+    self.held_by = held_by if held_by is not None else uuid.uuid4().int
+    specialized_collections: list[_SpecializedCollection] = []
+    specialized_functions: list[Callable[..., Any]] = []
+
+    def clear_caches():
+      specialized_collections.clear()
+      specialized_functions.clear()
+
+    _CachedColocatedFunctionMaker.JAX_CACHE.register_second_level(
+        self.held_by,
+        clear_caches,
+    )
+    self.specialized_collections = specialized_collections
+    self.specialized_functions = specialized_functions
 
   def __del__(self):
-    if self.held_by is not None:
-      _SINGLETON_CACHED_GET_SPECIALIZED_FUNCTION.cache_remove(self.held_by)
+    self.specialized_collections.clear()
+    self.specialized_functions.clear()
+    try:
+      _CachedColocatedFunctionMaker.JAX_CACHE.remove_second_level(self.held_by)
+    except AttributeError:
+      # Ignore error during python finalization.
+      pass
 
   def _make_callable(
       self,
@@ -482,6 +608,14 @@ class _CachedColocatedFunctionMaker:
           ),
       )
 
+    # Caches for a collection of specialized functions or a specialized function
+    # itself. The latter is used as a performance optimization when the input
+    # spec is explicitly specified and can skip a collection lookup. The caches
+    # use weakrefs so that we avoid creating cyclic references.
+    specialized_collections_wref = lambda: None
+    specialized_functions_wref = lambda: None
+    wref_mu = threading.Lock()
+
     @api_boundary
     def __call__(*args, **kwargs):
       """Executes the given Python function on the same devices as the arguments or as specialized.
@@ -489,63 +623,65 @@ class _CachedColocatedFunctionMaker:
       If the callable has not been specialized with output shapes and shardings
       (see `specialize` above), the very first call will run synchronously to
       discover output shapes and shardings, and will run asynchronously after.
-      If
-      specialized with output shapes and shardings, every execution of the
+      If specialized with output shapes and shardings, every execution of the
       callable will be asynchronous.
       """
       args_leaves, in_specs_treedef = tree_util.tree_flatten((args, kwargs))
 
-      in_specs_leaves = tuple(_get_spec(x) for x in args_leaves)
-      if specialization.in_specs_treedef is None:
-        # Allow input polymorphism by applying input_specs specialization
-        # temporarily for this call.
-        return self._make_callable(
-            info,
-            specialization.update(
-                in_specs_treedef=in_specs_treedef,
-                in_specs_leaves=in_specs_leaves,
-            ),
-        )(*args, **kwargs)
-
-      if specialization.devices is None:
-        devices = _infer_devices_from_args(args_leaves)
-        if devices is None:
-          raise ValueError(
-              "No devices found. colocated_python function without input"
-              " arguments must be first specialized with devices."
-          )
-        # Allow device polymorphism by applying devices specialization temporarily
-        # for this call.
-        return self._make_callable(
-            info,
-            specialization.update(devices=devices),
-        )(*args, **kwargs)
-
-      # Assertion is added to silence mypy error: Unsupported operand types for !=
-      # ("PyTreeDef" and "None")  [operator]
-      assert isinstance(specialization.in_specs_treedef, tree_util.PyTreeDef)
-
-      # If input_specs is known, verify that it matches actual inputs.
-      if (
-          specialization.in_specs_treedef != in_specs_treedef
-          or specialization.in_specs_leaves != in_specs_leaves
-      ):
+      no_input = len(args_leaves) == 0
+      if no_input and specialization.devices is None:
         raise ValueError(
-            "Input specs in specialization and input specs of arguments must"
-            " have the same pytree structure, but they have the following"
-            " structural differences:\n"
-            + (
-                "\n".join(
-                    f"   - {tree_util.keystr(path)} is a {thing1} in value 1"
-                    f" and a {thing2} in  value 2, so {explanation}.\n"
-                    for path, thing1, thing2, explanation in tree_util.equality_errors_pytreedef(
-                        specialization.in_specs_treedef, in_specs_treedef
-                    )
-                )
-            )
+            "No devices found. colocated_python function without input"
+            " arguments must be first specialized with devices."
         )
 
-      return self._get_specialized_func(info, specialization)(*args, **kwargs)
+      fully_specified_in_spec = (
+          specialization.in_specs_treedef is not None
+          and specialization.in_specs_leaves is not None
+      )
+
+      if not fully_specified_in_spec and not no_input:
+        # We need to handle input polymorphism
+        nonlocal specialized_collections_wref
+        with wref_mu:
+          collection: _SpecializedCollection = specialized_collections_wref()
+          if collection is None:
+            collection = _SpecializedCollection()
+            self.specialized_collections.append(collection)
+            specialized_collections_wref = weakref.ref(collection)
+        result = collection.get(
+            args_leaves, in_specs_treedef, info, specialization
+        )(*args, **kwargs)
+        del collection
+        return result
+
+      # No input polymorphism -- exactly one compiled function is possible.
+      with wref_mu:
+        nonlocal specialized_functions_wref
+        func: Callable[..., Any] = specialized_functions_wref()
+        if func is None:
+          if fully_specified_in_spec and specialization.devices is not None:
+            func = _uncached_get_specialized_func(info, specialization)
+          elif fully_specified_in_spec:
+            func = _uncached_get_specialized_func(
+                info,
+                specialization.update(
+                    devices=_infer_devices_from_args(args_leaves)
+                ),
+            )
+          elif no_input:
+            func = _uncached_get_specialized_func(
+                info,
+                specialization.update(
+                    in_specs_leaves=tuple(),
+                    in_specs_treedef=in_specs_treedef,
+                ),
+            )
+          self.specialized_functions.append(func)
+          specialized_functions_wref = weakref.ref(func)
+      result = func(*args, **kwargs)
+      del func
+      return result
 
     __call__ = wraps(info.fun)(__call__)
     __call__.specialize = specialize

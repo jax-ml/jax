@@ -46,9 +46,9 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.core import typeof, cur_qdd
 from jax._src.api_util import (
-  argnums_partial_except, flatten_axes, flatten_fun3, flatten_fun_nokwargs,
-  donation_vector, check_callable, resolve_argnums, argnames_partial_except,
-  debug_info, check_no_aliased_ref_args, _check_no_aliased_closed_over_refs)
+  argnums_partial_except, flatten_axes, flatten_fun3, donation_vector,
+  check_callable, resolve_argnums, argnames_partial_except, debug_info,
+  check_no_aliased_ref_args, _check_no_aliased_closed_over_refs)
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
 from jax._src.interpreters import ad
@@ -361,7 +361,7 @@ def _parse_jit_arguments(fun: Callable, *, in_shardings: Any,
         'backend and device argument on jit is deprecated. You can use'
         ' `jax.device_put(..., jax.local_devices(backend="cpu")[0])` on the'
         ' inputs to the jitted function to get the same behavior.',
-        category=DeprecationWarning, stacklevel=2
+        DeprecationWarning,
     )
     if device is not None and backend is not None:
       raise ValueError("can't specify both a device and a backend for jit, "
@@ -1206,30 +1206,25 @@ def pjit_check_aval_sharding(
     name_str = f' with pytree key path {name}' if name else ''
     shape = aval.shape
     try:
-      # Sharding interfaces can implement `check_compatible_aval` as an optional
-      # method to raise a more meaningful error.
-      if hasattr(s, 'check_compatible_aval'):
-        s.check_compatible_aval(shape)
-      else:
-        s._to_xla_hlo_sharding(len(shape))
+      s.check_compatible_aval(shape)
     except ValueError as e:
       raise ValueError(
           f'One of {what_aval}{name_str} is incompatible with its sharding '
           f'annotation {s}: {e}')
-    # Use the `OpSharding` proto to find out how many ways each dimension of
-    # the aval is sharded. This approach will work across all
-    # Sharding.
-    hlo_sharding = s._to_xla_hlo_sharding(len(shape))
-    assert hlo_sharding is not None
-    num_ways_dim_sharded, _ = op_shardings.get_num_ways_dim_sharded(
-        hlo_sharding, allow_partial_manual)
-    for i, size in enumerate(num_ways_dim_sharded):
-      if not allow_uneven_sharding and shape[i] % size != 0:
-        raise ValueError(f"One of {what_aval}{name_str} was given the sharding "
-                         f"of {s}, which implies that "
-                         f"the global size of its dimension {i} should be "
-                         f"divisible by {size}, but it is equal to {shape[i]} "
-                         f"(full shape: {shape})")
+
+    if not allow_uneven_sharding:
+      hlo_sharding = s._to_xla_hlo_sharding(len(shape))
+      assert hlo_sharding is not None
+      num_ways_dim_sharded, _ = op_shardings.get_num_ways_dim_sharded(
+          hlo_sharding, allow_partial_manual)
+      for i, size in enumerate(num_ways_dim_sharded):
+        if shape[i] % size != 0:
+          raise ValueError(
+              f'One of {what_aval}{name_str} was given the sharding '
+              f'of {s}, which implies that '
+              f'the global size of its dimension {i} should be '
+              f'divisible by {size}, but it is equal to {shape[i]} '
+              f'(full shape: {shape})')
 
 
 def check_aval_layout_compatibility(
@@ -2228,81 +2223,6 @@ pe.partial_eval_jaxpr_custom_rules[jit_p] = \
             _pjit_partial_eval_custom_params_updater)
 
 
-@lu.cache
-def _pjit_transpose_trace(fun: lu.WrappedFun,
-                          in_avals: Sequence[core.AbstractValue]):
-  transpose_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
-  transpose_jaxpr = core.ClosedJaxpr(transpose_jaxpr, consts)
-  return transpose_jaxpr
-
-
-def _pjit_transpose(cts_in, *primals_in,
-                    jaxpr: core.ClosedJaxpr,
-                    in_shardings, out_shardings, in_layouts, out_layouts,
-                    donated_invars, ctx_mesh, name, keep_unused, inline,
-                    compiler_options_kvs):
-  def prune_type(ty, xs, maybe_zeros):
-    return tuple(x for x, mz in zip(xs, maybe_zeros) if type(mz) is not ty)
-
-  dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  body = lu.wrap_init(ad.closed_backward_pass, debug_info=dbg)
-  body = lu.hashable_partial(body, jaxpr, False)
-  primals_and_nz_cts_in, in_treedef = tree_flatten((primals_in, cts_in))
-  body, cts_out_treedef_thunk = flatten_fun_nokwargs(body, in_treedef)
-
-  transpose_in_shardings = (
-    *prune_type(ad.UndefinedPrimal, in_shardings, primals_in),
-    *prune_type(ad.Zero, out_shardings, cts_in)
-  )
-  transpose_in_layouts = (
-    *prune_type(ad.UndefinedPrimal, in_layouts, primals_in),
-    *prune_type(ad.Zero, out_layouts, cts_in)
-  )
-  global_cts_in_avals = tuple(
-      core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd else a
-      for x in primals_and_nz_cts_in)
-
-  transpose_jaxpr = _pjit_transpose_trace(body, global_cts_in_avals)
-  cts_out_treedef = cts_out_treedef_thunk()
-  transpose_out_shardings = prune_type(
-      ad.Zero,
-      in_shardings,
-      tree_unflatten(cts_out_treedef, [object()] * cts_out_treedef.num_leaves))
-  transpose_out_layouts = prune_type(
-      ad.Zero,
-      in_layouts,
-      tree_unflatten(cts_out_treedef, [object()] * cts_out_treedef.num_leaves))
-
-  try:
-    nz_cts_out = jit_p.bind(
-        *primals_and_nz_cts_in,
-        jaxpr=transpose_jaxpr,
-        in_shardings=transpose_in_shardings,
-        out_shardings=transpose_out_shardings,
-        in_layouts=transpose_in_layouts,
-        out_layouts=transpose_out_layouts,
-        donated_invars=(False,) * len(primals_and_nz_cts_in),
-        ctx_mesh=ctx_mesh,
-        name=name,
-        keep_unused=keep_unused,
-        inline=inline,
-        compiler_options_kvs=compiler_options_kvs)
-  except api_util.InternalFloatingPointError as e:
-    print("Invalid nan value encountered in the backward pass of a jax.jit "
-          "function. Calling the de-optimized backward pass.")
-    try:
-      _ = ad.closed_backward_pass(jaxpr, None, primals_in, cts_in)
-    except (FloatingPointError, ZeroDivisionError) as e2:
-      raise e2 from None  # great
-    else:
-      # If control reaches this line, we got a NaN on the output of `compiled`
-      # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
-      api_util._raise_no_nan_in_deoptimized(e)
-
-  return tree_unflatten(cts_out_treedef, nz_cts_out)
-ad.primitive_transposes[jit_p] = _pjit_transpose
-
-
 def _pjit_transpose_fancy(
     cts_in, *args, jaxpr, in_shardings, out_shardings, in_layouts,
     out_layouts, donated_invars, ctx_mesh, name, keep_unused, inline,
@@ -2699,40 +2619,51 @@ def reshard(xs, out_shardings):
           f'and have a nonempty mesh. Got sharding {s}.'
       )
     ds = ds.update(spec=ds.spec._normalized_spec_for_aval(x_aval.ndim))  # pytype: disable=attribute-error
-    out_flat.append(reshard_p.bind(x, dst_sharding=ds))
+    cmesh = (s.mesh if (isinstance(s, NamedSharding) and
+                        isinstance(s.mesh, mesh_lib.Mesh))
+             else None)
+    out_flat.append(reshard_p.bind(x, dst_sharding=ds, concrete_mesh=cmesh))
   return tree_unflatten(treedef, out_flat)
 
 reshard_p = core.Primitive('reshard')
 reshard_p.skip_canonicalization = True
 
-def _reshard_abstract_eval(aval, dst_sharding):
+def _reshard_abstract_eval(aval, *, dst_sharding, concrete_mesh):
   assert isinstance(aval, core.ShapedArray)
   if aval.sharding == dst_sharding:
     return aval
   return aval.update(sharding=dst_sharding)
 reshard_p.def_abstract_eval(_reshard_abstract_eval)
 
-def _reshard_impl(x, dst_sharding):
-  return dispatch.apply_primitive(reshard_p, x, dst_sharding=dst_sharding)
+def _reshard_impl(x, *, dst_sharding, concrete_mesh):
+  thunk = lambda: dispatch.apply_primitive(
+      reshard_p, x, dst_sharding=dst_sharding, concrete_mesh=concrete_mesh)
+  if concrete_mesh is None:
+    return thunk()
+  else:
+    with sharding_impls.set_mesh(concrete_mesh):
+      return thunk()
 reshard_p.def_impl(_reshard_impl)
 
-def _reshard_transpose_rule(ct, x, dst_sharding):
+def _reshard_transpose_rule(ct, x, *, dst_sharding, concrete_mesh):
   assert ad.is_undefined_primal(x)
   out_sharding = x.aval.to_cotangent_aval().sharding
   with mesh_lib.use_abstract_mesh(out_sharding.mesh):
-    x_bar = reshard_p.bind(ct, dst_sharding=out_sharding)
+    x_bar = reshard_p.bind(ct, dst_sharding=out_sharding,
+                           concrete_mesh=concrete_mesh)
     return [x_bar]
 ad.deflinear2(reshard_p, _reshard_transpose_rule)
 
-def _reshard_transpose_fancy(ct, x, dst_sharding):
+def _reshard_transpose_fancy(ct, x, *, dst_sharding, concrete_mesh):
   assert isinstance(x, ad.GradAccum)
   out_sharding = x.aval.to_cotangent_aval().sharding
   with mesh_lib.use_abstract_mesh(out_sharding.mesh):
-    x_bar = reshard_p.bind(ct, dst_sharding=out_sharding)
+    x_bar = reshard_p.bind(ct, dst_sharding=out_sharding,
+                           concrete_mesh=concrete_mesh)
     x.accum(x_bar)
 ad.fancy_transposes[reshard_p] = _reshard_transpose_fancy
 
-def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding):
+def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding, concrete_mesh):
   aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
   if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
@@ -2743,12 +2674,13 @@ def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding):
   return [mlir.lower_with_sharding_in_types(ctx, x_node, aval_out, proto)]
 mlir.register_lowering(reshard_p, _reshard_hlo_lowering)
 
-def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding):
+def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding, concrete_mesh):
   x, = vals_in
   d, = dims_in
   vmapped_dst_sharding = batching.get_sharding_for_vmap(
       axis_data, dst_sharding, d)
-  y = reshard_p.bind(x, dst_sharding=vmapped_dst_sharding)
+  y = reshard_p.bind(x, dst_sharding=vmapped_dst_sharding,
+                     concrete_mesh=concrete_mesh)
   return y, d
 batching.fancy_primitive_batchers[reshard_p] = _reshard_batcher
 batching.skippable_batchers[reshard_p] = lambda _: ()

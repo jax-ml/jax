@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/python/compile_only_ifrt/client.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/hlo/hlo_program.h"
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
@@ -79,7 +80,13 @@ absl::StatusOr<nb_class_ptr<PyExecutable>> CompileOnlyPyClient::CompileUnloaded(
 
     auto xla_options = std::make_unique<ifrt::XlaCompileOptions>(
         options, std::move(executable_devices));
-#if JAX_IFRT_VERSION_NUMBER >= 38
+#if JAX_IFRT_VERSION_NUMBER >= 42
+    TF_ASSIGN_OR_RETURN(
+        ifrt_executable,
+        ifrt_client->GetDefaultCompiler()->Compile(
+            std::make_unique<xla::ifrt::HloProgram>(std::move(module)),
+            ifrt_client->topology(), std::move(xla_options)));
+#elif JAX_IFRT_VERSION_NUMBER >= 38
     TF_ASSIGN_OR_RETURN(
         ifrt_executable,
         ifrt::PjRtExecutable::Create(std::move(module), std::move(options),

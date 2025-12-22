@@ -131,8 +131,7 @@ def to_default_dtype(arr: ArrayLike) -> np.ndarray:
   """Convert a value to an array with JAX's default dtype.
 
   This is generally used for type conversions of values returned by numpy functions,
-  to make their dtypes take into account the state of the ``jax_enable_x64`` and
-  ``jax_default_dtype_bits`` flags.
+  to make their dtypes take into account the state of the ``jax_enable_x64`` flag.
   """
   arr = np.asarray(arr)
   dtype_fn = _dtypes.default_types.get(arr.dtype.kind)
@@ -143,8 +142,7 @@ def with_jax_dtype_defaults(func: Callable[..., Any], use_defaults: bool = True)
 
   This is generally used to wrap numpy functions within tests, in order to make
   their default output dtypes match those of corresponding JAX functions, taking
-  into account the state of the ``jax_enable_x64`` and ``jax_default_dtype_bits``
-  flags.
+  into account the state of the ``jax_enable_x64`` flag.
 
   Args:
     use_defaults : whether to convert any given output to the default dtype. May be
@@ -1339,14 +1337,16 @@ class JaxTestCase(parameterized.TestCase):
                             rtol=rtol, canonicalize_dtypes=canonicalize_dtypes,
                             err_msg=err_msg)
     elif is_sequence(actual) and not hasattr(actual, '__array__'):
-      self.assertTrue(is_sequence(desired) and not hasattr(desired, '__array__'))
+      self.assertTrue(is_sequence(desired) and not hasattr(desired, '__array__'),
+                      msg=f"Expected sequence, got {desired}")
       self.assertEqual(len(actual), len(desired))
       for actual_elt, desired_elt in zip(actual, desired):
         self.assertAllClose(actual_elt, desired_elt, check_dtypes=check_dtypes, atol=atol,
                             rtol=rtol, canonicalize_dtypes=canonicalize_dtypes,
                             err_msg=err_msg)
     elif hasattr(actual, '__array__') or np.isscalar(actual):
-      self.assertTrue(hasattr(desired, '__array__') or np.isscalar(desired))
+      self.assertTrue(hasattr(desired, '__array__') or np.isscalar(desired),
+                      msg=f"Expected array-like, got {desired}")
       if check_dtypes:
         self.assertDtypesMatch(actual, desired, canonicalize_dtypes=canonicalize_dtypes)
       actual = np.asarray(actual)
@@ -1554,7 +1554,7 @@ def with_explicit_mesh(sizes, names, axis_types=None, iota_order=False):
 def create_mesh(mesh_shape, axis_names, iota_order=False, axis_types=None):
   size = math.prod(mesh_shape)
   if len(xla_bridge.devices()) < size:
-    raise unittest.SkipTest(f"Test requires {size} global devices.")
+    raise unittest.SkipTest(f"Test requires {size} global devices and found {len(xla_bridge.devices())}.")
   if iota_order:
     devices = sorted(xla_bridge.devices(), key=lambda d: d.id)
     mesh_devices = np.array(devices[:size]).reshape(mesh_shape)

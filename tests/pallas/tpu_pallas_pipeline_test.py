@@ -14,6 +14,7 @@
 
 """Test TPU-specific extensions to pallas_call."""
 
+import dataclasses
 import functools
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -21,10 +22,14 @@ import hypothesis as hp
 import hypothesis.strategies as hps
 import jax
 from jax import lax
+from jax._src import hijax
+from jax._src import shard_map
+from jax._src import state
 from jax._src import test_util as jtu
+from jax._src.state import indexing
+from jax._src.state import primitives as state_primitives
 from jax.experimental import mesh_utils
 from jax.experimental import pallas as pl
-from jax._src import shard_map
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 import numpy as np
@@ -139,9 +144,34 @@ class PallasCallPipelineTest(parameterized.TestCase):
     out = pl.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 512), jnp.int32),
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
     )()
     np.testing.assert_allclose(out, jnp.full_like(out, 42))
+
+  def test_hbm_output(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 512), jnp.int32),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_hbm_ref, o_hbm_ref):
+      @functools.partial(
+          pltpu.emit_pipeline,
+          grid=(4,),
+          in_specs=pl.BlockSpec((8, 128), lambda i: (0, i)),
+          out_specs=pl.BlockSpec(
+              (8, 512), lambda i: (0, 0), memory_space=pltpu.HBM
+          ),
+      )
+      def pipeline(x_ref, o_ref):
+        i = pl.program_id(0)
+        pltpu.sync_copy(x_ref, o_ref.at[:, pl.ds(i * 128, 128)])
+
+      pipeline(x_hbm_ref, o_hbm_ref)
+
+    x = jnp.arange(8 * 512).reshape(8, 512)
+    np.testing.assert_allclose(kernel(x), x)
 
   @parameterized.product(
       no_pipelining=[False, True],
@@ -174,10 +204,10 @@ class PallasCallPipelineTest(parameterized.TestCase):
         matmul_kernel,
         out_shape=jax.ShapeDtypeStruct((512, 512), jnp.float32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.ANY),
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
     )
 
     jax.block_until_ready(z(x, y))
@@ -190,7 +220,7 @@ class PallasCallPipelineTest(parameterized.TestCase):
 
   @parameterized.named_parameters(
       ('vmem', pltpu.VMEM),
-      ('hbm', pltpu.ANY),
+      ('hbm', pl.ANY),
   )
   def test_double_pipeline_matmul(self, memory_space):
     # TODO(b/358121809): Re-enable this test once the bug is fixed.
@@ -268,9 +298,9 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         copy_kernel,
         out_shape=jax.ShapeDtypeStruct(x.shape, jnp.int32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
     )
     result = fn(x)
     np.testing.assert_allclose(result, x)
@@ -319,10 +349,10 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         matmul_kernel,
         out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
     )
     result = fn(x, y)
     np.testing.assert_allclose(result, x @ y, atol=5e-5)
@@ -362,10 +392,10 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         grid=(2,),
         out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=(pltpu.PARALLEL,)
         ),
@@ -416,10 +446,10 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         copy_kernel,
         out_shape=jax.ShapeDtypeStruct((len(in_block_indices) * 128, 128), jnp.int32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.SMEM),
+            pl.BlockSpec(memory_space=pl.ANY),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
     )
     result = fn(x, jnp.array(in_block_indices))
 
@@ -469,10 +499,10 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         copy_kernel,
         out_shape=jax.ShapeDtypeStruct((1024, 128), jnp.int32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.SMEM),
+            pl.BlockSpec(memory_space=pl.ANY),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
     )
     result = fn(x, jnp.array(out_block_indices))
 
@@ -530,9 +560,9 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         copy_kernel,
         out_shape=jax.ShapeDtypeStruct(x.shape, jnp.int32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
     )
     result = fn(x)
     np.testing.assert_allclose(result, x)
@@ -608,10 +638,10 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         copy_kernel,
         out_shape=jax.ShapeDtypeStruct((blk_len * 2 * 128, 128), jnp.int32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.SMEM),
+            pl.BlockSpec(memory_space=pl.ANY),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         scratch_shapes = [pltpu.SMEM((1,), dtype=jnp.int32)]
     )
     result = jax.block_until_ready(fn(x, jnp.array(in_block_indices)))
@@ -680,9 +710,9 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         copy_kernel,
         out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
     )
     result = fn(x)
     expected = 0
@@ -725,10 +755,10 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
         matmul_kernel,
         out_shape=jax.ShapeDtypeStruct((M, N), jnp.float32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         scratch_shapes=inner_allocs,
     )
     result = fn(x, y)
@@ -751,10 +781,10 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
 
   @parameterized.named_parameters(
       ('vmem', pltpu.VMEM, jnp.bfloat16, 2, 2, 2),
-      ('hbm', pltpu.ANY, jnp.bfloat16, 2, 2, 2),
-      ('hbm_float32', pltpu.ANY, jnp.float32, 2, 2, 2),
-      ('hbm_float32_112', pltpu.ANY, jnp.float32, 1, 1, 2),
-      ('hbm_float32_111', pltpu.ANY, jnp.float32, 1, 1, 1),
+      ('hbm', pl.ANY, jnp.bfloat16, 2, 2, 2),
+      ('hbm_float32', pl.ANY, jnp.float32, 2, 2, 2),
+      ('hbm_float32_112', pl.ANY, jnp.float32, 1, 1, 2),
+      ('hbm_float32_111', pl.ANY, jnp.float32, 1, 1, 1),
   )
   def test_pipeline_latency_optimized_allgather_matmul(
       self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles):
@@ -1041,10 +1071,10 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
 
   @parameterized.named_parameters(
       ('vmem', pltpu.VMEM, jnp.bfloat16, 2, 2, 2),
-      ('hbm', pltpu.ANY, jnp.bfloat16, 2, 2, 2),
-      ('hbm_float32', pltpu.ANY, jnp.float32, 2, 2, 2),
-      ('hbm_float32_122', pltpu.ANY, jnp.float32, 1, 2, 2),
-      ('hbm_float32_121', pltpu.ANY, jnp.float32, 1, 2, 1),
+      ('hbm', pl.ANY, jnp.bfloat16, 2, 2, 2),
+      ('hbm_float32', pl.ANY, jnp.float32, 2, 2, 2),
+      ('hbm_float32_122', pl.ANY, jnp.float32, 1, 2, 2),
+      ('hbm_float32_121', pl.ANY, jnp.float32, 1, 2, 1),
   )
   def test_pipeline_throughput_optimized_allgather_matmul(
       self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles):
@@ -1284,10 +1314,10 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
 
   @parameterized.named_parameters(
       ('vmem', pltpu.VMEM, jnp.bfloat16, 2, 2, 2),
-      ('hbm', pltpu.ANY, jnp.bfloat16, 2, 2, 2),
-      ('hbm_float32', pltpu.ANY, jnp.float32, 2, 4, 2),
-      ('hbm_float32_112', pltpu.ANY, jnp.float32, 1, 1, 2),
-      ('hbm_float32_111', pltpu.ANY, jnp.float32, 1, 1, 1),
+      ('hbm', pl.ANY, jnp.bfloat16, 2, 2, 2),
+      ('hbm_float32', pl.ANY, jnp.float32, 2, 4, 2),
+      ('hbm_float32_112', pl.ANY, jnp.float32, 1, 1, 2),
+      ('hbm_float32_111', pl.ANY, jnp.float32, 1, 1, 1),
   )
   def test_pipeline_latency_optimized_matmul_reducescatter(
       self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles):
@@ -1571,10 +1601,10 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
 
   @parameterized.named_parameters(
       ('vmem', pltpu.VMEM, jnp.bfloat16, 2, 2, 2),
-      ('hbm', pltpu.ANY, jnp.bfloat16, 2, 2, 2),
-      ('hbm_float32', pltpu.ANY, jnp.float32, 2, 4, 2),
-      ('hbm_float32_112', pltpu.ANY, jnp.float32, 1, 2, 2),
-      ('hbm_float32_111', pltpu.ANY, jnp.float32, 1, 2, 1),
+      ('hbm', pl.ANY, jnp.bfloat16, 2, 2, 2),
+      ('hbm_float32', pl.ANY, jnp.float32, 2, 4, 2),
+      ('hbm_float32_112', pl.ANY, jnp.float32, 1, 2, 2),
+      ('hbm_float32_111', pl.ANY, jnp.float32, 1, 2, 1),
   )
   def test_pipeline_throughput_optimized_matmul_reducescatter(
       self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles):
@@ -1863,9 +1893,9 @@ class PallasCallMegacoreTest(parameterized.TestCase):
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=1,
             in_specs=[
-                pl.BlockSpec(memory_space=pltpu.ANY),
+                pl.BlockSpec(memory_space=pl.ANY),
             ],
-            out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+            out_specs=pl.BlockSpec(memory_space=pl.ANY),
             grid=(num_cores,),
         ),
         compiler_params=pltpu.CompilerParams(
@@ -1900,9 +1930,9 @@ class PallasCallMegacoreTest(parameterized.TestCase):
         matmul_kernel,
         out_shape=jax.ShapeDtypeStruct((512, 512), jnp.float32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         grid=(num_cores,),
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=('parallel',)
@@ -1950,10 +1980,10 @@ class PallasCallMegacoreTest(parameterized.TestCase):
         functools.partial(matmul_kernel, bm=bm, bk=bk, bn=bn),
         out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.ANY),
-            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         grid=(num_cores,),
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=('parallel',)
@@ -1999,10 +2029,10 @@ def matmul(x: jax.Array, y: jax.Array, *, bm: int, bk: int, bn: int):
       kernel,
       out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
       in_specs=[
-          pl.BlockSpec(memory_space=pltpu.ANY),
-          pl.BlockSpec(memory_space=pltpu.ANY),
+          pl.BlockSpec(memory_space=pl.ANY),
+          pl.BlockSpec(memory_space=pl.ANY),
       ],
-      out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+      out_specs=pl.BlockSpec(memory_space=pl.ANY),
       grid=(num_cores,),
   )(x, y)
 
@@ -2187,6 +2217,254 @@ class PallasCallBoundedSliceIndexingTest(parameterized.TestCase):
 
     out = f(x, slices)
     np.testing.assert_allclose(out, x)
+
+
+class PipelineHijaxTest(parameterized.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works on TPU v4+.')
+
+  def test_emit_pipeline_hijax(self):
+    @dataclasses.dataclass(frozen=True)
+    class ArrayTuple:
+      x0: jax.Array
+      x1: jax.Array
+
+      @property
+      def shape(self):
+        assert self.x0.shape == self.x1.shape
+        return self.x0.shape
+
+      @property
+      def dtype(self):
+        assert self.x0.dtype == self.x1.dtype
+        return self.x0.dtype
+
+    @dataclasses.dataclass(frozen=True)
+    class ShapedArrayTuple(hijax.HiType):
+      shape: tuple[int, ...]
+      dtype: jnp.dtype
+
+      update = dataclasses.replace
+
+      def lo_ty(self) -> list[hijax.ShapedArray]:
+        return [hijax.ShapedArray(self.shape, self.dtype)] * 2
+
+      def lower_val(self, hi_val: ArrayTuple) -> list[jax.Array]:
+        return [hi_val.x0, hi_val.x1]
+
+      def raise_val(self, x0, x1) -> ArrayTuple:
+        return ArrayTuple(x0, x1)
+
+      def ref_get_abstract_eval(self, ref_aval, *args, tree):
+        arr_aval = hijax.ShapedArray(self.shape, self.dtype)
+        updated_ref = ref_aval.update(inner_aval=arr_aval)
+        out, effects = state_primitives.get_p.abstract_eval(
+            updated_ref, *args, tree=tree
+        )
+        assert isinstance(out, hijax.ShapedArray)
+        return ShapedArrayTuple(out.shape, out.dtype), effects
+
+      def ref_get_to_lojax(
+          self, ref: state.TransformedRef | jax.Ref, idx: indexing.NDIndexer
+      ):
+        tup_ref, transforms = ref._refs, ref.transforms  # pylint: disable=protected-access
+        assert isinstance(transforms, tuple)
+        transforms += (idx,)
+
+        flat_transforms, tree = jax.tree.flatten(transforms)
+        x0_out = state_primitives.get_p.bind(
+            tup_ref.x0, *flat_transforms, tree=tree
+        )
+        x1_out = state_primitives.get_p.bind(
+            tup_ref.x1, *flat_transforms, tree=tree
+        )
+        return ShapedArrayTuple(x0_out, x1_out).raise_val(x0_out, x1_out)
+
+      def ref_swap_abstract_eval(self, ref_aval, val_aval, *args, tree):
+        arr_aval = hijax.ShapedArray(self.shape, self.dtype)
+        val_arr_aval = hijax.ShapedArray(val_aval.shape, val_aval.dtype)
+        updated_ref = ref_aval.update(inner_aval=arr_aval)
+        out_aval, effects = state_primitives.swap_p.abstract_eval(
+            updated_ref, val_arr_aval, *args, tree=tree
+        )
+        assert isinstance(out_aval, hijax.ShapedArray)
+        return ShapedArrayTuple(out_aval.shape, out_aval.dtype), effects
+
+      def ref_swap_to_lojax(
+          self,
+          ref: state.TransformedRef | jax.Ref,
+          val: ArrayTuple,
+          idx: indexing.NDIndexer,
+      ):
+        tup_ref, transforms = ref._refs, ref.transforms  # pylint: disable=protected-access
+        assert isinstance(transforms, tuple)
+        transforms += (idx,)
+
+        flat_transforms, tree = jax.tree.flatten(transforms)
+        x0_out = state_primitives.swap_p.bind(
+            tup_ref.x0, val.x0, *flat_transforms, tree=tree
+        )
+        x1_out = state_primitives.swap_p.bind(
+            tup_ref.x1, val.x1, *flat_transforms, tree=tree
+        )
+        return self.raise_val(x0_out, x1_out)
+
+      def lower_block_spec(
+          self, block_spec: pl.BlockSpec
+      ) -> list[pl.BlockSpec]:
+        return [block_spec, block_spec]
+
+      def dma_start(
+          self,
+          src_ref: state.TransformedRef,
+          dst_ref: state.TransformedRef,
+          src_sem: state.TransformedRef,
+          dst_sem: state.TransformedRef,
+          device_id: jax.Array | int | None,
+          device_id_type: pl.DeviceIdType,
+          priority: int,
+          add: bool,
+      ) -> None:
+        del add
+        src_aval = jax.typeof(src_ref.ref).inner_aval
+        assert isinstance(src_aval, ShapedArrayTuple)
+        dst_aval = jax.typeof(dst_ref.ref).inner_aval
+        assert isinstance(dst_aval, ShapedArrayTuple)
+
+        src_ref, src_transforms = src_ref.ref._refs, src_ref.transforms  # pylint: disable=protected-access
+        dst_ref, dst_transforms = dst_ref.ref._refs, dst_ref.transforms  # pylint: disable=protected-access
+
+        def _run_dma(
+            src_ref,
+            dst_ref,
+            src_sem,
+            dst_sem,
+            device_id,
+            device_id_type,
+            priority,
+        ):
+          if src_sem is not None:
+            desc = pltpu.make_async_remote_copy(
+                src_ref,
+                dst_ref,
+                src_sem,
+                dst_sem,
+                device_id=device_id,
+                device_id_type=device_id_type,
+            )
+          else:
+            assert device_id is None
+            desc = pltpu.make_async_copy(src_ref, dst_ref, dst_sem)
+          desc.start(priority=priority)
+
+        src_x0_ref, src_x1_ref = src_ref.x0, src_ref.x1
+        dst_x0_ref, dst_x1_ref = dst_ref.x0, dst_ref.x1
+
+        _run_dma(
+            state.TransformedRef(src_x0_ref, src_transforms),
+            state.TransformedRef(dst_x0_ref, dst_transforms),
+            src_sem,
+            dst_sem,
+            device_id,
+            device_id_type,
+            priority,
+        )
+        _run_dma(
+            state.TransformedRef(src_x1_ref, src_transforms),
+            state.TransformedRef(dst_x1_ref, dst_transforms),
+            src_sem,
+            dst_sem,
+            device_id,
+            device_id_type,
+            priority,
+        )
+
+      def dma_wait(
+          self, src_ref, dst_ref, src_sem, dst_sem, device_id, device_id_type
+      ):
+        assert isinstance(jax.typeof(src_ref.ref).inner_aval, ShapedArrayTuple)
+        assert isinstance(jax.typeof(dst_ref.ref).inner_aval, ShapedArrayTuple)
+
+        src_ref, src_transforms = src_ref.ref._refs, src_ref.transforms  # pylint: disable=protected-access
+        dst_ref, dst_transforms = dst_ref.ref._refs, dst_ref.transforms  # pylint: disable=protected-access
+
+        def _run_dma(
+            src_ref, dst_ref, src_sem, dst_sem, device_id, device_id_type
+        ):
+          if src_sem is not None:
+            desc = pltpu.make_async_remote_copy(
+                src_ref,
+                dst_ref,
+                src_sem,
+                dst_sem,
+                device_id=device_id,
+                device_id_type=device_id_type,
+            )
+          else:
+            assert device_id is None
+            desc = pltpu.make_async_copy(src_ref, dst_ref, dst_sem)
+          desc.wait()
+
+        src_x0_ref, src_x1_ref = src_ref.x0, src_ref.x1
+        dst_x0_ref, dst_x1_ref = dst_ref.x0, dst_ref.x1
+
+        _run_dma(
+            state.TransformedRef(src_x0_ref, src_transforms),
+            state.TransformedRef(dst_x0_ref, dst_transforms),
+            src_sem,
+            dst_sem,
+            device_id,
+            device_id_type,
+        )
+        _run_dma(
+            state.TransformedRef(src_x1_ref, src_transforms),
+            state.TransformedRef(dst_x1_ref, dst_transforms),
+            src_sem,
+            dst_sem,
+            device_id,
+            device_id_type,
+        )
+
+    hijax.register_hitype(
+        ArrayTuple, lambda q: ShapedArrayTuple(q.shape, q.dtype)
+    )
+
+    def kernel(x_hbm_ref, o_hbm_ref):
+      def body(x_ref, o_ref):
+        o_ref[...] = x_ref[...]
+
+      num_steps = 4
+      block_shape = (x_hbm_ref.shape[0] // num_steps, x_hbm_ref.shape[1])
+
+      pltpu.emit_pipeline(
+          body,
+          grid=(num_steps,),
+          in_specs=(pl.BlockSpec(block_shape, lambda i: (i, 0)),),
+          out_specs=pl.BlockSpec(block_shape, lambda i: (i, 0)),
+      )(x_hbm_ref, o_hbm_ref)
+
+    inp = ArrayTuple(
+        jnp.arange(32 * 128, dtype=jnp.int32).reshape((32, 128)),
+        jnp.arange(32 * 128, dtype=jnp.int32).reshape((32, 128)),
+    )
+
+    out_ty = ShapedArrayTuple(
+        inp.shape,
+        inp.dtype,
+    )
+
+    out = pl.pallas_call(
+        kernel,
+        in_specs=(pl.BlockSpec(memory_space=pl.ANY),),
+        out_shape=out_ty,
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+    )(inp)
+
+    np.testing.assert_allclose(out.x0, inp.x0)
+    np.testing.assert_allclose(out.x1, inp.x1)
 
 
 if __name__ == '__main__':

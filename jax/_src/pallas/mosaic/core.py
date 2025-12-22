@@ -16,22 +16,23 @@
 from __future__ import annotations
 
 import collections
+from collections.abc import Mapping
 from collections.abc import Sequence
 import dataclasses
 import enum
 from typing import Any, ClassVar, Literal
-from collections.abc import Mapping
 
 import jax
-import jax.numpy as jnp
-from jax.extend import backend as jex_backend
 from jax._src import core as jax_core
+from jax._src import deprecations
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import util
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
+from jax.extend import backend as jex_backend
+import jax.numpy as jnp
 import numpy as np
 
 
@@ -102,6 +103,8 @@ class CompilerParams(pallas_core.CompilerParams):
     skip_device_barrier: Skip the default device barrier for the kernel.
     allow_collective_id_without_custom_barrier: Allow the use of collective_id
       without a custom barrier.
+    use_tc_tiling_on_sc: Use TensorCore tiling for SparseCore. This flag is
+      only used for ``SC_*_SUBCORE`` kernels.
   """
   BACKEND: ClassVar[pallas_core.Backend] = "mosaic_tpu"
   dimension_semantics: tuple[DimensionSemantics, ...] | None = None
@@ -117,6 +120,7 @@ class CompilerParams(pallas_core.CompilerParams):
   skip_device_barrier: bool = False
   allow_collective_id_without_custom_barrier: bool = False
   shape_invariant_numerics: bool = True
+  use_tc_tiling_on_sc: bool | None = None
 
   def __init__(
       self,
@@ -133,6 +137,7 @@ class CompilerParams(pallas_core.CompilerParams):
       skip_device_barrier: bool = False,
       allow_collective_id_without_custom_barrier: bool = False,
       shape_invariant_numerics: bool = True,
+      use_tc_tiling_on_sc: bool | None = None,
   ):
     object.__setattr__(
         self,
@@ -165,12 +170,13 @@ class CompilerParams(pallas_core.CompilerParams):
     object.__setattr__(
         self, "shape_invariant_numerics", shape_invariant_numerics
     )
+    object.__setattr__(self, "use_tc_tiling_on_sc", use_tc_tiling_on_sc)
 
   # Replace is a method, not a field.
   replace = dataclasses.replace
 
+
 class MemorySpace(enum.Enum):
-  ANY = "any"  # TODO(b/368401328): Remove this and just use pl.ANY.
   VMEM = "vmem"
   VMEM_SHARED = "vmem_shared"
   SMEM = "smem"
@@ -188,6 +194,21 @@ class MemorySpace(enum.Enum):
   def __call__(self, shape: Sequence[int], dtype: jnp.dtype):
     # A convenience function for constructing MemoryRef types of ShapedArrays.
     return self.from_type(jax_core.ShapedArray(tuple(shape), dtype))
+
+  def __getattr__(self, name):
+    if name == "ANY":
+      # Deprecated on Dec 10, 2025.
+      deprecations.warn(
+          "pltpu-memory-space-any",
+          "pltpu.MemorySpace.ANY is deprecated. Use pl.ANY instead.",
+          stacklevel=2,
+      )
+      return pallas_core.MemorySpace.ANY
+    return super().__getattr__(name)  # type: ignore
+
+
+# TODO(slebedev): Remove this after
+MemorySpace.ANY = pallas_core.MemorySpace.ANY
 
 class dma_semaphore(pallas_core.semaphore_dtype): pass
 

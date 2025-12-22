@@ -68,7 +68,7 @@ from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
-from jax._src.mesh import get_concrete_mesh, get_abstract_mesh
+from jax._src.mesh import get_concrete_mesh, get_abstract_mesh, Mesh
 from jax._src.sharding_impls import (PmapSharding, PartitionSpec as P,
                                      NamedSharding)
 from jax._src.layout import Format
@@ -1191,9 +1191,9 @@ def vmap(fun: F,
                   _mapped_axis_size(fun, in_tree, args_flat, in_axes_flat, "vmap"))
     explicit_mesh_axis = _mapped_axis_spec(args_flat, in_axes_flat)
     if spmd_axis_name is not None and explicit_mesh_axis is not None:
-      spmd_axis_name = (
-          tuple(core.remove_size_one_mesh_axis(P(spmd_axis_name), get_abstract_mesh()))
-          if config.remove_size_one_mesh_axis_from_type.value else spmd_axis_name)
+      if config.remove_size_one_mesh_axis_from_type.value:
+        mesh = get_abstract_mesh()
+        spmd_axis_name = tuple(i for i in spmd_axis_name if mesh.shape[i] != 1)
       if spmd_axis_name == explicit_mesh_axis:
         spmd_axis_name = None
       else:
@@ -2212,120 +2212,12 @@ def vjp(
       fun, debug_info=debug_info("vjp", fun, primals, {}))
   return _vjp(wrapped_fun, *primals, has_aux=has_aux)
 
-def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
-  """Variant of vjp() that takes an lu.WrappedFun."""
-  if config.vjp3.value:
-    return _vjp3(fun, *primals, has_aux=has_aux)
-  primals_flat, in_tree = tree_flatten(primals)
-  primals_flat = [canonicalize_value(v) if not isinstance(v, core.Tracer) else v
-                  for v in primals_flat]
-  for arg in primals_flat: dispatch.check_arg(arg)
-  if not has_aux:
-    flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
-    out_primals, vjp = ad.vjp(flat_fun, primals_flat)
-    out_tree = out_tree()
-  else:
-    flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, in_tree)
-    out_primals, vjp, aux = ad.vjp(flat_fun, primals_flat, has_aux=True)
-    out_tree, aux_tree = out_aux_trees()
-  out_primal_avals = map(shaped_abstractify, out_primals)
-  out_primal_py = tree_unflatten(out_tree, out_primals)
-  vjp_py = Partial(partial(_vjp_pullback_wrapper, fun.__name__,
-                           out_primal_avals, (out_tree, in_tree)), vjp)
-  if not has_aux:
-    return out_primal_py, vjp_py
-  else:
-    return out_primal_py, vjp_py, tree_unflatten(aux_tree, aux)
-
-@partial(api_boundary, repro_api_name="jax.experimental.saved_input_vjp")
-def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
-                    allow_unused: bool = True, allow_opaque: bool = True):
-  if len(which) != len(primals):
-    raise ValueError(
-    "length of 'which' argument must equal the number of primal input values, "
-    f"but got {len(which)=} and {len(primals)=}")
-
-  dbg = debug_info("saved_input_vjp", f, primals, {})
-  fun = lu.wrap_init(f, debug_info=dbg)
-  primals_flat, in_tree = tree_flatten(primals)
-  fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
-  out_primals_flat, out_pvals, jaxpr, residuals = ad.linearize(fun, *primals_flat)
-  out_known = [pval.is_known() for pval in out_pvals]
-  primals_filt, filt_tree = tree_flatten(tuple(p for w, p in zip(which, primals) if w))
-  id_map = {id(x): i for i, x in enumerate(primals_filt)}
-  opaque_residuals = []
-  res_spec = [RSpec(id_map[id(r)], True) if id(r) in id_map else
-              RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)  # type: ignore
-              for r in residuals]
-  f_vjp = Partial(partial(_saved_input_vjpfun, res_spec, filt_tree, in_tree,
-                          out_tree(), out_known, jaxpr), opaque_residuals)
-
-  if not allow_unused and not set(id_map).issubset(res_ids := {id(r) for r in residuals}):
-    unused = [(i, core.get_aval(x)) for i, (x, w) in enumerate(zip(primals, which))
-              if w and id(x) not in res_ids]
-    assert unused
-    if len(unused) == 1:
-      (i, a), = unused
-      start, was = "an input value", "was"
-      msg = f" {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'} of type {a.str_short()}"
-    else:
-      start, was = "multiple input values", "were"
-      msg = "\n" + "\n".join(f"  * {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'} of type {a.str_short()}"
-                             for i, a in unused)
-    raise Exception(f"with {allow_unused=}, {start} marked to be saved {was} "
-                    f"not used by the backward pass:{msg}")
-
-  if not allow_opaque and opaque_residuals:
-    msg = ", ".join(core.get_aval(x).str_short() for x in opaque_residuals)
-    raise Exception(f"with {allow_opaque=}, the backward pass requires opaque "
-                    f"(non-input) residuals: {msg}")
-
-  out_primals = tree_unflatten(out_tree(), out_primals_flat)
-  return out_primals, f_vjp
-
-def _saved_input_vjpfun(res_spec, filtered_tree, in_tree, out_tree, out_known,
-                        jaxpr, opaque_residuals, ct, *saved_primals):
-  primals_filtered, filtered_tree_ = tree_flatten(saved_primals)
-  if filtered_tree != filtered_tree_:
-    raise ValueError(
-        "inputs passed to f_vjp must be a tuple of (pytrees of) "
-        "arrays with the same structure as\n"
-        "  tuple(x for x, w in zip(inputs, which) if w)\n"
-        "given the original call\n"
-        "  _, f_vjp = saved_input_vjp(f, which, *inputs, ...)\n"
-        "but the structures differ:\n" +
-        "\n".join(f"  * inputs{keystr(path)} was a {thing1} in the original "
-                  f"call, but a {thing2} here, so {explanation}"
-                  for path, thing1, thing2, explanation
-                  in equality_errors_pytreedef(filtered_tree, filtered_tree_)))
-
-  residuals = [primals_filtered[i.idx] if i.primal else opaque_residuals[i.idx]
-               for i in res_spec]
-  dummy_args = [ad.UndefinedPrimal(v.aval) for v in jaxpr.invars]
-  cts_flat, out_tree_ = tree_flatten(ct)
-  assert out_tree_ == out_tree
-  cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
-  arg_cts = ad.backward_pass(jaxpr, True, residuals, dummy_args, cts_flat)
-  return tree_unflatten(in_tree, map(ad.instantiate_zeros, arg_cts))
-
-@dataclasses.dataclass(frozen=True)
-class RSpec:
-  idx: int
-  primal: bool
-
-si_vjp = saved_input_vjp
-
-
-def vjp3(f, *primals, has_aux=False):
-  dbg = debug_info("vjp", f, primals, {})
-  fun = lu.wrap_init(f, debug_info=dbg)
-  return _vjp3(fun, *primals, has_aux=has_aux)
-
-def _vjp3(fun, *primals, has_aux=False):
+def _vjp(fun, *primals, has_aux=False):
   canon = lambda x: x if isinstance(x, core.Tracer) else canonicalize_value(x)
   primals = tree_map(canon, primals)
   primals_flat, in_tree = tree_flatten(primals)
-  for arg in primals_flat: dispatch.check_arg(arg)
+  for arg in primals_flat:
+    dispatch.check_arg(arg)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
     out_primals_flat, out_pvals, jaxpr, residuals = ad.linearize(
@@ -2354,22 +2246,14 @@ def _vjp3(fun, *primals, has_aux=False):
   else:
     return out_primals, f_vjp, tree_unflatten(aux_tree, aux)
 
-def tuptree_map(f, treedef, x):
-  return treedef.walk(lambda xs, _: tuple(xs), f, x)
-
-
-def _is_ref(x):
-  from jax._src.state.types import AbstractRef
-  try: return isinstance(typeof(x), AbstractRef)
-  except: return False
-
 def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
                    args_res, opaque_res, *maybe_ct_refs):
   if not maybe_ct_refs:
     maybe_ct_refs_flat = [GradValue()] * in_tree.num_leaves
   else:
     maybe_ct_refs_flat, in_tree_ = tree_flatten(maybe_ct_refs)
-    if in_tree != in_tree_: raise Exception  # TODO accept isomorph tuple tree
+    if in_tree != in_tree_:
+      raise Exception  # TODO accept isomorph tuple tree
   args_res_ = tree_leaves(args_res, is_leaf=lambda x: isinstance(x, NotNeeded))
   residuals = [args_res_[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
   maybe_refs = [ad.RefAccum(v.aval, x) if _is_ref(x) else ad.ValAccum(v.aval)
@@ -2380,7 +2264,8 @@ def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
 def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, out_primal_avals, residuals,
               maybe_refs, out_ct):
   cts_flat, out_tree_ = tree_flatten(out_ct)
-  if out_tree != out_tree_: _vjp_ct_tree_error(jaxpr, out_tree, out_tree_)
+  if out_tree != out_tree_:
+    _vjp_ct_tree_error(jaxpr, out_tree, out_tree_)
   _vjp_check_ct_avals(cts_flat, out_primal_avals)
   cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
   ad.backward_pass3(jaxpr, True, residuals, maybe_refs, cts_flat)
@@ -2388,6 +2273,23 @@ def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, out_primal_avals, residuals,
              for x in maybe_refs]
   arg_cts = map(ad.instantiate_zeros, arg_cts)
   return tree_unflatten(in_tree, arg_cts)
+
+
+@dataclasses.dataclass(frozen=True)
+class RSpec:
+  idx: int
+  primal: bool
+
+def tuptree_map(f, treedef, x):
+  return treedef.walk(lambda xs, _: tuple(xs), f, x)
+
+def _is_ref(x):
+  from jax._src.state.types import AbstractRef
+  try:
+    return isinstance(typeof(x), AbstractRef)
+  except:
+    return False
+
 
 _vjp_too_many_args = """
 The function returned by `jax.vjp` applied to {} was called with {} arguments,
@@ -2410,6 +2312,7 @@ If we instead call `f_vjp(2.0, 2.0)`, with the values 'splatted out' as
 arguments rather than in a tuple, this error can arise.
 """.format
 
+
 def _vjp_ct_tree_error(jaxpr, out_tree, ct_tree):
   msg = f"""unexpected tree structure.
 
@@ -2424,13 +2327,12 @@ But the tree structures differ:
                    in equality_errors_pytreedef(out_tree, ct_tree))
   raise ValueError(msg)
 
+
 def _vjp_check_ct_avals(cts, primal_avals):
   # TODO(mattjj): improve this error  by flattening with keys in the first place
   for ct, aval in zip(cts, primal_avals):
     ct_aval = typeof(ct)
-    ct_aval_expected = (
-        aval.to_cotangent_aval() if hasattr(aval, 'to_cotangent_aval') else
-        aval.to_tangent_aval())
+    ct_aval_expected = aval.to_cotangent_aval()
     if (not core.typecompat(ct_aval, ct_aval_expected) and
         not _temporary_dtype_exception(ct_aval, ct_aval_expected)):
       raise ValueError(
@@ -2438,6 +2340,7 @@ def _vjp_check_ct_avals(cts, primal_avals):
           f"got {ct_aval.str_short()}, but expected {ct_aval_expected.str_short()} "
           "because the corresponding output of the differentiated function had JAX type "
           f"{aval.str_short()}")
+
 
 @register_dataclass
 @dataclasses.dataclass(frozen=True)
@@ -2897,8 +2800,12 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
       raise ValueError("the shards passed to device_put_sharded must have "
                        f"consistent shape and dtype, but got {a1} and {a2}.")
     stacked_aval = avals[0].update(shape=(len(devices),) + avals[0].shape)
-    sharding_spec = sharding_specs.create_pmap_sharding_spec(stacked_aval.shape)
-    sharding = PmapSharding(np.array(devices), sharding_spec)
+    if config.pmap_shmap_merge.value:
+      mesh = Mesh(np.array(devices), ('_device_put_sharded',))
+      sharding = NamedSharding(mesh, P('_device_put_sharded'))
+    else:
+      sharding_spec = sharding_specs.create_pmap_sharding_spec(stacked_aval.shape)
+      sharding = PmapSharding(np.array(devices), sharding_spec)
     if dtypes.issubdtype(stacked_aval.dtype, dtypes.extended):
       return stacked_aval.dtype._rules.device_put_sharded(xs, stacked_aval, sharding, devices)
     if config.pmap_no_rank_reduction.value:
@@ -2953,7 +2860,6 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
   def _device_put_replicated(x):
     aval = core.unmapped_aval(len(devices), 0, core.get_aval(x))
     assert isinstance(aval, ShapedArray)
-    sharding_spec = sharding_specs.create_pmap_sharding_spec(aval.shape)
     if config.pmap_no_rank_reduction.value:
       if isinstance(x, (np.ndarray, basearray.Array)):
         buf = device_put(x[None], devices[0])
@@ -2961,7 +2867,12 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
         buf = device_put(x, devices[0])[None]
     else:
       buf = device_put(x, devices[0])
-    sharding = PmapSharding(np.array(devices), sharding_spec)
+    if config.pmap_shmap_merge.value:
+      mesh = Mesh(np.array(devices), ('_device_put_replicated',))
+      sharding = NamedSharding(mesh, P('_device_put_replicated'))
+    else:
+      sharding_spec = sharding_specs.create_pmap_sharding_spec(aval.shape)
+      sharding = PmapSharding(np.array(devices), sharding_spec)
     if dtypes.issubdtype(aval.dtype, dtypes.extended):
       return aval.dtype._rules.device_put_replicated(buf, aval, sharding, devices)
     return pxla.batched_device_put(aval, sharding, [buf] * len(devices), devices)

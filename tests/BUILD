@@ -955,6 +955,7 @@ jax_multiplatform_test(
         "cpu": [
             "noasan",
             "nomsan",
+            "notsan",  # Times out.
         ],  # TODO(phawkins): Latest SciPy leaks memory.
     },
     shard_count = {
@@ -1237,9 +1238,6 @@ jax_multiplatform_test(
             "nomsan",  # Times out
             "notsan",  # Times out
         ],
-    },
-    env = {
-        "XLA_FLAGS": "--xla_cpu_use_xnnpack=false",  # TODO(b/454581761): Reenable once we switch to YNNPACK.
     },
     shard_count = 4,
     deps = py_deps([
@@ -2071,6 +2069,15 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "export_serialization_back_compat_test",
     srcs = ["export_serialization_back_compat_test.py"],
+    enable_backends = [
+        "cpu",
+        "gpu",
+        "tpu",
+    ],
+    enable_configs = [
+        "tpu_v3_x4",
+        "gpu_h100x2",
+    ],
     tags = [],
     deps = [
         "//jax/_src:internal_export_back_compat_test_data",

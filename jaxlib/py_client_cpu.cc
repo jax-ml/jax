@@ -173,7 +173,7 @@ ffi::Error XlaFfiPythonCpuCallback(xla::FfiLoadedHostCallbacks* callbacks,
       absl::c_reverse_copy(expected_shape.layout().minor_to_major(),
                            reversed_layout.begin());
       options.permutation = reversed_layout;
-      options.input_layout = xla::TransposePlan::Striding{strides};
+      options.input_striding = xla::TransposePlan::Striding{strides};
       auto maybe_plan = transpose_cache->cache.GetOrCreate(options);
       if (!maybe_plan.ok()) {
         return ffi::Error::Internal(maybe_plan.status().ToString());

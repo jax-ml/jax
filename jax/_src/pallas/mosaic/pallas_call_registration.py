@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import dataclasses
+import json
 from typing import cast
 
 import jax
@@ -72,10 +73,6 @@ def _get_memory_space_from_aval(
   # If we are passed an aval with an explicit memory space tag, we use it
   # to constrain the memory space.
   match out_aval.memory_space:
-    case None:
-      return None
-    case tpu_core.MemorySpace.ANY:
-      return None
     case tpu_core.MemorySpace.HBM:
       return tpu_custom_call.MemorySpace.HBM
     case tpu_core.MemorySpace.VMEM:
@@ -164,7 +161,7 @@ def pallas_call_tpu_lowering_rule(
         grid_mapping,
         jaxpr,
         dimension_semantics=mosaic_params.dimension_semantics,
-        kernel_type=mosaic_params.kernel_type,
+        kernel_type=kernel_type,
         mesh=jax_mesh,
         dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
     )
@@ -207,11 +204,6 @@ def pallas_call_tpu_lowering_rule(
       isinstance(aval, pallas_core.ShapedArrayWithMemorySpace)
       for aval in ctx.avals_in
   ):
-    # TODO(sharadmv): Support dynamic grid bounds.
-    if num_dyn_bounds != 0:
-      raise NotImplementedError(
-          "Dynamic grid bounds are not supported when specifying memory spaces for inputs."
-      )
     input_memory_spaces = _get_memory_spaces_from_avals(
         ctx.avals_in, kernel_type=kernel_type
     )
@@ -258,6 +250,39 @@ def pallas_call_tpu_lowering_rule(
       has_side_effects = tpu_custom_call.TpuSideEffectType.SIDE_EFFECTING
     case _:
       raise ValueError(f"Invalid side effect type: {mosaic_params.has_side_effects}")
+  tiling: tpu_custom_call.Tiling | None = None
+  if mosaic_params.use_tc_tiling_on_sc is not None:
+    if kernel_type not in (
+        tpu_core.KernelType.SC_SCALAR_SUBCORE,
+        tpu_core.KernelType.SC_VECTOR_SUBCORE,
+    ):
+      raise ValueError(
+          "use_tc_tiling_on_sc= is only supported for SC_*_SUBCORE kernels"
+      )
+
+    tiling = (
+        tpu_custom_call.Tiling.COMPACT
+        if mosaic_params.use_tc_tiling_on_sc
+        else tpu_custom_call.Tiling.SPARSE_CORE
+    )
+  dict_metadata = dict(metadata) if metadata is not None else {}
+  del metadata
+  if jax_mesh is not None:
+    mesh_axes = {
+        e.name
+        for e in jaxpr.effects
+        if isinstance(e, jax_core.NamedAxisEffect)
+        # Filter for only device mesh axis name effects
+        and e.name in jax_mesh.axis_names
+    }
+    # Only put mesh axes in metadata if there are any.
+    if mesh_axes:
+      if "mesh_axes" in dict_metadata:
+        raise ValueError("Metadata already contains mesh axes.")
+      mesh_axes_list = list(mesh_axes)
+      if all(isinstance(a, str) for a in mesh_axes):
+        mesh_axes_list = sorted(mesh_axes)  # type: ignore
+      dict_metadata["mesh_axes"] = json.dumps(mesh_axes_list)
   out_nodes = mosaic.lower_module_to_custom_call(
       kernel_ctx,
       *dynamic_grid_args,
@@ -277,10 +302,11 @@ def pallas_call_tpu_lowering_rule(
       output_memory_spaces=output_memory_spaces,
       disable_bounds_checks=mosaic_params.disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
-      metadata=dict(metadata) if metadata is not None else None,
+      metadata=dict_metadata,
       skip_device_barrier=mosaic_params.skip_device_barrier,
       allow_collective_id_without_custom_barrier=mosaic_params.allow_collective_id_without_custom_barrier,
       shape_invariant_numerics=mosaic_params.shape_invariant_numerics,
+      tiling=tiling,
   )
   _maybe_cast_to_bool = (
       lambda x, aval: x.astype(jax.numpy.bool_)

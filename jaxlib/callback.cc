@@ -104,7 +104,7 @@ absl::Status CpuCallback::PrepareAndCall(void** result, void** arg_ptrs) {
           xla::primitive_util::ByteWidth(results_[i].type);
       options.dims = dims;
       options.permutation = results_[i].reversed_layout;
-      options.input_layout = xla::TransposePlan::Striding{strides};
+      options.input_striding = xla::TransposePlan::Striding{strides};
       absl::StatusOr<std::shared_ptr<xla::TransposePlan>> plan =
           transpose_cache_.GetOrCreate(options);
       if (!plan.ok()) {

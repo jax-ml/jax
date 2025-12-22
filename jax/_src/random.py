@@ -565,21 +565,17 @@ def randint(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.integer):
     raise TypeError(f"randint only accepts integer dtypes, got {dtype}")
 
-  # TODO(jakevdp): migrate users to safer randint and remove the old version.
-  if config.safer_randint.value:
-    info = dtypes.iinfo(dtype)
-    dtype_for_sampling = dtype
-    if info.bits < 32:
-      # Sample in 32 bits to avoid biased results.
-      dtype_for_sampling = np.dtype('int32')
-      minval = jnp.asarray(minval).astype('int32').clip(int(info.min), int(info.max))
-      maxval = jnp.asarray(maxval).astype('int32').clip(int(info.min), int(info.max) + 1)
+  info = dtypes.iinfo(dtype)
+  dtype_for_sampling = dtype
+  if info.bits < 32:
+    # Sample in 32 bits to avoid biased results.
+    dtype_for_sampling = np.dtype('int32')
+    minval = jnp.asarray(minval).astype('int32').clip(int(info.min), int(info.max))
+    maxval = jnp.asarray(maxval).astype('int32').clip(int(info.min), int(info.max) + 1)
 
-    return maybe_auto_axes(_randint, out_sharding, shape=shape, dtype=dtype_for_sampling)(
-        key, minval, maxval).astype(dtype)
+  return maybe_auto_axes(_randint, out_sharding, shape=shape, dtype=dtype_for_sampling)(
+      key, minval, maxval).astype(dtype)
 
-  return maybe_auto_axes(_randint, out_sharding, shape=shape, dtype=dtype)(
-      key, minval, maxval)
 
 @jit(static_argnums=(3, 4))
 def _randint(key, minval, maxval, shape, dtype) -> Array:

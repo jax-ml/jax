@@ -23,6 +23,7 @@ import logging
 import os
 import sys
 from typing import Any, Generic, NoReturn, Optional, Protocol, Type, TypeVar, cast
+import warnings
 
 from jax._src import deprecations
 from jax._src.lib import _jax
@@ -1249,27 +1250,6 @@ random_seed_offset = int_state(
     include_in_trace_context=True,
 )
 
-def _safer_randint_deprecation(new_val):
-  if not new_val:
-    deprecations.warn(
-      'safer-randint-config',
-      (
-        'The jax_safer_randint configuration is deprecated in JAX v0.7.2'
-        ' and will be removed in JAX v0.9.0.'
-      ),
-      stacklevel=4
-    )
-
-# TODO(jakevdp): remove this flag.
-safer_randint = bool_state(
-    name='jax_safer_randint',
-    default=True,
-    help='Use a safer randint algorithm for 8-bit and 16-bit dtypes.',
-    include_in_jit_key=True,
-    upgrade=True,
-    validator=_safer_randint_deprecation
-)
-
 class LegacyPrngKeyState(enum.StrEnum):
   ALLOW = 'allow'
   WARN = 'warn'
@@ -1548,25 +1528,23 @@ remove_custom_partitioning_ptr_from_cache_key = bool_state(
           'what they are trying to achieve should set it.'),
 )
 
-def _default_dtype_bits_deprecation(new_val):
-  if new_val != '64':
-    deprecations.warn(
-      'default-dtype-bits-config',
-      (
-        'The jax_default_dtype_bits configuration is deprecated in JAX v0.7.1'
-        ' and will be removed in JAX v0.9.0.'
-      ),
-      stacklevel=4
-    )
+def _default_dtype_bits_deprecation(val):
+  if val != '_default':
+    warnings.warn(
+        (
+          'The jax_default_dtype_bits configuration is deprecated in JAX v0.7.1'
+          ' and has no effect as of JAX v0.9.0. It will be removed in JAX v0.10.0.'
+        ),
+        category=DeprecationWarning,
+        stacklevel=4)
 
 
 default_dtype_bits = enum_state(
     name='jax_default_dtype_bits',
-    enum_values=['32', '64'],
-    default='64',
-    help=('[deprecated]. This flag was an experiment in allowing users to specify the'
-          ' default bit width. It was never fully supported or tested. It will '
-          ' have no effect after JAX v0.9.0, and be removed entirely in JAX v0.10.0.'),
+    enum_values=['_default', '32', '64'],
+    default='_default',
+    help=('[deprecated]. This has no effect starting with JAX v0.9.0, and'
+          ' will be removed in JAX v0.10.0.'),
     extra_validator=_default_dtype_bits_deprecation)
 
 
@@ -1819,13 +1797,6 @@ disable_vmap_shmap_error = bool_state(
     upgrade=False,
     help='Temporary workaround to disable an error check in vmap-of-shmap.')
 
-# TODO(mattjj): remove once we land mutable array plumbing, or face great shame
-custom_vjp_disable_shape_check = bool_state(
-    name='jax_custom_vjp_disable_shape_check',
-    default=False,
-    upgrade=True,
-    help='Disable the check from #19009 to enable some custom_vjp hacks.')
-
 mutable_array_checks = bool_state(
     name='jax_mutable_array_checks',
     default=True,
@@ -1833,17 +1804,18 @@ mutable_array_checks = bool_state(
     help='Enable error checks for mutable arrays that rule out aliasing.',
     include_in_trace_context=True)
 
-vjp3 = bool_state(
-    name='jax_vjp3',
-    default=True,
-    upgrade=True,
-    help='Use new backward-pass code in jax.vjp')
-
 refs_to_pins = bool_state(
     name='jax_refs_to_pins',
     default=False,
     upgrade=True,
     help='Lower refs to pinned buffers in HLO.')
+
+# TODO(mattjj, yashkatariya): remove once we land box plumbing
+disable_bwd_checks = bool_state(
+    name='jax_disable_bwd_checks',
+    default=False,
+    upgrade=True,
+    help='Disables all bwd pass checks')
 
 xla_runtime_errors = bool_state(
     name='jax_experimental_unsafe_xla_runtime_errors',

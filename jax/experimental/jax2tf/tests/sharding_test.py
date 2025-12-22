@@ -24,6 +24,7 @@ import logging
 import re
 from typing import Any
 import unittest
+import warnings
 
 from absl import app
 from absl.testing import absltest
@@ -46,7 +47,12 @@ import jax.numpy as jnp
 
 import numpy as np
 
-import tensorflow as tf
+# TODO(b/470156950): Remove this once a proper fix is in place
+with warnings.catch_warnings():
+  warnings.filterwarnings("ignore",
+                          category=FutureWarning,
+                          message=".*np.object.*")
+  import tensorflow as tf
 
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)

@@ -39,11 +39,15 @@ jax.config.parse_flags_with_absl()
 
 
 class PallasSCTest(jtu.JaxTestCase):
-  COMPILER_OPTIONS = {"xla_tpu_use_tc_device_shape_on_sc": "false"}
+  USE_TC_TILING = False
 
   def setUp(self):
     if not jtu.is_device_tpu(5, "p") and not jtu.is_device_tpu_at_least(6):
       self.skipTest("SparseCore only supported on TPU v5p+")
+
+    if self.USE_TC_TILING and jtu.is_cloud_tpu():
+      # TODO(apaszke,slebedev): Fix those.
+      self.skipTest("Many tests are failing on Cloud TPUs")
 
     super().setUp()
 
@@ -53,53 +57,31 @@ class PallasSCTest(jtu.JaxTestCase):
 
   def vector_subcore_kernel(self, **kwargs):
     assert "compiler_params" not in kwargs
-    def wrapper(f):
-      f = pl.pallas_call(
-          f,
-          compiler_params=pltpu.CompilerParams(
-              kernel_type=pltpu.KernelType.SC_VECTOR_SUBCORE
-          ),
-          **kwargs,
-      )
-      return jax.jit(f, compiler_options=self.COMPILER_OPTIONS)
-    return wrapper
+    return functools.partial(
+        pl.pallas_call,
+        **kwargs,
+        compiler_params=pltpu.CompilerParams(
+            kernel_type=pltpu.KernelType.SC_VECTOR_SUBCORE,
+            use_tc_tiling_on_sc=self.USE_TC_TILING,
+        ),
+    )
 
-  def kernel(self, *args, jax_compiler_options=None, **kwargs):
-    if jax_compiler_options is None:
-      jax_compiler_options = self.COMPILER_OPTIONS
-    # We only implement the decorator version of pl.kernel for now.
-    def wrapper(f):
-      f = pl.kernel(f, *args, **kwargs)
-      return jax.jit(f, compiler_options=jax_compiler_options)
-    return wrapper
-
-  @property
-  def uses_tc_tiling(self):
-    return self.COMPILER_OPTIONS.get(
-        "xla_tpu_use_tc_device_shape_on_sc", "false"
-    ) == "true"
+  def kernel(self, **kwargs):
+    assert "compiler_params" not in kwargs
+    return functools.partial(
+        pl.kernel,
+        compiler_params=pltpu.CompilerParams(
+            use_tc_tiling_on_sc=self.USE_TC_TILING
+        ),
+        **kwargs,
+    )
 
   def skip_if_tc_tiling(self, reason: str = ""):
-    use_tc_tiling = self.COMPILER_OPTIONS.get(
-        "xla_tpu_use_tc_device_shape_on_sc", "false"
-    )
-    if use_tc_tiling == "true":
+    if self.USE_TC_TILING:
       self.skipTest(f"TC tiling is not supported. {reason}")
 
 
-class TCTilingMixin():
-  COMPILER_OPTIONS = {"xla_tpu_use_tc_device_shape_on_sc": "true"}
-
-  def setUp(self):
-    super().setUp()
-    if jtu.is_cloud_tpu():
-      # TODO(apaszke,slebedev): Fix those.
-      self.skipTest("Many tests are failing on Cloud TPUs")
-
-
 class DebugPrintTest(PallasSCTest):
-  # We are passing compiler options from jax.jit explicitly.
-  COMPILER_OPTIONS = {}
 
   def setUp(self):
     if jtu.is_cloud_tpu():
@@ -313,14 +295,14 @@ class VectorSubcoreTest(PallasSCTest):
   @jtu.thread_unsafe_test(condition=not jtu.hypothesis_is_thread_safe())
   @hp.given(hps.data())
   def test_block_spec_untiled_slicing(self, data):
-    if not self.uses_tc_tiling:
+    if not self.USE_TC_TILING:
       self.skipTest("Test uncoveres a bug: @reproduce_failure('6.80.0', b'AAEBAQAAAAA=')")
     slice_shape = data.draw(
         hps.lists(
-            hps.integers(1, 3), min_size=(1 + self.uses_tc_tiling), max_size=4
+            hps.integers(1, 3), min_size=(1 + self.USE_TC_TILING), max_size=4
         )
     )
-    if self.uses_tc_tiling:
+    if self.USE_TC_TILING:
       slice_shape[-2] *= 8
       slice_shape[-1] *= 128
     else:
@@ -549,8 +531,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   def test_gather_1d_with_dynamically_sized_2d_ref(self):
     self.skip_if_tc_tiling()
-    if not jtu.is_cloud_tpu_at_least(2025, 10, 22):
-      self.skipTest("Needs a newer libtpu")
 
     x = jnp.arange(16)
     indices = jax.random.permutation(
@@ -770,8 +750,6 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_store_scatter_2d(self):
-    if not jtu.is_cloud_tpu_at_least(2025, 10, 31):
-      self.skipTest("Needs a newer libtpu")
 
     num_steps = 4
     x = jnp.arange(num_steps * 8).reshape(num_steps, 8)
@@ -1093,8 +1071,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(sizes=[[1, 1], [2, 2], [1, 1, 1, 1]])
   def test_split_concatenate(self, sizes):
-    if not jtu.is_cloud_tpu_at_least(2025, 10, 26):
-      self.skipTest("Test requires a newer libtpu")
 
     shape = (sum(sizes), 8)
     x = jnp.arange(math.prod(shape)).reshape(-1, 8)
@@ -1384,9 +1360,6 @@ class VectorSubcoreTest(PallasSCTest):
       kernel(x)
 
   def test_multiple_of(self):
-    if not jtu.is_cloud_tpu_at_least(2025, 10, 16):
-      self.skipTest("Test requires a newer libtpu")
-
     x = jnp.arange(16)
 
     @self.vector_subcore_kernel(out_shape=x)
@@ -1426,8 +1399,7 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(), expected)
 
   def test_barrier_via_pallas_call(self):
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 22):
-      self.skipTest("Test requires a newer libtpu")
+    self.skip_if_tc_tiling()
 
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
@@ -1439,15 +1411,14 @@ class VectorSubcoreTest(PallasSCTest):
         compiler_params=pltpu.CompilerParams(
             kernel_type=pltpu.KernelType.SC_VECTOR_SUBCORE,
             dimension_semantics=["subcore_parallel"],
+            use_tc_tiling_on_sc=self.USE_TC_TILING,
         ),
         out_shape=jax.ShapeDtypeStruct(
             shape=(mesh.num_subcores, vec_dim), dtype=jnp.uint32
         ),
         out_specs=pl.BlockSpec((1, vec_dim), lambda i: (i, 0)),
         scratch_shapes=(
-            pltpu.VMEM_SHARED(
-                (mesh.num_subcores, vec_dim), jnp.uint32
-            ),
+            pltpu.VMEM_SHARED((mesh.num_subcores, vec_dim), jnp.uint32),
             pltpu.VMEM((vec_dim,), jnp.uint32),
         ),
     )
@@ -1517,13 +1488,16 @@ class VectorSubcoreTest(PallasSCTest):
         compiler_params=pltpu.CompilerParams(
             kernel_type=pltpu.KernelType.SC_VECTOR_SUBCORE,
             dimension_semantics=["subcore_parallel"],
+            use_tc_tiling_on_sc=self.USE_TC_TILING,
         ),
         out_shape=jax.ShapeDtypeStruct(shape[1:], dtype),
-        out_specs=pl.BlockSpec(shape[1:], lambda i: (0,),
-                               memory_space=pltpu.HBM),
-        in_specs=[pl.BlockSpec(shape, lambda *_: (0, 0),
-                               memory_space=pltpu.HBM),
-                  pl.BlockSpec(shape[1:], lambda _: (0,))],
+        out_specs=pl.BlockSpec(
+            shape[1:], lambda i: (0,), memory_space=pltpu.HBM
+        ),
+        in_specs=[
+            pl.BlockSpec(shape, lambda *_: (0, 0), memory_space=pltpu.HBM),
+            pl.BlockSpec(shape[1:], lambda _: (0,)),
+        ],
         scratch_shapes=[
             pltpu.VMEM_SHARED(shape[1:], dtype),
             pltpu.VMEM(shape[1:], dtype),
@@ -1606,8 +1580,6 @@ class VectorSubcoreTest(PallasSCTest):
               core_axis_name="core", subcore_axis_name="subcore", num_cores=1
           ),
           scratch_shapes=(pltpu.VMEM(x.shape, x.dtype),),
-          # compiler_options don't compose well with shard_map...
-          jax_compiler_options={},
       )
       def kernel(in_ref, o_ref, scratch_ref):
         pltpu.sync_copy(in_ref, scratch_ref)
@@ -1618,30 +1590,19 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(f(x), x)
 
   @parameterized.named_parameters(
-      ("exp", jnp.exp), ("neg", lambda x: -x), ("abs", jnp.abs))
+      ("exp", jnp.exp), ("neg", lambda x: -x), ("abs", jnp.abs)
+  )
   def test_unary_ops(self, op):
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 30):
-      self.skipTest("Test requires a newer libtpu")
-
     x = jnp.arange(8, dtype=jnp.float32)
 
-    def sc_exp_kernel(x_hbm_ref, out_ref):
-      out_ref[...] = op(x_hbm_ref[...])
+    @self.vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, o_ref):
+      o_ref[...] = op(x_ref[...])
 
-    result = pl.pallas_call(
-        sc_exp_kernel,
-        compiler_params=pltpu.CompilerParams(
-                kernel_type=pltpu.KernelType.SC_VECTOR_SUBCORE
-            ),
-        out_shape=x,
-    )(x)
-    np.testing.assert_array_equal(result, op(x))
+    np.testing.assert_array_equal(kernel(x), op(x))
 
   @parameterized.product(dtype=[np.int32, np.float32])
   def test_vector_gather(self, dtype):
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 2):
-      self.skipTest("Test requires a newer libtpu")
-
     vec_dim = self.sc_info.num_lanes
     x = np.arange(vec_dim, dtype=dtype)
     indices = np.random.randint(0, vec_dim, size=vec_dim, dtype=np.int32)
@@ -1661,9 +1622,6 @@ class VectorSubcoreTest(PallasSCTest):
       descending=[False, True],
   )
   def test_sort_key_val(self, keys_dtype, values_dtype, use_mask, descending):
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 2):
-      self.skipTest("Test requires a newer libtpu")
-
     vec_dim = self.sc_info.num_lanes
     keys = np.arange(vec_dim, dtype=keys_dtype)
     np.random.shuffle(keys)
@@ -1706,9 +1664,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[np.int32, np.float32])
   def test_rev_and_sort_desc(self, dtype):
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 2):
-      self.skipTest("Test requires a newer libtpu")
-
     vec_dim = self.sc_info.num_lanes
     keys = np.arange(vec_dim, dtype=dtype)
     np.random.shuffle(keys)
@@ -1728,9 +1683,6 @@ class VectorSubcoreTest(PallasSCTest):
       values_dtypes=[(), (np.int32,), (np.float32, np.int32)],
   )
   def test_sort(self, keys_dtype, values_dtypes):
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 30):
-      self.skipTest("Test requires a newer libtpu")
-
     vec_dim = self.sc_info.num_lanes
     keys = np.arange(vec_dim, dtype=keys_dtype)
     np.random.shuffle(keys)
@@ -1757,8 +1709,8 @@ class VectorSubcoreTest(PallasSCTest):
       np.testing.assert_array_equal(values_result, values_in[perm])
 
 
-class VectorSubcoreTestWithTCTiling(TCTilingMixin, VectorSubcoreTest):
-  pass
+class VectorSubcoreTestWithTCTiling(VectorSubcoreTest):
+  USE_TC_TILING = True
 
 
 class ScalarSubcoreTest(PallasSCTest):
@@ -1888,8 +1840,8 @@ class ScalarSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x + jnp.arange(1, 9)[:, None])
 
 
-class ScalarSubcoreTestWithTCTiling(TCTilingMixin, ScalarSubcoreTest):
-  pass
+class ScalarSubcoreTestWithTCTiling(ScalarSubcoreTest):
+  USE_TC_TILING = True
 
 
 class PipelineTest(PallasSCTest):
@@ -1919,16 +1871,14 @@ class PipelineTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x + 1)
 
 
-class PipelineTestWithTCTiling(TCTilingMixin, PipelineTest):
-  pass
+class PipelineTestWithTCTiling(PipelineTest):
+  USE_TC_TILING = True
 
 
 class PallasSparsecoreAsyncTest(PallasSCTest):
 
   def setUp(self):
     super().setUp()
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 14):
-      self.skipTest("Needs a newer libtpu")
 
   @parameterized.product(
       shape=[
@@ -1946,8 +1896,6 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
       dtype=[jnp.int32, jnp.float32, jnp.bfloat16],
   )
   def test_basic_async_kernel(self, shape, dtype):
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 8):
-      self.skipTest("Need newer libtpu")
     x = jnp.arange(shape[0] * shape[1], dtype=dtype).reshape(shape)
 
     @jax.jit
@@ -1961,6 +1909,7 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
           compiler_params=pltpu.CompilerParams(
               dimension_semantics=["core_parallel"],
               kernel_type=pltpu.KernelType.SC_SCALAR_SUBCORE,
+              use_tc_tiling_on_sc=self.USE_TC_TILING,
           ),
       )()
 
@@ -1984,10 +1933,8 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
     np.testing.assert_array_equal(o, x)
 
 
-class PallasSparsecoreAsyncTestWithTCTiling(
-    TCTilingMixin, PallasSparsecoreAsyncTest
-):
-  pass
+class PallasSparsecoreAsyncTestWithTCTiling(PallasSparsecoreAsyncTest):
+  USE_TC_TILING = True
 
 
 if __name__ == "__main__":

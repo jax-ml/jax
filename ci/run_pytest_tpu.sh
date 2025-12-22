@@ -73,7 +73,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     --deselect=tests/pallas/tpu_pallas_call_print_test.py::PallasCallPrintTest \
     --deselect=tests/pallas/tpu_sparsecore_pallas_test.py::DebugPrintTest \
     --deselect=tests/pallas/tpu_pallas_interpret_thread_map_test.py::InterpretThreadMapTest::test_thread_map \
-    --maxfail=20 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
+    --dist=loadfile --maxfail=20 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
 
   # Store the return value of the first command.
   first_cmd_retval=$?

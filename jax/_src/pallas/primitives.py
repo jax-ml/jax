@@ -854,6 +854,17 @@ def wrap_with_transforms(f, transforms, *args):
 run_scoped_p = jax_core.Primitive("run_scoped")
 run_scoped_p.multiple_results = True
 
+def _run_scoped_is_high(*avals, jaxpr, **params):
+  del avals, params
+  return jaxpr.is_high
+run_scoped_p.is_high = _run_scoped_is_high  # type: ignore[method-assign]
+
+def _run_scoped_to_lojax(*args, jaxpr, **params):
+  closed_hi_jaxpr = jax_core.ClosedJaxpr(jaxpr, args)
+  closed_lo_jaxpr = pe.lower_jaxpr(closed_hi_jaxpr)
+  consts = closed_lo_jaxpr.consts
+  return run_scoped_p.bind(*consts, jaxpr=closed_lo_jaxpr.jaxpr, **params)
+run_scoped_p.to_lojax = _run_scoped_to_lojax
 
 def run_scoped(
     f: Callable[..., Any],
@@ -1073,7 +1084,7 @@ def check_sem_avals(
   ):
     raise ValueError(
         f"Must {name} semaphores of the following types:"
-        f" {allowed_semaphore_types}."
+        f" {allowed_semaphore_types}. Got {sem_dtype}."
     )
 
 
@@ -1180,26 +1191,32 @@ def _semaphore_signal_abstract_eval(
     args_tree,
     device_id_type: DeviceIdType,
 ):
-  del device_id_type
   (
       sem_aval,
       sem_transforms_avals,
       value_aval,
-      device_id_avals,
+      device_id_aval,
       core_index_aval,
   ) = tree_util.tree_unflatten(args_tree, avals)
   check_sem_avals(sem_aval, sem_transforms_avals, "signal")
   if value_aval.dtype != jnp.dtype("int32"):
     raise ValueError(f"Must signal an int32 value, but got {value_aval.dtype}")
   effs : set[effects.Effect] = set()
-  if device_id_avals is not None:
-    device_id_flat_avals = tree_util.tree_leaves(device_id_avals)
+  if device_id_aval is not None:
+    device_id_flat_avals = tree_util.tree_leaves(device_id_aval)
     for aval in device_id_flat_avals:
       if aval.dtype != jnp.dtype("int32"):
         raise ValueError(
             f"`device_id`s must be an int32 value, but got {aval.dtype}"
         )
-    effs.add(pallas_core.comms_effect)
+    if device_id_type is DeviceIdType.MESH and isinstance(device_id_aval, dict):
+      for k in device_id_aval:
+        if not isinstance(k, tuple):
+          k = (k,)
+        for k_ in k:
+          effs.add(jax_core.NamedAxisEffect(k_))
+    else:
+      effs.add(pallas_core.comms_effect)
   return [], effs
 
 def _semaphore_signal_pp_eqn(eqn: jax_core.JaxprEqn,
@@ -1334,20 +1351,26 @@ state_discharge.register_discharge_rule(semaphore_wait_p)(
 )
 
 
-def _device_id_dict_to_mesh(mesh_context: pallas_utils.MeshInfo, device_id_dict, get_axis_index):
+def _device_id_dict_to_mesh(mesh_context: pallas_utils.MeshInfo | None, device_id_dict, get_axis_index):
   i32 = ir.IntegerType.get_signless(32)
-  assert mesh_context is not None
-  mesh_axis_sizes = dict(zip(mesh_context.axis_names, mesh_context.mesh_shape))
+  if mesh_context is None:
+    mesh_axis_sizes = {}
+  else:
+    mesh_axis_sizes = dict(
+        zip(mesh_context.axis_names, mesh_context.mesh_shape)
+    )
   physical_axis_dict = {}
   # Handle joint axes (i.e., one logical axis over >1 physical axes)
-  for axis, idx in device_id_dict.items():
-    if isinstance(axis, tuple) and any(a in mesh_context.axis_names for a in axis):
-      if not all(a in mesh_context.axis_names for a in axis):
+  for axis_name, idx in device_id_dict.items():
+    if isinstance(axis_name, tuple) and any(
+        a in mesh_axis_sizes for a in axis_name
+    ):
+      if not all(a in mesh_axis_sizes for a in axis_name):
         raise NotImplementedError(
-            f"{axis} mixes JAX mesh and Pallas mesh grid axes"
+            f"{axis_name} mixes JAX mesh and Pallas mesh grid axes"
         )
-      axes_dimensions = [mesh_axis_sizes[name] for name in axis]
-      for axis_index, axis_name in enumerate(axis):
+      axes_dimensions = [mesh_axis_sizes[name] for name in axis_name]
+      for axis_index, axis_name in enumerate(axis_name):
         axis_size = mesh_axis_sizes[axis_name]
         inner_mesh_size = math.prod(axes_dimensions[axis_index + 1 :])
         minor_divisor = arith.constant(i32, inner_mesh_size)
@@ -1370,17 +1393,17 @@ def _device_id_dict_to_mesh(mesh_context: pallas_utils.MeshInfo, device_id_dict,
           )
         physical_axis_dict[axis_name] = device_idx
     else:
-      physical_axis_dict[axis] = idx
+      physical_axis_dict[axis_name] = idx
   device_id = []
-  for axis in mesh_context.axis_names:
-    if axis in physical_axis_dict:
-      device_id.append(physical_axis_dict[axis])
+  for axis_name in mesh_axis_sizes:
+    if axis_name in physical_axis_dict:
+      device_id.append(physical_axis_dict[axis_name])
     else:
-      device_id.append(get_axis_index(axis))
+      device_id.append(get_axis_index(axis_name))
   non_mesh_axes = {
       k: v
       for k, v in physical_axis_dict.items()
-      if k not in mesh_context.axis_names
+      if k not in mesh_axis_sizes
   }
   return tuple(device_id), non_mesh_axes
 
@@ -1402,13 +1425,15 @@ def device_id_to_logical(
           "`device_id_type` must be MESH if `device_id` is a dict,"
           f" got: {device_id_type = }."
       )
-    assert mesh_context is not None
     device_id, non_mesh_axes = _device_id_dict_to_mesh(mesh_context, device_id, get_axis_index)
   if device_id_type is DeviceIdType.MESH:
-    assert mesh_context is not None
     # Mesh means we are passed the mesh coordinates for the device
     device_ids = tree_util.tree_leaves(device_id)
-    mesh_strides = mesh_context.mesh_strides
+    mesh_strides: tuple[int, ...]
+    if mesh_context is None:
+      mesh_strides = ()
+    else:
+      mesh_strides = mesh_context.mesh_strides
     if len(device_ids) != len(mesh_strides):
       raise ValueError(
           "Number of device ids must match the number of mesh axes, but got"

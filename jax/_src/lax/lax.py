@@ -34,7 +34,6 @@ from jax._src import api_util
 from jax._src import array
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
@@ -62,6 +61,7 @@ from jax._src.mesh import get_abstract_mesh, get_concrete_mesh
 from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
   standard_primitive)
+from jax._src.core import typeof
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -2410,6 +2410,7 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike,
              preferred_element_type=preferred_element_type, out_sharding=out_sharding)
 
 
+# TODO(jakevdp): replace `*args`` with `*` in v0.10.0
 def dot(lhs: ArrayLike, rhs: ArrayLike, *args,
         dimension_numbers: DotDimensionNumbers | None = None,
         precision: PrecisionLike = None,
@@ -2464,30 +2465,12 @@ def dot(lhs: ArrayLike, rhs: ArrayLike, *args,
   .. _stablehlo.dot_general: https://openxla.org/stablehlo/spec#dot_general
   .. _DotGeneral: https://www.openxla.org/xla/operation_semantics#dotgeneral
   """
-  # TODO(jakevdp): keyword warning added for JAX v0.7.1; finalize this for v0.9.0.
   if args:
-    deprecations.warn(
-      "jax-lax-dot-positional-args",
-      (
-        "jax.lax.dot: passing precision or preferred_element_type by position"
-        " is deprecated; pass them by keyword instead."
-      ),
-      stacklevel=2
+    raise TypeError(
+      f"dot() takes 2 positional arguments but {2 + len(args)} were given."
+      " Passing precision or preferred_element_type by position is not allowed"
+      " as of JAX v0.9.0; pass them by keyword instead."
     )
-    # Prior to merging dot and dot_general, dot() had two additional positional args:
-    # `precision` and `preferred_element_type`.
-    if len(args) == 1:
-      if precision is not None:
-        raise TypeError("jax.lax.dot got multiple values for argument 'precision'")
-      precision, = args
-    elif len(args) == 2:
-      if precision is not None:
-        raise TypeError("jax.lax.dot got multiple values for argument 'precision'")
-      if preferred_element_type is not None:
-        raise TypeError("jax.lax.dot got multiple values for argument 'preferred_element_type'")
-      precision, preferred_element_type = args
-    else:
-      raise TypeError("Too many positional arguments passed to jax.lax.dot.")
   del args
 
   lhs_shape = np.shape(lhs)
@@ -2696,7 +2679,7 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
     operand: an array
     shape: the shape of the target array
     broadcast_dimensions: to which dimension in the target shape each dimension
-      of the operand shape corresponds to.  That is, dimension i of the operand
+      of the operand shape corresponds to. That is, dimension i of the operand
       becomes dimension broadcast_dimensions[i] of the result.
 
   Returns:
@@ -2705,15 +2688,18 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
   See Also:
     jax.lax.broadcast : simpler interface to add new leading dimensions.
   """
-  # TODO(dfm): Re-write this as a "reshard" when only the sharding changes.
   out_sharding = canonicalize_sharding(out_sharding, 'broadcast_in_dim')
   if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions) and
       isinstance(operand, Array) and out_sharding is None):
     return operand
+  operand_aval = typeof(operand)
+  if (operand_aval.shape == shape and
+      list(broadcast_dimensions) == list(range(operand_aval.ndim)) and
+      out_sharding is not None and operand_aval.sharding != out_sharding):
+    return pjit.reshard(operand, out_sharding)
   return broadcast_in_dim_p.bind(
       operand, shape=tuple(shape),
-      broadcast_dimensions=tuple(broadcast_dimensions),
-      sharding=out_sharding)
+      broadcast_dimensions=tuple(broadcast_dimensions), sharding=out_sharding)
 
 def broadcast_to_rank(x: ArrayLike, rank: int) -> Array:
   """Adds leading dimensions of ``1`` to give ``x`` rank ``rank``."""
@@ -2773,7 +2759,7 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
     same_dims = tuple(dims) == tuple(range(np.ndim(operand)))
   out_sharding = canonicalize_sharding(out_sharding, 'reshape')
   same_sharding = (out_sharding is None or
-                   core.typeof(operand).sharding == out_sharding)
+                   typeof(operand).sharding == out_sharding)
 
   if (np.shape(operand) and same_shape and same_dims and same_sharding and
       isinstance(operand, Array)):
@@ -3600,7 +3586,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
     # TODO(yashkatariya): Maybe use `shaped_abstractify` here instead of
     # `typeof` because `x` can be anything that implements the
     # `DuckTypedArray` protocol.
-    val = core.pvary(val, tuple(core.typeof(x).vma))
+    val = core.pvary(val, tuple(typeof(x).vma))
   return val
 
 
@@ -4063,7 +4049,7 @@ def _unbroadcast(aval, x):
     raise TypeError("transpose with implicit broadcasting of unshaped values")
   x_shape = np.shape(x)
   if (core.definitely_equal_shape(aval.shape, x_shape) and
-      aval.sharding == core.typeof(x).sharding):
+      aval.sharding == typeof(x).sharding):
     return x
   assert not aval.shape or len(x_shape) == len(aval.shape)
   if not aval.shape:
@@ -4076,17 +4062,20 @@ def _unbroadcast(aval, x):
     x = reduce_sum(x, dims) if dims else x
     return reshape(x, aval.shape, out_sharding=aval.to_cotangent_aval().sharding)
 
-def _maybe_broadcast(target_shape, x):
+def _maybe_broadcast(target_shape, x, target_sharding):
   x_shape = np.shape(x)
-  if core.definitely_equal_shape(x_shape, target_shape):
+  x_sharding = typeof(x).sharding
+  if (core.definitely_equal_shape(x_shape, target_shape) and
+      x_sharding == target_sharding):
     return x
   elif not x_shape:
-    return broadcast_in_dim(x, target_shape, ())
+    return broadcast_in_dim(x, target_shape, (), out_sharding=target_sharding)
   else:
     dims = [i for i, (a, b) in enumerate(zip(x_shape, target_shape))
             if core.definitely_equal(a, b)]
     squeeze_shape = [x_shape[i] for i in dims]
-    return broadcast_in_dim(reshape(x, squeeze_shape), target_shape, dims)
+    return broadcast_in_dim(reshape(x, squeeze_shape), target_shape, dims,
+                            out_sharding=target_sharding)
 
 def broadcast_hlo(
     aval_out: core.ShapedArray, avals: Sequence[core.ShapedArray],
@@ -4506,8 +4495,9 @@ def _pow_jvp_lhs(g, ans, x, y):
   if dtypes.issubdtype(y_dtype, np.integer):
     if x.shape != y.shape:
       shape = broadcast_shapes(x.shape, y.shape)
-      x = _maybe_broadcast(shape, x)
-      y = _maybe_broadcast(shape, y)
+      sharding = broadcast_shardings(typeof(x), typeof(y))
+      x = _maybe_broadcast(shape, x, sharding)
+      y = _maybe_broadcast(shape, y, sharding)
     jac = select(eq(y, _const(y, 0)), _zeros(y),
                  mul(_replace_zero(y), pow(x, sub(y, _ones(y)))))
   else:
@@ -4614,9 +4604,11 @@ def _add_jvp(primals, tangents):
   if type(xdot) is type(ydot) is ad_util.Zero:
     return primal_out, ad_util.Zero.from_primal_value(primal_out)
   if type(xdot) is ad_util.Zero:
-    return primal_out, _maybe_broadcast(primal_out.shape, ydot)
+    return (primal_out, _maybe_broadcast(primal_out.shape, ydot,
+                                         typeof(primal_out).sharding))
   elif type(ydot) is ad_util.Zero:
-    return primal_out, _maybe_broadcast(primal_out.shape, xdot)
+    return (primal_out, _maybe_broadcast(primal_out.shape, xdot,
+                                         typeof(primal_out).sharding))
   else:
     return primal_out, add(xdot, ydot)
 
@@ -4667,9 +4659,11 @@ def _sub_jvp(primals, tangents):
   if type(xdot) is type(ydot) is ad_util.Zero:
     return primal_out, ad_util.Zero.from_primal_value(primal_out)
   if type(xdot) is ad_util.Zero:
-    return primal_out, _maybe_broadcast(primal_out.shape, neg(ydot))
+    return (primal_out, _maybe_broadcast(primal_out.shape, neg(ydot),
+                                         typeof(primal_out).sharding))
   elif type(ydot) is ad_util.Zero:
-    return primal_out, _maybe_broadcast(primal_out.shape, xdot)
+    return (primal_out, _maybe_broadcast(primal_out.shape, xdot,
+                                         typeof(primal_out).sharding))
   else:
     return primal_out, sub(xdot, ydot)
 
@@ -4742,14 +4736,17 @@ mlir.register_lowering(div_p, partial(_nary_lower_hlo, hlo.divide))
 rem_p = standard_naryop([_int | _float, _int | _float], 'rem')
 ad.defjvp(
     rem_p,
-    lambda g, x, y: _maybe_broadcast(broadcast_shapes(np.shape(x), np.shape(y)), g),
+    lambda g, x, y: _maybe_broadcast(
+        broadcast_shapes(np.shape(x), np.shape(y)), g,
+        broadcast_shardings(typeof(x), typeof(y))),
     lambda g, x, y: mul(neg(g), mul(sign(div(x, y)), floor(abs(div(x, y))))))
 mlir.register_lowering(rem_p, partial(_nary_lower_hlo, hlo.remainder))
 
 def _minmax_complex_lowering(x, y, *, lax_cmp_pick_x):
   result_shape = broadcast_shapes(np.shape(x), np.shape(y))
-  x = _maybe_broadcast(result_shape, x)
-  y = _maybe_broadcast(result_shape, y)
+  result_sharding = broadcast_shardings(typeof(x), typeof(y))
+  x = _maybe_broadcast(result_shape, x, result_sharding)
+  y = _maybe_broadcast(result_shape, y, result_sharding)
   rx = real(x)
   ry = real(y)
   pick_x = select(eq(rx, ry), lax_cmp_pick_x(imag(x), imag(y)),
@@ -6728,10 +6725,8 @@ def _split_transpose_rule(cotangents, operand, *, sizes, axis):
   assert ad.is_undefined_primal(operand)
   if all(type(t) is ad_util.Zero for t in cotangents):
     return ad_util.Zero(operand.aval),
-  cotangents = [
-    _zeros(t.aval) if type(t) is ad_util.Zero else t
-    for t in cotangents
-  ]
+  cotangents = [t.instantiate() if type(t) is ad_util.Zero else t
+                for t in cotangents]
   return concatenate(cotangents, dimension=axis),
 
 def _split_batch_rule(batched_args, batch_dims, *, sizes, axis):
@@ -7324,7 +7319,7 @@ def _select_batch_rule(axis_data, batched_args, batch_dims, **unused_kwargs):
       # vmapped function had a scalar which with nonscalar args
       assert np.ndim(which) == 1
       which = broadcast_in_dim(which, cases[0].shape, [which_bdim],
-                               out_sharding=core.typeof(cases[0]).sharding)
+                               out_sharding=typeof(cases[0]).sharding)
       return select_n(which, *cases), which_bdim
   elif np.ndim(which) == 0 and all(bdim is not None for bdim in case_bdims):
     if all(case_bdims[0] == bdim for bdim in case_bdims[1:]):
@@ -7346,7 +7341,7 @@ def _select_batch_rule(axis_data, batched_args, batch_dims, **unused_kwargs):
     # vmapped function had a scalar which with nonscalar args
     assert np.ndim(which) == 1
     which = broadcast_in_dim(which, cases[0].shape, [0],
-                             out_sharding=core.typeof(cases[0]).sharding)
+                             out_sharding=typeof(cases[0]).sharding)
   if np.ndim(which) > np.ndim(cases[0]):
     assert np.ndim(cases[0]) == 0
     cases = [broadcast(c, which.shape) for c in cases]
@@ -7793,7 +7788,7 @@ def _reduce_logical_sharding_rule(operand, *, axes):
 def _reduce_or_lin(nzs, x, *, axes):
   nz, = nzs
   y = reduce_or_p.bind(x, axes=axes)
-  aval = core.typeof(y).to_tangent_aval()
+  aval = typeof(y).to_tangent_aval()
   return y, False, (), lambda _, t: ad_util.Zero(aval)
 
 reduce_or_p = standard_primitive(
@@ -8000,7 +7995,7 @@ def _sort_batch_rule(batched_args, batch_dims, *, dimension, is_stable, num_keys
       dims = np.delete(np.arange(prototype_arg.ndim), new_bdim)
       new_args.append(broadcast_in_dim(
           arg, prototype_arg.shape, dims,
-          out_sharding=core.typeof(prototype_arg).sharding))
+          out_sharding=typeof(prototype_arg).sharding))
     else:
       new_args.append(batching.moveaxis(arg, bdim, new_bdim))
   new_dimension = dimension + (new_bdim <= dimension)

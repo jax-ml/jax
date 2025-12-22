@@ -362,6 +362,8 @@ def _get_dma_effects(
     dst_transforms_avals,
     dst_sem_transforms_avals,
     src_sem_aval,
+    device_id_aval,
+    device_id_type,
 ):
   n_src_transforms = len(tree_util.tree_leaves(src_transforms_avals))
   n_dst_transforms = len(tree_util.tree_leaves(dst_transforms_avals))
@@ -377,11 +379,66 @@ def _get_dma_effects(
         1 + n_src_transforms + 1 + n_dst_transforms + 1 + n_dst_sem_transforms
     )
     effs.add(state.WriteEffect(src_sem_index))
+  if device_id_aval is not None:
+    if device_id_type is primitives.DeviceIdType.MESH and isinstance(
+        device_id_aval, dict
+    ):
+      for k in device_id_aval:
+        if not isinstance(k, tuple):
+          k = (k,)
+        for k_ in k:
+          effs.add(jax_core.NamedAxisEffect(k_))
   return effs
 
 
 dma_start_p = jax_core.Primitive('dma_start')
 dma_start_p.multiple_results = True
+
+def _dma_is_high(*avals, **params):
+  return any(aval.is_high for aval in avals)
+
+dma_start_p.is_high = _dma_is_high  # type: ignore[method-assign]
+
+def _dma_start_to_lojax(*args, tree, device_id_type, priority, add):
+  (
+      src_ref,
+      src_transforms,
+      dst_ref,
+      dst_transforms,
+      dst_sem,
+      dst_sem_transforms,
+      src_sem,
+      src_sem_transforms,
+      device_id,
+  ) = tree_util.tree_unflatten(tree, args)
+  src_ref_aval = jax_core.get_aval(src_ref)
+  dst_ref_aval = jax_core.get_aval(dst_ref)
+  if not (src_ref_aval.is_high and dst_ref_aval.is_high):
+    raise NotImplementedError("dma_start not implemented in LoJAX yet.")
+  dst_sem_aval = jax_core.get_aval(dst_sem)
+  if dst_sem_aval.is_high:
+    raise NotImplementedError("dma_start not implemented in LoJAX yet.")
+  if src_sem is not None:
+    if jax_core.get_aval(src_sem).is_high:
+      raise NotImplementedError("dma_start not implemented in LoJAX yet.")
+  src_transformed_ref = state.TransformedRef(src_ref, src_transforms)
+  dst_transformed_ref = state.TransformedRef(dst_ref, dst_transforms)
+  if src_sem is not None:
+    src_sem = state.TransformedRef(src_sem, src_sem_transforms)
+  dst_sem = state.TransformedRef(dst_sem, dst_sem_transforms)
+
+  src_ref_aval.inner_aval.dma_start(
+      src_transformed_ref,
+      dst_transformed_ref,
+      src_sem,
+      dst_sem,
+      device_id=device_id,
+      priority=priority,
+      device_id_type=device_id_type,
+      add=add
+  )
+  return []
+dma_start_p.to_lojax = _dma_start_to_lojax
 
 @dma_start_p.def_effectful_abstract_eval
 def _dma_start_abstract_eval(*args, tree, device_id_type, priority, add):
@@ -425,6 +482,8 @@ def _dma_start_abstract_eval(*args, tree, device_id_type, priority, add):
       dst_transforms_avals,
       dst_sem_transforms_avals,
       src_sem_aval,
+      device_id_aval,
+      device_id_type,
   )
 
 def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
@@ -646,9 +705,48 @@ state_discharge.register_partial_discharge_rule(dma_start_p)(dma_start_partial_d
 dma_wait_p = jax_core.Primitive('dma_wait')
 dma_wait_p.multiple_results = True
 
+dma_wait_p.is_high = _dma_is_high  # type: ignore[method-assign]
+
+def _dma_wait_to_lojax(*args, tree, device_id_type):
+  (
+      src_ref,
+      src_transforms,
+      dst_ref,
+      dst_transforms,
+      dst_sem,
+      dst_sem_transforms,
+      src_sem,
+      src_sem_transforms,
+      device_id,
+  ) = tree_util.tree_unflatten(tree, args)
+  src_ref_aval = jax_core.get_aval(src_ref)
+  dst_ref_aval = jax_core.get_aval(dst_ref)
+  if not (src_ref_aval.is_high and dst_ref_aval.is_high):
+    raise NotImplementedError("dma_wait not implemented in LoJAX yet.")
+  dst_sem_aval = jax_core.get_aval(dst_sem)
+  if dst_sem_aval.is_high:
+    raise NotImplementedError("dma_wait not implemented in LoJAX yet.")
+  if src_sem is not None:
+    if jax_core.get_aval(src_sem).is_high:
+      raise NotImplementedError("dma_wait not implemented in LoJAX yet.")
+  src_transformed_ref = state.TransformedRef(src_ref, src_transforms)
+  dst_transformed_ref = state.TransformedRef(dst_ref, dst_transforms)
+  if src_sem is not None:
+    src_sem = state.TransformedRef(src_sem, src_sem_transforms)
+  dst_sem = state.TransformedRef(dst_sem, dst_sem_transforms)
+  src_ref_aval.inner_aval.dma_wait(
+      src_transformed_ref,
+      dst_transformed_ref,
+      src_sem,
+      dst_sem,
+      device_id=device_id,
+      device_id_type=device_id_type,
+  )
+  return []
+dma_wait_p.to_lojax = _dma_wait_to_lojax
+
 @dma_wait_p.def_effectful_abstract_eval
 def _dma_wait_abstract_eval(*args, tree, device_id_type):
-  del device_id_type
   (
       src_ref_aval,
       src_transforms_avals,
@@ -665,6 +763,8 @@ def _dma_wait_abstract_eval(*args, tree, device_id_type):
       dst_transforms_avals,
       dst_sem_transforms_avals,
       src_sem_aval,
+      device_id_aval,
+      device_id_type,
   )
 
 def _dma_wait_pp_eqn(eqn: jax_core.JaxprEqn,
@@ -1054,7 +1154,7 @@ def with_memory_space_constraint(
   Returns:
     The array ``x`` with the memory space constraint.
   """
-  if memory_space in {tpu_core.MemorySpace.ANY, pl_core.MemorySpace.ANY}:
+  if memory_space is pl_core.MemorySpace.ANY:
     return x
   if memory_space not in {
       tpu_core.MemorySpace.HBM,

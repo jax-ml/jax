@@ -89,10 +89,6 @@ VMEM_SHARED = MemorySpace.VMEM_SHARED
 HBM = MemorySpace.HBM
 HOST = MemorySpace.HOST
 SEMAPHORE = MemorySpace.SEMAPHORE
-# Expose ANY for backward compatibility.
-ANY = GeneralMemorySpace.ANY
-del GeneralMemorySpace
-
 
 _deprecations = {
     # Added Oct 31, 2025
@@ -100,13 +96,20 @@ _deprecations = {
       "pltpu.delay is deprecated, use pl.delay instead.",
       pl_primitives.delay
     ),
+    # Added Dec 10, 2025
+    "ANY": (
+        "pltpu.ANY is deprecated, use pl.ANY instead.",
+        GeneralMemorySpace.ANY
+    ),
 }
 
 if typing.TYPE_CHECKING:
   delay = pl_primitives.delay
+  ANY = GeneralMemorySpace.ANY
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing
 del pl_primitives
+del GeneralMemorySpace

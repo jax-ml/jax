@@ -194,8 +194,6 @@ class OpsTest(ptu.PallasTPUTest):
     )
 
   def test_sum_of_two_matmuls(self):
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 15):
-      self.skipTest("Test requires libtpu from 2025/11/15 or later")
     if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("Test requires TPUv5+")
 
@@ -349,8 +347,6 @@ class OpsTest(ptu.PallasTPUTest):
       keepdims=[False, True],
   )
   def test_reduce_index(self, axis, in_shape, reduce_func, keepdims):
-    if not keepdims and not jtu.is_cloud_tpu_at_least(2025, 11, 24):
-      self.skipTest("Requires libtpu built after 2025-11-24")
     dtype = jnp.float32
     rank = len(in_shape)
     if axis >= rank:
@@ -389,8 +385,6 @@ class OpsTest(ptu.PallasTPUTest):
       dtype=[jnp.float32, jnp.bfloat16],
   )
   def test_i1_relayout_bw(self, shape, msk_dtype, dtype):
-    if shape[0] < 8 and not jtu.is_cloud_tpu_at_least(2025, 11, 9):
-      self.skipTest("Requires libtpu built after 2025-11-09")
     msk_bitwidth = dtypes.itemsize_bits(msk_dtype)
     bitwidth = dtypes.itemsize_bits(dtype)
     if jtu.get_tpu_version() < 5 and msk_bitwidth < 32:
@@ -424,8 +418,6 @@ class OpsTest(ptu.PallasTPUTest):
   )
   def test_i1_relayout_bw_tiling(self, msk_dtype, dtype):
     self.skipTest("TODO: jevinjiang - Enable once presubmits pass.")
-    if not jtu.is_cloud_tpu_at_least(2025, 10, 7):
-      self.skipTest("Requires libtpu built after 2025-10-07")
     shape = (256, 256)
     bitwidth = dtypes.itemsize_bits(dtype)
     msk_bitwidth = dtypes.itemsize_bits(msk_dtype)
@@ -708,8 +700,6 @@ class OpsTest(ptu.PallasTPUTest):
     self.assertEqual(output, 0)
 
   def test_retiling_with_replicated_lane(self):
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 5):
-      self.skipTest("Test requires libtpu from 2025/11/5 or later")
     shape = (32, 1)
     broadcast_shape = (32, 256)
 
@@ -733,8 +723,6 @@ class OpsTest(ptu.PallasTPUTest):
   def test_stochastic_round(self, target_dtype):
     if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("Requires TPU v5+")
-    if not jtu.is_cloud_tpu_at_least(2025, 10, 29):
-      self.skipTest("Test requires libtpu from 2025/10/29 or later")
 
     def kernel(x_ref, b_ref, o_ref):
       o_ref[...] = pltpu.stochastic_round(
@@ -807,8 +795,6 @@ class OpsTest(ptu.PallasTPUTest):
     unpacked_dtype, packed_dtype = config
     if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("Requires TPU v5+")
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 7):
-      self.skipTest("Test requires libtpu from 2025/11/7 or later")
 
     bitwidth = dtypes.itemsize_bits(packed_dtype)
     num_sources = 32 // bitwidth
@@ -842,8 +828,6 @@ class OpsTest(ptu.PallasTPUTest):
     unpacked_dtype, packed_dtype = config
     if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("Requires TPU v5+")
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 7):
-      self.skipTest("Test requires libtpu from 2025/11/7 or later")
 
     bitwidth = dtypes.itemsize_bits(packed_dtype)
     packing_factor = 32 // bitwidth

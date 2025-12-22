@@ -235,9 +235,9 @@ grid_spec = pltpu.PrefetchScalarGridSpec(
     num_scalar_prefetch=0,
     # MemorySpace.ANY will (usually) place the tensor in HBM.
     in_specs=[
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        pl.BlockSpec(memory_space=pl.ANY),
     ],
-    out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+    out_specs=pl.BlockSpec(memory_space=pl.ANY),
     scratch_shapes=(
         # We allocate DMA semaphores in scratch memory.
         [pltpu.SemaphoreType.DMA] * 2
@@ -357,9 +357,9 @@ grid_spec = pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
                 # MemorySpace.ANY will (usually) place the tensor in HBM.
-                pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+                pl.BlockSpec(memory_space=pl.ANY),
             ],
-            out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+            out_specs=pl.BlockSpec(memory_space=pl.ANY),
             scratch_shapes=(
               # DMA semaphores are allocated in scratch memory.
               # We allocated one semaphore for a local HBM-VMEM copy,
@@ -556,7 +556,7 @@ The prologue (executed when `outer_step==0`) first initiates a barrier with both
 
 The main body assumes that a value has already been copied into our local working slot, either from the previous iteration or from the prologue. A complicating factor is that our destination buffers live in HBM, but we need to load values to VMEM before we perform arithmetic. Therefore, we simultaneously copy the working slot value into our VMEM (`receive_scratch`) and pass the value on to our right neighbor's receiving slot. Once the value has been copied into our VMEM, we can accumulate it into our result (contained in `o_ref`).
 
-A subtle race condition can occur if one device runs one loop ahead of it's right neighbor. In this case, it could copy into the receiver's `working_slot` at the same time the receiver is reading from it. In order to avoid this, each device will block on a `REGULAR` semaphore before copying into the right neighbor's `dst_ref` until it has signaled that it is done reading from its `working_slot`. This race condition is rarely triggered for a small kernel such as this example, but can it can be explicitly triggered if for example using a `pltpu.delay` instruction to artificially hang a device.
+A subtle race condition can occur if one device runs one loop ahead of it's right neighbor. In this case, it could copy into the receiver's `working_slot` at the same time the receiver is reading from it. In order to avoid this, each device will block on a `REGULAR` semaphore before copying into the right neighbor's `dst_ref` until it has signaled that it is done reading from its `working_slot`. This race condition is rarely triggered for a small kernel such as this example, but can it can be explicitly triggered if for example using a `pl.delay` instruction to artificially hang a device.
 
 Note that this is not an optimal or fully general kernel, as the block sizes must entirely fit in VMEM and we could better interleave communication and accumulation. We will discuss these optimizations in later sections.
 
@@ -703,13 +703,13 @@ grid_spec = pltpu.PrefetchScalarGridSpec(
     num_scalar_prefetch=0,
     in_specs=[
         # Our input lives in VMEM
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.VMEM),
     ],
     out_specs=[
         # Our output lives in VMEM
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.VMEM),
         # Our double-buffer lives in HBM
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        pl.BlockSpec(memory_space=pl.ANY),
     ],
     grid=(num_devices,),
     scratch_shapes=(
@@ -1019,11 +1019,11 @@ out_shape = (
 grid_spec = pltpu.PrefetchScalarGridSpec(
     num_scalar_prefetch=0,
     in_specs=[
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.VMEM),
     ],
     out_specs=[
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM),
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.VMEM),
+        pl.BlockSpec(memory_space=pl.ANY),
     ],
     grid=(num_devices, 2),
     scratch_shapes=(
@@ -1410,11 +1410,11 @@ out_shape = (
 grid_spec = pltpu.PrefetchScalarGridSpec(
     num_scalar_prefetch=0,
     in_specs=[
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        pl.BlockSpec(memory_space=pl.ANY),
     ],
     out_specs=[
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
-        pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        pl.BlockSpec(memory_space=pl.ANY),
+        pl.BlockSpec(memory_space=pl.ANY),
     ],
     grid=(num_devices, 2),
     scratch_shapes=(

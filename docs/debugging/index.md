@@ -138,9 +138,8 @@ ENTRY main.5 {
 :caption: Read more
 :maxdepth: 1
 
+flags
 print_breakpoint
 checkify_guide
-./flags
 xla_metadata
 ```
-

@@ -20,6 +20,7 @@ import jax
 from jax import random
 from jax._src import test_util as jtu
 from jax.experimental import mesh_utils
+from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas.ops.tpu import all_gather
 import jax.numpy as jnp
@@ -91,7 +92,7 @@ class AllGatherTest(jtu.JaxTestCase):
   def test_all_gather_1d_mesh(self, is_vmem, shape, dtype):
     if jax.device_count() < 2:
       self.skipTest("Need more devices")
-    memory_space = pltpu.VMEM if is_vmem else pltpu.ANY
+    memory_space = pltpu.VMEM if is_vmem else pl.ANY
     mesh_shape = (jax.device_count(),)
     mesh = jax.sharding.Mesh(
         mesh_utils.create_device_mesh(mesh_shape, jax.devices()), ["x"]
@@ -112,7 +113,7 @@ class AllGatherTest(jtu.JaxTestCase):
       self.skipTest("Need more devices")
     if jax.device_count() % 2:
       self.skipTest("Need an even number of devices")
-    memory_space = pltpu.VMEM if is_vmem else pltpu.ANY
+    memory_space = pltpu.VMEM if is_vmem else pl.ANY
     mesh_shape = (2, jax.device_count() // 2)
     mesh = jax.sharding.Mesh(
         mesh_utils.create_device_mesh(mesh_shape, jax.devices()), ["x", "y"]

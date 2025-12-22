@@ -31,14 +31,3 @@ from jax._src.lib import _jax
 JaxRuntimeError = _jax.JaxRuntimeError
 JaxRuntimeError.__module__ = "jax.errors"
 del _jax
-
-_deprecations = {
-  "SimplifiedTraceback": (
-    "jax.errors.SimplifiedTraceback is deprecated and will be removed in JAX v0.8.",
-    None,
-  ),
-}
-
-from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-__getattr__ = _deprecation_getattr(__name__, _deprecations)
-del _deprecation_getattr

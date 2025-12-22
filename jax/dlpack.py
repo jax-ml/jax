@@ -16,19 +16,3 @@ from jax._src.dlpack import (
   from_dlpack as from_dlpack,
   is_supported_dtype as is_supported_dtype,
 )
-
-_deprecations = {
-    # Deprecated in JAX v0.7.0
-    "SUPPORTED_DTYPES": (
-        (
-            "jax.SUPPORTED_DTYPES is deprecated in JAX v0.7.0 and will be removed"
-            " in JAX v0.8.0. Use jax.dlpack.is_supported_dtype() instead."
-        ),
-        None,
-    ),
-}
-
-
-from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-__getattr__ = _deprecation_getattr(__name__, _deprecations)
-del _deprecation_getattr

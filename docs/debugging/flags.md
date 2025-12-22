@@ -1,3 +1,17 @@
+---
+jupytext:
+  formats: md:myst
+  text_representation:
+    extension: .md
+    format_name: myst
+    format_version: 0.13
+    jupytext_version: 1.16.4
+kernelspec:
+  display_name: Python 3
+  language: python
+  name: python3
+---
+
 (debugging-flags)=
 # JAX debugging flags
 
@@ -9,13 +23,13 @@ JAX offers flags and context managers that enable catching errors more easily.
 
 **Summary:** Enable the `jax_debug_nans` flag to automatically detect when NaNs are produced in `jax.jit`-compiled code.
 
-`jax_debug_nans` is a JAX flag that when enabled, will cause computations to error-out immediately on production of a NaN. Switching this option on adds a NaN check to every floating point type value produced by XLA. That means values are pulled back to the host and checked as ndarrays for every primitive operation not under an `@jax.jit`. 
+`jax_debug_nans` is a JAX flag that when enabled, will cause computations to error-out immediately on production of a NaN. Switching this option on adds a NaN check to every floating point type value produced by XLA. That means values are pulled back to the host and checked as ndarrays for every primitive operation not under an `@jax.jit`.
 
 For code under an `@jax.jit`, the output of every `@jax.jit` function is checked and if a NaN is present it will re-run the function in de-optimized op-by-op mode, effectively removing one level of `@jax.jit` at a time.
 
 There could be tricky situations that arise, like NaNs that only occur under a `@jax.jit` but don't get produced in de-optimized mode. In that case you'll see a warning message print out but your code will continue to execute.
 
-If the NaNs are being produced in the backward pass of a gradient evaluation, when an exception is raised several frames up in the stack trace you will be in the backward_pass function, which is essentially a simple jaxpr interpreter that walks the sequence of primitive operations in reverse. 
+If the NaNs are being produced in the backward pass of a gradient evaluation, when an exception is raised several frames up in the stack trace you will be in the backward_pass function, which is essentially a simple jaxpr interpreter that walks the sequence of primitive operations in reverse.
 
 ### Usage
 
@@ -27,7 +41,7 @@ If you want to trace where NaNs are occurring in your functions or gradients, yo
 
 ### Example(s)
 
-```python
+```{code-cell}
 import jax
 import jax.numpy as jnp
 import traceback
@@ -46,7 +60,7 @@ except FloatingPointError as e:
 
 The NaN generated was caught. By running `%debug`, we can get a post-mortem debugger. This also works with functions under `@jax.jit`, as the example below shows.
 
-```python
+```{code-cell}
 :tags: [raises-exception]
 
 jax.jit(f)(5.)
@@ -56,7 +70,7 @@ When this code sees a NaN in the output of an `@jax.jit` function, it calls into
 
 The `jax.debug_nans` context manager can be used to activate/deactivate NaN debugging. Since we activated it above with `jax.config.update`, let's deactivate it:
 
-```python
+```{code-cell}
 with jax.debug_nans(False):
   print(jax.jit(f)(5.))
 ```

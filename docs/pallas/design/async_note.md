@@ -18,7 +18,7 @@ def f(x):
 
 In this function, we could perform the `ppermute` at the same time as the `x + 1`. This is an optimization XLA does automatically by:
 
-1. decomposing `ppermute` into a `ppermute_start` and `ppermute_done` op, which are connected via a future.  
+1. decomposing `ppermute` into a `ppermute_start` and `ppermute_done` op, which are connected via a future.
 2. scheduling the `x + 1` between the `ppermute_start` and `ppermute_done`,
 
 resulting in the following program:
@@ -107,12 +107,12 @@ def ppermute_start(x, *, axis_name) -> tuple[Semaphore, Semaphore, Array]:
           ),
       ),
       in_specs=[
-          pl.BlockSpec(memory_space=pltpu.ANY),
+          pl.BlockSpec(memory_space=pl.ANY),
       ],
       out_specs=(
           pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
           pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
-          pl.BlockSpec(memory_space=pltpu.ANY),
+          pl.BlockSpec(memory_space=pl.ANY),
       ),
   )(x)
   return send_sem, recv_sem, out
@@ -139,11 +139,11 @@ def ppermute_done(send_sem, recv_sem, out) ->Array:
           ),
       ),
       in_specs=[
-          pl.BlockSpec(memory_space=pltpu.ANY),
+          pl.BlockSpec(memory_space=pl.ANY),
           pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
           pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
       ],
-      out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+      out_specs=pl.BlockSpec(memory_space=pl.ANY),
       input_output_aliases={0:0}
   )(out, send_sem, recv_sem)
   return out
@@ -167,9 +167,9 @@ def f(x):
 
 There are three remaining issues with this, each of which exists outside of Pallas to some degree. Here they are at a high level.
 
-1. Scheduling \- just because we write `ppermute_start`, then `x + 1`, then `ppermute_done` doesn’t guarantee that they will happen in that order. XLA is responsible for scheduling, so when we write JAX programs, we are setting up data dependencies that XLA will respect but XLA will not respect the specific order of operations written in JAX.  
-2. Lifetimes \- XLA assumes that once a value is out of scope in the dependency graph, its memory can be freed for use by other values. If we have an op that asynchronously copies x \-\> y, we need to ensure that x is alive until the copy is complete, otherwise we will be copying from garbage memory.  
-3. Defensive copies \- XLA reserves the right to create copies of values. We need to make sure we don’t introduce unnecessary copies to a) avoid unnecessary runtime overhead and b) ensure correctness. 
+1. Scheduling \- just because we write `ppermute_start`, then `x + 1`, then `ppermute_done` doesn’t guarantee that they will happen in that order. XLA is responsible for scheduling, so when we write JAX programs, we are setting up data dependencies that XLA will respect but XLA will not respect the specific order of operations written in JAX.
+2. Lifetimes \- XLA assumes that once a value is out of scope in the dependency graph, its memory can be freed for use by other values. If we have an op that asynchronously copies x \-\> y, we need to ensure that x is alive until the copy is complete, otherwise we will be copying from garbage memory.
+3. Defensive copies \- XLA reserves the right to create copies of values. We need to make sure we don’t introduce unnecessary copies to a) avoid unnecessary runtime overhead and b) ensure correctness.
 
 We will go over these issues one by one and suggest fixes.
 
@@ -292,13 +292,13 @@ def ppermute_start(x, *, axis_name) -> tuple[Semaphore, Semaphore, Array, Array]
           ),
       ),
       in_specs=[
-          pl.BlockSpec(memory_space=pltpu.ANY),
+          pl.BlockSpec(memory_space=pl.ANY),
       ],
       out_specs=(
           pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
           pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
-          pl.BlockSpec(memory_space=pltpu.ANY),
-          pl.BlockSpec(memory_space=pltpu.ANY),
+          pl.BlockSpec(memory_space=pl.ANY),
+          pl.BlockSpec(memory_space=pl.ANY),
       ),
       input_output_aliases={0:2}
   )(x)
@@ -322,12 +322,12 @@ def ppermute_done(send_sem, recv_sem, x, out) ->Array:
           ),
       ),
       in_specs=[
-          pl.BlockSpec(memory_space=pltpu.ANY),
-          pl.BlockSpec(memory_space=pltpu.ANY),
+          pl.BlockSpec(memory_space=pl.ANY),
+          pl.BlockSpec(memory_space=pl.ANY),
           pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
           pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
       ],
-      out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+      out_specs=pl.BlockSpec(memory_space=pl.ANY),
       input_output_aliases={1:0}
   )(x, out, send_sem, recv_sem)
   return out
@@ -485,7 +485,7 @@ def f(x):
   def body(i, x):
     *sems, x, x2 = ppermute_start(x)
     x2 = ppermute_done((*sems, x, x2))
-    
+
     *sems, x2, y = ppermute_start(x2)
     y = ppermute_done((*sems, x2, y))
     return y
@@ -574,10 +574,10 @@ our program should now be correct.
 
 So we’ve come up with some rules of thumb:
 
-1. If we have operations dependent on the input value to the `ppermute`, unpack the future to use the aliased value instead of the original value.  
+1. If we have operations dependent on the input value to the `ppermute`, unpack the future to use the aliased value instead of the original value.
 2. Use `unroll >= 2` when doing `ppermute`s in a loop body.
 
-Let’s combine everything into one function that does `ppermute`s in a loop and accumulates the result. 
+Let’s combine everything into one function that does `ppermute`s in a loop and accumulates the result.
 
 ```py
 def f(x):
@@ -641,7 +641,7 @@ def f(x):
   return y_ref[...]
 ```
 
-Before, we ran into scheduling ambiguity, where XLA could re-order the add w.r.t. the `ppermute`. With stateful semantics, we actually add in an ordering constraint\! `x_ref[...] += 1` mutates `x_ref` so it can’t be moved wrt to `ppermute_done_stateful`. JAX can inject these scheduling constraints as part of the lowering to HLO. 
+Before, we ran into scheduling ambiguity, where XLA could re-order the add w.r.t. the `ppermute`. With stateful semantics, we actually add in an ordering constraint\! `x_ref[...] += 1` mutates `x_ref` so it can’t be moved wrt to `ppermute_done_stateful`. JAX can inject these scheduling constraints as part of the lowering to HLO.
 
 The final key difference is evident when we try our loop examples.
 
@@ -665,8 +665,8 @@ To handle this without the manual unrolling, we’d create a scratch buffer with
 
 The realization here is that being stateful forces us to deal with a lot of the issues that pop up with value semantics earlier on. We define them away\!
 
-1. Scheduling \- stateful ops that have `Ref`s as inputs force an ordering of our program. Note that this will schedule operations on the same `Ref` wrt to each other. We might also need an `opt_barrier_stateful` to enforce more ordering constraints.  
-2. Lifetimes \- `Ref` lifetimes can be scoped via `run_state` or could be inputs to stateful ops.  
+1. Scheduling \- stateful ops that have `Ref`s as inputs force an ordering of our program. Note that this will schedule operations on the same `Ref` wrt to each other. We might also need an `opt_barrier_stateful` to enforce more ordering constraints.
+2. Lifetimes \- `Ref` lifetimes can be scoped via `run_state` or could be inputs to stateful ops.
 3. Defensive copies \- Using `Ref`s forces us to handle buffer assignment “manually” and the lowering can ensure the aliasing works out to avoid any copies.
 
 Another important fundamental limitation is that we eventually stage out an HLO program where the live buffers and semaphores are represented as array value types. XLA does not provide guarantees about buffer lifetimes or which memory spaces they live in for these intermediate values. *Therefore, it is possible XLA can copy array values even if they are actively being copied into by Pallas kernels.* This is easy to verify in HLO but it is a sharp edge of using custom calls to represent asynchronous operations in HLO.

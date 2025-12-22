@@ -515,19 +515,6 @@ def _check_unique_resources(pspec: PartitionSpec, arg_name: str, mesh=None
             f' for {mesh_lib.show_axes(multiple_uses)}'),
         mesh=mesh, pspec=pspec)
 
-def check_pspec_mix_axis_type(mesh, pspec):
-  for spec in pspec:
-    if isinstance(spec, tuple):
-      if all(mesh._name_to_type[spec[0]] == mesh._name_to_type[p]
-             for p in spec):
-        continue
-      if any(mesh._name_to_type[p] == AxisType.Manual for p in spec):
-        raise ValueError(
-            'Tuple subset of `PartitionSpec` cannot contain `Manual` mixed'
-            f' with `Auto` or `Explicit`. Got pspec {pspec} and subset'
-            f' {spec} with axis types:'
-            f' ({", ".join(str(mesh._name_to_type[p]) for p in spec)})')
-
 def _check_mesh_resource_axis(mesh, pspec):
   for p in pspec:
     if p is PartitionSpec.UNCONSTRAINED or p is None:
@@ -538,7 +525,6 @@ def _check_mesh_resource_axis(mesh, pspec):
         raise ValueError(
             f"Resource axis: {r} of {pspec} "
             f"is not found in mesh: {tuple(mesh.shape.keys())}.")
-  check_pspec_mix_axis_type(mesh, pspec)
   if (AxisType.Auto not in mesh.axis_types and
       PartitionSpec.UNCONSTRAINED in pspec):
     raise ValueError(

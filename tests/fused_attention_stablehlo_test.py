@@ -264,8 +264,6 @@ def sdpa_train_fp8(
   return out[0], (query_grad, key_grad, value_grad)
 
 
-@jtu.ignore_warning(category=DeprecationWarning,
-                    message='`with mesh:` context manager')
 class DotProductAttentionTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
@@ -755,8 +753,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-2, atol=1e-2)
 
   @jtu.run_on_devices("cuda")
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message='`with mesh:` context manager')
   def test_sdpa_residual(self):
     k1, k2, k3, k4, k5 = jax.random.split(jax.random.key(0), 5)
     query = jax.random.normal(

@@ -607,31 +607,15 @@ def _broadcasted_iota_op_lowering_rule(
 
 
 @_register_lowering(vector.BroadcastOp)
-def _vector_splat_op_lowering_rule(
-    _: LoweringContext, vector_splat_op: vector.BroadcastOp
-) -> Sequence[ir.Value]:
-
-  out_vec_ty = ir.VectorType(vector_splat_op.aggregate.type)
-  fragmented_array = fa.FragmentedArray.splat(
-      vector_splat_op.input,
-      tuple(out_vec_ty.shape),
-      layouts.from_layout_attr(vector_splat_op.attributes["out_layouts"][0]),
-      is_signed=_default_is_signed(out_vec_ty.element_type),
-  )
-  return [fragmented_array_to_ir(fragmented_array, out_vec_ty)]
-
-
-@_register_lowering(vector.BroadcastOp)
 def _vector_broadcast_op_lowering_rule(
-    _: LoweringContext, vector_broadcast_op: vector.BroadcastOp
+    _: LoweringContext, op: vector.BroadcastOp
 ) -> Sequence[ir.Value]:
-
-  out_vec_ty = ir.VectorType(vector_broadcast_op.vector.type)
+  out_vec_ty = ir.VectorType(op.vector.type)
   fragmented_array = fa.FragmentedArray.splat(
-      vector_broadcast_op.source,
+      op.source,
       tuple(out_vec_ty.shape),
       layouts.from_layout_attr(
-          vector_broadcast_op.attributes["out_layouts"][0]
+          op.attributes["out_layouts"][0]
       ),
       is_signed=_default_is_signed(out_vec_ty.element_type),
   )
@@ -646,7 +630,9 @@ def _vector_shape_cast_op_lowering_rule(
   out_vec_ty = ir.VectorType(op.result.type)
   assert out_vec_ty.has_static_shape
   a = _fragmented_array_from_ir(op.source, layout)
-  return [fragmented_array_to_ir(a.reshape(out_vec_ty.shape), out_vec_ty)]
+  return [
+      fragmented_array_to_ir(a.reshape(tuple(out_vec_ty.shape)), out_vec_ty)
+  ]
 
 
 @_register_lowering(vector.ExtractStridedSliceOp)
@@ -671,6 +657,33 @@ def _vector_extract_strided_slice_op_lowering_rule(
   result = a[indices]
   assert result.layout == layouts.from_layout_attr(out_layout)
   return [fragmented_array_to_ir(result, out_vec_ty)]
+
+
+@_register_lowering(vector.ExtractOp)
+def _vector_extract_op_lowering_rule(
+    ctx: LoweringContext, op: vector.ExtractOp
+) -> Sequence[ir.Value]:
+  del ctx
+  if op.dynamic_position:
+    raise NotImplementedError("Only slicing with static indices allowed.")
+
+  [in_layout] = inference_utils.in_layouts(op)
+  a = _fragmented_array_from_ir(op.source, in_layout)
+
+  if not ir.VectorType.isinstance(op.result.type):  # scalar result
+    result = a[tuple(op.static_position)]
+    assert isinstance(result.layout, fa.WGSplatFragLayout)
+    return [result.registers.item()]
+
+  [out_layout] = inference_utils.out_layouts(op)
+  assert in_layout == out_layout
+  a = _fragmented_array_from_ir(op.source, in_layout)
+  result_type = ir.VectorType(op.result.type)
+  slices = tuple(slice(i, i + 1) for i in op.static_position)
+  # TODO(allanrenucci): Add direct support for indexing to FragmentedArray.
+  result = a[slices].reshape(tuple(result_type.shape))
+  assert result.layout == layouts.from_layout_attr(out_layout)
+  return [fragmented_array_to_ir(result, result_type)]
 
 
 @_register_lowering(vector.ReductionOp)

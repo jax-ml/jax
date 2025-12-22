@@ -258,6 +258,7 @@ def reduce_expression(
     case _:
       assert_never(expr)
 
+
 @dataclasses.dataclass(frozen=True)
 class Equals:
   """States that `lhs` and `rhs` are equal."""
@@ -586,8 +587,10 @@ class ConstraintSystem:
     return free_variables
 
   def __and__(
-      self, other: ConstraintSystem
+      self, other: ConstraintSystem | Unsatisfiable
   ) -> ConstraintSystem | Unsatisfiable:
+    if isinstance(other, Unsatisfiable):
+      return Unsatisfiable()
     for variable, assignment in self.assignments.items():
       if variable in other.assignments and assignment != other.assignments[variable]:
         return Unsatisfiable()

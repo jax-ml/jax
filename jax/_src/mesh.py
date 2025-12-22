@@ -24,7 +24,6 @@ import functools
 import math
 import threading
 from typing import Any, NamedTuple
-import warnings
 
 import numpy as np
 
@@ -323,10 +322,6 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
   def __enter__(self):
     if jax_config.disallow_mesh_context_manager.value:
       raise RuntimeError("Mesh context manager is disabled.")
-    warnings.warn(
-        "`with mesh:` context manager has been deprecated. Please use `with"
-        " jax.set_mesh(mesh):` instead.",
-        category=DeprecationWarning, stacklevel=2)
     new_env = thread_resources.stack[-1].with_mesh(self)
     thread_resources.stack.append(new_env)
     thread_resources.env = new_env

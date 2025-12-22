@@ -504,13 +504,11 @@ class DtypesTest(jtu.JaxTestCase):
       dtypes.dtype(None)
 
   def testDefaultDtypes(self):
-    precision = config.default_dtype_bits.value
-    assert precision in ['32', '64']
     self.assertEqual(dtypes.bool_, np.bool_)
-    self.assertEqual(dtypes.int_, np.int32 if precision == '32' else np.int64)
-    self.assertEqual(dtypes.uint, np.uint32 if precision == '32' else np.uint64)
-    self.assertEqual(dtypes.float_, np.float32 if precision == '32' else np.float64)
-    self.assertEqual(dtypes.complex_, np.complex64 if precision == '32' else np.complex128)
+    self.assertEqual(dtypes.int_, np.int64)
+    self.assertEqual(dtypes.uint, np.uint64)
+    self.assertEqual(dtypes.float_, np.float64)
+    self.assertEqual(dtypes.complex_, np.complex128)
 
   def test_check_dtype_non_hashable(self):
     # regression test for issue with checking non-hashable custom dtype

@@ -1038,7 +1038,7 @@ def _device_assignment_mismatch_error(fun_name, fails, args_flat, api_name,
     first, second = mismatched_args_msg  # pytype: disable=bad-unpacking
     extra_msg = f" Got {first} and {second}"
   elif len(mismatched_args_msg) == 1:
-    first, second  = fails
+    first, second = fails
     # Choose the failure left which is not already covered by ARG_SHARDING.
     left = second if first.m_type == MismatchType.ARG_SHARDING else first
     extra_msg = f" Got {mismatched_args_msg[0]} and{left._str(api_name)}"

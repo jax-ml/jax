@@ -2951,7 +2951,10 @@ class ArrayTest(jtu.JaxTestCase):
     x = [np.arange(i, i + 4) for i in range(n_devices)]
     y = jax.device_put_sharded(x, devices)
     self.assertIsInstance(y, array.ArrayImpl)
-    self.assertIsInstance(y.sharding, jax.sharding.PmapSharding)
+    if config.pmap_shmap_merge.value:
+      self.assertIsInstance(y.sharding, jax.NamedSharding)
+    else:
+      self.assertIsInstance(y.sharding, jax.sharding.PmapSharding)
     for s in y.addressable_shards:
       self.assertArraysEqual(s.data, y[s.index])
       self.assertEqual(s.replica_id, 0)

@@ -543,8 +543,6 @@ class IndexerOpsTest(PallasBaseTest):
 
   @hp.given(hps.data())
   def test_load_and_broadcast_with_stride_0(self, data):
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 25):
-      self.skipTest("Requires libtpu built after 2025-11-25")
     if self.INTERPRET:
       self.skipTest("TODO: fails in interpret mode.")
     dtype = jnp.float32

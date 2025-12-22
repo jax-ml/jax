@@ -121,7 +121,7 @@ NB_MODULE(_sdy_mpmd, m) {
                     std::optional<int>,
                     std::optional<mlir::mpmd::SplitFragmentType>,
                     const std::string&>(),
-           nb::arg("origins"), nb::arg("stage_id"),
+           nb::arg("origins"), nb::arg("stage_id").none() = std::nullopt,
            nb::arg("call_counter").none() = std::nullopt,
            nb::arg("split_type").none() = std::nullopt, nb::arg("mesh_name"))
       .def_ro("origins", &FragmentInfo::origins)

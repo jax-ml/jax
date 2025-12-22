@@ -30,8 +30,6 @@ class SideEffectsTest(jtu.JaxTestCase):
     super().setUp()
     if not jtu.is_device_tpu():
       self.skipTest("TPU required")
-    if not jtu.is_cloud_tpu_at_least(2025, 11, 11):
-      self.skipTest("Newer libtpu required")
 
   @parameterized.named_parameters(
       ("pure", pltpu.SideEffectType.PURE),

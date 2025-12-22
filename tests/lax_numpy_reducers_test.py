@@ -861,14 +861,6 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, rtol=tol)
 
-  @jtu.sample_product(
-      op=['quantile', 'nanquantile', 'percentile', 'nanpercentile']
-  )
-  def testQuantileDeprecatedArgs(self, op):
-    func = getattr(jnp, op)
-    with self.assertRaisesRegex(TypeError, rf"{op}\(\) argument interpolation"):
-      func(jnp.arange(4), 0.5, interpolation='linear')
-
   @unittest.skipIf(not config.enable_x64.value, "test requires X64")
   @jtu.run_on_devices("cpu")  # test is for CPU float64 precision
   def testPercentilePrecision(self):
