@@ -2478,8 +2478,8 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
                     " v0.8.0. Use method instead.")
   return _quantile(lax.asarray(a), lax.asarray(q), weights, axis, method, keepdims, True)
 
-def _quantile(a: Array, q: Array, weights: Array | None, axis: int | tuple[int, ...] | None,
-              method: str, keepdims: bool, squash_nans: bool) -> Array:
+def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
+              method: str, keepdims: bool, squash_nans: bool, weights: ArrayLike | None = None) -> Array:
   if method not in ["linear", "lower", "higher", "midpoint", "nearest", "inverted_cdf"]:
     raise ValueError("method can only be 'linear', 'lower', 'higher', 'midpoint', 'nearest' or 'inverted_cdf'")
   if weights is not None:
