@@ -3920,7 +3920,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
 
   @parameterized.product(
       m=[256],
-      n=[256],
+      n=[128, 256],
       scale_jax_dtype=[jnp.float8_e8m0fnu, jnp.float8_e4m3fn],
   )
   def test_collective_scaled_matmul(self, m, n, scale_jax_dtype):
