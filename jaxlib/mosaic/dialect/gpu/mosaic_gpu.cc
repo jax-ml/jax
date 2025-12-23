@@ -285,6 +285,23 @@ llvm::LogicalResult VerifyCommonLoadStoreOp(
   }
   return llvm::success();
 }
+
+llvm::LogicalResult VerifyPermutation(mlir::Operation* op,
+                                      mlir::ArrayRef<int32_t> perm, int rank) {
+  if (rank != perm.size()) {
+    return op->emitError("transposition length mismatch: ") << perm.size();
+  }
+  for (int i = 0; i < perm.size(); ++i) {
+    if (perm[i] < 0 || perm[i] >= rank)
+      return op->emitError("transposition index out of range: ") << perm[i];
+    for (int j = i + 1; j < perm.size(); ++j)
+      if (perm[i] == perm[j]) {
+        return op->emitError("duplicate position index: ") << perm[i];
+      }
+  }
+  return llvm::success();
+}
+
 }  // namespace
 
 llvm::LogicalResult AsyncLoadOp::verify() {
@@ -303,6 +320,13 @@ llvm::LogicalResult AsyncLoadOp::verify() {
             "The `collective` attribute must not contain duplicate "
             "dimensions.");
       }
+  }
+  if (auto transpose = getTranspose()) {
+    if (VerifyPermutation(getOperation(), transpose->getPermutation(),
+                          getSource().getType().getRank())
+            .failed()) {
+      return mlir::failure();
+    }
   }
 
   return llvm::success();
@@ -331,9 +355,20 @@ llvm::LogicalResult AsyncPrefetchOp::verify() {
 }
 
 llvm::LogicalResult AsyncStoreOp::verify() {
-  return VerifyCommonLoadStoreOp(getOperation(), getDestination().getType(),
-                                 "destination", getSource().getType(), "source",
-                                 getSliceLengths(), getIndices().size());
+  if (VerifyCommonLoadStoreOp(getOperation(), getDestination().getType(),
+                              "destination", getSource().getType(), "source",
+                              getSliceLengths(), getIndices().size())
+          .failed()) {
+    return mlir::failure();
+  }
+  if (auto transpose = getTranspose()) {
+    if (VerifyPermutation(getOperation(), transpose->getPermutation(),
+                          getDestination().getType().getRank())
+            .failed()) {
+      return mlir::failure();
+    }
+  }
+  return llvm::success();
 }
 
 llvm::LogicalResult WGMMAOp::inferReturnTypes(

@@ -287,17 +287,9 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
 
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
-    TypedArrayAttrBase<MosaicGPU_Dimension, "dimensions">:$collective
+    TypedArrayAttrBase<MosaicGPU_Dimension, "dimensions">:$collective,
+    OptionalAttr<TransposeTransformAttr>:$transpose
   );
-
-  let assemblyFormat = [{
-    `source` `(` $source `:` type($source) `)`
-    `destination` `(` $destination `:` type($destination) `)`
-    `barrier` `(` $barrier `:` type($barrier) `)`
-    `indices` `(` $indices `)`
-    `predicate` `(` $predicate `)`
-    attr-dict
-  }];
 
   let hasVerifier = 1;
 }
@@ -379,16 +371,9 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
     DefaultValuedOptionalAttr<BoolAttr, "true">:$commit_group,
-    OptionalAttr<MosaicGPU_TMAReduction>:$reduction_op
+    OptionalAttr<MosaicGPU_TMAReduction>:$reduction_op,
+    OptionalAttr<TransposeTransformAttr>:$transpose
   );
-
-  let assemblyFormat = [{
-    `source` `(` $source `:` type($source) `)`
-    `destination` `(` $destination `:` type($destination) `)`
-    `indices` `(` $indices `)`
-    `predicate` `(` $predicate `)`
-    attr-dict
-  }];
 
   let hasVerifier = 1;
 }

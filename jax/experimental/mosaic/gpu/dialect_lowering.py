@@ -932,6 +932,12 @@ def _mgpu_async_load_op_lowering_rule(
       for axis in load_op.collective or []
   ]
 
+  if load_op.transpose:
+    permutation = mgpu.TransposeTransformAttr(load_op.transpose).permutation
+    transforms = transforms + (
+        launch_context.TransposeTransform(tuple(permutation)),
+    )
+
   # TODO(dasenov): async_copy requires all GMEM strides except the last one
   # to be a multiple of 16 bytes. This restriction could be loosned with
   # strided layouts when they are contiguous in GMEM. In that case, we could do:
@@ -1009,6 +1015,12 @@ def _mgpu_async_store_op_lowering_rule(
     reduction_op = mgpu.TMAReduction(store_op.reduction_op.value).name.lower()
   else:
     reduction_op = None
+
+  if store_op.transpose:
+    permutation = mgpu.TransposeTransformAttr(store_op.transpose).permutation
+    transforms = transforms + (
+        launch_context.TransposeTransform(tuple(permutation)),
+    )
 
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
