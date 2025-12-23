@@ -83,6 +83,9 @@ DotDimensionNumbersAttr defaultDimensionNumbers(Builder &builder,
                                                 bool transpose_lhs,
                                                 bool transpose_rhs);
 
+FailureOr<bool> isGather(Operation& op, MemRefType source_ty,
+                         MemRefType target_ty);
+
 #define GEN_PASS_REGISTRATION
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 
