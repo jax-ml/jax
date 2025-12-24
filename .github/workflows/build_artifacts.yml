@@ -52,6 +52,11 @@ on:
         options:
         - "1"
         - "0"
+      xla_commit:
+        description: "XLA commit to use?"
+        type: string
+        required: false
+        default: ""
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: choice
@@ -81,6 +86,11 @@ on:
         description: "Should latest XLA be used?"
         type: string
         default: "0"
+      xla_commit:
+        description: "XLA commit to use?"
+        type: string
+        required: false
+        default: ""
       upload_artifacts_to_gcs:
         description: "Should the artifacts be uploaded to a GCS bucket?"
         default: true
@@ -111,6 +121,7 @@ jobs:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_CUDA_VERSION: "${{ inputs.cuda-version }}"
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
+      JAXCI_XLA_COMMIT: "${{ inputs.xla_commit }}"
 
     name: "${{ inputs.artifact }},
             ${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
