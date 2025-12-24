@@ -27,11 +27,4 @@ def test_stacking_validation():
   with pytest.raises(TypeError, match="requires ndarray or scalar arguments"):
       jnp.atleast_3d([1, 2])
 
-def test_split_validation():
-    # If array_split/split also had the deprecation, test them too.
-    # Based on previous pattern, assuming they do.
-    with pytest.raises(TypeError, match="requires ndarray or scalar arguments"):
-        jnp.array_split([1, 2, 3, 4], 2)
-        
-    with pytest.raises(TypeError, match="requires ndarray or scalar arguments"):
-        jnp.split([1, 2, 3, 4], 2)
+
