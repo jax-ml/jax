@@ -388,6 +388,20 @@ class DevicePutTest(jtu.JaxTestCase):
     self._check_device_put_addressable_shards(
         out, np_inp * np_inp, s_dev, "device")
 
+  def test_oom(self):
+    np_inp = np.arange(1)
+
+    @functools.partial(jax.jit)
+    def f(x: jax.Array) -> jax.Array:
+      return jax.lax.broadcast(x, (1024, 1024, 1024, 1024))
+
+    with self.assertRaisesRegex(
+        jax.errors.JaxRuntimeError,
+        "RESOURCE_EXHAUSTED: Total allocation bytes \\(.*\\) is greater than"
+        " user allocation shared memory limit bytes \\(.*\\)",
+    ):
+      f.lower(np_inp).compile()
+
   def test_parameter_streaming(self):
     _, s_host, np_inp, inp_host = _create_inputs(
         (8, 2), P("x", "y"), mem_kind="pinned_host")
