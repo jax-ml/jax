@@ -1076,7 +1076,7 @@ def _trace_kernel_to_jaxpr(
 
 _PALLAS_USE_MOSAIC_GPU = config.bool_state(
     "jax_pallas_use_mosaic_gpu",
-    default=config.bool_env("JAX_PALLAS_USE_MOSAIC_GPU", False),
+    default=config.bool_env("JAX_PALLAS_USE_MOSAIC_GPU", True),
     help=(
         "If True, lower Pallas kernels to the experimental Mosaic GPU"
         " dialect, instead of Triton IR."

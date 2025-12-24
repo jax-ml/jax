@@ -103,6 +103,9 @@ jax_multiplatform_test(
         "gpu_b200",
         "tpu_v6e",
     ],
+    env = {
+        "JAX_PALLAS_USE_MOSAIC_GPU": "0",
+    },
     minimal_shard_count = {
         "tpu": 8,
     },
@@ -871,6 +874,9 @@ jax_multiplatform_test(
         "gpu_h100_x32",
         "gpu_b200",
     ],
+    env = {
+        "JAX_PALLAS_USE_MOSAIC_GPU": "0",
+    },
     shard_count = 1,
     deps = [
         "//jax/experimental:pallas",

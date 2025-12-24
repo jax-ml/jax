@@ -11,6 +11,14 @@ For the overall JAX change log see [here](https://docs.jax.dev/en/latest/changel
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
+## Unreleased
+
+* Changes
+
+  * The default lowering path on GPU now goes through Mosaic GPU. To keep using
+    Triton, call {func}`jax.experimental.pallas.pallas_call` with
+    the `backend` argument set to `'triton'`.
+
 ## Released with jax 0.8.1
 
 * New features:
