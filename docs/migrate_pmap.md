@@ -90,6 +90,69 @@ Mesh('y': 4, axis_types=(Auto,))
   parallelism](https://docs.jax.dev/en/latest/notebooks/shard_map.html) mode one
   mesh axis at a time. This approach greatly simplifies nested parallelism.
 
+### `JaxRuntimeError: INVALID_ARGUMENT: CopyArrays ... same size`
+
+#### Example
+```
+jax.errors.JaxRuntimeError: INVALID_ARGUMENT: CopyArrays only supports destination
+device list of the same size as the array device lists.
+```
+
+#### How this can happen
+
+- This error can appear in a multi-host setting (i.e., `jax.process_count() > 1`)
+  where users try to index into a sharded array (e.g., `x[0]`) with the intention
+  of grabbing what is semantically a replica. Please see [Appendix A](#appendix-a)
+  for more details.
+
+#### How to fix
+
+Instead of `x[0]`, use one of these approaches:
+
+- **Access local data directly**: Use `.addressable_shards[0].data` to get the
+  local shard without triggering global resharding.
+- **Explicit resharding**: Use `jax.device_put(x, sharding)` with an appropriate
+  `NamedSharding` to explicitly control how data is distributed.
+
+
+### Using `jax.stages.Lowered` returned by `jax.pmap(f).lower(*args)`
+
+Because of the default call path of a `jax.stages.Lowered` object, we miss the
+conversion from host-local arrays to global arrays to pass into the underlying
+`jax.shard_map(f)` as well as the conversion back from global arrays to host-local
+arrays for the output. This can lead to unexpected behavior in the multi-host
+setting. In this case, we recommend users call `jax.experimental.multihost_utils`'s
+`host_local_array_to_global_array` on inputs and `global_array_to_host_local_array`
+on outputs of `.compile()(*args)`to perform the necessary conversions.
+
+### `JaxRuntimeError: INTERNAL: Core halted unexpectedly`
+
+#### Example
+```
+jax.errors.JaxRuntimeError: INTERNAL: Core halted unexpectedly: Assertion args:
+0x00000000 0x00000000 0x00000000 INTERNAL: Accelerator device halted prematurely,
+perhaps due to an on-device check-failure. Node 0 halted unexpectedly at tag:pc
+TensorCoreSequencer:1:0x160 (from TensorCoreSequencer:1:0x208): scheckne:
+```
+
+#### How this can happen
+
+- This error typically occurs in multi-host settings when process synchronization
+  barriers are not properly aligned. The new `jax.pmap` implementation may have
+  different synchronization semantics compared to the old implementation.
+
+#### How to fix
+
+- Replace any custom process barrier implementations with
+  `jax.experimental.multihost_utils.sync_global_devices()`. This ensures all
+  processes reach the same synchronization point before proceeding.
+  ```python
+  from jax.experimental import multihost_utils as mhu
+
+  # Instead of custom barriers
+  mhu.sync_global_devices("barrier_name")
+  ```
+
 ## Performance implications
 
 ### `int` indexing into sharded arrays
@@ -100,7 +163,8 @@ users shard stacked copies of an array to replicate (e.g., via
 `jax.device_put_replicated`). These "sharded-but-really-replicated" arrays
 suffer unnecessary communication overhead when `int` indexing (e.g., `x[0]`)
 because JAX does not know the arrays are actually replicated. For a more
-thorough discussion, please see [Appendix A](#appendix-a).
+thorough discussion, please see the note on the multi-host setting in
+[Appendix A](#appendix-a).
 
 #### Option 1: Prevent unintended sharding (recommended)
 Avoid creating the leading sharded dimension entirely.
@@ -146,6 +210,32 @@ host-local array when returning to user code.
 
 This round-trip conversion cannot be avoided, so if the performance penalty is
 too great, we recommend migrating your code to `jax.shard_map`.
+
+### Transforming `jax.pmap` e.g., `jax.jit`
+
+We recommend keeping `jax.pmap` as the top-level transform since it is more
+performant than under another transform. However, if your code must put
+`jax.pmap` under another transform and the performance penalty is
+unacceptable, please file a bug as described above.
+
+### Buffer donation with `donate_argnums`
+
+Buffer donation with `donate_argnums` is fully supported in the new `jax.pmap`
+implementation, but performance depends on whether inputs are correctly sharded:
+
+- **Correctly sharded inputs (fast path)**: Arrays with the expected local
+  sharding use a zero-copy rewrap. Donation invalidates the original array as
+  expected, with no additional memory overhead.
+
+- **Incorrectly sharded inputs (slow path)**: Arrays that require resharding
+  must be copied first, then the original is deleted. This causes a **brief 2x
+  memory spike** before the original is freed. A warning is logged when this
+  occurs.
+
+To maximize donation efficiency, ensure your inputs are correctly sharded
+before calling `pmap`. If you see the resharding warning and memory is tight,
+consider migrating to `jax.shard_map` where you have full control over
+input/output sharding.
 
 ## Migrating to `jax.shard_map`
 
@@ -195,7 +285,7 @@ rank-reduced slice of the logical array `x`. However, performance depends on how
         requires **communication**; JAX will gather the *entire* array of shape
         `(8, 3, 4)` to each device and then take a slice.
 
-### The Common Performance Pitfall
+### The common performance pitfall
 
 A common pattern among `jax.pmap` users involves arrays that are **semantically
 replicated** (the user intends for them to be identical everywhere) but are
@@ -206,7 +296,7 @@ This happens implicitly (e.g., via `jax.pmap(..., out_axes=0)`) or explicitly
 checkpoints by calling `unreplicate` or `x[0]`, assuming it is a cheap
 operation.
 
-#### Example: The "Unreplicate" Anti-Pattern
+#### Example: The "unreplicate" anti-pattern
 
 ```python
 from flax import jax_utils
@@ -226,7 +316,7 @@ train_step_pmapped = jax.pmap(lambda x: x)
 train_state = jax_utils.unreplicate(train_step_pmapped(train_state))
 ```
 
-#### The Consequence
+#### The consequence
 Even though the user knows `train_state` contains identical data on every
 device, JAX sees an array with `shape (8, 3, 4)` and spec `jax.P('x', None,
 None)` i.e., an array that is sharded along its leading dimension. JAX cannot
@@ -249,7 +339,7 @@ train
                                      └─ PjitFunction(gather)
 ```
 
-### Why was "Old Pmap" Fast?
+### Why was "old `jax.pmap`" fast?
 Historically, `pmap` used `PmapSharding`, which had a fast-path optimization in
 `jax.Array`'s `__getitem__` allowing it to return an array with a
 `SingleDeviceSharding` (data residing on only one device).
@@ -265,4 +355,24 @@ The slowdown users experience now is JAX enforcing correct semantics: if you ask
 for `x[0]` from an array sharded along its leading dimension, you get a fully
 replicated result available on all devices, which requires communication.
 
-<!--* freshness: { reviewed: '2025-09-29' } *-->
+### A note on the multi-host setting
+`x[0]` will still give you the first slice along the first dimension of the
+*logical* global array. In the multi-host setting, we will see a more drastic
+version of the performance issues described above as all the hosts gather the
+entire array to each device before slicing. In certain cases, users can even
+face hard errors (e.g., `INVALID_ARGUMENT: CopyArrays only support...`).
+
+In multi-host settings (e.g., 4 hosts × 2 devices = 8 devices total):
+
+1. A global array with shape `(8, ...)` and `PartitionSpec('x')` has each slice
+   distributed across all 8 devices spanning all hosts.
+
+2. When you call `x[0]`, JAX needs to slice the first element and reshard the
+   result so it's available to all hosts.
+
+3. The `CopyArrays` operation in XLA requires source and destination to have the
+   same device count. But each host only sees its *local* subset of devices (2
+   in this example), not all 8. When JAX tries to create a resharded array, the
+   device list mismatch triggers the error.
+
+<!--* freshness: { reviewed: '2025-12-19' } *-->
