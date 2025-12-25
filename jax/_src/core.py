@@ -3379,16 +3379,24 @@ aval_mapping_handlers: dict[type, AvalMapHandlerPair] = {
 }
 
 # When a mapped function is given no axis name, we generate a name object based
-# on the id of the function object. Collisions aren't important because this
-# name can't be used in collectives, as user code never gets a ref to this
-# object. We don't want to use the function object itself because that might
-# persist references to the function object.
+# on a process-local cache of the function object's ID. This ensures that the
+# names are deterministic across runs (using a counter) while still being
+# unique within a run. Collisions aren't important because this name can't be
+# used in collectives, as user code never gets a ref to this object. We don't
+# want to use the function object itself because that might persist references
+# to the function object.
+_temp_axis_name_cache = {}
+_temp_axis_name_counter = it.count()
+
 # TODO(mattjj): revisit this unique axis name strategy
 @total_ordering
 class _TempAxisName:
 
   def __init__(self, obj):
-    self.id = id(obj)
+    obj_id = id(obj)
+    if obj_id not in _temp_axis_name_cache:
+      _temp_axis_name_cache[obj_id] = next(_temp_axis_name_counter)
+    self.id = _temp_axis_name_cache[obj_id]
 
   def __repr__(self):
     return f'<axis {hex(self.id)}>'
