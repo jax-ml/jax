@@ -37,13 +37,15 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('Needs a newer TPU')
 
-  @parameterized.parameters(
-      (pltpu.VMEM, 1),
+  @parameterized.product(
+      memory_space_color=[(pltpu.VMEM, 1),
       (pltpu.SMEM, 4),
       (pltpu.HBM, 0),
-      (pl.ANY, None),
+      (pl.ANY, None)],
+      batched=[True, False],
   )
-  def test_basic_input_memory_space_constraint(self, memory_space, color):
+  def test_basic_input_memory_space_constraint(self, memory_space_color, batched):
+    memory_space, color = memory_space_color
     def kernel(x_ref, y_ref):
       pltpu.sync_copy(x_ref, y_ref)
 
@@ -64,6 +66,9 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
       return x
 
     x = jnp.ones((8, 128), dtype=jnp.float32)
+    if batched:
+      x = x[None]
+      f = jax.vmap(f)
     y = f(x)
     np.testing.assert_array_equal(y, x)
     hlo = jax.jit(f).lower(x).compile().as_text()

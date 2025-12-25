@@ -36,11 +36,13 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import frozen_dict
 from jax._src import linear_util as lu
+from jax._src import memory as jax_memory
 from jax._src import state
 from jax._src import tree_util
 from jax._src import typing as jax_typing
 from jax._src import util
 from jax._src.export._export import export
+from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import discharge as state_discharge
@@ -208,6 +210,37 @@ class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
         memory_space=memory_space
     )
 mlir.ir_type_handlers[ShapedArrayWithMemorySpace] = mlir._array_ir_types
+
+
+def _sams_mapped_aval_handler(size, axis, aval):
+  aval_no_mem = aval.update(memory_space=jax_memory.Space.Any)
+  sa = jax_core._map_shaped_array(size, axis, aval_no_mem)
+  return ShapedArrayWithMemorySpace(
+      sa.shape,
+      sa.dtype,
+      sa.weak_type,
+      sharding=sa.sharding,
+      vma=sa.vma,
+      memory_space=aval.memory_space,
+  )
+
+
+def _sams_unmapped_aval_handler(size, axis, mesh_axis, aval):
+  aval_no_mem = aval.update(memory_space=jax_memory.Space.Any)
+  sa = jax_core._unmap_shaped_array(size, axis, mesh_axis, aval_no_mem)
+  return ShapedArrayWithMemorySpace(
+      sa.shape,
+      sa.dtype,
+      sa.weak_type,
+      sharding=sa.sharding,
+      vma=sa.vma,
+      memory_space=aval.memory_space,
+  )
+
+jax_core.aval_mapping_handlers[ShapedArrayWithMemorySpace] = (
+    _sams_mapped_aval_handler,
+    _sams_unmapped_aval_handler,
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1539,6 +1572,21 @@ mlir.register_lowering(
     with_memory_space_constraint_p, with_memory_space_constraint_lowering_rule
 )
 
+def with_memory_space_batching_rule(args, dims, *, memory_space):
+  (x,) = args
+  (d,) = dims
+  axis_size = x.shape[d]
+  if axis_size > 1:
+    raise ValueError(
+        "with_memory_space_constraint does not support batched dimensions:"
+        f" {x.shape=}, {d=}"
+    )
+  return with_memory_space_constraint_p.bind(x, memory_space=memory_space), d
+
+
+batching.primitive_batchers[with_memory_space_constraint_p] = (
+    with_memory_space_batching_rule
+)
 
 def default_mesh_discharge_rule(
     in_avals,

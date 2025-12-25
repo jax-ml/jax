@@ -166,7 +166,8 @@ class BatchTracer(Tracer):
     if self.batch_dim is not_mapped:
       return aval
     elif type(self.batch_dim) is int:
-      return core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)
+      out = core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)
+      return out
     else:
       raise Exception("batch dim should be int or `not_mapped`")
 

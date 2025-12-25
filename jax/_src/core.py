@@ -1060,7 +1060,7 @@ class Tracer(TracerBase, metaclass=TracerMeta):
 
   def __getattr__(self, name):
     # if the aval property raises an AttributeError, gets caught here
-    assert not config.enable_checks.value or name != "aval"
+    assert not config.enable_checks.value or name != "aval", type(self)
 
     if name == 'sharding':
       raise AttributeError(

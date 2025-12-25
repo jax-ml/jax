@@ -200,7 +200,7 @@ def standard_abstract_eval(
     core.check_avals_context_mesh([out_aval], prim.name)
     return out_aval
   else:
-    raise TypeError(avals, least_specialized)
+    raise TypeError(avals, least_specialized, prim)
 
 def standard_multi_result_abstract_eval(
     prim, shape_rule, dtype_rule, weak_type_rule, sharding_rule, vma_rule,
