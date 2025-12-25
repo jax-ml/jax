@@ -4706,7 +4706,6 @@ def vstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   if isinstance(tup, (np.ndarray, Array)):
     arrs = api.vmap(atleast_2d)(tup)
   else:
-    util.check_arraylike("vstack", *tup)
     arrs = [atleast_2d(m) for m in tup]
   return concatenate(arrs, axis=0, dtype=dtype)
 
@@ -4765,7 +4764,6 @@ def hstack(tup: np.ndarray | Array | Sequence[ArrayLike],
     arrs = api.vmap(atleast_1d)(tup)
     arr0_ndim = arrs.ndim - 1
   else:
-    util.check_arraylike("hstack", *tup)
     arrs = [atleast_1d(m) for m in tup]
     arr0_ndim = arrs[0].ndim
   return concatenate(arrs, axis=0 if arr0_ndim == 1 else 1, dtype=dtype)
@@ -4826,7 +4824,6 @@ def dstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   if isinstance(tup, (np.ndarray, Array)):
     arrs = api.vmap(atleast_3d)(tup)
   else:
-    util.check_arraylike("dstack", *tup)
     tup = util.ensure_arraylike_tuple("dstack", tup)
     arrs = [atleast_3d(m) for m in tup]
   return concatenate(arrs, axis=2, dtype=dtype)
@@ -4887,7 +4884,6 @@ def column_stack(tup: np.ndarray | Array | Sequence[ArrayLike]) -> Array:
   if isinstance(tup, (np.ndarray, Array)):
     arrs = api.vmap(lambda x: atleast_2d(x).T)(tup) if tup.ndim < 3 else tup
   else:
-    util.check_arraylike("column_stack", *tup)
     arrs = [atleast_2d(arr).T if arr.ndim < 2 else arr for arr in map(asarray, tup)]
   return concatenate(arrs, axis=1)
 
@@ -5203,7 +5199,6 @@ def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
     >>> jnp.atleast_2d(x, y)
     [Array([[1.]], dtype=float32), Array([[0, 1, 2, 3]], dtype=int32)]
   """
-  util.check_arraylike("atleast_2d", *arys)
   if len(arys) == 1:
     return array(arys[0], copy=False, ndmin=2)
   else:
@@ -5272,7 +5267,6 @@ def atleast_3d(*arys: ArrayLike) -> Array | list[Array]:
       [2]
       [3]]]
   """
-  util.check_arraylike("atleast_3d", *arys)
   if len(arys) == 1:
     arr = asarray(arys[0])
     if arr.ndim == 0:
