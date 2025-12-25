@@ -1698,6 +1698,51 @@ class RegistrationTest(jtu.JaxTestCase):
           Foo, data_fields=["x"], meta_fields=["y", "z"]
       )
 
+  def test_register_dataclass_overlapping_fields(self):
+    @dataclasses.dataclass
+    class Foo:
+      x: int
+      y: int
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "data_fields and meta_fields must be disjoint.*"
+        "fields appear in both: {'x'}",
+    ):
+      tree_util.register_dataclass(
+          Foo, data_fields=["x", "y"], meta_fields=["x"]
+      )
+
+    # Also test with a plain class (non-dataclass)
+    class Bar:
+      def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "data_fields and meta_fields must be disjoint.*"
+        "fields appear in both: {'y'}",
+    ):
+      tree_util.register_dataclass(
+          Bar, data_fields=["x", "y"], meta_fields=["y"]
+      )
+
+    # Test with multiple overlapping fields (all fields overlap)
+    class Baz:
+      def __init__(self, a, b):
+        self.a = a
+        self.b = b
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "data_fields and meta_fields must be disjoint.*"
+        "fields appear in both:",
+    ):
+      tree_util.register_dataclass(
+          Baz, data_fields=["a", "b"], meta_fields=["a", "b"]
+      )
+
   def test_register_dataclass_drop_fields(self):
     @dataclasses.dataclass
     class Foo:

@@ -1115,6 +1115,13 @@ def register_dataclass(
   meta_fields = tuple(meta_fields)
   data_fields = tuple(data_fields)
 
+  # Check for overlapping fields
+  if overlap := set(meta_fields) & set(data_fields):
+    raise ValueError(
+        f"data_fields and meta_fields must be disjoint, but the following "
+        f"fields appear in both: {overlap}."
+    )
+
   if dataclasses.is_dataclass(nodetype):
     init_fields = {f.name for f in dataclasses.fields(nodetype) if f.init}
     init_fields.difference_update(*drop_fields)
