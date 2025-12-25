@@ -179,9 +179,6 @@ class SingleDeviceSharding(jsharding.Sharding):
   def is_fully_addressable(self) -> bool:
     return xb.process_index(self._device.client) == self._device.process_index
 
-  def check_compatible_aval(self, aval_shape: Shape) -> None:
-    return
-
 SingleDeviceSharding.__module__ = 'jax.sharding'
 
 @util.cache(max_size=4096, trace_context_in_key=False)
@@ -323,9 +320,6 @@ class PmapSharding(jsharding.Sharding):
   @functools.cached_property
   def is_fully_addressable(self) -> bool:
     return self._internal_device_list.is_fully_addressable
-
-  def check_compatible_aval(self, aval_shape: Shape) -> None:
-    return
 
   def shard_shape(self, global_shape: Shape) -> Shape:
     sharded_dim = None
