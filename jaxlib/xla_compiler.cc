@@ -778,22 +778,6 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
               *hlo_module.entry_computation(), /*label=*/"",
               hlo_module.config().debug_options(), RenderedGraphFormat::kDot));
         });
-  m.def(
-      "hlo_module_cost_analysis",
-      xla::ValueOrThrowWrapper([](jax::PyClient* client,
-                                  const HloModule& module)
-                                   -> absl::StatusOr<nb::dict> {
-        TF_ASSIGN_OR_RETURN(auto analysis,
-                            client->pjrt_client()->GetHloCostAnalysis());
-        TF_RETURN_IF_ERROR(module.entry_computation()->Accept(analysis.get()));
-
-        // Convert from HloCostAnalysis::Properties to a standard map.
-        nb::dict ret;
-        analysis->properties().ForEach([&](std::string_view key, float val) {
-          ret[nb::str(key.data(), key.size())] = nb::cast(val);
-        });
-        return ret;
-      }));
   m.def("hlo_module_from_text",
         xla::ValueOrThrowWrapper(
             [](const std::string& hlo_module_text)
