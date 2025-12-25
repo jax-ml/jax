@@ -119,7 +119,10 @@ jobs:
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
-          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+          halt-dispatch-input: true
+        # mostly safe to add the big timeout as it will end in 10 minutes of no connection,
+        # or as soo as the user ends it
+        timeout-minutes: 180
       - name: "Bazel CUDA tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
         timeout-minutes: 60
         run: ${{ ((inputs.run_multiaccelerator_tests == 'false') && './ci/run_bazel_test_cuda_rbe.sh') || './ci/run_bazel_test_cuda_non_rbe.sh' }}
