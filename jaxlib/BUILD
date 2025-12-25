@@ -1471,6 +1471,8 @@ cc_library(
         "@xla//xla/client:executable_build_options",
         "@xla//xla/hlo/builder:xla_computation",
         "@xla//xla/hlo/ir:hlo",
+        "@xla//xla/hlo/ir:mesh_and_axis",
+        "@xla//xla/hlo/ir:named_sharding",
         "@xla//xla/hlo/parser:hlo_parser",
         "@xla//xla/pjrt:exceptions",
         "@xla//xla/pjrt:pjrt_executable",
