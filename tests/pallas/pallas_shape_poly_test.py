@@ -27,6 +27,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.pallas import pallas_call
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from jax import export
@@ -92,6 +93,9 @@ class ShapePolyTest(jtu.JaxTestCase,
     if sys.platform == "win32":
       self.skipTest("Only works on non-Windows platforms")
     super().setUp()
+    # TODO(bchetioui): Remove this for H100+ once tests are all compatible with
+    # Pallas/Mosaic GPU.
+    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(False))
 
   def test_copy(self):
     # The blocks are static, but the input and the grid are of polymorphic
