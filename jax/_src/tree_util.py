@@ -1119,7 +1119,7 @@ def register_dataclass(
   if overlap := set(meta_fields) & set(data_fields):
     raise ValueError(
         f"data_fields and meta_fields must be disjoint, but the following "
-        f"fields appear in both: {overlap}."
+        f"fields appear in both: {sorted(overlap)}."
     )
 
   if dataclasses.is_dataclass(nodetype):

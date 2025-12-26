@@ -1706,8 +1706,8 @@ class RegistrationTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        "data_fields and meta_fields must be disjoint.*"
-        "fields appear in both: {'x'}",
+        r"data_fields and meta_fields must be disjoint.*"
+        r"fields appear in both: \['x'\]",
     ):
       tree_util.register_dataclass(
           Foo, data_fields=["x", "y"], meta_fields=["x"]
@@ -1721,8 +1721,8 @@ class RegistrationTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        "data_fields and meta_fields must be disjoint.*"
-        "fields appear in both: {'y'}",
+        r"data_fields and meta_fields must be disjoint.*"
+        r"fields appear in both: \['y'\]",
     ):
       tree_util.register_dataclass(
           Bar, data_fields=["x", "y"], meta_fields=["y"]
@@ -1736,8 +1736,8 @@ class RegistrationTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        "data_fields and meta_fields must be disjoint.*"
-        "fields appear in both:",
+        r"data_fields and meta_fields must be disjoint.*"
+        r"fields appear in both: \['a', 'b'\]",
     ):
       tree_util.register_dataclass(
           Baz, data_fields=["a", "b"], meta_fields=["a", "b"]
