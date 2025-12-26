@@ -852,6 +852,20 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
 
+  def test_barrier_repeated_indexing(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_shapes=[plgpu.Barrier(num_barriers=4)],
+    )
+    def kernel(o_ref, barrier_ref):
+      b = barrier_ref.at[2:4].at[1:2]
+      plgpu.barrier_arrive(b)
+      plgpu.barrier_wait(barrier_ref.at[3])
+      o_ref[...] = jnp.ones_like(o_ref)
+
+    np.testing.assert_array_equal(kernel(), np.ones((128,), dtype=jnp.float32))
+
   @parameterized.named_parameters(
       {
           "testcase_name": "1d_none",
