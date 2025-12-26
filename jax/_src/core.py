@@ -2365,13 +2365,16 @@ def pvary(x, axis_name):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
     return x
-  # TODO(yashkatariya): Maybe move `order_wrt_mesh` to pvary_transpose_rule?
-  # Across hosts we should have the same order of axes during lowering time and
-  # pvary_p transposes to psum_invariant_p.
   cur_mesh = mesh_lib.get_abstract_mesh()
   new_axes = axes if cur_mesh.empty else order_wrt_mesh(cur_mesh, axes)
   assert set(new_axes) == set(axes)
   del axes
+  # TODO(yashkatariya): Remove this handling and remove_size_one_mesh_axis_from_type
+  # generally from JAX.
+  if config.remove_size_one_mesh_axis_from_type.value and not cur_mesh.empty:
+    new_axes = tuple(i for i in new_axes if cur_mesh.shape[i] != 1)
+    if not new_axes:
+      return x
   return tree_map(lambda leaf: pvary_p.bind(leaf, axes=new_axes), x)
 
 pvary_p = Primitive('pvary')

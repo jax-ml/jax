@@ -4318,6 +4318,16 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np.arange(4) * 2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('y')))
 
+  @config.remove_size_one_mesh_axis_from_type(True)
+  @jtu.with_explicit_mesh((1,), 'x')
+  def test_pvary_no_op_one_sized_mesh_axis(self, mesh):
+    @jax.jit
+    def f(x):
+      return jax.lax.pcast(x, 'x', to='varying')
+
+    jaxpr = f.trace(jnp.arange(8)).jaxpr
+    self.assertNotIn('pvary', str(jaxpr))
+
   @parameterized.parameters([False, True])
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'),
                           axis_types=(AxisType.Explicit, AxisType.Auto))
