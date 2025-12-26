@@ -251,6 +251,7 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 
   @api_boundary
   def cache_miss(*args, **kwargs):
+    logging.info('cpp_pjit fun: %s %s', id(fun), fun.__name__)
     # args do not include the const args
     # See https://docs.jax.dev/en/latest/internals/constants.html.
     if config.no_tracing.value:
@@ -632,12 +633,22 @@ def _infer_params_internal(
   entry = _infer_params_cached(fun, ji, signature, avals, ctx_mesh)
 
   if entry.pjit_params is None:
+    if isinstance(fun, partial):
+      name = f'partial({fun.func.__name__})'
+    else:
+      name = fun.__name__
+    logging.info('missed infer params: %s %s', id(fun), name)
+    # if fun.__name__ == 'f':
+    #   import traceback
+    #   traceback.print_stack()
     dbg = dbg_fn()
     p, args_flat = _infer_params_impl(
         fun, ji, ctx_mesh, dbg, args, kwargs, in_avals=avals)
     if p.params['jaxpr'].jaxpr.is_high:
       return p, p.consts + args_flat
     entry.pjit_params = p
+  else:
+    logging.info('hit infer params: %s %s', id(fun), fun.__name__)
   return entry.pjit_params, entry.pjit_params.consts + dynargs
 
 def _infer_input_type(fun: Callable, dbg_fn: Callable[[], core.DebugInfo],
@@ -1130,6 +1141,7 @@ def _create_pjit_jaxpr(
   else:
     closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
     final_consts = []
+  logging.info('missed jaxpr: %s', fun.__name__)
   return closed_jaxpr, final_consts, global_out_avals
 
 
