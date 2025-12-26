@@ -31,6 +31,7 @@ load(
 load(
     "//jaxlib:jax.bzl",
     "PLATFORM_TAGS_DICT",
+    "compare_wheel_sources_and_test_dependencies_test",
     "if_pypi_cuda_wheel_deps",
     "jax_py_test",
     "jax_wheel",
@@ -632,4 +633,80 @@ pytype_test(
         "manual",
         "notap",
     ],
+)
+
+_IGNORED_INIT_PY_FILES = [
+    # This file is copied as `__init__.py` in the root wheel folder.
+    "jaxlib/__init__.py",
+    # These files are not included in the JAX wheel because they belong to LLVM.
+    "jaxlib/mlir/__init__.py",
+    "jaxlib/mlir/dialects/__init__.py",
+    "jaxlib/mlir/extras/__init__.py",
+    # These files do not exist in the sources.
+    "jaxlib/mosaic/dialect/gpu/__init__.py",
+    "jaxlib/mosaic/python/__init__.py",
+]
+
+compare_wheel_sources_and_test_dependencies_test(
+    name = "check_wheel_sources_test",
+    testonly = True,
+    tags = [
+        "manual",
+        "notap",
+    ],
+    tests = [
+        "//jax/experimental/jax2tf/tests:jax2tf_test_cpu",
+        "//jax/experimental/jax2tf/tests/multiprocess:backend_independent_tests",
+        "//jax/experimental/jax2tf/tests/multiprocess:cpu_tests",
+        "//tests:backend_independent_tests",
+        "//tests:cpu_tests",
+        "//tests/mosaic:backend_independent_tests",
+        "//tests/mosaic:cpu_tests",
+        "//tests/multiprocess:backend_independent_tests",
+        "//tests/multiprocess:cpu_tests",
+        "//tests/pallas:backend_independent_tests",
+        "//tests/pallas:cpu_tests",
+    ] + if_cuda([
+        "//jax/experimental/jax2tf/tests/multiprocess:gpu_tests",
+        "//tests:gpu_tests",
+        "//tests/mosaic:gpu_tests",
+        "//tests/pallas:gpu_tests",
+        "//tests/multiprocess:gpu_tests",
+    ]),
+    wheel_additives = ["//:wheel_additives"],
+    wheel_sources = [
+        ":jaxlib_sources",
+        "//:jax_sources",
+    ] + if_cuda([
+        ":jax_plugin_sources",
+        ":jax_pjrt_sources",
+    ]),
+    ignored_init_py_files = _IGNORED_INIT_PY_FILES,
+)
+
+compare_wheel_sources_and_test_dependencies_test(
+    name = "check_tpu_wheel_sources_test",
+    testonly = True,
+    tags = [
+        "manual",
+        "notap",
+    ],
+    tests = [
+        "//jax/experimental/jax2tf/tests/multiprocess:backend_independent_tests",
+        "//tests:backend_independent_tests",
+        "//tests:tpu_tests",
+        "//tests/mosaic:backend_independent_tests",
+        "//tests/multiprocess:backend_independent_tests",
+        "//tests/multiprocess:tpu_tests",
+        "//tests/pallas:backend_independent_tests",
+        "//tests/pallas:ops_test_tpu",
+        "//tests/pallas:tpu_pallas_test_tpu",
+        "//tests/pallas:tpu_tests",
+    ],
+    wheel_additives = ["//:wheel_additives"],
+    wheel_sources = [
+        ":jaxlib_sources",
+        "//:jax_sources",
+    ],
+    ignored_init_py_files = _IGNORED_INIT_PY_FILES,
 )

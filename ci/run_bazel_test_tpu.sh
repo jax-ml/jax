@@ -113,6 +113,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     --verbose_failures \
     --test_output=errors \
     -- \
+    //jaxlib/tools:check_tpu_wheel_sources_test \
     //tests:tpu_tests \
     //tests/pallas:tpu_tests \
     //tests/pallas:tpu_pallas_test_tpu \
@@ -177,6 +178,7 @@ else
     --verbose_failures \
     --test_output=errors \
     -- \
+    //jaxlib/tools:check_tpu_wheel_sources_test \
     //tests/pallas:ops_test_tpu \
     //tests/pallas:export_back_compat_pallas_test_tpu \
     //tests/pallas:export_pallas_test_tpu \
