@@ -2007,3 +2007,11 @@ def nvvm_mbarrier_arrive_expect_tx(barrier: ir.Value, expect_tx: ir.Value, predi
     return nvvm.mbarrier_arrive_expect_tx(None, barrier, expect_tx, predicate=predicate)  # type: ignore
   except TypeError:
     return nvvm.mbarrier_arrive_expect_tx(barrier, expect_tx, predicate=predicate)  # pytype: disable=missing-parameter
+
+
+def get_cluster_ptr(ptr: ir.Value, cluster_block: ir.Value):
+  i32 = ir.IntegerType.get_signless(32)
+  assert cluster_block.type == i32, cluster_block.type
+  assert ptr.type == ir.Type.parse("!llvm.ptr<3>"), ptr.type
+  mapped_smem_ptr = nvvm.mapa(ir.Type.parse("!llvm.ptr<7>"), ptr, cluster_block)
+  return llvm.addrspacecast(ir.Type.parse("!llvm.ptr"), mapped_smem_ptr)
