@@ -3349,39 +3349,63 @@ def _while_lowering_rule(
 def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
   index, *args = args
   constant_index = _fold_and_get_constant_value(index)
+  branch_lowering_context = ctx.lowering_context.replace(
+    block_shapes=ctx.block_shapes[1:]
+  )
 
   if constant_index is not None:
-    return jaxpr_subcomp(
-        ctx.lowering_context.replace(block_shapes=ctx.block_shapes[1:]), branches[constant_index].jaxpr, *args
-    )
+    return jaxpr_subcomp(branch_lowering_context, branches[constant_index].jaxpr, *args)
+
   aval_to_ir_type_with_fn = functools.partial(
       aval_to_ir_type, ctx.lowering_context.dynamic_shape_replacement_fn
   )
   out_types = map(aval_to_ir_type_with_fn, ctx.avals_out)
-  pred = arith.cmpi(
-      arith.CmpIPredicate.ne, index, ir_constant(0, index.type)
-  )
-  if_op = scf.IfOp(pred, out_types, hasElse=True)
-  lowering_context = ctx.lowering_context.replace(
-      block_shapes=ctx.block_shapes[1:],
-  )
-  with ir.InsertionPoint(if_op.then_block):
-    # TODO(b/300272065): Use `scf.IndexSwitchOp` instead of a cascade of
-    # if/else.
-    if len(branches) > 2:
-      out = _cond_lowering_rule(
-          ctx,
-          arith.subi(index, ir_constant(1, index.type)),
-          *args,
-          branches=branches[1:],
+
+  # TODO(b/300272065): Use `scf.IndexSwitchOp` once available.
+  def generate_balanced_tree_recursive(
+      current_index_operand: ir.Value,
+      current_branches: Sequence[jax_core.ClosedJaxpr]
+  ) -> Sequence[ir.Value]:
+    """
+    Builds a balanced binary tree of if-else blocks.
+    """
+    num_branches = len(current_branches)
+
+    # Base case
+    if num_branches == 1:
+      return jaxpr_subcomp(
+        branch_lowering_context, current_branches[0].jaxpr, *args
       )
-    else:
-      out = jaxpr_subcomp(lowering_context, branches[1].jaxpr, *args)
-    scf.yield_(out)
-  with ir.InsertionPoint(if_op.else_block):
-    out = jaxpr_subcomp(lowering_context, branches[0].jaxpr, *args)
-    scf.yield_(out)
-  return if_op.results
+
+    mid_point = num_branches // 2
+    pred = arith.cmpi(
+      arith.CmpIPredicate.slt,
+      current_index_operand,
+      ir_constant(mid_point, current_index_operand.type)
+    )
+    if_op = scf.IfOp(pred, out_types, hasElse=True)
+
+    with ir.InsertionPoint(if_op.then_block):
+      # No need to update index for left branches - already 0-indexed.
+      results = generate_balanced_tree_recursive(
+        current_index_operand,
+        current_branches[:mid_point]
+      )
+      scf.yield_(results)
+
+    with ir.InsertionPoint(if_op.else_block):
+      # Adjusting index to be 0-indexed for right branches.
+      adjusted_index = arith.subi(
+        current_index_operand,
+        ir_constant(mid_point, current_index_operand.type)
+      )
+      results = generate_balanced_tree_recursive(
+        adjusted_index,
+        current_branches[mid_point:]
+      )
+      scf.yield_(results)
+
+  return generate_balanced_tree_recursive(index, branches)
 
 
 @register_lowering_rule(pjit.jit_p, kernel_types=[*tpu_core.KernelType])
