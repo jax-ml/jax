@@ -60,7 +60,7 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest') ||
-                   (contains(inputs.runner, 'linux-arm64') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-arm64:latest') ||
+                   (contains(inputs.runner, 'linux-arm64') && 'us-docker.pkg.dev/ml-oss-artifacts-transient/ml-public-testing-container/ml-build-arm64:846436444') ||
                    (contains(inputs.runner, 'windows-x86') && null) }}
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
