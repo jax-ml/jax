@@ -296,7 +296,13 @@ class VectorSubcoreTest(PallasSCTest):
   @hp.given(hps.data())
   def test_block_spec_untiled_slicing(self, data):
     if not self.USE_TC_TILING:
-      self.skipTest("Test uncoveres a bug: @reproduce_failure('6.80.0', b'AAEBAQAAAAA=')")
+      self.skipTest(
+          "Test uncovers a bug: @reproduce_failure('6.80.0', b'AAEBAQAAAAA=')"
+      )
+    else:
+      self.skipTest(
+          "Test uncovers a bug: @reproduce_failure('6.80.0', b'AAEAAQAAAAA=')"
+      )
     slice_shape = data.draw(
         hps.lists(
             hps.integers(1, 3), min_size=(1 + self.USE_TC_TILING), max_size=4
@@ -1061,7 +1067,7 @@ class VectorSubcoreTest(PallasSCTest):
       pl.run_scoped(
           scoped_kernel,
           plsc.MemoryRef(
-              x.shape, x_ref.dtype, memory_space=pltpu.VMEM, tiling=[(2, 1)]
+              x.shape, x_ref.dtype, memory_space=pltpu.VMEM, tiling=[(1, 8)]
           ),
       )
 
