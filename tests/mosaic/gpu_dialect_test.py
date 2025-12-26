@@ -1214,7 +1214,7 @@ class DialectLoweringTest(MosaicGpuTest):
     # Each barrier has its count equal to the arrival count times the
     # warpgroup size.
     for op in all_mbarrier_init_ops:
-      count = op.count.owner.opview
+      count = op.count.owner
       self.assertIsInstance(count, arith.ConstantOp)
       self.assertEqual(
           count.literal_value, arrival_count * mgpu_utils.WARPGROUP_SIZE

@@ -1998,7 +1998,7 @@ class FragmentedArray:
         # This also lets us share the right shift among more vectors.
         out_int_regs: list[ir.Value] = []
         if regs_from_32bit_slice:
-          slice_op = reg.owner.opview
+          slice_op = reg.owner
           slice_offset = slice_op.offsets[0].value
           reg_int = utils.bitcast(slice_op.source, i32)
           reg_int_shr = arith.shrui(reg_int, c(4, i32))
@@ -2072,7 +2072,7 @@ class FragmentedArray:
         assert group_size * 4 <= 32
         int_ty = ir.IntegerType.get_signless(group_size * 4)
         if regs_from_32bit_slice:
-          slice_op = reg.owner.opview
+          slice_op = reg.owner
           slice_offset = slice_op.offsets[0].value
           reg_int = utils.bitcast(slice_op.source, i32)
           reg_i8 = upcast_i4_to_i8(reg_int, first_valid_nibble=slice_offset)

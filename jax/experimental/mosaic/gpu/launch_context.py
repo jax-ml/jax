@@ -435,7 +435,7 @@ def _find_kernel_argument_for_gmem_ref(
     gmem_ref = gmem_ref.owner.owner.operands[gmem_ref.arg_number]
 
   # TODO(apaszke): This is a very approximate check. Improve it!
-  if not isinstance(gmem_ref.owner.opview, builtin.UnrealizedConversionCastOp):
+  if not isinstance(gmem_ref.owner, builtin.UnrealizedConversionCastOp):
     raise NotImplementedError(
         f"Expected {gmem_ref.owner} to be an unrealized conversion cast"
         " corresponding to a GMEM kernel argument."
@@ -1564,7 +1564,7 @@ def _recompute_peer_id(peer_id: ir.Value, fuel=8) -> ir.Value:
     )
   if isinstance(peer_id, ir.BlockArgument):
     raise ReplicationError("Can't recompute a value that's a block argument")
-  op = peer_id.owner.opview
+  op = peer_id.owner
   # We accept all arith ops
   if op.OPERATION_NAME.startswith("arith."):
     new_operands = [_recompute_peer_id(x, fuel - 1) for x in op.operands]
