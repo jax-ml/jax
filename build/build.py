@@ -519,8 +519,8 @@ async def main():
   clang_local = args.clang_path or not (utils.is_linux_x86_64(arch, os_name)
                                     or utils.is_linux_aarch64(arch, os_name))
   if clang_local:
-    if utils.is_linux(os_name):
-      wheel_build_command_base.append("--config=linux_clang_local")
+    if "cuda" in args.wheels and utils.is_linux(os_name):
+      wheel_build_command_base.append("--config=cuda_clang_local")
     else:
       wheel_build_command_base.append("--config=clang_local")
 
