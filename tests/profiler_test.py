@@ -23,6 +23,7 @@ import threading
 import time
 import unittest
 import unittest.mock
+from absl import flags
 from absl.testing import absltest
 import pathlib
 
@@ -68,6 +69,11 @@ class ProfilerTest(unittest.TestCase):
     super().setUp()
     self.worker_start = threading.Event()
     self.profile_done = False
+
+    # Set log_dir to capture C++ logs as test artifacts.
+    log_dir = os.getenv('TEST_UNDECLARED_OUTPUTS_DIR')
+    if log_dir:
+      flags.FLAGS.log_dir = log_dir
 
   @unittest.skipIf(not portpicker, "Test requires portpicker")
   def testStartStopServer(self):
@@ -468,6 +474,27 @@ class ProfilerTest(unittest.TestCase):
     jax.profiler.stop_server()
     thread_profiler.join()
     self._check_xspace_pb_exist(logdir)
+
+  def testDeviceVersionSavedToMetadata(self):
+    with tempfile.TemporaryDirectory() as tmpdir_string:
+      tmpdir = pathlib.Path(tmpdir_string)
+      with jax.profiler.trace(tmpdir):
+        jax.pmap(lambda x: jax.lax.psum(x + 1, 'i'), axis_name='i')(
+            jnp.ones(jax.local_device_count()))
+
+      proto_path = tuple(tmpdir.rglob("*.xplane.pb"))
+      self.assertEqual(len(proto_path), 1)
+      (proto_file,) = proto_path
+      proto = proto_file.read_bytes()
+
+      self.assertIn(b"jax_version", proto)
+      self.assertIn(b"jaxlib_version", proto)
+      if jtu.test_device_matches(["tpu"]):
+        self.assertIn(b"libtpu_version", proto)
+      if jtu.test_device_matches(["gpu"]):
+        self.assertIn(b"cuda_version", proto)
+        self.assertIn(b"cuda_runtime_version", proto)
+        self.assertIn(b"cuda_driver_version", proto)
 
   @unittest.skip("Profiler takes >30s on Cloud TPUs")
   @unittest.skipIf(

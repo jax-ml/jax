@@ -1204,7 +1204,9 @@ jax_multiplatform_test(
     ],
     tags = ["multiaccelerator"],
     deps = [
+        "//jax:experimental",
         "//jax/_src:profiler",
+        "//jaxlib:_jax",
     ] + py_deps([
         "absl/testing",
         "portpicker",

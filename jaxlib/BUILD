@@ -335,7 +335,10 @@ nanobind_pywrap_extension(
         "jax.jaxlib._jax.Array$": "Array: Any",
         "jax.jaxlib._jax.ArrayImpl$": "ArrayImpl: Any",
     },
-    visibility = jax_visibility("jaxlib/_jax"),
+    visibility = jax_visibility("jaxlib/_jax") + [
+        "//jax/_src:__pkg__",
+        "//jax/tests:__pkg__",
+    ],
     deps = [
         ":call_location",
         ":config",
