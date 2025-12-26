@@ -237,6 +237,7 @@ from jax._src.lax.lax import (
   empty as empty,
   zeros_like_array as _deprecated_zeros_like_array,
 )
+from jax._src.lax.scaled_dot import scaled_dot as scaled_dot
 from jax._src.lax.special import (
   bessel_i0e as bessel_i0e,
   bessel_i0e_p as bessel_i0e_p,
