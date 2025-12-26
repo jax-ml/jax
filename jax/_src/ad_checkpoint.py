@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from functools import partial
 import logging
 from typing import Any
@@ -204,6 +204,7 @@ checkpoint_policies = types.SimpleNamespace(
 def checkpoint(fun: Callable, *, prevent_cse: bool = True,
                policy: Callable[..., bool] | None = None,
                static_argnums: int | tuple[int, ...] = (),
+               static_argnames: str | Iterable[str] = (),
                concrete: bool | DeprecatedArg = DeprecatedArg()) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
@@ -252,6 +253,10 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
       caching purposes. Specifying arguments as static can avoid
       ConcretizationTypeErrors when tracing, but at the cost of more retracing
       overheads. See the example below.
+    static_argnames: Optional, string or collection of strings, a keyword-only
+      argument indicating named arguments to treat as static. These are
+      arguments that will be specialized on and traced with their concrete
+      values.
     policy: Optional, callable keyword-only argument. It should be one of the
       attributes of ``jax.checkpoint_policies``. The callable takes as input a
       type-level specification of a first-order primitive application and
@@ -359,6 +364,10 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
 
   if isinstance(static_argnums, int):
     static_argnums = static_argnums,
+  if isinstance(static_argnames, str):
+    static_argnames = (static_argnames,)
+  else:
+    static_argnames = tuple(static_argnames)
   if isinstance(prevent_cse, list):
     prevent_cse = tuple(prevent_cse)
   if not isinstance(prevent_cse, (tuple, bool)):
@@ -370,8 +379,10 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
   def fun_remat(*args, **kwargs):
     debug = api_util.debug_info(
         "checkpoint / remat", fun,
-        args, kwargs, static_argnums=static_argnums)
-    fun_, args = _remat_static_argnums(fun, static_argnums, args)
+        args, kwargs, static_argnums=static_argnums,
+        static_argnames=static_argnames)
+    fun_, args, kwargs = _remat_static_args(
+        fun, static_argnums, static_argnames, args, kwargs)
     args_flat, in_tree = tree_flatten((args, kwargs))
     in_avals = [core.shaped_abstractify(x) for x in args_flat]
     jaxpr, consts, out_tree = _trace_to_jaxpr(fun_, in_tree, tuple(in_avals), debug)
@@ -390,10 +401,12 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
 def remat(fun: Callable, *, prevent_cse: bool = True,
           policy: Callable[..., bool] | None = None,
           static_argnums: int | tuple[int, ...] = (),
+          static_argnames: str | Iterable[str] = (),
           concrete: bool | DeprecatedArg = DeprecatedArg()) -> Callable:
   """Alias of :func:`jax.checkpoint`."""
   return checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
-                    static_argnums=static_argnums, concrete=concrete)
+                    static_argnums=static_argnums,
+                    static_argnames=static_argnames, concrete=concrete)
 
 # This function is similar to api_util.argnums_partial, except the error
 # messages are specific to jax.remat (and thus more actionable), the
@@ -424,6 +437,68 @@ def _remat_static_argnums(fun, static_argnums, args):
     else: dyn_args.append(x)
   new_fun = _dyn_args_fun(fun, static_argnums_, tuple(static_args), nargs)
   return new_fun, dyn_args
+
+def _remat_static_args(fun, static_argnums, static_argnames, args, kwargs):
+  """Handle both static_argnums and static_argnames for checkpoint/remat.
+  
+  This function converts static_argnames to static_argnums indices, then uses
+  the existing _remat_static_argnums logic for positional args. For kwargs that
+  are marked static via static_argnames, they are closed over directly.
+  
+  Returns (new_fun, dynamic_args, dynamic_kwargs).
+  """
+  # If no static args at all, return as-is
+  if not static_argnums and not static_argnames:
+    return fun, args, kwargs
+  
+  static_argnums = static_argnums or ()
+  static_argnames = static_argnames or ()
+  
+  # Normalize static_argnums
+  if isinstance(static_argnums, int):
+    static_argnums = (static_argnums,)
+  
+  # Normalize static_argnames
+  if isinstance(static_argnames, str):
+    static_argnames = (static_argnames,)
+  
+  static_argnames_set = frozenset(static_argnames)
+  
+  # Separate kwargs into static and dynamic
+  static_kwargs = {}
+  dyn_kwargs = {}
+  for k, v in kwargs.items():
+    if k in static_argnames_set:
+      static_kwargs[k] = WrapHashably(v)
+    else:
+      dyn_kwargs[k] = v
+  
+  # Use _remat_static_argnums for positional args
+  fun_with_static_args, dyn_args = _remat_static_argnums(fun, static_argnums, args)
+  
+  # If there are static kwargs, we need to wrap the function further
+  if static_kwargs:
+    fun_final = _wrap_with_static_kwargs(fun_with_static_args, tuple(sorted(static_kwargs.items())))
+  else:
+    fun_final = fun_with_static_args
+  
+  return fun_final, dyn_args, dyn_kwargs
+
+def _wrap_with_static_kwargs(fun, static_kwargs_items):
+  """Wrap a function to inject static kwargs."""
+  if any(isinstance(v.val, core.Tracer) for _, v in static_kwargs_items):
+    return _wrap_with_static_kwargs_uncached(fun, static_kwargs_items)
+  return _wrap_with_static_kwargs_cached(fun, static_kwargs_items)
+
+def _wrap_with_static_kwargs_uncached(fun, static_kwargs_items):
+  def new_fun(*args, **kwargs):
+    full_kwargs = dict(kwargs)
+    for k, v in static_kwargs_items:
+      full_kwargs[k] = v.val
+    return fun(*args, **full_kwargs)
+  return new_fun
+
+_wrap_with_static_kwargs_cached = weakref_lru_cache(_wrap_with_static_kwargs_uncached)
 
 class WrapHashably:
   val: Any
@@ -484,9 +559,9 @@ def _trace_to_jaxpr(fun: Callable,
     msg, = e.args
     if 'for checkpoint' in msg:
       msg += "\n\n" + (
-          "Consider using the `static_argnums` parameter for `jax.remat` or "
-          "`jax.checkpoint`. See the `jax.checkpoint` docstring and its example "
-          "involving `static_argnums`:\n"
+          "Consider using the `static_argnums` or `static_argnames` parameter "
+          "for `jax.remat` or `jax.checkpoint`. See the `jax.checkpoint` "
+          "docstring and its example involving `static_argnums`:\n"
           "https://docs.jax.dev/en/latest/_autosummary/jax.checkpoint.html"
           "\n")
       e.args = msg,
