@@ -1798,7 +1798,7 @@ def _partial_eval_jaxpr_custom_rule(
       staged_in_res_specs.append(rn)
   if check_vma:
     out_res_specs_known = [P(order_wrt_mesh(mesh, var.aval.vma))  # type: ignore
-                           for var, o in zip(res_vars, out_fwd) if o is None]
+                           for var, w in zip(res_vars, which) if w]
   else:
     out_res_specs_known = [
         P(_all_newly_manual_mesh_names(mesh, manual_axes))] * sum(which)
