@@ -227,4 +227,5 @@ def breakpoint(*, backend: str | None = None, filter_frames: bool = True,
       _breakpoint_callback(*flat_args)
       return x
     token, flat_args = lax.stop_gradient((token, flat_args))
-    return callback.pure_callback(_breakpoint_callback_wrapper, token, token, *flat_args)
+    return callback.pure_callback(_breakpoint_callback_wrapper, token, token, *flat_args,
+                                  vmap_method="broadcast_all")
