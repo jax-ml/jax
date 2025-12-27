@@ -92,6 +92,15 @@ else
     rbe_config=rbe_${os}_${arch}
 fi
 
+# If the RUNNER_TEMP env is defined we will add that as a bep.json output for parsing out the invocation id
+if [[ -n "$RUNNER_TEMP" ]]; then
+  OUTPUT_BEP_FILE="$RUNNER_TEMP/bazel-out.json"
+  OUTPUT_BEP="--build_event_json_file=$OUTPUT_BEP_FILE"
+
+else
+  OUTPUT_BEP=""
+fi 
+
 bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     --build_runfile_links=false \
     --config=$rbe_config \
@@ -100,6 +109,7 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAX \
+    $OUTPUT_BEP \
     $test_strategy \
     --test_env=JAX_NUM_GENERATED_CASES=25 \
     --test_env=JAX_SKIP_SLOW_TESTS=true \
@@ -113,3 +123,15 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     //tests/multiprocess:cpu_tests \
     //jax/experimental/jax2tf/tests/multiprocess:cpu_tests \
     $IGNORE_TESTS
+
+if [[ -n "$OUTPUT_BEP_FILE" ]]; then
+  url="$(grep -m1 -o 'https://source\.cloud\.google\.com/results/invocations/[a-zA-Z0-9-]*' $OUTPUT_BEP_FILE)" || true # don't allow a pipe fail on this
+  if [[ -n "$url" ]]; then
+    echo "BES link: $url" >> $GITHUB_STEP_SUMMARY
+    echo "BES_URL=$(echo $url)" >> $GITHUB_ENV
+    echo "::notice:: BES link: $url"
+
+  else
+    echo "Could not parse build id from the invocation" 
+  fi
+fi
