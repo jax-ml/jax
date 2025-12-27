@@ -83,6 +83,8 @@ namespace {
 
 namespace nb = nanobind;
 
+// test
+
 // Converts a computation to a serialized HloModuleProto.
 absl::StatusOr<nb::bytes> GetComputationSerializedProto(
     const XlaComputation& computation) {
