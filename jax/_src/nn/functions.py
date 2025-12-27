@@ -902,9 +902,7 @@ def _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen,
     mask = _get_padding_mask_logits(T, S, q_seqlen, kv_seqlen)
     combined_mask = jnp.logical_and(combined_mask, mask)
 
-  safe_dtype = mask_dtype or logits.dtype
-  large_negative_number = _get_large_negative(safe_dtype)
-  large_negative_number = large_negative_number.astype(logits.dtype)
+  large_negative_number = _get_large_negative(mask_dtype or logits.dtype).astype(logits.dtype)
   padded_logits = jnp.where(combined_mask, logits, large_negative_number)
   return padded_logits
 
