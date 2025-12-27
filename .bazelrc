@@ -3,6 +3,7 @@
 # #############################################################################
 # TODO: Enable Bzlmod
 common --noenable_bzlmod
+common:bzlmod --enable_bzlmod --noenable_workspace
 
 # Make Bazel print out all options from rc files.
 common --announce_rc
@@ -126,10 +127,10 @@ common --action_env=PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=upb
 # See https://github.com/bazel-contrib/rules_python/issues/2445
 common --@rules_python//python/config_settings:precompile=force_disabled
 
-# Do not do this. If enabled protobuf's core internal target 
+# Do not do this. If enabled protobuf's core internal target
 # @com_google_protobuf//python:protobuf_python will start depending on a bunch
-# of cc_binary shared libraries artifacts, which will mess with how we link 
-# protobuf dependencies ourselves. By default this value is false, but some 
+# of cc_binary shared libraries artifacts, which will mess with how we link
+# protobuf dependencies ourselves. By default this value is false, but some
 # projects enable it, which we don't want here.
 # common --define=use_fast_cpp_protos=true
 
@@ -386,7 +387,7 @@ common:rbe --config=resultstore
 common:rbe --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
 common:rbe --define=EXECUTOR=remote
 common:rbe --flaky_test_attempts=3
-common:rbe --jobs=200
+common:rbe --jobs=800
 common:rbe --remote_executor=grpcs://remotebuildexecution.googleapis.com
 common:rbe --remote_timeout=3600
 common:rbe --spawn_strategy=remote,worker,standalone,local

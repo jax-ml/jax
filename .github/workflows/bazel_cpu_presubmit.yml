@@ -64,6 +64,7 @@ jobs:
         python: ["3.11", "3.14"]
         runner: ["linux-x86-n4-16", "linux-arm64-c4a-16", "windows-x86-n2-16"]
         enable-x64: [1, 0]
+        enable-bzlmod: [1, 0]
         exclude:
             # Exclude x64=1 on the oldest Python and x64=0 on the newest Python. As long as we have
             # coverage for one of each, we don't need to run both.
@@ -76,6 +77,9 @@ jobs:
               runner: "linux-arm64-c4a-16"
             - python: "3.11"
               runner: "windows-x86-n2-16"
+            # TODO: support testing multiple Python version with Bzlmod
+            - python: "3.14"
+              enable-bzlmod: 1
     name: "Bazel CPU ${{ (contains(matrix.runner, 'linux-x86') && 'tests' || 'build only') }}"
 # End Presubmit Naming Check github-cpu-presubmits
     with:
@@ -83,6 +87,7 @@ jobs:
       python: ${{ matrix.python }}
       halt-for-connection: ${{ inputs.halt-for-connection }}
       enable-x64:  ${{ matrix.enable-x64 }}
+      enable-bzlmod:  ${{ matrix.enable-bzlmod }}
       build_jaxlib: 'true'
       build_jax: 'true'
       bazel_command: ${{ (contains(matrix.runner, 'linux-x86') && 'test') || 'build' }}
