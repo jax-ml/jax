@@ -272,7 +272,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
             f"Unexpected execution success with known limitations {expect_tf_error}"))
           unexpected_successes.append(f"{mode}: {expect_tf_error}")
 
-      if (jtu.device_under_test() == "gpu" and
+      if (jtu.test_device_matches(["gpu"]) and
           "dot_general_preferred" in self._testMethodName):
         logging.info(log_message(f"Arguments are {args}, JAX result is {result_jax}\nand TF result is {result_tf}"))
 

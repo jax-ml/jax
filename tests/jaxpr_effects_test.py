@@ -532,7 +532,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     if config.pmap_shmap_merge.value:
       if jax.device_count() == 1:
         self.skipTest("This test won't raise with 1 device.")
-      if jtu.device_under_test() == "gpu":
+      if jtu.test_device_matches(["gpu"]):
         self.skipTest("Test does not raise under GPU.")
       if jtu.device_under_test() == "tpu" and jtu.get_tpu_version() > 3:
         self.skipTest("Test does not raise under TPU v4+.")
@@ -674,7 +674,7 @@ class ParallelEffectsTest(jtu.JaxTestCase):
     if config.pmap_shmap_merge.value:
       if jax.device_count() == 1:
         self.skipTest("This test won't raise with 1 device.")
-      if jtu.device_under_test() == "gpu":
+      if jtu.test_device_matches(["gpu"]):
         self.skipTest("Test does not raise under GPU.")
       if jtu.device_under_test() == "tpu" and jtu.get_tpu_version() > 3:
         self.skipTest("Test does not raise under TPU v4+.")
