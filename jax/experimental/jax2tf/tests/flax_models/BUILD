@@ -18,7 +18,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 licenses(["notice"])
 
 package(
-    default_applicable_licenses = [],
+    default_applicable_licenses = ["//jax:license"],
     default_visibility = [
         "//jax/experimental/jax2tf:__subpackages__",
         "//third_party/tensorflow/lite/experimental/mlir/testing/jax/test_models:__subpackages__",

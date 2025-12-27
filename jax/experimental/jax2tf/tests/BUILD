@@ -17,7 +17,7 @@ load("//jaxlib:jax.bzl", "if_oss", "jax_generate_backend_suites", "jax_multiplat
 
 licenses(["notice"])
 
-package(default_applicable_licenses = [])
+package(default_applicable_licenses = ["//jax:license"])
 
 jax_generate_backend_suites()
 

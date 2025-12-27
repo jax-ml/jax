@@ -14,7 +14,7 @@
 licenses(["notice"])
 
 package(
-    default_applicable_licenses = [],
+    default_applicable_licenses = ["//jax:license"],
     default_visibility = [
         "//jax/experimental/jax2tf:__subpackages__",
         "//third_party/tensorflow/lite/experimental/mlir/testing/jax:__subpackages__",

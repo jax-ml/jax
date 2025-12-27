@@ -13,7 +13,7 @@
 # limitations under the License.
 
 package(
-    default_applicable_licenses = [],
+    default_applicable_licenses = ["//jax:license"],
     default_visibility = ["//jax:__subpackages__"],
 )
 

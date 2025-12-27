@@ -18,7 +18,7 @@ load("//jaxlib:jax.bzl", "jax_multiplatform_test", "py_deps")
 licenses(["notice"])
 
 package(
-    default_applicable_licenses = [],
+    default_applicable_licenses = ["//jax:license"],
     default_visibility = ["//jax/experimental:mosaic_gpu_users"],
 )
 

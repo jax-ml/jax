@@ -26,10 +26,16 @@ load(
     "pytype_library",
     "pytype_strict_library",
 )
+load("//tools/build_defs/license:license.bzl", "license")
 
 package(
     default_applicable_licenses = [],
     default_visibility = [":internal"],
+)
+
+license(
+    name = "license",
+    package_name = "jax",
 )
 
 licenses(["notice"])
