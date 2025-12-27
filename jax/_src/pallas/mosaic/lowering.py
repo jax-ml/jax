@@ -730,6 +730,7 @@ def lower_jaxpr_to_module(
     kernel_type: tpu_core.KernelType,
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
+    relayout_constraints: dict[str, bool] | None = None,
 ) -> ir.Module:
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
@@ -783,6 +784,7 @@ def lower_jaxpr_to_module(
       dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
       dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
       backend=backend,
+      relayout_constraints=relayout_constraints,
   )
   m.body.append(func_op)
   sym_tab.insert(func_op)
@@ -960,6 +962,22 @@ def lower_jaxpr_to_module(
         m.operation.attributes[
             "tpu.dynamic_dimension_mapping_arg_name_" + str(placeholder)
         ] = ir.StringAttr.get(arg_name_str)
+
+  # Add relayout constraints from context manager, if any
+  relayout_constraints = tpu_primitives.get_current_relayout_constraints()
+  if relayout_constraints is not None:
+    func_op.attributes["tpu.allow_scratch_roundtrip"] = ir.BoolAttr.get(
+        relayout_constraints.allow_scratch_roundtrip
+    )
+    func_op.attributes["tpu.allow_pack_unpack"] = ir.BoolAttr.get(
+        relayout_constraints.allow_pack_unpack
+    )
+    func_op.attributes["tpu.allow_rotation_emulation"] = ir.BoolAttr.get(
+        relayout_constraints.allow_rotation_emulation
+    )
+    func_op.attributes["tpu.allow_implicit_dim_change"] = ir.BoolAttr.get(
+        relayout_constraints.allow_implicit_dim_change
+    )
   return m
 
 
@@ -1032,6 +1050,7 @@ def lower_jaxpr_to_func(
     backend: Any | None,
     dynamic_shape_replacement_fn: DynamicShapeReplacementFn | None = None,
     dynamic_shape_replacement_enabled: bool = False,
+    relayout_constraints: dict[str, bool] | None = None,
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
   num_scalar_prefetch = len(mosaic_grid_mapping.scalar_prefetch_types)
@@ -1071,6 +1090,23 @@ def lower_jaxpr_to_func(
     )
   body_func.__name__ = name
   body: Any = func.FuncOp.from_py_func(*arg_types, name=name)(body_func)
+
+  # Set function-level relayout constraints if provided.
+  # These are checked by relayout_insertion.cc for implicit relayouts.
+  if relayout_constraints is not None:
+    body.func_op.attributes["tpu.allow_scratch_roundtrip"] = (
+        ir.BoolAttr.get(relayout_constraints.get("allow_scratch_roundtrip", True))
+    )
+    body.func_op.attributes["tpu.allow_pack_unpack"] = ir.BoolAttr.get(
+        relayout_constraints.get("allow_pack_unpack", True)
+    )
+    body.func_op.attributes["tpu.allow_rotation_emulation"] = (
+        ir.BoolAttr.get(relayout_constraints.get("allow_rotation_emulation", True))
+    )
+    body.func_op.attributes["tpu.allow_implicit_dim_change"] = (
+        ir.BoolAttr.get(relayout_constraints.get("allow_implicit_dim_change", True))
+    )
+
   if dynamic_shape_replacement_enabled:
     # Skip verification for dynamic shape replacement - you can potentially
     # produce ir like ex: add(x[placeholder_0, placeholder_1], y[128, 128])
@@ -1196,6 +1232,31 @@ def jaxpr_subcomp(
           ans = lowering_rules[ctx.kernel_type][eqn.primitive](
               rule_context, *invals, **eqn.params
           )
+          # Apply relayout constraints from JaxprEqnContext if present.
+          # This enables no_relayouts() to work inside kernel bodies.
+          constraints = eqn.ctx.relayout_constraints
+          if constraints is not None:
+            if isinstance(ans, (list, tuple)):
+              ops = {val.owner for val in ans if isinstance(val, ir.Value)}
+            elif isinstance(ans, ir.Value):
+              ops = {ans.owner}
+            else:
+              ops = set()
+
+            for op in ops:
+              op.attributes["tpu.allow_scratch_roundtrip"] = (
+                  ir.BoolAttr.get(constraints.allow_scratch_roundtrip)
+              )
+              op.attributes["tpu.allow_pack_unpack"] = ir.BoolAttr.get(
+                  constraints.allow_pack_unpack
+              )
+              op.attributes["tpu.allow_rotation_emulation"] = (
+                  ir.BoolAttr.get(constraints.allow_rotation_emulation)
+              )
+              op.attributes["tpu.allow_implicit_dim_change"] = (
+                  ir.BoolAttr.get(constraints.allow_implicit_dim_change)
+              )
+
         except LoweringException:
           raise  # We only add the extra info to the innermost exception.
         except Exception as e:
@@ -2415,6 +2476,40 @@ def _reshape_lowering_rule(ctx: LoweringRuleContext, x, new_sizes, dimensions,
           ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
       ),
       x,
+  )
+
+
+@register_lowering_rule(
+    tpu_primitives.reshape_with_constraints_p,
+    kernel_types=[*tpu_core.KernelType],
+)
+def _reshape_with_constraints_lowering_rule(
+    ctx: LoweringRuleContext,
+    x,
+    *,
+    shape,
+    allow_pack_unpack,
+    allow_shifts,
+):
+  if not ctx.avals_in[0].shape:
+    return vector.broadcast(
+        aval_to_ir_type(
+            ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
+        ),
+        x,
+    )
+  if not ctx.avals_out[0].shape:
+    return vector.extract(x, [], [0] * len(ctx.avals_in[0].shape))
+
+  out_type = aval_to_ir_type(
+      ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
+  )
+
+  return tpu.reshape(
+      out_type,
+      x,
+      allow_pack_unpack=allow_pack_unpack,
+      allow_shifts=allow_shifts,
   )
 
 
