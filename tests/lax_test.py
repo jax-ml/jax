@@ -47,7 +47,6 @@ from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
-from jax._src.lib import jaxlib_extension_version
 from jax._src.util import safe_zip
 from jax._src.tree_util import tree_map
 
@@ -3980,9 +3979,7 @@ class FooTyRules:
     phys_aval = core.physical_aval(aval)
     phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
     phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
-    if jaxlib_extension_version >= 390:
-      return phys_handler.wrap(lambda arr: FooArray(aval.shape, arr))
-    return lambda bufs: FooArray(aval.shape, phys_handler(bufs))
+    return phys_handler.wrap(lambda arr: FooArray(aval.shape, arr))
 
 
 class FooTy(dtypes.ExtendedDType):

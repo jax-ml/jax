@@ -90,16 +90,10 @@ uint64_t GetBaseLaunchId(std::optional<std::string> fingerprint,
   // Pmap and replicated executables for example will only populate the local
   // device to the loaded executable and all devices will have different devices
   // fingerprints.
-#if JAX_IFRT_VERSION_NUMBER >= 37
   if (std::optional<ifrt::DeviceListRef> device_list = executable->devices();
       device_list.has_value() && !(*device_list)->IsFullyAddressable()) {
     ret += (*device_list)->fingerprint();
   }
-#else
-  if (!executable->devices()->IsFullyAddressable()) {
-    ret += executable->devices()->fingerprint();
-  }
-#endif
   VLOG(1) << "Get base launch id: " << ret << " from fingerprint: "
           << (fingerprint.has_value()
                   ? absl::StrCat(tsl::Fingerprint64(*fingerprint))
@@ -545,15 +539,10 @@ int32_t PyLoadedExecutable::GetNextLaunchId() {
   }
   VLOG(1) << "Launching executable " << ifrt_loaded_executable_->name()
           << " with launch ID: " << launch_id << " key: " << launch_id_key_;
-#if JAX_IFRT_VERSION_NUMBER >= 37
   VLOG(2) << "Executable devices for launch ID " << launch_id << ": "
           << (ifrt_loaded_executable_->devices().has_value()
                   ? (*ifrt_loaded_executable_->devices())->DebugString()
                   : "<nullopt>");
-#else
-  VLOG(2) << "Executable devices for launch ID " << launch_id << ": "
-          << ifrt_loaded_executable_->devices()->DebugString();
-#endif
   return launch_id;
 }
 

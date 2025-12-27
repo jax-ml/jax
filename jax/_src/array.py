@@ -39,7 +39,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.layout import AutoLayout, Format, Layout
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import empty_concrete_mesh
 from jax._src.sharding import Sharding
@@ -1288,12 +1287,9 @@ def _array_global_result_handler(global_aval, out_sharding, committed):
   if global_aval.dtype == dtypes.float0:
     def handler(xs):
       return np.zeros(global_aval.shape, dtypes.float0)
-    if jaxlib_extension_version >= 390:
-      phys_aval = core.physical_aval(global_aval)
-      return xc.array_result_handler(phys_aval, out_sharding, committed=committed,
-                                     _skip_checks=True).wrap(handler)
-    else:
-      return handler
+    phys_aval = core.physical_aval(global_aval)
+    return xc.array_result_handler(phys_aval, out_sharding, committed=committed,
+                                   _skip_checks=True).wrap(handler)
   if dtypes.issubdtype(global_aval.dtype, dtypes.extended):
     return global_aval.dtype._rules.global_sharded_result_handler(
         global_aval, out_sharding, committed)
@@ -1307,12 +1303,9 @@ def _array_local_result_handler(aval, sharding, indices):
   if aval.dtype == dtypes.float0:
     def handler(xs):
       return np.zeros(aval.shape, dtypes.float0)
-    if jaxlib_extension_version >= 390:
-      phys_aval = core.physical_aval(aval)
-      return xc.array_result_handler(phys_aval, sharding, committed=True,
-                                     _skip_checks=True).wrap(handler)
-    else:
-      return handler
+    phys_aval = core.physical_aval(aval)
+    return xc.array_result_handler(phys_aval, sharding, committed=True,
+                                   _skip_checks=True).wrap(handler)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     return aval.dtype._rules.local_sharded_result_handler(
         aval, sharding, indices)
@@ -1341,13 +1334,7 @@ pxla.shard_arg_handlers[core.Token] = _token_shard_arg
 def _token_global_result_handler(global_aval, out_sharding, committed):
   array_handler = _array_global_result_handler(
       core.get_token_aval(), out_sharding, committed)
-  if jaxlib_extension_version >= 390:
-    def wrapper(array):
-      return core.Token(array)
-    return array_handler.wrap(wrapper)  # type: ignore
-  else:
-    def old_wrapper(*args, **kwargs):
-      out_buf = array_handler(*args, **kwargs)
-      return core.Token(out_buf)
-    return old_wrapper
+  def wrapper(array):
+    return core.Token(array)
+  return array_handler.wrap(wrapper)  # type: ignore
 pxla.global_result_handlers[core.AbstractToken] = _token_global_result_handler

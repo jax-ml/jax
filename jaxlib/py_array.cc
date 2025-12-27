@@ -2305,15 +2305,10 @@ absl::Status PyArray::Register(nb::module_& m) {
       nb::is_method());
   type.attr("platform") = nb::cpp_function(
       [](PyArray self) {
-#if JAX_IFRT_VERSION_NUMBER >= 44
         const xla::ifrt::DeviceListRef& devices =
             self.ifrt_array()->sharding().devices();
         absl::string_view platform_name =
             devices->devices().front()->PlatformName();
-#else
-        absl::string_view platform_name =
-            self.ifrt_array()->client()->platform_name();
-#endif
         if (platform_name == "cuda" || platform_name == "rocm") {
           return std::string_view("gpu");
         } else {
