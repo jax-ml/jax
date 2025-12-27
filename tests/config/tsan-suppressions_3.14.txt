@@ -1,0 +1,21 @@
+# false-positive caused because we haven't tsan-instrumented libgcc_s. Multiple threads
+# are racing on a call to __register_frame_info(), but that function appears to be correctly locked internally.
+race:llvm::RuntimeDyldELF::registerEHFrames
+
+# https://github.com/openxla/xla/issues/20686
+race:dnnl_sgemm
+
+# https://github.com/python/cpython/issues/128050
+race:partial_vectorcall_fallback
+
+# Races because the LAPACK and BLAS in our scipy isn't TSAN instrumented.
+race:heevd_ffi
+race:gesdd_ffi
+race:dscal_k_
+race:scal_k_
+race:gemm_beta
+race:gemm_oncopy
+
+# https://github.com/python/cpython/issues/132214
+# Fixed in Python 3.15, but not backported to 3.13, 3.14.
+race:type_update_dict
