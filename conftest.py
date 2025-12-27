@@ -14,6 +14,8 @@
 """pytest configuration"""
 
 import os
+import sys
+
 import pytest
 
 
@@ -72,3 +74,18 @@ def pytest_collection() -> None:
     os.environ.setdefault(
         "CUDA_VISIBLE_DEVICES", str(xdist_worker_number % num_cuda_devices)
     )
+
+
+def pytest_runtest_logreport(report):
+  # Only look at the setup/call phase
+  if report.when == 'call':
+    # Get the worker ID
+    worker_id = getattr(report, "node", None)
+    if worker_id:
+      worker_id = worker_id.gateway.id
+    else:
+      worker_id = "master"
+
+    # Log to a file named after the worker
+    with open(f"test_order_{worker_id}.log", "a") as f:
+      f.write(f"{report.nodeid}\n")
