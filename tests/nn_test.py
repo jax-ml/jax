@@ -380,9 +380,9 @@ class NNFunctionsTest(jtu.JaxTestCase):
     _, dbias_ans, _ = bwd_ans(x, bias, mask)
     self.assertAllClose(dbias_ans, dbias_ref, rtol=0.1, atol=0.1)
 
-  def testDotProductAttentionDebugInfsFloat64(self):
+  @parameterized.product(dtype=[jnp.float16, jnp.float32, jnp.float64])
+  def testDotProductAttentionDebugInfs(self, dtype):
     with jax.enable_x64(True), jax.debug_infs(True):
-      dtype = jnp.float64
       shape = (1, 2, 4)
       q = jnp.zeros(shape, dtype=dtype)
       k = jnp.zeros(shape, dtype=dtype)
