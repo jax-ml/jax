@@ -100,6 +100,10 @@ class PyTreeDef(object):
     def GetRootAsPyTreeDef(cls, buf, offset=0):
         """This method is deprecated. Please switch to GetRootAs."""
         return cls.GetRootAs(buf, offset)
+    @classmethod
+    def PyTreeDefBufferHasIdentifier(cls, buf, offset, size_prefixed=False):
+        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x4A\x41\x58\x45", size_prefixed=size_prefixed)
+
     # PyTreeDef
     def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
@@ -235,6 +239,10 @@ class AbstractValue(object):
     def GetRootAsAbstractValue(cls, buf, offset=0):
         """This method is deprecated. Please switch to GetRootAs."""
         return cls.GetRootAs(buf, offset)
+    @classmethod
+    def AbstractValueBufferHasIdentifier(cls, buf, offset, size_prefixed=False):
+        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x4A\x41\x58\x45", size_prefixed=size_prefixed)
+
     # AbstractValue
     def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
@@ -317,6 +325,10 @@ class Sharding(object):
     def GetRootAsSharding(cls, buf, offset=0):
         """This method is deprecated. Please switch to GetRootAs."""
         return cls.GetRootAs(buf, offset)
+    @classmethod
+    def ShardingBufferHasIdentifier(cls, buf, offset, size_prefixed=False):
+        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x4A\x41\x58\x45", size_prefixed=size_prefixed)
+
     # Sharding
     def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
@@ -386,6 +398,10 @@ class Effect(object):
     def GetRootAsEffect(cls, buf, offset=0):
         """This method is deprecated. Please switch to GetRootAs."""
         return cls.GetRootAs(buf, offset)
+    @classmethod
+    def EffectBufferHasIdentifier(cls, buf, offset, size_prefixed=False):
+        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x4A\x41\x58\x45", size_prefixed=size_prefixed)
+
     # Effect
     def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
@@ -422,6 +438,10 @@ class DisabledSafetyCheck(object):
     def GetRootAsDisabledSafetyCheck(cls, buf, offset=0):
         """This method is deprecated. Please switch to GetRootAs."""
         return cls.GetRootAs(buf, offset)
+    @classmethod
+    def DisabledSafetyCheckBufferHasIdentifier(cls, buf, offset, size_prefixed=False):
+        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x4A\x41\x58\x45", size_prefixed=size_prefixed)
+
     # DisabledSafetyCheck
     def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
@@ -468,6 +488,10 @@ class Exported(object):
     def GetRootAsExported(cls, buf, offset=0):
         """This method is deprecated. Please switch to GetRootAs."""
         return cls.GetRootAs(buf, offset)
+    @classmethod
+    def ExportedBufferHasIdentifier(cls, buf, offset, size_prefixed=False):
+        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x4A\x41\x58\x45", size_prefixed=size_prefixed)
+
     # Exported
     def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
