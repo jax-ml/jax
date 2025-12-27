@@ -220,6 +220,16 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
   )
 
   cuda_group.add_argument(
+      "--cccl_version",
+      type=str,
+      help=
+        """
+        Hermetic CCCL version to use. Default is to use the version specified
+        in the .bazelrc.
+        """,
+  )
+
+  cuda_group.add_argument(
       "--disable_nccl",
       action="store_true",
       help="Should NCCL be disabled?",
@@ -612,6 +622,11 @@ async def main():
       logging.debug("Hermetic cuDNN version: %s", args.cudnn_version)
       wheel_build_command_base.append(
           f"--repo_env=HERMETIC_CUDNN_VERSION={args.cudnn_version}"
+      )
+    if args.cccl_version:
+      logging.debug("Hermetic CCCL version: %s", args.cccl_version)
+      wheel_build_command_base.append(
+          f"--repo_env=HERMETIC_CCCL_VERSION={args.cccl_version}"
       )
     if args.cuda_compute_capabilities:
       logging.debug(
