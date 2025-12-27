@@ -1519,6 +1519,10 @@ def _ndindexer_indices(
       if not allow_arrays:
         raise ValueError("Arrays are not supported as indices.")
       indices.append(idx)
+    elif isinstance(idx, ir.Value) and ir.VectorType.isinstance(idx.type): #pytype: disable=attribute-error
+      if not allow_arrays:
+        raise ValueError("Vectors are not supported as indices.")
+      indices.append(idx)
     elif not isinstance(idx, indexing.Slice):
       indices.append(_as_index(idx))
     elif not idx.is_dynamic_start and not idx.is_dynamic_size:
