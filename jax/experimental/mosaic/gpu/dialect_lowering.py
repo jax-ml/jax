@@ -1652,7 +1652,8 @@ def _memref_transpose_op_lowering_rule(
   in_transforms = inference_utils.in_transforms(op)[0]
   unwrapped_in_ref = unwrap_transformed_memref(op.in_, in_transforms)
   in_transformed_ty = ir.MemRefType(unwrapped_in_ref.type)
-  if len(in_transformed_ty.shape) == 2:
+
+  if in_transformed_ty.rank == op.in_.type.rank:
     new_permutation = op.permutation
   elif len(in_transformed_ty.shape) == 4:
     if op.permutation == _permutation_to_affine_map_attr([0, 1]):
@@ -1660,10 +1661,10 @@ def _memref_transpose_op_lowering_rule(
     elif op.permutation == _permutation_to_affine_map_attr([1, 0]):
       new_permutation = _permutation_to_affine_map_attr([1, 0, 3, 2])
     else:
-      raise NotImplementedError("Unsupported permutation.")
+      raise ValueError(f"Invalid permutation={op.permutation}.")
   else:
     raise NotImplementedError(
-        "TransposeOp only supports transposing 2D and 4D memrefs."
+        "TransposeOp only supports transposing tiled 2D memrefs."
     )
 
   out_transforms = inference_utils.out_transforms(op)[0]
@@ -1673,7 +1674,6 @@ def _memref_transpose_op_lowering_rule(
       unwrapped_in_ref,
       new_permutation,
   )
-
   wrapped_ref = wrap_transformed_memref(
       new_transpose_op.result, op.result.type, out_transforms
   )

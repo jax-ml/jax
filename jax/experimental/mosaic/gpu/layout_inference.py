@@ -1467,8 +1467,6 @@ def _memref_transpose_op_constraint_system(
     op: memref.TransposeOp,
 ) -> ConstraintSystemDerivationRuleResult:
   in_ty = ir.MemRefType(op.in_.type)
-  if len(in_ty.shape) != 2:
-    raise NotImplementedError(f"Only 2D memrefs are supported, got {in_ty}")
   in_strides, _ = in_ty.get_strides_and_offset()
   out_strides, _ = ir.MemRefType(op.result.type).get_strides_and_offset()
   transpose = in_strides != out_strides
