@@ -2291,6 +2291,7 @@ register_eltwise_rule(lax.rsqrt_p)
 register_eltwise_rule(lax.square_p)
 register_eltwise_rule(lax.log_p)
 register_eltwise_rule(lax.integer_pow_p)
+register_eltwise_rule(lax.logistic_p)
 
 
 @register_push_block_spec_rule(lax.reshape_p)
