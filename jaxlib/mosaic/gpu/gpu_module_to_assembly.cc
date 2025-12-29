@@ -54,6 +54,8 @@ namespace gpu {
 
 namespace {
 
+using ::llvm::failure;
+using ::llvm::FailureOr;
 using ::llvm::LogicalResult;
 using ::llvm::SmallVector;
 using ::mlir::Attribute;
@@ -71,7 +73,7 @@ class ModuleToAssembly : public mlir::LLVM::ModuleToObject {
         libraries_to_link_(std::move(libraries_to_link)) {};
 
   // Serializes the LLVM module to PTX.
-  std::optional<SmallVector<char, 0>> moduleToObject(
+  FailureOr<SmallVector<char, 0>> moduleToObject(
       llvm::Module& llvm_module) override;
 
   // Loads the bitcode files in `libraries_to_link_`.
@@ -82,7 +84,7 @@ class ModuleToAssembly : public mlir::LLVM::ModuleToObject {
   std::vector<std::string> libraries_to_link_;
 };
 
-std::optional<SmallVector<char, 0>> ModuleToAssembly::moduleToObject(
+FailureOr<SmallVector<char, 0>> ModuleToAssembly::moduleToObject(
     llvm::Module& llvm_module) {
   // Use a debug type compatible with upstream.
 #define DEBUG_TYPE "serialize-to-llvm"
@@ -90,15 +92,16 @@ std::optional<SmallVector<char, 0>> ModuleToAssembly::moduleToObject(
 #undef DEBUG_TYPE
   std::optional<llvm::TargetMachine*> machine = getOrCreateTargetMachine();
   if (!machine) {
-    getOperation().emitError() << "Target Machine unavailable for triple "
-                               << triple << ", can't optimize with LLVM\n";
-    return std::nullopt;
+    return getOperation().emitError()
+           << "Target Machine unavailable for "
+              "triple "
+           << triple << ", can't optimize with LLVM\n";
   }
   llvm::FailureOr<std::string> ptx = translateModuleToISA(
       llvm_module, **machine, [&]() { return getOperation().emitError(); });
   if (failed(ptx)) {
-    getOperation().emitError() << "Failed translating the module to PTX.";
-    return std::nullopt;
+    return getOperation().emitError() << "Failed translating the module"
+                                         "to PTX.";
   }
 
   return SmallVector<char, 0>(ptx->begin(), ptx->end());

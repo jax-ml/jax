@@ -3361,7 +3361,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
   pred = arith.cmpi(
       arith.CmpIPredicate.ne, index, ir_constant(0, index.type)
   )
-  if_op = scf.IfOp(pred, out_types, hasElse=True)
+  if_op = scf.IfOp(pred, out_types, has_else=True)
   lowering_context = ctx.lowering_context.replace(
       block_shapes=ctx.block_shapes[1:],
   )

@@ -2831,7 +2831,7 @@ def _cond_lowering_rule(
 
   use_branch0 = _equal(index, _ir_constant(0, index.type), signed=False)
   # TODO(bjp): Switch to scf.index_switch once exposed in triton.cc
-  if_op = scf_dialect.IfOp(use_branch0, out_types, hasElse=True)
+  if_op = scf_dialect.IfOp(use_branch0, out_types, has_else=True)
   with ir.InsertionPoint.at_block_begin(if_op.then_block):
     outs0 = lower_jaxpr_to_triton_ir(
         ctx.context,
