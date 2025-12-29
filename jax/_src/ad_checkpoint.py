@@ -19,6 +19,7 @@ from functools import partial
 import logging
 from typing import Any
 import types
+import inspect
 
 import numpy as np
 
@@ -201,7 +202,7 @@ checkpoint_policies = types.SimpleNamespace(
 ### Main API
 
 @partial(api_boundary, repro_api_name="jax.checkpoint")
-def checkpoint(fun: Callable, *, prevent_cse: bool = True,
+def checkpoint(fun: Callable | None = None, *, prevent_cse: bool = True,
                policy: Callable[..., bool] | None = None,
                static_argnums: int | tuple[int, ...] = (),
                static_argnames: str | Iterable[str] = (),
@@ -352,6 +353,11 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
   ``jax.ensure_compile_time_eval``), it may be easier to compute some values
   outside the :func:`jax.checkpoint`-decorated function and then close over them.
   """
+  if fun is None:
+    return partial(checkpoint, prevent_cse=prevent_cse, policy=policy,
+                   static_argnums=static_argnums,
+                   static_argnames=static_argnames, concrete=concrete)
+
   if not isinstance(concrete, DeprecatedArg):
     concrete_msg = (
         "The `concrete` option to `jax.checkpoint` has been deprecated."
@@ -439,66 +445,107 @@ def _remat_static_argnums(fun, static_argnums, args):
   return new_fun, dyn_args
 
 def _remat_static_args(fun, static_argnums, static_argnames, args, kwargs):
-  """Handle both static_argnums and static_argnames for checkpoint/remat.
-  
-  This function converts static_argnames to static_argnums indices, then uses
-  the existing _remat_static_argnums logic for positional args. For kwargs that
-  are marked static via static_argnames, they are closed over directly.
-  
-  Returns (new_fun, dynamic_args, dynamic_kwargs).
-  """
-  # If no static args at all, return as-is
   if not static_argnums and not static_argnames:
     return fun, args, kwargs
-  
+
   static_argnums = static_argnums or ()
   static_argnames = static_argnames or ()
-  
-  # Normalize static_argnums
+
   if isinstance(static_argnums, int):
     static_argnums = (static_argnums,)
-  
-  # Normalize static_argnames
   if isinstance(static_argnames, str):
     static_argnames = (static_argnames,)
-  
-  static_argnames_set = frozenset(static_argnames)
-  
-  # Separate kwargs into static and dynamic
-  static_kwargs = {}
+
+  sig = inspect.signature(fun)
+  bound = sig.bind(*args, **kwargs)
+  bound.apply_defaults()
+
+  static_argnames_set = set(static_argnames)
+  arg_names = list(bound.arguments.keys())
+  for i in static_argnums:
+    try:
+      if i < 0: i += len(bound.arguments)
+      if 0 <= i < len(arg_names):
+        static_argnames_set.add(arg_names[i])
+      else:
+        raise ValueError(f"static_argnums index {i} is out of bounds for {len(arg_names)} arguments")
+    except IndexError:
+      raise ValueError(f"static_argnums index {i} is out of bounds")
+
+  static_vals = {}
+  dyn_args = []
   dyn_kwargs = {}
-  for k, v in kwargs.items():
-    if k in static_argnames_set:
-      static_kwargs[k] = WrapHashably(v)
+
+  for name, val in bound.arguments.items():
+    param = sig.parameters.get(name)
+    if name in static_argnames_set:
+      static_vals[name] = WrapHashably(val)
+    elif param and param.kind == inspect.Parameter.VAR_POSITIONAL:
+      dyn_args.extend(val)
+    elif param and param.kind == inspect.Parameter.VAR_KEYWORD:
+      if isinstance(val, dict):
+        for k, v in val.items():
+          if k in static_argnames_set:
+            static_vals[k] = WrapHashably(v)
+          else:
+            dyn_kwargs[k] = v
     else:
-      dyn_kwargs[k] = v
-  
-  # Use _remat_static_argnums for positional args
-  fun_with_static_args, dyn_args = _remat_static_argnums(fun, static_argnums, args)
-  
-  # If there are static kwargs, we need to wrap the function further
-  if static_kwargs:
-    fun_final = _wrap_with_static_kwargs(fun_with_static_args, tuple(sorted(static_kwargs.items())))
-  else:
-    fun_final = fun_with_static_args
-  
-  return fun_final, dyn_args, dyn_kwargs
+      if param and param.kind == inspect.Parameter.POSITIONAL_ONLY:
+        dyn_args.append(val)
+      else:
+        dyn_kwargs[name] = val
 
-def _wrap_with_static_kwargs(fun, static_kwargs_items):
-  """Wrap a function to inject static kwargs."""
-  if any(isinstance(v.val, core.Tracer) for _, v in static_kwargs_items):
-    return _wrap_with_static_kwargs_uncached(fun, static_kwargs_items)
-  return _wrap_with_static_kwargs_cached(fun, static_kwargs_items)
+  return _dyn_args_fun_inspect(fun, sig, tuple(sorted(static_vals.items()))), dyn_args, dyn_kwargs
 
-def _wrap_with_static_kwargs_uncached(fun, static_kwargs_items):
+
+def _dyn_args_fun_inspect(fun, sig, static_vals_items):
+  if any(isinstance(v.val, core.Tracer) for _, v in static_vals_items):
+    return _dyn_args_fun_inspect_uncached(fun, sig, static_vals_items)
+  return _dyn_args_fun_inspect_cached(fun, sig, static_vals_items)
+
+
+def _dyn_args_fun_inspect_uncached(fun, sig, static_vals_items):
+  static_map = {k: v.val for k, v in static_vals_items}
+
   def new_fun(*args, **kwargs):
-    full_kwargs = dict(kwargs)
-    for k, v in static_kwargs_items:
-      full_kwargs[k] = v.val
-    return fun(*args, **full_kwargs)
+    arg_iter = iter(args)
+    final_args = []
+    final_kwargs = {}
+
+    for name, param in sig.parameters.items():
+      if name in static_map:
+        val = static_map[name]
+        if param.kind == inspect.Parameter.POSITIONAL_ONLY:
+          final_args.append(val)
+        elif param.kind == inspect.Parameter.VAR_POSITIONAL:
+          final_args.extend(val)
+        elif param.kind == inspect.Parameter.VAR_KEYWORD:
+          final_kwargs.update(val)
+        else:
+          final_kwargs[name] = val
+      elif param.kind == inspect.Parameter.VAR_KEYWORD:
+        final_kwargs.update(kwargs)
+      else:
+        if param.kind == inspect.Parameter.POSITIONAL_ONLY:
+          final_args.append(next(arg_iter))
+        elif param.kind == inspect.Parameter.VAR_POSITIONAL:
+          final_args.extend(list(arg_iter))
+        else:
+          if name in kwargs:
+            final_kwargs[name] = kwargs[name]
+
+    for k, v in static_map.items():
+      if k not in final_kwargs and k not in sig.parameters:
+        final_kwargs[k] = v
+
+    return fun(*final_args, **final_kwargs)
   return new_fun
 
-_wrap_with_static_kwargs_cached = weakref_lru_cache(_wrap_with_static_kwargs_uncached)
+_dyn_args_fun_inspect_cached = weakref_lru_cache(_dyn_args_fun_inspect_uncached)
+
+# Remove old _remat_static_args and helpers
+# (The replace block replaces the old function completely)
+
 
 class WrapHashably:
   val: Any
