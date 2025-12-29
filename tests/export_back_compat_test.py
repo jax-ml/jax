@@ -805,7 +805,6 @@ class CompatTest(bctu.CompatTestBase):
       return lax.ppermute(x, "a", perm=perm)
 
     data = [
-        (tpu_Sharding.data_2023_03_16, []),
         (tpu_Sharding.data_2025_06_30, None),
     ]
     # Due to changes in how Shardy is serialized, from using custom calls to
@@ -1031,7 +1030,6 @@ class ShardyCompatTest(bctu.CompatTestBase):
       return shard_map_func(x)
 
     data = [
-        (shardy_sharding_ops_with_different_meshes.data_2025_04_14, []),
         (shardy_sharding_ops_with_different_meshes.data_2025_06_30, None),
     ]
 
