@@ -3532,6 +3532,8 @@ class FragmentedArrayTest(TestCase):
           (lambda x: mgpu.FragmentedArray.sin(x), np.sin),
           (lambda x: mgpu.FragmentedArray.cos(x), np.cos),
           (lambda x: mgpu.FragmentedArray.rsqrt(x), jax.lax.rsqrt),
+          (lambda x: mgpu.FragmentedArray.abs(x), np.abs),
+          (lambda x: mgpu.FragmentedArray.erf(x), jax.scipy.special.erf),
       ],
       approx=[False, True],
   )
@@ -3549,6 +3551,37 @@ class FragmentedArrayTest(TestCase):
     atol = 5e-3 if approx else 2e-7
     rtol = 4e-6 if approx else 2e-7
     np.testing.assert_allclose(result, np_op(x), atol=atol, rtol=rtol)
+
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.int32, jnp.uint32],
+  )
+  def test_sign(self, dtype, m=64, n=32):
+    def kernel(ctx, dst, _):
+      # Use values that include negative, zero, and positive
+      iota = iota_tensor(m, n, dtype)
+      shifted = iota - (m * n // 2)  # Center around zero
+      shifted.sign().store_untiled(dst, optimized=False)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), dtype)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    x = np.arange(m * n, dtype=dtype).reshape(m, n) - (m * n // 2)
+    np.testing.assert_array_equal(result, np.sign(x))
+
+  def test_atan2(self, m=64, n=32):
+    def kernel(ctx, dst, _):
+      y = iota_tensor(m, n, jnp.float32) + 1  # Avoid zero
+      x = iota_tensor(m, n, jnp.float32) + 2
+      y.atan2(x).store_untiled(dst, optimized=False)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), jnp.float32)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    y = np.arange(m * n, dtype=jnp.float32).reshape(m, n) + 1
+    x = np.arange(m * n, dtype=jnp.float32).reshape(m, n) + 2
+    np.testing.assert_allclose(result, np.arctan2(y, x), atol=2e-7, rtol=2e-7)
 
   def test_strided_copy_noncontig_good(self):
     def kernel(ctx, src, dst, _):

@@ -1720,6 +1720,56 @@ class FragmentedArray:
       raise NotImplementedError
     return self._pointwise(mlir_math.roundeven)
 
+  def sign(self) -> FragmentedArray:
+    if isinstance(self.mlir_dtype, ir.FloatType):
+      # For floats: sign(x) = copysign(1.0, x) * (x != 0)
+      dtype = self.mlir_dtype
+      one = arith.constant(dtype, ir.FloatAttr.get(dtype, 1.0))
+      zero = arith.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
+      def float_sign(x):
+        one_val = one
+        zero_val = zero
+        if isinstance(x.type, ir.VectorType):
+          one_val = vector.broadcast(x.type, one)
+          zero_val = vector.broadcast(x.type, zero)
+        signed_one = mlir_math.copysign(one_val, x)
+        is_nonzero = arith.cmpf(arith.CmpFPredicate.ONE, x, zero_val)
+        nonzero_mask = arith.uitofp(signed_one.type, is_nonzero)
+        return arith.mulf(signed_one, nonzero_mask)
+      return self._pointwise(float_sign)
+    elif isinstance(self.mlir_dtype, ir.IntegerType):
+      # For integers: sign(x) = (x > 0) - (x < 0)
+      int_dtype = self.mlir_dtype
+      zero_scalar = arith.constant(int_dtype, 0)
+      is_signed = self.is_signed
+      def int_sign(x):
+        zero = zero_scalar
+        if isinstance(x.type, ir.VectorType):
+          zero = vector.broadcast(x.type, zero_scalar)
+        if is_signed:
+          pos = arith.cmpi(arith.CmpIPredicate.sgt, x, zero)
+          neg = arith.cmpi(arith.CmpIPredicate.slt, x, zero)
+          pos_ext = arith.extui(x.type, pos)
+          neg_ext = arith.extui(x.type, neg)
+          return arith.subi(pos_ext, neg_ext)
+        else:
+          # For unsigned: sign(x) = (x != 0)
+          nonzero = arith.cmpi(arith.CmpIPredicate.ne, x, zero)
+          return arith.extui(x.type, nonzero)
+      return self._pointwise(int_sign, output_is_signed=is_signed)
+    else:
+      raise NotImplementedError(self.mlir_dtype)
+
+  def erf(self) -> FragmentedArray:
+    if not isinstance(self.mlir_dtype, ir.FloatType):
+      raise NotImplementedError(self.mlir_dtype)
+    return self._pointwise(mlir_math.erf)
+
+  def atan2(self, other: FragmentedArray) -> FragmentedArray:
+    if not isinstance(self.mlir_dtype, ir.FloatType):
+      raise NotImplementedError(self.mlir_dtype)
+    return self._pointwise(mlir_math.atan2, other)
+
   @staticmethod
   def _lift_fast_instr(
       instr: str | Callable[[ir.Value], ir.Value],
@@ -2394,6 +2444,29 @@ class FragmentedArray:
           else:
             raise NotImplementedError(self.mlir_dtype)
           splat_op = lambda x: x
+        case "prod":
+          reduced_elems = math.prod(self.shape[a] for a in axis)
+          if isinstance(self.mlir_dtype, ir.FloatType):
+            op = arith.mulf
+            # For splat, prod(x, x, ..., x) = x^n
+            splat_op = lambda x: mlir_math.powf(
+                x, c(float(reduced_elems), x.type)
+            )
+          elif isinstance(self.mlir_dtype, ir.IntegerType):
+            op = arith.muli
+            # For splat, use repeated squaring to compute x^n
+            def int_pow(x, n=reduced_elems):
+              result = c(1, x.type)
+              base = x
+              while n > 0:
+                if n % 2 == 1:
+                  result = arith.muli(result, base)
+                base = arith.muli(base, base)
+                n //= 2
+              return result
+            splat_op = int_pow
+          else:
+            raise NotImplementedError(self.mlir_dtype)
         case _:
           raise ValueError(f"Unrecognized reduction operator: {op}")
     assert not isinstance(op, str)

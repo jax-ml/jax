@@ -2452,6 +2452,45 @@ def _round_lowering_rule_wg(ctx: LoweringRuleContext, x, rounding_method):
       assert_never(rounding_method)
 
 
+def _sign(x):
+  return (x > 0).astype(x.dtype) - (x < 0).astype(x.dtype)
+
+
+@register_lowering_rule(lax.sign_p, mgpu.LoweringSemantics.Lane)
+def _sign_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  return _ensure_fa(x, x_aval.dtype).sign()
+
+
+@register_lowering_rule(lax.sign_p, mgpu.LoweringSemantics.Warpgroup)
+def _sign_lowering_rule_wg(ctx: LoweringRuleContext, x):
+  return _lower_fun(_sign, multiple_results=False)(ctx, x)
+
+
+@register_lowering_rule(lax.erf_p, mgpu.LoweringSemantics.Lane)
+def _erf_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  return _ensure_fa(x, x_aval.dtype).erf()
+
+
+@register_lowering_rule(lax.erf_p, mgpu.LoweringSemantics.Warpgroup)
+def _erf_lowering_rule_wg(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  return math_dialect.erf(_ensure_ir_value(x, x_aval.dtype))
+
+
+@register_lowering_rule(lax.atan2_p, mgpu.LoweringSemantics.Lane)
+def _atan2_lowering_rule(ctx: LoweringRuleContext, y, x):
+  y, x = _bcast(y, x, *ctx.avals_in, *ctx.avals_out)
+  return y.atan2(x)
+
+
+@register_lowering_rule(lax.atan2_p, mgpu.LoweringSemantics.Warpgroup)
+def _atan2_lowering_rule_wg(ctx: LoweringRuleContext, y, x):
+  y, x = _bcast_wg(y, x, *ctx.avals_in, *ctx.avals_out)
+  return math_dialect.atan2(y, x)
+
+
 @register_lowering_rule(lax.reshape_p, mgpu.LoweringSemantics.Lane)
 def _reshape_lowering_rule(
     ctx: LoweringRuleContext, x, new_sizes, dimensions, sharding
@@ -2589,12 +2628,43 @@ def _reduce_max_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
   if jnp.issubdtype(x_aval.dtype, jnp.floating):
     kind = vector_dialect.CombiningKind.MAXIMUMF
     acc = float("-inf")
-  elif jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
-    kind = vector_dialect.CombiningKind.MAXSI
+  elif jnp.issubdtype(x_aval.dtype, jnp.integer):
+    if jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
+      kind = vector_dialect.CombiningKind.MAXSI
+    else:
+      kind = vector_dialect.CombiningKind.MAXUI
+    acc = np.iinfo(x_aval.dtype).min
+  else:
+    raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
+  return _reduce_lowering_rule_wg(kind, acc, ctx, x, axes=axes).result
+
+
+@register_lowering_rule(lax.reduce_min_p, mgpu.LoweringSemantics.Warpgroup)
+def _reduce_min_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
+  [x_aval] = ctx.avals_in
+  if jnp.issubdtype(x_aval.dtype, jnp.floating):
+    kind = vector_dialect.CombiningKind.MINIMUMF
+    acc = float("inf")
+  elif jnp.issubdtype(x_aval.dtype, jnp.integer):
+    if jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
+      kind = vector_dialect.CombiningKind.MINSI
+    else:
+      kind = vector_dialect.CombiningKind.MINUI
     acc = np.iinfo(x_aval.dtype).max
-  elif jnp.issubdtype(x_aval.dtype, jnp.unsignedinteger):
-    kind = vector_dialect.CombiningKind.MAXUI
-    acc = np.iinfo(x_aval.dtype).max
+  else:
+    raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
+  return _reduce_lowering_rule_wg(kind, acc, ctx, x, axes=axes).result
+
+
+@register_lowering_rule(lax.reduce_prod_p, mgpu.LoweringSemantics.Warpgroup)
+def _reduce_prod_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
+  [x_aval] = ctx.avals_in
+  if jnp.issubdtype(x_aval.dtype, jnp.floating):
+    kind = vector_dialect.CombiningKind.MUL
+    acc = 1.0
+  elif jnp.issubdtype(x_aval.dtype, jnp.integer):
+    kind = vector_dialect.CombiningKind.MUL
+    acc = 1
   else:
     raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
   return _reduce_lowering_rule_wg(kind, acc, ctx, x, axes=axes).result
