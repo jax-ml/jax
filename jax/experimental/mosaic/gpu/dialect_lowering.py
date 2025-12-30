@@ -1091,7 +1091,7 @@ for op, source_is_signed, target_is_signed in [
 def _unary_op_lowering_rule(
     _: LoweringContext,
     op: Any,
-    impl: Callable[..., fa.FragmentedArray],
+    impl: Any,
     is_signed: bool | None = None,
 ) -> Sequence[ir.Value]:
   in_layouts = inference_utils.in_layouts(op)
