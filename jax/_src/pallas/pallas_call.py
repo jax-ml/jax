@@ -554,12 +554,9 @@ def _pallas_call_batching_rule(
         "pallas_call with a mesh does not support batching"
     )
 
-  def _maybe_squeeze_out_bdim(
-      x: jax_typing.Array, bdim: int | batching.NotMapped
-  ) -> jax_typing.Array:
-    if bdim is batching.not_mapped:
-      return x
-    return jnp.squeeze(x, axis=bdim)
+  def _maybe_squeeze_out_bdim(x: jax_typing.Array, bdim: int | batching.NotMapped
+                              ) -> jax_typing.Array:
+    return x if bdim is batching.not_mapped else jnp.squeeze(x, axis=bdim)
 
   # this is the _global_ axis size if axis_data.explicit_mesh_axis is not None
   # we want to convert it to the local axis size
@@ -573,25 +570,23 @@ def _pallas_call_batching_rule(
 
   if axis_size == 1:
     # Why are we even vmapping?
-    args = map(_maybe_squeeze_out_bdim, args, dims)
+    manual_out_avals = [
+        o.update(sharding=o.sharding.update(mesh=_as_manual_mesh(o.sharding.mesh, ema)))
+        for o in out_avals] if ema else out_avals
+    def temp_f(*args):
+      args = map(_maybe_squeeze_out_bdim, args, dims)
+      out = pallas_call_p.bind(
+          *args, jaxpr=jaxpr, grid_mapping=grid_mapping, mesh=mesh,
+          input_output_aliases=input_output_aliases, debug=debug,
+          interpret=interpret, compiler_params=compiler_params,
+          cost_estimate=cost_estimate, out_avals=tuple(manual_out_avals),
+          backend=backend, metadata=metadata, name=name)
+      return [jnp.expand_dims(x, 0) for x in out]
     if ema:
-      raise NotImplementedError()
-    out = pallas_call_p.bind(
-        *args,
-        jaxpr=jaxpr,
-        grid_mapping=grid_mapping,
-        mesh=mesh,
-        input_output_aliases=input_output_aliases,
-        debug=debug,
-        interpret=interpret,
-        compiler_params=compiler_params,
-        cost_estimate=cost_estimate,
-        out_avals=out_avals,
-        backend=backend,
-        metadata=metadata,
-        name=name,
-    )
-    return [jnp.expand_dims(x, 0) for x in out], (0,) * len(out)
+      temp_f = remove_explicit(ema)(shard_map(
+          temp_f, out_specs=P(ema), axis_names=set(ema)))
+    out = temp_f(*args)
+    return out, (0,) * len(out)
 
   # The first num_dynamic_grid_bounds arguments are size-1 arrays that store
   # the size of the dynamic bounds.
