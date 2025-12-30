@@ -417,7 +417,18 @@ def idctn(x: Array, type: int = 2,
       assert not isinstance(s, Sequence)
       s = [operator.index(s)]
 
-  axes = canonicalize_axis_tuple(axes, x.ndim)
+  if axes is None:
+    if s is None:
+      axes = tuple(range(x.ndim))
+    else:
+      if len(s) > x.ndim:
+        raise ValueError("s has more dimensions than x")
+      axes = tuple(range(x.ndim - len(s), x.ndim))
+  else:
+    axes = canonicalize_axis_tuple(axes, x.ndim)
+
+  if s is not None and len(s) != len(axes):
+    raise ValueError("len(S) must match len(axes)")
 
   if len(axes) == 1:
     return idct(x, n=s[0] if s is not None else None, axis=axes[0], norm=norm)
