@@ -2439,25 +2439,22 @@ def _sign_lowering_rule(ctx: LoweringRuleContext, x):
     signed_one = math_dialect.copysign(one, x)
     is_nonzero = arith_dialect.cmpf(arith_dialect.CmpFPredicate.ONE, x, zero)
     return arith_dialect.select(is_nonzero, signed_one, zero)
-  elif jax.numpy.issubdtype(x_aval.dtype, jax.numpy.signedinteger):
-    # For signed integers: sign(x) = (x > 0) - (x < 0)
+  elif jax.numpy.issubdtype(x_aval.dtype, jax.numpy.integer):
     mlir_dtype = mgpu_utils.dtype_to_ir_type(x_aval.dtype)
     zero = arith_dialect.constant(mlir_dtype, 0)
     if ir.VectorType.isinstance(x.type):
       zero = vector_dialect.broadcast(x.type, zero)
-    pos = arith_dialect.cmpi(arith_dialect.CmpIPredicate.sgt, x, zero)
-    neg = arith_dialect.cmpi(arith_dialect.CmpIPredicate.slt, x, zero)
-    pos_ext = arith_dialect.extui(x.type, pos)
-    neg_ext = arith_dialect.extui(x.type, neg)
-    return arith_dialect.subi(pos_ext, neg_ext)
-  elif jax.numpy.issubdtype(x_aval.dtype, jax.numpy.unsignedinteger):
-    # For unsigned integers: sign(x) = (x > 0) ? 1 : 0
-    mlir_dtype = mgpu_utils.dtype_to_ir_type(x_aval.dtype)
-    zero = arith_dialect.constant(mlir_dtype, 0)
-    if ir.VectorType.isinstance(x.type):
-      zero = vector_dialect.broadcast(x.type, zero)
-    pos = arith_dialect.cmpi(arith_dialect.CmpIPredicate.ugt, x, zero)
-    return arith_dialect.extui(x.type, pos)
+    if jax.numpy.issubdtype(x_aval.dtype, jax.numpy.signedinteger):
+      # For signed integers: sign(x) = (x > 0) - (x < 0)
+      pos = arith_dialect.cmpi(arith_dialect.CmpIPredicate.sgt, x, zero)
+      neg = arith_dialect.cmpi(arith_dialect.CmpIPredicate.slt, x, zero)
+      pos_ext = arith_dialect.extui(x.type, pos)
+      neg_ext = arith_dialect.extui(x.type, neg)
+      return arith_dialect.subi(pos_ext, neg_ext)
+    else:
+      # For unsigned integers: sign(x) = (x > 0) ? 1 : 0
+      pos = arith_dialect.cmpi(arith_dialect.CmpIPredicate.ugt, x, zero)
+      return arith_dialect.extui(x.type, pos)
   else:
     raise NotImplementedError(f"Unsupported dtype for sign: {x_aval.dtype}")
 
@@ -2622,12 +2619,12 @@ def _reduce_max_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
   if jnp.issubdtype(x_aval.dtype, jnp.floating):
     kind = vector_dialect.CombiningKind.MAXIMUMF
     acc = float("-inf")
-  elif jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
-    kind = vector_dialect.CombiningKind.MAXSI
-    acc = np.iinfo(x_aval.dtype).max
-  elif jnp.issubdtype(x_aval.dtype, jnp.unsignedinteger):
-    kind = vector_dialect.CombiningKind.MAXUI
-    acc = np.iinfo(x_aval.dtype).max
+  elif jnp.issubdtype(x_aval.dtype, jnp.integer):
+    if jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
+      kind = vector_dialect.CombiningKind.MAXSI
+    else:
+      kind = vector_dialect.CombiningKind.MAXUI
+    acc = np.iinfo(x_aval.dtype).min
   else:
     raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
   return _reduce_lowering_rule_wg(kind, acc, ctx, x, axes=axes).result
@@ -2639,11 +2636,11 @@ def _reduce_min_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
   if jnp.issubdtype(x_aval.dtype, jnp.floating):
     kind = vector_dialect.CombiningKind.MINIMUMF
     acc = float("inf")
-  elif jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
-    kind = vector_dialect.CombiningKind.MINSI
-    acc = np.iinfo(x_aval.dtype).max
-  elif jnp.issubdtype(x_aval.dtype, jnp.unsignedinteger):
-    kind = vector_dialect.CombiningKind.MINUI
+  elif jnp.issubdtype(x_aval.dtype, jnp.integer):
+    if jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
+      kind = vector_dialect.CombiningKind.MINSI
+    else:
+      kind = vector_dialect.CombiningKind.MINUI
     acc = np.iinfo(x_aval.dtype).max
   else:
     raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")

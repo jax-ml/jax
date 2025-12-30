@@ -3523,7 +3523,7 @@ class FragmentedArrayTest(TestCase):
     np.testing.assert_allclose(result, np_op(x), atol=atol, rtol=rtol)
 
   @parameterized.product(
-      dtype=[jnp.float32, jnp.int32],
+      dtype=[jnp.float32, jnp.int32, jnp.uint32],
   )
   def test_sign(self, dtype, m=64, n=32):
     def kernel(ctx, dst, _):
