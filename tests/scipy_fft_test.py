@@ -139,7 +139,7 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     self.assertArraysAllClose(actual, expected, rtol=rtol)
 
   @jtu.sample_product(func=['idctn'])
-  def testiDtcnAxes(self, func):
+  def testIdtcnAxes(self, func):
     # Test for https://github.com/jax-ml/jax/issues/29426
     x = np.array([[1,2,3]])
     kwds = dict(s=(5,))

@@ -428,7 +428,7 @@ def idctn(x: Array, type: int = 2,
     axes = canonicalize_axis_tuple(axes, x.ndim)
 
   if s is not None and len(s) != len(axes):
-    raise ValueError("len(S) must match len(axes)")
+    raise ValueError("len(s) must match len(axes)")
 
   if len(axes) == 1:
     return idct(x, n=s[0] if s is not None else None, axis=axes[0], norm=norm)
