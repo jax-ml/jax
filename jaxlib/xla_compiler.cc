@@ -1336,9 +1336,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
           nb::lock_self())
       .def(
           "num_dimensions",
-          [](const xla::HloSharding& self) {
-            return self.tile_assignment().num_dimensions();
-          },
+          [](const xla::HloSharding& self) { return self.num_dimensions(); },
           nb::lock_self())
       .def("is_tile_assignment_iota",
            [](const xla::HloSharding& self) {
@@ -1347,8 +1345,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def(
           "tile_assignment_dimensions",
           [](const xla::HloSharding& self) {
-            absl::Span<int64_t const> span =
-                self.tile_assignment().dimensions();
+            absl::Span<int64_t const> span = self.dimensions();
             CHECK(span.data());
             return span;
           },
