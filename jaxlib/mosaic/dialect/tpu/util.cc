@@ -34,6 +34,7 @@ limitations under the License.
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Value.h"
@@ -58,6 +59,7 @@ SmallVector<int64_t> ComputeTileStrides(absl::Span<const int64_t> shape,
   SmallVector<int64_t> tile_strides(shape.size());
   int64_t stride = 1;
   for (size_t i = 0; i < shape.size(); ++i) {
+    CHECK(!ShapedType::isDynamic(shape[i]));
     const size_t idx = shape.size() - 1 - i;
     tile_strides[idx] = stride;
     if (i < tiling.size()) {
