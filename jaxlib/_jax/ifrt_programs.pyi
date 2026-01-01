@@ -15,12 +15,10 @@
 from collections.abc import Sequence
 from typing import Any, overload
 
-from .import (
-    CompileOptions as _CompileOptions,
-    DeviceList as _DeviceList,
-    Device as _Device,
-)
+import jax.jaxlib._jax
 import typing_extensions
+
+import jaxlib._xla
 
 class Program:
   pass
@@ -35,7 +33,7 @@ def make_hlo_program(mlir_module: bytes) -> Program: ...
 def make_colocated_python_program(
     name: str,
     picked_function: bytes,
-    devices: Sequence[_Device] | _DeviceList,
+    devices: Sequence[jax.jaxlib._jax.Device] | jax.jaxlib._jax.DeviceList,
     input_avals: Sequence[Any],
     output_avals: Sequence[Any],
 ) -> Program: ...
@@ -44,9 +42,9 @@ def make_plugin_program(data: str) -> Program: ...
 @overload
 def make_plugin_program(data: bytes) -> Program: ...
 def make_xla_compile_options(
-    options: _CompileOptions,
-    executable_devices: Sequence[_Device],
+    options: CompileOptions,
+    executable_devices: Sequence[jax.jaxlib._jax.Device],
     host_callbacks: Sequence[typing_extensions.CapsuleType],
-) -> CompileOptions: ...
+) -> jaxlib._xla.CompileOptions: ...
 def make_colocated_python_compile_options() -> CompileOptions: ...
 def make_plugin_compile_options() -> CompileOptions: ...

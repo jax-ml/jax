@@ -17,7 +17,7 @@ from typing import Any
 from jax._src import config
 from jax._src.lib import xla_client
 
-config_ext = xla_client._xla.config
+config_ext = xla_client._jax.config
 
 
 class XlaMetadata:

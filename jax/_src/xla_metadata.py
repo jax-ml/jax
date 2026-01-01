@@ -24,7 +24,7 @@ from jax._src.interpreters import ad, batching, mlir
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 
-config_ext = xla_client._xla.config
+config_ext = xla_client._jax.config
 
 
 class _XlaMetadataWrapper:
