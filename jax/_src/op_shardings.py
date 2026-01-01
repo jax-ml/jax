@@ -32,7 +32,7 @@ def get_num_ways_dim_sharded(
     return [], 1
   if hlo_sharding.is_unreduced():
     return [], 1
-  partitions = hlo_sharding.tile_assignment_dimensions()
+  partitions = hlo_sharding.dimensions()
   subgroup_types = hlo_sharding.subgroup_types()
 
   if subgroup_types == [xc.OpSharding.Type.REPLICATED]:
