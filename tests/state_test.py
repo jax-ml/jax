@@ -1385,6 +1385,25 @@ class StateControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(a.shape, ())
     self.assertEqual(b.shape, (3,))
 
+  @parameterized.named_parameters(
+      ("call_primitive", core.call_p),
+      ("closed_call_primitive", core.closed_call_p),
+  )
+  def test_call_primitive_discharges(self, prim):
+
+    def g(y_ref, x):
+      x_ref = jax.new_ref(x)
+      y_ref[...] = jnp.exp(x_ref[...])
+      return [jax.freeze(y_ref)]
+
+    def f(x):
+      y_ref = jax.new_ref(jnp.zeros_like(x))
+      g_ = partial(g, y_ref)
+      return prim.bind(
+          lu.wrap_init(g_, debug_info=api_util.debug_info("f", g, (x,), {})), x
+      )[0]
+    out = f(4.)
+    np.testing.assert_array_equal(out, jnp.exp(4.))
 
 class GeneralRefTest(jtu.JaxTestCase):
 
