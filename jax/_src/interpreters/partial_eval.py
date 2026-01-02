@@ -2294,8 +2294,10 @@ def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
 def trace_to_jaxpr(
     fun: Callable,
     in_avals: FlatTree,  # (args, kwargs) pair
-    debug_info: core.DebugInfo
+    debug_info: core.DebugInfo,
+    *context_for_cache_key,
 ) -> tuple[ClosedJaxpr, FlatTree]:
+  del context_for_cache_key  # read implicitly, e.g. qdd state
   test_event("trace_to_jaxpr")
   config.enable_checks.value and debug_info.assert_arg_names(len(in_avals))
   parent_trace = core.trace_ctx.trace

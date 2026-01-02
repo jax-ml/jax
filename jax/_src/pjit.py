@@ -533,15 +533,17 @@ def _trace_for_jit(
       ji.in_layouts_treedef, ji.in_layouts_leaves,
       avals, dbg, device_or_backend_set, have_kwargs)
 
+  qdd_token = _qdd_cache_index(fun, in_type.vals)  # represents qdd state context
+
   with dispatch.log_elapsed_time(
       "Finished tracing + transforming {fun_name} for pjit in {elapsed_time:.9f} sec",
       fun_name(fun), event=dispatch.JAXPR_TRACE_EVENT):
     if ji.use_resource_env:  # pjit
       with (_internal_use_concrete_mesh(ctx_mesh),
             mesh_lib.use_abstract_mesh(ctx_mesh.abstract_mesh)):
-        jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg)
+        jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
     else:
-      jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg)
+      jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports
@@ -559,7 +561,6 @@ def _trace_for_jit(
   else:
     consts = []
 
-  qdd_token = _qdd_cache_index(fun, in_type.vals)
   if config.mutable_array_checks.value:
     _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), dynargs)
   _qdd_cache_update(fun, in_type.vals, qdd_token, consts,
