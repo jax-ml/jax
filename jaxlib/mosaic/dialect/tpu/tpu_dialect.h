@@ -59,7 +59,8 @@ std::pair<bool, bool> mightCommunicateBetweenChips(Operation *op);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
     int hardware_generation, std::array<int64_t, 2> target_shape,
-    const TpuTilingFlags& tpu_tiling_flags, bool align = true);
+    const TpuTilingFlags& tpu_tiling_flags, bool align = true,
+    bool infer_kernel_arguments = true);
 
 #define GEN_PASS_DECL_MOSAICSERDEPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
