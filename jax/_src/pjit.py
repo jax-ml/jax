@@ -75,8 +75,7 @@ from jax._src.tree_util import (
 from jax._src.typing import ArrayLike
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps, distributed_debug_log,
-    split_list, weakref_lru_cache, merge_lists, subs_list, fun_name,
-    fun_qual_name)
+    split_list, weakref_lru_cache, merge_lists, subs_list, fun_name)
 from jax._src.lib import jaxlib_extension_version
 
 map, unsafe_map = safe_map, map
@@ -581,7 +580,6 @@ def _trace_for_jit(
           len(donated_invars) == len(consts) + len(avals))
 
   name = getattr(fun, '__name__', '<unknown>')
-  # name = fun_qual_name(fun),
   params = dict(
       jaxpr=jaxpr,
       in_shardings=in_shardings_flat,

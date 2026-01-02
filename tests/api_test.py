@@ -56,7 +56,6 @@ from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src import debugging
-from jax._src import pjit as pjit_lib
 from jax._src import sharding_impls
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src.interpreters import ad as ad_internal
