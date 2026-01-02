@@ -89,11 +89,19 @@ class IndexType(enum.Enum):
       # We should switch to IndexError for consistency.
       raise TypeError(f"JAX does not support string indexing; got {idx=}")
     elif isinstance(idx, Sequence):
-      if not idx:  # empty indices default to float, so special-case this.
+    if not idx:
         return cls.ARRAY
-      idx_aval = api.eval_shape(array_constructors.asarray, idx)
-      if idx_aval.dtype == bool:
+    idx_arr = np.asarray(idx)
+
+    if idx_arr.dtype == bool:
         return cls.BOOLEAN
+    elif dtypes.issubdtype(idx_arr.dtype, np.integer):
+        return cls.ARRAY
+    else:
+        raise TypeError(
+            f"Indexer must have integer or boolean type, got indexer with type {idx_arr.dtype}"
+        )
+
       elif dtypes.issubdtype(idx_aval.dtype, np.integer):
         return cls.ARRAY
       else:
