@@ -41,7 +41,7 @@ from jax._src import linear_util as lu
 from jax._src import stages
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
-    tree_leaves, Partial, PyTreeDef, all_leaves, keystr, broadcast_prefix,
+    tree_leaves, Partial, PyTreeDef, keystr, broadcast_prefix,
     prefix_errors, generate_key_paths, tree_flatten_with_path,
     equality_errors_pytreedef, register_pytree_node, register_dataclass)
 from jax._src import config
@@ -2463,15 +2463,6 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
 
   # Ensure that transposed_fun is a PyTree
   return Partial(transposed_fun, const)
-
-
-def _flat_axes_specs(*args, **kwargs
-                     ) -> list[pe.AbstractedAxesSpec]:
-  if kwargs: raise NotImplementedError
-  def ax_leaf(l):
-    return (isinstance(l, dict) and all_leaves(l.values()) or
-            isinstance(l, tuple) and all_leaves(l, lambda x: x is None))
-  return broadcast_prefix(args, ax_leaf)
 
 
 @overload

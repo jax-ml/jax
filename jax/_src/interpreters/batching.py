@@ -442,15 +442,6 @@ def batch_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
   store.store(out_dims)
   return out_vals
 
-def _locate_value(key, in_vals, out_vals):
-  for ix, candidate in enumerate(in_vals):
-    if key == id(candidate):
-      return pe.InDBIdx(ix)
-  for ix, candidate in enumerate(out_vals):
-    if key == id(candidate):
-      return pe.OutDBIdx(ix)
-  assert False, "Could not find segment lengths"
-
 ### API for batching jaxprs
 
 def batch_jaxpr2(

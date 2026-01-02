@@ -1688,33 +1688,10 @@ def pjit_staging_rule(trace, source_info, *args, **params):
 pe.custom_staging_rules[jit_p] = pjit_staging_rule
 
 
-def _pjit_forwarding(jaxpr, out_shardings, out_layouts):
-  in_fwd: list[int | None] = pe._jaxpr_forwarding(jaxpr.jaxpr)
-  in_fwd = [fwd if isinstance(os, UnspecifiedValue) and ol is None else None
-            for fwd, os, ol in zip(in_fwd, out_shardings, out_layouts)]
-  keep = [f is None for f in in_fwd]
-  jaxpr = pe.prune_closed_jaxpr_outputs(jaxpr, keep)
-  out_shardings = tuple(o for o, k in zip(out_shardings, keep) if k)
-  out_layouts   = tuple(o for o, k in zip(out_layouts  , keep) if k)
-  return jaxpr, in_fwd, out_shardings, out_layouts
-
 def pjit_forwarding_rule(eqn):
   return [None] * len(eqn.outvars), eqn
 # TODO(mattjj): Remove pjit_forwarding_rule and also in staging rule.
 pe.forwarding_rules[jit_p] = pjit_forwarding_rule
-
-
-# TODO(mattjj): remove/trivialize this when jaxprs have type annotation on them,
-# since it's actually not possible in general to infer the type from the term
-def _out_type(jaxpr: core.ClosedJaxpr) -> list[core.AbstractValue]:
-  out = []
-  in_idx = {v: i for i, v in enumerate(jaxpr.jaxpr.invars)}
-  out_idx = {x: i for i, x in enumerate(jaxpr.jaxpr.invars)
-             if type(x) is core.Var}
-  for x in jaxpr.jaxpr.outvars:
-    aval = x.aval
-    out.append(aval)
-  return out
 
 
 def _pjit_typecheck(ctx_factory, *in_atoms, jaxpr, **params):

@@ -1047,22 +1047,6 @@ def _is_valid_grid_dim(dim: int | jax_typing.Array) -> bool:
   return jax_core.is_dim(dim)
 
 
-def _max_shape_from_aval(array_aval: jax_core.ShapedArray):
-  array_aval_shape = list(array_aval.shape)
-  for i, s in enumerate(array_aval.shape):
-    try:
-      aval = jax_core.get_aval(s)
-    except OverflowError as e:
-      # Note - there are annoying cases where on 32 bit hardware,
-      # a flattened index space may overflow - for these cases,
-      # we just take the shape as is.
-      # In most places, this is totally sound to do.
-      # For ragged/jumble inputs, this will fail downstream.
-      return array_aval.shape
-
-  return tuple(array_aval_shape)
-
-
 def _convert_block_spec_to_block_mapping(
     block_spec: BlockSpec,
     origin: OriginStr,

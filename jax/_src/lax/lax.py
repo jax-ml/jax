@@ -6677,13 +6677,6 @@ def _concatenate_batch_rule(batched_args, batch_dims, *, dimension):
               for op, bdim in zip(batched_args, batch_dims)]
   return concatenate(operands, dimension + 1), 0
 
-def _concatenate_pad_rule(in_avals, out_avals, *operands, dimension):
-  if all(isinstance(a.shape[dimension], (int, np.integer))
-         for a in in_avals):
-    return [concatenate(operands, dimension)]
-  else:
-    raise NotImplementedError  # TODO(mattjj)
-
 concatenate_p = standard_primitive(
     _concatenate_shape_rule, _concatenate_dtype_rule, 'concatenate',
     sharding_rule=_concatenate_sharding_rule,
@@ -7579,15 +7572,6 @@ def _reduce_sum_transpose_rule(cotangent, operand, *, axes, out_sharding):
       out_sharding=operand.aval.to_cotangent_aval().sharding)
   assert result.shape == input_shape
   return [result]
-
-def _reducer_padding(traceable, ident, in_avals, out_avals, operand, *, axes,
-                     **kwargs):
-  del out_avals
-  aval, = in_avals
-  padded_axes = [(i, d.val) for i, d in enumerate(aval.shape)
-                 if isinstance(d, pe.BoundedAxisSize)]
-  operand_ = _replace_masked_values(operand, ident(aval.dtype), padded_axes)
-  return [traceable(operand_, axes)]
 
 def _replace_masked_values(x, val, padded_axes):
   if not padded_axes: return x
