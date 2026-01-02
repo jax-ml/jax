@@ -15,8 +15,10 @@
 import concurrent.futures
 from functools import partial
 import glob
+import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -49,6 +51,136 @@ except ImportError:
 jax.config.parse_flags_with_absl()
 
 
+def _trace_viewer_json_from_xplane(pb_path: str) -> dict:
+    """Convert an xplane.pb into Trace Viewer JSON dict using xprof/tensorboard plugin."""
+    try:
+        from tensorboard_plugin_profile.convert import raw_to_tool_data as convert
+    except Exception:
+        from xprof.convert import raw_to_tool_data as convert
+
+    result, _ = convert.xspace_to_tool_data([pb_path], "trace_viewer@^", {})
+    # result is bytes
+    return json.loads(result.decode("utf-8"))
+
+
+def _count_gpu_events_from_traceevents(traceevents: list) -> int:
+    """
+    Count GPU *kernel-stream* duration events in Trace Viewer traceEvents.
+
+    - GPU PIDs are discovered via process_name metadata that CONTAINS '/device:GPU'
+    - Kernel stream TIDs are discovered via thread_name metadata containing '(Kernel)'.
+    - We count only 'ph'=='X' events with 'dur' on those (pid, tid).
+    - Fallback: if we can't find kernel tids, count all 'X' events on GPU pids.
+    """
+    # 1) Find GPU pids (process_name contains '/device:GPU')
+    gpu_pids = set()
+    for ev in traceevents:
+        if ev.get("ph") == "M" and ev.get("name") == "process_name":
+            pname = (ev.get("args") or {}).get("name", "")
+            if isinstance(pname, str) and "/device:GPU" in pname:
+                pid = ev.get("pid")
+                if pid is not None:
+                    gpu_pids.add(pid)
+
+    if not gpu_pids:
+        return 0
+
+    # 2) For each GPU pid, find tids that correspond to kernel streams
+    kernel_tids_by_pid = {pid: set() for pid in gpu_pids}
+    for ev in traceevents:
+        if ev.get("ph") == "M" and ev.get("name") == "thread_name":
+            pid = ev.get("pid")
+            tid = ev.get("tid")
+            if pid in gpu_pids and tid is not None:
+                tname = (ev.get("args") or {}).get("name", "")
+                if isinstance(tname, str) and "(Kernel)" in tname:
+                    kernel_tids_by_pid[pid].add(
+                        tid
+                    )  # Flatten kernel tids; decide whether we have a kernel-tid signal
+    have_kernel_tids = any(kernel_tids_by_pid[pid] for pid in gpu_pids)
+
+    # 3) Count events
+    count = 0
+    if have_kernel_tids:
+        for ev in traceevents:
+            if ev.get("ph") != "X":
+                continue
+            if "dur" not in ev:
+                continue
+            pid = ev.get("pid")
+            tid = ev.get("tid")
+            if pid in gpu_pids and tid in kernel_tids_by_pid.get(pid, ()):
+                count += 1
+    else:  # Fallback: count all duration events on GPU pids
+        for ev in traceevents:
+            if ev.get("ph") == "X" and "dur" in ev and ev.get("pid") in gpu_pids:
+                count += 1
+
+    return count
+
+
+def _run_child_matmul_trace_and_get_xplane(outdir: str, m: int, k: int, n: int) -> str:
+    """
+    Run a minimal JAX matmul trace in a fresh process. Returns path to *.xplane.pb.
+
+    Uses (m, k) @ (k, n) -> (m, n).
+    Each shape is run in its own child process for clean isolation and simpler attribution.
+    """
+    code = r"""
+import glob, json, os
+import jax, jax.numpy as jnp
+from jax import jit
+import jax.profiler
+
+m = int(os.environ["MATMUL_M"])
+k = int(os.environ["MATMUL_K"])
+n = int(os.environ["MATMUL_N"])
+
+@jit
+def f(a, b):
+  return jnp.dot(a, b)
+
+# (m, k) @ (k, n) -> (m, n)
+a = jnp.ones((m, k), dtype=jnp.float16)
+b = jnp.ones((k, n), dtype=jnp.float16)
+
+# Compile/warm-up outside trace.
+f(a, b).block_until_ready()
+
+outdir = os.environ["OUTDIR"]
+with jax.profiler.trace(outdir):
+  for _ in range(5):
+    f(a, b).block_until_ready()
+
+pbs = glob.glob(os.path.join(outdir, "**", "*.xplane.pb"), recursive=True)
+assert len(pbs) == 1, pbs
+print(json.dumps({"xplane": pbs[0]}))
+"""
+
+    env = os.environ.copy()
+    env["OUTDIR"] = outdir
+    env["JAX_PLATFORMS"] = "rocm"
+    env["MATMUL_M"] = str(m)
+    env["MATMUL_K"] = str(k)
+    env["MATMUL_N"] = str(n)
+
+    # Optional diagnostics
+    # env["ROCPROFILER_LOG_LEVEL"] = "trace"
+    # env["AMD_LOG_LEVEL"] = "5"
+
+    r = subprocess.run(
+        [sys.executable, "-c", code], env=env, capture_output=True, text=True
+    )
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"Child failed for shape ({m},{k})x({k},{n}).\n"
+            f"STDOUT:\n{r.stdout}\n\nSTDERR:\n{r.stderr}"
+        )
+
+    info = json.loads(r.stdout.splitlines()[-1])
+    return info["xplane"]
+  
+  
 # We do not allow multiple concurrent profiler sessions.
 @jtu.thread_unsafe_test_class()
 class ProfilerTest(unittest.TestCase):
@@ -518,6 +650,45 @@ class ProfilerTest(unittest.TestCase):
     options.advanced_configuration = advanced_config
     returned_config = options.advanced_configuration
     self.assertDictEqual(returned_config, advanced_config)
+    
+  # test if there are GPU events when doing profiling via matmul on ROCm
+  @jtu.run_on_devices("gpu")
+  @jtu.thread_unsafe_test()
+  def test_rocm_gpu_events_present_for_many_matmul_shapes(self):
+      # ROCm-only gate using supported API
+      from jax.extend import backend as jax_backend
+
+      be = jax_backend.get_backend()
+      platform_version = getattr(be, "platform_version", "") or ""
+      if "rocm" not in platform_version.lower():
+          self.skipTest(f"Not ROCm backend: {platform_version}")
+
+      # test shapes:
+      shapes = [
+          (8, 8, 8),
+          (8, 32, 32),
+          (8, 128, 128),
+          (8, 256, 8),
+          (8, 512, 8),
+          (8, 1024, 256),
+          (1024, 1024, 1024),
+      ]
+
+      for m, k, n in shapes:
+          with self.subTest(shape=f"{m}x{k}x{n}"):
+              with tempfile.TemporaryDirectory() as td:
+                  outdir = os.path.join(td, "profile")
+                  xplane = _run_child_matmul_trace_and_get_xplane(outdir, m, k, n)
+
+                  tv = _trace_viewer_json_from_xplane(xplane)
+                  traceevents = tv.get("traceEvents", [])
+                  gpu_events = _count_gpu_events_from_traceevents(traceevents)
+
+                  self.assertGreater(
+                      gpu_events,
+                      0,
+                      f"Expected >0 GPU events for matmul {m}x{n}; got {gpu_events}. xplane={xplane}",
+                  )
 
 
 if __name__ == "__main__":
