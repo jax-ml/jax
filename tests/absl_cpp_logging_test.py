@@ -12,11 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest
-
 from absl.testing import absltest
 import jax
-from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.lib import utils
 
@@ -26,7 +23,6 @@ from jax._src.lib import utils
 @jtu.skip_under_pytest("Test must run in an isolated process")
 class AbslCppLoggingTest(jtu.JaxTestCase):
 
-  @unittest.skipIf(jaxlib.version <= (0, 7, 2), "absl_set_vlog_level is broken")
   def test_vlogging(self):
     utils.absl_set_min_log_level(0)  # INFO
     with jtu.capture_stderr() as stderr:
