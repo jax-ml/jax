@@ -23,6 +23,7 @@ from jax import lax
 from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src.pallas import pallas_call
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -64,6 +65,11 @@ DTYPE_LIST = [jnp.float32, jnp.float16, jnp.bfloat16,
 
 class TritonPallasTest(PallasBaseTest):
   INTERPRET = False
+
+  def setUp(self):
+    super().setUp()
+    # Force tests to use Triton.
+    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(False))
 
   @parameterized.product(src_dtype=DTYPE_LIST, dst_dtype=DTYPE_LIST)
   def test_fp_dtype_cast(self, src_dtype, dst_dtype):
