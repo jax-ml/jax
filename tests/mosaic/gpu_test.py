@@ -483,6 +483,29 @@ class MemRefTest(TestCase):
     )(scalar)
     np.testing.assert_array_equal(res, expected)
 
+  @parameterized.parameters(gpu.Dimension.x, gpu.Dimension.y)
+  def test_cluster_ref(self, dim):
+    index = ir.IndexType.get()
+    dims = (gpu.Dimension.x, gpu.Dimension.y)
+    def kernel(ctx, src, dst, scratch):
+      smem, barrier = scratch
+      cluster_idx = tuple(gpu.cluster_block_id(dim) for dim in dims)
+      peer_idx = arith.subi(arith.constant(index, 1), cluster_idx[dim])
+      peer_smem = ctx.get_cluster_ref(smem, dim, peer_idx)
+      a = mgpu.FragmentedArray.load_strided(memref_slice(src, cluster_idx)).store_untiled(smem)
+      utils.warpgroup_barrier()
+      barrier.arrive()
+      barrier.wait()
+      mgpu.FragmentedArray.load_strided(peer_smem).store_untiled(memref_slice(dst, cluster_idx))
+
+    barrier = mgpu.ClusterBarrier(collective_dims=(dim,))
+    x = np.arange(2 * 2 * 512, dtype=jnp.float32).reshape(2, 2, 512)
+    smem = jax.ShapeDtypeStruct(shape=(x.shape[-1],), dtype=jnp.float32)
+    f = mgpu.as_gpu_kernel(
+        kernel, (2, 2, 1), (128, 1, 1), x, x, (smem, barrier), cluster=(2, 2, 1)
+    )
+    np.testing.assert_array_equal(f(x), np.flip(x, axis=int(dim)))
+
 
 def get_packed_shape(strides, shape):
   perm = sorted(range(len(strides)), key=lambda i: strides[i], reverse=True)
