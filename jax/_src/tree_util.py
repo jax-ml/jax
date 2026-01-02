@@ -1101,10 +1101,16 @@ def register_dataclass(
     if not dataclasses.is_dataclass(nodetype):
       raise TypeError("register_dataclass: data_fields and meta_fields are required when"
                       f" nodetype is not a dataclass. Got {nodetype=}.")
-    data_fields = [f.name for f in dataclasses.fields(nodetype)
-                   if not f.metadata.get('static', False)]
-    meta_fields = [f.name for f in dataclasses.fields(nodetype)
-                   if f.metadata.get('static', False)]
+    data_fields = [
+        f.name
+        for f in dataclasses.fields(nodetype)
+        if not f.metadata.get("static", False)
+    ]
+    meta_fields = [
+        f.name
+        for f in dataclasses.fields(nodetype)
+        if f.metadata.get("static", False)
+    ]
 
   assert meta_fields is not None
   assert data_fields is not None
@@ -1131,6 +1137,12 @@ def register_dataclass(
       if unexpected := {*meta_fields, *data_fields} - init_fields:
         msg += f" Unexpected fields: {unexpected}."
       raise ValueError(msg)
+
+  if overlap := set(data_fields) & set(meta_fields):
+    raise ValueError(
+        "data_fields and meta_fields must not overlap. Overlapping fields:"
+        f" {overlap}."
+    )
 
   def unflatten_func(meta, data):
     meta_args = tuple(zip(meta_fields, meta))

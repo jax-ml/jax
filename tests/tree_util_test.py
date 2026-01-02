@@ -1698,6 +1698,21 @@ class RegistrationTest(jtu.JaxTestCase):
           Foo, data_fields=["x"], meta_fields=["y", "z"]
       )
 
+  def test_register_dataclass_overlapping_fields(self):
+    @dataclasses.dataclass
+    class Foo:
+      x: int
+      y: float
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "data_fields and meta_fields must not overlap.*"
+        "Overlapping fields: {'x'}",
+    ):
+      tree_util.register_dataclass(
+          Foo, data_fields=["x", "y"], meta_fields=["x"]
+      )
+
   def test_register_dataclass_drop_fields(self):
     @dataclasses.dataclass
     class Foo:
