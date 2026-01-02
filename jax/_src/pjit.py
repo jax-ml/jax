@@ -575,6 +575,8 @@ def _trace_for_jit(
   assert (len(in_shardings_flat) == len(in_layouts_flat) ==
           len(donated_invars) == len(consts) + len(avals))
 
+  name = getattr(fun, '__name__', '<unknown>')
+  # name = fun_qual_name(fun),
   params = dict(
       jaxpr=jaxpr,
       in_shardings=in_shardings_flat,
@@ -583,7 +585,7 @@ def _trace_for_jit(
       out_layouts=out_layouts_flat,
       donated_invars=donated_invars,
       ctx_mesh=ctx_mesh,
-      name=fun_qual_name(fun),
+      name=name,
       keep_unused=ji.keep_unused,
       inline=ji.inline,
       compiler_options_kvs=ji.compiler_options_kvs,
