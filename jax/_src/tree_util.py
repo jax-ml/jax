@@ -1474,6 +1474,11 @@ class FlatTree:
     pytree = tree_unflatten(self.tree, self.vals)
     return unwrap_statics(pytree, self.statics)
 
+  @property
+  def tree_without_statics(self):
+    # hardcodes default_registry because it's used implicitly in self.flatten
+    return filter_statics_from_treedef(default_registry, self.tree, self.statics)
+
   def update(self, new_vals) -> FlatTree:
     # `new_vals` can be a generator because `FlatTree` forces it to a tuple
     new = FlatTree(new_vals, self.tree, self.statics)
@@ -1513,6 +1518,25 @@ def unwrap_statics(pytree, statics):
     return tuple(unwrap_statics(p, s) for p, s in zip(pytree, statics))
   elif isinstance(pytree, dict):
     return {k : unwrap_statics(p, statics[k]) for k, p in pytree.items()}
+  else:
+    assert False, "unreachable"
+
+def filter_statics_from_treedef(registry, treedef, statics):
+  if statics is False:
+    return treedef
+  elif statics is True:
+    assert False, "unreachable"
+  elif isinstance(statics, tuple):
+    filtered = tuple(
+        filter_statics_from_treedef(registry, td, s)
+        for td, s in zip(treedef.children(), statics) if s is not True)
+    return treedef.from_node_data_and_children(registry, treedef.node_data(), filtered)  # type: ignore
+  elif isinstance(statics, dict):
+    ty, keys = treedef.node_data()  # type: ignore
+    filtered_keys, filtered_subtrees = unzip2(
+        (k, filter_statics_from_treedef(registry, td, statics[k]))
+        for td, k in zip(treedef.children(), keys) if statics[k] is not True)
+    return treedef.from_node_data_and_children(registry, (ty, filtered_keys), filtered_subtrees)  # type: ignore
   else:
     assert False, "unreachable"
 

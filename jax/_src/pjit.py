@@ -261,8 +261,7 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 
     maybe_fastpath_data = _get_fastpath_data(
         executable, out_tree, args_flat, out_flat, jaxpr.effects, jaxpr.consts,
-        pgle_profiler,
-        const_args)
+        pgle_profiler, const_args)
 
     return outs, maybe_fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
 
@@ -312,7 +311,7 @@ def jit_eval_shape(jit_func, *args, **kwargs):
 def jit_evict_fn(self):
   self._clear_cache()
   if jaxlib_extension_version >= 392:
-    pe.trace_to_jaxpr.evict_function(self)  # cl/846898750
+    pe.trace_to_jaxpr.evict_weakref(self._fun)  # cl/846898750
   else:
     # This clears *all* jaxpr tracing caches, not just for `self`.
     pe.trace_to_jaxpr.cache_clear()
@@ -593,8 +592,8 @@ def _trace_for_jit(
       inline=ji.inline,
       compiler_options_kvs=ji.compiler_options_kvs,
   )
-  p = PjitParams(consts, params, avals.vals,
-                 avals.tree, out_avals.tree, dbg.safe_arg_names(len(avals)))
+  p = PjitParams(consts, params, avals.vals, avals.tree_without_statics,
+                 out_avals.tree, dbg.safe_arg_names(len(avals)))
   return p, p.consts + dynargs
 
 def _infer_input_type(fun: Callable, dbg: core.DebugInfo,
