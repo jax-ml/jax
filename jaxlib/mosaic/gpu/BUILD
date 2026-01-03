@@ -19,7 +19,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 load("//jaxlib:jax.bzl", "if_oss", "nanobind_extension")
 
 package(
-    default_applicable_licenses = [],
+    default_applicable_licenses = ["//jax:license"],
     default_visibility = ["//jax/experimental:mosaic_gpu_users"],
 )
 
