@@ -506,24 +506,11 @@ PyClient::CompileAndLoadIfrtProgram(
         client->ifrt_client()->GetTopologyForDevices(executable_devices));
     auto xla_options = std::make_unique<ifrt::XlaCompileOptions>(
         options, std::move(executable_devices));
-#if JAX_IFRT_VERSION_NUMBER >= 42
     TF_ASSIGN_OR_RETURN(
         ifrt_executable,
         client->ifrt_client()->GetDefaultCompiler()->Compile(
             std::make_unique<xla::ifrt::HloProgram>(std::move(module)),
             *topology, std::move(xla_options)));
-#elif JAX_IFRT_VERSION_NUMBER >= 38
-    TF_ASSIGN_OR_RETURN(
-        ifrt_executable,
-        ifrt::PjRtExecutable::Create(std::move(module), std::move(options),
-                                     *topology->description()));
-#else
-    TF_ASSIGN_OR_RETURN(
-        auto pjrt_executable,
-        PjRtCompile(std::move(options), module, *topology->description()));
-    TF_ASSIGN_OR_RETURN(ifrt_executable, ifrt::PjRtExecutable::Create(
-                                             std::move(pjrt_executable)));
-#endif
   }
   return make_nb_class<PyExecutable>(ifrt_executable);
 }

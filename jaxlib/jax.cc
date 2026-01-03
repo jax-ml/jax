@@ -582,7 +582,6 @@ NB_MODULE(_jax, m) {
   aux::RegisterTransferServerTypes(m);
 #endif  // defined(__linux__)
 
-#if JAX_IFRT_VERSION_NUMBER >= 39
   nb::class_<xla::PreemptionSyncManager> preemption_sync_manager(
       m, "PreemptionSyncManager");
   preemption_sync_manager
@@ -605,30 +604,6 @@ NB_MODULE(_jax, m) {
       });
   m.def("create_preemption_sync_manager",
         []() { return xla::CreatePreemptionSyncManager(); });
-#else
-  nb::class_<tsl::PreemptionSyncManager> preemption_sync_manager(
-      m, "PreemptionSyncManager");
-  preemption_sync_manager
-      .def(
-          "initialize",
-          [](tsl::PreemptionSyncManager& manager,
-             xla::DistributedRuntimeClient* client) {
-            tsl::CoordinationServiceAgent* agent =
-                xla::ValueOrThrow(client->GetCoordinationServiceAgent());
-            xla::ThrowIfError(manager.Initialize(agent));
-          },
-          nb::arg("distributed_client"))
-      .def("reached_sync_point",
-           [](tsl::PreemptionSyncManager& manager, int step_counter) {
-             return manager.ReachedSyncPoint(step_counter);
-           })
-      .def("shutdown", [](tsl::PreemptionSyncManager& manager) {
-        nb::gil_scoped_release gil_release;
-        manager.Shutdown();
-      });
-  m.def("create_preemption_sync_manager",
-        []() { return tsl::CreatePreemptionSyncManager(); });
-#endif
 
   nb::class_<xla::DistributedRuntimeService> distributed_runtime_service(
       m, "DistributedRuntimeService");
