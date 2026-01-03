@@ -834,18 +834,27 @@ class Compiled(Stage):
     else:
       args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
 
+    # TODO(mattjj): improve wrong-number-of-args error
     if in_tree != params.in_tree:
       errs = list(tree_util.equality_errors_pytreedef(in_tree, params.in_tree))
       msg = []
       msg.append(
-          "Function compiled with input pytree does not match the input pytree"
-          f" it was called with. There are {len(errs)} mismatches, including:")
-      for path, thing1, thing2, explanation in errs:
-        fst, *rest = path
-        base = ['args', 'kwargs'][fst.idx]
+          "Compiled function's input pytree does not match the input pytree "
+          "it was called with.\n")
+      if len(errs) == 1:
+        [((fst, *rest), thing1, thing2, explanation)] = errs
+        base = ['args', 'kwargs'][fst.idx] if kwargs else 'args'
         msg.append(
-            f"    * at {base}{tree_util.keystr(tuple(rest))}, seen {thing2} but now"
-            f" given {thing1}, so {explanation}")
+            f"At {base}{tree_util.keystr(tuple(rest))}, compiled with "
+            f"{thing2}, but now given {thing1}, so {explanation}.")
+      else:
+        msg.append("There are {len(errs)} mismatches, including:")
+        for path, thing1, thing2, explanation in errs:
+          fst, *rest = path
+          base = ['args', 'kwargs'][fst.idx]
+          msg.append(
+              f"    * at {base}{tree_util.keystr(tuple(rest))}, compiled with "
+              f"{thing2} but now given {thing1}, so {explanation}")
       raise TypeError('\n'.join(msg))
 
     if not core.trace_state_clean():
