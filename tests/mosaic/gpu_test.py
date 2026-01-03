@@ -5362,6 +5362,37 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     expected = jax.lax.broadcasted_iota(dtype, shape, dimension)
     self.assertArraysEqual(kernel(), expected)
 
+  def test_untiled_transposes(self):
+    shape = (2, 64, 64)
+    def _kernel(ctx, in_ref, out_ref, scratch_ref):
+      del ctx
+      tmp = mgpu_dialect.vector_load(in_ref)
+      # We transpose twice (effectively a no-op) because storing to
+      # non-contiguous SMEM is not well supported.
+      scratch_ref = utils.memref_transpose(scratch_ref, (1, 0, 2))
+      scratch_ref = utils.memref_transpose(scratch_ref, (1, 0, 2))
+      mgpu_dialect.vector_store(tmp, scratch_ref)
+      zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
+      mgpu_dialect.async_store(
+          scratch_ref,
+          out_ref,
+          indices=[zero_i32] * len(shape),
+          slice_lengths=shape,
+      )
+
+    dtype = jnp.float32
+    kernel = mgpu.as_gpu_kernel(
+        _kernel,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(jax.ShapeDtypeStruct(shape, dtype),),
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        smem_scratch_shape=jax.ShapeDtypeStruct(shape, dtype),
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    self.assertArraysEqual(kernel(x), x)
+
   @parameterized.parameters(
       ((4, 64, 64), [[0], [1], [2]], (4, 64, 64), False),
       ((4, 64, 64), [[0], [1, 2], [3]], (4, 4, 16, 64), False),
