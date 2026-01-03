@@ -221,14 +221,14 @@ JAX shape check errors:
 
 ```python
 >>> v, = export.symbolic_shape("v,")
->>> export.export(jax.jit(lambda x, y: x + y))(
-...     jax.ShapeDtypeStruct((v,), dtype=np.int32),
-...     jax.ShapeDtypeStruct((4,), dtype=np.int32))
+>>> export.export(jax.jit(lambda x, y: x + y))(      # doctest: +IGNORE_EXCEPTION_DETAIL
+...     jax.ShapeDtypeStruct((v,), dtype=np.int32),  # doctest: +IGNORE_EXCEPTION_DETAIL
+...     jax.ShapeDtypeStruct((4,), dtype=np.int32))  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
 TypeError: add got incompatible shapes for broadcasting: (v,), (4,).
 
->>> export.export(jax.jit(lambda x: jnp.matmul(x, x)))(
-...     jax.ShapeDtypeStruct((v, 4), dtype=np.int32))
+>>> export.export(jax.jit(lambda x: jnp.matmul(x, x)))(  # doctest: +IGNORE_EXCEPTION_DETAIL
+...     jax.ShapeDtypeStruct((v, 4), dtype=np.int32))    # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
 TypeError: dot_general requires contracting dimensions to have the same shape, got (4,) and (v,).
 

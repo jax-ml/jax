@@ -834,6 +834,7 @@ class Compiled(Stage):
     else:
       args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
 
+    # TODO(mattjj): improve wrong-number-of-args error
     if in_tree != params.in_tree:
       errs = list(tree_util.equality_errors_pytreedef(in_tree, params.in_tree))
       msg = []

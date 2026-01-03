@@ -262,13 +262,6 @@ def event_listener(name, *args):
   elif name == "batched_device_put_end":
     thread_local_state.nested_device_put_count -= 1
 
-  elif name == "pjit._infer_params_impl":
-    # For infer_params, we collect per-function data, but only while a context
-    # manager is active.
-    infer_counts = thread_local_state.infer_params_fun_counts
-    if infer_counts is not None:
-      (fun,) = args
-      infer_counts[fun] += 1
   elif name == "lower_jaxpr_to_fun":
     # For infer_params, we collect per-function data, but only while a context
     # manager is active.
@@ -296,7 +289,7 @@ def count_events(event):
 count_device_put = count_events("batched_device_put")
 count_device_put_fast_path_hit = count_events("batched_copy_array")
 count_pjit_cpp_cache_miss = count_events("jit_cpp_cache_miss")
-count_jit_tracing_cache_miss = count_events("create_pjit_jaxpr")
+count_jit_tracing_cache_miss = count_events("trace_to_jaxpr")
 count_aot_jit_cpp_cache_miss = count_events("stages_compiled_call")
 count_jit_and_pmap_lowerings = count_events("lower_jaxpr_to_module")
 count_jit_compilation_cache_miss = count_events("pxla_cached_compilation")
@@ -329,8 +322,12 @@ def count_subjaxpr_to_hlo_conversion(fun_name):
   assert thread_local_state.lower_jaxpr_to_fun_counts is None
   counts = collections.Counter()
   thread_local_state.lower_jaxpr_to_fun_counts = counts
+  def get():
+    key, *others = {k for k in counts if fun_name in k}  # type: ignore
+    if others: raise Exception(f"ambiguous name: {fun_name}")
+    return counts[key]
   try:
-    yield lambda: counts[fun_name]
+    yield get
   finally:
     thread_local_state.lower_jaxpr_to_fun_counts = None
 
