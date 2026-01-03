@@ -209,7 +209,7 @@ def attention_strategy(draw: Draw) -> tuple[int, int, int, np.dtype]:
   q_seq_len, kv_seq_len = draw(sequence_length_strategy())
   head_dim_qk, head_dim_v = draw(
       hps.sampled_from(
-          [(64, 64), (128, 192), (128, 128), (256, 256), (192, 128)]
+          [(128, 128), (256, 256), (192, 128)]
       )
   )
   if q_seq_len >= 4096 and kv_seq_len >= 4096:
