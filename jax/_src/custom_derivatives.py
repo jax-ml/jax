@@ -162,6 +162,12 @@ class custom_jvp(Generic[ReturnValue]):
 
   __getattr__ = custom_api_util.forward_attr
 
+  def __repr__(self) -> str:
+    return f"<CustomJVP of {self.fun!r}>"
+
+
+
+
   def defjvp(self,
              jvp: Callable[..., tuple[ReturnValue, ReturnValue]],
              symbolic_zeros: bool = False,
