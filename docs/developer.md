@@ -101,23 +101,23 @@ current directory.
    versions in the configuration options. Bazel will download them and use as
    target dependencies.
 
-   To download the specific versions of CUDA/CUDNN redistributions, you can use
-   the `--cuda_version` and `--cudnn_version` flags:
+   To download the specific versions of CUDA/CUDNN/NCCL redistributions, you can
+   use the `--cuda_version` and `--cudnn_version` flags:
 
    ```bash
    python build/build.py build --wheels=jax-cuda-plugin --cuda_version=12.3.2 \
-   --cudnn_version=9.1.1
+   --cudnn_version=9.1.1 --nccl_version=2.28.9
    ```
    or
    ```bash
    python build/build.py build --wheels=jax-cuda-pjrt --cuda_version=12.3.2 \
-   --cudnn_version=9.1.1
+   --cudnn_version=9.1.1  --nccl_version=2.28.9
    ```
 
    Please note that these parameters are optional: by default Bazel will
    download CUDA and CUDNN redistribution versions provided in `.bazelrc` in the
-   environment variables `HERMETIC_CUDA_VERSION` and `HERMETIC_CUDNN_VERSION`
-   respectively.
+   environment variables `HERMETIC_CUDA_VERSION`, `HERMETIC_CUDNN_VERSION` and
+   `HERMETIC_NCCL_VERSION` respectively.
 
    To point to CUDA/CUDNN/NCCL redistributions on local file system, you can use
    the following command:
