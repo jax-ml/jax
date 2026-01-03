@@ -1164,9 +1164,23 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(2 * 128, dtype=jnp.float32).reshape(2, 128)
     np.testing.assert_array_equal(kernel(x), x)
 
-  def test_indexing_before_transpose(self):
-    self.skip_if_wg_semantics()
+  def test_smem_gmem_transposed_copies(self):
+    shape = (2, 2, 64)
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+        scratch_shapes=[plgpu.SMEM(shape, jnp.float32), plgpu.Barrier()],
+    )
+    def kernel(src_ref, dst_ref, smem_ref, barrier_ref):
+      smem_ref = plgpu.transpose_ref(smem_ref, (1, 0, 2))
+      plgpu.copy_gmem_to_smem(src_ref, smem_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      plgpu.copy_smem_to_gmem(smem_ref, dst_ref)
 
+    x = jnp.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
+    np.testing.assert_array_equal(kernel(x), x)
+
+  def test_indexing_before_transpose(self):
     def kernel(x_ref, o_ref, barrier_ref):
       for i in range(2):
         plgpu.copy_gmem_to_smem(
@@ -5771,7 +5785,6 @@ class WarpSpecializedPipelineTest(PallasTest):
     )
     x = jnp.arange(16 * 256, dtype=jnp.int32).reshape(16, 256)
     np.testing.assert_array_equal(kernel_fn(x), x + 1)
-
 
 
 class WarpSpecializedPipelineWGTest(

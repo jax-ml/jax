@@ -248,7 +248,15 @@ def _copy_smem_to_gmem_lowering(
     raise NotImplementedError(
         "GMEM refs with peer ids are not supported in warpgroup lowering."
     )
-  assert not copy_params.get("gmem_transform")
+
+  match copy_params.get("gmem_transform"):
+    case None:
+      transpose = None
+    case (mgpu.TransposeTransform(permutation=permutation),):  # pytype: disable=bad-unpacking
+      transpose = mgpu.dialect.TransposeTransformAttr.get(permutation)
+    case transforms:
+      raise ValueError(f"Unsupported GMEM transforms: {transforms}")
+
   if reduction_op is not None:
     # TODO(b/415721295): Call mgpu.dialect.async_store after the if, after
     # the minimal jaxlib version is 0.8.2.
@@ -265,6 +273,7 @@ def _copy_smem_to_gmem_lowering(
         predicate=predicate,
         commit_group=commit_group,  # type: ignore[call-arg]
         reduction_op=reduction_op_attr,
+        transpose=transpose,
     )
   else:
     mgpu.dialect.async_store(
@@ -274,6 +283,7 @@ def _copy_smem_to_gmem_lowering(
         slice_lengths,
         predicate=predicate,
         commit_group=commit_group,  # type: ignore[call-arg]
+        transpose=transpose,
     )
   return ()
 
@@ -613,7 +623,15 @@ def _copy_gmem_to_smem_lowering(
   else:
     indices, slice_lengths = _split_gmem_slice(copy_params["gmem_slice"])
   assert copy_params.get("swizzle") is None
-  assert not copy_params.get("gmem_transform")
+
+  match copy_params.get("gmem_transform"):
+    case None:
+      transpose = None
+    case (mgpu.TransposeTransform(permutation=permutation),):  # pytype: disable=bad-unpacking
+      transpose = mgpu.dialect.TransposeTransformAttr.get(permutation)
+    case transforms:
+      raise ValueError(f"Unsupported GMEM transforms: {transforms}")
+
   if copy_params.get("gmem_peer_id", None) is not None:
     raise NotImplementedError(
         "GMEM refs with peer ids are not supported in warpgroup lowering."
@@ -629,6 +647,7 @@ def _copy_gmem_to_smem_lowering(
       collective=ir.ArrayAttr.get(
           [ir.IntegerAttr.get(i32, axis) for axis in collective or []]
       ),
+      transpose=transpose,
   )
   return ()
 

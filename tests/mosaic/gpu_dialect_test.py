@@ -309,6 +309,28 @@ class DialectTest(MosaicGpuTest):
     ):
       self.module.operation.verify()
 
+  def test_async_load_op_transpose_must_have_same_size_as_source_rank(self):
+    with ir.InsertionPoint(self.module.body):
+      i32 = ir.IntegerType.get_signless(32)
+      source, destination, barrier, *indices = undefs(
+          ir.MemRefType.get([4], ir.F32Type.get()),
+          ir.MemRefType.get([4], ir.F32Type.get()),
+          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          i32,
+      )
+      mgpu.dialect.async_load(
+          source,
+          destination,
+          barrier,
+          indices,
+          slice_lengths=[4],
+          collective=ir.ArrayAttr.get([]),
+          transpose=mgpu.dialect.TransposeTransformAttr.get([0, 1, 2]),
+      )
+
+    with self.assertRaisesRegex(ir.MLIRError, "transposition length mismatch"):
+      self.module.operation.verify()
+
   def test_async_store_op_source_must_be_contiguous(self):
     with ir.InsertionPoint(self.module.body):
       source, destination, *indices = undefs(
@@ -437,6 +459,25 @@ class DialectTest(MosaicGpuTest):
         "The size of `slice_lengths` must be equal to the rank of"
         " `destination`",
     ):
+      self.module.operation.verify()
+
+  def test_async_store_op_transpose_must_have_unique_indices(self):
+    with ir.InsertionPoint(self.module.body):
+      source, destination, *indices = undefs(
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.IntegerType.get_signless(32),
+          ir.IntegerType.get_signless(32),
+      )
+      mgpu.dialect.async_store(
+          source,
+          destination,
+          indices,
+          slice_lengths=[4, 8],
+          transpose=mgpu.dialect.TransposeTransformAttr.get([0, 0]),
+      )
+
+    with self.assertRaisesRegex(ir.MLIRError, "duplicate position index"):
       self.module.operation.verify()
 
   def test_wgmma_types_match(self):
