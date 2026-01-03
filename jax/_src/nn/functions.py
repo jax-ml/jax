@@ -947,8 +947,11 @@ def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
   if bias is not None:
     logits = (logits + bias).astype(logits.dtype)
 
+  if logits.dtype == jnp.float64:
+    logits = logits.astype(jnp.float32)
+
   padded_logits = _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen,
-                               local_window_size)
+                              local_window_size)
 
   # Softmax and it is always carried out in fp32.
   padded_logits = padded_logits.astype(np.float32)
