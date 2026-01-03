@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import partial
 import itertools as it
+from typing import Any
 import unittest
 
 from absl.testing import absltest, parameterized
@@ -24,6 +25,7 @@ from absl.testing import absltest, parameterized
 import jax
 import jax.numpy as jnp
 from jax import typeof
+from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
 
 from jax._src import config
 from jax._src import core
@@ -32,6 +34,7 @@ from jax._src import state
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map
 from jax._src.state.discharge import run_state
@@ -41,6 +44,9 @@ from jax._src.hijax import (HiPrimitive, HiType, Box, new_box, box_set, box_get,
 from jax.experimental.hijax import VJPHiPrimitive
 
 config.parse_flags_with_absl()
+
+if not jax._src.xla_bridge.backends_are_initialized():
+  jax.config.update('jax_num_cpu_devices', 8)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -238,6 +244,175 @@ def make_tup(*elts):
 
 def get_tuple_element(tup, idx):
   return get_tup_elt_p.bind(tup, idx=idx)
+
+@dataclass(frozen=True)
+class ImmutBox:
+  _val: Any
+
+  @property
+  def shape(self):
+    if hasattr(self._val, 'shape'):
+      return self._val.shape
+    leaves = jax.tree.leaves(self._val)
+    if leaves and hasattr(leaves[0], 'shape'):
+      return leaves[0].shape
+    raise AttributeError(f"ImmutBox with value {self._val} has no shape")
+
+  @property
+  def ndim(self):
+    return len(self.shape)
+
+def immutbox_to_aval(box: ImmutBox) -> 'ImmutBoxTy':
+  leaves, treedef = jax.tree.flatten(box._val)
+  leaf_avals = tuple(map(core.typeof, leaves))
+  return ImmutBoxTy(leaf_avals, treedef)
+
+@dataclass(frozen=True)
+class ImmutBoxTy(HiType):
+  leaf_avals: tuple[core.AbstractValue, ...]
+  treedef: Any
+  has_qdd = False
+
+  @property
+  def shape(self):
+    reconstructed = jax.tree.unflatten(self.treedef, self.leaf_avals)
+    if hasattr(reconstructed, 'shape'):
+      return reconstructed.shape
+    if self.leaf_avals and hasattr(self.leaf_avals[0], 'shape'):
+      return self.leaf_avals[0].shape
+    raise AttributeError(f"ImmutBoxTy with treedef {self.treedef} has no shape")
+
+  @property
+  def ndim(self):
+    return len(self.shape)
+
+  @property
+  def sharding(self):
+    reconstructed = jax.tree.unflatten(self.treedef, self.leaf_avals)
+    if hasattr(reconstructed, 'sharding'):
+      return reconstructed.sharding
+    if self.leaf_avals and hasattr(self.leaf_avals[0], 'sharding'):
+      return self.leaf_avals[0].sharding
+    return None
+
+  def lo_ty(self):
+    return list(self.leaf_avals)
+
+  def lower_val(self, hi_val: ImmutBox):
+    leaves, treedef = jax.tree.flatten(hi_val._val)
+    assert treedef == self.treedef
+    return leaves
+
+  def raise_val(self, *lo_vals):
+    return ImmutBox(jax.tree.unflatten(self.treedef, lo_vals))
+
+  def to_tangent_aval(self):
+    tangent_leaf_avals = tuple(aval.to_tangent_aval() for aval in self.leaf_avals)
+    return ImmutBoxTy(tangent_leaf_avals, self.treedef)
+
+def _map_immutbox_ty(size: int, axis: int | None, aval: ImmutBoxTy) -> ImmutBoxTy:
+  if axis is None:
+    return aval
+  mapped_leaf_avals = tuple(core.mapped_aval(size, axis, leaf_aval)
+                            for leaf_aval in aval.leaf_avals)
+  return ImmutBoxTy(mapped_leaf_avals, aval.treedef)
+
+def _unmap_immutbox_ty(size: int, axis: int | None, explicit_mesh_axis,
+                       aval: ImmutBoxTy) -> ImmutBoxTy:
+  if axis is None:
+    return aval
+  elif isinstance(axis, int):
+    unmapped_leaf_avals = tuple(core.unmapped_aval(size, axis, explicit_mesh_axis, leaf_aval)
+                                for leaf_aval in aval.leaf_avals)
+    return ImmutBoxTy(unmapped_leaf_avals, aval.treedef)
+  else:
+    raise TypeError(axis)
+
+core.aval_mapping_handlers[ImmutBoxTy] = (_map_immutbox_ty, _unmap_immutbox_ty)
+
+class ImmutBoxNew(HiPrimitive):
+  def is_high(self, *leaves, leaf_avals, treedef) -> bool:
+    return True
+
+  def abstract_eval(self, *leaves, leaf_avals, treedef):
+    return ImmutBoxTy(leaf_avals, treedef), set()
+
+  def to_lojax(self, *leaves, leaf_avals, treedef):
+    val = jax.tree.unflatten(treedef, leaves)
+    return ImmutBox(val)
+
+  def jvp(self, primals, tangents, *, leaf_avals, treedef):
+    return (immutbox_new_p.bind(*primals, leaf_avals=leaf_avals, treedef=treedef),
+            immutbox_new_p.bind(*tangents, leaf_avals=leaf_avals, treedef=treedef))
+
+  def transpose(self, out_bar, *leaves, leaf_avals, treedef):
+    val = out_bar._val
+    leaves, _ = jax.tree.flatten(val)
+    return leaves
+
+immutbox_new_p = ImmutBoxNew('immutbox_new')
+
+def _immutbox_new_batcher(vals_in, dims_in, *, leaf_avals, treedef):
+  # All leaves should have the same batch dimension
+  batched_leaf_avals = tuple(
+      core.mapped_aval(leaf_aval.shape[dim] if dim is not batching.not_mapped else None,
+                       dim, leaf_aval) if dim is not batching.not_mapped else leaf_aval
+      for leaf_aval, dim in zip(leaf_avals, dims_in))
+  val_out = immutbox_new_p.bind(*vals_in, leaf_avals=batched_leaf_avals, treedef=treedef)
+  # Return the same batch dimension for the output
+  return val_out, dims_in[0] if dims_in else batching.not_mapped
+
+batching.primitive_batchers[immutbox_new_p] = _immutbox_new_batcher
+
+def immutbox_new(val):
+  leaves, treedef = jax.tree.flatten(val)
+  leaf_avals = tuple(map(core.typeof, leaves))
+  return immutbox_new_p.bind(*leaves, leaf_avals=leaf_avals, treedef=treedef)
+
+class ImmutBoxGet(HiPrimitive):
+  multiple_results = True
+
+  def is_high(self, box_aval) -> bool:
+    return True
+
+  def abstract_eval(self, box_aval):
+    leaf_avals = box_aval.leaf_avals
+    return list(leaf_avals), set()
+
+  def to_lojax(self, box):
+    leaves, _ = jax.tree.flatten(box._val)
+    return tuple(leaves)
+
+  def jvp(self, primals, tangents):
+    (box,), (box_dot,) = primals, tangents
+    return immutbox_get(box), immutbox_get(box_dot)
+
+  def transpose(self, out_bars, box):
+    box_aval = core.typeof(box) if not ad.is_undefined_primal(box) else box.aval
+    treedef = box_aval.treedef
+    reconstructed_cotangent = jax.tree.unflatten(treedef, out_bars)
+    return (immutbox_new(reconstructed_cotangent),)
+
+immutbox_get_p = ImmutBoxGet('immutbox_get')
+
+def _immutbox_get_batcher(vals_in, dims_in):
+  box, = vals_in
+  dim, = dims_in
+  box_ty = core.typeof(box)
+  # Get leaves from the batched box
+  leaves = immutbox_get_p.bind(box)
+  # All output leaves should have the same batch dimension as the input
+  dims_out = (dim,) * len(leaves)
+  return leaves, dims_out
+
+batching.primitive_batchers[immutbox_get_p] = _immutbox_get_batcher
+
+def immutbox_get(box):
+  leaves = immutbox_get_p.bind(box)
+  box_ty = core.typeof(box)
+  return jax.tree.unflatten(box_ty.treedef, leaves)
+
+register_hitype(ImmutBox, immutbox_to_aval)
 
 
 class HijaxTest(jtu.JaxTestCase):
@@ -1305,7 +1480,6 @@ class BoxTest(jtu.JaxTestCase):
     compiled(box)
     self.assertAllClose(box.get(), 4.)
 
-
 class RefTest(jtu.JaxTestCase):
 
   def test_get_ref_hitype(self):
@@ -1336,35 +1510,163 @@ class RefTest(jtu.JaxTestCase):
 
 class HijaxTransformCoverageTest(jtu.JaxTestCase):
 
+  def test_sharded_hijax_jit(self):
+    mesh = jax.make_mesh((4, 2), ('x', 'y'))
+    box_sharding = NamedSharding(mesh, P('x'))
+    y_sharding = NamedSharding(mesh, P('y'))
+
+    def f(box, y):
+      val = immutbox_get(box)
+      return immutbox_new(val + y)
+
+    f_jit = jax.jit(f, in_shardings=(box_sharding, y_sharding))
+    x = jnp.arange(16.).reshape(8, 2)
+    box = immutbox_new(x)
+    y = jnp.ones((8, 2))
+    result = f_jit(box, y)
+    self.assertAllClose(immutbox_get(result), x + y)
+
+  def test_vmap_hijax(self):
+    traced_shape = [None]
+
+    def f(box, y):
+      val = immutbox_get(box)
+      # Ensure that the the traced shape lacks a batch dim
+      traced_shape[0] = val.shape
+      return immutbox_new(val @ y)
+
+    f_vmap = jax.vmap(f, in_axes=(0, None))
+    x = jnp.arange(16.).reshape(8, 2)
+    box = immutbox_new(x)
+    y = jnp.ones((2,3))
+    result = f_vmap(box, y)
+    self.assertEqual(immutbox_get(result).shape, (8,3))
+    self.assertEqual(traced_shape[0], (2,))
+
+  def test_broadcast_hijax(self):
+    def f(box, y):
+      val = immutbox_get(box)
+      return immutbox_new(val + y)
+
+    f_vmap = jax.vmap(f, in_axes=(None, 0))
+    x = jnp.arange(3.)
+    box = immutbox_new(x)
+    y = jnp.ones((2,3))
+    result = f_vmap(box, y)
+    self.assertEqual(immutbox_get(result).shape, (2,3))
+
+  def test_hijax_captured_vmap(self):
+    box = immutbox_new(jnp.arange(3.))
+    def f(y):
+      val = immutbox_get(box)
+      return immutbox_new(val + y)
+
+    f_vmap = jax.vmap(f, in_axes=(0,))
+
+    y = jnp.ones((2,3))
+    result = f_vmap(y)
+    self.assertEqual(immutbox_get(result).shape, (2,3))
+
+  def test_donate_hijax_jit(self):
+    def f(box, y):
+      val = box.get()
+      result = val + y
+      box.set(result)
+      return box.get()
+
+    f_jit = jax.jit(f, donate_argnames=('box'))
+    x = jnp.arange(16.).reshape(8, 2)
+    box = Box(x)
+    y = jnp.ones((8, 2))
+    expected_result = x + y
+    result = f_jit(box, y)
+    self.assertAllClose(result, expected_result)
+
+  def test_hitypes_eval_shape(self):
+      tup = make_tup(jnp.array(2.0), jnp.array(3.0))
+      x = jnp.array(3.0)
+
+      def loss_fn(x, tup):
+        y = get_tuple_element(tup, 1)
+        return make_tup(x ** 2 + y, y)
+
+      def capturing_loss_fn(x):
+        y = get_tuple_element(tup, 1)
+        return make_tup(x ** 2 + y, y)
+
+      inner_shape = ShapedArray(shape=[], dtype=jnp.float32, weak_type=True)
+      expected_result = TupTy((inner_shape, inner_shape))
+      self.assertEqual(jax.eval_shape(loss_fn, x, tup), expected_result)
+      self.assertEqual(jax.eval_shape(capturing_loss_fn, x), expected_result)
+
+  @parameterized.parameters([False, True])
+  def test_while_loop_hi_arg(self, jit):
+    box = immutbox_new(1.0)
+
+    def f():
+      def cond_fun(box):
+        return immutbox_get(box) < 10
+      def body_fun(box):
+        return immutbox_new(immutbox_get(box) * 2)
+      return jax.lax.while_loop(cond_fun, body_fun, box)
+
+    if jit:
+      f = jax.jit(f)
+
+    result = f()
+    self.assertAllClose(immutbox_get(result), 16, check_dtypes=False)
+
+  @absltest.skip("Box.ty has_qdd, but isn't an AvalQDD, which confuses DynamicJaxprTracer")
+  @parameterized.parameters([False, True])
+  def test_while_loop_mut_hi_arg(self, jit):
+    box = Box(1.)
+
+    def f():
+      def cond_fun(box):
+        return box.get() < 10
+      def body_fun(box):
+        box.set(box.get() * 2.)
+        return box
+      _ = jax.lax.while_loop(cond_fun, body_fun, box)
+
+    if jit:
+      f = jax.jit(f)
+
+    f()
+    self.assertAllClose(box.get(), 16, check_dtypes=False)
+
+  # ------------
+  # grad
+  # ------------
   # with differentiable hijax arguments
   def test_hitypes_as_grad_args(self):
-    tup = make_tup(jnp.array(2.0), jnp.array(3.0))
+    box = immutbox_new((jnp.array(2.0), jnp.array(3.0)))
 
     def loss_fn(tup):
-      x = get_tuple_element(tup, 0)
+      x = immutbox_get(tup)[0]
       return x ** 2
 
-    grads = jax.grad(loss_fn)(tup)
-    self.assertAllClose(get_tuple_element(grads, 0), 4.0)
+    grads = jax.grad(loss_fn)(box)
+    self.assertAllClose(immutbox_get(grads)[0], 4.0)
 
   # with non-differentiable hijax arguments
   def test_hitypes_as_nondiff_grad_args(self):
-    tup = make_tup(jnp.array(2.0), jnp.array(3.0))
+    box = immutbox_new((jnp.array(2.0), jnp.array(3.0)))
     x = jnp.array(3.0)
 
-    def loss_fn(x, tup):
-      y = get_tuple_element(tup, 1)
+    def loss_fn(x, box):
+      y = immutbox_get(box)[1]
       return x ** 2 + y
 
-    grad = jax.grad(loss_fn)(x, tup)
+    grad = jax.grad(loss_fn)(x, box)
     self.assertAllClose(grad, 6.0, check_dtypes=False)
 
   # with hijax captured arguments
   def test_hitypes_as_captured_args(self):
-    tup = make_tup(jnp.array(2.0), jnp.array(3.0))
+    box = immutbox_new((jnp.array(2.0), jnp.array(3.0)))
 
     def loss_fn(x):
-      y = get_tuple_element(tup, 1)
+      y = immutbox_get(box)[1]
       return x ** 2 + y
 
     grad = jax.grad(loss_fn)(jnp.array(4.0))
@@ -1406,7 +1708,88 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
     self.assertAllClose(box.get(), 12.0, check_dtypes=False)
     self.assertAllClose(grad, 8.0, check_dtypes=False)
 
+  #------------
+  # scan
+  #------------
+  # with hijax carry arguments
+  def test_hitypes_as_scan_carry(self):
+    box = immutbox_new((jnp.array(1.0), jnp.array(2.0)))
 
+    def body(box, _):
+      x, y = immutbox_get(box)
+      return immutbox_new((x + 1.0, y + 2.0)), None
+
+    box, _ = jax.lax.scan(body, box, None, length=5)
+    x, y = immutbox_get(box)
+    self.assertAllClose(x, 6.0, check_dtypes=False)
+    self.assertAllClose(y, 12.0, check_dtypes=False)
+
+  # with hijax extensive arguments
+  def test_hitypes_as_scan_extensive(self):
+    box = immutbox_new((jnp.arange(5), -jnp.arange(5)))
+
+    def body(_, box_i):
+      x, y = immutbox_get(box_i)
+      box_i = immutbox_new((x * 2, y * 2))
+      return None, box_i
+    _, box = jax.lax.scan(body, None, box)
+    x, y = immutbox_get(box)
+    self.assertAllClose(x, jnp.arange(5) * 2, check_dtypes=False)
+    self.assertAllClose(y, -jnp.arange(5) * 2, check_dtypes=False)
+
+  # with hijax captured arguments
+  def test_hitypes_as_scan_captured(self):
+    box = immutbox_new((jnp.array(3.0), jnp.array(4.0)))
+    carry0 = jnp.array(1.0)
+    xs = jnp.arange(5, dtype=jnp.float32)
+
+    def body(carry, x):
+      a, b = immutbox_get(box)
+      carry = a * carry + b
+      y = a * x + b
+      return carry, immutbox_new(y)
+
+    carry, ys_box = jax.lax.scan(body, carry0, xs)
+    ys = immutbox_get(ys_box)
+    self.assertAllClose(carry, 727.0, check_dtypes=False)
+    self.assertAllClose(ys, 3.0 * xs + 4.0, check_dtypes=False)
+
+  # with mutable hijax carry arguments
+  @absltest.skip("has_qdd not yet supported for Box in scan carry")
+  def test_mutable_hitypes_as_scan_carry(self):
+    box = Box(jnp.array(1.0))
+
+    def body(box, _):
+      box.set(box.get() * 2)
+      return box, None
+
+    box, _ = jax.lax.scan(body, box, None, length=5)
+    self.assertAllClose(box.get(), 32.0, check_dtypes=False)
+
+  # with mutable hijax extensive arguments
+  @absltest.skip("Box doesn't have shape attribute needed for scan extensive")
+  def test_mutable_hitypes_as_scan_extensive(self):
+    boxes = [Box(jnp.float32(i)) for i in range(5)]
+
+    def body(_, box_i):
+      val = box_i.get()
+      box_i.set(val * 2)
+      return None, box_i
+
+    _, boxes_out = jax.lax.scan(body, None, boxes)
+    for i, box in enumerate(boxes_out):
+      self.assertAllClose(box.get(), i * 2, check_dtypes=False)
+
+  # with mutable hijax captured arguments
+  def test_mutable_hitypes_as_scan_captured(self):
+    box = Box(jnp.array(3.0))
+
+    def body(_, __):
+      box.set(box.get() + 1.0)
+      return None, None
+
+    jax.lax.scan(body, None, None, length=5)
+    self.assertAllClose(box.get(), 8.0, check_dtypes=False)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
