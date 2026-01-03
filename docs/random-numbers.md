@@ -32,7 +32,7 @@ To better understand the difference between the approaches taken by JAX and NumP
 ## Random numbers in NumPy
 
 Pseudo random number generation is natively supported in NumPy by the {mod}`numpy.random` module.
-Modern Numpy encourages using local generator objects `numpy.random.default_rng` for reproducible results, while legacy functions like `numpy.random.seed()` operate on a global state.
+Modern NumPy encourages using local generator objects `numpy.random.default_rng` for reproducible results, while legacy functions like `numpy.random.seed()` operate on a global state.
 
 ```{code-cell}
 import numpy as np
@@ -94,8 +94,8 @@ print("all at once: ", np.random.uniform(size=3))
 
 ## Random numbers in JAX
 
-JAX's random number generation differs in thet it tracks PRING state explicitly via Keys.
-This design ensures reproducibility, parallelism, and vectorization, while still allowing fair comparision with modern numy generators.
+JAX's random number generation differs in that it tracks PRNG state explicitly via keys.
+This design ensures reproducibility, parallelism, and vectorization, while still allowing fair comparison with modern NumPy generators.
 Specifically, in JAX we want PRNG generation to be:
 
 1. reproducible,
