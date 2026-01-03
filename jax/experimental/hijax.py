@@ -23,6 +23,10 @@ from jax._src.core import (
     ShapedArray as ShapedArray,
     aval_method as aval_method,
     aval_property as aval_property,
+    AvalMutableQDD as AvalMutableQDD,
+)
+from jax._src.interpreters.ad import (
+    is_undefined_primal as is_undefined_primal,
 )
 from jax._src.effects import (
     control_flow_allowed_effects as control_flow_allowed_effects,
@@ -33,6 +37,7 @@ from jax._src.hijax import (
     MutableHiType as MutableHiType,
     VJPHiPrimitive as VJPHiPrimitive,
     register_hitype as register_hitype,
+    VJPHiPrimitive as VJPHiPrimitive,
 )
 from jax._src.state import (
     AbstractRef as AbstractRef,
