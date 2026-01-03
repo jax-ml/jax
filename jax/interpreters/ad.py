@@ -40,7 +40,6 @@ from jax._src.interpreters.ad import (
   linearize as linearize,
   primitive_jvps as primitive_jvps,
   primitive_transposes as primitive_transposes,
-  reducing_transposes as reducing_transposes,
   zeros_like_aval as zeros_like_aval,
 )
 
@@ -139,6 +138,14 @@ _deprecations = {
         "jax.interpreters.ad.zero_jvp is deprecated.",
         _src_ad.zero_jvp,
     ),
+    # Deprecated for JAX v0.9.0; finalize in JAX v0.10.0.
+    "reducing_transposes": (
+        (
+            "jax.interpreters.ad.reducing_transposes is deprecated in JAX v0.9.0."
+            " It has been unused since v0.4.38."
+        ),
+        _src_ad.reducing_transposes,
+    ),
 }
 
 import typing
@@ -161,6 +168,7 @@ if typing.TYPE_CHECKING:
   nonzero_outputs = _src_ad.nonzero_outputs
   nonzero_tangent_outputs = _src_ad.nonzero_tangent_outputs
   rearrange_binders = _src_ad.rearrange_binders
+  reducing_transposes = _src_ad.reducing_transposes
   standard_jvp = _src_ad.standard_jvp
   standard_jvp2 = _src_ad.standard_jvp2
   traceable = _src_ad.traceable
