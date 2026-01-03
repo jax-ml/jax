@@ -29,6 +29,7 @@ from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
+from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import math as mlir_math
 from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import vector
@@ -2241,6 +2242,7 @@ class FragmentedArray:
     if isinstance(axis, int):
       axis = (axis,)
     splat_op = None
+    redux_op = None
     if isinstance(op, str):
       match op:
         case "add":
@@ -2248,18 +2250,25 @@ class FragmentedArray:
           if ir.FloatType.isinstance(self.mlir_dtype):
             op = addf
             splat_op = lambda x: arith.mulf(x, c(reduced_elems, x.type))
+            # TODO(apaszke): Use redux.sync on Blackwell for f32.
           elif ir.IntegerType.isinstance(self.mlir_dtype):
             op = arith.addi
             splat_op = lambda x: arith.muli(x, c(reduced_elems, x.type))
+            if utils.bitwidth(self.mlir_dtype) == 32:
+              redux_op = functools.partial(utils.redux, kind=nvvm.ReduxKind.ADD)
           else:
             raise NotImplementedError(self.mlir_dtype)
         case "max":
           if ir.F32Type.isinstance(self.mlir_dtype):
             op = self._lift_fast_instr("max.NaN.f32")
+            # TODO(apaszke): Use redux.sync on Blackwell.
           elif ir.FloatType.isinstance(self.mlir_dtype):
             op = arith.maximumf
           elif ir.IntegerType.isinstance(self.mlir_dtype):
             op = arith.maxsi if self.is_signed else arith.maxui
+            if utils.bitwidth(self.mlir_dtype) == 32:
+              kind = nvvm.ReduxKind.MAX if self.is_signed else nvvm.ReduxKind.UMAX
+              redux_op = functools.partial(utils.redux, kind=kind)
           else:
             raise NotImplementedError(self.mlir_dtype)
           splat_op = lambda x: x
@@ -2352,21 +2361,57 @@ class FragmentedArray:
         )
       # Reduce across warp lanes, if necessary (using warp shuffles).
       if any(reduced_dims[d] for d in layout.partitioned_lane_dims):
-        lane_stride = 1
-        for d in layout.lane_dims[::-1]:  # Iterate minor-to-major
-          if isinstance(d, Replicated):
-            lane_stride *= d.times
-          elif not reduced_dims[d]:
-            lane_stride *= tiled_tiling_shape[d]
-          else:
-            assert lane_stride.bit_count() == 1
-            reduction_size = tiled_tiling_shape[d]
-            while reduction_size > 1:
-              other_out_reg = utils.shfl_bfly(out_reg, lane_stride)
-              out_reg = op(out_reg, other_out_reg)
-              lane_stride *= 2
-              reduction_size //= 2
-        assert lane_stride == WARP_SIZE, lane_stride
+        if redux_op is not None:
+          mask = [True]  # The bit significance grows together with the index.
+          mask_shift_bits = 0
+          lane_stride = 1
+          for d in layout.lane_dims[::-1]:
+            if isinstance(d, Replicated):
+              size = d.times
+              reduced = False
+            else:
+              size = tiled_tiling_shape[d]
+              reduced = reduced_dims[d]
+            if reduced:
+              mask = mask * size
+            else:
+              mask += [False] * (len(mask) * (size - 1))
+              # This could really be computed as:
+              #     d_idx = (lane_index // lane_stride) % size
+              #     mask_shift += d_idx * lane_stride
+              # but if you look closely enough and realize that strides/sizes
+              # are powers of 2, the div/mod/mul is just an AND, and + is an OR:
+              #     mask_shift |= lane_index & ((size - 1) * lane_stride)
+              # What's more, instead of repeatedly doing the AND/OR, we can just
+              # compute which bits of the lane_index we want to use statically,
+              # and use a single AND operation to extract them after the loop.
+              assert lane_stride.bit_count() == 1 and size.bit_count() == 1
+              mask_shift_bits |= (size - 1) * lane_stride
+            lane_stride *= size
+          mask = sum(1 << i for i, m in enumerate(mask) if m)
+          lane_index = arith.remui(utils.thread_idx(), c(utils.WARP_SIZE, i32))
+          mask_shift = arith.andi(lane_index, arith.constant(i32, mask_shift_bits))
+          dyn_mask = arith.shli(arith.constant(i32, mask), mask_shift)
+          out_reg = redux_op(out_reg, dyn_mask)
+        else:
+          lane_stride = 1
+          for d in layout.lane_dims[::-1]:  # Iterate minor-to-major
+            if isinstance(d, Replicated):
+              lane_stride *= d.times
+            elif not reduced_dims[d]:
+              lane_stride *= tiled_tiling_shape[d]
+            else:
+              assert lane_stride.bit_count() == 1
+              reduction_size = tiled_tiling_shape[d]
+              while reduction_size > 1:
+                other_out_reg = utils.shfl_bfly(out_reg, lane_stride)
+                out_reg = op(out_reg, other_out_reg)
+                lane_stride *= 2
+                reduction_size //= 2
+          assert lane_stride == WARP_SIZE, lane_stride
+      # TODO(apaszke): At the moment we do a barrier for every output register,
+      # which is very expensive. If we have enough scratch, we should just try
+      # using a single barrier for multiple reductions.
       # Reduce across warps in the warpgroup, if necessary.
       if any(reduced_dims[d] for d in layout.partitioned_warp_dims):
         if scratch is None:

@@ -6427,7 +6427,8 @@ if hp is not None:
         rank = len(shape)
         reduced_dims = draw(hps.sets(hps.integers(0, rank - 1), min_size=1))
         dtype = draw(hps.sampled_from([jnp.int32, jnp.int16]))
-        return shape, layout, tuple(reduced_dims), dtype
+        op = draw(hps.sampled_from(["add", "max"]))
+        return shape, layout, tuple(reduced_dims), dtype, op
 
       warp_replicated_major = fa.TiledLayout(
           fa.Tiling(((2,), (1,))), (fa.Replicated(2,), -2), (fa.Replicated(32,),), -1
@@ -6438,21 +6439,35 @@ if hp is not None:
       warp_row_col_layout = fa.TiledLayout(
           fa.Tiling(((2, 2), (1,))), (-3, -2), (fa.Replicated(32,),), -1
       )
+      even_lane_split_layout = fa.TiledLayout(
+          fa.Tiling(((8,), (4,), (2,), (1,))),
+          (fa.Replicated(4),),
+          (-4, fa.Replicated(2), -3, fa.Replicated(2), -2),
+          -1,
+      )
+      odd_lane_split_layout = fa.TiledLayout(
+          fa.Tiling(((4,), (2,), (1,))),
+          (fa.Replicated(4),),
+          (fa.Replicated(2), -3, fa.Replicated(2), -2, fa.Replicated(2)),
+          -1,
+      )
 
       @hp.given(strategy())
-      @hp.example(((16,), warp_replicated_major, (0,), jnp.int32))
-      @hp.example(((16,), warp_replicated_minor, (0,), jnp.int32))
-      @hp.example(((16, 16), warp_row_col_layout, (0,), jnp.int32))
-      @hp.example(((16, 16), warp_row_col_layout, (1,), jnp.int32))
+      @hp.example(((16,), warp_replicated_major, (0,), jnp.int32, "add"))
+      @hp.example(((16,), warp_replicated_minor, (0,), jnp.int32, "add"))
+      @hp.example(((16, 16), warp_row_col_layout, (0,), jnp.int32, "add"))
+      @hp.example(((16, 16), warp_row_col_layout, (1,), jnp.int32, "add"))
+      @hp.example(((256,), even_lane_split_layout, (0,), jnp.int32, "max"))
+      @hp.example(((256,), odd_lane_split_layout, (0,), jnp.int32, "max"))
       def run(args):
-        shape, layout, reduced_dims, dtype = args
+        shape, layout, reduced_dims, dtype, op = args
         out_shape = list(shape)
         for d in sorted(reduced_dims, reverse=True):
           del out_shape[d]
         def kernel(ctx, src, dst, scratch):
           del ctx
           arr = fa.FragmentedArray.load_untiled(src, layout=layout, optimized=False, is_signed=True)
-          arr.reduce("add", reduced_dims, scratch).store_untiled(dst, optimized=False)
+          arr.reduce(op, reduced_dims, scratch).store_untiled(dst, optimized=False)
         x = jax.random.randint(jax.random.key(1234), shape, -1000, 1000, dtype)
         out_type = jax.ShapeDtypeStruct(out_shape, dtype)
         scratch_type = jax.ShapeDtypeStruct((2048,), dtype)
@@ -6464,7 +6479,11 @@ if hp is not None:
         except NotImplementedError:
           hp.assume(False)
           return
-        np.testing.assert_array_equal(result, x.sum(reduced_dims, dtype=dtype))
+        if op == "max":
+          ref = x.max(reduced_dims)
+        else:
+          ref = x.sum(reduced_dims, dtype=dtype)
+        np.testing.assert_array_equal(result, ref)
       run()
 
     def test_slice(self):
