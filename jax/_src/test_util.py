@@ -425,6 +425,9 @@ def is_tsan():
 def is_sanitized():
   return _jaxlib._jax.is_sanitized()
 
+def is_free_threading_active() -> bool:
+  return not sys._is_gil_enabled() if hasattr(sys, "_is_gil_enabled") else False
+
 # Returns True if it is not cloud TPU. If it is cloud TPU, returns True if it is
 # built at least `date``.
 # TODO(b/327203806): after libtpu adds a XLA version and the oldest support
