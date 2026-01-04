@@ -1586,3 +1586,11 @@ pytype_strict_library(
     srcs = ["ref.py"],
     deps = [":core"],
 )
+pytype_strict_library(
+    name = "utils",
+    srcs = ["util.py"],
+    deps = [
+        ":config",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
