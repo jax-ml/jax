@@ -22,6 +22,14 @@ package(default_applicable_licenses = [])
 jax_generate_backend_suites()
 
 py_library(
+    name = "jax2tf_tests",
+    srcs = [
+        "__init__.py",
+    ],
+    visibility = ["//jax:internal"],
+)
+
+py_library(
     name = "jax2tf_limitations",
     srcs = [
         "jax2tf_limitations.py",

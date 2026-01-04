@@ -137,24 +137,31 @@ jax_source_package(
 
 genrule(
     name = "wheel_additives",
+    testonly = True,
     srcs = [
         "//jax/_src:internal_test_harnesses",
         "//jax/_src:internal_test_util",
         "//jax/_src:internal_export_back_compat_test_util",
         "//jax/_src:internal_export_back_compat_test_data",
+        "//jax/experimental/jax2tf/tests:jax2tf_tests",
         "//jax/experimental/jax2tf/tests:tf_test_util",
         "//jax/experimental/mosaic/gpu/examples:flash_attention.py",
+        "//jax/experimental/mosaic/gpu/examples:gpu_examples",
         "//jax/experimental/mosaic/gpu/examples:matmul.py",
+        "//jax/experimental/mosaic/gpu/examples:matmul_blackwell",
         "//jax/_src:test_multiprocess",
         "//jax/_src/pallas:pallas_test_util",
+        "//jax/experimental:mosaic_gpu_test_util",
     ],
     outs = ["wheel_additives.zip"],
     cmd = "$(location @bazel_tools//tools/zip:zipper) c $@ $(SRCS)",
     tools = ["@bazel_tools//tools/zip:zipper"],
+    visibility = ["//visibility:public"],
 )
 
 py_import(
     name = "jax_py_import",
+    testonly = True,
     wheel = ":jax_wheel",
     zip_deps = [":wheel_additives"],
 )
@@ -164,6 +171,7 @@ py_import(
 # the jax wheel, but share the same package paths as the modules in the jax wheel.
 py_import(
     name = "jax_wheel_with_internal_test_util",
+    testonly = True,
     wheel = "@pypi_jax//:whl",
     zip_deps = [":wheel_additives"],
 )
