@@ -185,8 +185,8 @@ LogicalResult MemRefSliceOp::verify() {
         "References to semaphore memory space must have a semaphore element "
         "type.");
   }
-  if (indices.size() != slice_shape.size() ||
-      indices.size() != source_shape.size()) {
+  const int64_t rank = source_shape.size();
+  if (rank != slice_shape.size() || rank != indices.size()) {
     return emitOpError("Indices and slice shapes must match.");
   }
   // TODO(apaszke): Check that the result has a smaller shape.
@@ -212,20 +212,10 @@ LogicalResult MemRefSliceOp::verify() {
             source_type.getStridesAndOffset(source_strides, source_offset))) {
       return failure();
     }
-    int64_t target_offset = source_offset;
-    if (target_offset != ShapedType::kDynamic) {
-      for (auto [base_idx, source_stride] :
-           llvm::zip(getBaseIdx(), source_strides)) {
-        if (auto idx = getConstantIntValue(base_idx)) {
-          target_offset += *idx * source_stride;
-        } else {
-          target_offset = ShapedType::kDynamic;
-          break;
-        }
-      }
-    }
+    const int64_t expected_offset =
+        rank == 0 ? source_offset : ShapedType::kDynamic;
     auto expected_layout =
-        StridedLayoutAttr::get(getContext(), target_offset, source_strides);
+        StridedLayoutAttr::get(getContext(), expected_offset, source_strides);
     if (target_layout != expected_layout) {
       return emitOpError("Layout mismatch: got ")
              << target_layout << ", expected " << expected_layout << ".";
