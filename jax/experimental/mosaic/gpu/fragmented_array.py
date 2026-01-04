@@ -1662,6 +1662,63 @@ class FragmentedArray:
         self._lift_fast_instr("rsqrt.approx.f32") if approx else mlir_math.rsqrt
     )
 
+  def abs(self) -> FragmentedArray:
+    if ir.FloatType.isinstance(self.mlir_dtype):
+      return self._pointwise(mlir_math.absf)
+    elif ir.IntegerType.isinstance(self.mlir_dtype):
+      return self._pointwise(mlir_math.absi)
+    else:
+      raise NotImplementedError(self.mlir_dtype)
+
+  def sign(self) -> FragmentedArray:
+    if ir.FloatType.isinstance(self.mlir_dtype):
+      # For floats: sign(x) = copysign(1.0, x) if x != 0 else 0
+      # We use: sign(x) = copysign(1.0, x) * (x != 0)
+      dtype = self.mlir_dtype
+      one = arith.constant(dtype, ir.FloatAttr.get(dtype, 1.0))
+      zero = arith.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
+      def float_sign(x):
+        one_val = one
+        zero_val = zero
+        if ir.VectorType.isinstance(x.type):
+          one_val = vector.broadcast(x.type, one)
+          zero_val = vector.broadcast(x.type, zero)
+        signed_one = mlir_math.copysign(one_val, x)
+        is_nonzero = arith.cmpf(arith.CmpFPredicate.ONE, x, zero_val)
+        return arith.select(is_nonzero, signed_one, zero_val)
+      return self._pointwise(float_sign)
+    elif ir.IntegerType.isinstance(self.mlir_dtype):
+      # For integers: sign(x) = (x > 0) - (x < 0)
+      int_dtype = self.mlir_dtype
+      zero_scalar = arith.constant(int_dtype, 0)
+      is_signed = self.is_signed
+      def int_sign(x):
+        zero = zero_scalar
+        if ir.VectorType.isinstance(x.type):
+          zero = vector.broadcast(x.type, zero_scalar)
+        if is_signed:
+          pos = arith.cmpi(arith.CmpIPredicate.sgt, x, zero)
+          neg = arith.cmpi(arith.CmpIPredicate.slt, x, zero)
+        else:
+          pos = arith.cmpi(arith.CmpIPredicate.ugt, x, zero)
+          neg = arith.cmpi(arith.CmpIPredicate.ult, x, zero)
+        pos_ext = arith.extui(x.type, pos)
+        neg_ext = arith.extui(x.type, neg)
+        return arith.subi(pos_ext, neg_ext)
+      return self._pointwise(int_sign, output_is_signed=is_signed)
+    else:
+      raise NotImplementedError(self.mlir_dtype)
+
+  def erf(self) -> FragmentedArray:
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError(self.mlir_dtype)
+    return self._pointwise(mlir_math.erf)
+
+  def atan2(self, other: FragmentedArray) -> FragmentedArray:
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError(self.mlir_dtype)
+    return self._pointwise(mlir_math.atan2, other)
+
   @staticmethod
   def _lift_fast_instr(
       instr: str | Callable[[ir.Value], ir.Value],
@@ -2263,6 +2320,30 @@ class FragmentedArray:
           else:
             raise NotImplementedError(self.mlir_dtype)
           splat_op = lambda x: x
+        case "min":
+          if ir.F32Type.isinstance(self.mlir_dtype):
+            op = self._lift_fast_instr("min.NaN.f32")
+          elif ir.FloatType.isinstance(self.mlir_dtype):
+            op = arith.minimumf
+          elif ir.IntegerType.isinstance(self.mlir_dtype):
+            op = arith.minsi if self.is_signed else arith.minui
+          else:
+            raise NotImplementedError(self.mlir_dtype)
+          splat_op = lambda x: x
+        case "prod":
+          reduced_elems = math.prod(self.shape[a] for a in axis)
+          if ir.FloatType.isinstance(self.mlir_dtype):
+            op = arith.mulf
+            # For splat, prod(x, x, ..., x) = x^n
+            splat_op = lambda x: mlir_math.powf(
+                x, c(float(reduced_elems), x.type)
+            )
+          elif ir.IntegerType.isinstance(self.mlir_dtype):
+            op = arith.muli
+            # For integer splat, we cannot easily compute x^n, so raise error
+            splat_op = None
+          else:
+            raise NotImplementedError(self.mlir_dtype)
         case _:
           raise ValueError(f"Unrecognized reduction operator: {op}")
     assert not isinstance(op, str)

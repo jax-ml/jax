@@ -365,6 +365,8 @@ REDUCE_SCRATCH_ELEMS = 128 * 2  # vector of 2 elements per lane in each WG
 
 @_register_resource_estimator(lax.reduce_sum_p)
 @_register_resource_estimator(lax.reduce_max_p)
+@_register_resource_estimator(lax.reduce_min_p)
+@_register_resource_estimator(lax.reduce_prod_p)
 def _reduce_resource_estimator(
     ctx: ResourceEstimatorContext, x_aval: jax_core.ShapedArray, *, axes,
     **kwargs
@@ -2404,6 +2406,79 @@ def _log_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
   return math_dialect.log(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
 
 
+@register_lowering_rule(lax.abs_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(lax.abs_p, mgpu.LoweringSemantics.Warpgroup)
+def _abs_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    return _ensure_fa(x, x_aval.dtype).abs()
+  x = _ensure_ir_value(x, x_aval.dtype)
+  if jax.numpy.issubdtype(x_aval.dtype, jax.numpy.floating):
+    return math_dialect.absf(x)
+  elif jax.numpy.issubdtype(x_aval.dtype, jax.numpy.integer):
+    return math_dialect.absi(x)
+  else:
+    raise NotImplementedError(f"Unsupported dtype for abs: {x_aval.dtype}")
+
+
+@register_lowering_rule(lax.sign_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(lax.sign_p, mgpu.LoweringSemantics.Warpgroup)
+def _sign_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    return _ensure_fa(x, x_aval.dtype).sign()
+  x = _ensure_ir_value(x, x_aval.dtype)
+  if jax.numpy.issubdtype(x_aval.dtype, jax.numpy.floating):
+    # For floats: sign(x) = copysign(1.0, x) if x != 0 else 0
+    mlir_dtype = mgpu_utils.dtype_to_ir_type(x_aval.dtype)
+    one = arith_dialect.constant(mlir_dtype, ir.FloatAttr.get(mlir_dtype, 1.0))
+    zero = arith_dialect.constant(mlir_dtype, ir.FloatAttr.get(mlir_dtype, 0.0))
+    if ir.VectorType.isinstance(x.type):
+      one = vector_dialect.broadcast(x.type, one)
+      zero = vector_dialect.broadcast(x.type, zero)
+    signed_one = math_dialect.copysign(one, x)
+    is_nonzero = arith_dialect.cmpf(arith_dialect.CmpFPredicate.ONE, x, zero)
+    return arith_dialect.select(is_nonzero, signed_one, zero)
+  elif jax.numpy.issubdtype(x_aval.dtype, jax.numpy.integer):
+    mlir_dtype = mgpu_utils.dtype_to_ir_type(x_aval.dtype)
+    zero = arith_dialect.constant(mlir_dtype, 0)
+    if ir.VectorType.isinstance(x.type):
+      zero = vector_dialect.broadcast(x.type, zero)
+    if jax.numpy.issubdtype(x_aval.dtype, jax.numpy.signedinteger):
+      # For signed integers: sign(x) = (x > 0) - (x < 0)
+      pos = arith_dialect.cmpi(arith_dialect.CmpIPredicate.sgt, x, zero)
+      neg = arith_dialect.cmpi(arith_dialect.CmpIPredicate.slt, x, zero)
+      pos_ext = arith_dialect.extui(x.type, pos)
+      neg_ext = arith_dialect.extui(x.type, neg)
+      return arith_dialect.subi(pos_ext, neg_ext)
+    else:
+      # For unsigned integers: sign(x) = (x > 0) ? 1 : 0
+      pos = arith_dialect.cmpi(arith_dialect.CmpIPredicate.ugt, x, zero)
+      return arith_dialect.extui(x.type, pos)
+  else:
+    raise NotImplementedError(f"Unsupported dtype for sign: {x_aval.dtype}")
+
+
+@register_lowering_rule(lax.erf_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(lax.erf_p, mgpu.LoweringSemantics.Warpgroup)
+def _erf_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    return _ensure_fa(x, x_aval.dtype).erf()
+  return math_dialect.erf(_ensure_ir_value(x, x_aval.dtype))
+
+
+@register_lowering_rule(lax.atan2_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(lax.atan2_p, mgpu.LoweringSemantics.Warpgroup)
+def _atan2_lowering_rule(ctx: LoweringRuleContext, y, x):
+  [y_aval, x_aval] = ctx.avals_in
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    return _ensure_fa(y, y_aval.dtype).atan2(_ensure_fa(x, x_aval.dtype))
+  return math_dialect.atan2(
+      _ensure_ir_value(y, y_aval.dtype), _ensure_ir_value(x, x_aval.dtype)
+  )
+
+
 @register_lowering_rule(lax.reshape_p, mgpu.LoweringSemantics.Lane)
 def _reshape_lowering_rule(
     ctx: LoweringRuleContext, x, new_sizes, dimensions, sharding
@@ -2492,6 +2567,12 @@ register_lowering_rule(lax.reduce_sum_p, mgpu.LoweringSemantics.Lane)(
 register_lowering_rule(lax.reduce_max_p, mgpu.LoweringSemantics.Lane)(
     functools.partial(_reduce_lowering_rule, "max")
 )
+register_lowering_rule(lax.reduce_min_p, mgpu.LoweringSemantics.Lane)(
+    functools.partial(_reduce_lowering_rule, "min")
+)
+register_lowering_rule(lax.reduce_prod_p, mgpu.LoweringSemantics.Lane)(
+    functools.partial(_reduce_lowering_rule, "prod")
+)
 
 def _reduce_lowering_rule_wg(
     kind: vector_dialect.CombiningKind,
@@ -2538,12 +2619,43 @@ def _reduce_max_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
   if jnp.issubdtype(x_aval.dtype, jnp.floating):
     kind = vector_dialect.CombiningKind.MAXIMUMF
     acc = float("-inf")
-  elif jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
-    kind = vector_dialect.CombiningKind.MAXSI
+  elif jnp.issubdtype(x_aval.dtype, jnp.integer):
+    if jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
+      kind = vector_dialect.CombiningKind.MAXSI
+    else:
+      kind = vector_dialect.CombiningKind.MAXUI
+    acc = np.iinfo(x_aval.dtype).min
+  else:
+    raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
+  return _reduce_lowering_rule_wg(kind, acc, ctx, x, axes=axes).result
+
+
+@register_lowering_rule(lax.reduce_min_p, mgpu.LoweringSemantics.Warpgroup)
+def _reduce_min_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
+  [x_aval] = ctx.avals_in
+  if jnp.issubdtype(x_aval.dtype, jnp.floating):
+    kind = vector_dialect.CombiningKind.MINIMUMF
+    acc = float("inf")
+  elif jnp.issubdtype(x_aval.dtype, jnp.integer):
+    if jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
+      kind = vector_dialect.CombiningKind.MINSI
+    else:
+      kind = vector_dialect.CombiningKind.MINUI
     acc = np.iinfo(x_aval.dtype).max
-  elif jnp.issubdtype(x_aval.dtype, jnp.unsignedinteger):
-    kind = vector_dialect.CombiningKind.MAXUI
-    acc = np.iinfo(x_aval.dtype).max
+  else:
+    raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
+  return _reduce_lowering_rule_wg(kind, acc, ctx, x, axes=axes).result
+
+
+@register_lowering_rule(lax.reduce_prod_p, mgpu.LoweringSemantics.Warpgroup)
+def _reduce_prod_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
+  [x_aval] = ctx.avals_in
+  if jnp.issubdtype(x_aval.dtype, jnp.floating):
+    kind = vector_dialect.CombiningKind.MUL
+    acc = 1.0
+  elif jnp.issubdtype(x_aval.dtype, jnp.integer):
+    kind = vector_dialect.CombiningKind.MUL
+    acc = 1
   else:
     raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
   return _reduce_lowering_rule_wg(kind, acc, ctx, x, axes=axes).result
