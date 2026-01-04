@@ -2996,11 +2996,17 @@ def eval_shape(fun: Callable, *args, **kwargs):
   >>> print(out.dtype)
   float32
   """
+  return trace(fun, *args, **kwargs).out_info  # type: ignore
+
+
+@api_boundary
+def trace(fun: Callable, *args, **kwargs):
   if type(fun) is xc._xla.PjitFunction:
-    return fun.trace(*args, **kwargs).out_info  # type: ignore
+    return fun.trace(*args, **kwargs)
   try: hash(fun)
   except TypeError: fun = partial(fun)
-  return jit(fun).trace(*args, **kwargs).out_info
+  return jit(fun).trace(*args, **kwargs)
+
 
 
 @partial(api_boundary, repro_api_name="jax.named_call")
