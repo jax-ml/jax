@@ -78,6 +78,21 @@ _stop_gradient = partial(
 )
 
 
+def _function_like_repr(obj: Any) -> str:
+  d = getattr(obj, "__dict__", {})
+  fun = getattr(obj, "fun", None) or getattr(obj, "__wrapped__", None)
+  mod = d.get("__module__") or getattr(fun, "__module__", "")
+  name = (
+      d.get("__qualname__")
+      or d.get("__name__")
+      or getattr(fun, "__qualname__", None)
+      or getattr(fun, "__name__", None)
+      or "<?>"
+  )
+  prefix = f"{mod}." if mod else ""
+  return f"<function {prefix}{name} at 0x{id(obj):x}>"
+
+
 # like the api_util.py function, but also grabs output avals for error checking
 @lu.transformation_with_aux2
 def _flatten_fun_nokwargs(f: Callable,
@@ -161,6 +176,9 @@ class custom_jvp(Generic[ReturnValue]):
     self.nondiff_argnums = tuple(sorted(nondiff_argnums_))
 
   __getattr__ = custom_api_util.forward_attr
+
+  def __repr__(self) -> str:
+    return _function_like_repr(self)
 
   def defjvp(self,
              jvp: Callable[..., tuple[ReturnValue, ReturnValue]],
@@ -579,6 +597,9 @@ class custom_vjp(Generic[ReturnValue]):
     self.optimize_remat = False
 
   __getattr__ = custom_api_util.forward_attr
+
+  def __repr__(self) -> str:
+    return _function_like_repr(self)
 
   def defvjp(self,
              fwd: Callable[..., tuple[ReturnValue, Any]],

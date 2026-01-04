@@ -19,10 +19,10 @@ used in Keras and Sonnet.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import math
 import typing
-from typing import Any, Literal, Protocol, TypeAlias
+from typing import Any, Literal, Protocol, TypeAlias, TypeVar, cast
 
 import numpy as np
 
@@ -37,6 +37,8 @@ from jax._src.typing import Array, ArrayLike, DType
 from jax._src.util import set_module
 
 export = set_module('jax.nn.initializers')
+_PUBLIC_INIT_MODULE = "jax.nn.initializers"
+InitializerFn = TypeVar("InitializerFn", bound=Callable[..., Any])
 
 # TODO: Import or define these to match
 # https://github.com/numpy/numpy/blob/main/numpy/typing/_dtype_like.py.
@@ -56,6 +58,17 @@ class Initializer(Protocol):
                dtype: DTypeLikeInexact | None = None,
                out_sharding: OutShardingType = None) -> Array:
     raise NotImplementedError
+
+def _set_public_name(
+    init_fn: InitializerFn,
+    public_module: str,
+    public_name: str,
+) -> InitializerFn:
+  fn = cast(Any, init_fn)
+  fn.__module__ = public_module
+  fn.__name__ = public_name
+  fn.__qualname__ = public_name
+  return init_fn
 
 @export
 def zeros(key: Array,
@@ -114,7 +127,7 @@ def constant(value: ArrayLike,
     dtype = dtypes.default_float_dtype() if dtype is None else dtype
     out_sharding = canonicalize_sharding(out_sharding, 'nn.initializers.constant')
     return jnp.full(shape, value, dtype=dtype, device=out_sharding)
-  return init
+  return _set_public_name(init, _PUBLIC_INIT_MODULE, "constant")
 
 @export
 def uniform(scale: RealNumeric = 1e-2,
@@ -142,7 +155,7 @@ def uniform(scale: RealNumeric = 1e-2,
     dtype = dtypes.default_float_dtype() if dtype is None else dtype
     return random.uniform(key, shape, dtype,
                           out_sharding=out_sharding) * jnp.array(scale, dtype)
-  return init
+  return _set_public_name(init, _PUBLIC_INIT_MODULE, "uniform")
 
 @export
 def normal(stddev: RealNumeric = 1e-2,
@@ -170,7 +183,7 @@ def normal(stddev: RealNumeric = 1e-2,
     dtype = dtypes.default_float_dtype() if dtype is None else dtype
     return random.normal(key, shape, dtype,
                          out_sharding=out_sharding) * jnp.array(stddev, dtype)
-  return init
+  return _set_public_name(init, _PUBLIC_INIT_MODULE, "normal")
 
 @export
 def truncated_normal(stddev: RealNumeric = 1e-2,
@@ -209,7 +222,7 @@ def truncated_normal(stddev: RealNumeric = 1e-2,
     return random.truncated_normal(
         key, lower, upper, shape, dtype,
         out_sharding=out_sharding) * jnp.array(stddev, dtype)
-  return init
+  return _set_public_name(init, _PUBLIC_INIT_MODULE, "truncated_normal")
 
 @export
 def _compute_fans(shape: Sequence[int],
@@ -369,7 +382,7 @@ def variance_scaling(
     else:
       raise ValueError(f"invalid distribution for variance scaling initializer: {distribution}")
 
-  return init
+  return _set_public_name(init, _PUBLIC_INIT_MODULE, "variance_scaling")
 
 @export
 def glorot_uniform(in_axis: int | Sequence[int] = -2,
@@ -404,8 +417,9 @@ def glorot_uniform(in_axis: int | Sequence[int] = -2,
 
   .. _Glorot uniform initializer: http://proceedings.mlr.press/v9/glorot10a.html
   """
-  return variance_scaling(1.0, "fan_avg", "uniform", in_axis=in_axis,
+  init = variance_scaling(1.0, "fan_avg", "uniform", in_axis=in_axis,
                           out_axis=out_axis, batch_axis=batch_axis, dtype=dtype)
+  return _set_public_name(init, _PUBLIC_INIT_MODULE, "glorot_uniform")
 
 xavier_uniform = glorot_uniform
 
@@ -442,8 +456,9 @@ def glorot_normal(in_axis: int | Sequence[int] = -2,
 
   .. _Glorot normal initializer: http://proceedings.mlr.press/v9/glorot10a.html
   """
-  return variance_scaling(1.0, "fan_avg", "truncated_normal", in_axis=in_axis,
+  init = variance_scaling(1.0, "fan_avg", "truncated_normal", in_axis=in_axis,
                           out_axis=out_axis, batch_axis=batch_axis, dtype=dtype)
+  return _set_public_name(init, _PUBLIC_INIT_MODULE, "glorot_normal")
 
 xavier_normal = glorot_normal
 
@@ -480,8 +495,9 @@ def lecun_uniform(in_axis: int | Sequence[int] = -2,
 
   .. _Lecun uniform initializer: https://arxiv.org/abs/1706.02515
   """
-  return variance_scaling(1.0, "fan_in", "uniform", in_axis=in_axis,
+  init = variance_scaling(1.0, "fan_in", "uniform", in_axis=in_axis,
                           out_axis=out_axis, batch_axis=batch_axis, dtype=dtype)
+  return _set_public_name(init, _PUBLIC_INIT_MODULE, "lecun_uniform")
 
 @export
 def lecun_normal(in_axis: int | Sequence[int] = -2,
@@ -516,8 +532,9 @@ def lecun_normal(in_axis: int | Sequence[int] = -2,
 
   .. _Lecun normal initializer: https://arxiv.org/abs/1706.02515
   """
-  return variance_scaling(1.0, "fan_in", "truncated_normal", in_axis=in_axis,
+  init = variance_scaling(1.0, "fan_in", "truncated_normal", in_axis=in_axis,
                           out_axis=out_axis, batch_axis=batch_axis, dtype=dtype)
+  return _set_public_name(init, _PUBLIC_INIT_MODULE, "lecun_normal")
 
 @export
 def he_uniform(in_axis: int | Sequence[int] = -2,
@@ -552,8 +569,9 @@ def he_uniform(in_axis: int | Sequence[int] = -2,
 
   .. _He uniform initializer: https://arxiv.org/abs/1502.01852
   """
-  return variance_scaling(2.0, "fan_in", "uniform", in_axis=in_axis,
+  init = variance_scaling(2.0, "fan_in", "uniform", in_axis=in_axis,
                           out_axis=out_axis, batch_axis=batch_axis, dtype=dtype)
+  return _set_public_name(init, _PUBLIC_INIT_MODULE, "he_uniform")
 
 kaiming_uniform = he_uniform
 
@@ -590,8 +608,9 @@ def he_normal(in_axis: int | Sequence[int] = -2,
 
   .. _He normal initializer: https://arxiv.org/abs/1502.01852
   """
-  return variance_scaling(2.0, "fan_in", "truncated_normal", in_axis=in_axis,
+  init = variance_scaling(2.0, "fan_in", "truncated_normal", in_axis=in_axis,
                           out_axis=out_axis, batch_axis=batch_axis, dtype=dtype)
+  return _set_public_name(init, _PUBLIC_INIT_MODULE, "he_normal")
 
 kaiming_normal = he_normal
 
@@ -635,7 +654,7 @@ def orthogonal(scale: RealNumeric = 1.0,
     Q = jnp.reshape(Q, tuple(np.delete(shape, column_axis)) + (shape[column_axis],))
     Q = jnp.moveaxis(Q, -1, column_axis)
     return jnp.array(scale, dtype) * Q
-  return init
+  return _set_public_name(init, _PUBLIC_INIT_MODULE, "orthogonal")
 
 @export
 def delta_orthogonal(
@@ -698,4 +717,4 @@ def delta_orthogonal(
     else:
       k1, k2, k3 = shape[:3]
       return W.at[(k1-1)//2, (k2-1)//2, (k3-1)//2, ...].set(ortho_matrix)
-  return init
+  return _set_public_name(init, _PUBLIC_INIT_MODULE, "delta_orthogonal")

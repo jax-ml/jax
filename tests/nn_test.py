@@ -14,6 +14,7 @@
 
 import collections
 from functools import partial
+import inspect
 import itertools
 import unittest
 
@@ -25,6 +26,7 @@ import scipy.stats
 from jax._src import ad_checkpoint
 from jax._src import config
 from jax._src import core
+from jax._src import custom_derivatives
 from jax._src import dtypes as _dtypes
 from jax._src import test_util as jtu
 from jax._src.cudnn.scaled_matmul_stablehlo import (
@@ -107,6 +109,30 @@ def create_mxfp8_configs_if_available():
 @jtu.with_config(jax_legacy_prng_key="allow",
                  jax_numpy_dtype_promotion="standard")
 class NNFunctionsTest(jtu.JaxTestCase):
+  def testFunctionRepr(self):
+    wrapper_types = (
+        custom_derivatives.custom_jvp,
+        custom_derivatives.custom_vjp,
+    )
+    functions = []
+    for name, value in sorted(vars(nn).items()):
+      if name.startswith("_"):
+        continue
+      if isinstance(value, wrapper_types):
+        functions.append((name, value))
+
+    self.assertTrue(functions)
+    for name, fn in functions:
+      fn_repr = repr(fn)
+      with self.subTest(name=name):
+        self.assertNotIn("object at 0x", fn_repr)
+        self.assertNotIn("custom_jvp", fn_repr)
+        self.assertNotIn("custom_vjp", fn_repr)
+        self.assertNotIn("<locals>", fn_repr)
+        expected_name = getattr(fn, "__name__", None)
+        if expected_name:
+          self.assertIn(expected_name, fn_repr)
+
   @parameterized.product(
       contract=[160, 96],
       lhs_non_contract=[240, 100],
@@ -864,6 +890,50 @@ INITIALIZER_RECS = [
 
 @jtu.with_config(jax_legacy_prng_key="allow")
 class NNInitializersTest(jtu.JaxTestCase):
+  def testInitializerRepr(self):
+    required_kwargs = {
+        "value": 0,
+        "scale": 1.0,
+        "mode": "fan_in",
+        "distribution": "normal",
+    }
+
+    factories = []
+    for name, value in sorted(vars(nn.initializers).items()):
+      if name.startswith("_"):
+        continue
+      if inspect.isclass(value):
+        continue
+      if callable(value):
+        factories.append((name, value))
+
+    for name, factory in factories:
+      sig = inspect.signature(factory)
+      if "key" in sig.parameters:
+        init_fn = factory
+      else:
+        kwargs = {}
+        for param in sig.parameters.values():
+          if param.default is not param.empty:
+            continue
+          if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+            continue
+          if param.name in required_kwargs:
+            kwargs[param.name] = required_kwargs[param.name]
+          else:
+            self.fail(
+                f"Missing test value for initializer parameter {param.name}"
+                f" in {name}"
+            )
+        init_fn = factory(**kwargs)
+
+      init_repr = repr(init_fn)
+      with self.subTest(name=name):
+        self.assertNotIn("<locals>", init_repr)
+        expected_name = getattr(factory, "__name__", None)
+        if expected_name:
+          self.assertIn(expected_name, init_repr)
+
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(initializer=rec.initializer())],
