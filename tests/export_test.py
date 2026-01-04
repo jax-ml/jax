@@ -1770,7 +1770,9 @@ class JaxExportTest(jtu.JaxTestCase):
       return times_2_or_3_or_4.bind(x)
     x = np.float32(42.)
     exp = export.export(f, platforms=["cpu", "cuda", "rocm", "tpu"])(x)
-    expected = x * np.float32(dict(cpu=2, gpu=3, tpu=4)[jtu.device_under_test()])
+    expected = x * np.float32(
+        dict(cpu=2, gpu=3, cuda=3, rocm=3, tpu=4)[jtu.device_under_test()]
+    )
     self.assertAllClose(exp.call(x), expected)
 
   def test_multi_platform_unknown_platform(self):
@@ -1978,7 +1980,7 @@ class JaxExportTest(jtu.JaxTestCase):
       logging.info(
           "Using JAX serialization version %s",
           config.jax_export_calling_convention_version.value)
-      if jtu.device_under_test() == "gpu":
+      if jtu.test_device_matches(["gpu"]):
         # The export is not applicable to GPU
         raise unittest.SkipTest("Not intended for running on GPU")
       x = np.ones((3, 4), dtype=np.float32)
@@ -2184,7 +2186,6 @@ class JaxExportTest(jtu.JaxTestCase):
             jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
         else:
           jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
-
 
 
 if __name__ == "__main__":
