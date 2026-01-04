@@ -67,7 +67,7 @@ def serialize(exp: _export.Exported, vjp_order: int = 0) -> bytearray:
   """
   builder = flatbuffers.Builder(65536)
   exported = _serialize_exported(builder, exp, vjp_order)
-  builder.Finish(exported)
+  builder.Finish(exported, file_identifier=b'JAXE')
   return builder.Output()
 
 
