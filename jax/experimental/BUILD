@@ -518,6 +518,7 @@ pytype_strict_library(
     srcs = ["hijax.py"],
     visibility = ["//visibility:public"],
     deps = [
+        "//jax/_src:ad",
         "//jax/_src:ad_util",
         "//jax/_src:core",
         "//jax/_src:effects",
