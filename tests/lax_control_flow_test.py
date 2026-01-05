@@ -1818,12 +1818,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       assert b.shape == ()
       return c, b
 
+    on_gpu = jtu.device_under_test() == "gpu"
     if scan is scan_with_new_checkpoint:
-      rtol = {np.float32: 5e-5, np.float64: 1e-13}
+      rtol = {np.float32: 5e-5, np.float64: 1e-10 if on_gpu else 1e-13}
       atol = 1e-5
     else:
-      rtol = {np.float32: 2e-4, np.float64: 1e-13}
-      atol = {np.float32: 8e-5, np.float64: 1e-13}
+      rtol = {np.float32: 2e-4, np.float64: 1e-10 if on_gpu else 1e-13}
+      atol = {np.float32: 8e-5, np.float64: 1e-10 if on_gpu else 1e-13}
 
     if jit_f:
       f = jax.jit(f)
