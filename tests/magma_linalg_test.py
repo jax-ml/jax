@@ -115,7 +115,7 @@ class MagmaLinalgTest(jtu.JaxTestCase):
       self.assertIn('magma = "on"', hlo)
 
   @jtu.sample_product(
-    shape=[(3, 4), (3, 3), (4, 3), (4, 3)],
+    shape=[(3, 4), (3, 3), (4, 3), (100, 100), (100, 10)],
     dtype=float_types + complex_types,
   )
   @jtu.run_on_devices("gpu")

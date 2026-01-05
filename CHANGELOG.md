@@ -16,6 +16,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Bug fixes:
+  * Fixed a workspace size calculation error for pivoted QR (`magma_zgeqp3_gpu`)
+    in MAGMA 2.9.0 when using `use_magma=True` and `pivoting=True`.
+    ({jax-issue}`#34145`).
+
 ## JAX 0.8.2 (December 18, 2025)
 
 * Deprecations

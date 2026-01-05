@@ -110,21 +110,25 @@ struct MagmaGeqp3 {
 template <>
 struct MagmaGeqp3<ffi::F32> {
   static constexpr char name[] = "magma_sgeqp3_gpu";
+  static constexpr char expert_name[] = "magma_sgeqp3_expert_gpu_work";
   static constexpr char block_size_name[] = "magma_get_sgeqp3_nb";
 };
 template <>
 struct MagmaGeqp3<ffi::F64> {
   static constexpr char name[] = "magma_dgeqp3_gpu";
+  static constexpr char expert_name[] = "magma_dgeqp3_expert_gpu_work";
   static constexpr char block_size_name[] = "magma_get_dgeqp3_nb";
 };
 template <>
 struct MagmaGeqp3<ffi::C64> {
   static constexpr char name[] = "magma_cgeqp3_gpu";
+  static constexpr char expert_name[] = "magma_cgeqp3_expert_gpu_work";
   static constexpr char block_size_name[] = "magma_get_cgeqp3_nb";
 };
 template <>
 struct MagmaGeqp3<ffi::C128> {
   static constexpr char name[] = "magma_zgeqp3_gpu";
+  static constexpr char expert_name[] = "magma_zgeqp3_expert_gpu_work";
   static constexpr char block_size_name[] = "magma_get_zgeqp3_nb";
 };
 
@@ -371,24 +375,32 @@ class PivotingQrFactorizationMagma {
 
  private:
   Fn* fn_ = nullptr;
-  BlockSizeFn* block_size_fn_ = nullptr;
 
   absl::StatusOr<int> lwork(int m, int n) {
-    // `{c,d,s,z}_geqp3_gpu` do not support a workspace query, but we can still
-    // assign the symbol here.
+    // `{c,d,s,z}_geqp3_gpu` do not support a workspace query, but we can call
+    // the expert API instead.
     auto maybe_ptr = FindMagmaSymbol(MagmaGeqp3<DataType>::name);
     if (!maybe_ptr.ok()) return maybe_ptr.status();
     fn_ = reinterpret_cast<Fn*>(*maybe_ptr);
 
-    auto block_size_maybe_ptr =
-        FindMagmaSymbol(MagmaGeqp3<DataType>::block_size_name);
-    if (!block_size_maybe_ptr.ok()) return block_size_maybe_ptr.status();
-    block_size_fn_ = reinterpret_cast<BlockSizeFn*>(*block_size_maybe_ptr);
-    int optimal_block_size = block_size_fn_(m, n);
-    if constexpr (ffi::IsComplexType<DataType>()) {
-      return (n + 1) * optimal_block_size;
+    auto maybe_expert_ptr = FindMagmaSymbol(MagmaGeqp3<DataType>::expert_name);
+    if (!maybe_expert_ptr.ok()) return maybe_expert_ptr.status();
+    using ExpertFn = int(int m, int n, ValueType* dA, int ldda, int* jpvt,
+                         ValueType* tau, void* host_work, int* lwork_host,
+                         void* device_work, int* lwork_device, int* info,
+                         void* queue);
+    auto* expert_fn = reinterpret_cast<ExpertFn*>(*maybe_expert_ptr);
+
+    int lwork_host = -1;
+    int lwork_device = -1;
+    int info = 0;
+    expert_fn(m, n, nullptr, std::max(1, m), nullptr, nullptr, nullptr,
+              &lwork_host, nullptr, &lwork_device, &info, nullptr);
+    if (info != 0) {
+      return absl::InternalError(absl::StrFormat(
+          "MAGMA expert geqp3 workspace query failed with info=%d", info));
     }
-    return (n + 1) * optimal_block_size + 2 * n;
+    return lwork_device / sizeof(ValueType);
   }
 };
 
