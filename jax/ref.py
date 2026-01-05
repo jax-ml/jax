@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-__all__ = ['AbstractRef', 'Ref', 'ArrayRef', 'addupdate', 'new_ref', 'array_ref',
-           'freeze', 'get', 'set', 'swap']
+__all__ = [
+    'AbstractRef', 'Ref', 'addupdate', 'freeze', 'get', 'new_ref', 'set', 'swap'
+]
 
 from jax._src.core import Ref, freeze
 from jax._src.ref import new_ref
@@ -27,23 +28,17 @@ from jax._src.state.primitives import (
 
 
 _deprecations = {
-  # Added for v0.8.0
+  # Remove in v0.10.0
   "array_ref": (
-    "jax.array_ref is deprecated; use jax.new_ref instead.",
-    new_ref
+    "jax.array_ref was removed in JAX v0.9.0; use jax.new_ref instead.",
+    None
   ),
   "ArrayRef": (
-    "jax.ArrayRef is deprecated; use jax.Ref instead.",
-    Ref
+    "jax.ArrayRef was removed in JAX v0.9.0; use jax.Ref instead.",
+    None
   ),
 }
 
-import typing as _typing
-if _typing.TYPE_CHECKING:
-  array_ref = new_ref
-  ArrayRef = Ref
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr

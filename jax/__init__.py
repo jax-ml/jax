@@ -189,14 +189,14 @@ import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
 _deprecations = {
-  # Added for v0.8.0
+  # Remove in v0.10.0
   "array_ref": (
-    "jax.array_ref is deprecated; use jax.new_ref instead.",
-    new_ref
+    "jax.array_ref was removed in JAX v0.9.0; use jax.new_ref instead.",
+    None,
   ),
   "ArrayRef": (
-    "jax.ArrayRef is deprecated; use jax.Ref instead.",
-    Ref
+    "jax.ArrayRef was removed in JAX v0.9.0; use jax.Ref instead.",
+    None
   ),
   # Added for v0.8.1
   "device_put_replicated": (
@@ -212,8 +212,6 @@ _deprecations = {
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  array_ref = new_ref
-  ArrayRef = Ref
   device_put_replicated = _deprecated_device_put_replicated
   device_put_sharded = _deprecated_device_put_sharded
 else:

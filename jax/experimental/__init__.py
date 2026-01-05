@@ -30,46 +30,34 @@ from jax._src.dtypes import (
 from jax._src.earray import (
     EArray as EArray
 )
-from jax._src import core as _src_core
 from jax._src.core import (
     cur_qdd as cur_qdd,
 )
-from jax.experimental import x64_context as _x64_context
 
 _deprecations = {
-  # Added for v0.8.0
+  # Remove in v0.10.0
   "disable_x64": (
-    ("jax.experimental.disable_x64 is deprecated in JAX v0.8.0 and will be removed"
-     " in JAX v0.9.0; use jax.enable_x64(False) instead."),
-    _x64_context._disable_x64
+    ("jax.experimental.disable_x64 was removed in JAX v0.9.0;"
+     " use jax.enable_x64(False) instead."),
+    None,
   ),
   "enable_x64": (
-    ("jax.experimental.enable_x64 is deprecated in JAX v0.8.0 and will be removed"
-     " in JAX v0.9.0; use jax.enable_x64(True) instead."),
-    _x64_context._enable_x64
+    ("jax.experimental.enable_x64 was removed in JAX v0.9.0;"
+     " use jax.enable_x64(True) instead."),
+    None
   ),
   "mutable_array": (
-    ("jax.experimental.mutable_array is deprecated in JAX v0.8.0 and will be removed"
-     " in JAX v0.9.0; use jax.new_ref instead."),
-    _src_core.new_ref
+    ("jax.experimental.mutable_array was removed in JAX v0.9.0;"
+     " use jax.new_ref instead."),
+    None,
   ),
   "MutableArray": (
-    ("jax.experimental.MutableArray is deprecated in JAX v0.8.0 and will be removed"
-     " in JAX v0.9.0; use jax.Ref instead."),
-    _src_core.Ref
+    ("jax.experimental.MutableArray was removed in JAX v0.9.0;"
+     " use jax.Ref instead."),
+    None,
   ),
 }
 
-import typing as _typing
-if _typing.TYPE_CHECKING:
-  mutable_array = _src_core.new_ref
-  MutableArray = _src_core.Ref
-  enable_x64 = _x64_context._enable_x64
-  disable_x64 = _x64_context._disable_x64
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing
-del _src_core
-del _x64_context
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr

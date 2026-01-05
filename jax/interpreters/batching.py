@@ -36,43 +36,43 @@ _deprecations = {
   # Deprecated for JAX v0.7.1; finalize in JAX v0.9.0.
   "AxisSize": (
     "jax.interpreters.batching.AxisSize is deprecated.",
-    _src_batching.AxisSize,
+    None,
   ),
   "Array": (
     "jax.interpreters.batching.Array is deprecated. Use jax.Array directly.",
-    _src_batching.Array,
+    None,
   ),
   "BatchTrace": (
     "jax.interpreters.batching.BatchTrace is deprecated.",
-    _src_batching.BatchTrace,
+    None,
   ),
   "BatchTracer": (
     "jax.interpreters.batching.BatchTracer is deprecated.",
-    _src_batching.BatchTracer,
+    None,
   ),
   "BatchingRule": (
     "jax.interpreters.batching.BatchingRule is deprecated.",
-    _src_batching.BatchingRule,
+    None,
   ),
   "Elt": (
     "jax.interpreters.batching.Elt is deprecated.",
-    _src_batching.Elt,
+    None,
   ),
   "FromEltHandler": (
     "jax.interpreters.batching.FromEltHandler is deprecated.",
-    _src_batching.FromEltHandler,
+    None,
   ),
   "GetIdx": (
     "jax.interpreters.batching.GetIdx is deprecated.",
-    _src_batching.GetIdx,
+    None,
   ),
   "MakeIotaHandler": (
     "jax.interpreters.batching.MakeIotaHandler is deprecated.",
-    _src_batching.MakeIotaHandler,
+    None,
   ),
   "MapSpec": (
     "jax.interpreters.batching.MapSpec is deprecated.",
-    _src_batching.MapSpec,
+    None,
   ),
   "NotMapped": (
     "jax.interpreters.batching.NotMapped is deprecated.",
@@ -80,155 +80,118 @@ _deprecations = {
   ),
   "ToEltHandler": (
     "jax.interpreters.batching.ToEltHandler is deprecated.",
-    _src_batching.ToEltHandler,
+    None,
   ),
   "Vmappable": (
     "jax.interpreters.batching.Vmappable is deprecated.",
-    _src_batching.Vmappable,
+    None,
   ),
   "Zeros": (
     "jax.interpreters.batching.Zero is deprecated. Use jax.interpreters.ad.Zero.",
-    _src_batching.Zero,
+    None,
   ),
   "ZeroIfMapped": (
     "jax.interpreters.batching.ZeroIfMapped is deprecated. It is an internal type.",
-    _src_batching.ZeroIfMapped,
+    None,
   ),
   "batch": (
     "jax.interpreters.batching.batch is deprecated. It is an internal API.",
-    _src_batching.batch,
+    None,
   ),
   "batch_custom_jvp_subtrace": (
     "jax.interpreters.batching.batch_custom_jvp_subtrace is deprecated. It is an internal API.",
-    _src_batching.batch_custom_jvp_subtrace,
+    None,
   ),
   "batch_custom_vjp_bwd": (
     "jax.interpreters.batching.batch_custom_vjp_bwd is deprecated. It is an internal API.",
-    _src_batching.batch_custom_vjp_bwd,
+    None,
   ),
   "batch_jaxpr": (
     "jax.interpreters.batching.batch_jaxpr is deprecated. It is an internal API.",
-    _src_batching.batch_jaxpr,
+    None,
   ),
   "batch_jaxpr_axes": (
     "jax.interpreters.batching.batch_jaxpr_axes is deprecated. It is an internal API.",
-    _src_batching.batch_jaxpr_axes,
+    None,
   ),
   "batch_subtrace": (
     "jax.interpreters.batching.batch_subtrace is deprecated. It is an internal API.",
-    _src_batching.batch_subtrace,
+    None,
   ),
   "broadcast_batcher": (
     "jax.interpreters.batching.broadcast_batcher is deprecated. It is an internal API.",
-    _src_batching.broadcast_batcher,
+    None,
   ),
   "flatten_fun_for_vmap": (
     "jax.interpreters.batching.flatten_fun_for_vmap is deprecated. It is an internal API.",
-    _src_batching.flatten_fun_for_vmap,
+    None,
   ),
   "from_elt": (
     "jax.interpreters.batching.from_elt is deprecated. It is an internal API.",
-    _src_batching.from_elt,
+    None,
   ),
   "from_elt_handlers": (
     "jax.interpreters.batching.from_elt_handlers is deprecated. It is an internal API.",
-    _src_batching.from_elt_handlers,
+    None,
   ),
   "is_vmappable": (
     "jax.interpreters.batching.is_vmappable is deprecated. It is an internal API.",
-    _src_batching.is_vmappable,
+    None,
   ),
   "make_iota": (
     "jax.interpreters.batching.make_iota is deprecated. It is an internal API.",
-    _src_batching.make_iota,
+    None,
   ),
   "make_iota_handlers": (
     "jax.interpreters.batching.make_iota_handlers is deprecated. It is an internal API.",
-    _src_batching.make_iota_handlers,
+    None,
   ),
   "matchaxis": (
     "jax.interpreters.batching.matchaxis is deprecated. It is an internal API.",
-    _src_batching.matchaxis,
+    None,
   ),
   "moveaxis": (
     "jax.interpreters.batching.moveaxis is deprecated. Use jax.numpy.moveaxis.",
-    _src_batching.moveaxis,
+    None,
   ),
   "reducer_batcher": (
     "jax.interpreters.batching.reducer_batcher is deprecated. It is an internal API.",
-    _src_batching.reducer_batcher,
+    None,
   ),
   "spec_types": (
     "jax.interpreters.batching.spec_types is deprecated. It is an internal API.",
-    _src_batching.spec_types,
+    None,
   ),
   "to_elt": (
     "jax.interpreters.batching.to_elt is deprecated. It is an internal API.",
-    _src_batching.to_elt,
+    None,
   ),
   "to_elt_handlers": (
     "jax.interpreters.batching.to_elt_handlers is deprecated. It is an internal API.",
-    _src_batching.to_elt_handlers,
+    None,
   ),
   "vectorized_batcher": (
     "jax.interpreters.batching.vectorized_batcher is deprecated. It is an internal API.",
-    _src_batching.vectorized_batcher,
+    None,
   ),
   "vmappables": (
     "jax.interpreters.batching.vmappables is deprecated. It is an internal API.",
-    _src_batching.vmappables,
+    None,
   ),
   "vtile": (
     "jax.interpreters.batching.vtile is deprecated. It is an internal API.",
-    _src_batching.vtile,
+    None,
   ),
   "zero_if_mapped": (
     "jax.interpreters.batching.zero_if_mapped is deprecated. It is an internal API.",
-    _src_batching.zero_if_mapped,
+    None,
   ),
 }
 
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  Array = _src_batching.Array
-  AxisSize = _src_batching.AxisSize
-  BatchTrace = _src_batching.BatchTrace
-  BatchTracer = _src_batching.BatchTracer
-  BatchingRule = _src_batching.BatchingRule
-  Elt = _src_batching.Elt
-  FromEltHandler = _src_batching.FromEltHandler
-  GetIdx = _src_batching.GetIdx
-  MakeIotaHandler = _src_batching.MakeIotaHandler
-  MapSpec = _src_batching.MapSpec
   NotMapped = _src_batching.NotMapped
-  ToEltHandler = _src_batching.ToEltHandler
-  Vmappable = _src_batching.Vmappable
-  Zero = _src_batching.Zero
-  ZeroIfMapped = _src_batching.ZeroIfMapped
-  batch = _src_batching.batch
-  batch_custom_jvp_subtrace = _src_batching.batch_custom_jvp_subtrace
-  batch_custom_vjp_bwd = _src_batching.batch_custom_vjp_bwd
-  batch_jaxpr = _src_batching.batch_jaxpr
-  batch_jaxpr_axes = _src_batching.batch_jaxpr_axes
-  batch_subtrace = _src_batching.batch_subtrace
-  broadcast_batcher = _src_batching.broadcast_batcher
-  flatten_fun_for_vmap = _src_batching.flatten_fun_for_vmap
-  from_elt = _src_batching.from_elt
-  from_elt_handlers = _src_batching.from_elt_handlers
-  is_vmappable = _src_batching.is_vmappable
-  make_iota = _src_batching.make_iota
-  make_iota_handlers = _src_batching.make_iota_handlers
-  matchaxis = _src_batching.matchaxis
-  moveaxis = _src_batching.moveaxis
-  reducer_batcher = _src_batching.reducer_batcher
-  spec_types = _src_batching.spec_types
-  to_elt = _src_batching.to_elt
-  to_elt_handlers = _src_batching.to_elt_handlers
-  vectorized_batcher = _src_batching.vectorized_batcher
-  vmappables = _src_batching.vmappables
-  vtile = _src_batching.vtile
-  zero_if_mapped = _src_batching.zero_if_mapped
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
