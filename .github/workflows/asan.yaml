@@ -67,6 +67,7 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
+          apt install -y xxd
           source ${GITHUB_WORKSPACE}/venv/bin/activate
           cd jax
           pip install uv~=0.5.30
