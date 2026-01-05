@@ -306,11 +306,6 @@ def _make_flat_callback(in_tree, callback, static_args):
   return _flat_callback
 
 
-def _check_format(fmt, in_tree, dyn_args, static_args):
-  args, kwargs = merge_callback_args(in_tree, dyn_args, static_args)
-  formatter.format(fmt, *args, **kwargs)
-
-
 debug_print_p = core.Primitive("debug_print")
 debug_print_p.multiple_results = True
 

@@ -7573,12 +7573,6 @@ def _reduce_sum_transpose_rule(cotangent, operand, *, axes, out_sharding):
   assert result.shape == input_shape
   return [result]
 
-def _replace_masked_values(x, val, padded_axes):
-  if not padded_axes: return x
-  dtype = dtypes.scalar_type_to_dtype(int)
-  masks = [broadcasted_iota(dtype, x.shape, i) < d for i, d in padded_axes]
-  return select(_reduce(operator.and_, masks), x, full_like(x, val))
-
 def _reduce_op_shape_rule(operand, *, axes, input_shape=None, **kwargs):
   del input_shape  # Unused.
   if len(axes) != len(set(axes)):
