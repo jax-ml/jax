@@ -150,25 +150,31 @@ bool IsOptimizedBuild() {
 
 // Is*san reports whether the build is under that particular sanitizer.
 bool IsAsan() {
-#if defined(ADDRESS_SANITIZER)
-  return true;
-#else  // defined(ADDRESS_SANITIZER)
+#if defined(__SANITIZE_ADDRESS__)
+  return true;  // GCC and newer MSVC
+#elif defined(__has_feature) && __has_feature(address_sanitizer)
+  return true;  // Clang
+#else
   return false;
 #endif
 }
 
 bool IsMsan() {
-#if defined(MEMORY_SANITIZER)
-  return true;
-#else  // defined(MEMORY_SANITIZER)
+#if defined(__has_feature) && __has_feature(memory_sanitizer)
+  return true;  // Clang (MSan is typically Clang-only)
+#elif defined(__SANITIZE_MEMORY__)
+  return true;  // GCC (rare, but future-proof)
+#else
   return false;
 #endif
 }
 
 bool IsTsan() {
-#if defined(THREAD_SANITIZER)
-  return true;
-#else  // defined(THREAD_SANITIZER)
+#if defined(__SANITIZE_THREAD__)
+  return true;  // GCC
+#elif defined(__has_feature) && __has_feature(thread_sanitizer)
+  return true;  // Clang
+#else
   return false;
 #endif
 }
