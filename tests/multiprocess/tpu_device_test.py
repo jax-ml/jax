@@ -64,8 +64,8 @@ class TpuDeviceTest(jt_multiprocess.MultiProcessTest):
 
       with self.assertRaisesRegex(
           jax.errors.JaxRuntimeError,
-          'INVALID_ARGUMENT: Could not find memory addressable by device TPU'
-          ' v.* Device TPU v.* can address the following memory kinds: device,'
+          'INVALID_ARGUMENT: Could not find memory addressable by device TPU.*'
+          ' Device TPU.* can address the following memory kinds: device,'
           ' pinned_host, unpinned_host. Got memory kind: gpu_hbm',
       ):
         device.memory('gpu_hbm')
