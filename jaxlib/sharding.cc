@@ -28,6 +28,7 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "absl/hash/hash.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -80,6 +81,12 @@ nb::object CheckAndCanonicalizeMemoryKind(
     // If memory kind is not None, check if it's supported by the devices
     // mentioned in the Sharding.
     auto supported_memory_kinds = PyDeviceList::MemoryKinds(device_list);
+    if (absl::IsUnimplemented(supported_memory_kinds.status())) {
+      // TODO(b/473586037): Implement
+      // PjRtDeviceDescription::default_memory_space() for all backends so this
+      // fallback isn't necessary.
+      return nb::none();
+    }
     if (!supported_memory_kinds.ok()) {
       supported_memory_kinds = nb::tuple();
     }
