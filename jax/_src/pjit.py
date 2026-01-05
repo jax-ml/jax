@@ -760,9 +760,9 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
                                in_avals, dbg: core.DebugInfo,
                                device_or_backend_set, kws):
   if kws:
-    in_tree = in_avals.tree
+    in_tree = in_avals.tree_without_statics
   else:
-    in_tree, _ = treedef_children(in_avals.tree)
+    in_tree, _ = treedef_children(in_avals.tree_without_statics)
 
   orig_in_shardings = tree_unflatten(in_shardings_treedef, in_shardings_leaves)
   # Only do this if original in_shardings are unspecified. If it is AUTO, go
