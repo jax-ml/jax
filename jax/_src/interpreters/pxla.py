@@ -3303,7 +3303,7 @@ class MeshExecutable(stages.Executable):
         fastpath_data = None
       return outs, fastpath_data, False  # Do not remove cache entry
 
-    return xc._xla.pjit(
+    return xc._jax.pjit(
         self.unsafe_call.name, None, aot_cache_miss, [], [],
         JitGlobalCppCacheKeys(), tree_util.dispatch_registry, cc_shard_arg)
 

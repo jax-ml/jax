@@ -13,9 +13,10 @@
 # limitations under the License.
 
 from collections.abc import Sequence
-
-from .import HloSharding as _HloSharding
+import jaxlib._xla
 
 def PartiallyReplicateTiledShardingOnDims(
-    sharding: _HloSharding, dims: Sequence[int], /
-) -> _HloSharding: ...
+    arg0: jaxlib._xla.HloSharding,
+    arg1: Sequence[int],
+    /,
+) -> jaxlib._xla.HloSharding: ...

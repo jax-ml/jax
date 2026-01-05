@@ -23,7 +23,7 @@ from jax._src.dispatch import (
 )
 
 from jax._src.lib import xla_client as _xc
-Backend = _xc._xla.Client
+Backend = _xc._jax.Client
 del _xc
 
 # Deprecations
