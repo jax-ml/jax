@@ -365,6 +365,7 @@ REDUCE_SCRATCH_ELEMS = 128 * 2  # vector of 2 elements per lane in each WG
 
 @_register_resource_estimator(lax.reduce_sum_p)
 @_register_resource_estimator(lax.reduce_max_p)
+@_register_resource_estimator(lax.reduce_min_p)
 def _reduce_resource_estimator(
     ctx: ResourceEstimatorContext, x_aval: jax_core.ShapedArray, *, axes,
     **kwargs
@@ -2491,6 +2492,9 @@ register_lowering_rule(lax.reduce_sum_p, mgpu.LoweringSemantics.Lane)(
 )
 register_lowering_rule(lax.reduce_max_p, mgpu.LoweringSemantics.Lane)(
     functools.partial(_reduce_lowering_rule, "max")
+)
+register_lowering_rule(lax.reduce_min_p, mgpu.LoweringSemantics.Lane)(
+    functools.partial(_reduce_lowering_rule, "min")
 )
 
 def _reduce_lowering_rule_wg(

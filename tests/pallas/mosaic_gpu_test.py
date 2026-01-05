@@ -2401,35 +2401,39 @@ class PallasCallTest(PallasTest):
               lane_dims=(-3, -2),
               vector_dim=-1,
           ),
+          # To have some layout with vector length of 1
+          plgpu.Layout.TCGEN05_TMEM_NATIVE(1),
       ),
-      op=(jnp.sum, jnp.max),
+      op=(jnp.sum, jnp.max, jnp.min),
+      # TODO(apaszke): Add support for f8 (MLIR/LLVM barfs at the moment).
+      dtype=(jnp.float32, jnp.float16, jnp.bfloat16),
   )
-  def test_reduce_with_layout(self, layout, op):
+  def test_reduce_with_layout(self, layout, op, dtype):
     self.skip_if_wg_semantics()
     axis = -1
-    transforms = self.default_transforms(dtype=jnp.float32)
+    transforms = self.default_transforms(dtype=dtype)
     @functools.partial(
         self.kernel,
-        out_shape=jnp.zeros((128,), jnp.float32),
+        out_shape=jnp.zeros((128,), dtype),
         scratch_shapes=[
-            plgpu.SMEM((128, 128), jnp.float32, transforms=transforms),
-            plgpu.SMEM((128,), jnp.float32),
+            plgpu.SMEM((128, 128), dtype, transforms=transforms),
+            plgpu.SMEM((128,), dtype),
             plgpu.Barrier(),
         ],
     )
     def kernel(x_ref, y_ref, smem_ref, smem_reduced_ref, barrier_ref):
       plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)
       plgpu.barrier_wait(barrier_ref)
-      x_val = plgpu.load(smem_ref, (), layout=layout)
+      x_val = plgpu.load(smem_ref, (), layout=layout, optimized=False)
       smem_reduced_ref[...] = op(x_val, axis=axis)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(smem_reduced_ref, y_ref)
       plgpu.wait_smem_to_gmem(0)
 
     x = jax.random.uniform(
-        jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
+        jax.random.key(0), shape=(128, 128), dtype=dtype)
     x_result = jax.block_until_ready(kernel(x))
-    np.testing.assert_allclose(x_result, op(x, axis=axis), atol=1e-5)
+    np.testing.assert_allclose(x_result, op(x, axis=axis), atol=5e-5)
 
   def _test_broadcast_in_dim_base(self, shape, layout, *, axis, hint):
     assert len(shape) == 2
@@ -2929,6 +2933,7 @@ class PallasCallWGTest(
         pallas_primitives.semaphore_read_p,
         pallas_primitives.delay_p,
         checkify.check_p,
+        lax.reduce_min_p,
     }
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)

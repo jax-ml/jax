@@ -1572,8 +1572,17 @@ class FragmentedArray:
       maximumf = arith.maximumf
       if ir.F32Type.isinstance(self.mlir_dtype):
         maximumf = self._lift_fast_instr("max.NaN.f32")
+      elif ir.F16Type.isinstance(self.mlir_dtype):
+        maximumf = self._lift_fast_packed_instr("max.NaN.f16x2", "max.NaN.f16")
+      elif ir.BF16Type.isinstance(self.mlir_dtype):
+        maximumf = self._lift_fast_packed_instr("max.NaN.bf16x2", "max.NaN.bf16")
       return self._pointwise(maximumf, other)
     elif ir.IntegerType.isinstance(self.mlir_dtype):
+      width = utils.bitwidth(self.mlir_dtype)
+      if width == 16:
+        sign = "s" if self.is_signed else "u"
+        instr = self._lift_fast_packed_instr(f"max.{sign}16x2", f"max.{sign}16")
+        return self._pointwise(instr, other)
       return self._pointwise(
           arith.maxsi if self.is_signed else arith.maxui, other
       )
@@ -1582,8 +1591,20 @@ class FragmentedArray:
 
   def min(self, other) -> FragmentedArray:
     if ir.FloatType.isinstance(self.mlir_dtype):
-      return self._pointwise(arith.minimumf, other)
+      minimumf = arith.minimumf
+      if ir.F32Type.isinstance(self.mlir_dtype):
+        minimumf = self._lift_fast_instr("min.NaN.f32")
+      elif ir.F16Type.isinstance(self.mlir_dtype):
+        minimumf = self._lift_fast_packed_instr("min.NaN.f16x2", "min.NaN.f16")
+      elif ir.BF16Type.isinstance(self.mlir_dtype):
+        minimumf = self._lift_fast_packed_instr("min.NaN.bf16x2", "min.NaN.bf16")
+      return self._pointwise(minimumf, other)
     elif ir.IntegerType.isinstance(self.mlir_dtype):
+      width = utils.bitwidth(self.mlir_dtype)
+      if width == 16:
+        sign = "s" if self.is_signed else "u"
+        instr = self._lift_fast_packed_instr(f"min.{sign}16x2", f"min.{sign}16")
+        return self._pointwise(instr, other)
       return self._pointwise(
           arith.minsi if self.is_signed else arith.minui, other
       )
@@ -1700,6 +1721,49 @@ class FragmentedArray:
         return result
       else:
         raise NotImplementedError(arg_ty)
+    return fast_instr
+
+  @staticmethod
+  def _lift_fast_packed_instr(
+      packed_instr: str, single_instr: str,
+  ) -> Callable[[ir.Value, ir.Value], ir.Value]:
+    def fast_instr(*args):
+      arg_ty = args[0].type
+      assert all(a.type == arg_ty for a in args)
+      if not ir.VectorType.isinstance(arg_ty):
+        args = [vector.broadcast(ir.VectorType.get((1,), arg_ty), a) for a in args]
+      arg_ty = ir.VectorType(args[0].type)
+      [vec_len] = arg_ty.shape
+      vec_bitwidth = vec_len * utils.bitwidth(arg_ty.element_type)
+      if vec_len == 1 or vec_bitwidth == 32:
+        assert vec_bitwidth.bit_count() == 1
+        if vec_bitwidth == 32:
+          cstr = "r"
+        elif vec_bitwidth == 16:
+          cstr = "h"
+        else:
+          raise NotImplementedError(vec_bitwidth)
+        int_ty = ir.IntegerType.get_signless(vec_bitwidth)
+        args_ptx = ", ".join(f"${i}" for i in range(len(args) + 1))
+        args_int = [utils.bitcast(a, int_ty) for a in args]
+        result_int = llvm.inline_asm(
+            int_ty,
+            args_int,
+            f"{single_instr if vec_len == 1 else packed_instr} {args_ptx};",
+            f"={cstr}" + f",{cstr}" * len(args)
+        )
+        return utils.bitcast(result_int, arg_ty)
+      else:
+        assert vec_bitwidth > 32
+        slice_len = 32 // utils.bitwidth(arg_ty.element_type)
+        offset = 0
+        slices = []
+        while offset < vec_len:
+          slice_end = min(offset + slice_len, vec_len)
+          args_slice = [utils.vector_slice(a, slice(offset, slice_end)) for a in args]
+          slices.append(fast_instr(*args_slice))
+          offset = slice_end
+        return utils.vector_concat(slices)
     return fast_instr
 
   def bitcast(
@@ -2254,12 +2318,32 @@ class FragmentedArray:
           else:
             raise NotImplementedError(self.mlir_dtype)
         case "max":
+          assert ir.FloatType.isinstance(ir.BF16Type.get())
           if ir.F32Type.isinstance(self.mlir_dtype):
             op = self._lift_fast_instr("max.NaN.f32")
+          elif ir.F16Type.isinstance(self.mlir_dtype):
+            op = self._lift_fast_packed_instr("max.NaN.f16x2", "max.NaN.f16")
+          elif ir.BF16Type.isinstance(self.mlir_dtype):
+            op = self._lift_fast_packed_instr("max.NaN.bf16x2", "max.NaN.bf16")
           elif ir.FloatType.isinstance(self.mlir_dtype):
             op = arith.maximumf
           elif ir.IntegerType.isinstance(self.mlir_dtype):
             op = arith.maxsi if self.is_signed else arith.maxui
+          else:
+            raise NotImplementedError(self.mlir_dtype)
+          splat_op = lambda x: x
+        case "min":
+          assert ir.FloatType.isinstance(ir.BF16Type.get())
+          if ir.F32Type.isinstance(self.mlir_dtype):
+            op = self._lift_fast_instr("min.NaN.f32")
+          elif ir.F16Type.isinstance(self.mlir_dtype):
+            op = self._lift_fast_packed_instr("min.NaN.f16x2", "min.NaN.f16")
+          elif ir.BF16Type.isinstance(self.mlir_dtype):
+            op = self._lift_fast_packed_instr("min.NaN.bf16x2", "min.NaN.bf16")
+          elif ir.FloatType.isinstance(self.mlir_dtype):
+            op = arith.minimumf
+          elif ir.IntegerType.isinstance(self.mlir_dtype):
+            op = arith.minsi if self.is_signed else arith.minui
           else:
             raise NotImplementedError(self.mlir_dtype)
           splat_op = lambda x: x

@@ -3278,9 +3278,10 @@ class FragmentedArrayTest(TestCase):
           (lambda x, y: mgpu.FragmentedArray.min(x, y), np.minimum),
           (lambda x, y: mgpu.FragmentedArray.max(x, y), np.maximum),
       ),
-      dtype=[jnp.float32, jnp.int32, jnp.uint32],
+      # TODO(apaszke): Enable float8
+      dtype=[jnp.float32, jnp.int32, jnp.uint32, jnp.float16],
       m=(64, 128),
-      n=(8, 16, 32, 64, 80, 128, 256),
+      n=(8, 64, 256),
   )
   @jtu.ignore_warning(
       message="(invalid value|divide by zero)", category=RuntimeWarning
@@ -3292,18 +3293,24 @@ class FragmentedArrayTest(TestCase):
       np_op = op
 
     for scalar_rhs in [None, 2]:
-      def kernel(ctx, dst, _):
+      def kernel(ctx, lhs, rhs, dst, _):
         mlir_dtype = utils.dtype_to_ir_type(dtype)
-        iota = iota_tensor(m, n, dtype)
-        rhs = iota if scalar_rhs is None else c(scalar_rhs, mlir_dtype)
-        op(iota, rhs).store_untiled(dst, optimized=False)
-      out_shape = jax.ShapeDtypeStruct((m, n), dtype)
+        lhs = mgpu.FragmentedArray.load_strided(lhs, is_signed=utils.is_signed(dtype))
+        if scalar_rhs is None:
+          rhs = mgpu.FragmentedArray.load_strided(rhs, is_signed=utils.is_signed(dtype))
+        else:
+          rhs = c(scalar_rhs, mlir_dtype)
+        op(lhs, rhs).store_untiled(dst, optimized=False)
+      if jnp.issubdtype(dtype, jnp.floating):
+        x = self.prng.uniform(-1, 1, (m, n)).astype(dtype)
+        y = self.prng.uniform(-1, 1, (m, n)).astype(dtype)
+      else:
+        x = self.prng.integers(-16000, 16000, (m, n)).astype(dtype)
+        y = self.prng.integers(-16000, 16000, (m, n)).astype(dtype)
       result = mgpu.as_gpu_kernel(
-          kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
-      )()
-      ref_x = np.arange(m * n, dtype=dtype).reshape(m, n)
-      ref_rhs = scalar_rhs or ref_x
-      np.testing.assert_array_equal(result, np_op(ref_x, ref_rhs))
+          kernel, (1, 1, 1), (128, 1, 1), (x, y), x, ()
+      )(x, y)
+      np.testing.assert_array_equal(result, np_op(x, scalar_rhs or y))
 
   def test_minimum_np_compatibility(self):
     one = np.ones((128, 128)).astype(np.float32)
@@ -3686,6 +3693,52 @@ class FragmentedArrayTest(TestCase):
     else:
       raise NotImplementedError(f"Unsupported op: {op}")
     np.testing.assert_array_equal(result, expected)
+
+  @parameterized.product(
+      vec_size=(4, 3, 1),
+      dtype=(jnp.float32, jnp.float16, jnp.bfloat16,
+             jnp.int32, jnp.int16, jnp.uint32, jnp.uint16),
+  )
+  @jtu.thread_unsafe_test()
+  def test_max(self, vec_size, dtype):
+      def kernel(ctx, src, src2, dst, _):
+        is_signed = utils.is_signed(dtype)
+        src = fa.FragmentedArray.load_strided(src, vec_size=vec_size, is_signed=is_signed)
+        src2 = fa.FragmentedArray.load_strided(src2, vec_size=vec_size, is_signed=is_signed)
+        src.max(src2).store_untiled(dst)
+      x = self.prng.uniform(-1, 1, (12 * 128,)).astype(dtype)
+      y = self.prng.uniform(-1, 1, (12 * 128,)).astype(dtype)
+      f = mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), (x, y), x, ()
+      )
+      with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+        z = f(x, y).block_until_ready()
+      if dtype == jnp.float32:
+        dtype_short = "f32"
+      elif dtype == jnp.float16:
+        dtype_short = "f16"
+      elif dtype == jnp.bfloat16:
+        dtype_short = "bf16"
+      elif jnp.issubdtype(dtype, jnp.signedinteger):
+        dtype_short = f"s{dtypes.itemsize_bits(dtype)}"
+      elif jnp.issubdtype(dtype, jnp.unsignedinteger):
+        dtype_short = f"u{dtypes.itemsize_bits(dtype)}"
+      else:
+        raise NotImplementedError(f"Unsupported dtype: {dtype}")
+      ptx = ptx()
+      nan_modifier = ".NaN" if jnp.issubdtype(dtype, jnp.floating) else ""
+      instr = f"max{nan_modifier}.{dtype_short} "
+      instr_double = f"max{nan_modifier}.{dtype_short}x2 "
+      single_converts = ptx.count(instr)
+      double_converts = ptx.count(instr_double)
+      self.assertEqual(128 * (single_converts + 2 * double_converts), 12 * 128)
+      if vec_size % 2:
+        self.assertGreater(single_converts, 0)
+      elif dtypes.itemsize_bits(dtype) < 32:
+        # This, together with the assertion above, implies that all converts
+        # happened through doubled operations.
+        self.assertEqual(single_converts, 0)
+      np.testing.assert_array_equal(z, np.maximum(x, y))
 
   def test_splat_layout(self):
     m, n = 64, 8

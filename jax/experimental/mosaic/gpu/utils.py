@@ -1829,8 +1829,10 @@ def vector_concat(vectors: Sequence[ir.Value]) -> ir.Value:
   if vty.rank != 1:
     raise NotImplementedError("Only 1D vectors are supported")
   for v in vectors:
-    if v.type != vty:
-      raise ValueError("Cannot concatenate vectors of different types")
+    if v.type.element_type != vty.element_type:
+      raise ValueError("Cannot concatenate vectors of different element types")
+    if v.type.rank != 1:
+      raise ValueError("Can only concatenate 1D vectors")
   return _vector_concat_rec(vectors)
 
 
