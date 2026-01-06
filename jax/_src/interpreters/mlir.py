@@ -261,7 +261,13 @@ def ir_constant(
       return out
   if hasattr(val, '__jax_array__'):
     return ir_constant(val.__jax_array__())
-  raise TypeError(f"No constant handler for type: {type(val)}")
+  if isinstance(val, core.Tracer):
+    extra_msg = (". You are closing over a Tracer in your function which is "
+                 f" not allowed. Pass Tracer: {val.aval.str_short(True)} "
+                 " as an input to the function instead.")
+  else:
+    extra_msg = ''
+  raise TypeError(f"No constant handler for type: {type(val)}{extra_msg}")
 
 def _numpy_array_constant(x: np.ndarray | np.generic) -> IrValues:
   element_type = dtype_to_ir_type(x.dtype)
