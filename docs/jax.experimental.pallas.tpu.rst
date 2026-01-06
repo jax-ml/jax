@@ -17,6 +17,15 @@ Classes
    SemaphoreType
    TpuInfo
 
+Functions
+---------
+
+.. autosummary::
+   :toctree: _autosummary
+
+   load
+   store
+
 Communication
 -------------
 
@@ -80,4 +89,3 @@ Miscellaneous
    is_tpu_device
    run_on_first_core
    with_memory_space_constraint
-

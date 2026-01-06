@@ -28,3 +28,6 @@ Functions
    approx_tanh
    debug_barrier
    elementwise_inline_asm
+   load
+   max_contiguous
+   store
