@@ -25,7 +25,7 @@ import inspect
 import itertools
 import math
 import operator
-from typing import Any, Protocol, Self, TypeVar, cast
+from typing import Any, Protocol, Self, TypeVar, assert_never, cast
 
 import jax
 from jax import api_util
@@ -2405,6 +2405,51 @@ def _log_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
       arith_dialect.FastMathFlags.afn if ctx.module_ctx.approx_math else None
   )
   return math_dialect.log(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
+
+
+@register_lowering_rule(lax.abs_p, mgpu.LoweringSemantics.Lane)
+def _abs_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  return _ensure_fa(x, x_aval.dtype).abs()
+
+
+@register_lowering_rule(lax.abs_p, mgpu.LoweringSemantics.Warpgroup)
+def _abs_lowering_rule_wg(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  x = _ensure_ir_value(x, x_aval.dtype)
+  if jnp.issubdtype(x_aval.dtype, jnp.floating):
+    return math_dialect.absf(x)
+  if jnp.issubdtype(x_aval.dtype, jnp.integer):
+    return math_dialect.absi(x)
+  raise NotImplementedError(f"Unsupported dtype for abs: {x_aval.dtype}")
+
+
+@register_lowering_rule(lax.round_p, mgpu.LoweringSemantics.Lane)
+def _round_lowering_rule(ctx: LoweringRuleContext, x, rounding_method):
+  [x_aval] = ctx.avals_in
+  x = _ensure_fa(x, x_aval.dtype)
+  match rounding_method:
+    case lax.RoundingMethod.AWAY_FROM_ZERO:
+      return x.round()
+    case lax.RoundingMethod.TO_NEAREST_EVEN:
+      return x.round_even()
+    case _:
+      assert_never(rounding_method)
+
+
+@register_lowering_rule(lax.round_p, mgpu.LoweringSemantics.Warpgroup)
+def _round_lowering_rule_wg(ctx: LoweringRuleContext, x, rounding_method):
+  [x_aval] = ctx.avals_in
+  x = _ensure_ir_value(x, x_aval.dtype)
+  if not jnp.issubdtype(x_aval.dtype, jnp.floating):
+    raise NotImplementedError(f"Unsupported dtype for round: {x_aval.dtype}")
+  match rounding_method:
+    case lax.RoundingMethod.AWAY_FROM_ZERO:
+      return math_dialect.round(x)
+    case lax.RoundingMethod.TO_NEAREST_EVEN:
+      return math_dialect.roundeven(x)
+    case _:
+      assert_never(rounding_method)
 
 
 @register_lowering_rule(lax.reshape_p, mgpu.LoweringSemantics.Lane)

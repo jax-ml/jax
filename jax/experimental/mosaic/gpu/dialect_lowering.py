@@ -14,6 +14,10 @@
 
 """Lowering rules and pass for the MLIR Mosaic GPU dialect."""
 
+# mypy has been causing more problems than it solves here. Disable it for these
+# files. We have pytype checks anyway.
+# mypy: ignore-errors
+
 from collections.abc import Callable, Iterable, Sequence
 import dataclasses
 import functools
@@ -1140,8 +1144,10 @@ def _unary_op_lowering_rule(
     raise ValueError("Layout mismatch")
   a = _fragmented_array_from_ir(op.operand, layout, is_signed)
   if hasattr(op, "fastmath"):
-    approx = op.fastmath == ir.Attribute.parse("#arith.fastmath<afn>")
-    result_fa = impl(a, approx=approx)
+    if op.fastmath == ir.Attribute.parse("#arith.fastmath<afn>"):
+      result_fa = impl(a, approx=True)
+    else:
+      result_fa = impl(a)
   else:
     result_fa = impl(a)
 
@@ -1156,6 +1162,10 @@ for op, unary_impl, is_signed in [
     (mlir_math.CosOp, fa.FragmentedArray.cos, None),
     (mlir_math.LogOp, fa.FragmentedArray.log, None),
     (mlir_math.TanhOp, fa.FragmentedArray.tanh, None),
+    (mlir_math.AbsFOp, fa.FragmentedArray.abs, None),
+    (mlir_math.AbsIOp, fa.FragmentedArray.abs, True),
+    (mlir_math.RoundOp, fa.FragmentedArray.round, None),
+    (mlir_math.RoundEvenOp, fa.FragmentedArray.round_even, None),
 ]:
   _lowerings[op.OPERATION_NAME] = functools.partial(
       _unary_op_lowering_rule, impl=unary_impl, is_signed=is_signed

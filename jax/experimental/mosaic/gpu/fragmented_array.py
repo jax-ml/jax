@@ -1683,6 +1683,25 @@ class FragmentedArray:
         self._lift_fast_instr("rsqrt.approx.f32") if approx else mlir_math.rsqrt
     )
 
+  def abs(self) -> FragmentedArray:
+    if ir.FloatType.isinstance(self.mlir_dtype):
+      return self._pointwise(mlir_math.absf)
+    if ir.IntegerType.isinstance(self.mlir_dtype):
+      return self._pointwise(mlir_math.absi)
+    raise NotImplementedError
+
+  def round(self) -> FragmentedArray:
+    """Same as `lax.round(..., AWAY_FROM_ZERO)`."""
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    return self._pointwise(mlir_math.round)
+
+  def round_even(self) -> FragmentedArray:
+    """Same as `lax.round(..., TO_NEAREST_EVEN)`."""
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    return self._pointwise(mlir_math.roundeven)
+
   @staticmethod
   def _lift_fast_instr(
       instr: str | Callable[[ir.Value], ir.Value],

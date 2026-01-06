@@ -549,6 +549,10 @@ for op in [
     mlir_math.LogOp,
     mlir_math.RsqrtOp,
     mlir_math.TanhOp,
+    mlir_math.AbsFOp,
+    mlir_math.AbsIOp,
+    mlir_math.RoundOp,
+    mlir_math.RoundEvenOp,
 ]:
   _add_constraint_system_derivation_rule(op)(_pointwise_op_constraint_system)
 

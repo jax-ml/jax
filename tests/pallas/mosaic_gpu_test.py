@@ -233,6 +233,9 @@ class PallasCallTest(PallasTest):
           lax.tanh,
           lax.log,
           jax.nn.gelu,
+          lax.abs,
+          lax.round,
+          lambda x: lax.round(x, lax.RoundingMethod.TO_NEAREST_EVEN),
       ],
       approx_math=[True, False],
   )
@@ -5819,7 +5822,6 @@ class WarpSpecializedPipelineTest(PallasTest):
     )
     x = jnp.arange(16 * 256, dtype=jnp.int32).reshape(16, 256)
     np.testing.assert_array_equal(kernel_fn(x), x + 1)
-
 
 
 class WarpSpecializedPipelineWGTest(
