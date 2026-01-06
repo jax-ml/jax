@@ -766,6 +766,10 @@ def prime_decomposition(n: int) -> list[int]:
 def dynamic_gcd(a: int, b: ir.Value) -> int:
   if a <= 0:
     raise ValueError("a must be strictly positive")
+  if ir.VectorType.isinstance(b.type):
+    # We don't actually know the values of the vector elements, so we pick 1
+    # as the only safe value.
+    return 1
   if not ir.IntegerType.isinstance(b.type) and not ir.IndexType.isinstance(b.type):
     raise ValueError(f"Expected an integer dynamic value, got a {b.type}")
   if isinstance(b.owner, arith.ConstantOp):
@@ -1586,6 +1590,32 @@ def _with_transforms_constraint_system(
   return cs.ConstraintSystem(assignments=assignments), {var: [source, dest]}
 
 
+def _vector_value_sites_and_assignments_for_async_ops(
+    op: mgpu.AsyncLoadOp | mgpu.AsyncStoreOp | mgpu.AsyncPrefetchOp,
+) -> tuple[ValueSitesForVariable, dict[cs.Variable, cs.Constant]]:
+  values_sites: ValueSitesForVariable = dict()
+  assignments: dict[cs.Variable, cs.Constant] = dict()
+
+  match op:
+    case mgpu.AsyncLoadOp():
+      base_operand_index = 3
+    case mgpu.AsyncStoreOp():
+      base_operand_index = 2
+    case mgpu.AsyncPrefetchOp():
+      base_operand_index = 1
+    case _:
+      raise ValueError(f"Unsupported op type: {op}")  # make pytype happy
+
+  for i, idx in enumerate(op.indices):
+    if ir.VectorType.isinstance(idx.type):
+      value_site = ValueSite(op, VariableType.OPERAND, base_operand_index + i)
+      value_site_var = cs.Variable(value_site)
+      layout = cs.RegisterLayout(value=fa.TMA_GATHER_INDICES_LAYOUT)
+      values_sites[value_site_var] = [value_site]
+      assignments[value_site_var] = layout
+  return values_sites, assignments
+
+
 @_add_constraint_system_derivation_rule(mgpu.AsyncLoadOp)
 @_add_constraint_system_derivation_rule(mgpu.AsyncStoreOp)
 def _async_load_store_constraint_system(
@@ -1603,7 +1633,20 @@ def _async_load_store_constraint_system(
   operand = ValueSite(op, VariableType.OPERAND, operand_index)
   var = ctx.producer_ref(operand)
   constraints = [cs.Divides(expr=var, tiling_multiple=tuple(tiling_multiple))]
-  return cs.ConstraintSystem(constraints=constraints), {var: [operand]}
+  value_sites_for_variable = {var: [operand]}
+  value_sites, assignments = _vector_value_sites_and_assignments_for_async_ops(op)
+  value_sites_for_variable.update(value_sites)
+  return cs.ConstraintSystem(assignments, constraints), value_sites_for_variable
+
+
+@_add_constraint_system_derivation_rule(mgpu.AsyncPrefetchOp)
+def _async_prefetch_constraint_system(
+    ctx: DerivationContext,
+    op: mgpu.AsyncPrefetchOp,
+) -> ConstraintSystemDerivationRuleResult:
+  del ctx
+  value_sites, assignments = _vector_value_sites_and_assignments_for_async_ops(op)
+  return cs.ConstraintSystem(assignments), value_sites
 
 
 def _ensure_all_layouts_are_set(op: ir.OpView) -> None:

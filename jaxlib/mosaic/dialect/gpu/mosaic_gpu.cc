@@ -249,7 +249,8 @@ namespace {
 llvm::LogicalResult VerifyCommonLoadStoreOp(
     mlir::Operation* op, mlir::MemRefType gmem_type, std::string_view gmem_name,
     mlir::MemRefType smem_type, std::string_view smem_name,
-    mlir::ArrayRef<int64_t> slice_lengths, int num_indices) {
+    mlir::ArrayRef<int64_t> slice_lengths,
+    mlir::Operation::operand_range indices) {
   auto error = [op](auto... params) {
     return op->emitError(llvm::formatv(params...));
   };
@@ -274,7 +275,7 @@ llvm::LogicalResult VerifyCommonLoadStoreOp(
         "by -1 values in `slice_lengths`.",
         gmem_name, smem_name);
   }
-  if (num_indices != gmem_type.getRank()) {
+  if (indices.size() != gmem_type.getRank()) {
     return error("The size of `indices` must be equal to the rank of `{0}`.",
                  gmem_name);
   }
@@ -282,6 +283,24 @@ llvm::LogicalResult VerifyCommonLoadStoreOp(
     return error(
         "The size of `slice_lengths` must be equal to the rank of `{0}`.",
         gmem_name);
+  }
+  int first_vector_index_dim = -1;  // -1 means no vector index.
+  for (int i = 0; i < indices.size(); ++i) {
+    if (auto vec_type =
+            mlir::dyn_cast<mlir::VectorType>(indices[i].getType())) {
+      if (first_vector_index_dim >= 0) {
+        return error(
+            "Only one index may be a vector but got multiple vector indices "
+            "for dimensions {0} and {1}.", first_vector_index_dim, i);
+      }
+      first_vector_index_dim = i;
+      if (vec_type.getShape()[0] != slice_lengths[i]) {
+        return error(
+            "The size of the vector index must be equal to the slice length "
+            "but got {0} != {1}.",
+            vec_type.getShape()[0], slice_lengths[i]);
+      }
+    }
   }
   return llvm::success();
 }
@@ -291,7 +310,7 @@ llvm::LogicalResult AsyncLoadOp::verify() {
   auto r =
       VerifyCommonLoadStoreOp(getOperation(), getSource().getType(), "source",
                               getDestination().getType(), "destination",
-                              getSliceLengths(), getIndices().size());
+                              getSliceLengths(), getIndices());
   if (failed(r)) {
     return r;
   }
@@ -333,7 +352,7 @@ llvm::LogicalResult AsyncPrefetchOp::verify() {
 llvm::LogicalResult AsyncStoreOp::verify() {
   return VerifyCommonLoadStoreOp(getOperation(), getDestination().getType(),
                                  "destination", getSource().getType(), "source",
-                                 getSliceLengths(), getIndices().size());
+                                 getSliceLengths(), getIndices());
 }
 
 llvm::LogicalResult WGMMAOp::inferReturnTypes(

@@ -1109,7 +1109,14 @@ class PallasCallTest(PallasTest):
   def test_copy_gmem_to_smem_gather(self, transforms):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("Only works on a GPU with capability >= sm100")
-    self.skip_if_wg_semantics()
+    if transforms:
+      # We cannot yet specify transforms on block specs for WG semantics.
+      self.skip_if_wg_semantics()
+
+    # TODO(b/415721295): Remove when the minimum jaxlib version is 0.8.3.
+    if not hasattr(mgpu.dialect, "tma_gather_supported"):
+      self.skip_if_wg_semantics()
+
     dtype = jnp.int32
     out_shape = (64, 128)
     shape = (128, 64 + out_shape[-1])

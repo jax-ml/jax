@@ -261,6 +261,10 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     values in `slice_lengths` are the lengths. Providing -1 in `slice_lengths`
     indicates that the slice length is 1 and that the corresponding dimension
     should be collapsed and does not appear in the `destination` MemRef.
+    If an index is a vector of ints, its elements serve as GMEM indices from
+    which the data should be gathered from GMEM. In this case, the
+    `slice_lengths` must have a value equal to the size of the vector. Only one
+    index may be a vector.
 
     The data is written in row-major order to the contiguous SMEM `destination`.
     The `source` data does not need to be contiguous, except for the last
@@ -282,22 +286,13 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     AnyMemRef:$source,
     AnyMemRef:$destination,
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
-    Variadic<I32>:$indices,
+    Variadic<AnyTypeOf<[I32, VectorOfRankAndType<[1], [I32, I16, I8]>]>>:$indices,
     PtxPredicate:$predicate,
 
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
     TypedArrayAttrBase<MosaicGPU_Dimension, "dimensions">:$collective
   );
-
-  let assemblyFormat = [{
-    `source` `(` $source `:` type($source) `)`
-    `destination` `(` $destination `:` type($destination) `)`
-    `barrier` `(` $barrier `:` type($barrier) `)`
-    `indices` `(` $indices `)`
-    `predicate` `(` $predicate `)`
-    attr-dict
-  }];
 
   let hasVerifier = 1;
 }
@@ -314,7 +309,10 @@ def MosaicGPU_AsyncPrefetchOp : Op<MosaicGPU_Dialect, "async_prefetch",
     have a length equal to the rank of the `source`. The values in `indices` are
     the starting indices of each dimension and the values in `slice_lengths` are
     the lengths. Providing -1 in `slice_lengths` indicates that the slice length
-    is 1.
+    is 1. If an index is a vector of ints, its elements serve as GMEM indices
+    from which the data should be gathered from GMEM. In this case, the
+    `slice_lengths` must have a value equal to the size of the vector. Only one
+    index may be a vector.
 
     The `collective` attribute can be provided to partition the prefetch over
     multiple blocks in a cluster.
@@ -324,20 +322,13 @@ def MosaicGPU_AsyncPrefetchOp : Op<MosaicGPU_Dialect, "async_prefetch",
 
   let arguments = (ins
     AnyMemRef:$source,
-    Variadic<I32>:$indices,
+    Variadic<AnyTypeOf<[I32, VectorOfRankAndType<[1], [I32, I16, I8]>]>>:$indices,
     PtxPredicate:$predicate,
 
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
     TypedArrayAttrBase<MosaicGPU_Dimension, "dimensions">:$collective
   );
-
-  let assemblyFormat = [{
-    `source` `(` $source `:` type($source) `)`
-    `indices` `(` $indices `)`
-    `predicate` `(` $predicate `)`
-    attr-dict
-  }];
 
   let hasVerifier = 1;
 }
@@ -356,7 +347,10 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     The values in `indices` are the starting indices of each dimension and the
     values in `slice_lengths` are the lengths. Providing -1 in `slice_lengths`
     indicates that this dimension is collapsed in the `source` and needs to be
-    expanded to a slice of size 1 in the `destination`.
+    expanded to a slice of size 1 in the `destination`. If an index is a vector
+    of ints, its elements serve as GMEM indices to which the data should be
+    scattered to GMEM. In this case, the `slice_lengths` must have a value equal
+    to the size of the vector. Only one index may be a vector.
 
     The data is written in row-major order to the GMEM `destination`. The
     `source` data in SMEM needs to be contiguous, but the `destination` GMEM
@@ -373,7 +367,7 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
   let arguments = (ins
     AnyMemRef:$source,
     AnyMemRef:$destination,
-    Variadic<I32>:$indices,
+    Variadic<AnyTypeOf<[I32, VectorOfRankAndType<[1], [I32, I16, I8]>]>>:$indices,
     PtxPredicate:$predicate,
 
     // Attributes
@@ -381,14 +375,6 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     DefaultValuedOptionalAttr<BoolAttr, "true">:$commit_group,
     OptionalAttr<MosaicGPU_TMAReduction>:$reduction_op
   );
-
-  let assemblyFormat = [{
-    `source` `(` $source `:` type($source) `)`
-    `destination` `(` $destination `:` type($destination) `)`
-    `indices` `(` $indices `)`
-    `predicate` `(` $predicate `)`
-    attr-dict
-  }];
 
   let hasVerifier = 1;
 }
@@ -836,6 +822,11 @@ def MosaicGPU_BroadcastedIotaOp : Op<MosaicGPU_Dialect, "broadcasted_iota", []> 
   let results = (outs AnyFixedVectorOfNonZeroRank);
 
   let hasVerifier = 1;
+}
+
+// TODO (b/415721295): Remove when the minimum JAXLIB version is 0.8.3.
+def TMAGatherSupportedOp : Op<MosaicGPU_Dialect, "tma_gather_supported"> {
+  let summary = "Dummy op that will be removed. DO NOT USE.";
 }
 
 #endif // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_

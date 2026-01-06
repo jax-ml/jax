@@ -2089,6 +2089,71 @@ class LayoutInferenceTest(parameterized.TestCase):
     mgpu.infer_layout(self.module)
     self.checkInTmemLayouts(op, [layout])
 
+  @parameterized.product(
+      op_type=(
+          mgpu.dialect.AsyncLoadOp,
+          mgpu.dialect.AsyncStoreOp,
+          mgpu.dialect.AsyncPrefetchOp,
+      ),
+      vec_offset=(1, 2),
+  )
+  def test_infer_layout_for_async_ops_with_vector_indices(
+      self, op_type, vec_offset,
+  ):
+    # TODO(b/415721295): Remove when the minimum jaxlib version is 0.8.3.
+    if not hasattr(mgpu.dialect, "tma_gather_supported"):
+      self.skipTest("TMA gather support is required.")
+    with ir.InsertionPoint(self.module.body):
+      elt_ty = ir.BF16Type.get()
+      vec_len = 64
+      gmem_shape = (8, 128, 128)
+      smem_shape = (4, vec_len, 128) if vec_offset == 1 else (4, 128, vec_len)
+      i32 = ir.IntegerType.get_signless(32)
+      vec_ty = ir.VectorType.get((vec_len,), i32)
+
+      gmem_ty = ir.MemRefType.get(gmem_shape, elt_ty)
+      smem_ty = ir.MemRefType.get(smem_shape, elt_ty, memory_space=mgpu.utils.smem())
+      barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
+
+      gmem_ref, smem_ref, barrier, scalar_idx, vec_idx = undefs(
+          gmem_ty, smem_ty, barrier_ty, i32, vec_ty
+      )
+
+      if vec_offset == 1:
+        indices = [scalar_idx, vec_idx, scalar_idx]
+        slice_lengths = [4, vec_len, 128]
+      else:
+        indices = [scalar_idx, scalar_idx, vec_idx]
+        slice_lengths = [4, 128, vec_len]
+
+      if op_type == mgpu.dialect.AsyncLoadOp:
+        op = op_type(
+            source=gmem_ref,
+            destination=smem_ref,
+            barrier=barrier,
+            indices=indices,
+            slice_lengths=slice_lengths,
+            collective=ir.ArrayAttr.get([]),
+        )
+      elif op_type == mgpu.dialect.AsyncStoreOp:
+        op = op_type(
+            source=smem_ref,
+            destination=gmem_ref,
+            indices=indices,
+            slice_lengths=slice_lengths,
+        )
+      elif op_type == mgpu.dialect.AsyncPrefetchOp:
+        op = op_type(
+            source=gmem_ref,
+            indices=indices,
+            slice_lengths=slice_lengths,
+            collective=ir.ArrayAttr.get([]),
+        )
+
+      layout = mgpu.TMA_GATHER_INDICES_LAYOUT
+      mgpu.infer_layout(self.module)
+      self.checkInLayouts(op, [layout])
+
   @parameterized.parameters(
       ((32, 64, 128), [[0], [1], [2]], (32, 64, 128), False),
       ((32, 64, 128), [[0], [1, 2], [3]], (32, 4, 16, 128), False),

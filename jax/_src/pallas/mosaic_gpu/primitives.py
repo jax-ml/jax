@@ -291,9 +291,16 @@ def _split_gmem_slice(gmem_slice):
       case mgpu.DynamicSlice():
         indices.append(arith_dialect.index_cast(i32, idx.base))
         slice_lengths.append(idx.length)
-      case ir.Value():
+      case ir.Value() if ir.IndexType.isinstance(idx.type):
         indices.append(arith_dialect.index_cast(i32, idx))
         slice_lengths.append(-1)
+      case ir.Value() if ir.IntegerType.isinstance(idx.type):
+        indices.append(idx)
+        slice_lengths.append(-1)
+      case ir.Value() if ir.VectorType.isinstance(idx.type):
+        indices.append(idx)
+        [length] = ir.VectorType(idx.type).shape
+        slice_lengths.append(length)
       case _:
         raise NotImplementedError(f"Unsupported GMEM slice: {idx}")
   return indices, slice_lengths

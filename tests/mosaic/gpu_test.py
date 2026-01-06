@@ -6279,6 +6279,73 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
     x = self.prng.uniform(-100, 100, (128, 128)).astype(jnp.float32)
     self.assertArraysEqual(kernel(x), x)
 
+  @parameterized.parameters(jnp.int32, jnp.int16, jnp.int8)
+  def test_tma_gather(self, index_dtype):
+    # TODO(b/415721295): Remove when the minimum jaxlib version is 0.8.3.
+    if not hasattr(mgpu_dialect, "tma_gather_supported"):
+      self.skipTest("TMA gather support is required.")
+
+    dtype = jnp.bfloat16
+    src_shape = (128, 64)
+    dst_shape = (32, 64)
+    indices_shape = (32,)
+
+    def body(ctx, src, indices, dst, smem):
+      del ctx
+      smem_ref, tma_barrier = smem
+
+      # Load indices into registers
+      indices_vec = mgpu_dialect.vector_load(indices)
+      i32 = ir.IntegerType.get_signless(32)
+      zero = arith.constant(i32, 0)
+
+      slice_lengths = (32, 64)
+
+      # Load + Gather
+      expected_bytes = math.prod(slice_lengths) * np.dtype(dtype).itemsize
+      tma_barrier.arrive_expect_tx(expected_bytes)
+      mgpu_dialect.async_load(
+          source=src,
+          destination=smem_ref,
+          barrier=tma_barrier.as_barrier_memref(),
+          indices=[indices_vec, zero],
+          slice_lengths=slice_lengths,
+          collective=ir.ArrayAttr.get([]),
+      )
+      tma_barrier.wait()
+
+      # Store
+      mgpu_dialect.async_store(
+          source=smem_ref,
+          destination=dst,
+          indices=[zero, zero],
+          slice_lengths=slice_lengths,
+      )
+      nvvm.cp_async_bulk_wait_group(0)
+
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(
+            jax.ShapeDtypeStruct(src_shape, dtype),
+            jax.ShapeDtypeStruct(indices_shape, index_dtype),
+        ),
+        out_shape=jax.ShapeDtypeStruct(dst_shape, dtype),
+        smem_scratch_shape=[
+            jax.ShapeDtypeStruct((32, 64), dtype),
+            core.TMABarrier(1),
+        ],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    src = self.prng.uniform(-1, 1, src_shape).astype(dtype)
+    indices = jax.random.permutation(jax.random.key(0), 128)[:32].astype(index_dtype)
+    result = kernel(src, indices)
+
+    # Verification
+    np.testing.assert_array_equal(result, src[indices.astype(jnp.int32)])
+
 
 class UtilsTest(TestCase):
   @parameterized.parameters(

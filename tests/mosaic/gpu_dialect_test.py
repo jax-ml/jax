@@ -309,6 +309,64 @@ class DialectTest(MosaicGpuTest):
     ):
       self.module.operation.verify()
 
+  def test_async_load_op_vector_indices_shape_must_match_slice_lengths(self):
+    # TODO(b/415721295): Remove when the minimum jaxlib version is 0.8.3.
+    if not hasattr(mgpu.dialect, "tma_gather_supported"):
+      self.skipTest("TMA gather support is required.")
+
+    with ir.InsertionPoint(self.module.body):
+      i32 = ir.IntegerType.get_signless(32)
+      source, destination, barrier, *indices = undefs(
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          i32,
+          ir.VectorType.get([4], i32),
+      )
+      mgpu.dialect.async_load(
+          source,
+          destination,
+          barrier,
+          indices,
+          slice_lengths=[4, 8],
+          collective=ir.ArrayAttr.get([]),
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The size of the vector index must be equal to the slice length",
+    ):
+      self.module.operation.verify()
+
+  def test_async_load_op_only_one_vector_index_allowed(self):
+    # TODO(b/415721295): Remove when the minimum jaxlib version is 0.8.3.
+    if not hasattr(mgpu.dialect, "tma_gather_supported"):
+      self.skipTest("TMA gather support is required.")
+
+    with ir.InsertionPoint(self.module.body):
+      i32 = ir.IntegerType.get_signless(32)
+      source, destination, barrier, *indices = undefs(
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.VectorType.get([4], i32),
+          ir.VectorType.get([4], i32),
+      )
+      mgpu.dialect.async_load(
+          source,
+          destination,
+          barrier,
+          indices,
+          slice_lengths=[4, 4],
+          collective=ir.ArrayAttr.get([]),
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "Only one index may be a vector.*dimensions 0 and 1.",
+    ):
+      self.module.operation.verify()
+
   def test_async_store_op_source_must_be_contiguous(self):
     with ir.InsertionPoint(self.module.body):
       source, destination, *indices = undefs(

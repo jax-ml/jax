@@ -1513,10 +1513,12 @@ def _handle_transforms(
 
 def _ndindexer_indices(
     indexer: indexing.NDIndexer, allow_arrays: bool = False
-) -> tuple[gpu_core.Index | mgpu.FragmentedArray, ...]:
+) -> tuple[gpu_core.Index | mgpu.FragmentedArray | ir.Value, ...]:
   indices = []
   for idx in indexer.indices:
-    if isinstance(idx, mgpu.FragmentedArray) and idx.shape:
+    if (isinstance(idx, mgpu.FragmentedArray) and idx.shape) or (
+        isinstance(idx, ir.Value) and ir.VectorType.isinstance(idx.type)  # pytype: disable=attribute-error
+    ):
       if not allow_arrays:
         raise ValueError("Arrays are not supported as indices.")
       indices.append(idx)

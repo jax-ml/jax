@@ -906,6 +906,32 @@ def reinterpret_smem_ref(
   return new_ref
 
 
+def _gmem_slice_and_predicate(
+    ctx: LoweringContext,
+    op: mgpu.AsyncLoadOp | mgpu.AsyncPrefetchOp | mgpu.AsyncStoreOp,
+) -> tuple[
+    tuple[ir.Value | fa.FragmentedArray | utils.DynamicSlice, ...],
+    dict[str, ir.Value],
+]:
+  """Returns the GMEM slice and predicate for the given async op."""
+  gmem_slice = []
+  predicate = dict(predicate=ctx.single_thread_per_warpgroup_predicate)
+  for idx, size in zip(op.indices, op.slice_lengths, strict=True):
+    if ir.IntegerType.isinstance(idx.type):
+      idx_int = arith.index_cast(ir.IndexType.get(), idx)
+      v = idx_int if size < 0 else utils.DynamicSlice(idx_int, size)
+      gmem_slice.append(v)
+    elif ir.VectorType.isinstance(idx.type):
+      layout = inference_utils.in_layouts(op)[0]
+      assert layouts.from_layout_attr(layout) == fa.TMA_GATHER_INDICES_LAYOUT
+      idx_fa = _fragmented_array_from_ir(idx, layout)
+      gmem_slice.append(idx_fa)
+      predicate = dict()
+    else:
+      raise TypeError(f"Unsupported index type: {idx.type}")
+  return tuple(gmem_slice), predicate
+
+
 @_register_lowering(mgpu.AsyncLoadOp)
 def _mgpu_async_load_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncLoadOp
@@ -921,11 +947,7 @@ def _mgpu_async_load_op_lowering_rule(
       load_op.destination, transforms_attr
   )
 
-  gmem_slice = []
-  for idx_i32, size in zip(load_op.indices, load_op.slice_lengths, strict=True):
-    idx = arith.index_cast(ir.IndexType.get(), idx_i32)
-    v = idx if size < 0 else utils.DynamicSlice(idx, size)
-    gmem_slice.append(v)
+  gmem_slice, predicate = _gmem_slice_and_predicate(ctx, load_op)
 
   collective = [
       gpu.Dimension(ir.IntegerAttr(axis).value)
@@ -944,13 +966,13 @@ def _mgpu_async_load_op_lowering_rule(
   ctx.launch_context.async_copy(
       src_ref=load_op.source,
       dst_ref=unwrapped_destination,
-      gmem_slice=tuple(gmem_slice),
+      gmem_slice=gmem_slice,
       barrier=barrier.barrier_ref,
       collective=collective,
       arrive=False,
       swizzle=swizzle,
       gmem_transform=transforms,
-      predicate=ctx.single_thread_per_warpgroup_predicate,
+      **predicate,
   )
   return []
 
@@ -961,21 +983,17 @@ def _mgpu_async_prefetch_op_lowering_rule(
 ) -> Sequence[ir.Value]:
   assert ctx.launch_context is not None
 
-  gmem_slice = []
-  for idx_i32, size in zip(load_op.indices, load_op.slice_lengths, strict=True):
-    idx = arith.index_cast(ir.IndexType.get(), idx_i32)
-    v = idx if size < 0 else utils.DynamicSlice(idx, size)
-    gmem_slice.append(v)
+  gmem_slice, predicate = _gmem_slice_and_predicate(ctx, load_op)
 
   if load_op.collective:
     raise NotImplementedError("Collective prefetches are not supported yet.")
 
   ctx.launch_context.async_prefetch(
       gmem_ref=load_op.source,
-      gmem_slice=tuple(gmem_slice),
+      gmem_slice=gmem_slice,
       swizzle=None,
       gmem_transform=(),
-      predicate=ctx.single_thread_per_warpgroup_predicate,
+      **predicate,
   )
   return []
 
@@ -992,11 +1010,7 @@ def _mgpu_async_store_op_lowering_rule(
   )
   unwrapped_source = unwrap_transformed_memref(store_op.source, transforms_attr)
 
-  gmem_slice = []
-  for idx_i32, size in zip(store_op.indices, store_op.slice_lengths):
-    idx = arith.index_cast(ir.IndexType.get(), idx_i32)
-    v = idx if size < 0 else utils.DynamicSlice(idx, size)
-    gmem_slice.append(v)
+  gmem_slice, predicate = _gmem_slice_and_predicate(ctx, store_op)
 
   # TODO(dasenov): async_copy requires all GMEM strides except the last one
   # to be a multiple of 16 bytes. This restriction could be loosned with
@@ -1014,10 +1028,10 @@ def _mgpu_async_store_op_lowering_rule(
   ctx.launch_context.async_copy(
       src_ref=unwrapped_source,
       dst_ref=store_op.destination,
-      gmem_slice=tuple(gmem_slice),
+      gmem_slice=gmem_slice,
       swizzle=swizzle,
       gmem_transform=transforms,
-      predicate=ctx.single_thread_per_warpgroup_predicate,
+      **predicate,
       arrive=store_op.commit_group,
       reduction_op=reduction_op,
   )
