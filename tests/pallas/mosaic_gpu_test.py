@@ -141,6 +141,13 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
     self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
 
     super().setUp()
+    # Artificially shrink SMEM to avoid OOMs on cards with smaller capacity than
+    # those that we have in CI. See https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/compute-capabilities.html#compute-capabilities-table-memory-information-per-compute-capability
+    mgpu.core._SMEM_SIZE_BOUND = 99 * 1024
+
+  def tearDown(self):
+    super().tearDown()
+    mgpu.core._SMEM_SIZE_BOUND = float("inf")
 
   def skip_if_wg_semantics(self):
     if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
