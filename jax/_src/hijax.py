@@ -16,20 +16,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import partial
+import inspect
 import itertools as it
 from typing import Any, Hashable
 
+from jax._src import api
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
+from jax._src.api_util import resolve_kwargs, infer_argnums_and_argnames
+from jax._src.core import typeof
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
+from jax._src.custom_derivatives import CustomVJPPrimal
 from jax._src import ad_util
-from jax._src.util import safe_zip, safe_map, split_list
+from jax._src.util import safe_zip, safe_map, split_list, unzip2
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
-    broadcast_prefix)
+    broadcast_prefix, register_static)
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
@@ -479,8 +484,93 @@ ad.fancy_transposes[call_hi_primitive_linearized_p] = _call_hi_primitive_lineari
 def _call_hi_primitive_jvp(primals, tangents, *, prim):
   primals = tree_unflatten(prim.in_tree, primals)
   tangents = tree_unflatten(prim.in_tree, tangents)
-  out_primals, out_tangents =  prim.jvp(primals, tangents)
+  out_primals, out_tangents = prim.jvp(primals, tangents)
   out_primals_flat = tree_leaves_checked(prim.out_tree, out_primals)
   out_tangents_flat = prim.out_tree.flatten_up_to(out_tangents)
   return out_primals_flat, out_tangents_flat
 ad.primitive_jvps[call_hi_primitive_p] = _call_hi_primitive_jvp
+
+
+class CustomVJPTraced(VJPHiPrimitive):
+  def __init__(self, primal, fwd, bwd, in_avals, sym_zeros, static_argnums):
+    in_avals_ = [x.val if isinstance(x, Static) else x for x in in_avals]
+    traced = api.jit(primal, static_argnums=(*static_argnums,)).trace(*in_avals_)
+    if any(isinstance(x, core.Tracer) for x in traced._consts):
+      raise Exception  # TODO(mattjj):error tracer type, value type, primal name
+    self.in_avals = in_avals
+    self.out_aval = traced.out_avals
+    self.params = dict(traced=traced, fwd=fwd, bwd=bwd, symbolic_zeros=sym_zeros,
+                       static_argnums=static_argnums)
+    super().__init__()
+
+  def expand(self, *args):
+    args = [x for x in args if not isinstance(x, Static)]
+    return self.traced(*args)  # type: ignore
+
+  def vjp_fwd(self, in_nzs, *args):
+    in_nzs = tuple(x.val if isinstance(x, Static) else x for x in in_nzs)
+    args = tuple(x.val if isinstance(x, Static) else x for x in args)
+    if self.symbolic_zeros:  # type: ignore
+      args = tree_map(CustomVJPPrimal, args, in_nzs)
+    out, res = self.fwd(*args)  # type: ignore
+    if self.symbolic_zeros:  # type: ignore
+      out_pairs_flat = tree_leaves_checked(self.out_tree, out)
+      out_flat, out_nzs_flat = unzip2(
+          (x.value, x.perturbed) if isinstance(x, CustomVJPPrimal) else
+          (x, True) for x in out_pairs_flat)
+      out_nzs = tree_unflatten(self.out_tree, out_nzs_flat)
+      out = tree_unflatten(self.out_tree, out_flat)
+      return out, res, out_nzs
+    else:
+      return out, res
+
+  def vjp_bwd_retval(self, res, out_ct):
+    static_args = tuple(x.val for x in self.in_avals if isinstance(x, Static))
+    in_avals_ = tuple(x for x in self.in_avals if not isinstance(x, Static))
+    leaf = lambda x: isinstance(x, ad_util.Zero)
+    if self.symbolic_zeros:  # type: ignore
+      out_ct = tree_map(ad_util.replace_internal_symbolic_zeros, out_ct, is_leaf=leaf)
+    else:
+      out_ct = tree_map(ad_util.instantiate, out_ct, is_leaf=leaf)
+    in_cts = self.bwd(*static_args, res, out_ct)  # type: ignore
+    in_cts = broadcast_prefix(in_cts, in_avals_, is_leaf=lambda x: x is None)
+    in_cts = tree_unflatten(self.in_tree, map(_replace_none, self.in_avals_flat, in_cts))
+    if self.symbolic_zeros:  # type: ignore
+      in_cts = tree_map(ad_util.replace_rule_output_symbolic_zeros, in_cts)
+    return in_cts
+
+def _replace_none(primal_in_aval, maybe_ct):
+  if maybe_ct is None:
+    return ad_util.Zero(primal_in_aval.to_cotangent_aval())
+  else:
+    return maybe_ct
+
+class custom_vjp3:
+  def __init__(self, f, *, nondiff_argnums=(), nondiff_argnames=()):
+    self.f = f
+    self.static_argnums = _set_up_nondiff(f, nondiff_argnums, nondiff_argnames)
+
+  def defvjp(self, fwd, bwd, *, symbolic_zeros=False):
+    self.fwd = fwd
+    self.bwd = bwd
+    self.symz = symbolic_zeros
+    return self
+
+  def __call__(self, *args, **kwargs):
+    args = resolve_kwargs(self.f, args, kwargs)
+    args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
+    in_avals = tree_map(typeof, args)
+    prim = CustomVJPTraced(self.f, self.fwd, self.bwd, in_avals, self.symz, self.static_argnums)  # type: ignore
+    return prim(*args)
+
+def _set_up_nondiff(f, argnums_, argnames) -> frozenset[int]:
+  argnums = set(argnums_)
+  if argnames:
+    sig = inspect.signature(f)  # needed for static_argnames
+    argnums |= set(infer_argnums_and_argnames(sig, None, argnames)[0])
+  return frozenset(argnums)
+
+@register_static
+@dataclass(frozen=True)
+class Static:
+  val: Any

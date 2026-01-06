@@ -1189,6 +1189,9 @@ pytype_strict_library(
         ":partial_eval",
         ":tree_util",
         ":util",
+        ":api_util",
+        ":custom_derivatives",
+        ":api",
     ],
 )
 
