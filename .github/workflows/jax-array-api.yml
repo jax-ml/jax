@@ -40,8 +40,9 @@ jobs:
         path: 'array-api-tests'
         persist-credentials: false
     - name: Install dependencies
+      # TODO(jakevdp) remove numpy pin once ml_dtypes 0.6 is released
       run: |
-        $PYTHON -m uv pip install --system .[ci] pytest-xdist -r array-api-tests/requirements.txt
+        $PYTHON -m uv pip install --system .[ci] "numpy<2.4.0" pytest-xdist -r array-api-tests/requirements.txt
     - name: Run the test suite
       env:
         ARRAY_API_TESTS_MODULE: jax.numpy
