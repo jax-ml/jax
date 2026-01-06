@@ -304,7 +304,10 @@ class MultiDeviceTest(jtu.JaxTestCase):
       self.skipTest('Only can run test on device with mem_stats')
     mesh = Mesh(devices, axis_names=("i"))
     sharding = NamedSharding(mesh, P('i'))
-    available_memory = mem_stats['bytes_reservable_limit']
+    if jtu.is_device_rocm():
+      available_memory = mem_stats['bytes_limit']
+    else:
+      available_memory = mem_stats['bytes_reservable_limit']
     array_size = available_memory // (6 * len(devices)) * len(devices)
     # Set up tracemalloc to track memory usage.
     tm.start()
