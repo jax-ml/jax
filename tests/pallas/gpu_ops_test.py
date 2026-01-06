@@ -21,7 +21,6 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
-from jax import lax
 from jax import random
 from jax._src import config
 from jax._src import test_util as jtu
@@ -45,80 +44,6 @@ import numpy as np
 # pylint: disable=no-value-for-parameter
 
 config.parse_flags_with_absl()
-
-
-@functools.partial(jax.jit, static_argnames=["bm", "bn", "gm", "bk",
-                                             "interpret", "debug"])
-def matmul(x, y, *, bm, bn, gm, bk, interpret, debug=False):
-  m, n, k = x.shape[0], y.shape[1], x.shape[1]
-  @functools.partial(
-      pl.pallas_call, out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
-      interpret=interpret,
-      debug=debug,
-      grid=pl.cdiv(m, bm) * pl.cdiv(n, bn))
-  def matmul_kernel(x_ref, y_ref, o_ref):
-    pid = pl.program_id(axis=0)
-    num_pid_m = m // bm
-    num_pid_n = n // bn
-    num_pid_in_group = gm * num_pid_n
-    group_id = lax.div(pid, num_pid_in_group)
-    first_pid_m = group_id * gm
-    group_size_m = jnp.minimum(num_pid_m - first_pid_m, gm)
-    pid_m = first_pid_m + lax.rem(pid, group_size_m)
-    pid_n = lax.div(lax.rem(pid, num_pid_in_group), group_size_m)
-    idx_m = pid_m * bm + jnp.arange(bm)
-    idx_n = pid_n * bn + jnp.arange(bn)
-    idx_m = pl.max_contiguous(pl.multiple_of(idx_m, bm), bm)
-    idx_n = pl.max_contiguous(pl.multiple_of(idx_n, bn), bn)
-    def body(i, acc):
-      idx_k = i * bk + jnp.arange(bk)
-      x_idx = (
-          jax.lax.broadcast_in_dim(idx_m, (bm, bk), (0,)),
-          jax.lax.broadcast_in_dim(idx_k, (bm, bk), (1,)))
-      y_idx = (
-          jax.lax.broadcast_in_dim(idx_k, (bk, bn), (0,)),
-          jax.lax.broadcast_in_dim(idx_n, (bk, bn), (1,)))
-      x_block, y_block = x_ref[x_idx], y_ref[y_idx]
-      out = pl.dot(x_block, y_block)
-      return acc + out
-
-    acc = lax.fori_loop(
-        0, k // bk, body, init_val=jnp.zeros((bm, bn), dtype=jnp.float32)
-    ).astype(o_ref.dtype)
-    o_idx = (
-        jax.lax.broadcast_in_dim(idx_m, (bm, bn), (0,)),
-        jax.lax.broadcast_in_dim(idx_n, (bm, bn), (1,)),
-        )
-    o_ref[o_idx] = acc
-  return matmul_kernel(x, y)
-
-
-@functools.partial(jax.jit, static_argnames=["bm", "bn", "bk",
-                                             "interpret", "debug"])
-def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
-  m, n, k = x.shape[0], y.shape[1], x.shape[1]
-  @functools.partial(
-      pl.pallas_call,
-      out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
-      interpret=interpret,
-      debug=debug,
-      in_specs=[
-          pl.BlockSpec((bm, x.shape[1]), lambda i, _: (i, 0)),
-          pl.BlockSpec((y.shape[0], bn), lambda _, j: (0, j)),
-      ],
-      out_specs=pl.BlockSpec((bm, bn), lambda i, j: (i, j)),
-      grid=(pl.cdiv(m, bm), pl.cdiv(n, bn)),
-  )
-  def matmul_kernel(x_ref, y_ref, o_ref):
-    def body(i, acc):
-      x_block = x_ref[:, pl.ds(i * bk, bk)]
-      y_block = y_ref[pl.ds(i * bk, bk), :]
-      return acc + pl.dot(x_block, y_block)
-
-    o_ref[:, :] = lax.fori_loop(
-        k // bk, body, init_val=jnp.zeros(o_ref.shape, dtype=jnp.float32)
-    ).astype(o_ref.dtype)
-  return matmul_kernel(x, y)
 
 
 @jtu.with_config(jax_traceback_filtering="off")
