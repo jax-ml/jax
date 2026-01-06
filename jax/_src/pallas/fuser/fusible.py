@@ -31,6 +31,12 @@ from jax._src.pallas.fuser import fusion as fusion_lib
 fusible_p = jax_core.Primitive('fusible')
 fusible_p.multiple_results = True
 
+def _fusible_is_high(*_, jaxpr, **params):
+  del params
+  return jaxpr.is_high
+
+fusible_p.is_high = _fusible_is_high
+
 
 def _make_trivial_fusion(x: jax.Array) -> fusion_lib.Fusion:
   return fusion_lib.Fusion(
@@ -78,7 +84,8 @@ def fusible(f=None, *, output_fusion_prefix: Any = True):
 @fusible_p.def_impl
 def _(*consts_and_args, jaxpr, num_consts, **_):
   consts, args = util.split_list(consts_and_args, [num_consts])
-  return jax_core.eval_jaxpr(jaxpr, consts, *args)
+  result = jax_core.eval_jaxpr(jaxpr, consts, *args)
+  return result
 
 
 mlir.register_lowering(fusible_p, mlir.lower_fun(fusible_p.impl))
@@ -103,5 +110,27 @@ def _fusible_trivial_batching_rule(axis_data, args, dims, **kwargs):
 
   return out, (0,) * len(out)
 
-
 batching.fancy_primitive_batchers[fusible_p] = _fusible_trivial_batching_rule
+
+
+def _fusible_to_lojax(*hi_args, jaxpr, num_consts, **_):
+  const_in_avals = jaxpr.in_aval_qdds[:num_consts]
+  num_lo_consts = sum(len(aval.lo_ty()) for aval in const_in_avals)
+
+  lo_args = [
+      lo_val
+      for aval, x in zip(jaxpr.in_aval_qdds, hi_args)
+      for lo_val in (aval.read_loval(x) if aval.has_qdd else aval.lower_val(x))
+  ]
+
+  closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, lo_args[:num_lo_consts])
+
+  lo_jaxpr = pe.lower_jaxpr(closed_jaxpr)
+  all_outs = fusible_p.bind(*lo_args, jaxpr=lo_jaxpr.jaxpr, num_consts=num_lo_consts)
+
+  out_mut, lo_outs = util.split_list(all_outs, [pe.num_himuts_out(jaxpr)])
+  pe.apply_himut(jaxpr, hi_args, out_mut)
+  return pe.raise_lo_outs(jaxpr.out_avals, lo_outs)
+
+
+fusible_p.to_lojax = _fusible_to_lojax
