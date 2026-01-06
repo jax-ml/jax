@@ -1489,6 +1489,8 @@ class FlatTree:
   def paths(self) -> FlatTree:
     # TODO(dougalm): find a way to do this without roundtripping
     paths, _ = unzip2(tree_leaves_with_path(self.unflatten()))
+    if len(paths) != len(self.vals):
+      return self.update([''] * len(self.vals))  # not our fault
     return self.update(paths)
 
   def __len__(self):
