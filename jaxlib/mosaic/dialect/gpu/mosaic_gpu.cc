@@ -239,12 +239,6 @@ void DeclareRuntimeFunctions(mlir::OpBuilder& builder) {
       .setVisibility(mlir::func::FuncOp::Visibility::Private);
 }
 
-bool IsContiguous(mlir::MemRefType type) {
-  return type.getLayout().isIdentity() ||
-         (type.hasStaticShape() && type.getNumElements() > 0 &&
-          mlir::memref::isStaticShapeAndContiguousRowMajor(type));
-}
-
 namespace {
 llvm::LogicalResult VerifyCommonLoadStoreOp(
     mlir::Operation* op, mlir::MemRefType gmem_type, std::string_view gmem_name,
@@ -255,9 +249,6 @@ llvm::LogicalResult VerifyCommonLoadStoreOp(
     return op->emitError(llvm::formatv(params...));
   };
 
-  if (!IsContiguous(smem_type)) {
-    return error("The `{0}` memref must be contiguous.", smem_name);
-  }
   if (gmem_type.getElementType() != smem_type.getElementType()) {
     return error(
         "The `source` and `destination` memrefs must have the same element "

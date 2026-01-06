@@ -833,8 +833,7 @@ def transformed_smem_ref_type(
 ) -> ir.MemRefType:
   """Returns the transformed ref type for the given logical ref and transforms.
   """
-  transposed = utils.is_memref_transposed(ref_ty)
-  if not transforms and not transposed:
+  if not transforms:
     return ref_ty
 
   if not utils.is_smem_ref(ref_ty):
@@ -842,6 +841,7 @@ def transformed_smem_ref_type(
 
   shape = ref_ty.shape
   strides, offset = ref_ty.get_strides_and_offset()
+  transposed = utils.is_memref_transposed(ref_ty)
   if transposed:
     if len(shape) != 2:
       raise NotImplementedError(
@@ -943,9 +943,23 @@ def _mgpu_async_load_op_lowering_rule(
   swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
       transforms_attr
   )
-  unwrapped_destination = unwrap_transformed_memref(
+
+  unwrapped_dst = unwrap_transformed_memref(
       load_op.destination, transforms_attr
   )
+
+  if utils.is_memref_transposed(unwrapped_dst.type):
+    strides, _ = ir.MemRefType(unwrapped_dst.type).get_strides_and_offset()
+    permutation = tuple(
+        sorted(range(len(strides)), key=lambda i: strides[i], reverse=True)
+    )
+    # We undo the tranpose and apply it as a transform.
+    unwrapped_dst = utils.memref_transpose(
+        unwrapped_dst, permutation
+    )
+    if transforms:
+      raise NotImplementedError("Can't transpose transformed refs.")
+    transforms = (launch_context.TransposeTransform(permutation),)
 
   gmem_slice, predicate = _gmem_slice_and_predicate(ctx, load_op)
 
@@ -965,7 +979,7 @@ def _mgpu_async_load_op_lowering_rule(
     mgpu_utils.warpgroup_barrier()  # Make sure the writes have completed.
   ctx.launch_context.async_copy(
       src_ref=load_op.source,
-      dst_ref=unwrapped_destination,
+      dst_ref=unwrapped_dst,
       gmem_slice=gmem_slice,
       barrier=barrier.barrier_ref,
       collective=collective,
@@ -1009,6 +1023,18 @@ def _mgpu_async_store_op_lowering_rule(
       transforms_attr
   )
   unwrapped_source = unwrap_transformed_memref(store_op.source, transforms_attr)
+  if utils.is_memref_transposed(unwrapped_source.type):
+    strides, _ = ir.MemRefType(unwrapped_source.type).get_strides_and_offset()
+    permutation = tuple(
+        sorted(range(len(strides)), key=lambda i: strides[i], reverse=True)
+    )
+    # We undo the tranpose and apply it as a transform.
+    unwrapped_source = utils.memref_transpose(
+        unwrapped_source, permutation
+    )
+    if transforms:
+      raise NotImplementedError("Can't transpose transformed refs.")
+    transforms = (launch_context.TransposeTransform(permutation),)
 
   gmem_slice, predicate = _gmem_slice_and_predicate(ctx, store_op)
 
@@ -1666,18 +1692,19 @@ def _memref_transpose_op_lowering_rule(
   in_transforms = inference_utils.in_transforms(op)[0]
   unwrapped_in_ref = unwrap_transformed_memref(op.in_, in_transforms)
   in_transformed_ty = ir.MemRefType(unwrapped_in_ref.type)
-  if len(in_transformed_ty.shape) == 2:
+  if in_transformed_ty.rank == op.in_.type.rank:
     new_permutation = op.permutation
-  elif len(in_transformed_ty.shape) == 4:
+  elif in_transformed_ty.rank == 4:
     if op.permutation == _permutation_to_affine_map_attr([0, 1]):
       new_permutation = _permutation_to_affine_map_attr([0, 1, 2, 3])
     elif op.permutation == _permutation_to_affine_map_attr([1, 0]):
       new_permutation = _permutation_to_affine_map_attr([1, 0, 3, 2])
     else:
-      raise NotImplementedError("Unsupported permutation.")
+      raise NotImplementedError(f"Unsupported permutation={op.permutation}.")
   else:
     raise NotImplementedError(
-        "TransposeOp only supports transposing 2D and 4D memrefs."
+        "TransposeOp only supports transposing 4D tiled memrefs and untiled"
+        " memrefs."
     )
 
   out_transforms = inference_utils.out_transforms(op)[0]

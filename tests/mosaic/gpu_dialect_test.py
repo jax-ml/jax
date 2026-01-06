@@ -135,34 +135,6 @@ class DialectTest(MosaicGpuTest):
       )
     self.assertTrue(self.module.operation.verify())
 
-  def test_async_load_op_dest_must_be_contiguous(self):
-    with ir.InsertionPoint(self.module.body):
-      source, destination, barrier, *indices = undefs(
-          ir.MemRefType.get([4, 8], ir.F32Type.get()),
-          ir.MemRefType.get(
-              [4, 8],
-              ir.F32Type.get(),
-              layout=ir.Attribute.parse("strided<[16, 1]>"),
-          ),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
-          ir.IntegerType.get_signless(32),
-          ir.IntegerType.get_signless(32),
-      )
-      mgpu.dialect.async_load(
-          source,
-          destination,
-          barrier,
-          indices,
-          slice_lengths=[4, 8],
-          collective=ir.ArrayAttr.get([]),
-      )
-
-    with self.assertRaisesRegex(
-        ir.MLIRError,
-        "The `destination` memref must be contiguous",
-    ):
-      self.module.operation.verify()
-
   def test_async_load_op_source_and_dest_must_have_same_element_type(self):
     with ir.InsertionPoint(self.module.body):
       source, destination, barrier, *indices = undefs(
@@ -364,31 +336,6 @@ class DialectTest(MosaicGpuTest):
     with self.assertRaisesRegex(
         ir.MLIRError,
         "Only one index may be a vector.*dimensions 0 and 1.",
-    ):
-      self.module.operation.verify()
-
-  def test_async_store_op_source_must_be_contiguous(self):
-    with ir.InsertionPoint(self.module.body):
-      source, destination, *indices = undefs(
-          ir.MemRefType.get(
-              [4, 8],
-              ir.F32Type.get(),
-              layout=ir.Attribute.parse("strided<[16, 1]>"),
-          ),
-          ir.MemRefType.get([4, 8], ir.F32Type.get()),
-          ir.IntegerType.get_signless(32),
-          ir.IntegerType.get_signless(32),
-      )
-      mgpu.dialect.async_store(
-          source,
-          destination,
-          indices,
-          slice_lengths=[4, 8],
-      )
-
-    with self.assertRaisesRegex(
-        ir.MLIRError,
-        "The `source` memref must be contiguous",
     ):
       self.module.operation.verify()
 

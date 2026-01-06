@@ -221,8 +221,11 @@ def _copy_smem_to_gmem_lowering(
   )
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
+  handle_transposes = (
+      ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup
+  )
   src, src_transforms = lowering._handle_transforms(
-      ctx, src, src_transforms, handle_transposes=False
+      ctx, src, src_transforms, handle_transposes=handle_transposes
   )
   copy_params = _extract_gmem_copy_params(
       ctx, dst_transforms, supports_multicast=True
@@ -511,8 +514,11 @@ def _copy_gmem_to_smem_lowering(
   )
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
+  handle_transposes = (
+      ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup
+  )
   dst, dst_transforms = lowering._handle_transforms(
-      ctx, dst, dst_transforms, handle_transposes=False
+      ctx, dst, dst_transforms, handle_transposes=handle_transposes
   )
   copy_params = _extract_smem_copy_params(dst_transforms) | _extract_gmem_copy_params(ctx, src_transforms)
   base_index = _extract_barrier_slice_base(
