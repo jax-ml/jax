@@ -118,7 +118,7 @@ def _fusible_to_lojax(*hi_args, jaxpr, num_consts, **_):
 
   lo_args = [
       lo_val
-      for aval, x in zip(jaxpr.in_aval_qdds, hi_args)
+      for aval, x in util.safe_zip(jaxpr.in_aval_qdds, hi_args)
       for lo_val in (aval.read_loval(x) if aval.has_qdd else aval.lower_val(x))
   ]
 
