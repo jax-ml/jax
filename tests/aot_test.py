@@ -68,7 +68,9 @@ class JaxAotTest(jtu.JaxTestCase):
       aot_topo = topologies.get_topology_desc(
           platform=jax.devices()[0].platform
       )
-    except NotImplementedError:
+    except (ValueError, NotImplementedError) as e:
+      assert ('topology_name is not specified' in str(e) or
+              'topology not implemented' in str(e))
       raise unittest.SkipTest('PJRT Topology not supported')
 
     if jtu.TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
@@ -106,7 +108,9 @@ class JaxAotTest(jtu.JaxTestCase):
       aot_topo = topologies.get_topology_desc(
           platform=jax.devices()[0].platform
       )
-    except NotImplementedError:
+    except (ValueError, NotImplementedError) as e:
+      assert ('topology_name is not specified' in str(e) or
+              'topology not implemented' in str(e))
       raise unittest.SkipTest('PJRT Topology not supported')
 
     topo = xc.get_topology_for_devices(aot_topo.devices)
