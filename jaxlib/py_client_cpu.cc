@@ -132,7 +132,7 @@ ffi::Error XlaFfiPythonCpuCallback(xla::FfiLoadedHostCallbacks* callbacks,
       std::string msg = e.what();
       // 2. Restore the exception to the Python interpreter state
       e.restore();
-      // 3. Return error. The JAX runtime *should* check PyErr_Occured90 on failure.
+      // 3. Return error. The JAX runtime *should* check PyErr_Occured() on failure.
       return ffi::Error(ffi::ErrorCode::kUnknown,
           absl::StrFormat("CpuCallback error calling callback: %s", msg));
     }
