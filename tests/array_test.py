@@ -756,6 +756,21 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertEqual(x_bytes, y_bytes)
 
   @jtu.run_on_devices("cpu")
+  def test_buffer_protocol_donation(self):
+
+    @jax.jit(donate_argnums=(0,))
+    def add_one(x):
+      return x + 1;
+
+    rng = jtu.rand_default(self.rng())
+    x = rng((64, 64), np.float32)
+    y = jax.device_put(x)
+    # holds ref.
+    y_bytes = memoryview(y)
+    # doesn't crash
+    self.assertArraysEqual(add_one(y), x + 1)
+
+  @jtu.run_on_devices("cpu")
   def test_buffer_protocol_deletion(self):
     rng = jtu.rand_default(self.rng())
     x = rng((3, 4), np.float32)
