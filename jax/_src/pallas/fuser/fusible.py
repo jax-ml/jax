@@ -35,7 +35,7 @@ def _fusible_is_high(*_, jaxpr, **params):
   del params
   return jaxpr.is_high
 
-fusible_p.is_high = _fusible_is_high
+fusible_p.is_high = _fusible_is_high # type: ignore
 
 
 def _make_trivial_fusion(x: jax.Array) -> fusion_lib.Fusion:
