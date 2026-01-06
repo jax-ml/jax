@@ -57,6 +57,10 @@ _deprecations = {
         "jax.interpreters.ad.call_param_updaters was removed in JAX v0.9.0.",
         None,
     ),
+    "call_transpose": (
+        "jax.interpreters.ad.call_transpose was removed in JAX v0.9.0.",
+        None,
+    ),
     "call_transpose_param_updaters": (
         "jax.interpreters.ad.call_transpose_param_updaters was removed in JAX v0.9.0.",
         None,
@@ -133,12 +137,6 @@ _deprecations = {
         "jax.interpreters.ad.zero_jvp was removed in JAX v0.9.0.",
         None,
     ),
-    # Deprecated for JAX v0.7.1; finalize in JAX v0.9.0.
-    "call_transpose": (
-        # TODO(vanderplas): finalize this deprecation after callers are fixed.
-        "jax.interpreters.ad.call_transpose is deprecated.",
-        _src_ad.call_transpose,
-    ),
     # Deprecated for JAX v0.9.0; finalize in JAX v0.10.0.
     "reducing_transposes": (
         (
@@ -151,7 +149,6 @@ _deprecations = {
 
 import typing
 if typing.TYPE_CHECKING:
-  call_transpose = _src_ad.call_transpose
   reducing_transposes = _src_ad.reducing_transposes
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
