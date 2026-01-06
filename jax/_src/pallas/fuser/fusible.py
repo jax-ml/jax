@@ -84,8 +84,7 @@ def fusible(f=None, *, output_fusion_prefix: Any = True):
 @fusible_p.def_impl
 def _(*consts_and_args, jaxpr, num_consts, **_):
   consts, args = util.split_list(consts_and_args, [num_consts])
-  result = jax_core.eval_jaxpr(jaxpr, consts, *args)
-  return result
+  return jax_core.eval_jaxpr(jaxpr, consts, *args)
 
 
 mlir.register_lowering(fusible_p, mlir.lower_fun(fusible_p.impl))
