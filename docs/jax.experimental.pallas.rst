@@ -39,9 +39,6 @@ Functions
   dslice
   empty
   empty_like
-  load
-  store
-  swap
 
   broadcast_to
   debug_check
@@ -49,7 +46,6 @@ Functions
   dot
   get_global
   loop
-  max_contiguous
   multiple_of
   run_scoped
   when
@@ -63,4 +59,3 @@ Synchronization
   semaphore_read
   semaphore_signal
   semaphore_wait
-

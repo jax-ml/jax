@@ -19,6 +19,11 @@ Remember to align the itemized text with the first line of an item within a list
     Triton, call {func}`jax.experimental.pallas.pallas_call` with
     the `backend` argument set to `'triton'`.
 
+* Removals
+
+  * Removed the previously deprecated `pl.atomic_*`, `pl.load`, `pl.store`,
+    `pl.swap` and `pl.max_contiguous`.
+
 ## Released with jax 0.8.1
 
 * New features:
