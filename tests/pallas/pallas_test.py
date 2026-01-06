@@ -36,6 +36,7 @@ from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
 from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
+import jax.experimental.mosaic.gpu as mgpu
 import jax.export
 import jax.numpy as jnp
 import numpy as np
@@ -103,6 +104,7 @@ class PallasCallTest(ptu.PallasTest):
     # TODO(bchetioui): Remove this once tests are all compatible with
     # Pallas/Mosaic GPU.
     self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(False))
+    self.enter_context(mgpu.core.artificial_shared_memory_limit(jtu._SMEM_SIZE_BOUND_FOR_TESTS))
 
   def test_pallas_call_infers_backend_from_compiler_params(self):
     if not jtu.test_device_matches(["gpu"]):

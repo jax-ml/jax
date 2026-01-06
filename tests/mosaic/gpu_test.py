@@ -220,7 +220,7 @@ def iota_tensor(m, n, dtype, layout=mgpu.WGMMA_LAYOUT):
 
 class TestCase(parameterized.TestCase):
 
-  def setUp(self):
+  def setUp(self, *, artificial_shared_memory_limit=jtu._SMEM_SIZE_BOUND_FOR_TESTS):
     if not HAS_MOSAIC_GPU:
       self.skipTest("jaxlib built without Mosaic GPU")
     if (not jtu.test_device_matches(["cuda"]) or
@@ -233,6 +233,7 @@ class TestCase(parameterized.TestCase):
     self.enter_context(config.traceback_filtering("off"))
     self.enter_context(self.context)
     self.enter_context(ir.Location.unknown())
+    self.enter_context(core.artificial_shared_memory_limit(artificial_shared_memory_limit))
 
   @contextlib.contextmanager
   def capture_stdout(self):
@@ -250,7 +251,8 @@ class Sm90ATestCase(TestCase, jtu.CudaArchSpecificTest):
 
   def setUp(self):
       self.skip_unless_sm90a()
-      super().setUp()
+      # No artificially lowered limit for arch-specific tests
+      super().setUp(artificial_shared_memory_limit=None)
 
 
 class TestUtilTest(TestCase):
@@ -701,7 +703,6 @@ class WGMMALayoutTest(TestCase):
           ("WGMMA_LAYOUT_UPCAST_4X", "WGMMA_LAYOUT"),
       ),
   )
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_optimized_conversion(self, jax_dtype_from_to, layout_descs):
     layout_desc_from, layout_desc_to = layout_descs
     layout_from: fa.TiledLayout = getattr(fa, layout_desc_from)
@@ -1214,13 +1215,15 @@ class WGMMATest(TestCase):
     np.testing.assert_allclose(z, ref, rtol=1e-3, atol=0)
 
 
-class TCGen05Test(TestCase):
+class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
 
   def setUp(self):
-    super().setUp()
-    capabilities = ("10.0", "10.1")
-    if not any(jtu.is_cuda_compute_capability_equal(sm) for sm in capabilities):
-      self.skipTest("Only works on GPU with capability sm_100a or sm_101a")
+    self.skip_unless_tcgen05()
+    if jtu.is_cuda_compute_capability_equal("10.3"):
+      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
+      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
+    # No artificially lowered limit for arch-specific tests
+    super().setUp(artificial_shared_memory_limit=None)
 
   @parameterized.product(
       jax_dtype_packing=[(jnp.float32, 1), (jnp.float16, 1), (jnp.float16, 2), (jnp.float8_e5m2, 4)],
@@ -3865,8 +3868,6 @@ class FragmentedArrayTest(TestCase):
     np.testing.assert_allclose(result, np.full((128, 32), 3.14, np.float32))
 
   @parameterized.product(in_shape=((128, 128), (128, 64), (64, 128)))
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(
-    device_patterns=("RTX PRO 6000 Blackwell", "GB10$"))
   def test_strided_load_store(self, in_shape):
     def kernel(ctx, *args):
       gmem_input, gmem_output, (smem_input, smem_output) = args
@@ -4493,8 +4494,6 @@ class LayoutTest(TestCase):
           (fa.TCGEN05_LAYOUT, fa.TCGEN05_TRANSPOSED_LAYOUT),
       ],
   )
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(
-    device_patterns=("RTX PRO 6000 Blackwell", "GB10$"))
   def test_transpose_tiled(self, dtype, swizzle, layouts):
     mlir_dtype = utils.dtype_to_ir_type(dtype)
     bw = bytewidth(mlir_dtype)
@@ -4532,10 +4531,10 @@ class LayoutTest(TestCase):
         .T.reshape(n // tiling[0], tiling[0], m // tiling[1], tiling[1])
         .transpose(0, 2, 1, 3)
     )
-
-    y = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), x, y_ref, [x, y_ref, mgpu.TMABarrier()],
-    )(x)
+    with core.artificial_shared_memory_limit(None):
+      y = mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), x, y_ref, [x, y_ref, mgpu.TMABarrier()],
+      )(x)
     np.testing.assert_array_equal(y, y_ref)
 
   @parameterized.parameters(
@@ -4546,7 +4545,6 @@ class LayoutTest(TestCase):
       (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, jnp.int4, jnp.int4, 2),
   )
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_upcast_to_wgmma(
       self, start_layout, end_layout, in_dtype, cast_dtype, shfl_per_reg
   ):
@@ -5896,13 +5894,16 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
     )
 
 
-class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
+class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecificTest):
 
   def setUp(self):
-    super().setUp()
-    capabilities = ("10.0", "10.1")
-    if not any(jtu.is_cuda_compute_capability_equal(sm) for sm in capabilities):
-      self.skipTest("Only works on GPU with capability sm_100a or sm_101a")
+    self.skip_unless_tcgen05()
+    if jtu.is_cuda_compute_capability_equal("10.3"):
+      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
+      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
+    # No artificially lowered limit for arch-specific tests
+    super().setUp(artificial_shared_memory_limit=None)
+
 
   @parameterized.named_parameters(
       ("unpacked", (128, 77), jnp.bfloat16, 1, False),
