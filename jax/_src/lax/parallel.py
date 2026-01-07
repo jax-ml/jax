@@ -123,6 +123,9 @@ def psum(x, axis_name, *, axis_index_groups=None):
   """
   axes = ((axis_name,) if not isinstance(axis_name, (tuple, list)) else
           tuple(axis_name))
+  # TODO(yashkatariya): Remove this handling and remove_size_one_mesh_axis_from_type
+  # generally from JAX.
+  axes = _maybe_skip_one_sized_axes(axes)
   if not axes:
     return x
   def bind(leaf):
@@ -173,6 +176,14 @@ def _psum(x, axis_name, *, axis_index_groups):
                               axis_index_groups=axis_index_groups)
                   for leaf in leaves]
   return tree_util.tree_unflatten(treedef, out_flat)
+
+
+def _maybe_skip_one_sized_axes(axes):
+  if config.remove_size_one_mesh_axis_from_type.value:
+    cur_mesh = get_abstract_mesh()
+    return tuple(i for i in axes
+                 if (size := cur_mesh.shape.get(i)) is None or size != 1)
+  return axes
 
 
 def pmean(x, axis_name, *, axis_index_groups=None):
@@ -2164,6 +2175,9 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
    [16 18]]
   """
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
+  # TODO(yashkatariya): Remove this handling and remove_size_one_mesh_axis_from_type
+  # generally from JAX.
+  axes = _maybe_skip_one_sized_axes(axes)
   if not axes:
     return x
   def bind(leaf):
