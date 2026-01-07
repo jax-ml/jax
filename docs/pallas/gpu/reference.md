@@ -272,6 +272,13 @@ The available transforms are:
   This is primarily useful in that it lets you change the layout during the GMEM-SMEM copies (only
   do keep in mind that changing the minormost/last dimension is not supported by the hardware).
 
+```{note}
+When performing GMEM-SMEM or SMEM-GMEM copies and a `plgpu.TileTransform` is
+applied on the SMEM reference, the offsets into the GMEM reference must be
+aligned with the tile sizes. If that is not the case, the transfer may produce
+wrong results.
+```
+
 ### Array layouts
 
 There are a few useful layouts we have defined for you so far:
