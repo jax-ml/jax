@@ -42,6 +42,7 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src import sharding_impls
 from jax._src.interpreters import mlir
 from jax._src import lib
 from jax._src.lib.mlir.dialects import hlo
@@ -169,6 +170,60 @@ class JaxExportTest(jtu.JaxTestCase):
       except RuntimeError:
         continue
       self.platforms.append(backend)
+
+
+  def test_export_preserves_memory_kind(self):
+      # Regression test for https://github.com/jax-ml/jax/issues/33649
+      mesh = jax.sharding.Mesh(np.array(jax.devices()[:1]), ('x',))
+      shd = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'),
+                                       memory_kind='pinned_host')
+
+      def f(x):
+        return x
+
+      # Export the function with pinned_host input
+      exported = export.export(jax.jit(f, in_shardings=shd, out_shardings=shd))(
+          jax.ShapeDtypeStruct((2,), np.float32, sharding=shd))
+
+      # Verify the export object retained the input memory_kind metadata
+      restored_in = exported.in_shardings_jax(mesh)[0]
+      self.assertEqual(restored_in.memory_kind, 'pinned_host')
+
+  def test_export_class_reconstructs_output_memory_kind(self):
+    # Unit test for the plumbing in Exported.out_shardings_jax.
+    # We construct Exported manually to bypass JIT compilation, which might
+    # strip output memory_kinds on CPU backends.
+    mesh = jax.sharding.Mesh(np.array(jax.devices()[:1]), ('x',))
+
+    # Create a raw HLO sharding to simulate stored data
+    spec = jax.sharding.PartitionSpec('x')
+    base_sharding = jax.sharding.NamedSharding(mesh, spec)
+    # Get the raw HloSharding object directly
+    hlo_sharding = base_sharding._to_xla_hlo_sharding(1)
+
+    # Manually create an Exported object with out_memory_kinds set
+    # We fill required fields with dummy values
+    exp = export.Exported(
+        fun_name="test_fun",
+        in_tree=None, in_avals=(),
+        out_tree=None, out_avals=(),
+        in_shardings_hlo=(),
+        out_shardings_hlo=(hlo_sharding,),
+        nr_devices=1,
+        platforms=('cpu',),
+        ordered_effects=(), unordered_effects=(),
+        disabled_safety_checks=(),
+        mlir_module_serialized=b'',
+        calling_convention_version=0,
+        module_kept_var_idx=(),
+        uses_global_constants=False,
+        _get_vjp=None,
+        out_memory_kinds=('pinned_host',)
+    )
+
+    # Verify that out_shardings_jax uses the memory kind we stored
+    restored_out = exp.out_shardings_jax(mesh)[0]
+    self.assertEqual(restored_out.memory_kind, 'pinned_host')
 
   def test_basic_export_only(self):
     @jax.jit

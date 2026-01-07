@@ -207,6 +207,9 @@ class Exported:
 
   _get_vjp: Callable[[Exported], Exported] | None
 
+  in_memory_kinds: tuple[str | None, ...] | None = None
+  out_memory_kinds: tuple[str | None, ...] | None = None
+
   def mlir_module(self) -> str:
     """A string representation of the ``mlir_module_serialized``."""
     return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
@@ -253,18 +256,24 @@ class Exported:
        Shard(device=CpuDevice(id=0), index=(slice(7, 8, None),), replica_id=0, data=[14])]
 
     """
-    return tuple(_hlo_sharding_to_named_sharding(s, mesh)
-                 for s in self.in_shardings_hlo)
+    kinds = self.in_memory_kinds or (None,) * len(self.in_shardings_hlo)
+
+    return tuple(_hlo_sharding_to_named_sharding(s, mesh, kind)
+                 for s, kind in zip(self.in_shardings_hlo, kinds))
+
 
   def out_shardings_jax(
       self,
       mesh: mesh_lib.Mesh) -> Sequence[sharding.Sharding | None]:
     """Creates Shardings corresponding to ``self.out_shardings_hlo``.
 
-    See documentation for in_shardings_jax.
+    See ``in_shardings_jax`` for details.
     """
-    return tuple(_hlo_sharding_to_named_sharding(s, mesh)
-                 for s in self.out_shardings_hlo)
+    # Handle legacy Exported objects
+    kinds = self.out_memory_kinds or (None,) * len(self.out_shardings_hlo)
+
+    return tuple(_hlo_sharding_to_named_sharding(s, mesh, kind)
+                 for s, kind in zip(self.out_shardings_hlo, kinds))
 
   def has_vjp(self) -> bool:
     """Returns if this Exported supports VJP."""
@@ -788,6 +797,9 @@ def _export_lowered(
                   platforms=exp_primal.platforms,
                   disabled_checks=exp_primal.disabled_safety_checks)(*vjp_in_avals)
 
+  in_memory_kinds = tuple(getattr(s, 'memory_kind', None) for s in all_in_shardings)
+  out_memory_kinds = tuple(getattr(s, 'memory_kind', None) for s in lowering.compile_args["out_shardings"])
+
   return Exported(
       fun_name=fun_name,
       in_tree=lowered.in_tree,
@@ -796,6 +808,8 @@ def _export_lowered(
       out_avals=tuple(out_avals_flat),
       in_shardings_hlo=in_shardings,
       out_shardings_hlo=out_shardings,
+      in_memory_kinds=in_memory_kinds,
+      out_memory_kinds=out_memory_kinds,
       nr_devices=nr_devices,
       platforms=lowering._platforms,  # type: ignore
       ordered_effects=ordered_effects,
@@ -1225,11 +1239,18 @@ def _hlo_sharding_to_gspmd_sharding(
 
 def _hlo_sharding_to_named_sharding(
     hlo_sharding: HloSharding | None,
-    mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh):
+    mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh,
+    memory_kind: str | None = None):
   if hlo_sharding is None:
     return None
-  return sharding_impls.cached_named_sharding(
+
+  s = sharding_impls.cached_named_sharding(
       mesh, sharding_impls.parse_flatten_op_sharding(hlo_sharding, mesh)[0])
+
+  if memory_kind is not None and hasattr(s, 'with_memory_kind'):
+      return s.with_memory_kind(memory_kind)
+
+  return s
 
 
 def _get_vjp_fun(
