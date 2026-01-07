@@ -591,7 +591,7 @@ def _is_contiguous_shape_slice(
     ref_ty: ir.MemRefType, dim_slice: slice | None = slice(None)
 ):
   # If it's not a strided layout then we are definitely contiguous.
-  if not ir.StridedLayoutAttr.isinstance(ref_ty.layout):
+  if not isinstance(ref_ty.layout, ir.StridedLayoutAttr):
     return True
 
   strides = ir.StridedLayoutAttr(ref_ty.layout).strides[dim_slice]

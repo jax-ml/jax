@@ -323,7 +323,7 @@ def _optimization_barrier_op_lowering_rule(
 def _arith_constant_op_lowering_rule(
     _: LoweringContext, op: arith.ConstantOp
 ) -> Sequence[ir.Value]:
-  if not ir.DenseElementsAttr.isinstance(op.value):
+  if not isinstance(op.value, ir.DenseElementsAttr):
     raise NotImplementedError(f"Unsupported constant op: {op}")
 
   value = ir.DenseElementsAttr(op.value)
@@ -923,11 +923,11 @@ def _gmem_slice_and_predicate(
   gmem_slice = []
   predicate = dict(predicate=ctx.single_thread_per_warpgroup_predicate)
   for idx, size in zip(op.indices, op.slice_lengths, strict=True):
-    if ir.IntegerType.isinstance(idx.type):
+    if isinstance(idx.type, ir.IntegerType):
       idx_int = arith.index_cast(ir.IndexType.get(), idx)
       v = idx_int if size < 0 else utils.DynamicSlice(idx_int, size)
       gmem_slice.append(v)
-    elif ir.VectorType.isinstance(idx.type):
+    elif isinstance(idx.type, ir.VectorType):
       layout = inference_utils.in_layouts(op)[0]
       assert layouts.from_layout_attr(layout) == fa.TMA_GATHER_INDICES_LAYOUT
       idx_fa = _fragmented_array_from_ir(idx, layout)

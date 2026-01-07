@@ -1309,7 +1309,9 @@ class DialectLoweringTest(MosaicGpuTest):
     self.assertLen(all_stores, 2)
 
     def check_type(ty: ir.Type):
-      self.assertTrue(ir.VectorType.get((4,), elt_ty).isinstance(ty))
+      self.assertIsInstance(ty, ir.VectorType)
+      self.assertEqual(ty.element_type, elt_ty)
+      self.assertEqual(ty.shape, [4])
 
     load1, load2, *_ = all_loads  # Variadic unpacking to silence linter.
     check_type(load1.result.type)
