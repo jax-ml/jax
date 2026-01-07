@@ -47,7 +47,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 393  # fix AOT compilation when default memory space is unavailable.
+_version = 394  # add 'explain' callback to weakref_lru_cache
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.

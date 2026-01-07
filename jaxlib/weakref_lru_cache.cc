@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
@@ -106,10 +107,11 @@ struct HashableKey {
 class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
  public:
   WeakrefLRUCache(nb::callable cache_context_fn, nb::callable fn,
-                  int64_t maxsize)
+                  int64_t maxsize, std::optional<nb::callable> explain)
       : cache_context_fn_(cache_context_fn),
         fn_(fn),
-        lru_list_(std::make_shared<Cache::LRUList>(maxsize)) {}
+        lru_list_(std::make_shared<Cache::LRUList>(maxsize)),
+        explain_(explain) {}
 
   nb::object Call(nb::object weakref_key, nb::args args, nb::kwargs kwargs);
 
@@ -215,6 +217,7 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
   nb::callable cache_context_fn_;
   nb::callable fn_;
   std::shared_ptr<Cache::LRUList> lru_list_;
+  std::optional<nb::callable> explain_;
   std::unordered_map<WeakrefCacheKey, WeakrefCacheValue, WeakrefKeyHash,
                      WeakrefKeyEq>
       entries_;
@@ -328,6 +331,12 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
     if (inserted) {
       ++misses_;
       absl::Cleanup notify = [&] { entry->completed.Notify(); };
+      if (explain_.has_value()) {
+        auto explain = (*explain_)();
+        if (!explain.is_none()) {
+          explain(GetKeys(), weakref_key, *args, **kwargs);
+        }
+      }
       entry->result = fn_(weakref_key, *args, **kwargs);
       entry->has_result = true;
     } else {
@@ -359,6 +368,7 @@ std::vector<nb::object> WeakrefLRUCache::GetKeys() {
     wr_value.cache->ForEach([&results, &wr_key](
                                 const Key& key,
                                 const std::shared_ptr<CacheEntry>& value) {
+      if (!value->completed.HasBeenNotified()) { return; }
       nb::tuple result =
           nb::make_tuple(*wr_key.ref, key.context(), key.args(), key.kwargs());
       results.push_back(std::move(result));
@@ -397,6 +407,7 @@ void WeakrefLRUCache::Clear() {
   WeakrefLRUCache* cache = nb::inst_ptr<WeakrefLRUCache>(self);
   Py_VISIT(cache->cache_context_fn_.ptr());
   Py_VISIT(cache->fn_.ptr());
+  if (cache->explain_) { Py_VISIT(cache->explain_->ptr()); }
   for (const auto& [wr_key, wr_value] : cache->entries_) {
     Py_VISIT(wr_key.ref.ptr());
     int rval = 0;
@@ -424,6 +435,7 @@ void WeakrefLRUCache::Clear() {
   cache->Clear();
   cache->cache_context_fn_.reset();
   cache->fn_.reset();
+  cache->explain_ = std::nullopt;
   return 0;
 }
 
@@ -456,10 +468,13 @@ NB_MODULE(weakref_lru_cache, m) {
       });
   m.def(
       "weakref_lru_cache",
-      [](nb::callable cache_context_fn, nb::callable fn, int64_t maxsize) {
-        return std::make_shared<WeakrefLRUCache>(cache_context_fn, fn, maxsize);
+      [](nb::callable cache_context_fn, nb::callable fn, int64_t maxsize,
+         std::optional<nb::callable> explain) {
+        return std::make_shared<WeakrefLRUCache>(cache_context_fn, fn, maxsize,
+                                                 explain);
       },
-      nb::arg("cache_context_fn"), nb::arg("fn"), nb::arg("maxsize") = 2048);
+      nb::arg("cache_context_fn"), nb::arg("fn"), nb::arg("maxsize") = 2048,
+      nb::arg("explain") = std::optional<nb::callable>());
 }
 
 }  // namespace jax

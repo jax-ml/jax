@@ -313,6 +313,24 @@ class WeakrefLRUCacheTest(absltest.TestCase):
         expected_deletes.append(i)
         self.assertEqual(dtor_list, expected_deletes)
 
+  def testExplain(self):
+
+    def explain(keys, x):
+      self.assertLen(keys, num_keys_should_be)
+
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x: None, explain=lambda: explain)
+
+    class A: ...
+    a = A()
+
+    num_keys_should_be = 0
+    cache(a)
+
+    num_keys_should_be = 1
+    b = A()
+    cache(b)
+
 
 if __name__ == "__main__":
   absltest.main()
