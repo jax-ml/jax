@@ -833,62 +833,191 @@ def swizzle_and_transforms_from_transforms_attr(
   return swizzle or mgpu.SwizzlingMode.kNoSwizzle, tuple(gmem_transforms)
 
 
+def derive_contiguous_shape(
+    shape: Sequence[int], strides: Sequence[int]
+) -> list[int]:
+  """Returns a shape corresponding to a contiguous memref with the same ordered strides.
+
+  The size of the leading dimension of the resulting shape is always the same
+  as the size of the physically majormost dimension of the input type.
+  This assumes all strides are static and the physically minormost dimension
+  is contiguous (has stride 1).
+  """
+  leading_dimension = strides.index(max(strides))
+  sorted_strides = sorted(strides)
+  assert sorted_strides[0] == 1, "Expected minormost dimension to be contiguous"
+
+  reversed_result = []
+  previous_stride = 1
+  for stride in sorted_strides[1:]:
+    reversed_result.append(stride // previous_stride)
+    previous_stride = stride
+  reversed_result.append(shape[leading_dimension])
+  return list(reversed(reversed_result))
+
+
+def tile_shape(
+    shape: Sequence[int], tiling: Sequence[int]
+) -> tuple[list[int], list[int]]:
+  """Tiles the input shape and computes the resulting strides.
+
+  The shape is assumed to be row-major, and each of its dimensions must be
+  tiled.
+
+  Returns:
+    A tuple of (tiled_shape, tiled_strides).
+  """
+  assert len(tiling) == len(shape)
+  reversed_tiled_shape = []
+  reversed_tiled_strides = [1]
+
+  for tile_size in reversed(tiling):
+    new_stride = reversed_tiled_strides[-1] * tile_size
+    reversed_tiled_strides.append(new_stride)
+    reversed_tiled_shape.append(tile_size)
+
+  for dim_size, tile_size in zip(reversed(shape), reversed(tiling)):
+    if dim_size % tile_size != 0:
+      raise ValueError(
+          f"The dimension size {dim_size} must be a multiple of the tile size"
+          f" {tile_size}."
+      )
+    tiled_dim_size = dim_size // tile_size
+    reversed_tiled_shape.append(tiled_dim_size)
+    reversed_tiled_strides.append(
+        reversed_tiled_strides[-1] * tiled_dim_size
+    )
+
+  reversed_tiled_strides.pop()
+  return list(reversed(reversed_tiled_shape)), list(
+      reversed(reversed_tiled_strides)
+  )
+
+
+def delinearize_index(index: int, strides: Sequence[int]) -> tuple[int, ...]:
+  """Returns the delinearized index based on the given strides.
+
+  The strides must be in descending order.
+  """
+  delinearized_index = []
+  for stride in strides:
+    delinearized_index.append(index // stride)
+    index = index % stride
+  return tuple(delinearized_index)
+
+
 def transformed_smem_ref_type(
     ref_ty: ir.MemRefType,
     transforms: tuple[launch_context.MemRefTransform, ...],
 ) -> ir.MemRefType:
   """Returns the transformed ref type for the given logical ref and transforms.
   """
-  if not transforms:
-    return ref_ty
-
   if not utils.is_smem_ref(ref_ty):
     raise ValueError(f"Only workgroup memory is supported but got {ref_ty}.")
 
-  shape = ref_ty.shape
+  if not transforms:
+    return ref_ty
+
+  if len(transforms) > 1 or not isinstance(transforms[0], launch_context.TileTransform):
+    raise NotImplementedError(f"Unsupported transforms: {transforms}")
+  tiling = transforms[0].tiling  # pytype: disable=attribute-error
+
+  # Here, we must apply a single tile transform to the provided ref type. Tiling
+  # transforms are always specified in terms of a contiguous reference type.
+  #
+  # However, the ref type here may not be contiguous (in the case where the ref
+  # was previously sliced, or transposed, or both). In order to apply the
+  # transform correctly, we recover the original ref type (up to the size
+  # of the leading dimension), and apply the tiling transform to it. Then, we
+  # produce the final ref type by re-applying the eventual necessary slicing
+  # and transposition.
+  ref_shape = list(ref_ty.shape)
   strides, offset = ref_ty.get_strides_and_offset()
-  transposed = utils.is_memref_transposed(ref_ty)
-  if transposed:
-    if len(shape) != 2:
-      raise NotImplementedError(
-          f"Only 2D shapes can be transposed, but got {shape}"
-      )
-    if strides[0] != 1 or strides[1] != shape[0]:
-      raise NotImplementedError(
-          f"Only contiguous 2D memrefs can be transposed, but got {ref_ty}"
-      )
 
-  for t in transforms:
-    shape = list(t.transform_shape(shape))
+  # 1. Recover the original untransposed/unsliced shape (up to the leading
+  # dimension).
+  contiguous_shape = derive_contiguous_shape(ref_shape, strides)
 
-  minor_to_major_stride_order: tuple[int, ...]
-  if transposed:
-    # The expected output is a transposed ref and `shape` is already transposed.
-    # We need to compute the correct strides to match the shape.
-    if len(shape) == 2:
-      minor_to_major_stride_order = (1, 0)
-    elif len(shape) == 4:
-      minor_to_major_stride_order = (2, 3, 0, 1)
-    else:
-      raise NotImplementedError(
-          f"Expected a 2D or 4D shape after transforms, but got {shape}"
-      )
+  # 2. Compute permutations to go from the source ref's dimension order to the
+  # dimension order of the contiguous shape, and vice versa.
+  contiguous_to_source = list(range(len(strides)))
+  contiguous_to_source.sort(key=lambda i: strides[i], reverse=True)
+
+  source_to_contiguous = [0] * len(strides)
+  for i, idx in enumerate(contiguous_to_source):
+    source_to_contiguous[idx] = i
+
+  # In order to be able to apply the permutation of the shape to the tiling,
+  # we need to pad the tiling with -1s in the appropriate positions. By using a
+  # negative value as a sentinel, we make sure we can easily get rid of it
+  # later. By using 1, we ensure that multiplications/divisions still produce
+  # the correct result up to the sign (tiling all the leading dimensions by 1
+  # is equivalent to not tiling at all).
+  padded_tiling = [-1] * (len(ref_shape) - len(tiling)) + list(tiling)
+  contiguous_padded_tiling = [padded_tiling[d] for d in source_to_contiguous]
+
+  # 3. Produce the tiled shape and the tiled strides.
+  tiled_shape, tiled_strides = tile_shape(
+      contiguous_shape, contiguous_padded_tiling
+  )
+  # 4. Fix the sign of the strides in case we multiplied by -1, and fix the sign
+  # of untiled dimensions.
+  tiled_strides = [abs(s) for s in tiled_strides]
+  tiled_shape = [abs(s) for s in tiled_shape[:len(strides)]] + tiled_shape[len(strides):]
+
+  # 5. Reproduce the slicing of the original ref shape in the tiled shape.
+  sliced_contiguous_shape = [ref_shape[c] for c in source_to_contiguous]
+  sliced_tiled_shape = []
+  for i, (dim_size, slice_size) in enumerate(zip(contiguous_shape, sliced_contiguous_shape)):
+    if dim_size == slice_size:
+      sliced_tiled_shape.append(tiled_shape[i])
+      continue
+    tile_size = tiled_shape[i + len(contiguous_shape)]
+    assert dim_size % slice_size == 0
+    assert slice_size % tile_size == 0
+    sliced_tiled_shape.append(slice_size // tile_size)
+
+  sliced_tiled_shape.extend(tiled_shape[len(contiguous_shape):])
+
+  # 6. Apply the untiled permutation to both the tiling and the tiles.
+  untiled_rank = len(contiguous_to_source)
+  tiled_contiguous_to_source = list(contiguous_to_source) + [
+      p + untiled_rank for p in contiguous_to_source
+  ]
+  padded_result_shape = [sliced_tiled_shape[p] for p in tiled_contiguous_to_source]
+  padded_result_strides = [tiled_strides[p] for p in tiled_contiguous_to_source]
+
+  # 7. Eliminate the negative dimensions from the final shape, and eliminate the
+  # corresponding strides.
+  result_shape, result_strides = [], []
+  for dim_size, stride in zip(padded_result_shape, padded_result_strides):
+    if dim_size != -1:
+      result_shape.append(dim_size)
+      result_strides.append(stride)
+
+  # 8. Compute the equivalent memref offset within the tiled shape. This assumes
+  # that the offset is aligned with the tiling, which is always guaranteed.
+  if offset == 0 or offset == ir.ShapedType.get_dynamic_stride_or_offset():
+    new_offset = offset
   else:
-    minor_to_major_stride_order = tuple(reversed(range(len(shape))))
+    untransformed_strides = utils.get_contiguous_strides(contiguous_shape)
+    delinearized_offset = delinearize_index(offset, untransformed_strides)
+    tiled_index, _ = tile_shape(delinearized_offset, contiguous_padded_tiling)
+    new_offset = sum(a * b for a, b in zip(tiled_index[:-len(tiling)], tiled_strides))
 
-  new_strides = [1] * len(shape)
-  for i in range(1, len(shape)):
-    dim = minor_to_major_stride_order[i]
-    prev_dim = minor_to_major_stride_order[i-1]
-    new_strides[dim] = new_strides[prev_dim] * shape[prev_dim]
+  if ir.StridedLayoutAttr.isinstance(ref_ty.layout):
+    return ir.MemRefType.get(
+        result_shape,
+        ref_ty.element_type,
+        memory_space=ref_ty.memory_space,
+        layout=ir.StridedLayoutAttr.get(new_offset, result_strides),
+    )
 
-  new_ref_ty = ir.MemRefType.get(
-      shape,
+  return ir.MemRefType.get(
+      result_shape,
       ref_ty.element_type,
       memory_space=ref_ty.memory_space,
-      layout=ir.StridedLayoutAttr.get(offset, new_strides),
   )
-  return new_ref_ty
 
 
 def reinterpret_smem_ref(
@@ -1538,9 +1667,6 @@ def _memref_subview_op_lowering_rule(
   if op.sizes:
     raise NotImplementedError("SubViewOp only supports static sizes.")
   src_ty = ir.MemRefType(op.source.type)
-
-  if utils.is_memref_transposed(src_ty):
-    raise NotImplementedError("SubViewOp does not support transposed memrefs.")
 
   if utils.is_tmem_ref(src_ty):
     [in_tmem_layout] = inference_utils.in_tmem_layouts(op)
