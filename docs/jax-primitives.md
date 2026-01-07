@@ -374,7 +374,7 @@ def multiply_add_value_and_jvp(arg_values, arg_tangents):
   # An alternative would be to check for `Zero` and perform algebraic
   # simplification of the output tangent computation.
   def make_zero(tan):
-    return lax.zeros_like_array(x) if type(tan) is ad.Zero else tan
+    return lax.full_like(x, 0) if type(tan) is ad.Zero else tan
 
   output_tangent = multiply_add_prim(make_zero(xt), y, multiply_add_prim(x, make_zero(yt), make_zero(zt)))
   return (primal_out, output_tangent)
@@ -505,12 +505,12 @@ def multiply_add_transpose(ct, x, y, z):
   if not ad.is_undefined_primal(x):
     # This use of multiply_add is with a constant "x".
     assert ad.is_undefined_primal(y)
-    ct_y = ad.Zero(y.aval) if type(ct) is ad.Zero else multiply_add_prim(x, ct, lax.zeros_like_array(x))
+    ct_y = ad.Zero(y.aval) if type(ct) is ad.Zero else multiply_add_prim(x, ct, lax.full_like(x, 0))
     res = None, ct_y, ct
   else:
     # This use of multiply_add is with a constant "y".
     assert ad.is_undefined_primal(x)
-    ct_x = ad.Zero(x.aval) if type(ct) is ad.Zero else multiply_add_prim(ct, y, lax.zeros_like_array(y))
+    ct_x = ad.Zero(x.aval) if type(ct) is ad.Zero else multiply_add_prim(ct, y, lax.full_like(y, 0))
     res = ct_x, None, ct
   return res
 

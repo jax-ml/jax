@@ -1029,7 +1029,7 @@ def _unpack_conjugate_pairs(w, vr):
   # conjugate pair:
   # https://docs.nvidia.com/cuda/cusolver/index.html?highlight=geev#cusolverdnxgeev
   if w.size == 0:
-    return lax.complex(vr, lax.zeros_like_array(vr))
+    return lax.complex(vr, lax.full_like(vr, 0))
 
   is_real = ((w.imag == 0) | (w.imag == np.nan))
   # Finds the positions at which each conjugate pair starts, via the parity of
@@ -1048,7 +1048,7 @@ def _unpack_conjugate_pairs(w, vr):
                                          broadcast_dimensions=dims)
   re = lax.select(is_real | conj_pair_start, vr, vr_shifted_right)
   im = lax.select(conj_pair_start, vr_shifted_left, -vr)
-  im = lax.select(is_real, lax.zeros_like_array(vr), im)
+  im = lax.select(is_real, lax.full_like(vr, 0), im)
   return lax.complex(re, im)
 
 
@@ -2573,9 +2573,9 @@ def _tridiagonal_solve_transpose_rule(cotangent, dl, d, du, b):
   if type(cotangent) is ad_util.Zero:
     cotangent_b = ad_util.Zero(b.aval)
   else:
-    dl_trans = lax.concatenate((lax.zeros_like_array(du[..., -1:]), du[..., :-1]),
+    dl_trans = lax.concatenate((lax.full_like(du[..., -1:], 0), du[..., :-1]),
                                du.ndim-1)
-    du_trans = lax.concatenate((dl[..., 1:], lax.zeros_like_array(dl[..., :1])),
+    du_trans = lax.concatenate((dl[..., 1:], lax.full_like(dl[..., :1], 0)),
                                dl.ndim-1)
     cotangent_b = tridiagonal_solve(dl_trans, d, du_trans, cotangent)
   return [None, None, None, cotangent_b]
@@ -2705,12 +2705,12 @@ def symmetrize(x: Array) -> Array: return (x + _H(x)) / 2
 def _tril(m: Array, k:int = 0) -> Array:
   *_, N, M = m.shape
   mask = lax._tri(bool, (N, M), k)
-  return lax.select(lax.broadcast(mask, m.shape[:-2]), m, lax.zeros_like_array(m))
+  return lax.select(lax.broadcast(mask, m.shape[:-2]), m, lax.full_like(m, 0))
 
 def _triu(m: Array, k:int = 0) -> Array:
   *_, N, M = m.shape
   mask = lax._tri(bool, (N, M), k - 1)
-  return lax.select(lax.broadcast(mask, m.shape[:-2]), lax.zeros_like_array(m), m)
+  return lax.select(lax.broadcast(mask, m.shape[:-2]), lax.full_like(m, 0), m)
 
 def _construct_diagonal(s: Array) -> Array:
   """Construct a (batched) diagonal matrix"""

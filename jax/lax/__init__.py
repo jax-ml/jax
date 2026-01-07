@@ -235,7 +235,6 @@ from jax._src.lax.lax import (
   transpose_p as transpose_p,
   xor_p as xor_p,
   empty as empty,
-  zeros_like_array as _deprecated_zeros_like_array,
 )
 from jax._src.lax.special import (
   bessel_i0e as bessel_i0e,
@@ -402,15 +401,17 @@ from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
 from jax._src.dispatch import device_put_p as device_put_p
 
 _deprecations = {
-    # Added on July 24th 2025.
+    # Deprecated in v0.7.1; finalized in v0.9.0.
+    # TODO(jakevdp) remove entry in v0.10.0.
     "zeros_like_array": (
         (
-            "jax.lax.zeros_like_array is deprecated. Use jax.numpy.zeros_like"
-            " instead."
+            "jax.lax.zeros_like_array was deprecated in JAX 0.7.1 and removed"
+            " in JAX v0.9.0. Use jax.numpy.zeros_like instead."
         ),
-        _deprecated_zeros_like_array,
+        None,
     ),
-    # Added on Dec 1, 2025
+    # Deprecated in v0.8.2.
+    # TODO(jakevdp) finalize in v0.10.0.
     "pvary": (
         "jax.lax.pvary is deprecated. Use `jax.lax.pcast(..., to='varying')",
         _deprecated_pvary,
@@ -419,11 +420,10 @@ _deprecations = {
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  zeros_like_array = _deprecated_zeros_like_array
   pvary = _deprecated_pvary
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
-del _deprecated_zeros_like_array, _deprecated_pvary
+del _deprecated_pvary
 del _typing

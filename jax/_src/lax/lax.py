@@ -3854,10 +3854,6 @@ def _iter(tracer):
       return (slicing.index_in_dim(tracer, i, keepdims=False) for i in range(n))
 ShapedArray._iter = staticmethod(_iter)
 
-def zeros_like_array(x: ArrayLike) -> Array:
-  return full_like(x, 0)
-
-
 def _add_arrays(x, y):
   if (isinstance(a := core.get_aval(x), ShapedArray) and
       dtypes.issubdtype(a.dtype, dtypes.extended)):
