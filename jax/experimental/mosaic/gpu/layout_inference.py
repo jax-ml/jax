@@ -124,9 +124,9 @@ class ValueSite:
   def memory_space(self) -> MemorySpace:
     """Returns the memory space associated with this value."""
     type = self.value.type
-    if ir.VectorType.isinstance(type):
+    if isinstance(type, ir.VectorType):
       return MemorySpace.REG
-    assert ir.MemRefType.isinstance(type)
+    assert isinstance(type, ir.MemRefType)
     if utils.is_tmem_ref(type):
       return MemorySpace.TMEM
     elif utils.is_smem_ref(type):
@@ -178,7 +178,7 @@ def _strided_layout_for_variable(
   # TODO(bchetioui): should we make variables carry a shape as well, to make
   # things easier?
   type = variable.key.value.type
-  assert ir.VectorType.isinstance(type)
+  assert isinstance(type, ir.VectorType)
   return fa.WGStridedFragLayout.from_shaped_type(type)
 
 
@@ -487,15 +487,15 @@ def _add_constraint_system_derivation_rule(op: type[ir.OpView]):
 
 
 def is_vector(v: ir.Value) -> bool:
-  return ir.VectorType.isinstance(v.type)
+  return isinstance(v.type, ir.VectorType)
 
 
 def _is_smem_ref(v: ir.Value) -> bool:
-  return ir.MemRefType.isinstance(v.type) and utils.is_smem_ref(v)
+  return isinstance(v.type, ir.MemRefType) and utils.is_smem_ref(v)
 
 
 def _is_tmem_ref(v: ir.Value) -> bool:
-  return ir.MemRefType.isinstance(v.type) and utils.is_tmem_ref(v)
+  return isinstance(v.type, ir.MemRefType) and utils.is_tmem_ref(v)
 
 
 def _pointwise_op_constraint_system(
@@ -770,11 +770,13 @@ def prime_decomposition(n: int) -> list[int]:
 def dynamic_gcd(a: int, b: ir.Value) -> int:
   if a <= 0:
     raise ValueError("a must be strictly positive")
-  if ir.VectorType.isinstance(b.type):
+  if isinstance(b.type, ir.VectorType):
     # We don't actually know the values of the vector elements, so we pick 1
     # as the only safe value.
     return 1
-  if not ir.IntegerType.isinstance(b.type) and not ir.IndexType.isinstance(b.type):
+  if not isinstance(b.type, ir.IntegerType) and not isinstance(
+      b.type, ir.IndexType
+  ):
     raise ValueError(f"Expected an integer dynamic value, got a {b.type}")
   if isinstance(b.owner, arith.ConstantOp):
     return math.gcd(a, b.owner.literal_value)
@@ -913,7 +915,7 @@ def _infer_wgmma_tiling(
       b_type, max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
   )
   b_swizzle = _compute_swizzle(b_type, lc.TileTransform(b_tiling))
-  if not ir.MemRefType.isinstance(a_type):
+  if not isinstance(a_type, ir.MemRefType):
     return None, b_tiling
 
   a_tiling = _infer_tiling_for_mma_ref(
@@ -985,7 +987,7 @@ def _vector_broadcast_constraint_system(
   del ctx
   # This is not expected to be necessary at the moment. We should be using
   # mgpu.BroadcastInDimOp instead when dealing with broadcasting vectors.
-  if ir.ShapedType.isinstance(op.source.type):
+  if isinstance(op.source.type, ir.ShapedType):
     raise NotImplementedError("Only vector broadcasts from scalars are supported.")
   out_variable = cs.Variable(ValueSite(op, VariableType.RESULT, 0))
   layout = cs.RegisterLayout(fa.WGSplatFragLayout(tuple(op.result.type.shape)))
@@ -1142,7 +1144,7 @@ def _vector_extract_constraint_system(
     ctx: DerivationContext, op: vector.ExtractOp
 ) -> tuple[cs.ConstraintSystem, ValueSitesForVariable]:
   del ctx
-  if not ir.VectorType.isinstance(op.result.type):  # scalar result
+  if not isinstance(op.result.type, ir.VectorType):  # scalar result
     operand = ValueSite(op, VariableType.OPERAND, 0)
     variable = cs.Variable(operand)
     layout = fa.WGSplatFragLayout(tuple(op.source.type.shape))
@@ -1207,7 +1209,7 @@ def _custom_primitive_constraint_system(
 
   out_layouts = iter(op.out_layouts)
   for i, result in enumerate(op.results):
-    if ir.VectorType.isinstance(result.type):
+    if isinstance(result.type, ir.VectorType):
       v = cs.Variable(ValueSite(op, VariableType.RESULT, i))
       variables.append(v)
       assignments[v] = cs.RegisterLayout(
@@ -1609,7 +1611,7 @@ def _vector_value_sites_and_assignments_for_async_ops(
       raise ValueError(f"Unsupported op type: {op}")  # make pytype happy
 
   for i, idx in enumerate(op.indices):
-    if ir.VectorType.isinstance(idx.type):
+    if isinstance(idx.type, ir.VectorType):
       value_site = ValueSite(op, VariableType.OPERAND, base_operand_index + i)
       value_site_var = cs.Variable(value_site)
       layout = cs.RegisterLayout(value=fa.TMA_GATHER_INDICES_LAYOUT)
@@ -1698,7 +1700,7 @@ def _compute_swizzle(
     # TODO(b/447079781): Revisit if this is the behavior we want.
     return mgpu.SwizzlingMode.kNoSwizzle
 
-  if not ir.MemRefType.isinstance(type):
+  if not isinstance(type, ir.MemRefType):
     raise ValueError(f"Expected a MemRefType, got {type}.")
   ref_ty = ir.MemRefType(type)
   strides, _ = ref_ty.get_strides_and_offset()

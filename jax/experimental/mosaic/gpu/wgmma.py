@@ -72,7 +72,7 @@ class WGMMAAccumulator:
     f32 = ir.F32Type.get()
     if dtype is None:
       dtype = f32
-    if ir.IntegerType.isinstance(dtype):
+    if isinstance(dtype, ir.IntegerType):
       zero = arith.constant(dtype, ir.IntegerAttr.get(dtype, 0))
     else:
       zero = arith.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
@@ -102,12 +102,12 @@ class WGMMAAccumulator:
 def _supported_wgmma_types(dtype, abtype) -> bool:
   input_types_are = lambda ty: ty.isinstance(abtype)
   f16_acc_types = (ir.F16Type, ir.Float8E5M2Type, ir.Float8E4M3FNType)
-  if ir.F32Type.isinstance(dtype):
+  if isinstance(dtype, ir.F32Type):
     return any(input_types_are(ty) for ty in (ir.FloatTF32Type, ir.BF16Type, *f16_acc_types))
-  elif ir.F16Type.isinstance(dtype):
+  elif isinstance(dtype, ir.F16Type):
     return any(input_types_are(ty) for ty in f16_acc_types)
   elif ir.IntegerType.get_signless(32).isinstance(dtype):
-    return input_types_are(ir.IntegerType.get_signless(8))
+    return input_types_are(ir.IntegerType)
   else:
     return False
 
@@ -161,14 +161,14 @@ def wgmma_m64(
     if a_transpose is None:
       raise ValueError
 
-  if ir.F32Type.isinstance(out_ty) or out_ty == i32:
+  if isinstance(out_ty, ir.F32Type) or out_ty == i32:
     num_acc_regs = n // 2
     out_ty_field = ir.VectorType.get((1,), out_ty)
     acc_regs = list(acc.flat)
     assert acc_regs[0].type == ir.VectorType.get((1,), out_ty)
     to_acc_vec_regs = lambda regs: np.array(regs).reshape(acc.shape)
-    acc_constraint = "r" if ir.IntegerType.isinstance(out_ty) else "f"
-  elif ir.F16Type.isinstance(out_ty):
+    acc_constraint = "r" if isinstance(out_ty, ir.IntegerType) else "f"
+  elif isinstance(out_ty, ir.F16Type):
     num_acc_regs = n // 4
     out_ty_field = i32
     acc_regs = [_as_i32_reg(reg) for reg in acc.flat]
@@ -220,11 +220,11 @@ def wgmma_m64(
   assert next(reg_count) == len(reg_constraints_list)
   k_instr = 32 // bytewidth(element_type)
   el_ty = str(element_type)
-  if ir.Float8E5M2Type.isinstance(element_type):
+  if isinstance(element_type, ir.Float8E5M2Type):
     el_ty = "e5m2"
-  elif ir.Float8E4M3FNType.isinstance(element_type):
+  elif isinstance(element_type, ir.Float8E4M3FNType):
     el_ty = "e4m3"
-  elif ir.IntegerType.get_signless(8).isinstance(element_type):
+  elif isinstance(element_type, ir.IntegerType):
     # TODO(bchetioui): add u8 support in the future. Currently we always assume
     # that 8-bit integers are s8, and we would need to change the signature of
     # `wgmma` to indicate whether the input should be treated as signed or not.
@@ -319,7 +319,7 @@ def wgmma(
   if swizzle == 16:
     raise NotImplementedError("No swizzle is not supported")
   # Step 1. Establish the shape and element type of the operation.
-  if not ir.MemRefType.isinstance(b.type):
+  if not isinstance(b.type, ir.MemRefType):
     raise ValueError(f"B must be a memref, got: {b.type}")
   bf16 = ir.BF16Type.get()
   f32 = ir.F32Type.get()
@@ -342,7 +342,7 @@ def wgmma(
       # optimizations eliminate MMA instructions, leading to only the first tile
       # of the result being computed correctly.
       raise NotImplementedError("swizzle=32 not supported for s8 lhs in registers")
-  elif ir.MemRefType.isinstance(a.type):
+  elif isinstance(a.type, ir.MemRefType):
     (m, k2), element_type2 = mma_utils.tiled_memref_shape(a)
   else:
     raise ValueError(f"Unsupported A type: {type(a)}")

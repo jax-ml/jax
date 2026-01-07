@@ -186,7 +186,7 @@ def _default_is_signed(dtype: ir.Type) -> bool | None:
   When converting from Pallas dtype to IR type, we lose the `is_signed`
   information. We can default to `False` for most use cases.
   """
-  return False if ir.IntegerType.isinstance(dtype) else None
+  return False if isinstance(dtype, ir.IntegerType) else None
 
 
 def _fragmented_array_from_ir(
@@ -212,7 +212,7 @@ def _fragmented_array_from_ir(
     [attr.value for attr in conversion_cast.attributes["registers_shape"]]
   )
 
-  if ir.IntegerType.isinstance(conversion_cast.outputs[0].type.element_type):
+  if isinstance(conversion_cast.outputs[0].type.element_type, ir.IntegerType):
     is_signed = False if is_signed is None else is_signed
 
   return fa.FragmentedArray(
@@ -298,7 +298,9 @@ def _optimization_barrier_op_lowering_rule(
     _: LoweringContext,
     op: mgpu.OptimizationBarrierOp,
 ) -> Sequence[ir.Value]:
-  if not all(ir.VectorType.isinstance(operand.type) for operand in op.operands):
+  if not all(
+      isinstance(operand.type, ir.VectorType) for operand in op.operands
+  ):
     raise NotImplementedError(
         f"Optimization barrier op {op} has non-vector operands."
     )
@@ -582,7 +584,7 @@ def _print_layout_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.PrintLayoutOp
 ) -> Sequence[ir.Value]:
   del ctx
-  if ir.VectorType.isinstance(op.value.type):
+  if isinstance(op.value.type, ir.VectorType):
     (layout,) = inference_utils.in_layouts(op)
     a = _fragmented_array_from_ir(op.value, layout)
     print(op.format.value.format(pprint_layout(a)))
@@ -674,7 +676,7 @@ def _vector_extract_op_lowering_rule(
   [in_layout] = inference_utils.in_layouts(op)
   a = _fragmented_array_from_ir(op.source, in_layout)
 
-  if not ir.VectorType.isinstance(op.result.type):  # scalar result
+  if not isinstance(op.result.type, ir.VectorType):  # scalar result
     result = a[tuple(op.static_position)]
     assert isinstance(result.layout, fa.WGSplatFragLayout)
     return [result.registers.item()]
@@ -1297,7 +1299,7 @@ def _mgpu_wgmma_op_lowering_rule(
 
   # s8/i8 WGMMA expects signed integer accumulator.
   element_type = wgmma_op.a.type.element_type
-  is_signed = True if ir.IntegerType.isinstance(element_type) else None
+  is_signed = True if isinstance(element_type, ir.IntegerType) else None
   # TODO(dasenov): Move the value -> accumulator conversion outside of wgmma.
   # The associated fence could be a little expensive and is not needed if the
   # result a wgmma feeds into another wgmma (even in another loop step).
@@ -1306,7 +1308,7 @@ def _mgpu_wgmma_op_lowering_rule(
   )
   acc = wgmma.WGMMAAccumulator.from_registers(regs)
 
-  if ir.VectorType.isinstance(wgmma_op.a.type):
+  if isinstance(wgmma_op.a.type, ir.VectorType):
     a_transforms = None
     b_transforms = inference_utils.in_transforms(wgmma_op)[0]
     unwrapped_a_ref = None
@@ -1324,7 +1326,7 @@ def _mgpu_wgmma_op_lowering_rule(
       ir.MemRefType(wgmma_op.b.type), b_transforms, b_swizzle, minimum_swizzle
   )
 
-  if ir.VectorType.isinstance(wgmma_op.a.type):
+  if isinstance(wgmma_op.a.type, ir.VectorType):
     expected_a_layout = (
         fa.WGMMA_LAYOUT_8BIT
         if element_type == ir.IntegerType.get_signless(8)
@@ -1449,7 +1451,7 @@ def _slice_smem(result: ir.Type, offset: ir.Value):
   )
   offset = arith.index_cast(ir.IndexType.get(), offset)
   lowered_result_type = result
-  if ir.MemRefType.isinstance(result):
+  if isinstance(result, ir.MemRefType):
     memref_ty = ir.MemRefType(result)
     if memref_ty.element_type == ir.Type.parse("!mosaic_gpu.barrier"):
       lowered_result_type = ir.MemRefType.get(
@@ -1892,7 +1894,7 @@ def _tmem_ref_from_ir(
 
   Throws an error if the annotated layout does not match the expected layout.
   """
-  if not ir.MemRefType.isinstance(ref.type):
+  if not isinstance(ref.type, ir.MemRefType):
     raise ValueError(f"{ref} is not a memref.")
   mem_ref_ty = ir.MemRefType(ref.type)
 
@@ -2047,7 +2049,7 @@ def _flatten_ir_values(
   result: list[ir.Value] = []
   templates: list[_VectorTemplate | None] = []
   for v in values:
-    if ir.VectorType.isinstance(v.type):
+    if isinstance(v.type, ir.VectorType):
       fa = _fragmented_array_from_ir(v, next(fa_layouts_it))
       result.extend(fa.registers.flat)
       templates.append((fa.registers.shape, fa.layout, ir.VectorType(v.type)))
@@ -2237,7 +2239,7 @@ def _infer_flat_result_types(
   result_types: list[ir.Type] = []
   out_layouts_it = iter(out_layouts)
   for r in op.results:
-    if not ir.VectorType.isinstance(r.type):
+    if not isinstance(r.type, ir.VectorType):
       result_types.append(r.type)
       continue
     vec_type = ir.VectorType(r.type)

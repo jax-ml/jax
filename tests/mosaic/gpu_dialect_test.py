@@ -1396,7 +1396,7 @@ class DialectLoweringTest(MosaicGpuTest):
       scalar_out_ty = mgpu_utils.dtype_to_ir_type(out_dtype)
       in_ty = ir.VectorType.get(shape, scalar_in_ty)
       out_ty = ir.VectorType.get(shape, scalar_out_ty)
-      if ir.IntegerType.isinstance(scalar_in_ty):
+      if isinstance(scalar_in_ty, ir.IntegerType):
         zero = ir.IntegerAttr.get(scalar_in_ty, 0)
       else:
         zero = ir.FloatAttr.get(scalar_in_ty, 0)
