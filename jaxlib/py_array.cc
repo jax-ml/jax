@@ -803,8 +803,9 @@ absl::Status PyArray::set_arrays(nb::object obj) {
   TF_ASSIGN_OR_RETURN(
       auto array,
       py_client()->ifrt_client()->AssembleArrayFromSingleDeviceArrays(
-          ifrt::Shape(shape()), std::move(ifrt_sharding),
-          absl::MakeSpan(ifrt_arrays), ifrt::ArrayCopySemantics::kReuseInput,
+          ifrt_arrays[0]->dtype(), ifrt::Shape(shape()),
+          std::move(ifrt_sharding), absl::MakeSpan(ifrt_arrays),
+          ifrt::ArrayCopySemantics::kReuseInput,
           ifrt::SingleDeviceShardSemantics::kAddressableShards));
   SetIfrtArray(std::move(array));
   return absl::OkStatus();
@@ -2319,7 +2320,7 @@ absl::Status PyArray::Register(nb::module_& m) {
         } else {
           return platform_name;
         }
-    },
+      },
       nb::is_method());
   type.attr("is_ready") = nb::cpp_function(
       [](PyArray self) { return xla::ValueOrThrow(self.IsReady()); },
