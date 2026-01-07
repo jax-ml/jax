@@ -188,6 +188,8 @@ class JaxExportTest(jtu.JaxTestCase):
       # Verify the export object retained the input memory_kind metadata
       restored_in = exported.in_shardings_jax(mesh)[0]
       self.assertEqual(restored_in.memory_kind, 'pinned_host')
+      restored_out = exported.out_shardings_jax(mesh)[0]
+      self.assertEqual(restored_out.memory_kind, 'pinned_host')
 
   def test_export_class_reconstructs_output_memory_kind(self):
     # Unit test for the plumbing in Exported.out_shardings_jax.
@@ -205,8 +207,8 @@ class JaxExportTest(jtu.JaxTestCase):
     # We fill required fields with dummy values
     exp = export.Exported(
         fun_name="test_fun",
-        in_tree=None, in_avals=(),
-        out_tree=None, out_avals=(),
+        in_tree=tree_util.tree_structure(None), in_avals=(),
+        out_tree=tree_util.tree_structure(None), out_avals=(),
         in_shardings_hlo=(),
         out_shardings_hlo=(hlo_sharding,),
         nr_devices=1,
