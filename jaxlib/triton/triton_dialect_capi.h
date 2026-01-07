@@ -25,6 +25,7 @@ extern "C" {
 
 MLIR_DECLARE_CAPI_DIALECT_REGISTRATION(Triton, triton);
 
+MLIR_CAPI_EXPORTED MlirTypeID mlirTritonPointerTypeGetTypeID(void);
 MLIR_CAPI_EXPORTED MlirType mlirTritonPointerTypeGet(MlirType pointeeType,
                                                      int addressSpace);
 MLIR_CAPI_EXPORTED bool mlirTritonIsAPointer(MlirType type);

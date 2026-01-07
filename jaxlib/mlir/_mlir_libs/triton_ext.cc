@@ -45,8 +45,8 @@ NB_MODULE(_triton_ext, m) {
   // Types.
   //
 
-  mlir::python::nanobind_adaptors::mlir_type_subclass(m, "PointerType",
-                                             mlirTritonIsAPointer)
+  mlir::python::nanobind_adaptors::mlir_type_subclass(
+      m, "PointerType", mlirTritonIsAPointer, mlirTritonPointerTypeGetTypeID)
       .def_classmethod(
           "get",
           [](nb::object cls, MlirType pointee_type, int64_t address_space) {
@@ -54,9 +54,10 @@ NB_MODULE(_triton_ext, m) {
           },
           nb::arg("cls"), nb::arg("pointee_type"), nb::arg("address_space"),
           "Creates a PointerType type.")
-      .def_property_readonly("pointee_type", [](MlirType self) {
-        return mlirTritonPointerTypeGetPointeeType(self);
-      })
+      .def_property_readonly("pointee_type",
+                             [](MlirType self) {
+                               return mlirTritonPointerTypeGetPointeeType(self);
+                             })
       .def_property_readonly("address_space", [](MlirType self) {
         return mlirTritonPointerTypeGetAddressSpace(self);
       });

@@ -19,8 +19,10 @@ limitations under the License.
 
 #include "llvm/Support/Casting.h"
 #include "mlir-c/IR.h"
+#include "mlir-c/Support.h"
 #include "mlir/CAPI/IR.h"
 #include "mlir/CAPI/Registration.h"
+#include "mlir/CAPI/Support.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
@@ -60,6 +62,10 @@ MlirAttribute mlirTritonInferReduceOpEncoding(MlirAttribute operandEncoding,
   (void)inferLayoutInterface->inferReduceOpEncoding(opEncoding, axis,
                                                     retEncoding, std::nullopt);
   return wrap(retEncoding);
+}
+
+MlirTypeID mlirTritonPointerTypeGetTypeID(void) {
+  return wrap(mlir::triton::PointerType::getTypeID());
 }
 
 }  // extern "C"
