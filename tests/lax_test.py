@@ -888,6 +888,9 @@ class LaxTest(jtu.JaxTestCase):
                  for i in range(nspatial)]
     elif padding == 'SAME':
       o_sdims = [in_sdims[i]*strides[i] for i in range(nspatial)]
+    else:
+      o_sdims = [in_sdims[i]*strides[i] + max(e_k_sdims[i]-strides[i],0) - np.sum(p)
+                 for i, p in enumerate(padding)]
     o_shape =  [in_shape[0], k_shape[1]] + o_sdims
     out_spec_inv = [x[0] for x in
                     sorted(enumerate(dn.out_spec), key=lambda x: x[1])]
@@ -923,7 +926,9 @@ class LaxTest(jtu.JaxTestCase):
       ],
       dtype=lax_test_util.float_dtypes,
       strides=[(1, 1), (1, 2), (2, 1), (2, 2), (3, 3)],
-      padding=["VALID", "SAME"],
+      padding=list(itertools.product(
+        itertools.product([0,1,2], [0,1,2]),
+        itertools.product([0,1,2], [0,1,2]))) + ["VALID", "SAME"],
       dspec=[
           ("NHWC", "HWIO", "NHWC"),
       ],
@@ -941,7 +946,8 @@ class LaxTest(jtu.JaxTestCase):
       return lax.conv_transpose(lhs, rhs, strides, padding,
                                 rhs_dilation=rhs_dilation,
                                 dimension_numbers=dspec,
-                                transpose_kernel=True)
+                                transpose_kernel=True,
+                                use_consistent_padding=True)
 
     def fun_via_grad(lhs, rhs):
       return self._conv_transpose_via_grad(lhs, rhs, strides, padding,
@@ -963,7 +969,9 @@ class LaxTest(jtu.JaxTestCase):
       ],
       dtype=lax_test_util.float_dtypes,
       strides=[(1, 1), (1, 2), (2, 1), (2, 2), (3, 3)],
-      padding=["VALID", "SAME"],
+      padding=list(itertools.product(
+        itertools.product([0,1,2], [0,1,2]),
+        itertools.product([0,1,2], [0,1,2]))) + ["VALID", "SAME"],
       dspec=[
           ("NHWC", "HWIO", "NHWC"),
       ],
@@ -979,7 +987,8 @@ class LaxTest(jtu.JaxTestCase):
       return lax.conv_transpose(lhs, rhs, strides, padding,
                                 rhs_dilation=rhs_dilation,
                                 dimension_numbers=dspec,
-                                transpose_kernel=False)
+                                transpose_kernel=False,
+                                use_consistent_padding=True)
 
     def fun_via_grad(lhs, rhs):
       rhs_t = self._transpose_conv_kernel(lhs, rhs, dimension_numbers=dspec)
