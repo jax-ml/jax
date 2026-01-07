@@ -537,6 +537,15 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "random",
+    srcs = ["random.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//jax/_src:stateful_rng",
+    ]
+)
+
+pytype_strict_library(
     name = "rnn",
     srcs = ["rnn.py"],
     visibility = ["//visibility:public"],
