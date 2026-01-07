@@ -25,7 +25,6 @@ from jax import lax
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 
-from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -292,18 +291,16 @@ class FfiTest(jtu.JaxTestCase):
       jax.jit(fun).lower(jnp.ones(5)).as_text()
 
   def test_allow_x64(self):
-    if not config.enable_x64.value:
-      self.skipTest("Requires enable_x64=False")
     def fun():
       return jax.ffi.ffi_call("test", jax.ShapeDtypeStruct((), np.int64))()
     self.assertIn("tensor<i64>", jax.jit(fun).lower().as_text())
 
   def test_invalid_result_type(self):
     with self.assertRaisesRegex(
-        TypeError, "Cannot interpret value of type.*"):
+        ValueError, "All elements of result_shape_dtypes.*position 0"):
       jax.ffi.ffi_call("test", None)()
     with self.assertRaisesRegex(
-        TypeError, "Cannot interpret value of type.*"):
+        ValueError, "All elements of result_shape_dtypes.*position 1"):
       jax.ffi.ffi_call("test", (jax.ShapeDtypeStruct((), np.float32), ()))()
 
   @jtu.run_on_devices("gpu", "cpu")
