@@ -1517,7 +1517,7 @@ def _ndindexer_indices(
   indices = []
   for idx in indexer.indices:
     if (isinstance(idx, mgpu.FragmentedArray) and idx.shape) or (
-        isinstance(idx, ir.Value) and ir.VectorType.isinstance(idx.type)  # pytype: disable=attribute-error
+        isinstance(idx, ir.Value) and isinstance(idx.type, ir.VectorType)  # pytype: disable=attribute-error
     ):
       if not allow_arrays:
         raise ValueError("Arrays are not supported as indices.")

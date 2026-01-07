@@ -691,7 +691,7 @@ def _constant_constraint_system(
   variable = cs.Variable(result)
   shape = tuple(ir.ShapedType(constant_op.result.type).shape)
   if (
-      ir.DenseElementsAttr.isinstance(value)
+      isinstance(value, ir.DenseElementsAttr)
       and ir.DenseElementsAttr(value).is_splat
   ):
     layout = fa.WGSplatFragLayout(shape=shape)
