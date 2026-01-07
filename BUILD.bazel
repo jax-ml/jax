@@ -55,6 +55,7 @@ wheel_sources(
         "//jax/experimental:pallas_triton",
         "//jax/experimental:pjit",
         "//jax/experimental:profiler",
+        "//jax/experimental:random",
         "//jax/experimental:rnn",
         "//jax/experimental:scheduling_groups",
         "//jax/experimental:serialize_executable",
