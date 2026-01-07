@@ -21,7 +21,7 @@ import jax
 from jax import numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.interpreters import mlir as mlir_interpreter
+from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import builtin
@@ -45,7 +45,7 @@ config.parse_flags_with_absl()
 
 def _make_ir_context():
   context = ir.Context()
-  context.append_dialect_registry(mlir_interpreter.upstream_dialects)
+  context.append_dialect_registry(mlir.upstream_dialects)
   context.load_all_available_dialects()
   mgpu.dialect.register_dialect(context)
   return context
@@ -1309,7 +1309,7 @@ class DialectLoweringTest(MosaicGpuTest):
     self.assertLen(all_stores, 2)
 
     def check_type(ty: ir.Type):
-      self.assertTrue(ir.VectorType.get((4,), elt_ty).isinstance(ty))
+      self.assertTrue(mlir.isinstance(ty, ir.VectorType.get((4,), elt_ty)))
 
     load1, load2, *_ = all_loads  # Variadic unpacking to silence linter.
     check_type(load1.result.type)
@@ -1396,7 +1396,7 @@ class DialectLoweringTest(MosaicGpuTest):
       scalar_out_ty = mgpu_utils.dtype_to_ir_type(out_dtype)
       in_ty = ir.VectorType.get(shape, scalar_in_ty)
       out_ty = ir.VectorType.get(shape, scalar_out_ty)
-      if ir.IntegerType.isinstance(scalar_in_ty):
+      if mlir.isinstance(scalar_in_ty, ir.IntegerType):
         zero = ir.IntegerAttr.get(scalar_in_ty, 0)
       else:
         zero = ir.FloatAttr.get(scalar_in_ty, 0)

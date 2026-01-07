@@ -29,6 +29,7 @@ from jax import numpy as jnp
 from jax._src import config
 from jax._src import dlpack
 from jax._src import test_util as jtu
+from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax.experimental import jax2tf
@@ -1646,8 +1647,8 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
 
           # Verify that the first argument/result of the custom call op is a token
           # type. This is a calling convention defined by `has_token_input_output`.
-          self.assertTrue(hlo.TokenType.isinstance(op.operands[0].type))
-          self.assertTrue(hlo.TokenType.isinstance(op.results[0].type))
+          self.assertTrue(mlir.isinstance(op.operands[0].type, hlo.TokenType))
+          self.assertTrue(mlir.isinstance(op.results[0].type, hlo.TokenType))
 
       stablehlo_module = None
       with self.assertRaisesRegex(

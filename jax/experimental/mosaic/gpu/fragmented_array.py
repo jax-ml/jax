@@ -25,6 +25,7 @@ from typing import Any, Protocol, TypeAlias, TypeVar, cast, overload
 
 import jax
 import jax.experimental.mosaic.gpu as mgpu
+from jax._src.interepreters import mlir
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import gpu
@@ -661,7 +662,7 @@ class WGStridedFragLayout:
 
     Return None if the shaped type cannot have a strided layout.
     """
-    if not ir.ShapedType.isinstance(shaped_ty):
+    if not mlir.isinstance(shaped_ty, ir.ShapedType):
       raise TypeError(shaped_ty)
 
     shaped_ty = ir.ShapedType(shaped_ty)
@@ -933,7 +934,7 @@ class FragmentedArray:
     object.__setattr__(self, "layout", _layout)
     object.__setattr__(self, "is_signed", _is_signed)
 
-    if (_is_signed is not None) != ir.IntegerType.isinstance(self.mlir_dtype):
+    if (_is_signed is not None) != mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       raise TypeError(
           "is_signed must be non-None if and only if the MLIR type is an"
           f" integer type, got {_is_signed=} for {self.mlir_dtype}"
@@ -976,7 +977,7 @@ class FragmentedArray:
       is_signed: bool | None = None,
       vec_size: int | None = None,
   ) -> FragmentedArray:
-    if not ir.MemRefType.isinstance(ref.type):
+    if not mlir.isinstance(ref.type, ir.MemRefType):
       raise TypeError(ref.type)
 
     ref_ty = ir.MemRefType(ref.type)
@@ -1033,7 +1034,7 @@ class FragmentedArray:
       )
 
     def cast(idx: ir.Value) -> ir.Value:
-      if ir.FloatType.isinstance(dtype):
+      if mlir.isinstance(dtype, ir.FloatType):
         i32 = ir.IntegerType.get_signless(32)
         return arith.uitofp(dtype, arith.index_cast(i32, idx))
       return arith.index_cast(dtype, idx)
@@ -1369,9 +1370,9 @@ class FragmentedArray:
     for idx, reg in np.ndenumerate(self.registers):
       new_regs[idx] = op(reg, *(o.registers[idx] for o in other_arrs))
     reg_ty = new_regs.flat[0].type
-    if ir.VectorType.isinstance(reg_ty):
+    if mlir.isinstance(reg_ty, ir.VectorType):
       reg_ty = ir.VectorType(reg_ty).element_type
-    if output_is_signed is None and ir.IntegerType.isinstance(reg_ty):
+    if output_is_signed is None and mlir.isinstance(reg_ty, ir.IntegerType):
       output_is_signed = self.is_signed
     return FragmentedArray(
         _registers=new_regs, _layout=self.layout, _is_signed=output_is_signed
@@ -1381,17 +1382,17 @@ class FragmentedArray:
     return self
 
   def __neg__(self):
-    if ir.FloatType.isinstance(self.mlir_dtype):
+    if mlir.isinstance(self.mlir_dtype, ir.FloatType):
       return self._pointwise(arith.negf)
-    elif ir.IntegerType.isinstance(self.mlir_dtype):
+    elif mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       return 0 - self
     else:
       return NotImplemented
 
   def __add__(self, other):
-    if ir.FloatType.isinstance(self.mlir_dtype):
+    if mlir.isinstance(self.mlir_dtype, ir.FloatType):
       return self._pointwise(addf, other)
-    elif ir.IntegerType.isinstance(self.mlir_dtype):
+    elif mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       return self._pointwise(arith.addi, other)
     else:
       return NotImplemented
@@ -1400,9 +1401,9 @@ class FragmentedArray:
     return self + other
 
   def __mul__(self, other):
-    if ir.FloatType.isinstance(self.mlir_dtype):
+    if mlir.isinstance(self.mlir_dtype, ir.FloatType):
       return self._pointwise(mulf, other)
-    elif ir.IntegerType.isinstance(self.mlir_dtype):
+    elif mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       return self._pointwise(arith.muli, other)
     else:
       return NotImplemented
@@ -1411,37 +1412,37 @@ class FragmentedArray:
     return self * other
 
   def __sub__(self, other):
-    if ir.FloatType.isinstance(self.mlir_dtype):
+    if mlir.isinstance(self.mlir_dtype, ir.FloatType):
       return self._pointwise(subf, other)
-    elif ir.IntegerType.isinstance(self.mlir_dtype):
+    elif mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       return self._pointwise(arith.subi, other)
     else:
       return NotImplemented
 
   def __rsub__(self, other):
-    if ir.FloatType.isinstance(self.mlir_dtype):
+    if mlir.isinstance(self.mlir_dtype, ir.FloatType):
       return self._pointwise(lambda s, o: subf(o, s), other)
-    elif ir.IntegerType.isinstance(self.mlir_dtype):
+    elif mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       return self._pointwise(lambda s, o: arith.subi(o, s), other)
     else:
       return NotImplemented
 
   def __truediv__(self, other):
-    if not ir.FloatType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.FloatType):
       return NotImplemented
     return self._pointwise(arith.divf, other)
 
   def __rtruediv__(self, other):
-    if not ir.FloatType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.FloatType):
       return NotImplemented
     return self._pointwise(lambda s, o: arith.divf(o, s), other)
 
   def __floordiv__(self, other):
-    if ir.FloatType.isinstance(self.mlir_dtype):
+    if mlir.isinstance(self.mlir_dtype, ir.FloatType):
       return self._pointwise(
           lambda s, o: mlir_math.floor(arith.divf(s, o)), other
       )
-    elif ir.IntegerType.isinstance(self.mlir_dtype):
+    elif mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       if self.is_signed:
         return self._pointwise(arith.floordivsi, other)
       else:
@@ -1450,11 +1451,11 @@ class FragmentedArray:
       return NotImplemented
 
   def __rfloordiv__(self, other):
-    if ir.FloatType.isinstance(self.mlir_dtype):
+    if mlir.isinstance(self.mlir_dtype, ir.FloatType):
       return self._pointwise(
           lambda s, o: mlir_math.floor(arith.divf(o, s)), other
       )
-    elif ir.IntegerType.isinstance(self.mlir_dtype):
+    elif mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       if self.is_signed:
         return self._pointwise(lambda s, o: arith.floordivsi(o, s), other)
       else:
@@ -1463,7 +1464,7 @@ class FragmentedArray:
       return NotImplemented
 
   def __mod__(self, other):
-    if not ir.IntegerType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       return NotImplemented
     if self.is_signed:
       return self._pointwise(arith.remsi, other)
@@ -1471,7 +1472,7 @@ class FragmentedArray:
       return self._pointwise(arith.remui, other)
 
   def __rmod__(self, other):
-    if not ir.IntegerType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       return NotImplemented
     if self.is_signed:
       return self._pointwise(lambda s, o: arith.remsi(o, s), other)
@@ -1479,12 +1480,12 @@ class FragmentedArray:
       return self._pointwise(lambda s, o: arith.remui(o, s), other)
 
   def __invert__(self):
-    if not ir.IntegerType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       return NotImplemented
     return self ^ ~0
 
   def __or__(self, other):
-    if not ir.IntegerType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       return NotImplemented
     return self._pointwise(arith.ori, other)
 
@@ -1492,7 +1493,7 @@ class FragmentedArray:
     return self | other
 
   def __and__(self, other):
-    if not ir.IntegerType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       return NotImplemented
     return self._pointwise(arith.andi, other)
 
@@ -1500,7 +1501,7 @@ class FragmentedArray:
     return self & other
 
   def __xor__(self, other):
-    if not ir.IntegerType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       return NotImplemented
     return self._pointwise(arith.xori, other)
 
@@ -1556,9 +1557,9 @@ class FragmentedArray:
     )
 
   def _compare(self, other, *, f_pred, si_pred, ui_pred):
-    if ir.FloatType.isinstance(self.mlir_dtype):
+    if mlir.isinstance(self.mlir_dtype, ir.FloatType):
       pred = functools.partial(arith.cmpf, f_pred)
-    elif ir.IntegerType.isinstance(self.mlir_dtype):
+    elif mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       if self.is_signed:
         pred = functools.partial(arith.cmpi, si_pred)
       else:
@@ -1568,16 +1569,16 @@ class FragmentedArray:
     return self._pointwise(pred, other, output_is_signed=False)
 
   def max(self, other) -> FragmentedArray:
-    if ir.FloatType.isinstance(self.mlir_dtype):
+    if mlir.isinstance(self.mlir_dtype, ir.FloatType):
       maximumf = arith.maximumf
-      if ir.F32Type.isinstance(self.mlir_dtype):
+      if mlir.isinstance(self.mlir_dtype, ir.F32Type):
         maximumf = self._lift_fast_instr("max.NaN.f32")
-      elif ir.F16Type.isinstance(self.mlir_dtype):
+      elif mlir.isinstance(self.mlir_dtype, ir.F16Type):
         maximumf = self._lift_fast_packed_instr("max.NaN.f16x2", "max.NaN.f16")
-      elif ir.BF16Type.isinstance(self.mlir_dtype):
+      elif mlir.isinstance(self.mlir_dtype, ir.BF16Type):
         maximumf = self._lift_fast_packed_instr("max.NaN.bf16x2", "max.NaN.bf16")
       return self._pointwise(maximumf, other)
-    elif ir.IntegerType.isinstance(self.mlir_dtype):
+    elif mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       width = utils.bitwidth(self.mlir_dtype)
       if width == 16:
         sign = "s" if self.is_signed else "u"
@@ -1590,16 +1591,16 @@ class FragmentedArray:
       raise NotImplementedError
 
   def min(self, other) -> FragmentedArray:
-    if ir.FloatType.isinstance(self.mlir_dtype):
+    if mlir.isinstance(self.mlir_dtype, ir.FloatType):
       minimumf = arith.minimumf
-      if ir.F32Type.isinstance(self.mlir_dtype):
+      if mlir.isinstance(self.mlir_dtype, ir.F32Type):
         minimumf = self._lift_fast_instr("min.NaN.f32")
-      elif ir.F16Type.isinstance(self.mlir_dtype):
+      elif mlir.isinstance(self.mlir_dtype, ir.F16Type):
         minimumf = self._lift_fast_packed_instr("min.NaN.f16x2", "min.NaN.f16")
-      elif ir.BF16Type.isinstance(self.mlir_dtype):
+      elif mlir.isinstance(self.mlir_dtype, ir.BF16Type):
         minimumf = self._lift_fast_packed_instr("min.NaN.bf16x2", "min.NaN.bf16")
       return self._pointwise(minimumf, other)
-    elif ir.IntegerType.isinstance(self.mlir_dtype):
+    elif mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       width = utils.bitwidth(self.mlir_dtype)
       if width == 16:
         sign = "s" if self.is_signed else "u"
@@ -1612,7 +1613,7 @@ class FragmentedArray:
       raise NotImplementedError
 
   def exp(self, *, approx: bool = False) -> FragmentedArray:
-    if not ir.FloatType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
     if approx:
       dtype = self.mlir_dtype
@@ -1621,16 +1622,16 @@ class FragmentedArray:
     return self._pointwise(mlir_math.exp)
 
   def exp2(self, *, approx: bool = False) -> FragmentedArray:
-    if not ir.FloatType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
     if approx:
-      if not ir.F32Type.isinstance(self.mlir_dtype):
+      if not mlir.isinstance(self.mlir_dtype, ir.F32Type):
         raise NotImplementedError(self.mlir_dtype)
       return self._pointwise(self._lift_fast_instr("ex2.approx.ftz.f32"))
     return self._pointwise(mlir_math.exp2)
 
   def log(self, *, approx: bool = False) -> FragmentedArray:
-    if not ir.FloatType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
     if approx:
       dtype = self.mlir_dtype
@@ -1639,16 +1640,16 @@ class FragmentedArray:
     return self._pointwise(mlir_math.log)
 
   def log2(self, *, approx: bool = False) -> FragmentedArray:
-    if not ir.FloatType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError(self.mlir_dtype)
     if approx:
-      if not ir.F32Type.isinstance(self.mlir_dtype):
+      if not mlir.isinstance(self.mlir_dtype, ir.F32Type):
         raise NotImplementedError(self.mlir_dtype)
       return self._pointwise(self._lift_fast_instr("lg2.approx.ftz.f32"))
     return self._pointwise(mlir_math.log2)
 
   def sin(self, *, approx: bool = False) -> FragmentedArray:
-    if not ir.FloatType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
     if approx and self.mlir_dtype != ir.F32Type.get():
       raise NotImplementedError
@@ -1657,7 +1658,7 @@ class FragmentedArray:
     )
 
   def cos(self, *, approx: bool = False) -> FragmentedArray:
-    if not ir.FloatType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
     if approx and self.mlir_dtype != ir.F32Type.get():
       raise NotImplementedError
@@ -1666,7 +1667,7 @@ class FragmentedArray:
     )
 
   def tanh(self, *, approx: bool = False) -> FragmentedArray:
-    if not ir.FloatType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
     if approx and self.mlir_dtype != ir.F32Type.get():
       raise NotImplementedError
@@ -1675,7 +1676,7 @@ class FragmentedArray:
     )
 
   def rsqrt(self, *, approx: bool = False) -> FragmentedArray:
-    if not ir.FloatType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
     if approx and self.mlir_dtype != ir.F32Type.get():
       raise NotImplementedError
@@ -1684,21 +1685,21 @@ class FragmentedArray:
     )
 
   def abs(self) -> FragmentedArray:
-    if ir.FloatType.isinstance(self.mlir_dtype):
+    if mlir.isinstance(self.mlir_dtype, ir.FloatType):
       return self._pointwise(mlir_math.absf)
-    if ir.IntegerType.isinstance(self.mlir_dtype):
+    if mlir.isinstance(self.mlir_dtype, ir.IntegerType):
       return self._pointwise(mlir_math.absi)
     raise NotImplementedError
 
   def round(self) -> FragmentedArray:
     """Same as `lax.round(..., AWAY_FROM_ZERO)`."""
-    if not ir.FloatType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
     return self._pointwise(mlir_math.round)
 
   def round_even(self) -> FragmentedArray:
     """Same as `lax.round(..., TO_NEAREST_EVEN)`."""
-    if not ir.FloatType.isinstance(self.mlir_dtype):
+    if not mlir.isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
     return self._pointwise(mlir_math.roundeven)
 
@@ -1718,7 +1719,7 @@ class FragmentedArray:
           )
         else:
           return instr(*args)
-      elif ir.VectorType.isinstance(arg_ty):
+      elif mlir.isinstance(arg_ty, ir.VectorType):
         result = llvm.mlir_undef(arg_ty)
         [vec_len] = ir.VectorType(arg_ty).shape
         for i in range(vec_len):
@@ -1749,7 +1750,7 @@ class FragmentedArray:
     def fast_instr(*args):
       arg_ty = args[0].type
       assert all(a.type == arg_ty for a in args)
-      if not ir.VectorType.isinstance(arg_ty):
+      if not mlir.isinstance(arg_ty, ir.VectorType):
         args = [vector.broadcast(ir.VectorType.get((1,), arg_ty), a) for a in args]
       arg_ty = ir.VectorType(args[0].type)
       [vec_len] = arg_ty.shape
@@ -1788,7 +1789,7 @@ class FragmentedArray:
   def bitcast(
       self, elt: ir.Type, *, output_is_signed: bool | None = None
   ) -> FragmentedArray:
-    if (output_is_signed is not None) != ir.IntegerType.isinstance(elt):
+    if (output_is_signed is not None) != mlir.isinstance(elt, ir.IntegerType):
       raise TypeError(
           "output_is_signed must be non-None if and only if the MLIR type is an"
           f" integer type, got {output_is_signed=} for {elt}"
@@ -1797,7 +1798,7 @@ class FragmentedArray:
     if elt == self.mlir_dtype:
       return self
     reg_type = self.registers.flat[0].type
-    if ir.VectorType.isinstance(reg_type):
+    if mlir.isinstance(reg_type, ir.VectorType):
       reg_shape = ir.VectorType(reg_type).shape
       ty = ir.VectorType.get(reg_shape, elt)
     else:
@@ -1913,7 +1914,7 @@ class FragmentedArray:
     idx: Any
     any_reg = self.registers.flat[0]
     reg_type = any_reg.type
-    is_vector_reg = ir.VectorType.isinstance(reg_type)
+    is_vector_reg = mlir.isinstance(reg_type, ir.VectorType)
     reg_shape = tuple(ir.VectorType(reg_type).shape) if is_vector_reg else (1,)
     [vector_len] = reg_shape  # This is meant to be a 1D assertion.
     if (new_reg_bitwidth := utils.bitwidth(new_dtype) * vector_len) % 8:
@@ -2256,10 +2257,10 @@ class FragmentedArray:
           _registers=new_registers, _layout=self.layout, _is_signed=is_signed
       )
     # Generic path.
-    from_float = ir.FloatType.isinstance(cur_dtype)
-    to_float = ir.FloatType.isinstance(new_dtype)
-    from_integer = ir.IntegerType.isinstance(cur_dtype)
-    to_integer = ir.IntegerType.isinstance(new_dtype)
+    from_float = mlir.isinstance(cur_dtype, ir.FloatType)
+    to_float = mlir.isinstance(new_dtype, ir.FloatType)
+    from_integer = mlir.isinstance(cur_dtype, ir.IntegerType)
+    to_integer = mlir.isinstance(new_dtype, ir.IntegerType)
     if from_float and to_float:
       cur_ty_width = ir.FloatType(cur_dtype).width
       new_ty_width = ir.FloatType(new_dtype).width
@@ -2328,40 +2329,40 @@ class FragmentedArray:
       match op:
         case "add":
           reduced_elems = math.prod(self.shape[a] for a in axis)
-          if ir.FloatType.isinstance(self.mlir_dtype):
+          if mlir.isinstance(self.mlir_dtype, ir.FloatType):
             op = addf
             splat_op = lambda x: arith.mulf(x, c(reduced_elems, x.type))
-          elif ir.IntegerType.isinstance(self.mlir_dtype):
+          elif mlir.isinstance(self.mlir_dtype, ir.IntegerType):
             op = arith.addi
             splat_op = lambda x: arith.muli(x, c(reduced_elems, x.type))
           else:
             raise NotImplementedError(self.mlir_dtype)
         case "max":
-          assert ir.FloatType.isinstance(ir.BF16Type.get())
-          if ir.F32Type.isinstance(self.mlir_dtype):
+          assert mlir.isinstance(ir.BF16Type.get(), ir.FloatType)
+          if mlir.isinstance(self.mlir_dtype, ir.F32Type):
             op = self._lift_fast_instr("max.NaN.f32")
-          elif ir.F16Type.isinstance(self.mlir_dtype):
+          elif mlir.isinstance(self.mlir_dtype, ir.F16Type):
             op = self._lift_fast_packed_instr("max.NaN.f16x2", "max.NaN.f16")
-          elif ir.BF16Type.isinstance(self.mlir_dtype):
+          elif mlir.isinstance(self.mlir_dtype, ir.BF16Type):
             op = self._lift_fast_packed_instr("max.NaN.bf16x2", "max.NaN.bf16")
-          elif ir.FloatType.isinstance(self.mlir_dtype):
+          elif mlir.isinstance(self.mlir_dtype, ir.FloatType):
             op = arith.maximumf
-          elif ir.IntegerType.isinstance(self.mlir_dtype):
+          elif mlir.isinstance(self.mlir_dtype, ir.IntegerType):
             op = arith.maxsi if self.is_signed else arith.maxui
           else:
             raise NotImplementedError(self.mlir_dtype)
           splat_op = lambda x: x
         case "min":
-          assert ir.FloatType.isinstance(ir.BF16Type.get())
-          if ir.F32Type.isinstance(self.mlir_dtype):
+          assert mlir.isinstance(ir.BF16Type.get(), ir.FloatType)
+          if mlir.isinstance(self.mlir_dtype, ir.F32Type):
             op = self._lift_fast_instr("min.NaN.f32")
-          elif ir.F16Type.isinstance(self.mlir_dtype):
+          elif mlir.isinstance(self.mlir_dtype, ir.F16Type):
             op = self._lift_fast_packed_instr("min.NaN.f16x2", "min.NaN.f16")
-          elif ir.BF16Type.isinstance(self.mlir_dtype):
+          elif mlir.isinstance(self.mlir_dtype, ir.BF16Type):
             op = self._lift_fast_packed_instr("min.NaN.bf16x2", "min.NaN.bf16")
-          elif ir.FloatType.isinstance(self.mlir_dtype):
+          elif mlir.isinstance(self.mlir_dtype, ir.FloatType):
             op = arith.minimumf
-          elif ir.IntegerType.isinstance(self.mlir_dtype):
+          elif mlir.isinstance(self.mlir_dtype, ir.IntegerType):
             op = arith.minsi if self.is_signed else arith.minui
           else:
             raise NotImplementedError(self.mlir_dtype)
@@ -2719,7 +2720,7 @@ class FragmentedArray:
 
   def select(self, on_true, on_false):
     if (
-        not ir.IntegerType.isinstance(self.mlir_dtype)
+        not mlir.isinstance(self.mlir_dtype, ir.IntegerType)
         or ir.IntegerType(self.mlir_dtype).width != 1
     ):
       raise NotImplementedError
@@ -2763,7 +2764,7 @@ class FragmentedArray:
       # Lazily create new_regs once we know the desired output type.
       if create_array and new_regs is None:
         assert result is not None
-        if ir.VectorType.isinstance(old_reg_type):
+        if mlir.isinstance(old_reg_type, ir.VectorType):
           new_reg_type = ir.VectorType.get(old_reg_type.shape, result.type)
         else:
           new_reg_type = result.type
@@ -2772,7 +2773,7 @@ class FragmentedArray:
     for mlir_idx, reg_idx in zip(self.layout.thread_idxs(self.shape), np.ndindex(self.registers.shape), strict=True):
       reg = self.registers[reg_idx]
       assert len(mlir_idx) == len(self.shape), (mlir_idx, self.shape)
-      if ir.VectorType.isinstance(reg.type):
+      if mlir.isinstance(reg.type, ir.VectorType):
         [elems] = ir.VectorType(reg.type).shape
         for i in range(elems):
           c_i = c(i, index)
@@ -2812,7 +2813,7 @@ class FragmentedArray:
   def store_untiled(
       self, ref: ir.Value | utils.MultimemRef, *, swizzle: int = 16, optimized: bool = True
   ) -> None:
-    if not ir.MemRefType.isinstance(ref.type):
+    if not mlir.isinstance(ref.type, ir.MemRefType):
       raise ValueError(ref)
     match self.layout:
       case WGSplatFragLayout():
@@ -2930,7 +2931,7 @@ class FragmentedArray:
         reg = get(self.registers)
         reg_ty = ir.VectorType(reg.type)
         element_bitwidth = utils.bitwidth(reg_ty.element_type)
-        if ir.FloatType.isinstance(reg_ty.element_type) and element_bitwidth <= 8:
+        if mlir.isinstance(reg_ty.element_type, ir.FloatType) and element_bitwidth <= 8:
           narrow_int = ir.IntegerType.get_signless(element_bitwidth)
           reg = vector.bitcast(ir.VectorType.get(reg_ty.shape, narrow_int), reg)
         llvm.store(reg, ptr)
@@ -2961,7 +2962,7 @@ class FragmentedArray:
     reg_ty = ir.VectorType.get((layout.vector_length,), dtype)
     zero = vector.broadcast(reg_ty, c(0, dtype))
     registers = np.full(layout.registers_shape(shape), zero, dtype=object)
-    is_narrow_float = ir.FloatType.isinstance(dtype) and utils.bitwidth(dtype) <= 8
+    is_narrow_float = mlir.isinstance(dtype, ir.FloatType) and utils.bitwidth(dtype) <= 8
     narrow_int = ir.IntegerType.get_signless(utils.bitwidth(dtype))
     # Narrow floats are not supported by LLVM, so we need to transfer them as
     # narrow ints and bitcast back to the desired type.
@@ -3137,7 +3138,7 @@ class FragmentedArray:
     swizzle_group_transfers = 128 // transfer_bytes
     swizzle_groups_per_block = swizzle // 16
     swizzle_block_transfers = swizzle_groups_per_block * swizzle_group_transfers
-    if ir.FloatType.isinstance(dtype) and element_bits <= 8:
+    if mlir.isinstance(dtype, ir.FloatType) and element_bits <= 8:
       narrow_int = ir.IntegerType.get_signless(element_bits)
       transfer_dtype = ir.VectorType.get((vector_length,), narrow_int)
     else:
@@ -3510,7 +3511,7 @@ def optimization_barrier(*arrays):
   i32 = ir.IntegerType.get_signless(32)
 
   def _repack(regs_it, reg_ty):
-    if not ir.VectorType.isinstance(reg_ty):
+    if not mlir.isinstance(reg_ty, ir.VectorType):
       result_reg = next(regs_it)
       assert result_reg.type == reg_ty
       return result_reg
@@ -3531,8 +3532,8 @@ def optimization_barrier(*arrays):
   for array in arrays:
     reg_ty = array.registers.flat[0].type
     dtype = array.mlir_dtype
-    if ir.F32Type.isinstance(dtype) or dtype == i32:
-      if ir.VectorType.isinstance(reg_ty):
+    if mlir.isinstance(dtype, ir.F32Type) or dtype == i32:
+      if mlir.isinstance(reg_ty, ir.VectorType):
         [vec_len] = ir.VectorType(reg_ty).shape
         array_regs = [  # pylint: disable=g-complex-comprehension
             vector.extract(
@@ -3548,7 +3549,7 @@ def optimization_barrier(*arrays):
       reg_constraint = "r" if dtype == i32 else "f"
     elif utils.bitwidth(dtype) < 32:
       reg_packing = 4 // utils.bytewidth(dtype)
-      if not ir.VectorType.isinstance(reg_ty):
+      if not mlir.isinstance(reg_ty, ir.VectorType):
         raise NotImplementedError(array.mlir_dtype)
       [vec_len] = ir.VectorType(reg_ty).shape
       if vec_len % reg_packing:
@@ -3602,7 +3603,7 @@ def optimization_barrier(*arrays):
   for array in arrays:
     num_regs = array.registers.size
     reg_ty = array.registers.flat[0].type
-    if ir.VectorType.isinstance(reg_ty):
+    if mlir.isinstance(reg_ty, ir.VectorType):
       reg_ty = ir.VectorType(reg_ty)
     new_registers = np.empty((num_regs,), dtype=object)
     for i_vreg in range(num_regs):
@@ -3706,7 +3707,7 @@ def copy_tiled(src: ir.Value, dst: ir.Value, swizzle: int = 16):
   bitwidth = utils.bitwidth(src_ty.element_type)
   # Signedness doesn't matter, but we need to specify something for the
   # intermediate arrays.
-  is_signed = False if ir.IntegerType.isinstance(src_ty.element_type) else None
+  is_signed = False if mlir.isinstance(src_ty.element_type, ir.IntegerType) else None
   if utils.is_smem_ref(src_ty) != utils.is_smem_ref(dst_ty):
     if utils.is_smem_ref(src_ty):
       smem_ty, gmem_ty = src_ty, dst_ty

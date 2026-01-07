@@ -159,7 +159,7 @@ def _get_index_alignment(block_mapping: BlockMapping) -> tuple[int, ...]:
 
 
 def _bcast_to(a: ir.Value, shape: tuple[int, ...]) -> ir.Value:
-  if not ir.RankedTensorType.isinstance(a.type):
+  if not mlir.isinstance(a.type, ir.RankedTensorType):
     if not shape:
       return a
     return tt_dialect.splat(ir.RankedTensorType.get(shape, a.type), a)
@@ -485,7 +485,7 @@ def _atomic_rmw(
     semantic: tt_dialect.MemSemantic = tt_dialect.MemSemantic.ACQUIRE_RELEASE,
     sync_scope: tt_dialect.MemSyncScope = tt_dialect.MemSyncScope.GPU,
 ) -> ir.Value:
-  if ir.RankedTensorType.isinstance(ptr.type):
+  if mlir.isinstance(ptr.type, ir.RankedTensorType):
     ptr_type = ir.RankedTensorType(ptr.type)
     element_type = tt_dialect.PointerType(ptr_type.element_type)
     result_type = ir.RankedTensorType.get(
@@ -545,7 +545,7 @@ def _atomic_lowering_rule(
 @register_lowering(primitives.atomic_cas_p)
 def _atomic_cas_lowering_rule(ctx: LoweringRuleContext, ptr, cmp, val):
   _, cmp_aval, val_aval = ctx.avals_in
-  if ir.RankedTensorType.isinstance(ptr.type):
+  if mlir.isinstance(ptr.type, ir.RankedTensorType):
     ptr_type = ir.RankedTensorType(ptr.type)
     element_type = tt_dialect.PointerType(ptr_type.element_type)
     result_type = ir.RankedTensorType.get(
@@ -1142,7 +1142,7 @@ triton_lowering_rules.update({
 
 
 def _minus(x: ir.Value) -> ir.Value:
-  if tt_dialect.PointerType.isinstance(_element_type(x.type)):
+  if mlir.isinstance(_element_type(x.type), tt_dialect.PointerType):
     raise NotImplementedError(f"unsupported type: {x.type}")
   return _sub(_zeros_like(x), x)
 
@@ -1151,10 +1151,10 @@ def _add(x: ir.Value, y: ir.Value):
   x_element_type = _element_type(x.type)
   y_element_type = _element_type(y.type)
 
-  if tt_dialect.PointerType.isinstance(x_element_type):
-    assert not tt_dialect.PointerType.isinstance(y_element_type)
+  if mlir.isinstance(x_element_type, tt_dialect.PointerType):
+    assert not mlir.isinstance(y_element_type, tt_dialect.PointerType)
     return tt_dialect.addptr(x.type, x, y)
-  if tt_dialect.PointerType.isinstance(y_element_type):
+  if mlir.isinstance(y_element_type, tt_dialect.PointerType):
     return tt_dialect.addptr(y.type, y, x)
 
   assert x.type == y.type, (str(x.type), str(y.type))
@@ -1168,9 +1168,9 @@ def _add(x: ir.Value, y: ir.Value):
 def _sub(x: ir.Value, y: ir.Value) -> ir.Value:
   x_element_type = _element_type(x.type)
   y_element_type = _element_type(y.type)
-  if tt_dialect.PointerType.isinstance(x_element_type):
+  if mlir.isinstance(x_element_type, tt_dialect.PointerType):
     return tt_dialect.addptr(x.type, x, _minus(y))
-  elif not tt_dialect.PointerType.isinstance(y_element_type):
+  elif not mlir.isinstance(y_element_type, tt_dialect.PointerType):
     assert x.type == y.type, (str(x.type), str(y.type))
     if isinstance(x_element_type, ir.IntegerType):
       return arith_dialect.subi(x, y)
@@ -1368,7 +1368,7 @@ def debug_print_lowering_rule(
 
 
 def _set_attr(v: ir.Value, name: str, attr: ir.Attribute) -> None:
-  if not ir.BlockArgument.isinstance(v):
+  if not mlir.isinstance(v, ir.BlockArgument):
     v.owner.attributes[name] = attr
     return
 
@@ -1522,7 +1522,7 @@ def _iota_lowering_rule(ctx: LoweringRuleContext, *, dtype, shape, dimension,
 
 
 def _element_type(t: ir.Type) -> ir.Type:
-  if ir.RankedTensorType.isinstance(t):
+  if mlir.isinstance(t, ir.RankedTensorType):
     return ir.RankedTensorType(t).element_type
   else:
     return t
@@ -1551,7 +1551,7 @@ def _full(t: ir.Type, v: object) -> ir.Type:
   else:
     raise NotImplementedError
 
-  if ir.RankedTensorType.isinstance(t):
+  if mlir.isinstance(t, ir.RankedTensorType):
     return tt_dialect.splat(t, result)
   else:
     return result
@@ -1574,7 +1574,7 @@ def _ones_like(x: ir.Value) -> ir.Value:
 
 
 def _splat(x: ir.value, shape: Sequence[int]) -> ir.Value:
-  if ir.RankedTensorType.isinstance(x.type):
+  if mlir.isinstance(x.type, ir.RankedTensorType):
     raise TypeError("cannot splat a tensor")
   if not shape:
     return x
@@ -1582,7 +1582,7 @@ def _splat(x: ir.value, shape: Sequence[int]) -> ir.Value:
 
 
 def _expand_dims(x: ir.Value, axis: int) -> ir.Value:
-  if not ir.RankedTensorType.isinstance(x.type):
+  if not mlir.isinstance(x.type, ir.RankedTensorType):
     shape = list(ir.RankedTensorType(x.type).shape)
     shape.insert(axis, 1)
     return _splat(x, shape)
@@ -1679,9 +1679,7 @@ def _cast(
 
 def _ir_cast(src: ir.Value, dst_type: ir.Type, *,
              signed: bool, dst_signed: bool = False) -> ir.Value:
-  if ir.RankedTensorType.isinstance(
-      src.type
-  ) and not ir.RankedTensorType.isinstance(dst_type):
+  if mlir.isinstance(src.type, ir.RankedTensorType) and not mlir.isinstance(dst_type, ir.RankedTensorType):
     src_type = ir.RankedTensorType(src.type)
     dst_type = ir.RankedTensorType.get(
         src_type.shape,
@@ -1726,7 +1724,7 @@ def _ir_cast(src: ir.Value, dst_type: ir.Type, *,
   ):
     return _int_float_cast(src, dst_type, signed=signed)
 
-  if tt_dialect.PointerType.isinstance(src_element_type) and isinstance(
+  if mlir.isinstance(src_element_type, tt_dialect.PointerType) and isinstance(
       dst_element_type, ir.IntegerType
   ):
     if dst_element_type.width == 64:
@@ -1737,11 +1735,9 @@ def _ir_cast(src: ir.Value, dst_type: ir.Type, *,
       return _ir_cast(_not_equal(x, zero, signed=signed), dst_type, signed=signed)
   if isinstance(
       src_element_type, ir.IntegerType
-  ) and tt_dialect.PointerType.isinstance(dst_element_type):
+  ) and mlir.isinstance(dst_element_type, tt_dialect.PointerType):
     return tt_dialect.int_to_ptr(dst_type, src)
-  if tt_dialect.PointerType.isinstance(
-      src_element_type
-  ) and tt_dialect.PointerType.isinstance(dst_element_type):
+  if mlir.isinstance(src_element_type, tt_dialect.PointerType) and mlir.isinstance(dst_element_type, tt_dialect.PointerType):
     return tt_dialect.bitcast(dst_type, src)
 
   raise NotImplementedError(f"cannot cast {src} to {dst_type}")
@@ -1773,7 +1769,7 @@ def _broadcast_in_dim_lowering_rule(
 ):
   del sharding
   x = _ensure_ir_value(x, *ctx.avals_in)
-  if not ir.RankedTensorType.isinstance(x.type):
+  if not mlir.isinstance(x.type, ir.RankedTensorType):
     return _bcast_to(x, shape)
   expand_dims = [i for i in range(len(shape)) if i not in broadcast_dimensions]
   for dim in expand_dims:
@@ -1805,7 +1801,7 @@ def _reshape_lowering_rule(
 
 
 def _reshape(a: ir.Value, shape: Sequence[int]) -> ir.Value:
-  if not ir.RankedTensorType.isinstance(a.type):
+  if not mlir.isinstance(a.type, ir.RankedTensorType):
     assert all(dim_size == 1 for dim_size in shape)
     return _splat(a, shape)
 
@@ -1929,12 +1925,12 @@ def _compute_offsets_from_indices(
         dim_offsets = _ir_constant(dim_offsets, offset_eltype)
       dim_offsets = _ir_cast(dim_offsets, offset_eltype, signed=False)
 
-      if ir.RankedTensorType.isinstance(dim_offsets.type):
+      if mlir.isinstance(dim_offsets.type, ir.RankedTensorType):
         for _ in other_shape:
           rank = ir.RankedTensorType(dim_offsets.type).rank
           dim_offsets = _expand_dims(dim_offsets, rank)
 
-    if ir.RankedTensorType.isinstance(dim_offsets.type):
+    if mlir.isinstance(dim_offsets.type, ir.RankedTensorType):
       rank = ir.RankedTensorType(dim_offsets.type).rank
       for _ in range(len(indexer_shape) - rank):
         dim_offsets = _expand_dims(dim_offsets, 0)
@@ -1960,7 +1956,7 @@ def _compute_pointers_from_indices(
 @register_lowering(sp.get_p)
 def _get_lowering_rule(ctx: LoweringRuleContext, ptr, *idx, tree):
   indexers = tree_util.tree_unflatten(tree, idx)
-  if not tt_dialect.PointerType.isinstance(ptr.type):
+  if not mlir.isinstance(ptr.type, tt_dialect.PointerType):
     assert len(indexers) == 0
     return ptr
   args_flat, args_tree = tree_util.tree_flatten((ptr, indexers, None, None))
@@ -2003,21 +1999,21 @@ def _load(
           f"unsupported eviction policy: {eviction_policy}"
       ) from None
 
-  if tt_dialect.PointerType.isinstance(ptr.type):
+  if mlir.isinstance(ptr.type, tt_dialect.PointerType):
     ptr_type = tt_dialect.PointerType(ptr.type)
-    if ir.RankedTensorType.isinstance(ptr_type.pointee_type):
+    if mlir.isinstance(ptr_type.pointee_type, ir.RankedTensorType):
       raise NotImplementedError("loading from a block pointer is not supported")
 
   ptr_type = _element_type(ptr.type)
-  if not tt_dialect.PointerType.isinstance(ptr_type):
+  if not mlir.isinstance(ptr_type, tt_dialect.PointerType):
     raise ValueError(f"unsupported pointer type: {ptr_type}")
   ptr_type = tt_dialect.PointerType(ptr_type)
   if other is not None and mask is None:
     raise ValueError("other requires mask to be provided")
-  if not ir.RankedTensorType.isinstance(ptr.type):
-    if other is not None and ir.RankedTensorType.isinstance(other.type):
+  if not mlir.isinstance(ptr.type, ir.RankedTensorType):
+    if other is not None and mlir.isinstance(other.type, ir.RankedTensorType):
       raise ValueError("other cannot be a block if pointer is not a block")
-    if mask is not None and ir.RankedTensorType.isinstance(mask.type):
+    if mask is not None and mlir.isinstance(mask.type, ir.RankedTensorType):
       raise ValueError("mask cannot be a block if pointer is not a block")
 
   pointee_type = ptr_type.pointee_type
@@ -2108,7 +2104,7 @@ def _masked_load_lowering_rule(
     idx = NDIndexer.make_trivial_indexer(ref_shape)
   else:
     idx = indexers[0]
-  if not tt_dialect.PointerType.isinstance(ptr.type):
+  if not mlir.isinstance(ptr.type, tt_dialect.PointerType):
     assert len(ctx.avals_in) == 1
     return ptr
 
@@ -2164,7 +2160,7 @@ def _masked_load_lowering_rule(
 @register_lowering(sp.swap_p)
 def _swap_lowering_rule(ctx: LoweringRuleContext, ptr, value, *idx, tree):
   indexers = tree_util.tree_unflatten(tree, idx)
-  if not tt_dialect.PointerType.isinstance(ptr.type):
+  if not mlir.isinstance(ptr.type, tt_dialect.PointerType):
     assert len(indexers) == 0
     return ptr
   if len(indexers) > 1:
@@ -2199,19 +2195,19 @@ def _store(
           f"unsupported eviction policy: {eviction_policy}"
       ) from None
 
-  if tt_dialect.PointerType.isinstance(ptr.type):
+  if mlir.isinstance(ptr.type, tt_dialect.PointerType):
     ptr_type = tt_dialect.PointerType(ptr.type)
-    if ir.RankedTensorType.isinstance(ptr_type.pointee_type):
+    if mlir.isinstance(ptr_type.pointee_type, ir.RankedTensorType):
       raise NotImplementedError("loading from a block pointer is not supported")
 
   ptr_type = _element_type(ptr.type)
-  if not tt_dialect.PointerType.isinstance(ptr_type):
+  if not mlir.isinstance(ptr_type, tt_dialect.PointerType):
     raise ValueError(f"unsupported pointer type: {ptr_type}")
   ptr_type = tt_dialect.PointerType(ptr_type)
-  if not ir.RankedTensorType.isinstance(ptr.type):
-    if ir.RankedTensorType.isinstance(value.type):
+  if not mlir.isinstance(ptr.type, ir.RankedTensorType):
+    if mlir.isinstance(value.type, ir.RankedTensorType):
       raise ValueError("value cannot be a block if pointer is not a block")
-    if mask is not None and ir.RankedTensorType.isinstance(mask.type):
+    if mask is not None and mlir.isinstance(mask.type, ir.RankedTensorType):
       raise ValueError("mask cannot be a block if pointer is not a block")
 
   pointee_type = ptr_type.pointee_type
@@ -2263,7 +2259,7 @@ def _addupdate_lowering_rule(ctx: LoweringRuleContext, ptr, value, *idx, tree):
   block_info, *_ = ctx.block_infos
   assert block_info is not None
   indexers = tree_util.tree_unflatten(tree, idx)
-  if not tt_dialect.PointerType.isinstance(ptr.type):
+  if not mlir.isinstance(ptr.type, tt_dialect.PointerType):
     assert len(indexers) == 0
     return ptr
   if len(indexers) > 1:
@@ -2911,7 +2907,7 @@ def _bitcast_convert_type_lowering_rule(
     raise NotImplementedError(
         f"cannot cast {operand} to {new_dtype} because of different widths"
     )
-  if ir.RankedTensorType.isinstance(operand.type):
+  if mlir.isinstance(operand.type, ir.RankedTensorType):
     shape = ir.RankedTensorType(operand.type).shape
     result_type = ir.RankedTensorType.get(shape, dst_elem_type)
   else:

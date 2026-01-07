@@ -156,8 +156,8 @@ class FfiTest(jtu.JaxTestCase):
     # Ensure that token inputs and outputs are translated to the correct type
     module = jax.jit(fun).lower().compiler_ir("stablehlo")
     op = self.find_custom_call_in_module(module)
-    self.assertTrue(hlo.TokenType.isinstance(op.operands[0].type))
-    self.assertTrue(hlo.TokenType.isinstance(op.results[0].type))
+    self.assertTrue(mlir.isinstance(op.operands[0].type, hlo.TokenType))
+    self.assertTrue(mlir.isinstance(op.results[0].type, hlo.TokenType))
 
   def test_effects_hlo(self):
     # The target name must exist on the current platform, but we don't actually

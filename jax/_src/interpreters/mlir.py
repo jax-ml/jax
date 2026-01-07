@@ -116,6 +116,11 @@ def shape_tensor(sizes: Sequence[int | ir.RankedTensorType]
   else:
     return hlo.concatenate(ds, i64_attr(0))
 
+def isinstance(t: ir.Type, cls: type) -> bool:
+  # TODO(slebedev): Inline this shim once jaxlib contains the MLIR version
+  # which allows builtin ``isinstance``.
+  return cls.isinstance(t)
+
 
 def delegate_lowering(ctx, lowering_fun, *args, **ctx_override_kwargs):
   """Side-effects on `ctx`"""

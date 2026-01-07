@@ -21,6 +21,7 @@ import itertools
 import math
 from typing import Any, Callable, Iterator, cast
 
+from jax._src.interpreters import mlir
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import llvm
@@ -196,7 +197,7 @@ def mma(
     raise NotImplementedError("Block-scaled sparse matmuls unsupported")
 
   # Step 1. Establish the shape and element type of the operation.
-  if not ir.MemRefType.isinstance(b.type):
+  if not mlir.isinstance(b.type, ir.MemRefType):
     raise ValueError(f"B must be a memref, got: {b.type}")
   (k, n), element_type = mma_utils.tiled_memref_shape(b)
   if isinstance(a, TMEMRef):
@@ -218,7 +219,7 @@ def mma(
           f"A layout mismatch: expected {expected_layout}, got {a.layout}"
       )
   else:
-    if not ir.MemRefType.isinstance(a.type):
+    if not mlir.isinstance(a.type, ir.MemRefType):
       raise ValueError(f"A must be a memref, got {a.type}")
     (m, k2), element_type2 = mma_utils.tiled_memref_shape(a)
   if is_sparse:
@@ -294,7 +295,7 @@ def mma(
           f" type f32 or f16, but got: {d.dtype}"
       )
   elif any(
-      t.isinstance(element_type)
+      mlir.isinstance(element_type, t)
       for t in {ir.Float8E5M2Type, ir.Float8E4M3FNType}
   ):
     if d.dtype != f16 and d.dtype != f32:
@@ -308,7 +309,7 @@ def mma(
           f" accumulators, but got: {d.dtype}"
       )
   elif any(
-      t.isinstance(element_type) for t in {ir.Float4E2M1FNType}
+      mlir.isinstance(element_type, t) for t in {ir.Float4E2M1FNType}
   ):
     if is_sparse:
       raise NotImplementedError("Sparse MMA unsupported for f4e2m1fn")
@@ -595,8 +596,8 @@ def _do_mma(
   scale_steps = None
   if is_scaled:
     assert not is_sparse
-    if (ir.Float8E5M2Type.isinstance(element_type) or
-        ir.Float8E4M3FNType.isinstance(element_type)):
+    if (mlir.isinstance(element_type, ir.Float8E5M2Type) or
+        mlir.isinstance(element_type, ir.Float8E4M3FNType)):
       if scale_element_type != ir.Float8E8M0FNUType.get():
         raise ValueError(
             f"Scale element type mismatch: expected f8e8m0fnu, got {scale_element_type}"
@@ -606,7 +607,7 @@ def _do_mma(
       create_scaled_instr_descriptor = functools.partial(
           create_scaled_f8f6f4_instr_descriptor, scale_type=scale_element_type
       )
-    elif ir.Float4E2M1FNType.isinstance(element_type):
+    elif mlir.isinstance(element_type, ir.Float4E2M1FNType):
       assert not a_transpose and not b_transpose
       create_scaled_instr_descriptor = functools.partial(
           create_scaled_f4_instr_descriptor,
@@ -623,13 +624,13 @@ def _do_mma(
     extra_ptx = "[$5], [$6], "
     extra_constraints = ",r,r"
   else:
-    if ir.F16Type.isinstance(element_type) or ir.BF16Type.isinstance(element_type):
+    if mlir.isinstance(element_type, ir.F16Type) or mlir.isinstance(element_type, ir.BF16Type):
       kind = "f16"
-    elif ir.Float8E5M2Type.isinstance(element_type):
+    elif mlir.isinstance(element_type, ir.Float8E5M2Type):
       kind = "f8f6f4"
-    elif ir.Float8E4M3FNType.isinstance(element_type):
+    elif mlir.isinstance(element_type, ir.Float8E4M3FNType):
       kind = "f8f6f4"
-    elif ir.IntegerType.get_signless(8).isinstance(element_type):
+    elif mlir.isinstance(element_type, ir.IntegerType.get_signless(8)):
       kind = "i8"
     else:
       raise NotImplementedError(f"Unsupported input element type: {element_type}")
@@ -777,7 +778,7 @@ def tmem_alloc_exact_ncols(ncols: int, exact: bool) -> int:
 
 
 def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact: bool = True) -> tuple[ir.Value, int]:
-  if ir.MemRefType.isinstance(tmem_addr.type):
+  if mlir.isinstance(tmem_addr.type, ir.MemRefType):
     ref_ty = ir.MemRefType(tmem_addr.type)
     if ref_ty.element_type != ir.IntegerType.get_signless(32):
       raise ValueError(f"tmem_addr must be an i32 memref, got: {ref_ty}")
@@ -1070,7 +1071,7 @@ class TMEMRef:
       layout: TMEMLayout | None = None,
   ) -> TMEMRef:
     i32 = ir.IntegerType.get_signless(32)
-    if not ir.MemRefType.isinstance(tmem_addr_ref.type):
+    if not mlir.isinstance(tmem_addr_ref.type, ir.MemRefType):
       raise ValueError(f"tmem_addr_ref must be a memref or a pointer, got: {tmem_addr_ref.type}")
     addr_ref_ty = ir.MemRefType(tmem_addr_ref.type)
     if not utils.is_smem_ref(addr_ref_ty):

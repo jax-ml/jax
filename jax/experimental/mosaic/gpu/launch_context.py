@@ -21,6 +21,7 @@ import functools
 import math
 from typing import Any, Literal
 
+from jax._src.interpreters import mlir
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import _gpu_ops_gen
@@ -482,7 +483,7 @@ def _tma_dma_type(
     reduction_op: TMAReductionOp | None,
 ) -> int:
   """Returns the TMA DMA type for the given element type and signedness."""
-  if ir.IntegerType.isinstance(element_type):
+  if mlir.isinstance(element_type, ir.IntegerType):
     bitwidth = utils.bitwidth_impl(element_type)
     if bitwidth == 2:
       tma_dtype = 8
@@ -498,20 +499,20 @@ def _tma_dma_type(
       tma_dtype = 10 if reduction_op in ("smin", "smax") else 4
     else:
       raise ValueError(f"Unsupported integer bitwidth: {bitwidth}")
-  elif ir.F16Type.isinstance(element_type):
+  elif mlir.isinstance(element_type, ir.F16Type):
     tma_dtype = 5
-  elif ir.F32Type.isinstance(element_type):
+  elif mlir.isinstance(element_type, ir.F32Type):
     tma_dtype = 6
-  elif ir.BF16Type.isinstance(element_type):
+  elif mlir.isinstance(element_type, ir.BF16Type):
     tma_dtype = 7
   # We treat narrow floats as integers
-  elif ir.Float8E5M2Type.isinstance(element_type):
+  elif mlir.isinstance(element_type, ir.Float8E5M2Type):
     tma_dtype = 1
-  elif ir.Float8E4M3FNType.isinstance(element_type):
+  elif mlir.isinstance(element_type, ir.Float8E4M3FNType):
     tma_dtype = 1
-  elif ir.Float8E8M0FNUType.isinstance(element_type):
+  elif mlir.isinstance(element_type, ir.Float8E8M0FNUType):
     tma_dtype = 1
-  elif ir.Float4E2M1FNType.isinstance(element_type):
+  elif mlir.isinstance(element_type, ir.Float4E2M1FNType):
     tma_dtype = 0
   else:
     raise ValueError(f"unsupported TMA dtype {element_type}")
@@ -732,7 +733,7 @@ class LaunchContext:
       if len(gather_indices.shape) != 1:
         raise ValueError("Gather/scatter indices must be 1D")
       idx_dtype = gather_indices.mlir_dtype
-      if not ir.IntegerType.isinstance(idx_dtype) or utils.bitwidth(idx_dtype) > 32:
+      if not mlir.isinstance(idx_dtype, ir.IntegerType) or utils.bitwidth(idx_dtype) > 32:
         raise ValueError("Gather/scatter indices must be integers that are at most 32-bit wide")
       if gather_indices.is_signed:
         raise ValueError("Gather/scatter indices must be unsigned")
@@ -1105,7 +1106,7 @@ class LaunchContext:
       offset_scale = 1 if element_bitwidth >= 8 else 8 // element_bitwidth
       if element_bitwidth < 8:
         gep_type = i8
-      elif ir.FloatType.isinstance(element_type) and ir.FloatType(element_type).width == 8:
+      elif mlir.isinstance(element_type, ir.FloatType) and ir.FloatType(element_type).width == 8:
         gep_type = i8  # LLVM has no support for f8.
       else:
         gep_type = element_type
@@ -1506,7 +1507,7 @@ class LaunchContext:
 
   def to_remote(self, ref: ir.Value, peer: ir.Value):
     self._ensure_nvshmem_decls()
-    if ir.MemRefType.isinstance(ref.type):
+    if mlir.isinstance(ref.type, ir.MemRefType):
       # We replace the offset in the ref type by 0, because memref_ptr always
       # folds the offset into the pointer.
       ref_ty = ir.MemRefType(ref.type)
@@ -1529,7 +1530,7 @@ class LaunchContext:
   def to_remote_multicast(self, ref: ir.Value):
     i32 = ir.IntegerType.get_signless(32)
     self._ensure_nvshmem_decls()
-    if not ir.MemRefType.isinstance(ref.type):
+    if not mlir.isinstance(ref.type, ir.MemRefType):
       raise ValueError(f"Unsupported type for to_remote_multicast: {ref.type}")
       # We replace the offset in the ref type by 0, because memref_ptr always
       # folds the offset into the pointer.

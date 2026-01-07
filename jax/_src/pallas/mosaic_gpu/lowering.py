@@ -1144,7 +1144,7 @@ def lower_jaxpr_to_mosaic_gpu(
               raise AssertionError("Only scalars can be represented by non-ir.Values")
             return  # Skip following checks.
         if aval.shape:
-          if not ir.VectorType.isinstance(val.type):
+          if not mlir.isinstance(val.type, ir.VectorType):
             raise AssertionError(f"Non-scalar arrays must be represented by vectors, got: {val.type}")
           vty = ir.VectorType(val.type)
           if vty.element_type != mlir_dtype:
@@ -1152,7 +1152,7 @@ def lower_jaxpr_to_mosaic_gpu(
           if tuple(vty.shape) != aval.shape:
             raise AssertionError(f"Vector shape must match ShapedArray shape, got: {vty.shape} != {aval.shape}")
         else:
-          if ir.VectorType.isinstance(val.type):
+          if mlir.isinstance(val.type, ir.VectorType):
             raise AssertionError(f"Scalars must be represented by non-vector types, got: {val.type}")
           if val.type != mlir_dtype:
             raise AssertionError(f"Scalar type must match ShapedArray dtype, got: {val.type} != {mlir_dtype}")
@@ -1517,7 +1517,7 @@ def _ndindexer_indices(
   indices = []
   for idx in indexer.indices:
     if (isinstance(idx, mgpu.FragmentedArray) and idx.shape) or (
-        isinstance(idx, ir.Value) and ir.VectorType.isinstance(idx.type)  # pytype: disable=attribute-error
+        isinstance(idx, ir.Value) and mlir.isinstance(idx.type, ir.VectorType)  # pytype: disable=attribute-error
     ):
       if not allow_arrays:
         raise ValueError("Arrays are not supported as indices.")
@@ -1555,7 +1555,7 @@ def _get_lowering_rule(
       and ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp
   ):
     raise ValueError("Can only load scalars in warp-level code.")
-  if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):
+  if not isinstance(x_ref, ir.Value) and mlir.isinstance(x_ref, ir.MemRefType):
     raise TypeError(f"Can only load from references (got {x_ref}).")
   dtype = ctx.avals_out[0].dtype
 
@@ -1652,7 +1652,7 @@ def _get_lowering_rule(
 def _get_lowering_rule_wg(
     ctx: LoweringRuleContext, x_ref, *leaves, tree, optimized=True
 ):
-  if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):
+  if not isinstance(x_ref, ir.Value) and mlir.isinstance(x_ref, ir.MemRefType):
     raise TypeError(f"Can only load from references (got {x_ref}).")
 
   transforms = jax.tree.unflatten(tree, leaves)
@@ -1695,7 +1695,7 @@ def _swap_lowering_rule(
     )
   value = _ensure_fa(value, ctx.avals_in[1].dtype)
 
-  if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):
+  if not isinstance(x_ref, ir.Value) and mlir.isinstance(x_ref, ir.MemRefType):
     raise TypeError(f"Can only store to references (got {x_ref}).")
   v_aval = ctx.avals_in[1]
   transforms = jax.tree.unflatten(tree, leaves)
@@ -1793,10 +1793,10 @@ def _swap_lowering_rule_wg(
     ctx: LoweringRuleContext, x_smem, value, *leaves, tree
 ):
   shape = ctx.avals_out[0].shape
-  if shape and not ir.VectorType.isinstance(value.type):
+  if shape and not mlir.isinstance(value.type, ir.VectorType):
     raise TypeError(f"Can only store scalars or vectors (got {value}).")
   if not (
-      isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem.type)
+      isinstance(x_smem, ir.Value) and mlir.isinstance(x_smem.type, ir.MemRefType)
   ):
     raise TypeError(f"Can only store to references (got {x_smem}).")
   transforms = jax.tree.unflatten(tree, leaves)
@@ -1845,7 +1845,7 @@ def _slice_lowering_rule_wg(
     ctx: LoweringRuleContext, x, limit_indices, start_indices, strides
 ):
   del limit_indices
-  assert ir.VectorType.isinstance(x.type)
+  assert mlir.isinstance(x.type, ir.VectorType)
   if strides is not None:
     raise NotImplementedError("Strides are not supported.")
   out_ty = ir.VectorType.get(
@@ -2014,10 +2014,10 @@ def _convert_element_type_lowering_rule_wg(
   if 1 < mgpu_utils.bitwidth(cur_dtype) < 8 or 1 < mgpu_utils.bitwidth(new_dtype) < 8:
     raise NotImplementedError("Conversion involving sub-byte types unsupported")
 
-  from_float = ir.FloatType.isinstance(cur_dtype)
-  to_float = ir.FloatType.isinstance(new_dtype)
-  from_integer = ir.IntegerType.isinstance(cur_dtype)
-  to_integer = ir.IntegerType.isinstance(new_dtype)
+  from_float = mlir.isinstance(cur_dtype, ir.FloatType)
+  to_float = mlir.isinstance(new_dtype, ir.FloatType)
+  from_integer = mlir.isinstance(cur_dtype, ir.IntegerType)
+  to_integer = mlir.isinstance(new_dtype, ir.IntegerType)
   if from_float and to_float:
     cur_ty_width = ir.FloatType(cur_dtype).width
     new_ty_width = ir.FloatType(new_dtype).width
@@ -2124,7 +2124,7 @@ def _binary_op_lowering_rule(ctx: LoweringRuleContext, x, y, *, impl):
 
 
 def _div(x, y):
-  return x / y if ir.FloatType.isinstance(x.mlir_dtype) else x // y
+  return x / y if mlir.isinstance(x.mlir_dtype, ir.FloatType) else x // y
 
 
 for semantics in [gpu_core.LANExWG_SEMANTICS, gpu_core.LANExWARP_SEMANTICS]:
@@ -2829,7 +2829,7 @@ def _run_scoped_lowering_rule(
               mgpu.WGMMAAccumulator.zero(*aval.shape, dtype, is_signed=is_signed)
           )
         else:
-          if ir.IntegerType.isinstance(dtype):
+          if mlir.isinstance(dtype, ir.IntegerType):
             zero = arith_dialect.constant(dtype, 0)
           else:
             zero = arith_dialect.constant(dtype, 0.0)
@@ -3499,7 +3499,7 @@ def _bcast_wg(
     if y_aval.weak_type:
       y_dtype = x_aval.dtype
     y = _ensure_ir_value(y, y_dtype)
-  if not ir.VectorType.isinstance(x.type):
+  if not mlir.isinstance(x.type, ir.VectorType):
     assert not x_aval.shape
     x = vector_dialect.broadcast(
         ir.VectorType.get(out_aval.shape, mgpu_utils.dtype_to_ir_type(x_dtype)),
@@ -3507,7 +3507,7 @@ def _bcast_wg(
     )
   elif x_aval.shape != out_aval.shape:
     raise NotImplementedError("Unsupported broadcast")
-  if not ir.VectorType.isinstance(y.type):
+  if not mlir.isinstance(y.type, ir.VectorType):
     assert not y_aval.shape
     y = vector_dialect.broadcast(
         ir.VectorType.get(out_aval.shape, mgpu_utils.dtype_to_ir_type(y_dtype)),
@@ -3521,7 +3521,7 @@ def _bcast_wg(
 def _ensure_ir_value(x: Any, dtype: jnp.dtype) -> ir.Value:
   if isinstance(x, ir.Value):
     mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
-    if ir.VectorType.isinstance(x.type):
+    if mlir.isinstance(x.type, ir.VectorType):
       assert ir.VectorType(x.type).element_type == mlir_dtype
     else:
       assert x.type == mlir_dtype, (x.type, mlir_dtype)
@@ -3572,9 +3572,9 @@ def _as_index(v: object) -> ir.Value:
   match v:
     case int():
       return arith_dialect.constant(ir.IndexType.get(), v)
-    case ir.Value() if ir.IndexType.isinstance(v.type):
+    case ir.Value() if mlir.isinstance(v.type, ir.IndexType):
       return v
-    case ir.Value() if ir.IntegerType.isinstance(v.type):
+    case ir.Value() if mlir.isinstance(v.type, ir.IntegerType):
       return arith_dialect.index_cast(ir.IndexType.get(), v)
     case mgpu.FragmentedArray(layout=mgpu.WGSplatFragLayout()):
       return _as_index(v.registers.item())
@@ -3611,7 +3611,7 @@ def merge_indexers(
         # TODO(cperivol): We assume all indices are signed. We should
         # look at the JAX avals to see if the integers are signed or
         # not to figure out is_signed.
-        is_signed = False if ir.IntegerType.isinstance(x.type) else None
+        is_signed = False if mlir.isinstance(x.type, ir.IntegerType) else None
         return mgpu.FragmentedArray.splat(x, (), is_signed=is_signed).astype(
             i32, is_signed=False
         )
