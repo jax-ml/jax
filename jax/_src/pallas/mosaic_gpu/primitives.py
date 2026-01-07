@@ -294,13 +294,13 @@ def _split_gmem_slice(gmem_slice):
       case mgpu.DynamicSlice():
         indices.append(arith_dialect.index_cast(i32, idx.base))
         slice_lengths.append(idx.length)
-      case ir.Value() if ir.IndexType.isinstance(idx.type):
+      case ir.Value() if isinstance(idx.type, ir.IndexType):
         indices.append(arith_dialect.index_cast(i32, idx))
         slice_lengths.append(-1)
-      case ir.Value() if ir.IntegerType.isinstance(idx.type):
+      case ir.Value() if isinstance(idx.type, ir.IntegerType):
         indices.append(idx)
         slice_lengths.append(-1)
-      case ir.Value() if ir.VectorType.isinstance(idx.type):
+      case ir.Value() if isinstance(idx.type, ir.VectorType):
         indices.append(idx)
         [length] = ir.VectorType(idx.type).shape
         slice_lengths.append(length)
@@ -2520,7 +2520,7 @@ def _inline_mgpu_discharge(*args, **kwargs):
 
 def _type_check_mgpu_lane_semantics(v, ty):
   match (ty, v):
-    case (RefType(), ir.Value()) if ir.MemRefType.isinstance(v.type):
+    case (RefType(), ir.Value()) if isinstance(v.type, ir.MemRefType):
       pass
     case (ShapeDtypeStruct(), mgpu.FragmentedArray()):
       mlir_dtype = mgpu_utils.dtype_to_ir_type(ty.dtype)
@@ -2670,9 +2670,9 @@ def _clone_custom_op_with_extra_args(
   with this function is therefore required to restore the isolation property.
   """
   for arg in extra_args:
-    if ir.MemRefType.isinstance(arg.type) and mgpu_utils.is_smem_ref(arg.type):
+    if isinstance(arg.type, ir.MemRefType) and mgpu_utils.is_smem_ref(arg.type):
       raise ValueError(f"Extra arg {arg} must not be an SMEM ref.")
-    if ir.VectorType.isinstance(arg.type):
+    if isinstance(arg.type, ir.VectorType):
       raise ValueError(f"Extra arg {arg} must not have a vector type.")
 
   new_operands = list(custom_op.operands) + list(extra_args)
@@ -2785,7 +2785,7 @@ def _populate_custom_primitive_op_block(
     in_transforms_it = iter(in_transforms)
     avals_in = ctx.avals_in[:pytree_args.num_leaves]
     for arg, aval in zip(block.arguments, avals_in, strict=True):
-      if ir.MemRefType.isinstance(arg.type):
+      if isinstance(arg.type, ir.MemRefType):
         memref_ty = ir.MemRefType(arg.type)
         if not mgpu_utils.is_smem_ref(memref_ty):
           fn_inputs.append(arg)
@@ -2807,7 +2807,7 @@ def _populate_custom_primitive_op_block(
             [transformed_type], [arg]
         )
         fn_inputs.append(conversion_cast.result)
-      elif ir.VectorType.isinstance(arg.type):
+      elif isinstance(arg.type, ir.VectorType):
         layout_attr = next(in_layouts_it)
         layout = mgpu.layouts.from_layout_attr(layout_attr)
 
@@ -2849,7 +2849,7 @@ def _populate_custom_primitive_op_block(
     ):
       if not isinstance(fa, mgpu.FragmentedArray):
         raise ValueError(f"Expected a FragmentedArray, but got: {fa}")
-      if ir.VectorType.isinstance(result_ty):
+      if isinstance(result_ty, ir.VectorType):
         result_shape = ir.VectorType(result_ty).shape
         if fa.shape != tuple(result_shape):
           raise ValueError(f"Expected {result_shape} but got {fa.shape}")
@@ -3090,7 +3090,7 @@ def _async_load_tmem_lowering_rule_wg(
     ctx: lowering.LoweringRuleContext, x_ref: ir.Value, *leaves, tree
 ):
   assert isinstance(x_ref, ir.Value)
-  assert ir.MemRefType.isinstance(x_ref.type)
+  assert isinstance(x_ref.type, ir.MemRefType)
 
   transforms = jax.tree.unflatten(tree, leaves)
   x_tmem, transforms = lowering._handle_transforms(
@@ -3192,9 +3192,9 @@ def _async_store_tmem_lowering_rule_wg(
     tree,
 ):
   assert isinstance(x_ref, ir.Value)
-  assert ir.MemRefType.isinstance(x_ref.type)
+  assert isinstance(x_ref.type, ir.MemRefType)
   assert isinstance(value, ir.Value)
-  assert ir.VectorType.isinstance(value.type)
+  assert isinstance(value.type, ir.VectorType)
 
   transforms = jax.tree.unflatten(tree, leaves)
   x_tmem, transforms = lowering._handle_transforms(
