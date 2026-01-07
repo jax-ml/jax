@@ -357,7 +357,7 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
   if rhs_dilation is None:
     rhs_dilation = (1,) * (rhs.ndim - 2)
   pads: str | Sequence[tuple[int, int]]
-  if use_consistent_padding or padding in {'SAME', 'VALID'}:
+  if use_consistent_padding or (isinstance(padding, str) and padding in {'SAME', 'VALID'}):
     effective_k_size = map(lambda k, r: core.dilate_dim(k, r), k_sdims, rhs_dilation)
     replicated_padding = [padding] * len(strides) if isinstance(padding, str) else padding
     pads = tuple(_conv_transpose_padding(k, s, p)
