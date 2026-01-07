@@ -178,7 +178,7 @@ def build_kernel(
 
     loop_partition = Partition1D(kv_seq_len, chunk_size=blocks.kv)
     if_compute = scf.IfOp(
-        arith.cmpi(arith.CmpIPredicate.ne, wg_idx, c(2, i32)), hasElse=True
+        arith.cmpi(arith.CmpIPredicate.ne, wg_idx, c(2, i32)), has_else=True
     )
     with ir.InsertionPoint(if_compute.then_block):
       nvvm.setmaxregister(232, nvvm.SetMaxRegisterAction.increase)
