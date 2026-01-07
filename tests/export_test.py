@@ -182,7 +182,7 @@ class JaxExportTest(jtu.JaxTestCase):
         return x
 
       # Export the function with pinned_host input
-      exported = export.export(jax.jit(f, in_shardings=shd, out_shardings=shd))(
+      exported = get_exported(jax.jit(f, in_shardings=shd, out_shardings=shd))(
           jax.ShapeDtypeStruct((2,), np.float32, sharding=shd))
 
       # Verify the export object retained the input memory_kind metadata

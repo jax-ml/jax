@@ -104,6 +104,7 @@ enum ShardingKind: byte {
 table Sharding {
   kind: ShardingKind;
   hlo_sharding_proto: [byte];
+  memory_kind: string;
 }
 
 table Effect {

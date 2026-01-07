@@ -355,8 +355,15 @@ class Sharding(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
         return o == 0
 
+    # Sharding
+    def MemoryKind(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
 def ShardingStart(builder):
-    builder.StartObject(2)
+    builder.StartObject(3)
 
 def ShardingAddKind(builder, kind):
     builder.PrependInt8Slot(0, kind, 0)
@@ -366,6 +373,9 @@ def ShardingAddHloShardingProto(builder, hloShardingProto):
 
 def ShardingStartHloShardingProtoVector(builder, numElems):
     return builder.StartVector(1, numElems, 1)
+
+def ShardingAddMemoryKind(builder, memoryKind):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(memoryKind), 0)
 
 def ShardingEnd(builder):
     return builder.EndObject()

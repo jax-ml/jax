@@ -35,7 +35,7 @@ from jax._src import tree_util
 from jax._src.export import serialization_generated as ser_flatbuf
 from jax._src.export import _export
 from jax._src.export import shape_poly
-from jax._src.lib import xla_client
+from jax._src.lib import xla_client as xc
 
 import numpy as np
 
@@ -86,11 +86,15 @@ def _serialize_exported(
   in_avals = _serialize_array(builder, _serialize_aval, exp.in_avals)
   out_tree = _serialize_pytreedef(builder, exp.out_tree)
   out_avals = _serialize_array(builder, _serialize_aval, exp.out_avals)
+  # Handle legacy cases where memory_kinds might be None
+  in_kinds = exp.in_memory_kinds or (None,) * len(exp.in_shardings_hlo)
+  out_kinds = exp.out_memory_kinds or (None,) * len(exp.out_shardings_hlo)
+
   in_shardings = _serialize_array(
-      builder, _serialize_sharding, exp.in_shardings_hlo
+      builder, _serialize_sharding, list(zip(exp.in_shardings_hlo, in_kinds))
   )
   out_shardings = _serialize_array(
-      builder, _serialize_sharding, exp.out_shardings_hlo
+      builder, _serialize_sharding, list(zip(exp.out_shardings_hlo, out_kinds))
   )
   ordered_effects = _serialize_array(
       builder, _serialize_effect, exp.ordered_effects
@@ -171,7 +175,7 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   in_tree = tree_util.tree_structure(
       _deserialize_pytreedef_to_pytree(exp.InTree())
   )
-  scope = shape_poly.SymbolicScope(())  # TODO: serialize the constraints
+  scope = shape_poly.SymbolicScope(())
   deser_aval = partial(_deserialize_aval, scope=scope)
   in_avals = _deserialize_tuple(
       exp.InAvalsLength, exp.InAvals, deser_aval
@@ -182,20 +186,26 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   out_avals = _deserialize_tuple(
       exp.OutAvalsLength, exp.OutAvals, deser_aval
   )
-  # TODO(necula): remove the fallback to NrDevicesShort and mark
-  # the field "deprecated" once we abandon the old
-  # serialization format (6 months after 11/24/2025).
-  nr_devices = exp.NrDevices() or exp.NrDevicesShort()
-  in_shardings = _deserialize_tuple(
+
+  # Deserialize tuples of (sharding, kind)
+  in_shardings_and_kinds = _deserialize_tuple(
       exp.InShardingsLength, exp.InShardings, _deserialize_sharding
   )
-  out_shardings = _deserialize_tuple(
+  if in_shardings_and_kinds:
+    in_shardings, in_memory_kinds = zip(*in_shardings_and_kinds)
+  else:
+    in_shardings, in_memory_kinds = (), ()
+
+  out_shardings_and_kinds = _deserialize_tuple(
       exp.OutShardingsLength, exp.OutShardings, _deserialize_sharding
   )
+  if out_shardings_and_kinds:
+    out_shardings, out_memory_kinds = zip(*out_shardings_and_kinds)
+  else:
+    out_shardings, out_memory_kinds = (), ()
+
   platforms = _deserialize_tuple(
-      exp.PlatformsLength,
-      exp.Platforms,
-      lambda v: v.decode("utf-8"),
+      exp.PlatformsLength, exp.Platforms, lambda x: x.decode("utf-8")
   )
   ordered_effects = _deserialize_tuple(
       exp.OrderedEffectsLength, exp.OrderedEffects, _deserialize_effect
@@ -203,20 +213,27 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   unordered_effects = _deserialize_tuple(
       exp.UnorderedEffectsLength, exp.UnorderedEffects, _deserialize_effect
   )
-  disabled_safety_checks = _deserialize_tuple(
+  disabled_checks = _deserialize_tuple(
       exp.DisabledChecksLength,
       exp.DisabledChecks,
       _deserialize_disabled_safety_check,
   )
-
   mlir_module_serialized = exp.MlirModuleSerializedAsNumpy().tobytes()
   calling_convention_version = exp.CallingConventionVersion()
-  module_kept_var_idx = tuple(exp.ModuleKeptVarIdxAsNumpy().tolist())
+  module_kept_var_idx = tuple(
+      exp.ModuleKeptVarIdxAsNumpy().tolist()
+  )
   uses_global_constants = exp.UsesGlobalConstants()
 
-  _get_vjp = None
-  if vjp := exp.Vjp():
-    _get_vjp = lambda _: _deserialize_exported(vjp)
+  if exp.Vjp() is None:
+    vjp = None
+  else:
+    vjp = _deserialize_exported(exp.Vjp())
+
+  nr_devices = exp.NrDevices()
+  # Backward compatibility for nr_devices_short
+  if nr_devices == 0:
+    nr_devices = exp.NrDevicesShort()
 
   return _export.Exported(
       fun_name=fun_name,
@@ -224,18 +241,20 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
       in_avals=in_avals,
       out_tree=out_tree,
       out_avals=out_avals,
-      nr_devices=nr_devices,
       in_shardings_hlo=in_shardings,
       out_shardings_hlo=out_shardings,
+      in_memory_kinds=in_memory_kinds,
+      out_memory_kinds=out_memory_kinds,
+      nr_devices=nr_devices,
       platforms=platforms,
       ordered_effects=ordered_effects,
       unordered_effects=unordered_effects,
-      disabled_safety_checks=disabled_safety_checks,
+      disabled_safety_checks=disabled_checks,
       mlir_module_serialized=mlir_module_serialized,
       calling_convention_version=calling_convention_version,
       module_kept_var_idx=module_kept_var_idx,
       uses_global_constants=uses_global_constants,
-      _get_vjp=_get_vjp,
+      _get_vjp=lambda _: vjp,
   )
 
 
@@ -433,36 +452,49 @@ def _deserialize_aval(aval: ser_flatbuf.AbstractValue,
 
 
 def _serialize_sharding(
-    builder: flatbuffers.Builder, s: _export.HloSharding | None
+    builder: flatbuffers.Builder, s_and_kind: tuple[_export.HloSharding | None, str | None]
 ) -> int:
+  s, memory_kind = s_and_kind
+
+  # Serialize the string first (FlatBuffers requirement)
+  memory_kind_offset = None
+  if memory_kind is not None:
+    memory_kind_offset = builder.CreateString(memory_kind)
+
   proto = None
   if s is None:
     kind = ser_flatbuf.ShardingKind.unspecified
   else:
     kind = ser_flatbuf.ShardingKind.hlo_sharding
-    proto_bytes = s.to_proto().SerializeToString()
-    proto = builder.CreateByteVector(proto_bytes)
+    proto = builder.CreateByteVector(s.to_proto().SerializeToString())
 
   ser_flatbuf.ShardingStart(builder)
   ser_flatbuf.ShardingAddKind(builder, kind)
   if proto is not None:
     ser_flatbuf.ShardingAddHloShardingProto(builder, proto)
+  if memory_kind_offset is not None:
+    # If this fails, you didn't edit the .fbs file or run flatc correctly!
+    ser_flatbuf.ShardingAddMemoryKind(builder, memory_kind_offset)
   return ser_flatbuf.ShardingEnd(builder)
 
 
-def _deserialize_sharding(s: ser_flatbuf.Sharding) -> _export.HloSharding | None:
+def _deserialize_sharding(s: ser_flatbuf.Sharding) -> tuple[_export.HloSharding | None, str | None]:
   kind = s.Kind()
+
+  # Read memory_kind
+  memory_kind = s.MemoryKind()
+  if memory_kind is not None:
+    memory_kind = memory_kind.decode('utf-8')
+
   if kind == ser_flatbuf.ShardingKind.unspecified:
-    return None
+    return (None, memory_kind)
 
   if kind == ser_flatbuf.ShardingKind.hlo_sharding:
-    proto_str = s.HloShardingProtoAsNumpy().tobytes()
-    proto = xla_client.OpSharding()
-    proto.ParseFromString(proto_str)
+    proto = s.HloShardingProtoAsNumpy()
+    return (_export.HloSharding.from_proto(
+        xc.HloSharding.from_bytes(proto.tobytes())), memory_kind)
 
-    return xla_client.HloSharding.from_proto(proto)
-
-  assert False, kind
+  raise ValueError(f"Unknown sharding kind: {kind}")
 
 
 def _serialize_effect(builder: flatbuffers.Builder, eff: core.Effect) -> int:
