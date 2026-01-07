@@ -100,13 +100,17 @@ class WGMMAAccumulator:
 
 
 def _supported_wgmma_types(dtype, abtype) -> bool:
-  input_types_are = lambda ty: ty.isinstance(abtype)
+  input_types_are = lambda ty: isinstance(abtype, ty)
   f16_acc_types = (ir.F16Type, ir.Float8E5M2Type, ir.Float8E4M3FNType)
   if isinstance(dtype, ir.F32Type):
     return any(input_types_are(ty) for ty in (ir.FloatTF32Type, ir.BF16Type, *f16_acc_types))
   elif isinstance(dtype, ir.F16Type):
     return any(input_types_are(ty) for ty in f16_acc_types)
-  elif ir.IntegerType.get_signless(32).isinstance(dtype):
+  elif (
+      isinstance(dtype, ir.IntegerType)
+      and dtype.width == 32
+      and dtype.is_signless
+  ):
     return input_types_are(ir.IntegerType)
   else:
     return False
@@ -367,7 +371,7 @@ def wgmma(
           f" of type f32, but got: {acc._value.mlir_dtype}"
       )
   elif any(
-      t.isinstance(element_type)
+      isinstance(element_type, t)
       for t in {ir.F16Type, ir.Float8E5M2Type, ir.Float8E4M3FNType}
   ):
     if acc._value.mlir_dtype != f16 and acc._value.mlir_dtype != f32:

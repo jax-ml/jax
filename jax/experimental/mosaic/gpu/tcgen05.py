@@ -294,7 +294,7 @@ def mma(
           f" type f32 or f16, but got: {d.dtype}"
       )
   elif any(
-      t.isinstance(element_type)
+      isinstance(element_type, t)
       for t in {ir.Float8E5M2Type, ir.Float8E4M3FNType}
   ):
     if d.dtype != f16 and d.dtype != f32:
@@ -630,10 +630,16 @@ def _do_mma(
       kind = "f8f6f4"
     elif isinstance(element_type, ir.Float8E4M3FNType):
       kind = "f8f6f4"
-    elif ir.IntegerType.get_signless(8).isinstance(element_type):
+    elif (
+        isinstance(element_type, ir.IntegerType)
+        and element_type.width == 8
+        and element_type.is_signless
+    ):
       kind = "i8"
     else:
-      raise NotImplementedError(f"Unsupported input element type: {element_type}")
+      raise NotImplementedError(
+          f"Unsupported input element type: {element_type}"
+      )
     extra_constraints = extra_ptx = ""
 
     def create_scaled_instr_descriptor(*args):  # type: ignore
