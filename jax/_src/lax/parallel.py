@@ -125,13 +125,6 @@ def psum(x, axis_name, *, axis_index_groups=None):
           tuple(axis_name))
   if not axes:
     return x
-  # TODO(yashkatariya): Remove this handling and remove_size_one_mesh_axis_from_type
-  # generally from JAX.
-  cur_mesh = get_abstract_mesh()
-  if config.remove_size_one_mesh_axis_from_type.value and not cur_mesh.empty:
-    axes = tuple(i for i in axes if cur_mesh.shape[i] != 1)
-    if not axes:
-      return x
   def bind(leaf):
     from_ = _get_from(core.typeof(leaf), axes, 'jax.lax.psum')
     if from_ == 'unreduced':
@@ -2173,13 +2166,6 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axes:
     return x
-  # TODO(yashkatariya): Remove this handling and remove_size_one_mesh_axis_from_type
-  # generally from JAX.
-  cur_mesh = get_abstract_mesh()
-  if config.remove_size_one_mesh_axis_from_type.value and not cur_mesh.empty:
-    axes = tuple(i for i in axes if cur_mesh.shape[i] != 1)
-    if not axes:
-      return x
   def bind(leaf):
     from_ = _get_from(core.typeof(leaf), axes, 'jax.lax.psum_scatter')
     if from_ == 'unreduced':
