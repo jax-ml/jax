@@ -1876,6 +1876,66 @@ class PipelineTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), x + 1)
 
+  def test_explicit_sc_tiling_1d(self):
+    self.skip_if_tc_tiling("The test uses SC tiling.")
+
+    num_steps = 4
+    x = jnp.arange(num_steps * 8)
+
+    @self.vector_subcore_kernel(
+        out_shape=x,
+        in_specs=(pl.BlockSpec(memory_space=pltpu.HBM),),
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_hbm_ref, o_hbm_ref):
+      spec = plsc.BlockSpec((8,), lambda i: (i,))
+
+      @functools.partial(
+          pltpu.emit_pipeline,
+          grid=(num_steps,),
+          in_specs=spec,
+          out_specs=spec,
+          tiling=pltpu.Tiling.SPARSE_CORE,
+      )
+      def pipeline(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + 1
+
+      pipeline(x_hbm_ref, o_hbm_ref)
+
+    np.testing.assert_array_equal(kernel(x), x + 1)
+
+  def test_explicit_sc_tiling_2d(self):
+    self.skip_if_tc_tiling("The test uses SC tiling.")
+
+    num_steps = 16
+    x = jnp.arange(num_steps * 8 * 128).reshape(-1, 8, 128)
+
+    @self.vector_subcore_kernel(
+        out_shape=x,
+        in_specs=(pl.BlockSpec(memory_space=pltpu.HBM),),
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_hbm_ref, o_hbm_ref):
+      spec = plsc.BlockSpec((pl.Squeezed(), 8, 128), lambda i: (i, 0, 0))
+
+      @functools.partial(
+          pltpu.emit_pipeline,
+          grid=(num_steps,),
+          in_specs=[spec],
+          out_specs=[spec],
+          tiling=pltpu.Tiling.SPARSE_CORE,
+      )
+      def pipeline(x_ref, o_ref):
+        @pl.loop(0, 8)
+        def _(i):
+          @pl.loop(0, 128, step=8)
+          def _(j):
+            o_ref[i, pl.ds(j, 8)] = x_ref[i, pl.ds(j, 8)] + 1
+
+      pipeline(x_hbm_ref, o_hbm_ref)
+
+    np.testing.assert_array_equal(kernel(x), x + 1)
+
 
 class PipelineTestWithTCTiling(PipelineTest):
   USE_TC_TILING = True

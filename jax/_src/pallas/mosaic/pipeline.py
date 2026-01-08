@@ -56,8 +56,19 @@ PipelineBlockSpecs = Union[Sequence[pallas_core.BlockSpec], Any]
 PipelineRefs = Union[Sequence[REF], Any]
 
 
-# TODO(sharadmv): make this a parameter and make it queryable from the Device.
-_TILING = (8, 128)
+class Tiling(enum.Enum):
+  COMPACT = enum.auto()
+  SPARSE_CORE = enum.auto()
+
+  @property
+  def shape(self) -> tuple[int, ...]:
+    # TODO(slebedev): Use ``get_tpu_info()`` instead of hardcoding the values.
+    match self:
+      case Tiling.COMPACT:
+        return (8, 128)
+      case Tiling.SPARSE_CORE:
+        return (8,)
+
 
 def _broadcast_pytree_to(from_pytree, to_pytree):
   """Broadcast a prefix pytree to a given full tree."""
@@ -83,35 +94,46 @@ def _get_tpu_generation() -> int:
 
 
 def _make_tiling(
-    shape: tuple[int, ...], ty: jax_core.AbstractValue
+    shape: tuple[int, ...],
+    ty: jax_core.AbstractValue,
+    tiling: Tiling | None = None,
 ) -> tuple[int | None, ...]:
   """Compute a tiling for the given shape and type.
 
-  For a n-dimensional shape, returns (8, 128) for the last 2 dimensions
-  and 1 for the leading n - 2. For example, (256, 256) -> (8, 128) and
-  (2, 3, 128, 128) -> (1, 1, 8, 128).
+  For an n-dimensional shape, returns the tiling for the last
+  ``len(tiling.shape)`` dimensions and 1 for the leading dims. For example:
+  - 2D tiling: (256, 256) -> (8, 128) and (2, 3, 128, 128) -> (1, 1, 8, 128).
+  - 1D tiling: (16,) -> (8,) and (2, 3, 8) -> (1, 1, 8).
 
   Types are not required to have a dtype, so for such types we return None for
   all dimensions because their tiling is unknown.
   """
-
-  if len(shape) < 2:
-    raise ValueError(f"Shape must have at least 2 dimensions: {shape=}")
-
-  if not hasattr(ty, 'dtype'):
+  if not hasattr(ty, "dtype"):
     return (None,) * len(shape)
-
-  leading_dims, final_dims = shape[:-2], shape[-2:]
-  # We want to find the minimum power of 2 that fits the second-minor dimension
-  # of shape, with maximum value 8.
-  second_minor, _ = final_dims
-
   packing = 4 // ty.dtype.itemsize
-  max_tiling = _TILING[0]
-  second_minor_tiling = (1 + int(_get_tpu_generation() < 4)) * packing
-  while second_minor_tiling < min(second_minor, max_tiling):
-    second_minor_tiling *= 2
-  return (*(1,) * len(leading_dims), second_minor_tiling, _TILING[1])
+
+  if tiling is None:
+    tiling = Tiling.COMPACT
+  tiling_rank = len(tiling.shape)
+  if len(shape) < tiling_rank:
+    raise ValueError(
+        f"Shape must have at least {tiling_rank} dimensions: {shape=}"
+    )
+
+  leading_dims, final_dims = shape[:-tiling_rank], shape[-tiling_rank:]
+  match tiling:
+    case Tiling.COMPACT:
+      # We want to find the minimum power of 2 that fits the second-minor
+      # dimension of shape, with maximum value equal to ``tiling.shape[0]``.
+      second_minor, _ = final_dims
+      max_tiling = tiling.shape[0]
+      second_minor_tiling = (1 + int(_get_tpu_generation() < 4)) * packing
+      while second_minor_tiling < min(second_minor, max_tiling):
+        second_minor_tiling *= 2
+      return (*(1,) * len(leading_dims), second_minor_tiling, tiling.shape[1])
+    case Tiling.SPARSE_CORE:
+      [tile_size] = tiling.shape
+      return (*(1,) * len(leading_dims), tile_size * packing)
 
 
 def _round_up_to_nearest_multiple(
@@ -406,12 +428,9 @@ class BufferedRefBase:
     # tile multiple, i.e. (96, 256).
 
     if (src_shape := getattr(src_ty, "shape", None)) is None:
-      raise ValueError(f'Type {src_ty} does not have a type.')
+      raise ValueError(f"Type {src_ty} does not have a shape")
 
-    if len(src_shape) < 2:
-      raise NotImplementedError("Must use >1D values.")
-
-    tiling = _make_tiling(src_shape, src_ty)
+    tiling = _make_tiling(src_shape, src_ty, getattr(self, "tiling", None))
     block_indices = self.compute_index(*grid_indices)
     return tuple(
         _make_block_slice(bi, bs, ss, t)
@@ -478,6 +497,7 @@ class BufferedRef(BufferedRefBase):
       automatic accumulation.
     swap: Tracks whether the BufferedRef slots need to be swapped before next
       copy.
+    tiling: The tiling to assume for the buffers.
   """
   _spec: pl.BlockSpec = dataclasses.field(metadata=dict(static=True))
   _buffer_type: BufferType = dataclasses.field(metadata=dict(static=True))
@@ -498,6 +518,7 @@ class BufferedRef(BufferedRefBase):
   # TODO(ramiroleal): Improve prefetch/postyeet interface to avoid
   # using this ref.
   swap: ArrayRef | None
+  tiling: Tiling | None = dataclasses.field(metadata=dict(static=True))
 
   def __post_init__(self):
     if self.is_buffered and self.buffer_count < 1:
@@ -552,6 +573,7 @@ class BufferedRef(BufferedRefBase):
       grid_rank=None,
       use_lookahead=False,
       source_memory_space: tpu_core.MemorySpace | Literal[ANY] = ANY,  # type: ignore[valid-type]
+      tiling: Tiling | None = None,
   ) -> BufferedRef:
     """Create a BufferedRef.
 
@@ -565,6 +587,7 @@ class BufferedRef(BufferedRefBase):
       grid_rank: rank of the pipeline grid.
       use_lookahead: whether to enable pipeline lookahead.
       source_memory_space: The memory space of the backing source Ref.
+      tiling: The tiling to assume for the buffers.
 
     Returns:
       Initialized BufferedRef
@@ -608,6 +631,7 @@ class BufferedRef(BufferedRefBase):
           sem_recvs=None,
           sem_sends=None,
           swap=None,
+          tiling=None,
       )
     else:
       if use_lookahead and grid_rank is None:
@@ -643,6 +667,7 @@ class BufferedRef(BufferedRefBase):
               else SemaphoreType.DMA((buffer_count,))
           ),
           swap=SMEM((1,), jnp.bool) if needs_swap_ref else None,
+          tiling=tiling,
       )
 
   @classmethod
@@ -1691,6 +1716,7 @@ def make_pipeline_allocations(
     *refs,
     in_specs=(),
     out_specs=(),
+    tiling: Tiling | None = None,
     should_accumulate_out=False,
     needs_swap_ref=True,
     grid=None,
@@ -1735,11 +1761,16 @@ def make_pipeline_allocations(
       raise ValueError("Grid must be specified when using lookahead.")
 
     in_aval = _ref_to_value_aval(in_ref)
-    return BufferedRef.input(in_spec, in_aval, buffer_count,
-                             needs_swap_ref=needs_swap_ref,
-                             grid_rank=len(grid),
-                             use_lookahead=use_lookahead,
-                             source_memory_space=in_ref.memory_space)
+    return BufferedRef.input(
+        in_spec,
+        in_aval,
+        buffer_count,
+        needs_swap_ref=needs_swap_ref,
+        grid_rank=len(grid),
+        use_lookahead=use_lookahead,
+        source_memory_space=in_ref.memory_space,
+        tiling=tiling,
+    )
   in_brefs = jax.tree.map(make_input_bref, in_specs, in_refs)
   def make_output_bref(out_spec, out_ref, accumulate):
     buffer_count = 2
@@ -1751,12 +1782,22 @@ def make_pipeline_allocations(
     out_aval = _ref_to_value_aval(out_ref)
 
     if accumulate:
-      return BufferedRef.accumulator(out_spec, out_aval, buffer_count,
-                                     needs_swap_ref=needs_swap_ref,
-                                     source_memory_space=out_ref.memory_space)
-    return BufferedRef.output(out_spec, out_aval, buffer_count,
-                              needs_swap_ref=needs_swap_ref,
-                              source_memory_space=out_ref.memory_space)
+      return BufferedRef.accumulator(
+          out_spec,
+          out_aval,
+          buffer_count,
+          needs_swap_ref=needs_swap_ref,
+          source_memory_space=out_ref.memory_space,
+          tiling=tiling,
+      )
+    return BufferedRef.output(
+        out_spec,
+        out_aval,
+        buffer_count,
+        needs_swap_ref=needs_swap_ref,
+        source_memory_space=out_ref.memory_space,
+        tiling=tiling,
+    )
   out_brefs = jax.tree.map(
       make_output_bref, out_specs, out_refs, should_accumulate_out)
   return (*in_brefs, *out_brefs)
@@ -1892,6 +1933,7 @@ def emit_pipeline(
     grid: tuple[int | jax.Array, ...],
     in_specs=(),
     out_specs=(),
+    tiling: Tiling | None = None,
     should_accumulate_out: bool = False,
     core_axis: int | None = None,
     core_axis_name: str | None = None,
@@ -1914,6 +1956,7 @@ def emit_pipeline(
     grid: a pallas grid definition.
     in_specs: input pallas block specs
     out_specs: output pallas block specs
+    tiling: optional tiling to assume for the refs.
     should_accumulate_out: booleans to indicate which outputs should be treated
       as accumulators.
     core_axis: optional int, indicates whether or not to partition the grid
@@ -2019,6 +2062,7 @@ def emit_pipeline(
               should_accumulate_out=should_accumulate_out,
               needs_swap_ref=needs_swap_ref,
               grid=grid,
+              tiling=tiling,
           ),
       )
     if isinstance(allocations, list):
