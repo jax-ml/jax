@@ -5247,8 +5247,6 @@ class WarpSpecializedPipelineTest(PallasTest):
   @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_elementwise_add(self, m, n, num_compute_wgs, static,
                            manual_consumed_barriers, in_tree_template):
-    self.skip_if_wg_semantics()  # Crashes!
-
     blk_m = blk_n = 64
     if m % (num_compute_wgs * blk_m):
       self.skipTest(f"{m=} must be divisible by {num_compute_wgs=} * {blk_m=}")
@@ -5425,7 +5423,6 @@ class WarpSpecializedPipelineTest(PallasTest):
     np.testing.assert_allclose(kernel(x, y), x + y, atol=1e-4)
 
   def test_different_delay_release(self):
-    self.skip_if_wg_semantics()  # Crashes!
     m, n = 128, 64
     blk_m, blk_n = 32, 32
     in_specs = [
@@ -5505,8 +5502,6 @@ class WarpSpecializedPipelineTest(PallasTest):
 
   @parameterized.parameters((False,), (True,))
   def test_stationary_input(self, flip):
-    self.skip_if_wg_semantics()
-
     m = n = 256
     blk_m = blk_n = 64
 
@@ -5794,8 +5789,6 @@ class WarpSpecializedPipelineTest(PallasTest):
 
   @parameterized.parameters((pl.Squeezed(),), (None,))
   def test_emit_with_squeezed_dim(self, squeezed_dim):
-    self.skip_if_wg_semantics()
-
     shape = (16, 256)
     num_steps = shape[0]
 
