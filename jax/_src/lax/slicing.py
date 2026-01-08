@@ -1607,7 +1607,7 @@ def _dynamic_slice_batching_rule(batched_args, batch_dims, *, slice_sizes):
     [operand, index, *dyn_slice_sizes],
     [operand_bd, index_bdim, *dyn_slice_size_bds], dimension_numbers=dnums,
     slice_sizes=slice_sizes, unique_indices=True, indices_are_sorted=True,
-    mode=GatherScatterMode.PROMISE_IN_BOUNDS, fill_value=None)
+    mode=GatherScatterMode.CLIP, fill_value=None)
 
 def _dynamic_slice_staging_rule(trace, source_info, x, *start_indices,
                                 slice_sizes):
