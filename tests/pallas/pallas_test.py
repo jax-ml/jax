@@ -1349,6 +1349,82 @@ class PallasControlFlowTest(ptu.PallasTest):
     # Pallas/Mosaic GPU.
     self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(False))
 
+  def test_loop_with_unused_i_no_int(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((4,), jnp.int32),
+    )
+    def f(x_ref, y_ref):
+      def body(_, acc):
+        return acc + x_ref[...]
+      y_ref[...] = lax.fori_loop(
+          0, 3, body, jnp.zeros((4,), jnp.int32))
+
+    np.testing.assert_allclose(np.arange(1, 5) * 3,
+                                f(jnp.arange(1, 5, dtype=jnp.int32)))
+
+  def test_loop_with_unused_i_with_unused_int(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((4,), jnp.int32),
+    )
+    def f(x_ref, y_ref):
+      def body(_, carry):
+        i, acc = carry
+        return i + 1, acc + x_ref[...]
+      y_ref[...] = lax.fori_loop(
+          0, 3, body, (0, jnp.zeros((4,), jnp.int32)))[1]
+
+    np.testing.assert_allclose(np.arange(1, 5) * 3,
+                                f(jnp.arange(1, 5, dtype=jnp.int32)))
+
+  def test_loop_with_unused_i_with_used_int(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((4,), jnp.int32),
+    )
+    def f(x_ref, y_ref):
+      def body(_, carry):
+        i, j, acc = carry
+        return i + 1, j * 2, acc + x_ref[...] + j * 0
+      y_ref[...] = lax.fori_loop(
+          0, 3, body, (0, 0, jnp.zeros((4,), jnp.int32)))[2]
+
+    np.testing.assert_allclose(np.arange(1, 5) * 3,
+                                f(jnp.arange(1, 5, dtype=jnp.int32)))
+
+  def test_scan_with_extensive_inputs(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((4,), jnp.int32),
+    )
+    def f(y_ref):
+      def body(carry, x):
+        i, acc = carry
+        return (i + 1, acc + x), ()
+      y_ref[...] = lax.scan(
+          body, (0, jnp.zeros_like(y_ref)), jnp.zeros((4, 4), jnp.int32))[0][1]
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "Extensive inputs not supported"
+    ):
+      f()
+
+  def test_scan_with_extensive_outputs(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((4,), jnp.int32),
+    )
+    def f(y_ref):
+      def body(i,_):
+        return i + 1,  i
+      y_ref[...] = lax.scan(body, 0, jnp.zeros((4,), jnp.int32))[1]
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "Extensive outputs not supported"
+    ):
+      f()
+
   def test_loop_with_float64_carry(self):
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("TODO: error on TPU")
@@ -1364,9 +1440,7 @@ class PallasControlFlowTest(ptu.PallasTest):
       )
       def f(x_ref, y_ref):
         def body(i, acc):
-          # TODO(sharadmv): DCE loop index but retain carry breaks scan pattern.
-          # return acc + x_ref[...]
-          return acc + x_ref[...] + i * 0
+          return acc + x_ref[...]
         y_ref[...] = lax.fori_loop(
             0, 3, body, jnp.zeros((4,), jnp.float64))
 

@@ -167,6 +167,8 @@ def _bcast_to(a: ir.Value, shape: tuple[int, ...]) -> ir.Value:
     a_type = ir.RankedTensorType(a.type)
     if a_type.shape == [*shape]:
       return a
+    for _ in range(a_type.rank, len(shape)):
+      a = _expand_dims(a, 0)
     if a_type.rank != len(shape) or not all(
         a_type.shape[i] in (dim, 1) for i, dim in enumerate(shape)
     ):

@@ -1162,15 +1162,6 @@ def jaxpr_subcomp(
   current_name_stack.extend(initial_name_stack)
   for eqn in jaxpr.eqns:
     invals = map(read_env, eqn.invars)
-    # Skip lowering equations that don't have used outputs and no side-effects.
-    # This allows us to avoid lowering eqns that have unlowerable types (e.g.
-    # float0) in them.
-    # TODO(sharadmv): Remove this when DCEing the jaxpr works properly.
-    if (
-        all(isinstance(v, jax_core.DropVar) for v in eqn.outvars)
-        and not eqn.effects
-    ):
-      continue
     eqn_name_stack = ctx.name_stack + eqn.source_info.name_stack
     loc = mlir.source_info_to_location(  # pytype: disable=wrong-arg-types
         ctx, eqn.primitive, eqn_name_stack, eqn.source_info.traceback
@@ -3175,18 +3166,11 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
                              has_loop_index: bool,
                              unroll: int):
   def _run_body(i, args):
+    lowering_context = ctx.lowering_context.replace(
+        block_shapes=ctx.block_shapes)
     if has_loop_index:
-      lowering_context = ctx.lowering_context.replace(
-          block_shapes=ctx.block_shapes)
       args = jaxpr_subcomp(lowering_context, jaxpr, *consts, i, *args)
     else:
-      del i
-      lowering_context = ctx.lowering_context.replace(
-          block_shapes=(
-              *ctx.block_shapes[: len(consts)],
-              *ctx.block_shapes[len(consts) + 1 :],
-          ),
-      )
       args = jaxpr_subcomp(lowering_context, jaxpr, *consts, *args)
     return args
 
@@ -3233,10 +3217,14 @@ def _scan_lowering_rule(
 ):
   del _split_transpose
   # Can only handle fori_loop-like scans
-  num_extensive = len(args) - num_consts - num_carry
-  if num_extensive: raise NotImplementedError
+  num_extensive_inputs = len(args) - num_consts - num_carry
+  if num_extensive_inputs:
+    raise NotImplementedError("Extensive inputs not supported")
+  num_extensive_outputs = len(jaxpr.jaxpr.outvars) - num_carry
+  if num_extensive_outputs:
+    raise NotImplementedError("Extensive outputs not supported")
   if reverse: raise NotImplementedError
-  del linear, num_extensive, reverse
+  del linear, num_extensive_inputs, reverse
 
   jaxpr, jaxpr_consts = jaxpr.jaxpr, jaxpr.consts
   if jaxpr_consts: raise NotImplementedError

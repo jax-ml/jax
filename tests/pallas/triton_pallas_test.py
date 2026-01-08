@@ -267,7 +267,6 @@ class TritonPallasTest(PallasBaseTest):
 
   @parameterized.parameters(
       ((16, 32), (16,)),
-      ((16, 32), (32,)),
       ((16, 32), (16, 16)),
   )
   def test_invalid_broadcasted_load(self, x_shape, mask_shape):
@@ -283,14 +282,8 @@ class TritonPallasTest(PallasBaseTest):
 
     x = jnp.ones(x_shape, dtype=jnp.float32)
     mask = jnp.ones(mask_shape, dtype=jnp.bool_)
-    # assertRaises* methods do not support inspecting the __cause__, so
-    # we have to check it manually.
-    try:
+    with self.assertRaisesRegex(ValueError, "Cannot broadcast"):
       kernel(x, mask)
-    except Exception as e:
-      self.assertIn("Cannot broadcast", str(e.__cause__))
-    else:
-      self.fail("Expected exception due to invalid broadcasting")
 
   @parameterized.parameters("float16", "bfloat16", "float32")
   def test_approx_tanh(self, dtype):
