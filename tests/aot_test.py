@@ -20,6 +20,7 @@ from jax import lax
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
 from jax.experimental.serialize_executable import (
@@ -261,6 +262,40 @@ class JaxAotTest(jtu.JaxTestCase):
         'Execution devices belong to a client other than `backend`'):
       deserialize_and_load(serialized, in_tree, out_tree, backend='cpu',
                            execution_devices=jax.devices()[:1])
+
+  @jtu.run_on_devices('gpu')
+  def test_deviceless_aot_compile(self):
+    if jaxlib_extension_version < 393:
+      raise unittest.SkipTest('Test requires jaxlib extension version 393 or higher')
+    target_config = xc.get_topology_for_devices(jax.devices()).target_config
+    with jtu.global_config_context(jax_platforms="cpu"):
+      topology = topologies.get_topology_desc(
+        platform="cuda",
+        target_config=target_config,
+        topology="1x1x1",
+      )
+      assert topology.devices[0].client.runtime_type == "compile_only_runtime"
+      mesh = topologies.make_mesh(topo=topology, mesh_shape=(1,), axis_names=("x",))
+      x = jax.ShapeDtypeStruct(
+        shape=(2, 2),
+        dtype=jnp.float32,
+        sharding=jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
+      )
+      compiled = jax.jit(lambda x: jnp.sum(x * x)).lower(x).compile()
+      serialized_executable, _, _ = serialize(compiled)
+
+    _, in_tree = jax.tree.flatten(((0,), {}))
+    _, out_tree = jax.tree.flatten(0)
+    compiled = deserialize_and_load(
+        serialized_executable,
+        in_tree,
+        out_tree,
+        backend="cuda",
+        execution_devices=jax.devices()[:1]
+    )
+    input = jnp.array([[0., 1.], [2., 3.]], dtype=jnp.float32, device=jax.devices()[0])
+    result = compiled(input)
+    self.assertEqual(result, 14.)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
