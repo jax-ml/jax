@@ -4740,7 +4740,6 @@ class APITest(jtu.JaxTestCase):
           tracing_add_count += 1
       self.assertEqual(tracing_add_count, 2)
 
-  @unittest.skip('TODO(mattjj): re-enable after updating cache miss explainer')
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_skip_internals(self):
     if is_persistent_cache_enabled():
@@ -4751,7 +4750,6 @@ class APITest(jtu.JaxTestCase):
         for i in range(2):
           jnp.sin(jnp.arange(i + 1, dtype=np.float32))
 
-  @unittest.skip('TODO(mattjj): re-enable after updating cache miss explainer')
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_first_miss(self):
     @jax.jit

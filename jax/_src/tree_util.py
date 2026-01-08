@@ -1361,30 +1361,37 @@ class FlatTree:
        wouldn't be able to recover it.
   """
   # `FlatTree` constructor is private. Use `FlatTree.flatten` instead
-  def __init__(self, vals, treedef:PyTreeDef, statics):
+  def __init__(self, vals, treedef: PyTreeDef, statics):
     assert isinstance(treedef, pytree.PyTreeDef)
-    self.tree = treedef
     if not isinstance(vals, tuple):
       vals = tuple(vals)
     self.vals = tuple(vals)
+    self.tree = treedef
     self.statics = statics  # tree-prefix tuple-dict-tree of bools
 
-  def map(self, f:Callable) -> FlatTree:
+  def __eq__(self, other):
+    return (isinstance(other, FlatTree) and self.vals == other.vals
+            and self.tree == other.tree and self.statics == other.statics)
+
+  def __hash__(self):
+    return hash((self.vals, self.tree))
+
+  def map(self, f: Callable) -> FlatTree:
     return self.update(f(x) for x in self.vals)
 
-  def map2(self:FlatTree, f:Callable, t2:FlatTree) -> FlatTree:
+  def map2(self: FlatTree, f: Callable, t2: FlatTree) -> FlatTree:
     n = len(self)
     assert len(t2) == n
     return self.update(f(x1, x2) for x1, x2 in zip(self.vals, t2.vals))
 
   def map3(
-      self:FlatTree, f:Callable, t2:FlatTree, t3:FlatTree) -> FlatTree:
+      self: FlatTree, f: Callable, t2: FlatTree, t3: FlatTree) -> FlatTree:
     n = len(self)
     assert len(t2) == n and len(t3) == n
     return self.update(f(x1, x2, x3)
                        for x1, x2, x3 in zip(self.vals, t2.vals, t3.vals))
 
-  def unzip2(self:FlatTree) -> tuple[FlatTree, FlatTree]:
+  def unzip2(self: FlatTree) -> tuple[FlatTree, FlatTree]:
     ys = []
     zs = []
     for y, z in self.vals:
@@ -1419,7 +1426,7 @@ class FlatTree:
     else:
       assert False
 
-  def unpack(self:FlatTree) -> tuple[FlatTree, ...]:
+  def unpack(self: FlatTree) -> tuple[FlatTree, ...]:
     # TODO: this is O(N) not O(1) (with N as the number of leaves). If it
     # becomes a problem we can fix it with a fancier data tree.
     trees = treedef_children(self.tree)
@@ -1504,15 +1511,6 @@ class FlatTree:
 
   def __iter__(self):
     return self.vals.__iter__()
-
-  def __eq__(self, other):
-    return (isinstance(other, FlatTree)
-            and self.vals == other.vals
-            and self.tree == other.tree
-            and self.statics == other.statics)
-
-  def __hash__(self):
-    return hash((self.vals, self.tree))
 
 def unwrap_statics(pytree, statics):
   if statics is False:

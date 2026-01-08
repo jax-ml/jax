@@ -20,6 +20,7 @@ from collections.abc import Callable, Sequence
 import contextlib
 from dataclasses import dataclass
 from functools import partial
+import logging
 import itertools as it
 import operator as op
 from typing import Any, NamedTuple, Union
@@ -37,6 +38,7 @@ from jax._src import linear_util as lu
 from jax._src import profiler
 from jax._src import source_info_util
 from jax._src import xla_metadata_lib
+from jax._src import tree_util
 from jax._src.core import (
     Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval, AbstractValue,
     ClosedJaxpr, new_jaxpr_eqn, Var, DropVar, Atom, JaxprEqn, Primitive,
@@ -61,6 +63,7 @@ ConstId = int
 
 AttrKind = Any
 PyTree = Any
+logger = logging.getLogger(__name__)
 
 class PartialVal(tuple):
   """Partial value: either a known value or an unknown (abstract) value.
@@ -805,7 +808,7 @@ def move_envvars(jaxpr: Jaxpr, which: tuple[bool, ...]) -> Jaxpr:
 @weakref_lru_cache
 def separate_consts(jaxpr: ClosedJaxpr) -> tuple[ClosedJaxpr, list[Any]]:
   """Moves the constvars to the start of invars and returns the consts explicitly."""
-  return ClosedJaxpr(convert_constvars_jaxpr(jaxpr.jaxpr), []), jaxpr.consts
+  return close_jaxpr(convert_constvars_jaxpr(jaxpr.jaxpr)), jaxpr.consts
 
 @weakref_lru_cache
 def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
@@ -2290,13 +2293,127 @@ def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
   store.store(out_zeros)
   return [*out_primals, *out_nz_tangents]
 
-@weakref_lru_cache
+callsites_with_tracing_cache_miss: set[str] = set()
+
+def explain(keys, fun, in_avals, debug_info, qdd_token, *inline):
+  if inline and inline[0]: return
+
+  func_filename = debug_info.func_filename
+  if func_filename and not source_info_util.is_user_filename(func_filename):
+   return
+
+  msg: list[str] = []
+  p = msg.append
+
+  callsite = source_info_util.summarize(source_info_util.current())
+  p(f"TRACING CACHE MISS at {callsite}:")
+
+  src_info = ""
+  if func_filename:
+    src_info += f" defined at {func_filename}"
+  if func_lineno := debug_info.func_lineno:
+    src_info += f":{func_lineno}"
+  func_name = debug_info.func_name
+
+  # have we seen this function before at all?
+  keys = [key for fun_ref, *key in keys if fun_ref() is fun]
+  if not keys:
+    p(f"  never seen function:\n    {func_name} id={id(fun)}{src_info}")
+    if callsite in callsites_with_tracing_cache_miss:
+      p("  but seen another function defined on the same line; maybe the function is\n"
+        "  being re-defined repeatedly, preventing caching?")
+    else:
+      callsites_with_tracing_cache_miss.add(callsite)
+    return logger.log(logging.WARNING, "\n".join(msg))
+
+  p(f"  for {func_name}{src_info}")
+
+  key = (config.trace_context(), (in_avals, debug_info, qdd_token, *inline), {})
+  diffs = [diff_tracing_cache_keys(key, k) for k in keys]
+  assert diffs
+  min_diff = min(diffs, key=lambda v: v[1])
+  smallest_diffs = [d[0] for d in diffs if d[1] == min_diff[1]]
+  p('  all previously seen cache keys are different. Closest prevoius keys:')
+  for diff in smallest_diffs:
+    for d in diff:
+      p("  * key with " + d.replace('\n', '\n' + ' ' * 4))
+  return logger.log(logging.WARNING, "\n".join(msg))
+
+def diff_tracing_cache_keys(new_key, old_key):
+  diffs: list[tuple[str, int]] = []  # each difference with its size
+  new_ctx, (new_tree, new_dbg, new_qdd, _), () = new_key
+  old_ctx, (old_tree, old_dbg, old_qdd, _), () = old_key
+
+  diff_static(diffs, new_tree.tree, old_tree.tree)
+  diff_trees(diffs, new_tree.tree_without_statics, old_tree.tree_without_statics)
+
+  diffs, sizes = unzip2(sorted(diffs, key=lambda d: d[1]))
+  return diffs, sum(sizes)
+
+def diff_static(diffs, new_tree, old_tree):
+  # TODO can't use equality_errors, just tree map or some shit with Static as leaf
+  errs = list(tree_util.equality_errors_pytreedef(new_tree, old_tree))
+  for path, new_thing, old_thing, _ in errs:
+    # TODO(mattjj): refactor equality_errors to separate out string formatting
+    is_static = lambda x: 'tree_util.Static' in x
+    if is_static(new_thing) and not is_static(old_thing):
+      diffs.append((f"at {tree_util.keystr(path)}, input is now marked static", 1))
+    elif not is_static(new_thing) and is_static(old_thing):
+      diffs.append((f"at {tree_util.keystr(path)}, input was previously marked static", 1))
+    elif is_static(old_thing) and is_static(new_thing):
+      diffs.append(
+          (f"at {tree_util.keystr(path)}, different value of static args:\n"
+           f"  now {new_thing.val}\n  before {old_thing.val}", 1))
+
+def diff_trees(diffs, new_tree, old_tree):
+  if new_tree.num_leaves == old_tree.num_leaves:
+    # Look for the special case of passing positional args as kwargs or
+    # vice-versa; the common prefix of positional args match.
+    args_tree_k, kwargs_tree_k = tree_util.treedef_children(new_tree)
+    nr_args_k = len(tree_util.treedef_children(args_tree_k))
+    args_tree_ok, kwargs_tree_ok = tree_util.treedef_children(old_tree)
+    nr_args_ok = len(tree_util.treedef_children(args_tree_k))
+    if (tree_util.treedef_children(args_tree_k)[:min(nr_args_k, nr_args_ok)] ==
+        tree_util.treedef_children(args_tree_ok)[:min(nr_args_k, nr_args_ok)]):
+      keys_k = kwargs_tree_k.node_data()[1]  # type: ignore[index]
+      keys_ok = kwargs_tree_ok.node_data()[1]  # type: ignore[index]
+      diffs.append(
+          (("different number of args and kwargs, but same total number.\n"
+            f"  now {nr_args_k} args and kwargs "
+            f"with keys {keys_k}\n"
+            f"  before {nr_args_ok} args and kwargs "
+            f"with keys {keys_ok}"),
+            abs(nr_args_ok - nr_args_k)))
+      return
+
+  new_tree_str = str(new_tree)
+  new_tree_str = (new_tree_str if len(new_tree_str) < 73
+                    else new_tree_str[:73] + "...")
+  old_tree_str = str(old_tree)
+  old_tree_str = (old_tree_str if len(old_tree_str) < 73
+                    else old_tree_str[:73] + "...")
+  diff = [f"different input pytree:\n  now: {new_tree_str}\n"
+          f"  before: {old_tree_str}"]
+
+  errs = list(tree_util.equality_errors_pytreedef(new_tree, old_tree))
+  for path, thing1, thing2, explanation in errs:
+    fst, *path = path  # type: ignore
+    base = ["args", "kwargs"][fst.idx]
+    diff.append(
+        f"  * at {base}{tree_util.keystr(tuple(path))}, now {thing1} and "
+        f"before {thing2}, so {explanation}")
+  diffs.append(("\n".join(diff), len(errs)))
+
+@partial(weakref_lru_cache, explain=explain, maxsize=8192)
 def trace_to_jaxpr(
     fun: Callable,
     in_avals: FlatTree,  # (args, kwargs) pair
     debug_info: core.DebugInfo,
     *context_for_cache_key,
 ) -> tuple[ClosedJaxpr, FlatTree]:
+  if config.no_tracing.value:
+    raise RuntimeError(f"re-tracing function {fun} for "
+                       "`jit`, but 'no_tracing' is set")
   del context_for_cache_key  # read implicitly, e.g. qdd state
   test_event("trace_to_jaxpr")
   config.enable_checks.value and debug_info.assert_arg_names(len(in_avals))

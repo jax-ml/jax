@@ -333,8 +333,9 @@ memoize = cache(max_size=None)
 
 def _ignore(): return None
 
-def weakref_lru_cache(call: Callable, maxsize=2048,
-                      trace_context_in_key: bool = True):
+def weakref_lru_cache(
+    call: Callable, maxsize=2048, trace_context_in_key: bool = True,
+    explain: Callable | None = None):
   """
   Least recently used cache decorator with weakref support.
 
@@ -343,8 +344,8 @@ def weakref_lru_cache(call: Callable, maxsize=2048,
   behave similar to `functools.lru_cache`. The cache is thread local.
   """
   cached_call = _weakref_lru_cache.weakref_lru_cache(
-      config.trace_context if trace_context_in_key else _ignore, call, maxsize
-  )
+      config.trace_context if trace_context_in_key else _ignore, call, maxsize,
+      explain = lambda: explain if config.explain_cache_misses.value else None)
   register_cache(cached_call, str(call))
   return cached_call
 
