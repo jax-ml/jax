@@ -139,7 +139,7 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     self.assertArraysAllClose(actual, expected, rtol=rtol)
 
   @jtu.sample_product(func=['idctn'])
-  def testIdtcnAxes(self, func):
+  def testIdctnAxes(self, func):
     # Test for https://github.com/jax-ml/jax/issues/29426
     x = np.array([[1,2,3]])
     kwds = dict(s=(5,))
@@ -154,11 +154,11 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     self.assertArraysAllClose(actual, expected, rtol=rtol)
 
   @jtu.sample_product(func=['dctn'])
-  def testDtcnAxes(self, func):
+  def testDctnAxes(self, func):
     x = np.array([[1,2,3]])
     kwds = dict(s=(4,))
 
-    ops_func =  getattr(osp_fft, func)
+    ops_func = getattr(osp_fft, func)
     jsp_func = getattr(jsp_fft, func)
 
     expected = ops_func(x, **kwds)
