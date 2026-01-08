@@ -4803,6 +4803,28 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P(('x', 'y'), None)))
     self.assertArraysEqual(out, arr * 2)
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_zero_cotangent_sharding(self, mesh):
+    @jax.custom_vjp
+    def inner(x):
+      return x
+
+    def inner_fwd(x):
+      return x, None
+
+    def inner_bwd(_, g):
+      return None,
+
+    inner.defvjp(inner_fwd, inner_bwd)
+
+
+    @jax.shard_map(out_specs=jax.P('x'), check_vma=False)
+    def f(x):
+      return inner(x)
+
+    x = jax.device_put(jnp.arange(8.), jax.P('x'))
+    jax.grad(lambda x: f(x).sum())(x)  # don't crash
+
 
 class FunSpec(NamedTuple):
   name: str

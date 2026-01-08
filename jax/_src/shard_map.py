@@ -1707,8 +1707,7 @@ def _shard_map_transpose(out_cts, *args,
         jaxpr_unknown.jaxpr, False, (), (*res_reshaped, *undefs), out_cts
     )[len(res_reshaped):]
     _, in_ct_specs = partition_list(in_undef, in_specs)
-    in_cts = [ad.Zero(unshard_aval(mesh, check_vma, sp, x.aval))
-              if type(x) is ad.Zero else x if check_vma
+    in_cts = [ad.Zero(x.aval) if type(x) is ad.Zero else x if check_vma
               else lax_parallel.psum(x, tuple(_unmentioned2(mesh, sp, manual_axes)))
               for sp, x in zip(in_ct_specs, in_cts)]
     res_zeros = [ad_util.zero_from_primal(r) for r in res]
@@ -1754,7 +1753,9 @@ def _shard_map_transpose(out_cts, *args,
       msg = _inout_vma_error(
           fun_trans, mesh, out_tree(), list(new_out_specs_thunk()), fails)
       raise ValueError(msg) from None
-  return tree_unflatten(out_tree(), out_flat)
+  in_cts = tree_unflatten(out_tree(), out_flat)
+  return [ad.Zero(unshard_aval(mesh, check_vma, sp, x.aval))
+          if type(x) is ad.Zero else x for sp, x in zip(in_specs, in_cts)]
 ad.primitive_transposes[shard_map_p] = _shard_map_transpose
 
 # Remat
