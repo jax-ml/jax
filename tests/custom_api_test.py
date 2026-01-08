@@ -2023,6 +2023,84 @@ class CustomVJPTest(jtu.JaxTestCase):
         ),
         lambda: jax.grad(lambda x: scan_apply(f, x))(jnp.float32(1.)))
 
+  def test_custom_jvp_constants(self):
+
+    @jax.jit
+    def f(x, closed_over):
+      @jax.custom_jvp
+      def g(x):
+        return x
+
+      @g.defjvp
+      def g_jvp(primals, tangents):
+        x, = primals
+        dx, = tangents
+        return g(x), dx + closed_over
+
+      return g(x)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Encountered a tracer that was closed-over in a custom_vjp"):
+      jax.grad(f)(42., 1.)
+
+  @parameterized.named_parameters(
+      ('in_primal', True, False),
+      ('in_bwd', False, True),
+      ('none', False, False),
+  )
+  def test_custom_gradient_const(self, const_in_primal, const_in_bwd):
+
+    @jax.jit
+    def f(x, closed_over):
+
+      @jax.custom_gradient
+      def g(x):
+        y = (closed_over if const_in_primal else x) + 2.
+        benign_closed_over = x + 1.
+        def _grad_g(grad, x=x):
+          return grad + benign_closed_over + (closed_over if const_in_bwd else grad)
+        return x + y, _grad_g
+      return g(x)
+
+    if const_in_primal or const_in_bwd:
+      with self.assertRaisesRegex(
+          ValueError,
+          "Encountered a tracer that was closed-over in a custom_vjp"):
+        jax.grad(f)(42., 1.)
+    else:
+      jax.grad(f)(42., 1.)
+
+  @parameterized.named_parameters(
+      ('in_fwd', True, False),
+      ('in_bwd', False, True),
+      ('none', False, False),
+  )
+  def test_custom_vjp_constants(self, const_in_fwd, const_in_bwd):
+
+    @jax.jit
+    def f(x, closed_over):
+      @jax.custom_vjp
+      def g(x):
+        return x
+
+      def g_fwd(x):
+        return x + (closed_over if const_in_fwd else x), None
+
+      def g_bwd(res, ct):
+        return (ct + (closed_over if const_in_bwd else ct),)
+
+      g.defvjp(g_fwd, g_bwd)
+      return g(x)
+
+    if const_in_fwd or const_in_bwd:
+      with self.assertRaisesRegex(
+          ValueError,
+          "Encountered a tracer that was closed-over in a custom_vjp"):
+        jax.grad(f)(42., 1.)
+    else:
+      jax.grad(f)(42., 1.)
+
   def test_issue2511(self):
     arr = jnp.ones((5, 2, 2))
     foo = lambda x: api.vmap(jnp.linalg.det, (0,))(x)
