@@ -409,3 +409,24 @@ cc_library(
     name = "library_paths",
     hdrs = ["library_paths.h"],
 )
+
+cc_library(
+    name = "tiled_layout",
+    srcs = ["tiled_layout.cc"],
+    hdrs = ["tiled_layout.h"],
+    deps = [
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_test(
+    name = "tiled_layout_test",
+    srcs = ["tiled_layout_test.cc"],
+    deps = [
+        ":tiled_layout",
+        "//testing/base/public:gunit_main",
+    ],
+)

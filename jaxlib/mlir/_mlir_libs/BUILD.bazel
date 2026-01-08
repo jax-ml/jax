@@ -133,6 +133,7 @@ nanobind_pywrap_extension(
     copts = COPTS,
     deps = [
         "//jaxlib/mosaic/dialect/gpu:gpu_dialect_capi",
+        "//jaxlib/mosaic/gpu:tiled_layout",
         "@llvm-project//mlir:CAPIIR",
         "@llvm-project//mlir:MLIRBindingsPythonNanobindHeadersAndDeps",
         "@nanobind",

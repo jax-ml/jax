@@ -47,7 +47,7 @@ c = utils.c
 
 
 @dataclasses.dataclass(frozen=True)
-class Tiling:
+class TilingImpl:
   """A tiling expression describing a permutation of elements of an nd-array.
 
   To apply one level of tiling to an array, each of the trailing dimensions (up
@@ -111,23 +111,23 @@ class Tiling:
       shape = (*untiled_dims, *(d * t for d, t in zip(tiled_dims, tile)))
     return shape
 
-  def canonicalize(self) -> Tiling:
+  def canonicalize(self) -> TilingImpl:
     """Returns a canonicalized version of the tiling.
 
     We define a tiling to be canonical if, at each step (except the first one,
     which defines the base tile shape):
 
     1. The tiling partitions at least one dimension in more than 1 tile. For
-       example, the tiling `(8, 8)(8, 8)` is not canonical, as applying it
-       yields a shape `(1, 1, 8, 8)`. We canonicalize it to `(8, 8)`, which
-       allows getting rid of the unnecessary `1` dimensions.
+      example, the tiling `(8, 8)(8, 8)` is not canonical, as applying it
+      yields a shape `(1, 1, 8, 8)`. We canonicalize it to `(8, 8)`, which
+      allows getting rid of the unnecessary `1` dimensions.
     2. The leading dimensions of each tile are not `1`. If canonicalizing a
-       tile in this way leads to an empty tile, then the tile is given shape
-       `(1,)`---which is still a meaningful (final) tile. For example, the
-       tiling `(8, 8)(1, 4)` is not canonical, as applying it yields a shape
-       `(8, 2, 1, 4)`. We canonicalize it to `(8, 8)(4,)`, which allows
-       getting rid of the unnecessary `1` dimension, and yields a shape
-       `(8, 2, 4)`.
+      tile in this way leads to an empty tile, then the tile is given shape
+      `(1,)`---which is still a meaningful (final) tile. For example, the
+      tiling `(8, 8)(1, 4)` is not canonical, as applying it yields a shape
+      `(8, 2, 1, 4)`. We canonicalize it to `(8, 8)(4,)`, which allows
+      getting rid of the unnecessary `1` dimension, and yields a shape
+      `(8, 2, 4)`.
     """
     if len(self.tiles) <= 1:
       return self
@@ -146,7 +146,7 @@ class Tiling:
         continue
       shape = canonical_tile
       new_tiling.append(canonical_tile)
-    return Tiling(tuple(new_tiling))
+    return TilingImpl(tuple(new_tiling))
 
   def tile_strides(self, strides: tuple[int, ...]) -> tuple[int, ...]:
     """Computes the strides of an array after tiling."""
@@ -164,7 +164,7 @@ class Tiling:
     strides[dim] = 0
     return tuple(s == 0 for s in self.tile_strides(tuple(strides)))
 
-  def remove_dimension(self, dim: int) -> Tiling:
+  def remove_dimension(self, dim: int) -> TilingImpl:
     """Returns a tiling with the given dimension removed."""
     tiling_rank = len(self.tiles[0])
     if dim < 0 or dim >= tiling_rank:
@@ -181,7 +181,7 @@ class Tiling:
       if not t:  # If this tile is empty, all other tiles will be empty too.
         break
       tiles.append(t)
-    return Tiling(tuple(tiles))
+    return TilingImpl(tuple(tiles))
 
   def tile_nested_shape_strides(
       self,
@@ -259,6 +259,14 @@ class Tiling:
       inner = indices[-len(tile):]
       indices = (*untiled, *(o * t + i for o, i, t in zip(outer, inner, tile)))
     return indices
+
+# TODO(olechwierowicz): Clean up this once C++ Tiling is always available in JAX build.
+Tiling: Any
+if hasattr(mgpu.dialect, "Tiling"):
+  Tiling = mgpu.dialect.Tiling
+else:
+  Tiling = TilingImpl
+
 
 def enumerate_negative(elems: Sequence[T]) -> Iterable[tuple[int, T]]:
   """Like built-in enumerate, but returns negative indices into the sequence."""
