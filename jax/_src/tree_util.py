@@ -1508,7 +1508,8 @@ class FlatTree:
   def __eq__(self, other):
     return (isinstance(other, FlatTree)
             and self.vals == other.vals
-            and self.tree == other.tree)
+            and self.tree == other.tree
+            and self.statics == other.statics)
 
   def __hash__(self):
     return hash((self.vals, self.tree))
