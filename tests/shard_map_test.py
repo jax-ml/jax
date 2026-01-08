@@ -4817,7 +4817,6 @@ class ShardMapTest(jtu.JaxTestCase):
 
     inner.defvjp(inner_fwd, inner_bwd)
 
-
     @jax.shard_map(out_specs=jax.P('x'), check_vma=False)
     def f(x):
       return inner(x)

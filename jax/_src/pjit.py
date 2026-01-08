@@ -2633,6 +2633,8 @@ ad.deflinear2(reshard_p, _reshard_transpose_rule)
 
 def _reshard_transpose_fancy(ct, x, *, dst_sharding, concrete_mesh):
   assert isinstance(x, ad.GradAccum)
+  if type(ct) is ad.Zero:
+    return
   out_sharding = x.aval.to_cotangent_aval().sharding
   with mesh_lib.use_abstract_mesh(out_sharding.mesh):
     x_bar = reshard_p.bind(ct, dst_sharding=out_sharding,

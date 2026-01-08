@@ -10053,6 +10053,26 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     jax.jit(jax.grad(lambda t1, t2: g(t1, t2)[0]))(arr1, arr2)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_reshard_zero_cotangent(self, mesh):
+    @jax.custom_vjp
+    def f(x):
+      return x
+
+    def f_fwd(x):
+      return x, None
+
+    def f_bwd(res, g):
+      return None,
+
+    f.defvjp(f_fwd, f_bwd)
+
+    def g(x):
+      x = reshard(x, P('x'))
+      return f(x)
+
+    jax.jit(jax.grad(lambda x: g(x).sum()))(jnp.arange(8.))  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
