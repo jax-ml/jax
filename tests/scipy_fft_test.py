@@ -153,5 +153,19 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     rtol = {np.float64: 1E-12, np.float32: 1E-4}
     self.assertArraysAllClose(actual, expected, rtol=rtol)
 
+  @jtu.sample_product(func=['dctn'])
+  def testDtcnAxes(self, func):
+    x = np.array([[1,2,3]])
+    kwds = dict(s=(4,))
+
+    ops_func =  getattr(osp_fft, func)
+    jsp_func = getattr(jsp_fft, func)
+
+    expected = ops_func(x, **kwds)
+    actual = jsp_func(x, **kwds)
+
+    rtol = {np.float64: 1E-12, np.float32: 1E-4}
+    self.assertArraysAllClose(actual, expected, rtol=rtol)
+
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())
