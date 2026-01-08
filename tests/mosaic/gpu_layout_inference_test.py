@@ -683,7 +683,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     )
     [x_variable] = x_mapping.keys()
     [lc_variable] = lc_mapping.keys()
-    self.assertEqual(constraint, cs.Relayout(x_variable, lc_variable))
+    self.assertEqual(constraint, cs.Relayout(x_variable, lc_variable, 16))
 
   @parameterized.parameters(*layout_inference.MemorySpace)
   def test_relayout_only_derived_for_registers(self, memory_space):
@@ -717,7 +717,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       )
 
       if memory_space == layout_inference.MemorySpace.REG:
-        self.assertEqual(relayouts, [cs.Relayout(r_var, o_var)])
+        self.assertEqual(relayouts, [cs.Relayout(r_var, o_var, 32)])
       else:
         self.assertEmpty(relayouts)
 
@@ -1162,19 +1162,23 @@ class LayoutInferenceTest(parameterized.TestCase):
         index=0,
     )
     var = cs.Variable(value_site)
+    bitwidth = mgpu.utils.bitwidth(f32)
 
     constraints = [
         cs.Relayout(
             var,
             cs.RegisterLayout(fa.WGSplatFragLayout((128, 128))),
+            bitwidth,
         ),
         cs.Relayout(
             var,
             cs.RegisterLayout(fa.WGMMA_LAYOUT),
+            bitwidth,
         ),
         cs.Relayout(
             var,
             cs.RegisterLayout(fa.WGStridedFragLayout(shape, vec_size=4)),
+            bitwidth,
         ),
     ]
 

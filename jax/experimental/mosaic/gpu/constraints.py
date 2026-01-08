@@ -275,17 +275,27 @@ class Equals:
   def __str__(self):
     return f"Equals({self.lhs} == {self.rhs})"
 
-_SUPPORTED_TILED_RELAYOUTS = frozenset([
+
+_always_supported = lambda *args: True
+
+
+# Maps a tuple of layouts (source, target) to a function that takes in a
+# bitwidth and returns whether the source->target relayout is supported for
+# values of types with the given bitwidth.
+_SUPPORTED_TILED_RELAYOUTS = {
     # Transposed layouts.
-    (fa.WGMMA_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT),
-    (fa.WGMMA_TRANSPOSED_LAYOUT, fa.WGMMA_LAYOUT),
-    (fa.TCGEN05_LAYOUT, fa.TCGEN05_TRANSPOSED_LAYOUT),
-    (fa.TCGEN05_TRANSPOSED_LAYOUT, fa.TCGEN05_LAYOUT),
+    (fa.WGMMA_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT): _always_supported,
+    (fa.WGMMA_TRANSPOSED_LAYOUT, fa.WGMMA_LAYOUT): _always_supported,
+    (fa.TCGEN05_LAYOUT, fa.TCGEN05_TRANSPOSED_LAYOUT): _always_supported,
+    (fa.TCGEN05_TRANSPOSED_LAYOUT, fa.TCGEN05_LAYOUT): _always_supported,
     # "Conversion-optimized" layouts.
-    (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT),
-    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X),
-    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT),
-])
+    (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT):
+     lambda bitwidth: fa.can_relayout_wgmma_2x_to_wgmma(bitwidth),
+    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X):
+     lambda bitwidth: fa.can_relayout_wgmma_4x_to_wgmma_2x(bitwidth),
+    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT):
+     lambda bitwidth: fa.can_relayout_wgmma_4x_to_wgmma_2x(bitwidth) and fa.can_relayout_wgmma_2x_to_wgmma(bitwidth),
+}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -299,10 +309,15 @@ class Relayout:
 
   Modeling this constraint this way is helpful, in order to allow pruning
   inefficient solutions when attempting to solve a constraint system.
+
+  We include here the bitwidth of the element type we want to associate with
+  this constraint, as certain relayouts are only supported for specific
+  bitwidths.
   """
 
   source: Expression
   target: Expression
+  bitwidth: int
 
   def holds(self) -> bool | None:
     """Returns whether the relayout constraint holds.
@@ -330,7 +345,10 @@ class Relayout:
             source_layout, target_layout
         )
       case fa.TiledLayout(), fa.TiledLayout():
-        return (source_layout, target_layout) in _SUPPORTED_TILED_RELAYOUTS
+        is_supported = _SUPPORTED_TILED_RELAYOUTS.get(
+            (source_layout, target_layout), lambda *_: False
+        )
+        return is_supported(self.bitwidth)
       case _:
         return False
 
@@ -503,14 +521,14 @@ def reduce_constraint(
       if isinstance(rhs_red, Unsatisfiable):
         return Unsatisfiable()
       return Equals(lhs_red, rhs_red)
-    case Relayout(source=source, target=target):
+    case Relayout(source=source, target=target, bitwidth=bitwidth):
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
       if isinstance(source_red, Unsatisfiable) or isinstance(
           target_red, Unsatisfiable
       ):
         return Unsatisfiable()
-      return Relayout(source_red, target_red)
+      return Relayout(source_red, target_red, bitwidth)
     case NotOfType(expr=expr, type=type):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):

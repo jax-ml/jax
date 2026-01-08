@@ -1902,6 +1902,7 @@ def derive_relayout_constraints(
       if value_site.memory_space != MemorySpace.REG:
         continue
 
+      elt_bitwidth = utils.bitwidth(value_site.value.type.element_type)  # pytype: disable=attribute-error
       if value_site.type == VariableType.OPERAND:
         pr = producer_result(value_site)
         producer_variable = variable_for_value_site[pr]
@@ -1910,7 +1911,9 @@ def derive_relayout_constraints(
         # when processing this variable as one of the producer's consumers.
         if producer_variable not in visited:
           # The producer of a variable must be relayout-able to the variable.
-          constraints.append(cs.Relayout(producer_variable, variable))
+          constraints.append(
+              cs.Relayout(producer_variable, variable, elt_bitwidth)
+          )
       elif value_site.type in (VariableType.RESULT, VariableType.ARGUMENT):
         for co in consumer_operands(value_site):
           consumer_variable = variable_for_value_site[co]
@@ -1919,7 +1922,9 @@ def derive_relayout_constraints(
           # constraint when processing this variable as the consumer's producer.
           if consumer_variable not in visited:
             # A variable must be relayout-able to its consumers.
-            constraints.append(cs.Relayout(variable, consumer_variable))
+            constraints.append(
+                cs.Relayout(variable, consumer_variable, elt_bitwidth)
+            )
     visited.add(variable)
   return constraints
 

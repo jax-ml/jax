@@ -49,21 +49,21 @@ class ConstraintSystemTest(parameterized.TestCase):
     layout0, layout1 = [RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2)]
     system = cs.ConstraintSystem(
         assignments={v0: layout0},
-        constraints=[cs.Relayout(v0, layout1)],
+        constraints=[cs.Relayout(v0, layout1, 32)],
     )
     self.assertIsInstance(cs.reduce(system), cs.Unsatisfiable)
 
   @parameterized.parameters(*cs._SUPPORTED_TILED_RELAYOUTS)
   def test_reduce_constraint_system_removes_satisfed_relayouts(self, src, tgt):
     system = cs.ConstraintSystem(
-        constraints=[cs.Relayout(RL(src), RL(tgt))],
+        constraints=[cs.Relayout(RL(src), RL(tgt), 4)],
     )
     self.assertEqual(cs.reduce(system), cs.ConstraintSystem())
 
   def test_relayout_constraint_does_not_hold_for_incompatible_layouts(self):
     self.assertFalse(
         cs.Relayout(
-            RL(mgpu.WGMMA_ROW_LAYOUT), RL(mgpu.WGMMA_COL_LAYOUT)
+            RL(mgpu.WGMMA_ROW_LAYOUT), RL(mgpu.WGMMA_COL_LAYOUT), 32
         ).holds()
     )
 
@@ -86,7 +86,7 @@ class ConstraintSystemTest(parameterized.TestCase):
         constraints=[
             Eq(v0, v1),
             Eq(v0, v0),
-            cs.Relayout(v0, v0),
+            cs.Relayout(v0, v0, 32),
             cs.NotOfType(RL(mgpu.WGMMA_LAYOUT), mgpu.WGSplatFragLayout),
             cs.NotOfType(v1, mgpu.WGSplatFragLayout),
         ],
@@ -129,7 +129,7 @@ class ConstraintSystemTest(parameterized.TestCase):
     layout = RL(mgpu.WGSplatFragLayout((1, 1)))
     system = cs.ConstraintSystem(
         assignments={v0: layout},
-        constraints=[Eq(v1, v2), cs.Relayout(v2, v3)],
+        constraints=[Eq(v1, v2), cs.Relayout(v2, v3, 32)],
     )
     self.assertSequenceEqual(system.unknowns(), [v1, v2, v3])
 
@@ -260,7 +260,7 @@ class ConstraintSystemTest(parameterized.TestCase):
         assignments={v1: splat_layout},
         constraints=[
             cs.NotOfType(v0, mgpu.WGSplatFragLayout),
-            cs.Relayout(v0, v1),
+            cs.Relayout(v0, v1, 32),
         ],
     )
     self.assertIsInstance(cs.reduce(system), cs.Unsatisfiable)
@@ -268,13 +268,14 @@ class ConstraintSystemTest(parameterized.TestCase):
   def test_saturate_distinct_from_splat_does_not_create_duplicate_constraints(
       self,
   ):
+    bw = 32
     v0, v1, v2 = V(0), V(1), V(2)
     system = cs.ConstraintSystem(
         constraints=[
             cs.NotOfType(v0, mgpu.WGSplatFragLayout),
             cs.NotOfType(v1, mgpu.WGSplatFragLayout),
-            cs.Relayout(v0, v2),
-            cs.Relayout(v1, v2),
+            cs.Relayout(v0, v2, bw),
+            cs.Relayout(v1, v2, bw),
         ],
     )
 
@@ -284,8 +285,8 @@ class ConstraintSystemTest(parameterized.TestCase):
             constraints=[
                 cs.NotOfType(v0, mgpu.WGSplatFragLayout),
                 cs.NotOfType(v1, mgpu.WGSplatFragLayout),
-                cs.Relayout(v0, v2),
-                cs.Relayout(v1, v2),
+                cs.Relayout(v0, v2, bw),
+                cs.Relayout(v1, v2, bw),
                 cs.NotOfType(v2, mgpu.WGSplatFragLayout),
             ],
         ),
@@ -294,14 +295,15 @@ class ConstraintSystemTest(parameterized.TestCase):
   def test_saturate_distinct_from_splat_does_not_affect_non_splat(
       self,
   ):
+    bw = 32
     v0, v1, v2, v3, v4 = V(0), V(1), V(2), V(3), V(4)
     system = cs.ConstraintSystem(
         constraints=[
             cs.NotOfType(v0, mgpu.WGSplatFragLayout),
             cs.NotOfType(v1, mgpu.WGStridedFragLayout),
-            cs.Relayout(v0, v2),
-            cs.Relayout(v1, v3),
-            cs.Relayout(v4, v0),
+            cs.Relayout(v0, v2, bw),
+            cs.Relayout(v1, v3, bw),
+            cs.Relayout(v4, v0, bw),
         ],
     )
 
@@ -311,9 +313,9 @@ class ConstraintSystemTest(parameterized.TestCase):
             constraints=[
                 cs.NotOfType(v0, mgpu.WGSplatFragLayout),
                 cs.NotOfType(v1, mgpu.WGStridedFragLayout),
-                cs.Relayout(v0, v2),
-                cs.Relayout(v1, v3),
-                cs.Relayout(v4, v0),
+                cs.Relayout(v0, v2, bw),
+                cs.Relayout(v1, v3, bw),
+                cs.Relayout(v4, v0, bw),
                 cs.NotOfType(v2, mgpu.WGSplatFragLayout),
             ],
         ),
@@ -452,6 +454,23 @@ class ConstraintSystemTest(parameterized.TestCase):
         divides(5, (1,)),
     ]
     self.assertEqual(got.constraints, want)
+
+  @parameterized.parameters(
+    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X, 8),
+    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, 8),
+    (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, 32),
+  )
+  def test_forcing_relayout_on_unsupported_bitwidth_raises(self, src, dst, bitwidth):
+    self.assertFalse(cs.Relayout(cs.RegisterLayout(src), cs.RegisterLayout(dst), bitwidth).holds())
+
+  @parameterized.parameters(
+      (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X, 4),
+      (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, 4),
+      (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, 16),
+  )
+  def test_forcing_relayout_on_supported_bitwidth_succeeds(self, src, dst, bitwidth):
+    self.assertTrue(cs.Relayout(cs.RegisterLayout(src), cs.RegisterLayout(dst), bitwidth).holds())
+
 
 
 if __name__ == "__main__":

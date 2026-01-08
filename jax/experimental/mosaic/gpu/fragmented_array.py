@@ -908,6 +908,14 @@ TMA_GATHER_INDICES_LAYOUT = TiledLayout(
 )
 
 
+def can_relayout_wgmma_4x_to_wgmma_2x(bitwidth: int) -> bool:
+  return bitwidth == 4
+
+
+def can_relayout_wgmma_2x_to_wgmma(bitwidth: int) -> bool:
+  return bitwidth <= 16
+
+
 @jax.tree_util.register_pytree_node_class
 @dataclasses.dataclass(init=False, frozen=True, slots=True)
 class FragmentedArray:
@@ -1175,10 +1183,11 @@ class FragmentedArray:
       return FragmentedArray(
           _registers=new_regs, _layout=new_layout, _is_signed=self.is_signed,
       )
+    dtype_bitwidth = utils.bitwidth(self.mlir_dtype)
     if (
         self.layout == WGMMA_LAYOUT_UPCAST_2X
         and new_layout == WGMMA_LAYOUT
-        and (dtype_bitwidth := utils.bitwidth(self.mlir_dtype)) <= 16
+        and can_relayout_wgmma_2x_to_wgmma(dtype_bitwidth)
     ):
       assert shape[1] % 16 == 0  # Should be implied by the layout
       new_registers = np.empty(new_layout.registers_shape(shape), dtype=object)
@@ -1267,7 +1276,7 @@ class FragmentedArray:
     if (
         self.layout == WGMMA_LAYOUT_UPCAST_4X
         and new_layout == WGMMA_LAYOUT_UPCAST_2X
-        and utils.bitwidth(self.mlir_dtype) == 4
+        and can_relayout_wgmma_4x_to_wgmma_2x(dtype_bitwidth)
     ):
       assert shape[0] % 64 == 0  # Should be implied by the layout
       assert shape[1] % 32 == 0  # Should be implied by the layout
