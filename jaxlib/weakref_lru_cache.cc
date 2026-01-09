@@ -331,14 +331,14 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
     if (inserted) {
       ++misses_;
       absl::Cleanup notify = [&] { entry->completed.Notify(); };
+      entry->result = fn_(weakref_key, *args, **kwargs);
+      entry->has_result = true;
       if (explain_.has_value()) {
         auto explain = (*explain_)();
         if (!explain.is_none()) {
           explain(GetKeys(), weakref_key, *args, **kwargs);
         }
       }
-      entry->result = fn_(weakref_key, *args, **kwargs);
-      entry->has_result = true;
     } else {
       if (entry->thread_id == std::this_thread::get_id()) {
         auto error_string =
@@ -474,7 +474,8 @@ NB_MODULE(weakref_lru_cache, m) {
             cache_context_fn, fn,
             maxsize.value_or(std::numeric_limits<int>::max()), explain);
       },
-      nb::arg("cache_context_fn"), nb::arg("fn"), nb::arg("maxsize") = 2048,
+      nb::arg("cache_context_fn"), nb::arg("fn"),
+      nb::arg("maxsize").none() = 2048,
       nb::arg("explain") = std::optional<nb::callable>());
 }
 

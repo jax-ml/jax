@@ -3096,7 +3096,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       pjit(_pmapped_fun)(inputs)  # doesn't crash
       jax.jit(_pmapped_fun)(inputs)  # doesn't crash
 
-  @unittest.skipIf(lib.jaxlib_extension_version < 394, "jaxlib version")
+  @unittest.skipIf(lib.jaxlib_extension_version < 396, "jaxlib version")
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_sharding_mismatch(self):
     mesh = jtu.create_mesh((2,), ('x',))
