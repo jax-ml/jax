@@ -335,8 +335,8 @@ memoize = cache(max_size=None)
 def _ignore(): return None
 
 def weakref_lru_cache(
-    call: Callable, maxsize=2048, trace_context_in_key: bool = True,
-    explain: Callable | None = None):
+    call: Callable, maxsize: int | None = 2048,
+    trace_context_in_key: bool = True, explain: Callable | None = None):
   """
   Least recently used cache decorator with weakref support.
 
@@ -344,7 +344,7 @@ def weakref_lru_cache(
   and strong refs to all other arguments. In all other respects it should
   behave similar to `functools.lru_cache`. The cache is thread local.
   """
-  if jaxlib_extension_version >= 394:
+  if jaxlib_extension_version >= 396:
     cached_call = _weakref_lru_cache.weakref_lru_cache(  # type: ignore
         config.trace_context if trace_context_in_key else _ignore, call, maxsize,  # type: ignore
         explain = lambda: explain if config.explain_cache_misses.value else None)  # type: ignore

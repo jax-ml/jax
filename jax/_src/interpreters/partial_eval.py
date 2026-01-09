@@ -51,6 +51,7 @@ from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            as_hashable_function, weakref_lru_cache,
                            multi_weakref_lru_cache, subs_list,
                            HashableFunction, foreach, test_event)
+from jax._src.lib import jaxlib_extension_version
 
 
 map, unsafe_map = safe_map, map
@@ -2385,7 +2386,8 @@ def diff_types(dbg, new_leaves, old_leaves):
   if diffs: return 3, len(diffs), msg
 
 
-@partial(weakref_lru_cache, explain=explain, maxsize=8192)
+@partial(weakref_lru_cache, explain=explain,
+         maxsize=None if jaxlib_extension_version >= 396 else 8192)
 def trace_to_jaxpr(
     fun: Callable,
     in_avals: FlatTree,  # (args, kwargs) pair
