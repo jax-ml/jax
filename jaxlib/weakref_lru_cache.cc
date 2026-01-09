@@ -468,10 +468,11 @@ NB_MODULE(weakref_lru_cache, m) {
       });
   m.def(
       "weakref_lru_cache",
-      [](nb::callable cache_context_fn, nb::callable fn, int64_t maxsize,
-         std::optional<nb::callable> explain) {
-        return std::make_shared<WeakrefLRUCache>(cache_context_fn, fn, maxsize,
-                                                 explain);
+      [](nb::callable cache_context_fn, nb::callable fn,
+         std::optional<int64_t> maxsize, std::optional<nb::callable> explain) {
+        return std::make_shared<WeakrefLRUCache>(
+            cache_context_fn, fn,
+            maxsize.value_or(std::numeric_limits<int>::max()), explain);
       },
       nb::arg("cache_context_fn"), nb::arg("fn"), nb::arg("maxsize") = 2048,
       nb::arg("explain") = std::optional<nb::callable>());
