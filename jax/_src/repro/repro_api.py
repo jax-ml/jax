@@ -301,9 +301,19 @@ def pallas_custom_fusion_call(fun: Callable,
 def jax_export_call(fun: Callable, jit_kwargs: dict[str, Any], exp_kwargs: dict[str, Any],
                     *args, **kwargs):
   from jax._src import api  # type: ignore
-  from jax.export import export  # type: ignore
+  from jax._src.export import _export  # type: ignore
   fun_jit = repro_bypass_wrapper(api.jit)(fun, **jit_kwargs)
-  return repro_bypass_wrapper(export)(fun_jit, **exp_kwargs)(*args, **kwargs)
+  return repro_bypass_wrapper(_export._export_internal)(fun_jit, **exp_kwargs)(*args, **kwargs)
+
+
+# TODO(necula): this is needed only for jax2tf
+@partial(repro_boundary, api_name="jax_export_internal_call")
+def jax_export_internal_call(fun: Callable, jit_kwargs: dict[str, Any], exp_kwargs: dict[str, Any],
+                             *args, **kwargs):
+  from jax._src import api  # type: ignore
+  from jax._src.export import _export  # type: ignore
+  fun_jit = repro_bypass_wrapper(api.jit)(fun, **jit_kwargs)
+  return repro_bypass_wrapper(_export._export_internal)(fun_jit, **exp_kwargs)(*args, **kwargs)
 
 
 # TODO: move this out, it is about Flax

@@ -1218,8 +1218,10 @@ def jax_export_trampoline(real_export: Callable) -> Callable:
   def export_trampoline(fun_jit, **exp_kwargs):
     def exported_call(*args, **kwargs):
       from jax._src.repro import repro_api
-      assert (hasattr(fun_jit, "fun") and hasattr(fun_jit, "jit_kwargs") and
-              hasattr(fun_jit, "is_pjit"))
+      # We must be using a jitted function, expect jit_trampoline to have added
+      # the necessary attributes.
+      if not (hasattr(fun_jit, "fun") and hasattr(fun_jit, "jit_kwargs")):
+        raise NotImplementedError("jax.export.export called on a non-jitted function")
       return repro_api.jax_export_call(
           fun_jit.fun, fun_jit.jit_kwargs, exp_kwargs, *args, **kwargs)
 
@@ -1229,6 +1231,7 @@ def jax_export_trampoline(real_export: Callable) -> Callable:
   return export_trampoline
 
 boundary_trampolines["jax.export.export"] = jax_export_trampoline
+
 
 def custom_jvp_trampoline(real_boundary_fun: Callable):
   from jax._src import api_util  # type: ignore

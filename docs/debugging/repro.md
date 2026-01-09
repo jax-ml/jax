@@ -1,6 +1,6 @@
 # Generating reproducers for JAX errors
 
-<!--* freshness: { reviewed: '2025-10-15' } *-->
+<!--* freshness: { reviewed: '2026-04-15' } *-->
 
 WARNING: this code is experimental, expect changes or deletion.
 
@@ -13,13 +13,13 @@ layers of libraries, that reproduces the same error?
 ## Usage
 
 If you get an uncaught exception from under a JAX API call,
-you can set `JAX_REPRO_DIR` to a directory where JAX should attempt to save a Python source
-file that contains the JAX API calls that ought to reproduce the error.
+you can set `JAX_REPRO_DIR` to a directory where JAX should attempt to save a
+Python source file with the JAX API calls that ought to reproduce the error.
 This mechanism can be enabled simply by setting the `JAX_REPRO_DIR` variable.
 
-JAX will track the sequence of nested JAX API calls, capturing all user-functions,
-their calls to JAX APIs, and then recursively the user functions that are
-called by JAX during tracing.
+JAX will track the sequence of nested JAX API calls, capturing all
+user-functions, their calls to JAX APIs, and then recursively the user
+functions that are called by JAX during tracing.
 If an uncaught exception arises, then we save a repro that should result in
 the same call tree, and hopefully can reproduce the error.
 One can get the path and source code of the saved repro by
@@ -30,7 +30,10 @@ generate repros "explicitly", even in absence of errors:
 
 ```
    from jax._src import repro  # TODO: find final location
-   col = repro.collector(fun)  # fun should be a nullary Callable
+   # fun should be a Callable with no arguments that would otherwise be
+   # an appropriate input for `jax.jit`.
+   # TODO: document caching side-effects
+   col = repro.collector(fun)
    try:
       result = col()  # Executes `fun` and returns its result
    finally:

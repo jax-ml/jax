@@ -58,6 +58,11 @@ from jax._src import test_util as jtu
 from jax._src import traceback_util
 from jax._src import tree_util
 
+try:
+  import tensorflow as tf
+except ImportError:
+  tf = None
+
 
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -1133,6 +1138,48 @@ class ReproTest(jtu.JaxTestCase):
 
     self.collect_and_check(run_export,
                            np.ones((8,), dtype=np.float32))
+
+  def test_jax2tf_0(self):
+    if tf is None: self.skipTest("Needs TF")
+    from jax.experimental import jax2tf
+    def f_jax(x, y):
+      return jnp.sin(x) + y  # x and y cannot be broadcast together
+
+    def top():
+      x = tf.ones((2, 3), dtype=np.float32)
+      y = tf.ones((2, 4), dtype=np.float32)
+      return jax2tf.convert(f_jax)(x, y)
+
+    self.collect_and_check(top,
+                           expect_exception=(TypeError, "incompatible shapes"))
+
+
+  def test_jax2tf_grad(self):
+    maybe_skip_known_failure()
+    maybe_skip("needs_tf")
+    from jax.experimental import jax2tf
+
+    def f_jax(x):
+      @jax.custom_gradient
+      def h(x):
+        def _grad(g, x=x):
+          y = jnp.ones((x.shape[0], x.shape[1] + 1), dtype=x.dtype)
+          return x + y  # incompatible shapes
+        return x, _grad
+      return h(x)
+
+    def top():
+      x = tf.ones((2, 3), dtype=np.float32)
+      @tf.function(autograph=False)
+      def bwd(x):
+        outputs = jax2tf.convert(f_jax)(x)
+        return tf.gradients(outputs, x)
+
+      return bwd(x)
+
+    self.collect_and_check(top,
+                           expect_exception=(TypeError, "incompatible shapes"))
+
 
   @jtu.ignore_warning(category=DeprecationWarning,
                       message=".*pjit has been deprecated")
