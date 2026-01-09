@@ -41,6 +41,7 @@ limitations under the License.
 #include "mlir/IR/Location.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
+#include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
@@ -123,6 +124,45 @@ struct MemRefCastEraseLayout : public OpRewritePattern<memref::CastOp> {
   }
 };
 
+// Rewrites
+//
+//     memref.dim(tpu.memref_slice(..., dynamic_sizes), i)
+//
+// to
+//
+//     dynamic_sizes[dynamicDimIndex(i)]
+//
+// if i is a constant and refers to a dynamic dimension.
+struct MemRefDimOfSlice : public OpRewritePattern<memref::DimOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(memref::DimOp dim_op,
+                                PatternRewriter& rewriter) const override {
+    auto slice_op = dim_op.getSource().getDefiningOp<MemRefSliceOp>();
+    if (!slice_op) {
+      return failure();
+    }
+    const std::optional<int64_t> maybe_dim =
+        getConstantIntValue(dim_op.getDimension());
+    if (!maybe_dim) {
+      return failure();
+    }
+    const int64_t dim = *maybe_dim;
+    MemRefType result_type = slice_op.getType();
+    if (dim < 0 || result_type.getRank() <= dim) {
+      return dim_op.emitWarning("Dimension index is out of bounds");
+    }
+    if (result_type.getDimSize(dim) != ShapedType::kDynamic) {
+      return failure();
+    }
+    const unsigned dynamic_dim_idx = result_type.getDynamicDimIndex(dim);
+    ValueRange dynamic_sizes = slice_op.getDynamicSizes();
+    rewriter.replaceOpWithNewOp<arith::IndexCastOp>(
+        dim_op, dim_op.getType(), dynamic_sizes[dynamic_dim_idx]);
+    return success();
+  }
+};
+
 // Rewrites memref.dim(tpu.memref_squeeze(x)) to memref.dim(x) with the
 // dimension index adjusted to account for squeezed dimensions.
 struct MemRefDimOfSqueeze : public OpRewritePattern<memref::DimOp> {
@@ -166,7 +206,8 @@ struct MemRefDimOfSqueeze : public OpRewritePattern<memref::DimOp> {
 
 void TPUDialect::getCanonicalizationPatterns(RewritePatternSet& results) const
 /*override*/ {
-  results.add<MemRefCastEraseLayout, MemRefDimOfSqueeze>(getContext());
+  results.add<MemRefCastEraseLayout, MemRefDimOfSlice, MemRefDimOfSqueeze>(
+      getContext());
 }
 
 FailureOr<CoreType> GetCoreTypeOfParentFunc(Operation &op) {
