@@ -3295,20 +3295,6 @@ class CustomVJP3Test(CustomVJPTest):
   def tearDown(self):
     jax.custom_vjp = self.prev
 
-  # vmap support (to be added in the next PR)
-  def test_bwd_nones_vmap(self): pass
-  def test_custom_vjp_closure_4521(self): pass
-  def test_custom_vjp_scan_batching_edge_case(self): pass
-  def test_initial_style_vmap(self): pass
-  def test_initial_style_vmap_2(self): pass
-  def test_initial_style_vmap_3(self): pass
-  def test_initial_style_vmap_with_collective(self): pass
-  def test_symbolic_zero_custom_vjp_jit_vmap(self): pass
-  def test_symbolic_zero_custom_vjp_vmap(self): pass
-  def test_symbolic_zero_custom_vjp_vmap_output(self): pass
-  def test_vmap(self): pass
-  def test_vmap_vjp_called_twice(self): pass
-
   # closure, which ones of these do we care about?
   def test_closed_over_vmap_tracer(self): pass  # not sure if we care
   def test_bwd_closes_over_tracer(self): pass  # not sure if we care

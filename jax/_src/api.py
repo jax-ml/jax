@@ -1006,7 +1006,9 @@ def vmap(fun: F,
          out_axes: Any = 0,
          axis_name: AxisName | None = None,
          axis_size: int | None = None,
-         spmd_axis_name: AxisName | tuple[AxisName, ...] | None = None) -> F:
+         spmd_axis_name: AxisName | tuple[AxisName, ...] | None = None,
+         sum_match: bool = False
+         ) -> F:
   """Vectorizing map. Creates a function which maps ``fun`` over argument axes.
 
   Args:
@@ -1205,9 +1207,10 @@ def vmap(fun: F,
     try:
       axis_data = batching.AxisData(axis_name, axis_size_, spmd_axis_name,
                                     explicit_mesh_axis)
-      out_flat = batching.batch(
+      out_flat, inferred_out_axes = batching.batch(
           flat_fun, axis_data, in_axes_flat,
-          lambda: flatten_axes("vmap out_axes", out_tree(), out_axes)
+          lambda: flatten_axes("vmap out_axes", out_tree(), out_axes),
+          sum_match=sum_match
       ).call_wrapped(*args_flat)
     except batching.SpecMatchError as e:
       out_axes_flat = flatten_axes("vmap out_axes", out_tree(), out_axes)
@@ -1217,7 +1220,11 @@ def vmap(fun: F,
       path, _ = pairs[e.leaf_idx]
       raise ValueError(f'at vmap out_axes{keystr(path)}, got axis spec {e.dst} '
                        f'but output was batched on axis {e.src}') from None
-    return tree_unflatten(out_tree(), out_flat)
+    if any(d is batching.infer for d in tree_leaves(out_axes)):
+      return (tree_unflatten(out_tree(), out_flat),
+              tree_unflatten(out_tree(), inferred_out_axes))
+    else:
+      return tree_unflatten(out_tree(), out_flat)
 
   return cast(F, vmap_f)
 

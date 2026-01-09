@@ -37,10 +37,8 @@ from jax._src.util import (unzip2, safe_map, safe_zip, split_list,
                            canonicalize_axis, moveaxis, as_hashable_function,
                            curry, memoize, weakref_lru_cache, tuple_insert)
 
-
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
-
 
 ### vmappable typeclass
 
@@ -71,16 +69,17 @@ def to_elt(trace: Trace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
 to_elt_handlers: dict[type, ToEltHandler] = {}
 
 def from_elt(trace: BatchTrace, axis_size: AxisSize, mesh_axis: MeshAxis,
-             i: int, x: Elt, spec: MapSpec) -> Vmappable:
+             sum_match: bool, i: int, x: Elt, spec: MapSpec) -> tuple[Vmappable, MapSpec]:
   handler = from_elt_handlers.get(type(x))
   if handler:
     def _cont(axis_size, elt, axis):
-      return from_elt(trace, axis_size, mesh_axis, i, elt, axis)
-    return handler(_cont, axis_size, x, spec)
+      return from_elt(trace, axis_size, mesh_axis, sum_match, i, elt, axis)[0]
+    return handler(_cont, axis_size, x, spec), spec
   val, bdim = trace.to_batch_info(x)
+  bdim_inferred = bdim if spec is infer else spec
   try:
     return matchaxis(trace.axis_data.name, axis_size, mesh_axis,
-                     bdim, spec, val)
+                     bdim, spec, val, sum_match=sum_match), bdim_inferred
   except SpecMatchError:
     raise SpecMatchError(i, x.batch_dim, spec) from None
 from_elt_handlers: dict[type, FromEltHandler] = {}
@@ -361,21 +360,21 @@ class BatchTrace(Trace):
 ### API for batching callables with vmappable inputs and outputs
 
 def batch(fun: lu.WrappedFun, axis_data,
-          in_dims, out_dim_dests) -> lu.WrappedFun:
+          in_dims, out_dim_dests, sum_match=False) -> lu.WrappedFun:
   # we split up _batch_inner and _batch_outer for the leak checker
-  f = _batch_inner(fun, axis_data, out_dim_dests)
+  f = _batch_inner(fun, axis_data, out_dim_dests, sum_match)
   return _batch_outer(f, axis_data, in_dims)
 
 @lu.transformation2
 def _batch_outer(f, axis_data, in_dims, *in_vals):
   tag = TraceTag()
   with source_info_util.transform_name_stack('vmap'):
-    outs, trace = f(tag, in_dims, *in_vals)
+    outs, out_dim_srcs, trace = f(tag, in_dims, *in_vals)
   with core.ensure_no_leaks(trace): del trace
-  return outs
+  return outs, out_dim_srcs
 
 @lu.transformation2
-def _batch_inner(f: Callable, axis_data, out_dim_dests, tag, in_dims, *in_vals):
+def _batch_inner(f: Callable, axis_data, out_dim_dests, sum_match, tag, in_dims, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
   with core.take_current_trace() as parent_trace:
     trace = BatchTrace(parent_trace, tag, axis_data)
@@ -391,9 +390,10 @@ def _batch_inner(f: Callable, axis_data, out_dim_dests, tag, in_dims, *in_vals):
           core.add_explicit_mesh_axis_names(axis_data.explicit_mesh_axis)):
       outs = f(*in_tracers)
       out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
-      out_vals = map(partial(from_elt, trace, axis_data.size, axis_data.explicit_mesh_axis),
-                     range(len(outs)), outs, out_dim_dests)
-  return out_vals, trace
+      out_vals, out_dim_srcs = unzip2(
+          map(partial(from_elt, trace, axis_data.size, axis_data.explicit_mesh_axis, sum_match),
+              range(len(outs)), outs, out_dim_dests))
+  return out_vals, out_dim_srcs, trace
 
 # NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
 def vtile(f_flat: lu.WrappedFun,
@@ -784,13 +784,15 @@ def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
   except TypeError as e:
     raise TypeError(f"Output from batched function {x!r} with type "
                     f"{type(x)} is not a valid JAX type") from e
-  if src == dst:
+  if src == dst or dst is infer:
     return x
   elif type(src) == type(dst) == int:
     return moveaxis(x, src, dst)
-  elif src is not_mapped and dst is not not_mapped:
+  elif src is not_mapped and type(dst) is int:
     return broadcast(x, sz, canonicalize_axis(dst, np.ndim(x) + 1), mesh_axis)
-  elif dst is not_mapped and sum_match:
+  elif src is not_mapped and dst is sum_axis:
+    return x
+  elif dst is not_mapped and sum_match or dst is sum_axis:
     return x.sum(src)
   else:
     if (not isinstance(axis_name, core._TempAxisName) and
@@ -834,3 +836,13 @@ skippable_batchers[add_jaxvals_p] = lambda _: ()
 ### mutable arrays
 
 defvectorized(core.ref_p)
+
+### hijax
+
+class Sum: pass
+sum_axis = Sum()
+spec_types.add(Sum)
+
+class Infer: pass
+infer = Infer()
+spec_types.add(Infer)
