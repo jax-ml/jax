@@ -58,7 +58,6 @@ from jax._src.layout import Format, AutoLayout
 from jax._src.memory import Space as MemorySpace
 from jax._src.lib import _jax
 from jax._src.lib import jax_jit
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src import traceback_util
 from jax._src.typing import Array, ArrayLike, DimSize, Shape
@@ -909,10 +908,7 @@ else:
 
 class Tracer(TracerBase, metaclass=TracerMeta):
   __array_priority__ = 1000
-  if jaxlib_extension_version >= 388:
-    __slots__ = ['__weakref__', '_trace', '_line_info']
-  else:
-    __slots__ = ['_trace', '_line_info']
+  __slots__ = ['__weakref__', '_trace', '_line_info']
   __hash__ = None  # type: ignore
 
   _trace: Trace
@@ -1181,8 +1177,7 @@ class Tracer(TracerBase, metaclass=TracerMeta):
       f"The unsafe_buffer_pointer() method was called on {self._error_repr()}."
       f"{self._origin_msg()}")
 
-if jaxlib_extension_version >= 388:
-  _jax.set_tracer_class(Tracer)
+_jax.set_tracer_class(Tracer)
 
 # these can be used to set up forwarding of properties and instance methods from
 # Tracer instances to the underlying avals

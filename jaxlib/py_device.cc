@@ -70,11 +70,7 @@ std::string_view PyDevice::platform() const {
   // but we haven't yet updated JAX clients that
   // expect "gpu". Migrate users and remove this
   // code.
-#if JAX_IFRT_VERSION_NUMBER >= 44
   absl::string_view platform_name = device_->PlatformName();
-#else
-  absl::string_view platform_name = client_->platform_name();
-#endif
   if (platform_name == "cuda" || platform_name == "rocm") {
     return std::string_view("gpu");
   } else {

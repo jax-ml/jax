@@ -42,7 +42,6 @@ from jax._src.interpreters import pxla
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import gpu_prng
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
@@ -403,16 +402,10 @@ class KeyTyRules:
     phys_handler = phys_handler_maker(phys_aval, phys_sharding, phys_indices)
 
     # set up a handler that calls the physical one and wraps back up
-    if jaxlib_extension_version >= 390:
-      def handler(arr):
-        return PRNGKeyArray(aval.dtype._impl, arr)
+    def handler(arr):
+      return PRNGKeyArray(aval.dtype._impl, arr)
 
-      return phys_handler.wrap(handler)
-    else:
-      def handler(bufs):
-        return PRNGKeyArray(aval.dtype._impl, phys_handler(bufs))
-
-      return handler
+    return phys_handler.wrap(handler)
 
   @staticmethod
   def global_sharded_result_handler(aval, out_sharding, committed):
@@ -421,14 +414,9 @@ class KeyTyRules:
 
     phys_sharding = physical_sharding(aval, out_sharding)
     phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
-    if jaxlib_extension_version >= 390:
-      def handler(bufs):
-        return PRNGKeyArray(aval.dtype._impl, bufs)
-      return phys_handler.wrap(handler)
-    else:
-      def handler(bufs):
-        return PRNGKeyArray(aval.dtype._impl, phys_handler(bufs))
-      return handler
+    def handler(bufs):
+      return PRNGKeyArray(aval.dtype._impl, bufs)
+    return phys_handler.wrap(handler)
 
   @staticmethod
   def make_sharded_array(aval, sharding, arrays, committed):
