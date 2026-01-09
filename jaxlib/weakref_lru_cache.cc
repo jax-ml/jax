@@ -118,6 +118,7 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
   void EvictWeakref(nb::object weakref_key);
 
   std::vector<nb::object> GetKeys();
+  std::vector<nb::object> GetKeysLocked();
 
   struct CacheInfo {
     int64_t hits;
@@ -314,6 +315,8 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
     mu_.lock();
     mu_holder_thread_id_.store(std::this_thread::get_id());
   }
+  std::vector<nb::object> miss_keys;
+  nb::object explainer;
   {
     // GetOrCreateIfAbsent calls into Python hash and equality functions,
     // which may throw exceptions. The use of absl::Cleanup ensures mu_ is
@@ -322,20 +325,26 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
       mu_holder_thread_id_.store(std::thread::id());
       mu_.unlock();
     };
-    entry = cache.GetOrCreateIfAbsent(key, [&inserted](const Key& key) {
-      inserted = true;
-      return std::make_shared<CacheEntry>();
-    });
+    entry = cache.GetOrCreateIfAbsent(
+        key, [this, &miss_keys, &inserted, &explainer](const Key& key) {
+          inserted = true;
+          if (explain_.has_value()) {
+            explainer = (*explain_)();
+            if (!explainer.is_none()) {
+              miss_keys = GetKeysLocked();
+            } else {
+              explainer = nb::object();
+            }
+          }
+          return std::make_shared<CacheEntry>();
+        });
   }
   if (!entry->completed.HasBeenNotified()) {
     if (inserted) {
       ++misses_;
       absl::Cleanup notify = [&] { entry->completed.Notify(); };
-      if (explain_.has_value()) {
-        auto explain = (*explain_)();
-        if (!explain.is_none()) {
-          explain(GetKeys(), weakref_key, *args, **kwargs);
-        }
+      if (explainer) {
+        explainer(miss_keys, weakref_key, *args, **kwargs);
       }
       entry->result = fn_(weakref_key, *args, **kwargs);
       entry->has_result = true;
@@ -362,8 +371,11 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
 }
 
 std::vector<nb::object> WeakrefLRUCache::GetKeys() {
+  absl::MutexLock l(mu_);
+  return GetKeysLocked();
+}
+std::vector<nb::object> WeakrefLRUCache::GetKeysLocked() {
   std::vector<nb::object> results;
-  mu_.lock();
   for (const auto& [wr_key, wr_value] : entries_) {
     wr_value.cache->ForEach([&results, &wr_key](
                                 const Key& key,
@@ -374,7 +386,6 @@ std::vector<nb::object> WeakrefLRUCache::GetKeys() {
       results.push_back(std::move(result));
     });
   }
-  mu_.unlock();
   return results;
 }
 
@@ -474,7 +485,7 @@ NB_MODULE(weakref_lru_cache, m) {
             cache_context_fn, fn,
             maxsize.value_or(std::numeric_limits<int>::max()), explain);
       },
-      nb::arg("cache_context_fn"), nb::arg("fn"), nb::arg("maxsize") = 2048,
+      nb::arg("cache_context_fn"), nb::arg("fn"), nb::arg("maxsize").none() = 2048,
       nb::arg("explain") = std::optional<nb::callable>());
 }
 

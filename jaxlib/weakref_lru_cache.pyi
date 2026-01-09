@@ -35,6 +35,6 @@ class WeakrefLRUCache:
     def __repr__(self) -> str: ...
 
 def weakref_lru_cache(
-    cache_context_fn: Callable, fn: Callable, maxsize: int = 2048,
+    cache_context_fn: Callable, fn: Callable, maxsize: int | None = 2048,
     explain: Callable | None = None
 ) -> WeakrefLRUCache: ...
