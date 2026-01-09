@@ -20,6 +20,7 @@ from collections.abc import Callable, Mapping
 import dataclasses
 import enum
 import functools
+import hashlib
 from typing import Any, Literal, NamedTuple, Optional, Union, overload
 
 import jax
@@ -97,20 +98,17 @@ def get_kernel_name(
     is_segmented: bool,
     phase: str,
 ) -> str:
-  """Returns a unique name for all SplashAttention kernel variants."""
+  """Shorter kernel name to avoid 255 char filename limit."""
   assert phase == "dq" or phase == "dkv" or phase == "fwd"
   # Saving residuals is supported only for the fwd phase.
   assert not save_residuals or phase == "fwd"
-  residuals = ""
-  if save_residuals:
-    residuals = "_residuals"
-  elif phase == "fwd":
-    residuals = "_no_residuals"
   attention_type = "mqa" if is_mqa else "mha"
-  segments = "_segmented" if is_segmented else ""
-  return f"splash_{attention_type}_{phase}{segments}{residuals}_" + "_".join(
-      f"{k}={v}" for k, v in sorted(block_metadata.items())
-  )
+  residuals = "_res" if save_residuals else ""
+  segments = "_seg" if is_segmented else ""
+  # Hash the block metadata instead of spelling it all out
+  meta_str = str(sorted(block_metadata.items()))
+  meta_hash = hashlib.sha256(meta_str.encode()).hexdigest()
+  return f"splash_{attention_type}_{phase}{segments}{residuals}_{meta_hash}"
 
 
 # Reference attention implementations
