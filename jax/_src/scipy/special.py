@@ -1592,57 +1592,86 @@ def _gen_associated_legendre(l_max: int,
     of the ALFs at `x`; the dimensions in the sequence of order, degree, and
     evaluation points.
   """
-  p = jnp.zeros((l_max + 1, l_max + 1, x.shape[0]), dtype=x.dtype)
+  # Ensure inputs are float32/float64 (avoiding type errors)
+  x = jnp.asarray(x)
+  dtype = jnp.result_type(x, jnp.float32)
+  x = x.astype(dtype)
 
-  a_idx = jnp.arange(1, l_max + 1, dtype=x.dtype)
-  b_idx = jnp.arange(l_max, dtype=x.dtype)
+  # Avoid singularities at x=+/-1
+  eps = np.finfo(dtype).eps
+  x_safe = jnp.clip(x, -1.0 + eps, 1.0 - eps)
+  s = jnp.sqrt(1.0 - x_safe**2)
+
+  M = l_max + 1
+
+  # Initial state for l=0
   if is_normalized:
-    initial_value: ArrayLike = 0.5 / jnp.sqrt(np.pi)  # The initial value p(0,0).
-    f_a = jnp.cumprod(-1 * jnp.sqrt(1.0 + 0.5 / a_idx))
-    f_b = jnp.sqrt(2.0 * b_idx + 3.0)
+    # Orthonormal convention: P_0^0 = 1/sqrt(4*pi)
+    p00 = jnp.full_like(x, 0.28209479177387814)
   else:
-    initial_value = 1.0  # The initial value p(0,0).
-    f_a = jnp.cumprod(1.0 - 2.0 * a_idx)
-    f_b = 2.0 * b_idx + 1.0
+    p00 = jnp.ones_like(x)
 
-  p = p.at[(0, 0)].set(initial_value)
+  row_init = jnp.zeros((M,) + x.shape, dtype=dtype)
+  row_init = row_init.at[0].set(p00)
 
-  # Compute the diagonal entries p(l,l) with recurrence.
-  y = jnp.cumprod(
-      jnp.broadcast_to(jnp.sqrt(1.0 - x * x), (l_max, x.shape[0])),
-      axis=0)
-  p_diag = initial_value * jnp_einsum.einsum('i,ij->ij', f_a, y)
-  diag_indices = jnp.diag_indices(l_max + 1)
-  p = p.at[(diag_indices[0][1:], diag_indices[1][1:])].set(p_diag)
+  # Scan state: (P_{l-1}, P_{l-2})
+  init_carry = (row_init, jnp.zeros_like(row_init))
 
-  # Compute the off-diagonal entries with recurrence.
-  p_offdiag = jnp_einsum.einsum('ij,ij->ij',
-                         jnp_einsum.einsum('i,j->ij', f_b, x),
-                         p[jnp.diag_indices(l_max)])
-  offdiag_indices = (diag_indices[0][:l_max], diag_indices[1][:l_max] + 1)
-  p = p.at[offdiag_indices].set(p_offdiag)
+  def step_fn(carry, l):
+    p_prev, p_prev2 = carry
+    m = jnp.arange(M, dtype=dtype)
 
-  # Compute the remaining entries with recurrence.
-  d0_mask_3d, d1_mask_3d = _gen_recurrence_mask(
-      l_max, is_normalized=is_normalized, dtype=x.dtype)
+    # Vertical Recurrence: P_l = c1 * x * P_{l-1} - c2 * P_{l-2}
+    if is_normalized:
+      num1 = (2*l - 1) * (2*l + 1)
+      den1 = (l - m) * (l + m)
+      den1 = jnp.where(den1 > 0, den1, 1.0)
+      c1 = jnp.sqrt(num1 / den1)
 
-  def body_fun(i, p_val):
-    coeff_0 = d0_mask_3d[i]
-    coeff_1 = d1_mask_3d[i]
-    h = (jnp_einsum.einsum('ij,ijk->ijk',
-                    coeff_0,
-                    jnp_einsum.einsum(
-                        'ijk,k->ijk', jnp.roll(p_val, shift=1, axis=1), x)) -
-         jnp_einsum.einsum('ij,ijk->ijk', coeff_1, jnp.roll(p_val, shift=2, axis=1)))
-    p_val = p_val + h
-    return p_val
+      num2 = (2*l + 1) * (l - m - 1) * (l + m - 1)
+      den2 = (2*l - 3) * (l - m) * (l + m)
+      den2 = jnp.where(den2 > 0, den2, 1.0)
+      c2 = jnp.sqrt(num2 / den2)
+    else:
+      den = (l - m)
+      den = jnp.where(den > 0, den, 1.0)
+      c1 = (2*l - 1) / den
+      c2 = (l + m - 1) / den
 
-  # TODO(jakevdp): use some sort of fixed-point procedure here instead?
-  p = p.astype(dtypes.result_type(p, x, d0_mask_3d))
-  if l_max > 1:
-    p = lax.fori_loop(lower=2, upper=l_max+1, body_fun=body_fun, init_val=p)
+    # Reshape for broadcasting
+    coeff_shape = (M,) + (1,) * x.ndim
+    c1 = jnp.reshape(c1, coeff_shape)
+    c2 = jnp.reshape(c2, coeff_shape)
 
-  return p
+    x_b = jnp.expand_dims(x, 0)
+    p_curr = c1 * x_b * p_prev - c2 * p_prev2
+
+    # Diagonal Recurrence (Sector)
+    p_prev_diag = p_prev[l-1]
+
+    if is_normalized:
+        # Includes Condon-Shortley phase
+        diag_fact = -jnp.sqrt((2.0*l + 1.0) / (2.0*l))
+        p_diag = diag_fact * s * p_prev_diag
+    else:
+        p_diag = -(2.0*l - 1.0) * s * p_prev_diag
+
+    p_curr = p_curr.at[l].set(p_diag)
+
+    # Mask invalid orders m > l
+    mask = m <= l
+    mask_b = jnp.reshape(mask, (M,) + (1,) * x.ndim)
+    p_curr = jnp.where(mask_b, p_curr, 0.0)
+
+    return (p_curr, p_prev), p_curr
+
+  l_indices = jnp.arange(1, M)
+  _, stacked_rows = lax.scan(step_fn, init_carry, l_indices)
+
+  row_init_expanded = jnp.expand_dims(row_init, 0)
+  out = jnp.concatenate([row_init_expanded, stacked_rows], axis=0)
+
+  return out
 
 
 def lpmn(m: int, n: int, z: Array) -> tuple[Array, Array]:
