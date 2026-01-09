@@ -1182,8 +1182,11 @@ pytype_strict_library(
     deps = [
         ":ad",
         ":ad_util",
+        ":api",
+        ":api_util",
         ":batching",
         ":core",
+        ":custom_derivatives",
         ":dtypes",
         ":effects",
         ":partial_eval",

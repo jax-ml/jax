@@ -750,6 +750,7 @@ def tracers_to_jaxpr(
 
   processed_eqn_ids = set()
   eqns: list[core.JaxprEqn] = []
+  is_high = False
 
   reachable = toposort
   tracers = reachable((*in_tracers, *out_tracers, *effect_handles))
@@ -768,6 +769,8 @@ def tracers_to_jaxpr(
                    for a, rf in zip(r.out_avals, r.out_tracer_refs)]
         eqns.append(new_jaxpr_eqn(in_atoms, outvars, r.primitive, r.params,
                                   r.effects, r.source_info, r.ctx))
+        in_avals = [x.aval for x in in_atoms]
+        is_high |= r.primitive.is_high(*in_avals, **r.params)
         processed_eqn_ids.add(r.eqn_id)
     elif isinstance(r, LambdaBinding):
       if not any(t is in_tracer for in_tracer in in_tracers):
@@ -793,9 +796,9 @@ def tracers_to_jaxpr(
   const_vars, const_vals = unzip2(consts.items())
   outvars = map(get_atom, out_tracers)  # type: ignore[arg-type]
   jaxpr_effects = make_jaxpr_effects(const_vars, invars, outvars, eqns)
+  is_high |= any(x.aval.is_high for x in it.chain(const_vars, invars, outvars))
   jaxpr = Jaxpr(const_vars, invars,  # type: ignore[arg-type]
-                outvars, eqns, jaxpr_effects,
-                debug_info)
+                outvars, eqns, jaxpr_effects, debug_info, is_high)
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   # del getvar  # needed to avoid cyclic-reference closure, apparently!
   return jaxpr, const_vals, env_vals

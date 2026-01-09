@@ -41,6 +41,7 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
+from jax._src import hijax
 from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
 
@@ -2782,7 +2783,9 @@ class CustomVJPTest(jtu.JaxTestCase):
     primal_out1, primal_out2, primal_out3 = primal_outs
     self.assertIsInstance(primal_out1, jax.Array)
     self.assertAllClose(primal_out1, jnp.array([2., 3.]))
-    self.assertIsInstance(primal_out2, scalar_type)
+    if self.__class__ is CustomVJPTest:
+      # TODO(mattjj): we don't yet support this behavior for CustomVJPTraced
+      self.assertIsInstance(primal_out2, scalar_type)
     self.assertAllClose(primal_out2, 5.)
     self.assertIsInstance(primal_out3, jax.Array)
     self.assertAllClose(primal_out3, jnp.array([7., 9.]))
@@ -3284,6 +3287,68 @@ class CustomVJPTest(jtu.JaxTestCase):
         """).strip()
     self.assertEqual(actual, expected)
 
+@unittest.skip("delete this when running manually, doesn't work in CI")
+class CustomVJP3Test(CustomVJPTest):
+  def setUp(self):
+    self.prev, jax.custom_vjp = jax.custom_vjp, hijax.custom_vjp3
+
+  def tearDown(self):
+    jax.custom_vjp = self.prev
+
+  # vmap support (to be added in the next PR)
+  def test_bwd_nones_vmap(self): pass
+  def test_custom_vjp_closure_4521(self): pass
+  def test_custom_vjp_scan_batching_edge_case(self): pass
+  def test_initial_style_vmap(self): pass
+  def test_initial_style_vmap_2(self): pass
+  def test_initial_style_vmap_3(self): pass
+  def test_initial_style_vmap_with_collective(self): pass
+  def test_symbolic_zero_custom_vjp_jit_vmap(self): pass
+  def test_symbolic_zero_custom_vjp_vmap(self): pass
+  def test_symbolic_zero_custom_vjp_vmap_output(self): pass
+  def test_vmap(self): pass
+  def test_vmap_vjp_called_twice(self): pass
+
+  # closure, which ones of these do we care about?
+  def test_closed_over_vmap_tracer(self): pass  # not sure if we care
+  def test_bwd_closes_over_tracer(self): pass  # not sure if we care
+  def test_closed_over_tracer3(self): pass  # not sure if we care
+  def test_closure_with_vmap2(self): pass  # not sure if we care
+  def test_fwd_closes_over_tracer(self): pass  # not sure if we care
+
+  # eager (ie dont always trace, unless under a jit)
+  def test_python_control_flow(self): pass
+
+  # error messages
+  def test_missing_vjp_rule_error(self): pass
+  def test_jvp_error(self): pass  # TODO
+  def test_nondiff_arg_tracer_error(self): pass
+  def test_bwd_rule_shape_mismatch(self): pass
+  def test_pytrees_not_required_to_contain_nones(self): pass
+  def test_fwd_rule_primal_out_type_doesnt_match_primal_error_message(self): pass
+  def test_resolve_kwargs_error_message(self): pass
+  def test_symbolic_zero_custom_vjp_bwd_shape_error(self): pass
+  def test_vjp_rule_inconsistent_pytree_structures_error(self): pass
+  def test_vjp_bwd_returns_non_tuple_error(self): pass
+
+  # small api stuff
+  def test_bwd_rule_can_produce_list_or_tuple(self): pass  # TODO
+
+  # bad tests
+  def test_dce(self): pass  # TODO (test jaxpr)
+
+  # pretty-printing
+  def test_pretty_print(self): pass
+  def test_custom_lin_pretty_print(self): pass
+
+  # someone else will solve it
+  def test_remat(self): pass  # TODO try waiting for NCNP
+  def test_remat_higher_order(self): pass
+  # optimize remat
+  def test_optimize_remat_gh21303(self): pass  # TODO
+  def test_optimize_remat_kwargs(self): pass  # TODO
+  def test_optimize_remat_custom_vmap(self): pass
+  def test_optimize_remat_multiple_args(self): pass
 
 def transpose_unary(f, x_example):
   def transposed(y):
