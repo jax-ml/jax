@@ -1247,7 +1247,7 @@ def checkify(f: Callable[..., Out],
     jaxpr, consts = pe.separate_consts(jaxpr_)
     # checkify:
     error, out_flat = checkify_jaxpr(jaxpr, errors, init_error, *consts)
-    return error, out_avals.update_from_list(out_flat).unflatten()
+    return error, out_avals.update(out_flat).unflatten()
   return checked_fun
 
 def check(pred: Bool, msg: str,
