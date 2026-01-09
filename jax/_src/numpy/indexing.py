@@ -397,6 +397,81 @@ class NDIndexer:
       result = lax.squeeze(result, squeeze_axes)
     return result
 
+  def compute_via_dynamic_slice(self, arr: Array,
+                                mode: str | slicing.GatherScatterMode | None) -> Array:
+    """Equivalent of arr[idx] implemented in terms of static :func:`lax.dynamic_slice`.
+
+    This supports only INTEGER, ELLIPSIS, SLICE, and scalar ARRAY indices, and will
+    raise a TypeError if other indices are present.
+    """
+    if mode is not None:
+      parsed_mode = slicing.GatherScatterMode.from_any(mode)
+      if parsed_mode not in [
+          slicing.GatherScatterMode.PROMISE_IN_BOUNDS, slicing.GatherScatterMode.CLIP]:
+        raise ValueError("dynamic_slice requires mode='promise_in_bounds' or mode='clip'")
+
+    for position, pidx in enumerate(self.indices):
+      if pidx.typ in [IndexType.INTEGER, IndexType.ELLIPSIS]:
+        pass
+      elif pidx.typ == IndexType.SLICE:
+        assert isinstance(pidx.index, slice)
+        if pidx.index.step is not None and pidx.index.step not in [-1, 1]:
+          raise TypeError("dynamic_slice: only unit steps supported in slice."
+                          f" Got {pidx.index} at position {position}")
+      elif pidx.typ == IndexType.ARRAY:
+        if isinstance(pidx.index, Sequence) or np.shape(pidx.index) != ():  # type: ignore[arg-type]
+          raise TypeError("dynamic_slice: only scalar indices allowed."
+                          f" Got {pidx.index} at position {position}")
+      elif pidx.typ == IndexType.NONE:
+        raise TypeError(f"dynamic_slice: got {pidx.index} at position {position}")
+      elif pidx.typ == IndexType.BOOLEAN:
+        raise TypeError("dynamic_slice: indices must be scalars or slices."
+                        f" Got {pidx.index} at position {position}")
+      else:
+        raise TypeError(f"dynamic_slice: unrecognized index {pidx.index} at position {position}.")
+
+    start_indices: list[ArrayLike] = []
+    slice_sizes: list[int] = []
+    rev_axes: list[int] = []
+    squeeze_axes: list[int] = []
+
+    expanded = self.expand_ellipses()
+    for pidx in expanded.indices:
+      if pidx.typ in [IndexType.BOOLEAN, IndexType.NONE, IndexType.ELLIPSIS]:
+        raise RuntimeError(f"Internal: unexpected index encountered: {pidx}")
+      elif pidx.typ in [IndexType.INTEGER, IndexType.ARRAY]:
+        index = lax_numpy.asarray(pidx.index)
+        assert index.shape == ()  # Validated above.
+        axis, = pidx.consumed_axes
+        start_indices.append(index)
+        slice_sizes.append(1)
+        squeeze_axes.append(axis)
+      elif pidx.typ == IndexType.SLICE:
+        assert isinstance(pidx.index, slice)
+        axis, = pidx.consumed_axes
+        size = arr.shape[axis]
+        start, stop, stride = pidx.index.indices(size)
+        assert stride in [-1, 1]  # validated above
+        if stride < 0:
+          new_start = stop + 1 + abs(start - stop - 1) % abs(stride)
+          start_indices.append(new_start)
+          slice_sizes.append(max(0, start + 1 - new_start))
+          rev_axes.append(axis)
+        else:
+          start_indices.append(start)
+          slice_sizes.append(stop - start)
+      else:
+        raise TypeError(f"dynamic_slice: unrecognized index {pidx.index}")
+    result = arr
+    if start_indices:
+      result = slicing.dynamic_slice(arr, start_indices, slice_sizes,
+                                     allow_negative_indices=True)
+    if rev_axes:
+      result = lax.rev(result, rev_axes)
+    if squeeze_axes:
+      result = lax.squeeze(result, squeeze_axes)
+    return result
+
   def is_advanced_int_indexer(self):
     """Returns True if idx should trigger int array indexing, False otherwise."""
     # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
@@ -1016,6 +1091,7 @@ class IndexingStrategy(enum.Enum):
   GATHER = 'gather'
   SCATTER = 'scatter'
   STATIC_SLICE = 'static_slice'
+  DYNAMIC_SLICE = 'dynamic_slice'
 
 
 def rewriting_take(
@@ -1044,6 +1120,10 @@ def rewriting_take(
     if not normalize_indices:
       raise ValueError("strategy=STATIC_SLICE is only supported when normalize_indices=True.")
     return indexer.compute_via_static_slice(arr)
+  elif strategy == IndexingStrategy.DYNAMIC_SLICE:
+    if not normalize_indices:
+      raise ValueError("strategy=DYNAMIC_SLICE is only supported when normalize_indices=True.")
+    return indexer.compute_via_dynamic_slice(arr, mode=mode)
 
   # For simplicity of generated primitives, we call lax.slice or lax.dynamic_slice
   # in the simplest cases: i.e. non-dynamic arrays indexed with integers and slices.
