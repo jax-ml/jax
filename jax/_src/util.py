@@ -31,7 +31,6 @@ import numpy as np
 from jax._src import config
 from jax._src.lib import weakref_lru_cache as _weakref_lru_cache
 from jax._src.lib import utils as jaxlib_utils
-from jax._src.lib import jaxlib_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -334,9 +333,8 @@ memoize = cache(max_size=None)
 
 def _ignore(): return None
 
-def weakref_lru_cache(
-    call: Callable, maxsize=2048, trace_context_in_key: bool = True,
-    explain: Callable | None = None):
+def weakref_lru_cache(call: Callable, maxsize=2048,
+                      trace_context_in_key: bool = True):
   """
   Least recently used cache decorator with weakref support.
 
@@ -344,13 +342,9 @@ def weakref_lru_cache(
   and strong refs to all other arguments. In all other respects it should
   behave similar to `functools.lru_cache`. The cache is thread local.
   """
-  if jaxlib_extension_version >= 394:
-    cached_call = _weakref_lru_cache.weakref_lru_cache(  # type: ignore
-        config.trace_context if trace_context_in_key else _ignore, call, maxsize,  # type: ignore
-        explain = lambda: explain if config.explain_cache_misses.value else None)  # type: ignore
-  else:
-    cached_call = _weakref_lru_cache.weakref_lru_cache(
-        config.trace_context if trace_context_in_key else _ignore, call, maxsize)
+  cached_call = _weakref_lru_cache.weakref_lru_cache(
+      config.trace_context if trace_context_in_key else _ignore, call, maxsize
+  )
   register_cache(cached_call, str(call))
   return cached_call
 

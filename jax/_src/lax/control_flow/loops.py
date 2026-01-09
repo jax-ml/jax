@@ -68,7 +68,7 @@ from jax._src.util import (
 from jax._src import xla_bridge as xb
 from jax._src.tree_util import (
     keystr, tree_flatten, tree_map, tree_unflatten,
-    treedef_is_leaf, FlatTree)
+    treedef_is_leaf, FlatTree, tree_leaves_with_path)
 import numpy as np
 
 _map = safe_map
@@ -325,7 +325,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   if any(move_to_const):
     out = pe.merge_lists(move_to_const + [False] * num_ys, out, new_consts)
 
-  return out_avals.update(out).unflatten()
+  return out_avals.update_from_list(out).unflatten()
 
 def _infer_scan_length(
     xs_flat: list[Any], xs_avals: list[AbstractValue],
@@ -409,11 +409,13 @@ def _check_carry_type(name, body_fun, in_carry, out_carry):
         "Revise the function so that the carry output has the same pytree "
         "structure as the carry input.")
   if not all(_map(core.typematch, in_carry, out_carry)):
+    # TODO(dougalm): add a way to get paths paths without roundtripping
+    paths, _ = unzip2(tree_leaves_with_path(in_carry.unflatten()))
     diffs = [f'{component(path)} has type {in_aval.str_short()}'
              ' but the corresponding output carry component has type '
              f'{out_aval.str_short()}'
              f'{core.aval_mismatch_extra(in_aval, out_aval)}'
-             for path, in_aval, out_aval in zip(in_carry.paths, in_carry, out_carry)
+             for path, in_aval, out_aval in zip(paths, in_carry, out_carry)
              if not core.typematch(in_aval, out_aval)]
 
     if len(diffs) == 0:
@@ -428,7 +430,7 @@ def _check_carry_type(name, body_fun, in_carry, out_carry):
         f'applying `jax.lax.pcast(..., {tuple(out_aval.vma - in_aval.vma)},'
         " to='varying')` to the initial carry value corresponding to"
         f' {component(path)}'
-        for path, in_aval, out_aval in zip(in_carry.paths, in_carry, out_carry)
+        for path, in_aval, out_aval in zip(paths, in_carry, out_carry)
         if not core.typematch(in_aval, out_aval) and
         isinstance(in_aval, ShapedArray) and isinstance(out_aval, ShapedArray)
         and in_aval.vma != out_aval.vma and out_aval.vma - in_aval.vma]
@@ -1550,7 +1552,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   if any(move_to_const):
     outs = pe.merge_lists(move_to_const, outs, new_body_consts)
 
-  return body_out_avals.update(outs).unflatten()
+  return body_out_avals.update_from_list(outs).unflatten()
 
 
 def _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts, cond_nconsts

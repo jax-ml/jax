@@ -46,7 +46,8 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.core import typeof, cur_qdd
 from jax._src.api_util import (
-  flatten_axes, donation_vector, check_callable, resolve_argnums, debug_info,
+  argnums_partial_except, flatten_axes, flatten_fun3, donation_vector,
+  check_callable, resolve_argnums, argnames_partial_except, debug_info,
   check_no_aliased_ref_args, _check_no_aliased_closed_over_refs)
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
@@ -70,13 +71,13 @@ from jax._src.state.types import RefEffect
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure,
-    treedef_children, prefix_errors, PyTreeDef, none_leaf_registry as none_lr,
-    tree_map, FlatTree)
+    treedef_children, prefix_errors, keystr, PyTreeDef,
+    none_leaf_registry as none_lr, tree_map)
 from jax._src.typing import ArrayLike
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps, distributed_debug_log,
-    split_list, weakref_lru_cache, merge_lists, subs_list, fun_name)
-from jax._src.lib import jaxlib_extension_version
+    split_list, weakref_lru_cache, merge_lists, subs_list, fun_name,
+    fun_qual_name)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -129,7 +130,8 @@ class PjitInfo(NamedTuple):
     return self is other
 
 
-def _run_python_pjit(p, args_flat, fun: Callable, jit_info: PjitInfo, args, kwargs):
+def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
+  p, args_flat = _infer_params(fun, jit_info, args, kwargs)
 
   for arg in args_flat:
     dispatch.check_arg(arg)
@@ -254,14 +256,15 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
     if config.no_tracing.value:
       raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
                          "`jit`, but 'no_tracing' is set")
-    p, args_flat = _trace_for_jit(fun, jit_info, args, kwargs)
+
     (outs, out_flat, out_tree, args_flat, jaxpr,
-     executable, pgle_profiler, const_args) = _run_python_pjit(
-         p, args_flat, fun, jit_info, args, kwargs)
+     executable, pgle_profiler, const_args) = _python_pjit_helper(
+         fun, jit_info, *args, **kwargs)
 
     maybe_fastpath_data = _get_fastpath_data(
         executable, out_tree, args_flat, out_flat, jaxpr.effects, jaxpr.consts,
-        pgle_profiler, const_args)
+        pgle_profiler,
+        const_args)
 
     return outs, maybe_fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
 
@@ -288,6 +291,7 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
   cpp_pjitted_f._fun = fun
   cpp_pjitted_f._jit_info = jit_info
   cpp_jitted_f_class = type(cpp_pjitted_f)
+  # TODO(necula): make clear_cache private, no need to have it part of the API
   cpp_jitted_f_class.clear_cache = jit_evict_fn
   cpp_jitted_f_class.lower = jit_lower
   cpp_jitted_f_class.trace = jit_trace
@@ -296,7 +300,7 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 
 @api_boundary
 def jit_trace(jit_func, *args, **kwargs) -> stages.Traced:
-  p, args_flat = _trace_for_jit(jit_func._fun, jit_func._jit_info, args, kwargs)
+  p, args_flat = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs)
   arg_types = map(convert_to_metaty, args_flat)
   return stages.Traced(arg_types, p.params, p.in_tree, p.out_tree, p.consts)
 
@@ -310,11 +314,8 @@ def jit_eval_shape(jit_func, *args, **kwargs):
 
 def jit_evict_fn(self):
   self._clear_cache()
-  if jaxlib_extension_version >= 392:
-    pe.trace_to_jaxpr.evict_weakref(self._fun)  # cl/846898750
-  else:
-    # This clears *all* jaxpr tracing caches, not just for `self`.
-    pe.trace_to_jaxpr.cache_clear()
+  _create_pjit_jaxpr.evict_function(self._fun)  # pytype: disable=attribute-error
+  _infer_params_cached.cache_clear()
 
 
 def _split_layout_and_sharding(entries):
@@ -461,28 +462,16 @@ class PjitParams(NamedTuple):
   arg_names: tuple[str, ...]  # Not including the const_args
 
 
-def _trace_for_jit(
-    fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
-  ) -> tuple[PjitParams, list[core.Value]]:
-  if ji.use_resource_env:  # pjit
-    ctx_mesh = mesh_lib.thread_resources.env.physical_mesh
-  else:
-    ctx_mesh = mesh_lib.get_concrete_mesh()
-  dbg = debug_info(
-      'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
-      static_argnames=ji.static_argnames, sourceinfo=ji.fun_sourceinfo,
-      signature=ji.fun_signature)
-
-  signature, dynargs = jax_jit.parse_arguments(
-      args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
-      ji.static_argnames, tree_util.default_registry)
-  avals_list = _infer_input_type(fun, dbg, dynargs)
-  args_ft = FlatTree.flatten_static_argnums_argnames(
-      args, kwargs, ji.static_argnums, ji.static_argnames)
-  # TODO(dougalm): args_ft.vals and dynargs should be exactly the same here.
-  # Why did we need to flatten in C++ and again in Python?
-  avals = args_ft.update(avals_list)
-
+def _infer_params_impl(
+    fun: Callable,
+    ji: PjitInfo,
+    ctx_mesh: mesh_lib.Mesh,
+    dbg: core.DebugInfo,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    in_avals: tuple[core.AbstractValue, ...] | None,
+) -> tuple[PjitParams, list[Any]]:
+  util.test_event("pjit._infer_params_impl", fun)
   have_kwargs = bool(kwargs)
   if have_kwargs and ji.user_specified_in_shardings:
     raise ValueError(
@@ -493,10 +482,19 @@ def _trace_for_jit(
         "Mesh context manager should not be used with jit when backend or "
         "device is also specified as an argument to jit.")
 
+  f = lu.wrap_init(fun, debug_info=dbg)
+  f, dyn_args = argnums_partial_except(f, ji.static_argnums, args, allow_invalid=True)
+  del args
+  f, dyn_kwargs = argnames_partial_except(f, ji.static_argnames, kwargs)
+  del kwargs
+
+  explicit_args, in_tree = tree_flatten((dyn_args, dyn_kwargs))
+  flat_fun, out_tree_and_result_paths = flatten_fun3(f, in_tree)
+
   if (ji.donate_argnums or ji.donate_argnames) and not config.debug_nans.value:
-    donated_invars = donation_vector(ji.donate_argnums, ji.donate_argnames, avals.tree)
+    donated_invars = donation_vector(ji.donate_argnums, ji.donate_argnames, in_tree)
   else:
-    donated_invars = (False,) * len(avals)
+    donated_invars = (False,) * len(explicit_args)
 
   # If backend or device is set as an arg on jit, then resolve them to
   # in_shardings and out_shardings as if user passed in in_shardings
@@ -521,64 +519,48 @@ def _trace_for_jit(
   assert None not in in_shardings_leaves
   assert None not in out_shardings_leaves
 
-  in_type = avals.map2(
-    lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a,  # type: ignore
-    args_ft)
-  assert avals is not None
+  in_type: core.InputType | tuple[core.AbstractValue, ...]
+  in_type = in_avals  # type: ignore
+  in_type = tuple(core.AvalQDD(a, cur_qdd(x)) if a.has_qdd  # type: ignore
+                  else a for a, x in zip(in_type, explicit_args))
+  assert in_avals is not None
 
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
       in_shardings_treedef, in_shardings_leaves,
       ji.in_layouts_treedef, ji.in_layouts_leaves,
-      avals, dbg, device_or_backend_set, have_kwargs)
+      in_avals, in_tree, flat_fun.debug_info, device_or_backend_set, have_kwargs)
 
-  qdd_token = _qdd_cache_index(fun, in_type.vals)  # represents qdd state context
+  qdd_token = _qdd_cache_index(flat_fun, in_type)
 
-  with dispatch.log_elapsed_time(
-      "Finished tracing + transforming {fun_name} for pjit in {elapsed_time:.9f} sec",
-      fun_name(fun), event=dispatch.JAXPR_TRACE_EVENT):
-    if ji.use_resource_env:  # pjit
-      with (_internal_use_concrete_mesh(ctx_mesh),
-            mesh_lib.use_abstract_mesh(ctx_mesh.abstract_mesh)):
-        jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
-    else:
-      jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
-
-  if config.debug_key_reuse.value:
-    # Import here to avoid circular imports
-    from jax.experimental.key_reuse._core import check_key_reuse_jaxpr  # pytype: disable=import-error
-    check_key_reuse_jaxpr(jaxpr.jaxpr)
-
-  result_paths = tuple(f"result{lu._clean_keystr_arg_names(path)}"
-                       for path in out_avals.paths)
-  jaxpr.jaxpr._debug_info = jaxpr.debug_info._replace(result_paths=result_paths)
-
-  # TODO(mattjj,yashkatariya): if we take the 'true' path then we *must* fall
-  # off the C++ dispatch fast path for correctness. Ensure that happens.
-  if any(isinstance(c, core.Tracer) or core.typeof(c).has_qdd for c in jaxpr.consts):
-    jaxpr, consts = pe.separate_consts(jaxpr)
-  else:
-    consts = []
+  jaxpr, consts, out_avals = _create_pjit_jaxpr(
+      flat_fun, in_type, qdd_token, IgnoreKey(ji.inline))
 
   if config.mutable_array_checks.value:
-    _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), dynargs)
-  _qdd_cache_update(fun, in_type.vals, qdd_token, consts,
+    _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), explicit_args)
+  _qdd_cache_update(flat_fun, in_type, qdd_token, consts,
                     jaxpr.in_aval_qdds[:len(consts)])
 
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
       out_shardings_treedef, out_shardings_leaves, ji.out_layouts_treedef,
-      ji.out_layouts_leaves, out_avals.tree,
+      ji.out_layouts_leaves, HashableFunction(lambda: out_tree_and_result_paths()[0], closure=()),
       tuple(out_avals), jaxpr.jaxpr._debug_info, device_or_backend_set)
 
-  assert len(dynargs) == len(in_shardings_flat) == len(in_layouts_flat)
+  assert len(explicit_args) == len(in_shardings_flat) == len(in_layouts_flat)
+
+  args_flat = explicit_args
 
   num_extra_args = len(consts)
   in_shardings_flat = (UNSPECIFIED,) * num_extra_args + in_shardings_flat
   in_layouts_flat = (None,) * num_extra_args + in_layouts_flat
   donated_invars = (False,) * num_extra_args + donated_invars
   assert (len(in_shardings_flat) == len(in_layouts_flat) ==
-          len(donated_invars) == len(consts) + len(avals))
+          len(donated_invars) == len(consts) + len(args_flat))
 
-  name = getattr(fun, '__name__', '<unknown>')
+  out_tree, result_paths = out_tree_and_result_paths()
+  result_paths = tuple(f"result{lu._clean_keystr_arg_names(path)}"
+                       for path in result_paths)
+  jaxpr.jaxpr._debug_info = jaxpr.debug_info._replace(result_paths=result_paths)
+
   params = dict(
       jaxpr=jaxpr,
       in_shardings=in_shardings_flat,
@@ -587,28 +569,92 @@ def _trace_for_jit(
       out_layouts=out_layouts_flat,
       donated_invars=donated_invars,
       ctx_mesh=ctx_mesh,
-      name=name,
+      name=fun_qual_name(flat_fun),
       keep_unused=ji.keep_unused,
       inline=ji.inline,
       compiler_options_kvs=ji.compiler_options_kvs,
   )
-  p = PjitParams(consts, params, avals.vals, avals.tree_without_statics,
-                 out_avals.tree, dbg.safe_arg_names(len(avals)))
-  return p, p.consts + dynargs
 
-def _infer_input_type(fun: Callable, dbg: core.DebugInfo,
+  return (PjitParams(consts, params, in_avals,
+                     in_tree, out_tree, dbg.safe_arg_names(len(in_avals))),
+          args_flat)
+
+
+class InferParamsCacheEntry:
+  """Mutable value object for _infer_params_cached."""
+  __slots__ = ['pjit_params']
+  pjit_params: PjitParams | None
+  def __init__(self):
+    self.pjit_params = None
+
+
+# We use an outer cache that is keyed on the signature of the arguments, but
+# when populating a cache entry using _infer_params_impl, we need to provide
+# actual arguments. In principle, we could refactor _infer_params_impl to look
+# only at an argument signature instead of args/kwargs in those cases that we
+# cache, but this was a more minimal change.
+@util.weakref_lru_cache
+def _infer_params_cached(
+    fun: Callable,
+    jit_info: PjitInfo,
+    signature: jax_jit.ArgumentSignature,
+    in_avals: tuple[core.AbstractValue, ...],
+    ctx_mesh: mesh_lib.Mesh,
+) -> InferParamsCacheEntry:
+  return InferParamsCacheEntry()
+
+
+def _infer_params(
+    fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
+  ) -> tuple[PjitParams, list[core.Value]]:
+  if ji.use_resource_env:  # pjit
+    phys_mesh = mesh_lib.thread_resources.env.physical_mesh
+    with (_internal_use_concrete_mesh(phys_mesh),
+          mesh_lib.use_abstract_mesh(phys_mesh.abstract_mesh)):
+      return _infer_params_internal(fun, ji, args, kwargs)
+  else:
+    return _infer_params_internal(fun, ji, args, kwargs)
+
+
+def _infer_params_internal(
+    fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
+  ) -> tuple[PjitParams, list[Any]]:
+  ctx_mesh = mesh_lib.get_concrete_mesh()
+  dbg_fn = lambda: debug_info(
+      'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
+      static_argnames=ji.static_argnames, sourceinfo=ji.fun_sourceinfo,
+      signature=ji.fun_signature)
+
+  signature, dynargs = jax_jit.parse_arguments(
+      args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
+      ji.static_argnames, tree_util.default_registry)
+  avals = _infer_input_type(fun, dbg_fn, dynargs)
+  entry = _infer_params_cached(fun, ji, signature, avals, ctx_mesh)
+
+  if entry.pjit_params is None:
+    dbg = dbg_fn()
+    p, args_flat = _infer_params_impl(
+        fun, ji, ctx_mesh, dbg, args, kwargs, in_avals=avals)
+    if p.params['jaxpr'].jaxpr.is_high:
+      return p, p.consts + args_flat
+    entry.pjit_params = p
+  return entry.pjit_params, entry.pjit_params.consts + dynargs
+
+def _infer_input_type(fun: Callable, dbg_fn: Callable[[], core.DebugInfo],
                       explicit_args) -> tuple[core.AbstractValue, ...]:
   avals = []
   try:
     for i, x in enumerate(explicit_args):
       avals.append(core.shaped_abstractify(x))
   except OverflowError:
+    dbg = dbg_fn()
     arg_path = f"argument path is {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'}"  # pytype: disable=name-error
     raise OverflowError(
       "An overflow was encountered while parsing an argument to a jitted "
       f"computation, whose {arg_path}."
     ) from None
   except TypeError:
+    dbg = dbg_fn()
     arg_description = f"path {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'}"  # pytype: disable=name-error
     raise TypeError(
       f"Error interpreting argument to {fun} as an abstract array."
@@ -619,7 +665,7 @@ def _infer_input_type(fun: Callable, dbg: core.DebugInfo,
       " static_argnums or static_argnames parameters of jax.jit."
     ) from None
   if config.mutable_array_checks.value:
-    check_no_aliased_ref_args(lambda: dbg, avals, explicit_args)
+    check_no_aliased_ref_args(dbg_fn, avals, explicit_args)
   return tuple(avals)
 
 
@@ -757,12 +803,10 @@ class PytreeLeaf:
 @util.cache(max_size=4096, trace_context_in_key=False)
 def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
                                in_layouts_treedef, in_layouts_leaves,
-                               in_avals, dbg: core.DebugInfo,
+                               in_avals, in_tree, debug_info: core.DebugInfo,
                                device_or_backend_set, kws):
-  if kws:
-    in_tree = in_avals.tree_without_statics
-  else:
-    in_tree, _ = treedef_children(in_avals.tree_without_statics)
+  if not kws:
+    in_tree, _ = treedef_children(in_tree)
 
   orig_in_shardings = tree_unflatten(in_shardings_treedef, in_shardings_leaves)
   # Only do this if original in_shardings are unspecified. If it is AUTO, go
@@ -781,12 +825,313 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
         "pjit in_layouts", in_tree, in_layouts, tupled_args=True)
 
   pjit_check_aval_sharding(in_shardings_flat, in_avals,
-                           dbg.safe_arg_names(len(in_avals)),
+                           debug_info.safe_arg_names(len(in_avals)),
                            "pjit arguments", allow_uneven_sharding=False)
   check_aval_layout_compatibility(
       in_layouts_flat, in_avals,
-      dbg.safe_arg_names(len(in_avals)), "jit arguments")  # type: ignore[arg-type]
+      debug_info.safe_arg_names(len(in_avals)), "jit arguments")  # type: ignore[arg-type]
   return in_shardings_flat, in_layouts_flat
+
+callsites_with_tracing_cache_miss: set[str] = set()
+
+def diff_tracing_cache_keys(
+    k: tuple, oldk: tuple, debug_info: lu.DebugInfo) -> tuple[Sequence[str], int]:
+  """Explanations of differences between the cache keys, along with diff sizes.
+
+  Result: a pair of a list of explanations for differences, and the total size
+    of the differences. The sizes are used to pick the old key with the smallest
+    different size for the explanation that is shown to the user.
+  """
+  (fun_transforms_k, fun_params_k, fun_in_type_k,
+   (arg_in_type_k, _, arg_inline_k), ctx_k) = k
+  (fun_transforms_ok, fun_params_ok, fun_in_type_ok,
+   (arg_in_type_ok, _, arg_inline_ok), ctx_ok) = oldk
+
+  diffs: list[tuple[str, int]] = []  # each difference with its size
+  def unavailable(key_field: str, what_k, what_ok):
+    diffs.append(
+        (f"different {key_field}:\n    now: {what_k}\n != before: {what_ok}.\n"
+         "explanation unavailable! "
+         "please open an issue at https://github.com/jax-ml/jax.",
+         10))
+
+  def list_diff_size(s1: Sequence, s2: Sequence) -> int:
+    min_len = min(len(s1), len(s2))
+    diff_size = max(len(s1), len(s2)) - min_len
+    diff_size += sum(e1 != e2 for e1, e2 in zip(s1[:min_len],
+                                                s2[:min_len]))
+    return diff_size
+
+  different_leaf_count = False
+
+  def explain_transform_argnums_partial(param_k: tuple, param_ok: tuple):
+    dyn_argnums_k, static_args_k = param_k
+    dyn_argnums_ok, static_args_ok = param_ok
+    if dyn_argnums_k != dyn_argnums_ok:
+      diffs.append(
+          ("different static_argnums:\n"
+           f"  dynamic argnums now {dyn_argnums_k} and before {dyn_argnums_ok}",
+          1))
+    if static_args_k != static_args_ok:
+      diffs.append(
+          ("different value of static args:\n"
+           f"  now {', '.join(repr(a.val) for a in static_args_k)}"
+           f" and before {', '.join(repr(a.val) for a in static_args_ok)}",
+          list_diff_size(static_args_k, static_args_ok)))
+
+  def explain_transform_argnames_partial(param_k: tuple, param_ok: tuple):
+    static_kwargs_k, = param_k
+    static_kwargs_ok, = param_ok
+    static_kwargs_k = [(k, v.val) for k, v in
+                       sorted(static_kwargs_k.val.items())]
+    static_kwargs_ok = [(k, v.val) for k, v in
+                        sorted(static_kwargs_ok.val.items())]
+    if static_kwargs_k != static_kwargs_ok:
+      diffs.append(
+          ("different value of static kwargs:\n"
+           f"  now {{{', '.join(f'{k}: {repr(v)}' for k, v in static_kwargs_k)}}}"
+           f" and before {{{', '.join(f'{k}: {repr(v)}' for k, v in static_kwargs_ok)}}}",
+          list_diff_size(static_kwargs_k, static_kwargs_ok)))
+
+  def explain_in_tree_diff(in_tree_k: PyTreeDef, in_tree_ok: PyTreeDef):
+    nonlocal different_leaf_count
+    different_leaf_count = (in_tree_k.num_leaves != in_tree_ok.num_leaves)
+    if not different_leaf_count:
+      # Look for the special case of passing positional args as kwargs or
+      # vice-versa; the common prefix of positional args match.
+      args_tree_k, kwargs_tree_k = treedef_children(in_tree_k)
+      nr_args_k = len(treedef_children(args_tree_k))
+      args_tree_ok, kwargs_tree_ok = treedef_children(in_tree_ok)
+      nr_args_ok = len(treedef_children(args_tree_k))
+      if (treedef_children(args_tree_k)[:min(nr_args_k, nr_args_ok)] ==
+          treedef_children(args_tree_ok)[:min(nr_args_k, nr_args_ok)]):
+        keys_k = kwargs_tree_k.node_data()[1]  # type: ignore[index]
+        keys_ok = kwargs_tree_ok.node_data()[1]  # type: ignore[index]
+        diffs.append(
+            (("different number of args and kwargs, but same total number.\n"
+              f"  now {nr_args_k} args and kwargs "
+              f"with keys {keys_k}\n"
+              f"  before {nr_args_ok} args and kwargs "
+              f"with keys {keys_ok}"),
+             abs(nr_args_ok - nr_args_k)))
+        return
+
+    in_tree_k_str = str(in_tree_k)
+    in_tree_k_str = (in_tree_k_str if len(in_tree_k_str) < 73
+                     else in_tree_k_str[:73] + "...")
+    in_tree_ok_str = str(in_tree_ok)
+    in_tree_ok_str = (in_tree_ok_str if len(in_tree_ok_str) < 73
+                     else in_tree_ok_str[:73] + "...")
+    diff = [f"different input pytree:\n  now: {in_tree_k_str}\n"
+            f"  before: {in_tree_ok_str}"]
+
+    errs = list(tree_util.equality_errors_pytreedef(in_tree_k, in_tree_ok))
+    for path, thing1, thing2, explanation in errs:
+      fst, *path = path  # type: ignore
+      base = ["args", "kwargs"][fst.idx]
+      diff.append(
+          f"  * at {base}{keystr(tuple(path))}, now {thing1} and before {thing2},"
+          f" so {explanation}")
+    diffs.append(("\n".join(diff), len(errs)))
+
+  def explain_args_type_diff(args_k: tuple[core.AbstractValue],
+                             args_ok: tuple[core.AbstractValue]):
+    diff_size = 0
+    arg_names = debug_info.safe_arg_names(len(args_k))
+    def arg_type_to_str(at):
+      if hasattr(at, "str_short"):
+        return at.str_short(short_dtypes=True)
+      else:
+        return str(at)
+    args_k_str = ", ".join(f"{an}: {arg_type_to_str(at)}"
+                           for an, at in zip(arg_names, args_k))
+    args_k_str = args_k_str if len(args_k_str) < 73 else args_k_str[:73] + "..."
+    diff = [f"different input types:\n  types now: {args_k_str}"]
+    add_weak_type_hint = False
+
+    for name, arg_t_k, arg_t_ok in zip(arg_names, args_k, args_ok):
+      if arg_t_k == arg_t_ok: continue
+      this_arg_diff_size = 0
+      if type(arg_t_k) == type(arg_t_ok) == core.ShapedArray:
+        s1, s2 = arg_type_to_str(arg_t_k), arg_type_to_str(arg_t_ok)
+        this_arg_diff_size += list_diff_size(arg_t_k.shape, arg_t_ok.shape)  # type: ignore
+
+        if arg_t_k.weak_type != arg_t_ok.weak_type:  # type: ignore
+          s1 += f"{{weak_type={arg_t_k.weak_type}}}"  # type: ignore
+          s2 += f"{{weak_type={arg_t_ok.weak_type}}}"  # type: ignore
+          add_weak_type_hint = True
+          this_arg_diff_size += 1
+        elif arg_t_k.sharding != arg_t_ok.sharding:  # type: ignore
+          s1 = arg_t_k.str_short(short_dtypes=True, mesh_axis_types=True)  # type: ignore
+          s2 = arg_t_ok.str_short(short_dtypes=True, mesh_axis_types=True)  # type: ignore
+          this_arg_diff_size += 1
+      else:
+        s1, s2 = str(arg_t_k), str(arg_t_ok)
+      diff_size += max(1, this_arg_diff_size)
+      diff.append(f"    * at {name}, now {s1} and before {s2}")
+
+    if add_weak_type_hint:
+      diff.append(
+          "where weak_type=True often means a Python builtin numeric value, and \n"
+          "weak_type=False means a jax.Array.\n"
+          "See https://docs.jax.dev/en/latest/type_promotion.html#weak-types.")
+    diffs.append(("\n".join(diff), diff_size))
+
+  if fun_transforms_k != fun_transforms_ok:
+    if len(fun_transforms_k) != len(fun_transforms_ok):
+      different_leaf_count = True  # Skip other more precise checks
+      unavailable("fun_transforms length",
+                  fun_transforms_k, fun_transforms_ok)
+    else:
+      for i, (t, ot) in enumerate(zip(fun_transforms_k, fun_transforms_ok)):
+        t_name = t[0].__name__
+        if t == ot: continue
+
+        if t[0] != ot[0]:
+          unavailable(f"fun_transforms[{i}] transform", t, ot)
+          continue
+        if t_name == "flatten_fun3":
+          explain_in_tree_diff(t[1][0], ot[1][0])
+          continue
+        if t_name == "_argnums_partial":
+          explain_transform_argnums_partial(t[1], ot[1])
+          continue
+        if t_name == "_argnames_partial":
+          explain_transform_argnames_partial(t[1], ot[1])
+          continue
+        unavailable(f"fun_transforms.{t_name} params", t[1:], ot[1:])
+        continue
+
+  # If we had different leaf counts, we can discard the _argnums_partial
+  # difference. That transform sometimes occurs before the flatten_fun
+  if different_leaf_count:
+    diffs = [d for d in diffs if "fun_transforms._argnums_partial" not in d[0]]
+  if fun_params_k != fun_params_ok:
+    unavailable("fun_params", fun_params_k, fun_params_ok)
+  if fun_in_type_k != fun_in_type_ok:
+    unavailable("fun_in_type", fun_params_k, fun_params_ok)
+  if arg_in_type_k != arg_in_type_ok and not different_leaf_count:
+    explain_args_type_diff(arg_in_type_k, arg_in_type_ok)
+  if arg_inline_k != arg_inline_ok:
+    unavailable("arg_inline", arg_inline_k, arg_inline_ok)
+  if ctx_k != ctx_ok:
+    assert len(ctx_k) == len(ctx_ok)
+    idxs = [f"  [{i}]: now {c_k} and before {c_ok}"
+            for i, (c_k, c_ok) in enumerate(zip(ctx_k, ctx_ok)) if c_k != c_ok]
+    diffs.append(
+        ("different tracing context, e.g. due to config or context manager.\n"
+         "found differences at positions\n" +
+         ", and\n".join(idxs) +
+         "\ncompare to tuple returned by "
+         "config.trace_context() in jax/_src/config.py.",
+         len(idxs)))
+  if not diffs:  # Should never happen, but let's not crash
+    unavailable("something (unexpected empty diffs)", k, oldk)
+  diffs_and_sizes = util.unzip2(sorted(diffs, key=lambda d: d[1]))
+  return (diffs_and_sizes[0], sum(diffs_and_sizes[1]))
+
+
+def explain_tracing_cache_miss(
+    fun: lu.WrappedFun, unseen_f: bool, cache: dict,
+    key: tuple, elapsed_sec: float):
+  if config.check_tracer_leaks.value: return  # TODO(mattjj): can remove this
+  if key[3][2].val: return  # No explanations for "inline" functions
+
+  debug_info = fun.debug_info
+  func_filename = debug_info.func_filename
+  if func_filename and not source_info_util.is_user_filename(func_filename):
+   return
+
+  msg: list[str] = []
+  p = msg.append
+  done = lambda: logger.log(logging.WARNING, "\n".join(msg))
+
+  callsite = source_info_util.summarize(source_info_util.current())
+  p(f"TRACING CACHE MISS at {callsite} costing {elapsed_sec * 1e3:.3f} ms because:")
+
+  # have we seen this function before at all?
+  src_info = ""
+  if func_filename:
+    src_info += f" defined at {func_filename}"
+  if func_lineno := debug_info.func_lineno:
+    src_info += f":{func_lineno}"
+  func_name = debug_info.func_name
+  if unseen_f or not cache:
+    p(f"  never seen function:\n    {func_name} id={id(fun.f)}{src_info}")
+    if callsite in callsites_with_tracing_cache_miss:
+      p("  but seen another function defined on the same line; maybe the function is\n"
+        "  being re-defined repeatedly, preventing caching?")
+    else:
+      callsites_with_tracing_cache_miss.add(callsite)
+    return done()
+
+  p(f"  for {func_name}{src_info}")
+
+  # Do *not* remove the list() around the call to keys(). The cache may be
+  # updated concurrently by other threads, and we need to perform the iteration
+  # over the dictionary keys in a way that is concurrency safe. Here we are
+  # relying on an implementation behavior of CPython wherein the particular list
+  # constructor used here acts atomically.
+  # See https://github.com/jax-ml/jax/issues/30163
+  cache_keys = list(cache.keys())
+
+  diffs = [diff_tracing_cache_keys(key, ok, debug_info)
+           for ok in cache_keys if key != ok]
+  assert diffs, "we must find some diffs if key differs from all cache keys"
+  min_diff = min(diffs, key=lambda v: v[1])
+  smallest_diffs: Sequence[Sequence[str]]  # the diffs for the closest keys
+  smallest_diffs = [d[0] for d in diffs if d[1] == min_diff[1]]
+  def indent_subsequent_lines(indent: int, msg: str) -> str:
+    return msg.replace("\n", "\n" + " " * indent)
+  def p_one_diff(diff: Sequence[str]):
+    for d in diff:
+      p("  * key with " + indent_subsequent_lines(4, d))
+
+  if len(smallest_diffs) == 1:
+    p("  all previously seen cache keys are different. Closest previous key:")
+    p_one_diff(smallest_diffs[0])
+  else:
+    p("  all previously seen cache keys are different. "
+      "Several previous keys are closest:")
+    for d in smallest_diffs:
+      p_one_diff(d)
+
+  done()
+
+
+@partial(lu.cache, explain=explain_tracing_cache_miss)
+def _create_pjit_jaxpr(
+    fun: lu.WrappedFun,
+    in_type: core.InputType | Sequence[core.AbstractValue],
+    qdd_token: int,
+    ignored_inline: IgnoreKey
+) -> tuple[core.ClosedJaxpr, list[core.Value], list[core.AbstractValue]]:
+  util.test_event("create_pjit_jaxpr")
+  del qdd_token  # just part of the cache key
+  del ignored_inline  # just for explain_cache_miss
+  if config.no_tracing.value:
+    raise RuntimeError(f"re-tracing function {fun.f} for `jit`, but "
+                       "'no_tracing' is set")
+  with dispatch.log_elapsed_time(
+      "Finished tracing + transforming {fun_name} for pjit in {elapsed_time:.9f} sec",
+      fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
+    jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, in_type)
+
+  if config.debug_key_reuse.value:
+    # Import here to avoid circular imports
+    from jax.experimental.key_reuse._core import check_key_reuse_jaxpr  # pytype: disable=import-error
+    check_key_reuse_jaxpr(jaxpr)
+
+  # TODO(mattjj,yashkatariya): if we take the 'true' path then we *must* fall
+  # off the C++ dispatch fast path for correctness. Ensure that happens.
+  if any(isinstance(c, core.Tracer) or core.typeof(c).has_qdd for c in consts):
+    closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
+    final_consts = consts
+  else:
+    closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
+    final_consts = []
+  return closed_jaxpr, final_consts, global_out_avals
+
 
 @util.cache(max_size=4096, trace_context_in_key=False)
 def _check_and_canonicalize_out_shardings(
@@ -799,7 +1144,7 @@ def _check_and_canonicalize_out_shardings(
     out_shardings_flat = (orig_out_shardings,) * len(out_avals)
   else:
     out_shardings_flat = flatten_axis_resources(
-        "pjit out_shardings", out_tree, orig_out_shardings,
+        "pjit out_shardings", out_tree(), orig_out_shardings,
         tupled_args=False)
 
   out_layouts = tree_unflatten(out_layouts_treedef, out_layouts_leaves)
@@ -807,7 +1152,7 @@ def _check_and_canonicalize_out_shardings(
     out_layouts_flat = (out_layouts,) * len(out_avals)
   else:
     out_layouts_flat = flatten_axis_resources(
-        "pjit out_layouts", out_tree, out_layouts, tupled_args=False)
+        "pjit out_layouts", out_tree(), out_layouts, tupled_args=False)
 
   pjit_check_aval_sharding(
       out_shardings_flat, out_avals,
@@ -822,8 +1167,9 @@ def _check_and_canonicalize_out_shardings(
 _seen_qdds = weakref.WeakKeyDictionary()  # type: ignore
 
 def _seen_qdds_get(fun, in_type) -> list:
-  cache = _seen_qdds.setdefault(fun, defaultdict(list))
-  return cache[in_type]
+  assert fun.in_type is None or fun.in_type == in_type
+  cache = _seen_qdds.setdefault(fun.f, defaultdict(list))
+  return cache[(fun.transforms, fun.params, in_type)]
 
 def _qdd_cache_index(fun, in_type) -> int:
   cases = _seen_qdds_get(fun, in_type)

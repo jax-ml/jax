@@ -3194,6 +3194,7 @@ def clear_caches():
   # Clear all C++ compiled executable caches for pjit
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
+  pjit._infer_params_cached.cache_clear()
   xc._xla.PjitFunctionCache.clear_all()
 
   # Clear all C++ compiled executable caches for pmap

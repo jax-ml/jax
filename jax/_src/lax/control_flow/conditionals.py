@@ -183,7 +183,7 @@ def _switch_internal(
     for fwd in in_fwd
   ]
   assert next(out_, None) is None
-  return out_avalss[0].update(out).unflatten()
+  return out_avalss[0].update_from_list(out).unflatten()
 
 @partial(api_boundary, repro_api_name="jax_cond")
 def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
@@ -322,7 +322,7 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
     for fwd in in_fwd
   ]
   assert next(out_, None) is None
-  return out_avals.update(out).unflatten()
+  return out_avals.update_from_list(out).unflatten()
 
 def _check_branch_outputs(
     api_name, name1, name2, f1, f2, out_avals1, out_avals2) -> None:
