@@ -325,11 +325,14 @@ class ArrayImpl(basearray.Array):
     return self._value.tolist()
 
   def __format__(self, format_spec):
-    # Simulates behavior of https://github.com/numpy/numpy/pull/9883
-    if self.ndim == 0:
-      return format(self._value[()], format_spec)
+    if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
+      return repr(self)
+    elif (self.is_fully_addressable or self.is_fully_replicated and
+          self.sharding.has_addressable_devices):
+      # Simulates behavior of https://github.com/numpy/numpy/pull/9883
+      return format(self._value if self.ndim else self._value[()], format_spec)
     else:
-      return format(self._value, format_spec)
+      return repr(self)
 
   def __getitem__(self, idx):
     from jax._src.lax import lax  # pytype: disable=import-error
@@ -417,7 +420,8 @@ class ArrayImpl(basearray.Array):
   def __str__(self):
     if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
       return repr(self)
-    elif self.is_fully_addressable or self.is_fully_replicated:
+    elif (self.is_fully_addressable or self.is_fully_replicated and
+          self.sharding.has_addressable_devices):
       return str(self._value)  # doesn't print Array(...)
     else:
       return repr(self)

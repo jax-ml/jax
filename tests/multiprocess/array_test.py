@@ -814,6 +814,20 @@ class NonaddressableArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
     else:
       self.assertEqual(repr(y), "Array(shape=(8, 8), dtype=float32)")
 
+  def test_str(self):
+    y, _ = create_nonaddressable_array((8, 8))
+    if y.is_fully_addressable:
+      self.assertStartsWith(str(y), "[[ 0.  1.  2.  3.")
+    else:
+      self.assertEqual(str(y), "Array(shape=(8, 8), dtype=float32)")
+
+  def test_format(self):
+    y, _ = create_nonaddressable_array((8, 8))
+    if y.is_fully_addressable:
+      self.assertStartsWith(format(y), "[[ 0.  1.  2.  3.")
+    else:
+      self.assertEqual(format(y), "Array(shape=(8, 8), dtype=float32)")
+
   def test_array_astype(self):
     y, _ = create_nonaddressable_array((8, 8))
     y = y.astype(np.int32)
