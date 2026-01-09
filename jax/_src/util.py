@@ -345,9 +345,9 @@ def weakref_lru_cache(
   behave similar to `functools.lru_cache`. The cache is thread local.
   """
   if jaxlib_extension_version >= 394:
-    cached_call = _weakref_lru_cache.weakref_lru_cache(
-        config.trace_context if trace_context_in_key else _ignore, call, maxsize,
-        explain = lambda: explain if config.explain_cache_misses.value else None)
+    cached_call = _weakref_lru_cache.weakref_lru_cache(  # type: ignore
+        config.trace_context if trace_context_in_key else _ignore, call, maxsize,  # type: ignore
+        explain = lambda: explain if config.explain_cache_misses.value else None)  # type: ignore
   else:
     cached_call = _weakref_lru_cache.weakref_lru_cache(
         config.trace_context if trace_context_in_key else _ignore, call, maxsize)

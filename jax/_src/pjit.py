@@ -539,9 +539,9 @@ def _trace_for_jit(
     if ji.use_resource_env:  # pjit
       with (_internal_use_concrete_mesh(ctx_mesh),
             mesh_lib.use_abstract_mesh(ctx_mesh.abstract_mesh)):
-        jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token, ji.inline)
+        jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
     else:
-      jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token, ji.inline)
+      jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports

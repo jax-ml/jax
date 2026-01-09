@@ -2295,9 +2295,7 @@ def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
 
 callsites_with_tracing_cache_miss: set[str] = set()
 
-def explain(keys, fun, in_avals, debug_info, qdd_token, *inline):
-  if inline and inline[0]: return
-
+def explain(keys, fun, in_avals, debug_info, *context):
   func_filename = debug_info.func_filename
   if func_filename and not source_info_util.is_user_filename(func_filename):
    return
@@ -2328,7 +2326,7 @@ def explain(keys, fun, in_avals, debug_info, qdd_token, *inline):
 
   p(f"  for {func_name}{src_info}")
 
-  key = (config.trace_context(), (in_avals, debug_info, qdd_token, *inline), {})
+  key = (config.trace_context(), (in_avals, debug_info, *context), {})
   min_diff = min(diff_tracing_cache_keys(key, k) for k in keys)[-1]
   p('  all previously seen cache keys differ. For the closest previous key:')
   p('  ' + min_diff)
