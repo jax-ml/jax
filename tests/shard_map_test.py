@@ -4824,6 +4824,20 @@ class ShardMapTest(jtu.JaxTestCase):
     x = jax.device_put(jnp.arange(8.), jax.P('x'))
     jax.grad(lambda x: f(x).sum())(x)  # don't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_vmap_shmap_psum(self, mesh):
+    arr = jnp.arange(16).reshape(2, 8)
+
+    @jax.shard_map(in_specs=P("x"), out_specs=P(None))
+    def f(x):
+      return jax.lax.psum(x, axis_name='x')
+
+    f(arr)  # doesn't crash
+    jax.vmap(f)(arr)  # doesn't crash
+
+    jax.jit(f)(arr)  # doesn't crash
+    jax.jit(jax.vmap(f))(arr)  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str

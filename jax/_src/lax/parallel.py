@@ -838,7 +838,8 @@ def _constant_reduction(prim, axis_data, arg, axes, axis_index_groups):
   if axis_index_groups: raise NotImplementedError
   new_axes = tuple(n for n in axes if n != axis_data.name)
   if new_axes:
-    arg = prim.bind(arg, axes=new_axes, axis_index_groups=axis_index_groups)
+    arg = (prim.bind(arg, axes=new_axes) if prim is psum_invariant_p else
+           prim.bind(arg, axes=new_axes, axis_index_groups=axis_index_groups))
   if prim is psum_p:
     out = lax._const(arg, axis_data.size) * arg
   elif prim in (pmin_p, pmax_p):
@@ -855,19 +856,21 @@ def _reduction_with_positional_batcher(
   v = v if d is batching.not_mapped or d == 0 else _moveaxis(d, 0, v)
   if d is batching.not_mapped:
     unmapped_axes, unmapped_vals_in = transform_unmapped(0, v)
-    unmapped_vals_out = prim.bind(unmapped_vals_in, axes=unmapped_axes,
-                                  axis_index_groups=None)
-    return unmapped_vals_out
+    return (prim.bind(unmapped_vals_in, axes=unmapped_axes)
+            if prim is psum_invariant_p else
+            prim.bind(unmapped_vals_in, axes=unmapped_axes, axis_index_groups=None))
 
   mapped_axes, mapped_vals_in = transform_mapped(0, v)
-  mapped_vals_out = prim.bind(mapped_vals_in, axes=mapped_axes,
-                              axis_index_groups=None)
-  return mapped_vals_out
+  return (prim.bind(mapped_vals_in, axes=mapped_axes)
+          if prim is psum_invariant_p else
+          prim.bind(mapped_vals_in, axes=mapped_axes, axis_index_groups=None))
 
 def _reduction_batcher(prim, v, d, *, axes, axis_index_groups):
   assert not prim.multiple_results
   if not any(isinstance(axis, int) for axis in axes):
-    return prim.bind(v, axes=axes, axis_index_groups=axis_index_groups), d
+    out = (prim.bind(v, axes=axes) if prim is psum_invariant_p else
+           prim.bind(v, axes=axes, axis_index_groups=axis_index_groups))
+    return out, d
   val_out = _reduction_with_positional_batcher(
       prim, v, d, axis_index_groups,
       lambda d, v: (axes, v),
@@ -877,9 +880,8 @@ def _reduction_batcher(prim, v, d, *, axes, axis_index_groups):
   # _reduction_with_positional_batcher moves all map dims to 0
   return val_out, d if d is batching.not_mapped else 0
 
-def _batched_reduction_collective(
-    prim, if_unmapped, axis_data, vals_in, dims_in, axes,
-    axis_index_groups):
+def _batched_reduction_collective(prim, if_unmapped, axis_data, vals_in,
+                                  dims_in, axes, axis_index_groups):
   assert not prim.multiple_results
   (v,), (d,) = vals_in, dims_in
   del vals_in, dims_in
@@ -888,7 +890,9 @@ def _batched_reduction_collective(
     if axis_data.name in axes:
       return _constant_reduction(prim, axis_data, v, axes, axis_index_groups)
     else:
-      return prim.bind(v, axes=axes, axis_index_groups=axis_index_groups), d
+      out = (prim.bind(v, axes=axes) if prim is psum_invariant_p else
+             prim.bind(v, axes=axes, axis_index_groups=axis_index_groups))
+      return out, d
 
   if axis_data.name not in axes:
     return _reduction_batcher(
