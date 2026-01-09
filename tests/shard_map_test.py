@@ -4838,6 +4838,18 @@ class ShardMapTest(jtu.JaxTestCase):
     jax.jit(f)(arr)  # doesn't crash
     jax.jit(jax.vmap(f))(arr)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_subclass_partition_spec_error_message(self, mesh):
+    class MyP(jax.P):
+      pass
+
+    @jax.shard_map(in_specs=(jax.P("x"), MyP("x"),), out_specs=())
+    def f(x, y):
+      return ()
+
+    with self.assertRaisesRegex(ValueError, 'not evenly divisible'):
+      f(jnp.arange(8.), jnp.arange(9.))
+
 
 class FunSpec(NamedTuple):
   name: str
