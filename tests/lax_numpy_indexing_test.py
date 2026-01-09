@@ -450,12 +450,20 @@ class IndexingStrategyTest(jtu.JaxTestCase):
      for shape, indexer, _ in index_specs],
     dtype=all_dtypes,
     strategy=[indexing.IndexingStrategy.AUTO,
+              indexing.IndexingStrategy.DYNAMIC_SLICE,
               indexing.IndexingStrategy.STATIC_SLICE,
               indexing.IndexingStrategy.GATHER]
   )
   def test_simple_indexing(self, name, shape, dtype, indexer, strategy):
-    if isinstance(indexer, tuple) and any(isinstance(i, np.ndarray) for i in indexer):
-      self.skipTest("array indices not supported.")
+    del name # unused within test
+    tuple_indexer = indexer if isinstance(indexer, tuple) else (indexer,)
+    if (strategy == indexing.IndexingStrategy.STATIC_SLICE and
+        any(isinstance(i, np.ndarray) for i in tuple_indexer)):
+      self.skipTest("array indices not supported with STATIC_SLICE.")
+    if (strategy == indexing.IndexingStrategy.DYNAMIC_SLICE and
+        any(isinstance(i, slice) and not (i.step is None or i.step in [-1, 1])
+            for i in tuple_indexer)):
+      self.skipTest("non-unit step sizes not supported with DYNAMIC_SLICE")
 
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
