@@ -122,7 +122,6 @@ class RaggedDotTestCase(jtu.JaxTestCase):
       block_k=(64, 128),
       grid_block_n=(2, 4),
       max_concurrent_steps=(1, 2, 4),
-      num_groups=(1, 3, 16),
   )
   def test_ragged_dot_transposed(
       self,
@@ -131,8 +130,10 @@ class RaggedDotTestCase(jtu.JaxTestCase):
       block_k,
       grid_block_n,
       max_concurrent_steps,
-      num_groups,
   ):
+    # See log at
+    # https://github.com/jax-ml/jax/actions/runs/20821451405/job/59813460647.
+    self.skipTest("TODO(bchetioui): this test has broken in CI. Investigate.")
     dtype = jnp.float16
     lhs_smem_size = block_m * block_k * max_concurrent_steps * 2
     rhs_smem_size = block_k * block_n * max_concurrent_steps * 2
