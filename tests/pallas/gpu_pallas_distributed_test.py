@@ -29,6 +29,7 @@ from jax.experimental.pallas import mosaic_gpu as plgpu
 from jax.experimental.pallas.ops.gpu.reduce_scatter_mgpu import reduce_scatter
 from jax.experimental.pallas.ops.gpu.all_gather_mgpu import all_gather
 import jax.numpy as jnp
+import math
 import numpy as np
 
 
@@ -306,6 +307,52 @@ class PallasCallRemoteDMATest(TestCase):
     ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
+  def test_contiguous_copy_tma(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+
+    shape = (512,)
+
+    def kernel(y_ref, smem_ref, sem):
+      dev_id = lax.axis_index("y")
+      other_dev_id = 1 - dev_id
+
+      # Device ID must be an int32.
+      zero = jnp.int32(0)
+
+      @pl.when(dev_id == zero)
+      def _store():
+        output = plgpu.layout_cast(
+            jnp.arange(math.prod(shape)).reshape(shape),
+            plgpu.Layout.WG_STRIDED(shape, vec_size=1),
+        )
+        smem_ref[...] = output
+        plgpu.commit_smem()
+        plgpu.copy_smem_to_gmem(smem_ref, plgpu.remote_ref(y_ref, (zero, dev_id)))
+        plgpu.copy_smem_to_gmem(smem_ref, plgpu.remote_ref(y_ref, (zero, other_dev_id)))
+        plgpu.wait_smem_to_gmem(0)
+      pl.semaphore_signal(sem, 1, device_id=(zero, other_dev_id))
+      pl.semaphore_wait(sem)
+
+    kernel_call = pl.pallas_call(
+        kernel,
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
+        scratch_shapes=[
+            plgpu.SMEM(shape, jnp.int32),
+            plgpu.SemaphoreType.REGULAR,
+        ],
+    )
+    mesh = jtu.create_mesh((1, 2), ("x", "y"))
+    y = jax.jit(
+        jax.shard_map(
+            kernel_call, mesh=mesh, in_specs=(), out_specs=P("y"), check_vma=False,
+        )
+    )()
+    y = multihost_utils.process_allgather(y, tiled=True)
+    ref = jnp.arange(math.prod(shape)).reshape(shape)
+    np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
+
 
 class PallasCallMultimemTest(TestCase):
 
@@ -388,6 +435,45 @@ class PallasCallMultimemTest(TestCase):
     )()
     y = multihost_utils.process_allgather(y, tiled=True)
     ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
+    np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
+
+  def test_multimem_store_contiguous_tma(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+
+    shape = (512,)
+
+    def kernel(y_ref, smem_ref, sem):
+      @pl.when(lax.axis_index('x') == 0)
+      def _store():
+        output = plgpu.layout_cast(
+            jnp.arange(math.prod(shape)).reshape(shape),
+            plgpu.Layout.WG_STRIDED(shape, vec_size=1),
+        )
+        smem_ref[...] = output
+        plgpu.copy_smem_to_gmem(smem_ref, plgpu.multicast_ref(y_ref, 'x'))
+        plgpu.wait_smem_to_gmem(0)
+      other_dev_id = 1 - lax.axis_index('x')
+      pl.semaphore_signal(sem, 1, device_id=other_dev_id)
+      pl.semaphore_wait(sem)
+
+    kernel_call = pl.pallas_call(
+        kernel,
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
+        scratch_shapes=[
+            plgpu.SMEM(shape, jnp.int32,),
+            plgpu.SemaphoreType.REGULAR,
+        ],
+    )
+    mesh = jax.sharding.Mesh(jax.devices(), ['x'])
+    y = jax.jit(
+        jax.shard_map(
+            kernel_call, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False,
+        )
+    )()
+    y = multihost_utils.process_allgather(y, tiled=True)
+    ref = jnp.arange(math.prod(shape)).reshape(shape)
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
   @parameterized.parameters(
