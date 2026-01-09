@@ -16,10 +16,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 import dataclasses
 import enum
 import functools
+import json
 from typing import Any, Literal, NamedTuple, Optional, Union, overload
 
 import jax
@@ -91,7 +92,6 @@ MaskFunctionType = Callable[..., jax.Array]
 
 
 def get_kernel_name(
-    block_metadata: Mapping[str, Any],
     is_mqa: bool,
     save_residuals: bool,
     is_segmented: bool,
@@ -101,16 +101,10 @@ def get_kernel_name(
   assert phase == "dq" or phase == "dkv" or phase == "fwd"
   # Saving residuals is supported only for the fwd phase.
   assert not save_residuals or phase == "fwd"
-  residuals = ""
-  if save_residuals:
-    residuals = "_residuals"
-  elif phase == "fwd":
-    residuals = "_no_residuals"
+  residuals = "_residuals" if save_residuals else "_no_residuals"
   attention_type = "mqa" if is_mqa else "mha"
   segments = "_segmented" if is_segmented else ""
-  return f"splash_{attention_type}_{phase}{segments}{residuals}_" + "_".join(
-      f"{k}={v}" for k, v in sorted(block_metadata.items())
-  )
+  return f"splash_{attention_type}_{phase}{segments}{residuals}"
 
 
 # Reference attention implementations
@@ -1126,12 +1120,12 @@ def _splash_attention_forward(
     out_specs += [None]
 
   kernel_name = get_kernel_name(
-      dataclasses.asdict(block_sizes),
       is_mqa=is_mqa,
       save_residuals=save_residuals,
       is_segmented=segment_ids is not None,
       phase="fwd",
   )
+  metadata = {"xprof_metadata": json.dumps(dataclasses.asdict(block_sizes))}
 
   if fwd_mask_info.data_next is not None:
     grid_width = fwd_mask_info.data_next.shape[-1]
@@ -1167,6 +1161,7 @@ def _splash_attention_forward(
         out_shape=out_shapes,
         name=kernel_name,
         interpret=interpret,
+        metadata=metadata,
     )(
         fwd_mask_info.data_next,
         fwd_mask_info.block_mask,
@@ -1624,18 +1619,18 @@ def _splash_attention_bwd_dq(
   num_scalar_prefetch = 3
 
   kernel_name = get_kernel_name(
-      dict(
-          block_q_dq=bq,
-          block_kv_dq=bkv,
-          q_layout=q_layout,
-          k_layout=k_layout,
-          v_layout=v_layout,
-      ),
       is_mqa=is_mqa,
       save_residuals=False,
       is_segmented=segment_ids is not None,
       phase="dq",
   )
+  metadata = {"xprof_metadata": json.dumps(dict(
+      block_q_dq=bq,
+      block_kv_dq=bkv,
+      q_layout=q_layout,
+      k_layout=k_layout,
+      v_layout=v_layout,
+  ))}
   with jax.named_scope(kernel_name):
     _, dq = pl.pallas_call(
         kernel,
@@ -1651,6 +1646,7 @@ def _splash_attention_bwd_dq(
         ),
         name=kernel_name,
         interpret=interpret,
+        metadata=metadata,
     )(
         mask_info.data_next,
         mask_info.block_mask,
@@ -2183,19 +2179,19 @@ def _splash_attention_bwd_dkv(
   num_scalar_prefetch = 3
 
   kernel_name = get_kernel_name(
-      dict(
-          block_q_dkv=bq,
-          block_kv_dkv=bkv,
-          block_kv_dkv_compute=bkv_compute,
-          q_layout=q_layout,
-          k_layout=k_layout,
-          v_layout=v_layout,
-      ),
       is_mqa=is_mqa,
       save_residuals=False,
       is_segmented=segment_ids is not None,
       phase="dkv",
   )
+  metadata = {"xprof_metadata": json.dumps(dict(
+      block_q_dkv=bq,
+      block_kv_dkv=bkv,
+      block_kv_dkv_compute=bkv_compute,
+      q_layout=q_layout,
+      k_layout=k_layout,
+      v_layout=v_layout,
+  ))}
   with jax.named_scope(kernel_name):
     _, _, _, dq_unreduced, dk, dv = pl.pallas_call(
         kernel,
@@ -2216,6 +2212,7 @@ def _splash_attention_bwd_dkv(
         ),
         name=kernel_name,
         interpret=interpret,
+        metadata=metadata,
     )(
         mask_info.data_next,
         mask_info.block_mask,
