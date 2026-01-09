@@ -2221,12 +2221,6 @@ jax_ragged_dot_use_ragged_dot_instruction = bool_state(
     ),
 )
 
-jax_collectives_common_channel_id = bool_flag(
-    name='jax_collectives_common_channel_id',
-    default=True,
-    help="Should collectives use a common channel ID? Temporary feature flag.",
-)
-
 jax_pallas_verbose_errors = bool_flag(
     "jax_pallas_verbose_errors",
     default=bool_env("JAX_PALLAS_VERBOSE_ERRORS", False),

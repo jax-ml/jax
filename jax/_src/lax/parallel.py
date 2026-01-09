@@ -967,13 +967,6 @@ def _check_axis_names(axes, api_name):
           f"Found an unbound axis name: {name}. To fix this, please call"
           f" {api_name} under `jax.shard_map`.")
 
-# TODO(phawkins): remove this function and flag if this doesn't break anyone.
-def _get_channel(ctx):
-  if config.jax_collectives_common_channel_id.value:
-    return mlir.COLLECTIVE_CHANNEL_ID
-  else:
-    return ctx.module_context.new_channel_id()
-
 def _allreduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups):
   aval_in, = ctx.avals_in
   if axis_index_groups is not None and ("tpu" in ctx.module_context.platforms):
@@ -1007,7 +1000,7 @@ def _allreduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups):
     if is_spmd:
       other_args = dict(
           channel_handle=hlo.ChannelHandle.get(
-              _get_channel(ctx), mlir.DEVICE_TO_DEVICE_TYPE),
+              mlir.COLLECTIVE_CHANNEL_ID, mlir.DEVICE_TO_DEVICE_TYPE),
           use_global_device_ids=ir.BoolAttr.get(True))
     else:
       other_args = {}
@@ -1099,7 +1092,7 @@ def _pcollectives_lowering_common(ctx, *, axis_name, perm, op_name):
   if is_manual:
     other_args = dict(
         channel_handle=hlo.ChannelHandle.get(
-            _get_channel(ctx), mlir.DEVICE_TO_DEVICE_TYPE
+            mlir.COLLECTIVE_CHANNEL_ID, mlir.DEVICE_TO_DEVICE_TYPE
         )
     )
   else:
@@ -1290,7 +1283,7 @@ def _pbroadcast_lowering(ctx, x, *, axis_name, source):
     # We want to emit the collective-broadcast with global device IDs and a
     # channel ID, as otherwise it interprets the devices as replicas instead
     # of partitions - and XLA is configured with only a single replica.
-    channel_handle = hlo.ChannelHandle.get(_get_channel(ctx),
+    channel_handle = hlo.ChannelHandle.get(mlir.COLLECTIVE_CHANNEL_ID,
                                            mlir.DEVICE_TO_DEVICE_TYPE)
     other_args = dict(channel_handle=channel_handle)
   else:
@@ -1343,7 +1336,7 @@ def _all_to_all_lowering(
     # We want to emit the all-gather with global device IDs and a
     # channel ID, as otherwise it interprets the devices as replicas instead
     # of partitions - and XLA is configured with only a single replica.
-    channel_handle = hlo.ChannelHandle.get(_get_channel(ctx),
+    channel_handle = hlo.ChannelHandle.get(mlir.COLLECTIVE_CHANNEL_ID,
                                            mlir.DEVICE_TO_DEVICE_TYPE)
     other_args = dict(channel_handle=channel_handle)
   else:
@@ -1506,7 +1499,7 @@ def _ragged_all_to_all_lowering(
       ctx.module_context.axis_context, (SPMDAxisContext, ShardingContext))
   if is_spmd:
     ragged_all_to_all_attrs['channel_id'] = ir.IntegerAttr.get(
-        ir.IntegerType.get_signless(64), _get_channel(ctx)
+        ir.IntegerType.get_signless(64), mlir.COLLECTIVE_CHANNEL_ID
     )
 
   return hlo.CustomCallOp(
@@ -1763,7 +1756,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
     # of partitions - and XLA is configured with only a single replica.
     other_args = dict(
         channel_handle=hlo.ChannelHandle.get(
-            _get_channel(ctx), mlir.DEVICE_TO_DEVICE_TYPE),
+            mlir.COLLECTIVE_CHANNEL_ID, mlir.DEVICE_TO_DEVICE_TYPE),
         use_global_device_ids=ir.BoolAttr.get(True))
   else:
     other_args = {}
@@ -1989,7 +1982,7 @@ def _reduce_scatter_lowering(
     # of partitions - and XLA is configured with only a single replica.
     other_args = dict(
         channel_handle=hlo.ChannelHandle.get(
-            _get_channel(ctx), mlir.DEVICE_TO_DEVICE_TYPE),
+            mlir.COLLECTIVE_CHANNEL_ID, mlir.DEVICE_TO_DEVICE_TYPE),
         use_global_device_ids=ir.BoolAttr.get(True))
   else:
     other_args = {}

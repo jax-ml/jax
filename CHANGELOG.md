@@ -21,6 +21,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     in MAGMA 2.9.0 when using `use_magma=True` and `pivoting=True`.
     ({jax-issue}`#34145`).
 
+* Deprecations:
+  * The flag `jax_collectives_common_channel_id` was removed.
+
 ## JAX 0.8.2 (December 18, 2025)
 
 * Deprecations
