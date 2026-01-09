@@ -1701,21 +1701,21 @@ class FragmentedArray:
     )
 
   def abs(self) -> FragmentedArray:
-    if ir.FloatType.isinstance(self.mlir_dtype):
+    if isinstance(self.mlir_dtype, ir.FloatType):
       return self._pointwise(mlir_math.absf)
-    if ir.IntegerType.isinstance(self.mlir_dtype):
+    if isinstance(self.mlir_dtype, ir.IntegerType):
       return self._pointwise(mlir_math.absi)
     raise NotImplementedError
 
   def round(self) -> FragmentedArray:
     """Same as `lax.round(..., AWAY_FROM_ZERO)`."""
-    if not ir.FloatType.isinstance(self.mlir_dtype):
+    if not isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
     return self._pointwise(mlir_math.round)
 
   def round_even(self) -> FragmentedArray:
     """Same as `lax.round(..., TO_NEAREST_EVEN)`."""
-    if not ir.FloatType.isinstance(self.mlir_dtype):
+    if not isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
     return self._pointwise(mlir_math.roundeven)
 

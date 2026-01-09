@@ -96,7 +96,7 @@ def _mlir_to_torch_dtype(torch, mlir_dtype: ir.Type):
     return torch.float16
   if mlir_dtype == ir.BF16Type.get():
     return torch.bfloat16
-  if ir.IntegerType.isinstance(mlir_dtype):
+  if isinstance(mlir_dtype, ir.IntegerType):
     int_type = ir.IntegerType(mlir_dtype)
     if int_type.is_signed or int_type.is_signless:
       return getattr(torch, f"int{int_type.width}")
