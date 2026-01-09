@@ -16,15 +16,18 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/tiled_layout.h"
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status.h"
 
 namespace jax::mosaic::gpu {
 namespace {
 
 using ::testing::ElementsAre;
+using ::testing::status::StatusIs;
 
 TEST(TilingTest, TileNestedShapeStrides) {
   ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{64, 64}}));
@@ -105,6 +108,105 @@ TEST(TilingTest, UntileIndicesMultiLevel) {
   auto untiled_indices = tiling.UntileIndices(indices);
 
   EXPECT_THAT(untiled_indices, ElementsAre(70, 80));
+}
+
+TEST(TiledLayoutTest, Create) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{64, 8}, {16, 8}, {8, 8}, {1, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-8},
+                          /*lane_dims=*/{-4, -3},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  EXPECT_THAT(layout.warp_dims(), ElementsAre(-8));
+  EXPECT_THAT(layout.lane_dims(), ElementsAre(-4, -3));
+  EXPECT_EQ(layout.vector_dim(), -1);
+}
+
+TEST(TiledLayoutTest, CreateFailsWithDuplicateDims) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{10, 2}}));
+
+  EXPECT_THAT(TiledLayout::Create(std::move(tiling),
+                                  /*warp_dims=*/{-1},
+                                  /*lane_dims=*/{-1},
+                                  /*vector_dim=*/-2),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(TiledLayoutTest, CreateFailsWithEmptyTiling) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({}));
+  EXPECT_THAT(TiledLayout::Create(std::move(tiling),
+                                  /*warp_dims=*/{},
+                                  /*lane_dims=*/{},
+                                  /*vector_dim=*/-1),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(TiledLayoutTest, CreateFailsWithPositiveDim) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{32, 4}}));
+  EXPECT_THAT(TiledLayout::Create(std::move(tiling),
+                                  /*warp_dims=*/{1},
+                                  /*lane_dims=*/{-2},
+                                  /*vector_dim=*/-1),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(TiledLayoutTest, CreateFailsWithOutOfRangeDim) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{32, 4}}));
+  EXPECT_THAT(TiledLayout::Create(std::move(tiling),
+                                  /*warp_dims=*/{-3},
+                                  /*lane_dims=*/{-2},
+                                  /*vector_dim=*/-1),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(TiledLayoutTest, CreateFailsWithInvalidWarpDimsProduct) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{32, 4}}));
+  EXPECT_THAT(TiledLayout::Create(std::move(tiling),
+                                  /*warp_dims=*/{-2},
+                                  /*lane_dims=*/{Replicated(32)},
+                                  /*vector_dim=*/-1),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(TiledLayoutTest, CreateFailsWithInvalidLaneDimsProduct) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{8, 4, 32}}));
+  EXPECT_THAT(TiledLayout::Create(std::move(tiling),
+                                  /*warp_dims=*/{-2},
+                                  /*lane_dims=*/{-3},
+                                  /*vector_dim=*/-1),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(TiledLayoutTest, CreateFailsWithNonCanonicalLayout) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 32}, {1, 1}}));
+  EXPECT_THAT(TiledLayout::Create(std::move(tiling),
+                                  /*warp_dims=*/{-4},
+                                  /*lane_dims=*/{-3},
+                                  /*vector_dim=*/-1,
+                                  /*check_canonical=*/true),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(TiledLayoutTest, Canonicalize) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{4, 32, 1, 1}, {1, 1, 1, 1}}));
+
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-8},
+                          /*lane_dims=*/{-7},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(TiledLayout canonical, layout.Canonicalize());
+
+  EXPECT_THAT(canonical.warp_dims(), ElementsAre(-4));
+  EXPECT_THAT(canonical.lane_dims(), ElementsAre(-3));
+  EXPECT_EQ(canonical.vector_dim(), -1);
 }
 
 }  // namespace
