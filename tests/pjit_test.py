@@ -3095,7 +3095,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
       pjit(_pmapped_fun)(inputs)  # doesn't crash
       jax.jit(_pmapped_fun)(inputs)  # doesn't crash
 
-  @unittest.skip('TODO(mattjj): re-enable after updating cache miss explainer')
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_sharding_mismatch(self):
     mesh = jtu.create_mesh((2,), ('x',))

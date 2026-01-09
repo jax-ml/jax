@@ -1500,7 +1500,7 @@ class FlatTree:
       assert len(paths) == len(self.vals)
       return self.update(paths)
     except:
-      return self.update([''] * len(self.vals))  # not our fault
+      return self.update([()] * len(self.vals))  # not our fault
 
   def __len__(self):
     return self.len

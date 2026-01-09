@@ -2329,80 +2329,60 @@ def explain(keys, fun, in_avals, debug_info, qdd_token, *inline):
   p(f"  for {func_name}{src_info}")
 
   key = (config.trace_context(), (in_avals, debug_info, qdd_token, *inline), {})
-  diffs = [diff_tracing_cache_keys(key, k) for k in keys]
-  assert diffs
-  min_diff = min(diffs, key=lambda v: v[1])
-  smallest_diffs = [d[0] for d in diffs if d[1] == min_diff[1]]
-  p('  all previously seen cache keys are different. Closest prevoius keys:')
-  for diff in smallest_diffs:
-    for d in diff:
-      p("  * key with " + d.replace('\n', '\n' + ' ' * 4))
+  min_diff = min(diff_tracing_cache_keys(key, k) for k in keys)[-1]
+  p('  all previously seen cache keys differ. For the closest previous key:')
+  p('  ' + min_diff)
   return logger.log(logging.WARNING, "\n".join(msg))
 
-def diff_tracing_cache_keys(new_key, old_key):
-  diffs: list[tuple[str, int]] = []  # each difference with its size
-  new_ctx, (new_tree, new_dbg, new_qdd, _), () = new_key
-  old_ctx, (old_tree, old_dbg, old_qdd, _), () = old_key
+def diff_tracing_cache_keys(new_key, old_key) -> tuple[int, int, str] | None:
+  new_ctx, (new_tree, new_dbg, new_qdd, *_), () = new_key
+  old_ctx, (old_tree, old_dbg, old_qdd, *_), () = old_key
+  return (diff_ctx(new_ctx, old_ctx) or
+          diff_trees(new_tree.tree, old_tree.tree) or
+          diff_debug(new_dbg, old_dbg) or
+          diff_types(new_dbg, new_tree.vals, old_tree.vals) or
+          (4, 0, 'cache miss explanation unavailable'))
 
-  diff_static(diffs, new_tree.tree, old_tree.tree)
-  diff_trees(diffs, new_tree.tree_without_statics, old_tree.tree_without_statics)
+def diff_ctx(new_ctx, old_ctx):
+  msg = "Tracing context doesn't match, e.g. due to config or context manager."
+  num_diff = sum(map(op.ne, new_ctx, old_ctx))
+  if num_diff: return 0, num_diff, msg
 
-  diffs, sizes = unzip2(sorted(diffs, key=lambda d: d[1]))
-  return diffs, sum(sizes)
-
-def diff_static(diffs, new_tree, old_tree):
-  # TODO can't use equality_errors, just tree map or some shit with Static as leaf
-  errs = list(tree_util.equality_errors_pytreedef(new_tree, old_tree))
-  for path, new_thing, old_thing, _ in errs:
-    # TODO(mattjj): refactor equality_errors to separate out string formatting
-    is_static = lambda x: 'tree_util.Static' in x
-    if is_static(new_thing) and not is_static(old_thing):
-      diffs.append((f"at {tree_util.keystr(path)}, input is now marked static", 1))
-    elif not is_static(new_thing) and is_static(old_thing):
-      diffs.append((f"at {tree_util.keystr(path)}, input was previously marked static", 1))
-    elif is_static(old_thing) and is_static(new_thing):
-      diffs.append(
-          (f"at {tree_util.keystr(path)}, different value of static args:\n"
-           f"  now {new_thing.val}\n  before {old_thing.val}", 1))
-
-def diff_trees(diffs, new_tree, old_tree):
-  if new_tree.num_leaves == old_tree.num_leaves:
-    # Look for the special case of passing positional args as kwargs or
-    # vice-versa; the common prefix of positional args match.
-    args_tree_k, kwargs_tree_k = tree_util.treedef_children(new_tree)
-    nr_args_k = len(tree_util.treedef_children(args_tree_k))
-    args_tree_ok, kwargs_tree_ok = tree_util.treedef_children(old_tree)
-    nr_args_ok = len(tree_util.treedef_children(args_tree_k))
-    if (tree_util.treedef_children(args_tree_k)[:min(nr_args_k, nr_args_ok)] ==
-        tree_util.treedef_children(args_tree_ok)[:min(nr_args_k, nr_args_ok)]):
-      keys_k = kwargs_tree_k.node_data()[1]  # type: ignore[index]
-      keys_ok = kwargs_tree_ok.node_data()[1]  # type: ignore[index]
-      diffs.append(
-          (("different number of args and kwargs, but same total number.\n"
-            f"  now {nr_args_k} args and kwargs "
-            f"with keys {keys_k}\n"
-            f"  before {nr_args_ok} args and kwargs "
-            f"with keys {keys_ok}"),
-            abs(nr_args_ok - nr_args_k)))
-      return
-
-  new_tree_str = str(new_tree)
-  new_tree_str = (new_tree_str if len(new_tree_str) < 73
-                    else new_tree_str[:73] + "...")
-  old_tree_str = str(old_tree)
-  old_tree_str = (old_tree_str if len(old_tree_str) < 73
-                    else old_tree_str[:73] + "...")
-  diff = [f"different input pytree:\n  now: {new_tree_str}\n"
-          f"  before: {old_tree_str}"]
-
-  errs = list(tree_util.equality_errors_pytreedef(new_tree, old_tree))
+def diff_trees(new_tree, old_tree):
+  errs = tree_util.equality_errors_pytreedef(new_tree, old_tree)
+  tree_diffs = []
   for path, thing1, thing2, explanation in errs:
-    fst, *path = path  # type: ignore
-    base = ["args", "kwargs"][fst.idx]
-    diff.append(
-        f"  * at {base}{tree_util.keystr(tuple(path))}, now {thing1} and "
+    tree_diffs.append(
+        f"  * at input path {tree_util.keystr(tuple(path))}, now {thing1} and "
         f"before {thing2}, so {explanation}")
-  diffs.append(("\n".join(diff), len(errs)))
+  msg = 'different input pytree:\n' + '\n'.join(tree_diffs)
+  if tree_diffs: return 1, len(tree_diffs), msg
+
+def diff_debug(new_dbg, old_dbg):
+  msg = "Debug info doesn't match."
+  num_diff = sum(map(op.ne, new_dbg, old_dbg))
+  if num_diff: return 2, num_diff, msg
+
+def diff_types(dbg, new_leaves, old_leaves):
+  if new_leaves == old_leaves: return
+  diffs = []
+  add_weak_type_hint = False
+  for name, new_ty, old_ty in zip(dbg.arg_names, new_leaves, old_leaves):
+    if new_ty != old_ty:
+      new_str, old_str = new_ty.str_short(True), old_ty.str_short(True)
+      if type(new_ty) is type(old_ty) is core.ShapedArray:
+        if new_ty.sharding != old_ty.sharding:
+          new_str, old_str = new_ty.str_short(True, True), old_ty.str_short(True, True)
+        if new_ty.weak_type != old_ty.weak_type:
+          add_weak_type_hint = True
+          new_str += f'{{weak_type={new_ty.weak_type}}}'
+          old_str += f'{{weak_type={old_ty.weak_type}}}'
+      diffs.append(f"  * at {name}, now {new_str} and before {old_str}")
+  msg = 'different input types:\n' + '\n'.join(diffs)
+  if add_weak_type_hint:
+    msg += 'https://docs.jax.dev/en/latest/type_promotion.html#weak-types'
+  if diffs: return 3, len(diffs), msg
+
 
 @partial(weakref_lru_cache, explain=explain, maxsize=8192)
 def trace_to_jaxpr(
