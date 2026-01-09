@@ -454,6 +454,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        "//third_party/protobuf/util:json_util",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
@@ -1270,6 +1271,7 @@ cc_library(
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@nanobind",
         "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
