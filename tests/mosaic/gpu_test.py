@@ -2708,6 +2708,36 @@ class BarrierTest(TestCase):
     )()
     np.testing.assert_array_equal(y, np.ones((), dtype=np.int32))
 
+  @parameterized.parameters(False, True)
+  def test_mbarrier_complete_tx(self, predicated):
+    i32 = ir.IntegerType.get_signless(32)
+
+    def kernel(ctx, dst, mbar):
+      mbar.arrive_expect_tx(1024 // 128)
+
+      if predicated:
+        is_leader = mgpu.single_thread_predicate(mgpu.ThreadSubset.BLOCK)
+        mbar.complete_tx(1024, predicate=is_leader)
+      else:
+        mbar.complete_tx(1024 // 128)
+
+      mbar.wait()
+
+      with mgpu.single_thread(scope=mgpu.ThreadSubset.BLOCK):
+        memref.store(arith.constant(i32, 1), dst, [])
+
+    out_shape = jax.ShapeDtypeStruct((), jnp.int32)
+    y = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        (),
+        out_shape,
+        mgpu.Barrier(arrival_count=128),
+    )()
+
+    np.testing.assert_array_equal(y, np.array(1, dtype=np.int32))
+
 
 class AsyncCopyTest(TestCase):
 

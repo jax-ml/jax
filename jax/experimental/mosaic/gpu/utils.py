@@ -1087,6 +1087,28 @@ class BarrierRef:
         self.get_ptr(), bytes, predicate=predicate
     )
 
+  def complete_tx(
+      self, bytes: int | ir.Value, predicate: ir.Value | None = None
+  ):
+    if isinstance(bytes, int):
+      bytes = c(bytes, ir.IntegerType.get_signless(32))
+    elif ir.IndexType.isinstance(bytes.type):
+      i32 = ir.IntegerType.get_signless(32)
+      bytes = arith.index_cast(i32, bytes)
+
+    pred_ptx = pred_constraint = ""
+    if predicate is not None:
+      pred_ptx = "@$2"
+      pred_constraint = ",b"
+
+    llvm.inline_asm(
+        ir.Type.parse("!llvm.void"),
+        [self.get_ptr(), bytes] + ([predicate] if predicate is not None else []),
+        f"{pred_ptx} mbarrier.complete_tx.b64 [$0], $1;",
+        "l,r" + pred_constraint,
+        has_side_effects=True,
+    )
+
   def get_ptr(self):
     i64 = ir.IntegerType.get_signless(64)
     return getelementptr(self.base_address, [self.offset], i64)
