@@ -1,0 +1,165 @@
+# Composite action to download the jax, jaxlib, and the ROCm plugin wheels
+name: Download JAX ROCm wheels
+
+inputs:
+  python:
+    description: "Which python version should the artifact be downloaded for?"
+    type: string
+    required: true
+  rocm-version:
+    description: "Which ROCm version should the artifact be downloaded for?"
+    type: string
+    default: "7.2.0"
+  use-rocm-pip-wheels:
+    description: "Whether to download ROCm packages from PyPI?"
+    type: boolean
+    default: false
+  jax-version:
+    description: "Which JAX version to download from PyPI (e.g., 0.8.0, 0.8.2, or 'latest' for newest)"
+    type: string
+    default: "0.9.0"
+  jaxlib-version:
+    description: "Which jaxlib version to download? (pypi_latest/github_release)"
+    type: string
+    default: "pypi_latest"
+  github-release-tag:
+    description: "GitHub release tag to download wheels from (e.g., rocm-jax-v0.8.0). Required if jaxlib-version is 'github_release'"
+    type: string
+    default: "rocm-jax-v0.9.0-rc"
+  download-jax-from-pypi:
+    description: "Whether to download the jax wheel from PyPI"
+    default: '1'
+    type: string
+  skip-download-jaxlib-and-rocm-plugins:
+    description: "Whether to skip downloading the jaxlib and ROCm plugins (e.g for testing a jax only release)"
+    default: '0'
+    type: string
+permissions: {}
+runs:
+  using: "composite"
+
+  steps:
+    # Note that certain envs such as JAXCI_HERMETIC_PYTHON_VERSION are set by the calling workflow.
+    - name: Set env vars for wheel download
+      shell: bash
+      run: |
+        os=$(uname -s | awk '{print tolower($0)}')
+        arch=$(uname -m)
+
+        # Get the major and minor version of Python.
+        # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.11, then python_major_minor=311
+        # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13-nogil, then python_major_minor=313t
+        python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')
+
+        echo "OS=${os}" >> $GITHUB_ENV
+        echo "ARCH=${arch}" >> $GITHUB_ENV
+        # Python wheels follow a naming convention: standard wheels use the pattern
+        # `*-cp<py_version>-cp<py_version>-*`, while free-threaded wheels use
+        # `*-cp<py_version>-cp<py_version>t-*`.
+        echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
+
+        # Map ROCm version to wheel naming convention
+        # ROCm 6.x versions use "60", ROCm 7.x+ use the major version number
+        full_rocm_version="${{ inputs.rocm-version }}"
+        rocm_major_version="${full_rocm_version%%.*}"
+        if [[ "${rocm_major_version}" == "6" ]]; then
+          rocm_wheel_version="60"
+        else
+          rocm_wheel_version="${rocm_major_version}"
+        fi
+        echo "JAXCI_ROCM_VERSION=${rocm_wheel_version}" >> $GITHUB_ENV
+
+        # Get Python version for wheel filename (e.g., cp311)
+        python_version="cp${python_major_minor%t%-*}"
+        echo "PYTHON_VERSION=${python_version}" >> $GITHUB_ENV
+    - name: Download wheels
+      shell: bash
+      id: download-wheel-artifacts
+      # Set continue-on-error to true to prevent actions from failing the workflow if this step
+      # fails. Instead, we verify the outcome in the next step so that we can print a more
+      # informative error message.
+      continue-on-error: true
+      run: |
+        mkdir -p $(pwd)/dist
+
+        PYTHON=python${{ inputs.python }}
+
+        # Download JAX wheel from PyPI if requested
+        if [[ "${{ inputs.download-jax-from-pypi }}" == "1" ]]; then
+          if [[ "${{ inputs.jax-version }}" == "latest" ]]; then
+            echo "Downloading latest jax from PyPI..."
+            $PYTHON -m pip download jax --dest $(pwd)/dist/
+          else
+            echo "Downloading jax==${{ inputs.jax-version }} from PyPI..."
+            $PYTHON -m pip download jax==${{ inputs.jax-version }} --dest $(pwd)/dist/
+          fi
+        else
+          echo "JAX wheel won't be downloaded, only jaxlib pre-built wheel is tested."
+        fi
+
+        # Do not download the jaxlib and ROCm plugin artifacts if we are testing a jax only
+        # release.
+        if [[ "${{ inputs.skip-download-jaxlib-and-rocm-plugins }}" == "1" ]]; then
+          echo "JAX only release. Skipping jaxlib and ROCm plugin downloads."
+        elif [[ "${{ inputs.jaxlib-version }}" == "pypi_latest" ]]; then
+          echo "Downloading jaxlib, jax-rocm${JAXCI_ROCM_VERSION}-pjrt, and jax-rocm${JAXCI_ROCM_VERSION}-plugin from PyPI..."
+          $PYTHON -m pip download jaxlib jax-rocm${JAXCI_ROCM_VERSION}-pjrt jax-rocm${JAXCI_ROCM_VERSION}-plugin --dest $(pwd)/dist/
+        elif [[ "${{ inputs.jaxlib-version }}" == "github_release" ]]; then
+          if [[ -z "${{ inputs.github-release-tag }}" ]]; then
+            echo "Error: github-release-tag is required when jaxlib-version is 'github_release'"
+            exit 1
+          fi
+
+          echo "Downloading custom jaxlib and ROCm plugins from GitHub release: ${{ inputs.github-release-tag }}"
+
+          # Delete any jaxlib wheels that may have been downloaded from PyPI as dependencies
+          echo "Removing any PyPI jaxlib wheels from $(pwd)/dist/..."
+          rm -f $(pwd)/dist/jaxlib-*.whl
+
+          # Download custom jaxlib (e.g., jaxlib-0.8.0+rocm7.1.0-cp311-cp311-manylinux_2_27_x86_64.whl)
+          # Pattern: jaxlib-*+rocm*-${PYTHON_VERSION}-${PYTHON_VERSION}-manylinux*.whl
+          echo "Downloading custom jaxlib for Python ${PYTHON_VERSION}..."
+          gh release download ${{ inputs.github-release-tag }} \
+            --repo ROCm/rocm-jax \
+            --pattern "jaxlib-*+rocm*-${PYTHON_VERSION}-${PYTHON_VERSION}-manylinux*.whl" \
+            --dir $(pwd)/dist/
+
+          # Download ROCm PJRT plugin (e.g., jax_rocm7_pjrt-0.8.0+rocm7.1.0-py3-none-manylinux_2_28_x86_64.whl)
+          echo "Downloading ROCm PJRT plugin..."
+          gh release download ${{ inputs.github-release-tag }} \
+            --repo ROCm/rocm-jax \
+            --pattern "jax_rocm${JAXCI_ROCM_VERSION}_pjrt-*+rocm*-py3-none-manylinux*.whl" \
+            --dir $(pwd)/dist/
+
+          # Download ROCm plugin (e.g., jax_rocm7_plugin-0.8.0+rocm7.1.0-cp311-cp311-manylinux_2_28_x86_64.whl)
+          echo "Downloading ROCm plugin for Python ${PYTHON_VERSION}..."
+          gh release download ${{ inputs.github-release-tag }} \
+            --repo ROCm/rocm-jax \
+            --pattern "jax_rocm${JAXCI_ROCM_VERSION}_plugin-*+rocm*-${PYTHON_VERSION}-${PYTHON_VERSION}-manylinux*.whl" \
+            --dir $(pwd)/dist/
+
+          echo "Downloaded wheels:"
+          ls -lh $(pwd)/dist/
+        else
+          echo "Invalid jaxlib version: ${{ inputs.jaxlib-version }}. Supported values: 'pypi_latest', 'github_release'"
+          exit 1
+        fi
+    - name: Skip the test run if the wheel artifacts were not downloaded successfully
+      shell: bash
+      if: steps.download-wheel-artifacts.outcome == 'failure'
+      run: |
+        if [[ "${{ inputs.jaxlib-version }}" == "github_release" ]]; then
+          echo "Failed to download wheel artifacts from GitHub release: ${{ inputs.github-release-tag }}"
+          echo "Please check if the release exists and contains the required wheels:"
+          echo "  - jaxlib-*+rocm*-${PYTHON_VERSION}-${PYTHON_VERSION}-manylinux*.whl"
+          echo "  - jax_rocm${JAXCI_ROCM_VERSION}_pjrt-*+rocm*-py3-none-manylinux*.whl"
+          echo "  - jax_rocm${JAXCI_ROCM_VERSION}_plugin-*+rocm*-${PYTHON_VERSION}-${PYTHON_VERSION}-manylinux*.whl"
+        else
+          echo "Failed to download wheel artifacts from PyPI."
+          echo "Please check if the PyPI packages are available:"
+          echo "  - jaxlib"
+          echo "  - jax-rocm${JAXCI_ROCM_VERSION}-pjrt"
+          echo "  - jax-rocm${JAXCI_ROCM_VERSION}-plugin"
+        fi
+        echo "Skipping the test run."
+        exit 1
