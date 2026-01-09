@@ -1743,6 +1743,26 @@ def shfl_bfly(x: ir.Value, distance: int | ir.Value):
   return bitcast(y, result_type)
 
 
+def redux(x: ir.Value, mask: ir.Value, kind: nvvm.ReduxKind):
+  i32 = ir.IntegerType.get_signless(32)
+  if isinstance(vec_ty := x.type, ir.VectorType):
+    if bitwidth(vec_ty.element_type) != 32:
+      raise ValueError("Only 32-bit types supported")
+    [vec_len] = vec_ty.shape
+    result = llvm.mlir_undef(x.type)
+    for i in range(vec_len):
+      xi = llvm.extractelement(x, arith.constant(i32, i))
+      yi = redux(xi, mask, kind)
+      result = llvm.insertelement(result, yi, arith.constant(i32, i))
+    return result
+  if bitwidth(x.type) != 32:
+    raise ValueError("Only 32-bit scalar types supported")
+  if not isinstance(x.type, ir.IntegerType):
+    raise NotImplementedError(x.type)
+  assert mask.type == i32
+  return nvvm.redux_sync(x.type, x, kind, mask)
+
+
 def prmt(high: ir.Value, low: ir.Value, permutation: ir.Value):
   i32 = ir.IntegerType.get_signless(32)
   if (result_type := high.type) != low.type:
