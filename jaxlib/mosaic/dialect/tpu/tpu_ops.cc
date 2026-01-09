@@ -276,6 +276,7 @@ struct MemRefSliceFoldConstantDynamicDim
       } else {
         new_dynamic_sizes.push_back(dynamic_size);
       }
+      ++dynamic_dim_index;
     }
     // Update the memref_slice op and create a cast op to convert to the old
     // type.
