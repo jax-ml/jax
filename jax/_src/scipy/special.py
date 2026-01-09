@@ -1671,7 +1671,7 @@ def _gen_associated_legendre(l_max: int,
   row_init_expanded = jnp.expand_dims(row_init, 0)
   out = jnp.concatenate([row_init_expanded, stacked_rows], axis=0)
 
-  return out
+  return out.transpose((1, 0) + tuple(range(2, out.ndim)))
 
 
 def lpmn(m: int, n: int, z: Array) -> tuple[Array, Array]:
