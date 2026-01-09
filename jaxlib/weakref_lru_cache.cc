@@ -485,7 +485,8 @@ NB_MODULE(weakref_lru_cache, m) {
             cache_context_fn, fn,
             maxsize.value_or(std::numeric_limits<int>::max()), explain);
       },
-      nb::arg("cache_context_fn"), nb::arg("fn"), nb::arg("maxsize").none() = 2048,
+      nb::arg("cache_context_fn"), nb::arg("fn"),
+      nb::arg("maxsize").none() = 2048,
       nb::arg("explain") = std::optional<nb::callable>());
 }
 
