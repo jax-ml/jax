@@ -1607,7 +1607,7 @@ def _gen_associated_legendre(l_max: int,
   # Initial state for l=0
   if is_normalized:
     # Orthonormal convention: P_0^0 = 1/sqrt(4*pi)
-    p00 = jnp.full_like(x, 0.28209479177387814)
+    p00 = jnp.full_like(x, 1 / jnp.sqrt(4 * np.pi))
   else:
     p00 = jnp.ones_like(x)
 
