@@ -89,6 +89,10 @@ on:
         description: "GCS location prefix to where the artifacts should be uploaded"
         default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
         type: string
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: string
+        default: 'no'
     outputs:
       gcs_upload_uri:
         description: "GCS location prefix to where the artifacts were uploaded"
