@@ -275,22 +275,23 @@ void setLayout(Operation *op, ArrayRef<Layout> in, ArrayRef<Layout> out);
 // Helper functions to create constants.
 inline arith::ConstantOp IdxConst(int64_t idx, OpBuilder &builder,
                                   Location loc) {
-  return builder.create<arith::ConstantOp>(loc, builder.getIndexType(),
-                                           builder.getIndexAttr(idx));
+  return arith::ConstantOp::create(builder, loc, builder.getIndexType(),
+                                   builder.getIndexAttr(idx));
 }
 
 inline arith::ConstantOp I32Const(int32_t value, OpBuilder &builder,
                                   Location loc) {
-  return builder.create<arith::ConstantOp>(loc, builder.getI32Type(),
-                                           builder.getI32IntegerAttr(value));
+  return arith::ConstantOp::create(builder, loc, builder.getI32Type(),
+                                   builder.getI32IntegerAttr(value));
 }
 
 inline arith::ConstantOp I32Const(int32_t value, ArrayRef<int64_t> shape,
                                   OpBuilder &builder, Location loc) {
-  return builder.create<arith::ConstantOp>(
-      loc, DenseElementsAttr::get(
-               VectorType::get(shape, builder.getI32Type()),
-               builder.getIntegerAttr(builder.getI32Type(), value)));
+  return arith::ConstantOp::create(
+      builder, loc,
+      DenseElementsAttr::get(
+          VectorType::get(shape, builder.getI32Type()),
+          builder.getIntegerAttr(builder.getI32Type(), value)));
 }
 
 std::optional<int64_t> getIntConst(Value v);

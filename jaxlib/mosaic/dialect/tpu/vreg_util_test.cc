@@ -121,7 +121,7 @@ class VregUtilTest : public ::testing::Test {
                          tpu::TPUDialect>();
     mlir::Location loc = mlir::UnknownLoc::get(&context_);
     mlir::OpBuilder b(&context_);
-    module_ = b.create<ModuleOp>(loc);
+    module_ = ModuleOp::create(b, loc);
     builder_ = std::make_unique<mlir::ImplicitLocOpBuilder>(
         module_->getLoc(), module_->getBodyRegion());
   }

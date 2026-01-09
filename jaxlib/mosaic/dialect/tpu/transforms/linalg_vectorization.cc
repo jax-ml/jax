@@ -99,15 +99,14 @@ vector::TransferReadOp createTransferReadOp(vector::TransferReadOp op,
                                             PatternRewriter& rewriter) {
   // We know from preconditions that there are no out of bound dims.
   SmallVector<bool> in_bounds(source_ty.getRank(), true);
-  auto padding = rewriter.create<mlir::arith::ConstantOp>(
-      op->getLoc(), source_ty.getElementType(),
+  auto padding = mlir::arith::ConstantOp::create(
+      rewriter, op->getLoc(), source_ty.getElementType(),
       rewriter.getZeroAttr(source_ty.getElementType()));
-  return rewriter.create<vector::TransferReadOp>(
-      op.getLoc(),
+  return vector::TransferReadOp::create(
+      rewriter, op.getLoc(),
       VectorType::get(source_ty.getShape(), source_ty.getElementType()), source,
-      SmallVector<Value>(
-          source_ty.getRank(),
-          rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0)),
+      SmallVector<Value>(source_ty.getRank(), arith::ConstantIndexOp::create(
+                                                  rewriter, op.getLoc(), 0)),
       padding,  // Use padding with source_ty.
       AffineMapAttr::get(AffineMap::getMultiDimIdentityMap(source_ty.getRank(),
                                                            op->getContext())),
@@ -322,8 +321,9 @@ class GenericBitwidthConvert : public RewritePattern {
         continue;
       }
       has_bf16_operand = true;
-      extended_operands.push_back(rewriter.create<arith::ExtFOp>(
-          loc, VectorType::get(operand_type.getShape(), rewriter.getF32Type()),
+      extended_operands.push_back(arith::ExtFOp::create(
+          rewriter, loc,
+          VectorType::get(operand_type.getShape(), rewriter.getF32Type()),
           operand));
     }
     // If there are no bf16 operands, then we do not need to rewrite the op.
@@ -393,27 +393,27 @@ struct ContractionBitwidthConvert
     Value lhs = op.getLhs();
     Value rhs = op.getRhs();
     if (extend_operands) {
-      lhs = rewriter.create<arith::ExtFOp>(
-          op.getLoc(),
+      lhs = arith::ExtFOp::create(
+          rewriter, op.getLoc(),
           VectorType::get(op.getLhsType().getShape(), rewriter.getF32Type()),
           lhs);
-      rhs = rewriter.create<arith::ExtFOp>(
-          op.getLoc(),
+      rhs = arith::ExtFOp::create(
+          rewriter, op.getLoc(),
           VectorType::get(op.getRhsType().getShape(), rewriter.getF32Type()),
           rhs);
     }
 
     Value acc = op.getAcc();
     if (extend_acc) {
-      acc = rewriter.create<arith::ExtFOp>(
-          op.getLoc(),
+      acc = arith::ExtFOp::create(
+          rewriter, op.getLoc(),
           VectorType::get(acc_ty.getShape(), rewriter.getF32Type()),
           op.getAcc());
     }
 
-    vector::ContractionOp contraction = rewriter.create<vector::ContractionOp>(
-        op.getLoc(), lhs, rhs, acc, op.getIndexingMaps(), op.getIteratorTypes(),
-        op.getKind());
+    vector::ContractionOp contraction = vector::ContractionOp::create(
+        rewriter, op.getLoc(), lhs, rhs, acc, op.getIndexingMaps(),
+        op.getIteratorTypes(), op.getKind());
 
     if (extend_acc) {
       rewriter.replaceOpWithNewOp<arith::TruncFOp>(
@@ -451,14 +451,14 @@ struct MultiDimReductionBitwidthConvert
       return rewriter.notifyMatchFailure(op, "not vector reduction");
     }
 
-    auto reduction = rewriter.create<vector::MultiDimReductionOp>(
-        op.getLoc(),
-        rewriter.create<arith::ExtFOp>(
-            op.getLoc(),
+    auto reduction = vector::MultiDimReductionOp::create(
+        rewriter, op.getLoc(),
+        arith::ExtFOp::create(
+            rewriter, op.getLoc(),
             VectorType::get(src_ty.getShape(), rewriter.getF32Type()),
             op.getSource()),
-        rewriter.create<arith::ExtFOp>(
-            op.getLoc(),
+        arith::ExtFOp::create(
+            rewriter, op.getLoc(),
             VectorType::get(res_ty.getShape(), rewriter.getF32Type()),
             op.getAcc()),
         op.getReductionMask(), op.getKind());
