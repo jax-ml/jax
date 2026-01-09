@@ -15,10 +15,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import dataclasses
 import threading
 from typing import Any
-from collections.abc import Callable
+
+
+@dataclasses.dataclass
+class _ClassWrapperForGarbageCollection:
+  obj: Any
 
 
 @dataclasses.dataclass(frozen=True)
@@ -72,6 +77,8 @@ class _ObjectStore:
       state = self._storage.pop(uid)
 
     # The object will be deleted without holding the lock.
+    if isinstance(state.obj, _ClassWrapperForGarbageCollection):
+      del state.obj.obj
     del state
 
 

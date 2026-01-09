@@ -20,6 +20,7 @@ import inspect
 import random
 import threading
 from typing import Any
+import weakref
 
 import jax
 from jax._src import api_util
@@ -29,7 +30,6 @@ from jax._src.traceback_util import api_boundary
 from jax._src.util import wraps
 from jax.experimental.colocated_python import func
 from jax.experimental.colocated_python import obj_backend
-
 
 # TODO(madthanu): Remove the following config option and make its behavior the
 # default, once the behavior has been declared stable.
@@ -108,23 +108,23 @@ def _make_method(
     def _first_call(self):
       # Temporarily hold a strong reference to a new object if it is created
       # using initializer.
-      new_obj = None
+      temp_strong_ref = None
 
       def initializer():
-        nonlocal new_obj
-        new_obj = cls(*init_args, **init_kwargs)
-        if use_weakrefs:
-          import weakref
-
-          return weakref.ref(new_obj)
-        return new_obj
+        if not use_weakrefs:
+          return obj_backend._ClassWrapperForGarbageCollection(  # pylint: disable=protected-access
+              cls(*init_args, **init_kwargs)
+          )
+        nonlocal temp_strong_ref
+        temp_strong_ref = cls(*init_args, **init_kwargs)
+        return weakref.ref(temp_strong_ref)
 
       retrieved = obj_backend.SINGLETON_OBJECT_STORE.get_or_create(
           uid, initializer
       )
 
       if use_weakrefs:
-        self.obj = retrieved()
+        self.obj = temp_strong_ref
       else:
         self.obj = retrieved
 
@@ -132,7 +132,14 @@ def _make_method(
       with self._lock:
         if not hasattr(self, 'obj'):
           self._first_call()
-      return getattr(self.obj, method_name)(*args, **kwargs)
+
+      if use_weakrefs:
+        return getattr(self.obj, method_name)(*args, **kwargs)
+      else:
+        assert isinstance(
+            self.obj, obj_backend._ClassWrapperForGarbageCollection
+        )
+        return getattr(self.obj.obj, method_name)(*args, **kwargs)
 
   # Colocated Python callable for the controller.
   callable = func_maker.make_callable(
@@ -152,7 +159,8 @@ def _make_method(
 
       args_leaves = tree_util.tree_leaves((args, kwargs))
       args_shardings_leaves = tuple(
-          func._get_spec(x).sharding for x in args_leaves)
+          func._get_spec(x).sharding for x in args_leaves
+      )
       if args_shardings_leaves:
         _update_instance_devices(uid, args_shardings_leaves)
 
@@ -163,7 +171,8 @@ def _make_method(
       if not args_shardings_leaves:
         result_leaves = tree_util.tree_leaves(result)
         result_shardings_leaves = tuple(
-            func._get_spec(x).sharding for x in result_leaves)
+            func._get_spec(x).sharding for x in result_leaves
+        )
         _update_instance_devices(uid, result_shardings_leaves)
       return result
 
