@@ -24,16 +24,20 @@
 #                           runs Bazel TPU tests with py_import.
 
 name: CI - Wheel Tests (Continuous)
-permissions:
-      contents: read
+permissions: {}
 
 on:
-  schedule:
-    - cron: "0 */3 * * *" # Run once every 3 hours
-  workflow_dispatch: # allows triggering the workflow run manually
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - 'release/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # Don't cancel in-progress jobs for main/release branches.
   cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
 
 jobs:
