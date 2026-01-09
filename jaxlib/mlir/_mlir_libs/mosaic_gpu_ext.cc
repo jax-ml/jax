@@ -163,7 +163,7 @@ NB_MODULE(_mosaic_gpu_ext, m) {
             if (!result.ok()) {
               throw nb::value_error(result.status().message().data());
             }
-            return new (self) mgpu::Tiling(*result);
+            new (self) mgpu::Tiling(*result);
           },
           nb::arg("tiles"))
       .def(
