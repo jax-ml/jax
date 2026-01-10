@@ -335,15 +335,6 @@ cc_test(
     ],
 )
 
-filegroup(
-    name = "extension_srcs",
-    srcs = [
-        "dialect/tpu/transforms/extensions/apply_vector_layout_extensions.cc",
-        "dialect/tpu/transforms/extensions/infer_vector_layout_extensions.cc",
-    ],
-    # compatible with libtpu
-)
-
 cc_library(
     name = "pass_boilerplate",
     hdrs = ["pass_boilerplate.h"],
