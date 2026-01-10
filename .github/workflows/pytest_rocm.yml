@@ -1,0 +1,188 @@
+# CI - Pytest ROCm
+#
+# This workflow runs the ROCm tests with Pytest in ROCm team's GHCR containers.
+# It can be triggered manually via workflow_dispatch or called by other workflows
+# via workflow_call.
+#
+# It consists of the following job:
+# run-tests:
+#    - Runs in ROCm team's container (ghcr.io/rocm/jax-ubu*.rocm*:latest)
+#    - Downloads the JAX wheel and ROCm artifacts (custom jaxlib and plugins).
+#    - Executes the `run_pytest_rocm.sh` script, which performs the following actions:
+#      - Installs the downloaded wheel artifacts.
+#      - Runs the ROCm tests with Pytest.
+name: CI - Pytest ROCm
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Which runner should the workflow run on?"
+        type: choice
+        default: "linux-x86-64-4gpu-amd"
+        options:
+          - "linux-x86-64-1gpu-amd"
+          - "linux-x86-64-4gpu-amd"
+          - "linux-x86-64-8gpu-amd"
+      ubuntu-version:
+        description: "Which Ubuntu version to use for container? (ubu22=py3.11, ubu24=py3.12)"
+        type: choice
+        default: "22"
+        options:
+          - "22"
+          - "24"
+      python:
+        description: "Which Python version to use?"
+        type: choice
+        default: "3.11"
+        options:
+          - "3.11"
+          - "3.12"
+      rocm-version:
+        description: "Which ROCm version to test?"
+        type: choice
+        default: "7.2.0"
+        options:
+          - "7.2.0"
+      rocm-tag:
+        description: "ROCm tag for container image (e.g., rocm711)"
+        type: string
+        default: "rocm720"
+      jax-version:
+        description: "Which JAX version to download from PyPI? (e.g., 0.8.0, 0.8.2, or 'latest')"
+        type: string
+        default: "0.9.0"
+      jaxlib-version:
+        description: "Which jaxlib version to use? (pypi_latest/github_release)"
+        type: choice
+        default: "github_release"
+        options:
+          - "github_release"
+          - "pypi_latest"
+      github-release-tag:
+        description: "GitHub release tag for custom jaxlib (required if jaxlib-version is github_release)"
+        type: string
+        default: "rocm-jax-v0.9.0-rc"
+      skip-download-jaxlib-and-rocm-plugins:
+        description: "Whether to skip downloading the jaxlib and ROCm plugins (e.g for testing a jax only release)"
+        type: choice
+        default: '0'
+        options:
+          - '0'
+          - '1'
+      download-jax-from-pypi:
+        description: "Whether to download the jax wheel from PyPI"
+        type: choice
+        default: '1'
+        options:
+          - '1'
+          - '0'
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: string
+        default: 'no'
+  workflow_call:
+    inputs:
+      runner:
+        description: "Which runner should the workflow run on?"
+        type: string
+        default: "linux-x86-64-4gpu-amd"
+      ubuntu-version:
+        description: "Which Ubuntu version to use for container? (ubu22=py3.11, ubu24=py3.12)"
+        type: string
+        default: "22"
+      python:
+        description: "Which Python version to use?"
+        type: string
+        default: "3.11"
+      rocm-version:
+        description: "Which ROCm version to test?"
+        type: string
+        default: "7.2.0"
+      rocm-tag:
+        description: "ROCm tag for container image (e.g., rocm711)"
+        type: string
+        default: "rocm720"
+      jax-version:
+        description: "Which JAX version to download from PyPI? (e.g., 0.8.0, 0.8.2, or 'latest')"
+        type: string
+        default: "0.9.0"
+      jaxlib-version:
+        description: "Which jaxlib version to use? (pypi_latest/github_release)"
+        type: string
+        default: "github_release"
+      github-release-tag:
+        description: "GitHub release tag for custom jaxlib (required if jaxlib-version is github_release)"
+        type: string
+        default: "rocm-jax-v0.9.0-rc"
+      skip-download-jaxlib-and-rocm-plugins:
+        description: "Whether to skip downloading the jaxlib and ROCm plugins (e.g for testing a jax only release)"
+        default: '0'
+        type: string
+      download-jax-from-pypi:
+        description: "Whether to download the jax wheel from PyPI"
+        default: '1'
+        type: string
+permissions: {}
+
+env:
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+
+jobs:
+  run-tests:
+    defaults:
+      run:
+        # Set the shell to bash as GitHub actions run with /bin/sh by default
+        shell: bash
+    runs-on: ${{ inputs.runner }}
+    continue-on-error: true
+    # Run in ROCm team's GHCR container with GPU access
+    container:
+      image: ghcr.io/rocm/jax-base-ubu${{ inputs.ubuntu-version }}.${{ inputs.rocm-tag }}:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --shm-size 64G --env-file /etc/podinfo/gha-gpu-isolation-settings
+    name: "ROCm ${{ inputs.rocm-version }}, ubu${{ inputs.ubuntu-version }}, py${{ inputs.python }}"
+
+    env:
+      JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
+      JAXCI_PYTHON: "python${{ inputs.python }}"
+      JAXCI_ENABLE_X64: "0"
+
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+      - name: Install GitHub CLI
+        run: |
+          type -p curl >/dev/null || (apt update && apt install curl -y)
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          apt update
+          apt install gh -y
+      - name: Download JAX ROCm wheels
+        uses: ./.github/actions/download-jax-rocm-wheels
+        with:
+          python: ${{ inputs.python }}
+          rocm-version: ${{ inputs.rocm-version }}
+          jax-version: ${{ inputs.jax-version }}
+          jaxlib-version: ${{ inputs.jaxlib-version }}
+          github-release-tag: ${{ inputs.github-release-tag }}
+          skip-download-jaxlib-and-rocm-plugins: ${{ inputs.skip-download-jaxlib-and-rocm-plugins }}
+          download-jax-from-pypi: ${{ inputs.download-jax-from-pypi }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Python dependencies
+        run: |
+          $JAXCI_PYTHON -m pip install uv~=0.5.30
+          $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
+      # Halt for testing
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Run Pytest ROCm tests
+        timeout-minutes: 120
+        run: ./ci/run_pytest_rocm.sh
