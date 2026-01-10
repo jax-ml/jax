@@ -1,3 +1,46 @@
+#!/bin/bash
+# Copyright 2024 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+# Runs Pytest ROCm tests. Requires the jaxlib and ROCm plugin wheels to be
+# present inside $JAXCI_OUTPUT_DIR (../dist)
+#
+# -e: abort script if one command fails
+# -u: error if undefined variable used
+# -x: log all commands
+# -o history: record shell history
+# -o allexport: export all functions and variables to be available to subscripts
+set -exu -o history -o allexport
+
+# Source default JAXCI environment variables.
+source ci/envs/default.env
+
+# Install jaxlib and ROCm plugin wheels inside the $JAXCI_OUTPUT_DIR directory
+echo "Installing wheels locally..."
+source ./ci/utilities/install_wheels_locally.sh
+
+# Print all the installed packages
+echo "Installed packages:"
+"$JAXCI_PYTHON" -m uv pip freeze
+
+"$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
+
+rocm-smi
+
+# ==============================================================================
+# Set up the generic test environment variables
+# ==============================================================================
 export PY_COLORS=1
 export JAX_SKIP_SLOW_TESTS=true
 export NCCL_DEBUG=WARN
@@ -9,7 +52,7 @@ export JAX_ENABLE_X64="$JAXCI_ENABLE_X64"
 # This will be the minimum of: GPU capacity, CPU core count, and a system RAM limit.
 # ==============================================================================
 
-export gpu_count=$(amd-smi list | grep "GPU:" | wc -l)
+export gpu_count=$(rocminfo | egrep -c "Device Type:\s+GPU")
 echo "Number of GPUs detected: $gpu_count"
 
 # Query GPU 0 memory using rocm-smi
@@ -48,19 +91,32 @@ if [[ $host_memory_limit -lt $num_processes ]]; then
   echo "Adjusting num_processes to match host memory limit: $num_processes"
 fi
 
+if [[ 16 -lt $num_processes ]]; then
+  num_processes=16
+  echo "Reducing num_processes to $num_processes"
+fi
+
 echo "Final number of processes to run: $num_processes"
 
 export JAX_ENABLE_CUDA_XDIST="$gpu_count"
 export JAX_ENABLE_ROCM_XDIST="$gpu_count"
 export XLA_PYTHON_CLIENT_ALLOCATOR=platform
-export XLA_FLAGS=--xla_gpu_force_compilation_parallelism=1
+export XLA_FLAGS="--xla_gpu_force_compilation_parallelism=1 --xla_gpu_enable_nccl_comm_splitting=false --xla_gpu_enable_command_buffer="
+
+# ==============================================================================
+# Run tests
+# ==============================================================================
+
+# Disable core dumps just in case
+ulimit -c 0
 
 echo "Running ROCm tests..."
-pytest  -vv --durations=0 -n $num_processes --tb=short --maxfail=20 tests --deselect=tests/multi_device_test.py::MultiDeviceTest::test_computation_follows_data \
+# TODO: Add examples directory to test suite (CUDA tests both: tests examples)
+# TODO: Verify if CSV/HTML report generation should be kept (unique to ROCm)
+# TODO: Verify if log file output should be kept (unique to ROCm)
+export NPROC=32
+"$JAXCI_PYTHON" -m pytest -n $num_processes --tb=short \
+tests \
+--deselect=tests/multi_device_test.py::MultiDeviceTest::test_computation_follows_data \
 --deselect=tests/multiprocess_gpu_test.py::MultiProcessGpuTest::test_distributed_jax_visible_devices \
---deselect=tests/compilation_cache_test.py::CompilationCacheTest::test_task_using_cache_metric \
---csv=tests-report.csv \
---html=tests-report.html \
---self-contained-html \
-2>&1 | tee jax_0.8.0_UT.log
-
+--deselect=tests/compilation_cache_test.py::CompilationCacheTest::test_task_using_cache_metric
