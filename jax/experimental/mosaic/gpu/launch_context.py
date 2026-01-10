@@ -1360,20 +1360,6 @@ class LaunchContext:
     if predicate is None:
       predicate = c(1, ir.IntegerType.get_signless(1))
 
-    def check_contiguous_slice(slice_shape, strides):
-      if strides[-1] != 1:
-        return ValueError(
-            f"Minor-most dim must have stride of 1, got {strides[-1]}."
-        )
-
-      expected_stride = 1
-      for dim, stride in zip(reversed(slice_shape), reversed(strides), strict=True):
-        if dim != 1 and stride != expected_stride:
-          return False
-        expected_stride *= dim
-
-      return True
-
     ref = gmem_ref
     for t in gmem_transform:
       ref = t.apply(ref)
@@ -1382,7 +1368,7 @@ class LaunchContext:
 
     # Use the simpler copy instruction for contiguous transfers.
     is_simple_contiguous_copy = (
-        check_contiguous_slice(slice_shape, strides)
+        strides == utils.get_contiguous_strides(slice_shape)
         and reduction_op is None
         and (
             swizzle is None or swizzle == mgpu_dialect.SwizzlingMode.kNoSwizzle

@@ -111,10 +111,10 @@ def pack_array(values):
   return arr_ptr
 
 
-def get_contiguous_strides(xs):
+def get_contiguous_strides(shape: Sequence[int]) -> list[int]:
   strides_ret = []
   stride = 1
-  for x in xs[::-1]:
+  for x in shape[::-1]:
     strides_ret.append(stride)
     stride *= x
   return strides_ret[::-1]
