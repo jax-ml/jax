@@ -1416,7 +1416,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
     empty_mesh = jax.sharding.AbstractMesh((), ())
     shd_ns = jax.sharding.NamedSharding(empty_mesh, P(None, None),
-                                          memory_kind="pinned_host")
+                                        memory_kind="pinned_host")
 
     self.assertEqual(exported.in_avals[0].sharding,
                      jax.sharding.NamedSharding(empty_mesh, P(None, None)))

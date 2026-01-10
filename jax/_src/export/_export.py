@@ -202,7 +202,7 @@ class Exported:
   out_tree: tree_util.PyTreeDef
   out_avals: tuple[core.ShapedArray, ...]
 
-  # _has_named_shardings is True if the export was done after 12/5/2025 and
+  # _has_named_shardings is True if the export was done after 1/15/2026 and
   # we have _in_named_shardings and _out_named_shardings. In that case we
   # support multiple meshes for inputs and outputs, and we do not rely
   # anymore on the Shardy-saved meshes, which do not have axis_types anyway,
