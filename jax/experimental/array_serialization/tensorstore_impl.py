@@ -496,7 +496,7 @@ def estimate_read_memory_footprint(t: ts.TensorStore,
 
 
 async def async_deserialize(
-    user_in_sharding: jax.sharding.Sharding | Format | jax.ShapeDtypeStruct,
+    in_type: jax.sharding.Sharding | Format | jax.ShapeDtypeStruct,
     tensorstore_spec: ts.Spec | dict[str, Any],
     global_shape: Sequence[int] | None = None,
     dtype=None,
@@ -506,17 +506,20 @@ async def async_deserialize(
     assume_metadata: bool = False,
 ):
   """Main performant deserialization routine for arrays using tensorstore."""
-  in_sharding = (user_in_sharding.sharding
-                 if isinstance(user_in_sharding, Format) else user_in_sharding)
-  if isinstance(user_in_sharding, jax.ShapeDtypeStruct):
-    dtype = dtype if dtype is not None else user_in_sharding.dtype
-    in_sharding = user_in_sharding.sharding
-  if not isinstance(in_sharding, jax.sharding.Sharding):
-    raise ValueError(
-        'sharding passed to deserialization should be specified, concrete and'
-        f' an instance of `jax.sharding.Sharding`. Got {in_sharding}')
-  dll = (user_in_sharding.layout
-         if isinstance(user_in_sharding, Format) else None)
+  if isinstance(in_type, Format):
+    in_sharding, layout = in_type.sharding, in_type.layout
+  elif isinstance(in_type, jax.ShapeDtypeStruct):
+    dtype = in_type.dtype if dtype is None else dtype
+    in_sharding = in_type.sharding
+    layout = in_type.format.layout
+  else:
+    if not isinstance(in_type, jax.sharding.Sharding):
+      raise TypeError(
+          'sharding passed to deserialization should be specified, concrete and'
+          f' an instance of `jax.sharding.Sharding`. Got {in_type}')
+    in_sharding = in_type
+    layout = None
+  assert isinstance(in_sharding, jax.sharding.Sharding)
   t = await ts.open(
       tensorstore_spec,
       open=True,
@@ -552,7 +555,7 @@ async def async_deserialize(
     if out.dtype == jnp.int4:
       out = jnp.asarray(out)  # type: ignore
     result = jax.device_put(
-        out, Format(dll, jax.sharding.SingleDeviceSharding(device)))
+        out, Format(layout, jax.sharding.SingleDeviceSharding(device)))
     if byte_limiter is not None:
       # NB: `out` actually might not be ready for garbage collection by the
       # time we call release_bytes . Thus peak memory usage still might grow

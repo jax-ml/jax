@@ -39,7 +39,7 @@ from jax._src.export._export import (
     deserialization_registry as node_deserialization_registry)
 from jax._src.export._export import (
     serialization_registry as node_serialization_registry)
-from jax._src.layout import Layout as DLL
+from jax._src.layout import Layout
 from jax._src.layout import Format
 from jax.experimental.array_serialization import pytree_serialization
 from jax.experimental.array_serialization import serialization
@@ -633,19 +633,21 @@ class CheckpointTest(jtu.JaxTestCase):
     }
     self.assertTrue(serialization.is_remote_storage(nested_tspec))
 
-  def test_load_with_layout(self):
+  @parameterized.named_parameters(('4_devices', 4), ('1_device', 1))
+  def test_load_with_layout(self, device_count):
     if not jtu.test_device_matches(['tpu']):
       self.skipTest('Layouts are only supported on TPUs')
 
-    mesh = jtu.create_mesh((4, 2), ('x', 'y'))
-    np_inp = np.arange(32).reshape(8, 4)
+    mesh = jtu.create_mesh((2, 2) if device_count == 4 else (1, 1), ('x', 'y'))
+    np_inp = np.arange(device_count * 128 * 128 * 2).reshape((-1, 2 * 128))
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
 
-    out_format = jax.jit(lambda x: x.T, out_shardings=Format(DLL.AUTO)).lower(
-        arr).compile().output_formats
-    self.assertEqual(arr.format.layout.major_to_minor,
-                     out_format.layout.major_to_minor[::-1])
+    transpose_layout = Layout(
+        major_to_minor=arr.format.layout.major_to_minor[::-1],
+        tiling=arr.format.layout.tiling)
+    out_format = Format(transpose_layout, arr.sharding)
+    out_ref = jax.device_put(arr.T, out_format)
 
     ckpt_dir = pathlib.Path(self.create_tempdir('ckpt').full_path)
     ckpt_path = pathlib.Path(self.create_tempdir(f'{ckpt_dir}/first').full_path)
@@ -653,18 +655,22 @@ class CheckpointTest(jtu.JaxTestCase):
 
     manager = serialization.GlobalAsyncCheckpointManager()
     manager.serialize(
-        [arr], tspecs,
+        [out_ref], tspecs,
         on_commit_callback=partial(
             self._on_commit_callback, ckpt_dir, ckpt_dir))
     manager.wait_until_finished()
 
-    out, = serialization.run_deserialization([out_format], tspecs)
+    out_specs = [out_format, jax.ShapeDtypeStruct(
+        out_ref.shape, out_ref.dtype, sharding=out_format)]
 
-    self.assertEqual(out.format, out_format)
-    self.assertIsInstance(out, array.ArrayImpl)
-    self.assertArraysEqual(out, np_inp)
-    for s in out.addressable_shards:
-      self.assertArraysEqual(s.data, np_inp[s.index])
+    for out_spec, name in zip(out_specs, ['format', 'ShapeDtypeStruct']):
+      with self.subTest(f'deserialization_with_{name}'):
+        out, = serialization.run_deserialization([out_spec], tspecs)
+        self.assertEqual(out.format, out_format)
+        self.assertIsInstance(out, array.ArrayImpl)
+        self.assertArraysEqual(out, out_ref)
+        for s, s_ref in zip(out.addressable_shards, out_ref.addressable_shards):
+          self.assertArraysEqual(s.data, s_ref.data)
 
   def test_deserialization_with_int4(self):
     if config.use_shardy_partitioner.value:
