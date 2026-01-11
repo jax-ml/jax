@@ -725,6 +725,24 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
 
+  def test_kernel_auto_alias(self):
+    x = jnp.ones(256, dtype=jnp.float32)
+    @functools.partial(
+        self.kernel,
+        out_shape=[],
+        return_input_buffers=True,
+        scratch_shapes=[plgpu.SMEM((256,), jnp.float32)],
+    )
+    def kernel(in_ref, scratch_ref):
+      scratch_ref[...] = in_ref[...] + 1
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(scratch_ref, in_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    result = kernel(x)
+    self.assertLen(result, 1)
+    np.testing.assert_array_equal(result[0], jnp.ones_like(x) + 1)
+
   @parameterized.parameters(jnp.bfloat16, jnp.float16, jnp.float32)
   def test_copy_smem_to_gmem_reduction(self, dtype):
     # TODO(b/415721295):Remove after the minimal jaxlib version is 0.8.2.
