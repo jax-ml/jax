@@ -634,15 +634,16 @@ def _closed_call_discharge_rule(
 @register_discharge_rule(core.call_p)
 def _call_discharge_rule(
     in_avals: Sequence[core.AbstractValue], _,*args,
-    call_jaxpr: core.Jaxpr):
+    call_jaxpr: core.Jaxpr, **kwargs):
   closed_call_jaxpr = core.ClosedJaxpr(call_jaxpr, ())
   discharged_closed_jaxpr, num_outs, fun = _cached_closed_jaxpr_discharge(
       closed_call_jaxpr)
   discharged_call_jaxpr = discharged_closed_jaxpr.jaxpr
   discharged_consts = discharged_closed_jaxpr.consts
   discharged_call_jaxpr = pe.convert_constvars_jaxpr(discharged_call_jaxpr)
-  out_and_ref_vals = core.closed_call_p.bind(fun, *discharged_consts, *args,
-                                             call_jaxpr=discharged_call_jaxpr)
+  out_and_ref_vals = core.call_p.bind(fun, *discharged_consts, *args,
+                                      call_jaxpr=discharged_call_jaxpr,
+                                      **kwargs)
   out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
   ref_vals_iter = iter(ref_vals)
   new_invals = tuple(next(ref_vals_iter) if isinstance(aval, AbstractRef)
