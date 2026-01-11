@@ -46,6 +46,14 @@ SMEM_BANKS = 32
 SMEM_BANK_BYTES = 4
 c = utils.c
 
+from importlib.metadata import version, distributions
+
+import sys
+for d in distributions():
+  print(f"<< {d.name} {d.version}", file=sys.stderr)
+
+raise ValueError(version("nanobind"))
+
 
 @dataclasses.dataclass(frozen=True)
 class TilingImpl:
@@ -277,8 +285,32 @@ def enumerate_negative(elems: Sequence[T]) -> Iterable[tuple[int, T]]:
 
 
 @dataclasses.dataclass(frozen=True)
-class Replicated:
+class ReplicatedImpl:
   times: int
+
+
+# TODO(olechwierowicz): Clean up this once C++ Replicated is always available in JAX build.
+Replicated: Any
+if hasattr(mgpu.dialect, "Replicated"):
+  Replicated = mgpu.dialect.Replicated
+else:
+  Replicated = ReplicatedImpl
+
+
+def cc_method_exists(self, method_name: str):
+  return hasattr(mgpu.dialect, self.__class__.__name__) and hasattr(
+      getattr(mgpu.dialect, self.__class__.__name__), method_name
+  )
+
+
+def dispatch_to_cc_method(self, method_name: str, extract_args_fun, *args, **kwargs):
+  """Dispatches a method call to the corresponding C++ method."""
+  cls = getattr(mgpu.dialect, self.__class__.__name__)
+  instance = cls(*extract_args_fun(self))
+  attr = getattr(instance, method_name)
+  if not callable(attr):
+    return attr
+  return attr(*args, **kwargs)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -418,6 +450,8 @@ class TiledLayout:
     so the tiled shape always ends with this suffix, no matter what array shape
     it's applied to.
     """
+    if cc_method_exists(self, "tiled_tiling_shape"):
+      return self.dispatch_to_cc("tiled_tiling_shape")
     base_tile_shape = self.base_tile_shape
     return self.tiling.tile_shape(base_tile_shape)[len(base_tile_shape):]
 
@@ -532,6 +566,16 @@ class TiledLayout:
 
   def canonicalize(self) -> TiledLayout:
     """Returns a version of this layout where tiling is canonical."""
+    if cc_method_exists(self, "canonicalize"):
+      c_layout = self.dispatch_to_cc("canonicalize")
+      return TiledLayout(
+        tiling=c_layout.tiling,
+        warp_dims=c_layout.warp_dims,
+        lane_dims=c_layout.lane_dims,
+        vector_dim=c_layout.vector_dim,
+        _check_canonical=False
+      )
+
     canonical_tiling = self.tiling.canonicalize()
 
     s = self.base_tile_shape
@@ -583,6 +627,21 @@ class TiledLayout:
         tuple(replace_tiled_dim(d) for d in self.lane_dims if is_nontrivial(d)),
         replace_tiled_dim(self.vector_dim),
         _check_canonical=False,
+    )
+
+  def dispatch_to_cc(self, method_name: str, *args, **kwargs):
+    return dispatch_to_cc_method(
+        self,
+        method_name,
+        lambda inst: [
+            inst.tiling,
+            inst.warp_dims,
+            inst.lane_dims,
+            inst.vector_dim,
+            False,  # check_canonical
+        ],
+        *args,
+        **kwargs,
     )
 
 

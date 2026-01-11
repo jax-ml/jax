@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/status/statusor.h"
@@ -111,6 +112,113 @@ class Tiling {
   explicit Tiling(std::vector<Tile> tiles);
 
   std::vector<Tile> tiles_;
+};
+
+// Type wrapper for the number of times a dimension is replicated.
+struct Replicated {
+  int64_t times;
+
+  std::string ToString() const;
+
+  bool operator==(const Replicated& other) const {
+    return times == other.times;
+  }
+
+  template <typename H>
+  friend H AbslHashValue(H h, const Replicated& rep) {
+    return H::combine(std::move(h), rep.times);
+  }
+};
+
+// A FragmentedArray layout derived from a tiling expression.
+
+//  A logical array is transformed according to the tiling expression, and then
+//  split across warps (within a warpgroup), lanes, and vectorized according to
+//  the dimension indices. All dimension indices must be negative and should
+//  refer to the dimensions after tiling is applied.
+//
+//  To better understand this layout, consider the example of WGMMA-related
+//  tiling from
+//  https://docs.nvidia.com/cuda/parallel-thread-execution/#wgmma-64n16-d as
+//  applied to a 128x128 array. The corresponding TiledLayout has a tiling of:
+//
+//      (64, 8)(16, 8)(8, 8)(1, 2)
+//
+//  and warp_dims=(-8,), lane_dims=(-4, -3), vector_dim=-1.
+//
+//  We begin by applying the tiling (note that it always applies to a suffix):
+//
+//          Tiled shape                       Remaining tiling actions
+//  ===========================================================================
+//  128 128                                  (64, 8)(16, 8)(8, 8)(1, 2)
+//    2  16  64  8                           (16, 8)(8, 8)(1, 2)
+//    2  16   4  1  16  8                    (8, 8)(1, 2)
+//    2  16   4  1   2  1  8  8              (1, 2)
+//    2  16   4  1   2  1  8  4  1  2
+//
+//  The last expression is our final shape. At this stage, we're ready to
+//  partition the dimensions: warp_dims=(-8,) means that the 8-th dimension from
+//  the end is partitioned over 4 warps in a warpgroup (and so it must be of
+//  size 4). lane_dims=(-4, -3) indicate that those two dimensions are
+//  partitioned over the lanes within a warp (their product must be equal to 32,
+//  i.e. warp size). Finally, vector_dim=-1 indicates that each (logical)
+//  register is a vector containing 2 elements (there are no shape restrictions
+//  here).
+//
+//  Given the above, the shape of the (logical) register array used to represent
+//  the array in each thread is: (2, 16, 1, 1, 2, 1, 1, 1, 1, 1). We have set
+//  all the dimensions above to 1, since each thread is a member of a single
+//  warp, a single lane, and the elements along the vectorized dimension are
+//  represented by a single (logical) register.
+//
+class TiledLayout {
+ public:
+  using Dim = std::variant<int64_t, Replicated>;
+
+  static absl::StatusOr<TiledLayout> Create(Tiling tiling,
+                                            std::vector<Dim> warp_dims,
+                                            std::vector<Dim> lane_dims,
+                                            int64_t vector_dim,
+                                            bool check_canonical = true);
+  virtual ~TiledLayout() = default;
+
+  bool operator==(const TiledLayout& other) const;
+  bool operator!=(const TiledLayout& other) const { return !(*this == other); }
+
+  const Tiling& tiling() const { return tiling_; }
+  const std::vector<Dim>& warp_dims() const { return warp_dims_; }
+  const std::vector<Dim>& lane_dims() const { return lane_dims_; }
+  int64_t vector_dim() const { return vector_dim_; }
+
+  // Returns the of the tiled tiling (without the base tile shape part).
+  absl::StatusOr<std::vector<int64_t>> TiledTilingShape() const;
+
+  // Canonicalizes the layout. E.g. If the tiling suffix is
+  //   (4, 32, 1, 1, 1), vector_dim = -1, warp_dims = {-5}, lane_dims = {-4}
+  // then the canonicalized layout is
+  //   (4, 32, 1), vector_dim = -1, warp_dims = {-3}, lane_dims = {-2}
+  absl::StatusOr<TiledLayout> Canonicalize() const;
+
+  template <typename H>
+  friend H AbslHashValue(H h, const TiledLayout& layout) {
+    return H::combine(std::move(h), layout.tiling_, layout.warp_dims_,
+                      layout.lane_dims_, layout.vector_dim_);
+  }
+
+  std::string ToString() const;
+
+ private:
+  TiledLayout(Tiling tiling, std::vector<Dim> warp_dims,
+              std::vector<Dim> lane_dims, int64_t vector_dim)
+      : tiling_(std::move(tiling)),
+        warp_dims_(std::move(warp_dims)),
+        lane_dims_(std::move(lane_dims)),
+        vector_dim_(vector_dim) {};
+
+  Tiling tiling_;
+  std::vector<Dim> warp_dims_;
+  std::vector<Dim> lane_dims_;
+  int64_t vector_dim_;
 };
 
 }  // namespace jax::mosaic::gpu
