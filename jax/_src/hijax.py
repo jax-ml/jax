@@ -383,8 +383,12 @@ class VJPHiPrimitive:
                               "implement `vjp_bwd` or `vjp_bwd_retval`")
 
   def batch(self, axis_data, args, dims):
+    out_dim = self.batch_dim_rule(axis_data, dims)
+    return VmapOf(self, axis_data, dims, out_dim)(*args), out_dim
+
+  def batch_dim_rule(self, axis_data, dims):
     raise NotImplementedError(f"for vmap support, subclass {type(self)} must "
-                              "implement `batch`")
+                              "implement `batch` or `batch_dim_rule`")
 
   def jvp(self, primals, tangents):
     raise NotImplementedError(f"for jvp support, subclass {type(self)} must "
@@ -412,6 +416,62 @@ class VJPHiPrimitive:
 
   def __eq__(self, other):
     return type(self) is type(other) and self.params == other.params
+
+class VmapOf(VJPHiPrimitive):
+  def __init__(self, prim, axis_data, in_dims, out_dim):
+    unmap = lambda a, d: core.unmapped_aval(axis_data.size, d, a,
+                                            axis_data.explicit_mesh_axis)
+    self.in_avals = tree_map(unmap, prim.in_avals, in_dims)
+    self.out_aval = tree_map(unmap, prim.out_aval, out_dim)
+    self.params = dict(prim=prim, axis_data=axis_data, in_dims=in_dims,
+                       out_dim=out_dim)
+    super().__init__()
+
+  @property
+  def _vmap_params(self):
+    return dict(axis_size=self.axis_data.size, axis_name=self.axis_data.name,  # type: ignore
+                spmd_axis_name=self.axis_data.spmd_name or self.axis_data.explicit_mesh_axis)  # type: ignore
+
+  def expand(self, *args):
+    return api.vmap(self.prim.expand, in_axes=self.in_dims, out_axes=self.out_dim,  # type: ignore
+                    **self._vmap_params)(*args)
+
+  def vjp_fwd(self, in_nzs, *args):
+    store = lambda: None
+    def fwd(*args):
+      primal_out, res, *maybe_out_nzs = self.prim.vjp_fwd(in_nzs, *args)  # type: ignore
+      store.out_nzs = maybe_out_nzs
+      return primal_out, res
+    (primal_out, res), (_, res_axes) = api.vmap(
+        fwd, in_axes=self.in_dims, out_axes=(self.out_dim, batching.infer),  # type: ignore
+        **self._vmap_params)(*args)
+    return primal_out, (res, Static(res_axes)), *store.out_nzs  # type: ignore
+
+  def vjp_bwd_retval(self, res_, g):
+    res, res_axes = res_[0], res_[1].val
+    in_dims = tree_map(lambda x: batching.sum_axis if x is None else x, self.in_dims,  # type: ignore
+                       is_leaf=lambda x: x is None)
+    g = tree_map(partial(map_zero, self.axis_data), self.out_dim, g, is_leaf=lambda x: x is None)  # type: ignore
+    out = api.vmap(self.prim.vjp_bwd_retval, in_axes=(res_axes, self.out_dim),  # type: ignore
+                   out_axes=in_dims, **self._vmap_params, sum_match=True)(res, g)
+    return tree_map(partial(unmap_zero, self.axis_data), self.in_dims, out, is_leaf=lambda x: x is None)  # type: ignore
+
+  def batch_dim_rule(self, axis_data, in_dims):
+    in_dims_ = tree_map(lambda d, d_: d - (d_ < d), in_dims, self.in_dims)  # type: ignore
+    out_dim = self.prim.batch_dim_rule(axis_data, in_dims_)  # type: ignore
+    return tree_map(lambda d, d_: d + (d_ < d), out_dim, self.out_dim)  # type: ignore
+
+def map_zero(axis_data, d, ct):
+  if isinstance(ct, ad_util.Zero):
+    return ad_util.Zero(core.mapped_aval(axis_data.size, d, ct.aval))
+  return ct
+
+def unmap_zero(axis_data, d, ct):
+  if isinstance(ct, ad_util.Zero):
+    return ad_util.Zero(core.unmapped_aval(axis_data.size, d, ct.aval,
+                                           axis_data.explicit_mesh_axis))
+  return ct
+
 
 call_hi_primitive_p = core.Primitive("call_hi_primitive")
 call_hi_primitive_p.multiple_results = True
@@ -538,6 +598,12 @@ class CustomVJPTraced(VJPHiPrimitive):
     if self.symbolic_zeros:  # type: ignore
       in_cts = tree_map(ad_util.replace_rule_output_symbolic_zeros, in_cts)
     return in_cts
+
+  def batch_dim_rule(self, axis_data, in_dims):
+    in_dims_flat = self.in_tree.flatten_up_to(in_dims)
+    _, out_dims = batching.batch_jaxpr2(self.traced.jaxpr, axis_data, tuple(in_dims_flat))  # type: ignore
+    return tree_unflatten(self.out_tree, out_dims)
+
 
 def _replace_none(primal_in_aval, maybe_ct):
   if maybe_ct is None:
