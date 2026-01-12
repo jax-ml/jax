@@ -1215,6 +1215,7 @@ for op, binary_impl, is_signed in [
     (arith.MinUIOp, fa.FragmentedArray.min, False),
     (arith.MinimumFOp, fa.FragmentedArray.min, None),
     (mlir_math.Atan2Op, fa.FragmentedArray.atan2, None),
+    (mlir_math.CopySignOp, fa.FragmentedArray.copysign, None),
 ]:
   _lowerings[op.OPERATION_NAME] = functools.partial(
       _binary_op_lowering_rule, impl=binary_impl, is_signed=is_signed
@@ -1288,6 +1289,22 @@ def _bitcast_op_lowering_rule(
       output_is_signed=_default_is_signed(out_element_type),
   )
   return [fragmented_array_to_ir(out, op.result.type)]
+
+
+@_register_lowering(arith.SelectOp)
+def _select_op_lowering_rule(
+    ctx: LoweringContext, op: arith.SelectOp
+) -> Sequence[ir.Value]:
+  del ctx
+  in_layouts = inference_utils.in_layouts(op)
+  [layout] = inference_utils.out_layouts(op)
+  if any(in_layout != layout for in_layout in in_layouts):
+    raise ValueError("Layout mismatch")
+  pred = _fragmented_array_from_ir(op.condition, layout)
+  true_value = _fragmented_array_from_ir(op.true_value, layout)
+  false_value = _fragmented_array_from_ir(op.false_value, layout)
+  result = pred.select(true_value, false_value)
+  return [fragmented_array_to_ir(result, op.result.type)]
 
 
 @_register_lowering(mgpu.WGMMAOp)

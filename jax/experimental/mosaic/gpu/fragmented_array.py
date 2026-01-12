@@ -1637,6 +1637,11 @@ class FragmentedArray:
     else:
       raise NotImplementedError
 
+  def copysign(self, other: FragmentedArray) -> FragmentedArray:
+    if not isinstance(self.mlir_dtype, ir.FloatType):
+      raise NotImplementedError
+    return self._pointwise(mlir_math.copysign, other)
+
   def exp(self, *, approx: bool = False) -> FragmentedArray:
     if not isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
@@ -1727,46 +1732,6 @@ class FragmentedArray:
     if not isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
     return self._pointwise(mlir_math.roundeven)
-
-  def sign(self) -> FragmentedArray:
-    if isinstance(self.mlir_dtype, ir.FloatType):
-      # For floats: sign(x) = copysign(1.0, x) * (x != 0)
-      dtype = self.mlir_dtype
-      one = arith.constant(dtype, ir.FloatAttr.get(dtype, 1.0))
-      zero = arith.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
-      def float_sign(x):
-        one_val = one
-        zero_val = zero
-        if isinstance(x.type, ir.VectorType):
-          one_val = vector.broadcast(x.type, one)
-          zero_val = vector.broadcast(x.type, zero)
-        signed_one = mlir_math.copysign(one_val, x)
-        is_nonzero = arith.cmpf(arith.CmpFPredicate.ONE, x, zero_val)
-        nonzero_mask = arith.uitofp(signed_one.type, is_nonzero)
-        return arith.mulf(signed_one, nonzero_mask)
-      return self._pointwise(float_sign)
-    elif isinstance(self.mlir_dtype, ir.IntegerType):
-      # For integers: sign(x) = (x > 0) - (x < 0)
-      int_dtype = self.mlir_dtype
-      zero_scalar = arith.constant(int_dtype, 0)
-      is_signed = self.is_signed
-      def int_sign(x):
-        zero = zero_scalar
-        if isinstance(x.type, ir.VectorType):
-          zero = vector.broadcast(x.type, zero_scalar)
-        if is_signed:
-          pos = arith.cmpi(arith.CmpIPredicate.sgt, x, zero)
-          neg = arith.cmpi(arith.CmpIPredicate.slt, x, zero)
-          pos_ext = arith.extui(x.type, pos)
-          neg_ext = arith.extui(x.type, neg)
-          return arith.subi(pos_ext, neg_ext)
-        else:
-          # For unsigned: sign(x) = (x != 0)
-          nonzero = arith.cmpi(arith.CmpIPredicate.ne, x, zero)
-          return arith.extui(x.type, nonzero)
-      return self._pointwise(int_sign, output_is_signed=is_signed)
-    else:
-      raise NotImplementedError(self.mlir_dtype)
 
   def erf(self) -> FragmentedArray:
     if not isinstance(self.mlir_dtype, ir.FloatType):

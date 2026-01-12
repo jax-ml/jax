@@ -255,6 +255,19 @@ class PallasCallTest(PallasTest):
         kernel(x), op(x), rtol=1e-5 if approx_math else 3e-7
     )
 
+  @parameterized.parameters(jnp.float32, jnp.int32, jnp.uint32)
+  def test_sign(self, dtype):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], dtype),
+    )
+    def kernel(src_ref, dst_ref):
+      dst_ref[...] = lax.sign(src_ref[...])
+
+    # Use values that include negative, zero, and positive.
+    src = np.arange(256, dtype=dtype) - 128
+    np.testing.assert_array_equal(kernel(src), lax.sign(src))
+
   @parameterized.product(
       op=[
           operator.add,

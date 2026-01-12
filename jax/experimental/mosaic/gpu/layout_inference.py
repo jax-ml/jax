@@ -542,6 +542,7 @@ for op in [
     arith.TruncFOp,
     arith.TruncIOp,
     arith.XOrIOp,
+    arith.SelectOp,
     mlir_math.ExpOp,
     mlir_math.Exp2Op,
     mlir_math.SinOp,
@@ -553,6 +554,7 @@ for op in [
     mlir_math.AbsIOp,
     mlir_math.RoundOp,
     mlir_math.RoundEvenOp,
+    mlir_math.CopySignOp,
 ]:
   _add_constraint_system_derivation_rule(op)(_pointwise_op_constraint_system)
 

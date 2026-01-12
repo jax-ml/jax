@@ -2451,20 +2451,49 @@ def _round_lowering_rule_wg(ctx: LoweringRuleContext, x, rounding_method):
     case _:
       assert_never(rounding_method)
 
+_copysign_p = jax_core.Primitive("_copysign")
 
-def _sign(x):
-  return (x > 0).astype(x.dtype) - (x < 0).astype(x.dtype)
+
+def _copysign(x1: jax.typing.ArrayLike, x2: jax.typing.ArrayLike) -> jax.Array:
+  return _copysign_p.bind(x1, x2)
+
+
+@_copysign_p.def_abstract_eval
+def _copysign_abstract_eval(x1, x2):
+  return jax_core.ShapedArray(x2.shape, x2.dtype)
+
+
+@register_lowering_rule(_copysign_p, mgpu.LoweringSemantics.Lane)
+def _copysign_lowering_rule(ctx: LoweringRuleContext, x1, x2):
+  [x1_aval, x2_aval] = ctx.avals_in
+  x1 = _ensure_fa(x1, x1_aval.dtype)
+  x2 = _ensure_fa(x2, x2_aval.dtype)
+  return x1.copysign(x2)
+
+
+@register_lowering_rule(_copysign_p, mgpu.LoweringSemantics.Warpgroup)
+def _copysign_lowering_rule(ctx: LoweringRuleContext, x1, x2):
+  [x1_aval, x2_aval] = ctx.avals_in
+  x1 = _ensure_ir_value(x1, x1_aval.dtype)
+  x2 = _ensure_ir_value(x2, x2_aval.dtype)
+  return math_dialect.copysign(x1, x2)
 
 
 @register_lowering_rule(lax.sign_p, mgpu.LoweringSemantics.Lane)
-def _sign_lowering_rule(ctx: LoweringRuleContext, x):
-  [x_aval] = ctx.avals_in
-  return _ensure_fa(x, x_aval.dtype).sign()
-
-
 @register_lowering_rule(lax.sign_p, mgpu.LoweringSemantics.Warpgroup)
-def _sign_lowering_rule_wg(ctx: LoweringRuleContext, x):
-  return _lower_fun(_sign, multiple_results=False)(ctx, x)
+def _sign_lowering_rule(ctx: LoweringRuleContext, x):
+  def sign(x):
+    if jnp.issubdtype(x.dtype, jnp.floating):
+      ones = lax.full(x.shape, 1.0, dtype=x.dtype)
+      zeros = lax.full(x.shape, 0.0, dtype=x.dtype)
+      return lax.select(x != 0, _copysign(ones, x), zeros)
+    if jnp.issubdtype(x.dtype, jnp.signedinteger):
+      return (x > 0).astype(x.dtype) - (x < 0).astype(x.dtype)
+    if jnp.issubdtype(x.dtype, jnp.unsignedinteger):
+      return (x != 0).astype(x.dtype)
+    raise ValueError(f"Unsupported dtype for sign: {x.dtype}")
+
+  return _lower_fun(sign, multiple_results=False)(ctx, x)
 
 
 @register_lowering_rule(lax.erf_p, mgpu.LoweringSemantics.Lane)
