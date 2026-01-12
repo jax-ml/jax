@@ -383,4 +383,10 @@ std::ostream& operator<<(std::ostream& os, const Tiling& tiling) {
   return os << tiling.ToString();
 }
 
+std::string Replicated::ToString() const {
+  std::stringstream ss;
+  ss << "Replicated(" << times << ")";
+  return ss.str();
+}
+
 }  // namespace jax::mosaic::gpu

@@ -113,6 +113,22 @@ class Tiling {
   std::vector<Tile> tiles_;
 };
 
+// Type wrapper for the number of times a dimension is replicated.
+struct Replicated {
+  int64_t times;
+
+  std::string ToString() const;
+
+  bool operator==(const Replicated& other) const {
+    return times == other.times;
+  }
+
+  template <typename H>
+  friend H AbslHashValue(H h, const Replicated& rep) {
+    return H::combine(std::move(h), rep.times);
+  }
+};
+
 }  // namespace jax::mosaic::gpu
 
 #endif  // THIRD_PARTY_PY_JAX_EXPERIMENTAL_MOSAIC_GPU_CC_TILED_LAYOUT_H_

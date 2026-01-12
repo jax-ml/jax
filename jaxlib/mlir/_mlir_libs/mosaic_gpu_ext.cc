@@ -261,4 +261,21 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       .def("__hash__", [](const mgpu::Tiling& self) {
         return absl::Hash<mgpu::Tiling>{}(self);
       });
+
+  nb::class_<mgpu::Replicated>(m, "Replicated")
+      .def(nb::init<int64_t>(), nb::arg("times"))
+      .def_prop_rw(
+          "times", [](const mgpu::Replicated& self) { return self.times; },
+          [](mgpu::Replicated& self, int64_t times) { self.times = times; })
+      .def("__repr__", &mgpu::Replicated::ToString)
+      .def("__hash__",
+           [](const mgpu::Replicated& self) {
+             return absl::Hash<mgpu::Replicated>{}(self);
+           })
+      .def("__eq__", [](const mgpu::Replicated& self, nb::object other) {
+        if (!nb::isinstance<mgpu::Replicated>(other)) {
+          return false;
+        }
+        return self == nb::cast<mgpu::Replicated>(other);
+      });
 }

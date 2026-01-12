@@ -277,8 +277,16 @@ def enumerate_negative(elems: Sequence[T]) -> Iterable[tuple[int, T]]:
 
 
 @dataclasses.dataclass(frozen=True)
-class Replicated:
+class ReplicatedImpl:
   times: int
+
+
+# TODO(olechwierowicz): Clean up this once C++ Replicated is always available in JAX build.
+Replicated: Any
+if hasattr(mgpu.dialect, "Replicated"):
+  Replicated = mgpu.dialect.Replicated
+else:
+  Replicated = ReplicatedImpl
 
 
 @dataclasses.dataclass(frozen=True)
