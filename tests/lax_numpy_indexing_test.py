@@ -150,11 +150,6 @@ STATIC_SLICE_TESTS = [
     IndexSpec(shape=(3, 4, 5), indexer=(0, Ellipsis), out_shape=(4, 5)),
     IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis, 2, 3), out_shape=(3,)),
   ]),
-]
-
-
-STATIC_INDEXING_TESTS = [
-  *STATIC_SLICE_TESTS,
   ("SliceIndexClamping", [
     IndexSpec(shape=(10,), indexer=slice(2, 11, 1), out_shape=(8,)),
     IndexSpec(shape=(10,), indexer=slice(11, 12, 1), out_shape=(0,)),
@@ -177,6 +172,11 @@ STATIC_INDEXING_TESTS = [
     IndexSpec(shape=(3,), indexer=(), out_shape=(3,)),
     IndexSpec(shape=(3, 4), indexer=(), out_shape=(3, 4)),
   ]),
+]
+
+
+STATIC_INDEXING_TESTS = [
+  *STATIC_SLICE_TESTS,
   ("TupleOfIntAndSliceAndIntArray", [
     IndexSpec(shape=(3, 2, 3), indexer=(0, slice(None), np.arange(3)),
               out_shape=(3, 2)),
@@ -480,7 +480,6 @@ class IndexingStrategyTest(jtu.JaxTestCase):
       ((2, 3, 5), np.index_exp[3, :, 0], IndexError, "index 3 out of bounds for axis 0 with size 2"),
       ((2, 3), ([1, 2], 0), TypeError, "static_slice: indices must be static scalars or slices."),
       ((2, 3), (np.arange(2), 0), TypeError, "static_slice: indices must be static scalars or slices."),
-      ((2, 3), (None, 0), TypeError, "static_slice: got None at position 0"),
       ((2, 3), (1, 2, 3), IndexError, "Too many indices: array is 2-dimensional, but 3 were indexed"),
   )
   def test_slice_oob_indexing_fails(self, shape, idx, err, msg):

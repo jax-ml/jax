@@ -334,18 +334,16 @@ class NDIndexer:
   def compute_via_static_slice(self, arr: Array) -> Array:
     """Equivalent of arr[idx] implemented in terms of static :func:`lax.slice` operations.
 
-    This supports only INTEGER, ELLIPSIS, and SLICE indices, and will raise a TypeError
-    if other indices are present.
+    This supports only INTEGER, ELLIPSIS, NONE, and SLICE indices, and will raise a
+    TypeError if other indices are present.
     """
     # Validation of the unmodified user indices.
     self.validate_static_indices(normalize_indices=True)
     self.validate_slices()
 
     for position, pidx in enumerate(self.indices):
-      if pidx.typ in [IndexType.INTEGER, IndexType.ELLIPSIS, IndexType.SLICE]:
+      if pidx.typ in [IndexType.INTEGER, IndexType.ELLIPSIS, IndexType.SLICE, IndexType.NONE]:
         pass
-      elif pidx.typ == IndexType.NONE:
-        raise TypeError(f"static_slice: got {pidx.index} at position {position}")
       elif pidx.typ in [IndexType.ARRAY, IndexType.BOOLEAN]:
         raise TypeError("static_slice: indices must be static scalars or slices."
                         f" Got {pidx.index} at position {position}")
@@ -358,11 +356,18 @@ class NDIndexer:
     strides: list[int] = []
     rev_axes: list[int] = []
     squeeze_axes: list[int] = []
+    newaxis_dims: list[int] = []
 
     expanded = self.expand_ellipses()
     for pidx in expanded.indices:
-      if pidx.typ in [IndexType.ARRAY, IndexType.BOOLEAN, IndexType.NONE, IndexType.ELLIPSIS]:
+      if pidx.typ in [IndexType.ARRAY, IndexType.BOOLEAN, IndexType.ELLIPSIS]:
         raise RuntimeError(f"Internal: unexpected index encountered: {pidx}")
+      elif pidx.typ == IndexType.NONE:
+        # Expanded axes indices are based on the rank of the array after slicing
+        # (tracked by start_indices) and squeezing (tracked by squeeze_axes), and
+        # expand_dims inserts dimensions in order, so we must also account for
+        # previous expanded dimensions.
+        newaxis_dims.append(len(start_indices) - len(squeeze_axes) + len(newaxis_dims) )
       elif pidx.typ == IndexType.INTEGER:
         assert isinstance(pidx.index, (int, np.integer))
         axis, = pidx.consumed_axes
@@ -395,14 +400,16 @@ class NDIndexer:
       result = lax.rev(result, rev_axes)
     if squeeze_axes:
       result = lax.squeeze(result, squeeze_axes)
+    if newaxis_dims:
+      result = lax.expand_dims(result, newaxis_dims)
     return result
 
   def compute_via_dynamic_slice(self, arr: Array,
                                 mode: str | slicing.GatherScatterMode | None) -> Array:
     """Equivalent of arr[idx] implemented in terms of static :func:`lax.dynamic_slice`.
 
-    This supports only INTEGER, ELLIPSIS, SLICE, and scalar ARRAY indices, and will
-    raise a TypeError if other indices are present.
+    This supports only INTEGER, ELLIPSIS, NONE, SLICE, and scalar ARRAY indices,
+    and will raise a TypeError if other indices are present.
     """
     if mode is not None:
       parsed_mode = slicing.GatherScatterMode.from_any(mode)
@@ -411,7 +418,7 @@ class NDIndexer:
         raise ValueError("dynamic_slice requires mode='promise_in_bounds' or mode='clip'")
 
     for position, pidx in enumerate(self.indices):
-      if pidx.typ in [IndexType.INTEGER, IndexType.ELLIPSIS]:
+      if pidx.typ in [IndexType.INTEGER, IndexType.ELLIPSIS, IndexType.NONE]:
         pass
       elif pidx.typ == IndexType.SLICE:
         assert isinstance(pidx.index, slice)
@@ -422,8 +429,6 @@ class NDIndexer:
         if isinstance(pidx.index, Sequence) or np.shape(pidx.index) != ():  # type: ignore[arg-type]
           raise TypeError("dynamic_slice: only scalar indices allowed."
                           f" Got {pidx.index} at position {position}")
-      elif pidx.typ == IndexType.NONE:
-        raise TypeError(f"dynamic_slice: got {pidx.index} at position {position}")
       elif pidx.typ == IndexType.BOOLEAN:
         raise TypeError("dynamic_slice: indices must be scalars or slices."
                         f" Got {pidx.index} at position {position}")
@@ -434,11 +439,18 @@ class NDIndexer:
     slice_sizes: list[int] = []
     rev_axes: list[int] = []
     squeeze_axes: list[int] = []
+    newaxis_dims: list[int] = []
 
     expanded = self.expand_ellipses()
     for pidx in expanded.indices:
-      if pidx.typ in [IndexType.BOOLEAN, IndexType.NONE, IndexType.ELLIPSIS]:
+      if pidx.typ in [IndexType.BOOLEAN, IndexType.ELLIPSIS]:
         raise RuntimeError(f"Internal: unexpected index encountered: {pidx}")
+      elif pidx.typ == IndexType.NONE:
+        # Expanded axes indices are based on the rank of the array after slicing
+        # (tracked by start_indices) and squeezing (tracked by squeeze_axes), and
+        # expand_dims inserts dimensions in order, so we must also account for
+        # previous expanded dimensions.
+        newaxis_dims.append(len(start_indices) - len(squeeze_axes) + len(newaxis_dims))
       elif pidx.typ in [IndexType.INTEGER, IndexType.ARRAY]:
         index = lax_numpy.asarray(pidx.index)
         assert index.shape == ()  # Validated above.
@@ -470,6 +482,8 @@ class NDIndexer:
       result = lax.rev(result, rev_axes)
     if squeeze_axes:
       result = lax.squeeze(result, squeeze_axes)
+    if newaxis_dims:
+      result = lax.expand_dims(result, newaxis_dims)
     return result
 
   def is_advanced_int_indexer(self):
