@@ -59,8 +59,9 @@ std::pair<bool, bool> mightCommunicateBetweenChips(Operation *op);
 
 // Creates a pass that infers the layout of memrefs in the given function.
 //
-// The `target_shape` must be 2D and corresponds to (sublane count, lane count)
-// TensorCore tiling.
+// The `target_shape` can either be
+// * 1D -- (lane count) SparseCore tiling; or
+// * 2D -- (sublane count, lane count) TensorCore tiling.
 std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
     int hardware_generation, absl::Span<const int64_t> target_shape,
     const TpuTilingFlags& tpu_tiling_flags, bool align = true,
