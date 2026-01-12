@@ -1341,7 +1341,9 @@ def _get_sds(aval: jax_core.AbstractValue):
     case ShapedArrayWithMemorySpace():
       return aval.memory_space(aval.shape, aval.dtype)
     case jax_core.ShapedArray():
-      return jax_core.ShapeDtypeStruct(aval.shape, aval.dtype, vma=aval.vma)
+      return jax_core.ShapeDtypeStruct(
+          aval.shape, aval.dtype, vma=aval.vma, sharding=aval.sharding
+      )
     case _:
       raise ValueError(f"Unsupported abstract value: {aval}")
 

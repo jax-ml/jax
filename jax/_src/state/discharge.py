@@ -631,18 +631,19 @@ def _closed_call_discharge_rule(
   assert next(ref_vals_iter, sentinel) is sentinel
   return new_invals, out_vals
 
-@register_discharge_rule(core.call_p)
-def _call_discharge_rule(
+def _call_primitive_discharge_rule(
+    prim: core.Primitive,
     in_avals: Sequence[core.AbstractValue], _,*args,
-    call_jaxpr: core.Jaxpr):
+    call_jaxpr: core.Jaxpr, **kwargs):
   closed_call_jaxpr = core.ClosedJaxpr(call_jaxpr, ())
   discharged_closed_jaxpr, num_outs, fun = _cached_closed_jaxpr_discharge(
       closed_call_jaxpr)
   discharged_call_jaxpr = discharged_closed_jaxpr.jaxpr
   discharged_consts = discharged_closed_jaxpr.consts
   discharged_call_jaxpr = pe.convert_constvars_jaxpr(discharged_call_jaxpr)
-  out_and_ref_vals = core.closed_call_p.bind(fun, *discharged_consts, *args,
-                                             call_jaxpr=discharged_call_jaxpr)
+  out_and_ref_vals = prim.bind(fun, *discharged_consts, *args,
+                               call_jaxpr=discharged_call_jaxpr,
+                               **kwargs)
   out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
   ref_vals_iter = iter(ref_vals)
   new_invals = tuple(next(ref_vals_iter) if isinstance(aval, AbstractRef)
@@ -650,6 +651,9 @@ def _call_discharge_rule(
   sentinel = object()
   assert next(ref_vals_iter, sentinel) is sentinel
   return new_invals, out_vals
+register_discharge_rule(core.call_p)(
+    partial(_call_primitive_discharge_rule, core.call_p)
+)
 
 
 # # `run_state`
