@@ -3010,7 +3010,6 @@ class PallasCallWGTest(
         pallas_primitives.semaphore_read_p,
         pallas_primitives.delay_p,
         checkify.check_p,
-        lax.reduce_min_p,
     }
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)

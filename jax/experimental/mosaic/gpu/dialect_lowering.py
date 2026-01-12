@@ -1168,6 +1168,7 @@ for op, unary_impl, is_signed in [
     (mlir_math.AbsIOp, fa.FragmentedArray.abs, True),
     (mlir_math.RoundOp, fa.FragmentedArray.round, None),
     (mlir_math.RoundEvenOp, fa.FragmentedArray.round_even, None),
+    (mlir_math.ErfOp, fa.FragmentedArray.erf, None),
 ]:
   _lowerings[op.OPERATION_NAME] = functools.partial(
       _unary_op_lowering_rule, impl=unary_impl, is_signed=is_signed
@@ -1213,6 +1214,7 @@ for op, binary_impl, is_signed in [
     (arith.MinSIOp, fa.FragmentedArray.min, True),
     (arith.MinUIOp, fa.FragmentedArray.min, False),
     (arith.MinimumFOp, fa.FragmentedArray.min, None),
+    (mlir_math.Atan2Op, fa.FragmentedArray.atan2, None),
 ]:
   _lowerings[op.OPERATION_NAME] = functools.partial(
       _binary_op_lowering_rule, impl=binary_impl, is_signed=is_signed
