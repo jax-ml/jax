@@ -23,6 +23,7 @@ from typing import Any
 import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src import effects
 from jax._src import pretty_printer as pp
 from jax._src import prng as jax_prng
 from jax._src import random as jax_random
@@ -989,9 +990,15 @@ prng_seed_p = jax_core.Primitive("prng_seed")
 prng_seed_p.multiple_results = True
 
 
-@prng_seed_p.def_abstract_eval
+class PRNGEffect(effects.Effect):
+  pass
+prng_effect = PRNGEffect()
+effects.control_flow_allowed_effects.add_type(PRNGEffect)
+
+
+@prng_seed_p.def_effectful_abstract_eval
 def _prng_seed_abstract_eval(*_):
-  return []
+  return [], {prng_effect}
 
 
 def prng_seed(*seeds: int | jax.Array) -> None:
@@ -1006,7 +1013,6 @@ def prng_seed(*seeds: int | jax.Array) -> None:
 
 prng_random_bits_p = jax_core.Primitive(
     'prng_random_bits')
-
 
 @prng_random_bits_p.def_abstract_eval
 def _prng_random_bits_abstract_eval(*, shape):

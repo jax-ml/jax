@@ -1162,6 +1162,15 @@ def jaxpr_subcomp(
   current_name_stack.extend(initial_name_stack)
   for eqn in jaxpr.eqns:
     invals = map(read_env, eqn.invars)
+    # Skip lowering equations that don't have used outputs and no side-effects.
+    # This allows us to avoid lowering eqns that have unlowerable types (e.g.
+    # float0) in them.
+    # TODO(sharadmv): Remove this when DCEing the jaxpr works properly.
+    if (
+        all(isinstance(v, jax_core.DropVar) for v in eqn.outvars)
+        and not eqn.effects
+    ):
+      continue
     eqn_name_stack = ctx.name_stack + eqn.source_info.name_stack
     loc = mlir.source_info_to_location(  # pytype: disable=wrong-arg-types
         ctx, eqn.primitive, eqn_name_stack, eqn.source_info.traceback
