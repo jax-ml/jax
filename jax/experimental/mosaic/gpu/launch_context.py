@@ -1391,12 +1391,27 @@ class LaunchContext:
         and partitioned is None
     )
     if is_simple_contiguous_copy:
+      index = ir.IndexType.get()
+      to_i32 = lambda x: arith.index_cast(ir.IntegerType.get_signless(32), x)
+
       slicing = tuple(
           utils.ds(start, size)
           for start, size in zip(dyn_base_indices, slice_shape)
       )
       ref_slice = utils.memref_slice(ref, slicing)
       gmem_base_ptr = utils.memref_ptr(ref_slice)
+
+      # Clamp the out-of-bounds accesses to be within the bounds of the GMEM ref shape.
+      total_elements = c(math.prod(gmem_ref_ty.shape), index)
+      linear_offset_elems = memref.extract_strided_metadata(ref_slice)[1]
+
+      # Equivalent to: max(0, total - offset)
+      valid_offset_elems = arith.minui(linear_offset_elems, total_elements)
+      remaining_elements = arith.subi(total_elements, valid_offset_elems)
+
+      remaining_bytes = utils.elements_to_bytes(remaining_elements, element_bitwidth)
+      transfer_bytes_idx = arith.index_cast(index, transfer_bytes)
+      clamped_transfer_bytes = to_i32(arith.minui(transfer_bytes_idx, remaining_bytes))
 
       if gmem_peer_id is not None:
         self._ensure_nvshmem_decls()
@@ -1427,11 +1442,17 @@ class LaunchContext:
         barrier_ptr = barrier.get_ptr()
         if arrive:
           utils.nvvm_mbarrier_arrive_expect_tx(
-              barrier_ptr, transfer_bytes, predicate=predicate
+              barrier_ptr, clamped_transfer_bytes, predicate=predicate
           )
+        else:
+          # Make sure the barrier is completed with the correct number of bytes
+          # if we resize the transfer size.
+          left_to_complete = arith.subi(transfer_bytes, clamped_transfer_bytes)
+          barrier.complete_tx(left_to_complete, predicate=predicate)
+
         llvm.inline_asm(
           ir.Type.parse("!llvm.void"),
-          [predicate, smem_ptr, gmem_base_ptr, transfer_bytes, barrier_ptr],
+          [predicate, smem_ptr, gmem_base_ptr, clamped_transfer_bytes, barrier_ptr],
           """
           @$0 cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes [$1], [$2], $3, [$4];
           """,
@@ -1441,7 +1462,7 @@ class LaunchContext:
       else:
         llvm.inline_asm(
           ir.Type.parse("!llvm.void"),
-          [predicate, gmem_base_ptr, smem_ptr, transfer_bytes],
+          [predicate, gmem_base_ptr, smem_ptr, clamped_transfer_bytes],
           """
           @$0 cp.async.bulk.global.shared::cta.bulk_group [$1], [$2], $3;
           """,

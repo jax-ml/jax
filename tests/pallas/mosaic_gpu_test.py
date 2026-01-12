@@ -1660,7 +1660,6 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(out2, out2_ref)
 
   def test_program_id_in_block_spec(self):
-    self.skipTest("OOB accesses not handled correctly.")
     @functools.partial(
         self.pallas_call,
         in_specs=(pl.BlockSpec((2, 128), lambda i: (pl.program_id(0), i)),),
@@ -1673,6 +1672,44 @@ class PallasCallTest(PallasTest):
 
     x = jnp.arange(2 * 128, dtype=jnp.int32).reshape([2, 128])
     np.testing.assert_array_equal(kernel(x), x)
+
+  @parameterized.parameters(0, 112, 192, 208)
+  def test_out_of_bounds_tma(self, start_offset):
+    dtype = jnp.int8
+    gmem_size = 208
+    smem_size = 128
+
+    @functools.partial(
+        self.pallas_call,
+        in_specs=(
+            pl.BlockSpec(memory_space=plgpu.GMEM),
+            pl.BlockSpec(memory_space=plgpu.GMEM),
+        ),
+        out_shape=jax.ShapeDtypeStruct((smem_size,), dtype),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        scratch_shapes=[plgpu.SMEM((smem_size,), dtype), plgpu.Barrier()],
+        grid=(1,),
+    )
+    def kernel(start_idx, x_ref, o_ref, scratch_ref, barrier):
+      # Initialize SMEM with -1s to indicate OOB values.
+      scratch_ref[...] = jnp.full(scratch_ref.shape, -1, dtype)
+      plgpu.commit_smem()
+
+      idx = pl.ds(start_idx[...], smem_size)
+      plgpu.copy_gmem_to_smem(x_ref.at[idx], scratch_ref, barrier)
+      plgpu.barrier_wait(barrier)
+
+      o_ref[...] = scratch_ref[...]
+
+    input = jnp.arange(gmem_size, dtype=dtype)
+    start_idx_val = jnp.array(start_offset, dtype=jnp.int32)
+
+    valid_part = input[start_offset : start_offset + smem_size]
+    filler_part = jnp.full((smem_size - valid_part.size,), -1.0, dtype=dtype)
+    expected = jnp.concatenate([valid_part, filler_part])
+
+    out = kernel(start_idx_val, input)
+    np.testing.assert_allclose(out, expected)
 
   def test_num_programs(self):
     @functools.partial(

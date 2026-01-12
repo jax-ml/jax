@@ -1092,7 +1092,7 @@ class BarrierRef:
   ):
     if isinstance(bytes, int):
       bytes = c(bytes, ir.IntegerType.get_signless(32))
-    elif ir.IndexType.isinstance(bytes.type):
+    elif isinstance(bytes.type, ir.IndexType):
       i32 = ir.IntegerType.get_signless(32)
       bytes = arith.index_cast(i32, bytes)
 
@@ -1104,7 +1104,7 @@ class BarrierRef:
     llvm.inline_asm(
         ir.Type.parse("!llvm.void"),
         [self.get_ptr(), bytes] + ([predicate] if predicate is not None else []),
-        f"{pred_ptx} mbarrier.complete_tx.b64 [$0], $1;",
+        f"{pred_ptx} mbarrier.complete_tx.shared::cta.b64 [$0], $1;",
         "l,r" + pred_constraint,
         has_side_effects=True,
     )
@@ -2059,6 +2059,18 @@ def nvvm_mbarrier_arrive_expect_tx(barrier: ir.Value, expect_tx: ir.Value, predi
     return nvvm.mbarrier_arrive_expect_tx(None, barrier, expect_tx, predicate=predicate)  # type: ignore
   except TypeError:
     return nvvm.mbarrier_arrive_expect_tx(barrier, expect_tx, predicate=predicate)  # pytype: disable=missing-parameter
+
+
+def elements_to_bytes(offset: ir.Value, element_bitwidth: int) -> ir.Value:
+  """Convert an element-based linear offset to a byte-based offset."""
+  index_ty = offset.type
+
+  if element_bitwidth > 8:
+    return arith.muli(offset, c(element_bitwidth // 8, index_ty))
+  elif element_bitwidth < 8:
+    return arith.divsi(offset, c(8 // element_bitwidth, index_ty))
+  else:
+    return offset
 
 
 def get_cluster_ptr(ptr: ir.Value, cluster_block: ir.Value):
