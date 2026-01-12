@@ -3837,9 +3837,8 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
 
 
 @register_lowering_rule(checkify.check_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(checkify.check_p, mgpu.LoweringSemantics.Warpgroup)
 def _check_lowering_rule(ctx: LoweringRuleContext, *err_args, err_tree, debug):
-  del ctx  # Unused.
-
   if not debug:
     raise NotImplementedError(
         "Non-debug checks are not supported by the Mosaic GPU backend."
@@ -3858,7 +3857,9 @@ def _check_lowering_rule(ctx: LoweringRuleContext, *err_args, err_tree, debug):
   # check_p has an inverted predicate compared to assert, so we need to compute
   # ``not pred`` here.
   minus_one = _ir_constant(-1, mgpu_utils.dtype_to_ir_type(jnp.bool))
-  not_pred = arith_dialect.xori(pred.registers.item(), minus_one)
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    pred = pred.registers.item()
+  not_pred = arith_dialect.xori(pred, minus_one)
   cf_dialect.assert_(not_pred, exception.fmt_string)
   return []
 

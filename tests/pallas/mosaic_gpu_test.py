@@ -31,7 +31,6 @@ from absl.testing import parameterized
 import jax
 from jax import export
 from jax import lax
-from jax._src import checkify
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import test_util as jtu
@@ -1507,8 +1506,6 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(), jnp.array(42, jnp.int32))
 
   def test_check(self):
-    self.skip_if_wg_semantics()
-
     self.enter_context(pl.enable_debug_checks(True))
 
     @functools.partial(
@@ -3022,7 +3019,6 @@ class PallasCallWGTest(
         pallas_primitives.semaphore_wait_p,
         pallas_primitives.semaphore_read_p,
         pallas_primitives.delay_p,
-        checkify.check_p,
     }
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)
