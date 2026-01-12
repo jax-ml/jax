@@ -38,6 +38,7 @@ from jax._src import sharding_impls
 from jax._src import util as jax_util
 from jax._src.interpreters import mlir
 from jax._src.lib import mosaic_gpu_dialect as dialect
+from jax.extend import backend as jex_backend
 from jaxlib.mlir import ir
 from jaxlib.mlir import passmanager
 from jaxlib.mlir.dialects import _gpu_ops_gen
@@ -701,6 +702,15 @@ def _launch(
     gpu.terminator()
 
 
+def _infer_arch() -> tuple[int, int]:
+  device: Any = jax.sharding.get_abstract_mesh().abstract_device
+  if device is None:
+    device = jex_backend.get_default_device()
+  if not hasattr(device, "compute_capability"):
+    return (9, 0)  # TODO(apaszke): Remove this once we figure out the export story.
+  return tuple(map(int, device.compute_capability.split(".")))  # type: ignore
+
+
 def _lower_as_gpu_kernel(
     body,
     grid: tuple[int, int, int],
@@ -740,6 +750,9 @@ def _lower_as_gpu_kernel(
   dialect.register_dialect(module.context)
   attrs = module.operation.attributes
   attrs["sym_name"] = ir.StringAttr.get(module_name)
+  arch_major, arch_minor = _infer_arch()
+  attrs["mosaic_gpu.arch_major"] = ir.IntegerAttr.get(i32, arch_major)
+  attrs["mosaic_gpu.arch_minor"] = ir.IntegerAttr.get(i32, arch_minor)
 
   # These are needed as nonlocal below.
   launch_ctx = None

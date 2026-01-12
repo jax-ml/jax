@@ -2413,8 +2413,9 @@ class FragmentedArray:
             raise NotImplementedError(self.mlir_dtype)
         case "max":
           if isinstance(self.mlir_dtype, ir.F32Type):
-            # TODO(apaszke): Use redux.sync on Blackwell.
             op = self._lift_fast_instr("max.NaN.f32")
+            if utils.get_arch().major == 10:
+              redux_op = functools.partial(utils.redux, kind=nvvm.ReduxKind.FMAX)
           elif isinstance(self.mlir_dtype, ir.F16Type):
             op = self._lift_fast_packed_instr("max.NaN.f16x2", "max.NaN.f16")
           elif isinstance(self.mlir_dtype, ir.BF16Type):
@@ -2431,8 +2432,9 @@ class FragmentedArray:
           splat_op = lambda x: x
         case "min":
           if isinstance(self.mlir_dtype, ir.F32Type):
-            # TODO(apaszke): Use redux.sync on Blackwell.
             op = self._lift_fast_instr("min.NaN.f32")
+            if utils.get_arch().major == 10:
+              redux_op = functools.partial(utils.redux, kind=nvvm.ReduxKind.FMIN)
           elif isinstance(self.mlir_dtype, ir.F16Type):
             op = self._lift_fast_packed_instr("min.NaN.f16x2", "min.NaN.f16")
           elif isinstance(self.mlir_dtype, ir.BF16Type):

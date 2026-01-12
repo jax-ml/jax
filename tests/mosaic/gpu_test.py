@@ -6668,7 +6668,7 @@ if hp is not None:
       @hp.example(((16,), warp_replicated_minor, (0,), jnp.int32, "add"))
       @hp.example(((16, 16), warp_row_col_layout, (0,), jnp.int32, "add"))
       @hp.example(((16, 16), warp_row_col_layout, (1,), jnp.int32, "add"))
-      @hp.example(((256,), even_lane_split_layout, (0,), jnp.int32, "max"))
+      @hp.example(((256,), even_lane_split_layout, (0,), jnp.float32, "max"))
       @hp.example(((256,), odd_lane_split_layout, (0,), jnp.int32, "max"))
       def run(args):
         shape, layout, reduced_dims, dtype, op = args
@@ -6677,9 +6677,13 @@ if hp is not None:
           del out_shape[d]
         def kernel(ctx, src, dst, scratch):
           del ctx
-          arr = fa.FragmentedArray.load_untiled(src, layout=layout, optimized=False, is_signed=True)
+          arr = fa.FragmentedArray.load_untiled(src, layout=layout, optimized=False,
+                                                is_signed=utils.is_signed(dtype))
           arr.reduce(op, reduced_dims, scratch).store_untiled(dst, optimized=False)
-        x = jax.random.randint(jax.random.key(1234), shape, -1000, 1000, dtype)
+        if jnp.issubdtype(dtype, jnp.integer):
+          x = jax.random.randint(jax.random.key(1234), shape, -1000, 1000, dtype)
+        else:
+          x = jax.random.normal(jax.random.key(1234), shape, dtype)
         out_type = jax.ShapeDtypeStruct(out_shape, dtype)
         scratch_type = jax.ShapeDtypeStruct((2048,), dtype)
         hp.assume(layout.vector_length <= 16)  # Otherwise we run out of scratch

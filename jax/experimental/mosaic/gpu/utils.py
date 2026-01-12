@@ -1779,10 +1779,18 @@ def redux(x: ir.Value, mask: ir.Value, kind: nvvm.ReduxKind):
     return result
   if bitwidth(x.type) != 32:
     raise ValueError("Only 32-bit scalar types supported")
-  if not isinstance(x.type, ir.IntegerType):
+  if isinstance(x.type, ir.IntegerType):
+    pass
+  elif isinstance(x.type, ir.F32Type):
+    if get_arch().major != 10:
+      raise ValueError("F32 redux only supported on Blackwell GPUs")
+  else:
     raise NotImplementedError(x.type)
   assert mask.type == i32
-  return nvvm.redux_sync(x.type, x, kind, mask)
+  extra_kwargs = {}
+  if kind == nvvm.ReduxKind.FMAX or kind == nvvm.ReduxKind.FMIN:
+    extra_kwargs = dict(nan=True)
+  return nvvm.redux_sync(x.type, x, kind, mask, **extra_kwargs)
 
 
 def prmt(high: ir.Value, low: ir.Value, permutation: ir.Value):
@@ -2059,3 +2067,25 @@ def get_cluster_ptr(ptr: ir.Value, cluster_block: ir.Value):
   assert ptr.type == ir.Type.parse("!llvm.ptr<3>"), ptr.type
   mapped_smem_ptr = nvvm.mapa(ir.Type.parse("!llvm.ptr<7>"), ptr, cluster_block)
   return llvm.addrspacecast(ir.Type.parse("!llvm.ptr"), mapped_smem_ptr)
+
+
+@dataclasses.dataclass(frozen=True)
+class Arch:
+  major: int
+  minor: int
+
+
+def get_arch() -> Arch:
+  ip = ir.InsertionPoint.current
+  if ip is None:
+    raise ValueError("Cannot retrieve the architecture without an insertion point")
+  block = ip.block
+  op = block.owner
+  while op is not None:
+    if op.name == "builtin.module":
+      return Arch(
+          op.attributes["mosaic_gpu.arch_major"].value,
+          op.attributes["mosaic_gpu.arch_minor"].value,
+      )
+    op = op.parent
+  raise ValueError("Cannot retrieve the architecture: no module found")

@@ -99,6 +99,13 @@ class MosaicGpuTest(parameterized.TestCase):
     self.enter_context(_make_ir_context())
     self.enter_context(ir.Location.unknown())
     self.module = ir.Module.create()
+    i32 = ir.IntegerType.get_signless(32)
+    self.module.operation.attributes["mosaic_gpu.arch_major"] = (
+        ir.IntegerAttr.get(i32, 9)
+    )
+    self.module.operation.attributes["mosaic_gpu.arch_minor"] = (
+        ir.IntegerAttr.get(i32, 0)
+    )
 
 
 class DialectTest(MosaicGpuTest):
