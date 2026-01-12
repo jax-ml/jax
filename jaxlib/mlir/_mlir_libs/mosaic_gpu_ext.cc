@@ -14,11 +14,17 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstdint>
+#include <variant>
 #include <vector>
 
 #include "absl/hash/hash.h"
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
+#include "mlir/CAPI/IR.h"
+#include "mlir/IR/Block.h"  // IWYU pragma: keep
+#include "mlir/IR/Location.h"  // IWYU pragma: keep
+#include "mlir/IR/Operation.h"  // IWYU pragma: keep
+#include "mlir/IR/Value.h"  // IWYU pragma: keep
 #include "nanobind/nanobind.h"
 #include "nanobind/operators.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
@@ -278,4 +284,168 @@ NB_MODULE(_mosaic_gpu_ext, m) {
         }
         return self == nb::cast<mgpu::Replicated>(other);
       });
+
+  nb::class_<mgpu::TiledLayout>(m, "TiledLayout")
+      .def(
+          "__init__",
+          [](mgpu::TiledLayout* self, mgpu::Tiling tiling,
+             nb::iterable in_warp_dims, nb::iterable in_lane_dims,
+             int64_t vector_dim, bool check_canonical) {
+            std::vector<mgpu::TiledLayout::Dim> warp_dims;
+            for (const auto& dim : in_warp_dims) {
+              if (nb::isinstance<mgpu::Replicated>(dim)) {
+                warp_dims.emplace_back(nb::cast<mgpu::Replicated>(dim));
+              } else {
+                warp_dims.emplace_back(nb::cast<int64_t>(dim));
+              }
+            }
+            std::vector<mgpu::TiledLayout::Dim> lane_dims;
+            for (const auto& dim : in_lane_dims) {
+              if (nb::isinstance<mgpu::Replicated>(dim)) {
+                lane_dims.emplace_back(nb::cast<mgpu::Replicated>(dim));
+              } else {
+                lane_dims.emplace_back(nb::cast<int64_t>(dim));
+              }
+            }
+            auto result = mgpu::TiledLayout::Create(
+                tiling, warp_dims, lane_dims, vector_dim, check_canonical);
+            if (!result.ok()) {
+              throw nb::value_error(result.status().message().data());
+            }
+            new (self) mgpu::TiledLayout(*result);
+          },
+          nb::arg("tiling"), nb::arg("warp_dims"), nb::arg("lane_dims"),
+          nb::arg("vector_dim"), nb::arg("_check_canonical") = true)
+      .def_prop_ro("warp_dims",
+                   [](const mgpu::TiledLayout& self) {
+                     nb::list l;
+                     for (const auto& d : self.warp_dims()) {
+                       if (std::holds_alternative<mgpu::Replicated>(d)) {
+                         l.append(nb::cast(std::get<mgpu::Replicated>(d)));
+                       } else {
+                         l.append(nb::cast(std::get<int64_t>(d)));
+                       }
+                     }
+                     return nb::tuple(l);
+                   })
+      .def_prop_ro("lane_dims",
+                   [](const mgpu::TiledLayout& self) {
+                     nb::list l;
+                     for (const auto& d : self.lane_dims()) {
+                       if (std::holds_alternative<mgpu::Replicated>(d)) {
+                         l.append(nb::cast(std::get<mgpu::Replicated>(d)));
+                       } else {
+                         l.append(nb::cast(std::get<int64_t>(d)));
+                       }
+                     }
+                     return nb::tuple(l);
+                   })
+      .def_prop_ro("partitioned_warp_dims",
+                   [](const mgpu::TiledLayout& self) {
+                     return nb::tuple(nb::cast(self.PartitionedWarpDims()));
+                   })
+      .def_prop_ro("partitioned_lane_dims",
+                   [](const mgpu::TiledLayout& self) {
+                     return nb::tuple(nb::cast(self.PartitionedLaneDims()));
+                   })
+      .def_prop_ro("vector_length",
+                   [](const mgpu::TiledLayout& self) {
+                     auto result = self.VectorLength();
+                     if (!result.ok()) {
+                       throw nb::value_error(result.status().message().data());
+                     }
+                     return nb::cast(*result);
+                   })
+      .def_prop_ro("vector_dim", &mgpu::TiledLayout::vector_dim)
+      .def_prop_ro("tiling", &mgpu::TiledLayout::tiling)
+      .def_prop_ro("tiled_tiling_shape",
+                   [](const mgpu::TiledLayout& self) {
+                     auto result = self.TiledTilingShape();
+                     if (!result.ok()) {
+                       throw nb::value_error(result.status().message().data());
+                     }
+                     return nb::tuple(nb::cast(*self.TiledTilingShape()));
+                   })
+      .def(
+          "warp_indices",
+          [](const mgpu::TiledLayout& self, nb::object ip, nb::object loc) {
+            nb::object block = ip.attr("block");
+            nb::object ref_op = ip.attr("ref_operation");
+
+            MlirBlock block_c = nb::cast<MlirBlock>(block);
+            mlir::Block* cpp_block = unwrap(block_c);
+            MlirLocation loc_c = nb::cast<MlirLocation>(loc);
+            mlir::Location cpp_loc = unwrap(loc_c);
+            mlir::Operation* cpp_ref_op = nullptr;
+            if (!ref_op.is_none()) {
+              MlirOperation ref_op_c = nb::cast<MlirOperation>(ref_op);
+              cpp_ref_op = unwrap(ref_op_c);
+            }
+
+            auto [builder, new_loc] =
+                mgpu::MlirBuilder(cpp_block, &cpp_loc, cpp_ref_op);
+            auto result = self.WarpIndices(*builder, new_loc);
+            if (!result.ok()) {
+              throw nb::value_error(result.status().message().data());
+            }
+            nb::list l;
+            for (const auto& v : *result) {
+              l.append(nb::cast(wrap(v)));
+            }
+            return nb::tuple(l);
+          },
+          nb::arg("ip") = nb::none(), nb::arg("loc") = nb::none())
+      .def(
+          "lane_indices",
+          [](const mgpu::TiledLayout& self, nb::object ip, nb::object loc) {
+            nb::object block = ip.attr("block");
+            nb::object ref_op = ip.attr("ref_operation");
+
+            MlirBlock block_c = nb::cast<MlirBlock>(block);
+            mlir::Block* cpp_block = unwrap(block_c);
+            MlirLocation loc_c = nb::cast<MlirLocation>(loc);
+            mlir::Location cpp_loc = unwrap(loc_c);
+            mlir::Operation* cpp_ref_op = nullptr;
+            if (!ref_op.is_none()) {
+              MlirOperation ref_op_c = nb::cast<MlirOperation>(ref_op);
+              cpp_ref_op = unwrap(ref_op_c);
+            }
+
+            auto [builder, new_loc] =
+                mgpu::MlirBuilder(cpp_block, &cpp_loc, cpp_ref_op);
+            auto result = self.LaneIndices(*builder, new_loc);
+            if (!result.ok()) {
+              throw nb::value_error(result.status().message().data());
+            }
+            nb::list l;
+            for (const auto& v : *result) {
+              l.append(nb::cast(wrap(v)));
+            }
+            return nb::tuple(l);
+          },
+          nb::arg("ip") = nb::none(), nb::arg("loc") = nb::none())
+
+      .def("canonicalize",
+           [](const mgpu::TiledLayout& self) {
+             auto result = self.Canonicalize();
+             if (!result.ok()) {
+               throw nb::value_error(result.status().message().data());
+             }
+             return *result;
+           })
+      .def("__str__", &mgpu::TiledLayout::ToString)
+      .def("__repr__", &mgpu::TiledLayout::ToString)
+      .def("__hash__",
+           [](const mgpu::TiledLayout& self) {
+             return absl::Hash<mgpu::TiledLayout>{}(self);
+           })
+      .def(
+          "__eq__",
+          [](const mgpu::TiledLayout& self, nb::object other) -> bool {
+            if (!nb::isinstance<mgpu::TiledLayout>(other)) {
+              return false;
+            }
+            return self == nb::cast<mgpu::TiledLayout>(other);
+          },
+          nb::arg("other").none());
 }
