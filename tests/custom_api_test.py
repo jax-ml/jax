@@ -1572,6 +1572,29 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(api.value_and_grad(f)(-x), (jnp.cos(-x), 3.),
                         check_dtypes=False)
 
+  def test_python_control_flow_bwd(self):
+    @jax.custom_vjp
+    def f(x):
+      return jax.lax.cond(x > 0, jnp.sin, jnp.cos, x)  # no primal control flow
+    def f_fwd(x):
+      if x > 0:
+        return jnp.sin(x), x
+      else:
+        return jnp.cos(x), x
+    def f_rev(x, g):
+      if x > 0:
+        return (2 * g,)
+      else:
+        return (3 * g,)
+    f.defvjp(f_fwd, f_rev)
+    x = 2.
+    self.assertAllClose(f(x), jnp.sin(x))
+    self.assertAllClose(f(-x), jnp.cos(-x))
+    self.assertAllClose(api.value_and_grad(f)(x), (jnp.sin(x), 2.),
+                        check_dtypes=False)
+    self.assertAllClose(api.value_and_grad(f)(-x), (jnp.cos(-x), 3.),
+                        check_dtypes=False)
+
   def test_vmap(self):
     @jax.custom_vjp
     def f(x):
@@ -2925,6 +2948,22 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     g(1.)  # doesn't crash
 
+  def test_symbolic_zeros_remat(self):
+    @jax.custom_vjp
+    def f(x):
+      return x
+    def f_fwd(x):
+      return f(x.value), None
+    def f_bwd(_, g):
+      return g,
+    f.defvjp(f_fwd, f_bwd, symbolic_zeros=True)
+
+    @jax.remat
+    def foo(x):
+      return f(f(x))
+
+    jax.grad(foo)(3.)
+
   def test_nones_representing_zeros_in_subtrees_returned_by_bwd(self):
     # https://github.com/jax-ml/jax/issues/8356
     @jax.custom_vjp
@@ -3295,12 +3334,12 @@ class CustomVJP3Test(CustomVJPTest):
   def tearDown(self):
     jax.custom_vjp = self.prev
 
-  # closure, which ones of these do we care about?
-  def test_closed_over_vmap_tracer(self): pass  # not sure if we care
-  def test_bwd_closes_over_tracer(self): pass  # not sure if we care
-  def test_closed_over_tracer3(self): pass  # not sure if we care
-  def test_closure_with_vmap2(self): pass  # not sure if we care
-  def test_fwd_closes_over_tracer(self): pass  # not sure if we care
+  # closure
+  def test_closed_over_vmap_tracer(self): pass
+  def test_bwd_closes_over_tracer(self): pass
+  def test_closed_over_tracer3(self): pass
+  def test_closure_with_vmap2(self): pass
+  def test_fwd_closes_over_tracer(self): pass
 
   # eager (ie dont always trace, unless under a jit)
   def test_python_control_flow(self): pass
@@ -3327,14 +3366,8 @@ class CustomVJP3Test(CustomVJPTest):
   def test_pretty_print(self): pass
   def test_custom_lin_pretty_print(self): pass
 
-  # someone else will solve it
-  def test_remat(self): pass  # TODO try waiting for NCNP
-  def test_remat_higher_order(self): pass
-  # optimize remat
-  def test_optimize_remat_gh21303(self): pass  # TODO
-  def test_optimize_remat_kwargs(self): pass  # TODO
-  def test_optimize_remat_custom_vmap(self): pass
-  def test_optimize_remat_multiple_args(self): pass
+  # maybe we don't need to support?
+  def test_symbolic_zeros_remat(self): pass
 
 def transpose_unary(f, x_example):
   def transposed(y):

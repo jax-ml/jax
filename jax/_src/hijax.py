@@ -275,6 +275,7 @@ register_hitype(Box, lambda b: b.ty)
 class BoxEffect(effects.Effect): ...
 box_effect = BoxEffect()
 effects.control_flow_allowed_effects.add_type(BoxEffect)
+effects.custom_derivatives_allowed_effects.add_type(BoxEffect)
 
 class NewBox(HiPrimitive):
   def is_high(self, *, treedef) -> bool: return True  # type: ignore
@@ -550,17 +551,20 @@ def _call_hi_primitive_jvp(primals, tangents, *, prim):
   return out_primals_flat, out_tangents_flat
 ad.primitive_jvps[call_hi_primitive_p] = _call_hi_primitive_jvp
 
+def _call_hi_primitive_dce(used_outs_flat, eqn):
+  if hasattr(prim := eqn.params['prim'], 'dce'):
+    return prim.dce(used_outs_flat, eqn)
+  else:
+    return [True] * len(eqn.invars), eqn
+pe.dce_rules[call_hi_primitive_p] = _call_hi_primitive_dce
+
 
 class CustomVJPTraced(VJPHiPrimitive):
-  def __init__(self, primal, fwd, bwd, in_avals, sym_zeros, static_argnums):
-    in_avals_ = [x.val if isinstance(x, Static) else x for x in in_avals]
-    traced = api.jit(primal, static_argnums=(*static_argnums,)).trace(*in_avals_)
-    if any(isinstance(x, core.Tracer) for x in traced._consts):
-      raise Exception  # TODO(mattjj):error tracer type, value type, primal name
+  def __init__(self, traced, fwd, bwd, in_avals, sym_zeros, static_argnums, opt_remat):
     self.in_avals = in_avals
     self.out_aval = traced.out_avals
     self.params = dict(traced=traced, fwd=fwd, bwd=bwd, symbolic_zeros=sym_zeros,
-                       static_argnums=static_argnums)
+                       static_argnums=static_argnums, opt_remat=opt_remat)
     super().__init__()
 
   def expand(self, *args):
@@ -599,6 +603,19 @@ class CustomVJPTraced(VJPHiPrimitive):
       in_cts = tree_map(ad_util.replace_rule_output_symbolic_zeros, in_cts)
     return in_cts
 
+  def jvp(self, primals, tangents):
+    if self.symbolic_zeros: raise NotImplementedError  # type: ignore
+    zero = lambda x: isinstance(x, ad_util.Zero)
+    tangents = tree_map(ad_util.instantiate, tangents, is_leaf=zero)
+    if self.opt_remat:  # type: ignore
+      fwd_traced = api.jit(partial(self.vjp_fwd, (True,) * len(primals))).trace(*primals)
+      primals_out, residuals = OptRemat(self.traced, fwd_traced)(*primals)  # type: ignore
+    else:
+      primals_out, residuals, *_ = self.vjp_fwd((True,) * len(primals), *primals)
+    tangents_out_flat = fake_linear_op(self, [True] * len(tangents), residuals, *tangents)
+    tangents_out = tree_unflatten(self.out_tree, tangents_out_flat)
+    return primals_out, tangents_out
+
   def batch_dim_rule(self, axis_data, in_dims):
     in_dims_flat = self.in_tree.flatten_up_to(in_dims)
     _, out_dims = batching.batch_jaxpr2(self.traced.jaxpr, axis_data, tuple(in_dims_flat))  # type: ignore
@@ -616,18 +633,52 @@ class custom_vjp3:
     self.f = f
     self.static_argnums = _set_up_nondiff(f, nondiff_argnums, nondiff_argnames)
 
-  def defvjp(self, fwd, bwd, *, symbolic_zeros=False):
+  def defvjp(self, fwd, bwd, *, symbolic_zeros=False, optimize_remat=False):
     self.fwd = fwd
     self.bwd = bwd
     self.symz = symbolic_zeros
+    self.opt_remat = optimize_remat
     return self
 
   def __call__(self, *args, **kwargs):
     args = resolve_kwargs(self.f, args, kwargs)
+    traced = api.jit(self.f, static_argnums=(*self.static_argnums,)).trace(*args)
+    if any(isinstance(x, core.Tracer) for x in traced._consts):
+      raise Exception  # TODO(mattjj):error tracer type, value type, primal name
     args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
     in_avals = tree_map(typeof, args)
-    prim = CustomVJPTraced(self.f, self.fwd, self.bwd, in_avals, self.symz, self.static_argnums)  # type: ignore
+    prim = CustomVJPTraced(traced, self.fwd, self.bwd, in_avals, self.symz,  # type: ignore
+                           self.static_argnums, self.opt_remat)  # type: ignore
     return prim(*args)
+
+class OptRemat(VJPHiPrimitive):
+  traced_fwd: Any
+  traced_primal: Any
+
+  def __init__(self, traced_primal, traced_fwd):
+    self.in_avals, _ = traced_primal.in_avals
+    self.out_aval = traced_fwd.out_avals
+    self.params = dict(traced_primal=traced_primal, traced_fwd=traced_fwd)
+    super().__init__()
+
+  def expand(self, *primals):
+    return self.traced_fwd(*primals)
+
+  def dce(self, used_outs, eqn):
+    num_primals_in = len(self.traced_primal.jaxpr.in_avals)
+    num_primals_out = len(self.traced_primal.jaxpr.out_avals)
+    _, used_res = split_list(used_outs, [num_primals_out])
+    if any(used_res):
+      return [True] * num_primals_in, eqn
+    else:
+      outvars = [v for used, v in zip(used_outs, eqn.outvars) if used]
+      primal_eqn = pe.new_jaxpr_eqn(
+          eqn.invars, outvars, core.closed_call_p, dict(call_jaxpr=self.traced_primal.jaxpr),
+          self.traced_primal.jaxpr.effects, eqn.source_info, eqn.ctx)
+      return [True] * num_primals_in, primal_eqn
+
+  # TODO(mattjj): jvp and transpose? does anyone rely on them?
+
 
 def _set_up_nondiff(f, argnums_, argnames) -> frozenset[int]:
   argnums = set(argnums_)
