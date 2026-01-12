@@ -3328,8 +3328,8 @@ class FragmentedArrayTest(TestCase):
           operator.add,
           operator.mul,
           operator.sub,
-          (lambda x, y: mgpu.FragmentedArray.min(x, y), np.minimum),
-          (lambda x, y: mgpu.FragmentedArray.max(x, y), np.maximum),
+          (mgpu.FragmentedArray.min, np.minimum),
+          (mgpu.FragmentedArray.max, np.maximum),
       ),
       # TODO(apaszke): Enable float8
       dtype=[jnp.float32, jnp.int32, jnp.uint32, jnp.float16],
@@ -3524,6 +3524,7 @@ class FragmentedArrayTest(TestCase):
           (lambda x: -x, jax.lax.neg),
           (lambda x: x + 42, lambda x: x + 42),
           (lambda x: x.tanh(), jax.lax.tanh),
+          (lambda x: x.abs(), np.abs),
       ),
       dtype=[jnp.float32, jnp.int32, jnp.uint32],
   )
@@ -3558,21 +3559,25 @@ class FragmentedArrayTest(TestCase):
 
   @parameterized.product(
       ops=[
-          (lambda x: mgpu.FragmentedArray.exp(x), np.exp),
-          (lambda x: mgpu.FragmentedArray.sin(x), np.sin),
-          (lambda x: mgpu.FragmentedArray.cos(x), np.cos),
-          (lambda x: mgpu.FragmentedArray.rsqrt(x), jax.lax.rsqrt),
-          (lambda x: mgpu.FragmentedArray.abs(x), np.abs),
-          (lambda x: mgpu.FragmentedArray.erf(x), jax.scipy.special.erf),
+          (mgpu.FragmentedArray.exp, np.exp),
+          (mgpu.FragmentedArray.sin, np.sin),
+          (mgpu.FragmentedArray.cos, np.cos),
+          (mgpu.FragmentedArray.rsqrt, jax.lax.rsqrt),
+          (mgpu.FragmentedArray.erf, jax.scipy.special.erf),
       ],
       approx=[False, True],
   )
   @jtu.ignore_warning(message="overflow encountered", category=RuntimeWarning)
   def test_math(self, ops, approx, m=64, n=32):
     op, np_op = ops
+    kwargs = dict(approx=approx)
+    if op is mgpu.FragmentedArray.erf:
+      if approx:
+        raise self.skipTest("ERF not supported with approximation")
+      kwargs = {}
     def kernel(ctx, dst, _):
       iota = iota_tensor(m, n, jnp.float32)
-      op(iota).store_untiled(dst, optimized=False)
+      op(iota, **kwargs).store_untiled(dst, optimized=False)
     out_shape = jax.ShapeDtypeStruct((m, n), jnp.float32)
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
