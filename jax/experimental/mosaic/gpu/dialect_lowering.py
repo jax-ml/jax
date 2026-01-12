@@ -1348,7 +1348,7 @@ def _mgpu_wgmma_op_lowering_rule(
   if isinstance(wgmma_op.a.type, ir.VectorType):
     expected_a_layout = (
         fa.WGMMA_LAYOUT_8BIT
-        if element_type == ir.IntegerType.get_signless(8)
+        if utils.bitwidth(element_type) == 8
         else fa.WGMMA_LAYOUT
     )
     assert in_layouts[1] == layouts.to_layout_attr(expected_a_layout)

@@ -966,7 +966,7 @@ def _wgmma_constraint_system(
   else:
     assert a_tiling is None
     a_var = cs.Variable(a)
-    if ir.IntegerType.get_signless(8) == ir.VectorType(op.a.type).element_type:
+    if utils.bitwidth(op.a.type.element_type) == 8:
       layout = fa.WGMMA_LAYOUT_8BIT
     else:
       layout = fa.WGMMA_LAYOUT

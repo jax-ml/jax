@@ -3273,8 +3273,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
 
   @parameterized.parameters(jnp.int8, jnp.float8_e4m3fn, jnp.float8_e5m2)
   def test_wgmma_registers_8bit(self, input_dtype):
-    if input_dtype != jnp.int8:
-      self.skip_if_wg_semantics()
     if jnp.issubdtype(input_dtype, jnp.integer):
       out_dtype = jnp.int32
     else:
