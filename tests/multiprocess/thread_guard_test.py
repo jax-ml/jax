@@ -17,7 +17,6 @@
 import concurrent.futures
 
 import jax
-from jax._src import config
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
@@ -57,7 +56,7 @@ class ThreadGuardTest(jt_multiprocess.MultiProcessTest):
     # Test slow JIT path.
     with self.assertRaisesRegex(
         (RuntimeError, ValueError), 'thread guard was set'):
-      with (config.thread_guard(True),
+      with (jax.thread_guard(True),
         concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor):
         y = executor.submit(f, arr)
       jax.block_until_ready(y.result())
@@ -67,7 +66,7 @@ class ThreadGuardTest(jt_multiprocess.MultiProcessTest):
     x = g(x)
     with self.assertRaisesRegex(
         (RuntimeError, ValueError), 'thread guard was set'):
-      with (config.thread_guard(True),
+      with (jax.thread_guard(True),
         concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor):
         y = executor.submit(g, x)
       jax.block_until_ready(y.result())
@@ -81,7 +80,7 @@ class ThreadGuardTest(jt_multiprocess.MultiProcessTest):
     x = jnp.ones((jax.local_device_count(),))
     x = jax.device_put(x, sharding)
 
-    with config.thread_guard(True):
+    with jax.thread_guard(True):
       z = g(x)
       with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         y = executor.submit(f, x).result()
@@ -89,12 +88,12 @@ class ThreadGuardTest(jt_multiprocess.MultiProcessTest):
       jax.block_until_ready(out)  # No cross-process arrays, so no error.
 
     # Test nested thread guard context managers.
-    with config.thread_guard(True):
+    with jax.thread_guard(True):
       y = g(arr)
-      with config.thread_guard(True):
+      with jax.thread_guard(True):
         z = g(y)  # No error when context manager is redundantly nested.
         jax.block_until_ready(z)
-        with config.thread_guard(False):
+        with jax.thread_guard(False):
           with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             w = executor.submit(f, z).result()
           jax.block_until_ready(w)  # No error, thread guard deactivated.
@@ -113,7 +112,7 @@ class ThreadGuardTest(jt_multiprocess.MultiProcessTest):
 
     # Test thread guard in a subthread.
     def f_with_thread_guard_should_raise(x):
-      with (config.thread_guard(True),
+      with (jax.thread_guard(True),
         concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor):
         return executor.submit(f, x).result()
 
@@ -125,13 +124,13 @@ class ThreadGuardTest(jt_multiprocess.MultiProcessTest):
 
     # Test nested thread guard context managers in different threads raises.
     def f_with_thread_guard(x):
-      with config.thread_guard(True):
+      with jax.thread_guard(True):
         return f(x)
 
     with self.assertRaisesRegex(
         (RuntimeError, ValueError),
         'Nested thread guards in different threads are not supported'):
-      with config.thread_guard(True):
+      with jax.thread_guard(True):
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
           y = executor.submit(f_with_thread_guard, arr).result()
           jax.block_until_ready(y)

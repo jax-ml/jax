@@ -16,6 +16,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* New features:
+
+  * Added {func}`jax.thread_guard`, a context manager that detects when devices
+    are used by multiple threads in multi-controller JAX.
+
 * Bug fixes:
   * Fixed a workspace size calculation error for pivoted QR (`magma_zgeqp3_gpu`)
     in MAGMA 2.9.0 when using `use_magma=True` and `pivoting=True`.
