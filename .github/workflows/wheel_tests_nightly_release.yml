@@ -178,7 +178,7 @@ jobs:
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
             {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
             {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"},
-            {type: "v7x-8", cores: "8", runner: "linux-x86-tpu7x-224-4tpu"}
+            {type: "v7x-8", cores: "4", runner: "linux-x86-tpu7x-224-4tpu"}
           ]
           libtpu-version-type: ["pypi_latest", "nightly"]
           exclude:
@@ -242,7 +242,7 @@ jobs:
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
             {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
             {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
-            {type: "v7x-8", cores: "8", runner: "linux-x86-tpu7x-224-4tpu"},
+            {type: "v7x-8", cores: "4", runner: "linux-x86-tpu7x-224-4tpu"},
           ]
           libtpu-version-type: ["pypi_latest", "nightly"]
           exclude:
