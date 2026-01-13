@@ -37,7 +37,7 @@ jobs:
     name: "TPU test (jaxlib=head)"
     with:
       runner: "linux-x86-tpu7x-224-4tpu"
-      cores: "8"
+      cores: "4"
       tpu-type: "v7x-8"
       python: "3.14-nogil"
       libtpu-version-type: "nightly"
