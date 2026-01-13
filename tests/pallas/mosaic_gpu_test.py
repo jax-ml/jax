@@ -329,11 +329,12 @@ class PallasCallTest(PallasTest):
 
   @parameterized.product(shape=[(128,), (128, 64)])
   def test_reduce_sum(self, shape):
+
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct(shape, jnp.float32)
+        self.kernel, out_shape=jax.ShapeDtypeStruct((), jnp.float32)
     )
     def kernel(x_ref, o_ref):
-      o_ref[...] = jnp.broadcast_to(_sum_same_dtype(x_ref[...]), o_ref.shape)
+      o_ref[...] = _sum_same_dtype(x_ref[...])
 
     x = jnp.arange(math.prod(shape)).reshape(shape).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), jnp.sum(x))
