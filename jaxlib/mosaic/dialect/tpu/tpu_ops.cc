@@ -165,7 +165,7 @@ OpFoldResult BitcastVregOp::fold(FoldAdaptor adaptor) {
 }
 
 LogicalResult MemRefSliceOp::verify() {
-  auto source_type = getMemRefType(getMemRef());
+  auto source_type = getMemRef().getType();
   auto target_type = getType();
   auto source_layout = source_type.getLayout();
   auto target_layout = target_type.getLayout();
@@ -175,6 +175,11 @@ LogicalResult MemRefSliceOp::verify() {
   if (!source_type.hasStaticShape()) {
     return emitOpError(
         "Only slicing of memrefs with static shapes is supported.");
+  }
+  if (getDynamicSizes().size() != target_type.getNumDynamicDims()) {
+    return emitOpError(
+        "Number of provided dynamic dimensions sizes must match the number of "
+        "dynamic dimensions in the target type.");
   }
   auto source_shape = source_type.getShape();
   bool is_semaphore =
@@ -191,21 +196,15 @@ LogicalResult MemRefSliceOp::verify() {
   }
   // TODO(apaszke): Check that the result has a smaller shape.
   // TODO(apaszke): Check that strides are equivalent.
-  // Source and target attributes may be different before propagation is done by
-  // the canonicalizer, so we allow this when attributes are "unset" in the
-  // target type. Note that MemRefType does not allow a null layout so we treat
-  // the default identity affine map as an "unset" value instead.
+  // Source and target memory spaces may be different before propagation is done
+  // by memory space specialization.
   bool is_target_memory_space_provided = target_memory_space != nullptr;
   if (is_target_memory_space_provided &&
       target_memory_space != source_type.getMemorySpace()) {
     return emitOpError(
         "Memory spaces must match if the target memory space is provided.");
   }
-  if (isa<TiledLayoutAttr>(source_layout) &&
-      !isa<TiledLayoutAttr>(target_layout)) {
-    // TODO(slebedev): Remove this special-case once we move layout propagation
-    // to the infer-memref-layout pass.
-  } else if (isa<StridedLayoutAttr>(target_layout)) {
+  if (isa<StridedLayoutAttr>(target_layout)) {
     SmallVector<int64_t> source_strides;
     int64_t source_offset;
     if (failed(
@@ -230,18 +229,9 @@ LogicalResult MemRefSliceOp::verify() {
       return emitOpError("Layout mismatch: got ")
              << target_layout << ", expected " << expected_layout << ".";
     }
-  } else {
-    bool is_target_layout_identity_map =
-        isa<AffineMapAttr>(target_layout) && target_layout.isIdentity();
-    if (!is_target_layout_identity_map && target_layout != source_layout) {
-      return emitOpError(
-          "Layouts must match if the target layout is not an identity map.");
-    }
-  }
-  if (getDynamicSizes().size() != target_type.getNumDynamicDims()) {
+  } else if (target_layout != source_layout) {
     return emitOpError(
-        "Number of provided dynamic dimensions sizes must match the number of "
-        "dynamic dimensions in the target type.");
+        "Layouts must match if the target layout is not strided.");
   }
   return success();
 }
