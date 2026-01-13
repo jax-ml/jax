@@ -37,8 +37,9 @@ from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map
 from jax._src.state.discharge import run_state
 
-from jax._src.hijax import (HiPrimitive, HiType, Box, new_box, box_set, box_get,
-                            box_effect, register_hitype, ShapedArray, Ty)
+from jax._src.hijax import (
+    HiPrimitive, HiType, Box, new_box, box_set, box_get, box_effect,
+    register_hitype, ShapedArray, Ty, custom_vjp3)
 from jax.experimental.hijax import VJPHiPrimitive
 
 config.parse_flags_with_absl()
@@ -1175,6 +1176,32 @@ class BoxTest(jtu.JaxTestCase):
       f = jax.jit(f)
 
     jax.grad(partial(f, box))(1.0)
+    self.assertAllClose(box.get(), 2.0)
+
+  @parameterized.parameters([False, True])
+  def test_custom_vjp_primal(self, jit):
+    box = Box(0.0)
+
+    @custom_vjp3
+    def foo(box, x):
+      box.set(x)
+      return x
+    def foo_fwd(box, x):
+      assert False  # doesn't run
+    def foo_bwd(box, g):
+      assert False  # doesn't run
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    def f(box, x):
+      x = 2 * x
+      x = foo(box, x)
+      x = 2 * x
+      return x
+
+    if jit:
+      f = jax.jit(f)
+
+    f(box, 1.0)
     self.assertAllClose(box.get(), 2.0)
 
   @parameterized.parameters([False, True])
