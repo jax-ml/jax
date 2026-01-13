@@ -112,7 +112,7 @@ class InterpretParams(interpret_utils.InterpretParams):
 
   @property
   def num_cores_per_device(self) -> int:
-    return self.num_cores_or_threads_per_device
+    return self.num_cores_or_threads
 
 
 @contextlib.contextmanager
@@ -1708,7 +1708,7 @@ def interpret_pallas_call(
     # that users don't have to specify it in the InterpretParams.
     assert len(mesh.shape) == 1
     interpret_params = dataclasses.replace(
-        interpret_params, num_cores_or_threads_per_device=mesh.devices.shape[0]
+        interpret_params, num_cores_or_threads=mesh.devices.shape[0]
     )
 
   args = [remove_memory_space_p.bind(a) for a in args]

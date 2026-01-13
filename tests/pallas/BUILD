@@ -1410,3 +1410,17 @@ jax_multiplatform_test(
         "//jax/experimental:pallas_tpu",
     ] + py_deps("absl/testing"),
 )
+
+jax_multiplatform_test(
+    name = "gpu_pallas_interpret_test",
+    srcs = ["gpu_pallas_interpret_test.py"],
+    enable_backends = ["cpu"],
+    deps = [
+        "//jax/_src/pallas/mosaic_gpu/interpret:interpret_pallas_call",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_mosaic_gpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)

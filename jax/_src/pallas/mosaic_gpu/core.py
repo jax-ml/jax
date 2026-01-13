@@ -231,6 +231,7 @@ def kernel(
     cluster_names: tuple[str, ...] = (),
     num_threads: int | None = None,
     thread_name: str | None = None,
+    interpret: Any = None,
     **mesh_kwargs: object,
 ):
   """Entry point for defining a Mosaic GPU kernel.
@@ -292,7 +293,9 @@ def kernel(
         # The body function name is used to set the name of the kernel as a
         # fallback if the kernel name is not set explicitly.
         cmap_body.__name__ = getattr(body, "__name__", "anonymous")
-      pallas_core.core_map(mesh, compiler_params=compiler_params)(cmap_body)
+      pallas_core.core_map(
+          mesh, compiler_params=compiler_params, interpret=interpret
+      )(cmap_body)
     _, outs = state_discharge.run_state(stateful)((
         operands,
         jax.tree.map(lambda s: jax.lax.empty(s.shape, s.dtype), out_shape),
@@ -326,6 +329,7 @@ def kernel(
         cluster_names=cluster_names,
         num_threads=num_threads,
         thread_name=thread_name,
+        interpret=interpret,
         **mesh_kwargs_,
     )(*args)
     out_batched = tree_util.tree_map(lambda _: True, out_shape_)

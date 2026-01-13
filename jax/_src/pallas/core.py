@@ -1464,6 +1464,12 @@ def _core_map_abstract_eval(*args, jaxpr, mesh, **kwargs):
         effs = mosaic_tpu_interpret.get_interpret_effects()
     except ImportError:
       pass
+    try:
+      from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret  # Avoid circular dependency.
+      if isinstance(interpret, mosaic_gpu_interpret.InterpretParams):
+        effs = mosaic_gpu_interpret.get_interpret_effects()
+    except ImportError:
+      pass
   for eff in jaxpr.effects:
     if mesh.discharges_effect(eff) or isinstance(eff, CommsEffect):
       continue
@@ -1656,6 +1662,12 @@ def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
       from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret  # Avoid circular dependency.
       if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
         effs = mosaic_tpu_interpret.get_interpret_effects()
+    except ImportError:
+      pass
+    try:
+      from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret  # Avoid circular dependency.
+      if isinstance(interpret, mosaic_gpu_interpret.InterpretParams):
+        effs = mosaic_gpu_interpret.get_interpret_effects()
     except ImportError:
       pass
   for eff in jaxpr.effects:

@@ -69,8 +69,11 @@ class InterpretParams:
       all NaNs (or to their maximum possible value for integers). If "zero",
       allocated buffers are initialized to all zeros.
       Default: "nan".
-    num_cores_or_threads_per_device: The number of cores (TPU) or threads (GPU)
-      per device.
+    num_cores_or_threads: The number of cores per device (TPU) or threads per
+      block (GPU). Note that for interpreting GPU kernels, we currently only
+      support a single block in the grid. (So the number of threads per block on
+      the GPU can be thought of as the number of threads that runs concurrently
+      on the GPU.)
       Default: 1.
     vector_clock_size: The number of entries in the vector clocks. This should
       be an integer bigger then the total number of cores, i.e. bigger than
@@ -84,12 +87,19 @@ class InterpretParams:
   out_of_bounds_reads: Literal["raise", "uninitialized"] = "raise"
   skip_floating_point_ops: bool = False
   uninitialized_memory: Literal["nan", "zero"] = "nan"
-  num_cores_or_threads_per_device: int = 1
+  num_cores_or_threads: int = 1
   vector_clock_size: int | None = None
+
+  def __post_init__(self):
+    if self.num_cores_or_threads < 1:
+      raise ValueError(
+          "Number of cores or threads must be at least 1, but got"
+          f" {self.num_cores_or_threads}."
+      )
 
   def get_vector_clock_size(self, num_devices) -> int:
     """Returns the number of vector clocks to use.`"""
-    num_cores_or_threads = num_devices * self.num_cores_or_threads_per_device
+    num_cores_or_threads = num_devices * self.num_cores_or_threads
     if self.vector_clock_size is not None:
       if num_cores_or_threads >= self.vector_clock_size:
         raise ValueError(

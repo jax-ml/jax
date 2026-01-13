@@ -99,8 +99,12 @@ def _pallas_call_abstract_eval(
 ):
   if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
     # Report effects that will be introduced when running/lowering
-    # mosaic_tpu_interpret.mosaic_tpu_interpret.interpret_pallas_call .
+    # mosaic_tpu_interpret.interpret_pallas_call .
     effs = mosaic_tpu_interpret.get_interpret_effects()
+  elif isinstance(interpret, mosaic_gpu_interpret.InterpretParams):
+    # Report effects that will be introduced when running/lowering
+    # mosaic_gpu_interpret.interpret_pallas_call .
+    effs = mosaic_gpu_interpret.get_interpret_effects()
   elif getattr(params.get('compiler_params', None), 'has_side_effects', False):
     effs = jax_core.GenericEffect(pallas_call_p)
   else:
@@ -1102,6 +1106,10 @@ def _pallas_call_lowering(
       impl = partial(mosaic_tpu_interpret.interpret_pallas_call,
                      interpret_params=interpret,
                      **params)
+    elif isinstance(interpret, mosaic_gpu_interpret.InterpretParams):
+      impl = partial(mosaic_gpu_interpret.interpret_pallas_call,
+                     interpret_params=interpret,
+                     **params)
     else:
       impl = partial(hlo_interpreter.pallas_call_hlo_interpret,
                      backend=backend,
@@ -1654,5 +1662,12 @@ try:
   from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret
 except ImportError:
   mosaic_tpu_interpret = types.SimpleNamespace(  # type: ignore
-      InterpretParams=types.new_class('_NoInstances', (enum.Enum,)),
+      InterpretParams=types.new_class("_NoInstances", (enum.Enum,)),
+  )
+
+try:
+  from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret
+except ImportError:
+  mosaic_gpu_interpret = types.SimpleNamespace(  # type: ignore
+      InterpretParams=types.new_class("_NoInstances", (enum.Enum,)),
   )
