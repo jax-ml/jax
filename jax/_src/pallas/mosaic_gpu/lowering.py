@@ -508,16 +508,13 @@ class ModuleContext:
     yield tmem_ref
     self.tmem_used_cols -= cols_used
 
-  # TODO(cperivol): Only return the shapes and figure out the sizes when freeing.
   @contextlib.contextmanager
   def scratch_view(self, struct: jax.ShapeDtypeStruct) -> Iterator[ir.Value]:
     """Creates a view into the runtime scratch buffer for the given struct.
 
     This is a low-level API. Use it only if you know what you are doing.
 
-    The function allocates bytes at the top of a stack, which need to be
-    deallocated in a FIFO fashion with :meth:`ModuleContext.stack_free_smem`.
-    After deallocation, the view is invalid and cannot be used.
+    After the context manager exits, the view is invalid and cannot be used.
 
     Args:
       struct: The shape and dtype of the view to create.
