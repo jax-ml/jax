@@ -1383,6 +1383,7 @@ class LaunchContext:
     # Use the simpler copy instruction for contiguous transfers.
     is_simple_contiguous_copy = (
         check_contiguous_slice(slice_shape, strides)
+        and slice_shape[-1] > 256
         and reduction_op is None
         and (
             swizzle is None or swizzle == mgpu_dialect.SwizzlingMode.kNoSwizzle

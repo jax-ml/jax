@@ -803,10 +803,12 @@ class PallasCallTest(PallasTest):
       np.testing.assert_allclose(kernel(x)[indexer], x[indexer] + 1.0)
 
     ptx = output()
-    # Check that we are indeed using the simpler instruction without a tma desc.
-    self.assertIn("cp.async.bulk.shared::cta.global", ptx)  # copy in
-    self.assertIn("cp.async.bulk.global.shared", ptx)  # copy out
-    self.assertNotIn("cp.async.bulk.tensor", ptx)
+    slice_shape = x[indexer].shape
+    if slice_shape[-1] > 256:
+      # Check that we are indeed using the simpler instruction without a tma desc.
+      self.assertIn("cp.async.bulk.shared::cta.global", ptx)  # copy in
+      self.assertIn("cp.async.bulk.global.shared", ptx)  # copy out
+      self.assertNotIn("cp.async.bulk.tensor", ptx)
 
   @parameterized.named_parameters(
       {"testcase_name": "1d_none",
@@ -1705,7 +1707,7 @@ class PallasCallTest(PallasTest):
     start_idx_val = jnp.array(start_offset, dtype=jnp.int32)
 
     valid_part = input[start_offset : start_offset + smem_size]
-    filler_part = jnp.full((smem_size - valid_part.size,), -1.0, dtype=dtype)
+    filler_part = jnp.full((smem_size - valid_part.size,), 0.0, dtype=dtype)
     expected = jnp.concatenate([valid_part, filler_part])
 
     out = kernel(start_idx_val, input)
