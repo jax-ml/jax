@@ -15,7 +15,7 @@
 # Package for Pallas GPU Interpret Mode
 
 load("@rules_python//python:defs.bzl", "py_library")
-load("//jaxlib:jax.bzl", "pytype_strict_library")
+load("//jaxlib:jax.bzl", "py_deps", "pytype_strict_library")
 
 package(
     default_applicable_licenses = [],
@@ -61,8 +61,9 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic/interpret:vector_clock",
         "//jax/_src/pallas/mosaic_gpu:core",
-        "//third_party/py/numpy",
-    ],
+    ] + py_deps([
+        "numpy",
+    ]),
 )
 
 pytype_strict_library(
