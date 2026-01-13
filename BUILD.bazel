@@ -78,6 +78,7 @@ wheel_sources(
         "//jax/_src/lib",
         "//jax/_src/pallas/fuser",
         "//jax/_src/pallas/mosaic_gpu",
+        "//jax/_src/pallas/mosaic_gpu/interpret:interpret_pallas_call",
         "//jax/experimental/array_serialization:serialization",
         "//jax/experimental/array_serialization:pytree_serialization",
         "//jax/experimental/jax2tf",
