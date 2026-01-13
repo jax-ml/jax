@@ -289,6 +289,22 @@ else:
   Replicated = ReplicatedImpl
 
 
+def cc_method_exists(self, method_name: str):
+  return hasattr(mgpu.dialect, self.__class__.__name__) and hasattr(
+      getattr(mgpu.dialect, self.__class__.__name__), method_name
+  )
+
+
+def dispatch_to_cc_method(self, method_name: str, extract_args_fun, *args, **kwargs):
+  """Dispatches a method call to the corresponding C++ method."""
+  cls = getattr(mgpu.dialect, self.__class__.__name__)
+  instance = cls(*extract_args_fun(self))
+  attr = getattr(instance, method_name)
+  if not callable(attr):
+    return attr
+  return attr(*args, **kwargs)
+
+
 @dataclasses.dataclass(frozen=True)
 class TiledLayout:
   """A FragmentedArray layout derived from a tiling expression.
@@ -377,12 +393,16 @@ class TiledLayout:
 
   @functools.cached_property
   def partitioned_warp_dims(self) -> tuple[int, ...]:
+    if cc_method_exists(self, "partitioned_warp_dims"):
+      return self.dispatch_to_cc("partitioned_warp_dims", check_canonical=False)
     return tuple(
       d for d in self.warp_dims if not isinstance(d, Replicated)
     )
 
   @functools.cached_property
   def partitioned_lane_dims(self) -> tuple[int, ...]:
+    if cc_method_exists(self, "partitioned_lane_dims"):
+      return self.dispatch_to_cc("partitioned_lane_dims", check_canonical=False)
     return tuple(
       d for d in self.lane_dims if not isinstance(d, Replicated)
     )
@@ -415,6 +435,8 @@ class TiledLayout:
     This tile acts as the divisibility constraint for a suffix of arrays to
     which this layout applies.
     """
+    if cc_method_exists(self, "base_tile_shape"):
+      return self.dispatch_to_cc("base_tile_shape", check_canonical=False)
     return self.tiling.tiles[0]
 
   @functools.cached_property
@@ -426,6 +448,8 @@ class TiledLayout:
     so the tiled shape always ends with this suffix, no matter what array shape
     it's applied to.
     """
+    if cc_method_exists(self, "tiled_tiling_shape"):
+      return self.dispatch_to_cc("tiled_tiling_shape", check_canonical=False)
     base_tile_shape = self.base_tile_shape
     return self.tiling.tile_shape(base_tile_shape)[len(base_tile_shape):]
 
@@ -435,13 +459,19 @@ class TiledLayout:
 
   @property
   def vector_length(self) -> int:
+    if cc_method_exists(self, "vector_length"):
+      return self.dispatch_to_cc("vector_length", check_canonical=False)
     return self.tiled_tiling_shape[self.vector_dim]
 
   def registers_element_type(self, t: ir.Type) -> ir.Type:
+    if cc_method_exists(self, "registers_element_type"):
+      return self.dispatch_to_cc("registers_element_type", t, check_canonical=False)
     return ir.VectorType.get((self.vector_length,), t)
 
   def registers_shape(self, shape: tuple[int, ...]) -> tuple[int, ...]:
     """Returns the shape of the register array needed to represent an array of the given logical shape."""
+    if cc_method_exists(self, "registers_shape"):
+      return self.dispatch_to_cc("registers_shape", shape, check_canonical=False)
     tiled_shape = list(self.tiling.tile_shape(shape))
     for d in self.partitioned_warp_dims:
       tiled_shape[d] = 1
@@ -455,6 +485,8 @@ class TiledLayout:
 
     Inverse to `registers_shape`.
     """
+    if cc_method_exists(self, "shape_from_registers_shape"):
+      return self.dispatch_to_cc("shape_from_registers_shape", shape, check_canonical=False)
     tiled_tiling = self.tiled_tiling_shape
     shape = list(shape)
     for d in self.partitioned_warp_dims:
@@ -486,11 +518,25 @@ class TiledLayout:
     return tuple(full_indices)
 
   def lane_indices(self) -> tuple[ir.Value, ...]:
+    if cc_method_exists(self, "lane_indices"):
+      return self.dispatch_to_cc(
+          "lane_indices",
+          ir.InsertionPoint.current,
+          ir.Location.current,
+          check_canonical=False,
+      )
     i32 = ir.IntegerType.get_signless(32)
     lane_idx = arith.remui(utils.thread_idx(), c(WARP_SIZE, i32))
     return self._delinearize_index(lane_idx, self.lane_dims)
 
   def warp_indices(self) -> tuple[ir.Value, ...]:
+    if cc_method_exists(self, "warp_indices"):
+      return self.dispatch_to_cc(
+          "warp_indices",
+          ir.InsertionPoint.current,
+          ir.Location.current,
+          check_canonical=False,
+      )
     i32 = ir.IntegerType.get_signless(32)
     warp_idx = arith.remui(
         arith.divui(utils.thread_idx(), c(WARP_SIZE, i32)),
@@ -540,6 +586,16 @@ class TiledLayout:
 
   def canonicalize(self) -> TiledLayout:
     """Returns a version of this layout where tiling is canonical."""
+    if cc_method_exists(self, "canonicalize"):
+      c_layout = self.dispatch_to_cc("canonicalize", check_canonical=False)
+      return TiledLayout(
+        tiling=c_layout.tiling,
+        warp_dims=c_layout.warp_dims,
+        lane_dims=c_layout.lane_dims,
+        vector_dim=c_layout.vector_dim,
+        _check_canonical=False
+      )
+
     canonical_tiling = self.tiling.canonicalize()
 
     s = self.base_tile_shape
@@ -591,6 +647,22 @@ class TiledLayout:
         tuple(replace_tiled_dim(d) for d in self.lane_dims if is_nontrivial(d)),
         replace_tiled_dim(self.vector_dim),
         _check_canonical=False,
+    )
+
+  def dispatch_to_cc(self, method_name: str, *args, **kwargs):
+    check_canonical = kwargs.pop("check_canonical", True)
+    return dispatch_to_cc_method(
+        self,
+        method_name,
+        lambda inst: [
+            inst.tiling,
+            inst.warp_dims,
+            inst.lane_dims,
+            inst.vector_dim,
+            check_canonical
+        ],
+        *args,
+        **kwargs,
     )
 
 
