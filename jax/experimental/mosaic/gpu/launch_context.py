@@ -23,7 +23,6 @@ from typing import Any, Literal
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
-from jaxlib.mlir.dialects import _gpu_ops_gen
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import builtin
 from jaxlib.mlir.dialects import func
@@ -322,7 +321,7 @@ class Scratch:
              : (!llvm.array<256 x i8>) -> !llvm.ptr
 
   """
-  def __init__(self, gpu_launch_op: _gpu_ops_gen.LaunchOp):
+  def __init__(self, gpu_launch_op: gpu.LaunchOp):
     self.next_offset: int = 0
     self.host_init: list[Callable[[ir.Value], None]] = []
     self._ops_created = False

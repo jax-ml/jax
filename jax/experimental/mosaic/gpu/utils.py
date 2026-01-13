@@ -27,7 +27,6 @@ from jax import numpy as jnp
 from jax._src.lib import mosaic_gpu_dialect as dialect  # noqa: F401
 from jax.interpreters import mlir
 from jaxlib.mlir import ir
-from jaxlib.mlir.dialects import _gpu_ops_gen
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import builtin
 from jaxlib.mlir.dialects import gpu
@@ -189,7 +188,7 @@ def debug_print(fmt, *args, uniform=True, scope=None):
       else contextlib.nullcontext
   )
   with ctx():
-    _gpu_ops_gen.printf(fmt.format(*type_formats) + "\n", new_args)
+    gpu.printf(fmt.format(*type_formats) + "\n", *new_args)
 
 
 @dataclasses.dataclass(frozen=True)

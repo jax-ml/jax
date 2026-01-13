@@ -29,7 +29,6 @@ from typing import Any, Protocol, cast
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import _gpu_ops_gen
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import func
@@ -2312,7 +2311,7 @@ def _index_switch_op_lowering_rule(
 
 
 @_register_lowering(func.FuncOp)
-@_register_lowering(_gpu_ops_gen.LaunchOp)
+@_register_lowering(gpu.LaunchOp)
 def _traverse_op_lowering_rule(
     ctx: LoweringContext, op: ir.OpView
 ) -> MlirLoweringRuleResult:

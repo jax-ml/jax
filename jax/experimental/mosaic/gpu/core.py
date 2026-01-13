@@ -592,6 +592,7 @@ def _launch(
         )
   else:
     cluster_kwargs = {}
+  # `gpu.LaunchOp` is missing the clusterSize{X,Y,Z} arguments.
   launch_op = _gpu_ops_gen.LaunchOp(
       token.type,
       [token],
