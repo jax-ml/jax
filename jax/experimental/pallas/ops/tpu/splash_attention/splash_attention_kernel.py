@@ -638,8 +638,8 @@ def _apply_mask_and_soft_cap(
 
       repeats, rem = divmod(k_slice.size, NUM_LANES)
       assert rem == 0
-      q_sequence = pltpu.repeat(
-          q_sequence_ref[...], repeats, axis=1
+      q_sequence = jnp.tile(
+          q_sequence_ref[...], (1, repeats)
       )  # [bq, k_slice.size]
     else:
       assert q_sequence_ref.shape == (NUM_SUBLANES, bq)
@@ -665,14 +665,14 @@ def _apply_mask_and_soft_cap(
       repeats, rem = divmod(kv_ids.shape[1], NUM_LANES)
       if rem:
         raise NotImplementedError(f"block_kv must be a multiple of {NUM_LANES}")
-      q_ids = pltpu.repeat(q_segment_ids_ref[:], repeats, axis=1)  # [bq, bkv]
+      q_ids = jnp.tile(q_segment_ids_ref[:], (1, repeats))  # [bq, bkv]
     else:
       assert bq == q_segment_ids_ref.shape[-1]
       repeats, rem = divmod(bq, NUM_LANES)
       if rem:
         raise NotImplementedError(f"block_q must be a multiple of {NUM_LANES}")
-      kv_ids = pltpu.repeat(
-          kv_segment_ids_ref[k_slice, :], repeats, axis=1
+      kv_ids = jnp.tile(
+          kv_segment_ids_ref[k_slice, :], (1, repeats)
       )  # [k_slice, bq]
       q_ids = q_segment_ids_ref[:1, :]  # [1, bq]
     masks.append(q_ids == kv_ids)
@@ -801,7 +801,7 @@ def flash_attention_kernel(
           f"{bkv_compute=} should be a multiple of {NUM_LANES}"
       )
 
-    s_curr = jnp.exp(qk - pltpu.repeat(m_next, bkv_repeats, axis=1))
+    s_curr = jnp.exp(qk - jnp.tile(m_next, (1, bkv_repeats)))
     assert s_curr.shape == (bq, bkv_compute)
 
     l_curr = jax.lax.broadcast_in_dim(s_curr.sum(axis=-1), l_prev.shape, (0,))
@@ -819,8 +819,8 @@ def flash_attention_kernel(
     v = v.astype(float32)
     o_curr = lax.dot_general(s_curr, v, sv_dims)
 
-    alpha_o = pltpu.repeat(
-        alpha, head_dim_v_repeats, axis=1)[..., :o_scratch_ref.shape[-1]]
+    alpha_o = jnp.tile(
+        alpha, (1, head_dim_v_repeats))[..., :o_scratch_ref.shape[-1]]
     o_scratch_ref[:] = alpha_o * o_scratch_ref[:] + o_curr
 
   @pl.when(should_run)
@@ -834,8 +834,8 @@ def flash_attention_kernel(
   @pl.when(j == grid_width - 1)
   def end():
     l = l_scratch_ref[...]
-    l_inv = pltpu.repeat(
-        1.0 / l, head_dim_v_repeats, axis=1)[..., :o_scratch_ref.shape[-1]]
+    l_inv = jnp.tile(
+        1.0 / l, (1, head_dim_v_repeats))[..., :o_scratch_ref.shape[-1]]
     o_ref[...] = (o_scratch_ref[...] * l_inv).astype(o_ref.dtype)
     if logsumexp_ref is not None:
       assert logsumexp_ref.shape == (bq, NUM_LANES)
