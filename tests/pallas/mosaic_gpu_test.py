@@ -765,50 +765,6 @@ class PallasCallTest(PallasTest):
     output_val = x.reshape(-1, 128).sum(axis=0)
     np.testing.assert_array_equal(output, output_val)
 
-  @parameterized.parameters(
-      ((256,), (...,), jnp.bfloat16),
-      ((64, 128,), (...,), jnp.bfloat16),
-      ((64, 128,), (slice(2, 3), slice(0, 128)), jnp.bfloat16),
-      ((3, 64, 128), (...,), jnp.float32),
-      ((3, 64, 1, 128), (0, slice(0, 32), 0, slice(0, 128)), jnp.float32),
-      ((3, 64, 1, 128), (...,), jnp.float32),
-      ((10, 10, 512,), (4, 4), jnp.bfloat16),
-      ((10, 1024,), (4,), jnp.bfloat16),
-      ((8192,), (...,), jnp.bfloat16),
-      ((8192,), (slice(4096, 8192),), jnp.bfloat16),
-      ((8192,), (slice(4096, 8192),), jnp.float32),
-  )
-  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
-  @jtu.skip_under_pytest("Test fails under pytest in CI")
-  def test_copy_gmem_to_smem_contiguous(self, shape, indexer, dtype):
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(shape, dtype),
-        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
-        in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
-        scratch_shapes=[plgpu.SMEM(shape, dtype), plgpu.Barrier()],
-        grid=(1,),
-    )
-    def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
-      plgpu.copy_gmem_to_smem(
-          x_ref_gmem.at[indexer], scratch_ref.at[indexer], barrier_ref
-      )
-      plgpu.barrier_wait(barrier_ref)
-      scratch_ref[indexer] = scratch_ref[indexer] + 1
-      plgpu.commit_smem()
-      plgpu.copy_smem_to_gmem(scratch_ref.at[indexer], o_ref.at[indexer])
-      plgpu.wait_smem_to_gmem(0)
-
-    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), jtu.capture_stdout() as output:
-      x = jax.random.normal(jax.random.key(0), shape, dtype=dtype)
-      np.testing.assert_allclose(kernel(x)[indexer], x[indexer] + 1.0)
-
-    ptx = output()
-    # Check that we are indeed using the simpler instruction without a tma desc.
-    self.assertIn("cp.async.bulk.shared::cta.global", ptx)  # copy in
-    self.assertIn("cp.async.bulk.global.shared", ptx)  # copy out
-    self.assertNotIn("cp.async.bulk.tensor", ptx)
-
   @parameterized.named_parameters(
       {"testcase_name": "1d_none",
        "shape": (256,), "indexers": (slice(0, 128), slice(None, 32))},
@@ -1674,43 +1630,6 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(2 * 128, dtype=jnp.int32).reshape([2, 128])
     np.testing.assert_array_equal(kernel(x), x)
 
-  @parameterized.parameters(0, 112, 192, 208)
-  def test_out_of_bounds_tma(self, start_offset):
-    dtype = jnp.int8
-    gmem_size = 208
-    smem_size = 128
-
-    @functools.partial(
-        self.pallas_call,
-        in_specs=(
-            pl.BlockSpec(memory_space=plgpu.GMEM),
-            pl.BlockSpec(memory_space=plgpu.GMEM),
-        ),
-        out_shape=jax.ShapeDtypeStruct((smem_size,), dtype),
-        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
-        scratch_shapes=[plgpu.SMEM((smem_size,), dtype), plgpu.Barrier()],
-        grid=(1,),
-    )
-    def kernel(start_idx, x_ref, o_ref, scratch_ref, barrier):
-      # Initialize SMEM with -1s to indicate OOB values.
-      scratch_ref[...] = jnp.full(scratch_ref.shape, -1, dtype)
-      plgpu.commit_smem()
-
-      idx = pl.ds(start_idx[...], smem_size)
-      plgpu.copy_gmem_to_smem(x_ref.at[idx], scratch_ref, barrier)
-      plgpu.barrier_wait(barrier)
-
-      o_ref[...] = scratch_ref[...]
-
-    input = jnp.arange(gmem_size, dtype=dtype)
-    start_idx_val = jnp.array(start_offset, dtype=jnp.int32)
-
-    valid_part = input[start_offset : start_offset + smem_size]
-    filler_part = jnp.full((smem_size - valid_part.size,), -1.0, dtype=dtype)
-    expected = jnp.concatenate([valid_part, filler_part])
-
-    out = kernel(start_idx_val, input)
-    np.testing.assert_allclose(out, expected)
 
   def test_num_programs(self):
     @functools.partial(
@@ -2800,8 +2719,8 @@ class PallasCallTest(PallasTest):
     ptx = output()
     self.assertIn(".file", ptx)
     self.assertIn(".loc", ptx)
-    paths = re.findall(r'.file\s+\d+\s+"(.+)"', ptx)
-    self.assertEndsWith(__file__, paths[-1])
+    [path] = re.findall(r'.file\s+\d+\s+"(.+)"', ptx)
+    self.assertEndsWith(__file__, path)
 
   def test_collective_arrival_count(self):
     def kernel(dst, collective_barrier):

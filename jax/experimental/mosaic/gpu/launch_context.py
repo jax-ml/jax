@@ -955,6 +955,11 @@ class LaunchContext:
             f" {collective_size}"
         )
 
+    if max(slice_shape) > 256:
+      raise ValueError(
+          "Async copies only support copying <=256 elements along each"
+          f" dimension, got {tuple(slice_shape)}"
+      )
     if (zeroth_bw := slice_shape[-1] * element_bitwidth) % 128 != 0:
       raise ValueError(
           "Async copies require the number of bits copied along the last"
@@ -1352,132 +1357,6 @@ class LaunchContext:
       return
 
     assert gather_indices is None  # Only tiled TMA handled below.
-
-    smem_ptr = utils.memref_ptr(smem_ref, memory_space=3)
-    if isinstance(predicate, _DefaultPredicate):
-      predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
-    if predicate is None:
-      predicate = c(1, ir.IntegerType.get_signless(1))
-
-    def check_contiguous_slice(slice_shape, strides):
-      if strides[-1] != 1:
-        return ValueError(
-            f"Minor-most dim must have stride of 1, got {strides[-1]}."
-        )
-
-      expected_stride = 1
-      for dim, stride in zip(reversed(slice_shape), reversed(strides), strict=True):
-        if dim != 1 and stride != expected_stride:
-          return False
-        expected_stride *= dim
-
-      return True
-
-    ref = gmem_ref
-    for t in gmem_transform:
-      ref = t.apply(ref)
-    ref_ty = ir.MemRefType(ref.type)
-    strides, _ = ref_ty.get_strides_and_offset()
-
-    # Use the simpler copy instruction for contiguous transfers.
-    is_simple_contiguous_copy = (
-        check_contiguous_slice(slice_shape, strides)
-        and reduction_op is None
-        and (
-            swizzle is None or swizzle == mgpu_dialect.SwizzlingMode.kNoSwizzle
-        )
-        and collective_size == 1
-        and partitioned is None
-    )
-    if is_simple_contiguous_copy:
-      index = ir.IndexType.get()
-      to_i32 = lambda x: arith.index_cast(ir.IntegerType.get_signless(32), x)
-
-      slicing = tuple(
-          utils.ds(start, size)
-          for start, size in zip(dyn_base_indices, slice_shape)
-      )
-      ref_slice = utils.memref_slice(ref, slicing)
-      gmem_base_ptr = utils.memref_ptr(ref_slice)
-
-      # Clamp the out-of-bounds accesses to be within the bounds of the GMEM ref shape.
-      total_elements = c(math.prod(gmem_ref_ty.shape), index)
-      linear_offset_elems = memref.extract_strided_metadata(ref_slice)[1]
-
-      # Equivalent to: max(0, total - offset)
-      valid_offset_elems = arith.minui(linear_offset_elems, total_elements)
-      remaining_elements = arith.subi(total_elements, valid_offset_elems)
-
-      remaining_bytes = utils.elements_to_bytes(remaining_elements, element_bitwidth)
-      transfer_bytes_idx = arith.index_cast(index, transfer_bytes)
-      clamped_transfer_bytes = to_i32(arith.minui(transfer_bytes_idx, remaining_bytes))
-
-      if gmem_peer_id is not None:
-        self._ensure_nvshmem_decls()
-
-        if isinstance(gmem_peer_id, GlobalBroadcast):
-          world_team = arith.constant(i32, 0)
-          gmem_base_ptr = llvm.call(
-              gmem_base_ptr.type,
-              [world_team, gmem_base_ptr],
-              [],
-              [],
-              callee="nvshmemx_mc_ptr",
-          )
-        else:
-          if isinstance(gmem_peer_id, int):
-            gmem_peer_id = c(gmem_peer_id, i32)
-
-          gmem_base_ptr = llvm.call(
-              gmem_base_ptr.type,
-              [gmem_base_ptr, gmem_peer_id],
-              [],
-              [],
-              callee="nvshmem_ptr",
-          )
-
-      if gmem_ref is src_ref:
-        assert barrier is not None  # for pytype
-        barrier_ptr = barrier.get_ptr()
-        if arrive:
-          utils.nvvm_mbarrier_arrive_expect_tx(
-              barrier_ptr, clamped_transfer_bytes, predicate=predicate
-          )
-        else:
-          # Make sure the barrier is completed with the correct number of bytes
-          # if we resize the transfer size.
-          left_to_complete = arith.subi(transfer_bytes, clamped_transfer_bytes)
-          barrier.complete_tx(left_to_complete, predicate=predicate)
-
-        llvm.inline_asm(
-          ir.Type.parse("!llvm.void"),
-          [predicate, smem_ptr, gmem_base_ptr, clamped_transfer_bytes, barrier_ptr],
-          """
-          @$0 cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes [$1], [$2], $3, [$4];
-          """,
-          "b,l,l,r,l",
-          has_side_effects=True,
-        )
-      else:
-        llvm.inline_asm(
-          ir.Type.parse("!llvm.void"),
-          [predicate, gmem_base_ptr, smem_ptr, clamped_transfer_bytes],
-          """
-          @$0 cp.async.bulk.global.shared::cta.bulk_group [$1], [$2], $3;
-          """,
-          "b,l,l,r",
-          has_side_effects=True,
-          )
-        if arrive:
-          nvvm.cp_async_bulk_commit_group()
-      return
-
-    # Below are tiled TMA copies using a tensormap.
-    if max(slice_shape) > 256:
-      raise ValueError(
-          "Async copies only support copying <=256 elements along each"
-          f" dimension, got {tuple(slice_shape)}"
-      )
     tma_desc = self._get_tma_desc(
         gmem_ref, gmem_transform, gmem_peer_id,
         tuple(slice_shape), swizzle, reduction_op,
@@ -1486,6 +1365,11 @@ class LaunchContext:
     rev_dyn_base_indices = [
         arith.index_cast(i32, idx) for idx in reversed(dyn_base_indices)
     ]
+    if isinstance(predicate, _DefaultPredicate):
+      predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
+    if predicate is None:
+      predicate = c(1, ir.IntegerType.get_signless(1))
+    smem_ptr = utils.memref_ptr(smem_ref, memory_space=3)
     if gmem_ref is src_ref:
       assert barrier is not None  # for pytype
       barrier_ptr = barrier.get_ptr()
