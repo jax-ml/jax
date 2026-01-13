@@ -1474,10 +1474,17 @@ delay_p = jax_core.Primitive("delay")
 delay_p.multiple_results = True
 
 
-@delay_p.def_abstract_eval
+class DelayEffect(effects.Effect):
+  pass
+delay_effect = DelayEffect()
+effects.control_flow_allowed_effects.add_type(DelayEffect)
+pallas_core.kernel_local_effects.add_type(DelayEffect)
+
+
+@delay_p.def_effectful_abstract_eval
 def _delay_abstract_eval(nanos):
   del nanos
-  return []
+  return [], {delay_effect}
 
 
 def delay(nanos: int | jax_typing.Array) -> None:
