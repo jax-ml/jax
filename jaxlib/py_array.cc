@@ -2259,6 +2259,28 @@ absl::Status PyArray::Register(nb::module_& m) {
       nb::arg("committed"), nb::arg("_skip_checks") = false);
   type.attr("delete") = nb::cpp_function(
       [](PyArray& self) { xla::ThrowIfError(self.Delete()); }, nb::is_method());
+  type.attr("_rewrap_with_aval_and_sharding") = nb::cpp_function(
+      // NOTE(dsuo): This is a private API, so we don't add it to the stub.
+      [](PyArray self, nb::object aval, nb::object sharding) -> PyArray {
+        xla::ifrt::Array* ifrt_array_ptr = self.ifrt_array();
+        if (ifrt_array_ptr == nullptr) {
+          throw nb::value_error(
+              "_rewrap_with_aval_and_sharding() called on deleted or donated "
+              "buffer");
+        }
+        auto dtype = nb::cast<xla::nb_dtype>(aval.attr("dtype"));
+        auto shape = nb::cast<std::vector<int64_t>>(aval.attr("shape"));
+        auto py_device_list = nb::cast<const PyDeviceList*>(
+            sharding.attr("_internal_device_list"));
+        nb_class_ptr<PyClient> py_client = py_device_list->py_client();
+        auto ifrt_array = tsl::FormRef(ifrt_array_ptr);
+        Construct(reinterpret_cast<PyArrayObject*>(self.ptr()), aval,
+                  nb::cast<bool>(aval.attr("weak_type")), std::move(dtype),
+                  std::move(shape), std::move(sharding), /*committed=*/true,
+                  py_client, std::move(ifrt_array), xla::Future<>());
+        return self;
+      },
+      nb::is_method(), nb::arg("aval"), nb::arg("sharding"));
   type.attr("_sharding") = xla::nb_property_readonly(&PyArray::sharding);
   type.attr("aval") = xla::nb_property(&PyArray::aval, &PyArray::set_aval);
   type.attr("_arrays") =

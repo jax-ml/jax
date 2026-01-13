@@ -1565,7 +1565,7 @@ def pmap(
         " removed from JAX. Please migrate to pjit and remove global_arg_shapes"
         " from pmap.")
 
-  if config.pmap_shmap_merge.value:
+  if True:
     from jax._src.pmap import pmap  # pytype: disable=import-error
     return pmap(fun, axis_name, in_axes=in_axes, out_axes=out_axes,
                 static_broadcasted_argnums=static_broadcasted_argnums,

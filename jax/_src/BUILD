@@ -1091,18 +1091,27 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "pmap",
-    srcs = ["pmap.py"],
+    srcs = [
+        "pmap.py",
+    ],
     deps = [
         ":api",
+        ":api_util",
+        ":config",
         ":core",
+        ":dtypes",
         ":lax",
         ":mesh",
+        ":random",
         ":shard_map",
+        ":sharding_impls",
         ":stages",
         ":traceback_util",
         ":tree_util",
         ":util",
         ":xla_bridge",
+        "//jax/_src/lib",
+        "//third_party/py/numpy",
     ],
 )
 
