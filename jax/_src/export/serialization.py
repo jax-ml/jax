@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import types
 from collections.abc import Callable, Sequence
+import itertools
 from functools import partial
 from typing import Any, TypeVar
 
@@ -31,11 +32,14 @@ except ImportError as e:
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import tree_util
 from jax._src.export import serialization_generated as ser_flatbuf
 from jax._src.export import _export
 from jax._src.export import shape_poly
 from jax._src.lib import xla_client
+from jax._src import mesh
+from jax._src import named_sharding
+from jax._src import partition_spec
+from jax._src import tree_util
 
 import numpy as np
 
@@ -53,7 +57,10 @@ SerT = TypeVar("SerT")
 # Version 5, November 23rd, 2025, adds serialization for aval memory_space,
 #   upgrade num_devices to a 32 bit value.
 #   This version is backwards compatible with Version 2 to 4.
-_SERIALIZATION_VERSION = 5
+# Version 6, January 15th, 2026, adds serialization for sharding as
+#   NamedSharding, including the abstract mesh, and the partition spec.
+#   This version is backwards compatible with Version 2 to 5.
+_SERIALIZATION_VERSION = 6
 
 def serialize(exp: _export.Exported, vjp_order: int = 0) -> bytearray:
   """Serializes an Exported.
@@ -86,11 +93,16 @@ def _serialize_exported(
   in_avals = _serialize_array(builder, _serialize_aval, exp.in_avals)
   out_tree = _serialize_pytreedef(builder, exp.out_tree)
   out_avals = _serialize_array(builder, _serialize_aval, exp.out_avals)
+  # TODO(necula): For 30 days after 1/15/2026 we must serialize the HLO
+  # shardings. After that we can error out when serialized Exported with not
+  # _has_named_shardings.
   in_shardings = _serialize_array(
-      builder, _serialize_sharding, exp.in_shardings_hlo
+      builder, partial(_serialize_sharding, has_named_sharding=exp._has_named_shardings),
+      zip(exp._in_named_shardings, exp.in_shardings_hlo)  # type: ignore
   )
   out_shardings = _serialize_array(
-      builder, _serialize_sharding, exp.out_shardings_hlo
+      builder, partial(_serialize_sharding, has_named_sharding=exp._has_named_shardings),
+      zip(exp._out_named_shardings, exp.out_shardings_hlo)  # type: ignore
   )
   ordered_effects = _serialize_array(
       builder, _serialize_effect, exp.ordered_effects
@@ -171,17 +183,11 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   in_tree = tree_util.tree_structure(
       _deserialize_pytreedef_to_pytree(exp.InTree())
   )
-  scope = shape_poly.SymbolicScope(())  # TODO: serialize the constraints
-  deser_aval = partial(_deserialize_aval, scope=scope)
-  in_avals = _deserialize_tuple(
-      exp.InAvalsLength, exp.InAvals, deser_aval
-  )
+  scope = shape_poly.SymbolicScope(())  # TODO(necula): serialize the constraints
   out_tree = tree_util.tree_structure(
       _deserialize_pytreedef_to_pytree(exp.OutTree())
   )
-  out_avals = _deserialize_tuple(
-      exp.OutAvalsLength, exp.OutAvals, deser_aval
-  )
+
   # TODO(necula): remove the fallback to NrDevicesShort and mark
   # the field "deprecated" once we abandon the old
   # serialization format (6 months after 11/24/2025).
@@ -192,6 +198,28 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   out_shardings = _deserialize_tuple(
       exp.OutShardingsLength, exp.OutShardings, _deserialize_sharding
   )
+  has_named_shardings = any(isinstance(s, named_sharding.NamedSharding)
+                            for s in itertools.chain(in_shardings, out_shardings))
+  if has_named_shardings:
+    in_avals = tuple(
+      _deserialize_aval(exp.InAvals(i), scope=scope, sharding=in_shardings[i])  # type: ignore
+      for i in range(exp.InAvalsLength())
+    )
+    out_avals = tuple(
+      _deserialize_aval(exp.OutAvals(i), scope=scope, sharding=out_shardings[i])  # type: ignore
+      for i in range(exp.OutAvalsLength())
+    )
+    in_shardings_hlo = tuple(_export.named_to_hlo_sharding(s, aval)  # type: ignore
+                             for s, aval in zip(in_shardings, in_avals))
+    out_shardings_hlo = tuple(_export.named_to_hlo_sharding(s, aval)  # type: ignore
+                             for s, aval in zip(out_shardings, out_avals))
+  else:
+    in_avals = _deserialize_tuple(exp.InAvalsLength, exp.InAvals,
+                                  partial(_deserialize_aval, scope=scope, sharding=None))
+    out_avals = _deserialize_tuple(exp.OutAvalsLength, exp.OutAvals,
+                                   partial(_deserialize_aval, scope=scope, sharding=None))
+    in_shardings_hlo, in_shardings = in_shardings, (None,) * len(in_shardings)  # type: ignore
+    out_shardings_hlo, out_shardings = out_shardings, (None,) * len(out_shardings)  # type: ignore
   platforms = _deserialize_tuple(
       exp.PlatformsLength,
       exp.Platforms,
@@ -225,8 +253,11 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
       out_tree=out_tree,
       out_avals=out_avals,
       nr_devices=nr_devices,
-      in_shardings_hlo=in_shardings,
-      out_shardings_hlo=out_shardings,
+      in_shardings_hlo=in_shardings_hlo,
+      out_shardings_hlo=out_shardings_hlo,
+      _has_named_shardings=has_named_shardings,
+      _in_named_shardings=in_shardings,  # type: ignore
+      _out_named_shardings=out_shardings,  # type: ignore
       platforms=platforms,
       ordered_effects=ordered_effects,
       unordered_effects=unordered_effects,
@@ -397,6 +428,128 @@ _memory_space_to_enum = {
 _memory_space_from_enum = {v: k for k, v in _memory_space_to_enum.items()}
 
 
+_axis_type_to_enum = {
+    core.AxisType.Auto: ser_flatbuf.AxisType.Auto,
+    core.AxisType.Explicit: ser_flatbuf.AxisType.Explicit,
+    core.AxisType.Manual: ser_flatbuf.AxisType.Manual,
+}
+_axis_type_from_enum = {v: k for k, v in _axis_type_to_enum.items()}
+
+
+def _serialize_abstract_mesh(builder: flatbuffers.Builder,
+                             mesh: mesh.AbstractMesh) -> int:
+  ser_flatbuf.AbstractMeshStartAxisSizesVector(builder, len(mesh.axis_sizes))
+  for axis_size in reversed(mesh.axis_sizes):
+    builder.PrependUint32(axis_size)
+  axis_sizes = builder.EndVector()
+
+  axis_names = _serialize_array(builder,
+                                lambda builder, an: builder.CreateString(an),
+                                mesh.axis_names)
+
+  assert mesh.axis_types is not None, mesh
+  ser_flatbuf.AbstractMeshStartAxisTypesVector(builder, len(mesh.axis_types))
+  for axis_type in reversed(mesh.axis_types):
+    builder.PrependByte(_axis_type_to_enum[axis_type])
+  axis_types = builder.EndVector()
+
+  ser_flatbuf.AbstractMeshStart(builder)
+  ser_flatbuf.AbstractMeshAddAxisSizes(builder, axis_sizes)
+  ser_flatbuf.AbstractMeshAddAxisNames(builder, axis_names)
+  ser_flatbuf.AbstractMeshAddAxisTypes(builder, axis_types)
+  return ser_flatbuf.AbstractMeshEnd(builder)
+
+
+def _deserialize_abstract_mesh(ser_mesh: ser_flatbuf.AbstractMesh
+) -> mesh.AbstractMesh:
+  axis_sizes = tuple(ser_mesh.AxisSizes(i)
+                     for i in range(ser_mesh.AxisSizesLength()))
+  axis_names = tuple(ser_mesh.AxisNames(i).decode("utf-8")
+                     for i in range(ser_mesh.AxisNamesLength()))
+  axis_types = tuple(_axis_type_from_enum[ser_mesh.AxisTypes(i)]
+                     for i in range(ser_mesh.AxisTypesLength()))
+  return mesh.AbstractMesh(axis_sizes, axis_names, axis_types)
+
+
+def _serialize_partition_spec_one_axis(builder: flatbuffers.Builder,
+                                       spec: str | tuple[str, ...] | None) -> int:
+  if spec is None:
+    axes = ()
+  else:
+    axes = (spec,) if isinstance(spec, str) else spec  # type: ignore
+
+  axes_offset = _serialize_array(builder,
+                                 lambda builder, ps: builder.CreateString(ps),
+                                 axes)
+  ser_flatbuf.PartitionSpecOneAxisStart(builder)
+  ser_flatbuf.PartitionSpecOneAxisAddAxes(builder, axes_offset)
+  return ser_flatbuf.PartitionSpecOneAxisEnd(builder)
+
+
+def _deserialize_partition_spec_one_axis(
+    spec: ser_flatbuf.PartitionSpecOneAxis) -> str | tuple[str, ...] | None:
+  axes = tuple(spec.Axes(i).decode("utf-8") for i in range(spec.AxesLength()))
+  if not axes:
+    return None
+  else:
+    return axes[0] if len(axes) == 1 else axes
+
+
+def _serialize_partition_spec(builder: flatbuffers.Builder,
+                              spec: partition_spec.PartitionSpec) -> int:
+  partitions = _serialize_array(builder, _serialize_partition_spec_one_axis,
+                                spec._partitions)
+  reduced = _serialize_array(builder,  # type: ignore
+                             lambda builder, ps: builder.CreateString(ps),
+                             spec.reduced)
+  unreduced = _serialize_array(builder,  # type: ignore
+                               lambda builder, ps: builder.CreateString(ps),
+                               spec.unreduced)
+
+  ser_flatbuf.PartitionSpecStart(builder)
+  ser_flatbuf.PartitionSpecAddPartitions(builder, partitions)
+  ser_flatbuf.PartitionSpecAddReduced(builder, reduced)
+  ser_flatbuf.PartitionSpecAddUnreduced(builder, unreduced)
+  return ser_flatbuf.PartitionSpecEnd(builder)
+
+
+def _deserialize_partition_spec(spec: ser_flatbuf.PartitionSpec
+                                ) -> partition_spec.PartitionSpec:
+  partitions = tuple(_deserialize_partition_spec_one_axis(spec.Partitions(i))
+                     for i in range(spec.PartitionsLength()))
+  reduced = frozenset(spec.Reduced(i).decode("utf-8")
+                      for i in range(spec.ReducedLength()))
+  unreduced = frozenset(spec.Unreduced(i).decode("utf-8")
+                        for i in range(spec.UnreducedLength()))
+  return partition_spec.PartitionSpec(*partitions,
+                                      reduced=reduced,
+                                      unreduced=unreduced)
+
+
+def _serialize_named_sharding(
+    builder: flatbuffers.Builder, sharding: named_sharding.NamedSharding
+) -> int:
+  mesh_offset = _serialize_abstract_mesh(builder, sharding.mesh.abstract_mesh)
+  spec_offset = _serialize_partition_spec(builder, sharding.spec)
+  memory_kind = builder.CreateString(sharding.memory_kind) if sharding.memory_kind is not None else 0
+
+  ser_flatbuf.NamedShardingStart(builder)
+  ser_flatbuf.NamedShardingAddMesh(builder, mesh_offset)
+  ser_flatbuf.NamedShardingAddSpec(builder, spec_offset)
+  if memory_kind != 0:
+    ser_flatbuf.NamedShardingAddMemoryKind(builder, memory_kind)
+  return ser_flatbuf.NamedShardingEnd(builder)
+
+
+def _deserialize_named_sharding(
+    s: ser_flatbuf.NamedSharding
+) -> named_sharding.NamedSharding:
+  amesh = _deserialize_abstract_mesh(s.Mesh())
+  spec = _deserialize_partition_spec(s.Spec())
+  memory_kind = s.MemoryKind().decode("utf-8") if s.MemoryKind() is not None else None
+  return named_sharding.NamedSharding(amesh, spec, memory_kind=memory_kind)
+
+
 def _serialize_aval(
     builder: flatbuffers.Builder, aval: core.ShapedArray
 ) -> int:
@@ -415,54 +568,70 @@ def _serialize_aval(
   return ser_flatbuf.AbstractValueEnd(builder)
 
 
-def _deserialize_aval(aval: ser_flatbuf.AbstractValue,
-                      scope) -> core.ShapedArray:
-  aval_kind = aval.Kind()
-  if aval_kind == ser_flatbuf.AbstractValueKind.shapedArray:
-    dtype = _dtype_kind_to_dtype[aval.Dtype()]
-    shape = shape_poly.symbolic_shape(
-        ",".join(
+def _deserialize_aval(aval: ser_flatbuf.AbstractValue, *,
+                      scope: shape_poly.SymbolicScope,
+                      sharding: named_sharding.NamedSharding | None,
+                      ) -> core.ShapedArray:
+  dtype = _dtype_kind_to_dtype[aval.Dtype()]
+  shape = shape_poly.symbolic_shape(
+      ",".join(
             aval.Shape(i).decode("utf-8") for i in range(aval.ShapeLength())
         ),
         scope=scope
     )
-    mem_space = aval.MemorySpace() or ser_flatbuf.MemorySpace.Device
-    return core.ShapedArray(shape, dtype, memory_space=_memory_space_from_enum[mem_space])
+  if (ser_mem_space := aval.MemorySpace()):
+    mem_space = _memory_space_from_enum[ser_mem_space]
   else:
-    assert False, aval_kind
+    mem_space = core.MemorySpace.Device
+
+  aval = core.ShapedArray(shape, dtype, memory_space=mem_space)
+  return core.update_aval_with_sharding(aval, sharding)
 
 
 def _serialize_sharding(
-    builder: flatbuffers.Builder, s: _export.HloSharding | None
+    builder: flatbuffers.Builder, s: tuple[_export.NamedSharding | None, _export.HloSharding | None],
+    has_named_sharding: bool,
 ) -> int:
-  proto = None
-  if s is None:
+  named_s, hlo_s = s
+  is_unspecified = (named_s is None) if has_named_sharding else (hlo_s is None)
+  named_sharding = None
+  hlo_sharding = None
+  if is_unspecified:
     kind = ser_flatbuf.ShardingKind.unspecified
   else:
+    # TODO(necula): We must use the hlo_sharding kind for at least 30 days after
+    # 1/15/2026 because old deserializers check the kind and abort if they
+    # do not recognize it. After that date, we can stop using the kind.
     kind = ser_flatbuf.ShardingKind.hlo_sharding
-    proto_bytes = s.to_proto().SerializeToString()
-    proto = builder.CreateByteVector(proto_bytes)
+
+  if has_named_sharding and named_s is not None:
+    named_sharding = _serialize_named_sharding(builder, named_s)
+
+  # TODO(necula): We must serialize the hlo_sharding for at least 30 days after
+  # 1/15/2026 because old deserializers can only deserialize this sharding.
+  if hlo_s is not None:
+    hlo_sharding = builder.CreateByteVector(hlo_s.to_proto().SerializeToString())
 
   ser_flatbuf.ShardingStart(builder)
   ser_flatbuf.ShardingAddKind(builder, kind)
-  if proto is not None:
-    ser_flatbuf.ShardingAddHloShardingProto(builder, proto)
+  if hlo_sharding is not None:
+    ser_flatbuf.ShardingAddHloShardingProto(builder, hlo_sharding)
+  if named_sharding is not None:
+    ser_flatbuf.ShardingAddNamedSharding(builder, named_sharding)
   return ser_flatbuf.ShardingEnd(builder)
 
 
-def _deserialize_sharding(s: ser_flatbuf.Sharding) -> _export.HloSharding | None:
-  kind = s.Kind()
-  if kind == ser_flatbuf.ShardingKind.unspecified:
-    return None
+def _deserialize_sharding(s: ser_flatbuf.Sharding) -> _export.HloSharding | named_sharding.NamedSharding | None:
+  if (named_sharding_off := s.NamedSharding()) is not None:
+    return _deserialize_named_sharding(named_sharding_off)
 
-  if kind == ser_flatbuf.ShardingKind.hlo_sharding:
-    proto_str = s.HloShardingProtoAsNumpy().tobytes()
+  # TODO(necula): We must keep reading the HloSharding for 6 months after 1/15/2026.
+  if not s.HloShardingProtoIsNone():
     proto = xla_client.OpSharding()
-    proto.ParseFromString(proto_str)
-
+    proto.ParseFromString(s.HloShardingProtoAsNumpy().tobytes())
     return xla_client.HloSharding.from_proto(proto)
 
-  assert False, kind
+  return None  # Unspecified sharding
 
 
 def _serialize_effect(builder: flatbuffers.Builder, eff: core.Effect) -> int:
