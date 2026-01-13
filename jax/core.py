@@ -78,7 +78,7 @@ _deprecations = {
     _src_core.get_aval,
   ),
   "mapped_aval": (
-    "jax.core.mapped_aval is deprecated.",
+    "jax.core.mapped_aval is deprecated. Use jax.extend.core.mapped_aval.",
     _src_core.mapped_aval,
   ),
   "set_current_trace": (
@@ -98,7 +98,7 @@ _deprecations = {
     _src_core.traverse_jaxpr_params,
   ),
   "unmapped_aval": (
-    "jax.core.unmapped_aval is deprecated.",
+    "jax.core.unmapped_aval is deprecated. Use jax.extend.core.unmapped_aval.",
     _src_core.unmapped_aval,
   ),
   "AbstractToken": (

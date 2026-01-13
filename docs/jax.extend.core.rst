@@ -16,3 +16,5 @@
   array_types
   jaxpr_as_fun
   primitives
+  mapped_aval
+  unmapped_aval
