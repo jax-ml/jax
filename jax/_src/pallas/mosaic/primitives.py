@@ -994,6 +994,8 @@ class PRNGEffect(effects.Effect):
   pass
 prng_effect = PRNGEffect()
 effects.control_flow_allowed_effects.add_type(PRNGEffect)
+effects.custom_derivatives_allowed_effects.add_type(PRNGEffect)
+pl_core.kernel_local_effects.add_type(PRNGEffect)
 
 
 @prng_seed_p.def_effectful_abstract_eval

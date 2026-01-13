@@ -1447,6 +1447,8 @@ effects.control_flow_allowed_effects.add_type(CommsEffect)
 effects.remat_allowed_effects.add_type(CommsEffect)
 effects.custom_derivatives_allowed_effects.add_type(CommsEffect)
 
+kernel_local_effects: effects.EffectTypeSet = effects.EffectTypeSet()
+
 
 @core_map_p.def_effectful_abstract_eval
 def _core_map_abstract_eval(*args, jaxpr, mesh, **kwargs):
@@ -1464,6 +1466,8 @@ def _core_map_abstract_eval(*args, jaxpr, mesh, **kwargs):
       pass
   for eff in jaxpr.effects:
     if mesh.discharges_effect(eff) or isinstance(eff, CommsEffect):
+      continue
+    if kernel_local_effects.contains(eff):
       continue
     if not isinstance(eff, jax_core.NamedAxisEffect):
       effs.add(eff)
@@ -1656,6 +1660,8 @@ def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
       pass
   for eff in jaxpr.effects:
     if mesh.discharges_effect(eff) or isinstance(eff, CommsEffect):
+      continue
+    if kernel_local_effects.contains(eff):
       continue
     if not isinstance(eff, jax_core.NamedAxisEffect):
       effs.add(eff)
