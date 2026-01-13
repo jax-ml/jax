@@ -1788,7 +1788,7 @@ class FragmentedArray:
       packed_instr: str, single_instr: str,
   ) -> Callable[[ir.Value, ir.Value], ir.Value]:
     def fast_instr(*args):
-      arg_ty = args[0].type
+      arg_ty = original_arg_ty = args[0].type
       assert all(a.type == arg_ty for a in args)
       if not isinstance(arg_ty, ir.VectorType):
         args = [vector.broadcast(ir.VectorType.get((1,), arg_ty), a) for a in args]
@@ -1812,7 +1812,7 @@ class FragmentedArray:
             f"{single_instr if vec_len == 1 else packed_instr} {args_ptx};",
             f"={cstr}" + f",{cstr}" * len(args)
         )
-        return utils.bitcast(result_int, arg_ty)
+        return utils.bitcast(result_int, original_arg_ty)
       else:
         assert vec_bitwidth > 32
         slice_len = 32 // utils.bitwidth(arg_ty.element_type)
@@ -2526,12 +2526,6 @@ class FragmentedArray:
           scalar_out_reg = (
               scalar if scalar_out_reg is None else op(scalar_out_reg, scalar)
           )
-          if isinstance(scalar_out_reg.type, ir.VectorType):
-            scalar_out_reg = vector.extract(
-                scalar_out_reg,
-                dynamic_position=[],
-                static_position=ir.DenseI64ArrayAttr.get([0]),
-            )
         out_reg = vector.broadcast(
             ir.VectorType.get((1,), out_reg.type.element_type), scalar_out_reg
         )
