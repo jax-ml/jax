@@ -48,6 +48,7 @@ enum class PyTreeKind {
   kDict,        // A dict
   kCustom,      // A custom type.
   kDataclass,   // A dataclass.
+  kObject,      // An object with attributes specified in a dict
 };
 
 // Registry of custom node types.
@@ -90,6 +91,9 @@ class PyTreeRegistry {
     std::vector<nanobind::str> data_fields;
     std::vector<nanobind::str> meta_fields;
 
+    // For register_object
+    nanobind::str mapping_attr;
+
     int tp_traverse(visitproc visit, void* arg);
   };
 
@@ -103,6 +107,8 @@ class PyTreeRegistry {
   void RegisterDataclass(nanobind::object type,
                          std::vector<nanobind::str> data_fields,
                          std::vector<nanobind::str> meta_fields);
+  // Registration for flax objects.
+  void RegisterObject(nanobind::object type, nanobind::str mapping_attr);
 
   // Finds the custom type registration for `type`. Returns nullptr if none
   // exists.

@@ -1141,6 +1141,34 @@ def register_dataclass(
   _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
   return nodetype
 
+@export
+def register_object(
+    nodetype: Typ,
+    mapping_attr: str
+) -> Typ:
+
+  def unflatten_func(meta, data):
+    (meta_fields, meta_data, data_fields) = meta
+    module = object.__new__(nodetype)
+    for name, value in zip(meta_fields, meta_data):
+      object.__setattr__(module, name, value)
+    for name, value in zip(data_fields, data):
+      object.__setattr__(module, name, value)
+    return module
+
+  def flatten_func(x):
+    mapping_iter = getattr(x, mapping_attr).items()
+    meta_fields = [k for (k,v) in mapping_iter if not v]
+    data_fields = [k for (k,v) in mapping_iter if v]
+    data = tuple(getattr(x, name) for name in data_fields)
+    meta_data = tuple(getattr(x, name) for name in meta_fields)
+    return data, (meta_fields, meta_data, data_fields)
+
+  default_registry.register_object_node(nodetype, mapping_attr)
+  none_leaf_registry.register_object_node(nodetype, mapping_attr)
+  dispatch_registry.register_object_node(nodetype, mapping_attr)
+  _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
+  return nodetype
 
 register_pytree_with_keys(
     collections.OrderedDict,

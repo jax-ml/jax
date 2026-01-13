@@ -292,8 +292,25 @@ TREES_WITH_KEYPATH = (
     (BlackBox(value=2),),
 )
 
+# TODO: use the mapping directly rather than extracting two lists.
+class RegisteredObject:
+  def __init__(self, x, y):
+    self.x = x
+    self.y = y
+    self.__mapping__ = {'x': True, 'y': False, '__mapping__': False}
+
+  def __eq__(self, other):
+    return self.y == other.y and jnp.array_equal(self.x, other.x)
+
+jax.tree_util.register_object(RegisteredObject, '__mapping__')
 
 class TreeTest(jtu.JaxTestCase):
+
+  def testObject(self):
+    obj = RegisteredObject(jnp.arange(5), "hello")
+    xs, tree = tree_util.tree_flatten(obj)
+    actual = tree_util.tree_unflatten(tree, xs)
+    self.assertEqual(actual, obj)
 
   @parameterized.parameters(*(TREES + LEAVES))
   def testRoundtrip(self, inputs):
