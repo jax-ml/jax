@@ -231,14 +231,15 @@ def kernel(
     cluster_names: tuple[str, ...] = (),
     num_threads: int | None = None,
     thread_name: str | None = None,
+    return_input_buffers: bool = False,
     **mesh_kwargs: object,
 ):
   """Entry point for defining a Mosaic GPU kernel.
 
   Args:
-    body: The kernel body, which should take as arguments the input, output,
-      and scratch Refs. The number of input Refs is determined by the number
-      of arguments passed into kernel returned by this function. The number of
+    body: The kernel body, which should take as arguments the input, output, and
+      scratch Refs. The number of input Refs is determined by the number of
+      arguments passed into kernel returned by this function. The number of
       output and scratch Refs are determined by `out_shape` and `scratch_shapes`
       respectively.
     out_shape: a PyTree of :class:`jax.ShapeDtypeStruct` describing the shape
@@ -252,10 +253,12 @@ def kernel(
     cluster: A tuple of integers specifying the size of the kernel cluster.
     cluster_names: The axis names of the grid. Must be the same length as
       `cluster`.
-    num_threads: The number of threads to launch per block. Note that these
-      do not correspond to CUDA threads, but rather to warpgroups on Hopper
-      and Blackwell GPUs.
+    num_threads: The number of threads to launch per block. Note that these do
+      not correspond to CUDA threads, but rather to warpgroups on Hopper and
+      Blackwell GPUs.
     thread_name: The axis name used to query the thread index.
+    return_input_buffers: If True, the kernel will return the input buffers as
+      well as the outputs.
     **mesh_kwargs: Additional mesh kwargs. See `Mesh` for more details.
 
   Returns:
@@ -293,10 +296,12 @@ def kernel(
         # fallback if the kernel name is not set explicitly.
         cmap_body.__name__ = getattr(body, "__name__", "anonymous")
       pallas_core.core_map(mesh, compiler_params=compiler_params)(cmap_body)
-    _, outs = state_discharge.run_state(stateful)((
+    x, outs = state_discharge.run_state(stateful)((
         operands,
         jax.tree.map(lambda s: jax.lax.empty(s.shape, s.dtype), out_shape),
     ))
+    if return_input_buffers:
+      return (*x, *outs)
     return outs[0] if unwrap_out else outs
 
   @wrapper.def_vmap
