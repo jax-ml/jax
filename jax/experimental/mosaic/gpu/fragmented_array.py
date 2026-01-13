@@ -2526,6 +2526,12 @@ class FragmentedArray:
           scalar_out_reg = (
               scalar if scalar_out_reg is None else op(scalar_out_reg, scalar)
           )
+          if isinstance(scalar_out_reg.type, ir.VectorType):
+            scalar_out_reg = vector.extract(
+                scalar_out_reg,
+                dynamic_position=[],
+                static_position=ir.DenseI64ArrayAttr.get([0]),
+            )
         out_reg = vector.broadcast(
             ir.VectorType.get((1,), out_reg.type.element_type), scalar_out_reg
         )

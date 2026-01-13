@@ -2527,6 +2527,8 @@ class PallasCallTest(PallasTest):
           ),
           # To have some layout with vector length of 1
           plgpu.Layout.TCGEN05_TMEM_NATIVE(1),
+          # To have some layout with vector length > 2
+          plgpu.Layout.TCGEN05_TMEM_NATIVE(4),
       ),
       op=(jnp.sum, jnp.max, jnp.min),
       # TODO(apaszke): Add support for f8 (MLIR/LLVM barfs at the moment).
