@@ -1442,12 +1442,7 @@ def _slice_memref(
 
   ref_ty = ir.MemRefType(ref.type)
   ref_strides, ref_offset = ref_ty.get_strides_and_offset()
-  if ref_offset == ir_dynamic_size or ir_dynamic_size in static_starts:
-    target_offset = ir_dynamic_size
-  else:
-    target_offset = sum(
-        map(operator.mul, static_starts, ref_strides), ref_offset
-    )
+  target_offset = ref_offset if ref_ty.rank == 0 else ir_dynamic_size
   out_layout = ir.StridedLayoutAttr.get(target_offset, ref_strides)
   out_ty = ir.MemRefType.get(
       static_sizes, ref_ty.element_type, out_layout, ref_ty.memory_space
