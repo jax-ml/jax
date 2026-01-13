@@ -121,7 +121,7 @@ class PallasCallTest(ptu.PallasTest):
     pallas_call = functools.partial(
         pl.pallas_call,
         grid=(1,),
-        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.float32),
+        out_shape=jax.ShapeDtypeStruct((128, 64), jnp.float32),
     )
     def add_one(x_ref, o_ref):
       x = x_ref[:]
@@ -133,7 +133,7 @@ class PallasCallTest(ptu.PallasTest):
     add_one_mgpu = pallas_call(add_one, compiler_params=mosaic_gpu_params)
     add_one_triton = pallas_call(add_one, compiler_params=triton_params)
 
-    x = jnp.ones((128, 128), jnp.float32)
+    x = jnp.ones((128, 64), jnp.float32)
 
     # Running on the Mosaic GPU backend should be fine.
     self.assertArraysEqual(add_one_mgpu(x), x + 1)

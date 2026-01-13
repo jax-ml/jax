@@ -2529,17 +2529,17 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     self.skip_if_wg_semantics()
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((256, 128), jnp.float32),
+        out_shape=jax.ShapeDtypeStruct((64, 128), jnp.float32),
     )
     def kernel(x_ref, y_ref):
       to_be_broadcasted = plgpu.load(
           x_ref, (), layout=plgpu.Layout.WG_STRIDED((128,), 1)
       )
-      broadcasted = lax.broadcast_in_dim(to_be_broadcasted, (256, 128), (1,))
+      broadcasted = lax.broadcast_in_dim(to_be_broadcasted, (64, 128), (1,))
       y_ref[...] = broadcasted
 
     result = jax.random.uniform(jax.random.key(0), shape=(128,), dtype=jnp.float32)
-    np.testing.assert_array_equal(kernel(result), jnp.broadcast_to(result[None,:], (256, 128)))
+    np.testing.assert_array_equal(kernel(result), jnp.broadcast_to(result[None,:], (64, 128)))
 
   @parameterized.parameters(
       ((4, 128),),

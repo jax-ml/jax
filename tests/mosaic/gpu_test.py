@@ -3876,7 +3876,7 @@ class FragmentedArrayTest(TestCase):
       t.store_untiled(smem_output)
       copy(smem_output, gmem_output)
 
-    inp = out = self.prng.uniform(-1, 1, in_shape).astype(jnp.float32)
+    inp = out = self.prng.uniform(-1, 1, in_shape).astype(jnp.float16)
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (inp,), out, [inp, out],
     )(inp)
@@ -4504,6 +4504,10 @@ class LayoutTest(TestCase):
       m, n = 256, 96
     else:
       raise ValueError(f"Unsupported bitwidth: {bw}")
+    if jax.local_devices()[0].shared_memory_per_block_optin == 99 * 1024:
+      # Only reduce if needed to fit inside SMEM so as to keep >1 row tile
+      # in TCGEN05 tilings on relevant hardware.
+      m = 128
     tiling = (8, col_tiling)
     if col_tiling < 8:
       self.skipTest("Swizzle too small")
