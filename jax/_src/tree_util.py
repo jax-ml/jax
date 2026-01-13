@@ -252,6 +252,7 @@ def register_pytree_node(
   See also:
     - :func:`~jax.tree_util.register_static`: simpler API for registering a static pytree.
     - :func:`~jax.tree_util.register_dataclass`: simpler API for registering a dataclass.
+    - :func:`~jax.tree_util.register_object`: simpler API for registering a dynamic object.
     - :func:`~jax.tree_util.register_pytree_with_keys`
     - :func:`~jax.tree_util.register_pytree_node_class`
     - :func:`~jax.tree_util.register_pytree_with_keys_class`
@@ -1166,6 +1167,84 @@ def register_dataclass(
   _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
   return nodetype
 
+def key_fn(k):
+  if k.isdigit():
+    return (0, int(k))
+  return (1, k)
+
+@export
+def register_object(
+    nodetype: Typ,
+    mapping_attr: str,
+    has_int_keys: bool = False
+) -> Typ:
+  """Extends the set of types that are considered internal nodes in pytrees.
+
+  This differs from ``register_pytree_with_keys_class`` in that the C++
+  registries use the optimized C++ dataclass builtin instead of the argument
+  functions.
+
+  See :ref:`pytrees-custom-pytree-nodes` for more information about registering pytrees.
+
+  Args:
+    nodetype: a Python type to treat as an internal pytree node. This is assumed
+      to have ``__dict__`` attribute, which precludes classes using ``__slots__``.
+    mapping_attr: name of the attribute on instances of ``nodetype`` that holds a mapping from object
+      attribute names to boolean values indicating whether the attribute is a data field. Attributes
+      not included in the mapping are assumed to be metadata fields.
+    has_int_keys: If True, attributes that can be parsed as integers are traversed in the order of their integer values rather than
+      the order of their string values.
+
+  Returns:
+    The input class ``nodetype`` is returned unchanged after being added to JAX's
+    pytree registry, so that :func:`register_object` can be used as a decorator.
+
+  Examples:
+
+    >>> import jax
+    >>> from functools import partial
+    ...
+    >>> @partial(jax.tree_util.register_object,
+    ...          mapping_attr='__mapping__')
+    ... class MyStruct:
+    ...   def __init__(self, x: jax.Array, y: str):
+    ...     self.x = x
+    ...     self.y = y
+    ...     self.__mapping__ = {'x': True, 'y': False}
+  """
+  def object_unflatten_func(meta, data):
+    (meta_fields, meta_data, data_fields) = meta
+    module = object.__new__(nodetype)
+    for name, value in zip(meta_fields, meta_data):
+      object.__setattr__(module, name, value)
+    for name, value in zip(data_fields, data):
+      object.__setattr__(module, name, value)
+    return module
+
+  def object_flatten_func(x):
+    m = getattr(x, mapping_attr)
+    data = []
+    data_fields = []
+    meta_data = []
+    meta_fields = []
+    sorted_keys = sorted(x.__dict__.keys(), key=key_fn)
+    for k in sorted_keys:
+      if k in m and m[k]:
+        data.append(getattr(x, k))
+        data_fields.append(k)
+      else:
+        meta_data.append(getattr(x, k))
+        meta_fields.append(k)
+    return data, (meta_fields, meta_data, data_fields)
+
+  if hasattr(default_registry, 'register_object_node'):
+    default_registry.register_object_node(nodetype, mapping_attr, has_int_keys)
+    none_leaf_registry.register_object_node(nodetype, mapping_attr, has_int_keys)
+    dispatch_registry.register_object_node(nodetype, mapping_attr, has_int_keys)
+    _registry[nodetype] = _RegistryEntry(object_flatten_func, object_unflatten_func)
+    return nodetype
+  else:
+    raise NotImplementedError("`register_object` requires jaxlib >= 0.10")
 
 register_pytree_with_keys(
     collections.OrderedDict,
