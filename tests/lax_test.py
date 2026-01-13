@@ -1518,6 +1518,28 @@ class LaxTest(jtu.JaxTestCase):
     numpy_op = lambda x: lax_reference.broadcast_in_dim(x, outshape, dimensions)
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
 
+  @jtu.sample_product(
+      [
+          dict(arg_shape=arg_shape, reps=reps)
+          for arg_shape, reps in [
+              [(3,), (2,)],
+              [(2, 3), (1, 0)],
+              [(2, 3), (1, 2)],
+              [(2, 3), (2, 1)],
+              [(2, 1, 3), (1, 2, 3)],
+              [(1, 1, 4), (1, 3, 1)],
+          ]
+      ],
+      dtype=lax_test_util.default_dtypes,
+  )
+  def testTile(self, arg_shape, reps, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(arg_shape, dtype)]
+    op = lambda x: lax.tile(x, reps)
+    numpy_op = lambda x: np.tile(x, reps)
+    self._CompileAndCheck(op, args_maker)
+    self._CheckAgainstNumpy(numpy_op, op, args_maker)
+
   @parameterized.parameters(
     {"inshape": inshape, "dimensions": dimensions, "error_type": error_type,
      "err_msg": err_msg}

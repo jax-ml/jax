@@ -176,6 +176,7 @@ Operators
     sub
     tan
     tanh
+    tile
     top_k
     transpose
     zeta

@@ -791,6 +791,46 @@ class LaxVmapTest(jtu.JaxTestCase):
     expected = jnp.array([[[2.0, 2.0, 0.0], [3.0, 0.0, 1.0]]])
     self.assertAllClose(output, expected, check_dtypes=False)
 
+  @jtu.sample_product(
+      [
+          dict(arg_shape=arg_shape, reps=reps)
+          for arg_shape, reps in [
+              [(3,), (2,)],
+              [(2, 3), (1, 2)],
+              [(2, 3), (2, 1)],
+              [(2, 1, 3), (1, 2, 3)],
+          ]
+      ],
+      in_axes=[0, 1, -1],
+      out_axes=[0, 1, -1],
+  )
+  def testTileBatching(self, arg_shape, reps, in_axes, out_axes):
+    rng = jtu.rand_default(self.rng())
+    dtype = np.float32
+    args_maker = lambda: [rng(arg_shape, dtype)]
+    op = lambda x: lax.tile(x, reps)
+    args = args_maker()
+
+    # Construct batched arguments based on in_axes
+    if in_axes == 0:
+      batched_args = [jnp.stack([arg, arg], axis=0) for arg in args]
+    elif in_axes == 1:
+      batched_args = [jnp.stack([arg, arg], axis=1) for arg in args]
+    else: # in_axes == -1
+      batched_args = [jnp.stack([arg, arg], axis=-1) for arg in args]
+
+    # Compute expected output
+    out = op(*args)
+    if out_axes == 0:
+      expected = jnp.stack([out, out], axis=0)
+    elif out_axes == 1:
+      expected = jnp.stack([out, out], axis=1)
+    else: # out_axes == -1
+      expected = jnp.stack([out, out], axis=-1)
+
+    actual = jax.vmap(op, in_axes=in_axes, out_axes=out_axes)(*batched_args)
+    self.assertAllClose(expected, actual)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
