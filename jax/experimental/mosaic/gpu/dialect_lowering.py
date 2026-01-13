@@ -726,38 +726,43 @@ def _vector_multi_dim_reduction_op_lowering_rule(
 
   [in_layout, acc_layout] = inference_utils.in_layouts(op)
   [out_layout] = inference_utils.out_layouts(op)
-  if layouts.from_layout_attr(in_layout) != fa.WGMMA_LAYOUT:
-    raise NotImplementedError(f"Unsupported input layout: {in_layout}")
-  if layouts.from_layout_attr(out_layout) not in {
-      fa.WGMMA_ROW_LAYOUT,
-      fa.WGMMA_COL_LAYOUT,
-  }:
-    raise NotImplementedError(f"Unsupported output layout: {out_layout}")
   if out_layout != acc_layout:
     raise ValueError(
         f"Output layout {out_layout} must match the accumulator layout"
         f" {acc_layout}"
     )
 
-  # TODO(b/415721295): Derive `is_signed` from attributes.
-  is_signed = None
-  source_fa = _fragmented_array_from_ir(op.source, in_layout, is_signed)
-  acc_fa = _fragmented_array_from_ir(op.acc, acc_layout, is_signed)
-  match vector.CombiningKind[
+  if len(op.reduction_dims) != 1:
+    raise NotImplementedError("Only 1 reduction dimension is supported.")
+
+  op_kind = vector.CombiningKind[
       str(op.kind).removeprefix("#vector.kind<").removesuffix(">").upper()
-  ]:
+  ]
+  match op_kind:
     case vector.CombiningKind.ADD:
-      result = source_fa.reduce("add", op.reduction_dims[0])
-      result += acc_fa
-    case (
-        vector.CombiningKind.MAXIMUMF
-        | vector.CombiningKind.MAXSI
-        | vector.CombiningKind.MAXUI
-    ):
-      result = source_fa.reduce("max", op.reduction_dims[0])
-      result = result.max(acc_fa)
+      src = _fragmented_array_from_ir(op.source, in_layout)
+      acc = _fragmented_array_from_ir(op.acc, acc_layout)
+      result = src.reduce("add", op.reduction_dims[0])
+      result += acc
+    case vector.CombiningKind.MAXSI | vector.CombiningKind.MAXUI:
+      is_signed = op_kind == vector.CombiningKind.MAXSI
+      src = _fragmented_array_from_ir(op.source, in_layout, is_signed)
+      acc = _fragmented_array_from_ir(op.acc, acc_layout, is_signed)
+      result = src.reduce("max", op.reduction_dims[0])
+      result = result.max(acc)
+    case vector.CombiningKind.MAXIMUMF:
+      src = _fragmented_array_from_ir(op.source, in_layout)
+      acc = _fragmented_array_from_ir(op.acc, acc_layout)
+      result = src.reduce("max", op.reduction_dims[0])
+      result = result.max(acc)
+    case vector.CombiningKind.MINIMUMF:
+      src = _fragmented_array_from_ir(op.source, in_layout)
+      acc = _fragmented_array_from_ir(op.acc, acc_layout)
+      result = src.reduce("min", op.reduction_dims[0])
+      result = result.min(acc)
     case _:
       raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
+  assert result.layout == layouts.from_layout_attr(out_layout)  # pytype: disable=attribute-error
   return [fragmented_array_to_ir(result, op.result.type)]
 
 
