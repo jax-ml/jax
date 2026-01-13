@@ -896,17 +896,19 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
     }
 
     case PyTreeKind::kDataclass: {
-      nb::kwargs kwargs;
+      nb::object object_class = nb::borrow<nb::object>((PyObject*)&PyBaseObject_Type);
+      nb::object obj = object_class.attr("__new__")(node.custom->type);
       auto meta_size = node.custom->meta_fields.size();
       for (int i = 0; i < meta_size; ++i) {
-        kwargs[node.custom->meta_fields[i]] =
-            nb::borrow(nb::tuple(node.node_data)[i]);
+          object_class.attr("__setattr__")(obj, node.custom->meta_fields[i],
+            nb::borrow(nb::tuple(node.node_data)[i]));
       }
       auto data_size = node.custom->data_fields.size();
       for (int i = 0; i < data_size; ++i) {
-        kwargs[node.custom->data_fields[i]] = std::move(children[i]);
+          object_class.attr("__setattr__")(obj, node.custom->data_fields[i],
+              std::move(children[i]));
       }
-      return node.custom->type(**kwargs);
+      return obj;
     }
   }
   throw std::logic_error("Unreachable code.");
