@@ -448,7 +448,7 @@ artifacts using a new mesh constructed at the call site:
 ...                         sharding=NamedSharding(export_mesh, P("a"))))
 
 >>> # Prepare the mesh for calling `exp`.
->>> calling_mesh = Mesh(np.array(export_devices[::-1]), ("a",))
+>>> calling_mesh = Mesh(np.array(export_devices[::-1]), ("b",))
 
 >>> # Shard the arg according to what `exp` expects.
 >>> arg = jnp.arange(4 * len(export_devices))
@@ -772,7 +772,7 @@ that live in jaxlib):
        * Note that the forward compatibility mode is always false in JIT mode
          or if the user passes `--jax_export_ignore_forward_compatibility=true`
        * Note that at this point the exports will still not use `T_NEW`.
-  3. This can be done at any time after the previous step, and before
+  3. This can be done at any time after the previous step, and before 
      the next step: Add a backward compatibility test for `T_NEW`,
      and add `T_NEW` to the list of
      [`_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE`](https://github.com/search?q=repo%3Ajax-ml%2Fjax++%22_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE+%3D%22+path%3A_export.py&amp%3Btype=code&type=code) in `_export.py`.

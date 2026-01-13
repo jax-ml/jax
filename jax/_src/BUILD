@@ -796,8 +796,6 @@ pytype_strict_library(
         ":effects",
         ":mesh",
         ":mlir",
-        ":named_sharding",
-        ":partition_spec",
         ":sharding",
         ":sharding_impls",
         ":source_info_util",

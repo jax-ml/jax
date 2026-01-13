@@ -89,35 +89,6 @@ enum MemorySpace: byte {
   Any = 3,
 }
 
-enum AxisType: byte {
-  Missing = 0,  // default if missing (pre 1/15/2026)
-  Auto = 1,
-  Explicit = 2,
-  Manual = 3,
-}
-
-table AbstractMesh {
-  axis_sizes: [uint32];
-  axis_names: [string];
-  axis_types: [AxisType];
-}
-
-table PartitionSpecOneAxis {
-  axes: [string];  // [] = None, ['x'] = 'x', ['x', 'y'] = ('x', 'y')
-}
-
-table PartitionSpec {
-  partitions: [PartitionSpecOneAxis];
-  reduced: [string];
-  unreduced: [string];
-}
-
-table NamedSharding {
-  mesh: AbstractMesh;
-  spec: PartitionSpec;
-  memory_kind: string;
-}
-
 table AbstractValue {
   kind: AbstractValueKind;
   shape: [string];  // Support shape polymorphism
@@ -126,15 +97,13 @@ table AbstractValue {
 }
 
 enum ShardingKind: byte {
-  unspecified = 0,
-  hlo_sharding = 1,
-  named_sharding = 2,  // Added 1/15/2026
+  unspecified,
+  hlo_sharding,
 }
 
 table Sharding {
   kind: ShardingKind;
-  hlo_sharding_proto: [byte];  // if kind == hlo_sharding
-  named_sharding: NamedSharding;  // if kind == named_sharding; added 1/15/2026
+  hlo_sharding_proto: [byte];
 }
 
 table Effect {
