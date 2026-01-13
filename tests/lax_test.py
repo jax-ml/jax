@@ -1665,6 +1665,32 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "Dimension size after padding is not at least 0"):
       lax.pad(np.zeros(2), 0., [(-4, 0, 1)])
 
+  @jtu.sample_product(
+    [dict(in_shape=in_shape, window_shape=window_shape,
+          window_strides=window_strides, padding=padding)
+     for in_shape, window_shape, window_strides, padding in [
+       ((10, 10), (5, 5), (1, 1), 'SAME'),
+       ((8, 8), (3, 3), (2, 2), 'SAME_LOWER'),
+       ((7, 7), (3, 3), (2, 2), 'VALID'),
+     ]
+     ],
+  )
+  def testPadtypeToPadsReturnsInts(self, in_shape, window_shape, window_strides,
+                                   padding):
+    """Test that padtype_to_pads returns Python ints, not NumPy scalars."""
+    in_shape_arr = np.array(in_shape, dtype=np.int64)
+    window_shape_arr = np.array(window_shape, dtype=np.int64)
+    window_strides_arr = np.array(window_strides, dtype=np.int64)
+
+    pads = lax.padtype_to_pads(in_shape_arr, window_shape_arr,
+                               window_strides_arr, padding)
+
+    for i, (low, high) in enumerate(pads):
+      self.assertIsInstance(low, int,
+                            f"Padding dimension {i} low value is {type(low)}, expected int")
+      self.assertIsInstance(high, int,
+                            f"Padding dimension {i} high value is {type(high)}, expected int")
+
   def testReverse(self):
     rev = jax.jit(lambda operand: lax.rev(operand, dimensions))
 
