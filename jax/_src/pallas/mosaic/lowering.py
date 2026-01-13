@@ -3493,6 +3493,24 @@ def _repeat_lowering_rule(ctx: LoweringRuleContext, x, *, repeats, axis):
   )
 
 
+@register_lowering_rule(lax.tile_p)
+def _tile_lowering_rule(ctx: LoweringRuleContext, x, *, reps):
+  (x_aval,) = ctx.avals_in
+  newshape = list(x_aval.shape)
+  for axis, repeats in enumerate(reps):
+    newshape[axis] *= repeats
+    x = tpu.repeat(
+      aval_to_ir_type(
+          ctx.lowering_context.dynamic_shape_replacement_fn,
+          x_aval.update(shape=tuple(newshape))
+      ),
+      x,
+      axis,
+      repeats,
+    )
+  return x
+
+
 @register_lowering_rule(tpu_primitives.roll_p)
 def _roll_lowering_rule(
     ctx: LoweringRuleContext, x, shift, *, axis, stride, stride_axis

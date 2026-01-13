@@ -865,6 +865,42 @@ class OpsTest(ptu.PallasTPUTest):
 
     np.testing.assert_array_equal(result, expected)
 
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.bfloat16, jnp.int32, jnp.int8],
+      shape_reps=[
+          ((8, 128), (2, 1)),
+          ((8, 128), (1, 2)),
+          ((8, 128), (2, 2)),
+          ((128, 8, 128), (3,2,1)),
+      ],
+  )
+  def test_tile(self, dtype, shape_reps):
+    shape, reps = shape_reps
+
+    k1 = jax.random.key(1234)
+    if jnp.issubdtype(dtype, jnp.integer):
+      x = jax.random.randint(
+          k1,
+          shape,
+          minval=dtypes.iinfo(dtype).min,
+          maxval=dtypes.iinfo(dtype).max,
+          dtype=dtype,
+      )
+    else:
+      x = jax.random.normal(k1, shape, dtype=dtype)
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = jnp.tile(x_ref[...], reps)
+
+    run = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(np.multiply(shape, reps), dtype),
+    )
+
+    output = run(x)
+    expected = jnp.tile(x, reps)
+    np.testing.assert_array_equal(output, expected)
+
 
 if __name__ == "__main__":
   absltest.main()
