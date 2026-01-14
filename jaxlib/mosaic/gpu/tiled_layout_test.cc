@@ -16,15 +16,30 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/tiled_layout.h"
 
 #include <cstdint>
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status.h"
+#include "llvm/Support/Casting.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OwningOpRef.h"
+#include "mlir/IR/Value.h"
 
 namespace jax::mosaic::gpu {
 namespace {
 
+using ::testing::Each;
 using ::testing::ElementsAre;
+using ::testing::Truly;
+using ::testing::status::IsOkAndHolds;
+using ::testing::status::StatusIs;
 
 TEST(TilingTest, TileNestedShapeStrides) {
   ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{64, 64}}));
@@ -105,6 +120,318 @@ TEST(TilingTest, UntileIndicesMultiLevel) {
   auto untiled_indices = tiling.UntileIndices(indices);
 
   EXPECT_THAT(untiled_indices, ElementsAre(70, 80));
+}
+
+TEST(TiledLayoutTest, Create) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{64, 8}, {16, 8}, {8, 8}, {1, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-8},
+                          /*lane_dims=*/{-4, -3},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  EXPECT_THAT(layout.warp_dims(), ElementsAre(-8));
+  EXPECT_THAT(layout.lane_dims(), ElementsAre(-4, -3));
+  EXPECT_EQ(layout.vector_dim(), -1);
+}
+
+TEST(TiledLayoutTest, CreateFailsWithDuplicateDims) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{10, 2}}));
+
+  EXPECT_THAT(TiledLayout::Create(std::move(tiling),
+                                  /*warp_dims=*/{-1},
+                                  /*lane_dims=*/{-1},
+                                  /*vector_dim=*/-2),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(TiledLayoutTest, CreateFailsWithEmptyTiling) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({}));
+  EXPECT_THAT(TiledLayout::Create(std::move(tiling),
+                                  /*warp_dims=*/{},
+                                  /*lane_dims=*/{},
+                                  /*vector_dim=*/-1),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(TiledLayoutTest, CreateFailsWithPositiveDim) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{32, 4}}));
+  EXPECT_THAT(TiledLayout::Create(std::move(tiling),
+                                  /*warp_dims=*/{1},
+                                  /*lane_dims=*/{-2},
+                                  /*vector_dim=*/-1),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(TiledLayoutTest, CreateFailsWithOutOfRangeDim) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{32, 4}}));
+  EXPECT_THAT(TiledLayout::Create(std::move(tiling),
+                                  /*warp_dims=*/{-3},
+                                  /*lane_dims=*/{-2},
+                                  /*vector_dim=*/-1),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(TiledLayoutTest, CreateFailsWithInvalidWarpDimsProduct) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{32, 4}}));
+  EXPECT_THAT(TiledLayout::Create(std::move(tiling),
+                                  /*warp_dims=*/{-2},
+                                  /*lane_dims=*/{Replicated(32)},
+                                  /*vector_dim=*/-1),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(TiledLayoutTest, CreateFailsWithInvalidLaneDimsProduct) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{8, 4, 32}}));
+  EXPECT_THAT(TiledLayout::Create(std::move(tiling),
+                                  /*warp_dims=*/{-2},
+                                  /*lane_dims=*/{-3},
+                                  /*vector_dim=*/-1),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(TiledLayoutTest, CreateFailsWithNonCanonicalLayout) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 32}, {1, 1}}));
+  EXPECT_THAT(TiledLayout::Create(std::move(tiling),
+                                  /*warp_dims=*/{-4},
+                                  /*lane_dims=*/{-3},
+                                  /*vector_dim=*/-1,
+                                  /*check_canonical=*/true),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(TiledLayoutTest, Canonicalize) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{4, 32, 1, 1}, {1, 1, 1, 1}}));
+
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-8},
+                          /*lane_dims=*/{-7},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(TiledLayout canonical, layout.Canonicalize());
+
+  EXPECT_THAT(canonical.warp_dims(), ElementsAre(-4));
+  EXPECT_THAT(canonical.lane_dims(), ElementsAre(-3));
+  EXPECT_EQ(canonical.vector_dim(), -1);
+}
+
+TEST(TiledLayoutTest, PartitionedDimsReturnAllPartitionedDims) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{64, 8}, {32, 8}, {8, 8}, {1, 4}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-8, Replicated(2)},
+                          /*lane_dims=*/{-4, -3, Replicated(2)},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  EXPECT_THAT(layout.PartitionedWarpDims(), ElementsAre(-8));
+  EXPECT_THAT(layout.PartitionedLaneDims(), ElementsAre(-4, -3));
+}
+
+TEST(TiledLayoutTest, VectorLengthReturnsTheSizeOfTheVectorDim) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{64, 8}, {16, 8}, {8, 8}, {1, 2}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-8},
+                          /*lane_dims=*/{-4, -3},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  EXPECT_THAT(layout.VectorLength(), IsOkAndHolds(2));
+}
+
+TEST(TiledLayoutTest, ReduceLaneDims) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 4, 8, 8, 4, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-6},
+                          /*lane_dims=*/{-4, -5},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(TiledLayout reduced, layout.Reduce({1, 2}));
+
+  EXPECT_THAT(reduced.warp_dims(), ElementsAre(-4));
+  EXPECT_THAT(reduced.lane_dims(), ElementsAre(Replicated(8), Replicated(4)));
+  EXPECT_EQ(reduced.vector_dim(), -1);
+}
+
+TEST(TiledLayoutTest, ReduceWarpDims) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 4, 8, 8, 4, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling), /*warp_dims=*/{-6},
+                          /*lane_dims=*/{-4, -5},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(TiledLayout reduced, layout.Reduce({0}));
+
+  EXPECT_THAT(reduced.warp_dims(), ElementsAre(Replicated(4)));
+  EXPECT_THAT(reduced.lane_dims(), ElementsAre(-4, -5));
+  EXPECT_EQ(reduced.vector_dim(), -1);
+}
+
+TEST(TiledLayoutTest, ReduceVectorDim) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 4, 8, 8, 4, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling), /*warp_dims=*/{-6},
+                          /*lane_dims=*/{-4, -5},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(TiledLayout reduced, layout.Reduce({5}));
+
+  EXPECT_THAT(reduced.warp_dims(), ElementsAre(-6));
+  EXPECT_THAT(reduced.lane_dims(), ElementsAre(-4, -5));
+  EXPECT_EQ(reduced.vector_dim(), -1);
+  EXPECT_THAT(reduced.VectorLength(), IsOkAndHolds(1));
+}
+
+class TiledLayoutMlirTest : public ::testing::Test {
+ public:
+  TiledLayoutMlirTest() : context_(mlir::MLIRContext()) {}
+
+ protected:
+  void SetUp() override {
+    context_.getOrLoadDialect<mlir::arith::ArithDialect>();
+    context_.getOrLoadDialect<mlir::gpu::GPUDialect>();
+    module_ = mlir::ModuleOp::create(mlir::UnknownLoc::get(&context_));
+    builder_ = std::make_unique<mlir::OpBuilder>(module_->getBodyRegion());
+    loc_ = std::make_unique<mlir::Location>(builder_->getUnknownLoc());
+  }
+
+  static bool IsConstantZero(mlir::Value v) {
+    auto op = v.getDefiningOp<mlir::arith::ConstantOp>();
+    if (!op) {
+      return false;
+    }
+    auto attr = llvm::dyn_cast<mlir::IntegerAttr>(op.getValue());
+    if (!attr) {
+      return false;
+    }
+    return attr.getValue().isZero();
+  }
+
+  mlir::OpBuilder& builder() { return *builder_; }
+  mlir::Location& loc() { return *loc_; }
+
+ private:
+  mlir::MLIRContext context_;
+  mlir::OwningOpRef<mlir::ModuleOp> module_;
+  std::unique_ptr<mlir::OpBuilder> builder_;
+  std::unique_ptr<mlir::Location> loc_;
+};
+
+TEST_F(TiledLayoutMlirTest, WarpIndices) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{64, 8}, {16, 8}, {8, 8}, {1, 2}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-8},
+                          /*lane_dims=*/{-4, -3},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(std::vector<mlir::Value> indices,
+                       layout.WarpIndices(builder(), loc()));
+
+  // Make sure warp dim is non-zero.
+  EXPECT_EQ(indices.size(), 8);
+  EXPECT_FALSE(IsConstantZero(indices[0]));  // 8 - 8 = 0 index
+  EXPECT_TRUE(IsConstantZero(indices[1]));
+  EXPECT_TRUE(IsConstantZero(indices[2]));
+  EXPECT_TRUE(IsConstantZero(indices[3]));
+  EXPECT_TRUE(IsConstantZero(indices[4]));
+  EXPECT_TRUE(IsConstantZero(indices[5]));
+  EXPECT_TRUE(IsConstantZero(indices[6]));
+  EXPECT_TRUE(IsConstantZero(indices[7]));
+}
+
+TEST_F(TiledLayoutMlirTest, LaneIndices) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{64, 8}, {16, 8}, {8, 8}, {1, 2}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-8},
+                          /*lane_dims=*/{-4, -3},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(std::vector<mlir::Value> indices,
+                       layout.LaneIndices(builder(), loc()));
+
+  // Make sure lane dims are non-zero.
+  EXPECT_EQ(indices.size(), 8);
+  EXPECT_TRUE(IsConstantZero(indices[0]));
+  EXPECT_TRUE(IsConstantZero(indices[1]));
+  EXPECT_TRUE(IsConstantZero(indices[2]));
+  EXPECT_TRUE(IsConstantZero(indices[3]));
+  EXPECT_FALSE(IsConstantZero(indices[4]));  // 8 - 4 = 4 index
+  EXPECT_FALSE(IsConstantZero(indices[5]));  // 8 - 3 = 5 index
+  EXPECT_TRUE(IsConstantZero(indices[6]));
+  EXPECT_TRUE(IsConstantZero(indices[7]));
+}
+
+TEST_F(TiledLayoutMlirTest, IndicesWithReplicated) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{64, 8}, {16, 8}, {8, 8}, {1, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{Replicated(4)},
+                          /*lane_dims=*/{-4, -3},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(std::vector<mlir::Value> indices,
+                       layout.WarpIndices(builder(), loc()));
+
+  EXPECT_EQ(indices.size(), 8);
+  EXPECT_THAT(indices, Each(Truly(IsConstantZero)));
+}
+
+TEST(TiledLayoutTest,
+     ApplyingTilingToShapeAndShapeFromRegistersShapeReturnsOriginalShape) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 32, 2}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-3},
+                          /*lane_dims=*/{-2},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  EXPECT_THAT(layout.RegistersShape({8, 128, 2}),
+              IsOkAndHolds(ElementsAre(2, 4, 1, 1, 1, 1)));
+  EXPECT_THAT(layout.ShapeFromRegistersShape({2, 4, 1, 1, 1, 1}),
+              IsOkAndHolds(ElementsAre(8, 128, 2)));
+}
+
+TEST_F(TiledLayoutMlirTest, RegistersElementType) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 32, 2}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-3},
+                          /*lane_dims=*/{-2},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  mlir::Type f32 = builder().getF32Type();
+  ASSERT_OK_AND_ASSIGN(mlir::Type reg_type, layout.RegistersElementType(f32));
+
+  auto vec_type = llvm::dyn_cast<mlir::VectorType>(reg_type);
+  EXPECT_THAT(vec_type.getShape(), ElementsAre(2));
+  EXPECT_EQ(vec_type.getElementType(), f32);
 }
 
 }  // namespace
