@@ -2134,12 +2134,20 @@ class OpsTest(PallasBaseTest):
         self.skipTest("bfloat16 type are not supported on GPU")
       # Check shared memory limit: Triton loads lhs + rhs into shared memory
       if jtu.is_device_rocm():
+        # ROCm: use correct formula with dynamic limit from rocminfo
         dtype_size = jnp.dtype(dtype).itemsize
-        if (math.prod(lhs_shape) + math.prod(rhs_shape)) * dtype_size > get_rocm_shared_memory_limit():
+        shared_mem_bytes = (math.prod(lhs_shape) + math.prod(rhs_shape)) * dtype_size
+        shared_mem_limit = get_rocm_shared_memory_limit()
+        if shared_mem_bytes > shared_mem_limit:
           self.skipTest("Shared memory size limit exceeded")
-      elif math.prod(lhs_shape) + math.prod(rhs_shape) + math.prod(out_shape) > (256 * 256) * 2:
-        self.skipTest("Shared memory size limit exceeded")
-      if (jax.local_devices()[0].shared_memory_per_block_optin == 99 * 1024 and
+      else:
+        # NVIDIA: keep original check
+        if (
+            math.prod(lhs_shape) + math.prod(rhs_shape) + math.prod(out_shape)
+            > (256 * 256) * 2
+        ):
+          self.skipTest("Shared memory size limit exceeded")
+      if (jax.local_devices()[0].device_kind == "NVIDIA L4" and
           dtype == jnp.float32 and
           lhs_and_rhs_shape in [
             ((128, 16), (128, 256)),
