@@ -395,10 +395,9 @@ Programming multiple processes from JAX usually looks just like programming a
 single process, just with more devices! The main exceptions to this are around
 data coming in or out of JAX, e.g. when loading from external data sources.
 We'll first go over the basics of multi-process computations here, which largely
-look the same as their single-process counterparts. The next sections show how
-to run computations on a subset of devices and transfer data across processes
-with {func}`jax.device_put`. Finally, we'll go over some data loading 
-fundamentals, i.e. how to create JAX Arrays from non-JAX sources.
+look the same as their single-process counterparts. We'll go over some data 
+loading fundamentals, i.e. how to create JAX Arrays from non-JAX sources, later
+in this doc.
 
 Recall a {class}`jax.sharding.Mesh` pairs an array of {class}`jax.Device`s with
 a sequence of names, with one name per array axis. By creating a `Mesh` using
@@ -570,12 +569,11 @@ attribute does not require any communication, so any subset of processes can do
 it without needing the others. That attribute is not available under a
 {func}`jax.jit`.
 
-## Running on a subset of devices
+### Running on a subset of devices
 
-In the above examples, we used global meshes over all devices and ran SPMD 
-computations. Multi-controller JAX also supports meshes over just a subset 
-of devices, which is useful for writing MPMD programs where different 
-computations are run on each mesh.
+In the above examples, we used global meshes over all devices. Multi-controller
+JAX also supports meshes over just a subset of devices, which is useful for 
+running different computations concurrently on different devices.
 
 Let's define a mesh that includes just half of the global devices and
 place some data on it. We'll use the `devices` arg of `jax.make_mesh` to 
@@ -583,7 +581,7 @@ indicate which devices to use.
 
 ```python
 num_devices = jax.device_count() // 2
-mesh = jax.make_mesh((num_devices,), ('a',), 
+mesh = jax.make_mesh((num_devices,), ('a',),
                      devices=jax.devices()[num_devices:],
                      axis_types=(jax.sharding.AxisType.Explicit,))
 sharding = NamedSharding(mesh, P('a'))
@@ -624,6 +622,8 @@ The sharding, again on a four-host `v5litepod-16`, looks like this:
 ├───────────────────────┤
 │        TPU 12         │
 └───────────────────────┘
+
+NamedSharding(mesh=Mesh('a': 8, axis_types=(Explicit,)), spec=PartitionSpec('a',), memory_kind=device)
 ```
 
 Only processes 2 and 3 have local devices in the sharding; processes 0 and 1 
@@ -675,7 +675,7 @@ processes participated. In this example, we could have run the computation only
 in processes 2 and 3, but applying it in non-participating processes is fine 
 too and will produce an array with no local data, as in process 0 above.
 
-## Transferring data across processes with `jax.device_put`
+### Transferring data across processes with `jax.device_put`
 
 {func}`jax.device_put` can transfer data between devices across processes. As 
 with cross-process collectives, the data is transferred via high-speed 
@@ -683,8 +683,8 @@ networking links like TPU ICI or NVLink when available. Cross-process
 {func}`jax.device_put` must be called on all hosts that participate in either 
 the source or destination sharding. 
 
-An example use case is an MPMD pipeline-parallel program where each stage runs 
-on a different set of devices. After the first stage completes, use 
+An example use case is a pipeline-parallel program where each stage runs on a 
+different set of devices. After the first stage completes, use 
 {func}`jax.device_put` to transfer the result to another set of devices for the 
 next stage of the pipeline. Here's a simple illustration:
 
@@ -703,7 +703,7 @@ mesh_second_half = jax.make_mesh((num_devices,), ('a',),
                                  axis_types=(jax.sharding.AxisType.Explicit,))
 sharding_second_half = NamedSharding(mesh_second_half, P('a'))
 
-# Place the input data on the first sharding.
+# Place the input data on the first mesh.
 data = np.arange(64).reshape((8, 8))
 x = jax.device_put(data, sharding_first_half)
 
@@ -723,15 +723,21 @@ def g(x):
 y = f(x)
 
 # Transfer the data to the second set of devices.
-# `device_put` must be called in all process that participate in either of the
-# shardings, so it's important to call `y = f(x)` in all processes -- not just
-# those that participate in the first sharding -- so that we always have a 
-# reference to `y`.
+# `device_put` must be called in all processes that participate in either 
+# `y.sharding` or `sharding_second_half`, so it's important to call `y = f(x)` 
+# in all processes -- not just those that participate in the first stage -- so
+# that we always have a reference to `y`.
 z = jax.device_put(y, sharding_second_half)
 
 # Run the second stage on the second set of devices.
 result = g(z)
 ```
+
+In this example, the operations are asynchronous and will begin executing as
+soon as their inputs are ready. If we evaluated `y`, `z`, and `result` in a 
+loop over batches of data `x`, `f` would begin processing the next batch, and
+{func}`jax.device_put` would transfer the just-completed batch for processing
+by `g`, in parallel.
 
 Cross-process {func}`jax.device_put` is currently supported only when the 
 source and destination shardings have non-overlapping sets of participating 
@@ -830,8 +836,11 @@ to create an array spanning the devices on processes 0 and 1:
 ```python
 num_participating_processes = 2
 shape = (num_participating_processes, jax.local_device_count())
+devices = (jax.local_devices(process_index=0) + 
+           jax.local_devices(process_index=1))
 mesh = jax.make_mesh(shape, ('i', 'j'), 
-                     axis_types=(jax.sharding.AxisType.Explicit,) * 2)
+                     axis_types=(jax.sharding.AxisType.Explicit,) * 2,
+                     devices=devices)
 sharding = NamedSharding(mesh, P('i', 'j'))
 
 # manually create per-device data in processes 0 and 1.
