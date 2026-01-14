@@ -754,6 +754,12 @@ def _vector_multi_dim_reduction_op_lowering_rule(
       acc = _fragmented_array_from_ir(op.acc, acc_layout)
       result = src.reduce("max", op.reduction_dims[0])
       result = result.max(acc)
+    case vector.CombiningKind.MINUI | vector.CombiningKind.MINSI:
+      is_signed = op_kind == vector.CombiningKind.MINSI
+      src = _fragmented_array_from_ir(op.source, in_layout, is_signed)
+      acc = _fragmented_array_from_ir(op.acc, acc_layout, is_signed)
+      result = src.reduce("min", op.reduction_dims[0])
+      result = result.min(acc)
     case vector.CombiningKind.MINIMUMF:
       src = _fragmented_array_from_ir(op.source, in_layout)
       acc = _fragmented_array_from_ir(op.acc, acc_layout)

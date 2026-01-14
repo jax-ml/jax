@@ -2452,11 +2452,9 @@ class PallasCallTest(PallasTest):
       ),
       op=(jnp.sum, jnp.max, jnp.min),
       # TODO(apaszke): Add support for f8 (MLIR/LLVM barfs at the moment).
-      dtype=(jnp.float32, jnp.float16, jnp.bfloat16, jnp.int32),
+      dtype=(jnp.float32, jnp.float16, jnp.bfloat16, jnp.int32, jnp.uint32),
   )
   def test_reduce_with_layout(self, layout, op, dtype):
-    if dtype == jnp.int32 and op == jnp.min:
-      self.skipTest("int32 min not supported")
     if layout == plgpu.Layout.TCGEN05_M64_COLLECTIVE(128):
       self.skip_if_wg_semantics()  # cross-warp reductions are not supported.
     axis = -1
@@ -2479,10 +2477,10 @@ class PallasCallTest(PallasTest):
       plgpu.copy_smem_to_gmem(smem_reduced_ref, y_ref)
       plgpu.wait_smem_to_gmem(0)
 
-    if dtype == jnp.int32:
-      x = jnp.arange(
-          start=-128 * 128 // 2, stop=128 * 128 // 2, dtype=dtype
-      ).reshape((128, 128))
+    if jnp.issubdtype(dtype, jnp.integer):
+      x = jnp.arange(128 * 128).reshape((128, 128)).astype(dtype)
+      if dtype == jnp.int32:
+        x = x - x.size // 2  # include negative values.
     else:
       x = jax.random.uniform(jax.random.key(0), shape=(128, 128), dtype=dtype)
     x_result = jax.block_until_ready(kernel(x))
