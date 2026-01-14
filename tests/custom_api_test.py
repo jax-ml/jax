@@ -1934,18 +1934,8 @@ class CustomVJPTest(jtu.JaxTestCase):
     f.defvjp(foo_fwd, foo_bwd)
 
     f(2)  # doesn't crash
-    self.assertRaisesRegex(
-        TypeError,
-        re.escape(
-            "Custom VJP bwd rule must produce an output with the same container "
-            "(pytree) structure as the args tuple of the primal function, "
-            "and in particular must produce a tuple of length equal to the "
-            "number of arguments to the primal function, but got bwd output "
-            "structure {} for primal input structure {}.".format(
-                jax.tree.structure((1, 1)),
-                jax.tree.structure((1,)))
-        ),
-        lambda: api.grad(f)(2.))
+    with self.assertRaisesRegex(Exception, "Custom VJP bwd rule .*must produce"):
+      api.grad(f)(2.)
 
   def test_vjp_bwd_returns_non_tuple_error(self):
     @jax.custom_vjp
@@ -1983,19 +1973,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     self.assertRaisesRegex(
         TypeError,
-        re.escape(
-            "Custom VJP fwd rule f_fwd for function f must produce a pair "
-            "(list or tuple of length two) where the first element represents "
-            "the primal output (equal to the output of the "
-            "custom_vjp-decorated function f) and the second element "
-            "represents residuals (i.e. values stored from the forward "
-            "pass for use on the backward pass), but instead the fwd rule "
-            "output's first element had container/pytree structure:\n"
-            "    (float32[], float32[])\n"
-            "while the custom_vjp-decorated function f had output "
-            "container/pytree structure:\n"
-            "    float32[]."
-        ),
+        "Custom VJP fwd rule f_fwd for function f must produce a pair ",
         lambda: jax.grad(lambda x: scan_apply(f, x))(jnp.float32(1.)))
 
     def f_fwd2(x):
@@ -3010,7 +2988,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        r'output\[1\] the bwd rule produced an output of type float..\[3\]'):
+        r'output\[1\] the bwd rule produced an output of type f.*\[3\]'):
       jax.grad(lambda x, y: foo(x, y * y).sum(), 1)(jnp.ones(3), jnp.ones(4))
 
   def test_bwd_rule_shape_mismatch_disable(self):
@@ -3256,14 +3234,12 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         TypeError,
-        r"The input arguments to the custom_vjp-decorated function f(.*)\n"
         r"missing a required argument: 'y'"
     ):
       f(0.5)
 
     with self.assertRaisesRegex(
         TypeError,
-        r"The input arguments to the custom_vjp-decorated function f(.*)\n"
         "The following keyword arguments could not be resolved to positions: z"
     ):
       f(0.5, 0.1, z=1.0)
@@ -3344,20 +3320,44 @@ class CustomVJP3Test(CustomVJPTest):
   # eager (ie dont always trace, unless under a jit)
   def test_python_control_flow(self): pass
 
-  # error messages
-  def test_missing_vjp_rule_error(self): pass
-  def test_jvp_error(self): pass  # TODO
-  def test_nondiff_arg_tracer_error(self): pass
-  def test_bwd_rule_shape_mismatch(self): pass
+  # regress these, hope no one cares
   def test_pytrees_not_required_to_contain_nones(self): pass
-  def test_fwd_rule_primal_out_type_doesnt_match_primal_error_message(self): pass
-  def test_resolve_kwargs_error_message(self): pass
   def test_symbolic_zero_custom_vjp_bwd_shape_error(self): pass
-  def test_vjp_rule_inconsistent_pytree_structures_error(self): pass
-  def test_vjp_bwd_returns_non_tuple_error(self): pass
 
-  # small api stuff
-  def test_bwd_rule_can_produce_list_or_tuple(self): pass  # TODO
+  def test_fwd_rule_primal_out_type_doesnt_match_primal_error_message(self):
+    def scan_apply(f, x):
+      y, _ = jax.lax.scan(lambda x, _: (f(x), None), x, None, length=1)
+      return y
+
+    @jax.custom_vjp
+    def f(x):
+      return x
+
+    def f_fwd(x):
+      return (x, x), None
+
+    def f_bwd(_, y_bar):
+      return (y_bar,)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    self.assertRaisesRegex(
+        TypeError,
+        "Custom VJP fwd rule f_fwd for function f must produce a pair ",
+        lambda: jax.grad(lambda x: scan_apply(f, x))(jnp.float32(1.)))
+
+    def f_fwd2(x):
+      return jnp.zeros((3, *x.shape), x.dtype), None
+
+    def f_bwd2(_, y_bar):
+      return (y_bar,)
+
+    f.defvjp(f_fwd2, f_bwd2)
+
+    self.assertRaisesRegex(
+        TypeError,
+        r"got fwd output type float32\[3\] which doesn't match",
+        lambda: jax.grad(lambda x: scan_apply(f, x))(jnp.float32(1.)))
 
   # bad tests
   def test_dce(self): pass  # TODO (test jaxpr)

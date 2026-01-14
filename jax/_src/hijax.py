@@ -18,9 +18,10 @@ from dataclasses import dataclass
 from functools import partial
 import inspect
 import itertools as it
-from typing import Any, Hashable
+from typing import Any, Hashable, Callable
 
 from jax._src import api
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
@@ -30,11 +31,14 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.custom_derivatives import CustomVJPPrimal
+from jax._src.errors import UnexpectedTracerError
+from jax._src.state.types import AbstractRef
 from jax._src import ad_util
 from jax._src.util import safe_zip, safe_map, split_list, unzip2
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
-    broadcast_prefix, register_static)
+    broadcast_prefix, register_static, tree_structure, tree_map_with_path,
+    keystr)
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
@@ -437,6 +441,12 @@ class VmapOf(VJPHiPrimitive):
     return api.vmap(self.prim.expand, in_axes=self.in_dims, out_axes=self.out_dim,  # type: ignore
                     **self._vmap_params)(*args)
 
+  def jvp(self, primals, tangents):
+    # TODO probably gonna get non-pytree-prefix errors because of sym zeros...
+    return api.vmap(self.prim.jvp, in_axes=(self.in_dims, self.in_dims),  # type: ignore
+                    out_axes=(self.out_dim, self.out_dim),  # type: ignore
+                    **self._vmap_params)(primals, tangents)  # type: ignore
+
   def vjp_fwd(self, in_nzs, *args):
     store = lambda: None
     def fwd(*args):
@@ -449,6 +459,7 @@ class VmapOf(VJPHiPrimitive):
     return primal_out, (res, Static(res_axes)), *store.out_nzs  # type: ignore
 
   def vjp_bwd_retval(self, res_, g):
+    # TODO probably gonna get non-pytree-prefix errors because of sym zeros...
     res, res_axes = res_[0], res_[1].val
     in_dims = tree_map(lambda x: batching.sum_axis if x is None else x, self.in_dims,  # type: ignore
                        is_leaf=lambda x: x is None)
@@ -558,6 +569,9 @@ def _call_hi_primitive_dce(used_outs_flat, eqn):
     return pe._default_dce_rule(used_outs_flat, eqn)
 pe.dce_rules[call_hi_primitive_p] = _call_hi_primitive_dce
 
+call_hi_primitive_linearized_p.to_lojax = ad.raise_custom_vjp_error_on_jvp
+batching.fancy_primitive_batchers[call_hi_primitive_linearized_p] = ad.raise_custom_vjp_error_on_jvp
+
 
 class CustomVJPTraced(VJPHiPrimitive):
   def __init__(self, traced, fwd, bwd, in_avals, sym_zeros, static_argnums, opt_remat):
@@ -577,6 +591,9 @@ class CustomVJPTraced(VJPHiPrimitive):
     if self.symbolic_zeros:  # type: ignore
       args = tree_map(CustomVJPPrimal, args, in_nzs)
     out, res = self.fwd(*args)  # type: ignore
+    if ((tree := tree_structure(out)) != self.out_tree):
+      raise TypeError(_vjp_primal_fwd_tree_mismatch_err(self, tree))
+    tree_map_with_path(_vjp_fwd_aval_mismatch_err, self.out_aval, out)
     if self.symbolic_zeros:  # type: ignore
       out_pairs_flat = tree_leaves_checked(self.out_tree, out)
       out_flat, out_nzs_flat = unzip2(
@@ -597,8 +614,18 @@ class CustomVJPTraced(VJPHiPrimitive):
     else:
       out_ct = tree_map(ad_util.instantiate, out_ct, is_leaf=leaf)
     in_cts = self.bwd(*static_args, res, out_ct)  # type: ignore
+    if isinstance(in_cts, list):
+      in_cts = tuple(in_cts)
+    if not isinstance(in_cts, tuple):
+      raise TypeError(f"Custom VJP bwd rule {self.bwd} must produce a tuple "  # type: ignore
+                      f"but got {type(in_cts)}.")  # type: ignore
+    if len(in_cts) != len(self.in_tree.children()) - len(self.static_argnums):  # type: ignore
+      raise ValueError(f"Custom VJP bwd rule {self.bwd} must produce a tuple "  # type: ignore
+                       "of length equal to the primal args tuple, but got "
+                       f"length {len(in_cts)}")  # type: ignore
     in_cts = broadcast_prefix(in_cts, in_avals_, is_leaf=lambda x: x is None)
     in_cts = tree_unflatten(self.in_tree, map(_replace_none, self.in_avals_flat, in_cts))
+    tree_map_with_path(_vjp_bwd_aval_mismatch_err, self.in_avals, in_cts)
     if self.symbolic_zeros:  # type: ignore
       in_cts = tree_map(ad_util.replace_rule_output_symbolic_zeros, in_cts)
     return in_cts
@@ -621,6 +648,36 @@ class CustomVJPTraced(VJPHiPrimitive):
     _, out_dims = batching.batch_jaxpr2(self.traced.jaxpr, axis_data, tuple(in_dims_flat))  # type: ignore
     return tree_unflatten(self.out_tree, out_dims)
 
+def _vjp_primal_fwd_tree_mismatch_err(self, tree):
+  return (f"Custom VJP fwd rule {self.fwd.__name__} for function {self.traced.fun_name} "  # type: ignore
+          "must produce a pair (list or tuple of length two) where the first "
+          "element represents the primal output "
+          "(equal to the output of the custom_vjp-decorated function "
+          f"{self.traced.fun_name}) and the "  # type: ignore
+          "second element represents residuals (i.e. values stored from the "
+          "forward pass for use on the backward pass), but "
+          f"instead the fwd rule output's first element had container/pytree "
+          "structure:\n"
+          f"""    {str(tree ).replace("'", "")}\n"""  # type: ignore
+          f"while the custom_vjp-decorated function {self.traced.fun_name} had output "  # type: ignore
+          "container/pytree structure:\n"
+          f"""    {str(self.out_tree).replace("'", "")}.""")  # type: ignore
+
+def _vjp_fwd_aval_mismatch_err(path, primal_aval, fwd_val):
+  if not core.typematch(ty := typeof(fwd_val), primal_aval):
+    raise TypeError(f"at {keystr(path)}, got fwd output type {ty.str_short()} "
+                    f"which doesn't match primal output type {primal_aval.str_short()}")
+
+def _vjp_bwd_aval_mismatch_err(path, primal_aval, ct_val):
+  if config.disable_bwd_checks.value: return
+  if isinstance(ct_val, ad_util.Zero): return
+  if isinstance(primal_aval, AbstractRef): primal_aval = primal_aval.inner_aval
+  expected = primal_aval.to_cotangent_aval()
+  ty = ct_val.aval if isinstance(ct_val, ad_util.SymbolicZero) else typeof(ct_val)
+  if not core.typematch(ty, expected) and getattr(expected, 'dtype', None) is not dtypes.float0:
+    result = f"at output{keystr(path)} " if path else ""
+    raise ValueError(f"{result}the bwd rule produced an output of type {ty.str_short()} "
+                     f"which doesn't match expected type {expected.str_short()}")
 
 def _replace_none(primal_in_aval, maybe_ct):
   if maybe_ct is None:
@@ -629,6 +686,9 @@ def _replace_none(primal_in_aval, maybe_ct):
     return maybe_ct
 
 class custom_vjp3:
+  fwd: Callable | None = None
+  bwd: Callable | None = None
+
   def __init__(self, f, *, nondiff_argnums=(), nondiff_argnames=()):
     self.f = f
     self.static_argnums = _set_up_nondiff(f, nondiff_argnums, nondiff_argnames)
@@ -641,7 +701,14 @@ class custom_vjp3:
     return self
 
   def __call__(self, *args, **kwargs):
+    if not self.fwd or not self.bwd:
+      msg = f"No VJP defined for custom_vjp function {self.f.__name__} using defvjp."
+      raise AttributeError(msg)
+
     args = resolve_kwargs(self.f, args, kwargs)
+    if any(isinstance(args[i], core.Tracer) for i in self.static_argnums):
+      raise UnexpectedTracerError("custom_vjp inputs marked with nondiff_argnums "
+                                  "must be static, not Tracers")
     traced = api.jit(self.f, static_argnums=(*self.static_argnums,)).trace(*args)
     if any(isinstance(x, core.Tracer) for x in traced._consts):
       raise Exception  # TODO(mattjj):error tracer type, value type, primal name
