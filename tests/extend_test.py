@@ -20,6 +20,7 @@ import jax.numpy as jnp
 
 from jax._src import abstract_arrays
 from jax._src import api
+from jax._src import core
 from jax._src import linear_util
 from jax._src import prng
 from jax._src import test_util as jtu
@@ -48,6 +49,8 @@ class ExtendTest(jtu.JaxTestCase):
     self.assertIs(jex.backend.get_backend, xla_bridge.get_backend)
     self.assertIs(jex.backend.register_backend_factory, xla_bridge.register_backend_factory)
     self.assertIs(jex.core.array_types, abstract_arrays.array_types)
+    self.assertIs(jex.core.mapped_aval, core.mapped_aval)
+    self.assertIs(jex.core.unmapped_aval, core.unmapped_aval)
     self.assertIs(jex.linear_util.StoreException, linear_util.StoreException)
     self.assertIs(jex.linear_util.WrappedFun, linear_util.WrappedFun)
     self.assertIs(jex.linear_util.cache, linear_util.cache)

@@ -24,9 +24,11 @@ from jax._src.core import (
   Jaxpr as Jaxpr,
   JaxprEqn as JaxprEqn,
   jaxpr_as_fun as jaxpr_as_fun,
+  mapped_aval as mapped_aval,
   Literal as Literal,
   Primitive as Primitive,
   Token as Token,
+  unmapped_aval as unmapped_aval,
   Var as Var,
 )
 
