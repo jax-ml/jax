@@ -140,7 +140,7 @@ class CompatTest(bctu.CompatTestBase):
         cuda_tridiagonal_solve.data_2025_06_16,
         rocm_eigh_hipsolver_syev.data_2024_08_05,
         tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17,
-        tpu_Sharding.data_2023_03_16, tpu_ApproxTopK.data_2023_04_17,
+        tpu_Sharding.data_2025_06_30, tpu_ApproxTopK.data_2023_04_17,
         tpu_ApproxTopK.data_2023_05_16,
         tpu_stablehlo_dynamic_reduce_window.data_unary_2023_06_17,
         tpu_stablehlo_dynamic_reduce_window.data_variadic_2023_06_17,
@@ -805,7 +805,6 @@ class CompatTest(bctu.CompatTestBase):
       return lax.ppermute(x, "a", perm=perm)
 
     data = [
-        (tpu_Sharding.data_2023_03_16, []),
         (tpu_Sharding.data_2025_06_30, None),
     ]
     # Due to changes in how Shardy is serialized, from using custom calls to
@@ -1031,7 +1030,6 @@ class ShardyCompatTest(bctu.CompatTestBase):
       return shard_map_func(x)
 
     data = [
-        (shardy_sharding_ops_with_different_meshes.data_2025_04_14, []),
         (shardy_sharding_ops_with_different_meshes.data_2025_06_30, None),
     ]
 
