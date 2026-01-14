@@ -6249,25 +6249,33 @@ class NumpySignaturesTest(jtu.JaxTestCase):
 
     # TODO(jakevdp): fix some of the following signatures. Some are due to wrong argument names.
     unsupported_params = {
+      'arange': ['start_or_stop', 'like'],
+      'array': ['ndmax', 'like', 'subok'],
       'argpartition': ['kind', 'order'],
       'asarray': ['like'],
       'broadcast_to': ['subok'],
       'clip': ['kwargs', 'out'],
+      'concat': ['out', 'dtype', 'casting'],
+      'concatenate': ['out', 'casting'],
       'copy': ['subok'],
       'corrcoef': ['ddof', 'bias', 'dtype'],
       'cov': ['dtype'],
       'cumulative_prod': ['out'],
       'cumulative_sum': ['out'],
+      'dot': ['out'],
       'empty_like': ['subok', 'order'],
       'einsum': ['kwargs'],
       'einsum_path': ['einsum_call'],
+      'empty': ['order', 'like'],
       'eye': ['order', 'like'],
       'hstack': ['casting'],
       'identity': ['like'],
       'isin': ['kind'],
       'full': ['order', 'like'],
       'full_like': ['subok', 'order'],
+      'frombuffer': ['like'],
       'fromfunction': ['like'],
+      'frompyfunc': ['kwargs'],
       'load': ['mmap_mode', 'allow_pickle', 'fix_imports', 'encoding', 'max_header_size'],
       'nanpercentile': ['weights'],
       'nanquantile': ['weights'],
@@ -6277,17 +6285,21 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'ones_like': ['subok', 'order'],
       'partition': ['kind', 'order'],
       'percentile': ['weights'],
+      'promote_types': ['type1', 'type2'],
       'quantile': ['weights'],
       'row_stack': ['casting'],
       'stack': ['casting'],
       'std': ['mean'],
       'tri': ['like'],
+      'unravel_index': ['order'],
       'var': ['mean'],
       'vstack': ['casting'],
+      'zeros': ['order', 'like'],
       'zeros_like': ['subok', 'order']
     }
 
     extra_params = {
+      'arange': ['start'],
       'compress': ['size', 'fill_value'],
       'einsum': ['subscripts', 'precision'],
       'einsum_path': ['subscripts'],
@@ -6302,6 +6314,11 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     for name in names:
       jnp_fun = getattr(jnp, name)
       np_fun = getattr(np, name)
+      if isinstance(getattr(np, name), np.ufunc):
+        # Skip all `np.ufunc`s since many of the missing ufunc keywords may not
+        # be relevant for JAX. However, args such as `axis` and `keepdims` may
+        # be useful to `matmul` and others.
+        continue
       if name in ['histogram', 'histogram2d', 'histogramdd']:
         # numpy 1.24 re-orders the density and weights arguments.
         # TODO(jakevdp): migrate histogram APIs to match newer numpy versions.
@@ -6318,6 +6335,12 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       if name == "reshape":
         # Similar issue to clip: we'd need logic specific to the NumPy version
         # because of the change in argument name from `newshape` to `shape`.
+        continue
+      if name == "asarray":
+        # The order of the `device` and `copy` kwargs are swapped between jnp
+        # and np.
+        # jnp.asarray: a, dtype, order, copy, device, out_sharding
+        # np.asarray: a, dtype, order, device, copy, like
         continue
       # Note: can't use inspect.getfullargspec for some functions due to numpy issue
       # https://github.com/numpy/numpy/issues/12225
