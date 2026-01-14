@@ -334,6 +334,10 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
         ' tiled=True'):
       multihost_utils.process_allgather(arr, tiled=False)
 
+  @jtu.ignore_warning(
+      category=DeprecationWarning,
+      message='jax.sharding.PmapSharding is deprecated',
+  )
   def test_host_local_array_to_global_array_already_global(self):
     global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
