@@ -3156,7 +3156,7 @@ def fmod(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     operation of ``x1`` and ``x2`` with same sign as the elements of ``x1``.
 
   Note:
-    The result of ``jnp.fmod`` is equivalent to ``x1 - x2 * jnp.fix(x1 / x2)``.
+    The result of ``jnp.fmod`` is equivalent to ``x1 - x2 * jnp.trunc(x1 / x2)``.
 
   See also:
     - :func:`jax.numpy.mod` and :func:`jax.numpy.remainder`: Returns the element-wise
@@ -3171,7 +3171,7 @@ def fmod(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     >>> jnp.fmod(x1, x2)
     Array([[ 1, -1,  4],
            [ 0,  2, -2]], dtype=int32)
-    >>> x1 - x2 * jnp.fix(x1 / x2)
+    >>> x1 - x2 * jnp.trunc(x1 / x2)
     Array([[ 1., -1.,  4.],
            [ 0.,  2., -2.]], dtype=float32)
   """
