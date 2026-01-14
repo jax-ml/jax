@@ -740,9 +740,8 @@ loop over batches of data `x`, `f` would begin processing the next batch, and
 by `g`, in parallel.
 
 Cross-process {func}`jax.device_put` is currently supported only when the 
-source and destination shardings have non-overlapping sets of participating 
-processes, contain the same number of devices, and have the same shard shapes.
-If you're finding this overly restrictive, please file a
+source and destination shardings contain the same number of devices and have
+the same shard shapes. If you're finding this overly restrictive, please file a
 [Github Issue](https://github.com/jax-ml/jax/issues).
 
 ## Making process-spanning arrays from external data
