@@ -327,17 +327,20 @@ class PallasCallTest(PallasTest):
     y = jnp.flip(x).reshape(1, 256)
     np.testing.assert_array_equal(kernel(x, y), x + y[0])
 
-  @parameterized.product(shape=[(128,), (128, 64)])
-  def test_reduce_sum(self, shape):
-
-    @functools.partial(
-        self.kernel, out_shape=jax.ShapeDtypeStruct((), jnp.float32)
-    )
+  @parameterized.product(
+      op=(jnp.sum, jnp.max, jnp.min),
+      shape=((128,), (128, 64)),
+      dtype=(jnp.float32, jnp.int32, jnp.uint32),
+  )
+  def test_scalar_reduce(self, op, shape, dtype):
+    @functools.partial(self.kernel, out_shape=jax.ShapeDtypeStruct((), dtype))
     def kernel(x_ref, o_ref):
-      o_ref[...] = _sum_same_dtype(x_ref[...])
+      o_ref[...] = op(x_ref[...])
 
-    x = jnp.arange(math.prod(shape)).reshape(shape).astype(jnp.float32)
-    np.testing.assert_array_equal(kernel(x), jnp.sum(x))
+    x = jnp.arange(math.prod(shape)).reshape(shape).astype(dtype)
+    if dtype != jnp.uint32:
+      x = x - x.size // 2  # include negative values.
+    np.testing.assert_array_equal(kernel(x), op(x))
 
   def test_reshape(self):
     shape1, shape2 = (128,), (2, 16, 4)
@@ -1629,7 +1632,6 @@ class PallasCallTest(PallasTest):
 
     x = jnp.arange(2 * 128, dtype=jnp.int32).reshape([2, 128])
     np.testing.assert_array_equal(kernel(x), x)
-
 
   def test_num_programs(self):
     @functools.partial(

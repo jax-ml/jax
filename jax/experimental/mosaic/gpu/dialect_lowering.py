@@ -691,31 +691,47 @@ def _vector_extract_op_lowering_rule(
   return [fragmented_array_to_ir(result, result_type)]
 
 
+def _combining_kind(attr: ir.Attribute) -> vector.CombiningKind:
+  return vector.CombiningKind[
+      str(attr).removeprefix("#vector.kind<").removesuffix(">").upper()
+  ]
+
+
 @_register_lowering(vector.ReductionOp)
 def _vector_reduction_op_lowering_rule(
     ctx: LoweringContext, op: vector.ReductionOp
 ) -> Sequence[ir.Value]:
   del ctx  # Unused.
   [layout] = inference_utils.in_layouts(op)
-  element_type = ir.VectorType(op.vector.type).element_type
-  # TODO(b/415721295): Derive `is_signed` from attributes.
-  is_signed = None
-  a = _fragmented_array_from_ir(op.vector, layout, is_signed)
-  match str(op.kind):
-    case "#vector.kind<add>":
-      scratch = _slice_smem(
-          ir.MemRefType.get([4], element_type, memory_space=utils.smem()),
-          arith.constant(None, op.attributes["offset"]),
-      )
-      result = a.reduce("add", range(len(a.shape)), scratch)
-    case (
-        "#vector.kind<maxsi>" | "#vector.kind<maxui>" | "#vector.kind<maximumf>"
-    ):
-      # TODO(slebedev): Implement this and remove the raise below.
-      raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
+  element_type = op.vector.type.element_type
+  scratch = _slice_smem(
+      ir.MemRefType.get([4], element_type, memory_space=utils.smem()),
+      arith.constant(None, op.attributes["offset"]),
+  )
+  axes = range(op.vector.type.rank)
+  op_kind = _combining_kind(op.kind)
+  match op_kind:
+    case vector.CombiningKind.ADD:
+      a = _fragmented_array_from_ir(op.vector, layout)
+      result = a.reduce("add", axes, scratch)
+    case vector.CombiningKind.MAXSI | vector.CombiningKind.MAXUI:
+      is_signed = op_kind == vector.CombiningKind.MAXSI
+      a = _fragmented_array_from_ir(op.vector, layout, is_signed)
+      result = a.reduce("max", axes, scratch)
+    case vector.CombiningKind.MAXIMUMF:
+      a = _fragmented_array_from_ir(op.vector, layout)
+      result = a.reduce("max", axes, scratch)
+    case vector.CombiningKind.MINUI | vector.CombiningKind.MINSI:
+      is_signed = op_kind == vector.CombiningKind.MINSI
+      a = _fragmented_array_from_ir(op.vector, layout, is_signed)
+      result = a.reduce("min", axes, scratch)
+    case vector.CombiningKind.MINIMUMF:
+      a = _fragmented_array_from_ir(op.vector, layout)
+      result = a.reduce("min", axes, scratch)
     case _:
       raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
-  return [fragmented_array_to_ir(result, op.result.type)]
+  assert isinstance(result.layout, fa.WGSplatFragLayout)
+  return [result.registers.item()]
 
 @_register_lowering(vector.MultiDimReductionOp)
 def _vector_multi_dim_reduction_op_lowering_rule(
@@ -734,9 +750,7 @@ def _vector_multi_dim_reduction_op_lowering_rule(
   if len(op.reduction_dims) != 1:
     raise NotImplementedError("Only 1 reduction dimension is supported.")
 
-  op_kind = vector.CombiningKind[
-      str(op.kind).removeprefix("#vector.kind<").removesuffix(">").upper()
-  ]
+  op_kind = _combining_kind(op.kind)
   match op_kind:
     case vector.CombiningKind.ADD:
       src = _fragmented_array_from_ir(op.source, in_layout)

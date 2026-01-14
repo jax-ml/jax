@@ -2609,14 +2609,14 @@ register_lowering_rule(lax.reduce_min_p, mgpu.LoweringSemantics.Lane)(
     functools.partial(_reduce_lowering_rule, "min")
 )
 
+
 def _reduce_lowering_rule_wg(
-    kind: vector_dialect.CombiningKind,
-    acc: object,
     ctx: LoweringRuleContext,
+    kind: vector_dialect.CombiningKind,
+    acc: int | float,
     x,
-    *,
     axes,
-) -> ir.OpView:
+) -> ir.Value:
   [x_aval] = ctx.avals_in
   [out_aval] = ctx.avals_out
   x = _ensure_ir_value(x, x_aval.dtype)
@@ -2628,24 +2628,23 @@ def _reduce_lowering_rule_wg(
       x = vector_dialect.shape_cast(
           ir.VectorType.get([x_aval.size], out_type), x
       )
-    return vector_dialect.ReductionOp(out_type, kind, x)
+    reduction = vector_dialect.ReductionOp(out_type, kind, x)
+    reduction.attributes["offset"] = ir.IntegerAttr.get(
+        ir.IntegerType.get_signless(32), ctx.module_ctx.smem_used_bytes
+    )
+    return reduction.result
   acc = vector_dialect.broadcast(
       ir.VectorType.get(out_aval.shape, out_type),
       _ensure_ir_value(acc, out_aval.dtype),
   )
-  return vector_dialect.MultiDimReductionOp(kind, x, acc, axes)
+  return vector_dialect.multi_reduction(kind, x, acc, axes)
 
 
 @register_lowering_rule(lax.reduce_sum_p, mgpu.LoweringSemantics.Warpgroup)
 def _reduce_sum_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes,
                                  out_sharding):
-  op = _reduce_lowering_rule_wg(
-      vector_dialect.CombiningKind.ADD, 0, ctx, x, axes=axes
-  )
-  op.attributes["offset"] = ir.IntegerAttr.get(
-      ir.IntegerType.get_signless(32), ctx.module_ctx.smem_used_bytes
-  )
-  return op.result
+  kind = vector_dialect.CombiningKind.ADD
+  return _reduce_lowering_rule_wg(ctx, kind, 0, x, axes)
 
 
 @register_lowering_rule(lax.reduce_max_p, mgpu.LoweringSemantics.Warpgroup)
@@ -2662,7 +2661,7 @@ def _reduce_max_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
     acc = np.iinfo(x_aval.dtype).min
   else:
     raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
-  return _reduce_lowering_rule_wg(kind, acc, ctx, x, axes=axes).result
+  return _reduce_lowering_rule_wg(ctx, kind, acc, x, axes)
 
 
 @register_lowering_rule(lax.reduce_min_p, mgpu.LoweringSemantics.Warpgroup)
@@ -2679,21 +2678,20 @@ def _reduce_min_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
     acc = np.iinfo(x_aval.dtype).max
   else:
     raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
-  return _reduce_lowering_rule_wg(kind, acc, ctx, x, axes=axes).result
+  return _reduce_lowering_rule_wg(ctx, kind, acc, x, axes)
 
 
 @register_lowering_rule(lax.reduce_prod_p, mgpu.LoweringSemantics.Warpgroup)
 def _reduce_prod_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
   [x_aval] = ctx.avals_in
   if jnp.issubdtype(x_aval.dtype, jnp.floating):
-    kind = vector_dialect.CombiningKind.MUL
     acc = 1.0
   elif jnp.issubdtype(x_aval.dtype, jnp.integer):
-    kind = vector_dialect.CombiningKind.MUL
     acc = 1
   else:
     raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
-  return _reduce_lowering_rule_wg(kind, acc, ctx, x, axes=axes).result
+  kind = vector_dialect.CombiningKind.MUL
+  return _reduce_lowering_rule_wg(ctx, kind, acc, x, axes)
 
 
 def _block_id(ctx: LoweringRuleContext, dim: gpu_dialect.Dimension) -> ir.Value:
