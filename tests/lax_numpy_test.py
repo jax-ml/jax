@@ -6397,6 +6397,10 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'stack': ['casting'],
       'tri': ['like'],
       'unravel_index': ['order'],
+<<<<<<< HEAD
+=======
+      'var': ['mean'],
+>>>>>>> a3f8af53f (Fix Numpy signatures test (#598))
       'vstack': ['casting'],
       'zeros': ['order', 'like'],
       'zeros_like': ['subok', 'order']
