@@ -592,11 +592,13 @@ def is_empty_shape(s: core.Shape) -> bool:
   return any(d == 0 for d in s)
 
 
+_XLA_HOST_TRANSFER_PJRT_RENDEZVOUS_HANDLER_NAME = "pjrt_rendezvous"
+
+
 def send_to_host(
     channel: int,
     token: hlo.TokenType,
     operand: Any,
-    name: str,
     *,
     sharding: SdyArrayList | xc.OpSharding | None = None,
 ) -> ir.Value:
@@ -605,8 +607,12 @@ def send_to_host(
                         is_host_transfer=ir.BoolAttr.get(True))
   send_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
       dict(
-          _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
-          _xla_host_transfer_rendezvous=ir.StringAttr.get(str(name))))
+          _xla_host_transfer_handler_name=ir.StringAttr.get(
+              _XLA_HOST_TRANSFER_PJRT_RENDEZVOUS_HANDLER_NAME
+          ),
+          _xla_host_transfer_rendezvous=ir.StringAttr.get(str(channel)),
+      )
+  )
   if sharding is not None:
     if config.use_shardy_partitioner.value:
       # `SendOp`'s return type is a StableHLO `TokenType`. However JAX passed
@@ -628,7 +634,6 @@ def receive_from_host(
     channel: int,
     token: hlo.TokenType,
     out_aval: core.ShapedArray,
-    name: str,
     *,
     sharding: SdyArrayList | xc.OpSharding | None = None,
 ) -> tuple[ir.Value, ir.Value]:
@@ -638,8 +643,12 @@ def receive_from_host(
                         is_host_transfer=ir.BoolAttr.get(True))
   recv_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
       dict(
-          _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
-          _xla_host_transfer_rendezvous=ir.StringAttr.get(str(name))))
+          _xla_host_transfer_handler_name=ir.StringAttr.get(
+              _XLA_HOST_TRANSFER_PJRT_RENDEZVOUS_HANDLER_NAME
+          ),
+          _xla_host_transfer_rendezvous=ir.StringAttr.get(str(channel)),
+      )
+  )
   if sharding is not None:
     if config.use_shardy_partitioner.value:
       assert isinstance(sharding, SdyArrayList)
@@ -710,14 +719,12 @@ def _emit_tpu_python_callback(
     dummy_send_aval = core.ShapedArray((1,), np.float32)
     dummy_send_val = mlir.ir_constant(np.zeros(1, np.float32))
     operand_shapes = [*operand_shapes, _aval_to_xla_shape(dummy_send_aval)]
-    token = send_to_host(send_channel, token, dummy_send_val, callback.__name__,
-                         sharding=sharding)
+    token = send_to_host(send_channel, token, dummy_send_val, sharding=sharding)
     send_channels.append(send_channel)
   else:
     for operand in operands:
       channel = ctx.module_context.new_channel()
-      token = send_to_host(channel, token, operand, callback.__name__,
-                           sharding=sharding)
+      token = send_to_host(channel, token, operand, sharding=sharding)
       send_channels.append(channel)
 
   recv_channels = []
@@ -734,14 +741,16 @@ def _emit_tpu_python_callback(
     result_shapes = [_aval_to_xla_shape(dummy_recv_aval)]
     channel = ctx.module_context.new_channel()
     token, _ = receive_from_host(
-        channel, token, dummy_recv_aval, callback.__name__, sharding=sharding)
+        channel, token, dummy_recv_aval, sharding=sharding
+    )
     recv_channels.append(channel)
   else:
     for result_aval in result_avals:
       channel = ctx.module_context.new_channel()
       assert isinstance(result_aval, core.ShapedArray)
-      token, out = receive_from_host(channel, token, result_aval,
-                                     callback.__name__, sharding=sharding)
+      token, out = receive_from_host(
+          channel, token, result_aval, sharding=sharding
+      )
       outputs.append(out)
       recv_channels.append(channel)
   ifrt_callback = backend.make_python_callback_from_host_send_and_recv(

@@ -2491,16 +2491,14 @@ def _lower_jaxpr_to_fun_cached(
     try:
       func_op, _, _ = ctx.cached_primitive_lowerings[key]
     except KeyError:
-      num_callbacks = len(ctx.host_callbacks)
       func_op = lower_jaxpr_to_fun(
           ctx, fn_name, call_jaxpr, effects, num_const_args=num_const_args,
           in_avals=in_avals, arg_names=arg_names, result_names=result_names)
-      # If this Jaxpr includes callbacks, we can't cache the lowering because
-      # on TPU every callback must have a globally unique channel, but the
-      # channel gets assigned during lowering.
-      has_callbacks = len(ctx.host_callbacks) > num_callbacks
-      if not has_callbacks or "tpu" not in ctx.platforms:
-        ctx.cached_primitive_lowerings[key] = func_op, func_op.name.value, func_op.type.results
+      ctx.cached_primitive_lowerings[key] = (
+          func_op,
+          func_op.name.value,
+          func_op.type.results,
+      )
   else:
     func_op = lower_jaxpr_to_fun(
         ctx, fn_name, call_jaxpr, effects,

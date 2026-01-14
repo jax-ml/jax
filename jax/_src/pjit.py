@@ -1389,7 +1389,6 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
     # directly on the inputs or outputs because they are lost during MLIR->HLO
     # conversion. using_sharding_annotation=False means we add an identity
     # operation instead.
-    num_callbacks = len(mod_ctx.host_callbacks)
     func = mlir.lower_jaxpr_to_fun(
         mod_ctx, name, jaxpr, effects,
         num_const_args=num_const_args, in_avals=in_avals,
@@ -1397,12 +1396,7 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
         use_sharding_annotations=False,
         arg_layouts=in_layouts, result_layouts=out_layouts)
 
-    # If this Jaxpr includes callbacks, we can't cache the lowering because
-    # on TPU every callback must have a globally unique channel, but the
-    # channel gets assigned during lowering.
-    has_callbacks = len(mod_ctx.host_callbacks) > num_callbacks
-    if not has_callbacks or "tpu" not in mod_ctx.platforms:
-      mod_ctx.cached_primitive_lowerings[key] = func
+    mod_ctx.cached_primitive_lowerings[key] = func
   return func
 
 
