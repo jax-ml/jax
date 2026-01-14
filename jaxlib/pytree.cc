@@ -718,26 +718,17 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
       case PyTreeKind::kObject: {
 
         nb::object object = nb::borrow<nb::object>(handle);
-        nb::object aux_data = nb::steal(PyTuple_New(3));
         nb::mapping mapping = nb::cast<nb::mapping>(nb::getattr(object, node.custom->mapping_attr));
 
-        nb::list meta_fields;
         nb::list data_fields;
+        nb::list meta_data;
         for (auto item : mapping.items()) {
             auto [k, v] = nb::cast<std::pair<nb::object, nb::object>>(item);
             if (nb::cast<bool>(v)) {
                 data_fields.append(k);
             } else {
-                meta_fields.append(k);
+                meta_data.append(nb::getattr(object, k));
             }
-        }
-
-        auto meta_size = meta_fields.size();
-        nb::object meta_data = nb::steal(PyTuple_New(meta_size));
-        for (int meta_leaf = 0; meta_leaf < meta_size; ++meta_leaf) {
-            PyTuple_SET_ITEM(
-                meta_data.ptr(), meta_leaf,
-                nb::getattr(object, meta_fields[meta_leaf]).ptr());
         }
 
         auto data_size = data_fields.size();
@@ -754,9 +745,9 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
           }
         }
 
-        PyTuple_SET_ITEM(aux_data.ptr(), 0, meta_fields.release().ptr());
+        nb::object aux_data = nb::steal(PyTuple_New(2));
+        PyTuple_SET_ITEM(aux_data.ptr(), 0, mapping.release().ptr());
         PyTuple_SET_ITEM(aux_data.ptr(), 1, meta_data.release().ptr());
-        PyTuple_SET_ITEM(aux_data.ptr(), 2, data_fields.release().ptr());
         node.node_data = std::move(aux_data);
 
         break;
@@ -977,20 +968,18 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
       nb::object obj = object_class.attr("__new__")(node.custom->type);
 
       nb::tuple node_tuple = nb::tuple(node.node_data);
-      nb::list meta_fields = nb::list(node_tuple[0]);
-      nb::tuple meta_data = nb::tuple(node_tuple[1]);
-      nb::list data_fields = nb::list(node_tuple[2]);
+      nb::mapping mapping = nb::cast<nb::mapping>(node_tuple[0]);
+      nb::list meta_data = nb::list(node_tuple[1]);
 
-      auto meta_size = meta_fields.size();
-      for (int i = 0; i < meta_size; ++i) {
-          object_class.attr("__setattr__")(obj, meta_fields[i],
-            nb::borrow(meta_data[i]));
-      }
-
-      auto data_size = data_fields.size();
-      for (int i = 0; i < data_size; ++i) {
-          object_class.attr("__setattr__")(obj, data_fields[i],
-              std::move(children[i]));
+      int meta_idx = 0;
+      int child_idx = 0;
+      for (auto item : mapping.items()) {
+          auto [k, v] = nb::cast<std::pair<nb::object, nb::object>>(item);
+          if (nb::cast<bool>(v)) {
+              object_class.attr("__setattr__")(obj, k, std::move(children[child_idx++]));
+          } else {
+              object_class.attr("__setattr__")(obj, k, nb::borrow(meta_data[meta_idx++]));
+          }
       }
 
       return obj;
