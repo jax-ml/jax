@@ -1428,10 +1428,12 @@ def device_id_to_logical(
     device_id: ir.Value | tuple[ir.Value, ...] | dict[Any, ir.Value],
     device_id_type: DeviceIdType,
     get_axis_index,
-) -> tuple[ir.Value, dict[Any, ir.Value]]:
+) -> tuple[ir.Value | None, dict[Any, ir.Value]]:
   """Normalizes a device id into a logical device id and axes that don't correspond to JAX mesh axes.
 
-  The indexing implied by the returned axis dict should be handled by the caller.
+  The indexing implied by the returned axis dict should be handled by the
+  caller. If there are no cross-device operations, then the returned logical
+  device id will be None.
   """
   non_mesh_axes = {}
   if isinstance(device_id, dict):
@@ -1456,8 +1458,9 @@ def device_id_to_logical(
       )
 
     i32 = ir.IntegerType.get_signless(32)
-    if len(device_ids) == 0:
-      return arith.constant(i32, 0), non_mesh_axes
+    if not device_ids:
+      # If there are no device ids, then it is purely local communication.
+      return None, non_mesh_axes
     return functools.reduce(
         arith.addi,
         (

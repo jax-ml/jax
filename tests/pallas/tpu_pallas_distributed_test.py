@@ -41,8 +41,8 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     super().setUp()
     if jax.device_count() < 2:
       self.skipTest('Only >=2 devices are supported.')
-    if not jtu.is_device_tpu(5, 'e'):
-      self.skipTest('Only works with TPU v5e.')
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only TPUs v4+ are supported.')
 
   @parameterized.named_parameters(
       ('vmem', pltpu.VMEM),
@@ -360,18 +360,23 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
         vmem_shape = (xlocal, slc_size)
 
         # This runs on every core, for every vmem iterations
-        def alloc(out_vmem_ref, sem, send_sem, recv_sem):
+        def alloc(core_sem, out_vmem_ref, sem, send_sem, recv_sem):
           core_index = jax.lax.axis_index('core')
+          # Make sure all cores have entered run_scoped.
+          for j in range(num_cores):
+            pltpu.semaphore_signal(core_sem, 1, device_id={'core': j})
+          pltpu.semaphore_wait(core_sem, num_cores)
+
           device_index = jax.lax.axis_index('device')
           slc = pl.ds(core_index * slc_size, slc_size)
 
-          # Make sure all cores have entered run_scoped.
+          # Make sure all devices and cores have entered run_scoped.
           sem0 = pltpu.get_barrier_semaphore()
           for i in range(ddim):
             for j in range(num_cores):
               pltpu.semaphore_signal(
-                  sem0, 1, device_id={'device': i, 'core': j},
-                  device_id_type=pltpu.DeviceIdType.MESH)
+                  sem0, 1, device_id={'device': i, 'core': j}
+              )
           pltpu.semaphore_wait(sem0, ddim * num_cores)
 
           # Identity function by default
@@ -424,6 +429,38 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     masked_in = jax.lax.dynamic_update_slice(input_arr, mask, (8, 128))
     masked_out = jax.lax.dynamic_update_slice(pallas_out, mask, (8, 128))
     np.testing.assert_array_equal(masked_in, masked_out)
+
+  def test_multi_device_core_local_kernel(self):
+    num_devices = jax.device_count()
+    num_cores = pltpu.get_tpu_info().num_cores
+    x = jnp.arange(num_devices * num_cores * 8 * 128).reshape(
+        (num_devices, num_cores, 8, 128)
+    )
+
+    def body(x):
+      x_ref = jax.new_ref(x)
+      y_ref = jax.new_ref(jnp.empty_like(x))
+
+      tcmesh = pltpu.create_tensorcore_mesh('core')
+      @pl.core_map(tcmesh)
+      def _():
+        num_cores = jax.lax.axis_size('core')
+        def inner(sem):
+          for i in range(num_cores):
+            pltpu.semaphore_signal(sem, 1, device_id={'core': i})
+          pltpu.semaphore_wait(sem, num_cores)
+          core_id = jax.lax.axis_index('core')
+          pltpu.sync_copy(x_ref.at[:, core_id], y_ref.at[:, core_id])
+        pl.run_scoped(inner, pltpu.SemaphoreType.REGULAR)
+      return jax.freeze(y_ref)
+
+    mesh = jax.make_mesh((jax.device_count(),), ['x'])
+    y = jax.jit(
+        shard_map.shard_map(
+            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'), check_vma=False
+        )
+    )(x)
+    np.testing.assert_allclose(y, x)
 
   def test_no_barrier_semaphore(self):
     def alloc_sem(_):
