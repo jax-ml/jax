@@ -204,34 +204,9 @@ LogicalResult MemRefSliceOp::verify() {
     return emitOpError(
         "Memory spaces must match if the target memory space is provided.");
   }
-  if (isa<StridedLayoutAttr>(target_layout)) {
-    SmallVector<int64_t> source_strides;
-    int64_t source_offset;
-    if (failed(
-            source_type.getStridesAndOffset(source_strides, source_offset))) {
-      return failure();
-    }
-    int64_t target_offset = source_offset;
-    if (target_offset != ShapedType::kDynamic) {
-      for (auto [base_idx, source_stride] :
-           llvm::zip(getBaseIdx(), source_strides)) {
-        if (auto idx = getConstantIntValue(base_idx)) {
-          target_offset += *idx * source_stride;
-        } else {
-          target_offset = ShapedType::kDynamic;
-          break;
-        }
-      }
-    }
-    auto expected_layout =
-        StridedLayoutAttr::get(getContext(), target_offset, source_strides);
-    if (target_layout != expected_layout) {
-      return emitOpError("Layout mismatch: got ")
-             << target_layout << ", expected " << expected_layout << ".";
-    }
-  } else if (target_layout != source_layout) {
-    return emitOpError(
-        "Layouts must match if the target layout is not strided.");
+  if (isa<TiledLayoutAttr>(source_layout) !=
+      isa<TiledLayoutAttr>(target_layout)) {
+    return emitOpError("Source and target layouts must match.");
   }
   return success();
 }
@@ -340,34 +315,8 @@ LogicalResult MemRefSqueezeOp::verify() {
 
   auto source_layout = source_type.getLayout();
   auto target_layout = target_type.getLayout();
-  if (isa<TiledLayoutAttr>(source_layout) &&
+  if (!isa<TiledLayoutAttr>(source_layout) &&
       !isa<TiledLayoutAttr>(target_layout)) {
-    // TODO(slebedev): Remove this special-case once we move layout propagation
-    // to the infer-memref-layout pass.
-  } else if (isa<StridedLayoutAttr>(target_layout)) {
-    SmallVector<int64_t> source_strides;
-    int64_t source_offset;
-    if (failed(
-            source_type.getStridesAndOffset(source_strides, source_offset))) {
-      return failure();
-    }
-    SmallVector<int64_t> target_strides;
-    for (auto [i, stride] : llvm::enumerate(source_strides)) {
-      if (!llvm::is_contained(squeezed, i)) {
-        target_strides.push_back(stride);
-      }
-    }
-    auto expected_layout =
-        StridedLayoutAttr::get(getContext(), source_offset, target_strides);
-    if (target_layout != expected_layout) {
-      return emitOpError("Layout mismatch: got ")
-             << target_layout << ", expected " << expected_layout << ".";
-    }
-    return success();
-  } else if (!isa<TiledLayoutAttr>(source_layout) &&
-             !isa<TiledLayoutAttr>(target_layout)) {
-    // TODO(slebedev): Remove this branch once we migrate to TPU dialect layout
-    // attribute on SC.
     return success();
   }
 

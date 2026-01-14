@@ -19,7 +19,6 @@ from collections.abc import Callable, Collection, Hashable, Sequence
 import contextlib
 import dataclasses
 import functools
-import operator
 import string
 from typing import Any, Literal, Protocol, Self, TypeVar, cast
 
@@ -1381,27 +1380,6 @@ def _indexer_to_start_size_stride(
   )
 
 
-def _compute_squeezed_dims(source_shape: Sequence[int], target_shape: Sequence[int]) -> Sequence[bool]:
-  # This function only exists to align the ``tpu.memref_squeeze`` layout
-  # inference logic between Python and MLIR.
-  result = []
-  source_index = len(source_shape) - 1
-  target_index = len(target_shape) - 1
-  while source_index >= 0 or target_index >= 0:
-    target_dim = target_shape[target_index] if target_index >= 0 else -1
-    assert source_index >= 0
-    if source_shape[source_index] == target_dim:
-      result.append(False)
-      source_index -= 1
-      target_index -= 1
-    else:
-      assert source_shape[source_index] == 1
-      result.append(True)
-      source_index -= 1
-  result.reverse()
-  return result
-
-
 def _slice_memref(
     ref: ir.Value,
     indexer: NDIndexer,
@@ -1441,36 +1419,18 @@ def _slice_memref(
       dynamic_sizes.append(s)
 
   ref_ty = ir.MemRefType(ref.type)
-  ref_strides, ref_offset = ref_ty.get_strides_and_offset()
-  if ref_offset == ir_dynamic_size or ir_dynamic_size in static_starts:
-    target_offset = ir_dynamic_size
-  else:
-    target_offset = sum(
-        map(operator.mul, static_starts, ref_strides), ref_offset
-    )
-  out_layout = ir.StridedLayoutAttr.get(target_offset, ref_strides)
   out_ty = ir.MemRefType.get(
-      static_sizes, ref_ty.element_type, out_layout, ref_ty.memory_space
+      static_sizes, ref_ty.element_type, memory_space=ref_ty.memory_space
   )
   out = tpu.memref_slice(out_ty, ref, starts, dynamic_sizes)
   if any(squeeze_dims):
     # We need to squeeze out some dimensions.
     ref_ty = out_ty
     del out_ty
-    ref_strides, ref_offset = ref_ty.get_strides_and_offset()
-    target_sizes = [dim for i, dim in enumerate(ref_ty.shape) if not squeeze_dims[i]]
-    del squeeze_dims
-    # We re-infer the squeezed dimensions to align with the tpu.memref_squeeze
-    # verification logic in MLIR in ambiguous cases, e.g. when squeezing
-    # from [1, 1, 128] to [1, 128].
-    squeeze_dims = _compute_squeezed_dims(ref_ty.shape, target_sizes)
-    target_strides = [s for i, s in enumerate(ref_strides) if not squeeze_dims[i]]
-    out_layout = ir.StridedLayoutAttr.get(ref_offset, target_strides)
     out_ty = ir.MemRefType.get(
-        target_sizes,
+        [dim for i, dim in enumerate(ref_ty.shape) if not squeeze_dims[i]],
         ref_ty.element_type,
-        out_layout,
-        ref_ty.memory_space,
+        memory_space=ref_ty.memory_space
     )
     out = tpu.memref_squeeze(out_ty, out)
   return out, ref_block_shape

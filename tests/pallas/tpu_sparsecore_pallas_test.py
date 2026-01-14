@@ -49,6 +49,9 @@ class PallasSCTest(jtu.JaxTestCase):
       # TODO(apaszke,slebedev): Fix those.
       self.skipTest("Many tests are failing on Cloud TPUs")
 
+    if not jtu.is_cloud_tpu_at_least(2026, 1, 17):
+      self.skipTest("Need newer libtpu")
+
     super().setUp()
 
   @property
