@@ -29,8 +29,8 @@ from jax import lax
 from jax import numpy as jnp
 from jax import export
 from jax._src.shard_map import shard_map
-from jax.sharding import (NamedSharding, Mesh, PartitionSpec as P,
-                          reshard)
+from jax.sharding import (NamedSharding, Mesh, PartitionSpec as P, reshard)
+from jax._src.sharding_impls import GSPMDSharding
 from jax import tree_util
 
 from jax._src import config
@@ -1233,6 +1233,49 @@ class JaxExportTest(jtu.JaxTestCase):
     res = exp.call(a_run, b_run)
     self.assertEqual(res.addressable_shards[0].device, run_devices[0])
     self.assertEqual(res.addressable_shards[1].device, run_devices[1])
+
+  @jtu.parameterized_filterable(
+    kwargs=[
+      dict(testcase_name=f"_in={has_in_shardings}_out={has_out_shardings}",
+           has_in_shardings=has_in_shardings,
+           has_out_shardings=has_out_shardings)
+      for has_in_shardings in (False, True)
+      for has_out_shardings in (False, True)
+    ])
+  def test_gspmdshardings(self, has_in_shardings, has_out_shardings):
+    if len(jax.devices()) < 2:
+      self.skipTest("Need at least 2 devices")
+    run_devices = jax.devices()[:2]
+    mesh = jtu.create_mesh((2, 1), ("x", "y"))
+    ns1 = NamedSharding(mesh, P(None))
+    ns2 = NamedSharding(mesh, P("x"))
+    gs1 = GSPMDSharding(run_devices, ns1._to_xla_hlo_sharding(2))
+    gs2 = GSPMDSharding(run_devices, ns2._to_xla_hlo_sharding(2))
+
+    jit_kwargs = {}
+    if has_in_shardings:
+      jit_kwargs["in_shardings"] = (gs1, gs2)
+    if has_out_shardings:
+      jit_kwargs["out_shardings"] = (gs1, gs2)
+
+    f = jax.jit(lambda x1, x2: (x1, x2), **jit_kwargs)
+    x = jnp.arange(16 * 4, dtype=np.float32).reshape((16, 4))
+    x1_dev = jax.device_put(x, gs1)
+    x2_dev = jax.device_put(x, gs2)
+    res = f(x1_dev, x2_dev)
+
+    if not has_in_shardings:
+      exp = get_exported(f)(x1_dev, x2_dev)
+    else:
+      exp = get_exported(f)(x, x)
+
+    with jax.set_mesh(mesh):
+      call_res = exp.call(x, x)  # args are on default device
+    for r, cr in zip(res, call_res):
+      self.assertAllClose(r, cr)
+      self.assertEqual(len(r.addressable_shards), len(cr.addressable_shards))
+      for rs, crs in zip(r.addressable_shards, cr.addressable_shards):
+        self.assertArraysEqual(rs.data, crs.data)
 
   def test_export_abstract_mesh(self):
     if jax.local_device_count() < 2:

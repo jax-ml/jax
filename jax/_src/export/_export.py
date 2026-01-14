@@ -691,13 +691,28 @@ def to_named_sharding_with_abstract_mesh(
       memory_kind=s.memory_kind)
 
   if isinstance(s, sharding_impls.GSPMDSharding):
-    assert mesh is not None
-    assert mesh.size == len(s.device_set), (mesh, s)
-    return sharding_impls.cached_named_sharding(
-      mesh,
-      sharding_impls.parse_flatten_op_sharding(
-        s._to_xla_hlo_sharding(aval.ndim), mesh)[0],  # type: ignore
-      memory_kind=s.memory_kind)
+    if mesh is None:
+      if s._hlo_sharding.tuple_elements():
+        raise TypeError(
+            f'Cannot convert GSPMDSharding {s} into NamedSharding.')
+      elif s._hlo_sharding.is_replicated():
+        return sharding_impls.NamedSharding(
+            mesh_lib.empty_abstract_mesh,
+            sharding_impls.PartitionSpec(*([None] *aval.ndim)),
+            memory_kind=s.memory_kind)
+      elif s._hlo_sharding.is_tiled():
+        if not s._hlo_sharding.is_tile_assignment_iota():
+          raise TypeError(
+              f'Cannot convert GSPMDSharding {s} into NamedSharding.')
+        axis_sizes = tuple(s._hlo_sharding.get_axis_sizes())
+        axis_names = tuple(f'_axis_{i}' for i in range(len(axis_sizes)))
+        mesh = mesh_lib.AbstractMesh(axis_sizes, axis_names)
+        return sharding_impls._gspmd_to_named_sharding_via_mesh(s, mesh)
+      else:
+        raise TypeError(
+            f'Cannot convert GSPMDSharding {s} into NamedSharding.')
+    else:
+      return sharding_impls._gspmd_to_named_sharding_via_mesh(s, mesh)
 
   assert False, f"Unsupported sharding: {s}"
 
