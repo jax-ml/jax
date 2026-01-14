@@ -333,6 +333,8 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
       self.skipTest('Requires at least 2 devices for DMAs.')
     if (cdim := jax.devices()[0].num_cores) < 2:
       self.skipTest('Requires a TPU with at least 2 cores.')
+    if pltpu.get_tpu_info().num_cores > 1 and joint_axis:
+      self.skipTest('Joint axis is not supported on multi-core TPUs.')
     mesh = jax.make_mesh(
         (jax.device_count(),),
         ('device',),
@@ -411,6 +413,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
 
         pl.run_scoped(
             alloc,
+            pltpu.SemaphoreType.REGULAR,
             pltpu.VMEM(vmem_shape, out_ref.dtype),
             *([pltpu.SemaphoreType.DMA] * 3),
         )
