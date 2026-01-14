@@ -721,13 +721,12 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
         nb::mapping mapping = nb::cast<nb::mapping>(nb::getattr(object, node.custom->mapping_attr));
 
         nb::list data_fields;
-        nb::list meta_data;
         for (auto item : mapping.items()) {
             auto [k, v] = nb::cast<std::pair<nb::object, nb::object>>(item);
             if (nb::cast<bool>(v)) {
                 data_fields.append(k);
             } else {
-                meta_data.append(nb::getattr(object, k));
+                node.meta_data.push_back(nb::getattr(object, k));
             }
         }
 
@@ -745,10 +744,7 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
           }
         }
 
-        nb::object aux_data = nb::steal(PyTuple_New(2));
-        PyTuple_SET_ITEM(aux_data.ptr(), 0, mapping.release().ptr());
-        PyTuple_SET_ITEM(aux_data.ptr(), 1, meta_data.release().ptr());
-        node.node_data = std::move(aux_data);
+        node.node_data = mapping;
 
         break;
       }
@@ -967,9 +963,7 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
       nb::object object_class = nb::borrow<nb::object>((PyObject*)&PyBaseObject_Type);
       nb::object obj = object_class.attr("__new__")(node.custom->type);
 
-      nb::tuple node_tuple = nb::tuple(node.node_data);
-      nb::mapping mapping = nb::cast<nb::mapping>(node_tuple[0]);
-      nb::list meta_data = nb::list(node_tuple[1]);
+      nb::mapping mapping = nb::cast<nb::mapping>(node.node_data);
 
       int meta_idx = 0;
       int child_idx = 0;
@@ -978,7 +972,7 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
           if (nb::cast<bool>(v)) {
               object_class.attr("__setattr__")(obj, k, std::move(children[child_idx++]));
           } else {
-              object_class.attr("__setattr__")(obj, k, nb::borrow(meta_data[meta_idx++]));
+              object_class.attr("__setattr__")(obj, k, nb::borrow(node.meta_data[meta_idx++]));
           }
       }
 
@@ -1742,6 +1736,9 @@ int PyTreeDef::Node::tp_traverse(visitproc visit, void* arg) const {
   Py_VISIT(node_data.ptr());
   for (const auto& key : sorted_dict_keys) {
     Py_VISIT(key.ptr());
+  }
+  for (const auto& meta : meta_data) {
+    Py_VISIT(meta.ptr());
   }
   return 0;
 }

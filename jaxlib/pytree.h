@@ -345,6 +345,9 @@ class PyTreeDef {
     // objects that make python gc sweep slow.
     std::vector<nanobind::object> sorted_dict_keys;
 
+    // Kind-specific auxiliary data for kObject. Stores metadata values.
+    std::vector<nanobind::object> meta_data;
+
     // Custom type registration. Must be null for non-custom types.
     const PyTreeRegistry::Registration* custom = nullptr;
 
