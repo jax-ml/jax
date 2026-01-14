@@ -108,6 +108,13 @@ _CPU_ENABLE_ASYNC_DISPATCH = config.bool_flag(
     "inline without async dispatch.",
 )
 
+FORCE_DCN_CROSS_HOST_TRANSFERS = config.bool_flag(
+    name="jax_force_dcn_cross_host_transfers",
+    default=False,
+    help="Force cross host transfers to use the DCN socket transfer library "
+         "even when the plugin supports cross-host transfers."
+)
+
 CROSS_HOST_TRANSFER_SOCKET_ADDRESS = config.string_flag(
     name="jax_cross_host_transfer_socket_address",
     default="",
@@ -194,6 +201,7 @@ def make_tpu_client(
       options,
       distributed.global_state.client,
       _make_transfer_server_factory(),
+      FORCE_DCN_CROSS_HOST_TRANSFERS.value,
   )
 
 
@@ -549,6 +557,7 @@ def make_pjrt_c_api_client(
       distribute_options,
       distributed.global_state.client,
       _make_transfer_server_factory(),
+      FORCE_DCN_CROSS_HOST_TRANSFERS.value,
   )
 
 

@@ -992,6 +992,7 @@ def get_c_api_client(
     options: Mapping[str, str | bool | int | Sequence[int] | float] = ...,
     distributed_client: DistributedRuntimeClient | None = ...,
     transfer_server_factory: TransferServerInterfaceFactory | None = ...,
+    force_dcn_cross_host_transfers: bool = ...,
 ) -> Client: ...
 def get_default_c_api_topology(
     arg0: str,

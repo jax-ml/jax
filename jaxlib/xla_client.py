@@ -47,7 +47,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 396  # Grab GetKeys atomically alongside GetOrCreate
+_version = 397  # Re-enable DCN cross-host transfers on accelerators.
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -141,6 +141,7 @@ def make_c_api_client(
     options: _NameValueMapping | None = None,
     distributed_client: _xla.DistributedRuntimeClient | None = None,
     transfer_server_factory: _xla.TransferServerInterfaceFactory | None = None,
+    force_dcn_cross_host_transfers: bool = False,
 ):
   """Creates a PJRT C API client for a PJRT plugin.
 
@@ -162,6 +163,7 @@ def make_c_api_client(
       options,
       distributed_client,
       transfer_server_factory,
+      force_dcn_cross_host_transfers,
   )
 
 

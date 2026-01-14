@@ -367,14 +367,19 @@ def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
   # If a cross-host device transfer is requested but the backend does not
   # support it, then the user must set the flags to enable DCN-based transfers.
   if (different_process_inds and
-      not getattr(backend, 'supports_cross_host_transfers', False) and
+      (xla_bridge.FORCE_DCN_CROSS_HOST_TRANSFERS.value
+      or not getattr(backend, "supports_cross_host_transfers", False)) and
       not xla_bridge.CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value):
+    if xla_bridge.FORCE_DCN_CROSS_HOST_TRANSFERS.value:
+      msg = ("DCN-based cross-host transfers were requested with the "
+             "jax_force_dcn_cross_host_transfers flag.")
+    else:
+      msg = ("The backend ({backend.platform}, {backend.platform_version}) "
+             "does not support cross-host device transfers.")
     raise ValueError(
-        f"The backend ({backend.platform}, {backend.platform_version}) does "
-        "not support cross-host device transfers via ICI/NCCL. Please set "
-        "jax_cross_host_transfer_socket_address and (optionally) "
-        "jax_cross_host_transport_addresses flags to enable DCN-based cross "
-        "host device transfers.")
+        f"{msg} Please set jax_cross_host_transfer_socket_address and "
+        "(optionally) jax_cross_host_transport_addresses flags to enable "
+        "DCN-based cross host device transfers.")
   return different_process_inds
 
 @dataclasses.dataclass(frozen=True)

@@ -176,6 +176,15 @@ jax_multiprocess_test(
 )
 
 jax_multiprocess_test(
+    name = "socket_transfer_test",
+    srcs = ["socket_transfer_test.py"],
+    main = "socket_transfer_test.py",
+    deps = [
+        "//jax/_src:test_multiprocess",
+    ],
+)
+
+jax_multiprocess_test(
     name = "thread_guard_test",
     srcs = ["thread_guard_test.py"],
     main = "thread_guard_test.py",
