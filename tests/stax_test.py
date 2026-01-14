@@ -40,7 +40,7 @@ def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
   result_shape, params = init_fun(init_key, input_shape)
   inputs = random_inputs(test_case.rng(), input_shape)
   if params:
-    inputs = inputs.astype(dtypes.dtype(params[0]))
+    inputs = inputs.astype(dtypes.dtype(jax.tree.leaves(params)[0]))
   result = apply_fun(params, inputs, rng=rng_key)
   test_case.assertEqual(result.shape, result_shape)
 
