@@ -970,7 +970,7 @@ class JitTest(jtu.BufferDonationTestCase):
 
     result = jitted_f(1.)
     result_cpu = jitted_f_cpu(1.)
-    self.assertEqual(list(result.devices())[0].platform, jtu.device_under_test())
+    self.assertTrue(jtu.test_device_matches([list(result.devices())[0].platform]))
     self.assertEqual(list(result_cpu.devices())[0].platform, "cpu")
 
   @jtu.skip_on_devices("cpu")

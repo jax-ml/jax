@@ -159,7 +159,7 @@ def py_library_providing_imports_info(*, name, lib_rule = py_library, pytype_src
 def py_extension(name, srcs, copts, deps, linkopts = []):
     nanobind_extension(name, srcs = srcs, copts = copts, linkopts = linkopts, deps = deps, module_name = name)
 
-ALL_BACKENDS = ["cpu", "gpu", "tpu"]
+ALL_BACKENDS = ["cpu", "cuda", "rocm", "tpu"]
 
 def if_building_jaxlib(
         if_building,
@@ -292,7 +292,7 @@ def jax_multiplatform_test(
             "//jax",
             "//jax/_src:test_util",
         ] + deps)
-        if backend == "gpu":
+        if backend in ("cuda", "rocm"):
             test_deps += _gpu_test_deps()
             test_tags += tf_cuda_tests_tags()
         elif backend == "tpu":

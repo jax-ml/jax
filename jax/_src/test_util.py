@@ -381,7 +381,7 @@ def supported_dtypes():
              _dtypes.bfloat16, np.float16, np.float32, np.complex64,
              _dtypes.float8_e4m3fn, _dtypes.float8_e4m3b11fnuz,
              _dtypes.float8_e5m2}
-  elif device_under_test() == "gpu":
+  elif device_under_test() in ("gpu", "cuda", "rocm"):
     types = {np.bool_, np.int8, np.int16, np.int32, np.int64,
              np.uint8, np.uint16, np.uint32, np.uint64,
              _dtypes.bfloat16, np.float16, np.float32, np.float64,
@@ -399,10 +399,14 @@ def supported_dtypes():
   return types
 
 def is_device_rocm():
-  return 'rocm' in xla_bridge.get_backend().platform_version
+  return (device_under_test() == "rocm" or
+          device_under_test() == "gpu" and
+          "rocm" in xla_bridge.get_backend().platform_version)
 
 def is_device_cuda():
-  return 'cuda' in xla_bridge.get_backend().platform_version
+  return (device_under_test() == "cuda" or
+          device_under_test() == "gpu" and
+          "cuda" in xla_bridge.get_backend().platform_version)
 
 def is_cloud_tpu():
   return running_in_cloud_tpu_vm
@@ -591,9 +595,9 @@ class CudaArchSpecificTest:
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""
   if is_device_rocm():
-    return {device_under_test(), "rocm"}
+    return {"rocm", "rocm"}
   elif is_device_cuda():
-    return {device_under_test(), "cuda"}
+    return {"gpu", "cuda"}
   elif device_under_test() == "METAL":
     return {device_under_test(), "gpu"}
   else:

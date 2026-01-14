@@ -35,7 +35,7 @@ class Jax2TfLimitation(test_harnesses.Limitation):
       self,
       description: str,
       *,
-      devices: str | Sequence[str] = ("cpu", "gpu", "tpu"),
+      devices: str | Sequence[str] = ("cpu", "cuda", "tpu"),
       dtypes: Sequence[DType] = (),
       enabled: bool = True,
       # jax2tf specific
@@ -197,7 +197,7 @@ def custom_numeric(
         "graph",
     ),  # By default we should not need tolerance for
     # "compiled"
-    devices=("cpu", "gpu", "tpu"),
+    devices=("cpu", "cuda", "tpu"),
     custom_assert=None,
     enabled=True,
     tol=None) -> Jax2TfLimitation:
