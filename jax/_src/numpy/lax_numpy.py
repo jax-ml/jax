@@ -3473,6 +3473,11 @@ def fix(x: ArrayLike, out: None = None) -> Array:
 
   JAX implementation of :func:`numpy.fix`.
 
+  .. warning::
+
+     :func:`jax.numpy.fix` is deprecated and will be removed
+     in JAX v0.10.0. Use :func:`jax.numpy.trunc` instead.
+
   Args:
     x: input array.
     out: unused by JAX.
@@ -3493,7 +3498,7 @@ def fix(x: ArrayLike, out: None = None) -> Array:
     [[ 4.48  4.79 -1.68]
      [-0.31  0.7  -3.34]
      [-1.9   1.89  2.47]]
-    >>> jnp.fix(x)
+    >>> jnp.fix(x)  # doctest: +SKIP
     Array([[ 4.,  4., -1.],
            [-0.,  0., -3.],
            [-1.,  1.,  2.]], dtype=float32)

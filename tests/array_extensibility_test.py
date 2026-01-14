@@ -340,7 +340,6 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.fft.ifft, Float[5]),
   NumPyAPI.sig(jnp.fft.ifft2, Float[5, 5]),
   NumPyAPI.sig(jnp.fill_diagonal, Float[5, 5], Float[()], inplace=False),
-  NumPyAPI.sig(jnp.fix, Float[5]),
   NumPyAPI.sig(jnp.flatnonzero, Float[5]),
   NumPyAPI.sig(jnp.flip, Float[5]),
   NumPyAPI.sig(jnp.fliplr, Float[5, 5]),

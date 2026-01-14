@@ -6230,6 +6230,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
             'datetime_as_string',
             'datetime_data',
             'errstate',
+            'fix',
             'flatiter',
             'format_float_positional',
             'format_float_scientific',

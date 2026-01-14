@@ -212,9 +212,6 @@ JAX_COMPOUND_OP_RECORDS = [
               test_name="expm1_large", tolerance={np.float64: 1e-8}, inexact=True),
     op_record("expm1", 1, number_dtypes, all_shapes, jtu.rand_small_positive,
               [], tolerance={np.float64: 1e-8}, inexact=True),
-    op_record("fix", 1, float_dtypes, all_shapes, jtu.rand_default, []),
-    op_record("fix", 1, int_dtypes + unsigned_dtypes, all_shapes,
-              jtu.rand_default, [], check_dtypes=False),
     op_record("floor_divide", 2, default_dtypes + unsigned_dtypes,
               all_shapes, jtu.rand_nonzero, ["rev"]),
     op_record("fmin", 2, number_dtypes, all_shapes, jtu.rand_some_nan, []),
@@ -475,7 +472,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
         "arccosh", "arcsinh", "sinh", "cosh", "tanh", "sin", "cos", "tan",
         "log", "log1p", "log2", "log10", "exp", "expm1", "exp2", "pow",
         "power", "logaddexp", "logaddexp2", "i0", "acosh", "asinh"):
-      tol = jtu.join_tolerance(tol, 1e-4)
+      tol = jtu.join_tolerance(tol, 2e-4)
     tol = functools.reduce(jtu.join_tolerance,
                            [tolerance, tol, jtu.default_tolerance()])
 

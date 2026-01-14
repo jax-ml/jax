@@ -82,7 +82,7 @@ from jax._src.numpy.lax_numpy import (
     eye as eye,
     fill_diagonal as fill_diagonal,
     finfo as finfo,
-    fix as fix,
+    fix as _deprecated_fix,
     flatnonzero as flatnonzero,
     flip as flip,
     fliplr as fliplr,
@@ -495,3 +495,25 @@ from jax._src.numpy.vectorize import vectorize as vectorize
 from jax._src.numpy.array_methods import register_jax_array_methods
 register_jax_array_methods()
 del register_jax_array_methods
+
+
+_deprecations = {
+  # Deprecated in v0.9.0
+  "fix": (
+    (
+      "jax.numpy.fix was deprecated in JAX v0.9.0, and will be"
+      " removed in JAX v0.10.0. Use jax.numpy.trunc instead."
+    ),
+    _deprecated_fix,
+  ),
+}
+
+import typing as _typing
+if _typing.TYPE_CHECKING:
+  fix = _deprecated_fix
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing
+del _deprecated_fix
