@@ -720,31 +720,26 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
         nb::object object = nb::borrow<nb::object>(handle);
         nb::mapping mapping = nb::cast<nb::mapping>(nb::getattr(object, node.custom->mapping_attr));
 
-        nb::list data_fields;
+        node.arity = 0;
+
         for (auto item : mapping.items()) {
-            auto [k, v] = nb::cast<std::pair<nb::object, nb::object>>(item);
+            auto [k, v] = nb::cast<std::pair<nb::str, nb::object>>(item);
             if (nb::cast<bool>(v)) {
-                data_fields.append(k);
+                node.arity++;
+                if (keypath.has_value()) {
+                  keypath->push_back(
+                      make_nb_class<GetAttrKey>(k));
+                }
+                recurse(nb::getattr(handle, k), keypath);
+                if (keypath.has_value()) {
+                  keypath->pop_back();
+                }
             } else {
                 node.meta_data.push_back(nb::getattr(object, k));
             }
         }
 
-        auto data_size = data_fields.size();
-
-        node.arity = data_size;
-        for (int leaf = 0; leaf < data_size; ++leaf) {
-          if (keypath.has_value()) {
-            keypath->push_back(
-                make_nb_class<GetAttrKey>(data_fields[leaf]));
-          }
-          recurse(nb::getattr(handle, data_fields[leaf]), keypath);
-          if (keypath.has_value()) {
-            keypath->pop_back();
-          }
-        }
-
-        node.node_data = mapping;
+        node.node_data = std::move(mapping);
 
         break;
       }

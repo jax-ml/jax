@@ -45,16 +45,10 @@ class DataclassRegistered:
   def __eq__(self, other):
     return self.y == other.y and jnp.array_equal(self.x, other.x)
 
-def benchmark_flatten(obj, iterations=100000):
+def benchmark_roundtrip(obj, iterations=100000):
   start = time.time()
   for _ in range(iterations):
-    tree_util.tree_flatten(obj)
-  end = time.time()
-  return end - start
-
-def benchmark_unflatten(tree, xs, iterations=100000):
-  start = time.time()
-  for _ in range(iterations):
+    xs, tree = tree_util.tree_flatten(obj)
     tree_util.tree_unflatten(tree, xs)
   end = time.time()
   return end - start
@@ -64,29 +58,11 @@ if __name__ == '__main__':
   pytree_registered = PyTreeNodeRegistered(jnp.arange(5), "hello")
   dataclass_registered = DataclassRegistered(jnp.arange(5), "hello")
 
-  xs_obj, tree_obj = tree_util.tree_flatten(obj_registered)
-  xs_pytree, tree_pytree = tree_util.tree_flatten(pytree_registered)
-  xs_dataclass, tree_dataclass = tree_util.tree_flatten(dataclass_registered)
-
   print("Benchmarking flatten...")
-  time_obj_flatten = benchmark_flatten(obj_registered)
-  time_pytree_flatten = benchmark_flatten(pytree_registered)
-  time_dataclass_flatten = benchmark_flatten(dataclass_registered)
+  time_obj = benchmark_roundtrip(obj_registered)
+  time_pytree = benchmark_roundtrip(pytree_registered)
+  time_dataclass = benchmark_roundtrip(dataclass_registered)
 
-  print(f"register_object flatten: {time_obj_flatten:.4f}s")
-  print(f"register_pytree_node flatten: {time_pytree_flatten:.4f}s")
-  print(f"register_dataclass flatten: {time_dataclass_flatten:.4f}s")
-  print(f"Speedup over pytree_node: {time_pytree_flatten / time_obj_flatten:.2f}x")
-  print(f"Speedup over dataclass: {time_dataclass_flatten / time_obj_flatten:.2f}x")
-  print()
-
-  print("Benchmarking unflatten...")
-  time_obj_unflatten = benchmark_unflatten(tree_obj, xs_obj)
-  time_pytree_unflatten = benchmark_unflatten(tree_pytree, xs_pytree)
-  time_dataclass_unflatten = benchmark_unflatten(tree_dataclass, xs_dataclass)
-
-  print(f"register_object unflatten: {time_obj_unflatten:.4f}s")
-  print(f"register_pytree_node unflatten: {time_pytree_unflatten:.4f}s")
-  print(f"register_dataclass unflatten: {time_dataclass_unflatten:.4f}s")
-  print(f"Speedup over pytree_node: {time_pytree_unflatten / time_obj_unflatten:.2f}x")
-  print(f"Speedup over dataclass: {time_dataclass_unflatten / time_obj_unflatten:.2f}x")
+  print(f"register_object: {time_obj:.4f}s")
+  print(f"register_pytree_node: {time_pytree:.4f}s")
+  print(f"register_dataclass: {time_dataclass:.4f}s")
