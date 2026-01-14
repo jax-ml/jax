@@ -340,17 +340,11 @@ class ArrayImpl(basearray.Array):
     self._check_if_deleted()
 
     if isinstance(self.sharding, PmapSharding):
-      if config.pmap_no_rank_reduction.value:
-        cidx = idx if isinstance(idx, tuple) else (idx,)
+      cidx = idx if isinstance(idx, tuple) else (idx,)
 
-        padded_cidx = tuple(
-            slice(i, i + 1, None) if isinstance(i, int) else i for i in cidx
-        ) + (slice(None),) * (len(self.shape) - len(cidx))
-      else:
-        if not isinstance(idx, tuple):
-          padded_cidx = (idx,) + (slice(None),) * (len(self.shape) - 1)
-        else:
-          padded_cidx = idx + (slice(None),) * (len(self.shape) - len(idx))
+      padded_cidx = tuple(
+          slice(i, i + 1, None) if isinstance(i, int) else i for i in cidx
+      ) + (slice(None),) * (len(self.shape) - len(cidx))
 
       indices = tuple(self.sharding.devices_indices_map(self.shape).values())
       try:
@@ -361,12 +355,11 @@ class ArrayImpl(basearray.Array):
         out = self._arrays[arr_idx]
         sharding = SingleDeviceSharding(_get_device(out))
 
-        if config.pmap_no_rank_reduction.value:
-          # If cidx was the index of a single shard, then it corresponds to one
-          # shard of the chunked dimension.
-          dims = tuple(i for i, x in enumerate(cidx) if isinstance(x, int))
-          # Squeeze on committed arrays to avoid data movement to shard 0.
-          out = lax.squeeze(out, dimensions=dims)
+        # If cidx was the index of a single shard, then it corresponds to one
+        # shard of the chunked dimension.
+        dims = tuple(i for i, x in enumerate(cidx) if isinstance(x, int))
+        # Squeeze on committed arrays to avoid data movement to shard 0.
+        out = lax.squeeze(out, dimensions=dims)
 
         return ArrayImpl(
             out.aval, sharding, [out], committed=False, _skip_checks=True)

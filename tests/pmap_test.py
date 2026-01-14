@@ -3275,10 +3275,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
     self.assertEqual(out2.shape, (dc, dc, 2))
     for i, (s1, s2) in enumerate(safe_zip(out1.addressable_shards, out2.addressable_shards)):
       self.assertArraysEqual(s1.data, input_data[i])
-      if config.pmap_no_rank_reduction.value:
-        self.assertArraysEqual(s2.data, input_data[None])
-      else:
-        self.assertArraysEqual(s2.data, input_data)
+      self.assertArraysEqual(s2.data, input_data[None])
 
   @jtu.ignore_warning(category=DeprecationWarning)
   def test_pmap_array_sharding_mismatch(self):

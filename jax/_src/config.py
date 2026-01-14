@@ -25,7 +25,6 @@ import sys
 from typing import Any, Generic, NoReturn, Optional, Protocol, Type, TypeVar, cast
 import warnings
 
-from jax._src import deprecations
 from jax._src.lib import _jax
 from jax._src.lib import guard_lib
 from jax._src.lib import jax_jit
@@ -2079,27 +2078,7 @@ optional_enum_state(
       logging_config.update_logging_level_global(logging_level=logging_level)
 )
 
-def _default_pmap_no_rank_reduction(new_val):
-  if not new_val:
-    deprecations.warn(
-        'jax-pmap-no-rank-reduction',
-        (
-            'Setting `jax_pmap_no_rank_reduction` to `False` is deprecated in '
-            'JAX v0.7.2 and will be removed in JAX v0.9.0.'
-        ),
-        stacklevel=3,
-    )
 
-pmap_no_rank_reduction = bool_state(
-    name='jax_pmap_no_rank_reduction',
-    default=True,
-    help=(
-        '[deprecated] If True, pmap shards have the same rank as their '
-        'enclosing array. Setting to `False` is deprecated and in the future '
-        'all `pmap` calls will proceed without rank reduction.'
-    ),
-    validator=_default_pmap_no_rank_reduction,
-)
 
 use_shardy_partitioner = bool_state(
     name='jax_use_shardy_partitioner',

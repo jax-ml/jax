@@ -473,7 +473,6 @@ pytype_strict_library(
     name = "config",
     srcs = ["config.py"],
     deps = [
-        ":deprecations",
         ":logging_config",
         "//jax/_src/lib",
     ],
@@ -1364,7 +1363,6 @@ pytype_strict_library(
     name = "sharding_specs",
     srcs = ["sharding_specs.py"],
     deps = [
-        ":config",
         ":op_shardings",
         ":util",
         "//jax/_src/lib",

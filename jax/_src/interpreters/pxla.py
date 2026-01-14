@@ -69,7 +69,7 @@ from jax._src.sharding_impls import (
     ArrayMapping, AUTO, UnspecifiedValue, array_mapping_to_axis_resources,
     SingleDeviceSharding, GSPMDSharding, NamedSharding, PartitionSpec as P)
 from jax._src.util import (safe_map, safe_zip, partition_list, wrap_name,
-                           tuple_update, tuple_delete, distributed_debug_log,
+                           tuple_update, distributed_debug_log,
                            unzip2, HashableFunction, weakref_lru_cache,
                            tuple_insert)
 from jax._src.state.types import AbstractRef, RefEffect
@@ -264,10 +264,7 @@ def _shard_abstract_array(size, axis: int, x):
                        f"shape {x.shape}")
   except IndexError:
     raise ValueError(f"Cannot split a {x.dim}D value along axis {axis}") from None
-  if config.pmap_no_rank_reduction.value:
-    return x.update(shape=tuple_update(x.shape, axis, 1))
-  else:
-    return x.update(shape=tuple_delete(x.shape, axis))
+  return x.update(shape=tuple_update(x.shape, axis, 1))
 _shard_aval_handlers[ShapedArray] = _shard_abstract_array
 
 
@@ -754,10 +751,7 @@ def stage_parallel_callable(
       for axis, aval in safe_zip(pci.in_axes, pci.avals))
 
   orig_fun = fun
-  if config.pmap_no_rank_reduction.value:
-    fun = _change_argument_ranks(fun, pci.in_axes, pci.out_axes_thunk)
-  else:
-    fun = orig_fun
+  fun = _change_argument_ranks(fun, pci.in_axes, pci.out_axes_thunk)
   with core.extend_axis_env_nd([(pci.axis_name, pci.global_axis_size)]):
     with dispatch.log_elapsed_time(
         "Finished tracing + transforming {fun_name} for pmap in {elapsed_time} sec",
@@ -974,9 +968,6 @@ _pmap_aval_mapping_handlers: dict[type, AvalMapHandlerPair] = {
 
 def _pmap_unmapped_aval(size: core.AxisSize, axis: int | None,
                        aval: core.AbstractValue) -> core.AbstractValue:
-  if not config.pmap_no_rank_reduction.value:
-    return core.unmapped_aval(size, axis, aval)
-
   _, handler = _pmap_aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
     return handler(size, axis, aval)

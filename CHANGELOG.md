@@ -28,6 +28,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 * Deprecations:
   * The flag `jax_collectives_common_channel_id` was removed.
+  * The `jax_pmap_no_rank_reduction` config state has been removed. The
+    no-rank-reduction behavior is now the only supported behavior: a
+    `jax.pmap`ped function `f` sees inputs of the same rank as the input to
+    `jax.pmap(f)`. For example, if `jax.pmap(f)` receives shape `(8, 128)` on
+    8 devices, then `f` receives shape `(1, 128)`.
 
 ## JAX 0.8.2 (December 18, 2025)
 

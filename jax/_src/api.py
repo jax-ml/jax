@@ -2806,14 +2806,11 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
       sharding = PmapSharding(np.array(devices), sharding_spec)
     if dtypes.issubdtype(stacked_aval.dtype, dtypes.extended):
       return stacked_aval.dtype._rules.device_put_sharded(xs, stacked_aval, sharding, devices)
-    if config.pmap_no_rank_reduction.value:
-      ys = []
-      for x in xs:
-        if not isinstance(x, (np.ndarray, basearray.Array)):
-          x = np.asarray(x)
-        ys.append(x[None])
-    else:
-      ys = xs
+    ys = []
+    for x in xs:
+      if not isinstance(x, (np.ndarray, basearray.Array)):
+        x = np.asarray(x)
+      ys.append(x[None])
     return pxla.batched_device_put(stacked_aval, sharding, ys, list(devices))
 
 
@@ -2858,13 +2855,10 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
   def _device_put_replicated(x):
     aval = core.unmapped_aval(len(devices), 0, core.get_aval(x))
     assert isinstance(aval, ShapedArray)
-    if config.pmap_no_rank_reduction.value:
-      if isinstance(x, (np.ndarray, basearray.Array)):
-        buf = device_put(x[None], devices[0])
-      else:
-        buf = device_put(x, devices[0])[None]
+    if isinstance(x, (np.ndarray, basearray.Array)):
+      buf = device_put(x[None], devices[0])
     else:
-      buf = device_put(x, devices[0])
+      buf = device_put(x, devices[0])[None]
     if config.pmap_shmap_merge.value:
       mesh = Mesh(np.array(devices), ('_device_put_replicated',))
       sharding = NamedSharding(mesh, P('_device_put_replicated'))
