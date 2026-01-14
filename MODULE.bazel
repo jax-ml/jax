@@ -3,7 +3,7 @@ module(name = "jax")
 ##############################################################
 # Bazel module dependencies
 
-bazel_dep(name = "abseil-cpp", version = "20250814.0", repo_name = "com_google_absl")
+bazel_dep(name = "abseil-cpp", version = "20250814.1", repo_name = "com_google_absl")
 bazel_dep(name = "bazel_features", version = "1.36.0")
 bazel_dep(name = "bazel_skylib", version = "1.8.1")
 bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_google_flatbuffers")
@@ -16,32 +16,22 @@ bazel_dep(name = "rules_python", version = "1.6.1")
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
   module_name = "rules_ml_toolchain",
-  urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/f13852164b6fe240f8a989a744221a51e0d485cd.tar.gz"],
-  strip_prefix = "rules_ml_toolchain-f13852164b6fe240f8a989a744221a51e0d485cd",
+  urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/e37aa895d7a9a299e2313fd0a86fb6b7f24391e2.tar.gz"],
+  strip_prefix = "rules_ml_toolchain-e37aa895d7a9a299e2313fd0a86fb6b7f24391e2",
 )
 
 # TODO: use a released version when available
 bazel_dep(name = "xla")
 archive_override(
   module_name = "xla",
-  urls = ["https://github.com/openxla/xla/archive/2fba06ced7e3a3321da176acd0b717bb32e4716f.tar.gz"],
-  strip_prefix = "xla-2fba06ced7e3a3321da176acd0b717bb32e4716f",
+  urls = ["https://github.com/openxla/xla/archive/92b06d5b7044ab4a44401530249792d2dbbbd416.tar.gz"],
+  strip_prefix = "xla-92b06d5b7044ab4a44401530249792d2dbbbd416",
 )
 
 # TODO: upstream, otherwise we have to duplicate the patches in jax
 single_version_override(
   module_name = "grpc",
   patches = ["//third_party/grpc:grpc.patch"], # upstreaming in cl/822016400
-  patch_strip = 1,
-)
-
-# TODO: upstream, otherwise we have to duplicate the patches in jax
-single_version_override(
-  module_name = "abseil-cpp",
-  patches = [
-      "//third_party/absl:check_op.patch", # upstreamed, waiting for new release
-      "//third_party/absl:check_op_2.patch", # upstreamed, waiting for new release
-  ],
   patch_strip = 1,
 )
 
