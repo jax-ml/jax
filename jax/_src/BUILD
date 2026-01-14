@@ -82,6 +82,14 @@ pytype_strict_library(
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
+pytype_strict_library(
+    name = "gpu_test_util",
+    srcs = [
+        "internal_test_util/gpu_test_util.py",
+    ],
+    visibility = ["//jax:internal"],
+)
+
 # TODO(necula): break the internal_test_util into smaller build targets.
 pytype_strict_library(
     name = "internal_test_util",

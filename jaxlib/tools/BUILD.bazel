@@ -31,12 +31,14 @@ load(
 load(
     "//jaxlib:jax.bzl",
     "PLATFORM_TAGS_DICT",
+    "if_cuda_umd_libs",
     "if_pypi_cuda_wheel_deps",
     "jax_py_test",
     "jax_wheel",
     "pytype_strict_library",
     "pytype_test",
     "wheel_sources",
+    "zip_cuda_umd_libs",
 )
 
 licenses(["notice"])  # Apache 2
@@ -411,6 +413,8 @@ jax_wheel(
 # Py_import targets.
 cuda_suffix = "_cu12" if cuda_major_version == "12" else ""
 
+cuda_umd_libs_path = "nvidia/{}/lib".format("cu13" if cuda_major_version == "13" else "cuda_driver")
+
 filegroup(
     name = "nvidia_wheel_deps",
     srcs = [
@@ -446,6 +450,29 @@ config_setting(
     },
 )
 
+selects.config_setting_group(
+    name = "pypi_wheel_with_cuda_umd_deps",
+    match_all = [
+        ":pypi_cuda_wheel_deps",
+        "@cuda_driver//:cuda_umd_libs",
+        "//jax:config_build_jaxlib_false",
+    ],
+)
+
+selects.config_setting_group(
+    name = "py_import_wheel_with_cuda_umd_deps",
+    match_all = [
+        ":pypi_cuda_wheel_deps",
+        "@cuda_driver//:cuda_umd_libs",
+        "//jax:config_build_jaxlib_wheel",
+    ],
+)
+
+zip_cuda_umd_libs(
+    name = "zipped_cuda{cuda}_umd_libs".format(cuda = cuda_major_version),
+    path_prefix = cuda_umd_libs_path,
+)
+
 py_import(
     name = "jaxlib_py_import",
     wheel = ":jaxlib_wheel",
@@ -455,6 +482,7 @@ py_import(
     name = "jax_cuda_plugin_py_import",
     wheel = ":jax_cuda{cuda}_plugin_wheel".format(cuda = cuda_major_version),
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
+    zip_deps = if_cuda_umd_libs([":zipped_cuda{cuda}_umd_libs".format(cuda = cuda_major_version)]),
 )
 
 py_import(
@@ -468,6 +496,7 @@ py_import(
     name = "pypi_jax_cuda_plugin_with_cuda_deps",
     wheel = "@pypi_jax_cuda{cuda}_plugin//:whl".format(cuda = cuda_major_version),
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
+    zip_deps = if_cuda_umd_libs([":zipped_cuda{cuda}_umd_libs".format(cuda = cuda_major_version)]),
 )
 
 py_import(
