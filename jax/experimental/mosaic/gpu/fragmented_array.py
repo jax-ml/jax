@@ -2387,8 +2387,10 @@ class FragmentedArray:
         case "max":
           if isinstance(self.mlir_dtype, ir.F32Type):
             op = self._lift_fast_instr("max.NaN.f32")
-            if utils.get_arch().major == 10:
-              redux_op = functools.partial(utils.redux, kind=nvvm.ReduxKind.FMAX)
+            # TODO(apaskze,bchetioui): re-enable once broken tests are figured
+            # out.
+            # if utils.get_arch().major == 10:
+            #   redux_op = functools.partial(utils.redux, kind=nvvm.ReduxKind.FMAX)
           elif isinstance(self.mlir_dtype, ir.F16Type):
             op = self._lift_fast_packed_instr("max.NaN.f16x2", "max.NaN.f16")
           elif isinstance(self.mlir_dtype, ir.BF16Type):
@@ -2406,8 +2408,10 @@ class FragmentedArray:
         case "min":
           if isinstance(self.mlir_dtype, ir.F32Type):
             op = self._lift_fast_instr("min.NaN.f32")
-            if utils.get_arch().major == 10:
-              redux_op = functools.partial(utils.redux, kind=nvvm.ReduxKind.FMIN)
+            # TODO(apaskze,bchetioui): re-enable once broken tests are figured
+            # out.
+            # if utils.get_arch().major == 10:
+            #   redux_op = functools.partial(utils.redux, kind=nvvm.ReduxKind.FMIN)
           elif isinstance(self.mlir_dtype, ir.F16Type):
             op = self._lift_fast_packed_instr("min.NaN.f16x2", "min.NaN.f16")
           elif isinstance(self.mlir_dtype, ir.BF16Type):
