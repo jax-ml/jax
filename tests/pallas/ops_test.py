@@ -76,6 +76,34 @@ def is_power_of_two(n: int) -> bool:
   return (n > 0) and (n & (n - 1) == 0)
 
 
+def get_rocm_shared_memory_limit() -> int:
+  """Get the shared memory (LDS) limit in bytes for ROCm devices.
+
+  Queries rocminfo to get the GROUP segment size dynamically.
+  Returns 64KB as default if rocminfo fails (MI100/MI200/MI300 all have 64KB LDS).
+  """
+  try:
+    result = subprocess.run(
+        ['rocminfo'], capture_output=True, text=True, timeout=10
+    )
+    if result.returncode != 0:
+      return 64 * 1024  # Default if rocminfo fails
+    lines = result.stdout.split('\n')
+    for i, line in enumerate(lines):
+      if 'Segment:' in line and 'GROUP' in line:
+        if i + 1 < len(lines):
+          size_line = lines[i + 1]
+          # Match "Size: <number>(<hex>) KB" with case-insensitive KB check
+          match = re.search(r'Size:\s+(\d+)\s*\([^)]+\)\s*KB', size_line, re.IGNORECASE)
+          if match:
+            size_kb = int(match.group(1))
+            return size_kb * 1024  # Convert KB to bytes
+  except Exception:
+    pass
+  # Default for AMD GPUs (MI100/MI200/MI300 all have 64KB LDS)
+  return 64 * 1024
+
+
 def smem_on_tpu():
   if jtu.test_device_matches(["tpu"]):
     return pltpu.SMEM
@@ -2213,11 +2241,21 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["gpu"]):
       if dtype == jnp.bfloat16:
         self.skipTest("bfloat16 type are not supported on GPU")
-      if (
-          math.prod(lhs_shape) + math.prod(rhs_shape) + math.prod(out_shape)
-          > (256 * 256) * 2
-      ):
-        self.skipTest("Shared memory size limit exceeded")
+      # Check shared memory limit: Triton loads lhs + rhs into shared memory
+      if jtu.is_device_rocm():
+        # ROCm: use correct formula with dynamic limit from rocminfo
+        dtype_size = jnp.dtype(dtype).itemsize
+        shared_mem_bytes = (math.prod(lhs_shape) + math.prod(rhs_shape)) * dtype_size
+        shared_mem_limit = get_rocm_shared_memory_limit()
+        if shared_mem_bytes > shared_mem_limit:
+          self.skipTest("Shared memory size limit exceeded")
+      else:
+        # NVIDIA: keep original check
+        if (
+            math.prod(lhs_shape) + math.prod(rhs_shape) + math.prod(out_shape)
+            > (256 * 256) * 2
+        ):
+          self.skipTest("Shared memory size limit exceeded")
       if (jax.local_devices()[0].device_kind == "NVIDIA L4" and
           dtype == jnp.float32 and
           lhs_and_rhs_shape in [
