@@ -348,6 +348,74 @@ def call_allocate_buffer_for_all_threads(
   )
 
 
+def _allocate_buffer(
+    device_id: np.ndarray,
+    thread_id: np.ndarray,
+    allocation_request: np.ndarray,
+    value: np.ndarray,
+) -> np.ndarray:
+  """Allocates a buffer for the given `allocation_request`.
+
+  Args:
+    allocation_request: Array that converts into a `HostAllocationRequest`.
+    value: Array of values to initialize the allocated buffer with.
+
+  Returns:
+    `AllocationKey` to refer to the allocated buffer.
+  """
+  device_id = int(device_id)
+  thread_id = int(thread_id)
+  allocation_request = HostAllocationRequest.from_array(allocation_request)
+  value = np.array(value)
+  shared_memory = _get_shared_memory()
+
+  buffer_id = shared_memory.get_next_buffer_id(device_id, thread_id)
+
+  key = HostAllocationKey(
+      memory_space_id=allocation_request.memory_space_id,
+      device_id=allocation_request.device_id,
+      thread_id=allocation_request.thread_id,
+      initial_ref_count=allocation_request.initial_ref_count,
+      buffer_id=buffer_id,
+  )
+  ref_count = allocation_request.initial_ref_count
+  shared_memory.allocate_buffer(key, ref_count=ref_count, value=value)
+  return key.as_array
+
+
+def call_allocate_buffer(
+    device_id: int,
+    thread_id: int,
+    allocation_request: jnp.ndarray,
+    value: jnp.ndarray,
+) -> jnp.ndarray:
+  return callback.io_callback(
+      _allocate_buffer,
+      HostAllocationKey.shape_and_dtype(),
+      device_id,
+      thread_id,
+      allocation_request,
+      value,
+      ordered=True,
+  )
+
+
+def _deallocate_buffer(allocation_key: np.ndarray):
+  """Decreases the reference count of the buffer with `allocation_key` (Deallocates the buffer if its reference count becomes zero)."""
+  allocation_key = HostAllocationKey.from_array(allocation_key)
+  shared_memory = _get_shared_memory()
+  shared_memory.deallocate_buffer(allocation_key)
+
+
+def call_deallocate_buffer(allocation_key: jnp.ndarray):
+  callback.io_callback(
+      _deallocate_buffer,
+      None,
+      allocation_key,
+      ordered=True,
+  )
+
+
 def _handle_out_of_bounds_read(
     ret: np.ndarray | None,
     full_read_shape: tuple[int, ...],

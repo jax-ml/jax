@@ -27,6 +27,7 @@ from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
 from jax._src.pallas.mosaic_gpu.interpret import gpu_callbacks
 from jax._src.state import primitives as state_primitives
+from jax._src.util import safe_zip
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 
@@ -133,6 +134,86 @@ class JaxprInterpreter:
         mask=None,
     )
 
+  def _interpret_run_scoped_p(
+      self, eqn, get_invals: Callable[[], Sequence[Any]]
+  ):
+
+    def _allocate_for_aval(aval, same_allocations_for_all_threads: bool):
+      _raise_if_unsupported_memory_space(aval.memory_space)
+      memory_space_idx = gpu_callbacks.get_memory_space_idx(aval.memory_space)
+      allocation_request = gpu_callbacks.make_allocation_request_array(
+          device_id=self.device_info.device_id,
+          memory_space_id=memory_space_idx,
+          thread_id=0 if same_allocations_for_all_threads else self.thread_id,
+          initial_ref_count=self.num_threads
+          if same_allocations_for_all_threads
+          else 1,
+      )
+      return gpu_callbacks.call_allocate_buffer(
+          self.device_info.device_id,
+          self.thread_id,
+          allocation_request,
+          self.interpret_params.get_uninitialized_array(aval.shape, aval.dtype),
+      )
+
+    def _deallocate_for_aval(allocation, aval):
+      # TODO(nrink): Check that sempahores have value zero at the end of their
+      # lifetimes. (If semaphores are never explicitly deallocated, this check
+      # could take place at the end of kernel interpretation.)
+      _raise_if_unsupported_memory_space(aval.memory_space)
+      return gpu_callbacks.call_deallocate_buffer(
+          allocation,
+      )
+
+    assert eqn.primitive is primitives.run_scoped_p
+    collective_axes = eqn.params["collective_axes"]
+    # Note that on GPU, `SMEM` buffers and barriers can only be allocated
+    # collectively (i.e. corresponding to `same_allocations=True`). In the
+    # interpreter we are a little more lenient and allow non-collective
+    # allocations for `SMEM` buffers.
+    same_allocations = False
+    if collective_axes:
+      if (
+          self.mesh is None
+          or len(collective_axes) != 1
+          or collective_axes[0] != self.mesh.thread_name
+      ):
+        raise NotImplementedError(
+            "When interpreting `run_scoped` in a GPU kernel, non-empty"
+            " `collective_axes` is currently only supported when it contains a"
+            " single axis that agrees with the thread axis (i.e. `thread_name`)"
+            " of the mesh."
+        )
+      same_allocations = True
+
+    # Allocate a buffer or semaphore (to do, see below) for each element of
+    # `eqn.params['jaxpr'].invars`. It is assumed that each thread runs the same
+    # sequence of `run_scoped`s.
+    vars = eqn.params["jaxpr"].invars
+    allocs = []
+    for v in vars:
+      # TODO(nrink): Support semaphores. (Currently the call to
+      # `_allocate_for_aval` will fail when trying to allocate a semaphore.)
+      allocs.append(_allocate_for_aval(v.aval, same_allocations))
+
+    out = self.interpret(eqn.params["jaxpr"], *get_invals(), *allocs)
+
+    for a, v in safe_zip(allocs, vars):
+      _deallocate_for_aval(a, v.aval)
+
+    return out
+
+  def _interpret_cond_p(self, eqn, get_invals: Callable[[], Sequence[Any]]):
+    invals = get_invals()
+    return lax.switch(
+        invals[0],
+        [
+            functools.partial(self.interpret, branch_jaxpr.jaxpr)
+            for branch_jaxpr in eqn.params["branches"]
+        ],
+        *invals[1:],
+    )
+
   def _interpret_arithmetic_primitive(
       self, eqn, get_invals: Callable[[], Sequence[Any]]
   ):
@@ -188,6 +269,10 @@ class JaxprInterpreter:
             out = self._interpret_swap_p(eqn, deferred_invals)
           case primitives.swap_p:
             raise NotImplementedError("swap_p is not supported on GPU yet")
+          case primitives.run_scoped_p:
+            out = self._interpret_run_scoped_p(eqn, deferred_invals)
+          case lax.cond_p:
+            out = self._interpret_cond_p(eqn, deferred_invals)
           case _:
             out = self._interpret_arithmetic_primitive(eqn, deferred_invals)
 
