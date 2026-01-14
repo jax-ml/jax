@@ -388,9 +388,17 @@ load_p = jax_core.Primitive('masked_load')
 
 @load_p.def_effectful_abstract_eval
 def _load_abstract_eval(*avals_flat, args_tree, **_):
-  ref, transforms, _, _ = args_tree.unflatten(avals_flat)
+  ref_aval, transforms, mask_aval, _ = args_tree.unflatten(avals_flat)
   assert transforms is not None
-  transformed_ref = pallas_core.TransformedRef(ref, transforms)
+  transformed_ref = pallas_core.TransformedRef(ref_aval, transforms)
+  if mask_aval is not None:
+    try:
+      jnp.broadcast_shapes(transformed_ref.shape, mask_aval.shape)
+    except ValueError:
+      raise ValueError(
+          f"Cannot broadcast mask shape {mask_aval.shape} to load shape"
+          f" {transformed_ref.shape}"
+      )
   return (
       jax_core.ShapedArray(transformed_ref.shape, transformed_ref.dtype),
       {state.ReadEffect(0)},

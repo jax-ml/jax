@@ -1048,6 +1048,8 @@ def _trace_kernel_to_jaxpr(
     with config.mutable_array_checks(False):
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
           wrapped_kernel_fun, kernel_avals)
+      jaxpr, _ = pe.dce_jaxpr(jaxpr, used_outputs=[True] * len(jaxpr.outvars),
+                              instantiate=True)
     if consts:
       consts_avals = [
           aval
