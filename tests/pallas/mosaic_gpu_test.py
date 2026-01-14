@@ -3416,10 +3416,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     np.testing.assert_allclose(f(a, b), out_ref, rtol=1e-3)
 
   def test_load_store_wgmma_transposed(self):
-    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
-      self.skipTest("Doesn't work in WG semantics")
-    transforms = (plgpu.TilingTransform((8, 16)),
-                  plgpu.SwizzleTransform(64))
+    transforms = self.default_transforms(swizzle=64, dtype=jnp.float32)
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct([8, 64], jnp.float32),
