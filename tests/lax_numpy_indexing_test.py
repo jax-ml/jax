@@ -166,6 +166,7 @@ STATIC_SLICE_TESTS = [
     IndexSpec(shape=(3, 4), indexer=(Ellipsis, None), out_shape=(3, 4, 1)),
     IndexSpec(shape=(3, 4), indexer=(0, None, Ellipsis), out_shape=(1, 4)),
     IndexSpec(shape=(3, 4, 5), indexer=(1, None, Ellipsis), out_shape=(1, 4, 5)),
+    IndexSpec(shape=(3, 4, 5), indexer=(1, None, slice(None), None), out_shape=(1, 4, 1, 5)),
   ]),
   ("EmptyIndex", [
     IndexSpec(shape=(), indexer=(), out_shape=()),
@@ -452,9 +453,10 @@ class IndexingStrategyTest(jtu.JaxTestCase):
     strategy=[indexing.IndexingStrategy.AUTO,
               indexing.IndexingStrategy.DYNAMIC_SLICE,
               indexing.IndexingStrategy.STATIC_SLICE,
-              indexing.IndexingStrategy.GATHER]
+              indexing.IndexingStrategy.GATHER],
+    mode=[None, "clip", "promise_in_bounds"],
   )
-  def test_simple_indexing(self, name, shape, dtype, indexer, strategy):
+  def test_simple_indexing(self, name, shape, dtype, indexer, strategy, mode):
     del name # unused within test
     tuple_indexer = indexer if isinstance(indexer, tuple) else (indexer,)
     if (strategy == indexing.IndexingStrategy.STATIC_SLICE and
@@ -468,7 +470,33 @@ class IndexingStrategyTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     np_fun = lambda x: np.asarray(x)[indexer]
-    jnp_fun = partial(indexing.rewriting_take, idx=indexer, strategy=strategy)
+    jnp_fun = partial(indexing.rewriting_take, idx=indexer, strategy=strategy, mode=mode)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    shape=[(3, 4), (3, 5, 2)],
+    dtype=all_dtypes,
+    indexer=[(-2,), (-1, -2), (10,), (10, 1)],
+    strategy=[indexing.IndexingStrategy.AUTO,
+              indexing.IndexingStrategy.DYNAMIC_SLICE,
+              indexing.IndexingStrategy.STATIC_SLICE,
+              indexing.IndexingStrategy.GATHER],
+    normalize_indices=[True, False]
+  )
+  def test_simple_indexing_oob(self, shape, dtype, indexer, strategy, normalize_indices):
+    """Test negative and out-of-bound index handling for indexing strategies."""
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    if normalize_indices:
+      np_indexer = tuple(np.clip(i, -size, size - 1)
+                         for i, size in zip(indexer, shape))
+    else:
+      np_indexer = tuple(np.clip(i, 0, size - 1)
+                         for i, size in zip(indexer, shape))
+    np_fun = lambda x: np.asarray(x)[np_indexer]
+    jnp_fun = partial(indexing.rewriting_take, idx=indexer, strategy=strategy,
+                      normalize_indices=normalize_indices, mode='clip')
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 

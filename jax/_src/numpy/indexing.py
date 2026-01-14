@@ -226,6 +226,30 @@ class NDIndexer:
           raise IndexError("Slice entries must be static integers."
                           f" Got {idx.index} at position {position}")
 
+  @staticmethod
+  def is_sharded(arr) -> bool:
+    """Check whether the array is sharded."""
+    return isinstance(arr, array.ArrayImpl) and not dispatch.is_single_device_sharding(arr.sharding)
+
+  def has_partial_slices(self) -> bool:
+    """Check whether the indexer contains partial slices.
+
+    For sharded arrays, partial slices cannot automatically propagate
+    sharding.
+    """
+    for idx in self.indices:
+      if idx.typ == IndexType.INTEGER:
+        return True
+      if idx.typ == IndexType.SLICE:
+        slc = idx.index
+        assert isinstance(slc, slice)
+        axis, = idx.consumed_axes
+        size = self.shape[axis]
+        start, stop, step = slc.indices(self.shape[axis])
+        if abs(step) != 1 or abs(stop - start) != size:
+          return True
+    return False
+
   def expand_bool_indices(self) -> NDIndexer:
     """Returns a new NDIndexer with boolean indices replaced by array indices.
 
@@ -331,15 +355,33 @@ class NDIndexer:
         new_indices.append(idx)
     return NDIndexer(indices=new_indices, shape=self.shape)
 
-  def compute_via_static_slice(self, arr: Array) -> Array:
+  def compute_via_static_slice(self, arr: Array, *,
+                               normalize_indices: bool = True,
+                               mode: str | slicing.GatherScatterMode | None) -> Array:
     """Equivalent of arr[idx] implemented in terms of static :func:`lax.slice` operations.
 
     This supports only INTEGER, ELLIPSIS, NONE, and SLICE indices, and will raise a
     TypeError if other indices are present.
     """
+    if mode is None:
+      parsed_mode = slicing.GatherScatterMode.PROMISE_IN_BOUNDS
+    else:
+      parsed_mode = slicing.GatherScatterMode.from_any(mode)
+
+    if parsed_mode not in [
+        slicing.GatherScatterMode.PROMISE_IN_BOUNDS, slicing.GatherScatterMode.CLIP]:
+      raise ValueError("static_slice requires mode='promise_in_bounds' or mode='clip'")
+
     # Validation of the unmodified user indices.
-    self.validate_static_indices(normalize_indices=True)
+    if parsed_mode == slicing.GatherScatterMode.PROMISE_IN_BOUNDS:
+      self.validate_static_indices(normalize_indices=normalize_indices)
     self.validate_slices()
+
+    # For sharded inputs, indexing (like x[0]) and partial slices (like x[:2] as
+    # opposed to x[:]) lead to incorrect sharding semantics when computed via slice.
+    # TODO(yashkatariya): fix slice with sharding
+    if self.is_sharded(arr) and self.has_partial_slices():
+      raise ValueError("static_slice with partial slices does not support nontrivial array sharding.")
 
     for position, pidx in enumerate(self.indices):
       if pidx.typ in [IndexType.INTEGER, IndexType.ELLIPSIS, IndexType.SLICE, IndexType.NONE]:
@@ -371,7 +413,12 @@ class NDIndexer:
       elif pidx.typ == IndexType.INTEGER:
         assert isinstance(pidx.index, (int, np.integer))
         axis, = pidx.consumed_axes
-        start_index = int(pidx.index + arr.shape[axis] if pidx.index < 0 else pidx.index)
+        start_index = int(pidx.index)
+        if normalize_indices and start_index < 0:
+          start_index += arr.shape[axis]
+        # Normalization & validation have already been handled, so clip start_index
+        # to valid range
+        start_index = min(max(start_index, 0), arr.shape[axis] - 1)
         start_indices.append(start_index)
         limit_indices.append(start_index + 1)
         strides.append(1)
@@ -394,7 +441,11 @@ class NDIndexer:
       else:
         raise TypeError(f"static_slice: unrecognized index {pidx.index}")
     result = arr
-    if start_indices:
+    is_trivial_slice = all(
+      (start, stop, step) == (0, size, 1)
+      for start, stop, step, size in zip(start_indices, limit_indices, strides, arr.shape)
+    )
+    if not is_trivial_slice:
       result = slicing.slice(result, start_indices, limit_indices, strides)
     if rev_axes:
       result = lax.rev(result, rev_axes)
@@ -404,7 +455,8 @@ class NDIndexer:
       result = lax.expand_dims(result, newaxis_dims)
     return result
 
-  def compute_via_dynamic_slice(self, arr: Array,
+  def compute_via_dynamic_slice(self, arr: Array, *,
+                                normalize_indices: bool = True,
                                 mode: str | slicing.GatherScatterMode | None) -> Array:
     """Equivalent of arr[idx] implemented in terms of static :func:`lax.dynamic_slice`.
 
@@ -416,6 +468,12 @@ class NDIndexer:
       if parsed_mode not in [
           slicing.GatherScatterMode.PROMISE_IN_BOUNDS, slicing.GatherScatterMode.CLIP]:
         raise ValueError("dynamic_slice requires mode='promise_in_bounds' or mode='clip'")
+
+    # For sharded inputs, indexing (like x[0]) and partial slices (like x[:2] as
+    # opposed to x[:]) lead to incorrect sharding semantics when computed via slice.
+    # TODO(yashkatariya): fix slice with sharding
+    if self.is_sharded(arr) and self.has_partial_slices():
+      raise ValueError("dynamic_slice with partial slices does not support nontrivial array sharding.")
 
     for position, pidx in enumerate(self.indices):
       if pidx.typ in [IndexType.INTEGER, IndexType.ELLIPSIS, IndexType.NONE]:
@@ -475,9 +533,13 @@ class NDIndexer:
       else:
         raise TypeError(f"dynamic_slice: unrecognized index {pidx.index}")
     result = arr
-    if start_indices:
+    is_trivial_slice = all(
+      (slice_size == axis_size)
+      for slice_size, axis_size in zip(slice_sizes, arr.shape)
+    )
+    if not is_trivial_slice:
       result = slicing.dynamic_slice(arr, start_indices, slice_sizes,
-                                     allow_negative_indices=True)
+                                     allow_negative_indices=normalize_indices)
     if rev_axes:
       result = lax.rev(result, rev_axes)
     if squeeze_axes:
@@ -1131,13 +1193,12 @@ def rewriting_take(
     indexer.validate_static_indices(normalize_indices=normalize_indices)
 
   if strategy == IndexingStrategy.STATIC_SLICE:
-    if not normalize_indices:
-      raise ValueError("strategy=STATIC_SLICE is only supported when normalize_indices=True.")
-    return indexer.compute_via_static_slice(arr)
-  elif strategy == IndexingStrategy.DYNAMIC_SLICE:
-    if not normalize_indices:
-      raise ValueError("strategy=DYNAMIC_SLICE is only supported when normalize_indices=True.")
-    return indexer.compute_via_dynamic_slice(arr, mode=mode)
+    return indexer.compute_via_static_slice(
+      arr, mode=mode, normalize_indices=normalize_indices)
+
+  if strategy == IndexingStrategy.DYNAMIC_SLICE:
+    return indexer.compute_via_dynamic_slice(
+      arr, mode=mode, normalize_indices=normalize_indices)
 
   # For simplicity of generated primitives, we call lax.slice or lax.dynamic_slice
   # in the simplest cases: i.e. non-dynamic arrays indexed with integers and slices.
