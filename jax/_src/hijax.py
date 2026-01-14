@@ -555,7 +555,7 @@ def _call_hi_primitive_dce(used_outs_flat, eqn):
   if hasattr(prim := eqn.params['prim'], 'dce'):
     return prim.dce(used_outs_flat, eqn)
   else:
-    return [True] * len(eqn.invars), eqn
+    return pe._default_dce_rule(used_outs_flat, eqn)
 pe.dce_rules[call_hi_primitive_p] = _call_hi_primitive_dce
 
 
