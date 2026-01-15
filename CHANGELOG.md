@@ -16,6 +16,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.9.0 (TODO)
+
 * New features:
 
   * Added {func}`jax.thread_guard`, a context manager that detects when devices
