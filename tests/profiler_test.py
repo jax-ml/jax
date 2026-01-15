@@ -55,7 +55,7 @@ def _trace_viewer_json_from_xplane(pb_path: str) -> dict:
     """Convert an xplane.pb into Trace Viewer JSON dict using xprof/tensorboard plugin."""
     try:
         from tensorboard_plugin_profile.convert import raw_to_tool_data as convert
-    except Exception:
+    except ImportError:
         from xprof.convert import raw_to_tool_data as convert
 
     result, _ = convert.xspace_to_tool_data([pb_path], "trace_viewer@^", {})
@@ -101,20 +101,16 @@ def _count_gpu_events_from_traceevents(traceevents: list) -> int:
 
     # 3) Count events
     count = 0
-    if have_kernel_tids:
-        for ev in traceevents:
-            if ev.get("ph") != "X":
-                continue
-            if "dur" not in ev:
-                continue
+
+    for ev in traceevents:
+        if ev.get("ph") == "X" and "dur" in ev:
             pid = ev.get("pid")
-            tid = ev.get("tid")
-            if pid in gpu_pids and tid in kernel_tids_by_pid.get(pid, ()):
-                count += 1
-    else:  # Fallback: count all duration events on GPU pids
-        for ev in traceevents:
-            if ev.get("ph") == "X" and "dur" in ev and ev.get("pid") in gpu_pids:
-                count += 1
+            if pid in gpu_ids:
+                if have_kernel_tid:
+                    if ev.get("tid") in kernel_tids_by_pid.get(pid, set()):
+                        count += 1
+                else:
+                    count += 1
 
     return count
 
