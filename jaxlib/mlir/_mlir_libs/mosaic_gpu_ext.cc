@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstdint>
+#include <variant>
 #include <vector>
 
 #include "absl/hash/hash.h"
@@ -278,4 +279,93 @@ NB_MODULE(_mosaic_gpu_ext, m) {
         }
         return self == nb::cast<mgpu::Replicated>(other);
       });
+
+  nb::class_<mgpu::TiledLayout>(m, "TiledLayout")
+      .def(
+          "__init__",
+          [](mgpu::TiledLayout* self, mgpu::Tiling tiling,
+             nb::iterable in_warp_dims, nb::iterable in_lane_dims,
+             int64_t vector_dim, bool check_canonical) {
+            std::vector<mgpu::TiledLayout::Dim> warp_dims;
+            for (const auto& dim : in_warp_dims) {
+              if (nb::isinstance<mgpu::Replicated>(dim)) {
+                warp_dims.emplace_back(nb::cast<mgpu::Replicated>(dim));
+              } else {
+                warp_dims.emplace_back(nb::cast<int64_t>(dim));
+              }
+            }
+            std::vector<mgpu::TiledLayout::Dim> lane_dims;
+            for (const auto& dim : in_lane_dims) {
+              if (nb::isinstance<mgpu::Replicated>(dim)) {
+                lane_dims.emplace_back(nb::cast<mgpu::Replicated>(dim));
+              } else {
+                lane_dims.emplace_back(nb::cast<int64_t>(dim));
+              }
+            }
+            auto result = mgpu::TiledLayout::Create(
+                tiling, warp_dims, lane_dims, vector_dim, check_canonical);
+            if (!result.ok()) {
+              throw nb::value_error(result.status().message().data());
+            }
+            new (self) mgpu::TiledLayout(*result);
+          },
+          nb::arg("tiling"), nb::arg("warp_dims"), nb::arg("lane_dims"),
+          nb::arg("vector_dim"), nb::arg("_check_canonical") = true)
+      .def_prop_ro("warp_dims",
+                   [](const mgpu::TiledLayout& self) {
+                     nb::list l;
+                     for (const auto& d : self.warp_dims()) {
+                       if (std::holds_alternative<mgpu::Replicated>(d)) {
+                         l.append(nb::cast(std::get<mgpu::Replicated>(d)));
+                       } else {
+                         l.append(nb::cast(std::get<int64_t>(d)));
+                       }
+                     }
+                     return nb::tuple(l);
+                   })
+      .def_prop_ro("lane_dims",
+                   [](const mgpu::TiledLayout& self) {
+                     nb::list l;
+                     for (const auto& d : self.lane_dims()) {
+                       if (std::holds_alternative<mgpu::Replicated>(d)) {
+                         l.append(nb::cast(std::get<mgpu::Replicated>(d)));
+                       } else {
+                         l.append(nb::cast(std::get<int64_t>(d)));
+                       }
+                     }
+                     return nb::tuple(l);
+                   })
+      .def_prop_ro("vector_dim", &mgpu::TiledLayout::vector_dim)
+      .def_prop_ro("tiling", &mgpu::TiledLayout::tiling)
+      .def_prop_ro("tiled_tiling_shape",
+                   [](const mgpu::TiledLayout& self) {
+                     auto result = self.TiledTilingShape();
+                     if (!result.ok()) {
+                       throw nb::value_error(result.status().message().data());
+                     }
+                     return nb::tuple(nb::cast(*self.TiledTilingShape()));
+                   })
+      .def("canonicalize",
+           [](const mgpu::TiledLayout& self) {
+             auto result = self.Canonicalize();
+             if (!result.ok()) {
+               throw nb::value_error(result.status().message().data());
+             }
+             return *result;
+           })
+      .def("__str__", &mgpu::TiledLayout::ToString)
+      .def("__repr__", &mgpu::TiledLayout::ToString)
+      .def("__hash__",
+           [](const mgpu::TiledLayout& self) {
+             return absl::Hash<mgpu::TiledLayout>{}(self);
+           })
+      .def(
+          "__eq__",
+          [](const mgpu::TiledLayout& self, nb::object other) -> bool {
+            if (!nb::isinstance<mgpu::TiledLayout>(other)) {
+              return false;
+            }
+            return self == nb::cast<mgpu::TiledLayout>(other);
+          },
+          nb::arg("other").none());
 }

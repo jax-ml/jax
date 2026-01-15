@@ -419,6 +419,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -428,5 +429,6 @@ cc_test(
     deps = [
         ":tiled_layout",
         "//testing/base/public:gunit_main",
+        "@com_google_absl//absl/status",
     ],
 )

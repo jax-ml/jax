@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "jaxlib/mosaic/gpu/tiled_layout.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -22,13 +23,45 @@ limitations under the License.
 #include <sstream>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace jax::mosaic::gpu {
+namespace {
+
+constexpr int64_t WARP_SIZE = 32;
+constexpr int64_t WARPGROUP_SIZE = 128;
+constexpr int64_t WARPS_IN_WARPGROUP = WARPGROUP_SIZE / WARP_SIZE;
+
+int64_t DimSize(const TiledLayout::Dim& d,
+                const std::vector<int64_t>& tiled_shape) {
+  if (std::holds_alternative<Replicated>(d)) {
+    return std::get<Replicated>(d).times;
+  }
+  int64_t idx = std::get<int64_t>(d);
+  CHECK(idx < 0) << "Dimension index must be negative";
+  idx += tiled_shape.size();
+  CHECK(idx >= 0 && idx < tiled_shape.size()) << "Dimension index out of range";
+  return tiled_shape[idx];
+}
+
+std::vector<int64_t> PartitionedDims(
+    const std::vector<TiledLayout::Dim>& dims) {
+  std::vector<int64_t> result;
+  for (const auto& d : dims) {
+    if (std::holds_alternative<int64_t>(d)) {
+      result.push_back(std::get<int64_t>(d));
+    }
+  }
+  return result;
+}
+
+}  // namespace
 
 Tiling::Tiling(std::vector<Tile> tiles) : tiles_(std::move(tiles)) {}
 
@@ -386,6 +419,208 @@ std::ostream& operator<<(std::ostream& os, const Tiling& tiling) {
 std::string Replicated::ToString() const {
   std::stringstream ss;
   ss << "Replicated(" << times << ")";
+  return ss.str();
+}
+
+absl::StatusOr<TiledLayout> TiledLayout::Create(Tiling tiling,
+                                                std::vector<Dim> warp_dims,
+                                                std::vector<Dim> lane_dims,
+                                                int64_t vector_dim,
+                                                bool check_canonical) {
+  if (tiling.tiles().empty()) {
+    return absl::InvalidArgumentError("Tiling must have at least one tile");
+  }
+  const Tiling::Tile& min_shape = tiling.tiles()[0];
+  TF_ASSIGN_OR_RETURN(std::vector<int64_t> min_tiled_shape,
+                      tiling.TileShape(min_shape));
+
+  std::vector<int64_t> partitioned_warp_dims = PartitionedDims(warp_dims);
+  std::vector<int64_t> partitioned_lane_dims = PartitionedDims(lane_dims);
+
+  // Keeping the dimensions in a std::vector as the size is small and the extra
+  // overhead of a set would be larger.
+  std::vector<int64_t> dims_set;
+  dims_set.insert(dims_set.end(), partitioned_warp_dims.begin(),
+                  partitioned_warp_dims.end());
+  dims_set.insert(dims_set.end(), partitioned_lane_dims.begin(),
+                  partitioned_lane_dims.end());
+  dims_set.push_back(vector_dim);
+
+  for (int64_t d : dims_set) {
+    if (d >= 0) {
+      return absl::InvalidArgumentError("All dimensions must be negative");
+    }
+
+    if (d < -static_cast<int64_t>(min_tiled_shape.size() - min_shape.size())) {
+      return absl::InvalidArgumentError("Dimension out of range");
+    }
+  }
+
+  std::sort(dims_set.begin(), dims_set.end());
+  for (size_t i = 1; i < dims_set.size(); ++i) {
+    if (dims_set[i] == dims_set[i - 1]) {
+      return absl::InvalidArgumentError("Duplicate partitioning dimensions");
+    }
+  }
+
+  int64_t warp_dims_prod = 1;
+  for (const Dim& d : warp_dims) {
+    warp_dims_prod *= DimSize(d, min_tiled_shape);
+  }
+  if (warp_dims_prod != WARPS_IN_WARPGROUP) {
+    return absl::InvalidArgumentError(
+        "The product of warp dims does not equal the number of warps in a "
+        "warpgroup");
+  }
+
+  int64_t lane_dims_prod = 1;
+  for (const auto& d : lane_dims) {
+    lane_dims_prod *= DimSize(d, min_tiled_shape);
+  }
+  if (lane_dims_prod != WARP_SIZE) {
+    return absl::InvalidArgumentError(
+        "The product of lane dims does not equal the warp size");
+  }
+
+  TiledLayout layout(std::move(tiling), std::move(warp_dims),
+                     std::move(lane_dims), vector_dim);
+  if (check_canonical) {
+    TF_ASSIGN_OR_RETURN(TiledLayout canonical, layout.Canonicalize());
+    if (canonical != layout) {
+      return absl::InvalidArgumentError("TiledLayout is not canonical");
+    }
+  }
+  return layout;
+}
+
+absl::StatusOr<std::vector<int64_t>> TiledLayout::TiledTilingShape() const {
+  const Tiling::Tile& min_shape = tiling_.tiles()[0];
+  TF_ASSIGN_OR_RETURN(std::vector<int64_t> min_tiled_shape,
+                      tiling_.TileShape(min_shape));
+  return std::vector<int64_t>(min_tiled_shape.begin() + min_shape.size(),
+                              min_tiled_shape.end());
+}
+
+absl::StatusOr<TiledLayout> TiledLayout::Canonicalize() const {
+  Tiling canonical_tiling = tiling_.Canonicalize();
+  const std::vector<int64_t>& s = tiling_.tiles()[0];
+  TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_tiling_shape,
+                      TiledTilingShape());
+
+  TF_ASSIGN_OR_RETURN(std::vector<int64_t> canonical_tiled_tiling_shape,
+                      canonical_tiling.TileShape(s));
+  canonical_tiled_tiling_shape.erase(
+      canonical_tiled_tiling_shape.begin(),
+      canonical_tiled_tiling_shape.begin() + s.size());
+
+  int64_t offset =
+      static_cast<int64_t>(canonical_tiled_tiling_shape.size()) - 1;
+  std::vector<bool> rev_removed_dims;
+  // Iterate starting from the end in order to eliminate leading dimensions,
+  // whenever possible. For instance, say we have
+  //
+  //   shape=(4, 32, 1, 1, 1, 1, 1)
+  //   warp_dims=(-7,),
+  //   lane_dims=(-6,)
+  //   vector_dim=-1
+  //
+  // and we want to canonicalize this to
+  //
+  //   shape=(4, 32, 1)
+  //   warp_dims=(-3,),
+  //   lane_dims=(-2,)
+  //   vector_dim=-1.
+  //
+  // After the loop below, we end up with
+  //
+  //   rev_removed_dims=[False, True, True, True, True, False, False]
+  //
+  // which will yield offsets `4` for `warp_dims[0]`, `4` for `lane_dims[0]`,
+  // and `0` for `vector_dim`.
+  for (auto it = tiled_tiling_shape.rbegin(); it != tiled_tiling_shape.rend();
+       ++it) {
+    if (offset >= 0 && *it == canonical_tiled_tiling_shape[offset]) {
+      rev_removed_dims.push_back(false);
+      offset--;
+    } else {
+      rev_removed_dims.push_back(true);
+    }
+  }
+  CHECK_EQ(offset, -1);
+
+  std::vector<int64_t> dim_offsets(rev_removed_dims.size());
+  int64_t current_sum = 0;
+  for (size_t i = 0; i < rev_removed_dims.size(); ++i) {
+    if (rev_removed_dims[i]) {
+      current_sum++;
+    }
+    dim_offsets[i] = current_sum;
+  }
+  std::reverse(dim_offsets.begin(), dim_offsets.end());
+
+  auto replace_tiled_dim = [&](Dim d) -> Dim {
+    if (std::holds_alternative<Replicated>(d)) {
+      return d;
+    }
+    int64_t idx = std::get<int64_t>(d);
+    CHECK(idx < 0) << "Expected negative index";
+    return idx + dim_offsets[idx + tiled_tiling_shape.size()];
+  };
+
+  auto is_nontrivial = [&](Dim d) -> bool {
+    if (std::holds_alternative<Replicated>(d)) {
+      return true;
+    }
+    int64_t idx = std::get<int64_t>(d);
+    CHECK(idx < 0) << "Expected negative index";
+    return tiled_tiling_shape[idx + tiled_tiling_shape.size()] != 1;
+  };
+
+  std::vector<Dim> new_warp_dims;
+  for (const auto& d : warp_dims_) {
+    if (is_nontrivial(d)) {
+      new_warp_dims.push_back(replace_tiled_dim(d));
+    }
+  }
+  std::vector<Dim> new_lane_dims;
+  for (const auto& d : lane_dims_) {
+    if (is_nontrivial(d)) {
+      new_lane_dims.push_back(replace_tiled_dim(d));
+    }
+  }
+  Dim new_vector_dim_val = replace_tiled_dim(vector_dim_);
+  int64_t new_vector_dim = std::get<int64_t>(new_vector_dim_val);
+
+  return TiledLayout(canonical_tiling, new_warp_dims, new_lane_dims,
+                     new_vector_dim);
+}
+
+bool TiledLayout::operator==(const TiledLayout& other) const {
+  return tiling_ == other.tiling_ && warp_dims_ == other.warp_dims_ &&
+         lane_dims_ == other.lane_dims_ && vector_dim_ == other.vector_dim_;
+}
+
+std::string TiledLayout::ToString() const {
+  std::stringstream ss;
+  ss << "TiledLayout(tiling=" << tiling_.ToString() << ", warp_dims=(";
+  for (size_t i = 0; i < warp_dims_.size(); ++i) {
+    if (i > 0) ss << ", ";
+    if (std::holds_alternative<Replicated>(warp_dims_[i])) {
+      ss << "Replicated(" << std::get<Replicated>(warp_dims_[i]).times << ")";
+    } else {
+      ss << std::get<int64_t>(warp_dims_[i]);
+    }
+  }
+  ss << "), lane_dims=(";
+  for (size_t i = 0; i < lane_dims_.size(); ++i) {
+    if (i > 0) ss << ", ";
+    if (std::holds_alternative<Replicated>(lane_dims_[i])) {
+      ss << "Replicated(" << std::get<Replicated>(lane_dims_[i]).times << ")";
+    } else {
+      ss << std::get<int64_t>(lane_dims_[i]);
+    }
+  }
+  ss << "), vector_dim=" << vector_dim_ << ")";
   return ss.str();
 }
 
