@@ -361,7 +361,17 @@ def _run_scoped_resource_estimator(
           f"Unsupported memory space: {aval.memory_space}")
   return rs + _estimate_resources(ctx, jaxpr)
 
-REDUCE_SCRATCH_ELEMS = 128 * 4  # vector of 4 elements per lane in each WG
+# Vector of 6 elements per lane in each WG. This is optimized for cross-warp
+# reductions involving each lane storing two elements, such as e.g. row
+# reductions of the WGMMA and TCGEN05 layouts. This allows us to do 3 2-element
+# cross-warp reductions in parallel. Benchmarking has shown that this should
+# achieve most of the gains for H100 and B200 for this configuration.
+#
+# It is possible to achieve more gains by increasing this further, but since
+# this consumes SMEM space, we should be careful to not reserve too much.
+# TODO(bchetioui): Allow this to be overriden by the user.
+REDUCE_SCRATCH_ELEMS = 128 * 2 * 6
+
 
 @_register_resource_estimator(lax.reduce_sum_p)
 @_register_resource_estimator(lax.reduce_max_p)
