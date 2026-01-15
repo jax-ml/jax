@@ -76,7 +76,7 @@ def _reduce_window(
         window_dimensions if window_dilation is None else
         lax._dilate_shape(window_dimensions, window_dilation))
     padding = tuple(lax.padtype_to_pads(
-        flat_operands[0].shape, dilated_window_dims, window_strides, padding))
+        flat_operands[0].shape, dilated_window_dims, window_strides or [], padding))
   else:
     padding = tuple((x, y) for x, y in padding)
   if window_strides is None:
