@@ -31,6 +31,14 @@ exports_files(
 )
 
 py_library(
+    name = "gpu_examples",
+    srcs = [
+        "__init__.py",
+    ],
+    visibility = ["//jax:internal"],
+)
+
+py_library(
     name = "matmul",
     srcs = ["matmul.py"],
     deps = [

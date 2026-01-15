@@ -34,18 +34,6 @@ fi
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
 
-if [[ "$JAXCI_BUILD_JAXLIB" == "false" ]]; then
-  WHEEL_SIZE_TESTS=""
-else
-  WHEEL_SIZE_TESTS="//jaxlib/tools:jax_cuda_plugin_wheel_size_test \
-      //jaxlib/tools:jax_cuda_pjrt_wheel_size_test \
-      //jaxlib/tools:jaxlib_wheel_size_test"
-fi
-
-if [[ "$JAXCI_BUILD_JAX" != "false" ]]; then
-  WHEEL_SIZE_TESTS="$WHEEL_SIZE_TESTS //:jax_wheel_size_test"
-fi
-
 if [[ "$JAXCI_BUILD_JAXLIB" != "true" ]]; then
   cuda_libs_flag="--config=cuda_libraries_from_stubs"
 else
@@ -72,4 +60,4 @@ bazel test --config=rbe_linux_x86_64_cuda${JAXCI_CUDA_VERSION} \
       --//jax:build_jax=$JAXCI_BUILD_JAX \
       //tests:gpu_tests //tests:backend_independent_tests \
       //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests \
-      $WHEEL_SIZE_TESTS
+      //jaxlib/tools:check_gpu_wheel_sources_test

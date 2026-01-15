@@ -174,6 +174,7 @@ else
     --verbose_failures \
     --test_output=errors \
     -- \
+    //jaxlib/tools:check_tpu_wheel_sources_test \
     //tests/pallas:ops_test_tpu \
     //tests/pallas:export_back_compat_pallas_test_tpu \
     //tests/pallas:export_pallas_test_tpu \

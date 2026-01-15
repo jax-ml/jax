@@ -160,6 +160,8 @@ def py_extension(name, srcs, copts, deps, linkopts = []):
     nanobind_extension(name, srcs = srcs, copts = copts, linkopts = linkopts, deps = deps, module_name = name)
 
 ALL_BACKENDS = ["cpu", "gpu", "tpu"]
+TEST_SUITE_SUFFIX = "_tests"
+BACKEND_INDEPENDENT_TESTS = "backend_independent_tests"
 
 def if_building_jaxlib(
         if_building,
@@ -308,7 +310,27 @@ def jax_multiplatform_test(
             tags = test_tags,
             main = main,
             exec_properties = tf_exec_properties({"tags": test_tags}),
+            visibility = jax_visibility(name),
         )
+
+def get_test_suite_list(paths, backends = []):
+    """Returns a list of test suite targets for the given paths and backends.
+
+    Args:
+      paths: the paths to the test suites.
+      backends: the set of backends for which rules should be generated. Defaults to all backends.
+
+    Returns:
+      A list of backend specific test suite targets.
+    """
+    test_suite_list = []
+    if not backends:
+        backends = ALL_BACKENDS
+    for path in paths:
+        for backend in backends:
+            test_suite_list.append("//{}:{}{}".format(path, backend, TEST_SUITE_SUFFIX))
+        test_suite_list.append("//{}:{}".format(path, BACKEND_INDEPENDENT_TESTS))
+    return test_suite_list
 
 def jax_generate_backend_suites(backends = []):
     """Generates test suite targets named cpu_tests, gpu_tests, etc.
@@ -320,12 +342,14 @@ def jax_generate_backend_suites(backends = []):
         backends = ALL_BACKENDS
     for backend in backends:
         native.test_suite(
-            name = "%s_tests" % backend,
+            name = backend + TEST_SUITE_SUFFIX,
             tags = ["jax_test_%s" % backend, "-manual"],
+            visibility = jax_visibility(backend + TEST_SUITE_SUFFIX),
         )
     native.test_suite(
-        name = "backend_independent_tests",
+        name = BACKEND_INDEPENDENT_TESTS,
         tags = ["-jax_test_%s" % backend for backend in backends] + ["-manual"],
+        visibility = jax_visibility(BACKEND_INDEPENDENT_TESTS),
     )
 
 def _get_full_wheel_name(
@@ -642,11 +666,15 @@ def wheel_sources(
         symlink_deps = symlink_data_srcs,
     )
     transitive_hdrs(name = "{}_hdrs".format(name), deps = hdr_srcs)
-    native.filegroup(name = name, srcs = [
-        ":{}_py".format(name),
-        ":{}_data".format(name),
-        ":{}_hdrs".format(name),
-    ] + static_srcs)
+    native.filegroup(
+        name = name,
+        srcs = [
+            ":{}_py".format(name),
+            ":{}_data".format(name),
+            ":{}_hdrs".format(name),
+        ] + static_srcs,
+        visibility = jax_visibility(name),
+    )
 
 def if_pypi_cuda_wheel_deps(if_true, if_false = []):
     """ select() on whether we're adding pypi CUDA wheel deps. """
@@ -709,3 +737,158 @@ def jax_multiprocess_test(
 
 def jax_multiprocess_generate_backend_suites(name = None, backends = []):
     return jax_generate_backend_suites(backends = backends)
+
+TransitiveSrcsInfo = provider(
+    "Provider to collect transitive source files and dependencies",
+    fields = {"files": "depset of files"},
+)
+
+def _collect_transitive_srcs_aspect_impl(_, ctx):
+    files = []
+    attrs_to_traverse = ["srcs", "deps"]
+    if ctx.rule.kind == "test_suite":
+        attrs_to_traverse.append("_implicit_tests")
+    is_test_rule = ctx.rule.kind in ["py_test", "test_suite"]
+
+    for attr in attrs_to_traverse:
+        if not hasattr(ctx.rule.attr, attr):
+            continue
+        attr_val = getattr(ctx.rule.attr, attr)
+        if type(attr_val) != "list":
+            continue
+
+        for dep in attr_val:
+            transitive_sources = {}
+            if not PyInfo in dep:
+                continue
+            if is_test_rule:
+                source_files = [f for f in dep[DefaultInfo].files.to_list() if f.is_source]
+            else:
+                source_files = []
+            for ts in dep[PyInfo].transitive_sources.to_list():
+                if (not ts.owner.package or ts in source_files):
+                    # Skip test source files and files in @pypi wheels
+                    continue
+                else:
+                    transitive_sources[ts] = True
+            files.append(depset(transitive_sources.keys()))
+    return [TransitiveSrcsInfo(files = depset(transitive = files))]
+
+collect_srcs_aspect = aspect(
+    implementation = _collect_transitive_srcs_aspect_impl,
+    attr_aspects = ["srcs", "deps"],
+)
+
+collect_test_deps_aspect = aspect(
+    implementation = _collect_transitive_srcs_aspect_impl,
+    attr_aspects = ["tests"],
+)
+
+def _compare_srcs_and_test_deps_test_impl(ctx):
+    build_jaxlib = ctx.attr.build_jaxlib[BuildSettingInfo].value
+    build_jax = ctx.attr.build_jax[BuildSettingInfo].value
+    message = "PASSED: All test dependencies are present in the wheel."
+    test_result = 0
+    doc_link = "https://github.com/jax-ml/jax/blob/main/docs/contributing.md#wheel-sources-update"
+
+    if build_jax == "true" and build_jaxlib == "true":
+        srcs_list = []
+        for src in ctx.attr.srcs:
+            if TransitiveSrcsInfo in src:
+                srcs_list.append(src[TransitiveSrcsInfo].files)
+
+        srcs_depset = depset(transitive = srcs_list)
+        srcs_map = {
+            f.short_path: True
+            for f in srcs_depset.to_list() + ctx.files.srcs
+        }
+
+        test_dependencies_list = []
+        for test in ctx.attr.tests:
+            if TransitiveSrcsInfo in test:
+                test_dependencies_list.append(test[TransitiveSrcsInfo].files)
+
+        test_dependencies_depset = depset(transitive = test_dependencies_list)
+        test_dependencies_map = {}
+
+        # We need to add __init__.py files for all python modules to make them available via API.
+        for f in test_dependencies_depset.to_list():
+            test_dependencies_map[f.short_path] = True
+            init_py_path = f.short_path.replace(f.basename, "__init__.py")
+            for root_folder_name in ctx.attr.root_package_names:
+                if (f.short_path.startswith(root_folder_name) and
+                    init_py_path not in ctx.attr.ignored_init_py_files):
+                    test_dependencies_map[init_py_path] = True
+                    break
+
+        test_dependencies_paths = [k for k in test_dependencies_map.keys()]
+        srcs_paths = srcs_map.keys()
+
+        if srcs_paths != test_dependencies_paths:
+            missing_in_srcs = sorted([
+                p
+                for p in test_dependencies_paths
+                if p not in srcs_map
+            ])
+
+            if missing_in_srcs:
+                message = ("FAILED: Files in test dependencies not found in sources: %s" %
+                           missing_in_srcs + "\n" +
+                           "See instructions in %s" % doc_link)
+                test_result = 1
+
+    else:
+        message = "SKIPPED: The test will be executed only with //jax:build_jax=true and //jax:build_jaxlib=true."
+        test_result = 0
+
+    script_content = """#!/bin/bash
+echo "%s"
+exit %s""" % (message, test_result)
+    test_runner_script = ctx.actions.declare_file(ctx.label.name + "_runner.sh")
+    ctx.actions.write(
+        output = test_runner_script,
+        content = script_content,
+        is_executable = True,
+    )
+
+    runfiles = ctx.runfiles(files = [])
+
+    return [
+        DefaultInfo(
+            executable = test_runner_script,
+            runfiles = runfiles,
+        ),
+    ]
+
+compare_srcs_and_test_deps_test = rule(
+    implementation = _compare_srcs_and_test_deps_test_impl,
+    attrs = {
+        "srcs": attr.label_list(
+            allow_files = True,
+            mandatory = True,
+            aspects = [collect_srcs_aspect],
+        ),
+        "tests": attr.label_list(
+            allow_empty = False,
+            mandatory = True,
+            aspects = [collect_test_deps_aspect],
+        ),
+        "ignored_init_py_files": attr.string_list(
+            mandatory = True,
+        ),
+        "build_jaxlib": attr.label(default = Label("//jax:build_jaxlib")),
+        "build_jax": attr.label(default = Label("//jax:build_jax")),
+        "root_package_names": attr.string_list(mandatory = True),
+    },
+    test = True,
+)
+"""Compares the source files against the test dependencies.
+
+Args:
+  srcs: The source files to compare.
+  tests: The test dependencies to compare.
+  ignored_init_py_files: The init python files to ignore.
+  build_jaxlib: The build setting for jaxlib.
+  build_jax: The build setting for jax.
+  root_package_names: The root folder names to compare.
+"""  # buildifier: disable=no-effect

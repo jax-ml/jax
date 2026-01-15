@@ -14,6 +14,7 @@
 
 load(
     "//jaxlib:jax.bzl",
+    "if_cuda_is_configured",
     "jax_generate_backend_suites",
     "jax_multiplatform_test",
     "jax_py_test",
@@ -51,10 +52,10 @@ jax_multiplatform_test(
     tags = [
         "noasan",  # Times out.
     ],
-    deps = [
+    deps = if_cuda_is_configured([
         "//jax/experimental:mosaic_gpu",
         "//jax/experimental:mosaic_gpu_test_util",
-    ] + py_deps([
+    ]) + py_deps([
         "absl/testing",
         "numpy",
         "hypothesis",
@@ -73,9 +74,9 @@ jax_multiplatform_test(
     tags = [
         "noasan",  # ASAN is unsupported.
     ],
-    deps = [
+    deps = if_cuda_is_configured([
         "//jax/experimental:mosaic_gpu",
-    ] + py_deps([
+    ]) + py_deps([
         "absl/testing",
         "numpy",
         "torch",
@@ -92,9 +93,9 @@ jax_multiplatform_test(
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     tags = ["multiaccelerator"],
-    deps = [
+    deps = if_cuda_is_configured([
         "//jax/experimental:mosaic_gpu",
-    ] + py_deps([
+    ]) + py_deps([
         "absl/testing",
         "numpy",
     ]),
@@ -116,8 +117,9 @@ jax_multiplatform_test(
     tags = ["multiaccelerator"],
     deps = [
         "//jax/_src:test_multiprocess",
+    ] + if_cuda_is_configured([
         "//jax/experimental:mosaic_gpu",
-    ] + py_deps([
+    ]) + py_deps([
         "absl/testing",
         "numpy",
     ]),
@@ -130,8 +132,9 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax/_src:test_util",
+    ] + if_cuda_is_configured([
         "//jax/experimental:mosaic_gpu",
-    ] + py_deps("absl/testing"),
+    ]) + py_deps("absl/testing"),
 )
 
 jax_py_test(
@@ -140,8 +143,9 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax/_src:test_util",
+    ] + if_cuda_is_configured([
         "//jax/experimental:mosaic_gpu",
-    ] + py_deps("absl/testing"),
+    ]) + py_deps("absl/testing"),
 )
 
 jax_py_test(
@@ -152,9 +156,10 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax/_src:test_util",
+    ] + if_cuda_is_configured([
         "//jax/experimental:mosaic_gpu",
         "//jax/experimental:mosaic_gpu_test_util",
-    ] + py_deps("absl/testing"),
+    ]) + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -169,11 +174,11 @@ jax_multiplatform_test(
     tags = [
         "noasan",
     ],
-    deps = [
+    deps = if_cuda_is_configured([
         "//jax/experimental:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:matmul",
         "//jax/experimental/mosaic/gpu/examples:matmul_blackwell",
-    ] + py_deps([
+    ]) + py_deps([
         "absl/testing",
         "numpy",
         "hypothesis",
@@ -194,9 +199,9 @@ jax_multiplatform_test(
         "noasan",
         "notap",
     ],
-    deps = [
+    deps = if_cuda_is_configured([
         "//jax/experimental:mosaic_gpu",
-    ] + py_deps([
+    ]) + py_deps([
         "numpy",
         "absl/testing",
     ]),
@@ -214,10 +219,10 @@ jax_multiplatform_test(
     tags = [
         "noasan",  # Remove the tag once the CUPTI issue is fixed.
     ],
-    deps = [
+    deps = if_cuda_is_configured([
         "//jax/experimental:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:flash_attention",
-    ] + py_deps("absl/testing"),
+    ]) + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -232,7 +237,7 @@ jax_multiplatform_test(
         "noasan",  # CUPTI leaks memory
         "nomsan",
     ],
-    deps = [
+    deps = if_cuda_is_configured([
         "//jax/experimental:mosaic_gpu",
-    ] + py_deps("absl/testing"),
+    ]) + py_deps("absl/testing"),
 )
