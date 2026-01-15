@@ -102,8 +102,7 @@ static FailureOr<APFloat> convertFloatValue(
 
 LogicalResult UnrollVectorsOp::canonicalize(UnrollVectorsOp op,
                                             PatternRewriter &rewriter) {
-  RollVectorsOp roll_op =
-      dyn_cast_or_null<RollVectorsOp>(op.getOperand().getDefiningOp());
+  RollVectorsOp roll_op = op.getOperand().getDefiningOp<RollVectorsOp>();
   if (!roll_op) {
     return failure();
   }
