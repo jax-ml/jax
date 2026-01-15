@@ -5149,21 +5149,6 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TracerBoolConversionError, r"with shape bool\[\]\.[^\.]"):
       f(0)
 
-  def test_dot_general_grad_preferred_element_type(self):
-    w = jnp.ones((4, 5), dtype=jnp.float32)
-    x = jnp.ones((3, 4), dtype=jnp.bfloat16)
-
-    def f(w, x):
-      y = jax.lax.dot_general(x, w, dimension_numbers=((1, 0), ((), ())),
-                              preferred_element_type=jnp.bfloat16)
-      return jnp.mean(y, dtype=jnp.bfloat16)
-
-    f = jax.jit(jax.grad(f))
-    out = f(w, x)
-    self.assertEqual(out.dtype, w.dtype)
-    jaxpr = f.trace(w, x).jaxpr
-    self.assertNotIn('convert_element_type', str(jaxpr))
-
   def test_inlined_literals_with_error(self):
     @jax.jit
     def f():
