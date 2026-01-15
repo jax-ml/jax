@@ -737,6 +737,9 @@ jax_multiplatform_test(
     srcs = [
         "tpu_splash_attention_kernel_test.py",
     ],
+    disable_configs = [
+        "tpu_7x_x4",  # not a multi-chip test
+    ],
     enable_backends = ["tpu"],
     minimal_shard_count = 8,
     shard_count = 24,
