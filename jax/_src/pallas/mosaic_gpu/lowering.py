@@ -361,7 +361,7 @@ def _run_scoped_resource_estimator(
           f"Unsupported memory space: {aval.memory_space}")
   return rs + _estimate_resources(ctx, jaxpr)
 
-REDUCE_SCRATCH_ELEMS = 128 * 2  # vector of 2 elements per lane in each WG
+REDUCE_SCRATCH_ELEMS = 128 * 4  # vector of 4 elements per lane in each WG
 
 @_register_resource_estimator(lax.reduce_sum_p)
 @_register_resource_estimator(lax.reduce_max_p)
@@ -2590,7 +2590,12 @@ def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):
         raise NotImplementedError("Multi-axis reductions not supported")
       reduced_dim = x.layout.tiling.tile_dimension(axes[0])
       if any(reduced_dim[d] for d in x.layout.partitioned_warp_dims):
-        scratch_ty = jax.ShapeDtypeStruct(shape=(REDUCE_SCRATCH_ELEMS,), dtype=x_aval.dtype)
+        size = x.layout.vector_length * 128  # a vector per lane in each WG.
+        if size > REDUCE_SCRATCH_ELEMS:
+          raise NotImplementedError(
+              f"Reduce scratch {size=} exceeds max={REDUCE_SCRATCH_ELEMS}"
+          )
+        scratch_ty = jax.ShapeDtypeStruct(shape=(size,), dtype=x_aval.dtype)
         ctx = ctx.module_ctx.scratch_view(scratch_ty)
       else:
         ctx = contextlib.nullcontext(None)

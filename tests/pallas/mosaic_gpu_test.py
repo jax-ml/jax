@@ -2463,6 +2463,20 @@ class PallasCallTest(PallasTest):
     x_result = jax.block_until_ready(kernel(x))
     np.testing.assert_allclose(x_result, op(x, axis=axis), atol=5e-5)
 
+  def test_cross_warp_reduction(self):
+    self.skip_if_wg_semantics()  # cross-warp reductions are not supported.
+    @functools.partial(
+        self.kernel,
+        out_shape=jnp.zeros((128,), jnp.float32),
+    )
+    def kernel(x_ref, y_ref):
+      layout = plgpu.Layout.TCGEN05_TMEM_NATIVE(4)
+      x_val = plgpu.load(x_ref, (), layout=layout, optimized=False)
+      y_ref[...] = jnp.sum(x_val, axis=0)
+
+    x = jax.random.uniform(jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
+    np.testing.assert_allclose(kernel(x), jnp.sum(x, axis=0), atol=5e-5)
+
   def _test_broadcast_in_dim_base(self, shape, layout, *, axis, hint):
     assert len(shape) == 2
 
