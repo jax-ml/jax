@@ -8569,7 +8569,11 @@ class PaddingType(enum.Enum):
   SAME_LOWER = 3
 
 
-def padtype_to_pads(in_shape, window_shape, window_strides, padding):
+def padtype_to_pads(
+    in_shape: Sequence[int] | np.ndarray,
+    window_shape: Sequence[int] | np.ndarray,
+    window_strides: Sequence[int] | np.ndarray,
+    padding: str | PaddingType) -> list[tuple[int, int]]:
   """Convert a padding specification to a list of pad value pairs.
 
   This utility resolves abstract convolution padding modes into concrete
@@ -8600,20 +8604,15 @@ def padtype_to_pads(in_shape, window_shape, window_strides, padding):
       amount is odd, the extra padding is added to the **start**
       (low side) of the dimension.
   """
-
   if isinstance(padding, str):
-    mapping = {
-        'VALID': PaddingType.VALID,
-        'SAME': PaddingType.SAME,
-        'SAME_LOWER': PaddingType.SAME_LOWER,
-    }
     try:
-      padding = mapping[padding.upper()]
+      padding = PaddingType[padding.upper()]
     except KeyError as err:
-      msg = "Unrecognized padding type: expected 'VALID', 'SAME', or 'SAME_LOWER', got {}."
-      raise RuntimeError(msg.format(padding)) from err
+      raise RuntimeError(
+        f"Unrecognized padding type: expected 'VALID', 'SAME', or 'SAME_LOWER', got {padding}."
+      ) from err
 
-  if padding == PaddingType.SAME or padding == PaddingType.SAME_LOWER:
+  if padding in (PaddingType.SAME, PaddingType.SAME_LOWER):
     out_shape = _ceil_divide(in_shape, window_strides)
     pad_sizes = (core.max_dim(d, 0)
                  for d in (out_shape - 1) * window_strides +
@@ -8627,15 +8626,11 @@ def padtype_to_pads(in_shape, window_shape, window_strides, padding):
           (pad_size - pad_size // 2, pad_size // 2) for pad_size in pad_sizes
       ]
     # Avoids verbose numpy scalars in jaxprs.
-    return [
-      tuple(x.item() if isinstance(x, np.generic) else x for x in p)
-      for p in pads
-    ]
+    return tree_util.tree_map(lambda x: x.item() if isinstance(x, np.generic) else x, pads)
   elif padding == PaddingType.VALID:
     return [(0, 0)] * len(in_shape)
   else:
-    msg = "Unknown padding type: {}."
-    raise TypeError(msg.format(padding))
+    raise TypeError(f"Unknown padding type: {padding}.")
 
 
 # Map of lax function to equivalent jax.numpy function for use in error string below.
