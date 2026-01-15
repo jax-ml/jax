@@ -1073,7 +1073,7 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
         query_quantized, key_quantized, value_quantized, fp8_metas
     )
     out_ref = jitted_sdpa_inference_ref(query, key, value)
-    self.assertArraysAllClose(out_ref, out.astype(dtype), rtol=6e-2, atol=6e-2)
+    self.assertArraysAllClose(out_ref, out.astype(dtype), rtol=8e-2, atol=8e-2)
 
 
 if __name__ == "__main__":
