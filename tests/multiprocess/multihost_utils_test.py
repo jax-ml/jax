@@ -102,6 +102,10 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
       self.assertEqual(out.shape, (2 * num_processes, 2))
       np.testing.assert_array_equal(out, np.concatenate([x] * num_processes))
 
+  @jtu.ignore_warning(
+      category=DeprecationWarning,
+      message='jax.sharding.PmapSharding is deprecated',
+  )
   def test_broadcast_one_to_all(self):
     elems_per_host = 4
 
@@ -118,6 +122,10 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
     out = multihost_utils.broadcast_one_to_all(x)
     np.testing.assert_array_equal(out, np.array(0))
 
+  @jtu.ignore_warning(
+      category=DeprecationWarning,
+      message='jax.sharding.PmapSharding is deprecated',
+  )
   def test_broadcast_one_to_all_set_mesh(self):
     devices = jax.devices()[1:] + [jax.devices()[0]]
     user_mesh = jax.sharding.Mesh(
@@ -141,6 +149,10 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
       out = multihost_utils.broadcast_one_to_all(x)
       np.testing.assert_array_equal(out, np.array(0))
 
+  @jtu.ignore_warning(
+      category=DeprecationWarning,
+      message='jax.sharding.PmapSharding is deprecated',
+  )
   def test_broadcast_one_to_all_uint8(self):
     elems_per_host = 4
 
@@ -357,6 +369,10 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
 
     self.assertEqual(id(arr), id(out))
 
+  @jtu.ignore_warning(
+      category=DeprecationWarning,
+      message='jax.sharding.PmapSharding is deprecated',
+  )
   def test_host_local_array_to_global_array_same_sharding_array(self):
     if jtu.is_device_tpu('5', 'e'):
       raise unittest.SkipTest('Test fails on v5e')
@@ -390,6 +406,10 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
       )
       np.testing.assert_array_equal(o.data, global_data[o.index])
 
+  @jtu.ignore_warning(
+      category=DeprecationWarning,
+      message='jax.sharding.PmapSharding is deprecated',
+  )
   def test_host_local_to_global_reshard_committed_single_device_array(self):
     if jtu.is_device_tpu('5', 'e'):
       raise unittest.SkipTest('Test fails on v5e')
@@ -465,6 +485,10 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
       self.assertEqual(o.index, out.addressable_shards[0].index)
       np.testing.assert_array_equal(o.data, global_data[o.index])
 
+  @jtu.ignore_warning(
+      category=DeprecationWarning,
+      message='jax.sharding.PmapSharding is deprecated',
+  )
   def test_global_array_to_host_local_array(self):
     if jtu.is_device_tpu('5', 'e'):
       raise unittest.SkipTest('Test fails on v5e')
