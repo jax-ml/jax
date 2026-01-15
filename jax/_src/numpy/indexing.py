@@ -441,12 +441,13 @@ class NDIndexer:
       else:
         raise TypeError(f"static_slice: unrecognized index {pidx.index}")
     result = arr
-    is_trivial_slice = all(
-      (start, stop, step) == (0, size, 1)
-      for start, stop, step, size in zip(start_indices, limit_indices, strides, arr.shape)
+    optional_strides: list[int] | None = None if all(s == 1 for s in strides) else strides
+    is_trivial_slice = optional_strides is None and all(
+      (start, stop) == (0, size)
+      for start, stop, size in zip(start_indices, limit_indices, arr.shape)
     )
     if not is_trivial_slice:
-      result = slicing.slice(result, start_indices, limit_indices, strides)
+      result = slicing.slice(result, start_indices, limit_indices, optional_strides)
     if rev_axes:
       result = lax.rev(result, rev_axes)
     if squeeze_axes:

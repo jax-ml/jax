@@ -993,42 +993,49 @@ class IndexingTest(jtu.JaxTestCase):
 
   def testSimpleIndexingUsesSlice(self):
     jaxpr = jax.make_jaxpr(lambda x: x[:2, :2])(jnp.ones((3, 4)))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
-    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.slice_p)
+    eqn, = jaxpr.jaxpr.eqns
+    self.assertEqual(eqn.primitive, lax.slice_p)
+    self.assertIsNone(eqn.params['strides'])
 
     jaxpr = jax.make_jaxpr(lambda x: x[0, :2, 1])(jnp.ones((3, 4, 5)))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 2)
-    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.slice_p)
-    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+    slice_eqn, squeeze_eqn = jaxpr.jaxpr.eqns
+    self.assertEqual(slice_eqn.primitive, lax.slice_p)
+    self.assertEqual(squeeze_eqn.primitive, lax.squeeze_p)
+    self.assertIsNone(slice_eqn.params['strides'])
 
     jaxpr = jax.make_jaxpr(lambda x: x[0, 0])(jnp.ones((3, 4, 5)))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 2)
-    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.slice_p)
-    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+    slice_eqn, squeeze_eqn = jaxpr.jaxpr.eqns
+    self.assertEqual(slice_eqn.primitive, lax.slice_p)
+    self.assertEqual(squeeze_eqn.primitive, lax.squeeze_p)
+    self.assertIsNone(slice_eqn.params['strides'])
 
     jaxpr = jax.make_jaxpr(lambda x: x[:, 1])(jnp.ones((3, 4, 5)))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 2)
-    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.slice_p)
-    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+    slice_eqn, squeeze_eqn = jaxpr.jaxpr.eqns
+    self.assertEqual(slice_eqn.primitive, lax.slice_p)
+    self.assertEqual(squeeze_eqn.primitive, lax.squeeze_p)
+    self.assertIsNone(slice_eqn.params['strides'])
 
     # Indexing with `Ellipsis` is not lowered to `gather` ...
     jaxpr = jax.make_jaxpr(lambda x: x[..., 0])(jnp.ones((3, 4, 5)))
-    self.assertLen((jaxpr.jaxpr.eqns), 2)
-    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.slice_p)
-    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+    slice_eqn, squeeze_eqn = jaxpr.jaxpr.eqns
+    self.assertEqual(slice_eqn.primitive, lax.slice_p)
+    self.assertEqual(squeeze_eqn.primitive, lax.squeeze_p)
+    self.assertIsNone(slice_eqn.params['strides'])
 
     # ... even when the ellipsis expands to no dimensions.
     jaxpr = jax.make_jaxpr(lambda x: x[..., 0:1])(jnp.ones((3,)))
-    self.assertLen((jaxpr.jaxpr.eqns), 1)
-    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.slice_p)
+    eqn, = jaxpr.jaxpr.eqns
+    self.assertEqual(eqn.primitive, lax.slice_p)
+    self.assertIsNone(eqn.params['strides'])
     jaxpr = jax.make_jaxpr(lambda x: x[0:1, ...])(jnp.ones((3,)))
-    self.assertLen((jaxpr.jaxpr.eqns), 1)
-    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.slice_p)
+    eqn, = jaxpr.jaxpr.eqns
+    self.assertEqual(eqn.primitive, lax.slice_p)
+    self.assertIsNone(eqn.params['strides'])
 
     # Simple reverses lower to lax.rev_p
     jaxpr = jax.make_jaxpr(lambda x: x[:, ::-1])(jnp.ones((3, 4)))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
-    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.rev_p)
+    eqn, = jaxpr.jaxpr.eqns
+    self.assertEqual(eqn.primitive, lax.rev_p)
 
     # Non-static indices produce a dynamic slice
     jaxpr = jax.make_jaxpr(lambda x, i: x[i])(jnp.ones((4,)), 2)
