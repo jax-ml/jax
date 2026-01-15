@@ -146,8 +146,10 @@ def _maybe_physicalize_block_shape(aval, block_shape):
 # SHLO functions that compute the symbolic dimension expression for the
 # placeholder.
 class LoweringDynamicShapeEnv:
-  dim_expr_to_placeholder: dict[shape_poly._DimExpr, int] = {}
-  placeholder_to_dim_expr: dict[int, shape_poly._DimExpr] = {}
+
+  def __init__(self):
+    self.dim_expr_to_placeholder: dict[shape_poly._DimExpr, int] = {}
+    self.placeholder_to_dim_expr: dict[int, shape_poly._DimExpr] = {}
 
   def to_placeholder(self, dim_expr: Any) -> ir.Value:
     if jax_core.is_constant_dim(dim_expr):

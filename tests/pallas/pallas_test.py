@@ -2692,6 +2692,28 @@ class SymbolicPallasTest(ptu.PallasTest):
         str(exported_module),
     )
 
+  def test_pallas_shape_poly_no_cache_collision(self):
+
+    def kernel(x, y):
+      y[:] = x[:]
+
+    f = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    f = jax.vmap(f)
+
+    x1_shape = jax.ShapeDtypeStruct(
+        jax.export.symbolic_shape('b1, 8, 128'), jnp.float32
+    )
+    exported_module1 = pl.lower_as_mlir(jax.jit(f), x1_shape, dynamic_shapes=True)
+    self.assertIn("(b1, 8, 128)", str(exported_module1))
+    x2_shape = jax.ShapeDtypeStruct(
+        jax.export.symbolic_shape('b2, 8, 128'), jnp.float32
+    )
+    exported_module2 = pl.lower_as_mlir(jax.jit(f), x2_shape, dynamic_shapes=True)
+    self.assertIn("(b2, 8, 128)", str(exported_module2))
+
 
 class PallasCallNamedGridInterpretTest(PallasCallNamedGridTest):
   INTERPRET = True
