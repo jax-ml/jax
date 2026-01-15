@@ -4259,3 +4259,11 @@ def _dim_as_value_lowering(ctx: LoweringRuleContext, *, dim):
 def _touch_lowering_rule(ctx: LoweringRuleContext, x: jax.Array):
   del ctx, x
   return []
+
+
+@register_lowering_rule(tpu_primitives.trace_value_p)
+def _trace_value_lowering_rule(ctx: LoweringRuleContext, value, *, label: str):
+  """Lower trace_value to tpu.trace_value."""
+  del ctx
+  tpu.trace_value(value, label)
+  return []

@@ -1231,3 +1231,46 @@ def touch(ref: jax.Array | state.TransformedRef) -> None:
 @touch_p.def_effectful_abstract_eval
 def _touch_abstract_eval(ref: jax.Array):
   return [], {state.ReadEffect(0), state.WriteEffect(0)}
+
+
+trace_value_p = jax_core.Primitive("trace_value")
+trace_value_p.multiple_results = True
+
+
+def trace_value(label: str, value: jax.Array) -> None:
+  """Emit a scalar value to the current xprof trace scope.
+
+  This appends a dynamic scalar value to the enclosing trace region.
+  The value will appear in xprof trace viewer associated with the trace event.
+
+  Args:
+    label: A string label for this value in xprof.
+    value: A scalar i32 or f32 value to emit.
+
+  Example:
+    # Inside a Pallas kernel:
+    x  = jnp.sum(y > 0)
+    pltpu.trace_value("my_x", x)
+  """
+  trace_value_p.bind(value, label=label)
+
+
+class TraceEffect(effects.Effect):
+  pass
+
+
+trace_effect = TraceEffect()
+effects.control_flow_allowed_effects.add_type(TraceEffect)
+pl_core.kernel_local_effects.add_type(TraceEffect)
+
+
+@trace_value_p.def_effectful_abstract_eval
+def _trace_value_abstract_eval(value, *, label):
+  del label
+  if value.shape:
+    raise ValueError(
+        f"trace_value requires a scalar value, got shape {value.shape}"
+    )
+  if value.dtype not in (jnp.int32, jnp.float32):
+    raise ValueError(f"trace_value requires i32 or f32, got {value.dtype}")
+  return [], {trace_effect}

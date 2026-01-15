@@ -1371,6 +1371,27 @@ def TPU_TraceStopOp : TPU_Op<"trace_stop", []> {
   let results = (outs);
 }
 
+def TPU_TraceValueOp : TPU_Op<"trace_value", []> {
+  let summary = "Emit a scalar value as a trace event.";
+  let description = [{
+    Emits a dynamic scalar value as a trace event.
+    When lowered to LLO, creates its own trace scope (start/value/stop).
+    Supported types: i32, f32.
+
+    Example:
+    ```mlir
+    %count = arith.constant 42 : i32
+    tpu.trace_value %count, "my_value" : i32
+    ```
+  }];
+  let arguments = (ins
+    AnyTypeOf<[I32, F32]>:$value,
+    StrAttr:$label
+  );
+  let results = (outs);
+  let assemblyFormat = [{ $value `,` $label attr-dict `:` type($value) }];
+}
+
 def TPU_YieldOp : TPU_Op<"yield", [Pure, ReturnLike, Terminator]> {
   let arguments = (ins Variadic<AnyType>:$results);
   let assemblyFormat = [{ attr-dict ($results^ `:` type($results))? }];
