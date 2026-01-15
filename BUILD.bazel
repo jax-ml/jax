@@ -163,6 +163,7 @@ genrule(
 
 py_import(
     name = "jax_py_import",
+    testonly = True,
     wheel = ":jax_wheel",
     zip_deps = [":wheel_additives"],
 )
@@ -172,6 +173,7 @@ py_import(
 # the jax wheel, but share the same package paths as the modules in the jax wheel.
 py_import(
     name = "jax_wheel_with_internal_test_util",
+    testonly = True,
     wheel = "@pypi_jax//:whl",
     zip_deps = [":wheel_additives"],
 )
