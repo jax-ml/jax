@@ -147,14 +147,6 @@ def _mosaic_gpu_abstract_eval(*_, module, out_types, inout_types):
   ]
 
 
-def _has_communication(module, **_):
-  empty_str_attr = ir.StringAttr.get("")
-  for op in module.body:
-    if "nvshmem" in getattr(op, "sym_name", empty_str_attr).value:
-      return True
-  return False
-
-
 # TODO(apaszke): Implement a proper system for managing kernel lifetimes
 # Maps kernel ID to the compiled kernel ASM.
 KNOWN_KERNELS: dict[bytes, bytes] = {}
@@ -170,28 +162,31 @@ def _mosaic_gpu_lowering_rule(
     use_custom_barrier: bool = False,
 ):
   axis_context = ctx.module_context.axis_context
-  if _has_communication(module):
-    # Those checks are trying to ensure that the logical device ids are
-    # consistent with the NVSHMEM PE ids that Mosaic will be using for
-    # communication. Any divergence here would require us to implement a logical
-    # to physical translation, which is currently not implemented.
-    if isinstance(axis_context, sharding_impls.SPMDAxisContext):
-      mesh = axis_context.mesh
-      # Skip the check for AbstractMesh
-      if (isinstance(mesh, mesh_lib.Mesh) and
-          not np.array_equal(mesh.device_ids.ravel(), np.arange(mesh.size))):
-        raise NotImplementedError(
-            "Mosaic GPU only supports meshes with device ordering that follows"
-            f" row-major device ids. Got: {mesh.device_ids.ravel()} device ids."
-        )
-    elif isinstance(axis_context, sharding_impls.ShardingContext):
-      if axis_context.num_devices != 1:
-        raise NotImplementedError(
-            "Mosaic GPU only supports single-device meshes in ShardingContext."
-            f" Got: {axis_context.num_devices} devices."
-        )
-    else:
-      raise NotImplementedError(f"Unsupported sharding context: {axis_context}")
+  # Those checks are trying to ensure that the logical device ids are
+  # consistent with the NVSHMEM PE ids that Mosaic will be using for
+  # communication. Any divergence here would require us to implement a logical
+  # to physical translation, which is currently not implemented.
+  mesh_size = 1
+  if isinstance(axis_context, sharding_impls.SPMDAxisContext):
+    mesh = axis_context.mesh
+    mesh_size = axis_context.mesh.size
+    # Skip the check for AbstractMesh
+    if (isinstance(mesh, mesh_lib.Mesh) and
+        not np.array_equal(mesh.device_ids.ravel(), np.arange(mesh.size))
+        and mesh.size > 1):
+      raise NotImplementedError(
+          "Mosaic GPU only supports meshes with device ordering that follows"
+          f" row-major device ids. Got: {mesh.device_ids.ravel()} device ids."
+      )
+  elif isinstance(axis_context, sharding_impls.ShardingContext):
+    mesh_size = axis_context.num_devices
+    if axis_context.num_devices != 1:
+      raise NotImplementedError(
+          "Mosaic GPU only supports single-device meshes in ShardingContext."
+          f" Got: {axis_context.num_devices} devices."
+      )
+  else:
+    raise NotImplementedError(f"Unsupported sharding context: {axis_context}")
 
   if inout_types:
     if input_output_aliases:
@@ -224,11 +219,37 @@ def _mosaic_gpu_lowering_rule(
   else:
     KNOWN_KERNELS[kernel_id] = module_asm
 
+  if (mesh_size == 1 or supports_cross_device_collectives()):
+    op = mlir.custom_call(
+        "mosaic_gpu_v2",
+        result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
+        operands=args,
+        operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
+        result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
+        backend_config=dict(
+            kernel_hash=ir.StringAttr.get(kernel_id),
+            module=ir.StringAttr.get(module_asm),
+            use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
+        ),
+        operand_output_aliases=dict(input_output_aliases),
+        api_version=4,
+    )
+    return op.results
+
+  # Add collective metadata to the arguments.
+  # Collective metadata stores pointers to both input and output parameters.
+  num_params = len(ctx.avals_out) + len(ctx.avals_in)
+  num_peers = axis_context.mesh.size
+  collective_metadata_size = (launch_context.COLLECTIVE_METADATA_SIZE +
+                              num_peers * num_params)
+  collective_metadata_arg = mlir.ir_constant(
+      jax.numpy.zeros((collective_metadata_size,), np.int64))
+  operands = args + (collective_metadata_arg,)
   op = mlir.custom_call(
       "mosaic_gpu_v2",
       result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-      operands=args,
-      operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
+      operands=operands,
+      operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in] + [[0]],
       result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
       backend_config=dict(
           kernel_hash=ir.StringAttr.get(kernel_id),
@@ -239,7 +260,6 @@ def _mosaic_gpu_lowering_rule(
       api_version=4,
   )
   return op.results
-
 
 mlir.register_lowering(mosaic_gpu_p, _mosaic_gpu_lowering_rule, "cuda")
 
@@ -542,6 +562,8 @@ def _launch(
     module: ir.Module,
     profiler_spec: profiler.ProfilerSpec | None = None,
     maybe_prof_buffer: ir.Value | None = None,
+    collective_metadata: ir.Value | None = None,
+    num_peers: int = 0,
 ):
   if (profiler_spec is None) != (maybe_prof_buffer is None):
     raise ValueError(
@@ -633,7 +655,9 @@ def _launch(
       prof = None
 
     ctx = launch_context.LaunchContext(
-        module, launch_context.Scratch(launch_op), cluster, prof
+        module, launch_context.Scratch(launch_op), cluster, prof,
+        collective_metadata=collective_metadata,
+        num_peers=num_peers,
     )
     with ctx.named_region("Init"):
       tmem_allocs: list[_TMEMAlloc | _TMEMDialectAlloc] = []
@@ -725,6 +749,7 @@ def _lower_as_gpu_kernel(
     module_name: str,
     kernel_name: str,
     prof_spec: profiler.ProfilerSpec | None = None,
+    jax_mesh: mesh_lib.Mesh | None = None,
 ):
   ptr_ty = ir.Type.parse("!llvm.ptr")
   token_ty = ir.Type.parse("!gpu.async.token")
@@ -774,10 +799,33 @@ def _lower_as_gpu_kernel(
       for i, ref_ty in enumerate([*in_ref_tys, *inout_ref_tys, *out_ref_tys]):
         ptr = llvm.LoadOp(ptr_ty, llvm.GEPOp(ptr_ty, buffers, [], [i], ptr_ty, llvm.GEPNoWrapFlags.none))
         arg_refs.append(utils.ptr_as_memref(ptr, ir.MemRefType(ref_ty)))
+
       prof_buffer = arg_refs.pop() if prof_spec is not None else None
+
+      collective_metadata = None
+      num_peers = 0
+
+      # Collective metadata parameter is used to lower collective operations
+      # in a single-process setup.
+      if (jax_mesh is not None and jax_mesh.size > 1
+          and not supports_cross_device_collectives()):
+        num_args = len(arg_refs)
+        num_peers = jax_mesh.size
+        collective_metadata_size = (
+            launch_context.COLLECTIVE_METADATA_SIZE + num_args * num_peers)
+        metadata_shape = jax.ShapeDtypeStruct(shape=(collective_metadata_size,),
+                                              dtype=np.int64)
+        metadata_ptr = llvm.LoadOp(
+            ptr_ty,
+            llvm.GEPOp(ptr_ty, buffers, [], [len(arg_refs)],
+                      ptr_ty, llvm.GEPNoWrapFlags.none))
+        collective_metadata = utils.ptr_as_memref(
+            metadata_ptr, _shape_to_ref_ty(metadata_shape))
+
       with _launch(
           token, grid, cluster, block, smem_scratch_shape,
-          lowering_semantics, module, prof_spec, prof_buffer
+          lowering_semantics, module, prof_spec, prof_buffer,
+          collective_metadata, num_peers
       ) as (_launch_ctx, smem_refs):
         nonlocal launch_ctx
         launch_ctx = _launch_ctx
