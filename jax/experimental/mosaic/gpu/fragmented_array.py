@@ -2575,6 +2575,8 @@ class FragmentedArray:
         )
       # Reduce across warp lanes, if necessary (using warp shuffles).
       if any(reduced_dims[d] for d in layout.partitioned_lane_dims):
+        # TODO(apaszke): Reenable Redux after targeted optimization and benchmarking.
+        redux_op = None
         if redux_op is not None:
           mask = [True]  # The bit significance grows together with the index.
           mask_shift_bits = 0
