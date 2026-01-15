@@ -42,6 +42,8 @@ from jax._src.hijax import (
     register_hitype, ShapedArray, Ty, custom_vjp3)
 from jax.experimental.hijax import VJPHiPrimitive
 
+jtu.request_cpu_devices(2)
+
 config.parse_flags_with_absl()
 
 map, unsafe_map = safe_map, map
@@ -916,6 +918,25 @@ class HijaxTest(jtu.JaxTestCase):
 
     nzs_in_ = (False, True)
     self.assertAllClose(jax.grad(mul, 1)(2., 3.), 2., check_dtypes=False)
+
+  @jtu.with_explicit_mesh((2,), ('data',))
+  def test_hijax_primitive_under_shard_map(self, mesh):
+    class Square(VJPHiPrimitive):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+    def square(x):
+      return Square(jax.typeof(x))(x)
+    g = jax.shard_map(square, in_specs=(jax.P('data'),), out_specs=jax.P('data'))
+    x = jnp.arange(10)
+    g(x)
+    jax.jit(g)(x)
 
 
 class BoxTest(jtu.JaxTestCase):
