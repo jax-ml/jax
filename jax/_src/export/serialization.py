@@ -198,8 +198,9 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   out_shardings = _deserialize_tuple(
       exp.OutShardingsLength, exp.OutShardings, _deserialize_sharding
   )
-  has_named_shardings = any(isinstance(s, named_sharding.NamedSharding)
-                            for s in itertools.chain(in_shardings, out_shardings))
+  # has_named_sharding will be True for all exports after 1/15/2026
+  has_named_shardings = not any(isinstance(s, _export.HloSharding)
+                                for s in itertools.chain(in_shardings, out_shardings))
   if has_named_shardings:
     in_avals = tuple(
       _deserialize_aval(exp.InAvals(i), scope=scope, sharding=in_shardings[i])  # type: ignore
@@ -623,6 +624,7 @@ def _serialize_sharding(
 
 def _deserialize_sharding(s: ser_flatbuf.Sharding) -> _export.HloSharding | named_sharding.NamedSharding | None:
   if (named_sharding_off := s.NamedSharding()) is not None:
+    # After 1/15/26 all exports will have named shardings (or None)
     return _deserialize_named_sharding(named_sharding_off)
 
   # TODO(necula): We must keep reading the HloSharding for 6 months after 1/15/2026.
