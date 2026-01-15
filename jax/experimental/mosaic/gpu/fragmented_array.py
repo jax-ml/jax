@@ -393,12 +393,16 @@ class TiledLayout:
 
   @functools.cached_property
   def partitioned_warp_dims(self) -> tuple[int, ...]:
+    if cc_method_exists(self, "partitioned_warp_dims"):
+      return self.dispatch_to_cc("partitioned_warp_dims", check_canonical=False)
     return tuple(
       d for d in self.warp_dims if not isinstance(d, Replicated)
     )
 
   @functools.cached_property
   def partitioned_lane_dims(self) -> tuple[int, ...]:
+    if cc_method_exists(self, "partitioned_lane_dims"):
+      return self.dispatch_to_cc("partitioned_lane_dims", check_canonical=False)
     return tuple(
       d for d in self.lane_dims if not isinstance(d, Replicated)
     )
@@ -453,6 +457,8 @@ class TiledLayout:
 
   @property
   def vector_length(self) -> int:
+    if cc_method_exists(self, "vector_length"):
+      return self.dispatch_to_cc("vector_length", check_canonical=False)
     return self.tiled_tiling_shape[self.vector_dim]
 
   def registers_element_type(self, t: ir.Type) -> ir.Type:

@@ -27,6 +27,7 @@ namespace jax::mosaic::gpu {
 namespace {
 
 using ::testing::ElementsAre;
+using ::testing::status::IsOkAndHolds;
 using ::testing::status::StatusIs;
 
 TEST(TilingTest, TileNestedShapeStrides) {
@@ -207,6 +208,33 @@ TEST(TiledLayoutTest, Canonicalize) {
   EXPECT_THAT(canonical.warp_dims(), ElementsAre(-4));
   EXPECT_THAT(canonical.lane_dims(), ElementsAre(-3));
   EXPECT_EQ(canonical.vector_dim(), -1);
+}
+
+TEST(TiledLayoutTest, PartitionedDimsReturnAllPartitionedDims) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{64, 8}, {32, 8}, {8, 8}, {1, 4}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-8, Replicated(2)},
+                          /*lane_dims=*/{-4, -3, Replicated(2)},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  EXPECT_THAT(layout.PartitionedWarpDims(), ElementsAre(-8));
+  EXPECT_THAT(layout.PartitionedLaneDims(), ElementsAre(-4, -3));
+}
+
+TEST(TiledLayoutTest, VectorLengthReturnsTheSizeOfTheVectorDim) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{64, 8}, {16, 8}, {8, 8}, {1, 2}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-8},
+                          /*lane_dims=*/{-4, -3},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  EXPECT_THAT(layout.VectorLength(), IsOkAndHolds(2));
 }
 
 }  // namespace

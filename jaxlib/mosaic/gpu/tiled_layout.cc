@@ -595,6 +595,20 @@ absl::StatusOr<TiledLayout> TiledLayout::Canonicalize() const {
                      new_vector_dim);
 }
 
+std::vector<int64_t> TiledLayout::PartitionedWarpDims() const {
+  return PartitionedDims(warp_dims_);
+}
+
+std::vector<int64_t> TiledLayout::PartitionedLaneDims() const {
+  return PartitionedDims(lane_dims_);
+}
+
+absl::StatusOr<size_t> TiledLayout::VectorLength() const {
+  TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_tiling_shape,
+                      TiledTilingShape());
+  return DimSize(vector_dim_, tiled_tiling_shape);
+}
+
 bool TiledLayout::operator==(const TiledLayout& other) const {
   return tiling_ == other.tiling_ && warp_dims_ == other.warp_dims_ &&
          lane_dims_ == other.lane_dims_ && vector_dim_ == other.vector_dim_;

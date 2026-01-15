@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef THIRD_PARTY_PY_JAX_EXPERIMENTAL_MOSAIC_GPU_CC_TILED_LAYOUT_H_
 #define THIRD_PARTY_PY_JAX_EXPERIMENTAL_MOSAIC_GPU_CC_TILED_LAYOUT_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -198,6 +199,16 @@ class TiledLayout {
   // then the canonicalized layout is
   //   (4, 32, 1), vector_dim = -1, warp_dims = {-3}, lane_dims = {-2}
   absl::StatusOr<TiledLayout> Canonicalize() const;
+
+  // Returns the partitioned warp dimensions verbatim.
+  std::vector<int64_t> PartitionedWarpDims() const;
+
+  // Returns the partitioned lane dimensions verbatim.
+  std::vector<int64_t> PartitionedLaneDims() const;
+
+  // Returns the size of the vector dimension. E.g. if the tiling suffix is
+  // (..., 4), and vector_dims = {-1}, then the vector length is 4.
+  absl::StatusOr<size_t> VectorLength() const;
 
   template <typename H>
   friend H AbslHashValue(H h, const TiledLayout& layout) {

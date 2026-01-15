@@ -335,6 +335,22 @@ NB_MODULE(_mosaic_gpu_ext, m) {
                      }
                      return nb::tuple(l);
                    })
+      .def_prop_ro("partitioned_warp_dims",
+                   [](const mgpu::TiledLayout& self) {
+                     return nb::tuple(nb::cast(self.PartitionedWarpDims()));
+                   })
+      .def_prop_ro("partitioned_lane_dims",
+                   [](const mgpu::TiledLayout& self) {
+                     return nb::tuple(nb::cast(self.PartitionedLaneDims()));
+                   })
+      .def_prop_ro("vector_length",
+                   [](const mgpu::TiledLayout& self) {
+                     auto result = self.VectorLength();
+                     if (!result.ok()) {
+                       throw nb::value_error(result.status().message().data());
+                     }
+                     return nb::cast(*result);
+                   })
       .def_prop_ro("vector_dim", &mgpu::TiledLayout::vector_dim)
       .def_prop_ro("tiling", &mgpu::TiledLayout::tiling)
       .def_prop_ro("tiled_tiling_shape",
