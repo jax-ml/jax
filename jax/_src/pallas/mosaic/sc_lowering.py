@@ -113,6 +113,7 @@ def lower_jaxpr_to_module(
     raise NotImplementedError(
         "Dynamic shape replacement is not supported for SparseCore."
     )
+  dynamic_shape_replacement_fn = lambda x: x
   if not grid_mapping.grid:
     index_map_avals, index_map_tree = tree_util.tree_flatten(
         ((jax_core.ShapedArray((), jnp.int32),), {})
@@ -200,6 +201,7 @@ def lower_jaxpr_to_module(
         kernel_type=kernel_type,
         forward_compatible=lowering_context.is_forward_compat(),
         backend=backend,
+        dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
     )
     assert mlir_func.verify(), mlir_func
     m.body.append(mlir_func)
