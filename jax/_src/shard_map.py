@@ -720,7 +720,9 @@ def _shard_map_staging(
                   in_avals)
   with (_extend_axis_env(mesh, manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
-    jaxpr, out_avals_, consts = pe.trace_to_jaxpr_dynamic(f, in_avals_)
+    jaxpr, out_avals_, consts = pe.trace_to_jaxpr_dynamic(
+        f, in_avals_, lower=trace.requires_low)
+
   _check_names(out_specs_thunk(), out_avals_)
   if check_vma:
     out_vma = [v.aval.vma for v in jaxpr.outvars]
@@ -737,6 +739,7 @@ def _shard_map_staging(
                 check_vma=check_vma, manual_axes=manual_axes)
   effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
   const_tracers = map(to_jaxpr_tracer, consts)
+  trace.frame.is_high |= jaxpr.is_high
   return trace.emit_eqn([*const_tracers, *in_tracers], out_avals, prim, params,
                          effs, source_info)
 pe.DynamicJaxprTrace.process_shard_map = _shard_map_staging
