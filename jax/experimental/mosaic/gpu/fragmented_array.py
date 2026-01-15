@@ -289,24 +289,8 @@ else:
   Replicated = ReplicatedImpl
 
 
-def cc_method_exists(self, method_name: str):
-  return hasattr(mgpu.dialect, self.__class__.__name__) and hasattr(
-      getattr(mgpu.dialect, self.__class__.__name__), method_name
-  )
-
-
-def dispatch_to_cc_method(self, method_name: str, extract_args_fun, *args, **kwargs):
-  """Dispatches a method call to the corresponding C++ method."""
-  cls = getattr(mgpu.dialect, self.__class__.__name__)
-  instance = cls(*extract_args_fun(self))
-  attr = getattr(instance, method_name)
-  if not callable(attr):
-    return attr
-  return attr(*args, **kwargs)
-
-
 @dataclasses.dataclass(frozen=True)
-class TiledLayout:
+class TiledLayoutImpl:
   """A FragmentedArray layout derived from a tiling expression.
 
   A logical array is transformed according to the tiling expression, and then
@@ -393,16 +377,12 @@ class TiledLayout:
 
   @functools.cached_property
   def partitioned_warp_dims(self) -> tuple[int, ...]:
-    if cc_method_exists(self, "partitioned_warp_dims"):
-      return self.dispatch_to_cc("partitioned_warp_dims", check_canonical=False)
     return tuple(
       d for d in self.warp_dims if not isinstance(d, Replicated)
     )
 
   @functools.cached_property
   def partitioned_lane_dims(self) -> tuple[int, ...]:
-    if cc_method_exists(self, "partitioned_lane_dims"):
-      return self.dispatch_to_cc("partitioned_lane_dims", check_canonical=False)
     return tuple(
       d for d in self.lane_dims if not isinstance(d, Replicated)
     )
@@ -446,8 +426,6 @@ class TiledLayout:
     so the tiled shape always ends with this suffix, no matter what array shape
     it's applied to.
     """
-    if cc_method_exists(self, "tiled_tiling_shape"):
-      return self.dispatch_to_cc("tiled_tiling_shape", check_canonical=False)
     base_tile_shape = self.base_tile_shape
     return self.tiling.tile_shape(base_tile_shape)[len(base_tile_shape):]
 
@@ -457,8 +435,6 @@ class TiledLayout:
 
   @property
   def vector_length(self) -> int:
-    if cc_method_exists(self, "vector_length"):
-      return self.dispatch_to_cc("vector_length", check_canonical=False)
     return self.tiled_tiling_shape[self.vector_dim]
 
   def registers_element_type(self, t: ir.Type) -> ir.Type:
@@ -522,7 +498,7 @@ class TiledLayout:
     )
     return self._delinearize_index(warp_idx, self.warp_dims)
 
-  def remove_dimension(self, dim: int) -> TiledLayout:
+  def remove_dimension(self, dim: int) -> TiledLayoutImpl:
     if dim < 0 or dim >= len(self.tiling.tiles[0]):
       raise ValueError(f"Dimension {dim} is out of range for {self.tiling}")
     new_tiling = self.tiling.remove_dimension(dim)
@@ -542,7 +518,7 @@ class TiledLayout:
         return Replicated(size)
       else:
         return d + dim_offsets[d]
-    return TiledLayout(
+    return TiledLayoutImpl(
         new_tiling,
         tuple(
             d if isinstance(d, Replicated) else replace_tiled_dim(d, tiled_shape[d])
@@ -556,24 +532,14 @@ class TiledLayout:
         _check_canonical=False,
     ).canonicalize()
 
-  def reduce(self, axes: Sequence[int]) -> TiledLayout:
+  def reduce(self, axes: Sequence[int]) -> TiledLayoutImpl:
     reduced_layout = self
     for a in sorted(axes, reverse=True):
       reduced_layout = reduced_layout.remove_dimension(a)
     return reduced_layout
 
-  def canonicalize(self) -> TiledLayout:
+  def canonicalize(self) -> TiledLayoutImpl:
     """Returns a version of this layout where tiling is canonical."""
-    if cc_method_exists(self, "canonicalize"):
-      c_layout = self.dispatch_to_cc("canonicalize", check_canonical=False)
-      return TiledLayout(
-        tiling=c_layout.tiling,
-        warp_dims=c_layout.warp_dims,
-        lane_dims=c_layout.lane_dims,
-        vector_dim=c_layout.vector_dim,
-        _check_canonical=False
-      )
-
     canonical_tiling = self.tiling.canonicalize()
 
     s = self.base_tile_shape
@@ -619,7 +585,7 @@ class TiledLayout:
     def is_nontrivial(d: int | Replicated):
       return isinstance(d, Replicated) or tiled_tiling_shape[d] != 1
 
-    return TiledLayout(
+    return TiledLayoutImpl(
         canonical_tiling,
         tuple(replace_tiled_dim(d) for d in self.warp_dims if is_nontrivial(d)),
         tuple(replace_tiled_dim(d) for d in self.lane_dims if is_nontrivial(d)),
@@ -627,21 +593,12 @@ class TiledLayout:
         _check_canonical=False,
     )
 
-  def dispatch_to_cc(self, method_name: str, *args, **kwargs):
-    check_canonical = kwargs.pop("check_canonical", True)
-    return dispatch_to_cc_method(
-        self,
-        method_name,
-        lambda inst: [
-            inst.tiling,
-            inst.warp_dims,
-            inst.lane_dims,
-            inst.vector_dim,
-            check_canonical
-        ],
-        *args,
-        **kwargs,
-    )
+# TODO(olechwierowicz): Clean this up once C++ TiledLayout is always available in JAX build.
+TiledLayout: Any
+if hasattr(mgpu.dialect, "TiledLayout"):
+  TiledLayout = mgpu.dialect.TiledLayout
+else:
+  TiledLayout = TiledLayoutImpl
 
 
 def _tiled_wgmma_layout(shape: tuple[int, ...]):
