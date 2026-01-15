@@ -309,7 +309,7 @@ def _dtype_to_ir_type(dtype: DTypeLike,
 
 
 def aval_to_ir_type(
-    dynamic_shape_replacement_fn,
+    dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
     aval,
     shape=None,
     memory_space: AnyMemorySpace | None = None,
@@ -973,7 +973,7 @@ def lower_jaxpr_to_transform_func(
     kernel_type: tpu_core.KernelType,
     forward_compatible: bool,
     backend: Any | None,
-    dynamic_shape_replacement_fn: DynamicShapeReplacementFn | None = None,
+    dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
   arg_types = [
@@ -1031,8 +1031,8 @@ def lower_jaxpr_to_func(
     kernel_type: tpu_core.KernelType,
     forward_compatible: bool,
     backend: Any | None,
-    dynamic_shape_replacement_fn: DynamicShapeReplacementFn | None = None,
-    dynamic_shape_replacement_enabled: bool = False,
+    dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
+    dynamic_shape_replacement_enabled: bool,
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
   num_scalar_prefetch = len(mosaic_grid_mapping.scalar_prefetch_types)
