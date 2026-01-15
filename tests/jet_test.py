@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 from functools import reduce, partial
 
 from absl.testing import absltest
@@ -289,6 +288,8 @@ class JetTest(jtu.JaxTestCase):
                                               atol=5e-3)
   @jtu.skip_on_devices("tpu")
   def test_logistic(self):   self.unary_check(lax.logistic, lims=[-100, 100], order=5)
+  @unittest.skipIf(jtu.is_test_rbe() and jtu.is_gil_disabled() and jtu.is_tsan(),
+                   "Consumes too much RAM under FT TSAN: b/456211935")
   @jtu.skip_on_devices("tpu")
   def test_expit2(self):     self.expit_check(lims=[-500, 500], order=5)
   @jtu.skip_on_devices("tpu")
@@ -413,6 +414,8 @@ class JetTest(jtu.JaxTestCase):
       return jax.grad(f)(x, eps)
     jet(g, (1.,), ([1.],))  # doesn't crash
 
+  @unittest.skipIf(jtu.is_test_rbe() and jtu.is_gil_disabled() and jtu.is_tsan(),
+                   "Consumes too much RAM under FT TSAN: b/456211935")
   def test_scatter_add(self):
     # very basic test from https://github.com/jax-ml/jax/issues/5365
     def f(x):

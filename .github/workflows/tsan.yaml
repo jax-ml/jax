@@ -23,16 +23,11 @@ jobs:
   tsan:
     runs-on: linux-x86-n4-64
     container:
-      image: index.docker.io/library/ubuntu@sha256:b359f1067efa76f37863778f7b6d0e8d911e3ee8efa807ad01fbf5dc1ef9006b # ratchet:ubuntu:24.04
+      image: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build@sha256:ea67e8453d8b09c2ba48853da5e79efef4b65804b4a48dfae4b4da89ffd38405 # ml-build container (based on Ubuntu 22.04)
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Disabled. 3.13 has unfixed races in CPython itself; we get better signal from 3.14.
-          # - name-prefix: "with 3.13"
-          #   python-version: "3.13"
-          #   github_branch: "3.13"
-          #   requirements_lock_name: "requirements_lock_3_13_ft"
           - name-prefix: "with 3.14"
             python-version: "3.14"
             github_branch: "3.14"
@@ -43,15 +38,46 @@ jobs:
     steps:
       # Install git before actions/checkout as otherwise it will download the code with the GitHub
       # REST API and therefore any subsequent git commands will fail.
-      - name: Install clang 18
+      # Also install dependencies for Google Cloud SDK (curl, python3, etc)
+      - name: Install dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt update
-          apt install -q -y clang-18 libstdc++-14-dev build-essential libssl-dev \
-            zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git \
-            libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
-            libffi-dev liblzma-dev file zip
+          apt-get update
+          apt-get install -q -y \
+            clang-18 \
+            libclang-common-18-dev \
+            libclang-rt-18-dev \
+            libc++abi-18-dev \
+            lld-18 \
+            libstdc++-12-dev \
+            libc++-18-dev \
+            build-essential \
+            libssl-dev \
+            zlib1g-dev \
+            libbz2-dev \
+            libreadline-dev \
+            libsqlite3-dev \
+            curl \
+            git \
+            libncursesw5-dev \
+            xz-utils \
+            tk-dev \
+            libxml2-dev \
+            libxmlsec1-dev \
+            libffi-dev \
+            liblzma-dev \
+            file \
+            vim \
+            wget \
+            zip \
+            zstd
+      - name: Install Google Cloud SDK
+        run: |
+          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
+          apt update && apt install -y google-cloud-cli
+
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           path: jax
@@ -90,7 +116,7 @@ jobs:
         run: |
           cd cpython
           mkdir ${GITHUB_WORKSPACE}/cpython-tsan
-          CC=clang-18 CXX=clang++-18 ./configure --prefix ${GITHUB_WORKSPACE}/cpython-tsan --disable-gil --with-thread-sanitizer
+          CC=clang-18 CXX=clang++-18 CFLAGS=" -O0 -g" CXXFLAGS="-stdlib=libc++" ./configure --prefix ${GITHUB_WORKSPACE}/cpython-tsan --disable-gil --with-thread-sanitizer --with-mimalloc
           make -j64
           make install -j64
           # Check whether free-threading mode is enabled
@@ -108,8 +134,24 @@ jobs:
             ./python-tsan.tgz
           key: ${{ runner.os }}-cpython-tsan-${{ matrix.python-version }}-${{ steps.get-date.outputs.date }}
 
+      # Upload the Python tarball to GCS so RBE can access it.
+      - name: Upload TSAN CPython to GCS
+        run: |
+          GCS_DEST="gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}"
+          echo "Uploading python-tsan.tgz to $GCS_DEST"
+          gcloud storage cp python-tsan.tgz "$GCS_DEST/"
+
+          # Output the HTTP URL for Bazel
+          BASE_URL="https://storage.googleapis.com/general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}/python-tsan.tgz"
+          # URL-encode the path (handles spaces in workflow name)
+          PUBLIC_URL=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${BASE_URL}', safe=':/'))")
+          echo "HERMETIC_PYTHON_URL=$PUBLIC_URL" >> $GITHUB_ENV
+
+      # --- Condtional NumPy steps for pre-release Python ---
+
       - name: Restore cached TSAN Numpy
         id: cache-numpy-tsan-restore
+        if: matrix.python-version == '3.15'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
@@ -117,7 +159,7 @@ jobs:
           key: ${{ runner.os }}-numpy-tsan-${{ matrix.python-version }}-${{ hashFiles('numpy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
 
       - name: Build TSAN Numpy wheel
-        if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
+        if: matrix.python-version == '3.15' && steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
         run: |
           set -eux
           cd numpy
@@ -163,12 +205,14 @@ jobs:
 
       - name: Save TSAN Numpy wheel
         id: cache-numpy-tsan-save
-        if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
+        if: matrix.python-version == '3.15' && steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ./wheelhouse
           key: ${{ runner.os }}-numpy-tsan-${{ matrix.python-version }}-${{ hashFiles('numpy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
+
+      # --- End Conditional NumPy Steps ---
 
       - name: Build Jax and run tests
         timeout-minutes: 180
@@ -182,26 +226,30 @@ jobs:
           set -x
           cd jax
 
-          export PYTHON_SHA256=($(sha256sum ${GITHUB_WORKSPACE}/python-tsan.tgz))
+          # Calculate SHA256 of the Python tarball
+          export PYTHON_SHA256=($(sha256sum ${GITHUB_WORKSPACE}/python-tsan.tgz | awk '{ print $1 }'))
           echo "Python sha256: ${PYTHON_SHA256}"
+          echo "Python URL: $HERMETIC_PYTHON_URL"
 
+          # Configure Bazel
           python3 build/build.py build --configure_only \
             --python_version=${{ matrix.python-version }}-ft \
-            --bazel_options=--repo_env=HERMETIC_PYTHON_URL="file://${GITHUB_WORKSPACE}/python-tsan.tgz" \
+            --bazel_options=--repo_env=HERMETIC_PYTHON_URL="${HERMETIC_PYTHON_URL}" \
             --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256=${PYTHON_SHA256} \
             --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX="cpython-tsan/" \
             --bazel_options=--color=yes \
             --bazel_options=--copt=-fsanitize=thread \
             --bazel_options=--linkopt="-fsanitize=thread" \
-            --bazel_options=--copt=-g \
-            --clang_path=/usr/bin/clang-18
+            --bazel_options=--copt=-g
 
           mkdir -p dist
-          # Check whether we have numpy wheel or exit with error
-          ls ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl || exit 1
-          cp -v ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl dist/
-          if [ "${{ matrix.python-version }}" == "3.14" ]; then
-            # Patch build/requirements_lock_3_14_ft.txt to use TSAN instrumented NumPy
+
+          # Copy custom Numpy wheel only if using 3.15 (and if it exists)
+          if [ "${{ matrix.python-version }}" == "3.15" ]; then
+            ls ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl || exit 1
+            cp -v ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl dist/
+
+            # Patch requirements lock to use TSAN-instrumented NumPy
             sed -i "s|--extra-index-url.*|--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" build/${{ matrix.requirements_lock_name }}.txt
           fi
 
@@ -209,27 +257,26 @@ jobs:
           echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
           echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
 
-          # Set symlink to the bazel executable
-          bazel_exec=($(ls bazel-*))
-          ln -s ${bazel_exec} bazel
 
           # Check python version
           python_version="${{ matrix.python-version }}"
-          ./bazel run --@rules_python//python/config_settings:py_freethreaded="yes" @python_${python_version//./_}_host//:python -- -VV
+          bazel run --config=rbe_linux_x86_64 --@rules_python//python/config_settings:py_freethreaded="yes" @python_${python_version//./_}_host//:python -- -VV
 
           # Check numpy version
-          ./bazel cquery @pypi_numpy//:* | grep whl
+          bazel cquery @pypi_numpy//:* | grep whl
 
           # Build JAX and run tests
-          ./bazel test \
+          bazel test \
               --test_env=JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES \
               --test_env=JAX_ENABLE_X64=$JAX_ENABLE_X64 \
               --test_env=JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS \
               --test_env=PYTHON_GIL=0 \
-              --test_env=TSAN_OPTIONS=halt_on_error=1,suppressions=$PWD/.github/workflows/tsan-suppressions_${{ matrix.python-version }}.txt \
+              --test_env=TSAN_OPTIONS="halt_on_error=1,suppressions=tests/config/tsan-suppressions_${{ matrix.python-version }}.txt" \
               --test_env=JAX_TEST_NUM_THREADS=8 \
+              --@rules_python//python/config_settings:py_freethreaded="yes" \
               --test_output=errors \
-              --local_test_jobs=10 \
               --test_timeout=1800 \
-              --config=ci_rbe_cache \
+              --config=rbe_linux_x86_64 \
+              --test_tag_filters=-notsan \
+              --run_under=//tests/config:oss_tsan_wrapper_sh \
               //tests:cpu_tests

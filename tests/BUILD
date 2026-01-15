@@ -35,7 +35,12 @@ jax_multiplatform_test(
     name = "api_test",
     srcs = ["api_test.py"],
     enable_configs = ["tpu_v3_x4"],
-    shard_count = 5,
+    shard_count = {
+        "cpu": select({
+            "//tests/config:tsan_freethreading_rbe": 10,
+            "//conditions:default": 5,
+        }),
+    },
     deps = py_deps([
         "absl/testing",
         "numpy",
@@ -45,6 +50,12 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "custom_api_test",
     srcs = ["custom_api_test.py"],
+    shard_count = {
+        "cpu": select({
+            "//tests/config:tsan_freethreading_rbe": 2,
+            "//conditions:default": 1,
+        }),
+    },
     deps = [
         "//jax/_src:custom_derivatives",
         "//jax/experimental:custom_dce",
@@ -145,6 +156,10 @@ jax_multiplatform_test(
     },
     shard_count = {
         "gpu": 5,
+        "cpu": select({
+            "//tests/config:tsan_freethreading_rbe": 4,
+            "//conditions:default": 2,
+        }),
     },
     deps = py_deps([
         "absl/testing",
@@ -596,6 +611,10 @@ jax_multiplatform_test(
     srcs = ["jet_test.py"],
     shard_count = {
         "gpu": 2,
+        "cpu": select({
+            "//tests/config:tsan_freethreading_rbe": 8,
+            "//conditions:default": 1,
+        }),
     },
     deps = [
         "//jax/example_libraries:stax",

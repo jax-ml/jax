@@ -422,6 +422,15 @@ def is_tsan():
 def is_sanitized():
   return _jaxlib._jax.is_sanitized()
 
+def is_gil_disabled() -> bool:
+  return not sys._is_gil_enabled() if hasattr(sys, "_is_gil_enabled") else False
+
+def is_test_rbe():
+  """Check for a variable set by the RBE toolchain under testing."""
+  return (
+      os.getenv("IS_JAX_RBE_TESTING", "").lower() in {"true", "1", "yes", "y"}
+      )
+
 # Returns True if it is not cloud TPU. If it is cloud TPU, returns True if it is
 # built at least `date``.
 # TODO(b/327203806): after libtpu adds a XLA version and the oldest support

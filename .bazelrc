@@ -394,6 +394,7 @@ common:rbe --spawn_strategy=remote,worker,standalone,local
 # workers:
 common:rbe --remote_download_toplevel
 test:rbe --test_env=USER=anon
+test:rbe --test_env=IS_JAX_RBE_TESTING=1
 
 common:rbe_cpu_pool --repo_env=REMOTE_GPU_TESTING=0
 common:rbe_gpu_pool --repo_env=REMOTE_GPU_TESTING=1
