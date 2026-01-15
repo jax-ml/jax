@@ -245,47 +245,47 @@ class DupPudTest(jtu.JaxTestCase):
     kernel = fake_kernel_p.bind
 
     @fake_kernel_p.def_effectful_abstract_eval
-    def _(ref, *, idx):
+    def _(ref, *, idx, v):
       return [], {core.array_ref_effect}
 
     @discharge.register_discharge_rule(fake_kernel_p)
-    def dis(in_avals, out_avals, val_and_tok, *, idx):
+    def dis(in_avals, out_avals, val_and_tok, *, idx, v):
       val, tok = val_and_tok
 
-      @pl.run_state
-      def foo(refs):
-        val_ref, tok_ref = refs
-        from jax._src.pallas.mosaic.core import TensorCoreMesh
+      def kernel(tok_ref, val_ref, out_tok_ref):
+        @functools.partial(pl.run_scoped,
+                          vmem_ref=pltpu.VMEM(val_ref.shape, val_ref.dtype))
+        def _(vmem_ref):
+          pltpu.sync_copy(val_ref.at[idx], vmem_ref.at[idx])
+          vmem_ref[...] += jnp.ones_like(vmem_ref) * v
+          pltpu.sync_copy(vmem_ref.at[idx], val_ref.at[idx])
 
-        @pl.core_map(mesh=TensorCoreMesh([object()], ['core']),
-                     interpret=pltpu.InterpretParams())
-        def kernel():
-          pltpu.touch(tok_ref)
-          @functools.partial(pl.run_scoped,
-                            vmem_ref=pltpu.VMEM(val_ref.shape, val_ref.dtype))
-          def _(vmem_ref):
-            pltpu.sync_copy(val_ref.at[idx], vmem_ref.at[idx])
-            vmem_ref[...] += jnp.ones_like(vmem_ref)
-            pltpu.sync_copy(vmem_ref.at[idx], val_ref.at[idx])
-      _, tok = foo((val, tok))
-      return [(val, tok)], []
+      out_tok = pl.pallas_call(
+          kernel,
+          out_shape=tok,
+          grid=(),
+          interpret=pltpu.InterpretParams(),
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY),
+                    pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY))(tok, val)
+      return [(val, out_tok)], []
 
     @jax.jit
     def f(x):
       x_ref = jax.new_ref(x)
       x1_ref, x2_ref = dup(x_ref)
 
-      kernel(x1_ref, idx=slice(0, 8))
-      kernel(x1_ref, idx=slice(0, 8))
+      kernel(x1_ref, idx=slice(0, 8), v=2)
+      kernel(x1_ref, idx=slice(0, 8), v=-1)
 
-      kernel(x2_ref, idx=slice(8, 16))
+      kernel(x2_ref, idx=slice(8, 16), v=1)
 
       x_ref = pud(x1_ref, x2_ref)
       return jax.freeze(x_ref)
 
     x = jnp.arange(16 * 128).reshape((16, 128))
     print(f.trace(x).jaxpr)
-    f(x)
+    np.testing.assert_array_equal(f(x), x + 1)
 
 
 
