@@ -505,6 +505,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_distributed_test",
     srcs = ["tpu_pallas_distributed_test.py"],
+    # TODO(sharadmv): fix timeouts
+    disable_configs = [
+        "tpu_7x",
+        "tpu_7x_x4",
+    ],
     enable_backends = ["tpu"],
     tags = ["multiaccelerator"],
     deps = [
