@@ -1975,6 +1975,7 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
           lambda _: None,
           out_shape=pltpu.SemaphoreType.DMA(()),
           out_specs=pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
+          grid=(1,),
           compiler_params=pltpu.CompilerParams(
               dimension_semantics=["core_parallel"],
               kernel_type=pltpu.KernelType.SC_SCALAR_SUBCORE,
