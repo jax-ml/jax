@@ -5480,9 +5480,12 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   inverse_spec = tuple(xs.spec[o] for o in unsorted_axes)
   ds = xs.update(spec=xs.spec.update(partitions=inverse_spec))
   dot_general_out = dot_general(g, y, dims, precision=precision,
-                                preferred_element_type=x.aval.dtype,
+                                preferred_element_type=preferred_element_type,
                                 out_sharding=ds)
   x_bar = transpose(dot_general_out, tuple(out_axes))
+  if x_bar.dtype != x.aval.dtype:
+    x_bar = _convert_element_type(x_bar, x.aval.dtype, x.aval.weak_type,
+                                  warn_on_complex_to_real_cast=False)
   return x_bar
 
 def _dot_general_transpose_rhs(g, x, y, *, dimension_numbers, precision,
