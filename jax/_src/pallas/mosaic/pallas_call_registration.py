@@ -171,7 +171,10 @@ def pallas_call_tpu_lowering_rule(
     pm.run(mosaic_module.operation)
     print(f"\nThe Mosaic module for pallas_call {debug_info.func_src_info}:")
     print(mosaic_module)
-  num_dyn_bounds = grid_mapping.num_dynamic_grid_bounds
+  if grid_mapping.grid is None:
+    num_dyn_bounds = 0
+  else:
+    num_dyn_bounds = sum(1 for g in grid_mapping.grid if not isinstance(g, int))
   input_output_aliases = tuple(
       (a[0] + num_dyn_bounds, a[1])
       for a in input_output_aliases
@@ -195,6 +198,7 @@ def pallas_call_tpu_lowering_rule(
 
   # Dynamic grid bounds have to go at the front.
   dynamic_grid_args, args = in_nodes[:num_dyn_bounds], in_nodes[num_dyn_bounds:]
+  grid_indices = tuple(range(num_dyn_bounds))
   kernel_ctx = ctx.replace(avals_in=kernel_in_avals, avals_out=kernel_out_avals)
   output_memory_spaces = _get_memory_spaces_from_avals(
       out_avals, kernel_type=kernel_type
@@ -307,6 +311,7 @@ def pallas_call_tpu_lowering_rule(
       allow_collective_id_without_custom_barrier=mosaic_params.allow_collective_id_without_custom_barrier,
       shape_invariant_numerics=mosaic_params.shape_invariant_numerics,
       tiling=tiling,
+      grid_indices=grid_indices,
   )
   _maybe_cast_to_bool = (
       lambda x, aval: x.astype(jax.numpy.bool_)
