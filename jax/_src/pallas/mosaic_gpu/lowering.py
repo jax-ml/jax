@@ -2629,15 +2629,16 @@ def _reduce_lowering_rule_wg(
           ir.VectorType.get([x_aval.size], out_type), x
       )
     reduction = vector_dialect.ReductionOp(out_type, kind, x)
-    reduction.attributes["offset"] = ir.IntegerAttr.get(
-        ir.IntegerType.get_signless(32), ctx.module_ctx.smem_used_bytes
+  else:
+    acc = vector_dialect.broadcast(
+        ir.VectorType.get(out_aval.shape, out_type),
+        _ensure_ir_value(acc, out_aval.dtype),
     )
-    return reduction.result
-  acc = vector_dialect.broadcast(
-      ir.VectorType.get(out_aval.shape, out_type),
-      _ensure_ir_value(acc, out_aval.dtype),
+    reduction = vector_dialect.MultiDimReductionOp(kind, x, acc, axes)
+  reduction.attributes["offset"] = ir.IntegerAttr.get(
+      ir.IntegerType.get_signless(32), ctx.module_ctx.smem_used_bytes
   )
-  return vector_dialect.multi_reduction(kind, x, acc, axes)
+  return reduction.result
 
 
 @register_lowering_rule(lax.reduce_sum_p, mgpu.LoweringSemantics.Warpgroup)

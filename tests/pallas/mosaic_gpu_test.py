@@ -2443,8 +2443,6 @@ class PallasCallTest(PallasTest):
       dtype=(jnp.float32, jnp.float16, jnp.bfloat16, jnp.int32, jnp.uint32),
   )
   def test_reduce_with_layout(self, layout, op, dtype):
-    if layout == plgpu.Layout.TCGEN05_M64_COLLECTIVE(128):
-      self.skip_if_wg_semantics()  # cross-warp reductions are not supported.
     axis = -1
     @functools.partial(
         self.kernel,
