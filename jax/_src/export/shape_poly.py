@@ -227,6 +227,7 @@ class _DimFactor:
           return normalized_var._evaluate(env)  # type: ignore
         err_msg = (
             f"Encountered dimension variable '{self.var}' that is not appearing in the shapes of the function arguments.\n"
+            f"The following dimension variables are appearing in the shapes of the function arguments: {list(env.keys())}.\n"
             "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details.")
         raise UnexpectedDimVar(err_msg)
     else:
