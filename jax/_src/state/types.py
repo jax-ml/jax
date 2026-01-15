@@ -271,6 +271,151 @@ class Transform(Protocol):
     return pp.text(f"{{{self}}}")
 
 
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass(frozen=True)
+class RefNewAxis:
+  """Transform that inserts new axes at specified positions."""
+  positions: tuple[int, ...]  # positions to insert new axes (in output)
+
+  def tree_flatten(self):
+    return (), (self.positions,)
+
+  @classmethod
+  def tree_unflatten(cls, metadata, arrays):
+    assert not arrays
+    return cls(*metadata)
+
+  def transform_shape(
+      self, shape: tuple[int | Array, ...] | None
+  ) -> tuple[int | Array, ...] | None:
+    if shape is None:
+      return None
+    result = list(shape)
+    for pos in sorted(self.positions):
+      result.insert(pos, 1)
+    return tuple(result)
+
+  def transform_dtype(self, dtype):
+    return dtype
+
+  def transform_sharding(self, sharding):
+    if all(p is None for p in sharding.spec):
+      return sharding
+    raise NotImplementedError
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    del context
+    return pp.text(f"{{newaxis{list(self.positions)}}}")
+
+
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass(frozen=True)
+class RefFlip:
+  """Transform that flips (reverses) specified axes."""
+  axes: tuple[int, ...]  # axes to flip
+
+  def tree_flatten(self):
+    return (), (self.axes,)
+
+  @classmethod
+  def tree_unflatten(cls, metadata, arrays):
+    assert not arrays
+    return cls(*metadata)
+
+  def transform_shape(
+      self, shape: tuple[int | Array, ...] | None
+  ) -> tuple[int | Array, ...] | None:
+    # Flip doesn't change shape
+    return shape
+
+  def transform_dtype(self, dtype):
+    return dtype
+
+  def transform_sharding(self, sharding):
+    if all(p is None for p in sharding.spec):
+      return sharding
+    raise NotImplementedError
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    del context
+    return pp.text(f"{{flip{list(self.axes)}}}")
+
+
+def _expand_ellipsis(indices: list, shape_len: int) -> list:
+  """Expand ellipsis in indices to appropriate number of slice(None)."""
+  num_none = sum(idx is None for idx in indices)
+  num_ellipsis = sum(idx is ... for idx in indices)
+
+  if num_ellipsis > 0:
+    ip = indices.index(...)
+    num_real_indices = len(indices) - num_ellipsis - num_none
+    num_slices_needed = shape_len - num_real_indices
+    indices[ip:ip+1] = [slice(None)] * max(0, num_slices_needed)
+
+  return indices
+
+
+def _separate_none_indices(indices: list) -> tuple[list, list]:
+  """Separate None indices and track output positions.
+
+  Returns:
+    (none_positions, filtered_indices)
+  """
+  none_positions = []
+  filtered_indices = []
+  output_pos = 0
+
+  for idx in indices:
+    if idx is None:
+      none_positions.append(output_pos)
+      output_pos += 1
+    else:
+      filtered_indices.append(idx)
+      if isinstance(idx, slice) or isinstance(idx, indexing.Slice):
+        output_pos += 1
+      elif not isinstance(idx, (int, np.integer)) and hasattr(idx, 'shape') and idx.shape:
+        output_pos += len(idx.shape)
+
+  return none_positions, filtered_indices
+
+
+def _convert_negative_slices(filtered_indices: list, shape: tuple) -> tuple[list, list]:
+  """Convert negative step slices to positive equivalents.
+
+  Returns:
+    (converted_indices, flip_axes)
+  """
+  flip_axes = []
+  converted_indices = []
+  output_axis = 0
+
+  for i, idx in enumerate(filtered_indices):
+    if isinstance(idx, slice):
+      dim_size = shape[i] if i < len(shape) else 1
+      start, step, size = core.canonicalize_slice(idx, dim_size)
+
+      if step < 0:
+        if size > 0:
+          new_start = start + (size - 1) * step
+          new_step = -step
+          converted_indices.append(slice(new_start, new_start + size * new_step, new_step))
+          flip_axes.append(output_axis)
+        else:
+          converted_indices.append(slice(start, start, 1))
+        output_axis += 1
+      else:
+        converted_indices.append(idx)
+        output_axis += 1
+    elif isinstance(idx, (int, np.integer)):
+      converted_indices.append(idx)
+    else:
+      converted_indices.append(idx)
+      if hasattr(idx, 'shape') and idx.shape:
+        output_axis += len(idx.shape)
+
+  return converted_indices, flip_axes
+
+
 @dataclasses.dataclass
 class RefIndexer:
   ref_or_view: Any
@@ -278,11 +423,39 @@ class RefIndexer:
   def __getitem__(self, slc):
     if not isinstance(slc, tuple):
       slc = (slc,)
-    indexer = indexing.NDIndexer.from_indices_shape(slc, self.ref_or_view.shape)
+
+    shape = self.ref_or_view.shape
+
+    # Expand ellipsis and process indices
+    indices = _expand_ellipsis(list(slc), len(shape))
+    none_positions, filtered_indices = _separate_none_indices(indices)
+    converted_indices, flip_axes = _convert_negative_slices(filtered_indices, shape)
+
+    # Create indexer tuple
+    if converted_indices:
+      filtered_tuple = tuple(converted_indices)
+    elif shape == ():
+      filtered_tuple = ()
+    else:
+      filtered_tuple = (slice(None),) * len(shape)
+
+    # Build the result
     if isinstance(self.ref_or_view, TransformedRef):
-      view = self.ref_or_view
-      return TransformedRef(view.ref, (*view.transforms, indexer))
-    return TransformedRef(self.ref_or_view, (indexer,))
+      base_ref = self.ref_or_view.ref
+      current_transforms = self.ref_or_view.transforms
+    else:
+      base_ref = self.ref_or_view
+      current_transforms = ()
+
+    transforms = list(current_transforms)
+    if filtered_tuple:
+      indexer = indexing.NDIndexer.from_indices_shape(filtered_tuple, shape)
+      transforms.append(indexer)
+    if flip_axes:
+      transforms.append(RefFlip(tuple(flip_axes)))
+    if none_positions:
+      transforms.append(RefNewAxis(tuple(none_positions)))
+    return TransformedRef(base_ref, tuple(transforms))
 
 
 @dataclasses.dataclass(frozen=True)
