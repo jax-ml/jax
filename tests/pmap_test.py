@@ -27,6 +27,7 @@ from unittest import SkipTest
 import weakref
 
 import numpy as np
+from absl import flags
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -41,10 +42,8 @@ from jax._src import api as src_api
 from jax._src import array
 from jax._src import core
 from jax._src import config
-from jax._src import dtypes
 from jax._src import sharding_impls
 from jax._src import sharding_specs
-from jax._src import stages
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import lax_test_util
 from jax._src.interpreters import pxla
@@ -54,6 +53,17 @@ from jax._src.util import safe_map, safe_zip
 
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
+
+_PMAP_SHMAP_MERGE = flags.DEFINE_bool(
+    'pmap_shmap_merge', True,
+    'If False, run pmap tests with jax_pmap_shmap_merge=False.')
+
+if not _PMAP_SHMAP_MERGE.value:
+  with jtu.ignore_warning(
+      category=DeprecationWarning,
+      message='Setting `jax_pmap_shmap_merge` is deprecated',
+  ):
+    config.update('jax_pmap_shmap_merge', False)
 
 
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
@@ -2261,67 +2271,6 @@ class PythonPmapTest(jtu.JaxTestCase):
         category=UserWarning, message="The function jit.bits. includes a pmap"):
       result2 = jax.jit(jax.pmap(jax.random.bits))(keys)
     self.assertArraysEqual(result1, result2)
-
-
-class PmapShmapMergeTest(jtu.JaxTestCase):
-
-  def setUp(self):
-    super().setUp()
-    if jax.device_count() < 2:
-      raise SkipTest('test requires at least two devices')
-
-  @config.pmap_shmap_merge(True)
-  def test_store_exception(self):
-    def f(x):
-      return x
-    inp = jnp.ones((jax.device_count(), 1), dtype=jnp.float32)
-    jax.pmap(f, axis_name='i')(inp)
-    inp = jnp.ones((jax.device_count(), 1), dtype=jnp.int32)
-    jax.pmap(f, axis_name='i')(inp)
-
-  @config.pmap_shmap_merge(True)
-  def test_prng_key(self):
-    keys = jax.random.split(jax.random.key(0), jax.device_count())
-    out = jax.pmap(lambda x: x)(keys)
-    self.assertEqual(type(out), type(keys))
-    out = jax.pmap(lambda x, y: y, in_axes=(0, None))(keys, jax.random.key(0))
-    self.assertEqual(type(out), type(keys))
-    out = jax.pmap(lambda x, y: y, in_axes=(0, None), out_axes=None)(
-        keys, jax.random.key(0))
-    self.assertEqual(type(out), type(keys))
-
-  @config.pmap_shmap_merge(True)
-  def test_lower_with_flattened_args(self):
-    shape = (jax.device_count(), 3)
-
-    inputs = np.reshape(np.arange(math.prod(shape)), shape)
-    # The shard_map implementation of pmap takes pytree args, but the inner
-    # jitted_f must take flattened args.
-    _ = jax.pmap(lambda x: x[0]).lower((inputs, ())).compile()  # doesn't crash
-
-  @config.pmap_shmap_merge(True)
-  def test_float0_dtype_input(self):
-    inputs = np.array([b''] * jax.device_count(), dtype=dtypes.float0)
-    _ = jax.pmap(lambda x: x)(inputs)  # doesn't crash
-
-  @config.pmap_shmap_merge(True)
-  def test_float0_dtype_output(self):
-    inputs = np.ones(jax.device_count())
-    _ = jax.pmap(lambda x: jnp.array(b'', dtype=dtypes.float0))(inputs)  # doesn't crash
-
-  @config.pmap_shmap_merge(True)
-  def test_lowered_args_info(self):
-    shmap_lowered = jax.pmap(lambda x: x).lower((jnp.ones((1,), jnp.float32), ()))
-    aval = core.ShapedArray((1,), jnp.float32)
-    expected_args_info = (((stages.ArgInfo(aval, donated=False), (),),),{},)
-    self.assertEqual(shmap_lowered.args_info, expected_args_info)  # doesn't crash
-
-  @config.pmap_shmap_merge(True)
-  def test_wrapped(self):
-    f = lambda x: x
-    g = jax.pmap(f)
-    self.assertTrue(hasattr(g, '__wrapped__'))
-    self.assertEqual(g.__wrapped__, f)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

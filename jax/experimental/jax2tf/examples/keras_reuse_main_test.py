@@ -13,6 +13,16 @@
 # limitations under the License.
 
 import os
+import warnings
+
+# Must be set before import jax, as jax_google.py sets the flag during import.
+warnings.filterwarnings(
+    'ignore',
+    message='Setting `jax_pmap_shmap_merge` is deprecated',
+    category=DeprecationWarning,
+)
+
+# pylint: disable=g-import-not-at-top
 from absl import flags
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -21,6 +31,7 @@ from jax._src import test_util as jtu
 
 from jax.experimental.jax2tf.examples import keras_reuse_main
 from jax.experimental.jax2tf.tests import tf_test_util
+# pylint: enable=g-import-not-at-top
 
 jax.config.parse_flags_with_absl()
 FLAGS = flags.FLAGS

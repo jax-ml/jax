@@ -1090,7 +1090,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "pmap_without_shmap_test",
     srcs = ["pmap_test.py"],
-    args = ["--jax_pmap_shmap_merge=false"],
+    args = ["--pmap_shmap_merge=false"],
     backend_tags = {
         "tpu": [
             "noasan",  # Times out under asan.
@@ -1120,7 +1120,6 @@ jax_multiplatform_test(
         "//jax/_src:internal_test_util",
     ] + py_deps([
         "absl/testing",
-        "disable_pmap_shmap_merge",
         "numpy",
     ]),
 )
@@ -1153,6 +1152,25 @@ jax_multiplatform_test(
     deps = [
         "//jax/_src:internal_test_util",
     ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "pmap_shmap_merge_test",
+    srcs = ["pmap_shmap_merge_test.py"],
+    enable_configs = [
+        "gpu_v100",
+        "tpu_v3_x4",
+    ],
+    shard_count = {
+        "cpu": 20,
+        "gpu": 10,
+        "tpu": 20,
+    },
+    tags = ["multiaccelerator"],
+    deps = py_deps([
         "absl/testing",
         "numpy",
     ]),

@@ -130,5 +130,5 @@ register('jax-numpy-arange-complex')
 register('jax-numpy-astype-complex-to-real')
 register('jax-numpy-clip-args')
 register('jax-scipy-special-sph-harm')
-
+register('jax-pmap-shmap-merge')
 register('pltpu-memory-space-any')

@@ -33,6 +33,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `jax.pmap`ped function `f` sees inputs of the same rank as the input to
     `jax.pmap(f)`. For example, if `jax.pmap(f)` receives shape `(8, 128)` on
     8 devices, then `f` receives shape `(1, 128)`.
+  * Setting the `jax_pmap_shmap_merge` config state is deprecated in JAX v0.9.0
+    and will be removed in JAX v0.10.0.
   * {func}`jax.numpy.fix` is deprecated, anticipating the deprecation of
     {func}`numpy.fix` in NumPy v2.5.0. {func}`jax.numpy.trunc` is a drop-in
     replacement.

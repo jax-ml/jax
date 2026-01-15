@@ -473,6 +473,7 @@ pytype_strict_library(
     name = "config",
     srcs = ["config.py"],
     deps = [
+        ":deprecations",
         ":logging_config",
         "//jax/_src/lib",
     ],
