@@ -1152,9 +1152,7 @@ DeviceId = (
 class SemaphoreEffect(effects.Effect):
   pass
 sem_effect = SemaphoreEffect()
-effects.lowerable_effects.add_type(SemaphoreEffect)
 effects.control_flow_allowed_effects.add_type(SemaphoreEffect)
-effects.remat_allowed_effects.add_type(SemaphoreEffect)
 effects.custom_derivatives_allowed_effects.add_type(SemaphoreEffect)
 pallas_core.kernel_local_effects.add_type(SemaphoreEffect)
 
