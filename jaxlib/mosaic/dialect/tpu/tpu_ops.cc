@@ -1305,13 +1305,11 @@ LogicalResult SemaphoreSignalOp::verify() {
     return emitOpError("Semaphore reference must be rank 0");
   }
 
-  FailureOr<std::optional<CoreType>> issuing_core_type_maybe =
-      GetCoreTypeOfParentFunc(**this);
-  if (failed(issuing_core_type_maybe)) {
-    return issuing_core_type_maybe;
+  FailureOr<CoreType> issuing_core_type = GetCoreTypeOfParentFunc(**this);
+  if (failed(issuing_core_type)) {
+    return issuing_core_type;
   }
-  CoreType issuing_core_type = issuing_core_type_maybe->value_or(CoreType::kTc);
-  CoreType target_core_type = getCoreType().value_or(issuing_core_type);
+  CoreType target_core_type = getCoreType().value_or(*issuing_core_type);
 
   if (getCoreId() == nullptr && getDeviceId() == nullptr) {
     if (target_core_type != issuing_core_type) {
@@ -1319,14 +1317,8 @@ LogicalResult SemaphoreSignalOp::verify() {
           absl::StrFormat("Target core type (%s) must match source core type "
                           "(%s) when device_id and core_id are not specified",
                           stringifyCoreType(target_core_type),
-                          stringifyCoreType(issuing_core_type)));
+                          stringifyCoreType(*issuing_core_type)));
     }
-  }
-  if ((issuing_core_type == CoreType::kTc &&
-       target_core_type == CoreType::kScScalarSubcore) ||
-      (issuing_core_type == CoreType::kScScalarSubcore &&
-       target_core_type == CoreType::kTc)) {
-    return emitOpError("Signalling between TC and SC is not implemented");
   }
   return success();
 }
@@ -1337,6 +1329,14 @@ LogicalResult SemaphoreWaitOp::verify() {
     return emitOpError("Semaphore reference must be rank 0");
   }
   return success();
+}
+
+void EnqueueDMAOp::build(OpBuilder& builder, OperationState& state,
+                         Value source, Value source_semaphore, Value target,
+                         Value target_semaphore, Value device_id, Value core_id,
+                         uint32_t priority, bool strict_ordering) {
+  build(builder, state, source, source_semaphore, target, target_semaphore,
+        device_id, core_id, /*core_type=*/nullptr, priority, strict_ordering);
 }
 
 LogicalResult EnqueueDMAOp::verify() {
@@ -1385,12 +1385,22 @@ LogicalResult EnqueueDMAOp::verify() {
     return emitOpError(
         "Not implemented: non-zero priority is not supported for remote DMA");
   }
-  FailureOr<CoreType> issuing_core = GetCoreTypeOfParentFunc(**this);
-  if (failed(issuing_core)) {
-    return issuing_core;
+  FailureOr<CoreType> issuing_core_type = GetCoreTypeOfParentFunc(**this);
+  if (failed(issuing_core_type)) {
+    return issuing_core_type;
   }
-  if (getStrictOrdering() && *issuing_core != CoreType::kScScalarSubcore &&
-      *issuing_core != CoreType::kScVectorSubcore) {
+  CoreType target_core_type = getCoreType().value_or(*issuing_core_type);
+  if (getCoreId() == nullptr && getDeviceId() == nullptr) {
+    if (target_core_type != *issuing_core_type) {
+      return emitOpError(
+          absl::StrFormat("Target core type (%s) must match source core type "
+                          "(%s) when device_id and core_id are not specified",
+                          stringifyCoreType(target_core_type),
+                          stringifyCoreType(*issuing_core_type)));
+    }
+  }
+  if (getStrictOrdering() && *issuing_core_type != CoreType::kScScalarSubcore &&
+      *issuing_core_type != CoreType::kScVectorSubcore) {
     return emitOpError(
         "Strict ordering is only supported on the SC scalar and vector "
         "subcores");
