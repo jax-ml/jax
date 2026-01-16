@@ -40,6 +40,8 @@ jax_multiplatform_test(
             "//tests/config:tsan_freethreading_rbe": 10,
             "//conditions:default": 5,
         }),
+        "gpu": 5,
+        "tpu": 5,
     },
     deps = py_deps([
         "absl/testing",
