@@ -333,6 +333,7 @@ def _tpu_custom_call_lowering(
     out_avals: Any,
     input_output_aliases: tuple[tuple[int, int], ...],
     metadata: Any | None,
+    grid_indices: Sequence[int] | None = None,
 ) -> ir.OpResultList:
   result_types = [mlir.aval_to_ir_type(aval) for aval in out_avals]
   axis_context = ctx.module_context.axis_context
@@ -387,6 +388,10 @@ def _tpu_custom_call_lowering(
   assert isinstance(has_side_effects, TpuSideEffectType)
   if has_side_effects == TpuSideEffectType.DATAFLOW_SIDE_EFFECTING:
     metadata_dict["xla_allow_dce_side_effecting_op"] = ir.StringAttr.get("true")
+  if grid_indices is not None:
+    metadata_dict["indices_of_grid_operands"] = ir.StringAttr.get(
+        "{" + ", ".join(str(i) for i in grid_indices) + "}"
+    )
   if metadata_dict:
     call.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(metadata_dict)
   return call.results
@@ -684,6 +689,7 @@ def lower_module_to_custom_call(
     shape_invariant_numerics: bool = False,
     needs_layout_passes: bool | None = None,
     tiling: Tiling | None = None,
+    grid_indices: Sequence[int] | None = None,
 ) -> Sequence[ir.Value]:
   if isinstance(has_side_effects, bool):
     has_side_effects = (
@@ -719,6 +725,7 @@ def lower_module_to_custom_call(
       out_avals=out_type,
       input_output_aliases=input_output_aliases,
       metadata=metadata,
+      grid_indices=grid_indices,
   )
 
 
@@ -742,6 +749,7 @@ def as_tpu_kernel(
     shape_invariant_numerics: bool = False,
     needs_layout_passes: bool | None = None,
     metadata: Any | None = None,
+    grid_indices: Sequence[int] | None = None,
     _ir_version: int | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
@@ -768,6 +776,7 @@ def as_tpu_kernel(
       kernel_name=kernel_name,
       input_output_aliases=input_output_aliases,
       metadata=metadata,
+      grid_indices=grid_indices,
   )
 
 
@@ -792,6 +801,7 @@ def lowered_as_tpu_kernel(
     disable_bounds_checks: bool = False,
     metadata: Any | None = None,
     allow_collective_id_without_custom_barrier: bool = False,
+    grid_indices: Sequence[int] | None = None,
 ) -> Callable[..., Any]:
   device_type = _get_device_type(lowered_module)
   lowered_module_asm = lowered_module.operation.get_asm(
@@ -827,6 +837,7 @@ def lowered_as_tpu_kernel(
       kernel_name=kernel_name,
       input_output_aliases=input_output_aliases,
       metadata=metadata,
+      grid_indices=grid_indices,
   )
 
 
@@ -838,6 +849,7 @@ def _as_jax_callable(
     kernel_name: str | None,
     input_output_aliases: tuple[tuple[int, int], ...],
     metadata: Any | None,
+    grid_indices: Sequence[int] | None,
 ) -> Callable[..., Any]:
   unpack = False
   if not isinstance(out_type, collections.abc.Iterable):
@@ -855,6 +867,7 @@ def _as_jax_callable(
         out_avals=out_avals,
         input_output_aliases=input_output_aliases,
         metadata=metadata,
+        grid_indices=grid_indices,
     )
     return result[0] if unpack else result
 
