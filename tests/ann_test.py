@@ -119,6 +119,8 @@ class AnnTest(jtu.JaxTestCase):
   )
   def test_pmap(self, qy_shape, db_shape, dtype, k, recall):
     num_devices = jax.device_count()
+    if num_devices % 2 != 0:
+      self.skipTest("Works only when number of devices is a multiple of 2.")
     rng = jtu.rand_default(self.rng())
     qy = rng(qy_shape, dtype)
     db = rng(db_shape, dtype)
