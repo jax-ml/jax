@@ -26,6 +26,7 @@ jax.iml
 
 # virtualenv/venv directories
 /venv/
+/venv_new/
 /bin/
 /include/
 /lib/
