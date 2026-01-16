@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import itertools
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -1149,6 +1151,61 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     y = x[128:256]
     out = kernel_fn((1,), scalar_prefetch_values, (y,))
     np.testing.assert_array_equal(out, y.sum(axis=1))
+
+  @parameterized.parameters((512, 128), (128, 512), (128, 128), (256, 128))
+  def test_tile(self, *value_shape):
+    x = jax.random.normal(jax.random.key(0), value_shape, dtype=np.float32)
+    full_shape = (512, 512)
+    block_shape = (128, 256)
+    reps = tuple(full_dim // dim for full_dim, dim in zip(full_shape, value_shape))
+
+    def f():
+      return jnp.tile(x, reps)
+
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(f)
+    self.assertLen(new_values, 1)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec(block_shape, lambda i, j: (i, j))
+    kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        grid=(1, 1, 1),
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values)
+    self.assertLen(value_block_specs, 1)
+    x_block_spec = value_block_specs[0]
+    # Expect to load a slice of the input on the non-tiled dimensions
+    # and the whole input on the tiled dimensions.
+    expected_value_block_shape = tuple(
+        min(value_dim, block_dim)
+        for value_dim, block_dim in zip(value_shape, block_shape)
+    )
+    self.assertEqual(x_block_spec.block_shape, expected_value_block_shape)
+    for idxs in itertools.product(*(
+        range(full_dim // block_dim)
+        for full_dim, block_dim in zip(full_shape, block_shape)
+    )):
+      expected_block_indices = tuple(
+          idx % (value_dim // block_dim) if value_dim >= block_dim else 0
+          for idx, value_dim, block_dim in zip(idxs, value_shape, block_shape)
+      )
+      self.assertEqual(
+          x_block_spec.index_map(*idxs, *scalar_prefetch_values),
+          expected_block_indices,
+      )
+    block_reps = tuple(
+        block_dim // value_block_dim
+        for block_dim, value_block_dim
+        in zip(block_shape, expected_value_block_shape)
+    )
+    x_block = jax.random.normal(
+        jax.random.key(0), expected_value_block_shape, dtype=np.float32
+    )
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0, 0), scalar_prefetch_values, (x_block,)),
+        jnp.tile(x_block, block_reps),
+    )
 
 
 class PullBlockSpecHOPTest(jtu.JaxTestCase):

@@ -1466,6 +1466,72 @@ def _transpose_pull_rule(
   return [pallas_core.BlockSpec(new_shape, new_index_map)]
 
 
+@register_eval_rule(lax.tile_p)
+def _tile_eval_rule(
+    eval_ctx: KernelEvalContext, x, reps: tuple[int, ...]
+):
+  block_spec = eval_ctx.out_block_specs[0]
+  block_shape = block_spec.block_shape
+  if any(isinstance(dim, pallas_core.Element) for dim in block_shape):
+    raise NotImplementedError(
+        'tile with Element-indexed dimensions not supported yet'
+    )
+  if not all(
+      out_dim % in_dim == 0 for out_dim, in_dim in zip(block_shape, x.shape)
+  ):
+    raise NotImplementedError(
+        'Block size must be a multiple of the input size. '
+        f'Got block {block_shape=} but input {x.shape}.'
+    )
+  reps_in_block = [
+      out_dim // in_dim if out_dim >= in_dim else 1
+      for out_dim, in_dim in zip(block_shape, x.shape)
+  ]
+  return lax.tile(x, reps_in_block)
+
+
+@register_pull_block_spec_rule(lax.tile_p)
+def _tile_pull_rule(
+    ctx: PullRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    *,
+    reps: tuple[int, ...],
+):
+  block_shape = block_spec.block_shape
+  aval_in = ctx.avals_in[0]
+  assert isinstance(aval_in, core.ShapedArray)
+  assert len(block_shape) == len(aval_in.shape)
+  if any(isinstance(dim, pallas_core.Element) for dim in block_shape):
+    raise NotImplementedError(
+        'tile with Element-indexed dimensions not supported yet'
+    )
+
+  if not all(
+      (block_dim % in_dim == 0) or (in_dim % block_dim == 0)
+      for block_dim, in_dim in zip(block_shape, aval_in.shape)
+  ):
+    raise NotImplementedError(
+        'Every block dimension must be either a multiple or factor of input. '
+        f'Got block {block_shape} for input {aval_in.shape}'
+    )
+
+  new_shape = tuple(
+      min(block_dim, in_dim)
+      for block_dim, in_dim in zip(block_shape, aval_in.shape)
+  )
+
+  def new_index_map(*args):
+    original_idxs = block_spec.index_map(*args)
+    return tuple(
+        0 if block_dim >= in_dim else orig_idx % (in_dim // block_dim)
+        for orig_idx, block_dim, in_dim in zip(
+            original_idxs, block_shape, aval_in.shape
+        )
+    )
+
+  return [pallas_core.BlockSpec(new_shape, new_index_map)]
+
+
 @register_eval_rule(lax.convert_element_type_p)
 def _convert_element_type_eval_rule(
     eval_ctx: KernelEvalContext, x, new_dtype, **params
