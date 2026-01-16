@@ -854,15 +854,17 @@ def matmul6(a, b, config: TuningConfig):
 
 
 @jtu.with_config(jax_traceback_filtering="off")
-class MatmulTutorialSm100ATest(jtu.JaxTestCase):
+class MatmulTutorialTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
   BENCHMARK = False
 
   def setUp(self):
     super().setUp()
     if not jtu.test_device_matches(["cuda"]):
       self.skipTest("Test requires an NVIDIA GPU")
-    if not jtu.is_cuda_compute_capability_equal("10.0"):
-      self.skipTest("Only works on GPU with capability sm100a")
+    self.skip_unless_tcgen05()
+    if jtu.is_cuda_compute_capability_equal("10.3"):
+      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
+      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
     self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
 
   def benchmark(self, matmul_impl, a, b, config_search_space):
