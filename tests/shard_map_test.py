@@ -4850,6 +4850,17 @@ class ShardMapTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, 'not evenly divisible'):
       f(jnp.arange(8.), jnp.arange(9.))
 
+  def test_shmap_empty_mesh_error(self):
+    mesh = empty_concrete_mesh
+
+    @shard_map(mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def f(x):
+      return x
+
+    with self.assertRaisesRegex(
+        ValueError, "shard_map requires a non-empty mesh"):
+      f(jnp.arange(8))
+
 
 class FunSpec(NamedTuple):
   name: str

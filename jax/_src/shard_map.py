@@ -325,6 +325,8 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _smap):
     raise TypeError("shard_map requires a `jax.sharding.Mesh` or a "
                     "`jax.sharding.AbstractMesh` instance for its "
                     f"second argument, but got {mesh} of type {type(mesh)}.")
+  if mesh.empty:
+    raise ValueError(f"shard_map requires a non-empty mesh. Got {mesh}")
 
   mesh_axis_names_wo_vmap = (
       frozenset(mesh.axis_names) - core.get_axis_env().explicit_mesh_axis_names
