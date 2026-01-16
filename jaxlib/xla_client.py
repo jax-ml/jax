@@ -47,7 +47,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 397  # Re-enable DCN cross-host transfers on accelerators.
+_version = 398  # Cross-host device_put with mixed local and remote transfers.
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.

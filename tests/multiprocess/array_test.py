@@ -23,6 +23,7 @@ from jax._src import array
 from jax._src import sharding_impls
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 import numpy as np
@@ -1074,6 +1075,36 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
         ValueError, ("For a cross-host reshard in multi-controller JAX|"
                      "device_put's second argument must be a Device")):
       jax.device_put(y, cpu_sharding)
+
+  @jtu.skip_on_devices("cpu")
+  def test_device_put_with_mixed_local_and_remote_transfers(self):
+    if jaxlib_extension_version < 398:
+      self.skipTest("This functionality is not yet supported in jaxlib.")
+    if jax.local_device_count() < 2:
+      self.skipTest("Need at least 2 local devices for this test.")
+
+    x = jnp.arange(64).reshape(8, 8)
+    src_sharding = jax.sharding.NamedSharding(
+        jax.make_mesh((jax.local_device_count(),), ("x",),
+                      devices=jax.local_devices(process_index=0),
+                      axis_types=(jax.sharding.AxisType.Explicit,)),
+        P("x"))
+
+    # Half of the shards require cross-host transfers and half require local
+    # transfers.
+    dst_devices = (
+        jax.local_devices(process_index=1)[:jax.local_device_count() // 2]
+        + jax.local_devices(process_index=0)[:jax.local_device_count() // 2])
+    dst_sharding = jax.sharding.NamedSharding(
+        jax.make_mesh((jax.local_device_count(),), ("x",), devices=dst_devices,
+                      axis_types=(jax.sharding.AxisType.Explicit,)),
+        P("x"))
+    y = jax.device_put(x, src_sharding)
+    z = jax.device_put(y, dst_sharding)
+    if jax.process_index() in (0, 1):
+      self.assertLen(z.addressable_shards, jax.local_device_count() // 2)
+    for shard in z.addressable_shards:
+      np.testing.assert_array_equal(shard.data, x[shard.index])
 
 
 if __name__ == "__main__":
