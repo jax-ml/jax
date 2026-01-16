@@ -2581,40 +2581,14 @@ class FragmentedArray:
         )
       # Reduce across warp lanes, if necessary (using warp shuffles).
       if any(reduced_dims[d] for d in layout.partitioned_lane_dims):
-        # TODO(apaszke): Reenable Redux after targeted optimization and benchmarking.
-        redux_op = None
-        if redux_op is not None:
-          mask = [True]  # The bit significance grows together with the index.
-          mask_shift_bits = 0
-          lane_stride = 1
-          for d in layout.lane_dims[::-1]:
-            if isinstance(d, Replicated):
-              size = d.times
-              reduced = False
-            else:
-              size = tiled_tiling_shape[d]
-              reduced = reduced_dims[d]
-            if reduced:
-              mask = mask * size
-            else:
-              mask += [False] * (len(mask) * (size - 1))
-              # This could really be computed as:
-              #     d_idx = (lane_index // lane_stride) % size
-              #     mask_shift += d_idx * lane_stride
-              # but if you look closely enough and realize that strides/sizes
-              # are powers of 2, the div/mod/mul is just an AND, and + is an OR:
-              #     mask_shift |= lane_index & ((size - 1) * lane_stride)
-              # What's more, instead of repeatedly doing the AND/OR, we can just
-              # compute which bits of the lane_index we want to use statically,
-              # and use a single AND operation to extract them after the loop.
-              assert lane_stride.bit_count() == 1 and size.bit_count() == 1
-              mask_shift_bits |= (size - 1) * lane_stride
-            lane_stride *= size
-          mask = sum(1 << i for i, m in enumerate(mask) if m)
-          lane_index = arith.remui(utils.thread_idx(), c(utils.WARP_SIZE, i32))
-          mask_shift = arith.andi(lane_index, arith.constant(i32, mask_shift_bits))
-          dyn_mask = arith.shli(arith.constant(i32, mask), mask_shift)
-          out_reg = redux_op(out_reg, dyn_mask)
+        all_lanes = (
+            layout.partitioned_lane_dims == layout.lane_dims and
+            all(reduced_dims[d] for d in layout.lane_dims)
+        )
+        # It doesn't make sense to use redux unless we reduce across all lanes.
+        # The instruction seems to have a uniform register output.
+        if redux_op is not None and all_lanes:
+          out_reg = redux_op(out_reg, arith.constant(i32, 0xffffffff))
         else:
           lane_stride = 1
           for d in layout.lane_dims[::-1]:  # Iterate minor-to-major
