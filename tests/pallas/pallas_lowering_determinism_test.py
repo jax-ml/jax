@@ -110,8 +110,8 @@ class PallasLoweringDeterminismTest(jtu.JaxTestCase):
     self.assertEqual(body0, body1)
 
   def testOrderAgnostic(self):
-    # TODO(b/476232048): Reenable once fixed.
-    self.skipTest("Fix debug info in jit cache.")
+    if jaxlib_extension_version < 399:
+      self.skipTest("TracebackScope requires jaxlib >= 399")
 
     def get_pallas_body(f):
       x = jnp.ones((8,), dtype=jnp.float32)
