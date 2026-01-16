@@ -650,7 +650,6 @@ _IGNORED_INIT_PY_FILES = [
 
 compare_srcs_and_test_deps_test(
     name = "check_cpu_wheel_sources_test",
-    testonly = True,
     srcs = [
         ":jaxlib_sources",
         "//:jax_sources",
@@ -681,7 +680,6 @@ compare_srcs_and_test_deps_test(
 
 compare_srcs_and_test_deps_test(
     name = "check_gpu_wheel_sources_test",
-    testonly = True,
     srcs = [
         ":jax_pjrt_sources",
         ":jax_plugin_sources",
@@ -712,7 +710,6 @@ compare_srcs_and_test_deps_test(
 
 compare_srcs_and_test_deps_test(
     name = "check_tpu_wheel_sources_test",
-    testonly = True,
     srcs = [
         ":jaxlib_sources",
         "//:jax_sources",
