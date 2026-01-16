@@ -43,6 +43,9 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
       self.skipTest('Only >=2 devices are supported.')
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('Only TPUs v4+ are supported.')
+    if jtu.is_device_tpu(7, 'x'):
+      # TODO(sharadmv): Enable these tests.
+      self.skipTest('Tests time out on TPUs v7x.')
 
   @parameterized.named_parameters(
       ('vmem', pltpu.VMEM),
@@ -518,6 +521,9 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
     super().setUp()
     if not jtu.is_device_tpu():
       self.skipTest('Test requires TPU')
+    if jtu.is_device_tpu(7, 'x'):
+      # TODO(sharadmv): Enable these tests.
+      self.skipTest('Tests time out on TPUs v7x.')
 
   @parameterized.parameters(('left',), ('right',))
   def test_interpret_remote_dma_ppermute(self, permutation):
@@ -795,6 +801,10 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
 class VerificationTest(jtu.JaxTestCase):
 
   def test_verification(self):
+    if jtu.is_device_tpu(7, 'x'):
+      # TODO(sharadmv): Enable these tests.
+      self.skipTest('Tests time out on TPUs v7x.')
+
     self.skipTest(
         'TODO(b/455847773): Fix MLIR layout mismatch in tpu.memref_slice (dynamic offset issue).'
     )
@@ -860,6 +870,9 @@ class PallasKernelMetadataDistributedTest(parameterized.TestCase):
   def test_mesh_axes_metadata_is_preserved(self, axis_names, op):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('Remote async copy only supported on TPU v4+')
+    if jtu.is_device_tpu(7, 'x'):
+      # TODO(sharadmv): Enable these tests.
+      self.skipTest('Tests time out on TPUs v7x.')
     if len(jax.devices()) < 4:
       self.skipTest('Not enough devices')
     devices = np.array(jax.devices()[:4]).reshape((2, 2))
