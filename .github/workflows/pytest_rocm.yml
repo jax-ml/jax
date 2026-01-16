@@ -58,7 +58,7 @@ on:
       gcs_download_uri:
         description: "GCS location prefix from where the artifacts should be downloaded"
         type: string
-        default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+        default: 'gs://jax-nightly-artifacts/latest'
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -91,7 +91,7 @@ on:
         type: string
       gcs_download_uri:
         description: "GCS location prefix from where the artifacts should be downloaded"
-        default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+        default: 'gs://jax-nightly-artifacts/latest'
         type: string
 permissions: {}
 
