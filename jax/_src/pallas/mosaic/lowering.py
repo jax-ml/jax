@@ -2041,22 +2041,6 @@ def _broadcast_in_dim_lowering_rule(
   if aval_in.shape == shape:
     return val
 
-  if jnp.issubdtype(aval_in.dtype, jnp.bool_) and (
-      ctx.forward_compatible or ctx.is_cloud_tpu_older_than(2025, 6, 3)
-  ):
-    # Direct broadcasts for bools are not supported in Mosaic due to booleans
-    # living in mask registers and broadcast operating on vregs. Broadcast as an
-    # integer instead and cast back to a bool.
-    def _proxy_fun(val, *, shape, broadcast_dimensions):
-      int_val = jnp.where(val, 1, 0)
-      bcast_val = jax.lax.broadcast_in_dim(int_val, shape, broadcast_dimensions)
-      return bcast_val == 1
-
-    proxy_lowering = lower_fun(_proxy_fun, multiple_results=False)
-    return proxy_lowering(
-        ctx, val, shape=shape, broadcast_dimensions=broadcast_dimensions
-    )
-
   if broadcast_dimensions:
     out_shape_list = [1] * len(shape)
     for i, s in zip(broadcast_dimensions, aval_in.shape):
@@ -2327,18 +2311,10 @@ def _convert_element_type_lowering_rule(
   unsigned = jnp.unsignedinteger
   old_bitwidth = dtypes.itemsize_bits(old_dtype)
   new_bitwidth = dtypes.itemsize_bits(new_dtype)
-  both_32bit = old_bitwidth == 32 and new_bitwidth == 32
   if _from(floating) and _to(floating):
-    forward_compat = ctx.forward_compatible or ctx.is_cloud_tpu_older_than(
-        2025, 6, 29
-    )
-    if old_bitwidth < new_bitwidth and (
-        new_bitwidth == 32 or not forward_compat
-    ):
+    if old_bitwidth < new_bitwidth:
       return arith.extf(out_type, x)
-    elif old_bitwidth > new_bitwidth and (
-        old_bitwidth == 32 or not forward_compat
-    ):
+    elif old_bitwidth > new_bitwidth:
       return arith.truncf(out_type, x)
   elif _from(integer) and _to(integer):
     if old_bitwidth < new_bitwidth and new_bitwidth == 32:
@@ -2354,11 +2330,7 @@ def _convert_element_type_lowering_rule(
   elif _from(floating) and _to(signed):
     return arith.fptosi(out_type, x)
   elif _from(signed) and _to(floating):
-    if (
-        not (ctx.forward_compatible or ctx.is_cloud_tpu_older_than(2025, 5, 12))
-        or both_32bit
-    ):
-      return arith.sitofp(out_type, x)
+    return arith.sitofp(out_type, x)
   elif old_dtype == jnp.bool_ and _to(integer) and new_bitwidth == 32:
     return arith.extui(out_type, x)
   return lower_fun(functools.partial(_convert_helper, to_dtype=new_dtype),
@@ -2529,10 +2501,7 @@ def _transpose_lowering_rule(ctx: LoweringRuleContext, x, *, permutation):
   out_type = aval_to_ir_type(
       ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
   )
-  if ctx.forward_compatible or ctx.is_cloud_tpu_older_than(2025, 5, 8):
-    return vector.transpose(out_type, x, permutation)
-  else:
-    return tpu.transpose(out_type, x, permutation)
+  return tpu.transpose(out_type, x, permutation)
 
 
 def _bcast(
