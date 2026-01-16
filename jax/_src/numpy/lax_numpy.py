@@ -36,6 +36,7 @@ from typing import Any, IO, Literal, Protocol, TypeVar, Union, overload
 import numpy as np
 
 from jax._src import api
+from jax._src import config
 from jax._src import core
 from jax._src import deprecations
 from jax._src import dtypes
@@ -9419,6 +9420,12 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
   if sorter is not None:
     a = a[sorter]
   dtype = lax_utils.int_dtype_for_dim(a.shape[0], signed=True)
+  if not config.pmap_shmap_merge.value:
+    # pmap doesn't support hijax primitives. Rather than fixing the old
+    # pmap tracing path (which is deprecated and will soon be removed)
+    # we instead fall back to the equivalent non-hijax call path.
+    return hijax._searchsorted_impl(a, v, dimension=0, batch_dims=0,
+                                    side=side, method=method, dtype=dtype)
   return hijax.searchsorted(a, v, side=side, method=method, dtype=dtype)
 
 
