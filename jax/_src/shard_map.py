@@ -1398,7 +1398,7 @@ def _shard_map_batch(
     ) -> Sequence[batching.BatchTracer]:
   in_vals, in_dims = unzip2(map(trace.to_batch_info, in_tracers))
   spmd_axis_name = trace.axis_data.spmd_name
-  explicit_mesh_axis = trace.axis_data.explicit_mesh_axis
+  explicit_mesh_axis = trace.axis_data.ema_data.name
   if spmd_axis_name is not None:
     used = {n for spec in in_specs for n in _spec_to_vma(spec)}
     if not config.disable_vmap_shmap_error.value and set(spmd_axis_name) & used:
@@ -1407,9 +1407,7 @@ def _shard_map_batch(
         sp if d is batching.not_mapped else pxla.batch_spec(sp, d, spmd_axis_name)
         for sp, d in zip(in_specs, in_dims)]
     new_size = trace.axis_data.size // prod(mesh.shape[n] for n in spmd_axis_name)
-    new_axis_data = batching.AxisData(
-        trace.axis_data.name, new_size, trace.axis_data.spmd_name,
-        trace.axis_data.explicit_mesh_axis)
+    new_axis_data = trace.axis_data.update(size=new_size)
   elif explicit_mesh_axis is not None:
     used = {n for spec in in_specs for n in _spec_to_vma(spec)}
     if set(explicit_mesh_axis) & used:

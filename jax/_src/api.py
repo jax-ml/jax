@@ -1192,10 +1192,10 @@ def vmap(fun: F,
     axis_size_ = (axis_size if axis_size is not None else
                   _mapped_axis_size(fun, in_tree, args_flat, in_axes_flat, "vmap"))
     explicit_mesh_axis = _mapped_axis_spec(args_flat, in_axes_flat)
+    cur_mesh = get_abstract_mesh()
     if spmd_axis_name is not None and explicit_mesh_axis is not None:
       if config.remove_size_one_mesh_axis_from_type.value:
-        mesh = get_abstract_mesh()
-        spmd_axis_name = tuple(i for i in spmd_axis_name if mesh.shape[i] != 1)
+        spmd_axis_name = tuple(i for i in spmd_axis_name if cur_mesh.shape[i] != 1)
       if spmd_axis_name == explicit_mesh_axis:
         spmd_axis_name = None
       else:
@@ -1205,8 +1205,14 @@ def vmap(fun: F,
             f" arrays sharded on {explicit_mesh_axis=}")
       assert spmd_axis_name is None
     try:
+      ema_size = (None if explicit_mesh_axis is None else
+                  tuple(s for n, s in zip(cur_mesh.axis_names, cur_mesh.axis_sizes)
+                        if n in explicit_mesh_axis))
+      ema_data = batching.VmapExplicitData(
+          explicit_mesh_axis, ema_size,
+          batching.get_ema_pos(cur_mesh, explicit_mesh_axis))
       axis_data = batching.AxisData(axis_name, axis_size_, spmd_axis_name,
-                                    explicit_mesh_axis)
+                                    ema_data)
       out_flat, inferred_out_axes = batching.batch(
           flat_fun, axis_data, in_axes_flat,
           lambda: flatten_axes("vmap out_axes", out_tree(), out_axes),

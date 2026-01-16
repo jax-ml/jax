@@ -2868,9 +2868,9 @@ def _scatter_batching_rule(scatter_op, axis_data, batched_args, batch_dims, *,
   size = next(x.shape[ax] for x, ax in zip(batched_args, batch_dims)
               if ax is not None)
   operand = batching.bdim_at_front(operand, operand_bdim, size,
-                                   axis_data.explicit_mesh_axis)
+                                   axis_data.ema_data.name)
   updates = batching.bdim_at_front(updates, updates_bdim, size,
-                                   axis_data.explicit_mesh_axis)
+                                   axis_data.ema_data.name)
 
   if indices_bdim is None:
     inserted_window_dims = tuple(np.add(1, dimension_numbers.inserted_window_dims))
@@ -2893,7 +2893,7 @@ def _scatter_batching_rule(scatter_op, axis_data, batched_args, batch_dims, *,
 
   # see the third case in _gather_batching_rule for comparison and comments
   indices = batching.bdim_at_front(indices, indices_bdim, size,
-                                   axis_data.explicit_mesh_axis)
+                                   axis_data.ema_data.name)
 
   update_window_dims = tuple(np.add(1, dimension_numbers.update_window_dims))
   inserted_window_dims = tuple(np.add(1, dimension_numbers.inserted_window_dims))

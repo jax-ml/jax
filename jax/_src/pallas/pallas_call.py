@@ -562,10 +562,10 @@ def _pallas_call_batching_rule(
                               ) -> jax_typing.Array:
     return x if bdim is batching.not_mapped else jnp.squeeze(x, axis=bdim)
 
-  # this is the _global_ axis size if axis_data.explicit_mesh_axis is not None
+  # this is the _global_ axis size if axis_data.ema_data.name is not None
   # we want to convert it to the local axis size
   axis_size = axis_data.size
-  ema = axis_data.explicit_mesh_axis
+  ema = axis_data.ema_data.name
   abs_mesh = get_abstract_mesh()
   if ema:
     mesh_size = math.prod(abs_mesh.shape[i] for i in ema)

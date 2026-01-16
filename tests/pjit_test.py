@@ -7936,7 +7936,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_select_batch(self, mesh):
-    y_sharding = NamedSharding(mesh, P('y', None))
     xy_sharding = NamedSharding(mesh, P('x', 'y', None))
     batch_a = jax.device_put(jnp.ones((4, 2, 3), dtype=jnp.float32), xy_sharding)
     batch_b = jax.device_put(jnp.ones((4, 2, 2), dtype=jnp.int32), xy_sharding)
@@ -7944,7 +7943,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out_s = NamedSharding(mesh, P('x', 'y', None, None))
 
     def select(a, b):
-      c = a.at[b].get(out_sharding=y_sharding)
+      c = a.at[b].get(out_sharding=P('y', None))
       return c
 
     @jax.jit
@@ -10098,6 +10097,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = tile(x)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None, ('x', 'y'))))
     self.check_wsc_in_lowered(tile.lower(x).as_text())
+
+  @jtu.with_explicit_mesh((4, 2), ('x', 'y'))
+  def test_vmap_grad_axis_error(self, mesh):
+    def einsum_loss(a, b):
+      einsum_out = jnp.einsum('xyz,wz->xyw', b, a, out_sharding=jax.P())
+      loss_value = jnp.sum(einsum_out)
+      return loss_value
+
+    a = jax.device_put(np.ones((32, 64), dtype=jnp.float32), P(None, 'y'))
+    b = jax.device_put(np.ones((8, 1, 32, 64), dtype=jnp.float32),
+                       jax.P(('x', 'y'), None, None))
+    jax.jit(jax.vmap(jax.grad(einsum_loss), in_axes=(None, 0)))(a, b)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

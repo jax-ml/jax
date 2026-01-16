@@ -29,7 +29,7 @@ import numpy as np
 
 from jax._src import config as jax_config
 from jax._src import xla_bridge as xb
-from jax._src.util import safe_zip, cache, tuple_delete
+from jax._src.util import safe_zip, cache, tuple_delete, unzip3
 from jax._src.lib import xla_client as xc
 
 zip, unsafe_zip = safe_zip, zip
@@ -595,19 +595,21 @@ def _raise_value_error(name):
 empty_abstract_mesh = AbstractMesh((), ())
 empty_concrete_mesh = Mesh(np.empty((), dtype=object), ())
 
-class use_abstract_mesh:
-  __slots__ = ['mesh', 'prev']
 
-  def __init__(self, mesh: AbstractMesh):
+class _use_abstract_mesh:
+  __slots__ = ['mesh', 'prev', '_skip_err']
+
+  def __init__(self, mesh: AbstractMesh, _skip_err):
     if not isinstance(mesh, AbstractMesh):
       raise ValueError(
           "Expected mesh of type `jax.sharding.AbstractMesh`. Got type:"
           f" {type(mesh)}")
     self.mesh = mesh
+    self._skip_err = _skip_err
 
   def __enter__(self):
     self.prev = jax_config.abstract_mesh_context_manager.swap_local(self.mesh)
-    if (self.prev is not config_ext.unset and
+    if (not self._skip_err and self.prev is not config_ext.unset and
         not self.prev.empty and not self.mesh.empty and
         self.prev.size != self.mesh.size):
       jax_config.abstract_mesh_context_manager.set_local(self.prev)
@@ -618,6 +620,13 @@ class use_abstract_mesh:
 
   def __exit__(self, exc_type, exc_value, traceback):
     jax_config.abstract_mesh_context_manager.set_local(self.prev)
+
+
+def use_abstract_mesh(mesh):
+  return _use_abstract_mesh(mesh, _skip_err=False)
+
+def vmap_use_abstract_mesh(mesh):
+  return _use_abstract_mesh(mesh, _skip_err=True)
 
 
 def get_abstract_mesh() -> AbstractMesh:

@@ -680,7 +680,7 @@ def _array_ref_batched(axis_data, vals_in, dims_in, memory_space, kind):
   if dim is None:
     # We defensively batch the ref, b/c it could later be hit with a batched val
     val2 = batching.broadcast(val, axis_data.size, 0,
-                              axis_data.explicit_mesh_axis)
+                              axis_data.ema_data.name)
     return core.ref_p.bind(val2, memory_space=memory_space, kind=kind), 0
   else:
     return core.ref_p.bind(val, memory_space=memory_space, kind=kind), dim
@@ -923,7 +923,7 @@ def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
   if not indexers:
     if ref_is_batched and not val_is_batched:
       val = batching.broadcast(val, axis_data.size, ref_dim,
-                               axis_data.explicit_mesh_axis)
+                               axis_data.ema_data.name)
     return swap_p.bind(ref, val, *flat_idxs, tree=tree), ref_dim
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
@@ -953,7 +953,7 @@ def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
   if not val_is_batched:
     if ref_is_batched or idx_is_batched:
       val = batching.broadcast(val, axis_data.size, batched_dim_in_result,
-                               axis_data.explicit_mesh_axis)
+                               axis_data.ema_data.name)
   else:
     val = batching.moveaxis(val, val_dim, batched_dim_in_result)
 
@@ -1036,7 +1036,7 @@ def _addupdate_vmap(axis_data, batched_args, batched_dims, *, tree):
   if not val_is_batched:
     if ref_is_batched or idx_is_batched:
       val = batching.broadcast(val, axis_data.size, batched_dim_in_result,
-                               axis_data.explicit_mesh_axis)
+                               axis_data.ema_data.name)
   else:
     val = batching.moveaxis(val, val_dim, batched_dim_in_result)
 

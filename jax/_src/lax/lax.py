@@ -6548,8 +6548,11 @@ def _broadcast_in_dim_abstract_eval(x, shape, broadcast_dimensions,
       x, shape=shape, broadcast_dimensions=broadcast_dimensions,
       sharding=sharding)
   new_vma = core.standard_vma_rule('broadcast_in_dim', x)
-  return core.ShapedArray(shape, x.dtype, x.weak_type, sharding=new_sharding,
-                          vma=new_vma, memory_space=x.memory_space)
+  out_aval = core.ShapedArray(
+      shape, x.dtype, x.weak_type, sharding=new_sharding, vma=new_vma,
+      memory_space=x.memory_space)
+  core.check_avals_context_mesh([out_aval], 'broadcast_in_dim')
+  return out_aval
 
 
 broadcast_in_dim_p = core.Primitive('broadcast_in_dim')
@@ -7384,8 +7387,6 @@ def _select_transpose_rule(t, which, *cases):
 def _select_batch_rule(axis_data, batched_args, batch_dims, **unused_kwargs):
   which, *cases = batched_args
   which_bdim, *case_bdims = batch_dims
-  size = next(x.shape[i] for x, i in zip(batched_args, batch_dims)
-              if i is not None)
 
   # avoid transposes and some broadcasts in special cases
   if all(which_bdim == bdim for bdim in case_bdims):
@@ -7406,11 +7407,10 @@ def _select_batch_rule(axis_data, batched_args, batch_dims, **unused_kwargs):
                      for c, c_bdim in zip(cases[1:], case_bdims[1:])]
       return select_n(which, cases[0], *other_cases), bdim
 
-  which = (batching.bdim_at_front(which, which_bdim, size,
-                                  axis_data.explicit_mesh_axis)
+  which = (batching.bdim_at_front2(which, which_bdim, axis_data)
            if np.shape(which) else which)
   if not all(() == np.shape(c) for c in cases):
-    cases = [batching.bdim_at_front(c, bdim, size, axis_data.explicit_mesh_axis)
+    cases = [batching.bdim_at_front2(c, bdim, axis_data)
              for c, bdim in zip(cases, case_bdims)]
   assert all(np.shape(cases[0]) == np.shape(c) for c in cases[1:])
   if 0 < np.ndim(which) < np.ndim(cases[0]):

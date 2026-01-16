@@ -629,7 +629,7 @@ def _conv_general_dilated_batch_rule(
   def get_out_sharding(axis):
     if out_sharding is None:
       return None
-    val = axis_data.explicit_mesh_axis
+    val = axis_data.ema_data.name
     if not val:
       return out_sharding
     if out_sharding.spec[axis] is not None:
