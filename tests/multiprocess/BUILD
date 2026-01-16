@@ -178,6 +178,8 @@ jax_multiprocess_test(
 jax_multiprocess_test(
     name = "socket_transfer_test",
     srcs = ["socket_transfer_test.py"],
+    # TODO(b/476419684): Remoe the following line once flaky crashes during teardown are fixed.
+    enable_backends = [],
     main = "socket_transfer_test.py",
     deps = [
         "//jax/_src:test_multiprocess",
