@@ -841,10 +841,18 @@ def _compare_srcs_and_test_deps_test_impl(ctx):
         message = "SKIPPED: The test will be executed only with //jax:build_jax=true and //jax:build_jaxlib=true."
         test_result = 0
 
-    script_content = """#!/bin/bash
-echo "%s"
-exit %s""" % (message, test_result)
-    test_runner_script = ctx.actions.declare_file(ctx.label.name + "_runner.sh")
+    if ctx.attr.platform_name == "Windows":
+        script_content = """@ECHO OFF
+ECHO {message}
+EXIT /B {test_result}""".format(message = message, test_result = test_result)
+        script_filename = ctx.label.name + "_runner.bat"
+    else:
+        script_content = """#!/bin/bash
+echo "{message}"
+exit {test_result}""".format(message = message, test_result = test_result)
+        script_filename = ctx.label.name + "_runner.sh"
+
+    test_runner_script = ctx.actions.declare_file(script_filename)
     ctx.actions.write(
         output = test_runner_script,
         content = script_content,
@@ -860,7 +868,7 @@ exit %s""" % (message, test_result)
         ),
     ]
 
-compare_srcs_and_test_deps_test = rule(
+_compare_srcs_and_test_deps_test = rule(
     implementation = _compare_srcs_and_test_deps_test_impl,
     attrs = {
         "srcs": attr.label_list(
@@ -879,16 +887,35 @@ compare_srcs_and_test_deps_test = rule(
         "build_jaxlib": attr.label(default = Label("//jax:build_jaxlib")),
         "build_jax": attr.label(default = Label("//jax:build_jax")),
         "root_package_names": attr.string_list(mandatory = True),
+        "platform_name": attr.string(mandatory = True),
     },
     test = True,
 )
-"""Compares the source files against the test dependencies.
 
-Args:
-  srcs: The source files to compare.
-  tests: The test dependencies to compare.
-  ignored_init_py_files: The init python files to ignore.
-  build_jaxlib: The build setting for jaxlib.
-  build_jax: The build setting for jax.
-  root_package_names: The root folder names to compare.
-"""  # buildifier: disable=no-effect
+def compare_srcs_and_test_deps_test(name, srcs, tests, ignored_init_py_files, root_package_names, tags = []):
+    """Compares the source files against the test dependencies.
+
+    Args:
+    srcs: The source files to compare.
+    tests: The test dependencies to compare.
+    ignored_init_py_files: The init python files to ignore.
+    build_jaxlib: The build setting for jaxlib.
+    build_jax: The build setting for jax.
+    root_package_names: The root folder names to compare.
+    tags: The tags to apply to the test.
+    """
+    _compare_srcs_and_test_deps_test(
+        name = name,
+        srcs = srcs,
+        tests = tests,
+        ignored_init_py_files = ignored_init_py_files,
+        root_package_names = root_package_names,
+        platform_name = select({
+            "@platforms//os:osx": "Darwin",
+            "@platforms//os:macos": "Darwin",
+            "@platforms//os:windows": "Windows",
+            "@platforms//os:linux": "Linux",
+        }),
+        tags = tags,
+        testonly = True,
+    )
