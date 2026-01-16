@@ -332,7 +332,7 @@ class SearchsortedTest(jtu.JaxTestCase):
 
   def test_vmap_unbatched(self):
     """Test batched case where neither input is batched"""
-    x = np.array([2, 1, 3])
+    x = np.array([2, 1, 3], dtype='int32')
     y = np.array([2, 3, 4, 5])
     z = np.array([4, 3])
     def f(x, y, z):
