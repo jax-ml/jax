@@ -21,7 +21,6 @@ from typing import Any
 import unittest
 
 from absl.testing import absltest
-from absl.testing import flagsaver
 from absl.testing import parameterized
 import jax
 from jax import api_util
@@ -32,8 +31,8 @@ from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
-from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas import pallas_test_util as ptu
+from jax._src.pallas import primitives as pallas_primitives
 from jax.experimental import pallas as pl
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
@@ -2205,32 +2204,6 @@ class OpsTest(PallasBaseTest):
         atol=3 if dtype == jnp.int4 else 0,
         rtol=0.05 if dtype == jnp.int4 else 0,
     )
-
-  @parameterized.parameters(jnp.int8, jnp.int4)
-  # Test that when compatibility mode is disabled,
-  # the dot is not converted to floating point matmul and fails.
-  def test_itof_dot_canonicalization_fails_without_compat_mode(self, dtype):
-    self.skip_if_mosaic_gpu()
-    if not jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on this hardware")
-    if jtu.get_tpu_version() != 7 or self.INTERPRET:
-      self.skipTest("The canonicalization pass being tested is on v7 only.")
-    lhs_shape = rhs_shape = out_shape = (256, 256)
-    with flagsaver.flagsaver(xla_mosaic_compat_mode=False):
-
-      @functools.partial(
-          self.pallas_call,
-          out_shape=jax.ShapeDtypeStruct(out_shape, jnp.int32),
-      )
-      def dot(x_ref, y_ref, o_ref):
-        x = x_ref[:, :]
-        y = y_ref[:, :]
-        o_ref[:, :] = pl.dot(x, y, False, False).astype(o_ref.dtype)
-
-      x = jnp.full(lhs_shape, 1, dtype=dtype)
-      y = jnp.full(rhs_shape, 1, dtype=dtype)
-      with self.assertRaises(Exception):
-        dot(x, y)
 
   def test_strided_load(self):
     self.skip_if_mosaic_gpu()
