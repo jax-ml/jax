@@ -18,7 +18,6 @@ import glob
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import threading
@@ -268,68 +267,6 @@ def _count_events_with_kernel_details(traceevents: List[Dict[str, Any]]) -> int:
         if "kernel_details" in args:
             count += 1
     return count
-
-
-def _run_child_matmul_trace_and_get_xplane(outdir: str, m: int, k: int, n: int) -> str:
-    """
-    Run a minimal JAX matmul trace in a fresh process. Returns path to *.xplane.pb.
-
-    Uses (m, k) @ (k, n) -> (m, n).
-    Each shape is run in its own child process for clean isolation and simpler attribution.
-    """
-    code = r"""
-import glob, json, os
-import jax, jax.numpy as jnp
-from jax import jit
-import jax.profiler
-
-m = int(os.environ["MATMUL_M"])
-k = int(os.environ["MATMUL_K"])
-n = int(os.environ["MATMUL_N"])
-
-@jit
-def f(a, b):
-  return jnp.dot(a, b)
-
-# (m, k) @ (k, n) -> (m, n)
-a = jnp.ones((m, k), dtype=jnp.float16)
-b = jnp.ones((k, n), dtype=jnp.float16)
-
-# Compile/warm-up outside trace.
-f(a, b).block_until_ready()
-
-outdir = os.environ["OUTDIR"]
-with jax.profiler.trace(outdir):
-  for _ in range(5):
-    f(a, b).block_until_ready()
-
-pbs = glob.glob(os.path.join(outdir, "**", "*.xplane.pb"), recursive=True)
-assert len(pbs) == 1, pbs
-print(json.dumps({"xplane": pbs[0]}))
-"""
-
-    env = os.environ.copy()
-    env["OUTDIR"] = outdir
-    env["JAX_PLATFORMS"] = "rocm"
-    env["MATMUL_M"] = str(m)
-    env["MATMUL_K"] = str(k)
-    env["MATMUL_N"] = str(n)
-
-    # Optional diagnostics
-    # env["ROCPROFILER_LOG_LEVEL"] = "trace"
-    # env["AMD_LOG_LEVEL"] = "5"
-
-    r = subprocess.run(
-        [sys.executable, "-c", code], env=env, capture_output=True, text=True
-    )
-    if r.returncode != 0:
-        raise RuntimeError(
-            f"Child failed for shape ({m},{k})x({k},{n}).\n"
-            f"STDOUT:\n{r.stdout}\n\nSTDERR:\n{r.stderr}"
-        )
-
-    info = json.loads(r.stdout.splitlines()[-1])
-    return info["xplane"]
 
 
 # We do not allow multiple concurrent profiler sessions.
@@ -807,16 +744,16 @@ class ProfilerTest(unittest.TestCase):
             unittest.mock.ANY,
         )
 
-    # def test_advanced_configuration_getter(self):
-    #     options = jax.profiler.ProfileOptions()
-    #     advanced_config = {
-    #         "tpu_trace_mode": "TRACE_COMPUTE",
-    #         "tpu_num_sparse_cores_to_trace": 1,
-    #         "enableFwThrottleEvent": True,
-    #     }
-    #     options.advanced_configuration = advanced_config
-    #     returned_config = options.advanced_configuration
-    #     self.assertDictEqual(returned_config, advanced_config)
+    def test_advanced_configuration_getter(self):
+        options = jax.profiler.ProfileOptions()
+        advanced_config = {
+            "tpu_trace_mode": "TRACE_COMPUTE",
+            "tpu_num_sparse_cores_to_trace": 1,
+            "enableFwThrottleEvent": True,
+        }
+        options.advanced_configuration = advanced_config
+        returned_config = options.advanced_configuration
+        self.assertDictEqual(returned_config, advanced_config)
 
     # test if there are GPU events when doing profiling via matmul on ROCm
     @jtu.run_on_devices("gpu")
@@ -829,6 +766,10 @@ class ProfilerTest(unittest.TestCase):
         platform_version = getattr(be, "platform_version", "") or ""
         if "rocm" not in platform_version.lower():
             self.skipTest(f"Not ROCm backend: {platform_version}")
+
+        @jit
+        def matmul(x, y):
+            return jnp.dot(x, y)
 
         # test shapes:
         shapes = [
@@ -843,10 +784,22 @@ class ProfilerTest(unittest.TestCase):
 
         for m, k, n in shapes:
             with self.subTest(shape=f"{m}x{k}x{n}"):
-                with tempfile.TemporaryDirectory() as td:
-                    outdir = os.path.join(td, "profile")
-                    xplane = _run_child_matmul_trace_and_get_xplane(outdir, m, k, n)
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    # Run profiling directly in the test process
+                    with jax.profiler.trace(tmpdir):
+                        x = jax.random.normal(jax.random.key(0), (m, k))
+                        y = jax.random.normal(jax.random.key(1), (k, n))
+                        result = matmul(x, y)
+                        result.block_until_ready()
 
+                    # Find and read the xplane.pb file
+                    xplane_files = glob.glob(
+                        os.path.join(tmpdir, "**", "*.xplane.pb"), recursive=True
+                    )
+                    self.assertEqual(len(xplane_files), 1, "Expected exactly one xplane.pb file")
+                    xplane = xplane_files[0]
+
+                    # Convert to trace viewer JSON and count GPU events
                     tv = _trace_viewer_json_from_xplane(xplane)
                     traceevents = tv.get("traceEvents", [])
                     gpu_events = _count_gpu_events_from_traceevents(traceevents)
@@ -854,7 +807,7 @@ class ProfilerTest(unittest.TestCase):
                     self.assertGreater(
                         gpu_events,
                         0,
-                        f"Expected >0 GPU events for matmul {m}x{n}; got {gpu_events}. xplane={xplane}",
+                        f"Expected >0 GPU events for matmul {m}x{k}x{n}; got {gpu_events}. xplane={xplane}",
                     )
 
     # Test kernel_details are present in trace.json.gz for ROCm profiling
@@ -874,16 +827,24 @@ class ProfilerTest(unittest.TestCase):
         if "rocm" not in platform_version.lower():
             self.skipTest(f"Not ROCm backend: {platform_version}")
 
+        @jit
+        def matmul(x, y):
+            return jnp.dot(x, y)
+
         # Use a large matmul that should definitely have kernel launches
         m, k, n = 1024, 1024, 1024
 
-        with tempfile.TemporaryDirectory() as td:
-            outdir = os.path.join(td, "profile")
-            xplane = _run_child_matmul_trace_and_get_xplane(outdir, m, k, n)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Run profiling directly in the test process
+            with jax.profiler.trace(tmpdir):
+                x = jax.random.normal(jax.random.key(0), (m, k))
+                y = jax.random.normal(jax.random.key(1), (k, n))
+                result = matmul(x, y)
+                result.block_until_ready()
 
             # Read the trace.json.gz file directly (not convert from xplane)
             try:
-                trace_data = _find_and_read_trace_json_gz(outdir)
+                trace_data = _find_and_read_trace_json_gz(tmpdir)
             except FileNotFoundError as e:
                 self.fail(f"Could not find trace.json.gz file: {e}")
 
@@ -900,7 +861,7 @@ class ProfilerTest(unittest.TestCase):
                 0,
                 f"Expected kernel_details in trace.json.gz for matmul {m}x{k}x{n}; "
                 f"found {kernel_detail_count} events with kernel_details out of {len(traceevents)} total events. "
-                f"profile_dir={outdir}",
+                f"profile_dir={tmpdir}",
             )
 
             # Validate the format of kernel_details in the first few events
