@@ -13,11 +13,11 @@
 # limitations under the License.
 """Lowering for Pallas TPU SparseCore."""
 
-from typing import Any, NoReturn, cast
 from collections.abc import Sequence
 import contextlib
 import dataclasses
 import functools
+from typing import Any, cast, NoReturn
 
 from jax._src import api_util
 from jax._src import core as jax_core
@@ -28,8 +28,8 @@ from jax._src import mesh as mesh_lib
 from jax._src import numpy as jnp
 from jax._src import source_info_util
 from jax._src import state
-from jax._src import util
 from jax._src import tree_util
+from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
@@ -82,8 +82,7 @@ class GlobalAllocations:
 
 
 @dataclasses.dataclass
-class ScLoweringContext(tc_lowering.LoweringContext):
-  """Lowering context for SparseCore."""
+class LoweringContext(tc_lowering.LoweringContext):
   global_allocations: GlobalAllocations
 
 LoweringRuleContext = tc_lowering.LoweringRuleContext
@@ -307,7 +306,7 @@ def lower_jaxpr_to_func(
     allocation_operands = operands_and_scratch[
         len(operands_and_scratch) - len(flat_allocations):]
     allocations = allocations_tree.unflatten(allocation_operands)
-    lowering_context = ScLoweringContext(
+    lowering_context = LoweringContext(
         mosaic_grid_mapping.grid,  # type: ignore
         mosaic_grid_mapping.grid_names,
         mosaic_grid_mapping.vmapped_dims,
@@ -372,10 +371,11 @@ register_lowering_rule = functools.partial(
     ),
 )
 
+
 @register_lowering_rule(pallas_primitives.get_global_p)
-def _lower_get_global(ctx: LoweringRuleContext, *, what):
+def _get_logbal_lowering_rule(ctx: LoweringRuleContext, *, what):
   lctx = ctx.lowering_context
-  assert isinstance(lctx, ScLoweringContext)
+  assert isinstance(lctx, LoweringContext)
   return lctx.global_allocations.next_allocation(what)
 
 
