@@ -1386,8 +1386,19 @@ class FragmentedArray:
     )
 
   def _pointwise(
-      self, op, *other, output_is_signed: bool | None = None
+      self,
+      op,
+      *other,
+      output_is_signed: bool | None = None,
+      restrict_bitwidth: bool = True,
   ) -> FragmentedArray:
+    if restrict_bitwidth:
+      if (bitwidth := utils.bitwidth(self.mlir_dtype)) <= 8 and bitwidth != 1:
+        raise NotImplementedError(
+            f"Pointwise operations on {bitwidth}-bit types are unsupported"
+            " (except bitwise operations). Upcast to a 16- or 32-bit type"
+            " before performing the operation."
+        )
     # If our layout is a splat, then we should either dispatch to a non-splat
     # layout, or broadcast ourselves to the output shape first.
     if isinstance(self.layout, WGSplatFragLayout):
@@ -1562,7 +1573,7 @@ class FragmentedArray:
   def __or__(self, other):
     if not isinstance(self.mlir_dtype, ir.IntegerType):
       return NotImplemented
-    return self._pointwise(arith.ori, other)
+    return self._pointwise(arith.ori, other, restrict_bitwidth=False)
 
   def __ror__(self, other):
     return self | other
@@ -1570,7 +1581,7 @@ class FragmentedArray:
   def __and__(self, other):
     if not isinstance(self.mlir_dtype, ir.IntegerType):
       return NotImplemented
-    return self._pointwise(arith.andi, other)
+    return self._pointwise(arith.andi, other, restrict_bitwidth=False)
 
   def __rand__(self, other):
     return self & other
@@ -1578,10 +1589,24 @@ class FragmentedArray:
   def __xor__(self, other):
     if not isinstance(self.mlir_dtype, ir.IntegerType):
       return NotImplemented
-    return self._pointwise(arith.xori, other)
+    return self._pointwise(arith.xori, other, restrict_bitwidth=False)
 
   def __rxor__(self, other):
     return self ^ other
+
+  def __lshift__(self, other):
+    if not isinstance(self.mlir_dtype, ir.IntegerType):
+      return NotImplemented
+    return self._pointwise(arith.shli, other, restrict_bitwidth=False)
+
+  def __rshift__(self, other):
+    if not isinstance(self.mlir_dtype, ir.IntegerType):
+      return NotImplemented
+    return self._pointwise(
+        arith.shrsi if self.is_signed else arith.shrui,
+        other,
+        restrict_bitwidth=False,
+    )
 
   def __eq__(self, other):
     return self._compare(
@@ -1589,6 +1614,7 @@ class FragmentedArray:
         f_pred=arith.CmpFPredicate.OEQ,
         si_pred=arith.CmpIPredicate.eq,
         ui_pred=arith.CmpIPredicate.eq,
+        restrict_bitwidth=False,
     )
 
   def __ne__(self, other):
@@ -1597,6 +1623,7 @@ class FragmentedArray:
         f_pred=arith.CmpFPredicate.UNE,
         si_pred=arith.CmpIPredicate.ne,
         ui_pred=arith.CmpIPredicate.ne,
+        restrict_bitwidth=False,
     )
 
   def __lt__(self, other):
@@ -1631,7 +1658,9 @@ class FragmentedArray:
         ui_pred=arith.CmpIPredicate.uge,
     )
 
-  def _compare(self, other, *, f_pred, si_pred, ui_pred):
+  def _compare(
+      self, other, *, f_pred, si_pred, ui_pred, restrict_bitwidth=True
+  ):
     if isinstance(self.mlir_dtype, ir.FloatType):
       pred = functools.partial(arith.cmpf, f_pred)
     elif isinstance(self.mlir_dtype, ir.IntegerType):
@@ -1641,7 +1670,9 @@ class FragmentedArray:
         pred = functools.partial(arith.cmpi, ui_pred)
     else:
       return NotImplemented
-    return self._pointwise(pred, other, output_is_signed=False)
+    return self._pointwise(
+        pred, other, output_is_signed=False, restrict_bitwidth=restrict_bitwidth
+    )
 
   def max(self, other) -> FragmentedArray:
     if isinstance(self.mlir_dtype, ir.FloatType):

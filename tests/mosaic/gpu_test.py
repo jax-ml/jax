@@ -3504,20 +3504,23 @@ class FragmentedArrayTest(TestCase):
     np.testing.assert_array_equal(result, expected)
 
   @parameterized.product(
-      op=[operator.and_, operator.or_, operator.xor],
-      dtype=[jnp.uint32],
+      op=[operator.and_, operator.or_, operator.xor, operator.lshift, operator.rshift],
+      dtype=[jnp.uint32, jnp.uint8],
   )
   def test_bitwise(self, op, dtype, m=64, n=8):
+    is_shift = op in {operator.lshift, operator.rshift}
     def kernel(ctx, dst, _):
       iota = iota_tensor(m, n, dtype)
-      op(iota, iota + 1).store_untiled(dst, optimized=False)
+      rhs = iota & 0xf if is_shift else iota << 2
+      op(iota, rhs).store_untiled(dst, optimized=False)
 
     out_shape = jax.ShapeDtypeStruct((m, n), dtype)
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
     )()
     iota = np.arange(m * n, dtype=dtype).reshape(m, n)
-    np.testing.assert_array_equal(result, op(iota, iota + 1))
+    rhs = iota & 0xf if is_shift else iota << 2
+    np.testing.assert_array_equal(result, op(iota, rhs))
 
   @parameterized.product(
       ops=(
@@ -4168,14 +4171,14 @@ class FragmentedArrayTest(TestCase):
     m, n = 128, 128
     def kernel(ctx, dst, _):
       i8 = ir.IntegerType.get_signless(8)
-      iota = iota_tensor(m, n, jnp.uint8)
+      iota = iota_tensor(m, n, jnp.uint16)
       (iota > 10).astype(i8, is_signed=False).store_untiled(dst, optimized=False)
 
     out_shape = jax.ShapeDtypeStruct((m, n), jnp.int8)
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
     )()
-    iota = np.arange(m * n, dtype=jnp.uint8).reshape(m, n)
+    iota = np.arange(m * n, dtype=jnp.uint16).reshape(m, n)
     np.testing.assert_array_equal(result, (iota > 10).astype(jnp.uint8))
 
   @parameterized.product(dtype=(jnp.bfloat16, jnp.float16))
