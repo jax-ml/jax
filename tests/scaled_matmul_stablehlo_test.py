@@ -48,15 +48,15 @@ input_shardings = [
 ]
 c_name = "__cudnn$blockScaledDot"
 expected_hlos = [
-    (c_name, "all-reduce", "f32[1,512,512]", "replica_groups={{0,1},{2,3}}"),
-    ("all-gather", "f8e4m3fn[512,512]", "replica_groups=[2,2]<=[4]", c_name),
-    ("all-gather", "f8e4m3fn[512,512]", "replica_groups=[2,2]<=[4]", c_name),
-    (c_name,),
-    ("all-gather", "f8e4m3fn[256,1024]", "replica_groups=[2,2]<=[4]", c_name),
-    (c_name,),
-    ("all-gather", "f8e4m3fn[2,512,1024]", "replica_groups=[2,2]<=[4]", c_name),
-    ("all-gather", "f8e4m3fn[2,512,512]", "replica_groups=[2,2]<=[4]", c_name),
-    ("all-gather", "f8e4m3fn[2,256,1024]", "replica_groups=[2,2]<=[2,2]", c_name,),
+    [("all-reduce", "f32[1,512,512]", "replica_groups={{0,1},{2,3}}"), (c_name,)],
+    [("all-gather", "f8e4m3fn[512,512]", "replica_groups=[2,2]<=[4]"), (c_name,)],
+    [("all-gather", "f8e4m3fn[512,512]", "replica_groups=[2,2]<=[4]"), (c_name,)],
+    [(c_name,)],
+    [("all-gather", "f8e4m3fn[256,1024]", "replica_groups=[2,2]<=[4]"), (c_name,)],
+    [(c_name,)],
+    [("all-gather", "f8e4m3fn[2,512,1024]", "replica_groups=[2,2]<=[4]"), (c_name,)],
+    [("all-gather", "f8e4m3fn[2,512,512]", "replica_groups=[2,2]<=[4]"), (c_name,)],
+    [("all-gather", "f8e4m3fn[2,256,1024]", "replica_groups=[2,2]<=[2,2]"), (c_name,)],
 ]
 expected_output_spec = [
     PartitionSpec('dp',),
@@ -74,7 +74,7 @@ expected_output_spec = [
 # in Shardy.
 if not config.use_shardy_partitioner.value:
     expected_output_spec[5] = PartitionSpec(None, 'dp', 'tp')
-    expected_hlos[5] += ("reduce-scatter", "f32[2,256,512]", "replica_groups={{0,1},{2,3}}")
+    expected_hlos[5] += [("reduce-scatter", "f32[2,256,512]", "replica_groups={{0,1},{2,3}}")]
 
 sharding_configs = {
     input_sharding: (hlo, output_spec)
@@ -293,12 +293,12 @@ class ScaledMatmulTest(jtu.JaxTestCase):
     expected_hlo = sharding_configs[in_shardings][0]
     hlo_text = get_hlo_text(in_shardings, block_scale_configs)
 
-    hlo_pattern = re.compile(
-        r".*".join([re.escape(x) for x in expected_hlo]), flags=re.DOTALL
-    )
-    self.assertRegex(
-        hlo_text, hlo_pattern, msg=f"Failed to find pattern: {expected_hlo}"
-    )
+    for expected_hlo_patterns in expected_hlo:
+      hlo_pattern_str = r".*".join(map(re.escape, expected_hlo_patterns))
+      hlo_pattern = re.compile(hlo_pattern_str, flags=re.DOTALL)
+      # Check all patterns in case of failures
+      with self.subTest(pattern=hlo_pattern_str):
+        self.assertRegex(hlo_text, hlo_pattern, msg=f"Failed to find pattern: {hlo_pattern_str}")
 
   @jtu.sample_product(
       contract=[160, 96],
