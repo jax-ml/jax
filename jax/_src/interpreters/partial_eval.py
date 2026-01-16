@@ -20,7 +20,6 @@ from collections.abc import Callable, Sequence
 import contextlib
 from dataclasses import dataclass
 from functools import partial
-import logging
 import itertools as it
 import operator as op
 from typing import Any, NamedTuple, Union
@@ -38,7 +37,6 @@ from jax._src import linear_util as lu
 from jax._src import profiler
 from jax._src import source_info_util
 from jax._src import xla_metadata_lib
-from jax._src import tree_util
 from jax._src.core import (
     Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval, AbstractValue,
     ClosedJaxpr, new_jaxpr_eqn, Var, DropVar, Atom, JaxprEqn, Primitive,
@@ -50,7 +48,7 @@ from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            as_hashable_function, weakref_lru_cache,
                            multi_weakref_lru_cache, subs_list,
-                           HashableFunction, foreach, test_event)
+                           HashableFunction, foreach)
 
 
 map, unsafe_map = safe_map, map
@@ -63,7 +61,6 @@ ConstId = int
 
 AttrKind = Any
 PyTree = Any
-logger = logging.getLogger(__name__)
 
 class PartialVal(tuple):
   """Partial value: either a known value or an unknown (abstract) value.
@@ -811,7 +808,7 @@ def move_envvars(jaxpr: Jaxpr, which: tuple[bool, ...]) -> Jaxpr:
 @weakref_lru_cache
 def separate_consts(jaxpr: ClosedJaxpr) -> tuple[ClosedJaxpr, list[Any]]:
   """Moves the constvars to the start of invars and returns the consts explicitly."""
-  return close_jaxpr(convert_constvars_jaxpr(jaxpr.jaxpr)), jaxpr.consts
+  return ClosedJaxpr(convert_constvars_jaxpr(jaxpr.jaxpr), []), jaxpr.consts
 
 @weakref_lru_cache
 def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
@@ -2296,107 +2293,12 @@ def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
   store.store(out_zeros)
   return [*out_primals, *out_nz_tangents]
 
-callsites_with_tracing_cache_miss: set[str] = set()
-
-def explain(keys, fun, in_avals, debug_info, *context):
-  func_filename = debug_info.func_filename
-  if func_filename and not source_info_util.is_user_filename(func_filename):
-   return
-
-  msg: list[str] = []
-  p = msg.append
-
-  callsite = source_info_util.summarize(source_info_util.current())
-  p(f"TRACING CACHE MISS at {callsite}:")
-
-  src_info = ""
-  if func_filename:
-    src_info += f" defined at {func_filename}"
-  if func_lineno := debug_info.func_lineno:
-    src_info += f":{func_lineno}"
-  func_name = debug_info.func_name
-
-  # have we seen this function before at all?
-  keys = [key for fun_ref, *key in keys if fun_ref() is fun]
-  if not keys:
-    p(f"  never seen function:\n    {func_name} id={id(fun)}{src_info}")
-    if callsite in callsites_with_tracing_cache_miss:
-      p("  but seen another function defined on the same line; maybe the function is\n"
-        "  being re-defined repeatedly, preventing caching?")
-    else:
-      callsites_with_tracing_cache_miss.add(callsite)
-    return logger.log(logging.WARNING, "\n".join(msg))
-
-  p(f"  for {func_name}{src_info}")
-
-  key = (config.trace_context(), (in_avals, debug_info, *context), {})
-  min_diff = min(diff_tracing_cache_keys(key, k) for k in keys)[-1]
-  p('  all previously seen cache keys differ. For the closest previous key:')
-  p('  ' + min_diff)
-  return logger.log(logging.WARNING, "\n".join(msg))
-
-def diff_tracing_cache_keys(new_key, old_key) -> tuple[int, int, str] | None:
-  new_ctx, (new_tree, new_dbg, new_qdd, *_), () = new_key
-  old_ctx, (old_tree, old_dbg, old_qdd, *_), () = old_key
-  return (diff_ctx(new_ctx, old_ctx) or
-          diff_trees(new_tree.tree, old_tree.tree) or
-          diff_debug(new_dbg, old_dbg) or
-          diff_types(new_dbg, new_tree.vals, old_tree.vals) or
-          (4, 0, 'cache miss explanation unavailable'))
-
-def diff_ctx(new_ctx, old_ctx):
-  msg = "Tracing context doesn't match, e.g. due to config or context manager."
-  num_diff = sum(map(op.ne, new_ctx, old_ctx))
-  if num_diff: return 0, num_diff, msg
-
-def diff_trees(new_tree, old_tree):
-  errs = tree_util.equality_errors_pytreedef(new_tree, old_tree)
-  tree_diffs = []
-  for path, thing1, thing2, explanation in errs:
-    tree_diffs.append(
-        f"  * at input path {tree_util.keystr(tuple(path))}, now {thing1} and "
-        f"before {thing2}, so {explanation}")
-  msg = 'different input pytree:\n' + '\n'.join(tree_diffs)
-  if tree_diffs: return 1, len(tree_diffs), msg
-
-def diff_debug(new_dbg, old_dbg):
-  msg = "Debug info doesn't match."
-  num_diff = sum(map(op.ne, new_dbg, old_dbg))
-  if num_diff: return 2, num_diff, msg
-
-def diff_types(dbg, new_leaves, old_leaves):
-  if new_leaves == old_leaves: return
-  diffs = []
-  add_weak_type_hint = False
-  for name, new_ty, old_ty in zip(dbg.arg_names, new_leaves, old_leaves):
-    if new_ty != old_ty:
-      new_str, old_str = new_ty.str_short(True), old_ty.str_short(True)
-      if type(new_ty) is type(old_ty) is core.ShapedArray:
-        if new_ty.sharding != old_ty.sharding:
-          new_str, old_str = new_ty.str_short(True, True), old_ty.str_short(True, True)
-        if new_ty.weak_type != old_ty.weak_type:
-          add_weak_type_hint = True
-          new_str += f'{{weak_type={new_ty.weak_type}}}'
-          old_str += f'{{weak_type={old_ty.weak_type}}}'
-      diffs.append(f"  * at {name}, now {new_str} and before {old_str}")
-  msg = 'different input types:\n' + '\n'.join(diffs)
-  if add_weak_type_hint:
-    msg += 'https://docs.jax.dev/en/latest/type_promotion.html#weak-types'
-  if diffs: return 3, len(diffs), msg
-
-
-@partial(weakref_lru_cache, explain=explain, maxsize=8192)
+@weakref_lru_cache
 def trace_to_jaxpr(
     fun: Callable,
     in_avals: FlatTree,  # (args, kwargs) pair
-    debug_info: core.DebugInfo,
-    *context_for_cache_key,
+    debug_info: core.DebugInfo
 ) -> tuple[ClosedJaxpr, FlatTree]:
-  if config.no_tracing.value:
-    raise RuntimeError(f"re-tracing function {fun} for "
-                       "`jit`, but 'no_tracing' is set")
-  del context_for_cache_key  # read implicitly, e.g. qdd state
-  test_event("trace_to_jaxpr")
   config.enable_checks.value and debug_info.assert_arg_names(len(in_avals))
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(debug_info, parent_trace=parent_trace)

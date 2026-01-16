@@ -128,7 +128,7 @@ def custom_root(f: Callable,
 
   solution_flat = _custom_root(
       const_lengths, jaxprs, *_flatten(all_consts), *guess_flat)
-  return solution_avals.update(solution_flat).unflatten()
+  return solution_avals.update_from_list(solution_flat).unflatten()
 
 
 @partial(custom_derivatives.custom_jvp, nondiff_argnums=(0, 1))
@@ -319,7 +319,7 @@ def custom_linear_solve(
   args = core.standard_insert_pvary(*args)
   out_flat = linear_solve_p.bind(*args, const_lengths=const_lengths, jaxprs=jaxprs)
 
-  return out_avals.update(out_flat).unflatten()
+  return out_avals.update_from_list(out_flat).unflatten()
 
 
 def _linear_solve_abstract_eval(*args, const_lengths, jaxprs):
