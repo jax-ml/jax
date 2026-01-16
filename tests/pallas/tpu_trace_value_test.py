@@ -24,12 +24,14 @@ import jax.numpy as jnp
 def simple_kernel_with_trace_value(x_ref, s_ref, o_ref):
   """Simple kernel that emits trace metrics."""
   # Emit a constant to xprof trace
-  pltpu.trace_value("constant_value", jnp.float32(42.42))
+  with jax.named_scope("my_scope_1"):
+    pltpu.trace_value("constant_value", jnp.float32(42.42))
   scale = s_ref[0]
 
   z = x_ref[...] + jnp.float32(48.0) + scale.astype(jnp.float32).reshape((1, 1))
   pltpu.trace_value("scale_value", scale)
   o_ref[...] = z
+  pltpu.trace_value("z_ref_value", z)
 
 
 class TraceMetricTest(jtu.JaxTestCase):
