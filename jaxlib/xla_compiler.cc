@@ -110,7 +110,7 @@ absl::StatusOr<nb::bytes> GetHloModuleSerializedProto(const HloModule& module) {
 absl::StatusOr<std::shared_ptr<HloModule>> HloModuleFromSerializedProto(
     const nb::bytes& bytes) {
   HloModuleProto proto;
-  proto.ParseFromArray(bytes.c_str(), bytes.size());
+  proto.ParseFromString(absl::string_view(bytes.c_str(), bytes.size()));
   TF_ASSIGN_OR_RETURN(const HloModuleConfig module_config,
                       HloModule::CreateModuleConfigFromProto(
                           proto, GetDebugOptionsFromFlags()));
@@ -445,7 +445,8 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def("__setstate__", [](Layout* self, nb::tuple t) {
         LayoutProto result;
         nb::bytes serialized = nb::cast<nb::bytes>(t[0]);
-        result.ParseFromArray(serialized.c_str(), serialized.size());
+        result.ParseFromString(
+            absl::string_view(serialized.c_str(), serialized.size()));
         new (self) Layout(ValueOrThrow(Layout::FromProto(result)));
       });
 
@@ -640,8 +641,9 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
            [](XlaComputation* self,
               const nb::bytes& serialized_hlo_module_proto) {
              HloModuleProto proto;
-             proto.ParseFromArray(serialized_hlo_module_proto.c_str(),
-                                  serialized_hlo_module_proto.size());
+             proto.ParseFromString(
+                 absl::string_view(serialized_hlo_module_proto.c_str(),
+                                   serialized_hlo_module_proto.size()));
              new (self) XlaComputation(proto);
            })
       .def("get_hlo_module", xla::ValueOrThrowWrapper(GetHloModule))
@@ -872,7 +874,8 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
            [](CompileOptions* self, nb::tuple t) {
              CompileOptionsProto result;
              nb::bytes serialized = nb::cast<nb::bytes>(t[0]);
-             result.ParseFromArray(serialized.c_str(), serialized.size());
+             result.ParseFromString(
+                 absl::string_view(serialized.c_str(), serialized.size()));
              new (self) CompileOptions(
                  ValueOrThrow(CompileOptions::FromProto(result)));
            })
@@ -891,7 +894,8 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def_static("ParseFromString",
                   [](nb::bytes s) {
                     CompileOptionsProto result;
-                    result.ParseFromArray(s.c_str(), s.size());
+                    result.ParseFromString(
+                        absl::string_view(s.c_str(), s.size()));
                     return ValueOrThrow(CompileOptions::FromProto(result));
                   })
       .def_rw("argument_layouts", &CompileOptions::argument_layouts)
@@ -1137,8 +1141,8 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
            [](ExecutableBuildOptions& options,
               const nb::bytes& serialized_proto) {
              xla::CompilationEnvironmentsProto env_proto;
-             env_proto.ParseFromArray(serialized_proto.c_str(),
-                                      serialized_proto.size());
+             env_proto.ParseFromString(absl::string_view(
+                 serialized_proto.c_str(), serialized_proto.size()));
              auto comp_envs = xla::ValueOrThrow(
                  xla::CompilationEnvironments::CreateFromProto(env_proto));
              *options.mutable_comp_envs() = std::move(*comp_envs);
@@ -1235,7 +1239,8 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
            [](OpSharding* self, nb::tuple t) {
              new (self) OpSharding();
              nb::bytes serialized = nb::cast<nb::bytes>(t[0]);
-             self->ParseFromArray(serialized.c_str(), serialized.size());
+             self->ParseFromString(
+                 absl::string_view(serialized.c_str(), serialized.size()));
            })
       .def_prop_rw("type", &xla::OpSharding::type, &xla::OpSharding::set_type)
       .def_prop_rw("replicate_on_last_tile_dim",
@@ -1251,7 +1256,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
            [](const xla::OpSharding& self) { return self.DebugString(); })
       .def("ParseFromString",
            [](OpSharding& sharding, const nb::bytes& s) {
-             sharding.ParseFromArray(s.c_str(), s.size());
+             sharding.ParseFromString(absl::string_view(s.c_str(), s.size()));
            })
       .def("SerializeToString",
            [](const OpSharding& sharding) {
