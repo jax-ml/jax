@@ -117,13 +117,13 @@ class SearchSorted(VJPHiPrimitive):
       out_bdim = None
     elif bdims[1] is None:
       # Only sorted_arr is batched
-      assert bdims[0] is not None
+      assert bdims[0] is not None  # for type checker
       sorted_arr = jnp.moveaxis(sorted_arr, bdims[0], batch_dims)
       dimension = dimension if dimension > bdims[0] else dimension + 1
       out_bdim = batch_dims
     elif bdims[0] is None:
       # Only query is batched
-      assert bdims[1] is not None
+      assert bdims[1] is not None  # for type checker
       query = jnp.moveaxis(query, bdims[1], batch_dims)
       out_bdim = sorted_arr.ndim - 1
     else:
