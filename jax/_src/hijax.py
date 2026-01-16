@@ -711,6 +711,11 @@ class custom_vjp3:
                                   "must be static, not Tracers")
     traced = api.jit(self.f, static_argnums=(*self.static_argnums,)).trace(*args)
     if any(isinstance(x, core.Tracer) for x in traced._consts):
+      t = next(x for x in traced._consts if isinstance(x, core.Tracer))
+      raise UnexpectedTracerError(
+          f"custom_vjp-decorated function {self.f} closed over a {type(t).__name__} "
+          f"of type {t.aval.str_short()}, but custom_vjp functions can't close "
+          f"over Tracers. Rewrite {self.f} to take it as an explicit input.")
       raise Exception  # TODO(mattjj):error tracer type, value type, primal name
     args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
     in_avals = tree_map(typeof, args)
