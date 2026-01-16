@@ -10099,6 +10099,20 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None, ('x', 'y'))))
     self.check_wsc_in_lowered(tile.lower(x).as_text())
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_vmap_grad_axis_error(self, mesh):
+    def einsum_loss(a, b):
+      einsum_out = jnp.einsum('xyz,wz->xyw', b, a, out_sharding=jax.P())
+      loss_value = jnp.sum(einsum_out)
+      return loss_value
+
+    a = jax.device_put(np.ones((32, 64), dtype=jnp.float32), P(None, 'y'))
+    b = jax.device_put(np.ones((8, 1, 32, 64), dtype=jnp.float32),
+                       jax.P(('x', 'y'), None, None))
+    with self.assertRaisesRegex(
+        ValueError, "Unmapped values passed to vmap cannot be sharded"):
+      jax.jit(jax.vmap(jax.grad(einsum_loss), in_axes=(None, 0)))(a, b)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

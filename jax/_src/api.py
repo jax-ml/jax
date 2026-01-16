@@ -1192,6 +1192,7 @@ def vmap(fun: F,
     axis_size_ = (axis_size if axis_size is not None else
                   _mapped_axis_size(fun, in_tree, args_flat, in_axes_flat, "vmap"))
     explicit_mesh_axis = _mapped_axis_spec(args_flat, in_axes_flat)
+    _check_ema_unmapped_args(explicit_mesh_axis, args_flat, in_axes_flat)
     if spmd_axis_name is not None and explicit_mesh_axis is not None:
       if config.remove_size_one_mesh_axis_from_type.value:
         mesh = get_abstract_mesh()
@@ -1250,6 +1251,19 @@ def _mapped_axis_spec(args_flat, in_axes_flat):
   if out_spec is not None and not isinstance(out_spec, tuple):
     out_spec = (out_spec,)
   return out_spec
+
+def _check_ema_unmapped_args(ema, args_flat, in_axes_flat):
+  if ema is None:
+    return
+  for a, i in zip(args_flat, in_axes_flat):
+    if i is None:
+      aval = core.typeof(a)
+      spec = set(sharding_impls.flatten_spec(aval.sharding.spec))
+      if any(e in spec for e in ema):
+        raise ValueError(
+            "Unmapped values passed to vmap cannot be sharded along the mesh"
+            f" axis you are vmapping over. Got type: {aval.str_short(True)},"
+            f" in_axes: {i} and vmapped mesh axis: {ema}")
 
 def _mapped_axis_size(fn, tree, vals, dims, name):
   if not vals:
