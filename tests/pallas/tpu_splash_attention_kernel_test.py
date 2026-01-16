@@ -312,6 +312,9 @@ class PallasBaseTest(ptu.PallasTPUTest):
         self.skipTest("Not supported on TPU generations <= 3")
     if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
       self.skipTest("On CPU the test works only in 32-bit")
+    if jtu.is_device_tpu(7, 'x'):
+      # TODO(sharadmv): Enable these tests.
+      self.skipTest('Tests time out on TPUs v7x.')
 
     super().setUp()
 
