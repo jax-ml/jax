@@ -1517,4 +1517,39 @@ def TPU_LogBufferOp : TPU_Op<"log_buffer"> {
   let hasCanonicalizeMethod = 1;
 }
 
+def TPU_FetchAndAddSyncOp : TPU_Op<"fetch_and_add_sync",
+    [DefaultMemWrite, AttrSizedOperandSegments]> {
+  let summary = [{
+    FetchAndAddSyncOp atomically increments an SMEM element and returns the
+    old value.
+  }];
+
+  let description = [{
+    FetchAndAddSyncOp atomically increments the element at `base[indices]` by
+    `$value` and returns the old value. The number of `$indices` must match the
+    rank of the `$base` memref. The `$base` memref must be in SMEM. The update
+    is synchronous.
+
+    If `$vector_subcore_id` is provided, the increment is performed on the
+    specified vector subcore. Otherwise, the increment is performed on the
+    scalar subcore.
+  }];
+
+  let arguments = (ins
+    MemRefOf<[I32]>:$base,
+    Variadic<I32>:$indices,
+    I32:$value,
+    Optional<I32>:$vector_subcore_id
+  );
+  let results = (outs I32:$result);
+  let assemblyFormat = [{
+    $base `[` $indices `]` `,` $value (`vector_subcore_id` `(` $vector_subcore_id^ `)`)?
+    attr-dict `:` type($base) `,` type($value) `->` type($result)
+  }];
+
+
+  let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
+}
+
 #endif  // TPU_OPS

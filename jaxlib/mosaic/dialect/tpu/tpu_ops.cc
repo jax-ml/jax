@@ -2296,6 +2296,24 @@ LogicalResult StochasticConvertElementwiseOp::verify() {
   return success();
 }
 
+LogicalResult FetchAndAddSyncOp::verify() {
+  MemRefType base_type = getBase().getType();
+  if (base_type.getRank() != getIndices().size()) {
+    return emitOpError("Number of indices (")
+           << getIndices().size() << ") must match memref rank ("
+           << base_type.getRank() << ")";
+  }
+  /* if (!HasMemorySpace(base_type, MemorySpace::kSmem)) {
+    return emitOpError("Base memref must be in SMEM");
+  } */
+  return success();
+}
+
+LogicalResult FetchAndAddSyncOp::canonicalize(FetchAndAddSyncOp op,
+                                              PatternRewriter& rewriter) {
+  return propagateTiledLayoutToConsumer(op, rewriter);
+}
+
 }  // namespace tpu
 }  // namespace mlir
 
