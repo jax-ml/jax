@@ -1514,6 +1514,7 @@ def TPU_LogBufferOp : TPU_Op<"log_buffer"> {
   let results = (outs);
   let assemblyFormat = [{ $tag attr-dict `:` $input `:` type($input) }];
   let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
 }
 
 #endif  // TPU_OPS

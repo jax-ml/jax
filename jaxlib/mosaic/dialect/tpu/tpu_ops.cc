@@ -1851,6 +1851,11 @@ LogicalResult LogBufferOp::verify() {
   return success();
 }
 
+LogicalResult LogBufferOp::canonicalize(LogBufferOp op,
+                                        PatternRewriter& rewriter) {
+  return propagateTiledLayoutToConsumer(op, rewriter);
+}
+
 LogicalResult ReciprocalOp::verify() {
   if (!getType().getElementType().isF32()) {
     return emitOpError("Not implemented: Reciprocal op for non-f32 dtypes");
