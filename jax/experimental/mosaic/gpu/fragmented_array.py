@@ -2534,6 +2534,8 @@ class FragmentedArray:
         pass
       case _:
         raise NotImplementedError(self.layout)
+    # Silence type checker complaints.
+    assert isinstance(self.layout, TiledLayout)
     if len(self.layout.base_tile_shape) != len(self.shape):
       raise NotImplementedError
     if isinstance(axis, int):
@@ -2554,7 +2556,8 @@ class FragmentedArray:
     )
     out_regs = np.empty(remaining_shape, dtype=object)
     index = ir.IndexType.get()
-    for out_idx in np.ndindex(remaining_shape):
+
+    def reduce_within_warp(out_idx):
       out_reg = None
       for red_idx in np.ndindex(reduced_shape):
         src_idx = tuple(o + r for o, r in zip(out_idx, red_idx))
@@ -2631,71 +2634,238 @@ class FragmentedArray:
                 lane_stride *= 2
                 reduction_size //= 2
           assert lane_stride == WARP_SIZE, lane_stride
-      # TODO(apaszke): At the moment we do a barrier for every output register,
-      # which is very expensive. If we have enough scratch, we should just try
-      # using a single barrier for multiple reductions.
-      # Reduce across warps in the warpgroup, if necessary.
-      if any(reduced_dims[d] for d in layout.partitioned_warp_dims):
-        if scratch is None:
-          raise ValueError(
-              "scratch must be provided when cross-warp reduction is required"
+      return out_reg
+
+    def swizzle_warp_idx_fn(lane_idx: ir.Value, vec_len: int):
+      bitwidth = utils.bitwidth(self.mlir_dtype)
+      num_banks = bank_bitwidth = 32
+      bitwidth_per_store = WARPS_IN_WARPGROUP * vec_len * bitwidth
+      num_banks_per_store = bitwidth_per_store // bank_bitwidth
+      # This range supports vector types from vector<1xi8> to
+      # {vector<32xi8>, vector<16xi16>, vector<8xi32>}, which should be plenty
+      # for realistic use cases. Other cases are not guaranteed to work, but
+      # even if they do, their performance hasn't been evaluated. As a result,
+      # we prefer failing explicitly, to make sure that we don't end up
+      # emitting reductions with poor performance.
+      #
+      # Note: I believe that this should be batch invariant, but have not
+      # thought about it too deeply. If we ever decide that batch invariance
+      # is a property we want to uphold more carefully, then we should revisit
+      # this logic.
+      if bitwidth_per_store < bank_bitwidth or 4 * WARPS_IN_WARPGROUP < num_banks_per_store or 32 % num_banks_per_store != 0:
+          raise NotImplementedError(
+              "Unsupported configuration for cross-warp reduction: "
+              f"{self.mlir_dtype} with {vec_len=}"
           )
-        [vec_len] = ir.VectorType(out_reg.type).shape
-        scratch_ty = ir.MemRefType(scratch.type)
-        if scratch_ty.rank != 1:
-          raise ValueError(f"Expected rank 1 for scratch, got {scratch_ty.rank}")
-        if scratch_ty.element_type != self.mlir_dtype:
-          raise ValueError(
-              f"Expected element type {self.mlir_dtype} for scratch, got"
-              f" {scratch_ty.element_type}"
+      # Assume one row is 128 bytes (32 banks of 4 bytes). For a given lane
+      # index, we want to store the data coming from all 4 warps
+      # contiguously in order to enable vectorized loads later on. If we
+      # simply store the data in order of thread_idx naively, this will
+      # result in bank conflicts, since each warp will hit only a quarter of
+      # the shared memory banks.
+      #
+      # In order to avoid these bank conflicts, we swizzle the data
+      # manually, such that across every four rows of 128 bytes, each warp
+      # will hit all the shared memory banks.
+      lanes_per_row = num_banks // num_banks_per_store
+      num_rows = WARP_SIZE // lanes_per_row
+      row_idx = arith.divui(lane_idx, c(lanes_per_row, i32))
+      match num_banks_per_store:
+        case 1:
+          assert num_rows == 1, num_rows
+          # Here, each lane stores to a different bank, so we don't need to
+          # swizzle the warp index at all.
+          swizzle_warp_idx = lambda widx: widx
+        case 2:
+          assert num_rows == 2, num_rows
+          # In this case, each lane stores 16-bit in a single bank, and the
+          # stores look like:
+          #
+          #     |            Bank 0           |            Bank 1           | ...
+          #     |    16-bit    |    16-bit    |    16-bit    |    16-bit    | ...
+          # r0: | warp0 lane0  | warp1 lane0  | warp2 lane0  | warp3 lane0  | ...
+          # r1: | warp2 lane16 | warp3 lane16 | warp0 lane16 | warp1 lane16 | ...
+          #
+          # such that the first 16 lanes of each warp are mapped to row 0, and
+          # the last 16 lanes of each warp are mapped to row 1, and within a
+          # single row, for a given lane, the data coming from each warp is
+          # always stored in the same order.
+          #
+          # We avoid bank conflicts on the two rows by xoring the warp index
+          # with 2 on row 1, such that lanes in warp0 and warp1 hit even banks
+          # on row 0 and odd banks on row 1 (and the opposite for warp2 and
+          # warp3).
+          lane_xor = arith.shli(row_idx, c(1, i32))
+          swizzle_warp_idx = lambda widx: arith.xori(widx, lane_xor)
+        # As long as we use a multiple of 4 banks, we can use the same
+        # formulation to rotate the order of the 4 warps.
+        case x if x % 4 == 0:
+          # In that case, each lane stores 32-bit, and the stores look like:
+          #
+          # r0: | warp0 lane0  | warp1 lane0  | warp2 lane0  | warp3 lane0  | ...
+          # r1: | warp3 lane8  | warp0 lane8  | warp1 lane8  | warp2 lane8  | ...
+          # r2: | warp2 lane16 | warp3 lane16 | warp0 lane16 | warp1 lane16 | ...
+          # r3: | warp1 lane24 | warp2 lane24 | warp3 lane24 | warp0 lane24 | ...
+          #
+          # such that lanes 0-8 are mapped to row 0, lanes 8-16 to row 1,
+          # lanes 16-24 to row 2, and lanes 24-32 to row 3. In each row, the
+          # index of the warp is rotated to the right by the row index.
+          swizzle_warp_idx = lambda widx: arith.remui(
+              arith.addi(widx, row_idx), c(WARPS_IN_WARPGROUP, i32)
           )
-        # TODO(apaszke): All lanes that replicate data can share the same scratch.
-        # For now we treat the complete reduction as a special case.
-        reduces_all_dims = set(axis) == set(range(len(self.shape)))
-        unique_lanes = 1 if reduces_all_dims else 32
-        if scratch_ty.shape[0] < WARPS_IN_WARPGROUP * unique_lanes * vec_len:
-          raise ValueError("Insufficient scratch space for cross-warp reduction")
-        if scratch_ty.get_strides_and_offset()[0] != [1]:
-          raise ValueError("Expected scratch to be contiguous")
-        thread_idx = utils.thread_idx()
-        if reduces_all_dims:
-          lane_idx = c(0, i32)
+        case _:
+          raise NotImplementedError(num_banks_per_store)
+      return swizzle_warp_idx
+
+    def store_swizzled(
+        out_reg: ir.Value,
+        step_idx: int,
+        lane_idx: ir.Value,
+        scratch: ir.Value,
+        swizzle_warp_idx: Callable[[ir.Value], ir.Value]
+    ):
+      [vec_len] = ir.VectorType(out_reg.type).shape
+      warp_idx = arith.divui(
+          arith.remui(thread_idx, c(WARPGROUP_SIZE, i32)), c(WARP_SIZE, i32)
+      )
+
+      step_base_scratch_idx = c(step_idx * WARPGROUP_SIZE, i32)
+      lane_base_scratch_idx = arith.addi(
+          step_base_scratch_idx, arith.muli(lane_idx, c(WARPS_IN_WARPGROUP, i32))
+      )
+      store_idx = arith.addi(lane_base_scratch_idx, swizzle_warp_idx(warp_idx))
+      as_index = lambda x: arith.index_cast(index, x)
+      vector.store(
+          out_reg, scratch, [as_index(arith.muli(store_idx, c(vec_len, i32)))])
+      return
+
+    def reduce_stored(
+        reg_ty: ir.VectorType,
+        step_idx: int,
+        lane_idx: ir.Value,
+        swizzle_warp_idx: Callable[[ir.Value], ir.Value]
+    ):
+      [vec_len] = ir.VectorType(reg_ty).shape
+      out_reg = None
+      step_base_scratch_idx = c(step_idx * WARPGROUP_SIZE, i32)
+      lane_base_scratch_idx = arith.addi(
+          step_base_scratch_idx, arith.muli(lane_idx, c(WARPS_IN_WARPGROUP, i32))
+      )
+      # warp_idx & warp_group_mask gives you the reduction group of the current warp.
+      if all(isinstance(d, int) and reduced_dims[d] for d in layout.warp_dims):
+        # When we load all the data that we have stored, we can omit swizzling
+        # the warp index without any loss of correctness or determinism.
+        # Without this manual optimization, LLVM can fail to recognize that
+        # it can use wider load instructions, leading to worse performance
+        # (presumably due to scheduling pressure) and sometimes also to
+        # unnecessary bank conflicts.
+        load_ty = ir.VectorType.get((vec_len * WARPS_IN_WARPGROUP,),
+                                    reg_ty.element_type)
+        load_idx = arith.muli(lane_base_scratch_idx, c(vec_len, i32))
+        parts = vector.load(
+            load_ty, scratch, [arith.index_cast(index, load_idx)]
+        )
+        for i in range(WARPS_IN_WARPGROUP):
+          part = utils.vector_slice(parts, slice(i * vec_len, (i + 1) * vec_len))
+          out_reg = part if out_reg is None else op(out_reg, part)
+      else:
+        # 4 has only two non-trivial prime factors: 2 and 2.
+        assert len(layout.warp_dims) == 2
+        wd0, wd1 = layout.warp_dims
+        # TODO(bchetioui): these paths are optimizable. The above logic is
+        # well-suited for loads of values stored by all 4 warps, but we should
+        # adapt the store logic to also account for these cases where we only
+        # load the value stored by every other warp. In this case, we should
+        # use a different swizzle function, in order to make sure we can
+        # always get vectorized loads!
+        if isinstance(wd0, int) and reduced_dims[wd0]:
+          warp_offsets, warp_group_mask = [0, 2], 1
         else:
-          lane_idx = arith.remui(thread_idx, c(WARP_SIZE, i32))
+          assert isinstance(wd1, int) and reduced_dims[wd1]
+          warp_offsets, warp_group_mask = [0, 1], 2
+        thread_idx = utils.thread_idx()
         warp_idx = arith.divui(
             arith.remui(thread_idx, c(WARPGROUP_SIZE, i32)), c(WARP_SIZE, i32)
         )
-        spill_base = arith.muli(lane_idx, c(WARPS_IN_WARPGROUP, i32))
-        store_idx = arith.index_cast(index, arith.addi(spill_base, warp_idx))
-        vector.store(
-            out_reg, scratch, [arith.muli(store_idx, c(vec_len, index))]
-        )
-        utils.warpgroup_barrier()
-        # warp_idx & warp_group_mask gives you the reduction group of the current warp.
-        if all(isinstance(d, int) and reduced_dims[d] for d in layout.warp_dims):
-          warp_offsets, warp_group_mask = [*range(WARPS_IN_WARPGROUP)], 0
-        else:
-          # 4 has only two non-trivial prime factors: 2 and 2.
-          assert len(layout.warp_dims) == 2
-          wd0, wd1 = layout.warp_dims
-          if isinstance(wd0, int) and reduced_dims[wd0]:
-            warp_offsets, warp_group_mask = [0, 2], 1
-          else:
-            assert isinstance(wd1, int) and reduced_dims[wd1]
-            warp_offsets, warp_group_mask = [0, 1], 2
-        reg_ty = out_reg.type
-        out_reg = None
         warp_reduction_group = arith.andi(warp_idx, arith.constant(i32, warp_group_mask))
         for warp_offset in warp_offsets:
           reduced_warp = arith.addi(warp_reduction_group, c(warp_offset, i32))
-          load_idx = arith.index_cast(
-              index,
-              arith.muli(arith.addi(spill_base, reduced_warp), c(vec_len, i32)),
+          load_idx = arith.addi(lane_base_scratch_idx, swizzle_warp_idx(reduced_warp))
+          part = vector.load(
+              reg_ty, scratch,
+              [arith.index_cast(index, arith.muli(load_idx, c(vec_len, i32)))]
           )
-          part = vector.load(reg_ty, scratch, [load_idx])
           out_reg = part if out_reg is None else op(out_reg, part)
-        utils.warpgroup_barrier()  # Make sure everyone is done using scratch.
-      out_regs[out_idx] = out_reg
+      return out_reg
+
+    if reduced_shape:
+      reduced_layout = layout.reduce(axis)
+      vec_len = reduced_layout.vector_length
+    else:
+      vec_len = 1
+
+    thread_idx = utils.thread_idx()
+    lane_idx = arith.remui(thread_idx, c(WARP_SIZE, i32))
+
+    if any(reduced_dims[d] for d in layout.partitioned_warp_dims):
+      reduce_across_warps = True
+      if scratch is None:
+        raise ValueError(
+            "scratch must be provided when cross-warp reduction is required"
+        )
+      scratch_ty = ir.MemRefType(scratch.type)
+      if scratch_ty.rank != 1:
+        raise ValueError(f"Expected rank 1 for scratch, got {scratch_ty.rank}")
+      if scratch_ty.element_type != self.mlir_dtype:
+        raise ValueError(
+            f"Expected element type {self.mlir_dtype} for scratch, got"
+            f" {scratch_ty.element_type}"
+        )
+      # TODO(apaszke): All lanes that replicate data can share the same scratch.
+      # For now we treat the complete reduction as a special case.
+      reduces_all_dims = set(axis) == set(range(len(self.shape)))
+      unique_lanes = 1 if reduces_all_dims else 32
+      scratch_ty = ir.MemRefType(scratch.type)
+      scratch_elems_per_register = WARPS_IN_WARPGROUP * unique_lanes * vec_len
+      if scratch_ty.shape[0] < scratch_elems_per_register:
+        raise ValueError("Insufficient scratch space for cross-warp reduction")
+      if scratch_ty.get_strides_and_offset()[0] != [1]:
+        raise ValueError("Expected scratch to be contiguous")
+      num_concurrent_cross_warp_reductions = scratch_ty.shape[0] // scratch_elems_per_register
+      thread_idx = utils.thread_idx()
+      if reduces_all_dims:
+        lane_idx = c(0, i32)
+      swizzle_warp_idx = swizzle_warp_idx_fn(lane_idx, vec_len)
+    else:
+      reduce_across_warps = False
+      lane_idx = num_concurrent_cross_warp_reductions = swizzle_warp_idx = None
+
+    unreduced_indices = []
+    for out_idx in np.ndindex(remaining_shape):
+      out_reg = reduce_within_warp(out_idx)
+      reg_ty = ir.VectorType(out_reg.type)
+      if reduce_across_warps:
+        step = len(unreduced_indices)
+        store_swizzled(out_reg, step, lane_idx, scratch, swizzle_warp_idx)
+        unreduced_indices.append(out_idx)
+        if len(unreduced_indices) == num_concurrent_cross_warp_reductions:
+          utils.warpgroup_barrier()
+          for i, unreduced_index in enumerate(unreduced_indices):
+            out_regs[unreduced_index] = reduce_stored(
+                reg_ty, i, lane_idx, swizzle_warp_idx
+            )
+          unreduced_indices = []
+          utils.warpgroup_barrier()
+      else:
+        out_regs[out_idx] = out_reg
+    if unreduced_indices:
+      utils.warpgroup_barrier()
+      for i, unreduced_index in enumerate(unreduced_indices):
+        out_regs[unreduced_index] = reduce_stored(
+            reg_ty, i, lane_idx, swizzle_warp_idx  # pytype: disable=undefined-variable
+        )
+      utils.warpgroup_barrier()
+    del unreduced_indices
     # Infer the output layout and reshape the registers accordingly.
     reduced_logical_shape = list(self.shape)
     for a in sorted(axis, reverse=True):
