@@ -1382,6 +1382,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:Support",
         "@nanobind",
+        "@tsl//tsl/platform:protobuf",
         "@xla//xla:array",
         "@xla//xla:debug_options_flags",
         "@xla//xla:literal",

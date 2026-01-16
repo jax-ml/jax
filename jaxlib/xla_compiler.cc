@@ -77,6 +77,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {
@@ -96,7 +97,10 @@ absl::StatusOr<nb::bytes> GetComputationSerializedProto(
 // Converts a hlo module to a serialized HloModuleProto.
 absl::StatusOr<nb::bytes> GetHloModuleSerializedProto(const HloModule& module) {
   std::string result;
-  if (!tsl::SerializeToStringDeterministic(module.ToProto(), &result)) {
+  tsl::protobuf::Arena arena;
+  HloModuleProto* proto = tsl::protobuf::Arena::Create<HloModuleProto>(&arena);
+  module.ToProto(proto);
+  if (!tsl::SerializeToStringDeterministic(*proto, &result)) {
     return Unknown("Failed to serialize the HloModuleProto.");
   }
   return nb::bytes(result.data(), result.size());
