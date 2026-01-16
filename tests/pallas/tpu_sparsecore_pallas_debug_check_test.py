@@ -100,6 +100,9 @@ class DebugCheckTest(jtu.JaxTestCase):
     )
 
   def test_vector_debug_check(self):
+    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 1, 16):
+      self.skipTest("Requires libtpu built after 2026-1-16")
+
     x = jnp.arange(8)
 
     @functools.partial(
