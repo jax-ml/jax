@@ -341,6 +341,16 @@ class SearchsortedTest(jtu.JaxTestCase):
     expected = x[:, None] * hijax.searchsorted(y, z)[None, :]
     self.assertArraysEqual(result, expected)
 
+  def test_nested_vmap(self):
+    x = np.arange(60).reshape(2, 3, 10)
+    y = np.arange(5, 65, 10).reshape(2, 3)
+    out = jax.vmap(jax.vmap(hijax.searchsorted))(x, y)
+    expected = jax.numpy.array([
+      [hijax.searchsorted(x, y) for x, y in zip(xrow, yrow)]
+      for xrow, yrow in zip(x, y)
+    ])
+    self.assertArraysEqual(out, expected)
+
   @jtu.sample_product(
       side=_SIDES,
       method=_METHODS,
