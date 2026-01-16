@@ -10,11 +10,13 @@
 #                     built by internal CI jobs and runs CUDA tests.
 # 4. run-bazel-test-cuda: Calls the `bazel_cuda.yml` workflow which downloads the JAX wheels
 #                     that were built by internal CI jobs and runs Bazel CUDA tests.
-# 5. run-pytest-tpu: Calls the `pytest_tpu.yml` workflow which downloads the JAX wheels that were
+# 5. run-pytest-rocm: Calls the `pytest_rocm.yml` workflow which downloads the JAX wheels and
+#                     ROCm plugins from PyPI/GitHub releases and runs ROCm tests.
+# 6. run-pytest-tpu: Calls the `pytest_tpu.yml` workflow which downloads the JAX wheels that were
 #                    built by internal CI jobs and runs TPU tests.
-# 6. run-bazel-test-tpu: Calls the `bazel_test_tpu.yml` workflow which downloads the JAX wheels that
+# 7. run-bazel-test-tpu: Calls the `bazel_test_tpu.yml` workflow which downloads the JAX wheels that
 #                        were built by internal CI jobs and runs Bazel TPU tests.
-# 7. verify-release-wheels-install: Verifies that JAX's release wheels can be installed.
+# 8. verify-release-wheels-install: Verifies that JAX's release wheels can be installed.
 name: CI - Wheel Tests (Nightly/Release)
 
 on:
@@ -167,6 +169,37 @@ jobs:
       jaxlib-version: "head"
       write_to_bazel_remote_cache: 1
       run_multiaccelerator_tests: "true"
+
+  run-pytest-rocm:
+    uses: ./.github/workflows/pytest_rocm.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          runner: ["linux-x86-64-1gpu-amd", "linux-x86-64-4gpu-amd"]
+          python: ["3.11", "3.12"]
+          rocm: [
+            {version: "7.2.0", tag: "rocm720"},
+          ]
+          ubuntu-version: ["22", "24"]
+          exclude:
+            # TODO: decouple ubuntu version and python version.
+            # Match python version with ubuntu version.
+            - python: "3.11"
+              ubuntu-version: "24"
+            - python: "3.12"
+              ubuntu-version: "22"
+    name: "Pytest ROCm (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      ubuntu-version: ${{ matrix.ubuntu-version }}
+      rocm-version: ${{ matrix.rocm.version }}
+      rocm-tag: ${{ matrix.rocm.tag }}
+      jax-version: "0.9.0"
+      jaxlib-version: "github_release"
+      github-release-tag: "rocm-jax-v0.9.0-rc"
+      skip-download-jaxlib-and-rocm-plugins: "0"
+      download-jax-from-pypi: "1"
 
   run-pytest-tpu:
     uses: ./.github/workflows/pytest_tpu.yml
