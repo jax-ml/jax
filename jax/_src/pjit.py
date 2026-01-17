@@ -56,7 +56,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
-from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh
 from jax._src.sharding import Sharding
@@ -129,8 +128,7 @@ class PjitInfo(NamedTuple):
     return self is other
 
 
-def _run_python_pjit(p, args_flat, fun: Callable, jit_info: PjitInfo, args, kwargs):
-
+def _run_python_pjit(p, args_flat, fun: Callable, args, kwargs):
   for arg in args_flat:
     dispatch.check_arg(arg)
 
@@ -170,7 +168,8 @@ def _run_python_pjit(p, args_flat, fun: Callable, jit_info: PjitInfo, args, kwar
       raise AssertionError("Unreachable") from e
   except api_util.InternalFloatingPointError as e:
     if getattr(fun, '_apply_primitive', False):
-      raise FloatingPointError(f"invalid value ({e.ty}) encountered in {fun.__qualname__}") from None
+      raise FloatingPointError(
+          f"invalid value ({e.ty}) encountered in {fun.__qualname__}") from None
     api_util.maybe_recursive_nan_check(e, fun, args, kwargs)
 
   outs = tree_unflatten(p.out_tree, out_flat)
@@ -257,7 +256,7 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
     p, args_flat = _trace_for_jit(fun, jit_info, args, kwargs)
     (outs, out_flat, out_tree, args_flat, jaxpr,
      executable, pgle_profiler, const_args) = _run_python_pjit(
-         p, args_flat, fun, jit_info, args, kwargs)
+         p, args_flat, fun, args, kwargs)
 
     maybe_fastpath_data = _get_fastpath_data(
         executable, out_tree, args_flat, out_flat, jaxpr.effects, jaxpr.consts,
@@ -468,20 +467,16 @@ def _trace_for_jit(
     ctx_mesh = mesh_lib.thread_resources.env.physical_mesh
   else:
     ctx_mesh = mesh_lib.get_concrete_mesh()
+
   dbg = debug_info(
       'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
       static_argnames=ji.static_argnames, sourceinfo=ji.fun_sourceinfo,
       signature=ji.fun_signature)
 
-  signature, dynargs = jax_jit.parse_arguments(
-      args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
-      ji.static_argnames, tree_util.default_registry)
-  avals_list = _infer_input_type(fun, dbg, dynargs)
   args_ft = FlatTree.flatten_static_argnums_argnames(
       args, kwargs, ji.static_argnums, ji.static_argnames)
-  # TODO(dougalm): args_ft.vals and dynargs should be exactly the same here.
-  # Why did we need to flatten in C++ and again in Python?
-  avals = args_ft.update(avals_list)
+  avals = _infer_input_type(fun, dbg, args_ft.vals)
+  avals_ft = args_ft.update(avals)
 
   have_kwargs = bool(kwargs)
   if have_kwargs and ji.user_specified_in_shardings:
@@ -494,9 +489,10 @@ def _trace_for_jit(
         "device is also specified as an argument to jit.")
 
   if (ji.donate_argnums or ji.donate_argnames) and not config.debug_nans.value:
-    donated_invars = donation_vector(ji.donate_argnums, ji.donate_argnames, avals.tree)
+    donated_invars = donation_vector(ji.donate_argnums, ji.donate_argnames,
+                                     avals_ft.tree)
   else:
-    donated_invars = (False,) * len(avals)
+    donated_invars = (False,) * len(avals_ft)
 
   # If backend or device is set as an arg on jit, then resolve them to
   # in_shardings and out_shardings as if user passed in in_shardings
@@ -521,15 +517,15 @@ def _trace_for_jit(
   assert None not in in_shardings_leaves
   assert None not in out_shardings_leaves
 
-  in_type = avals.map2(
+  in_type = avals_ft.map2(
     lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a,  # type: ignore
     args_ft)
-  assert avals is not None
+  assert avals_ft is not None
 
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
       in_shardings_treedef, in_shardings_leaves,
       ji.in_layouts_treedef, ji.in_layouts_leaves,
-      avals, dbg, device_or_backend_set, have_kwargs)
+      avals_ft, dbg, device_or_backend_set, have_kwargs)
 
   qdd_token = _qdd_cache_index(fun, in_type.vals)  # represents qdd state context
 
@@ -560,7 +556,7 @@ def _trace_for_jit(
     consts = []
 
   if config.mutable_array_checks.value:
-    _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), dynargs)
+    _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), args_ft.vals)
   _qdd_cache_update(fun, in_type.vals, qdd_token, consts,
                     jaxpr.in_aval_qdds[:len(consts)])
 
@@ -569,16 +565,15 @@ def _trace_for_jit(
       ji.out_layouts_leaves, out_avals.tree,
       tuple(out_avals), jaxpr.jaxpr._debug_info, device_or_backend_set)
 
-  assert len(dynargs) == len(in_shardings_flat) == len(in_layouts_flat)
+  assert len(args_ft.vals) == len(in_shardings_flat) == len(in_layouts_flat)
 
   num_extra_args = len(consts)
   in_shardings_flat = (UNSPECIFIED,) * num_extra_args + in_shardings_flat
   in_layouts_flat = (None,) * num_extra_args + in_layouts_flat
   donated_invars = (False,) * num_extra_args + donated_invars
   assert (len(in_shardings_flat) == len(in_layouts_flat) ==
-          len(donated_invars) == len(consts) + len(avals))
+          len(donated_invars) == len(consts) + len(avals_ft))
 
-  name = getattr(fun, '__name__', '<unknown>')
   params = dict(
       jaxpr=jaxpr,
       in_shardings=in_shardings_flat,
@@ -587,14 +582,14 @@ def _trace_for_jit(
       out_layouts=out_layouts_flat,
       donated_invars=donated_invars,
       ctx_mesh=ctx_mesh,
-      name=name,
+      name=fun_name(fun),
       keep_unused=ji.keep_unused,
       inline=ji.inline,
       compiler_options_kvs=ji.compiler_options_kvs,
   )
-  p = PjitParams(consts, params, avals.vals, avals.tree_without_statics,
-                 out_avals.tree, dbg.safe_arg_names(len(avals)))
-  return p, p.consts + dynargs
+  p = PjitParams(consts, params, avals_ft.vals, avals_ft.tree_without_statics,
+                 out_avals.tree, dbg.safe_arg_names(len(avals_ft)))
+  return p, consts + list(args_ft.vals)
 
 def _infer_input_type(fun: Callable, dbg: core.DebugInfo,
                       explicit_args) -> tuple[core.AbstractValue, ...]:
