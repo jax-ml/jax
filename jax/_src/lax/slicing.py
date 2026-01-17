@@ -122,9 +122,13 @@ def dynamic_slice(
     *,
     allow_negative_indices: bool | Sequence[bool] = True
 ) -> Array:
-  """Wraps XLA's `DynamicSlice
-  <https://www.openxla.org/xla/operation_semantics#dynamicslice>`_
-  operator.
+  """Extract array slices at dynamic indices.
+
+  This function lowers directly to the `stablehlo.dynamic_slice`_ operation.
+
+  For out-of-bound indices, the semantics of `dynamic_slice` are similar to
+  :func:`jax.lax.gather` with `mode='clip'`: that is, out-of-bound indices
+  are clipped into the in-bound range.
 
   Args:
     operand: an array to slice.
@@ -136,10 +140,9 @@ def dynamic_slice(
       must have statically known size).
     allow_negative_indices: a bool or sequence of bools, one per dimension; if
       a bool is passed, it applies to all dimensions. For each dimension,
-      if true, negative indices are permitted and are are interpreted relative
-      to the end of the array. If false, negative indices are treated as if they
-      were out of bounds and the result is implementation defined, typically
-      clamped to the first index.
+      if true, negative indices are interpreted relative to the end of the array.
+      If false, negative indices are treated as out of bounds and the slice is
+      clipped to the valid range.
 
   Returns:
     An array containing the slice.
@@ -159,7 +162,7 @@ def dynamic_slice(
 
     Note the potentially surprising behavior for the case where the requested slice
     overruns the bounds of the array; in this case the start index is adjusted to
-    return a slice of the requested size:
+    return an in-bound slice of the requested size:
 
     >>> dynamic_slice(x, (1, 1), (2, 4))
     Array([[ 4,  5,  6,  7],
@@ -170,6 +173,8 @@ def dynamic_slice(
     - :func:`jax.lax.slice`
     - :func:`jax.lax.dynamic_slice_in_dim`
     - :func:`jax.lax.dynamic_index_in_dim`
+
+  .. _stablehlo.dynamic_slice: https://openxla.org/stablehlo/spec#dynamic_slice
   """
   start_indices = _dynamic_slice_indices(
       operand, start_indices, allow_negative_indices)
@@ -184,9 +189,13 @@ def dynamic_update_slice(
     *,
     allow_negative_indices: bool | Sequence[bool] = True
 ) -> Array:
-  """Wraps XLA's `DynamicUpdateSlice
-  <https://www.openxla.org/xla/operation_semantics#dynamicupdateslice>`_
-  operator.
+  """Update array slices at dynamic indices.
+
+  This function lowers directly to the `stablehlo.dynamic_update_slice`_ operation.
+
+  For out-of-bound indices, the semantics of `dynamic_update_slice` are similar to
+  :func:`jax.lax.scatter` with `mode='clip'`: that is, out-of-bound indices
+  are clipped into the in-bound range.
 
   Args:
     operand: an array to slice.
@@ -194,10 +203,9 @@ def dynamic_update_slice(
     start_indices: a list of scalar indices, one per dimension.
     allow_negative_indices: a bool or sequence of bools, one per dimension; if
       a bool is passed, it applies to all dimensions. For each dimension,
-      if true, negative indices are permitted and are are interpreted relative
-      to the end of the array. If false, negative indices are treated as if they
-      were out of bounds and the result is implementation defined, typically
-      clamped to the first index.
+      if true, negative indices are interpreted relative to the end of the array.
+      If false, negative indices are treated as out of bounds and the slice is
+      clipped to the valid range.
 
   Returns:
     An array containing the slice.
@@ -206,17 +214,17 @@ def dynamic_update_slice(
     Here is an example of updating a one-dimensional slice update:
 
     >>> x = jnp.zeros(6)
-    >>> y = jnp.ones(3)
+    >>> y = jnp.array([1., 2., 3.])
     >>> dynamic_update_slice(x, y, (2,))
-    Array([0., 0., 1., 1., 1., 0.], dtype=float32)
+    Array([0., 0., 1., 2., 3., 0.], dtype=float32)
 
-    If the update slice is too large to fit in the array, the start
-    index will be adjusted to make it fit
+    If any part of the update slice falls outside the valid range, the start
+    index will be adjusted such that the slice is valid:
 
-    >>> dynamic_update_slice(x, y, (3,))
-    Array([0., 0., 0., 1., 1., 1.], dtype=float32)
     >>> dynamic_update_slice(x, y, (5,))
-    Array([0., 0., 0., 1., 1., 1.], dtype=float32)
+    Array([0., 0., 0., 1., 2., 3.], dtype=float32)
+    >>> dynamic_update_slice(x, y, (-7,))
+    Array([1., 2., 3., 0., 0., 0.], dtype=float32)
 
     Here is an example of a two-dimensional slice update:
 
@@ -232,6 +240,8 @@ def dynamic_update_slice(
     - :attr:`jax.numpy.ndarray.at`
     - :attr:`lax.dynamic_update_index_in_dim`
     - :attr:`lax.dynamic_update_slice_in_dim`
+
+  .. _stablehlo.dynamic_update_slice: https://openxla.org/stablehlo/spec#dynamic_update_slice
   """
   start_indices = _dynamic_slice_indices(
       operand, start_indices, allow_negative_indices)
@@ -1092,8 +1102,8 @@ def dynamic_slice_in_dim(operand: Array | np.ndarray,
     axis: the axis along which to apply the slice (defaults to 0)
     allow_negative_indices: boolean specifying whether negative indices are
       allowed. If true, negative indices are taken relative to the end of the
-      array. If false, negative indices are out of bounds and the result is
-      implementation defined.
+      array. If false, negative indices are treated as out of bounds and the
+      slice is clipped to the valid range.
 
   Returns:
     An array containing the slice.
@@ -1105,8 +1115,8 @@ def dynamic_slice_in_dim(operand: Array | np.ndarray,
     >>> dynamic_slice_in_dim(x, 1, 3)
     Array([1, 2, 3], dtype=int32)
 
-    Like `jax.lax.dynamic_slice`, out-of-bound slices will be clipped to the
-    valid range:
+    As in :func:`jax.lax.dynamic_slice`, out-of-bound slices will be clipped
+    to the valid range:
 
     >>> dynamic_slice_in_dim(x, 4, 3)
     Array([2, 3, 4], dtype=int32)
@@ -1159,8 +1169,8 @@ def dynamic_index_in_dim(operand: Array | np.ndarray,
       the input (default = True)
     allow_negative_indices: boolean specifying whether negative indices are
       allowed. If true, negative indices are taken relative to the end of the
-      array. If false, negative indices are out of bounds and the result is
-      implementation defined.
+      array. If false, negative indices are treated as out of bounds and the
+      slice is clipped to the valid range.
 
   Returns:
     An array containing the slice.
@@ -1174,6 +1184,12 @@ def dynamic_index_in_dim(operand: Array | np.ndarray,
 
     >>> dynamic_index_in_dim(x, 1, keepdims=False)
     Array(1, dtype=int32)
+
+    As in :func:`jax.lax.dynamic_slice`, out-of-bound indices will be clipped
+    into the valid range:
+
+    >>> dynamic_index_in_dim(x, 100)
+    Array([4], dtype=int32)
 
     Here is a two-dimensional example:
 
@@ -1215,8 +1231,8 @@ def dynamic_update_slice_in_dim(operand: Array | np.ndarray,
     axis: the axis of the update.
     allow_negative_indices: boolean specifying whether negative indices are
       allowed. If true, negative indices are taken relative to the end of the
-      array. If false, negative indices are out of bounds and the result is
-      implementation defined.
+      array. If false, negative indices are treated as out of bounds and the
+      slice is clipped to the valid range.
 
   Returns:
     The updated array
@@ -1224,17 +1240,17 @@ def dynamic_update_slice_in_dim(operand: Array | np.ndarray,
   Examples:
 
     >>> x = jnp.zeros(6)
-    >>> y = jnp.ones(3)
+    >>> y = jnp.array([1., 2., 3.])
     >>> dynamic_update_slice_in_dim(x, y, 2, axis=0)
-    Array([0., 0., 1., 1., 1., 0.], dtype=float32)
+    Array([0., 0., 1., 2., 3., 0.], dtype=float32)
 
-    If the update slice is too large to fit in the array, the start
-    index will be adjusted to make it fit:
+    As with :func:`~jax.lax.dynamic_update_slice`, if any part of the slice falls
+    outside the valid range, the start index will be adjusted to make it fit:
 
-    >>> dynamic_update_slice_in_dim(x, y, 3, axis=0)
-    Array([0., 0., 0., 1., 1., 1.], dtype=float32)
     >>> dynamic_update_slice_in_dim(x, y, 5, axis=0)
-    Array([0., 0., 0., 1., 1., 1.], dtype=float32)
+    Array([0., 0., 0., 1., 2., 3.], dtype=float32)
+    >>> dynamic_update_slice_in_dim(x, y, -7, axis=0)
+    Array([1., 2., 3., 0., 0., 0.], dtype=float32)
 
     Here is an example of a two-dimensional slice update:
 
@@ -1285,9 +1301,8 @@ def dynamic_update_index_in_dim(operand: Array | np.ndarray,
     axis: the axis of the update.
     allow_negative_indices: boolean specifying whether negative indices are
       allowed. If true, negative indices are taken relative to the end of the
-      array. If false, negative indices are out of bounds and the result is
-      implementation defined.
-
+      array. If false, negative indices are treated as out of bounds and the
+      slice is clipped to the valid range.
   Returns:
     The updated array
 
@@ -1302,11 +1317,13 @@ def dynamic_update_index_in_dim(operand: Array | np.ndarray,
     >>> dynamic_update_index_in_dim(x, y, 2, axis=0)
     Array([0., 0., 1., 0., 0., 0.], dtype=float32)
 
-    If the specified index is out of bounds, the index will be clipped to the
-    valid range:
+    As with :func:`~jax.lax.dynamic_update_slice`, if the specified index is out
+    of bounds the index will be clipped to the valid range:
 
     >>> dynamic_update_index_in_dim(x, y, 10, axis=0)
     Array([0., 0., 0., 0., 0., 1.], dtype=float32)
+    >>> dynamic_update_index_in_dim(x, y, -10, axis=0)
+    Array([1., 0., 0., 0., 0., 0.], dtype=float32)
 
     Here is an example of a two-dimensional dynamic index update:
 
