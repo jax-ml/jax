@@ -77,7 +77,6 @@ try:
 except ImportError:
   hp = hps = None
 
-
 # ruff: noqa: F405
 # pylint: disable=g-complex-comprehension
 config.parse_flags_with_absl()
@@ -233,6 +232,13 @@ class TestCase(parameterized.TestCase):
     self.enter_context(config.traceback_filtering("off"))
     self.enter_context(self.context)
     self.enter_context(ir.Location.unknown())
+    # Artificially shrink SMEM to avoid OOMs on cards with smaller capacity than
+    # those that we have in CI. See https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/compute-capabilities.html#compute-capabilities-table-memory-information-per-compute-capability
+    core._SMEM_SIZE_BOUND = 99 * 1024
+
+  def tearDown(self):
+    super().tearDown()
+    core._SMEM_SIZE_BOUND = float("inf")
 
   @contextlib.contextmanager
   def capture_stdout(self):
