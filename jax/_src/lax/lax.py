@@ -3472,6 +3472,14 @@ def _tri(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
   return convert_element_type_p.bind(bool_tri, new_dtype=dtype, weak_type=False,
                                      sharding=None)
 
+def _stop_gradient(x):
+  if dtypes.issubdtype(core.get_aval(x).dtype, dtypes.extended):
+    return x
+  elif isinstance(x, ad.JVPTracer):
+    return _stop_gradient(x.primal)
+  else:
+    return ad_util.stop_gradient_p.bind(x)
+
 def stop_gradient(x: T) -> T:
   """Stops gradient computation.
 
@@ -3517,14 +3525,7 @@ def stop_gradient(x: T) -> T:
     efficiency. Refer to :ref:`stopping-gradients` for more discussion of
     the applicability of ``stop_gradient``.
   """
-  def stop(x):
-    if dtypes.issubdtype(core.get_aval(x).dtype, dtypes.extended):
-      return x
-    elif isinstance(x, ad.JVPTracer):
-      return stop(x.primal)
-    else:
-      return ad_util.stop_gradient_p.bind(x)
-  return tree_util.tree_map(stop, x)
+  return tree_util.tree_map(_stop_gradient, x)
 
 def reduce_precision(operand: float | ArrayLike,
                      exponent_bits: int,
