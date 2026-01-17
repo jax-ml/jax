@@ -21,7 +21,7 @@ import functools
 from functools import partial, cached_property
 import operator as op
 import textwrap
-from typing import Any, TypeVar
+from typing import Any, TypeVar, overload
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
@@ -35,6 +35,7 @@ traceback_util.register_exclusion(__file__)
 
 T = TypeVar("T")
 Typ = TypeVar("Typ", bound=type[Any])
+Typ2 = TypeVar("Typ2", bound=type[Any])
 H = TypeVar("H", bound=Hashable)
 
 Leaf = Any
@@ -990,13 +991,25 @@ def register_pytree_with_keys_class(cls: Typ) -> Typ:
   return cls
 
 
-@export
+@overload
 def register_dataclass(
     nodetype: Typ,
     data_fields: Sequence[str] | None = None,
     meta_fields: Sequence[str] | None = None,
+    drop_fields: Sequence[str] = ()) -> Typ: ...
+@overload
+def register_dataclass(
+    nodetype: None,
+    data_fields: Sequence[str] | None = None,
+    meta_fields: Sequence[str] | None = None,
+    drop_fields: Sequence[str] = ()) -> Callable[[Typ], Typ]: ...
+@export
+def register_dataclass(
+    nodetype: Typ | None = None,
+    data_fields: Sequence[str] | None = None,
+    meta_fields: Sequence[str] | None = None,
     drop_fields: Sequence[str] = (),
-) -> Typ:
+) -> Typ | Callable[[Typ2], Typ2]:
   """Extends the set of types that are considered internal nodes in pytrees.
 
   This differs from ``register_pytree_with_keys_class`` in that the C++
@@ -1094,6 +1107,13 @@ def register_dataclass(
     >>> compiled_func(m)
     Array([1., 2., 3.], dtype=float32)
   """
+  if nodetype is None:
+    return lambda nodetype: register_dataclass(
+        nodetype,
+        data_fields=data_fields,
+        meta_fields=meta_fields,
+        drop_fields=drop_fields)
+
   if data_fields is None or meta_fields is None:
     if (data_fields is None) != (meta_fields is None):
       raise TypeError("register_dataclass: data_fields and meta_fields must both be specified"

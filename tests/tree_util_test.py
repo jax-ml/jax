@@ -1736,6 +1736,21 @@ class RegistrationTest(jtu.JaxTestCase):
     # ``y`` is missing, but no validation is done for plain classes.
     tree_util.register_dataclass(Foo, data_fields=["x"], meta_fields=[])
 
+  def test_register_dataclass_decorator_factory(self):
+    @tree_util.register_dataclass(data_fields=["x"], meta_fields=["y"])
+    @dataclasses.dataclass
+    class Foo:
+      x: jax.Array
+      y: int
+
+    f = Foo(jnp.arange(4), 2)
+
+    flattened_x, = tree_util.tree_leaves(f)
+    self.assertArraysEqual(flattened_x, f.x)
+
+    pytreedef = jax.tree.structure(f)
+    self.assertEqual(pytreedef.node_data(), (Foo, (f.y,)))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
