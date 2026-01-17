@@ -61,6 +61,13 @@ class Traceback : public nanobind::object {
   // Returns true if traceback collection is enabled.
   static bool IsEnabled();
 
+  // Sets the stop frame for traceback collection on the current thread.
+  // Captured tracebacks will stop when they reach this frame.
+  static void SetStopFrame(PyFrameObject* frame);
+
+  // Returns the current stop frame for the current thread.
+  static PyFrameObject* GetStopFrame();
+
   // Returns a string representation of the traceback.
   std::string ToString() const;
 
@@ -83,6 +90,7 @@ class Traceback : public nanobind::object {
 
  private:
   static bool Check(PyObject* o);
+  static thread_local PyFrameObject* stop_frame_;
 };
 
 }  // namespace jax

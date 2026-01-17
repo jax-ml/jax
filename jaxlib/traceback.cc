@@ -186,6 +186,53 @@ nb::object AsPythonTraceback(const Traceback& tb) {
   return traceback;
 }
 
+// A context manager that bounds the stack for traceback collection.
+// When entered, it sets the stop frame to the caller's caller, effectively
+// truncating any tracebacks captured within its scope to the call site.
+class TracebackScope {
+ public:
+  TracebackScope() = default;
+  TracebackScope(const TracebackScope& other) = delete;
+  TracebackScope(TracebackScope&& other) noexcept = default;
+  TracebackScope& operator=(const TracebackScope&) = delete;
+  TracebackScope& operator=(TracebackScope&&) noexcept = default;
+  ~TracebackScope() {
+    if (old_stop_frame_) {
+      CHECK(PyGILState_Check());
+      old_stop_frame_ = {};
+    }
+  }
+
+  // Captures the current stop frame and sets a new one at the caller's caller.
+  TracebackScope& Enter() {
+    if (old_stop_frame_) {
+      throw nb::value_error("Cannot enter TracebackScope recursively.");
+    }
+    old_stop_frame_ = nb::borrow<nb::object>(
+        reinterpret_cast<PyObject*>(Traceback::GetStopFrame()));
+    PyThreadState* thread_state = PyThreadState_GET();
+    if (thread_state) {
+      // We get the frame of the caller of the __enter__ method.
+      nb::object frame = nb::steal<nb::object>(
+          reinterpret_cast<PyObject*>(PyThreadState_GetFrame(thread_state)));
+      if (frame) {
+        Traceback::SetStopFrame(reinterpret_cast<PyFrameObject*>(frame.ptr()));
+      }
+    }
+    return *this;
+  }
+
+  // Restores the previous stop frame.
+  void Exit(nb::args args) {
+    Traceback::SetStopFrame(
+        reinterpret_cast<PyFrameObject*>(old_stop_frame_.ptr()));
+    old_stop_frame_ = {};
+  }
+
+ private:
+  nb::object old_stop_frame_;
+};
+
 }  // namespace
 
 std::vector<Traceback::Frame> Traceback::Frames() const {
@@ -215,6 +262,16 @@ absl::Span<const TracebackEntry> Traceback::RawFrames() const {
   return absl::MakeConstSpan(tb->frames, Py_SIZE(tb));
 }
 
+thread_local PyFrameObject* Traceback::stop_frame_ = nullptr;
+
+void Traceback::SetStopFrame(PyFrameObject* frame) {
+  Py_XINCREF(frame);
+  Py_XDECREF(stop_frame_);
+  stop_frame_ = frame;
+}
+
+PyFrameObject* Traceback::GetStopFrame() { return stop_frame_; }
+
 /*static*/ bool Traceback::Check(PyObject* o) { return traceback_check(o); }
 
 /*static*/ std::optional<Traceback> Traceback::Get() {
@@ -241,6 +298,9 @@ absl::Span<const TracebackEntry> Traceback::RawFrames() const {
   for (_PyInterpreterFrame* f = thread_state->cframe->current_frame;
        f != nullptr && count < kMaxFrames; f = f->previous) {
     if (_PyFrame_IsIncomplete(f)) continue;
+    if (stop_frame_ && f->frame_obj == stop_frame_) {
+      break;
+    }
     Py_INCREF(f->f_code);
     frames[count] = {f->f_code, static_cast<int>(_PyInterpreterFrame_LASTI(f) *
                                                  sizeof(_Py_CODEUNIT))};
@@ -250,6 +310,7 @@ absl::Span<const TracebackEntry> Traceback::RawFrames() const {
   for (_PyInterpreterFrame* f = thread_state->current_frame;
        f != nullptr && count < kMaxFrames; f = f->previous) {
     if (_PyFrame_IsIncomplete(f)) continue;
+    if (stop_frame_ && f->frame_obj == stop_frame_) break;
     Py_INCREF(f->f_executable);
     frames[count] = {
         reinterpret_cast<PyCodeObject*>(f->f_executable),
@@ -261,6 +322,9 @@ absl::Span<const TracebackEntry> Traceback::RawFrames() const {
 #else   // PLATFORM_GOOGLE
   PyFrameObject* py_frame = PyThreadState_GetFrame(thread_state);
   while (py_frame != nullptr && count < kMaxFrames) {
+    if (stop_frame_ && py_frame == stop_frame_) {
+      break;
+    }
     frames[count] = {PyFrame_GetCode(py_frame), PyFrame_GetLasti(py_frame)};
     ++count;
     PyFrameObject* next = PyFrame_GetBack(py_frame);
@@ -324,6 +388,7 @@ void Traceback::Register(nb::module_& m) {
       object that describes the Python stack of the calling thread. Stack
       trace collection has a small overhead, so it is disabled by default. If
       traceback collection is disabled, returns ``None``. )doc");
+
   type.attr("frames") = xla::nb_property_readonly(&Traceback::Frames);
   type.attr("raw_frames") = nb::cpp_function(
       [](const Traceback& tb) -> nb::tuple {
@@ -408,6 +473,12 @@ void Traceback::Register(nb::module_& m) {
       "Python wrapper around the Python C API function PyCode_Addr2Location",
       nb::sig("def code_addr2location(code: types.CodeType, lasti: int) -> "
               "tuple[int, int, int, int]"));
+
+  nb::class_<TracebackScope>(m, "TracebackScope")
+      .def(nb::init<>())
+      .def("__enter__", &TracebackScope::Enter,
+           nb::rv_policy::reference_internal)
+      .def("__exit__", &TracebackScope::Exit);
 }
 
 }  // namespace jax

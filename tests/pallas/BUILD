@@ -37,6 +37,16 @@ test_suite(
 )
 
 jax_multiplatform_test(
+    name = "pallas_lowering_determinism_test",
+    srcs = ["pallas_lowering_determinism_test.py"],
+    enable_backends = [],
+    enable_configs = ["tpu_grm"],
+    deps = [
+        "//jax/experimental:pallas_tpu",
+    ] + py_deps("absl/testing"),
+)
+
+jax_multiplatform_test(
     name = "pallas_test",
     srcs = [
         "pallas_test.py",

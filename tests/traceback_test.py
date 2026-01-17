@@ -19,11 +19,15 @@ from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 import numpy as np
 
+
 Traceback = _jax.Traceback
 Frame = _jax.Frame
+if jaxlib_extension_version >= 399:
+  TracebackScope = _jax.TracebackScope
 
 
 @contextlib.contextmanager
@@ -154,6 +158,63 @@ class TracebackTest(absltest.TestCase):
       foo_frame = tb_string[1].split("\n")
       self.assertEndsWith(foo_frame[0], "FooFn")
       self.assertEqual(foo_frame[1].strip(), "return x + 1")
+
+
+class TracebackScopeTest(absltest.TestCase):
+
+  def testTracebackScope(self):
+    if jaxlib_extension_version < 399:
+      self.skipTest("TracebackScope requires jaxlib >= 399")
+
+    def Inner():
+      return Traceback.get_traceback()
+
+    def Outer():
+      with TracebackScope():
+        return Inner()
+
+    with tracebacks(enabled=True):
+      tb = Outer()
+      self.assertIsInstance(tb, Traceback)
+      function_names = [f.function_name for f in tb.frames]
+      self.assertIn(
+          "TracebackScopeTest.testTracebackScope.<locals>.Inner", function_names
+      )
+      self.assertNotIn(
+          "TracebackScopeTest.testTracebackScope.<locals>.Outer", function_names
+      )
+
+  def testTracebackScopeNesting(self):
+    if jaxlib_extension_version < 399:
+      self.skipTest("TracebackScope requires jaxlib >= 399")
+
+    def Inner():
+      return Traceback.get_traceback()
+
+    def Level2():
+      with TracebackScope():
+        return Inner()
+
+    def Level1():
+      with TracebackScope():
+        return Level2()
+
+    with tracebacks(enabled=True):
+      tb = Level1()
+      function_names = [f.function_name for f in tb.frames]
+      # Both Level2 and Level1 should be excluded because both have scopes.
+      self.assertIn(
+          "TracebackScopeTest.testTracebackScopeNesting.<locals>.Inner", function_names
+      )
+      self.assertNotIn(
+          "TracebackScopeTest.testTracebackScopeNesting.<locals>.Level2", function_names
+      )
+      self.assertNotIn(
+          "TracebackScopeTest.testTracebackScopeNesting.<locals>.Level1", function_names
+      )
+      # Specifically, the traceback should only have the 'Inner' frame.
+      self.assertLen(tb.frames, 1)
+      self.assertEqual(tb.frames[0].function_name, "TracebackScopeTest.testTracebackScopeNesting.<locals>.Inner")
 
 
 if __name__ == "__main__":
