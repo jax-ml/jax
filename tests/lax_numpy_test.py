@@ -2533,6 +2533,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return jnp.searchsorted(a, v, side=side, method=method, sorter=sorter)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+    jtu.check_vmap(jnp_fun, args_maker, self.rng())
 
   @unittest.skipIf(
     platform.system() == "Windows",
