@@ -2098,7 +2098,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @jtu.sample_product(
     shape=[(), (3,), (1, 4), (1, 5, 9), (11, 0, 13)],
     dtype=float_types + complex_types + int_types)
-  @jtu.skip_on_devices("rocm")
   def testToeplitzSymmetricConstruction(self, shape, dtype):
     if (dtype in [np.float64, np.complex128]
         and not config.enable_x64.value):
