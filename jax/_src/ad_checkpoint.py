@@ -479,7 +479,7 @@ def _trace_to_jaxpr(fun: Callable,
                     ) -> tuple[core.Jaxpr, Sequence[Any], PyTreeDef]:
   flat_fun, out_tree = api_util.flatten_fun(lu.wrap_init(fun, debug_info=debug), in_tree)
   try:
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, lower=True)
   except core.ConcretizationTypeError as e:
     msg, = e.args
     if 'for checkpoint' in msg:
