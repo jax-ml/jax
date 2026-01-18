@@ -708,6 +708,18 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np.spacing, jnp.spacing, args_maker, check_dtypes=True, tol=0)
     self._CompileAndCheck(jnp.spacing, args_maker, tol=0)
 
+  @jtu.sample_product(dtype=float_dtypes + int_dtypes)
+  @jtu.ignore_warning(category=RuntimeWarning, message="(divide by zero|invalid value).*")
+  def testFloorDivideZero(self, dtype):
+    def args_maker():
+      if dtypes.issubdtype(dtype, np.floating):
+        x = jnp.array([-np.inf, -1, 0, 1, np.inf], dtype=dtype)
+      else:
+        x = jnp.array([-1, 0, 1], dtype=dtype)
+      return (x, jnp.zeros_like(x))
+    self._CheckAgainstNumpy(np.floor_divide, jnp.floor_divide, args_maker)
+    self._CompileAndCheck(jnp.floor_divide, args_maker)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
