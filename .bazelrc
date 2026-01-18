@@ -126,10 +126,10 @@ common --action_env=PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=upb
 # See https://github.com/bazel-contrib/rules_python/issues/2445
 common --@rules_python//python/config_settings:precompile=force_disabled
 
-# Do not do this. If enabled protobuf's core internal target 
+# Do not do this. If enabled protobuf's core internal target
 # @com_google_protobuf//python:protobuf_python will start depending on a bunch
-# of cc_binary shared libraries artifacts, which will mess with how we link 
-# protobuf dependencies ourselves. By default this value is false, but some 
+# of cc_binary shared libraries artifacts, which will mess with how we link
+# protobuf dependencies ourselves. By default this value is false, but some
 # projects enable it, which we don't want here.
 # common --define=use_fast_cpp_protos=true
 
@@ -169,7 +169,7 @@ common:clang --copt=-Qunused-arguments
 # Error on struct/class mismatches, since this causes link failures on Windows.
 common:clang --copt=-Werror=mismatched-tags
 # Required when building with clang>=19, see jax-ml/jax#27091
-common:clang --copt=-Wno-error=c23-extensions
+# common:clang --copt=-Wno-error=c23-extensions
 
 # Configs for CUDA
 common:cuda_v12 --repo_env=HERMETIC_CUDA_VERSION="12.9.1"

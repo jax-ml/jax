@@ -52,6 +52,7 @@ limitations under the License.
 #include "nanobind/typing.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pytree.pb.h"
+#include "pytree.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/tsl/platform/logging.h"
 
@@ -103,6 +104,20 @@ void PyTreeRegistry::Register(
     throw std::invalid_argument(
         absl::StrFormat("Duplicate custom PyTreeDef type registration for %s.",
                         nb::cast<std::string_view>(nb::repr(type))));
+  }
+}
+
+void PyTreeRegistry::RegisterObject(nb::object type, nb::str mapping_attr) {
+  auto registration = std::make_unique<Registration>();
+  registration->kind = PyTreeKind::kObject;
+  registration->type = type;
+  registration->mapping_attr = std::move(mapping_attr);
+  nb::ft_lock_guard lock(mu_);
+  auto it = registrations_.emplace(type, std::move(registration));
+  if (!it.second) {
+    throw std::invalid_argument(absl::StrFormat(
+        "Duplicate custom object PyTreeDef type registration for %s.",
+        nb::cast<std::string_view>(nb::repr(std::move(type)))));
   }
 }
 
@@ -208,6 +223,7 @@ PyTreeKind PyTreeRegistry::KindOfObject(
   const PyTreeRegistry::Registration* registration = Lookup(obj.type());
   if (registration) {
     if (registration->kind == PyTreeKind::kCustom ||
+        registration->kind == PyTreeKind::kObject ||
         registration->kind == PyTreeKind::kDataclass) {
       *custom = registration;
     } else {
@@ -699,6 +715,34 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
         }
         break;
       }
+      case PyTreeKind::kObject: {
+
+        nb::object object = nb::borrow<nb::object>(handle);
+        nb::mapping mapping = nb::cast<nb::mapping>(nb::getattr(object, node.custom->mapping_attr));
+
+        node.arity = 0;
+
+        for (auto item : mapping.items()) {
+            auto [k, v] = nb::cast<std::pair<nb::str, nb::object>>(item);
+            if (nb::cast<bool>(v)) {
+                node.arity++;
+                if (keypath.has_value()) {
+                  keypath->push_back(
+                      make_nb_class<GetAttrKey>(k));
+                }
+                recurse(nb::getattr(handle, k), keypath);
+                if (keypath.has_value()) {
+                  keypath->pop_back();
+                }
+            } else {
+                node.meta_data.push_back(nb::getattr(object, k));
+            }
+        }
+
+        node.node_data = std::move(mapping);
+
+        break;
+      }
       case PyTreeKind::kNamedTuple: {
         nb::tuple tuple = nb::borrow<nb::tuple>(handle);
         node.arity = tuple.size();
@@ -815,7 +859,8 @@ nb::object PyTreeDef::UnflattenImpl(T leaves) const {
       case PyTreeKind::kList:
       case PyTreeKind::kDict:
       case PyTreeKind::kCustom:
-      case PyTreeKind::kDataclass: {
+      case PyTreeKind::kDataclass:
+      case PyTreeKind::kObject:  {
         const int size = agenda.size();
         absl::Span<nb::object> span;
         if (node.arity > 0) {
@@ -907,6 +952,26 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
         kwargs[node.custom->data_fields[i]] = std::move(children[i]);
       }
       return node.custom->type(**kwargs);
+    }
+
+    case PyTreeKind::kObject: {
+      nb::object object_class = nb::borrow<nb::object>((PyObject*)&PyBaseObject_Type);
+      nb::object obj = object_class.attr("__new__")(node.custom->type);
+
+      nb::mapping mapping = nb::cast<nb::mapping>(node.node_data);
+
+      int meta_idx = 0;
+      int child_idx = 0;
+      for (auto item : mapping.items()) {
+          auto [k, v] = nb::cast<std::pair<nb::object, nb::object>>(item);
+          if (nb::cast<bool>(v)) {
+              object_class.attr("__setattr__")(obj, k, std::move(children[child_idx++]));
+          } else {
+              object_class.attr("__setattr__")(obj, k, nb::borrow(node.meta_data[meta_idx++]));
+          }
+      }
+
+      return obj;
     }
   }
   throw std::logic_error("Unreachable code.");
@@ -1101,6 +1166,61 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         }
         break;
       }
+      case PyTreeKind::kObject: {
+        auto* registration = registry_->Lookup(object.type());
+        if (registration != node.custom) {
+        throw std::invalid_argument(absl::StrFormat(
+            "Custom object node type mismatch: expected type: %s, value: "
+            "%s.",
+            nb::cast<std::string_view>(nb::repr(node.custom->type)),
+            nb::cast<std::string_view>(nb::repr(std::move(object)))));
+        }
+        nb::object aux_data = nb::steal(PyTuple_New(3));
+        nb::mapping mapping = nb::cast<nb::mapping>(nb::getattr(object, node.custom->mapping_attr));
+
+        nb::list meta_fields;
+        nb::list data_fields;
+        for (auto item : mapping.items()) {
+            auto [k, v] = nb::cast<std::pair<nb::object, nb::object>>(item);
+            if (nb::cast<bool>(v)) {
+                data_fields.append(k);
+            } else {
+                meta_fields.append(k);
+            }
+        }
+
+        auto meta_size = meta_fields.size();
+        nb::object meta_data = nb::steal(PyTuple_New(meta_size));
+        for (int meta_leaf = 0; meta_leaf < meta_size; ++meta_leaf) {
+            PyTuple_SET_ITEM(
+                meta_data.ptr(), meta_leaf,
+                nb::getattr(object, meta_fields[meta_leaf]).ptr());
+        }
+
+        auto data_size = data_fields.size();
+        if (data_size != node.arity) {
+        throw std::invalid_argument(absl::StrFormat(
+            "Custom type arity mismatch: %d != %d; value: %s.", data_size,
+            node.arity, nb::cast<std::string_view>(nb::repr(object))));
+        }
+        for (int leaf = 0; leaf < data_size; ++leaf) {
+        agenda.push_back(nb::borrow<nb::object>(
+            nb::getattr(object, data_fields[leaf])));
+        }
+
+        PyTuple_SET_ITEM(aux_data.ptr(), 0, meta_fields.release().ptr());
+        PyTuple_SET_ITEM(aux_data.ptr(), 1, meta_data.release().ptr());
+        PyTuple_SET_ITEM(aux_data.ptr(), 2, data_fields.release().ptr());
+
+        if (node.node_data.not_equal(aux_data)) {
+            throw std::invalid_argument(absl::StrFormat(
+                "Mismatch custom object node data: %s != %s; value: %s.",
+                nb::cast<std::string_view>(nb::repr(node.node_data)),
+                nb::cast<std::string_view>(nb::repr(aux_data)),
+                nb::cast<std::string_view>(nb::repr(object))));
+        }
+        break;
+      }
     }
   }
   if (it != traversal_.rend() || leaf != -1) {
@@ -1135,7 +1255,8 @@ nb::object PyTreeDef::Walk(const nb::callable& f_node, nb::handle f_leaf,
       case PyTreeKind::kList:
       case PyTreeKind::kDict:
       case PyTreeKind::kCustom:
-      case PyTreeKind::kDataclass: {
+      case PyTreeKind::kDataclass:
+      case PyTreeKind::kObject: {
         if (agenda.size() < node.arity) {
           throw std::logic_error("Too few elements for custom type.");
         }
@@ -1310,7 +1431,8 @@ std::string PyTreeDef::ToString() const {
 
       case PyTreeKind::kNamedTuple:
       case PyTreeKind::kCustom:
-      case PyTreeKind::kDataclass: {
+      case PyTreeKind::kDataclass:
+      case PyTreeKind::kObject: {
         std::string kind;
         std::string data;
         if (node.kind == PyTreeKind::kNamedTuple) {
@@ -1546,6 +1668,7 @@ std::optional<std::pair<nb::object, nb::object>> PyTreeDef::GetNodeData()
       return std::make_pair(node.node_data, nb::none());
     case PyTreeKind::kCustom:
     case PyTreeKind::kDataclass:
+    case PyTreeKind::kObject:
       return std::make_pair(node.custom->type, node.node_data);
   }
 }
@@ -1608,6 +1731,9 @@ int PyTreeDef::Node::tp_traverse(visitproc visit, void* arg) const {
   Py_VISIT(node_data.ptr());
   for (const auto& key : sorted_dict_keys) {
     Py_VISIT(key.ptr());
+  }
+  for (const auto& meta : meta_data) {
+    Py_VISIT(meta.ptr());
   }
   return 0;
 }
@@ -1756,6 +1882,17 @@ void BuildPytreeSubmodule(nb::module_& m) {
       "type: type, "
       "data_fields: typing.Sequence[str], "
       "meta_fields: Sequence[str], /"
+      ") -> Any"
+                   // clang-format on
+                   ));
+  registry.def("register_object_node", &PyTreeRegistry::RegisterObject,
+               nb::arg("type").none(), nb::arg("mapping_attr").none(),
+               nb::sig(
+                   // clang-format off
+      "def register_object_node("
+      "self, "
+      "type: type, "
+      "mapping_attr: str, /"
       ") -> Any"
                    // clang-format on
                    ));
