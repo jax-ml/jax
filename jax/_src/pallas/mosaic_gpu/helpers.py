@@ -344,13 +344,15 @@ def dynamic_scheduling_loop(
   def decorator(body):
     grid_idx = tuple(lax.axis_index(axis_name) for axis_name in grid_names)
     success = True
-    def _scoped(try_cancel_buffer, try_cancel_barrier):
+    def _scoped(try_cancel_buffer, try_cancel_barrier, thread_barrier):
+      gpu_primitives.barrier_arrive(thread_barrier)
       def try_cancel_cond(carry):
         _, success, _, _ = carry
         return success
       def try_cancel_body(carry):
         grid_idx, _, wave_step, user_carry = carry
         slot = lax.rem(wave_step, jnp.int32(2))
+        gpu_primitives.barrier_wait(thread_barrier)
         gpu_primitives.try_cluster_cancel(try_cancel_buffer.at[slot],
                                           try_cancel_barrier.at[slot])
         loop_info = NDLoopInfo(
@@ -366,6 +368,7 @@ def dynamic_scheduling_loop(
         grid_idx, success = gpu_primitives.query_cluster_cancel(
             try_cancel_buffer.at[slot],
             grid_names=grid_names)
+        gpu_primitives.barrier_arrive(thread_barrier)
         return (grid_idx, success, wave_step + jnp.int32(1), user_carry)
       init_carry = (grid_idx, success, jnp.int32(0), user_carry)
       final_carry = lax.while_loop(
@@ -373,6 +376,7 @@ def dynamic_scheduling_loop(
           try_cancel_body,
           init_carry,
       )
+      gpu_primitives.barrier_wait(thread_barrier)
       if user_carry is not None:
         return final_carry[-1]
     return pallas_primitives.run_scoped(
@@ -380,6 +384,7 @@ def dynamic_scheduling_loop(
         try_cancel_buffer=gpu_core.TryClusterCancelResult(2),
         try_cancel_barrier=gpu_core.Barrier(num_arrivals=num_threads,
                                             num_barriers=2),
+        thread_barrier=gpu_core.Barrier(num_arrivals=num_threads),
         collective_axes=thread_axis,
     )
   return decorator
