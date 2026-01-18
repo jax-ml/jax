@@ -120,6 +120,10 @@ Instead of `x[0]`, use one of these approaches:
   local shard without triggering global resharding.
 - **Explicit resharding**: Use `jax.device_put(x, sharding)` with an appropriate
   `NamedSharding` to explicitly control how data is distributed.
+- **Use static indices**: For loops over shards or devices, use Python `range()`
+  instead of `jnp.arange()`. This ensures JAX uses basic slicing (selecting a
+  specific shard) which is handled statically and bypasses the `gather`
+  resharding issues.
 
 ### Using `jax.stages.Lowered` returned by `jax.pmap(f).lower(*args)`
 

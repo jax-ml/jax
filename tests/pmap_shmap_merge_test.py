@@ -116,6 +116,17 @@ class PmapShmapMergeTest(jtu.JaxTestCase):
     self.assertTrue(hasattr(g, '__wrapped__'))
     self.assertEqual(g.__wrapped__, f)
 
+  @config.pmap_shmap_merge(True)
+  def test_numpy_input_sharding(self):
+    # Test that pmap correctly handles numpy array inputs by providing
+    # explicit in_shardings to the underlying jit(shard_map).
+    # Without explicit in_shardings, jit would default to UnspecifiedValue
+    # for numpy inputs, causing failures.
+    np_input = np.arange(jax.device_count(), dtype=np.float32)
+    result = jax.pmap(lambda x: x * 2)(np_input)
+    expected = np_input * 2
+    self.assertAllClose(result, expected)
+
 
 if __name__ == '__main__':
   absltest.main()
