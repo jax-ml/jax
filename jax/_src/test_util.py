@@ -2425,3 +2425,56 @@ def runtime_environment() -> str | None:
     return "bazel"
   else:
     return "pytest"
+
+
+def check_vmap(
+    fun: Callable[..., ArrayLike],
+    args_maker: Callable[[], Sequence[np.ndarray]],
+    rng: np.random.RandomState,
+    *,
+    batch_size: int = 3,
+    atol: float | None = None,
+    rtol: float | None = None,
+) -> None:
+  """Automatically check vmap against manual batching.
+
+  This will evaluate vmap(fun) over one or more randomly-selected batch
+  dimensions, and compare the output with that of a manual batching.
+
+  Args:
+    fun: callable which should take one or more array arguments
+    args_maker: callable which creates a tuple of arguments to be passed
+      to `fun`. For best results this should generate a new random set of
+      arguments each time it is called.
+    rng: random state used to generate batch dimensions.
+    batch_size: optionally specify the batch size (default: 3)
+    atol: optionally specify absolute tolerance threshold
+    rtol: optionally specify relative tolerance threshold.
+  """
+  args = args_maker()
+  n_args = len(args)
+  if n_args == 0:
+    raise ValueError("check_vmap: function must take one or more arguments.")
+  num_to_batch = int(rng.randint(1, n_args + 1))
+  dims_to_batch = set(rng.choice(n_args, num_to_batch, replace=False))
+  assert len(dims_to_batch) == num_to_batch
+
+  unstacked_args: list[Sequence[Any]] = []
+  bdims: list[int | None] = []
+  stacked_args: list[np.ndarray] = []
+  arg_batches = list(zip(args, *(args_maker() for _ in range(1, batch_size))))
+  for i in range(n_args):
+    if i in dims_to_batch:
+      bdim = rng.randint(0, args[i].ndim + 1)
+      bdims.append(bdim)
+      unstacked_args.append(arg_batches[i])
+      stacked_args.append(np.stack(arg_batches[i], axis=bdim))
+    else:
+      bdims.append(None)
+      unstacked_args.append([args[i]] * batch_size)
+      stacked_args.append(args[i])
+  vmap_result = api.vmap(fun, bdims)(*stacked_args)
+  manual_result = np.stack(list(map(fun, *unstacked_args)))
+  _assert_numpy_allclose(
+    vmap_result, manual_result, rtol=rtol, atol=atol,
+    err_msg=f"vmap did not equal baseline for {bdims=}")
