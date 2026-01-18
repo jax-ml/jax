@@ -2,7 +2,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Google+Sans');
 
 /* Base LP sidebar modifications */
-body:has(.hero) .sidebar-toggle,
 body:has(.hero) .bd-sidebar-secondary {
     display: none !important;
 }
