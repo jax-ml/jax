@@ -84,6 +84,7 @@ with jax.debug_nans(False):
 ##### Limitations
 * Re-running functions eagerly can be slow. You shouldn't have the NaN-checker on if you're not debugging, as it can introduce lots of device-host round-trips and performance regressions.
 * Errors on false positives (e.g. intentionally created NaNs)
+* Disables buffer donation (`donate_argnums`/`donate_argnames` in `jax.jit` and `jax.pmap`). This is because debug mode needs to inspect intermediate values that would be invalidated by donation. See {ref}`buffer-donation` for more details.
 
 ## `jax_debug_infs` configuration option and context manager
 
