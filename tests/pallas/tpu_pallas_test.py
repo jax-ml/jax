@@ -44,6 +44,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas.ops.tpu import example_kernel
 from jax.extend import linear_util as lu
+from jax._src.pallas.mosaic import primitives as mpi
 import jax.numpy as jnp
 import numpy as np
 
@@ -4222,5 +4223,776 @@ class PallasKernelMetadataTest(ptu.PallasTPUTest):
     )
 
 
+class NoRelayoutsTest(ptu.PallasTPUTest):
+
+  def test_simple_kernel_without_context(self):
+    def kernel(x_ref, out_ref):
+      out_ref[...] = x_ref[...] * 2.0
+
+    x = jnp.arange(1024, dtype=jnp.float32).reshape((8, 128))
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )(x)
+    np.testing.assert_allclose(result, x * 2.0)
+
+  def test_context_manager_exists(self):
+
+    self.assertTrue(hasattr(mpi, 'no_relayouts'))
+    self.assertTrue(hasattr(mpi, 'RelayoutConstraints'))
+    self.assertTrue(hasattr(mpi, 'get_current_relayout_constraints'))
+
+  def test_context_manager_default_values(self):
+
+    with mpi.no_relayouts() as _:
+      constraints = mpi.get_current_relayout_constraints()
+      self.assertIsNotNone(constraints)
+      self.assertFalse(constraints.allow_scratch_roundtrip)
+      self.assertFalse(constraints.allow_pack_unpack)
+      self.assertFalse(constraints.allow_rotation_emulation)
+      self.assertFalse(constraints.allow_implicit_dim_change)
+
+  def test_context_manager_custom_values(self):
+
+    with mpi.no_relayouts(
+        allow_scratch_roundtrip=True,
+        allow_pack_unpack=False,
+        allow_rotation_emulation=True,
+        allow_implicit_dim_change=False,
+    ) as _:
+      constraints = mpi.get_current_relayout_constraints()
+      self.assertIsNotNone(constraints)
+      self.assertTrue(constraints.allow_scratch_roundtrip)
+      self.assertFalse(constraints.allow_pack_unpack)
+      self.assertTrue(constraints.allow_rotation_emulation)
+      self.assertFalse(constraints.allow_implicit_dim_change)
+
+  def test_context_manager_resets_on_exit(self):
+
+    self.assertIsNone(mpi.get_current_relayout_constraints())
+
+    with mpi.no_relayouts():
+      self.assertIsNotNone(mpi.get_current_relayout_constraints())
+
+    self.assertIsNone(mpi.get_current_relayout_constraints())
+
+  def test_kernel_runs_with_relaxed_constraints(self):
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = x_ref[...] * 2.0
+
+    x = jnp.arange(1024, dtype=jnp.float32).reshape((8, 128))
+
+    with mpi.no_relayouts(
+        allow_scratch_roundtrip=True,
+        allow_pack_unpack=True,
+        allow_rotation_emulation=True,
+        allow_implicit_dim_change=True,
+    ):
+      result = self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+      )(x)
+      np.testing.assert_allclose(result, x * 2.0)
+
+  def test_constraints_propagate_to_lowering(self):
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = x_ref[...] + 1.0
+
+    x = jnp.arange(1024, dtype=jnp.float32).reshape((8, 128))
+
+    with mpi.no_relayouts(allow_implicit_dim_change=True):
+      @jax.jit
+      def f(x):
+        return self.pallas_call(
+            kernel,
+            out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        )(x)
+
+      result = f(x)
+      np.testing.assert_allclose(result, x + 1.0)
+
+  def test_1d_to_2d_reshape_triggers_implicit_dim_change(self):
+
+    def kernel_1d_to_2d(x_ref, out_ref):
+      data_1d = x_ref[:]
+      out_ref[0, :] = data_1d
+
+    x = jnp.arange(128, dtype=jnp.float32)
+
+    result = self.pallas_call(
+        kernel_1d_to_2d,
+        in_specs=[pl.BlockSpec((128,), lambda: (0,))],
+        out_specs=pl.BlockSpec((8, 128), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )(x)
+    np.testing.assert_allclose(result[0, :], x)
+
+  def test_relayout_constraint_api_complete(self):
+
+    constraints = mpi.RelayoutConstraints.block_all()
+    self.assertFalse(constraints.allow_scratch_roundtrip)
+    self.assertFalse(constraints.allow_pack_unpack)
+    self.assertFalse(constraints.allow_rotation_emulation)
+    self.assertFalse(constraints.allow_implicit_dim_change)
+
+  def test_bf16_operations_with_constraints(self):
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = x_ref[...] * jnp.bfloat16(2.0)
+
+    x = jnp.arange(1024, dtype=jnp.bfloat16).reshape((8, 128))
+
+    with mpi.no_relayouts(
+        allow_scratch_roundtrip=True,
+        allow_pack_unpack=True,
+        allow_rotation_emulation=True,
+        allow_implicit_dim_change=True,
+    ):
+      result = self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.bfloat16),
+      )(x)
+      np.testing.assert_allclose(
+          result.astype(jnp.float32), (x * 2.0).astype(jnp.float32), rtol=1e-2
+      )
+
+  def test_transpose_with_constraints(self):
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = x_ref[...].T
+
+    x = jnp.arange(8 * 128, dtype=jnp.float32).reshape((8, 128))
+
+    with mpi.no_relayouts(
+        allow_scratch_roundtrip=True,
+        allow_pack_unpack=True,
+        allow_rotation_emulation=True,
+        allow_implicit_dim_change=True,
+    ):
+      result = self.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec((8, 128), lambda: (0, 0))],
+          out_specs=pl.BlockSpec((128, 8), lambda: (0, 0)),
+          out_shape=jax.ShapeDtypeStruct((128, 8), jnp.float32),
+      )(x)
+      np.testing.assert_allclose(result, x.T)
+
+  def test_reshape_with_constraints_success_then_failure(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
+
+    def kernel_success(x_ref, o_ref):
+      x = x_ref[...]
+      y = mpi.reshape_with_constraints(x, (64, 256), allow_shifts=True)
+      o_ref[...] = y
+
+    result = self.pallas_call(
+        kernel_success,
+        in_specs=[pl.BlockSpec((128, 128), lambda i, j: (0, 0))],
+        out_specs=pl.BlockSpec((64, 256), lambda i, j: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((64, 256), jnp.float32),
+        grid=(1, 1),
+    )(x)
+    np.testing.assert_allclose(result, x.reshape(64, 256))
+
+    def kernel_fails(x_ref, o_ref):
+      x = x_ref[...]
+      y = mpi.reshape_with_constraints(x, (64, 256), allow_shifts=False)
+      o_ref[...] = y
+
+    with self.assertRaises(Exception):
+      self.pallas_call(
+          kernel_fails,
+          in_specs=[pl.BlockSpec((128, 128), lambda i, j: (0, 0))],
+          out_specs=pl.BlockSpec((64, 256), lambda i, j: (0, 0)),
+          out_shape=jax.ShapeDtypeStruct((64, 256), jnp.float32),
+          grid=(1, 1),
+      )(x)
+
+  def test_reshape_pack_unpack_success_then_failure(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    x = jnp.arange(128 * 128, dtype=jnp.int8).reshape(128, 128)
+
+    def kernel_success(x_ref, o_ref):
+      x = x_ref[...]
+      y = mpi.reshape_with_constraints(x, (64, 256), allow_pack_unpack=True)
+      o_ref[...] = y
+
+    result = self.pallas_call(
+        kernel_success,
+        in_specs=[pl.BlockSpec((128, 128), lambda i, j: (0, 0))],
+        out_specs=pl.BlockSpec((64, 256), lambda i, j: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((64, 256), jnp.int8),
+        grid=(1, 1),
+    )(x)
+    np.testing.assert_allclose(result, x.reshape(64, 256))
+
+    def kernel_fails(x_ref, o_ref):
+      x = x_ref[...]
+      y = mpi.reshape_with_constraints(x, (64, 256), allow_pack_unpack=False)
+      o_ref[...] = y
+
+    with self.assertRaises(Exception):
+      self.pallas_call(
+          kernel_fails,
+          in_specs=[pl.BlockSpec((128, 128), lambda i, j: (0, 0))],
+          out_specs=pl.BlockSpec((64, 256), lambda i, j: (0, 0)),
+          out_shape=jax.ShapeDtypeStruct((64, 256), jnp.int8),
+          grid=(1, 1),
+      )(x)
+
+  def test_no_relayouts_context_with_layout_forcing_kernel(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    def kernel_with_transpose(x_ref, out_ref):
+      x = x_ref[...] * 2.0
+      y = x.T
+      out_ref[...] = y + 1.0
+
+    x = jnp.arange(8 * 128, dtype=jnp.float32).reshape((8, 128))
+
+    result = self.pallas_call(
+        kernel_with_transpose,
+        in_specs=[pl.BlockSpec((8, 128), lambda: (0, 0))],
+        out_specs=pl.BlockSpec((128, 8), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((128, 8), jnp.float32),
+    )(x)
+    np.testing.assert_allclose(result, (x * 2.0).T + 1.0)
+
+    with mpi.no_relayouts(
+        allow_scratch_roundtrip=True,
+        allow_pack_unpack=True,
+        allow_rotation_emulation=True,
+        allow_implicit_dim_change=True,
+    ):
+      result2 = self.pallas_call(
+          kernel_with_transpose,
+          in_specs=[pl.BlockSpec((8, 128), lambda: (0, 0))],
+          out_specs=pl.BlockSpec((128, 8), lambda: (0, 0)),
+          out_shape=jax.ShapeDtypeStruct((128, 8), jnp.float32),
+      )(x)
+      np.testing.assert_allclose(result2, (x * 2.0).T + 1.0)
+
+  def test_no_relayouts_blocks_expensive_reshape(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
+
+    def kernel_with_constrained_reshape(x_ref, o_ref):
+      data = x_ref[...]
+      reshaped = mpi.reshape_with_constraints(data, (64, 256), allow_shifts=True)
+      o_ref[...] = reshaped
+
+    result = self.pallas_call(
+        kernel_with_constrained_reshape,
+        in_specs=[pl.BlockSpec((128, 128), lambda i, j: (0, 0))],
+        out_specs=pl.BlockSpec((64, 256), lambda i, j: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((64, 256), jnp.float32),
+        grid=(1, 1),
+    )(x)
+    np.testing.assert_allclose(result, x.reshape(64, 256))
+
+    def kernel_blocked(x_ref, o_ref):
+      data = x_ref[...]
+      reshaped = mpi.reshape_with_constraints(data, (64, 256), allow_shifts=False)
+      o_ref[...] = reshaped
+
+    with self.assertRaises(Exception):
+      self.pallas_call(
+          kernel_blocked,
+          in_specs=[pl.BlockSpec((128, 128), lambda i, j: (0, 0))],
+          out_specs=pl.BlockSpec((64, 256), lambda i, j: (0, 0)),
+          out_shape=jax.ShapeDtypeStruct((64, 256), jnp.float32),
+          grid=(1, 1),
+      )(x)
+
+  def test_no_relayouts_context_blocks_kernel(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    x = jnp.arange(128 * 128, dtype=jnp.int8).reshape(128, 128)
+
+    def kernel_int8_reshape(x_ref, o_ref):
+      data = x_ref[...]
+      reshaped = mpi.reshape_with_constraints(data, (64, 256), allow_pack_unpack=True)
+      o_ref[...] = reshaped
+
+    result = self.pallas_call(
+        kernel_int8_reshape,
+        in_specs=[pl.BlockSpec((128, 128), lambda i, j: (0, 0))],
+        out_specs=pl.BlockSpec((64, 256), lambda i, j: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((64, 256), jnp.int8),
+        grid=(1, 1),
+    )(x)
+    np.testing.assert_allclose(result, x.reshape(64, 256))
+
+    def kernel_blocked(x_ref, o_ref):
+      data = x_ref[...]
+      reshaped = mpi.reshape_with_constraints(data, (64, 256), allow_pack_unpack=False)
+      o_ref[...] = reshaped
+
+    with self.assertRaises(Exception):
+      self.pallas_call(
+          kernel_blocked,
+          in_specs=[pl.BlockSpec((128, 128), lambda i, j: (0, 0))],
+          out_specs=pl.BlockSpec((64, 256), lambda i, j: (0, 0)),
+          out_shape=jax.ShapeDtypeStruct((64, 256), jnp.int8),
+          grid=(1, 1),
+      )(x)
+
+  def test_add_dot_add_forces_relayout(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    m, k, n = 64, 32, 48
+
+    def kernel_add_dot_add(x_ref, y_ref, bias_ref, out_ref):
+      x = x_ref[...] + 1.0
+      y = y_ref[...]
+      result = jax.lax.dot(x, y)
+      out_ref[...] = result + bias_ref[...]
+
+    x = jnp.ones((m, k), dtype=jnp.float32)
+    y = jnp.ones((k, n), dtype=jnp.float32)
+    bias = jnp.ones((m, n), dtype=jnp.float32)
+
+    result = self.pallas_call(
+        kernel_add_dot_add,
+        in_specs=[
+            pl.BlockSpec((m, k), lambda: (0, 0)),
+            pl.BlockSpec((k, n), lambda: (0, 0)),
+            pl.BlockSpec((m, n), lambda: (0, 0)),
+        ],
+        out_specs=pl.BlockSpec((m, n), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+    )(x, y, bias)
+    expected = jnp.full((m, n), 65.0, dtype=jnp.float32)
+    np.testing.assert_allclose(result, expected)
+
+    with mpi.no_relayouts(
+        allow_scratch_roundtrip=True,
+        allow_pack_unpack=True,
+        allow_rotation_emulation=True,
+        allow_implicit_dim_change=True,
+    ):
+      result2 = self.pallas_call(
+          kernel_add_dot_add,
+          in_specs=[
+              pl.BlockSpec((m, k), lambda: (0, 0)),
+              pl.BlockSpec((k, n), lambda: (0, 0)),
+              pl.BlockSpec((m, n), lambda: (0, 0)),
+          ],
+          out_specs=pl.BlockSpec((m, n), lambda: (0, 0)),
+          out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+      )(x, y, bias)
+      np.testing.assert_allclose(result2, expected)
+
+  def test_dot_chain_with_weird_shapes(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    m, k1, k2, n = 64, 48, 48, 64
+
+    def kernel_dot_add_dot(x_ref, w1_ref, w2_ref, out_ref):
+      x = x_ref[...]
+      w1 = w1_ref[...]
+      w2 = w2_ref[...]
+      h1 = jax.lax.dot(x, w1)
+      h2 = h1 + 1.0
+      out_ref[...] = jax.lax.dot(h2, w2)
+
+    x = jnp.ones((m, k1), dtype=jnp.float32)
+    w1 = jnp.ones((k1, k2), dtype=jnp.float32)
+    w2 = jnp.ones((k2, n), dtype=jnp.float32)
+
+    result = self.pallas_call(
+        kernel_dot_add_dot,
+        in_specs=[
+            pl.BlockSpec((m, k1), lambda: (0, 0)),
+            pl.BlockSpec((k1, k2), lambda: (0, 0)),
+            pl.BlockSpec((k2, n), lambda: (0, 0)),
+        ],
+        out_specs=pl.BlockSpec((m, n), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+    )(x, w1, w2)
+    expected = jnp.full((m, n), 2352.0, dtype=jnp.float32)
+    np.testing.assert_allclose(result, expected)
+
+    with mpi.no_relayouts(
+        allow_scratch_roundtrip=True,
+        allow_pack_unpack=True,
+        allow_rotation_emulation=True,
+        allow_implicit_dim_change=True,
+    ):
+      result2 = self.pallas_call(
+          kernel_dot_add_dot,
+          in_specs=[
+              pl.BlockSpec((m, k1), lambda: (0, 0)),
+              pl.BlockSpec((k1, k2), lambda: (0, 0)),
+              pl.BlockSpec((k2, n), lambda: (0, 0)),
+          ],
+          out_specs=pl.BlockSpec((m, n), lambda: (0, 0)),
+          out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+      )(x, w1, w2)
+      np.testing.assert_allclose(result2, expected)
+
+  def test_relayout_constraints_with_add_dot_add_kernel(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    m, k, n = 128, 64, 128
+
+    def kernel_add_dot_add(x_ref, y_ref, bias_ref, out_ref):
+      x = x_ref[...] + 1.0
+      y = y_ref[...]
+      result = jax.lax.dot(x, y)
+      out_ref[...] = result + bias_ref[...]
+
+    x = jnp.ones((m, k), dtype=jnp.float32)
+    y = jnp.ones((k, n), dtype=jnp.float32)
+    bias = jnp.ones((m, n), dtype=jnp.float32)
+
+    result = self.pallas_call(
+        kernel_add_dot_add,
+        in_specs=[
+            pl.BlockSpec((m, k), lambda: (0, 0)),
+            pl.BlockSpec((k, n), lambda: (0, 0)),
+            pl.BlockSpec((m, n), lambda: (0, 0)),
+        ],
+        out_specs=pl.BlockSpec((m, n), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+    )(x, y, bias)
+    expected = jnp.full((m, n), 129.0, dtype=jnp.float32)
+    np.testing.assert_allclose(result, expected)
+
+    with mpi.no_relayouts(**mpi.RelayoutConstraints.block_all().__dict__):
+      result2 = self.pallas_call(
+          kernel_add_dot_add,
+          in_specs=[
+              pl.BlockSpec((m, k), lambda: (0, 0)),
+              pl.BlockSpec((k, n), lambda: (0, 0)),
+              pl.BlockSpec((m, n), lambda: (0, 0)),
+          ],
+          out_specs=pl.BlockSpec((m, n), lambda: (0, 0)),
+          out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+      )(x, y, bias)
+      np.testing.assert_allclose(result2, expected)
+
+  def test_relayout_constrained_reshape_then_reduce_fails(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
+
+    def kernel_success(x_ref, out_ref):
+      data = x_ref[...]
+      reshaped = mpi.reshape_with_constraints(data, (64, 256), allow_shifts=True)
+      reduced = jnp.sum(reshaped, axis=0)
+      out_ref[:] = reduced
+
+    result = self.pallas_call(
+        kernel_success,
+        in_specs=[pl.BlockSpec((128, 128), lambda i, j: (0, 0))],
+        out_specs=pl.BlockSpec((256,), lambda i, j: (0,)),
+        out_shape=jax.ShapeDtypeStruct((256,), jnp.float32),
+        grid=(1, 1),
+    )(x)
+    expected = x.reshape(64, 256).sum(axis=0)
+    np.testing.assert_allclose(result, expected)
+
+    def kernel_fails(x_ref, out_ref):
+      data = x_ref[...]
+      reshaped = mpi.reshape_with_constraints(data, (64, 256), allow_shifts=False)
+      reduced = jnp.sum(reshaped, axis=0)
+      out_ref[:] = reduced
+
+    with self.assertRaises(Exception):
+      self.pallas_call(
+          kernel_fails,
+          in_specs=[pl.BlockSpec((128, 128), lambda i, j: (0, 0))],
+          out_specs=pl.BlockSpec((256,), lambda i, j: (0,)),
+          out_shape=jax.ShapeDtypeStruct((256,), jnp.float32),
+          grid=(1, 1),
+      )(x)
+
+  def test_multi_op_chain_bf16_reduce_dot(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    m, k, n = 128, 64, 128
+
+    def kernel_bf16_reduce_dot(x_ref, y_ref, bias_ref, out_ref):
+      x = x_ref[...]
+      y = y_ref[...]
+
+      x_added = x + jnp.bfloat16(1.0)
+
+      x_reduced = jnp.sum(x_added, axis=0)
+
+      x_broadcast = jnp.broadcast_to(x_reduced, (m, k))
+
+      x_f32 = x_broadcast.astype(jnp.float32)
+      y_f32 = y.astype(jnp.float32)
+
+      result = jax.lax.dot(x_f32, y_f32)
+
+      out_ref[...] = result + bias_ref[...]
+
+    x = jnp.ones((m, k), dtype=jnp.bfloat16)
+    y = jnp.ones((k, n), dtype=jnp.bfloat16)
+    bias = jnp.ones((m, n), dtype=jnp.float32)
+
+    result = self.pallas_call(
+        kernel_bf16_reduce_dot,
+        in_specs=[
+            pl.BlockSpec((m, k), lambda: (0, 0)),
+            pl.BlockSpec((k, n), lambda: (0, 0)),
+            pl.BlockSpec((m, n), lambda: (0, 0)),
+        ],
+        out_specs=pl.BlockSpec((m, n), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+    )(x, y, bias)
+
+    expected_val = 2.0 * m * k + 1.0
+    np.testing.assert_allclose(result, jnp.full((m, n), expected_val),
+                               rtol=0.1)
+
+  def test_reduce_then_matmul_layout_conflict(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    m, k, n = 128, 64, 128
+
+    def kernel_reduce_then_matmul(x_ref, y_ref, out_ref):
+      x = x_ref[...]
+      y = y_ref[...]
+
+      x_reduced = jnp.sum(x, axis=0)
+
+      x_tiled = jnp.tile(x_reduced, (m, 1))
+
+      result = jax.lax.dot(x_tiled, y)
+
+      out_ref[...] = result
+
+    x = jnp.ones((m, k), dtype=jnp.float32)
+    y = jnp.ones((k, n), dtype=jnp.float32)
+
+    result = self.pallas_call(
+        kernel_reduce_then_matmul,
+        in_specs=[
+            pl.BlockSpec((m, k), lambda: (0, 0)),
+            pl.BlockSpec((k, n), lambda: (0, 0)),
+        ],
+        out_specs=pl.BlockSpec((m, n), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+    )(x, y)
+
+    expected = jnp.full((m, n), float(m * k), dtype=jnp.float32)
+    np.testing.assert_allclose(result, expected)
+
+
+  def test_transpose_between_ops(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    m, n = 128, 64
+
+    def kernel_transpose(x_ref, out_ref):
+      x = x_ref[...]
+      x_t = jnp.transpose(x)
+      result = x_t + 1.0
+      out_ref[...] = result
+
+    x = jnp.arange(m * n, dtype=jnp.float32).reshape(m, n)
+
+    result = self.pallas_call(
+        kernel_transpose,
+        in_specs=[pl.BlockSpec((m, n), lambda: (0, 0))],
+        out_specs=pl.BlockSpec((n, m), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((n, m), jnp.float32),
+    )(x)
+
+    expected = x.T + 1.0
+    np.testing.assert_allclose(result, expected)
+
+  def test_concat_different_layouts(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    m, n = 8, 128
+
+    def kernel_concat_different_layouts(x_ref, y_ref, out_ref):
+      x = x_ref[...]
+      y = y_ref[...]
+      x_reduced = jnp.sum(x, axis=0, keepdims=True)
+      y_added = y + 1.0
+      y_row = y_added[0:1, :]
+      result = jnp.concatenate([x_reduced, y_row], axis=0)
+      out_ref[...] = result
+
+    x = jnp.ones((m, n), dtype=jnp.float32)
+    y = jnp.ones((m, n), dtype=jnp.float32)
+
+    result = self.pallas_call(
+        kernel_concat_different_layouts,
+        in_specs=[
+            pl.BlockSpec((m, n), lambda: (0, 0)),
+            pl.BlockSpec((m, n), lambda: (0, 0)),
+        ],
+        out_specs=pl.BlockSpec((2, n), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((2, n), jnp.float32),
+    )(x, y)
+
+    expected = jnp.array([[float(m)] * n, [2.0] * n])
+    np.testing.assert_allclose(result, expected)
+
+  def test_scratch_tiling_expansion_forces_relayout(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    m, k, n = 128, 128, 128
+
+    def kernel_with_scratch(x_ref, y_ref, out_ref, scratch_ref):
+      x = x_ref[...]
+      scratch_ref[...] = x
+      x_from_scratch = scratch_ref[...]
+      result = jax.lax.dot(x_from_scratch, y_ref[...])
+      out_ref[...] = result
+
+    x = jnp.ones((m, k), dtype=jnp.float32)
+    y = jnp.ones((k, n), dtype=jnp.float32)
+
+    result = self.pallas_call(
+        kernel_with_scratch,
+        in_specs=[
+            pl.BlockSpec((m, k), lambda: (0, 0)),
+            pl.BlockSpec((k, n), lambda: (0, 0)),
+        ],
+        out_specs=pl.BlockSpec((m, n), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+        scratch_shapes=[
+            pltpu.VMEM((m, k), jnp.float32),
+        ],
+    )(x, y)
+
+    expected = jnp.full((m, n), float(k), dtype=jnp.float32)
+    np.testing.assert_allclose(result, expected)
+
+  def test_1d_vector_to_matmul_forces_tiling_change(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    k, n = 128, 128
+
+    def kernel_1d_to_matmul(x_ref, y_ref, out_ref):
+      vec = x_ref[:]
+      result = jnp.outer(vec, y_ref[:])
+      out_ref[...] = result
+
+    x = jnp.ones((k,), dtype=jnp.float32)
+    y = jnp.ones((n,), dtype=jnp.float32)
+
+    result = self.pallas_call(
+        kernel_1d_to_matmul,
+        in_specs=[
+            pl.BlockSpec((k,), lambda: (0,)),
+            pl.BlockSpec((n,), lambda: (0,)),
+        ],
+        out_specs=pl.BlockSpec((k, n), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((k, n), jnp.float32),
+    )(x, y)
+
+    expected = jnp.ones((k, n), dtype=jnp.float32)
+    np.testing.assert_allclose(result, expected)
+
+  def test_unaligned_concat_forces_fixed_offsets(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    m1, m2, n = 7, 7, 128
+
+    def kernel_unaligned_concat_to_matmul(x1_ref, x2_ref, y_ref, out_ref):
+      x1 = x1_ref[...]
+      x2 = x2_ref[...]
+      x_cat = jnp.concatenate([x1, x2], axis=0)
+      out_ref[...] = x_cat
+
+    x1 = jnp.ones((m1, n), dtype=jnp.float32)
+    x2 = jnp.ones((m2, n), dtype=jnp.float32) * 2
+    y = jnp.ones((n, n), dtype=jnp.float32)
+
+    result = self.pallas_call(
+        kernel_unaligned_concat_to_matmul,
+        in_specs=[
+            pl.BlockSpec((m1, n), lambda: (0, 0)),
+            pl.BlockSpec((m2, n), lambda: (0, 0)),
+            pl.BlockSpec((n, n), lambda: (0, 0)),
+        ],
+        out_specs=pl.BlockSpec((m1 + m2, n), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((m1 + m2, n), jnp.float32),
+    )(x1, x2, y)
+
+    expected = jnp.concatenate([x1, x2], axis=0)
+    np.testing.assert_allclose(result, expected)
+
+  def test_unaligned_concat_then_matmul(self):
+
+    if self.INTERPRET:
+      self.skipTest("Interpret mode doesn't trigger relayout constraints")
+
+    m1, m2, k, n = 7, 7, 128, 128
+
+    def kernel_unaligned_concat_matmul(x1_ref, x2_ref, y_ref, out_ref):
+      x1 = x1_ref[...]
+      x2 = x2_ref[...]
+      x_cat = jnp.concatenate([x1, x2], axis=0)
+      result = jax.lax.dot(x_cat, y_ref[...])
+      out_ref[...] = result
+
+    x1 = jnp.ones((m1, k), dtype=jnp.float32)
+    x2 = jnp.ones((m2, k), dtype=jnp.float32)
+    y = jnp.ones((k, n), dtype=jnp.float32)
+
+    result = self.pallas_call(
+        kernel_unaligned_concat_matmul,
+        in_specs=[
+            pl.BlockSpec((m1, k), lambda: (0, 0)),
+            pl.BlockSpec((m2, k), lambda: (0, 0)),
+            pl.BlockSpec((k, n), lambda: (0, 0)),
+        ],
+        out_specs=pl.BlockSpec((m1 + m2, n), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((m1 + m2, n), jnp.float32),
+    )(x1, x2, y)
+
+    expected = jnp.full((m1 + m2, n), float(k), dtype=jnp.float32)
+    np.testing.assert_allclose(result, expected)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
+

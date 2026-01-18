@@ -422,6 +422,7 @@ jax_multiplatform_test(
     shard_count = 8,
     deps = [
         "//jax/_src/pallas:pallas_test_util",
+        "//jax/_src/pallas/mosaic:primitives",
         "//jax/experimental:mesh_utils",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",

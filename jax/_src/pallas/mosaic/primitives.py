@@ -15,9 +15,12 @@
 """Module for Pallas:TPU-specific JAX primitives and functions."""
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import dataclasses
 import functools
 import logging
+import math
 from typing import Any
 
 import jax
@@ -122,8 +125,123 @@ def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
 
   return mlir.lower_fun(_bitcast, multiple_results=False)(ctx, x)
 
-
 mlir.register_lowering(bitcast_p, _bitcast_lowering_rule)
+
+
+@dataclasses.dataclass(frozen=True)
+class RelayoutConstraints:
+  """Constraints for relayout operations.
+
+  When used with `no_relayouts()` context manager, these flags control which
+  expensive relayout paths are allowed during compilation.
+  """
+  allow_scratch_roundtrip: bool = True
+  allow_pack_unpack: bool = True
+  allow_rotation_emulation: bool = True
+  allow_implicit_dim_change: bool = True
+
+  @classmethod
+  def block_all(cls) -> "RelayoutConstraints":
+    return cls(
+        allow_scratch_roundtrip=False,
+        allow_pack_unpack=False,
+        allow_rotation_emulation=False,
+        allow_implicit_dim_change=False,
+    )
+
+
+
+_relayout_constraints_var: contextvars.ContextVar[RelayoutConstraints | None] = (
+    contextvars.ContextVar("relayout_constraints", default=None)
+)
+
+
+def get_current_relayout_constraints() -> RelayoutConstraints | None:
+  """Returns the current relayout constraints from the context, if any."""
+  return _relayout_constraints_var.get()
+
+
+# Register the getter with core.py to enable JaxprEqnContext to capture constraints.
+jax_core.register_relayout_constraints_getter(get_current_relayout_constraints)
+
+
+@contextlib.contextmanager
+def no_relayouts(
+    *,
+    allow_scratch_roundtrip: bool = False,
+    allow_pack_unpack: bool = False,
+    allow_rotation_emulation: bool = False,
+    allow_implicit_dim_change: bool = False,
+):
+  """Context manager to constrain expensive relayout operations.
+
+  By default, all expensive paths are blocked. Use the keyword arguments to
+  selectively allow specific paths.
+
+  Args:
+    allow_scratch_roundtrip: If False (default), block VMEM scratch round-trips.
+    allow_pack_unpack: If False (default), block packing format changes.
+    allow_rotation_emulation: If False (default), block bitwise rotation emulation.
+    allow_implicit_dim_change: If False (default), block implicit dimension changes.
+
+  Yields:
+    None
+
+  Example:
+    >>> with no_relayouts():
+    ...   # Any implicit relayout here will cause compilation error
+    ...   pass
+    >>> with no_relayouts(allow_implicit_dim_change=True):
+    ...   # Allow only implicit dim changes, block all other expensive paths
+    ...   pass
+  """
+  constraints = RelayoutConstraints(
+      allow_scratch_roundtrip=allow_scratch_roundtrip,
+      allow_pack_unpack=allow_pack_unpack,
+      allow_rotation_emulation=allow_rotation_emulation,
+      allow_implicit_dim_change=allow_implicit_dim_change,
+  )
+  token = _relayout_constraints_var.set(constraints)
+  try:
+    yield
+  finally:
+    _relayout_constraints_var.reset(token)
+
+
+reshape_with_constraints_p = jax_core.Primitive("reshape_with_constraints")
+
+
+def reshape_with_constraints(
+    x: jax.Array,
+    shape: tuple[int, ...],
+    *,
+    allow_pack_unpack: bool = True,
+    allow_shifts: bool = True,
+) -> jax.Array:
+  shape = jax_core.canonicalize_shape(shape)
+  if math.prod(x.shape) != math.prod(shape):
+    raise ValueError(
+        f"Shape mismatch: {x.shape} vs {shape} (prod: {math.prod(x.shape)} vs"
+        f" {math.prod(shape)})"
+    )
+  return reshape_with_constraints_p.bind(
+      x,
+      shape=shape,
+      allow_pack_unpack=allow_pack_unpack,
+      allow_shifts=allow_shifts,
+  )
+
+
+@reshape_with_constraints_p.def_abstract_eval
+def _reshape_with_constraints_abstract_eval(
+    x,
+    *,
+    shape,
+    allow_pack_unpack,
+    allow_shifts,
+):
+  del allow_pack_unpack, allow_shifts
+  return jax_core.ShapedArray(shape, x.dtype)
 
 roll_p = jax_core.Primitive("roll")
 

@@ -587,7 +587,11 @@ def TPU_IotaOp : TPU_Op<"iota", [Pure]> {
 }
 
 def TPU_ReshapeOp : TPU_Op<"reshape", [Pure]> {
-  let arguments = (ins AnyVectorOfNonZeroRank:$source);
+  let arguments = (ins
+    AnyVectorOfNonZeroRank:$source,
+    DefaultValuedAttr<BoolAttr, "true">:$allow_pack_unpack,
+    DefaultValuedAttr<BoolAttr, "true">:$allow_shifts
+  );
   let results = (outs AnyVectorOfNonZeroRank:$result);
   let assemblyFormat = [{ $source attr-dict `:` type($source) `->` type($result) }];
   let hasVerifier = 1;
@@ -768,7 +772,13 @@ def TPU_UnpackElementwiseOp : TPU_Op<"unpack_elementwise", [Pure, ElementwiseMap
 }
 
 def TPU_RelayoutOp : TPU_Op<"relayout", [Pure, SameOperandsAndResultType]> {
-  let arguments = (ins AnyVectorOfAnyRank:$input);
+  let arguments = (ins
+    AnyVectorOfAnyRank:$input,
+    DefaultValuedAttr<BoolAttr, "true">:$allow_scratch_roundtrip,
+    DefaultValuedAttr<BoolAttr, "true">:$allow_pack_unpack,
+    DefaultValuedAttr<BoolAttr, "true">:$allow_rotation_emulation,
+    DefaultValuedAttr<BoolAttr, "true">:$allow_implicit_dim_change
+  );
   let results = (outs AnyVectorOfAnyRank:$output);
   let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
   let hasVerifier = 1;

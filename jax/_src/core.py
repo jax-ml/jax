@@ -376,19 +376,22 @@ class JaxprEqnContextManager:
 class JaxprEqnContext:
 
   __slots__ = ['compute_type', 'threefry_partitionable', 'xla_metadata',
-               'cur_abstract_mesh']
+               'cur_abstract_mesh', 'relayout_constraints']
 
   compute_type: str | None
   threefry_partitionable: bool
   xla_metadata: dict[str, Any] | None
   cur_abstract_mesh: mesh_lib.AbstractMesh
+  relayout_constraints: Any  # Type is pallas.mosaic.primitives.RelayoutConstraints
 
   def __init__(self, compute_type: str | None, threefry_partitionable: bool,
-               xla_metadata: dict[str, Any] | None = None):
+               xla_metadata: dict[str, Any] | None = None,
+               relayout_constraints: Any = None):
     self.compute_type = compute_type
     self.threefry_partitionable = threefry_partitionable
     self.cur_abstract_mesh = mesh_lib.get_abstract_mesh()
     self.xla_metadata = xla_metadata
+    self.relayout_constraints = relayout_constraints
 
   @property
   def manager(self):
@@ -399,7 +402,8 @@ class JaxprEqnContext:
         f"JaxprEqnContext(compute_type={self.compute_type}, "
         f"threefry_partitionable={self.threefry_partitionable}, "
         f"cur_abstract_mesh={self.cur_abstract_mesh}, "
-        f"xla_metadata={self.xla_metadata})"
+        f"xla_metadata={self.xla_metadata}, "
+        f"relayout_constraints={self.relayout_constraints})"
     )
 
   def __hash__(self):
@@ -409,13 +413,15 @@ class JaxprEqnContext:
         self.cur_abstract_mesh,
         None if self.xla_metadata is None
         else tuple(sorted(self.xla_metadata.items())),
+        self.relayout_constraints,
     ))
 
   def __eq__(self, other):
     return (self.compute_type == other.compute_type and
             self.threefry_partitionable == other.threefry_partitionable and
             self.cur_abstract_mesh == other.cur_abstract_mesh and
-            self.xla_metadata == other.xla_metadata)
+            self.xla_metadata == other.xla_metadata and
+            self.relayout_constraints == other.relayout_constraints)
 
 
 class JaxprEqn:
@@ -471,14 +477,33 @@ class JaxprEqn:
     )
 
 
+# Callback for getting relayout constraints - set by pallas.mosaic.primitives
+# to avoid circular imports. Returns None if not set or no constraints active.
+_get_relayout_constraints_callback: Callable[[], Any] | None = None
+
+
+def register_relayout_constraints_getter(getter: Callable[[], Any]) -> None:
+  """Register a callback to get current relayout constraints.
+
+  This is called by jax._src.pallas.mosaic.primitives to avoid circular imports.
+  """
+  global _get_relayout_constraints_callback
+  _get_relayout_constraints_callback = getter
+
+
 # TODO(mattjj): call typecheck rules here, so we don't form bad eqns
 def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
                   ctx=None) -> JaxprEqn:
   source_info = source_info or source_info_util.new_source_info()
-  ctx = ctx or JaxprEqnContext(
-      config.compute_on_context_manager.value,
-      config.threefry_partitionable.value,
-      xla_metadata_lib.current_xla_metadata())
+  if ctx is None:
+    relayout_constraints = None
+    if _get_relayout_constraints_callback is not None:
+      relayout_constraints = _get_relayout_constraints_callback()
+    ctx = JaxprEqnContext(
+        config.compute_on_context_manager.value,
+        config.threefry_partitionable.value,
+        xla_metadata_lib.current_xla_metadata(),
+        relayout_constraints)
   if config.enable_checks.value:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)
