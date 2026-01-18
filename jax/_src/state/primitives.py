@@ -1191,3 +1191,24 @@ def _linval_to_mlir_type(a):
   return mlir.ir.MemRefType.get(a.shape, mlir.dtype_to_ir_type(a.dtype),
                                 memory_space=a.memory_space)
 mlir.ir_type_handlers[AbstractLinVal] = _linval_to_mlir_type
+
+
+def dup(x_ref):
+  return dup_p.bind(x_ref)
+
+dup_p = core.Primitive('dup')
+dup_p.multiple_results = True
+@dup_p.def_effectful_abstract_eval
+def _dup_abstract_eval(ref_aval):
+  return (ref_aval, ref_aval), {core.array_ref_effect}
+core._ref_allocating_primitives.add(dup_p)
+
+
+def pud(*refs):
+  return pud_p.bind(*refs)
+
+pud_p = core.Primitive('pud')
+@pud_p.def_effectful_abstract_eval
+def _pud_abstract_eval(ref_aval, *_):
+  return ref_aval, {core.array_ref_effect}
+core._ref_allocating_primitives.add(pud_p)

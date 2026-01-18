@@ -1692,9 +1692,9 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
   mut_arrays = set()
   for eqn in eqns:
     if eqn.primitive in core._ref_allocating_primitives:
-      outvar, = eqn.outvars
-      all_vars[outvar] = None  # type: ignore
-      mut_arrays.add(outvar)
+      for outvar in eqn.outvars:
+        all_vars[outvar] = None  # type: ignore
+        mut_arrays.add(outvar)
     for eff in eqn.effects:
       if isinstance(eff, effects.JaxprInputEffect):
         if eff.input_index >= len(eqn.invars):
