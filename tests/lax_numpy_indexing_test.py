@@ -1037,11 +1037,16 @@ class IndexingTest(jtu.JaxTestCase):
     eqn, = jaxpr.jaxpr.eqns
     self.assertEqual(eqn.primitive, lax.rev_p)
 
-    # Non-static indices produce a dynamic slice
+    # Non-static scalar indices produce a dynamic slice
     jaxpr = jax.make_jaxpr(lambda x, i: x[i])(jnp.ones((4,)), 2)
     self.assertEqual(len(jaxpr.jaxpr.eqns), 6)
     self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
     self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+
+    # Non-scalar indices produce a gather
+    jaxpr = jax.make_jaxpr(lambda x, i: x[i])(jnp.ones((4,)), jnp.array([2, 3]))
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 5)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.gather_p)
 
   def testTrivialGatherIsntGenerated(self):
     # https://github.com/jax-ml/jax/issues/1621
