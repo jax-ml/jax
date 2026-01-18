@@ -3293,8 +3293,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
     np.testing.assert_allclose(res, a[0] @ b[0], rtol=1e-3)
 
   def test_wgmma_sliced_acc_read(self):
-    self.skip_if_wg_semantics()  # MLIR verifier error for `memref.subview`.
-
     def kernel(a_ref, b_ref, o_ref):
       def scope(acc_ref):
         plgpu.wgmma(acc_ref, a_ref, b_ref)
@@ -3317,6 +3315,30 @@ class PallasCallSm90ATest(PallasSm90ATest):
         grid=(1, 1),
     )(a, b)
     np.testing.assert_allclose(res, a @ b, rtol=1e-3)
+
+  def test_wgmma_sliced_transposed_lhs(self):
+    def kernel(a_ref, b_ref, o_ref):
+      def scope(acc_ref):
+        plgpu.wgmma(acc_ref, a_ref.T.at[:64, :128], b_ref)
+        return acc_ref[...]
+      o_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 128), jnp.float32))
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(256, 128), dtype=jnp.float16)
+    b = jax.random.uniform(key2, shape=(128, 128), dtype=jnp.float16)
+    transforms = self.default_transforms(dtype=jnp.float16)
+    res = self.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.BlockSpec((256, 128), lambda *ij: ij, transforms=transforms),
+            plgpu.BlockSpec((128, 128), lambda *ij: ij, transforms=transforms),
+        ],
+        out_specs=plgpu.BlockSpec((64, 128), lambda *ij: ij),
+        out_shape=jax.ShapeDtypeStruct((64, 128), jnp.float32),
+        grid=(1, 1),
+    )(a, b)
+    np.testing.assert_allclose(res, a.T[:64, :128] @ b, rtol=1e-3)
+
 
   @parameterized.product(
       src_memory_space=[plgpu.SMEM, plgpu.GMEM],
