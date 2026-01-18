@@ -24,6 +24,9 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/statusor.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/Location.h"
+#include "mlir/IR/Value.h"
 
 namespace jax::mosaic::gpu {
 
@@ -190,9 +193,10 @@ class TiledLayout {
   const std::vector<Dim>& warp_dims() const { return warp_dims_; }
   const std::vector<Dim>& lane_dims() const { return lane_dims_; }
   int64_t vector_dim() const { return vector_dim_; }
-
-  // Returns the shape of the tiled tiling (without the base tile shape part).
-  absl::StatusOr<std::vector<int64_t>> TiledTilingShape() const;
+  const std::vector<int64_t>& tiled_tiling_shape() const {
+    return tiled_tiling_shape_;
+  }
+  size_t tiled_tiling_rank() const { return tiled_tiling_shape_.size(); };
 
   // Canonicalizes the layout. E.g. If the tiling suffix is
   //   (4, 32, 1, 1, 1), vector_dim = -1, warp_dims = {-5}, lane_dims = {-4}
@@ -206,9 +210,45 @@ class TiledLayout {
   // Returns the partitioned lane dimensions verbatim.
   std::vector<int64_t> PartitionedLaneDims() const;
 
+  // Returns delinearized warp indices for a current thread.
+  absl::StatusOr<std::vector<mlir::Value>> WarpIndices(
+      mlir::OpBuilder& builder, mlir::Location& loc) const;
+
+  // Returns delinearized lane indices for a current thread.
+  absl::StatusOr<std::vector<mlir::Value>> LaneIndices(
+      mlir::OpBuilder& builder, mlir::Location& loc) const;
+
   // Returns the size of the vector dimension. E.g. if the tiling suffix is
   // (..., 4), and vector_dims = {-1}, then the vector length is 4.
   absl::StatusOr<size_t> VectorLength() const;
+
+  // Returns the shape of the register array needed to represent an array of the
+  // given logical shape.
+  absl::StatusOr<std::vector<int64_t>> RegistersShape(
+      const std::vector<int64_t>& shape) const;
+
+  // Returns the element type of the register array.
+  absl::StatusOr<mlir::Type> RegistersElementType(mlir::Type t) const;
+
+  // Returns the logical shape of an array given its register array shape.
+  // Inverse to `registers_shape`.
+  absl::StatusOr<std::vector<int64_t>> ShapeFromRegistersShape(
+      const std::vector<int64_t>& shape) const;
+
+  // Returns the base tile shape of the tiling expression.
+  Tiling::Tile BaseTileShape() const;
+
+  // Returns a layout with the given dimension removed.
+  absl::StatusOr<TiledLayout> RemoveDimension(int64_t dim) const;
+
+  // Returns a layout with the given dimensions reduced across `axes`.
+  absl::StatusOr<TiledLayout> Reduce(const std::vector<int64_t>& axes) const;
+
+  // Returns the nd-indices of all the elements the current thread is holding
+  // given `shape`.
+  absl::StatusOr<std::vector<std::vector<mlir::Value>>> ThreadIdxs(
+      mlir::OpBuilder& builder, mlir::Location& loc,
+      const std::vector<int64_t>& shape) const;
 
   template <typename H>
   friend H AbslHashValue(H h, const TiledLayout& layout) {
@@ -224,13 +264,31 @@ class TiledLayout {
       : tiling_(std::move(tiling)),
         warp_dims_(std::move(warp_dims)),
         lane_dims_(std::move(lane_dims)),
-        vector_dim_(vector_dim) {};
+        vector_dim_(vector_dim),
+        tiled_tiling_shape_(*TiledTilingShape()) {};
+
+  // Returns the shape of the tiled tiling (without the base tile shape part).
+  absl::StatusOr<std::vector<int64_t>> TiledTilingShape() const;
+
+  // Turns the linearized thread index `idx` into a vector of full indices for
+  // the given dimensions `dims`.
+  absl::StatusOr<std::vector<mlir::Value>> DelinearizeIndex(
+      mlir::OpBuilder& builder, mlir::Location loc, mlir::Value idx,
+      const std::vector<TiledLayout::Dim>& dims) const;
 
   Tiling tiling_;
   std::vector<Dim> warp_dims_;
   std::vector<Dim> lane_dims_;
   int64_t vector_dim_;
+
+  // Tiled tiling shape can be reconstructed from the tiling object. We cache it
+  // to avoid recomputation.
+  std::vector<int64_t> tiled_tiling_shape_;
 };
+
+// TODO(olechwierowicz): Move this to a separate util file.
+std::pair<std::unique_ptr<mlir::OpBuilder>, mlir::Location> MlirBuilder(
+    mlir::Block* block, mlir::Location* loc, mlir::Operation* ref_op);
 
 }  // namespace jax::mosaic::gpu
 

@@ -14,12 +14,20 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstdint>
+#include <memory>
+#include <utility>
 #include <variant>
 #include <vector>
 
 #include "absl/hash/hash.h"
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
+#include "mlir/CAPI/IR.h"
+#include "mlir/IR/Block.h"  // IWYU pragma: keep
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/Location.h"  // IWYU pragma: keep
+#include "mlir/IR/Operation.h"  // IWYU pragma: keep
+#include "mlir/IR/Value.h"  // IWYU pragma: keep
 #include "nanobind/nanobind.h"
 #include "nanobind/operators.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
@@ -31,6 +39,30 @@ limitations under the License.
 
 namespace nb = nanobind;
 namespace mgpu = jax::mosaic::gpu;
+
+std::pair<std::unique_ptr<mlir::OpBuilder>, mlir::Location>
+GetBuilderAndLocation() {
+  nb::object mlir_ir = nb::module_::import_("mlir.ir");
+  nb::object ip_cls = mlir_ir.attr("InsertionPoint");
+  nb::object loc_cls = mlir_ir.attr("Location");
+  nb::object loc = loc_cls.attr("current");
+  nb::object ip = ip_cls.attr("current");
+
+  nb::object block = ip.attr("block");
+  nb::object ref_op = ip.attr("ref_operation");
+
+  MlirBlock block_c = nb::cast<MlirBlock>(block);
+  mlir::Block* cpp_block = unwrap(block_c);
+  MlirLocation loc_c = nb::cast<MlirLocation>(loc);
+  mlir::Location cpp_loc = unwrap(loc_c);
+  mlir::Operation* cpp_ref_op = nullptr;
+  if (!ref_op.is_none()) {
+    MlirOperation ref_op_c = nb::cast<MlirOperation>(ref_op);
+    cpp_ref_op = unwrap(ref_op_c);
+  }
+
+  return mgpu::MlirBuilder(cpp_block, &cpp_loc, cpp_ref_op);
+}
 
 NB_MODULE(_mosaic_gpu_ext, m) {
   m.def(
@@ -355,12 +387,39 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       .def_prop_ro("tiling", &mgpu::TiledLayout::tiling)
       .def_prop_ro("tiled_tiling_shape",
                    [](const mgpu::TiledLayout& self) {
-                     auto result = self.TiledTilingShape();
-                     if (!result.ok()) {
-                       throw nb::value_error(result.status().message().data());
-                     }
-                     return nb::tuple(nb::cast(*self.TiledTilingShape()));
+                     return nb::tuple(nb::cast(self.tiled_tiling_shape()));
                    })
+      .def_prop_ro("tiled_tiling_rank",
+                   [](const mgpu::TiledLayout& self) {
+                     return self.tiled_tiling_rank();
+                   })
+      .def("warp_indices",
+           [](const mgpu::TiledLayout& self) {
+             auto [builder, loc] = GetBuilderAndLocation();
+             auto result = self.WarpIndices(*builder, loc);
+             if (!result.ok()) {
+               throw nb::value_error(result.status().message().data());
+             }
+             nb::list l;
+             for (const auto& v : *result) {
+               l.append(nb::cast(wrap(v)));
+             }
+             return nb::tuple(l);
+           })
+      .def("lane_indices",
+           [](const mgpu::TiledLayout& self) {
+             auto [builder, new_loc] = GetBuilderAndLocation();
+             auto result = self.LaneIndices(*builder, new_loc);
+             if (!result.ok()) {
+               throw nb::value_error(result.status().message().data());
+             }
+             nb::list l;
+             for (const auto& v : *result) {
+               l.append(nb::cast(wrap(v)));
+             }
+             return nb::tuple(l);
+           })
+
       .def("canonicalize",
            [](const mgpu::TiledLayout& self) {
              auto result = self.Canonicalize();
@@ -369,6 +428,82 @@ NB_MODULE(_mosaic_gpu_ext, m) {
              }
              return *result;
            })
+      .def(
+          "registers_shape",
+          [](const mgpu::TiledLayout& self, const std::vector<int64_t>& shape) {
+            auto result = self.RegistersShape(shape);
+            if (!result.ok()) {
+              throw nb::value_error(result.status().message().data());
+            }
+            return nb::tuple(nb::cast(*result));
+          },
+          nb::arg("shape"))
+      .def(
+          "registers_element_type",
+          [](const mgpu::TiledLayout& self, MlirType t) {
+            auto result = self.RegistersElementType(unwrap(t));
+            if (!result.ok()) {
+              throw nb::value_error(result.status().message().data());
+            }
+            return nb::cast(wrap(*result));
+          },
+          nb::arg("t"))
+      .def(
+          "shape_from_registers_shape",
+          [](const mgpu::TiledLayout& self, const std::vector<int64_t>& shape) {
+            auto result = self.ShapeFromRegistersShape(shape);
+            if (!result.ok()) {
+              throw nb::value_error(result.status().message().data());
+            }
+            return nb::tuple(nb::cast(*result));
+          },
+          nb::arg("shape"))
+      .def_prop_ro("base_tile_shape",
+                   [](const mgpu::TiledLayout& self) {
+                     return nb::tuple(nb::cast(self.BaseTileShape()));
+                   })
+      .def(
+          "remove_dimension",
+          [](const mgpu::TiledLayout& self, int64_t dim) {
+            auto result = self.RemoveDimension(dim);
+            if (!result.ok()) {
+              throw nb::value_error(result.status().message().data());
+            }
+            return *result;
+          },
+          nb::arg("dim"))
+      .def(
+          "reduce",
+          [](const mgpu::TiledLayout& self, nb::iterable axes) {
+            std::vector<int64_t> axes_vec;
+            for (const auto& axis : axes) {
+              axes_vec.push_back(nb::cast<int64_t>(axis));
+            }
+            auto result = self.Reduce(axes_vec);
+            if (!result.ok()) {
+              throw nb::value_error(result.status().message().data());
+            }
+            return *result;
+          },
+          nb::arg("axes"))
+      .def(
+          "thread_idxs",
+          [](const mgpu::TiledLayout& self, const std::vector<int64_t>& shape) {
+            auto [builder, new_loc] = GetBuilderAndLocation();
+            auto result = self.ThreadIdxs(*builder, new_loc, shape);
+            if (!result.ok()) {
+              throw nb::value_error(result.status().message().data());
+            }
+            nb::list list;
+            for (const auto& row : *result) {
+              nb::list inner_list;
+              for (const auto& val : row) {
+                inner_list.append(nb::cast(wrap(val)));
+              }
+              list.append(nb::tuple(inner_list));
+            }
+            return list;
+          })
       .def("__str__", &mgpu::TiledLayout::ToString)
       .def("__repr__", &mgpu::TiledLayout::ToString)
       .def("__hash__",

@@ -16,19 +16,69 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/tiled_layout.h"
 
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "llvm/Support/Casting.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OwningOpRef.h"
+#include "mlir/IR/Value.h"
 
 namespace jax::mosaic::gpu {
 namespace {
 
+using ::testing::Each;
 using ::testing::ElementsAre;
+using ::testing::Truly;
+using ::testing::UnorderedElementsAre;
 using ::testing::status::IsOkAndHolds;
 using ::testing::status::StatusIs;
+
+int64_t EvaluateThreadZero(mlir::Value v) {
+  if (auto op = v.getDefiningOp<mlir::arith::ConstantIndexOp>()) {
+    return op.value();
+  }
+  if (auto op = v.getDefiningOp<mlir::arith::ConstantIntOp>()) {
+    return op.value();
+  }
+  if (auto op = v.getDefiningOp<mlir::arith::AddIOp>()) {
+    return EvaluateThreadZero(op.getLhs()) + EvaluateThreadZero(op.getRhs());
+  }
+  if (auto op = v.getDefiningOp<mlir::arith::MulIOp>()) {
+    return EvaluateThreadZero(op.getLhs()) * EvaluateThreadZero(op.getRhs());
+  }
+  if (auto op = v.getDefiningOp<mlir::arith::DivUIOp>()) {
+    int64_t lhs = EvaluateThreadZero(op.getLhs());
+    int64_t rhs = EvaluateThreadZero(op.getRhs());
+    return lhs / rhs;
+  }
+  if (auto op = v.getDefiningOp<mlir::arith::RemUIOp>()) {
+    int64_t lhs = EvaluateThreadZero(op.getLhs());
+    int64_t rhs = EvaluateThreadZero(op.getRhs());
+    return lhs % rhs;
+  }
+  if (auto op = v.getDefiningOp<mlir::arith::IndexCastOp>()) {
+    return EvaluateThreadZero(op.getIn());
+  }
+  if (auto op = v.getDefiningOp<mlir::gpu::ThreadIdOp>()) {
+    return 0;
+  }
+  if (auto op = v.getDefiningOp<mlir::gpu::BlockDimOp>()) {
+    return 0;
+  }
+
+  CHECK(false) << "Unknown op: "
+               << v.getDefiningOp()->getName().getStringRef().str();
+}
 
 TEST(TilingTest, TileNestedShapeStrides) {
   ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{64, 64}}));
@@ -235,6 +285,239 @@ TEST(TiledLayoutTest, VectorLengthReturnsTheSizeOfTheVectorDim) {
                           /*vector_dim=*/-1, /*check_canonical=*/false));
 
   EXPECT_THAT(layout.VectorLength(), IsOkAndHolds(2));
+}
+
+TEST(TiledLayoutTest, ReduceLaneDims) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 4, 8, 8, 4, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-6},
+                          /*lane_dims=*/{-4, -5},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(TiledLayout reduced, layout.Reduce({1, 2}));
+
+  EXPECT_THAT(reduced.warp_dims(), ElementsAre(-4));
+  EXPECT_THAT(reduced.lane_dims(), ElementsAre(Replicated(8), Replicated(4)));
+  EXPECT_EQ(reduced.vector_dim(), -1);
+}
+
+TEST(TiledLayoutTest, ReduceWarpDims) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 4, 8, 8, 4, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling), /*warp_dims=*/{-6},
+                          /*lane_dims=*/{-4, -5},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(TiledLayout reduced, layout.Reduce({0}));
+
+  EXPECT_THAT(reduced.warp_dims(), ElementsAre(Replicated(4)));
+  EXPECT_THAT(reduced.lane_dims(), ElementsAre(-4, -5));
+  EXPECT_EQ(reduced.vector_dim(), -1);
+}
+
+TEST(TiledLayoutTest, ReduceVectorDim) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 4, 8, 8, 4, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling), /*warp_dims=*/{-6},
+                          /*lane_dims=*/{-4, -5},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(TiledLayout reduced, layout.Reduce({5}));
+
+  EXPECT_THAT(reduced.warp_dims(), ElementsAre(-6));
+  EXPECT_THAT(reduced.lane_dims(), ElementsAre(-4, -5));
+  EXPECT_EQ(reduced.vector_dim(), -1);
+  EXPECT_THAT(reduced.VectorLength(), IsOkAndHolds(1));
+}
+
+class TiledLayoutMlirTest : public ::testing::Test {
+ public:
+  TiledLayoutMlirTest() : context_(mlir::MLIRContext()) {}
+
+ protected:
+  void SetUp() override {
+    context_.getOrLoadDialect<mlir::arith::ArithDialect>();
+    context_.getOrLoadDialect<mlir::gpu::GPUDialect>();
+    module_ = mlir::ModuleOp::create(mlir::UnknownLoc::get(&context_));
+    builder_ = std::make_unique<mlir::OpBuilder>(module_->getBodyRegion());
+    loc_ = std::make_unique<mlir::Location>(builder_->getUnknownLoc());
+  }
+
+  static bool IsConstantZero(mlir::Value v) {
+    auto op = v.getDefiningOp<mlir::arith::ConstantOp>();
+    if (!op) {
+      return false;
+    }
+    auto attr = llvm::dyn_cast<mlir::IntegerAttr>(op.getValue());
+    if (!attr) {
+      return false;
+    }
+    return attr.getValue().isZero();
+  }
+
+  mlir::OpBuilder& builder() { return *builder_; }
+  mlir::Location& loc() { return *loc_; }
+
+ private:
+  mlir::MLIRContext context_;
+  mlir::OwningOpRef<mlir::ModuleOp> module_;
+  std::unique_ptr<mlir::OpBuilder> builder_;
+  std::unique_ptr<mlir::Location> loc_;
+};
+
+TEST_F(TiledLayoutMlirTest, WarpIndices) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{64, 8}, {16, 8}, {8, 8}, {1, 2}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-8},
+                          /*lane_dims=*/{-4, -3},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(std::vector<mlir::Value> indices,
+                       layout.WarpIndices(builder(), loc()));
+
+  // Make sure warp dim is non-zero.
+  EXPECT_EQ(indices.size(), 8);
+  EXPECT_FALSE(IsConstantZero(indices[0]));  // 8 - 8 = 0 index
+  EXPECT_TRUE(IsConstantZero(indices[1]));
+  EXPECT_TRUE(IsConstantZero(indices[2]));
+  EXPECT_TRUE(IsConstantZero(indices[3]));
+  EXPECT_TRUE(IsConstantZero(indices[4]));
+  EXPECT_TRUE(IsConstantZero(indices[5]));
+  EXPECT_TRUE(IsConstantZero(indices[6]));
+  EXPECT_TRUE(IsConstantZero(indices[7]));
+}
+
+TEST_F(TiledLayoutMlirTest, LaneIndices) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{64, 8}, {16, 8}, {8, 8}, {1, 2}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-8},
+                          /*lane_dims=*/{-4, -3},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(std::vector<mlir::Value> indices,
+                       layout.LaneIndices(builder(), loc()));
+
+  // Make sure lane dims are non-zero.
+  EXPECT_EQ(indices.size(), 8);
+  EXPECT_TRUE(IsConstantZero(indices[0]));
+  EXPECT_TRUE(IsConstantZero(indices[1]));
+  EXPECT_TRUE(IsConstantZero(indices[2]));
+  EXPECT_TRUE(IsConstantZero(indices[3]));
+  EXPECT_FALSE(IsConstantZero(indices[4]));  // 8 - 4 = 4 index
+  EXPECT_FALSE(IsConstantZero(indices[5]));  // 8 - 3 = 5 index
+  EXPECT_TRUE(IsConstantZero(indices[6]));
+  EXPECT_TRUE(IsConstantZero(indices[7]));
+}
+
+TEST_F(TiledLayoutMlirTest, IndicesWithReplicated) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{64, 8}, {16, 8}, {8, 8}, {1, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{Replicated(4)},
+                          /*lane_dims=*/{-4, -3},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(std::vector<mlir::Value> indices,
+                       layout.WarpIndices(builder(), loc()));
+
+  EXPECT_EQ(indices.size(), 8);
+  EXPECT_THAT(indices, Each(Truly(IsConstantZero)));
+}
+
+TEST(TiledLayoutTest,
+     ApplyingTilingToShapeAndShapeFromRegistersShapeReturnsOriginalShape) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 32, 2}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-3},
+                          /*lane_dims=*/{-2},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  EXPECT_THAT(layout.RegistersShape({8, 128, 2}),
+              IsOkAndHolds(ElementsAre(2, 4, 1, 1, 1, 1)));
+  EXPECT_THAT(layout.ShapeFromRegistersShape({2, 4, 1, 1, 1, 1}),
+              IsOkAndHolds(ElementsAre(8, 128, 2)));
+}
+
+TEST_F(TiledLayoutMlirTest, RegistersElementType) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 32, 2}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-3},
+                          /*lane_dims=*/{-2},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  mlir::Type f32 = builder().getF32Type();
+  ASSERT_OK_AND_ASSIGN(mlir::Type reg_type, layout.RegistersElementType(f32));
+
+  auto vec_type = llvm::dyn_cast<mlir::VectorType>(reg_type);
+  EXPECT_THAT(vec_type.getShape(), ElementsAre(2));
+  EXPECT_EQ(vec_type.getElementType(), f32);
+}
+
+TEST_F(TiledLayoutMlirTest, ThreadIdxsReturnsCorrectIndicesForWGMMALayout) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{64, 8}, {16, 8}, {8, 8}, {1, 2}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-8},
+                          /*lane_dims=*/{-4, -3},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::vector<mlir::Value>> indices,
+      layout.ThreadIdxs(builder(), loc(), /*shape=*/{128, 128}));
+
+  std::vector<std::vector<int64_t>> evaluated_indices;
+  for (const auto& idx : indices) {
+    evaluated_indices.push_back(
+        {EvaluateThreadZero(idx[0]), EvaluateThreadZero(idx[1])});
+  }
+
+  EXPECT_THAT(
+      evaluated_indices,
+      UnorderedElementsAre(
+          ElementsAre(0, 0), ElementsAre(0, 8), ElementsAre(0, 16),
+          ElementsAre(0, 24), ElementsAre(0, 32), ElementsAre(0, 40),
+          ElementsAre(0, 48), ElementsAre(0, 56), ElementsAre(0, 64),
+          ElementsAre(0, 72), ElementsAre(0, 80), ElementsAre(0, 88),
+          ElementsAre(0, 96), ElementsAre(0, 104), ElementsAre(0, 112),
+          ElementsAre(0, 120), ElementsAre(8, 0), ElementsAre(8, 8),
+          ElementsAre(8, 16), ElementsAre(8, 24), ElementsAre(8, 32),
+          ElementsAre(8, 40), ElementsAre(8, 48), ElementsAre(8, 56),
+          ElementsAre(8, 64), ElementsAre(8, 72), ElementsAre(8, 80),
+          ElementsAre(8, 88), ElementsAre(8, 96), ElementsAre(8, 104),
+          ElementsAre(8, 112), ElementsAre(8, 120), ElementsAre(64, 0),
+          ElementsAre(64, 8), ElementsAre(64, 16), ElementsAre(64, 24),
+          ElementsAre(64, 32), ElementsAre(64, 40), ElementsAre(64, 48),
+          ElementsAre(64, 56), ElementsAre(64, 64), ElementsAre(64, 72),
+          ElementsAre(64, 80), ElementsAre(64, 88), ElementsAre(64, 96),
+          ElementsAre(64, 104), ElementsAre(64, 112), ElementsAre(64, 120),
+          ElementsAre(72, 0), ElementsAre(72, 8), ElementsAre(72, 16),
+          ElementsAre(72, 24), ElementsAre(72, 32), ElementsAre(72, 40),
+          ElementsAre(72, 48), ElementsAre(72, 56), ElementsAre(72, 64),
+          ElementsAre(72, 72), ElementsAre(72, 80), ElementsAre(72, 88),
+          ElementsAre(72, 96), ElementsAre(72, 104), ElementsAre(72, 112),
+          ElementsAre(72, 120)));
 }
 
 }  // namespace
