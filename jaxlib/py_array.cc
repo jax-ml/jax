@@ -2259,6 +2259,42 @@ absl::Status PyArray::Register(nb::module_& m) {
       nb::arg("committed"), nb::arg("_skip_checks") = false);
   type.attr("delete") = nb::cpp_function(
       [](PyArray& self) { xla::ThrowIfError(self.Delete()); }, nb::is_method());
+  type.attr("_rewrap_with_aval_and_sharding") = nb::cpp_function(
+      // NOTE(dsuo): Zero-copy metadata rewrapping. Returns `self` with new
+      // aval and sharding metadata so we can avoid memory copies when only
+      // the logical view of data changes.
+      // NOTE(dsuo): This is a private API, so we don't add it to the stub.
+      // Optimized to directly mutate metadata without touching the IFRT array
+      // reference. This avoids incrementing the ref count and allows buffers
+      // to be freed when no longer needed.
+      // NOTE(dsuo): The returned array shares buffers with the original. Both
+      // arrays refer to the same IFRT array reference without incrementing
+      // refcount. If either array is deleted or donated, both become invalid.
+      [](PyArray self, nb::object aval, nb::object sharding) -> PyArray {
+        xla::ifrt::Array* ifrt_array_ptr = self.ifrt_array();
+        if (ifrt_array_ptr == nullptr) {
+          throw nb::value_error(
+              "_rewrap_with_aval_and_sharding() called on deleted or donated "
+              "buffer");
+        }
+        // Directly mutate metadata fields without using Construct or FormRef
+        auto& storage = *GetPyArrayStorageFromObject(
+            reinterpret_cast<PyArrayObject*>(self.ptr()));
+        storage.aval = std::move(aval);
+        storage.sharding = std::move(sharding);
+        storage.dtype = nb::cast<xla::nb_dtype>(storage.aval.attr("dtype"));
+        storage.shape =
+            nb::cast<std::vector<int64_t>>(storage.aval.attr("shape"));
+        storage.weak_type = nb::cast<bool>(storage.aval.attr("weak_type"));
+        storage.committed = true;
+        // Clear cached values that depend on shape/sharding
+        storage.npy_value = nb::none();
+        storage.fully_replicated_array = nb::none();
+        storage.host_value.Clear();
+        storage.dynamic_shape = std::nullopt;
+        return self;
+      },
+      nb::is_method(), nb::arg("aval"), nb::arg("sharding"));
   type.attr("_sharding") = xla::nb_property_readonly(&PyArray::sharding);
   type.attr("aval") = xla::nb_property(&PyArray::aval, &PyArray::set_aval);
   type.attr("_arrays") =
