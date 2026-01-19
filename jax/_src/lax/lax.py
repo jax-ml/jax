@@ -5480,8 +5480,10 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   xs = x.aval.to_cotangent_aval().sharding
   inverse_spec = tuple(xs.spec[o] for o in unsorted_axes)
   ds = xs.update(spec=xs.spec.update(partitions=inverse_spec))
+  # Use the target gradient dtype as preferred_element_type to avoid an
+  # extraneous upcast after the backward matmul. (fixes #34330)
   dot_general_out = dot_general(g, y, dims, precision=precision,
-                                preferred_element_type=preferred_element_type,
+                                preferred_element_type=x.aval.dtype,
                                 out_sharding=ds)
   x_bar = transpose(dot_general_out, tuple(out_axes))
   if x_bar.dtype != x.aval.dtype:

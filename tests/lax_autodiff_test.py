@@ -453,6 +453,38 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                                  preferred_element_type=jax.numpy.float32)
     jax.jacrev(f)(x)  # don't crash!
 
+  def testDotGeneralBackwardNoExtraneousUpcast(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/34330
+    # The backward pass of dot_general with mixed precision (bf16 @ f32 -> bf16)
+    # should not produce an extraneous upcast. The backward matmul should
+    # directly use the target gradient dtype as preferred_element_type.
+    x = jax.numpy.ones((3, 4), dtype=jax.numpy.bfloat16)
+    w = jax.numpy.ones((4, 5), dtype=jax.numpy.float32)
+
+    def forward(w, x):
+      y = jax.lax.dot_general(
+          x, w,
+          dimension_numbers=((1, 0), (tuple(), tuple())),
+          preferred_element_type=jax.numpy.bfloat16)
+      return jax.numpy.mean(y, dtype=jax.numpy.bfloat16)
+
+    grad_fn = jax.grad(forward)
+    jaxpr = jax.make_jaxpr(grad_fn)(w, x)
+    jaxpr_str = str(jaxpr)
+
+    # Count convert_element_type operations - there should be none related to
+    # converting the backward dot_general output to f32
+    # After the fix, the backward matmul directly outputs f32
+    lines = jaxpr_str.split('\n')
+    convert_to_f32_count = sum(
+        1 for line in lines
+        if 'convert_element_type' in line and 'float32' in line
+    )
+    self.assertEqual(convert_to_f32_count, 0,
+                     msg=f"Expected no convert_element_type to float32 in "
+                         f"backward pass, but found {convert_to_f32_count}. "
+                         f"Jaxpr:\n{jaxpr_str}")
+
   @jtu.sample_product(
     shape=[(), (2, 3)],
     dtype=float_dtypes,
