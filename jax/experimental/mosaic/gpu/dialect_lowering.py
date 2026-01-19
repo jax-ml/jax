@@ -59,6 +59,7 @@ class LoweringContext:
   single_thread_per_warpgroup_predicate: ir.Value | None
   single_warp_per_block_predicate: ir.Value | None
   auto_barriers: bool
+  smem_requested_bytes: int
   lowered_operations: set[ir.Operation | ir.OpView] = dataclasses.field(
       default_factory=set
   )
@@ -709,12 +710,12 @@ def _is_reduction_signed(kind: vector.CombiningKind) -> bool | None:
 def _vector_reduction_op_lowering_rule(
     ctx: LoweringContext, op: vector.ReductionOp
 ) -> Sequence[ir.Value]:
-  del ctx  # Unused.
   [layout] = inference_utils.in_layouts(op)
   element_type = op.vector.type.element_type
   scratch = _slice_smem(
       ir.MemRefType.get([4], element_type, memory_space=utils.smem()),
       arith.constant(None, op.attributes["offset"]),
+      ctx.smem_requested_bytes,
   )
   axes = range(op.vector.type.rank)
   op_kind = _combining_kind(op.kind)
@@ -737,8 +738,6 @@ def _vector_reduction_op_lowering_rule(
 def _vector_multi_dim_reduction_op_lowering_rule(
     ctx: LoweringContext, op: vector.MultiDimReductionOp
 ) -> Sequence[ir.Value]:
-  del ctx
-
   [in_layout, acc_layout] = inference_utils.in_layouts(op)
   [out_layout] = inference_utils.out_layouts(op)
   if out_layout != acc_layout:
@@ -771,6 +770,7 @@ def _vector_multi_dim_reduction_op_lowering_rule(
     scratch = _slice_smem(
         ir.MemRefType.get([size], dtype, memory_space=utils.smem()),
         arith.constant(None, op.attributes["offset"]),
+        ctx.smem_requested_bytes,
     )
   else:
     scratch = None
@@ -1475,9 +1475,7 @@ def _mgpu_wait_op_lowering_rule(
 def _mgpu_slice_smem_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.SliceSMEMOp
 ) -> Sequence[ir.Value]:
-  del ctx
-  sliced_ref = _slice_smem(op.result.type, op.offset)
-
+  sliced_ref = _slice_smem(op.result.type, op.offset, ctx.smem_requested_bytes)
   memref_ty = ir.MemRefType(sliced_ref.type)
   if (
       memref_ty.element_type == ir.Type.parse("!mosaic_gpu.barrier")
@@ -1493,19 +1491,23 @@ def _mgpu_slice_smem_op_lowering_rule(
   return [wrapped_ref]
 
 
-def _slice_smem(result: ir.Type, offset: ir.Value):
+def _slice_smem(result: ir.MemRefType, offset: ir.Value, smem_size: int):
+  if isinstance(offset.owner, arith.ConstantOp):
+    cst_offset = ir.IntegerAttr(offset.owner.value).value
+    size = math.prod(result.shape) * utils.bitwidth(result.element_type) // 8
+    if cst_offset + size > smem_size:
+      raise ValueError("Ran out of shared memory.")
+
   i8 = ir.IntegerType.get_signless(8)
   smem_base = gpu.dynamic_shared_memory(
       ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=utils.smem())
   )
   offset = arith.index_cast(ir.IndexType.get(), offset)
   lowered_result_type = result
-  if isinstance(result, ir.MemRefType):
-    memref_ty = ir.MemRefType(result)
-    if memref_ty.element_type == ir.Type.parse("!mosaic_gpu.barrier"):
-      lowered_result_type = ir.MemRefType.get(
-          memref_ty.shape, _lowered_barrier_type(), memory_space=utils.smem()
-      )
+  if result.element_type == ir.Type.parse("!mosaic_gpu.barrier"):
+    lowered_result_type = ir.MemRefType.get(
+        result.shape, _lowered_barrier_type(), memory_space=utils.smem()
+    )
   view = memref.view(lowered_result_type, smem_base, offset, [])
   if result == lowered_result_type:
     return view
@@ -2364,13 +2366,13 @@ def _should_lower(op: ir.OpView) -> bool:
   )
 
 
-def _gpu_launch_op(module: ir.Module) -> ir.Operation:
+def _gpu_launch_op(module: ir.Module) -> gpu.LaunchOp:
   for op in module.body.operations:
     for region in op.operation.regions:
       for block in region.blocks:
         for sub_op in block.operations:
-          if sub_op.operation.name == "gpu.launch":
-            return sub_op.operation
+          if isinstance(sub_op, gpu.LaunchOp):
+            return sub_op
   raise ValueError("gpu.launch op not found.")
 
 
@@ -2382,7 +2384,7 @@ def _lowering_context(
   """Returns a `LoweringContext` for the given `LaunchContext`."""
   # TODO(bchetioui): fix tests to not have a test-only path polluting the API.
   if launch_context is None:  # this case is used in some tests
-    return LoweringContext(None, None, None, None, auto_barriers)
+    return LoweringContext(None, None, None, None, auto_barriers, 10**9)
 
   gpu_launch_op = _gpu_launch_op(module)
   with ir.InsertionPoint.at_block_begin(gpu_launch_op.regions[0].blocks[0]):
@@ -2395,12 +2397,16 @@ def _lowering_context(
     eq = arith.CmpIPredicate.eq
     i32 = ir.IntegerType.get_signless(32)
     warp_predicate = arith.cmpi(eq, utils.warp_idx(sync=False), utils.c(0, i32))
+    smem_size = gpu_launch_op.dynamicSharedMemorySize
+    assert isinstance(smem_size.owner, arith.ConstantOp)
+    smem_size = ir.IntegerAttr(smem_size.owner.value).value
     return LoweringContext(
         launch_context,
         block_predicate,
         warpgroup_predicate,
         warp_predicate,
         auto_barriers,
+        smem_size,
     )
 
 
