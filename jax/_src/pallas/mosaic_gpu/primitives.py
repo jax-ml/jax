@@ -1391,16 +1391,25 @@ def _wgmma_wait_lowering(ctx: lowering.LoweringRuleContext, allow_groups):
 
 wgmma_accumulator_deref_p = jax_core.Primitive("wgmma_accumulator_deref_p")
 
-def wgmma_accumulator_deref(acc):
-  """Dereferences an accumulator register."""
+
+def wgmma_accumulator_load(acc, *, wait_n: int | None = 0):
+  """Dereferences an accumulator register.
+
+  Before dereferencing, this operation waits until there is no more than
+  ``wait_n`` WGMMA operations in flight. If ``wait_n`` is None, no
+  synchronization is performed.
+  """
+  if wait_n is not None and wait_n < 0:
+    raise ValueError(f"wait_n must be non-negative, got {wait_n=}")
 
   if not isinstance(acc.aval, gpu_core.WGMMAAbstractAccumulatorRef):
     raise TypeError(f"acc must be a WGMMAAccumulatorAbstractRef, got {acc.aval=}")
 
-  return wgmma_accumulator_deref_p.bind(acc)
+  return wgmma_accumulator_deref_p.bind(acc, wait_n=wait_n)
+
 
 @wgmma_accumulator_deref_p.def_effectful_abstract_eval
-def _wgmma_accumulator_deref_abstract_eval(acc):
+def _wgmma_accumulator_deref_abstract_eval(acc, **_):
   # Dereferencing implies flushing so we have a wgmma pipeline effect.
   ret = acc.inner_aval if isinstance(acc, state.AbstractRef) else acc
   assert isinstance(ret, jax_core.ShapedArray), acc
@@ -1408,9 +1417,9 @@ def _wgmma_accumulator_deref_abstract_eval(acc):
 
 
 @discharge.register_discharge_rule(wgmma_accumulator_deref_p)
-def _wgmma_accumulator_deref_discharge(in_avals, out_avals, acc):
+def _wgmma_accumulator_deref_discharge(in_avals, out_avals, acc, *, wait_n):
   del in_avals, out_avals
-  return (None,), wgmma_accumulator_deref_p.bind(acc)
+  return (None,), wgmma_accumulator_deref_p.bind(acc, wait_n=wait_n)
 
 
 @lowering.register_lowering_rule(
@@ -1419,8 +1428,11 @@ def _wgmma_accumulator_deref_discharge(in_avals, out_avals, acc):
 @lowering.register_lowering_rule(
     wgmma_accumulator_deref_p, mgpu.LoweringSemantics.Warpgroup
 )
-def _wgmma_accumulator_deref_lowering(ctx: lowering.LoweringRuleContext, acc):
-  nvvm_dialect.wgmma_wait_group_sync_aligned(0)
+def _wgmma_accumulator_deref_lowering(
+    ctx: lowering.LoweringRuleContext, acc, *, wait_n: int | None
+):
+  if wait_n is not None:
+    nvvm_dialect.wgmma_wait_group_sync_aligned(wait_n)
   return (
       acc.value
       if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane

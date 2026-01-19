@@ -1178,6 +1178,7 @@ class Barrier:
           f"Num arrivals must be at least 1, but got {self.num_arrivals}"
       )
 
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class ClusterBarrier:
   collective_axes: tuple[str | tuple[str, ...], ...]
@@ -1240,9 +1241,8 @@ class WGMMAAbstractAccumulatorRef(state.AbstractRef):
     )
 
   def _getitem(self, tracer, idx):
-    from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_deref  # pytype: disable=import-error
-    arr = wgmma_accumulator_deref(tracer)
-
+    from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_load  # pytype: disable=import-error
+    arr = wgmma_accumulator_load(tracer, wait_n=0)
     if not is_trivial_index(idx, tracer.shape):
       arr = arr[idx]
 

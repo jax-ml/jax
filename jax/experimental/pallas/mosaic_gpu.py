@@ -84,6 +84,7 @@ from jax._src.pallas.mosaic_gpu.primitives import try_cluster_cancel as try_clus
 from jax._src.pallas.mosaic_gpu.primitives import wait_load_tmem as wait_load_tmem
 from jax._src.pallas.mosaic_gpu.primitives import wait_smem_to_gmem as wait_smem_to_gmem
 from jax._src.pallas.mosaic_gpu.primitives import wgmma as wgmma
+from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_load as wgmma_accumulator_load
 from jax._src.pallas.mosaic_gpu.primitives import wgmma_wait as wgmma_wait
 from jax._src.pallas.mosaic_gpu.torch import as_torch_kernel as as_torch_kernel
 from jax.experimental.mosaic.gpu.core import LoweringSemantics as LoweringSemantics

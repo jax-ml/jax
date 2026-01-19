@@ -3339,6 +3339,42 @@ class PallasCallSm90ATest(PallasSm90ATest):
     )(a, b)
     np.testing.assert_allclose(res, a @ b, rtol=1e-3)
 
+  def test_wgmma_accumulator_load_with_custom_wait(self):
+    def kernel(a_ref, b_ref, o_ref0, o_ref1):
+      def scope(acc0_ref, acc1_ref):
+        plgpu.wgmma(acc0_ref, a_ref, b_ref)
+        plgpu.wgmma(acc1_ref, a_ref, b_ref)
+        acc0 = plgpu.wgmma_accumulator_load(acc0_ref, wait_n=1)
+        acc1 = plgpu.wgmma_accumulator_load(acc1_ref, wait_n=0)
+        return acc0, acc1
+      o_ref0[...], o_ref1[...] = pl.run_scoped(
+          scope, plgpu.ACC((64, 64), jnp.float32), plgpu.ACC((64, 64), jnp.float32)
+      )
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(64, 64), dtype=jnp.float16)
+    b = jax.random.uniform(key2, shape=(64, 64), dtype=jnp.float16)
+    transforms = self.default_transforms(dtype=jnp.float16)
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      out0, out1 = jax.block_until_ready(self.pallas_call(
+          kernel,
+          in_specs=[
+              plgpu.BlockSpec(transforms=transforms),
+              plgpu.BlockSpec(transforms=transforms),
+          ],
+          out_shape=(jax.ShapeDtypeStruct((64, 64), jnp.float32),
+                    jax.ShapeDtypeStruct((64, 64), jnp.float32)),
+          grid=(1, 1),
+      )(a, b))
+    ptx_str = ptx()
+    wgmma_waits = re.findall(r"wgmma.wait_group.sync.aligned\s+(\d+);", ptx_str)
+    self.assertLen(wgmma_waits, 2)
+    self.assertEqual(int(wgmma_waits[0]), 1)
+    self.assertEqual(int(wgmma_waits[1]), 0)
+
+    self.assertArraysEqual(out0, out1)
+    self.assertAllClose(out0, jnp.dot(a, b, preferred_element_type=jnp.float32), rtol=1e-3)
+
   @parameterized.product(
       src_memory_space=[plgpu.SMEM, plgpu.GMEM],
       layout=[plgpu.Layout.WGMMA_ROW, plgpu.Layout.WGMMA_COL],
