@@ -5174,6 +5174,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
       # Registers -> SMEM
       mgpu_dialect.vector_store(cast, smem)
+      utils.commit_shared()
 
       # SMEM -> GMEM
       zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
