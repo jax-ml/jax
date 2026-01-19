@@ -542,62 +542,6 @@ class LaunchContext:
     else:
       yield
 
-  def cluster_idx(
-      self,
-      dim: gpu.Dimension | Sequence[gpu.Dimension] | None = None,
-      dim_idx: ir.Value | Sequence[ir.Value] | None = None,
-  ) -> ir.Value:
-    """Returns the linear index of a block within a subset of the cluster spanned by the given dimensions.
-
-    dim_idx can be used to specify the index of another block along the selected
-    dimensions. If not provided, the current block's index is used.
-    """
-    if dim is None:
-      dim = gpu.Dimension
-    elif isinstance(dim, gpu.Dimension):
-      dim = (dim,)
-    if dim_idx is None:
-      dim_idx = [gpu.cluster_block_id(d) for d in dim]
-    elif isinstance(dim_idx, ir.Value):
-      if len(dim) != 1:
-        raise ValueError(
-            "Expected a single dimension when passing a single index"
-        )
-      dim_idx = [dim_idx]
-    index = ir.IndexType.get()
-    stride = 1
-    lin_idx = c(0, index)
-    for d, idx in sorted(zip(dim, dim_idx, strict=True), key=lambda x: x[0]):
-      if self.cluster_size[d] == 1:  # Optimize a multiply by 0.
-        continue
-      lin_idx = arith.addi(lin_idx, arith.muli(idx, c(stride, index)))
-      stride *= self.cluster_size[d]
-    return lin_idx
-
-  def get_cluster_ref(self, ref: ir.Value, dim: gpu.Dimension, idx: ir.Value):
-    i32 = ir.IntegerType.get_signless(32)
-    # We replace the offset in the ref type by 0, because memref_ptr always
-    # folds the offset into the pointer.
-    ref_ty = ir.MemRefType(ref.type)
-    strides, _ = ref_ty.get_strides_and_offset()
-    result_type = ir.MemRefType.get(
-        ref_ty.shape,
-        ref_ty.element_type,
-        ir.StridedLayoutAttr.get(0, strides),
-        None,
-    )
-    if ref_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
-      raise ValueError(f"Expected SMEM but got: {ref.memory_space}")
-    idxs = [gpu.cluster_block_id(d) for d in gpu.Dimension]
-    idxs[dim] = idx
-    flat_block = arith.index_cast(i32, self.cluster_idx(gpu.Dimension, idxs))  # type: ignore
-    return utils.ptr_as_memref(
-        utils.get_cluster_ptr(
-            utils.memref_ptr(ref, memory_space=3), flat_block
-        ),
-        result_type,
-    )
-
   def _alloc_scratch(
       self,
       size: int,
@@ -824,7 +768,8 @@ class LaunchContext:
         dyn_base_indices[partitioned] = arith.addi(  # type: ignore[index]
             dyn_base_indices[partitioned],
             arith.muli(
-                self.cluster_idx(collective), c(slice_shape[partitioned], index)
+                utils.cluster_idx(collective),
+                c(slice_shape[partitioned], index),
             ),
         )
         dyn_base_indices = tuple(dyn_base_indices)
@@ -924,7 +869,7 @@ class LaunchContext:
               (slice(None),) * (dim - num_squeezed_dims)
               + (utils.ds(block_offset, slice_shape[dim]),),
           )
-      idx = self.cluster_idx(collective)
+      idx = utils.cluster_idx(collective)
       rem_collective_size = collective_size
       has_swizzle = (
           swizzle is not None
@@ -1378,7 +1323,7 @@ class LaunchContext:
         assert collective_size == 2
         if arrive:
           first_block = arith.cmpi(
-              arith.CmpIPredicate.eq, self.cluster_idx(collective), c(0, index),
+              arith.CmpIPredicate.eq, utils.cluster_idx(collective), c(0, index),
           )
           arrive_predicate = arith.andi(predicate, first_block)
           utils.nvvm_mbarrier_arrive_expect_tx(
