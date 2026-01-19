@@ -511,6 +511,8 @@ typedef miopenRNNFWDMode_t gpudnnForwardMode_t;
 typedef hipModule_t gpuModule_t;
 typedef void gpuSyevjInfo;
 typedef hipsolverSyevjInfo_t gpuSyevjInfo_t;
+typedef void gpuGesvdjInfo;
+typedef hipsolverGesvdjInfo_t gpuGesvdjInfo_t;
 typedef hipsolverEigMode_t gpusolverEigMode_t;
 typedef hipsolverStatus_t gpusolverStatus_t;
 typedef hipsparseIndexType_t gpusparseIndexType_t;
@@ -591,6 +593,8 @@ inline hipsolverStatus_t gpusolverDnCreate(gpusolverDnHandle_t* handle) {
 #define gpusolverDnSetStream hipsolverSetStream
 #define gpusolverDnCreateSyevjInfo hipsolverCreateSyevjInfo
 #define gpusolverDnDestroySyevjInfo hipsolverDestroySyevjInfo
+#define gpusolverDnCreateGesvdjInfo hipsolverCreateGesvdjInfo
+#define gpusolverDnDestroyGesvdjInfo hipsolverDestroyGesvdjInfo
 #define gpusolverDnSgeqrf hipsolverSgeqrf
 #define gpusolverDnDgeqrf hipsolverDgeqrf
 #define gpusolverDnCgeqrf hipsolverCgeqrf
@@ -667,6 +671,22 @@ inline hipsolverStatus_t gpusolverDnCreate(gpusolverDnHandle_t* handle) {
   hipsolverCgesvd_bufferSize(h, jobu, jobvt, m, n, lwork)
 #define gpusolverDnZgesvd_bufferSize(h, jobu, jobvt, m, n, lwork) \
   hipsolverZgesvd_bufferSize(h, jobu, jobvt, m, n, lwork)
+#define gpusolverDnSgesvdj hipsolverSgesvdj
+#define gpusolverDnDgesvdj hipsolverDgesvdj
+#define gpusolverDnCgesvdj hipsolverCgesvdj
+#define gpusolverDnZgesvdj hipsolverZgesvdj
+#define gpusolverDnSgesvdj_bufferSize hipsolverSgesvdj_bufferSize
+#define gpusolverDnDgesvdj_bufferSize hipsolverDgesvdj_bufferSize
+#define gpusolverDnCgesvdj_bufferSize hipsolverCgesvdj_bufferSize
+#define gpusolverDnZgesvdj_bufferSize hipsolverZgesvdj_bufferSize
+#define gpusolverDnSgesvdjBatched hipsolverSgesvdjBatched
+#define gpusolverDnDgesvdjBatched hipsolverDgesvdjBatched
+#define gpusolverDnCgesvdjBatched hipsolverCgesvdjBatched
+#define gpusolverDnZgesvdjBatched hipsolverZgesvdjBatched
+#define gpusolverDnSgesvdjBatched_bufferSize hipsolverSgesvdjBatched_bufferSize
+#define gpusolverDnDgesvdjBatched_bufferSize hipsolverDgesvdjBatched_bufferSize
+#define gpusolverDnCgesvdjBatched_bufferSize hipsolverCgesvdjBatched_bufferSize
+#define gpusolverDnZgesvdjBatched_bufferSize hipsolverZgesvdjBatched_bufferSize
 #define gpusolverDnSsytrd_bufferSize hipsolverDnSsytrd_bufferSize
 #define gpusolverDnDsytrd_bufferSize hipsolverDnDsytrd_bufferSize
 #define gpusolverDnChetrd_bufferSize hipsolverDnChetrd_bufferSize

@@ -1024,8 +1024,6 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdFfi, GesvdDispatch,
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
 
-#ifdef JAX_GPU_CUDA
-
 template <typename T>
 ffi::Error GesvdjImpl(int64_t batch, int64_t rows, int64_t cols,
                       gpuStream_t stream, ffi::ScratchAllocator& scratch,
@@ -1280,6 +1278,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdpFfi, GesvdpDispatch,
 );
 
 #endif  // JAX_GPU_CUDA
+
+#ifdef JAX_GPU_CUDA
 
 // csrlsvqr: Linear system solve via Sparse QR
 

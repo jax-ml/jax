@@ -302,8 +302,6 @@ JAX_GPU_DEFINE_GESVD(gpuComplex, gpusolverDnCgesvd);
 JAX_GPU_DEFINE_GESVD(gpuDoubleComplex, gpusolverDnZgesvd);
 #undef JAX_GPU_DEFINE_GESVD
 
-#ifdef JAX_GPU_CUDA
-
 #define JAX_GPU_DEFINE_GESVDJ(Type, Name)                                      \
   template <>                                                                  \
   absl::StatusOr<int> GesvdjBufferSize<Type>(                                  \
@@ -358,6 +356,8 @@ JAX_GPU_DEFINE_GESVDJ_BATCHED(double, gpusolverDnDgesvdjBatched);
 JAX_GPU_DEFINE_GESVDJ_BATCHED(gpuComplex, gpusolverDnCgesvdjBatched);
 JAX_GPU_DEFINE_GESVDJ_BATCHED(gpuDoubleComplex, gpusolverDnZgesvdjBatched);
 #undef JAX_GPU_DEFINE_GESVDJ_BATCHED
+
+#ifdef JAX_GPU_CUDA
 
 #define JAX_GPU_DEFINE_CSRLSVQR(Type, Scalar, Name)                          \
   template <>                                                                \
