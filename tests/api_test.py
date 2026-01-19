@@ -4740,7 +4740,7 @@ class APITest(jtu.JaxTestCase):
           tracing_add_count += 1
       self.assertEqual(tracing_add_count, 2)
 
-  @unittest.skipIf(lib.jaxlib_extension_version < 394, "jaxlib version")
+  @unittest.skipIf(lib.jaxlib_extension_version < 396, "jaxlib version")
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_skip_internals(self):
     if is_persistent_cache_enabled():
@@ -4751,7 +4751,7 @@ class APITest(jtu.JaxTestCase):
         for i in range(2):
           jnp.sin(jnp.arange(i + 1, dtype=np.float32))
 
-  @unittest.skipIf(lib.jaxlib_extension_version < 394, "jaxlib version")
+  @unittest.skipIf(lib.jaxlib_extension_version < 396, "jaxlib version")
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_first_miss(self):
     @jax.jit
@@ -4770,7 +4770,7 @@ class APITest(jtu.JaxTestCase):
     self.assertIn("never seen function", msg)
     self.assertNotIn("explanation unavailable!", msg)
 
-  @unittest.skipIf(lib.jaxlib_extension_version < 394, "jaxlib version")
+  @unittest.skipIf(lib.jaxlib_extension_version < 396, "jaxlib version")
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_in_tree(self):
     @jax.jit
@@ -4843,7 +4843,7 @@ class APITest(jtu.JaxTestCase):
     self.assertIn("now {foo: 'bar'} and before {foo: 'foo'}", msg)
     self.assertNotIn('explanation unavailable!', msg)
 
-  @unittest.skipIf(lib.jaxlib_extension_version < 394, "jaxlib version")
+  @unittest.skipIf(lib.jaxlib_extension_version < 396, "jaxlib version")
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_dtype(self):
     @jax.jit
@@ -4859,7 +4859,7 @@ class APITest(jtu.JaxTestCase):
     self.assertIn("at y, now i32[] and before f32[]", msg)
     self.assertNotIn("explanation unavailable!", msg)
 
-  @unittest.skipIf(lib.jaxlib_extension_version < 394, "jaxlib version")
+  @unittest.skipIf(lib.jaxlib_extension_version < 396, "jaxlib version")
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_weak_type(self):
     @jax.jit
@@ -4881,7 +4881,7 @@ class APITest(jtu.JaxTestCase):
     self.assertIn("https://docs.jax.dev/en/latest/type_promotion.html#weak-types", msg)
     self.assertNotIn("explanation unavailable!", msg)
 
-  @unittest.skipIf(lib.jaxlib_extension_version < 394, "jaxlib version")
+  @unittest.skipIf(lib.jaxlib_extension_version < 396, "jaxlib version")
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_shape(self):
     @jax.jit
@@ -4917,7 +4917,7 @@ class APITest(jtu.JaxTestCase):
     self.assertIn("at x, now f32[10,2,30] and before f32[10,20,30]", msg)
     self.assertNotIn("explanation unavailable!", msg)
 
-  @unittest.skipIf(lib.jaxlib_extension_version < 394, "jaxlib version")
+  @unittest.skipIf(lib.jaxlib_extension_version < 396, "jaxlib version")
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_tracing_config(self):
     @jax.jit
@@ -4962,7 +4962,7 @@ class APITest(jtu.JaxTestCase):
     self.assertIn("key with different tracing context", msg)
     self.assertNotIn("explanation unavailable!", msg)
 
-  @unittest.skipIf(lib.jaxlib_extension_version < 394, "jaxlib version")
+  @unittest.skipIf(lib.jaxlib_extension_version < 396, "jaxlib version")
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_new_function_in_loop(self):
     @jax.jit
@@ -4985,13 +4985,13 @@ class APITest(jtu.JaxTestCase):
       _, msg = cm.output
       self.assertIn('another function defined on the same line', msg)
 
-  @unittest.skipIf(lib.jaxlib_extension_version < 394, "jaxlib version")
+  @unittest.skipIf(lib.jaxlib_extension_version < 396, "jaxlib version")
   def test_cache_miss_explanations_no_source_info(self):
     # ``operator.add`` is a built-in function and does not have source info.
     with config.explain_cache_misses(True):
       jax.jit(operator.add)(42, 24)  # doesn't crash
 
-  @unittest.skipIf(lib.jaxlib_extension_version < 394, "jaxlib version")
+  @unittest.skipIf(lib.jaxlib_extension_version < 396, "jaxlib version")
   def test_cache_miss_explanations_are_thread_safe(self):
     @jax.jit
     def f(i):
