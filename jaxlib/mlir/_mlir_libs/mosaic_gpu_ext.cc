@@ -18,6 +18,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/hash/hash.h"
+#include "absl/log/log.h"
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
 #include "nanobind/nanobind.h"
@@ -156,6 +157,7 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       .def(
           "__init__",
           [](mgpu::Tiling* self, nb::iterable in_tiles) {
+            LOG(FATAL) << "<< test";
             std::vector<std::vector<int64_t>> tiles;
             for (const auto& tile : in_tiles) {
               tiles.push_back(nb::cast<std::vector<int64_t>>(tile));
