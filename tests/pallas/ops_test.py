@@ -583,7 +583,6 @@ class OpsTest(PallasBaseTest):
       for name, func, strategy in UNARY_FUNCTIONS
   )
   @hp.given(hps.data())
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_unary_primitives(self, name, func, shape_dtype_strategy, data):
     if name in ["abs", "log1p", "pow2", "reciprocal", "relu", "sin", "sqrt"]:
       self.skip_if_mosaic_gpu()
@@ -2077,10 +2076,6 @@ class OpsTest(PallasBaseTest):
       trans_x=[False, True],
       trans_y=[False, True],
   )
-  @jtu.skip_if_triton_exceeds_shared_memory(
-    device_patterns=("RTX PRO 6000 Blackwell", "GB10$"))
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(
-    device_patterns=("RTX PRO 6000 Blackwell", "GB10$"))
   def test_dot(self, lhs_and_rhs_shape, dtype, trans_x, trans_y):
     self.skip_if_mosaic_gpu()
 
@@ -2109,7 +2104,7 @@ class OpsTest(PallasBaseTest):
           > (256 * 256) * 2
       ):
         self.skipTest("Shared memory size limit exceeded")
-      if (jax.local_devices()[0].device_kind == "NVIDIA L4" and
+      if (jax.local_devices()[0].shared_memory_per_block_optin == 99 * 1024 and
           dtype == jnp.float32 and
           lhs_and_rhs_shape in [
             ((128, 16), (128, 256)),

@@ -64,6 +64,18 @@ cuda_root = lib.cuda_path or "/usr/local/cuda"
 os.environ["CUDA_ROOT"] = cuda_root
 PYTHON_RUNFILES = os.environ.get("PYTHON_RUNFILES")
 
+_SMEM_SIZE_BOUND = None  # For test purposes.
+
+@contextlib.contextmanager
+def artificial_shared_memory_limit(limit):
+    global _SMEM_SIZE_BOUND
+    old_limit = _SMEM_SIZE_BOUND
+    _SMEM_SIZE_BOUND = limit
+    try:
+        yield
+    finally:
+        _SMEM_SIZE_BOUND = old_limit
+
 # This tracks the latest Mosaic GPU IR version with a monthly delay.
 FWD_COMPAT_IR_VERSION = 2
 
@@ -575,6 +587,8 @@ def _launch(
   # Note in either case we assume all devices have the same amount of
   # shared memory.
   max_smem_bytes = getattr(device, "shared_memory_per_block_optin", 227 * 1024)
+  if _SMEM_SIZE_BOUND is not None:
+    max_smem_bytes = min(max_smem_bytes, _SMEM_SIZE_BOUND)
   if smem_bytes > max_smem_bytes:
     raise ValueError("Mosaic GPU kernel exceeds available shared memory: "
                      f"{smem_bytes=} > {max_smem_bytes=}")

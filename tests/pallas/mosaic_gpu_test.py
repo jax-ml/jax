@@ -134,12 +134,13 @@ class PallasTestMetaclass(parameterized.TestGeneratorMetaclass):
 class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
   LOWERING_SEMANTICS: ClassVar[plgpu.LoweringSemantics]
 
-  def setUp(self):
+  def setUp(self, *, artificial_shared_memory_limit=jtu._SMEM_SIZE_BOUND_FOR_TESTS):
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on a GPU with capability >= sm90")
     self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
 
     super().setUp()
+    self.enter_context(mgpu.core.artificial_shared_memory_limit(artificial_shared_memory_limit))
 
   def skip_if_wg_semantics(self):
     if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
@@ -186,17 +187,22 @@ class PallasSm90ATest(PallasTest, jtu.CudaArchSpecificTest):
 
   def setUp(self):
     self.skip_unless_sm90a()
-    super().setUp()
+    # No artificially lowered limit for arch-specific tests
+    super().setUp(artificial_shared_memory_limit=None)
 
 
-class PallasSm100ATest(PallasTest, jtu.CudaArchSpecificTest):
+class PallasTCGen05Test(PallasTest, jtu.CudaArchSpecificTest):
 
   def setUp(self):
-    self.skip_unless_sm100a()
-    super().setUp()
+    self.skip_unless_tcgen05()
+    if jtu.is_cuda_compute_capability_equal("10.3"):
+      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
+      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
+    # No artificially lowered limit for arch-specific tests
+    super().setUp(artificial_shared_memory_limit=None)
 
 
-class PallasCallTest(PallasTest):
+class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   def test_jitted_function_containing_multiple_pallas_calls(self):
     # This test aims to ensure that execution works correctly inside CUDA
@@ -1071,7 +1077,6 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 64, dtype=jnp.float32).reshape(128, 64)
     np.testing.assert_array_equal(f(x), x * 2)
 
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_scoped_copy_with_user_transforms(self):
     self.skip_if_wg_semantics()
 
@@ -2545,17 +2550,17 @@ class PallasCallTest(PallasTest):
     self.skip_if_wg_semantics()
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((256, 128), jnp.float32),
+        out_shape=jax.ShapeDtypeStruct((64, 128), jnp.float32),
     )
     def kernel(x_ref, y_ref):
       to_be_broadcasted = plgpu.load(
           x_ref, (), layout=plgpu.Layout.WG_STRIDED((128,), 1)
       )
-      broadcasted = lax.broadcast_in_dim(to_be_broadcasted, (256, 128), (1,))
+      broadcasted = lax.broadcast_in_dim(to_be_broadcasted, (64, 128), (1,))
       y_ref[...] = broadcasted
 
     result = jax.random.uniform(jax.random.key(0), shape=(128,), dtype=jnp.float32)
-    np.testing.assert_array_equal(kernel(result), jnp.broadcast_to(result[None,:], (256, 128)))
+    np.testing.assert_array_equal(kernel(result), jnp.broadcast_to(result[None,:], (64, 128)))
 
   @parameterized.parameters(
       ((4, 128),),
@@ -2600,8 +2605,6 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x), jnp.broadcast_to(x[:, None], (128, 128)))
 
   @parameterized.named_parameters((l.name.lower(), l) for l in plgpu.Layout)
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(
-      device_patterns=("RTX PRO 6000 Blackwell", "GB10$"))
   def test_copy_layout(self, layout):
     if layout in {
         plgpu.Layout.WG_SPLAT,
@@ -2620,7 +2623,13 @@ class PallasCallTest(PallasTest):
         or layout != plgpu.Layout.TCGEN05_TMEM_NATIVE
     ) and layout != plgpu.Layout.TCGEN05_M64_COLLECTIVE_NATIVE
 
-    shape = (128, 128) if "tcgen05" in layout.name.lower() else (64, 128)
+    if "tcgen05" in layout.name.lower():
+      self.skip_unless_tcgen05()
+      limit = None
+      shape = (128, 128)
+    else:
+      limit = jtu._SMEM_SIZE_BOUND_FOR_TESTS
+      shape = (64, 128)
     dtype = jnp.float32
     swizzle = 128
     if layout in (plgpu.Layout.WGMMA_UPCAST_4X, plgpu.Layout.WGMMA_UPCAST_2X):
@@ -2650,7 +2659,8 @@ class PallasCallTest(PallasTest):
       o_ref[...] = plgpu.load(x_ref, (), layout=layout, optimized=optimized)
 
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
-    np.testing.assert_array_equal(kernel(x), x)
+    with mgpu.core.artificial_shared_memory_limit(limit):
+      np.testing.assert_array_equal(kernel(x), x)
 
   @parameterized.parameters(
       (((0, 0),), (128, 128), (128, 128)),
@@ -3439,7 +3449,7 @@ class PallasCallSm90AWGTest(
   ...
 
 
-class PallasCallSm100ATest(PallasSm100ATest):
+class PallasCallTCGen05Test(PallasTCGen05Test):
 
   def test_print_layout_tmem(self):
     shape = (128, 256)
@@ -4660,8 +4670,8 @@ class PallasCallSm100ATest(PallasSm100ATest):
     np.testing.assert_equal(result, expected)
 
 
-class PallasCallSm100AWGTest(
-    PallasCallSm100ATest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
+class PallasCallTCGen05WGTest(
+    PallasCallTCGen05Test, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
 ):
   ...
 
@@ -5188,7 +5198,6 @@ class WarpSpecializedPipelineTest(PallasTest):
       manual_consumed_barriers=[False, True],
       in_tree_template=[(0, 1), ((0, (1,), None))],
   )
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_elementwise_add(self, m, n, num_compute_wgs, static,
                            manual_consumed_barriers, in_tree_template):
     blk_m = blk_n = 64
@@ -5307,7 +5316,6 @@ class WarpSpecializedPipelineTest(PallasTest):
       small_shape=[True, False],
       max_concurrent_steps=[2, 3, 4],
   )
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_delay_release(
       self, num_compute_wgs, static, manual_consumed_barriers, small_shape,
       max_concurrent_steps
@@ -6590,17 +6598,18 @@ class HelpersTest(PallasTest):
     # Mosaic GPU uses some shared memory implicitly, so we can't
     # explicitly request the full amount.
     large_amount_of_shared_memory = int(0.9 * max_shared_memory)
-    result = self.kernel(body,
-                 out_shape=jax.ShapeDtypeStruct(out_shape, jnp.int32),
-                 grid=grid,
-                 grid_names=grid_names,
-                 cluster=cluster,
-                 cluster_names=cluster_names,
-                 # Allocate a large amount of SMEM to prevent multiple blocks
-                 # being scheduled on the same SM.
-                 scratch_shapes=[
-                   plgpu.SMEM((large_amount_of_shared_memory,), jnp.int8)],
-                 )()
+    with mgpu.core.artificial_shared_memory_limit(None):
+      result = self.kernel(body,
+                  out_shape=jax.ShapeDtypeStruct(out_shape, jnp.int32),
+                  grid=grid,
+                  grid_names=grid_names,
+                  cluster=cluster,
+                  cluster_names=cluster_names,
+                  # Allocate a large amount of SMEM to prevent multiple blocks
+                  # being scheduled on the same SM.
+                  scratch_shapes=[
+                    plgpu.SMEM((large_amount_of_shared_memory,), jnp.int8)],
+                  )()
 
     # Result maps grid_idx -> SM that performed the work.
     # Check that each SM had at least 1 block of work.
@@ -6643,15 +6652,16 @@ class HelpersTest(PallasTest):
     # Mosaic GPU uses some shared memory implicitly, so we can't
     # explicitly request the full amount.
     large_amount_of_shared_memory = int(0.9 * max_shared_memory)
-    result = self.kernel(body,
-                 out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
-                 grid=(sm_count + blocks_to_steal,),
-                 grid_names=("x",),
-                 # Allocate a large amount of SMEM to prevent multiple blocks
-                 # being scheduled on the same SM.
-                 scratch_shapes=[
-                   plgpu.SMEM((large_amount_of_shared_memory,), jnp.int8)],
-                 )()
+    with mgpu.core.artificial_shared_memory_limit(None):
+      result = self.kernel(body,
+                  out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
+                  grid=(sm_count + blocks_to_steal,),
+                  grid_names=("x",),
+                  # Allocate a large amount of SMEM to prevent multiple blocks
+                  # being scheduled on the same SM.
+                  scratch_shapes=[
+                    plgpu.SMEM((large_amount_of_shared_memory,), jnp.int8)],
+                  )()
     self.assertEqual(result[0], blocks_to_steal + 1)
 
 

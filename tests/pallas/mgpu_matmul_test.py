@@ -42,7 +42,7 @@ def exceeds_h100_smem(alloc_bytes: int) -> bool:
 
 
 @jtu.with_config(jax_traceback_filtering="off")
-class MatrixMultiplicationSm100ATest(jtu.JaxTestCase):
+class MatrixMultiplicationTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
 
   def setUp(self):
     super().setUp()
@@ -63,8 +63,10 @@ class MatrixMultiplicationSm100ATest(jtu.JaxTestCase):
       k,
       dtype,
   ):
-    if not jtu.is_cuda_compute_capability_equal("10.0"):
-      self.skipTest("Only works on GPU with capability sm100a")
+    self.skip_unless_tcgen05()
+    if jtu.is_cuda_compute_capability_equal("10.3"):
+      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
+      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
     k1, k2, = jax.random.split(jax.random.key(42), 2)
     a = jax.random.normal(k1, (m, k), dtype)
     b = jax.random.normal(k2, (k, n), dtype)
