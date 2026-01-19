@@ -510,44 +510,6 @@ def device_kind_match(device_patterns: str | Sequence[str]):
   matching_pattern = pattern_search(device_patterns, device_kind)
   return matching_pattern
 
-def skip_if_errors(
-    *,
-    error_patterns: str | Sequence[str],
-    device_patterns: str | Sequence[str],
-    reason: str | Callable[[str, str], str],
-):
-  """Skip if both error message and device kind match a corresponding pattern."""
-  def skip(test_method):
-    @functools.wraps(test_method)
-    def test_method_wrapper(self, *args, **kwargs):
-      device_kind = xla_bridge.devices()[0].device_kind
-      try:
-        return test_method(self, *args, **kwargs)
-      except Exception as e:
-        matching_error_pattern = pattern_search(error_patterns, str(e))
-        matching_device_pattern = pattern_search(device_patterns, device_kind)
-        if matching_error_pattern and matching_device_pattern:
-          if not isinstance(reason, str):
-            reason_str = reason(matching_error_pattern, matching_device_pattern)
-          else:
-            reason_str = reason
-          self.skipTest(reason_str)
-        raise
-    return test_method_wrapper
-  return skip
-
-skip_if_mosaic_gpu_exceeds_shared_memory = functools.partial(
-  skip_if_errors,
-  error_patterns="kernel exceeds available shared memory",
-  reason=lambda err, dev: f"Mosaic GPU kernel exceeds shared memory on {dev}",
-)
-
-skip_if_triton_exceeds_shared_memory = functools.partial(
-  skip_if_errors,
-  error_patterns="Shared memory size limit exceeded",
-  reason=lambda err, dev: f"Triton kernel exceeds shared memory on {dev}",
-)
-
 def get_cuda_nonportable_max_cluster_size():
   # Per-device nonportable maximum cluster sizes for Jetson Thor and DGX
   # Spark (GB10) determined by querying cuOccupancyMaxPotentialClusterSize
@@ -584,6 +546,12 @@ def is_cuda_version_at_least(major: int, minor: int):
       and cuda_versions.cuda_runtime_get_version() >= major * 1000 + minor * 10
   )
 
+# Artificial shared memory size used for some tests. 99 KiB is the limit for compute
+# capabilities 8.6, 8.9 and 12.0. Using a smaller limit when running architecture
+# agnostic tests on all hardware helps avoid introducing architecture-specific OOM
+# errors in those tests.
+# https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/compute-capabilities.html#compute-capabilities-table-memory-information-per-compute-capability
+_SMEM_SIZE_BOUND_FOR_TESTS = 99 * 1024
 
 class CudaArchSpecificTest:
   """A mixin with methods allowing to skip arch specific tests."""
@@ -592,10 +560,14 @@ class CudaArchSpecificTest:
     if not is_cuda_compute_capability_equal("9.0"):
       self.skipTest("Only works on GPU with capability sm90a")  # pytype: disable=attribute-error
 
-  def skip_unless_sm100a(self):
-    if not is_cuda_compute_capability_equal("10.0"):
-      self.skipTest("Only works on GPU with capability sm100a")  # pytype: disable=attribute-error
-
+  def skip_unless_tcgen05(self):
+    if not is_device_cuda():
+      self.skipTest("Only works on GPU")  # pytype: disable=attribute-error
+    else:
+      d, *_ = xla_bridge.local_devices(backend="gpu")
+      target_major, _ = map(int, d.compute_capability.split(".", 1))
+      if target_major not in (10, 11):
+        self.skipTest("Only works on GPU with tcgen05 instructions")  # pytype: disable=attribute-error
 
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""
@@ -1162,7 +1134,8 @@ def with_config(**kwds):
     assert inspect.isclass(cls) and issubclass(cls, JaxTestCase), "@with_config can only wrap JaxTestCase class definitions."
     cls._default_thread_local_config = {}
     for b in cls.__bases__:
-      cls._default_thread_local_config.update(b._default_thread_local_config)
+      if hasattr(b, "_default_thread_local_config"):
+        cls._default_thread_local_config.update(b._default_thread_local_config)
     cls._default_thread_local_config.update(kwds)
     return cls
   return decorator
@@ -1173,7 +1146,8 @@ def with_global_config(**kwds):
     assert inspect.isclass(cls) and issubclass(cls, JaxTestCase), "@with_config can only wrap JaxTestCase class definitions."
     cls._default_global_config = {}
     for b in cls.__bases__:
-      cls._default_global_config.update(b._default_global_config)
+      if hasattr(b, "_default_global_config"):
+        cls._default_global_config.update(b._default_global_config)
     cls._default_global_config.update(kwds)
     return cls
   return decorator

@@ -173,15 +173,16 @@ class RaggedDotTestCase(jtu.JaxTestCase):
 
 
 @jtu.with_config(jax_traceback_filtering="off")
-class RaggedDotSm100aTestCase(jtu.JaxTestCase):
+class RaggedDotTCGen05TestCase(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
 
   def setUp(self):
     super().setUp()
     if blackwell_ragged_dot_mgpu is None:
       self.skipTest("Mosaic GPU not available.")
-    if (not jtu.test_device_matches(["cuda"]) or
-        not jtu.is_cuda_compute_capability_equal("10.0")):
-      self.skipTest("Only works on GPU with capability sm100a")
+    self.skip_unless_tcgen05()
+    if jtu.is_cuda_compute_capability_equal("10.3"):
+      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
+      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
     self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
 
   @parameterized.product(

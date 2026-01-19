@@ -36,6 +36,7 @@ from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
 from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
+import jax.experimental.mosaic.gpu as mgpu
 import jax.export
 import jax.numpy as jnp
 import numpy as np
@@ -103,6 +104,7 @@ class PallasCallTest(ptu.PallasTest):
     # TODO(bchetioui): Remove this once tests are all compatible with
     # Pallas/Mosaic GPU.
     self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(False))
+    self.enter_context(mgpu.core.artificial_shared_memory_limit(jtu._SMEM_SIZE_BOUND_FOR_TESTS))
 
   def test_pallas_call_infers_backend_from_compiler_params(self):
     if not jtu.test_device_matches(["gpu"]):
@@ -119,7 +121,7 @@ class PallasCallTest(ptu.PallasTest):
     pallas_call = functools.partial(
         pl.pallas_call,
         grid=(1,),
-        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.float32),
+        out_shape=jax.ShapeDtypeStruct((128, 64), jnp.float32),
     )
     def add_one(x_ref, o_ref):
       x = x_ref[:]
@@ -131,7 +133,7 @@ class PallasCallTest(ptu.PallasTest):
     add_one_mgpu = pallas_call(add_one, compiler_params=mosaic_gpu_params)
     add_one_triton = pallas_call(add_one, compiler_params=triton_params)
 
-    x = jnp.ones((128, 128), jnp.float32)
+    x = jnp.ones((128, 64), jnp.float32)
 
     # Running on the Mosaic GPU backend should be fine.
     self.assertArraysEqual(add_one_mgpu(x), x + 1)

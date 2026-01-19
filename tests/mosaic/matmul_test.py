@@ -52,7 +52,7 @@ def seed_hypothesis(f):
 
 @jtu.with_config(jax_traceback_filtering="off")
 @jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
-class MatmulTestCase(jtu.JaxTestCase):
+class MatmulTestCase(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
 
   def setUp(self):
     super().setUp()
@@ -142,8 +142,10 @@ class MatmulTestCase(jtu.JaxTestCase):
   @hp.settings(max_examples=100)  # Add verbosity=hp.Verbosity.verbose to debug
   @hp.given(hps.data())
   def test_matmul_sm100(self, data):
-    if not jtu.is_cuda_compute_capability_equal("10.0"):
-      self.skipTest("Only works on GPU with capability sm100a")
+    self.skip_unless_tcgen05()
+    if jtu.is_cuda_compute_capability_equal("10.3"):
+      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
+      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
 
     dtype = data.draw(
         hps.sampled_from([jnp.float16, jnp.bfloat16]),
