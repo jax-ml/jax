@@ -2257,6 +2257,7 @@ def _binom(n, k):
 
 
 @jit(static_argnames=("n",))
+@jit
 def companion(a: ArrayLike) -> Array:
   r"""Create a companion matrix.
 
@@ -2267,14 +2268,18 @@ def companion(a: ArrayLike) -> Array:
   of the polynomial.
 
   Args:
-    a: array of shape ``(n,)`` containing polynomial coefficients in descending
-      order. The length of ``a`` must be at least 2, and ``a[0]`` must not be zero.
+    a: array of shape ``(..., n)`` containing polynomial coefficients in descending
+      order. The length of ``a`` along the last axis must be at least 2, and
+      ``a[..., 0]`` must not be zero.
 
   Returns:
-    A companion matrix of shape ``(n-1, n-1)``
+    A companion matrix of shape ``(..., n-1, n-1)``. For batch input, each slice
+    of shape ``(n-1, n-1)`` along the last two dimensions of the output
+    corresponds with a slice of shape ``(n,)`` along the last dimension of the input.
 
   Raises:
-    ValueError: if ``a`` has fewer than 2 elements or if ``a[0] == 0``.
+    ValueError: if ``a`` has fewer than 2 elements along the last axis or if
+      ``a[..., 0] == 0``.
 
   Examples:
     Create a companion matrix for the polynomial ``x^3 - 10x^2 + 31x - 30``:
@@ -2290,28 +2295,33 @@ def companion(a: ArrayLike) -> Array:
 
     >>> jnp.linalg.eigvals(C)
     Array([5.+0.j, 3.+0.j, 2.+0.j], dtype=complex64)
+
+    Batch processing is supported:
+
+    >>> a_batch = jnp.array([[1., 2., 3.], [2., 5., -10.]])
+    >>> C_batch = jax.scipy.linalg.companion(a_batch)
+    >>> C_batch.shape
+    (2, 2, 2)
   """
   a = jnp.atleast_1d(jnp.asarray(a))
   
-  if a.ndim > 1:
-    raise ValueError("Input must be a 1-D array")
-  
-  n = a.shape[0]
+  n = a.shape[-1]
   
   if n < 2:
-    raise ValueError("The length of `a` must be at least 2.")
+    raise ValueError("The length of `a` along the last axis must be at least 2.")
   
-  if a[0] == 0:
-    raise ValueError("The first coefficient of `a` must not be zero.")
+  if jnp.any(a[..., 0] == 0):
+    raise ValueError("The first coefficient(s) of `a` (i.e. elements "
+                     "of `a[..., 0]`) must not be zero.")
   
   # Create companion matrix
-  # First row is -a[1:] / a[0]
-  first_row = -a[1:] / a[0]
+  # First row is -a[..., 1:] / a[..., 0:1]
+  first_row = -a[..., 1:] / (1.0 * a[..., 0:1])
   
   # Create the full matrix
-  c = jnp.zeros((n - 1, n - 1), dtype=first_row.dtype)
-  c = c.at[0, :].set(first_row)
-  c = c.at[jnp.arange(1, n - 1), jnp.arange(0, n - 2)].set(1)
+  c = jnp.zeros(a.shape[:-1] + (n - 1, n - 1), dtype=first_row.dtype)
+  c = c.at[..., 0, :].set(first_row)
+  c = c.at[..., jnp.arange(1, n - 1), jnp.arange(0, n - 2)].set(1)
   
   return c
 

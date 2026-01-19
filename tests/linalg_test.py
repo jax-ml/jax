@@ -2534,6 +2534,15 @@ class LaxLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker)
     self._CompileAndCheck(jsp_fun, args_maker)
 
+  def testCompanionBatching(self):
+    # Test batch processing
+    a_batch = np.array([[1., 2., 3.], [2., 5., -10.]])
+    args_maker = lambda: [a_batch]
+    osp_fun = osp.linalg.companion
+    jsp_fun = jsp.linalg.companion
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
   def testCompanionErrors(self):
     # Test error for n < 2
     with self.assertRaises(ValueError):
@@ -2544,6 +2553,10 @@ class LaxLinalgTest(jtu.JaxTestCase):
     # Test error for zero leading coefficient
     with self.assertRaises(ValueError):
       jsp.linalg.companion([0, 1, 2])
+    
+    # Test error for zero leading coefficient in batch
+    with self.assertRaises(ValueError):
+      jsp.linalg.companion([[0, 1, 2], [1, 2, 3]])
 
 
 if __name__ == "__main__":
