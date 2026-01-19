@@ -2518,6 +2518,33 @@ class LaxLinalgTest(jtu.JaxTestCase):
                             check_dtypes=False)
     self._CompileAndCheck(jsp_fun, args_maker)
 
+  @jtu.sample_product(
+    a=[
+      [1, 2, 3],  # Basic test case
+      [2.0, 5.0, -10.0],  # Float values
+      [1.0, -10.0, 31.0, -30.0],  # Larger matrix
+      [1, 4, 6, 4, 1],  # Even larger
+      [1.0+2.0j, 3.0-1.0j, 2.0+4.0j],  # Complex coefficients
+    ]
+  )
+  def testCompanion(self, a):
+    args_maker = lambda: [np.array(a)]
+    osp_fun = osp.linalg.companion
+    jsp_fun = jsp.linalg.companion
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  def testCompanionErrors(self):
+    # Test error for n < 2
+    with self.assertRaises(ValueError):
+      jsp.linalg.companion([1])
+    with self.assertRaises(ValueError):
+      jsp.linalg.companion([])
+    
+    # Test error for zero leading coefficient
+    with self.assertRaises(ValueError):
+      jsp.linalg.companion([0, 1, 2])
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
