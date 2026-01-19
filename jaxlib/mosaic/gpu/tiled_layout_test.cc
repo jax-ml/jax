@@ -347,5 +347,38 @@ TEST_F(TiledLayoutMlirTest, IndicesWithReplicated) {
   EXPECT_THAT(indices, Each(Truly(IsConstantZero)));
 }
 
+TEST(TiledLayoutTest,
+     ApplyingTilingToShapeAndShapeFromRegistersShapeReturnsOriginalShape) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 32, 2}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-3},
+                          /*lane_dims=*/{-2},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  EXPECT_THAT(layout.RegistersShape({8, 128, 2}),
+              IsOkAndHolds(ElementsAre(2, 4, 1, 1, 1, 1)));
+  EXPECT_THAT(layout.ShapeFromRegistersShape({2, 4, 1, 1, 1, 1}),
+              IsOkAndHolds(ElementsAre(8, 128, 2)));
+}
+
+TEST_F(TiledLayoutMlirTest, RegistersElementType) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 32, 2}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-3},
+                          /*lane_dims=*/{-2},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  mlir::Type f32 = builder_.getF32Type();
+  ASSERT_OK_AND_ASSIGN(mlir::Type reg_type, layout.RegistersElementType(f32));
+
+  auto vec_type = llvm::dyn_cast<mlir::VectorType>(reg_type);
+  EXPECT_THAT(vec_type.getShape(), ElementsAre(2));
+  EXPECT_EQ(vec_type.getElementType(), f32);
+}
+
 }  // namespace
 }  // namespace jax::mosaic::gpu

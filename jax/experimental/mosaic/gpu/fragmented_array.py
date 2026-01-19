@@ -435,6 +435,8 @@ class TiledLayout:
     This tile acts as the divisibility constraint for a suffix of arrays to
     which this layout applies.
     """
+    if cc_method_exists(self, "base_tile_shape"):
+      return self.dispatch_to_cc("base_tile_shape", check_canonical=False)
     return self.tiling.tiles[0]
 
   @functools.cached_property
@@ -462,10 +464,14 @@ class TiledLayout:
     return self.tiled_tiling_shape[self.vector_dim]
 
   def registers_element_type(self, t: ir.Type) -> ir.Type:
+    if cc_method_exists(self, "registers_element_type"):
+      return self.dispatch_to_cc("registers_element_type", t, check_canonical=False)
     return ir.VectorType.get((self.vector_length,), t)
 
   def registers_shape(self, shape: tuple[int, ...]) -> tuple[int, ...]:
     """Returns the shape of the register array needed to represent an array of the given logical shape."""
+    if cc_method_exists(self, "registers_shape"):
+      return self.dispatch_to_cc("registers_shape", shape, check_canonical=False)
     tiled_shape = list(self.tiling.tile_shape(shape))
     for d in self.partitioned_warp_dims:
       tiled_shape[d] = 1
@@ -479,6 +485,8 @@ class TiledLayout:
 
     Inverse to `registers_shape`.
     """
+    if cc_method_exists(self, "shape_from_registers_shape"):
+      return self.dispatch_to_cc("shape_from_registers_shape", shape, check_canonical=False)
     tiled_tiling = self.tiled_tiling_shape
     shape = list(shape)
     for d in self.partitioned_warp_dims:

@@ -446,6 +446,40 @@ NB_MODULE(_mosaic_gpu_ext, m) {
              }
              return *result;
            })
+      .def(
+          "registers_shape",
+          [](const mgpu::TiledLayout& self, const std::vector<int64_t>& shape) {
+            auto result = self.RegistersShape(shape);
+            if (!result.ok()) {
+              throw nb::value_error(result.status().message().data());
+            }
+            return nb::tuple(nb::cast(*result));
+          },
+          nb::arg("shape"))
+      .def(
+          "registers_element_type",
+          [](const mgpu::TiledLayout& self, MlirType t) {
+            auto result = self.RegistersElementType(unwrap(t));
+            if (!result.ok()) {
+              throw nb::value_error(result.status().message().data());
+            }
+            return nb::cast(wrap(*result));
+          },
+          nb::arg("t"))
+      .def(
+          "shape_from_registers_shape",
+          [](const mgpu::TiledLayout& self, const std::vector<int64_t>& shape) {
+            auto result = self.ShapeFromRegistersShape(shape);
+            if (!result.ok()) {
+              throw nb::value_error(result.status().message().data());
+            }
+            return nb::tuple(nb::cast(*result));
+          },
+          nb::arg("shape"))
+      .def_prop_ro("base_tile_shape",
+                   [](const mgpu::TiledLayout& self) {
+                     return nb::tuple(nb::cast(self.BaseTileShape()));
+                   })
       .def("__str__", &mgpu::TiledLayout::ToString)
       .def("__repr__", &mgpu::TiledLayout::ToString)
       .def("__hash__",

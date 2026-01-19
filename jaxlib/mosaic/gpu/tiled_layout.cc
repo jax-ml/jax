@@ -741,4 +741,49 @@ absl::StatusOr<std::vector<mlir::Value>> TiledLayout::DelinearizeIndex(
   return full_indices;
 }
 
+absl::StatusOr<std::vector<int64_t>> TiledLayout::RegistersShape(
+    const std::vector<int64_t>& shape) const {
+  TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_shape,
+                      tiling_.TileShape(shape));
+  for (int64_t d : PartitionedWarpDims()) {
+    CHECK(d < 0) << "Expected negative dimension index";
+    tiled_shape[d + tiled_shape.size()] = 1;
+  }
+  for (int64_t d : PartitionedLaneDims()) {
+    CHECK(d < 0) << "Expected negative dimension index";
+    tiled_shape[d + tiled_shape.size()] = 1;
+  }
+  CHECK(vector_dim_ < 0) << "Expected negative dimension index";
+  tiled_shape[vector_dim_ + tiled_shape.size()] = 1;
+  return tiled_shape;
+}
+
+absl::StatusOr<std::vector<int64_t>> TiledLayout::ShapeFromRegistersShape(
+    const std::vector<int64_t>& shape) const {
+  TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_tiling, TiledTilingShape());
+  std::vector<int64_t> tiled_shape = shape;
+  for (int64_t d : PartitionedWarpDims()) {
+    CHECK(d < 0) << "Expected negative dimension index";
+    tiled_shape[d + tiled_shape.size()] = tiled_tiling[d + tiled_tiling.size()];
+  }
+  for (int64_t d : PartitionedLaneDims()) {
+    CHECK(d < 0) << "Expected negative dimension index";
+    tiled_shape[d + tiled_shape.size()] = tiled_tiling[d + tiled_tiling.size()];
+  }
+  CHECK(vector_dim_ < 0) << "Expected negative dimension index";
+  tiled_shape[vector_dim_ + tiled_shape.size()] =
+      tiled_tiling[vector_dim_ + tiled_tiling.size()];
+  return tiling_.UntileShape(tiled_shape);
+}
+
+absl::StatusOr<mlir::Type> TiledLayout::RegistersElementType(
+    mlir::Type t) const {
+  TF_ASSIGN_OR_RETURN(size_t vector_length, VectorLength());
+  return mlir::VectorType::get({static_cast<int64_t>(vector_length)}, t);
+}
+
+std::vector<int64_t> TiledLayout::BaseTileShape() const {
+  return tiling_.tiles()[0];
+}
+
 }  // namespace jax::mosaic::gpu

@@ -221,6 +221,22 @@ class TiledLayout {
   // (..., 4), and vector_dims = {-1}, then the vector length is 4.
   absl::StatusOr<size_t> VectorLength() const;
 
+  // Returns the shape of the register array needed to represent an array of the
+  // given logical shape.
+  absl::StatusOr<std::vector<int64_t>> RegistersShape(
+      const std::vector<int64_t>& shape) const;
+
+  // Returns the element type of the register array.
+  absl::StatusOr<mlir::Type> RegistersElementType(mlir::Type t) const;
+
+  // Returns the logical shape of an array given its register array shape.
+  // Inverse to `registers_shape`.
+  absl::StatusOr<std::vector<int64_t>> ShapeFromRegistersShape(
+      const std::vector<int64_t>& shape) const;
+
+  // Returns the base tile shape of the tiling expression.
+  Tiling::Tile BaseTileShape() const;
+
   template <typename H>
   friend H AbslHashValue(H h, const TiledLayout& layout) {
     return H::combine(std::move(h), layout.tiling_, layout.warp_dims_,
