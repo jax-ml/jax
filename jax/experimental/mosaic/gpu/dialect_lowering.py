@@ -697,6 +697,14 @@ def _combining_kind(attr: ir.Attribute) -> vector.CombiningKind:
   ]
 
 
+def _is_reduction_signed(kind: vector.CombiningKind) -> bool | None:
+  if kind in (vector.CombiningKind.MAXSI, vector.CombiningKind.MINSI):
+    return True
+  if kind in (vector.CombiningKind.MAXUI, vector.CombiningKind.MINUI):
+    return False
+  return None
+
+
 @_register_lowering(vector.ReductionOp)
 def _vector_reduction_op_lowering_rule(
     ctx: LoweringContext, op: vector.ReductionOp
@@ -710,28 +718,20 @@ def _vector_reduction_op_lowering_rule(
   )
   axes = range(op.vector.type.rank)
   op_kind = _combining_kind(op.kind)
+  is_signed = _is_reduction_signed(op_kind)
+  a = _fragmented_array_from_ir(op.vector, layout, is_signed)
   match op_kind:
     case vector.CombiningKind.ADD:
-      a = _fragmented_array_from_ir(op.vector, layout)
       result = a.reduce("add", axes, scratch)
-    case vector.CombiningKind.MAXSI | vector.CombiningKind.MAXUI:
-      is_signed = op_kind == vector.CombiningKind.MAXSI
-      a = _fragmented_array_from_ir(op.vector, layout, is_signed)
+    case vector.CombiningKind.MAXSI | vector.CombiningKind.MAXUI | vector.CombiningKind.MAXIMUMF:
       result = a.reduce("max", axes, scratch)
-    case vector.CombiningKind.MAXIMUMF:
-      a = _fragmented_array_from_ir(op.vector, layout)
-      result = a.reduce("max", axes, scratch)
-    case vector.CombiningKind.MINUI | vector.CombiningKind.MINSI:
-      is_signed = op_kind == vector.CombiningKind.MINSI
-      a = _fragmented_array_from_ir(op.vector, layout, is_signed)
-      result = a.reduce("min", axes, scratch)
-    case vector.CombiningKind.MINIMUMF:
-      a = _fragmented_array_from_ir(op.vector, layout)
+    case vector.CombiningKind.MINUI | vector.CombiningKind.MINSI | vector.CombiningKind.MINIMUMF:
       result = a.reduce("min", axes, scratch)
     case _:
       raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
   assert isinstance(result.layout, fa.WGSplatFragLayout)
   return [result.registers.item()]
+
 
 @_register_lowering(vector.MultiDimReductionOp)
 def _vector_multi_dim_reduction_op_lowering_rule(
@@ -751,33 +751,39 @@ def _vector_multi_dim_reduction_op_lowering_rule(
     raise NotImplementedError("Only 1 reduction dimension is supported.")
 
   op_kind = _combining_kind(op.kind)
+  is_signed = _is_reduction_signed(op_kind)
+  src = _fragmented_array_from_ir(op.source, in_layout, is_signed)
+  acc = _fragmented_array_from_ir(op.acc, acc_layout, is_signed)
+
+  if not isinstance(src.layout, fa.TiledLayout):
+    raise NotImplementedError(f"Unsupported layout: {src.layout}")
+  reduced_dim = src.layout.tiling.tile_dimension(op.reduction_dims[0])
+  if any(reduced_dim[d] for d in src.layout.partitioned_warp_dims):
+    # cross-warp reductions require scratch space.
+    dtype = op.source.type.element_type
+    size = src.layout.vector_length * 128  # a vector per lane in each WG.
+    scratch_size = ir.IntegerAttr(op.attributes["scratch_size"]).value
+    if size > scratch_size:
+      raise ValueError(
+          f"Required scratch space ({size}) is larger than the available"
+          f" scratch size ({scratch_size})"
+      )
+    scratch = _slice_smem(
+        ir.MemRefType.get([size], dtype, memory_space=utils.smem()),
+        arith.constant(None, op.attributes["offset"]),
+    )
+  else:
+    scratch = None
+
   match op_kind:
     case vector.CombiningKind.ADD:
-      src = _fragmented_array_from_ir(op.source, in_layout)
-      acc = _fragmented_array_from_ir(op.acc, acc_layout)
-      result = src.reduce("add", op.reduction_dims[0])
+      result = src.reduce("add", op.reduction_dims[0], scratch)
       result += acc
-    case vector.CombiningKind.MAXSI | vector.CombiningKind.MAXUI:
-      is_signed = op_kind == vector.CombiningKind.MAXSI
-      src = _fragmented_array_from_ir(op.source, in_layout, is_signed)
-      acc = _fragmented_array_from_ir(op.acc, acc_layout, is_signed)
-      result = src.reduce("max", op.reduction_dims[0])
+    case vector.CombiningKind.MAXSI | vector.CombiningKind.MAXUI | vector.CombiningKind.MAXIMUMF:
+      result = src.reduce("max", op.reduction_dims[0], scratch)
       result = result.max(acc)
-    case vector.CombiningKind.MAXIMUMF:
-      src = _fragmented_array_from_ir(op.source, in_layout)
-      acc = _fragmented_array_from_ir(op.acc, acc_layout)
-      result = src.reduce("max", op.reduction_dims[0])
-      result = result.max(acc)
-    case vector.CombiningKind.MINUI | vector.CombiningKind.MINSI:
-      is_signed = op_kind == vector.CombiningKind.MINSI
-      src = _fragmented_array_from_ir(op.source, in_layout, is_signed)
-      acc = _fragmented_array_from_ir(op.acc, acc_layout, is_signed)
-      result = src.reduce("min", op.reduction_dims[0])
-      result = result.min(acc)
-    case vector.CombiningKind.MINIMUMF:
-      src = _fragmented_array_from_ir(op.source, in_layout)
-      acc = _fragmented_array_from_ir(op.acc, acc_layout)
-      result = src.reduce("min", op.reduction_dims[0])
+    case vector.CombiningKind.MINUI | vector.CombiningKind.MINSI | vector.CombiningKind.MINIMUMF:
+      result = src.reduce("min", op.reduction_dims[0], scratch)
       result = result.min(acc)
     case _:
       raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
