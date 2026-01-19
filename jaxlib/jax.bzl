@@ -72,7 +72,7 @@ def get_zstandard():
         return []
     return ["@pypi//zstandard"]
 
-def get_optional_dep(package, excluded_py_versions=["3.14", "3.14-ft"]):
+def get_optional_dep(package, excluded_py_versions = ["3.14", "3.14-ft"]):
     if HERMETIC_PYTHON_VERSION in excluded_py_versions:
         return []
     return [package]
@@ -189,10 +189,13 @@ def _gpu_test_deps():
             # TODO(ybaturina): Remove this once we can add NVSHMEM libraries in the dependencies.
             "@pypi//nvidia_nvshmem_cu12",
         ],
-        "//jax:config_build_jaxlib_false": [
+        "//jax:config_build_jaxlib_false": if_rocm_is_configured([
+            "//jaxlib/tools:rocm_plugin_kernels_wheel",
+            "//jaxlib/tools:rocm_plugin_pjrt_wheel",
+        ]) + if_cuda_is_configured([
             "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",
             "//jaxlib/tools:pypi_jax_cuda_pjrt_with_cuda_deps",
-        ],
+        ]),
         "//jax:config_build_jaxlib_wheel": [
             "//jaxlib/tools:jax_cuda_plugin_py_import",
             "//jaxlib/tools:jax_cuda_pjrt_py_import",
@@ -297,6 +300,7 @@ def jax_multiplatform_test(
             tags = test_tags,
             main = main,
             exec_properties = tf_exec_properties({"tags": test_tags}),
+            legacy_create_init = 0,
         )
 
 def jax_generate_backend_suites(backends = []):

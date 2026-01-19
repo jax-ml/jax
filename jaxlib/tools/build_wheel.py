@@ -146,9 +146,28 @@ plat_name={tag}
     )
 
 
+def _detect_source_file_prefix(runfiles):
+  """Detect the correct runfiles prefix for jaxlib files.
+
+  When building from inside the jax repository, files are at __main__/jaxlib/...
+  When building as @jax external repository, files are at jax/jaxlib/...
+  When wheel_sources are provided, no prefix is needed.
+  """
+  # Try __main__ first (building from inside jax repo)
+  if runfiles.Rlocation("__main__/jaxlib/tools/LICENSE.txt"):
+    return "__main__/"
+  # Try jax/ (building as @jax external repository)
+  if runfiles.Rlocation("jax/jaxlib/tools/LICENSE.txt"):
+    return "jax/"
+  # Fallback to empty prefix (wheel_sources should be provided)
+  return ""
+
+
 def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
-  """Assembles a source tree for the wheel in `wheel_sources_path`."""
-  source_file_prefix = build_utils.get_source_file_prefix(wheel_sources)
+  """Assembles a source tree for the wheel in `wheel_sources_path`. In case of
+  build under @jax strip the prefix"""
+  source_file_prefix = _detect_source_file_prefix(r) if not wheel_sources else ""
+
   # The wheel sources provided by the transitive rules might have different path
   # prefixes, so we need to create a map of paths relative to the root package
   # to the full paths.
@@ -387,9 +406,9 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
   copy_files(
       dst_dir=jaxlib_dir / "include" / "xla" / "ffi" / "api",
       src_files=[
-          "xla/xla/ffi/api/c_api.h",
-          "xla/xla/ffi/api/api.h",
-          "xla/xla/ffi/api/ffi.h",
+          f"{source_file_prefix}jaxlib/include/xla/ffi/api/c_api.h",
+          f"{source_file_prefix}jaxlib/include/xla/ffi/api/api.h",
+          f"{source_file_prefix}jaxlib/include/xla/ffi/api/ffi.h",
       ],
   )
 
