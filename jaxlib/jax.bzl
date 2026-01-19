@@ -68,11 +68,14 @@ PLATFORM_TAGS_DICT = {
     ("Windows", "AMD64"): ("win", "amd64"),
 }
 
+# TODO(vam): remove this once zstandard builds against Python >3.13
+def get_zstandard():
+    if HERMETIC_PYTHON_VERSION in ("3.13", "3.13-ft", "3.14", "3.14-ft"):
+        return []
+    return ["@pypi//zstandard"]
+
 def get_optional_dep(package, excluded_py_versions = ["3.14", "3.14-ft"]):
-    py_ver = HERMETIC_PYTHON_VERSION
-    if HERMETIC_PYTHON_VERSION_KIND == "ft":
-        py_ver += "-ft"
-    if py_ver in excluded_py_versions:
+    if HERMETIC_PYTHON_VERSION in excluded_py_versions:
         return []
     return [package]
 
@@ -198,10 +201,13 @@ def _gpu_test_deps():
             "//jaxlib/rocm:gpu_only_test_deps",
             "//jax_plugins:gpu_plugin_only_test_deps",
         ],
-        "//jax:config_build_jaxlib_false": [
+        "//jax:config_build_jaxlib_false": if_rocm_is_configured([
+            "//jaxlib/tools:rocm_plugin_kernels_wheel",
+            "//jaxlib/tools:rocm_plugin_pjrt_wheel",
+        ]) + if_cuda_is_configured([
             "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",
             "//jaxlib/tools:pypi_jax_cuda_pjrt_with_cuda_deps",
-        ],
+        ]),
         "//jax:config_build_jaxlib_wheel": [
             "//jaxlib/tools:jax_cuda_plugin_py_import",
             "//jaxlib/tools:jax_cuda_pjrt_py_import",
@@ -311,6 +317,7 @@ def jax_multiplatform_test(
             main = main,
             exec_properties = tf_exec_properties({"tags": test_tags}),
             visibility = jax_visibility(name),
+            legacy_create_init = 0,
         )
 
 def get_test_suite_list(paths, backends = []):
