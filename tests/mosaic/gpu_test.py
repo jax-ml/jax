@@ -598,6 +598,33 @@ class WGMMALayoutTest(TestCase):
     np.testing.assert_array_equal(iota, expected)
 
   @parameterized.product(
+      dtype=[jnp.float32, jnp.float16],
+      swizzle=(32, 64, 128),
+  )
+  def test_store_tiled_with_tiling_rank(self, dtype, swizzle):
+    mlir_dtype = utils.dtype_to_ir_type(dtype)
+    if bytewidth(mlir_dtype) > 2 and swizzle == 32:
+      self.skipTest("Not implemented")
+    col_tiling = swizzle // bytewidth(mlir_dtype)
+    m = 64
+    n = col_tiling * 3
+    tiling = (64, col_tiling)
+    def kernel(ctx, out, smem):
+      del ctx
+      assert smem.type.rank == 5
+      iota_tensor(2 * m, n, dtype).reshape((2, m, n)).store_tiled(smem, swizzle=swizzle, tiling_rank=2)
+      copy(smem, out, swizzle=swizzle)
+    expected = (
+        np.arange(2 * m * n, dtype=dtype)
+        .reshape(2, m // tiling[0], tiling[0], n // tiling[1], tiling[1])
+        .transpose(0, 1, 3, 2, 4)
+    )
+    iota = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), expected, expected
+    )()
+    np.testing.assert_array_equal(iota, expected)
+
+  @parameterized.product(
       jax_dtype_to=(
           jnp.int8, jnp.int16, jnp.int32, jnp.bfloat16, jnp.float8_e4m3fn,
       ),

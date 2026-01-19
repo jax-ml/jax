@@ -1609,6 +1609,7 @@ def _get_lowering_rule(
           swizzle=swizzle,
           layout=ctx.out_layout_hint or mgpu.WGMMA_LAYOUT,
           optimized=optimized,
+          tiling_rank=len(tiling),
       )
     case (*maybe_transpose,):
       if maybe_transpose:
@@ -1752,8 +1753,9 @@ def _swap_lowering_rule(
           is_signed=mgpu_utils.is_signed(v_aval.dtype),
           swizzle=swizzle,
           layout=value.layout,
+          tiling_rank=len(tiling),
       )
-      value.store_tiled(x_smem, swizzle=swizzle)
+      value.store_tiled(x_smem, swizzle=swizzle, tiling_rank=len(tiling))
     case () | (gpu_core.TransposeRef(),):
       transposed = bool(transforms)
       match value.layout:

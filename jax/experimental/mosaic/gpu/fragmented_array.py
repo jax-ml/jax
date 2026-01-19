@@ -3096,7 +3096,13 @@ class FragmentedArray:
     )
     fa.store_untiled(ref)
 
-  def store_tiled(self, ref: ir.Value | utils.MultimemRef, swizzle: int | None, optimized: bool = True):
+  def store_tiled(
+      self,
+      ref: ir.Value | utils.MultimemRef,
+      swizzle: int | None,
+      optimized: bool = True,
+      tiling_rank: int | None = None,
+  ):
     if not isinstance(self.layout, TiledLayout):
       raise NotImplementedError(self.layout)
     layout, shape = self.layout, self.shape
@@ -3104,11 +3110,15 @@ class FragmentedArray:
     # However, in that case all of the racing writes store the same data, which
     # is ok in the CUDA memory model.
     if isinstance(ref, utils.MultimemRef):
-      stores = self.transfer_tiled(ref.ref, swizzle, layout, shape, optimized)
+      stores = self.transfer_tiled(
+          ref.ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank
+      )
       for get, _update, _idx, ptr in stores:
         utils.multimem_store(ptr, get(self.registers))
     else:
-      stores = self.transfer_tiled(ref, swizzle, layout, shape, optimized)
+      stores = self.transfer_tiled(
+          ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank
+      )
       for get, _update, _idx, ptr in stores:
         reg = get(self.registers)
         reg_ty = ir.VectorType(reg.type)
@@ -3130,6 +3140,7 @@ class FragmentedArray:
       is_signed: bool | None = None,
       layout: FragmentedLayout = WGMMA_LAYOUT,
       optimized: bool = True,
+      tiling_rank: int | None = None,
       _load_fun: Callable[[ir.VectorType, ir.Value], ir.Value] = llvm.load,
       _narrow_float_as_int: bool = True,
   ) -> FragmentedArray:
@@ -3138,11 +3149,24 @@ class FragmentedArray:
     ref_ty = ir.MemRefType(ref.type)
     dtype = ref_ty.element_type
     tiled_shape = ref_ty.shape
-    if len(tiled_shape) % 2:
-      raise ValueError("Tiled reference must have even rank")
-    if len(tiled_shape) < 2:
-      raise ValueError("Tiled reference must have at least two dimensions")
-    tiling = Tiling((tiled_shape[len(tiled_shape) // 2 :],))
+    if tiling_rank is None:
+      if len(tiled_shape) % 2:
+        raise ValueError("Tiled reference must have even rank")
+      if len(tiled_shape) < 2:
+        raise ValueError("Tiled reference must have at least two dimensions")
+      tiling_rank = len(tiled_shape) // 2
+    else:
+      if tiling_rank > len(tiled_shape) // 2:
+        raise ValueError(
+            f"Tiling rank for reference of shape {tiled_shape} must be at most"
+            f" {len(tiled_shape) // 2}"
+        )
+      if not tiling_rank:
+        raise ValueError(
+            "Tiling rank for reference of shape {tiled_shape} must be at least"
+            " 1"
+        )
+    tiling = Tiling((tiled_shape[-tiling_rank:],))
     shape = tiling.untile_shape(tiled_shape)
     reg_ty = ir.VectorType.get((layout.vector_length,), dtype)
     zero = vector.broadcast(reg_ty, c(0, dtype))
@@ -3157,7 +3181,9 @@ class FragmentedArray:
         (layout.vector_length,),
         narrow_int if is_narrow_float and _narrow_float_as_int else dtype
     )
-    loads = cls.transfer_tiled(ref, swizzle, layout, shape, optimized)
+    loads = cls.transfer_tiled(
+        ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank
+    )
     for _get, update, _idx, ptr in loads:
       loaded_reg = _load_fun(transfer_ty, ptr)
       if is_narrow_float and _narrow_float_as_int:
@@ -3225,6 +3251,7 @@ class FragmentedArray:
       layout: TiledLayout,
       shape: tuple[int, ...],
       optimized: bool = True,
+      ref_tiling_rank: int | None = None,
   ):
     """Generate a transfer schedule for a tiled layout.
 
@@ -3245,9 +3272,17 @@ class FragmentedArray:
 
     ref_ty = ir.MemRefType(ref.type)
     dtype = ref_ty.element_type
-    if ref_ty.rank % 2:
-      raise ValueError("Tiled reference must have even rank")
-    ref_logical_rank = ref_ty.rank // 2
+    if ref_tiling_rank is None:
+      if len(ref_ty.shape) % 2:
+        raise ValueError("Tiled reference must have an even rank when its tiling rank is not specified")
+      ref_tiling_rank = ref_ty.rank // 2
+    if ref_tiling_rank > len(ref_ty.shape) // 2:
+      raise ValueError(
+          f"Tiling rank for reference of shape {ref_ty.shape} must be at most"
+          f" {len(ref_ty.shape) // 2}"
+      )
+    assert ref_tiling_rank and ref_ty.rank > ref_tiling_rank
+    ref_logical_rank = ref_ty.rank - ref_tiling_rank
     ref_tiling_shape = tuple(ref_ty.shape[ref_logical_rank:])
     ref_tiling = Tiling((ref_tiling_shape,))
     ref_strides, _ = ref_ty.get_strides_and_offset()
@@ -3256,14 +3291,17 @@ class FragmentedArray:
           f"The reference has untiled shape of {ref_logical_shape} while the"
           f" register array has shape {shape}"
       )
+    first_tiled_dim = ref_logical_rank - ref_tiling_rank
     nested_ref_shape = tuple(
-        (ref_ty.shape[i], ref_ty.shape[i + ref_logical_rank])
-        if ref_ty.shape[i + ref_logical_rank] != 1 else (ref_ty.shape[i],)
+        (ref_ty.shape[i], ref_ty.shape[i + ref_tiling_rank])
+        if i >= first_tiled_dim and ref_ty.shape[i + ref_tiling_rank] != 1
+        else (ref_ty.shape[i],)
         for i in range(ref_logical_rank)
     )
     nested_ref_strides = tuple(
-        (ref_strides[i], ref_strides[i + ref_logical_rank])
-        if ref_ty.shape[i + ref_logical_rank] != 1 else (ref_strides[i],)
+        (ref_strides[i], ref_strides[i + ref_tiling_rank])
+        if i >= first_tiled_dim and ref_ty.shape[i + ref_tiling_rank] != 1
+        else (ref_strides[i],)
         for i in range(ref_logical_rank)
     )
     tiled_nested_shape, tiled_nested_strides = tiling.tile_nested_shape_strides(

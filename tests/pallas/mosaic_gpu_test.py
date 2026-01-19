@@ -371,6 +371,27 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(math.prod(shape1)).reshape(shape1).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x.reshape(shape2))
 
+  def test_reshape_tiled_into_tiled(self):
+    self.skip_if_wg_semantics()  # Need support for user-specified transforms.
+    shape1, shape2 = (6 * 64, 8), (2, 3, 64, 8)
+
+    transforms = (plgpu.TilingTransform((8, 8)), plgpu.SwizzleTransform(32))
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct(shape2, jnp.float32),
+        scratch_shapes=[plgpu.SMEM(shape2, jnp.float32, transforms=transforms)],
+    )
+    def kernel(x_ref, out_ref, scratch_ref):
+      x = plgpu.load(x_ref, (), layout=plgpu.Layout.WGMMA, optimized=False)
+      # Here we actually want to test that we can store a tiled value to a ref
+      # where the tiling transform rank is not the same as the ref's rank.
+      scratch_ref[...] = x.reshape(shape2)
+      out_ref[...] = scratch_ref[...]
+
+    x = jnp.arange(math.prod(shape1)).reshape(shape1).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x.reshape(shape2))
+
   def test_reshape_splat(self):
     shape = (1, 1, 1)
 
