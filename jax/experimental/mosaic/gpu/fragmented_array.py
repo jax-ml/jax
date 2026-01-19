@@ -510,11 +510,25 @@ class TiledLayout:
     return tuple(full_indices)
 
   def lane_indices(self) -> tuple[ir.Value, ...]:
+    if cc_method_exists(self, "lane_indices"):
+      return self.dispatch_to_cc(
+          "lane_indices",
+          ir.InsertionPoint.current,
+          ir.Location.current,
+          check_canonical=False,
+      )
     i32 = ir.IntegerType.get_signless(32)
     lane_idx = arith.remui(utils.thread_idx(), c(WARP_SIZE, i32))
     return self._delinearize_index(lane_idx, self.lane_dims)
 
   def warp_indices(self) -> tuple[ir.Value, ...]:
+    if cc_method_exists(self, "warp_indices"):
+      return self.dispatch_to_cc(
+          "warp_indices",
+          ir.InsertionPoint.current,
+          ir.Location.current,
+          check_canonical=False,
+      )
     i32 = ir.IntegerType.get_signless(32)
     warp_idx = arith.remui(
         arith.divui(utils.thread_idx(), c(WARP_SIZE, i32)),

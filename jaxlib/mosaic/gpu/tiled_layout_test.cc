@@ -22,13 +22,36 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "llvm/Support/Casting.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OwningOpRef.h"
+#include "mlir/IR/Value.h"
 
 namespace jax::mosaic::gpu {
 namespace {
 
+using ::testing::Each;
 using ::testing::ElementsAre;
+using ::testing::Truly;
 using ::testing::status::IsOkAndHolds;
 using ::testing::status::StatusIs;
+
+// Returns true if the given value is a constant integer equal to zero.
+bool IsConstantZero(mlir::Value v) {
+  auto op = v.getDefiningOp<mlir::arith::ConstantOp>();
+  if (!op) {
+    return false;
+  }
+  auto attr = llvm::dyn_cast<mlir::IntegerAttr>(op.getValue());
+  if (!attr) {
+    return false;
+  }
+  return attr.getValue().isZero();
+}
 
 TEST(TilingTest, TileNestedShapeStrides) {
   ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{64, 64}}));
@@ -235,6 +258,93 @@ TEST(TiledLayoutTest, VectorLengthReturnsTheSizeOfTheVectorDim) {
                           /*vector_dim=*/-1, /*check_canonical=*/false));
 
   EXPECT_THAT(layout.VectorLength(), IsOkAndHolds(2));
+}
+
+class TiledLayoutMlirTest : public ::testing::Test {
+ public:
+  TiledLayoutMlirTest()
+      : builder_(mlir::UnknownLoc::get(&context_), &context_),
+        module_(mlir::OwningOpRef<mlir::ModuleOp>(
+            mlir::ModuleOp::create(builder_.getUnknownLoc(), "module"))) {}
+
+ protected:
+  void SetUp() override {
+    context_.loadDialect<mlir::arith::ArithDialect, mlir::gpu::GPUDialect>();
+    builder_.setInsertionPointToEnd(module_->getBody());
+  }
+
+ protected:
+  mlir::MLIRContext context_;
+  mlir::ImplicitLocOpBuilder builder_;
+  mlir::OwningOpRef<mlir::ModuleOp> module_;
+};
+
+TEST_F(TiledLayoutMlirTest, WarpIndices) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{64, 8}, {16, 8}, {8, 8}, {1, 2}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-8},
+                          /*lane_dims=*/{-4, -3},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(std::vector<mlir::Value> indices,
+                       layout.WarpIndices(builder_));
+
+  // Make sure warp dim is non-zero.
+  EXPECT_EQ(indices.size(), 8);
+  EXPECT_FALSE(IsConstantZero(indices[0]));  // 8 - 8 = 0 index
+  EXPECT_TRUE(IsConstantZero(indices[1]));
+  EXPECT_TRUE(IsConstantZero(indices[2]));
+  EXPECT_TRUE(IsConstantZero(indices[3]));
+  EXPECT_TRUE(IsConstantZero(indices[4]));
+  EXPECT_TRUE(IsConstantZero(indices[5]));
+  EXPECT_TRUE(IsConstantZero(indices[6]));
+  EXPECT_TRUE(IsConstantZero(indices[7]));
+}
+
+TEST_F(TiledLayoutMlirTest, LaneIndices) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{64, 8}, {16, 8}, {8, 8}, {1, 2}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-8},
+                          /*lane_dims=*/{-4, -3},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(std::vector<mlir::Value> indices,
+                       layout.LaneIndices(builder_));
+
+  // Make sure lane dims are non-zero.
+  EXPECT_EQ(indices.size(), 8);
+  EXPECT_TRUE(IsConstantZero(indices[0]));
+  EXPECT_TRUE(IsConstantZero(indices[1]));
+  EXPECT_TRUE(IsConstantZero(indices[2]));
+  EXPECT_TRUE(IsConstantZero(indices[3]));
+  EXPECT_FALSE(IsConstantZero(indices[4]));  // 8 - 4 = 4 index
+  EXPECT_FALSE(IsConstantZero(indices[5]));  // 8 - 3 = 5 index
+  EXPECT_TRUE(IsConstantZero(indices[6]));
+  EXPECT_TRUE(IsConstantZero(indices[7]));
+}
+
+TEST_F(TiledLayoutMlirTest, IndicesWithReplicated) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling,
+                       Tiling::Create({{64, 8}, {16, 8}, {8, 8}, {1, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{Replicated(4)},
+                          /*lane_dims=*/{-4, -3},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(std::vector<mlir::Value> indices,
+                       layout.WarpIndices(builder_));
+
+  EXPECT_EQ(indices.size(), 8);
+  EXPECT_THAT(indices, Each(Truly(IsConstantZero)));
 }
 
 }  // namespace

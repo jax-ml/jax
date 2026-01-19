@@ -29,6 +29,12 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "llvm/ADT/STLExtras.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/Types.h"
+#include "mlir/IR/Value.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace jax::mosaic::gpu {
@@ -59,6 +65,29 @@ std::vector<int64_t> PartitionedDims(
     }
   }
   return result;
+}
+
+mlir::Value ThreadIdx(mlir::ImplicitLocOpBuilder& builder) {
+  mlir::Type i32 = builder.getI32Type();
+  auto get_thread_id = [&](mlir::gpu::Dimension dim) {
+    mlir::Value tid = mlir::gpu::ThreadIdOp::create(builder, dim);
+    return mlir::arith::IndexCastOp::create(builder, i32, tid);
+  };
+  auto get_block_dim = [&](mlir::gpu::Dimension dim) {
+    mlir::Value bdim = mlir::gpu::BlockDimOp::create(builder, dim);
+    return mlir::arith::IndexCastOp::create(builder, i32, bdim);
+  };
+
+  mlir::Value idx = get_thread_id(mlir::gpu::Dimension::x);
+  mlir::Value stride = get_block_dim(mlir::gpu::Dimension::x);
+  for (const auto& dim : {mlir::gpu::Dimension::y, mlir::gpu::Dimension::z}) {
+    idx = mlir::arith::AddIOp::create(
+        builder, idx,
+        mlir::arith::MulIOp::create(builder, get_thread_id(dim), stride));
+    stride = mlir::arith::MulIOp::create(builder, stride, get_block_dim(dim));
+  }
+
+  return idx;
 }
 
 }  // namespace
@@ -603,6 +632,31 @@ std::vector<int64_t> TiledLayout::PartitionedLaneDims() const {
   return PartitionedDims(lane_dims_);
 }
 
+absl::StatusOr<std::vector<mlir::Value>> TiledLayout::WarpIndices(
+    mlir::ImplicitLocOpBuilder& builder) const {
+  mlir::Type i32 = builder.getI32Type();
+  mlir::Value c32 = mlir::arith::ConstantOp::create(
+      builder, i32, builder.getIntegerAttr(i32, WARP_SIZE));
+  mlir::Value c4 = mlir::arith::ConstantOp::create(
+      builder, i32, builder.getIntegerAttr(i32, WARPS_IN_WARPGROUP));
+  mlir::Value thread_id = ThreadIdx(builder);
+  mlir::Value warp_id = mlir::arith::DivUIOp::create(builder, thread_id, c32);
+  warp_id = mlir::arith::RemUIOp::create(builder, warp_id, c4);
+  return DelinearizeIndex(builder, warp_id, warp_dims_);
+}
+
+absl::StatusOr<std::vector<mlir::Value>> TiledLayout::LaneIndices(
+    mlir::ImplicitLocOpBuilder& builder) const {
+  mlir::Type i32 = builder.getI32Type();
+  mlir::Value c32 = mlir::arith::ConstantOp::create(
+      builder, i32, builder.getIntegerAttr(i32, WARP_SIZE));
+  mlir::Value thread_id = ThreadIdx(builder);
+  mlir::Value lane_id = mlir::arith::RemUIOp::create(builder, thread_id, c32);
+  TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_tiling_shape,
+                      TiledTilingShape());
+  return DelinearizeIndex(builder, lane_id, lane_dims_);
+}
+
 absl::StatusOr<size_t> TiledLayout::VectorLength() const {
   TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_tiling_shape,
                       TiledTilingShape());
@@ -636,6 +690,55 @@ std::string TiledLayout::ToString() const {
   }
   ss << "), vector_dim=" << vector_dim_ << ")";
   return ss.str();
+}
+
+absl::StatusOr<std::vector<mlir::Value>> TiledLayout::DelinearizeIndex(
+    mlir::ImplicitLocOpBuilder& builder, mlir::Value idx,
+    const std::vector<TiledLayout::Dim>& dims) const {
+  TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_shape, TiledTilingShape());
+
+  std::vector<int64_t> dims_sizes;
+  for (const auto& d : dims) {
+    if (std::holds_alternative<Replicated>(d)) {
+      dims_sizes.push_back(std::get<Replicated>(d).times);
+    } else {
+      int64_t idx = std::get<int64_t>(d);
+      CHECK(idx < 0) << "Dimension index must be negative";
+      dims_sizes.push_back(tiled_shape[idx + tiled_shape.size()]);
+    }
+  }
+
+  std::vector<int64_t> dims_strides(dims_sizes.size());
+  int64_t stride = 1;
+  for (int i = dims_sizes.size() - 1; i >= 0; --i) {
+    dims_strides[i] = stride;
+    stride *= dims_sizes[i];
+  }
+
+  mlir::Type i32 = builder.getI32Type();
+  std::vector<mlir::Value> dims_indices;
+  for (const auto& [dim_stride, dim_size] :
+       llvm::zip(dims_strides, dims_sizes)) {
+    mlir::Value stride = mlir::arith::ConstantOp::create(
+        builder, i32, builder.getIntegerAttr(i32, dim_stride));
+    mlir::Value size = mlir::arith::ConstantOp::create(
+        builder, i32, builder.getIntegerAttr(i32, dim_size));
+    mlir::Value div = mlir::arith::DivUIOp::create(builder, idx, stride);
+    dims_indices.push_back(mlir::arith::RemUIOp::create(builder, div, size));
+  }
+
+  std::vector<mlir::Value> full_indices(
+      tiled_shape.size(), mlir::arith::ConstantOp::create(
+                              builder, i32, builder.getIntegerAttr(i32, 0)));
+  for (const auto& [dim, dim_idx] : llvm::zip(dims, dims_indices)) {
+    if (std::holds_alternative<Replicated>(dim)) {
+      continue;
+    }
+    int64_t d = std::get<int64_t>(dim);
+    CHECK(d < 0) << "Dimension index must be negative";
+    full_indices[d + tiled_shape.size()] = dim_idx;
+  }
+  return full_indices;
 }
 
 }  // namespace jax::mosaic::gpu

@@ -24,6 +24,9 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/statusor.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/Location.h"
+#include "mlir/IR/Value.h"
 
 namespace jax::mosaic::gpu {
 
@@ -206,6 +209,14 @@ class TiledLayout {
   // Returns the partitioned lane dimensions verbatim.
   std::vector<int64_t> PartitionedLaneDims() const;
 
+  // Returns delinearized warp indices for a current thread.
+  absl::StatusOr<std::vector<mlir::Value>> WarpIndices(
+      mlir::ImplicitLocOpBuilder& builder) const;
+
+  // Returns delinearized lane indices for a current thread.
+  absl::StatusOr<std::vector<mlir::Value>> LaneIndices(
+      mlir::ImplicitLocOpBuilder& builder) const;
+
   // Returns the size of the vector dimension. E.g. if the tiling suffix is
   // (..., 4), and vector_dims = {-1}, then the vector length is 4.
   absl::StatusOr<size_t> VectorLength() const;
@@ -225,6 +236,12 @@ class TiledLayout {
         warp_dims_(std::move(warp_dims)),
         lane_dims_(std::move(lane_dims)),
         vector_dim_(vector_dim) {};
+
+  // Turns the linearized thread index `idx` into a vector of full indices for
+  // the given dimensions `dims`.
+  absl::StatusOr<std::vector<mlir::Value>> DelinearizeIndex(
+      mlir::ImplicitLocOpBuilder& builder, mlir::Value idx,
+      const std::vector<TiledLayout::Dim>& dims) const;
 
   Tiling tiling_;
   std::vector<Dim> warp_dims_;
