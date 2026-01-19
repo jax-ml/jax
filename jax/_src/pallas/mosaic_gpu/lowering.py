@@ -1038,21 +1038,20 @@ def lower_jaxpr_to_module(
 
   # NOTE: new_out_shapes has out_shapes, then semaphores_shape and
   # optionally the profiler buffer.
-  module, new_out_shapes, _, launch_ctx = (
-      mgpu_core._lower_as_gpu_kernel(
-          body,
-          grid=cuda_grid,
-          cluster=cluster,
-          block=block,
-          in_shapes=(*in_shapes, *scoped_semaphores_shape),
-          out_shape=(*out_shapes, *scoped_semaphores_shape),
-          inout_shape=(),
-          smem_scratch_shape=scratch_buffers,
-          lowering_semantics=lowering_semantics,
-          module_name=mlir.sanitize_name(debug_info.func_name),
-          kernel_name=mlir.sanitize_name(debug_info.func_name),
-          prof_spec=prof_spec,
-      )
+  module, new_out_shapes, _, launch_ctx = mgpu_core._lower_as_gpu_kernel(
+      body,
+      grid=cuda_grid,
+      cluster=cluster,
+      block=block,
+      in_shapes=(*in_shapes, *scoped_semaphores_shape),
+      out_shape=(*out_shapes, *scoped_semaphores_shape),
+      inout_shape=(),
+      smem_scratch_shape=scratch_buffers,
+      lowering_semantics=lowering_semantics,
+      module_name=mlir.sanitize_name(debug_info.func_name),
+      kernel_name=mlir.sanitize_name(debug_info.func_name),
+      prof_spec=prof_spec,
+      jax_mesh=jax_mesh,
   )
 
   if lowering_semantics == mgpu.LoweringSemantics.Warpgroup:

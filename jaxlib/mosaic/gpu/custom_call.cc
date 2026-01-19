@@ -37,6 +37,7 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/library_paths.h"
 #include "absl/base/call_once.h"
 #include "absl/base/no_destructor.h"
+#include "absl/base/nullability.h"
 #include "absl/base/optimization.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
@@ -111,7 +112,13 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/passes.h"
 #include "jaxlib/mosaic/gpu/serde.h"
 #include "jaxlib/mosaic/gpu/target.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/ffi.h"
+#include "xla/backends/gpu/runtime/collective_clique_requests.h"
+#include "xla/backends/gpu/runtime/collective_execution.h"
+#include "xla/backends/gpu/runtime/collective_metadata_thunk.h"
+#include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
@@ -124,7 +131,9 @@ limitations under the License.
 #include "xla/stream_executor/cuda/compilation_provider_options.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/ptx_compiler_support.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/path.h"
 #include "tsl/profiler/lib/traceme.h"
 
@@ -160,43 +169,42 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     const se::CudaComputeCapability& cc, const std::string& sm,
     const std::string& ptx_isa, const std::string& nvshmem_path) {
   static absl::once_flag register_passes_flag;
-  absl::call_once(
-      register_passes_flag, [&compilation_provider, &cc]() {
-        mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
+  absl::call_once(register_passes_flag, [&compilation_provider, &cc]() {
+    mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
 
-        llvm::InitializeNativeTarget();
-        llvm::InitializeNativeTarget();
-        llvm::InitializeNativeTargetAsmPrinter();
-        mlir::registerCanonicalizer();
-        mlir::registerCSE();
-        mlir::registerStripDebugInfo();
-        mlir::registerConvertNVGPUToNVVMPass();
-        mlir::registerConvertVectorToSCF();
-        mlir::registerSCFToControlFlowPass();
-        mlir::registerConvertNVVMToLLVMPass();
-        mlir::registerArithToLLVMConversionPass();
-        mlir::registerConvertIndexToLLVMPass();
-        mlir::registerConvertGpuOpsToNVVMOps();
-        mlir::registerConvertMathToLLVMPass();
-        mlir::registerConvertFuncToLLVMPass();
-        mlir::registerLowerAffinePass();
-        mlir::registerReconcileUnrealizedCastsPass();
-        // TODO(apaszke): Only register the passes we actually use.
-        mlir::memref::registerMemRefPasses();
-        mlir::registerConvertToLLVMPass();
-        mlir::registerGPUPasses();
-        mlir::registerGpuLaunchSinkIndexComputationsPass();
-        mosaic::gpu::registerGpuModuleToAssemblyPass();
-        mosaic::gpu::registerAssemblyToBinaryPass(compilation_provider, cc);
-        mosaic::gpu::registerGpuLaunchLoweringPass();
-        mosaic::gpu::registerConvertGpuToLLVMPass();
-        mosaic::gpu::registerByvalInsertionPass();
-        mosaic::gpu::registerLLVMAttrInsertionPass();
-        mosaic::gpu::registerResolveTrivialLocationsPass();
-        mlir::arith::registerArithExpandOpsPass();
-        mlir::LLVM::registerDIScopeForLLVMFuncOpPass();
-        return true;
-      });
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+    mlir::registerCanonicalizer();
+    mlir::registerCSE();
+    mlir::registerStripDebugInfo();
+    mlir::registerConvertNVGPUToNVVMPass();
+    mlir::registerConvertVectorToSCF();
+    mlir::registerSCFToControlFlowPass();
+    mlir::registerConvertNVVMToLLVMPass();
+    mlir::registerArithToLLVMConversionPass();
+    mlir::registerConvertIndexToLLVMPass();
+    mlir::registerConvertGpuOpsToNVVMOps();
+    mlir::registerConvertMathToLLVMPass();
+    mlir::registerConvertFuncToLLVMPass();
+    mlir::registerLowerAffinePass();
+    mlir::registerReconcileUnrealizedCastsPass();
+    // TODO(apaszke): Only register the passes we actually use.
+    mlir::memref::registerMemRefPasses();
+    mlir::registerConvertToLLVMPass();
+    mlir::registerGPUPasses();
+    mlir::registerGpuLaunchSinkIndexComputationsPass();
+    mosaic::gpu::registerGpuModuleToAssemblyPass();
+    mosaic::gpu::registerAssemblyToBinaryPass(compilation_provider, cc);
+    mosaic::gpu::registerGpuLaunchLoweringPass();
+    mosaic::gpu::registerConvertGpuToLLVMPass();
+    mosaic::gpu::registerByvalInsertionPass();
+    mosaic::gpu::registerLLVMAttrInsertionPass();
+    mosaic::gpu::registerResolveTrivialLocationsPass();
+    mlir::arith::registerArithExpandOpsPass();
+    mlir::LLVM::registerDIScopeForLLVMFuncOpPass();
+    return true;
+  });
   const char* cuda_root = mosaic::gpu::GetCUDARoot();
   if (!cuda_root) {
     return mlir::failure();
@@ -640,6 +648,44 @@ absl::StatusOr<CompiledKernel*> CachedCompileAndInit(
   return &cache->kernels.at(key);
 }
 
+absl::StatusOr<xla::gpu::GpuCollectives::Topology> GetTopology(
+    const xla::gpu::CollectiveParams* absl_nullable collective_params) {
+  if (collective_params == nullptr ||
+      collective_params->collectives == nullptr) {
+    return absl::InvalidArgumentError("Collective params are null.");
+  }
+
+  return collective_params->collectives->GetTopology();
+}
+
+static absl::StatusOr<xla::ReplicaGroup> AllDevices(
+    const xla::gpu::CollectiveParams* absl_nullable collective_params) {
+  TF_ASSIGN_OR_RETURN(auto topology, GetTopology(collective_params));
+  int num_devices = topology.device_count_per_process;
+
+  xla::ReplicaGroup group;
+  group.mutable_replica_ids()->Reserve(num_devices);
+  for (int64_t i = 0; i < num_devices; ++i) {
+    group.add_replica_ids(i);
+  }
+  return group;
+}
+
+bool IsSingleProcessMultiDeviceTopology(
+    const xla::gpu::CollectiveParams* absl_nullable collective_params) {
+  auto topology = GetTopology(collective_params);
+  if (!topology.ok()) {
+    return false;
+  }
+
+  auto topology_value = topology.value();
+  if (topology_value.num_nodes > 1 ||
+      topology_value.device_count_per_process == 1) {
+    return false;
+  }
+  return topology->num_nodes == 1 && topology->device_count_per_process > 1;
+}
+
 // TODO(b/464203195): Backward-compatible version using the legacy FFI
 // API. Remove once backward compatibility window has passed.
 void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
@@ -667,11 +713,122 @@ void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,
                                          "CUDA");
 
-absl::Status MosaicGpuExecute(cudaStream_t stream, ffi::RemainingArgs inputs,
-                              ffi::RemainingRets results,
-                              std::string_view kernel_hash,
-                              std::string_view module,
-                              bool use_custom_barrier) {
+absl::StatusOr<std::vector<void*>> ConstructKernelBuffers(
+    const xla::gpu::CollectiveParams* collective_params,
+    se::Stream* absl_nullable se_stream, ffi::RemainingArgs inputs,
+    ffi::RemainingRets results) {
+  std::vector<void*> buffers;
+  buffers.reserve(inputs.size() + results.size());
+
+  // When several devices handled with a single process we also need to
+  // construct the collective metadata and store it to the last buffer.
+  if (IsSingleProcessMultiDeviceTopology(collective_params) &&
+      se_stream != nullptr) {
+    std::vector<ffi::AnyBuffer> input_buffers;
+    input_buffers.reserve(inputs.size());
+
+    for (int i = 0; i < inputs.size(); ++i) {
+      TF_ASSIGN_OR_RETURN(auto input_buffer, inputs.get<ffi::AnyBuffer>(i));
+      input_buffers.push_back(input_buffer);
+      if (reinterpret_cast<uintptr_t>(input_buffer.untyped_data()) %
+          mosaic::gpu::kExpectedHbmAlignment) {
+        return absl::InvalidArgumentError(
+            absl::StrFormat("Input buffer %d is not %d-byte aligned", i,
+                            mosaic::gpu::kExpectedHbmAlignment));
+      }
+    }
+
+    std::vector<ffi::AnyBuffer> output_buffers;
+    output_buffers.reserve(results.size());
+    for (int i = 0; i < results.size(); ++i) {
+      TF_ASSIGN_OR_RETURN(auto output_buffer, results.get<ffi::AnyBuffer>(i));
+      output_buffers.push_back(*output_buffer);
+
+      if (reinterpret_cast<uintptr_t>(output_buffer->untyped_data()) %
+          mosaic::gpu::kExpectedHbmAlignment) {
+        return absl::InvalidArgumentError(
+            absl::StrFormat("Output buffer %d is not %d-byte aligned", i,
+                            mosaic::gpu::kExpectedHbmAlignment));
+      }
+    }
+
+    std::vector<se::DeviceAddressBase> parameters;
+    // Reserve space for input and output buffers,
+    // except the collective metadata buffer.
+    parameters.reserve(inputs.size() + results.size() - 1);
+
+    // The last input buffer is used as the collective metadata buffer.
+    se::DeviceAddressBase collective_metadata_ptr =
+        input_buffers.back().device_memory();
+
+    // Add all input buffers except the collective metadata buffer.
+    for (int i = 0; i < input_buffers.size() - 1; ++i) {
+      auto input_buffer = input_buffers[i];
+      parameters.push_back(input_buffer.device_memory());
+    }
+
+    for (int i = 0; i < results.size(); ++i) {
+      auto output_buffer = output_buffers[i];
+      parameters.push_back(output_buffer.device_memory());
+    }
+
+    // Construct collective metadata
+    TF_ASSIGN_OR_RETURN(auto replica_group, AllDevices(collective_params));
+    TF_ASSIGN_OR_RETURN(
+        xla::gpu::GpuCliqueKey clique_key,
+        GetGpuCliqueKey(
+            *collective_params, {replica_group},
+            xla::CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID,
+            xla::AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+    TF_RETURN_IF_ERROR(
+        xla::gpu::CollectiveMetadataThunk::ConstructCollectiveMetadata(
+            clique_key,
+            clique_key.rank(collective_params->global_device_id).value(),
+            se_stream, std::move(parameters),
+            // TODO(b/476264413): Add multimem support.
+            /*multimem=*/nullptr, collective_metadata_ptr));
+
+    // Add input and result buffers to the kernel arguments. Add the collective
+    // metadata buffer to the last position.
+    for (int i = 0; i < input_buffers.size() - 1; ++i) {
+      buffers.push_back(input_buffers[i].untyped_data());
+    }
+    for (int i = 0; i < output_buffers.size(); ++i) {
+      buffers.push_back(output_buffers[i].untyped_data());
+    }
+
+    buffers.push_back(collective_metadata_ptr.opaque());
+  } else {
+    for (int i = 0; i < inputs.size(); ++i) {
+      buffers.push_back(inputs.get<ffi::AnyBuffer>(i)->untyped_data());
+      if (reinterpret_cast<uintptr_t>(buffers.back()) %
+          mosaic::gpu::kExpectedHbmAlignment) {
+        return absl::InvalidArgumentError(
+            absl::StrFormat("Input buffer %d is not %d-byte aligned", i,
+                            mosaic::gpu::kExpectedHbmAlignment));
+      }
+    }
+    for (int i = 0; i < results.size(); ++i) {
+      buffers.push_back((*results.get<ffi::AnyBuffer>(i))->untyped_data());
+      if (reinterpret_cast<uintptr_t>(buffers.back()) %
+          mosaic::gpu::kExpectedHbmAlignment) {
+        return absl::InvalidArgumentError(
+            absl::StrFormat("Output buffer %d is not %d-byte aligned", i,
+                            mosaic::gpu::kExpectedHbmAlignment));
+      }
+    }
+  }
+
+  return buffers;
+}
+
+absl::Status MosaicGpuExecute(
+    cudaStream_t stream, se::Stream* se_stream,
+    const xla::gpu::CollectiveParams* collective_params,
+    const xla::gpu::CollectiveCliques* collective_cliques,
+    ffi::RemainingArgs inputs, ffi::RemainingRets results,
+    std::string_view kernel_hash, std::string_view module,
+    bool use_custom_barrier) {
   if (use_custom_barrier) {
     return absl::UnimplementedError("Custom barrier is not supported on GPUs.");
   }
@@ -686,26 +843,9 @@ absl::Status MosaicGpuExecute(cudaStream_t stream, ffi::RemainingArgs inputs,
   auto ctx_kernel_comm = compiled_kernel->GetHostLaunch();
   bool is_comm_used = std::get<2>(ctx_kernel_comm);
 
-  std::vector<void*> buffers;
-  buffers.reserve(inputs.size() + results.size());
-  for (int i = 0; i < inputs.size(); ++i) {
-    buffers.push_back(inputs.get<ffi::AnyBuffer>(i)->untyped_data());
-    if (reinterpret_cast<uintptr_t>(buffers.back()) %
-        mosaic::gpu::kExpectedHbmAlignment) {
-      return absl::InvalidArgumentError(
-          absl::StrFormat("Input buffer %d is not %d-byte aligned", i,
-                          mosaic::gpu::kExpectedHbmAlignment));
-    }
-  }
-  for (int i = 0; i < results.size(); ++i) {
-    buffers.push_back((*results.get<ffi::AnyBuffer>(i))->untyped_data());
-    if (reinterpret_cast<uintptr_t>(buffers.back()) %
-        mosaic::gpu::kExpectedHbmAlignment) {
-      return absl::InvalidArgumentError(
-          absl::StrFormat("Output buffer %d is not %d-byte aligned", i,
-                          mosaic::gpu::kExpectedHbmAlignment));
-    }
-  }
+  TF_ASSIGN_OR_RETURN(
+      std::vector<void*> buffers,
+      ConstructKernelBuffers(collective_params, se_stream, inputs, results));
   void** buffers_ptr = buffers.data();
   void* args[4] = {&std::get<0>(ctx_kernel_comm), &stream, &buffers_ptr};
 
@@ -716,9 +856,37 @@ absl::Status MosaicGpuExecute(cudaStream_t stream, ffi::RemainingArgs inputs,
   return absl::OkStatus();
 }
 
+static absl::Status MosaicGpuPrepare(
+    const xla::gpu::CollectiveParams* absl_nullable collective_params,
+    xla::gpu::CollectiveCliqueRequests* absl_nullable clique_requests) {
+  if (!IsSingleProcessMultiDeviceTopology(collective_params)) {
+    return absl::OkStatus();
+  }
+
+  // TODO(b/476264413): Add multimem support.
+  TF_ASSIGN_OR_RETURN(auto replica_group, AllDevices(collective_params));
+  TF_ASSIGN_OR_RETURN(
+      xla::gpu::GpuCliqueKey clique_key,
+      GetGpuCliqueKey(
+          *collective_params, {replica_group},
+          xla::CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID,
+          xla::AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+
+  TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key));
+  return absl::OkStatus();
+}
+
+XLA_FFI_DEFINE_HANDLER(kMosaicGpuPrepare, MosaicGpuPrepare,
+                       ffi::Ffi::BindPrepare()
+                           .Ctx<ffi::CollectiveParams>()
+                           .Ctx<ffi::CollectiveCliqueRequests>());
+
 XLA_FFI_DEFINE_HANDLER(kMosaicGpuExecute, MosaicGpuExecute,
                        ffi::Ffi::Bind<ffi::ExecutionStage::kExecute>()
                            .Ctx<xla::ffi::PlatformStream<cudaStream_t>>()
+                           .Ctx<ffi::Stream>()
+                           .Ctx<ffi::CollectiveParams>()
+                           .Ctx<ffi::CollectiveCliques>()
                            .RemainingArgs()
                            .RemainingRets()
                            .Attr<std::string_view>("kernel_hash")
@@ -729,7 +897,7 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuExecute, MosaicGpuExecute,
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "mosaic_gpu_v2", "CUDA",
                          {
                              /*instantiate=*/nullptr,
-                             /*prepare=*/nullptr,
+                             /*prepare=*/kMosaicGpuPrepare,
                              /*initialize=*/nullptr,
                              /*execute=*/kMosaicGpuExecute,
                          });

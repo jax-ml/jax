@@ -19,6 +19,7 @@ import dataclasses
 import enum
 import functools
 import math
+import queue
 from typing import Any, Literal
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
@@ -52,6 +53,11 @@ TMAReductionOp = Literal[
     "smin",
     "smax",
 ]
+
+# Fixed size of the collective metadata structure in the XLA.
+# Stores rank, param_to_peers_ptrs and multicast_buffer_ptr.
+COLLECTIVE_METADATA_SIZE = 3
+
 
 def _reduction_op_to_ptx(reduction_op: TMAReductionOp) -> str:
   # convert [s|u]min|max to min|max
@@ -528,6 +534,8 @@ class LaunchContext:
   scratch: Scratch
   cluster_size: tuple[int, int, int]
   profiler: OnDeviceProfiler | None = None
+  collective_metadata: ir.Value | None = None
+  num_peers: int = 0
   tma_descriptors: dict[
       tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...], Any, int],
       ir.Value,
@@ -1547,8 +1555,77 @@ class LaunchContext:
           "nvshmemx_mc_ptr", nvshmemx_mc_ptr_type, sym_visibility="private"
       )
 
+  def _calculate_subview_byte_offset(self, subview_op: memref.SubViewOp) -> int:
+    source_type = subview_op.source.type
+    if not isinstance(source_type, ir.MemRefType):
+      return 0
+
+    element_type = source_type.element_type
+    element_size = utils.bytewidth(element_type)
+    offsets_attr = subview_op.attributes["static_offsets"]
+    if len(offsets_attr) == 1 and offsets_attr[0] > 0:
+      return offsets_attr[0] * element_size
+    return 0
+
+  # For a given reference, finds to which kernel argument it refers to
+  # and computes the offset from the argument. Used for the lowering of the
+  # collective operations with the collective metadata.
+  #
+  # Returns a tuple (argument_id, offset).
+  # TODO(patrios): Add caching.
+  def _find_kernel_argument_with_offset(self, ref: ir.Value):
+    ref_owner = ref.owner
+    ref_operation = ref_owner.operation
+
+    visited_operations = {ref_owner}
+    opeands_queue = queue.Queue()
+    opeands_queue.put((ref_operation, []))
+
+    kernel_argument_operation = None
+    kernel_subview_chain = []
+    while not opeands_queue.empty():
+      [op, chain] = opeands_queue.get()
+      op_subview_chain = chain.copy()
+      if isinstance(op, memref.SubViewOp):
+        op_subview_chain.append(op)
+
+      operands = op.operands
+      for operand in operands:
+        # An operand of the block operation is the kernel argument, so we stop
+        # the search here.
+        if isinstance(operand.owner, ir.Block):
+          kernel_argument_operation = op
+          kernel_subview_chain = op_subview_chain
+          break
+
+        if operand.owner not in visited_operations:
+          visited_operations.add(operand.owner)
+          opeands_queue.put((operand.owner, op_subview_chain))
+      if kernel_argument_operation is not None:
+        break
+
+    if kernel_argument_operation is None or not isinstance(
+        kernel_argument_operation, llvm.GEPOp
+    ):
+      raise ValueError(f"Unsupported operation: {kernel_argument_operation}")
+
+    memory_offset = 0
+    for op in kernel_subview_chain:
+      memory_offset += self._calculate_subview_byte_offset(op)
+
+    raw_constant_indices = kernel_argument_operation.attributes[
+        "rawConstantIndices"
+    ]
+
+    if len(raw_constant_indices) != 1:
+      raise ValueError(
+          "Unsupported number of raw constant indices:"
+          f" {len(raw_constant_indices)}"
+      )
+
+    return (raw_constant_indices[0], memory_offset)
+
   def to_remote(self, ref: ir.Value, peer: ir.Value):
-    self._ensure_nvshmem_decls()
     if isinstance(ref.type, ir.MemRefType):
       # We replace the offset in the ref type by 0, because memref_ptr always
       # folds the offset into the pointer.
@@ -1563,14 +1640,67 @@ class LaunchContext:
       return utils.ptr_as_memref(
           self.to_remote(utils.memref_ptr(ref), peer), result_type
       )
-    if ref.type != ir.Type.parse("!llvm.ptr"):
-      raise ValueError(f"Unsupported type for to_remote: {ref.type}")
-    if peer.type != ir.IntegerType.get_signless(32):
-      raise ValueError(f"peer index must be an i32, got {peer.type}")
-    return llvm.call(ref.type, [ref, peer], [], [], callee="nvshmem_ptr")
+
+    if self.collective_metadata is None:
+      self._ensure_nvshmem_decls()
+      if ref.type != ir.Type.parse("!llvm.ptr"):
+        raise ValueError(f"Unsupported type for to_remote: {ref.type}")
+      if peer.type != ir.IntegerType.get_signless(32):
+        raise ValueError(f"peer index must be an i32, got {peer.type}")
+      return llvm.call(ref.type, [ref, peer], [], [], callee="nvshmem_ptr")
+    else:
+      # Collective metadata contains pointers of kerenl argument for each peer
+      # device. The pointer has the following format:
+      # [
+      #   param0_peer0, param0_peer1, ..., param0_peerN,
+      #   param1_peer0, param1_peer1, ..., param1_peerN,
+      #   ...
+      # ]
+      # During the lowering we need to find the corresponding kernel argument
+      # for a given reference, load the corresponding pointer from the
+      # collective metadata and also compute the address of the given reference.
+      # As an example an address of signlas will have an offset from the first
+      # pointer of the kernel arguments defined with the memref.subview
+      # operation.
+      ctx = self.collective_metadata.context
+      loc = self.collective_metadata.location
+      ptr_type = ir.Type.parse("!llvm.ptr")
+      index_type = ir.IndexType.get(context=ctx)
+      parameter_id, memory_offset = self._find_kernel_argument_with_offset(ref)
+      parameters_offset = (
+          COLLECTIVE_METADATA_SIZE + self.num_peers * parameter_id
+      )
+      parameters_offset_attr = ir.IntegerAttr.get(index_type, parameters_offset)
+      parameters_offset_constant = arith.ConstantOp(
+          index_type, parameters_offset_attr, loc=loc
+      )
+      peer_casted = arith.IndexCastOp(index_type, peer).result
+      peer_parameter_offset = arith.AddIOp(
+          parameters_offset_constant, peer_casted, loc=loc
+      )
+      address_of_param_to_peers = memref.LoadOp(
+          self.collective_metadata, [peer_parameter_offset], loc=loc
+      ).result
+
+      i64 = ir.IntegerType.get_signless(64)
+      memory_offset_attr = ir.IntegerAttr.get(i64, memory_offset)
+      memory_offset_constant = arith.ConstantOp(i64, memory_offset_attr)
+      memory_address = arith.AddIOp(
+          address_of_param_to_peers, memory_offset_constant, loc=loc
+      )
+
+      memory_address_op = llvm.inttoptr(ptr_type, memory_address, loc=loc)
+      return memory_address_op
 
   def to_remote_multicast(self, ref: ir.Value):
     i32 = ir.IntegerType.get_signless(32)
+
+    # TODO(patrios): Support multimem lowering with collective metadata
+    if self.collective_metadata is not None:
+      raise NotImplementedError(
+          "Multicast lowering with collective metadata is not implemented yet"
+      )
+
     self._ensure_nvshmem_decls()
     if not isinstance(ref.type, ir.MemRefType):
       raise ValueError(f"Unsupported type for to_remote_multicast: {ref.type}")
@@ -1592,9 +1722,24 @@ class LaunchContext:
     return utils.MultimemRef(utils.ptr_as_memref(mc_ptr, result_type))
 
   def device_id(self) -> ir.Value:
-    self._ensure_nvshmem_decls()
     i32 = ir.IntegerType.get_signless(32)
-    return llvm.call(i32, [], [], [], callee="nvshmem_my_pe")
+    if self.collective_metadata is None:
+      self._ensure_nvshmem_decls()
+      return llvm.call(i32, [], [], [], callee="nvshmem_my_pe")
+    else:
+      # Rank id is stored as the first element of the collective metadata.
+      ctx = self.collective_metadata.context
+      loc = self.collective_metadata.location
+      index_type = ir.IndexType.get(context=ctx)
+      rank_offset_attr = ir.IntegerAttr.get(index_type, 0)
+      rank_offset_constant = arith.ConstantOp(
+          index_type, rank_offset_attr, loc=loc
+      ).result
+      load_op = memref.LoadOp(
+          self.collective_metadata, [rank_offset_constant], loc=loc
+      )
+      casted = arith.TruncIOp(i32, load_op)
+      return casted.result
 
 
 class ReplicationError(Exception):
