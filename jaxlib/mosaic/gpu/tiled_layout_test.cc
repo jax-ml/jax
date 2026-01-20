@@ -416,6 +416,22 @@ TEST(TiledLayoutTest,
               IsOkAndHolds(ElementsAre(8, 128, 2)));
 }
 
+TEST(TiledLayoutTest, ShapeFromRegistersShapeFailsWithInvalidShape) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 32, 2}}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-3},
+                          /*lane_dims=*/{-2},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  EXPECT_THAT(layout.ShapeFromRegistersShape({2, 4, 1, 1, 1}),  // Too short.
+              StatusIs(absl::StatusCode::kInvalidArgument));
+
+  EXPECT_THAT(layout.ShapeFromRegistersShape({2, 4, 1, 1, 1, 1, 1}),  // OK.
+              IsOkAndHolds(ElementsAre(2, 16, 32, 2)));
+}
+
 TEST_F(TiledLayoutMlirTest, RegistersElementType) {
   ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 32, 2}}));
   ASSERT_OK_AND_ASSIGN(

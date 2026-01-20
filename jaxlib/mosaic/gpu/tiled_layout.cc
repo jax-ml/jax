@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -762,6 +763,15 @@ absl::StatusOr<std::vector<int64_t>> TiledLayout::RegistersShape(
 absl::StatusOr<std::vector<int64_t>> TiledLayout::ShapeFromRegistersShape(
     const std::vector<int64_t>& shape) const {
   TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_tiling, TiledTilingShape());
+  if (shape.size() < tiled_tiling.size()) {
+    std::string shape_str = absl::StrCat("(", absl::StrJoin(shape, ", "), ")");
+    std::string tiled_tiling_str =
+        absl::StrCat("(", absl::StrJoin(tiled_tiling, ", "), ")");
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Shape must have at least the same size as the tiled tiling shape. "
+        "Shape: ",
+        shape_str, ", tiled tiling shape: ", tiled_tiling_str));
+  }
   std::vector<int64_t> tiled_shape = shape;
   for (int64_t d : PartitionedWarpDims()) {
     CHECK(d < 0) << "Expected negative dimension index";
