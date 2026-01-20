@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 import jax
 import jax.numpy as jnp
 from jax import tree_util
+import numpy as np
 
 class ObjectRegistered:
   def __init__(self, x, y, z):
@@ -29,8 +30,12 @@ class PyObjectRegistered:
   def tree_flatten(self):
     statics = []
     data = []
-    for (k,v) in self.__mapping__.items():
-      (data if v else statics).append(getattr(self, k))
+    for (k,v) in vars(self).items():
+      if k in self.__mapping__ and self.__mapping__[k]:
+        data.append(v)
+      else:
+        self.__mapping__[k] = False
+        statics.append(v)
     return (data, (statics, self.__mapping__))
 
   @classmethod
@@ -89,6 +94,9 @@ def benchmark_roundtrip(obj, iterations=100000):
   end = time.time()
   return end - start
 
+def ci(a):
+  return f"{np.mean(a):.4f}s ± {2 * np.std(a):.4f}s"
+
 if __name__ == '__main__':
   obj_registered = ObjectRegistered(jnp.arange(5), "hello", "world")
   pytree_registered = PyTreeNodeRegistered(jnp.arange(5), "hello", "world")
@@ -96,12 +104,14 @@ if __name__ == '__main__':
   pyobj_registered = PyObjectRegistered(jnp.arange(5), "hello", "world")
 
   print("Benchmarking flatten...")
-  time_obj = benchmark_roundtrip(obj_registered)
-  time_pytree = benchmark_roundtrip(pytree_registered)
-  time_dataclass = benchmark_roundtrip(dataclass_registered)
-  time_pyobject = benchmark_roundtrip(pyobj_registered)
+  time_obj = [benchmark_roundtrip(obj_registered) for _ in range(10)]
+  time_pytree = [benchmark_roundtrip(pytree_registered) for _ in range(10)]
+  time_dataclass = [benchmark_roundtrip(dataclass_registered) for _ in range(10)]
+  time_pyobject = [benchmark_roundtrip(pyobj_registered) for _ in range(10)]
 
-  print(f"register_object: {time_obj:.4f}s")
-  print(f"register_pytree_node: {time_pytree:.4f}s")
-  print(f"register_dataclass: {time_dataclass:.4f}s")
-  print(f"register_pyobject: {time_pyobject:.4f}s")
+  print(f"register_object: {ci(time_obj)}")
+  print(f"register_pytree_node: {ci(time_pytree)}")
+  print(f"register_dataclass: {ci(time_dataclass)}")
+  print(f"register_pyobject: {ci(time_pyobject)}")
+
+  print(f"Improvement : {np.mean(time_obj) / np.mean(time_pyobject):.4f}")
