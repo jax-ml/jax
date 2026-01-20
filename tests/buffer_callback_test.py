@@ -95,7 +95,7 @@ class BufferCallbackTest(jtu.JaxTestCase):
   @parameterized.product(
       dtype=jtu.dtypes.all, command_buffer_compatible=[True, False]
   )
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("gpu")
   def test_cuda_array_interface(self, dtype, command_buffer_compatible):
     if command_buffer_compatible:
       self.skipTest("Requires jaxlib extension version of at least 337.")
