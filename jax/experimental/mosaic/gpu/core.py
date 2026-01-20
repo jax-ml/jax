@@ -783,19 +783,44 @@ def _lower_as_gpu_kernel(
     def main(token_ptr, buffers):
       nonlocal launch_ctx
       token = builtin.unrealized_conversion_cast([token_ty], [token_ptr])
-      arg_refs = []
       # XLA will pass in inout refs again as outputs, but we ignore them.
-      for i, ref_ty in enumerate([*in_ref_tys, *inout_ref_tys, *out_ref_tys]):
-        ptr = llvm.LoadOp(ptr_ty, llvm.GEPOp(ptr_ty, buffers, [], [i], ptr_ty, llvm.GEPNoWrapFlags.none))
-        arg_refs.append(utils.ptr_as_memref(ptr, ir.MemRefType(ref_ty)))
-      prof_buffer = arg_refs.pop() if prof_spec is not None else None
+      arg_ref_tys = [*in_ref_tys, *inout_ref_tys, *out_ref_tys]
+      arg_ptrs = [
+          llvm.load(ptr_ty, utils.getelementptr(buffers, [i], ptr_ty))
+          for i in range(len(arg_ref_tys))
+      ]
+      host_arg_refs = [
+          utils.ptr_as_memref(ptr, ref_ty)
+          for ptr, ref_ty in zip(arg_ptrs, arg_ref_tys)
+      ]
+      prof_buffer = None
+      if prof_spec is not None:
+        prof_buffer = host_arg_refs.pop()
+        arg_ptrs.pop()
+        arg_ref_tys.pop()
       with _launch(
           token, grid, cluster, block, smem_scratch_shape,
           lowering_semantics, module, prof_spec, prof_buffer
       ) as (_launch_ctx, smem_refs):
         nonlocal launch_ctx
         launch_ctx = _launch_ctx
-        body(launch_ctx, *arg_refs, smem_refs)
+        if lowering_semantics == LoweringSemantics.Warpgroup:
+          # TODO(apaszke): Figure out how to do deal with this for WG semantics.
+          # At the moment this is hugely problematic, because WG semantics
+          # delays the creation of TMA descriptors until dialect lowering. This,
+          # however, means that the host_arg_refs that will be used later are
+          # currently unused and will be destroyed by the canonicalization pass
+          # (which we need to remove ops layout inference doesn't support...).
+          device_arg_refs = host_arg_refs
+        else:
+          device_arg_refs = [
+              utils.ptr_as_memref(ptr, ref_ty)
+              for ptr, ref_ty in zip(arg_ptrs, arg_ref_tys)
+          ]
+        launch_ctx.device_to_host_ref_cache = dict(
+            zip(device_arg_refs, host_arg_refs, strict=True)
+        )
+        body(launch_ctx, *device_arg_refs, smem_refs)
     main.func_op.attributes["llvm.emit_c_interface"] = ir.UnitAttr.get()
   sym_tab = ir.SymbolTable(module.operation)
   sym_tab.insert(main.func_op)

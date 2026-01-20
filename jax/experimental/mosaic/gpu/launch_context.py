@@ -419,29 +419,6 @@ class _DefaultPredicate:
   pass
 
 
-def _find_kernel_argument_for_gmem_ref(
-    gmem_ref: ir.Value,
-) -> builtin.UnrealizedConversionCastOp:
-  """Returns the kernel argument value for a given gmem_ref.
-
-  The kernel argument is expected to be an unrealized conversion cast. This
-  function will recursively go up block arguments in case of nested blocks.
-  """
-  if not isinstance(gmem_ref.type, ir.MemRefType):
-    raise ValueError(f"Expected {gmem_ref} to have a memref type.")
-
-  while isinstance(gmem_ref, ir.BlockArgument):
-    gmem_ref = gmem_ref.owner.owner.operands[gmem_ref.arg_number]
-
-  # TODO(apaszke): This is a very approximate check. Improve it!
-  if not isinstance(gmem_ref.owner.opview, builtin.UnrealizedConversionCastOp):
-    raise NotImplementedError(
-        f"Expected {gmem_ref.owner} to be an unrealized conversion cast"
-        " corresponding to a GMEM kernel argument."
-    )
-  return gmem_ref
-
-
 def _is_tma_reduction_op_supported(
     reduction_op: TMAReductionOp | None, dtype: ir.Type,
 ) -> bool:
@@ -533,6 +510,9 @@ class LaunchContext:
       ir.Value,
   ] = dataclasses.field(default_factory=dict, init=False)
   is_device_collective: bool = False
+  device_to_host_ref_cache: dict[ir.Value, ir.Value] = dataclasses.field(
+      default_factory=dict, init=False
+  )
 
   @contextlib.contextmanager
   def named_region(self, *args, **kwargs):
@@ -631,6 +611,19 @@ class LaunchContext:
     gep.move_after(self.scratch.device_ptr().owner)
     return device_init(gep.result)
 
+  def _device_to_host_ref(self, gmem_ref: ir.Value) -> ir.Value:
+    """Returns the host-side memref descriptor for the given device-side memref value.
+
+    Only valid to call when gmem_ref is a kernel argument.
+    """
+    if not isinstance(gmem_ref.type, ir.MemRefType):
+      raise ValueError(f"Expected {gmem_ref} to have a memref type.")
+
+    if host_ref := self.device_to_host_ref_cache.get(gmem_ref, None):
+      return host_ref
+
+    raise ValueError("Expected a kernel argument ref")
+
   def _get_tma_desc(
       self,
       gmem_ref: ir.Value,
@@ -640,7 +633,7 @@ class LaunchContext:
       swizzle: int | None,
       reduction_op: TMAReductionOp | None,
   ):
-    gmem_ref = _find_kernel_argument_for_gmem_ref(gmem_ref)
+    gmem_ref = self._device_to_host_ref(gmem_ref)
     tma_dtype = _tma_dma_type(ir.MemRefType(gmem_ref.type).element_type, reduction_op)
     # Using ir.Values in cache keys is a little sketchy, but I think it should
     # be fine. Having it in the key will keep it alive, and if comparison and
@@ -873,7 +866,7 @@ class LaunchContext:
     index = ir.IndexType.get()
     # The function below is called only to verify the GMEM ref. The output
     # is meant to be ignored.
-    _find_kernel_argument_for_gmem_ref(gmem_ref)
+    self._device_to_host_ref(gmem_ref)
     gmem_ref_ty = ir.MemRefType(gmem_ref.type)
     element_bitwidth = utils.bitwidth(gmem_ref_ty.element_type)
     gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
