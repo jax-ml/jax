@@ -456,7 +456,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
     # cuDNN and Blackwell checks only apply to CUDA devices.
-    # ROCm uses XLA's fallback path (dequantize + standard dot) for MXFP8.
+    # ROCm uses XLA's fallback path (dequantize + standard dot) for MXFP8/NVFP4.
     if jtu.test_device_matches(["cuda"]):
       try:
         check_cudnn_version()
@@ -833,7 +833,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
     self.assertArraysAllClose(x_grad, x_grad_ref, rtol=1e-2, atol=1e1)
     self.assertArraysAllClose(w_grad, w_grad_ref, rtol=1e-2, atol=1e1)
 
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("gpu")
   def test_remat_checkpoint_dots(self):
     input = jnp.ones((1, 128, 128))
     config = create_nvfp4_configs([input])[0]
@@ -868,7 +868,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
     # Check that the custom backward for scaled_matmul is used.
     self.assertEqual(jaxpr.count('bwd=scaled_dot_bwd'), 1)
 
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("gpu")
   def test_remat_checkpoint_dots_with_no_batch_dims(self):
     input = jnp.ones((1, 128, 128))
     batched_input = jnp.ones((16, 128, 128))
