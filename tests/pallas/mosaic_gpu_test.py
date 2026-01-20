@@ -3346,6 +3346,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     )(a, b)
     np.testing.assert_allclose(res, a @ b, rtol=1e-3)
 
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_wgmma_accumulator_load_with_custom_wait(self):
     def kernel(a_ref, b_ref, o_ref0, o_ref1):
       def scope(acc0_ref, acc1_ref):
@@ -3370,7 +3371,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
               plgpu.BlockSpec(transforms=transforms),
           ],
           out_shape=(jax.ShapeDtypeStruct((64, 64), jnp.float32),
-                    jax.ShapeDtypeStruct((64, 64), jnp.float32)),
+                     jax.ShapeDtypeStruct((64, 64), jnp.float32)),
           grid=(1, 1),
       )(a, b))
     ptx_str = ptx()
