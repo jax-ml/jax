@@ -17,10 +17,10 @@ from functools import partial
 from jax._src import core
 from jax._src import dispatch
 from jax._src import linear_util as lu
-from jax._src.api_util import debug_info, flatten_fun
+from jax._src.api_util import debug_info
 from jax._src.util import (safe_map, safe_zip, weakref_lru_cache, unzip2,
                            split_list)
-from jax._src.tree_util import tree_flatten, tree_unflatten
+from jax._src.tree_util import tree_flatten, tree_unflatten, FlatTree
 from jax._src.interpreters import ad, mlir, partial_eval as pe, batching
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir import ir
@@ -40,19 +40,12 @@ def xla_metadata_call(f=None, **meta):
 def _xla_metadata_call(fun, **meta):
   def wrapped(*args, **kwargs):
     dbg = debug_info('xla_metadata_call', fun, args, kwargs)
-    args_flat, in_tree = tree_flatten((args, kwargs))
-    f = lu.wrap_init(fun, debug_info=dbg)
-    f, out_tree = flatten_fun(f, in_tree)
-    in_avals = tuple(core.shaped_abstractify(x) for x in args_flat)
-    jaxpr = _trace_to_jaxpr(f, in_avals)
-    outs_flat = xla_metadata_call_p.bind(*args_flat, jaxpr=jaxpr, **meta)
-    return tree_unflatten(out_tree(), outs_flat)
+    args_ft = FlatTree.flatten((args, kwargs))
+    in_avals = args_ft.map(core.shaped_abstractify)
+    jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_avals, dbg)
+    outs_flat = xla_metadata_call_p.bind(*args_ft.vals, jaxpr=jaxpr, **meta)
+    return tree_unflatten(out_avals.tree, outs_flat)
   return wrapped
-
-@lu.cache
-def _trace_to_jaxpr(flat_fun, in_avals):
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
-  return core.ClosedJaxpr(jaxpr, consts)
 
 xla_metadata_call_p = core.Primitive('xla_metadata_call')
 xla_metadata_call_p.multiple_results = True
