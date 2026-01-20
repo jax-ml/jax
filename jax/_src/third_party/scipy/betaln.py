@@ -78,35 +78,9 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
         https://github.com/scipy/scipy/blob/ef2dee592ba8fb900ff2308b9d1c79e4d6a0ad8b/scipy/special/cdflib/betaln.f
     """
     a, b = promote_args_inexact("betaln", a, b)
-    return _betaln_impl(a, b)
-
-
-@betaln.defjvp
-def betaln_jvp(primals, tangents):
-    """Custom JVP for betaln with mathematically correct derivatives.
-    
-    d/da betaln(a, b) = digamma(a) - digamma(a + b)
-    d/db betaln(a, b) = digamma(b) - digamma(a + b)
-    
-    This avoids the derivative discontinuity from jnp.minimum/jnp.maximum
-    that caused incorrect Hessians in the original implementation.
-    """
-    a, b = primals
-    a_dot, b_dot = tangents
-    
-    # Forward pass uses the numerically stable implementation
-    result = betaln(a, b)
-    
-    # Backward pass uses the mathematically correct formula
-    # d/da betaln(a, b) = digamma(a) - digamma(a + b)
-    # d/db betaln(a, b) = digamma(b) - digamma(a + b)
-    digamma_a = lax.digamma(a)
-    digamma_b = lax.digamma(b)
-    digamma_ab = lax.digamma(a + b)
-    
-    da = digamma_a - digamma_ab
-    db = digamma_b - digamma_ab
-    
-    tangent_out = a_dot * da + b_dot * db
-    
-    return result, tangent_out
+    # Use jnp.where to ensure correct gradients at the boundary, as per maintainer feedback
+    a_le_b = jnp.where(a <= b, a, b)
+    b_ge_a = jnp.where(a <= b, b, a)
+    small_b = lax.lgamma(a_le_b) + (lax.lgamma(b_ge_a) - lax.lgamma(a_le_b + b_ge_a))
+    large_b = lax.lgamma(a_le_b) + algdiv(a_le_b, b_ge_a)
+    return jnp.where(b_ge_a < 8, small_b, large_b)
