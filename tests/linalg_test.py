@@ -1102,8 +1102,17 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     pnorm=[jnp.inf, -jnp.inf, 1, -1, 2, -2, 'fro'],
     dtype=float_types + complex_types,
   )
-  @jtu.skip_on_devices("gpu")  # TODO(#2203): numerical errors
   def testCond(self, shape, pnorm, dtype):
+
+    if jtu.test_device_matches(['gpu']):
+      # Unskipping test for ROCm while leaving
+      # original skip in place for other GPUs as per
+      # commit: e81024f5053def119eddb7fb06ff6c4f7b5948a8
+      #
+      # Original note: TODO(#2203): numerical errors
+      if not jtu.is_device_rocm():
+        self.skipTest("Unsupported platform")
+
     def gen_mat():
       # arr_gen = jtu.rand_some_nan(self.rng())
       arr_gen = jtu.rand_default(self.rng())
