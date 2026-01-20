@@ -1376,7 +1376,7 @@ class OpsTest(PallasBaseTest):
       self.skipTest("float16 is not supported on TPU")
 
     if (
-        jtu.test_device_matches(["gpu"])
+        jtu.test_device_matches(["cuda"])
         and not jtu.is_cuda_compute_capability_at_least("8.0")
     ):
       self.skipTest("Only works on GPUs with capability >= sm80")
