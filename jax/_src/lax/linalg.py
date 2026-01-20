@@ -2198,7 +2198,9 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
   use_polar = False
   if algorithm is None or algorithm == SvdAlgorithm.DEFAULT:
     try:
-      use_jacobi = target_name_prefix == "cu" and m <= 1024 and n <= 1024
+      gpu_available = target_name_prefix == "cu" or \
+                      target_name_prefix == "hip"
+      use_jacobi = gpu_available and m <= 1024 and n <= 1024
     except core.InconclusiveDimensionOperation:
       use_jacobi = False
   elif algorithm == SvdAlgorithm.JACOBI:
