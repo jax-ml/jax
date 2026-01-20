@@ -589,7 +589,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
       ],
       output_type=[jnp.float32, jnp.float16, jnp.bfloat16],
   )
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("gpu")
   def test_dot_general_nvfp4(self, configs, output_type):
     (a_raw, b_raw), (a_dq, b_dq), _, block_scale_configs = (
         generate_nvfp4_quantized_tensors(configs[:-1], output_type)
