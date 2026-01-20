@@ -105,8 +105,8 @@ class MlirRegisterLoweringTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         NotImplementedError,
         "Registering an MLIR lowering rule for primitive .+ for an unknown "
-        "platform foo. Known platforms are: .+."):
-      mlir.register_lowering(prim=None, rule=None, platform="foo")
+        "platform this_is_a_fake_platform. Known platforms are: .+."):
+      mlir.register_lowering(prim=None, rule=None, platform="this_is_a_fake_platform")
 
 
 class ShardingTest(jtu.JaxTestCase):
