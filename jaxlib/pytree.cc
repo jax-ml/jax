@@ -719,22 +719,23 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
 
         nb::object object = nb::borrow<nb::object>(handle);
         nb::mapping mapping = nb::cast<nb::mapping>(nb::getattr(object, node.custom->mapping_attr));
+        nb::mapping vars = nb::cast<nb::mapping>(nb::getattr(object, "__dict__"));
 
         node.arity = 0;
 
-        for (auto item : mapping.items()) {
-            auto [k, v] = nb::cast<std::pair<nb::str, nb::object>>(item);
-            if (nb::cast<bool>(v)) {
+        for (auto k : vars.keys()) {
+            if (mapping.contains(k) && nb::cast<bool>(mapping[k])) {
                 node.arity++;
                 if (keypath.has_value()) {
                   keypath->push_back(
-                      make_nb_class<GetAttrKey>(k));
+                      make_nb_class<GetAttrKey>(nb::cast<nb::str>(k)));
                 }
                 recurse(nb::getattr(handle, k), keypath);
                 if (keypath.has_value()) {
                   keypath->pop_back();
                 }
             } else {
+                mapping[k] = false;
                 node.meta_data.push_back(nb::getattr(object, k));
             }
         }
@@ -1175,50 +1176,17 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
             nb::cast<std::string_view>(nb::repr(node.custom->type)),
             nb::cast<std::string_view>(nb::repr(std::move(object)))));
         }
-        nb::object aux_data = nb::steal(PyTuple_New(3));
-        nb::mapping mapping = nb::cast<nb::mapping>(nb::getattr(object, node.custom->mapping_attr));
 
-        nb::list meta_fields;
-        nb::list data_fields;
-        for (auto item : mapping.items()) {
-            auto [k, v] = nb::cast<std::pair<nb::object, nb::object>>(item);
-            if (nb::cast<bool>(v)) {
-                data_fields.append(k);
-            } else {
-                meta_fields.append(k);
+        nb::mapping mapping = nb::cast<nb::mapping>(nb::getattr(object, node.custom->mapping_attr));
+        nb::mapping vars = nb::cast<nb::mapping>(nb::getattr(object, "__dict__"));
+
+        for (auto k : vars.keys()) {
+            if (mapping.contains(k) && nb::cast<bool>(mapping[k])) {
+                agenda.push_back(nb::borrow<nb::object>(
+                    nb::getattr(object, k)));
             }
         }
 
-        auto meta_size = meta_fields.size();
-        nb::object meta_data = nb::steal(PyTuple_New(meta_size));
-        for (int meta_leaf = 0; meta_leaf < meta_size; ++meta_leaf) {
-            PyTuple_SET_ITEM(
-                meta_data.ptr(), meta_leaf,
-                nb::getattr(object, meta_fields[meta_leaf]).ptr());
-        }
-
-        auto data_size = data_fields.size();
-        if (data_size != node.arity) {
-        throw std::invalid_argument(absl::StrFormat(
-            "Custom type arity mismatch: %d != %d; value: %s.", data_size,
-            node.arity, nb::cast<std::string_view>(nb::repr(object))));
-        }
-        for (int leaf = 0; leaf < data_size; ++leaf) {
-        agenda.push_back(nb::borrow<nb::object>(
-            nb::getattr(object, data_fields[leaf])));
-        }
-
-        PyTuple_SET_ITEM(aux_data.ptr(), 0, meta_fields.release().ptr());
-        PyTuple_SET_ITEM(aux_data.ptr(), 1, meta_data.release().ptr());
-        PyTuple_SET_ITEM(aux_data.ptr(), 2, data_fields.release().ptr());
-
-        if (node.node_data.not_equal(aux_data)) {
-            throw std::invalid_argument(absl::StrFormat(
-                "Mismatch custom object node data: %s != %s; value: %s.",
-                nb::cast<std::string_view>(nb::repr(node.node_data)),
-                nb::cast<std::string_view>(nb::repr(aux_data)),
-                nb::cast<std::string_view>(nb::repr(object))));
-        }
         break;
       }
     }
