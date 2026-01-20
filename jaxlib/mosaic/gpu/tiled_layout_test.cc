@@ -260,6 +260,59 @@ TEST(TiledLayoutTest, VectorLengthReturnsTheSizeOfTheVectorDim) {
   EXPECT_THAT(layout.VectorLength(), IsOkAndHolds(2));
 }
 
+TEST(TiledLayoutTest, ReduceLaneDims) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 4, 8, 8, 4, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling),
+                          /*warp_dims=*/{-6},
+                          /*lane_dims=*/{-4, -5},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(TiledLayout reduced, layout.Reduce({1, 2}));
+
+  EXPECT_THAT(reduced.tiling(), *Tiling::Create({{4, 8, 4, 2}}));
+  EXPECT_THAT(reduced.warp_dims(), ElementsAre(-4));
+  EXPECT_THAT(reduced.lane_dims(), ElementsAre(Replicated(8), Replicated(4)));
+  EXPECT_EQ(reduced.vector_dim(), -1);
+}
+
+TEST(TiledLayoutTest, ReduceWarpDims) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 4, 8, 8, 4, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling), /*warp_dims=*/{-6},
+                          /*lane_dims=*/{-4, -5},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(TiledLayout reduced, layout.Reduce({0}));
+
+  EXPECT_THAT(reduced.tiling(), *Tiling::Create({{4, 8, 8, 4, 2}}));
+  EXPECT_THAT(reduced.warp_dims(), ElementsAre(Replicated(4)));
+  EXPECT_THAT(reduced.lane_dims(), ElementsAre(-4, -5));
+  EXPECT_EQ(reduced.vector_dim(), -1);
+}
+
+TEST(TiledLayoutTest, ReduceVectorDim) {
+  ASSERT_OK_AND_ASSIGN(Tiling tiling, Tiling::Create({{4, 4, 8, 8, 4, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(
+      TiledLayout layout,
+      TiledLayout::Create(std::move(tiling), /*warp_dims=*/{-6},
+                          /*lane_dims=*/{-4, -5},
+                          /*vector_dim=*/-1, /*check_canonical=*/false));
+
+  ASSERT_OK_AND_ASSIGN(TiledLayout reduced, layout.Reduce({5}));
+
+  EXPECT_THAT(reduced.tiling(), *Tiling::Create({{4, 4, 8, 8, 4}, {1}}));
+  EXPECT_THAT(reduced.warp_dims(), ElementsAre(-6));
+  EXPECT_THAT(reduced.lane_dims(), ElementsAre(-4, -5));
+  EXPECT_EQ(reduced.vector_dim(), -1);
+  EXPECT_THAT(reduced.VectorLength(), IsOkAndHolds(1));
+}
+
 class TiledLayoutMlirTest : public ::testing::Test {
  public:
   TiledLayoutMlirTest()

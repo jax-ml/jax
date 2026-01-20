@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -784,6 +785,96 @@ absl::StatusOr<mlir::Type> TiledLayout::RegistersElementType(
 
 std::vector<int64_t> TiledLayout::BaseTileShape() const {
   return tiling_.tiles()[0];
+}
+
+absl::StatusOr<TiledLayout> TiledLayout::RemoveDimension(int64_t dim) const {
+  if (dim < 0 || dim >= BaseTileShape().size()) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Dimension ", dim, " is out of range for ", tiling_.ToString()));
+  }
+
+  TF_ASSIGN_OR_RETURN(Tiling new_tiling, tiling_.RemoveDimension(dim));
+  TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_shape, TiledTilingShape());
+  TF_ASSIGN_OR_RETURN(std::vector<bool> removed_dim,
+                      tiling_.TileDimension(dim));
+
+  std::vector<int64_t> dim_offsets(removed_dim.size());
+  int64_t current_sum = 0;
+  for (int i = removed_dim.size() - 1; i >= 0; --i) {
+    if (removed_dim[i]) {
+      current_sum++;
+    }
+    dim_offsets[i] = current_sum;
+  }
+
+  CHECK(vector_dim_ < 0) << "Expected negative dimension index";
+  int64_t offset = removed_dim.size();
+  int64_t vector_dim_pos = vector_dim_ + offset;
+
+  int64_t new_vector_dim;
+  if (removed_dim[vector_dim_pos]) {
+    std::vector<Tiling::Tile> tiles = new_tiling.tiles();
+    tiles.push_back({1});
+    TF_ASSIGN_OR_RETURN(new_tiling, Tiling::Create(tiles));
+    new_vector_dim = -1;
+    for (size_t i = 0; i < dim_offsets.size(); ++i) {
+      dim_offsets[i]--;  // We inserted an extra dim.
+    }
+  } else {
+    new_vector_dim = vector_dim_ + dim_offsets[vector_dim_pos];
+  }
+
+  auto replace_tiled_dim = [&](Dim d, int64_t size) -> Dim {
+    if (std::holds_alternative<Replicated>(d)) {
+      return d;
+    }
+    int64_t idx = std::get<int64_t>(d);
+    CHECK(idx < 0) << "Expected negative dimension index";
+    int64_t pos = idx + offset;
+    if (removed_dim[pos]) {
+      return Replicated{size};
+    } else {
+      return idx + dim_offsets[pos];
+    }
+  };
+
+  std::vector<Dim> new_warp_dims;
+  for (const auto& d : warp_dims_) {
+    int64_t size = 0;
+    if (std::holds_alternative<int64_t>(d)) {
+      int64_t pos = std::get<int64_t>(d);
+      CHECK(pos < 0) << "Expected negative dimension index";
+      size = tiled_shape[pos + tiled_shape.size()];
+    }
+    new_warp_dims.push_back(replace_tiled_dim(d, size));
+  }
+  std::vector<Dim> new_lane_dims;
+  for (const auto& d : lane_dims_) {
+    int64_t size = 0;
+    if (std::holds_alternative<int64_t>(d)) {
+      int64_t pos = std::get<int64_t>(d);
+      CHECK(pos < 0) << "Expected negative dimension index";
+      size = tiled_shape[pos + tiled_shape.size()];
+    }
+    new_lane_dims.push_back(replace_tiled_dim(d, size));
+  }
+
+  TF_ASSIGN_OR_RETURN(TiledLayout new_layout,
+                      TiledLayout::Create(new_tiling, new_warp_dims,
+                                          new_lane_dims, new_vector_dim,
+                                          /*check_canonical=*/false));
+  return new_layout.Canonicalize();
+}
+
+absl::StatusOr<TiledLayout> TiledLayout::Reduce(
+    const std::vector<int64_t>& axes) const {
+  TiledLayout reduced_layout = *this;
+  std::vector<int64_t> sorted_axes = axes;
+  std::sort(sorted_axes.rbegin(), sorted_axes.rend());
+  for (int a : sorted_axes) {
+    TF_ASSIGN_OR_RETURN(reduced_layout, reduced_layout.RemoveDimension(a));
+  }
+  return reduced_layout;
 }
 
 }  // namespace jax::mosaic::gpu

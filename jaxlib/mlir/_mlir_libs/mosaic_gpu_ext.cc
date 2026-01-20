@@ -480,6 +480,30 @@ NB_MODULE(_mosaic_gpu_ext, m) {
                    [](const mgpu::TiledLayout& self) {
                      return nb::tuple(nb::cast(self.BaseTileShape()));
                    })
+      .def(
+          "remove_dimension",
+          [](const mgpu::TiledLayout& self, int64_t dim) {
+            auto result = self.RemoveDimension(dim);
+            if (!result.ok()) {
+              throw nb::value_error(result.status().message().data());
+            }
+            return *result;
+          },
+          nb::arg("dim"))
+      .def(
+          "reduce",
+          [](const mgpu::TiledLayout& self, nb::iterable axes) {
+            std::vector<int64_t> axes_vec;
+            for (const auto& axis : axes) {
+              axes_vec.push_back(nb::cast<int64_t>(axis));
+            }
+            auto result = self.Reduce(axes_vec);
+            if (!result.ok()) {
+              throw nb::value_error(result.status().message().data());
+            }
+            return *result;
+          },
+          nb::arg("axes"))
       .def("__str__", &mgpu::TiledLayout::ToString)
       .def("__repr__", &mgpu::TiledLayout::ToString)
       .def("__hash__",

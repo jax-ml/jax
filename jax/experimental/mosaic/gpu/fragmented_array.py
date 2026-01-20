@@ -545,6 +545,15 @@ class TiledLayout:
     return self._delinearize_index(warp_idx, self.warp_dims)
 
   def remove_dimension(self, dim: int) -> TiledLayout:
+    if cc_method_exists(self, "remove_dimension"):
+      cc_layout = self.dispatch_to_cc("remove_dimension", dim, check_canonical=False)
+      return TiledLayout(
+          tiling=cc_layout.tiling,
+          warp_dims=cc_layout.warp_dims,
+          lane_dims=cc_layout.lane_dims,
+          vector_dim=cc_layout.vector_dim,
+          _check_canonical=False,
+      )
     if dim < 0 or dim >= len(self.tiling.tiles[0]):
       raise ValueError(f"Dimension {dim} is out of range for {self.tiling}")
     new_tiling = self.tiling.remove_dimension(dim)
@@ -579,6 +588,15 @@ class TiledLayout:
     ).canonicalize()
 
   def reduce(self, axes: Sequence[int]) -> TiledLayout:
+    if cc_method_exists(self, "reduce"):
+      cc_layout = self.dispatch_to_cc("reduce", axes, check_canonical=False)
+      return TiledLayout(
+          tiling=cc_layout.tiling,
+          warp_dims=cc_layout.warp_dims,
+          lane_dims=cc_layout.lane_dims,
+          vector_dim=cc_layout.vector_dim,
+          _check_canonical=False,
+      )
     reduced_layout = self
     for a in sorted(axes, reverse=True):
       reduced_layout = reduced_layout.remove_dimension(a)

@@ -237,6 +237,12 @@ class TiledLayout {
   // Returns the base tile shape of the tiling expression.
   Tiling::Tile BaseTileShape() const;
 
+  // Returns a layout with the given dimension removed.
+  absl::StatusOr<TiledLayout> RemoveDimension(int64_t dim) const;
+
+  // Returns a layout with the given dimensions reduced across `axes`.
+  absl::StatusOr<TiledLayout> Reduce(const std::vector<int64_t>& axes) const;
+
   template <typename H>
   friend H AbslHashValue(H h, const TiledLayout& layout) {
     return H::combine(std::move(h), layout.tiling_, layout.warp_dims_,
