@@ -387,8 +387,6 @@ def supported_dtypes():
              _dtypes.bfloat16, np.float16, np.float32, np.float64,
              np.complex64, np.complex128, _dtypes.float8_e4m3fn,
              _dtypes.float8_e5m2}
-  elif device_under_test() == "METAL":
-    types = {np.int32, np.uint32, np.float32}
   else:
     types = {np.bool_, _dtypes.int4, np.int8, np.int16, np.int32, np.int64,
              _dtypes.uint4, np.uint8, np.uint16, np.uint32, np.uint64,
@@ -575,8 +573,6 @@ def _get_device_tags():
     return {device_under_test(), "rocm"}
   elif is_device_cuda():
     return {device_under_test(), "cuda"}
-  elif device_under_test() == "METAL":
-    return {device_under_test(), "gpu"}
   else:
     return {device_under_test()}
 

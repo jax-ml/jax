@@ -2849,8 +2849,6 @@ def _cumulative_reduction_primitive(name, reduce_fn, reduce_window_fn):
         platform=platform,
         inline=False)
 
-  # For jax-metal, until reduce_window legalization is better supported.
-  register_lowering(partial(associative_scan, reduce_fn), 'METAL')
   # In XLA, there's a rewriter for an O(N^2) reduce-window implementation.
   register_lowering(
       partial(cumred_reduce_window_impl, reduce_window_fn)
