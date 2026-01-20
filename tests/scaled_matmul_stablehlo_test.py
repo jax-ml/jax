@@ -667,7 +667,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
       ],
       output_type=[jnp.float16, jnp.bfloat16, jnp.float32],
   )
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("gpu")
   def test_dot_general(self, configs, output_type):
     cast_to_representable = partial(
         quantize_dequantize,
