@@ -455,12 +455,15 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    try:
-      check_cudnn_version()
-    except RuntimeError as e:
-      self.skipTest(str(e))
-    if not jtu.is_cuda_compute_capability_at_least("10.0"):
-      self.skipTest("Requires at least Blackwell arch")
+    # cuDNN and Blackwell checks only apply to CUDA devices.
+    # ROCm uses XLA's fallback path (dequantize + standard dot) for MXFP8.
+    if jtu.test_device_matches(["cuda"]):
+      try:
+        check_cudnn_version()
+      except RuntimeError as e:
+        self.skipTest(str(e))
+      if not jtu.is_cuda_compute_capability_at_least("10.0"):
+        self.skipTest("Requires at least Blackwell arch")
 
   block_scale_configs = create_mxfp8_configs()
 
@@ -713,7 +716,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
       self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
 
   @jtu.sample_product(in_shardings=sharding_configs)
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("gpu")
   def test_dot_general_sharded(self, in_shardings):
     if len(jax.local_devices()) < 4:
       self.skipTest("Require at least 4 devices to run sharding tests.")
