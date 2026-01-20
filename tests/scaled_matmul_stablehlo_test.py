@@ -518,7 +518,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
           ((30, 64), (100, 64), (([1], [1]), ([], []))),
       ]
   )
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("gpu")
   def test_nvfp4_gradient_clip(self, enable_grad_clip, configs):
     output_type = jnp.float32
     (a_raw, b_raw), (a_dq, b_dq), _, block_scale_configs = (
