@@ -787,7 +787,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
           ((2, 128, 128), (128, 2, 128), (0, 1, 2)),
       ]
   )
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("gpu")
   def test_dot_general_vmap(self, configs):
     cast_to_representable = partial(
         quantize_dequantize,
