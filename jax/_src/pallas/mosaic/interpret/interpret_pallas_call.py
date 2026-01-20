@@ -28,10 +28,10 @@ from jax._src import callback
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import frozen_dict
-from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import source_info_util
 from jax._src.interpreters import mlir
+from jax._src.tree_util import FlatTree
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src.pallas.mosaic import core as mosaic_core
@@ -50,7 +50,7 @@ from jax._src.util import (
     safe_zip,
     split_list
 )
-from jax.interpreters import partial_eval as pe
+from jax._src.interpreters import partial_eval as pe
 import jax.numpy as jnp
 import numpy as np
 
@@ -1064,12 +1064,6 @@ def _compute_transformed_shape_and_dtype(shape, dtype, transforms):
   return shape, dtype
 
 
-@lu.cache
-def _to_jaxpr(flat_fun, in_avals):
-  new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
-  new_jaxpr = jax_core.ClosedJaxpr(new_jaxpr, consts)
-  return new_jaxpr
-
 def _is_any(memory_space):
   return memory_space is pallas_core.MemorySpace.ANY
 
@@ -1236,11 +1230,11 @@ def _interpret_jaxpr(
         def f(*args, jaxpr):
           return _interpret(jaxpr.jaxpr, *jaxpr.consts, *args)
         invals = deferred_invals()
-        in_avals = tuple(jax_core.shaped_abstractify(i) for i in invals)
-        new_jaxpr = _to_jaxpr(
-            lu.wrap_init(functools.partial(f, jaxpr=eqn.params['jaxpr']),
-                        debug_info=eqn.params['jaxpr'].jaxpr.debug_info),
-            in_avals)
+        args_ft = FlatTree.flatten((invals, {}))
+        avals_ft = args_ft.map(jax_core.shaped_abstractify)
+        new_jaxpr, _ = pe.trace_to_jaxpr(
+            functools.partial(f, jaxpr=eqn.params['jaxpr']), avals_ft,
+            eqn.params['jaxpr'].jaxpr.debug_info)
         out = pjit.jit_p.bind(*invals, **(eqn.params | {'jaxpr': new_jaxpr}))
 
       elif prim is primitives.run_scoped_p:
