@@ -99,6 +99,8 @@ def mode(a: ArrayLike, axis: int | None = 0, nan_policy: str = "propagate", keep
       "In order to best JIT compile `mode`, we cannot know whether `x` contains nans. "
       "Please check if nans exist in `x` outside of the `mode` function."
     )
+  if axis is not None:
+    axis = canonicalize_axis(axis, x.ndim)
 
   input_shape = x.shape
   if keepdims:
@@ -125,7 +127,6 @@ def mode(a: ArrayLike, axis: int | None = 0, nan_policy: str = "propagate", keep
       vals, counts = jnp.unique(x, return_counts=True, size=x.size)
       return vals[jnp.argmax(counts)], counts.max()
 
-  axis = canonicalize_axis(axis, x.ndim)
   x = jnp.moveaxis(x, axis, 0)
   x = x.reshape(x.shape[0], math.prod(x.shape[1:]))
   vals, counts = api.vmap(_mode_helper, in_axes=1)(x)
