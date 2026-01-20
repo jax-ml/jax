@@ -746,17 +746,11 @@ __attribute__((visibility("default"))) void** MosaicGpuCompile(
     return nullptr;
   }
   auto [ctx, launch, is_comm_used] = compiled->GetHostLaunch();
-  auto tuple_ptr = std::unique_ptr<void*>(new void*[3]);
-  if (!tuple_ptr) {
-    return nullptr;
-  }
-  tuple_ptr.get()[0] = ctx;
-  tuple_ptr.get()[1] = reinterpret_cast<void*>(launch);
-  tuple_ptr.get()[2] = new CompiledKernel(std::move(*compiled));
-  if (!tuple_ptr.get()[2]) {
-    return nullptr;
-  }
-  return tuple_ptr.release();
+  auto tuple_ptr = new void*[3];
+  tuple_ptr[0] = ctx;
+  tuple_ptr[1] = reinterpret_cast<void*>(launch);
+  tuple_ptr[2] = new CompiledKernel(std::move(*compiled));
+  return tuple_ptr;
 }
 
 __attribute__((visibility("default"))) void MosaicGpuUnload(void** tuple_ptr) {
