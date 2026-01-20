@@ -57,6 +57,7 @@ from jax._src import sharding_specs
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import pjit
+from jax._src import hijax
 from jax._src import xla_bridge as xb
 from jax._src.core import eval_jaxpr, shaped_abstractify, ShapedArray, typeof
 from jax._src.api_util import (
@@ -2587,7 +2588,10 @@ def make_jaxpr(
     else:
       jaxpr = traced.jaxpr
     if return_shape:
-      out = [ShapeDtypeStruct(o.shape, o.dtype) for o in jaxpr.out_avals]
+      out = [
+        o if isinstance(o, hijax.HiType) else ShapeDtypeStruct(o.shape, o.dtype)
+        for o in jaxpr.out_avals
+      ]
       return jaxpr, tree_unflatten(tree_structure(traced.out_info), out)
     return jaxpr
 

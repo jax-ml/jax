@@ -938,6 +938,17 @@ class HijaxTest(jtu.JaxTestCase):
     g(x)
     jax.jit(g)(x)
 
+  def test_make_jaxpr_return_out(self):
+    def f():
+      return make_tup(1, 2)
+
+    jaxpr, shape = jax.make_jaxpr(f, return_shape=True)()
+    self.assertIsInstance(shape, TupTy)
+    self.assertEqual(len(shape.tys), 2)
+    expected_aval = core.get_aval(1)
+    self.assertEqual(shape.tys[0], expected_aval)
+    self.assertEqual(shape.tys[1], expected_aval)
+
 
 class BoxTest(jtu.JaxTestCase):
 
