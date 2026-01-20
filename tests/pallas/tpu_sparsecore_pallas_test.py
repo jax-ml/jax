@@ -109,7 +109,8 @@ class PallasSCTest(jtu.JaxTestCase):
     return functools.partial(
         pl.kernel,
         compiler_params=pltpu.CompilerParams(
-            use_tc_tiling_on_sc=self.USE_TC_TILING
+            kernel_type=pltpu.CoreType.SC_SCALAR_SUBCORE,
+            use_tc_tiling_on_sc=self.USE_TC_TILING,
         ),
         **kwargs,
     )
@@ -1336,7 +1337,13 @@ class VectorSubcoreTest(PallasSCTest):
           effectful_op(scratch_ref[...])
           pltpu.sync_copy(scratch_ref, o_ref)
         pl.run_scoped(with_scratch, pltpu.VMEM(x.shape, x.dtype))
-      pl.core_map(mesh)(lambda: body(*refs))
+      pl.core_map(
+          mesh,
+          compiler_params=pltpu.CompilerParams(
+              kernel_type=pltpu.CoreType.SC_VECTOR_SUBCORE,
+              use_tc_tiling_on_sc=self.USE_TC_TILING,
+          ),
+      )(lambda: body(*refs))
 
     _, out = jax.jit(state_discharge.run_state(stateful))(
         (x, jnp.empty_like(x)))
@@ -2270,7 +2277,13 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
       y_ref = pl.empty_ref_like(pltpu.HBM(x.shape, x.dtype))
       x_ref = jax.new_ref(x)
 
-      run_kernel = pl.core_map(mesh=sc_mesh)
+      run_kernel = pl.core_map(
+          mesh=sc_mesh,
+          compiler_params=pltpu.CompilerParams(
+              kernel_type=pltpu.CoreType.SC_SCALAR_SUBCORE,
+              use_tc_tiling_on_sc=self.USE_TC_TILING,
+          ),
+      )
 
       @run_kernel
       def _():
@@ -2299,10 +2312,20 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
           out_shape=pltpu.SemaphoreType.DMA(()),
           mesh=mesh,
           name="sem_alloc",
+          compiler_params=pltpu.CompilerParams(
+              kernel_type=pltpu.CoreType.SC_SCALAR_SUBCORE,
+              use_tc_tiling_on_sc=self.USE_TC_TILING,
+          ),
       )()
       sem_ref = jax.new_ref(sem, memory_space=pltpu.SEMAPHORE)
 
-      @pl.core_map(mesh)
+      @pl.core_map(
+          mesh,
+          compiler_params=pltpu.CompilerParams(
+              kernel_type=pltpu.CoreType.SC_SCALAR_SUBCORE,
+              use_tc_tiling_on_sc=self.USE_TC_TILING,
+          ),
+      )
       def dma1():
         pltpu.async_copy(x_ref.at[index_ref[0]], y_ref, sem_ref).wait()
       index_ref[0] += 1  # TODO(b/487587946): unable to put this inside dma1
@@ -2310,7 +2333,13 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
       y1 = jax.freeze(y_ref)
       y_ref = jax.new_ref(y1)
 
-      @pl.core_map(mesh)
+      @pl.core_map(
+          mesh,
+          compiler_params=pltpu.CompilerParams(
+              kernel_type=pltpu.CoreType.SC_SCALAR_SUBCORE,
+              use_tc_tiling_on_sc=self.USE_TC_TILING,
+          ),
+      )
       def dma2():
         pltpu.async_copy(x_ref.at[index_ref[0]], y_ref, sem_ref).wait()
 

@@ -327,11 +327,6 @@ class CustomCallBackendConfig:
     if self.tiling is not None:
       config.write(b', "sparse_core_config": ')
       config.write(_compact_json_object(tiling=self.tiling.value))
-    if self.device_type is not None:
-      config.write(b', "device_type": ')
-      config.write(
-          ('"DEVICE_TYPE_' + self.device_type.upper() + '"').encode("ascii")
-      )
     if self.vmem_limit_bytes is not None:
       config.write(
           b', "scoped_memory_configs": [{"memory_space":1, "offset": 0,'
