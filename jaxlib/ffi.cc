@@ -328,9 +328,9 @@ absl::StatusOr<xla::nb_numpy_ndarray> PyFfiAnyBuffer::NumpyArray() const {
 }
 
 absl::StatusOr<nb::dict> PyFfiAnyBuffer::CudaArrayInterface() const {
-  if (device_type_ != kDLCUDA) {
+  if (device_type_ != kDLCUDA && device_type_ != kDLROCM) {
     return absl::UnimplementedError(
-        "Buffer.__cuda_array_interface__ is only supported on CUDA.");
+        "Buffer.__cuda_array_interface__ is only supported on CUDA and ROCm.");
   }
 
   nb::dict result;
