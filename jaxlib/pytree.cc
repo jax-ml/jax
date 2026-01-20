@@ -718,14 +718,17 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
       case PyTreeKind::kObject: {
 
         nb::object object = nb::borrow<nb::object>(handle);
-        nb::mapping mapping = nb::cast<nb::mapping>(nb::getattr(object, node.custom->mapping_attr));
-        nb::mapping vars = nb::cast<nb::mapping>(nb::getattr(object, "__dict__"));
+        StringSet mapping = nb::cast<StringSet>(nb::getattr(object, node.custom->mapping_attr));
+        nb::dict vars = nb::cast<nb::dict>(nb::getattr(object, "__dict__"));
+        std::vector<nb::object> meta_keys;
+        std::vector<nb::object> meta_data;
 
         node.arity = 0;
 
         for (auto k : vars.keys()) {
-            if (mapping.contains(k) && nb::cast<bool>(mapping[k])) {
+            if (mapping.count(nb::cast<std::string>(k)) > 0) {
                 node.arity++;
+                node.sorted_dict_keys.push_back(nb::borrow<nb::object>(k));
                 if (keypath.has_value()) {
                   keypath->push_back(
                       make_nb_class<GetAttrKey>(nb::cast<nb::str>(k)));
@@ -735,12 +738,10 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
                   keypath->pop_back();
                 }
             } else {
-                mapping[k] = false;
                 node.meta_data.push_back(nb::getattr(object, k));
+                node.meta_keys.push_back(nb::borrow<nb::object>(k));
             }
         }
-
-        node.node_data = std::move(mapping);
 
         break;
       }
@@ -959,18 +960,16 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
       nb::object object_class = nb::borrow<nb::object>((PyObject*)&PyBaseObject_Type);
       nb::object obj = object_class.attr("__new__")(node.custom->type);
 
-      nb::mapping mapping = nb::cast<nb::mapping>(node.node_data);
-
-      int meta_idx = 0;
-      int child_idx = 0;
-      for (auto item : mapping.items()) {
-          auto [k, v] = nb::cast<std::pair<nb::object, nb::object>>(item);
-          if (nb::cast<bool>(v)) {
-              object_class.attr("__setattr__")(obj, k, std::move(children[child_idx++]));
-          } else {
-              object_class.attr("__setattr__")(obj, k, nb::borrow(node.meta_data[meta_idx++]));
-          }
+      nb::dict dict;
+      for (int i = 0; i < node.arity; ++i) {
+        dict[node.sorted_dict_keys[i]] = std::move(children[i]);
       }
+
+      for (int i = 0; i < node.meta_keys.size(); ++i) {
+        dict[node.meta_keys[i]] = std::move(node.meta_data[i]);
+      }
+
+      nb::setattr(obj, "__dict__", std::move(dict));
 
       return obj;
     }
@@ -1177,11 +1176,11 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
             nb::cast<std::string_view>(nb::repr(std::move(object)))));
         }
 
-        nb::mapping mapping = nb::cast<nb::mapping>(nb::getattr(object, node.custom->mapping_attr));
-        nb::mapping vars = nb::cast<nb::mapping>(nb::getattr(object, "__dict__"));
+        StringSet mapping = nb::cast<StringSet>(nb::getattr(object, node.custom->mapping_attr));
+        nb::dict vars = nb::cast<nb::dict>(nb::getattr(object, "__dict__"));
 
         for (auto k : vars.keys()) {
-            if (mapping.contains(k) && nb::cast<bool>(mapping[k])) {
+            if (mapping.count(nb::cast<std::string>(k)) > 0) {
                 agenda.push_back(nb::borrow<nb::object>(
                     nb::getattr(object, k)));
             }
@@ -1761,6 +1760,8 @@ void BuildPytreeSubmodule(nb::module_& m) {
   nb::class_<PyTreeRegistry> registry(pytree, "PyTreeRegistry",
                                       nb::dynamic_attr(),
                                       nb::type_slots(PyTreeRegistry::slots_));
+
+  nb::bind_map<StringSet>(pytree, "StringSet");
 
   registry.def(nb::init<bool, bool, bool, bool, bool>(),
                nb::arg("enable_none") = true, nb::arg("enable_tuple") = true,

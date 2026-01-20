@@ -5,12 +5,16 @@ import jax.numpy as jnp
 from jax import tree_util
 import numpy as np
 
+from jax._src import lib as jaxlib
+
+jaxlib.pytree.StringSet({'hello': True, 'world': True})
+
 class ObjectRegistered:
   def __init__(self, x, y, z):
     self.x = x
     self.y = y
     self.z = z
-    self.__mapping__ = {'x': True, 'y': False, 'z': False, '__mapping__': False}
+    self.__mapping__ = jaxlib.pytree.StringSet({'x': True})
 
   def __eq__(self, other):
     return self.y == other.y and self.z == other.z and jnp.array_equal(self.x, other.x)

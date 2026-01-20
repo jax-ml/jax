@@ -25,6 +25,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -34,6 +35,8 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/string.h"
+#include <nanobind/stl/bind_map.h>
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pytree.pb.h"
 
@@ -50,6 +53,8 @@ enum class PyTreeKind {
   kDataclass,   // A dataclass.
   kObject,      // An object with attributes specified in a dict
 };
+
+using StringSet = std::map<std::string, bool>;
 
 // Registry of custom node types.
 class PyTreeRegistry {
@@ -345,8 +350,9 @@ class PyTreeDef {
     // objects that make python gc sweep slow.
     std::vector<nanobind::object> sorted_dict_keys;
 
-    // Kind-specific auxiliary data for kObject. Stores metadata values.
+    // Kind-specific auxiliary data for kObject. Stores metadata keys and values.
     std::vector<nanobind::object> meta_data;
+    std::vector<nanobind::object> meta_keys;
 
     // Custom type registration. Must be null for non-custom types.
     const PyTreeRegistry::Registration* custom = nullptr;
