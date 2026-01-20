@@ -474,7 +474,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
           (1024, 2048),
       ],
   )
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("gpu")
   def test_quantize_nvfp4(self, shape):
     # To test the q-dq logic is valid with XLA
     output_type = jnp.float32
@@ -498,7 +498,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
                               a, rtol=0.2, atol=0.5)
 
   @jtu.sample_product(value=[1e6, 1/4096])
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("gpu")
   def test_quantize_requires_global_scale(self, value):
     output_type = jnp.float32
     k1, k2 = jax.random.split(jax.random.key(0), 2)
