@@ -232,20 +232,7 @@ using *TPU v2* and not the older, deprecated TPU runtime.
 (install-mac-gpu)=
 ## Mac GPU
 
-### pip installation
-
-Apple provides an experimental Metal plugin. For details,
-refer to
-[Apple's JAX on Metal documentation](https://developer.apple.com/metal/jax/).
-
-**Note:** There are several caveats with the Metal plugin:
-
-* The Metal plugin is new and experimental and has a number of
-  [known issues](https://github.com/jax-ml/jax/issues?q=is%3Aissue+is%3Aopen+label%3A%22Apple+GPU+%28Metal%29+plugin%22).
-  Please report any issues on the JAX issue tracker.
-* The Metal plugin currently requires very specific versions of `jax` and
-  `jaxlib`. This restriction will be relaxed over time as the plugin API
-  matures.
+JAX is not supported on Mac/OSX GPU; instead use the standard {ref}`CPU installation <install-cpu>` commands.
 
 (install-amd-gpu)=
 ## AMD GPU (Linux)

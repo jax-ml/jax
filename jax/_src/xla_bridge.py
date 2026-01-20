@@ -287,9 +287,6 @@ _plugin_callback_lock = threading.Lock()
 # for unimplemented features. Wrong outputs are not acceptable.
 _nonexperimental_plugins: set[str] = {'cuda', 'rocm'}
 
-# The set of known experimental plugins that have registrations in JAX codebase.
-_experimental_plugins: set[str] = {"METAL"}
-
 def register_backend_factory(name: str, factory: BackendFactory, *,
                              priority: int = 0,
                              fail_quietly: bool = True,
@@ -708,7 +705,6 @@ for _platform, _alias in _platform_aliases.items():
 def known_platforms() -> set[str]:
   platforms = set()
   platforms |= set(_nonexperimental_plugins)
-  platforms |= set(_experimental_plugins)
   platforms |= set(_backend_factories.keys())
   platforms |= set(_platform_aliases.values())
   return platforms
