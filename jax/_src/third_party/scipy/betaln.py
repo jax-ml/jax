@@ -84,3 +84,14 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
     small_b = lax.lgamma(a_le_b) + (lax.lgamma(b_ge_a) - lax.lgamma(a_le_b + b_ge_a))
     large_b = lax.lgamma(a_le_b) + algdiv(a_le_b, b_ge_a)
     return jnp.where(b_ge_a < 8, small_b, large_b)
+
+
+def _betaln_jvp(primals, tangents):
+    a, b = primals
+    a_dot, b_dot = tangents
+    y = betaln(a, b)
+    psi_ab = lax.digamma(a + b)
+    return y, (lax.digamma(a) - psi_ab) * a_dot + (lax.digamma(b) - psi_ab) * b_dot
+
+
+betaln.defjvp(_betaln_jvp)
