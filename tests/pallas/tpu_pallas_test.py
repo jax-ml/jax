@@ -4268,6 +4268,57 @@ class ExplicitMXUTest(jtu.JaxTestCase):
     out_ref = matmul_ref(x, y).block_until_ready()
     np.testing.assert_array_equal(out, out_ref)
 
+  def test_two_mxus(self):
+    dtype = jnp.bfloat16
+    m = k = n = 256
+    generator = np.random.default_rng(1234)
+    x = generator.normal(size=(m, k)).astype(dtype)
+    y0 = generator.normal(size=(k, n)).astype(dtype)
+    y1 = generator.normal(size=(k, n)).astype(dtype)
+
+    def matmul_kernel(x_ref, y0_ref, y1_ref, o0_ref, o1_ref):
+      pltpu.matmul_push_rhs(
+          y0_ref[...], mxu_index=0, staging_register=0
+      )
+      pltpu.matmul_push_rhs(
+          y1_ref[...], mxu_index=1, staging_register=0
+      )
+      pltpu.matmul_acc_lhs(
+          acc_addr=0, lhs=x_ref[...], mxu_index=0, load_staged_rhs=0
+      )
+      pltpu.matmul_acc_lhs(
+          acc_addr=0, lhs=x_ref[...], mxu_index=1, load_staged_rhs=0
+      )
+      o0_ref[...] = pltpu.matmul_pop(
+          acc_addr=0, shape=(m, n), dtype=jnp.float32, mxu_index=0
+      )
+      o1_ref[...] = pltpu.matmul_pop(
+          acc_addr=0, shape=(m, n), dtype=jnp.float32, mxu_index=1
+      )
+
+    matmul = pl.pallas_call(
+        matmul_kernel,
+        out_shape=(
+            jax.ShapeDtypeStruct((m, n), jnp.float32),
+            jax.ShapeDtypeStruct((m, n), jnp.float32),
+        ),
+    )
+
+    out0, out1 = matmul(x, y0, y1)
+
+    out0_ref = jnp.matmul(
+        x.astype(jnp.float32),
+        y0.astype(jnp.float32),
+        preferred_element_type=jnp.float32,
+    )
+    out1_ref = jnp.matmul(
+        x.astype(jnp.float32),
+        y1.astype(jnp.float32),
+        preferred_element_type=jnp.float32,
+    )
+    np.testing.assert_allclose(out0, out0_ref, atol=1e-3, rtol=1e-3)
+    np.testing.assert_allclose(out1, out1_ref, atol=1e-3, rtol=1e-3)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
