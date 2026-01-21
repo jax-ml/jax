@@ -175,7 +175,11 @@ TEST(CustomCallTest, KernelCompilationIsCached) {
     absl::ScopedMockLog log;
     EXPECT_CALL(log,
                 Log(absl::LogSeverity::kInfo, _,
-                    "Successfully compiled and initialized Mosaic GPU kernel"))
+                    "Successfully compiled Mosaic GPU kernel"))
+        .Times(1);
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    "Successfully initialized Mosaic GPU kernel"))
         .Times(1);
     log.StartCapturingLogs();
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
@@ -186,7 +190,11 @@ TEST(CustomCallTest, KernelCompilationIsCached) {
     absl::ScopedMockLog log;
     EXPECT_CALL(log,
                 Log(absl::LogSeverity::kInfo, _,
-                    "Successfully compiled and initialized Mosaic GPU kernel"))
+                    "Successfully compiled Mosaic GPU kernel"))
+        .Times(0);
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    "Successfully initialized Mosaic GPU kernel"))
         .Times(0);
     log.StartCapturingLogs();
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
