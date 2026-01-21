@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
 import itertools as it
@@ -955,6 +956,49 @@ class HijaxTest(jtu.JaxTestCase):
     x = jnp.arange(10)
     result = jax.jit(partial(jax.lax.platform_dependent, cpu=square, default=square))(x)
     self.assertArraysAllClose(result, x ** 2)
+
+  def test_hijax_primitive_under_remat(self):
+    class Square(VJPHiPrimitive):
+      _jvp_execution_count = 0
+
+      @classmethod
+      @contextmanager
+      def assert_jvp_rule_called_once(cls):
+        initial_count = cls._jvp_execution_count
+        yield
+        self.assertEqual(cls._jvp_execution_count, initial_count + 1)
+
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def jvp(self, primals, tangents):
+        self.__class__._jvp_execution_count += 1
+        (x,), (t,) = primals, tangents
+        return self(x), t * 2 * x
+
+    @jax.remat
+    def square(x):
+      return Square(jax.typeof(x))(x)
+
+    x = jnp.arange(10)
+    expected = x ** 2
+    with self.subTest("no jit"):
+      self.assertArraysAllClose(square(x), expected)
+    with self.subTest("jit"):
+      self.assertArraysAllClose(jax.jit(square)(x), expected)
+
+    x = jnp.float32(2.0)
+    expected_grad = jnp.float32(4.0)
+    with self.subTest("jit-of-grad"):
+      with Square.assert_jvp_rule_called_once():
+        actual_grad = jax.jit(jax.grad(square))(x)
+      self.assertArraysAllClose(actual_grad, expected_grad)
 
 
 class BoxTest(jtu.JaxTestCase):
