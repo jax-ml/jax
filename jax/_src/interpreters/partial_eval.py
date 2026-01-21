@@ -51,7 +51,6 @@ from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            as_hashable_function, weakref_lru_cache,
                            multi_weakref_lru_cache, subs_list,
                            HashableFunction, foreach, test_event)
-from jax._src.lib import jaxlib_extension_version
 
 
 map, unsafe_map = safe_map, map
