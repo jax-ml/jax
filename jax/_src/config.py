@@ -1255,6 +1255,13 @@ pmap_shmap_merge = bool_state(
     validator=_default_pmap_shmap_merge,
 )
 
+custom_vjp3 = bool_state(
+    name='jax_custom_vjp3',
+    default=False,
+    upgrade=True,
+    help='If True, embrace the future of custom autodiff rules.',
+)
+
 
 distributed_debug = bool_state(
     name='jax_distributed_debug',

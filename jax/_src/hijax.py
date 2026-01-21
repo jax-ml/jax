@@ -689,7 +689,7 @@ class custom_vjp3:
   fwd: Callable | None = None
   bwd: Callable | None = None
 
-  def __init__(self, f, *, nondiff_argnums=(), nondiff_argnames=()):
+  def __init__(self, f, nondiff_argnums=(), nondiff_argnames=()):
     self.f = f
     self.static_argnums = _set_up_nondiff(f, nondiff_argnums, nondiff_argnames)
 
