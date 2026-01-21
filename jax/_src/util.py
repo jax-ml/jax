@@ -29,7 +29,7 @@ import weakref
 import numpy as np
 
 from jax._src import config
-from jax._src.lib import weakref_lru_cache as _weakref_lru_cache
+from jax._src.lib import weakref_lru_cache as lib_weakref_lru_cache
 from jax._src.lib import utils as jaxlib_utils
 from jax._src.lib import jaxlib_extension_version
 
@@ -335,7 +335,7 @@ memoize = cache(max_size=None)
 def _ignore(): return None
 
 def weakref_lru_cache(
-    call: Callable, maxsize: int | None = 2048,
+    f=None, *, maxsize: int | None = 2048,
     trace_context_in_key: bool = True, explain: Callable | None = None):
   """
   Least recently used cache decorator with weakref support.
@@ -344,15 +344,22 @@ def weakref_lru_cache(
   and strong refs to all other arguments. In all other respects it should
   behave similar to `functools.lru_cache`. The cache is thread local.
   """
+  kwargs = dict(maxsize=maxsize, trace_context_in_key=trace_context_in_key,
+                explain=explain)
+  if f is None:
+    return lambda g: _weakref_lru_cache(g, **kwargs)
+  return _weakref_lru_cache(f, **kwargs)
+
+def _weakref_lru_cache(f, maxsize, trace_context_in_key, explain):
   if jaxlib_extension_version >= 396:
-    cached_call = _weakref_lru_cache.weakref_lru_cache(  # type: ignore
-        config.trace_context if trace_context_in_key else _ignore, call, maxsize,  # type: ignore
+    cached_f = lib_weakref_lru_cache.weakref_lru_cache(  # type: ignore
+        config.trace_context if trace_context_in_key else _ignore, f, maxsize,  # type: ignore
         explain = lambda: explain if config.explain_cache_misses.value else None)  # type: ignore
   else:
-    cached_call = _weakref_lru_cache.weakref_lru_cache(
-        config.trace_context if trace_context_in_key else _ignore, call, maxsize)
-  register_cache(cached_call, str(call))
-  return cached_call
+    cached_f = lib_weakref_lru_cache.weakref_lru_cache(
+        config.trace_context if trace_context_in_key else _ignore, f, maxsize)
+  register_cache(cached_f, str(f))
+  return cached_f
 
 
 @dataclasses.dataclass(frozen=True, slots=True, weakref_slot=True)
@@ -450,7 +457,7 @@ def multi_weakref_lru_cache(
       return call(*orig_args, **orig_kwargs)
 
 
-    cached_call = _weakref_lru_cache.weakref_lru_cache(
+    cached_call = lib_weakref_lru_cache.weakref_lru_cache(
         config.trace_context if trace_context_in_key else _ignore,
         cache_miss, maxsize
     )

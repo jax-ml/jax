@@ -2386,8 +2386,7 @@ def diff_types(dbg, new_leaves, old_leaves):
   if diffs: return 3, len(diffs), msg
 
 
-@partial(weakref_lru_cache, explain=explain,
-         maxsize=None if jaxlib_extension_version >= 396 else 8192)
+@weakref_lru_cache(maxsize=None, explain=explain)
 def trace_to_jaxpr(
     fun: Callable,
     in_avals: FlatTree,  # (args, kwargs) pair
