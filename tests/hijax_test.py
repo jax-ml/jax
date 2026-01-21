@@ -938,6 +938,24 @@ class HijaxTest(jtu.JaxTestCase):
     g(x)
     jax.jit(g)(x)
 
+  def test_hijax_cond_platform_dependent(self):
+    class Square(VJPHiPrimitive):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+    def square(x):
+      return Square(jax.typeof(x))(x)
+
+    x = jnp.arange(10)
+    result = jax.jit(partial(jax.lax.platform_dependent, cpu=square, default=square))(x)
+    self.assertArraysAllClose(result, x ** 2)
+
 
 class BoxTest(jtu.JaxTestCase):
 
