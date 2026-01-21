@@ -11,7 +11,7 @@ opt-einsum
 # Needed to build wheels
 build
 setuptools
-wheel
+wheel!=0.46.1
 
 # JAX's own libraries. We include these in the requirements so you can
 # bazel test without building jaxlib and without manually updating the
