@@ -285,20 +285,21 @@ jax_wheel(
     name = "jax_rocm_plugin_wheel",
     enable_rocm = True,
     no_abi = False,
-    platform_version = "60",
+    platform_version = "7",
+    reproducible = True,
     source_files = [":jax_plugin_sources"],
     wheel_binary = ":build_gpu_kernels_wheel_tool",
-    wheel_name = "jax_rocm60_plugin",
+    wheel_name = "jax_rocm7_plugin",
 )
 
 jax_wheel(
     name = "jax_rocm_plugin_wheel_editable",
     editable = True,
     enable_rocm = True,
-    platform_version = "60",
+    platform_version = "7",
     source_files = [":jax_plugin_sources"],
     wheel_binary = ":build_gpu_kernels_wheel_tool",
-    wheel_name = "jax_rocm60_plugin",
+    wheel_name = "jax_rocm7_plugin",
 )
 
 # JAX PJRT wheel targets.
@@ -394,20 +395,21 @@ jax_wheel(
     name = "jax_rocm_pjrt_wheel",
     enable_rocm = True,
     no_abi = True,
-    platform_version = "60",
+    platform_version = "7",
+    reproducible = True,
     source_files = [":jax_pjrt_sources"],
     wheel_binary = ":build_gpu_plugin_wheel_tool",
-    wheel_name = "jax_rocm60_pjrt",
+    wheel_name = "jax_rocm7_pjrt",
 )
 
 jax_wheel(
     name = "jax_rocm_pjrt_wheel_editable",
     editable = True,
     enable_rocm = True,
-    platform_version = "60",
+    platform_version = "7",
     source_files = [":jax_pjrt_sources"],
     wheel_binary = ":build_gpu_plugin_wheel_tool",
-    wheel_name = "jax_rocm60_pjrt",
+    wheel_name = "jax_rocm7_pjrt",
 )
 
 # Py_import targets.
@@ -463,6 +465,16 @@ py_import(
     name = "jax_cuda_pjrt_py_import",
     wheel = ":jax_cuda{cuda}_pjrt_wheel".format(cuda = cuda_major_version),
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
+)
+
+py_import(
+    name = "jax_rocm_plugin_py_import",
+    wheel = ":jax_rocm_plugin_wheel",
+)
+
+py_import(
+    name = "jax_rocm_pjrt_py_import",
+    wheel = ":jax_rocm_pjrt_wheel",
 )
 
 # The targets below are used for GPU tests with `--//jax:build_jaxlib=false`.

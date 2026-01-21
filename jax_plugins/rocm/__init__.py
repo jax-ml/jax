@@ -18,13 +18,12 @@ import logging
 import os
 import pathlib
 
-from jax._src.lib import triton
 from jax._src.lib import xla_client
 import jax._src.xla_bridge as xb
 
 # rocm_plugin_extension locates inside jaxlib. `jaxlib` is for testing without
 # preinstalled jax rocm plugin packages.
-for pkg_name in ['jax_rocm60_plugin', 'jaxlib.cuda']:
+for pkg_name in ['jax_rocm7_plugin', 'jax_rocm60_plugin', 'jaxlib.rocm']:
   try:
     rocm_plugin_extension = importlib.import_module(
         f'{pkg_name}.rocm_plugin_extension'
@@ -106,13 +105,6 @@ def initialize():
     for _name, _value in rocm_plugin_extension.ffi_handlers().items():
       xla_client.register_custom_call_target(
           _name, _value, platform='ROCM', api_version=1
-      )
-    if hasattr(rocm_plugin_extension, 'compile_triton_to_asm'):
-      triton.register_compilation_handler(
-          "ROCM",
-          functools.partial(
-              rocm_plugin_extension.compile_triton_to_asm, c_api
-          ),
       )
   else:
     logger.warning('rocm_plugin_extension is not found.')
