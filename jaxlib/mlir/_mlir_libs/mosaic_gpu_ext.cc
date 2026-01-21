@@ -504,6 +504,28 @@ NB_MODULE(_mosaic_gpu_ext, m) {
             return *result;
           },
           nb::arg("axes"))
+      .def("thread_idxs",
+           [](const mgpu::TiledLayout& self, const std::vector<int64_t>& shape,
+              nb::object ip, nb::object loc) {
+             auto builder = MlirBuilder(ip, loc);
+             if (!builder.ok()) {
+               throw nb::value_error(builder.status().message().data());
+             }
+
+             auto result = self.ThreadIdxs(*builder, shape);
+             if (!result.ok()) {
+               throw nb::value_error(result.status().message().data());
+             }
+             nb::list list;
+             for (const auto& row : *result) {
+               nb::list inner_list;
+               for (const auto& val : row) {
+                 inner_list.append(nb::cast(wrap(val)));
+               }
+               list.append(nb::tuple(inner_list));
+             }
+             return list;
+           })
       .def("__str__", &mgpu::TiledLayout::ToString)
       .def("__repr__", &mgpu::TiledLayout::ToString)
       .def("__hash__",

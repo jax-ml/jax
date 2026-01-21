@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <ostream>
 #include <sstream>
@@ -90,6 +91,40 @@ mlir::Value ThreadIdx(mlir::ImplicitLocOpBuilder& builder) {
   }
 
   return idx;
+}
+
+// Returns the dot product of `a` and `b`.
+mlir::Value DynDot(mlir::ImplicitLocOpBuilder& builder,
+                   const std::vector<mlir::Value>& a,
+                   const std::vector<mlir::Value>& b) {
+  CHECK(a.size() == b.size()) << "Vectors must have the same size";
+  mlir::Value res = mlir::arith::ConstantOp::create(
+      builder, a[0].getType(), builder.getIntegerAttr(a[0].getType(), 0));
+  for (auto [lhs, rhs] : llvm::zip(a, b)) {
+    mlir::Value prod = mlir::arith::MulIOp::create(builder, lhs, rhs);
+    res = mlir::arith::AddIOp::create(builder, res, prod);
+  }
+  return res;
+}
+
+// Returns the nd-indices of all the elements in `shape`.
+std::vector<std::vector<int64_t>> NdIndices(const std::vector<int64_t>& shape) {
+  std::vector<int64_t> idx(shape.size(), 0);
+  std::vector<std::vector<int64_t>> result;
+
+  std::function<void(int64_t)> gen = [&](int64_t rank) {
+    if (rank == shape.size()) {
+      result.push_back(idx);
+      return;
+    }
+    for (size_t j = 0; j < shape[rank]; ++j) {
+      idx[rank] = j;
+      gen(rank + 1);
+    }
+  };
+
+  gen(0);
+  return result;
 }
 
 }  // namespace
@@ -885,6 +920,66 @@ absl::StatusOr<TiledLayout> TiledLayout::Reduce(
     TF_ASSIGN_OR_RETURN(reduced_layout, reduced_layout.RemoveDimension(a));
   }
   return reduced_layout;
+}
+
+absl::StatusOr<std::vector<std::vector<mlir::Value>>> TiledLayout::ThreadIdxs(
+    mlir::ImplicitLocOpBuilder& builder,
+    const std::vector<int64_t>& shape) const {
+  mlir::Type i32 = builder.getIntegerType(32);
+  mlir::IndexType index_type = builder.getIndexType();
+  TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_tiling_shape,
+                      TiledTilingShape());
+  TF_ASSIGN_OR_RETURN(std::vector<mlir::Value> lane_indices,
+                      LaneIndices(builder));
+  TF_ASSIGN_OR_RETURN(std::vector<mlir::Value> warp_indices,
+                      WarpIndices(builder));
+
+  std::vector<int64_t> contig_strides(shape.size());
+  int64_t stride = 1;
+  for (int i = shape.size() - 1; i >= 0; --i) {
+    contig_strides[i] = stride;
+    stride *= shape[i];
+  }
+  std::vector<int64_t> tile_strides = tiling_.TileStrides(contig_strides);
+
+  std::vector<mlir::Value> dyn_tile_strides;
+  for (size_t i = tile_strides.size() - tiled_tiling_shape.size();
+       i < tile_strides.size(); ++i) {
+    dyn_tile_strides.push_back(mlir::arith::ConstantOp::create(
+        builder, i32, builder.getIntegerAttr(i32, tile_strides[i])));
+  }
+
+  mlir::Value warp_offset = DynDot(builder, warp_indices, dyn_tile_strides);
+  mlir::Value lane_offset = DynDot(builder, lane_indices, dyn_tile_strides);
+  mlir::Value dyn_offset =
+      mlir::arith::AddIOp::create(builder, warp_offset, lane_offset);
+
+  TF_ASSIGN_OR_RETURN(std::vector<int64_t> reg_shape, RegistersShape(shape));
+  std::vector<std::vector<mlir::Value>> indices;
+
+  for (const std::vector<int64_t>& tile_idx : NdIndices(reg_shape)) {
+    int64_t tile_lin_idx = 0;
+    for (size_t i = 0; i < tile_idx.size(); ++i) {
+      tile_lin_idx += tile_idx[i] * tile_strides[i];
+    }
+    mlir::Value dyn_lin_idx = mlir::arith::AddIOp::create(
+        builder, dyn_offset,
+        mlir::arith::ConstantOp::create(
+            builder, i32, builder.getIntegerAttr(i32, tile_lin_idx)));
+
+    std::vector<mlir::Value> idx;
+    idx.reserve(contig_strides.size());
+    for (const auto& contig_stride : contig_strides) {
+      mlir::Value s = mlir::arith::ConstantOp::create(
+          builder, i32, builder.getIntegerAttr(i32, contig_stride));
+      mlir::Value div = mlir::arith::DivUIOp::create(builder, dyn_lin_idx, s);
+      idx.push_back(mlir::arith::IndexCastOp::create(builder, index_type, div));
+      dyn_lin_idx = mlir::arith::RemUIOp::create(builder, dyn_lin_idx, s);
+    }
+    indices.push_back(idx);
+  }
+
+  return indices;
 }
 
 }  // namespace jax::mosaic::gpu

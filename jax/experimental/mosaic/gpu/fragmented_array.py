@@ -410,6 +410,15 @@ class TiledLayout:
   def thread_idxs(self, shape: tuple[int, ...]) -> Iterable[tuple[ir.Value, ...]]:
     # We first find the linear index and then divide by the shape to
     # get the index.
+    if cc_method_exists(self, "thread_idxs"):
+      yield from self.dispatch_to_cc(
+          "thread_idxs",
+          shape,
+          ir.InsertionPoint.current,
+          ir.Location.current,
+          check_canonical=False,
+      )
+      return
     i32 = ir.IntegerType.get_signless(32)
     index = ir.IndexType.get()
     contig_strides = tuple(utils.get_contiguous_strides(shape))

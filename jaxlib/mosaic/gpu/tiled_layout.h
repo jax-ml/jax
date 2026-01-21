@@ -25,7 +25,6 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/IR/Location.h"
 #include "mlir/IR/Value.h"
 
 namespace jax::mosaic::gpu {
@@ -242,6 +241,17 @@ class TiledLayout {
 
   // Returns a layout with the given dimensions reduced across `axes`.
   absl::StatusOr<TiledLayout> Reduce(const std::vector<int64_t>& axes) const;
+
+  // Returns the nd-indices of all the elements the current thread is holding
+  // given `shape`. The order of the returned nd-indices is such that the last
+  // dimension of the register shape is iterated over first.
+  //
+  // E.g. for a register shape of (4, 2) the values returned correspond to the
+  // following register order:
+  //   (0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1), (3, 0), (3, 1)
+  absl::StatusOr<std::vector<std::vector<mlir::Value>>> ThreadIdxs(
+      mlir::ImplicitLocOpBuilder& builder,
+      const std::vector<int64_t>& shape) const;
 
   template <typename H>
   friend H AbslHashValue(H h, const TiledLayout& layout) {

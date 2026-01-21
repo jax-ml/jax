@@ -434,6 +434,7 @@ cc_test(
     deps = [
         ":tiled_layout",
         "//testing/base/public:gunit_main",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
