@@ -912,7 +912,7 @@ jax_multiplatform_test(
         "gpu_h100_x32",
         "gpu_b200",
     ],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     tags = [
         "manual",
         "notap",
@@ -935,7 +935,7 @@ jax_multiplatform_test(
         "gpu_h100",
         "gpu_b200",
     ],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     shard_count = 8,
     tags = [
         "mosaic_gpu_test",
@@ -955,7 +955,7 @@ jax_multiplatform_test(
     srcs = ["mgpu_examples_test.py"],
     enable_backends = [],
     enable_configs = ["gpu_b200"],
-    # env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    # env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     shard_count = 8,
     tags = [
         "mosaic_gpu_test",
@@ -980,7 +980,7 @@ jax_multiplatform_test(
         "gpu_h100",
         "gpu_b200",
     ],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     shard_count = 8,
     tags = ["mosaic_gpu_test"],
     deps = [
@@ -998,7 +998,7 @@ jax_multiplatform_test(
     srcs = ["//jax/experimental/pallas/ops/gpu:hopper_matmul_mgpu.py"],
     enable_backends = [],
     enable_configs = ["gpu_h100"],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     tags = [
         "manual",
         "notap",
@@ -1017,7 +1017,7 @@ jax_multiplatform_test(
     srcs = ["//jax/experimental/pallas/ops/gpu:hopper_mixed_type_matmul_mgpu.py"],
     enable_backends = [],
     enable_configs = ["gpu_h100"],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     tags = [
         "manual",
         "notap",
@@ -1058,7 +1058,7 @@ jax_multiplatform_test(
     ],
     enable_backends = [],
     enable_configs = ["gpu_b200"],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     main = "//jax/experimental/pallas/ops/gpu:blackwell_ragged_dot_mgpu.py",
     tags = [
         "manual",
@@ -1082,7 +1082,7 @@ jax_multiplatform_test(
         "gpu_h100",
         "gpu_b200",
     ],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     tags = [
         "manual",
         "notap",
@@ -1103,7 +1103,7 @@ jax_multiplatform_test(
         "gpu_h100_x32",
         "gpu_h100",
     ],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     tags = [
         "manual",
         "notap",
@@ -1123,7 +1123,7 @@ jax_multiplatform_test(
         "gpu_h100",
         "gpu_b200",
     ],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     shard_count = 20,
     tags = [
         "mosaic_gpu_test",
@@ -1177,7 +1177,7 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_h100_x32",
     ],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     tags = [
         "noasan",
     ],
