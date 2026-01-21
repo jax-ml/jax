@@ -2315,8 +2315,15 @@ batching.skippable_batchers[reshard_p] = lambda _: ()
 
 # -------------------- auto and user mode -------------------------
 
+@dataclass(frozen=True, kw_only=True)
+class MeshInfo:
+  prev: AbstractMesh
+  new: AbstractMesh
+  axes: Any
+
 def _get_new_mesh(axes: str | tuple[str, ...] | None,
-                  axis_type: mesh_lib.AxisType, name: str, shardings=None):
+                  axis_type: mesh_lib.AxisType, name: str, shardings=None
+                  ) -> MeshInfo | None:
   cur_mesh = mesh_lib.get_abstract_mesh()
   flat_shardings, _ = tree_flatten(shardings)
   sharding_mesh = mesh_lib.empty_abstract_mesh
@@ -2329,10 +2336,7 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
       sharding_mesh = i.mesh.abstract_mesh
 
   if sharding_mesh.empty and cur_mesh.empty:
-    raise ValueError(
-        f'Context mesh {cur_mesh} cannot be empty. Please use'
-        ' `jax.set_mesh` API to enter into a mesh context when using'
-        f' `{name}` API.')
+    return None
   if not sharding_mesh.empty and not cur_mesh.empty:
     if sharding_mesh != cur_mesh:
       raise ValueError(
@@ -2357,8 +2361,9 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
           'Going from `Manual` AxisType to `Auto` or `Explicit` AxisType is not'
           ' allowed. Please file a bug at https://github.com/jax-ml/jax/issues'
           ' with your use case')
-  return (mesh_to_use.update_axis_types({a: axis_type for a in axes}),
-          mesh_to_use, axes)
+  new_mesh = mesh_to_use.update_axis_types({a: axis_type for a in axes})
+  return MeshInfo(prev=mesh_to_use, new=new_mesh, axes=axes)
+
 
 def auto_axes(f=None, /, *, axes: str | tuple[str, ...] | None = None,
               out_sharding=None):
@@ -2377,13 +2382,15 @@ def _auto_axes(fun, *, axes_, out_sharding):
         raise TypeError("Missing required keyword argument: 'out_sharding'")
     else:
       _out_sharding = out_sharding
-    new_mesh, prev_mesh, axes = _get_new_mesh(
+    mesh_info = _get_new_mesh(
         axes_, mesh_lib.AxisType.Auto, 'auto_axes', shardings=_out_sharding)
-    if set(prev_mesh.auto_axes) == set(axes):
+    if mesh_info is None:
       return fun(*args, **kwargs)
-    with mesh_lib.use_abstract_mesh(new_mesh):
+    if set(mesh_info.prev.auto_axes) == set(mesh_info.axes):
+      return fun(*args, **kwargs)
+    with mesh_lib.use_abstract_mesh(mesh_info.new):
       in_specs = tree_map(lambda a: core.modify_spec_for_auto_manual(
-          core.get_aval(a).sharding.spec, new_mesh), args)
+          core.get_aval(a).sharding.spec, mesh_info.new), args)
       args = reshard(args, in_specs)
       out = fun(*args, **kwargs)
     return reshard(out, _out_sharding)
@@ -2407,9 +2414,12 @@ def _explicit_axes(fun, *, axes, in_sharding):
         raise TypeError("Missing required keyword argument: 'in_sharding'")
     else:
       _in_sharding = in_sharding
-    new_mesh, _, _ = _get_new_mesh(axes, mesh_lib.AxisType.Explicit,
-                                   'explicit_axes')
-    with mesh_lib.use_abstract_mesh(new_mesh):
+    mesh_info = _get_new_mesh(axes, mesh_lib.AxisType.Explicit, 'explicit_axes')
+    if mesh_info is None:
+      raise ValueError(
+          'Context mesh cannot be empty. Please use `jax.set_mesh` API to enter'
+          ' into a mesh context when using `explicit_axes` API.')
+    with mesh_lib.use_abstract_mesh(mesh_info.new):
       args = reshard(args, _in_sharding)
       out = fun(*args, **kwargs)
     out_specs = tree_map(lambda o: core.modify_spec_for_auto_manual(

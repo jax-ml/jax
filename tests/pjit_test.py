@@ -10111,6 +10111,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ValueError, "Unmapped values passed to vmap cannot be sharded"):
       jax.jit(jax.vmap(jax.grad(einsum_loss), in_axes=(None, 0)))(a, b)
 
+  def test_no_op_auto_axes_no_mesh(self):
+    @auto_axes(out_sharding=P())
+    def g(x):
+      return x
+
+    @jax.jit
+    def f(x):
+      return g(x)
+
+    f(np.arange(8))  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
