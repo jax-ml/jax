@@ -130,6 +130,8 @@ def prepare_wheel_cuda(
   write_setup_cfg(wheel_sources_path, cpu)
 
   plugin_dir = wheel_sources_path / f"jax_cuda{cuda_version}_plugin"
+  plugin_dir.mkdir(parents=True, exist_ok=True)
+  (plugin_dir / "__init__.py").touch()
   copy_files(
       dst_dir=plugin_dir,
       src_files=[
@@ -182,6 +184,8 @@ def prepare_wheel_rocm(
   write_setup_cfg(wheel_sources_path, cpu)
 
   plugin_dir = wheel_sources_path / f"jax_rocm{rocm_version}_plugin"
+  plugin_dir.mkdir(parents=True, exist_ok=True)
+  (plugin_dir / "__init__.py").touch()
   copy_files(
       dst_dir=plugin_dir,
       src_files=[

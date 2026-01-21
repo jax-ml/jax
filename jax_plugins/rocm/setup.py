@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Setup script for JAX ROCm PJRT plugin package."""
+
 import importlib
 import os
 from setuptools import setup, find_namespace_packages
@@ -25,6 +27,7 @@ package_name = f"jax_plugins.xla_rocm{rocm_version}"
 default_rocm_path = "/opt/rocm"
 rocm_path = os.getenv("ROCM_PATH", default_rocm_path)
 rocm_detected_version = rocm_path.split('-')[-1] if '-' in rocm_path else "unknown"
+rocm_tag = os.getenv("ROCM_VERSION_EXTRA")
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -35,6 +38,8 @@ def load_version_module(pkg_path):
 
 _version_module = load_version_module(f"jax_plugins/xla_rocm{rocm_version}")
 __version__ = _version_module._get_version_for_build()
+if rocm_tag:
+  __version__ = __version__ + "+rocm" + rocm_tag
 
 packages = find_namespace_packages(
     include=[
