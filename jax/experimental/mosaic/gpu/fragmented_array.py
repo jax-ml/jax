@@ -2637,13 +2637,23 @@ class FragmentedArray:
     out_regs = np.empty(remaining_shape, dtype=object)
     index = ir.IndexType.get()
     for out_idx in np.ndindex(remaining_shape):
-      out_reg = None
-      for red_idx in np.ndindex(reduced_shape):
+      # Compute partial reductions, breaking the dependency between subsequent
+      # element-wise operations. This, combined with scheduling of other warps,
+      # helps to hide the latency of the SM's pipeline.
+      # NOTE: This changes operation order and increases register usage.
+      num_partial_results = 4
+      out_reg_parts = [None] * num_partial_results
+      for i, red_idx in enumerate(np.ndindex(reduced_shape)):
         src_idx = tuple(o + r for o, r in zip(out_idx, red_idx))
-        if out_reg is None:
-          out_reg = self.registers[src_idx]
+        slot = i % num_partial_results
+        if out_reg_parts[slot] is None:
+          out_reg_parts[slot] = self.registers[src_idx]
         else:
-          out_reg = op(out_reg, self.registers[src_idx])
+          out_reg_parts[slot] = op(out_reg_parts[slot], self.registers[src_idx])
+      out_reg = None
+      for part in out_reg_parts:
+        if part is not None:
+          out_reg = part if out_reg is None else op(out_reg, part)
       assert out_reg is not None
       # Reduce within the vector dimension, if necessary.
       if reduced_dims[layout.vector_dim]:
