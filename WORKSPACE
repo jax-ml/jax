@@ -60,6 +60,8 @@ python_init_repositories(
         "jaxlib*",
         "jax_cuda*",
         "jax-cuda*",
+        "jax_rocm*",
+        "jax-rocm*",
     ],
     local_wheel_workspaces = ["//jaxlib:jax.bzl"],
     requirements = {
