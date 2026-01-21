@@ -786,7 +786,7 @@ def _lower_as_gpu_kernel(
       arg_refs = []
       # XLA will pass in inout refs again as outputs, but we ignore them.
       for i, ref_ty in enumerate([*in_ref_tys, *inout_ref_tys, *out_ref_tys]):
-        ptr = llvm.LoadOp(ptr_ty, llvm.GEPOp(ptr_ty, buffers, [], [i], ptr_ty, llvm.GEPNoWrapFlags.none))
+        ptr = llvm.load(ptr_ty, utils.getelementptr(buffers, [i], ptr_ty))
         arg_refs.append(utils.ptr_as_memref(ptr, ir.MemRefType(ref_ty)))
       prof_buffer = arg_refs.pop() if prof_spec is not None else None
       with _launch(
