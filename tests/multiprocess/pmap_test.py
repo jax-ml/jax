@@ -87,6 +87,7 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
     self.assertEqual(ps._device_assignment, pmap_in_sharding._device_assignment)
     self.assertEqual(ps.sharding_spec, pmap_in_sharding.sharding_spec)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_global_axis_size_initial_style(self):
     xs = jnp.ones(jax.local_device_count())
     pmapped_f = jax.pmap(lambda x: jax.lax.all_gather(x, "i"), axis_name="i")

@@ -3538,11 +3538,17 @@ class APITest(jtu.JaxTestCase):
       api.vmap(lambda x: x)({})
 
   def test_pmap_empty_arguments(self):
-    with self.assertRaisesRegex(
-        ValueError,
-        "pmap wrapped function must be passed at least one argument "
-        r"containing an array, got empty \*args=\(\{\},\) and \*\*kwargs=\{\}"):
-      api.pmap(lambda x: x)({})
+    if config.pmap_shmap_merge.value:
+      with self.assertRaisesRegex(
+          ValueError,
+          "pmap requires at least one argument with a mapped axis."):
+        api.pmap(lambda x: x)({})
+    else:
+      with self.assertRaisesRegex(
+          ValueError,
+          "pmap wrapped function must be passed at least one argument "
+          r"containing an array, got empty \*args=\(\{\},\) and \*\*kwargs=\{\}"):
+        api.pmap(lambda x: x)({})
 
   @jtu.thread_unsafe_test()  # counting compilations isn't thread-safe
   def test_pmap_global_cache(self):

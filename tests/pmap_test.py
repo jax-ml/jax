@@ -661,10 +661,17 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testMismatchedAxisSizes(self):
     n = jax.device_count()
     f = self.pmap(lambda x, y: x + y)
-    self.assertRaisesRegex(
-        ValueError,
-        "pmap got inconsistent sizes for array axes to be mapped",
-        lambda: f(self.rng().randn(n), self.rng().randn(n - 1)))
+    if config.pmap_shmap_merge.value:
+      self.assertRaisesRegex(
+          ValueError,
+          # NOTE(dsuo): Different error message on device/version.
+          ".*",
+          lambda: f(self.rng().randn(n), self.rng().randn(n - 1)))
+    else:
+      self.assertRaisesRegex(
+          ValueError,
+          "pmap got inconsistent sizes for array axes to be mapped",
+          lambda: f(self.rng().randn(n), self.rng().randn(n - 1)))
 
   def testInAxesPyTreePrefixMismatchError(self):
     x = jnp.array([3.14])
