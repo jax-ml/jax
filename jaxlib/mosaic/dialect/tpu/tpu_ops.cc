@@ -1322,11 +1322,10 @@ LogicalResult SemaphoreSignalOp::verify() {
                           stringifyCoreType(issuing_core_type)));
     }
   }
-  if ((issuing_core_type == CoreType::kTc &&
-       target_core_type == CoreType::kScScalarSubcore) ||
-      (issuing_core_type == CoreType::kScScalarSubcore &&
-       target_core_type == CoreType::kTc)) {
-    return emitOpError("Signalling between TC and SC is not implemented");
+  if (issuing_core_type != CoreType::kScVectorSubcore &&
+      target_core_type == CoreType::kScVectorSubcore) {
+    return emitOpError(
+        "Signalling remote SC vectore subcore is not implemented");
   }
   return success();
 }
