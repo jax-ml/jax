@@ -800,10 +800,6 @@ class OpsTest(ptu.PallasTPUTest):
     unpacked_dtype, packed_dtype = config
     if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("Requires TPU v5+")
-    if dtypes.itemsize_bits(
-        unpacked_dtype
-    ) != 32 and not jtu.is_cloud_tpu_at_least(2026, 1, 2):
-      self.skipTest("Test requires libtpu from 2026/01/02 or later")
 
     src_bitwidth = dtypes.itemsize_bits(unpacked_dtype)
     tgt_bitwidth = dtypes.itemsize_bits(packed_dtype)

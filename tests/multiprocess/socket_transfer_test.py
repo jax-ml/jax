@@ -16,7 +16,6 @@
 
 import jax
 from jax._src import test_multiprocess as jt_multiprocess
-from jax._src.lib import jaxlib_extension_version
 from jax.sharding import PartitionSpec as P
 import numpy as np
 
@@ -29,8 +28,6 @@ except ImportError:
 class SocketTransferTest(jt_multiprocess.MultiProcessTest):
 
   def test_cross_host_transfer_single_device_sharding(self):
-    if jaxlib_extension_version < 397:
-      self.skipTest("Fails in older versions of jaxlib.")
     x = np.arange(64).reshape(8, 8)
     src_pid = 0
     dst_pid = 1
@@ -48,8 +45,6 @@ class SocketTransferTest(jt_multiprocess.MultiProcessTest):
       self.assertEmpty(z.addressable_shards)
 
   def test_cross_host_transfer_named_sharding(self):
-    if jaxlib_extension_version < 397:
-      self.skipTest("Fails in older versions of jaxlib.")
     x = np.arange(64).reshape(8, 8)
     n_local = jax.local_device_count()
     src_pid = 0
@@ -75,8 +70,6 @@ class SocketTransferTest(jt_multiprocess.MultiProcessTest):
       self.assertEmpty(z.addressable_shards)
 
   def test_cross_host_transfer_named_sharding_replicated(self):
-    if jaxlib_extension_version < 397:
-      self.skipTest("Fails in older versions of jaxlib.")
     x = np.arange(64).reshape(8, 8)
     n_dev = jax.device_count() // 2
     src_sharding = jax.sharding.NamedSharding(

@@ -44,14 +44,9 @@ class PallasSCTest(jtu.JaxTestCase):
   def setUp(self):
     if not jtu.is_device_tpu(5, "p") and not jtu.is_device_tpu_at_least(6):
       self.skipTest("SparseCore only supported on TPU v5p+")
-
     if self.USE_TC_TILING and jtu.is_cloud_tpu():
       # TODO(apaszke,slebedev): Fix those.
       self.skipTest("Many tests are failing on Cloud TPUs")
-
-    if not jtu.is_cloud_tpu_at_least(2026, 1, 17):
-      self.skipTest("Need newer libtpu")
-
     super().setUp()
 
   @property

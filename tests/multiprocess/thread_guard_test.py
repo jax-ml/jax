@@ -18,7 +18,6 @@ import concurrent.futures
 
 import jax
 from jax._src import test_multiprocess as jt_multiprocess
-from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 
 
@@ -41,11 +40,6 @@ class ThreadGuardTest(jt_multiprocess.MultiProcessTest):
   # Use a single test method since the thread guard affects global state and
   # tests can't run in parallel.
   def test_thread_guard(self):
-    if jaxlib_extension_version < 395:
-      self.skipTest(
-          'Thread guard is supported only in jaxlib version >= 395. Jaxlib '
-          f'version is {jaxlib_extension_version}')
-
     mesh = jax.make_mesh(
         (jax.device_count(),), ('i',),
         axis_types=(jax.sharding.AxisType.Explicit,), devices=jax.devices())

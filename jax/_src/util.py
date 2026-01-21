@@ -31,7 +31,6 @@ import numpy as np
 from jax._src import config
 from jax._src.lib import weakref_lru_cache as lib_weakref_lru_cache
 from jax._src.lib import utils as jaxlib_utils
-from jax._src.lib import jaxlib_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -351,13 +350,9 @@ def weakref_lru_cache(
   return _weakref_lru_cache(f, **kwargs)
 
 def _weakref_lru_cache(f, maxsize, trace_context_in_key, explain):
-  if jaxlib_extension_version >= 396:
-    cached_f = lib_weakref_lru_cache.weakref_lru_cache(  # type: ignore
-        config.trace_context if trace_context_in_key else _ignore, f, maxsize,  # type: ignore
-        explain = lambda: explain if config.explain_cache_misses.value else None)  # type: ignore
-  else:
-    cached_f = lib_weakref_lru_cache.weakref_lru_cache(
-        config.trace_context if trace_context_in_key else _ignore, f, maxsize)
+  cached_f = lib_weakref_lru_cache.weakref_lru_cache(  # type: ignore
+      config.trace_context if trace_context_in_key else _ignore, f, maxsize,  # type: ignore
+      explain = lambda: explain if config.explain_cache_misses.value else None)  # type: ignore
   register_cache(cached_f, str(f))
   return cached_f
 

@@ -722,8 +722,6 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, s)
 
   def test_valid_custom_layout_after_copy_across_clients(self):
-    if jax._src.lib.ifrt_version < 45:
-      self.skipTest('Only works for JAX_IFRT_VERSION_NUMBER >= 45')
     if not jtu.test_device_matches(['tpu']):
       self.skipTest('Only works for TPU')
 

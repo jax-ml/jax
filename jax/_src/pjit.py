@@ -75,7 +75,6 @@ from jax._src.typing import ArrayLike
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps, distributed_debug_log,
     split_list, weakref_lru_cache, merge_lists, subs_list, fun_name)
-from jax._src.lib import jaxlib_extension_version
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -309,11 +308,7 @@ def jit_eval_shape(jit_func, *args, **kwargs):
 
 def jit_evict_fn(self):
   self._clear_cache()
-  if jaxlib_extension_version >= 392:
-    pe.trace_to_jaxpr.evict_weakref(self._fun)  # cl/846898750
-  else:
-    # This clears *all* jaxpr tracing caches, not just for `self`.
-    pe.trace_to_jaxpr.cache_clear()
+  pe.trace_to_jaxpr.evict_weakref(self._fun)
 
 
 def _split_layout_and_sharding(entries):

@@ -1485,12 +1485,6 @@ class OpsTest(PallasBaseTest):
   ):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("TPU only test")
-
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(
-        2025, 10, 5
-    ):
-      self.skipTest("Requires libtpu built after 2025-10-05")
-
     x_shape, y_shape, dims_numbers = shapes_and_dims_numbers
     if batch_size is not None:
       x_shape = (batch_size,) + x_shape
@@ -1545,11 +1539,6 @@ class OpsTest(PallasBaseTest):
   def test_dot_general_non_front_batch_dims(self, shapes_and_dims_numbers):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("TPU only test")
-
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(
-        2025, 11, 30
-    ):
-      self.skipTest("Requires libtpu built after 2025-11-30")
 
     x_shape, y_shape, dims_numbers = shapes_and_dims_numbers
 
@@ -1608,11 +1597,6 @@ class OpsTest(PallasBaseTest):
   ):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("TPU only test")
-
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(
-        2025, 10, 5
-    ):
-      self.skipTest("Requires libtpu built after 2025-10-05")
 
     (
         x_shape_unbatched,

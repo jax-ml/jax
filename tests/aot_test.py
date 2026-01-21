@@ -20,7 +20,6 @@ from jax import lax
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
 from jax.experimental.serialize_executable import (
@@ -265,8 +264,6 @@ class JaxAotTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices('gpu')
   def test_deviceless_aot_compile(self):
-    if jaxlib_extension_version < 393:
-      raise unittest.SkipTest('Test requires jaxlib extension version 393 or higher')
     target_config = xc.get_topology_for_devices(jax.devices()).target_config
     with jtu.global_config_context(jax_platforms="cpu"):
       topology = topologies.get_topology_desc(

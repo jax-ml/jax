@@ -41,7 +41,6 @@ from jax._src import hardware_utils
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.cloud_tpu_init import get_tpu_library_path
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib import _profiler
@@ -197,13 +196,6 @@ def make_tpu_client(
     _jax.initialize_pjrt_plugin('tpu')
   if options is None:
     options = {}
-  if jaxlib_extension_version < 397:
-    return _jax.get_c_api_client(
-        "tpu",
-        options,
-        distributed.global_state.client,
-        _make_transfer_server_factory(),
-    )
   return _jax.get_c_api_client(
       "tpu",
       options,
@@ -557,13 +549,6 @@ def make_pjrt_c_api_client(
     distribute_options['partition_index'] = partition_index
   if options is not None:
     distribute_options.update(updated_options)
-  if jaxlib_extension_version < 397:
-    return xla_client.make_c_api_client(
-        plugin_name,
-        distribute_options,
-        distributed.global_state.client,
-        _make_transfer_server_factory(),
-    )
   return xla_client.make_c_api_client(
       plugin_name,
       distribute_options,

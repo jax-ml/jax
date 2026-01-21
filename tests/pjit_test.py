@@ -62,7 +62,6 @@ from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
-from jax._src.lib import ifrt_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -9690,10 +9689,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   @jtu.with_explicit_mesh((2,), 'x')
   def test_both_inputs_reduced(self, func, mesh):
-    if ifrt_version < 46:
-      self.skipTest('Requires ifrt_version >= 46')
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 22):
-      self.skipTest('Requires libtpu built after 2025-12-22')
     arr1 = jax.device_put(np.arange(8.), P(reduced={'x'}))
     arr2 = jax.device_put(np.arange(8.), P(reduced={'x'}))
 
@@ -9766,10 +9761,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_scalar_to_unreduced(self, mesh):
-    if ifrt_version < 46:
-      self.skipTest('Requires ifrt_version >= 46')
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 22):
-      self.skipTest('Requires libtpu built after 2025-12-22')
     inp = jnp.array(1)
     for s in inp.addressable_shards:
       self.assertArraysEqual(s.data, inp)
@@ -9804,10 +9795,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
   def test_replicated_sharded_unreduced_roundtrip(
       self, shape, orig_spec, un_spec, mesh):
-    if ifrt_version < 46:
-      self.skipTest('Requires ifrt_version >= 46')
-    if not jtu.is_cloud_tpu_at_least(2025, 12, 22):
-      self.skipTest('Requires libtpu built after 2025-12-22')
     np1 = np.arange(math.prod(shape)).reshape(shape)
     arr = jax.device_put(np1, orig_spec)
 

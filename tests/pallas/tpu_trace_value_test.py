@@ -41,9 +41,6 @@ class TraceMetricTest(jtu.JaxTestCase):
 
   def test_simple_trace_metric(self):
     """Test that trace_metric compiles and runs without error."""
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 1, 16):
-      self.skipTest("Requires libtpu built after 2026-1-16")
-
     x = jnp.ones((8, 128), dtype=jnp.float32)
 
     s = jax.random.randint(jax.random.key(0), (1,), minval=0, maxval=100)
