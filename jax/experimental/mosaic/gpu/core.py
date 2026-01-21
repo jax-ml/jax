@@ -962,10 +962,15 @@ def as_gpu_kernel(
       _check_args(*args)
       *results, prof_buffer = bind(*args)
       def dump_profile(prof_buffer):
-        out_file = os.path.join(prof_spec.dump_path, f"{time.time_ns()}-trace.json")
         try:
-          with open(out_file, "x") as f:
-            prof_spec.dump(prof_buffer, f, grid=grid, block=block)
+          if prof_spec.dump_path is not None:
+            out_file = os.path.join(
+                prof_spec.dump_path, f"{time.time_ns()}-trace.json"
+            )
+            with open(out_file, "x") as f:
+              prof_spec.dump(prof_buffer, f, grid=grid, block=block)
+          else:
+            prof_spec.dump(prof_buffer, None, grid=grid, block=block)
         except FileExistsError:
           pass  # TODO: Retry
       jax.debug.callback(dump_profile, prof_buffer)
