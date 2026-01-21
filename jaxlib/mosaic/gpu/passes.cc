@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Conversion/GPUCommon/GPUCommonPass.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
@@ -29,15 +30,19 @@ limitations under the License.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Location.h"
+#include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Transforms/RegionUtils.h"
 #include "jaxlib/mosaic/pass_boilerplate.h"
 
 namespace mosaic {
@@ -256,6 +261,65 @@ class ResolveTrivialLocationsPass
   }
 };
 
+
+bool IsMemRefDescriptorBuilderOp(mlir::Operation *op) {
+  return mlir::matchPattern(op, mlir::m_Constant()) ||
+         mlir::isa<mlir::UnrealizedConversionCastOp, mlir::LLVM::InsertValueOp,
+                   mlir::LLVM::UndefOp, mlir::LLVM::ConstantOp>(op);
+}
+
+void GetOpsToSink(mlir::Operation* op,
+                  mlir::SetVector<mlir::Operation*>& to_sink) {
+  if (to_sink.count(op) || !IsMemRefDescriptorBuilderOp(op)) {
+    return;
+  }
+  for (mlir::Value operand : op->getOperands()) {
+    if (mlir::Operation* defining_op = operand.getDefiningOp()) {
+      GetOpsToSink(defining_op, to_sink);
+    }
+  }
+  to_sink.insert(op);
+}
+
+class MosaicGpuSinkMemRefDescriptorsPass
+    : public jaxlib::mlir::Pass<MosaicGpuSinkMemRefDescriptorsPass,
+                                mlir::ModuleOp> {
+ public:
+  using jaxlib::mlir::Pass<MosaicGpuSinkMemRefDescriptorsPass,
+                           mlir::ModuleOp>::Pass;
+  static constexpr llvm::StringLiteral kArgumentName =
+      "mosaic-gpu-sink-memref-descriptors";
+  static constexpr llvm::StringLiteral kPassName =
+      "MosaicGpuSinkMemRefDescriptorsPass";
+
+  void runOnOperation() override {
+    mlir::Operation *op = getOperation();
+    op->walk([](mlir::gpu::LaunchOp launch) {
+      mlir::Region &body = launch.getBody();
+
+      mlir::SetVector<mlir::Value> sink_sources;
+      mlir::getUsedValuesDefinedAbove(body, sink_sources);
+
+      mlir::SetVector<mlir::Operation *> to_sink;
+      for (mlir::Value operand : sink_sources) {
+        if (mlir::Operation *sink_source_op = operand.getDefiningOp()) {
+          GetOpsToSink(sink_source_op, to_sink);
+        }
+      }
+
+      mlir::IRMapping map;
+      mlir::OpBuilder builder(body);
+      for (mlir::Operation* op : to_sink) {
+        mlir::Operation* clonedOp = builder.clone(*op, map);
+        for (auto [old, updated] :
+             llvm::zip_equal(op->getResults(), clonedOp->getResults())) {
+          mlir::replaceAllUsesInRegionWith(old, updated, body);
+        }
+      }
+    });
+  }
+};
+
 }  // namespace
 
 void registerConvertGpuToLLVMPass() {
@@ -279,6 +343,12 @@ void registerLLVMAttrInsertionPass() {
 void registerResolveTrivialLocationsPass() {
   ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
     return std::make_unique<ResolveTrivialLocationsPass>();
+  });
+}
+
+void registerGpuSinkMemRefDescriptorsPass() {
+  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
+    return std::make_unique<MosaicGpuSinkMemRefDescriptorsPass>();
   });
 }
 

@@ -23,6 +23,7 @@ void registerByvalInsertionPass();
 void registerConvertGpuToLLVMPass();
 void registerLLVMAttrInsertionPass();
 void registerResolveTrivialLocationsPass();
+void registerGpuSinkMemRefDescriptorsPass();
 
 // This is the default of cudaMalloc and is also upheld by the XLA:GPU runtime.
 // We annotate all GMEM pointers with this alignment in LLVMAttrInsertionPass.

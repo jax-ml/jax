@@ -6513,6 +6513,27 @@ class UtilsTest(TestCase):
     self.assertIn("__assertfail", sass())
 
 
+class EndToEndTest(TestCase):
+
+  def test_kernel_arguments(self):
+    dtype = jnp.float32
+    swizzle = 128
+    bw = bitwidth(dtype_to_ir_type(dtype))
+    shape = (128, 8 * swizzle // bw)
+    i1 = ir.IntegerType.get_signless(1)
+    def kernel(ctx, src, dst, smem):
+      tmp, barrier = smem
+      ctx.async_copy(src_ref=src, dst_ref=tmp, swizzle=swizzle, barrier=barrier)
+      barrier.wait_parity(c(0, i1))
+      copy(tmp, dst, swizzle=swizzle)
+    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    smem = (x, mgpu.TMABarrier())
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)(x)
+      np.testing.assert_array_equal(y, x)
+    self.assertEqual(ptx().count("\t.param"), 2)
+
+
 class SerializationTest(absltest.TestCase):
 
   def test_pass_is_registered(self):
