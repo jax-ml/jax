@@ -4229,8 +4229,13 @@ class ExplicitMXUTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu_at_least(7):
       self.skipTest("TPU v7 required for this test.")
 
-  def test_basic(self):
-    dtype = jnp.bfloat16
+  @parameterized.named_parameters(
+      ('f32', jnp.float32),
+      ('bf16', jnp.bfloat16),
+      ('f8_e4m3fn', jnp.float8_e4m3fn),
+      ('f8_e5m2', jnp.float8_e5m2),
+  )
+  def test_basic(self, dtype):
     m = 128 + 64
     k = n = 256
     generator = np.random.default_rng(1234)
