@@ -203,6 +203,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
       impl=['cudnn', 'xla'],
   )
   def testDotProductAttention(self, dtype, group_num, use_vmap, impl):
+    if impl == 'cudnn' and jtu.is_device_rocm():
+      raise unittest.SkipTest("cuDNN not available on ROCm.")
     if impl == 'cudnn' and not jtu.is_cuda_compute_capability_at_least("8.0"):
       raise unittest.SkipTest("Needs compute capability 8.0 or higher.")
     if impl == 'cudnn' and dtype == jnp.float32:
