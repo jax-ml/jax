@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import dataclasses
 from functools import partial
-from typing import Any, Union
+from typing import Any, Union, TypeAlias
 
 import numpy as np
 
@@ -133,7 +133,7 @@ def flatten_fun_for_vmap(f: Callable,
 ### tracer
 
 # TODO(mattjj): use a special sentinel type rather than None
-NotMapped = type(None)
+NotMapped: TypeAlias = type(None)
 not_mapped = None
 
 
