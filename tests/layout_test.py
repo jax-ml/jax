@@ -573,7 +573,6 @@ class LayoutTest(jtu.JaxTestCase):
     f(arr)
     self.assertTrue(arr.is_deleted())
 
-  @jtu.skip_on_devices('cpu', 'gpu')
   def test_layout_donation_mismatching_in_and_out_fails(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
@@ -590,7 +589,13 @@ class LayoutTest(jtu.JaxTestCase):
 
     sds = jax.ShapeDtypeStruct(np_inp.shape, np_inp.dtype, sharding=s)
     f.lower(sds).compile()(arr)
-    self.assertFalse(arr.is_deleted())
+    # On TPU, custom tiling creates a layout mismatch that prevents donation.
+    # On GPU/ROCm, tiling is not enforced so layouts are compatible and
+    # donation succeeds.
+    if jtu.test_device_matches(['tpu']):
+      self.assertFalse(arr.is_deleted())
+    else:
+      self.assertTrue(arr.is_deleted())
 
   def test_donation_error_on_auto(self):
     @partial(jax.jit, donate_argnums=0, in_shardings=Format(Layout.AUTO))
