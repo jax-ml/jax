@@ -16,7 +16,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
-## JAX 0.9.0 (TODO)
+* New features:
+* Bug fixes:
+* Deprecations:
+* Changes:
+
+## JAX 0.9.0 (January 20, 2026)
 
 * New features:
 
