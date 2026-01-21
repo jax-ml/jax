@@ -4222,5 +4222,47 @@ class PallasKernelMetadataTest(ptu.PallasTPUTest):
     )
 
 
+class ExplicitMXUTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.is_device_tpu_at_least(7):
+      self.skipTest("TPU v7 required for this test.")
+
+  def test_basic(self):
+    dtype = jnp.bfloat16
+    m = 128 + 64
+    k = n = 256
+    generator = np.random.default_rng(1234)
+    x = generator.normal(size=(m, k)).astype(dtype)
+    y = generator.normal(size=(k, n)).astype(dtype)
+
+    def matmul_kernel(x_ref, y_ref, o_ref):
+      pltpu.matmul_push_rhs(
+          y_ref[...], mxu_index=0, staging_register=0
+      )
+      pltpu.matmul_acc_lhs(
+          acc_addr=0, lhs=x_ref[...], mxu_index=0, load_staged_rhs=0
+      )
+      o_ref[...] = pltpu.matmul_pop(
+          acc_addr=0, shape=(m, n), dtype=jnp.float32, mxu_index=0
+      )
+    matmul = pl.pallas_call(
+        matmul_kernel, out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+    )
+
+    def matmul_ref_kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = jnp.matmul(
+          x_ref[...], y_ref[...], preferred_element_type=jnp.float32
+      )
+    matmul_ref = pl.pallas_call(
+        matmul_ref_kernel, out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+    )
+
+    out = matmul(x, y).block_until_ready()
+    out_ref = matmul_ref(x, y).block_until_ready()
+    np.testing.assert_array_equal(out, out_ref)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

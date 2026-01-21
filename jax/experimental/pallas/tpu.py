@@ -47,6 +47,9 @@ from jax._src.pallas.mosaic.primitives import get_barrier_semaphore as get_barri
 from jax._src.pallas.mosaic.primitives import load as load
 from jax._src.pallas.mosaic.primitives import make_async_copy as make_async_copy
 from jax._src.pallas.mosaic.primitives import make_async_remote_copy as make_async_remote_copy
+from jax._src.pallas.mosaic.primitives import matmul_push_rhs as matmul_push_rhs
+from jax._src.pallas.mosaic.primitives import matmul_acc_lhs as matmul_acc_lhs
+from jax._src.pallas.mosaic.primitives import matmul_pop as matmul_pop
 from jax._src.pallas.mosaic.primitives import pack_elementwise as pack_elementwise
 from jax._src.pallas.mosaic.primitives import prng_random_bits as prng_random_bits
 from jax._src.pallas.mosaic.primitives import prng_seed as prng_seed

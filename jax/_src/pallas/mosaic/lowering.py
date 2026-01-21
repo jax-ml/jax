@@ -4237,3 +4237,50 @@ def _trace_value_lowering_rule(ctx: LoweringRuleContext, value, *, label: str):
   del ctx
   tpu.trace_value(value, label)
   return []
+
+
+@register_lowering_rule(tpu_primitives.matmul_push_rhs_p)
+def _matmul_push_rhs_lowering_rule(
+    ctx: LoweringRuleContext,
+    rhs: jax.Array,
+    *,
+    staging_register: int,
+    mxu_index: int,
+):
+  del ctx
+  tpu.matmul_push_rhs(rhs, mxu_index, staging_register=staging_register)
+  return []
+
+
+@register_lowering_rule(tpu_primitives.matmul_acc_lhs_p)
+def _matmul_acc_lhs_lowering_rule(
+    ctx: LoweringRuleContext,
+    lhs: jax.Array,
+    *,
+    acc_addr: int,
+    mxu_index: int,
+    load_staged_rhs: int | None,
+):
+  del ctx
+  staged_rhs_kwarg = {}
+  if load_staged_rhs is not None:
+    staged_rhs_kwarg = {"load_staged_rhs": load_staged_rhs}
+  tpu.matmul_acc_lhs(acc_addr, lhs, mxu_index, **staged_rhs_kwarg)
+  return []
+
+
+@register_lowering_rule(tpu_primitives.matmul_pop_p)
+def _matmul_pop_lowering_rule(
+    ctx: LoweringRuleContext,
+    *,
+    acc_addr: int,
+    mxu_index: int,
+    shape: tuple[int, int],
+    dtype: jax.typing.DTypeLike,
+):
+  del ctx
+  return tpu.matmul_pop(
+      ir.VectorType.get(shape, _dtype_to_ir_type(dtype)),
+      acc_addr,
+      mxu_index,
+  )

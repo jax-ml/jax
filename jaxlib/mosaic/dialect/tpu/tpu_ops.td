@@ -895,6 +895,43 @@ def TPU_MatmulOp : TPU_Op<"matmul", [Pure]> {
   let hasVerifier = 1;
 }
 
+def TPU_MatmulPushRhsOp : TPU_Op<"matmul_push_rhs"> {
+  let arguments = (ins
+    AnyVectorOfNonZeroRank:$rhs,
+    I32Attr:$mxu_index,
+    DefaultValuedAttr<I32Attr, "0">:$staging_register,
+    DefaultValuedAttr<BoolAttr, "false">:$transpose
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    $rhs attr-dict `:` type($rhs)
+  }];
+}
+
+def TPU_MatmulAccLhsOp : TPU_Op<"matmul_acc_lhs"> {
+  let arguments = (ins
+    I32Attr:$acc,
+    AnyVectorOfNonZeroRank:$lhs,
+    I32Attr:$mxu_index,
+    OptionalAttr<I32Attr>:$load_staged_rhs
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    $acc `,` $lhs attr-dict `:` type($lhs)
+  }];
+}
+
+def TPU_MatmulPopOp : TPU_Op<"matmul_pop"> {
+  let arguments = (ins
+    I32Attr:$acc,
+    I32Attr:$mxu_index
+  );
+  let results = (outs AnyVectorOfNonZeroRank:$result);
+  let assemblyFormat = [{
+    $acc attr-dict `:` type($result)
+  }];
+}
+
 def TPU_ConcatenateOp : TPU_Op<"concatenate", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let arguments = (ins
     Variadic<AnyVectorOfNonZeroRank>:$sources,
