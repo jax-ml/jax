@@ -41,7 +41,7 @@ class OptimizerTests(jtu.JaxTestCase):
     self.assertEqual(jax.tree.structure(opt_state),
                      jax.tree.structure(opt_state2))
 
-  @jtu.skip_on_devices('gpu')
+  @jtu.skip_on_devices('cuda')
   def _CheckRun(self, optimizer, loss, x0, num_steps, *args, **kwargs):
     init_fun, update_fun, get_params = optimizer(*args)
 
