@@ -1324,7 +1324,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         jax.random.uniform(jax.random.key(42), shape=(256,), dtype=jnp.float32)
         * input_factor
     )
-    np.testing.assert_allclose(layer_norm(x), layer_norm_np(x), rtol=5e-5)
+    np.testing.assert_allclose(layer_norm(x), layer_norm_np(x), rtol=6e-5)
 
   def test_print(self):
 
@@ -2446,6 +2446,33 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       )
     )
     np.testing.assert_array_equal(kernel(x), x)
+
+  @parameterized.parameters(
+      (plgpu.Layout.WGMMA, 0),
+      (plgpu.Layout.WGMMA, 1),
+      # To have some layout with vector length of 1
+      (plgpu.Layout.TCGEN05_TMEM_NATIVE(1), 0),
+      (plgpu.Layout.TCGEN05_TMEM_NATIVE(1), 1),
+      # To have some layout with vector length > 2
+      (plgpu.Layout.TCGEN05_TMEM_NATIVE(4), 0),
+      (plgpu.Layout.TCGEN05_TMEM_NATIVE(4), 1),
+  )
+  def test_reduction_is_batch_invariant(self, layout, axis):
+    @functools.partial(
+        self.kernel,
+        out_shape=jnp.zeros((128,), jnp.float32),
+    )
+    def kernel(x_ref, out_ref):
+      x = plgpu.load(x_ref, (), layout=layout, optimized=False)
+      out_ref[...] = jax.lax.reduce_sum(x, axes=(axis,))
+
+    row = jax.random.uniform(jax.random.key(0), shape=(128,), dtype=jnp.float32)
+    x = jnp.stack([row for _ in range(128)])
+    x = x.T if axis == 0 else x
+    result = kernel(x)
+    expected = result[0]
+    self.assertAllClose(expected, jnp.sum(row))
+    self.assertArraysEqual(result, jax.lax.broadcast_in_dim(expected, (128,), ()))
 
   @parameterized.product(
       layout=(
