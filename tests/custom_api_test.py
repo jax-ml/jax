@@ -3310,20 +3310,78 @@ class CustomVJP3Test(CustomVJPTest):
   def tearDown(self):
     jax.custom_vjp = self.prev
 
-  # closure
-  def test_closed_over_vmap_tracer(self): pass
-  def test_bwd_closes_over_tracer(self): pass
-  def test_closed_over_tracer3(self): pass
-  def test_closure_with_vmap2(self): pass
-  def test_fwd_closes_over_tracer(self): pass
-
-  # eager (ie dont always trace, unless under a jit)
-  def test_python_control_flow(self): pass
-
   # regress these, hope no one cares
+  def test_python_control_flow(self): pass
   def test_pytrees_not_required_to_contain_nones(self): pass
   def test_symbolic_zero_custom_vjp_bwd_shape_error(self): pass
+  def test_symbolic_zeros_remat(self): pass
+  def test_dce(self): pass
+  def test_pretty_print(self): pass
+  def test_custom_lin_pretty_print(self): pass
 
+  # vmap closure: don't support anymore, but raise good errors
+  def test_closed_over_vmap_tracer(self):
+    def outer(x):
+      @jax.custom_vjp
+      def f(y):
+        return x * y
+      def f_fwd(y):
+        return f(y), jnp.cos(y)
+      def f_rev(cos_y, g):
+        return (cos_y * g,)
+      f.defvjp(f_fwd, f_rev)
+      return f
+
+    @api.vmap
+    def g(x):
+      return outer(x)(3.)
+
+    with self.assertRaisesRegex(UnexpectedTracerError, "can't close over"):
+      g(np.arange(3.))
+
+  def test_closed_over_tracer3(self):
+    def outer(x):
+      @jax.custom_vjp
+      def f(y):
+        return x * y
+      def f_fwd(y):
+        return f(y), (x, jnp.cos(y))
+      def f_rev(res, g):
+        x, cos_y = res
+        return (cos_y * g * x,)
+      f.defvjp(f_fwd, f_rev)
+      return api.grad(f)
+
+    @api.vmap
+    def g(x):
+      return outer(x)(3.)
+
+    with self.assertRaisesRegex(UnexpectedTracerError, "can't close over"):
+      g(np.arange(3.))
+
+  def test_closure_with_vmap2(self):
+    # https://github.com/jax-ml/jax/issues/8783
+    def h(z):
+      def f(x):
+        @jax.custom_vjp
+        def g(y):
+          return x * y
+
+        def g_fwd(y):
+          return x * y, (x, x * y, y)
+        def g_rev(res, w_bar):
+          x, *_ = res
+          return (x * w_bar,)
+        g.defvjp(g_fwd, g_rev)
+
+        return g(z)
+
+      return jax.vmap(f)(jnp.arange(3., dtype='float32')).sum()
+
+    with self.assertRaisesRegex(UnexpectedTracerError, "can't close over"):
+      jtu.check_grads(h, (jnp.float32(3.14),), order=1, modes=['rev'])
+
+  # improved error message
   def test_fwd_rule_primal_out_type_doesnt_match_primal_error_message(self):
     def scan_apply(f, x):
       y, _ = jax.lax.scan(lambda x, _: (f(x), None), x, None, length=1)
@@ -3359,15 +3417,6 @@ class CustomVJP3Test(CustomVJPTest):
         r"got fwd output type float32\[3\] which doesn't match",
         lambda: jax.grad(lambda x: scan_apply(f, x))(jnp.float32(1.)))
 
-  # bad tests
-  def test_dce(self): pass  # TODO (test jaxpr)
-
-  # pretty-printing
-  def test_pretty_print(self): pass
-  def test_custom_lin_pretty_print(self): pass
-
-  # maybe we don't need to support?
-  def test_symbolic_zeros_remat(self): pass
 
 def transpose_unary(f, x_example):
   def transposed(y):
