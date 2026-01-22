@@ -3472,6 +3472,58 @@ class FragmentedArrayTest(TestCase):
     rhs = 0 if rhs_is_literal else iota + 1
     np.testing.assert_array_equal(result, op(iota, rhs).astype(jnp.int8))
 
+  @parameterized.product(
+      # TODO(apaszke): Add float16, float8_e5m2
+      jax_dtype_from=(jnp.float32, jnp.bfloat16, jnp.float8_e4m3fn, jnp.float8_e8m0fnu),
+      jax_dtype_to=(jnp.float32, jnp.bfloat16, jnp.float8_e4m3fn, jnp.float8_e8m0fnu),
+      # Test different vector lengths.
+      vec_len=(1, 2, 4, 8),
+  )
+  def test_conversion_f8_(self, jax_dtype_from, jax_dtype_to, vec_len):
+    from_bitwidth = jnp.finfo(jax_dtype_from).bits
+    to_bitwidth = jnp.finfo(jax_dtype_to).bits
+    if from_bitwidth > 8 and to_bitwidth > 8:
+      self.skipTest("At least one of the types should be 8-bit")
+    if from_bitwidth == to_bitwidth == 8:
+      self.skipTest("f8 <-> f8 conversions unimplemented")
+    if jnp.float8_e8m0fnu in {
+        jax_dtype_from,
+        jax_dtype_to,
+    } and not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("f8e8m0fnu not supported on pre-Blackwell GPUs")
+    unimplemented = [
+        (jnp.float8_e4m3fn, jnp.bfloat16),
+        (jnp.float8_e4m3fn, jnp.float32),
+        (jnp.bfloat16, jnp.float8_e8m0fnu),
+    ]
+    if (jax_dtype_from, jax_dtype_to) in unimplemented:
+      self.skipTest("Unimplemented")
+    layout = fa.tmem_native_layout(vec_len)
+    mlir_dtype_to = utils.dtype_to_ir_type(jax_dtype_to)
+    m = 128
+    n = 256
+    def kernel(ctx, inp, out, smem):
+      del ctx, smem
+      t = mgpu.FragmentedArray.load_untiled(inp, layout=layout, optimized=False)
+      t = t.astype(mlir_dtype_to)
+      t.store_untiled(out, optimized=False)
+
+    # For now we only sample the values representable in the narrow type,
+    # because XLA and Mosaic disagree about the rounding.
+    narrow_type = jax_dtype_from if from_bitwidth < to_bitwidth else jax_dtype_to
+    int_sample_dtype = getattr(jnp, "int" + str(jnp.finfo(narrow_type).bits))
+    sample_iinfo = jnp.iinfo(int_sample_dtype)
+    bits = self.prng.integers(
+        low=sample_iinfo.min, high=sample_iinfo.max, size=(m, n), dtype=np.int32
+    ).astype(int_sample_dtype)
+    values = jax.lax.bitcast_convert_type(bits, narrow_type).astype(jax_dtype_from)
+
+    expected = values.astype(jax_dtype_to)
+    res = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), values, expected, ()
+    )(values)
+    self.assertTrue(np.array_equal(res, expected, equal_nan=True))
+
   def test_foreach_wgmma_row_array(self):
     def kernel(ctx, out, smem):
       del ctx, smem

@@ -1088,6 +1088,8 @@ class FragmentedArray:
           raise ValueError(
               "Register array shape does not match the tiled layout"
           ) from None
+        [vec_len] = self.registers.flat[0].type.shape
+        assert vec_len == self.layout.vector_length
 
       case _:
         raise NotImplementedError
@@ -2071,6 +2073,7 @@ class FragmentedArray:
     bf16 = ir.BF16Type.get()
     f32 = ir.F32Type.get()
     f8e4m3fn = ir.Float8E4M3FNType.get()
+    f8e8m0fnu = ir.Float8E8M0FNUType.get()
 
     cur_dtype = self.mlir_dtype
     if cur_dtype == new_dtype:
@@ -2393,44 +2396,88 @@ class FragmentedArray:
       return FragmentedArray(
           _registers=new_registers, _layout=self.layout, _is_signed=is_signed
       )
-    # TODO(bchetioui): handle conversions to/from other float8 types.
-    if cur_dtype in {bf16, f32} and new_dtype == f8e4m3fn:
-      if vector_len != 2:
-        raise NotImplementedError(vector_len)
+
+    # Most f8 casts are done by converting two elements at a time.
+    def pairwise_convert(do_convert):
+      src_bitwidth = utils.bitwidth(cur_dtype)
+      tgt_bitwidth = utils.bitwidth(new_dtype)
+      assert tgt_bitwidth <= 16
+      src_int_ty = ir.IntegerType.get_signless(src_bitwidth)
+      tgt_int_ty = ir.IntegerType.get_signless(tgt_bitwidth)
+      tgt_pair_int_ty = ir.IntegerType.get_signless(tgt_bitwidth * 2)
+      even_vector_len = vector_len + (vector_len % 2)
       new_registers = np.empty_like(self.registers)
-      empty_vec_16 = llvm.mlir_undef(ir.VectorType.get((1,), i16))
+      empty_pair_vec = llvm.mlir_undef(
+          ir.VectorType.get((even_vector_len // 2,), tgt_pair_int_ty)
+      )
       for idx, reg in np.ndenumerate(self.registers):
-        e0 = vector.extract(
-            reg,
-            dynamic_position=[],
-            static_position=ir.DenseI64ArrayAttr.get([0]),
-        )
-        e1 = vector.extract(
-            reg,
-            dynamic_position=[],
-            static_position=ir.DenseI64ArrayAttr.get([1]),
-        )
-        # TODO(bchetioui): can we do faster than this?
-        if cur_dtype == bf16:
-          e0 = arith.extf(f32, e0)
-          e1 = arith.extf(f32, e1)
-        new_reg_16 = llvm.inline_asm(
-            i16,
-            [e1, e0],
-            "cvt.rn.satfinite.e4m3x2.f32 $0, $1, $2;",
-            "=h,f,f",
-        )
-        new_registers[idx] = vector.bitcast(
-            ir.VectorType.get((2,), f8e4m3fn),
-            llvm.insertelement(empty_vec_16, new_reg_16, c(0, i32)))
+        reg = utils.bitcast(reg, ir.VectorType.get((vector_len,), src_int_ty))
+        if vector_len % 2:
+          reg = utils.vector_concat([reg, llvm.mlir_undef(ir.VectorType.get((1,), src_int_ty))])
+        carry_pair_vec = empty_pair_vec
+        for base_idx in range(0, even_vector_len, 2):
+          pair_vec = utils.vector_slice(reg, slice(base_idx, base_idx + 2))
+          new_pair_vec = do_convert(pair_vec)
+          carry_pair_vec = llvm.insertelement(carry_pair_vec, new_pair_vec, c(base_idx // 2, i32))
+        if vector_len % 2:
+          new_reg = vector.bitcast(ir.VectorType.get((even_vector_len,), tgt_int_ty), carry_pair_vec)
+          new_reg = utils.vector_slice(new_reg, slice(0, vector_len))
+          new_reg = vector.bitcast(ir.VectorType.get((vector_len,), new_dtype), new_reg)
+        else:
+          new_reg = vector.bitcast(ir.VectorType.get((vector_len,), new_dtype), carry_pair_vec)
+        new_registers[idx] = new_reg
       return FragmentedArray(
           _registers=new_registers, _layout=self.layout, _is_signed=is_signed
       )
+
+    if f8e8m0fnu in {cur_dtype, new_dtype} and utils.get_arch().major < 10:
+      raise ValueError(
+          "f8e8m0fnu type only supported on Blackwell and newer GPUs"
+      )
+    if cur_dtype == f8e8m0fnu and new_dtype == bf16:
+      def do_convert(pair_vec):
+        return llvm.inline_asm(
+            i32,
+            [utils.bitcast(pair_vec, i16)],
+            "cvt.rn.bf16x2.ue8m0x2 $0, $1;",
+            "=r,h",
+        )
+      return pairwise_convert(do_convert)
+    # TODO(bchetioui): handle conversions to/from other float8 types.
+    if cur_dtype == f32 and new_dtype in {f8e4m3fn, f8e8m0fnu}:
+      tgt_ty = "e4m3" if new_dtype == f8e4m3fn else "ue8m0"
+      rounding = "rn" if new_dtype == f8e4m3fn else "rz"
+      def do_convert(pair_vec):
+        e0, e1 = (
+            vector.extract(pair_vec, dynamic_position=[], static_position=[i])
+            for i in range(2)
+        )
+        return llvm.inline_asm(
+            i16,
+            [e1, e0],
+            f"cvt.{rounding}.satfinite.{tgt_ty}x2.f32 $0, $1, $2;",
+            "=h,r,r",
+        )
+      return pairwise_convert(do_convert)
+
+    if cur_dtype == f8e8m0fnu and new_dtype == f32:
+      return self.astype(bf16).astype(f32)
+    if cur_dtype == bf16 and new_dtype == f8e4m3fn:
+      # There are no instructions to convert bf16 to f8e4m3fn directly.
+      return self.astype(f32).astype(f8e4m3fn)
+
     # Generic path.
     from_float = isinstance(cur_dtype, ir.FloatType)
     to_float = isinstance(new_dtype, ir.FloatType)
     from_integer = isinstance(cur_dtype, ir.IntegerType)
     to_integer = isinstance(new_dtype, ir.IntegerType)
+    from_narrow_float = from_float and utils.bitwidth(cur_dtype) <= 8
+    to_narrow_float = to_float and utils.bitwidth(new_dtype) <= 8
+    if from_narrow_float or to_narrow_float:
+      raise NotImplementedError(
+          f"Unsupported conversion involving narrow float types: {cur_dtype}"
+          f" to {new_dtype}"
+      )
     if from_float and to_float:
       cur_ty_width = ir.FloatType(cur_dtype).width
       new_ty_width = ir.FloatType(new_dtype).width
@@ -2455,7 +2502,7 @@ class FragmentedArray:
           case _:
             raise NotImplementedError(f"Unsupported layout {self.layout}")
         convert = lambda ty, x: arith.truncf(ty, arith.extf(upcast_ty, x))
-      elif ir.FloatType(cur_dtype).width > ir.FloatType(new_dtype).width:
+      elif cur_ty_width > new_ty_width:
         convert = arith.truncf
       else:
         convert = arith.extf
@@ -2712,7 +2759,7 @@ class FragmentedArray:
           bitwidth_per_store > 128 or
           num_banks % num_banks_per_output != 0
       ):
-          raise NotImplementedError(
+        raise NotImplementedError(
               "Unoptimized configuration for cross-warp reduction: "
               f"{self.mlir_dtype} with {vec_len=}"
           )
