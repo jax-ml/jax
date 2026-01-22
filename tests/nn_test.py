@@ -113,12 +113,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
       dtype=[jnp.float16, jnp.bfloat16, jnp.float32],
   )
   def testScaledMatmul(self, contract, lhs_non_contract, dtype):
-    # ROCm scaled_matmul is implemented in commit a2b972f28 ("register rocm
-    # platform to mx datatype lowering path") but JAX upstream has not merged
-    # this change yet. Skip until upstream JAX includes ROCm support.
-    if jtu.is_device_rocm():
-      raise unittest.SkipTest("ROCm scaled_matmul pending upstream JAX merge (a2b972f28).")
-    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+    # ROCm: scaled_matmul works, skip only CUDA compute capability check
+    if not jtu.is_device_rocm() and not jtu.is_cuda_compute_capability_at_least("10.0"):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
     # Check if float8_e8m0fnu is available
     configs = create_mxfp8_configs_if_available()
@@ -141,12 +137,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
   )
   def testScaledDotGeneral(
       self, is_training, output_type):
-    # ROCm scaled_matmul is implemented in commit a2b972f28 ("register rocm
-    # platform to mx datatype lowering path") but JAX upstream has not merged
-    # this change yet. Skip until upstream JAX includes ROCm support.
-    if jtu.is_device_rocm():
-      raise unittest.SkipTest("ROCm scaled_matmul pending upstream JAX merge (a2b972f28).")
-    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+    # ROCm: scaled_dot_general works, skip only CUDA compute capability check
+    if not jtu.is_device_rocm() and not jtu.is_cuda_compute_capability_at_least("10.0"):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
 
     configs = create_mxfp8_configs_if_available()
@@ -255,10 +247,13 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testDotProductAttentionMask(self, mask_mode):
     if isinstance(mask_mode, str):
       mask_mode = (mask_mode,)
-    if not jtu.is_cuda_compute_capability_at_least("8.0"):
-      raise unittest.SkipTest("Requires compute capability 8.0 or higher.")
-    if jtu.is_cuda_version_at_least(13, 0):
-      raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
+    # ROCm: use XLA implementation instead of cuDNN
+    use_cudnn = not jtu.is_device_rocm()
+    if use_cudnn:
+      if not jtu.is_cuda_compute_capability_at_least("8.0"):
+        raise unittest.SkipTest("Requires compute capability 8.0 or higher.")
+      if jtu.is_cuda_version_at_least(13, 0):
+        raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
     dtype = jnp.bfloat16
     B, S, T, N, H = 2, 128, 128, 4, 32
@@ -285,8 +280,9 @@ class NNFunctionsTest(jtu.JaxTestCase):
       window_size = (3, 2) if is_causal else (3, 0)
 
     sdpa = nn.dot_product_attention
+    impl = 'cudnn' if use_cudnn else 'xla'
     sdpa_ref = partial(sdpa, is_causal=is_causal, implementation=None)
-    sdpa_ans = partial(sdpa, is_causal=is_causal, implementation='cudnn')
+    sdpa_ans = partial(sdpa, is_causal=is_causal, implementation=impl)
 
     args = (Q, K, V, bias, mask)
     kwargs = {'query_seq_lengths': q_seqlen, 'key_value_seq_lengths': kv_seqlen}
@@ -305,9 +301,10 @@ class NNFunctionsTest(jtu.JaxTestCase):
     dQ_ref, dK_ref, dV_ref, dbias_ref = sdpa_vjp_ref(grad)[:4]
     dQ_ans, dK_ans, dV_ans, dbias_ans = sdpa_vjp_ans(grad)[:4]
 
-    # Check if cudnn backend is called.
-    self.assertTrue(_check_cudnn_backend(sdpa_ans, *args, **kwargs))
-    self.assertTrue(_check_cudnn_backend(sdpa_vjp_ans, grad))
+    # Check if cudnn backend is called (only on CUDA).
+    if use_cudnn:
+      self.assertTrue(_check_cudnn_backend(sdpa_ans, *args, **kwargs))
+      self.assertTrue(_check_cudnn_backend(sdpa_vjp_ans, grad))
 
     self.assertAllClose(out_ref, out_ans, atol=.01, rtol=.01)
     self.assertAllClose(dQ_ref, dQ_ans, rtol=.02, atol=.02)
