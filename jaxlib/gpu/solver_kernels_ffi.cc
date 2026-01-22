@@ -1277,10 +1277,6 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdpFfi, GesvdpDispatch,
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
 
-#endif  // JAX_GPU_CUDA
-
-#ifdef JAX_GPU_CUDA
-
 // csrlsvqr: Linear system solve via Sparse QR
 
 template <typename T>
