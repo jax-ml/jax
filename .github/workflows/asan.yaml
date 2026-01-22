@@ -80,7 +80,7 @@ jobs:
           cd jax
           python build/build.py build --wheels=jaxlib --verbose \
             --bazel_options=--color=yes \
-            --bazel_options=--copt=-fsanitize=address
+            --bazel_options=--config=asan
           uv pip install dist/jaxlib-*.whl \
             -e .
       - name: Run tests
