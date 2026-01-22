@@ -320,10 +320,13 @@ class NNFunctionsTest(jtu.JaxTestCase):
       use_vmap=[False, True],
   )
   def testDotProductAttentionBiasGradient(self, batch_size, use_vmap):
-    if not jtu.is_cuda_compute_capability_at_least("8.0"):
-      raise unittest.SkipTest("Requires compute capability 8.0 or higher.")
-    if jtu.is_cuda_version_at_least(13, 0):
-      raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
+    # ROCm: use XLA implementation instead of cuDNN
+    use_cudnn = not jtu.is_device_rocm()
+    if use_cudnn:
+      if not jtu.is_cuda_compute_capability_at_least("8.0"):
+        raise unittest.SkipTest("Requires compute capability 8.0 or higher.")
+      if jtu.is_cuda_version_at_least(13, 0):
+        raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
     dtype = jnp.bfloat16
     B, S, N, H = batch_size, 128, 4, 32
@@ -343,7 +346,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
           implementation=impl,
       )
     attn_ref = partial(attention, impl=None)
-    attn_ans = partial(attention, impl='cudnn')
+    attn_ans = partial(attention, impl='cudnn' if use_cudnn else 'xla')
     if use_vmap:
       attn_batched_ref = jax.vmap(attn_ref, in_axes=(0, 0, None))
       attn_batched_ans = jax.vmap(attn_ans, in_axes=(0, 0, None))
