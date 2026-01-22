@@ -43,6 +43,10 @@ def get_races() -> gpu_callbacks.RaceDetectionState:
   return gpu_callbacks.get_races()
 
 
+def reset_gpu_interpret_mode_state():
+  gpu_callbacks.reset_gpu_interpret_mode_state()
+
+
 def _get_grid_bounds(grid_mapping: pallas_core.GridMapping) -> tuple[int, ...]:
   if grid_mapping.num_dynamic_grid_bounds > 0:
     raise NotImplementedError(
@@ -473,6 +477,8 @@ def interpret_pallas_call(
 
   outputs = _get_outputs(device_info.device_id, output_buffers)
 
+  # TODO(nrink): It might make sense to check/assert here that no barriers
+  # remain allocated in the shared memory.
   gpu_callbacks.call_clean_up_shared_memory()
 
   return outputs

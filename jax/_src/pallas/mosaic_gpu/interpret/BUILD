@@ -52,12 +52,12 @@ pytype_strict_library(
     name = "gpu_callbacks",
     srcs = ["gpu_callbacks.py"],
     deps = [
+        ":shared_memory",
         "//jax",
         "//jax/_src:callback",
         "//jax/_src:lax",
         "//jax/_src:source_info_util",
         "//jax/_src/pallas/mosaic/interpret:race_detection_state",
-        "//jax/_src/pallas/mosaic/interpret:shared_memory",
         "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic/interpret:vector_clock",
         "//jax/_src/pallas/mosaic_gpu:core",
@@ -72,7 +72,6 @@ pytype_strict_library(
     deps = [
         ":gpu_callbacks",
         "//jax",
-        "//jax/_src:callback",
         "//jax/_src:core",
         "//jax/_src:lax",
         "//jax/_src:source_info_util",
@@ -80,6 +79,16 @@ pytype_strict_library(
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic_gpu:core",
+        "//jax/_src/pallas/mosaic_gpu:primitives",
         "//jax/experimental:pallas_mosaic_gpu",
+    ],
+)
+
+pytype_strict_library(
+    name = "shared_memory",
+    srcs = ["shared_memory.py"],
+    deps = [
+        "//jax/_src/pallas/mosaic/interpret:shared_memory",
+        "//jax/_src/pallas/mosaic/interpret:vector_clock",
     ],
 )

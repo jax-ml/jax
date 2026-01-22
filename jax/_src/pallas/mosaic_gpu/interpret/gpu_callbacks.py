@@ -27,11 +27,11 @@ import jax
 from jax import numpy as jnp
 from jax._src import callback
 from jax._src import source_info_util
-from jax._src.pallas.mosaic.interpret import shared_memory as memory
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
 from jax._src.pallas.mosaic.interpret.race_detection_state import RaceDetectionState
 from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
+from jax._src.pallas.mosaic_gpu.interpret import shared_memory as memory
 from jax._src.state import indexing
 import numpy as np
 
@@ -64,12 +64,12 @@ def is_gmem_memory_space(space: mosaic_gpu_core.MemorySpace | None) -> bool:
   return space == mosaic_gpu_core.MemorySpace.GMEM
 
 
-_shared_memory: memory.SharedMemory | None = None
+_shared_memory: memory.GPUSharedMemory | None = None
 _shared_memory_init_lock = threading.Lock()
 _races: RaceDetectionState | None = None
 
 
-def _get_shared_memory() -> memory.SharedMemory:
+def _get_shared_memory() -> memory.GPUSharedMemory:
   assert _shared_memory is not None
   return _shared_memory
 
@@ -83,6 +83,24 @@ def _clear_shared_memory():
 def get_races() -> RaceDetectionState:
   assert _races is not None
   return _races
+
+
+def reset_gpu_interpret_mode_state():
+  """Resets all global, shared state used by GPU interpret mode.
+
+  GPU interpret mode uses global, shared state for simulating memory buffers,
+  for race detection, etc., when interpreting a kernel. Normally, this shared
+  state is cleaned up after a kernel is interpreted.
+
+  But if an exception is thrown while interpreting a kernel, the shared state
+  is not cleaned up, allowing the simulated GPU state to be examined for
+  debugging purposes. In this case, the shared state must be reset before
+  any further kernels are interpreted.
+  """
+  global _shared_memory, _races
+  with _shared_memory_init_lock:
+    _shared_memory = None
+    _races = None
 
 
 # Below we define pairs of _callback_ functions. Each pair consists of
@@ -120,7 +138,7 @@ def _initialize_shared_memory(
     if _shared_memory is None:
       vector_clock_size = interpret_params.get_vector_clock_size(num_devices)
       _races = RaceDetectionState(num_cores=num_total_threads)
-      _shared_memory = memory.SharedMemory(
+      _shared_memory = memory.GPUSharedMemory(
           num_devices=num_devices,
           # We re-use the `SharedMemory`'s capability to model multiple cores
           # per (TPU) device for modeling the  multiple threads on a single GPU
@@ -423,7 +441,7 @@ def _handle_out_of_bounds_read(
     dtype: np.dtype,
     allocation_key: HostAllocationKey,
     read_range: tuple[int | slice, ...],
-    shared_memory: memory.SharedMemory,
+    shared_memory: memory.GPUSharedMemory,
     source_info,
     input_name: str | None,
     block_indices: tuple[int, ...] | None,
@@ -681,5 +699,137 @@ def call_swap(
       transforms,
       val,
       mask,
+      ordered=True,
+  )
+
+
+def _allocate_barriers(
+    device_id: np.ndarray,
+    thread_id: np.ndarray,
+    num_arrivals: np.ndarray,
+    num_barriers: np.ndarray,
+    ref_count: np.ndarray,
+) -> np.ndarray:
+  device_id = int(device_id)
+  thread_id = int(thread_id)
+  num_arrivals = int(num_arrivals)
+  num_barriers = int(num_barriers)
+  ref_count = int(ref_count)
+  shared_memory = _get_shared_memory()
+
+  keys = []
+  for _ in range(num_barriers):
+    # Advance `shared_memory`'s internal buffer id counter for all threads that
+    # call into this function.
+    barrier_id = shared_memory.get_next_buffer_id(device_id, thread_id)
+    smem_space_id = IDX_BY_GPU_MEMORY_SPACE[mosaic_gpu_core.SMEM]
+    key = HostAllocationKey(
+        memory_space_id=smem_space_id,
+        device_id=device_id,
+        # Barriers are shared between threads. Hence we associate all
+        # allocations for `Barrier`s with the 0th thread.
+        thread_id=0,
+        initial_ref_count=ref_count,
+        buffer_id=barrier_id,
+    )
+
+    shared_memory.allocate_barrier(
+        key, ref_count=ref_count, num_arrivals=num_arrivals
+    )
+    keys.append(key.as_array)
+
+  assert len(keys) == num_barriers
+  return np.array(keys, dtype=np.int32)
+
+
+def call_allocate_barriers(
+    device_id: int,
+    thread_id: int,
+    num_arrivals: int,
+    num_barriers: int,
+    ref_count: int,
+) -> jnp.ndarray:
+  shape_and_dtype = HostAllocationKey.shape_and_dtype()
+  result_shape = (num_barriers, *shape_and_dtype.shape)
+  result_shape_and_dtype = jax.ShapeDtypeStruct(
+      result_shape, shape_and_dtype.dtype
+  )
+  return callback.io_callback(
+      _allocate_barriers,
+      result_shape_and_dtype,
+      device_id,
+      thread_id,
+      num_arrivals,
+      num_barriers,
+      ref_count,
+      ordered=True,
+  )
+
+
+def _deallocate_barrier(allocation_key: np.ndarray):
+  assert len(allocation_key.shape) == 2
+  num_barriers = allocation_key.shape[0]
+
+  keys_to_deallocate = []
+  for i in range(num_barriers):
+    keys_to_deallocate.append(allocation_key[i, :])
+
+  shared_memory = _get_shared_memory()
+
+  for key in keys_to_deallocate:
+    barrier_allocation_key = HostAllocationKey.from_array(key)
+    shared_memory.deallocate_barrier(barrier_allocation_key)
+
+
+def call_deallocate_barrier(allocation_key: jnp.ndarray):
+  callback.io_callback(_deallocate_barrier, None, allocation_key, ordered=True)
+
+
+def _barrier_wait(device_id: int, thread_id: int, allocation_key: np.ndarray):
+  device_id = int(device_id)
+  thread_id = int(thread_id)
+  barrier_key = HostAllocationKey.from_array(allocation_key)
+  shared_memory = _get_shared_memory()
+
+  barrier, _ = shared_memory.get_barrier_and_increment_clock(
+      barrier_key, device_id, thread_id
+  )
+  barrier.wait(device_id, thread_id)
+
+
+def call_barrier_wait(
+    device_id: int, thread_id: int, allocation_key: jnp.ndarray
+):
+  callback.io_callback(
+      _barrier_wait,
+      None,
+      device_id,
+      thread_id,
+      allocation_key,
+      ordered=True,
+  )
+
+
+def _barrier_arrive(device_id: int, thread_id: int, allocation_key: np.ndarray):
+  device_id = int(device_id)
+  thread_id = int(thread_id)
+  barrier_key = HostAllocationKey.from_array(allocation_key)
+  shared_memory = _get_shared_memory()
+
+  barrier, clock = shared_memory.get_barrier_and_increment_clock(
+      barrier_key, device_id, thread_id
+  )
+  barrier.arrive(device_id, thread_id, clock)
+
+
+def call_barrier_arrive(
+    device_id: int, thread_id: int, allocation_key: jnp.ndarray
+):
+  callback.io_callback(
+      _barrier_arrive,
+      None,
+      device_id,
+      thread_id,
+      allocation_key,
       ordered=True,
   )

@@ -81,7 +81,7 @@ class Semaphore:
     global_core_id = int(global_core_id)
     with self.cv:
       self.count_by_core[global_core_id] += inc
-      if self.shared_memory.detect_races:
+      if self.detect_races:
         if self.clocks[global_core_id] is None:
           self.clocks[global_core_id] = vc.copy_vector_clock(clock)
         else:
@@ -171,8 +171,13 @@ class Semaphore:
 SemaphoreTask = Callable[[], None]
 
 
+@dataclasses.dataclass(init=False)
+class Allocation:
+  ...
+
+
 @dataclasses.dataclass
-class Buffer:
+class Buffer(Allocation):
   content: np.ndarray
   _: dataclasses.KW_ONLY
   ref_count: int = 1
@@ -212,8 +217,8 @@ class SharedMemory:
   barrier: threading.Barrier
   clean_up_barrier: threading.Barrier
 
-  # (memory_space, buffer_id, device_id, local_core_id) -> NumPy array
-  mem: dict[tuple[str, int, int, int], Buffer] = dataclasses.field(
+  # (memory_space, buffer_id, device_id, local_core_id) -> Allocation
+  mem: dict[tuple[str, int, int, int], Allocation] = dataclasses.field(
       default_factory=dict
   )
 
@@ -392,6 +397,12 @@ class SharedMemory:
     """Decreases the ref count for the buffer with `key` and deallocates the buffer if the ref count is zero."""
     with self.lock:
       buff = self.mem[key]
+      if not isinstance(buff, Buffer):
+        raise ValueError(
+            f"Attempting to deallocate allocation with key `{key}` that is not"
+            " a `Buffer`."
+        )
+
       buff.decrease_ref_count()
       if buff.has_zero_ref_count():
         self.mem.pop(key)
@@ -463,7 +474,14 @@ class SharedMemory:
       if self.detect_races:
         vc.inc_vector_clock(self.clocks[global_core_id], global_core_id)
         clock = vc.copy_vector_clock(self.clocks[global_core_id])
-      array = self.mem[key].content
+
+      buff = self.mem[key]
+      if not isinstance(buff, Buffer):
+        raise ValueError(
+            f"Attempting to get contents of allocation with key `{key}` that is"
+            " not a `Buffer`."
+        )
+      array = buff.content
 
       try:
         result = array[rnge].copy()
@@ -499,7 +517,14 @@ class SharedMemory:
       if self.detect_races:
         vc.inc_vector_clock(self.clocks[global_core_id], global_core_id)
         clock = vc.copy_vector_clock(self.clocks[global_core_id])
-      array = self.mem[key].content
+
+      buff = self.mem[key]
+      if not isinstance(buff, Buffer):
+        raise ValueError(
+            f"Attempting to store into allocation with key `{key}` that is not"
+            " a `Buffer`."
+        )
+      array = buff.content
       shape_and_dtype = ShapeAndDtype(array.shape, array.dtype)
 
       assert array.dtype == value.dtype  # TODO(jburnim): Catch this statically.
@@ -542,7 +567,15 @@ class SharedMemory:
       if self.detect_races:
         vc.inc_vector_clock(self.clocks[global_core_id], global_core_id)
         clock = vc.copy_vector_clock(self.clocks[global_core_id])
-      array = self.mem[key].content
+
+      buff = self.mem[key]
+      if not isinstance(buff, Buffer):
+        raise ValueError(
+            f"Attempting to swap into allocation with `key` {key} that is not a"
+            " `Buffer`."
+        )
+
+      array = buff.content
       shape_and_dtype = ShapeAndDtype(array.shape, array.dtype)
 
       assert array.dtype == value.dtype  # TODO(jburnim): Catch this statically.
