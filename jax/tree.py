@@ -28,6 +28,7 @@ from jax._src.tree import (
     map as map,
     reduce as reduce,
     reduce_associative as reduce_associative,
+    static as static,
     structure as structure,
     transpose as transpose,
     unflatten as unflatten,

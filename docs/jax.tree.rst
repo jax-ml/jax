@@ -21,6 +21,7 @@ List of Functions
    map_with_path
    reduce
    reduce_associative
+   static
    structure
    transpose
    unflatten
