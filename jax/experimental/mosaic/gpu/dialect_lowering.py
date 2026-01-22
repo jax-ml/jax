@@ -134,16 +134,14 @@ def _undo_conversion_cast(
   The function will verify that the returned values have types that match
   `expected_types`.
   """
-  conversion_cast = cast(
-      builtin.UnrealizedConversionCastOp, ir_value.owner.opview  # pytype: disable=attribute-error
-  )
+  cast = ir_value.owner
 
-  if not isinstance(conversion_cast, builtin.UnrealizedConversionCastOp):
-    raise ValueError(f"{conversion_cast} is not a conversion_cast")
+  if not isinstance(cast, builtin.UnrealizedConversionCastOp):
+    raise ValueError(f"{cast} is not a conversion_cast")
 
   converted_outputs = builtin.unrealized_conversion_cast(
-      [operand.type for operand in conversion_cast.operands],
-      conversion_cast.results,
+      [operand.type for operand in cast.operands],
+      cast.results,
   )
   if isinstance(converted_outputs, ir.OpResultList):
     converted_outputs = list(converted_outputs)
@@ -154,7 +152,7 @@ def _undo_conversion_cast(
     if v.type != t:
       raise ValueError(f"Expected type {t} for value {v}")
 
-  return conversion_cast, converted_outputs
+  return cast, converted_outputs
 
 
 def fragmented_array_to_ir(
