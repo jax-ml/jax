@@ -2367,6 +2367,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(shape=[(3,), (3, 4), (3, 4, 5)],
                       dtype=float_types + complex_types)
+  @jtu.skip_on_devices("rocm") # Numerical errors on ROCm
   def test_tridiagonal_solve(self, shape, dtype):
     if dtype not in float_types and jtu.test_device_matches(["gpu"]):
       self.skipTest("Data type not supported on GPU")
