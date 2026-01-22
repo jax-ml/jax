@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 import dataclasses
+import enum
 import functools
 import itertools
 import math
@@ -45,6 +46,32 @@ WARPS_IN_WARPGROUP = WARPGROUP_SIZE // WARP_SIZE
 SMEM_BANKS = 32
 SMEM_BANK_BYTES = 4
 c = utils.c
+
+
+class Rounding(enum.Enum):
+  TO_NEAREST_EVEN = enum.auto()
+  TO_POSITIVE_INFINITY = enum.auto()
+  TO_ZERO = enum.auto()
+
+  @property
+  def ptx(self) -> str:
+    match self:
+      case Rounding.TO_NEAREST_EVEN:
+        return "rn"
+      case Rounding.TO_POSITIVE_INFINITY:
+        return "rp"
+      case Rounding.TO_ZERO:
+        return "rz"
+
+  @property
+  def arith(self) -> arith.RoundingMode:
+    match self:
+      case Rounding.TO_NEAREST_EVEN:
+        return arith.RoundingMode.to_nearest_even
+      case Rounding.TO_POSITIVE_INFINITY:
+        return arith.RoundingMode.upward
+      case Rounding.TO_ZERO:
+        return arith.RoundingMode.toward_zero
 
 
 @dataclasses.dataclass(frozen=True)
@@ -2064,7 +2091,11 @@ class FragmentedArray:
 
   # TODO(apaszke): Support JAX dtypes here as well?
   def astype(
-      self, new_dtype: ir.Type, *, is_signed: bool | None = None
+      self,
+      new_dtype: ir.Type,
+      *,
+      is_signed: bool | None = None,
+      rounding: Rounding | None = None,
   ) -> FragmentedArray:
     i4 = ir.IntegerType.get_signless(4)
     i8 = ir.IntegerType.get_signless(8)
@@ -2440,7 +2471,7 @@ class FragmentedArray:
       )
 
     # Here we handle all conversions involving f8 types.
-    # TODO(apaszke): Figure out proper satfinite and rounding modes.
+    # TODO(apaszke): Figure out proper satfinite control.
     supported_f8_f16 = {f8e4m3fn: f16, f8e5m2: f16, f8e8m0fnu: bf16}
     f8_ptx_names = {f8e4m3fn: "e4m3", f8e5m2: "e5m2", f8e8m0fnu: "ue8m0"}
     f16_ptx_names = {f16: "f16", bf16: "bf16"}
@@ -2450,10 +2481,35 @@ class FragmentedArray:
       raise ValueError(
           "f8e8m0fnu type only supported on Blackwell and newer GPUs"
       )
+
+    def check_supported_rounding(allowed_roundings, hw_limitation: bool = True):
+      if rounding is None:
+        return
+      if rounding not in allowed_roundings:
+        err_type = ValueError if hw_limitation else NotImplementedError
+        raise err_type(
+            f"Only {' and '.join(map(lambda x: x.name, allowed_roundings))}"
+            f" rounding mode{'' if len(allowed_roundings) == 1 else 's'} are"
+            f" supported for {cur_dtype} -> {new_dtype}, but got {rounding}"
+        )
+    def get_fp8_rounding(fp8_type: ir.Type) -> str:
+      assert fp8_type in f8_types
+      allowed_rounding: tuple[Rounding, ...]
+      if fp8_type == f8e8m0fnu:
+        if rounding is None:
+          return Rounding.TO_POSITIVE_INFINITY.ptx
+        allowed_rounding = (Rounding.TO_ZERO, Rounding.TO_POSITIVE_INFINITY)
+      else:
+        if rounding is None:
+          return Rounding.TO_NEAREST_EVEN.ptx
+        allowed_rounding = (Rounding.TO_NEAREST_EVEN,)
+      check_supported_rounding(allowed_rounding)
+      return rounding.ptx  # type: ignore
+
     # f8 <-> f32
     if cur_dtype == f32 and new_dtype in f8_types:
       name_8 = f8_ptx_names[new_dtype]
-      rounding = "rz" if new_dtype == f8e8m0fnu else "rn"
+      ptx_round = get_fp8_rounding(new_dtype)
       def do_convert(pair_vec):
         e0, e1 = (
             vector.extract(pair_vec, dynamic_position=[], static_position=[i])
@@ -2462,7 +2518,7 @@ class FragmentedArray:
         return llvm.inline_asm(
             i16,
             [e1, e0],
-            f"cvt.{rounding}.satfinite.{name_8}x2.f32 $0, $1, $2;",
+            f"cvt.{ptx_round}.satfinite.{name_8}x2.f32 $0, $1, $2;",
             "=h,r,r",
         )
       return pairwise_convert(do_convert)
@@ -2473,8 +2529,8 @@ class FragmentedArray:
     if new_dtype in f8_types and cur_dtype == supported_f8_f16[new_dtype]:
       name_16 = f16_ptx_names[cur_dtype]
       name_8 = f8_ptx_names[new_dtype]
-      rounding = "rz" if new_dtype == f8e8m0fnu else "rn"
-      ptx = f"cvt.{rounding}.satfinite.{name_8}x2.{name_16}x2 $0, $1;"
+      ptx_round = get_fp8_rounding(new_dtype)
+      ptx = f"cvt.{ptx_round}.satfinite.{name_8}x2.{name_16}x2 $0, $1;"
       def do_convert(pair_vec):
         return llvm.inline_asm(i16, [utils.bitcast(pair_vec, i32)], ptx, "=h,r")
       return pairwise_convert(do_convert)
@@ -2520,6 +2576,7 @@ class FragmentedArray:
           f"Unsupported conversion involving narrow float types: {cur_dtype}"
           f" to {new_dtype}"
       )
+    arith_rounding = rounding.arith if rounding else None
     if from_float and to_float:
       cur_ty_width = ir.FloatType(cur_dtype).width
       new_ty_width = ir.FloatType(new_dtype).width
@@ -2543,9 +2600,11 @@ class FragmentedArray:
             upcast_ty = larger_ty
           case _:
             raise NotImplementedError(f"Unsupported layout {self.layout}")
-        convert = lambda ty, x: arith.truncf(ty, arith.extf(upcast_ty, x))
+        convert = lambda ty, x: arith.truncf(
+            ty, arith.extf(upcast_ty, x), roundingmode=arith_rounding
+        )
       elif cur_ty_width > new_ty_width:
-        convert = arith.truncf
+        convert = functools.partial(arith.truncf, roundingmode=arith_rounding)
       else:
         convert = arith.extf
     elif from_integer and to_integer:
@@ -2554,8 +2613,12 @@ class FragmentedArray:
       else:
         convert = arith.extsi if self.is_signed else arith.extui
     elif from_integer and to_float:
+      # TODO(apaszke): Support other rounding modes.
+      check_supported_rounding((Rounding.TO_NEAREST_EVEN,), hw_limitation=False)
       convert = arith.sitofp if self.is_signed else arith.uitofp
     elif from_float and to_integer:
+      # TODO(apaszke): Support other rounding modes.
+      check_supported_rounding((Rounding.TO_ZERO,), hw_limitation=False)
       convert = arith.fptosi if is_signed else arith.fptoui
     else:
       raise NotImplementedError(f"Unsupported conversion {cur_dtype} -> {new_dtype}")
@@ -3028,7 +3091,7 @@ class FragmentedArray:
       utils.warpgroup_barrier()
       for i, unreduced_index in enumerate(unreduced_indices):
         out_regs[unreduced_index] = reduce_stored(
-            reg_ty, i, lane_idx, swizzle_warp_idx  # pytype: disable=undefined-variable
+            reg_ty, i, lane_idx, swizzle_warp_idx
         )
       utils.warpgroup_barrier()
     del unreduced_indices
