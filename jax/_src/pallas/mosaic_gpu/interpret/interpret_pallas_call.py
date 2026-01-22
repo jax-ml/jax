@@ -489,8 +489,15 @@ def interpret_pallas_call(
 
   outputs = _get_outputs(device_info.device_id, output_buffers)
 
-  # TODO(nrink): It might make sense to check/assert here that no barriers
-  # remain allocated in the shared memory.
+  # We assert that no barriers remain allocated. This is an internal consistency
+  # check because the interpreter should take care of deallocating all barriers
+  # that it has allocated. It is important that the interpreter deallocates all
+  # barriers because barrier deallocation also checks that the barrier was used
+  # correctly by the kernel/threads. (Specifically, it is checked that if a
+  # thread has observed any completed barrier arrival, it has in fact observed
+  # all completed arrivals).
+  gpu_callbacks.call_assert_no_barriers_allocated()
+
   gpu_callbacks.call_clean_up_shared_memory()
 
   return outputs

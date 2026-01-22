@@ -833,3 +833,11 @@ def call_barrier_arrive(
       allocation_key,
       ordered=True,
   )
+
+
+def _assert_no_barriers_allocated():
+  _get_shared_memory().assert_no_barriers_allocated()
+
+
+def call_assert_no_barriers_allocated():
+  callback.io_callback(_assert_no_barriers_allocated, (), ordered=True)
