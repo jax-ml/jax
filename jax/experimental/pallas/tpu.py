@@ -15,6 +15,7 @@
 """Mosaic-specific Pallas APIs."""
 import typing
 
+from jax._src.pallas.einshape import einshape as einshape
 from jax._src.pallas.mosaic import core as core
 from jax._src.pallas.mosaic.core import create_tensorcore_mesh as create_tensorcore_mesh
 from jax._src.pallas.mosaic.core import dma_semaphore as dma_semaphore
@@ -39,7 +40,6 @@ from jax._src.pallas.mosaic.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic.pipeline import emit_pipeline_with_allocations as emit_pipeline_with_allocations
 from jax._src.pallas.mosaic.pipeline import get_pipeline_schedule as get_pipeline_schedule
 from jax._src.pallas.mosaic.pipeline import make_pipeline_allocations as make_pipeline_allocations
-from jax._src.pallas.mosaic.pipeline import Tiling as Tiling
 from jax._src.pallas.mosaic.primitives import async_copy as async_copy
 from jax._src.pallas.mosaic.primitives import async_remote_copy as async_remote_copy
 from jax._src.pallas.mosaic.primitives import bitcast as bitcast
@@ -69,6 +69,7 @@ from jax._src.pallas.mosaic.random import to_pallas_key as to_pallas_key
 from jax._src.pallas.mosaic.tpu_info import ChipVersion as ChipVersion
 from jax._src.pallas.mosaic.tpu_info import get_tpu_info as get_tpu_info
 from jax._src.pallas.mosaic.tpu_info import is_tpu_device as is_tpu_device
+from jax._src.pallas.mosaic.tpu_info import Tiling as Tiling
 from jax._src.pallas.mosaic.tpu_info import TpuInfo as TpuInfo
 
 # Those primitives got moved to Pallas core. Keeping the updated imports
