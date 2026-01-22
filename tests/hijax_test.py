@@ -397,6 +397,42 @@ def immutbox_get(box):
 register_hitype(ImmutBox, immutbox_to_aval)
 
 
+class Square(VJPHiPrimitive):
+  """Simple parameterless hijax primitive for use in tests."""
+  _jvp_execution_count = 0
+
+  def __init__(self, in_aval):
+    self.in_avals = (in_aval,)
+    self.out_aval = in_aval
+    self.params = {}
+    super().__init__()
+
+  @classmethod
+  @contextmanager
+  def assert_jvp_rule_called_once(cls):
+    initial_count = cls._jvp_execution_count
+    yield
+    assert cls._jvp_execution_count == initial_count + 1
+
+  def expand(self, x):
+    return x ** 2
+
+  def jvp(self, primals, tangents):
+    self.__class__._jvp_execution_count += 1
+    (x,), (t,) = primals, tangents
+    return self(x), t * 2.0 * x
+
+  def vjp_fwd(self, nzs_in, x):
+    return (self(x), x)
+
+  def vjp_bwd_retval(self, res, t):
+    return (t * 2.0 * res,)
+
+def square(x):
+  """Bind a hijax primtive that returns the square of x."""
+  return Square(jax.typeof(x))(x)
+
+
 class HijaxTest(jtu.JaxTestCase):
   def test_basic_register(self):
     # older test that defines a slightly different QArray internally
@@ -922,82 +958,29 @@ class HijaxTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('data',))
   def test_hijax_primitive_under_shard_map(self, mesh):
-    class Square(VJPHiPrimitive):
-      def __init__(self, in_aval):
-        self.in_avals = (in_aval,)
-        self.out_aval = in_aval
-        self.params = {}
-        super().__init__()
-
-      def expand(self, x):
-        return x ** 2
-
-    def square(x):
-      return Square(jax.typeof(x))(x)
     g = jax.shard_map(square, in_specs=(jax.P('data'),), out_specs=jax.P('data'))
     x = jnp.arange(10)
     g(x)
     jax.jit(g)(x)
 
   def test_hijax_cond_platform_dependent(self):
-    class Square(VJPHiPrimitive):
-      def __init__(self, in_aval):
-        self.in_avals = (in_aval,)
-        self.out_aval = in_aval
-        self.params = {}
-        super().__init__()
-
-      def expand(self, x):
-        return x ** 2
-
-    def square(x):
-      return Square(jax.typeof(x))(x)
-
     x = jnp.arange(10)
     result = jax.jit(partial(jax.lax.platform_dependent, cpu=square, default=square))(x)
     self.assertArraysAllClose(result, x ** 2)
 
   def test_hijax_primitive_under_remat(self):
-    class Square(VJPHiPrimitive):
-      _jvp_execution_count = 0
-
-      @classmethod
-      @contextmanager
-      def assert_jvp_rule_called_once(cls):
-        initial_count = cls._jvp_execution_count
-        yield
-        self.assertEqual(cls._jvp_execution_count, initial_count + 1)
-
-      def __init__(self, in_aval):
-        self.in_avals = (in_aval,)
-        self.out_aval = in_aval
-        self.params = {}
-        super().__init__()
-
-      def expand(self, x):
-        return x ** 2
-
-      def jvp(self, primals, tangents):
-        self.__class__._jvp_execution_count += 1
-        (x,), (t,) = primals, tangents
-        return self(x), t * 2 * x
-
-    @jax.remat
-    def square(x):
-      return Square(jax.typeof(x))(x)
-
     x = jnp.arange(10)
     expected = x ** 2
     with self.subTest("no jit"):
-      self.assertArraysAllClose(square(x), expected)
+      self.assertArraysAllClose(jax.remat(square)(x), expected)
     with self.subTest("jit"):
-      self.assertArraysAllClose(jax.jit(square)(x), expected)
+      self.assertArraysAllClose(jax.jit(jax.remat(square))(x), expected)
 
     x = jnp.float32(2.0)
     expected_grad = jnp.float32(4.0)
     with self.subTest("jit-of-grad"):
       with Square.assert_jvp_rule_called_once():
-        actual_grad = jax.jit(jax.grad(square))(x)
+        actual_grad = jax.jit(jax.grad(jax.remat(square)))(x)
       self.assertArraysAllClose(actual_grad, expected_grad)
 
 
