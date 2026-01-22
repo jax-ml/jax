@@ -4314,6 +4314,163 @@ class ExplicitMXUTest(jtu.JaxTestCase):
     np.testing.assert_allclose(out0, out0_ref, atol=1e-3, rtol=1e-3)
     np.testing.assert_allclose(out1, out1_ref, atol=1e-3, rtol=1e-3)
 
+  def test_matmul_kernel(self):
+    dtype = jnp.bfloat16
+    m = n = k = 4096
+    generator = np.random.default_rng(1234)
+    x = generator.normal(size=(m, k)).astype(dtype)
+    y = generator.normal(size=(k, n)).astype(dtype)
+
+    def matmul_kernel(x_ref, y_ref, o_ref):
+      def _next_index(indices, grid):
+        out = []
+        carry: bool | jax.Array = True
+        for (i, g) in reversed(list(zip(indices, grid, strict=True))):
+          inc = jax.lax.select(carry, i + 1, i)
+          carry = inc == g
+          out.append(jax.lax.select(carry, 0, inc))
+        return tuple(
+            0 if isinstance(g, int) and g == 1 else i
+            for i, g in zip(tuple(reversed(out)), grid, strict=True)
+        )
+
+      mem_block_m = 2048
+      mem_block_n = 512
+      mem_block_k = 4096
+      assert m % mem_block_m == 0
+      assert n % mem_block_n == 0
+      assert k % mem_block_k == 0
+
+      compute_block_m = compute_block_n = compute_block_k = 256
+      mxu_count = 2
+
+      def memory_body(x_vmem, y_vmem, o_vmem):
+        compute_mn_grid = (
+            mem_block_m // (mxu_count * compute_block_m),
+            mem_block_n // compute_block_n,
+        )
+        compute_k_steps = mem_block_k // compute_block_k
+
+        def lhs_slice(mi, _, ki):
+          mxu_compute_block_m = mxu_count * compute_block_m
+          return (
+              pl.ds(mi * mxu_compute_block_m, mxu_compute_block_m),
+              pl.ds(ki * compute_block_k, compute_block_k),
+          )
+        def rhs_slice(_, ni, ki):
+          return (
+              pl.ds(ki * compute_block_k, compute_block_k),
+              pl.ds(ni * compute_block_n, compute_block_n),
+          )
+        def out_slice(mi, ni):
+          mxu_compute_block_m = mxu_count * compute_block_m
+          return (
+              pl.ds(mi * mxu_compute_block_m, mxu_compute_block_m),
+              pl.ds(ni * compute_block_n, compute_block_n),
+          )
+
+        for mxu in range(mxu_count):
+          pltpu.matmul_push_rhs(
+              rhs=y_vmem[rhs_slice(0, 0, 0)],
+              staging_register=0,
+              mxu_index=mxu,
+          )
+        # Zero the accumulator on the first step.
+        accumulate = pl.program_id(2) > 0
+
+        def compute_body(i, mn_indices, push=True):
+          pop_mi, pop_ni = mn_indices
+          mi, ni = _next_index(mn_indices, compute_mn_grid)
+
+          def body(pop_addr, mul_addr):
+            for mxu in range(mxu_count):
+              mxu_slice = pl.ds(mxu * compute_block_m, compute_block_m)
+              o_vmem_slice = o_vmem.at[out_slice(pop_mi, pop_ni)].at[mxu_slice]
+              prev_out = jnp.where(accumulate, o_vmem_slice[...], jnp.zeros_like(o_vmem_slice))
+              o_vmem_slice[...] = prev_out + pltpu.matmul_pop(
+                  acc_addr=pop_addr,
+                  shape=(compute_block_m, compute_block_n),
+                  dtype=jnp.float32,
+                  mxu_index=mxu,
+              ).astype(o_vmem.dtype)
+
+            def steady_k(ki, push=True):
+              lhs = x_vmem.at[lhs_slice(mi, ni, ki)]
+              # We push the next m/n block if this is the last k.
+              rhs_indices = _next_index(
+                  (mi, ni, ki), (*compute_mn_grid, compute_k_steps)
+              )
+              rhs = y_vmem.at[rhs_slice(*rhs_indices)]
+              for mxu in range(mxu_count):
+                mxu_slice = pl.ds(mxu * compute_block_m, compute_block_m)
+                pltpu.matmul_acc_lhs(
+                    acc_addr=mul_addr, lhs=lhs[mxu_slice], mxu_index=mxu, load_staged_rhs=0
+                )
+                if push:
+                  pltpu.matmul_push_rhs(rhs=rhs[...], staging_register=0, mxu_index=mxu)
+
+            assert compute_k_steps >= 3
+            steady_k(0, push=True)
+            steady_k(1, push=True)
+            if not push:
+              pl.loop(2, compute_k_steps - 1)(steady_k)
+              steady_k(compute_k_steps - 1, push=push)
+            else:
+              pl.loop(2, compute_k_steps)(steady_k)
+
+          @pl.when(jax.lax.rem(i, 2) == 0)
+          def _even():
+            body(128, 0)
+          @pl.when(jax.lax.rem(i, 2) != 0)
+          def _odd():
+            body(0, 128)
+
+          return mi, ni
+
+        final_indices = (compute_mn_grid[0] - 1, compute_mn_grid[1] - 1)
+        last_indices = jax.lax.fori_loop(0, math.prod(compute_mn_grid) - 1, compute_body, final_indices)
+        # TODO(apaszke): Add a way to push the RHS without a matmul.
+        compute_body(math.prod(compute_mn_grid) - 1, last_indices, push=False)
+
+        for mxu in range(mxu_count):
+          mxu_slice = pl.ds(mxu * compute_block_m, compute_block_m)
+          # TODO(apaszke): Accumulate in f32
+          o_vmem_slice = o_vmem.at[out_slice(*final_indices)].at[mxu_slice]
+          prev_out = jnp.where(accumulate, o_vmem_slice[...], jnp.zeros_like(o_vmem_slice))
+          o_vmem_slice[...] = prev_out + pltpu.matmul_pop(
+              acc_addr=128 if math.prod(compute_mn_grid) % 2 == 0 else 0,
+              shape=(compute_block_m, compute_block_n),
+              dtype=jnp.float32,
+              mxu_index=mxu,
+          ).astype(o_vmem.dtype)
+
+      mem_grid = (
+          x.shape[0] // mem_block_m,
+          y.shape[1] // mem_block_n,
+          x.shape[1] // mem_block_k,
+      )
+      pltpu.emit_pipeline(
+          memory_body,
+          grid=mem_grid,
+          in_specs=(
+              pl.BlockSpec((mem_block_m, mem_block_k), lambda i, j, l: (i, l)),
+              pl.BlockSpec((mem_block_k, mem_block_n), lambda i, j, l: (l, j)),
+          ),
+          out_specs=pl.BlockSpec((mem_block_m, mem_block_n), lambda i, j, l: (i, j)),
+      )(x_ref, y_ref, o_ref)
+
+    matmul = pl.pallas_call(
+        matmul_kernel,
+        out_shape=jax.ShapeDtypeStruct((x.shape[0], y.shape[1]), dtype),
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)] * 2,
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        compiler_params=pltpu.CompilerParams(vmem_limit_bytes=60 * 1024 * 1024),
+        name='matmul',
+    )
+    out = matmul(x, y).block_until_ready()
+    out_ref = jnp.matmul(x, y).block_until_ready().astype(jnp.float32)
+    np.testing.assert_allclose(out, out_ref, atol=1e-2, rtol=1e-2)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
