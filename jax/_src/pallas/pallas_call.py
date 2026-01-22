@@ -598,8 +598,8 @@ def _pallas_call_batching_rule(
           backend=backend, metadata=metadata, name=name)
       return [jnp.expand_dims(x, 0) for x in out]
     if ema:
-      temp_f = remove_explicit(ema)(shard_map(
-          temp_f, out_specs=P(ema), axis_names=set(ema)))
+      with jax_core.remove_explicit_mesh_axis_names(ema):
+        temp_f = shard_map(temp_f, out_specs=P(ema), axis_names=set(ema))
     out = temp_f(*args)
     return out, (0,) * len(out)
 
@@ -763,25 +763,13 @@ def _pallas_call_batching_rule(
 
   if ema:
     # TODO all batching rules should probably be in outer mesh ctx
-    bind = remove_explicit(ema)(shard_map(
-        bind, out_specs=P(ema), axis_names=set(ema)))
+    with jax_core.remove_explicit_mesh_axis_names(ema):
+      bind = shard_map(bind, out_specs=P(ema), axis_names=set(ema))
 
   out = bind(*dynamic_grid_args, *args)
   return out, (0,) * len(out)
 
 batching.fancy_primitive_batchers[pallas_call_p] = _pallas_call_batching_rule
-
-
-@contextlib.contextmanager
-def remove_explicit(ema):
-  prev = jax_core.trace_ctx.axis_env
-  # assert set(prev.explicit_mesh_axis_names) == set(ema)
-  new = jax_core.AxisEnv(prev.axis_sizes, prev.spmd_axis_names, set())
-  try:
-    jax_core.trace_ctx.set_axis_env(new)
-    yield
-  finally:
-    jax_core.trace_ctx.set_axis_env(prev)
 
 
 def checkify_pallas_kernel_body_jaxpr(

@@ -10110,6 +10110,54 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     f(np.arange(8))  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_rng_bit_generator_vmap_ema(self, mesh):
+    # See https://github.com/jax-ml/jax/issues/34497
+    keys = np.arange(4 * 4).reshape((4, 4)).astype(np.uint32)
+    keys_sharded = jax.device_put(keys, P('x', None))
+
+    @jax.jit
+    @jax.vmap
+    def f(key):
+      return lax.rng_bit_generator(key, shape=(5, 7))
+
+    out_keys, bits = f(keys_sharded)
+    self.assertEqual(out_keys.shape, (4, 4))
+    self.assertEqual(bits.shape, (4, 5, 7))
+    self.assertEqual(bits.sharding, NamedSharding(mesh, P('x', None, None)))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_rng_bit_generator_vmap_ema_out_sharding(self, mesh):
+    # See https://github.com/jax-ml/jax/issues/34497
+    keys = np.arange(4 * 4).reshape((4, 4)).astype(np.uint32)
+    keys_sharded = jax.device_put(keys, P('x', None))
+
+    @jax.jit
+    @jax.vmap
+    def f(key):
+      return lax.rng_bit_generator(key, shape=(4, 7), out_sharding=P('y'))
+
+    out_keys, bits = f(keys_sharded)
+    self.assertEqual(out_keys.shape, (4, 4))
+    self.assertEqual(bits.shape, (4, 4, 7))
+    self.assertEqual(bits.sharding, NamedSharding(mesh, P('x', 'y', None)))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_rng_bit_generator_vmap_out_sharding(self, mesh):
+    # See https://github.com/jax-ml/jax/issues/34497
+    keys = np.arange(4 * 4).reshape((4, 4)).astype(np.uint32)
+    keys_sharded = jax.device_put(keys, P(None, None))
+
+    @jax.jit
+    @jax.vmap
+    def f(key):
+      return lax.rng_bit_generator(key, shape=(4, 7), out_sharding=P('y'))
+
+    out_keys, bits = f(keys_sharded)
+    self.assertEqual(out_keys.shape, (4, 4))
+    self.assertEqual(bits.shape, (4, 4, 7))
+    self.assertEqual(bits.sharding, NamedSharding(mesh, P(None, 'y', None)))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

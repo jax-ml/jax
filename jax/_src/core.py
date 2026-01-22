@@ -1288,6 +1288,10 @@ class AxisEnv:
     new_ema = self.explicit_mesh_axis_names | frozenset(axis_names)
     return AxisEnv(self.axis_sizes, self.spmd_axis_names, new_ema)
 
+  def remove_explicit_mesh_axis_names(self, axis_names):
+    new_ema = self.explicit_mesh_axis_names - frozenset(axis_names)
+    return AxisEnv(self.axis_sizes, self.spmd_axis_names, new_ema)
+
   def as_hashable_key(self):
     return tuple((name, size) for (name, size) in self.axis_sizes.items()
                  if name is not no_axis_name)
@@ -1398,7 +1402,7 @@ class AddSpmdAxisNamesContextManager:
 
 add_spmd_axis_names = AddSpmdAxisNamesContextManager
 
-
+# TODO(yashkatariya): Remove this once vmap handles mesh contexts correctly.
 class AddExplicitMeshAxisNamesContextManager:
   __slots__ = ['prev', 'axis_names']
 
@@ -1415,6 +1419,24 @@ class AddExplicitMeshAxisNamesContextManager:
     trace_ctx.set_axis_env(self.prev)
 
 add_explicit_mesh_axis_names = AddExplicitMeshAxisNamesContextManager
+
+# TODO(yashkatariya): Remove this once vmap handles mesh contexts correctly.
+class RemoveExplicitMeshAxisNamesContextManager:
+  __slots__ = ['prev', 'axis_names']
+
+  def __init__(self, axis_names: AxisName | None):
+    self.axis_names = axis_names
+
+  def __enter__(self):
+    self.prev = trace_ctx.axis_env
+    if self.axis_names is not None:
+      trace_ctx.set_axis_env(self.prev.remove_explicit_mesh_axis_names(
+          self.axis_names))
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    trace_ctx.set_axis_env(self.prev)
+
+remove_explicit_mesh_axis_names = RemoveExplicitMeshAxisNamesContextManager
 
 
 def get_axis_env():
