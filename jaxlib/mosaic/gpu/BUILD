@@ -327,7 +327,6 @@ cc_library(
         "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/profiler/lib:traceme",
-        "@xla//xla:executable_run_options",
         "@xla//xla/backends/gpu:ffi",
         "@xla//xla/ffi",
         "@xla//xla/ffi:ffi_api",

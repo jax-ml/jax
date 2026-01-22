@@ -30,14 +30,12 @@ limitations under the License.
 #include <string>
 #include <string_view>
 #include <system_error>  // NOLINT
-#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "jaxlib/mosaic/gpu/library_paths.h"
 #include "absl/base/call_once.h"
 #include "absl/base/no_destructor.h"
-#include "absl/base/optimization.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -52,6 +50,7 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/synchronization/mutex.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "third_party/gpus/cuda/include/driver_types.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CodeGen.h"
@@ -113,7 +112,6 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/serde.h"
 #include "jaxlib/mosaic/gpu/target.h"
 #include "xla/backends/gpu/ffi.h"
-#include "xla/executable_run_options.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
 #include "xla/service/custom_call_status.h"
@@ -130,6 +128,8 @@ limitations under the License.
 #include "tsl/profiler/lib/traceme.h"
 
 namespace {
+
+using ::mosaic::gpu::NvshmemApi;
 
 namespace ffi = xla::ffi;
 namespace se = stream_executor;
@@ -470,7 +470,7 @@ absl::StatusOr<CompiledKernel> Compile(llvm::StringRef module_str) {
   std::string nvshmem_path = "";
   if (is_comm_used) {
     TF_ASSIGN_OR_RETURN(nvshmem_path, get_nvshmem_llvm_lib_path());
-    if (!mosaic::gpu::NvshmemApi::Default(/*assert_ok=*/false).is_loaded()) {
+    if (!NvshmemApi::Default(/*assert_ok=*/false).is_loaded()) {
       return absl::InternalError(
           "Failed to load the NVSHMEM library. Make sure it is installed (e.g. "
           "`pip install nvidia-nvshmem-cu12`).");
@@ -630,16 +630,15 @@ absl::StatusOr<void*> CachedInit(const CompiledKernel& kernel) {
 }
 
 // TODO(b/464203195): Inline once the legacy custom call is removed.
-absl::Status MosaicGPUCustomCallImpl(void* stream, void** buffers,
+absl::Status MosaicGPUCustomCallImpl(cudaStream_t stream, void** buffers,
                                      const KernelHash& hash,
                                      llvm::StringRef module) {
   TF_ASSIGN_OR_RETURN(auto* kernel, CachedCompile(hash, module));
   TF_ASSIGN_OR_RETURN(auto ctx, CachedInit(*kernel));
-  void* args[4] = {&ctx, &stream, &buffers};
   if (kernel->is_comm_used) {
-    mosaic::gpu::NvshmemApi::Default().barrier_all_on_stream(
-        reinterpret_cast<cudaStream_t>(stream));
+    NvshmemApi::Default().barrier_all_on_stream(stream);
   }
+  void* args[4] = {&ctx, &stream, &buffers};
   kernel->host_launch(args);
   return absl::OkStatus();
 }
@@ -650,8 +649,9 @@ void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
                          size_t opaque_len, XlaCustomCallStatus* cc_status) {
   KernelHash hash;
   std::memcpy(hash.data(), opaque, sizeof(KernelHash));
-  auto status = MosaicGPUCustomCallImpl(stream, buffers, hash,
-                                        opaque + sizeof(KernelHash));
+  auto status =
+      MosaicGPUCustomCallImpl(reinterpret_cast<cudaStream_t>(stream), buffers,
+                              hash, opaque + sizeof(KernelHash));
   if (!status.ok()) {
     XlaCustomCallStatusSetFailure(cc_status, status.message().data(),
                                   status.message().size());
