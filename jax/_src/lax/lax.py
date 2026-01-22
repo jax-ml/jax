@@ -5655,9 +5655,10 @@ def _dot_general_batch_unpack_dims(batch_dims):
 
 ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
-batching.fancy_primitive_batchers[dot_general_p] = functools.partial(
+_dot_general_batch_rule = functools.partial(
     _dot_batch_rule, _dot_general_batch_unpack_args,
     _dot_general_batch_unpack_dims, dot_general)
+batching.fancy_primitive_batchers[dot_general_p] = _dot_general_batch_rule
 core.pp_eqn_rules[dot_general_p] = _dot_general_pp_rule
 
 
