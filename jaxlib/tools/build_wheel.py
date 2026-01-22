@@ -59,6 +59,13 @@ parser.add_argument(
 parser.add_argument(
     "--srcs", help="source files for the wheel", action="append"
 )
+parser.add_argument(
+    "--build_from_external_workspace",
+    action="store_true",
+    help="Set when building from an external/umbrella workspace where jax is @jax. "
+    "When true, source prefix is 'jax/' instead of '__main__/'.",
+)
+
 args = parser.parse_args()
 
 r = runfiles.Create()
@@ -103,7 +110,7 @@ def patch_copy_mlir_import(
 
 
 def verify_mac_libraries_dont_reference_chkstack(
-    runfiles=None, wheel_sources_map=None
+    runfiles=None, wheel_sources_map=None, jax_source_prefix="__main__"
 ):
   """Verifies that _jax.so doesn't depend on ____chkstk_darwin.
 
@@ -116,7 +123,7 @@ def verify_mac_libraries_dont_reference_chkstack(
   if not _is_mac():
     return
   file_path = _get_file_path(
-      f"__main__/jaxlib/_jax.{pyext}", runfiles, wheel_sources_map
+      f"{jax_source_prefix}jaxlib/_jax.{pyext}", runfiles, wheel_sources_map
   )
   nm = subprocess.run(
       ["nm", "-g", file_path],
@@ -166,7 +173,14 @@ def _detect_source_file_prefix(runfiles):
 def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
   """Assembles a source tree for the wheel in `wheel_sources_path`. In case of
   build under @jax strip the prefix"""
-  source_file_prefix = _detect_source_file_prefix(r) if not wheel_sources else ""
+  # wheel_sources is a list of file paths, not a prefix. If provided, use empty prefix.
+  # Otherwise, determine prefix based on build_from_external_workspace flag.
+  if wheel_sources:
+    source_file_prefix = ""
+  elif args.build_from_external_workspace:
+    source_file_prefix = "jax/"
+  else:
+    source_file_prefix = "__main__/"
 
   # The wheel sources provided by the transitive rules might have different path
   # prefixes, so we need to create a map of paths relative to the root package
@@ -187,7 +201,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
   )
 
   verify_mac_libraries_dont_reference_chkstack(
-      runfiles=r, wheel_sources_map=wheel_sources_map
+      runfiles=r, wheel_sources_map=wheel_sources_map, jax_source_prefix=source_file_prefix
   )
   copy_files(
       dst_dir=wheel_sources_path,
@@ -408,14 +422,23 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
       wheel_sources_map=wheel_sources_map,
   )
 
+  if args.build_from_external_workspace:
+    xla_ffi_files = [
+        f"{source_file_prefix}jaxlib/include/xla/ffi/api/c_api.h",
+        f"{source_file_prefix}jaxlib/include/xla/ffi/api/api.h",
+        f"{source_file_prefix}jaxlib/include/xla/ffi/api/ffi.h",
+    ]
+  else:
+    xla_ffi_files = [
+        "xla/ffi/api/c_api.h",
+        "xla/ffi/api/api.h",
+        "xla/ffi/api/ffi.h",
+    ]
+
   copy_files(
-      dst_dir=jaxlib_dir / "include" / "xla" / "ffi" / "api",
-      src_files=[
-          f"{source_file_prefix}jaxlib/include/xla/ffi/api/c_api.h",
-          f"{source_file_prefix}jaxlib/include/xla/ffi/api/api.h",
-          f"{source_file_prefix}jaxlib/include/xla/ffi/api/ffi.h",
-      ],
-  )
+        dst_dir=jaxlib_dir / "include" / "xla" / "ffi" / "api",
+        src_files=xla_ffi_files,
+   )
 
 tmpdir = None
 sources_path = args.sources_path

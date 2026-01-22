@@ -68,14 +68,12 @@ PLATFORM_TAGS_DICT = {
     ("Windows", "AMD64"): ("win", "amd64"),
 }
 
-# TODO(vam): remove this once zstandard builds against Python >3.13
-def get_zstandard():
-    if HERMETIC_PYTHON_VERSION in ("3.13", "3.13-ft", "3.14", "3.14-ft"):
-        return []
-    return ["@pypi//zstandard"]
 
 def get_optional_dep(package, excluded_py_versions = ["3.14", "3.14-ft"]):
-    if HERMETIC_PYTHON_VERSION in excluded_py_versions:
+    py_ver = HERMETIC_PYTHON_VERSION
+    if HERMETIC_PYTHON_VERSION_KIND == "ft":
+        py_ver += "-ft"
+    if py_ver in excluded_py_versions:
         return []
     return [package]
 
