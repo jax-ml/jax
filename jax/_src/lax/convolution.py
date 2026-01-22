@@ -596,10 +596,21 @@ def _conv_general_dilated_batch_rule(
     lhs_dilation, rhs_dilation, dimension_numbers,
     feature_group_count, batch_group_count, precision,
     preferred_element_type, out_sharding, **unused_kwargs):
-  assert batch_group_count == 1 or feature_group_count == 1
   lhs, rhs = batched_args
   lhs_bdim, rhs_bdim = batch_dims
   lhs_spec, rhs_spec, out_spec = dimension_numbers
+  if lhs_bdim is None and rhs_bdim is None:
+    out = conv_general_dilated_p.bind(
+        lhs, rhs, window_strides=window_strides, padding=padding,
+        lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation,
+        dimension_numbers=dimension_numbers,
+        feature_group_count=feature_group_count,
+        batch_group_count=batch_group_count, precision=precision,
+        preferred_element_type=preferred_element_type,
+        out_sharding=out_sharding, **unused_kwargs)
+    return out, None
+
+  assert batch_group_count == 1 or feature_group_count == 1
 
   # Some of the cases that reshape into batch or feature dimensions do not work
   # with size 0 batch dimensions. The best fix would be to extend HLO to support
@@ -730,7 +741,6 @@ ad.defbilinear(conv_general_dilated_p,
                _conv_general_dilated_transpose_rhs)
 
 batching.fancy_primitive_batchers[conv_general_dilated_p] = _conv_general_dilated_batch_rule
-batching.skippable_batchers[conv_general_dilated_p] = lambda _: ()
 
 def _complex_mul(mul, x, y):
   # We use a trick for complex multiplication sometimes attributed to Gauss

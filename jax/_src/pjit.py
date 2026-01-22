@@ -2189,6 +2189,14 @@ mlir.register_lowering(sharding_constraint_p,
 def _sharding_constraint_batcher(
     axis_data, vals_in, dims_in, sharding, layout, context_mesh,
     unconstrained_dims):
+  x, = vals_in
+  d, = dims_in
+  if d is None:
+    out = sharding_constraint_p.bind(
+        x, sharding=sharding, layout=layout, context_mesh=context_mesh,
+        unconstrained_dims=unconstrained_dims)
+    return out, None
+
   if axis_data.spmd_name is not None and isinstance(sharding, NamedSharding):
     used = {n for ns in sharding.spec
             for n in (ns if isinstance(ns, tuple) else (ns,))}
@@ -2196,8 +2204,6 @@ def _sharding_constraint_batcher(
       raise ValueError(f"vmap spmd_axis_name {axis_data.spmd_name} cannot appear in "
                        "with_sharding_constraint spec, but got spec "
                        f"{sharding.spec}")
-  x, = vals_in
-  d, = dims_in
   unconstrained_dims = {ud + (d <= ud) for ud in unconstrained_dims}
   if axis_data.spmd_name is None:
     unconstrained_dims.add(d)
@@ -2222,7 +2228,6 @@ def _sharding_constraint_batcher(
       unconstrained_dims=frozenset(unconstrained_dims))
   return y, d
 batching.fancy_primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher
-batching.skippable_batchers[sharding_constraint_p] = lambda _: ()
 
 # -------------------- reshard ------------------------------------
 
@@ -2300,13 +2305,16 @@ mlir.register_lowering(reshard_p, _reshard_hlo_lowering)
 def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding, concrete_mesh):
   x, = vals_in
   d, = dims_in
+  if d is None:
+    out = reshard_p.bind(x, dst_sharding=dst_sharding,
+                         concrete_mesh=concrete_mesh)
+    return out, None
   vmapped_dst_sharding = batching.get_sharding_for_vmap(
       axis_data, dst_sharding, d)
   y = reshard_p.bind(x, dst_sharding=vmapped_dst_sharding,
                      concrete_mesh=concrete_mesh)
   return y, d
 batching.fancy_primitive_batchers[reshard_p] = _reshard_batcher
-batching.skippable_batchers[reshard_p] = lambda _: ()
 
 # -------------------- auto and user mode -------------------------
 
@@ -2465,11 +2473,12 @@ mlir.register_lowering(layout_constraint_p,
 def _layout_constraint_batcher(axis_data, vals_in, dims_in, layout):
   x, = vals_in
   d, = dims_in
+  if d is None:
+    return layout_constraint_p.bind(x, layout=layout), None
   vmapped_layout = get_layout_for_vmap(d, layout)
   y = layout_constraint_p.bind(x, layout=vmapped_layout)
   return y, d
 batching.fancy_primitive_batchers[layout_constraint_p] = _layout_constraint_batcher
-batching.skippable_batchers[layout_constraint_p] = lambda _: ()
 
 # -------------------- helpers --------------------
 

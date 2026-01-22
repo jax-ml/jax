@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import dataclasses
 from functools import partial
-from typing import Any, Union
+from typing import Any
 
 import numpy as np
 
@@ -250,27 +250,20 @@ class BatchTrace(Trace):
     vals_in, dims_in = unzip2(map(self.to_batch_info, tracers))
     args_not_mapped = all(bdim is not_mapped for bdim in dims_in)
     if p in fancy_primitive_batchers:
-      if (args_not_mapped
-          and p in skippable_batchers
-          and not any(self.axis_data.name == axis_name
-                      for axis_name in skippable_batchers[p](params))):
-        return p.bind_with_trace(self.parent_trace, vals_in, params)
-      else:
-        with core.set_current_trace(self.parent_trace):
-          val_out, dim_out = fancy_primitive_batchers[p](
-              self.axis_data, vals_in, dims_in, **params)
-    elif args_not_mapped:
+      with core.set_current_trace(self.parent_trace):
+        val_out, dim_out = fancy_primitive_batchers[p](
+            self.axis_data, vals_in, dims_in, **params)
+        src = source_info_util.current()
+        if p.multiple_results:
+          return [BatchTracer(self, x, d, src) if d is not not_mapped else x
+                  for x, d in zip(val_out, dim_out)]
+        else:
+          return (BatchTracer(self, val_out, dim_out, src)
+                  if dim_out is not not_mapped else val_out)
+    elif args_not_mapped:  # Not all primitives have batching rules defined
       return p.bind_with_trace(self.parent_trace, vals_in, params)
     else:
       raise NotImplementedError(f"Batching rule for '{p}' not implemented")
-    src = source_info_util.current()
-    if p.multiple_results:
-      with core.set_current_trace(self.parent_trace):  # val_out may be lazy map
-        return [BatchTracer(self, x, d, src) if d is not not_mapped else x
-                for x, d in zip(val_out, dim_out)]
-    else:
-      return (BatchTracer(self, val_out, dim_out, src)
-              if dim_out is not not_mapped else val_out)
 
   def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
@@ -639,10 +632,6 @@ def _matchaxis_symzeros(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
 
 ### utilities for defining primitives' batching rules
 
-BatchingRule = Callable[
-    ...,
-    tuple[Any, Union[int, None, tuple[Union[int, None], ...]]]
-]
 fancy_primitive_batchers: dict[core.Primitive, Callable] = {}
 
 # backwards compat shim. TODO: delete
@@ -667,12 +656,6 @@ class PrimitiveBatchersProxy:
   def __delitem__(self, prim):
     del fancy_primitive_batchers[prim]
 primitive_batchers = PrimitiveBatchersProxy()
-
-
-# Presence in this table allows fancy batchers to be skipped by batch traces for
-# irrelevant axes. The Callable takes params and returns a list of relevant axes
-# TODO(yashkatariya): remove this
-skippable_batchers : dict[core.Primitive, Callable] = {}
 
 def defvectorized(prim):
   fancy_primitive_batchers[prim] = partial(vectorized_batcher, prim)
@@ -817,6 +800,8 @@ def bdim_at_front(x, bdim, size, mesh_axis=None):
 def add_batched(axis_data, batched_args, batch_dims):
   bdx, bdy = batch_dims
   x, y = batched_args
+  if bdx is None and bdy is None:
+    return add_jaxvals(x, y), None
   mesh_axis = axis_data.explicit_mesh_axis
   if bdx == bdy:
     return add_jaxvals(x, y), bdx
@@ -831,7 +816,6 @@ def add_batched(axis_data, batched_args, batch_dims):
     return add_jaxvals(x, y), bdy
 
 fancy_primitive_batchers[add_jaxvals_p] = add_batched
-skippable_batchers[add_jaxvals_p] = lambda _: ()
 
 ### mutable arrays
 

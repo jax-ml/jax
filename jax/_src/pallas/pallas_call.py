@@ -555,6 +555,15 @@ def _pallas_call_batching_rule(
     metadata: FrozenDict[str, str] | None = None,
     name: str | None = None,
 ):
+  if all(bdim is None for bdim in dims):
+    out = pallas_call_p.bind(
+        *args, jaxpr=jaxpr, grid_mapping=grid_mapping, mesh=mesh,
+        input_output_aliases=input_output_aliases, debug=debug,
+        interpret=interpret, compiler_params=compiler_params,
+        cost_estimate=cost_estimate, out_avals=out_avals,
+        backend=backend, metadata=metadata, name=name)
+    return out, (None,) * len(out)
+
   if mesh is not None:
     raise NotImplementedError(
         "pallas_call with a mesh does not support batching"
@@ -761,7 +770,6 @@ def _pallas_call_batching_rule(
   return out, (0,) * len(out)
 
 batching.fancy_primitive_batchers[pallas_call_p] = _pallas_call_batching_rule
-batching.skippable_batchers[pallas_call_p] = lambda _: ()
 
 
 @contextlib.contextmanager
