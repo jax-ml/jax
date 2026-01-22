@@ -41,7 +41,6 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
-from jax._src import hijax
 from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
 
@@ -3302,13 +3301,8 @@ class CustomVJPTest(jtu.JaxTestCase):
         """).strip()
     self.assertEqual(actual, expected)
 
-@unittest.skip("delete this when running manually, doesn't work in CI")
+@jtu.with_config(jax_custom_vjp3=True)
 class CustomVJP3Test(CustomVJPTest):
-  def setUp(self):
-    self.prev, jax.custom_vjp = jax.custom_vjp, hijax.custom_vjp3
-
-  def tearDown(self):
-    jax.custom_vjp = self.prev
 
   # regress these, hope no one cares
   def test_python_control_flow(self): pass

@@ -553,6 +553,13 @@ class custom_vjp(Generic[ReturnValue]):
   .. _tutorial: https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
   """
 
+  def __new__(cls, fun, nondiff_argnums=(), nondiff_argnames=()):
+    if config.custom_vjp3.value:
+      from jax._src.hijax import custom_vjp3  # type: ignore
+      return custom_vjp3(fun, nondiff_argnums, nondiff_argnames)
+    else:
+      return super().__new__(cls)
+
   def __init__(self,
                fun: Callable[..., ReturnValue],
                nondiff_argnums: Sequence[int] = (),
