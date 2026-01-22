@@ -1180,6 +1180,7 @@ jax_multiplatform_test(
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     tags = [
         "noasan",
+        "notap",  # TODO(b/477964663): Broken by PyTorch 2.10.0 upgrade.
     ],
     deps = [
         "//jax/experimental:pallas",
