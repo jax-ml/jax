@@ -1935,6 +1935,10 @@ class OpsTest(PallasBaseTest):
       self.skipTest(
           "elementwise_inline_asm is not supported in interpret mode"
       )
+    
+    if jtu.is_device_rocm():
+      self.skipTest("elementwise_inline_asm is not currently "
+                    "supported on ROCm")
 
     @functools.partial(
         self.pallas_call,
