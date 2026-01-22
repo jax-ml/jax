@@ -14,7 +14,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from typing import Any, TypeVar
+import dataclasses
+from typing import Any, TypeVar, TYPE_CHECKING
 
 from jax._src import tree_util
 
@@ -455,3 +456,51 @@ def broadcast(prefix_tree: Any, full_tree: Any,
       - :func:`jax.tree.structure`
   """
   return tree_util.tree_broadcast(prefix_tree, full_tree, is_leaf=is_leaf)
+
+
+# dataclasses.field is specially handled by static type checkers
+# (see https://peps.python.org/pep-0681/). In order to make static()
+# usable with built-in dataclass, the type checker needs to recognize
+# that it's identical to `dataclasses.field`. Since there is no
+# general registration mechanism for this, we define it this way:
+if TYPE_CHECKING:
+  static = dataclasses.field
+else:
+  def static(**kwargs):
+    """Convenience wrapper to declare a static pytree attribute.
+
+    Arguments are the same as those of :func:`dataclasses.field`, but
+    :func:`static` will automatically populate `metadata` with
+    `static = True`, as used by :func:`jax.tree_util.register_dataclass`.
+
+    Example:
+
+      >>> import jax
+      >>> from dataclasses import dataclass
+      ...
+      >>> @jax.tree_util.register_dataclass
+      ... @dataclass
+      ... class MyOp:
+      ...   x: jax.Array
+      ...   y: jax.Array
+      ...   op: str = jax.tree.static(default="add")  # static string field
+      ...
+      >>> m = MyOp(x=jnp.ones(3), y=jnp.arange(3))
+      >>> m
+      MyOp(x=Array([1., 1., 1.], dtype=float32), y=Array([0, 1, 2], dtype=int32), op='add')
+
+      >>> leaves, treedef = jax.tree.flatten(m)
+      >>> leaves
+      [Array([1., 1., 1.], dtype=float32), Array([0, 1, 2], dtype=int32)]
+
+      >>> treedef
+      PyTreeDef(CustomNode(MyOp[('add',)], [*, *]))
+
+      >>> jax.tree.unflatten(treedef, leaves)
+      MyOp(x=Array([1., 1., 1.], dtype=float32), y=Array([0, 1, 2], dtype=int32), op='add')
+
+    See also:
+      - :func:`jax.tree_util.register_dataclass`
+    """
+    metadata = {"static": True, **(kwargs.pop('metadata', {}) or {})}
+    return dataclasses.field(metadata=metadata, **kwargs)

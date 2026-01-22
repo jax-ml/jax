@@ -1736,6 +1736,25 @@ class RegistrationTest(jtu.JaxTestCase):
     # ``y`` is missing, but no validation is done for plain classes.
     tree_util.register_dataclass(Foo, data_fields=["x"], meta_fields=[])
 
+  def test_static(self):
+    with self.subTest("simple static"):
+      static = jax.tree.static()
+      self.assertEqual(static.default, dataclasses.MISSING)
+      self.assertEqual(static.metadata, {"static": True})
+
+    with self.subTest("with default"):
+      static = jax.tree.static(default="abc")
+      self.assertEqual(static.default, "abc")
+      self.assertEqual(static.metadata, {"static": True})
+
+    with self.subTest("with extra metadata"):
+      static = jax.tree.static(metadata={"somekey": "someval"})
+      self.assertEqual(static.metadata, {"static": True, "somekey": "someval"})
+
+    with self.subTest("with static False"):
+      static = jax.tree.static(metadata={"static": False})
+      self.assertEqual(static.metadata, {"static": False})
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
