@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/strings/substitute.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -33,7 +34,6 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
 #include "xla/stream_executor/cuda/cuda_platform.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace {
@@ -49,7 +49,20 @@ absl::Status ExecuteSync(xla::PjRtLoadedExecutable* executable) {
 }
 
 TEST(CustomCallTest, MosaicGpuUsesCommandBuffers) {
-  constexpr absl::string_view kHloModule = R"(
+  //  Dumped from the following kernel:
+  //
+  // ```
+  // def kernel(src_ref, dst_ref):
+  //   dst_ref[...] = src_ref[...]
+  // ```
+  std::string backend_config =
+      R"pb({ kernel_hash =
+                 "\D5:\00\A6\E4\ED\D6.\DB\B3R\91\C87\A9\AE\F2\C2f4\EBO\9C\08\8C\C1\B8/\8D\D8\C2L",
+             module =
+                 "ML\EFR\01MLIR\00\01O\0D\01\03\05\07\09\0B\01\03\0D\037\0F\11\13\15\17\19\1B\1D\1F!#%')+-/13579;=?AC\03\22\02\D5\19\01\C9\0F\13\0B\0B\0F\13\13\13\13\0B\07\0B\0B\13\13\0F\0B\0F\13\13\13\13\13\13\13\0B+\0B\0F\0B\0B\0F\0B\0B#\0B\0B\0B\0B;\0B\0B\0B\0B\0B\0B\0B#\0B\0B\07\0B\13\13\13\0F\13\0B333U\1B\0B\0B\0B#\1B\0B\C3\0B\13\13\13\13\13\13\13\13\13\17\17\17\0B\0F\1F\0F\0B\0B\13\0F\0B\0F\0B\17\0F\0B\0F\0B\17\05\03a\07\07111\09\03Y\0B\03U\01\11\0F\07\0F\0B\13\07/\17\05\07)yQ\07\03E\02\FA\09\1DC\15\03\03\A7\D1\05E\05G\11\05\01\03\03\07\1F\03\03\19\CB\03\03\19\CD\03\03\19\CF\05I\1F\05K\05M\03\03\07\A9\03\03\B1\09\11\01\01\05O\11\01\11\03\03s\09\03\03\17u\03\03\17w\03\03\17y\03\03\07\AB\03\03\07\AD\03\03\AF\D3\05Q\03\0979;\1F=?\13A\05S\11\01%\05U\05W\11\05\19\05Y\05[\03\07!G\13IKM\0D\0D\05]\05_\05a\03\0DQ#SUW\C9\13Y[\09]\09\05c\05e\0D\15\05g\05i\05k\05m\03\07!ace\13g\0D\0F\05o\0F\05q\03\03\07k\11\03\02\04\03\03\07o\11\03\05\03\03\07\09\05s#\05\03\11\00\00\00\00\00\00\00\00#\05\03\11\01\00\00\00\00\00\00\00#\05\03\11\02\00\00\00\00\00\00\00affine_map<() -> ()>\00\03\05\7F\81\83\85\05u\0D\11\05w#\01\03\09\01\00\00\00\03\05\89\8B\8D\09\05y#\01\17Y\01\00\00\00\01\00\00\00\01\00\00\00\01\00\00\00\01\00\00\00\01\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\05{\17\05/Q\17\05/_\17\05/m\17\05/\E3\17\05/\F1\17\05/\FF\17\05/\83\17\05/\9D\17\05/\B7\17\05/*\02\17\05/j\02\17\05/\A2\02\05}\11\01\15\11\01\D0\FF\FF\FF?\11\01}\05\7F\05\81\03\03\07#\1D\B7\B9\05\83\1D\BB\BD\05\85\173&\05'\1D\C1\C3\05\87\1D\C5\C7\05\89\173&\05\0D#llvm.linkage<external>\00#gpu<dim x>\00#gpu<dim y>\00#gpu<dim z>\00#arith.overflow<none>\00#nvvm<shfl_kind idx>\00\01\02\02\03\01\02\04\01\09\15\01\0B{\0B\05\11\11\11\05\05\11\11\05\11\01\05\05\11\11\01!llvm.ptr\00!llvm.struct<(ptr, ptr, i64)>\00!llvm.array<0 x i8>\00!gpu.async.token\00\04\B6\0C\05\01\11\015\07\03\01\0D\17\11\01E\07\01!\11\01O\07\01\17\11\01_\07\03)O\05\11\01\11\01\05\03\01\0B\03\01\05\03\01i\03\03\05\03\15m\03\03#\03\15q\03\05%\02\15\03\13\11\06\01\03\17\03\01\19\07\01%\03\11\03\03\0D\07\01'\03\13\05\0D\11\0D\07\01)\03\13\05\13\11\0D\07\01+\03\13\05\15\0B\11\06\01\03\09\03\17'\07\01}\03\11\03\03\19\07\01%\03\11\03\1B\0D\07\01'\03\13\05\0D\1D\0D\07\01)\03\13\05\1F\1D\0D\07\01+\03\13\05!\0B\11\06\01\03\09\03#)\17\01\87\03\17\11\0F\09\09\09\07\09\09\05\05\03\BB\AE\02\19\03\8F\03\91\03\93\03\95\03\97\03\99\03\9B\03\9D\03\9F\03\A1\03\A3\03\A5\1B\02\01\03\07\09\03\01\0D\03\03\03\06\01\03\01\03C\0B\03\01\0D\03\03\03\06\01\03\01\03G\09\03\01\0F\03\03\03\06\01\03\01\03K\07\07\01\03\03\01\05MI\0F\07\01\03\03\01\05EO\0B\03\01\0F\03\03\03\06\01\03\01\03S\07\07\01\03\03\01\05IU\09\03\01\11\03\03\03\06\01\03\01\03Y\07\07\01\03\03\01\05[W\0F\07\01\03\03\01\05Q]\0B\03\01\11\03\03\03\06\01\03\01\03a\07\07\01\03\03\01\05Wc\05\03\01\1B\03\01\13\06\01\03\01\05_g\05\03\01-\03\01\05\03\01\0B\03\01\05\03\01/\03\01\1D\07\011\03\01\09kimo\05\03\01\0B\03\01\15\07\01\1D\03\07\05qs\1F\06\01\03\07\05uA\1B\02\01\03\07\09\03\01\0D\03\03\03\06\01\03\01\03{\0B\03\01\0D\03\03\03\06\01\03\01\03\7F\09\03\01\0F\03\03\03\06\01\03\01\03\83\07\07\01\03\03\01\05\85\81\0F\07\01\03\03\01\05}\87\0B\03\01\0F\03\03\03\06\01\03\01\03\8B\07\07\01\03\03\01\05\81\8D\09\03\01\11\03\03\03\06\01\03\01\03\91\07\07\01\03\03\01\05\93\8F\0F\07\01\03\03\01\05\89\95\0B\03\01\11\03\03\03\06\01\03\01\03\99\07\07\01\03\03\01\05\8F\9B\05\03\01\1B\03\01\13\06\01\03\01\05\97\9F\05\03\01-\03\01\05\03\01\0B\03\01\05\03\01/\03\01\1D\07\011\03\01\09\A3\A1\A5\A7\05\03\01\B3\03\01-\06\01\03\01\05\A9\AB\05\03\01\0B\03\01\15\07\01\1D\03\07\05\AD\AF\1F\06\01\03\07\05\B1y\09\03\01\0D\03\03\03\06\01\03\01\03\B5\0B\03\01\0D\03\03\03\06\01\03\01\03\B9\09\03\01\0F\03\03\03\06\01\03\01\03\BD\07\07\01\03\03\01\05\BF\BB\0F\07\01\03\03\01\05\B7\C1\0B\03\01\0F\03\03\03\06\01\03\01\03\C5\07\07\01\03\03\01\05\BB\C7\09\03\01\11\03\03\03\06\01\03\01\03\CB\07\07\01\03\03\01\05\CD\C9\0F\07\01\03\03\01\05\C3\CF\0B\03\01\11\03\03\03\06\01\03\01\03\D3\07\07\01\03\03\01\05\C9\D5\05\03\01\1B\03\01\13\06\01\03\01\05\D1\D9\05\03\01\0B\03\01\15\07\01\1D\03\07\05\DB\DD/\00\011\00\013\06\B5\03\0B\03\195\04\BF\05\E1%7\00\01+\00\01\06\03\01\05\01\00\B2\0F\8B\0B\0D\09\0B\15\0B\1D/)'\15\13%-\19\1B\1F\11\19\17\11\1F3\19\0F5--g\1D\15\13\13\0D\05\1F\1B\19\193\19\19\17'!'#\17\1F!\15\15\17\19G\17#\1D\1D\17\1F#\0F\0B\0D\09\0B%\11builtin\00stable_mosaic_gpu\00llvm\00gpu\00arith\00nvvm\00module\00arith.index_cast\00arith.constant\00arith.muli\00gpu.thread_id\00gpu.block_dim\00llvm.insertvalue\00arith.addi\00builtin.unrealized_conversion_cast\00arith.shrui\00arith.cmpi\00func.func\00llvm.load\00nvvm.elect.sync\00nvvm.shfl.sync\00arith.andi\00llvm.mlir.global\00llvm.mlir.constant\00llvm.mlir.undef\00llvm.getelementptr\00gpu.launch\00func.return\00arith.remui\00nvvm.fence.mbarrier.init\00gpu.barrier\00memref.load\00memref.store\00gpu.terminator\00-\00value\00sym_name\00position\00dimension\00function_type\00third_party/py/jax/tests/pallas/mosaic_gpu_test.py\00mosaic_gpu.arch_major\00mosaic_gpu.arch_minor\00stable_mosaic_gpu.version\00kernel\00pallas_call\00mosaic_gpu_init_tma_desc\00sym_visibility\00private\00addr_space\00global_type\00linkage\00global_scratch\00unnamed_addr\00visibility_\00llvm.emit_c_interface\00kernel_mosaic_gpu\00ordering\00elem_type\00rawConstantIndices\00operandSegmentSizes\00workgroup_attributions\00overflowFlags\00kind\00predicate\00get:\00get\00swap:\00swap\00",
+             use_custom_barrier = false })pb";
+
+  std::string hlo_module = absl::Substitute(R"(
 HloModule mosaic_gpu_uses_command_buffers
 
 ENTRY main {
@@ -58,35 +71,32 @@ ENTRY main {
   // a command buffer thunk. At the time of writing, the minimum number of
   // thunks necessary to trigger the behavior is 5.
   cc0 = f32[] custom-call(c0),
-    custom_call_target="mosaic_gpu_v2", api_version=API_VERSION_TYPED_FFI
+    custom_call_target="mosaic_gpu_v2", api_version=API_VERSION_TYPED_FFI, backend_config=$0
   cc1 = f32[] custom-call(cc0),
-    custom_call_target="mosaic_gpu_v2", api_version=API_VERSION_TYPED_FFI
+    custom_call_target="mosaic_gpu_v2", api_version=API_VERSION_TYPED_FFI, backend_config=$0
   cc2 = f32[] custom-call(cc1),
-    custom_call_target="mosaic_gpu_v2", api_version=API_VERSION_TYPED_FFI
+    custom_call_target="mosaic_gpu_v2", api_version=API_VERSION_TYPED_FFI, backend_config=$0
   cc3 = f32[] custom-call(cc2),
-    custom_call_target="mosaic_gpu_v2", api_version=API_VERSION_TYPED_FFI
+    custom_call_target="mosaic_gpu_v2", api_version=API_VERSION_TYPED_FFI, backend_config=$0
   ROOT cc4 = f32[] custom-call(cc3),
-    custom_call_target="mosaic_gpu_v2", api_version=API_VERSION_TYPED_FFI
-})";
+    custom_call_target="mosaic_gpu_v2", api_version=API_VERSION_TYPED_FFI, backend_config=$0
+})",
+                                            backend_config);
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          xla::ParseAndReturnUnverifiedModule(kHloModule));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       xla::ParseAndReturnUnverifiedModule(hlo_module));
 
   std::string tmp_path = testing::TempDir();
   tsl::setenv("XLA_FLAGS", absl::StrCat("--xla_dump_to=", tmp_path).c_str(),
               /*overwrite=*/true);
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
-                          xla::GetXlaPjrtGpuClient(/*options=*/{}));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<xla::PjRtLoadedExecutable> executable,
       client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
                              /*options=*/{}));
-
-  // Ignore return value. Execution will fail because the custom calls don't
-  // wrap any valid Mosaic code, but we only care that the chosen execution
-  // plan uses a command buffer thunk.
-  ExecuteSync(executable.get()).IgnoreError();
 
   // Matching the name exactly is vulnerable to renaming changes, and is not
   // ideal. With that said, this seems like the most reasonable thing to do, and
@@ -101,7 +111,7 @@ ENTRY main {
   // Ensure that before the thunk passes have run, the first thunk is a custom
   // call thunk as expected.
   std::string before_contents;
-  TF_CHECK_OK(tsl::ReadFileToString(
+  ASSERT_OK(tsl::ReadFileToString(
       ::tsl::Env::Default(),
       absl::StrCat(tmp_path, "/", kBeforeThunkPassesFilename),
       &before_contents));
@@ -111,12 +121,15 @@ ENTRY main {
   // buffer thunk (which therefore wraps the custom call thunk identified in
   // the previous step).
   std::string after_contents;
-  TF_CHECK_OK(tsl::ReadFileToString(
+  ASSERT_OK(tsl::ReadFileToString(
       ::tsl::Env::Default(),
       absl::StrCat(tmp_path, "/", kAfterThunkPassesFilename), &after_contents));
 
   // There should be only command buffer thunks.
   EXPECT_THAT(after_contents, testing::StartsWith("000: kCommandBuffer"));
+
+  // Make sure the program runs successfully.
+  EXPECT_OK(ExecuteSync(executable.get()));
 }
 
 TEST(CustomCallTest, LegacyCustomCall) {

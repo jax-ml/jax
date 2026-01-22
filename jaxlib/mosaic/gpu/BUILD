@@ -367,7 +367,6 @@ cc_test(
         "@xla//xla/service:gpu_plugin",
         "@xla//xla/stream_executor/cuda:cuda_platform",
         "@xla//xla/tsl/platform:env",
-        "@xla//xla/tsl/platform:status",
         "@xla//xla/tsl/platform:statusor",
     ],
 )
