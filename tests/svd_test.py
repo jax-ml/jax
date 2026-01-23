@@ -274,13 +274,16 @@ class SvdTest(jtu.JaxTestCase):
       start=[0, 1, 64, 126, 127],
       end=[1, 2, 65, 127, 128],
   )
-  @jtu.run_on_devices('tpu')  # TODO(rmlarsen: enable on other devices)
+  @jtu.run_on_devices('tpu', 'rocm')
   def testSvdSubsetByIndex(self, start, end):
     if start >= end:
       return
     dtype = np.float32
     m = 256
     n = 128
+    # subset_by_index is only implemented for TPU; on ROCm only full range works
+    if jtu.is_device_rocm() and not (start == 0 and end == min(m, n)):
+      self.skipTest("subset_by_index not implemented for ROCm")
     rng = jtu.rand_default(self.rng())
     tol = np.maximum(n, 80) * np.finfo(dtype).eps
     args_maker = lambda: [rng((m, n), dtype)]
