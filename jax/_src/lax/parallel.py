@@ -2268,6 +2268,7 @@ axis_index_p.def_impl(partial(dispatch.apply_primitive, axis_index_p))
 mlir.register_lowering(axis_index_p, _axis_index_lowering)
 axis_index_p.def_effectful_abstract_eval(_axis_index_effectful_abstract_eval)
 batching.fancy_primitive_batchers[axis_index_p] = _axis_index_batcher
+
 ######################## psum_invariant_p ####################################
 
 def bind_psum_invariant(leaf, *, axes, axis_index_groups):
@@ -2295,15 +2296,13 @@ def _psum_invariant_abstract_eval(name, aval, *, axes):
         " names mentioned in `axes` passed to `psum` must be present in"
         f" `jax.typeof(inp).vma`. Got axes={axes} and"
         f" jax.typeof(inp).vma={aval.vma}")
+  if any(isinstance(a, int) for a in axes):
+    raise ValueError(f'psum_invariant does not accept integer axes. Got {axes}')
 
   named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
-  pos_axes = tuple(axis for axis in axes if isinstance(axis, int))
   core.check_avals_context_mesh([aval], name)
   check_unreduced_args([aval], name)
-  out_aval = core.ShapedArray(
-      lax._reduce_op_shape_rule(aval, axes=pos_axes), aval.dtype,
-      sharding=lax._reduce_op_sharding_rule(aval, axes=pos_axes),
-      vma=frozenset(a for a in aval.vma if a not in named_axes))
+  out_aval = aval.update(vma=frozenset(a for a in aval.vma if a not in named_axes))
   return out_aval, {core.NamedAxisEffect(axis) for axis in named_axes}
 psum_invariant_p.def_effectful_abstract_eval(
     partial(_psum_invariant_abstract_eval, psum_invariant_p.name))
