@@ -86,6 +86,7 @@ def extract_pallas_body(lowered):
 
 class PallasLoweringDeterminismTest(jtu.JaxTestCase):
 
+  @jtu.run_on_devices("tpu")
   def testCallsiteAgnostic(self):
     if jaxlib_extension_version < 399:
       self.skipTest("TracebackScope requires jaxlib >= 399")
