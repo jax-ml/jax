@@ -440,7 +440,9 @@ struct CompiledKernel {
   bool is_comm_used = false;
 };
 
-absl::StatusOr<CompiledKernel> Compile(llvm::StringRef module_str) {
+absl::StatusOr<CompiledKernel> Compile(
+    llvm::StringRef module_str,
+    std::optional<se::CudaComputeCapability> cc) {
   tsl::profiler::TraceMe trace("Compile");
   mlir::MLIRContext context(mlir::MLIRContext::Threading::DISABLED);
   context.allowUnregisteredDialects(true);
@@ -461,9 +463,11 @@ absl::StatusOr<CompiledKernel> Compile(llvm::StringRef module_str) {
   mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
   TF_ASSIGN_OR_RETURN(se::cuda::CompilationProvider * compilation_provider,
                       GetAssemblyToBinaryCompilationProvider());
-  TF_ASSIGN_OR_RETURN(se::CudaComputeCapability cc, GetCudaComputeCapability());
+  if (!cc.has_value()) {
+    TF_ASSIGN_OR_RETURN(cc, GetCudaComputeCapability());
+  }
   TF_ASSIGN_OR_RETURN(std::string sm,
-                      mosaic::gpu::GetSmVersion(cc.major, cc.minor));
+                      mosaic::gpu::GetSmVersion(cc->major, cc->minor));
   TF_ASSIGN_OR_RETURN(std::string ptx_isa,
                       GetPtxIsaVersion(*compilation_provider));
   bool is_comm_used = is_nvshmem_used(*module);
@@ -515,7 +519,7 @@ absl::StatusOr<CompiledKernel> Compile(llvm::StringRef module_str) {
   // setting our own command line options makes compilation dependent on
   // outside state/non-deterministic.
   xla::llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_cl_options);
-  auto passes = GetPassPipeline(module->getContext(), compilation_provider, cc,
+  auto passes = GetPassPipeline(module->getContext(), compilation_provider, *cc,
                                 sm, ptx_isa, nvshmem_path);
   if (mlir::failed(passes)) {
     return absl::InternalError("Failed to construct pass pipeline");
@@ -579,8 +583,9 @@ absl::StatusOr<CompiledKernel> Compile(llvm::StringRef module_str) {
 
 using KernelHash = std::array<uint64_t, 4>;
 
-absl::StatusOr<CompiledKernel*> CachedCompile(const KernelHash& kernel_hash,
-                                              llvm::StringRef module) {
+absl::StatusOr<CompiledKernel*> CachedCompile(
+    const KernelHash& kernel_hash, llvm::StringRef module,
+    std::optional<se::CudaComputeCapability> cc) {
   struct Cache {
     absl::Mutex mutex;
     absl::flat_hash_map<KernelHash, CompiledKernel> kernels
@@ -591,7 +596,7 @@ absl::StatusOr<CompiledKernel*> CachedCompile(const KernelHash& kernel_hash,
   absl::MutexLock lock(cache->mutex);
   auto it = cache->kernels.find(kernel_hash);
   if (it != cache->kernels.end()) return &it->second;
-  TF_ASSIGN_OR_RETURN(auto kernel, Compile(module));
+  TF_ASSIGN_OR_RETURN(auto kernel, Compile(module, std::move(cc)));
   cache->kernels.insert_or_assign(kernel_hash, std::move(kernel));
   return &cache->kernels.at(kernel_hash);
 }
@@ -630,10 +635,11 @@ absl::StatusOr<void*> CachedInit(const CompiledKernel& kernel) {
 }
 
 // TODO(b/464203195): Inline once the legacy custom call is removed.
-absl::Status MosaicGPUCustomCallImpl(cudaStream_t stream, void** buffers,
-                                     const KernelHash& hash,
-                                     llvm::StringRef module) {
-  TF_ASSIGN_OR_RETURN(auto* kernel, CachedCompile(hash, module));
+absl::Status MosaicGPUCustomCallImpl(
+    cudaStream_t stream, void** buffers, const KernelHash& hash,
+    llvm::StringRef module,
+    std::optional<se::CudaComputeCapability> cc = std::nullopt) {
+  TF_ASSIGN_OR_RETURN(auto* kernel, CachedCompile(hash, module, std::move(cc)));
   TF_ASSIGN_OR_RETURN(auto ctx, CachedInit(*kernel));
   if (kernel->is_comm_used) {
     NvshmemApi::Default().barrier_all_on_stream(stream);
@@ -661,7 +667,7 @@ void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,
                                          "CUDA");
 
-absl::Status MosaicGpuExecute(cudaStream_t stream, ffi::RemainingArgs inputs,
+absl::Status MosaicGpuExecute(se::Stream* stream, ffi::RemainingArgs inputs,
                               ffi::RemainingRets results,
                               std::string_view kernel_hash,
                               std::string_view module,
@@ -698,12 +704,16 @@ absl::Status MosaicGpuExecute(cudaStream_t stream, ffi::RemainingArgs inputs,
     }
   }
 
-  return MosaicGPUCustomCallImpl(stream, buffers.data(), hash, module);
+  cudaStream_t cuda_stream =
+      reinterpret_cast<cudaStream_t>(stream->platform_specific_handle().stream);
+  se::CudaComputeCapability cc =
+      stream->parent()->GetDeviceDescription().cuda_compute_capability();
+  return MosaicGPUCustomCallImpl(cuda_stream, buffers.data(), hash, module, cc);
 }
 
 XLA_FFI_DEFINE_HANDLER(kMosaicGpuExecute, MosaicGpuExecute,
                        ffi::Ffi::Bind<ffi::ExecutionStage::kExecute>()
-                           .Ctx<xla::ffi::PlatformStream<cudaStream_t>>()
+                           .Ctx<ffi::Stream>()
                            .RemainingArgs()
                            .RemainingRets()
                            .Attr<std::string_view>("kernel_hash")
@@ -726,7 +736,7 @@ extern "C" {
 __attribute__((visibility("default"))) void** MosaicGpuCompile(
     const char* module, int num_module_bytes) {
   std::string module_str(module, num_module_bytes);
-  auto kernel = Compile(module_str);
+  auto kernel = Compile(module_str, /*cc=*/std::nullopt);
   if (!kernel.ok()) {
     return nullptr;
   }
