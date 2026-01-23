@@ -456,7 +456,8 @@ def _traceback_to_location(ctx: ModuleContext, tb: xc.Traceback) -> ir.Location:
 def source_info_to_location(
     ctx: ModuleContext, primitive: core.Primitive | None,
     name_stack: source_info_util.NameStack,
-    traceback: xc.Traceback | None) -> ir.Location:
+    traceback: xc.Traceback | None,
+    outer_traceback: xc.Traceback | None = None) -> ir.Location:
   if config.include_full_tracebacks_in_locations.value:
     if traceback is None:
       loc = ir.Location.unknown()
@@ -464,6 +465,8 @@ def source_info_to_location(
       loc = _traceback_to_location(ctx, traceback)
   else:
     frame = source_info_util.user_frame(traceback)
+    if frame is None:
+      frame = source_info_util.user_frame(outer_traceback)
     if frame is None:
       loc = ir.Location.unknown()
     else:
@@ -1838,6 +1841,9 @@ def lower_jaxpr_to_fun(
       if main_function
       else source_info_util.new_name_stack()
   )
+  outer_traceback = (
+      source_info_util.current().traceback if main_function else None
+  )
 
   with ir.InsertionPoint(entry_block):
     flat_args = entry_block.arguments
@@ -1889,7 +1895,7 @@ def lower_jaxpr_to_fun(
     out_vals, tokens_out = jaxpr_subcomp(
         ctx, jaxpr.jaxpr, name_stack, tokens_in,
         consts_for_constvars, *args, dim_var_values=dim_var_values,
-        const_lowering=const_lowering)
+        const_lowering=const_lowering, outer_traceback=outer_traceback)
     outs: list[IrValues] = []
     for eff in effects:
       outs.append(tokens_out.get(eff))
@@ -1993,6 +1999,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
                   *args: IrValues,
                   dim_var_values: Sequence[ir.Value],
                   const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
+                  outer_traceback: xc.Traceback | None = None,
                   ) -> tuple[Sequence[IrValues], TokenSet]:
   """Lowers a jaxpr into MLIR, inlined into an existing function.
 
@@ -2054,7 +2061,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
 
     eqn_name_stack = name_stack + eqn.source_info.name_stack
     loc = source_info_to_location(ctx, eqn.primitive, eqn_name_stack,
-                                  eqn.source_info.traceback)
+                                  eqn.source_info.traceback, outer_traceback)
     with (source_info_util.user_context(eqn.source_info.traceback), loc,
           eqn.ctx.manager):
       # TODO(mattjj, phawkins): support caching for dynamic shapes.
@@ -2062,11 +2069,11 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
           eqn.primitive not in _uncacheable_primitives)
       if can_cache_lowering:
         loc = source_info_to_location(ctx, None, eqn_name_stack,
-                                      eqn.source_info.traceback)
+                                      eqn.source_info.traceback, outer_traceback)
         with loc:
           out_nodes, tokens_out = _cached_lowering(
               ctx, eqn, tokens_in, tuple(dim_var_values), const_lowering,
-              *in_nodes, **eqn.params)
+              outer_traceback, *in_nodes, **eqn.params)
       else:
         # If we cannot cache the lowering, lower inline.
         axis_size_env = None
@@ -2098,6 +2105,7 @@ def _cached_lowering(
     tokens_in: TokenSet,
     dim_var_values: tuple[ir.Value, ...],
     const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
+    outer_traceback: xc.Traceback | None = None,
     *args, **params) -> tuple[Sequence[IrValues], TokenSet]:
   """Lowers a jaxpr equation, using a cache.
 
@@ -2126,7 +2134,7 @@ def _cached_lowering(
     cache_entry = _emit_lowering_rule_as_fun(
         partial(_uncached_lowering, eqn.primitive, eqn.ctx, eqn.effects), ctx,
         eqn.ctx, eqn.primitive, ordered_effects, avals_in,
-        avals_out, **params)
+        avals_out, eqn.source_info.traceback, outer_traceback, **params)
     ctx.lowering_cache[cache_key] = cache_entry
 
   tokens_in_args = tuple(tokens_in.get(eff) for eff in ordered_effects)
@@ -2158,6 +2166,8 @@ def _emit_lowering_rule_as_fun(
     ordered_effects: Sequence[core.Effect],
     avals_in: Sequence[core.AbstractValue],
     avals_out: Sequence[core.AbstractValue],
+    traceback: xc.Traceback | None = None,
+    outer_traceback: xc.Traceback | None = None,
     **params
 ) -> LoweringCacheValue:
   """Emits the contents of a lowering rule as a private function."""
@@ -2201,7 +2211,9 @@ def _emit_lowering_rule_as_fun(
         tokens_in=TokenSet(zip(ordered_effects, token_args)),
         tokens_out=None, jaxpr_eqn_ctx=eqn_ctx, dim_var_values=dim_var_values,
         const_lowering=const_lowering)
-    with ir.Location.name(str(primitive.name)):
+    with source_info_to_location(ctx, primitive,
+                                 source_info_util.new_name_stack(),
+                                 traceback, outer_traceback):
       outs, inline = lowering_rule(sub_ctx, *unflattened_args, **params)
     if sub_ctx.tokens_out:
       outs = [*[sub_ctx.tokens_out.get(eff) for eff in ordered_effects], *outs]

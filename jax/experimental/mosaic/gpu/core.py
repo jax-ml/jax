@@ -791,6 +791,7 @@ def _lower_as_gpu_kernel(
     kernel_name: str,
     prof_spec: profiler.ProfilerSpec | None = None,
     jax_mesh: mesh_lib.Mesh | None = None,
+    base_loc: ir.Location | None = None,
 ):
   ptr_ty = ir.Type.parse("!llvm.ptr")
   token_ty = ir.Type.parse("!gpu.async.token")
@@ -813,7 +814,7 @@ def _lower_as_gpu_kernel(
     out_shape = (*out_shape, prof_spec.jax_buffer_type(grid, block))
     out_ref_tys.append(prof_spec.mlir_buffer_type(grid, block))
 
-  module = ir.Module.create()
+  module = ir.Module.create(loc=base_loc)
   dialect.register_dialect(module.context)
   attrs = module.operation.attributes
   attrs["sym_name"] = ir.StringAttr.get(module_name)

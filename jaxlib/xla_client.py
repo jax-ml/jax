@@ -523,7 +523,10 @@ register_custom_call_as_batch_partitionable = (
 
 
 Traceback = _xla.Traceback
-TracebackScope = _xla.TracebackScope
+if _version >= 399:
+  TracebackScope = _xla.TracebackScope
+else:
+  TracebackScope = contextlib.nullcontext
 Frame = _xla.Frame
 
 
