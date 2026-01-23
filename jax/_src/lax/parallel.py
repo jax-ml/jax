@@ -1577,6 +1577,10 @@ def _ragged_all_to_all_transpose(
 
 def _ragged_all_to_all_batched_collective(axis_data, vals_in, dims_in,
                                           axis_name, axis_index_groups):
+  if all(bdim is None for bdim in dims_in) and axis_data.name not in axis_name:
+    out = ragged_all_to_all_p.bind(*vals_in, axis_name=axis_name,
+                                   axis_index_groups=axis_index_groups)
+    return out, None
   if axis_data.name in axis_name:
     raise NotImplementedError("Please open a feature request!")
   if axis_index_groups:
@@ -2260,6 +2264,9 @@ def _axis_index_effectful_abstract_eval(*, axis_name):
   return ShapedArray((), np.int32, sharding=sharding, vma=vma), effect
 
 def _axis_index_batcher(axis_data, vals_in, dims_in, *, axis_name):
+  axes = tuple(axis_name) if isinstance(axis_name, (tuple, list)) else (axis_name,)
+  if axis_data.name not in axes:
+    return axis_index_p.bind(axis_name=axis_name), None
   return lax.iota(np.int32, axis_data.size), 0
 
 axis_index_p = core.Primitive('axis_index')
@@ -2267,7 +2274,6 @@ axis_index_p.def_impl(partial(dispatch.apply_primitive, axis_index_p))
 mlir.register_lowering(axis_index_p, _axis_index_lowering)
 axis_index_p.def_effectful_abstract_eval(_axis_index_effectful_abstract_eval)
 batching.fancy_primitive_batchers[axis_index_p] = _axis_index_batcher
-
 ######################## psum_invariant_p ####################################
 
 def bind_psum_invariant(leaf, *, axes, axis_index_groups):
