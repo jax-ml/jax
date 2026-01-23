@@ -818,12 +818,6 @@ def _axis_size(
 
 ### parallel primitives
 
-def _names_in_param(pname: str, params: core.ParamDict) -> tuple[str]:
-  axis_names = params[pname]
-  if isinstance(axis_names, (tuple, list)):
-    return tuple(axis_names)
-  else:
-    return (axis_names,)
 
 def _constant_reduction(prim, axis_data, arg, axes, axis_index_groups):
   assert axis_data.name in axes

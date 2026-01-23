@@ -135,11 +135,6 @@ def _fft_lowering(ctx, x, *, fft_type, fft_lengths):
   ]
 
 
-def _naive_rfft(x, fft_lengths):
-  y = fft(x, FftType.FFT, fft_lengths)
-  n = fft_lengths[-1]
-  return y[..., : n//2 + 1]
-
 @jit(static_argnums=1)
 def _rfft_transpose(t, fft_lengths):
   # The transpose can be computed directly using irfft with a mask to account
