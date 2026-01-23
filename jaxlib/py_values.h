@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/xla_data.pb.h"
@@ -95,10 +96,10 @@ absl::StatusOr<DevicePutResult> DevicePutWithDevice(
 //
 // See the above `DevicePutWithDevice` for other details.
 absl::StatusOr<DevicePutResult> DevicePutWithSharding(
-    absl::Span<const nanobind::handle> addressable_shards,
-    xla::ifrt::Client* ifrt_client, const xla::nb_dtype& dtype,
-    absl::Span<const int64_t> shape, nanobind::handle sharding,
-    const DevicePutOptions& options);
+    absl::Span<const nanobind::handle> src_shards,
+    xla::ifrt::DeviceListRef dst_devices, xla::ifrt::Client* ifrt_client,
+    const xla::nb_dtype& dtype, absl::Span<const int64_t> shape,
+    nanobind::handle sharding, const DevicePutOptions& options);
 
 // Describes the abstract shape and dtype of an argument.
 struct PyArgSignature {

@@ -47,20 +47,6 @@ class DeviceIdTest(jt_multiprocess.MultiProcessTest):
     y = jax.jit(lambda x: x + 1)(x)
     self.assertEqual(y, 2)
 
-  # TODO(phawkins): this test CHECK-fails on TPU.
-  @jtu.skip_on_devices("tpu")
-  def testNonaddressableDeviceToDevicePut(self):
-    source_device = jax.local_devices(backend="cpu")[0]
-    x = jax.device_put(0, source_device)
-    for device in jax.devices():
-      if device.process_index != jax.process_index():
-        with self.assertRaisesRegex(
-            RuntimeError,
-            "(Cannot copy array to non-addressable device.*|.*is not a local"
-            " device.*)",
-        ):
-          jax.device_put(x, device)
-
   def testDefaultDevicePlatformString(self):
     with jax.default_device("cpu"):
       result = jax.jit(lambda x: x + 1)(1)

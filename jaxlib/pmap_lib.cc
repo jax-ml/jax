@@ -213,9 +213,12 @@ absl::StatusOr<ShardArgResult> ShardArg(
     }
     CHECK(ifrt_client != nullptr);
     TF_ASSIGN_OR_RETURN(
+        xla::ifrt::DeviceListRef ifrt_devices,
+        ifrt_client->MakeDeviceList(devices));
+    TF_ASSIGN_OR_RETURN(
         DevicePutResult device_put_result,
         DevicePutWithSharding(
-            args, ifrt_client, ndarray.dtype(),
+            args, ifrt_devices, ifrt_client, ndarray.dtype(),
             nb::cast<std::vector<int64_t>>(ndarray.attr("shape")),
             input_spec.array_sharding, options));
     result.ifrt_array = std::move(device_put_result.ifrt_array);

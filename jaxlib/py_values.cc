@@ -1085,10 +1085,10 @@ absl::StatusOr<DevicePutResult> DevicePutWithDevice(
 }
 
 absl::StatusOr<DevicePutResult> DevicePutWithSharding(
-    absl::Span<const nanobind::handle> addressable_shards,
-    ifrt::Client* ifrt_client, const xla::nb_dtype& dtype,
-    absl::Span<const int64_t> shape, nanobind::handle sharding,
-    const DevicePutOptions& options) {
+    absl::Span<const nanobind::handle> src_shards,
+    xla::ifrt::DeviceListRef dst_devices, ifrt::Client* ifrt_client,
+    const xla::nb_dtype& dtype, absl::Span<const int64_t> shape,
+    nanobind::handle sharding, const DevicePutOptions& options) {
   tsl::profiler::TraceMe traceme("DevicePutWithSharding");
   ++GetDevicePutInfo().device_put_with_sharding;
 
@@ -1096,31 +1096,16 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
                       GetIfrtDeviceList(sharding));
   ifrt::DeviceList* ifrt_addressable_device_list =
       ifrt_device_list->AddressableDeviceList();
-  absl::Span<ifrt::Device* const> ifrt_addressable_devices =
-      ifrt_addressable_device_list->devices();
   // Pmap sharding requires special handling because it needs a shard shape
   // upfront.
   const bool is_pmap_sharding = sharding.type().is(PmapSharding::type());
 
-  if (addressable_shards.size() != ifrt_addressable_devices.size()) {
-    // Try to generate a friendly error message if the user attempted to copy to
-    // a non-addressable device.
-    if (addressable_shards.size() > ifrt_addressable_devices.size()) {
-      for (ifrt::Device* device : ifrt_device_list->devices()) {
-        if (!device->IsAddressable()) {
-          return xla::InvalidArgument(
-              "Cannot copy array to non-addressable device: %s",
-              device->DebugString());
-        }
-      }
-    }
-    // Otherwise, generate a generic error message.
+  if (src_shards.size() != dst_devices->size()) {
     return xla::InvalidArgument(
-        "Number of addressable shard data does not match the number "
-        "of addressable devices in the sharding: %d vs. %d",
-        addressable_shards.size(), ifrt_addressable_devices.size());
+        "Number of input shards does not match the number of destination "
+        "devices: %d vs. %d", src_shards.size(), dst_devices->size());
   }
-  if (is_pmap_sharding && addressable_shards.empty()) {
+  if (is_pmap_sharding && src_shards.empty()) {
     return xla::InvalidArgument(
         "Pmap sharding requires at least one addressable shard.");
   }
@@ -1130,12 +1115,12 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
   ifrt::MemoryKind ifrt_memory_kind = GetMemoryKind(sharding);
 
   std::vector<ShardFn> shard_fns;
-  shard_fns.reserve(addressable_shards.size());
-  for (int i = 0; i < addressable_shards.size(); ++i) {
+  shard_fns.reserve(src_shards.size());
+  for (int i = 0; i < src_shards.size(); ++i) {
     TF_ASSIGN_OR_RETURN(
         ShardFn shard,
-        MakeShardFn(addressable_shards[i], ifrt_client,
-                    ifrt_addressable_devices[i], ifrt_memory_kind, options));
+        MakeShardFn(src_shards[i], ifrt_client,
+                    dst_devices->devices()[i], ifrt_memory_kind, options));
     shard_fns.push_back(std::move(shard));
   }
 
@@ -1169,10 +1154,12 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
       // If any shard is an IFRT array, we should assemble shards.
       should_batch = false;
     }
-    shards.push_back(std::move(shard));
-    if (should_batch && is_fully_replicated) {
-      // We need only one host buffer for a fully-replicated array.
-      break;
+    if (dst_devices->devices()[i]->IsAddressable()) {
+      shards.push_back(std::move(shard));
+      if (should_batch && is_fully_replicated) {
+        // We need only one host buffer for a fully-replicated array.
+        break;
+      }
     }
   }
   // While we have finished calling `shard_fns`, we cannot destroy them until we

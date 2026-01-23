@@ -1376,20 +1376,12 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
   GlobalPyRefManager()->CollectGarbage();
 
   PyUserContextScope user_context_scope;
-  auto n_devices = dst_devices.size();
 
   DevicePutOptions options;
   options.squash_64bit_types = !jax_enable_x64;
   options.allow_zero_copy =
       (!force_copy && (host_buffer_semantics ==
                        ifrt::Client::HostBufferSemantics::kImmutableZeroCopy));
-
-  std::vector<ifrt::ArrayRef> ifrt_arrays;
-
-  absl::InlinedVector<ifrt::Device*, 1> devices;
-  devices.reserve(n_devices);
-  std::vector<xla::ifrt::Shape> shapes;
-  shapes.reserve(n_devices);
 
   std::vector<nb::handle> args;
   args.reserve(xs.size());
@@ -1409,10 +1401,19 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
   TF_ASSIGN_OR_RETURN(nb_class_ptr<PyDeviceList> py_device_list,
                       GetPyDeviceList(sharding));
 
+  std::vector<xla::ifrt::Device*> ifrt_devices;
+  ifrt_devices.reserve(dst_devices.size());
+  for (const PyDevice* device : dst_devices) {
+    ifrt_devices.push_back(device->device());
+  }
+  ifrt::Client* ifrt_client = py_device_list->py_client()->ifrt_client();
+  TF_ASSIGN_OR_RETURN(
+      xla::ifrt::DeviceListRef ifrt_device_list,
+      ifrt_client->MakeDeviceList(ifrt_devices));
   TF_ASSIGN_OR_RETURN(
       DevicePutResult device_put_result,
-      DevicePutWithSharding(args, py_device_list->py_client()->ifrt_client(),
-                            dtype, shape, sharding, options));
+      DevicePutWithSharding(args, ifrt_device_list, ifrt_client, dtype, shape,
+                            sharding, options));
 
   return PyArray(aval, weak_type, dtype, std::move(shape), std::move(sharding),
                  py_device_list->py_client(),

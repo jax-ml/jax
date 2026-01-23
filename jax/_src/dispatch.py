@@ -505,10 +505,12 @@ def _device_put_sharding_impl(
 
   # Only `Device` exists below. `Sharding` instance is handled above.
   if x_is_jax_array:
-    if not x_is_fully_addressable:
+    if not x_is_fully_addressable and not is_single_device_sharding(x_sharding):
       raise ValueError(
-          "device_put's first argument must be a fully addressable array, but "
-          f"got value with devices {x.devices()}")
+          "When the second argument to `device_put` is a Device, the first "
+          "argument must be a fully addressable array or a non-addressable "
+          "array with a single device sharding. Got value with devices "
+          f"{x.devices()}")
     if device is None:
       if copy == ArrayCopySemantics.REUSE_INPUT:
         return x
