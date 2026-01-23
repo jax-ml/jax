@@ -171,7 +171,9 @@ def pallas_call_tpu_lowering_rule(
     pm.run(mosaic_module.operation)
     print(f"\nThe Mosaic module for pallas_call {debug_info.func_src_info}:")
     print(mosaic_module)
-  num_dyn_bounds = grid_mapping.num_dynamic_grid_bounds
+  num_dyn_bounds = sum(
+      jax_core.is_symbolic_dim(g) for g in grid_mapping.grid or []
+  )
   input_output_aliases = tuple(
       (a[0] + num_dyn_bounds, a[1])
       for a in input_output_aliases
@@ -195,6 +197,22 @@ def pallas_call_tpu_lowering_rule(
 
   # Dynamic grid bounds have to go at the front.
   dynamic_grid_args, args = in_nodes[:num_dyn_bounds], in_nodes[num_dyn_bounds:]
+
+  # Identify which dynamic operands are actually concrete. We should not
+  # prune these because we haven't specialized the kernel to remove them.
+  # We only prune operands that are truly dynamic (and thus might be specialized
+  # later).
+  if pallas_core.dynamic_shapes_export_enabled():
+    grid_indices = []
+    dyn_idx = 0
+    for g in grid_mapping.grid or []:
+      if jax_core.is_symbolic_dim(g):
+        grid_indices.append(dyn_idx)
+        dyn_idx += 1
+    grid_indices = tuple(grid_indices)
+  else:
+    grid_indices = None
+
   kernel_ctx = ctx.replace(avals_in=kernel_in_avals, avals_out=kernel_out_avals)
   output_memory_spaces = _get_memory_spaces_from_avals(
       out_avals, kernel_type=kernel_type
@@ -307,6 +325,7 @@ def pallas_call_tpu_lowering_rule(
       allow_collective_id_without_custom_barrier=mosaic_params.allow_collective_id_without_custom_barrier,
       shape_invariant_numerics=mosaic_params.shape_invariant_numerics,
       tiling=tiling,
+      grid_indices=grid_indices,
   )
   _maybe_cast_to_bool = (
       lambda x, aval: x.astype(jax.numpy.bool_)
