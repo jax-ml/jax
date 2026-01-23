@@ -697,6 +697,24 @@ void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,
                                          "CUDA");
 
+// Validate custom call attributes.
+absl::Status InstantiateResources(ffi::Dictionary attrs) {
+  TF_ASSIGN_OR_RETURN(bool use_custom_barrier,
+                      attrs.get<bool>("use_custom_barrier"));
+  if (use_custom_barrier) {
+    return absl::UnimplementedError("Custom barrier is not supported on GPUs.");
+  }
+  TF_ASSIGN_OR_RETURN(std::string_view kernel_hash,
+                      attrs.get<std::string_view>("kernel_hash"));
+  if (kernel_hash.size() != sizeof(KernelHash)) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("Kernel hash size is %d bytes, expected %d bytes",
+                        kernel_hash.size(), sizeof(KernelHash)));
+  }
+  TF_RETURN_IF_ERROR(attrs.get<std::string_view>("module").status());
+  return absl::OkStatus();
+}
+
 
 absl::StatusOr<std::vector<void*>> ConstructKernelBuffers(
     const xla::gpu::CollectiveParams* collective_params,
@@ -783,9 +801,7 @@ absl::StatusOr<std::vector<void*>> ConstructKernelBuffers(
 }
 
 bool ModuleUsesCollectiveMetadata(const xla::ffi::Dictionary& attrs) {
-  absl::StatusOr<bool> uses_collective_metadata =
-      attrs.get<bool>("uses_xla_collective_metadata");
-  return uses_collective_metadata.ok() && *uses_collective_metadata;
+  return attrs.get<bool>("uses_xla_collective_metadata").value_or(false);
 }
 
 absl::Status MosaicGpuExecute(
@@ -794,35 +810,18 @@ absl::Status MosaicGpuExecute(
     const xla::gpu::CollectiveCliques* collective_cliques,
     ffi::RemainingArgs inputs, ffi::RemainingRets results,
     xla::ffi::Dictionary attributes) {
-  TF_ASSIGN_OR_RETURN(bool use_custom_barrier,
-                      attributes.get<bool>("use_custom_barrier"));
-  TF_ASSIGN_OR_RETURN(std::string_view kernel_hash,
-                      attributes.get<std::string_view>("kernel_hash"));
-  TF_ASSIGN_OR_RETURN(std::string_view module,
-                      attributes.get<std::string_view>("module"));
-
-  if (use_custom_barrier) {
-    return absl::UnimplementedError("Custom barrier is not supported on GPUs.");
-  }
-  if (kernel_hash.size() != sizeof(KernelHash)) {
-    return absl::InvalidArgumentError(
-        absl::StrFormat("Kernel hash size is %d bytes, expected %d bytes",
-                        kernel_hash.size(), sizeof(KernelHash)));
-  }
-
-  KernelHash hash;
-  std::memcpy(hash.data(), kernel_hash.data(), sizeof(KernelHash));
-
-
   TF_ASSIGN_OR_RETURN(std::vector<void*> buffers,
                       ConstructKernelBuffers(
                         collective_params, stream,
                         ModuleUsesCollectiveMetadata(attributes), inputs,
                         results));
-
   cudaStream_t cuda_stream = reinterpret_cast<cudaStream_t>(
       stream->platform_specific_handle().stream);
-  return MosaicGPUCustomCallImpl(cuda_stream, buffers.data(), hash, module);
+  auto kernel_hash = attributes.get<std::string_view>("kernel_hash");
+  KernelHash hash;
+  std::memcpy(hash.data(), kernel_hash->data(), sizeof(KernelHash));
+  auto module = attributes.get<std::string_view>("module");
+  return MosaicGPUCustomCallImpl(cuda_stream, buffers.data(), hash, *module);
 }
 
 absl::Status MosaicGpuPrepare(
@@ -854,6 +853,14 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuPrepare, MosaicGpuPrepare,
                            .Ctx<ffi::CollectiveCliqueRequests>()
                            .Attrs());
 
+XLA_FFI_DEFINE_HANDLER(kMosaicGPUInstantiate, InstantiateResources,
+                       ffi::Ffi::BindInstantiate().Attrs());
+
+//  We expect the following attributes:
+// - kernel_hash: a hash of the kernel.
+// - module: the serialized MLIR module.
+// - use_custom_barrier
+// - uses_xla_collective_metadata (optional)
 XLA_FFI_DEFINE_HANDLER(kMosaicGpuExecute, MosaicGpuExecute,
                        ffi::Ffi::Bind<ffi::ExecutionStage::kExecute>()
                            .Ctx<ffi::Stream>()
@@ -866,7 +873,7 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuExecute, MosaicGpuExecute,
 
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "mosaic_gpu_v2", "CUDA",
                          {
-                             /*instantiate=*/nullptr,
+                             /*instantiate=*/kMosaicGPUInstantiate,
                              /*prepare=*/kMosaicGpuPrepare,
                              /*initialize=*/nullptr,
                            /*execute=*/kMosaicGpuExecute,
