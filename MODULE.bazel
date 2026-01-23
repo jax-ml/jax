@@ -1,0 +1,225 @@
+module(name = "jax")
+
+##############################################################
+# Bazel module dependencies
+##############################################################
+
+bazel_dep(name = "abseil-cpp", version = "20250814.1", repo_name = "com_google_absl")
+bazel_dep(name = "bazel_features", version = "1.36.0")
+bazel_dep(name = "bazel_skylib", version = "1.8.1")
+bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_google_flatbuffers")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "pybind11_bazel", version = "2.13.6")
+bazel_dep(name = "rules_cc", version = "0.2.8")
+bazel_dep(name = "rules_python", version = "1.6.1")
+
+# TODO: use a released version when available
+bazel_dep(name = "rules_ml_toolchain")
+archive_override(
+    module_name = "rules_ml_toolchain",
+    integrity = "sha256-s6lSdgWx8xRrtDEin6H4ui5EFI7S653N6rgAy+SnA/Y=",
+    strip_prefix = "rules_ml_toolchain-469be4eea388140207e2a31b8f4d4d612532fcde",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/469be4eea388140207e2a31b8f4d4d612532fcde.tar.gz"],
+)
+
+# TODO: use a released version when available
+bazel_dep(name = "xla")
+archive_override(
+    module_name = "xla",
+    integrity = "sha256-FmmcrZgng83LaOHnuYpTmouqcQdCh5jbt0tnUQQdj9g=",
+    strip_prefix = "xla-ed953c01bb51f95a36abd907d1a64295feef16fc",
+    urls = ["https://github.com/openxla/xla/archive/ed953c01bb51f95a36abd907d1a64295feef16fc.tar.gz"],
+)
+
+# TODO: upstream, otherwise we have to duplicate the patches in jax
+single_version_override(
+    module_name = "grpc",
+    patch_strip = 1,
+    patches = ["//third_party/grpc:grpc.patch"],  # upstreaming in cl/822016400
+)
+
+# TODO: The linker input from curl causes linking error for //jaxlib:libjax_common.so
+# https://github.com/bazelbuild/bazel-central-registry/blob/9bf492585e2deea72df928318d16b1be2964e32b/modules/curl/8.11.0/overlay/BUILD.bazel#L282-L284
+# Figure out why and if it's possible to avoid this patch.
+single_version_override(
+    module_name = "curl",
+    patches = ["//third_party/curl:remove_linker_script.patch"],
+)
+
+##############################################################
+# Dependencies defined in XLA via module extensions
+##############################################################
+
+### TSL
+tsl_extension = use_extension("@xla//third_party/extensions:tsl.bzl", "tsl_extension")
+use_repo(tsl_extension, "tsl")
+
+### LLVM
+llvm = use_extension("@xla//third_party/extensions:llvm.bzl", "llvm_extension")
+use_repo(llvm, "llvm-project")
+
+### C++ dependencies
+# TODO: convert them to Bazel modules (bazel_dep).
+third_party = use_extension("@xla//third_party/extensions:third_party.bzl", "third_party_ext")
+use_repo(
+    third_party,
+    "dlpack",
+    "eigen_archive",
+    "gloo",
+    "nanobind",
+    "shardy",
+    "stablehlo",
+    "triton",
+)
+
+rocm = use_extension("@xla//third_party/extensions:rocm_configure.bzl", "rocm_configure_ext")
+use_repo(rocm, "local_config_rocm")
+
+python_version_ext = use_extension("@xla//third_party/extensions:python_version.bzl", "python_version_ext")
+use_repo(python_version_ext, "python_version_repo")
+
+### RBE
+rbe_config = use_extension("@xla//third_party/extensions:rbe_config.bzl", "rbe_config_ext")
+use_repo(rbe_config, "ml_build_config_platform")
+
+remote_execution_configure = use_extension("@xla//third_party/extensions:remote_execution_configure.bzl", "remote_execution_configure_ext")
+use_repo(remote_execution_configure, "local_config_remote_execution")
+
+##############################################################
+# Python dependencies
+##############################################################
+
+### Toolchains
+
+# TODO: Support HERMETIC_PYTHON_URL, etc to allow specifying a custom built
+# python version.
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.defaults(
+    # The environment variable takes precedence if set.
+    python_version = "3.11",
+    python_version_env = "HERMETIC_PYTHON_VERSION",
+)
+python.toolchain(python_version = "3.11")
+python.toolchain(python_version = "3.12")
+python.toolchain(python_version = "3.13")
+python.toolchain(python_version = "3.14")
+
+### Pypi
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+
+[pip.parse(
+    extra_hub_aliases = {
+        "numpy": ["numpy_headers"],
+    },
+    hub_name = "jax_pypi",
+    python_version = python_version,
+    requirements_lock = "//build:requirements_lock_{}.txt".format(python_version.replace(".", "_")),
+    whl_modifications = {
+        "@pypi_mods//:numpy.json": "numpy",  # @pypi_mods is defined in XLA's MODULE.bazel
+    },
+) for python_version in [
+    "3.11",
+    "3.12",
+    "3.13",
+    "3.14",
+]]
+
+use_repo(pip, "pypi_mods", pypi = "jax_pypi")
+
+# Override XLA's pypi installation to use the one defined by JAX.
+# TODO: have a better way to unify the pypi installation.
+override_repo(
+    pip,
+    xla_pypi = "pypi",
+)
+
+### Pybind
+pybind11_internal_configure = use_extension(
+    "@pybind11_bazel//:internal_configure.bzl",
+    "internal_configure_extension",
+)
+use_repo(pybind11_internal_configure, "pybind11")
+
+##############################################################
+# Dependencies defined in rules_ml_toolchain
+##############################################################
+
+### CUDA dependencies
+cuda_configure = use_extension("@rules_ml_toolchain//extensions:cuda_configure.bzl", "cuda_configure_ext")
+use_repo(cuda_configure, "local_config_cuda")
+
+cuda_json_ext = use_extension("@rules_ml_toolchain//extensions:cuda_json.bzl", "cuda_json_ext")
+use_repo(cuda_json_ext, "cuda_redist_json")
+
+cuda_redist_init_ext = use_extension("@rules_ml_toolchain//extensions:cuda_redist_init.bzl", "cuda_redist_init_ext")
+use_repo(
+    cuda_redist_init_ext,
+    "cuda_cccl",
+    "cuda_crt",
+    "cuda_cublas",
+    "cuda_cudart",
+    "cuda_cudnn",
+    "cuda_cufft",
+    "cuda_cupti",
+    "cuda_curand",
+    "cuda_cusolver",
+    "cuda_cusparse",
+    "cuda_nvcc",
+    "cuda_nvdisasm",
+    "cuda_nvjitlink",
+    "cuda_nvml",
+    "cuda_nvtx",
+    "cuda_nvvm",
+)
+
+### Toolchains
+register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
+
+register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_cuda")
+
+register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64")
+
+register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64_cuda")
+
+##############################################################
+# Other dependencies via use_repo_rule
+##############################################################
+
+nvidia_wheel_versions_repository = use_repo_rule(
+    "@xla//third_party/py:python_wheel.bzl",
+    "nvidia_wheel_versions_repository",
+)
+
+nvidia_wheel_versions_repository(
+    name = "nvidia_wheel_versions",
+    versions_source = "//build:nvidia-requirements.txt",
+)
+
+jax_python_wheel_repository = use_repo_rule(
+    "//jaxlib:jax_python_wheel.bzl",
+    "jax_python_wheel_repository",
+)
+
+jax_python_wheel_repository(
+    name = "jax_wheel",
+    version_key = "_version",
+    version_source = "//jax:version.py",
+)
+
+python_wheel_version_suffix_repository = use_repo_rule(
+    "@xla//third_party/py:python_wheel.bzl",
+    "python_wheel_version_suffix_repository",
+)
+
+python_wheel_version_suffix_repository(
+    name = "jax_wheel_version_suffix",
+)
+
+test_shard_count_repository = use_repo_rule(
+    "//:test_shard_count.bzl",
+    "test_shard_count_repository",
+)
+
+test_shard_count_repository(
+    name = "test_shard_count",
+)

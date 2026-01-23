@@ -52,6 +52,11 @@ else
   FREETHREADED_FLAG_VALUE="no"
 fi
 
+BZLMOD_CONFIG=""
+if [[ "${JAXCI_ENABLE_BZLMOD:-0}" == "1" ]]; then
+  BZLMOD_CONFIG="--config=bzlmod"
+fi
+
  # TODO(b/446172564): Remove this condition when the test is fixed on all
  # platforms.
 if [[ $os == "linux" ]] && [[ $arch == "x86_64" ]]; then
@@ -83,6 +88,7 @@ else
 fi
 
 bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
+    $BZLMOD_CONFIG \
     --build_runfile_links=false \
     --config=$rbe_config \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \

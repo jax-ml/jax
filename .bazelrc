@@ -3,6 +3,9 @@
 # #############################################################################
 # TODO: Enable Bzlmod
 common --noenable_bzlmod
+common:bzlmod --enable_bzlmod --noenable_workspace
+## Make sure direct dependencies specified match the resolved version.
+common:bzlmod --check_direct_dependencies=error
 
 # Make Bazel print out all options from rc files.
 common --announce_rc
