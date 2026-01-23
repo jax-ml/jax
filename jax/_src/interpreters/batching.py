@@ -250,7 +250,10 @@ class BatchTrace(Trace):
     vals_in, dims_in = unzip2(map(self.to_batch_info, tracers))
     args_not_mapped = all(bdim is not_mapped for bdim in dims_in)
     if p in fancy_primitive_batchers:
-      with core.set_current_trace(self.parent_trace):
+      # TODO(yashkatariya): Remove remove_explicit_mesh_axis_names when vmap
+      # mesh ctx is correctly set.
+      with (core.set_current_trace(self.parent_trace),
+            core.remove_explicit_mesh_axis_names(self.axis_data.explicit_mesh_axis)):
         val_out, dim_out = fancy_primitive_batchers[p](
             self.axis_data, vals_in, dims_in, **params)
         src = source_info_util.current()
