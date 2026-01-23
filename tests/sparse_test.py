@@ -137,6 +137,7 @@ class cuSparseTest(sptu.SparseTestCase):
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   @jax.default_matmul_precision("float32")
+  @jtu.skip_on_devices("rocm")  # skipping on ROCm due to known issue in hipSPARSE
   def test_csr_matmul_ad(self, shape, dtype, bshape):
     if jtu.is_device_rocm():
       self.skipTest("test_csr_matmul_ad not supported on ROCm due to hipSPARSE issue")
@@ -217,6 +218,7 @@ class cuSparseTest(sptu.SparseTestCase):
     dtype=all_dtypes,
     transpose=[True, False],
   )
+  @jtu.skip_on_devices("rocm")  # skipping on ROCm due to known issue in hipSPARSE
   def test_csr_matvec(self, shape, dtype, transpose):
     if jtu.is_device_rocm():
       self.skipTest("test_csr_matvec not supported on ROCm due to hipSPARSE issue")
@@ -588,6 +590,7 @@ class cuSparseTest(sptu.SparseTestCase):
       transpose=[True, False],
   )
   @jtu.run_on_devices("gpu")
+  @jtu.skip_on_devices("rocm")  # skipping on ROCm due to known issue in hipSPARSE
   def test_csr_spmv(self, shape, dtype, transpose):
     if jtu.is_device_rocm():
       self.skipTest("test_csr_spmv not supported on ROCm due to hipSPARSE issue")
@@ -1048,6 +1051,7 @@ class SparseObjectTest(sptu.SparseTestCase):
     )
     for Obj in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO]))
   @jax.default_matmul_precision("float32")
+  @jtu.skip_on_devices("rocm")  # skipping on ROCm due to known issue in hipSPARSE
   def test_matmul(self, shape, dtype, Obj, bshape):
     if jtu.is_device_rocm():
       self.skipTest("test_matmul not supported on ROCm due to hipSPARSE issue")
