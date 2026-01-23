@@ -931,7 +931,7 @@ def _allreduce_effectful_abstract_eval(aval, *, axes, axis_index_groups):
       raise ValueError(f"axis_index_groups can only be used with reductions over "
                        f"named axes, but got: {axes}")
   core.check_avals_context_mesh([aval], 'psum')
-  check_unreduced_args([aval], 'psum')
+  check_unreduced_args([aval], axes, 'psum')
   out_aval = ShapedArray(
       lax._reduce_op_shape_rule(aval, axes=pos_axes), aval.dtype,
       sharding=lax._reduce_op_sharding_rule(aval, axes=pos_axes))
@@ -1121,7 +1121,7 @@ def _ppermute_batcher(axis_data, vals_in, dims_in, axis_name, perm):
 def _raise_to_shaped_abstract_eval(x, *, axis_name, **params):
   _check_axis_names(axis_name, 'ppermute')
   collective_vma_rule('ppermute', axis_name, x)
-  check_unreduced_args([x], 'ppermute')
+  check_unreduced_args([x], axis_name, 'ppermute')
   return x
 
 ppermute_p = core.Primitive('ppermute')
@@ -1437,7 +1437,7 @@ def _all_to_all_effectful_abstract_eval(
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
   _check_axis_names(axis_name, 'all_to_all')
-  check_unreduced_args([input_aval], 'all_to_all')
+  check_unreduced_args([input_aval], axis_name, 'all_to_all')
   shape = list(input_aval.shape)
   axis_size = (
       _axis_size(axis_name)
@@ -1774,7 +1774,7 @@ def _all_gather_effectful_abstract_eval(
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
   _check_axis_names(axis_name, 'all_gather')
-  check_unreduced_args([x_aval], 'all_gather')
+  check_unreduced_args([x_aval], axis_name, 'all_gather')
   new_shape = list(x_aval.shape)
   if tiled:
     new_shape[all_gather_dimension] *= axis_size
@@ -1900,7 +1900,7 @@ def _all_gather_invariant_effectful_abstract_eval(
     x_aval, *, all_gather_dimension, axis_name, axis_size, tiled
 ):
   _check_axis_names(axis_name, 'all_gather_invariant')
-  check_unreduced_args([x_aval], 'all_gather_invariant')
+  check_unreduced_args([x_aval], axis_name, 'all_gather_invariant')
   new_shape = list(x_aval.shape)
   if tiled:
     new_shape[all_gather_dimension] *= axis_size
@@ -2005,7 +2005,7 @@ def _reduce_scatter_effectful_abstract_eval(
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
   _check_axis_names(axis_name, 'reduce_scatter')
-  check_unreduced_args([x_aval], 'reduce_scatter')
+  check_unreduced_args([x_aval], axis_name, 'reduce_scatter')
   new_shape = list(x_aval.shape)
   scatter_dim_input_size = x_aval.shape[scatter_dimension]
   if tiled:
@@ -2301,7 +2301,7 @@ def _psum_invariant_abstract_eval(name, aval, *, axes):
 
   named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
   core.check_avals_context_mesh([aval], name)
-  check_unreduced_args([aval], name)
+  check_unreduced_args([aval], axes, name)
   out_aval = aval.update(vma=frozenset(a for a in aval.vma if a not in named_axes))
   return out_aval, {core.NamedAxisEffect(axis) for axis in named_axes}
 psum_invariant_p.def_effectful_abstract_eval(
@@ -2332,7 +2332,7 @@ def _pvary_abstract_eval(aval, *, axes):
   if not config._check_vma.value:
     return aval
   _check_axis_names(axes, 'pvary')
-  check_unreduced_args([aval], 'pvary')
+  check_unreduced_args([aval], axes, 'pvary')
   assert isinstance(axes, tuple)
   if set(axes).intersection(aval.vma):
     raise ValueError(
@@ -2654,7 +2654,7 @@ mlir.register_lowering(vary_unreduced_cast_p, lambda ctx, x, *, axes: [x])
 def _vary_unreduced_cast_abstract_eval(aval, *, axes):
   assert isinstance(axes, tuple)
   _check_axis_names(axes, 'vary_unreduced_cast')
-  check_unreduced_args([aval], 'vary_unreduced_cast')
+  check_unreduced_args([aval], axes, 'vary_unreduced_cast')
   if not aval.vma:
     raise ValueError('vary_unreduced_cast only accepts inputs that are'
                      f' varying. Got {aval.str_short(True)}')

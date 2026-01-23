@@ -2410,16 +2410,18 @@ reduced_vary_cast_p = Primitive('reduced_vary_cast_p')
 
 #######################################################################
 
-def check_unreduced_args(args, name):
+def check_unreduced_args(args, axes, name):
+  axes = axes if isinstance(axes, (tuple, list)) else (axes,)
+  axes = set(axes)
   for a in args:
-    if a.sharding.spec.unreduced:
+    if a.sharding.spec.unreduced & axes:
       raise ValueError(
           f"{name} cannot accept args which are unreduced. Got"
-          f" {a.str_short(True)}")
-    if a.sharding.spec.reduced:
+          f" {a.str_short(True)} and axes={axes}")
+    if a.sharding.spec.reduced & axes:
       raise ValueError(
           f"{name} cannot accept args which are reduced. Got"
-          f" {a.str_short(True)}")
+          f" {a.str_short(True)} and axes={axes}")
 
 def standard_insert_pvary(*args):
   if not config._check_vma.value:

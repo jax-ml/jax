@@ -4861,6 +4861,25 @@ class ShardMapTest(jtu.JaxTestCase):
         ValueError, "shard_map requires a non-empty mesh"):
       f(jnp.arange(8))
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_psum_reduced_input(self, mesh):
+    arr = jax.device_put(np.arange(32.).reshape(8, 4), P('x', 'y'))
+
+    @jax.shard_map(out_specs=P(reduced={'y'}))
+    def f(x):
+      seq_x = jax.lax.all_gather(x, 'y', axis=1, tiled=True, to='reduced')
+      complex_loss = jnp.sum(seq_x)
+      return jax.lax.psum(complex_loss, 'x')
+
+    out = jax.jit(f)(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(reduced={'y'})))
+
+    gout = jax.jit(jax.grad(f))(arr)
+    self.assertEqual(gout.sharding, NamedSharding(mesh, P('x', 'y')))
+
+    expected_gout = jax.jit(jax.grad(jnp.sum))(arr)
+    self.assertArraysEqual(gout, expected_gout)
+
 
 class FunSpec(NamedTuple):
   name: str

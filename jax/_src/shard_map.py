@@ -796,7 +796,7 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.AbstractValue
                     for i, sz in enumerate(aval.shape))
   names_spec = spec._normalized_spec_for_aval(aval.ndim)
   if aval.ndim == 0:
-    out_spec = P()
+    out_spec = P(unreduced=spec.unreduced, reduced=spec.reduced)
   else:
     out_spec = []  # type: ignore
     for name_s, aval_s in zip(names_spec, aval.sharding.spec):
