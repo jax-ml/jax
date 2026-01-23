@@ -140,6 +140,8 @@ using MosaicHostFunc = void(void**);
 // Mirrors `--xla_gpu_cuda_data_dir`'s default value.
 constexpr std::string_view kDefaultCudaDataDir = "./cuda_sdk_lib";
 
+// Returns the latest PTX ISA version supported by both LLVM and the underlying
+// PTX compiler.
 absl::StatusOr<std::string> GetPtxIsaVersion(
     const se::cuda::CompilationProvider& compilation_provider) {
   TF_ASSIGN_OR_RETURN(int ptxas_latest_version,
@@ -468,7 +470,13 @@ absl::StatusOr<CompiledKernel> Compile(
   }
   TF_ASSIGN_OR_RETURN(std::string sm,
                       mosaic::gpu::GetSmVersion(cc->major, cc->minor));
-  TF_ASSIGN_OR_RETURN(std::string ptx_isa,
+  // Here, it is important to use a PTX ISA version that is supported by both
+  // the underlying compilation provider, and by LLVM. Using a version that is
+  // newer than what LLVM supports will lead to the indication being ignored by
+  // LLVM (potentially causing a version downgrade), while using a version that
+  // is newer than what the compilation provider supports will lead to LLVM
+  // potentially generating PTX that the compilation provider cannot handle.
+  TF_ASSIGN_OR_RETURN(std::string llvm_ptx_isa,
                       GetPtxIsaVersion(*compilation_provider));
   bool is_comm_used = is_nvshmem_used(*module);
   std::string nvshmem_path = "";
@@ -515,7 +523,7 @@ absl::StatusOr<CompiledKernel> Compile(
   // outside state/non-deterministic.
   xla::llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_cl_options);
   auto passes = GetPassPipeline(module->getContext(), compilation_provider, *cc,
-                                sm, ptx_isa, nvshmem_path);
+                                sm, llvm_ptx_isa, nvshmem_path);
   if (mlir::failed(passes)) {
     return absl::InternalError("Failed to construct pass pipeline");
   }

@@ -161,6 +161,8 @@ cc_library(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@llvm-project//llvm:IRReader",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:ir_headers",
@@ -181,6 +183,7 @@ cc_library(
         "@xla//xla/stream_executor/cuda:compilation_options",
         "@xla//xla/stream_executor/cuda:compilation_provider",
         "@xla//xla/stream_executor/cuda:cuda_compute_capability",
+        "@xla//xla/tsl/platform:statusor",
     ],
 )
 

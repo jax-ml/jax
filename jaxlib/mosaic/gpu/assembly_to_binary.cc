@@ -21,6 +21,7 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/assembly_to_binary.h"
 
 #include <cassert>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -28,6 +29,8 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/IR/Builders.h"
@@ -44,6 +47,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/compilation_options.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace mosaic {
 namespace gpu {
@@ -51,6 +55,29 @@ namespace gpu {
 namespace {
 
 namespace se = ::stream_executor;
+
+absl::StatusOr<std::string> SetPtxIsaVersionToHighestSupported(
+    const se::cuda::CompilationProvider& compilation_provider,
+    llvm::StringRef ptx_str) {
+  TF_ASSIGN_OR_RETURN(int ptx_isa_latest_version,
+                      compilation_provider.GetLatestPtxIsaVersion());
+
+  int major_version = ptx_isa_latest_version / 10;
+  int minor_version = ptx_isa_latest_version % 10;
+
+  uint64_t start_pos = ptx_str.find(".version");
+  uint64_t end_pos = ptx_str.find('\n', start_pos);
+
+  if (start_pos == std::string::npos || end_pos == std::string::npos) {
+    return absl::InternalError(
+        "Failed to find PTX version during PTX to SASS lowering.");
+  }
+
+  return absl::StrCat(
+      ptx_str.substr(0, start_pos).str(),
+      absl::StrFormat(".version %d.%d", major_version, minor_version),
+      ptx_str.substr(end_pos).str());
+}
 
 class AssemblyToBinaryPass
     : public jaxlib::mlir::Pass<AssemblyToBinaryPass, mlir::ModuleOp> {
@@ -91,10 +118,26 @@ class AssemblyToBinaryPass
       }
 
       llvm::StringRef ptx_str = object.getObject().getValue();
-      if (dump_opts.ptx) {
-        DumpToFileOrStdout(ptx_str, dump_opts.module_basename + ".ptx",
-                           dump_opts.dump_path);
+
+      auto dump_ptx_if_enabled = [&]() {
+        if (dump_opts.ptx) {
+          DumpToFileOrStdout(ptx_str, dump_opts.module_basename + ".ptx",
+                             dump_opts.dump_path);
+        }
+      };
+
+      absl::StatusOr<std::string> ptx_str_or =
+          SetPtxIsaVersionToHighestSupported(*compilation_provider_, ptx_str);
+
+      if (!ptx_str_or.ok()) {
+        // Dump the PTX before emitting the error, for better diagnostics.
+        dump_ptx_if_enabled();
+        binary.emitOpError(ptx_str_or.status().message());
+        return mlir::WalkResult::interrupt();
       }
+      ptx_str = *ptx_str_or;
+      dump_ptx_if_enabled();
+
       absl::StatusOr<se::cuda::Assembly> sass_or =
           compilation_provider_->Compile(cc_, ptx_str, compilation_options);
       if (!sass_or.ok()) {
