@@ -4222,7 +4222,9 @@ class ExplicitMXUTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
     if not jtu.is_device_tpu_at_least(7):
-      self.skipTest("TPU v7 required for this test.")
+      self.skipTest('TPU v7 required for this test.')
+    if not jtu.is_cloud_tpu_at_least(2026, 1, 28):
+      self.skipTest('Test requires a newer libTPU.')
 
   @parameterized.named_parameters(
       ('f32', jnp.float32),
