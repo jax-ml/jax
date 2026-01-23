@@ -717,7 +717,7 @@ absl::Status InstantiateResources(ffi::Dictionary attrs) {
 
 
 absl::StatusOr<std::vector<void*>> ConstructKernelBuffers(
-    const xla::gpu::CollectiveParams* collective_params,
+    const xla::gpu::CollectiveParams* absl_nullable collective_params,
     se::Stream* absl_nonnull stream, bool uses_collective_metadata,
     ffi::RemainingArgs inputs, ffi::RemainingRets results) {
   std::vector<void*> buffers;
@@ -753,6 +753,7 @@ absl::StatusOr<std::vector<void*>> ConstructKernelBuffers(
   // When several devices handled with a single process we also need to
   // construct the collective metadata and store it to the last buffer.
   if (uses_collective_metadata) {
+    CHECK(collective_params != nullptr);
     std::vector<se::DeviceAddressBase> parameters;
     // Reserve space for input and output buffers,
     // except the collective metadata buffer.
@@ -807,7 +808,6 @@ bool ModuleUsesCollectiveMetadata(const xla::ffi::Dictionary& attrs) {
 absl::Status MosaicGpuExecute(
     se::Stream* stream,
     const xla::gpu::CollectiveParams* collective_params,
-    const xla::gpu::CollectiveCliques* collective_cliques,
     ffi::RemainingArgs inputs, ffi::RemainingRets results,
     xla::ffi::Dictionary attributes) {
   TF_ASSIGN_OR_RETURN(std::vector<void*> buffers,
@@ -831,6 +831,9 @@ absl::Status MosaicGpuPrepare(
   if (!ModuleUsesCollectiveMetadata(attributes)) {
     return absl::OkStatus();
   }
+
+  CHECK(collective_params != nullptr);
+  CHECK(clique_requests != nullptr);
 
   // TODO(b/476264413): Add multimem support.
   // TODO(b/477478816): Support replica groups to execute a mosaic kernel on a
@@ -865,7 +868,6 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuExecute, MosaicGpuExecute,
                        ffi::Ffi::Bind<ffi::ExecutionStage::kExecute>()
                            .Ctx<ffi::Stream>()
                            .Ctx<ffi::CollectiveParams>()
-                           .Ctx<ffi::CollectiveCliques>()
                            .RemainingArgs()
                            .RemainingRets()
                            .Attrs(),
