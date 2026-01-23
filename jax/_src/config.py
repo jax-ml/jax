@@ -1260,6 +1260,8 @@ custom_vjp3 = bool_state(
     default=False,
     upgrade=True,
     help='If True, embrace the future of custom autodiff rules.',
+    include_in_jit_key=True,
+    include_in_trace_context=True,
 )
 
 
