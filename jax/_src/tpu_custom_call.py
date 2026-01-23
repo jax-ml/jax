@@ -637,6 +637,10 @@ def _lowered_to_custom_call_config(
         "vmem_limit_bytes must be an int: provided with a"
         f" {type(vmem_limit_bytes)}."
     )
+  if tiling is not None and  device_type != "sparsecore":
+    raise ValueError(
+        "explicit tiling is only supported for SparseCore kernels."
+    )
   return CustomCallBackendConfig(
       lowered_module_asm,
       has_communication,
@@ -742,6 +746,7 @@ def as_tpu_kernel(
     shape_invariant_numerics: bool = False,
     needs_layout_passes: bool | None = None,
     metadata: Any | None = None,
+    tiling: Tiling | None = None,
     _ir_version: int | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
@@ -760,6 +765,7 @@ def as_tpu_kernel(
       shape_invariant_numerics=shape_invariant_numerics,
       needs_layout_passes=needs_layout_passes,
       ir_version=_ir_version,
+      tiling=tiling,
   )
   return _as_jax_callable(
       config,
