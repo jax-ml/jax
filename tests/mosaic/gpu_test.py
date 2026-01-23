@@ -662,56 +662,6 @@ class WGMMALayoutTest(TestCase):
     f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, y, (x, y))
     np.testing.assert_array_equal(f(x), y)
 
-  @parameterized.parameters(
-      (jnp.float32, jnp.float8_e4m3fn),
-      (jnp.bfloat16, jnp.float8_e4m3fn)
-  )
-  def test_f8_conversions(self, jax_dtype_from, jax_dtype_to):
-    mlir_dtype_to = utils.dtype_to_ir_type(jax_dtype_to)
-    def kernel(ctx, inp, out, smem):
-      del ctx
-      smem_from, smem_to = smem
-      copy(inp, smem_from, swizzle=128)
-      t = mgpu.FragmentedArray.load_tiled(
-          smem_from,
-          swizzle=128,
-          is_signed=None,
-          layout=fa.WGMMA_LAYOUT,
-      )
-      t = t.astype(mlir_dtype_to, is_signed=utils.is_signed(jax_dtype_to))
-      t.store_tiled(smem_to, swizzle=128)
-      copy(smem_to, out, swizzle=128)
-
-    # These generative shenanigans are to ensure that we don't generate values
-    # that are too large for the target type. That is because the saturation
-    # behavior of the conversion is different between XLA and Mosaic GPU here
-    # (to use the NVIDIA internal, we allow Mosaic GPU to use the .satfinite
-    # modifier, which saturates to the largest finite value---while XLA would
-    # give us NaNs in this case).
-    max_finite_val = 0b111_1110
-
-    expected = jax.lax.bitcast_convert_type(
-        jax.random.randint(
-            jax.random.key(42),
-            (1, 1, 64, 128),
-            -max_finite_val,
-            max_finite_val + 1,
-            dtype=jnp.uint8,
-        ),
-        jax_dtype_to,
-    )
-    x = expected.astype(jax_dtype_from)
-
-    res = mgpu.as_gpu_kernel(
-        kernel,
-        (1, 1, 1),
-        (128, 1, 1),
-        x,
-        expected,
-        (x, expected),
-    )(x)
-    np.testing.assert_array_equal(res, expected)
-
   @parameterized.product(
       jax_dtype_from_to=(
           (jnp.int8, jnp.bfloat16),
@@ -3473,10 +3423,9 @@ class FragmentedArrayTest(TestCase):
     np.testing.assert_array_equal(result, op(iota, rhs).astype(jnp.int8))
 
   @parameterized.product(
-      # TODO(apaszke): Add float16, float8_e5m2
-      jax_dtype_from=(jnp.float32, jnp.bfloat16, jnp.float8_e4m3fn, jnp.float8_e8m0fnu),
-      jax_dtype_to=(jnp.float32, jnp.bfloat16, jnp.float8_e4m3fn, jnp.float8_e8m0fnu),
-      # Test different vector lengths.
+      # TODO(apaszke): Add float16
+      jax_dtype_from=(jnp.float32, jnp.bfloat16, jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float8_e8m0fnu),
+      jax_dtype_to=(jnp.float32, jnp.bfloat16, jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float8_e8m0fnu),
       vec_len=(1, 2, 4, 8),
   )
   def test_conversion_f8_(self, jax_dtype_from, jax_dtype_to, vec_len):
@@ -3484,19 +3433,23 @@ class FragmentedArrayTest(TestCase):
     to_bitwidth = jnp.finfo(jax_dtype_to).bits
     if from_bitwidth > 8 and to_bitwidth > 8:
       self.skipTest("At least one of the types should be 8-bit")
-    if from_bitwidth == to_bitwidth == 8:
-      self.skipTest("f8 <-> f8 conversions unimplemented")
+    if jax_dtype_from == jax_dtype_to:
+      self.skipTest("Identical types, so nothing to test")
     if jnp.float8_e8m0fnu in {
         jax_dtype_from,
         jax_dtype_to,
     } and not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("f8e8m0fnu not supported on pre-Blackwell GPUs")
-    unimplemented = [
-        (jnp.float8_e4m3fn, jnp.bfloat16),
-        (jnp.float8_e4m3fn, jnp.float32),
-        (jnp.bfloat16, jnp.float8_e8m0fnu),
-    ]
-    if (jax_dtype_from, jax_dtype_to) in unimplemented:
+    if from_bitwidth == to_bitwidth == 8 and {jax_dtype_from, jax_dtype_to} != {
+        jnp.float8_e4m3fn, jnp.float8_e5m2,
+    }:
+      self.skipTest("An unimplemented f8 <-> f8 conversion")
+    unimplemented = {
+        frozenset((jnp.float8_e4m3fn, jnp.bfloat16)),
+        frozenset((jnp.float8_e5m2, jnp.bfloat16)),
+        frozenset((jnp.float8_e8m0fnu, jnp.float16)),
+    }
+    if {jax_dtype_from, jax_dtype_to} in unimplemented:
       self.skipTest("Unimplemented")
     layout = fa.tmem_native_layout(vec_len)
     mlir_dtype_to = utils.dtype_to_ir_type(jax_dtype_to)
@@ -3516,7 +3469,10 @@ class FragmentedArrayTest(TestCase):
     bits = self.prng.integers(
         low=sample_iinfo.min, high=sample_iinfo.max, size=(m, n), dtype=np.int32
     ).astype(int_sample_dtype)
-    values = jax.lax.bitcast_convert_type(bits, narrow_type).astype(jax_dtype_from)
+    values = jax.lax.bitcast_convert_type(bits, narrow_type)
+    # A bunch of conversions are only supported for finite values.
+    values = values.at[jnp.isinf(values)].set(jnp.finfo(narrow_type).max)
+    values = values.astype(jax_dtype_from)
 
     expected = values.astype(jax_dtype_to)
     res = mgpu.as_gpu_kernel(
@@ -3860,44 +3816,44 @@ class FragmentedArrayTest(TestCase):
   )
   @jtu.thread_unsafe_test()
   def test_max(self, vec_size, dtype):
-      def kernel(ctx, src, src2, dst, _):
-        is_signed = utils.is_signed(dtype)
-        src = fa.FragmentedArray.load_strided(src, vec_size=vec_size, is_signed=is_signed)
-        src2 = fa.FragmentedArray.load_strided(src2, vec_size=vec_size, is_signed=is_signed)
-        src.max(src2).store_untiled(dst)
-      x = self.prng.uniform(-1, 1, (12 * 128,)).astype(dtype)
-      y = self.prng.uniform(-1, 1, (12 * 128,)).astype(dtype)
-      f = mgpu.as_gpu_kernel(
+    def kernel(ctx, src, src2, dst, _):
+      is_signed = utils.is_signed(dtype)
+      src = fa.FragmentedArray.load_strided(src, vec_size=vec_size, is_signed=is_signed)
+      src2 = fa.FragmentedArray.load_strided(src2, vec_size=vec_size, is_signed=is_signed)
+      src.max(src2).store_untiled(dst)
+    x = self.prng.uniform(-1, 1, (12 * 128,)).astype(dtype)
+    y = self.prng.uniform(-1, 1, (12 * 128,)).astype(dtype)
+    f = mgpu.as_gpu_kernel(
           kernel, (1, 1, 1), (128, 1, 1), (x, y), x, ()
       )
-      with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
-        z = f(x, y).block_until_ready()
-      if dtype == jnp.float32:
-        dtype_short = "f32"
-      elif dtype == jnp.float16:
-        dtype_short = "f16"
-      elif dtype == jnp.bfloat16:
-        dtype_short = "bf16"
-      elif jnp.issubdtype(dtype, jnp.signedinteger):
-        dtype_short = f"s{dtypes.itemsize_bits(dtype)}"
-      elif jnp.issubdtype(dtype, jnp.unsignedinteger):
-        dtype_short = f"u{dtypes.itemsize_bits(dtype)}"
-      else:
-        raise NotImplementedError(f"Unsupported dtype: {dtype}")
-      ptx = ptx()
-      nan_modifier = ".NaN" if jnp.issubdtype(dtype, jnp.floating) else ""
-      instr = f"max{nan_modifier}.{dtype_short} "
-      instr_double = f"max{nan_modifier}.{dtype_short}x2 "
-      single_converts = ptx.count(instr)
-      double_converts = ptx.count(instr_double)
-      self.assertEqual(128 * (single_converts + 2 * double_converts), 12 * 128)
-      if vec_size % 2:
-        self.assertGreater(single_converts, 0)
-      elif dtypes.itemsize_bits(dtype) < 32:
-        # This, together with the assertion above, implies that all converts
-        # happened through doubled operations.
-        self.assertEqual(single_converts, 0)
-      np.testing.assert_array_equal(z, np.maximum(x, y))
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      z = f(x, y).block_until_ready()
+    if dtype == jnp.float32:
+      dtype_short = "f32"
+    elif dtype == jnp.float16:
+      dtype_short = "f16"
+    elif dtype == jnp.bfloat16:
+      dtype_short = "bf16"
+    elif jnp.issubdtype(dtype, jnp.signedinteger):
+      dtype_short = f"s{dtypes.itemsize_bits(dtype)}"
+    elif jnp.issubdtype(dtype, jnp.unsignedinteger):
+      dtype_short = f"u{dtypes.itemsize_bits(dtype)}"
+    else:
+      raise NotImplementedError(f"Unsupported dtype: {dtype}")
+    ptx = ptx()
+    nan_modifier = ".NaN" if jnp.issubdtype(dtype, jnp.floating) else ""
+    instr = f"max{nan_modifier}.{dtype_short} "
+    instr_double = f"max{nan_modifier}.{dtype_short}x2 "
+    single_converts = ptx.count(instr)
+    double_converts = ptx.count(instr_double)
+    self.assertEqual(128 * (single_converts + 2 * double_converts), 12 * 128)
+    if vec_size % 2:
+      self.assertGreater(single_converts, 0)
+    elif dtypes.itemsize_bits(dtype) < 32:
+      # This, together with the assertion above, implies that all converts
+      # happened through doubled operations.
+      self.assertEqual(single_converts, 0)
+    np.testing.assert_array_equal(z, np.maximum(x, y))
 
   def test_splat_layout(self):
     m, n = 64, 8

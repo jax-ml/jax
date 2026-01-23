@@ -2070,9 +2070,11 @@ class FragmentedArray:
     i8 = ir.IntegerType.get_signless(8)
     i16 = ir.IntegerType.get_signless(16)
     i32 = ir.IntegerType.get_signless(32)
-    bf16 = ir.BF16Type.get()
     f32 = ir.F32Type.get()
+    f16 = ir.F16Type.get()
+    bf16 = ir.BF16Type.get()
     f8e4m3fn = ir.Float8E4M3FNType.get()
+    f8e5m2 = ir.Float8E5M2Type.get()
     f8e8m0fnu = ir.Float8E8M0FNUType.get()
 
     cur_dtype = self.mlir_dtype
@@ -2430,23 +2432,21 @@ class FragmentedArray:
           _registers=new_registers, _layout=self.layout, _is_signed=is_signed
       )
 
+    # Here we handle all conversions involving f8 types.
+    # TODO(apaszke): Figure out proper satfinite and rounding modes.
+    supported_f8_f16 = {f8e4m3fn: f16, f8e5m2: f16, f8e8m0fnu: bf16}
+    f8_ptx_names = {f8e4m3fn: "e4m3", f8e5m2: "e5m2", f8e8m0fnu: "ue8m0"}
+    f16_ptx_names = {f16: "f16", bf16: "bf16"}
+    f8_types = f8_ptx_names.keys()
+    f16_types = f16_ptx_names.keys()
     if f8e8m0fnu in {cur_dtype, new_dtype} and utils.get_arch().major < 10:
       raise ValueError(
           "f8e8m0fnu type only supported on Blackwell and newer GPUs"
       )
-    if cur_dtype == f8e8m0fnu and new_dtype == bf16:
-      def do_convert(pair_vec):
-        return llvm.inline_asm(
-            i32,
-            [utils.bitcast(pair_vec, i16)],
-            "cvt.rn.bf16x2.ue8m0x2 $0, $1;",
-            "=r,h",
-        )
-      return pairwise_convert(do_convert)
-    # TODO(bchetioui): handle conversions to/from other float8 types.
-    if cur_dtype == f32 and new_dtype in {f8e4m3fn, f8e8m0fnu}:
-      tgt_ty = "e4m3" if new_dtype == f8e4m3fn else "ue8m0"
-      rounding = "rn" if new_dtype == f8e4m3fn else "rz"
+    # f8 <-> f32
+    if cur_dtype == f32 and new_dtype in f8_types:
+      name_8 = f8_ptx_names[new_dtype]
+      rounding = "rz" if new_dtype == f8e8m0fnu else "rn"
       def do_convert(pair_vec):
         e0, e1 = (
             vector.extract(pair_vec, dynamic_position=[], static_position=[i])
@@ -2455,16 +2455,51 @@ class FragmentedArray:
         return llvm.inline_asm(
             i16,
             [e1, e0],
-            f"cvt.{rounding}.satfinite.{tgt_ty}x2.f32 $0, $1, $2;",
+            f"cvt.{rounding}.satfinite.{name_8}x2.f32 $0, $1, $2;",
             "=h,r,r",
         )
       return pairwise_convert(do_convert)
-
-    if cur_dtype == f8e8m0fnu and new_dtype == f32:
-      return self.astype(bf16).astype(f32)
-    if cur_dtype == bf16 and new_dtype == f8e4m3fn:
-      # There are no instructions to convert bf16 to f8e4m3fn directly.
-      return self.astype(f32).astype(f8e4m3fn)
+    # No f8 type supports direct conversion to f32, so we go via 16-bit floats.
+    if cur_dtype in f8_types and new_dtype == f32:
+      return self.astype(supported_f8_f16[cur_dtype]).astype(f32)
+    # f8 <-> f16
+    if new_dtype in f8_types and cur_dtype == supported_f8_f16[new_dtype]:
+      name_16 = f16_ptx_names[cur_dtype]
+      name_8 = f8_ptx_names[new_dtype]
+      rounding = "rz" if new_dtype == f8e8m0fnu else "rn"
+      ptx = f"cvt.{rounding}.satfinite.{name_8}x2.{name_16}x2 $0, $1;"
+      def do_convert(pair_vec):
+        return llvm.inline_asm(i16, [utils.bitcast(pair_vec, i32)], ptx, "=h,r")
+      return pairwise_convert(do_convert)
+    if cur_dtype in f8_types and new_dtype == supported_f8_f16[cur_dtype]:
+      name_8 = f8_ptx_names[cur_dtype]
+      name_16 = f16_ptx_names[new_dtype]
+      ptx = f"cvt.rn.{name_16}x2.{name_8}x2 $0, $1;"
+      def do_convert(pair_vec):
+        return llvm.inline_asm(i32, [utils.bitcast(pair_vec, i16)], ptx, "=r,h")
+      return pairwise_convert(do_convert)
+    # We don't emulate the unsupported f8 <-> f16 conversions, but rather force
+    # the user to go via f32 to let them know it's expensive.
+    if (new_dtype in f8_types and cur_dtype in f16_types) or (
+        new_dtype in f16_types and cur_dtype in f8_types
+    ):
+      # Remap the 16-bit type to the supported one.
+      ok_cur_dtype = supported_f8_f16.get(new_dtype, cur_dtype)
+      ok_new_dtype = supported_f8_f16.get(cur_dtype, new_dtype)
+      raise NotImplementedError(
+          f"Hardware has no support for converting from {cur_dtype} to"
+          f" {new_dtype} (only cast from {ok_cur_dtype} to {ok_new_dtype} is"
+          " supported). Cast to f32 first and then to the target type"
+          " (expensive, but sufficient)."
+      )
+    # Repack through a shared 16-bit type.
+    if cur_dtype in f8_types and new_dtype in f8_types:
+      if supported_f8_f16[cur_dtype] == supported_f8_f16[new_dtype]:
+        return self.astype(supported_f8_f16[cur_dtype]).astype(new_dtype)
+      raise NotImplementedError(
+          f"Conversion from {cur_dtype} to {new_dtype} must go through f32,"
+          " which is expensive. Cast to f32 explicitly if you really want it."
+      )
 
     # Generic path.
     from_float = isinstance(cur_dtype, ir.FloatType)
