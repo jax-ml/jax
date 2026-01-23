@@ -83,6 +83,9 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
     if [[ "$JAXCI_BAZEL_CPU_RBE_MODE" == 'test' ]]; then
         test_strategy="--strategy=TestRunner=local"
     fi
+elif [[ $os == "windows" ]]; then
+    # Use the new RBE pool for Windows
+    rbe_config=rbe_${os}_${arch}_new
 else
     rbe_config=rbe_${os}_${arch}
 fi

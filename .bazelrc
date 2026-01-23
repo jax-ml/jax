@@ -463,6 +463,17 @@ common:rbe_windows_amd64 --nobuild_python_zip
 
 common:rbe_windows_amd64 --config=ci_windows_amd64
 
+# New RBE configs for Windows. These run in the new ml-oss-rbe-general project.
+common:rbe_windows_amd64_new --config=rbe_windows_amd64
+
+# Override the remote instance and BES instance names to use the new RBE pools
+common:rbe_windows_amd64_new --remote_instance_name=projects/ml-oss-rbe-general/instances/default_instance
+common:rbe_windows_amd64_new --bes_instance_name="ml-oss-rbe-general"
+
+common:rbe_windows_amd64_new --host_platform="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_new"
+common:rbe_windows_amd64_new --extra_execution_platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_new"
+common:rbe_windows_amd64_new --platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_new"
+
 # #############################################################################
 # Cross-compile config options below. Native RBE support does not exist for
 # Linux Aarch64 and Mac x86. So, we use a cross-compile toolchain to build
