@@ -474,11 +474,6 @@ absl::StatusOr<CompiledKernel> Compile(
   std::string nvshmem_path = "";
   if (is_comm_used) {
     TF_ASSIGN_OR_RETURN(nvshmem_path, get_nvshmem_llvm_lib_path());
-    if (!NvshmemApi::Default(/*assert_ok=*/false).is_loaded()) {
-      return absl::InternalError(
-          "Failed to load the NVSHMEM library. Make sure it is installed (e.g. "
-          "`pip install nvidia-nvshmem-cu12`).");
-    }
   }
   const char* dump_llvm = getenv("MOSAIC_GPU_DUMP_LLVM");
   const char* llvm_debug_only = getenv("MOSAIC_GPU_LLVM_DEBUG_ONLY");
@@ -601,7 +596,13 @@ absl::StatusOr<CompiledKernel*> CachedCompile(
   return &cache->kernels.at(kernel_hash);
 }
 
-void* InitKernel(const CompiledKernel& kernel) {
+absl::StatusOr<void*> InitKernel(const CompiledKernel& kernel) {
+  if (kernel.is_comm_used &&
+      !NvshmemApi::Default(/*assert_ok=*/false).is_loaded()) {
+    return absl::InternalError(
+        "Failed to load the NVSHMEM library. Make sure it is installed (e.g. "
+        "`pip install nvidia-nvshmem-cu12`).");
+  }
   void* module_ptr = nullptr;
   void* kernel_ptr = nullptr;
   void** module_ptr_ptr = &module_ptr;
@@ -629,7 +630,7 @@ absl::StatusOr<void*> CachedInit(const CompiledKernel& kernel) {
   absl::MutexLock lock(cache->mutex);
   auto it = cache->contexts.find(key);
   if (it != cache->contexts.end()) return it->second;
-  void* context = InitKernel(kernel);
+  TF_ASSIGN_OR_RETURN(void* context, InitKernel(kernel));
   cache->contexts.insert_or_assign(key, context);
   return context;
 }
@@ -741,8 +742,11 @@ __attribute__((visibility("default"))) void** MosaicGpuCompile(
     return nullptr;
   }
   auto ctx = InitKernel(*kernel);
+  if (!ctx.ok()) {
+    return nullptr;
+  }
   auto tuple_ptr = new void*[3];
-  tuple_ptr[0] = ctx;
+  tuple_ptr[0] = *ctx;
   tuple_ptr[1] = reinterpret_cast<void*>(kernel->host_launch);
   tuple_ptr[2] = new CompiledKernel(std::move(*kernel));
   return tuple_ptr;
