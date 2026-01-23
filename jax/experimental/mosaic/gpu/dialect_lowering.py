@@ -758,15 +758,9 @@ def _vector_multi_dim_reduction_op_lowering_rule(
   if any(reduced_dim[d] for d in src.layout.partitioned_warp_dims):
     # cross-warp reductions require scratch space.
     dtype = op.source.type.element_type
-    size = src.layout.vector_length * 128  # a vector per lane in each WG.
-    scratch_size = ir.IntegerAttr(op.attributes["scratch_size"]).value
-    if size > scratch_size:
-      raise ValueError(
-          f"Required scratch space ({size}) is larger than the available"
-          f" scratch size ({scratch_size})"
-      )
+    allocation_size = ir.IntegerAttr(op.attributes["scratch_size"]).value * 8 // utils.bitwidth(dtype)
     scratch = _slice_smem(
-        ir.MemRefType.get([size], dtype, memory_space=utils.smem()),
+        ir.MemRefType.get([allocation_size], dtype, memory_space=utils.smem()),
         arith.constant(None, op.attributes["offset"]),
         ctx.smem_requested_bytes,
     )

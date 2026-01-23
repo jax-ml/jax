@@ -2474,6 +2474,49 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     self.assertAllClose(expected, jnp.sum(row))
     self.assertArraysEqual(result, jax.lax.broadcast_in_dim(expected, (128,), ()))
 
+  def test_reduction_fails_on_too_little_scratch_bytes_for_cross_warp_reduction(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+        compiler_params=plgpu.CompilerParams(reduction_scratch_bytes=0),
+    )
+    def kernel(x_ref, y_ref):
+      x_val = plgpu.load(x_ref, (), layout=plgpu.Layout.WGMMA, optimized=False)
+      y_ref[...] = jnp.sum(x_val, axis=0)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r"Required reduction scratch size \(1024 bytes\) is larger than the "
+        r"available scratch size \(0 bytes\)"
+    ):
+      kernel(jnp.zeros((128, 128), dtype=jnp.float32))
+
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_reduction_with_more_scratch_uses_less_synchronization(self):
+    def run_kernel(x, scratch_bytes):
+      def kernel(x_ref, y_ref):
+        x_val = plgpu.load(x_ref, (), layout=plgpu.Layout.WGMMA, optimized=False)
+        y_ref[...] = jnp.sum(x_val, axis=0)
+      return self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+          compiler_params=plgpu.CompilerParams(reduction_scratch_bytes=scratch_bytes)
+      )(x)
+
+    x = jax.random.uniform(jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
+    with jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"), jtu.capture_stdout() as sass0:
+      out0 = run_kernel(x, 1024).block_until_ready()
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"), jtu.capture_stdout() as sass1:
+      out1 = run_kernel(x, 2 * 1024).block_until_ready()
+
+    self.assertAllClose(out0, jnp.sum(x, axis=0))
+    self.assertArraysEqual(out0, out1)
+
+    syncs0 = re.findall(r"BAR.SYNC", sass0())
+    syncs1 = re.findall(r"BAR.SYNC", sass1())
+    self.assertLess(len(syncs1), len(syncs0))
+
   @parameterized.product(
       layout=(
           plgpu.Layout.WGMMA,

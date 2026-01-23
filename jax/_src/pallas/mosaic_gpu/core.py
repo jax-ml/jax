@@ -102,6 +102,11 @@ class CompilerParams(pallas_core.CompilerParams):
       thread ever calls commit_smem(), reads from the committed SMEM and then
       issues an async copy overwriting that region (this is a very artificial
       and highly unlikely scenario).
+    reduction_scratch_bytes: The number of shared memory bytes to reserve as
+      scratch space for cross-warp reductions. The higher this value, the more
+      registers can be reduced in parallel. 2 * 128 * 6 * 4 = 6144 bytes is
+      typically a good value in order to extract most of the potential gains on
+      H100 and B200.
     profile_space: The number of profiler events that can be collected in a
       single invocation. It is undefined behavior if a thread collects more
       events than this.
@@ -112,6 +117,7 @@ class CompilerParams(pallas_core.CompilerParams):
   dimension_semantics: Sequence[DimensionSemantics] | None = None
   max_concurrent_steps: int = 1
   unsafe_no_auto_barriers: bool = False
+  reduction_scratch_bytes: int = 128 * 4 * 4
   profile_space: int = 0
   profile_dir: str = ""
   lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Lane

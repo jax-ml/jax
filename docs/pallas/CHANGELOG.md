@@ -13,6 +13,14 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* New features:
+
+  * Added a `reduction_scratch_bytes` field to
+    {class}`jax.experimental.pallas.mosaic_gpu.CompilerParams`. This gives user
+    control over how much shared memory Pallas is allowed to reserve for
+    cross-warp reductions on GPU. Increasing this value typically allows for
+    faster reductions.
+
 * Changes
 
   * The default lowering path on GPU now goes through Mosaic GPU. To keep using

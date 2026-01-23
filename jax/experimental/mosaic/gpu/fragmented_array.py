@@ -2795,9 +2795,9 @@ class FragmentedArray:
           num_banks % num_banks_per_output != 0
       ):
         raise NotImplementedError(
-              "Unoptimized configuration for cross-warp reduction: "
-              f"{self.mlir_dtype} with {vec_len=}"
-          )
+            "Unoptimized configuration for cross-warp reduction: "
+            f"{self.mlir_dtype} with {vec_len=}"
+        )
       # Define one row to be 128 bytes (32 banks of 4 bytes). For a given lane
       # index, we want to store the data coming from all 4 warps
       # contiguously in order to enable vectorized loads later on. If we
@@ -2981,7 +2981,12 @@ class FragmentedArray:
       scratch_ty = ir.MemRefType(scratch.type)
       scratch_elems_per_register = WARPS_IN_WARPGROUP * unique_lanes * vec_len
       if scratch_ty.shape[0] < scratch_elems_per_register:
-        raise ValueError("Insufficient scratch space for cross-warp reduction")
+        available_bytes = scratch_ty.shape[0] * utils.bitwidth(scratch_ty.element_type) // 8
+        required_bytes = scratch_elems_per_register * utils.bitwidth(scratch_ty.element_type) // 8
+        raise ValueError(
+            f"Required reduction scratch size ({required_bytes} bytes) is "
+            f"larger than the available scratch size ({available_bytes} bytes)"
+        )
       if scratch_ty.get_strides_and_offset()[0] != [1]:
         raise ValueError("Expected scratch to be contiguous")
       num_concurrent_cross_warp_reductions = scratch_ty.shape[0] // scratch_elems_per_register
