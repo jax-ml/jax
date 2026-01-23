@@ -1041,6 +1041,16 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(128 * (t1_ceil // 128), t1_ceil)
     self.assertEqual(128 * b1 * (t1_ceil // 128), b1 * t1_ceil)
 
+  def test_constraints_eq_8(self):
+    # Came up in a user question
+    s, = shape_poly.symbolic_shape(
+      "s",
+    constraints=["floordiv(s + 1, 2) == - floordiv(- s, 2)"])
+
+    left = (s + 1) // 2
+    right = - ((- s) // 2)
+    self.assertEqual(left, right)
+
   def test_constraints_eq_bug_23456(self):
     b, = jax.export.symbolic_shape('b', constraints=['b==5'])
     jax.eval_shape(lambda k: jnp.tile(k, 3), jax.ShapeDtypeStruct((b,), jnp.float32))
