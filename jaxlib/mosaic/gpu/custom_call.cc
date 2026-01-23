@@ -174,8 +174,6 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
   absl::call_once(
       register_passes_flag, [&compilation_provider, &cc]() {
         mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
-
-        llvm::InitializeNativeTarget();
         llvm::InitializeNativeTarget();
         llvm::InitializeNativeTargetAsmPrinter();
         mlir::registerCanonicalizer();
@@ -207,7 +205,6 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         mosaic::gpu::registerGpuSinkMemRefDescriptorsPass();
         mlir::arith::registerArithExpandOpsPass();
         mlir::LLVM::registerDIScopeForLLVMFuncOpPass();
-        return true;
       });
   const char* cuda_root = mosaic::gpu::GetCUDARoot();
   if (!cuda_root) {
