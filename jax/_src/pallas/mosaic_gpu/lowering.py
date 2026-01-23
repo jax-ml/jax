@@ -421,6 +421,7 @@ class ModuleContext:
   # See the documentation of unsafe_no_auto_barriers in CompilerParams.
   auto_barriers: bool
   warp_axis_name: str | None = None
+  base_loc: ir.Location | None = None
 
   @property
   def single_lane_predicate(self) -> ir.Value:
@@ -609,6 +610,7 @@ class LoweringResult:
   new_out_shapes: tuple[jax.ShapeDtypeStruct, ...]  # Does not include gmem scratch!
   profiler_spec: mgpu_profiler.ProfilerSpec | None
   gmem_scratch_shapes: tuple[jax.ShapeDtypeStruct, ...]
+  base_loc: ir.Location | None = None
 
 
 class LoweringError(Exception):  # pylint: disable=g-bad-exception-name
@@ -718,6 +720,7 @@ def lower_pipelined_jaxpr_to_module(
     jaxpr: jax_core.Jaxpr,
     params: gpu_core.CompilerParams,
     cost_estimate: pallas_core.CostEstimate | None,
+    base_loc: ir.Location | None = None,
 ) -> LoweringResult:
   del cost_estimate  # Unused.
 
@@ -844,6 +847,7 @@ def lower_pipelined_jaxpr_to_module(
         new_jaxpr,
         params,
         new_consts,
+        base_loc=base_loc,
     )
 
 
@@ -858,6 +862,7 @@ def lower_jaxpr_to_module(
     jaxpr: jax_core.Jaxpr,
     params: gpu_core.CompilerParams,
     consts=(),
+    base_loc: ir.Location | None = None,
 ) -> LoweringResult:
   debug_info = jaxpr.debug_info
   approx_math = params.approx_math
@@ -982,6 +987,7 @@ def lower_jaxpr_to_module(
         if jax_mesh is not None
         else None,
         auto_barriers=not params.unsafe_no_auto_barriers,
+        base_loc=base_loc,
     )
     del runtime_smem, grouped_barriers, runtime_barriers
     _ = lower_jaxpr_to_mosaic_gpu(
@@ -1052,6 +1058,7 @@ def lower_jaxpr_to_module(
           module_name=mlir.sanitize_name(debug_info.func_name),
           kernel_name=mlir.sanitize_name(debug_info.func_name),
           prof_spec=prof_spec,
+          base_loc=base_loc,
       )
   )
 
@@ -1168,6 +1175,25 @@ def lower_jaxpr_to_mosaic_gpu(
     loc = mlir.source_info_to_location(  # pytype: disable=wrong-arg-types
         module_ctx, eqn.primitive, eqn_name_stack, eqn.source_info.traceback
     )
+    if module_ctx.base_loc is not None:
+      # If the equation has no file location, we just use the base_loc directly
+      # to avoid creating a CallSiteLoc with an unknown callee, which can crash
+      # MLIR's DIScopeForLLVMFuncOpPass.
+      def has_file(l):
+        if l.is_a_file():
+          return True
+        if l.is_a_name():
+          return has_file(l.child_loc)
+        if l.is_a_callsite():
+          return has_file(l.callee) or has_file(l.caller)
+        if l.is_a_fused():
+          return any(has_file(child) for child in l.locations)
+        return False
+
+      if not has_file(loc):
+        loc = module_ctx.base_loc
+      else:
+        loc = ir.Location.callsite(loc, [module_ctx.base_loc])
     with source_info_util.user_context(eqn.source_info.traceback), loc:
       if eqn.primitive not in mosaic_lowering_rules[
           (module_ctx.lowering_semantics, module_ctx.primitive_semantics)]:

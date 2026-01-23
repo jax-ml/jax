@@ -78,11 +78,13 @@ def pallas_call_lowering(
     if isinstance(axis_context, sharding_impls.SPMDAxisContext):
       jax_mesh = axis_context.mesh
 
-  # TODO(slebedev): Remove this once the ensure-debug-info-scope-on-llvm-func
-  # pass correctly handles full tracebacks.
-  with config.include_full_tracebacks_in_locations(False):
+  with config.include_full_tracebacks_in_locations(True):
+    base_loc = mlir.source_info_to_location(
+        ctx.module_context, ctx.primitive, ctx.name_stack, ctx.traceback
+    )
     lowering_result = lowering.lower_pipelined_jaxpr_to_module(
-        grid_mapping, mesh, jax_mesh, jaxpr, params, cost_estimate
+        grid_mapping, mesh, jax_mesh, jaxpr, params, cost_estimate,
+        base_loc=base_loc,
     )
   if debug:
     print(f"\nThe Mosaic GPU module for pallas_call {debug_info.func_src_info}:")
