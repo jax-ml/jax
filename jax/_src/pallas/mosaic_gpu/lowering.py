@@ -1043,21 +1043,20 @@ def lower_jaxpr_to_module(
 
   # NOTE: new_out_shapes has out_shapes, then semaphores_shape and
   # optionally the profiler buffer.
-  module, new_out_shapes, _, launch_ctx = (
-      mgpu_core._lower_as_gpu_kernel(
-          body,
-          grid=cuda_grid,
-          cluster=cluster,
-          block=block,
-          in_shapes=(*in_shapes, *scoped_semaphores_shape),
-          out_shape=(*out_shapes, *scoped_semaphores_shape),
-          inout_shape=(),
-          smem_scratch_shape=scratch_buffers,
-          lowering_semantics=lowering_semantics,
-          module_name=mlir.sanitize_name(debug_info.func_name),
-          kernel_name=mlir.sanitize_name(debug_info.func_name),
-          prof_spec=prof_spec,
-      )
+  module, new_out_shapes, _, launch_ctx = mgpu_core._lower_as_gpu_kernel(
+      body,
+      grid=cuda_grid,
+      cluster=cluster,
+      block=block,
+      in_shapes=(*in_shapes, *scoped_semaphores_shape),
+      out_shape=(*out_shapes, *scoped_semaphores_shape),
+      inout_shape=(),
+      smem_scratch_shape=scratch_buffers,
+      lowering_semantics=lowering_semantics,
+      module_name=mlir.sanitize_name(debug_info.func_name),
+      kernel_name=mlir.sanitize_name(debug_info.func_name),
+      prof_spec=prof_spec,
+      jax_mesh=jax_mesh,
   )
 
   if lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
@@ -3805,7 +3804,6 @@ def _semaphore_signal_lowering_rule(
   sem, transforms = _handle_transforms(ctx, sem, transforms)
   if transforms:
     raise NotImplementedError(f"Unhandled transforms for semaphore_signal: {transforms}")
-  sem_ptr = mgpu.utils.memref_ptr(sem)
   if device_id is not None:
     device_id, other_axes = primitives.device_id_to_logical(
         ctx.module_ctx.mesh_info,
@@ -3817,7 +3815,9 @@ def _semaphore_signal_lowering_rule(
       raise NotImplementedError(
           f"Only JAX mesh axes can be used in device_id, but found {other_axes}"
       )
-    sem_ptr = ctx.launch_ctx.to_remote(sem_ptr, device_id)
+    sem = ctx.launch_ctx.to_remote(sem, device_id)
+  sem_ptr = mgpu.utils.memref_ptr(sem)
+
   # TODO(apaszke): Narrow the scope from .sys to .gpu when the semaphore is local.
   val = _ir_constant(value, i32)
   # We only signal the semaphore from a single lane, which does not guarantee

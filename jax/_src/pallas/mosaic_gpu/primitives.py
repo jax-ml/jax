@@ -3443,7 +3443,6 @@ def _semaphore_signal_lowering_rule(
     transformed_sems.append(sem)
   del sems, transforms  # Use transformed_sems instead.
   for sem, value, device_id in zip(transformed_sems, values, device_ids, strict=True):
-    sem_ptr = mgpu.utils.memref_ptr(sem)
     if device_id is not None:
       device_id, other_axes = pallas_primitives.device_id_to_logical(
           ctx.module_ctx.mesh_info,
@@ -3456,7 +3455,8 @@ def _semaphore_signal_lowering_rule(
             f"Only JAX mesh axes can be used in device_id, but found {other_axes}"
         )
       device_id = lowering._ensure_ir_value(device_id, jnp.int32)
-      sem_ptr = ctx.launch_ctx.to_remote(sem_ptr, device_id)
+      sem = ctx.launch_ctx.to_remote(sem, device_id)
+    sem_ptr = mgpu.utils.memref_ptr(sem)
     # TODO(apaszke): Narrow the scope from .sys to .gpu when the semaphore is local.
     # We only signal the semaphore from a single lane, which does not guarantee
     # anything about the state of the other three warps in the warpgroup (they

@@ -53,6 +53,21 @@ TMAReductionOp = Literal[
     "smax",
 ]
 
+# Fixed size of the collective metadata structure in the XLA.
+# Stores rank, param_to_peers_ptrs and multicast_buffer_ptr.
+COLLECTIVE_METADATA_SIZE = 3
+
+# Attribute used to merk the module which uses collective metadata.
+COLLECTIVE_ATTR = "mosaic_gpu.collective_metadata_used"
+# Attribute used to cache the kernel argument which corresponds to a given
+# reference during remote_ref lowering.
+KERNEL_ARG_ID_ATTR = "mosaic_gpu.from_kernel_arg_idx"
+
+
+def uses_collective_metadata(module):
+  return COLLECTIVE_ATTR in module.operation.attributes.keys()
+
+
 def _reduction_op_to_ptx(reduction_op: TMAReductionOp) -> str:
   # convert [s|u]min|max to min|max
   return reduction_op[-3:]
@@ -528,6 +543,8 @@ class LaunchContext:
   scratch: Scratch
   cluster_size: tuple[int, int, int]
   profiler: OnDeviceProfiler | None = None
+  collective_metadata: ir.Value | None = None
+  num_peers: int = 0
   tma_descriptors: dict[
       tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...], Any, int],
       ir.Value,
@@ -687,6 +704,10 @@ class LaunchContext:
             peer_id = c(gmem_peer_id, i32)
           else:
             try:
+              # TODO(b/478180853): Compute the peer id on the host without
+              # nvshmem.
+              if uses_collective_metadata(self.module):
+                raise ValueError("TMA is not supported with collectives.")
               # We try to reproduce the gmem_peer_id computation on the host.
               peer_id = _recompute_peer_id(gmem_peer_id, fuel=16)
             except ReplicationError as e:
@@ -1547,8 +1568,58 @@ class LaunchContext:
           "nvshmemx_mc_ptr", nvshmemx_mc_ptr_type, sym_visibility="private"
       )
 
-  def to_remote(self, ref: ir.Value, peer: ir.Value):
-    self._ensure_nvshmem_decls()
+  # For a given reference, finds to which kernel argument it refers to.
+  # Used for the lowering of the collective operations with the
+  # collective metadata.
+  def _find_kernel_argument(self, ref: ir.Value):
+    if KERNEL_ARG_ID_ATTR in ref.owner.attributes:
+      return ref.owner.attributes[KERNEL_ARG_ID_ATTR].value
+
+    if not isinstance(ref.type, ir.MemRefType):
+      raise ValueError(
+          f"Expected a memref, got {ref.type}"
+      )
+
+    lookup_op_owner = ref.owner
+    while True:
+      kernel_arguments = {operand.owner.attributes[KERNEL_ARG_ID_ATTR].value for operand in lookup_op_owner.operands if KERNEL_ARG_ID_ATTR in operand.owner.attributes}
+      if len(kernel_arguments) > 1:
+        raise ValueError(
+            f"Multiple kernel arguments found for the reference: {ref}"
+        )
+
+      if len(kernel_arguments) == 1:
+        kernel_argument = kernel_arguments.pop()
+        break
+
+      memref_operand_owners = [
+          operand.owner
+          for operand in lookup_op_owner.operands
+          if isinstance(operand.type, ir.MemRefType)
+      ]
+      if len(memref_operand_owners) > 1:
+        raise ValueError(
+            f"Multiple memref operands for the reference: {ref}"
+        )
+      if not memref_operand_owners:
+        raise ValueError(
+            f"Can't find the kernel argument for the reference: {ref}"
+        )
+
+      lookup_op_owner = memref_operand_owners[0]
+
+    if kernel_argument is None:
+      raise ValueError(
+          f"Can't find the kernel argument for the reference: {ref}"
+      )
+
+    ref.owner.attributes[KERNEL_ARG_ID_ATTR] = ir.IntegerAttr.get(
+        ir.IntegerType.get_signless(32), kernel_argument
+    )
+    return kernel_argument
+
+  def to_remote(self, ref: ir.Value, peer: ir.Value,
+                parameter_id: int | None = None):
     if isinstance(ref.type, ir.MemRefType):
       # We replace the offset in the ref type by 0, because memref_ptr always
       # folds the offset into the pointer.
@@ -1560,17 +1631,80 @@ class LaunchContext:
           ir.StridedLayoutAttr.get(0, strides),
           ref_ty.memory_space,
       )
-      return utils.ptr_as_memref(
-          self.to_remote(utils.memref_ptr(ref), peer), result_type
+
+      parameter_id = None
+      if self.collective_metadata is not None:
+        parameter_id = self._find_kernel_argument(ref)
+
+      ref_ptr = utils.memref_ptr(ref)
+      remote_memref = utils.ptr_as_memref(
+          self.to_remote(ref_ptr, peer, parameter_id), result_type
       )
-    if ref.type != ir.Type.parse("!llvm.ptr"):
-      raise ValueError(f"Unsupported type for to_remote: {ref.type}")
-    if peer.type != ir.IntegerType.get_signless(32):
-      raise ValueError(f"peer index must be an i32, got {peer.type}")
-    return llvm.call(ref.type, [ref, peer], [], [], callee="nvshmem_ptr")
+
+      if self.collective_metadata is not None:
+        remote_memref.owner.attributes[KERNEL_ARG_ID_ATTR] = ir.IntegerAttr.get(
+            ir.IntegerType.get_signless(32), self._find_kernel_argument(ref)
+        )
+      return remote_memref
+
+    if self.collective_metadata is None:
+      self._ensure_nvshmem_decls()
+      if ref.type != ir.Type.parse("!llvm.ptr"):
+        raise ValueError(f"Unsupported type for to_remote: {ref.type}")
+      if peer.type != ir.IntegerType.get_signless(32):
+        raise ValueError(f"peer index must be an i32, got {peer.type}")
+      return llvm.call(ref.type, [ref, peer], [], [], callee="nvshmem_ptr")
+    else:
+      # Collective metadata contains pointers of kernel arguments for each peer
+      # device. The pointer has the following format:
+      # [
+      #   param0_peer0, param0_peer1, ..., param0_peerN,
+      #   param1_peer0, param1_peer1, ..., param1_peerN,
+      #   ...
+      # ]
+      # During the lowering we need to find the corresponding kernel argument
+      # for a given reference, load the corresponding pointer from the
+      # collective metadata and also compute the address of the given reference.
+      # As an example an address of signlas will have an offset from the first
+      # pointer of the kernel arguments defined with the memref.subview
+      # operation.
+      self.module.operation.attributes[COLLECTIVE_ATTR] = ir.UnitAttr.get()
+      index_type = ir.IndexType.get()
+
+      if parameter_id is None:
+        raise ValueError(f"parameter_id must be provided for ref {ref}")
+      parameters_offset = (
+          COLLECTIVE_METADATA_SIZE + self.num_peers * parameter_id
+      )
+      parameters_offset_constant = arith.constant(
+          index_type, parameters_offset)
+      current_device = arith.index_cast(index_type, self.device_id())
+      current_device_parameter_offset = arith.addi(
+          parameters_offset_constant, current_device)
+      address_of_param = memref.load(
+          self.collective_metadata, [current_device_parameter_offset])
+
+      ref_int = llvm.ptrtoint(ir.IntegerType.get_signless(64), ref)
+      offset_op = arith.subi(ref_int, address_of_param)
+
+      peer_parameter_offset = arith.addi(
+          parameters_offset_constant, arith.index_cast(index_type, peer))
+      address_of_param_to_peers = memref.load(
+          self.collective_metadata, [peer_parameter_offset])
+      memory_address = arith.addi(address_of_param_to_peers, offset_op)
+      ptr_type = ir.Type.parse("!llvm.ptr")
+      memory_address_op = llvm.inttoptr(ptr_type, memory_address)
+      return memory_address_op
 
   def to_remote_multicast(self, ref: ir.Value):
     i32 = ir.IntegerType.get_signless(32)
+
+    # TODO(patrios): Support multimem lowering with collective metadata
+    if self.collective_metadata is not None:
+      raise NotImplementedError(
+          "Multicast lowering with collective metadata is not implemented yet"
+      )
+
     self._ensure_nvshmem_decls()
     if not isinstance(ref.type, ir.MemRefType):
       raise ValueError(f"Unsupported type for to_remote_multicast: {ref.type}")
@@ -1592,9 +1726,17 @@ class LaunchContext:
     return utils.MultimemRef(utils.ptr_as_memref(mc_ptr, result_type))
 
   def device_id(self) -> ir.Value:
-    self._ensure_nvshmem_decls()
     i32 = ir.IntegerType.get_signless(32)
-    return llvm.call(i32, [], [], [], callee="nvshmem_my_pe")
+    if self.collective_metadata is None:
+      self._ensure_nvshmem_decls()
+      return llvm.call(i32, [], [], [], callee="nvshmem_my_pe")
+    else:
+      # Rank id is stored as the first element of the collective metadata.
+      self.module.operation.attributes[COLLECTIVE_ATTR] = ir.UnitAttr.get()
+      rank_offset_constant = arith.constant(ir.IndexType.get(), 0)
+      load_op = memref.load(
+          self.collective_metadata, [rank_offset_constant])
+      return arith.trunci(i32, load_op)
 
 
 class ReplicationError(Exception):

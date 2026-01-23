@@ -26,7 +26,7 @@ import math
 import os
 import pathlib
 import time
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, TypedDict
 import weakref
 
 import jax
@@ -127,7 +127,7 @@ else:
     )
 
 
-def supports_cross_device_collectives():
+def is_nvshmem_available():
   try:
     nvshmem_bc_path = os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"]
   except KeyError:
@@ -146,6 +146,16 @@ def supports_cross_device_collectives():
   )
 
 
+def is_single_process_multi_device_topology():
+  return (jax.device_count() > 1
+          and jax.device_count() == jax.local_device_count())
+
+
+def supports_cross_device_collectives():
+  return ((is_nvshmem_available() and jax.local_device_count() == 1)
+          or is_single_process_multi_device_topology())
+
+
 mosaic_gpu_p = jax_core.Primitive("mosaic_gpu_p")
 mosaic_gpu_p.multiple_results = True
 
@@ -160,6 +170,8 @@ def _mosaic_gpu_abstract_eval(*_, module, out_types, inout_types):
 
 
 def _has_communication(module, **_):
+  if launch_context.uses_collective_metadata(module):
+    return True
   empty_str_attr = ir.StringAttr.get("")
   for op in module.body:
     if "nvshmem" in getattr(op, "sym_name", empty_str_attr).value:
@@ -182,7 +194,8 @@ def _mosaic_gpu_lowering_rule(
     use_custom_barrier: bool = False,
 ):
   axis_context = ctx.module_context.axis_context
-  if _has_communication(module):
+  is_multi_device_module = _has_communication(module)
+  if is_multi_device_module:
     # Those checks are trying to ensure that the logical device ids are
     # consistent with the NVSHMEM PE ids that Mosaic will be using for
     # communication. Any divergence here would require us to implement a logical
@@ -236,22 +249,53 @@ def _mosaic_gpu_lowering_rule(
   else:
     KNOWN_KERNELS[kernel_id] = module_asm
 
-  op = mlir.custom_call(
-      "mosaic_gpu_v2",
-      result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-      operands=args,
-      operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
-      result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
-      backend_config=dict(
+  class CustomCallArgs(TypedDict):
+    call_target_name: str
+    result_types: list[ir.Type]
+    operands: tuple[ir.Value]
+    operand_layouts: list[list[int]]
+    result_layouts: list[list[int]]
+    backend_config: dict[str, ir.Attribute]
+    operand_output_aliases: dict[int, int]
+    api_version: int
+
+  custom_call_kwargs : CustomCallArgs = {
+      "call_target_name": "mosaic_gpu_v2",
+      "result_types": [mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
+      "operands": args,
+      "operand_layouts": [list(reversed(range(a.ndim))) for a in ctx.avals_in],
+      "result_layouts": [list(reversed(range(a.ndim))) for a in ctx.avals_out],
+      "backend_config": dict(
           kernel_hash=ir.StringAttr.get(kernel_id),
           module=ir.StringAttr.get(module_asm),
           use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
+          uses_xla_collective_metadata=ir.BoolAttr.get(
+              launch_context.uses_collective_metadata(module)
+          ),
       ),
-      operand_output_aliases=dict(input_output_aliases),
-      api_version=4,
-  )
-  return op.results
+      "operand_output_aliases": dict(input_output_aliases),
+      "api_version": 4
+  }
 
+  if not is_multi_device_module or not is_single_process_multi_device_topology():
+    op = mlir.custom_call(**custom_call_kwargs)
+    return op.results
+
+  # Add collective metadata as additional output buffer.
+  # Collective metadata stores pointers to both input and output parameters.
+  num_params = len(ctx.avals_out) + len(ctx.avals_in)
+  num_peers = axis_context.mesh.size
+  collective_metadata_size = (
+      launch_context.COLLECTIVE_METADATA_SIZE + num_peers * num_params
+  )
+
+  custom_call_kwargs["result_layouts"] += [[0]]
+  custom_call_kwargs["result_types"] += [
+      ir.RankedTensorType.get((collective_metadata_size,),
+                              ir.IntegerType.get_signless(64))]
+  op = mlir.custom_call(**custom_call_kwargs)
+  # Drop the collective metadata buffer from the results.
+  return op.results[:-1]
 
 mlir.register_lowering(mosaic_gpu_p, _mosaic_gpu_lowering_rule, "cuda")
 
@@ -554,6 +598,8 @@ def _launch(
     module: ir.Module,
     profiler_spec: profiler.ProfilerSpec | None = None,
     maybe_prof_buffer: ir.Value | None = None,
+    collective_metadata: ir.Value | None = None,
+    num_peers: int = 0,
 ):
   if (profiler_spec is None) != (maybe_prof_buffer is None):
     raise ValueError(
@@ -647,7 +693,12 @@ def _launch(
       prof = None
 
     ctx = launch_context.LaunchContext(
-        module, launch_context.Scratch(launch_op), cluster, prof
+        module,
+        launch_context.Scratch(launch_op),
+        cluster,
+        prof,
+        collective_metadata=collective_metadata,
+        num_peers=num_peers,
     )
     with ctx.named_region("Init"):
       tmem_allocs: list[_TMEMAlloc | _TMEMDialectAlloc] = []
@@ -739,6 +790,7 @@ def _lower_as_gpu_kernel(
     module_name: str,
     kernel_name: str,
     prof_spec: profiler.ProfilerSpec | None = None,
+    jax_mesh: mesh_lib.Mesh | None = None,
 ):
   ptr_ty = ir.Type.parse("!llvm.ptr")
   token_ty = ir.Type.parse("!gpu.async.token")
@@ -786,12 +838,54 @@ def _lower_as_gpu_kernel(
       arg_refs = []
       # XLA will pass in inout refs again as outputs, but we ignore them.
       for i, ref_ty in enumerate([*in_ref_tys, *inout_ref_tys, *out_ref_tys]):
-        ptr = llvm.load(ptr_ty, utils.getelementptr(buffers, [i], ptr_ty))
-        arg_refs.append(utils.ptr_as_memref(ptr, ir.MemRefType(ref_ty)))
+        gep_op = utils.getelementptr(buffers, [i], ptr_ty)
+        ptr = llvm.load(ptr_ty, gep_op)
+        arg_memref = utils.ptr_as_memref(ptr, ir.MemRefType(ref_ty))
+        # Annotate so we can find the corresponding kernel argument during the
+        # lowering.
+        arg_memref.owner.attributes[launch_context.KERNEL_ARG_ID_ATTR] = ir.IntegerAttr.get(i32, i)
+        arg_refs.append(arg_memref)
+
+      collective_metadata = None
+      num_peers = 0
+
+      # Collective metadata parameter is used to lower collective operations
+      # in a single-process setup.
+      if (
+          jax_mesh is not None
+          and jax_mesh.size > 1
+          and is_single_process_multi_device_topology()
+      ):
+        num_args = len(arg_refs)
+        num_peers = jax_mesh.size
+        collective_metadata_size = (
+            launch_context.COLLECTIVE_METADATA_SIZE + num_args * num_peers
+        )
+        metadata_shape = jax.ShapeDtypeStruct(
+            shape=(collective_metadata_size,), dtype=np.int64
+        )
+        metadata_ptr = llvm.load(
+            ptr_ty,
+            utils.getelementptr(buffers, [num_args], ptr_ty),
+        )
+        collective_metadata = utils.ptr_as_memref(
+            metadata_ptr, _shape_to_ref_ty(metadata_shape)
+        )
+
       prof_buffer = arg_refs.pop() if prof_spec is not None else None
+
       with _launch(
-          token, grid, cluster, block, smem_scratch_shape,
-          lowering_semantics, module, prof_spec, prof_buffer
+          token,
+          grid,
+          cluster,
+          block,
+          smem_scratch_shape,
+          lowering_semantics,
+          module,
+          prof_spec,
+          prof_buffer,
+          collective_metadata,
+          num_peers,
       ) as (_launch_ctx, smem_refs):
         nonlocal launch_ctx
         launch_ctx = _launch_ctx

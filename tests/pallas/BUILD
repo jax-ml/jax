@@ -461,7 +461,7 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "gpu_pallas_distributed_test",
+    name = "gpu_pallas_distributed_nvshmem_test",
     srcs = ["gpu_pallas_distributed_test.py"],
     args = [
         "--num_processes=2",
@@ -487,6 +487,32 @@ jax_multiplatform_test(
         "//jax/extend",
     ] + py_deps([
         "portpicker",
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "gpu_pallas_distributed_test",
+    srcs = ["gpu_pallas_distributed_test.py"],
+    enable_backends = [],
+    enable_configs = [
+        "gpu_h100x2",
+        "gpu_b200x2",
+    ],
+    env = {
+        "JAX_PALLAS_USE_MOSAIC_GPU": "1",
+    },
+    tags = [
+        "mosaic_gpu_test",
+        "multiaccelerator",
+    ],
+    deps = [
+        "//jax/_src:test_multiprocess",
+        "//jax/experimental:pallas_experimental_gpu_ops",
+        "//jax/experimental:pallas_mosaic_gpu",
+        "//jax/extend",
+    ] + py_deps([
         "absl/testing",
         "numpy",
     ]),
