@@ -81,6 +81,7 @@ MODULES_TO_SKIP = [
   "jax.collect_profile",  # fails when xprof is not available.
   "jax.core",  # internal tools, not documented.
   "jax.example_libraries",  # TODO(jakevdp): un-skip these.
+  "jax.extend.backend",
   "jax.extend.core.primitives",
   "jax.extend.ifrt_programs",
   "jax.extend.mlir.dialects",

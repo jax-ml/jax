@@ -28,7 +28,8 @@ from jax._src.xla_bridge import (
   register_backend_factory as register_backend_factory,
 )
 from jax._src.interpreters.pxla import (
-  get_default_device as get_default_device
+  clear_in_memory_compilation_cache as clear_in_memory_compilation_cache,
+  get_default_device as get_default_device,
 )
 from jax._src import (
     util as _util
