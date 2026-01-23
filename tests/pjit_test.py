@@ -10815,6 +10815,36 @@ class UtilTest(jtu.JaxTestCase):
     out = dispatch.get_intermediate_shardings(jaxpr)
     self.assertLen(out, 16)
 
+  def test_compile_after_trace_and_lower_on_abstract_mesh(self):
+    mesh = jtu.create_mesh((4,), ('x',))
+    abstract_sharding = NamedSharding(mesh.abstract_mesh, P('x'))
+
+    jitted = jax.jit(
+        lambda x: x * 2,
+        in_shardings=abstract_sharding,
+        out_shardings=abstract_sharding,
+    )
+
+    abstract_arr = jax.ShapeDtypeStruct(
+        mesh.devices.shape, np.float32, sharding=abstract_sharding
+    )
+    traced = jitted.trace(abstract_arr)
+
+    lowered = traced.lower(lowering_platforms=(mesh.devices.flat[0].platform,))
+
+    # Repeat twice to test that `compile()` behaves consistently across
+    # calls.
+    for _ in range(2):
+      # Compiling without a device assignment should fail, as we
+      # traced/lowered on an abstract mesh.
+      with self.assertRaisesRegex(
+          RuntimeError, 'device_assignment cannot be `None`'
+      ):
+        lowered.compile()
+
+      # Compiling with a device assignment should succeed.
+      lowered.compile(device_assignment=tuple(mesh.devices.flat))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

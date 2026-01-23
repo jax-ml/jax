@@ -2506,15 +2506,19 @@ class MeshComputation(stages.Lowering):
       compilation_device_list = device_list
     assert isinstance(compilation_device_list, (type(None), xc.DeviceList))
 
-    if self._executable is None or compiler_options_kvs or device_assignment:
-      executable = UnloadedMeshExecutable.from_hlo(
-          self._name, self._hlo, **self.compile_args,
-          compiler_options_kvs=compiler_options_kvs,
-          device_list=compilation_device_list)
-      if not compiler_options_kvs:
-        self._executable = executable
-      return executable
-    return self._executable
+    # Only cache executable into `self` if `.compile()` in AOT is called without
+    # specifying compiler_options and device_assignment.
+    use_cache = compiler_options is None and device_assignment is None
+    if use_cache and self._executable is not None:
+      return self._executable
+
+    executable = UnloadedMeshExecutable.from_hlo(
+        self._name, self._hlo, **self.compile_args,
+        compiler_options_kvs=compiler_options_kvs,
+        device_list=compilation_device_list)
+    if use_cache:
+      self._executable = executable
+    return executable
 
   def cost_analysis(self) -> dict[str, float]:
     backend = self.compile_args["backend"]
