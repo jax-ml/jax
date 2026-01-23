@@ -35,7 +35,7 @@ jobs:
       uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
       with:
         repository: data-apis/array-api-tests
-        ref: '2025.05.23'
+        ref: 3249a739f8ce9be95e5210ed90ea5d8d62045eec
         submodules: 'true'
         path: 'array-api-tests'
         persist-credentials: false
