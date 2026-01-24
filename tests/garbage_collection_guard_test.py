@@ -12,16 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import dataclasses
 import gc
 import weakref
 
 from absl.testing import absltest
 import jax
 from jax._src import config
+from jax._src.lib import jaxlib_extension_version
 import jax._src.test_util as jtu
 import jax.numpy as jnp
 
 jax.config.parse_flags_with_absl()
+
+_GC_ERROR_MESSAGE = "`jax.Array` was deleted by the Python garbage collector"
+
+
+@dataclasses.dataclass()
+class _A:
+  a: jax.Array
+  ref: "_B"
+
+
+@dataclasses.dataclass()
+class _B:
+  ref: _A | None = None
 
 
 def _create_array_cycle():
@@ -45,11 +60,9 @@ class GarbageCollectionGuardTest(jtu.JaxTestCase):
       self.assertIsNone(ref())  # Cycle collected.
     # Check that no error message is logged because
     # `array_garbage_collection_guard` defaults to `allow`.
-    self.assertNotIn(
-        "`jax.Array` was deleted by the Python garbage collector", stderr(),
-    )
+    self.assertNotIn(_GC_ERROR_MESSAGE, stderr())
 
-  def test_gced_array_is_logged(self):
+  def test_array_part_of_cycle_is_logged(self):
     with config.array_garbage_collection_guard("log"):
       with jtu.capture_stderr() as stderr:
         # Create a reference cycle of two jax.Arrays.
@@ -59,9 +72,27 @@ class GarbageCollectionGuardTest(jtu.JaxTestCase):
         self.assertIsNone(ref())  # Cycle collected.
     # Verify that an error message is logged because two jax.Arrays were garbage
     # collected.
-    self.assertIn(
-        "`jax.Array` was deleted by the Python garbage collector", stderr()
-    )
+    self.assertIn(_GC_ERROR_MESSAGE, stderr())
+
+  def test_array_reachable_from_cycle_is_logged(self):
+    if jaxlib_extension_version < 401:
+      self.skipTest("This functionality is not yet supported in jaxlib.")
+    with config.array_garbage_collection_guard("log"):
+      with jtu.capture_stderr() as stderr:
+        b = _B()
+        a = _A(a=jnp.array([1, 2, 3]), ref=b)
+        b.ref = a
+        del a
+        del b
+        gc.collect()
+    self.assertIn(_GC_ERROR_MESSAGE, stderr())
+
+  def test_no_error_is_logged_when_array_is_not_gced(self):
+    with config.array_garbage_collection_guard("log"):
+      with jtu.capture_stderr() as stderr:
+        a = jnp.array([1, 2, 3])
+        del a
+    self.assertNotIn(_GC_ERROR_MESSAGE, stderr())
 
 
 if __name__ == "__main__":

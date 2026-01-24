@@ -332,8 +332,11 @@ extern "C" int PyArray_tp_traverse(PyObject* self, visitproc visit, void* arg) {
   return 0;
 }
 
-// dynamic_attr: Allow the GC to clear the dictionary.
-extern "C" int PyArray_tp_clear(PyObject* self) {
+extern "C" void PyArray_tp_finalize(PyObject* self) {
+  // This method assumes that `PyObject_CallFinalizerFromDealloc` is not called
+  // from `PyArray_tp_dealloc`. If this assumption is violated, then the garbage
+  // collector guard would trigger for an array deallocated via reference
+  // counting.
   switch (auto guard_level = GetGarbageCollectArrayGuard(); guard_level) {
     case GarbageCollectionGuardLevel::kAllow:
       break;
@@ -361,13 +364,28 @@ extern "C" int PyArray_tp_clear(PyObject* self) {
       if (guard_level == GarbageCollectionGuardLevel::kFatal) {
         Py_FatalError(error_msg.c_str());
       } else {
+#if PY_VERSION_HEX < 0x030C0000
+        PyObject *err_type, *err_value, *err_traceback;
+        PyErr_Fetch(&err_type, &err_value, &err_traceback);
+#else
+        PyObject* exc = PyErr_GetRaisedException();
+#endif
         PyErr_SetString(PyExc_RuntimeError, error_msg.c_str());
         PyErr_Print();
         PyErr_Clear();
+#if PY_VERSION_HEX < 0x030C0000
+        PyErr_Restore(err_type, err_value, err_traceback);
+#else
+        PyErr_SetRaisedException(exc);
+#endif
       }
       break;
     }
   }
+}
+
+// dynamic_attr: Allow the GC to clear the dictionary.
+extern "C" int PyArray_tp_clear(PyObject* self) {
 #if PY_VERSION_HEX < 0x030C0000
   PyObject*& dict = *_PyObject_GetDictPtr(self);
   Py_CLEAR(dict);
@@ -2079,6 +2097,7 @@ PyMemberDef array_impl_members[] = {
 
 PyType_Slot array_impl_slots[] = {
     {Py_tp_new, reinterpret_cast<void*>(PyArray_tp_new)},
+    {Py_tp_finalize, reinterpret_cast<void*>(PyArray_tp_finalize)},
     {Py_tp_dealloc, reinterpret_cast<void*>(PyArray_tp_dealloc)},
     {Py_tp_members, reinterpret_cast<void*>(array_impl_members)},
     {Py_tp_traverse, reinterpret_cast<void*>(PyArray_tp_traverse)},

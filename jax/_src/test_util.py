@@ -227,6 +227,7 @@ def _capture_output(fp: TextIO) -> Generator[Callable[[], str], None, None]:
       f.seek(0)
       captured = f.read()
       os.dup2(original_fd, fp.fileno())
+      os.close(original_fd)
 
 
 capture_stdout = partial(_capture_output, sys.stdout)

@@ -42,6 +42,7 @@ Configuration
 .. autosummary::
    :toctree: _autosummary
 
+   array_garbage_collection_guard
    config
    check_tracer_leaks
    checking_leaks
