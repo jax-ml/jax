@@ -266,7 +266,7 @@ class PgleTest(jtu.JaxTestCase):
         # Run 2: Compilation should not be called
         with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
           f(x)
-        self.assertGreater(cache_miss_count(), 0)
+        self.assertEqual(cache_miss_count(), 0)
 
         fdo_profiles_before_pgle = self.get_fdo_profiles(dump_dir)
         # Run 3: Module should be compiled with FDO and stored to persistent cache
