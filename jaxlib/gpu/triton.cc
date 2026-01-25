@@ -153,7 +153,7 @@ NB_MODULE(_triton, m) {
         ValueOrThrowWrapper([](int device) -> absl::StatusOr<std::string_view> {
 #ifdef JAX_GPU_HIP
           hipDeviceProp_t prop;
-          hipGetDeviceProperties(&prop, 0);
+          GPU_RETURN_IF_ERROR(hipGetDeviceProperties(&prop, 0));
           return prop.gcnArchName;
 #else
           return absl::UnimplementedError("Not a HIP GPU");
