@@ -4880,6 +4880,18 @@ class ShardMapTest(jtu.JaxTestCase):
     expected_gout = jax.jit(jax.grad(jnp.sum))(arr)
     self.assertArraysEqual(gout, expected_gout)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_axis_index_unmapped(self, mesh):
+    arr = np.arange(8, dtype=np.int32)
+
+    @jax.vmap
+    def f(x):
+      return jax.lax.axis_index('x')
+
+    out = jax.jit(jax.shard_map(f, in_specs=P(), out_specs=P(),
+                                check_vma=False))(arr)
+    self.assertArraysEqual(out, np.zeros_like(arr, dtype=np.int32))
+
 
 class FunSpec(NamedTuple):
   name: str
