@@ -20,7 +20,6 @@ load(
     "jax_extend_internal_users",
     "jax_extra_deps",
     "jax_internal_packages",
-    "jax_visibility",
     "py_deps",
     "py_library_providing_imports_info",
     "pytype_library",
@@ -254,39 +253,4 @@ py_library_providing_imports_info(
 pytype_strict_library(
     name = "version",
     srcs = ["version.py"],
-)
-
-# Public JAX libraries below this point.
-
-# Aliases of experimental targets.
-# TODO(dsuo): remove these aliases/targets.
-pytype_strict_library(
-    name = "experimental",
-    visibility = jax_visibility("experimental_deprecated_alias"),
-    deps = [
-        ":jax",
-        "//jax/example_libraries:optimizers",
-        "//jax/example_libraries:stax",
-        "//jax/experimental",
-        "//jax/experimental:checkify",
-        "//jax/experimental:compute_on",
-        "//jax/experimental:custom_dce",
-        "//jax/experimental:custom_partitioning",
-        "//jax/experimental:fused",
-        "//jax/experimental:hijax",
-        "//jax/experimental:jet",
-        "//jax/experimental:layout",
-        "//jax/experimental:mesh_utils",
-        "//jax/experimental:multihost_utils",
-        "//jax/experimental:ode",
-        "//jax/experimental:pjit",
-        "//jax/experimental:profiler",
-        "//jax/experimental:rnn",
-        "//jax/experimental:scheduling_groups",
-        "//jax/experimental:shard_alike",
-        "//jax/experimental:shard_map",
-        "//jax/experimental:topologies",
-        "//jax/experimental:transfer",
-        "//jax/experimental:xla_metadata",
-    ],
 )
