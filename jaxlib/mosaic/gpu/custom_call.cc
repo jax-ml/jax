@@ -651,8 +651,7 @@ absl::StatusOr<void*> CachedInit(const CompiledKernel& kernel) {
 // TODO(b/464203195): Inline once the legacy custom call is removed.
 absl::Status MosaicGPUCustomCallImpl(
     cudaStream_t stream, void** buffers, const KernelHash& hash,
-    llvm::StringRef module,
-    std::optional<se::CudaComputeCapability> cc = std::nullopt) {
+    llvm::StringRef module, std::optional<se::CudaComputeCapability> cc) {
   TF_ASSIGN_OR_RETURN(auto* kernel, CachedCompile(hash, module, std::move(cc)));
   TF_ASSIGN_OR_RETURN(auto ctx, CachedInit(*kernel));
   if (kernel->is_comm_used) {
@@ -682,9 +681,9 @@ void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
                          size_t opaque_len, XlaCustomCallStatus* cc_status) {
   KernelHash hash;
   std::memcpy(hash.data(), opaque, sizeof(KernelHash));
-  auto status =
-      MosaicGPUCustomCallImpl(reinterpret_cast<cudaStream_t>(stream), buffers,
-                              hash, opaque + sizeof(KernelHash));
+  auto status = MosaicGPUCustomCallImpl(
+      reinterpret_cast<cudaStream_t>(stream), buffers, hash,
+      opaque + sizeof(KernelHash), /*cc=*/std::nullopt);
   if (!status.ok()) {
     XlaCustomCallStatusSetFailure(cc_status, status.message().data(),
                                   status.message().size());
@@ -818,7 +817,10 @@ absl::Status MosaicGpuExecute(
   KernelHash hash;
   std::memcpy(hash.data(), kernel_hash->data(), sizeof(KernelHash));
   auto module = attributes.get<std::string_view>("module");
-  return MosaicGPUCustomCallImpl(cuda_stream, buffers.data(), hash, *module);
+  se::CudaComputeCapability cc =
+      stream->parent()->GetDeviceDescription().cuda_compute_capability();
+  return MosaicGPUCustomCallImpl(cuda_stream, buffers.data(), hash, *module,
+                                 cc);
 }
 
 absl::Status MosaicGpuPrepare(
