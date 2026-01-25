@@ -53,11 +53,13 @@ traceback_util.register_exclusion(__file__)
 
 def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
          static_broadcasted_argnums=(), devices=None, backend=None,
-         axis_size=None, donate_argnums=(), global_arg_shapes=None):
-  del global_arg_shapes
+         axis_size=None, donate_argnums=()):
+  if devices is not None:
+    if not devices:
+      raise ValueError("'devices' argument to pmap must be non-empty, or None.")
+    devices = tuple(devices)
   # TODO(vanderplas): move these definitions into jax._src and avoid local import.
   import jax.experimental.multihost_utils as mhu  # pytype: disable=import-error
-  devices = tuple(devices) if devices is not None else devices
   axis_name, static_broadcasted_tuple, donate_tuple = api._shared_code_pmap(
       f, axis_name, static_broadcasted_argnums, donate_argnums, in_axes, out_axes)
   if isinstance(axis_name, core._TempAxisName):  # pylint: disable=protected-access
@@ -216,9 +218,6 @@ def _get_global_axis_size(local_axis_size: int, in_devices, backend_name: str,
 def _prepare_pmap(f: Callable, fun: lu.WrappedFun, in_axes, out_axes,
                   static_broadcasted_tuple, donate_tuple, in_devices,
                   backend_name, axis_size, args, kwargs):
-  if in_devices is not None and len(in_devices) == 0:
-    raise ValueError("'devices' argument to pmap must be non-empty, or None.")
-
   if static_broadcasted_tuple:
     if max(static_broadcasted_tuple) >= len(args):
       raise ValueError(

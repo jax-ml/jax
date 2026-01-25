@@ -2613,12 +2613,18 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     self.assertAllClose(r1, expected, atol=1e-6, rtol=1e-3)
 
   def testNoDevicesError(self):
-    f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i', devices=[])
-    shape = (jax.device_count(), 4)
-    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
-    with self.assertRaisesRegex(
-        ValueError, "'devices' argument to pmap must be non-empty, or None."):
-      f(x)
+    if config.pmap_shmap_merge.value:
+      # NOTE(dsuo): ValueError raised when creating pmap'd function now.
+      with self.assertRaisesRegex(
+          ValueError, "'devices' argument to pmap must be non-empty, or None."):
+        _ = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i', devices=[])
+    else:
+      f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i', devices=[])
+      shape = (jax.device_count(), 4)
+      x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+      with self.assertRaisesRegex(
+          ValueError, "'devices' argument to pmap must be non-empty, or None."):
+        f(x)
 
   def testBadAxisSizeError(self):
     if jax.device_count() == 1:
