@@ -19,6 +19,9 @@ from typing import Any, Callable, NamedTuple, Sequence
 import numpy as np
 
 from jax._src import api
+from jax._src.api_util import (
+    argnums_partial, donation_vector, flatten_fun,
+    flat_out_axes, fun_signature, fun_sourceinfo)
 from jax._src import array
 from jax._src import config
 from jax._src import core
@@ -31,10 +34,6 @@ from jax._src import stages
 from jax._src import traceback_util
 from jax._src import util
 from jax._src import xla_bridge as xb
-from jax._src.api_util import (
-    argnums_partial, debug_info, donation_vector,
-    flatten_fun, flat_out_axes,
-)
 from jax._src.interpreters import pxla
 from jax._src.shard_map import _shard_map, _axes_to_pspec
 from jax._src.mesh import Mesh
@@ -61,11 +60,12 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
   devices = tuple(devices) if devices is not None else devices
   axis_name, static_broadcasted_tuple, donate_tuple = api._shared_code_pmap(
       f, axis_name, static_broadcasted_argnums, donate_argnums, in_axes, out_axes)
-  if isinstance(axis_name, core._TempAxisName):
+  if isinstance(axis_name, core._TempAxisName):  # pylint: disable=protected-access
     axis_name = repr(axis_name)
+  fun = pmap_wrap_init(f, static_broadcasted_tuple)
 
   def infer_params(*args, __check=True, **kwargs):
-    p = _prepare_pmap(f, in_axes, out_axes, static_broadcasted_tuple,
+    p = _prepare_pmap(f, fun, in_axes, out_axes, static_broadcasted_tuple,
                       donate_tuple, devices, backend, axis_size, args, kwargs)
     trace_state_clean = core.trace_state_clean()
     if __check:
@@ -213,17 +213,12 @@ def _get_global_axis_size(local_axis_size: int, in_devices, backend_name: str,
   return global_axis_size
 
 
-def _prepare_pmap(fun: Callable, in_axes, out_axes, static_broadcasted_tuple,
-                  donate_tuple, in_devices, backend_name,
-                  axis_size, args, kwargs):
+def _prepare_pmap(f: Callable, fun: lu.WrappedFun, in_axes, out_axes,
+                  static_broadcasted_tuple, donate_tuple, in_devices,
+                  backend_name, axis_size, args, kwargs):
   if in_devices is not None and len(in_devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
-  dbg = debug_info("pmap", fun, args, kwargs,
-                   static_argnums=static_broadcasted_tuple)
-
-  f = lu.wrap_init(fun, debug_info=dbg)
-  del dbg
   if static_broadcasted_tuple:
     if max(static_broadcasted_tuple) >= len(args):
       raise ValueError(
@@ -233,7 +228,7 @@ def _prepare_pmap(fun: Callable, in_axes, out_axes, static_broadcasted_tuple,
           "All static broadcasted arguments must be passed positionally.")
     dyn_argnums = [i for i in range(len(args))
                    if i not in static_broadcasted_tuple]
-    f, dyn_args = argnums_partial(f, dyn_argnums, args)
+    fun, dyn_args = argnums_partial(fun, dyn_argnums, args)
 
     if isinstance(in_axes, tuple):
       dyn_in_axes = tuple(in_axes[i] for i in dyn_argnums)
@@ -268,10 +263,10 @@ def _prepare_pmap(fun: Callable, in_axes, out_axes, static_broadcasted_tuple,
             "is a tree prefix of the tuple of arguments passed positionally to "
             "the pmapped function.")
     raise ValueError(msg) from None
-  local_axis_size = _mapped_axis_size(fun, in_tree, args, in_axes_flat, "pmap")
+  local_axis_size = _mapped_axis_size(f, in_tree, args, in_axes_flat, "pmap")
 
-  f, out_axes_thunk = flat_out_axes(f, out_axes)
-  flat_fun, out_tree = flatten_fun(f, in_tree)
+  fun, out_axes_thunk = flat_out_axes(fun, out_axes)
+  flat_fun, out_tree = flatten_fun(fun, in_tree)
 
   is_explicit_global_axis_size = axis_size is not None
   global_axis_size = _get_global_axis_size(local_axis_size, in_devices,
@@ -287,6 +282,30 @@ def _prepare_pmap(fun: Callable, in_axes, out_axes, static_broadcasted_tuple,
                       devices=None if in_devices is None else tuple(in_devices),
                       global_axis_size=global_axis_size,
                       is_explicit_global_axis_size=is_explicit_global_axis_size)
+
+
+def pmap_wrap_init(f, static_broadcasted_tuple):
+  """Create a wrapped function with DebugInfo for pmap.
+
+  Args:
+    f: The function to wrap.
+    static_broadcasted_tuple: Tuple of static argument indices.
+
+  Returns:
+    A lu.WrappedFun ready for pmap.
+  """
+  # Compute arg_names from signature, excluding static argnums
+  if (signature := fun_signature(f)) is not None:
+    static_set = frozenset(static_broadcasted_tuple)
+    arg_names = tuple(
+        name
+        for i, name in enumerate(signature.parameters.keys())
+        if i not in static_set
+    )
+  else:
+    arg_names = None
+  dbg = lu.DebugInfo("pmap", fun_sourceinfo(f), arg_names, None)
+  return lu.wrap_init(f, debug_info=dbg)
 
 
 @lru_cache
