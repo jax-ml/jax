@@ -280,7 +280,7 @@ Data parallel is the most common and easy-to-understand form of parallelism. In 
 
 Fully-Sharded Data Parallel (FSDP)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-The drawback of data-parallel sharding is that we have to keep multiple, full, redundant copies of the model parameters in HBM. This is a very performant strategy for small models, but since HBM is in short supply, we need to shard the model parameters as well. In the *Fully-Sharded Data Parallel (FSDP)* strategy, we shard both the model and the parameters. Now, as the forward pass happens, the parameters are, one-by-one, unsharded (via ``AllGather``) into whole arrays before they are applied to the activations. This unsharding is brief and temporary, however, leading to a large saving in HBM. In the backward pass, each ``AllGather`` becomes a ``ReduceScatter``. Then there is a final ``ReduceScatter`` at the optimizer update to synchronize gradients. Compared with Data parallelism, the total communication traffic is 50% highter, but we our HBM pressure is reduced by the size of the model divided by the number of devices.
+The drawback of data-parallel sharding is that we have to keep multiple, full, redundant copies of the model parameters in HBM. This is a very performant strategy for small models, but since HBM is in short supply, we need to shard the model parameters as well. In the *Fully-Sharded Data Parallel (FSDP)* strategy, we shard both the activations and the model parameters. Now, as the forward pass happens, the parameters are, one-by-one, unsharded (via ``AllGather``) into whole arrays before they are applied to the activations. This unsharding is brief and temporary, however, leading to a large saving in HBM. In the backward pass, each ``AllGather`` becomes a ``ReduceScatter``. Then there is a final ``ReduceScatter`` at the optimizer update to synchronize gradients. Compared with Data parallelism, the total communication traffic is 50% higher, but our HBM pressure is reduced by the size of the model divided by the number of devices.
 
 *Mesh:*
 
@@ -323,7 +323,7 @@ If our model is large enough and structured appropriately, it becomes beneficial
 *Mesh:*
 
 .. code-block:: python
- 
+
     mesh = jax.make_mesh((128,4), ("fsdp", "tensor"))
 
 *Parameter Shardings:*
