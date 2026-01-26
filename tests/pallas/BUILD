@@ -241,16 +241,11 @@ jax_multiplatform_test(
     srcs = [
         "mosaic_gpu_test.py",
     ],
-    disable_configs = [
-        # TODO(b/462499936): Re-enable when test passes on MIG partition.
-        "gpu_b200",
-    ],
     enable_backends = [],
     enable_configs = [
         "gpu_h100_x32",
         "gpu_h100",
-        # TODO(b/462499936): Remove gpu_b200_full when test passes onMIG partition.
-        "gpu_b200_full",
+        "gpu_b200",
     ],
     shard_count = 4,
     tags = [
