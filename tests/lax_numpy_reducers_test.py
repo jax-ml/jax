@@ -1110,6 +1110,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       q = jnp.array([0.25, 0.5, 0.75], dtype=dtype) * (q_limit / 1.0)
       weights = w_rng(shape, dtype)
       return [data, q, weights]
+    @jtu.ignore_warning(category=RuntimeWarning, message="All-NaN slice encountered")
     def np_fun(data, q, weights):
       if dtype == dtypes.bfloat16:
         data, q, weights = (x.astype(np.float32) for x in (data, q, weights))

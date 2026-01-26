@@ -36,6 +36,7 @@ from jax._src.lax import parallel as lax_parallel
 from jax._src.lax import slicing as lax_slicing
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.util import canonicalize_axis, canonicalize_axis_tuple, maybe_named_axis, set_module
+from jax._src.numpy import indexing
 
 
 export = set_module('jax.numpy')
@@ -2483,7 +2484,7 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
     >>> x = jnp.array([1, 2, jnp.nan, 4, 5])
     >>> weights = jnp.array([1, 1, 1, 2, 1])
     >>> jnp.nanquantile(x, 0.5, weights=weights, method='inverted_cdf')
-    Array(3.5, dtype=float32)
+    Array(4.0, dtype=float32)
   """
   a, q = ensure_arraylike("nanquantile", a, q)
   if overwrite_input or out is not None:
@@ -2657,28 +2658,35 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
       valid_counts = lax.full_like(total_weight, a_shape[axis], dtype=q.dtype)
     limit = lax.sub(valid_counts, lax._const(valid_counts, 1))
     max_idx = lax.convert_element_type(limit, np.int32)
-    max_idx_p = lax.expand_dims(max_idx, tuple(range(q_ndim)))
-    idx = lax.max(lax._const(idx, 0), lax.min(idx, lax.asarray(max_idx_p, dtype=idx.dtype)))
-    out_shape = q_shape + valid_counts.shape
-    index = []
-    curr_out_axis = q_ndim
-    for i in range(a.ndim):
-      if i == axis:
-        index.append(idx)
-        if keepdims:
-          curr_out_axis += 1
-      else:
-        index.append(lax.broadcasted_iota(np.int32, out_shape, curr_out_axis))
-        curr_out_axis += 1  
-    result = a[tuple(index)]
+    max_idx_f = lax.expand_dims(max_idx, tuple(range(q_ndim)))
+    max_idx_f = lax.convert_element_type(max_idx_f, idx.dtype)
+    idx = lax.max(lax._const(idx, 0), lax.min(idx, max_idx_f))
+    if keepdims:
+      idx_take = lax.squeeze(idx, (q_ndim + axis,))
+    else:
+      idx_take = idx
+    if q_ndim == 0:
+      idx_transposed = lax.expand_dims(idx_take, (axis,))
+      result = indexing.take_along_axis(a, idx_transposed, axis=axis)
+      result = lax.squeeze(result, (axis,))
+    else:
+      perm = (list(range(q_ndim, q_ndim + axis)) +
+              list(range(q_ndim)) +
+              list(range(q_ndim + axis, idx_take.ndim)))
+      idx_transposed = lax.transpose(idx_take, perm)
+      result = indexing.take_along_axis(a, idx_transposed, axis=axis)
+      inv_perm = [perm.index(i) for i in range(len(perm))]
+      result = lax.transpose(result, inv_perm)
+    if keepdims:
+      result = lax.expand_dims(result, (q_ndim + axis,))
     all_nan_data = lax.eq(valid_counts, lax.full_like(valid_counts, 0))
     any_bad_weight = any(bad_weights, axis=axis, keepdims=keepdims)
     if squash_nans:
       force_nan = lax.bitwise_or(any_bad_weight, all_nan_data)
     else:
       force_nan = lax.bitwise_or(any_bad_weight, any(nan_data, axis=axis, keepdims=keepdims))
-    force_nan_p = lax.expand_dims(force_nan, tuple(range(q_ndim)))
-    result = _where(force_nan_p, lax.full_like(result, np.nan), result)
+    force_nan_f = lax.expand_dims(force_nan, tuple(range(q_ndim)))
+    result = _where(force_nan_f, lax.full_like(result, np.nan), result)
   else:
     raise ValueError(f"{method=!r} not recognized")
   if keepdims and keepdim:
@@ -2802,7 +2810,7 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
     >>> x = jnp.array([1, 2, jnp.nan, 4, 5])
     >>> weights = jnp.array([1, 1, 1, 2, 1])
     >>> jnp.nanpercentile(x, 50, weights=weights, method='inverted_cdf')
-    Array(3.5, dtype=float32)
+    Array(4.0, dtype=float32)
   """
   a, q = ensure_arraylike("nanpercentile", a, q)
   q, = promote_dtypes_inexact(q)
