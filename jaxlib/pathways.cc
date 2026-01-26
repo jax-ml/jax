@@ -22,6 +22,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -36,16 +38,22 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_user_context.h"
 #include "jaxlib/to_ifrt_sharding.h"
+#include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
+#include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/array_spec.h"
+#include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/remap_plan.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/user_context.h"
+#include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
+#include "xla/python/nb_absl_flat_hash_set.h"  // IWYU pragma: keep
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
+#include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/types.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/errors.h"
@@ -360,6 +368,33 @@ ExperimentalSplitByMeshAxis(
   return py_results;
 }
 
+jax::nb_class_ptr<jax::PyClient> CreateCpuClient(
+    absl::flat_hash_set<int> addressable_devices,
+    absl::flat_hash_map<int, int> device_id_to_process_index) {
+  xla::CpuClientOptions options;
+  options.asynchronous = true;
+  options.cpu_device_count = addressable_devices.size();
+  auto cpu_client =
+      xla::ValueOrThrow(xla::GetXlaPjrtCpuClient(std::move(options)));
+
+  xla::ifrt::PjRtClient::CreateOptions create_options;
+  create_options.pjrt_client = std::move(cpu_client);
+  xla::ifrt::PjRtClient::CreateOptions::GlobalDeviceMapping&
+      global_device_mapping = create_options.global_device_mapping.emplace();
+  for (int device_id : addressable_devices) {
+    global_device_mapping.addressable_device_ids.insert(
+        xla::ifrt::DeviceId(device_id));
+  }
+  for (const auto& [device_id, process_index] : device_id_to_process_index) {
+    global_device_mapping
+        .device_id_to_process_index[xla::ifrt::DeviceId(device_id)] =
+        process_index;
+  }
+  create_options.sort_devices_by_process_index = false;
+  return jax::PyClient::Make(
+      xla::ValueOrThrow(xla::ifrt::PjRtClient::Create(create_options)));
+}
+
 }  // namespace
 
 NB_MODULE(_pathways, m) {
@@ -372,6 +407,8 @@ NB_MODULE(_pathways, m) {
         nb::arg("mesh_axis_sizes"), nb::arg("mesh_axis_idx"),
         nb::arg("mesh_axis_sections"), nb::arg("submesh_shardings"),
         nb::arg("donate"));
+  m.def("_create_cpu_client", CreateCpuClient, nb::arg("addressable_devices"),
+        nb::arg("device_id_to_process_index"));
 }
 
 }  // namespace jax
