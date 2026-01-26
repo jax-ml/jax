@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <optional>
+#include <variant>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -24,10 +25,12 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
@@ -142,6 +145,59 @@ TEST_F(UtilsTest, MemRefUnfoldWorksWithStridedLayoutAndUnknownDim) {
   auto [strides, offset] = result_type.getStridesAndOffset();
   EXPECT_EQ(offset, 0);
   EXPECT_EQ(strides, (llvm::ArrayRef<int64_t>{8192, 128, 1}));
+}
+
+TEST_F(UtilsTest, MemRefSliceStaticValues) {
+  mlir::Type f32 = builder_.getF32Type();
+  mlir::MemRefType input_type = mlir::MemRefType::get({10, 20}, f32);
+  mlir::Value input = mlir::memref::AllocOp::create(builder_, input_type);
+  std::vector<std::variant<int64_t, mlir::Value>> base_indices = {2, 5};
+  std::vector<int64_t> slice_shape = {1, 5};
+  std::vector<bool> is_squeezed = {true, false};
+
+  ASSERT_OK_AND_ASSIGN(
+      mlir::Value result,
+      MemRefSlice(builder_, input, base_indices, slice_shape, is_squeezed));
+
+  auto result_type = mlir::cast<mlir::MemRefType>(result.getType());
+  EXPECT_EQ(result_type.getShape(), (llvm::ArrayRef<int64_t>{5}));
+  auto [strides, offset] = result_type.getStridesAndOffset();
+  EXPECT_EQ(offset, 45);
+  EXPECT_EQ(strides, (llvm::ArrayRef<int64_t>{1}));
+}
+
+TEST_F(UtilsTest, MemRefSliceDynamicMlirValues) {
+  mlir::Type f32 = builder_.getF32Type();
+  mlir::MemRefType input_type = mlir::MemRefType::get({10, 20}, f32);
+  mlir::Value input = mlir::memref::AllocOp::create(builder_, input_type);
+  mlir::Value idx = builder_.create<mlir::arith::ConstantIndexOp>(2);
+  std::vector<std::variant<int64_t, mlir::Value>> base_indices = {idx, 5};
+  std::vector<int64_t> slice_shape = {1, 5};
+  std::vector<bool> is_squeezed = {true, false};
+
+  ASSERT_OK_AND_ASSIGN(
+      mlir::Value result,
+      MemRefSlice(builder_, input, base_indices, slice_shape, is_squeezed));
+
+  auto result_type = mlir::cast<mlir::MemRefType>(result.getType());
+  EXPECT_EQ(result_type.getShape(), llvm::ArrayRef<int64_t>{5});
+  auto [strides, offset] = result_type.getStridesAndOffset();
+  EXPECT_EQ(offset, mlir::ShapedType::kDynamic);
+  EXPECT_EQ(strides, llvm::ArrayRef<int64_t>{1});
+}
+
+TEST_F(UtilsTest, MemRefSliceChecksSqueezedShape) {
+  mlir::Type f32 = builder_.getF32Type();
+  mlir::MemRefType input_type = mlir::MemRefType::get({10, 20}, f32);
+  mlir::Value input = mlir::memref::AllocOp::create(builder_, input_type);
+  std::vector<std::variant<int64_t, mlir::Value>> base_indices = {2, 5};
+  std::vector<int64_t> slice_shape = {2, 5};
+  std::vector<bool> is_squeezed = {true, false};
+
+  EXPECT_THAT(
+      MemRefSlice(builder_, input, base_indices, slice_shape, is_squeezed),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               "Slice shape must be 1 for squeezed dimensions"));
 }
 
 }  // namespace

@@ -18,19 +18,23 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <variant>
 #include <vector>
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "llvm/ADT/STLExtras.h"
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 
@@ -147,6 +151,71 @@ absl::StatusOr<mlir::Value> MemRefUnfold(
   CHECK(assoc.size() == ref_ty.getRank());
 
   return mlir::memref::ExpandShapeOp::create(builder, new_ref_ty, ref, assoc)
+      .getResult();
+}
+
+absl::StatusOr<mlir::Value> MemRefSlice(
+    mlir::ImplicitLocOpBuilder& builder, mlir::Value ref,
+    const std::vector<std::variant<int64_t, mlir::Value>>& base_indices,
+    const std::vector<int64_t>& slice_shape,
+    const std::vector<bool>& is_squeezed) {
+  auto ref_ty = mlir::cast<mlir::MemRefType>(ref.getType());
+  if (base_indices.size() != ref_ty.getRank() ||
+      slice_shape.size() != ref_ty.getRank() ||
+      is_squeezed.size() != ref_ty.getRank()) {
+    return absl::InvalidArgumentError("Indices must match memref rank");
+  }
+
+  auto [memref_strides, offset] = ref_ty.getStridesAndOffset();
+  int64_t dynamic_offset = mlir::ShapedType::kDynamic;
+  int64_t new_offset = offset;
+
+  if (new_offset != dynamic_offset) {
+    for (const auto& [base_idx, memref_stride] :
+         llvm::zip(base_indices, memref_strides)) {
+      if (std::holds_alternative<int64_t>(base_idx)) {
+        new_offset += std::get<int64_t>(base_idx) * memref_stride;
+      } else {
+        new_offset = dynamic_offset;
+        break;
+      }
+    }
+  }
+
+  std::vector<int64_t> new_strides;
+  std::vector<int64_t> new_shape;
+  for (size_t i = 0; i < ref_ty.getRank(); ++i) {
+    if (!is_squeezed[i]) {
+      new_strides.push_back(memref_strides[i]);
+      new_shape.push_back(slice_shape[i]);
+    } else if (slice_shape[i] != 1) {
+      return absl::InvalidArgumentError(
+          "Slice shape must be 1 for squeezed dimensions");
+    }
+  }
+
+  llvm::SmallVector<mlir::OpFoldResult> offsets;
+  llvm::SmallVector<mlir::OpFoldResult> sizes;
+  llvm::SmallVector<mlir::OpFoldResult> strides;
+
+  for (size_t i = 0; i < ref_ty.getRank(); ++i) {
+    if (std::holds_alternative<int64_t>(base_indices[i])) {
+      offsets.push_back(
+          builder.getIndexAttr(std::get<int64_t>(base_indices[i])));
+    } else {
+      offsets.push_back(std::get<mlir::Value>(base_indices[i]));
+    }
+    sizes.push_back(builder.getIndexAttr(slice_shape[i]));
+    strides.push_back(builder.getIndexAttr(1));
+  }
+
+  auto new_layout = mlir::StridedLayoutAttr::get(builder.getContext(),
+                                                 new_offset, new_strides);
+  auto new_ref_ty = mlir::MemRefType::get(new_shape, ref_ty.getElementType(),
+                                          new_layout, ref_ty.getMemorySpace());
+
+  return builder
+      .create<mlir::memref::SubViewOp>(new_ref_ty, ref, offsets, sizes, strides)
       .getResult();
 }
 
