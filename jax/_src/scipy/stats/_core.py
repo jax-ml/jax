@@ -193,7 +193,7 @@ def rankdata(
   if method not in ("average", "min", "max", "dense", "ordinal"):
     raise ValueError(f"unknown method '{method}'")
 
-  a = jnp.asarray(a)
+  a, = promote_args_inexact("rankdata", a)
 
   if axis is not None:
     return jnp.apply_along_axis(rankdata, axis, a, method)
@@ -216,7 +216,10 @@ def rankdata(
   if method == "average":
     return .5 * (count[dense] + count[dense - 1] + 1).astype(dtypes.default_float_dtype())
   raise ValueError(f"unknown method '{method}'")
-
+  if nan_policy == "propagate":
+    contains_nan = jnp.any(jnp.isnan(arr))
+    return jnp.where(contains_nan, jnp.nan, result)
+  return result
 
 @api.jit(static_argnames=['axis', 'nan_policy', 'keepdims'])
 def sem(a: ArrayLike, axis: int | None = 0, ddof: int = 1, nan_policy: str = "propagate", *, keepdims: bool = False) -> Array:
