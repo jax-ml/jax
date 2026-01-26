@@ -1379,6 +1379,7 @@ jax_multiplatform_test(
     enable_configs = [
         "tpu_v5p",
         "tpu_v6e",
+        "tpu_7x",
     ],
     shard_count = 10,
     deps = [
@@ -1403,6 +1404,7 @@ jax_multiplatform_test(
     enable_configs = [
         "tpu_v5p",
         "tpu_v6e",
+        "tpu_7x",
         "cpu",  # Just to make sure we at least check the shard_count in presubmit.
     ],
     shard_count = 3,
@@ -1429,6 +1431,7 @@ jax_multiplatform_test(
     enable_configs = [
         "tpu_v5p_x4",
         "tpu_v6e_x8",
+        "tpu_7x_x4",
     ],
     deps = [
         "//jax/experimental:mesh_utils",

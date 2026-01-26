@@ -354,7 +354,7 @@ def get_tpu_info() -> TpuInfo:
           fp8_ops_per_second=int(4.60e15 // num_chip_cores),
           int4_ops_per_second=0,  # Not Available
           sparse_core=SparseCoreInfo(
-              num_cores=4,
+              num_cores=2,
               num_subcores=16,
               num_lanes=16,
               dma_granule_size_bytes=64,
