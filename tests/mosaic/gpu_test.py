@@ -6855,23 +6855,15 @@ if hp is not None:
           new_warp_dims = list(layout.warp_dims)
           position = data.draw(hps.integers(0, len(layout.warp_dims)))
           new_warp_dims.insert(position, d)
-          layout = fa.TiledLayout(
-              layout.tiling,
-              warp_dims=tuple(new_warp_dims),
-              lane_dims=layout.lane_dims,
-              vector_dim=layout.vector_dim,
-              _check_canonical=False,
+          layout = dataclasses.replace(
+              layout, warp_dims=tuple(new_warp_dims), _check_canonical=False
           )
         else:
           new_lane_dims = list(layout.lane_dims)
           position = data.draw(hps.integers(0, len(layout.lane_dims)))
           new_lane_dims.insert(position, d)
-          layout = fa.TiledLayout(
-              layout.tiling,
-              warp_dims=layout.warp_dims,
-              lane_dims=tuple(new_lane_dims),
-              vector_dim=layout.vector_dim,
-              _check_canonical=False,
+          layout = dataclasses.replace(
+              layout, lane_dims=tuple(new_lane_dims), _check_canonical=False
           )
       self.assertNotEqual(layout, canonical_layout)
       self.assertEqual(layout.canonicalize(), canonical_layout)

@@ -192,10 +192,9 @@ class TiledLayout {
   const std::vector<Dim>& warp_dims() const { return warp_dims_; }
   const std::vector<Dim>& lane_dims() const { return lane_dims_; }
   int64_t vector_dim() const { return vector_dim_; }
-  const std::vector<int64_t>& tiled_tiling_shape() const {
-    return tiled_tiling_shape_;
-  }
-  size_t tiled_tiling_rank() const { return tiled_tiling_shape_.size(); };
+
+  // Returns the shape of the tiled tiling (without the base tile shape part).
+  absl::StatusOr<std::vector<int64_t>> TiledTilingShape() const;
 
   // Canonicalizes the layout. E.g. If the tiling suffix is
   //   (4, 32, 1, 1, 1), vector_dim = -1, warp_dims = {-5}, lane_dims = {-4}
@@ -268,11 +267,7 @@ class TiledLayout {
       : tiling_(std::move(tiling)),
         warp_dims_(std::move(warp_dims)),
         lane_dims_(std::move(lane_dims)),
-        vector_dim_(vector_dim),
-        tiled_tiling_shape_(TiledTilingShape()) {};
-
-  // Returns the shape of the tiled tiling (without the base tile shape part).
-  std::vector<int64_t> TiledTilingShape() const;
+        vector_dim_(vector_dim) {};
 
   // Turns the linearized thread index `idx` into a vector of full indices for
   // the given dimensions `dims`.
@@ -284,10 +279,6 @@ class TiledLayout {
   std::vector<Dim> warp_dims_;
   std::vector<Dim> lane_dims_;
   int64_t vector_dim_;
-
-  // Tiled tiling shape can be reconstructed from the tiling object. We cache it
-  // to avoid recomputation.
-  std::vector<int64_t> tiled_tiling_shape_;
 };
 
 }  // namespace jax::mosaic::gpu

@@ -873,6 +873,7 @@ def _tmem_store(tmem_addr, shape, num, regs, unpack: bool) -> None:
   )
 
 
+@dataclasses.dataclass(frozen=True)
 class TMEMLayout(fa.TiledLayout):
   """Represents the way a shape is laid out in TMEM.
 
