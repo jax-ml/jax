@@ -662,19 +662,6 @@ absl::Status MosaicGPUCustomCallImpl(
   return absl::OkStatus();
 }
 
-xla::ReplicaGroup AllDevices(
-  const xla::gpu::CollectiveParams& collective_params) {
-  CHECK(collective_params.global_device_id_map != nullptr);
-  int num_devices = collective_params.global_device_id_map->size();
-
-  xla::ReplicaGroup group;
-  group.mutable_replica_ids()->Reserve(num_devices);
-  for (int64_t i = 0; i < num_devices; ++i) {
-    group.add_replica_ids(i);
-  }
-  return group;
-}
-
 // TODO(b/464203195): Backward-compatible version using the legacy FFI
 // API. Remove once backward compatibility window has passed.
 void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
@@ -711,89 +698,33 @@ absl::Status InstantiateResources(ffi::Dictionary attrs) {
   return absl::OkStatus();
 }
 
-
-absl::StatusOr<std::vector<void*>> ConstructKernelBuffers(
-    const xla::gpu::CollectiveParams* absl_nullable collective_params,
-    se::Stream* absl_nonnull stream, bool uses_collective_metadata,
-    ffi::RemainingArgs inputs, ffi::RemainingRets results) {
-  std::vector<void*> buffers;
+absl::StatusOr<std::vector<ffi::AnyBuffer>> GetBuffers(
+  ffi::RemainingArgs inputs, ffi::RemainingRets results) {
+  std::vector<ffi::AnyBuffer> buffers;
   buffers.reserve(inputs.size() + results.size());
-  std::vector<ffi::AnyBuffer> input_buffers;
-  input_buffers.reserve(inputs.size());
-
   for (int i = 0; i < inputs.size(); ++i) {
     TF_ASSIGN_OR_RETURN(auto input_buffer, inputs.get<ffi::AnyBuffer>(i));
-    input_buffers.push_back(input_buffer);
     if (reinterpret_cast<uintptr_t>(input_buffer.untyped_data()) %
         mosaic::gpu::kExpectedHbmAlignment) {
       return absl::InvalidArgumentError(
           absl::StrFormat("Input buffer %d is not %d-byte aligned", i,
                           mosaic::gpu::kExpectedHbmAlignment));
     }
+    buffers.push_back(input_buffer);
   }
 
   std::vector<ffi::AnyBuffer> result_buffers;
   result_buffers.reserve(results.size());
   for (int i = 0; i < results.size(); ++i) {
     TF_ASSIGN_OR_RETURN(auto result_buffer, results.get<ffi::AnyBuffer>(i));
-    result_buffers.push_back(*result_buffer);
-
     if (reinterpret_cast<uintptr_t>(result_buffer->untyped_data()) %
         mosaic::gpu::kExpectedHbmAlignment) {
       return absl::InvalidArgumentError(
           absl::StrFormat("Output buffer %d is not %d-byte aligned", i,
                           mosaic::gpu::kExpectedHbmAlignment));
     }
+    buffers.push_back(*result_buffer);
   }
-
-  // When several devices handled with a single process we also need to
-  // construct the collective metadata and store it to the last buffer.
-  if (uses_collective_metadata) {
-    CHECK(collective_params != nullptr);
-    std::vector<se::DeviceAddressBase> parameters;
-    // Reserve space for input and output buffers,
-    // except the collective metadata buffer.
-    parameters.reserve(inputs.size() + results.size() - 1);
-
-    for (int i = 0; i < input_buffers.size(); ++i) {
-      xla::ffi::AnyBuffer input_buffer = input_buffers[i];
-      parameters.push_back(input_buffer.device_memory());
-    }
-
-    // Add all result buffers except the collective metadata buffer.
-    for (int i = 0; i < results.size() - 1; ++i) {
-      xla::ffi::AnyBuffer result_buffer = result_buffers[i];
-      parameters.push_back(result_buffer.device_memory());
-    }
-
-    // The last output buffer is used as the collective metadata buffer.
-    se::DeviceAddressBase collective_metadata_ptr =
-        result_buffers.back().device_memory();
-    // Construct collective metadata
-    xla::ReplicaGroup replica_group = AllDevices(*collective_params);
-    TF_ASSIGN_OR_RETURN(
-        xla::gpu::GpuCliqueKey clique_key,
-        GetGpuCliqueKey(
-            *collective_params, {replica_group},
-            xla::CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID,
-            xla::AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
-    // TODO(b/477485739): Move this to the initialization stage.
-    TF_RETURN_IF_ERROR(
-        xla::gpu::CollectiveMetadataThunk::ConstructCollectiveMetadata(
-            clique_key,
-            clique_key.rank(collective_params->global_device_id).value(),
-            stream, std::move(parameters),
-            // TODO(b/476264413): Add multimem support.
-            /*multimem=*/nullptr, collective_metadata_ptr));
-  }
-
-  for (const xla::ffi::AnyBuffer& input_buffer : input_buffers) {
-    buffers.push_back(input_buffer.untyped_data());
-  }
-  for (const xla::ffi::AnyBuffer& result_buffer : result_buffers) {
-    buffers.push_back(result_buffer.untyped_data());
-  }
-
   return buffers;
 }
 
@@ -801,27 +732,98 @@ bool ModuleUsesCollectiveMetadata(const xla::ffi::Dictionary& attrs) {
   return attrs.get<bool>("uses_xla_collective_metadata").value_or(false);
 }
 
-absl::Status MosaicGpuExecute(
+// TODO(b/477478816): Support replica groups to execute a mosaic kernel on a
+// subset of devices.
+absl::StatusOr<xla::gpu::GpuCliqueKey> GetCliqueKeyForAllDevices(
+    const xla::gpu::CollectiveParams& collective_params) {
+  CHECK(collective_params.global_device_id_map != nullptr);
+
+  int num_devices = collective_params.global_device_id_map->size();
+  xla::ReplicaGroup group;
+  group.mutable_replica_ids()->Reserve(num_devices);
+  for (int64_t i = 0; i < num_devices; ++i) {
+    group.add_replica_ids(i);
+  }
+
+  return GetGpuCliqueKey(
+      collective_params, {group},
+      xla::CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID,
+      xla::AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE);
+}
+
+absl::Status MosaicGpuInitialize(
     se::Stream* stream,
     const xla::gpu::CollectiveParams* collective_params,
+    const xla::gpu::CollectiveCliques* collective_cliques,
     ffi::RemainingArgs inputs, ffi::RemainingRets results,
     xla::ffi::Dictionary attributes) {
-  TF_ASSIGN_OR_RETURN(std::vector<void*> buffers,
-                      ConstructKernelBuffers(
-                        collective_params, stream,
-                        ModuleUsesCollectiveMetadata(attributes), inputs,
-                        results));
+  bool uses_collective_metadata = ModuleUsesCollectiveMetadata(attributes);
+  if (!uses_collective_metadata) {
+    // If the kernel does not use collective metadata, we can skip the
+    // initialization.
+    return absl::OkStatus();
+  }
+
+  // When several devices handled with a single process we also need to
+  // construct the collective metadata and store it to the last buffer.
+  TF_ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
+                      GetBuffers(inputs, results));
+
+  std::vector<se::DeviceAddressBase> parameters;
+  // Reserve space for input and output buffers, except the
+  // collective metadata buffer.
+  parameters.reserve(buffers.size() - 1);
+
+  // Add all result buffers except the collective metadata buffer.
+  for (int i = 0; i < buffers.size() - 1; ++i) {
+    xla::ffi::AnyBuffer input_buffer = buffers[i];
+    parameters.push_back(input_buffer.device_memory());
+  }
+
+  TF_ASSIGN_OR_RETURN(
+      xla::gpu::GpuCliqueKey clique_key,
+      GetCliqueKeyForAllDevices(*collective_params));
+
+  // The last output buffer is used as the collective metadata buffer.
+  se::DeviceAddressBase collective_metadata_ptr =
+      buffers.back().device_memory();
+
+    TF_RETURN_IF_ERROR(
+        xla::gpu::CollectiveMetadataThunk::ConstructCollectiveMetadata(
+            clique_key,
+            clique_key.rank(collective_params->global_device_id).value(),
+            stream, std::move(parameters),
+            // TODO(b/476264413): Add multimem support.
+            /*multimem=*/nullptr, collective_metadata_ptr));
+  return absl::OkStatus();
+}
+
+absl::Status MosaicGpuExecute(
+    se::Stream* stream,
+    ffi::RemainingArgs inputs, ffi::RemainingRets results,
+    xla::ffi::Dictionary attributes) {
   cudaStream_t cuda_stream = reinterpret_cast<cudaStream_t>(
       stream->platform_specific_handle().stream);
   auto kernel_hash = attributes.get<std::string_view>("kernel_hash");
   KernelHash hash;
   std::memcpy(hash.data(), kernel_hash->data(), sizeof(KernelHash));
   auto module = attributes.get<std::string_view>("module");
+
+  std::vector<void*> buffer_ptrs;
+  buffer_ptrs.reserve(inputs.size() + results.size());
+
+  TF_ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
+                      GetBuffers(inputs, results));
+  for (const xla::ffi::AnyBuffer& buffer : buffers) {
+    buffer_ptrs.push_back(buffer.untyped_data());
+  }
+
   se::CudaComputeCapability cc =
       stream->parent()->GetDeviceDescription().cuda_compute_capability();
-  return MosaicGPUCustomCallImpl(cuda_stream, buffers.data(), hash, *module,
+  return MosaicGPUCustomCallImpl(cuda_stream, buffer_ptrs.data(), hash, *module,
                                  cc);
 }
+
 
 absl::Status MosaicGpuPrepare(
     const xla::gpu::CollectiveParams* absl_nullable collective_params,
@@ -835,15 +837,8 @@ absl::Status MosaicGpuPrepare(
   CHECK(clique_requests != nullptr);
 
   // TODO(b/476264413): Add multimem support.
-  // TODO(b/477478816): Support replica groups to execute a mosaic kernel on a
-  // subset of devices.
-  auto replica_group = AllDevices(*collective_params);
-  TF_ASSIGN_OR_RETURN(
-      xla::gpu::GpuCliqueKey clique_key,
-      GetGpuCliqueKey(
-          *collective_params, {replica_group},
-          xla::CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID,
-          xla::AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+  TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
+                      GetCliqueKeyForAllDevices(*collective_params));
 
   TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key));
   return absl::OkStatus();
@@ -858,6 +853,17 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuPrepare, MosaicGpuPrepare,
 XLA_FFI_DEFINE_HANDLER(kMosaicGPUInstantiate, InstantiateResources,
                        ffi::Ffi::BindInstantiate().Attrs());
 
+XLA_FFI_DEFINE_HANDLER(kMosaicGpuInitialize, MosaicGpuInitialize,
+                       ffi::Ffi::BindInitialize()
+                           .Ctx<ffi::Stream>()
+                           .Ctx<ffi::CollectiveParams>()
+                           .Ctx<ffi::CollectiveCliques>()
+                           .RemainingArgs()
+                           .RemainingRets()
+                           .Attrs(),
+                       {ffi::Traits::kCmdBufferCompatible});
+
+
 //  We expect the following attributes:
 // - kernel_hash: a hash of the kernel.
 // - module: the serialized MLIR module.
@@ -866,7 +872,6 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGPUInstantiate, InstantiateResources,
 XLA_FFI_DEFINE_HANDLER(kMosaicGpuExecute, MosaicGpuExecute,
                        ffi::Ffi::Bind<ffi::ExecutionStage::kExecute>()
                            .Ctx<ffi::Stream>()
-                           .Ctx<ffi::CollectiveParams>()
                            .RemainingArgs()
                            .RemainingRets()
                            .Attrs(),
@@ -876,8 +881,8 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "mosaic_gpu_v2", "CUDA",
                          {
                              /*instantiate=*/kMosaicGPUInstantiate,
                              /*prepare=*/kMosaicGpuPrepare,
-                             /*initialize=*/nullptr,
-                           /*execute=*/kMosaicGpuExecute,
+                             /*initialize=*/kMosaicGpuInitialize,
+                             /*execute=*/kMosaicGpuExecute,
                          });
 
 }  // namespace
