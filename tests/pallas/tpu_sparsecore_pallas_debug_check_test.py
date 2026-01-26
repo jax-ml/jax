@@ -130,6 +130,8 @@ class DebugCheckTest(jtu.JaxTestCase):
       flags.FLAGS.xla_sc_assert_level = "all-loads-stores"
     else:
       self.skipTest("TODO: Find another way to enable bounds checking.")
+    if jtu.is_device_tpu(7, "x"):
+      self.skipTest("TODO(b/478798643): Fails on v7x")
 
     x = jnp.arange(8, dtype=jnp.int32)
     # Index 8 is out-of-bounds.
