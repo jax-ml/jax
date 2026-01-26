@@ -74,6 +74,14 @@ class PrimitiveTest(jtu.JaxTestCase):
       self.skipTest("Eigenvalues are sorted and it is not correct to compare "
                     "decompositions for equality.")
 
+    # Tridiagonal Solve (gtsv2) on ROCm is implemented but produces
+    # numerical errors as of at least ROCm 7.2 so gtsv2 cannot be marked
+    # as stable yet.
+    # TODO Re-enable this test when ROCm numerical errors in gtsv2 are fixed.
+    if "tridiagonal_solve" in harness.fullname and jtu.is_device_rocm():
+        self.skipTest("Tridiagonal Solve (gtsv2) is currently "
+                      "unsupported on ROCm")
+
     if harness.params.get("enable_xla", False):
       self.skipTest("enable_xla=False is not relevant")
 
