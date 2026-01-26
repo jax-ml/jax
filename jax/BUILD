@@ -73,7 +73,7 @@ config_setting(
 )
 
 config_setting(
-    name = "config_build_external_deps",
+    name = "config_build_jaxlib_external_deps",
     flag_values = {
         ":build_jaxlib": "external_deps",
     },
