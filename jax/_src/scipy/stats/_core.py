@@ -219,12 +219,14 @@ def rankdata(
     raise ValueError(f"unknown method '{method}'")
 
   # 1. Ensure output is ALWAYS float
-  result = result.astype(dtypes.default_float_dtype())
+  out_dtype = dtypes.promote_dtypes_inexact(result.dtype, jnp.result_type(a))[0]
+  result = result.astype(out_dtype)
 
   # 2. Handle NaN policy (Propagate if needed)
   if nan_policy == "propagate":
     contains_nan = jnp.any(jnp.isnan(arr))
     return jnp.where(contains_nan, jnp.nan, result)
+
   return result
 
 @api.jit(static_argnames=['axis', 'nan_policy', 'keepdims'])

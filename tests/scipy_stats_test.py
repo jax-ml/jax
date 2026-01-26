@@ -39,7 +39,13 @@ def genNamedParametersNArgs(n):
     dtypes=itertools.combinations_with_replacement(jtu.dtypes.floating, n),
   )
 
-def test_rankdata_nan_propagation_consistent():
+
+
+# Allow implicit rank promotion in these tests, as virtually every test exercises it.
+@jtu.with_config(jax_numpy_rank_promotion="allow")
+class LaxBackedScipyStatsTests(jtu.JaxTestCase):
+  """Tests for LAX-backed scipy.stats implementations"""
+  def test_rankdata_nan_propagation_consistent():
     # Test that NaN in input results in all NaNs in output for 'propagate'
     x = jnp.array([1.0, jnp.nan, 2.0])
     expected = jnp.array([jnp.nan, jnp.nan, jnp.nan])
@@ -47,12 +53,7 @@ def test_rankdata_nan_propagation_consistent():
     
     # assert_allclose is safe across different Scipy versions
     np.testing.assert_allclose(actual, expected)
-
-# Allow implicit rank promotion in these tests, as virtually every test exercises it.
-@jtu.with_config(jax_numpy_rank_promotion="allow")
-class LaxBackedScipyStatsTests(jtu.JaxTestCase):
-  """Tests for LAX-backed scipy.stats implementations"""
-
+    
   @genNamedParametersNArgs(2)
   def testVonMisesPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
