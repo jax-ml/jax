@@ -465,16 +465,6 @@ config_setting(
 )
 
 py_import(
-    name = "rocm_plugin_kernels_wheel",
-    wheel = "@pypi_jax_rocm7_plugin//:whl",
-)
-
-py_import(
-    name = "rocm_plugin_pjrt_wheel",
-    wheel = "@pypi_jax_rocm7_pjrt//:whl",
-)
-
-py_import(
     name = "jaxlib_py_import",
     wheel = ":jaxlib_wheel",
 )

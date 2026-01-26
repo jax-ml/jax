@@ -199,13 +199,10 @@ def _gpu_test_deps():
             "//jaxlib/rocm:gpu_only_test_deps",
             "//jax_plugins:gpu_plugin_only_test_deps",
         ],
-        "//jax:config_build_jaxlib_false": if_rocm_is_configured([
-            "//jaxlib/tools:rocm_plugin_kernels_wheel",
-            "//jaxlib/tools:rocm_plugin_pjrt_wheel",
-        ]) + if_cuda_is_configured([
+        "//jax:config_build_jaxlib_false": [
             "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",
             "//jaxlib/tools:pypi_jax_cuda_pjrt_with_cuda_deps",
-        ]),
+        ],
         "//jax:config_build_jaxlib_wheel": [
             "//jaxlib/tools:jax_cuda_plugin_py_import",
             "//jaxlib/tools:jax_cuda_pjrt_py_import",

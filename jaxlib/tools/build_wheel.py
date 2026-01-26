@@ -59,12 +59,6 @@ parser.add_argument(
 parser.add_argument(
     "--srcs", help="source files for the wheel", action="append"
 )
-parser.add_argument(
-    "--build_from_external_workspace",
-    action="store_true",
-    help="Set when building from an external/umbrella workspace where jax is @jax. "
-    "When true, source prefix is 'jax/' instead of '__main__/'.",
-)
 
 args = parser.parse_args()
 
@@ -158,12 +152,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
   build under @jax strip the prefix"""
   # wheel_sources is a list of file paths, not a prefix. If provided, use empty prefix.
   # Otherwise, determine prefix based on build_from_external_workspace flag.
-  if wheel_sources:
-    source_file_prefix = ""
-  elif args.build_from_external_workspace:
-    source_file_prefix = "jax/"
-  else:
-    source_file_prefix = "__main__/"
+  source_file_prefix = f"{r.CurrentRepository()}/" if not wheel_sources else ""
 
   # The wheel sources provided by the transitive rules might have different path
   # prefixes, so we need to create a map of paths relative to the root package
@@ -405,17 +394,17 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
       wheel_sources_map=wheel_sources_map,
   )
 
-  if args.build_from_external_workspace:
-    xla_ffi_files = [
-        f"{source_file_prefix}jaxlib/include/xla/ffi/api/c_api.h",
-        f"{source_file_prefix}jaxlib/include/xla/ffi/api/api.h",
-        f"{source_file_prefix}jaxlib/include/xla/ffi/api/ffi.h",
-    ]
-  else:
+  if wheel_sources:
     xla_ffi_files = [
         "xla/ffi/api/c_api.h",
         "xla/ffi/api/api.h",
         "xla/ffi/api/ffi.h",
+    ]
+  else:
+    xla_ffi_files = [
+        f"{source_file_prefix}jaxlib/include/xla/ffi/api/c_api.h",
+        f"{source_file_prefix}jaxlib/include/xla/ffi/api/api.h",
+        f"{source_file_prefix}jaxlib/include/xla/ffi/api/ffi.h",
     ]
 
   copy_files(
