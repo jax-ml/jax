@@ -219,8 +219,7 @@ def rankdata(
     raise ValueError(f"unknown method '{method}'")
 
   # 1. Ensure output is ALWAYS float
-  out_dtype = dtypes.promote_dtypes_inexact(result.dtype, jnp.result_type(a))[0]
-  result = result.astype(out_dtype)
+  result, = dtypes.promote_dtypes_inexact(result)
 
   # 2. Handle NaN policy (Propagate if needed)
   if nan_policy == "propagate":
