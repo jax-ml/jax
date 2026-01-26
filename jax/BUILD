@@ -46,6 +46,7 @@ string_flag(
         "true",
         "false",
         "wheel",
+        "external_deps",
     ],
 )
 
@@ -67,6 +68,13 @@ config_setting(
     name = "config_build_jaxlib_wheel",
     flag_values = {
         ":build_jaxlib": "wheel",
+    },
+)
+
+config_setting(
+    name = "config_build_jaxlib_external_deps",
+    flag_values = {
+        ":build_jaxlib": "external_deps",
     },
 )
 
