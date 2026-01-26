@@ -219,4 +219,41 @@ absl::StatusOr<mlir::Value> MemRefSlice(
       .getResult();
 }
 
+absl::StatusOr<mlir::Value> MemRefTranspose(
+    mlir::ImplicitLocOpBuilder& builder, mlir::Value ref,
+    const std::vector<int64_t>& permutation) {
+  auto ref_ty = mlir::cast<mlir::MemRefType>(ref.getType());
+  if (permutation.size() != ref_ty.getRank()) {
+    return absl::InvalidArgumentError("Permutation rank mismatch");
+  }
+
+  auto [strides, offset] = ref_ty.getStridesAndOffset();
+  std::vector<int64_t> new_strides;
+  std::vector<int64_t> new_shape;
+  new_strides.reserve(permutation.size());
+  new_shape.reserve(permutation.size());
+
+  for (int64_t p : permutation) {
+    if (p < 0 || p >= ref_ty.getRank()) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Invalid permutation index. Expected 0 <= index < ",
+                       ref_ty.getRank(), " but got ", p));
+    }
+    new_strides.push_back(strides[p]);
+    new_shape.push_back(ref_ty.getShape()[p]);
+  }
+
+  auto new_layout =
+      mlir::StridedLayoutAttr::get(builder.getContext(), offset, new_strides);
+  auto new_ty = mlir::MemRefType::get(new_shape, ref_ty.getElementType(),
+                                      new_layout, ref_ty.getMemorySpace());
+
+  mlir::AffineMap permutation_map =
+      mlir::AffineMap::getPermutationMap(permutation, builder.getContext());
+  return builder
+      .create<mlir::memref::TransposeOp>(
+          new_ty, ref, mlir::AffineMapAttr::get(permutation_map))
+      .getResult();
+}
+
 }  // namespace jax::mosaic::gpu

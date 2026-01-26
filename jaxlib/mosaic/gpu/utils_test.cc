@@ -186,6 +186,48 @@ TEST_F(UtilsTest, MemRefSliceDynamicMlirValues) {
   EXPECT_EQ(strides, llvm::ArrayRef<int64_t>{1});
 }
 
+TEST_F(UtilsTest, MemRefTransposeSimple2DCase) {
+  mlir::Type f32 = builder_.getF32Type();
+  mlir::MemRefType input_type = mlir::MemRefType::get({10, 20}, f32);
+  mlir::Value input = mlir::memref::AllocOp::create(builder_, input_type);
+  std::vector<int64_t> permutation = {1, 0};
+
+  ASSERT_OK_AND_ASSIGN(mlir::Value result,
+                       MemRefTranspose(builder_, input, permutation));
+
+  auto result_type = mlir::cast<mlir::MemRefType>(result.getType());
+  EXPECT_EQ(result_type.getShape(), (llvm::ArrayRef<int64_t>{20, 10}));
+  auto [strides, offset] = result_type.getStridesAndOffset();
+  EXPECT_EQ(offset, 0);
+  EXPECT_EQ(strides, (llvm::ArrayRef<int64_t>{1, 20}));
+}
+
+TEST_F(UtilsTest, MemRefTransposeChecksRank) {
+  mlir::Type f32 = builder_.getF32Type();
+  mlir::MemRefType input_type = mlir::MemRefType::get({10, 20}, f32);
+  mlir::Value input = mlir::memref::AllocOp::create(builder_, input_type);
+
+  EXPECT_THAT(MemRefTranspose(builder_, input, {1}),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       "Permutation rank mismatch"));
+}
+
+TEST_F(UtilsTest, MemRefTransposeChecksPermutationRange) {
+  mlir::Type f32 = builder_.getF32Type();
+  mlir::MemRefType input_type = mlir::MemRefType::get({10, 20}, f32);
+  mlir::Value input = mlir::memref::AllocOp::create(builder_, input_type);
+
+  EXPECT_THAT(
+      MemRefTranspose(builder_, input, {0, 2}),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               "Invalid permutation index. Expected 0 <= index < 2 but got 2"));
+  EXPECT_THAT(
+      MemRefTranspose(builder_, input, {-1, 0}),
+      StatusIs(
+          absl::StatusCode::kInvalidArgument,
+          "Invalid permutation index. Expected 0 <= index < 2 but got -1"));
+}
+
 TEST_F(UtilsTest, MemRefSliceChecksSqueezedShape) {
   mlir::Type f32 = builder_.getF32Type();
   mlir::MemRefType input_type = mlir::MemRefType::get({10, 20}, f32);

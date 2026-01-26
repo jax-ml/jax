@@ -66,6 +66,21 @@ absl::StatusOr<mlir::Value> MemRefSlice(
     const std::vector<int64_t>& slice_shape,
     const std::vector<bool>& is_squeezed);
 
+// Transposes the dimensions of a MemRef.
+//
+// The `permutation` vector specifies the permutation of the dimensions: the
+// i-th dimension of the result is the permutation[i]-th dimension of the input.
+// The rank of the input MemRef must match the size of `permutation` and indices
+// must be within [0, rank).
+//
+// Example:
+//   ref: memref<10x20xf32>
+//   permutation: {1, 0}
+//   Result: memref<20x10xf32>
+absl::StatusOr<mlir::Value> MemRefTranspose(
+    mlir::ImplicitLocOpBuilder& builder, mlir::Value ref,
+    const std::vector<int64_t>& permutation);
+
 }  // namespace jax::mosaic::gpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_GPU_UTILS_H_
