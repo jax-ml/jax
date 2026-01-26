@@ -14,6 +14,9 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstdint>
+#include <memory>
+#include <optional>
+#include <utility>
 #include <variant>
 #include <vector>
 
