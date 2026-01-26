@@ -14,9 +14,6 @@ from jax._src import lib as jaxlib
 class StaticDict(dict):
   pass
 
-class DictWrap(dict):
-  pass
-
 class ObjectRegistered:
   def __init__(self, data_children=[], static_children=[]):
     for i, child in enumerate(data_children):

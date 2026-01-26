@@ -52,7 +52,6 @@ limitations under the License.
 #include "nanobind/typing.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pytree.pb.h"
-#include "pytree.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/tsl/platform/logging.h"
 

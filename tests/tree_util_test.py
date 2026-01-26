@@ -28,6 +28,7 @@ from jax._src import test_util as jtu
 from jax._src.tree_util import (
     flatten_one_level, prefix_errors, broadcast_flattened_prefix_with_treedef)
 import jax.numpy as jnp
+from jax._src import lib as jaxlib
 
 # Easier to read.
 SequenceKey = tree_util.SequenceKey
@@ -292,12 +293,11 @@ TREES_WITH_KEYPATH = (
     (BlackBox(value=2),),
 )
 
-# TODO: use the mapping directly rather than extracting two lists.
 class RegisteredObject:
   def __init__(self, x, y):
     self.x = x
     self.y = y
-    self.__mapping__ = {'x': True, 'y': False, '__mapping__': False}
+    self.__mapping__ = jaxlib.pytree.StringSet({'x': True, 'y': False, '__mapping__': False})
 
   def __eq__(self, other):
     return self.y == other.y and jnp.array_equal(self.x, other.x)
