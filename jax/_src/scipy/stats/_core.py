@@ -150,6 +150,7 @@ def rankdata(
   JAX implementation of :func:`scipy.stats.rankdata`.
 
   Ranks begin at 1, and the *method* argument controls how ties are handled.
+x this
 
   Args:
     a: arraylike
@@ -202,20 +203,23 @@ def rankdata(
   arr, sorter = lax.sort_key_val(arr, jnp.arange(arr.size))
   inv = invert_permutation(sorter)
 
-  if method == "ordinal":
-    return inv + 1
   obs = jnp.concatenate([jnp.array([True]), arr[1:] != arr[:-1]])
   dense = obs.cumsum()[inv]
-  if method == "dense":
-    return dense
   count = jnp.nonzero(obs, size=arr.size + 1, fill_value=obs.size)[0]
-  if method == "max":
-    return count[dense]
-  if method == "min":
-    return count[dense - 1] + 1
-  if method == "average":
-    return .5 * (count[dense] + count[dense - 1] + 1).astype(dtypes.default_float_dtype())
-  raise ValueError(f"unknown method '{method}'")
+
+  if method == "ordinal":
+    result = inv + 1
+  elif method == "dense":
+    result = dense
+  elif method == "max":
+    result = count[dense]
+  elif method == "min":
+    result = count[dense - 1] + 1
+  elif method == "average":
+    result = .5 * (count[dense] + count[dense - 1] + 1).astype(dtypes.default_float_dtype())
+  else:
+    raise ValueError(f"unknown method '{method}'")
+
   if nan_policy == "propagate":
     contains_nan = jnp.any(jnp.isnan(arr))
     return jnp.where(contains_nan, jnp.nan, result)
