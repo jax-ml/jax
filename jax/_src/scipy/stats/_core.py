@@ -150,7 +150,6 @@ def rankdata(
   JAX implementation of :func:`scipy.stats.rankdata`.
 
   Ranks begin at 1, and the *method* argument controls how ties are handled.
-x this
 
   Args:
     a: arraylike
@@ -194,8 +193,7 @@ x this
   if method not in ("average", "min", "max", "dense", "ordinal"):
     raise ValueError(f"unknown method '{method}'")
 
-  a, = promote_args_inexact("rankdata", a)
-
+  
   if axis is not None:
     return jnp.apply_along_axis(rankdata, axis, a, method)
 
@@ -220,6 +218,10 @@ x this
   else:
     raise ValueError(f"unknown method '{method}'")
 
+  # 1. Ensure output is ALWAYS float
+  result = result.astype(dtypes.default_float_dtype())
+
+  # 2. Handle NaN policy (Propagate if needed)
   if nan_policy == "propagate":
     contains_nan = jnp.any(jnp.isnan(arr))
     return jnp.where(contains_nan, jnp.nan, result)
