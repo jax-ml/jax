@@ -153,23 +153,6 @@ plat_name={tag}
     )
 
 
-def _detect_source_file_prefix(runfiles):
-  """Detect the correct runfiles prefix for jaxlib files.
-
-  When building from inside the jax repository, files are at __main__/jaxlib/...
-  When building as @jax external repository, files are at jax/jaxlib/...
-  When wheel_sources are provided, no prefix is needed.
-  """
-  # Try __main__ first (building from inside jax repo)
-  if runfiles.Rlocation("__main__/jaxlib/tools/LICENSE.txt"):
-    return "__main__/"
-  # Try jax/ (building as @jax external repository)
-  if runfiles.Rlocation("jax/jaxlib/tools/LICENSE.txt"):
-    return "jax/"
-  # Fallback to empty prefix (wheel_sources should be provided)
-  return ""
-
-
 def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
   """Assembles a source tree for the wheel in `wheel_sources_path`. In case of
   build under @jax strip the prefix"""
