@@ -718,14 +718,14 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
 
         nb::object object = nb::borrow<nb::object>(handle);
         StringSet mapping = nb::cast<StringSet>(nb::getattr(object, node.custom->mapping_attr));
-        nb::dict vars = nb::cast<nb::dict>(nb::getattr(object, "__dict__"));
-        std::vector<nb::object> meta_keys;
-        std::vector<nb::object> meta_data;
 
         node.arity = 0;
 
-        for (auto k : vars.keys()) {
-            if (mapping.count(nb::cast<std::string>(k)) > 0) {
+        std::vector<nb::object> keys = GetSortedPyDictKeys(
+            nb::getattr(object, "__dict__").ptr());
+        for (auto k : keys) {
+            auto k_str = nb::cast<std::string>(k);
+            if (mapping.count(k_str) > 0 && mapping[k_str]) {
                 node.arity++;
                 node.sorted_dict_keys.push_back(nb::borrow<nb::object>(k));
                 if (keypath.has_value()) {
@@ -1176,12 +1176,33 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         }
 
         StringSet mapping = nb::cast<StringSet>(nb::getattr(object, node.custom->mapping_attr));
-        nb::dict vars = nb::cast<nb::dict>(nb::getattr(object, "__dict__"));
+        std::vector<nb::object> keys = GetSortedPyDictKeys(nb::getattr(object, "__dict__").ptr());
+        std::vector<nb::object> meta_keys;
+        std::vector<nb::object> meta_data;
 
-        for (auto k : vars.keys()) {
-            if (mapping.count(nb::cast<std::string>(k)) > 0) {
+        for (auto k : keys) {
+            auto k_str = nb::cast<std::string>(k);
+            if (mapping.count(k_str) > 0 && mapping[k_str]) {
                 agenda.push_back(nb::borrow<nb::object>(
                     nb::getattr(object, k)));
+            } else {
+                meta_data.push_back(nb::getattr(object, k));
+                meta_keys.push_back(nb::borrow<nb::object>(k));
+            }
+        }
+
+        for (int i=0; i < meta_keys.size(); i++) {
+            if (meta_data[i].not_equal(node.meta_data[i])) {
+                throw std::invalid_argument(absl::StrFormat(
+                    "Mismatch kObject meta data: %s != %s",
+                    nb::cast<std::string_view>(nb::repr(node.meta_data[i])),
+                    nb::cast<std::string_view>(nb::repr(meta_data[i]))));
+            }
+            if (meta_keys[i].not_equal(node.meta_keys[i])) {
+                throw std::invalid_argument(absl::StrFormat(
+                    "Mismatch kObject meta data: %s != %s",
+                    nb::cast<std::string_view>(nb::repr(node.meta_keys[i])),
+                    nb::cast<std::string_view>(nb::repr(meta_keys[i]))));
             }
         }
 
