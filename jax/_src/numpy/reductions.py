@@ -2385,10 +2385,6 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
     a: N-dimensional array input.
     q: scalar or 1-dimensional array specifying the desired quantiles. ``q``
       should contain floating-point values between ``0.0`` and ``1.0``.
-    weights: optional array of weights associated with the values in ``a``.
-      Each value in ``a`` contributes to the quantile according to its
-      associated weight. The weights array must be broadcastable to the same
-      shape as ``a``. Only works with ``method="inverted_cdf"``.
     axis: optional axis or tuple of axes along which to compute the quantile
     out: not implemented by JAX; will error if not None
     overwrite_input: not implemented by JAX; will error if not False
@@ -2397,6 +2393,10 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
       default is ``linear``.
     keepdims: if True, then the returned array will have the same number of
       dimensions as the input. Default is False.
+    weights: keyword-only. optional array of weights associated with the values in ``a``.
+      Each value in ``a`` contributes to the quantile according to its
+      associated weight. The weights array must be broadcastable to the same
+      shape as ``a``. Only works with ``method="inverted_cdf"``.
 
   Returns:
     An array containing the specified quantiles along the specified axes.
@@ -2447,10 +2447,6 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
     a: N-dimensional array input.
     q: scalar or 1-dimensional array specifying the desired quantiles. ``q``
       should contain floating-point values between ``0.0`` and ``1.0``.
-    weights: optional array of weights associated with the values in ``a``.
-      Each value in ``a`` contributes to the quantile according to its
-      associated weight. The weights array must be broadcastable to the same
-      shape as ``a``. Only works with ``method="inverted_cdf"``.
     axis: optional axis or tuple of axes along which to compute the quantile
     out: not implemented by JAX; will error if not None
     overwrite_input: not implemented by JAX; will error if not False
@@ -2459,6 +2455,11 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
       default is ``linear``.
     keepdims: if True, then the returned array will have the same number of
       dimensions as the input. Default is False.
+    weights: keyword-only. Optional array of weights for each element in `a`.
+      Values with higher weights contribute more to the quantile calculation.
+      The weights array must be broadcastable to the shape of `a` along the specified axis.
+      NaN values in `a` are ignored when computing the quantiles.
+      Weighted quantiles are currently only supported when `method="inverted_cdf"`.
 
   Returns:
     An array containing the specified quantiles along the specified axes.
@@ -2712,10 +2713,6 @@ def percentile(a: ArrayLike, q: ArrayLike,
     a: N-dimensional array input.
     q: scalar or 1-dimensional array specifying the desired quantiles. ``q``
       should contain integer or floating point values between ``0`` and ``100``.
-    weights: optional array of weights associated with the values in ``a``.
-      Each value in ``a`` contributes to the quantile according to its
-      associated weight. The weights array must be broadcastable to the same
-      shape as ``a``. Only works with ``method="inverted_cdf"``.
     axis: optional axis or tuple of axes along which to compute the quantile
     out: not implemented by JAX; will error if not None
     overwrite_input: not implemented by JAX; will error if not False
@@ -2724,6 +2721,10 @@ def percentile(a: ArrayLike, q: ArrayLike,
       default is ``linear``.
     keepdims: if True, then the returned array will have the same number of
       dimensions as the input. Default is False.
+    weights: keyword-only. optional array of weights for each element in `a`. 
+      Values with higher weights contribute more to the percentile calculation. 
+      The weights array must be broadcastable to the shape of `a` along the specified axis. 
+      Currently, weighted percentiles are only supported when `method="inverted_cdf"`.
 
   Returns:
     An array containing the specified percentiles along the specified axes.
@@ -2774,10 +2775,6 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
     a: N-dimensional array input.
     q: scalar or 1-dimensional array specifying the desired quantiles. ``q``
       should contain integer or floating point values between ``0`` and ``100``.
-    weights: optional array of weights associated with the values in ``a``.
-      Each value in ``a`` contributes to the quantile according to its
-      associated weight. The weights array must be broadcastable to the same
-      shape as ``a``. Only works with ``method="inverted_cdf"``.
     axis: optional axis or tuple of axes along which to compute the quantile
     out: not implemented by JAX; will error if not None
     overwrite_input: not implemented by JAX; will error if not False
@@ -2786,7 +2783,10 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
       default is ``linear``.
     keepdims: if True, then the returned array will have the same number of
       dimensions as the input. Default is False.
-
+    weights: keyword-only. optional array of weights for each element in `a`. 
+      Values with higher weights contribute more to the percentile calculation. 
+      The weights array must be broadcastable to the shape of `a` along the specified axis. 
+      NaN values in `a` are ignored. Weighted percentiles are currently only supported when `method="inverted_cdf"`.
   Returns:
     An array containing the specified percentiles along the specified axes.
 
