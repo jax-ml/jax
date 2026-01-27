@@ -18,8 +18,7 @@ from typing import Any
 
 from jax._src import api
 from jax._src.api_util import (
-    argnums_partial, donation_vector, flatten_fun,
-    flat_out_axes, fun_signature, fun_sourceinfo)
+    argnums_partial, donation_vector, fun_signature, fun_sourceinfo)
 from jax._src import array
 from jax._src import config
 from jax._src import core
@@ -37,7 +36,8 @@ from jax._src.lax import lax
 from jax._src.mesh import Mesh
 from jax._src.shard_map import _axes_to_pspec, _shard_map
 from jax._src.tree_util import (
-    broadcast_flattened_prefix_with_treedef, prefix_errors, tree_flatten, tree_map, tree_unflatten)
+    broadcast_flattened_prefix_with_treedef, broadcast_prefix,
+    prefix_errors, tree_flatten, tree_map, tree_unflatten)
 import numpy as np
 
 map, unsafe_map = util.safe_map, map
@@ -61,11 +61,13 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
   if isinstance(axis_name, core._TempAxisName):  # pylint: disable=protected-access
     axis_name = repr(axis_name)
   wrapped_fun = _pmap_wrap_init(f, static_broadcasted_tuple)
+  out_axes_flat, out_axes_tree = tree_flatten(out_axes)
+  out_axes_flat = tuple(out_axes_flat)
 
   def infer_params(*args, **kwargs):
     process_count = xb.process_count(backend)
     trace_state_clean = core.trace_state_clean()
-    fun, dyn_argnums, dyn_args = _get_dyn_args(
+    dyn_f, dyn_argnums, dyn_args = _get_dyn_args(
         wrapped_fun, static_broadcasted_tuple, args)
     dyn_args_flat, dyn_args_tree = tree_flatten((dyn_args, kwargs))
     in_axes_flat = _get_in_axes_flat(
@@ -76,11 +78,9 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
         donate_tuple, dyn_args_tree, len(dyn_args_flat))
     mesh_devices = _get_mesh_devices(
         devices, backend, local_axis_size, axis_size, trace_state_clean)
-    fun, out_axes_thunk = flat_out_axes(fun, out_axes)
-    flat_fun, out_tree = flatten_fun(fun, dyn_args_tree)
-    mesh = Mesh(mesh_devices, (axis_name,))
-    _pmapped, in_specs, out_specs = _cached_shard_map(
-        flat_fun, mesh, in_axes_flat, out_axes_thunk, axis_name)
+    _pmapped, in_specs, out_specs, mesh = _cached_shard_map(
+        dyn_f, dyn_args_tree, in_axes_flat, out_axes_flat, out_axes_tree,
+        mesh_devices, axis_name)
     jitted_f = api.jit(
         _pmapped,
         donate_argnums=[i for i, val in enumerate(donated_invars) if val])
@@ -94,31 +94,31 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
             dyn_args_flat, mesh, list(in_specs))
     else:
       flat_global_args = dyn_args_flat
-    return (jitted_f, flat_global_args, dyn_args_tree, out_tree, mesh, out_specs,
+    return (jitted_f, flat_global_args, dyn_args_tree, mesh, out_specs,
             donate_tuple, process_count, trace_state_clean)
 
   @util.wraps(f)
   def wrapped(*args, **kwargs):
-    (jitted_f, flat_global_args, _, out_tree, mesh, out_specs,
+    (jitted_f, flat_global_args, _, mesh, out_specs,
      _, process_count, trace_state_clean) = infer_params(*args, **kwargs)
     outs = jitted_f(*flat_global_args)
     if process_count > 1:
       if trace_state_clean:
-        outs = [
-            global_array_to_host_local_array(out, global_mesh=mesh, pspec=spec)
-            for out, spec in zip(outs, out_specs())
-        ]
+        outs = tree_map(
+            lambda out, spec: global_array_to_host_local_array(
+                out, global_mesh=mesh, pspec=spec),
+            outs, out_specs, is_leaf=lambda x: x is None)
       else:
-        outs = mhu.global_array_to_host_local_array(outs, mesh, out_specs())
-    return tree_unflatten(out_tree(), outs)
+        outs = mhu.global_array_to_host_local_array(outs, mesh, out_specs)
+    return outs
 
   def lower(*args, **kwargs):
-    jitted_f, flat_global_args, in_tree, out_tree, _, _, donate_tuple, _, _ = infer_params(
+    jitted_f, flat_global_args, in_tree, _, _, donate_tuple, _, _ = infer_params(
         *args, **kwargs)
     abstract_args = list(map(core.shaped_abstractify, flat_global_args))
     args_info = stages.make_args_info(in_tree, abstract_args, donate_tuple)
     lowered = jitted_f.trace(*flat_global_args).lower()
-    lowered = stages.Lowered(lowered._lowering, args_info, out_tree(),
+    lowered = stages.Lowered(lowered._lowering, args_info, lowered.out_tree,
                              no_kwargs=lowered._no_kwargs)
     return lowered
   wrapped.lower = lower
@@ -126,29 +126,33 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
 
 
 @lu.cache
-def _cached_shard_map(flat_fun, mesh, in_axes_flat, out_axes_thunk, axis_name):
-  f_transformed = flat_fun.f_transformed
-  def reset_stores_f_transformed(*args, **kwargs):
-    for store in flat_fun.stores:
-      if store is not None:
-        store.reset()
-    return f_transformed(*args, **kwargs)
-  flat_fun.f_transformed = reset_stores_f_transformed
+def _cached_shard_map(fun, in_tree, in_axes_flat,
+                      out_axes_flat, out_axes_tree, mesh_devices, axis_name):
+  mesh = Mesh(mesh_devices, (axis_name,))
+  out_axes = tree_unflatten(out_axes_tree, list(out_axes_flat))
   in_specs = tuple(map(partial(_axes_to_pspec, axis_name), in_axes_flat))
-  out_specs = lambda: map(partial(_axes_to_pspec, axis_name), out_axes_thunk())
-  fun = _handle_reshapes(flat_fun, in_axes_flat, out_axes_thunk)
-  return (_shard_map(fun.call_wrapped, mesh=mesh, in_specs=in_specs,
-                     out_specs=out_specs, check_vma=False,
-                     axis_names=set(mesh.axis_names)),
-          in_specs, out_specs)
-
-@lu.transformation2
-def _handle_reshapes(f, in_axes, out_axes_thunk, *args, **kwargs):
-  args = tree_map(lambda x, ax: x if ax is None else lax.squeeze(x, [ax]),
-                  list(args), list(in_axes))
-  out = f(*args)
-  return tree_map(lambda x, ax: x if ax is None else lax.expand_dims(x, [ax]),
-                  list(out), list(out_axes_thunk()))
+  out_specs = tree_map(
+      partial(_axes_to_pspec, axis_name), out_axes, is_leaf=lambda x: x is None
+  )
+  def _fun(*flat_args):
+    args = tree_map(
+        lambda x, ax: x if ax is None else lax.squeeze(x, [ax]),
+        flat_args,
+        in_axes_flat,
+    )
+    args, kwargs = tree_unflatten(in_tree, args)
+    out = fun.call_wrapped(*args, **kwargs)
+    out_flat, out_tree = tree_flatten(out)
+    out_axes_flat = broadcast_prefix(out_axes, out, is_leaf=lambda x: x is None)
+    out_flat = tree_map(
+        lambda x, ax: x if ax is None else lax.expand_dims(x, [ax]),
+        out_flat,
+        out_axes_flat,
+    )
+    return tree_unflatten(out_tree, out_flat)
+  _pmapped = _shard_map(_fun, mesh=mesh, in_specs=in_specs, out_specs=out_specs,
+      check_vma=False, axis_names=set(mesh.axis_names))
+  return (_pmapped, in_specs, out_specs, mesh)
 
 
 def _mapped_axis_size(args, in_axes):
