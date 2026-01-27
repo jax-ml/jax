@@ -943,9 +943,13 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
         ValueError, "does not support cross-host device transfers"):
       jax.device_put(y, dst_sharding)
 
+  @parameterized.named_parameters(
+      ("numpy", np.arange),
+      ("uncommitted", jnp.arange),
+  )
   @jtu.skip_on_devices("cpu")
-  def test_cross_host_transfer_single_device_sharding(self):
-    x = np.arange(64).reshape(8, 8)
+  def test_cross_host_transfer_single_device_sharding(self, arange_fn):
+    x = arange_fn(64).reshape(8, 8)
     src_pid = 0
     dst_pid = 1
     src_sharding = jax.sharding.SingleDeviceSharding(
@@ -960,9 +964,13 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
     else:
       self.assertEmpty(z.addressable_shards)
 
+  @parameterized.named_parameters(
+      ("numpy", np.arange),
+      ("uncommitted", jnp.arange),
+  )
   @jtu.skip_on_devices("cpu")
-  def test_cross_host_transfer_named_sharding(self):
-    x = np.arange(64).reshape(8, 8)
+  def test_cross_host_transfer_named_sharding(self, arange_fn):
+    x = arange_fn(64).reshape(8, 8)
     n_local = jax.local_device_count()
     src_pid = 0
     dst_pid = 1
@@ -1113,11 +1121,15 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
     for shard in z.addressable_shards:
       np.testing.assert_array_equal(shard.data, x[shard.index])
 
+  @parameterized.named_parameters(
+      ("numpy", np.arange),
+      ("uncommitted", jnp.arange),
+  )
   @jtu.skip_on_devices("cpu")
-  def test_device_put_to_device(self):
+  def test_device_put_to_device(self, arange_fn):
     if jaxlib_extension_version < 400:
       self.skipTest("This functionality is not yet supported in jaxlib.")
-    x = np.arange(64).reshape(8, 8)
+    x = arange_fn(64).reshape(8, 8)
     src_pid = 0
     dst_pid = 1
     src_device = jax.local_devices(process_index=src_pid)[0]
