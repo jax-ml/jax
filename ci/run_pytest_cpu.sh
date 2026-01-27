@@ -56,4 +56,4 @@ fi
 
 echo "Running CPU tests..."
 "$JAXCI_PYTHON" -m pytest -n auto --tb=short $MAX_PROCESSES_ARG \
- --maxfail=20 tests examples
+ --maxfail=20 --verbose tests examples
