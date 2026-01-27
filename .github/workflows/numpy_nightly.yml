@@ -19,10 +19,6 @@ on:
     - cron: "0 */3 * * *" # Run once every 3 hours
 
 permissions: {}
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  # Don't cancel in-progress jobs for main/release branches.
-  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' && github.ref != 'debug-cpu-timeout' }}
 
 env:
   UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
