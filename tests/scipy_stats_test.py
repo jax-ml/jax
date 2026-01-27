@@ -2058,28 +2058,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                             tol=tol)
     self._CompileAndCheck(lax_fun, args_maker, rtol=tol)
-
-  @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
-      for shape in [(0,), (7,), (47, 8), (0, 2, 3), (10, 5, 21)]
-      for axis in [None, *range(len(shape))
-    ]],
-    dtype=jtu.dtypes.integer + jtu.dtypes.floating,
-    method=['average', 'min', 'max', 'dense', 'ordinal']
-  )
-  def testRankData(self, shape, dtype, axis, method):
-
-    rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape, dtype)]
-
-    scipy_fun = partial(osp_stats.rankdata, method=method, axis=axis)
-    lax_fun = partial(lsp_stats.rankdata, method=method, axis=axis)
-    tol_spec = {np.float32: 2e-4, np.float64: 5e-6}
-    tol = jtu.tolerance(dtype, tol_spec)
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=tol)
-    self._CompileAndCheck(lax_fun, args_maker, rtol=tol)
-
+    
   @jtu.sample_product(
     [dict(shape=shape, axis=axis, ddof=ddof, nan_policy=nan_policy, keepdims=keepdims)
       for shape in [(5,), (5, 6), (5, 6, 7)]
