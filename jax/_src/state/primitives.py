@@ -25,6 +25,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import pretty_printer as pp
+from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src.interpreters import ad
@@ -532,8 +533,11 @@ def _get_pp_rule(eqn, context, settings) -> pp.Doc:
   x, *flat_idx = eqn.invars
   transforms = tree_util.tree_unflatten(eqn.params["tree"], flat_idx)
   lhs = core.pp_vars([y], context, print_shapes=settings.print_shapes)
+  annotation = (source_info_util.summarize(eqn.source_info)
+                if settings.source_info else None)
   return pp.concat(
-      [lhs, pp.text(" <- "), pp_ref_transforms(context, x, transforms)]
+      [lhs, pp.text(" <- ", annotation=annotation),
+       pp_ref_transforms(context, x, transforms)]
   )
 core.pp_eqn_rules[get_p] = _get_pp_rule
 
@@ -541,33 +545,36 @@ def _swap_pp_rule(eqn, context, settings) -> pp.Doc:
   y, = eqn.outvars
   x, v, *flat_idx = eqn.invars
   transforms = tree_util.tree_unflatten(eqn.params["tree"], flat_idx)
+  annotation = (source_info_util.summarize(eqn.source_info)
+                if settings.source_info else None)
   if type(y) is core.DropVar:
     # In the case of a set (ignored return value),
     # pretty print `_ = swap x v i` as `x[i] <- v`
     del y
     return pp.concat([
         pp_ref_transforms(context, x, transforms),
-        pp.text(" <- "),
+        pp.text(" <- ", annotation=annotation),
         pp.text(core.pp_var(v, context)),
     ])
   else:
     # pretty-print `y:T = swap x v i` as `y:T, x[i] <- x[i], v`
     x_i = pp_ref_transforms(context, x, transforms)
     y = core.pp_vars([y], context, print_shapes=settings.print_shapes)
-    return pp.concat([y, pp.text(', '), x_i, pp.text(' <- '),
-                      x_i, pp.text(', '),
-                      pp.text(core.pp_var(v, context))])
+    return pp.concat([y, pp.text(', '), x_i,
+                      pp.text(' <- ', annotation=annotation), x_i,
+                      pp.text(', '), pp.text(core.pp_var(v, context))])
 core.pp_eqn_rules[swap_p] = _swap_pp_rule
 
 def _addupdate_pp_rule(eqn, context, settings) -> pp.Doc:
-  del settings
   # pretty-print ` = addupdate x i v` as `x[i] += v`
   () = eqn.outvars
   x, v, *flat_idx = eqn.invars
   transforms = tree_util.tree_unflatten(eqn.params["tree"], flat_idx)
+  annotation = (source_info_util.summarize(eqn.source_info)
+                if settings.source_info else None)
   return pp.concat([
       pp_ref_transforms(context, x, transforms),
-      pp.text(" += "),
+      pp.text(" += ", annotation=annotation),
       pp.text(core.pp_var(v, context)),
   ])
 core.pp_eqn_rules[addupdate_p] = _addupdate_pp_rule
