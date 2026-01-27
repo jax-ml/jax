@@ -2508,10 +2508,10 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       )(x)
 
     x = jax.random.uniform(jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
-    with jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"), jtu.capture_stdout() as sass0:
+    with jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"), self.capture_stdout() as sass0:
       out0 = run_kernel(x, 1024).block_until_ready()
 
-    with jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"), jtu.capture_stdout() as sass1:
+    with jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"), self.capture_stdout() as sass1:
       out1 = run_kernel(x, 2 * 1024).block_until_ready()
 
     self.assertAllClose(out0, jnp.sum(x, axis=0))

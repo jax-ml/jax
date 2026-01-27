@@ -253,7 +253,6 @@ jax_multiplatform_test(
         "notsan",  # Times out.
     ],
     deps = [
-        "//jax/experimental:mosaic_gpu",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_mosaic_gpu",  # build_cleaner: keep
     ] + py_deps([
