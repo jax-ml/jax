@@ -41,6 +41,7 @@ from jax._src.pallas.mosaic.interpret import vector_clock as vc
 from jax._src.pallas.mosaic.interpret.race_detection_state import RaceDetectionState
 from jax._src.pallas.mosaic.interpret.thread_map import thread_map
 import jax._src.pallas.mosaic.interpret.utils as interpret_utils
+from jax._src import state
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
@@ -1055,15 +1056,6 @@ def semaphore_wait(device_id, local_core_id, sem_id, value):
   sem.wait(value, global_core_id)
 
 
-def _compute_transformed_shape_and_dtype(shape, dtype, transforms):
-  for transform in transforms:
-    if transform is None:
-      continue
-    shape = transform.transform_shape(shape)
-    dtype = transform.transform_dtype(dtype)
-  return shape, dtype
-
-
 def _is_any(memory_space):
   return memory_space is pallas_core.MemorySpace.ANY
 
@@ -1389,8 +1381,10 @@ def _interpret_jaxpr(
             src_sem_transforms,
             target_device_id,
         ) = jax.tree.unflatten(eqn.params['tree'], deferred_invals())
-        read_shape, read_dtype = _compute_transformed_shape_and_dtype(
-            eqn.invars[0].aval.shape, eqn.invars[0].aval.dtype, src_transforms)
+        src_ref_aval = state.get_transforms_type(src_transforms, eqn.invars[0].aval)
+        assert isinstance(src_ref_aval, state.AbstractRef)
+        read_shape = src_ref_aval.shape
+        read_dtype = src_ref_aval.dtype
         callback.io_callback(
             dma_wait,
             (),

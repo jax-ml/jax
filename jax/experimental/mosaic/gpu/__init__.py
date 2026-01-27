@@ -38,6 +38,7 @@ from .launch_context import (
     MemRefTransform as MemRefTransform,
     TMAReductionOp as TMAReductionOp,
     Rounding as Rounding,
+    SwizzleTransform as SwizzleTransform,
     TileTransform as TileTransform,
     TransposeTransform as TransposeTransform,
 )

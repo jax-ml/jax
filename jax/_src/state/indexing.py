@@ -17,11 +17,14 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Union
+import math
+import operator
+from typing import Any, ClassVar, Union
 
 from jax._src import core
 from jax._src import pretty_printer as pp
 from jax._src import tree_util
+from jax._src.state import types as state_types  # pytype: disable=import-error
 from jax._src.typing import Array
 from jax._src.util import merge_lists
 from jax._src.util import partition_list
@@ -129,6 +132,97 @@ def dslice(
     return Slice(0, start, stride)
   return Slice(start, size, stride)
 
+class DShapedArray:
+  def __init__(self, shape, dtype, weak_type=False, *, sharding=None,
+               vma: frozenset[core.AxisName] = frozenset(),
+               memory_space: core.MemorySpace = core.MemorySpace.Device):
+    self.shape = shape
+    self.dtype = core._dtype_object(dtype)
+    self.weak_type = weak_type
+    self.sharding = sharding
+    self.vma = core.get_vma(vma, self.sharding)
+    self.memory_space = core.get_memory_space(memory_space)
+
+  def lower_val(self, val): return [val]
+  def raise_val(self, val): return val
+  def lo_ty(self): return [self]
+
+  def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
+    if shape is None:
+      shape = self.shape
+    if dtype is None:
+      dtype = self.dtype
+    if weak_type is None:
+      weak_type = self.weak_type
+    if 'sharding' not in kwargs:
+      kwargs['sharding'] = self.sharding
+    if 'vma' not in kwargs:
+      kwargs['vma'] = self.vma
+    if 'memory_space' not in kwargs:
+      kwargs['memory_space'] = self.memory_space
+    return DShapedArray(shape, dtype, weak_type, **kwargs)
+
+  ndim = property(lambda self: len(self.shape))
+  size = property(lambda self:
+                  0 if any(type(d) is int and d == 0 for d in self.shape)
+                  else math.prod(self.shape))
+
+  broadcast: ClassVar[core.aval_method | None] = None
+  transpose: ClassVar[core.aval_method | None] = None
+  reshape: ClassVar[core.aval_method | None] = None
+  _iter: ClassVar[staticmethod | None] = None
+
+  def __eq__(self, other):
+    return (type(self) is type(other)
+            and self.dtype == other.dtype and self.shape == other.shape
+            and self.weak_type == other.weak_type
+            and self.sharding == other.sharding
+            and self.vma == other.vma
+            and self.memory_space == other.memory_space)
+
+  def __hash__(self):
+    # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
+    # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
+    # the unique character code via hash(self.dtype.char)
+    return hash((self.shape, self.dtype, self.weak_type, self.sharding,
+                 self.vma, self.memory_space))
+
+  def __ne__(self, other):
+    return not self == other
+
+  def __repr__(self):
+    wt_str = ", weak_type=True" if self.weak_type else ""
+    return f'DShapedArray({self.str_short()}{wt_str})'
+
+  def __str__(self):
+    wt_str = "~" if self.weak_type else ""
+    return f'{wt_str}{self.str_short()}'
+
+  def str_short(self, short_dtypes=False, mesh_axis_types=False):
+    return core.str_short_aval(
+        self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,
+        self.vma, self.memory_space, short_dtypes, mesh_axis_types)
+
+  def _len(self, ignored_tracer):
+    try:
+      return self.shape[0]
+    except IndexError as err:
+      raise TypeError("len() of unsized object") from err  # same as numpy error
+
+  def update_vma(self, vma):
+    return self.update(vma=vma)
+
+  def update_weak_type(self, weak_type):
+    return self.update(weak_type=weak_type)
+
+  _bool    = core.concretization_function_error(bool)
+  _int     = core.concretization_function_error(int, True)
+  _float   = core.concretization_function_error(float, True)
+  _complex = core.concretization_function_error(complex, True)
+  _hex     = core.concretization_function_error(hex)
+  _oct     = core.concretization_function_error(oct)
+  _index   = core.concretization_function_error(operator.index)
+
 
 ds = dslice  # Handy alias
 
@@ -151,9 +245,11 @@ def _maybe_concretize(x: Any):
   # expensive as the size of the tracing context (i.e. the jaxpr) grows.
   return core.to_concrete_value(x)
 
+indexer_transform_type_registry: set[type] = set()
+
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass
-class NDIndexer:
+class NDIndexer(state_types.Transform):
   indices: tuple[DimIndexer, ...]
   shape: tuple[int, ...]
   int_indexer_shape: tuple[int | Array, ...]
@@ -183,7 +279,6 @@ class NDIndexer:
         continue
       # The shape of indexer integers should be broadcastable up to the
       # int_indexer_shape of the whole NDIndexer
-      from jax._src.state import types as state_types  # pytype: disable=import-error
       idx_shape = (
           idx.shape
           if isinstance(idx, state_types.TransformedRef)
@@ -337,35 +432,58 @@ class NDIndexer:
 
     return slice_shape
 
-  def transform_shape(self, shape: None | tuple[int | Array, ...]) -> None | tuple[int | Array, ...]:
-    del shape  # Unused
-    return self.get_indexer_shape()
+  def transform_type(self, x: core.AbstractValue):
+    match x:
+      case state_types.AbstractRef():
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
+      case core.ShapedArray():
+        self._validate_sharding(x.sharding)
+        if self.is_dynamic_size:
+          return DShapedArray(self.get_indexer_shape(), x.dtype,
+                              weak_type=x.weak_type,
+                              sharding=x.sharding,
+                              vma=x.vma,
+                              memory_space=x.memory_space)
+        return x.update(shape=self.get_indexer_shape())
+      case _:
+        if type(x) in indexer_transform_type_registry:
+          assert hasattr(x, "transform_ndindexer")
+          return x.transform_ndindexer(self)
+        raise TypeError(f"Cannot transform type: {x}")
 
-  def transform_dtype(self, dtype):
-    return dtype
-
-  def transform_sharding(self, sharding):
-    # If there are no explicit axes, do nothing.
+  def _validate_sharding(self, sharding):
     if all(p is None for p in sharding.spec):
-      return sharding
-    # If there are explicit axes, we don't support changing the shape, so we
-    # don't support int indexers and instead require all slices.
-    if (self.int_indexer_shape or
-        not all(isinstance(idx, Slice) for idx in self.indices)):
-      raise TypeError("sharded ref (array reference) can only be indexed by "
-                      "slices, not integers")
+      return
+    # If there are explicit axes, we don't support changing the shape, so
+    # we don't support int indexers and instead require all slices.
+    if self.int_indexer_shape or not all(
+        isinstance(idx, Slice) for idx in self.indices
+    ):
+      raise TypeError(
+          "sharded ref (array reference) can only be indexed by "
+          "slices, not integers"
+      )
     #  Moreover, only allow trivial slice(None) slices on explicitly sharded
     #  axes. Then the sharding stays the same.
     _, slice_indexers, _ = unpack_ndindexer(self)
-    for i, (d, sl, s) in enumerate(zip(self.shape, slice_indexers, sharding.spec)):
-      if s is None: continue
-      if not (type(sl.start)  is int and sl.start == 0 and
-              type(sl.size)   is int and sl.size  == d and
-              type(sl.stride) is int and sl.stride == 1):
-        raise ValueError("sharded ref (array reference) can only be sliced "
-                         f"along unsharded axes, but ref of shape {self.shape} "
-                         f"was sliced on axis {i}, which is sharded like {s}")
-    return sharding
+    for i, (d, sl, s) in enumerate(
+        zip(self.shape, slice_indexers, sharding.spec)
+    ):
+      if s is None:
+        continue
+      if not (
+          type(sl.start) is int
+          and sl.start == 0
+          and type(sl.size) is int
+          and sl.size == d
+          and type(sl.stride) is int
+          and sl.stride == 1
+      ):
+        raise ValueError(
+            "sharded ref (array reference) can only be sliced "
+            f"along unsharded axes, but ref of shape {self.shape} "
+            f"was sliced on axis {i}, which is sharded like {s}"
+        )
 
   def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
     indices = []
