@@ -62,20 +62,17 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
     axis_name = repr(axis_name)
   fun = _pmap_wrap_init(f, static_broadcasted_tuple)
 
-  def infer_params(*args, __check=True, **kwargs):
+  def infer_params(*args, **kwargs):
     p = _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
                       donate_tuple, devices, backend, axis_size, args, kwargs)
     trace_state_clean = core.trace_state_clean()
-    if __check:
-      for arg in p.flat_args:
-        dispatch.check_arg(arg)
     mesh = Mesh(_get_devices(p, backend), (axis_name,))
     _pmapped, in_specs, out_specs = _cached_shard_map(
         p.flat_fun, mesh, p.in_axes_flat, p.out_axes_thunk, axis_name)
     jitted_f = api.jit(
         _pmapped,
         donate_argnums=[i for i, val in enumerate(p.donated_invars) if val])
-    if __check and xb.process_count() > 1:
+    if xb.process_count() > 1:
       if trace_state_clean:
         flat_global_args = [
             host_local_array_to_global_array(arr, global_mesh=mesh, pspec=spec)
@@ -104,8 +101,7 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
 
   def lower(*args, **kwargs):
     jitted_f, flat_global_args, p, _, _, donate_tuple = infer_params(
-        *args, __check=False, **kwargs
-    )
+        *args, **kwargs)
     abstract_args = list(map(core.shaped_abstractify, flat_global_args))
     args_info = stages.make_args_info(p.in_tree, abstract_args, donate_tuple)
     lowered = jitted_f.trace(*flat_global_args).lower()
