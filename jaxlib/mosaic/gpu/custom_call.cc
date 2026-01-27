@@ -640,7 +640,7 @@ absl::StatusOr<void*> InitKernel(const CompiledKernel& kernel) {
 
 // Initializes the kernel in the current CUDA context and return a handle to the
 // kernel.
-absl::StatusOr<void*> CachedInit(const CompiledKernel& kernel) {
+absl::StatusOr<void*> CachedInit(const CompiledKernel* absl_nonnull kernel) {
   using CacheKey = std::pair<const CompiledKernel*, uintptr_t>;
   struct Cache {
     absl::Mutex mutex;
@@ -650,12 +650,12 @@ absl::StatusOr<void*> CachedInit(const CompiledKernel& kernel) {
 
   CUcontext ctx;
   CUDA_RETURN_IF_ERROR(cuCtxGetCurrent(&ctx));
-  CacheKey key(&kernel, reinterpret_cast<uintptr_t>(ctx));
+  CacheKey key(kernel, reinterpret_cast<uintptr_t>(ctx));
 
   absl::MutexLock lock(cache->mutex);
   auto it = cache->contexts.find(key);
   if (it != cache->contexts.end()) return it->second;
-  TF_ASSIGN_OR_RETURN(void* context, InitKernel(kernel));
+  TF_ASSIGN_OR_RETURN(void* context, InitKernel(*kernel));
   cache->contexts.insert_or_assign(key, context);
   return context;
 }
@@ -664,7 +664,7 @@ absl::Status LegacyCustomCall(cudaStream_t stream, void** buffers,
                               const KernelHash& hash, llvm::StringRef module) {
   TF_ASSIGN_OR_RETURN(auto* kernel,
                       CachedCompile(hash, module, /*cc=*/std::nullopt));
-  TF_ASSIGN_OR_RETURN(auto ctx, CachedInit(*kernel));
+  TF_ASSIGN_OR_RETURN(auto ctx, CachedInit(kernel));
   if (kernel->is_comm_used) {
     NvshmemApi::Default().barrier_all_on_stream(stream);
   }
@@ -833,7 +833,7 @@ absl::Status MosaicGpuExecute(cudaStream_t stream, ffi::RemainingArgs inputs,
     buffer_ptrs.push_back(buffer.untyped_data());
   }
   CompiledKernel* kernel = resources->kernel;
-  TF_ASSIGN_OR_RETURN(auto ctx, CachedInit(*kernel));
+  TF_ASSIGN_OR_RETURN(auto ctx, CachedInit(kernel));
   if (kernel->is_comm_used) {
     NvshmemApi::Default().barrier_all_on_stream(stream);
   }
