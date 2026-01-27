@@ -56,7 +56,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
-    # Jake's requirement: Handle Scipy 1.18.0 transition
+    # Handle Scipy 1.18.0 transition where the output dtype of rankdata 
+# changed from float64 to float32 for certain inputs. 
+# See: https://github.com/scipy/scipy/pull/24420
+
     def rankdata_reference(a, method, axis):
       res = osp_stats.rankdata(a, method=method, axis=axis)
       if jtu.scipy_version < (1, 18, 0):
@@ -68,7 +71,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     tol = jtu.tolerance(dtype, tol_spec)
     
     self._CheckAgainstNumpy(rankdata_reference, lax_fun, args_maker, 
-                            check_dtypes=False, tol=tol)
+                            check_dtypes=True, tol=tol)
     self._CompileAndCheck(lax_fun, args_maker, rtol=tol)
   
   @jtu.sample_product(
