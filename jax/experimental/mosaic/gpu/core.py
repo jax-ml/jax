@@ -889,10 +889,9 @@ def _lower_as_gpu_kernel(
 def _run_serde_pass(
     module: ir.Module, *, serialize: bool, ir_version: int | None = None
 ) -> ir.Module:
-  module = ir.Module.parse(
-      module.operation.get_asm(binary=True, enable_debug_info=True),
-      context=module.context,
-  )
+  bytecode_buffer = io.BytesIO()
+  module.operation.write_bytecode(bytecode_buffer)
+  module = ir.Module.parse(bytecode_buffer.getvalue(), context=module.context)
   pipeline = passmanager.PassManager.parse(
       "builtin.module(mosaic_gpu-serde{serialize="
       + str(serialize).lower()
@@ -1096,8 +1095,10 @@ def as_torch_gpu_kernel(
       inout_shape,
   )
   module = _run_serde_pass(module, serialize=True, ir_version=None)
+  bytecode_buffer = io.BytesIO()
+  module.operation.write_bytecode(bytecode_buffer)
   return _as_torch_gpu_kernel(
-      module.operation.get_asm(binary=True, enable_debug_info=True),
+      bytecode_buffer.getvalue(),
       in_shape,
       out_shape,
       inout_shape,
