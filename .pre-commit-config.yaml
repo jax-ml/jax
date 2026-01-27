@@ -50,3 +50,11 @@ repos:
   - id: jupytext
     files: docs/
     args: [--sync]
+
+- repo: https://github.com/facebook/pyrefly-pre-commit
+  rev: 099622e491908f1e032f6fa734057ea1e5b6058b  # frozen: v0.50.0
+  hooks:
+    - id: pyrefly-check
+      name: Pyrefly (type checking)
+      pass_filenames: false
+      additional_dependencies: [types-requests==2.31.0, numpy~=2.3.0, scipy-stubs, setuptools]
