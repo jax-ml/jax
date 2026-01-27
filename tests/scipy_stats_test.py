@@ -45,44 +45,7 @@ def genNamedParametersNArgs(n):
 @jtu.with_config(jax_numpy_rank_promotion="allow")
 class LaxBackedScipyStatsTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.stats implementations"""
- @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
-      for shape in [(0,), (7,), (47, 8), (0, 2, 3), (10, 5, 21)]
-      for axis in [None, *range(len(shape))]],
-    dtype=jtu.dtypes.integer + jtu.dtypes.floating,
-    method=['average', 'min', 'max', 'dense', 'ordinal']
-  )
-  def testRankData(self, shape, dtype, axis, method):
-    rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape, dtype)]
 
-    # Handle Scipy 1.18.0 transition where the output dtype of rankdata 
-# changed from float64 to float32 for certain inputs. 
-# See: https://github.com/scipy/scipy/pull/24420
-
-    def rankdata_reference(a, method, axis):
-      res = osp_stats.rankdata(a, method=method, axis=axis)
-      if jtu.scipy_version < (1, 18, 0):
-        return res.astype(dtypes.default_float_dtype())
-      return res
-
-    lax_fun = partial(lsp_stats.rankdata, method=method, axis=axis)
-    tol_spec = {np.float32: 2e-4, np.float64: 5e-6}
-    tol = jtu.tolerance(dtype, tol_spec)
-    
-    self._CheckAgainstNumpy(rankdata_reference, lax_fun, args_maker, 
-                            check_dtypes=True, tol=tol)
-    self._CompileAndCheck(lax_fun, args_maker, rtol=tol)
-  
-  @jtu.sample_product(
-    method=["average", "min", "max", "dense", "ordinal"],
-  )
-  def testRankDataNaNPropagation(self, method):
-    x = jnp.array([1.0, jnp.nan, 2.0])
-    expected = jnp.array([jnp.nan, jnp.nan, jnp.nan])
-    actual = lsp_stats.rankdata(x, method=method, nan_policy='propagate')
-    self.assertAllClose(actual, expected)
-    
   @genNamedParametersNArgs(2)
   def testVonMisesPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
@@ -2095,12 +2058,49 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     rng = jtu.rand_positive(self.rng())
     scipy_fun = osp_stats.poisson.entropy
     lax_fun = lsp_stats.poisson.entropy
-
     args_maker = lambda: [rng(shape, dtype)]
     tol = ({np.float32: 1e-2, np.float64: 1e-4} if jtu.test_device_matches(["tpu"])
            else {np.float32: 2e-4, np.float64: 5e-6})
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,check_dtypes=False, tol=tol)
     self._CompileAndCheck(lax_fun, args_maker, rtol=1e-4)
+
+@jtu.sample_product(
+    [dict(shape=shape, axis=axis)
+      for shape in [(0,), (7,), (47, 8), (0, 2, 3), (10, 5, 21)]
+      for axis in [None, *range(len(shape))]],
+    dtype=jtu.dtypes.integer + jtu.dtypes.floating,
+    method=['average', 'min', 'max', 'dense', 'ordinal']
+  )
+  def testRankData(self, shape, dtype, axis, method):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+# Handle Scipy 1.18.0 transition where the output dtype of rankdata 
+# changed from float64 to float32 for certain inputs. 
+# See: https://github.com/scipy/scipy/pull/24420
+
+    def rankdata_reference(a, method, axis):
+      res = osp_stats.rankdata(a, method=method, axis=axis)
+      if jtu.scipy_version < (1, 18, 0):
+        return res.astype(dtypes.default_float_dtype())
+      return res
+
+    lax_fun = partial(lsp_stats.rankdata, method=method, axis=axis)
+    tol_spec = {np.float32: 2e-4, np.float64: 5e-6}
+    tol = jtu.tolerance(dtype, tol_spec)
+    
+    self._CheckAgainstNumpy(rankdata_reference, lax_fun, args_maker, 
+                            check_dtypes=True, tol=tol)
+    self._CompileAndCheck(lax_fun, args_maker, rtol=tol)
+  
+  @jtu.sample_product(
+    method=["average", "min", "max", "dense", "ordinal"],
+  )
+  def testRankDataNaNPropagation(self, method):
+    x = jnp.array([1.0, jnp.nan, 2.0])
+    expected = jnp.array([jnp.nan, jnp.nan, jnp.nan])
+    actual = lsp_stats.rankdata(x, method=method, nan_policy='propagate')
+    self.assertAllClose(actual, expected)
 
   @genNamedParametersNArgs(2)
   def testPoissonEntropyWithLoc(self, shapes, dtypes):
