@@ -16,6 +16,7 @@ limitations under the License.
 #include <Python.h>
 
 #include <cstddef>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -26,6 +27,8 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/debugging/failure_signal_handler.h"
 #include "absl/log/globals.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
@@ -209,6 +212,35 @@ PyMethodDef foreach_def = {
     "ignoring the return values and returns None. The iterables must all have "
     "the same lengths."};
 
+// Helper to format a safe_zip length mismatch error and set PyErr.
+// Shows lengths of all arguments for easier debugging.
+void SetSafeZipLengthError(PyObject* const* args, Py_ssize_t nargs,
+                           size_t mismatch_idx, size_t arg1_len,
+                           size_t other_len) {
+  std::string msg = absl::StrFormat(
+      "safe_zip() argument %zu has length %zu but argument 1 has length %zu. "
+      "All lengths: (",
+      mismatch_idx + 1, other_len, arg1_len);
+  for (Py_ssize_t j = 0; j < nargs; ++j) {
+    if (j > 0) absl::StrAppend(&msg, ", ");
+    if (j == 0) {
+      absl::StrAppendFormat(&msg, "%zu", arg1_len);
+    } else if (j == static_cast<Py_ssize_t>(mismatch_idx)) {
+      absl::StrAppendFormat(&msg, "%zu", other_len);
+    } else {
+      Py_ssize_t len = PyObject_LengthHint(args[j], -1);
+      if (PyErr_Occurred()) { PyErr_Clear(); len = -1; }
+      if (len >= 0) {
+        absl::StrAppendFormat(&msg, "%d", static_cast<int>(len));
+      } else {
+        absl::StrAppend(&msg, "?");
+      }
+    }
+  }
+  absl::StrAppend(&msg, ")");
+  PyErr_SetString(PyExc_ValueError, msg.c_str());
+}
+
 // A variant of zip(...) that:
 // a) returns a list instead of an iterator, and
 // b) checks that the input iterables are of equal length.
@@ -254,9 +286,14 @@ PyObject* SafeZip(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
         v = nb::steal<nb::object>(PyIter_Next(iterators[i].ptr()));
         if (PyErr_Occurred()) return nullptr;
         if (!v.ptr()) {
-          PyErr_Format(PyExc_ValueError,
-                       "safe_zip() argument %u is shorter than argument 1",
-                       i + 1);
+          // Arg i+1 is shorter. Count remaining in arg 1.
+          size_t arg1_remaining = 0;
+          while (auto r = nb::steal<nb::object>(
+                     PyIter_Next(iterators[0].ptr()))) {
+            if (PyErr_Occurred()) { PyErr_Clear(); break; }
+            ++arg1_remaining;
+          }
+          SetSafeZipLengthError(args, nargs, i, n + 1 + arg1_remaining, n);
           return nullptr;
         }
         PyTuple_SET_ITEM(tuple.ptr(), i, v.release().ptr());
@@ -268,9 +305,14 @@ PyObject* SafeZip(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
         v = nb::steal<nb::object>(PyIter_Next(iterators[i].ptr()));
         if (PyErr_Occurred()) return nullptr;
         if (v.ptr()) {
-          PyErr_Format(PyExc_ValueError,
-                       "safe_zip() argument %u is longer than argument 1",
-                       i + 1);
+          // Arg i+1 is longer. Count remaining.
+          size_t extra = 1;
+          while (auto r = nb::steal<nb::object>(
+                     PyIter_Next(iterators[i].ptr()))) {
+            if (PyErr_Occurred()) { PyErr_Clear(); break; }
+            ++extra;
+          }
+          SetSafeZipLengthError(args, nargs, i, n, n + extra);
           return nullptr;
         }
       }
