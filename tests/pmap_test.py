@@ -689,7 +689,11 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testOutAxesPyTreePrefixMismatchError(self):
     x = jnp.array([3.14])
     f = jax.pmap(lambda x, y: ((x, x), x), out_axes=((0, 0, 0), 0))
-    with self.assertRaisesRegex(ValueError, re.escape("pmap out_axes[0]")):
+    if config.pmap_shmap_merge.value:
+      regex = "pytree structure error: different lengths of tuple at key path.*"
+    else:
+      regex = re.escape("pmap out_axes[0]")
+    with self.assertRaisesRegex(ValueError, regex):
       f(x, x)
 
   @parameterized.named_parameters(

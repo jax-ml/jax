@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from functools import lru_cache, partial
-from typing import Any, Callable, NamedTuple, Sequence
+from typing import Any
 
 from jax._src import api
 from jax._src.api_util import (
@@ -60,33 +60,46 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
       f, axis_name, static_broadcasted_argnums, donate_argnums, in_axes, out_axes)
   if isinstance(axis_name, core._TempAxisName):  # pylint: disable=protected-access
     axis_name = repr(axis_name)
-  fun = _pmap_wrap_init(f, static_broadcasted_tuple)
+  wrapped_fun = _pmap_wrap_init(f, static_broadcasted_tuple)
 
   def infer_params(*args, **kwargs):
-    p = _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
-                      donate_tuple, devices, backend, axis_size, args, kwargs)
+    fun, dyn_argnums, dyn_args = _get_dyn_args(
+        wrapped_fun, static_broadcasted_tuple, args)
+    dyn_args_flat, dyn_args_tree = tree_flatten((dyn_args, kwargs))
+    in_axes_flat = _get_in_axes_flat(
+        in_axes, dyn_argnums, dyn_args, kwargs, len(dyn_args_flat),
+        dyn_args_tree)
+    local_axis_size = _mapped_axis_size(dyn_args_flat, in_axes_flat)
+    donated_invars = _get_donated_invars(
+        donate_tuple, dyn_args_tree, len(dyn_args_flat))
+    fun, out_axes_thunk = flat_out_axes(fun, out_axes)
+    flat_fun, out_tree = flatten_fun(fun, dyn_args_tree)
+    global_axis_size = _get_global_axis_size(local_axis_size, devices,
+                                             backend, axis_size)
     trace_state_clean = core.trace_state_clean()
-    mesh = Mesh(_get_devices(p, backend), (axis_name,))
+    mesh = Mesh(
+        _get_devices(devices, local_axis_size, global_axis_size, backend),
+        (axis_name,))
     _pmapped, in_specs, out_specs = _cached_shard_map(
-        p.flat_fun, mesh, p.in_axes_flat, p.out_axes_thunk, axis_name)
+        flat_fun, mesh, in_axes_flat, out_axes_thunk, axis_name)
     jitted_f = api.jit(
         _pmapped,
-        donate_argnums=[i for i, val in enumerate(p.donated_invars) if val])
+        donate_argnums=[i for i, val in enumerate(donated_invars) if val])
     if xb.process_count() > 1:
       if trace_state_clean:
         flat_global_args = [
             host_local_array_to_global_array(arr, global_mesh=mesh, pspec=spec)
-            for arr, spec in zip(p.flat_args, in_specs)]
+            for arr, spec in zip(dyn_args_flat, in_specs)]
       else:
         flat_global_args = mhu.host_local_array_to_global_array(
-            p.flat_args, mesh, list(in_specs))
+            dyn_args_flat, mesh, list(in_specs))
     else:
-      flat_global_args = p.flat_args
-    return jitted_f, flat_global_args, p, mesh, out_specs, donate_tuple
+      flat_global_args = dyn_args_flat
+    return jitted_f, flat_global_args, dyn_args_tree, out_tree, mesh, out_specs, donate_tuple
 
   @util.wraps(f)
   def wrapped(*args, **kwargs):
-    jitted_f, flat_global_args, p, mesh, out_specs, _ = infer_params(
+    jitted_f, flat_global_args, _, out_tree, mesh, out_specs, _ = infer_params(
         *args, **kwargs)
     outs = jitted_f(*flat_global_args)
     if xb.process_count() > 1:
@@ -97,15 +110,15 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
         ]
       else:
         outs = mhu.global_array_to_host_local_array(outs, mesh, out_specs())
-    return tree_unflatten(p.out_tree(), outs)
+    return tree_unflatten(out_tree(), outs)
 
   def lower(*args, **kwargs):
-    jitted_f, flat_global_args, p, _, _, donate_tuple = infer_params(
+    jitted_f, flat_global_args, in_tree, out_tree, _, _, donate_tuple = infer_params(
         *args, **kwargs)
     abstract_args = list(map(core.shaped_abstractify, flat_global_args))
-    args_info = stages.make_args_info(p.in_tree, abstract_args, donate_tuple)
+    args_info = stages.make_args_info(in_tree, abstract_args, donate_tuple)
     lowered = jitted_f.trace(*flat_global_args).lower()
-    lowered = stages.Lowered(lowered._lowering, args_info, p.out_tree(),
+    lowered = stages.Lowered(lowered._lowering, args_info, out_tree(),
                              no_kwargs=lowered._no_kwargs)
     return lowered
   wrapped.lower = lower
@@ -137,14 +150,14 @@ def _handle_reshapes(f, in_axes, out_axes_thunk, *args, **kwargs):
   return tree_map(lambda x, ax: x if ax is None else lax.expand_dims(x, [ax]),
                   list(out), list(out_axes_thunk()))
 
-def _get_devices(p, backend):
-  if backend is not None and p.devices is None:
+def _get_devices(devices, local_axis_size, global_axis_size, backend):
+  if backend is not None and devices is None:
     devs = xb.devices(backend=backend)
   else:
-    devs = xb.devices() if p.devices is None else p.devices
+    devs = xb.devices() if devices is None else devices
   if xb.process_count() > 1:
-    return devs[:p.global_axis_size]
-  return devs[:p.local_axis_size]
+    return devs[:global_axis_size]
+  return devs[:local_axis_size]
 
 
 def _ensure_index_tuple(x) -> tuple[int, ...]:
@@ -181,20 +194,6 @@ def _mapped_axis_size(args, in_axes):
   raise ValueError("pmap requires at least one argument with a mapped axis.")
 
 
-class PmapCallInfo(NamedTuple):
-  flat_fun: lu.WrappedFun
-  in_tree: Any
-  out_tree: Callable
-  flat_args: Sequence[Any]
-  donated_invars: Sequence[bool]
-  in_axes_flat: Sequence[int | None]
-  local_axis_size: int
-  out_axes_thunk: Callable
-  devices: Sequence | None
-  global_axis_size: int
-  is_explicit_global_axis_size: bool
-
-
 def _get_global_axis_size(local_axis_size: int, in_devices, backend_name: str,
                           global_axis_size: int | None):
   if (xb.process_count() == 1 and global_axis_size is not None and
@@ -219,36 +218,6 @@ def _get_global_axis_size(local_axis_size: int, in_devices, backend_name: str,
           len(xb.local_devices(pi, backend)) == xb.local_device_count(backend)
           for pi in range(xb.process_count(backend)))
   return global_axis_size
-
-
-def _prepare_pmap(fun: lu.WrappedFun, in_axes, out_axes,
-                  static_broadcasted_tuple, donate_tuple, in_devices,
-                  backend_name, axis_size, args, kwargs):
-  fun, dyn_argnums, dyn_args = _get_dyn_args(fun, static_broadcasted_tuple, args)
-  dyn_args_flat, dyn_args_tree = tree_flatten((dyn_args, kwargs))
-  in_axes_flat = _get_in_axes_flat(in_axes, dyn_argnums, dyn_args, kwargs,
-                                   len(dyn_args_flat), dyn_args_tree)
-  local_axis_size = _mapped_axis_size(dyn_args_flat, in_axes_flat)
-  donated_invars = _get_donated_invars(donate_tuple, dyn_args_tree,
-                                       len(dyn_args_flat))
-
-  fun, out_axes_thunk = flat_out_axes(fun, out_axes)
-  flat_fun, out_tree = flatten_fun(fun, dyn_args_tree)
-
-  is_explicit_global_axis_size = axis_size is not None
-  global_axis_size = _get_global_axis_size(local_axis_size, in_devices,
-                                           backend_name, axis_size)
-  return PmapCallInfo(flat_fun=flat_fun,
-                      in_tree=dyn_args_tree,
-                      out_tree=out_tree,
-                      flat_args=dyn_args_flat,
-                      donated_invars=donated_invars,
-                      in_axes_flat=in_axes_flat,
-                      local_axis_size=local_axis_size,
-                      out_axes_thunk=out_axes_thunk,
-                      devices=None if in_devices is None else tuple(in_devices),
-                      global_axis_size=global_axis_size,
-                      is_explicit_global_axis_size=is_explicit_global_axis_size)
 
 
 def _pmap_wrap_init(f, static_broadcasted_tuple):
