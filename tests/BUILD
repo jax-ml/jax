@@ -683,6 +683,15 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "lax_numpy_hijax_test",
+    srcs = ["lax_numpy_hijax_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "lax_numpy_operators_test",
     srcs = ["lax_numpy_operators_test.py"],
     shard_count = {
