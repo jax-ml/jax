@@ -28,6 +28,11 @@ class ObjectRegistered:
 
 jax.tree_util.register_object(ObjectRegistered, '__mapping__')
 
+def without_fast_map(**kwargs):
+  result = ObjectRegistered(**kwargs)
+  result.__mapping__ = dict(result.__mapping__)
+  return result
+
 class PyObjectRegistered(ObjectRegistered):
 
   def tree_flatten(self):
@@ -155,6 +160,7 @@ if __name__ == '__main__':
   num_static = width - num_data
 
   obj_registered = make_tree(ObjectRegistered, depth, num_data, num_static)
+  slow_registered = make_tree(without_fast_map, depth, num_data, num_static)
   pytree_registered = make_tree(PyTreeNodeRegistered, depth, num_data, num_static)
   # DataclassRegistered = make_dataclass_registered(num_data, num_static)
   dataclass_registered = make_dataclass_tree(DataclassRegistered, depth, num_data, num_static)
@@ -162,6 +168,8 @@ if __name__ == '__main__':
   dict_registered = make_tree(make_dict, depth, num_data, num_static)
   vals, _ = jax.tree.flatten(dataclass_registered)
 
+  print("Benchmarking slow object...")
+  time_slowobj = [benchmark_roundtrip(slow_registered) for _ in range(3)]
   print("Benchmarking object...")
   time_obj = [benchmark_roundtrip(obj_registered) for _ in range(3)]
   print("Benchmarking pytree")
@@ -181,5 +189,6 @@ if __name__ == '__main__':
   print(f"register_dict: {ci(time_dict)}")
   print(f"register_dataclass: {ci(time_dataclass)}")
   print(f"register_pyobject: {ci(time_pyobject)}")
+  print(f"register_object slow: {ci(time_slowobj)}")
 
   print(f"C++ Speedup : {np.mean(time_obj) / np.mean(time_pyobject):.4f}")
