@@ -2509,6 +2509,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with jax.disable_jit():
       self.assertAllClose(np.cumsum(x[::-1])[::-1], cumsum(x, True), check_dtypes=False)
 
+  def test_scan_complex128_reverse(self):
+    def cumsum(x, reverse):
+      return lax.scan(lambda c, x: (c + x, c + x), 0j, x, reverse=reverse)[1]
+
+    x = np.array([3, 1, 4, 1, 5, 9], dtype=np.complex128) + 1j
+    self.assertAllClose(np.cumsum(x), cumsum(x, False), check_dtypes=False)
+    self.assertAllClose(np.cumsum(x[::-1])[::-1], cumsum(x, True), check_dtypes=False)
+
   def test_scan_unroll(self):
     d = jnp.ones(2)
     def f(c, a):
@@ -2540,9 +2548,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertLess(len(scan_hlo), len(scan_unrolled_hlo))
     self.assertLess(len(scan_unrolled_hlo), len(scan_fully_unrolled_hlo))
 
-    # and the lowering should contain a while loop, unless the scan is fully
-    # unrolled
-    self.assertIn("while(", scan_hlo)
+    # and the lowering should contain a scan op or a while loop, unless the scan
+    # is fully unrolled
+    if "while(" not in scan_hlo:
+      self.assertIn("scan(", scan_hlo)
     self.assertIn("while(", scan_unrolled_hlo)
     self.assertNotIn("while(", scan_fully_unrolled_hlo)
 
