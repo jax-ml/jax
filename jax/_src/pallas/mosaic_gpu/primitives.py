@@ -2812,7 +2812,7 @@ def _populate_custom_primitive_op_block(
         # wrap the transfromed refs. Since the mgpu_fn works at the lowered
         # "lane" level, we need to transform (lower) the inputs before passing
         # them to the mgpu_fn.
-        transformed_type = mgpu.dialect_lowering.transformed_smem_ref_type(
+        transformed_type = mgpu.dialect_lowering.transform_type(
             memref_ty, transforms
         )
         conversion_cast = builtin_dialect.UnrealizedConversionCastOp(
