@@ -13,10 +13,8 @@
 # limitations under the License.
 from __future__ import annotations
 
-from functools import partial, lru_cache
+from functools import lru_cache, partial
 from typing import Any, Callable, NamedTuple, Sequence
-
-import numpy as np
 
 from jax._src import api
 from jax._src.api_util import (
@@ -35,14 +33,12 @@ from jax._src import traceback_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import pxla
-from jax._src.shard_map import _shard_map, _axes_to_pspec
-from jax._src.mesh import Mesh
 from jax._src.lax import lax
+from jax._src.mesh import Mesh
+from jax._src.shard_map import _axes_to_pspec, _shard_map
 from jax._src.tree_util import (
-    tree_map, tree_unflatten, tree_flatten, broadcast_prefix,
-    prefix_errors,
-)
-from jax._src.util import safe_zip as sz
+    broadcast_flattened_prefix_with_treedef, prefix_errors, tree_flatten, tree_map, tree_unflatten)
+import numpy as np
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -64,10 +60,10 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
       f, axis_name, static_broadcasted_argnums, donate_argnums, in_axes, out_axes)
   if isinstance(axis_name, core._TempAxisName):  # pylint: disable=protected-access
     axis_name = repr(axis_name)
-  fun = pmap_wrap_init(f, static_broadcasted_tuple)
+  fun = _pmap_wrap_init(f, static_broadcasted_tuple)
 
   def infer_params(*args, __check=True, **kwargs):
-    p = _prepare_pmap(f, fun, in_axes, out_axes, static_broadcasted_tuple,
+    p = _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
                       donate_tuple, devices, backend, axis_size, args, kwargs)
     trace_state_clean = core.trace_state_clean()
     if __check:
@@ -162,17 +158,31 @@ def _ensure_index_tuple(x) -> tuple[int, ...]:
     return tuple(int(i) for i in x)
 
 
-def _mapped_axis_size(fn, tree, args, in_axes_flat, name):
-  try:
-    mapped_sizes = [np.shape(a)[ax] for a, ax in sz(args, in_axes_flat)
-                    if ax is not None]
-    if not mapped_sizes:
-      raise ValueError(f"{name} requires at least one argument with a mapped axis.")
-    if not all(core.definitely_equal(s, mapped_sizes[0]) for s in mapped_sizes[1:]):
-      raise ValueError(f"{name} got inconsistent sizes for the mapped axis.")
-    return mapped_sizes[0]
-  except (IndexError, TypeError):
-    raise ValueError(f"{name} has invalid in_axes specification.")
+def _mapped_axis_size(args, in_axes):
+  """Infer axis size from the first mapped argument.
+
+  shard_map already does a check on all arguments, so just look at first arg.
+
+  Args:
+    args: Flat list of arguments.
+    in_axes: Flat tuple of axis indices (int or None for each arg).
+
+  Returns:
+    The size of the mapped axis.
+
+  Raises:
+    ValueError: If no args have a mapped axis.
+  """
+  if args and in_axes:
+    # Fast path: check first arg/axis (most common case).
+    if in_axes[0] is not None and hasattr(args[0], "shape"):
+      return int(args[0].shape[in_axes[0]])
+    # Slow path: scan for first mapped arg.
+    if isinstance(in_axes, tuple):
+      for arg, ax in zip(args, in_axes):
+        if ax is not None and hasattr(arg, "shape"):
+          return int(arg.shape[ax])
+  raise ValueError("pmap requires at least one argument with a mapped axis.")
 
 
 class PmapCallInfo(NamedTuple):
@@ -215,65 +225,27 @@ def _get_global_axis_size(local_axis_size: int, in_devices, backend_name: str,
   return global_axis_size
 
 
-def _prepare_pmap(f: Callable, fun: lu.WrappedFun, in_axes, out_axes,
+def _prepare_pmap(fun: lu.WrappedFun, in_axes, out_axes,
                   static_broadcasted_tuple, donate_tuple, in_devices,
                   backend_name, axis_size, args, kwargs):
-  if static_broadcasted_tuple:
-    if max(static_broadcasted_tuple) >= len(args):
-      raise ValueError(
-          f"pmapped function has static_broadcasted_argnums={static_broadcasted_tuple}"
-          f" but was called with only {len(args)} positional "
-          f"argument{'s' if len(args) > 1 else ''}. "
-          "All static broadcasted arguments must be passed positionally.")
-    dyn_argnums = [i for i in range(len(args))
-                   if i not in static_broadcasted_tuple]
-    fun, dyn_args = argnums_partial(fun, dyn_argnums, args)
-
-    if isinstance(in_axes, tuple):
-      dyn_in_axes = tuple(in_axes[i] for i in dyn_argnums)
-    else:
-      dyn_in_axes = in_axes
-  else:
-    dyn_args, dyn_in_axes = args, in_axes
-  args, in_tree = tree_flatten((dyn_args, kwargs))
-
-  if donate_tuple and not config.debug_nans.value:
-    donated_invars = donation_vector(donate_tuple, (), in_tree)
-  else:
-    donated_invars = (False,) * len(args)
-  try:
-    in_axes_flat = tuple(broadcast_prefix((dyn_in_axes, 0), (dyn_args, kwargs),
-                                          is_leaf=lambda x: x is None))
-  except ValueError:
-    e, *_ = prefix_errors((dyn_in_axes, 0), (dyn_args, kwargs))
-    ex = e('pmap in_axes')
-    msg, = ex.args
-    msg += ("\n\nThe 'full pytree' here is the tuple of arguments passed "
-            "positionally to the pmapped function, and the value of `in_axes` "
-            "must be a tree prefix of that tuple. But it was not a prefix.")
-    if kwargs:
-      msg += ("\n\nWhen some arguments are passed by keyword to the pmapped "
-              "function, they are not included in the comparison to `in_axes`. "
-              "Instead, each argument passed by keyword is mapped over its "
-              "leading axis. See the description of `in_axes` in the `pmap` "
-              "docstring: "
-              "https://docs.jax.dev/en/latest/_autosummary/jax.pmap.html#jax.pmap")
-    msg += ("\n\nCheck that the value of the `in_axes` argument to `pmap` "
-            "is a tree prefix of the tuple of arguments passed positionally to "
-            "the pmapped function.")
-    raise ValueError(msg) from None
-  local_axis_size = _mapped_axis_size(f, in_tree, args, in_axes_flat, "pmap")
+  fun, dyn_argnums, dyn_args = _get_dyn_args(fun, static_broadcasted_tuple, args)
+  dyn_args_flat, dyn_args_tree = tree_flatten((dyn_args, kwargs))
+  in_axes_flat = _get_in_axes_flat(in_axes, dyn_argnums, dyn_args, kwargs,
+                                   len(dyn_args_flat), dyn_args_tree)
+  local_axis_size = _mapped_axis_size(dyn_args_flat, in_axes_flat)
+  donated_invars = _get_donated_invars(donate_tuple, dyn_args_tree,
+                                       len(dyn_args_flat))
 
   fun, out_axes_thunk = flat_out_axes(fun, out_axes)
-  flat_fun, out_tree = flatten_fun(fun, in_tree)
+  flat_fun, out_tree = flatten_fun(fun, dyn_args_tree)
 
   is_explicit_global_axis_size = axis_size is not None
   global_axis_size = _get_global_axis_size(local_axis_size, in_devices,
                                            backend_name, axis_size)
   return PmapCallInfo(flat_fun=flat_fun,
-                      in_tree=in_tree,
+                      in_tree=dyn_args_tree,
                       out_tree=out_tree,
-                      flat_args=args,
+                      flat_args=dyn_args_flat,
                       donated_invars=donated_invars,
                       in_axes_flat=in_axes_flat,
                       local_axis_size=local_axis_size,
@@ -283,7 +255,7 @@ def _prepare_pmap(f: Callable, fun: lu.WrappedFun, in_axes, out_axes,
                       is_explicit_global_axis_size=is_explicit_global_axis_size)
 
 
-def pmap_wrap_init(f, static_broadcasted_tuple):
+def _pmap_wrap_init(f, static_broadcasted_tuple):
   """Create a wrapped function with DebugInfo for pmap.
 
   Args:
@@ -305,6 +277,149 @@ def pmap_wrap_init(f, static_broadcasted_tuple):
     arg_names = None
   dbg = lu.DebugInfo("pmap", fun_sourceinfo(f), arg_names, None)
   return lu.wrap_init(f, debug_info=dbg)
+
+
+def _get_dyn_args(wrapped_f, static_broadcasted_tuple, args):
+  """Extract dynamic args and argnums after handling static args.
+
+  Args:
+    wrapped_f: The wrapped function.
+    static_broadcasted_tuple: Tuple of static argument indices.
+    args: Positional arguments.
+
+  Returns:
+    dyn_f: function with static args bound
+    dyn_argnums: list of dynamic arg indices (or None if no static args)
+    dyn_args: dynamic positional arguments (after static removed)
+
+  Raises:
+    ValueError: If static_broadcasted_argnums exceeds number of args.
+  """
+
+  if static_broadcasted_tuple:
+    if max(static_broadcasted_tuple) >= len(args):
+      raise ValueError(
+          "pmapped function has"
+          f" static_broadcasted_argnums={static_broadcasted_tuple} but was"
+          f" called with only {len(args)} positional"
+          f" argument{'s' if len(args) > 1 else ''}. All static broadcasted"
+          " arguments must be passed positionally."
+      )
+    dyn_argnums = [
+        i for i in range(len(args)) if i not in static_broadcasted_tuple
+    ]
+    wrapped_f, dyn_args = argnums_partial(wrapped_f, dyn_argnums, args)
+  else:
+    dyn_argnums = None
+    dyn_args = args
+  return wrapped_f, dyn_argnums, dyn_args
+
+
+def _get_in_axes_flat(
+    in_axes, dyn_argnums, dyn_args, kwargs, num_flat_args, in_tree
+):
+  """Compute flat in_axes tuple from in_axes prefix and args structure.
+
+  Args:
+    in_axes: The original in_axes specification.
+    dyn_argnums: The indices of dynamic (non-static) positional args, or None if
+      no static args.
+    dyn_args: The dynamic positional args (after static args removed).
+    kwargs: The keyword arguments.
+    num_flat_args: Total number of flat args.
+    in_tree: The PyTreeDef of (dyn_args, kwargs).
+
+  Returns:
+    Flat tuple of axis indices (int or None for each flat arg).
+
+  Raises:
+    ValueError: If in_axes is not a valid prefix of the args structure.
+  """
+  # Compute dyn_in_axes from in_axes and dyn_argnums
+  if dyn_argnums is not None and isinstance(in_axes, tuple):
+    dyn_in_axes = tuple(in_axes[i] for i in dyn_argnums)
+  else:
+    dyn_in_axes = in_axes
+
+  # Fast path: avoid broadcast_prefix for common simple cases
+  in_axes_flat = None
+
+  if isinstance(dyn_in_axes, int):
+    if dyn_in_axes == 0:
+      # Most common case: all args mapped on axis 0, including kwargs (which also get 0)
+      in_axes_flat = (0,) * num_flat_args
+    elif not kwargs:
+      # No kwargs: broadcast single in_axes to all positional leaves
+      in_axes_flat = (dyn_in_axes,) * num_flat_args
+  elif dyn_in_axes is None and not kwargs:
+    # Unusual case: no mapping, no kwargs
+    in_axes_flat = (None,) * num_flat_args
+  elif (
+      not kwargs
+      and isinstance(dyn_in_axes, tuple)
+      and all(isinstance(ax, int) or ax is None for ax in dyn_in_axes)
+  ):
+    # No kwargs: check if it's a simple flat tuple matching positional args
+    if len(dyn_in_axes) == len(dyn_args) and num_flat_args == len(dyn_args):
+      # Each positional arg is a leaf (no nested structure)
+      in_axes_flat = dyn_in_axes
+
+  # Slow path: use broadcast_flattened_prefix_with_treedef for complex cases
+  if in_axes_flat is None:
+    try:
+      # Flatten in_axes prefix tree (treating None as leaf)
+      flat_in_axes_prefix, in_axes_tree = tree_flatten(
+          (dyn_in_axes, 0), is_leaf=lambda x: x is None
+      )
+      in_axes_flat = tuple(
+          broadcast_flattened_prefix_with_treedef(
+              flat_in_axes_prefix, in_axes_tree, in_tree
+          )
+      )
+    except ValueError:
+      e, *_ = prefix_errors((dyn_in_axes, 0), (dyn_args, kwargs))
+      ex = e("pmap in_axes")
+      (msg,) = ex.args
+      msg += (
+          "\n\nThe 'full pytree' here is the tuple of arguments passed "
+          "positionally to the pmapped function, and the value of `in_axes` "
+          "must be a tree prefix of that tuple. But it was not a prefix."
+      )
+      if kwargs:
+        msg += (
+            "\n\nWhen some arguments are passed by keyword to the pmapped "
+            "function, they are not included in the comparison to `in_axes`. "
+            "Instead, each argument passed by keyword is mapped over its "
+            "leading axis. See the description of `in_axes` in the `pmap` "
+            "docstring: "
+            "https://docs.jax.dev/en/latest/_autosummary/jax.pmap.html#jax.pmap"
+        )
+      msg += (
+          "\n\nCheck that the value of the `in_axes` argument to `pmap` "
+          "is a tree prefix of the tuple of arguments passed positionally to "
+          "the pmapped function."
+      )
+      raise ValueError(msg) from None
+
+  return in_axes_flat
+
+
+def _get_donated_invars(donate_tuple, in_tree, num_flat_args):
+  """Compute donation vector for arguments.
+
+  Args:
+    donate_tuple: Tuple of donated argument indices.
+    in_tree: PyTreeDef of input structure.
+    num_flat_args: Number of flat arguments.
+
+  Returns:
+    Tuple of bools indicating which flat args are donated.
+  """
+
+  if donate_tuple and not config.debug_nans.value:
+    return donation_vector(donate_tuple, (), in_tree)
+  else:
+    return (False,) * num_flat_args
 
 
 @lru_cache
