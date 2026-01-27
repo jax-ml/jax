@@ -245,7 +245,37 @@ PyTreeKind PyTreeRegistry::KindOfObject(
   return it == registrations_.end() ? nullptr : it->second.get();
 }
 
-/*static*/ std::vector<nb::object> GetSortedPyDictKeys(PyObject* py_dict) {
+struct identity {
+    using is_transparent = void;
+
+    template <typename T>
+    constexpr T&& operator()(T&& t) const noexcept
+    {
+        return std::forward<T>(t);
+    }
+};
+
+int py_compare(const nb::object& a, const nb::object& b) {
+    return PyObject_RichCompareBool(a.ptr(), b.ptr(), Py_LT);
+}
+
+int flax_compare(const nb::object& a, const nb::object& b) {
+    bool a_is_digit = nb::cast<bool>(a.attr("isdigit")());
+    bool b_is_digit = nb::cast<bool>(b.attr("isdigit")());
+    if (a_is_digit && !b_is_digit) {
+        return 1;
+    }
+    if (!a_is_digit && b_is_digit) {
+        return 0;
+    }
+    if (a_is_digit && b_is_digit) {
+        return PyObject_RichCompareBool(nb::int_(a).ptr(), nb::int_(a).ptr(), Py_LT);
+    }
+    PyObject_RichCompareBool(a.ptr(), b.ptr(), Py_LT);
+}
+
+/*static*/ std::vector<nb::object> GetSortedPyDictKeys(PyObject* py_dict,
+    int (*compare)(const nb::object&, const nb::object&) = py_compare) {
   std::vector<nb::object> keys;
   keys.reserve(PyDict_Size(py_dict));
   PyObject* key;
@@ -256,8 +286,8 @@ PyTreeKind PyTreeRegistry::KindOfObject(
 
   try {
     std::stable_sort(
-        keys.begin(), keys.end(), [](const nb::object& a, const nb::object& b) {
-          int cmp = PyObject_RichCompareBool(a.ptr(), b.ptr(), Py_LT);
+        keys.begin(), keys.end(), [=](const nb::object& a, const nb::object& b) {
+          int cmp = compare(a, b);
           if (cmp == -1) {
             throw nb::python_error();
           }
