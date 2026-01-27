@@ -2221,18 +2221,11 @@ absl::Status PyArray::Register(nb::module_& m) {
         if (tracer_class.ptr() && self.ptr() == base_type.ptr() &&
             PyObject_TypeCheck(x.ptr(), reinterpret_cast<PyTypeObject*>(
                                             tracer_class.ptr())) != 0) {
-          // TODO(phawkins): we would like to change this to use the logic below
-          // but it is a somewhat breaking change. Let us defer it to a future
-          // PR.
-          return true;
-          // auto is_traced_array_fn =
-          //     nb::getattr(x, "_is_traced_array", nb::none());
-          // if (!is_traced_array_fn.is_none()) {
-          //   try {
-          //     return nb::cast<bool>(is_traced_array_fn());
-          //   } catch (...) {
-          //   }
-          // }
+          auto is_traced_array_fn =
+              nb::getattr(x, "_is_traced_array", nb::none());
+          if (!is_traced_array_fn.is_none()) {
+            return nb::cast<bool>(is_traced_array_fn());
+          }
         }
         return false;
       },
