@@ -131,6 +131,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/ptx_compiler_support.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/gpu/collective_kernel_metadata.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "tsl/platform/path.h"
@@ -694,6 +695,8 @@ struct CustomCallResources {
   //  TODO(allanrenucci): Remove explicit constructor after supporting C++20.
   explicit CustomCallResources(CompiledKernel* kernel) : kernel(kernel) {}
   CompiledKernel* kernel = nullptr;
+
+  CollectiveKernelMetadata collective_metadata;
 };
 
 // Validate custom call attributes and compile the kernel.
@@ -775,11 +778,10 @@ absl::StatusOr<xla::gpu::GpuCliqueKey> GetCliqueKeyForAllDevices(
 }
 
 absl::Status MosaicGpuInitialize(
-    se::Stream* stream,
-    const xla::gpu::CollectiveParams* collective_params,
+    se::Stream* stream, const xla::gpu::CollectiveParams* collective_params,
     const xla::gpu::CollectiveCliques* collective_cliques,
     ffi::RemainingArgs inputs, ffi::RemainingRets results,
-    xla::ffi::Dictionary attributes) {
+    CustomCallResources* resources, xla::ffi::Dictionary attributes) {
   bool uses_collective_metadata = ModuleUsesCollectiveMetadata(attributes);
   if (!uses_collective_metadata) {
     // If the kernel does not use collective metadata, we can skip the
@@ -803,21 +805,21 @@ absl::Status MosaicGpuInitialize(
     parameters.push_back(input_buffer.device_memory());
   }
 
-  TF_ASSIGN_OR_RETURN(
-      xla::gpu::GpuCliqueKey clique_key,
-      GetCliqueKeyForAllDevices(*collective_params));
+  TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
+                      GetCliqueKeyForAllDevices(*collective_params));
 
   // The last output buffer is used as the collective metadata buffer.
   se::DeviceAddressBase collective_metadata_ptr =
       buffers.back().device_memory();
 
-    TF_RETURN_IF_ERROR(
-        xla::gpu::CollectiveMetadataThunk::ConstructCollectiveMetadata(
-            clique_key,
-            clique_key.rank(collective_params->global_device_id).value(),
-            stream, std::move(parameters),
-            // TODO(b/476264413): Add multimem support.
-            /*multimem=*/nullptr, collective_metadata_ptr));
+  TF_ASSIGN_OR_RETURN(
+      resources->collective_metadata,
+      xla::gpu::CollectiveMetadataThunk::ConstructAndReturnCollectiveMetadata(
+          clique_key,
+          clique_key.rank(collective_params->global_device_id).value(), stream,
+          std::move(parameters),
+          // TODO(b/476264413): Add multimem support.
+          /*multimem=*/nullptr, collective_metadata_ptr));
   return absl::OkStatus();
 }
 
@@ -879,6 +881,7 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuInitialize, MosaicGpuInitialize,
                            .Ctx<ffi::CollectiveCliques>()
                            .RemainingArgs()
                            .RemainingRets()
+                           .Ctx<xla::ffi::State<CustomCallResources>>()
                            .Attrs(),
                        {ffi::Traits::kCmdBufferCompatible});
 
