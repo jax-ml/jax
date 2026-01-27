@@ -678,12 +678,19 @@ class WGMMALayoutTest(TestCase):
           ("WGMMA_LAYOUT_UPCAST_4X", "WGMMA_LAYOUT_UPCAST_4X"),
           ("WGMMA_LAYOUT_UPCAST_4X", "WGMMA_LAYOUT_UPCAST_2X"),
           ("WGMMA_LAYOUT_UPCAST_4X", "WGMMA_LAYOUT"),
+          ("TMEM_NATIVE_LAYOUT_8", "TMEM_NATIVE_LAYOUT_8"),
       ),
   )
   def test_optimized_conversion(self, jax_dtype_from_to, layout_descs):
     layout_desc_from, layout_desc_to = layout_descs
-    layout_from: fa.TiledLayout = getattr(fa, layout_desc_from)
-    layout_to: fa.TiledLayout = getattr(fa, layout_desc_to)
+    if layout_desc_from == "TMEM_NATIVE_LAYOUT_8":
+      layout_from = fa.tmem_native_layout(8)
+    else:
+      layout_from: fa.TiledLayout = getattr(fa, layout_desc_from)
+    if layout_desc_to == "TMEM_NATIVE_LAYOUT_8":
+      layout_to = fa.tmem_native_layout(8)
+    else:
+      layout_to: fa.TiledLayout = getattr(fa, layout_desc_to)
     jax_dtype_from, jax_dtype_to = jax_dtype_from_to
     mlir_dtype_from = utils.dtype_to_ir_type(jax_dtype_from)
     mlir_dtype_to = utils.dtype_to_ir_type(jax_dtype_to)

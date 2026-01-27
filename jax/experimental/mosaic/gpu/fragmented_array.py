@@ -2352,7 +2352,12 @@ class FragmentedArray:
       return FragmentedArray(
           _registers=new_registers, _layout=self.layout, _is_signed=is_signed
       )
-    if cur_dtype == i8 and self.is_signed and new_dtype == bf16 and vector_len in {2, 4}:
+    if (
+        cur_dtype == i8
+        and self.is_signed
+        and new_dtype == bf16
+        and (vector_len == 2 or vector_len % 4 == 0)
+    ):
       new_registers = np.empty_like(self.registers)
       def upcast_i8_to_bf16(reg, high):
         # We first embed the s8 into a bf16 with the exponent equal to
@@ -2384,14 +2389,16 @@ class FragmentedArray:
           reg_32 = utils.vector_concat([reg_16, pad_vec_16])
           new_reg_32 = upcast_i8_to_bf16(reg_32, high=False)
           new_vec_32 = llvm.insertelement(empty_vec_32, new_reg_32, c(0, i32))
-        elif vector_len == 4:
-          reg_32 = vector.bitcast(ir.VectorType.get((1,), i32), reg)
-          low = upcast_i8_to_bf16(reg_32, high=False)
-          high = upcast_i8_to_bf16(reg_32, high=True)
-          new_vec_32 = llvm.insertelement(empty_vec_32, low, c(0, i32))
-          new_vec_32 = llvm.insertelement(new_vec_32, high, c(1, i32))
         else:
-          raise NotImplementedError(vector_len)
+          assert vector_len % 4 == 0
+          vec_32 = vector.bitcast(ir.VectorType.get((vector_len // 4,), i32), reg)
+          new_vec_32 = empty_vec_32
+          for i in range(vector_len // 4):
+            reg_32 = vector.extract(vec_32, [], [i])
+            low = upcast_i8_to_bf16(reg_32, high=False)
+            high = upcast_i8_to_bf16(reg_32, high=True)
+            new_vec_32 = llvm.insertelement(new_vec_32, low, c(2 * i, i32))
+            new_vec_32 = llvm.insertelement(new_vec_32, high, c(2 * i + 1, i32))
         new_registers[idx] = vector.bitcast(
             ir.VectorType.get((vector_len,), new_dtype), new_vec_32
         )
