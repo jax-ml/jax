@@ -62,6 +62,8 @@ COLLECTIVE_ATTR = "mosaic_gpu.collective_metadata_used"
 # Attribute used to cache the kernel argument which corresponds to a given
 # reference during remote_ref lowering.
 KERNEL_ARG_ID_ATTR = "mosaic_gpu.from_kernel_arg_idx"
+# Attribute used to mark the first creation of the GMEM kernel arguments.
+ORIGINAL_KERNEL_ARG_ATTR = "mosaic_gpu.original_kernel_arg"
 
 
 def uses_collective_metadata(module):
@@ -448,11 +450,9 @@ def _find_kernel_argument_for_gmem_ref(
   while isinstance(gmem_ref, ir.BlockArgument):
     gmem_ref = gmem_ref.owner.owner.operands[gmem_ref.arg_number]
 
-  # TODO(apaszke): This is a very approximate check. Improve it!
-  if not isinstance(gmem_ref.owner, builtin.UnrealizedConversionCastOp):
+  if ORIGINAL_KERNEL_ARG_ATTR not in gmem_ref.owner.attributes:
     raise NotImplementedError(
-        f"Expected {gmem_ref.owner} to be an unrealized conversion cast"
-        " corresponding to a GMEM kernel argument."
+        f"Expected {gmem_ref.owner} to be a GMEM kernel argument."
     )
   return gmem_ref
 
@@ -1568,59 +1568,41 @@ class LaunchContext:
           "nvshmemx_mc_ptr", nvshmemx_mc_ptr_type, sym_visibility="private"
       )
 
-  # For a given reference, finds to which kernel argument it refers to.
-  # Used for the lowering of the collective operations with the
-  # collective metadata.
-  def _find_kernel_argument(self, ref: ir.Value):
-    if KERNEL_ARG_ID_ATTR in ref.owner.attributes:
-      return ref.owner.attributes[KERNEL_ARG_ID_ATTR].value
-
+  def _find_kernel_argument_index(self, ref: ir.Value):
+    """Finds the index of the kernel argument used to derive the given reference."""
     if not isinstance(ref.type, ir.MemRefType):
-      raise ValueError(
-          f"Expected a memref, got {ref.type}"
-      )
+      raise ValueError(f"Expected a memref, got {ref.type}")
 
-    lookup_op_owner = ref.owner
-    while True:
-      kernel_arguments = {operand.owner.attributes[KERNEL_ARG_ID_ATTR].value for operand in lookup_op_owner.operands if KERNEL_ARG_ID_ATTR in operand.owner.attributes}
-      if len(kernel_arguments) > 1:
-        raise ValueError(
-            f"Multiple kernel arguments found for the reference: {ref}"
-        )
-
-      if len(kernel_arguments) == 1:
-        kernel_argument = kernel_arguments.pop()
-        break
-
-      memref_operand_owners = [
-          operand.owner
-          for operand in lookup_op_owner.operands
-          if isinstance(operand.type, ir.MemRefType)
-      ]
-      if len(memref_operand_owners) > 1:
-        raise ValueError(
-            f"Multiple memref operands for the reference: {ref}"
-        )
-      if not memref_operand_owners:
+    op = ref.owner
+    while KERNEL_ARG_ID_ATTR not in getattr(op, "attributes", {}):
+      if not isinstance(op, ir.OpView):
         raise ValueError(
             f"Can't find the kernel argument for the reference: {ref}"
         )
+      memref_operands = [
+          operand
+          for operand in op.operands
+          if isinstance(operand.type, ir.MemRefType)
+      ]
+      if len(memref_operands) != 1:
+        raise ValueError(
+            f"Can't find the kernel argument. {op} doesn't have a single memref"
+            " operand."
+        )
+      op = memref_operands[0].owner
 
-      lookup_op_owner = memref_operand_owners[0]
+    attr = op.attributes[KERNEL_ARG_ID_ATTR]
+    # Save the result so that we can find it out faster next time.
+    ref.owner.attributes[KERNEL_ARG_ID_ATTR] = attr
+    return attr.value
 
-    if kernel_argument is None:
-      raise ValueError(
-          f"Can't find the kernel argument for the reference: {ref}"
-      )
-
-    ref.owner.attributes[KERNEL_ARG_ID_ATTR] = ir.IntegerAttr.get(
-        ir.IntegerType.get_signless(32), kernel_argument
-    )
-    return kernel_argument
-
-  def to_remote(self, ref: ir.Value, peer: ir.Value,
-                parameter_id: int | None = None):
+  def to_remote(
+      self, ref: ir.Value, peer: ir.Value, *, _kernel_arg_idx: int | None = None
+  ):
+    i32 = ir.IntegerType.get_signless(32)
+    i64 = ir.IntegerType.get_signless(64)
     if isinstance(ref.type, ir.MemRefType):
+      assert _kernel_arg_idx is None
       # We replace the offset in the ref type by 0, because memref_ptr always
       # folds the offset into the pointer.
       ref_ty = ir.MemRefType(ref.type)
@@ -1632,18 +1614,18 @@ class LaunchContext:
           ref_ty.memory_space,
       )
 
-      parameter_id = None
+      arg_idx = None
       if self.collective_metadata is not None:
-        parameter_id = self._find_kernel_argument(ref)
+        arg_idx = self._find_kernel_argument_index(ref)
 
       ref_ptr = utils.memref_ptr(ref)
       remote_memref = utils.ptr_as_memref(
-          self.to_remote(ref_ptr, peer, parameter_id), result_type
+          self.to_remote(ref_ptr, peer, _kernel_arg_idx=arg_idx), result_type
       )
 
       if self.collective_metadata is not None:
         remote_memref.owner.attributes[KERNEL_ARG_ID_ATTR] = ir.IntegerAttr.get(
-            ir.IntegerType.get_signless(32), self._find_kernel_argument(ref)
+            i32, arg_idx
         )
       return remote_memref
 
@@ -1651,7 +1633,7 @@ class LaunchContext:
       self._ensure_nvshmem_decls()
       if ref.type != ir.Type.parse("!llvm.ptr"):
         raise ValueError(f"Unsupported type for to_remote: {ref.type}")
-      if peer.type != ir.IntegerType.get_signless(32):
+      if peer.type != i32:
         raise ValueError(f"peer index must be an i32, got {peer.type}")
       return llvm.call(ref.type, [ref, peer], [], [], callee="nvshmem_ptr")
     else:
@@ -1669,32 +1651,28 @@ class LaunchContext:
       # pointer of the kernel arguments defined with the memref.subview
       # operation.
       self.module.operation.attributes[COLLECTIVE_ATTR] = ir.UnitAttr.get()
-      index_type = ir.IndexType.get()
+      index = ir.IndexType.get()
 
-      if parameter_id is None:
-        raise ValueError(f"parameter_id must be provided for ref {ref}")
-      parameters_offset = (
-          COLLECTIVE_METADATA_SIZE + self.num_peers * parameter_id
+      assert _kernel_arg_idx is not None
+      arg_ptrs_base = arith.constant(
+          index, COLLECTIVE_METADATA_SIZE + self.num_peers * _kernel_arg_idx
       )
-      parameters_offset_constant = arith.constant(
-          index_type, parameters_offset)
-      current_device = arith.index_cast(index_type, self.device_id())
-      current_device_parameter_offset = arith.addi(
-          parameters_offset_constant, current_device)
-      address_of_param = memref.load(
-          self.collective_metadata, [current_device_parameter_offset])
-
-      ref_int = llvm.ptrtoint(ir.IntegerType.get_signless(64), ref)
-      offset_op = arith.subi(ref_int, address_of_param)
-
-      peer_parameter_offset = arith.addi(
-          parameters_offset_constant, arith.index_cast(index_type, peer))
-      address_of_param_to_peers = memref.load(
-          self.collective_metadata, [peer_parameter_offset])
-      memory_address = arith.addi(address_of_param_to_peers, offset_op)
-      ptr_type = ir.Type.parse("!llvm.ptr")
-      memory_address_op = llvm.inttoptr(ptr_type, memory_address)
-      return memory_address_op
+      local_arg_ptr_offset = arith.addi(
+          arg_ptrs_base, arith.index_cast(index, self.device_id())
+      )
+      # TODO(apaszke): Just use the pointer directly. After all it is an arg.
+      local_arg_ptr = memref.load(
+          self.collective_metadata, [local_arg_ptr_offset]
+      )
+      local_offset = arith.subi(llvm.ptrtoint(i64, ref), local_arg_ptr)
+      remote_arg_ptr_offset = arith.addi(
+          arg_ptrs_base, arith.index_cast(index, peer)
+      )
+      remote_arg_ptr = memref.load(
+          self.collective_metadata, [remote_arg_ptr_offset]
+      )
+      memory_address = arith.addi(remote_arg_ptr, local_offset)
+      return llvm.inttoptr(ref.type, memory_address)
 
   def to_remote_multicast(self, ref: ir.Value):
     i32 = ir.IntegerType.get_signless(32)
