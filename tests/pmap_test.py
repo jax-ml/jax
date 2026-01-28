@@ -1405,6 +1405,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     device_count = jax.device_count()
     f = self.pmap(lambda x: 3)
     x = jnp.arange(device_count + 1)
+    expected_regex_old = r'compiling computation that requires \d+ logical devices, but only \d+ XLA devices are available .*'
     if config.pmap_shmap_merge.value:
       expected_regex = [
         # NOTE(dsuo): We get different error messages depending on backend.
@@ -1412,10 +1413,12 @@ class PythonPmapTest(jtu.JaxTestCase):
         r'cannot select an axis to squeeze out which has size not equal to one.*',
         r'Sharding.*implies that array.*but the dimension size is.*',
         r'implies that the global size of its dimension.*should be divisible by.*',
+        r'One of pjit arguments.*was given the sharding.*divisible by.*',
+        expected_regex_old,
       ]
       expected_regex = '|'.join(expected_regex)
     else:
-      expected_regex = r'compiling computation that requires \d+ logical devices, but only \d+ XLA devices are available .*'
+      expected_regex = expected_regex_old
     self.assertRaisesRegex(ValueError, expected_regex, lambda: f(x))
 
     # TODO(mattjj): test error message with explicit devices

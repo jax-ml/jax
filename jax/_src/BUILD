@@ -1092,7 +1092,9 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "pmap",
-    srcs = ["pmap.py"],
+    srcs = [
+        "pmap.py",
+    ],
     deps = [
         ":api",
         ":api_util",
