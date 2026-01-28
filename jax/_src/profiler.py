@@ -98,6 +98,18 @@ class _ProfileState:
 _profile_state = _ProfileState()
 
 
+def set_metadata(key: str, value: str) -> None:
+  """Sets metadata for the current profiling session."""
+  if hasattr(_profiler, "set_metadata"):
+    return _profiler.set_metadata(key, value)
+
+
+def clear_metadata() -> None:
+  """Clears metadata for the current profiling session."""
+  if hasattr(_profiler, "clear_metadata"):
+    return _profiler.clear_metadata()
+
+
 def start_trace(
     log_dir: os.PathLike | str,
     create_perfetto_link: bool = False,
@@ -138,14 +150,28 @@ def start_trace(
     # session. Otherwise on Cloud TPU, libtpu may not be initialized before
     # creating the tracer, which will cause the TPU tracer initialization to
     # fail and no TPU operations will be included in the profile.
-    xla_bridge.get_backend()
+    client = xla_bridge.get_backend()
 
-    if profiler_options is None:
-      _profile_state.profile_session = _profiler.ProfilerSession()
-    else:
-      _profile_state.profile_session = _profiler.ProfilerSession(
-          profiler_options
-      )
+    options = profiler_options
+    if options is None:
+      options = ProfileOptions()
+    try:
+      from jax import version as jax_version_module
+      set_metadata("jax_version", jax_version_module.__version__)
+    except ImportError:
+      print("Failed to get JAX version, setting metadata to unknown.")
+      set_metadata("jax_version", "unknown")
+    try:
+      from jax._src.lib import version as version_lib
+      jaxlib_version_str = ".".join(map(str, version_lib))
+      jaxlib_version = jaxlib_version_str
+      if client.platform == "tpu":
+        jaxlib_version += f" ({client.platform_version})"
+      set_metadata("jaxlib_version", jaxlib_version)
+    except (ImportError, AttributeError):
+      print("Failed to get JAXLIB version, setting metadata to unknown.")
+      set_metadata("jaxlib_version", "unknown")
+    _profile_state.profile_session = _profiler.ProfilerSession(options)
     _profile_state.create_perfetto_link = create_perfetto_link
     _profile_state.create_perfetto_trace = (
         create_perfetto_trace or create_perfetto_link)
