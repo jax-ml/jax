@@ -1139,14 +1139,21 @@ def _pallas_call_lowering(
   def gpu_lowering(ctx: mlir.LoweringRuleContext,
                    *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
                    **params):
+    is_rocm = ctx.module_context.platforms == ("rocm",)
     try:
       match backend:
         case "mosaic_gpu":
+          if is_rocm:
+            raise ValueError(
+                "Mosaic GPU backend does not yet support AMD ROCm devices. "
+                "Use backend='triton' for ROCm."
+            )
           from jax._src.pallas.mosaic_gpu import pallas_call_registration
         case "triton":
           from jax._src.pallas.triton import pallas_call_registration  # type: ignore
         case None:
-          if _PALLAS_USE_MOSAIC_GPU.value:
+          # Mosaic GPU only supports NVIDIA CUDA, not AMD ROCm.
+          if _PALLAS_USE_MOSAIC_GPU.value and not is_rocm:
             from jax._src.pallas.mosaic_gpu import pallas_call_registration
           else:
             from jax._src.pallas.triton import pallas_call_registration  # type: ignore
