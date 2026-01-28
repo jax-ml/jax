@@ -154,7 +154,7 @@ OpFoldResult BitcastVregOp::fold(FoldAdaptor adaptor) {
   }
   // Bitcast from X -> Y -> ... -> Z -> X is a no-op.
   Value input = getInput();
-  while (auto op = dyn_cast<BitcastVregOp>(input.getDefiningOp())) {
+  while (auto op = dyn_cast_if_present<BitcastVregOp>(input.getDefiningOp())) {
     input = op.getInput();
     if (getType() == input.getType()) {
       return input;
