@@ -2213,7 +2213,7 @@ class LaxTest(jtu.JaxTestCase):
           )
       ],
   )
-  @jtu.skip_on_devices('gpu') # jax.lax.mul has an XLA bug on GPU b/339071103
+  @jtu.skip_on_devices('cuda') # jax.lax.mul has an XLA bug on CUDA GPU b/339071103
   @jtu.skip_on_devices('tpu') # b/39342488
   def testReduceWindowGeneralJVP(
       self,
@@ -2309,7 +2309,7 @@ class LaxTest(jtu.JaxTestCase):
           )
       ],
   )
-  @jtu.skip_on_devices('gpu') # jax.lax.mul has an XLA bug on GPU b/339071103
+  @jtu.skip_on_devices('cuda') # jax.lax.mul has an XLA bug on CUDA GPU b/339071103
   @jtu.skip_on_devices('tpu') # b/39342488
   def testReduceWindowCustomSameAsMonoid(
       self,
@@ -2432,7 +2432,7 @@ class LaxTest(jtu.JaxTestCase):
       ],
       dtype=[np.float32],
   )
-  @jtu.skip_on_devices('gpu')
+  @jtu.skip_on_devices('cuda')
   def testReduceWindowVariadic(self, dtype, shape, dims, strides, padding,
                                base_dilation, window_dilation):
     if (jtu.test_device_matches(["tpu"]) and
