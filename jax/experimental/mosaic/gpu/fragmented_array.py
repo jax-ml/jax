@@ -39,8 +39,9 @@ from . import utils
 
 
 T = TypeVar("T")
+IS_ROCM = utils.IS_ROCM
 WARPGROUP_SIZE = utils.WARPGROUP_SIZE
-WARP_SIZE = 32
+WARP_SIZE = utils.WARP_SIZE
 WARPS_IN_WARPGROUP = WARPGROUP_SIZE // WARP_SIZE
 SMEM_BANKS = 32
 SMEM_BANK_BYTES = 4
@@ -384,8 +385,11 @@ class TiledLayout:
         d.times if isinstance(d, Replicated) else min_tiled_shape[d]
         for d in self.lane_dims
     )
-    if lane_dims_prod != WARP_SIZE:
-      raise ValueError("The product of lane dims does not equal the warp size")
+    # TODO(Arech): remove IS_ROCM check here after TiledLayout instantiation
+    # definitions start respect actual WARP_SIZE which could be different.
+    if not IS_ROCM:
+      if lane_dims_prod != WARP_SIZE:
+        raise ValueError("The product of lane dims does not equal the warp size")
     if _check_canonical:
       canonical_layout = self.canonicalize()
       if self != canonical_layout:

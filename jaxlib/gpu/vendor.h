@@ -68,6 +68,9 @@ typedef CUdevice gpuDevice_t;
 typedef CUdeviceptr gpuDevicePtr_t;
 typedef cudaStream_t gpuStream_t;
 typedef cudaError_t gpuError_t;
+// CUDA Driver API has very much different error handling than CUDA Runtime API
+// and cudaError_t (runtime's) isn't the same as CUresult (driver's).
+typedef CUresult gpuDrvError_t;
 typedef CUevent gpuEvent_t;
 typedef CUfunction gpuFunction_t;
 typedef cudnnHandle_t gpudnnHandle_t;
@@ -99,6 +102,9 @@ typedef cusparseStatus_t gpusparseStatus_t;
 typedef cusparseSpMatDescr_t gpusparseSpMatDescr_t;
 typedef cusparseDnMatDescr_t gpusparseDnMatDescr_t;
 typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
+
+using gpuLaunchConfig_t = CUlaunchConfig;
+using gpuLaunchAttribute_t = CUlaunchAttribute;
 
 #define GPU_C_16F CUDA_C_16F
 #define GPU_R_16F CUDA_R_16F
@@ -365,8 +371,10 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuEventDestroy cuEventDestroy
 #define gpuFuncGetAttribute cuFuncGetAttribute
 #define gpuFuncSetCacheConfig cuFuncSetCacheConfig
+#define gpuDrvGetErrorString cuGetErrorString
 #define gpuInit cuInit
 #define gpuLaunchKernel cuLaunchKernel
+#define gpuLaunchKernelEx cuLaunchKernelEx
 #define gpuMemcpyDtoHAsync cuMemcpyDtoHAsync
 #define gpuMemcpyHtoDAsync cuMemcpyHtoDAsync
 #define gpuMemsetD8Async cuMemsetD8Async
@@ -402,6 +410,7 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuStreamSynchronize cudaStreamSynchronize
 #define gpuStreamWaitEvent cudaStreamWaitEvent
 #define gpuSuccess cudaSuccess
+#define gpuDrvSuccess CUDA_SUCCESS
 
 #define gpuDeviceProp cudaDeviceProp
 #define gpuGetDeviceProperties cudaGetDeviceProperties
@@ -493,6 +502,8 @@ typedef hipDevice_t gpuDevice_t;
 typedef hipDeviceptr_t gpuDevicePtr_t;
 typedef hipStream_t gpuStream_t;
 typedef hipError_t gpuError_t;
+// but HIP uses the same error space for Runtime and Driver APIs.
+typedef hipError_t gpuDrvError_t;
 typedef hipEvent_t gpuEvent_t;
 typedef hipFunction_t gpuFunction_t;
 typedef miopenHandle_t gpudnnHandle_t;
@@ -520,6 +531,9 @@ typedef hipsparseStatus_t gpusparseStatus_t;
 typedef hipsparseSpMatDescr_t gpusparseSpMatDescr_t;
 typedef hipsparseDnMatDescr_t gpusparseDnMatDescr_t;
 typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
+
+using gpuLaunchConfig_t = HIP_LAUNCH_CONFIG;
+using gpuLaunchAttribute_t = hipLaunchAttribute;
 
 #define GPU_C_16F HIP_C_16F
 #define GPU_R_16F HIP_R_16F
@@ -762,6 +776,7 @@ inline hipsparseStatus_t gpusparseCreate(gpusparseHandle_t* handle) {
 #define gpuStreamSynchronize hipStreamSynchronize
 #define gpuStreamWaitEvent hipStreamWaitEvent
 #define gpuSuccess hipSuccess
+#define gpuDrvSuccess hipSuccess
 
 #define gpuCtxGetDevice hipCtxGetDevice
 #define gpuCtxGetCurrent hipCtxGetCurrent
@@ -770,6 +785,7 @@ inline hipsparseStatus_t gpusparseCreate(gpusparseHandle_t* handle) {
 #define gpuDeviceGet hipDeviceGet
 #define gpuDeviceGetAttribute hipDeviceGetAttribute
 #define gpuDevicePrimaryCtxRetain hipDevicePrimaryCtxRetain
+#define gpuDrvGetErrorString hipDrvGetErrorString
 #define gpuEventCreate hipEventCreateWithFlags
 #define gpuEventRecord hipEventRecord
 #define gpuEventSynchronize hipEventSynchronize
@@ -780,6 +796,7 @@ inline hipsparseStatus_t gpusparseCreate(gpusparseHandle_t* handle) {
 #define gpuGetStreamDeviceId hipGetStreamDeviceId
 #define gpuInit hipInit
 #define gpuLaunchKernel hipModuleLaunchKernel
+#define gpuLaunchKernelEx hipDrvLaunchKernelEx
 #define gpuModuleGetFunction hipModuleGetFunction
 #define gpuModuleLoadData hipModuleLoadData
 #define gpuModuleUnload hipModuleUnload
@@ -819,5 +836,29 @@ constexpr uint32_t kNumThreadsPerWarp = 64;
 #else  // defined(GPU vendor)
 #error "Either JAX_GPU_CUDA or JAX_GPU_HIP must be defined"
 #endif  // defined(GPU vendor)
+
+namespace {
+/// Safely returns verbose error string for the given Driver API error.
+const char *gpuDrvErrorString(gpuDrvError_t result) {
+  const char *error{nullptr};
+  gpuDrvGetErrorString(result, &error);
+  return error == nullptr ? "<unknown error>" : error;
+}
+} // namespace
+
+/// \brief Executes a return statement with absl::InternalError() object
+/// having a verbose error message if the vendor specific Driver API statement
+/// errors out. Otherwise a no-op.
+/// \details Use it instead of CUDA_RETURN_IF_ERROR or similar macro for
+/// portability.
+/// The user is responsible for using it with Driver API only on CUDA or in a
+/// vendor-agnostic code.
+/// \pre Assumes #include "absl/status/status.h"
+#define GPUDRV_RETURN_IF_ERROR(stmt)                                           \
+  do {                                                                         \
+    if (gpuDrvError_t result = (stmt); result != gpuDrvSuccess) {              \
+      return absl::InternalError(gpuDrvErrorString(result));                   \
+    }                                                                          \
+  } while (0)
 
 #endif  // JAXLIB_GPU_VENDOR_H_

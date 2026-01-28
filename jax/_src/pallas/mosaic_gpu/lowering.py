@@ -83,7 +83,7 @@ zip, unsafe_zip = util.safe_zip, zip
 
 partial = functools.partial
 SMEM = gpu_core.SMEM
-WARPGROUP_SIZE = 128
+WARPGROUP_SIZE = mgpu_utils.WARPGROUP_SIZE
 RefOrTmemType = TypeVar("RefOrTmemType", ir.Value, tcgen05.TMEMRef)
 CollectiveAxesType = Sequence[Hashable]
 
@@ -332,6 +332,8 @@ def _run_scoped_resource_estimator(
         raise ValueError(f"TMEM allocations must be 2D. Got {aval.shape}")
       # Estimate columns used.
       if isinstance(aval, gpu_core.AbstractRefUnion):
+        # TODO(arechins) 128 below might be a hardcoded WARPGROUP_SIZE which needs to be fixed once
+        # we have TMEM support ready
         assert aval.shape[0] == 128
         cols_used = aval.shape[1]
       else:
@@ -743,13 +745,13 @@ def lower_pipelined_jaxpr_to_module(
 
   if gpu_mesh:
     assert isinstance(gpu_mesh, gpu_core.Mesh)
-    block = (128 * (gpu_mesh.num_threads or 1), 1, 1)
+    block = (WARPGROUP_SIZE * (gpu_mesh.num_threads or 1), 1, 1)
     grid = gpu_mesh.grid
     thread_axis = (
         gpu_mesh.thread_name if gpu_mesh.thread_name is not None else ()
     )
   else:
-    block = (128, 1, 1)
+    block = (WARPGROUP_SIZE, 1, 1)
     grid = grid_mapping.grid
     thread_axis = ()
 

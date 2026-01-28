@@ -30,11 +30,14 @@ from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvvm
+from jaxlib.mlir.dialects import scf
 import numpy as np
 
 from . import fragmented_array as fa
 from . import profiler
 from . import utils
+
+IS_ROCM = utils.IS_ROCM
 
 TMA_DESCRIPTOR_BYTES = 128
 TMA_DESCRIPTOR_ALIGNMENT = 64
@@ -999,6 +1002,145 @@ class LaunchContext:
       )
     return (smem_ref, slice_shape, dyn_base_indices, gmem_transform)
 
+  def async_copy_rocm(
+      self,
+      *,
+      src_ref: ir.Value,
+      dst_ref: ir.Value,
+      gmem_slice: Any = (),
+      gmem_transform: MemRefTransform | tuple[MemRefTransform, ...] = (),
+      gmem_peer_id: int | ir.Value | GlobalBroadcast | None = None,
+      barrier: utils.BarrierRef | None = None,
+      swizzle: int | None = None,
+      arrive: bool | None = None,
+      collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
+      partitioned: int | None = None,
+      # Should select 0 or 1 threads from the WG.
+      predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
+      reduction_op: TMAReductionOp | None = None,
+      implementation: AsyncCopyImplementation = AsyncCopyImplementation.TMA,
+  ):
+    """This is a stub for the ROCM implementation of async_copy function in an
+    old-fashioned synchronous way.
+    Once we have HW support, it'll be replaced with a proper implementation.
+    """
+    assert not gmem_transform
+    assert not gmem_peer_id
+    assert not swizzle
+    assert not collective
+    assert not partitioned
+    assert not reduction_op
+
+    index = ir.IndexType.get()
+    src_ref_ty = ir.MemRefType(src_ref.type)
+    dst_ref_ty = ir.MemRefType(dst_ref.type)
+    element_type = src_ref_ty.element_type
+    if element_type != dst_ref_ty.element_type:
+      raise ValueError(
+          f"Expected same element type, got {element_type} and"
+          f" {dst_ref_ty.element_type}"
+      )
+    if not isinstance(gmem_slice, tuple):
+      gmem_slice = (gmem_slice,)
+
+    if src_ref_ty.memory_space is None and utils.is_smem_ref(dst_ref_ty):
+      gmem_ref, smem_ref = src_ref, dst_ref
+    elif utils.is_smem_ref(src_ref_ty) and dst_ref_ty.memory_space is None:
+      gmem_ref, smem_ref = dst_ref, src_ref
+    else:
+      raise ValueError("Only SMEM <-> GMEM copies supported")
+
+    (
+        slice_shape,
+        dyn_base_indices,
+        squeezed_dims,
+        gather_indices,
+        gmem_transform,
+    ) = self._prepare_async_copy(
+        gmem_ref,
+        gmem_slice,
+        gmem_transform,
+        collective,
+        partitioned,
+        implementation,
+    )
+
+    gmem_ref_ty = ir.MemRefType(gmem_ref.type)
+    smem_ref_ty = ir.MemRefType(smem_ref.type)
+
+    # We moved all squeezed dims to the front in _prepare_async_copy.
+    assert all(d == 1 for d in slice_shape[:len(squeezed_dims)])
+    if slice_shape[len(squeezed_dims):] != smem_ref_ty.shape:
+      raise ValueError(
+          "Expected the SMEM reference to have the same shape as the"
+          f" transformed slice: {tuple(smem_ref_ty.shape)} !="
+          f" {slice_shape[len(squeezed_dims):]}"
+      )
+
+    tid_idx = arith.index_cast(index, utils.thread_idx())
+    block_dim_x = gpu.block_dim(gpu.Dimension.x)
+    block_dim_y = gpu.block_dim(gpu.Dimension.y)
+    block_dim_z = gpu.block_dim(gpu.Dimension.z)
+    block_size = arith.muli(block_dim_x, arith.muli(block_dim_y, block_dim_z))
+
+    # Get actual SMEM shape and validate
+    smem_shape = list(smem_ref_ty.shape)
+
+    # Validate shapes match
+    expected_smem_shape = slice_shape[len(squeezed_dims):]
+    if expected_smem_shape != smem_shape:
+        raise ValueError(
+            f"SMEM shape {smem_shape} doesn't match expected slice shape "
+            f"{expected_smem_shape}"
+        )
+
+    total_elements = math.prod(smem_shape)
+    total_c = c(total_elements, index)
+    gmem_to_smem = (gmem_ref is src_ref)
+
+    # Compute strides for SMEM index conversion (row-major)
+    smem_strides = []
+    s = 1
+    for d in reversed(smem_shape):
+        smem_strides.insert(0, s)
+        s *= d
+
+    # Use scf.ForOp directly for strided loop
+    for_op = scf.ForOp(tid_idx, total_c, block_size, [])
+    with ir.InsertionPoint(for_op.body):
+        lin_idx = for_op.induction_variable
+
+        # Linear to multi-dimensional index conversion for SMEM
+        remaining = lin_idx
+        smem_idx = []
+        for dim_size, stride in zip(smem_shape, smem_strides):
+            stride_c = c(stride, index)
+            idx = arith.divui(remaining, stride_c)
+            remaining = arith.remui(remaining, stride_c)
+            smem_idx.append(idx)
+
+        # Compute GMEM indices: start with base indices, then add offsets
+        # Skip squeezed dims (they keep their base index)
+        gmem_idx = list(dyn_base_indices)
+        for i, idx in enumerate(smem_idx):
+            gmem_dim = i + len(squeezed_dims)
+            gmem_idx[gmem_dim] = arith.addi(dyn_base_indices[gmem_dim], idx)
+
+        if gmem_to_smem:
+            val = memref.load(gmem_ref, gmem_idx)
+            memref.store(val, smem_ref, smem_idx)
+        else:
+            val = memref.load(smem_ref, smem_idx)
+            memref.store(val, gmem_ref, gmem_idx)
+
+        scf.YieldOp([])
+
+    # Since this is a part of an asynch code, there'll be an explicit
+    # synchronization later
+    # rocdl.s_waitcnt(0)
+    # gpu.barrier()
+
+
   def async_copy(
       self,
       *,
@@ -1043,6 +1185,22 @@ class LaunchContext:
       transfer across all blocks involved in the collective. Barriers supplied
       by other blocks will be ignored (even if `arrive` is True).
     """
+    if IS_ROCM:
+      return self.async_copy_rocm(
+        src_ref=src_ref,
+        dst_ref=dst_ref,
+        gmem_slice=gmem_slice,
+        gmem_transform=gmem_transform,
+        gmem_peer_id=gmem_peer_id,
+        barrier=barrier,
+        swizzle=swizzle,
+        arrive=arrive,
+        collective=collective,
+        partitioned=partitioned,
+        predicate=predicate,
+        reduction_op=reduction_op,
+        implementation=implementation,
+      )
     index = ir.IndexType.get()
     i8 = ir.IntegerType.get_signless(8)
     i16 = ir.IntegerType.get_signless(16)
@@ -1536,7 +1694,12 @@ class LaunchContext:
       self, allow_groups: int, await_read_only: bool = False,
       scope: utils.ThreadSubset = utils.ThreadSubset.WARPGROUP,
   ):
-    nvvm.cp_async_bulk_wait_group(allow_groups, read=await_read_only)
+    if IS_ROCM:
+      # we don't have async copies yet, so we'll use a regular fence provided by
+      # the barrier implementations called directly afterwards below.
+      pass
+    else:
+      nvvm.cp_async_bulk_wait_group(allow_groups, read=await_read_only)
     if scope == utils.ThreadSubset.WARPGROUP:
       utils.warpgroup_barrier()
     elif scope == utils.ThreadSubset.WARP:

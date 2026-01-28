@@ -55,8 +55,9 @@ import numpy as np
 
 
 AxisName = jax_core.AxisName
-WARP_SIZE = 32
-WARPGROUP_SIZE = 128
+IS_ROCM = mgpu_utils.IS_ROCM
+WARP_SIZE = mgpu_utils.WARP_SIZE
+WARPGROUP_SIZE = mgpu_utils.WARPGROUP_SIZE
 
 
 _Ref = state.AbstractRef | state_types.TransformedRef
@@ -1047,7 +1048,11 @@ def _commit_group_abstract_eval():
     commit_group_p, mgpu.LoweringSemantics.Warpgroup)
 def _commit_group_lowering(ctx: lowering.LoweringRuleContext):
   del ctx  # Unused.
-  nvvm_dialect.cp_async_bulk_commit_group()
+  if IS_ROCM:
+    # we don't have async copies yet, so barriers handle the sync
+    pass
+  else:
+    nvvm_dialect.cp_async_bulk_commit_group()
   return ()
 
 

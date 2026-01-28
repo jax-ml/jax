@@ -48,6 +48,22 @@ nanobind_pywrap_extension(
 )
 
 nanobind_pywrap_extension(
+    name = "_mlirDialectsAMDGPU",
+    srcs = [
+        "@llvm-project//mlir:lib/Bindings/Python/DialectAMDGPU.cpp",
+    ],
+    copts = COPTS,
+    deps = [
+        "@llvm-project//mlir:CAPIDebug",
+        "@llvm-project//mlir:CAPIIR",
+        "@llvm-project//mlir:CAPIAMDGPU",
+        "@llvm-project//mlir:CAPITransforms",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeaders",
+        "@nanobind",
+    ],
+)
+
+nanobind_pywrap_extension(
     name = "_mlirDialectsGPU",
     srcs = [
         "@llvm-project//mlir:lib/Bindings/Python/DialectGPU.cpp",
@@ -258,6 +274,7 @@ nanobind_pywrap_extension(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:CAPIAMDGPU",
         "@llvm-project//mlir:CAPIArith",
         "@llvm-project//mlir:CAPICF",
         "@llvm-project//mlir:CAPIDebug",
@@ -268,6 +285,7 @@ nanobind_pywrap_extension(
         "@llvm-project//mlir:CAPIMemRef",
         "@llvm-project//mlir:CAPINVGPU",
         "@llvm-project//mlir:CAPINVVM",
+        "@llvm-project//mlir:CAPIROCDL",
         "@llvm-project//mlir:CAPISCF",
         "@llvm-project//mlir:CAPITransforms",
         "@llvm-project//mlir:CAPIVector",

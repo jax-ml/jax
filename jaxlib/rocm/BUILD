@@ -485,6 +485,7 @@ py_library(
         ":_solver",
         ":_sparse",
         ":_triton",
+        "//jaxlib/mosaic/gpu:mosaic_gpu",
     ],
 )
 

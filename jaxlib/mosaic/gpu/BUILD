@@ -16,7 +16,13 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_python//python:defs.bzl", "py_library")
-load("//jaxlib:jax.bzl", "if_oss", "nanobind_extension")
+load(
+    "//jaxlib:jax.bzl",
+    "if_oss",
+    "nanobind_extension",
+    "if_cuda_is_configured",
+    "if_rocm_is_configured"
+)
 
 package(
     default_applicable_licenses = [],
@@ -143,17 +149,23 @@ cc_library(
 cc_library(
     name = "passes",
     srcs = [
-        "assembly_to_binary.cc",
-        "gpu_module_to_assembly.cc",
         "launch_lowering.cc",
         "passes.cc",
-    ],
+    ] + if_cuda_is_configured([
+        "assembly_to_binary.cc",
+        "gpu_module_to_assembly.cc",
+    ]) + if_rocm_is_configured([
+        "rocm_module_to_binary.cc",
+    ]),
     hdrs = [
-        "assembly_to_binary.h",
-        "gpu_module_to_assembly.h",
         "launch_lowering.h",
         "passes.h",
-    ],
+    ]  + if_cuda_is_configured([
+        "assembly_to_binary.h",
+        "gpu_module_to_assembly.h",
+    ]) + if_rocm_is_configured([
+        "rocm_module_to_binary.h",
+    ]),
     features = ["asan_runtime_closure"],  # Details: https://github.com/google-ml-infra/rules_ml_toolchain/tree/main/cc/sanitizers#troubleshooting
     deps = [
         ":dump",
@@ -173,18 +185,25 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:LLVMCommonConversion",
         "@llvm-project//mlir:LLVMDialect",
-        "@llvm-project//mlir:NVVMDialect",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TargetLLVM",
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:VectorDialect",
         "@xla//xla/service/gpu/llvm_gpu_backend:load_ir_module",
+        "@xla//xla/tsl/platform:statusor",
+    ] + if_cuda_is_configured([
+        "@llvm-project//mlir:NVVMDialect",
         "@xla//xla/stream_executor/cuda:compilation_options",
         "@xla//xla/stream_executor/cuda:compilation_provider",
         "@xla//xla/stream_executor/cuda:cuda_compute_capability",
-        "@xla//xla/tsl/platform:statusor",
-    ],
+    ]) + if_rocm_is_configured([
+        "@llvm-project//mlir:ROCDLDialect",
+        "@xla//xla/service/gpu/llvm_gpu_backend:amdgpu_backend",
+        "@xla//xla/stream_executor/rocm:rocm_compute_capability",
+        "@xla//xla/stream_executor:device_description",
+        "@xla//xla:debug_options_flags",
+    ]),
 )
 
 CAPI_SOURCES = [
@@ -234,6 +253,7 @@ cc_library(
     # Linker may prune these symbols if they are not explicitly exported.
     linkopts = [
         "-Wl,--export-dynamic-symbol='mosaic_gpu_*'",
+    ] + if_cuda_is_configured([
         "-Wl,--export-dynamic-symbol='nvshmem_my_pe'",
         "-Wl,--export-dynamic-symbol='nvshmem_ptr'",
         "-Wl,--export-dynamic-symbol='nvshmemx_barrier_all_on_stream'",
@@ -241,11 +261,15 @@ cc_library(
         "-Wl,--export-dynamic-symbol='nvshmemx_cumodule_init'",
         "-Wl,--export-dynamic-symbol='nvshmemx_init_status'",
         "-Wl,--export-dynamic-symbol='nvshmemx_mc_ptr'",
-    ],
+    ]),
     deps = [
+    ] + if_cuda_is_configured([
         ":nvshmem",
+        "//jaxlib/cuda:cuda_vendor",
         "@local_config_cuda//cuda:cuda_headers",
-    ],
+    ]) + if_rocm_is_configured([
+        "//jaxlib/rocm:hip_vendor",
+    ]),
     alwayslink = True,
 )
 
@@ -260,6 +284,8 @@ cc_library(
 
 cc_library(
     name = "custom_call",
+    # needs to be visible when building pjrt for ROCm, whose build system is external to the repo.
+    visibility = ["//visibility:public"],
     srcs = ["custom_call.cc"],
     linkopts = if_oss(
         [],  # We use a version script to ensure symbol visibility in the OSS build.
@@ -271,11 +297,8 @@ cc_library(
     deps = [
         ":dump",
         ":library_paths",  # buildcleaner: keep
-        ":nvshmem",
         ":passes",
         ":serde",
-        ":target",
-        "//jaxlib/cuda:cuda_vendor",
         "//jaxlib/mosaic/dialect/gpu:mosaic_gpu",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -316,11 +339,6 @@ cc_library(
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:MemRefToLLVM",
         "@llvm-project//mlir:MemRefTransforms",
-        "@llvm-project//mlir:NVGPUDialect",
-        "@llvm-project//mlir:NVVMDialect",
-        "@llvm-project//mlir:NVVMTarget",
-        "@llvm-project//mlir:NVVMToLLVM",
-        "@llvm-project//mlir:NVVMToLLVMIRTranslation",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:SCFDialect",
@@ -329,7 +347,6 @@ cc_library(
         "@llvm-project//mlir:UBToLLVM",
         "@llvm-project//mlir:VectorDialect",
         "@llvm-project//mlir:VectorToLLVM",
-        "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/profiler/lib:traceme",
         "@xla//xla:executable_run_options",
@@ -343,6 +360,18 @@ cc_library(
         "@xla//xla/ffi:ffi_api",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/service:custom_call_target_registry",
+        "@xla//xla/tsl/platform:statusor",
+        "@xla//xla/tsl/platform:errors",
+    ] + if_cuda_is_configured([
+        ":nvshmem",
+        ":target",
+        "//jaxlib/cuda:cuda_vendor",
+        "@llvm-project//mlir:NVGPUDialect",
+        "@llvm-project//mlir:NVVMDialect",
+        "@llvm-project//mlir:NVVMTarget",
+        "@llvm-project//mlir:NVVMToLLVM",
+        "@llvm-project//mlir:NVVMToLLVMIRTranslation",
+        "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
         "@xla//xla/service/llvm_ir:llvm_command_line_options",
         "@xla//xla/stream_executor:device_description",
@@ -351,9 +380,14 @@ cc_library(
         "@xla//xla/stream_executor/cuda:compilation_provider_options",
         "@xla//xla/stream_executor/cuda:cuda_compute_capability",
         "@xla//xla/stream_executor/cuda:ptx_compiler_support",
-        "@xla//xla/tsl/platform:errors",
-        "@xla//xla/tsl/platform:statusor",
-    ],
+    ]) + if_rocm_is_configured([
+        "//jaxlib/rocm:hip_vendor",
+        "@llvm-project//mlir:ROCDLDialect",
+        "@llvm-project//mlir:ROCDLTarget",
+        "@llvm-project//mlir:ROCDLToLLVMIRTranslation",
+        "@xla//xla/stream_executor/rocm:rocm_compute_capability",
+        "@xla//xla/stream_executor/rocm:rocm_driver_wrapper",
+    ]),
     alwayslink = True,
 )
 
@@ -385,19 +419,23 @@ cc_test(
 
 nanobind_extension(
     name = "_mosaic_gpu_ext",
-    srcs = ["mosaic_gpu_ext.cc"],
+    srcs = if_cuda_is_configured(["mosaic_gpu_ext.cc"])
+         + if_rocm_is_configured(["mosaic_gpu_ext_rocm.cc"]),
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
     deps = [
         "//jaxlib:kernel_nanobind_helpers",
-        "//jaxlib/cuda:cuda_vendor",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/strings",
         "@nanobind",
+    ] + if_cuda_is_configured([
+        "//jaxlib/cuda:cuda_vendor",
         "@xla//xla/tsl/cuda:cudart",
-    ],
+    ]) + if_rocm_is_configured([
+        "//jaxlib/rocm:hip_vendor",
+    ]),
 )
 
 cc_binary(
@@ -410,12 +448,18 @@ cc_binary(
         "notap",
     ],
     deps = [
+    ] + if_cuda_is_configured([
         ":nvshmem",
+        "//jaxlib/cuda:cuda_vendor",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/tsl/cuda:cudart",
-    ],
+    ]) + if_rocm_is_configured([
+        "//jaxlib/rocm:hip_vendor",
+        "@xla//xla/stream_executor/rocm:rocm_driver_wrapper",
+    ]),
 )
 
+# Note, this remains CUDA specific, as ROCm uses XLA's compiler wrapper which doesn't need it
 cc_library(
     name = "library_paths",
     hdrs = ["library_paths.h"],

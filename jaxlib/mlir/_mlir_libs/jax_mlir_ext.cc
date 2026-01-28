@@ -30,6 +30,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
+#include "mlir-c/Dialect/AMDGPU.h"  // IWYU pragma: keep
 #include "mlir-c/Dialect/Arith.h"  // IWYU pragma: keep
 #include "mlir-c/Dialect/ControlFlow.h"
 #include "mlir-c/Dialect/Func.h"  // IWYU pragma: keep
@@ -39,6 +40,7 @@ limitations under the License.
 #include "mlir-c/Dialect/MemRef.h"  // IWYU pragma: keep
 #include "mlir-c/Dialect/NVGPU.h"  // IWYU pragma: keep
 #include "mlir-c/Dialect/NVVM.h"  // IWYU pragma: keep
+#include "mlir-c/Dialect/ROCDL.h"  // IWYU pragma: keep
 #include "mlir-c/Dialect/SCF.h"  // IWYU pragma: keep
 #include "mlir-c/Dialect/Vector.h"  // IWYU pragma: keep
 #include "mlir-c/IR.h"
@@ -206,11 +208,13 @@ NB_MODULE(_jax_mlir_ext, m) {
     unwrap(registry)->insert<mlir::vhlo::VhloDialect>();
 
     // For Mosaic GPU
+    REGISTER_DIALECT(amdgpu);
     REGISTER_DIALECT(cf);
     REGISTER_DIALECT(gpu);
     REGISTER_DIALECT(nvgpu);
     REGISTER_DIALECT(nvvm);
     REGISTER_DIALECT(llvm);
+    REGISTER_DIALECT(rocdl);
 #undef REGISTER_DIALECT
 
     mlirMosaicGpuRegisterSerdePass();
