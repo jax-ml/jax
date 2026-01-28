@@ -133,14 +133,17 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
     if jtu.is_device_rocm():
       self.skipTest("Mosaic GPU is not supported on ROCm.")
 
-    if (not jtu.is_device_cuda() or
+    # Check mosaic support first (before GPU capability check)
+    if not mgpu.supports_cross_device_collectives():
+      if jtu.test_device_matches(["rocm"]):
+        self.skipTest("Mosaic not supported on ROCm currently.")
+      else:
+        self.skipTest("NVSHMEM library unavailable.")
+    if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("Only works on GPU with capability >= sm90")
-    if not mgpu.supports_cross_device_collectives():
-      self.skipTest(
-          "Skip test since cross-device collectives are not supported"
-          " (either NVSHMEM is not available in multi-process mode, or mixed"
-          " mode is used).")
+    if jax.process_count() == 1:
+      self.skipTest("Test requires multiple processes.")
     if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
       self.skipTest("NVSHMEM doesn't work with the platform allocator.")
 
