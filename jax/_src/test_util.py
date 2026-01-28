@@ -606,9 +606,23 @@ def _device_filter(predicate, skip_reason=None):
     return test_method_wrapper
   return skip
 
-def skip_on_devices(*disabled_devices):
-  """A decorator for test methods to skip the test on certain devices."""
-  return _device_filter(lambda: not test_device_matches(disabled_devices))
+def skip_on_devices(*disabled_devices, skip_reason=None):
+  """A decorator for test methods to skip the test on certain devices.
+  
+  Args:
+    *disabled_devices: Device names that the test should skip on.
+    skip_reason: Optional custom skip message when test is skipped.
+  """
+  if skip_reason is None:
+    skip_messages = {
+      ("gpu",): "Skipped on all GPUs.",
+      ("cpu",): "Skipped on CPU.",
+      ("tpu",): "Skipped on TPU.",
+      ("cuda",): "Skipped on CUDA GPUs.",
+      ("rocm",): "Skipped on ROCm GPUs.",
+    }
+    skip_reason = skip_messages.get(disabled_devices)
+  return _device_filter(lambda: not test_device_matches(disabled_devices), skip_reason)
 
 def run_on_devices(*enabled_devices, skip_reason=None):
   """A decorator for test methods to run the test only on certain devices.
@@ -618,10 +632,14 @@ def run_on_devices(*enabled_devices, skip_reason=None):
     skip_reason: Optional custom skip message when test is skipped.
   """
   if skip_reason is None:
-    if enabled_devices == ("cpu",):
-      skip_reason = "Skipped: CPU-only test."
-    elif enabled_devices == ("tpu",):
-      skip_reason = "Skipped: TPU-only test."
+    device_specific_skip_reasons = {
+        ("cpu",): "Skipped: CPU-only test.",
+        ("tpu",): "Skipped: TPU-only test.",
+        ("gpu",): "Skipped: GPU-only test.",
+        ("rocm",): "Skipped: ROCm-only test.",
+        ("cuda",): "Skipped: CUDA-only test.",
+    }
+    skip_reason = device_specific_skip_reasons.get(enabled_devices)
   return _device_filter(lambda: test_device_matches(enabled_devices), skip_reason)
 
 def device_supports_buffer_donation():
