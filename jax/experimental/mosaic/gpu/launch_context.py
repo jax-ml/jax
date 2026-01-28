@@ -64,6 +64,9 @@ COLLECTIVE_ATTR = "mosaic_gpu.collective_metadata_used"
 KERNEL_ARG_ID_ATTR = "mosaic_gpu.from_kernel_arg_idx"
 # Attribute used to mark the first creation of the GMEM kernel arguments.
 ORIGINAL_KERNEL_ARG_ATTR = "mosaic_gpu.original_kernel_arg"
+# Module attribute used to identify which kernel arguments are used with
+# multimem.
+MULTIMEM_ARGS_ATTR = "mosaic_gpu.multimem_args"
 
 
 def uses_collective_metadata(module):
@@ -1677,13 +1680,6 @@ class LaunchContext:
   def to_remote_multicast(self, ref: ir.Value):
     i32 = ir.IntegerType.get_signless(32)
 
-    # TODO(patrios): Support multimem lowering with collective metadata
-    if self.collective_metadata is not None:
-      raise NotImplementedError(
-          "Multicast lowering with collective metadata is not implemented yet"
-      )
-
-    self._ensure_nvshmem_decls()
     if not isinstance(ref.type, ir.MemRefType):
       raise ValueError(f"Unsupported type for to_remote_multicast: {ref.type}")
       # We replace the offset in the ref type by 0, because memref_ptr always
@@ -1696,12 +1692,60 @@ class LaunchContext:
         ir.StridedLayoutAttr.get(0, strides),
         ref_ty.memory_space,
     )
-    world_team = arith.constant(i32, 0)
-    ptr = utils.memref_ptr(ref)
-    mc_ptr = llvm.call(
-        ptr.type, [world_team, ptr], [], [], callee="nvshmemx_mc_ptr",
-    )
-    return utils.MultimemRef(utils.ptr_as_memref(mc_ptr, result_type))
+
+    if self.collective_metadata is None:
+      self._ensure_nvshmem_decls()
+      world_team = arith.constant(i32, 0)
+      ptr = utils.memref_ptr(ref)
+      mc_ptr = llvm.call(
+          ptr.type,
+          [world_team, ptr],
+          [],
+          [],
+          callee="nvshmemx_mc_ptr",
+      )
+      return utils.MultimemRef(utils.ptr_as_memref(mc_ptr, result_type))
+    else:
+      parameter_id = self._find_kernel_argument_index(ref)
+      module_attributes = self.module.operation.attributes
+      if MULTIMEM_ARGS_ATTR in module_attributes:
+        if str(parameter_id) not in module_attributes[MULTIMEM_ARGS_ATTR].value:
+          module_attributes[MULTIMEM_ARGS_ATTR] = ir.StringAttr.get(
+              module_attributes[MULTIMEM_ARGS_ATTR].value
+              + ","
+              + str(parameter_id)
+          )
+      else:
+        module_attributes[MULTIMEM_ARGS_ATTR] = ir.StringAttr.get(
+            str(parameter_id)
+        )
+
+      index_type = ir.IndexType.get()
+      parameters_offset = (
+          COLLECTIVE_METADATA_SIZE + self.num_peers * parameter_id
+      )
+      parameters_offset_constant = arith.constant(index_type, parameters_offset)
+      current_device = arith.index_cast(index_type, self.device_id())
+      current_device_parameter_offset = arith.addi(
+          parameters_offset_constant, current_device
+      )
+      parameter_ref = memref.load(
+          self.collective_metadata, [current_device_parameter_offset]
+      )
+      ref_ptr = utils.memref_ptr(ref)
+      ref_int = llvm.ptrtoint(ir.IntegerType.get_signless(64), ref_ptr)
+      ref_offset = arith.subi(ref_int, parameter_ref)
+
+      # multimem_ptr is the third field in the collective metadata.
+      multimem_ref_offset = arith.constant(ir.IndexType.get(), 2)
+      multimem_ref = memref.load(
+          self.collective_metadata, [multimem_ref_offset]
+      )
+
+      multimem_address = arith.addi(multimem_ref, ref_offset)
+      ptr_type = ir.Type.parse("!llvm.ptr")
+      multimem_ptr = llvm.inttoptr(ptr_type, multimem_address)
+      return utils.MultimemRef(utils.ptr_as_memref(multimem_ptr, result_type))
 
   def device_id(self) -> ir.Value:
     i32 = ir.IntegerType.get_signless(32)
