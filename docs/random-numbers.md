@@ -32,14 +32,15 @@ To better understand the difference between the approaches taken by JAX and NumP
 ## Random numbers in NumPy
 
 Pseudo random number generation is natively supported in NumPy by the {mod}`numpy.random` module.
-In NumPy, pseudo random number generation is based on a global `state`, which can be set to a deterministic initial condition using {func}`numpy.random.seed`.
+Modern NumPy encourages using local generator objects such as numpy.random.default_rng for reproducible results, while legacy functions like numpy.random.seed() operate on a global state.
+In both cases, however, NumPy’s PRNG state is updated implicitly by random function calls, and this mutation is hidden from the function signature.
 
 ```{code-cell}
 import numpy as np
 np.random.seed(0)
 ```
 
-Repeated calls to NumPy's stateful pseudorandom number generators (PRNGs) mutate the global state and give a stream of pseudorandom numbers:
+Repeated calls to NumPy’s stateful pseudorandom number generators (PRNGs) implicitly mutate internal PRNG state—whether that state is global or associated with a local generator—and produce a stream of pseudorandom numbers:
 
 ```{code-cell}
 :id: rr9FeP41fynt
@@ -94,15 +95,15 @@ print("all at once: ", np.random.uniform(size=3))
 
 ## Random numbers in JAX
 
-JAX's random number generation differs from NumPy's in important ways, because NumPy's
-PRNG design makes it hard to simultaneously guarantee a number of desirable properties.
+JAX's random number generation differs in that it tracks PRNG state explicitly via keys.
+This design ensures reproducibility, parallelism, and vectorization, while still allowing fair comparison with modern NumPy generators.
 Specifically, in JAX we want PRNG generation to be:
 
 1. reproducible,
 2. parallelizable,
 3. vectorisable.
 
-We will discuss why in the following. First, we will focus on the implications of a PRNG design based on a global state. Consider the code:
+We will discuss why in the following. First, we will focus on the implications of a PRNG design based on implicit state mutation. Consider the code:
 
 ```{code-cell}
 import numpy as np
@@ -122,11 +123,11 @@ The function `foo` sums two scalars sampled from a uniform distribution.
 The output of this code can only satisfy requirement #1 if we assume a predictable order of execution for `bar()` and `baz()`.
 This is not a problem in NumPy, which always evaluates code in the order defined by the Python interpreter.
 In JAX, however, this is more problematic: for efficient execution, we want the JIT compiler to be free to reorder, elide, and fuse various operations in the function we define.
-Further, when executing in multi-device environments, execution efficiency would be hampered by the need for each process to synchronize a global state.
+Further, when executing in multi-device environments, execution efficiency would be hampered by the need for each process to synchronize implicitly mutated PRNG state.
 
 ### Explicit random state
 
-To avoid these issues, JAX avoids implicit global random state, and instead tracks state explicitly via a random `key`:
+To avoid these issues, JAX avoids implicit PRNG state mutation entirely, and instead tracks state explicitly via a random `key`:
 
 ```{code-cell}
 from jax import random
@@ -142,7 +143,7 @@ old-style raw PRNG keys produced by {func}`jax.random.PRNGKey`. For details, see
 
 A key is an array with a special dtype corresponding to the particular PRNG implementation being used; in the default implementation each key is backed by a pair of `uint32` values.
 
-The key is effectively a stand-in for NumPy's hidden state object, but we pass it explicitly to {func}`jax.random` functions.
+The key plays a role analogous to NumPy’s hidden PRNG state object; however, unlike NumPy, this state is never mutated implicitly and must be passed and updated explicitly by the user.
 Importantly, random functions consume the key, but do not modify it: feeding the same key object to a random function will always result in the same sample being generated.
 
 ```{code-cell}
