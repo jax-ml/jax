@@ -18,6 +18,7 @@ from collections.abc import Callable, Sequence
 from functools import partial
 import inspect
 import itertools as it
+import math
 import operator
 from typing import Any, TypeVar
 import weakref
@@ -45,8 +46,8 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
-from jax._src import sharding_impls as sharding
-from jax._src.mesh import use_abstract_mesh
+from jax._src.mesh import use_abstract_mesh, get_abstract_mesh
+from jax._src.shard_map import shard_map
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import windowed_reductions
@@ -57,7 +58,7 @@ from jax._src.lax.other import logaddexp
 from jax._src.pjit import auto_axes, PartitionSpec as P, reshard
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.sharding_impls import canonicalize_sharding
+from jax._src.sharding_impls import canonicalize_sharding, SingleDeviceSharding
 from jax._src.state import discharge as state_discharge, AbstractRef
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import equality_errors
@@ -885,7 +886,7 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
 def _maybe_put(x):
   if isinstance(x, (np.ndarray, literals.TypedNdArray)):
     aval = core.shaped_abstractify(x)
-    s = sharding.SingleDeviceSharding(xb.local_devices(backend='cpu')[0])
+    s = SingleDeviceSharding(xb.local_devices(backend='cpu')[0])
     result_handler = pxla.global_aval_to_result_handler(aval, s, False)
     return result_handler(
         pxla.shard_args(
@@ -2578,8 +2579,8 @@ def map(f, xs, *, batch_size: int | None = None):
     _, ys = scan(g, (), xs)
   return ys
 
-def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype,
-                                     algorithm, out_sharding):
+def _rng_bit_generator_batching_rule(axis_data, batched_args, batch_dims, *,
+                                     shape, dtype, algorithm, out_sharding):
   keys, = batched_args
   bd, = batch_dims
   if bd is batching.not_mapped:
@@ -2587,17 +2588,35 @@ def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype,
         keys, shape=shape, dtype=dtype, algorithm=algorithm,
         out_sharding=out_sharding), (None, None)
   keys = batching.moveaxis(keys, bd, 0)
-  batch_size = keys.shape[0]
-  out_s = (out_sharding.update(spec=(keys.aval.sharding.spec[0], *out_sharding.spec))
-           if out_sharding is not None else None)
-  key = keys[0]
-  new_key, bits = lax.rng_bit_generator_p.bind(
-      key, shape=(batch_size, *shape), dtype=dtype, algorithm=algorithm,
-      out_sharding=out_s)
-  new_keys = slicing.dynamic_update_index_in_dim(keys, new_key, 0, axis=0)
+
+  abs_mesh = get_abstract_mesh()
+  ema = axis_data.explicit_mesh_axis
+  axis_size = axis_data.size
+  if ema is not None:
+    mesh_size = math.prod(abs_mesh.shape[i] for i in ema)
+    axis_size, ragged = divmod(axis_data.size, mesh_size)
+    assert not ragged
+
+  out_s = None if out_sharding is None else P(None, *out_sharding.spec)
+
+  def generate(keys):
+    key = keys[0]
+    new_key, bits = lax.rng_bit_generator(
+        key, shape=(axis_size, *shape), dtype=dtype, algorithm=algorithm,
+        out_sharding=out_s)
+    new_keys = slicing.dynamic_update_index_in_dim(keys, new_key, 0, axis=0)
+    return new_keys, bits
+
+  if ema is not None:
+    keys_spec = core.typeof(keys).sharding.spec
+    new_keys, bits = shard_map(
+        generate, out_specs=(keys_spec, P(ema, *[None] * len(shape))),
+        axis_names=set(ema))(keys)
+  else:
+    new_keys, bits = generate(keys)
   return (new_keys, bits), (0, 0)
 
-batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule
+batching.fancy_primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule
 
 ### associative_scan
 
