@@ -7,8 +7,13 @@
 We can use the JAX profiler to generate traces of a JAX program that can be
 visualized using the [Perfetto visualizer](https://ui.perfetto.dev). Currently,
 this method blocks the program until a link is clicked and the Perfetto UI loads
-the trace. If you wish to get profiling information without any interaction,
-check out the XProf profiler below.
+the trace.
+
+If you wish to get profiling information without any interaction, check out
+the [XProf](https://openxla.org/xprof) profiler below. XProf provides a more
+detailed trace viewer and offers tools like the [Memory Profile Tool](https://openxla.org/xprof/memory_viewer)
+and [Graph Viewer](https://openxla.org/xprof/graph_viewer) to analyze memory
+usage and the structure of the XLA computation graph.
 
 ```python
 with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
@@ -71,8 +76,8 @@ Tensorboard to the `log_dir` to analyze the trace (see the
 
 [XProf](https://openxla.org/xprof)
 can be used to profile JAX programs. XProf is a great way to acquire and
-visualize performance traces and profiles of your program, including activity on
-GPU and TPU. The end result looks something like this:
+visualize performance traces and profiles of your program, including activity
+on GPU and TPU. The end result looks something like this:
 
 ![XProf example](_static/tensorboard_profiler.png)
 
@@ -96,6 +101,27 @@ XProf.
 ```shell
 pip install tb-nightly xprof-nightly
 ```
+
+### XProf and Tensorboard
+
+XProf is the underlying tool that powers the profiling and trace capturing
+functionality in Tensorboard. As long as `xprof` is installed, a "Profile" tab
+will be present within Tensorboard. Using this is identical to launching XProf
+independently, as long as it is launched pointing to the same log directory.
+This includes profile capture, analysis, and viewing functionality. XProf
+supplants the `tensorboard_plugin_profile` functionality that was previously
+recommended.
+
+```shell
+$ tensorboard --logdir=/tmp/profile-data
+[...]
+Serving TensorBoard on localhost; to expose to the network, use a proxy or pass --bind_all
+TensorBoard 2.19.0 at http://localhost:6006/ (Press CTRL+C to quit)
+```
+
+On Google Cloud, we recommend using
+[`cloud-diagnostics-xprof`](https://github.com/AI-Hypercomputer/cloud-diagnostics-xprof)
+for easy setup and hosting of TensorBoard and XProf and storage of post-run analysis.
 
 ### Programmatic capture
 
@@ -230,23 +256,6 @@ You can also use the following tools:
 - [HLO Op Profile](https://openxla.org/xprof/hlo_op_profile)
 - [Roofline Model](https://openxla.org/xprof/roofline_analysis)<br /><br />
 
-### XProf and Tensorboard
-
-XProf is the underlying tool that powers the profiling and trace capturing
-functionality in Tensorboard. As long as `xprof` is installed, a "Profile" tab
-will be present within Tensorboard. Using this is identical to launching XProf
-independently, as long as it is launched pointing to the same log directory.
-This includes profile capture, analysis, and viewing functionality. XProf
-supplants the `tensorboard_plugin_profile` functionality that was previously
-recommended.
-
-```shell
-$ tensorboard --logdir=/tmp/profile-data
-[...]
-Serving TensorBoard on localhost; to expose to the network, use a proxy or pass --bind_all
-TensorBoard 2.19.0 at http://localhost:6006/ (Press CTRL+C to quit)
-```
-
 ### Adding custom trace events
 
 By default, the events in the trace viewer are mostly low-level internal JAX
@@ -372,15 +381,14 @@ The following options are available for GPU profiling:
 *   `gpu_dump_graph_node_mapping`: If enabled, dumps CUDA graph node
     mapping information into the trace. Defaults to `False`.
 
-For example:
+##### Example
 
-```
+```python
 options = ProfileOptions()
 options.advanced_configuration = {"tpu_trace_mode" : "TRACE_ONLY_HOST", "tpu_num_sparse_cores_to_trace" : 2}
-
 ```
 
-Returns InvalidArgumentError if any unrecognized keys or option values are
+Returns `InvalidArgumentError` if any unrecognized keys or option values are
 found.
 
 ### Troubleshooting
