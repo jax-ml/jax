@@ -599,28 +599,20 @@ def send_to_host(
     channel: int,
     token: hlo.TokenType,
     operand: Any,
-    name: str | None = None,
     *,
     sharding: SdyArrayList | xc.OpSharding | None = None,
 ) -> ir.Value:
   channel_handle = hlo.ChannelHandle.get(channel, mlir.SEND_TO_HOST_TYPE)
   send_op = hlo.SendOp([operand], token, channel_handle,
                         is_host_transfer=ir.BoolAttr.get(True))
-  if mlir.USE_NEW_TPU_CALLBACK_LOWERING:
-    send_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
-        dict(
-            _xla_host_transfer_handler_name=ir.StringAttr.get(
-                _XLA_HOST_TRANSFER_PJRT_RENDEZVOUS_HANDLER_NAME
-            ),
-            _xla_host_transfer_rendezvous=ir.StringAttr.get(str(channel)),
-        )
-    )
-  else:
-    assert name is not None
-    send_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
-        dict(
-            _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
-            _xla_host_transfer_rendezvous=ir.StringAttr.get(str(name))))
+  send_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
+      dict(
+          _xla_host_transfer_handler_name=ir.StringAttr.get(
+              _XLA_HOST_TRANSFER_PJRT_RENDEZVOUS_HANDLER_NAME
+          ),
+          _xla_host_transfer_rendezvous=ir.StringAttr.get(str(channel)),
+      )
+  )
   if sharding is not None:
     if config.use_shardy_partitioner.value:
       # `SendOp`'s return type is a StableHLO `TokenType`. However JAX passed
@@ -642,7 +634,6 @@ def receive_from_host(
     channel: int,
     token: hlo.TokenType,
     out_aval: core.ShapedArray,
-    name: str | None = None,
     *,
     sharding: SdyArrayList | xc.OpSharding | None = None,
 ) -> tuple[ir.Value, ir.Value]:
@@ -650,21 +641,14 @@ def receive_from_host(
   recv_op = hlo.RecvOp([mlir.aval_to_ir_type(out_aval),
                         hlo.TokenType.get()], token, channel_handle,
                         is_host_transfer=ir.BoolAttr.get(True))
-  if mlir.USE_NEW_TPU_CALLBACK_LOWERING:
-    recv_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
-        dict(
-            _xla_host_transfer_handler_name=ir.StringAttr.get(
-                _XLA_HOST_TRANSFER_PJRT_RENDEZVOUS_HANDLER_NAME
-            ),
-            _xla_host_transfer_rendezvous=ir.StringAttr.get(str(channel)),
-        )
-    )
-  else:
-    assert name is not None
-    recv_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
-        dict(
-            _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
-            _xla_host_transfer_rendezvous=ir.StringAttr.get(str(name))))
+  recv_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
+      dict(
+          _xla_host_transfer_handler_name=ir.StringAttr.get(
+              _XLA_HOST_TRANSFER_PJRT_RENDEZVOUS_HANDLER_NAME
+          ),
+          _xla_host_transfer_rendezvous=ir.StringAttr.get(str(channel)),
+      )
+  )
   if sharding is not None:
     if config.use_shardy_partitioner.value:
       assert isinstance(sharding, SdyArrayList)
@@ -735,21 +719,13 @@ def _emit_tpu_python_callback(
     dummy_send_aval = core.ShapedArray((1,), np.float32)
     dummy_send_val = mlir.ir_constant(np.zeros(1, np.float32))
     operand_shapes = [*operand_shapes, _aval_to_xla_shape(dummy_send_aval)]
-    if mlir.USE_NEW_TPU_CALLBACK_LOWERING:
-      token = send_to_host(send_channel, token, dummy_send_val,
-                           sharding=sharding)
-    else:
-      token = send_to_host(send_channel, token, dummy_send_val,
-                           _wrapped_callback.__name__, sharding=sharding)
+    token = send_to_host(send_channel, token, dummy_send_val,
+                         sharding=sharding)
     send_channels.append(send_channel)
   else:
     for operand in operands:
       channel = ctx.module_context.new_channel()
-      if mlir.USE_NEW_TPU_CALLBACK_LOWERING:
-        token = send_to_host(channel, token, operand, sharding=sharding)
-      else:
-        token = send_to_host(channel, token, operand,
-                             _wrapped_callback.__name__, sharding=sharding)
+      token = send_to_host(channel, token, operand, sharding=sharding)
       send_channels.append(channel)
 
   recv_channels = []
@@ -765,29 +741,17 @@ def _emit_tpu_python_callback(
     dummy_recv_aval = core.ShapedArray((), np.float32)
     result_shapes = [_aval_to_xla_shape(dummy_recv_aval)]
     channel = ctx.module_context.new_channel()
-    if mlir.USE_NEW_TPU_CALLBACK_LOWERING:
-      token, _ = receive_from_host(
-          channel, token, dummy_recv_aval, sharding=sharding
-      )
-    else:
-      token, _ = receive_from_host(
-          channel, token, dummy_recv_aval, _wrapped_callback.__name__,
-          sharding=sharding
-      )
+    token, _ = receive_from_host(
+        channel, token, dummy_recv_aval, sharding=sharding
+    )
     recv_channels.append(channel)
   else:
     for result_aval in result_avals:
       channel = ctx.module_context.new_channel()
       assert isinstance(result_aval, core.ShapedArray)
-      if mlir.USE_NEW_TPU_CALLBACK_LOWERING:
-        token, out = receive_from_host(
-            channel, token, result_aval, sharding=sharding
-        )
-      else:
-        token, out = receive_from_host(
-            channel, token, result_aval, _wrapped_callback.__name__,
-            sharding=sharding
-        )
+      token, out = receive_from_host(
+          channel, token, result_aval, sharding=sharding
+      )
       outputs.append(out)
       recv_channels.append(channel)
   ifrt_callback = backend.make_python_callback_from_host_send_and_recv(
