@@ -113,6 +113,50 @@ class ParsedIndex(NamedTuple):
   typ: IndexType
   consumed_axes: tuple[int, ...]
 
+  def is_simple_reverse_slice(self) -> bool:
+    return (
+        self.typ is IndexType.SLICE
+        and isinstance(self.index, slice)
+        and self.index.start is self.index.stop is None
+        and isinstance(self.index.step, int)
+        and self.index.step == -1
+    )
+
+  def is_valid_integer_index_for_slice(
+      self, size: int, mode: str | None
+  ) -> bool:
+    if size == 0:
+      return False
+    if self.typ is IndexType.INTEGER:
+      return -size <= self.index < size  # type: ignore[operator]
+    if self.typ is IndexType.ARRAY:
+      # If it's a sequence (list/tuple), it has ndim >= 1, so it's not a scalar.
+      # We avoid calling np.ndim because if it contains Tracers, it will crash.
+      if isinstance(self.index, Sequence):
+        return False
+      if not (
+          np.ndim(self.index) == 0
+          and np.issubdtype(dtypes.dtype(self.index), np.integer)
+      ):
+        return False
+
+      # For dynamic integer indices, semantics require promise_inbounds.
+      # We checked for scalar integer array in `_attempt_rewriting_take_via_slice`
+      return mode in [None, "promise_inbounds"]
+    return False
+
+  def is_contiguous_slice(self) -> bool:
+    return (
+        self.typ is IndexType.SLICE
+        and isinstance(self.index, slice)
+        and (self.index.start is None or _is_integer_index(self.index.start))
+        and (self.index.stop is None or _is_integer_index(self.index.stop))
+        and (
+            self.index.step is None
+            or (_is_integer_index(self.index.step) and self.index.step == 1)
+        )
+    )
+
 
 def _parse_indices(
     indices: tuple[Index, ...],
@@ -1032,62 +1076,43 @@ def put_along_axis(
 def _is_integer_index(idx: Any) -> bool:
   return isinstance(idx, (int, np.integer)) and not isinstance(idx, (bool, np.bool_))
 
-def _is_simple_reverse_slice(idx: Any) -> bool:
-  return (isinstance(idx, slice) and
-          idx.start is idx.stop is None and
-          isinstance(idx.step, int) and idx.step == -1)
-
-def _is_valid_integer_index_for_slice(idx, size, mode):
-  if size == 0:
-    return False
-  if _is_integer_index(idx):
-    return -size <= idx < size
-  try:
-    shape, dtype = np.shape(idx), dtypes.dtype(idx)
-  except:
-    return False
-  if shape == () and np.issubdtype(dtype, np.integer):
-    # For dynamic integer indices, semantics require promise_inbounds.
-    return mode in [None, 'promise_inbounds']
-  return False
-
-def _is_contiguous_slice(idx):
-  return (isinstance(idx, slice) and
-          (idx.start is None or _is_integer_index(idx.start)) and
-          (idx.stop is None or _is_integer_index(idx.stop)) and
-          (idx.step is None or (_is_integer_index(idx.step) and idx.step == 1)))
 
 def _attempt_rewriting_take_via_slice(
     arr: Array, indexer: NDIndexer, *,
     mode: str | slicing.GatherScatterMode | None,
     out_sharding: NamedSharding | PartitionSpec | None = None) -> Array | None:
   # attempt to compute _rewriting_take via lax.slice(); return None if not possible.
-
-  # TODO(jakevdp): update implementation to use indexer directly, and to reuse code
-  # from compute_via_static_slice
-  idx = tuple(i.index for i in indexer.indices)
-
   if not all(isinstance(i, int) for i in arr.shape):
     return None
-  if any(i is None for i in idx):
-    return None  # TODO(jakevdp): handle newaxis case
-  # For symbolic dimensions fallback to gather
-  if any(core.is_symbolic_dim(elt)
-         for i in idx if isinstance(i, slice)
-         for elt in (i.start, i.stop, i.step)):
-    return None
-  if any(i is Ellipsis for i in idx):
-    # Remove ellipses and pad with trailing `slice(None)` if necessary.
-    # Do this before checking against rank of `arr` so that `...` can
-    # count as no dimensions at all (e.g. `my_1d_array[:, ...]` succeeds)
-    idx = _canonicalize_tuple_index(arr.ndim, idx=idx)
-  if len(idx) > arr.ndim:
-    return None
 
-  simple_revs = {i for i, ind in enumerate(idx) if _is_simple_reverse_slice(ind)}
-  int_indices = {i for i, (ind, size) in enumerate(zip(idx, arr.shape))
-                 if _is_valid_integer_index_for_slice(ind, size, mode)}
-  contiguous_slices = {i for i, ind in enumerate(idx) if _is_contiguous_slice(ind)}
+  indexer = indexer.expand_ellipses()
+
+  if any(idx.typ is IndexType.NONE for idx in indexer.indices):
+    return None  # TODO(jakevdp): handle newaxis case
+
+  # For symbolic dimensions fallback to gather
+  for idx in indexer.indices:
+    if idx.typ is IndexType.SLICE:
+      assert isinstance(idx.index, slice)
+      if any(
+          core.is_symbolic_dim(elt)
+          for elt in (idx.index.start, idx.index.stop, idx.index.step)
+      ):
+        return None
+
+  simple_revs = {
+      i
+      for i, idx in enumerate(indexer.indices)
+      if idx.is_simple_reverse_slice()
+  }
+  int_indices = {
+      i
+      for i, (idx, size) in enumerate(zip(indexer.indices, arr.shape))
+      if idx.is_valid_integer_index_for_slice(size, mode)
+  }
+  contiguous_slices = {
+      i for i, idx in enumerate(indexer.indices) if idx.is_contiguous_slice()
+  }
 
   # For sharded inputs, indexing (like x[0]) and partial slices (like x[:2] as
   # opposed to x[:]) lead to incorrect sharding semantics when computed via
@@ -1095,42 +1120,63 @@ def _attempt_rewriting_take_via_slice(
   # TODO(yashkatariya): fix dynamic_slice with sharding
   is_sharded = (isinstance(arr, array.ArrayImpl) and
                 not dispatch.is_single_device_sharding(arr.sharding))
-  has_partial_slices = any(idx[i].indices(arr.shape[i]) != (0, arr.shape[i], 1)  # type: ignore[union-attr]
-                           for i in contiguous_slices)
-  if is_sharded and (int_indices or has_partial_slices):
-    return None
 
-  if len(simple_revs) + len(int_indices) + len(contiguous_slices) != len(idx):
+  if is_sharded:
+    if int_indices:
+      return None
+    # Check for partial slices.
+    for i in contiguous_slices:
+      idx = indexer.indices[i]
+      assert isinstance(idx.index, slice)
+      if idx.index.indices(arr.shape[i]) != (0, arr.shape[i], 1):
+        return None
+
+  if len(simple_revs) + len(int_indices) + len(contiguous_slices) != len(
+      indexer.indices
+  ):
     return None
 
   if simple_revs:
     arr = lax.rev(arr, tuple(simple_revs))
-    idx = tuple(slice(None) if i in simple_revs else ind
-                for i, ind in enumerate(idx))
-    contiguous_slices |= simple_revs
 
-  if not (int_indices or has_partial_slices):
-    return arr
-
-  idx += (arr.ndim - len(idx)) * (slice(None),)
   start_indices: Sequence[ArrayLike] = []
   slice_sizes: list[int] = []
   allow_negative_indices: list[bool] = []
 
-  for ind, size in safe_zip(idx, arr.shape):
-    if isinstance(ind, slice):
-      start, stop, step = ind.indices(size)
-      assert step == 1  # checked above
+  for i, (idx, size) in enumerate(zip(indexer.indices, arr.shape)):
+    if i in simple_revs:
+      # These were reversed and replaced by slice(None)
+      start_indices.append(0)
+      slice_sizes.append(size)
+      allow_negative_indices.append(False)
+    elif i in contiguous_slices:
+      assert isinstance(idx.index, slice)
+      start, stop, step = idx.index.indices(size)
+      assert step == 1
       start_indices.append(start)
       slice_sizes.append(max(0, stop - start))
-      allow_negative_indices.append(start < 0 or stop < 0)
+      allow_negative_indices.append(
+          idx.index.start is not None
+          and idx.index.start < 0
+          or idx.index.stop is not None
+          and idx.index.stop < 0
+      )
     else:
-      assert np.issubdtype(dtypes.dtype(ind), np.integer)  # checked above
-      assert np.shape(ind) == ()  # type: ignore[arg-type]  # checked above
+      # Must be int index
+      ind = idx.index
+      assert np.issubdtype(dtypes.dtype(ind), np.integer)
+      assert np.shape(ind) == ()
       start_indices.append(ind)
       slice_sizes.append(1)
       allow_negative_indices.append(
           not isinstance(ind, (int, np.integer)) or bool(ind < 0))
+
+  # Optimization: if we sliced everything fully, just return arr.
+  # This captures the "no partial slices" case better.
+  if not int_indices and all(
+      sz == orig_sz for sz, orig_sz in zip(slice_sizes, arr.shape)
+  ):
+    return arr
 
   # Try to use static slicing when possible.
   if all(isinstance(i, (int, np.integer)) and i >= 0 for i in start_indices):
@@ -1159,7 +1205,7 @@ def _attempt_rewriting_take_via_slice(
     else:
       arr = internal_ds(arr, start_indices)
   if int_indices:
-    arr = lax.squeeze(arr, tuple(int_indices))
+    arr = lax.squeeze(arr, tuple(sorted(int_indices)))
   return arr
 
 
