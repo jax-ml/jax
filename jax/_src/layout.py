@@ -43,7 +43,7 @@ class Layout:
                 sub_byte_element_size_in_bits: int = 0):
     self.major_to_minor = tuple(major_to_minor)
     self.tiling = None if tiling is None else tuple(map(tuple, tiling))
-    self._sub_byte_element_size_in_bits = sub_byte_element_size_in_bits
+    self.sub_byte_element_size_in_bits = sub_byte_element_size_in_bits
 
   @staticmethod
   def from_pjrt_layout(pjrt_layout: xc.PjRtLayout):
@@ -56,19 +56,19 @@ class Layout:
     return (
         f'Layout(major_to_minor={self.major_to_minor},'
         f' tiling={self.tiling},'
-        f' sub_byte_element_size_in_bits={self._sub_byte_element_size_in_bits})'
+        f' sub_byte_element_size_in_bits={self.sub_byte_element_size_in_bits})'
     )
 
   def __hash__(self):
     return hash((self.major_to_minor, self.tiling,
-                  self._sub_byte_element_size_in_bits))
+                  self.sub_byte_element_size_in_bits))
 
   def __eq__(self, other):
     if not isinstance(other, Layout):
       return False
     return (self.major_to_minor == other.major_to_minor and
             self.tiling == other.tiling and
-            self._sub_byte_element_size_in_bits == other._sub_byte_element_size_in_bits)
+            self.sub_byte_element_size_in_bits == other.sub_byte_element_size_in_bits)
 
   def update(self, **kwargs):
     if 'major_to_minor' not in kwargs:
@@ -76,7 +76,7 @@ class Layout:
     if 'tiling' not in kwargs:
       kwargs['tiling'] = self.tiling
     if 'sub_byte_element_size_in_bits' not in kwargs:
-      kwargs['sub_byte_element_size_in_bits'] = self._sub_byte_element_size_in_bits
+      kwargs['sub_byte_element_size_in_bits'] = self.sub_byte_element_size_in_bits
     return Layout(kwargs['major_to_minor'], kwargs['tiling'],
                   kwargs['sub_byte_element_size_in_bits'])
 
@@ -84,8 +84,8 @@ class Layout:
     if self.tiling is None:
       xla_layout = xc.Layout(self.major_to_minor[::-1])
     else:
-      if self._sub_byte_element_size_in_bits != 0:
-        sub_byte_size = self._sub_byte_element_size_in_bits
+      if self.sub_byte_element_size_in_bits != 0:
+        sub_byte_size = self.sub_byte_element_size_in_bits
       elif issubdtype(dtype, np.integer):
         sub_byte_size = iinfo(dtype).bits if iinfo(dtype).bits < 8 else 0
       else:
