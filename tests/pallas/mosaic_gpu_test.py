@@ -195,9 +195,6 @@ class PallasTCGen05Test(PallasTest, jtu.CudaArchSpecificTest):
 
   def setUp(self):
     self.skip_unless_tcgen05()
-    if jtu.is_cuda_compute_capability_equal("10.3"):
-      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
-      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
     # No artificially lowered limit for arch-specific tests
     super().setUp(artificial_shared_memory_limit=None)
 
@@ -3830,6 +3827,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       lhs_tmem=[False, True],
   )
   def test_integer_matmul(self, m, n, swizzle, dtype, lhs_tmem):
+    self.skip_unless_tcgen05_int8()
     if n * jnp.dtype(dtype).itemsize <= swizzle:
       self.skipTest("swizzle too big")
     if lhs_tmem and m == 64:

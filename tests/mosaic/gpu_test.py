@@ -1203,9 +1203,6 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
 
   def setUp(self):
     self.skip_unless_tcgen05()
-    if jtu.is_cuda_compute_capability_equal("10.3"):
-      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
-      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
     # No artificially lowered limit for arch-specific tests
     super().setUp(artificial_shared_memory_limit=None)
 
@@ -1353,6 +1350,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       swizzle=(32, 64, 128,),
   )
   def test_mma_basic_int(self, **kwargs):
+    self.skip_unless_tcgen05_int8()
     in_bytewidth = jnp.dtype(kwargs["in_jax_dtype"]).itemsize
     lhs_transpose = kwargs["lhs_transpose"]
     swizzle = kwargs["swizzle"]
@@ -1534,6 +1532,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       n=(64, 128, 256),
   )
   def test_mma_lhs_tmem_integer(self, m, n, in_jax_dtype, out_jax_dtype):
+    self.skip_unless_tcgen05_int8()
     self._basic_mma_lhs_tmem_test(
         m, n, in_jax_dtype, out_jax_dtype, fa.tmem_native_layout(vector_length=4),
         swizzle=math.gcd(n, 128)
@@ -1923,6 +1922,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       rhs_swizzle=(64, 128),  # 32 is too small and unsuported.
   )
   def test_mma_sparse(self, m, n, in_jax_dtype, lhs_swizzle, rhs_swizzle, lhs_transpose, rhs_transpose):
+    if in_jax_dtype == jnp.int8:
+      self.skip_unless_tcgen05_int8()
     if jnp.issubdtype(in_jax_dtype, jnp.floating):
       out_jax_dtype = jnp.float32
     else:
@@ -5948,9 +5949,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
 
   def setUp(self):
     self.skip_unless_tcgen05()
-    if jtu.is_cuda_compute_capability_equal("10.3"):
-      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
-      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
     # No artificially lowered limit for arch-specific tests
     super().setUp(artificial_shared_memory_limit=None)
 
