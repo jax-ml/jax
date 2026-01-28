@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from functools import lru_cache, partial
 from typing import Any, Callable, NamedTuple
+import warnings
 
 from jax._src import api
 from jax._src.api_util import (
@@ -22,15 +23,16 @@ from jax._src.api_util import (
 from jax._src import array
 from jax._src import config
 from jax._src import core
-from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import linear_util as lu
+from jax._src import pjit as pjit_lib
 from jax._src import prng
 from jax._src import sharding_impls
 from jax._src import stages
 from jax._src import traceback_util
 from jax._src import util
 from jax._src import xla_bridge as xb
+from jax._src.lib import jaxlib_extension_version
 from jax._src.interpreters import pxla
 from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
@@ -43,6 +45,9 @@ import numpy as np
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
+
+# jaxlib extension version >= 400 supports _rewrap_with_aval_and_sharding
+_SUPPORTS_REWRAP = jaxlib_extension_version >= 400
 traceback_util.register_exclusion(__file__)
 
 
@@ -55,9 +60,7 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
     if not devices:
       raise ValueError("'devices' argument to pmap must be non-empty, or None.")
     devices = tuple(devices)
-  # TODO(vanderplas): move these definitions into jax._src and avoid local import.
-  import jax.experimental.multihost_utils as mhu  # pytype: disable=import-error
-  axis_name, static_broadcasted_tuple, donate_tuple = api._shared_code_pmap(
+  axis_name, static_broadcasted_tuple, donate_tuple = api._shared_code_pmap(  # pylint: disable=protected-access
       f, axis_name, static_broadcasted_argnums, donate_argnums, in_axes, out_axes)
   if isinstance(axis_name, core._TempAxisName):  # pylint: disable=protected-access
     axis_name = repr(axis_name)
@@ -88,42 +91,37 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
       jit_kwargs["out_shardings"] = cached.out_global_shardings
     jitted_f = api.jit(cached.pmapped, **jit_kwargs)
     if process_count > 1:
-      if trace_state_clean:
-        flat_global_args = [
-            host_local_array_to_global_array(arr, global_mesh=cached.mesh, pspec=spec)
-            for arr, spec in zip(dyn_args_flat, cached.in_specs_flat)]
-      else:
-        flat_global_args = mhu.host_local_array_to_global_array(
-            dyn_args_flat, cached.mesh, list(cached.in_specs_flat))
-    else:
-      flat_global_args = dyn_args_flat
-    return (jitted_f, flat_global_args, dyn_args_tree, cached.mesh, cached.out_specs,
-            donate_tuple, process_count, trace_state_clean)
+      dyn_args_flat = host_local_array_to_global_array(
+          dyn_args_flat, cached, trace_state_clean, donated_invars
+      )
+    return (cached, jitted_f, dyn_args_flat, dyn_args_tree, donate_tuple,
+            process_count, trace_state_clean)
 
   @util.wraps(f)
   def wrapped(*args, **kwargs):
-    (jitted_f, flat_global_args, _, mesh, out_specs,
-     _, process_count, trace_state_clean) = infer_params(*args, **kwargs)
-    outs = jitted_f(*flat_global_args)
+    cached, jitted_f, dyn_args_flat, _, _, process_count, trace_state_clean = (
+        infer_params(*args, **kwargs))
+    out = jitted_f(*dyn_args_flat)
     if process_count > 1:
-      if trace_state_clean:
-        outs = tree_map(
-            lambda out, spec: global_array_to_host_local_array(
-                out, global_mesh=mesh, pspec=spec),
-            outs, out_specs, is_leaf=lambda x: x is None)
-      else:
-        outs = mhu.global_array_to_host_local_array(outs, mesh, out_specs)
-    return outs
+      out = global_array_to_host_local_array(out, cached, trace_state_clean)
+    return out
 
   def lower(*args, **kwargs):
-    jitted_f, flat_global_args, in_tree, _, _, donate_tuple, _, _ = infer_params(
-        *args, **kwargs)
-    abstract_args = list(map(core.shaped_abstractify, flat_global_args))
-    args_info = stages.make_args_info(in_tree, abstract_args, donate_tuple)
-    lowered = jitted_f.trace(*flat_global_args).lower()
-    lowered = stages.Lowered(lowered._lowering, args_info, lowered.out_tree,
-                             no_kwargs=lowered._no_kwargs)
-    return lowered
+    _, jitted_f, args_flat, in_tree, donated_tuple, _, _ = infer_params(
+        *args, **kwargs
+    )
+    abstract_args = list(map(core.shaped_abstractify, args_flat))
+    args_info = stages.make_args_info(in_tree, abstract_args, donated_tuple)
+    lowered = jitted_f.trace(*args_flat).lower()
+    # NOTE(dsuo): Calling .compile()(*inputs) will fail because our jitted function
+    # has no notion of host-local <> global conversion.
+    return stages.Lowered(
+        lowered._lowering,  # pylint: disable=protected-access
+        args_info,
+        lowered.out_tree,
+        no_kwargs=lowered._no_kwargs,  # pylint: disable=protected-access
+    )
+
   wrapped.lower = lower
   return wrapped
 
@@ -485,93 +483,221 @@ def _get_mesh_devices(devices, backend, local_axis_size, axis_size,
 
 
 @lru_cache
-def _local_to_global_aval(local_aval, mesh, pspec):
-  pspec = sharding_impls.prepare_axis_resources(pspec, 'pspec to array_mapping')
+def _local_to_global_aval(shape, dtype, sharding):
+  """Compute global aval from local shape."""
+  pspec_prepared = sharding_impls.prepare_axis_resources(sharding.spec, "pspec")
+  local_aval = core.ShapedArray(shape, dtype)
   return pxla.mesh_local_to_global(
-      mesh, sharding_impls.get_array_mapping(pspec), local_aval)
+      sharding.mesh,
+      sharding_impls.get_array_mapping(pspec_prepared),
+      local_aval,
+  )
+
 
 @lru_cache
-def _global_to_local_aval(global_aval, mesh, pspec):
-  pspec = sharding_impls.prepare_axis_resources(pspec, 'pspec to array_mapping')
+def _global_to_local_aval(shape, dtype, sharding):
+  """Compute local aval from global shape."""
+  pspec_prepared = sharding_impls.prepare_axis_resources(sharding.spec, "pspec")
+  global_aval = core.ShapedArray(shape, dtype)
   return pxla.mesh_global_to_local(
-      mesh, sharding_impls.get_array_mapping(pspec), global_aval)
+      sharding.mesh,
+      sharding_impls.get_array_mapping(pspec_prepared),
+      global_aval,
+  )
+
+
+@lru_cache
+def _local_device_indices(local_sharding, shape):
+  """Cached device indices for slicing arrays."""
+  return tuple(local_sharding.devices_indices_map(shape).values())
+
+
+@lru_cache
+def _is_sharding_equivalent(sharding_a, sharding_b, ndim):
+  """Check if sharding is equivalent to NamedSharding(mesh.local_mesh, pspec)."""
+  return sharding_a.is_equivalent_to(sharding_b, ndim)
+
+
+@lru_cache
+def _get_out_shardings(out_tree, pspecs, out_shardings_thunk):
+  """Get flattened output shardings, combining pspec flattening and sharding lookup."""
+  out_pspecs_flat = pjit_lib.flatten_axis_resources(
+      "output pspecs", out_tree, pspecs, tupled_args=True
+  )
+  return tuple(zip(*[out_shardings_thunk(p) for p in out_pspecs_flat]))
 
 
 def host_local_array_to_global_array(
-    arr: Any, *, global_mesh: Mesh, pspec: Any):
-  if pspec is None:
-    raise ValueError(
-        '`None` is not a valid input to the pspecs argument. Please use '
-        'jax.sharding.PartitionSpec() if you wanted to replicate your input.')
-  if isinstance(arr, array.ArrayImpl) and not arr.is_fully_addressable:
-    return arr
-  if (isinstance(arr, array.ArrayImpl) and isinstance(
-      arr.sharding, sharding_impls.PmapSharding)) or not hasattr(arr, 'shape'):
-    arr = np.array(arr)
-  if arr.dtype == dtypes.float0:
-    arr = np.zeros(arr.shape, dtype=np.dtype(bool))
-  dtype = arr.dtype
-  if is_prng_key_array := isinstance(arr, prng.PRNGKeyArray):
-    arr = arr._base_array
+    dyn_args_flat, cached, trace_state_clean, donated_invars
+):
+  """Convert host-local arrays to global arrays for multihost pmap.
 
-  local_sharding = sharding_impls.NamedSharding(global_mesh.local_mesh, pspec)
+  Args:
+    dyn_args_flat: Flat list of input arrays.
+    cached: CachedPmap tuple with mesh and sharding info.
+    trace_state_clean: True if in execution mode (not tracing).
+    donated_invars: Tuple of bools indicating which args are donated. For
+      donated args that require the slow path, we delete the original to free
+      memory.
 
-  if (isinstance(arr, array.ArrayImpl) and
-      arr.sharding.is_equivalent_to(local_sharding, arr.ndim)):
-    arrays = [x.data for x in arr.addressable_shards]
-  else:
-    arr = dtypes.canonicalize_value(arr)
-    arrays = [
-        arr[i] for i in local_sharding.devices_indices_map(arr.shape).values()
-    ]
+  Returns:
+    Converted global arrays.
+  """
+  if not trace_state_clean:
+    import jax.experimental.multihost_utils as mhu  # pytype: disable=import-error
 
-  global_aval = _local_to_global_aval(
-      core.ShapedArray(arr.shape, arr.dtype), global_mesh, pspec)
+    return list(
+        mhu.host_local_array_to_global_array(
+            tuple(dyn_args_flat), cached.mesh, cached.in_specs_flat
+        )
+    )
 
-  out = pxla.batched_device_put(
-      global_aval, sharding_impls.NamedSharding(global_mesh, pspec),
-      arrays, list(global_mesh.local_mesh.devices.flat))
-  if is_prng_key_array:
-    return prng.PRNGKeyArray(dtype._impl, out)
-  return out
+  in_local_shardings = cached.in_local_shardings
+  in_global_shardings = cached.in_global_shardings
 
+  if dyn_args_flat and isinstance(
+      dyn_args_flat[0], (core.Tracer, core.AbstractValue)
+  ):
+    return dyn_args_flat
 
-def global_array_to_host_local_array(
-    arr: Any, *, global_mesh: Mesh, pspec: Any):
-  if pspec is None:
-    raise ValueError(
-        '`None` is not a valid input to the pspecs argument. Please use '
-        'jax.sharding.PartitionSpec() if you wanted to replicate your input.')
-  if isinstance(arr, array.ArrayImpl) and arr.is_fully_addressable:
-    return arr
-  if not hasattr(arr, 'shape'):
-    arr = np.array(arr)
-  if arr.dtype == dtypes.float0:
-    arr = np.zeros(arr.shape, dtype=np.dtype(bool))
-  dtype = arr.dtype
-  if is_prng_key_array := isinstance(arr, prng.PRNGKeyArray):
-    arr = arr._base_array
+  for i, arr in enumerate(dyn_args_flat):
+    local_sharding = in_local_shardings[i]
+    global_sharding = in_global_shardings[i]
+    donated = donated_invars[i]
+    prng_impl = None
+    typ = type(arr)
+    if typ == array.ArrayImpl and not arr.is_fully_addressable:
+      continue
+    if typ != array.ArrayImpl:
+      if typ == prng.PRNGKeyArray:
+        prng_impl = arr.dtype._impl  # pylint: disable=protected-access
+        arr = arr._base_array  # pylint: disable=protected-access
+      dtype = arr.dtype
+      if dtype == dtypes.float0:
+        arr = np.zeros(arr.shape, dtype=bool)
+      arr = np.asarray(arr)
+      if dtype != dtypes.canonicalize_dtype(dtype):
+        arr = dtypes.canonicalize_value(arr)
+    shape, dtype = arr.shape, arr.dtype
 
-  global_sharding = sharding_impls.NamedSharding(global_mesh, pspec)
-  local_sharding = sharding_impls.NamedSharding(global_mesh.local_mesh, pspec)
-  local_aval = _global_to_local_aval(
-      core.ShapedArray(arr.shape, arr.dtype), global_mesh, pspec)
-
-  if isinstance(arr, array.ArrayImpl):
-    if arr.sharding.is_equivalent_to(global_sharding, arr.ndim):
-      arrays = arr._arrays
+    global_aval = _local_to_global_aval(shape, dtype, global_sharding)
+    if typ == array.ArrayImpl and _is_sharding_equivalent(
+        arr.sharding, local_sharding, len(arr.shape)
+    ):
+      # Fast path: rewrap without copy (shares buffers with original).
+      # For donated args, jit's donation will invalidate the shared buffers,
+      # which is the expected behavior - original arrays become invalid.
+      if _SUPPORTS_REWRAP:
+        dyn_args_flat[i] = arr._rewrap_with_aval_and_sharding(  # pylint: disable=protected-access
+            global_aval, global_sharding
+        )
+      else:
+        # Fallback for older jaxlib: use batched_device_put with shard data.
+        arrays = [x.data for x in arr.addressable_shards]
+        dyn_args_flat[i] = pxla.batched_device_put(
+            global_aval,
+            global_sharding,
+            arrays,
+            list(local_sharding._device_assignment),
+        )  # pylint: disable=protected-access
     else:
-      resharded_array = dispatch.device_put_p.bind(arr, devices=None, srcs=None, device=global_sharding)
-      arrays = resharded_array._arrays
-    out = array.ArrayImpl(local_aval, local_sharding, arrays, committed=True)
-    if is_prng_key_array:
-      return prng.PRNGKeyArray(dtype._impl, out)
+      # Slow path: slice and device_put (creates new buffers).
+      # For donated args, we must explicitly delete the original to free memory.
+      arrays = [
+          arr[idx] for idx in _local_device_indices(local_sharding, shape)
+      ]
+      dyn_args_flat[i] = pxla.batched_device_put(
+          global_aval,
+          global_sharding,
+          arrays,
+          list(local_sharding._device_assignment),
+      )  # pylint: disable=protected-access
+      if donated and typ == array.ArrayImpl:
+        warnings.warn(
+            "Donated pmap argument required resharding. This causes a brief "
+            "2x memory spike before the original is freed. For optimal "
+            "donation, ensure inputs are correctly sharded before pmap.",
+            stacklevel=4,
+        )
+        arr.delete()
+    if prng_impl is not None:
+      dyn_args_flat[i] = prng.PRNGKeyArray(prng_impl, dyn_args_flat[i])
+
+  return dyn_args_flat
+
+
+def global_array_to_host_local_array(out, cached, trace_state_clean):
+  """Convert global arrays to host-local arrays for multihost pmap output.
+
+  Args:
+    out: The output pytree from jitted function.
+    cached: CachedPmap tuple with mesh and sharding info.
+    trace_state_clean: True if in execution mode (not tracing).
+
+  Returns:
+    Host-local output pytree.
+  """
+  if not trace_state_clean:
+    import jax.experimental.multihost_utils as mhu  # pytype: disable=import-error
+
+    return mhu.global_array_to_host_local_array(
+        out, cached.mesh, cached.out_specs
+    )
+
+  out_flat, out_tree = tree_flatten(out)
+  out_local_shardings, out_global_shardings = _get_out_shardings(
+      out_tree, cached.out_specs, cached.out_local_shardings_thunk
+  )
+
+  if out_flat and isinstance(out_flat[0], (core.Tracer, core.AbstractValue)):
     return out
-  else:
-    arr = dtypes.canonicalize_value(arr)
-    arrays = [
-        arr[i] for i in local_sharding.devices_indices_map(arr.shape).values()
-    ]
-  return pxla.batched_device_put(
-      local_aval, local_sharding, arrays,
-      list(global_mesh.local_mesh.devices.flat))
+
+  for i, arr in enumerate(out_flat):
+    local_sharding = out_local_shardings[i]
+    global_sharding = out_global_shardings[i]
+    prng_impl = None
+    typ = type(arr)
+    if typ == array.ArrayImpl and arr.is_fully_addressable:
+      continue
+    if typ != array.ArrayImpl:
+      if typ == prng.PRNGKeyArray:
+        prng_impl = arr.dtype._impl  # pylint: disable=protected-access
+        arr = arr._base_array  # pylint: disable=protected-access
+      try:
+        _ = arr.shape
+      except AttributeError:
+        arr = np.array(arr)
+      dtype = arr.dtype
+      if dtype == dtypes.float0:
+        arr = np.zeros(arr.shape, dtype=bool)
+      if dtype != dtypes.canonicalize_dtype(dtype):
+        arr = dtypes.canonicalize_value(arr)
+    shape, dtype = arr.shape, arr.dtype
+
+    local_aval = _global_to_local_aval(shape, dtype, global_sharding)
+    if typ == array.ArrayImpl:
+      if not _is_sharding_equivalent(arr.sharding, global_sharding, len(shape)):
+        arr = api.device_put(arr, global_sharding)
+      if _SUPPORTS_REWRAP:
+        out_flat[i] = arr._rewrap_with_aval_and_sharding(  # pylint: disable=protected-access
+            local_aval, local_sharding
+        )
+      else:
+        # Fallback for older jaxlib: construct ArrayImpl directly.
+        out_flat[i] = array.ArrayImpl(
+            local_aval, local_sharding, arr._arrays, committed=True
+        )  # pylint: disable=protected-access
+    else:
+      arrays = [
+          arr[idx] for idx in _local_device_indices(local_sharding, shape)
+      ]
+      out_flat[i] = pxla.batched_device_put(
+          local_aval,
+          local_sharding,
+          arrays,
+          list(local_sharding._device_assignment),
+      )  # pylint: disable=protected-access
+    if prng_impl is not None:
+      out_flat[i] = prng.PRNGKeyArray(prng_impl, out_flat[i])
+
+  return tree_unflatten(out_tree, out_flat)
