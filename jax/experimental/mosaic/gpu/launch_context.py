@@ -67,6 +67,9 @@ ORIGINAL_KERNEL_ARG_ATTR = "mosaic_gpu.original_kernel_arg"
 # Attribute used to identify an operation used to load the current device id.
 # Needed for _recompute_peer_device_id in TMA descriptor construction.
 DEVICE_ID_ATTR = "mosaic_gpu.device_id_load"
+# Module attribute used to identify which kernel arguments are used with
+# multimem.
+MULTIMEM_ARGS_ATTR = "mosaic_gpu.multimem_args"
 
 
 def uses_collective_metadata(module):
@@ -565,6 +568,7 @@ class LaunchContext:
   device_collective_metadata: ir.Value | None = None
   host_collective_metadata: ir.Value | None = None
   num_peers: int = 0
+  num_params: int = 0
   tma_descriptors: dict[
       tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...], Any, int],
       ir.Value,
@@ -762,19 +766,16 @@ class LaunchContext:
                 callee="nvshmemx_mc_ptr",
             )
           else:
-            # TODO(patrios): Remove this once multimem lowering with collective
-            # metadata is supported.
-            raise NotImplementedError(
-                "GlobalBroadcast not supported with collective metadata"
-            )
+            # TODO(b/481949311): Replace this with:
+            # multimem_ref = self.to_remote_multicast(gmem_peer_id, on_host=True)
+            # base_ptr = utils.memref_ptr(multimem_ref)
+            # once the bug is fixed.
+            raise ValueError("TMA is not supported with collectives.")
         elif gmem_peer_id is not None:
           if not isinstance(gmem_peer_id, ir.Value):
             peer_id = c(gmem_peer_id, i32)
           else:
             try:
-              # TODO(b/481949311): Remove this once the bug is fixed.
-              if uses_collective_metadata(self.module):
-                raise ValueError("TMA is not supported with collectives.")
               # We try to reproduce the gmem_peer_id computation on the host.
               peer_id = self._recompute_peer_id(gmem_peer_id, fuel=16)
             except ReplicationError as e:
@@ -792,8 +793,8 @@ class LaunchContext:
                 callee="nvshmem_ptr",
             )
           else:
-            # TODO(b/481949311): Remove this once the bug is fixed.
-            raise ValueError("TMA is not supported with collectives.")
+            remote_ref = self.to_remote(ref, peer_id, on_host=True)
+            base_ptr = utils.memref_ptr(remote_ref)
         rank = ref_ty.rank
         assert rank * 2 == len(sizes_and_strides)
         swizzle_arg = (
@@ -1760,16 +1761,8 @@ class LaunchContext:
       memory_address = arith.addi(remote_arg_ptr, local_offset)
       return llvm.inttoptr(ref.type, memory_address)
 
-  def to_remote_multicast(self, ref: ir.Value):
+  def to_remote_multicast(self, ref: ir.Value, on_host: bool = False):
     i32 = ir.IntegerType.get_signless(32)
-
-    # TODO(patrios): Support multimem lowering with collective metadata
-    if self.device_collective_metadata is not None:
-      raise NotImplementedError(
-          "Multicast lowering with collective metadata is not implemented yet"
-      )
-
-    self._ensure_nvshmem_decls()
     if not isinstance(ref.type, ir.MemRefType):
       raise ValueError(f"Unsupported type for to_remote_multicast: {ref.type}")
       # We replace the offset in the ref type by 0, because memref_ptr always
@@ -1782,12 +1775,72 @@ class LaunchContext:
         ir.StridedLayoutAttr.get(0, strides),
         ref_ty.memory_space,
     )
-    world_team = arith.constant(i32, 0)
-    ptr = utils.memref_ptr(ref)
-    mc_ptr = llvm.call(
-        ptr.type, [world_team, ptr], [], [], callee="nvshmemx_mc_ptr",
+
+    collective_metadata = (
+        self.host_collective_metadata
+        if on_host
+        else self.device_collective_metadata
     )
-    return utils.MultimemRef(utils.ptr_as_memref(mc_ptr, result_type))
+    if collective_metadata is None:
+      self._ensure_nvshmem_decls()
+      world_team = arith.constant(i32, 0)
+      ptr = utils.memref_ptr(ref)
+      mc_ptr = llvm.call(
+          ptr.type,
+          [world_team, ptr],
+          [],
+          [],
+          callee="nvshmemx_mc_ptr",
+      )
+      return utils.MultimemRef(utils.ptr_as_memref(mc_ptr, result_type))
+
+    parameter_id = self._find_kernel_argument_index(ref)
+    module_attributes = self.module.operation.attributes
+    if MULTIMEM_ARGS_ATTR in module_attributes:
+      multimem_delimiter = ","
+      multimem_args = module_attributes[MULTIMEM_ARGS_ATTR].value.split(
+          multimem_delimiter
+      )
+      if str(parameter_id) not in multimem_args:
+        module_attributes[MULTIMEM_ARGS_ATTR] = ir.StringAttr.get(
+            module_attributes[MULTIMEM_ARGS_ATTR].value
+            + multimem_delimiter
+            + str(parameter_id)
+        )
+    else:
+      module_attributes[MULTIMEM_ARGS_ATTR] = ir.StringAttr.get(
+          str(parameter_id)
+      )
+
+    index_type = ir.IndexType.get()
+    parameters_offset = COLLECTIVE_METADATA_SIZE + self.num_peers * parameter_id
+    parameters_offset_constant = arith.constant(index_type, parameters_offset)
+    current_device = arith.index_cast(index_type, self.device_id(on_host))
+    current_device_parameter_offset = arith.addi(
+        parameters_offset_constant, current_device
+    )
+    parameter_ref = memref.load(
+        collective_metadata, [current_device_parameter_offset]
+    )
+    ref_ptr = utils.memref_ptr(ref)
+    ref_int = llvm.ptrtoint(ir.IntegerType.get_signless(64), ref_ptr)
+    ref_offset = arith.subi(ref_int, parameter_ref)
+
+    # parameter multimem address space offset.
+    multimem_addresses_offset = (
+        COLLECTIVE_METADATA_SIZE
+        + self.num_peers * self.num_params
+        + parameter_id
+    )
+    multimem_ref_offset = arith.constant(
+        ir.IndexType.get(), multimem_addresses_offset
+    )
+    multimem_ref = memref.load(collective_metadata, [multimem_ref_offset])
+
+    multimem_address = arith.addi(multimem_ref, ref_offset)
+    ptr_type = ir.Type.parse("!llvm.ptr")
+    multimem_ptr = llvm.inttoptr(ptr_type, multimem_address)
+    return utils.MultimemRef(utils.ptr_as_memref(multimem_ptr, result_type))
 
   def device_id(self, on_host: bool = False) -> ir.Value:
     collective_metadata = (

@@ -45,19 +45,15 @@ def is_nvshmem_used():
         and "--xla_gpu_experimental_enable_nvshmem" in os.environ["XLA_FLAGS"])
 
 
+def all_gather_if_multiprocess(x):
+  if jax.process_count() > 1:
+    return multihost_utils.process_allgather(x, tiled=True)
+  return x
+
+
 class TestCase(jt_multiprocess.MultiProcessTest if is_nvshmem_used() is None else parameterized.TestCase):
 
   def setUp(self):
-    # TODO(b/482756208): Fix this
-    if jax.local_device_count() > 1:
-      self.skipTest("Collective metadata tests are flaky since right now when "
-                    "collective metadata is used there is no cross-device "
-                    "barrier before the module execution. This might lead to a "
-                    "situation when device 1 writes a signal to the device 2 "
-                    "the same time as device 2 zeroes it's signal memory "
-                    "buffer to launch a kernel. Eventually device 1 waits "
-                    "forever on a deadlock.")
-
     if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("Only works on GPU with capability >= sm90")
@@ -400,10 +396,6 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y, jnp.ones_like(y))
 
   def test_semaphore_signal_collective_axes(self):
-    # TODO(b/476264413): Support multimem in multi-thread mode.
-    if jax.local_device_count() > 1:
-      return  # Multimem not supported in multi-thread mode yet.
-
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
@@ -459,10 +451,6 @@ class PallasCallRemoteDMATest(TestCase):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
-    # TODO(b/481949311): Remove this once the bug is fixed.
-    if jax.local_device_count() > 1:
-      self.skipTest("b/481949311")
-
     def kernel(y_ref, smem_ref, sem):
       dev_id = lax.axis_index("y")
       other_dev_id = 1 - dev_id
@@ -500,8 +488,7 @@ class PallasCallRemoteDMATest(TestCase):
             kernel_call, mesh=mesh, in_specs=(), out_specs=P("y"), check_vma=False,
         )
     )()
-    if jax.local_device_count() == 1:
-      y = multihost_utils.process_allgather(y, tiled=True)
+    y = all_gather_if_multiprocess(y)
     ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
@@ -509,8 +496,6 @@ class PallasCallRemoteDMATest(TestCase):
 class PallasCallMultimemTest(TestCase):
 
   def setUp(self):
-    if jax.local_device_count() > 1:
-      self.skipTest("Multimem not supported in multi-thread mode yet.")
     super().setUp()
 
   def _get_reduction_impl(self, reduction):
@@ -555,7 +540,7 @@ class PallasCallMultimemTest(TestCase):
             kernel_call, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False,
         )
     )()
-    y = multihost_utils.process_allgather(y, tiled=True)
+    y = all_gather_if_multiprocess(y, tiled=True)
     ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
@@ -590,7 +575,7 @@ class PallasCallMultimemTest(TestCase):
             kernel_call, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False,
         )
     )()
-    y = multihost_utils.process_allgather(y, tiled=True)
+    y = all_gather_if_multiprocess(y, tiled=True)
     ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
@@ -693,7 +678,7 @@ class PallasCallMultimemTest(TestCase):
             check_vma=False,
         )
     )(x_local)
-    y = multihost_utils.process_allgather(y, tiled=True)
+    y = all_gather_if_multiprocess(y, tiled=True)
     np_reduction = self._get_reduction_impl(reduction)
     np.testing.assert_array_equal(
         y.astype(jnp.float32),
@@ -738,7 +723,7 @@ class PallasCallMultimemTest(TestCase):
         )
     )(x)
 
-    y = multihost_utils.process_allgather(y, tiled=True)
+    y = all_gather_if_multiprocess(y, tiled=True)
     np_reduction = self._get_reduction_impl(reduction)
 
     split_idx = x.shape[scatter_dimension] // 2
@@ -835,7 +820,7 @@ class PallasCallMultimemTest(TestCase):
             body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
         )
     )(x)
-    y = multihost_utils.process_allgather(y, tiled=True)
+    y = all_gather_if_multiprocess(y, tiled=True)
     np_reduction = self._get_reduction_impl(reduction)
     expected = np_reduction(x[0], x[1])
     tol = 1e-5 if reduction == "add" else 0
@@ -880,7 +865,7 @@ class PallasCallMultimemTest(TestCase):
             body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
         )
     )(x)
-    y = multihost_utils.process_allgather(y, tiled=True)
+    y = all_gather_if_multiprocess(y, tiled=True)
     repeats = [1] * len(x.shape)
     repeats[gather_dimension] = 2
     np.testing.assert_array_equal(y, np.tile(x, repeats))
