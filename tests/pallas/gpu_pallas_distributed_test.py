@@ -45,7 +45,7 @@ def is_nvshmem_used():
         and "--xla_gpu_experimental_enable_nvshmem" in os.environ["XLA_FLAGS"])
 
 
-class TestCase(jt_multiprocess.MultiProcessTest if is_nvshmem_used() is None else parameterized.TestCase):
+class TestCase(jt_multiprocess.MultiProcessTest if is_nvshmem_used() is None else parameterized.TestCase, jtu.JaxTestCase):
 
   def setUp(self):
     if (not jtu.test_device_matches(["cuda"]) or

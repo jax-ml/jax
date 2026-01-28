@@ -648,23 +648,30 @@ class TilingTransform(MemoryRefTransform):
 class UntileRef(state_types.Transform):
   tiling: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
 
-  def transform_shape(self, shape):
-    if shape is None:
-      return None
-    assert shape[-len(self.tiling) :] == self.tiling
-    shape = shape[: -len(self.tiling)]  # Drop tiling
-    return shape[: -len(self.tiling)] + tuple(
-        block_dim * tiling_dim
-        for block_dim, tiling_dim in zip(shape[-len(self.tiling) :], self.tiling)
-    )
-
-  def transform_dtype(self, dtype):
-    return dtype
+  def transform_type(self, ty):
+    match ty:
+      case jax_core.ShapedArray():
+        shape = ty.shape
+        if shape is None:
+          return ty
+        assert shape[-len(self.tiling) :] == self.tiling, (shape, self.tiling)
+        shape = shape[: -len(self.tiling)]  # Drop tiling
+        new_shape = shape[: -len(self.tiling)] + tuple(
+            block_dim * tiling_dim
+            for block_dim, tiling_dim in zip(
+                shape[-len(self.tiling) :], self.tiling
+            )
+        )
+        return ty.update(shape=new_shape)
+      case state_types.AbstractRef():
+        return ty.update(inner_aval=self.transform_type(ty.inner_aval))
+      case _:
+        raise TypeError(f"Cannot transform type: {ty}")
 
   def untransform_transpose(
       self, perm: tuple[int, ...]
   ) -> tuple[tuple[int, ...], state_types.Transform]:
-    # The transpose in question is applied to the utiled ref so we
+    # The transpose in question is applied to the untiled ref so we
     # need to translate it by duplicating and offsetting the last part.
     off = len(perm)
     new_suffix = [i + off for i in perm[-len(self.tiling) :]]
@@ -679,9 +686,8 @@ class UntileRef(state_types.Transform):
     return (*perm, *new_suffix), dataclasses.replace(self, tiling=new_tiling)
 
   def untransform_reshape(
-      self, dtype: jnp.dtype, shape: tuple[int, ...]
-  ) -> tuple[tuple[int, ...], state_types.Transform]:
-    del dtype
+      self, ty,
+  ) -> tuple[jax_core.AbstractValue, state_types.Transform]:
     # TODO(slebedev): Support this.
     raise NotImplementedError("Reshapes don't commute with tiling.")
 
@@ -777,7 +783,7 @@ class TransposeTransform(MemoryRefTransform):
 
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
-class TransposeRef(state_types.RefTransposer):
+class TransposeRef(state_types.TransposeTransform):
 
   def untransform_transpose(
       self, perm
@@ -787,9 +793,8 @@ class TransposeRef(state_types.RefTransposer):
     )
 
   def untransform_reshape(
-      self, dtype: jnp.dtype | ir.Type, shape: tuple[int, ...]
-  ) -> tuple[tuple[int, ...], state_types.Transform]:
-    del shape, dtype
+      self, ty
+  ) -> tuple[jax_core.AbstractValue, state_types.Transform]:
     raise NotImplementedError("Can't reshape a transposed memref.")
 
   def untransform_index(
@@ -811,53 +816,37 @@ class TransposeRef(state_types.RefTransposer):
     return mgpu.TransposeTransform(_perm_inverse(self.permutation))
 
 
-@tree_util.register_pytree_node_class
+@tree_util.register_dataclass
 @dataclasses.dataclass
 class PeerMemRef(state_types.Transform):
   device_id: Any
-  device_id_type: pallas_primitives.DeviceIdType
+  device_id_type: pallas_primitives.DeviceIdType = dataclasses.field(
+      metadata=dict(static=True)
+  )
 
-  def transform_shape(self, shape):
-    return shape
-
-  def transform_dtype(self, dtype):
-    return dtype
+  def transform_type(self, ty):
+    return ty
 
   def untransform_index(
       self, idxs: tuple[Index, ...]
   ) -> tuple[tuple[Index, ...], state_types.Transform]:
     return idxs, self
 
-  def tree_flatten(self):
-    return (self.device_id,), (self.device_id_type,)
 
-  @classmethod
-  def tree_unflatten(cls, metadata, arrays):
-    return cls(arrays[0], metadata[0])
-
-
-@tree_util.register_pytree_node_class
+@tree_util.register_dataclass
 @dataclasses.dataclass
 class MulticastRef(state_types.Transform):
-  collective_axes: tuple[Hashable, ...]
+  collective_axes: tuple[Hashable, ...] = dataclasses.field(
+      metadata=dict(static=True)
+  )
 
-  def transform_shape(self, shape):
-    return shape
-
-  def transform_dtype(self, dtype):
-    return dtype
+  def transform_type(self, ty):
+    return ty
 
   def untransform_index(
       self, idxs: tuple[Index, ...]
   ) -> tuple[tuple[Index, ...], state_types.Transform]:
     return idxs, self
-
-  def tree_flatten(self):
-    return (), self.collective_axes
-
-  @classmethod
-  def tree_unflatten(cls, metadata, arrays):
-    return cls(metadata[0])
 
 
 def remote_ref(
@@ -925,18 +914,20 @@ def untile_ref(ref, tiling: tuple[int, ...]) -> pallas_core.TransformedRef:
   return transform_ref(ref, UntileRef(tiling))
 
 def unswizzle_ref(ref, swizzle: int) -> pallas_core.TransformedRef:
-  return transform_ref(ref, UnswizzleRef(swizzle))
+  return transform_ref(ref, UnswizzleTransform(swizzle))
 
 
-@tree_util.register_pytree_node_class
+@tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class ExtractAliasedRef(state_types.Transform):
   """Bitcasts the underlying ref at the given offset to the given shape and dtype."""
-  dtype: dtypes.DType
-  shape: tuple[int, ...]
-  offset: int
+  dtype: dtypes.DType = dataclasses.field(metadata=dict(static=True))
+  shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  offset: int = dataclasses.field(metadata=dict(static=True))
   # TMEM-specific params
-  layout: tcgen05.TMEMLayout | None
+  layout: tcgen05.TMEMLayout | None = dataclasses.field(
+      metadata=dict(static=True)
+  )
 
   @classmethod
   def from_transformed_ref(
@@ -947,22 +938,14 @@ class ExtractAliasedRef(state_types.Transform):
   ):
     return cls(dtypes.dtype(ref.dtype), ref.ref.shape, byte_offset, layout)
 
-  def transform_shape(self, shape):
-    if shape is None:
-      return None
-    return self.shape
-
-  def transform_dtype(self, dtype):
-    del dtype  # Unused.
-    return self.dtype
-
-  def tree_flatten(self):
-    return (), (self.dtype, self.shape, self.offset, self.layout)
-
-  @classmethod
-  def tree_unflatten(cls, metadata, arrays):
-    assert not arrays
-    return cls(*metadata)
+  def transform_type(self, ty):
+    match ty:
+      case state_types.AbstractRef():
+        return ty.update(inner_aval=self.transform_type(ty.inner_aval))
+      case jax_core.ShapedArray():
+        return ty.update(shape=self.shape, dtype=self.dtype)
+      case _:
+        raise TypeError(f"Unsupported type: {ty}")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -981,7 +964,7 @@ class SwizzleTransform(MemoryRefTransform):
 
   def undo(self, ref: pallas_core.TransformedRef) -> pallas_core.TransformedRef:
     return dataclasses.replace(
-        ref, transforms=(*ref.transforms, UnswizzleRef(self.swizzle))
+        ref, transforms=(*ref.transforms, UnswizzleTransform(self.swizzle))
     )
 
   def to_gpu_transform(self) -> mgpu.MemRefTransform:
@@ -1006,29 +989,36 @@ class SwizzleTransform(MemoryRefTransform):
 
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
-class UnswizzleRef(state_types.Transform):
+class UnswizzleTransform(state_types.Transform):
   swizzle: int = dataclasses.field(metadata=dict(static=True))
+
+  def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
+    # Swizzling preserves the type
+    return x
 
   def swizzle_elems(self, dtype: jnp.dtype | ir.Type) -> int:
     if not isinstance(dtype, ir.Type):
       dtype = mgpu_utils.dtype_to_ir_type(dtype)
     return (self.swizzle * 8) // mgpu.bitwidth(dtype)
 
-  def untransform_transpose(self, perm) -> tuple[tuple[int, ...], state_types.Transform]:
+  def untransform_transpose(
+      self, perm: tuple[int, ...]
+  ) -> tuple[tuple[int, ...], state_types.Transform]:
     if perm[-1] != len(perm) - 1:
       raise ValueError("Can't transpose the swizzled dimension.")
 
     return perm, self
 
   def untransform_reshape(
-      self, dtype: jnp.dtype | ir.Type, shape: tuple[int, ...]
-  ) -> tuple[tuple[int, ...], state_types.Transform]:
-    if shape[-1] != self.swizzle_elems(dtype):
+      self, ty: jax_core.ShapedArray
+  ) -> tuple[jax_core.AbstractValue, state_types.Transform]:
+    shape = ty.shape
+    if shape[-1] != self.swizzle_elems(ty.dtype):
       raise ValueError(
           f"Reshape shape {shape} is not divisible by swizzle elements"
-          f" {self.swizzle_elems(dtype)}"
+          f" {self.swizzle_elems(ty.dtype)}"
       )
-    return shape, self
+    return ty, self
 
   def untransform_index(
       self, dtype: jnp.dtype | ir.Type, idxs: tuple[Index, ...]

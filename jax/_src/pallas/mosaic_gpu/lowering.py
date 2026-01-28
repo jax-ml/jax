@@ -63,8 +63,8 @@ from jax._src.state import discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as sp
 from jax._src.state import types as state_types
-from jax._src.state.types import RefReshaper
-from jax._src.state.types import RefTransposer
+from jax._src.state.types import ReshapeTransform
+from jax._src.state.types import TransposeTransform
 from jax._src.util import foreach
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
@@ -1358,15 +1358,18 @@ def _handle_dtype_bitcast(
 
 
 def _extract_aliased_ref(
-    ref: RefOrTmemType, transforms: Sequence[state_types.Transform]
-) -> tuple[RefOrTmemType, Sequence[state_types.Transform]]:
+    ref: RefOrTmemType, ref_aval: state_types.AbstractRef,
+    transforms: Sequence[state_types.Transform]
+) -> tuple[RefOrTmemType, state_types.AbstractRef,
+           Sequence[state_types.Transform]]:
   match transforms:
     case (
         gpu_core.ExtractAliasedRef(
             dtype, transformed_shape, offset, layout
-        ),
+        ) as t,
         *other_transforms,
     ):
+      ref_aval = t.transform_type(ref_aval)
       mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
       if isinstance(ref, tcgen05.TMEMRef):
         assert layout is not None
@@ -1395,24 +1398,14 @@ def _extract_aliased_ref(
             mgpu_utils.dtype_to_ir_type(dtype),
         )
         ref = mgpu.memref_reshape(ref, transformed_shape)
-      return ref, tuple(other_transforms)
+      return ref, ref_aval, tuple(other_transforms)
     case _:
-      return ref, transforms
-
-
-def _transform_dtype(
-    dtype: dtypes.DType,
-    transforms: Sequence[state_types.Transform],
-) -> dtypes.DType:
-  """Applies `t.transform_dtype` for `t` in `transforms` sequentially on `dtype`."""
-  for transform in transforms:
-    dtype = transform.transform_dtype(dtype)
-  assert dtype is not None
-  return dtype  # pytype: disable=bad-return-type
+      return ref, ref_aval, transforms
 
 
 def _handle_transforms(
     ctx: LoweringRuleContext,
+    ref_aval: state_types.AbstractRef,
     ref: RefOrTmemType,
     transforms: Sequence[state_types.Transform],
     *,
@@ -1423,7 +1416,7 @@ def _handle_transforms(
 ) -> tuple[RefOrTmemType, Sequence[state_types.Transform]]:
   # Before we handle other transforms, we resolve any possible leading
   # aliasing transform.
-  ref, transforms = _extract_aliased_ref(ref, transforms)
+  ref, ref_aval, transforms = _extract_aliased_ref(ref, ref_aval, transforms)
   if isinstance(ref, tcgen05.TMEMRef):
     mlir_dtype = ref.dtype
   else:
@@ -1459,7 +1452,7 @@ def _handle_transforms(
           transformed_ref = transformed_ref.slice(*indices)
         else:
           transformed_ref = mgpu.memref_slice(transformed_ref, indices)
-      case RefTransposer(perm):
+      case TransposeTransform(perm):
         if handle_transposes:
           perm = _bubble_up(lambda t, p: t.untransform_transpose(p), perm)
           if isinstance(transformed_ref, tcgen05.TMEMRef):
@@ -1469,9 +1462,9 @@ def _handle_transforms(
           if not isinstance(t, gpu_core.TransposeRef):
             t = gpu_core.TransposeRef(perm)
           new_transforms.append(t)
-      case RefReshaper(dtype=dtype, shape=shape) if handle_reshapes:
+      case ReshapeTransform(shape=shape) if handle_reshapes:
         shape = _bubble_up(
-            lambda t, p: t.untransform_reshape(dtype, p),  # pylint: disable=cell-var-from-loop
+            lambda t, p: t.untransform_reshape(ref_aval, p),  # pylint: disable=cell-var-from-loop
             shape)
         if isinstance(transformed_ref, tcgen05.TMEMRef):
           raise ValueError("TMEM reshape not allowed.")
@@ -1488,7 +1481,7 @@ def _handle_transforms(
               "Only JAX mesh axes can be used to obtain peer references, but"
               f" got {other_axes}"
           )
-      case gpu_core.MulticastRef(_, _, _):
+      case gpu_core.MulticastRef(_):
         if not allow_multicast_refs:
           raise NotImplementedError(
               "Multicast references are not allowed in the lowering of this"
@@ -1497,6 +1490,7 @@ def _handle_transforms(
         is_multicast = True
       case _:
         new_transforms.append(t)
+    ref_aval = t.transform_type(ref_aval)
   if peer_device_id is not None:
     assert not is_multicast
     if not allow_peer_refs:
@@ -1566,8 +1560,9 @@ def _get_lowering_rule(
       mgpu.TCGEN05_TRANSPOSED_LAYOUT,
   )
   transposed = bool(transposed)
+  assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
   x_smem, transforms = _handle_transforms(
-      ctx, x_ref, transforms, handle_transposes=not transposed,
+      ctx, ctx.avals_in[0], x_ref, transforms, handle_transposes=not transposed,
       allow_peer_refs=True
   )
   x_smem = cast(ir.Value, x_smem)
@@ -1581,7 +1576,7 @@ def _get_lowering_rule(
 
   match transforms:
     case (
-        gpu_core.UnswizzleRef(swizzle),
+        gpu_core.UnswizzleTransform(swizzle),
         gpu_core.UntileRef(tiling),
         *maybe_transpose,
     ):
@@ -1658,8 +1653,9 @@ def _get_lowering_rule_wg(
     raise TypeError(f"Can only load from references (got {x_ref}).")
 
   transforms = jax.tree.unflatten(tree, leaves)
+  assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
   x_ref, transforms = _handle_transforms(
-      ctx, x_ref, transforms, allow_peer_refs=True
+      ctx, ctx.avals_in[0], x_ref, transforms, allow_peer_refs=True
   )
 
   if transforms:
@@ -1705,9 +1701,10 @@ def _swap_lowering_rule(
       mgpu.WGMMA_TRANSPOSED_LAYOUT,
       mgpu.TCGEN05_TRANSPOSED_LAYOUT,
   )
+  assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
   x_smem, transforms = _handle_transforms(
-      ctx, x_ref, transforms, handle_transposes=not transposed_value,
-      allow_peer_refs=True
+      ctx, ctx.avals_in[0], x_ref, transforms,
+      handle_transposes=not transposed_value, allow_peer_refs=True
   )
   del x_ref  # Don't use x_ref anymore. Use x_smem instead!
 
@@ -1725,7 +1722,7 @@ def _swap_lowering_rule(
       )
       value.store_untiled(x_smem)
     case (
-        gpu_core.UnswizzleRef(swizzle),
+        gpu_core.UnswizzleTransform(swizzle),
         gpu_core.UntileRef(tiling),
         *maybe_transpose,
     ):
@@ -1803,8 +1800,9 @@ def _swap_lowering_rule_wg(
   ):
     raise TypeError(f"Can only store to references (got {x_smem}).")
   transforms = jax.tree.unflatten(tree, leaves)
+  assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
   x_smem, transforms = _handle_transforms(
-      ctx, x_smem, transforms, allow_peer_refs=True)
+      ctx, ctx.avals_in[0], x_smem, transforms, allow_peer_refs=True)
   if transforms:
     raise NotImplementedError(
         "Transforms are not yet implemented for warpgroup semantics"
@@ -3770,7 +3768,8 @@ def merge_indexers(
 @register_lowering_rule(primitives.semaphore_read_p, mgpu.LoweringSemantics.Lane)
 def _semaphore_read_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem, transforms = tree_util.tree_unflatten(args_tree, args)
-  sem, transforms = _handle_transforms(ctx, sem, transforms)
+  assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
+  sem, transforms = _handle_transforms(ctx, ctx.avals_in[0], sem, transforms)
   if transforms:
     raise NotImplementedError(f"Unhandled transforms for semaphore_read: {transforms}")
   sem_ptr = mgpu.utils.memref_ptr(sem)
@@ -3801,7 +3800,8 @@ def _semaphore_signal_lowering_rule(
         "Mosaic GPU backend does not support the concept of cores, but"
         " core_index is specified"
     )
-  sem, transforms = _handle_transforms(ctx, sem, transforms)
+  assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
+  sem, transforms = _handle_transforms(ctx, ctx.avals_in[0], sem, transforms)
   if transforms:
     raise NotImplementedError(f"Unhandled transforms for semaphore_signal: {transforms}")
   if device_id is not None:
@@ -3835,7 +3835,8 @@ def _semaphore_signal_lowering_rule(
 @register_lowering_rule(primitives.semaphore_wait_p, mgpu.LoweringSemantics.Lane)
 def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem, transforms, value, decrement = tree_util.tree_unflatten(args_tree, args)
-  sem, transforms = _handle_transforms(ctx, sem, transforms)
+  assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
+  sem, transforms = _handle_transforms(ctx, ctx.avals_in[0], sem, transforms)
   if transforms:
     raise NotImplementedError(
         f"Unhandled transforms for semaphore_wait: {transforms}"
