@@ -89,7 +89,8 @@ absl::StatusOr<nb::bytes> JsonToPprofProfile(std::string json) {
 
 absl::StatusOr<std::string> PprofProfileToJson(nb::bytes binary_proto) {
   tensorflow::tfprof::pprof::Profile profile;
-  profile.ParseFromArray(binary_proto.c_str(), binary_proto.size());
+  profile.ParseFromString(
+      absl::string_view(binary_proto.c_str(), binary_proto.size()));
   std::string output;
   auto status = tsl::protobuf::util::MessageToJsonString(profile, &output);
   if (!status.ok()) {
