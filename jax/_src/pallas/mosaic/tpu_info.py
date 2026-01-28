@@ -164,6 +164,7 @@ def is_tpu_device() -> bool:
       "TPU v5 lite",
       "TPU v5",
       "TPU v5p",
+      "TPU v5p split",
       "TPU v6 lite",
       "TPU v6e",
       "TPU7x",
@@ -305,6 +306,31 @@ def get_tpu_info() -> TpuInfo:
           int4_ops_per_second=int(1.84e15 // num_chip_cores),
           sparse_core=SparseCoreInfo(
               num_cores=4,
+              num_subcores=16,
+              num_lanes=8,
+              dma_granule_size_bytes=32,
+          ),
+      )
+    case "TPU v5p split":  # 1 TensorCores per fake device
+      num_chip_cores = 2 # 2 TensorCores per chip
+      return TpuInfo(
+          chip_version=ChipVersion.TPU_V5P,
+          generation=5,
+          num_cores=core.get_num_device_cores(),
+          num_lanes=NUM_LANES,
+          num_sublanes=NUM_SUBLANES,
+          mxu_column_size=MXU_COLUMN_SIZE_GEN_LT_6,
+          vmem_capacity_bytes=64 * 1024 * 1024,  # 64 MiB per core
+          cmem_capacity_bytes=0,
+          smem_capacity_bytes=1024 * 1024,  # 1 MiB per core
+          hbm_capacity_bytes=103_000_000_000 // num_chip_cores,
+          mem_bw_bytes_per_second=int(2.46e12 // num_chip_cores),
+          bf16_ops_per_second=int(4.59e14 // num_chip_cores),
+          int8_ops_per_second=int(9.18e14 // num_chip_cores),
+          fp8_ops_per_second=0,  # Not Available
+          int4_ops_per_second=int(1.84e15 // num_chip_cores),
+          sparse_core=SparseCoreInfo(
+              num_cores=4 // num_chip_cores,
               num_subcores=16,
               num_lanes=8,
               dma_granule_size_bytes=32,
