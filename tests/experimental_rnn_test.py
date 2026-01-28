@@ -216,7 +216,7 @@ class RnnTest(jtu.JaxTestCase):
     self.assertIn('"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\00@\\03\\80\\00\\00\\00\\00\\00@\\01\\00\\00\\00\\00\\00\\00"',
                     stablehlo)
 
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("cuda", "rocm")
   def test_no_workspace_overflow(self):
     # Problem sizes known to cause overflows on older versions.
     batch_size, max_seq_length, input_size = 256, 500, 512
