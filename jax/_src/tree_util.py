@@ -1144,7 +1144,8 @@ def register_dataclass(
 @export
 def register_object(
     nodetype: Typ,
-    mapping_attr: str
+    mapping_attr: str,
+    has_int_keys: bool = False
 ) -> Typ:
 
   def unflatten_func(meta, data):
@@ -1156,17 +1157,30 @@ def register_object(
       object.__setattr__(module, name, value)
     return module
 
+  def key_fn(k):
+    if k.isdigit():
+      return (0, int(k))
+    return (1, k)
+
   def flatten_func(x):
-    mapping_iter = getattr(x, mapping_attr).items()
-    meta_fields = [k for (k,v) in mapping_iter if not v]
-    data_fields = [k for (k,v) in mapping_iter if v]
-    data = tuple(getattr(x, name) for name in data_fields)
-    meta_data = tuple(getattr(x, name) for name in meta_fields)
+    m = getattr(x, mapping_attr)
+    data = []
+    data_fields = []
+    meta_data = []
+    meta_fields = []
+    sorted_keys = sorted(x.__dict__.keys(), key=key_fn)
+    for k in sorted_keys:
+      if k in m and m[k]:
+        data.append(getattr(x, k))
+        data_fields.append(k)
+      else:
+        meta_data.append(getattr(x, k))
+        meta_fields.append(k)
     return data, (meta_fields, meta_data, data_fields)
 
-  default_registry.register_object_node(nodetype, mapping_attr)
-  none_leaf_registry.register_object_node(nodetype, mapping_attr)
-  dispatch_registry.register_object_node(nodetype, mapping_attr)
+  default_registry.register_object_node(nodetype, mapping_attr, has_int_keys)
+  none_leaf_registry.register_object_node(nodetype, mapping_attr, has_int_keys)
+  dispatch_registry.register_object_node(nodetype, mapping_attr, has_int_keys)
   _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
   return nodetype
 

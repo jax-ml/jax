@@ -5,10 +5,7 @@ import jax.numpy as jnp
 from jax import tree_util
 import numpy as np
 from typing import Any
-
 from jax._src import lib as jaxlib
-
-# TODO: If meta_data and meta_keys were python arrays instead, would there be a penalty?
 
 @jax.tree_util.register_static
 class StaticDict(dict):
@@ -28,29 +25,43 @@ class ObjectRegistered:
 
 jax.tree_util.register_object(ObjectRegistered, '__mapping__')
 
+class ObjectRegisteredInt(ObjectRegistered):
+  pass
+
+jax.tree_util.register_object(ObjectRegisteredInt, '__mapping__', True)
+
+def key_fn(k):
+  if k.isdigit():
+    return (0, int(k))
+  return (1, k)
+
 class PyObjectRegistered(ObjectRegistered):
 
-  def tree_flatten(self):
-    statics = {}
-    data = []
-    data_keys = []
-    for (k,v) in vars(self).items():
-      if k in self.__mapping__:
-        data.append(v)
-        data_keys.append(k)
-      else:
-        statics[k] = v
-    return (data, (data_keys, statics))
-
   @classmethod
-  def tree_unflatten(cls, saved, xs):
-    data_keys, statics = saved
-    obj = object.__new__(cls)
-    for k,v in statics.items():
-      object.__setattr__(obj, k, v)
-    for k,v in zip(data_keys, xs):
-      object.__setattr__(obj, k, v)
-    return obj
+  def tree_unflatten(cls, meta, data):
+    (meta_fields, meta_data, data_fields) = meta
+    module = object.__new__(cls)
+    for name, value in zip(meta_fields, meta_data):
+      object.__setattr__(module, name, value)
+    for name, value in zip(data_fields, data):
+      object.__setattr__(module, name, value)
+    return module
+
+  def tree_flatten(self):
+    m = self.__mapping__
+    data = []
+    data_fields = []
+    meta_data = []
+    meta_fields = []
+    sorted_keys = sorted(self.__dict__.keys(), key=key_fn)
+    for k in sorted_keys:
+      if k in m and m[k]:
+        data.append(getattr(self, k))
+        data_fields.append(k)
+      else:
+        meta_data.append(getattr(self, k))
+        meta_fields.append(k)
+    return data, (meta_fields, meta_data, data_fields)
 
 tree_util.register_pytree_node(
     PyObjectRegistered,
@@ -155,7 +166,8 @@ if __name__ == '__main__':
   num_static = width - num_data
 
   obj_registered = make_tree(ObjectRegistered, depth, num_data, num_static)
-  pytree_registered = make_tree(PyTreeNodeRegistered, depth, num_data, num_static)
+  obj_registered_int = make_tree(ObjectRegisteredInt, depth, num_data, num_static)
+  # pytree_registered = make_tree(PyTreeNodeRegistered, depth, num_data, num_static)
   # DataclassRegistered = make_dataclass_registered(num_data, num_static)
   dataclass_registered = make_dataclass_tree(DataclassRegistered, depth, num_data, num_static)
   pyobj_registered = make_tree(PyObjectRegistered, depth, num_data, num_static)
@@ -164,8 +176,10 @@ if __name__ == '__main__':
 
   print("Benchmarking object...")
   time_obj = [benchmark_roundtrip(obj_registered) for _ in range(3)]
-  print("Benchmarking pytree")
-  time_pytree = [benchmark_roundtrip(pytree_registered) for _ in range(3)]
+  print("Benchmarking object int...")
+  time_obj = [benchmark_roundtrip(obj_registered_int) for _ in range(3)]
+  # print("Benchmarking pytree")
+  # time_pytree = [benchmark_roundtrip(pytree_registered) for _ in range(3)]
   print("Benchmarking dict")
   time_dict = [benchmark_roundtrip(dict_registered) for _ in range(3)]
   print("Benchmarking pre-flattened")
@@ -177,7 +191,7 @@ if __name__ == '__main__':
 
   print(f"pre flattened: {ci(time_flat)}")
   print(f"register_object: {ci(time_obj)}")
-  print(f"register_pytree_node: {ci(time_pytree)}")
+  # print(f"register_pytree_node: {ci(time_pytree)}")
   print(f"register_dict: {ci(time_dict)}")
   print(f"register_dataclass: {ci(time_dataclass)}")
   print(f"register_pyobject: {ci(time_pyobject)}")

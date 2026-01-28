@@ -106,11 +106,12 @@ void PyTreeRegistry::Register(
   }
 }
 
-void PyTreeRegistry::RegisterObject(nb::object type, nb::str mapping_attr) {
+void PyTreeRegistry::RegisterObject(nb::object type, nb::str mapping_attr, bool has_int_keys) {
   auto registration = std::make_unique<Registration>();
   registration->kind = PyTreeKind::kObject;
   registration->type = type;
   registration->mapping_attr = std::move(mapping_attr);
+  registration->has_int_keys = has_int_keys;
   nb::ft_lock_guard lock(mu_);
   auto it = registrations_.emplace(type, std::move(registration));
   if (!it.second) {
@@ -260,8 +261,10 @@ int py_compare(const nb::object& a, const nb::object& b) {
 }
 
 int flax_compare(const nb::object& a, const nb::object& b) {
-    bool a_is_digit = nb::cast<bool>(a.attr("isdigit")());
-    bool b_is_digit = nb::cast<bool>(b.attr("isdigit")());
+    std::string a_str = nb::cast<std::string>(nb::str(a));
+    std::string b_str = nb::cast<std::string>(nb::str(b));
+    bool a_is_digit = !a_str.empty() && std::all_of(a_str.begin(), a_str.end(), ::isdigit);
+    bool b_is_digit = !b_str.empty() && std::all_of(b_str.begin(), b_str.end(), ::isdigit);
     if (a_is_digit && !b_is_digit) {
         return 1;
     }
@@ -269,9 +272,11 @@ int flax_compare(const nb::object& a, const nb::object& b) {
         return 0;
     }
     if (a_is_digit && b_is_digit) {
-        return PyObject_RichCompareBool(nb::int_(a).ptr(), nb::int_(a).ptr(), Py_LT);
+        long long a_num = std::stoll(a_str);
+        long long b_num = std::stoll(b_str);
+        return a_num < b_num ? 1 : 0;
     }
-    PyObject_RichCompareBool(a.ptr(), b.ptr(), Py_LT);
+    return a_str < b_str ? 1 : 0;
 }
 
 /*static*/ std::vector<nb::object> GetSortedPyDictKeys(PyObject* py_dict,
@@ -750,9 +755,9 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
         StringSet mapping = nb::cast<StringSet>(nb::getattr(object, node.custom->mapping_attr));
 
         node.arity = 0;
-
+        auto compare_f = node.custom->has_int_keys ? flax_compare : py_compare;
         std::vector<nb::object> keys = GetSortedPyDictKeys(
-            nb::getattr(object, "__dict__").ptr());
+            nb::getattr(object, "__dict__").ptr(), compare_f);
         for (auto k : keys) {
             auto k_str = nb::cast<std::string>(k);
             if (mapping.count(k_str) > 0 && mapping[k_str]) {
@@ -1906,12 +1911,14 @@ void BuildPytreeSubmodule(nb::module_& m) {
                    ));
   registry.def("register_object_node", &PyTreeRegistry::RegisterObject,
                nb::arg("type").none(), nb::arg("mapping_attr").none(),
+               nb::arg("has_int_keys").none(),
                nb::sig(
                    // clang-format off
       "def register_object_node("
       "self, "
       "type: type, "
-      "mapping_attr: str, /"
+      "mapping_attr: str, "
+      "has_int_keys: bool, /"
       ") -> Any"
                    // clang-format on
                    ));

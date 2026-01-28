@@ -97,6 +97,7 @@ class PyTreeRegistry {
 
     // For register_object
     nanobind::str mapping_attr;
+    bool has_int_keys;
 
     int tp_traverse(visitproc visit, void* arg);
   };
@@ -112,7 +113,7 @@ class PyTreeRegistry {
                          std::vector<nanobind::str> data_fields,
                          std::vector<nanobind::str> meta_fields);
   // Registration for flax objects.
-  void RegisterObject(nanobind::object type, nanobind::str mapping_attr);
+  void RegisterObject(nanobind::object type, nanobind::str mapping_attr, bool has_int_keys);
 
   // Finds the custom type registration for `type`. Returns nullptr if none
   // exists.
