@@ -985,9 +985,10 @@ nb::dict PyArray::CudaArrayInterface() {
   ifrt::Array* ifrt_array = arr.ifrt_array();
   std::optional<xla::Shape>& scratch = arr.GetStorage().dynamic_shape;
   auto* pjrt_buffer = GetPjrtBuffer(ifrt_array);
-  if (pjrt_buffer->client()->platform_id() != xla::CudaId()) {
+  if (pjrt_buffer->client()->platform_id() != xla::CudaId() &&
+      pjrt_buffer->client()->platform_id() != xla::RocmId()) {
     throw nb::attribute_error(
-        "__cuda_array_interface__ is only defined for NVidia GPU buffers.");
+        "__cuda_array_interface__ is only defined for GPU buffers.");
   }
   if (pjrt_buffer->IsTuple()) {
     throw nb::attribute_error(
