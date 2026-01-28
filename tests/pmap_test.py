@@ -195,7 +195,11 @@ class PythonPmapTest(jtu.JaxTestCase):
     for obj in [lowered, compiled]:
       self.assertFalse(obj._no_kwargs)
       self.assertEqual(obj.in_tree, jax.tree.flatten(((0,), {}))[1])
-      self.assertEqual(obj.in_avals, ((core.ShapedArray(x.shape, x.dtype),), {}))
+      # Compare shape/dtype only; sharding may differ with pmap_shmap_merge.
+      ((aval,), kwargs) = obj.in_avals
+      self.assertEqual(kwargs, {})
+      self.assertEqual(aval.shape, x.shape)
+      self.assertEqual(aval.dtype, x.dtype)
 
   def testLowerCompileInTreeMismatch(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
@@ -730,12 +734,9 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(f_ans, f_expected)
     self.assertIsInstance(f_ans, array.ArrayImpl)
     if config.pmap_shmap_merge.value:
-      if jax.device_count() == 1:
-        self.assertEmpty(f_ans.sharding.spec)
-      else:
-        self.assertLen(f_ans.sharding.spec, 1)
-        axis = f_ans.sharding.spec[0]
-        self.assertEqual(axis, f_ans.sharding.mesh.axis_names[0])
+      self.assertLen(f_ans.sharding.spec, 1)
+      axis = f_ans.sharding.spec[0]
+      self.assertEqual(axis, f_ans.sharding.mesh.axis_names[0])
     else:
       sharding_spec = f_ans.sharding.sharding_spec
       # the output is actually replicated (has the same values in each device
@@ -749,12 +750,9 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(g_ans, g_expected)
     self.assertIsInstance(g_ans, array.ArrayImpl)
     if config.pmap_shmap_merge.value:
-      if jax.device_count() == 1:
-        self.assertEmpty(g_ans.sharding.spec)
-      else:
-        self.assertLen(g_ans.sharding.spec, 1)
-        axis = g_ans.sharding.spec[0]
-        self.assertEqual(axis, g_ans.sharding.mesh.axis_names[0])
+      self.assertLen(g_ans.sharding.spec, 1)
+      axis = g_ans.sharding.spec[0]
+      self.assertEqual(axis, g_ans.sharding.mesh.axis_names[0])
     else:
       sharding_spec = g_ans.sharding.sharding_spec
       self.assertEmpty([a for a in sharding_spec.mesh_mapping
@@ -1413,6 +1411,7 @@ class PythonPmapTest(jtu.JaxTestCase):
         r'shard_map applied.*axis sizes.*not evenly divisible.*mesh axis sizes.*',
         r'cannot select an axis to squeeze out which has size not equal to one.*',
         r'Sharding.*implies that array.*but the dimension size is.*',
+        r'implies that the global size of its dimension.*should be divisible by.*',
       ]
       expected_regex = '|'.join(expected_regex)
     else:

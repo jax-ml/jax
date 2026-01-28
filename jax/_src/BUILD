@@ -1109,6 +1109,7 @@ pytype_strict_library(
         ":tree_util",
         ":util",
         ":xla_bridge",
+        "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
 

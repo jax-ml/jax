@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from functools import lru_cache, partial
-from typing import Any
+from typing import Any, Callable, NamedTuple
 
 from jax._src import api
 from jax._src.api_util import (
@@ -33,6 +33,7 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import pxla
 from jax._src.lax import lax
+from jax._src.lib import xla_client as xc
 from jax._src.mesh import Mesh
 from jax._src.shard_map import _axes_to_pspec, _shard_map
 from jax._src.tree_util import (
@@ -78,23 +79,25 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
         donate_tuple, dyn_args_tree, len(dyn_args_flat))
     mesh_devices = _get_mesh_devices(
         devices, backend, local_axis_size, axis_size, trace_state_clean)
-    _pmapped, in_specs, out_specs, mesh = _cached_shard_map(
+    cached = _cached_shard_map(
         dyn_f, dyn_args_tree, in_axes_flat, out_axes_flat, out_axes_tree,
-        mesh_devices, axis_name)
-    jitted_f = api.jit(
-        _pmapped,
-        donate_argnums=[i for i, val in enumerate(donated_invars) if val])
+        donated_invars, mesh_devices, axis_name)
+    jit_kwargs = {"donate_argnums": cached.donate_argnums}
+    if trace_state_clean:
+      jit_kwargs["in_shardings"] = tuple(cached.in_global_shardings)
+      jit_kwargs["out_shardings"] = cached.out_global_shardings
+    jitted_f = api.jit(cached.pmapped, **jit_kwargs)
     if process_count > 1:
       if trace_state_clean:
         flat_global_args = [
-            host_local_array_to_global_array(arr, global_mesh=mesh, pspec=spec)
-            for arr, spec in zip(dyn_args_flat, in_specs)]
+            host_local_array_to_global_array(arr, global_mesh=cached.mesh, pspec=spec)
+            for arr, spec in zip(dyn_args_flat, cached.in_specs_flat)]
       else:
         flat_global_args = mhu.host_local_array_to_global_array(
-            dyn_args_flat, mesh, list(in_specs))
+            dyn_args_flat, cached.mesh, list(cached.in_specs_flat))
     else:
       flat_global_args = dyn_args_flat
-    return (jitted_f, flat_global_args, dyn_args_tree, mesh, out_specs,
+    return (jitted_f, flat_global_args, dyn_args_tree, cached.mesh, cached.out_specs,
             donate_tuple, process_count, trace_state_clean)
 
   @util.wraps(f)
@@ -125,9 +128,41 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
   return wrapped
 
 
+class CachedShardMap(NamedTuple):
+  """Core cached pmap result.
+
+  Attributes:
+    pmapped: The shard_map-transformed function.
+    in_specs_flat: Flattened input PartitionSpecs for array conversion.
+    local_devices: List of devices in the local mesh.
+    in_local_shardings: NamedSharding for each input using local mesh.
+    in_global_shardings: NamedSharding for each input using global mesh.
+    mesh: The global Mesh for this pmap invocation.
+    out_specs: Output PartitionSpecs as a pytree prefix.
+    out_local_shardings_thunk: Cached thunk returning (local, global) sharding
+      pairs for output pspecs.
+    donate_argnums: Indices of donated arguments.
+    out_global_shardings: Output NamedShardings as a pytree.
+  """
+
+  pmapped: Callable[..., Any]
+  in_specs_flat: tuple[sharding_impls.PartitionSpec, ...]
+  local_devices: list[xc.Device]
+  in_local_shardings: list[sharding_impls.NamedSharding]
+  in_global_shardings: list[sharding_impls.NamedSharding]
+  mesh: Mesh
+  out_specs: Any  # pytree of PartitionSpecs
+  out_local_shardings_thunk: Callable[
+      [sharding_impls.PartitionSpec],
+      tuple[sharding_impls.NamedSharding, sharding_impls.NamedSharding],
+  ]
+  donate_argnums: list[int]
+  out_global_shardings: Any  # pytree of NamedShardings
+
+
 @lu.cache
-def _cached_shard_map(fun, in_tree, in_axes_flat,
-                      out_axes_flat, out_axes_tree, mesh_devices, axis_name):
+def _cached_shard_map(fun, in_tree, in_axes_flat, out_axes_flat, out_axes_tree,
+                      donated_invars, mesh_devices, axis_name):
   mesh = Mesh(mesh_devices, (axis_name,))
   out_axes = tree_unflatten(out_axes_tree, list(out_axes_flat))
   in_specs = tuple(map(partial(_axes_to_pspec, axis_name), in_axes_flat))
@@ -152,7 +187,41 @@ def _cached_shard_map(fun, in_tree, in_axes_flat,
     return tree_unflatten(out_tree, out_flat)
   _pmapped = _shard_map(_fun, mesh=mesh, in_specs=in_specs, out_specs=out_specs,
       check_vma=False, axis_names=set(mesh.axis_names))
-  return (_pmapped, in_specs, out_specs, mesh)
+  # Donation is now safe in multi-host mode because host_local_array_to_global_array
+  # copies donated arrays instead of rewrapping them (which would share buffers).
+  donate_argnums = [i for i, val in enumerate(donated_invars) if val]
+
+  # out_specs is a pytree, so use tree_map to convert to shardings
+  get_sharding = (
+      lambda spec: sharding_impls.NamedSharding(mesh, spec)
+      if spec is not None else spec)
+  out_global_shardings = tree_map(
+      get_sharding, out_specs, is_leaf=lambda x: x is None)
+
+  @lru_cache
+  def out_local_shardings_thunk(pspec):
+    return (
+        sharding_impls.NamedSharding(mesh.local_mesh, pspec),
+        sharding_impls.NamedSharding(mesh, pspec),
+    )
+
+  local_devices = list(mesh.local_mesh.devices.flat)
+  in_local_shardings = [
+      sharding_impls.NamedSharding(mesh.local_mesh, p) for p in in_specs]
+  in_global_shardings = [
+      sharding_impls.NamedSharding(mesh, p) for p in in_specs]
+  return CachedShardMap(
+      pmapped=_pmapped,
+      in_specs_flat=in_specs,
+      local_devices=local_devices,
+      in_local_shardings=in_local_shardings,
+      in_global_shardings=in_global_shardings,
+      mesh=mesh,
+      out_specs=out_specs,
+      out_local_shardings_thunk=out_local_shardings_thunk,
+      donate_argnums=donate_argnums,
+      out_global_shardings=out_global_shardings,
+  )
 
 
 def _mapped_axis_size(args, in_axes):
