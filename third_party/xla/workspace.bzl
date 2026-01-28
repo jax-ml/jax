@@ -26,6 +26,7 @@ def repo():
         # web links (`/archive/`) links so we use the GitHub API endpoint to get the tarball
         # instead.
         urls = tf_mirror_urls("https://api.github.com/repos/openxla/xla/tarball/{commit}".format(commit = XLA_COMMIT)),
+        patch_file = ["//third_party/xla:coordination_service_config_fix.patch"],
     )
 
     # For development, one often wants to make changes to the TF repository as well

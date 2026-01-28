@@ -14,7 +14,14 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## Unreleased
+## JAX 0.8.3
+
+JAX v0.8.3 is identical to v0.8.2 with the following two bug fixes patched in:
+
+- https://github.com/openxla/xla/commit/4bc723da9766d784920f4e566f87afc6ffbf6a5b
+- https://github.com/openxla/xla/commit/21552fd83ec0f02ec3f418f4ac356bfa1d91ce4d
+
+## JAX 0.8.2  (December 18, 2025)
 
 * Deprecations
   * `jax.lax.pvary` has been deprecated.

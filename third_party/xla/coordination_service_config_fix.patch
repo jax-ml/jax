@@ -1,0 +1,60 @@
+diff --git a/xla/pjrt/distributed/client.cc b/xla/pjrt/distributed/client.cc
+index 09bbb10607..f7cae0828c 100644
+--- a/xla/pjrt/distributed/client.cc
++++ b/xla/pjrt/distributed/client.cc
+@@ -89,7 +89,9 @@ DistributedRuntimeCoordinationServiceClient::
+   // Convert options to coordination config.
+   CoordinationServiceAgent::Config config;
+   config.service_leader = "/job:jax_worker/task:0";
+-  config.cluster_register_timeout = options.init_timeout;
++  if (options.init_timeout > absl::ZeroDuration()) {
++    config.cluster_register_timeout = options.init_timeout;
++  }
+   config.heartbeat_timeout = options.heartbeat_timeout;
+   config.shutdown_barrier_timeout = options.shutdown_timeout;
+   config.agent_destruction_without_shutdown = !options.shutdown_on_destruction;
+diff --git a/xla/pjrt/distributed/coordination/coordination_service.cc b/xla/pjrt/distributed/coordination/coordination_service.cc
+index 0326b3c5cb..20b02a9242 100644
+--- a/xla/pjrt/distributed/coordination/coordination_service.cc
++++ b/xla/pjrt/distributed/coordination/coordination_service.cc
+@@ -740,7 +740,7 @@ absl::Status CoordinationService::DisconnectTask(const CoordinatedTask& task) {
+ 
+   // Disconnect task.
+   task_state->Disconnect(
+-      /*grace_period_duration_us=*/absl::ToInt64Milliseconds(
++      /*grace_period_duration_us=*/absl::ToInt64Microseconds(
+           config_.heartbeat_timeout));
+   LeaveOngoingBarriers(task, "task disconnected");
+   RefreshAliveness();
+diff --git a/xla/pjrt/distributed/coordination/coordination_service_agent.cc b/xla/pjrt/distributed/coordination/coordination_service_agent.cc
+index bc6788cb7e..41418be4cb 100644
+--- a/xla/pjrt/distributed/coordination/coordination_service_agent.cc
++++ b/xla/pjrt/distributed/coordination/coordination_service_agent.cc
+@@ -241,7 +241,7 @@ void CoordinationServiceAgent::StartSendingHeartbeats() {
+   *request.mutable_source_task() = task_;
+   request.set_incarnation(incarnation_id_.value());
+   HeartbeatResponse response;
+-  const absl::Duration heartbeat_interval = config_.heartbeat_timeout;
++  const absl::Duration heartbeat_interval = config_.heartbeat_timeout / 2;
+   tsl::CallOptions call_opts;
+   call_opts.SetTimeout(absl::ToInt64Milliseconds(heartbeat_interval));
+ 
+@@ -285,7 +285,7 @@ void CoordinationServiceAgent::StartSendingHeartbeats() {
+     {
+       absl::MutexLock l(shutdown_mu_);
+       shutdown_mu_.AwaitWithTimeout(absl::Condition(&shutting_down_),
+-                                    config_.heartbeat_timeout);
++                                    heartbeat_interval);
+       if (shutting_down_) {
+         return;
+       }
+diff --git a/xla/pjrt/distributed/coordination/coordination_service_test.cc b/xla/pjrt/distributed/coordination/coordination_service_test.cc
+index ec75076d4c..32ccf22295 100644
+--- a/xla/pjrt/distributed/coordination/coordination_service_test.cc
++++ b/xla/pjrt/distributed/coordination/coordination_service_test.cc
+@@ -1,4 +1,4 @@
+-/*r Copyright 2021 The TensorFlow Authors. All Rights Reserved.
++/* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+ 
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
