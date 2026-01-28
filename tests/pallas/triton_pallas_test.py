@@ -48,7 +48,8 @@ class PallasBaseTest(jtu.JaxTestCase):
       if not self.INTERPRET:
         self.skipTest("On CPU the test works only in interpret mode")
     elif jtu.test_device_matches(["gpu"]):
-      if not jtu.is_cuda_compute_capability_at_least("9.0"):
+      if jtu.test_device_matches(["cuda"]) and \
+         not jtu.is_cuda_compute_capability_at_least("9.0"):
         self.skipTest("Only works on GPU with capability >= sm90")
     else:
       self.skipTest("Test only works on CPU and GPU")
@@ -122,11 +123,17 @@ class TritonPallasTest(PallasBaseTest):
       if np.issubdtype(value.dtype, np.integer):
         neutral = np.array(np.iinfo(value.dtype).min, value.dtype)
       else:
+        # JAX on ROCm does not currently handle atomic fmin/fmax correctly
+        if jtu.test_device_matches(["rocm"]):
+            self.skipTest("Atomic fmin/fmax not currently supported on ROCm.")
         neutral = np.array(-float("inf"), value.dtype)
     elif op == plgpu.atomic_min:
       if np.issubdtype(value.dtype, np.integer):
         neutral = np.array(np.iinfo(value.dtype).max, value.dtype)
       else:
+        # JAX on ROCm does not currently handle atomic fmin/fmax correctly
+        if jtu.test_device_matches(["rocm"]):
+            self.skipTest("Atomic fmin/fmax not currently supported on ROCm.")
         neutral = np.array(float("inf"), value.dtype)
     elif op == plgpu.atomic_or:
       neutral = np.array(False, value.dtype)
@@ -322,6 +329,10 @@ class TritonPallasTest(PallasBaseTest):
       self.skipTest(
           "elementwise_inline_asm is not supported in interpret mode"
       )
+
+    if jtu.is_device_rocm():
+      self.skipTest("elementwise_inline_asm is not currently "
+                    "supported on ROCm")
 
     @functools.partial(
         self.pallas_call,
