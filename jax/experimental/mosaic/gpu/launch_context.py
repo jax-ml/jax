@@ -104,6 +104,11 @@ class MemRefTransform:
     """
     raise NotImplementedError("Subclasses should override this method")
 
+  def to_attr(self) -> ir.Attribute:
+    raise NotImplementedError(
+        f"Subclasses should override this method: {type(self)}"
+    )
+
 
 class Rounding(enum.Enum):
   UP = enum.auto()
@@ -203,6 +208,15 @@ class TileTransform(MemRefTransform):
   def batch(self, leading_rank: int) -> MemRefTransform:
     return self
 
+  def to_attr(self) -> ir.Attribute:
+    return mgpu_dialect.TileTransformAttr.get(self.tiling)
+
+@dataclasses.dataclass(frozen=True)
+class SwizzleTransform(MemRefTransform):
+  swizzle: int
+
+  def to_attr(self) -> ir.Attribute:
+    return mgpu_dialect.SwizzleTransformAttr.get(self.swizzle)
 
 @dataclasses.dataclass(frozen=True)
 class TransposeTransform(MemRefTransform):
@@ -230,6 +244,8 @@ class TransposeTransform(MemRefTransform):
         (*range(leading_rank), *(d + leading_rank for d in self.permutation))
     )
 
+  def to_attr(self) -> ir.Attribute:
+    return mgpu_dialect.TransposeTransformAttr.get(self.permutation)
 
 @dataclasses.dataclass(frozen=True)
 class CollapseLeadingIndicesTransform(MemRefTransform):

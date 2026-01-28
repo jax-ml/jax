@@ -637,11 +637,20 @@ no_block_spec = NoBlockSpec()
 BlockSpecTree = Any
 
 
-class MemoryRefTransform(Protocol):
-  """Transforms a memory reference on load or store."""
-
-  def undo(self, ref: TransformedRef) -> TransformedRef:
-    raise NotImplementedError("Abstract evaluation not implemented.")
+def undo_transforms(
+    aval: jax_core.AbstractValue,
+    memory_transforms: Sequence[state_types.Transform],
+) -> list[state_types.Transform]:
+  """Extract the `Transform`s that reverse the `Transforms`s"""
+  if not memory_transforms:
+    return []
+  transforms: list[state_types.Transform] = []
+  avals = [aval]
+  for t in memory_transforms[:-1]:
+    avals.append(t.transform_type(aval))
+  for t, a in reversed(list(zip(memory_transforms, avals))):
+    transforms.append(t.undo(a))
+  return transforms
 
 
 @dataclasses.dataclass(frozen=True)
@@ -658,7 +667,7 @@ class BlockMapping:
   index_map_out_tree: tree_util.PyTreeDef
   array_aval: jax_core.ShapedArray  # The whole array
   origin: OriginStr
-  transforms: Sequence[MemoryRefTransform] = ()
+  transforms: Sequence[state_types.Transform] = ()
   pipeline_mode: Buffered | None = None
   debug: bool = False
 
@@ -695,10 +704,10 @@ class BlockMapping:
     """Returns the abstract value of the Ref after transformations."""
     if not self.transforms:
       return self.transformed_block_aval
-    ref = TransformedRef(self.transformed_block_aval, ())
-    for transform in reversed(self.transforms):
-      ref = transform.undo(ref)
-    return ref
+    reverse_transforms = undo_transforms(
+        self.transformed_block_aval, self.transforms
+    )
+    return TransformedRef(self.transformed_block_aval, reverse_transforms)
 
   def compute_start_indices_interpret(self, loop_idx, *args):
     discharged_jaxpr, discharged_consts = state_discharge.discharge_state(

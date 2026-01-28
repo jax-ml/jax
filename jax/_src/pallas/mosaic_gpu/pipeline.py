@@ -270,7 +270,8 @@ def emit_pipeline(
                 (max_concurrent_steps, *_get_block_shape(spec)),  # type: ignore
                 ref.dtype,
                 transforms=tuple(
-                    t.batch(1) for t in getattr(spec, "transforms", ())
+                    gpu_core.batch_transform(t, 1)
+                    for t in getattr(spec, "transforms", ())
                 ),
             )
             if _in_smem(spec)

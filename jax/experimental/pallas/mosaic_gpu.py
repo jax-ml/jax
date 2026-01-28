@@ -24,7 +24,6 @@ from jax._src.pallas.mosaic_gpu.core import CompilerParams as CompilerParams
 from jax._src.pallas.mosaic_gpu.core import kernel as kernel
 from jax._src.pallas.mosaic_gpu.core import Layout as Layout
 from jax._src.pallas.mosaic_gpu.core import layout_cast as layout_cast
-from jax._src.pallas.mosaic_gpu.core import MemoryRefTransform as MemoryRefTransform
 from jax._src.pallas.mosaic_gpu.core import MemorySpace as MemorySpace
 from jax._src.pallas.mosaic_gpu.core import Mesh as Mesh
 from jax._src.pallas.mosaic_gpu.core import multicast_ref as multicast_ref
@@ -87,6 +86,7 @@ from jax._src.pallas.mosaic_gpu.primitives import wgmma as wgmma
 from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_load as wgmma_accumulator_load
 from jax._src.pallas.mosaic_gpu.primitives import wgmma_wait as wgmma_wait
 from jax._src.pallas.mosaic_gpu.torch import as_torch_kernel as as_torch_kernel
+from jax._src.state.types import Transform as Transform
 from jax.experimental.mosaic.gpu.core import LoweringSemantics as LoweringSemantics
 from jax.experimental.mosaic.gpu.fragmented_array import Replicated as Replicated
 from jax.experimental.mosaic.gpu.fragmented_array import Tiling as Tiling
