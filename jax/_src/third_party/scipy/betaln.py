@@ -1,3 +1,4 @@
+from jax import custom_jvp
 from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.typing import Array, ArrayLike
@@ -47,19 +48,50 @@ def algdiv(a, b):
     return jnp.where(u <= v, (w - v) - u, (w - u) - v)
 
 
+def _betaln_impl(a, b):
+    """Compute betaln with numerical stability for large inputs.
+    
+    Uses the standard lgamma formula for small inputs and a more stable
+    algorithm (algdiv) for large inputs where catastrophic cancellation
+    would otherwise occur.
+    """
+    # Swap so that a <= b for the algdiv algorithm
+    a_orig, b_orig = a, b
+    a = jnp.minimum(a_orig, b_orig)
+    b = jnp.maximum(a_orig, b_orig)
+    
+    small_b = lax.lgamma(a) + (lax.lgamma(b) - lax.lgamma(a + b))
+    large_b = lax.lgamma(a) + algdiv(a, b)
+    return jnp.where(b < 8, small_b, large_b)
+
+
+@custom_jvp
 def betaln(a: ArrayLike, b: ArrayLike) -> Array:
     """Compute the log of the beta function.
 
-    Derived from scipy's implementation of `betaln`_.
-
-    This implementation does not handle all branches of the scipy implementation, but is still much more accurate
-    than just doing lgamma(a) + lgamma(b) - lgamma(a + b) when inputs are large (> 1M or so).
+    Uses a numerically stable algorithm for both small and large inputs.
+    The derivative is computed analytically using the digamma function,
+    which ensures correct first and second-order derivatives even at
+    boundary cases where a == b (fixes #34353).
 
     .. _betaln:
         https://github.com/scipy/scipy/blob/ef2dee592ba8fb900ff2308b9d1c79e4d6a0ad8b/scipy/special/cdflib/betaln.f
     """
     a, b = promote_args_inexact("betaln", a, b)
-    a, b = jnp.minimum(a, b), jnp.maximum(a, b)
-    small_b = lax.lgamma(a) + (lax.lgamma(b) - lax.lgamma(a + b))
-    large_b = lax.lgamma(a) + algdiv(a, b)
-    return jnp.where(b < 8, small_b, large_b)
+    # Use jnp.where to ensure correct gradients at the boundary, as per maintainer feedback
+    a_le_b = jnp.where(a <= b, a, b)
+    b_ge_a = jnp.where(a <= b, b, a)
+    small_b = lax.lgamma(a_le_b) + (lax.lgamma(b_ge_a) - lax.lgamma(a_le_b + b_ge_a))
+    large_b = lax.lgamma(a_le_b) + algdiv(a_le_b, b_ge_a)
+    return jnp.where(b_ge_a < 8, small_b, large_b)
+
+
+def _betaln_jvp(primals, tangents):
+    a, b = primals
+    a_dot, b_dot = tangents
+    y = betaln(a, b)
+    psi_ab = lax.digamma(a + b)
+    return y, (lax.digamma(a) - psi_ab) * a_dot + (lax.digamma(b) - psi_ab) * b_dot
+
+
+betaln.defjvp(_betaln_jvp)

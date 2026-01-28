@@ -254,6 +254,39 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     # Check that d/dx betaln(x, 1) = d/dx -log(x) = -1/x.
     self.assertAllClose(tangents_out, -1 / xs, atol=atol)
 
+  def testIssue34353(self):
+    """Tests betaln second-order derivatives (Hessian) at a == b boundary.
+    
+    Regression test for https://github.com/jax-ml/jax/issues/34353
+    The original betaln implementation used jnp.minimum/jnp.maximum to swap
+    arguments, which caused incorrect Hessians when a == b due to non-smooth
+    derivatives at the boundary.
+    """
+    # Test at the boundary case where a == b (exp(0) = 1)
+    log_alpha = 0.0
+    log_beta = 0.0
+    
+    def loss_func(theta_a, theta_b):
+      a = jnp.exp(theta_a)
+      b = jnp.exp(theta_b)
+      return lsp_special.betaln(a, b) - lsp_special.betaln(a + 1, b)
+    
+    # Compute Hessian using autodiff
+    hess = jax.hessian(loss_func, argnums=(0, 1))(log_alpha, log_beta)
+    hess_aa = float(hess[0][0])
+    hess_bb = float(hess[1][1])
+    
+    # The expected Hessian is 0.25 (verified analytically and via scipy)
+    # The original bug gave -0.5725 (wrong sign!)
+    expected_hess = 0.25
+    
+    # The autodiff Hessian should be positive and close to expected value
+    self.assertAllClose(hess_aa, expected_hess, atol=0.01)
+    self.assertAllClose(hess_bb, expected_hess, atol=0.01)
+    
+    # Explicitly check that the sign is positive (the key symptom of the bug)
+    self.assertGreater(hess_aa, 0, "Hessian should be positive, not negative")
+
   def testXlogyShouldReturnZero(self):
     self.assertAllClose(lsp_special.xlogy(0., 0.), 0., check_dtypes=False)
 
