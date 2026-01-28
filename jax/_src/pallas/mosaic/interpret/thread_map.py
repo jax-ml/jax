@@ -30,12 +30,19 @@ def _run_jaxpr(jaxpr, consts, *args):
   return
 
 
-def _thread_map_callback(jaxpr, num_threads, consts):
+def _thread_map_callback(jaxpr, num_threads, consts, invals):
   num_threads = int(num_threads)
   threads = []
   with futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
     for i in range(num_threads):
-      threads.append(executor.submit(_run_jaxpr, jaxpr, consts, jnp.int32(i)))
+      # `jaxpr` is the traced representation of a function whose first argument
+      # is the thread ID. Hence,
+      #   - prepend the thread ID onto the `invals`; and
+      #   - flatten the arguments that are to be passed through to the
+      #     evaluation of `jaxpr`.
+      args = (jnp.int32(i), *invals)
+      flat_args, _ = jax.tree.flatten(args)
+      threads.append(executor.submit(_run_jaxpr, jaxpr, consts, *flat_args))
     exceptions = []
     for i in range(num_threads):
       try:
@@ -48,7 +55,7 @@ def _thread_map_callback(jaxpr, num_threads, consts):
     raise exceptions[0]
 
 
-def _call_threadmap_callback(jaxpr, num_threads, *consts):
+def _call_threadmap_callback(jaxpr, num_threads, consts, invals):
   # NOTE: At runtime, _thread_map_callback will lower and compile the
   # given jaxpr.  (JAX's caches should ensure the jaxpr is only lowered and
   # compiled once.)
@@ -62,19 +69,22 @@ def _call_threadmap_callback(jaxpr, num_threads, *consts):
       (),
       num_threads,
       consts,
+      invals,
       ordered=True,
   )
 
 
-def thread_map(f, num_threads):
+def thread_map(f, num_threads, *args):
+  """Executes `f(thread_id, *args)` for `num_threads` threads."""
+
   if num_threads == 1:
-    f(jnp.int32(0))
+    f(jnp.int32(0), *args)
     return
 
-  def _f(core_index):
-    f(core_index)
+  def _f(core_or_thread_index, *args):
+    f(core_or_thread_index, *args)
     return ()
 
-  jaxpr = jax.make_jaxpr(_f)(jnp.int32(0))
+  jaxpr = jax.make_jaxpr(_f)(jnp.int32(0), *args)
 
-  _call_threadmap_callback(jaxpr.jaxpr, num_threads, *jaxpr.consts)
+  _call_threadmap_callback(jaxpr.jaxpr, num_threads, jaxpr.consts, args)

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import functools
+from typing import Any
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
@@ -24,6 +25,13 @@ import numpy as np
 
 
 jax.config.parse_flags_with_absl()
+
+
+def _maybe_reverse(arg: tuple[Any], reverse: bool) -> tuple[Any]:
+  if reverse:
+    return tuple(reversed(arg))
+  else:
+    return arg
 
 
 # TODO(nrink): Figure out how to safely run different instance of GPU
@@ -108,6 +116,10 @@ class InterpretTest(jtu.JaxTestCase):
 
   def test_skip_floating_point_ops(self):
     def matmul_kernel(x_ref, y_ref, z_ref):
+      # TODO(nrink): Matrix multiplication with `@` is nor supported for real
+      # GPU kernels (but the GPU kernel interpreter allows this). Replace this
+      # with a `wgmma` or `tcgen05_mma` once these are supported by the GPU
+      # kernel interpreter.
       z_ref[...] = x_ref[...] @ y_ref[...]
 
     def matmul(x: jax.Array, y: jax.Array):
@@ -181,6 +193,10 @@ class InterpretTest(jtu.JaxTestCase):
             col_block_idx * num_cols_per_block, num_cols_per_block
         )
 
+        # TODO(nrink): Matrix multiplication with `@` is nor supported for real
+        # GPU kernels (but the GPU kernel interpreter allows this). Replace this
+        # with a `wgmma` or `tcgen05_mma` once these are supported by the GPU
+        # kernel interpreter.
         o_ref[row_slice, col_slice] = x_ref[row_slice, :] @ y_ref[:, col_slice]
 
       return _matmul_kernel(x, y)
@@ -643,6 +659,229 @@ class InterpretTest(jtu.JaxTestCase):
     ):
       _kernel()
     mosaic_interpret.reset_gpu_interpret_mode_state()
+
+  @jtu.parameterized.product(
+      num_blocks_w=[1, 2, 3],
+      num_blocks_x=[1, 2, 3],
+      num_blocks_y=[1, 2, 3],
+      num_threads=[1, 2, 3],
+  )
+  def test_grid_iteration(
+      self, num_blocks_w, num_blocks_x, num_blocks_y, num_threads
+  ):
+    def _kernel(a_gmem, out_gmem):
+      w = jax.lax.axis_index('w')
+      x = jax.lax.axis_index('x')
+      y = jax.lax.axis_index('y')
+      z = jax.lax.axis_index('z')
+
+      offset = (
+          w * num_blocks_x * num_blocks_y * num_threads
+          + x * num_blocks_y * num_threads
+          + y * num_threads
+          + z
+      )
+      out_gmem[w, x, y, z] = a_gmem[w, x, y, z] + offset
+
+    a = 42 * jnp.ones(
+        (num_blocks_w, num_blocks_x, num_blocks_y, num_threads),
+        dtype=jnp.int32,
+    )
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_shape=jax.ShapeDtypeStruct(a.shape, a.dtype),
+        grid=(num_blocks_w, num_blocks_x, num_blocks_y),
+        grid_names=('w', 'x', 'y'),
+        num_threads=num_threads,
+        thread_name='z',
+        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+    )
+
+    y = kernel(a)
+    expected = a + jnp.arange(
+        num_blocks_w * num_blocks_x * num_blocks_y * num_threads,
+        dtype=a.dtype,
+    ).reshape(a.shape)
+    np.testing.assert_array_equal(y, expected)
+    self.assertFalse(mosaic_interpret.get_races().races_found)
+
+  @jtu.parameterized.product(
+      tile_x=[1, 2, 4],
+      tile_y=[1, 2, 4],
+      tile_z=[1, 2, 4],
+      swap_grid_axes=[True, False],
+  )
+  def test_add_over_grid(self, tile_x, tile_y, tile_z, swap_grid_axes):
+    dtype = jnp.int32
+    x, y, z = 4, 4, 4
+
+    assert x % tile_x == 0
+    assert y % tile_y == 0
+    assert z % tile_z == 0
+
+    a = jnp.arange(x * y * z, dtype=dtype).reshape((x, y, z))
+    b = jnp.ones((x, y, z), dtype=dtype)
+
+    x_iters = x // tile_x
+    y_iters = y // tile_y
+    z_iters = z // tile_z
+
+    def _kernel(a_gmem, b_gmem, out_gmem):
+      xi = jax.lax.axis_index('x')
+      yi = jax.lax.axis_index('y')
+      zi = jax.lax.axis_index('z')
+      xi_slice = pl.ds(xi * tile_x, tile_x)
+      yi_slice = pl.ds(yi * tile_y, tile_y)
+      zi_slice = pl.ds(zi * tile_z, tile_z)
+
+      out_gmem[xi_slice, yi_slice, zi_slice] = (
+          a_gmem[xi_slice, yi_slice, zi_slice]
+          + b_gmem[xi_slice, yi_slice, zi_slice]
+      )
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_shape=jax.ShapeDtypeStruct((x, y, z), dtype),
+        grid=_maybe_reverse((x_iters, y_iters), swap_grid_axes),
+        grid_names=_maybe_reverse(('x', 'y'), swap_grid_axes),
+        num_threads=z_iters,
+        thread_name='z',
+        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+    )
+
+    expected = a + b
+    y = kernel(a, b)
+    np.testing.assert_array_equal(y, expected)
+    self.assertFalse(mosaic_interpret.get_races().races_found)
+
+  @jtu.parameterized.product(
+      tile_m=[1, 2, 4],
+      tile_k=[1, 2, 4],
+      tile_n=[1, 2, 4],
+      swap_grid_axes=[True, False],
+  )
+  def test_matmul_over_grid_with_barrier_and_smem(
+      self, tile_m, tile_k, tile_n, swap_grid_axes
+  ):
+    dtype = jnp.int32
+    m, k, n = 4, 4, 4
+
+    assert m % tile_m == 0
+    assert k % tile_k == 0
+    assert n % tile_n == 0
+
+    a = jnp.arange(16, dtype=dtype).reshape((m, k))
+    b = jnp.ones((k, n), dtype=dtype)
+
+    m_iters = m // tile_m
+    k_iters = k // tile_k
+    n_iters = n // tile_n
+
+    def _kernel(a_gmem, b_gmem, out_gmem, acc_smem, barrier):
+      mi = jax.lax.axis_index('m')
+      ki = jax.lax.axis_index('k')
+      ni = jax.lax.axis_index('n')
+      mi_slice = pl.ds(mi * tile_m, tile_m)
+      ki_slice = pl.ds(ki * tile_k, tile_k)
+      ni_slice = pl.ds(ni * tile_n, tile_n)
+
+      # We map the reduced dimension, i.e. `k`, to the thread dimension. This
+      # allows us to do the accumulation into an `SMEM` buffer, i.e. `acc_smem`.
+      # (Note that a fresh `SMEM` buffer is allocated for each grid point, but
+      # for each fixed grid point, a single `SMEM` buffer is shared across the
+      # threads.) We then need to use barriers to sequentialize access to the
+      # `SMEM` buffer between the threads. (Note that the specific sequential
+      # order of the updates to `acc_smem` does not matter, so long as there are
+      # no races.)
+
+      @pl.when(ki == 0)
+      def _():
+        acc_smem[...] = jnp.zeros(acc_smem.shape, dtype=acc_smem.dtype)
+        plgpu.barrier_arrive(barrier.at[0])
+
+      plgpu.barrier_wait(barrier.at[ki])
+      # TODO(nrink): Matrix multiplication with `@` is not supported for real
+      # GPU kernels (but the GPU kernel interpreter allows this). Replace this
+      # with a `wgmma` or `tcgen05_mma` once these are supported by the GPU
+      # kernel interpreter.
+      acc_smem[...] += a_gmem[mi_slice, ki_slice] @ b_gmem[ki_slice, ni_slice]
+      plgpu.barrier_arrive(barrier.at[(ki + 1) % k_iters])
+
+      @pl.when(ki == 0)
+      def _():
+        plgpu.barrier_wait(barrier.at[0])
+        out_gmem[mi_slice, ni_slice] = acc_smem[...]
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+        scratch_shapes=dict(
+            acc_smem=plgpu.SMEM((tile_m, tile_n), dtype),
+            barrier=plgpu.Barrier(num_barriers=k_iters),
+        ),
+        grid=_maybe_reverse((m_iters, n_iters), swap_grid_axes),
+        grid_names=_maybe_reverse(('m', 'n'), swap_grid_axes),
+        num_threads=k_iters,
+        thread_name='k',
+        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+    )
+
+    expected = a @ b
+    y = kernel(a, b)
+    np.testing.assert_array_equal(y, expected)
+    self.assertFalse(mosaic_interpret.get_races().races_found)
+
+  def test_matmul_over_grid_with_race(self, tile_m=4, tile_k=2, tile_n=4):
+    dtype = jnp.int32
+    m, k, n = 4, 4, 4
+
+    assert m % tile_m == 0
+    assert k % tile_k == 0
+    assert n % tile_n == 0
+
+    a = jnp.arange(16, dtype=dtype).reshape((m, k))
+    b = jnp.ones((k, n), dtype=dtype)
+
+    m_iters = m // tile_m
+    k_iters = k // tile_k
+    n_iters = n // tile_n
+
+    def _kernel(a_gmem, b_gmem, _, acc_smem):
+      mi = jax.lax.axis_index('m')
+      ki = jax.lax.axis_index('k')
+      ni = jax.lax.axis_index('n')
+      mi_slice = pl.ds(mi * tile_m, tile_m)
+      ki_slice = pl.ds(ki * tile_k, tile_k)
+      ni_slice = pl.ds(ni * tile_n, tile_n)
+
+      # The two threads race to update `acc_smem`. We do not bother with
+      # initializing `acc_mem` to zero, nor with copying the final result out to
+      # `GMEM`, as is done in the correct (i.e. race-free) test above (i.e. in
+      # `test_matmul_over_grid_with_barrier_and_smem`). This would only
+      # introduce additional races.
+      #
+      # TODO(nrink): Matrix multiplication with `@` is not supported for real
+      # GPU kernels (but the GPU kernel interpreter allows this). Replace this
+      # with a `wgmma` or `tcgen05_mma` once these are supported by the GPU
+      # kernel interpreter.
+      acc_smem[...] += a_gmem[mi_slice, ki_slice] @ b_gmem[ki_slice, ni_slice]
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+        scratch_shapes=dict(
+            acc_smem=plgpu.SMEM((tile_m, tile_n), dtype),
+        ),
+        grid=(m_iters, n_iters),
+        grid_names=('m', 'n'),
+        num_threads=k_iters,
+        thread_name='k',
+        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+    )
+
+    kernel(a, b)
+    self.assertTrue(mosaic_interpret.get_races().races_found)
 
 
 if __name__ == '__main__':

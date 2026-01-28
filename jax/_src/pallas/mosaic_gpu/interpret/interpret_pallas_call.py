@@ -61,34 +61,31 @@ def _get_grid_bounds(grid_mapping: pallas_core.GridMapping) -> tuple[int, ...]:
   return tuple(result)
 
 
-def _get_num_threads(
+def _get_grid_dims_and_num_threads(
     grid_mapping: pallas_core.GridMapping, mesh: plgpu.Mesh | None
-) -> int:
+) -> tuple[tuple[int, ...], int]:
   if not mesh:
     num_threads = 1
+    grid_dims = _get_grid_bounds(grid_mapping)
   elif isinstance(mesh, plgpu.Mesh):
-    if math.prod(mesh.grid) != 1:
-      raise NotImplementedError(
-          f"Invalid grid {mesh.grid} in mesh: GPU interpret mode does not"
-          " support non-trivial grids (i.e. grids with more than one point)."
-      )
     if mesh.cluster is not None and math.prod(mesh.cluster) != 1:
       raise NotImplementedError(
           f"Invalid cluster {mesh.cluster} in mesh: GPU interpret mode does not"
           " support (non-trivial) clusters."
       )
     num_threads = int(mesh.num_threads or 1)
+    grid_dims = tuple(mesh.grid)
   else:
     raise ValueError(f"Unsupported mesh type: {type(mesh)}")
 
-  if math.prod(_get_grid_bounds(grid_mapping)) != num_threads:
+  reconstructed_grid = grid_dims + (num_threads,)
+  if math.prod(_get_grid_bounds(grid_mapping)) != math.prod(reconstructed_grid):
     raise NotImplementedError(
-        f"Invalid grid {grid_mapping.grid} in grid_mapping: GPU interpret mode"
-        " does not support grids with more points than threads"
-        f" ({num_threads}). "
+        f"Invalid grid {grid_mapping.grid} in grid_mapping: expected grid to"
+        f" have the same size as {reconstructed_grid}"
     )
 
-  return num_threads
+  return grid_dims, num_threads
 
 
 def _allocate_buffers_for_inputs(
@@ -354,7 +351,9 @@ def interpret_pallas_call(
   # `index_map`s).
   assert all(bm.has_trivial_window() for bm in grid_mapping.block_mappings)
 
-  num_threads = _get_num_threads(grid_mapping, mesh)
+  grid_dims, num_threads = _get_grid_dims_and_num_threads(
+      grid_mapping, mesh
+  )
   device_info = jaxpr_interpret.DeviceInfo()
 
   interpret_params = dataclasses.replace(
@@ -414,7 +413,7 @@ def interpret_pallas_call(
       jaxpr.invars[grid_mapping.slice_block_ops], [grid_mapping.num_inputs]
   )
 
-  def _kernel(thread_id):
+  def _kernel(thread_id, grid_point_coords):
     # Note that the copying from `GMEM` buffers here could introduce races when
     # multiple threads copy to the same kernel input buffer. For this to happen,
     # (a) there must be multiple threads and (b) the targeted kernel input
@@ -437,6 +436,7 @@ def interpret_pallas_call(
     )
 
     jaxpr_interpreter = jaxpr_interpret.JaxprInterpreter(
+        grid_point_coords=grid_point_coords,
         thread_id=thread_id,
         mesh=mesh,
         device_info=device_info,
@@ -459,6 +459,14 @@ def interpret_pallas_call(
         transforms=(),
     )
 
+  num_grid_loop_iterations = math.prod(grid_dims)
+
+  def _grid_loop_body(loop_idx: int, _: None):
+    grid_point_coords = interpret_utils.get_indices(
+        grid_dims, loop_idx
+    )
+    thread_map.thread_map(_kernel, num_threads, grid_point_coords)
+
   # TODO(nrink): Should we only create happens-before here from thread 0 to
   # the other threads? Currently we update the vector clocks for all threads by
   # looking at the vector clock of all (other) threads. It should suffice, but
@@ -467,7 +475,11 @@ def interpret_pallas_call(
   # the thread itself).
   gpu_callbacks.call_update_clocks_for_device_barrier(device_info.device_id)
 
-  thread_map.thread_map(_kernel, num_threads)
+  # TODO(nrink): For now we execute the grid by sequentially looping over the
+  # points in the grid. This may need to be refined to be more faithful to the
+  # semantics of grid execution on a real GPU. (The other extreme would be to
+  # execute all grid points fully concurrently, e.g. in individual threads.)
+  jax.lax.fori_loop(0, num_grid_loop_iterations, _grid_loop_body, None)
 
   # TODO(nrink): Should we only create happens-before here from the other
   # threads to thread 0? Analogous to the comment above, it should suffice, but

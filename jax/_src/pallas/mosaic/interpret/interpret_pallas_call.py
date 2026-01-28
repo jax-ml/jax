@@ -1509,23 +1509,6 @@ def _compute_start_indices(
   )
   return block_indices, ret
 
-def _get_next_indices(grid, indices):
-  next_indices = []
-  carry = True
-  for dim_size, index in reversed(list(zip(grid, indices))):
-    i = jnp.where(carry, index + 1, index)
-    carry = dim_size == i
-    next_indices.append(jnp.where(carry, 0, i))
-  return tuple(reversed(next_indices))
-
-def _get_indices(grid, loop_index):
-  indices = []
-  for dim_size in reversed(grid):
-    i = loop_index % dim_size
-    loop_index = loop_index // dim_size
-    indices.append(i)
-  return tuple(reversed(indices))
-
 def _get_mosaic_params(compiler_params: dict[str, pallas_core.CompilerParams]) -> mosaic_core.CompilerParams:
   try:
     return cast(mosaic_core.CompilerParams, compiler_params['mosaic_tpu'])
@@ -1991,7 +1974,7 @@ def interpret_pallas_call(
         )
 
       with pallas_core.grid_env(_get_local_grid_env(grid_point)):
-        next_loop_idx = _get_next_indices(grid, loop_idx)
+        next_loop_idx = interpret_utils.get_next_indices(grid, loop_idx)
         next_grid_point = _get_grid_point(
             next_loop_idx, randomized_grid_coordinates
         )
@@ -2173,7 +2156,7 @@ def interpret_pallas_call(
             next_start_indices,
         )
 
-    initial_loop_idx = _get_indices(grid, initial_iteration_idx)
+    initial_loop_idx = interpret_utils.get_indices(grid, initial_iteration_idx)
     initial_grid_point = _get_grid_point(
       initial_loop_idx, randomized_grid_coordinates)
     with pallas_core.grid_env(_get_local_grid_env(initial_grid_point)):
