@@ -193,7 +193,7 @@ def rankdata(
   if method not in ("average", "min", "max", "dense", "ordinal"):
     raise ValueError(f"unknown method '{method}'")
 
-  
+
   if axis is not None:
     return jnp.apply_along_axis(rankdata, axis, a, method)
 
@@ -206,6 +206,12 @@ def rankdata(
     obs = jnp.concatenate([jnp.array([True]), arr_sorted[1:] != arr_sorted[:-1]])
     dense = obs.cumsum()[inv]
     count = jnp.nonzero(obs, size=operand.size + 1, fill_value=obs.size)[0]
+    
+    if jnp.issubdtype(operand.dtype, jnp.inexact):
+      out_dtype = operand.dtype
+    else:
+      out_dtype = dtypes.default_float_dtype()
+
 
     if method == "ordinal":
       res = inv + 1
@@ -216,13 +222,14 @@ def rankdata(
     elif method == "min":
       res = count[dense - 1] + 1
     elif method == "average":
-      res = .5 * (count[dense] + count[dense - 1] + 1)
+      sum_ranks = count[dense] + count[dense - 1] + 1
+      res = sum_ranks.astype(out_dtype) * 0.5
+      
     else:
       raise ValueError(f"unknown method '{method}'")
-    
+
     # Ensure float output
-    res, = dtypes.promote_dtypes_inexact(res)
-    return res
+    return res.astype(out_dtype)
 
   if nan_policy == "propagate":
     contains_nan = jnp.any(jnp.isnan(arr))

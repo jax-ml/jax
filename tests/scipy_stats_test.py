@@ -20,6 +20,7 @@ from absl.testing import absltest
 
 import numpy as np
 import scipy.stats as osp_stats
+import scipy
 
 import jax
 import jax.numpy as jnp
@@ -2037,17 +2038,19 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     # Handle Scipy 1.18.0 transition where the output dtype of rankdata changed.
     # See: https://github.com/scipy/scipy/pull/24420
-    def rankdata_reference(a, method, axis):
+    def rankdata_reference(a):
       res = osp_stats.rankdata(a, method=method, axis=axis)
-      if jtu.scipy_version < (1, 18, 0):
+      
+      major, minor, micro = map(int, scipy.__version__.split('.')[:3])
+      if (major, minor, micro) < (1, 18, 0):
         # Cast to match the JAX implementation's floating-point output
-        return res.astype(jax.dtypes.canonicalize_dtype(res.dtype))
+        return res.astype(jnp.float_)
       return res
 
     lax_fun = partial(lsp_stats.rankdata, method=method, axis=axis)
     tol_spec = {np.float32: 2e-4, np.float64: 5e-6}
     tol = jtu.tolerance(dtype, tol_spec)
-    
+
     self._CheckAgainstNumpy(rankdata_reference, lax_fun, args_maker, check_dtypes=True,
                            tol=tol)
     self._CompileAndCheck(lax_fun, args_maker, rtol=tol)
