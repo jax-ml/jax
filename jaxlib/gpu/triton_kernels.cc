@@ -19,6 +19,7 @@ limitations under the License.
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <string>
@@ -30,6 +31,9 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+// Required for absl::c_find_if.
+// NOLINTNEXTLINE(misc-include-cleaner)
+#include "absl/algorithm/container.h"
 #include "absl/base/optimization.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/cleanup/cleanup.h"
@@ -39,7 +43,20 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+// Required for absl::CEscape.
+// NOLINTNEXTLINE(misc-include-cleaner)
+#include "absl/strings/escaping.h"
+// Required for absl::StrAppend.
+// NOLINTNEXTLINE(misc-include-cleaner)
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+// Required for absl::StrJoin.
+// NOLINTNEXTLINE(misc-include-cleaner)
+#include "absl/strings/str_join.h"
+// Required for absl::StrSplit.
+// NOLINTNEXTLINE(misc-include-cleaner)
+#include "absl/strings/str_split.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/triton.pb.h"
@@ -50,6 +67,7 @@ limitations under the License.
 #ifdef JAX_GPU_CUDA
 #include "xla/stream_executor/cuda/cuda_asm_compiler.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/gpu/gpu_asm_opts.h"
 #endif  // JAX_GPU_CUDA
 
 #ifdef JAX_GPU_HIP
@@ -133,10 +151,39 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
       cc_major, cc_minor,
       has_accelerated_features ? FeatureExtension::kAcceleratedFeatures
                                : FeatureExtension::kNone);
-  JAX_ASSIGN_OR_RETURN(
-      std::vector<uint8_t> module_image,
-      stream_executor::CompileGpuAsm(cc, std::string(ptx),
-                                     stream_executor::GpuAsmOpts{}));
+
+  // Parse JAX_TRITON_PTXAS_EXTRA_FLAGS (space-separated list).
+  std::vector<std::string> ptxas_extra_flags;
+  const char* extra_flags_env = std::getenv("JAX_TRITON_PTXAS_EXTRA_FLAGS");
+  if (extra_flags_env != nullptr) {
+    ptxas_extra_flags = absl::StrSplit(extra_flags_env, ' ', absl::SkipEmpty());
+  }
+
+  // Parse JAX_TRITON_PTXAS_DEVICE_DEBUG (boolean: "1" or "true").
+  const char* debug_env = std::getenv("JAX_TRITON_PTXAS_DEVICE_DEBUG");
+  const bool device_debug =
+      debug_env != nullptr && (absl::string_view(debug_env) == "true" ||
+                               absl::string_view(debug_env) == "1");
+  if (device_debug &&
+      absl::c_find_if(ptxas_extra_flags, [](const std::string& flag) {
+        return flag == "--device-debug" || flag == "-g";
+      }) == ptxas_extra_flags.end()) {
+    ptxas_extra_flags.push_back("--device-debug");
+  }
+
+  VLOG(1) << absl::StreamFormat(
+      "ptxas_extra_flags = {%s}",
+      absl::StrJoin(ptxas_extra_flags, ", ",
+                    [](std::string* s, absl::string_view v) {
+                      absl::StrAppend(s, absl::CEscape(v));
+                    }));
+
+  JAX_ASSIGN_OR_RETURN(std::vector<uint8_t> module_image,
+                       stream_executor::CompileGpuAsm(
+                           cc, std::string(ptx),
+                           stream_executor::GpuAsmOpts(
+                               /*disable_gpuasm_optimizations=*/false,
+                               /*preferred_cuda_dir=*/"", ptxas_extra_flags)));
 #endif
 
   auto [it2, success] = module_images.insert(
