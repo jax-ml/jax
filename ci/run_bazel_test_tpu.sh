@@ -24,6 +24,8 @@
 # -o allexport: export all functions and variables to be available to subscripts
 set -exu -o history -o allexport
 
+ulimit -s 8192
+
 # Source default JAXCI environment variables.
 source ci/envs/default.env
 
