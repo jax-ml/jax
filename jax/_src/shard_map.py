@@ -772,7 +772,10 @@ def _shard_shaped_array(mesh: Mesh, manual_axes: frozenset, check_vma,
   new_shape = tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
                     for i, sz in enumerate(aval.shape))
   manual_mesh = _as_manual_mesh(mesh, manual_axes)
-  new_sharding = aval.sharding.update(mesh=manual_mesh)
+  new_spec = aval.sharding.spec.update(
+      unreduced=aval.sharding.spec.unreduced if check_vma else frozenset(),
+      reduced=aval.sharding.spec.reduced if check_vma else frozenset())
+  new_sharding = aval.sharding.update(mesh=manual_mesh, spec=new_spec)
   vma = _spec_to_vma(spec) if check_vma else frozenset()
   vma = vma | aval.vma
   return aval.update(shape=new_shape, sharding=new_sharding, vma=vma)
@@ -781,12 +784,12 @@ core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
 def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.AbstractValue
                           ) -> core.AbstractValue:
   assert isinstance(aval, core.ShapedArray)
-  if spec.unreduced != aval.sharding.spec.unreduced:
+  if check_vma and spec.unreduced != aval.sharding.spec.unreduced:
     raise ValueError(
         "out_specs passed to shard_map should be equal to the unreduced"
         f" present on the out_aval. Got out_specs={spec} and"
         f" out_aval={aval.str_short(True)}")
-  if spec.reduced != aval.sharding.spec.reduced:
+  if check_vma and spec.reduced != aval.sharding.spec.reduced:
     raise ValueError(
         "out_specs passed to shard_map should be equal to the reduced present"
         f" on the out_aval. Got out_specs={spec} and"
@@ -817,8 +820,7 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.AbstractValue
               get_abstract_mesh())
   new_sharding = NamedSharding(new_mesh, out_spec)
   manual_axes = set(new_mesh.manual_axes)
-  vma = (frozenset(v for v in aval.vma if v in manual_axes)
-         if check_vma else frozenset())
+  vma = frozenset(v for v in aval.vma if v in manual_axes)
   return aval.update(shape=new_shape, sharding=new_sharding, vma=vma)
 core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
 
@@ -1700,7 +1702,7 @@ def _unmentioned2(mesh: Mesh, spec, manual_axes: frozenset[AxisName]
                   ) -> list[AxisName]:
   # We use a filtered-down version of unmentioned to avoid defensive-psum over
   # more chips than required in the transpose-no-check-vma case.
-  name_set = _spec_to_vma(spec)
+  name_set = _spec_to_vma(spec) | spec.unreduced
   return [n for n in _all_mesh_names_except_spmd(mesh, manual_axes)
           if n not in name_set]
 

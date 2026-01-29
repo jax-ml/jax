@@ -3131,10 +3131,16 @@ def typematch(t1: AbstractValue, t2: AbstractValue,
 def cmp_shape_sharding_vma(t1, t2):
   # TODO(yashkatariya): Expand this to Manual and Auto mode.
   # See https://github.com/jax-ml/jax/issues/26474
-  if (not t1.sharding.mesh.empty and not t2.sharding.mesh.empty and
-      (t1.sharding.mesh._any_axis_explicit or
-        t2.sharding.mesh._any_axis_explicit)):
-    shd_eq = t1.sharding == t2.sharding
+  t1_mesh, t2_mesh = t1.sharding.mesh, t2.sharding.mesh
+  if not t1_mesh.empty and not t2_mesh.empty:
+    if t1_mesh._any_axis_explicit or t2_mesh._any_axis_explicit:
+      shd_eq = t1.sharding == t2.sharding
+    elif t1_mesh._any_axis_manual or t2_mesh._any_axis_manual:
+      # TODO(yashkatariya): Once reduced/unreduced is fused into vma, remove this.
+      shd_eq = (t1.sharding.spec.unreduced == t2.sharding.spec.unreduced or
+                t1.sharding.spec.reduced == t2.sharding.spec.reduced)
+    else:
+      shd_eq = True
   else:
     shd_eq = True
   return (shd_eq and definitely_equal_shape(t1.shape, t2.shape) and

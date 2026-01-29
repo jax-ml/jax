@@ -4913,6 +4913,116 @@ class ShardMapTest(jtu.JaxTestCase):
       jax.shard_map(lambda x: x, in_specs=P(), out_specs=P(unreduced={'x'}),
                     check_vma=False)(np.arange(8))
 
+  @parameterized.parameters(True, False)
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_replicated_unreduced_bitcast_check_vma_false(self, grad, mesh):
+    arr = jax.device_put(np.arange(8.), P())
+
+    @jax.jit
+    @shard_map(in_specs=P(), out_specs=P(unreduced={'x'}), check_vma=False)
+    def f(x):
+      return x
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+    for s in out.addressable_shards:
+      self.assertArraysEqual(s.data, arr)
+
+    if grad:
+      out_g = jax.jit(jax.grad(lambda x: jax.reshard(f(x), P()).sum()))(arr)
+      self.assertEqual(out_g.sharding, NamedSharding(mesh, P(None)))
+
+    @jax.jit
+    @shard_map(in_specs=P(unreduced={'x'}), out_specs=P(), check_vma=False)
+    def g(x):
+      self.assertEqual(x.aval.sharding.spec.unreduced, frozenset())
+      return x
+
+    out2 = g(out)
+    self.assertEqual(out2.sharding, NamedSharding(mesh, P(None)))
+    for s in out2.addressable_shards:
+      self.assertArraysEqual(s.data, arr)
+
+    if grad:
+      out_g = jax.jit(jax.grad(lambda x: g(x).sum()))(out)
+      self.assertEqual(out_g.sharding,
+                       NamedSharding(mesh, P(None, reduced={'x'})))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_unreduced_replicated_bitcast(self, mesh):
+    arr = jax.device_put(np.arange(4), P('x'))
+
+    @jax.jit
+    @shard_map(in_specs=P('x'), out_specs=P(unreduced={'x'}))
+    def f(x):
+      return x
+
+    out = f(arr)
+    self.assertTupleEqual(out.shape, (2,))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+    for o, a in zip(out.addressable_shards, arr.addressable_shards):
+      self.assertArraysEqual(o.data, a.data)
+
+    @jax.jit
+    @shard_map(in_specs=P(unreduced={'x'}), out_specs=P())
+    def g1(x):
+      return jax.lax.psum(x, 'x')
+
+    out2 = g1(out)
+    self.assertTupleEqual(out2.shape, (2,))
+    self.assertEqual(out2.sharding, NamedSharding(mesh, P(None)))
+    for s in out2.addressable_shards:
+      self.assertArraysEqual(s.data, np.array([2, 4]))
+
+    @jax.jit
+    @shard_map(in_specs=P(unreduced={'x'}), out_specs=P(), check_vma=False)
+    def g2(x):
+      return x
+
+    out3 = g2(out)
+    self.assertTupleEqual(out3.shape, (2,))
+    self.assertEqual(out3.sharding, NamedSharding(mesh, P(None)))
+    for o, a in zip(out3.addressable_shards, arr.addressable_shards):
+      self.assertArraysEqual(o.data, a.data)
+
+  @parameterized.parameters(True, False)
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_sharded_unreduced_roundtrip_check_vma_false(self, grad, mesh):
+    arr = jax.device_put(np.arange(4.), P('x'))
+
+    @jax.jit
+    @shard_map(in_specs=P('x'), out_specs=P(unreduced={'x'}), check_vma=False)
+    def f(x):
+      return x
+
+    out = f(arr)
+    # Global shape decreases from (4,) -> (2,)
+    self.assertTupleEqual(out.shape, (2,))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+    for o, a in zip(out.addressable_shards, arr.addressable_shards):
+      self.assertArraysEqual(o.data, a.data)
+
+    if grad:
+      out_g = jax.jit(jax.grad(lambda x: jax.reshard(f(x), P()).sum()))(arr)
+      self.assertEqual(out_g.sharding, NamedSharding(mesh, P('x')))
+
+    @jax.jit
+    @shard_map(in_specs=P(unreduced={'x'}), out_specs=P('x'), check_vma=False)
+    def g(x):
+      return x
+
+    out2 = g(out)
+    # Global shape increases from (2,) -> (4,)
+    self.assertTupleEqual(out2.shape, (4,))
+    self.assertEqual(out2.sharding, NamedSharding(mesh, P('x')))
+    for o, a in zip(out2.addressable_shards, arr.addressable_shards):
+      self.assertArraysEqual(o.data, a.data)
+
+    if grad:
+      out_g = jax.jit(jax.grad(lambda x: g(x).sum()))(out)
+      self.assertEqual(out_g.sharding,
+                       NamedSharding(mesh, P(None, reduced={'x'})))
+
 
 class FunSpec(NamedTuple):
   name: str
