@@ -10110,6 +10110,32 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     f(np.arange(8))  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_device_put_unreduced_error(self, mesh):
+    with self.assertRaisesRegex(
+        NotImplementedError, "device_put with unreduced is not implemented"):
+      jax.device_put(np.arange(8), P(unreduced={'x'}))
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "device_put with unreduced is not implemented"):
+      jax.device_put(np.arange(8), NamedSharding(mesh, P(unreduced={'x'})))
+
+    arr_unreduced = jax.reshard(jnp.arange(8), P(unreduced={'x'}))
+    with self.assertRaisesRegex(
+        NotImplementedError, "device_put with unreduced is not implemented"):
+      jax.device_put(arr_unreduced, P())
+
+    out = jax.device_put(np.arange(8), P(reduced={'x'}))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(reduced={'x'})))
+    self.assertEqual(out.aval.sharding,
+                     NamedSharding(mesh.abstract_mesh, P(None, reduced={'x'})))
+
+    arr_reduced = jax.reshard(jnp.arange(8), P(reduced={'x'}))
+    out = jax.device_put(arr_reduced, P())
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+    self.assertEqual(out.aval.sharding,
+                     NamedSharding(mesh.abstract_mesh, P(None)))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
