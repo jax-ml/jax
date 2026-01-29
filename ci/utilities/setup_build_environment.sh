@@ -64,6 +64,12 @@ if [[ ! -z "$JAXCI_XLA_COMMIT" ]]; then
   popd
 fi
 
+# If a JAX commit is provided, check out JAX at that commit.
+if [[ ! -z "$JAXCI_JAX_COMMIT" ]]; then
+  echo "JAXCI_JAX_COMMIT is set. Checking out JAX at $JAXCI_JAX_COMMIT"
+  git checkout "$JAXCI_JAX_COMMIT"
+fi
+
 if [[ ! -z ${JAXCI_XLA_GIT_DIR} ]]; then
   echo "INFO: Overriding XLA to be read from $JAXCI_XLA_GIT_DIR instead of the"
   echo "pinned version in the WORKSPACE."

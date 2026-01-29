@@ -78,6 +78,14 @@ on:
         required: false
         default: 'false'
         type: string
+      xla_commit:
+        description: 'XLA commit to test against.'
+        required: false
+        type: string
+      jax_commit:
+        description: 'JAX commit to test against.'
+        required: false
+        type: string
 permissions: {}
 
 env:
@@ -103,6 +111,8 @@ jobs:
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
+      JAXCI_XLA_COMMIT: ${{ inputs.xla_commit }}
+      JAXCI_JAX_COMMIT: ${{ inputs.jax_commit }}
 
     steps:
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
