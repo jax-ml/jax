@@ -2329,8 +2329,6 @@ core.pvary_p.def_impl(lambda arg, *, axes: arg)
 mlir.register_lowering(core.pvary_p, lambda ctx, x, *, axes: [x])
 
 def _pvary_abstract_eval(aval, *, axes):
-  if not config._check_vma.value:
-    return aval
   _check_axis_names(axes, 'pvary')
   check_unreduced_args([aval], axes, 'pvary')
   assert isinstance(axes, tuple)
@@ -2592,6 +2590,8 @@ ad.deflinear2(unreduced_psum_p, _unreduced_psum_transpose_rule)
 
 # Invariant -> Reduced no-op cast. It's the transpose of unreduced_psum.
 def preduced(x, axis_name):
+  if not config._check_vma.value:
+    return x
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axes:
     return x
@@ -2641,6 +2641,8 @@ batching.primitive_batchers[preduced_p] = _preduced_batcher
 
 # Varying -> Unreduced no-op cast
 def vary_unreduced_cast(x, axis_name):
+  if not config._check_vma.value:
+    return x
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
     return x

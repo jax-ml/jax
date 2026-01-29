@@ -2380,6 +2380,8 @@ def primal_sharding_to_cotangent_sharding(sharding):
 
 # Invariant -> Variant no-op cast
 def pvary(x, axis_name):
+  if not config._check_vma.value:
+    return x
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
     return x
@@ -2401,6 +2403,8 @@ pvary_p = Primitive('pvary')
 
 # Reduced -> Varying no-op cast
 def reduced_vary_cast(x, axis_name):
+  if not config._check_vma.value:
+    return x
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
     return x
