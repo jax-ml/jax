@@ -782,7 +782,8 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
             nb::getattr(object, "__dict__").ptr(), compare_f);
         for (auto k : keys) {
             auto k_str = nb::cast<std::string>(k);
-            if (mapping.count(k_str) > 0 && mapping[k_str]) {
+            auto it = mapping.find(k_str);
+            if (it != mapping.end() && it->second) {
                 node.arity++;
                 node.sorted_dict_keys.push_back(nb::borrow<nb::object>(k));
                 if (keypath.has_value()) {
@@ -811,7 +812,6 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
         std::vector<nb::object> keys = GetSortedPyDictKeys(
             nb::getattr(object, "__dict__").ptr(), compare_f);
         for (auto k : keys) {
-            auto k_str = nb::cast<std::string>(k);
             if (mapping.contains(k) && nb::cast<bool>(mapping[k])) {
                 node.arity++;
                 node.sorted_dict_keys.push_back(nb::borrow<nb::object>(k));
@@ -1343,7 +1343,8 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
 
         for (auto k : keys) {
             auto k_str = nb::cast<std::string>(k);
-            if (mapping.count(k_str) > 0 && mapping[k_str]) {
+            auto it = mapping.find(k_str);
+            if (it != mapping.end() && it->second) {
                 agenda.push_back(nb::borrow<nb::object>(
                     nb::getattr(object, k)));
             } else {
@@ -1441,7 +1442,7 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         auto node_meta_tuple = nb::cast<nb::tuple>(node.node_data);
         nb::list node_meta_keys = nb::cast<nb::list>(node_meta_tuple[0]);
         nb::list node_meta_data = nb::cast<nb::list>(node_meta_tuple[1]);
-        
+
         if (meta_keys.size() != node_meta_keys.size()) {
             throw std::invalid_argument(absl::StrFormat(
                 "Mismatch kPyObjectSlow meta keys count: %d != %d",
