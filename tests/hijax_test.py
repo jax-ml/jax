@@ -40,7 +40,7 @@ from jax._src.state.discharge import run_state
 
 from jax._src.hijax import (
     HiPrimitive, HiType, Box, new_box, box_set, box_get, box_effect,
-    register_hitype, ShapedArray, Ty, custom_vjp3)
+    register_hitype, ShapedArray, Ty, custom_vjp3, MappingSpec)
 from jax.experimental.hijax import VJPHiPrimitive
 
 jtu.request_cpu_devices(2)
@@ -204,7 +204,20 @@ class TupTy(HiType):
   def normalize(self):
     return TupTy(tuple(ty.normalize() for ty in self.tys))
 
+  def mapped_aval(self, size, spec):
+    return TupTy(tuple(ty.mapped_aval(size, s) for ty, s in zip(self.tys, spec.val)))
+
+  def match_spec(self, src, dst, val):
+    if src == dst:
+      return val
+    else:
+      raise NotImplementedError
+
 register_hitype(HiTup, lambda t: TupTy(tuple(map(typeof, t.elts))))
+
+@dataclass(frozen=True)
+class TupSpec(MappingSpec):
+  val: tuple
 
 class MakeTup(HiPrimitive):
   def abstract_eval(_, *in_avals):
@@ -669,6 +682,10 @@ class HijaxTest(jtu.JaxTestCase):
       f = jax.jit(f)
 
     self.assertEqual(f(), 2)
+
+  def test_tuple_vmap(self):
+    tup = make_tup(jnp.arange(3.), jnp.arange(3.))
+    jax.vmap(lambda x: x, in_axes=TupSpec((0, 0)), out_axes=TupSpec((0, 0)), axis_size=3)(tup)
 
   @parameterized.parameters([False, True])
   def test_ref_to_tuple(self, jit):

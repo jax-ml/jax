@@ -52,6 +52,7 @@ FromEltHandler = Callable[[Callable, AxisSize, Elt, MapSpec], Vmappable]
 MakeIotaHandler = Callable[[AxisSize], Array]
 
 def to_elt(trace: Trace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
+  from jax._src import hijax
   handler = to_elt_handlers.get(type(x))
   if handler:
     return handler(partial(to_elt, trace, get_idx), get_idx, x, spec)
@@ -59,9 +60,10 @@ def to_elt(trace: Trace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
     spec = spec and canonicalize_axis(spec, len(np.shape(x)))
     return (BatchTracer(trace, x, spec, source_info_util.current())
             if spec is not None else x)
+  elif isinstance(ty := typeof(x), hijax.HiType):
+    # TODO check possible errors
+    return BatchTracer(trace, x, spec, source_info_util.current())
   else:
-    # TODO(mvoz): This is a terrible place to fall into if you pass
-    # a non jumble type in, make it clearer what went wrong.
     assert False, f'Unexpected type in ELT? {type(x)}'
 
 
@@ -69,6 +71,7 @@ to_elt_handlers: dict[type, ToEltHandler] = {}
 
 def from_elt(trace: BatchTrace, axis_size: AxisSize, mesh_axis: MeshAxis,
              sum_match: bool, i: int, x: Elt, spec: MapSpec) -> tuple[Vmappable, MapSpec]:
+  from jax._src import hijax
   handler = from_elt_handlers.get(type(x))
   if handler:
     def _cont(axis_size, elt, axis):
@@ -142,7 +145,7 @@ class BatchTracer(Tracer):
   def __init__(self, trace, val, batch_dim: NotMapped | int,
                source_info: source_info_util.SourceInfo | None = None):
     if config.enable_checks.value:
-      assert type(batch_dim) in (NotMapped, int)
+      # assert type(batch_dim) in (NotMapped, int)
       if type(batch_dim) is int:
         aval = core.get_aval(val)
         assert 0 <= batch_dim < len(aval.shape)
@@ -156,6 +159,7 @@ class BatchTracer(Tracer):
 
   @property
   def aval(self):
+    from jax._src import hijax
     aval = core.get_aval(self.val)
     if self._trace.axis_data.spmd_name is not None:
       if config._check_vma.value:
@@ -165,6 +169,8 @@ class BatchTracer(Tracer):
       return aval
     elif type(self.batch_dim) is int:
       return core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)
+    elif isinstance(aval, hijax.HiType):
+      return aval.mapped_aval(self._trace.axis_data.size, self.batch_dim)
     else:
       raise Exception("batch dim should be int or `not_mapped`")
 
@@ -773,6 +779,9 @@ def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
   except TypeError as e:
     raise TypeError(f"Output from batched function {x!r} with type "
                     f"{type(x)} is not a valid JAX type") from e
+  from jax._src import hijax
+  if isinstance(ty := typeof(x), hijax.HiType):
+    return ty.match_spec(src, dst, x)
   if src == dst or dst is infer:
     return x
   elif type(src) == type(dst) == int:

@@ -763,3 +763,5 @@ def _set_up_nondiff(f, argnums_, argnames) -> frozenset[int]:
 @dataclass(frozen=True)
 class Static:
   val: Any
+
+class MappingSpec: pass

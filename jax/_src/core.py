@@ -2287,6 +2287,9 @@ class ShapedArray(AbstractValue):
         self.shape, dtype, self.weak_type, sharding=sharding, vma=self.vma,
         memory_space=self.memory_space)
 
+  def mapped_aval(self, size, spec):
+    return mapped_aval(size, spec, self)
+
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str_short_aval(
         self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,

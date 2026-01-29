@@ -1158,13 +1158,17 @@ def vmap(fun: F,
     # rather than raising an error. https://github.com/jax-ml/jax/issues/2367
     in_axes = tuple(in_axes)
 
-  if not (in_axes is None or type(in_axes) in {int, tuple, *batching.spec_types}):
+  from jax._src import hijax
+  if not (in_axes is None or type(in_axes) in {int, tuple, *batching.spec_types}
+          or isinstance(in_axes, hijax.MappingSpec)):
     raise TypeError("vmap in_axes must be an int, None, or a tuple of entries corresponding "
                     f"to the positional arguments passed to the function, but got {in_axes}.")
-  if not all(type(l) in {int, *batching.spec_types} for l in tree_leaves(in_axes)):
+  if not all(type(l) in {int, *batching.spec_types} or isinstance(l, hijax.MappingSpec)
+             for l in tree_leaves(in_axes)):
     raise TypeError("vmap in_axes must be an int, None, or (nested) container "
                     f"with those types as leaves, but got {in_axes}.")
-  if not all(type(l) in {int, *batching.spec_types} for l in tree_leaves(out_axes)):
+  if not all(type(l) in {int, *batching.spec_types} or isinstance(l, hijax.MappingSpec)
+             for l in tree_leaves(out_axes)):
     raise TypeError("vmap out_axes must be an int, None, or (nested) container "
                     f"with those types as leaves, but got {out_axes}.")
 
@@ -1234,7 +1238,7 @@ def _mapped_axis_spec(args_flat, in_axes_flat):
     try:
       # Duck type arrays like BCOO arrays can be passed to vmap.
       return shaped_abstractify(arg).sharding.spec[i]
-    except (IndexError, TypeError):
+    except (IndexError, TypeError, AttributeError):
       return None
 
   out_spec = None
