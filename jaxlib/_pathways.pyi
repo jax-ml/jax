@@ -33,3 +33,8 @@ def _split_by_mesh_axis(
     submesh_shardings: Sequence[Sequence[int]],
     donate: bool = ...,
 ) -> Sequence[Sequence[_jax.ArrayImpl]]: ...
+
+def _create_cpu_client(
+    addressable_devices: set[int],
+    device_id_to_process_index: dict[int, int],
+) -> _jax.Client: ...

@@ -35,7 +35,7 @@ exports_files([
 
 cc_binary(
     name = "pjrt_c_api_gpu_plugin.so",
-    features = ["asan_runtime_closure_feature"],  # Details: https://github.com/google-ml-infra/rules_ml_toolchain/tree/main/cc/sanitizers#troubleshooting
+    features = ["asan_runtime_closure"],  # Details: https://github.com/google-ml-infra/rules_ml_toolchain/tree/main/cc/sanitizers#troubleshooting
     linkopts = [
         "-Wl,--version-script,$(location :gpu_version_script.lds)",
         "-Wl,--no-undefined",

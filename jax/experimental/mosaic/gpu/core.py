@@ -26,7 +26,7 @@ import math
 import os
 import pathlib
 import time
-from typing import Any, Generic, TypeVar, TypedDict
+from typing import Any, Generic, TypeVar
 import weakref
 
 import jax
@@ -194,8 +194,7 @@ def _mosaic_gpu_lowering_rule(
     use_custom_barrier: bool = False,
 ):
   axis_context = ctx.module_context.axis_context
-  is_multi_device_module = _has_communication(module)
-  if is_multi_device_module:
+  if is_multi_device_module := _has_communication(module):
     # Those checks are trying to ensure that the logical device ids are
     # consistent with the NVSHMEM PE ids that Mosaic will be using for
     # communication. Any divergence here would require us to implement a logical
@@ -249,17 +248,7 @@ def _mosaic_gpu_lowering_rule(
   else:
     KNOWN_KERNELS[kernel_id] = module_asm
 
-  class CustomCallArgs(TypedDict):
-    call_target_name: str
-    result_types: list[ir.Type]
-    operands: tuple[ir.Value]
-    operand_layouts: list[list[int]]
-    result_layouts: list[list[int]]
-    backend_config: dict[str, ir.Attribute]
-    operand_output_aliases: dict[int, int]
-    api_version: int
-
-  custom_call_kwargs : CustomCallArgs = {
+  custom_call_kwargs = {
       "call_target_name": "mosaic_gpu_v2",
       "result_types": [mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
       "operands": args,
@@ -278,8 +267,7 @@ def _mosaic_gpu_lowering_rule(
   }
 
   if not is_multi_device_module or not is_single_process_multi_device_topology():
-    op = mlir.custom_call(**custom_call_kwargs)
-    return op.results
+    return mlir.custom_call(**custom_call_kwargs).results  # type: ignore
 
   # Add collective metadata as additional output buffer.
   # Collective metadata stores pointers to both input and output parameters.
@@ -289,13 +277,12 @@ def _mosaic_gpu_lowering_rule(
       launch_context.COLLECTIVE_METADATA_SIZE + num_peers * num_params
   )
 
-  custom_call_kwargs["result_layouts"] += [[0]]
-  custom_call_kwargs["result_types"] += [
+  custom_call_kwargs["result_layouts"] += [[0]]  # type: ignore
+  custom_call_kwargs["result_types"] += [  # type: ignore
       ir.RankedTensorType.get((collective_metadata_size,),
                               ir.IntegerType.get_signless(64))]
-  op = mlir.custom_call(**custom_call_kwargs)
   # Drop the collective metadata buffer from the results.
-  return op.results[:-1]
+  return mlir.custom_call(**custom_call_kwargs).results[:-1]  # type: ignore
 
 mlir.register_lowering(mosaic_gpu_p, _mosaic_gpu_lowering_rule, "cuda")
 
@@ -838,12 +825,16 @@ def _lower_as_gpu_kernel(
       arg_refs = []
       # XLA will pass in inout refs again as outputs, but we ignore them.
       for i, ref_ty in enumerate([*in_ref_tys, *inout_ref_tys, *out_ref_tys]):
-        gep_op = utils.getelementptr(buffers, [i], ptr_ty)
-        ptr = llvm.load(ptr_ty, gep_op)
+        ptr = llvm.load(ptr_ty, utils.getelementptr(buffers, [i], ptr_ty))
         arg_memref = utils.ptr_as_memref(ptr, ir.MemRefType(ref_ty))
         # Annotate so we can find the corresponding kernel argument during the
         # lowering.
-        arg_memref.owner.attributes[launch_context.KERNEL_ARG_ID_ATTR] = ir.IntegerAttr.get(i32, i)
+        arg_memref.owner.attributes[launch_context.KERNEL_ARG_ID_ATTR] = (
+            ir.IntegerAttr.get(i32, i)
+        )
+        arg_memref.owner.attributes[launch_context.ORIGINAL_KERNEL_ARG_ATTR] = (
+            ir.UnitAttr.get()
+        )
         arg_refs.append(arg_memref)
 
       collective_metadata = None
@@ -858,19 +849,14 @@ def _lower_as_gpu_kernel(
       ):
         num_args = len(arg_refs)
         num_peers = jax_mesh.size
-        collective_metadata_size = (
-            launch_context.COLLECTIVE_METADATA_SIZE + num_args * num_peers
-        )
-        metadata_shape = jax.ShapeDtypeStruct(
-            shape=(collective_metadata_size,), dtype=np.int64
-        )
         metadata_ptr = llvm.load(
-            ptr_ty,
-            utils.getelementptr(buffers, [num_args], ptr_ty),
+            ptr_ty, utils.getelementptr(buffers, [num_args], ptr_ty)
         )
-        collective_metadata = utils.ptr_as_memref(
-            metadata_ptr, _shape_to_ref_ty(metadata_shape)
+        metadata_ty = ir.MemRefType.get(
+            (launch_context.COLLECTIVE_METADATA_SIZE + num_args * num_peers,),
+            ir.IntegerType.get_signless(64)
         )
+        collective_metadata = utils.ptr_as_memref(metadata_ptr, metadata_ty)
 
       prof_buffer = arg_refs.pop() if prof_spec is not None else None
 
@@ -903,10 +889,9 @@ def _lower_as_gpu_kernel(
 def _run_serde_pass(
     module: ir.Module, *, serialize: bool, ir_version: int | None = None
 ) -> ir.Module:
-  module = ir.Module.parse(
-      module.operation.get_asm(binary=True, enable_debug_info=True),
-      context=module.context,
-  )
+  bytecode_buffer = io.BytesIO()
+  module.operation.write_bytecode(bytecode_buffer)
+  module = ir.Module.parse(bytecode_buffer.getvalue(), context=module.context)
   pipeline = passmanager.PassManager.parse(
       "builtin.module(mosaic_gpu-serde{serialize="
       + str(serialize).lower()
@@ -1110,8 +1095,10 @@ def as_torch_gpu_kernel(
       inout_shape,
   )
   module = _run_serde_pass(module, serialize=True, ir_version=None)
+  bytecode_buffer = io.BytesIO()
+  module.operation.write_bytecode(bytecode_buffer)
   return _as_torch_gpu_kernel(
-      module.operation.get_asm(binary=True, enable_debug_info=True),
+      bytecode_buffer.getvalue(),
       in_shape,
       out_shape,
       inout_shape,

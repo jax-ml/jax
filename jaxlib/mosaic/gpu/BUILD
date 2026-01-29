@@ -154,7 +154,7 @@ cc_library(
         "launch_lowering.h",
         "passes.h",
     ],
-    features = ["asan_runtime_closure_feature"],  # Details: https://github.com/google-ml-infra/rules_ml_toolchain/tree/main/cc/sanitizers#troubleshooting
+    features = ["asan_runtime_closure"],  # Details: https://github.com/google-ml-infra/rules_ml_toolchain/tree/main/cc/sanitizers#troubleshooting
     deps = [
         ":dump",
         "//jaxlib/mosaic:pass_boilerplate",
@@ -333,7 +333,6 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/profiler/lib:traceme",
         "@xla//xla:executable_run_options",
-        "@xla//xla:xla_data_proto_cc",
         "@xla//xla/backends/gpu:ffi",
         "@xla//xla/backends/gpu/collectives:gpu_clique_key",
         "@xla//xla/backends/gpu/runtime:collective_clique_requests",
@@ -346,6 +345,7 @@ cc_library(
         "@xla//xla/service:custom_call_target_registry",
         "@xla//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
         "@xla//xla/service/llvm_ir:llvm_command_line_options",
+        "@xla//xla/stream_executor:device_description",
         "@xla//xla/stream_executor/cuda:assemble_compilation_provider",
         "@xla//xla/stream_executor/cuda:compilation_provider",
         "@xla//xla/stream_executor/cuda:compilation_provider_options",
@@ -451,5 +451,39 @@ cc_test(
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
+    ],
+)
+
+cc_library(
+    name = "utils",
+    srcs = ["utils.cc"],
+    hdrs = ["utils.h"],
+    deps = [
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:AsmParser",
+        "@llvm-project//mlir:DialectUtils",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+cc_test(
+    name = "utils_test",
+    srcs = ["utils_test.cc"],
+    deps = [
+        ":utils",
+        "//testing/base/public:gunit_main",
+        "@com_google_absl//absl/status",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:Support",
     ],
 )

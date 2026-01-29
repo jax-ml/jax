@@ -1092,7 +1092,9 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "pmap",
-    srcs = ["pmap.py"],
+    srcs = [
+        "pmap.py",
+    ],
     deps = [
         ":api",
         ":api_util",
@@ -1109,6 +1111,7 @@ pytype_strict_library(
         ":tree_util",
         ":util",
         ":xla_bridge",
+        "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
 

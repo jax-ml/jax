@@ -2221,18 +2221,11 @@ absl::Status PyArray::Register(nb::module_& m) {
         if (tracer_class.ptr() && self.ptr() == base_type.ptr() &&
             PyObject_TypeCheck(x.ptr(), reinterpret_cast<PyTypeObject*>(
                                             tracer_class.ptr())) != 0) {
-          // TODO(phawkins): we would like to change this to use the logic below
-          // but it is a somewhat breaking change. Let us defer it to a future
-          // PR.
-          return true;
-          // auto is_traced_array_fn =
-          //     nb::getattr(x, "_is_traced_array", nb::none());
-          // if (!is_traced_array_fn.is_none()) {
-          //   try {
-          //     return nb::cast<bool>(is_traced_array_fn());
-          //   } catch (...) {
-          //   }
-          // }
+          auto is_traced_array_fn =
+              nb::getattr(x, "_is_traced_array", nb::none());
+          if (!is_traced_array_fn.is_none()) {
+            return nb::cast<bool>(is_traced_array_fn());
+          }
         }
         return false;
       },
@@ -2279,6 +2272,28 @@ absl::Status PyArray::Register(nb::module_& m) {
       nb::arg("committed"), nb::arg("_skip_checks") = false);
   type.attr("delete") = nb::cpp_function(
       [](PyArray& self) { xla::ThrowIfError(self.Delete()); }, nb::is_method());
+  type.attr("_rewrap_with_aval_and_sharding") = nb::cpp_function(
+      // NOTE(dsuo): Zero-copy metadata rewrapping. Returns a new PyArray with
+      // new aval and sharding metadata that shares the same underlying ifrt
+      // array, avoiding memory copies when only the logical view changes.
+      [](PyArray self, nb::object aval, nb::object sharding) -> PyArray {
+        xla::ifrt::Array* ifrt_array_ptr = self.ifrt_array();
+        if (ifrt_array_ptr == nullptr) {
+          throw nb::value_error(
+              "_rewrap_with_aval_and_sharding() called on deleted or donated "
+              "buffer");
+        }
+        // Create a new PyArray that shares the same ifrt array.
+        bool weak_type = nb::cast<bool>(aval.attr("weak_type"));
+        xla::nb_dtype dtype = nb::cast<xla::nb_dtype>(aval.attr("dtype"));
+        std::vector<int64_t> shape =
+            nb::cast<std::vector<int64_t>>(aval.attr("shape"));
+        return PyArray(std::move(aval), weak_type, dtype, std::move(shape),
+                       std::move(sharding), self.py_client(),
+                       tsl::FormRef(ifrt_array_ptr), /*committed=*/true,
+                       /*skip_checks=*/true);
+      },
+      nb::is_method(), nb::arg("aval"), nb::arg("sharding"));
   type.attr("_sharding") = xla::nb_property_readonly(&PyArray::sharding);
   type.attr("aval") = xla::nb_property(&PyArray::aval, &PyArray::set_aval);
   type.attr("_arrays") =

@@ -195,7 +195,11 @@ class PythonPmapTest(jtu.JaxTestCase):
     for obj in [lowered, compiled]:
       self.assertFalse(obj._no_kwargs)
       self.assertEqual(obj.in_tree, jax.tree.flatten(((0,), {}))[1])
-      self.assertEqual(obj.in_avals, ((core.ShapedArray(x.shape, x.dtype),), {}))
+      # Compare shape/dtype only; sharding may differ with pmap_shmap_merge.
+      ((aval,), kwargs) = obj.in_avals
+      self.assertEqual(kwargs, {})
+      self.assertEqual(aval.shape, x.shape)
+      self.assertEqual(aval.dtype, x.dtype)
 
   def testLowerCompileInTreeMismatch(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
@@ -689,7 +693,11 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testOutAxesPyTreePrefixMismatchError(self):
     x = jnp.array([3.14])
     f = jax.pmap(lambda x, y: ((x, x), x), out_axes=((0, 0, 0), 0))
-    with self.assertRaisesRegex(ValueError, re.escape("pmap out_axes[0]")):
+    if config.pmap_shmap_merge.value:
+      regex = "pytree structure error: different lengths of tuple at key path.*"
+    else:
+      regex = re.escape("pmap out_axes[0]")
+    with self.assertRaisesRegex(ValueError, regex):
       f(x, x)
 
   @parameterized.named_parameters(
@@ -726,12 +734,9 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(f_ans, f_expected)
     self.assertIsInstance(f_ans, array.ArrayImpl)
     if config.pmap_shmap_merge.value:
-      if jax.device_count() == 1:
-        self.assertEmpty(f_ans.sharding.spec)
-      else:
-        self.assertLen(f_ans.sharding.spec, 1)
-        axis = f_ans.sharding.spec[0]
-        self.assertEqual(axis, f_ans.sharding.mesh.axis_names[0])
+      self.assertLen(f_ans.sharding.spec, 1)
+      axis = f_ans.sharding.spec[0]
+      self.assertEqual(axis, f_ans.sharding.mesh.axis_names[0])
     else:
       sharding_spec = f_ans.sharding.sharding_spec
       # the output is actually replicated (has the same values in each device
@@ -745,12 +750,9 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(g_ans, g_expected)
     self.assertIsInstance(g_ans, array.ArrayImpl)
     if config.pmap_shmap_merge.value:
-      if jax.device_count() == 1:
-        self.assertEmpty(g_ans.sharding.spec)
-      else:
-        self.assertLen(g_ans.sharding.spec, 1)
-        axis = g_ans.sharding.spec[0]
-        self.assertEqual(axis, g_ans.sharding.mesh.axis_names[0])
+      self.assertLen(g_ans.sharding.spec, 1)
+      axis = g_ans.sharding.spec[0]
+      self.assertEqual(axis, g_ans.sharding.mesh.axis_names[0])
     else:
       sharding_spec = g_ans.sharding.sharding_spec
       self.assertEmpty([a for a in sharding_spec.mesh_mapping
@@ -1403,16 +1405,20 @@ class PythonPmapTest(jtu.JaxTestCase):
     device_count = jax.device_count()
     f = self.pmap(lambda x: 3)
     x = jnp.arange(device_count + 1)
+    expected_regex_old = r'compiling computation that requires \d+ logical devices, but only \d+ XLA devices are available .*'
     if config.pmap_shmap_merge.value:
       expected_regex = [
         # NOTE(dsuo): We get different error messages depending on backend.
         r'shard_map applied.*axis sizes.*not evenly divisible.*mesh axis sizes.*',
         r'cannot select an axis to squeeze out which has size not equal to one.*',
         r'Sharding.*implies that array.*but the dimension size is.*',
+        r'implies that the global size of its dimension.*should be divisible by.*',
+        r'One of pjit arguments.*was given the sharding.*divisible by.*',
+        expected_regex_old,
       ]
       expected_regex = '|'.join(expected_regex)
     else:
-      expected_regex = r'compiling computation that requires \d+ logical devices, but only \d+ XLA devices are available .*'
+      expected_regex = expected_regex_old
     self.assertRaisesRegex(ValueError, expected_regex, lambda: f(x))
 
     # TODO(mattjj): test error message with explicit devices

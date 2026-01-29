@@ -8480,7 +8480,9 @@ def dce_sink(val):
   tree_util.tree_map(dce_sink_p.bind, val)
 
 class NoDCEEffect(effects.Effect):
-  pass
+  # we don't inherit these from `object` due to serialization.py
+  def __hash__(self): return hash(type(self))
+  def __eq__(self, other): return type(self) is type(other)
 no_dce_effect = NoDCEEffect()
 effects.control_flow_allowed_effects.add_type(NoDCEEffect)
 effects.lowerable_effects.add_type(NoDCEEffect)

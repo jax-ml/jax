@@ -138,6 +138,10 @@ class cuSparseTest(sptu.SparseTestCase):
   )
   @jax.default_matmul_precision("float32")
   def test_csr_matmul_ad(self, shape, dtype, bshape):
+    if jtu.is_device_rocm():
+      # hipSPARSE segfault observed as of ROCm 7.2.
+      # TODO(ROCm): Re-enable once hipSPARSE issue is fixed.
+      self.skipTest("test_csr_matmul_ad not supported on ROCm due to hipSPARSE issue")
     csr_matmul = sparse_csr._csr_matvec if len(bshape) == 1 else sparse_csr._csr_matmat
     tol = {np.float32: 2E-5, np.float64: 1E-12, np.complex64: 1E-5,
            np.complex128: 1E-12}
@@ -216,13 +220,10 @@ class cuSparseTest(sptu.SparseTestCase):
     transpose=[True, False],
   )
   def test_csr_matvec(self, shape, dtype, transpose):
-    if (
-        jtu.is_device_rocm() and
-        get_rocm_version() < (6, 4) and
-        dtype in (jtu.dtypes.floating + jtu.dtypes.complex)
-    ):
-      # TODO: Remove this check when ROCm 6.4+ is the minimum supported version
-      self.skipTest("ROCm <6.4 bug: NaN propagation when beta==0 (fixed in ROCm 6.4.0)")
+    if jtu.is_device_rocm():
+      # hipSPARSE segfault observed as of ROCm 7.2.
+      # TODO(ROCm): Re-enable once hipSPARSE issue is fixed.
+      self.skipTest("test_csr_matvec not supported on ROCm due to hipSPARSE issue")
 
     op = lambda M: M.T if transpose else M
 
@@ -592,6 +593,10 @@ class cuSparseTest(sptu.SparseTestCase):
   )
   @jtu.run_on_devices("gpu")
   def test_csr_spmv(self, shape, dtype, transpose):
+    if jtu.is_device_rocm():
+      # hipSPARSE segfault observed as of ROCm 7.2.
+      # TODO(ROCm): Re-enable once hipSPARSE issue is fixed.
+      self.skipTest("test_csr_spmv not supported on ROCm due to hipSPARSE issue")
     tol = {np.float32: 2E-5, np.float64: 2E-14}
 
     rng_sparse = sptu.rand_sparse(self.rng())
@@ -1043,6 +1048,10 @@ class SparseObjectTest(sptu.SparseTestCase):
     for Obj in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO]))
   @jax.default_matmul_precision("float32")
   def test_matmul(self, shape, dtype, Obj, bshape):
+    if jtu.is_device_rocm():
+      # hipSPARSE segfault observed as of ROCm 7.2.
+      # TODO(ROCm): Re-enable once hipSPARSE issue is fixed.
+      self.skipTest("test_matmul not supported on ROCm due to hipSPARSE issue")
     rng = sptu.rand_sparse(self.rng(), post=jnp.array)
     rng_b = jtu.rand_default(self.rng())
     M = rng(shape, dtype)

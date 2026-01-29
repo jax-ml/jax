@@ -1983,6 +1983,36 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     self.assertIn('_xla_stream_annotation="2"', compiled_text)
     self.assertArraysEqual(compiled_f(arr1, arr2), arr1 * 11)
 
+  @jtu.skip_on_devices('cpu')
+  def test_compute_on2_out_mem_space(self):
+    arr = jnp.array([1.0, 2.0, 3.0])
+
+    @compute_on2(compute_type='device_host',
+                 out_memory_spaces=jax.memory.Space.Host)
+    def f(x):
+      return x * 2.0
+
+    out = f(arr)
+    self.assertArraysEqual(out, arr * 2)
+    self.assertEqual(out.sharding.memory_kind, 'pinned_host')
+
+  @jtu.skip_on_devices('cpu')
+  def test_compute_on2_out_mem_space_tuple(self):
+    arr = jnp.array([1.0, 2.0, 3.0])
+    arr2 = jnp.array([1.0, 2.0, 3.0])
+
+    @compute_on2(compute_type='device_host',
+                 out_memory_spaces=(jax.memory.Space.Host, jax.memory.Space.Device))
+    def f(x, y):
+      return x * 2, y * 2
+
+    out1, out2 = f(arr, arr2)
+    self.assertArraysEqual(out1, arr * 2)
+    self.assertEqual(out1.sharding.memory_kind, 'pinned_host')
+    self.assertArraysEqual(out2, arr2 * 2)
+    self.assertEqual(out2.sharding.memory_kind, 'device')
+
+
 class ActivationOffloadingTest(jtu.JaxTestCase):
 
   def setUp(self):

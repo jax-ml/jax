@@ -36,6 +36,7 @@ from jax._src import typing as jax_typing
 from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import pretty_printer as pp
+from jax._src import source_info_util
 from jax._src import state
 from jax._src import util
 from jax._src.interpreters import ad
@@ -404,8 +405,11 @@ def _load_pp_rule(eqn, context, settings):
       eqn.params["args_tree"], eqn.invars
   )
   # TODO(sharadmv): pretty print mask and other
+  annotation = (source_info_util.summarize(eqn.source_info)
+                if settings.source_info else None)
   lhs = jax_core.pp_vars([y], context, print_shapes=settings.print_shapes)
-  result = [lhs, pp.text(" <- "), sp.pp_ref_transforms(context, x, transforms)]
+  result = [lhs, pp.text(" <- ", annotation=annotation),
+            sp.pp_ref_transforms(context, x, transforms)]
   if mask is not None:
     result += [
         pp.text(" "),
@@ -564,16 +568,19 @@ def _swap_pp_rule(eqn, context, settings):
   y, = eqn.outvars
   x, transforms, val, mask = eqn.params["args_tree"].unflatten(eqn.invars)
   x_i = sp.pp_ref_transforms(context, x, transforms)
+  annotation = (source_info_util.summarize(eqn.source_info)
+                if settings.source_info else None)
   if isinstance(y, jax_core.DropVar):
     return pp.concat([
         x_i,
-        pp.text(" <- "), pp.text(jax_core.pp_var(val, context))])
+        pp.text(" <- ", annotation=annotation),
+        pp.text(jax_core.pp_var(val, context))])
   y = jax_core.pp_vars([y], context, print_shapes=settings.print_shapes)
   result = [
       y,
       pp.text(", "),
       x_i,
-      pp.text(" <- "),
+      pp.text(" <- ", annotation=annotation),
       x_i,
       pp.text(", "),
       pp.text(jax_core.pp_var(val, context)),

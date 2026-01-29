@@ -94,5 +94,80 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
     jaxpr = jax.make_jaxpr(pmapped_f)(xs)
     jax.core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, xs)  # does not crash
 
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_array_device_size_mismatch_with_mesh(self):
+    """Test pmap when input array's device count differs from pmap mesh."""
+    local_devices = jax.local_devices()
+    n = len(local_devices)
+
+    local_mesh = jax.sharding.Mesh(np.array(local_devices), ("x",))
+    local_sharding = jax.sharding.NamedSharding(
+        local_mesh, jax.sharding.PartitionSpec("x")
+    )
+
+    local_data = jnp.arange(n, dtype=jnp.float32)
+    local_arr = jax.device_put(local_data, local_sharding)
+
+    f = jax.pmap(lambda x: x + 1, devices=local_devices)
+    out = f(local_arr)
+    expected = np.arange(n, dtype=np.float32) + 1
+    np.testing.assert_array_equal(out, expected)
+
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_pmap_with_scalars(self):
+    """Test pmap with scalar inputs."""
+    n = jax.local_device_count()
+    scalars = [1.0] * n
+    f = jax.pmap(lambda x: x + 1)
+    out = f(np.array(scalars))
+    np.testing.assert_array_equal(out, np.array([2.0] * n))
+
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_pmap_with_numpy_arrays(self):
+    """Test pmap with numpy array inputs."""
+    n = jax.local_device_count()
+    np_input = np.arange(n * 4, dtype=np.float32).reshape((n, 4))
+    f = jax.pmap(lambda x: x * 2)
+    out = f(np_input)
+    np.testing.assert_array_equal(out, np_input * 2)
+
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_pmap_with_prng_keys(self):
+    """Test pmap with PRNGKey inputs."""
+    n = jax.local_device_count()
+    keys = jax.random.split(jax.random.key(0), n)
+    f = jax.pmap(lambda k: jax.random.normal(k, shape=(2,)))
+    out = f(keys)
+    self.assertEqual(out.shape, (n, 2))
+    for i in range(n):
+      for j in range(i + 1, n):
+        self.assertFalse(np.allclose(out.addressable_data(i), out.addressable_data(j)))
+
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_pmap_with_float0(self):
+    """Test pmap with float0 dtype arrays (used in autodiff for integer args)."""
+    n = jax.local_device_count()
+    float0_arr = np.zeros((n, 3), dtype=jax.dtypes.float0)
+
+    f = jax.pmap(lambda x: x)
+    out = f(float0_arr)
+    self.assertEqual(out.shape, (n, 3))
+    self.assertEqual(out.dtype, np.dtype(bool))
+
+  @jtu.ignore_warning(category=UserWarning,
+                      message=".*Using jit-of-pmap can lead to inefficient data movement")
+  def test_replicated_output_sharding_multi_process(self):
+    if not jax.config.jax_pmap_shmap_merge:
+      self.skipTest("Only applies to pmap shmap merge")
+
+    f = jax.pmap(lambda x: x, axis_name="i", out_axes=None)
+    x = jnp.arange(jax.local_device_count())
+    out = f(x)
+
+    self.assertIsInstance(out.sharding, jax.sharding.NamedSharding)
+    self.assertEqual(out.sharding.spec, jax.sharding.PartitionSpec())
+    self.assertEqual(out.sharding.mesh.size, jax.local_device_count())
+
+
 if __name__ == "__main__":
   jt_multiprocess.main()

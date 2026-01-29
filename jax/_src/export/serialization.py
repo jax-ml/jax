@@ -144,7 +144,6 @@ def _serialize_exported(
   ser_flatbuf.ExportedAddOutTree(builder, out_tree)
   ser_flatbuf.ExportedAddOutAvals(builder, out_avals)
   ser_flatbuf.ExportedAddNrDevices(builder, exp.nr_devices)
-  ser_flatbuf.ExportedAddNrDevicesShort(builder, exp.nr_devices)  # For forward compatibility, can remove after January 2026
   ser_flatbuf.ExportedAddInShardings(builder, in_shardings)
   ser_flatbuf.ExportedAddOutShardings(builder, out_shardings)
   ser_flatbuf.ExportedAddPlatforms(builder, platforms)

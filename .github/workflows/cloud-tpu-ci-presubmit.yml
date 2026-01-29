@@ -41,7 +41,7 @@ jobs:
       tpu-type: "v6e-8"
       python: "3.14-nogil"
       libtpu-version-type: "nightly"
-      halt-for-connection: false
+      halt-for-connection: ${{ inputs.halt-for-connection }}
       build_jaxlib: "true"
       build_jax: "true"
       clone_main_xla: 1

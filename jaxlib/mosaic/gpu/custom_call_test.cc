@@ -176,24 +176,31 @@ std::string TestMGPUHloModule(std::string extra_attributes = "") {
                           extra_attributes);
 }
 
-TEST(CustomCallTest, KernelCompilationIsCached) {
-  ASSERT_OK_AND_ASSIGN(
-      auto module, xla::ParseAndReturnUnverifiedModule(TestMGPUHloModule()));
+TEST(CustomCallTest, KernelInitializationIsCached) {
+  std::string module_str = TestMGPUHloModule();
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       xla::ParseAndReturnUnverifiedModule(module_str));
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
                        xla::GetXlaPjrtGpuClient(/*options=*/{}));
-  ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
-      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
-                             /*options=*/{}));
 
   absl::SetVLogLevel("custom_call", 5);
+
+  std::unique_ptr<xla::PjRtLoadedExecutable> executable;
   {
     absl::ScopedMockLog log;
     EXPECT_CALL(log,
                 Log(absl::LogSeverity::kInfo, _,
                     "Successfully compiled Mosaic GPU kernel"))
         .Times(1);
+    log.StartCapturingLogs();
+    ASSERT_OK_AND_ASSIGN(executable, client->CompileAndLoad(
+                                         xla::XlaComputation(module->ToProto()),
+                                         /*options=*/{}));
+  }
+
+  {
+    absl::ScopedMockLog log;
     EXPECT_CALL(log,
                 Log(absl::LogSeverity::kInfo, _,
                     "Successfully initialized Mosaic GPU kernel"))
@@ -203,15 +210,10 @@ TEST(CustomCallTest, KernelCompilationIsCached) {
   }
 
   {
-    // The second execution the compilation should be cached.
+    // The second execution the initialization should be cached.
     absl::ScopedMockLog log;
-    EXPECT_CALL(log,
-                Log(absl::LogSeverity::kInfo, _,
-                    "Successfully compiled Mosaic GPU kernel"))
-        .Times(0);
-    EXPECT_CALL(log,
-                Log(absl::LogSeverity::kInfo, _,
-                    "Successfully initialized Mosaic GPU kernel"))
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Successfully initialized Mosaic GPU kernel"))
         .Times(0);
     log.StartCapturingLogs();
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());

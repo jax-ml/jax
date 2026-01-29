@@ -1510,10 +1510,10 @@ bool hasHbmOrVmemSharedMemorySpace(MemRefType ty) {
   return HasMemorySpace(ty, MemorySpace::kHbm) ||
          HasMemorySpace(ty, MemorySpace::kVmemShared);
 }
+}  // namespace
 
-FailureOr<bool> isGather(Operation &op, Value source, Value target) {
-  const MemRefType source_ty = getMemRefType(source);
-  const MemRefType target_ty = getMemRefType(target);
+FailureOr<bool> isGather(Operation& op, MemRefType source_ty,
+                         MemRefType target_ty) {
   if (hasHbmOrVmemSharedMemorySpace(source_ty) &&
       HasMemorySpace(target_ty, MemorySpace::kVmem)) {
     return true;
@@ -1526,10 +1526,11 @@ FailureOr<bool> isGather(Operation &op, Value source, Value target) {
       "The transfer must be between HBM and VMEM, or between VMEM_SHARED and "
       "VMEM");
 }
-}  // namespace
 
 FailureOr<bool> EnqueueIndirectDMAOp::isGather() {
-  return mlir::tpu::isGather(*getOperation(), getSource(), getTarget());
+  const MemRefType source_ty = getMemRefType(getSource());
+  const MemRefType target_ty = getMemRefType(getTarget());
+  return mlir::tpu::isGather(*getOperation(), source_ty, target_ty);
 }
 
 LogicalResult EnqueueIndirectDMAOp::verify() {
@@ -1615,7 +1616,9 @@ LogicalResult WaitDMA2Op::canonicalize(WaitDMA2Op op,
 }
 
 FailureOr<bool> WaitIndirectDMAOp::isGather() {
-  return mlir::tpu::isGather(*getOperation(), getSrc(), getDst());
+  const MemRefType source_ty = getMemRefType(getSrc());
+  const MemRefType target_ty = getMemRefType(getDst());
+  return mlir::tpu::isGather(*getOperation(), source_ty, target_ty);
 }
 
 LogicalResult WaitIndirectDMAOp::verify() {

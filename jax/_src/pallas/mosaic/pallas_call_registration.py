@@ -48,6 +48,9 @@ def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
   """
   assert isinstance(
       x, (jax.Array, jax_core.ShapedArray, state_types.AbstractLinVal)
+  ) or (
+      isinstance(x, jax_core.Tracer)
+      and isinstance(x.aval, state_types.AbstractLinVal)
   ), type(x)
   if isinstance(x, jax.Array):
     if dtypes.issubdtype(x.dtype, jax.numpy.bool_):

@@ -106,6 +106,7 @@ _SENTINEL = jnp.inf
 class JaxprInterpreter:
   """Interprets a jaxpr by replacing memory operations with (GPU) callbacks."""
 
+  grid_point_coords: tuple[int]
   thread_id: int
   mesh: plgpu.Mesh | None
   device_info: DeviceInfo
@@ -122,12 +123,18 @@ class JaxprInterpreter:
   def _interpret_axis_index_p(self, eqn):
     assert eqn.primitive is lax.axis_index_p
     axis_name = eqn.params["axis_name"]
-    if (self.mesh is not None) and (axis_name == self.mesh.thread_name):
-      return jnp.int32(self.thread_id)
-    elif axis_name in self.device_info.axis_indices:
-      return self.device_info.axis_indices[axis_name]
-    else:
-      raise ValueError(
+    if self.mesh is not None:
+      if axis_name == self.mesh.thread_name:
+        return jnp.int32(self.thread_id)
+      elif axis_name in self.mesh.grid_names:
+        return jnp.int32(
+            self.grid_point_coords[self.mesh.grid_names.index(axis_name)]
+        )
+
+    if axis_name in self.device_info.axis_indices:
+      return jnp.int32(self.device_info.axis_indices[axis_name])
+
+    raise ValueError(
           f"Unable to determine axis index for axis name {axis_name}"
       )
 

@@ -344,3 +344,22 @@ def to_range(transforms) -> tuple[slice | int, ...]:
         ret, tuple(_transform_slice_or_index(i) for i in transform.indices)
     )
   return ret
+
+
+def get_next_indices(grid, indices):
+  next_indices = []
+  carry = True
+  for dim_size, index in reversed(list(zip(grid, indices))):
+    i = jnp.where(carry, index + 1, index)
+    carry = dim_size == i
+    next_indices.append(jnp.where(carry, 0, i))
+  return tuple(reversed(next_indices))
+
+
+def get_indices(grid, loop_index):
+  indices = []
+  for dim_size in reversed(grid):
+    i = loop_index % dim_size
+    loop_index = loop_index // dim_size
+    indices.append(i)
+  return tuple(reversed(indices))

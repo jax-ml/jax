@@ -119,10 +119,12 @@ class DebugCheckTest(jtu.JaxTestCase):
       jax.block_until_ready(kernel())
 
     self.assertNotIn("Check success!", str(error.exception))
-    self.assertIn("Check failure!", str(error.exception))
-    self.assertIn(
-        "check at DebugCheckTest.test_vector_debug_check", str(error.exception)
-    )
+    if jtu.is_cloud_tpu() and jtu.is_device_tpu_at_least(7):
+      self.assertIn("Check failure!", str(error.exception))
+      self.assertIn(
+          "check at DebugCheckTest.test_vector_debug_check",
+          str(error.exception),
+      )
 
   def test_trigger_bounds_checker(self):
     if "xla_sc_assert_level" in flags.FLAGS:
@@ -130,6 +132,8 @@ class DebugCheckTest(jtu.JaxTestCase):
       flags.FLAGS.xla_sc_assert_level = "all-loads-stores"
     else:
       self.skipTest("TODO: Find another way to enable bounds checking.")
+    if jtu.is_device_tpu(7, "x"):
+      self.skipTest("TODO(b/478798643): Fails on v7x")
 
     x = jnp.arange(8, dtype=jnp.int32)
     # Index 8 is out-of-bounds.

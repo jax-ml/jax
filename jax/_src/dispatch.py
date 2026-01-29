@@ -518,11 +518,19 @@ def _device_put_sharding_impl(
         return _DeferredShardArg(x, x_sharding, aval, x.committed, copy)
     elif is_single_device_sharding(x_sharding):
       device = x_sharding._device_assignment[0] if device is None else device
+      sharding = SingleDeviceSharding(device)
+      if not x._committed and not sharding.has_addressable_devices:
+        # For uncommitted arrays in McJAX, each process has a local copy of the
+        # array. If the destination sharding is not addressable, no data
+        # transfer is needed, since the data was transferred in the process
+        # in which the sharding is addressable.
+        shards, devices = [], []
+      else:
+        shards, devices = [x], [device]
       if copy == ArrayCopySemantics.ALWAYS_COPY:
-        return xc.batched_device_put(aval, SingleDeviceSharding(device), [x],
-                                     [device], True, True)
-      return pxla.batched_device_put(aval, SingleDeviceSharding(device), [x],
-                                     [device])
+        return xc.batched_device_put(aval, sharding, shards, devices, True,
+                                     True)
+      return pxla.batched_device_put(aval, sharding, shards, devices)
 
   sh = SingleDeviceSharding(pxla.get_default_device()
                             if device is None else device)
