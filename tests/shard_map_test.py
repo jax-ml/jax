@@ -4892,6 +4892,27 @@ class ShardMapTest(jtu.JaxTestCase):
                                 check_vma=False))(arr)
     self.assertArraysEqual(out, np.zeros_like(arr, dtype=np.int32))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_unreduced_eager_shmap(self, mesh):
+    arr = jax.reshard(jnp.arange(8), P(unreduced={'x'}))
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Eager shard_map with unreduced/reduced is not implemented"):
+      jax.shard_map(lambda x: x, out_specs=P(unreduced={'x'}))(arr)
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Eager shard_map with unreduced/reduced is not implemented"):
+      jax.shard_map(lambda x: jax.lax.pcast(x, 'x', to='unreduced'),
+                    in_specs=P('x'), out_specs=P(unreduced={'x'}))(np.arange(8))
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Eager shard_map with unreduced/reduced is not implemented"):
+      jax.shard_map(lambda x: x, in_specs=P(), out_specs=P(unreduced={'x'}),
+                    check_vma=False)(np.arange(8))
+
 
 class FunSpec(NamedTuple):
   name: str

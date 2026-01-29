@@ -1092,6 +1092,10 @@ def _spec_to_vma(spec):
 def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs, out_specs_thunk,
                     check_vma, manual_axes):
   del prim
+  if any(s.unreduced or s.reduced for s in in_specs):
+    raise NotImplementedError(
+        "Eager shard_map with unreduced/reduced is not implemented. Please wrap"
+        " your shard_map in `jax.jit`.")
   if isinstance(mesh, AbstractMesh):
     concrete_mesh = get_concrete_mesh()
     mesh = concrete_mesh if not concrete_mesh.empty else mesh
@@ -1110,6 +1114,10 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs, out_specs_thunk,
     src_pspecs = tuple(P(order_wrt_mesh(mesh, manual_axes))
                        for _ in range(len(out_vma)))
   dst_pspecs = out_specs_thunk()
+  if any(s.unreduced or s.reduced for s in dst_pspecs):
+    raise NotImplementedError(
+        "Eager shard_map with unreduced/reduced is not implemented. Please wrap"
+        " your shard_map in `jax.jit`.")
   return map(partial(_match_spec, mesh, check_vma, manual_axes),
              src_pspecs, dst_pspecs, outs)
 core.EvalTrace.process_shard_map = _shard_map_impl
@@ -1390,6 +1398,14 @@ def _device_put_eager_rule(mesh, *xs, srcs, devices, copy_semantics):
   return xs
 eager_rules[dispatch.device_put_p] = _device_put_eager_rule
 
+def raise_notimplemented(*args, **kwargs):
+  raise NotImplementedError(
+      "Eager shard_map with unreduced/reduced is not implemented. Please wrap"
+      " your shard_map in `jax.jit`.")
+
+eager_rules[lax_parallel.preduced_p] = raise_notimplemented
+eager_rules[lax_parallel.vary_unreduced_cast_p] = raise_notimplemented
+eager_rules[core.reduced_vary_cast_p] = raise_notimplemented
 
 # Batching
 
