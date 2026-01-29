@@ -862,9 +862,6 @@ class MatmulTutorialTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
     if not jtu.test_device_matches(["cuda"]):
       self.skipTest("Test requires an NVIDIA GPU")
     self.skip_unless_tcgen05()
-    if jtu.is_cuda_compute_capability_equal("10.3"):
-      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
-      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
     self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
 
   def benchmark(self, matmul_impl, a, b, config_search_space):

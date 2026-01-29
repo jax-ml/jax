@@ -170,7 +170,8 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::MLIRContext* ctx,
     const se::cuda::CompilationProvider* compilation_provider,
     const se::CudaComputeCapability& cc, const std::string& sm,
-    const std::string& ptx_isa, const std::string& nvshmem_path) {
+    const std::string& ptx_isa, const std::string& nvshmem_path,
+    bool verify_target) {
   static absl::once_flag register_passes_flag;
   absl::call_once(
       register_passes_flag, [&compilation_provider, &cc]() {
@@ -229,7 +230,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
           convert-scf-to-cf,
           convert-nvvm-to-llvm,
           expand-strided-metadata,
-          nvvm-attach-target{O=3 chip=%1$s fast=false features=+%2$s ftz=false  module= triple=nvptx64-nvidia-cuda},
+          nvvm-attach-target{O=3 chip=%1$s fast=false features=+%2$s ftz=false  module= triple=nvptx64-nvidia-cuda verify-target-arch=%4$v},
           lower-affine,
           convert-arith-to-llvm{index-bitwidth=0},
           convert-index-to-llvm{index-bitwidth=64},
@@ -253,7 +254,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
           reconcile-unrealized-casts
         )
       )",
-                      sm, ptx_isa, absl::StrJoin(libraries_to_link, ",")));
+                      sm, ptx_isa, absl::StrJoin(libraries_to_link, ","), verify_target));
 }
 
 mlir::LogicalResult RunPasses(mlir::OpPassManager&& passes,
@@ -533,6 +534,9 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
     abort();
   }
 #endif
+  // nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a; disable
+  // verification on sm_103a, sm_110a etc. where we see spurious failures.
+  bool verify_target = !((cc->major == 10 && cc->minor > 0) || cc->major == 11);
   // Use `div.full` for float32 division---this generates better SASS.
   const std::vector<std::string> llvm_cl_options{"-nvptx-prec-divf32=1"};
   // Acquire a lock over the LLVM command line options here. XLA uses this
@@ -542,7 +546,7 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   // outside state/non-deterministic.
   xla::llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_cl_options);
   auto passes = GetPassPipeline(module->getContext(), compilation_provider, *cc,
-                                sm, llvm_ptx_isa, nvshmem_path);
+                                sm, llvm_ptx_isa, nvshmem_path, verify_target);
   if (mlir::failed(passes)) {
     return absl::InternalError("Failed to construct pass pipeline");
   }

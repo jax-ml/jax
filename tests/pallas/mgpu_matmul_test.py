@@ -64,9 +64,6 @@ class MatrixMultiplicationTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest)
       dtype,
   ):
     self.skip_unless_tcgen05()
-    if jtu.is_cuda_compute_capability_equal("10.3"):
-      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
-      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
     k1, k2, = jax.random.split(jax.random.key(42), 2)
     a = jax.random.normal(k1, (m, k), dtype)
     b = jax.random.normal(k2, (k, n), dtype)
