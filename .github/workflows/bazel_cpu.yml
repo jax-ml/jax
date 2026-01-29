@@ -55,6 +55,14 @@ on:
         description: "GCS location prefix from where the artifacts should be downloaded"
         default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
         type: string
+      xla_commit:
+        description: 'XLA commit to test against.'
+        required: false
+        type: string
+      jax_commit:
+        description: 'JAX commit to test against.'
+        required: false
+        type: string
 
 jobs:
   run-tests:
@@ -73,6 +81,8 @@ jobs:
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_BAZEL_CPU_RBE_MODE: "${{ inputs.bazel_command }}"
+      JAXCI_XLA_COMMIT: ${{ inputs.xla_commit }}
+      JAXCI_JAX_COMMIT: ${{ inputs.jax_commit }}
 
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||

@@ -91,6 +91,9 @@ jobs:
       halt-for-connection: ${{inputs.halt-for-connection}}
       build_jaxlib: "false"
       build_jax: "false"
+      # TODO(ybaturina): Change to proper commits from nightly/release builds
+      jax_commit: ${{ startsWith(github.ref_name, 'release/') && '3f125024ecd17a1d90789a69c59962de4ff6af53' || '' }}
+      xla_commit: ${{ startsWith(github.ref_name, 'release/') && '913ae2eaa3cb88971003592a90959685a78c9e30' || '' }}
 
   run-pytest-cuda:
     uses: ./.github/workflows/pytest_cuda.yml
@@ -167,6 +170,9 @@ jobs:
       jaxlib-version: "head"
       write_to_bazel_remote_cache: 1
       run_multiaccelerator_tests: "true"
+      # TODO(ybaturina): Change to proper commits from nightly/release builds
+      jax_commit: ${{ startsWith(github.ref_name, 'release/') && '3f125024ecd17a1d90789a69c59962de4ff6af53' || '' }}
+      xla_commit: ${{ startsWith(github.ref_name, 'release/') && '913ae2eaa3cb88971003592a90959685a78c9e30' || '' }}
 
   run-pytest-tpu:
     uses: ./.github/workflows/pytest_tpu.yml
@@ -305,6 +311,9 @@ jobs:
       build_jax: "false"
       jaxlib-version: "head"
       clone_main_xla: 0
+      # TODO(ybaturina): Change to proper commits from nightly/release builds
+      jax_commit: ${{ startsWith(github.ref_name, 'release/') && '3f125024ecd17a1d90789a69c59962de4ff6af53' || '' }}
+      xla_commit: ${{ startsWith(github.ref_name, 'release/') && '913ae2eaa3cb88971003592a90959685a78c9e30' || '' }}
 
   verify-release-wheels-install:
     if: ${{ startsWith(github.ref_name, 'release/')}}
