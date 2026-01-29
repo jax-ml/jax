@@ -152,13 +152,10 @@ OpFoldResult BitcastVregOp::fold(FoldAdaptor adaptor) {
   if (getType() == getInput().getType()) {
     return getInput();
   }
-  // Bitcast from X -> Y -> ... -> Z -> X is a no-op.
-  Value input = getInput();
-  while (auto op = dyn_cast_if_present<BitcastVregOp>(input.getDefiningOp())) {
-    input = op.getInput();
-    if (getType() == input.getType()) {
-      return input;
-    }
+  // Simplify bitcast chain of X -> Y -> Z to X -> Z.
+  if (auto defining_op = getInput().getDefiningOp<BitcastVregOp>()) {
+    getInputMutable().assign(defining_op.getInput());
+    return getResult();
   }
   return nullptr;
 }
@@ -1884,7 +1881,7 @@ LogicalResult UnpackSubelementsOp::canonicalize(UnpackSubelementsOp op,
   }
   if (!op.getSignExtended()) {
     // Unpack of pack with the same format is reversible if not sign extended.
-    if (auto pack = dyn_cast<PackSubelementsOp>(op.getSource().getDefiningOp());
+    if (auto pack = op.getSource().getDefiningOp<PackSubelementsOp>();
         pack && pack.getPackFormat() == op.getPackFormat() &&
         pack.getSources().front().getType() == op.getType()) {
       Value source = pack.getPaddedSources(
