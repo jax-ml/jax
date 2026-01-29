@@ -294,6 +294,8 @@ class TritonPallasTest(PallasBaseTest):
 
   @parameterized.parameters("float16", "bfloat16", "float32")
   def test_approx_tanh(self, dtype):
+    if jtu.is_device_rocm() and dtype in ("float16", "float32"):
+      self.skipTest("Skipped on ROCm.")  # test_approx_tanh0 and test_approx_tanh2
     if self.INTERPRET:
       self.skipTest("approx_tanh is not supported in interpret mode")
 

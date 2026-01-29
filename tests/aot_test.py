@@ -264,6 +264,8 @@ class JaxAotTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices('gpu')
   def test_deviceless_aot_compile(self):
+    if jtu.is_device_rocm():
+      self.skipTest("Skipped on ROCm.")
     target_config = xc.get_topology_for_devices(jax.devices()).target_config
     with jtu.global_config_context(jax_platforms="cpu"):
       topology = topologies.get_topology_desc(

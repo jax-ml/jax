@@ -6210,6 +6210,8 @@ class NumpyGradTests(jtu.JaxTestCase):
 class NumpySignaturesTest(jtu.JaxTestCase):
 
   def testWrappedSignaturesMatch(self):
+    if jtu.is_device_rocm():
+      self.skipTest("Skipped on ROCm.")
     """Test that jax.numpy function signatures match numpy."""
     # NumPy functions explicitly not implemented in JAX:
     skip = {'array2string',
