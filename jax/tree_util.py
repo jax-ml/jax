@@ -53,6 +53,7 @@ from jax._src.tree_util import (
     register_dataclass as register_dataclass,
     register_object as register_object,
     register_pyobjectdict as register_pyobjectdict,
+    register_pyobjectslow as register_pyobjectslow,
     register_pytree_node_class as register_pytree_node_class,
     register_pytree_node as register_pytree_node,
     register_pytree_with_keys_class as register_pytree_with_keys_class,

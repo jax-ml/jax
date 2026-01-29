@@ -50,6 +50,20 @@ class PyObjectDictRegistered:
 
 jax.tree_util.register_pyobjectdict(PyObjectDictRegistered, '__mapping__')
 
+class PyObjectSlowRegistered:
+  def __init__(self, data_children=[], static_children=[]):
+    for i, child in enumerate(data_children):
+      setattr(self, f'data{i+1}', child)
+    for i, child in enumerate(static_children):
+      setattr(self, f'static{i+1}', child)
+    mapping = {f'data{i+1}': True for i in range(len(data_children))}
+    self.__mapping__ = mapping
+
+  def __eq__(self, other):
+    return vars(self) == vars(other)
+
+jax.tree_util.register_pyobjectslow(PyObjectSlowRegistered, '__mapping__')
+
 def key_fn(k):
   if k.isdigit():
     return (0, int(k))
@@ -154,12 +168,14 @@ if __name__ == '__main__':
   dataclass_registered = make_dataclass_tree(DataclassRegistered, depth, num_data, num_static)
   pyobj_registered = make_tree(PyObjectRegistered, depth, num_data, num_static)
   pyobjectdict_registered = make_tree(PyObjectDictRegistered, depth, num_data, num_static)
+  pyobjectslow_registered = make_tree(PyObjectSlowRegistered, depth, num_data, num_static)
   dict_registered = make_tree(make_dict, depth, num_data, num_static)
   vals, _ = jax.tree.flatten(dataclass_registered)
 
   print("Object time ", ci([benchmark_roundtrip(obj_registered) for _ in range(3)]))
   print("Int object time ", ci([benchmark_roundtrip(obj_registered_int) for _ in range(3)]))
   print("PyObjectDict time ", ci([benchmark_roundtrip(pyobjectdict_registered) for _ in range(3)]))
+  print("PyObjectSlow time ", ci([benchmark_roundtrip(pyobjectslow_registered) for _ in range(3)]))
   print("Dict time ", ci([benchmark_roundtrip(dict_registered) for _ in range(3)]))
   print("Pre-flattened time ", ci([benchmark_roundtrip(vals) for _ in range(3)]))
   print("Dataclass time ", ci([benchmark_roundtrip(dataclass_registered) for _ in range(3)]))

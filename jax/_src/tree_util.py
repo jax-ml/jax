@@ -1183,6 +1183,7 @@ def register_object(
   _registry[nodetype] = _RegistryEntry(object_flatten_func, object_unflatten_func)
   return nodetype
 
+@export
 def register_pyobjectdict(
     nodetype: Typ,
     mapping_attr: str,
@@ -1191,6 +1192,18 @@ def register_pyobjectdict(
   default_registry.register_pyobjectdict_node(nodetype, mapping_attr, has_int_keys)
   none_leaf_registry.register_pyobjectdict_node(nodetype, mapping_attr, has_int_keys)
   dispatch_registry.register_pyobjectdict_node(nodetype, mapping_attr, has_int_keys)
+  _registry[nodetype] = _RegistryEntry(object_flatten_func, object_unflatten_func)
+  return nodetype
+
+@export
+def register_pyobjectslow(
+    nodetype: Typ,
+    mapping_attr: str,
+    has_int_keys: bool = False
+) -> Typ:
+  default_registry.register_pyobjectslow_node(nodetype, mapping_attr, has_int_keys)
+  none_leaf_registry.register_pyobjectslow_node(nodetype, mapping_attr, has_int_keys)
+  dispatch_registry.register_pyobjectslow_node(nodetype, mapping_attr, has_int_keys)
   _registry[nodetype] = _RegistryEntry(object_flatten_func, object_unflatten_func)
   return nodetype
 

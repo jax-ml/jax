@@ -52,6 +52,7 @@ enum class PyTreeKind {
   kDataclass,   // A dataclass.
   kObject,      // An object with attributes specified in a dict
   kPyObjectDict, // An object with attributes specified in a python dict
+  kPyObjectSlow, // An object with python dict mapping, storing meta in node_data
 };
 
 using StringSet = std::map<std::string, bool>;
@@ -117,6 +118,8 @@ class PyTreeRegistry {
   void RegisterObject(nanobind::object type, nanobind::str mapping_attr, bool has_int_keys);
   // Registration for objects using python dict.
   void RegisterPyObjectDict(nanobind::object type, nanobind::str mapping_attr, bool has_int_keys);
+  // Registration for objects using python dict with slow meta storage.
+  void RegisterPyObjectSlow(nanobind::object type, nanobind::str mapping_attr, bool has_int_keys);
 
   // Finds the custom type registration for `type`. Returns nullptr if none
   // exists.
