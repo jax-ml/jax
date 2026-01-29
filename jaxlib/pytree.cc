@@ -246,16 +246,6 @@ PyTreeKind PyTreeRegistry::KindOfObject(
   return it == registrations_.end() ? nullptr : it->second.get();
 }
 
-struct identity {
-    using is_transparent = void;
-
-    template <typename T>
-    constexpr T&& operator()(T&& t) const noexcept
-    {
-        return std::forward<T>(t);
-    }
-};
-
 int py_compare(const nb::object& a, const nb::object& b) {
     return PyObject_RichCompareBool(a.ptr(), b.ptr(), Py_LT);
 }
@@ -1753,9 +1743,6 @@ int PyTreeDef::Node::tp_traverse(visitproc visit, void* arg) const {
   Py_VISIT(node_data.ptr());
   for (const auto& key : sorted_dict_keys) {
     Py_VISIT(key.ptr());
-  }
-  for (const auto& meta : meta_data) {
-    Py_VISIT(meta.ptr());
   }
   return 0;
 }
