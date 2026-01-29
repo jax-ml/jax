@@ -98,11 +98,15 @@ tree_util.register_pytree_node(
 )
 
 def make_dataclass_registered(num_data, num_static):
-  data_fields = [f'data{i+1}' for i in range(num_data)]
-  static_fields = [(f'static{i+1}', Any, field(metadata=dict(static=True))) for i in range(num_static)]
-  DataclassRegistered = make_dataclass('DataclassRegistered', data_fields + static_fields)
-  tree_util.register_dataclass(DataclassRegistered)
-  return DataclassRegistered
+  lines = ['@jax.tree_util.register_dataclass', '@dataclass', 'class DataclassRegistered:']
+  for i in range(num_data):
+    lines.append(f'  data{i+1}: Any')
+  for i in range(num_static):
+    lines.append(f'  static{i+1}: Any = field(metadata=dict(static=True))')
+  code = '\n'.join(lines)
+  namespace = {'jax': jax, 'dataclass': dataclass, 'Any': Any, 'field': field}
+  exec(code, namespace)
+  return namespace['DataclassRegistered']
 
 def make_tree(cls, depth, num_data, num_static):
   if depth == 0:
@@ -132,7 +136,7 @@ def make_dataclass_tree(cls, depth, num_data, num_static):
     kwargs[f'static{i+1}'] = child
   return cls(**kwargs)
 
-def benchmark_roundtrip(obj, iterations=1000):
+def benchmark_roundtrip(obj, iterations=100):
   start = time.time()
   for _ in range(iterations):
     xs, tree = tree_util.tree_flatten(obj)
@@ -143,21 +147,7 @@ def benchmark_roundtrip(obj, iterations=1000):
 def ci(a):
   return f"{np.mean(a):.4f}s ± {2 * np.std(a):.4f}s"
 
-# For reasons I don't understand, Jax's register_dataclass is substantially faster
-# on this manually defined class compared to one created by make_dataclass_registered
-@jax.tree_util.register_dataclass
-@dataclass
-class DataclassRegistered:
-  data1: Any
-  data2: Any
-  data3: Any
-  data4: Any
-  data5: Any
-  static1: Any = field(metadata=dict(static=True))
-  static2: Any = field(metadata=dict(static=True))
-  static3: Any = field(metadata=dict(static=True))
-  static4: Any = field(metadata=dict(static=True))
-  static5: Any = field(metadata=dict(static=True))
+
 
 if __name__ == '__main__':
   width = 10
@@ -167,33 +157,16 @@ if __name__ == '__main__':
 
   obj_registered = make_tree(ObjectRegistered, depth, num_data, num_static)
   obj_registered_int = make_tree(ObjectRegisteredInt, depth, num_data, num_static)
-  # pytree_registered = make_tree(PyTreeNodeRegistered, depth, num_data, num_static)
-  # DataclassRegistered = make_dataclass_registered(num_data, num_static)
+  pytree_registered = make_tree(PyTreeNodeRegistered, depth, num_data, num_static)
+  DataclassRegistered = make_dataclass_registered(num_data, num_static)
   dataclass_registered = make_dataclass_tree(DataclassRegistered, depth, num_data, num_static)
   pyobj_registered = make_tree(PyObjectRegistered, depth, num_data, num_static)
   dict_registered = make_tree(make_dict, depth, num_data, num_static)
   vals, _ = jax.tree.flatten(dataclass_registered)
 
-  print("Benchmarking object...")
-  time_obj = [benchmark_roundtrip(obj_registered) for _ in range(3)]
-  print("Benchmarking object int...")
-  time_obj = [benchmark_roundtrip(obj_registered_int) for _ in range(3)]
-  # print("Benchmarking pytree")
-  # time_pytree = [benchmark_roundtrip(pytree_registered) for _ in range(3)]
-  print("Benchmarking dict")
-  time_dict = [benchmark_roundtrip(dict_registered) for _ in range(3)]
-  print("Benchmarking pre-flattened")
-  time_flat = [benchmark_roundtrip(vals) for _ in range(3)]
-  print("Benchmarking dataclass")
-  time_dataclass = [benchmark_roundtrip(dataclass_registered) for _ in range(3)]
-  print("Benchmarking pyobject")
-  time_pyobject = [benchmark_roundtrip(pyobj_registered) for _ in range(3)]
-
-  print(f"pre flattened: {ci(time_flat)}")
-  print(f"register_object: {ci(time_obj)}")
-  # print(f"register_pytree_node: {ci(time_pytree)}")
-  print(f"register_dict: {ci(time_dict)}")
-  print(f"register_dataclass: {ci(time_dataclass)}")
-  print(f"register_pyobject: {ci(time_pyobject)}")
-
-  print(f"C++ Speedup : {np.mean(time_obj) / np.mean(time_pyobject):.4f}")
+  print("Object time ", ci([benchmark_roundtrip(obj_registered) for _ in range(3)]))
+  print("Pytree time ", ci([benchmark_roundtrip(pytree_registered) for _ in range(3)]))
+  print("Dict time ", ci([benchmark_roundtrip(dict_registered) for _ in range(3)]))
+  print("Pre-flattened time ", ci([benchmark_roundtrip(vals) for _ in range(3)]))
+  print("Dataclass time ", ci([benchmark_roundtrip(dataclass_registered) for _ in range(3)]))
+  print("Pyobject time ", ci([benchmark_roundtrip(pyobj_registered) for _ in range(3)]))
