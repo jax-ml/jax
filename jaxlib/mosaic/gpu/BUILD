@@ -351,6 +351,7 @@ cc_library(
         "@xla//xla/stream_executor/cuda:compilation_provider_options",
         "@xla//xla/stream_executor/cuda:cuda_compute_capability",
         "@xla//xla/stream_executor/cuda:ptx_compiler_support",
+        "@xla//xla/stream_executor/gpu:collective_kernel_metadata",
         "@xla//xla/tsl/platform:errors",
         "@xla//xla/tsl/platform:statusor",
     ],
