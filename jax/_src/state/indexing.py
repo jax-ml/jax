@@ -242,7 +242,7 @@ class NDIndexer:
       if num_ellipsis > 1:
         raise ValueError("Only one ellipsis is supported.")
       # Expand ... so that `indices` has the same length as `shape`.
-      ip = indices.index(...)
+      ip = next(i for i, idx in enumerate(indices) if idx is ...)
       indices = list(indices)
       indices[ip:ip+1] = [slice(None)] * (len(shape) - len(indices) + 1)
       indices = tuple(indices)

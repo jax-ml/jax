@@ -1111,6 +1111,19 @@ class MutableArrayTest(jtu.JaxTestCase):
     y_bar = jax.grad(f)(3.)
     self.assertAllClose(y_bar, 2., check_dtypes=False)
 
+  @jtu.sample_product([
+    dict(shape=(3, 4), indexer=np.index_exp[1]),
+    dict(shape=(3, 4), indexer=np.index_exp[1:4]),
+    dict(shape=(2, 3, 4), indexer=np.index_exp[..., 0]),
+    dict(shape=(2, 3, 4), indexer=np.index_exp[:, 1]),
+    dict(shape=(3, 4), indexer=np.index_exp[np.arange(2), np.arange(2)]),
+    dict(shape=(3, 4), indexer=np.index_exp[np.arange(2), ..., np.arange(2)]),
+  ])
+  def test_indexing_patterns(self, shape, indexer):
+    x = self.rng().uniform(size=shape)
+    x_ref = jax.new_ref(x)
+    self.assertArraysAllClose(x[indexer], x_ref[indexer])
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
