@@ -206,7 +206,7 @@ def rankdata(
     obs = jnp.concatenate([jnp.array([True]), arr_sorted[1:] != arr_sorted[:-1]])
     dense = obs.cumsum()[inv]
     count = jnp.nonzero(obs, size=operand.size + 1, fill_value=obs.size)[0]
-    
+
     if jnp.issubdtype(operand.dtype, jnp.inexact):
       out_dtype = operand.dtype
     else:
@@ -224,7 +224,7 @@ def rankdata(
     elif method == "average":
       sum_ranks = count[dense] + count[dense - 1] + 1
       res = sum_ranks.astype(out_dtype) * 0.5
-      
+
     else:
       raise ValueError(f"unknown method '{method}'")
 

@@ -2040,7 +2040,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     # See: https://github.com/scipy/scipy/pull/24420
     def rankdata_reference(a):
       res = osp_stats.rankdata(a, method=method, axis=axis)
-      
+
       major, minor, micro = map(int, scipy.__version__.split('.')[:3])
       if (major, minor, micro) < (1, 18, 0):
         # Cast to match the JAX implementation's floating-point output
