@@ -1053,6 +1053,24 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "blackwell_blockscaled_matmul_mgpu_run",
+    srcs = ["//jax/experimental/pallas/ops/gpu:blackwell_blockscaled_matmul_mgpu.py"],
+    enable_backends = [],
+    enable_configs = ["gpu_b200"],
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_mosaic_gpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "blackwell_matmul_mgpu_run",
     srcs = ["//jax/experimental/pallas/ops/gpu:blackwell_matmul_mgpu.py"],
     enable_backends = [],
