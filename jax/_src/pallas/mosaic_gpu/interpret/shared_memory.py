@@ -232,3 +232,9 @@ class GPUSharedMemory(memory.SharedMemory):
       barrier.deallocate()
       if barrier.has_zero_ref_count():
         self.mem.pop(key)
+
+  def assert_no_barriers_allocated(self):
+    for key, alloc in self.mem.items():
+      assert not isinstance(
+          alloc, Barrier
+      ), f"Barrier remains allocated at key `{key}`."
