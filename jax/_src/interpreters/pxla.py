@@ -2253,6 +2253,7 @@ def lower_sharding_computation(
        out_layouts)
 
   jaxpr = closed_jaxpr.jaxpr
+  print(jaxpr)
   global_in_avals = closed_jaxpr.in_avals
   global_out_avals = closed_jaxpr.out_avals
 

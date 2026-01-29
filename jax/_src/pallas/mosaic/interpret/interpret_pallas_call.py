@@ -1452,6 +1452,9 @@ def _interpret_jaxpr(
       elif prim is primitives.atomic_cas_p:
         raise NotImplementedError('atomic_cas_p')
 
+      elif prim is mosaic_primitives.touch_p:
+        continue
+
       else:
         if interpret_params.skip_floating_point_ops and all(
             interpret_utils.is_float(ovar.aval.dtype) for ovar in eqn.outvars
