@@ -37,6 +37,7 @@ py_library(
         "primitives.py",
         "utils.py",
     ],
+    strict_deps = False,
     deps = [
         "//jax",
         "//jax/_src:ad",
@@ -76,6 +77,7 @@ py_library(
     srcs = [
         "pallas_test_util.py",
     ],
+    strict_deps = False,
     deps = [
         ":pallas",
         "//jax/_src:test_util",
