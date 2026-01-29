@@ -2543,21 +2543,20 @@ class OpsTest(PallasBaseTest):
       )(x)
       np.testing.assert_array_equal(out, jnp.pad(x, padding, mode=pad_type))
     except Exception as e:
+      self.assertLess(
+          jtu.get_tpu_version(), 4, "only TPU older than v4 may fail"
+      )
       self.assertEqual(
           dtype,
           jnp.bfloat16,
           "some bfloat16 combinations can fail with not implemented",
       )
-      # The first two options are expected to fail due to current limitations
-      # in the Pallas TPU lowering. However, the last one is unexpected, and
-      # should be fixed, it is a pjrt bug.
-      # b/379787665
-      acceptable_errors = (
-          "Only 32-bit types supported" in str(e)
-          or "Not implemented" in str(e)
-          or "Expected mask vector type" in str(e)
-      )
-      self.assertTrue(acceptable_errors, "Failed with error: " + str(e))
+      if jtu.is_cloud_tpu_at_least(2026, 2, 3):
+        self.assertIn(
+            "Not implemented: subelement mask not supported for TPU older"
+            " than v4.",
+            str(e),
+        )
 
   @parameterized.parameters((128, 128), (256, 256))
   def test_jnp_diagonal_pallas(self, n, m):

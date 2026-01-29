@@ -202,9 +202,16 @@ FailureOr<TypedValue<VectorType>> TiledRectangularVregBounds::getVectorMask(
   const int8_t bitwidth = layout_.bitwidth();
   const int packing = layout_.packing();
   const int max_subelems = generation < 4 ? 1 : generation < 5 ? 2 : 4;
+  const bool needs_subelement_mask =
+      maskVariesAlong(Direction::kSubelements, target_shape);
+  if (needs_subelement_mask && generation < 4) {
+    return emitError(loc,
+                     "Not implemented: subelement mask not supported for TPU "
+                     "older than v4.");
+  }
   const IntegerType i1 = builder.getI1Type();
   const VectorType mask_vreg_ty = [&]() {
-    if (maskVariesAlong(Direction::kSubelements, target_shape)) {
+    if (needs_subelement_mask) {
       // When CreateSubelementMask isn't supported, we virtualize masking.
       if (packing > max_subelems) {
         return VectorType::get(target_shape, i1);
@@ -252,7 +259,7 @@ FailureOr<TypedValue<VectorType>> TiledRectangularVregBounds::getVectorMask(
                    boundIdxConst(start_lane)},
         ValueRange{boundIdxConst(sublane_offset + end_sub),
                    boundIdxConst(end_lane)});
-    if (maskVariesAlong(Direction::kSubelements, target_shape)) {
+    if (needs_subelement_mask) {
       int64_t start_row = start_offsets_[0] + row_offset;
       int64_t end_row = end_offsets_[0] + row_offset;
       if (packing <= max_subelems) {
