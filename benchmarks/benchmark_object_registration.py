@@ -26,7 +26,13 @@ class ObjectRegistered:
 jax.tree_util.register_object(ObjectRegistered, '__mapping__')
 
 class ObjectRegisteredInt(ObjectRegistered):
-  pass
+  def __init__(self, data_children=[], static_children=[]):
+    for i, child in enumerate(data_children):
+      setattr(self, f'{i+1}', child)
+    for i, child in enumerate(static_children):
+      setattr(self, f'static{i+1}', child)
+    mapping = {f'{i+1}': True for i in range(len(data_children))}
+    self.__mapping__ = jaxlib.pytree.StringSet(mapping)
 
 jax.tree_util.register_object(ObjectRegisteredInt, '__mapping__', True)
 
@@ -67,34 +73,6 @@ tree_util.register_pytree_node(
     PyObjectRegistered,
     PyObjectRegistered.tree_flatten,
     PyObjectRegistered.tree_unflatten
-)
-
-class PyTreeNodeRegistered:
-  def __init__(self, data_children=[], static_children=[]):
-    self._num_data = len(data_children)
-    self._num_static = len(static_children)
-    for i, child in enumerate(data_children):
-      setattr(self, f'data{i+1}', child)
-    for i, child in enumerate(static_children):
-      setattr(self, f'static{i+1}', child)
-
-  def __eq__(self, other):
-    return vars(self) == vars(other)
-
-  def tree_flatten(self):
-    data_list = [getattr(self, f'data{i+1}') for i in range(self._num_data)]
-    static_list = [getattr(self, f'static{i+1}') for i in range(self._num_static)]
-    return (data_list, static_list)
-
-  @classmethod
-  def tree_unflatten(cls, aux, data_children):
-    static_children = aux
-    return cls(data_children=data_children, static_children=static_children)
-
-tree_util.register_pytree_node(
-    PyTreeNodeRegistered,
-    PyTreeNodeRegistered.tree_flatten,
-    PyTreeNodeRegistered.tree_unflatten
 )
 
 def make_dataclass_registered(num_data, num_static):
@@ -140,8 +118,9 @@ def benchmark_roundtrip(obj, iterations=100):
   start = time.time()
   for _ in range(iterations):
     xs, tree = tree_util.tree_flatten(obj)
-    tree_util.tree_unflatten(tree, xs)
+    result = tree_util.tree_unflatten(tree, xs)
   end = time.time()
+  assert result == obj, "Roundtrip failed"
   return end - start
 
 def ci(a):
@@ -157,7 +136,6 @@ if __name__ == '__main__':
 
   obj_registered = make_tree(ObjectRegistered, depth, num_data, num_static)
   obj_registered_int = make_tree(ObjectRegisteredInt, depth, num_data, num_static)
-  pytree_registered = make_tree(PyTreeNodeRegistered, depth, num_data, num_static)
   DataclassRegistered = make_dataclass_registered(num_data, num_static)
   dataclass_registered = make_dataclass_tree(DataclassRegistered, depth, num_data, num_static)
   pyobj_registered = make_tree(PyObjectRegistered, depth, num_data, num_static)
@@ -165,7 +143,7 @@ if __name__ == '__main__':
   vals, _ = jax.tree.flatten(dataclass_registered)
 
   print("Object time ", ci([benchmark_roundtrip(obj_registered) for _ in range(3)]))
-  print("Pytree time ", ci([benchmark_roundtrip(pytree_registered) for _ in range(3)]))
+  print("Int object time ", ci([benchmark_roundtrip(obj_registered_int) for _ in range(3)]))
   print("Dict time ", ci([benchmark_roundtrip(dict_registered) for _ in range(3)]))
   print("Pre-flattened time ", ci([benchmark_roundtrip(vals) for _ in range(3)]))
   print("Dataclass time ", ci([benchmark_roundtrip(dataclass_registered) for _ in range(3)]))
