@@ -238,6 +238,7 @@ from jax._src.lax.lax import (
   xor_p as xor_p,
   empty as empty,
 )
+from jax._src.lax.scaled_dot import scaled_dot as scaled_dot
 from jax._src.lax.special import (
   bessel_i0e as bessel_i0e,
   bessel_i0e_p as bessel_i0e_p,
