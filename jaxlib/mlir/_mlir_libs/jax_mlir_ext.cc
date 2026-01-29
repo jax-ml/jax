@@ -152,7 +152,7 @@ absl::StatusOr<std::vector<MlirValue>> InlinedCall(
         llvm::StringRef child_op_type, child_op_name;
         ParseLocation(child_loc, child_op_type, child_op_name);
 
-        child_loc = parent_base_loc;
+        child_loc = mlir::CallSiteLoc::get(child_loc, parent_base_loc);
         if (child_op_name.empty()) {
           child_loc = mlir::NameLoc::get(
               op_builder.getStringAttr(parent_op_name), child_loc);
