@@ -1080,6 +1080,37 @@ class MutableArrayTest(jtu.JaxTestCase):
 
     jax.linearize(f, 5.)  # don't crash
 
+  def test_empty_ref_basic(self):
+    @jax.jit
+    def f():
+      ref = jax.empty_ref(jax.ShapeDtypeStruct((), 'float32'))
+      ref[...] = 1.
+      return ref[...]
+
+    y = f()
+    self.assertAllClose(y, jnp.ones((), 'float32'))
+
+  def test_empty_ref_jvp(self):
+    @jax.jit
+    def f(x):
+      ref = jax.empty_ref(jax.ShapeDtypeStruct((), 'float32'))
+      ref[...] = 2. * x
+      return ref[...]
+
+    y, y_dot = jax.jvp(f, (3.,), (1.,))
+    self.assertAllClose(y, 6., check_dtypes=False)
+    self.assertAllClose(y_dot, 2., check_dtypes=False)
+
+  def test_empty_ref_grad(self):
+    @jax.jit
+    def f(x):
+      ref = jax.empty_ref(jax.ShapeDtypeStruct((), 'float32'))
+      ref[...] = 2. * x
+      return ref[...]
+
+    y_bar = jax.grad(f)(3.)
+    self.assertAllClose(y_bar, 2., check_dtypes=False)
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):

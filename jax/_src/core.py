@@ -2571,6 +2571,21 @@ def _ref_to_lojax(init_val, *, memory_space, kind):
 ref_p.to_lojax = _ref_to_lojax  # type: ignore
 
 
+# TODO(mattjj,dougalm): merge with ref_p
+def empty_ref(ty, memory_space=None):
+  aval = shaped_abstractify(ty)
+  return empty_ref_p.bind(ty=aval, memory_space=memory_space)
+empty_ref_p = Primitive('empty_ref')
+empty_ref_p.ref_primitive = True
+empty_ref_p.is_effectful = lambda _: True  # type: ignore
+
+@empty_ref_p.def_effectful_abstract_eval
+def _empty_ref_abstract_eval(*, ty, memory_space):
+  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+  return (AbstractRef(ty, memory_space=memory_space),
+          {internal_mutable_array_effect})
+
+
 class InternalMutableArrayEffect(effects.Effect):
   pass
 array_ref_effect = internal_mutable_array_effect = InternalMutableArrayEffect()
@@ -3215,7 +3230,7 @@ class MutableTypecheckVal:
   mutable_qdd : MutableQuasiDynamicData
 
 
-_ref_allocating_primitives = {ref_p}
+_ref_allocating_primitives = {ref_p, empty_ref_p}
 
 
 def _check_jaxpr(
