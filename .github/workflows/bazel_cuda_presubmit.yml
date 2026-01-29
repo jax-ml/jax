@@ -90,3 +90,4 @@ jobs:
       build_jaxlib: ${{ (matrix.jaxlib-version == 'head' && true) || false }}
       build_jax: 'true'
       run_multiaccelerator_tests: 'false'
+      clone_main_xla: 1

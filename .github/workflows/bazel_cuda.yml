@@ -75,6 +75,10 @@ on:
         required: false
         default: 'false'
         type: string
+      clone_main_xla:
+        description: "Should latest XLA be used?"
+        type: string
+        required: true
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -96,6 +100,7 @@ jobs:
       JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: ${{ inputs.write_to_bazel_remote_cache }}
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
+      JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
         (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||

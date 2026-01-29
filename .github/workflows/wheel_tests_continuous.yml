@@ -170,6 +170,7 @@ jobs:
       enable-x64:  ${{ matrix.enable-x64 }}
       build_jaxlib: "wheel"
       build_jax: "wheel"
+      clone_main_xla: 1
 
   run-bazel-test-cuda:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
@@ -200,6 +201,7 @@ jobs:
       build_jax: "false"
       write_to_bazel_remote_cache: 1
       run_multiaccelerator_tests: "true"
+      clone_main_xla: 1
 
   run-bazel-test-cuda-py-import:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
@@ -226,6 +228,7 @@ jobs:
       jaxlib-version: "head"
       write_to_bazel_remote_cache: 1
       run_multiaccelerator_tests: "true"
+      clone_main_xla: 1
 
   run-pytest-tpu:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
