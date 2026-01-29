@@ -1440,6 +1440,30 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
     self.assertIn("x: WGMMA_ROW\n", output())
 
+  @parameterized.parameters(False, True)
+  def test_fp8_relayout(self, from_narrow):
+    self.skip_if_wg_semantics()  # Failed to infer layouts.
+    shape = (128, 32)
+    dtype = jnp.float8_e4m3fn
+    if from_narrow:
+      from_, to = 4, 8
+    else:
+      from_, to = 8, 4
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct(shape, dtype)
+    )
+    def kernel(x_ref, o_ref):
+      x = plgpu.load(
+          x_ref, (),
+          layout=plgpu.Layout.TCGEN05_TMEM_NATIVE(from_),
+          optimized=False
+      )
+      o_ref[...] = plgpu.layout_cast(x, plgpu.Layout.TCGEN05_TMEM_NATIVE(to))
+
+    x = jax.random.normal(jax.random.key(10), shape).astype(dtype)
+    np.testing.assert_array_equal(kernel(x), x)
+
   @parameterized.parameters(
           (plgpu.TilingTransform((1, 32)), plgpu.SwizzleTransform(128)),
           (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)),
