@@ -131,6 +131,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/ptx_compiler_support.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/gpu/collective_kernel_metadata.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "tsl/platform/path.h"
@@ -811,13 +812,15 @@ absl::Status MosaicGpuInitialize(
   se::DeviceAddressBase collective_metadata_ptr =
       buffers.back().device_memory();
 
-    TF_RETURN_IF_ERROR(
-        xla::gpu::CollectiveMetadataThunk::ConstructCollectiveMetadata(
-            clique_key,
-            clique_key.rank(collective_params->global_device_id).value(),
-            stream, std::move(parameters),
-            // TODO(b/476264413): Add multimem support.
-            /*multimem=*/nullptr, collective_metadata_ptr));
+  // TODO(b/478180853): Pass host metadata to TMA initialization.
+  TF_ASSIGN_OR_RETURN(
+      CollectiveKernelMetadata _,
+      xla::gpu::CollectiveMetadataThunk::ConstructCollectiveMetadata(
+          clique_key,
+          clique_key.rank(collective_params->global_device_id).value(), stream,
+          std::move(parameters),
+          // TODO(b/476264413): Add multimem support.
+          /*multimem=*/nullptr, collective_metadata_ptr));
   return absl::OkStatus();
 }
 
