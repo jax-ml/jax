@@ -116,6 +116,33 @@ class SpecialWithKeys(Special):
 
 
 @tree_util.register_pytree_node_class
+class SpecialDunder:
+  def __init__(self, x, y):
+    self.x = x
+    self.y = y
+
+  def __repr__(self):
+    return f"SpecialDunder(x={self.x}, y={self.y})"
+
+  def __tree_flatten__(self):
+    return ((self.x, self.y), None)
+
+  @classmethod
+  def __tree_unflatten__(cls, aux_data, children):
+    return cls(*children)
+
+  def __eq__(self, other):
+    return type(self) is type(other) and (self.x, self.y) == (other.x, other.y)
+
+
+@tree_util.register_pytree_with_keys_class
+class SpecialDunderWithKeys(SpecialDunder):
+  def __tree_flatten_with_keys__(self):
+    return (((tree_util.GetAttrKey('x'), self.x),
+             (tree_util.GetAttrKey('y'), self.y)), None)
+
+
+@tree_util.register_pytree_node_class
 class FlatCache:
   def __init__(self, structured, *, leaves=None, treedef=None):
     if treedef is None:
@@ -190,6 +217,7 @@ TREES = (
     ([AnObject(3, None, [4, "foo"])],),
     ([AnObject2(3, None, [4, "foo"])],),
     (Special(2, 3.0),),
+    (SpecialDunder(2, 3.0),),
     ({"a": 1, "b": 2},),
     (StaticInt(1),),
     (StaticTuple((2, 3)),),
@@ -210,6 +238,7 @@ TREE_STRINGS = (
     "PyTreeDef([CustomNode(AnObject[[4, 'foo']], [*, None])])",
     "PyTreeDef([CustomNode(AnObject2[[4, 'foo']], [*, None])])",
     "PyTreeDef(CustomNode(Special[None], [*, *]))",
+    "PyTreeDef(CustomNode(SpecialDunder[None], [*, *]))",
     "PyTreeDef({'a': *, 'b': *})",
     "PyTreeDef(CustomNode(StaticInt[1], []))",
     "PyTreeDef(CustomNode(StaticTuple[(2, 3)], []))",
@@ -281,6 +310,7 @@ TREES_WITH_KEYPATH = (
     ([3, ATuple(foo=(3, ATuple(foo=3, bar=None)), bar={"baz": 34})],),
     ([AnObject2(3, None, [4, "foo"])],),
     (SpecialWithKeys(2, 3.),),
+    (SpecialDunderWithKeys(2, 3.),),
     ({"a": 1, "b": 0},),
     (collections.OrderedDict([("foo", 34), ("baz", 101), ("something", -42)]),),
     (collections.defaultdict(dict,
@@ -952,6 +982,28 @@ class TreeTest(jtu.JaxTestCase):
       flatten_one_level(1)
     with self.assertRaisesRegex(ValueError, "can't tree-flatten type"):
       flatten_one_level(jnp.array((1, 2)))
+
+  def testSingleDunderError(self):
+    class SingleDunder:
+      def __tree_flatten__(self):
+        return (), ''
+      @classmethod
+      def tree_unflatten(cls, aux_data, children):
+        return cls()
+    msg = "register_pytree_node_class.*SingleDunder.*only defines __tree_flatten__"
+    with self.assertRaisesRegex(ValueError, msg):
+      tree_util.register_pytree_node_class(SingleDunder)
+
+  def testSingleDunderErrorWithKeys(self):
+    class SingleDunder:
+      @classmethod
+      def __tree_unflatten__(cls, aux_data, children):
+        return cls()
+      def tree_flatten_with_keys(cls):
+        return (), None
+    msg = "register_pytree_with_keys_class.*SingleDunder.*only defines __tree_unflatten__"
+    with self.assertRaisesRegex(ValueError, msg):
+      tree_util.register_pytree_with_keys_class(SingleDunder)
 
   def testOptionalFlatten(self):
     @tree_util.register_pytree_with_keys_class
