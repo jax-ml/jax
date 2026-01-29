@@ -1037,26 +1037,31 @@ class IndexingTest(jtu.JaxTestCase):
     eqn, = jaxpr.jaxpr.eqns
     self.assertEqual(eqn.primitive, lax.rev_p)
 
-    # Non-static indices produce a dynamic slice
+    # Non-static scalar indices produce a dynamic slice
     jaxpr = jax.make_jaxpr(lambda x, i: x[i])(jnp.ones((4,)), 2)
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 6)
+    self.assertLen(jaxpr.jaxpr.eqns, 6)
     self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
     self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+
+    # Non-scalar indices produce a gather
+    jaxpr = jax.make_jaxpr(lambda x, i: x[i])(jnp.ones((4,)), jnp.array([2, 3]))
+    self.assertIn(len(jaxpr.jaxpr.eqns), (5, 6))  # depending on X64 mode
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.gather_p)
 
   def testTrivialGatherIsntGenerated(self):
     # https://github.com/jax-ml/jax/issues/1621
     jaxpr = jax.make_jaxpr(lambda x: x[:, None])(np.arange(4))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
+    self.assertLen(jaxpr.jaxpr.eqns, 1)
     self.assertNotIn('gather', str(jaxpr))
 
     jaxpr = jax.make_jaxpr(lambda x: x[0:6:1])(np.arange(4))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 0)
+    self.assertLen(jaxpr.jaxpr.eqns, 0)
 
     jaxpr = jax.make_jaxpr(lambda x: x[:4])(np.arange(4))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 0)
+    self.assertLen(jaxpr.jaxpr.eqns, 0)
 
     jaxpr = jax.make_jaxpr(lambda x: x[::-1])(np.arange(4))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
+    self.assertLen(jaxpr.jaxpr.eqns, 1)
     self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.rev_p)
 
   def testOOBEmptySlice(self):
