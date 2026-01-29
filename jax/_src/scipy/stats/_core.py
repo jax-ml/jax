@@ -207,11 +207,7 @@ def rankdata(
     dense = obs.cumsum()[inv]
     count = jnp.nonzero(obs, size=operand.size + 1, fill_value=obs.size)[0]
 
-    if jnp.issubdtype(operand.dtype, jnp.inexact):
-      out_dtype = operand.dtype
-    else:
-      out_dtype = dtypes.default_float_dtype()
-
+    out_dtype = dtypes.to_inexact_dtype(operand.dtype)
 
     if method == "ordinal":
       res = inv + 1
