@@ -559,19 +559,18 @@ absl::StatusOr<TiledLayout> TiledLayout::Create(Tiling tiling,
   return layout;
 }
 
-absl::StatusOr<std::vector<int64_t>> TiledLayout::TiledTilingShape() const {
+std::vector<int64_t> TiledLayout::TiledTilingShape() const {
   const Tiling::Tile& min_shape = tiling_.tiles()[0];
-  TF_ASSIGN_OR_RETURN(std::vector<int64_t> min_tiled_shape,
-                      tiling_.TileShape(min_shape));
-  return std::vector<int64_t>(min_tiled_shape.begin() + min_shape.size(),
-                              min_tiled_shape.end());
+  auto min_tiled_shape = tiling_.TileShape(min_shape);
+  CHECK_OK(min_tiled_shape) << "Expecting tiling to be valid by construction";
+  return std::vector<int64_t>(min_tiled_shape->begin() + min_shape.size(),
+                              min_tiled_shape->end());
 }
 
 absl::StatusOr<TiledLayout> TiledLayout::Canonicalize() const {
   Tiling canonical_tiling = tiling_.Canonicalize();
   const std::vector<int64_t>& s = tiling_.tiles()[0];
-  TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_tiling_shape,
-                      TiledTilingShape());
+  std::vector<int64_t> tiled_tiling_shape = TiledTilingShape();
 
   TF_ASSIGN_OR_RETURN(std::vector<int64_t> canonical_tiled_tiling_shape,
                       canonical_tiling.TileShape(s));
@@ -689,15 +688,11 @@ absl::StatusOr<std::vector<mlir::Value>> TiledLayout::LaneIndices(
       builder, i32, builder.getIntegerAttr(i32, WARP_SIZE));
   mlir::Value thread_id = ThreadIdx(builder);
   mlir::Value lane_id = mlir::arith::RemUIOp::create(builder, thread_id, c32);
-  TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_tiling_shape,
-                      TiledTilingShape());
   return DelinearizeIndex(builder, lane_id, lane_dims_);
 }
 
 absl::StatusOr<size_t> TiledLayout::VectorLength() const {
-  TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_tiling_shape,
-                      TiledTilingShape());
-  return DimSize(vector_dim_, tiled_tiling_shape);
+  return DimSize(vector_dim_, TiledTilingShape());
 }
 
 bool TiledLayout::operator==(const TiledLayout& other) const {
@@ -732,7 +727,7 @@ std::string TiledLayout::ToString() const {
 absl::StatusOr<std::vector<mlir::Value>> TiledLayout::DelinearizeIndex(
     mlir::ImplicitLocOpBuilder& builder, mlir::Value idx,
     const std::vector<TiledLayout::Dim>& dims) const {
-  TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_shape, TiledTilingShape());
+  std::vector<int64_t> tiled_shape = TiledTilingShape();
 
   std::vector<int64_t> dims_sizes;
   for (const auto& d : dims) {
@@ -797,7 +792,7 @@ absl::StatusOr<std::vector<int64_t>> TiledLayout::RegistersShape(
 
 absl::StatusOr<std::vector<int64_t>> TiledLayout::ShapeFromRegistersShape(
     const std::vector<int64_t>& shape) const {
-  TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_tiling, TiledTilingShape());
+  std::vector<int64_t> tiled_tiling = TiledTilingShape();
   if (shape.size() < tiled_tiling.size()) {
     std::string shape_str = absl::StrCat("(", absl::StrJoin(shape, ", "), ")");
     std::string tiled_tiling_str =
@@ -839,7 +834,7 @@ absl::StatusOr<TiledLayout> TiledLayout::RemoveDimension(int64_t dim) const {
   }
 
   TF_ASSIGN_OR_RETURN(Tiling new_tiling, tiling_.RemoveDimension(dim));
-  TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_shape, TiledTilingShape());
+  std::vector<int64_t> tiled_shape = TiledTilingShape();
   TF_ASSIGN_OR_RETURN(std::vector<bool> removed_dim,
                       tiling_.TileDimension(dim));
 
@@ -927,8 +922,7 @@ absl::StatusOr<std::vector<std::vector<mlir::Value>>> TiledLayout::ThreadIdxs(
     const std::vector<int64_t>& shape) const {
   mlir::Type i32 = builder.getIntegerType(32);
   mlir::IndexType index_type = builder.getIndexType();
-  TF_ASSIGN_OR_RETURN(std::vector<int64_t> tiled_tiling_shape,
-                      TiledTilingShape());
+  std::vector<int64_t> tiled_tiling_shape = TiledTilingShape();
   TF_ASSIGN_OR_RETURN(std::vector<mlir::Value> lane_indices,
                       LaneIndices(builder));
   TF_ASSIGN_OR_RETURN(std::vector<mlir::Value> warp_indices,
