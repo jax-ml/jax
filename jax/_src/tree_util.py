@@ -1141,47 +1141,57 @@ def register_dataclass(
   _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
   return nodetype
 
+def key_fn(k):
+  if k.isdigit():
+    return (0, int(k))
+  return (1, k)
+
+def object_unflatten_func(meta, data):
+  (meta_fields, meta_data, data_fields) = meta
+  module = object.__new__(nodetype)
+  for name, value in zip(meta_fields, meta_data):
+    object.__setattr__(module, name, value)
+  for name, value in zip(data_fields, data):
+    object.__setattr__(module, name, value)
+  return module
+
+def object_flatten_func(x):
+  m = getattr(x, mapping_attr)
+  data = []
+  data_fields = []
+  meta_data = []
+  meta_fields = []
+  sorted_keys = sorted(x.__dict__.keys(), key=key_fn)
+  for k in sorted_keys:
+    if k in m and m[k]:
+      data.append(getattr(x, k))
+      data_fields.append(k)
+    else:
+      meta_data.append(getattr(x, k))
+      meta_fields.append(k)
+  return data, (meta_fields, meta_data, data_fields)
+
 @export
 def register_object(
     nodetype: Typ,
     mapping_attr: str,
     has_int_keys: bool = False
 ) -> Typ:
-
-  def unflatten_func(meta, data):
-    (meta_fields, meta_data, data_fields) = meta
-    module = object.__new__(nodetype)
-    for name, value in zip(meta_fields, meta_data):
-      object.__setattr__(module, name, value)
-    for name, value in zip(data_fields, data):
-      object.__setattr__(module, name, value)
-    return module
-
-  def key_fn(k):
-    if k.isdigit():
-      return (0, int(k))
-    return (1, k)
-
-  def flatten_func(x):
-    m = getattr(x, mapping_attr)
-    data = []
-    data_fields = []
-    meta_data = []
-    meta_fields = []
-    sorted_keys = sorted(x.__dict__.keys(), key=key_fn)
-    for k in sorted_keys:
-      if k in m and m[k]:
-        data.append(getattr(x, k))
-        data_fields.append(k)
-      else:
-        meta_data.append(getattr(x, k))
-        meta_fields.append(k)
-    return data, (meta_fields, meta_data, data_fields)
-
   default_registry.register_object_node(nodetype, mapping_attr, has_int_keys)
   none_leaf_registry.register_object_node(nodetype, mapping_attr, has_int_keys)
   dispatch_registry.register_object_node(nodetype, mapping_attr, has_int_keys)
-  _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
+  _registry[nodetype] = _RegistryEntry(object_flatten_func, object_unflatten_func)
+  return nodetype
+
+def register_pyobjectdict(
+    nodetype: Typ,
+    mapping_attr: str,
+    has_int_keys: bool = False
+) -> Typ:
+  default_registry.register_pyobjectdict_node(nodetype, mapping_attr, has_int_keys)
+  none_leaf_registry.register_pyobjectdict_node(nodetype, mapping_attr, has_int_keys)
+  dispatch_registry.register_pyobjectdict_node(nodetype, mapping_attr, has_int_keys)
+  _registry[nodetype] = _RegistryEntry(object_flatten_func, object_unflatten_func)
   return nodetype
 
 register_pytree_with_keys(
