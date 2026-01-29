@@ -930,10 +930,14 @@ _types_whose_dtype_should_not_be_canonicalized = (
 )
 
 def dtype(x: Any) -> DType:
-  """Return the dtype object for a value or type.
+  """Return the dtype object for a user-provided value or type.
 
   Python scalars, Python scalar types, NumPy scalar type, NumPy dtypes, and
   non-JAX arrays will have their dtypes canonicalized.
+
+  This is not the function you want to call for an internally-derived dtype,
+  since it will raise an error if explicit x64 types are observed in a non-x64
+  mode. You should use this function for user-derived types or values only.
 
   Note: this is not the same function as jax.numpy.dtype, which simply aliases
   numpy.dtype."""
@@ -1001,13 +1005,17 @@ def lattice_result_type(*args: Any) -> tuple[DType, bool]:
     result_type = _least_upper_bound(
         config.numpy_dtype_promotion.value, config.enable_x64.value,
         *{_jax_type(dtype, False) for dtype in dtypes})
-    out_dtype = dtype(result_type)
+    # We do not call dtype(result_type) on dtypes here because we do not want to
+    # error on explicit x64 types in a non-x64 mode.
+    out_dtype = result_type if isinstance(result_type, DType) else dtype(result_type)
     out_weak_type = True
   else:
     result_type = _least_upper_bound(
         config.numpy_dtype_promotion.value, config.enable_x64.value,
         *{_jax_type(d, w) for d, w in zip(dtypes, weak_types)})
-    out_dtype = dtype(result_type)
+    # We do not call dtype(result_type) on dtypes here because we do not want to
+    # error on explicit x64 types in a non-x64 mode.
+    out_dtype = result_type if isinstance(result_type, DType) else dtype(result_type)
     out_weak_type = any(result_type is t for t in _weak_types)
   return out_dtype, (out_dtype != bool_) and out_weak_type
 
