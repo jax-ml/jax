@@ -50,3 +50,14 @@ repos:
   - id: jupytext
     files: docs/
     args: [--sync]
+
+# This is a manual-only pre-commit hook to run pyrefly type checks. To run it:
+# $ pre-commit run --hook-stage manual pyrefly-check --all-files
+- repo: https://github.com/facebook/pyrefly-pre-commit
+  rev: 099622e491908f1e032f6fa734057ea1e5b6058b  # frozen: v0.50.0
+  hooks:
+    - id: pyrefly-check
+      name: Pyrefly (type checking)
+      pass_filenames: false
+      additional_dependencies: [types-requests==2.31.0, numpy~=2.3.0, ml_dtypes~=0.5.0, scipy-stubs]
+      stages: [manual]
