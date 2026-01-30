@@ -37,6 +37,10 @@ py_library(
         "primitives.py",
         "utils.py",
     ],
+    visibility = [
+        "//jax:internal",
+        "//third_party/py/torch_tpu/ops/scaled_dot_product_attention/kernels:__subpackages__",
+    ],
     deps = [
         "//jax",
         "//jax/_src:ad",
