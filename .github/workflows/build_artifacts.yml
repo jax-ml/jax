@@ -52,6 +52,10 @@ on:
         options:
         - "1"
         - "0"
+      xla-commit:
+        description: "Specific XLA commit to use (overrides clone_main_xla)"
+        type: string
+        default: ""
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: choice
@@ -81,6 +85,10 @@ on:
         description: "Should latest XLA be used?"
         type: string
         default: "0"
+      xla-commit:
+        description: "Specific XLA commit to use (overrides clone_main_xla)"
+        type: string
+        default: ""
       upload_artifacts_to_gcs:
         description: "Should the artifacts be uploaded to a GCS bucket?"
         default: true
@@ -115,11 +123,12 @@ jobs:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_CUDA_VERSION: "${{ inputs.cuda-version }}"
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
+      JAXCI_XLA_COMMIT: "${{ inputs.xla-commit }}"
 
     name: "${{ inputs.artifact }},
             ${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
             (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||
-            (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py ${{ inputs.python }}${{ (contains(inputs.artifact, 'cuda') && format(', cuda {0}', inputs.cuda-version)) || '' }}, clone main XLA=${{ inputs.clone_main_xla }}"
+            (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py ${{ inputs.python }}${{ (contains(inputs.artifact, 'cuda') && format(', cuda {0}', inputs.cuda-version)) || '' }}, ${{ inputs.xla-commit != '' && format('xla_commit={0}', inputs.xla-commit) || format('clone_main_xla={0}', inputs.clone_main_xla) }}"
 
     # Map the job outputs to step outputs
     outputs:
