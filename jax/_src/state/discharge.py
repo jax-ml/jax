@@ -214,6 +214,13 @@ def _eval_jaxpr_discharge_state(
         if config.refs_to_pins.value:
           ans = pin(ans)
         refs_to_discharge.add(id(outvar.aval))
+      elif eqn.primitive is core.empty_ref_p:
+        [], [outvar] = eqn.invars, eqn.outvars
+        aval = outvar.aval.inner_aval
+        if not isinstance(aval, core.ShapedArray):
+          raise NotImplementedError  # TODO(sharadmv)
+        ans = lax.empty(aval.shape, aval.dtype)
+        refs_to_discharge.add(id(outvar.aval))
       elif eqn.primitive is core.freeze_p:
         [invar], [outvar] = eqn.invars, eqn.outvars
         ans = env.read(invar)
