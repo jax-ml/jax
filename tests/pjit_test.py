@@ -5069,7 +5069,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "mul got incompatible shardings for broadcasting"):
       g(arr1, jax.device_put(np_inp1, NamedSharding(mesh, jax.P(('x', 'y')))))
 
-  # TODO(b/87654321) - Expect an all-gather in the `contracting2` test case.
+  # TODO(b/448574823) - Expect an all-gather in the `contracting2` test case.
   @parameterized.named_parameters(
       ('x_y', P('x', None), P(None, 'y'), P('x', 'y'), None),
       ('x_None', P('x', None), P(None, None), P('x', None), None),
