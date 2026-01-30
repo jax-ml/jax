@@ -14,7 +14,6 @@
 
 from collections.abc import Sequence
 import importlib
-import os
 import re
 from types import ModuleType
 import warnings
@@ -57,6 +56,26 @@ def import_from_plugin(
 def check_plugin_version(
     plugin_name: str, jaxlib_version: str, plugin_version: str
 ) -> bool:
+  """Check if a plugin version is compatible with the jaxlib version.
+
+  Args:
+    plugin_name: Name of the plugin module.
+    jaxlib_version: The installed jaxlib version string.
+    plugin_version: The installed plugin version string.
+
+  Returns:
+    True if the plugin is compatible, False otherwise.
+  """
+  # ROCm plugins skip runtime version checks. Version compatibility is managed
+  # via pip dependency constraints in setup.py instead. This allows ROCm plugins
+  # to be released on their own schedule without strict jaxlib version coupling.
+  is_rocm_plugin = any(
+      rocm_name in plugin_name
+      for rocm_name in _PLUGIN_MODULE_NAMES.get("rocm", [])
+  )
+  if is_rocm_plugin:
+    return True
+
   # Regex to match a dotted version prefix 0.1.23.456.789 of a PEP440 version.
   # PEP440 allows a number of non-numeric suffixes, which we allow also.
   # We currently do not allow an epoch.
@@ -68,53 +87,13 @@ def check_plugin_version(
       raise ValueError(f"Unable to parse version string '{v}'")
     return tuple(int(x) for x in m.group(0).split("."))
 
-  jaxlib_parsed = _parse_version(jaxlib_version)
-  plugin_parsed = _parse_version(plugin_version)
-
-  # Check if this is a ROCm plugin
-  is_rocm_plugin = any(rocm_name in plugin_name for rocm_name in _PLUGIN_MODULE_NAMES.get("rocm", []))
-
-  # Check if version checking is disabled via environment variable (ROCm plugins only)
-  if is_rocm_plugin and os.environ.get("JAX_DEBUG_SKIP_ROCM_PLUGIN_VERSION_CHECK", "").lower() in ("1", "true", "yes"):
+  if _parse_version(jaxlib_version) != _parse_version(plugin_version):
     warnings.warn(
-        f"JAX ROCm plugin {plugin_name} version checking has been disabled via "
-        "JAX_DEBUG_SKIP_ROCM_PLUGIN_VERSION_CHECK environment variable. "
-        "This may lead to compatibility issues.",
+        f"JAX plugin {plugin_name} version {plugin_version} is installed, but "
+        "it is not compatible with the installed jaxlib version "
+        f"{jaxlib_version}, so it will not be used.",
         RuntimeWarning,
     )
-    return True
-
-  if is_rocm_plugin:
-    # For ROCm plugins: major versions must match, plugin minor version must be <= jaxlib minor version
-    if len(jaxlib_parsed) < 2 or len(plugin_parsed) < 2:
-      # If either version doesn't have major.minor format, fall back to exact match
-      compatible = jaxlib_parsed == plugin_parsed
-    else:
-      # Check major version match and minor version constraint
-      major_match = jaxlib_parsed[0] == plugin_parsed[0]
-      minor_compatible = plugin_parsed[1] <= jaxlib_parsed[1]
-      compatible = major_match and minor_compatible
-  else:
-    # For non-ROCm plugins: require exact version match
-    compatible = jaxlib_parsed == plugin_parsed
-
-  if not compatible:
-    if is_rocm_plugin:
-      warnings.warn(
-          f"JAX ROCm plugin {plugin_name} version {plugin_version} is installed, but "
-          "it is not compatible with the installed jaxlib version "
-          f"{jaxlib_version}. ROCm plugins require matching major versions and "
-          "plugin minor version <= jaxlib minor version, so it will not be used."
-          f"Use JAX_DEBUG_SKIP_ROCM_PLUGIN_VERSION_CHECK=1 to override",
-          RuntimeWarning,
-      )
-    else:
-      warnings.warn(
-          f"JAX plugin {plugin_name} version {plugin_version} is installed, but "
-          "it is not compatible with the installed jaxlib version "
-          f"{jaxlib_version}, so it will not be used.",
-          RuntimeWarning,
-      )
     return False
   return True
 
