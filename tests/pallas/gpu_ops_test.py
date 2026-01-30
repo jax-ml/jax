@@ -100,13 +100,19 @@ class FusedAttentionTest(PallasBaseTest):
       use_fwd,
       use_segment_ids,
   ):
-    # Skip specific failing tests by name
-    if jtu.is_device_rocm() and hasattr(self, '_testMethodName'):
-      test_name = self._testMethodName
-      if any(x in test_name for x in ['test_fused_attention_fwd0', 'test_fused_attention_fwd5',
-                                        'test_fused_attention_fwd7', 'test_fused_attention_fwd8']):
-        self.skipTest("Skipped on ROCm.")
+    # Skip specific failing tests due to autotuner issue on ROCm. Issue #34711
+    # TODO(GulsumGudukbay): Unskip once fixed.
+    if jtu.is_device_rocm():
+      key = (batch_size, seq_len, num_heads, head_dim, tuple(block_sizes),
+             causal, use_fwd, use_segment_ids)
 
+      if (key in {
+            (1, 384, 1, 72, (("block_q", 64), ("block_k", 64)),  False, True,  True),   # fwd5
+            (1, 384, 1, 72, (("block_q", 64), ("block_k", 128)), False, False, True),   # fwd7
+            (2, 384, 1, 64, (("block_q", 64), ("block_k", 64)),  True,  False, True),   # fwd8
+            (1, 384, 2, 72, (("block_q", 128), ("block_k", 128)), False, True, True),   # fwd0
+          }):
+        self.skipTest("Skipped on ROCm due to autotuner issue.")
     k1, k2, k3 = random.split(random.key(0), 3)
     q = random.normal(
         k1, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
@@ -199,12 +205,27 @@ class FusedAttentionTest(PallasBaseTest):
       causal,
       use_segment_ids,
   ):
-    # Skip specific failing tests by name
-    if jtu.is_device_rocm() and hasattr(self, '_testMethodName'):
-      test_name = self._testMethodName
-      if any(x in test_name for x in ['test_fused_attention_bwd1', 'test_fused_attention_bwd2',
-                                        'test_fused_attention_bwd7', 'test_fused_attention_bwd9']):
-        self.skipTest("Skipped on ROCm.")
+    # Skip specific failing tests on ROCm due to autotuner issue. Issue #34711
+    # TODO(GulsumGudukbay): Unskip once fixed.
+    if jtu.is_device_rocm():
+      key = (batch_size, seq_len, num_heads, head_dim, tuple(block_sizes),
+             causal, use_segment_ids)
+
+      if key in {
+        (1, 384, 1, 128, (("block_q", 64), ("block_k", 64), ("block_q_dkv", 64),
+                          ("block_kv_dkv", 64), ("block_q_dq", 64), ("block_kv_dq", 64)),
+         True,  False),  # bwd1
+        (2, 384, 1, 32,  (("block_q", 64), ("block_k", 128), ("block_q_dkv", 64),
+                          ("block_kv_dkv", 32), ("block_q_dq", 32), ("block_kv_dq", 64)),
+         False, False),  # bwd2
+        (1, 384, 1, 72,  (("block_q", 128), ("block_k", 128), ("block_q_dkv", 32),
+                          ("block_kv_dkv", 32), ("block_q_dq", 32), ("block_kv_dq", 128)),
+         False, True),   # bwd7
+        (1, 384, 2, 64,  (("block_q", 64), ("block_k", 64), ("block_q_dkv", 64),
+                          ("block_kv_dkv", 64), ("block_q_dq", 64), ("block_kv_dq", 64)),
+         True,  False),  # bwd9
+      }:
+        self.skipTest("Skipped on ROCm due to autotuner issue.")
 
     if jtu.is_cuda_compute_capability_at_least("8.0"):
       # TODO(b/416306534)

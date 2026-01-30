@@ -102,11 +102,13 @@ class QdwhTest(jtu.JaxTestCase):
       dtype=float_types + complex_types,
   )
   def testQdwhWithRandomMatrix(self, shape, log_cond, dtype):
-    # Skip specific failing test by name
-    if jtu.is_device_rocm() and hasattr(self, '_testMethodName'):
-      if 'testQdwhWithRandomMatrix1' in self._testMethodName:
-        self.skipTest("Skipped on ROCm.")
     """Tests qdwh with upper triangular input of all ones."""
+    # ROCm: Triton GEMM autotuner cannot compile this specific case.
+    # TODO(gulsumgudukbay): Unskip once fixed. Issue #34711.
+    if (jtu.is_device_rocm()
+        and shape == (300, 300)
+        and dtype == np.float32):
+      self.skipTest("Skipped on ROCm, Triton GEMM autotuner issue.")
     eps = jnp.finfo(dtype).eps
     m, n = shape
     max_cond = np.log10(1.0 / eps)

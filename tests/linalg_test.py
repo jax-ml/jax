@@ -571,8 +571,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       )
 
   def testEighTinyNorm(self):
+    # Skip test on ROCm due to numerical error. Issue #34711
+    # TODO(GulsumGudukbay): Unskip once fixed.
     if jtu.is_device_rocm():
-      self.skipTest("Skipped on ROCm.")
+      self.skipTest("Skipped on ROCm due to numerical error.")
     rng = jtu.rand_default(self.rng())
     a = rng((300, 300), dtype=np.float32)
     eps = jnp.finfo(a.dtype).eps
@@ -2409,10 +2411,12 @@ class LaxLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(shape=[(3,), (3, 4)], dtype=float_types + complex_types)
   def test_tridiagonal_solve_grad(self, shape, dtype):
-    # Skip specific failing test by name
-    if jtu.is_device_rocm() and hasattr(self, '_testMethodName'):
-      if 'test_tridiagonal_solve_grad0' in self._testMethodName:
-        self.skipTest("Skipped on ROCm.")
+    # Skip test_tridiagonal_solve_grad: The test_tridiagonal_solve_grad test fails 
+    # on ROCm devices due to numerical error. 
+    # TODO(AratiGanesh): Remove this skip after fixing the issue. Linked to 
+    # issue #34711
+    if jtu.is_device_rocm() and shape == (3,4) and dtype == np.float32:
+      self.skipTest("Skipped on ROCm due to numerical error.")
     if dtype not in float_types and jtu.test_device_matches(["gpu"]):
       self.skipTest("Data type not supported on GPU")
     rng = self.rng()
