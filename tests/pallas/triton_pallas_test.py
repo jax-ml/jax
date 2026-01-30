@@ -297,7 +297,7 @@ class TritonPallasTest(PallasBaseTest):
     # Skip approx_tanh tests on ROCm due to missing tanh.approx instruction. 
     # TODO(GulsumGudukbay): Will be unskipped once PR 34598 is merged. Issue #34711.
     if jtu.is_device_rocm() and dtype in ("float16", "float32"):
-      self.skipTest("Skipped on ROCm.")  # test_approx_tanh0 and test_approx_tanh2
+      self.skipTest("Skipped on ROCm due to missing tanh.approx instruction.")  # test_approx_tanh0 and test_approx_tanh2
     if self.INTERPRET:
       self.skipTest("approx_tanh is not supported in interpret mode")
 
