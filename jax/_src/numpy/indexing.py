@@ -390,7 +390,7 @@ class NDIndexer:
         pass
       elif pidx.typ in [IndexType.ARRAY, IndexType.BOOLEAN]:
         raise TypeError("static_slice: indices must be static scalars or slices."
-                        f" Got {pidx.index} at position {position}")
+                        f" Got index of type {type(pidx.index)} at position {position}")
       else:
         raise TypeError(f"static_slice: unrecognized index {pidx.index} at position {position}.")
 
@@ -489,10 +489,10 @@ class NDIndexer:
       elif pidx.typ == IndexType.ARRAY:
         if isinstance(pidx.index, Sequence) or np.shape(pidx.index) != ():  # type: ignore[arg-type]
           raise TypeError("dynamic_slice: only scalar indices allowed."
-                          f" Got {pidx.index} at position {position}")
+                          f" Got index of type {type(pidx.index)} at position {position}")
       elif pidx.typ == IndexType.BOOLEAN:
         raise TypeError("dynamic_slice: indices must be scalars or slices."
-                        f" Got {pidx.index} at position {position}")
+                        f" Got index of type {type(pidx.index)} at position {position}")
       else:
         raise TypeError(f"dynamic_slice: unrecognized index {pidx.index} at position {position}.")
 
