@@ -179,7 +179,7 @@ class RnnTest(jtu.JaxTestCase):
       y_padded = y_ref[i, seq_lengths[i]:]
       np.testing.assert_allclose(y_padded, jnp.zeros_like(y_padded))
 
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("gpu")
   def test_struct_encoding_determinism(self):
     def f(k1, k2, k3, k4):
         batch_size = 1
@@ -213,8 +213,15 @@ class RnnTest(jtu.JaxTestCase):
 
     k = jax.random.split(jax.random.PRNGKey(1), 4)
     stablehlo = jax.jit(f).lower(*k).as_text("stablehlo")
-    self.assertIn('"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\00@\\03\\80\\00\\00\\00\\00\\00@\\01\\00\\00\\00\\00\\00\\00"',
-                    stablehlo)
+    # Platform-specific binary encodings for RnnDescriptor
+    cuda_encoding = '"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\00@\\03\\80\\00\\00\\00\\00\\00@\\01\\00\\00\\00\\00\\00\\00"'
+    rocm_encoding = '"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\008\\00\\00\\00\\00\\00\\00\\00\\1C\\00\\00\\00\\00\\00\\00\\00"'
+    
+    # Check that one of the expected encodings is present
+    if jtu.test_device_matches(["cuda"]):
+      self.assertIn(cuda_encoding, stablehlo)
+    elif jtu.test_device_matches(["rocm"]):
+      self.assertIn(rocm_encoding, stablehlo)
 
   @jtu.run_on_devices("cuda")
   def test_no_workspace_overflow(self):
