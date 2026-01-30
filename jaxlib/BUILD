@@ -1381,6 +1381,7 @@ cc_library(
     deps = [
         ":dlpack",
         ":py_client",
+        "//third_party/protobuf:arena",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/status",
