@@ -1759,8 +1759,7 @@ class OpsTest(PallasBaseTest):
         rtol=rtol,
     )
 
-  @parameterized.parameters("float16", "bfloat16")
-  def test_true_divide_unsupported(self, dtype):
+  def test_f16_true_divide_unsupported(self):
     self.skip_if_mosaic_gpu()
 
     if self.INTERPRET:
@@ -1768,13 +1767,13 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((2,), dtype),
+        out_shape=jax.ShapeDtypeStruct((2,), jnp.float16),
     )
     def kernel(x_ref, y_ref, o_ref):
       o_ref[...] = jnp.true_divide(x_ref[...], y_ref[...])
 
-    x = jnp.array([2.4, 4.2]).astype(dtype)
-    y = jnp.array([4.2, 2.4]).astype(dtype)
+    x = jnp.array([2.4, 4.2]).astype(jnp.float16)
+    y = jnp.array([4.2, 2.4]).astype(jnp.float16)
     with self.assertRaises(Exception):
       kernel(x, y)
 
