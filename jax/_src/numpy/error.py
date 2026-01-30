@@ -14,7 +14,6 @@
 
 import contextlib
 from typing import Literal
-from collections.abc import Sequence
 
 import numpy as np
 
@@ -23,7 +22,6 @@ from jax._src import dtypes
 from jax._src import error_check as error_check_lib
 from jax._src.numpy import array_constructors
 from jax._src.numpy import array_creation
-from jax._src.numpy import lax_numpy
 from jax._src.numpy import ufuncs
 from jax._src.numpy import reductions
 from jax._src.typing import Array, ArrayLike
@@ -120,31 +118,6 @@ def _check_precondition_oob_gather(
           reductions.max(gather_indices) >= shape,
       ),
       "Out of bounds encountered before calling `lax.gather`",
-  )
-
-
-def _check_precondition_oob_dynamic_slice(
-    shape: tuple[int, ...],
-    start_indices: Sequence[ArrayLike],
-    slice_sizes: list[int],
-    allow_negative_indices: list[bool],
-) -> None:
-  """Check for out of bounds errors before calling `lax.dynamic_slice`."""
-  if config.error_checking_behavior_oob.value == "ignore":
-    return
-
-  start_indices = array_constructors.array(start_indices)
-  shape = array_constructors.array(shape, dtype=start_indices.dtype)
-  slice_sizes = array_constructors.array(slice_sizes, dtype=start_indices.dtype)
-  allow_negative_indices = array_constructors.array(allow_negative_indices, dtype='bool')
-
-  lower_bound = lax_numpy.where(allow_negative_indices, -shape, 0)
-  error_check_lib.set_error_if(
-      ufuncs.logical_or(
-          ufuncs.minimum(start_indices, start_indices + slice_sizes) < lower_bound,
-          ufuncs.maximum(start_indices, start_indices + slice_sizes) >= shape,
-      ),
-      "Out of bounds encountered before calling `lax.dynamic_slice`",
   )
 
 
