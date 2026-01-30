@@ -483,8 +483,8 @@ PyClient::CompileAndLoadIfrtProgram(
         ifrt_loaded_executable,
         client->ifrt_client_->GetDefaultCompiler()->CompileAndLoad(
             std::move(ifrt_program), std::move(ifrt_options)));
-#endif
     compile_status = ifrt_loaded_executable->GetReadyFuture().Await();
+#endif
     if (compile_status.ok()) {
       TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
     }
