@@ -2245,6 +2245,44 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module)
 
+  @parameterized.product(
+      swizzle=(32, 64, 128),
+      side=("lhs", "rhs"),
+      transpose_other_side=(True, False),
+  )
+  def test_infer_mma_transforms_supports_small_tile_sizes(
+      self, swizzle, side, transpose_other_side
+  ):
+    shape = (64, 64)
+    transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((8, swizzle // 2)),
+        mgpu.dialect.SwizzleTransformAttr.get(swizzle),
+    ])
+    with ir.InsertionPoint(self.module.body):
+      bf16 = ir.BF16Type.get()
+      f32 = ir.F32Type.get()
+      ref_ty = ir.MemRefType.get(shape, bf16, memory_space=mgpu.utils.smem())
+      acc_ty = ir.VectorType.get(shape, f32)
+      acc, lhs, rhs = undefs(acc_ty, ref_ty, ref_ty)
+      mgpu.dialect.with_transforms(lhs if side == "lhs" else rhs, transforms)
+      lhs_transforms, rhs_transforms = transforms, transforms
+      if transpose_other_side:
+        transposed_transforms = ir.ArrayAttr.get([
+            mgpu.dialect.TileTransformAttr.get((swizzle // 2, 8)),
+            mgpu.dialect.SwizzleTransformAttr.get(swizzle),
+        ])
+        if side == "lhs":
+          rhs = mgpu.utils.memref_transpose(rhs, (1, 0))
+          rhs_transforms = transposed_transforms
+        else:
+          lhs = mgpu.utils.memref_transpose(lhs, (1, 0))
+          lhs_transforms = transposed_transforms
+      wgmma = mgpu.dialect.WGMMAOp(acc, lhs, rhs)
+
+    mgpu.infer_layout(self.module)
+    wgmma_transforms = inference_utils.in_transforms(wgmma)
+    self.assertSequenceEqual(wgmma_transforms, [lhs_transforms, rhs_transforms])
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

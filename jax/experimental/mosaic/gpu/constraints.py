@@ -27,9 +27,9 @@ import math
 from typing import Any, assert_never, final
 
 from . import fragmented_array as fa
+from . import inference_utils
 from . import launch_context as lc
 from . import layouts as layouts_lib
-from . import inference_utils
 from . import tcgen05
 
 
@@ -504,7 +504,34 @@ class Divides:
     return f"{self.tiling_multiple} % {self.expr} == 0"
 
 
-Constraint = Equals | Relayout | NotOfType | IsTransferable | Divides
+@dataclasses.dataclass(frozen=True)
+class IsValidMmaTiling:
+  """States that the `expr` SMEM tiling must be compatible with MMA requirements.
+
+  For both tcgen05.mma and wgmma, tiling is valid if it is of the form
+  (8, swizzle_elems), with
+      swizzle_elems in {s * 8 // dtype_bitwidth for s in [32, 64, 128]}.
+  """
+  expr: Expression
+  bitwidth: int
+
+  def holds(self) -> bool | None:
+    match self.expr:
+      case SMEMTiling(value=None):
+        return False
+      case SMEMTiling(value=lc.TileTransform(tiling=t)):
+        valid_tilings = {(8, s * 8 // self.bitwidth) for s in [32, 64, 128]}
+        return t in valid_tilings
+      case RegisterLayout() | TMEMLayout() as c:
+        raise ValueError(f"Unexpected value {c} in IsValidMmaTiling constraint")
+      case _:
+        return None
+
+  def __str__(self):
+    return f"IsValidMMATiling({self.expr}, {self.bitwidth})"
+
+
+Constraint = Equals | Relayout | NotOfType | IsTransferable | IsValidMmaTiling | Divides
 
 
 def reduce_constraint(
@@ -540,6 +567,11 @@ def reduce_constraint(
       if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
         return Unsatisfiable()
       return IsTransferable(source_red, target_red, shape)
+    case IsValidMmaTiling(expr=expr, bitwidth=bitwidth):
+      expr_red = reduce_expression(expr, assignments)
+      if isinstance(expr_red, Unsatisfiable):
+        return Unsatisfiable()
+      return IsValidMmaTiling(expr_red, bitwidth)
     case Divides(expr=expr, tiling_multiple=tiling_multiple):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
@@ -598,6 +630,8 @@ class ConstraintSystem:
         case IsTransferable(source=source, target=target, shape=_):
           extract_variables(source)
           extract_variables(target)
+        case IsValidMmaTiling(expr=expr):
+          extract_variables(expr)
         case Divides(expr=expr):
           extract_variables(expr)
         case _ as never:

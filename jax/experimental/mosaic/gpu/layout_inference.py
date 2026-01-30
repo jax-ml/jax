@@ -262,6 +262,30 @@ def _extract_layout_candidates_from_memory_space_transfer(
         yield variable, cs.RegisterLayout(reg_layout)
 
 
+def _extract_layout_candidates_from_mma_tiling(
+    mma_tiling: cs.IsValidMmaTiling,
+) -> Iterator[tuple[cs.Variable, cs.Constant]]:
+  v: cs.Variable
+  match mma_tiling.expr:
+    case cs.Variable() as var:
+      is_transposed = False
+      v = var
+    case cs.Transpose(cs.Variable() as var):
+      assert isinstance(var, cs.Variable)
+      is_transposed = True
+      v = var
+    case _:
+      return
+
+  tiled_dimensions = v.key.shape[-2:]
+  for swizzle in (128, 64, 32):
+    swizzle_elems = swizzle * 8 // mma_tiling.bitwidth
+    tiling = (swizzle_elems, 8) if is_transposed else (8, swizzle_elems)
+    if any(s % t for s, t in zip(tiled_dimensions, tiling)):
+      continue
+    yield v, cs.SMEMTiling(lc.TileTransform(tiling))
+
+
 def _divides_per_var(
     constraints: Sequence[cs.Constraint],
 ) -> dict[cs.Variable, cs.Divides]:
@@ -295,6 +319,8 @@ def _extract_variable_assignments_from_constraints(
         yield var, layout
       case cs.Relayout(cs.RegisterLayout() as layout, cs.Variable() as var):
         yield var, layout
+      case cs.IsValidMmaTiling() as mma_tiling:
+        yield from _extract_layout_candidates_from_mma_tiling(mma_tiling)
 
 
 def conjure_assignment(
@@ -946,39 +972,45 @@ def _wgmma_constraint_system(
   acc_var = cs.Variable(acc_out)
   acc_layout = fa.WGMMA_LAYOUT
   assignments[acc_var] = cs.RegisterLayout(acc_layout)
-  acc_is_valid = is_valid_register_layout_assignment(acc_out.shape, acc_layout)
+  if not is_valid_register_layout_assignment(acc_out.shape, acc_layout):
+    return cs.Unsatisfiable()
   value_sites_for_variable[acc_var] = [acc_in, acc_out]
 
-  a_tiling, b_tiling = _infer_wgmma_tiling(op.a.type, op.b.type)
   b = ValueSite(op, VariableType.OPERAND, 2)
   b_var = ctx.producer_ref(b)
-  b_tile_transform = lc.TileTransform(b_tiling)
-  b_is_valid = is_valid_smem_layout_assignment(b.shape, b_tile_transform)
-  assignments[b_var] = cs.SMEMTiling(b_tile_transform)
+  input_bitwidth = utils.bitwidth(op.b.type.element_type)
+  b_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.b.type))
+  if b_is_transposed:
+    constraints = [cs.IsValidMmaTiling(cs.Transpose(b_var), input_bitwidth)]
+  else:
+    constraints = [cs.IsValidMmaTiling(b_var, input_bitwidth)]
   value_sites_for_variable[b_var] = [b]
 
   a = ValueSite(op, VariableType.OPERAND, 1)
   if _is_smem_ref(op.a):
     a_var = ctx.producer_ref(a)
-    a_tile_transform = lc.TileTransform(a_tiling)
-    assignments[a_var] = cs.SMEMTiling(a_tile_transform)
-    a_is_valid = is_valid_smem_layout_assignment(a.shape, a_tile_transform)
+    # We expect the tiling transform to be physically the same on both sides.
+    # However, the constraint system assigns tiling transforms based on the
+    # logical shape. In the case the tiled dimensions of exactly one of the
+    # operands are transposed, we need to transpose the transform as well.
+    a_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.a.type))
+    if a_is_transposed != b_is_transposed:
+      constraints.append(cs.Equals(lhs=a_var, rhs=cs.Transpose(b_var)))
+    else:
+      constraints.append(cs.Equals(lhs=a_var, rhs=b_var))
   else:
-    assert a_tiling is None
     a_var = cs.Variable(a)
     if utils.bitwidth(op.a.type.element_type) == 8:
       layout = fa.WGMMA_LAYOUT_8BIT
     else:
       layout = fa.WGMMA_LAYOUT
     assignments[a_var] = cs.RegisterLayout(layout)
-    a_is_valid = is_valid_register_layout_assignment(a.shape, layout)
+    # TODO(bchetioui): raise a better error here.
+    if not is_valid_register_layout_assignment(a.shape, layout):
+      return cs.Unsatisfiable()
 
   value_sites_for_variable[a_var] = [a]
-
-  # TODO(bchetioui): think about raising a better error here.
-  if not a_is_valid or not b_is_valid or not acc_is_valid:
-    return cs.Unsatisfiable()
-  return cs.ConstraintSystem(assignments), value_sites_for_variable
+  return cs.ConstraintSystem(assignments, constraints), value_sites_for_variable
 
 
 @_add_constraint_system_derivation_rule(vector.BroadcastOp)
