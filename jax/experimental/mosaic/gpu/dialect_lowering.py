@@ -855,62 +855,208 @@ def swizzle_and_transforms_from_transforms_attr(
   return swizzle or mgpu.SwizzlingMode.kNoSwizzle, tuple(gmem_transforms)
 
 
+def untranspose_type(ref_ty: ir.MemRefType) -> tuple[ir.MemRefType, tuple[int, ...]]:
+  strides, offset = ref_ty.get_strides_and_offset()
+  row_major_strides = sorted(strides, reverse=True)
+  row_major_shape = [ref_ty.shape[strides.index(o)] for o in row_major_strides]
+
+  if isinstance(ref_ty.layout, ir.StridedLayoutAttr):
+    layout = ir.StridedLayoutAttr.get(offset, row_major_strides)
+  else:
+    layout = None
+  ret_ty = ir.MemRefType.get(
+      row_major_shape, ref_ty.element_type,
+      memory_space=ref_ty.memory_space,
+      layout=layout)
+  return ret_ty, tuple(strides.index(o) for o in row_major_strides)
+
+
+def unslice_type(ref_ty: ir.MemRefType) -> tuple[ir.MemRefType, tuple[slice, ...]]:
+  strides, offset = ref_ty.get_strides_and_offset()
+  if strides != sorted(strides, reverse=True):
+    raise NotImplementedError("Only row-major strides are supported.")
+  if strides[-1] != 1:
+    raise NotImplementedError("Only contiguous memref types are supported.")
+
+  starts = [0] * len(strides)
+  if offset != 0 and offset != ir.ShapedType.get_dynamic_stride_or_offset():
+    for i, stride in enumerate(strides):
+      starts[i] = offset // stride
+      offset %= stride
+    assert offset == 0
+  slices = tuple(slice(start, start + size) for start, size in zip(starts, ref_ty.shape))
+
+  reversed_full_shape = []
+  previous_stride = 1
+  for stride in reversed(strides[:-1]):
+    reversed_full_shape.append(stride // previous_stride)
+    previous_stride = stride
+  reversed_full_shape.append(ref_ty.shape[0])
+  full_shape = reversed_full_shape[::-1]
+
+  if isinstance(ref_ty.layout, ir.StridedLayoutAttr):
+    layout = ir.StridedLayoutAttr.get(offset, strides)
+  else:
+    layout = None
+
+  ret_ty = ir.MemRefType.get(
+      full_shape, ref_ty.element_type,
+      memory_space=ref_ty.memory_space,
+      layout=layout)
+  return ret_ty, slices
+
+
+def slice_type(ref_ty: ir.MemRefType, slices: tuple[slice, ...]) -> ir.MemRefType:
+  strides, offset = ref_ty.get_strides_and_offset()
+  has_dynamic_offset = offset == ir.ShapedType.get_dynamic_stride_or_offset()
+  if offset != 0 and not has_dynamic_offset:
+    raise NotImplementedError(
+        "Only contiguous memref types are supported."
+    )
+  new_offset = 0
+  shape = []
+  for sl, st, d in zip(slices, strides, ref_ty.shape, strict=True):
+    if sl.start is None:
+      shape.append(d)
+    else:
+      shape.append(sl.stop - sl.start)
+      new_offset += sl.start * st
+  if has_dynamic_offset:
+    new_offset = offset
+
+  if isinstance(ref_ty.layout, ir.StridedLayoutAttr) or new_offset != 0:
+    layout = ir.StridedLayoutAttr.get(new_offset, strides)
+  else:
+    layout = None
+
+  return ir.MemRefType.get(
+      shape, ref_ty.element_type,
+      memory_space=ref_ty.memory_space,
+      layout=layout)
+
+
+def transpose_type(ref_ty: ir.MemRefType, permutation: tuple[int, ...]) -> ir.MemRefType:
+  strides, offset = ref_ty.get_strides_and_offset()
+  new_strides = [strides[p] for p in permutation]
+  new_shape = [ref_ty.shape[p] for p in permutation]
+  return ir.MemRefType.get(
+      new_shape, ref_ty.element_type,
+      memory_space=ref_ty.memory_space,
+      layout=ir.StridedLayoutAttr.get(offset, new_strides))
+
+
+def tile_permutation(
+    permutation: tuple[int, ...], num_tiled_dims: int
+) -> tuple[int, ...]:
+  """Applies tiling to a permutation."""
+  perm_len = len(permutation)
+  num_untiled_dims = perm_len - num_tiled_dims
+  new_suffix = [i + perm_len - num_untiled_dims for i in permutation[-num_tiled_dims:]]
+  if set(new_suffix) != set(range(perm_len, perm_len + num_tiled_dims)):
+    raise NotImplementedError(
+        "Tiling a permutation that mixes tiled and non-tiled dimensions"
+    )
+  return *permutation, *new_suffix
+
+
+def permute_tiling(
+    permutation: tuple[int, ...], tiling: tuple[int, ...]
+) -> tuple[int, ...]:
+  """Applies a permutation on a shape to a tiling on the trailing dimensions."""
+  perm_len = len(permutation)
+  num_untiled_dims = perm_len - len(tiling)
+  if set(permutation[-len(tiling):]) != set(range(num_untiled_dims, perm_len)):
+    raise NotImplementedError(
+        "Permuting a tiling with a permutation that mixes tiled and non-tiled "
+        "dimensions"
+    )
+  tiling_permutation = [p - num_untiled_dims for p in permutation[-len(tiling):]]
+  return tuple(tiling[p] for p in tiling_permutation)
+
+
+def tile_slices(
+    slices: tuple[slice, ...], tiling: tuple[int, ...]
+) -> tuple[slice, ...]:
+  assert len(tiling) <= len(slices), (tiling, slices)
+  untiled_slices, tiled_slices = slices[:-len(tiling)], slices[-len(tiling):]
+  new_tiled_slices = []
+  for tiled_slice, tile_size in zip(tiled_slices, tiling, strict=True):
+    if tiled_slice.start % tile_size != 0 or tiled_slice.stop % tile_size != 0:
+      raise ValueError("Can not tile slices misaligned with the tile size.")
+    new_tiled_slices.append(
+        slice(tiled_slice.start // tile_size, tiled_slice.stop // tile_size)
+    )
+  return (*untiled_slices, *new_tiled_slices, *[slice(None) for _ in tiling])
+
+
 def transformed_smem_ref_type(
     ref_ty: ir.MemRefType,
     transforms: tuple[launch_context.MemRefTransform, ...],
 ) -> ir.MemRefType:
   """Returns the transformed ref type for the given logical ref and transforms.
   """
-  if not transforms:
-    return ref_ty
-
   if not utils.is_smem_ref(ref_ty):
     raise ValueError(f"Only workgroup memory is supported but got {ref_ty}.")
 
-  shape = ref_ty.shape
+  if not transforms:
+    return ref_ty
+
+  if len(transforms) > 1 or not isinstance(transforms[0], launch_context.TileTransform):
+    raise NotImplementedError(f"Unsupported transforms: {transforms}")
+  tile_transform: launch_context.TileTransform = transforms[0]  # pytype: disable=attribute-error
+
+  # Here, we must apply a single tile transform to the provided ref type. Tiling
+  # transforms are always specified in terms of a contiguous reference type.
+  #
+  # However, the ref type here may not be contiguous (in the case where the ref
+  # was previously sliced, or transposed, or both). In order to apply the
+  # transform correctly, we recover the original ref type (up to the size
+  # of the leading dimension), and apply the tiling transform to it. Then, we
+  # produce the final ref type by re-applying the eventual necessary slicing
+  # and transposition.
+  #
+  # The logic here is similar to Pallas's handling of transforms when lowering
+  # with lane semantics---albeit in a different form. In Pallas, the refs start
+  # out as already tiled, and the subsequent transpositions or slice are
+  # expressed in terms of the untiled ref. Here, we start out with untiled refs,
+  # but with the transpositions or slices already applied.
+  ref_ty, permutation = untranspose_type(ref_ty)
+  ref_ty, slices = unslice_type(ref_ty)
   strides, offset = ref_ty.get_strides_and_offset()
-  transposed = utils.is_memref_transposed(ref_ty)
-  if transposed:
-    if len(shape) != 2:
-      raise NotImplementedError(
-          f"Only 2D shapes can be transposed, but got {shape}"
-      )
-    if strides[0] != 1 or strides[1] != shape[0]:
-      raise NotImplementedError(
-          f"Only contiguous 2D memrefs can be transposed, but got {ref_ty}"
-      )
+  assert strides == sorted(strides, reverse=True), strides
+  assert offset == 0 or offset == ir.ShapedType.get_dynamic_stride_or_offset(), offset
 
-  for t in transforms:
-    shape = list(t.transform_shape(shape))
+  # Transforms are transposed to follow the physical layout of the memref during
+  # layout inference, so we also need to untranspose it.
+  # TODO(bchetioui): we could choose to not transpose in layout inference, which
+  # would allow us to avoid this step, and would likely make more sense
+  # semantically).
+  untransposed_tile_transform = launch_context.TileTransform(
+      permute_tiling(permutation, tile_transform.tiling)
+  )
 
-  minor_to_major_stride_order: tuple[int, ...]
-  if transposed:
-    # The expected output is a transposed ref and `shape` is already transposed.
-    # We need to compute the correct strides to match the shape.
-    if len(shape) == 2:
-      minor_to_major_stride_order = (1, 0)
-    elif len(shape) == 4:
-      minor_to_major_stride_order = (2, 3, 0, 1)
-    else:
-      raise NotImplementedError(
-          f"Expected a 2D or 4D shape after transforms, but got {shape}"
-      )
+  tiled_shape = untransposed_tile_transform.transform_shape(ref_ty.shape)
+  if isinstance(ref_ty.layout, ir.StridedLayoutAttr):
+    reversed_strides = [1]
+    for d in reversed(tiled_shape[1:]):
+      reversed_strides.append(reversed_strides[-1] * d)
+    layout = ir.StridedLayoutAttr.get(offset, reversed_strides[::-1])
   else:
-    minor_to_major_stride_order = tuple(reversed(range(len(shape))))
+    layout = None
 
-  new_strides = [1] * len(shape)
-  for i in range(1, len(shape)):
-    dim = minor_to_major_stride_order[i]
-    prev_dim = minor_to_major_stride_order[i-1]
-    new_strides[dim] = new_strides[prev_dim] * shape[prev_dim]
-
-  new_ref_ty = ir.MemRefType.get(
-      shape,
+  out_ty = ir.MemRefType.get(
+      tiled_shape,
       ref_ty.element_type,
       memory_space=ref_ty.memory_space,
-      layout=ir.StridedLayoutAttr.get(offset, new_strides),
+      layout=layout
   )
-  return new_ref_ty
+
+  slices = tile_slices(slices, untransposed_tile_transform.tiling)
+  permutation = tile_permutation(permutation, len(tile_transform.tiling))
+
+  out_ty = slice_type(out_ty, slices)
+  out_ty = transpose_type(out_ty, permutation)
+  return out_ty
 
 
 def reinterpret_smem_ref(
