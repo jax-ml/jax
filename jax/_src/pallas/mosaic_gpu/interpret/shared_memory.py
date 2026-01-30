@@ -38,6 +38,18 @@ class Barrier(memory.Allocation):
   # vector clock, which is updated when threads arrive at the `Barrier`. When
   # a thread completes waiting on the `Barrier` the thread's vector clock is
   # updated with the clock value at which the `Barrier` was last arrived at.
+  #
+  # Internally the implementation of a `Barrier` relies on a condition variable
+  # `self.cv`. Waiting on a `Barrier` is internally implemented as waiting on
+  # the condition variable (until a barrier arrival has been completed). To
+  # complement this, when a thread arrives at a `Barrier`, we notify all threads
+  # that are currently waiting by notifying `self.cv` internally. We also use
+  # the lock on `self.cv` to protect internal state of the `Barrier` that can be
+  # modified by multiple threads. Internal state that can be modified by
+  # multiple threads must then also only be read under the protection of the
+  # lock on `self.cv`. Attributes that are protected in this way must only be
+  # read or modified while holding the lock on `self.cv`. The attributes this
+  # applies to are annoted with comments "Protected by `self.cv`'s lock" below.
   def __init__(
       self,
       shared_memory: GPUSharedMemory,
@@ -45,9 +57,9 @@ class Barrier(memory.Allocation):
       num_arrivals: int,
   ):
     self.shared_memory = shared_memory
-    self.ref_count: int = ref_count
-    self.num_arrivals: int = num_arrivals
-    self.arrivals_count: int = 0
+    self.ref_count: int = ref_count  # Protected by `self.cv`'s lock.
+    self.num_arrivals: int = num_arrivals  # Protected by `self.cv`'s lock.
+    self.arrivals_count: int = 0  # Protected by `self.cv`'s lock.
 
     # We model the `Barrier`'s phase as an integer and, consequently,
     # the 'next awaited phase by thread' as an array of integers. Note that on
@@ -57,20 +69,31 @@ class Barrier(memory.Allocation):
     # increment `self.phase` (by one) when a barrier is completed. Using an
     # integer for the `Barrier`s phase (and incrementing it instead of flipping
     # a bit) can be helpful for debugging.
-    self.phase: int = 0
-    self.next_awaited_phase_by_thread: list[int] = [
+    self.phase: int = 0  # Protected by `self.cv`'s lock.
+    self.next_awaited_phase_by_thread: list[int] = [  # Protected by `self.cv`'s lock.
         1
     ] * shared_memory.num_threads_per_device
     # Initialize `self.phase_change_observed` to `True` so that the first
     # arrival (more precisely, the first time we have arrived
     # `self.num_arrivals` times) at the `Barrier` does not raise an error due to
     # an unobserved phase change.
-    self.phase_change_observed: bool = True
+    self.phase_change_observed: bool = True  # Protected by `self.cv`'s lock.
 
+    # Invariant: We allow the lock on `self.cv` to be acquired and held in a
+    # scope where `self.shared_memory.lock` is already held, but *not* the other
+    # way around. The reasons for this are:
+    #   - From code that holds `self.shared_memory.lock` we need to able to call
+    #     methods of `Barrier` that then acquire the lock on `self.cv`
+    #     internally (to modify internal state of `self` in a thread-safe way).
+    #     This is needed, for example, when `self.shared_memory` deallocates a
+    #     barrier (or at least decreases a barrier's ref count).
+    #   - If we allowed the scopes during which `self.shared_memory.lock` and
+    #     `self.cv` are both held to be nested in both ways, this can lead to
+    #     deadlock.
     self.cv = threading.Condition()
 
     if self.shared_memory.detect_races:
-      self.clock: vc.VectorClock | None = None
+      self.clock: vc.VectorClock | None = None  # Protected by `self.cv`'s lock.
 
   def __repr__(self) -> str:
     return (
@@ -83,7 +106,8 @@ class Barrier(memory.Allocation):
     return self.shared_memory.detect_races
 
   def has_zero_ref_count(self) -> bool:
-    return self.ref_count == 0
+    with self.cv:
+      return self.ref_count == 0
 
   def deallocate(self):
     """Deallocates the `Barrier`."""
@@ -154,21 +178,31 @@ class Barrier(memory.Allocation):
               f" Thread {local_thread_id} has not participated in all"
               " completions of the barrier.)"
           )
+
         self.cv.wait()
 
       self.phase_change_observed = True
       self.next_awaited_phase_by_thread[local_thread_id] += 1
 
-      if self.detect_races:
-        global_thread_id = self.shared_memory.get_global_thread_id(
-            device_id, local_thread_id
+      # Read `self.clock` while still holding the lock on `self.cv`. (If race
+      # detection is enabled, the clock is needed below to update a vector clock
+      # that is managed by `self.shared_memory`.)
+      clock = self.clock if self.detect_races else None
+
+    # Note that this block cannot be nested under the `with self.cv` block
+    # immediately above since this would violate the invariant that
+    # `self.shared_memory.lock` *cannot* be acquired when `self.cv`'s lock is
+    # already held. (See the documentation of `self.cv` above.)
+    if self.detect_races:
+      global_thread_id = self.shared_memory.get_global_thread_id(
+          device_id, local_thread_id
+      )
+      # Assert before acquiring the lock on `self.shared_memory`.
+      assert clock is not None
+      with self.shared_memory.lock:
+        vc.update_vector_clock(
+            self.shared_memory.clocks[global_thread_id], clock
         )
-        # Assert before acquiring the lock on `self.shared_memory`.
-        assert self.clock is not None
-        with self.shared_memory.lock:
-          vc.update_vector_clock(
-              self.shared_memory.clocks[global_thread_id], self.clock
-          )
 
 
 @dataclasses.dataclass
@@ -221,7 +255,9 @@ class GPUSharedMemory(memory.SharedMemory):
 
     return barrier, clock
 
-  def deallocate_barrier(self, key: Any):
+  def deallocate_barrier(self, device_id: int, thread_id: int, key: Any):
+    del device_id, thread_id  # unused (but kept for debugging)
+
     with self.lock:
       barrier = self.mem[key]
       if not isinstance(barrier, Barrier):
@@ -229,7 +265,9 @@ class GPUSharedMemory(memory.SharedMemory):
             f"Attempting to get barrier from allocation with {key} that is not"
             " a `Barrier`."
         )
+
       barrier.deallocate()
+
       if barrier.has_zero_ref_count():
         self.mem.pop(key)
 

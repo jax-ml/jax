@@ -766,7 +766,12 @@ def call_allocate_barriers(
   )
 
 
-def _deallocate_barrier(allocation_key: np.ndarray):
+def _deallocate_barrier(
+    device_id: np.ndarray, thread_id: np.ndarray, allocation_key: np.ndarray
+):
+  device_id = int(device_id)
+  thread_id = int(thread_id)
+
   assert len(allocation_key.shape) == 2
   num_barriers = allocation_key.shape[0]
 
@@ -778,11 +783,22 @@ def _deallocate_barrier(allocation_key: np.ndarray):
 
   for key in keys_to_deallocate:
     barrier_allocation_key = HostAllocationKey.from_array(key)
-    shared_memory.deallocate_barrier(barrier_allocation_key)
+    shared_memory.deallocate_barrier(
+        device_id, thread_id, barrier_allocation_key
+    )
 
 
-def call_deallocate_barrier(allocation_key: jnp.ndarray):
-  callback.io_callback(_deallocate_barrier, None, allocation_key, ordered=True)
+def call_deallocate_barrier(
+    device_id: int, thread_id: int, allocation_key: jnp.ndarray
+):
+  callback.io_callback(
+      _deallocate_barrier,
+      None,
+      device_id,
+      thread_id,
+      allocation_key,
+      ordered=True,
+  )
 
 
 def _barrier_wait(device_id: int, thread_id: int, allocation_key: np.ndarray):

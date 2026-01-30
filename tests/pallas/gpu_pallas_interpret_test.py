@@ -322,8 +322,6 @@ class InterpretTest(jtu.JaxTestCase):
 
   @jtu.parameterized.parameters(2, 3, 4, 5, 6, 7, 8, 9, 10)
   def test_multiple_barriers_with_single_arrival(self, num_threads):
-    # TODO(nrink): Re-enable this test once the deadlock is fixed.
-    self.skipTest("Deadlocks sometimes")
     @functools.partial(
         plgpu.kernel,
         out_shape=jax.ShapeDtypeStruct((), jnp.int32),
