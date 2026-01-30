@@ -142,7 +142,6 @@ py_binary(
     main = "build_wheel.py",
     deps = [
         ":build_utils",
-        "//jaxlib:jaxlib_files",
         "@bazel_tools//tools/python/runfiles",
         "@pypi//build",
         "@pypi//setuptools",
