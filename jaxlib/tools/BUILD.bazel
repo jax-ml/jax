@@ -139,10 +139,6 @@ string_flag(
 py_binary(
     name = "build_wheel_tool",
     srcs = ["build_wheel.py"],
-    data = [
-        ":jaxlib_sources",
-        "//jaxlib",
-    ],
     main = "build_wheel.py",
     deps = [
         ":build_utils",
