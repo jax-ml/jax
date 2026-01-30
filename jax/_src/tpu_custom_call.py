@@ -225,23 +225,28 @@ class CustomCallBackendConfig:
       config.write(b', "internal_scratch_in_bytes": ')
       config.write(str(self.internal_scratch_in_bytes).encode("ascii"))
     if self.output_memory_spaces is not None:
-      config.write(b', "output_memory_colors": [')
+      is_tuple = len(self.output_memory_spaces) > 1
       for i, memory_space in enumerate(self.output_memory_spaces):
         if i:
           config.write(b",")
-        color = memory_space.color if memory_space is not None else -1
-        config.write(str(color).encode("ascii"))
+        else:
+          config.write(b', "output_memory_space_colors": [')
+        color = memory_space.color if memory_space is not None else 6
+        config.write(f'{{"color":{color}'.encode("ascii"))
+        if is_tuple:
+          config.write(f',"shape_index":{i}'.encode("ascii"))
+        config.write(b"}")
       config.write(b"]")
     if self.input_memory_spaces is not None:
       comma = False
-      for i, input_memory_space in enumerate(self.input_memory_spaces):
-        if input_memory_space is None:
+      for i, memory_space in enumerate(self.input_memory_spaces):
+        if memory_space is None:
           continue
-        if input_memory_space is MemorySpace.SMEM:
+        if memory_space is MemorySpace.SMEM:
           # TODO(sharadmv): Add support for SMEM (though atm, XLA will not
           # page out SMEM arrays).
           continue
-        if input_memory_space not in (
+        if memory_space not in (
             MemorySpace.HBM,
             MemorySpace.VMEM,
             MemorySpace.SMEM,
@@ -254,7 +259,7 @@ class CustomCallBackendConfig:
         else:
           config.write(b', "input_memory_space_colors": [')
         config.write(
-            f'{{"operand_index":{i},"color":{input_memory_space.color}}}'
+            f'{{"operand_index":{i},"color":{memory_space.color}}}'
             .encode("ascii")
         )
         comma = True
