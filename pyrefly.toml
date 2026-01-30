@@ -1,0 +1,41 @@
+python-version = "3.12"
+
+project-includes = [
+    "jax/**/*.py*",
+    # "tests/**/*.py",
+]
+
+ignore-missing-imports = [
+    "absl.*",
+    "flatbuffers.*",
+    "flax.*",
+    "google.colab.*",
+    "hypothesis.*",
+    "IPython.*",
+    "jax_cuda12_plugin.*",
+    "jax_cuda13_plugin.*",
+    "jaxlib.*",
+    "jraph.*",
+    "kubernetes.*",
+    "libtpu.*",
+    "matplotlib.*",
+    "mpi4py.*",
+    "nvidia.*",
+    "optax.*",
+    "opt_einsum.*",
+    "portpicker.*",
+    "pygments.*",
+    "pytest.*",
+    "rich.*",
+    "setuptools.*",
+    "tensorflow.*",
+    "tensorflowjs.*",
+    "tensorflow_serving.*",
+    "tensorstore.*",
+    "web_pdb.*",
+    "xprof.*",
+    "zstandard.*",
+]
+
+permissive-ignores = true
+untyped-def-behavior = "check-and-infer-return-any"
