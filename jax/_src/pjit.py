@@ -75,6 +75,7 @@ from jax._src.typing import ArrayLike
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps, distributed_debug_log,
     split_list, weakref_lru_cache, merge_lists, subs_list, fun_name)
+from jax._src.lib import jax_jit
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -252,7 +253,7 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
     if config.no_tracing.value:
       raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
                          "`jit`, but 'no_tracing' is set")
-    p, args_flat = _trace_for_jit(fun, jit_info, args, kwargs)
+    p, args_flat = _infer_params(fun, jit_info, args, kwargs)
     (outs, out_flat, out_tree, args_flat, jaxpr,
      executable, pgle_profiler, const_args) = _run_python_pjit(
          p, args_flat, fun, args, kwargs)
@@ -294,7 +295,7 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 
 @api_boundary
 def jit_trace(jit_func, *args, **kwargs) -> stages.Traced:
-  p, args_flat = _trace_for_jit(jit_func._fun, jit_func._jit_info, args, kwargs)
+  p, args_flat = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs)
   arg_types = map(convert_to_metaty, args_flat)
   return stages.Traced(arg_types, p.params, p.in_tree, p.out_tree, p.consts)
 
@@ -309,6 +310,7 @@ def jit_eval_shape(jit_func, *args, **kwargs):
 def jit_evict_fn(self):
   self._clear_cache()
   pe.trace_to_jaxpr.evict_weakref(self._fun)
+  _infer_params_cached.cache_clear()
 
 
 def _split_layout_and_sharding(entries):
@@ -456,25 +458,14 @@ class PjitParams(NamedTuple):
 
 
 def _trace_for_jit(
-    fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
-  ) -> tuple[PjitParams, list[core.Value]]:
-  if ji.use_resource_env:  # pjit
-    ctx_mesh = mesh_lib.thread_resources.env.physical_mesh
-  else:
-    ctx_mesh = mesh_lib.get_concrete_mesh()
-
-  dbg = debug_info(
-      'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
-      static_argnames=ji.static_argnames, sourceinfo=ji.fun_sourceinfo,
-      signature=ji.fun_signature)
-
+    fun: Callable, ji: PjitInfo, ctx_mesh: mesh_lib.Mesh,
+    dbg: core.DebugInfo, avals, args, kwargs) -> PjitParams:
   args_ft = FlatTree.flatten_static_argnums_argnames(
       args, kwargs, ji.static_argnums, ji.static_argnames)
-  avals = _infer_input_type(fun, dbg, args_ft.vals)
   avals_ft = args_ft.update(avals)
 
-  have_kwargs = bool(kwargs)
-  if have_kwargs and ji.user_specified_in_shardings:
+  has_kwargs = bool(kwargs)
+  if has_kwargs and ji.user_specified_in_shardings:
     raise ValueError(
         "pjit does not support kwargs when in_shardings is specified.")
 
@@ -520,7 +511,7 @@ def _trace_for_jit(
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
       in_shardings_treedef, in_shardings_leaves,
       ji.in_layouts_treedef, ji.in_layouts_leaves,
-      avals_ft, dbg, device_or_backend_set, have_kwargs)
+      avals_ft, dbg, device_or_backend_set, has_kwargs)
 
   qdd_token = _qdd_cache_index(fun, in_type.vals)  # represents qdd state context
 
@@ -582,23 +573,62 @@ def _trace_for_jit(
       inline=ji.inline,
       compiler_options_kvs=ji.compiler_options_kvs,
   )
-  p = PjitParams(consts, params, avals_ft.vals, avals_ft.tree_without_statics,
-                 out_avals.tree, dbg.safe_arg_names(len(avals_ft)))
-  return p, consts + list(args_ft.vals)
+  return PjitParams(consts, params, avals_ft.vals, avals_ft.tree_without_statics,
+                    out_avals.tree, dbg.safe_arg_names(len(avals_ft)))
 
-def _infer_input_type(fun: Callable, dbg: core.DebugInfo,
+
+@dataclass(slots=True)
+class InferParamsCacheEntry:
+  pjit_params: PjitParams | None = None
+
+@weakref_lru_cache
+def _infer_params_cached(
+    fun: Callable, jit_info: PjitInfo, signature: jax_jit.ArgumentSignature,
+    in_avals: tuple[core.AbstractValue, ...], ctx_mesh: mesh_lib.Mesh
+    ) -> InferParamsCacheEntry:
+  return InferParamsCacheEntry()
+
+def _infer_params(
+    fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
+  ) -> tuple[PjitParams, list[core.Value]]:
+  ctx_mesh = (mesh_lib.thread_resources.env.physical_mesh
+              if ji.use_resource_env else mesh_lib.get_concrete_mesh())
+  dbg_fn = lambda: debug_info(
+      'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
+      static_argnames=ji.static_argnames, sourceinfo=ji.fun_sourceinfo,
+      signature=ji.fun_signature)
+
+  arg_signature, dynargs = jax_jit.parse_arguments(
+      args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
+      ji.static_argnames, tree_util.default_registry)
+  avals = _infer_input_type(fun, dbg_fn, dynargs)
+  entry = _infer_params_cached(fun, ji, arg_signature, avals, ctx_mesh)
+
+  if entry.pjit_params is not None:
+    return entry.pjit_params, entry.pjit_params.consts + dynargs
+
+  p = _trace_for_jit(fun, ji, ctx_mesh, dbg_fn(), avals, args, kwargs)
+  if p.params['jaxpr'].jaxpr.is_high:
+    return p, p.consts + dynargs
+  entry.pjit_params = p
+  return p, p.consts + dynargs
+
+
+def _infer_input_type(fun: Callable, dbg_fn: Callable[[], core.DebugInfo],
                       explicit_args) -> tuple[core.AbstractValue, ...]:
   avals = []
   try:
     for i, x in enumerate(explicit_args):
       avals.append(core.shaped_abstractify(x))
   except OverflowError:
+    dbg = dbg_fn()
     arg_path = f"argument path is {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'}"  # pytype: disable=name-error
     raise OverflowError(
       "An overflow was encountered while parsing an argument to a jitted "
       f"computation, whose {arg_path}."
     ) from None
   except TypeError:
+    dbg = dbg_fn()
     arg_description = f"path {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'}"  # pytype: disable=name-error
     raise TypeError(
       f"Error interpreting argument to {fun} as an abstract array."
@@ -609,7 +639,7 @@ def _infer_input_type(fun: Callable, dbg: core.DebugInfo,
       " static_argnums or static_argnames parameters of jax.jit."
     ) from None
   if config.mutable_array_checks.value:
-    check_no_aliased_ref_args(lambda: dbg, avals, explicit_args)
+    check_no_aliased_ref_args(dbg_fn, avals, explicit_args)
   return tuple(avals)
 
 

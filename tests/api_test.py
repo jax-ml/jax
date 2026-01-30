@@ -7908,7 +7908,7 @@ class TracebackTest(jtu.JaxTestCase):
 
   def test_jit_traceback(self):
     # TODO(dougalm): shoud be able to get this down to 2 or 3
-    expected_depth = 5
+    expected_depth = 6
     init_depth = self.cur_depth()
     @jit
     def foo(x):
