@@ -214,13 +214,13 @@ class DLPackTest(jtu.JaxTestCase):
 
 class CudaArrayInterfaceTest(jtu.JaxTestCase):
 
-  @jtu.skip_on_devices("cuda")
+  @jtu.skip_on_devices("cuda", "rocm")
   def testCudaArrayInterfaceOnNonCudaFails(self):
     x = jnp.arange(5)
     self.assertFalse(hasattr(x, "__cuda_array_interface__"))
     with self.assertRaisesRegex(
         AttributeError,
-        "__cuda_array_interface__ is only defined for NVidia GPU buffers.",
+        "__cuda_array_interface__ is only defined for GPU buffers.",
     ):
       _ = x.__cuda_array_interface__
 
