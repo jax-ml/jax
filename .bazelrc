@@ -249,13 +249,21 @@ common:rocm --copt=-Wno-gnu-offsetof-extensions
 common:rocm --copt=-Qunused-arguments
 common:rocm --action_env=TF_HIPCC_CLANG="1"
 
-# ASan works only for Linux x86_64
-common:asan --platforms=@rules_ml_toolchain//common:linux_x86_64_with_sanitizers
+# Sanitizers work only for Linux x86_64
+# ASan
 common:asan --features=asan
+common:asan --host_features=-asan
+common:asan --@rules_ml_toolchain//common:asan_options=detect_leaks=0
 common:asan --strip=never
 common:asan --copt -DADDRESS_SANITIZER
 common:asan --copt -O1
 common:asan --copt -g
+
+# TSan
+common:tsan --features=tsan
+common:tsan --strip=never
+common:tsan --copt=-g
+common:tsan --copt=-Wno-unused-command-line-argument
 
 # #############################################################################
 # Cache options below.

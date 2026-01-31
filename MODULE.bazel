@@ -17,9 +17,9 @@ bazel_dep(name = "rules_python", version = "1.6.1")
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-KIfZtJ4Y7132+HQ4pNmXWUCNIaH0Y8YfS+arMdiS3Ig=",
-    strip_prefix = "rules_ml_toolchain-de6fc6c38ea0368a198daa3f8c7cb829cc8db185",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/de6fc6c38ea0368a198daa3f8c7cb829cc8db185.tar.gz"],
+    integrity = "sha256-DHEwVpytyoPepPdfl37tyFwI4jC36Y12WXbYlNWJH+I=",
+    strip_prefix = "rules_ml_toolchain-f65cb63854d4aa504fc866eb03af2e09b0f136e8",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/f65cb63854d4aa504fc866eb03af2e09b0f136e8.tar.gz"],
 )
 
 # TODO: use a released version when available

@@ -237,10 +237,7 @@ jobs:
             --bazel_options=--repo_env=HERMETIC_PYTHON_URL="${HERMETIC_PYTHON_URL}" \
             --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256=${PYTHON_SHA256} \
             --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX="cpython-tsan/" \
-            --bazel_options=--color=yes \
-            --bazel_options=--copt=-fsanitize=thread \
-            --bazel_options=--linkopt="-fsanitize=thread" \
-            --bazel_options=--copt=-g
+            --bazel_options=--color=yes
 
           mkdir -p dist
 
@@ -267,16 +264,18 @@ jobs:
 
           # Build JAX and run tests
           bazel test \
+              --verbose_failures \
               --test_env=JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES \
               --test_env=JAX_ENABLE_X64=$JAX_ENABLE_X64 \
               --test_env=JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS \
               --test_env=PYTHON_GIL=0 \
-              --test_env=TSAN_OPTIONS="halt_on_error=1,suppressions=tests/config/tsan-suppressions_${{ matrix.python-version }}.txt" \
+              --test_env=TSAN_OPTIONS="stack_size=2,halt_on_error=1,suppressions=tests/config/tsan-suppressions_${{ matrix.python-version }}.txt" \
               --test_env=JAX_TEST_NUM_THREADS=8 \
               --@rules_python//python/config_settings:py_freethreaded="yes" \
               --test_output=errors \
               --test_timeout=1800 \
               --config=rbe_linux_x86_64 \
+              --config=tsan \
               --test_tag_filters=-notsan \
               --run_under=//tests/config:oss_tsan_wrapper_sh \
               //tests:cpu_tests
