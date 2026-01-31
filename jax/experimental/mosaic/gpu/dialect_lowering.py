@@ -972,25 +972,6 @@ def transform_type(
       layout=layout
   )
 
-def reinterpret_smem_ref(
-    ref: ir.Value,
-    transforms: tuple[launch_context.MemRefTransform, ...],
-) -> ir.Value:
-  """Applies transforms on the ref, and makes sure that their effect is
-  propagated appropriately on the strides.
-
-  This function is used any time we lower from a dialect SMEM ref (2D for wgmma)
-  with given transforms to a "physical" SMEM ref (4D for wgmma) that is fully
-  transformed and transposed as needed.
-  """
-  ref_ty = ir.MemRefType(ref.type)
-  new_ref_ty = transform_type(ref_ty, transforms)
-  if ref_ty == new_ref_ty:
-    return ref
-  ms = utils.WORKGROUP_NVPTX_ADDRESS_SPACE
-  ptr = utils.memref_ptr(ref, memory_space=ms)
-  new_ref = utils.ptr_as_memref(ptr, new_ref_ty, ptr_memory_space=ms)
-  return new_ref
 
 
 def _gmem_slice_and_predicate(
@@ -1526,20 +1507,17 @@ def _mgpu_wait_op_lowering_rule(
 def _mgpu_slice_smem_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.SliceSMEMOp
 ) -> Sequence[ir.Value]:
-  sliced_ref = _slice_smem(op.result.type, op.offset, ctx.smem_requested_bytes)
-  memref_ty = ir.MemRefType(sliced_ref.type)
-  if (
-      memref_ty.element_type == ir.Type.parse("!mosaic_gpu.barrier")
-  ):
+  ref_ty = ir.MemRefType(op.result.type)
+  if ref_ty.element_type == ir.Type.parse("!mosaic_gpu.barrier"):
     # Barrier memrefs are not transformed and must not be wrapped.
     assert not inference_utils.has_out_transforms_set(op)
-    return [sliced_ref]
+    return [_slice_smem(ref_ty, op.offset, ctx.smem_requested_bytes)]
 
-  out_transforms = inference_utils.out_transforms(op)[0]
+  [out_transforms] = inference_utils.out_transforms(op)
   _, transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
-  transformed_ref = reinterpret_smem_ref(sliced_ref, transforms)
-  wrapped_ref = wrap_transformed_memref(transformed_ref, op.result.type, out_transforms)
-  return [wrapped_ref]
+  transformed_ref_ty = transform_type(ref_ty, transforms)
+  transformed_ref = _slice_smem(transformed_ref_ty, op.offset, ctx.smem_requested_bytes)
+  return [wrap_transformed_memref(transformed_ref, op.result.type, out_transforms)]
 
 
 def _slice_smem(result: ir.MemRefType, offset: ir.Value, smem_size: int):
