@@ -475,6 +475,7 @@ print_fwd_bwd(f, 3.)
 
 +++ {"id": "wvSm1yu0yUtd"}
 
+(gradient-checkpointing-practical-notes)=
 ### Practical notes
 
 +++ {"id": "LSADkBOCyX9X"}
