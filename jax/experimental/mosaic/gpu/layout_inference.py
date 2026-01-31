@@ -123,15 +123,15 @@ class ValueSite:
   @property
   def memory_space(self) -> MemorySpace:
     """Returns the memory space associated with this value."""
-    type = self.value.type
-    if isinstance(type, ir.VectorType):
+    ty = self.value.type
+    if isinstance(ty, ir.VectorType):
       return MemorySpace.REG
-    assert isinstance(type, ir.MemRefType)
-    if utils.is_tmem_ref(type):
+    assert isinstance(ty, ir.MemRefType)
+    if utils.is_tmem_ref(ty):
       return MemorySpace.TMEM
-    elif utils.is_smem_ref(type):
+    elif utils.is_smem_ref(ty):
       return MemorySpace.SMEM
-    raise ValueError(f"Unsupported memory space for: {type}")
+    raise ValueError(f"Unsupported memory space for: {ty}")
 
   def __str__(self):
     match = _op_name_regex.match(str(self.operation))
@@ -177,9 +177,9 @@ def _strided_layout_for_variable(
   """
   # TODO(bchetioui): should we make variables carry a shape as well, to make
   # things easier?
-  type = variable.key.value.type
-  assert isinstance(type, ir.VectorType)
-  return fa.WGStridedFragLayout.from_shaped_type(type)
+  ty = variable.key.value.type
+  assert isinstance(ty, ir.VectorType)
+  return fa.WGStridedFragLayout.from_shaped_type(ty)
 
 
 def _default_tmem_layout_for_variable(
@@ -189,7 +189,7 @@ def _default_tmem_layout_for_variable(
   value = variable.key.value
   parent = value.owner
   if isinstance(parent, mgpu.TmemAllocOp):
-    return tcgen05._infer_tmem_layout(
+    return tcgen05._infer_tmem_layout(  # pylint: disable=protected-access
         tuple(value.type.shape), parent.collective, packing=1
     )
   return None
@@ -534,7 +534,7 @@ def _pointwise_op_constraint_system(
   return cs.ConstraintSystem(), {variable: all_value_sites}
 
 
-for op in [
+for _op in [
     arith.AddIOp,
     arith.AddFOp,
     arith.AndIOp,
@@ -582,7 +582,7 @@ for op in [
     mlir_math.RoundEvenOp,
     mlir_math.CopySignOp,
 ]:
-  _add_constraint_system_derivation_rule(op)(_pointwise_op_constraint_system)
+  _add_constraint_system_derivation_rule(_op)(_pointwise_op_constraint_system)
 
 
 @_add_constraint_system_derivation_rule(mgpu.VectorLoadOp)
@@ -929,34 +929,6 @@ def _infer_tiling_for_mma_ref(
   else:
     tiling = (major_tiling, minor_tiling)
   return tiling
-
-
-def _infer_wgmma_tiling(
-    a_type: ir.Type, b_type: ir.MemRefType
-) -> tuple[tuple[int, int] | None, tuple[int, int]]:
-  """Infers the tiling for a (if in SMEM) and b of a WGMMAOp.
-
-  If both a and b are in SMEM, this function infers tilings that have matching
-  swizzle values.
-  """
-  b_tiling = _infer_tiling_for_mma_ref(
-      b_type, max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
-  )
-  b_swizzle = _compute_swizzle(b_type, lc.TileTransform(b_tiling))
-  if not isinstance(a_type, ir.MemRefType):
-    return None, b_tiling
-
-  a_tiling = _infer_tiling_for_mma_ref(
-      cast(ir.MemRefType, a_type), max_swizzle=b_swizzle
-  )
-  a_swizzle = _compute_swizzle(a_type, lc.TileTransform(a_tiling))
-  if a_swizzle != b_swizzle:
-    # The swizzle for a and b has to match. This is not a fundamental
-    # limitation, rather the lowering doesn't currently support it.
-    b_tiling = _infer_tiling_for_mma_ref(b_type, max_swizzle=a_swizzle)
-    b_swizzle = _compute_swizzle(b_type, lc.TileTransform(b_tiling))
-    assert a_swizzle == b_swizzle
-  return a_tiling, b_tiling
 
 
 @_add_constraint_system_derivation_rule(mgpu.WGMMAOp)
@@ -1322,7 +1294,7 @@ def _tcgen05_mma_constraint_system(
   acc = ValueSite(op, VariableType.OPERAND, 0)
   acc_variable = ctx.producer_ref(acc)
   acc_type = ir.ShapedType(op.accumulator.type)
-  acc_layout = tcgen05._infer_tmem_layout(
+  acc_layout = tcgen05._infer_tmem_layout(  # pylint: disable=protected-access
       tuple(acc_type.shape), op.collective, packing=1
   )
   assignments[acc_variable] = cs.TMEMLayout(acc_layout)
@@ -1363,7 +1335,7 @@ def _tcgen05_mma_constraint_system(
     a_type = ir.ShapedType(op.a.type)
     a_var = ctx.producer_ref(a)
     packing = 32 // utils.bitwidth(a_type.element_type)
-    a_layout = tcgen05._infer_tmem_layout(
+    a_layout = tcgen05._infer_tmem_layout(  # pylint: disable=protected-access
         tuple(a_type.shape), op.collective, packing
     )
     assignments[a_var] = cs.TMEMLayout(a_layout)
@@ -1730,16 +1702,16 @@ def _ensure_right_number_of_layouts(
 
 
 def _compute_swizzle(
-    type: ir.Type, tile_transform: lc.TileTransform | None
+    ty: ir.Type, tile_transform: lc.TileTransform | None
 ) -> mgpu.SwizzlingMode:
   """Computes the swizzle mode given a tiling transform and a data type."""
   if tile_transform is None:
     # TODO(b/447079781): Revisit if this is the behavior we want.
     return mgpu.SwizzlingMode.kNoSwizzle
 
-  if not isinstance(type, ir.MemRefType):
-    raise ValueError(f"Expected a MemRefType, got {type}.")
-  ref_ty = ir.MemRefType(type)
+  if not isinstance(ty, ir.MemRefType):
+    raise ValueError(f"Expected a MemRefType, got {ty}.")
+  ref_ty = ir.MemRefType(ty)
   strides, _ = ref_ty.get_strides_and_offset()
   tiling = tile_transform.tiling
 
@@ -1893,9 +1865,9 @@ def producer_result(operand: ValueSite) -> ValueSite:
     return ValueSite(producer, VariableType.RESULT, index)
 
   if isinstance(producer, ir.Block):
-    index = list(producer.arguments).index(value)
-    region_index = list(producer.owner.regions).index(producer.region)
-    return ValueSite(producer.owner, VariableType.ARGUMENT, index, region_index)
+    index = list(producer.arguments).index(value)  # pytype: disable=attribute-error
+    region_index = list(producer.owner.regions).index(producer.region)  # pytype: disable=attribute-error
+    return ValueSite(producer.owner, VariableType.ARGUMENT, index, region_index)  # pytype: disable=attribute-error
 
   raise TypeError(
       f"Producer {producer} is not an operation nor a block: {type(producer)}."
@@ -1905,14 +1877,14 @@ def producer_result(operand: ValueSite) -> ValueSite:
 def consumer_operands(result: ValueSite) -> Sequence[ValueSite]:
   """Given a result or an argument, returns the corresponding operands in its consumers."""
   assert result.type in (VariableType.RESULT, VariableType.ARGUMENT)
-  consumer_operands: list[ValueSite] = []
+  results: list[ValueSite] = []
   # The layout can also be chosen from the layout of the consumers of the
   # results.
   for use in result.value.uses:
     consumer = use.owner
     index = use.operand_number
-    consumer_operands.append(ValueSite(consumer, VariableType.OPERAND, index))
-  return consumer_operands
+    results.append(ValueSite(consumer, VariableType.OPERAND, index))
+  return results
 
 
 def derive_relayout_constraints(
