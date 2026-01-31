@@ -448,7 +448,11 @@ class ValAccum(GradAccum):
 
   def __init__(self, aval, val=None):
     self.aval = aval
-    self.val = Zero(aval) if val is None else val
+    self.val = Zero(aval.to_cotangent_aval()) if val is None else val
+    ct_check(self, self.val)
+
+  def __repr__(self):
+    return f"ValAccum({self.aval})"
 
   def accum(self, x):
     if x is not None:

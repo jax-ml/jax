@@ -10136,6 +10136,21 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.aval.sharding,
                      NamedSharding(mesh.abstract_mesh, P(None)))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_vjp_unreduced_zeros(self, mesh):
+    arr1 = jax.reshard(np.arange(8.), P(reduced={'x'}))
+    arr2 = jax.reshard(np.arange(8.), P(reduced={'x'}))
+    arr2_unr = jax.reshard(jnp.arange(8.), P(unreduced={'x'}))
+
+    @jax.jit
+    def f(x, y):
+      return y
+
+    _, f_vjp = jax.vjp(f, arr1, arr2)
+    x_bar, y_bar = f_vjp(arr2_unr)
+    self.assertEqual(jax.typeof(x_bar).sharding.spec, P(None, unreduced={'x'}))
+    self.assertEqual(jax.typeof(y_bar).sharding.spec, P(None, unreduced={'x'}))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
