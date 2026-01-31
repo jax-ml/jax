@@ -1096,7 +1096,7 @@ def process_index(
 # TODO: remove this sometime after jax 0.2.13 is released
 def host_id(backend: str | xla_client.Client | None = None) -> int:
   warnings.warn(
-      "jax.host_id has been renamed to jax.process_index. This alias "
+      "jax.process_index has been renamed to jax.process_index. This alias "
       "will eventually be removed; please update your code.")
   return process_index(backend)
 
@@ -1113,7 +1113,7 @@ def process_count(
 # TODO: remove this sometime after jax 0.2.13 is released
 def host_count(backend: str | xla_client.Client | None = None) -> int:
   warnings.warn(
-      "jax.host_count has been renamed to jax.process_count. This alias "
+      "jax.process_count has been renamed to jax.process_count. This alias "
       "will eventually be removed; please update your code.")
   return process_count(backend)
 
@@ -1139,7 +1139,7 @@ def host_ids(
     backend: str | xla_client.Client | None = None
 ) -> list[int]:
   warnings.warn(
-      "jax.host_ids has been renamed to jax.process_indices. This alias "
+      "jax.process_indexs has been renamed to jax.process_indices. This alias "
       "will eventually be removed; please update your code.")
   return process_indices(backend)
 
