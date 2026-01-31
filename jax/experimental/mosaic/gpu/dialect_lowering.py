@@ -240,7 +240,7 @@ def unwrap_transformed_memref(
   """Uwraps a memref from an unrealized cast and verifies its transforms."""
 
   _, transforms = swizzle_and_transforms_from_transforms_attr(expected_transforms)
-  transformed_type = transformed_smem_ref_type(ref.type, transforms)
+  transformed_type = transform_type(ref.type, transforms)
   conversion_cast, [result] = _undo_conversion_cast(ref, [transformed_type])
 
   # Check that the actual transforms match the expected ones.
@@ -855,63 +855,122 @@ def swizzle_and_transforms_from_transforms_attr(
   return swizzle or mgpu.SwizzlingMode.kNoSwizzle, tuple(gmem_transforms)
 
 
-def transformed_smem_ref_type(
+def tile_offset(
+    offsets: tuple[int, ...], tiling: tuple[int, ...]
+) -> tuple[int, ...]:
+  """Tiles the trailing offsets in `offsets` according to `tiling`.
+
+  Raises if the offsets are not aligned with the start of a tile.
+  """
+  if len(offsets) < len(tiling):
+    raise ValueError(f"Offsets {offsets} have lower rank than tiling {tiling}")
+  untiled_offsets, tiled_offsets = (
+      offsets[: -len(tiling)],
+      offsets[-len(tiling) :],
+  )
+  for i, t in zip(tiled_offsets, tiling, strict=True):
+    if i % t != 0:
+      raise ValueError(f"Offset {i} is not divisible by tile size {t}")
+  return (
+      *untiled_offsets,
+      *[i // t for i, t in zip(tiled_offsets, tiling, strict=True)],
+      *[0] * len(tiling),
+  )
+
+
+def tile_strides(
+    strides: tuple[int, ...], tiling: tuple[int, ...]
+) -> tuple[int, ...]:
+  """Tiles the trailing strides in `strides` according to `tiling`.
+
+  The `len(tiling)` trailing strides in `strides` must be the `len(tiling)`
+  smallest strides in `strides`. The same property holds in the result, i.e.,
+  given two tiles with indices i and j (i < j) with strides tiled according to
+  this function, then all the elements in tile i are physically ordered before
+  all the elements in tile j.
+
+  E.g., tile_strides((2048, 32, 1), (8, 4)) = (2048, 256, 32, 4, 1)
+  """
+  if len(strides) < len(tiling):
+    raise ValueError(f"Strides {strides} have lower rank than tiling {tiling}")
+  ordered_strides = sorted(strides, reverse=True)
+  if set(ordered_strides[-len(tiling):]) != set(strides[-len(tiling):]):
+    raise ValueError(
+        "Can not tile strides when tiled dimensions have been transposed with "
+        f"untiled dimensions. Strides: {strides}, tiling: {tiling}"
+    )
+  tiled_ordered_strides = ordered_strides[-len(tiling):]
+  untiled_strides, tiled_strides = strides[:-len(tiling)], strides[-len(tiling):]
+
+  to_ordered = lambda i: tiled_ordered_strides.index(tiled_strides[i])
+  from_ordered = lambda i: tiled_strides.index(tiled_ordered_strides[i])
+
+  ordered_tiling = [tiling[to_ordered(i)] for i in range(len(tiling))]
+  ordered_tiled_strides = [tiled_strides[to_ordered(i)] for i in range(len(tiling))]
+
+  ordered_tiled_tiling_strides = [1]
+  for t in reversed(ordered_tiling):
+    ordered_tiled_tiling_strides.append(ordered_tiled_tiling_strides[-1] * t)
+
+  for s, t in zip(ordered_tiled_strides[:-1][::-1], ordered_tiling[1:][::-1], strict=True):
+    if s % t != 0:
+      raise ValueError(
+          f"Stride {s} is not divisible by tile size {t}. Strides: {strides}, "
+          f"tiling: {tiling}"
+      )
+    ordered_tiled_tiling_strides.append(s // t * ordered_tiled_tiling_strides[-1])
+
+  ordered_tiled_tiling_strides.reverse()
+
+  return (
+      *untiled_strides,
+      *[ordered_tiled_tiling_strides[from_ordered(i)] for i in range(len(tiling))],
+      *[ordered_tiled_tiling_strides[len(tiling) + from_ordered(i)] for i in range(len(tiling))]
+  )
+
+
+def transform_type(
     ref_ty: ir.MemRefType,
     transforms: tuple[launch_context.MemRefTransform, ...],
 ) -> ir.MemRefType:
-  """Returns the transformed ref type for the given logical ref and transforms.
-  """
-  if not transforms:
-    return ref_ty
-
   if not utils.is_smem_ref(ref_ty):
     raise ValueError(f"Only workgroup memory is supported but got {ref_ty}.")
 
-  shape = ref_ty.shape
+  if not transforms:
+    return ref_ty
+
+  # TODO(bchetioui): this should be trivial to relax if ever necessary.
+  if len(transforms) > 1 or not isinstance(transforms[0], launch_context.TileTransform):
+    raise NotImplementedError(f"Unsupported transforms: {transforms}")
+  tile_transform: launch_context.TileTransform = transforms[0]  # pytype: disable=attribute-error
+
   strides, offset = ref_ty.get_strides_and_offset()
-  transposed = utils.is_memref_transposed(ref_ty)
-  if transposed:
-    if len(shape) != 2:
-      raise NotImplementedError(
-          f"Only 2D shapes can be transposed, but got {shape}"
-      )
-    if strides[0] != 1 or strides[1] != shape[0]:
-      raise NotImplementedError(
-          f"Only contiguous 2D memrefs can be transposed, but got {ref_ty}"
-      )
+  tiled_shape = tile_transform.transform_shape(ref_ty.shape)
+  tiled_strides = tile_strides(strides, tile_transform.tiling)
 
-  for t in transforms:
-    shape = list(t.transform_shape(shape))
-
-  minor_to_major_stride_order: tuple[int, ...]
-  if transposed:
-    # The expected output is a transposed ref and `shape` is already transposed.
-    # We need to compute the correct strides to match the shape.
-    if len(shape) == 2:
-      minor_to_major_stride_order = (1, 0)
-    elif len(shape) == 4:
-      minor_to_major_stride_order = (2, 3, 0, 1)
-    else:
-      raise NotImplementedError(
-          f"Expected a 2D or 4D shape after transforms, but got {shape}"
-      )
+  if offset == ir.ShapedType.get_dynamic_stride_or_offset():
+    tiled_offset = offset
   else:
-    minor_to_major_stride_order = tuple(reversed(range(len(shape))))
+    delinearized_offset = [0] * len(strides)
+    for i, stride in sorted(enumerate(strides), key=lambda es: es[1], reverse=True):
+      delinearized_offset[i] = offset // stride
+      offset %= stride
+    tiled_delinearized_offset = tile_offset(
+        tuple(delinearized_offset), tile_transform.tiling
+    )
+    tiled_offset = sum(o * s for o, s in zip(tiled_delinearized_offset, tiled_strides, strict=True))
 
-  new_strides = [1] * len(shape)
-  for i in range(1, len(shape)):
-    dim = minor_to_major_stride_order[i]
-    prev_dim = minor_to_major_stride_order[i-1]
-    new_strides[dim] = new_strides[prev_dim] * shape[prev_dim]
+  if isinstance(ref_ty.layout, ir.StridedLayoutAttr):
+    layout = ir.StridedLayoutAttr.get(tiled_offset, tiled_strides)
+  else:
+    layout = None
 
-  new_ref_ty = ir.MemRefType.get(
-      shape,
+  return ir.MemRefType.get(
+      tiled_shape,
       ref_ty.element_type,
       memory_space=ref_ty.memory_space,
-      layout=ir.StridedLayoutAttr.get(offset, new_strides),
+      layout=layout
   )
-  return new_ref_ty
-
 
 def reinterpret_smem_ref(
     ref: ir.Value,
@@ -925,7 +984,7 @@ def reinterpret_smem_ref(
   transformed and transposed as needed.
   """
   ref_ty = ir.MemRefType(ref.type)
-  new_ref_ty = transformed_smem_ref_type(ref_ty, transforms)
+  new_ref_ty = transform_type(ref_ty, transforms)
   if ref_ty == new_ref_ty:
     return ref
   ms = utils.WORKGROUP_NVPTX_ADDRESS_SPACE
@@ -1657,12 +1716,13 @@ def _memref_subview_op_lowering_rule(
             "SubViewOp only supports static sizes for the tiled dimensions."
         )
       new_sizes = tile_transform.transform_shape(list(op.static_sizes))
+      # TODO(bchetioui): support transposed offsets.
       new_static_offsets, new_dynamic_offsets = _tile_transform_offsets(
           tiling, list(op.static_offsets), list(op.offsets)
       )
 
       new_subview_op = memref.SubViewOp(
-          transformed_smem_ref_type(op.result.type, transforms),
+          transform_type(ir.MemRefType(op.result.type), transforms),
           unwrapped_source_ref,
           new_dynamic_offsets,
           None,
@@ -1765,7 +1825,7 @@ def _memref_transpose_op_lowering_rule(
   out_transforms = inference_utils.out_transforms(op)[0]
   _, transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
   new_transpose_op = memref.TransposeOp(
-      transformed_smem_ref_type(op.result.type, transforms),
+      transform_type(ir.MemRefType(op.result.type), transforms),
       unwrapped_in_ref,
       new_permutation,
   )
@@ -1788,7 +1848,7 @@ def _memref_expand_shape_op_lowering_rule(
 
   out_transforms = inference_utils.out_transforms(op)[0]
   _, transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
-  out_transformed_ty = transformed_smem_ref_type(op.result.type, transforms)
+  out_transformed_ty = transform_type(ir.MemRefType(op.result.type), transforms)
 
   reassociation = list(op.reassociation)
   num_tiling_dims = len(in_transformed_ty.shape) - len(op.src.type.shape)
@@ -1799,6 +1859,8 @@ def _memref_expand_shape_op_lowering_rule(
   if num_tiling_dims > 0 and any(
       len(x) > 1 for x in reassociation[-num_tiling_dims:]
   ):
+    # If we ever remove this restriction, we will need to ensure this is
+    # compatible with `transform_type`.
     raise NotImplementedError("Expanding tiled dimensions is not supported.")
 
   start_index = len(op.static_output_shape)

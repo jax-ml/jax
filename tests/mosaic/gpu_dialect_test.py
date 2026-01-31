@@ -33,6 +33,7 @@ from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.mosaic.gpu import dialect_lowering as lowering
+from jax.experimental.mosaic.gpu import launch_context
 from jax.experimental.mosaic.gpu import layouts
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
@@ -1481,11 +1482,11 @@ class DialectLoweringTest(MosaicGpuTest):
       ref = memref.alloc(ty_in, [], [])
 
       ref = mgpu_utils.memref_transpose(ref, (1, 0))
-      # This tiling is applied to the transposed memref.
-      transforms = [mgpu.TileTransform(tiling=(16, 32))]
 
-      ref_transformed = lowering.reinterpret_smem_ref(ref, transforms)
-      ty_transformed = ir.MemRefType(ref_transformed.type)
+      ty_transformed = lowering.transform_type(
+          ir.MemRefType(ref.type),
+          (mgpu.TileTransform(tiling=(16, 32)),)
+      )
       self.assertEqual(ty_transformed.shape, [8, 2, 16, 32])
       strides, _ = ty_transformed.get_strides_and_offset()
       self.assertEqual(strides, [512, 4096, 1, 16])
@@ -1537,6 +1538,38 @@ class DialectLoweringTest(MosaicGpuTest):
           smem_scratch_shape=jax.ShapeDtypeStruct((), jnp.int32),
           thread_semantics=mgpu.LoweringSemantics.Warpgroup,
       )
+
+  def test_transform_type_handles_type_with_untiled_dimensions_correctly(self):
+    ty = ir.MemRefType.get(
+        (37, 128, 256), ir.BF16Type.get(),
+        memory_space=mgpu_utils.smem()
+    )
+    tile = (launch_context.TileTransform((32, 8)),)
+    tiled_type = lowering.transform_type(ty, tile)
+
+    tiled_strides, tiled_offset = tiled_type.get_strides_and_offset()
+    self.assertEqual(tuple(tiled_type.shape), (37, 4, 32, 32, 8))
+    self.assertEqual(tuple(tiled_strides), (32768, 8192, 256, 8, 1))
+    self.assertEqual(tiled_offset, 0)
+
+  def test_transform_type_handles_sliced_transposed_type_correctly(self):
+    strides = mgpu_utils.get_contiguous_strides((512, 256))
+    offset = 128 * 256 + 32
+    # This type is equivalent to the type of `y` in
+    #   y = x[128:256, 32:96].T
+    # given `x` a contiguous ref of shape (512, 256).
+    ty = ir.MemRefType.get(
+        (64, 128), ir.BF16Type.get(),
+        memory_space=mgpu_utils.smem(),
+        layout=ir.StridedLayoutAttr.get(offset, strides[::-1])
+    )
+    tile = (launch_context.TileTransform((8, 16)),)
+    tiled_type = lowering.transform_type(ty, tile)
+
+    tiled_strides, tiled_offset = tiled_type.get_strides_and_offset()
+    self.assertEqual(tuple(tiled_type.shape), (8, 8, 8, 16))
+    self.assertEqual(tuple(tiled_strides), (128, 4096, 1, 8))
+    self.assertEqual(tiled_offset, 128 // 16 * 4096 + 32 // 8 * 128)
 
 
 if __name__ == "__main__":

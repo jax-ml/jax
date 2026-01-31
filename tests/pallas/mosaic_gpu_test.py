@@ -3419,8 +3419,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
     np.testing.assert_allclose(res, a[0] @ b[0], rtol=1e-3)
 
   def test_wgmma_sliced_acc_read(self):
-    self.skip_if_wg_semantics()  # MLIR verifier error for `memref.subview`.
-
     def kernel(a_ref, b_ref, o_ref):
       def scope(acc_ref):
         plgpu.wgmma(acc_ref, a_ref, b_ref)
