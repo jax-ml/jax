@@ -556,11 +556,11 @@ def reduce_constraint(
       ):
         return Unsatisfiable()
       return Relayout(source_red, target_red, bitwidth)
-    case NotOfType(expr=expr, type=type):
+    case NotOfType(expr=expr, type=ty):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
-      return NotOfType(expr_red, type)
+      return NotOfType(expr_red, ty)
     case IsTransferable(source=source, target=target, shape=shape):
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
@@ -673,13 +673,13 @@ def non_splat_variables(
     constraints: Sequence[Constraint],
 ) -> set[Variable]:
   """Returns a all vars distinct from a splat."""
-  vars: set[Variable] = set()
+  vs: set[Variable] = set()
   for constraint in constraints:
     match constraint:
-      case NotOfType(expr=Variable() as var, type=fa.WGSplatFragLayout):
-        assert isinstance(var, Variable)  # make pytype happy
-        vars.add(var)
-  return vars
+      case NotOfType(expr=Variable() as v, type=fa.WGSplatFragLayout):
+        assert isinstance(v, Variable)  # make pytype happy
+        vs.add(v)
+  return vs
 
 
 def _has_relayout_of_non_splat_to_splat(constraints: Sequence[Constraint]) -> bool:
@@ -724,7 +724,7 @@ def saturate_distinct_from_splat(
   """
   non_splat = non_splat_variables(constraint_system.constraints)
   new_constraints: list[Constraint] = []
-  new_non_splat_found = len(non_splat) > 0
+  new_non_splat_found = bool(non_splat)
 
   while new_non_splat_found:
     new_non_splat_found = False

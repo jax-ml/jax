@@ -671,13 +671,11 @@ class LayoutInferenceTest(parameterized.TestCase):
     layout = mgpu.WGMMA_ROW_LAYOUT
     with ir.InsertionPoint(self.module.body):
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))
-      lc = layout_cast(x.result, layouts.to_layout_attr(layout)).owner.opview
+      lcast = layout_cast(x.result, layouts.to_layout_attr(layout)).owner.opview
 
     ctx = layout_inference.DerivationContext()
     _, x_mapping = _undef_constraint_system(ctx, x)
-    _, lc_mapping = layout_inference._layout_cast_constraint_system(
-        ctx, lc
-    )
+    _, lc_mapping = layout_inference._layout_cast_constraint_system(ctx, lcast)
     [constraint] = layout_inference.derive_relayout_constraints(
         x_mapping | lc_mapping
     )
@@ -1031,8 +1029,8 @@ class LayoutInferenceTest(parameterized.TestCase):
       c_079 = arith.constant(vector_ty, ir.DenseElementsAttr.get_splat(vector_ty,  ir.FloatAttr.get(f32, 0.797884583)))
       c_044 = arith.constant(vector_ty, ir.DenseElementsAttr.get_splat(vector_ty,  ir.FloatAttr.get(f32, 0.044715)))
 
-      memref = llvm.mlir_undef(memref_ty)
-      load = mgpu.dialect.VectorLoadOp(memref)
+      ref = llvm.mlir_undef(memref_ty)
+      load = mgpu.dialect.VectorLoadOp(ref)
       x = load.result
       x2 = arith.mulf(x, x)
       x3 = arith.mulf(x2, x)
@@ -1043,7 +1041,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       u = arith.addf(t, c_1)
       v = arith.mulf(u, c_05)
       r = arith.mulf(x, v)
-      store = mgpu.dialect.VectorStoreOp(r, memref)
+      store = mgpu.dialect.VectorStoreOp(r, ref)
 
     mgpu.infer_layout(self.module)
 
@@ -1067,14 +1065,14 @@ class LayoutInferenceTest(parameterized.TestCase):
       ((3, 32, 256), ir.BF16Type, False, (64,), 128),
       ((256,), ir.BF16Type, False, (2, 2), None),
   )
-  def test_compute_swizzle(self, shape, type, transposed, tiling, want_swizzle):
+  def test_compute_swizzle(self, shape, ty, transposed, tiling, want_swizzle):
     with ir.InsertionPoint(self.module.body):
-      ref_ty = ir.MemRefType.get(shape, type.get())
+      ref_ty = ir.MemRefType.get(shape, ty.get())
       if transposed:
         strides, offset = ref_ty.get_strides_and_offset()
         strides[-1], strides[-2] = strides[-2], strides[-1]
         layout = ir.StridedLayoutAttr.get(offset, strides)
-        ref_ty = ir.MemRefType.get(shape, type.get(), layout)
+        ref_ty = ir.MemRefType.get(shape, ty.get(), layout)
 
       tile_transform = None if tiling is None else lc.TileTransform(tiling)
 
@@ -2146,7 +2144,8 @@ class LayoutInferenceTest(parameterized.TestCase):
             indices=indices,
             slice_lengths=slice_lengths,
         )
-      elif op_type == mgpu.dialect.AsyncPrefetchOp:
+      else:
+        assert op_type == mgpu.dialect.AsyncPrefetchOp
         op = op_type(
             source=gmem_ref,
             indices=indices,
