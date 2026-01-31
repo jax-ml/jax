@@ -1327,7 +1327,36 @@ def _tcgen05_mma_constraint_system(
   )
   assignments[acc_variable] = cs.TMEMLayout(acc_layout)
   acc_is_valid = is_valid_tmem_layout_assignment(acc.shape, acc_layout)
+  # TODO(bchetioui): think about raising a better error here.
+  if not acc_is_valid:
+    return cs.Unsatisfiable()
   operands_for_variable[acc_variable] = [acc]
+
+  element_type_bitwidth = utils.bitwidth(op.b.type.element_type)
+  b = ValueSite(op, VariableType.OPERAND, 2)
+  b_var = ctx.producer_ref(b)
+  operands_for_variable[b_var] = [b]
+  b_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.b.type))
+  if b_is_transposed:
+    constraints = [cs.IsValidMmaTiling(cs.Transpose(b_var), element_type_bitwidth)]
+  else:
+    constraints = [cs.IsValidMmaTiling(b_var, element_type_bitwidth)]
+
+  # SMEM
+  M = op.accumulator.type.shape[0]
+  if M == 64 and not op.collective.value:
+    # We can't split N into groups if we would partition it below the tile size.
+    N = op.b.type.shape[1]
+    n_lane_groups = 2
+    max_swizzle_elems = next(
+        8 * s // element_type_bitwidth
+        for s in reversed(mgpu.SwizzlingMode)
+        if 8 * s // element_type_bitwidth <= N // n_lane_groups
+    )
+    if b_is_transposed:
+      constraints.append(cs.Divides(b_var, (max_swizzle_elems, 8)))
+    else:
+      constraints.append(cs.Divides(b_var, (8, max_swizzle_elems)))
 
   if _is_tmem_ref(op.a):
     a = ValueSite(op, VariableType.OPERAND, 1)
@@ -1340,47 +1369,21 @@ def _tcgen05_mma_constraint_system(
     assignments[a_var] = cs.TMEMLayout(a_layout)
     operands_for_variable[a_var] = [a]
     a_is_valid = is_valid_tmem_layout_assignment(a.shape, a_layout)
+    # TODO(bchetioui): think about raising a better error here.
+    if not a_is_valid:
+      return cs.Unsatisfiable()
   else:
     assert _is_smem_ref(op.a)
-    a_tiling = _infer_tiling_for_mma_ref(
-        ir.MemRefType(op.a.type),
-        max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle,
-    )
+    a_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.a.type))
     a = ValueSite(op, VariableType.OPERAND, 1)
     a_var = ctx.producer_ref(a)
-    a_tile_transform = lc.TileTransform(a_tiling)
-    assignments[a_var] = cs.SMEMTiling(a_tile_transform)
     operands_for_variable[a_var] = [a]
-    a_is_valid = is_valid_smem_layout_assignment(a.shape, a_tile_transform)
+    if a_is_transposed:
+      constraints.append(cs.IsValidMmaTiling(cs.Transpose(a_var), element_type_bitwidth))
+    else:
+      constraints.append(cs.IsValidMmaTiling(a_var, element_type_bitwidth))
 
-  # SMEM
-  M = op.accumulator.type.shape[0]
-  if M == 64 and not op.collective.value:
-    # We can't split N into groups if we would partition it below the tile size.
-    N = op.b.type.shape[1]
-    element_type_bitwidth = utils.bitwidth(op.b.type.element_type)
-    n_lane_groups = 2
-    max_b_swizzle = next(
-        s
-        for s in reversed(mgpu.SwizzlingMode)
-        if 8 * s // element_type_bitwidth <= N // n_lane_groups
-    )
-  else:
-    max_b_swizzle = mgpu.SwizzlingMode.k128ByteSwizzle
-
-  b_tiling = _infer_tiling_for_mma_ref(ir.MemRefType(op.b.type), max_b_swizzle)
-  b = ValueSite(op, VariableType.OPERAND, 2)
-  b_var = ctx.producer_ref(b)
-  b_tile_transform = lc.TileTransform(b_tiling)
-  assignments[b_var] = cs.SMEMTiling(b_tile_transform)
-  operands_for_variable[b_var] = [b]
-  b_is_valid = is_valid_smem_layout_assignment(b.shape, b_tile_transform)
-
-  # TODO(bchetioui): think about raising a better error here.
-  if not a_is_valid or not b_is_valid or not acc_is_valid:
-    return cs.Unsatisfiable()
-
-  return cs.ConstraintSystem(assignments=assignments), operands_for_variable
+  return cs.ConstraintSystem(assignments=assignments, constraints=constraints), operands_for_variable
 
 
 @_add_constraint_system_derivation_rule(mgpu.AsyncLoadTmemOp)

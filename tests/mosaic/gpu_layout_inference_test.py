@@ -2250,7 +2250,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       side=("lhs", "rhs"),
       transpose_other_side=(True, False),
   )
-  def test_infer_mma_transforms_supports_small_tile_sizes(
+  def test_infer_wgmma_transforms_supports_small_tile_sizes(
       self, swizzle, side, transpose_other_side
   ):
     shape = (64, 64)
@@ -2282,6 +2282,57 @@ class LayoutInferenceTest(parameterized.TestCase):
     mgpu.infer_layout(self.module)
     wgmma_transforms = inference_utils.in_transforms(wgmma)
     self.assertSequenceEqual(wgmma_transforms, [lhs_transforms, rhs_transforms])
+
+  @parameterized.product(
+      lhs_swizzle=(32, 64, 128),
+      rhs_swizzle=(32, 64, 128),
+      transpose_lhs=(True, False),
+      transpose_rhs=(True, False),
+      MN=(64, 128)
+  )
+  def test_infer_tcgen05_mma_transforms_supports_small_tile_sizes(
+      self, lhs_swizzle, rhs_swizzle, transpose_lhs, transpose_rhs, MN
+  ):
+    if MN == 64 and (lhs_swizzle == 128 or rhs_swizzle == 128):
+      self.skipTest("Swizzle must be at most 64 for MN=64.")
+    shape = (MN, MN)
+    with ir.InsertionPoint(self.module.body):
+      bf16 = ir.BF16Type.get()
+      f32 = ir.F32Type.get()
+      ref_ty = ir.MemRefType.get(shape, bf16, memory_space=mgpu.utils.smem())
+      acc_ty = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
+      acc, lhs, rhs = undefs(acc_ty, ref_ty, ref_ty)
+      mgpu.dialect.with_transforms(lhs, ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((8, lhs_swizzle // 2)),
+          mgpu.dialect.SwizzleTransformAttr.get(lhs_swizzle),
+      ]))
+      mgpu.dialect.with_transforms(rhs, ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((8, rhs_swizzle // 2)),
+          mgpu.dialect.SwizzleTransformAttr.get(rhs_swizzle),
+      ]))
+
+      if transpose_lhs:
+        lhs = mgpu.utils.memref_transpose(lhs, (1, 0))
+      if transpose_rhs:
+        rhs = mgpu.utils.memref_transpose(rhs, (1, 0))
+      accumulate = arith.constant(ir.IntegerType.get_signless(1), 1)
+      tcgen05_mma_op = mgpu.dialect.TcGen05MMAOp(acc, lhs, rhs, accumulate)
+
+    mgpu.infer_layout(self.module)
+
+    lhs_tiling = (lhs_swizzle // 2, 8) if transpose_lhs else (8, lhs_swizzle // 2)
+    rhs_tiling = (rhs_swizzle // 2, 8) if transpose_rhs else (8, rhs_swizzle // 2)
+
+    lhs_transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get(lhs_tiling),
+        mgpu.dialect.SwizzleTransformAttr.get(lhs_swizzle),
+    ])
+    rhs_transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get(rhs_tiling),
+        mgpu.dialect.SwizzleTransformAttr.get(rhs_swizzle),
+    ])
+    tcgen05_mma_transforms = inference_utils.in_transforms(tcgen05_mma_op)
+    self.assertSequenceEqual(tcgen05_mma_transforms, [lhs_transforms, rhs_transforms])
 
 
 if __name__ == "__main__":
