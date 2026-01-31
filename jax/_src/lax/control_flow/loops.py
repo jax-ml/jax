@@ -650,7 +650,7 @@ def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
   carry, carry_dot, ys, ys_dot = split_list(out_flat, [num_carry, len(init_dot), num_ys])
   primals_out = carry + ys
   tangents_out_iter = iter(carry_dot + ys_dot)
-  tangents_out = [next(tangents_out_iter) if nz else ad_util.Zero.from_primal_value(p)
+  tangents_out = [next(tangents_out_iter) if nz else ad_util.p2tz(p)
                   for p, nz in zip(primals_out, nonzeros_out)]
   return primals_out, tangents_out
 
@@ -1739,7 +1739,7 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
 
   out_carry, out_carry_dot = split_list(out, [num_carry])
   out_tangents_iter = iter(out_carry_dot)
-  out_tangents = [next(out_tangents_iter) if nz else ad_util.Zero.from_primal_value(p)
+  out_tangents = [next(out_tangents_iter) if nz else ad_util.p2tz(p)
                   for p, nz in zip(out_carry, nonzeros_out)]
   return out_carry, out_tangents
 

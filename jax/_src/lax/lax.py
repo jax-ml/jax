@@ -4632,7 +4632,7 @@ def _add_jvp(primals, tangents):
   xdot, ydot = tangents
   primal_out = add(x, y)
   if type(xdot) is type(ydot) is ad_util.Zero:
-    return primal_out, ad_util.Zero.from_primal_value(primal_out)
+    return primal_out, ad_util.p2tz(primal_out)
   if type(xdot) is ad_util.Zero:
     return (primal_out, _maybe_broadcast(primal_out.shape, ydot,
                                          typeof(primal_out).sharding))
@@ -4687,7 +4687,7 @@ def _sub_jvp(primals, tangents):
   xdot, ydot = tangents
   primal_out = sub(x, y)
   if type(xdot) is type(ydot) is ad_util.Zero:
-    return primal_out, ad_util.Zero.from_primal_value(primal_out)
+    return primal_out, ad_util.p2tz(primal_out)
   if type(xdot) is ad_util.Zero:
     return (primal_out, _maybe_broadcast(primal_out.shape, neg(ydot),
                                          typeof(primal_out).sharding))
@@ -4946,7 +4946,7 @@ def _convert_element_type_jvp_rule(tangent, primal_result, operand, *,
                                    new_dtype, weak_type, sharding):
   new_tangent_dtype = core.primal_dtype_to_tangent_dtype(new_dtype)
   if new_tangent_dtype == dtypes.float0:
-    return ad_util.Zero.from_primal_value(primal_result)
+    return ad_util.p2tz(primal_result)
   else:
     return convert_element_type_p.bind(tangent, new_dtype=new_tangent_dtype,
                                        weak_type=weak_type, sharding=sharding)
@@ -6529,7 +6529,7 @@ def _broadcast_in_dim_jvp_rule(primals, tangents, *, shape, broadcast_dimensions
                               broadcast_dimensions=broadcast_dimensions,
                               sharding=sharding)
   if type(operand_dot) is ad_util.Zero:
-    y_dot = ad_util.Zero.from_primal_value(y)
+    y_dot = ad_util.p2tz(y)
   else:
     y_dot = broadcast_in_dim_p.bind(operand_dot, shape=shape,
                                     broadcast_dimensions=broadcast_dimensions,
@@ -8147,7 +8147,7 @@ def _top_k_jvp(primals, tangents, *, k, axis):
   tangent, = tangents
   primals_out = top_k(operand, k, axis=axis)
   if type(tangent) is ad_util.Zero:
-    tangent_out = ad_util.Zero.from_primal_value(primals_out[0])
+    tangent_out = ad_util.p2tz(primals_out[0])
   else:
     _, k_idxs = primals_out
     idx_shape = k_idxs.shape
@@ -8163,7 +8163,7 @@ def _top_k_jvp(primals, tangents, *, k, axis):
         start_index_map=(axis,),
     )
     tangent_out = slicing.gather(tangent, gather_indices, dnums, slice_sizes)
-  return primals_out, (tangent_out, ad_util.Zero.from_primal_value(primals_out[1]))
+  return primals_out, (tangent_out, ad_util.p2tz(primals_out[1]))
 
 def _top_k_batch_rule(batched_args, batch_dims, *, k, axis):
   operand, = batched_args
@@ -8211,7 +8211,7 @@ batching.primitive_batchers[top_k_p] = _top_k_batch_rule
 def _stop_gradient_jvp_rule(primals, tangents):
   # if we don't call stop_gradient here, we'd only peel off one autodiff tracer
   x, = primals
-  return stop_gradient(x), ad_util.Zero.from_primal_value(x)
+  return stop_gradient(x), ad_util.p2tz(x)
 
 def _stop_gradient_batch_rule(batched_args, batch_dims):
   x, = batched_args

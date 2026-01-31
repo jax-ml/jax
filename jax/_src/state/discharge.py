@@ -786,7 +786,7 @@ def _run_state_jvp(primals: Sequence[Any], tangents: Sequence[Any], *,
                                                            len(primals)])
   del out_consts
   out_tangents_iter = iter(out_tangents)
-  out_tangents = [next(out_tangents_iter) if nz else ad_util.Zero.from_primal_value(p)
+  out_tangents = [next(out_tangents_iter) if nz else ad_util.p2tz(p)
                   for p, nz in zip(out_primals, nonzero_tangents)]
   return out_primals, out_tangents
 ad.primitive_jvps[run_state_p] = _run_state_jvp

@@ -1659,7 +1659,7 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
       (lu.wrap_init(f_tangent, debug_info=lin_jaxpr.debug_info),
        *residuals, *env, *nz_tangents_in), tangent_params)
   nz_tangents_out_iter = iter(nz_tangents_out)
-  tangents_out = [next(nz_tangents_out_iter) if nz else ad.Zero.from_primal_value(primal)
+  tangents_out = [next(nz_tangents_out_iter) if nz else ad.p2tz(primal)
                   for nz, primal in zip(nzs_out, primals_out)]
   return map(partial(ad.maybe_linearize_tracer, trace), primals_out, nzs_out, tangents_out)
 ad.LinearizeTrace.process_shard_map = _shard_map_linearize
