@@ -1546,7 +1546,7 @@ def _ragged_all_to_all_jvp(primals, tangents, **params):
   result = ragged_all_to_all_p.bind(
       operand, output, *sizes_and_offsets, **params)
   if type(operand_dot) is type(output_dot) is ad.Zero:
-    result_dot = ad.Zero.from_primal_value(result)
+    result_dot = ad.p2tz(result)
   else:
     operand_dot = ad.instantiate_zeros(operand_dot)
     output_dot = ad.instantiate_zeros(output_dot)

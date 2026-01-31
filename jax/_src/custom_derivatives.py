@@ -28,7 +28,7 @@ from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import traceback_util
 from jax._src.ad_util import (
-    stop_gradient_p, SymbolicZero, Zero, zeros_like_aval)
+    stop_gradient_p, SymbolicZero, Zero, zeros_like_aval, p2tz)
 from jax._src.api_util import (
   argnums_partial, flatten_fun_nokwargs, resolve_kwargs,
   prepend_static_args, debug_info, fun_signature,
@@ -70,7 +70,7 @@ def _sum_tangents(_, x, *xs):
   return reduce(ad.add_tangents, xs, x)
 
 def _zeros_like_pytree(x):
-  return tree_map(Zero.from_primal_value, x)
+  return tree_map(p2tz, x)
 
 _stop_gradient = partial(
     tree_map,

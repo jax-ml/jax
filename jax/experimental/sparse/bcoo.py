@@ -329,11 +329,11 @@ def _bcoo_fromdense_jvp(primals, tangents, *, nse, n_batch, n_dense, index_dtype
   data, indices = primals_out
 
   if type(Mdot) is ad.Zero:
-    data_dot = ad.Zero.from_primal_value(data)
+    data_dot = ad.p2tz(data)
   else:
     data_dot = _bcoo_extract(indices, Mdot)
 
-  tangents_out = (data_dot, ad.Zero.from_primal_value(indices))
+  tangents_out = (data_dot, ad.p2tz(indices))
 
   return primals_out, tangents_out
 
@@ -568,7 +568,7 @@ def _bcoo_transpose_jvp(primals, tangents, *, permutation: Sequence[int], spinfo
   data_dot, _ = tangents
   primals_out = _bcoo_transpose(data, indices, permutation=permutation, spinfo=spinfo)
   data_dot_out, _ = _bcoo_transpose(data_dot, indices, permutation=permutation, spinfo=spinfo)
-  return primals_out, (data_dot_out, ad.Zero.from_primal_value(indices))
+  return primals_out, (data_dot_out, ad.p2tz(indices))
 
 def _bcoo_transpose_transpose(ct, data, indices, *, permutation: Sequence[int], spinfo: SparseInfo):
   data_ct, indices_ct = ct
@@ -1282,7 +1282,7 @@ def _bcoo_spdot_general_jvp(primals, tangents, **kwds):
     data_dot_out += _bcoo_spdot_general(lhs_data_dot, lhs_indices, rhs_data, rhs_indices, **kwds)[0]
   if type(rhs_data_dot) is not ad.Zero:
     data_dot_out += _bcoo_spdot_general(lhs_data, lhs_indices, rhs_data_dot, rhs_indices, **kwds)[0]
-  return primals_out, [data_dot_out, ad.Zero.from_primal_value(primals_out[1])]
+  return primals_out, [data_dot_out, ad.p2tz(primals_out[1])]
 
 # TODO(JVP): transpose rule
 batching.primitive_batchers[bcoo_spdot_general_p] = _bcoo_spdot_general_batch_rule
@@ -1363,8 +1363,8 @@ def _bcoo_sort_indices_jvp(primals, tangents, *, spinfo):
   permute = nfold_vmap(lambda d, p: d[p], props.n_batch)
   data_out = permute(data, perm)
 
-  indices_dot_out = ad.Zero.from_primal_value(indices)
-  data_dot_out = ad.Zero.from_primal_value(data_out) if type(data_dot) is ad.Zero else permute(data_dot, perm)
+  indices_dot_out = ad.p2tz(indices)
+  data_dot_out = ad.p2tz(data_out) if type(data_dot) is ad.Zero else permute(data_dot, perm)
   return (data_out, indices_out), (data_dot_out, indices_dot_out)
 
 _bcoo_sort_indices_hlo = mlir.lower_fun(
@@ -1549,8 +1549,8 @@ def _bcoo_sum_duplicates_jvp(primals, tangents, *, spinfo, nse):
     permute = lambda x, i, y: x
   permute = nfold_vmap(permute, props.n_batch)
   data_out = permute(data_out, mapping, data)
-  indices_dot_out = ad.Zero.from_primal_value(indices_out)
-  data_dot_out = ad.Zero.from_primal_value(data_out) if type(data_dot) is ad.Zero else permute(data_dot_out, mapping, data_dot)
+  indices_dot_out = ad.p2tz(indices_out)
+  data_dot_out = ad.p2tz(data_out) if type(data_dot) is ad.Zero else permute(data_dot_out, mapping, data_dot)
   return (data_out, indices_out), (data_dot_out, indices_dot_out)
 
 _bcoo_sum_duplicates_hlo = mlir.lower_fun(

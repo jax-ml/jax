@@ -1528,8 +1528,8 @@ def _lu_jvp_rule(primals, tangents):
     lu_dot_fun = api.vmap(lu_dot_fun)
   lu_dot = lu_dot_fun(lu, a_dot, permutation)
 
-  return (lu, pivots, permutation), (lu_dot, ad_util.Zero.from_primal_value(pivots),
-                                     ad_util.Zero.from_primal_value(permutation))
+  return (lu, pivots, permutation), (lu_dot, ad_util.p2tz(pivots),
+                                     ad_util.p2tz(permutation))
 
 
 def _lu_cpu_gpu_lowering(ctx, operand, *, target_name_prefix: str):
@@ -1879,7 +1879,7 @@ def qr_jvp_rule(primals, tangents, *, pivoting, full_matrices, use_magma):
   dq = q @ (do - qt_dx_rinv) + dx_rinv
   dr = (qt_dx_rinv - do) @ r
   if pivoting:
-    dp = ad_util.Zero.from_primal_value(p[0])
+    dp = ad_util.p2tz(p[0])
     return (q, r, p[0]), (dq, dr, dp)
   return (q, r), (dq, dr)
 

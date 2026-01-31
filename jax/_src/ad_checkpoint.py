@@ -598,7 +598,7 @@ def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
       prevent_cse=prevent_cse, differentiated=differentiated, policy=policy)
   out_primals, out_tangents_ = split_list(outs, [len(jaxpr.outvars)])
   out_tangents_ = iter(out_tangents_)
-  out_tangents = [next(out_tangents_) if nz else ad_util.Zero.from_primal_value(p)
+  out_tangents = [next(out_tangents_) if nz else ad_util.p2tz(p)
                   for p, nz in zip(out_primals, out_nz)]
   return out_primals, out_tangents
 ad.primitive_jvps[remat_p] = remat_jvp
