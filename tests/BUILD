@@ -2246,6 +2246,23 @@ jax_multiplatform_test(
     ]),
 )
 
+jax_multiplatform_test(
+    name = "scaled_dot_test",
+    srcs = ["scaled_dot_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]) + [
+        "//jax/_src:api_util",
+        "//jax/_src:core",
+        "//jax/_src:dtypes",
+        "//jax/_src:mlir",
+        "//jax/_src:partial_eval",
+        "//jax/_src:typing",
+        "//jax/_src/lib",
+    ],
+)
+
 jax_py_test(
     name = "custom_partitioning_sharding_rule_test",
     srcs = ["custom_partitioning_sharding_rule_test.py"],
