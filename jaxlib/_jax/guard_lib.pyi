@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Jax support library for guards"""
+
 import enum
 
 class TransferGuardLevel(enum.Enum):

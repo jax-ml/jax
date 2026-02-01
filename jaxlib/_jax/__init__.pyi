@@ -324,7 +324,7 @@ class CompileOptions:
   @property
   def argument_layouts(self) -> list[Shape] | None: ...
   @argument_layouts.setter
-  def argument_layouts(self, arg: Sequence[Shape], /) -> None: ...
+  def argument_layouts(self, arg: Sequence[Shape]) -> None: ...
   @property
   def parameter_is_tupled_arguments(self) -> bool: ...
   @parameter_is_tupled_arguments.setter
@@ -910,7 +910,7 @@ class Client:
       serialized: bytes,
       executable_devices: DeviceList,
       compile_options: CompileOptions | None = ...,
-      host_callbacks: Sequence[typing_extensions.CapsuleType] = ...,
+      host_callbacks: Sequence[typing_extensions.CapsuleType] | None = ...,
   ) -> LoadedExecutable: ...
   @overload
   def deserialize_executable(
@@ -918,7 +918,7 @@ class Client:
       serialized: bytes,
       executable_devices: DeviceList,
       compile_options: CompileOptions | None = ...,
-      host_callbacks: Sequence[Callable] = ...,
+      host_callbacks: Sequence[Callable] | None = ...,
   ) -> LoadedExecutable: ...
   @overload
   def deserialize_executable(

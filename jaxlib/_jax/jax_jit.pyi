@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Jax C++ jit library"""
+
 from collections.abc import Callable, Sequence
 from .config import Config as _Config
 from .pytree import (
