@@ -136,7 +136,7 @@ def _load_nvidia_libraries():
   _load("cuda_cupti", ["libcupti.so.12"])
   _load("cu13", ["libcupti.so.13"])
   _load("cusparse", ["libcusparse.so.12"])
-  _load("cu13", ["libcusparse.so.12"])
+  _load("cu13", ["libcusparse.so.13"])
   _load("cusolver", ["libcusolver.so.11"])
   _load("cu13", ["libcusolver.so.12"])
   _load("cufft", ["libcufft.so.11"])
@@ -297,6 +297,20 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
       raise RuntimeError(msg)
     else:
       results.append({"installed": True, "msg": msg, "passed": False})
+
+  # https://github.com/jax-ml/jax/issues/34696
+  # CUDA 13 has a cuBLASLt issue with vmap + grad + matmul combination
+  cuda_runtime_version = _version_check("CUDA", cuda_versions.cuda_runtime_get_version,
+                                         cuda_versions.cuda_runtime_build_version,
+                                         scale_for_comparison=10) or 0
+  if cuda_runtime_version >= 130000:
+    warning_msg = (
+        "JAX is running with CUDA 13+. There is a known issue with cuBLASLt in CUDA 13 "
+        "that can cause segmentation faults when combining jax.grad, jax.vmap, and matrix "
+        "multiplication. If you encounter this issue, you can work around it by setting: "
+        "XLA_FLAGS='--xla_gpu_cublas_fallback=true' or by upgrading CUDA/cuBLASLt to a newer version."
+    )
+    logger.warning(warning_msg)
 
   errors = []
   debug_results = []

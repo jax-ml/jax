@@ -16,6 +16,18 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Bug fixes:
+
+  * Fixed segmentation fault in CUDA 13 cuBLASLt library when using
+    {func}`jax.grad`, {func}`jax.vmap`, and matrix multiplication together
+    ({gh-issue}`34696`). The issue is a known cuBLASLt bug in CUDA 13. As a
+    workaround, you can set ``XLA_FLAGS='--xla_gpu_cublas_fallback=true'``.
+    The issue is fixed in later CUDA versions and will be automatically resolved
+    when you upgrade your CUDA toolchain.
+
+  * Fixed incorrect library loading for cuSPARSE in CUDA 13. cuSPARSE 13 was
+    being incorrectly loaded as version 12, which could cause version mismatches.
+
 ## JAX 0.8.1 (November 18, 2025)
 
 * New features:
