@@ -1,0 +1,312 @@
+diff --git a/xla/backends/autotuner/autotuner.cc b/xla/backends/autotuner/autotuner.cc
+index 29e350f306..147251b86f 100644
+--- a/xla/backends/autotuner/autotuner.cc
++++ b/xla/backends/autotuner/autotuner.cc
+@@ -191,15 +191,31 @@ absl::Status Autotuner::Autotune(HloModule* module,
+   }
+ 
+   // 2. Shard and get instructions to autotune for current shard.
++  // Sort the instructions by fingerprint to ensure deterministic sharding.
++  std::vector<tsl::Fprint128> sorted_fingerprints;
++  for (const auto& [fingerprint, _] : all_instructions_by_fingerprint) {
++    sorted_fingerprints.push_back(fingerprint);
++  }
++  std::sort(sorted_fingerprints.begin(), sorted_fingerprints.end(),
++            [](const tsl::Fprint128& a, const tsl::Fprint128& b) {
++              if (a.high64 != b.high64) {
++                return a.high64 < b.high64;
++              }
++              return a.low64 < b.low64;
++            });
++
+   const size_t bucket_size =
+-      std::ceil(static_cast<double>(all_instructions_by_fingerprint.size()) /
++      std::ceil(static_cast<double>(sorted_fingerprints.size()) /
+                 static_cast<double>(total_shards));
+   const size_t start = bucket_size * my_shard_index;
+-  const size_t end =
+-      std::min(start + bucket_size, all_instructions_by_fingerprint.size());
+-  InstructionsByFingerprint instructions_by_fingerprint(
+-      std::next(all_instructions_by_fingerprint.begin(), start),
+-      std::next(all_instructions_by_fingerprint.begin(), end));
++  const size_t end = std::min(start + bucket_size, sorted_fingerprints.size());
++
++  InstructionsByFingerprint instructions_by_fingerprint;
++  for (size_t i = start; i < end; ++i) {
++    const tsl::Fprint128& fingerprint = sorted_fingerprints[i];
++    instructions_by_fingerprint[fingerprint] =
++        all_instructions_by_fingerprint.at(fingerprint);
++  }
+ 
+   // 3. Autotune instructions for this shard. Use cached configs if available,
+   // otherwise autotune and cache the best config.
+@@ -254,7 +270,9 @@ absl::Status Autotuner::Autotune(HloModule* module,
+ 
+   // 6. Apply the results to all candidate instructions, must be already in
+   // cache_ due to step 3 and 5 above.
+-  for (auto& [_, instructions] : all_instructions_by_fingerprint) {
++  for (tsl::Fprint128 fingerprint : sorted_fingerprints) {
++    std::vector<HloInstruction*>& instructions =
++        all_instructions_by_fingerprint[fingerprint];
+     CHECK(!instructions.empty());
+     std::optional<Config> cached_config = LookUp(instructions[0]);
+     CHECK(cached_config.has_value())
+diff --git a/xla/backends/autotuner/autotuner_test.cc b/xla/backends/autotuner/autotuner_test.cc
+index cb3d839b8d..f32a2a96e6 100644
+--- a/xla/backends/autotuner/autotuner_test.cc
++++ b/xla/backends/autotuner/autotuner_test.cc
+@@ -999,32 +999,32 @@ TEST_F(AutotunerTest, ShardedAutotuning) {
+   auto kv_store = std::make_shared<MockKeyValueStore>();
+   auto cache = std::make_unique<MockAutotunerCache>();
+ 
+-  // Shard 0 autotunes kCopy instructions, updates the cache and serializes the
+-  // result to a string "kCopy_autotune_result".
+-  EXPECT_CALL(*cache, Lookup(InstrPtrMatcher(HloOpcode::kCopy)))
++  // Shard 0 autotunes kAdd instructions, updates the cache and serializes the
++  // result to a string "kAdd_autotune_result".
++  EXPECT_CALL(*cache, Lookup(InstrPtrMatcher(HloOpcode::kAdd)))
+       .WillOnce(Return(std::nullopt))                    // During autotuning.
+       .WillOnce(Return(GetCacheConfig("best_config")));  // Config application.
+-  EXPECT_CALL(*cache, Insert(InstrPtrMatcher(HloOpcode::kCopy), _))
++  EXPECT_CALL(*cache, Insert(InstrPtrMatcher(HloOpcode::kAdd), _))
+       .WillOnce(Return(absl::OkStatus()));
+-  EXPECT_CALL(*cache, Serialize(_)).WillOnce(Return("kCopy_autotune_result"));
++  EXPECT_CALL(*cache, Serialize(_)).WillOnce(Return("kAdd_autotune_result"));
+   // Stores the serialized results to the KV store if it does not exist.
+   EXPECT_CALL(*kv_store, TryGet(testing::HasSubstr("_0")))
+       .WillOnce(Return(absl::NotFoundError("not found")));
+-  EXPECT_CALL(*kv_store, Set(testing::HasSubstr("_0"), "kCopy_autotune_result"))
++  EXPECT_CALL(*kv_store, Set(testing::HasSubstr("_0"), "kAdd_autotune_result"))
+       .WillOnce(Return(absl::OkStatus()));
+ 
+   // Shard 0 reads the KV store entry for shard 1 and updates the current cache.
+   EXPECT_CALL(*kv_store, Get(testing::HasSubstr("_1"), _))
+-      .WillOnce(Return("kAdd_autotune_result"));
+-  EXPECT_CALL(*cache, Deserialize("kAdd_autotune_result"))
++      .WillOnce(Return("kCopy_autotune_result"));
++  EXPECT_CALL(*cache, Deserialize("kCopy_autotune_result"))
+       .WillOnce(Return(absl::OkStatus()));
+-  EXPECT_CALL(*cache, Lookup(InstrPtrMatcher(HloOpcode::kAdd)))
++  EXPECT_CALL(*cache, Lookup(InstrPtrMatcher(HloOpcode::kCopy)))
+       .WillOnce(Return(GetCacheConfig("best_config")));
+ 
+   ASSERT_OK_AND_ASSIGN(
+       std::unique_ptr<Autotuner> autotuner,
+       SetupAutotunerWithExpectations(
+-          /*instrs_to_autotune=*/{HloOpcode::kCopy},
++          /*instrs_to_autotune=*/{HloOpcode::kAdd},
+           /*instrs_to_apply_config_and_count=*/
+           {{HloOpcode::kCopy, 1}, {HloOpcode::kAdd, 2}}, std::move(cache)));
+ 
+diff --git a/xla/debug_options_flags.cc b/xla/debug_options_flags.cc
+index 5dfc6037f6..34cd4f0007 100644
+--- a/xla/debug_options_flags.cc
++++ b/xla/debug_options_flags.cc
+@@ -472,6 +472,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
+       DebugOptions::DETECTION_MODE_NONE);
+   opts.set_xla_gpu_experimental_scaled_dot_with_triton(false);
+   opts.set_xla_gpu_experimental_use_raft_select_k(false);
++  opts.set_xla_early_exit_with_layouts(false);
++  opts.set_xla_gpu_experimental_all_fusions_with_triton(false);
+ 
+   opts.add_xla_gpu_experimental_autotune_backends(
+       DebugOptions::AUTOTUNE_BACKEND_TRITON);
+@@ -2395,6 +2397,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
+       "  'cudnn,triton' (overwrites defaults)\n"
+       "  '+cudnn,-cublas' (adds/removes from defaults)\n"
+       "Available: cudnn, triton, cublas, cublaslt."));
++  flag_list->push_back(tsl::Flag(
++      "xla_gpu_experimental_all_fusions_with_triton",
++      bool_setter_for(
++          &DebugOptions::set_xla_gpu_experimental_all_fusions_with_triton),
++      debug_options->xla_gpu_experimental_all_fusions_with_triton(),
++      "Experimental: If true, autotune all fusions with block level emitter."));
+   flag_list->push_back(tsl::Flag(
+       "xla_gpu_gemm_autotuner_override_file",
+       string_setter_for(
+diff --git a/xla/service/gpu/BUILD b/xla/service/gpu/BUILD
+index f2d9ce221f..78015c50d3 100644
+--- a/xla/service/gpu/BUILD
++++ b/xla/service/gpu/BUILD
+@@ -2190,6 +2190,7 @@ cc_library(
+         "//xla/hlo/transforms/simplifiers:hlo_constant_folding",
+         "//xla/hlo/transforms/simplifiers:reshape_mover",
+         "//xla/hlo/transforms/simplifiers:tuple_simplifier",
++        "//xla/pjrt/distributed:key_value_store_interface",
+         "//xla/service:call_inliner",
+         "//xla/service:compiler",
+         "//xla/service:dump",
+diff --git a/xla/service/gpu/amdgpu_compiler.cc b/xla/service/gpu/amdgpu_compiler.cc
+index 143826d3b1..9b8ec66942 100644
+--- a/xla/service/gpu/amdgpu_compiler.cc
++++ b/xla/service/gpu/amdgpu_compiler.cc
+@@ -364,7 +364,8 @@ absl::Status AMDGPUCompiler::AddFusionAutotuningPass(
+     const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
+     stream_executor::StreamExecutor* stream_executor,
+     const Compiler::GpuTargetConfig* target_config,
+-    HloCostAnalysis::ShapeSizeFunction shape_size_fn) {
++    HloCostAnalysis::ShapeSizeFunction shape_size_fn,
++    const MultiProcessKeyValueStore& key_value_store) {
+   if (stream_executor == nullptr) {
+     return absl::OkStatus();
+   }
+@@ -389,8 +390,7 @@ absl::Status AMDGPUCompiler::AddFusionAutotuningPass(
+       AutotunerPass::Create(std::move(backends), debug_options, stream_executor,
+                             thread_pool, ShouldAutotuneBetweenFusionEmitters,
+                             target_config, options.device_allocator,
+-                            /*optimize_scratch_bytes=*/false,
+-                            MultiProcessKeyValueStore(),
++                            /*optimize_scratch_bytes=*/false, key_value_store,
+                             /*allow_reg_spills=*/true));
+   pipeline->AddPass(std::move(autotuner_pass));
+   return absl::OkStatus();
+diff --git a/xla/service/gpu/amdgpu_compiler.h b/xla/service/gpu/amdgpu_compiler.h
+index 5d739b2b37..7216bf7a2d 100644
+--- a/xla/service/gpu/amdgpu_compiler.h
++++ b/xla/service/gpu/amdgpu_compiler.h
+@@ -77,7 +77,8 @@ class AMDGPUCompiler : public GpuCompiler {
+       const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
+       stream_executor::StreamExecutor* stream_executor,
+       const Compiler::GpuTargetConfig* target_config,
+-      HloCostAnalysis::ShapeSizeFunction shape_size_fn) override;
++      HloCostAnalysis::ShapeSizeFunction shape_size_fn,
++      const MultiProcessKeyValueStore& key_value_store) override;
+ 
+  private:
+   AMDGPUCompiler(const AMDGPUCompiler&) = delete;
+diff --git a/xla/service/gpu/gpu_compiler.cc b/xla/service/gpu/gpu_compiler.cc
+index 0556396f2a..b91f89b737 100644
+--- a/xla/service/gpu/gpu_compiler.cc
++++ b/xla/service/gpu/gpu_compiler.cc
+@@ -1650,7 +1650,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
+     pipeline.AddPass<FusionWrapper>(gpu_target_config.device_description);
+     RETURN_IF_ERROR(AddFusionAutotuningPass(
+         &pipeline, hlo_module, options, thread_pool.get_mutable(), stream_exec,
+-        &gpu_target_config, ShapeSizeBytesFunction()));
++        &gpu_target_config, ShapeSizeBytesFunction(), options.key_value_store));
+     RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
+   }
+ 
+diff --git a/xla/service/gpu/gpu_compiler.h b/xla/service/gpu/gpu_compiler.h
+index 2af1b20bd9..8d38f27f28 100644
+--- a/xla/service/gpu/gpu_compiler.h
++++ b/xla/service/gpu/gpu_compiler.h
+@@ -202,7 +202,8 @@ class GpuCompiler : public LLVMCompiler {
+       const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
+       stream_executor::StreamExecutor* stream_executor,
+       const GpuTargetConfig* target_config,
+-      HloCostAnalysis::ShapeSizeFunction shape_size_fn) {
++      HloCostAnalysis::ShapeSizeFunction shape_size_fn,
++      const MultiProcessKeyValueStore& key_value_store) {
+     return absl::OkStatus();
+   }
+ 
+diff --git a/xla/service/gpu/nvptx_compiler.cc b/xla/service/gpu/nvptx_compiler.cc
+index 933edde2e3..8f5c8094b6 100644
+--- a/xla/service/gpu/nvptx_compiler.cc
++++ b/xla/service/gpu/nvptx_compiler.cc
+@@ -64,6 +64,7 @@ limitations under the License.
+ #include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
+ #include "xla/hlo/transforms/simplifiers/reshape_mover.h"
+ #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
++#include "xla/pjrt/distributed/key_value_store_interface.h"
+ #include "xla/service/call_inliner.h"
+ #include "xla/service/compiler.h"
+ #include "xla/service/dump.h"
+@@ -426,10 +427,7 @@ NVPTXCompiler::GetCodegenBackends(
+ 
+ namespace {
+ 
+-// Returns true if the instruction is a fusion that would go through the native
+-// emitter, but may benefit from going through the block-level emitter.
+-// Currently, we only do this for reductions and transposes.
+-bool ShouldAutotuneBetweenFusionEmitters(const HloInstruction& instruction) {
++bool ShouldAutotuneBetweenFusionEmittersAny(const HloInstruction& instruction) {
+   if (instruction.opcode() != HloOpcode::kFusion) {
+     return false;
+   }
+@@ -445,6 +443,15 @@ bool ShouldAutotuneBetweenFusionEmitters(const HloInstruction& instruction) {
+                      HloPredicateIsOp<HloOpcode::kScatter>)) {
+     return false;
+   }
++  return true;
++}
++
++// Returns true if the instruction is a fusion that would go through the native
++// emitter, but may benefit from going through the block-level emitter.
++// Currently, we only do this for reductions and transposes.
++bool ShouldAutotuneBetweenFusionEmitters(const HloInstruction& instruction) {
++  if (!ShouldAutotuneBetweenFusionEmittersAny(instruction)) return false;
++  auto fusion = Cast<const HloFusionInstruction>(&instruction);
+   return absl::c_any_of(
+       fusion->fused_instructions_computation()->instructions(),
+       HloPredicateIsOp<HloOpcode::kReduce, HloOpcode::kTranspose>);
+@@ -457,7 +464,8 @@ absl::Status NVPTXCompiler::AddFusionAutotuningPass(
+     const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
+     stream_executor::StreamExecutor* stream_executor,
+     const Compiler::GpuTargetConfig* target_config,
+-    HloCostAnalysis::ShapeSizeFunction shape_size_fn) {
++    HloCostAnalysis::ShapeSizeFunction shape_size_fn,
++    const MultiProcessKeyValueStore& key_value_store) {
+   if (stream_executor == nullptr) {
+     return absl::OkStatus();
+   }
+@@ -477,13 +485,17 @@ absl::Status NVPTXCompiler::AddFusionAutotuningPass(
+       /*use_default_config=*/true);
+   backends.push_back(std::move(ble_backend));
+ 
++  auto should_autotune =
++      debug_options.xla_gpu_experimental_all_fusions_with_triton()
++          ? ShouldAutotuneBetweenFusionEmittersAny
++          : ShouldAutotuneBetweenFusionEmitters;
++
+   TF_ASSIGN_OR_RETURN(
+       std::unique_ptr<AutotunerPass> autotuner_pass,
+       AutotunerPass::Create(std::move(backends), debug_options, stream_executor,
+-                            thread_pool, ShouldAutotuneBetweenFusionEmitters,
+-                            target_config, options.device_allocator,
+-                            /*optimize_scratch_bytes=*/false,
+-                            MultiProcessKeyValueStore(),
++                            thread_pool, should_autotune, target_config,
++                            options.device_allocator,
++                            /*optimize_scratch_bytes=*/false, key_value_store,
+                             /*allow_reg_spills=*/true));
+   pipeline->AddPass(std::move(autotuner_pass));
+   return absl::OkStatus();
+diff --git a/xla/service/gpu/nvptx_compiler.h b/xla/service/gpu/nvptx_compiler.h
+index e3d3cacc45..5e9719aeb1 100644
+--- a/xla/service/gpu/nvptx_compiler.h
++++ b/xla/service/gpu/nvptx_compiler.h
+@@ -80,7 +80,8 @@ class NVPTXCompiler : public GpuCompiler {
+       const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
+       stream_executor::StreamExecutor* stream_executor,
+       const Compiler::GpuTargetConfig* target_config,
+-      HloCostAnalysis::ShapeSizeFunction shape_size_fn) override;
++      HloCostAnalysis::ShapeSizeFunction shape_size_fn,
++      const MultiProcessKeyValueStore& key_value_store) override;
+ 
+   absl::Status RunCudnnCompilerPasses(HloModule* module,
+                                       se::StreamExecutor* stream_exec,
+diff --git a/xla/xla.proto b/xla/xla.proto
+index de31d3c4cd..bc4d1d8e81 100644
+--- a/xla/xla.proto
++++ b/xla/xla.proto
+@@ -631,6 +631,9 @@ message DebugOptions {
+ 
+   optional bool xla_gpu_exhaustive_tiling_search = 219;
+ 
++  // If true, autotune all fusions with block level emitter.
++  optional bool xla_gpu_experimental_all_fusions_with_triton = 444;
++
+   // If true, allows unroll factor 8 on Blackwell architectures. This is also
+   // guarded with a heuristic, but the heuristic is not perfect, so enabling
+   // this flag can cause both performance improvements and performance
+@@ -1356,7 +1359,7 @@ message DebugOptions {
+   // Note: when adding a new flag, please add it to one of the hardware-specific
+   // or hardware-agnostic sections at the top of this proto message.
+ 
+-  // Next id: 444
++  // Next id: 445
+ 
+   // Extra options to pass to the compilation backend (e.g. LLVM); specific
+   // interpretation of these values is left to the backend.

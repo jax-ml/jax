@@ -14,9 +14,17 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## Unreleased
+## JAX 0.9.0.1
 
-## JAX 0.9.0 (TODO)
+JAX v0.9.0.1 is identical to v0.9.0 with the commits from the following four
+PRs patched in:
+
+- https://github.com/openxla/xla/pull/36579
+- https://github.com/openxla/xla/pull/36345
+- https://github.com/openxla/xla/pull/36755
+- https://github.com/openxla/xla/pull/36696
+
+## JAX 0.9.0 (January 20, 2026)
 
 * New features:
 
