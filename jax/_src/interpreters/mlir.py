@@ -2692,7 +2692,7 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
       else:
         out.append(lower_with_sharding_in_types(ctx, op, out_aval))
     else:
-      if op_aval_sharding.spec.unreduced or op_aval_sharding.spec.reduced:
+      if op_aval_sharding.spec.unreduced:
         raise NotImplementedError()
       assert len(op_aval_shape) <= len(out_shape), (op_aval_shape, out_shape)
       broadcast_dimensions = list(range(len(out_shape) - len(op_aval_shape), len(out_shape)))

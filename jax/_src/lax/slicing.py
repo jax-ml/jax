@@ -1471,8 +1471,13 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
   out = slice(operand, new_start_indices, new_limit_indices, new_strides)
   return out, bdim
 
+def _slice_reduced_rule(out_s, operand, *, start_indices, limit_indices, strides):
+  return out_s.update(spec=out_s.spec.update(reduced=operand.sharding.spec.reduced))
+
+
 slice_p = standard_primitive(_slice_shape_rule, input_dtype, 'slice',
                              sharding_rule=_slice_sharding_rule,
+                             reduced_rule=_slice_reduced_rule,
                              vma_rule=partial(core.standard_vma_rule, 'slice'))
 ad.deflinear2(slice_p, _slice_transpose_rule)
 ad.fancy_transposes[slice_p] = _slice_transpose_fancy
@@ -2286,9 +2291,28 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
                   indices_are_sorted=indices_are_sorted, mode=mode,
                   fill_value=fill_value), 0
 
+def _gather_reduced_rule(out_s, operand, indices, *, dimension_numbers, slice_sizes,
+                         unique_indices, indices_are_sorted, mode, fill_value=None):
+  if indices.sharding.spec.unreduced or indices.sharding.spec.reduced:
+    raise ValueError("cannot propagate gather shardings for unreduced/reduced indices")
+
+  # axes that are sharded in indices and reduced in the indexed tensor lose the
+  # reduced specifier in the output
+  ind_sharded_axes = set()
+  for p in indices.sharding.spec:
+    if isinstance(p, str):
+      ind_sharded_axes.add(p)
+    elif isinstance(p, tuple):
+      ind_sharded_axes.update(p)
+  out_reduced = set(operand.sharding.spec.reduced) - ind_sharded_axes
+
+  return out_s.update(spec=out_s.spec.update(reduced=frozenset(out_reduced)))
+
+
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
     weak_type_rule=_argnum_weak_type(0), sharding_rule=_gather_sharding_rule,
+    reduced_rule=_gather_reduced_rule,
     vma_rule=partial(core.standard_vma_rule, 'gather'))
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 ad.primitive_transposes[gather_p] = _gather_transpose_rule

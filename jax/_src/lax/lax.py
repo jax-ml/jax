@@ -4055,6 +4055,31 @@ def nary_reduced_rule(out_s, *avals, **params):
             f' jax.P(...))`. Got input spec: {s} and reduced spec: {reduced_s}')
   return out_s.update(spec=out_s.spec.update(reduced=reduced_s))
 
+def _eltwise_nary_reduced_rule(out_sharding, *avals, **params):
+  non_empty_avals = [a for a in avals if a.shape]
+  specs = [a.sharding.spec for a in non_empty_avals]
+
+  reduced_spec = {s.reduced for s in specs if s.reduced}
+  if len(reduced_spec) > 1:
+    raise core.ShardingTypeError(
+        'All inputs should be reduced across the same mesh axes. Got specs:'
+        f' {reduced_spec}')
+  reduced_s, = reduced_spec if reduced_spec else (frozenset(),)
+  if reduced_s:
+    for a in non_empty_avals:
+      s = a.sharding.spec
+      if a.sharding.replicated_axes & reduced_s:
+        raise core.ShardingTypeError(
+            'Inputs cannot be replicated on the same axes that another input'
+            f' is reduced on. Got input spec: {s} and reduced spec: {reduced_s}')
+    # axes that are sharded in one input and reduced in another lose the reduced
+    # specifier in the output.
+    sharded_axes = set()
+    for a in non_empty_avals:
+      sharded_axes.update(
+          axis for axis in flatten_spec(a.sharding.spec) if axis is not None)
+    reduced_s = frozenset(reduced_s - sharded_axes)
+  return out_sharding.update(spec=out_sharding.spec.update(reduced=reduced_s))
 
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
            require_same_dtypes=True, unreduced_rule=None, reduced_rule=None):
@@ -4066,7 +4091,8 @@ def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
   prim = standard_primitive(
       shape_rule, dtype_rule, name, sharding_rule=sharding_rule,
       vma_rule=partial(core.standard_vma_rule, name),
-      unreduced_rule=unreduced_rule, reduced_rule=nary_reduced_rule)
+      unreduced_rule=unreduced_rule,
+      reduced_rule=reduced_rule or nary_reduced_rule)
   batching.defbroadcasting(prim)
   return prim
 standard_naryop = partial(naryop, input_dtype)
@@ -4680,8 +4706,13 @@ def _add_unreduced_rule(out_sharding, x, y):
     res_unreduced = frozenset()
   return out_sharding.update(spec=out_sharding.spec.update(unreduced=res_unreduced))
 
-add_p: Primitive = naryop(input_dtype, [_num, _num], 'add',
-                          unreduced_rule=_add_unreduced_rule)
+add_p: Primitive = naryop(
+    input_dtype,
+    [_num, _num],
+    'add',
+    unreduced_rule=_add_unreduced_rule,
+    reduced_rule=_eltwise_nary_reduced_rule,
+)
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
 mlir.register_lowering(add_p, partial(_nary_lower_hlo, hlo.add))
@@ -4746,7 +4777,13 @@ def _mul_unreduced_rule(out_sharding, x, y):
   return out_sharding.update(spec=out_sharding.spec.update(
       unreduced=out_unreduced, reduced=out_reduced))
 
-mul_p = standard_naryop([_num, _num], 'mul', unreduced_rule=_mul_unreduced_rule)
+mul_p: Primitive = naryop(
+    input_dtype,
+    [_num, _num],
+    'mul',
+    unreduced_rule=_mul_unreduced_rule,
+    reduced_rule=_eltwise_nary_reduced_rule,
+)
 ad.defjvp(mul_p,
           lambda xdot, x, y: mul(xdot, y),
           lambda ydot, x, y: mul(x, ydot))
@@ -6854,12 +6891,16 @@ def _split_vma_rule(operand, *, sizes, axis):
   out_shapes = _split_shape_rule(operand, sizes=sizes, axis=axis)
   return [out_vma] * len(out_shapes)
 
+def _split_unreduced_rule(out_shardings, operand, *, sizes, axis):
+  return [s.update(spec=s.spec.update(unreduced=operand.sharding.spec.unreduced))
+          for s in out_shardings]
+
 split_p = core.Primitive('split')
 split_p.multiple_results = True
 split_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, split_p, _split_shape_rule,
             _split_dtype_rule, _split_weak_type_rule, _split_sharding_rule,
-            _split_vma_rule))
+            _split_vma_rule, unreduced_rule=_split_unreduced_rule))
 split_p.def_impl(partial(dispatch.apply_primitive, split_p))
 ad.deflinear2(split_p, _split_transpose_rule)
 batching.primitive_batchers[split_p] = _split_batch_rule
@@ -7212,6 +7253,10 @@ def _reshape_transpose_rule(t, operand, *, new_sizes, dimensions, sharding):
                               out_sharding=t_s),
                       np.argsort(dimensions))]
 
+def _reshape_unreduced_rule(out_s, operand, *, new_sizes, dimensions, sharding):
+  return out_s.update(spec=out_s.spec.update(
+    unreduced=operand.sharding.spec.unreduced))
+
 def _reshape_batch_rule(axis_data, batched_args, batch_dims, *, new_sizes,
                         dimensions, sharding):
   operand, = batched_args
@@ -7247,7 +7292,8 @@ def _reshape_staging_rule(
 
 reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                'reshape', sharding_rule=_reshape_sharding_rule,
-                               vma_rule=partial(core.standard_vma_rule, 'reshape'))
+                               vma_rule=partial(core.standard_vma_rule, 'reshape'),
+                               unreduced_rule=_reshape_unreduced_rule)
 ad.deflinear2(reshape_p, _reshape_transpose_rule)
 batching.fancy_primitive_batchers[reshape_p] = _reshape_batch_rule
 mlir.register_lowering(reshape_p, _reshape_lower)
@@ -7698,8 +7744,8 @@ def _reduce_sum_sharding_rule(operand, *, axes, out_sharding):
 
 def _reduce_sum_unreduced_rule(out_s, operand, *, axes, **kwargs):
   if operand.sharding.spec.unreduced:
-    raise core.ShardingTypeError(
-        f'operand passed to reduce_sum cannot be unreduced. Got {operand=}')
+    return out_s.update(spec=out_s.spec.update(
+        unreduced=operand.sharding.spec.unreduced))
   if unreduced_spec := out_s.spec.unreduced:
     axes = frozenset(axes)
     reduced_spec = frozenset(
