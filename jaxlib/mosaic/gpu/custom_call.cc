@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -118,6 +119,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_execution.h"
 #include "xla/backends/gpu/runtime/collective_metadata_thunk.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
@@ -173,41 +175,40 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     const std::string& ptx_isa, const std::string& nvshmem_path,
     bool verify_target) {
   static absl::once_flag register_passes_flag;
-  absl::call_once(
-      register_passes_flag, [&compilation_provider, &cc]() {
-        mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
-        llvm::InitializeNativeTarget();
-        llvm::InitializeNativeTargetAsmPrinter();
-        mlir::registerCanonicalizer();
-        mlir::registerCSE();
-        mlir::registerStripDebugInfo();
-        mlir::registerConvertNVGPUToNVVMPass();
-        mlir::registerConvertVectorToSCF();
-        mlir::registerSCFToControlFlowPass();
-        mlir::registerConvertNVVMToLLVMPass();
-        mlir::registerArithToLLVMConversionPass();
-        mlir::registerConvertIndexToLLVMPass();
-        mlir::registerConvertGpuOpsToNVVMOps();
-        mlir::registerConvertMathToLLVMPass();
-        mlir::registerConvertFuncToLLVMPass();
-        mlir::registerLowerAffinePass();
-        mlir::registerReconcileUnrealizedCastsPass();
-        // TODO(apaszke): Only register the passes we actually use.
-        mlir::memref::registerMemRefPasses();
-        mlir::registerConvertToLLVMPass();
-        mlir::registerGPUPasses();
-        mlir::registerGpuLaunchSinkIndexComputationsPass();
-        mosaic::gpu::registerGpuModuleToAssemblyPass();
-        mosaic::gpu::registerAssemblyToBinaryPass(compilation_provider, cc);
-        mosaic::gpu::registerGpuLaunchLoweringPass();
-        mosaic::gpu::registerConvertGpuToLLVMPass();
-        mosaic::gpu::registerByvalInsertionPass();
-        mosaic::gpu::registerLLVMAttrInsertionPass();
-        mosaic::gpu::registerResolveTrivialLocationsPass();
-        mosaic::gpu::registerGpuSinkMemRefDescriptorsPass();
-        mlir::arith::registerArithExpandOpsPass();
-        mlir::LLVM::registerDIScopeForLLVMFuncOpPass();
-      });
+  absl::call_once(register_passes_flag, [&compilation_provider, &cc]() {
+    mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+    mlir::registerCanonicalizer();
+    mlir::registerCSE();
+    mlir::registerStripDebugInfo();
+    mlir::registerConvertNVGPUToNVVMPass();
+    mlir::registerConvertVectorToSCF();
+    mlir::registerSCFToControlFlowPass();
+    mlir::registerConvertNVVMToLLVMPass();
+    mlir::registerArithToLLVMConversionPass();
+    mlir::registerConvertIndexToLLVMPass();
+    mlir::registerConvertGpuOpsToNVVMOps();
+    mlir::registerConvertMathToLLVMPass();
+    mlir::registerConvertFuncToLLVMPass();
+    mlir::registerLowerAffinePass();
+    mlir::registerReconcileUnrealizedCastsPass();
+    // TODO(apaszke): Only register the passes we actually use.
+    mlir::memref::registerMemRefPasses();
+    mlir::registerConvertToLLVMPass();
+    mlir::registerGPUPasses();
+    mlir::registerGpuLaunchSinkIndexComputationsPass();
+    mosaic::gpu::registerGpuModuleToAssemblyPass();
+    mosaic::gpu::registerAssemblyToBinaryPass(compilation_provider, cc);
+    mosaic::gpu::registerGpuLaunchLoweringPass();
+    mosaic::gpu::registerConvertGpuToLLVMPass();
+    mosaic::gpu::registerByvalInsertionPass();
+    mosaic::gpu::registerLLVMAttrInsertionPass();
+    mosaic::gpu::registerResolveTrivialLocationsPass();
+    mosaic::gpu::registerGpuSinkMemRefDescriptorsPass();
+    mlir::arith::registerArithExpandOpsPass();
+    mlir::LLVM::registerDIScopeForLLVMFuncOpPass();
+  });
   const char* cuda_root = mosaic::gpu::GetCUDARoot();
   if (!cuda_root) {
     return mlir::failure();
@@ -698,6 +699,12 @@ struct CustomCallResources {
   //  TODO(allanrenucci): Remove explicit constructor after supporting C++20.
   explicit CustomCallResources(CompiledKernel* kernel) : kernel(kernel) {}
   CompiledKernel* kernel = nullptr;
+
+  absl::Mutex mutex;
+  // A map from device ID to the CPU version of the collective metadata for TMA
+  // initialization.
+  absl::flat_hash_map<int, std::vector<char>> cpu_metadata_buffers
+      ABSL_GUARDED_BY(mutex);
 };
 
 // Validate custom call attributes and compile the kernel.
@@ -726,7 +733,7 @@ absl::StatusOr<std::unique_ptr<CustomCallResources>> InstantiateResources(
 }
 
 absl::StatusOr<std::vector<ffi::AnyBuffer>> GetBuffers(
-  ffi::RemainingArgs inputs, ffi::RemainingRets results) {
+    ffi::RemainingArgs inputs, ffi::RemainingRets results) {
   std::vector<ffi::AnyBuffer> buffers;
   buffers.reserve(inputs.size() + results.size());
   for (int i = 0; i < inputs.size(); ++i) {
@@ -778,12 +785,43 @@ absl::StatusOr<xla::gpu::GpuCliqueKey> GetCliqueKeyForAllDevices(
       xla::AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE);
 }
 
+// Creates a collective metadata, stores the device version in a provided
+// location and returns the pointer to the CPU version of the metadata.
+absl::StatusOr<std::vector<char>> CreateCollectiveMetadata(
+    const xla::gpu::GpuCliqueKey& clique_key, xla::RankId current_rank,
+    se::Stream* stream, se::DeviceAddressBase collective_metadata_ptr,
+    std::vector<se::DeviceAddressBase>&& parameters) {
+  TF_ASSIGN_OR_RETURN(
+      std::vector<void*> param_to_peers,
+      xla::gpu::CollectiveMetadataThunk::CollectParamToPeers(
+          clique_key, current_rank, stream, std::move(parameters)));
+  TF_ASSIGN_OR_RETURN(
+      auto metadata,
+      xla::gpu::CollectiveMetadataThunk::CreateCollectiveMetadata(
+          clique_key, current_rank, stream,
+          // TODO(patrios): Add multimem support.
+          /*multimem=*/nullptr));
+  TF_RETURN_IF_ERROR(
+      xla::gpu::CollectiveMetadataThunk::CopyCollectiveMetadataToDevice(
+          stream, metadata, param_to_peers, collective_metadata_ptr));
+
+  // Metadata contains the current rank, two unused during the CPU lowering
+  // pointers and the param_to_peers which is used by TMA.
+  constexpr size_t metadata_size = 3 * sizeof(uint64_t);
+  std::vector<char> cpu_metadata_buffer(metadata_size +
+                                        param_to_peers.size() * sizeof(void*));
+
+  std::memcpy(cpu_metadata_buffer.data(), &current_rank, sizeof(uint64_t));
+  std::memcpy(cpu_metadata_buffer.data() + metadata_size, param_to_peers.data(),
+              param_to_peers.size() * sizeof(void*));
+  return cpu_metadata_buffer;
+}
+
 absl::Status MosaicGpuInitialize(
-    se::Stream* stream,
-    const xla::gpu::CollectiveParams* collective_params,
+    se::Stream* stream, const xla::gpu::CollectiveParams* collective_params,
     const xla::gpu::CollectiveCliques* collective_cliques,
     ffi::RemainingArgs inputs, ffi::RemainingRets results,
-    xla::ffi::Dictionary attributes) {
+    CustomCallResources* resources, xla::ffi::Dictionary attributes) {
   bool uses_collective_metadata = ModuleUsesCollectiveMetadata(attributes);
   if (!uses_collective_metadata) {
     // If the kernel does not use collective metadata, we can skip the
@@ -807,35 +845,48 @@ absl::Status MosaicGpuInitialize(
     parameters.push_back(input_buffer.device_memory());
   }
 
-  TF_ASSIGN_OR_RETURN(
-      xla::gpu::GpuCliqueKey clique_key,
-      GetCliqueKeyForAllDevices(*collective_params));
+  TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
+                      GetCliqueKeyForAllDevices(*collective_params));
 
   // The last output buffer is used as the collective metadata buffer.
   se::DeviceAddressBase collective_metadata_ptr =
       buffers.back().device_memory();
 
-    TF_RETURN_IF_ERROR(
-        xla::gpu::CollectiveMetadataThunk::ConstructCollectiveMetadata(
-            clique_key,
-            clique_key.rank(collective_params->global_device_id).value(),
-            stream, std::move(parameters),
-            // TODO(b/476264413): Add multimem support.
-            /*multimem=*/nullptr, collective_metadata_ptr));
+  auto current_rank =
+      clique_key.rank(collective_params->global_device_id).value();
+  TF_ASSIGN_OR_RETURN(
+      std::vector<char> cpu_metadata_buffer,
+      CreateCollectiveMetadata(clique_key, current_rank, stream,
+                               collective_metadata_ptr, std::move(parameters)));
+
+  absl::MutexLock lock(resources->mutex);
+  resources->cpu_metadata_buffers[collective_params->global_device_id.value()] =
+      std::move(cpu_metadata_buffer);
   return absl::OkStatus();
 }
 
-absl::Status MosaicGpuExecute(cudaStream_t stream, ffi::RemainingArgs inputs,
-                              ffi::RemainingRets results,
-                              CustomCallResources* resources,
-                              xla::ffi::Dictionary attributes) {
+absl::Status MosaicGpuExecute(
+    cudaStream_t stream, const xla::gpu::CollectiveParams* collective_params,
+    ffi::RemainingArgs inputs, ffi::RemainingRets results,
+    CustomCallResources* resources, xla::ffi::Dictionary attributes) {
   std::vector<void*> buffer_ptrs;
   TF_ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
                       GetBuffers(inputs, results));
-  buffer_ptrs.reserve(buffers.size());
+  bool uses_collective_metadata = ModuleUsesCollectiveMetadata(attributes);
+  buffer_ptrs.reserve(buffers.size() + (uses_collective_metadata ? 1 : 0));
   for (const xla::ffi::AnyBuffer& buffer : buffers) {
     buffer_ptrs.push_back(buffer.untyped_data());
   }
+
+  // Adding a CPU version of the collective metadata for TMA initialization.
+  if (uses_collective_metadata) {
+    absl::MutexLock lock(resources->mutex);
+
+    std::vector<char>& cpu_metadata_buffer = resources->cpu_metadata_buffers.at(
+        collective_params->global_device_id.value());
+    buffer_ptrs.push_back(cpu_metadata_buffer.data());
+  }
+
   CompiledKernel* kernel = resources->kernel;
   TF_ASSIGN_OR_RETURN(auto ctx, CachedInit(kernel));
   if (kernel->is_comm_used) {
@@ -883,9 +934,9 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuInitialize, MosaicGpuInitialize,
                            .Ctx<ffi::CollectiveCliques>()
                            .RemainingArgs()
                            .RemainingRets()
+                           .Ctx<xla::ffi::State<CustomCallResources>>()
                            .Attrs(),
                        {ffi::Traits::kCmdBufferCompatible});
-
 
 //  We expect the following attributes:
 // - kernel_hash: a hash of the kernel.
@@ -895,6 +946,7 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuInitialize, MosaicGpuInitialize,
 XLA_FFI_DEFINE_HANDLER(kMosaicGpuExecute, MosaicGpuExecute,
                        ffi::Ffi::Bind<ffi::ExecutionStage::kExecute>()
                            .Ctx<ffi::PlatformStream<cudaStream_t>>()
+                           .Ctx<ffi::CollectiveParams>()
                            .RemainingArgs()
                            .RemainingRets()
                            .Ctx<xla::ffi::State<CustomCallResources>>()
