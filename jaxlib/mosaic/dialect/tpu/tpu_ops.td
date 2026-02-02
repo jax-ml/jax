@@ -1554,4 +1554,47 @@ def TPU_LogBufferOp : TPU_Op<"log_buffer"> {
   let hasCanonicalizeMethod = 1;
 }
 
+def TPU_FetchAndAddSyncOp : TPU_Op<"fetch_and_add_sync", [DefaultMemRead, DefaultMemWrite]> {
+  let summary = [{
+    FetchAndAddSyncOp atomically increments an SMEM element on another core and
+    returns the old value.
+  }];
+
+  let description = [{
+    FetchAndAddSyncOp atomically increments the element at `base[indices]` on
+    core `core_id` by `$value` and returns the old value. The number of
+    `$indices` must match the rank of the `$base` memref. The `$base` memref
+    must be in SMEM. The update is synchronous.
+
+    The `$core_type` and `$core_id` specify the core on which the increment is
+    performed.
+
+    Example:
+
+    ```mlir
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %tile_id = arith.constant 3 : i32
+    %old = tpu.fetch_and_add_sync %smem[%c0], %c1, <sc_vector_subcore>, %tile_id
+        : memref<1xi32, #tpu.memory_space<smem>>, i32 -> i32
+    ```
+  }];
+
+  let arguments = (ins
+    MemRefOf<[I32]>:$base,
+    Variadic<I32>:$indices,
+    I32:$value,
+    TPU_CoreTypeEnum:$core_type,
+    I32:$core_id
+  );
+  let results = (outs I32:$result);
+  let assemblyFormat = [{
+    $base `[` $indices `]` `,` $value `,` $core_type `,` $core_id
+    attr-dict `:` type($base) `,` type($value) `->` type($result)
+  }];
+
+  let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
+}
+
 #endif  // TPU_OPS

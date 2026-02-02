@@ -2295,6 +2295,35 @@ LogicalResult StochasticConvertElementwiseOp::verify() {
   return success();
 }
 
+LogicalResult FetchAndAddSyncOp::verify() {
+  switch (getCoreType()) {
+    case CoreType::kScVectorSubcore:
+      break;
+    case CoreType::kScScalarSubcore:
+      // TODO(b/480918210): Remove this once the bug is fixed.
+      [[fallthrough]];
+    default:
+      return emitOpError(
+                 "Only SC scalar and vector subcores are supported, got ")
+             << getCoreType();
+  }
+  MemRefType base_type = getBase().getType();
+  if (base_type.getRank() != getIndices().size()) {
+    return emitOpError("Number of indices (")
+           << getIndices().size() << ") must match memref rank ("
+           << base_type.getRank() << ")";
+  }
+  // TODO(slebedev): Require the base to be in SMEM.
+  // TODO(slebedev): Check that the enclosing function has subcore_parallel
+  // in its dimension semantics.
+  return success();
+}
+
+LogicalResult FetchAndAddSyncOp::canonicalize(FetchAndAddSyncOp op,
+                                              PatternRewriter& rewriter) {
+  return propagateTiledLayoutToConsumer(op, rewriter);
+}
+
 }  // namespace tpu
 }  // namespace mlir
 
