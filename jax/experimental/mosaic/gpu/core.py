@@ -248,22 +248,29 @@ def _mosaic_gpu_lowering_rule(
   else:
     KNOWN_KERNELS[kernel_id] = module_asm
 
+  backend_config = {
+      "kernel_hash": ir.StringAttr.get(kernel_id),
+      "module": ir.StringAttr.get(module_asm),
+      "use_custom_barrier": ir.BoolAttr.get(use_custom_barrier),
+      "uses_xla_collective_metadata": ir.BoolAttr.get(
+          launch_context.uses_collective_metadata(module)
+      ),
+  }
+
+  if launch_context.MULTIMEM_ARGS_ATTR in module.operation.attributes:
+    backend_config["xla_multimem_parameters"] = ir.StringAttr.get(
+        module.operation.attributes[launch_context.MULTIMEM_ARGS_ATTR].value
+    )
+
   custom_call_kwargs = {
       "call_target_name": "mosaic_gpu_v2",
       "result_types": [mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
       "operands": args,
       "operand_layouts": [list(reversed(range(a.ndim))) for a in ctx.avals_in],
       "result_layouts": [list(reversed(range(a.ndim))) for a in ctx.avals_out],
-      "backend_config": dict(
-          kernel_hash=ir.StringAttr.get(kernel_id),
-          module=ir.StringAttr.get(module_asm),
-          use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
-          uses_xla_collective_metadata=ir.BoolAttr.get(
-              launch_context.uses_collective_metadata(module)
-          ),
-      ),
+      "backend_config": backend_config,
       "operand_output_aliases": dict(input_output_aliases),
-      "api_version": 4
+      "api_version": 4,
   }
 
   if not is_multi_device_module or not is_single_process_multi_device_topology():

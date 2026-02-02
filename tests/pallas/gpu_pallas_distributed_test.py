@@ -365,11 +365,9 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y, jnp.ones_like(y))
 
   def test_semaphore_signal_collective_axes(self):
-    # TODO(b/476264413): Support multimem in multi-thread mode.
-    if jax.local_device_count() > 1:
-      return  # Multimem not supported in multi-thread mode yet.
-
-    if jax.process_index() > 2:
+    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
+    # subset device execution is supported.
+    if jax.process_index() > 2 or jax.local_device_count() > 2:
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem):
@@ -472,8 +470,10 @@ class PallasCallRemoteDMATest(TestCase):
 class PallasCallMultimemTest(TestCase):
 
   def setUp(self):
-    if jax.local_device_count() > 1:
-      self.skipTest("Multimem not supported in multi-thread mode yet.")
+    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
+    # subset device execution is supported.
+    if jax.local_device_count() > 2:
+      self.skipTest("Tests requires 2 devices.")
     super().setUp()
 
   def _get_reduction_impl(self, reduction):
@@ -523,6 +523,10 @@ class PallasCallMultimemTest(TestCase):
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
   def test_multimem_store_tma(self):
+    if jax.local_device_count() > 1:
+      self.skipTest(
+          "TMA is not supported with multimem within a single process."
+      )
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
@@ -857,30 +861,40 @@ class PallasCallMultimemTest(TestCase):
       (jnp.int32, 1),
   )
   def test_all_gather(self, dtype, vec_size):
+    if jax.local_device_count() > 1:
+      self.skipTest("Skipping test for multi-host tests.")
     # 16 rows * 64 cols = 1024 elements = 8 elements per thread
     self._test_all_gather(
         (1024, 64), dtype, tile_size=1024, vec_size=vec_size, num_blocks=4
     )
 
   def test_all_gather_large_minor_dims(self):
+    if jax.local_device_count() > 1:
+      self.skipTest("Skipping test for multi-host tests.")
     self._test_all_gather(
         (512, 32768), jnp.float16, tile_size=8192, vec_size=4, num_blocks=4
     )
 
   @parameterized.parameters(2048, 256, None)
   def test_all_gather_auto_vec_size(self, tile_size):
+    if jax.local_device_count() > 1:
+      self.skipTest("Skipping test for multi-host tests.")
     self._test_all_gather(
         (1024, 64), jnp.float16, tile_size=tile_size, vec_size=None, num_blocks=4
     )
 
   @parameterized.parameters(2048, 256, None)
   def test_all_gather_auto_vec_size_int(self, tile_size):
+    if jax.local_device_count() > 1:
+      self.skipTest("Skipping test for multi-host tests.")
     self._test_all_gather(
         (1024, 64), jnp.int32, tile_size=tile_size, vec_size=None, num_blocks=4
     )
 
   @parameterized.parameters(1, 2)
   def test_all_gather_different_axes(self, axis):
+    if jax.local_device_count() > 1:
+      self.skipTest("Skipping test for multi-host tests.")
     if axis == 1:
       shape = (64, 1024, 32)
       tile_size = 2048

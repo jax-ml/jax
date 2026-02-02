@@ -34,6 +34,7 @@ limitations under the License.
 #include <vector>
 
 #include "jaxlib/mosaic/gpu/library_paths.h"
+#include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
 #include "absl/base/no_destructor.h"
 #include "absl/base/nullability.h"
@@ -45,6 +46,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -117,10 +119,12 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
 #include "xla/backends/gpu/runtime/collective_metadata_thunk.h"
+#include "xla/backends/gpu/runtime/collective_multimem.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
+#include "xla/runtime/device_id.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"
@@ -694,6 +698,15 @@ struct CustomCallResources {
   //  TODO(allanrenucci): Remove explicit constructor after supporting C++20.
   explicit CustomCallResources(CompiledKernel* kernel) : kernel(kernel) {}
   CompiledKernel* kernel = nullptr;
+
+  absl::Mutex mutex;
+  // Keeps the multimem address space constructed at the prepare stage to be
+  // used during initialization during the CollectiveMetadata construction.
+  absl::flat_hash_map<int, se::DeviceAddressBase> device_to_multimem_address
+      ABSL_GUARDED_BY(mutex);
+  // Keeps multimem handlers alive for the duration of the kernel execution.
+  absl::flat_hash_map<int, std::shared_ptr<xla::gpu::CollectiveMultimem>>
+      device_to_multimem_handler ABSL_GUARDED_BY(mutex);
 };
 
 // Validate custom call attributes and compile the kernel.
@@ -722,7 +735,7 @@ absl::StatusOr<std::unique_ptr<CustomCallResources>> InstantiateResources(
 }
 
 absl::StatusOr<std::vector<ffi::AnyBuffer>> GetBuffers(
-  ffi::RemainingArgs inputs, ffi::RemainingRets results) {
+    ffi::RemainingArgs inputs, ffi::RemainingRets results) {
   std::vector<ffi::AnyBuffer> buffers;
   buffers.reserve(inputs.size() + results.size());
   for (int i = 0; i < inputs.size(); ++i) {
@@ -774,12 +787,78 @@ absl::StatusOr<xla::gpu::GpuCliqueKey> GetCliqueKeyForAllDevices(
       xla::AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE);
 }
 
-absl::Status MosaicGpuInitialize(
-    se::Stream* stream,
-    const xla::gpu::CollectiveParams* collective_params,
-    const xla::gpu::CollectiveCliques* collective_cliques,
+std::vector<int64_t> ParseMultimemArgs(xla::ffi::Dictionary attributes) {
+  std::string_view multimem_args =
+      attributes.get<std::string_view>("xla_multimem_parameters").value_or("");
+  std::vector<std::string> multimem_args_list =
+      absl::StrSplit(multimem_args, ',');
+  std::vector<int64_t> result;
+  result.reserve(multimem_args_list.size());
+  for (const std::string& arg : multimem_args_list) {
+    int64_t arg_int;
+    if (absl::SimpleAtoi(arg, &arg_int)) {
+      result.push_back(arg_int);
+    }
+  }
+  return result;
+}
+
+absl::Status MosaicGpuPrepare(
+    const xla::gpu::CollectiveParams* absl_nullable collective_params,
+    xla::gpu::CollectiveMultimemRequests* absl_nullable multimem_requests,
+    xla::gpu::CollectiveCliqueRequests* absl_nullable clique_requests,
     ffi::RemainingArgs inputs, ffi::RemainingRets results,
-    xla::ffi::Dictionary attributes) {
+    CustomCallResources* resources, xla::ffi::Dictionary attributes) {
+  if (!ModuleUsesCollectiveMetadata(attributes)) {
+    return absl::OkStatus();
+  }
+
+  CHECK(collective_params != nullptr);
+  CHECK(clique_requests != nullptr);
+
+  TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
+                      GetCliqueKeyForAllDevices(*collective_params));
+  TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key));
+
+  std::vector<int64_t> multimem_args_list = ParseMultimemArgs(attributes);
+  if (multimem_args_list.empty()) {
+    return absl::OkStatus();
+  }
+
+  TF_ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
+                      GetBuffers(inputs, results));
+  se::DeviceAddressBase multimem_args_memory_range;
+  for (int64_t arg : multimem_args_list) {
+    if (arg >= buffers.size()) {
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Multimem argument index %d is out of range", arg));
+    }
+
+    se::DeviceAddressBase arg_ptr = buffers[arg].device_memory();
+    TF_ASSIGN_OR_RETURN(se::DeviceAddressBase arg_range,
+                        collective_params->executor->GetMemoryRange(arg_ptr));
+    if (multimem_args_memory_range.is_null()) {
+      multimem_args_memory_range = arg_range;
+    } else if (multimem_args_memory_range != arg_range) {
+      return absl::InvalidArgumentError(
+          "Multimem arguments must be in the same memory range");
+    }
+  }
+
+  multimem_requests->Request({clique_key, multimem_args_memory_range});
+  absl::MutexLock lock(resources->mutex);
+  resources->device_to_multimem_address[collective_params->global_device_id
+                                            .value()] =
+      multimem_args_memory_range;
+  return absl::OkStatus();
+}
+
+absl::Status MosaicGpuInitialize(
+    se::Stream* stream, const xla::gpu::CollectiveParams* collective_params,
+    const xla::gpu::CollectiveCliques* collective_cliques,
+    const xla::gpu::CollectiveMultimemProvider* collective_multimem_provider,
+    ffi::RemainingArgs inputs, ffi::RemainingRets results,
+    CustomCallResources* resources, xla::ffi::Dictionary attributes) {
   bool uses_collective_metadata = ModuleUsesCollectiveMetadata(attributes);
   if (!uses_collective_metadata) {
     // If the kernel does not use collective metadata, we can skip the
@@ -797,27 +876,51 @@ absl::Status MosaicGpuInitialize(
   // collective metadata buffer.
   parameters.reserve(buffers.size() - 1);
 
+  std::vector<int64_t> multimem_args_list = ParseMultimemArgs(attributes);
   // Add all result buffers except the collective metadata buffer.
   for (int i = 0; i < buffers.size() - 1; ++i) {
     xla::ffi::AnyBuffer input_buffer = buffers[i];
-    parameters.push_back(input_buffer.device_memory());
+    se::DeviceAddressBase parameter_address;
+    if (absl::c_linear_search(multimem_args_list, i)) {
+      TF_ASSIGN_OR_RETURN(parameter_address,
+                          collective_params->executor->GetMemoryRange(
+                              input_buffer.device_memory()));
+    } else {
+      parameter_address = input_buffer.device_memory();
+    }
+    parameters.push_back(parameter_address);
   }
 
-  TF_ASSIGN_OR_RETURN(
-      xla::gpu::GpuCliqueKey clique_key,
-      GetCliqueKeyForAllDevices(*collective_params));
+  TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
+                      GetCliqueKeyForAllDevices(*collective_params));
 
   // The last output buffer is used as the collective metadata buffer.
   se::DeviceAddressBase collective_metadata_ptr =
       buffers.back().device_memory();
 
-    TF_RETURN_IF_ERROR(
-        xla::gpu::CollectiveMetadataThunk::ConstructCollectiveMetadata(
-            clique_key,
-            clique_key.rank(collective_params->global_device_id).value(),
-            stream, std::move(parameters),
-            // TODO(b/476264413): Add multimem support.
-            /*multimem=*/nullptr, collective_metadata_ptr));
+  xla::GlobalDeviceId device_id = collective_params->global_device_id;
+  std::shared_ptr<xla::gpu::CollectiveMultimem> multimem = nullptr;
+  {
+    absl::MutexLock lock(resources->mutex);
+    if (resources->device_to_multimem_address.contains(device_id.value())) {
+      TF_ASSIGN_OR_RETURN(
+          multimem,
+          collective_multimem_provider->Get(
+              {clique_key,
+               resources->device_to_multimem_address[device_id.value()]}));
+    }
+  }
+
+  std::vector<char> cpu_collective_metadata;
+  TF_RETURN_IF_ERROR(
+      xla::gpu::CollectiveMetadataThunk::ConstructCollectiveMetadata(
+          clique_key, clique_key.rank(device_id).value(), stream,
+          std::move(parameters),
+          /*multimem=*/multimem, collective_metadata_ptr));
+
+  absl::MutexLock lock(resources->mutex);
+  resources->device_to_multimem_handler[device_id.value()] =
+      std::move(multimem);
   return absl::OkStatus();
 }
 
@@ -843,29 +946,14 @@ absl::Status MosaicGpuExecute(cudaStream_t stream, ffi::RemainingArgs inputs,
   return absl::OkStatus();
 }
 
-absl::Status MosaicGpuPrepare(
-    const xla::gpu::CollectiveParams* absl_nullable collective_params,
-    xla::gpu::CollectiveCliqueRequests* absl_nullable clique_requests,
-    xla::ffi::Dictionary attributes) {
-  if (!ModuleUsesCollectiveMetadata(attributes)) {
-    return absl::OkStatus();
-  }
-
-  CHECK(collective_params != nullptr);
-  CHECK(clique_requests != nullptr);
-
-  // TODO(b/476264413): Add multimem support.
-  TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
-                      GetCliqueKeyForAllDevices(*collective_params));
-
-  TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key));
-  return absl::OkStatus();
-}
-
 XLA_FFI_DEFINE_HANDLER(kMosaicGpuPrepare, MosaicGpuPrepare,
                        ffi::Ffi::BindPrepare()
                            .Ctx<ffi::CollectiveParams>()
+                           .Ctx<ffi::CollectiveMultimemRequests>()
                            .Ctx<ffi::CollectiveCliqueRequests>()
+                           .RemainingArgs()
+                           .RemainingRets()
+                           .Ctx<xla::ffi::State<CustomCallResources>>()
                            .Attrs());
 
 XLA_FFI_DEFINE_HANDLER(
@@ -877,11 +965,12 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuInitialize, MosaicGpuInitialize,
                            .Ctx<ffi::Stream>()
                            .Ctx<ffi::CollectiveParams>()
                            .Ctx<ffi::CollectiveCliques>()
+                           .Ctx<ffi::CollectiveMultimemProvider>()
                            .RemainingArgs()
                            .RemainingRets()
+                           .Ctx<xla::ffi::State<CustomCallResources>>()
                            .Attrs(),
                        {ffi::Traits::kCmdBufferCompatible});
-
 
 //  We expect the following attributes:
 // - kernel_hash: a hash of the kernel.
