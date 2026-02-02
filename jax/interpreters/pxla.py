@@ -32,7 +32,10 @@ _deprecations = {
         _deprecated_pxla.MapTracer,
     ),
     "MeshAxisName": (
-        "jax.interpreters.pxla.MeshAxisName is deprecated as of JAX v0.8.2. Use jax.sharding.Mesh axis names directly.",
+        (
+            "jax.interpreters.pxla.MeshAxisName is deprecated as of JAX v0.8.2."
+            " Use jax.sharding.Mesh axis names directly."
+        ),
         _deprecated_pxla.MeshAxisName,
     ),
     "MeshComputation": (
@@ -48,19 +51,31 @@ _deprecations = {
         _deprecated_pxla.PmapExecutable,
     ),
     "global_aval_to_result_handler": (
-        "jax.interpreters.pxla.global_aval_to_result_handler is deprecated as of JAX v0.8.2.",
+        (
+            "jax.interpreters.pxla.global_aval_to_result_handler is deprecated"
+            " as of JAX v0.8.2."
+        ),
         _deprecated_pxla.global_aval_to_result_handler,
     ),
     "global_avals_to_results_handler": (
-        "jax.interpreters.pxla.global_avals_to_results_handler is deprecated as of JAX v0.8.2.",
+        (
+            "jax.interpreters.pxla.global_avals_to_results_handler is"
+            " deprecated as of JAX v0.8.2."
+        ),
         _deprecated_pxla.global_avals_to_results_handler,
     ),
     "global_result_handlers": (
-        "jax.interpreters.pxla.global_result_handlers is deprecated as of JAX v0.8.2.",
+        (
+            "jax.interpreters.pxla.global_result_handlers is deprecated as of"
+            " JAX v0.8.2."
+        ),
         _deprecated_pxla.global_result_handlers,
     ),
     "parallel_callable": (
-        "jax.interpreters.pxla.parallel_callable is deprecated as of JAX v0.8.2.",
+        (
+            "jax.interpreters.pxla.parallel_callable is deprecated as of JAX"
+            " v0.8.2."
+        ),
         _deprecated_pxla.parallel_callable,
     ),
     "shard_args": (
@@ -72,19 +87,33 @@ _deprecations = {
         _deprecated_pxla.xla_pmap_p,
     ),
     "thread_resources": (
-        "jax.interpreters.pxla.thread_resources is deprecated as of JAX v0.8.2.",
+        (
+            "jax.interpreters.pxla.thread_resources is deprecated as of JAX"
+            " v0.8.2. Please switch to using `with jax.set_mesh(mesh)` instead"
+            " of `with mesh:` and then use `jax.sharding.get_abstract_mesh()`"
+            " to get the current mesh."
+        ),
         _deprecated_mesh.thread_resources,
     ),
     "are_hlo_shardings_equal": (
-        "jax.interpreters.pxla.are_hlo_shardings_equal is deprecated as of JAX v0.8.2.",
+        (
+            "jax.interpreters.pxla.are_hlo_shardings_equal is deprecated as of"
+            " JAX v0.8.2."
+        ),
         _deprecated_op_shardings.are_hlo_shardings_equal,
     ),
     "is_hlo_sharding_replicated": (
-        "jax.interpreters.pxla.is_hlo_sharding_replicated is deprecated as of JAX v0.8.2.",
+        (
+            "jax.interpreters.pxla.is_hlo_sharding_replicated is deprecated as"
+            " of JAX v0.8.2."
+        ),
         _deprecated_op_shardings.is_hlo_sharding_replicated,
     ),
     "op_sharding_to_indices": (
-        "jax.interpreters.pxla.op_sharding_to_indices is deprecated as of JAX v0.8.2.",
+        (
+            "jax.interpreters.pxla.op_sharding_to_indices is deprecated as of"
+            " JAX v0.8.2."
+        ),
         _deprecated_op_shardings.op_sharding_to_indices,
     ),
     "ArrayMapping": (
@@ -96,35 +125,59 @@ _deprecations = {
         _deprecated_sharding_impls.UNSPECIFIED,
     ),
     "array_mapping_to_axis_resources": (
-        "jax.interpreters.pxla.array_mapping_to_axis_resources is deprecated as of JAX v0.8.2.",
+        (
+            "jax.interpreters.pxla.array_mapping_to_axis_resources is"
+            " deprecated as of JAX v0.8.2."
+        ),
         _deprecated_sharding_impls.array_mapping_to_axis_resources,
     ),
     "Chunked": (
-        "jax.interpreters.pxla.Chunked is deprecated as of JAX v0.8.2.",
+        (
+            "jax.interpreters.pxla.Chunked is deprecated as of JAX v0.8.2."
+            " Please use `jax.shard_map` instead of `jax.pmap`."
+        ),
         _deprecated_sharding_specs.Chunked,
     ),
     "NoSharding": (
-        "jax.interpreters.pxla.NoSharding is deprecated as of JAX v0.8.2.",
+        (
+            "jax.interpreters.pxla.NoSharding is deprecated as of JAX v0.8.2."
+            " Please use `jax.shard_map` instead of `jax.pmap`."
+        ),
         _deprecated_sharding_specs.NoSharding,
     ),
     "Replicated": (
-        "jax.interpreters.pxla.Replicated is deprecated as of JAX v0.8.2.",
+        (
+            "jax.interpreters.pxla.Replicated is deprecated as of JAX v0.8.2."
+            " Please use `jax.shard_map` instead of `jax.pmap`."
+        ),
         _deprecated_sharding_specs.Replicated,
     ),
     "ShardedAxis": (
-        "jax.interpreters.pxla.ShardedAxis is deprecated as of JAX v0.8.2.",
+        (
+            "jax.interpreters.pxla.ShardedAxis is deprecated as of JAX v0.8.2."
+            " Please use `jax.shard_map` instead of `jax.pmap`."
+        ),
         _deprecated_sharding_specs.ShardedAxis,
     ),
     "ShardingSpec": (
-        "jax.interpreters.pxla.ShardingSpec is deprecated as of JAX v0.8.2.",
+        (
+            "jax.interpreters.pxla.ShardingSpec is deprecated as of JAX v0.8.2."
+            " Please use `jax.shard_map` instead of `jax.pmap`."
+        ),
         _deprecated_sharding_specs.ShardingSpec,
     ),
     "Unstacked": (
-        "jax.interpreters.pxla.Unstacked is deprecated as of JAX v0.8.2.",
+        (
+            "jax.interpreters.pxla.Unstacked is deprecated as of JAX v0.8.2."
+            " Please use `jax.shard_map` instead of `jax.pmap`."
+        ),
         _deprecated_sharding_specs.Unstacked,
     ),
     "spec_to_indices": (
-        "jax.interpreters.pxla.spec_to_indices is deprecated as of JAX v0.8.2.",
+        (
+            "jax.interpreters.pxla.spec_to_indices is deprecated as of JAX"
+            " v0.8.2. Please use `jax.shard_map` instead of `jax.pmap`."
+        ),
         _deprecated_sharding_specs.spec_to_indices,
     ),
 }
