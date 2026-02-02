@@ -756,10 +756,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   @parameterized.parameters(jnp.bfloat16, jnp.float16, jnp.float32)
   def test_copy_smem_to_gmem_reduction(self, dtype):
-    # TODO(b/415721295):Remove after the minimal jaxlib version is 0.8.2.
-    if not hasattr(mgpu.dialect, "TMAReduction"):
-      self.skip_if_wg_semantics()
-
     @functools.partial(
         self.pallas_call,
         grid=(200,),
@@ -1143,11 +1139,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     if transforms:
       # We cannot yet specify transforms on block specs for WG semantics.
       self.skip_if_wg_semantics()
-
-    # TODO(b/415721295): Remove when the minimum jaxlib version is 0.8.3.
-    if not hasattr(mgpu.dialect, "tma_gather_supported"):
-      self.skip_if_wg_semantics()
-
     dtype = jnp.int32
     out_shape = (64, 128)
     shape = (128, 64 + out_shape[-1])

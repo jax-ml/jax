@@ -290,10 +290,6 @@ class DialectTest(MosaicGpuTest):
       self.module.operation.verify()
 
   def test_async_load_op_vector_indices_shape_must_match_slice_lengths(self):
-    # TODO(b/415721295): Remove when the minimum jaxlib version is 0.8.3.
-    if not hasattr(mgpu.dialect, "tma_gather_supported"):
-      self.skipTest("TMA gather support is required.")
-
     with ir.InsertionPoint(self.module.body):
       i32 = ir.IntegerType.get_signless(32)
       source, destination, barrier, *indices = undefs(
@@ -319,10 +315,6 @@ class DialectTest(MosaicGpuTest):
       self.module.operation.verify()
 
   def test_async_load_op_only_one_vector_index_allowed(self):
-    # TODO(b/415721295): Remove when the minimum jaxlib version is 0.8.3.
-    if not hasattr(mgpu.dialect, "tma_gather_supported"):
-      self.skipTest("TMA gather support is required.")
-
     with ir.InsertionPoint(self.module.body):
       i32 = ir.IntegerType.get_signless(32)
       source, destination, barrier, *indices = undefs(

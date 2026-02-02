@@ -2102,9 +2102,6 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_layout_for_async_ops_with_vector_indices(
       self, op_type, vec_offset,
   ):
-    # TODO(b/415721295): Remove when the minimum jaxlib version is 0.8.3.
-    if not hasattr(mgpu.dialect, "tma_gather_supported"):
-      self.skipTest("TMA gather support is required.")
     with ir.InsertionPoint(self.module.body):
       elt_ty = ir.BF16Type.get()
       vec_len = 64

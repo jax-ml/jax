@@ -824,9 +824,4 @@ def MosaicGPU_BroadcastedIotaOp : Op<MosaicGPU_Dialect, "broadcasted_iota", []> 
   let hasVerifier = 1;
 }
 
-// TODO (b/415721295): Remove when the minimum JAXLIB version is 0.8.3.
-def TMAGatherSupportedOp : Op<MosaicGPU_Dialect, "tma_gather_supported"> {
-  let summary = "Dummy op that will be removed. DO NOT USE.";
-}
-
 #endif // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_

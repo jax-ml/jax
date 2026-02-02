@@ -5626,10 +5626,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     if not config.enable_x64.value and dtype in (jnp.int64, jnp.uint64):
       self.skipTest("x64 support is disabled")
 
-    # TODO(b/415721295):Clean up after the minimal jaxlib version is 0.8.2.
-    if not hasattr(mgpu_dialect, "TMAReduction"):
-      self.skipTest("The mgpu_dialect.TMAReduction attribute is required.")
-
     if reduction_op in ("min", "max"):
       if dtype in (jnp.int32, jnp.int64):
         reduction_op = "s" + reduction_op
@@ -6406,10 +6402,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
 
   @parameterized.parameters(jnp.int32, jnp.int16, jnp.int8)
   def test_tma_gather(self, index_dtype):
-    # TODO(b/415721295): Remove when the minimum jaxlib version is 0.8.3.
-    if not hasattr(mgpu_dialect, "tma_gather_supported"):
-      self.skipTest("TMA gather support is required.")
-
     dtype = jnp.bfloat16
     src_shape = (128, 64)
     dst_shape = (32, 64)
