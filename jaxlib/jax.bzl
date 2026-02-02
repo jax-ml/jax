@@ -311,7 +311,6 @@ def jax_multiplatform_test(
             main = main,
             exec_properties = tf_exec_properties({"tags": test_tags}),
             visibility = jax_visibility(name),
-            legacy_create_init = 0,
         )
 
 def get_test_suite_list(paths, backends = []):
