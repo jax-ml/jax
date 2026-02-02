@@ -4076,7 +4076,9 @@ standard_naryop = partial(naryop, input_dtype)
 # involving linear primitives with implicit broadcasting.
 def _unbroadcast(aval, x):
   if not isinstance(aval, ShapedArray):
-    raise TypeError("transpose with implicit broadcasting of unshaped values")
+    raise TypeError(
+        'transpose with implicit broadcasting of unshaped values. Got'
+        f' {type(aval)}')
   x_shape = np.shape(x)
   if (core.definitely_equal_shape(aval.shape, x_shape) and
       aval.sharding == typeof(x).sharding):
@@ -4090,7 +4092,7 @@ def _unbroadcast(aval, x):
     if config.enable_checks.value:
       assert all(aval.shape[i] == 1 for i in dims)
     x = reduce_sum(x, dims) if dims else x
-    return reshape(x, aval.shape, out_sharding=aval.to_cotangent_aval().sharding)
+    return reshape(x, aval.shape, out_sharding=aval.sharding)
 
 def _maybe_broadcast(target_shape, x, target_sharding):
   x_shape = np.shape(x)
@@ -4647,8 +4649,10 @@ def _add_transpose(t, x, y):
   # some places (e.g. in custom_jvp) it may not always hold. For example, see
   # api_test.py's CustomJVPTest.test_jaxpr_zeros.
   # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
-  x_aval = x.aval if ad.is_undefined_primal(x) else core.get_aval(x)
-  y_aval = y.aval if ad.is_undefined_primal(y) else core.get_aval(y)
+  x_aval = x.aval if ad.is_undefined_primal(x) else core.typeof(x)
+  x_aval = x_aval.to_cotangent_aval()
+  y_aval = y.aval if ad.is_undefined_primal(y) else core.typeof(y)
+  y_aval = y_aval.to_cotangent_aval()
   if type(t) is ad_util.Zero:
     return [ad_util.Zero(x_aval), ad_util.Zero(y_aval)]
   else:
@@ -4746,8 +4750,10 @@ mul_p = standard_naryop([_num, _num], 'mul', unreduced_rule=_mul_unreduced_rule)
 ad.defjvp(mul_p,
           lambda xdot, x, y: mul(xdot, y),
           lambda ydot, x, y: mul(x, ydot))
-ad.defbilinear(mul_p, lambda ct, x, y: _unbroadcast(x.aval, mul(ct, y)),
-               lambda ct, x, y: _unbroadcast(y.aval, mul(x, ct)))
+ad.defbilinear(
+    mul_p,
+    lambda ct, x, y: _unbroadcast(x.aval.to_cotangent_aval(), mul(ct, y)),
+    lambda ct, x, y: _unbroadcast(y.aval.to_cotangent_aval(), mul(x, ct)))
 mlir.register_lowering(mul_p, partial(_nary_lower_hlo, hlo.multiply))
 
 def _div_transpose_rule(cotangent, x, y):
@@ -4932,14 +4938,15 @@ def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type,
   assert ad.is_undefined_primal(operand)
   old_dtype = operand.aval.dtype
   old_weak_type = dtypes.is_weakly_typed(operand)
+  operand_ct_aval = operand.aval.to_cotangent_aval()
   if type(ct) is ad_util.Zero:
-    return [ad_util.Zero(operand.aval)]
+    return [ad_util.Zero(operand_ct_aval)]
   elif core.primal_dtype_to_tangent_dtype(old_dtype) == dtypes.float0:
     return [ad_util.Zero(operand.aval.update(dtype=dtypes.float0, weak_type=False))]
   else:
     out = convert_element_type_p.bind(
         ct, new_dtype=old_dtype, weak_type=old_weak_type,
-        sharding=operand.aval.to_cotangent_aval().sharding)
+        sharding=operand_ct_aval.sharding)
     return [out]
 
 def _convert_element_type_jvp_rule(tangent, primal_result, operand, *,
