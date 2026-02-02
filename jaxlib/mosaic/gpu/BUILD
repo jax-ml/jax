@@ -339,6 +339,7 @@ cc_library(
         "@xla//xla/backends/gpu/runtime:collective_execution",
         "@xla//xla/backends/gpu/runtime:collective_metadata_thunk",
         "@xla//xla/backends/gpu/runtime:collective_params",
+        "@xla//xla/core/collectives:rank_id",
         "@xla//xla/ffi",
         "@xla//xla/ffi:ffi_api",
         "@xla//xla/service:custom_call_status",
