@@ -143,10 +143,6 @@ class MatmulTestCase(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
   @hp.given(hps.data())
   def test_matmul_sm100(self, data):
     self.skip_unless_tcgen05()
-    if jtu.is_cuda_compute_capability_equal("10.3"):
-      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
-      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
-
     dtype = data.draw(
         hps.sampled_from([jnp.float16, jnp.bfloat16]),
         label="dtype",
