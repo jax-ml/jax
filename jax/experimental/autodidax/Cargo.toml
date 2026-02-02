@@ -1,0 +1,12 @@
+[package]
+name = "autodidax"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "autodidax_core"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
