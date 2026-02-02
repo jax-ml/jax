@@ -68,6 +68,7 @@ PLATFORM_TAGS_DICT = {
     ("Windows", "AMD64"): ("win", "amd64"),
 }
 
+
 def get_optional_dep(package, excluded_py_versions = ["3.14", "3.14-ft"]):
     py_ver = HERMETIC_PYTHON_VERSION
     if HERMETIC_PYTHON_VERSION_KIND == "ft":
@@ -311,6 +312,7 @@ def jax_multiplatform_test(
             main = main,
             exec_properties = tf_exec_properties({"tags": test_tags}),
             visibility = jax_visibility(name),
+            legacy_create_init = 0,
         )
 
 def get_test_suite_list(paths, backends = []):
