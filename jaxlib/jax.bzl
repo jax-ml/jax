@@ -68,7 +68,6 @@ PLATFORM_TAGS_DICT = {
     ("Windows", "AMD64"): ("win", "amd64"),
 }
 
-
 def get_optional_dep(package, excluded_py_versions = ["3.14", "3.14-ft"]):
     py_ver = HERMETIC_PYTHON_VERSION
     if HERMETIC_PYTHON_VERSION_KIND == "ft":
