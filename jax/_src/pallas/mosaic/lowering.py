@@ -19,6 +19,7 @@ from collections.abc import Callable, Collection, Hashable, Sequence
 import contextlib
 import dataclasses
 import functools
+import json
 import string
 from typing import Any, Literal, Protocol, Self, TypeVar, cast
 
@@ -137,12 +138,13 @@ def _maybe_physicalize_block_shape(aval, block_shape):
 #
 # The attributes are:
 #
-# tpu.dynamic_dimension_mapping_arg_name_<placeholder>
+# tpu.dynamic_dimension_mapping_arg_location_<placeholder>
 # tpu.dynamic_dimension_mapping_module_<placeholder>
 #
-# The first attribute is a comma-separated list of the dimension variables
-# that are used to compute the symbolic dimension expression for the
-# placeholder. The second attribute is the MLIR module that contains the
+# The first attribute is a comma-separated list of the location of the dimension
+# variables that are used to compute the symbolic dimension expression for the
+# placeholder. By location, we mean the specific operand/dimension in the
+# tpu_custom_call. The second attribute is the MLIR module that contains the
 # SHLO functions that compute the symbolic dimension expression for the
 # placeholder.
 class LoweringDynamicShapeEnv:
@@ -933,6 +935,30 @@ def lower_jaxpr_to_module(
     for aval in args_dimvars:
       env[aval] = _mosaic_lowering_dynamic_shape_env.to_placeholder(aval)
 
+    # We store the location of each dimvar, so we can map it back
+    # to the argument and dimension index. During specialization phase of Mosaic
+    # use this information to grab the concretete value and replace the
+    # placeholder.
+    location_of_dimvar = {}
+
+    # Dynamic grid bounds have to go at the front.
+    if mosaic_grid_mapping.grid:
+      dynamic_dims = (
+          d for d in mosaic_grid_mapping.grid if not isinstance(d, int)
+      )
+      for operand_idx, dim in enumerate(dynamic_dims):
+        location_of_dimvar.setdefault(
+            str(dim), {"operand_index": operand_idx, "dimension_index": -1}
+        )
+
+    # Populate location_of_dimvar from input shapes.
+    for operand_idx, aval in enumerate(lowering_context.avals_in):
+      for dimension_idx, dim in enumerate(getattr(aval, "shape", [])):
+        location_of_dimvar.setdefault(
+            str(dim),
+            {"operand_index": operand_idx, "dimension_index": dimension_idx},
+        )
+
     for (
         placeholder,
         dim_expr,
@@ -952,15 +978,27 @@ def lower_jaxpr_to_module(
         )(
             (dim_expr,), tuple(args_dimvars), *(env[v] for v in args_dimvars)
         ).mlir_module()
-        arg_name = args_dimvars
+        arg_names = args_dimvars
         # See Note - On Export Placeholders for more details.
         m.operation.attributes[
             "tpu.dynamic_dimension_mapping_module_" + str(placeholder)
         ] = ir.StringAttr.get(str(stablehlo))
-        arg_name_str = ",".join(arg_name)
+        arg_names_to_loc = []
+        for arg_name in arg_names:
+          if arg_name not in location_of_dimvar:
+            raise ValueError(
+                f"Unable to find location of dimvar {arg_name} in dim_map"
+                f" {location_of_dimvar}"
+            )
+          loc = location_of_dimvar[arg_name]
+          arg_names_to_loc.append({
+              "operand_index": loc["operand_index"],
+              "dimension_index": loc["dimension_index"],
+          })
+
         m.operation.attributes[
-            "tpu.dynamic_dimension_mapping_arg_name_" + str(placeholder)
-        ] = ir.StringAttr.get(arg_name_str)
+            "tpu.dynamic_dimension_mapping_arg_location_" + str(placeholder)
+        ] = ir.StringAttr.get(json.dumps(arg_names_to_loc))
   return m
 
 
