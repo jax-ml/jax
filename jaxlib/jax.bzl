@@ -16,7 +16,6 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@com_github_google_flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
-load("@external_test_deps//:test_deps.bzl", "external")
 load("@jax_wheel//:wheel.bzl", "WHEEL_VERSION")
 load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "WHEEL_VERSION_SUFFIX")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
@@ -181,14 +180,12 @@ def if_building_jaxlib(
         "//jax:config_build_jaxlib_true": if_building,
         "//jax:config_build_jaxlib_false": if_not_building,
         "//jax:config_build_jaxlib_wheel": [],
-        "//jax:config_build_jaxlib_external_deps": if_building,
     })
 
 def _cpu_test_deps():
     """Returns the test dependencies needed for a CPU-only JAX test."""
     return select({
         "//jax:config_build_jaxlib_true": [],
-        "//jax:config_build_jaxlib_external_deps": [],
         "//jax:config_build_jaxlib_false": ["@pypi//jaxlib"],
         "//jax:config_build_jaxlib_wheel": ["//jaxlib/tools:jaxlib_py_import"],
     })
@@ -201,9 +198,6 @@ def _gpu_test_deps():
             "//jaxlib/rocm:gpu_only_test_deps",
             "//jax_plugins:gpu_plugin_only_test_deps",
         ],
-        "//jax:config_build_jaxlib_external_deps": external.test_deps +
-                                                   if_cuda_is_configured(["//jaxlib/cuda:gpu_only_test_deps"]) +
-                                                   if_rocm_is_configured(["//jaxlib/rocm:gpu_only_test_deps"]),
         "//jax:config_build_jaxlib_false": [
             "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",
             "//jaxlib/tools:pypi_jax_cuda_pjrt_with_cuda_deps",
