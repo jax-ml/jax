@@ -1196,7 +1196,7 @@ debug_nans = bool_state(
           'output of a jit-compiled computation, call into the un-compiled '
           'version in an attempt to more precisely identify the operation '
           'which produced the nan. Note: enabling this option disables buffer '
-          'donation (see jax.jit donate_argnums) for functions compiled while '
+          'donation (see the `donate_argnums` argument to `jax.jit`) for functions compiled while '
           'this mode is active.'))
 
 debug_infs = bool_state(
