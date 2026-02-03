@@ -16,3 +16,4 @@
 
 from jax._src.tpu_custom_call import as_tpu_kernel as as_tpu_kernel
 from jax._src.tpu_custom_call import lower_module_to_custom_call as lower_module_to_custom_call
+from jax._src.tpu_custom_call import Tiling as Tiling
