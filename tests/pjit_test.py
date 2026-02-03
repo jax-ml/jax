@@ -10151,6 +10151,29 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(jax.typeof(x_bar).sharding.spec, P(None, unreduced={'x'}))
     self.assertEqual(jax.typeof(y_bar).sharding.spec, P(None, unreduced={'x'}))
 
+  @jtu.with_explicit_mesh((2,), ('fsdp',))
+  def test_microbatch_vmap_unreduced(self, mesh):
+    inputs = jax.device_put(jnp.ones((4, 8, 16)), P(None, 'fsdp'))
+    targets = jax.device_put(jnp.ones((4, 8, 16)), P(None, 'fsdp'))
+    params = {'w_in': jnp.ones((2, 16, 64)), 'w_out': jnp.ones((2, 64, 16))}
+    params = jax.device_put(params, P(reduced={'fsdp'}))
+
+    def stage_fn(params, x):
+      def layer(carry, p):
+        h = jnp.dot(carry, p['w_in'], out_sharding=P('fsdp'))
+        return jnp.dot(h, p['w_out'], out_sharding=P('fsdp')), None
+      out, _ = jax.lax.scan(layer, x, params)
+      return out
+
+    @jax.jit
+    @partial(jax.vmap, in_axes=(None, 0, 0))
+    @jax.value_and_grad
+    def loss_fn(params, inputs, targets):
+      x = stage_fn(params, inputs)
+      return jnp.sum((x - targets) ** 2)
+
+    loss_fn(params, inputs, targets)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

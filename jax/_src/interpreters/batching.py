@@ -26,7 +26,6 @@ from jax._src.core import typeof
 from jax._src import source_info_util
 from jax._src import linear_util as lu
 from jax._src.partition_spec import PartitionSpec as P
-from jax._src.sharding_impls import NamedSharding
 from jax._src import mesh as mesh_lib
 from jax._src.ad_util import Zero, SymbolicZero, add_jaxvals, add_jaxvals_p
 from jax._src.core import Trace, Tracer, TraceTag, AxisName
@@ -224,10 +223,9 @@ class AxisData:
 
 def get_sharding_for_vmap(axis_data, orig_sharding, axis):
   val = axis_data.explicit_mesh_axis
-  # TODO(yashkatariya): Preserve unreduced here using
-  # `orig_sharding.spec.update`
-  new_spec = P(*tuple_insert(orig_sharding.spec, axis, val))
-  return NamedSharding(orig_sharding.mesh, new_spec)
+  new_spec = orig_sharding.spec.update(
+      partitions=tuple_insert(orig_sharding.spec, axis, val))
+  return orig_sharding.update(spec=new_spec)
 
 
 class BatchTrace(Trace):
