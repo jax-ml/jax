@@ -612,16 +612,22 @@ def _broadcasted_iota_op_lowering_rule(
 def _vector_broadcast_op_lowering_rule(
     _: LoweringContext, op: vector.BroadcastOp
 ) -> Sequence[ir.Value]:
-  out_vec_ty = ir.VectorType(op.vector.type)
-  fragmented_array = fa.FragmentedArray.splat(
-      op.source,
-      tuple(out_vec_ty.shape),
-      layouts_lib.from_layout_attr(
-          op.attributes["out_layouts"][0]
-      ),
-      is_signed=_default_is_signed(out_vec_ty.element_type),
-  )
-  return [fragmented_array_to_ir(fragmented_array, out_vec_ty)]
+  [out_layout] = inference_utils.out_layouts(op)
+  out_ty = ir.VectorType(op.vector.type)
+  if not isinstance(op.source.type, ir.VectorType):  # scalar broadcast
+    res = fa.FragmentedArray.splat(
+        op.source,
+        tuple(out_ty.shape),
+        layouts_lib.from_layout_attr(out_layout),
+        is_signed=_default_is_signed(out_ty.element_type),
+    )
+    return [fragmented_array_to_ir(res, out_ty)]
+
+  [in_layout] = inference_utils.in_layouts(op)
+  a = _fragmented_array_from_ir(op.source, in_layout)
+  res = a.broadcast(out_ty.shape)
+  assert res.layout == layouts_lib.from_layout_attr(out_layout)
+  return [fragmented_array_to_ir(res, out_ty)]
 
 
 @_register_lowering(vector.ShapeCastOp)
@@ -796,14 +802,7 @@ def _mgpu_layout_cast_op_lowering_rule(
 def _mgpu_broadcast_in_dim_op_lowering_rule(
     _: LoweringContext, op: mgpu.BroadcastInDimOp
 ) -> Sequence[ir.Value]:
-  in_ty = ir.VectorType(op.operand.type)
   out_ty = ir.VectorType(op.result.type)
-  if len(in_ty.shape) != 1 or len(out_ty.shape) != 2:
-    raise NotImplementedError(
-        "Broadcast in dim with non-trivial broadcast dimensions is not"
-        f" supported: {op}"
-    )
-
   broadcast_dims = tuple(op.broadcast_dimensions)
   in_layout_attr = inference_utils.in_layouts(op)[0]
   operand_fa = _fragmented_array_from_ir(op.operand, in_layout_attr)
