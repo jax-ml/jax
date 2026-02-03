@@ -2587,8 +2587,7 @@ def make_jaxpr(
     else:
       jaxpr = traced.jaxpr
     if return_shape:
-      out = [ShapeDtypeStruct(o.shape, o.dtype) for o in jaxpr.out_avals]
-      return jaxpr, tree_unflatten(tree_structure(traced.out_info), out)
+      return jaxpr, traced.out_info
     return jaxpr
 
   make_jaxpr_f.__module__ = "jax"
