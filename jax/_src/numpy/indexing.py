@@ -34,6 +34,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
+from jax._src import indexing
 from jax._src import literals
 from jax._src.lax import lax
 from jax._src.lax import slicing
@@ -64,6 +65,7 @@ class IndexType(enum.Enum):
   INTEGER = "integer"
   BOOLEAN = "boolean"
   ARRAY = "array"
+  DYNAMIC_SLICE = "dynamic_slice"
 
   @classmethod
   def from_index(cls, idx: Index) -> IndexType:
@@ -74,6 +76,8 @@ class IndexType(enum.Enum):
       return cls.ELLIPSIS
     elif isinstance(idx, slice):
       return cls.SLICE
+    elif isinstance(idx, indexing.Slice):
+      return cls.DYNAMIC_SLICE
     elif _is_integer_index(idx):
       return cls.INTEGER
     elif _is_boolean_index(idx):
@@ -150,7 +154,7 @@ def _parse_indices(
       ellipses_indices.append(i)
     elif typ == IndexType.BOOLEAN:
       dimensions_consumed.append(np.ndim(idx))  # type: ignore[arg-type]
-    elif typ in [IndexType.INTEGER, IndexType.ARRAY, IndexType.SLICE]:
+    elif typ in [IndexType.INTEGER, IndexType.ARRAY, IndexType.SLICE, IndexType.DYNAMIC_SLICE]:
       dimensions_consumed.append(1)
     else:
       raise IndexError(f"Unrecognized index type: {typ}")
@@ -238,7 +242,7 @@ class NDIndexer:
     sharding.
     """
     for idx in self.indices:
-      if idx.typ == IndexType.INTEGER:
+      if idx.typ in [IndexType.INTEGER, IndexType.DYNAMIC_SLICE]:
         return True
       if idx.typ == IndexType.SLICE:
         slc = idx.index
@@ -388,7 +392,7 @@ class NDIndexer:
     for position, pidx in enumerate(self.indices):
       if pidx.typ in [IndexType.INTEGER, IndexType.ELLIPSIS, IndexType.SLICE, IndexType.NONE]:
         pass
-      elif pidx.typ in [IndexType.ARRAY, IndexType.BOOLEAN]:
+      elif pidx.typ in [IndexType.ARRAY, IndexType.BOOLEAN, IndexType.DYNAMIC_SLICE]:
         raise TypeError("static_slice: indices must be static scalars or slices."
                         f" Got index of type {type(pidx.index)} at position {position}")
       else:
@@ -481,6 +485,11 @@ class NDIndexer:
     for position, pidx in enumerate(self.indices):
       if pidx.typ in [IndexType.INTEGER, IndexType.ELLIPSIS, IndexType.NONE]:
         pass
+      elif pidx.typ == IndexType.DYNAMIC_SLICE:
+        assert isinstance(pidx.index, indexing.Slice)
+        if pidx.index.stride != 1:
+          raise TypeError("dynamic_slice: only unit steps supported in slice."
+                          f" Got {pidx.index} at position {position}")
       elif pidx.typ == IndexType.SLICE:
         assert isinstance(pidx.index, slice)
         if pidx.index.step is not None and pidx.index.step not in [-1, 1]:
@@ -537,6 +546,11 @@ class NDIndexer:
         else:
           start_indices.append(start)
           slice_sizes.append(stop - start)
+      elif pidx.typ == IndexType.DYNAMIC_SLICE:
+        assert isinstance(pidx.index, indexing.Slice)
+        start_indices.append(pidx.index.start)
+        slice_sizes.append(pidx.index.size)
+        trivial_slicing = False
       else:
         raise TypeError(f"dynamic_slice: unrecognized index {pidx.index}")
     result = arr
@@ -1298,10 +1312,14 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
       newaxis_dims.append(y_axis)
       y_axis += 1
 
-    elif index.typ == IndexType.SLICE:
+    elif index.typ in [IndexType.SLICE, IndexType.DYNAMIC_SLICE]:
       # Handle static slice index.
-      assert isinstance(index.index, slice)
-      start, step, slice_size = core.canonicalize_slice(index.index, indexer.shape[x_axis])
+      if isinstance(index.index, indexing.Slice):
+        start, step, slice_size = index.index.start, index.index.stride, index.index.size
+      elif isinstance(index.index, slice):
+        start, step, slice_size = core.canonicalize_slice(index.index, indexer.shape[x_axis])
+      else:
+        raise RuntimeError(f"Internal: expected slice or Slice, got {type(index.index)}")
       slice_shape.append(slice_size)
       slice_spec.append(x_spec[x_axis])
 
