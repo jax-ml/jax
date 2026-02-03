@@ -2277,7 +2277,12 @@ def companion(a: ArrayLike) -> Array:
 
   Note:
     If ``a[..., 0] == 0``, the result will contain NaN values.
-    For ``n < 2``, the result will be an empty array of shape ``(..., 0, 0)``.
+    
+    Unlike :func:`scipy.linalg.companion`, which raises ``ValueError`` when
+    ``n < 2``, this JAX implementation returns an empty array of shape
+    ``(..., 0, 0)`` in such cases. This design choice allows the function to
+    remain JIT-compatible, as raising errors based on array values is not
+    permitted under JIT compilation.
 
   Examples:
     Create a companion matrix for the polynomial ``x^3 - 10x^2 + 31x - 30``:
@@ -2302,7 +2307,7 @@ def companion(a: ArrayLike) -> Array:
     (2, 2, 2)
   """
   a = ensure_arraylike("companion", a)
-  a = jnp.atleast_1d(jnp.asarray(a))
+  a = jnp.atleast_1d(a)
   
   n = a.shape[-1]
   
