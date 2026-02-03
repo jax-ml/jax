@@ -625,7 +625,7 @@ def _infer_input_type(fun: Callable, dbg_fn: Callable[[], core.DebugInfo],
     arg_path = f"argument path is {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'}"  # pytype: disable=name-error
     raise OverflowError(
       "An overflow was encountered while parsing an argument to a jitted "
-      f"computation, whose {arg_path}."
+      f"computation, whose {arg_path}. Got {type(x)} with value {x}"  # pytype: disable=name-error
     ) from None
   except TypeError:
     dbg = dbg_fn()
