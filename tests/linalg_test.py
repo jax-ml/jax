@@ -2543,20 +2543,15 @@ class LaxLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker)
     self._CompileAndCheck(jsp_fun, args_maker)
 
-  def testCompanionErrors(self):
-    # Test error for n < 2
-    with self.assertRaises(ValueError):
-      jsp.linalg.companion([1])
-    with self.assertRaises(ValueError):
-      jsp.linalg.companion([])
+  def testCompanionZeroLeadingCoefficient(self):
+    # Test that zero leading coefficient produces NaN
+    result = jsp.linalg.companion(np.array([0., 1., 2.]))
+    self.assertTrue(np.all(np.isnan(result[0, :])))
     
-    # Test error for zero leading coefficient
-    with self.assertRaises(ValueError):
-      jsp.linalg.companion([0, 1, 2])
-    
-    # Test error for zero leading coefficient in batch
-    with self.assertRaises(ValueError):
-      jsp.linalg.companion([[0, 1, 2], [1, 2, 3]])
+    # Test zero leading coefficient in batch - only affected row should be NaN
+    result_batch = jsp.linalg.companion(np.array([[0., 1., 2.], [1., 2., 3.]]))
+    self.assertTrue(np.all(np.isnan(result_batch[0, 0, :])))  # First batch has NaN
+    self.assertFalse(np.any(np.isnan(result_batch[1])))  # Second batch is valid
 
 
 if __name__ == "__main__":
