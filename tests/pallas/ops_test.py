@@ -1891,6 +1891,9 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]):
       self.skipTest("Not implemented on TPU")
 
+    if jtu.is_device_rocm():
+      self.skipTest("approx_tanh not supported on ROCm")
+
     if self.INTERPRET:
       self.skipTest("approx_tanh is not supported in interpret mode")
 
