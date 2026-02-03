@@ -2325,7 +2325,10 @@ ad.deflinear2(psum_invariant_p, _psum_invariant_transpose_rule)
 
 ########################### pvary ##################################
 
-core.pvary_p.def_impl(lambda arg, *, axes: arg)
+def _raise_valueerror(name, arg, *, axes):
+  raise ValueError(f'{name} should be called under jax.shard_map.')
+
+core.pvary_p.def_impl(partial(_raise_valueerror, 'pvary'))
 mlir.register_lowering(core.pvary_p, lambda ctx, x, *, axes: [x])
 
 def _pvary_abstract_eval(aval, *, axes):
@@ -2590,19 +2593,19 @@ ad.deflinear2(unreduced_psum_p, _unreduced_psum_transpose_rule)
 
 # Invariant -> Reduced no-op cast. It's the transpose of unreduced_psum.
 def preduced(x, axis_name):
-  if not config._check_vma.value:
-    return x
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axes:
     return x
   cur_mesh = get_abstract_mesh()
+  if not config._check_vma.value and all(a in cur_mesh.manual_axes for a in axes):
+    return x
   new_axes = axes if cur_mesh.empty else core.order_wrt_mesh(cur_mesh, axes)
   assert set(new_axes) == set(axes)
   del axes
   return tree_util.tree_map(lambda l: preduced_p.bind(l, axes=new_axes), x)
 
 preduced_p = core.Primitive('preduced')
-preduced_p.def_impl(lambda arg, *, axes: arg)
+preduced_p.def_impl(partial(_raise_valueerror, 'preduced'))
 mlir.register_lowering(preduced_p, lambda ctx, x, *, axes: [x])
 
 def _preduced_abstract_eval(aval, *, axes):
@@ -2641,16 +2644,17 @@ batching.primitive_batchers[preduced_p] = _preduced_batcher
 
 # Varying -> Unreduced no-op cast
 def vary_unreduced_cast(x, axis_name):
-  if not config._check_vma.value:
-    return x
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
+    return x
+  cur_mesh = get_abstract_mesh()
+  if not config._check_vma.value and all(a in cur_mesh.manual_axes for a in axes):
     return x
   return tree_util.tree_map(
       lambda leaf: vary_unreduced_cast_p.bind(leaf, axes=axes), x)
 
 vary_unreduced_cast_p = core.Primitive('vary_unreduced_cast_p')
-vary_unreduced_cast_p.def_impl(lambda arg, *, axes: arg)
+vary_unreduced_cast_p.def_impl(partial(_raise_valueerror, 'vary_unreduced_cast'))
 mlir.register_lowering(vary_unreduced_cast_p, lambda ctx, x, *, axes: [x])
 
 def _vary_unreduced_cast_abstract_eval(aval, *, axes):
@@ -2694,7 +2698,8 @@ batching.primitive_batchers[vary_unreduced_cast_p] = _vary_unreduced_cast_batche
 
 # Reduced -> Varying no-op cast
 # Traceable defined in core.py to avoid circular imports
-core.reduced_vary_cast_p.def_impl(lambda arg, *, axes: arg)
+core.reduced_vary_cast_p.def_impl(
+    partial(_raise_valueerror, 'reduced_vary_cast'))
 mlir.register_lowering(core.reduced_vary_cast_p, lambda ctx, x, *, axes: [x])
 
 def _reduced_vary_cast_abstract_eval(aval, *, axes):

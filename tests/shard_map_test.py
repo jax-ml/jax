@@ -5023,6 +5023,34 @@ class ShardMapTest(jtu.JaxTestCase):
       self.assertEqual(out_g.sharding,
                        NamedSharding(mesh, P(None, reduced={'x'})))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_pvary_eager(self, mesh):
+    inp = np.arange(8.)
+
+    def f(x):
+      return jax.lax.pcast(x, 'x', to='varying')
+
+    f_shmap = shard_map(f, in_specs=P(), out_specs=P('x'))
+    out = f_shmap(inp)
+    self.assertArraysEqual(out, np.concat([inp, inp]))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+    jax.jit(jax.grad(lambda x: f_shmap(x).sum()))(inp)  # doesn't crash
+
+    with self.assertRaisesRegex(
+        ValueError, "pvary should be called under jax.shard_map"):
+      f(inp)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_pvary_explicit_axes_error(self, mesh):
+    @jax.jit
+    @shard_map(in_specs=P(), out_specs=P('x'), axis_names={'x'}, check_vma=False)
+    def f(x):
+      return jax.lax.pcast(x, 'y', to='varying')
+
+    with self.assertRaisesRegex(NameError, "Found an unbound axis name"):
+      f(np.arange(8))
+
 
 class FunSpec(NamedTuple):
   name: str
