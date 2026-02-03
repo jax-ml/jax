@@ -2587,7 +2587,14 @@ def make_jaxpr(
     else:
       jaxpr = traced.jaxpr
     if return_shape:
-      out = [ShapeDtypeStruct(o.shape, o.dtype) for o in jaxpr.out_avals]
+      def aval_to_shape_struct(aval):
+        if hasattr(aval, 'shape') and hasattr(aval, 'dtype'):
+          return ShapeDtypeStruct(aval.shape, aval.dtype)
+        else:
+          # For HiType and other abstract values without shape/dtype,
+          # return the aval itself as it already describes the type
+          return aval
+      out = [aval_to_shape_struct(o) for o in jaxpr.out_avals]
       return jaxpr, tree_unflatten(tree_structure(traced.out_info), out)
     return jaxpr
 
