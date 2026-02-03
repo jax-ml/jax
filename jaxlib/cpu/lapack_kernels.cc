@@ -23,14 +23,18 @@ limitations under the License.
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/base/dynamic_annotations.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "jaxlib/ffi_helpers.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
+#include "xla/future.h"
 
 static_assert(sizeof(jax::lapack_int) == sizeof(int32_t),
               "Expected LAPACK integers to be 32-bit");
@@ -356,9 +360,24 @@ template struct CholeskyFactorization<ffi::DataType::C128>;
 
 namespace internal {
 
+// TODO(basioli): It might be worth consider parallelizing on even smaller
+// matrices if batch size is large enough.
+// In this case we wouldn't queue a call per matrix, but a call where we'd
+// handle a chunk of the batch (e.x. (10000, 2, 2) could be chunked into e.x.
+// (250, 2, 2)).
+bool ShouldParallelizeSVD(int64_t batch_size, int64_t rows, int64_t cols,
+                          int64_t num_threads) {
+  int64_t matrix_size = rows * cols;
+
+  const int64_t kMinMatrixSizeForParallelization = 8 * 8;
+
+  return matrix_size >= kMinMatrixSizeForParallelization && batch_size > 1;
+}
+
 template <ffi::DataType dtype>
 static ffi::Error SvdKernel(
-    ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    ffi::ResultBuffer<dtype> x_out,
     ffi::ResultBuffer<ffi::ToReal(dtype)> singular_values,
     ffi::ResultBuffer<dtype> u, ffi::ResultBuffer<dtype> vt,
     ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode) {
@@ -375,29 +394,11 @@ static ffi::Error SvdKernel(
   auto* vt_data = vt->typed_data();
   auto* info_data = info->typed_data();
 
-  // Prepare LAPACK workspaces.
-  FFI_ASSIGN_OR_RETURN(
-      const auto work_size,
-      svd::SVDType<dtype>::GetWorkspaceSize(x_rows, x_cols, mode));
-  FFI_ASSIGN_OR_RETURN(const auto iwork_size,
-                       svd::GetIntWorkspaceSize(x_rows, x_cols));
-  auto work_data = AllocateScratchMemory<dtype>(work_size);
-  auto iwork_data = AllocateScratchMemory<LapackIntDtype>(iwork_size);
-  using RealType = typename svd::SVDType<dtype>::RealType;
-  std::unique_ptr<RealType[]> rwork;
-  if constexpr (ffi::IsComplexType<dtype>()) {
-    FFI_ASSIGN_OR_RETURN(const auto rwork_size,
-                         svd::GetRealWorkspaceSize(x_rows, x_cols, mode));
-    rwork = AllocateScratchMemory<ffi::ToReal(dtype)>(rwork_size);
-  }
-
   CopyIfDiffBuffer(x, x_out);
 
   FFI_ASSIGN_OR_RETURN(auto x_rows_v, MaybeCastNoOverflow<lapack_int>(x_rows));
   FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<lapack_int>(x_cols));
   auto mode_v = static_cast<char>(mode);
-  FFI_ASSIGN_OR_RETURN(auto workspace_dim_v,
-                       MaybeCastNoOverflow<lapack_int>(work_size));
   auto x_leading_dim_v = x_rows_v;
   auto u_leading_dim_v = x_rows_v;
 
@@ -406,12 +407,38 @@ static ffi::Error SvdKernel(
   FFI_ASSIGN_OR_RETURN(auto vt_leading_dim_v,
                        MaybeCastNoOverflow<lapack_int>(vt_dims.front()));
 
+  // Prepare LAPACK workspaces.
+  FFI_ASSIGN_OR_RETURN(
+      const auto work_size,
+      svd::SVDType<dtype>::GetWorkspaceSize(x_rows, x_cols, mode));
+  FFI_ASSIGN_OR_RETURN(const auto iwork_size,
+                       svd::GetIntWorkspaceSize(x_rows, x_cols));
+  FFI_ASSIGN_OR_RETURN(auto workspace_dim_v,
+                       MaybeCastNoOverflow<lapack_int>(work_size));
+  using RealType = typename svd::SVDType<dtype>::RealType;
+  lapack_int rwork_size = 0;
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    FFI_ASSIGN_OR_RETURN(rwork_size,
+                         svd::GetRealWorkspaceSize(x_rows, x_cols, mode));
+  }
+
   const int64_t x_out_step{x_rows * x_cols};
   const int64_t singular_values_step{singular_values->dimensions().back()};
   const int64_t u_step{u_dims.front() * u_dims.back()};
   const int64_t vt_step{vt_leading_dim_v * vt_dims.back()};
 
-  for (int64_t i = 0; i < batch_count; ++i) {
+  bool should_parallelize = ShouldParallelizeSVD(batch_count, x_rows, x_cols,
+                                                 thread_pool.num_threads());
+
+  auto thread_work = [&](auto* x_out_data, auto* singular_values_data,
+                         auto* u_data, auto* vt_data, auto* info_data) {
+    auto work_data = AllocateScratchMemory<dtype>(work_size);
+    auto iwork_data = AllocateScratchMemory<LapackIntDtype>(iwork_size);
+    std::unique_ptr<RealType[]> rwork;
+    if constexpr (ffi::IsComplexType<dtype>()) {
+      rwork = AllocateScratchMemory<ffi::ToReal(dtype)>(rwork_size);
+    }
+
     if constexpr (ffi::IsComplexType<dtype>()) {
       svd::SVDType<dtype>::fn(&mode_v, &x_rows_v, &x_cols_v, x_out_data,
                               &x_leading_dim_v, singular_values_data, u_data,
@@ -424,6 +451,26 @@ static ffi::Error SvdKernel(
                               &u_leading_dim_v, vt_data, &vt_leading_dim_v,
                               work_data.get(), &workspace_dim_v,
                               iwork_data.get(), info_data);
+    }
+  };
+
+  std::vector<xla::Future<>> futures;
+  futures.reserve(batch_count);
+  for (int64_t i = 0; i < batch_count; ++i) {
+    if (!should_parallelize) {
+      thread_work(x_out_data, singular_values_data, u_data, vt_data, info_data);
+    } else {
+      auto [promise, future] = xla::MakePromise();
+      futures.push_back(std::move(future));
+      // We copy the thread_work parameters here because they get updated in the
+      // loop.
+      thread_pool.Schedule([&, promise = std::move(promise), x_out_data,
+                            singular_values_data, u_data, vt_data,
+                            info_data]() mutable {
+        thread_work(x_out_data, singular_values_data, u_data, vt_data,
+                    info_data);
+        promise.Set();
+      });
     }
 
     // Suppress MSAN warnings when using a copy of LAPACK uninstrumented by
@@ -459,6 +506,15 @@ static ffi::Error SvdKernel(
     u_data += u_step;
     vt_data += vt_step;
     ++info_data;
+  }
+
+  if (should_parallelize) {
+    absl::Status futures_status = xla::JoinFutures(std::move(futures)).Await();
+
+    if (!futures_status.ok()) {
+      return ffi::Error(XLA_FFI_Error_Code_INTERNAL,
+                        std::string(futures_status.message()));
+    }
   }
   return ffi::Error::Success();
 }
@@ -595,22 +651,23 @@ static absl::StatusOr<lapack_int> SvdQRGetWorkspaceSize(
 
 template <ffi::DataType dtype>
 ffi::Error SingularValueDecomposition<dtype>::Kernel(
-    ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
-    ffi::ResultBuffer<dtype> singular_values, ffi::ResultBuffer<dtype> u,
-    ffi::ResultBuffer<dtype> vt, ffi::ResultBuffer<LapackIntDtype> info,
-    svd::ComputationMode mode) {
-  return internal::SvdKernel<dtype>(x, x_out, singular_values, u, vt, info,
-                                    mode);
+    ::xla::ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> singular_values,
+    ffi::ResultBuffer<dtype> u, ffi::ResultBuffer<dtype> vt,
+    ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode) {
+  return internal::SvdKernel<dtype>(thread_pool, x, x_out, singular_values, u,
+                                    vt, info, mode);
 }
 
 template <ffi::DataType dtype>
 ffi::Error SingularValueDecompositionComplex<dtype>::Kernel(
-    ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
+    ::xla::ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    ffi::ResultBuffer<dtype> x_out,
     ffi::ResultBuffer<ffi::ToReal(dtype)> singular_values,
     ffi::ResultBuffer<dtype> u, ffi::ResultBuffer<dtype> vt,
     ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode) {
-  return internal::SvdKernel<dtype>(x, x_out, singular_values, u, vt, info,
-                                    mode);
+  return internal::SvdKernel<dtype>(thread_pool, x, x_out, singular_values, u,
+                                    vt, info, mode);
 }
 
 template <ffi::DataType dtype>
@@ -1401,6 +1458,7 @@ template struct TridiagonalSolver<ffi::DataType::C128>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                             \
       name, SingularValueDecomposition<data_type>::Kernel,   \
       ::xla::ffi::Ffi::Bind()                                \
+          .Ctx<::xla::ffi::ThreadPool>()                     \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)         \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)     \
           .Ret<::xla::ffi::Buffer<data_type>>(/*s*/)         \
@@ -1413,6 +1471,7 @@ template struct TridiagonalSolver<ffi::DataType::C128>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                                         \
       name, SingularValueDecompositionComplex<data_type>::Kernel,        \
       ::xla::ffi::Ffi::Bind()                                            \
+          .Ctx<::xla::ffi::ThreadPool>()                                 \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)                     \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)                 \
           .Ret<::xla::ffi::Buffer<::xla::ffi::ToReal(data_type)>>(/*s*/) \
