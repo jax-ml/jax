@@ -18,7 +18,9 @@ import dataclasses
 import threading
 from typing import Any
 
+from absl import logging
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
+from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
 
 
@@ -55,11 +57,13 @@ class Barrier(memory.Allocation):
       shared_memory: GPUSharedMemory,
       ref_count: int,
       num_arrivals: int,
+      enable_logging: bool = False,
   ):
     self.shared_memory = shared_memory
     self.ref_count: int = ref_count  # Protected by `self.cv`'s lock.
     self.num_arrivals: int = num_arrivals  # Protected by `self.cv`'s lock.
     self.arrivals_count: int = 0  # Protected by `self.cv`'s lock.
+    self.enable_logging: bool = enable_logging
 
     # We model the `Barrier`'s phase as an integer and, consequently,
     # the 'next awaited phase by thread' as an array of integers. Note that on
@@ -101,6 +105,10 @@ class Barrier(memory.Allocation):
         f" arrivals_count={self.arrivals_count})"
     )
 
+  def _log(self, message: str):
+    if self.enable_logging:
+      logging.info(message)
+
   @property
   def detect_races(self) -> bool:
     return self.shared_memory.detect_races
@@ -128,8 +136,6 @@ class Barrier(memory.Allocation):
           )
 
   def arrive(self, device_id: int, local_thread_id: int, clock):
-    del device_id, local_thread_id  # unused (but kept for debugging)
-
     with self.cv:
       self.arrivals_count += 1
       if self.arrivals_count == self.num_arrivals:
@@ -141,6 +147,11 @@ class Barrier(memory.Allocation):
         self.phase += 1
         self.arrivals_count = 0
         self.phase_change_observed = False
+
+        self._log(
+            f"Device {device_id}, thread {local_thread_id}: Barrier {id(self)}"
+            f" has completed arrival. Phase is now {self.phase}."
+        )
 
       if self.detect_races:
         if self.clock is None:
@@ -179,10 +190,21 @@ class Barrier(memory.Allocation):
               " completions of the barrier.)"
           )
 
+        self._log(
+            f"Device {device_id}, thread {local_thread_id}: Waiting for barrier"
+            f" {id(self)} to reach phase"
+            f" {self.next_awaited_phase_by_thread[local_thread_id]}. (Current"
+            f" phase: {self.phase})"
+        )
         self.cv.wait()
 
       self.phase_change_observed = True
       self.next_awaited_phase_by_thread[local_thread_id] += 1
+
+      self._log(
+          f"Device {device_id}, thread {local_thread_id}: Finished waiting for"
+          f" phase {self.phase} of barrier {id(self)}."
+      )
 
       # Read `self.clock` while still holding the lock on `self.cv`. (If race
       # detection is enabled, the clock is needed below to update a vector clock
@@ -208,6 +230,15 @@ class Barrier(memory.Allocation):
 @dataclasses.dataclass
 class GPUSharedMemory(memory.SharedMemory):
 
+  logging_mode: interpret_utils.LoggingMode | None = None
+
+  def _log(self, message: str):
+    if (
+        self.logging_mode is not None
+        and interpret_utils.LoggingMode.SHARED_MEMORY in self.logging_mode
+    ):
+      logging.info(message)
+
   @property
   def num_threads_per_device(self) -> int:
     return self.num_cores_per_device
@@ -222,6 +253,8 @@ class GPUSharedMemory(memory.SharedMemory):
 
   def allocate_barrier(
       self,
+      device_id: int,
+      thread_id: int,
       key: Any,
       ref_count: int,
       num_arrivals: int,
@@ -229,8 +262,19 @@ class GPUSharedMemory(memory.SharedMemory):
     """Allocates a barrier with the given key unless it already exists."""
     with self.lock:
       if key not in self.mem:
-        self.mem[key] = Barrier(
-            self, ref_count=ref_count, num_arrivals=num_arrivals
+        barrier = Barrier(
+            self,
+            ref_count=ref_count,
+            num_arrivals=num_arrivals,
+            enable_logging=(
+                self.logging_mode is not None
+                and interpret_utils.LoggingMode.BARRIER in self.logging_mode
+            ),
+        )
+        self.mem[key] = barrier
+        self._log(
+            f"Device {device_id}, thread {thread_id}: Allocated barrier"
+            f" {id(barrier)} ({barrier}) with key {key}."
         )
 
   def get_barrier_and_increment_clock(
@@ -256,8 +300,6 @@ class GPUSharedMemory(memory.SharedMemory):
     return barrier, clock
 
   def deallocate_barrier(self, device_id: int, thread_id: int, key: Any):
-    del device_id, thread_id  # unused (but kept for debugging)
-
     with self.lock:
       barrier = self.mem[key]
       if not isinstance(barrier, Barrier):
@@ -266,9 +308,17 @@ class GPUSharedMemory(memory.SharedMemory):
             " a `Barrier`."
         )
 
+      self._log(
+          f"Device {device_id}, thread {thread_id}: Decreasing ref count of"
+          f" barrier {id(barrier)} with key {key}."
+      )
       barrier.deallocate()
 
       if barrier.has_zero_ref_count():
+        self._log(
+            f"Device {device_id}, thread {thread_id}: Deallocating barrier"
+            f" {id(barrier)} with key {key}."
+        )
         self.mem.pop(key)
 
   def assert_no_barriers_allocated(self):

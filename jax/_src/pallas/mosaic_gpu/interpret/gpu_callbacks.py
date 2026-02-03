@@ -158,6 +158,7 @@ def _initialize_shared_memory(
           clean_up_barrier=threading.Barrier(
               num_devices, action=_clear_shared_memory
           ),
+          logging_mode=interpret_params.logging_mode,
       )
   # The naming of the `num_cores` property of `SharedMemory` originates from the
   # support for multipl cores in a (Megacore) TPU device. As commented above, on
@@ -734,7 +735,11 @@ def _allocate_barriers(
     )
 
     shared_memory.allocate_barrier(
-        key, ref_count=ref_count, num_arrivals=num_arrivals
+        device_id,
+        thread_id,
+        key,
+        ref_count=ref_count,
+        num_arrivals=num_arrivals,
     )
     keys.append(key.as_array)
 

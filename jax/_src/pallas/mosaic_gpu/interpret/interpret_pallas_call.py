@@ -135,7 +135,7 @@ def _allocate_buffers_for_outputs(
     grid_mapping: pallas_core.GridMapping,
     input_buffer_keys: Sequence[jax.Array],
     input_vals: Sequence[jax.Array],
-    interpret_params: InterpretParams,
+    interpret_params: interpret_utils.InterpretGPUParams,
 ) -> list[AllocationKeyAndValue]:
   """Allocates `GMEM` buffers for `pallas_call` outputs, respecting aliased inputs."""
   # TODO(nrink): This code is a simplified version to the corresponding TPU
@@ -198,7 +198,7 @@ def _get_kernel_buffers(
     invars: Sequence[Any],
     input_buffer_keys: Sequence[jax.Array],
     output_buffer_keys: Sequence[jax.Array],
-    interpret_params: InterpretParams,
+    interpret_params: interpret_utils.InterpretGPUParams,
 ) -> list[jax.Array]:
   """Collects buffers to be passed to the kernel from `pallas_call` input/output buffers."""
   # TODO(nrink): This code is a simplified version to the corresponding TPU
@@ -339,7 +339,7 @@ def interpret_pallas_call(
     compiler_params: Mapping[str, Any],
     cost_estimate: pallas_core.CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    interpret_params: InterpretParams,
+    interpret_params: interpret_utils.InterpretGPUParams,
     metadata: Mapping[str, str] | None,
     **kwargs,
 ) -> Sequence[Array]:
