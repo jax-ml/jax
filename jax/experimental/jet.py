@@ -359,6 +359,7 @@ deflinear(lax.reduce_window_sum_p)
 deflinear(lax.fft_p)
 deflinear(lax.copy_p)
 deflinear(dispatch.device_put_p)
+deflinear(pjit.reshard_p)
 
 def _dynamic_slice_jet_rule(primals_in, series_in, **params):
   operand, *start_indices = primals_in
