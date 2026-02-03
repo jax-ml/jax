@@ -179,7 +179,9 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(out.aval.weak_type, weak_type)
 
   def testConvertElementTypeOOB(self):
-    out = lax.convert_element_type(2 ** 32, 'int32')
+    # Overflow emits DeprecationWarning but still produces wrapped result
+    with self.assertWarnsRegex(DeprecationWarning, "Python integer 4294967296 overflows when cast to int32"):
+      out = lax.convert_element_type(2 ** 32, 'int32')
     self.assertEqual(out, 0)
 
   @jtu.sample_product(

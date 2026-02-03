@@ -1675,9 +1675,21 @@ def _convert_element_type(
   # converting to a NumPy array before calling bind. Without this step, we'd
   # first canonicalize the input to a value of dtype int32 or int64, leading to
   # an overflow error.
+  # Temporary fix: Emit a DeprecationWarning for integer overflow during
+  # Python int → dtype conversion. Future versions will raise an error.
+  # See issue #31426 for details.
   if type(operand) is int and new_dtype != dtypes.float0:
-    operand = literals.TypedNdArray(np.asarray(operand).astype(new_dtype),
-                                         weak_type)
+    try:
+      operand = literals.TypedNdArray(np.asarray(operand, new_dtype),
+                                           weak_type)
+    except OverflowError:
+      warnings.warn(
+          f"Python integer {operand} overflows when cast to {new_dtype}. This will raise an error in a future version of JAX (after deprecation).",
+          DeprecationWarning,
+          stacklevel=2,
+      )
+      operand = literals.TypedNdArray(np.asarray(operand).astype(new_dtype),
+                                           weak_type)
 
   if ((old_dtype, old_weak_type) == (new_dtype, weak_type) and
       isinstance(operand, Array) and
