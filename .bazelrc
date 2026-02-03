@@ -429,6 +429,8 @@ common:rbe_linux_x86_64_base --platforms="@ml_build_config_platform//:platform"
 common:rbe_linux_x86_64 --config=rbe_linux_x86_64_base
 common:rbe_linux_x86_64 --config=ci_linux_x86_64
 
+common:rbe_linux_x86_64_clang_local --config=ci_linux_x86_64_clang_local
+
 common:rbe_linux_x86_64_cuda_common --config=rbe_linux_x86_64_base
 common:rbe_linux_x86_64_cuda_common --config=rbe_gpu_pool
 # Update UMD version when RBE CUDA driver is updated.
