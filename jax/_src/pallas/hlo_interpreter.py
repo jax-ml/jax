@@ -375,7 +375,7 @@ def pallas_call_hlo_interpret(
   discharged_jaxpr, discharged_consts, scratch_avals = kernel_to_hlo_jaxpr(
       jaxpr, (), grid_mapping, backend=backend)
   if debug:
-    print(f"\nJaxpr of the the kernel in pallas_call {debug_info.func_src_info}:")
+    print(f"\nJaxpr of the kernel in pallas_call {debug_info.func_src_info}:")
     print(discharged_jaxpr)
   out = _initialize_output_vals(grid_mapping.block_mappings_output,
                                 args, input_output_aliases)

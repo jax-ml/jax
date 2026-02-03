@@ -144,7 +144,7 @@ print(foo(2.00001))
 # Ordinary evaluation of `foo(2.00001)` propagates this primal-tangent pair,
 # producing `10.0000700001` as the result. The primal and tangent components are
 # well separated in scale so we can visually interpret the result as the
-# primal-tangent pair (10.0, 7.0), ignoring the the ~1e-10 truncation error at
+# primal-tangent pair (10.0, 7.0), ignoring the ~1e-10 truncation error at
 # the end.
 
 # The idea with forward-mode differentiation is to do the same thing but exactly
