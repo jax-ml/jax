@@ -177,8 +177,8 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          runner: ["linux-x86-64-1gpu-amd", "linux-x86-64-4gpu-amd"]
-          python: ["3.11", "3.12"]
+          runner: ["linux-x86-64-1gpu-amd", "linux-x86-64-4gpu-amd", "linux-x86-64-8gpu-amd"]
+          python: ["3.11", "3.12", "3.13", "3.14"]
           rocm: [
             {version: "7.2.0", tag: "rocm720"},
           ]
