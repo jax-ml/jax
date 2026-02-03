@@ -299,8 +299,8 @@ def cache(max_size=4096, trace_context_in_key: bool | Callable = True):
           return f(*args, **kwargs)
         return cached(trace_context(), *args, **kwargs)
 
-      wrapper.cache_clear = cached.cache_clear
-      wrapper.cache_info = cached.cache_info
+      wrapper.cache_clear = cached.cache_clear  # pyrefly: ignore[missing-attribute]
+      wrapper.cache_info = cached.cache_info  # pyrefly: ignore[missing-attribute]
       register_cache(wrapper, str(f))
       return wrapper
   else:
@@ -478,11 +478,11 @@ def multi_weakref_lru_cache(
                                                   for v in acc_weakrefs))
         return cached_call(key, *args, **kwargs)
 
-    wrapper.cache_info = cached_call.cache_info
-    wrapper.cache_clear = cached_call.cache_clear
-    wrapper.cache_keys = cached_call.cache_keys
-    wrapper._multi_weakref_id_to_key = id_to_key  # stays alive as long as wrapper
-    wrapper._multi_weakref_to_key_ids = weakref_to_key_ids
+    wrapper.cache_info = cached_call.cache_info  # pyrefly: ignore[missing-attribute]
+    wrapper.cache_clear = cached_call.cache_clear  # pyrefly: ignore[missing-attribute]
+    wrapper.cache_keys = cached_call.cache_keys  # pyrefly: ignore[missing-attribute]
+    wrapper._multi_weakref_id_to_key = id_to_key  # stays alive as long as wrapper  # pyrefly: ignore[missing-attribute]
+    wrapper._multi_weakref_to_key_ids = weakref_to_key_ids  # pyrefly: ignore[missing-attribute]
     return wrapper
 
 
@@ -595,12 +595,12 @@ def wraps(
       doc = getattr(wrapped, "__doc__", "") or ""
       fun.__dict__.update(getattr(wrapped, "__dict__", {}))
       fun.__annotations__ = getattr(wrapped, "__annotations__", {})
-      fun.__name__ = name if namestr is None else namestr.format(fun=name)
+      fun.__name__ = name if namestr is None else namestr.format(fun=name)  # pyrefly: ignore[missing-attribute]
       fun.__module__ = getattr(wrapped, "__module__", "<unknown module>")
       fun.__doc__ = (doc if docstr is None
                      else docstr.format(fun=name, doc=doc, **kwargs))
-      fun.__qualname__ = getattr(wrapped, "__qualname__", fun.__name__)
-      fun.__wrapped__ = wrapped
+      fun.__qualname__ = getattr(wrapped, "__qualname__", fun.__name__)  # pyrefly: ignore[missing-attribute]
+      fun.__wrapped__ = wrapped  # pyrefly: ignore[missing-attribute]
     except Exception:
       pass
     return fun
@@ -686,10 +686,10 @@ class HashablePartial:
 def maybe_named_axis(axis, if_pos, if_named):
   try:
     pos = operator.index(axis)
-    named = False
   except TypeError:
-    named = True
-  return if_named(axis) if named else if_pos(pos)
+    return if_named(axis)
+  else:
+    return if_pos(pos)
 
 def distributed_debug_log(*pairs):
   """Format and log `pairs` if config.jax_distributed_debug is enabled.
@@ -763,7 +763,7 @@ class HashableWrapper:
 
 def _original_func(f: Callable) -> Callable:
   if isinstance(f, property):
-    return cast(property, f).fget
+    return cast(property, f).fget  # pyrefly: ignore[bad-return]
   elif isinstance(f, functools.cached_property):
     return f.func
   return f
@@ -803,7 +803,7 @@ def use_cpp_method(is_enabled: bool = True) -> Callable[[T], T]:
   def decorator(f):
     if is_enabled:
       original_func = _original_func(f)
-      original_func._use_cpp = True
+      original_func._use_cpp = True  # pyrefly: ignore[missing-attribute]
     return f
   return decorator
 
