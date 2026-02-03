@@ -29,7 +29,7 @@ from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy import linalg as jnp_linalg
 from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import (
-    check_arraylike, promote_dtypes, promote_dtypes_inexact,
+    check_arraylike, ensure_arraylike, promote_dtypes, promote_dtypes_inexact,
     promote_dtypes_complex, promote_args_inexact)
 from jax._src.tpu.linalg import qdwh
 from jax._src.typing import Array, ArrayLike
@@ -2268,8 +2268,7 @@ def companion(a: ArrayLike) -> Array:
 
   Args:
     a: array of shape ``(..., n)`` containing polynomial coefficients in descending
-      order. The length of ``a`` along the last axis must be at least 2, and
-      ``a[..., 0]`` must not be zero.
+      order. The length of ``a`` along the last axis must be at least 2.
 
   Returns:
     A companion matrix of shape ``(..., n-1, n-1)``. For batch input, each slice
@@ -2278,6 +2277,7 @@ def companion(a: ArrayLike) -> Array:
 
   Note:
     If ``a[..., 0] == 0``, the result will contain NaN values.
+    For ``n < 2``, the result will be an empty array of shape ``(..., 0, 0)``.
 
   Examples:
     Create a companion matrix for the polynomial ``x^3 - 10x^2 + 31x - 30``:
@@ -2301,17 +2301,30 @@ def companion(a: ArrayLike) -> Array:
     >>> C_batch.shape
     (2, 2, 2)
   """
+  a = ensure_arraylike("companion", a)
   a = jnp.atleast_1d(jnp.asarray(a))
   
   n = a.shape[-1]
   
-  # Division by zero will naturally produce NaN when a[..., 0] == 0
-  first_row = -a[..., 1:] / a[..., 0:1]
+  # Explicitly handle division by zero to produce NaN (not inf)
+  # Use where to set NaN when leading coefficient is zero
+  first_row = jnp.where(
+      a[..., 0:1] == 0,
+      jnp.nan,
+      -a[..., 1:] / a[..., 0:1]
+  )
   
   # Create the full matrix
-  c = jnp.zeros((*a.shape[:-1], n - 1, n - 1), dtype=first_row.dtype)
-  c = c.at[..., 0, :].set(first_row)
-  c = c.at[..., jnp.arange(1, n - 1), jnp.arange(0, n - 2)].set(1)
+  # For n < 2, use max to avoid negative dimensions, creating (0, 0) shaped arrays
+  matrix_dim = max(n - 1, 0)
+  c = jnp.zeros((*a.shape[:-1], matrix_dim, matrix_dim), dtype=first_row.dtype)
+  
+  # Set first row if n >= 2 (otherwise c has shape (..., 0, 0))
+  if n >= 2:
+    c = c.at[..., 0, :].set(first_row)
+    # Set the subdiagonal to 1 if n >= 3
+    if n >= 3:
+      c = c.at[..., jnp.arange(1, n - 1), jnp.arange(0, n - 2)].set(1)
   
   return c
 

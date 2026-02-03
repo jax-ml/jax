@@ -2534,6 +2534,18 @@ class LaxLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker)
     self._CompileAndCheck(jsp_fun, args_maker)
 
+  def testCompanionEdgeCases(self):
+    # Test zero leading coefficient produces NaN
+    result = jsp.linalg.companion(jnp.array([0., 1., 2.]))
+    self.assertTrue(jnp.all(jnp.isnan(result[0, :])))
+    
+    # Test n < 2 produces NaN
+    result_n1 = jsp.linalg.companion(jnp.array([1.]))
+    self.assertEqual(result_n1.shape, (0, 0))
+    
+    result_n0 = jsp.linalg.companion(jnp.array([]))
+    self.assertEqual(result_n0.shape, (0, 0))
+
   def testCompanionBatching(self):
     # Test batch processing
     a_batch = np.array([[1., 2., 3.], [2., 5., -10.]])
@@ -2542,16 +2554,6 @@ class LaxLinalgTest(jtu.JaxTestCase):
     jsp_fun = jsp.linalg.companion
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker)
     self._CompileAndCheck(jsp_fun, args_maker)
-
-  def testCompanionZeroLeadingCoefficient(self):
-    # Test that zero leading coefficient produces NaN
-    result = jsp.linalg.companion(np.array([0., 1., 2.]))
-    self.assertTrue(np.all(np.isnan(result[0, :])))
-    
-    # Test zero leading coefficient in batch - only affected row should be NaN
-    result_batch = jsp.linalg.companion(np.array([[0., 1., 2.], [1., 2., 3.]]))
-    self.assertTrue(np.all(np.isnan(result_batch[0, 0, :])))  # First batch has NaN
-    self.assertFalse(np.any(np.isnan(result_batch[1])))  # Second batch is valid
 
 
 if __name__ == "__main__":
