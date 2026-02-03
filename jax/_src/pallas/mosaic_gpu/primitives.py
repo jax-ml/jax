@@ -96,8 +96,11 @@ def _print_layout_lowering(
     transforms_tree
 ):
   if transforms_leaves:
-    x, remaining_transforms = lowering._handle_transforms(
-        ctx, x, transforms_tree.unflatten(transforms_leaves),
+    assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
+    transform_avals = transforms_tree.unflatten(ctx.avals_in[1:])
+    x, _, remaining_transforms = lowering._handle_transforms(
+        ctx, ctx.avals_in[0], x, transform_avals,
+        transforms_tree.unflatten(transforms_leaves),
     )
     if remaining_transforms:
       raise NotImplementedError(
@@ -224,12 +227,18 @@ def _copy_smem_to_gmem_lowering(
   handle_transposes = (
       ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup
   )
-  src, src_transforms = lowering._handle_transforms(
-      ctx, src, src_transforms, handle_transposes=handle_transposes
+  src_aval = ctx.avals_in[0]
+  assert isinstance(src_aval, state_types.AbstractRef)
+  src_transform_avals = src_transforms_treedef.unflatten(
+      ctx.avals_in[2 : 2 + src_transforms_treedef.num_leaves]
+  )
+  src, src_aval, src_transforms = lowering._handle_transforms(
+      ctx, src_aval, src, src_transform_avals, src_transforms,
+      handle_transposes=handle_transposes
   )
   copy_params = _extract_gmem_copy_params(
       ctx, dst_transforms, supports_multicast=True
-  ) | _extract_smem_copy_params(src_transforms)
+  ) | _extract_smem_copy_params(src_aval, src_transforms)
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     ctx.launch_ctx.async_copy(
         src_ref=src,
@@ -276,7 +285,7 @@ def _split_gmem_slice(gmem_slice):
   for idx in gmem_slice:
     match idx:
       case slice():
-        indices.append(mgpu_utils.c(idx.start, i32))
+        indices.append(mgpu.utils.c(idx.start, i32))
         slice_lengths.append(idx.stop - idx.start)
       case mgpu.DynamicSlice():
         indices.append(arith_dialect.index_cast(i32, idx.base))
@@ -349,16 +358,19 @@ def _extract_gmem_copy_params(ctx, transforms, supports_multicast=False):
   )
 
 
-def _extract_smem_copy_params(transforms):
+def _extract_smem_copy_params(aval, transforms):
   if not transforms:
     return {}
   # Split off swizzling, if present
   match transforms:
-    case [gpu_core.UnswizzleRef(swizzle), *transforms]:
+    case [gpu_core.UnswizzleTransform(swizzle), *transforms]:
       pass
     case _:
       swizzle = None
-  gpu_transforms = tuple(t.undo_to_gpu_transform() for t in transforms[::-1])
+  reversed_transforms = pallas_core.undo_transforms(aval, transforms)
+  gpu_transforms = tuple(
+      gpu_core.to_gpu_transform(t) for t in reversed_transforms
+  )
   return dict(
       gmem_transform=gpu_transforms,
       swizzle=swizzle,
@@ -499,15 +511,38 @@ def _copy_gmem_to_smem_lowering(
           ],
       )
   )
+  _, flat_dst_transforms_avals, _ = (
+      util.split_list(
+          ctx.avals_in[3:],
+          [
+              src_transforms_treedef.num_leaves,
+              dst_transforms_treedef.num_leaves,
+          ],
+      )
+  )
+  src_ref_aval = ctx.avals_in[0]
+  dst_ref_aval = ctx.avals_in[1]
+  barrier_ref_aval = ctx.avals_in[2]
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
+  barrier_transforms = barrier_transforms_treedef.unflatten(flat_barrier_transforms)
   handle_transposes = (
       ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup
   )
-  dst, dst_transforms = lowering._handle_transforms(
-      ctx, dst, dst_transforms, handle_transposes=handle_transposes
-  )
-  copy_params = _extract_smem_copy_params(dst_transforms) | _extract_gmem_copy_params(ctx, src_transforms)
+  assert isinstance(src_ref_aval, state_types.AbstractRef)
+  assert isinstance(dst_ref_aval, state_types.AbstractRef)
+  assert isinstance(barrier_ref_aval, state_types.AbstractRef)
+
+  dst_transform_avals = dst_transforms_treedef.unflatten(
+      flat_dst_transforms_avals)
+  assert len(dst_transform_avals) == len(dst_transforms)
+  dst, dst_ref_aval, dst_transforms = lowering._handle_transforms(
+      ctx, dst_ref_aval, dst, dst_transform_avals, dst_transforms,
+      handle_transposes=handle_transposes)
+
+  copy_params = _extract_smem_copy_params(
+      dst_ref_aval, dst_transforms
+  ) | _extract_gmem_copy_params(ctx, src_transforms)
   base_index = _extract_barrier_slice_base(
       barrier_transforms_treedef.unflatten(flat_barrier_transforms)
   )
@@ -891,10 +926,12 @@ def _barrier_arrive_lowering(
     transforms_treedef,
 ):
   transforms = transforms_treedef.unflatten(flat_transforms)
+  barrier_aval = ctx.avals_in[0]
+  assert isinstance(barrier_aval, state_types.AbstractRef)
   base_index = _extract_barrier_slice_base(transforms)
   if base_index is not None:
     barrier = barrier[base_index]
-  sem_dtype = ctx.avals_in[0].inner_aval.dtype  # type: ignore
+  sem_dtype = barrier_aval.inner_aval.dtype  # type: ignore
   orders_tensor_core = getattr(sem_dtype, "orders_tensor_core", False)
   if orders_tensor_core:
     # We arrive on only one lane for barriers with orders_tensor_core=True,
@@ -969,6 +1006,7 @@ def _barrier_wait_lowering(
     transforms_treedef,
 ):
   barrier_aval = ctx.avals_in[0]
+  assert isinstance(barrier_aval, state_types.AbstractRef)
   transforms = transforms_treedef.unflatten(flat_transforms)
   orders_tensor_core = getattr(
       barrier_aval.inner_aval.dtype, "orders_tensor_core", False  # type: ignore
@@ -1211,17 +1249,29 @@ def _wgmma_lowering(
       raise NotImplementedError("int_indexer_shape non-empty")
     acc_indices = lowering._ndindexer_indices(acc_indexer)
 
+  transform_avals_list = util.split_list(
+      ctx.avals_in[3:], [getattr(tree, "num_leaves", 0) for tree in transform_treedefs]
+  )
   if a_transforms is not None:
-    a, a_transforms = lowering._handle_transforms(
-        ctx, a, a_transforms, handle_transposes=False, handle_reshapes=False
+    a_aval = ctx.avals_in[1]
+    if not isinstance(a_aval, state_types.AbstractRef):
+      assert isinstance(a_aval, jax_core.ShapedArray), (type(a_aval),)
+      a_ref_aval = state.AbstractRef(a_aval)
+    else:
+      a_ref_aval = a_aval
+    a_transform_avals = (
+        None if transform_treedefs[1] is None else transform_treedefs[1].unflatten(transform_avals_list[1])
     )
+    a, _, a_transforms = lowering._handle_transforms(
+        ctx, a_ref_aval, a, a_transform_avals, a_transforms,
+        handle_transposes=False, handle_reshapes=False)
     match a_transforms:
-      case (gpu_core.UnswizzleRef(lhs_swizzle), gpu_core.UntileRef(tiling)):
+      case (gpu_core.UnswizzleTransform(lhs_swizzle), gpu_core.UntilingTransform(tiling)):
         lhs_transpose = False
       case (
-          gpu_core.UnswizzleRef(lhs_swizzle),
-          gpu_core.UntileRef(tiling),
-          gpu_core.TransposeRef((1, 0)),
+          gpu_core.UnswizzleTransform(lhs_swizzle),
+          gpu_core.UntilingTransform(tiling),
+          state_types.TransposeTransform((1, 0)),
       ):
         lhs_transpose = True
       case _:
@@ -1241,25 +1291,34 @@ def _wgmma_lowering(
       )
 
   assert b_transforms is not None
-  b, b_transforms = lowering._handle_transforms(
-      ctx, b, b_transforms, handle_transposes=False, handle_reshapes=False
+  b_aval = ctx.avals_in[2]
+  if not isinstance(b_aval, state_types.AbstractRef):
+    assert isinstance(b_aval, jax_core.ShapedArray)
+    b_ref_aval = state_types.AbstractRef(b_aval)
+  else:
+    b_ref_aval = b_aval
+  b_transform_avals = (
+      None if transform_treedefs[2] is None else transform_treedefs[2].unflatten(transform_avals_list[2])
   )
+  b, _, b_transforms = lowering._handle_transforms(
+      ctx, b_ref_aval, b, b_transform_avals, b_transforms,
+      handle_transposes=False, handle_reshapes=False)
 
   match b_transforms:
-    case (gpu_core.UnswizzleRef(rhs_swizzle), gpu_core.UntileRef(rhs_tiling)):
+    case (gpu_core.UnswizzleTransform(rhs_swizzle), gpu_core.UntilingTransform(rhs_tiling)):
       rhs_transpose = False
     case (
-        gpu_core.UnswizzleRef(rhs_swizzle),
-        gpu_core.UntileRef(rhs_tiling),
-        gpu_core.TransposeRef((1, 0)),
+        gpu_core.UnswizzleTransform(rhs_swizzle),
+        gpu_core.UntilingTransform(rhs_tiling),
+        state_types.TransposeTransform((1, 0)),
     ):
       rhs_transpose = True
     case (
-        gpu_core.UnswizzleRef(rhs_swizzle),
-        gpu_core.TransposeRef((1, 0, 2, 3, 4)),
-        gpu_core.UntileRef(rhs_tiling),
-        gpu_core.TransposeRef(permutation=(1, 0, 2)),
-        state.types.RefReshaper(shape=new_shape),
+        gpu_core.UnswizzleTransform(rhs_swizzle),
+        state_types.TransposeTransform((1, 0, 2, 3, 4)),
+        gpu_core.UntilingTransform(rhs_tiling),
+        state_types.TransposeTransform(permutation=(1, 0, 2)),
+        state.types.ReshapeTransform(shape=new_shape),
     ):
       if len(rhs_tiling) != 2 or len(new_shape) != 2:
         raise ValueError("WGMMA expects shapes 2D tiled into 2D tiles.")
@@ -1324,17 +1383,33 @@ def _wgmma_warpgroup_lowering(
         transforms_leaves, [a_transforms_tree.num_leaves]
     )
     a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
-    a, a_transforms = lowering._handle_transforms(ctx, a, a_transforms)
+    a_aval = ctx.avals_in[1]
+    assert isinstance(a_aval, state_types.AbstractRef)
+    a_transform_avals = a_transforms_tree.unflatten(
+        ctx.avals_in[3 : 3 + a_transforms_tree.num_leaves]
+    )
+    a, _, a_transforms = lowering._handle_transforms(
+        ctx, a_aval, a, a_transform_avals, a_transforms
+    )
     if a_transforms:
       raise ValueError(
           f"WGMMA lhs has unsupported transforms: {a_transforms}."
       )
+    a_transforms_num_leaves = a_transforms_tree.num_leaves
   else:
+    a_transforms_num_leaves = 0
     b_transforms_leaves = transforms_leaves  # type: ignore
 
   if b_transforms_tree is not None:
     b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
-    b, b_transforms = lowering._handle_transforms(ctx, b, b_transforms)
+    b_aval = ctx.avals_in[2]
+    assert isinstance(b_aval, state_types.AbstractRef)
+    b_transform_avals = b_transforms_tree.unflatten(
+        ctx.avals_in[3 + a_transforms_num_leaves:]
+    )
+    b, _, b_transforms = lowering._handle_transforms(
+        ctx, b_aval, b, b_transform_avals, b_transforms
+    )
     if b_transforms:
       raise ValueError(
           f"WGMMA rhs has unsupported transforms: {b_transforms}."
@@ -1646,23 +1721,36 @@ def _tcgen05_mma_lowering(
     scaled: bool,
     sparse: bool,
 ):
-  _, a_aval, b_aval, *_ = ctx.avals_in
+  (
+      acc_aval,
+      a_aval,
+      b_aval,
+      accumulate_aval,
+      *_,
+  ) = ctx.avals_in
+  assert isinstance(acc_aval, state_types.AbstractRef)
+  assert isinstance(a_aval, state_types.AbstractRef)
+  assert isinstance(b_aval, state_types.AbstractRef)
+  del accumulate_aval
   lhs_swizzle: int | None = None
   lhs_transpose: bool = False
+  leaves = list(barrier_scales_and_transforms_leaves)
+  avals = list(ctx.avals_in[4:])
   if arrive:
-    barrier_ref, *scales_and_transforms_leaves = barrier_scales_and_transforms_leaves
+    barrier_ref, leaves = leaves[0], leaves[1:]
+    barrier_ref_aval, avals = avals[0], avals[1:]
   else:
-    barrier_ref = None
-    scales_and_transforms_leaves = barrier_scales_and_transforms_leaves  # type: ignore[assignment]
+    barrier_ref = barrier_ref_aval = None
   if scaled:
-    a_scale_ref, b_scale_ref, *transforms_leaves = scales_and_transforms_leaves
+    a_scale_ref, b_scale_ref, leaves = leaves[0], leaves[1], leaves[2:]
+    a_scale_ref_aval, b_scale_ref_aval, avals = avals[0], avals[1], avals[2:]
   else:
-    a_scale_ref = b_scale_ref = None
-    transforms_leaves = scales_and_transforms_leaves  # type: ignore[assignment]
+    a_scale_ref = b_scale_ref = a_scale_ref_aval = b_scale_ref_aval = None
   if sparse:
-    a_sparse_metadata_ref, *transforms_leaves = transforms_leaves
+    a_sparse_metadata_ref, leaves = leaves[0], leaves[1:]
+    a_sparse_metadata_ref_aval, avals = avals[0], avals[1:]
   else:
-    a_sparse_metadata_ref = None
+    a_sparse_metadata_ref = a_sparse_metadata_ref_aval = None
 
   transforms_trees = (
       acc_transforms_tree,
@@ -1673,6 +1761,10 @@ def _tcgen05_mma_lowering(
       b_scale_transforms_tree,
       a_sparse_metadata_transforms_tree,
   )
+  ns = [getattr(tree, "num_leaves", 0) for tree in transforms_trees]
+  transforms_leaves_lists = util.split_list_checked(leaves, ns)
+  transforms_avals_lists = util.split_list_checked(avals, ns)
+
   (
       acc_transforms_leaves,
       a_transforms_leaves,
@@ -1681,17 +1773,24 @@ def _tcgen05_mma_lowering(
       a_scale_transforms_leaves,
       b_scale_transforms_leaves,
       a_sparse_metadata_transforms_leaves,
-      leftovers,
-  ) = util.split_list(
-      transforms_leaves,
-      [getattr(tree, "num_leaves", 0) for tree in transforms_trees],
-  )
-  assert not leftovers
+  ) = transforms_leaves_lists
+
+  (
+      acc_transforms_leaves_avals,
+      a_transforms_leaves_avals,
+      b_transforms_leaves_avals,
+      barrier_transforms_leaves_avals,
+      a_scale_transforms_leaves_avals,
+      b_scale_transforms_leaves_avals,
+      a_sparse_metadata_transforms_leaves_avals,
+  ) = transforms_avals_lists
 
   if acc_transforms_tree is not None:
     acc_transforms = acc_transforms_tree.unflatten(acc_transforms_leaves)
-    acc, acc_transforms = lowering._handle_transforms(
-        ctx, acc, acc_transforms, handle_transposes=False
+    acc_transform_avals = acc_transforms_tree.unflatten(acc_transforms_leaves_avals)
+    acc, _, acc_transforms = lowering._handle_transforms(
+        ctx, acc_aval, acc, acc_transform_avals, acc_transforms,
+        handle_transposes=False
     )
     if acc_transforms:
       raise NotImplementedError(
@@ -1700,17 +1799,20 @@ def _tcgen05_mma_lowering(
 
   if a_transforms_tree is not None:
     a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
-    a_dtype = lowering._transform_dtype(a_aval.dtype, a_transforms)
-    a_ref, a_transforms = lowering._handle_transforms(
-        ctx, a_ref, a_transforms, handle_transposes=False, handle_reshapes=True
-    )
+    a_out_ty = state_types.get_transforms_type(a_transforms, a_aval)
+    assert isinstance(a_out_ty, state_types.AbstractRef)
+    a_dtype = a_out_ty.dtype
+    a_transform_avals = a_transforms_tree.unflatten(a_transforms_leaves_avals)
+    a_ref, _, a_transforms = lowering._handle_transforms(
+        ctx, a_aval, a_ref, a_transform_avals, a_transforms,
+        handle_transposes=False, handle_reshapes=True)
     match a_transforms:
-      case (gpu_core.UnswizzleRef(lhs_swizzle), gpu_core.UntileRef(lhs_tiling)):
+      case (gpu_core.UnswizzleTransform(lhs_swizzle), gpu_core.UntilingTransform(lhs_tiling)):
         lhs_transpose = False
       case (
-          gpu_core.UnswizzleRef(lhs_swizzle),
-          gpu_core.UntileRef(lhs_tiling),
-          gpu_core.TransposeRef((1, 0)),
+          gpu_core.UnswizzleTransform(lhs_swizzle),
+          gpu_core.UntilingTransform(lhs_tiling),
+          state_types.TransposeTransform((1, 0)),
       ):
         lhs_transpose = True
       case () if isinstance(a_ref, tcgen05.TMEMRef):
@@ -1727,17 +1829,20 @@ def _tcgen05_mma_lowering(
 
   assert b_transforms_tree is not None
   b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
-  b_dtype = lowering._transform_dtype(b_aval.dtype, b_transforms)
-  b_ref, b_transforms = lowering._handle_transforms(
-      ctx, b_ref, b_transforms, handle_transposes=False, handle_reshapes=True
-  )
+  b_out_ty = state_types.get_transforms_type(b_transforms, b_aval)
+  assert isinstance(b_out_ty, state_types.AbstractRef)
+  b_dtype = b_out_ty.dtype
+  b_transform_avals = b_transforms_tree.unflatten(b_transforms_leaves_avals)
+  b_ref, _, b_transforms = lowering._handle_transforms(
+      ctx, b_aval, b_ref, b_transform_avals, b_transforms, handle_transposes=False,
+      handle_reshapes=True)
   match b_transforms:
-    case (gpu_core.UnswizzleRef(rhs_swizzle), gpu_core.UntileRef(rhs_tiling)):
+    case (gpu_core.UnswizzleTransform(rhs_swizzle), gpu_core.UntilingTransform(rhs_tiling)):
       rhs_transpose = False
     case (
-        gpu_core.UnswizzleRef(rhs_swizzle),
-        gpu_core.UntileRef(rhs_tiling),
-        gpu_core.TransposeRef((1, 0)),
+        gpu_core.UnswizzleTransform(rhs_swizzle),
+        gpu_core.UntilingTransform(rhs_tiling),
+        state_types.TransposeTransform((1, 0)),
     ):
       rhs_transpose = True
     case _:
@@ -1776,21 +1881,29 @@ def _tcgen05_mma_lowering(
     accumulate = accumulate.registers.item()
     assert isinstance(accumulate, ir.Value)
 
-  if a_scale_transforms_tree is not None:
+  if a_scale_ref is not None:
     a_scale_transforms = a_scale_transforms_tree.unflatten(
         a_scale_transforms_leaves
     )
-    a_scale_ref, a_scale_transforms = lowering._handle_transforms(
-        ctx, a_scale_ref, a_scale_transforms
+    a_scale_transform_avals = a_scale_transforms_tree.unflatten(
+        a_scale_transforms_leaves_avals
+    )
+    a_scale_ref, _, a_scale_transforms = lowering._handle_transforms(
+        ctx, a_scale_ref_aval, a_scale_ref, a_scale_transform_avals,
+        a_scale_transforms
     )
     if a_scale_transforms:
       raise NotImplementedError(f"Unsupported transforms: {a_scale_transforms}")
-  if b_scale_transforms_tree is not None:
+  if b_scale_ref is not None:
     b_scale_transforms = b_scale_transforms_tree.unflatten(
         b_scale_transforms_leaves
     )
-    b_scale_ref, b_scale_transforms = lowering._handle_transforms(
-        ctx, b_scale_ref, b_scale_transforms
+    b_scale_transform_avals = b_scale_transforms_tree.unflatten(
+        b_scale_transforms_leaves_avals
+    )
+    b_scale_ref, _, b_scale_transforms = lowering._handle_transforms(
+        ctx, b_scale_ref_aval, b_scale_ref, b_scale_transform_avals,
+        b_scale_transforms
     )
     if b_scale_transforms:
       raise NotImplementedError(f"Unsupported transforms: {b_scale_transforms}")
@@ -1798,10 +1911,16 @@ def _tcgen05_mma_lowering(
     a_sparse_metadata_transforms = a_sparse_metadata_transforms_tree.unflatten(
         a_sparse_metadata_transforms_leaves
     )
-    a_sparse_metadata_ref, a_sparse_metadata_transforms = (
-        lowering._handle_transforms(
-            ctx, a_sparse_metadata_ref, a_sparse_metadata_transforms
+    a_sparse_metadata_transform_avals = (
+        a_sparse_metadata_transforms_tree.unflatten(
+            a_sparse_metadata_transforms_leaves_avals
         )
+    )
+    assert isinstance(a_sparse_metadata_ref_aval, state_types.AbstractRef)
+    a_sparse_metadata_ref, _, a_sparse_metadata_transforms = (
+        lowering._handle_transforms(
+            ctx, a_sparse_metadata_ref_aval, a_sparse_metadata_ref,
+            a_sparse_metadata_transform_avals, a_sparse_metadata_transforms)
     )
     if a_sparse_metadata_transforms:
       raise NotImplementedError(
@@ -1868,11 +1987,36 @@ def _tcgen05_mma_lowering_wg(
         "Scaled and sparse MMAs not supported for WG semantics."
     )
 
+  (
+      acc_aval,
+      a_aval,
+      b_aval,
+      accumulate_aval,
+      *_,
+  ) = ctx.avals_in
+  assert isinstance(acc_aval, state_types.AbstractRef)
+  assert isinstance(a_aval, state_types.AbstractRef)
+  assert isinstance(b_aval, state_types.AbstractRef)
+  del accumulate_aval
+
+  leaves = list(barrier_scales_and_transforms_leaves)
+  avals = list(ctx.avals_in[4:])
   if arrive:
-    barrier_ref, *transforms_leaves = barrier_scales_and_transforms_leaves
+    barrier_ref, leaves = leaves[0], leaves[1:]
+    barrier_ref_aval, avals = avals[0], avals[1:]
   else:
-    barrier_ref = None
-    transforms_leaves = barrier_scales_and_transforms_leaves  # type: ignore[assignment]
+    barrier_ref = barrier_ref_aval = None
+
+  if scaled:
+    # Scales are not supported for WG semantics, but we still need to unpack them
+    # if they are present in the leaves/avals to get to the transforms.
+    _, _, leaves = leaves[0], leaves[1], leaves[2:]
+    _, _, avals = avals[0], avals[1], avals[2:]
+
+  if sparse:
+    # Sparse metadata is not supported for WG semantics.
+    _, leaves = leaves[0], leaves[1:]
+    _, avals = avals[0], avals[1:]
 
   transforms_trees = (
       acc_transforms_tree,
@@ -1880,22 +2024,29 @@ def _tcgen05_mma_lowering_wg(
       b_transforms_tree,
       barrier_transforms_tree,
   )
+  ns = [getattr(tree, "num_leaves", 0) for tree in transforms_trees]
+  transforms_leaves_lists = util.split_list_checked(leaves, ns)
+  transforms_avals_lists = util.split_list_checked(avals, ns)
+
   (
       acc_transforms_leaves,
       a_transforms_leaves,
       b_transforms_leaves,
       barrier_transforms_leaves,
-      leftovers,
-  ) = util.split_list(
-      transforms_leaves,
-      [getattr(tree, "num_leaves", 0) for tree in transforms_trees],
-  )
-  assert not leftovers
+  ) = transforms_leaves_lists
+
+  (
+      acc_transforms_leaves_avals,
+      a_transforms_leaves_avals,
+      b_transforms_leaves_avals,
+      barrier_transforms_leaves_avals,
+  ) = transforms_avals_lists
 
   if acc_transforms_tree is not None:
     acc_transforms = acc_transforms_tree.unflatten(acc_transforms_leaves)
-    acc_ref, acc_transforms = lowering._handle_transforms(
-        ctx, acc_ref, acc_transforms, handle_transposes=False
+    acc_transform_avals = acc_transforms_tree.unflatten(acc_transforms_leaves_avals)
+    acc_ref, _, acc_transforms = lowering._handle_transforms(
+        ctx, acc_aval, acc_ref, acc_transform_avals, acc_transforms, handle_transposes=False
     )
     if acc_transforms:
       raise NotImplementedError(
@@ -1904,11 +2055,10 @@ def _tcgen05_mma_lowering_wg(
 
   if a_transforms_tree is not None:
     a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
-    a_aval = ctx.avals_in[1]
-    assert isinstance(a_aval, state_types.AbstractRef)
+    a_transform_avals = a_transforms_tree.unflatten(a_transforms_leaves_avals)
     handle_transposes = a_aval.memory_space == gpu_core.SMEM
-    a_ref, a_transforms = lowering._handle_transforms(
-        ctx, a_ref, a_transforms, handle_transposes=handle_transposes
+    a_ref, _, a_transforms = lowering._handle_transforms(
+        ctx, a_aval, a_ref, a_transform_avals, a_transforms, handle_transposes=handle_transposes
     )
     if a_transforms:
       raise NotImplementedError(
@@ -1917,7 +2067,10 @@ def _tcgen05_mma_lowering_wg(
 
   if b_transforms_tree is not None:
     b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
-    b_ref, b_transforms = lowering._handle_transforms(ctx, b_ref, b_transforms)
+    b_transform_avals = b_transforms_tree.unflatten(b_transforms_leaves_avals)
+    b_ref, _, b_transforms = lowering._handle_transforms(
+        ctx, b_aval, b_ref, b_transform_avals, b_transforms
+    )
     if b_transforms:
       raise NotImplementedError(
           f"Unsupported transforms for RHS: {b_transforms}."
@@ -2013,6 +2166,8 @@ def _tcgen05_commit_arrive_lowering(
     barrier_transforms_tree,
     collective_axis,
 ):
+  barrier_ref_aval = ctx.avals_in[0]
+  assert isinstance(barrier_ref_aval, state_types.AbstractRef)
   if barrier_transforms_tree is not None:
     barrier_transforms = barrier_transforms_tree.unflatten(
         barrier_transforms_leaves
@@ -2046,6 +2201,8 @@ def _tcgen05_commit_arrive_lowering_wg(
     barrier_transforms_tree,
     collective_axis,
 ):
+  barrier_ref_aval = ctx.avals_in[0]
+  assert isinstance(barrier_ref_aval, state_types.AbstractRef)
   if barrier_transforms_tree is not None:
     barrier_transforms = barrier_transforms_tree.unflatten(
         barrier_transforms_leaves
@@ -2256,18 +2413,32 @@ def _jaxpr_call_lowering_rule(
   flat_refs, flat_program_ids = util.split_list(
       flat_args, [sum(treedef.num_leaves for treedef in ref_treedefs)]
   )
+  flat_ref_avals, flat_program_ids_avals = util.split_list(
+      ctx.avals_in, [sum(treedef.num_leaves for treedef in ref_treedefs)]
+  )
+  del flat_program_ids_avals  # Unused.
   flat_refs = util.split_list(
       flat_refs,
       [treedef.num_leaves for treedef in ref_treedefs[: len(ref_treedefs) - 1]],
   )
-  for treedef, flat_ref in zip(ref_treedefs, flat_refs):
+  flat_ref_avals = util.split_list(
+      flat_ref_avals,
+      [treedef.num_leaves for treedef in ref_treedefs[: len(ref_treedefs) - 1]],
+  )
+  for treedef, flat_ref, ref_aval in zip(
+      ref_treedefs, flat_refs, flat_ref_avals
+  ):
     ref = treedef.unflatten(flat_ref)
+    ref_aval = treedef.unflatten(ref_aval)
     if isinstance(ref, tuple):
       ref, transforms = ref
+      ref_aval, transform_avals = ref_aval  # type: ignore
       # We ignore other transforms here, because they are already embedded
       # in the jaxpr.
-      ref, _ = lowering._handle_transforms(
-          ctx, ref, transforms, handle_reshapes=False, handle_transposes=False
+      assert isinstance(ref_aval, state.AbstractRef)
+      ref, _, _ = lowering._handle_transforms(
+          ctx, ref_aval, ref, transform_avals, transforms,
+          handle_reshapes=False, handle_transposes=False
       )
     args.append(ref)
   program_ids = program_ids_treedef.unflatten(flat_program_ids)
@@ -2388,17 +2559,7 @@ inline_mgpu_p.multiple_results = True
 
 @dataclasses.dataclass(frozen=True)
 class RefType:
-  transforms: tuple[gpu_core.MemoryRefTransform, ...] = ()
-
-
-def _undo_transforms(
-    raw_ref: state.AbstractRef,
-    memory_transforms: Sequence[gpu_core.MemoryRefTransform],
-):
-  """Extract the `Transform`s that reverse the `MemoryRefTransform`s"""
-  tmp_ref = state_types.TransformedRef(raw_ref, transforms=())
-  tmp_ref = functools.reduce(lambda r, t: t.undo(r), reversed(memory_transforms), tmp_ref)
-  return tmp_ref.transforms
+  transforms: tuple[state_types.Transform, ...] = ()
 
 
 def inline_mgpu(*, arg_types=(), return_type=None):
@@ -2552,6 +2713,7 @@ def _inline_mgpu_flat_transformed_args(
   flat_args = flat_args_and_transforms[:pytree_args.num_leaves]
   flat_arg_avals = ctx.avals_in[:pytree_args.num_leaves]
   ref_transforms = pytree_ref_transforms.unflatten(flat_args_and_transforms[pytree_args.num_leaves:])
+  ref_transform_avals = pytree_ref_transforms.unflatten(ctx.avals_in[pytree_args.num_leaves:])
   is_wg_semantics = (
       ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup
   )
@@ -2561,17 +2723,24 @@ def _inline_mgpu_flat_transformed_args(
       _type_check_mgpu_lane_semantics(a, t)
 
   flat_transformed : list[ir.Value] = []
-  for a, aval, t, transforms in zip(
-      flat_args, flat_arg_avals, flat_arg_types, ref_transforms, strict=True
+  for a, aval, t, transforms, transform_avals in zip(
+      flat_args,
+      flat_arg_avals,
+      flat_arg_types,
+      ref_transforms,
+      ref_transform_avals,
+      strict=True,
   ):
     if not isinstance(t, RefType):
       flat_transformed.append(a)
       assert transforms is None
       continue
     assert isinstance(aval, state.AbstractRef)
-    a, user_transforms = lowering._handle_transforms(
+    a, aval, user_transforms = lowering._handle_transforms(
         ctx,
+        aval,
         a,
+        transform_avals,
         transforms,
         handle_transposes=is_wg_semantics,
     )
@@ -2587,9 +2756,12 @@ def _inline_mgpu_flat_transformed_args(
       # applied implicitly (eg by emit-pipeline) and therefore we do not
       # expect the user to pass them to the type. The transforms not
       # passed by the user here will be discharged.
-      ty_transforms = _undo_transforms(aval, t.transforms)
+      ty_transforms = tuple(pallas_core.undo_transforms(aval, t.transforms))
       if ty_transforms != tuple(user_transforms):
-        raise ValueError(f"Transform mismatch: got {user_transforms}, expected {ty_transforms}")
+        raise ValueError(
+            f"Transform mismatch: got {user_transforms}, expected"
+            f" {ty_transforms}"
+        )
     flat_transformed.append(a)
 
   return flat_transformed
@@ -2633,7 +2805,8 @@ def _inline_mgpu_lowering_rule(
 
 def _ref_type_to_transforms(ref_type: RefType) -> ir.ArrayAttribute:
   """Returns the Mosaic GPU transforms for the given ref type."""
-  transform_attrs = [t.to_gpu_transform_attr() for t in ref_type.transforms]
+  transform_attrs = [gpu_core.to_gpu_transform(t).to_attr()
+                     for t in ref_type.transforms]
   return ir.ArrayAttr.get(transform_attrs)
 
 
@@ -2957,14 +3130,14 @@ load_p = jax_core.Primitive("load")
 @load_p.def_effectful_abstract_eval
 def _load_abstract_eval(src, *avals_flat, tree, optimized):
   del optimized  # Unused.
-  transforms = tree.unflatten(avals_flat)
-  dtype = lowering._transform_dtype(src.dtype, transforms)
-  transforms = list(transforms)
+  transforms = list(tree.unflatten(avals_flat))
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
-    ref_shape = state.get_transforms_shape(transforms, src.shape)
-    transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_shape))
-  shape = transforms[-1].get_indexer_shape()
-  return jax_core.ShapedArray(shape, dtype), {state.ReadEffect(0)}
+    tref_aval = state.get_transforms_type(transforms, src)
+    assert isinstance(tref_aval, state_types.AbstractRef)
+    transforms.append(indexing.NDIndexer.make_trivial_indexer(tref_aval.shape))
+  out_ty = state.get_transforms_type(transforms, src)
+  assert isinstance(out_ty, state_types.AbstractRef)
+  return out_ty.inner_aval, {state.ReadEffect(0)}
 
 
 lowering.register_lowering_rule(load_p, mgpu.LoweringSemantics.Lane)(
@@ -3067,10 +3240,15 @@ def _async_load_tmem_lowering_rule(
     ctx: lowering.LoweringRuleContext, x_ref, *leaves, tree
 ):
   assert isinstance(x_ref, tcgen05.TMEMRef)
+  x_aval = ctx.avals_in[0]
+  assert isinstance(x_aval, state_types.AbstractRef)
   transforms = jax.tree.unflatten(tree, leaves)
-  x_tmem, transforms = lowering._handle_transforms(
-      ctx, x_ref, transforms, handle_transposes=False, handle_reshapes=False,
+  transform_avals = tree.unflatten(
+      ctx.avals_in[1 : 1 + tree.num_leaves]
   )
+  x_tmem, _, transforms = lowering._handle_transforms(
+      ctx, x_aval, x_ref, transform_avals, transforms, handle_transposes=False,
+      handle_reshapes=False)
   if transforms:
     raise NotImplementedError(
         f"Unimplemented transforms for TMEM refs. {transforms=}"
@@ -3090,11 +3268,18 @@ def _async_load_tmem_lowering_rule_wg(
 ):
   assert isinstance(x_ref, ir.Value)
   assert isinstance(x_ref.type, ir.MemRefType)
+  x_aval = ctx.avals_in[0]
+  assert isinstance(x_aval, state_types.AbstractRef)
 
   transforms = jax.tree.unflatten(tree, leaves)
-  x_tmem, transforms = lowering._handle_transforms(
+  transform_avals = tree.unflatten(
+      ctx.avals_in[1 : 1 + tree.num_leaves]
+  )
+  x_tmem, _, transforms = lowering._handle_transforms(
       ctx,
+      x_aval,
       x_ref,
+      transform_avals,
       transforms,
       handle_transposes=False,
       handle_reshapes=False,
@@ -3168,10 +3353,15 @@ def _async_store_tmem_lowering_rule(
     ctx: lowering.LoweringRuleContext, x_ref, value, *leaves, tree
 ):
   assert isinstance(x_ref, tcgen05.TMEMRef)
+  x_aval = ctx.avals_in[0]
+  assert isinstance(x_aval, state_types.AbstractRef)
   transforms = jax.tree.unflatten(tree, leaves)
-  x_tmem, transforms = lowering._handle_transforms(
-      ctx, x_ref, transforms, handle_transposes=False, handle_reshapes=False,
+  transform_avals = tree.unflatten(
+      ctx.avals_in[2 : 2 + tree.num_leaves]
   )
+  x_tmem, _, transforms = lowering._handle_transforms(
+      ctx, x_aval, x_ref, transform_avals, transforms, handle_transposes=False,
+      handle_reshapes=False)
   if transforms:
     raise NotImplementedError(
         f"Unimplemented transforms for TMEM refs. {transforms=}"
@@ -3194,11 +3384,18 @@ def _async_store_tmem_lowering_rule_wg(
   assert isinstance(x_ref.type, ir.MemRefType)
   assert isinstance(value, ir.Value)
   assert isinstance(value.type, ir.VectorType)
+  x_aval = ctx.avals_in[0]
+  assert isinstance(x_aval, state_types.AbstractRef)
 
   transforms = jax.tree.unflatten(tree, leaves)
-  x_tmem, transforms = lowering._handle_transforms(
+  transform_avals = tree.unflatten(
+      ctx.avals_in[2 : 2 + tree.num_leaves]
+  )
+  x_tmem, _, transforms = lowering._handle_transforms(
       ctx,
+      x_aval,
       x_ref,
+      transform_avals,
       transforms,
       handle_transposes=False,
       handle_reshapes=False,
@@ -3295,8 +3492,21 @@ def _async_copy_to_tmem_lowering_rule(
   smem_leaves, tmem_leaves = util.split_list(leaves, [smem_tree.num_leaves])
   smem_transforms = jax.tree.unflatten(smem_tree, smem_leaves)
   tmem_transforms = jax.tree.unflatten(tmem_tree, tmem_leaves)
-  smem_ref, smem_transforms = lowering._handle_transforms(ctx, smem_ref, smem_transforms)
-  tmem_ref, tmem_transforms = lowering._handle_transforms(ctx, tmem_ref, tmem_transforms)
+  smem_aval = ctx.avals_in[0]
+  assert isinstance(smem_aval, state_types.AbstractRef)
+  tmem_aval = ctx.avals_in[1]
+  assert isinstance(tmem_aval, state_types.AbstractRef)
+  transform_avals = util.split_list(
+      ctx.avals_in[2:], [smem_tree.num_leaves]
+  )
+  smem_transform_avals = smem_tree.unflatten(transform_avals[0])
+  tmem_transform_avals = tmem_tree.unflatten(transform_avals[1])
+  smem_ref, _, smem_transforms = lowering._handle_transforms(
+      ctx, smem_aval, smem_ref, smem_transform_avals, smem_transforms
+  )
+  tmem_ref, _, tmem_transforms = lowering._handle_transforms(
+      ctx, tmem_aval, tmem_ref, tmem_transform_avals, tmem_transforms
+  )
   if smem_transforms:
     raise NotImplementedError(f"Unimplemented transforms for SMEM refs: {smem_transforms}")
   if tmem_transforms:
@@ -3422,9 +3632,15 @@ def _semaphore_signal_lowering_rule(
   sems, transforms, values, device_ids = tree_util.tree_unflatten(
       args_tree, args
   )
+  sem_avals, transform_avals, *_ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
   transformed_sems = []
-  for sem, sem_transforms in zip(sems, transforms, strict=True):
-    sem, sem_transforms = lowering._handle_transforms(ctx, sem, sem_transforms)
+  for sem, sem_aval, sem_transform_avals, sem_transforms in zip(
+      sems, sem_avals, transform_avals, transforms, strict=True
+  ):
+    assert isinstance(sem_aval, state_types.AbstractRef)
+    sem, _, sem_transforms = lowering._handle_transforms(
+        ctx, sem_aval, sem, sem_transform_avals, sem_transforms
+    )
     if sem_transforms:
       raise NotImplementedError(f"Unhandled transforms for semaphore_signal_parallel: {sem_transforms}")
     transformed_sems.append(sem)
@@ -3486,8 +3702,13 @@ def try_cluster_cancel_lowering(
     res_transforms_leaves, barrier_transforms_leaves = util.split_list(
       transforms_leaves, [result_transforms_tree.num_leaves])
     res_transforms = result_transforms_tree.unflatten(res_transforms_leaves)
-    result_ref, res_transforms = lowering._handle_transforms(
-        ctx, result_ref, res_transforms)
+    res_transform_avals = result_transforms_tree.unflatten(
+        ctx.avals_in[2 : 2 + result_transforms_tree.num_leaves]
+    )
+    result_aval = ctx.avals_in[0]
+    assert isinstance(result_aval, state_types.AbstractRef)
+    result_ref, _, res_transforms = lowering._handle_transforms(
+        ctx, result_aval, result_ref, res_transform_avals, res_transforms)
     if res_transforms:
       raise NotImplementedError(
           f"Unimplemented transforms for result ref: {res_transforms}"
@@ -3608,8 +3829,11 @@ def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext,
                                   transforms_tree):
   if transforms_tree is not None:
     res_transforms = transforms_tree.unflatten(transforms_leaves)
-    result_ref, res_transforms = lowering._handle_transforms(
-        ctx, result_ref, res_transforms)
+    result_aval = ctx.avals_in[0]
+    assert isinstance(result_aval, state_types.AbstractRef)
+    transform_avals = transforms_tree.unflatten(ctx.avals_in[1:])
+    result_ref, _, res_transforms = lowering._handle_transforms(
+        ctx, result_aval, result_ref, transform_avals, res_transforms)
     if res_transforms:
       raise NotImplementedError(
           f"Unimplemented transforms for result ref: {res_transforms}"
@@ -3711,9 +3935,10 @@ def _multimem_store_abstract_eval(source, ref, *transforms_leaves, transforms_tr
   shape, dtype = ref.shape, ref.dtype
   if transforms_tree is not None:
     transforms = jax.tree.unflatten(transforms_tree, transforms_leaves)
-    for t in transforms:
-      shape = t.transform_shape(shape)
-      dtype = t.transform_dtype(dtype)
+    ty = state.get_transforms_type(transforms, ref)
+    assert isinstance(ty, state.AbstractRef)
+    shape = ty.shape
+    dtype = ty.dtype
   if source.dtype != dtype:
     raise ValueError(f"Value dtype {source.dtype} does not match ref dtype {dtype}")
   if source.shape != shape:
@@ -3739,8 +3964,11 @@ def _multimem_store_lowering_rule(
     raise TypeError(f"Can only store arrays (got {value}).")
   if transforms_tree is not None:
     transforms = tree_util.tree_unflatten(transforms_tree, transforms_leaves)
-    local_ref, transforms = lowering._handle_transforms(
-        ctx, local_ref, transforms, allow_peer_refs=False
+    local_ref_aval = ctx.avals_in[1]
+    assert isinstance(local_ref_aval, state_types.AbstractRef)
+    transform_avals = transforms_tree.unflatten(ctx.avals_in[2:])
+    local_ref, _, transforms = lowering._handle_transforms(
+        ctx, local_ref_aval, local_ref, transform_avals, transforms, allow_peer_refs=False
     )
     if transforms:
       raise NotImplementedError(
@@ -3762,13 +3990,12 @@ multimem_load_reduce_p = jax_core.Primitive("multimem_load_reduce")
 def _multimem_load_reduce_abstract_eval(ref, *avals_flat, tree, collective_axes, reduction_op):
   del collective_axes, reduction_op
   _check_ref(ref, "ref", gpu_core.GMEM)
-  shape, dtype = ref.shape, ref.dtype
+  out_ref = ref
   if tree is not None:
     transforms = jax.tree.unflatten(tree, avals_flat)
-    for t in transforms:
-      shape = t.transform_shape(shape)
-      dtype = t.transform_dtype(dtype)
-  return jax_core.ShapedArray(shape, dtype), {pallas_core.comms_effect}
+    out_ref = state.get_transforms_type(transforms, ref)
+  assert isinstance(out_ref, state_types.AbstractRef)
+  return out_ref.inner_aval, {pallas_core.comms_effect}
 
 @lowering.register_lowering_rule(multimem_load_reduce_p, mgpu.LoweringSemantics.Lane)
 def _multimem_load_reduce_lowering_rule(
@@ -3796,7 +4023,12 @@ def _multimem_load_reduce_lowering_rule(
     )
   dtype = ctx.avals_out[0].dtype
   transforms = tree.unflatten(transforms_leaves)
-  ref, transforms = lowering._handle_transforms(ctx, ref, transforms, allow_peer_refs=False)
+  transform_avals = tree.unflatten(ctx.avals_in[1:])
+  ref_aval = ctx.avals_in[0]
+  assert isinstance(ref_aval, state_types.AbstractRef)
+  ref, _, transforms = lowering._handle_transforms(ctx, ref_aval, ref,
+                                                   transform_avals, transforms,
+                                                   allow_peer_refs=False)
   if transforms:
     raise NotImplementedError(
         f"Unhandled transforms for multimem_load_reduce: {transforms}"
@@ -3886,9 +4118,12 @@ def _semaphore_signal_multicast_abstract_eval(*avals, args_tree, collective_axes
 def _semaphore_signal_multicast_lowering(
     ctx: lowering.LoweringRuleContext, *args, args_tree, collective_axes
 ):
-  i32 = ir.IntegerType.get_signless(32)
   sem, transforms, value = tree_util.tree_unflatten(args_tree, args)
-  sem, sem_transforms = lowering._handle_transforms(ctx, sem, transforms)
+  sem_aval, transform_avals, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  assert isinstance(sem_aval, state_types.AbstractRef)
+  sem, _, sem_transforms = lowering._handle_transforms(ctx, sem_aval, sem,
+                                                       transform_avals,
+                                                       transforms)
   if sem_transforms:
     raise NotImplementedError(
         f"Unhandled transforms for semaphore_signal_multicast: {sem_transforms}"
@@ -3904,6 +4139,7 @@ def _semaphore_signal_multicast_lowering(
   multi_ref = ctx.launch_ctx.to_remote_multicast(sem)
   if ctx.module_ctx.auto_barriers:
     mgpu_utils.warpgroup_barrier()
+  i32 = ir.IntegerType.get_signless(32)
   val = lowering._ir_constant(value, i32)
   mgpu_utils.SemaphoreRef.signal_multimem(mgpu_utils.memref_ptr(multi_ref.ref), val)
   return ()

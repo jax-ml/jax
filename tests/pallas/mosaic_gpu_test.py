@@ -173,7 +173,7 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
 
   def default_transforms(
       self, *, swizzle: int = 128, dtype: jnp.dtype
-  ) -> Sequence[plgpu.MemoryRefTransform]:
+  ) -> Sequence[plgpu.Transform]:
     if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
       return ()
     swizzle_elems = 8 * swizzle // dtypes.itemsize_bits(dtype)
@@ -2108,7 +2108,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       # Ensure that the transforms provided in the scratch shapes have been
       # passed correctly.
       self.assertIsInstance(extract_alias_transform, gpu_core.ExtractAliasedRef)
-      self.assertIsInstance(tile_transform, gpu_core.UntileRef)
+      self.assertIsInstance(tile_transform, gpu_core.UntilingTransform)
       smem_ref256[...] = x_ref[...] + 1
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(smem_ref128, o_ref128)

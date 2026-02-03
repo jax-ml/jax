@@ -40,7 +40,7 @@ from jax._src.lax import slicing as lax_slicing
 from jax._src.state import indexing
 from jax._src.state.primitives import addupdate_p, get_p, swap_p, pin, unpin
 from jax._src.state.types import (
-    AbstractRef, RefBitcaster, RefEffect, RefReshaper, get_ref_aval_from_value,
+    AbstractRef, BitcastTransform, RefEffect, ReshapeTransform, get_ref_aval_from_value,
     uninitialized,)
 from jax._src.state.utils import bitcast, hoist_consts_to_refs
 from jax._src.typing import Array
@@ -470,9 +470,9 @@ def transform_array(x, transforms):
     match transform:
       case indexing.NDIndexer():
         result = _index_array(result, transform)
-      case RefBitcaster():
+      case BitcastTransform():
         result = bitcast(result, transform.dtype)
-      case RefReshaper():
+      case ReshapeTransform():
         result = result.reshape(transform.shape)
       case _:
         raise NotImplementedError(f"Unsupported transform: {transform}")
@@ -516,9 +516,9 @@ def transform_swap_array(x, transforms, val):
           # the result of the indexing, and is no longer the original array that
           # was indexed into.
         intermediates.append(new_val)
-      case RefBitcaster():
+      case BitcastTransform():
         intermediates.append(bitcast(new_val, transform.dtype))
-      case RefReshaper():
+      case ReshapeTransform():
         intermediates.append(new_val.reshape(transform.shape))
       case _:
         raise NotImplementedError(f"Unsupported transform: {transform}")

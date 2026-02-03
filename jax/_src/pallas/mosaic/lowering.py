@@ -69,7 +69,7 @@ from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import random as pl_random
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
-from jax._src.state.types import RefBitcaster, RefReshaper
+from jax._src.state.types import BitcastTransform, ReshapeTransform
 from jax._src.typing import Array, DTypeLike
 from jax._src.util import foreach
 from jax._src.util import safe_map
@@ -1385,7 +1385,7 @@ def _indexer_to_start_size_stride(
 def _slice_memref(
     ref: ir.Value,
     indexer: NDIndexer,
-    ref_dtype: DTypeLike,
+    ref_ty: state.AbstractRef,
     ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
 ) -> tuple[ir.Value, tuple[int | pallas_core.Squeezed, ...]]:
   assert ref_block_shape is not None
@@ -1440,11 +1440,11 @@ def _slice_memref(
 
 def _bitcast_memref(
     ref: ir.Value,
-    bitcaster: RefBitcaster,
-    ref_dtype: DTypeLike,
+    bitcaster: BitcastTransform,
+    ref_aval: state.AbstractRef,
     ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
-) -> tuple[ir.Value, DTypeLike, tuple[int | pallas_core.Squeezed, ...]]:
-  src_bitwidth = dtypes.itemsize_bits(ref_dtype)
+) -> tuple[ir.Value, tuple[int | pallas_core.Squeezed, ...]]:
+  src_bitwidth = dtypes.itemsize_bits(ref_aval.dtype)
   dst_bitwidth = dtypes.itemsize_bits(bitcaster.dtype)
   if src_bitwidth != dst_bitwidth:
     if len(ref_block_shape) < 2:
@@ -1456,11 +1456,11 @@ def _bitcast_memref(
           "Bitcast a ref whose 2nd minormost dimension is squeezed when"
           " bitwidth changes."
       )
-  new_ref_dtype = bitcaster.dtype
+  out_aval = bitcaster.transform_type(ref_aval)
   ref_ty = ir.MemRefType(ref.type)
   target_ref_ty = ir.MemRefType.get(
-      bitcaster.shape,
-      _dtype_to_ir_type(new_ref_dtype),
+      out_aval.shape,
+      _dtype_to_ir_type(out_aval.dtype),
       memory_space=ref_ty.memory_space,
   )
   new_ref_block_shape = list(ref_block_shape)
@@ -1473,21 +1473,16 @@ def _bitcast_memref(
     )
   return (
       tpu.memref_bitcast(target_ref_ty, ref),
-      new_ref_dtype,
       tuple(new_ref_block_shape),
   )
 
 
 def _reshape_memref(
     ref: ir.Value,
-    reshaper: RefReshaper,
-    ref_dtype: DTypeLike,
+    reshaper: ReshapeTransform,
+    ref_aval: state.AbstractRef,
     ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
 ) -> tuple[ir.Value, tuple[int, ...]]:
-  if ref_dtype != reshaper.dtype:
-    raise ValueError(
-        f"Reshape a ref with dtype change: {reshaper.dtype} vs {ref_dtype}"
-    )
   if len(ref_block_shape) < 2:
     raise NotImplementedError("Reshape 1D ref is not supported.")
   if (
@@ -1505,7 +1500,7 @@ def _reshape_memref(
   ref_ty = ir.MemRefType(ref.type)
   target_ref_ty = ir.MemRefType.get(
       reshaper.shape,
-      _dtype_to_ir_type(reshaper.dtype),
+      _dtype_to_ir_type(ref_aval.dtype),
       memory_space=ref_ty.memory_space,
   )
   return (
@@ -1514,23 +1509,24 @@ def _reshape_memref(
   )
 
 
-def _transform_ref(ref, ref_dtype, ref_block_shape, transforms):
+def _transform_ref(ref, ref_ty, ref_block_shape, transforms):
   for transform in transforms:
     match transform:
       case NDIndexer():
         ref, ref_block_shape = _slice_memref(
-            ref, transform, ref_dtype, ref_block_shape
+            ref, transform, ref_ty, ref_block_shape
         )
-      case RefBitcaster():
-        ref, ref_dtype, ref_block_shape = _bitcast_memref(
-            ref, transform, ref_dtype, ref_block_shape
+      case BitcastTransform():
+        ref, ref_block_shape = _bitcast_memref(
+            ref, transform, ref_ty, ref_block_shape
         )
-      case RefReshaper():
+      case ReshapeTransform():
         ref, ref_block_shape = _reshape_memref(
-            ref, transform, ref_dtype, ref_block_shape
+            ref, transform, ref_ty, ref_block_shape
         )
       case _:
         raise NotImplementedError(f"Unsupported transform: {transform}")
+    ref_ty = transform.transform_type(ref_ty)
   return ref, ref_block_shape
 
 
@@ -1560,8 +1556,9 @@ def _canonicalize_transforms_to_indexer(
     prev_transforms, idx = [], NDIndexer.make_trivial_indexer(ref_aval.shape)
   else:
     if not isinstance(transforms[-1], NDIndexer):
-      ref_shape = state.get_transforms_shape(transforms, ref_aval.shape)
-      idx = NDIndexer.make_trivial_indexer(ref_shape)
+      new_ref_aval = state.get_transforms_type(transforms, ref_aval)
+      assert isinstance(new_ref_aval, state.AbstractRef)
+      idx = NDIndexer.make_trivial_indexer(new_ref_aval.shape)
       prev_transforms = transforms
     else:
       (*prev_transforms, idx) = transforms
@@ -1586,7 +1583,7 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
 
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
-      ref, ref_aval.dtype, ref_block_shape, prev_transforms
+      ref, ref_aval, ref_block_shape, prev_transforms
   )
   ref_type = ir.MemRefType(ref.type)
   is_smem_load = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
@@ -1693,7 +1690,7 @@ def _prng_key_load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree
   idx = cast(NDIndexer, idx)
   inner_aval = jax_core.physical_aval(ref_aval.inner_aval)  # pytype: disable=wrong-arg-types
   ref, ref_block_shape = _transform_ref(
-      ref, inner_aval.dtype, ref_block_shape, prev_transforms
+      ref, ref_aval, ref_block_shape, prev_transforms
   )
 
   if len(key_shape) != 2:
@@ -1796,7 +1793,7 @@ def _masked_swap_lowering_rule(
 
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
-      ref, ref_aval.dtype, ref_block_shape, prev_transforms
+      ref, ref_aval, ref_block_shape, prev_transforms
   )
 
   ref_type = ir.MemRefType(ref.type)
@@ -3715,7 +3712,7 @@ def _semaphore_read_lowering_rule(
       },
   )
   sem, transforms = tree_util.tree_unflatten(args_tree, args)
-  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
+  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, transforms)
   return tpu.sem_read(sem)
 
 
@@ -3732,7 +3729,7 @@ def _semaphore_signal_lowering_rule(
   sem, transforms, value, device_id, core_index = tree_util.tree_unflatten(
       args_tree, args
   )
-  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
+  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, transforms)
   if device_id is not None:
     device_id, core_id = _device_id_to_logical(ctx, device_id, device_id_type)
     if core_id is not None:
@@ -3753,7 +3750,7 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem, transforms, value, decrement = tree_util.tree_unflatten(args_tree, args)
   if not decrement:
     raise NotImplementedError("Non-decrementing wait is not supported.")
-  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
+  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, transforms)
   tpu.sem_wait(sem, value)
   return []
 
@@ -3788,16 +3785,16 @@ def _dma_start_lowering_rule(
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
   src_ref_block_shape, dst_ref_block_shape = block_shapes[0], block_shapes[2]
   src_ref, _ = _transform_ref(
-      src_ref, src_ref_aval.dtype, src_ref_block_shape, src_transforms
+      src_ref, src_ref_aval, src_ref_block_shape, src_transforms
   )
   if src_sem is not None:
     src_sem, _ = _transform_ref(
-        src_sem, src_sem_aval.dtype, src_sem_aval.shape, src_sem_transforms
+        src_sem, src_sem_aval, src_sem_aval.shape, src_sem_transforms
     )
   dst_ref, _ = _transform_ref(
-      dst_ref, dst_ref_aval.dtype, dst_ref_block_shape, dst_transforms
+      dst_ref, dst_ref_aval, dst_ref_block_shape, dst_transforms
   )
-  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
+  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, sem_transforms)
   core_id = None
   if device_id is not None:
     device_id, core_id = _device_id_to_logical(ctx, device_id, device_id_type)
@@ -3832,9 +3829,9 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   )
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
   ref_block_shape = block_shapes[2]
-  src, _ = _transform_ref(src, src_aval.dtype, src_aval.shape, src_transforms)
-  dst, _ = _transform_ref(dst, dst_aval.dtype, ref_block_shape, transforms)
-  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
+  src, _ = _transform_ref(src, src_aval, src_aval.shape, src_transforms)
+  dst, _ = _transform_ref(dst, dst_aval, ref_block_shape, transforms)
+  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, sem_transforms)
 
   core_id = None
   if device_id is not None:
