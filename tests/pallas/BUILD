@@ -1212,7 +1212,7 @@ jax_multiplatform_test(
 
 jax_multiplatform_test(
     name = "mgpu_collective_matmul_run",
-    srcs = ["//jax/experimental/pallas/ops/gpu:collective_matmul_mgpu.py"],
+    srcs = ["//jax/experimental/pallas/ops/gpu:all_gather_lhs_matmul_mgpu.py"],
     args = [
         "--num_processes=2",
         "--gpus_per_process=1",
