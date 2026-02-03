@@ -2588,9 +2588,9 @@ def make_jaxpr(
       jaxpr = traced.jaxpr
     if return_shape:
       def aval_to_shape_struct(aval):
-        if hasattr(aval, 'shape') and hasattr(aval, 'dtype'):
+        try:
           return ShapeDtypeStruct(aval.shape, aval.dtype)
-        else:
+        except AttributeError:
           # For HiType and other abstract values without shape/dtype,
           # return the aval itself as it already describes the type
           return aval
