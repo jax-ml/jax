@@ -121,4 +121,7 @@ fx2 = f(x)  # Still no donation (using cached compilation)
 # Clear cache and recompile to restore donation
 f.clear_cache()
 fx3 = f(x)  # Buffer donation now works
+# Using `x` now fails because its buffer was donated:
+x.block_until_ready()
+# >> RuntimeError: Invalid argument: CopyToHostAsync() called on invalid buffer
 ```
