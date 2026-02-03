@@ -86,3 +86,39 @@ y = jax.device_put(np.ones((1, 3)))  # `y` has different shape than the output
 z = jax.jit(add, donate_argnums=(1,))(x, y)
 # >> UserWarning: Some donated buffers were not usable: f32[1,3]{1,0}
 ```
+
+## Limitations
+
+### Buffer donation is disabled when `debug_nans` is enabled
+
+When {func}`jax.debug_nans` mode is enabled (or the `JAX_DEBUG_NANS` environment
+variable is set), buffer donation is disabled for all functions compiled while
+this mode is active. This is because `debug_nans` mode needs to re-execute
+computations to identify the source of NaN values, which requires the input
+buffers to remain valid.
+
+Note that donation is disabled at compilation time, so if a function is compiled
+while `debug_nans` is enabled, it will not donate buffers even if `debug_nans`
+is later disabled. To restore buffer donation, clear the function's cache with
+`f.clear_cache()` and recompile with `debug_nans` disabled.
+
+```python
+from jax import debug_nans, jit
+import jax.numpy as jnp
+
+@jit(donate_argnums=(0,))
+def f(x):
+    return x
+
+# With debug_nans enabled, donation is disabled
+with debug_nans(True):
+    x = jnp.arange(10)
+    fx = f(x)  # Buffer donation does not occur
+
+# Even outside the context, the cached function still doesn't donate
+fx2 = f(x)  # Still no donation (using cached compilation)
+
+# Clear cache and recompile to restore donation
+f.clear_cache()
+fx3 = f(x)  # Buffer donation now works
+```
