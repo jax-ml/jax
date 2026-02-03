@@ -2249,6 +2249,10 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "scaled_dot_test",
     srcs = ["scaled_dot_test.py"],
+    shard_count = {
+        "gpu": 5,
+        "tpu": 5,
+    },
     deps = py_deps([
         "absl/testing",
         "numpy",
