@@ -36,6 +36,7 @@ from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy import indexing
+from jax._src.indexing import Slice
 
 config.parse_flags_with_absl()
 
@@ -201,6 +202,11 @@ STATIC_INDEXING_OUT_OF_BOUNDS_TESTS = [
   ]),
 ]
 
+DYNAMIC_SLICE_TESTS = [
+  ("OneSliceIndex", [
+    IndexSpec(shape=(10,), indexer=jax.ds(1, 3), out_shape=(3,)),
+  ]),
+]
 
 ADVANCED_INDEXING_TESTS = [
   ("One1DIntArrayIndex", [
@@ -470,6 +476,43 @@ class IndexingStrategyTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     np_fun = lambda x: np.asarray(x)[indexer]
+    jnp_fun = partial(indexing.rewriting_take, idx=indexer, strategy=strategy, mode=mode)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+
+  @jtu.sample_product(
+    [dict(name=name, shape=shape, indexer=indexer)
+     for name, index_specs in DYNAMIC_SLICE_TESTS
+     for shape, indexer, _ in index_specs],
+    dtype=all_dtypes,
+    strategy=[indexing.IndexingStrategy.AUTO,
+              indexing.IndexingStrategy.DYNAMIC_SLICE,
+              indexing.IndexingStrategy.GATHER],
+    mode=[None, "clip", "promise_in_bounds"],
+  )
+  def test_dslice_indexing(self, name, shape, dtype, indexer, strategy, mode):
+    del name # unused within test
+    tuple_indexer = indexer if isinstance(indexer, tuple) else (indexer,)
+    if (strategy == indexing.IndexingStrategy.STATIC_SLICE and
+        any(isinstance(i, np.ndarray) for i in tuple_indexer)):
+      self.skipTest("array indices not supported with STATIC_SLICE.")
+    if (strategy == indexing.IndexingStrategy.DYNAMIC_SLICE and
+        any(isinstance(i, slice) and not (i.step is None or i.step in [-1, 1])
+            for i in tuple_indexer)):
+      self.skipTest("non-unit step sizes not supported with DYNAMIC_SLICE")
+
+    def to_numpy_indexer(indexer):
+      if not isinstance(indexer, tuple):
+        indexer = (indexer,)
+      return tuple(
+        slice(i.start, i.start + i.size, i.stride) if isinstance(i, Slice) else i
+        for i in indexer
+      )
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    np_fun = lambda x: np.asarray(x)[to_numpy_indexer(indexer)]
     jnp_fun = partial(indexing.rewriting_take, idx=indexer, strategy=strategy, mode=mode)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
