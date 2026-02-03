@@ -1219,6 +1219,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       y = jnp.pad(x, 0, mode=mode)
       self.assertTrue(dtypes.is_weakly_typed(y))
 
+  @jtu.sample_product([
+    dict(input_shape=(3, 4, 5), pad_width={-2: (1, 3)}, expected_shape=(3, 4 + 1 + 3, 5)),
+    dict(input_shape=(3, 4, 5), pad_width={0: (5, 2)}, expected_shape=(3 + 5 + 2, 4, 5)),
+    dict(input_shape=(3, 4, 5), pad_width={0: (5, 2), -1: (3, 4)}, expected_shape=(3 + 5 + 2, 4, 5 + 3 + 4)),
+    dict(input_shape=(3, 4, 5), pad_width={1: 5}, expected_shape=(3, 4 + 2 * 5, 5)),
+  ])
+  def testPadDictPadWidth(self, input_shape, pad_width, expected_shape):
+    a = jnp.zeros(input_shape)
+    result = jnp.pad(a, pad_width)
+    assert result.shape == expected_shape
+
   @jtu.sample_product(
     [dict(shape=shape, dtype=dtype)
       for shape, dtype in _shape_and_dtypes(all_shapes, default_dtypes)],
