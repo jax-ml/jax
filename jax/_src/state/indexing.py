@@ -75,7 +75,10 @@ class Slice:
   def from_slice(cls, slc: slice, size: int) -> Slice:
     start, step, size = core.canonicalize_slice(slc, size)
     if step < 1:
-      raise ValueError(f"slice must have a step >= 1 (found: {step})")
+      raise ValueError(
+          f"Slice step must be positive (found: {step}). "
+          "Negative steps should be handled before reaching NDIndexer."
+      )
     return cls(start, size, step)
 
 
@@ -172,12 +175,14 @@ class NDIndexer:
       if isinstance(idx, Slice):
         start = idx.start
         if value := _maybe_concretize(start):
-          if value >= s:
+          size_val = _maybe_concretize(idx.size)
+          # Allow start == s when size == 0 (empty slice)
+          if value >= s and (size_val is None or size_val > 0):
             raise ValueError(f"Out of bound slice: start={value}, dim={s}.")
-          if size := _maybe_concretize(idx.size):
-            if value + (size - 1) * idx.stride >= s:
+          if size_val:
+            if value + (size_val - 1) * idx.stride >= s:
               raise ValueError(
-                  f"Out of bound slice: start={value}, size={size},"
+                  f"Out of bound slice: start={value}, size={size_val},"
                   f" stride={idx.stride}, dim={s}."
               )
         continue

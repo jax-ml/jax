@@ -40,8 +40,8 @@ from jax._src.lax import slicing as lax_slicing
 from jax._src.state import indexing
 from jax._src.state.primitives import addupdate_p, get_p, swap_p, pin, unpin
 from jax._src.state.types import (
-    AbstractRef, RefBitcaster, RefEffect, RefReshaper, get_ref_aval_from_value,
-    uninitialized,)
+    AbstractRef, RefBitcaster, RefEffect, RefFlip, RefNewAxis, RefReshaper,
+    get_ref_aval_from_value, uninitialized,)
 from jax._src.state.utils import bitcast, hoist_consts_to_refs
 from jax._src.typing import Array
 from jax._src.util import (foreach, safe_map, safe_zip, split_list, unzip2,
@@ -474,6 +474,11 @@ def transform_array(x, transforms):
         result = bitcast(result, transform.dtype)
       case RefReshaper():
         result = result.reshape(transform.shape)
+      case RefFlip():
+        result = lax.rev(result, transform.axes)
+      case RefNewAxis():
+        # Insert new axes at specified positions
+        result = lax.expand_dims(result, sorted(transform.positions))
       case _:
         raise NotImplementedError(f"Unsupported transform: {transform}")
   return result
@@ -517,9 +522,17 @@ def transform_swap_array(x, transforms, val):
           # was indexed into.
         intermediates.append(new_val)
       case RefBitcaster():
-        intermediates.append(bitcast(new_val, transform.dtype))
+        new_val = bitcast(new_val, transform.dtype)
+        intermediates.append(new_val)
       case RefReshaper():
-        intermediates.append(new_val.reshape(transform.shape))
+        new_val = new_val.reshape(transform.shape)
+        intermediates.append(new_val)
+      case RefFlip():
+        new_val = lax.rev(new_val, transform.axes)
+        intermediates.append(new_val)
+      case RefNewAxis():
+        new_val = lax.expand_dims(new_val, sorted(transform.positions))
+        intermediates.append(new_val)
       case _:
         raise NotImplementedError(f"Unsupported transform: {transform}")
 
@@ -528,7 +541,7 @@ def transform_swap_array(x, transforms, val):
   new_x = val
 
   # Write phase (reversed loop)
-  for intermediate, transform in reversed(zip(intermediates[:-1], transforms)):
+  for intermediate, transform in reversed(list(zip(intermediates[:-1], transforms))):
     if isinstance(transform, indexing.NDIndexer):
       indexer = transform
       if _is_trivial_indexer(indexer):
@@ -549,6 +562,18 @@ def transform_swap_array(x, transforms, val):
         if transpose_order is not None:
           transpose_order_inversed = np.argsort(transpose_order)
           new_x = new_x.transpose(transpose_order_inversed)
+    elif isinstance(transform, RefFlip):
+      # Reverse the flip
+      new_x = lax.rev(new_x, transform.axes)
+    elif isinstance(transform, RefNewAxis):
+      # Squeeze the added axes
+      new_x = lax.squeeze(new_x, sorted(transform.positions))
+    elif isinstance(transform, RefReshaper):
+      # Reshape back to the shape of the intermediate array
+      new_x = new_x.reshape(intermediate.shape)
+    elif isinstance(transform, RefBitcaster):
+      # Bitcast back to the dtype of the intermediate array
+      new_x = bitcast(new_x, intermediate.dtype)
     else:
       raise NotImplementedError(f"Unsupported transform: {transform}")
 
