@@ -106,14 +106,14 @@ absl::StatusOr<xla::PjRtMemorySpace*> MemorySpaceFromSharding(
                           absl::StrAppend(out, *ms->Kind().memory_kind());
                         }));
     }
-    return tensorflow::down_cast<xla::ifrt::PjRtMemory*>(memory)->pjrt_memory();
+    return absl::down_cast<xla::ifrt::PjRtMemory*>(memory)->pjrt_memory();
   } else {
     if (!device->IsAddressable()) {
       return xla::InvalidArgument(
           "Cannot copy array to non-addressable device %s",
           device->DebugString());
     }
-    return tensorflow::down_cast<xla::ifrt::PjRtDevice*>(device)
+    return absl::down_cast<xla::ifrt::PjRtDevice*>(device)
         ->pjrt_device()
         ->default_memory_space();
   }
@@ -192,7 +192,7 @@ class PyTransferServer {
     use_raw_buffers_ = use_raw_buffers;
     std::shared_ptr<BulkTransportFactory> factory;
     std::shared_ptr<xla::PjRtClient> pjrt_client =
-        tensorflow::down_cast<xla::ifrt::PjRtClient*>(client)
+        absl::down_cast<xla::ifrt::PjRtClient*>(client)
             ->shared_ptr_pjrt_client();
     if (transport_addresses.empty()) {
       factory = BulkTransportFactory::CreateLocal();
@@ -403,8 +403,8 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
         std::vector<tsl::RCReference<xla::ifrt::PjRtCompatibleArray>> arrs;
         arrs.reserve(dests.size());
         for (const jax::PyArray& dest : dests) {
-          arrs.push_back(tsl::FormRef(
-              tensorflow::down_cast<xla::ifrt::PjRtCompatibleArray*>(
+          arrs.push_back(
+              tsl::FormRef(absl::down_cast<xla::ifrt::PjRtCompatibleArray*>(
                   dest.ifrt_array())));
         }
         uint64_t uuid_cpp;
