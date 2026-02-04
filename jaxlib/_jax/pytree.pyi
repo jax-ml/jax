@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Python tree library"""
+
 from collections.abc import Callable, Hashable, Iterable, Sequence
 from typing import Any, TypeVar
 

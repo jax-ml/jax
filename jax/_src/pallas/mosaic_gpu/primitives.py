@@ -254,31 +254,18 @@ def _copy_smem_to_gmem_lowering(
     )
   assert not copy_params.get("gmem_transform")
   if reduction_op is not None:
-    # TODO(b/415721295): Call mgpu.dialect.async_store after the if, after
-    # the minimal jaxlib version is 0.8.2.
-    if not hasattr(mgpu.dialect, "TMAReduction"):
-      raise NotImplementedError("Reduction op is not supported yet.")
-    reduction_op_attr = getattr(
-        mgpu.dialect.TMAReduction, reduction_op.capitalize()
-    )
-    mgpu.dialect.async_store(
-        src,
-        dst,
-        indices,
-        slice_lengths,
-        predicate=predicate,
-        commit_group=commit_group,  # type: ignore[call-arg]
-        reduction_op=reduction_op_attr,
-    )
+    reduction_op_attr = getattr(mgpu.dialect.TMAReduction, reduction_op.capitalize())
   else:
-    mgpu.dialect.async_store(
-        src,
-        dst,
-        indices,
-        slice_lengths,
-        predicate=predicate,
-        commit_group=commit_group,  # type: ignore[call-arg]
-    )
+    reduction_op_attr = None
+  mgpu.dialect.async_store(
+      src,
+      dst,
+      indices,
+      slice_lengths,
+      predicate=predicate,
+      commit_group=commit_group,  # type: ignore[call-arg]
+      reduction_op=reduction_op_attr,
+  )
   return ()
 
 
@@ -2812,7 +2799,7 @@ def _populate_custom_primitive_op_block(
         # wrap the transfromed refs. Since the mgpu_fn works at the lowered
         # "lane" level, we need to transform (lower) the inputs before passing
         # them to the mgpu_fn.
-        transformed_type = mgpu.dialect_lowering.transformed_smem_ref_type(
+        transformed_type = mgpu.dialect_lowering.transform_type(
             memref_ty, transforms
         )
         conversion_cast = builtin_dialect.UnrealizedConversionCastOp(

@@ -92,9 +92,18 @@ class SingleRowVRegBounds : public VRegDataBounds {
                stop_offset_ < entries_per_vreg - target_shape[1];
       case Direction::kLanes:
         return true;
+      // This is very different from the definition in the 2d tiling case
+      // `TiledRectangularVregBounds` where we only need to check whether the
+      // offsets are divisible by packing. Here in the 1d tiling case, the data
+      // is still vertically packed, so as long as the start and stop offsets
+      // are not aligned to sublanes, subelement masking is required. For
+      // example, consider a 16-bit vector with `start_offset_ = 0` and
+      // `stop_offset_ = 128`, the mask should be true for the lower 16 bits and
+      // false for the upper 16 bits across all lanes.
       case Direction::kSubelements:
-        return start_offset_ % layout_.packing() != 0 ||
-               stop_offset_ % layout_.packing() != 0;
+        return layout_.bitwidth() != 32 &&
+               (start_offset_ % (target_shape[1] * layout_.packing()) != 0 ||
+                stop_offset_ % (target_shape[1] * layout_.packing()) != 0);
     }
   }
 
@@ -102,19 +111,42 @@ class SingleRowVRegBounds : public VRegDataBounds {
   FailureOr<TypedValue<VectorType>> getVectorMask(
       OpBuilder& builder, const Location loc, const int generation,
       const std::array<int64_t, 2> target_shape) const override {
+    // Only packed types may require subelement masking.
     if (maskVariesAlong(Direction::kSubelements, target_shape)) {
-      return emitError(loc, "Not implemented: masked along subelements");
+      if (layout_.bitwidth() != 16) {
+        return emitError(loc,
+                         "Only 16-bit subelement masking is currently "
+                         "implemented in SingleRowVRegBounds::getVectorMask.");
+      }
+
+      const auto i16_vreg =
+          VectorType::get({target_shape[0], target_shape[1], layout_.packing()},
+                          builder.getI16Type());
+      const auto getI16VregConstant = [&](const int32_t v) {
+        return arith::ConstantOp::create(
+            builder, loc, i16_vreg,
+            DenseElementsAttr::get(i16_vreg, builder.getI16IntegerAttr(v)));
+      };
+      const Value start = getI16VregConstant(start_offset_);
+      const Value end = getI16VregConstant(stop_offset_);
+      const Value iota = tpu::IotaOp::create(builder, loc, i16_vreg,
+                                             ArrayRef<int32_t>{0, 2, 1});
+      return cast<TypedValue<VectorType>>(
+          arith::AndIOp::create(
+              builder, loc,
+              arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::sge,
+                                    iota, start),
+              arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::slt,
+                                    iota, end))
+              .getResult());
     }
+
+    // Handle 32-bit as well as packed types with sublane-aligned offsets.
     const auto i32_vreg = VectorType::get(target_shape, builder.getI32Type());
     const auto getI32VregConstant = [&](const int32_t v) {
       return arith::ConstantOp::create(builder, loc, i32_vreg,
                                        DenseElementsAttr::get(i32_vreg, v));
     };
-    if (layout_.bitwidth() != 32 &&
-        (start_offset_ % (target_shape[1] * layout_.packing()) != 0 ||
-         stop_offset_ % (target_shape[1] * layout_.packing()) != 0)) {
-      return emitError(loc, "Not implemented: offset not aligned to sublanes");
-    }
     const Value start = getI32VregConstant(start_offset_ / layout_.packing());
     const Value end = getI32VregConstant(stop_offset_ / layout_.packing());
     const Value iota =

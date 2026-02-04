@@ -265,6 +265,7 @@ Miscellaneous
     live_arrays
     clear_caches
     typeof
+    ds
 
 .. _checkpoint-policies:
 

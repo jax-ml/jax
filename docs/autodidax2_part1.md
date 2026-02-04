@@ -168,7 +168,7 @@ the sum of the two, with the tangent scaled by a small fixed epsilon, `1e-5`.
 Ordinary evaluation of `foo(2.00001)` propagates this primal-tangent pair,
 producing `10.0000700001` as the result. The primal and tangent components are
 well separated in scale so we can visually interpret the result as the
-primal-tangent pair (10.0, 7.0), ignoring the the ~1e-10 truncation error at
+primal-tangent pair (10.0, 7.0), ignoring the ~1e-10 truncation error at
 the end.
 
 +++

@@ -135,6 +135,7 @@ from jax._src.core import ShapeDtypeStruct as ShapeDtypeStruct
 from jax._src.api import value_and_grad as value_and_grad
 from jax._src.api import vjp as vjp
 from jax._src.api import vmap as vmap
+from jax._src.indexing import ds as ds
 from jax._src.sharding_impls import NamedSharding as NamedSharding
 from jax._src.sharding_impls import make_mesh as make_mesh
 from jax._src.sharding_impls import set_mesh as set_mesh
@@ -145,6 +146,7 @@ from jax._src.shard_map import shard_map as shard_map
 from jax._src.shard_map import smap as smap
 
 from jax.ref import new_ref as new_ref
+from jax.ref import empty_ref as empty_ref
 from jax.ref import freeze as freeze
 from jax.ref import Ref as Ref
 

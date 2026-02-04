@@ -214,6 +214,13 @@ def _eval_jaxpr_discharge_state(
         if config.refs_to_pins.value:
           ans = pin(ans)
         refs_to_discharge.add(id(outvar.aval))
+      elif eqn.primitive is core.empty_ref_p:
+        [], [outvar] = eqn.invars, eqn.outvars
+        aval = outvar.aval.inner_aval
+        if not isinstance(aval, core.ShapedArray):
+          raise NotImplementedError  # TODO(sharadmv)
+        ans = lax.empty(aval.shape, aval.dtype)
+        refs_to_discharge.add(id(outvar.aval))
       elif eqn.primitive is core.freeze_p:
         [invar], [outvar] = eqn.invars, eqn.outvars
         ans = env.read(invar)
@@ -779,7 +786,7 @@ def _run_state_jvp(primals: Sequence[Any], tangents: Sequence[Any], *,
                                                            len(primals)])
   del out_consts
   out_tangents_iter = iter(out_tangents)
-  out_tangents = [next(out_tangents_iter) if nz else ad_util.Zero.from_primal_value(p)
+  out_tangents = [next(out_tangents_iter) if nz else ad_util.p2tz(p)
                   for p, nz in zip(out_primals, nonzero_tangents)]
   return out_primals, out_tangents
 ad.primitive_jvps[run_state_p] = _run_state_jvp

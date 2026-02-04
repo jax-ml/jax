@@ -26,12 +26,17 @@ set -exu -o history -o allexport
 source ci/envs/default.env
 
 # Clone XLA at HEAD if path to local XLA is not provided
-if [[ -z "$JAXCI_XLA_GIT_DIR" ]]; then
+if [[ -z "$JAXCI_XLA_GIT_DIR" && -z "$JAXCI_CLONE_MAIN_XLA" ]]; then
     export JAXCI_CLONE_MAIN_XLA=1
 fi
 
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
+
+OVERRIDE_XLA_REPO=""
+if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
+  OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
+fi
 
 # Run Bazel CPU tests with RBE.
 os=$(uname -s | awk '{print tolower($0)}')
@@ -83,9 +88,6 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
     if [[ "$JAXCI_BAZEL_CPU_RBE_MODE" == 'test' ]]; then
         test_strategy="--strategy=TestRunner=local"
     fi
-elif [[ $os == "windows" ]]; then
-    # Use the new RBE pool for Windows
-    rbe_config=rbe_${os}_${arch}_new
 else
     rbe_config=rbe_${os}_${arch}
 fi
@@ -96,7 +98,7 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     --config=$rbe_config \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
-    --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
+    $OVERRIDE_XLA_REPO \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAX \
     $test_strategy \

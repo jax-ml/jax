@@ -1135,6 +1135,23 @@ ad.primitive_linearizations[core.ref_p] = _ref_lin
 ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))
 ad.defjvp(core.accum_grad_in_ref_p, lambda g, _: core.accum_grad_in_ref_p.bind(g))
 
+
+def _empty_ref_jvp(primals, tangents, *, ty, memory_space):
+  primal_ref = core.empty_ref_p.bind(ty=ty, memory_space=memory_space)
+  tangent_ref = core.empty_ref_p.bind(ty=ty.to_tangent_aval(),
+                                      memory_space=memory_space)
+  return primal_ref, tangent_ref
+ad.primitive_jvps[core.empty_ref_p] = _empty_ref_jvp
+
+def _empty_ref_lin(nzs_in, *, ty, memory_space):
+  primal_ref = core.empty_ref_p.bind(ty=ty, memory_space=memory_space)
+  def lin(_):
+    return core.empty_ref_p.bind(ty=ty.to_tangent_aval(),
+                                 memory_space=memory_space)
+  return primal_ref, True, None, lin
+ad.primitive_linearizations[core.empty_ref_p] = _empty_ref_lin
+
+
 # === pinned, chained LinearVals ===
 
 def create_linear(ty, memory_space=None):

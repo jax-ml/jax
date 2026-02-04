@@ -5069,7 +5069,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "mul got incompatible shardings for broadcasting"):
       g(arr1, jax.device_put(np_inp1, NamedSharding(mesh, jax.P(('x', 'y')))))
 
-  # TODO(b/87654321) - Expect an all-gather in the `contracting2` test case.
+  # TODO(b/448574823) - Expect an all-gather in the `contracting2` test case.
   @parameterized.named_parameters(
       ('x_y', P('x', None), P(None, 'y'), P('x', 'y'), None),
       ('x_None', P('x', None), P(None, None), P('x', None), None),
@@ -10109,6 +10109,70 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return g(x)
 
     f(np.arange(8))  # doesn't crash
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_device_put_unreduced_error(self, mesh):
+    with self.assertRaisesRegex(
+        NotImplementedError, "device_put with unreduced is not implemented"):
+      jax.device_put(np.arange(8), P(unreduced={'x'}))
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "device_put with unreduced is not implemented"):
+      jax.device_put(np.arange(8), NamedSharding(mesh, P(unreduced={'x'})))
+
+    arr_unreduced = jax.reshard(jnp.arange(8), P(unreduced={'x'}))
+    with self.assertRaisesRegex(
+        NotImplementedError, "device_put with unreduced is not implemented"):
+      jax.device_put(arr_unreduced, P())
+
+    out = jax.device_put(np.arange(8), P(reduced={'x'}))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(reduced={'x'})))
+    self.assertEqual(out.aval.sharding,
+                     NamedSharding(mesh.abstract_mesh, P(None, reduced={'x'})))
+
+    arr_reduced = jax.reshard(jnp.arange(8), P(reduced={'x'}))
+    out = jax.device_put(arr_reduced, P())
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+    self.assertEqual(out.aval.sharding,
+                     NamedSharding(mesh.abstract_mesh, P(None)))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_vjp_unreduced_zeros(self, mesh):
+    arr1 = jax.reshard(np.arange(8.), P(reduced={'x'}))
+    arr2 = jax.reshard(np.arange(8.), P(reduced={'x'}))
+    arr2_unr = jax.reshard(jnp.arange(8.), P(unreduced={'x'}))
+
+    @jax.jit
+    def f(x, y):
+      return y
+
+    _, f_vjp = jax.vjp(f, arr1, arr2)
+    x_bar, y_bar = f_vjp(arr2_unr)
+    self.assertEqual(jax.typeof(x_bar).sharding.spec, P(None, unreduced={'x'}))
+    self.assertEqual(jax.typeof(y_bar).sharding.spec, P(None, unreduced={'x'}))
+
+  @jtu.with_explicit_mesh((2,), ('fsdp',))
+  def test_microbatch_vmap_unreduced(self, mesh):
+    inputs = jax.device_put(jnp.ones((4, 8, 16)), P(None, 'fsdp'))
+    targets = jax.device_put(jnp.ones((4, 8, 16)), P(None, 'fsdp'))
+    params = {'w_in': jnp.ones((2, 16, 64)), 'w_out': jnp.ones((2, 64, 16))}
+    params = jax.device_put(params, P(reduced={'fsdp'}))
+
+    def stage_fn(params, x):
+      def layer(carry, p):
+        h = jnp.dot(carry, p['w_in'], out_sharding=P('fsdp'))
+        return jnp.dot(h, p['w_out'], out_sharding=P('fsdp')), None
+      out, _ = jax.lax.scan(layer, x, params)
+      return out
+
+    @jax.jit
+    @partial(jax.vmap, in_axes=(None, 0, 0))
+    @jax.value_and_grad
+    def loss_fn(params, inputs, targets):
+      x = stage_fn(params, inputs)
+      return jnp.sum((x - targets) ** 2)
+
+    loss_fn(params, inputs, targets)  # doesn't crash
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

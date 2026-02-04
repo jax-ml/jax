@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Python bindings for the XLA FFI."""
+
 import enum
 import numpy
 import typing_extensions

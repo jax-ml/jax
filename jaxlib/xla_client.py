@@ -47,7 +47,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 401  # jax.ArrayImpl._rewrap_with_aval_and_sharding
+_version = 402  # jax.profiler metadata
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.

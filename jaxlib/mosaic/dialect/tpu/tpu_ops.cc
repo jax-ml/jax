@@ -152,13 +152,10 @@ OpFoldResult BitcastVregOp::fold(FoldAdaptor adaptor) {
   if (getType() == getInput().getType()) {
     return getInput();
   }
-  // Bitcast from X -> Y -> ... -> Z -> X is a no-op.
-  Value input = getInput();
-  while (auto op = dyn_cast<BitcastVregOp>(input.getDefiningOp())) {
-    input = op.getInput();
-    if (getType() == input.getType()) {
-      return input;
-    }
+  // Simplify bitcast chain of X -> Y -> Z to X -> Z.
+  if (auto defining_op = getInput().getDefiningOp<BitcastVregOp>()) {
+    getInputMutable().assign(defining_op.getInput());
+    return getResult();
   }
   return nullptr;
 }
@@ -1884,7 +1881,7 @@ LogicalResult UnpackSubelementsOp::canonicalize(UnpackSubelementsOp op,
   }
   if (!op.getSignExtended()) {
     // Unpack of pack with the same format is reversible if not sign extended.
-    if (auto pack = dyn_cast<PackSubelementsOp>(op.getSource().getDefiningOp());
+    if (auto pack = op.getSource().getDefiningOp<PackSubelementsOp>();
         pack && pack.getPackFormat() == op.getPackFormat() &&
         pack.getSources().front().getType() == op.getType()) {
       Value source = pack.getPaddedSources(
@@ -2296,6 +2293,35 @@ LogicalResult StochasticConvertElementwiseOp::verify() {
         "destination types.");
   }
   return success();
+}
+
+LogicalResult FetchAndAddSyncOp::verify() {
+  switch (getCoreType()) {
+    case CoreType::kScVectorSubcore:
+      break;
+    case CoreType::kScScalarSubcore:
+      // TODO(b/480918210): Remove this once the bug is fixed.
+      [[fallthrough]];
+    default:
+      return emitOpError(
+                 "Only SC scalar and vector subcores are supported, got ")
+             << getCoreType();
+  }
+  MemRefType base_type = getBase().getType();
+  if (base_type.getRank() != getIndices().size()) {
+    return emitOpError("Number of indices (")
+           << getIndices().size() << ") must match memref rank ("
+           << base_type.getRank() << ")";
+  }
+  // TODO(slebedev): Require the base to be in SMEM.
+  // TODO(slebedev): Check that the enclosing function has subcore_parallel
+  // in its dimension semantics.
+  return success();
+}
+
+LogicalResult FetchAndAddSyncOp::canonicalize(FetchAndAddSyncOp op,
+                                              PatternRewriter& rewriter) {
+  return propagateTiledLayoutToConsumer(op, rewriter);
 }
 
 }  // namespace tpu

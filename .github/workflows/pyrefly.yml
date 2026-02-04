@@ -1,0 +1,33 @@
+name: Pyrefly type check (non-blocking)
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # Don't cancel in-progress jobs for main branches.
+  cancel-in-progress: ${{ github.ref != 'main' }}
+
+jobs:
+  pyrefly:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548  # v6.1.0
+        with:
+          python-version: 3.12
+      - run: python -m pip install pre-commit
+      - name: Run pyrefly check
+        run: pre-commit run pyrefly-check --hook-stage=manual --show-diff-on-failure --color=always --all-files
+        # This is expected to fail; we set continue-on-error so the workflow will be marked green.
+        continue-on-error: true

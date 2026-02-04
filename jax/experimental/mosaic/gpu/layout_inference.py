@@ -123,15 +123,15 @@ class ValueSite:
   @property
   def memory_space(self) -> MemorySpace:
     """Returns the memory space associated with this value."""
-    type = self.value.type
-    if isinstance(type, ir.VectorType):
+    ty = self.value.type
+    if isinstance(ty, ir.VectorType):
       return MemorySpace.REG
-    assert isinstance(type, ir.MemRefType)
-    if utils.is_tmem_ref(type):
+    assert isinstance(ty, ir.MemRefType)
+    if utils.is_tmem_ref(ty):
       return MemorySpace.TMEM
-    elif utils.is_smem_ref(type):
+    elif utils.is_smem_ref(ty):
       return MemorySpace.SMEM
-    raise ValueError(f"Unsupported memory space for: {type}")
+    raise ValueError(f"Unsupported memory space for: {ty}")
 
   def __str__(self):
     match = _op_name_regex.match(str(self.operation))
@@ -177,9 +177,9 @@ def _strided_layout_for_variable(
   """
   # TODO(bchetioui): should we make variables carry a shape as well, to make
   # things easier?
-  type = variable.key.value.type
-  assert isinstance(type, ir.VectorType)
-  return fa.WGStridedFragLayout.from_shaped_type(type)
+  ty = variable.key.value.type
+  assert isinstance(ty, ir.VectorType)
+  return fa.WGStridedFragLayout.from_shaped_type(ty)
 
 
 def _default_tmem_layout_for_variable(
@@ -189,7 +189,7 @@ def _default_tmem_layout_for_variable(
   value = variable.key.value
   parent = value.owner
   if isinstance(parent, mgpu.TmemAllocOp):
-    return tcgen05._infer_tmem_layout(
+    return tcgen05._infer_tmem_layout(  # pylint: disable=protected-access
         tuple(value.type.shape), parent.collective, packing=1
     )
   return None
@@ -262,6 +262,30 @@ def _extract_layout_candidates_from_memory_space_transfer(
         yield variable, cs.RegisterLayout(reg_layout)
 
 
+def _extract_layout_candidates_from_mma_tiling(
+    mma_tiling: cs.IsValidMmaTiling,
+) -> Iterator[tuple[cs.Variable, cs.Constant]]:
+  v: cs.Variable
+  match mma_tiling.expr:
+    case cs.Variable() as var:
+      is_transposed = False
+      v = var
+    case cs.Transpose(cs.Variable() as var):
+      assert isinstance(var, cs.Variable)
+      is_transposed = True
+      v = var
+    case _:
+      return
+
+  tiled_dimensions = v.key.shape[-2:]
+  for swizzle in (128, 64, 32):
+    swizzle_elems = swizzle * 8 // mma_tiling.bitwidth
+    tiling = (swizzle_elems, 8) if is_transposed else (8, swizzle_elems)
+    if any(s % t for s, t in zip(tiled_dimensions, tiling)):
+      continue
+    yield v, cs.SMEMTiling(lc.TileTransform(tiling))
+
+
 def _divides_per_var(
     constraints: Sequence[cs.Constraint],
 ) -> dict[cs.Variable, cs.Divides]:
@@ -295,6 +319,8 @@ def _extract_variable_assignments_from_constraints(
         yield var, layout
       case cs.Relayout(cs.RegisterLayout() as layout, cs.Variable() as var):
         yield var, layout
+      case cs.IsValidMmaTiling() as mma_tiling:
+        yield from _extract_layout_candidates_from_mma_tiling(mma_tiling)
 
 
 def conjure_assignment(
@@ -508,7 +534,7 @@ def _pointwise_op_constraint_system(
   return cs.ConstraintSystem(), {variable: all_value_sites}
 
 
-for op in [
+for _op in [
     arith.AddIOp,
     arith.AddFOp,
     arith.AndIOp,
@@ -556,7 +582,7 @@ for op in [
     mlir_math.RoundEvenOp,
     mlir_math.CopySignOp,
 ]:
-  _add_constraint_system_derivation_rule(op)(_pointwise_op_constraint_system)
+  _add_constraint_system_derivation_rule(_op)(_pointwise_op_constraint_system)
 
 
 @_add_constraint_system_derivation_rule(mgpu.VectorLoadOp)
@@ -905,34 +931,6 @@ def _infer_tiling_for_mma_ref(
   return tiling
 
 
-def _infer_wgmma_tiling(
-    a_type: ir.Type, b_type: ir.MemRefType
-) -> tuple[tuple[int, int] | None, tuple[int, int]]:
-  """Infers the tiling for a (if in SMEM) and b of a WGMMAOp.
-
-  If both a and b are in SMEM, this function infers tilings that have matching
-  swizzle values.
-  """
-  b_tiling = _infer_tiling_for_mma_ref(
-      b_type, max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
-  )
-  b_swizzle = _compute_swizzle(b_type, lc.TileTransform(b_tiling))
-  if not isinstance(a_type, ir.MemRefType):
-    return None, b_tiling
-
-  a_tiling = _infer_tiling_for_mma_ref(
-      cast(ir.MemRefType, a_type), max_swizzle=b_swizzle
-  )
-  a_swizzle = _compute_swizzle(a_type, lc.TileTransform(a_tiling))
-  if a_swizzle != b_swizzle:
-    # The swizzle for a and b has to match. This is not a fundamental
-    # limitation, rather the lowering doesn't currently support it.
-    b_tiling = _infer_tiling_for_mma_ref(b_type, max_swizzle=a_swizzle)
-    b_swizzle = _compute_swizzle(b_type, lc.TileTransform(b_tiling))
-    assert a_swizzle == b_swizzle
-  return a_tiling, b_tiling
-
-
 @_add_constraint_system_derivation_rule(mgpu.WGMMAOp)
 def _wgmma_constraint_system(
     ctx: DerivationContext,
@@ -946,39 +944,45 @@ def _wgmma_constraint_system(
   acc_var = cs.Variable(acc_out)
   acc_layout = fa.WGMMA_LAYOUT
   assignments[acc_var] = cs.RegisterLayout(acc_layout)
-  acc_is_valid = is_valid_register_layout_assignment(acc_out.shape, acc_layout)
+  if not is_valid_register_layout_assignment(acc_out.shape, acc_layout):
+    return cs.Unsatisfiable()
   value_sites_for_variable[acc_var] = [acc_in, acc_out]
 
-  a_tiling, b_tiling = _infer_wgmma_tiling(op.a.type, op.b.type)
   b = ValueSite(op, VariableType.OPERAND, 2)
   b_var = ctx.producer_ref(b)
-  b_tile_transform = lc.TileTransform(b_tiling)
-  b_is_valid = is_valid_smem_layout_assignment(b.shape, b_tile_transform)
-  assignments[b_var] = cs.SMEMTiling(b_tile_transform)
+  input_bitwidth = utils.bitwidth(op.b.type.element_type)
+  b_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.b.type))
+  if b_is_transposed:
+    constraints = [cs.IsValidMmaTiling(cs.Transpose(b_var), input_bitwidth)]
+  else:
+    constraints = [cs.IsValidMmaTiling(b_var, input_bitwidth)]
   value_sites_for_variable[b_var] = [b]
 
   a = ValueSite(op, VariableType.OPERAND, 1)
   if _is_smem_ref(op.a):
     a_var = ctx.producer_ref(a)
-    a_tile_transform = lc.TileTransform(a_tiling)
-    assignments[a_var] = cs.SMEMTiling(a_tile_transform)
-    a_is_valid = is_valid_smem_layout_assignment(a.shape, a_tile_transform)
+    # We expect the tiling transform to be physically the same on both sides.
+    # However, the constraint system assigns tiling transforms based on the
+    # logical shape. In the case the tiled dimensions of exactly one of the
+    # operands are transposed, we need to transpose the transform as well.
+    a_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.a.type))
+    if a_is_transposed != b_is_transposed:
+      constraints.append(cs.Equals(lhs=a_var, rhs=cs.Transpose(b_var)))
+    else:
+      constraints.append(cs.Equals(lhs=a_var, rhs=b_var))
   else:
-    assert a_tiling is None
     a_var = cs.Variable(a)
     if utils.bitwidth(op.a.type.element_type) == 8:
       layout = fa.WGMMA_LAYOUT_8BIT
     else:
       layout = fa.WGMMA_LAYOUT
     assignments[a_var] = cs.RegisterLayout(layout)
-    a_is_valid = is_valid_register_layout_assignment(a.shape, layout)
+    # TODO(bchetioui): raise a better error here.
+    if not is_valid_register_layout_assignment(a.shape, layout):
+      return cs.Unsatisfiable()
 
   value_sites_for_variable[a_var] = [a]
-
-  # TODO(bchetioui): think about raising a better error here.
-  if not a_is_valid or not b_is_valid or not acc_is_valid:
-    return cs.Unsatisfiable()
-  return cs.ConstraintSystem(assignments), value_sites_for_variable
+  return cs.ConstraintSystem(assignments, constraints), value_sites_for_variable
 
 
 @_add_constraint_system_derivation_rule(vector.BroadcastOp)
@@ -1290,65 +1294,68 @@ def _tcgen05_mma_constraint_system(
   acc = ValueSite(op, VariableType.OPERAND, 0)
   acc_variable = ctx.producer_ref(acc)
   acc_type = ir.ShapedType(op.accumulator.type)
-  acc_layout = tcgen05._infer_tmem_layout(
+  acc_layout = tcgen05._infer_tmem_layout(  # pylint: disable=protected-access
       tuple(acc_type.shape), op.collective, packing=1
   )
   assignments[acc_variable] = cs.TMEMLayout(acc_layout)
   acc_is_valid = is_valid_tmem_layout_assignment(acc.shape, acc_layout)
+  # TODO(bchetioui): think about raising a better error here.
+  if not acc_is_valid:
+    return cs.Unsatisfiable()
   operands_for_variable[acc_variable] = [acc]
 
-  if _is_tmem_ref(op.a):
-    a = ValueSite(op, VariableType.OPERAND, 1)
-    a_type = ir.ShapedType(op.a.type)
-    a_var = ctx.producer_ref(a)
-    packing = 32 // utils.bitwidth(a_type.element_type)
-    a_layout = tcgen05._infer_tmem_layout(
-        tuple(a_type.shape), op.collective, packing
-    )
-    assignments[a_var] = cs.TMEMLayout(a_layout)
-    operands_for_variable[a_var] = [a]
-    a_is_valid = is_valid_tmem_layout_assignment(a.shape, a_layout)
+  element_type_bitwidth = utils.bitwidth(op.b.type.element_type)
+  b = ValueSite(op, VariableType.OPERAND, 2)
+  b_var = ctx.producer_ref(b)
+  operands_for_variable[b_var] = [b]
+  b_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.b.type))
+  if b_is_transposed:
+    constraints = [cs.IsValidMmaTiling(cs.Transpose(b_var), element_type_bitwidth)]
   else:
-    assert _is_smem_ref(op.a)
-    a_tiling = _infer_tiling_for_mma_ref(
-        ir.MemRefType(op.a.type),
-        max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle,
-    )
-    a = ValueSite(op, VariableType.OPERAND, 1)
-    a_var = ctx.producer_ref(a)
-    a_tile_transform = lc.TileTransform(a_tiling)
-    assignments[a_var] = cs.SMEMTiling(a_tile_transform)
-    operands_for_variable[a_var] = [a]
-    a_is_valid = is_valid_smem_layout_assignment(a.shape, a_tile_transform)
+    constraints = [cs.IsValidMmaTiling(b_var, element_type_bitwidth)]
 
   # SMEM
   M = op.accumulator.type.shape[0]
   if M == 64 and not op.collective.value:
     # We can't split N into groups if we would partition it below the tile size.
     N = op.b.type.shape[1]
-    element_type_bitwidth = utils.bitwidth(op.b.type.element_type)
     n_lane_groups = 2
-    max_b_swizzle = next(
-        s
+    max_swizzle_elems = next(
+        8 * s // element_type_bitwidth
         for s in reversed(mgpu.SwizzlingMode)
         if 8 * s // element_type_bitwidth <= N // n_lane_groups
     )
+    if b_is_transposed:
+      constraints.append(cs.Divides(b_var, (max_swizzle_elems, 8)))
+    else:
+      constraints.append(cs.Divides(b_var, (8, max_swizzle_elems)))
+
+  if _is_tmem_ref(op.a):
+    a = ValueSite(op, VariableType.OPERAND, 1)
+    a_type = ir.ShapedType(op.a.type)
+    a_var = ctx.producer_ref(a)
+    packing = 32 // utils.bitwidth(a_type.element_type)
+    a_layout = tcgen05._infer_tmem_layout(  # pylint: disable=protected-access
+        tuple(a_type.shape), op.collective, packing
+    )
+    assignments[a_var] = cs.TMEMLayout(a_layout)
+    operands_for_variable[a_var] = [a]
+    a_is_valid = is_valid_tmem_layout_assignment(a.shape, a_layout)
+    # TODO(bchetioui): think about raising a better error here.
+    if not a_is_valid:
+      return cs.Unsatisfiable()
   else:
-    max_b_swizzle = mgpu.SwizzlingMode.k128ByteSwizzle
+    assert _is_smem_ref(op.a)
+    a_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.a.type))
+    a = ValueSite(op, VariableType.OPERAND, 1)
+    a_var = ctx.producer_ref(a)
+    operands_for_variable[a_var] = [a]
+    if a_is_transposed:
+      constraints.append(cs.IsValidMmaTiling(cs.Transpose(a_var), element_type_bitwidth))
+    else:
+      constraints.append(cs.IsValidMmaTiling(a_var, element_type_bitwidth))
 
-  b_tiling = _infer_tiling_for_mma_ref(ir.MemRefType(op.b.type), max_b_swizzle)
-  b = ValueSite(op, VariableType.OPERAND, 2)
-  b_var = ctx.producer_ref(b)
-  b_tile_transform = lc.TileTransform(b_tiling)
-  assignments[b_var] = cs.SMEMTiling(b_tile_transform)
-  operands_for_variable[b_var] = [b]
-  b_is_valid = is_valid_smem_layout_assignment(b.shape, b_tile_transform)
-
-  # TODO(bchetioui): think about raising a better error here.
-  if not a_is_valid or not b_is_valid or not acc_is_valid:
-    return cs.Unsatisfiable()
-
-  return cs.ConstraintSystem(assignments=assignments), operands_for_variable
+  return cs.ConstraintSystem(assignments=assignments, constraints=constraints), operands_for_variable
 
 
 @_add_constraint_system_derivation_rule(mgpu.AsyncLoadTmemOp)
@@ -1695,16 +1702,16 @@ def _ensure_right_number_of_layouts(
 
 
 def _compute_swizzle(
-    type: ir.Type, tile_transform: lc.TileTransform | None
+    ty: ir.Type, tile_transform: lc.TileTransform | None
 ) -> mgpu.SwizzlingMode:
   """Computes the swizzle mode given a tiling transform and a data type."""
   if tile_transform is None:
     # TODO(b/447079781): Revisit if this is the behavior we want.
     return mgpu.SwizzlingMode.kNoSwizzle
 
-  if not isinstance(type, ir.MemRefType):
-    raise ValueError(f"Expected a MemRefType, got {type}.")
-  ref_ty = ir.MemRefType(type)
+  if not isinstance(ty, ir.MemRefType):
+    raise ValueError(f"Expected a MemRefType, got {ty}.")
+  ref_ty = ir.MemRefType(ty)
   strides, _ = ref_ty.get_strides_and_offset()
   tiling = tile_transform.tiling
 
@@ -1858,9 +1865,9 @@ def producer_result(operand: ValueSite) -> ValueSite:
     return ValueSite(producer, VariableType.RESULT, index)
 
   if isinstance(producer, ir.Block):
-    index = list(producer.arguments).index(value)
-    region_index = list(producer.owner.regions).index(producer.region)
-    return ValueSite(producer.owner, VariableType.ARGUMENT, index, region_index)
+    index = list(producer.arguments).index(value)  # pytype: disable=attribute-error
+    region_index = list(producer.owner.regions).index(producer.region)  # pytype: disable=attribute-error
+    return ValueSite(producer.owner, VariableType.ARGUMENT, index, region_index)  # pytype: disable=attribute-error
 
   raise TypeError(
       f"Producer {producer} is not an operation nor a block: {type(producer)}."
@@ -1870,14 +1877,14 @@ def producer_result(operand: ValueSite) -> ValueSite:
 def consumer_operands(result: ValueSite) -> Sequence[ValueSite]:
   """Given a result or an argument, returns the corresponding operands in its consumers."""
   assert result.type in (VariableType.RESULT, VariableType.ARGUMENT)
-  consumer_operands: list[ValueSite] = []
+  results: list[ValueSite] = []
   # The layout can also be chosen from the layout of the consumers of the
   # results.
   for use in result.value.uses:
     consumer = use.owner
     index = use.operand_number
-    consumer_operands.append(ValueSite(consumer, VariableType.OPERAND, index))
-  return consumer_operands
+    results.append(ValueSite(consumer, VariableType.OPERAND, index))
+  return results
 
 
 def derive_relayout_constraints(

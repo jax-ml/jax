@@ -14,6 +14,7 @@
 
 from collections.abc import Sequence
 import dataclasses
+import enum
 import math
 import threading
 from typing import Any, Literal
@@ -142,9 +143,39 @@ class InterpretParams:
     return value
 
 
+class LoggingMode(enum.Flag):
+  """Logging mode for GPU interpret mode.
+
+  Attrs:
+    BARRIER: Enable logging inside barrier object.
+    SHARED_MEMORY: Enable logging in the shared memory object.
+  """
+
+  BARRIER = enum.auto()
+  SHARED_MEMORY = enum.auto()
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class InterpretGPUParams(InterpretParams):
-  ...
+  """Parameters for GPU interpret mode.
+
+  GPU interpret mode is a way run Pallas GPU kernels on CPU, while simulating
+  a GPU's shared memory spaces (GMEM, SMEM, etc.), threads and synchronization
+  operations (e.g. barriers). This mode is intended for debugging and testing.
+
+  To run a kernel under GPU interpret mode, pass an instance of
+  ``InterpretParams`` as an argument for the ``interpret`` parameter of
+  :func:`pallas_call`, :func:`core_map` or :func:`kernel`.
+
+  NOTE: If an exception is raised while interpreting a kernel, you must call
+  :func:`reset_gpu_interpret_mode_state` before using GPU interpret mode
+  again in the same process.
+
+  Attrs:
+    logging_mode: Logging mode for GPU interpret mode.
+  """
+
+  logging_mode: LoggingMode | None = None
 
 
 class Counter:

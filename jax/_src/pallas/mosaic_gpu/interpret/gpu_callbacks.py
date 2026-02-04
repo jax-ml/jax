@@ -158,6 +158,7 @@ def _initialize_shared_memory(
           clean_up_barrier=threading.Barrier(
               num_devices, action=_clear_shared_memory
           ),
+          logging_mode=interpret_params.logging_mode,
       )
   # The naming of the `num_cores` property of `SharedMemory` originates from the
   # support for multipl cores in a (Megacore) TPU device. As commented above, on
@@ -734,7 +735,11 @@ def _allocate_barriers(
     )
 
     shared_memory.allocate_barrier(
-        key, ref_count=ref_count, num_arrivals=num_arrivals
+        device_id,
+        thread_id,
+        key,
+        ref_count=ref_count,
+        num_arrivals=num_arrivals,
     )
     keys.append(key.as_array)
 
@@ -766,7 +771,12 @@ def call_allocate_barriers(
   )
 
 
-def _deallocate_barrier(allocation_key: np.ndarray):
+def _deallocate_barrier(
+    device_id: np.ndarray, thread_id: np.ndarray, allocation_key: np.ndarray
+):
+  device_id = int(device_id)
+  thread_id = int(thread_id)
+
   assert len(allocation_key.shape) == 2
   num_barriers = allocation_key.shape[0]
 
@@ -778,11 +788,22 @@ def _deallocate_barrier(allocation_key: np.ndarray):
 
   for key in keys_to_deallocate:
     barrier_allocation_key = HostAllocationKey.from_array(key)
-    shared_memory.deallocate_barrier(barrier_allocation_key)
+    shared_memory.deallocate_barrier(
+        device_id, thread_id, barrier_allocation_key
+    )
 
 
-def call_deallocate_barrier(allocation_key: jnp.ndarray):
-  callback.io_callback(_deallocate_barrier, None, allocation_key, ordered=True)
+def call_deallocate_barrier(
+    device_id: int, thread_id: int, allocation_key: jnp.ndarray
+):
+  callback.io_callback(
+      _deallocate_barrier,
+      None,
+      device_id,
+      thread_id,
+      allocation_key,
+      ordered=True,
+  )
 
 
 def _barrier_wait(device_id: int, thread_id: int, allocation_key: np.ndarray):
@@ -833,3 +854,11 @@ def call_barrier_arrive(
       allocation_key,
       ordered=True,
   )
+
+
+def _assert_no_barriers_allocated():
+  _get_shared_memory().assert_no_barriers_allocated()
+
+
+def call_assert_no_barriers_allocated():
+  callback.io_callback(_assert_no_barriers_allocated, (), ordered=True)

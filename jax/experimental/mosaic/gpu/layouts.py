@@ -267,11 +267,11 @@ def from_transform_attr(
 ) -> launch_context.MemRefTransform | mgpu.SwizzlingMode:
   if is_tile_transform(transform):
     return launch_context.TileTransform(
-        mgpu.TileTransformAttr(transform).tiling
+        tuple(mgpu.TileTransformAttr(transform).tiling)
     )
   elif is_transpose_transform(transform):
     return launch_context.TransposeTransform(
-        mgpu.TransposeTransformAttr(transform).permutation
+        tuple(mgpu.TransposeTransformAttr(transform).permutation)
     )
   elif is_swizzle_transform(transform):
     return mgpu.SwizzlingMode(mgpu.SwizzleTransformAttr(transform).swizzle)

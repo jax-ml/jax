@@ -204,6 +204,7 @@ py_library_providing_imports_info(
         "//jax/_src:hashable_array",
         "//jax/_src:hijax",
         "//jax/_src:image",
+        "//jax/_src:indexing",
         "//jax/_src:init",
         "//jax/_src:internal_mesh_utils",
         "//jax/_src:jaxpr_util",

@@ -119,10 +119,10 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(y, x)
     hlo = jax.jit(f, out_shardings=out_sharding).lower(x).compile().as_text()
     if color is None:
-      self.assertIn('"output_memory_colors":[]', hlo)
+      self.assertIn('"output_memory_space_colors":[]', hlo)
     else:
       self.assertIn(
-          f'"output_memory_colors":["{color}"]',
+          f'"output_memory_space_colors":[{{"color":"{color}","shape_index":[]}}]',
           hlo,
       )
 

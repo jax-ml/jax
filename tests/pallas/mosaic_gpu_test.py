@@ -195,9 +195,6 @@ class PallasTCGen05Test(PallasTest, jtu.CudaArchSpecificTest):
 
   def setUp(self):
     self.skip_unless_tcgen05()
-    if jtu.is_cuda_compute_capability_equal("10.3"):
-      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
-      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
     # No artificially lowered limit for arch-specific tests
     super().setUp(artificial_shared_memory_limit=None)
 
@@ -756,10 +753,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   @parameterized.parameters(jnp.bfloat16, jnp.float16, jnp.float32)
   def test_copy_smem_to_gmem_reduction(self, dtype):
-    # TODO(b/415721295):Remove after the minimal jaxlib version is 0.8.2.
-    if not hasattr(mgpu.dialect, "TMAReduction"):
-      self.skip_if_wg_semantics()
-
     @functools.partial(
         self.pallas_call,
         grid=(200,),
@@ -1143,11 +1136,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     if transforms:
       # We cannot yet specify transforms on block specs for WG semantics.
       self.skip_if_wg_semantics()
-
-    # TODO(b/415721295): Remove when the minimum jaxlib version is 0.8.3.
-    if not hasattr(mgpu.dialect, "tma_gather_supported"):
-      self.skip_if_wg_semantics()
-
     dtype = jnp.int32
     out_shape = (64, 128)
     shape = (128, 64 + out_shape[-1])
@@ -1439,6 +1427,30 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       jax.block_until_ready(kernel(x))
 
     self.assertIn("x: WGMMA_ROW\n", output())
+
+  @parameterized.parameters(False, True)
+  def test_fp8_relayout(self, from_narrow):
+    self.skip_if_wg_semantics()  # Failed to infer layouts.
+    shape = (128, 32)
+    dtype = jnp.float8_e4m3fn
+    if from_narrow:
+      from_, to = 4, 8
+    else:
+      from_, to = 8, 4
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct(shape, dtype)
+    )
+    def kernel(x_ref, o_ref):
+      x = plgpu.load(
+          x_ref, (),
+          layout=plgpu.Layout.TCGEN05_TMEM_NATIVE(from_),
+          optimized=False
+      )
+      o_ref[...] = plgpu.layout_cast(x, plgpu.Layout.TCGEN05_TMEM_NATIVE(to))
+
+    x = jax.random.normal(jax.random.key(10), shape).astype(dtype)
+    np.testing.assert_array_equal(kernel(x), x)
 
   @parameterized.parameters(
           (plgpu.TilingTransform((1, 32)), plgpu.SwizzleTransform(128)),
@@ -3395,8 +3407,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
     np.testing.assert_allclose(res, a[0] @ b[0], rtol=1e-3)
 
   def test_wgmma_sliced_acc_read(self):
-    self.skip_if_wg_semantics()  # MLIR verifier error for `memref.subview`.
-
     def kernel(a_ref, b_ref, o_ref):
       def scope(acc_ref):
         plgpu.wgmma(acc_ref, a_ref, b_ref)
@@ -3830,6 +3840,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       lhs_tmem=[False, True],
   )
   def test_integer_matmul(self, m, n, swizzle, dtype, lhs_tmem):
+    self.skip_unless_tcgen05_int8()
     if n * jnp.dtype(dtype).itemsize <= swizzle:
       self.skipTest("swizzle too big")
     if lhs_tmem and m == 64:

@@ -34,6 +34,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
+from jax._src import indexing
 from jax._src import literals
 from jax._src.lax import lax
 from jax._src.lax import slicing
@@ -64,6 +65,7 @@ class IndexType(enum.Enum):
   INTEGER = "integer"
   BOOLEAN = "boolean"
   ARRAY = "array"
+  DYNAMIC_SLICE = "dynamic_slice"
 
   @classmethod
   def from_index(cls, idx: Index) -> IndexType:
@@ -74,6 +76,8 @@ class IndexType(enum.Enum):
       return cls.ELLIPSIS
     elif isinstance(idx, slice):
       return cls.SLICE
+    elif isinstance(idx, indexing.Slice):
+      return cls.DYNAMIC_SLICE
     elif _is_integer_index(idx):
       return cls.INTEGER
     elif _is_boolean_index(idx):
@@ -150,7 +154,7 @@ def _parse_indices(
       ellipses_indices.append(i)
     elif typ == IndexType.BOOLEAN:
       dimensions_consumed.append(np.ndim(idx))  # type: ignore[arg-type]
-    elif typ in [IndexType.INTEGER, IndexType.ARRAY, IndexType.SLICE]:
+    elif typ in [IndexType.INTEGER, IndexType.ARRAY, IndexType.SLICE, IndexType.DYNAMIC_SLICE]:
       dimensions_consumed.append(1)
     else:
       raise IndexError(f"Unrecognized index type: {typ}")
@@ -202,7 +206,7 @@ class NDIndexer:
 
     Raises an IndexError in case of out-of-bound indices
     """
-    for position, idx in enumerate(self.indices):
+    for idx in self.indices:
       if idx.typ == IndexType.INTEGER:
         assert isinstance(idx.index, (int, np.integer))
         i = operator.index(idx.index)
@@ -238,7 +242,7 @@ class NDIndexer:
     sharding.
     """
     for idx in self.indices:
-      if idx.typ == IndexType.INTEGER:
+      if idx.typ in [IndexType.INTEGER, IndexType.DYNAMIC_SLICE]:
         return True
       if idx.typ == IndexType.SLICE:
         slc = idx.index
@@ -367,6 +371,8 @@ class NDIndexer:
       parsed_mode = slicing.GatherScatterMode.PROMISE_IN_BOUNDS
     else:
       parsed_mode = slicing.GatherScatterMode.from_any(mode)
+    if any(core.is_symbolic_dim(s) for s in self.shape):
+      raise ValueError("mode='slice' is not valid for polymorphic shapes.")
 
     if parsed_mode not in [
         slicing.GatherScatterMode.PROMISE_IN_BOUNDS, slicing.GatherScatterMode.CLIP]:
@@ -386,9 +392,9 @@ class NDIndexer:
     for position, pidx in enumerate(self.indices):
       if pidx.typ in [IndexType.INTEGER, IndexType.ELLIPSIS, IndexType.SLICE, IndexType.NONE]:
         pass
-      elif pidx.typ in [IndexType.ARRAY, IndexType.BOOLEAN]:
+      elif pidx.typ in [IndexType.ARRAY, IndexType.BOOLEAN, IndexType.DYNAMIC_SLICE]:
         raise TypeError("static_slice: indices must be static scalars or slices."
-                        f" Got {pidx.index} at position {position}")
+                        f" Got index of type {type(pidx.index)} at position {position}")
       else:
         raise TypeError(f"static_slice: unrecognized index {pidx.index} at position {position}.")
 
@@ -479,6 +485,11 @@ class NDIndexer:
     for position, pidx in enumerate(self.indices):
       if pidx.typ in [IndexType.INTEGER, IndexType.ELLIPSIS, IndexType.NONE]:
         pass
+      elif pidx.typ == IndexType.DYNAMIC_SLICE:
+        assert isinstance(pidx.index, indexing.Slice)
+        if pidx.index.stride != 1:
+          raise TypeError("dynamic_slice: only unit steps supported in slice."
+                          f" Got {pidx.index} at position {position}")
       elif pidx.typ == IndexType.SLICE:
         assert isinstance(pidx.index, slice)
         if pidx.index.step is not None and pidx.index.step not in [-1, 1]:
@@ -487,10 +498,10 @@ class NDIndexer:
       elif pidx.typ == IndexType.ARRAY:
         if isinstance(pidx.index, Sequence) or np.shape(pidx.index) != ():  # type: ignore[arg-type]
           raise TypeError("dynamic_slice: only scalar indices allowed."
-                          f" Got {pidx.index} at position {position}")
+                          f" Got index of type {type(pidx.index)} at position {position}")
       elif pidx.typ == IndexType.BOOLEAN:
         raise TypeError("dynamic_slice: indices must be scalars or slices."
-                        f" Got {pidx.index} at position {position}")
+                        f" Got index of type {type(pidx.index)} at position {position}")
       else:
         raise TypeError(f"dynamic_slice: unrecognized index {pidx.index} at position {position}.")
 
@@ -501,6 +512,7 @@ class NDIndexer:
     newaxis_dims: list[int] = []
 
     expanded = self.expand_ellipses()
+    trivial_slicing = True
     for pidx in expanded.indices:
       if pidx.typ in [IndexType.BOOLEAN, IndexType.ELLIPSIS]:
         raise RuntimeError(f"Internal: unexpected index encountered: {pidx}")
@@ -511,6 +523,7 @@ class NDIndexer:
         # previous expanded dimensions.
         newaxis_dims.append(len(start_indices) - len(squeeze_axes) + len(newaxis_dims))
       elif pidx.typ in [IndexType.INTEGER, IndexType.ARRAY]:
+        trivial_slicing = False
         index = lax_numpy.asarray(pidx.index)
         assert index.shape == ()  # Validated above.
         axis, = pidx.consumed_axes
@@ -519,6 +532,8 @@ class NDIndexer:
         squeeze_axes.append(axis)
       elif pidx.typ == IndexType.SLICE:
         assert isinstance(pidx.index, slice)
+        if pidx.index != slice(None):
+          trivial_slicing = False
         axis, = pidx.consumed_axes
         size = arr.shape[axis]
         start, stop, stride = pidx.index.indices(size)
@@ -531,14 +546,15 @@ class NDIndexer:
         else:
           start_indices.append(start)
           slice_sizes.append(stop - start)
+      elif pidx.typ == IndexType.DYNAMIC_SLICE:
+        assert isinstance(pidx.index, indexing.Slice)
+        start_indices.append(pidx.index.start)
+        slice_sizes.append(pidx.index.size)
+        trivial_slicing = False
       else:
         raise TypeError(f"dynamic_slice: unrecognized index {pidx.index}")
     result = arr
-    is_trivial_slice = all(
-      (slice_size == axis_size)
-      for slice_size, axis_size in zip(slice_sizes, arr.shape)
-    )
-    if not is_trivial_slice:
+    if not trivial_slicing:
       result = slicing.dynamic_slice(arr, start_indices, slice_sizes,
                                      allow_negative_indices=normalize_indices)
     if rev_axes:
@@ -1032,136 +1048,6 @@ def put_along_axis(
 def _is_integer_index(idx: Any) -> bool:
   return isinstance(idx, (int, np.integer)) and not isinstance(idx, (bool, np.bool_))
 
-def _is_simple_reverse_slice(idx: Any) -> bool:
-  return (isinstance(idx, slice) and
-          idx.start is idx.stop is None and
-          isinstance(idx.step, int) and idx.step == -1)
-
-def _is_valid_integer_index_for_slice(idx, size, mode):
-  if size == 0:
-    return False
-  if _is_integer_index(idx):
-    return -size <= idx < size
-  try:
-    shape, dtype = np.shape(idx), dtypes.dtype(idx)
-  except:
-    return False
-  if shape == () and np.issubdtype(dtype, np.integer):
-    # For dynamic integer indices, semantics require promise_inbounds.
-    return mode in [None, 'promise_inbounds']
-  return False
-
-def _is_contiguous_slice(idx):
-  return (isinstance(idx, slice) and
-          (idx.start is None or _is_integer_index(idx.start)) and
-          (idx.stop is None or _is_integer_index(idx.stop)) and
-          (idx.step is None or (_is_integer_index(idx.step) and idx.step == 1)))
-
-def _attempt_rewriting_take_via_slice(
-    arr: Array, indexer: NDIndexer, *,
-    mode: str | slicing.GatherScatterMode | None,
-    out_sharding: NamedSharding | PartitionSpec | None = None) -> Array | None:
-  # attempt to compute _rewriting_take via lax.slice(); return None if not possible.
-
-  # TODO(jakevdp): update implementation to use indexer directly, and to reuse code
-  # from compute_via_static_slice
-  idx = tuple(i.index for i in indexer.indices)
-
-  if not all(isinstance(i, int) for i in arr.shape):
-    return None
-  if any(i is None for i in idx):
-    return None  # TODO(jakevdp): handle newaxis case
-  # For symbolic dimensions fallback to gather
-  if any(core.is_symbolic_dim(elt)
-         for i in idx if isinstance(i, slice)
-         for elt in (i.start, i.stop, i.step)):
-    return None
-  if any(i is Ellipsis for i in idx):
-    # Remove ellipses and pad with trailing `slice(None)` if necessary.
-    # Do this before checking against rank of `arr` so that `...` can
-    # count as no dimensions at all (e.g. `my_1d_array[:, ...]` succeeds)
-    idx = _canonicalize_tuple_index(arr.ndim, idx=idx)
-  if len(idx) > arr.ndim:
-    return None
-
-  simple_revs = {i for i, ind in enumerate(idx) if _is_simple_reverse_slice(ind)}
-  int_indices = {i for i, (ind, size) in enumerate(zip(idx, arr.shape))
-                 if _is_valid_integer_index_for_slice(ind, size, mode)}
-  contiguous_slices = {i for i, ind in enumerate(idx) if _is_contiguous_slice(ind)}
-
-  # For sharded inputs, indexing (like x[0]) and partial slices (like x[:2] as
-  # opposed to x[:]) lead to incorrect sharding semantics when computed via
-  # dynamic_slice, so we fall back to gather.
-  # TODO(yashkatariya): fix dynamic_slice with sharding
-  is_sharded = (isinstance(arr, array.ArrayImpl) and
-                not dispatch.is_single_device_sharding(arr.sharding))
-  has_partial_slices = any(idx[i].indices(arr.shape[i]) != (0, arr.shape[i], 1)  # type: ignore[union-attr]
-                           for i in contiguous_slices)
-  if is_sharded and (int_indices or has_partial_slices):
-    return None
-
-  if len(simple_revs) + len(int_indices) + len(contiguous_slices) != len(idx):
-    return None
-
-  if simple_revs:
-    arr = lax.rev(arr, tuple(simple_revs))
-    idx = tuple(slice(None) if i in simple_revs else ind
-                for i, ind in enumerate(idx))
-    contiguous_slices |= simple_revs
-
-  if not (int_indices or has_partial_slices):
-    return arr
-
-  idx += (arr.ndim - len(idx)) * (slice(None),)
-  start_indices: Sequence[ArrayLike] = []
-  slice_sizes: list[int] = []
-  allow_negative_indices: list[bool] = []
-
-  for ind, size in safe_zip(idx, arr.shape):
-    if isinstance(ind, slice):
-      start, stop, step = ind.indices(size)
-      assert step == 1  # checked above
-      start_indices.append(start)
-      slice_sizes.append(max(0, stop - start))
-      allow_negative_indices.append(start < 0 or stop < 0)
-    else:
-      assert np.issubdtype(dtypes.dtype(ind), np.integer)  # checked above
-      assert np.shape(ind) == ()  # type: ignore[arg-type]  # checked above
-      start_indices.append(ind)
-      slice_sizes.append(1)
-      allow_negative_indices.append(
-          not isinstance(ind, (int, np.integer)) or bool(ind < 0))
-
-  # Try to use static slicing when possible.
-  if all(isinstance(i, (int, np.integer)) and i >= 0 for i in start_indices):
-    int_start_indices = [int(i) for i in start_indices]  # type: ignore
-    int_limit_indices = [i + s for i, s in zip(int_start_indices, slice_sizes)]
-    arr = slicing.slice(
-        arr, start_indices=int_start_indices, limit_indices=int_limit_indices)
-  else:
-    # We must be careful with dtypes because dynamic_slice requires all
-    # start indices to have matching types.
-    if len(start_indices) > 1:
-      index_dtype = lax_utils.int_dtype_for_shape(arr.shape, signed=True)
-      start_indices = [lax.convert_element_type(idx, index_dtype) for idx in start_indices]
-    jnp_error._check_precondition_oob_dynamic_slice(
-        arr.shape, start_indices, slice_sizes, allow_negative_indices
-    )
-    internal_ds = partial(slicing.dynamic_slice, slice_sizes=slice_sizes,
-                          allow_negative_indices=allow_negative_indices)
-    if out_sharding is not None:
-      out_sharding = canonicalize_sharding(out_sharding, 'take')
-      arr = auto_axes(
-          internal_ds,
-          out_sharding=out_sharding,
-          axes=out_sharding.mesh.explicit_axes,  # type: ignore
-      )(arr, start_indices)
-    else:
-      arr = internal_ds(arr, start_indices)
-  if int_indices:
-    arr = lax.squeeze(arr, tuple(int_indices))
-  return arr
-
 
 class IndexingStrategy(enum.Enum):
   AUTO = 'auto'
@@ -1201,14 +1087,22 @@ def rewriting_take(
     return indexer.compute_via_dynamic_slice(
       arr, mode=mode, normalize_indices=normalize_indices)
 
-  # For simplicity of generated primitives, we call lax.slice or lax.dynamic_slice
-  # in the simplest cases: i.e. non-dynamic arrays indexed with integers and slices.
-  # TODO(jakevdp): lower to slice even when normalize_indices is False
-  if strategy == IndexingStrategy.AUTO and normalize_indices:
-    result = _attempt_rewriting_take_via_slice(arr, indexer, mode=mode, out_sharding=out_sharding)
-    if result is not None:
-      return result
+  if strategy == IndexingStrategy.AUTO:
+    # Attempt static slice first
+    try:
+      return indexer.compute_via_static_slice(
+        arr, mode=mode, normalize_indices=normalize_indices)
+    except (TypeError, ValueError, IndexError):
+      pass
 
+    # Attempt dynamic slice next
+    try:
+      return indexer.compute_via_dynamic_slice(
+        arr, mode=mode, normalize_indices=normalize_indices)
+    except (TypeError, ValueError, IndexError):
+      pass
+
+  # In remaining cases, compute via gather.
   indexer = indexer.expand_bool_indices()
   dynamic_idx, treedef = tree_flatten(indexer)
   internal_gather = partial(
@@ -1418,10 +1312,14 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
       newaxis_dims.append(y_axis)
       y_axis += 1
 
-    elif index.typ == IndexType.SLICE:
+    elif index.typ in [IndexType.SLICE, IndexType.DYNAMIC_SLICE]:
       # Handle static slice index.
-      assert isinstance(index.index, slice)
-      start, step, slice_size = core.canonicalize_slice(index.index, indexer.shape[x_axis])
+      if isinstance(index.index, indexing.Slice):
+        start, step, slice_size = index.index.start, index.index.stride, index.index.size
+      elif isinstance(index.index, slice):
+        start, step, slice_size = core.canonicalize_slice(index.index, indexer.shape[x_axis])
+      else:
+        raise RuntimeError(f"Internal: expected slice or Slice, got {type(index.index)}")
       slice_shape.append(slice_size)
       slice_spec.append(x_spec[x_axis])
 
@@ -1540,27 +1438,6 @@ def _is_scalar(x):
       isinstance(x, (np.ndarray, literals.TypedNdArray, Array))
       and np.ndim(x) == 0
   )
-
-def _canonicalize_tuple_index(arr_ndim, idx):
-  """Helper to remove Ellipsis and add in the implicit trailing slice(None)."""
-  num_dimensions_consumed = sum(not (e is None or e is Ellipsis or isinstance(e, bool)) for e in idx)
-  if num_dimensions_consumed > arr_ndim:
-    index_or_indices = "index" if num_dimensions_consumed == 1 else "indices"
-    raise IndexError(
-        f"Too many indices: {arr_ndim}-dimensional array indexed "
-        f"with {num_dimensions_consumed} regular {index_or_indices}.")
-  ellipses = (i for i, elt in enumerate(idx) if elt is Ellipsis)
-  ellipsis_index = next(ellipses, None)
-  if ellipsis_index is not None:
-    if next(ellipses, None) is not None:
-      raise IndexError(
-          f"Multiple ellipses (...) not supported: {list(map(type, idx))}.")
-    colons = (slice(None),) * (arr_ndim - num_dimensions_consumed)
-    idx = idx[:ellipsis_index] + colons + idx[ellipsis_index + 1:]
-  elif num_dimensions_consumed < arr_ndim:
-    colons = (slice(None),) * (arr_ndim - num_dimensions_consumed)
-    idx = tuple(idx) + colons
-  return idx
 
 
 @export

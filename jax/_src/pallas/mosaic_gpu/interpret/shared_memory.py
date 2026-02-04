@@ -18,7 +18,9 @@ import dataclasses
 import threading
 from typing import Any
 
+from absl import logging
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
+from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
 
 
@@ -38,16 +40,30 @@ class Barrier(memory.Allocation):
   # vector clock, which is updated when threads arrive at the `Barrier`. When
   # a thread completes waiting on the `Barrier` the thread's vector clock is
   # updated with the clock value at which the `Barrier` was last arrived at.
+  #
+  # Internally the implementation of a `Barrier` relies on a condition variable
+  # `self.cv`. Waiting on a `Barrier` is internally implemented as waiting on
+  # the condition variable (until a barrier arrival has been completed). To
+  # complement this, when a thread arrives at a `Barrier`, we notify all threads
+  # that are currently waiting by notifying `self.cv` internally. We also use
+  # the lock on `self.cv` to protect internal state of the `Barrier` that can be
+  # modified by multiple threads. Internal state that can be modified by
+  # multiple threads must then also only be read under the protection of the
+  # lock on `self.cv`. Attributes that are protected in this way must only be
+  # read or modified while holding the lock on `self.cv`. The attributes this
+  # applies to are annoted with comments "Protected by `self.cv`'s lock" below.
   def __init__(
       self,
       shared_memory: GPUSharedMemory,
       ref_count: int,
       num_arrivals: int,
+      enable_logging: bool = False,
   ):
     self.shared_memory = shared_memory
-    self.ref_count: int = ref_count
-    self.num_arrivals: int = num_arrivals
-    self.arrivals_count: int = 0
+    self.ref_count: int = ref_count  # Protected by `self.cv`'s lock.
+    self.num_arrivals: int = num_arrivals  # Protected by `self.cv`'s lock.
+    self.arrivals_count: int = 0  # Protected by `self.cv`'s lock.
+    self.enable_logging: bool = enable_logging
 
     # We model the `Barrier`'s phase as an integer and, consequently,
     # the 'next awaited phase by thread' as an array of integers. Note that on
@@ -57,20 +73,31 @@ class Barrier(memory.Allocation):
     # increment `self.phase` (by one) when a barrier is completed. Using an
     # integer for the `Barrier`s phase (and incrementing it instead of flipping
     # a bit) can be helpful for debugging.
-    self.phase: int = 0
-    self.next_awaited_phase_by_thread: list[int] = [
+    self.phase: int = 0  # Protected by `self.cv`'s lock.
+    self.next_awaited_phase_by_thread: list[int] = [  # Protected by `self.cv`'s lock.
         1
     ] * shared_memory.num_threads_per_device
     # Initialize `self.phase_change_observed` to `True` so that the first
     # arrival (more precisely, the first time we have arrived
     # `self.num_arrivals` times) at the `Barrier` does not raise an error due to
     # an unobserved phase change.
-    self.phase_change_observed: bool = True
+    self.phase_change_observed: bool = True  # Protected by `self.cv`'s lock.
 
+    # Invariant: We allow the lock on `self.cv` to be acquired and held in a
+    # scope where `self.shared_memory.lock` is already held, but *not* the other
+    # way around. The reasons for this are:
+    #   - From code that holds `self.shared_memory.lock` we need to able to call
+    #     methods of `Barrier` that then acquire the lock on `self.cv`
+    #     internally (to modify internal state of `self` in a thread-safe way).
+    #     This is needed, for example, when `self.shared_memory` deallocates a
+    #     barrier (or at least decreases a barrier's ref count).
+    #   - If we allowed the scopes during which `self.shared_memory.lock` and
+    #     `self.cv` are both held to be nested in both ways, this can lead to
+    #     deadlock.
     self.cv = threading.Condition()
 
     if self.shared_memory.detect_races:
-      self.clock: vc.VectorClock | None = None
+      self.clock: vc.VectorClock | None = None  # Protected by `self.cv`'s lock.
 
   def __repr__(self) -> str:
     return (
@@ -78,12 +105,17 @@ class Barrier(memory.Allocation):
         f" arrivals_count={self.arrivals_count})"
     )
 
+  def _log(self, message: str):
+    if self.enable_logging:
+      logging.info(message)
+
   @property
   def detect_races(self) -> bool:
     return self.shared_memory.detect_races
 
   def has_zero_ref_count(self) -> bool:
-    return self.ref_count == 0
+    with self.cv:
+      return self.ref_count == 0
 
   def deallocate(self):
     """Deallocates the `Barrier`."""
@@ -104,8 +136,6 @@ class Barrier(memory.Allocation):
           )
 
   def arrive(self, device_id: int, local_thread_id: int, clock):
-    del device_id, local_thread_id  # unused (but kept for debugging)
-
     with self.cv:
       self.arrivals_count += 1
       if self.arrivals_count == self.num_arrivals:
@@ -117,6 +147,11 @@ class Barrier(memory.Allocation):
         self.phase += 1
         self.arrivals_count = 0
         self.phase_change_observed = False
+
+        self._log(
+            f"Device {device_id}, thread {local_thread_id}: Barrier {id(self)}"
+            f" has completed arrival. Phase is now {self.phase}."
+        )
 
       if self.detect_races:
         if self.clock is None:
@@ -154,25 +189,55 @@ class Barrier(memory.Allocation):
               f" Thread {local_thread_id} has not participated in all"
               " completions of the barrier.)"
           )
+
+        self._log(
+            f"Device {device_id}, thread {local_thread_id}: Waiting for barrier"
+            f" {id(self)} to reach phase"
+            f" {self.next_awaited_phase_by_thread[local_thread_id]}. (Current"
+            f" phase: {self.phase})"
+        )
         self.cv.wait()
 
       self.phase_change_observed = True
       self.next_awaited_phase_by_thread[local_thread_id] += 1
 
-      if self.detect_races:
-        global_thread_id = self.shared_memory.get_global_thread_id(
-            device_id, local_thread_id
+      self._log(
+          f"Device {device_id}, thread {local_thread_id}: Finished waiting for"
+          f" phase {self.phase} of barrier {id(self)}."
+      )
+
+      # Read `self.clock` while still holding the lock on `self.cv`. (If race
+      # detection is enabled, the clock is needed below to update a vector clock
+      # that is managed by `self.shared_memory`.)
+      clock = self.clock if self.detect_races else None
+
+    # Note that this block cannot be nested under the `with self.cv` block
+    # immediately above since this would violate the invariant that
+    # `self.shared_memory.lock` *cannot* be acquired when `self.cv`'s lock is
+    # already held. (See the documentation of `self.cv` above.)
+    if self.detect_races:
+      global_thread_id = self.shared_memory.get_global_thread_id(
+          device_id, local_thread_id
+      )
+      # Assert before acquiring the lock on `self.shared_memory`.
+      assert clock is not None
+      with self.shared_memory.lock:
+        vc.update_vector_clock(
+            self.shared_memory.clocks[global_thread_id], clock
         )
-        # Assert before acquiring the lock on `self.shared_memory`.
-        assert self.clock is not None
-        with self.shared_memory.lock:
-          vc.update_vector_clock(
-              self.shared_memory.clocks[global_thread_id], self.clock
-          )
 
 
 @dataclasses.dataclass
 class GPUSharedMemory(memory.SharedMemory):
+
+  logging_mode: interpret_utils.LoggingMode | None = None
+
+  def _log(self, message: str):
+    if (
+        self.logging_mode is not None
+        and interpret_utils.LoggingMode.SHARED_MEMORY in self.logging_mode
+    ):
+      logging.info(message)
 
   @property
   def num_threads_per_device(self) -> int:
@@ -188,6 +253,8 @@ class GPUSharedMemory(memory.SharedMemory):
 
   def allocate_barrier(
       self,
+      device_id: int,
+      thread_id: int,
       key: Any,
       ref_count: int,
       num_arrivals: int,
@@ -195,8 +262,19 @@ class GPUSharedMemory(memory.SharedMemory):
     """Allocates a barrier with the given key unless it already exists."""
     with self.lock:
       if key not in self.mem:
-        self.mem[key] = Barrier(
-            self, ref_count=ref_count, num_arrivals=num_arrivals
+        barrier = Barrier(
+            self,
+            ref_count=ref_count,
+            num_arrivals=num_arrivals,
+            enable_logging=(
+                self.logging_mode is not None
+                and interpret_utils.LoggingMode.BARRIER in self.logging_mode
+            ),
+        )
+        self.mem[key] = barrier
+        self._log(
+            f"Device {device_id}, thread {thread_id}: Allocated barrier"
+            f" {id(barrier)} ({barrier}) with key {key}."
         )
 
   def get_barrier_and_increment_clock(
@@ -221,7 +299,7 @@ class GPUSharedMemory(memory.SharedMemory):
 
     return barrier, clock
 
-  def deallocate_barrier(self, key: Any):
+  def deallocate_barrier(self, device_id: int, thread_id: int, key: Any):
     with self.lock:
       barrier = self.mem[key]
       if not isinstance(barrier, Barrier):
@@ -229,6 +307,22 @@ class GPUSharedMemory(memory.SharedMemory):
             f"Attempting to get barrier from allocation with {key} that is not"
             " a `Barrier`."
         )
+
+      self._log(
+          f"Device {device_id}, thread {thread_id}: Decreasing ref count of"
+          f" barrier {id(barrier)} with key {key}."
+      )
       barrier.deallocate()
+
       if barrier.has_zero_ref_count():
+        self._log(
+            f"Device {device_id}, thread {thread_id}: Deallocating barrier"
+            f" {id(barrier)} with key {key}."
+        )
         self.mem.pop(key)
+
+  def assert_no_barriers_allocated(self):
+    for key, alloc in self.mem.items():
+      assert not isinstance(
+          alloc, Barrier
+      ), f"Barrier remains allocated at key `{key}`."

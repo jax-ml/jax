@@ -420,8 +420,11 @@ class CoreMapTest(jtu.JaxTestCase):
     custom_call = [l for l in text.split("\n") if "@tpu_custom_call" in l]
     self.assertLen(custom_call, 1)
     custom_call = custom_call[0]
-    self.assertRegex(custom_call,
-                     r".*output_memory_colors\\22: \[" + str(color) + r"\].*")
+    self.assertRegex(
+        custom_call,
+        r".*output_memory_space_colors\\22: "
+        r"\[{\\22color\\22:" + str(color) + r"}\].*",
+    )
 
 
 if __name__ == "__main__":

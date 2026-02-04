@@ -82,6 +82,16 @@ pytype_strict_library(
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
+pytype_strict_library(
+    name = "indexing",
+    srcs = ["indexing.py"],
+    deps = [
+        ":core",
+        ":tree_util",
+        ":typing",
+    ],
+)
+
 # TODO(necula): break the internal_test_util into smaller build targets.
 pytype_strict_library(
     name = "internal_test_util",
@@ -1084,8 +1094,10 @@ pytype_strict_library(
     name = "profiler",
     srcs = ["profiler.py"],
     deps = [
+        ":init",
         ":traceback_util",
         ":xla_bridge",
+        "//jax:version",
         "//jax/_src/lib",
     ],
 )
@@ -1360,6 +1372,7 @@ py_library_providing_imports_info(
         ":dtypes",
         ":error_check",
         ":export",
+        ":indexing",
         ":lax",
         ":literals",
         ":mesh",
@@ -1413,6 +1426,7 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
+        ":indexing",
         ":pretty_printer",
         ":traceback_util",
         ":tree_util",

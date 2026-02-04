@@ -13,10 +13,11 @@
 # limitations under the License.
 
 __all__ = [
-    'AbstractRef', 'Ref', 'addupdate', 'freeze', 'get', 'new_ref', 'set', 'swap'
+    'AbstractRef', 'Ref', 'addupdate', 'freeze', 'get', 'new_ref', 'empty_ref',
+    'set', 'swap'
 ]
 
-from jax._src.core import Ref, freeze
+from jax._src.core import Ref, freeze, empty_ref
 from jax._src.ref import new_ref
 from jax._src.state.types import AbstractRef
 from jax._src.state.primitives import (

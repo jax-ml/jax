@@ -78,9 +78,9 @@ pallas_call_p.multiple_results = True
 
 
 def _pallas_call_impl(*args, **params):
+
   # Call the lowering path
   @partial(api.jit, inline=True)
-
   def _jit_run(*args):
     return pallas_call_p.bind(*args, **params)
 
@@ -124,12 +124,14 @@ def _pallas_call_abstract_eval(
     raise ValueError(f"input pinned buffers without input_output_aliases:"
                      f"{missing}")
   outin_aliases = {out_idx: in_idx for in_idx, out_idx in inout_aliases.items()}
+  out_avals = [avals[outin_aliases[out_idx]] if out_idx in outin_aliases else a
+               for out_idx, a in enumerate(out_avals)]
   # Make sure we don't return ShapedArrayWithMemorySpace to the outside world.
   out_avals = [jax_core.ShapedArray(a.shape, a.dtype, a.weak_type,
                                     sharding=a.sharding)
-               if isinstance(a, pallas_core.ShapedArrayWithMemorySpace) else
-               avals[outin_aliases[out_idx]] if out_idx in outin_aliases
-               else a for out_idx, a in enumerate(out_avals)]
+               if isinstance(a, pallas_core.ShapedArrayWithMemorySpace) else a
+               for a in out_avals]
+
   # TODO(mattjj,yashkatariya): if we hide vmapped away mesh axes, use this:
   # if not (all(a.sharding.mesh.are_all_axes_manual for a in avals) and
   #         all(a.sharding.mesh.are_all_axes_manual for a in out_avals) and
