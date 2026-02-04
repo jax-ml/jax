@@ -31,6 +31,7 @@ from absl.testing import parameterized
 import jax
 from jax import export
 from jax import lax
+from jax import sharding
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import test_util as jtu
@@ -6782,6 +6783,43 @@ class HelpersTest(PallasTest):
                     plgpu.SMEM((large_amount_of_shared_memory,), jnp.int8)],
                   )()
     self.assertEqual(result[0], blocks_to_steal + 1)
+
+
+class DistributedTest(PallasTest):
+  def test_lowering_with_explicit_sharding(self):
+    mesh = jax.make_mesh(
+      (1, 1),
+      ("x", "y"),
+      axis_types=(sharding.AxisType.Explicit, sharding.AxisType.Explicit))
+
+    with jax.set_mesh(mesh):
+      x = jax.random.normal(jax.random.key(0), shape=(64, 64), dtype=jnp.float32)
+      x = sharding.reshard(x, sharding.PartitionSpec("x", "y"))
+      @jax.jit
+      def sharded_relu(x):
+          x_spec = jax.typeof(x).sharding.spec
+          @jax.shard_map(in_specs=x_spec, out_specs=x_spec)
+          def shmap(x_shard):
+              def relu_kernel(x_ref, o_ref, x_smem, barrier):
+                  plgpu.copy_gmem_to_smem(x_ref, x_smem, barrier)
+                  plgpu.barrier_wait(barrier)
+                  x_value = x_smem[...]
+                  x_smem[...] = jnp.where(x_value > 0, x_value, 0)
+                  plgpu.commit_smem()
+                  plgpu.copy_smem_to_gmem(x_smem, o_ref)
+                  plgpu.wait_smem_to_gmem(0)
+              out_shape = jax.ShapeDtypeStruct(shape=(64, 64), dtype=jnp.float32)
+              result = plgpu.kernel(relu_kernel,
+                  out_shape=out_shape,
+                  scratch_shapes=dict(
+                      x_smem=plgpu.SMEM((64, 64), jnp.float32),
+                      barrier=plgpu.Barrier()
+                  )
+              )(x_shard)
+              return result
+          return shmap(x)
+      result = sharded_relu(x)
+    np.testing.assert_array_equal(result, jnp.maximum(x, 0))
 
 
 if __name__ == "__main__":

@@ -3920,3 +3920,10 @@ def _delay_lowering(ctx: LoweringRuleContext, nanos):
     nanos = _i32_constant(nanos)
   mgpu.nanosleep(nanos)
   return []
+
+
+@register_lowering_rule(pjit.reshard_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(pjit.reshard_p, mgpu.LoweringSemantics.Warpgroup)
+def _reshard_lowering_rule(ctx, x, dst_sharding, concrete_mesh):
+  del ctx, dst_sharding, concrete_mesh
+  return x
