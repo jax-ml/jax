@@ -450,14 +450,11 @@ LogicalResult RelayoutOp::verify() {
 }
 
 LogicalResult MemRefReshapeOp::verify() {
-  auto src_ty = getMemRefType(getInput());
+  auto src_ty = getInput().getType();
   auto tgt_ty = getType();
   if (tgt_ty.getMemorySpace() != nullptr &&
       tgt_ty.getMemorySpace() != src_ty.getMemorySpace()) {
     return emitOpError("Memory spaces do not match.");
-  }
-  if (src_ty.getShape().size() < 2 || tgt_ty.getShape().size() < 2) {
-    return emitError("Not implemented: 1d memref reshape.");
   }
   if (tgt_ty.getElementType() != src_ty.getElementType()) {
     return emitOpError("Element types don't match.");
@@ -469,44 +466,40 @@ LogicalResult MemRefReshapeOp::verify() {
         "Number of elements doesn't match between input and output memref "
         "type.");
   }
-  // Source and target attributes may be different before propagation is done by
-  // the canonicalizer, so we allow this when attributes are "unset" in the
-  // target type.
-  auto tgt_layout = dyn_cast<tpu::TiledLayoutAttr>(tgt_ty.getLayout());
-  if (!tgt_layout) {
+  if (src_ty.getLayout().isIdentity() && tgt_ty.getLayout().isIdentity()) {
+    // Untiled reshape
     return success();
   }
   auto src_layout = dyn_cast<tpu::TiledLayoutAttr>(src_ty.getLayout());
-  if (!src_layout || src_layout.getTiles().empty()) {
-    return emitOpError("Expected a tiled layout for the input memref.");
+  auto tgt_layout = dyn_cast<tpu::TiledLayoutAttr>(tgt_ty.getLayout());
+  if (!src_layout || !tgt_layout) {
+    return emitOpError("Only identity or tiled layouts supported.");
   }
   if (src_layout.getTiles() != tgt_layout.getTiles()) {
     return emitOpError(
         "Expected the same tiling for the input and output memref.");
   }
-  auto tile = src_layout.getTiles().front().dimensions();
-  if (tile.size() != 2) {
-    return emitOpError("Not implemented: memref reshape with 1D tiling.");
-  }
-  SmallVector<int64_t> src_tile_strides(src_layout.getTileStrides());
-  if (ComputeTileStrides(src_ty, tile) != src_tile_strides) {
+  if (!src_layout.tilesAreKnownContiguous()) {
     return emitOpError("Not implemented: reshape on a non-contiguous memref.");
   }
-  auto src_tiled_shape = src_ty.getShape().take_back(2);
-  auto tgt_tiled_shape = tgt_ty.getShape().take_back(2);
-  bool is_src_align_tile_2nd_minor = src_tiled_shape[0] % tile[0] == 0;
-  bool is_src_align_tile_minor = src_tiled_shape[1] % tile[1] == 0;
-  bool is_tgt_align_tile_2nd_minor = tgt_tiled_shape[0] % tile[0] == 0;
-  bool is_tgt_align_tile_minor = tgt_tiled_shape[1] % tile[1] == 0;
-  if (tile[0] == 1 && is_src_align_tile_minor && is_tgt_align_tile_minor) {
-    // When the tiling is (1, ?) and the source and target shapes are aligned
-    // to the tile, we support reshape on any dims.
-  } else if (tgt_tiled_shape[1] != src_tiled_shape[1]) {
-    return emitError("Expected the minormost dimension to be unchanged");
-  } else if (tgt_tiled_shape[0] != src_tiled_shape[0]) {
-    if (!is_src_align_tile_2nd_minor || !is_tgt_align_tile_2nd_minor) {
-      return emitError(
-          "Expected the 2nd minor dimension is aligned to the tile");
+  // Trim leading 1s from the first tile, they don't alter the effective layout.
+  const ArrayRef<int64_t> tile =
+      toArrayRef(src_layout.getTiles().front().dimensions())
+          .drop_while(llvm::equal_to<int64_t>(1));
+  if (!tile.empty()) {
+    const ArrayRef<int64_t> src_tiled_shape =
+        src_ty.getShape().take_back(tile.size());
+    const ArrayRef<int64_t> tgt_tiled_shape =
+        tgt_ty.getShape().take_back(tile.size());
+    if (src_tiled_shape.front() != tgt_tiled_shape.front() &&
+        (src_tiled_shape.front() % tile.front() != 0 ||
+         tgt_tiled_shape.front() % tile.front() != 0)) {
+      return emitOpError(
+          "Expected the first (excluding leading tile 1s) tiled dimensions to "
+          "be equal or aligned to the tile");
+    }
+    if (src_tiled_shape.drop_front() != tgt_tiled_shape.drop_front()) {
+      return emitOpError("Expected the trailing tiled dimensions to be equal");
     }
   }
   return success();
