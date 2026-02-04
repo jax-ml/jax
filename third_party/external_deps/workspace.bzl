@@ -32,7 +32,7 @@ def _external_test_deps_repository_impl(repository_ctx):
         repository_ctx: The repository context.
     """
     env_var_name = repository_ctx.attr.env_var
-    deps_env = repository_ctx.os.environ.get(env_var_name, "")
+    deps_env = repository_ctx.getenv(env_var_name, "")
 
     # Parse the comma-separated list of targets
     deps_list = []
@@ -65,10 +65,9 @@ external_test_deps_repository = repository_rule(
             doc = "The name of the environment variable containing the comma-separated list of targets.",
         ),
         "_build_tpl": attr.label(
-            default = Label("//third_party/testing:BUILD.tpl"),
+            default = Label("//third_party/external_deps:BUILD.tpl"),
         ),
     },
-    environ = ["EXTERNAL_TEST_DEPS"],
     doc = "Repository rule to parse external test dependencies from an environment variable.",
 )
 
