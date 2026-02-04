@@ -54,6 +54,14 @@ _error_list_lock = threading.RLock()
 # (error_message, traceback) pairs. Traceback is `str` when imported from AOT.
 _error_list: list[tuple[str, TracebackType | str]] = []
 
+# Standard error message for invalid/corrupted error codes from AOT import.
+_INVALID_ERROR_CODE_MSG = (
+    "An unknown error occurred during execution of an AOT-imported function. "
+    "This may indicate data corruption during AOT serialization/deserialization, "
+    "or a version mismatch between the exporting and importing JAX versions."
+)
+_INVALID_ERROR_CODE_TRACEBACK = "Traceback not available for corrupted error codes."
+
 
 class _ErrorStorage(threading.local):
 
@@ -238,13 +246,11 @@ def raise_if_error() -> None:
 
   with _error_list_lock:
     if error_code >= len(_error_list):
-      raise JaxValueError(
-          f"Invalid error code {error_code} encountered. This may indicate "
-          f"data corruption during AOT serialization/deserialization. "
-          f"Expected error code in range [0, {len(_error_list)}), but got "
-          f"{error_code}."
-      )
-    msg, traceback = _error_list[error_code]
+      # Handle invalid error codes gracefully with a standard error message.
+      # This can happen with corrupted AOT serialization data.
+      msg, traceback = _INVALID_ERROR_CODE_MSG, _INVALID_ERROR_CODE_TRACEBACK
+    else:
+      msg, traceback = _error_list[error_code]
   if isinstance(traceback, str):  # from imported AOT functions
     exc = JaxValueError(
         f"{msg}\nThe original traceback is shown below:\n{traceback}"
@@ -363,21 +369,14 @@ def unwrap_from_import(f):
       offset = len(_error_list)
       _error_list.extend(error_list)
 
-    # Validate that new_error_code is within bounds of error_list before using.
-    # This handles potential data corruption during AOT serialization.
-    max_valid_code = np.uint32(len(error_list))
-    is_valid_error = lax.bitwise_and(
-        new_error_code != np.uint32(_NO_ERROR),
-        new_error_code < max_valid_code,
-    )
-
     # Update the global error code array.
     error_code = _error_storage.ref[...]
     should_update = lax.bitwise_and(
         error_code == np.uint32(_NO_ERROR),
-        is_valid_error,
+        new_error_code != np.uint32(_NO_ERROR),
     )
     error_code = lax.select(should_update, new_error_code + offset, error_code)
+
     # TODO(ayx): support vmap and shard_map.
     _error_storage.ref[...] = error_code
 
