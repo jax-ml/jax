@@ -2536,15 +2536,15 @@ class LaxLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker)
 
   def testCompanionEdgeCases(self):
-    # Test zero leading coefficient produces NaN
+    # Test zero leading coefficient produces inf (from division by zero)
     result = jsp.linalg.companion(jnp.array([0., 1., 2.]))
-    self.assertTrue(jnp.all(jnp.isnan(result[0, :])))
+    self.assertTrue(jnp.all(jnp.isinf(result[0, :])))
     
     # Test n < 2 raises ValueError
-    with self.assertRaises(ValueError):
+    with self.assertRaisesRegex(ValueError, "at least 2"):
       jsp.linalg.companion(jnp.array([1.]))
     
-    with self.assertRaises(ValueError):
+    with self.assertRaisesRegex(ValueError, "at least 2"):
       jsp.linalg.companion(jnp.array([]))
 
 

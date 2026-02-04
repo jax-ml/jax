@@ -2276,7 +2276,7 @@ def companion(a: ArrayLike) -> Array:
     corresponds with a slice of shape ``(n,)`` along the last dimension of the input.
 
   Note:
-    If ``a[..., 0] == 0``, the result will contain NaN values.
+    If ``a[..., 0] == 0``, the result will contain inf values.
 
   Raises:
     ValueError: if ``a`` has fewer than 2 elements along the last axis.
@@ -2312,13 +2312,9 @@ def companion(a: ArrayLike) -> Array:
         "The length of `a` along the last axis must be at least 2."
     )
   
-  # Explicitly handle division by zero to produce NaN (not inf)
-  # Use where to set NaN when leading coefficient is zero
-  first_row = jnp.where(
-      a[..., 0:1] == 0,
-      jnp.nan,
-      -a[..., 1:] / a[..., 0:1]
-  )
+  # Division by zero will naturally produce inf, which is appropriate
+  # for polynomial roots computation
+  first_row = -a[..., 1:] / a[..., 0:1]
   
   # Create the full matrix
   c = jnp.zeros((*a.shape[:-1], n - 1, n - 1), dtype=first_row.dtype)
