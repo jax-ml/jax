@@ -2525,6 +2525,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
       [1.0, -10.0, 31.0, -30.0],  # Larger matrix
       [1, 4, 6, 4, 1],  # Even larger
       [1.0+2.0j, 3.0-1.0j, 2.0+4.0j],  # Complex coefficients
+      [[1., 2., 3.], [2., 5., -10.]],  # Batched input
     ]
   )
   def testCompanion(self, a):
@@ -2539,21 +2540,12 @@ class LaxLinalgTest(jtu.JaxTestCase):
     result = jsp.linalg.companion(jnp.array([0., 1., 2.]))
     self.assertTrue(jnp.all(jnp.isnan(result[0, :])))
     
-    # Test n < 2 produces NaN
-    result_n1 = jsp.linalg.companion(jnp.array([1.]))
-    self.assertEqual(result_n1.shape, (0, 0))
+    # Test n < 2 raises ValueError
+    with self.assertRaises(ValueError):
+      jsp.linalg.companion(jnp.array([1.]))
     
-    result_n0 = jsp.linalg.companion(jnp.array([]))
-    self.assertEqual(result_n0.shape, (0, 0))
-
-  def testCompanionBatching(self):
-    # Test batch processing
-    a_batch = np.array([[1., 2., 3.], [2., 5., -10.]])
-    args_maker = lambda: [a_batch]
-    osp_fun = osp.linalg.companion
-    jsp_fun = jsp.linalg.companion
-    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker)
-    self._CompileAndCheck(jsp_fun, args_maker)
+    with self.assertRaises(ValueError):
+      jsp.linalg.companion(jnp.array([]))
 
 
 if __name__ == "__main__":

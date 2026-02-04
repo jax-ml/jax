@@ -2277,12 +2277,9 @@ def companion(a: ArrayLike) -> Array:
 
   Note:
     If ``a[..., 0] == 0``, the result will contain NaN values.
-    
-    Unlike :func:`scipy.linalg.companion`, which raises ``ValueError`` when
-    ``n < 2``, this JAX implementation returns an empty array of shape
-    ``(..., 0, 0)`` in such cases. This design choice allows the function to
-    remain JIT-compatible, as raising errors based on array values is not
-    permitted under JIT compilation.
+
+  Raises:
+    ValueError: if ``a`` has fewer than 2 elements along the last axis.
 
   Examples:
     Create a companion matrix for the polynomial ``x^3 - 10x^2 + 31x - 30``:
@@ -2310,6 +2307,10 @@ def companion(a: ArrayLike) -> Array:
   a = jnp.atleast_1d(a)
   
   n = a.shape[-1]
+  if n < 2:
+    raise ValueError(
+        "The length of `a` along the last axis must be at least 2."
+    )
   
   # Explicitly handle division by zero to produce NaN (not inf)
   # Use where to set NaN when leading coefficient is zero
@@ -2320,16 +2321,12 @@ def companion(a: ArrayLike) -> Array:
   )
   
   # Create the full matrix
-  # For n < 2, use max to avoid negative dimensions, creating (0, 0) shaped arrays
-  matrix_dim = max(n - 1, 0)
-  c = jnp.zeros((*a.shape[:-1], matrix_dim, matrix_dim), dtype=first_row.dtype)
+  c = jnp.zeros((*a.shape[:-1], n - 1, n - 1), dtype=first_row.dtype)
+  c = c.at[..., 0, :].set(first_row)
   
-  # Set first row if n >= 2 (otherwise c has shape (..., 0, 0))
-  if n >= 2:
-    c = c.at[..., 0, :].set(first_row)
-    # Set the subdiagonal to 1 if n >= 3
-    if n >= 3:
-      c = c.at[..., jnp.arange(1, n - 1), jnp.arange(0, n - 2)].set(1)
+  # Set the subdiagonal to 1
+  if n > 2:
+    c = c.at[..., jnp.arange(1, n - 1), jnp.arange(0, n - 2)].set(1)
   
   return c
 
