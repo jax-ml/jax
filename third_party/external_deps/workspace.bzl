@@ -51,8 +51,8 @@ def _parse_deps_from_env(repository_ctx, env_var_name):
                 deps_list.append(dep)
     return deps_list
 
-def _external_test_deps_repository_impl(repository_ctx):
-    """Implementation of the external_test_deps_repository rule.
+def _external_deps_repository_impl(repository_ctx):
+    """Implementation of the external_deps_repository rule.
 
     Reads the specified environment variables and generates an external_deps.bzl
     file containing a struct with dependency lists.
@@ -90,8 +90,8 @@ def _external_test_deps_repository_impl(repository_ctx):
 
     repository_ctx.file("BUILD.bazel", "# Auto-generated BUILD file\n")
 
-external_test_deps_repository = repository_rule(
-    implementation = _external_test_deps_repository_impl,
+external_deps_repository = repository_rule(
+    implementation = _external_deps_repository_impl,
     attrs = {
         "env_vars": attr.string_list(
             default = EXTERNAL_DEPS_ENV_VARS,
@@ -101,14 +101,14 @@ external_test_deps_repository = repository_rule(
             default = Label("//third_party/external_deps:BUILD.tpl"),
         ),
     },
-    doc = "Repository rule to parse external test dependencies from environment variables.",
+    doc = "Repository rule to parse external dependencies from environment variables.",
 )
 
-def repo(name = "external_test_deps", env_vars = EXTERNAL_DEPS_ENV_VARS):
-    """Convenience function to create the external test deps repository.
+def repo(name = "external_deps", env_vars = EXTERNAL_DEPS_ENV_VARS):
+    """Convenience function to create the external deps repository.
 
     Args:
-        name: The name of the repository (default: "external_test_deps").
+        name: The name of the repository (default: "external_deps").
         env_vars: List of environment variable names to parse (default: ["EXTERNAL_TEST_DEPS"]).
     """
-    external_test_deps_repository(name = name, env_vars = env_vars)
+    external_deps_repository(name = name, env_vars = env_vars)

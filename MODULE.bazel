@@ -224,11 +224,11 @@ test_shard_count_repository(
     name = "test_shard_count",
 )
 
-external_test_deps_repository = use_repo_rule(
+external_deps_repository = use_repo_rule(
     "//third_party/external_deps:workspace.bzl",
-    "external_test_deps_repository",
+    "external_deps_repository",
 )
 
-external_test_deps_repository(
-    name = "external_test_deps",
+external_deps_repository(
+    name = "external_deps",
 )
