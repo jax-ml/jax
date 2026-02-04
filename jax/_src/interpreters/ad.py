@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import contextlib
+import dataclasses
 import functools
 import itertools as it
 from functools import partial
@@ -540,8 +541,8 @@ def nonzero_tangent_outputs(f, store, *args, **kwargs):
 class JVPTrace(Trace):
   def __init__(self, parent_trace, tag):
     super().__init__()
-    self.tag = tag
     self.parent_trace = parent_trace
+    self.tag = tag
     self.requires_low = False
 
   def to_primal_tangent_pair(self, val):
@@ -934,6 +935,94 @@ class LinearizeTrace(Trace):
   # the `in_axes` and `out_axes_thunk` params must be updated;
   # that's handled in process_call.
   process_map = process_call
+
+################################# VJPTrace ####################################
+
+primitive_vjps = {}
+
+class Covar:
+  def __init__(self, aval):
+    self.aval = aval  # should be cotangent aval
+  def __repr__(self):
+    return f"Covar(aval={self.aval}, id={id(self)})"
+
+@dataclasses.dataclass(frozen=True)
+class VJPOp:
+  left_vars: list[Covar]
+  right_vars: list[Covar]
+  pullback: Callable
+
+class VJPTrace(core.Trace):
+
+  def __init__(self, parent_trace, tag):
+    super().__init__()
+    self.parent_trace = parent_trace
+    self.tag = tag
+    self.ops = []
+
+  def to_primal_var_pair(self, tracer):
+    if isinstance(tracer, VJPTracer) and tracer._trace.tag is self.tag:
+      return tracer.primal, tracer.covar
+    else:
+      assert False
+
+  def process_primitive(self, p, tracers, params):
+    left_primals, left_covars = unzip2(map(self.to_primal_var_pair, tracers))
+    vjp_maker = primitive_vjps.get(p)
+    if vjp_maker is None:
+      raise NotImplementedError(f"VJP not defined for primitive: {p}")
+
+    with core.set_current_trace(self.parent_trace):
+      right_primals, pullback = vjp_maker(*left_primals, **params)
+      right_covars = [Covar(typeof(r).to_cotangent_aval())
+                      for r in right_primals]
+      vjp_op = VJPOp(left_covars, right_covars, pullback)
+      self.ops.append(vjp_op)
+
+      if p.multiple_results:
+        return [VJPTracer(self, p, v) for p, v in zip(right_primals, right_covars)]
+      else:
+        return VJPTracer(self, right_primals[0], right_covars[0])
+
+class VJPTracer(core.Tracer):
+  __slots__ = ['primal', 'covar']
+
+  def __init__(self, trace, primal, covar):
+    self._trace = trace
+    self.primal = primal
+    self.covar = covar
+
+  @property
+  def aval(self):
+    return typeof(self.primal)
+
+
+def vjp4(f, x):
+  with core.take_current_trace() as parent_trace:
+    trace = VJPTrace(parent_trace, core.TraceTag())
+    leftmost_covar = Covar(typeof(x).to_cotangent_aval())
+    left_tracer = VJPTracer(trace, x, leftmost_covar)
+    with core.set_current_trace(trace):
+      ans = f(left_tracer)
+    right_primal, right_covar = trace.to_primal_var_pair(ans)
+
+  def pullback(right_ct):
+    ct_env = {right_covar: right_ct}
+
+    def accum(var, ct):
+      if var not in ct_env:
+        ct_env[var] = ct
+      else:
+        ct_env[var] = ct_env[var] + ct
+
+    for vjp_op in trace.ops[::-1]:
+      right_cts = map(ct_env.get, vjp_op.right_vars)
+      left_cts = vjp_op.pullback(right_cts)
+      map(accum, vjp_op.left_vars, left_cts)
+    return ct_env[leftmost_covar]
+
+  return right_primal, pullback
+
 
 
 @weakref_lru_cache
