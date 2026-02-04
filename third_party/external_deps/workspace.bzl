@@ -19,17 +19,17 @@ and generates a .bzl file containing a struct with dependency lists for each
 environment variable.
 
 Each environment variable should contain a comma-separated list of targets, e.g.:
-    EXTERNAL_TEST_DEPS=@jax_rocm_plugin//:plugin.whl,@jax_rocm_plugin//:pjrt.whl
+    TEST_DEPS=@jax_rocm_plugin//:plugin.whl,@jax_rocm_plugin//:pjrt.whl
 
 The generated struct uses lowercase environment variable names as keys, e.g.:
-    external.external_test_deps  # list of deps from EXTERNAL_TEST_DEPS
+    external.test_deps  # list of deps from TEST_DEPS
 """
 
 # List of environment variables to parse for external dependencies.
 # Each variable should contain a comma-separated list of Bazel targets.
 # The generated struct will have fields named after the lowercase variable names.
 EXTERNAL_DEPS_ENV_VARS = [
-    "EXTERNAL_TEST_DEPS",
+    "TEST_DEPS",
 ]
 
 def _parse_deps_from_env(repository_ctx, env_var_name):
