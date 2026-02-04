@@ -14,4 +14,4 @@
 
 licenses(["notice"])  # Apache 2.0
 
-exports_files(["BUILD.tpl"])
+exports_files(["external_deps.bzl.tpl"])

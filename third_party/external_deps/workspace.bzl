@@ -69,7 +69,7 @@ external_deps_repository = repository_rule(
             doc = "Dictionary mapping field names to lists of dependency targets.",
         ),
         "_build_tpl": attr.label(
-            default = Label("//third_party/external_deps:BUILD.tpl"),
+            default = Label("//third_party/external_deps:external_deps.bzl.tpl"),
         ),
     },
     doc = "Repository rule to configure external dependencies.",
