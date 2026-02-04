@@ -30,6 +30,7 @@ from jax._src import logging_config
 from jax._src.lib import _jax
 from jax._src.lib import guard_lib
 from jax._src.lib import jax_jit
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 
 config_ext = xla_client._xla.config
@@ -421,7 +422,9 @@ def bool_state(
 
   def parser(val):
     if validator:
-      validator(val)
+      validated_val = validator(val)
+      if validated_val is not None:
+        val = validated_val
     return bool(val)
 
   s = State[bool](
@@ -1231,10 +1234,10 @@ log_checkpoint_residuals = bool_state(
 # Since we want a deprecation warning regardless of value, we need an
 # exemption for when config.py is first loaded.
 _pmap_shmap_merge_initialized = False
+_pmap_shmap_merge_val = True
 
 
-def _default_pmap_shmap_merge(new_val):
-  del new_val
+def _default_pmap_shmap_merge(_new_val):
   global _pmap_shmap_merge_initialized
   if _pmap_shmap_merge_initialized:
     deprecations.warn(
@@ -1246,10 +1249,12 @@ def _default_pmap_shmap_merge(new_val):
         stacklevel=3,
     )
   _pmap_shmap_merge_initialized = True
+  return _pmap_shmap_merge_val
+
 
 pmap_shmap_merge = bool_state(
     name='jax_pmap_shmap_merge',
-    default=True,
+    default=_pmap_shmap_merge_val,
     upgrade=True,
     help='If True, pmap and shard_map API will be merged.',
     validator=_default_pmap_shmap_merge,
@@ -1263,7 +1268,6 @@ custom_vjp3 = bool_state(
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
-
 
 distributed_debug = bool_state(
     name='jax_distributed_debug',
@@ -1769,21 +1773,29 @@ default_matmul_precision = optional_enum_state(
 
 
 traceback_filtering = enum_state(
-    name = 'jax_traceback_filtering',
-    enum_values=["off", "tracebackhide", "remove_frames", "quiet_remove_frames",
-                 "auto"],
-    default="auto",
-    help="Controls how JAX filters internal frames out of tracebacks. Valid values are:\n"
-         "- ``off``: disables traceback filtering.\n"
-         "- ``auto``: use ``tracebackhide`` if running under a sufficiently "
-         "new IPython, or ``remove_frames`` otherwise.\n"
-         "- ``tracebackhide``: adds ``__tracebackhide__`` annotations to "
-         "hidden stack frames, which some traceback printers support.\n"
-         "- ``remove_frames``: removes hidden frames from tracebacks, and adds "
-         "the unfiltered traceback as a ``__cause__`` of the exception.\n"
-         "- ``quiet_remove_frames``: removes hidden frames from tracebacks, and adds "
-         "a brief message (to the ``__cause__`` of the exception) describing that this has "
-         "happened.\n\n")
+    name='jax_traceback_filtering',
+    enum_values=[
+        'off',
+        'tracebackhide',
+        'remove_frames',
+        'quiet_remove_frames',
+        'auto',
+    ],
+    default='off',
+    help=(
+        'Controls how JAX filters internal frames out of tracebacks. Valid'
+        ' values are:\n- ``off``: disables traceback filtering.\n- ``auto``:'
+        ' use ``tracebackhide`` if running under a sufficiently new IPython, or'
+        ' ``remove_frames`` otherwise.\n- ``tracebackhide``: adds'
+        ' ``__tracebackhide__`` annotations to hidden stack frames, which some'
+        ' traceback printers support.\n- ``remove_frames``: removes hidden'
+        ' frames from tracebacks, and adds the unfiltered traceback as a'
+        ' ``__cause__`` of the exception.\n- ``quiet_remove_frames``: removes'
+        ' hidden frames from tracebacks, and adds a brief message (to the'
+        ' ``__cause__`` of the exception) describing that this has'
+        ' happened.\n\n'
+    ),
+)
 
 # This flag is for internal use.
 # TODO(tianjianlu): Removes once we always enable cusparse lowering.
@@ -2033,20 +2045,22 @@ array_garbage_collection_guard = optional_enum_state(
     ),
 )
 
-thread_guard = bool_state(
-    name='jax_thread_guard',
-    default=False,
-    help=(
-        'If True, an error will be raised at runtime if a multi-process JAX '
-        'operation is called from a thread other than the one in which the '
-        'thread guard was set. This is useful for detecting cases where '
-        'threads may schedule operations in different orders in different '
-        'processes, leading to non-deterministic crashes.'
-    ),
-    update_thread_local_hook=(
-        # If the state is None, set it to False.
-        lambda val: guard_lib.update_thread_guard_global_state(val or False)),
-)
+if jaxlib_extension_version >= 395:
+  thread_guard = bool_state(
+      name='jax_thread_guard',
+      default=False,
+      help=(
+          'If True, an error will be raised at runtime if a multi-process JAX '
+          'operation is called from a thread other than the one in which the '
+          'thread guard was set. This is useful for detecting cases where '
+          'threads may schedule operations in different orders in different '
+          'processes, leading to non-deterministic crashes.'
+      ),
+      update_thread_local_hook=(
+          # If the state is None, set it to False.
+          lambda val: guard_lib.update_thread_guard_global_state(val or False)
+      ),
+  )
 
 # TODO(nbasile): Remove hasattr checks after jaxlib 0.8.1 release
 if hasattr(_jax, 'RuntimeTracebackMode'):
@@ -2106,7 +2120,6 @@ optional_enum_state(
     update_global_hook=lambda logging_level: \
       logging_config.update_logging_level_global(logging_level=logging_level)
 )
-
 
 
 use_shardy_partitioner = bool_state(
