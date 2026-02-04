@@ -14,7 +14,6 @@
 
 # AMD HIP kernels
 
-load("@external_test_deps//:test_deps.bzl", "external")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_python//python:defs.bzl", "py_library")
 load(
@@ -550,5 +549,5 @@ py_library(
     deps = if_rocm_is_configured([
         ":rocm_gpu_support",
         ":rocm_plugin_extension",
-    ] + external.test_deps),
+    ]),
 )
