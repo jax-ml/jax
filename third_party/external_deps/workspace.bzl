@@ -54,7 +54,7 @@ def _parse_deps_from_env(repository_ctx, env_var_name):
 def _external_test_deps_repository_impl(repository_ctx):
     """Implementation of the external_test_deps_repository rule.
 
-    Reads the specified environment variables and generates a test_deps.bzl
+    Reads the specified environment variables and generates an external_deps.bzl
     file containing a struct with dependency lists.
 
     Args:
@@ -78,9 +78,9 @@ def _external_test_deps_repository_impl(repository_ctx):
         struct_fields.append(field_content)
         env_var_comments.append(env_var_name)
 
-    # Generate the test_deps.bzl file using the template
+    # Generate the external_deps.bzl file using the template
     repository_ctx.template(
-        "test_deps.bzl",
+        "external_deps.bzl",
         repository_ctx.attr._build_tpl,
         substitutions = {
             "%{ENV_VARS}": ", ".join(env_var_comments),
