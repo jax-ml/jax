@@ -1,5 +1,3 @@
-workspace(name = "jax")
-
 load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 
 # The XLA commit is determined by third_party/xla/revision.bzl.
