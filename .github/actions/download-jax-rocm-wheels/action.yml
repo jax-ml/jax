@@ -18,8 +18,8 @@ inputs:
     description: "Whether to download the jax wheel from GCS"
     default: '1'
     type: string
-  skip-download-jaxlib-and-rocm-plugins-from-gcs:
-    description: "Whether to skip downloading the jaxlib and ROCm plugins from GCS (e.g for testing a jax only release)"
+  skip-download-jaxlib-and-plugins-from-gcs:
+    description: "Whether to skip downloading the jaxlib and plugins from GCS (e.g for testing a jax only release)"
     default: '0'
     type: string
   gcs_download_uri:
@@ -78,7 +78,7 @@ runs:
 
         # Do not download the jaxlib and ROCm plugin artifacts if we are testing a jax only
         # release.
-        if [[ "${{ inputs.skip-download-jaxlib-and-rocm-plugins-from-gcs }}" == "1" ]]; then
+        if [[ "${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}" == "1" ]]; then
           echo "JAX only release. Only downloading the jax wheel from the release bucket."
         else
           if [[ ${{ inputs.jaxlib-version }} == "head" ]]; then

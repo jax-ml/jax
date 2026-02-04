@@ -142,7 +142,7 @@ jobs:
       cuda-version:  ${{ matrix.cuda.cuda-version }}
       use-nvidia-pip-wheels: ${{ matrix.cuda.use-nvidia-pip-wheels }}
       enable-x64:  ${{ matrix.enable-x64 }}
-      skip-download-jaxlib-and-cuda-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
+      skip-download-jaxlib-and-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
 
@@ -189,7 +189,7 @@ jobs:
       rocm-version: ${{ matrix.rocm.version }}
       rocm-tag: ${{ matrix.rocm.tag }}
       jaxlib-version: "head"
-      skip-download-jaxlib-and-rocm-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
+      skip-download-jaxlib-and-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
 
   run-pytest-tpu:

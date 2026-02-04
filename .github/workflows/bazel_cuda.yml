@@ -49,8 +49,8 @@ on:
         description: "Whether to download the jax wheel from GCS"
         default: '1'
         type: string
-      skip-download-jaxlib-and-cuda-plugins-from-gcs:
-        description: "Whether to skip downloading the jaxlib and cuda plugins from GCS (e.g for testing a jax only release)"
+      skip-download-jaxlib-and-plugins-from-gcs:
+        description: "Whether to skip downloading the jaxlib and plugins from GCS (e.g for testing a jax only release)"
         default: '0'
         type: string
       gcs_download_uri:
@@ -117,7 +117,7 @@ jobs:
           python: ${{ inputs.python }}
           cuda-version: ${{ inputs.cuda-version }}
           download-jax-from-gcs: ${{ inputs.download-jax-from-gcs }}
-          skip-download-jaxlib-and-cuda-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs }}
+          skip-download-jaxlib-and-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
           jaxlib-version: ${{ inputs.jaxlib-version }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
       # Halt for testing

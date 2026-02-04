@@ -48,8 +48,8 @@ on:
         options:
           - "head"
           - "pypi_latest"
-      skip-download-jaxlib-and-rocm-plugins-from-gcs:
-        description: "Whether to skip downloading the jaxlib and ROCm plugins from GCS (e.g for testing a jax only release)"
+      skip-download-jaxlib-and-plugins-from-gcs:
+        description: "Whether to skip downloading the jaxlib and plugins from GCS (e.g for testing a jax only release)"
         type: choice
         default: '0'
         options:
@@ -85,8 +85,8 @@ on:
         description: "Which jaxlib version to use? (head/pypi_latest)"
         type: string
         default: "head"
-      skip-download-jaxlib-and-rocm-plugins-from-gcs:
-        description: "Whether to skip downloading the jaxlib and ROCm plugins from GCS (e.g for testing a jax only release)"
+      skip-download-jaxlib-and-plugins-from-gcs:
+        description: "Whether to skip downloading the jaxlib and plugins from GCS (e.g for testing a jax only release)"
         default: '0'
         type: string
       gcs_download_uri:
@@ -132,7 +132,7 @@ jobs:
           python: ${{ inputs.python }}
           rocm-version: ${{ inputs.rocm-version }}
           jaxlib-version: ${{ inputs.jaxlib-version }}
-          skip-download-jaxlib-and-rocm-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-rocm-plugins-from-gcs }}
+          skip-download-jaxlib-and-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

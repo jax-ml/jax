@@ -82,7 +82,7 @@ jobs:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       download-jax-from-gcs: 0
-      skip-download-jaxlib-and-cuda-plugins-from-gcs: 0
+      skip-download-jaxlib-and-plugins-from-gcs: 0
       jaxlib-version: ${{ matrix.jaxlib-version }}
       halt-for-connection: ${{ inputs.halt-for-connection }}
       cuda-version: ${{ matrix.cuda-version }}
