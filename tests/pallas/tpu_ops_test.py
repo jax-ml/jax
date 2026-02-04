@@ -793,13 +793,23 @@ class OpsTest(ptu.PallasTPUTest):
           (jnp.int32, jnp.int4),
           (jnp.int16, jnp.int8),
           (jnp.int8, jnp.int4),
+          (jnp.int4, jnp.int2),
       ],
-      shape=[(8, 128), (2, 15, 300)],
+      shape=[(8, 128), (2, 15, 300), (512, 256)],
   )
   def test_pack_elementwise(self, config, shape):
     unpacked_dtype, packed_dtype = config
     if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("Requires TPU v5+")
+    if packed_dtype == jnp.int2:
+      if not jtu.is_cloud_tpu_at_least(2026, 2, 10):
+        raise self.skipTest(
+            "int2 is only supported for tpu at least 02/10/2026"
+        )
+      if (shape[-2] % (8 * 16)) or (shape[-1] % 128):
+        raise self.skipTest(
+            "int2 is only supported for shapes with vreg alignment"
+        )
 
     src_bitwidth = dtypes.itemsize_bits(unpacked_dtype)
     tgt_bitwidth = dtypes.itemsize_bits(packed_dtype)
