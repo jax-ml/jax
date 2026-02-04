@@ -33,6 +33,7 @@ limitations under the License.
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
@@ -1876,24 +1877,22 @@ LogicalResult UnpackSubelementsOp::canonicalize(UnpackSubelementsOp op,
                                                 PatternRewriter& rewriter) {
   auto src_elem_ty = op.getSource().getType().getElementType();
   auto dst_elem_ty = op.getType().getElementType();
-  if (!src_elem_ty.isSignlessInteger() || !dst_elem_ty.isSignlessInteger()) {
-    return failure();
-  }
-  if (!op.getSignExtended()) {
-    // Unpack of pack with the same format is reversible if not sign extended.
-    if (auto pack = op.getSource().getDefiningOp<PackSubelementsOp>();
-        pack && pack.getPackFormat() == op.getPackFormat() &&
-        pack.getSources().front().getType() == op.getType()) {
-      Value source = pack.getPaddedSources(
-          pack.getSources(), pack.getPositions(),
-          getElementTypeBitwidth(op.getType()) /
-              getElementTypeBitwidth(pack.getType()))[op.getIndex()];
-      if (source) {
-        rewriter.replaceAllOpUsesWith(op, source);
-        return success();
-      }
+  CHECK_EQ(src_elem_ty.isSignlessInteger(), dst_elem_ty.isSignlessInteger());
+  if (auto pack = op.getSource().getDefiningOp<PackSubelementsOp>();
+      pack && pack.getPackFormat() == op.getPackFormat() &&
+      pack.getSources().front().getType() == op.getType()) {
+    Value source = pack.getPaddedSources(
+        pack.getSources(), pack.getPositions(),
+        getElementTypeBitwidth(op.getType()) /
+            getElementTypeBitwidth(pack.getType()))[op.getIndex()];
+    if (source == nullptr) {
+      rewriter.replaceAllOpUsesWith(
+          op, ub::PoisonOp::create(rewriter, op.getLoc(), op.getType()));
     }
-    return failure();
+    if (src_elem_ty.isSignlessInteger() && dst_elem_ty.isSignlessInteger() &&
+        !op.getSignExtended()) {
+      rewriter.replaceAllOpUsesWith(op, source);
+    }
   }
   // Set `sign_extended` to false if it's used by pack that reduces the source
   // bitwidth.
