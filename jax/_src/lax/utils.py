@@ -20,6 +20,7 @@ from functools import partial
 
 import numpy as np
 
+import warnings
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -29,6 +30,10 @@ from jax._src.named_sharding import DuplicateSpecError, NamedSharding
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.util import safe_zip
 from jax._src.typing import DimSize, DType, Shape
+
+# Track which operations have already warned about mixed memory spaces to avoid spam.
+# Note: This is module-level mutable state and not thread-safe.
+_warned_memory_space_ops: set[str] = set()
 
 zip, unsafe_zip = safe_zip, zip
 
@@ -157,10 +162,20 @@ def _default_memory_space_rule(prim, *avals, **kwargs):
     if not a.ndim:
       continue
     if prev_aval is not None and prev_aval.memory_space != a.memory_space:
-      raise ValueError(
-          f'memory_space of all inputs passed to `{prim.name}` must be the'
-          f' same. Got one operand with type: {prev_aval.str_short()} and'
-          f' another operand with type: {a.str_short()}')
+      if prim.name not in _warned_memory_space_ops:
+        warnings.warn(
+            f'Operation `{prim.name}` received inputs with different memory '
+            f'spaces: {prev_aval.memory_space.name} and '
+            f'{a.memory_space.name}. Using memory space '
+            f'{prev_aval.memory_space.name} for the output. This is allowed '
+            f'but may indicate unintentional mixing of host and device memory. '
+            f'If this is unintentional, ensure all inputs use the same '
+            f'memory_kind (e.g., using jax.device_put or consistent shardings '
+            f'with memory_kind parameter).',
+            UserWarning,
+            stacklevel=4)
+        _warned_memory_space_ops.add(prim.name)
+      break
     prev_aval = a
   if prev_aval is None:
     return core.MemorySpace.Device

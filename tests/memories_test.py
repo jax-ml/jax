@@ -20,6 +20,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 from absl import flags
 import unittest
+import warnings
 
 import jax
 from jax import lax
@@ -1096,6 +1097,82 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     x = jnp.ones(3) * 4
     all_true = jnp.ones(3, jnp.float32)
     self.assertArraysEqual(g(x), all_true)
+
+  def test_compute_on2_tree_map_mixed_memory_spaces(self):
+    """Test that tree_map operations with mixed memory spaces trigger warnings."""
+    @compute_on2(compute_type='device_host', out_memory_spaces=(
+        jax.memory.Space.Device,
+        jax.memory.Space.Host
+    ))
+    def tree_map_mixed_memory(device_pytree, host_pytree):
+      mixed_result = jax.tree_util.tree_map(lambda x, y: x + y, device_pytree, host_pytree)
+      mixed_mult = jax.tree_util.tree_map(lambda x, y: x * y, device_pytree, host_pytree)
+      return mixed_result, mixed_mult
+
+    @jax.jit
+    def f(device_pytree, host_pytree):
+      return tree_map_mixed_memory(device_pytree, host_pytree)
+
+    mesh = jtu.create_mesh((2,), ("x",)) if jax.device_count() >= 2 else jtu.create_mesh((1,), ("x",))
+    device_sharding = NamedSharding(mesh, P(), memory_kind="device")
+    host_sharding = NamedSharding(mesh, P(), memory_kind="pinned_host")
+
+    device_data = {'a': jnp.array([1.0, 2.0, 3.0]), 'b': jnp.array([4.0, 5.0])}
+    host_data = {'a': jnp.array([10.0, 20.0, 30.0]), 'b': jnp.array([40.0, 50.0])}
+
+    device_pytree = jax.tree_util.tree_map(lambda x: jax.device_put(x, device_sharding), device_data)
+    host_pytree = jax.tree_util.tree_map(lambda x: jax.device_put(x, host_sharding), host_data)
+
+    # Test that warnings are emitted during lowering
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter("always")
+      f.lower(device_pytree, host_pytree)
+
+      memory_space_warnings = [
+          warning for warning in w
+          if (issubclass(warning.category, UserWarning) and
+              'memory' in str(warning.message).lower() and
+              'space' in str(warning.message).lower())
+      ]
+      warning_messages = [str(w.message) for w in memory_space_warnings]
+      self.assertTrue(
+          any('add' in msg for msg in warning_messages),
+          f"Expected warning about 'add' operation, got: {warning_messages}")
+      self.assertTrue(
+          any('Device' in msg and 'Host' in msg for msg in warning_messages),
+          f"Expected warnings to mention Device and Host memory spaces, "
+          f"got: {warning_messages}")
+      self.assertTrue(
+          any('memory_kind' in msg for msg in warning_messages),
+          f"Expected warnings to include guidance about memory_kind, "
+          f"got: {warning_messages}")
+
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter("always")
+      f.lower(device_pytree, host_pytree)
+      memory_space_warnings = [
+          warning for warning in w
+          if (issubclass(warning.category, UserWarning) and
+              'memory' in str(warning.message).lower() and
+              'space' in str(warning.message).lower())
+      ]
+      self.assertEqual(len(memory_space_warnings), 0,
+                      f"Expected no warnings on second lowering (warn-once), got: {[str(warning.message) for warning in w]}")
+
+    # Execute the function and verify correctness
+    result_add, result_mult = f(device_pytree, host_pytree)
+    expected_add = jax.tree_util.tree_map(lambda x, y: x + y, device_data, host_data)
+    expected_mult = jax.tree_util.tree_map(lambda x, y: x * y, device_data, host_data)
+
+    self.assertArraysEqual(result_add['a'], expected_add['a'])
+    self.assertArraysEqual(result_add['b'], expected_add['b'])
+    self.assertArraysEqual(result_mult['a'], expected_mult['a'])
+    self.assertArraysEqual(result_mult['b'], expected_mult['b'])
+
+    self.assertEqual(result_add['a'].sharding.memory_kind, "device")
+    self.assertEqual(result_add['b'].sharding.memory_kind, "device")
+    self.assertEqual(result_mult['a'].sharding.memory_kind, "pinned_host")
+    self.assertEqual(result_mult['b'].sharding.memory_kind, "pinned_host")
 
   def test_host_offload_in_custom_vjp_sharded(self):
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
