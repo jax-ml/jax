@@ -786,8 +786,14 @@ NB_MODULE(_jax, m) {
       [](std::string address, int num_nodes,
          std::optional<int> heartbeat_timeout,
          std::optional<int> cluster_register_timeout,
-         std::optional<int> shutdown_timeout)
+         std::optional<int> shutdown_timeout,
+         std::optional<int> example_added_argument)
           -> std::unique_ptr<xla::DistributedRuntimeService> {
+        if (example_added_argument.has_value()) {
+          LOG(INFO) << "example_added_argument = " << *example_added_argument;
+        } else {
+          LOG(INFO) << "example_added_argument is None";
+        }
         xla::CoordinationServiceImpl::Options options;
         options.num_nodes = num_nodes;
         if (heartbeat_timeout.has_value()) {
@@ -807,7 +813,8 @@ NB_MODULE(_jax, m) {
       nb::arg("address"), nb::arg("num_nodes"),
       nb::arg("heartbeat_timeout").none() = std::nullopt,
       nb::arg("cluster_register_timeout").none() = std::nullopt,
-      nb::arg("shutdown_timeout").none() = std::nullopt);
+      nb::arg("shutdown_timeout").none() = std::nullopt,
+      nb::arg("example_added_argument").none() = std::nullopt);
 
   m.def(
       "get_distributed_runtime_client",
