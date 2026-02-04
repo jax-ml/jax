@@ -23,7 +23,7 @@ jobs:
   tsan:
     runs-on: linux-x86-n4-64
     container:
-      image: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build@sha256:ea67e8453d8b09c2ba48853da5e79efef4b65804b4a48dfae4b4da89ffd38405 # ml-build container (based on Ubuntu 22.04)
+      image: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build@sha256:44b04823658fa377793d4a99f282a6c23d13d6f7157adcdd892e09a96a16d8ab
     strategy:
       fail-fast: false
       matrix:
@@ -266,7 +266,7 @@ jobs:
           bazel cquery @pypi_numpy//:* | grep whl
 
           # Build JAX and run tests
-          bazel test \
+          bazel test --verbose_failures \
               --test_env=JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES \
               --test_env=JAX_ENABLE_X64=$JAX_ENABLE_X64 \
               --test_env=JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS \
@@ -276,7 +276,12 @@ jobs:
               --@rules_python//python/config_settings:py_freethreaded="yes" \
               --test_output=errors \
               --test_timeout=1800 \
-              --config=rbe_linux_x86_64 \
+              --config=rbe_linux_x86_64_clang_local \
               --test_tag_filters=-notsan \
               --run_under=//tests/config:oss_tsan_wrapper_sh \
+              --copt="-fsanitize=thread" \
+              --linkopt="-fsanitize=thread" \
+              --copt="-g" \
               //tests:cpu_tests
+
+
