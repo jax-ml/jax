@@ -17,6 +17,4 @@
 
 # Struct containing external dependency targets.
 # These targets can be used as dependencies in BUILD files.
-external = struct(
-%{STRUCT_FIELDS}
-)
+EXTERNAL_DEPS = %{EXTERNAL_DEPS}

@@ -16,8 +16,8 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@com_github_google_flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
-load("@external_deps//:external_deps.bzl", "external")
 load("@jax_wheel//:wheel.bzl", "WHEEL_VERSION")
+load("@rocm_external_test_deps//:external_deps.bzl", "EXTERNAL_DEPS")
 load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "WHEEL_VERSION_SUFFIX")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
@@ -202,11 +202,11 @@ def _gpu_test_deps():
         "//jax:config_build_jaxlib_false": if_cuda_is_configured([
             "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",
             "//jaxlib/tools:pypi_jax_cuda_pjrt_with_cuda_deps",
-        ]) + external.test_deps,
+        ]) + if_rocm_is_configured(EXTERNAL_DEPS),
         "//jax:config_build_jaxlib_wheel": if_cuda_is_configured([
             "//jaxlib/tools:jax_cuda_plugin_py_import",
             "//jaxlib/tools:jax_cuda_pjrt_py_import",
-        ]) + external.test_deps,
+        ]) + if_rocm_is_configured(EXTERNAL_DEPS),
     })
 
 def _get_jax_test_deps(deps):

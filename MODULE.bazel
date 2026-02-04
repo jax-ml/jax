@@ -226,9 +226,9 @@ test_shard_count_repository(
 
 external_deps_repository = use_repo_rule(
     "//third_party/external_deps:workspace.bzl",
-    "external_deps_repository",
+    "init_external_deps_repo",
 )
 
 external_deps_repository(
-    name = "external_deps",
+    name = "rocm_external_test_deps",
 )
