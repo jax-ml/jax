@@ -12,78 +12,49 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Repository rule to parse external test dependencies from environment variables.
+"""Repository rule to configure external test dependencies.
 
-This module provides a repository rule that reads a list of environment variables
-and generates a .bzl file containing a struct with dependency lists for each
-environment variable.
+This module provides a repository rule that accepts dependency lists directly
+and generates a .bzl file containing a struct with those dependencies.
 
-Each environment variable should contain a comma-separated list of targets, e.g.:
-    TEST_DEPS=@jax_rocm_plugin//:plugin.whl,@jax_rocm_plugin//:pjrt.whl
+Usage:
+    repo(
+        TEST_DEPS = ["@jax_rocm_plugin//:plugin.whl", "@jax_rocm_plugin//:pjrt.whl"],
+    )
 
-The generated struct uses lowercase environment variable names as keys, e.g.:
+The generated struct uses lowercase field names as keys, e.g.:
     external.test_deps  # list of deps from TEST_DEPS
 """
 
-# List of environment variables to parse for external dependencies.
-# Each variable should contain a comma-separated list of Bazel targets.
-# The generated struct will have fields named after the lowercase variable names.
-EXTERNAL_DEPS_ENV_VARS = [
+# List of declared external dependency names.
+# Each name corresponds to a keyword argument that can be passed to repo().
+# The generated struct will have fields named after the lowercase names.
+EXTERNAL_DEPS_NAMES = [
     "TEST_DEPS",
 ]
-
-def _parse_deps_from_env(repository_ctx, env_var_name):
-    """Parses a comma-separated list of deps from an environment variable.
-
-    Args:
-        repository_ctx: The repository context.
-        env_var_name: The name of the environment variable.
-
-    Returns:
-        A list of dependency targets.
-    """
-    deps_env = repository_ctx.getenv(env_var_name, "")
-    deps_list = []
-    if deps_env:
-        for dep in deps_env.split(","):
-            dep = dep.strip()
-            if dep:
-                deps_list.append(dep)
-    return deps_list
 
 def _external_deps_repository_impl(repository_ctx):
     """Implementation of the external_deps_repository rule.
 
-    Reads the specified environment variables and generates an external_deps.bzl
-    file containing a struct with dependency lists.
+    Generates an external_deps.bzl file containing a struct with dependency lists.
 
     Args:
         repository_ctx: The repository context.
     """
-    env_vars = repository_ctx.attr.env_vars
+    deps_dict = repository_ctx.attr.deps
 
     struct_fields = []
-    env_var_comments = []
-    for env_var_name in env_vars:
-        deps_list = _parse_deps_from_env(repository_ctx, env_var_name)
-        field_name = env_var_name.lower()
-
-        # Format the deps list
-        if deps_list:
-            deps_formatted = "\n".join(['        "{}",'.format(dep) for dep in deps_list])
-            field_content = "    {} = [\n{}\n    ],".format(field_name, deps_formatted)
-        else:
-            field_content = "    {} = [],".format(field_name)
-
-        struct_fields.append(field_content)
-        env_var_comments.append(env_var_name)
+    field_names = []
+    for field_name, deps_list in deps_dict.items():
+        struct_fields.append("    {} = {},".format(field_name, deps_list))
+        field_names.append(field_name)
 
     # Generate the external_deps.bzl file using the template
     repository_ctx.template(
         "external_deps.bzl",
         repository_ctx.attr._build_tpl,
         substitutions = {
-            "%{ENV_VARS}": ", ".join(env_var_comments),
+            "%{ENV_VARS}": ", ".join(field_names),
             "%{STRUCT_FIELDS}": "\n".join(struct_fields),
         },
     )
@@ -93,22 +64,43 @@ def _external_deps_repository_impl(repository_ctx):
 external_deps_repository = repository_rule(
     implementation = _external_deps_repository_impl,
     attrs = {
-        "env_vars": attr.string_list(
-            default = EXTERNAL_DEPS_ENV_VARS,
-            doc = "List of environment variable names containing comma-separated lists of targets.",
+        "deps": attr.string_list_dict(
+            default = {},
+            doc = "Dictionary mapping field names to lists of dependency targets.",
         ),
         "_build_tpl": attr.label(
             default = Label("//third_party/external_deps:BUILD.tpl"),
         ),
     },
-    doc = "Repository rule to parse external dependencies from environment variables.",
+    doc = "Repository rule to configure external dependencies.",
 )
 
-def repo(name = "external_deps", env_vars = EXTERNAL_DEPS_ENV_VARS):
+def repo(name = "external_deps", **kwargs):
     """Convenience function to create the external deps repository.
 
     Args:
         name: The name of the repository (default: "external_deps").
-        env_vars: List of environment variable names to parse (default: ["EXTERNAL_TEST_DEPS"]).
+        **kwargs: Keyword arguments mapping names from EXTERNAL_DEPS_NAMES
+                  (e.g., TEST_DEPS) to lists of dependency targets.
+                  Names are converted to lowercase for the generated struct fields.
+
+    Example:
+        repo(
+            TEST_DEPS = ["@some_repo//:target1", "@some_repo//:target2"],
+        )
+
+        # In your BUILD files, access via:
+        # load("@external_deps//:external_deps.bzl", "external")
+        # external.test_deps  -> ["@some_repo//:target1", "@some_repo//:target2"]
     """
-    external_deps_repository(name = name, env_vars = env_vars)
+    deps = {}
+
+    for dep_name in EXTERNAL_DEPS_NAMES:
+        field_name = dep_name.lower()
+        deps[field_name] = []
+
+    for key, value in kwargs.items():
+        field_name = key.lower()
+        deps[field_name] = value
+
+    external_deps_repository(name = name, deps = deps)

@@ -13,10 +13,9 @@
 # limitations under the License.
 
 # Auto-generated file. Do not edit.
-# Generated from environment variables: %{ENV_VARS}
+# Generated with fields: %{ENV_VARS}
 
-# Struct containing external test dependency targets.
-# Each field is named after the lowercase environment variable name.
+# Struct containing external dependency targets.
 # These targets can be used as dependencies in BUILD files.
 external = struct(
 %{STRUCT_FIELDS}
