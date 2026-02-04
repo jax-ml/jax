@@ -52,6 +52,7 @@ from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_piv
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_cusolver_getrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_svd_cusolver_gesvd
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_tridiagonal_cusolver_sytrd
+from jax._src.internal_test_util.export_back_compat_test_data import rocm_tridiagonal_hipsolver_sytrd
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_tridiagonal_solve
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Eigh
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Lu
@@ -137,6 +138,7 @@ class CompatTest(bctu.CompatTestBase):
         cuda_svd_cusolver_gesvd.data_2024_10_08,
         cpu_tridiagonal_solve_lapack_gtsv.data_2025_01_09,
         cuda_tridiagonal_cusolver_sytrd.data_2025_01_09,
+        rocm_tridiagonal_hipsolver_sytrd.data_2026_02_04,
         cuda_tridiagonal_solve.data_2025_06_16,
         rocm_eigh_hipsolver_syev.data_2024_08_05,
         tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17,
@@ -741,9 +743,17 @@ class CompatTest(bctu.CompatTestBase):
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
 
-    data = self.load_testdata(
-        cuda_tridiagonal_cusolver_sytrd.data_2025_01_09[dtype_name]
-    )
+    platform_data = None
+    if jtu.test_device_matches(["cuda"]):
+      platform_data = \
+          cuda_tridiagonal_cusolver_sytrd.data_2025_01_09[dtype_name]
+    elif jtu.test_device_matches(["rocm"]):
+      platform_data = \
+          rocm_tridiagonal_hipsolver_sytrd.data_2026_02_04[dtype_name]
+    else:
+      self.skipTest("Unsupported platform")
+
+    data = self.load_testdata(platform_data)
     self.run_one_test(func, data, rtol=rtol, atol=atol)
 
   @parameterized.named_parameters(
