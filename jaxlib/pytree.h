@@ -35,7 +35,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string.h"
-#include <nanobind/stl/bind_map.h>
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pytree.pb.h"
 
@@ -112,10 +111,6 @@ class PyTreeRegistry {
                          std::vector<nanobind::str> meta_fields);
   // Registration for flax objects.
   void RegisterObject(nanobind::object type, nanobind::str mapping_attr, bool has_int_keys);
-  // Registration for objects using python dict.
-  void RegisterPyObjectDict(nanobind::object type, nanobind::str mapping_attr, bool has_int_keys);
-  // Registration for objects using python dict with slow meta storage.
-  void RegisterPyObjectSlow(nanobind::object type, nanobind::str mapping_attr, bool has_int_keys);
 
   // Finds the custom type registration for `type`. Returns nullptr if none
   // exists.
