@@ -50,12 +50,8 @@ enum class PyTreeKind {
   kDict,        // A dict
   kCustom,      // A custom type.
   kDataclass,   // A dataclass.
-  kObject,      // An object with attributes specified in a dict
-  kPyObjectDict, // An object with attributes specified in a python dict
-  kPyObjectSlow, // An object with python dict mapping, storing meta in node_data
+  kObject, // An object with attributes specified in a python dict
 };
-
-using StringSet = std::map<std::string, bool>;
 
 // Registry of custom node types.
 class PyTreeRegistry {
