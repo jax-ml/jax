@@ -58,18 +58,3 @@ external_deps_repository = repository_rule(
     },
     doc = "Repository rule to configure external test dependencies.",
 )
-
-def init_external_deps_repo(name, deps = []):
-    """Convenience function to create the external deps repository.
-
-    Args:
-        name: The name of the repository (default: "rocm_external_test_deps").
-        deps: List of dependency targets to include as EXTERNAL_DEPS.
-
-    Example:
-        init_external_deps_repo(deps = ["@some_repo//:target1", "@some_repo//:target2"])
-
-        # In your BUILD files, access via:
-        # load("@rocm_external_test_deps//:external_deps.bzl", "EXTERNAL_DEPS")
-    """
-    external_deps_repository(name = name, deps = deps)
