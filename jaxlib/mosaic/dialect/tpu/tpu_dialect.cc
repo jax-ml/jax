@@ -406,6 +406,13 @@ SmallVector<int64_t> TiledLayoutAttr::getDefaultTileStrides(
   return strides;
 }
 
+TiledLayoutAttr TiledLayoutAttr::getContiguous(MLIRContext* context,
+                                               ArrayRef<xla::Tile> tiles,
+                                               ArrayRef<int64_t> shape) {
+  return TiledLayoutAttr::get(
+      context, tiles, TiledLayoutAttr::getDefaultTileStrides(tiles, shape));
+}
+
 bool TiledLayoutAttr::tilesAreKnownContiguous(
     const ArrayRef<int64_t> shape) const {
   const ArrayRef<xla::Tile> tiles = getTiles();

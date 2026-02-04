@@ -146,6 +146,7 @@ def TPU_TiledLayoutAttr
   );
   let extraClassDeclaration = [{
     static ::llvm::SmallVector<int64_t> getDefaultTileStrides(::llvm::ArrayRef<::xla::Tile> tiles, ::llvm::ArrayRef<int64_t> shape);
+    static TiledLayoutAttr getContiguous(::mlir::MLIRContext* context, ::llvm::ArrayRef<::xla::Tile> tiles, ::llvm::ArrayRef<int64_t> shape);
     bool tilesAreKnownContiguous(::llvm::ArrayRef<int64_t> shape) const;
 
     int64_t getRank() const {
