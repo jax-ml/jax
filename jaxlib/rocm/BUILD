@@ -550,5 +550,5 @@ py_library(
     deps = if_rocm_is_configured([
         ":rocm_gpu_support",
         ":rocm_plugin_extension",
-    ] + external.test_deps),
+    ] + external.external_test_deps),
 )
