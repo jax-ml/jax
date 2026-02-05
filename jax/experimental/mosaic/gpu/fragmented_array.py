@@ -2522,14 +2522,14 @@ class FragmentedArray:
             op = arith.addi
             splat_op = lambda x: arith.muli(x, c(reduced_elems, x.type))
             if utils.bitwidth(self.mlir_dtype) == 32:
-              redux_op = functools.partial(utils.redux, kind=nvvm.ReduxKind.ADD)
+              redux_op = functools.partial(utils.redux, kind=nvvm.ReductionKind.ADD)
           else:
             raise NotImplementedError(self.mlir_dtype)
         case "max":
           if isinstance(self.mlir_dtype, ir.F32Type):
             op = self._lift_fast_instr("max.NaN.f32")
             if utils.get_arch().major == 10:
-              redux_op = functools.partial(utils.redux, kind=nvvm.ReduxKind.FMAX)
+              redux_op = functools.partial(utils.redux, kind=nvvm.ReductionKind.FMAX)
           elif isinstance(self.mlir_dtype, ir.F16Type):
             op = self._lift_fast_packed_instr("max.NaN.f16x2", "max.NaN.f16")
           elif isinstance(self.mlir_dtype, ir.BF16Type):
@@ -2539,7 +2539,7 @@ class FragmentedArray:
           elif isinstance(self.mlir_dtype, ir.IntegerType):
             op = arith.maxsi if self.is_signed else arith.maxui
             if utils.bitwidth(self.mlir_dtype) == 32:
-              kind = nvvm.ReduxKind.MAX if self.is_signed else nvvm.ReduxKind.UMAX
+              kind = nvvm.ReductionKind.MAX if self.is_signed else nvvm.ReductionKind.UMAX
               redux_op = functools.partial(utils.redux, kind=kind)
           else:
             raise NotImplementedError(self.mlir_dtype)
@@ -2548,7 +2548,7 @@ class FragmentedArray:
           if isinstance(self.mlir_dtype, ir.F32Type):
             op = self._lift_fast_instr("min.NaN.f32")
             if utils.get_arch().major == 10:
-              redux_op = functools.partial(utils.redux, kind=nvvm.ReduxKind.FMIN)
+              redux_op = functools.partial(utils.redux, kind=nvvm.ReductionKind.FMIN)
           elif isinstance(self.mlir_dtype, ir.F16Type):
             op = self._lift_fast_packed_instr("min.NaN.f16x2", "min.NaN.f16")
           elif isinstance(self.mlir_dtype, ir.BF16Type):
