@@ -48,6 +48,7 @@ from jax._src.internal_test_util.export_back_compat_test_data import cpu_hessenb
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_tridiagonal_lapack_sytrd_hetrd
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_tridiagonal_solve_lapack_gtsv
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_threefry2x32
+from jax._src.internal_test_util.export_back_compat_test_data import rocm_threefry2x32
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_pivots_to_permutation
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_cusolver_getrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_svd_cusolver_gesvd
@@ -130,6 +131,7 @@ class CompatTest(bctu.CompatTestBase):
         *cpu_ffi_testdatas,
         cuda_cholesky_solver_potrf.data_2025_10_15,
         cuda_threefry2x32.data_2024_07_30,
+        rocm_threefry2x32.data_2026_02_05,
         cuda_lu_pivots_to_permutation.data_2025_04_01,
         cuda_lu_cusolver_getrf.data_2024_08_19,
         cuda_qr_cusolver_geqrf.data_2024_09_26,
@@ -780,6 +782,13 @@ class CompatTest(bctu.CompatTestBase):
         return jax.random.uniform(x, (2, 4), dtype=np.float32)
 
       data = self.load_testdata(cuda_threefry2x32.data_2024_07_30)
+      self.run_one_test(func, data)
+
+  def test_rocm_threefry2x32(self):
+    with config.threefry_partitionable(False):
+      def func(x):
+        return jax.random.uniform(x, (2, 4), dtype=np.float32)
+      data = self.load_testdata(rocm_threefry2x32.data_2026_02_05)
       self.run_one_test(func, data)
 
   def test_tpu_sharding(self):
