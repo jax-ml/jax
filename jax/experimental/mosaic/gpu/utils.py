@@ -1764,7 +1764,15 @@ def shfl_bfly(x: ir.Value, distance: int | ir.Value):
   return bitcast(y, result_type)
 
 
-def redux(x: ir.Value, mask: ir.Value, kind: nvvm.ReductionKind):
+# TODO(bchetioui): Clean this up once minimum jaxlib version is at least 0.9.1.
+if hasattr(nvvm, "ReductionKind"):
+  ReductionKind = nvvm.ReductionKind
+else:
+  assert hasattr(nvvm, "ReduxKind")
+  ReductionKind = nvvm.ReduxKind
+
+
+def redux(x: ir.Value, mask: ir.Value, kind: ReductionKind):  # type: ignore
   i32 = ir.IntegerType.get_signless(32)
   if isinstance(vec_ty := x.type, ir.VectorType):
     if bitwidth(vec_ty.element_type) != 32:
@@ -1787,7 +1795,7 @@ def redux(x: ir.Value, mask: ir.Value, kind: nvvm.ReductionKind):
     raise NotImplementedError(x.type)
   assert mask.type == i32
   extra_kwargs = {}
-  if kind == nvvm.ReductionKind.FMAX or kind == nvvm.ReductionKind.FMIN:
+  if kind == ReductionKind.FMAX or kind == ReductionKind.FMIN:
     extra_kwargs = dict(nan=True)
   return nvvm.redux_sync(x.type, x, kind, mask, **extra_kwargs)
 
