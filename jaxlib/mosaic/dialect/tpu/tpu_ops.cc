@@ -774,7 +774,12 @@ LogicalResult verifyLoadOp(Op op) {
 
 LogicalResult VectorLoadOp::verify() {
   const MemRefType ref_ty = getBase().getType();
-  if (llvm::size(getIndices()) != ref_ty.getRank()) {
+  const VectorType vector_ty = getType();
+  const int64_t rank = ref_ty.getRank();
+  if (vector_ty.getRank() != rank) {
+    return emitOpError("Expected vector rank to match memref rank.");
+  }
+  if (llvm::size(getIndices()) != rank) {
     return emitOpError("Expected ") << ref_ty.getRank() << " indices.";
   }
   if (!getStrides().empty()) {
