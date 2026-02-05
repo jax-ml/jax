@@ -909,12 +909,6 @@ absl::Status MosaicGpuInitialize(
                                collective_metadata_ptr, std::move(parameters)));
 
   absl::MutexLock lock(resources->collective_metadata_resources->mutex);
-  if (resources->collective_metadata_resources->cpu_metadata_buffers.contains(
-          collective_params->global_device_id.value())) {
-    return absl::InternalError(absl::StrFormat(
-        "Collective metadata buffer already exists for device: %lld",
-        current_rank.value()));
-  }
   resources->collective_metadata_resources->cpu_metadata_buffers[
       collective_params->global_device_id.value()] =
       std::move(cpu_metadata_buffer);
