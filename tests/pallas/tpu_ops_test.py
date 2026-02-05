@@ -897,6 +897,29 @@ class OpsTest(ptu.PallasTPUTest):
     expected = jnp.tile(x, reps)
     np.testing.assert_array_equal(output, expected)
 
+  @parameterized.parameters(
+      jnp.float32,
+      jnp.bfloat16,
+  )
+  def test_sigmoid(self, dtype):
+    if dtype == jnp.bfloat16 and not jtu.is_cloud_tpu_at_least(2026, 2, 9):
+      self.skipTest("Test requires a newer libTPU.")
+
+    shape = (32, 128)
+    x = jax.random.normal(jax.random.key(42), shape, dtype=dtype)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jax.nn.sigmoid(x_ref[...])
+
+    self.assertAllClose(
+        kernel(x),
+        jax.nn.sigmoid(x),
+    )
+
 
 if __name__ == "__main__":
   absltest.main()

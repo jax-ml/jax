@@ -2823,6 +2823,7 @@ def _exp2_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
   return math.exp2(x)
 
 
+# TODO(b/411034003): use sigshift instead of exp for better numerics.
 @register_lowering_rule(lax.logistic_p)
 def _logistic_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
   if accuracy is not None:
@@ -2836,7 +2837,9 @@ def _logistic_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
   if not aval_out.shape:
     one = ir_constant(1.0, mlir_type=out_type)
   else:
-    one = vector.broadcast(out_type, ir_constant(1.0))
+    one = vector.broadcast(
+        out_type, ir_constant(1.0, _dtype_to_ir_type(aval_out.dtype))
+    )
   denom = arith.addf(one, exp_neg_x)
   return arith.divf(one, denom)
 
