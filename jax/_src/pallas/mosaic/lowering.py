@@ -1143,6 +1143,11 @@ def jaxpr_subcomp(
   def read_block_shape(atom: jax_core.Atom):
     if isinstance(atom, jax_core.Literal):
       return None
+    # Not all refs may have block shapes (e.g. those introduced with
+    # `jax.empty_ref`), but lowering expects them to exist---so we just return
+    # the shape of the ref in this case.
+    if atom not in block_shape_env and isinstance(atom.aval, state.AbstractRef):
+      return atom.aval.shape
     return block_shape_env.get(atom, None)
 
   def read_env(atom: jax_core.Atom):
@@ -3668,6 +3673,13 @@ def _run_scoped_lowering_rule(
     out = jaxpr_subcomp(ctx, jaxpr, *consts, *args)
     tpu.yield_(out)
   return region.results
+
+
+@register_lowering_rule(jax_core.empty_ref_p)
+def _empty_ref_lowering_rule(ctx: LoweringRuleContext, ty, memory_space):
+  del ty, memory_space
+  [aval_out] = ctx.avals_out
+  return _alloc_value(aval_out, ctx=ctx)  # pytype: disable=wrong-arg-types
 
 
 def _device_id_to_logical(

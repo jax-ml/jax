@@ -924,6 +924,21 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     )()
     np.testing.assert_allclose(o, 4 * np.ones_like(o))
 
+  def test_empty_ref_allocation(self):
+    def kernel(y_ref):
+      x_ref = jax.empty_ref(
+          jax.ShapeDtypeStruct(y_ref.shape, y_ref.dtype),
+          memory_space=pltpu.VMEM
+      )
+      x_ref[...] = jnp.ones_like(x_ref)
+      y_ref[...] = 4 * x_ref[...]
+
+    o = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )()
+    np.testing.assert_allclose(o, 4 * np.ones_like(o))
+
   def test_run_scoped_can_return_scalar_value(self):
     def kernel(y_ref):
       def body(x_ref):
