@@ -64,7 +64,7 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_equal(kernel(), np.array([42], dtype=jnp.int32))
     self.assertFalse(mosaic_interpret.get_races().races_found)
 
-  @jtu.parameterized.parameters(1, 2, 4, 8, 16)
+  @jtu.parameterized.parameters(range(1, 17))
   def test_interpret_core_map(self, num_threads: int):
     @pl.run_state
     def kernel(o_ref):
@@ -98,7 +98,7 @@ class InterpretTest(jtu.JaxTestCase):
     kernel(jnp.zeros((), jnp.int32))
     self.assertTrue(mosaic_interpret.get_races().races_found)
 
-  @jtu.parameterized.parameters(1, 2, 4, 8, 16)
+  @jtu.parameterized.parameters(range(1, 17))
   def test_interpret_kernel(self, num_threads):
     @functools.partial(
         plgpu.kernel,
@@ -287,7 +287,7 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(y, x + 2)
     self.assertFalse(mosaic_interpret.get_races().races_found)
 
-  @jtu.parameterized.parameters(2, 3, 4, 5, 6, 7, 8, 9)
+  @jtu.parameterized.parameters(range(2, 17))
   def test_single_barrier_with_multiple_arrival(self, num_threads):
 
     @functools.partial(
@@ -320,7 +320,7 @@ class InterpretTest(jtu.JaxTestCase):
     self.assertEqual(y, sum(range(num_threads)))
     self.assertFalse(mosaic_interpret.get_races().races_found)
 
-  @jtu.parameterized.parameters(2, 3, 4, 5, 6, 7, 8, 9, 10)
+  @jtu.parameterized.parameters(range(2, 17))
   def test_multiple_barriers_with_single_arrival(self, num_threads):
     @functools.partial(
         plgpu.kernel,
@@ -553,9 +553,9 @@ class InterpretTest(jtu.JaxTestCase):
     mosaic_interpret.reset_gpu_interpret_mode_state()
 
   @jtu.parameterized.product(
-      num_arriving_threads=[1, 2, 3, 4],
-      num_observing_threads=[1, 2, 3, 4],
-      num_threads=[4],
+      num_arriving_threads=list(range(1, 17)),
+      num_observing_threads=list(range(1, 17)),
+      num_threads=[16],
   )
   def test_barrier_wait_in_multiple_threads_ok(
       self, num_arriving_threads, num_observing_threads, num_threads
