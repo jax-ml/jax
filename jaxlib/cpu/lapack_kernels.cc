@@ -452,26 +452,6 @@ static ffi::Error SvdKernel(
                               work_data.get(), &workspace_dim_v,
                               iwork_data.get(), info_data);
     }
-  };
-
-  std::vector<xla::Future<>> futures;
-  futures.reserve(batch_count);
-  for (int64_t i = 0; i < batch_count; ++i) {
-    if (!should_parallelize) {
-      thread_work(x_out_data, singular_values_data, u_data, vt_data, info_data);
-    } else {
-      auto [promise, future] = xla::MakePromise();
-      futures.push_back(std::move(future));
-      // We copy the thread_work parameters here because they get updated in the
-      // loop.
-      thread_pool.Schedule([&, promise = std::move(promise), x_out_data,
-                            singular_values_data, u_data, vt_data,
-                            info_data]() mutable {
-        thread_work(x_out_data, singular_values_data, u_data, vt_data,
-                    info_data);
-        promise.Set();
-      });
-    }
 
     // Suppress MSAN warnings when using a copy of LAPACK uninstrumented by
     // MSAN.
@@ -499,6 +479,26 @@ static ffi::Error SvdKernel(
           u_data, u_leading_dim_v * std::min(x_rows_v, x_cols_v) * sizeof(T));
       ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
           vt_data, vt_leading_dim_v * x_cols_v * sizeof(T));
+    }
+  };
+
+  std::vector<xla::Future<>> futures;
+  futures.reserve(batch_count);
+  for (int64_t i = 0; i < batch_count; ++i) {
+    if (!should_parallelize) {
+      thread_work(x_out_data, singular_values_data, u_data, vt_data, info_data);
+    } else {
+      auto [promise, future] = xla::MakePromise();
+      futures.push_back(std::move(future));
+      // We copy the thread_work parameters here because they get updated in the
+      // loop.
+      thread_pool.Schedule([&, promise = std::move(promise), x_out_data,
+                            singular_values_data, u_data, vt_data,
+                            info_data]() mutable {
+        thread_work(x_out_data, singular_values_data, u_data, vt_data,
+                    info_data);
+        promise.Set();
+      });
     }
 
     x_out_data += x_out_step;
