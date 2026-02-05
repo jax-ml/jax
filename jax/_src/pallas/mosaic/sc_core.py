@@ -241,7 +241,6 @@ def _scalar_subcore_mesh_discharge_rule(
       name=name,
       memory_space=tpu_core.MemorySpace.HBM,
       metadata=metadata,
-      scratch_shapes=tree_util.tree_leaves(gather_global_allocations(jaxpr)),
   )
 
 
@@ -337,7 +336,6 @@ def _vector_subcore_mesh_discharge_rule(
       name=name,
       memory_space=tpu_core.MemorySpace.HBM,
       metadata=metadata,
-      scratch_shapes=tree_util.tree_leaves(gather_global_allocations(jaxpr)),
   )
 
 
