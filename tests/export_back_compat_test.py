@@ -51,6 +51,7 @@ from jax._src.internal_test_util.export_back_compat_test_data import cpu_tridiag
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_threefry2x32
 from jax._src.internal_test_util.export_back_compat_test_data import rocm_threefry2x32
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_pivots_to_permutation
+from jax._src.internal_test_util.export_back_compat_test_data import rocm_lu_pivots_to_permutation
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_cusolver_getrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_svd_cusolver_gesvd
 from jax._src.internal_test_util.export_back_compat_test_data import rocm_svd_hipsolver_gesvd
@@ -136,6 +137,7 @@ class CompatTest(bctu.CompatTestBase):
         cuda_threefry2x32.data_2024_07_30,
         rocm_threefry2x32.data_2026_02_05,
         cuda_lu_pivots_to_permutation.data_2025_04_01,
+        rocm_lu_pivots_to_permutation.data_2026_02_04,
         cuda_lu_cusolver_getrf.data_2024_08_19,
         cuda_qr_cusolver_geqrf.data_2024_09_26,
         rocm_qr_hipsolver_geqrf.data_2026_02_04,
@@ -387,6 +389,12 @@ class CompatTest(bctu.CompatTestBase):
     shape = (2, 3, 4)
     func = lambda: CompatTest.lu_pivots_to_permutation_harness(shape)
     data = self.load_testdata(cuda_lu_pivots_to_permutation.data_2025_04_01)
+    self.run_one_test(func, data)
+
+  def test_rocm_lu_pivots_to_permutation(self):
+    shape = (2, 3, 4)
+    func = lambda: CompatTest.lu_pivots_to_permutation_harness(shape)
+    data = self.load_testdata(rocm_lu_pivots_to_permutation.data_2026_02_04)
     self.run_one_test(func, data)
 
   @parameterized.named_parameters(
