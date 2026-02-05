@@ -287,7 +287,7 @@ def TPU_StoreOp : TPU_Op<"store", [DefaultMemWrite, AttrSizedOperandSegments]> {
     Variadic<Index>:$indices,
     DenseBoolArrayAttr:$sublane_mask,
     Optional<AnyType>:$mask,
-    OptionalAttr<I32Attr>:$sublane_stride  // In sublane-sized units
+    DefaultValuedAttr<I32Attr, "1">:$sublane_stride  // In sublane-sized units
   );
   let results = (outs);
   let assemblyFormat = [{
@@ -300,7 +300,7 @@ def TPU_LoadOp : TPU_Op<"load", [DefaultMemRead]> {
     AnyType:$base,
     Variadic<Index>:$indices,
     DenseBoolArrayAttr:$sublane_mask,
-    OptionalAttr<I32Attr>:$sublane_stride  // In sublane-sized units
+    DefaultValuedAttr<I32Attr, "1">:$sublane_stride  // In sublane-sized units
   );
   let results = (outs TPU_Vreg:$result);
   let assemblyFormat = [{

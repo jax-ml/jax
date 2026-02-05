@@ -1677,8 +1677,7 @@ LogicalResult ShuffledLoadOp::canonicalize(ShuffledLoadOp op,
   }
   if (can_convert_to_simple_load) {
     rewriter.replaceOpWithNewOp<tpu::LoadOp>(
-        op, op.getType(), op.getBase(), op.getIndices(), op.getSublaneMask(),
-        /*sublane_stride=*/nullptr);
+        op, op.getType(), op.getBase(), op.getIndices(), op.getSublaneMask());
   }
   return success();
 }
@@ -1719,8 +1718,7 @@ LogicalResult ShuffledStoreOp::canonicalize(ShuffledStoreOp op,
     rewriter.replaceOpWithNewOp<tpu::StoreOp>(op, op.getValueToStore(),
                                               op.getBase(), op.getIndices(),
                                               op.getSublaneMask(),
-                                              /*mask=*/nullptr,
-                                              /*sublane_stride=*/nullptr);
+                                              /*mask=*/nullptr);
   }
   return success();
 }
