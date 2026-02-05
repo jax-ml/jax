@@ -2322,12 +2322,12 @@ def _convert_element_type_lowering_rule(
     elif old_bitwidth > new_bitwidth:
       return arith.truncf(out_type, x)
   elif _from(integer) and _to(integer):
-    if old_bitwidth < new_bitwidth and new_bitwidth == 32:
+    if old_bitwidth < new_bitwidth:
       if _from(unsigned):
         return arith.extui(out_type, x)
       if _from(signed):
         return arith.extsi(out_type, x)
-    elif old_bitwidth > new_bitwidth and old_bitwidth == 32:
+    elif old_bitwidth > new_bitwidth:
       return arith.trunci(out_type, x)
     elif jnp.iinfo(old_dtype).bits == jnp.iinfo(new_dtype).bits:
       # This case triggers when casting signed to unsigned or vice versa.
@@ -2336,7 +2336,8 @@ def _convert_element_type_lowering_rule(
     return arith.fptosi(out_type, x)
   elif _from(signed) and _to(floating):
     return arith.sitofp(out_type, x)
-  elif old_dtype == jnp.bool_ and _to(integer) and new_bitwidth == 32:
+  elif old_dtype == jnp.bool_ and _to(integer):
+    # bool is either 0 or 1 in integer representation hence unsigned.
     return arith.extui(out_type, x)
   return lower_fun(functools.partial(_convert_helper, to_dtype=new_dtype),
                    multiple_results=False)(ctx, x)
