@@ -62,7 +62,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
-from jax._src.sharding import Sharding as JSharding
+from jax._src.sharding import Sharding as JSharding, IndivisibleError
 from jax._src.mesh import (AbstractMesh, Mesh, get_abstract_mesh,
                            get_concrete_mesh)
 from jax._src.sharding_impls import (
@@ -2688,6 +2688,8 @@ def _get_out_sharding_from_orig_sharding(
       else:
         try:
           out.append(orig_handler(o, out_aval, orig_in_s))
+        except IndivisibleError:
+          raise
         except:
           out.append(o)
     else:

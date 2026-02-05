@@ -887,19 +887,7 @@ def pjit_check_aval_sharding(
           f'annotation {s}: {e}')
 
     if not allow_uneven_sharding:
-      hlo_sharding = s._to_xla_hlo_sharding(len(shape))
-      assert hlo_sharding is not None
-      num_ways_dim_sharded, _ = op_shardings.get_num_ways_dim_sharded(
-          hlo_sharding, allow_partial_manual)
-      for i, size in enumerate(num_ways_dim_sharded):
-        if shape[i] % size != 0:
-          raise ValueError(
-              f'One of {what_aval}{name_str} was given the sharding '
-              f'of {s}, which implies that '
-              f'the global size of its dimension {i} should be '
-              f'divisible by {size}, but it is equal to {shape[i]} '
-              f'(full shape: {shape})')
-
+      s.shard_shape(aval.shape)  # will check for divisibility
 
 def check_aval_layout_compatibility(
     layouts, flat_avals, names: Sequence[str], what_aval: str):

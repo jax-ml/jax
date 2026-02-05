@@ -48,7 +48,8 @@ from jax._src.shard_map import shard_map
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax.experimental import primal_tangent_dtype
 from jax._src import array
-from jax._src.sharding import Sharding, common_devices_indices_map
+from jax._src.sharding import (Sharding, common_devices_indices_map,
+                               IndivisibleError)
 from jax._src import op_shardings
 from jax._src import sharding_impls
 from jax._src.sharding_impls import (
@@ -3191,32 +3192,28 @@ class ArrayPjitTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P('x'))
 
     x = jnp.ones((1,))
-    with self.assertRaisesRegex(
-        ValueError, 'implies that the global size of its dimension 0 should be '
-                    'divisible by 2, but it is equal to 1 '):
+    with self.assertRaises(IndivisibleError):
       jax.device_put(x, s)
 
     y = jnp.ones((2,))
-    with self.assertRaisesRegex(
-        ValueError, 'implies that the global size of its dimension 0 should be '
-                    'divisible by 2, but it is equal to 1 '):
+    with self.assertRaises(IndivisibleError):
       jax.device_put((y, x), s)
 
     if config.pmap_shmap_merge.value:
-      expected_regex = re.compile(
-          r"One of device_put args was given the sharding of .*"
-      )
+      expected_regex = re.compile(r".*should evenly divide the shape.*")
+      with self.assertRaises(IndivisibleError):
+        s2 = jax.pmap(lambda x: x,
+                      devices=list(mesh.devices.flat))(jnp.arange(2)).sharding
+        jax.device_put(x, s2)
     else:
       expected_regex = (
           "The sharded dimension must be equal to the number of "
           "devices passed to PmapSharding. Got sharded dimension 0 with value 1 "
           r"in shape \(1,\) and the number of devices=2")
-
-    with self.assertRaisesRegex(
-        ValueError, expected_regex):
-      s2 = jax.pmap(lambda x: x,
-                    devices=list(mesh.devices.flat))(jnp.arange(2)).sharding
-      jax.device_put(x, s2)
+      with self.assertRaisesRegex(ValueError, expected_regex):
+        s2 = jax.pmap(lambda x: x,
+                      devices=list(mesh.devices.flat))(jnp.arange(2)).sharding
+        jax.device_put(x, s2)
 
     jax.device_put(2., NamedSharding(mesh, P()))  # doesn't crash
 
@@ -4971,6 +4968,17 @@ class ArrayPjitTest(jtu.JaxTestCase):
         "only valid for values of rank at least 3, but was applied to a value "
         "of rank 2"):
       jax.ShapeDtypeStruct((128, 128), jnp.float32, sharding=P(None, 'x', None))
+
+  def test_indivisible_sharding_xla(self):
+    mesh = jtu.create_mesh((4,), 'x')
+    arr = jax.device_put(np.arange(8), NamedSharding(mesh, P('x')))
+
+    @jax.jit
+    def f(x):
+      return x[:2]
+
+    with self.assertRaises(IndivisibleError):
+      f(arr)
 
 
 class ShardingInTypesTest(jtu.JaxTestCase):
@@ -10183,12 +10191,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     x = jnp.ones((3, 2))
     spec = P(resources, None)
     mesh_size = str(math.prod([dim[1] for dim in mesh]))
-    error = re.compile(
-        r"One of pjit arguments with pytree key path x.*" + spec_regex(spec) + r".*"
-        r"implies that the global size of its dimension 0 should be "
-        r"divisible by " + mesh_size + r", but it is equal to 3 "
-        r"\(full shape: \(3, 2\)\)", re.M | re.S)
-    with self.assertRaisesRegex(ValueError, error):
+    with self.assertRaises(IndivisibleError):
       pjit(lambda x: x, in_shardings=spec, out_shardings=None)(x)
 
   @unittest.skip("regressed")  # TODO(mattjj): fix test

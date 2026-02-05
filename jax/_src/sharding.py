@@ -29,6 +29,8 @@ Device = xc.Device
 Index = tuple[slice, ...]
 XLADeviceAssignment = Sequence[Device]
 
+class IndivisibleError(Exception):
+  pass
 
 @cache(max_size=4096, trace_context_in_key=False)
 def _addressable_devices_indices_map(
@@ -65,13 +67,9 @@ def _common_shard_shape(self, global_shape: Shape) -> Shape:
   assert len(partitions) == len(global_shape), (len(partitions), len(global_shape))
   out = []
   for dim, (s, p) in enumerate(safe_zip(global_shape, partitions)):
-    try:
-      quotient, remainder = divmod(s, p)
-    except TypeError:
-      # TODO Figure out how to partition dynamic shapes
-      raise NotImplementedError
+    quotient, remainder = divmod(s, p)
     if remainder != 0:
-      raise ValueError(
+      raise IndivisibleError(
           f"Sharding {self} implies that array axis {dim} is partitioned "
           f"{p} times, but the dimension size is {s} "
           f"(full shape: {global_shape}, "
