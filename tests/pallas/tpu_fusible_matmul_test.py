@@ -135,14 +135,14 @@ def _fusible_matmul(
       x_fn,
       x_block_spec,
       scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(0),
-      grid=grid,
+      grid_len=len(grid),
   )(x_values)
 
   y_fn, (y_value_block_specs,), _ = fuser.pull_block_spec(
       y_fn,
       y_block_spec,
       scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(1),
-      grid=grid,
+      grid_len=len(grid),
   )(y_values)
 
   z_out_block_spec = fuser.push_block_spec(z, z_block_spec)(z_type)
@@ -150,7 +150,7 @@ def _fusible_matmul(
       z_fn,
       z_out_block_spec,
       scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(2),
-      grid=grid,
+      grid_len=len(grid),
   )(z_values, z_type)
 
   # TODO(sharadmv): This is a hack. We should be able to pass in the scalar
