@@ -64,6 +64,9 @@ COLLECTIVE_ATTR = "mosaic_gpu.collective_metadata_used"
 KERNEL_ARG_ID_ATTR = "mosaic_gpu.from_kernel_arg_idx"
 # Attribute used to mark the first creation of the GMEM kernel arguments.
 ORIGINAL_KERNEL_ARG_ATTR = "mosaic_gpu.original_kernel_arg"
+# Attribute used to identify an operation used to load the current device id.
+# Needed for _recompute_peer_device_id in TMA descriptor construction.
+DEVICE_ID_ATTR = "mosaic_gpu.device_id_load"
 
 
 def uses_collective_metadata(module):
@@ -543,7 +546,8 @@ class LaunchContext:
   scratch: Scratch
   cluster_size: tuple[int, int, int]
   profiler: OnDeviceProfiler | None = None
-  collective_metadata: ir.Value | None = None
+  device_collective_metadata: ir.Value | None = None
+  host_collective_metadata: ir.Value | None = None
   num_peers: int = 0
   tma_descriptors: dict[
       tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...], Any, int],
@@ -637,8 +641,11 @@ class LaunchContext:
     self.scratch.next_offset += size
     def host_init_wrapped(host_ptr):
       host_init(
-          llvm.getelementptr(ptr_ty, host_ptr, [], [alloc_base], i8, llvm.GEPNoWrapFlags.none)
+          llvm.getelementptr(
+              ptr_ty, host_ptr, [], [alloc_base], i8, llvm.GEPNoWrapFlags.none
+          ),
       )
+
     self.scratch.host_init.append(host_init_wrapped)
     # with ir.InsertionPoint(self.gmem_scratch_ptr.owner):
     # There is no way to create an insertion point after an operation...
@@ -647,6 +654,44 @@ class LaunchContext:
     )
     gep.move_after(self.scratch.device_ptr().owner)
     return device_init(gep.result)
+
+  def _recompute_peer_id(
+      self,
+      peer_id: ir.Value,
+      fuel=8,
+  ) -> ir.Value:
+    if fuel == 0:
+      raise ReplicationError(
+          "gmem_peer_id computation is too complicated to recompute on the host"
+      )
+    if isinstance(peer_id, ir.BlockArgument):
+      raise ReplicationError("Can't recompute a value that's a block argument")
+    op = peer_id.owner
+
+    # We accept all arith ops
+    if op.OPERATION_NAME.startswith("arith."):
+      if DEVICE_ID_ATTR in op.attributes:
+        return self.device_id(on_host=True)
+      new_operands = [
+          self._recompute_peer_id(x, fuel - 1)
+          for x in op.operands
+      ]
+      result_types = [r.type for r in op.results]
+      new_attributes = {na: op.attributes[na] for na in op.attributes}
+      new_op = ir.Operation.create(
+          op.OPERATION_NAME, result_types, new_operands, new_attributes
+      )
+      return new_op.results if len(new_op.results) > 1 else new_op.result
+
+    # nvshmem_my_pe queries the device id of the current process and works on
+    # both the host and the device.
+    if isinstance(op, llvm.CallOp) and op.callee.value == "nvshmem_my_pe":
+      i32 = ir.IntegerType.get_signless(32)
+      return llvm.call(i32, [], [], [], callee="nvshmem_my_pe")
+
+    raise ReplicationError(
+        f"Unrecognized op can't be recomputed on the host: {op}"
+    )
 
   def _get_tma_desc(
       self,
@@ -667,7 +712,7 @@ class LaunchContext:
       i32 = ir.IntegerType.get_signless(32)
       i64 = ir.IntegerType.get_signless(64)
       ptr_ty = ir.Type.parse("!llvm.ptr")
-      def init_tma_desc(host_ptr):
+      def init_tma_desc(host_ptr: ir.Value):
         ref = gmem_ref
         for t in gmem_transform:
           ref = t.apply(ref)
@@ -690,38 +735,46 @@ class LaunchContext:
             ptr_ty, alloc_ptr, [as_i64(offset)], [llvm_dyn], ref_ty.element_type, llvm.GEPNoWrapFlags.none,
         )
         if isinstance(gmem_peer_id, GlobalBroadcast):
-          self._ensure_nvshmem_decls()
-          world_team = arith.constant(i32, 0)
-          base_ptr = llvm.call(
-              base_ptr.type,
-              [world_team, base_ptr],
-              [],
-              [],
-              callee="nvshmemx_mc_ptr",
-          )
+          if self.host_collective_metadata is None:
+            self._ensure_nvshmem_decls()
+            world_team = arith.constant(i32, 0)
+            base_ptr = llvm.call(
+                base_ptr.type,
+                [world_team, base_ptr],
+                [],
+                [],
+                callee="nvshmemx_mc_ptr",
+            )
+          else:
+            # TODO(patrios): Remove this once multimem lowering with collective
+            # metadata is supported.
+            raise NotImplementedError(
+                "GlobalBroadcast not supported with collective metadata"
+            )
         elif gmem_peer_id is not None:
           if not isinstance(gmem_peer_id, ir.Value):
             peer_id = c(gmem_peer_id, i32)
           else:
             try:
-              # TODO(b/478180853): Compute the peer id on the host without
-              # nvshmem.
-              if uses_collective_metadata(self.module):
-                raise ValueError("TMA is not supported with collectives.")
               # We try to reproduce the gmem_peer_id computation on the host.
-              peer_id = _recompute_peer_id(gmem_peer_id, fuel=16)
+              peer_id = self._recompute_peer_id(gmem_peer_id, fuel=16)
             except ReplicationError as e:
               raise ValueError(
                   "Failed to recompute the async_copy peer id on the host"
               ) from e
-          self._ensure_nvshmem_decls()
-          base_ptr = llvm.call(
-              base_ptr.type,
-              [base_ptr, peer_id],
-              [],
-              [],
-              callee="nvshmem_ptr",
-          )
+
+          if self.host_collective_metadata is None:
+            self._ensure_nvshmem_decls()
+            base_ptr = llvm.call(
+                base_ptr.type,
+                [base_ptr, peer_id],
+                [],
+                [],
+                callee="nvshmem_ptr",
+            )
+          else:
+            remote_ref = self.to_remote(ref, peer_id, on_host=True)
+            base_ptr = utils.memref_ptr(remote_ref)
         rank = ref_ty.rank
         assert rank * 2 == len(sizes_and_strides)
         swizzle_arg = (
@@ -743,6 +796,7 @@ class LaunchContext:
             utils.pack_array([c(v, i64) for v in transformed_slice_shape]),
         ]
         func.call([], "mosaic_gpu_init_tma_desc", args)
+
       def cast_tma_desc(device_ptr):
         # TODO(apaszke): Investigate why prefetching can cause launch failures
         # nvvm.prefetch_tensormap(device_ptr)
@@ -1549,7 +1603,7 @@ class LaunchContext:
     utils.warpgroup_barrier()
 
   def _ensure_nvshmem_decls(self):
-    if self.is_device_collective:
+    if self.is_device_collective or self.device_collective_metadata is not None:
       return
     self.is_device_collective = True
     with ir.InsertionPoint(self.module.body):
@@ -1597,8 +1651,18 @@ class LaunchContext:
     return attr.value
 
   def to_remote(
-      self, ref: ir.Value, peer: ir.Value, *, _kernel_arg_idx: int | None = None
+      self,
+      ref: ir.Value,
+      peer: ir.Value,
+      *,
+      _kernel_arg_idx: int | None = None,
+      on_host: bool = False,
   ):
+    collective_metadata = (
+        self.host_collective_metadata
+        if on_host
+        else self.device_collective_metadata
+    )
     i32 = ir.IntegerType.get_signless(32)
     i64 = ir.IntegerType.get_signless(64)
     if isinstance(ref.type, ir.MemRefType):
@@ -1615,21 +1679,27 @@ class LaunchContext:
       )
 
       arg_idx = None
-      if self.collective_metadata is not None:
+      if collective_metadata is not None:
         arg_idx = self._find_kernel_argument_index(ref)
 
       ref_ptr = utils.memref_ptr(ref)
       remote_memref = utils.ptr_as_memref(
-          self.to_remote(ref_ptr, peer, _kernel_arg_idx=arg_idx), result_type
+          self.to_remote(
+              ref_ptr,
+              peer,
+              _kernel_arg_idx=arg_idx,
+              on_host=on_host,
+          ),
+          result_type,
       )
 
-      if self.collective_metadata is not None:
+      if collective_metadata is not None:
         remote_memref.owner.attributes[KERNEL_ARG_ID_ATTR] = ir.IntegerAttr.get(
             i32, arg_idx
         )
       return remote_memref
 
-    if self.collective_metadata is None:
+    if collective_metadata is None:
       self._ensure_nvshmem_decls()
       if ref.type != ir.Type.parse("!llvm.ptr"):
         raise ValueError(f"Unsupported type for to_remote: {ref.type}")
@@ -1658,19 +1728,16 @@ class LaunchContext:
           index, COLLECTIVE_METADATA_SIZE + self.num_peers * _kernel_arg_idx
       )
       local_arg_ptr_offset = arith.addi(
-          arg_ptrs_base, arith.index_cast(index, self.device_id())
+          arg_ptrs_base,
+          arith.index_cast(index, self.device_id(on_host)),
       )
       # TODO(apaszke): Just use the pointer directly. After all it is an arg.
-      local_arg_ptr = memref.load(
-          self.collective_metadata, [local_arg_ptr_offset]
-      )
+      local_arg_ptr = memref.load(collective_metadata, [local_arg_ptr_offset])
       local_offset = arith.subi(llvm.ptrtoint(i64, ref), local_arg_ptr)
       remote_arg_ptr_offset = arith.addi(
           arg_ptrs_base, arith.index_cast(index, peer)
       )
-      remote_arg_ptr = memref.load(
-          self.collective_metadata, [remote_arg_ptr_offset]
-      )
+      remote_arg_ptr = memref.load(collective_metadata, [remote_arg_ptr_offset])
       memory_address = arith.addi(remote_arg_ptr, local_offset)
       return llvm.inttoptr(ref.type, memory_address)
 
@@ -1678,7 +1745,7 @@ class LaunchContext:
     i32 = ir.IntegerType.get_signless(32)
 
     # TODO(patrios): Support multimem lowering with collective metadata
-    if self.collective_metadata is not None:
+    if self.device_collective_metadata is not None:
       raise NotImplementedError(
           "Multicast lowering with collective metadata is not implemented yet"
       )
@@ -1703,45 +1770,25 @@ class LaunchContext:
     )
     return utils.MultimemRef(utils.ptr_as_memref(mc_ptr, result_type))
 
-  def device_id(self) -> ir.Value:
+  def device_id(self, on_host: bool = False) -> ir.Value:
+    collective_metadata = (
+        self.host_collective_metadata
+        if on_host
+        else self.device_collective_metadata
+    )
     i32 = ir.IntegerType.get_signless(32)
-    if self.collective_metadata is None:
+    if collective_metadata is None:
       self._ensure_nvshmem_decls()
       return llvm.call(i32, [], [], [], callee="nvshmem_my_pe")
     else:
       # Rank id is stored as the first element of the collective metadata.
       self.module.operation.attributes[COLLECTIVE_ATTR] = ir.UnitAttr.get()
       rank_offset_constant = arith.constant(ir.IndexType.get(), 0)
-      load_op = memref.load(
-          self.collective_metadata, [rank_offset_constant])
-      return arith.trunci(i32, load_op)
+      load_op = memref.load(collective_metadata, [rank_offset_constant])
+      device_rank = arith.trunci(i32, load_op)
+      device_rank.owner.attributes[DEVICE_ID_ATTR] = ir.UnitAttr.get()
+      return device_rank
 
 
 class ReplicationError(Exception):
   pass
-
-def _recompute_peer_id(peer_id: ir.Value, fuel=8) -> ir.Value:
-  if fuel == 0:
-    raise ReplicationError(
-        "gmem_peer_id computation is too complicated to recompute on the host"
-    )
-  if isinstance(peer_id, ir.BlockArgument):
-    raise ReplicationError("Can't recompute a value that's a block argument")
-  op = peer_id.owner
-  # We accept all arith ops
-  if op.OPERATION_NAME.startswith("arith."):
-    new_operands = [_recompute_peer_id(x, fuel - 1) for x in op.operands]
-    result_types = [r.type for r in op.results]
-    new_attributes = {na: op.attributes[na] for na in op.attributes}
-    new_op = ir.Operation.create(
-        op.OPERATION_NAME, result_types, new_operands, new_attributes
-    )
-    return new_op.results if len(new_op.results) > 1 else new_op.result
-  # nvshmem_my_pe queries the device id of the current process and works on both
-  # the host and the device.
-  if isinstance(op, llvm.CallOp) and op.callee.value == "nvshmem_my_pe":
-    i32 = ir.IntegerType.get_signless(32)
-    return llvm.call(i32, [], [], [], callee="nvshmem_my_pe")
-  raise ReplicationError(
-      f"Unrecognized op can't be recomputed on the host: {op}"
-  )

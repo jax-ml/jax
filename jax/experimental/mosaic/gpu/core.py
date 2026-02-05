@@ -585,7 +585,8 @@ def _launch(
     module: ir.Module,
     profiler_spec: profiler.ProfilerSpec | None = None,
     maybe_prof_buffer: ir.Value | None = None,
-    collective_metadata: ir.Value | None = None,
+    device_collective_metadata: ir.Value | None = None,
+    host_collective_metadata: ir.Value | None = None,
     num_peers: int = 0,
 ):
   if (profiler_spec is None) != (maybe_prof_buffer is None):
@@ -684,7 +685,8 @@ def _launch(
         launch_context.Scratch(launch_op),
         cluster,
         prof,
-        collective_metadata=collective_metadata,
+        device_collective_metadata=device_collective_metadata,
+        host_collective_metadata=host_collective_metadata,
         num_peers=num_peers,
     )
     with ctx.named_region("Init"):
@@ -838,6 +840,7 @@ def _lower_as_gpu_kernel(
         arg_refs.append(arg_memref)
 
       collective_metadata = None
+      host_collective_metadata = None
       num_peers = 0
 
       # Collective metadata parameter is used to lower collective operations
@@ -858,6 +861,13 @@ def _lower_as_gpu_kernel(
         )
         collective_metadata = utils.ptr_as_memref(metadata_ptr, metadata_ty)
 
+        host_metadata_ptr = llvm.load(
+            ptr_ty, utils.getelementptr(buffers, [num_args + 1], ptr_ty)
+        )
+        host_collective_metadata = utils.ptr_as_memref(
+            host_metadata_ptr, metadata_ty
+        )
+
       prof_buffer = arg_refs.pop() if prof_spec is not None else None
 
       with _launch(
@@ -871,6 +881,7 @@ def _lower_as_gpu_kernel(
           prof_spec,
           prof_buffer,
           collective_metadata,
+          host_collective_metadata,
           num_peers,
       ) as (_launch_ctx, smem_refs):
         nonlocal launch_ctx

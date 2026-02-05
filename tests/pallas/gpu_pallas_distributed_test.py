@@ -421,7 +421,9 @@ class PallasCallRemoteDMATest(TestCase):
 
   @parameterized.parameters(False, True)
   def test_copy_tma(self, use_dict):
-    if jax.local_device_count() > 1:
+    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
+    # subset device execution is supported.
+    if jax.local_device_count() > 2:
       return  # Test-case uses multiprocess collectives.
 
     if jax.process_index() > 2:
@@ -464,7 +466,8 @@ class PallasCallRemoteDMATest(TestCase):
             kernel_call, mesh=mesh, in_specs=(), out_specs=P("y"), check_vma=False,
         )
     )()
-    y = multihost_utils.process_allgather(y, tiled=True)
+    if jax.local_device_count() == 1:
+      y = multihost_utils.process_allgather(y, tiled=True)
     ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
