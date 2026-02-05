@@ -1394,14 +1394,14 @@ class FlatTree:
   def map2(self: FlatTree, f: Callable, t2: FlatTree) -> FlatTree:
     n = len(self)
     assert len(t2) == n
-    return self.update(f(x1, x2) for x1, x2 in zip(self.vals, t2.vals))
+    return self.update(f(x1, x2) for x1, x2 in zip(self.vals, list(t2)))
 
   def map3(
       self: FlatTree, f: Callable, t2: FlatTree, t3: FlatTree) -> FlatTree:
     n = len(self)
     assert len(t2) == n and len(t3) == n
     return self.update(f(x1, x2, x3)
-                       for x1, x2, x3 in zip(self.vals, t2.vals, t3.vals))
+                       for x1, x2, x3 in zip(self.vals, list(t2), list(t3)))
 
   def unzip2(self: FlatTree) -> tuple[FlatTree, FlatTree]:
     ys = []
@@ -1440,7 +1440,8 @@ class FlatTree:
 
   def unpack(self: FlatTree) -> tuple[FlatTree, ...]:
     # TODO: this is O(N) not O(1) (with N as the number of leaves). If it
-    # becomes a problem we can fix it with a fancier data tree.
+    # becomes a problem we can fix it with a fancier data structure.
+    # TODO(dougalm): assert that we're dealing with a tuple
     trees = treedef_children(self.tree)
     children = []
     offset = 0
@@ -1450,6 +1451,13 @@ class FlatTree:
       children.append(FlatTree(self.vals[offset:new_offset], tree, statics))
       offset = new_offset
     return tuple(children)
+
+  def with_aux(self:FlatTree, aux:Any) -> FlatTree:
+    return FlatTree.pack((self, FlatTree.flatten(Static(aux))))
+
+  def unpack_aux(self:FlatTree) -> tuple[FlatTree, Any]:
+    x, aux = self.unpack()
+    return x, aux.unflatten().val
 
   @staticmethod
   def flatten(tree: PyTree) -> FlatTree:

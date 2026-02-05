@@ -30,7 +30,7 @@ from jax._src import mesh as mesh_lib
 from jax._src.ad_util import Zero, SymbolicZero, add_jaxvals, add_jaxvals_p
 from jax._src.core import Trace, Tracer, TraceTag, AxisName
 from jax._src.interpreters import partial_eval as pe
-from jax._src.tree_util import (tree_unflatten, tree_flatten, PyTreeDef)
+from jax._src.tree_util import (tree_unflatten, tree_flatten, PyTreeDef, Static, FlatTree)
 from jax._src.typing import Array
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list,
                            canonicalize_axis, moveaxis, as_hashable_function,
@@ -422,6 +422,19 @@ def vtile(f_flat: lu.WrappedFun,
   return _map_to_tile(batch(f_flat, axis_data, in_axes_flat, out_axes_flat))
 
 ### API for batching functions with jaxpr type inputs and outputs
+
+# Returns `out_dims` as a second tuple component.
+# The result of `f` should be a `FlatTree`.
+def batch_subtrace_2(f, tag, axis_data, in_dims, in_vals):
+  with core.take_current_trace() as parent_trace:
+    trace = BatchTrace(parent_trace, tag, axis_data)
+    with core.set_current_trace(trace):
+      in_dims = in_dims() if callable(in_dims) else in_dims
+      in_tracers = [BatchTracer(trace, x, dim, source_info_util.current())
+                    if dim is not None else x for x, dim in zip(in_vals, in_dims)]
+      outs = f(*in_tracers)
+    out_vals, out_dims = outs.map(trace.to_batch_info).unzip2()
+  return out_vals, list(out_dims)
 
 @lu.transformation_with_aux2
 def batch_subtrace(f, store, tag, axis_data, in_dims, *in_vals):

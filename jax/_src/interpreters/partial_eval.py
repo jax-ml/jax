@@ -2391,6 +2391,7 @@ def trace_to_jaxpr(
     in_avals: FlatTree,  # (args, kwargs) pair
     debug_info: core.DebugInfo,
     *context_for_cache_key,
+    fun_returns_flat_tree=False,
 ) -> tuple[ClosedJaxpr, FlatTree]:
   if config.no_tracing.value:
     raise RuntimeError(f"re-tracing function {fun} for "
@@ -2408,8 +2409,13 @@ def trace_to_jaxpr(
     with core.set_current_trace(trace):
       args, kwargs = in_tracers.unflatten()
       ans_pytree = fun(*args, **kwargs)
-      debug_info = debug_info.set_result_paths(ans_pytree)
-      ans = FlatTree.flatten(ans_pytree)
+      if fun_returns_flat_tree:
+        # TODO(dougalm): make result paths optional
+        ans = ans_pytree
+        debug_info = debug_info.set_result_paths([''] * len(ans))
+      else:
+        debug_info = debug_info.set_result_paths(ans_pytree)
+        ans = FlatTree.flatten(ans_pytree)
       del ans_pytree, args, kwargs
 
     _check_returned_jaxtypes(debug_info, list(ans))
