@@ -65,9 +65,7 @@ class TestCase(jt_multiprocess.MultiProcessTest if is_nvshmem_used() is None els
 class PallasCallRemoteDMATest(TestCase):
 
   def test_remote_dma_basic(self):
-    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
-    # subset device execution is supported.
-    if jax.process_index() > 2 or jax.local_device_count() > 2:
+    if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
       other_dev_id = 1 - lax.axis_index('x')
@@ -104,9 +102,7 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
   def test_remote_dma_with_profiler(self):
-    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
-    # subset device execution is supported.
-    if jax.process_index() > 2 or jax.local_device_count() > 2:
+    if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
       other_dev_id = 1 - lax.axis_index('x')
@@ -152,9 +148,7 @@ class PallasCallRemoteDMATest(TestCase):
       np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
   def test_remote_dma_in_loop(self):
-    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
-    # subset device execution is supported.
-    if jax.process_index() > 2 or jax.local_device_count() > 2:
+    if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
@@ -196,9 +190,7 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
   def test_remote_dma_dynamic_index(self):
-    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
-    # subset device execution is supported.
-    if jax.process_index() > 2 or jax.local_device_count() > 2:
+    if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
       other_dev_id = jnp.sum(x_ref[...] == 1, dtype=jnp.int32)
@@ -237,13 +229,11 @@ class PallasCallRemoteDMATest(TestCase):
 
   @parameterized.parameters(('x',), ('y',))
   def test_remote_dma_2d_mesh(self, axis):
-    # TODO(b/477478816): Get rid of local_device_count() < 4 condition once
-    # subset device execution is supported.
-    if jax.process_count() < 4 or jax.local_device_count() < 4:
-      self.skipTest('Test requires at least 4 devices (and processes).')
-    # TODO(b/477478816): Get rid of local_device_count() > 4 condition once
-    # subset device execution is supported.
-    if jax.process_index() > 4 or jax.local_device_count() > 4:
+    if (jax.process_count() < 4 and
+        (jax.process_count() != 1 or jax.local_device_count() < 4)):
+      self.skipTest('Test requires at least 4 devices either accessible by a'
+                    'single process or 4 processes with 1 device each.')
+    if jax.process_index() > 4:
       return  # Only 4 processes needed.
     def kernel(x_ref, y_ref, recv_sem):
       other_dev_id = {axis: 1 - lax.axis_index(axis)}
@@ -274,9 +264,7 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
   def test_wait_twice(self):
-    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
-    # subset device execution is supported.
-    if jax.process_index() > 2 or jax.local_device_count() > 2:
+    if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem):
@@ -303,9 +291,7 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y, jnp.ones_like(y))
 
   def test_wait_nodec(self):
-    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
-    # subset device execution is supported.
-    if jax.process_index() > 2 or jax.local_device_count() > 2:
+    if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem):
@@ -333,9 +319,7 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y, jnp.ones_like(y))
 
   def test_signal_parallel(self):
-    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
-    # subset device execution is supported.
-    if jax.process_index() > 2 or jax.local_device_count() > 2:
+    if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem, sem2):
@@ -421,11 +405,6 @@ class PallasCallRemoteDMATest(TestCase):
 
   @parameterized.parameters(False, True)
   def test_copy_tma(self, use_dict):
-    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
-    # subset device execution is supported.
-    if jax.local_device_count() > 2:
-      return  # Test-case uses multiprocess collectives.
-
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 

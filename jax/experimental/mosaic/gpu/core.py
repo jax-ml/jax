@@ -194,6 +194,7 @@ def _mosaic_gpu_lowering_rule(
     use_custom_barrier: bool = False,
 ):
   axis_context = ctx.module_context.axis_context
+  replica_ids = []
   if is_multi_device_module := _has_communication(module):
     # Those checks are trying to ensure that the logical device ids are
     # consistent with the NVSHMEM PE ids that Mosaic will be using for
@@ -201,13 +202,14 @@ def _mosaic_gpu_lowering_rule(
     # to physical translation, which is currently not implemented.
     if isinstance(axis_context, sharding_impls.SPMDAxisContext):
       mesh = axis_context.mesh
-      # Skip the check for AbstractMesh
-      if (isinstance(mesh, mesh_lib.Mesh) and
-          not np.array_equal(mesh.device_ids.ravel(), np.arange(mesh.size))):
-        raise NotImplementedError(
-            "Mosaic GPU only supports meshes with device ordering that follows"
-            f" row-major device ids. Got: {mesh.device_ids.ravel()} device ids."
-        )
+      if isinstance(mesh, mesh_lib.Mesh):
+        replica_ids = mesh.device_ids.ravel()
+        # Skip the check for AbstractMesh
+        if not np.array_equal(mesh.device_ids.ravel(), np.arange(mesh.size)):
+          raise NotImplementedError(
+              "Mosaic GPU only supports meshes with device ordering that follows"
+              f" row-major device ids. Got: {mesh.device_ids.ravel()} device ids."
+          )
     elif isinstance(axis_context, sharding_impls.ShardingContext):
       if axis_context.num_devices != 1:
         raise NotImplementedError(
@@ -248,20 +250,21 @@ def _mosaic_gpu_lowering_rule(
   else:
     KNOWN_KERNELS[kernel_id] = module_asm
 
+  backend_config = dict(
+      kernel_hash=ir.StringAttr.get(kernel_id),
+      module=ir.StringAttr.get(module_asm),
+      use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
+      uses_xla_collective_metadata=ir.BoolAttr.get(
+          launch_context.uses_collective_metadata(module)
+      ),
+  )
   custom_call_kwargs = {
       "call_target_name": "mosaic_gpu_v2",
       "result_types": [mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
       "operands": args,
       "operand_layouts": [list(reversed(range(a.ndim))) for a in ctx.avals_in],
       "result_layouts": [list(reversed(range(a.ndim))) for a in ctx.avals_out],
-      "backend_config": dict(
-          kernel_hash=ir.StringAttr.get(kernel_id),
-          module=ir.StringAttr.get(module_asm),
-          use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
-          uses_xla_collective_metadata=ir.BoolAttr.get(
-              launch_context.uses_collective_metadata(module)
-          ),
-      ),
+      "backend_config": backend_config,
       "operand_output_aliases": dict(input_output_aliases),
       "api_version": 4
   }
@@ -281,6 +284,9 @@ def _mosaic_gpu_lowering_rule(
   custom_call_kwargs["result_types"] += [  # type: ignore
       ir.RankedTensorType.get((collective_metadata_size,),
                               ir.IntegerType.get_signless(64))]
+  backend_config["xla_replica_ids"] = ir.StringAttr.get(
+      ",".join(map(str, replica_ids))
+  )
   # Drop the collective metadata buffer from the results.
   return mlir.custom_call(**custom_call_kwargs).results[:-1]  # type: ignore
 

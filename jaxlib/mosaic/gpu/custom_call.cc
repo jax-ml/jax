@@ -46,6 +46,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -790,17 +791,36 @@ bool ModuleUsesCollectiveMetadata(const xla::ffi::Dictionary& attrs) {
   return attrs.get<bool>("uses_xla_collective_metadata").value_or(false);
 }
 
-// TODO(b/477478816): Support replica groups to execute a mosaic kernel on a
-// subset of devices.
-absl::StatusOr<xla::gpu::GpuCliqueKey> GetCliqueKeyForAllDevices(
-    const xla::gpu::CollectiveParams& collective_params) {
-  CHECK(collective_params.global_device_id_map != nullptr);
+absl::StatusOr<std::vector<int64_t>> GetReplicaIds(
+    const xla::ffi::Dictionary& attributes) {
+  std::string_view replica_ids_str =
+      attributes.get<std::string_view>("xla_replica_ids").value_or("");
+  if (replica_ids_str.empty()) {
+    return absl::InvalidArgumentError("No replica ids found in attributes.");
+  }
+  std::vector<int64_t> replica_ids;
+  for (const std::string_view replica_id_str :
+       absl::StrSplit(replica_ids_str, ',')) {
+    int64_t replica_id;
+    if (!absl::SimpleAtoi(replica_id_str, &replica_id)) {
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Failed to parse replica id: %s", replica_id_str));
+    }
+    replica_ids.push_back(replica_id);
+  }
+  return replica_ids;
+}
 
-  int num_devices = collective_params.global_device_id_map->size();
+absl::StatusOr<xla::gpu::GpuCliqueKey> GetCliqueKey(
+    const xla::gpu::CollectiveParams& collective_params,
+    const xla::ffi::Dictionary& attributes) {
+  TF_ASSIGN_OR_RETURN(std::vector<int64_t> replica_ids,
+                      GetReplicaIds(attributes));
+
   xla::ReplicaGroup group;
-  group.mutable_replica_ids()->Reserve(num_devices);
-  for (int64_t i = 0; i < num_devices; ++i) {
-    group.add_replica_ids(i);
+  group.mutable_replica_ids()->Reserve(replica_ids.size());
+  for (int64_t replica_id : replica_ids) {
+    group.add_replica_ids(replica_id);
   }
 
   return GetGpuCliqueKey(
@@ -875,7 +895,7 @@ absl::Status MosaicGpuInitialize(
   }
 
   TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
-                      GetCliqueKeyForAllDevices(*collective_params));
+                      GetCliqueKey(*collective_params, attributes));
 
   // The last output buffer is used as the collective metadata buffer.
   se::DeviceAddressBase collective_metadata_ptr =
@@ -946,9 +966,8 @@ absl::Status MosaicGpuPrepare(
   CHECK(collective_params != nullptr);
   CHECK(clique_requests != nullptr);
 
-  // TODO(b/476264413): Add multimem support.
   TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
-                      GetCliqueKeyForAllDevices(*collective_params));
+                      GetCliqueKey(*collective_params, attributes));
 
   TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key));
   return absl::OkStatus();
