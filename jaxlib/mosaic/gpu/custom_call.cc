@@ -696,11 +696,7 @@ void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,
                                          "CUDA");
 
-struct CustomCallResources {
-  //  TODO(allanrenucci): Remove explicit constructor after supporting C++20.
-  explicit CustomCallResources(CompiledKernel* kernel) : kernel(kernel) {}
-  CompiledKernel* kernel = nullptr;
-
+struct CollectiveMetadataResources {
   absl::Mutex mutex;
   // A map from a global device ID to the CPU version of the collective metadata
   // for TMA initialization.
@@ -708,6 +704,23 @@ struct CustomCallResources {
   // CollectiveKernelMetadata | param_to_peers array
   absl::flat_hash_map<int, std::vector<char>> cpu_metadata_buffers
       ABSL_GUARDED_BY(mutex);
+};
+
+struct CustomCallResources {
+  CustomCallResources(CompiledKernel* kernel,
+                      std::unique_ptr<CollectiveMetadataResources,
+                                      void (*)(CollectiveMetadataResources*)>
+                          collective_metadata_resources)
+      : kernel(kernel),
+        collective_metadata_resources(
+            std::move(collective_metadata_resources)) {}
+  CompiledKernel* kernel = nullptr;
+
+  // We need to use a custom deleter here since this object is handed to
+  // XLA which can be linked dynamically.
+  std::unique_ptr<CollectiveMetadataResources,
+                  void (*)(CollectiveMetadataResources*)>
+      collective_metadata_resources;
 };
 
 // Validate custom call attributes and compile the kernel.
@@ -732,7 +745,15 @@ absl::StatusOr<std::unique_ptr<CustomCallResources>> InstantiateResources(
   TF_ASSIGN_OR_RETURN(
       CompiledKernel * kernel,
       CachedCompile(hash, module, *cc->cuda_compute_capability()));
-  return std::make_unique<CustomCallResources>(kernel);
+  std::unique_ptr<CollectiveMetadataResources,
+                  void (*)(CollectiveMetadataResources*)>
+      collective_metadata_resources(
+          new CollectiveMetadataResources,
+          [](CollectiveMetadataResources* resources) { delete resources; });
+  // TODO(481949311): Return directly unique_ptr with deleter once FFI API is
+  // updated to support it.
+  return std::make_unique<CustomCallResources>(
+      kernel, std::move(collective_metadata_resources));
 }
 
 absl::StatusOr<std::vector<ffi::AnyBuffer>> GetBuffers(
@@ -867,14 +888,15 @@ absl::Status MosaicGpuInitialize(
       CreateCollectiveMetadata(clique_key, current_rank, stream,
                                collective_metadata_ptr, std::move(parameters)));
 
-  absl::MutexLock lock(resources->mutex);
-  if (resources->cpu_metadata_buffers.contains(
+  absl::MutexLock lock(resources->collective_metadata_resources->mutex);
+  if (resources->collective_metadata_resources->cpu_metadata_buffers.contains(
           collective_params->global_device_id.value())) {
     return absl::InternalError(absl::StrFormat(
         "Collective metadata buffer already exists for device: %lld",
         current_rank.value()));
   }
-  resources->cpu_metadata_buffers[collective_params->global_device_id.value()] =
+  resources->collective_metadata_resources->cpu_metadata_buffers[
+      collective_params->global_device_id.value()] =
       std::move(cpu_metadata_buffer);
   return absl::OkStatus();
 }
@@ -894,10 +916,11 @@ absl::Status MosaicGpuExecute(
 
   // Adding a CPU version of the collective metadata for TMA initialization.
   if (uses_collective_metadata) {
-    absl::MutexLock lock(resources->mutex);
+    absl::MutexLock lock(resources->collective_metadata_resources->mutex);
 
-    std::vector<char>& cpu_metadata_buffer = resources->cpu_metadata_buffers.at(
-        collective_params->global_device_id.value());
+    std::vector<char>& cpu_metadata_buffer =
+        resources->collective_metadata_resources->cpu_metadata_buffers.at(
+            collective_params->global_device_id.value());
     buffer_ptrs.push_back(cpu_metadata_buffer.data());
   }
 
