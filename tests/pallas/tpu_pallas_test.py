@@ -905,6 +905,25 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     )()
     np.testing.assert_allclose(o, 4 * np.ones_like(o))
 
+  def test_with_scoped_allocation(self):
+    def kernel(y_ref):
+
+      @pl.with_scoped(
+          pltpu.VMEM((8, 128), jnp.float32),
+          w_ref=pltpu.VMEM((8, 128), jnp.float32),
+      )
+      def body(y_ref, x_ref, w_ref):
+        x_ref[...] = jnp.ones_like(x_ref)
+        w_ref[...] = jnp.ones_like(w_ref)
+        y_ref[...] = 4 * x_ref[...] * w_ref[...]
+      body(y_ref)
+
+    o = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )()
+    np.testing.assert_allclose(o, 4 * np.ones_like(o))
+
   def test_run_scoped_can_return_scalar_value(self):
     def kernel(y_ref):
       def body(x_ref):

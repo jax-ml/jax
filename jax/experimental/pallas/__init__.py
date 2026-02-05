@@ -45,6 +45,7 @@ from jax._src.pallas.helpers import enable_debug_checks as enable_debug_checks
 from jax._src.pallas.helpers import kernel as kernel
 from jax._src.pallas.helpers import loop as loop
 from jax._src.pallas.helpers import when as when
+from jax._src.pallas.helpers import with_scoped as with_scoped
 from jax._src.pallas.pallas_call import pallas_call as pallas_call
 from jax._src.pallas.pallas_call import pallas_call_p as pallas_call_p
 from jax._src.pallas.primitives import debug_print as debug_print
