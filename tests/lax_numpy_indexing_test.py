@@ -103,6 +103,8 @@ STATIC_SLICE_TESTS = [
     IndexSpec(shape=(10, 8), indexer=slice(3, 1, -1), out_shape=(2, 8)),
     IndexSpec(shape=(10, 8), indexer=slice(0, 8, -1), out_shape=(0, 8)),
     IndexSpec(shape=(10, 8), indexer=slice(None, None, -1), out_shape=(10, 8)),
+    IndexSpec(shape=(10, 8), indexer=slice(12, 12, -4), out_shape=(0, 8)),
+    IndexSpec(shape=(10, 8), indexer=slice(12, 4, -4), out_shape=(2, 8)),
   ]),
   ("OneSliceIndexNonUnitStride", [
     IndexSpec(shape=(10,), indexer=slice(0, 8, 2), out_shape=(4,)),
