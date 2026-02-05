@@ -100,6 +100,10 @@ load("//third_party/flatbuffers:workspace.bzl", flatbuffers = "repo")
 
 flatbuffers()
 
+load("//third_party/external_deps:workspace.bzl", "external_deps_repository")
+
+external_deps_repository(name = "rocm_external_test_deps")
+
 load("//:test_shard_count.bzl", "test_shard_count_repository")
 
 test_shard_count_repository(
