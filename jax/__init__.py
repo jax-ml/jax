@@ -147,6 +147,7 @@ from jax._src.shard_map import smap as smap
 
 from jax.ref import new_ref as new_ref
 from jax.ref import empty_ref as empty_ref
+from jax.ref import free_ref as free_ref
 from jax.ref import freeze as freeze
 from jax.ref import Ref as Ref
 

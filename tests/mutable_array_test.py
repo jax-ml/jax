@@ -1111,6 +1111,60 @@ class MutableArrayTest(jtu.JaxTestCase):
     y_bar = jax.grad(f)(3.)
     self.assertAllClose(y_bar, 2., check_dtypes=False)
 
+  def test_free_ref_basic(self):
+    @jax.jit
+    def f(x):
+      ref = jax.empty_ref(jax.ShapeDtypeStruct((), 'float32'))
+      ref[...] = 2. * x
+      result = ref[...]
+      jax.free_ref(ref)
+      return result
+    self.assertArraysEqual(f(3.), 6., check_dtypes=False)
+
+  def test_double_free_ref_raises(self):
+    @jax.jit
+    def f():
+      ref = jax.empty_ref(jax.ShapeDtypeStruct((), 'float32'))
+      jax.free_ref(ref)
+      jax.free_ref(ref)  # double free, should raise
+
+    with self.assertRaises(Exception):
+      f()
+
+  def test_deref_after_free_ref_raises(self):
+    @jax.jit
+    def f(x):
+      ref = jax.new_ref(x)
+      jax.free_ref(ref)
+      return ref[...]  # deref after free, should raise
+    with self.assertRaises(Exception):
+      f(1.)
+
+  def test_free_ref_jvp(self):
+    @jax.jit
+    def f(x):
+      ref = jax.empty_ref(jax.ShapeDtypeStruct((), 'float32'))
+      ref[...] = 2. * x
+      result = ref[...]
+      jax.free_ref(ref)
+      return result
+
+    y, y_dot = jax.jvp(f, (3.,), (1.,))
+    self.assertArraysEqual(y, 6., check_dtypes=False)
+    self.assertArraysEqual(y_dot, 2., check_dtypes=False)
+
+  def test_free_ref_grad(self):
+    @jax.jit
+    def f(x):
+      ref = jax.empty_ref(jax.ShapeDtypeStruct((), 'float32'))
+      ref[...] = 2. * x
+      result = ref[...]
+      jax.free_ref(ref)
+      return result
+
+    y_bar = jax.grad(f)(3.)
+    self.assertArraysEqual(y_bar, 2., check_dtypes=False)
+
   @jtu.sample_product([
     dict(shape=(3, 4), indexer=np.index_exp[1]),
     dict(shape=(3, 4), indexer=np.index_exp[1:4]),

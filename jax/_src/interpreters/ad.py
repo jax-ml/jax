@@ -341,6 +341,8 @@ def backward_pass3(
 
   lin_eqns = []
   for eqn in jaxpr.eqns:
+    # TODO(mattjj): shorten the lifetime of the reference accumulators, as it
+    # is longer than necessary.
     if eqn.primitive.ref_primitive:
       v, = eqn.outvars
       lin_eqns.append(eqn)

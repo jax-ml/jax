@@ -221,6 +221,10 @@ def _eval_jaxpr_discharge_state(
           raise NotImplementedError  # TODO(sharadmv)
         ans = lax.empty(aval.shape, aval.dtype)
         refs_to_discharge.add(id(outvar.aval))
+      elif eqn.primitive is core.free_ref_p:
+        [invar], [] = eqn.invars, eqn.outvars
+        refs_to_discharge.remove(id(invar.aval))
+        ans = ()
       elif eqn.primitive is core.freeze_p:
         [invar], [outvar] = eqn.invars, eqn.outvars
         ans = env.read(invar)

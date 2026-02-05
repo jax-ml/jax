@@ -2587,11 +2587,34 @@ empty_ref_p = Primitive('empty_ref')
 empty_ref_p.ref_primitive = True
 empty_ref_p.is_effectful = lambda _: True  # type: ignore
 
+
 @empty_ref_p.def_effectful_abstract_eval
 def _empty_ref_abstract_eval(*, ty, memory_space):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   return (AbstractRef(ty, memory_space=memory_space),
           {internal_mutable_array_effect})
+
+
+# TODO(mattjj,dougalm): merge with freeze_p
+def free_ref(ref: Ref):
+  """Invalidate a given reference."""
+  free_ref_p.bind(ref)
+  return ()
+
+free_ref_p = Primitive('free_ref')
+free_ref_p.multiple_results = True
+free_ref_p.is_effectful = lambda _: True  # type: ignore
+free_ref_p.ref_primitive = True
+
+
+@free_ref_p.def_effectful_abstract_eval
+def _free_ref_abstract_eval(ref_aval):
+  return (), {internal_mutable_array_effect}
+
+
+@free_ref_p.def_impl
+def _free_ref_impl(ref):
+  return ()
 
 
 class InternalMutableArrayEffect(effects.Effect):

@@ -1151,6 +1151,13 @@ def _empty_ref_lin(nzs_in, *, ty, memory_space):
   return primal_ref, True, None, lin
 ad.primitive_linearizations[core.empty_ref_p] = _empty_ref_lin
 
+def _free_ref_jvp(primals, tangents):
+  [primal_ref], [tangent_ref] = primals, tangents
+  core.free_ref(primal_ref)
+  core.free_ref(tangent_ref)
+  return (), ()
+
+ad.primitive_jvps[core.free_ref_p] = _free_ref_jvp
 
 # === pinned, chained LinearVals ===
 
