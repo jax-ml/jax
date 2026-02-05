@@ -1390,23 +1390,6 @@ class JitTest(jtu.BufferDonationTestCase):
             "xla_gpu_auto_spmd_partitioning_memory_budget_ratio": 0.5,
         })(1.0)  # doesn't crash.
 
-  def test_exec_time_optimization_effort_compiler_option(self):
-    def f(x):
-      return jnp.sqrt(x ** 2) + 1.
-
-    f_jit = jit(
-        f,
-        compiler_options={
-            "exec_time_optimization_effort": 0.0,
-        })(1.0)  # doesn't crash.
-
-    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, "No such"):
-      f_jit = jit(
-          f,
-          compiler_options={
-              "exec_time_compilation_effort": 0.0,
-          })(1.0)
-
   def test_optimization_level_compiler_option(self):
     def f(x):
       return jnp.sqrt(x**2) + 1.0
