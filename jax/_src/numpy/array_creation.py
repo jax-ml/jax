@@ -358,7 +358,7 @@ def empty_like(prototype: ArrayLike | DuckTypedArray,
   array full of zeros.
 
   Args:
-    a: Array-like object with ``shape`` and ``dtype`` attributes.
+    prototype: Array-like object with ``shape`` and ``dtype`` attributes.
     shape: optionally override the shape of the created array.
     dtype: optionally override the dtype of the created array.
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
