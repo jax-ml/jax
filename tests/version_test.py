@@ -27,7 +27,7 @@ from jax._src import test_util as jtu
 # This is a subset of the full PEP440 pattern; for example we skip post releases
 VERSION_PATTERN = re.compile(r"""
   ^                                    # start of string
-  (?P<version>[0-9]+\.[0-9]+\.[0-9]+)  # main version; like '0.4.16'
+  (?P<version>[0-9]+(\.[0-9]+){2,3})   # main version; like '0.4.16', or '0.4.16.1'
   (?:
       (?:rc(?P<rc>[0-9]+))?             # optional rc version; like 'rc1'
       |                                 # or
