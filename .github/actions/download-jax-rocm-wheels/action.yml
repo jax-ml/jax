@@ -1,19 +1,15 @@
-# Composite action to download the jax, jaxlib, and the CUDA plugin wheels
-name: Download JAX CUDA wheels
+# Composite action to download the jax, jaxlib, and the ROCm plugin wheels
+name: Download JAX ROCm wheels
 
 inputs:
   python:
     description: "Which python version should the artifact be downloaded for?"
     type: string
     required: true
-  cuda-version:
-    description: "Which cuda version should the artifact be downloaded for?"
+  rocm-version:
+    description: "Which ROCm version should the artifact be downloaded for?"
     type: string
-    default: "12"
-  use-nvidia-pip-wheels:
-    description: "Whether to download Nvidia CUDA packages from PyPI?"
-    type: boolean
-    default: false
+    default: "7.2.0"
   jaxlib-version:
     description: "Which jaxlib version to download? (head/pypi_latest)"
     type: string
@@ -54,9 +50,15 @@ runs:
         # `*-cp<py_version>-cp<py_version>t-*`.
         echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
 
-        # Get the CUDA major version only
-        full_cuda_version="${{ inputs.cuda-version }}"
-        echo "JAXCI_CUDA_VERSION=${full_cuda_version%%.*}" >> $GITHUB_ENV
+        # Get the ROCm major version only
+        full_rocm_version="${{ inputs.rocm-version }}"
+        rocm_major_version="${full_rocm_version%%.*}"
+        if [[ "${rocm_major_version}" == "6" ]]; then
+          rocm_wheel_version="60"
+        else
+          rocm_wheel_version="${rocm_major_version}"
+        fi
+        echo "JAXCI_ROCM_VERSION=${rocm_wheel_version}" >> $GITHUB_ENV
     - name: Download wheels
       shell: bash
       id: download-wheel-artifacts
@@ -66,24 +68,44 @@ runs:
       continue-on-error: true
       run: |
         mkdir -p $(pwd)/dist
+        # Disable Authentication on the ROCm runners.
+        gcloud config set auth/disable_credentials True
         if [[ "${{ inputs.download-jax-from-gcs }}" == "1" ]]; then
           gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
         else
           echo "JAX wheel won't be downloaded, only jaxlib pre-built wheel is tested."
         fi
 
-        # Do not download the jaxlib and CUDA plugin artifacts if we are testing a jax only
+        # Do not download the jaxlib and ROCm plugin artifacts if we are testing a jax only
         # release.
         if [[ "${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}" == "1" ]]; then
           echo "JAX only release. Only downloading the jax wheel from the release bucket."
         else
           if [[ ${{ inputs.jaxlib-version }} == "head" ]]; then
             gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda${JAXCI_CUDA_VERSION}*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda${JAXCI_CUDA_VERSION}*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
+
+            # Get the latest release tag (including pre-releases) from ROCm/jax-plugin
+            echo "Finding latest ROCm plugin release (including pre-releases)..."
+            LATEST_PLUGIN_TAG=$(gh release list -R ROCm/jax-plugin --limit 10 --json tagName,publishedAt \
+                                --jq 'sort_by(.publishedAt) | reverse | .[0].tagName')
+            echo "Latest plugin release: $LATEST_PLUGIN_TAG"
+
+            # Download ROCm PJRT plugin from latest release
+            echo "Downloading ROCm PJRT plugin from release $LATEST_PLUGIN_TAG..."
+            gh release download "$LATEST_PLUGIN_TAG" \
+              --repo ROCm/jax-plugin \
+              --pattern "jax_rocm${JAXCI_ROCM_VERSION}_pjrt-*-py3-none-manylinux*.whl" \
+              --dir $(pwd)/dist/
+
+            # Download ROCm plugin from latest release
+            echo "Downloading ROCm plugin from release $LATEST_PLUGIN_TAG..."
+            gh release download "$LATEST_PLUGIN_TAG" \
+              --repo ROCm/jax-plugin \
+              --pattern "jax_rocm${JAXCI_ROCM_VERSION}_plugin-*-${PYTHON_MAJOR_MINOR}*manylinux*.whl" \
+              --dir $(pwd)/dist/
           elif [[ ${{ inputs.jaxlib-version }} == "pypi_latest" ]]; then
             PYTHON=python${{ inputs.python }}
-            $PYTHON -m pip download jaxlib jax-cuda${JAXCI_CUDA_VERSION}-pjrt jax-cuda${JAXCI_CUDA_VERSION}-plugin --dest $(pwd)/dist/
+            $PYTHON -m pip download jaxlib jax-rocm${JAXCI_ROCM_VERSION}-pjrt jax-rocm${JAXCI_ROCM_VERSION}-plugin --dest $(pwd)/dist/
           else
             echo "Invalid jaxlib version: ${{ inputs.jaxlib-version }}"
             exit 1
@@ -94,7 +116,7 @@ runs:
       if: steps.download-wheel-artifacts.outcome == 'failure'
       run: |
         echo "Failed to download wheel artifacts. Please check if the wheels were"
-        echo "built successfully by the artifact build jobs and are available in the GCS bucket if
+        echo "built successfully by the artifact build jobs and are available in the GCS bucket if"
         echo "downloading from GCS."
         echo "Skipping the test run."
         exit 1
