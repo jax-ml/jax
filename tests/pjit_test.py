@@ -10182,6 +10182,26 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     loss_fn(params, inputs, targets)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_broadcast_reduced_inp_unreduced_out(self, mesh):
+    arr = jax.device_put(np.arange(8.), P(reduced={'x'}))
+
+    @jax.jit
+    def f(x):
+      return jax.lax.broadcast_in_dim(x, (2, 8), broadcast_dimensions=[1],
+                                      out_sharding=P('x', None))
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+    out_g = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(out_g.sharding,
+                     NamedSharding(mesh, P(None, unreduced={'x'})))
+
+    arr2 = jax.device_put(np.arange(8.), P())
+    exp_out_g = jax.jit(jax.grad(lambda x: f(x).sum()))(arr2)
+    self.assertArraysEqual(exp_out_g, reshard(out_g, P()))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

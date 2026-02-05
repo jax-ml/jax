@@ -6487,7 +6487,9 @@ def _broadcast_in_dim_transpose_rule(ct, operand,
                if core.definitely_equal(s, 1)]
   bdims = tuple(np.delete(broadcast_dimensions, unit_dims))
   axes = tuple(np.delete(range(len(shape)), bdims))
-  return [expand_dims(reduce_sum(ct, axes), unit_dims)]
+  out = reduce_sum(ct, axes,
+                   out_sharding=operand.aval.to_cotangent_aval().sharding)
+  return [expand_dims(out, unit_dims)]
 
 def _broadcast_in_dim_batch_rule(axis_data, batched_args, batch_dims, shape,
                                  broadcast_dimensions, sharding):
@@ -7723,7 +7725,7 @@ reduce_sum_p = standard_primitive(
   unreduced_rule=_reduce_sum_unreduced_rule,
   reduced_rule=_reduce_sum_reduced_rule)
 ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
-batching.defreducer(reduce_sum_p, _get_sum_identity)
+batching.defreducer(reduce_sum_p)
 
 def _reduce_prod_jvp_rule(primals, tangents, *, axes):
   reducer = lambda x, y: [mul(x, y)]
@@ -7742,7 +7744,7 @@ reduce_prod_p = standard_primitive(
   'reduce_prod', sharding_rule=_reduce_op_sharding_rule,
   vma_rule=partial(core.standard_vma_rule, 'reduce_prod'))
 ad.primitive_jvps[reduce_prod_p] = _reduce_prod_jvp_rule
-batching.defreducer(reduce_prod_p, _get_prod_identity)
+batching.defreducer(reduce_prod_p)
 
 def _reduce_chooser_jvp_rule(g, ans, operand, *, axes):
   # TODO(mattjj): an alternative is to use variadic reduce to compute the chosen
@@ -7760,7 +7762,7 @@ reduce_max_p = standard_primitive(
     sharding_rule=_reduce_op_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_max'))
 ad.defjvp2(reduce_max_p, _reduce_chooser_jvp_rule)
-batching.defreducer(reduce_max_p, _get_max_identity)
+batching.defreducer(reduce_max_p)
 
 
 reduce_min_p = standard_primitive(
@@ -7768,7 +7770,7 @@ reduce_min_p = standard_primitive(
     sharding_rule=_reduce_op_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_min'))
 ad.defjvp2(reduce_min_p, _reduce_chooser_jvp_rule)
-batching.defreducer(reduce_min_p, _get_min_identity)
+batching.defreducer(reduce_min_p)
 
 def _argminmax_shape_rule(operand, *, axes, index_dtype):
   axis, = axes
@@ -7832,14 +7834,14 @@ argmin_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               'argmin', weak_type_rule=_strip_weak_type,
                               sharding_rule=_argminmax_sharding_rule,
                               vma_rule=partial(core.standard_vma_rule, 'argmin'))
-batching.defreducer(argmin_p, _get_min_identity)
+batching.defreducer(argmin_p)
 ad.defjvp_zero(argmin_p)
 
 argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               'argmax', weak_type_rule=_strip_weak_type,
                               sharding_rule=_argminmax_sharding_rule,
                               vma_rule=partial(core.standard_vma_rule, 'argmax'))
-batching.defreducer(argmax_p, _get_max_identity)
+batching.defreducer(argmax_p)
 ad.defjvp_zero(argmax_p)
 
 mlir.register_lowering(
@@ -7878,7 +7880,7 @@ reduce_or_p = standard_primitive(
     _reduce_logical_shape_rule, input_dtype, 'reduce_or',
     weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_or'))
-batching.defreducer(reduce_or_p, _get_bitwise_or_identity)
+batching.defreducer(reduce_or_p)
 ad.primitive_linearizations[reduce_or_p] = _reduce_or_lin
 
 
@@ -7886,14 +7888,14 @@ reduce_and_p = standard_primitive(
     _reduce_logical_shape_rule, input_dtype, 'reduce_and',
     weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_and'))
-batching.defreducer(reduce_and_p, _get_bitwise_and_identity)
+batching.defreducer(reduce_and_p)
 
 
 reduce_xor_p = standard_primitive(
     _reduce_logical_shape_rule, input_dtype, 'reduce_xor',
     weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_xor'))
-batching.defreducer(reduce_xor_p, _get_bitwise_or_identity)
+batching.defreducer(reduce_xor_p)
 
 
 def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes, **kwargs):

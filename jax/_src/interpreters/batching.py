@@ -703,10 +703,10 @@ def _handle_scalar_broadcasting(nd, x, d):
   else:
     return lax.expand_dims(x, tuple(range(np.ndim(x), nd)))
 
-def defreducer(prim, ident):
-  fancy_primitive_batchers[prim] = partial(reducer_batcher, prim, ident)
+def defreducer(prim):
+  fancy_primitive_batchers[prim] = partial(reducer_batcher, prim)
 
-def reducer_batcher(prim, ident, axis_data, batched_args, batch_dims, axes,
+def reducer_batcher(prim, axis_data, batched_args, batch_dims, axes,
                     **params):
   if all(d is None for d in batch_dims):
     return prim.bind(*batched_args, axes=axes, **params), None
@@ -719,6 +719,11 @@ def reducer_batcher(prim, ident, axis_data, batched_args, batch_dims, axes,
     bdim_out = out_axis(axes, bdim)
     if 'input_shape' in params:
       params = dict(params, input_shape=operand.shape)
+    if 'out_sharding' in params:
+      out_s = params['out_sharding']
+      if out_s is not None:
+        params = dict(params,
+                      out_sharding=get_sharding_for_vmap(axis_data, out_s, bdim_out))
     return prim.bind(operand, axes=axes, **params), bdim_out
   else:
     assert False
