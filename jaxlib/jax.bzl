@@ -22,6 +22,7 @@ load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", 
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
 load("@nvidia_wheel_versions//:versions.bzl", "NVIDIA_WHEEL_VERSIONS")
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION", "HERMETIC_PYTHON_VERSION_KIND")
+load("@rocm_external_test_deps//:external_deps.bzl", "EXTERNAL_DEPS")
 load("@rules_cc//cc:defs.bzl", _cc_proto_library = "cc_proto_library")
 load("@rules_python//python:defs.bzl", "py_library", "py_test")
 load("@test_shard_count//:test_shard_count.bzl", "USE_MINIMAL_SHARD_COUNT")
@@ -198,14 +199,14 @@ def _gpu_test_deps():
             "//jaxlib/rocm:gpu_only_test_deps",
             "//jax_plugins:gpu_plugin_only_test_deps",
         ],
-        "//jax:config_build_jaxlib_false": [
+        "//jax:config_build_jaxlib_false": if_cuda_is_configured([
             "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",
             "//jaxlib/tools:pypi_jax_cuda_pjrt_with_cuda_deps",
-        ],
-        "//jax:config_build_jaxlib_wheel": [
+        ]) + if_rocm_is_configured(EXTERNAL_DEPS),
+        "//jax:config_build_jaxlib_wheel": if_cuda_is_configured([
             "//jaxlib/tools:jax_cuda_plugin_py_import",
             "//jaxlib/tools:jax_cuda_pjrt_py_import",
-        ],
+        ]) + if_rocm_is_configured(EXTERNAL_DEPS),
     })
 
 def _get_jax_test_deps(deps):
@@ -570,11 +571,11 @@ def jax_wheel(
         }),
         # TODO(kanglan) Add @platforms//cpu:ppc64le once JAX Bazel is upgraded > 6.5.0.
         cpu = select({
-            "//jaxlib/tools:macos_arm64": "arm64",
-            "//jaxlib/tools:macos_x86_64": "x86_64",
-            "//jaxlib/tools:win_amd64": "AMD64",
-            "//jaxlib/tools:linux_aarch64": "aarch64",
-            "//jaxlib/tools:linux_x86_64": "x86_64",
+            Label("//jaxlib/tools:macos_arm64"): "arm64",
+            Label("//jaxlib/tools:macos_x86_64"): "x86_64",
+            Label("//jaxlib/tools:win_amd64"): "AMD64",
+            Label("//jaxlib/tools:linux_aarch64"): "aarch64",
+            Label("//jaxlib/tools:linux_x86_64"): "x86_64",
         }),
         source_files = source_files,
     )
