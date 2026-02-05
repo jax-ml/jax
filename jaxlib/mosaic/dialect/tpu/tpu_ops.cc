@@ -488,8 +488,8 @@ LogicalResult MemRefReshapeOp::verify() {
   if (tile.size() != 2) {
     return emitOpError("Not implemented: memref reshape with 1D tiling.");
   }
-  SmallVector<int64_t> src_tile_strides(src_layout.getTileStrides());
-  if (ComputeTileStrides(src_ty, tile) != src_tile_strides) {
+  if (!src_layout.tilesAreKnownContiguous(src_ty.getShape()) ||
+      !tgt_layout.tilesAreKnownContiguous(tgt_ty.getShape())) {
     return emitOpError("Not implemented: reshape on a non-contiguous memref.");
   }
   auto src_tiled_shape = src_ty.getShape().take_back(2);
