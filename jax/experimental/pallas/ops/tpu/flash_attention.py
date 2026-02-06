@@ -452,15 +452,7 @@ def _flash_attention_kernel_single_batch(
 
       l_next = jnp.sum(p, axis=1)[:, None] + l_corr  # Shape [block_q, 128]
 
-      head_dim_repeats, rem = divmod(head_dim, MIN_BLOCK_SIZE)
-      l_broadcast = lambda l: jnp.tile(l, (1, head_dim_repeats))
-      if rem:
-        if head_dim_repeats == 0:
-          l_broadcast = lambda l: l[:, :head_dim]
-        else:
-          raise NotImplementedError(
-              f"{head_dim=} should be a multiple of {MIN_BLOCK_SIZE} if larger"
-          )
+      l_broadcast = lambda l: jnp.broadcast_to(l[:, 0:1], (block_q, head_dim))
       l_scratch_ref[batch_idx] = l_next
       m_scratch_ref[batch_idx] = m_next
 
@@ -603,16 +595,22 @@ def _flash_attention_impl(
 ):
   batch_size, num_heads, q_seq_len, head_dim = q.shape
   _, _, kv_seq_len, _ = k.shape
-  _verify_block("block_q", "q_seq_len", block_q, q_seq_len, should_divide=False)
-  _verify_block("block_k_major", "kv_seq_len", block_k_major, kv_seq_len)
-  _verify_block("block_k", "kv_seq_len", block_k, kv_seq_len)
-  _verify_block("block_b", "batch", block_b, batch_size, should_divide=False)
+
+  if isinstance(q_seq_len, int):
+    _verify_block(
+        "block_q", "q_seq_len", block_q, q_seq_len, should_divide=False
+    )
+  if isinstance(kv_seq_len, int):
+    _verify_block("block_k_major", "kv_seq_len", block_k_major, kv_seq_len)
+    _verify_block("block_k", "kv_seq_len", block_k, kv_seq_len)
+  if isinstance(batch_size, int):
+    _verify_block("block_b", "batch", block_b, batch_size, should_divide=False)
 
   # TODO(apaszke): Tile over heads as well.
   grid = (
-      pl.cdiv(batch_size, block_b),
+      (batch_size + block_b - 1) // block_b,  # cdiv(batch_size, block_b)
       num_heads,
-      pl.cdiv(q_seq_len, block_q),
+      (q_seq_len + block_q - 1) // block_q,  # cdiv(q_seq_len, block_q)
       kv_seq_len // block_k_major,
   )
 
@@ -755,6 +753,28 @@ def _flash_attention_impl(
       kv_segment_ids_spec,
   ]
 
+  if (
+      isinstance(batch_size, int)
+      and isinstance(num_heads, int)
+      and isinstance(q_seq_len, int)
+      and isinstance(kv_seq_len, int)
+      and isinstance(head_dim, int)
+  ):
+    cost_estimate = _fwd_cost_estimate(
+        q,
+        k,
+        v,
+        ab,
+        segment_ids,
+        causal=causal,
+        sm_scale=sm_scale,
+        kernel_inputs_specs=(q, k, v, ab, q_segment_ids, kv_segment_ids),
+        kernel_outputs_specs=out_shape,
+    )
+  else:
+    cost_estimate = (
+        None  # TODO(chenjincheng): Add support for non-integer seq lengths.
+    )
   o, *aux = pl.pallas_call(
       kernel,
       grid_spec=pltpu.PrefetchScalarGridSpec(
@@ -774,17 +794,7 @@ def _flash_attention_impl(
               "arbitrary",
           )
       ),
-      cost_estimate=_fwd_cost_estimate(
-          q,
-          k,
-          v,
-          ab,
-          segment_ids,
-          causal=causal,
-          sm_scale=sm_scale,
-          kernel_inputs_specs=(q, k, v, ab, q_segment_ids, kv_segment_ids),
-          kernel_outputs_specs=out_shape,
-      ),
+      cost_estimate=cost_estimate,
   )(q, k, v, ab, q_segment_ids, kv_segment_ids)
   if save_residuals:
     l, m = (v[..., 0] for v in aux[-2:])
