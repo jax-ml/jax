@@ -6,12 +6,12 @@ module(name = "jax")
 
 bazel_dep(name = "abseil-cpp", version = "20250814.1", repo_name = "com_google_absl")
 bazel_dep(name = "bazel_features", version = "1.36.0")
-bazel_dep(name = "bazel_skylib", version = "1.8.1")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
 bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_google_flatbuffers")
 bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "pybind11_bazel", version = "2.13.6")
 bazel_dep(name = "rules_cc", version = "0.2.8")
-bazel_dep(name = "rules_python", version = "1.6.1")
+bazel_dep(name = "rules_python", version = "1.8.3")
 
 # TODO: use a released version when available
 bazel_dep(name = "rules_ml_toolchain")
