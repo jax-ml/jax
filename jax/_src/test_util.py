@@ -116,6 +116,8 @@ HYPOTHESIS_PROFILE = config.string_flag(
           'deterministic, interactive'),
 )
 
+# Global flag ensuring we only patch the subprocess env once per process.
+_bazel_subprocess_env_patched = False
 
 # We sanitize test names to ensure they work with "unitttest -k" and
 # "pytest -k" test filtering. pytest accepts '[' and ']' but unittest -k
@@ -1231,6 +1233,7 @@ class JaxTestCase(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
+    self._configure_subprocess_env()
     self.enterContext(assert_global_configs_unchanged())
 
     # We use the adler32 hash for two reasons.
@@ -1251,6 +1254,35 @@ class JaxTestCase(parameterized.TestCase):
       tmp_dir = self.enterContext(tempfile.TemporaryDirectory())
       self.enterContext(config.compilation_cache_dir(tmp_dir))
       self.addCleanup(compilation_cache.reset_cache)
+
+  def _configure_subprocess_env(self):
+    """
+    Propagates the current Bazel environment to subprocesses.
+
+    Note: Fix for rules_python >= 1.7.0 (Strict Hermeticity):
+    The parent process sees dependencies via sys.path, but modern rules_python
+    does not export this to PYTHONPATH by default. We must manually propagate
+    it so child workers can locate dependencies.
+    """
+    global _bazel_subprocess_env_patched
+
+    if _bazel_subprocess_env_patched:
+      return
+
+    current_paths = os.pathsep.join(sys.path)
+    existing_pythonpath = os.environ.get('PYTHONPATH', '')
+
+    # Check if strict hermeticity is already satisfied
+    if current_paths in existing_pythonpath:
+      _bazel_subprocess_env_patched = True
+      return
+
+    if existing_pythonpath:
+      os.environ['PYTHONPATH'] = current_paths + os.pathsep + existing_pythonpath
+    else:
+      os.environ['PYTHONPATH'] = current_paths
+
+    _bazel_subprocess_env_patched = True
 
   def tearDown(self) -> None:
     assert core.reset_trace_state()

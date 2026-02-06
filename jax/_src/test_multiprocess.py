@@ -257,9 +257,21 @@ def _main(argv, shard_main):
   subprocesses = []
   output_filenames = []
   output_files = []
+  current_pythonpath = os.pathsep.join(sys.path)
+
   for i in range(num_processes):
     device_ids = None
     env = os.environ.copy()
+
+    # Note: Fix for rules_python >= 1.7.0 (Strict Hermeticity):
+    # The parent process sees dependencies via sys.path, but modern rules_python
+    # does not export this to PYTHONPATH by default. We must manually propagate
+    # it so child workers can locate dependencies.
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    if existing_pythonpath:
+      env["PYTHONPATH"] = current_pythonpath + os.pathsep + existing_pythonpath
+    else:
+      env["PYTHONPATH"] = current_pythonpath
 
     args = [
         "/proc/self/exe",
