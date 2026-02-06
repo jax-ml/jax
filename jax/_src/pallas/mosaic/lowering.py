@@ -3617,7 +3617,7 @@ def _bitcast_convert_type_lowering_rule(
 
 
 def _alloc_value(
-    aval: jax_core.AbstractValue, *, ctx: LoweringRuleContext
+    aval: jax_core.AbstractValue | ShapedAbstractValue, *, ctx: LoweringRuleContext
 ) -> ir.Value:
   if isinstance(aval, state.AbstractRef):
     if jnp.issubdtype(aval.dtype, pallas_core.semaphore_dtype):
@@ -3683,7 +3683,7 @@ def _run_scoped_lowering_rule(
 def _empty_ref_lowering_rule(ctx: LoweringRuleContext, ty, memory_space):
   del ty, memory_space
   [aval_out] = ctx.avals_out
-  return _alloc_value(aval_out, ctx=ctx)  # pytype: disable=wrong-arg-types
+  return _alloc_value(aval_out, ctx=ctx)
 
 
 def _device_id_to_logical(

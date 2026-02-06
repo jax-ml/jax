@@ -1135,6 +1135,23 @@ class VectorSubcoreTest(PallasSCTest):
     # does not yet handle tiled layouts properly, so the result is wrong.
     _ = kernel(x)
 
+  @parameterized.parameters(pltpu.VMEM, pltpu.SMEM)
+  def test_empty_ref_allocation(self, memory_space):
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct((16,), jnp.float32),
+    )
+    def kernel(y_ref):
+      x_ref = jax.empty_ref(
+          jax.ShapeDtypeStruct(y_ref.shape, y_ref.dtype),
+          memory_space=memory_space,
+      )
+      s = ... if memory_space == pltpu.VMEM else 0
+      x_ref[s] = jnp.ones_like(x_ref) if memory_space == pltpu.VMEM else 1.
+      y_ref[...] = jnp.broadcast_to(4 * x_ref[s], y_ref.shape)
+
+    o = kernel()
+    np.testing.assert_allclose(o, 4 * np.ones_like(o))
+
   @parameterized.product(sizes=[[1, 1], [2, 2], [1, 1, 1, 1]])
   def test_split_concatenate(self, sizes):
     if jtu.is_device_tpu(7, "x"):

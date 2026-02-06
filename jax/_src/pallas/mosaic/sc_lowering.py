@@ -880,6 +880,13 @@ def _run_scoped_lowering_rule(
   )
 
 
+@register_lowering_rule(jax_core.empty_ref_p)
+def _empty_ref_lowering_rule(ctx: LoweringRuleContext, ty, memory_space):
+  del ty, memory_space
+  [aval_out] = ctx.avals_out
+  return _alloc_value(aval_out, ctx=ctx)  # pytype: disable=wrong-arg-types
+
+
 @register_lowering_rule(
     lax.sort_p, kernel_types=[tpu_core.KernelType.SC_VECTOR_SUBCORE]
 )
@@ -1012,7 +1019,7 @@ def _default_tile_strides(
 
 
 def _alloc_value(
-    aval: jax_core.AbstractValue, *, ctx: LoweringRuleContext
+    aval: jax_core.AbstractValue | tc_lowering.ShapedAbstractValue, *, ctx: LoweringRuleContext
 ) -> ir.Value:
   if isinstance(aval, sc_core.AbstractRef) and aval.tiling is not None:
     tiling = "".join(f"({','.join(map(str, tile))})" for tile in aval.tiling)
