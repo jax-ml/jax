@@ -26,6 +26,7 @@ from jax._src.pallas.mosaic.sc_primitives import all_reduce_population_count as 
 from jax._src.pallas.mosaic.sc_primitives import bitcast as bitcast
 from jax._src.pallas.mosaic.sc_primitives import cummax as cummax
 from jax._src.pallas.mosaic.sc_primitives import cumsum as cumsum
+from jax._src.pallas.mosaic.sc_primitives import fetch_and_add as fetch_and_add
 from jax._src.pallas.mosaic.sc_primitives import load_expanded as load_expanded
 from jax._src.pallas.mosaic.sc_primitives import load_gather as load_gather
 from jax._src.pallas.mosaic.sc_primitives import pack as pack

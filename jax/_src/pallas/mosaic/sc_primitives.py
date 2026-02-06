@@ -31,10 +31,12 @@ from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import lowering as tc_lowering
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import sc_lowering
+from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
 from jax.experimental.mosaic.dialects import tpu
@@ -1146,3 +1148,85 @@ def all_reduce_ffs(x: jax.Array, *, reduce: int = 1) -> jax.Array:
     ``x`` or ``x.size`` if there are no true elements.
   """
   return all_reduce_ffs_p.bind(x, reduce=reduce)
+
+
+fetch_and_add_p = jax_core.Primitive("sc_fetch_and_add")
+fetch_and_add_p.multiple_results = False
+
+
+@fetch_and_add_p.def_effectful_abstract_eval
+def _fetch_and_add_abstract_eval(*args):
+  x_ref, value, *indices, subcore_id = args
+  if x_ref.dtype != jnp.int32:
+    raise NotImplementedError(
+        f"Only int32 refs are supported, but got {x_ref.dtype}"
+    )
+  if x_ref.memory_space != tpu_core.MemorySpace.SMEM:
+    raise ValueError(
+        f"Only refs in SMEM memory space are supported, but got {x_ref}"
+    )
+  if value.dtype != x_ref.dtype or value.shape:
+    raise ValueError(
+        "The value must be a scalar of the same type as the ref"
+        f" ({x_ref.dtype}), but got {value}."
+    )
+  if any(i.dtype != jnp.int32 or i.shape for i in indices):
+    raise ValueError(
+        f"All indices must be scalars of type int32, but got {indices}."
+    )
+  if subcore_id.dtype != jnp.int32 or subcore_id.shape:
+    raise ValueError(
+        f"subcore_id= must be a scalar of type int32, but got {subcore_id}."
+    )
+  return value, {state_types.ReadEffect(0), state_types.WriteEffect(0)}
+
+
+@sc_lowering.register_lowering_rule(fetch_and_add_p)
+def _fetch_and_add_lowering_rule(ctx: sc_lowering.LoweringRuleContext, *args):
+  del ctx  # Unused.
+  x_ref, value, *indices, subcore_id = args
+  core_type = ir.Attribute.parse("#tpu.core_type<sc_vector_subcore>")
+  return tpu.fetch_and_add_sync(
+      x_ref, indices, value, core_type=core_type, core_id=subcore_id
+  )
+
+
+def fetch_and_add(
+    x_ref: jax.Ref | state_types.TransformedRef,
+    value: jax.typing.ArrayLike,
+    *,
+    subcore_id: jax.typing.ArrayLike,
+) -> jax.Array:
+  """Adds value to the ``x_ref`` on another subcore.
+
+  Be careful to ensure subcores are synchronized between initializing the SMEM
+  (on the target subcore) and adding to it, potentially using
+  ``plsc.subcore_barrier()``.
+
+  Args:
+    x_ref: A scalar SMEM ref.
+    value: The value to add to ``x_ref`` on ``subcore_id``.
+    subcore_id: The ID of the vector subcore to use.
+
+  Returns:
+    The value of ``x_ref`` on the specified subcore before adding ``value``.
+  """
+  if x_ref.size != 1:
+    raise ValueError(f"Expected a scalar ref, but got {x_ref.shape=}.")
+
+  x_ref, transforms = pallas_primitives._get_ref_and_transforms(x_ref)
+  match transforms:
+    case []:
+      indices = [jnp.int32(0)] * x_ref.ndim
+    case [indexing.NDIndexer(indices=indices) as indexer]:
+      if any(isinstance(i, indexing.Slice) for i in indexer.indices):
+        raise ValueError(
+            "fetch_and_add only supports refs indexed with non-slice indices,"
+            f" but got {indices}"
+        )
+    case _:
+      raise ValueError(
+          "fetch_and_add requires a scalar ref with a single non-slice"
+          f" indexer, but got {transforms}"
+      )
+  return fetch_and_add_p.bind(x_ref, value, *indices, subcore_id)

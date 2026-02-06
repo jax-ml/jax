@@ -1101,6 +1101,51 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), np.broadcast_to(expected, x.shape))
 
+  def test_fetch_and_add(self):
+    n = self.sc_info.num_subcores
+    dim = self.num_lanes
+
+    @functools.partial(
+        pl.pallas_call,
+        compiler_params=pltpu.CompilerParams(
+            kernel_type=pltpu.KernelType.SC_VECTOR_SUBCORE,
+            dimension_semantics=["subcore_parallel"],
+        ),
+        out_shape=(
+            jax.ShapeDtypeStruct((n * dim,), jnp.int32),
+            jax.ShapeDtypeStruct((n * dim,), jnp.int32),
+        ),
+        grid=(n,),
+        out_specs=(
+            pl.BlockSpec([dim], lambda i: (i,)),
+            pl.BlockSpec([dim], lambda i: (i,)),
+        ),
+        scratch_shapes=(pltpu.SMEM([1], jnp.int32),),
+    )
+    def kernel(old_val_ref, new_val_ref, smem_ref):
+      my_id = pl.program_id(0)
+      smem_ref[0] = my_id
+      plsc.subcore_barrier()
+      neighbor_id = (my_id + 1) % n
+      old_val = plsc.fetch_and_add(
+          smem_ref.at[0], 10, subcore_id=neighbor_id
+      )
+      plsc.subcore_barrier()
+      new_val = smem_ref[0]
+      old_val_ref[...] = jax.lax.broadcast(old_val, old_val_ref.shape)
+      new_val_ref[...] = jax.lax.broadcast(new_val, new_val_ref.shape)
+
+    old, new = kernel()
+    old = old.reshape(n, dim)
+    new = new.reshape(n, dim)
+
+    # old_val comes from the neighbor, which is (my_id + 1) % n.
+    expected_old = (np.arange(n) + 1) % n
+    # new_val is my_id + 10, since the neighbor added 10 to me.
+    expected_new = np.arange(n) + 10
+    np.testing.assert_array_equal(old[:, 0], expected_old)
+    np.testing.assert_array_equal(new[:, 1], expected_new)
+
   def test_run_scoped(self):
     x = jnp.arange(self.num_lanes)
 
