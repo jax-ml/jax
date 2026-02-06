@@ -1286,13 +1286,11 @@ LogicalResult SemaphoreSignalOp::verify() {
     return emitOpError("Semaphore reference must be rank 0");
   }
 
-  FailureOr<std::optional<CoreType>> issuing_core_type_maybe =
-      GetCoreTypeOfParentFunc(**this);
-  if (failed(issuing_core_type_maybe)) {
-    return issuing_core_type_maybe;
+  FailureOr<CoreType> issuing_core_type = GetCoreTypeOfParentFunc(**this);
+  if (failed(issuing_core_type)) {
+    return issuing_core_type;
   }
-  CoreType issuing_core_type = issuing_core_type_maybe->value_or(CoreType::kTc);
-  CoreType target_core_type = getCoreType().value_or(issuing_core_type);
+  CoreType target_core_type = getCoreType().value_or(*issuing_core_type);
 
   if (getCoreId() == nullptr && getDeviceId() == nullptr) {
     if (target_core_type != issuing_core_type) {
@@ -1300,7 +1298,7 @@ LogicalResult SemaphoreSignalOp::verify() {
           absl::StrFormat("Target core type (%s) must match source core type "
                           "(%s) when device_id and core_id are not specified",
                           stringifyCoreType(target_core_type),
-                          stringifyCoreType(issuing_core_type)));
+                          stringifyCoreType(*issuing_core_type)));
     }
   }
   if (issuing_core_type != CoreType::kScVectorSubcore &&
@@ -1317,6 +1315,14 @@ LogicalResult SemaphoreWaitOp::verify() {
     return emitOpError("Semaphore reference must be rank 0");
   }
   return success();
+}
+
+void EnqueueDMAOp::build(OpBuilder& builder, OperationState& state,
+                         Value source, Value source_semaphore, Value target,
+                         Value target_semaphore, Value device_id, Value core_id,
+                         uint32_t priority, bool strict_ordering) {
+  build(builder, state, source, source_semaphore, target, target_semaphore,
+        device_id, core_id, /*core_type=*/nullptr, priority, strict_ordering);
 }
 
 LogicalResult EnqueueDMAOp::verify() {
@@ -1368,6 +1374,15 @@ LogicalResult EnqueueDMAOp::verify() {
   FailureOr<CoreType> issuing_core = GetCoreTypeOfParentFunc(**this);
   if (failed(issuing_core)) {
     return issuing_core;
+  }
+  // If the target core_type is different from the issuing core_type,
+  // the specific core_id must be provided. The device_id is irrelevant here.
+  CoreType target_core = getCoreType().value_or(*issuing_core);
+  if (target_core != *issuing_core && getCoreId() == nullptr) {
+    return emitOpError(absl::StrFormat(
+        "Core id must be specified when target core type (%s) "
+        "is different from source core type (%s)",
+        stringifyCoreType(target_core), stringifyCoreType(*issuing_core)));
   }
   if (getStrictOrdering() && *issuing_core != CoreType::kScScalarSubcore &&
       *issuing_core != CoreType::kScVectorSubcore) {
@@ -1580,7 +1595,7 @@ LogicalResult WaitDMAOp::verify() {
 void WaitDMA2Op::build(OpBuilder &builder, OperationState &state,
                        Value semaphore, Value src, Value dst) {
   build(builder, state, semaphore, src, dst, /*device_id=*/nullptr,
-        /*core_id=*/nullptr);
+        /*core_id=*/nullptr, /*core_type=*/nullptr);
 }
 
 LogicalResult WaitDMA2Op::verify() {
