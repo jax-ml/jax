@@ -829,6 +829,25 @@ absl::StatusOr<xla::gpu::GpuCliqueKey> GetCliqueKey(
       xla::AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE);
 }
 
+// Returns device groups for a collective operation. Device groups used by
+// XLA to decide if collective communicator can be safely split from one of
+// the existing clique. Passing incorrect device groups can lead to deadlocks
+// or wasted resources from allocating duplicate communicators.
+absl::StatusOr<std::vector<std::vector<xla::GlobalDeviceId>>>
+GetCliqueDeviceGroups(const xla::gpu::CollectiveParams &collective_params,
+                      const xla::ffi::Dictionary &attributes) {
+  TF_ASSIGN_OR_RETURN(std::vector<int64_t> replica_ids,
+                      GetReplicaIds(attributes));
+
+  std::vector<std::vector<xla::GlobalDeviceId>> device_groups(1);
+  device_groups[0].resize(replica_ids.size());
+  for (int32_t i = 0; i < replica_ids.size(); ++i) {
+    device_groups[0][i] = xla::GlobalDeviceId(replica_ids[i]);
+  }
+
+  return device_groups;
+}
+
 // Creates a collective metadata, stores the device version in a provided
 // location and returns the pointer to the CPU version of the metadata.
 absl::StatusOr<std::vector<char>> CreateCollectiveMetadata(
@@ -962,8 +981,11 @@ absl::Status MosaicGpuPrepare(
 
   TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
                       GetCliqueKey(*collective_params, attributes));
+  TF_ASSIGN_OR_RETURN(
+      std::vector<std::vector<xla::GlobalDeviceId>> device_groups,
+      GetCliqueDeviceGroups(*collective_params, attributes));
 
-  TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key));
+  TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key, device_groups));
   return absl::OkStatus();
 }
 
