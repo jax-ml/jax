@@ -31,6 +31,7 @@ limitations under the License.
 #include <string>
 #include <string_view>
 #include <system_error>  // NOLINT
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -220,8 +221,8 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
   if (!nvshmem_path.empty()) {
     libraries_to_link.push_back(nvshmem_path);
   }
-  return mlir::parsePassPipeline(
-      absl::StrFormat(R"(
+  return mlir::parsePassPipeline(absl::StrFormat(
+      R"(
         builtin.module(
           mosaic-gpu-resolve-trivial-locations,
           arith-expand,
@@ -257,7 +258,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
           reconcile-unrealized-casts
         )
       )",
-                      sm, ptx_isa, absl::StrJoin(libraries_to_link, ","), verify_target));
+      sm, ptx_isa, absl::StrJoin(libraries_to_link, ","), verify_target));
 }
 
 mlir::LogicalResult RunPasses(mlir::OpPassManager&& passes,
@@ -697,31 +698,19 @@ void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,
                                          "CUDA");
 
-struct CollectiveMetadataResources {
+// TODO(b/481949311): Register type with FFI and use absl::flat_hash_map instead
+// of std::map after.
+struct CustomCallResources {
+  CustomCallResources(CompiledKernel* kernel) : kernel(kernel) {}
+  CompiledKernel* kernel = nullptr;
+
   absl::Mutex mutex;
   // A map from a global device ID to the CPU version of the collective metadata
   // for TMA initialization.
   // Stores the following structure:
   // CollectiveKernelMetadata | param_to_peers array
-  absl::flat_hash_map<int, std::vector<char>> cpu_metadata_buffers
+  std::unordered_map<int, std::vector<char>> cpu_metadata_buffers
       ABSL_GUARDED_BY(mutex);
-};
-
-struct CustomCallResources {
-  CustomCallResources(CompiledKernel* kernel,
-                      std::unique_ptr<CollectiveMetadataResources,
-                                      void (*)(CollectiveMetadataResources*)>
-                          collective_metadata_resources)
-      : kernel(kernel),
-        collective_metadata_resources(
-            std::move(collective_metadata_resources)) {}
-  CompiledKernel* kernel = nullptr;
-
-  // We need to use a custom deleter here since this object is handed to
-  // XLA which can be linked dynamically.
-  std::unique_ptr<CollectiveMetadataResources,
-                  void (*)(CollectiveMetadataResources*)>
-      collective_metadata_resources;
 };
 
 // Validate custom call attributes and compile the kernel.
@@ -746,15 +735,7 @@ absl::StatusOr<std::unique_ptr<CustomCallResources>> InstantiateResources(
   TF_ASSIGN_OR_RETURN(
       CompiledKernel * kernel,
       CachedCompile(hash, module, *cc->cuda_compute_capability()));
-  std::unique_ptr<CollectiveMetadataResources,
-                  void (*)(CollectiveMetadataResources*)>
-      collective_metadata_resources(
-          new CollectiveMetadataResources,
-          [](CollectiveMetadataResources* resources) { delete resources; });
-  // TODO(481949311): Return directly unique_ptr with deleter once FFI API is
-  // updated to support it.
-  return std::make_unique<CustomCallResources>(
-      kernel, std::move(collective_metadata_resources));
+  return std::make_unique<CustomCallResources>(kernel);
 }
 
 absl::StatusOr<std::vector<ffi::AnyBuffer>> GetBuffers(
@@ -834,8 +815,8 @@ absl::StatusOr<xla::gpu::GpuCliqueKey> GetCliqueKey(
 // the existing clique. Passing incorrect device groups can lead to deadlocks
 // or wasted resources from allocating duplicate communicators.
 absl::StatusOr<std::vector<std::vector<xla::GlobalDeviceId>>>
-GetCliqueDeviceGroups(const xla::gpu::CollectiveParams &collective_params,
-                      const xla::ffi::Dictionary &attributes) {
+GetCliqueDeviceGroups(const xla::gpu::CollectiveParams& collective_params,
+                      const xla::ffi::Dictionary& attributes) {
   TF_ASSIGN_OR_RETURN(std::vector<int64_t> replica_ids,
                       GetReplicaIds(attributes));
 
@@ -927,9 +908,8 @@ absl::Status MosaicGpuInitialize(
       CreateCollectiveMetadata(clique_key, current_rank, stream,
                                collective_metadata_ptr, std::move(parameters)));
 
-  absl::MutexLock lock(resources->collective_metadata_resources->mutex);
-  resources->collective_metadata_resources->cpu_metadata_buffers[
-      collective_params->global_device_id.value()] =
+  absl::MutexLock lock(resources->mutex);
+  resources->cpu_metadata_buffers[collective_params->global_device_id.value()] =
       std::move(cpu_metadata_buffer);
   return absl::OkStatus();
 }
@@ -949,11 +929,10 @@ absl::Status MosaicGpuExecute(
 
   // Adding a CPU version of the collective metadata for TMA initialization.
   if (uses_collective_metadata) {
-    absl::MutexLock lock(resources->collective_metadata_resources->mutex);
+    absl::MutexLock lock(resources->mutex);
 
-    std::vector<char>& cpu_metadata_buffer =
-        resources->collective_metadata_resources->cpu_metadata_buffers.at(
-            collective_params->global_device_id.value());
+    std::vector<char>& cpu_metadata_buffer = resources->cpu_metadata_buffers.at(
+        collective_params->global_device_id.value());
     buffer_ptrs.push_back(cpu_metadata_buffer.data());
   }
 
