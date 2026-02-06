@@ -9341,7 +9341,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_sum_unreduced_error(self, mesh):
     # Case 1
-    arr2 = jax.device_put(np.arange(16).reshape(8, 2), P('y', None))
+    arr = jax.device_put(np.arange(16).reshape(8, 2), P('y', None))
 
     @jax.jit
     def g(x):
@@ -9352,19 +9352,19 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         core.ShardingTypeError,
         "out_sharding's unreduced axes should be in operand's specs that were"
         ' summed over'):
-      g(arr2)
+      g(arr)
 
     # Case 2
     @jax.jit
     def f(x):
       out = jax.lax.reduce_sum(
           x, axes=(0,), out_sharding=P(None, unreduced={'y'}))
-      return jax.lax.reduce_sum(out, axes=(0,))
+      out = jax.lax.reduce_sum(out, axes=(0,))
+      self.assertEqual(out.aval.sharding.spec, P(unreduced={'y'}))
+      return out
 
-    with self.assertRaisesRegex(
-        core.ShardingTypeError,
-        "operand passed to reduce_sum cannot be unreduced"):
-      f(arr2)
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'y'})))
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_multi_axes_reduce_sum(self, mesh):
@@ -10251,6 +10251,50 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return reshard((o1 + o2), P()).sum()
     out_g = jax.jit(jax.grad(g))(arr)
     self.assertEqual(out_g.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_reduce_sum_unreduced_inp(self, mesh):
+    arr = jax.reshard(jnp.arange(4.), P(unreduced={'x'}))
+
+    @jax.jit
+    def f(x):
+      return jax.lax.reduce_sum(x, axes=[0])
+
+    out = f(arr)
+    self.assertEqual(out.ndim, 0)
+    for s, es in zip(out.addressable_shards, [np.array(6.), np.array(0.)]):
+      self.assertArraysEqual(s.data, es, check_dtypes=False)
+
+    out_g = jax.jit(jax.grad(f))(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
+
+    arr2 = jax.reshard(jnp.arange(4.), P('x'))
+    ex_out_g = jax.jit(jax.grad(f))(arr2)
+
+    self.assertArraysEqual(out_g, ex_out_g)
+
+  @parameterized.parameters(
+      ([0], None, P(None, unreduced={'y'})),
+      ([0], P(unreduced={'x', 'y'}), P(None, unreduced={'x', 'y'})),
+      # ([0], P(unreduced={'x'}), P(None, unreduced={'x'})),
+      ([0, 1], None, P(unreduced={'y'})),
+      ([0, 1], P(unreduced={'x', 'y'}), P(unreduced={'x', 'y'})),
+      # ([0, 1], P(unreduced={'x'}), P(unreduced={'x'})),
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reduce_sum_unreduced_inp_multi_mesh(self, axes, out_s, eq_out_s, mesh):
+    inp1 = jax.device_put(np.arange(16).reshape(8, 2), P('x', 'y'))
+    inp2 = jax.device_put(np.arange(8).reshape(2, 4), P('y', None))
+    arr = jnp.dot(inp1, inp2, out_sharding=P('x', unreduced={'y'}))
+
+    @jax.jit
+    def f(x):
+      out = jax.lax.reduce_sum(x, axes=axes, out_sharding=out_s)
+      self.assertEqual(out.aval.sharding.spec, eq_out_s)
+      return out
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, eq_out_s))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

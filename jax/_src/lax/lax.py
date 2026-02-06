@@ -7704,19 +7704,20 @@ def _reduce_sum_sharding_rule(operand, *, axes, out_sharding):
   return operand.sharding.update(spec=new_spec)
 
 def _reduce_sum_unreduced_rule(out_s, operand, *, axes, **kwargs):
-  if operand.sharding.spec.unreduced:
-    raise core.ShardingTypeError(
-        f'operand passed to reduce_sum cannot be unreduced. Got {operand=}')
   if unreduced_spec := out_s.spec.unreduced:
     axes = frozenset(axes)
-    reduced_spec = frozenset(
+    used_spec = frozenset(
         s for i, spec in enumerate(operand.sharding.spec) if i in axes
-        for s in (spec if isinstance(spec, tuple) else (spec,)))
-    if not all(u in reduced_spec for u in unreduced_spec):
+        for s in (spec if isinstance(spec, tuple) else (spec,))
+    ) | operand.sharding.spec.unreduced
+    if not all(u in used_spec for u in unreduced_spec):
       raise core.ShardingTypeError(
           "out_sharding's unreduced axes should be in operand's specs that"
           f' were summed over. Got {operand=}, {axes=},'
           f' unreduced_spec={unreduced_spec}')
+  elif operand.sharding.spec.unreduced:
+    return out_s.update(spec=out_s.spec.update(
+        unreduced=operand.sharding.spec.unreduced))
   return out_s
 
 def _reduce_sum_reduced_rule(out_s, operand, *, axes, **kwargs):
