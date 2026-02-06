@@ -6480,15 +6480,17 @@ def _broadcast_in_dim_typecheck_rule(
 def _broadcast_in_dim_transpose_rule(ct, operand,
                                      shape, broadcast_dimensions, sharding):
   if type(ct) is ad_util.Zero:
-    return [ad_util.Zero(operand.aval)]
+    return [ad_util.Zero(operand.aval.to_cotangent_aval())]
   if not isinstance(operand, ad.UndefinedPrimal):
     return [None]  # transpose wrt literal
   unit_dims = [i for i, s in enumerate(operand.aval.shape)
                if core.definitely_equal(s, 1)]
   bdims = tuple(np.delete(broadcast_dimensions, unit_dims))
   axes = tuple(np.delete(range(len(shape)), bdims))
-  out = reduce_sum(ct, axes,
-                   out_sharding=operand.aval.to_cotangent_aval().sharding)
+  ct_s = operand.aval.to_cotangent_aval().sharding
+  ct_s = ct_s.update(spec=ct_s.spec.update(
+      partitions=tuple_delete(ct_s.spec, unit_dims)))
+  out = reduce_sum(ct, axes, out_sharding=ct_s)
   return [expand_dims(out, unit_dims)]
 
 def _broadcast_in_dim_batch_rule(axis_data, batched_args, batch_dims, shape,
