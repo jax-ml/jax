@@ -252,3 +252,33 @@ module @jit_func attributes {jax.uses_shape_polymorphism = false, mhlo.num_parti
     xla_call_module_version=9,
     nr_devices=1,
 )  # End paste
+
+# Pasted from the test output (see export_back_compat_test_util.py module docstring)
+data_2026_02_04_rocm = {}
+data_2026_02_04_rocm['shardy'] = dict(
+    testdata_version=1,
+    platform='rocm',
+    custom_call_targets=['annotate_device_placement'],
+    serialized_date=datetime.date(2026, 2, 4),
+    inputs=(array([1., 2.], dtype=float32), array([3., 4.], dtype=float32)),
+    expected_outputs=(array([4., 6.], dtype=float32),),
+    mlir_module_text=r"""
+#loc1 = loc("x")
+#loc2 = loc("y")
+module @jit_func attributes {jax.uses_shape_polymorphism = false, mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 : i32} {
+  sdy.mesh @mesh = <["a"=1]> loc(#loc)
+  func.func public @main(%arg0: tensor<2xf32> {mhlo.memory_kind = "device", sdy.sharding = #sdy.sharding<@mesh, [{"a"}]>} loc("x"), %arg1: tensor<2xf32> {mhlo.memory_kind = "pinned_host", sdy.sharding = #sdy.sharding<@mesh, [{"a"}]>} loc("y")) -> (tensor<2xf32> {jax.result_info = "result", mhlo.memory_kind = "pinned_host", sdy.sharding = #sdy.sharding<@mesh, [{"a"}]>}) {
+    %0 = stablehlo.add %arg0, %arg1 : tensor<2xf32> loc(#loc5)
+    %1 = stablehlo.custom_call @annotate_device_placement(%0) {has_side_effect = true, mhlo.frontend_attributes = {_xla_buffer_placement = "pinned_host"}} : (tensor<2xf32>) -> tensor<2xf32> loc(#loc)
+    return %1 : tensor<2xf32> loc(#loc)
+  } loc(#loc)
+} loc(#loc)
+#loc = loc(unknown)
+#loc3 = loc("/rocm-jax/jax/tests/export_back_compat_test.py":902:13)
+#loc4 = loc("jit(func)"(#loc3))
+#loc5 = loc("add"(#loc4))
+""",
+    mlir_module_serialized=b"ML\xefR\rStableHLO_v1.13.1\x00\x01#\x07\x01\x05\t\r\x01\x03\x0f\x03\x03\x13\x05\t\x17\x1b\x1f#\x03\x83a\x0b\x01-\x07\x0f\x0b#\x0b\x0f\x0b\x0b\x0b\x0b\x0f\x0b\x0f\x0b\x0f\x0b\x0f\x0b\x17\x0b\x13\x0b\x03\x0b\x17\x13\x0f\x17\x0f\x05+\x0b\x0b\x0b\x0b\x13\x1b\x0b\x1b\x0b\x0f#\x0b\x0b\x0b\x0b\x13\x0b\x0b\x0b\x0b\x0b\x01\x05\x0b\x0f\x05\x07\x13\x1b\x07\x02v\x02\x1f\x11\x03\x05\x05\t\x03\x07\t\x0b\r\x03\x0f\x03\x05\x13\x11\x01\x00\x05\x15\x05\x17\x05\x19\t\x05\x1d\x17\x01\x05\x1b\x1d\x1b\x01\x05\x1d\x1d\x1f!\x05\x1f\x1d#%\x05!\x17'\x1a\x0e\x1b\x05#\x03\x03+U\x05%\r\x13\x033\x01\x05\x031\x01\x03'\x05\x0b\x035\x01\x01\t'\x01\x03\x01\x1d)\x1d+\x1d-\x03\x05AE\r\x059C;-\x1d/\r\x059=;-#\x07\x03\x03K\r\x07MO9=;-\x1d1\x1d3\x1d5\x1d7\r\x03W=\x1d9\x0b\x03\x1d;\x1d=\x05\x03\x01\t\x01\x02\x02)\x03\t\t\x11\x05\x05\x05\x03\x05\t\x04m\x05\x01Q\x01\x07\x01\x07\x04[\x03\x01\t\x03@\x01\x03\x05P\x01\x05\x07\x04?\x03\t\x0f\x05\x0b\x15\x0b\x19\x00\x07\x06\x1d\x03\x05\x05\x01\x03\tG\x01)\x07\x03\x05\x03\x05\x0b\x04\x01\x03\x07\x06\x03\x01\x05\x01\x00F\x06?5\x03-\x0f\x0b\x0f!\x0f\x19\x1b#\x053_\x15\t\x05\x05\x13%)9\x15\x1f\x0f\x11\x0b\x0f\x0b\t\x11builtin\x00sdy\x00vhlo\x00module\x00mesh\x00func_v1\x00add_v1\x00custom_call_v1\x00return_v1\x00jax.uses_shape_polymorphism\x00mhlo.num_partitions\x00mhlo.num_replicas\x00jit_func\x00x\x00y\x00add\x00jit(func)\x00/rocm-jax/jax/tests/export_back_compat_test.py\x00mhlo.frontend_attributes\x00a\x00mhlo.memory_kind\x00sdy.sharding\x00pinned_host\x00device\x00jax.result_info\x00result\x00main\x00public\x00_xla_buffer_placement\x00\x00annotate_device_placement\x00\x08-\t\x05#\x01\x05/\x05\x0b?GIQS\x11Y[]7_777",
+    xla_call_module_version=10,
+    nr_devices=1,
+)  # End paste
