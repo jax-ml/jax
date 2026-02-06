@@ -1526,6 +1526,17 @@ compilation_cache_dir = optional_string_state(
           '2. The value of this flag set in the command line or by default.'),
 )
 
+compilation_cache_check_contents = bool_state(
+    name='jax_compilation_cache_check_contents',
+    default=False,
+    help=(
+        'When the compilation cache is enabled, check that the value '
+        'found in the disk cache matches the result of a fresh compilation. '
+        'This check is performed only the first time a key is encountered '
+        'in a process.'
+    ),
+)
+
 compilation_cache_expect_pgle = bool_state(
     name='jax_compilation_cache_expect_pgle',
     default=False,
