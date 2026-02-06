@@ -1595,8 +1595,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(jnp.int32, jnp.float32)
   def test_gather_add(self, dtype):
-    """Gather from HBM at indices added to contiguous VMEM."""
     self.skip_if_tc_tiling()
+
     shape = (self.sc_info.num_subcores, 64, 32)
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(*shape)
     # TODO(b/478819791): Fix and enable on v7x
@@ -1608,25 +1608,21 @@ class VectorSubcoreTest(PallasSCTest):
         mesh=plsc.VectorSubcoreMesh(
             core_axis_name="core", subcore_axis_name="subcore", num_cores=1
         ),
-        scratch_shapes=[
-            pltpu.VMEM([8], jnp.int32),
-            pltpu.VMEM([8, 32], dtype),
-            pltpu.SemaphoreType.DMA,
-        ],
+        scratch_shapes=dict(
+            indices_vmem=pltpu.VMEM([8], jnp.int32),
+            scratch_ref=pltpu.VMEM([8, 32], dtype),
+        ),
     )
-    def kernel(x_ref, indices_ref, o_ref, indices_vmem, scratch_ref, sem):
+    def kernel(x_ref, indices_ref, o_ref, indices_vmem, scratch_ref):
       subcore_id = lax.axis_index("subcore")
       pltpu.sync_copy(indices_ref, indices_vmem)
       # Initialize scratch space.
       pltpu.sync_copy(x_ref.at[subcore_id, pl.ds(0, 8)], scratch_ref)
       # Gather-add selected indices to scratch.
-      pltpu.async_copy(
-          # TODO: Can't mix array and ref indexers .at[subcore_id, indices_vmem]
-          x_ref.at[subcore_id].at[indices_vmem],
-          scratch_ref,
-          sem,
-          add=True,
-      ).wait()
+      # TODO(selebedev): Allow mixing array and ref indexers in ``.at``.
+      pltpu.sync_copy(
+          x_ref.at[subcore_id].at[indices_vmem], scratch_ref, add=True
+      )
       pltpu.sync_copy(scratch_ref, o_ref.at[subcore_id])
 
     indices = jnp.arange(8) * 8
@@ -1634,10 +1630,9 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(jnp.int32, jnp.float32)
   def test_scatter_add(self, dtype):
-    """Scatter from contiguous VMEM added to VMEM_SHARED at indices."""
     self.skip_if_tc_tiling()
-    nsubcores = self.sc_info.num_subcores
-    shape = (nsubcores, 32)
+
+    shape = (self.sc_info.num_subcores, 32)
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(*shape)
 
     mesh = plsc.VectorSubcoreMesh(
@@ -1662,11 +1657,9 @@ class VectorSubcoreTest(PallasSCTest):
         scratch_shapes=[
             pltpu.VMEM_SHARED(shape[1:], dtype),
             pltpu.VMEM(shape[1:], dtype),
-            pltpu.SemaphoreType.DMA,
         ],
     )
-    def kernel(x_ref, indices_ref, o_ref,
-               shared_scratch_ref, scratch_ref, sem):
+    def kernel(x_ref, indices_ref, o_ref, shared_scratch_ref, scratch_ref):
       subcore_id = pl.program_id(0)
       pltpu.sync_copy(x_ref.at[subcore_id], scratch_ref)
       # Subcore 0 to init shared scratch.
@@ -1675,12 +1668,7 @@ class VectorSubcoreTest(PallasSCTest):
         pltpu.sync_copy(scratch_ref, shared_scratch_ref)
       plsc.subcore_barrier()
       # All cores to add their slice to shared scratch.
-      pltpu.async_copy(
-          scratch_ref,
-          shared_scratch_ref.at[indices_ref],
-          sem,
-          add=True,
-      ).wait()
+      pltpu.sync_copy(scratch_ref, shared_scratch_ref.at[indices_ref], add=True)
       plsc.subcore_barrier()
       # Subcore 0 to copy shared scratch to output.
       @pl.when(subcore_id == 0)
