@@ -1869,6 +1869,47 @@ class OpsTest(PallasBaseTest):
 
     np.testing.assert_allclose(f(), kernel())
 
+  @parameterized.parameters("float16", "bfloat16", "float32", "float64")
+  def test_approx_tanh(self, dtype):
+    self.skip_if_mosaic_gpu()
+
+    if jtu.test_device_matches(["tpu"]):
+      self.skipTest("Not implemented on TPU")
+
+    if self.INTERPRET:
+      self.skipTest("approx_tanh is not supported in interpret mode")
+
+    if (dtype == "bfloat16" and
+        jtu.test_device_matches(["cuda"]) and
+        not jtu.is_cuda_compute_capability_at_least("9.0")):
+      self.skipTest("tanh.approx.bf16 requires a GPU with capability >= sm90")
+
+    if dtype == "float64":
+      if jtu.test_device_matches(["cuda"]):
+        self.skipTest("f64 approx_tanh is only supported on ROCm")
+
+    # Enable x64 for f64 test if not already enabled, restore after test
+    original_x64 = jax.config.x64_enabled
+    if dtype == "float64" and not original_x64:
+      jax.config.update("jax_enable_x64", True)
+      self.addCleanup(lambda: jax.config.update("jax_enable_x64", False))
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), dtype),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = plgpu_triton.approx_tanh(x_ref[...])
+
+    x = jnp.asarray([-1, 0.42, 0.24, 1]).astype(dtype)
+    # We upcast to float32 because NumPy <2.0 does not handle custom dtypes
+    # properly. See https://github.com/jax-ml/jax/issues/11014.
+    np.testing.assert_allclose(
+        kernel(x).astype(jnp.float32),
+        jnp.tanh(x).astype(jnp.float32),
+        atol=5e-3,
+        rtol=5e-3,
+    )
+
   @parameterized.parameters(
       ((2, 4), (8,)),
       ((2, 4), (8, 1)),
