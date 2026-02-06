@@ -34,6 +34,7 @@ from jax._src.internal_test_util import export_back_compat_test_util as bctu
 from jax._src.internal_test_util.export_back_compat_test_data import annotate_data_placement
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_cholesky_lapack_potrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_cholesky_solver_potrf
+from jax._src.internal_test_util.export_back_compat_test_data import rocm_cholesky_solver_potrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eig_lapack_geev
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_eigh_cusolver_syev
 from jax._src.internal_test_util.export_back_compat_test_data import rocm_eigh_hipsolver_syev
@@ -129,6 +130,7 @@ class CompatTest(bctu.CompatTestBase):
     covering_testdatas = [
         *cpu_ffi_testdatas,
         cuda_cholesky_solver_potrf.data_2025_10_15,
+        rocm_cholesky_solver_potrf.data_2026_02_05,
         cuda_threefry2x32.data_2024_07_30,
         cuda_lu_pivots_to_permutation.data_2025_04_01,
         cuda_lu_cusolver_getrf.data_2024_08_19,
@@ -172,7 +174,6 @@ class CompatTest(bctu.CompatTestBase):
       "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",
       "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi", "hipsolver_syevd_ffi",
       "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
-      "hipsolver_potrf_ffi",
     })
     not_covered = targets_to_cover.difference(covered_targets)
     self.assertEmpty(not_covered,
@@ -222,7 +223,14 @@ class CompatTest(bctu.CompatTestBase):
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
 
-    info = cuda_cholesky_solver_potrf.data_2025_10_15[dtype_name]
+    # Select test data based on platform
+    if jtu.test_device_matches(["rocm"]):
+      info = rocm_cholesky_solver_potrf.data_2026_02_05[dtype_name]
+    elif jtu.test_device_matches(["cuda"]):
+      info = cuda_cholesky_solver_potrf.data_2025_10_15[dtype_name]
+    else:
+      self.skipTest("Unsupported platform")
+    
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol)
 
