@@ -18,7 +18,6 @@ from __future__ import annotations
 import collections
 from collections.abc import Sequence
 import dataclasses
-import math
 from typing import Any, TypeAlias
 
 import jax
@@ -346,42 +345,16 @@ pallas_core._core_map_mesh_rules[VectorSubcoreMesh] = (
 )
 
 
-# TODO(slebedev): Only keep the shapes which do not require unrolling.
-SUPPORTED_VECTOR_SHAPES = collections.defaultdict(list)
-for dtype in [jnp.int32, jnp.uint32, jnp.float32]:
-  SUPPORTED_VECTOR_SHAPES[jnp.dtype(dtype)].extend([
-      # fmt: off
-      (8,), (16,), (32,), (64,),
-      (1, 8), (1, 16),
-      (2, 8), (2, 16),
-      (4, 8), (4, 16),
-      # fmt: on
-  ])
-for dtype in [jnp.int16, jnp.uint16, jnp.float16, jnp.bfloat16]:
-  SUPPORTED_VECTOR_SHAPES[jnp.dtype(dtype)].extend([
-      # fmt: off
-      (16,), (32,), (64,),
-      (2, 8), (2, 16),
-      # fmt: on
-  ])
-for dtype in [jnp.float16, jnp.bfloat16]:
-  SUPPORTED_VECTOR_SHAPES[jnp.dtype(dtype)].extend([
-      # fmt: off
-      (4, 8), (4, 16),
-      # fmt: on
-  ])
-for dtype in [jnp.int8, jnp.uint8]:
-  SUPPORTED_VECTOR_SHAPES[jnp.dtype(dtype)].extend([
-      # fmt: off
-      (32,), (64,),
-      (4, 8), (4, 16),
-      # fmt: on
-  ])
-
-
-# Make sure all combinations are divisible by the vector register size.
-supported_shapes: list[Any] = []
-for dtype, supported_shapes in SUPPORTED_VECTOR_SHAPES.items():
-  for shape in supported_shapes:
-    assert (math.prod(shape) * dtype.itemsize) % 32 == 0
-del dtype, supported_shapes
+def supported_shapes(dtype: jax.typing.DTypeLike) -> Sequence[tuple[int, ...]]:
+  """Returns all supported array shapes for the given dtype on SparseCore."""
+  sc_info = get_sparse_core_info()
+  num_elements = (sc_info.num_lanes * 4) // jnp.dtype(dtype).itemsize
+  # TODO(slebedev): The compiler does not support (1, num_elements) atm.
+  divisors = [d for d in range(2, num_elements + 1) if num_elements % d == 0]
+  shapes_1d = [(num_elements,)] if num_elements % sc_info.num_lanes == 0 else []
+  shapes_2d = [
+      (d, num_elements // d)
+      for d in divisors
+      if (num_elements // d) % sc_info.num_lanes == 0
+  ]
+  return shapes_1d + shapes_2d
