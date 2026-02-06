@@ -26,12 +26,12 @@ limitations under the License.
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>  // NOLINT
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -709,7 +709,7 @@ struct CustomCallResources {
   // for TMA initialization.
   // Stores the following structure:
   // CollectiveKernelMetadata | param_to_peers array
-  std::unordered_map<int, std::vector<char>> cpu_metadata_buffers
+  std::map<int, std::vector<char>> cpu_metadata_buffers
       ABSL_GUARDED_BY(mutex);
 };
 
