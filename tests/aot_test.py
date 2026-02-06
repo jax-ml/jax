@@ -265,7 +265,7 @@ class JaxAotTest(jtu.JaxTestCase):
   @jtu.run_on_devices('gpu')
   def test_deviceless_aot_compile(self):
     target_config = xc.get_topology_for_devices(jax.devices()).target_config
-    gpu_platform = jax.default_backend()  # Capture before switching to cpu
+    gpu_platform = jax.devices()[0].platform  # Capture before switching to cpu
     with jtu.global_config_context(jax_platforms="cpu"):
       topology = topologies.get_topology_desc(
         platform=gpu_platform,
