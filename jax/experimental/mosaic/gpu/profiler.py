@@ -26,6 +26,7 @@ import warnings
 import jax
 from jax._src import stages
 from jax._src import util
+from jax._src.lib import _profiler
 import jax.numpy as jnp
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -34,6 +35,11 @@ from jaxlib.mlir.dialects import memref
 import numpy as np
 
 from .utils import *  # noqa: F403
+
+try:
+  from tensorflow.compiler.xla.python import _gpu_ondevice_tracing as gpu_ondevice_tracing  # noqa: F401
+except ImportError:
+  gpu_ondevice_tracing = None  # type: ignore[assignment]
 
 try:
   from jax._src.lib import mosaic_gpu as mosaic_gpu_lib
@@ -185,6 +191,25 @@ class ProfilerSpec:
       )
     else:
       self.dump_path = dump_path
+    self.tracing_version = self.injection_id = 0
+    self._check_gpu_ondevice_tracing()
+
+  def __bool__(self) -> bool:
+    return self.entries_per_warpgroup > 0 and (
+        (self.tracing_version > 0 and self.injection_id > 0)
+        or bool(self.dump_path)
+    )
+
+  def _check_gpu_ondevice_tracing(self):
+    if gpu_ondevice_tracing is not None:
+      self.tracing_version = gpu_ondevice_tracing.active_version()
+      # tracing_version == 0 means no active tracing.
+      if self.tracing_version > 0:
+        # injection_id == 0 means on device tracing is not enabled for the
+        # current profiling session or no more injection is allowed.
+        self.injection_id = gpu_ondevice_tracing.start_injection_instance(
+            self.tracing_version
+        )
 
   def _num_warpgroups(
       self, grid: tuple[int, ...], block: tuple[int, ...]
@@ -294,7 +319,55 @@ class ProfilerSpec:
           events.append(block_events)
     events = sorted(events, key=lambda x: x[0]["ts"])
     flat_events = list(itertools.chain.from_iterable(events))
-    return json.dump({"displayTimeUnit": "ns", "traceEvents": flat_events}, f)
+
+    if f is not None:
+      json.dump({"displayTimeUnit": "ns", "traceEvents": flat_events}, f)
+
+    if (
+        gpu_ondevice_tracing is not None
+        and self.tracing_version > 0
+        and self.injection_id > 0
+    ):
+      with _profiler.TraceMe(
+          "MosaicGpuProfilerDump", inject_id=self.injection_id
+      ):
+        range_dict = {}
+        for event in flat_events:
+          range_key = (event["name"], event["pid"], event["tid"])
+          if event["ph"] == "B":
+            range_dict[range_key] = event["ts"]
+          elif event["ph"] == "E":
+            if range_key in range_dict:
+              begin_ts = range_dict[range_key]
+              range_dict.pop(range_key)
+            else:
+              begin_ts = None
+              warnings.warn(
+                  "Event start time not found for ending event:"
+                  f" {event['name']}@{event['ts']}"
+              )
+            gpu_ondevice_tracing.inject(
+                version=self.tracing_version,
+                injection_instance_id=self.injection_id,
+                tag_name=(
+                    event["name"]
+                    if begin_ts is not None
+                    else f"{event['name']} (ERROR NO START TIMESTAMP)"
+                ),
+                tag_id=self.interned_names[event["name"]],
+                pid=event["pid"],
+                tid=event["tid"],
+                start_time_ns=(
+                    int(begin_ts * 1e3)
+                    if begin_ts is not None
+                    else int(event["ts"] * 1e3) - 1
+                ),
+                duration_ps=(
+                    int((event["ts"] - begin_ts) * 1e6)
+                    if begin_ts is not None
+                    else 1000  # Just a 1 ns event when missing the start time.
+                ),
+            )
 
 
 @dataclasses.dataclass(frozen=True)
