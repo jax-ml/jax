@@ -1161,7 +1161,7 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "mgpu_collective_matmul_test",
+    name = "mgpu_collective_matmul_nvshmem_test",
     srcs = ["mgpu_collective_matmul_test.py"],
     args = [
         "--num_processes=2",
@@ -1178,6 +1178,30 @@ jax_multiplatform_test(
         "FAIL_ON_NVSHMEM_UNAVAILABLE": "",
     },
     shard_count = 8,
+    tags = [
+        "manual",
+        "multiaccelerator",
+        "notap",
+    ],
+    deps = [
+        "//jax/_src:test_multiprocess",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_experimental_gpu_ops",
+        "//jax/experimental:pallas_mosaic_gpu",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
+    name = "mgpu_collective_matmul_test",
+    srcs = ["mgpu_collective_matmul_test.py"],
+    enable_backends = [],
+    enable_configs = [
+        "gpu_h100x2",
+        "gpu_b200x2",
+    ],
+    env = {
+        "JAX_PALLAS_USE_MOSAIC_GPU": "1",
+    },
     tags = [
         "manual",
         "multiaccelerator",
@@ -1211,7 +1235,7 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "mgpu_collective_matmul_run",
+    name = "mgpu_collective_matmul_nvshmem_run",
     srcs = ["//jax/experimental/pallas/ops/gpu:collective_matmul_mgpu.py"],
     args = [
         "--num_processes=2",
@@ -1232,6 +1256,28 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax/_src:test_multiprocess",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_experimental_gpu_ops",
+        "//jax/experimental:pallas_mosaic_gpu",
+    ],
+)
+
+jax_multiplatform_test(
+    name = "mgpu_collective_matmul_run",
+    srcs = ["//jax/experimental/pallas/ops/gpu:collective_matmul_mgpu.py"],
+    enable_backends = [],
+    enable_configs = [
+        "gpu_h100x2",
+    ],
+    env = {
+        "JAX_PALLAS_USE_MOSAIC_GPU": "1",
+    },
+    tags = [
+        "manual",
+        "multiaccelerator",
+        "notap",
+    ],
+    deps = [
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_experimental_gpu_ops",
         "//jax/experimental:pallas_mosaic_gpu",
