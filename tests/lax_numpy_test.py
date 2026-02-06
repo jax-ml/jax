@@ -6211,11 +6211,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
 
   def testWrappedSignaturesMatch(self):
     """Test that jax.numpy function signatures match numpy."""
-    # Skip test on ROCm due to unsupported 'mean' function. Issue #34711
-    # TODO(GulsumGudukbay): Unskip once fixed.
-    if jtu.is_device_rocm():
-      self.skipTest("Skipped on ROCm due to unsupported 'mean' function.")
-
     # NumPy functions explicitly not implemented in JAX:
     skip = {'array2string',
             'asanyarray',
