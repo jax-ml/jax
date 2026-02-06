@@ -6818,10 +6818,10 @@ def _split_weak_type_rule(operand, *, sizes, axis):
 def _split_transpose_rule(cotangents, operand, *, sizes, axis):
   assert ad.is_undefined_primal(operand)
   if all(type(t) is ad_util.Zero for t in cotangents):
-    return ad_util.Zero(operand.aval),
-  cotangents = [t.instantiate() if type(t) is ad_util.Zero else t
-                for t in cotangents]
-  return concatenate(cotangents, dimension=axis),
+    return [ad_util.Zero(operand.aval.to_cotangent_aval())]
+  cotangents = [ct.instantiate() if type(ct) is ad_util.Zero else ct
+                for ct in cotangents]
+  return [concatenate(cotangents, dimension=axis)]
 
 def _split_batch_rule(batched_args, batch_dims, *, sizes, axis):
   operand, = batched_args
@@ -6851,6 +6851,9 @@ def _split_sharding_rule(operand, *, sizes, axis):
   return [slicing._get_sharding_for_varying_out_shape(out_sh, operand, 'split')
           for out_sh in out_shapes]
 
+def _split_unreduced_rule(out_shardings, operand, *, sizes, axis):
+  return out_shardings
+
 def _split_vma_rule(operand, *, sizes, axis):
   out_vma = core.standard_vma_rule('split', operand)
   out_shapes = _split_shape_rule(operand, sizes=sizes, axis=axis)
@@ -6861,7 +6864,7 @@ split_p.multiple_results = True
 split_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, split_p, _split_shape_rule,
             _split_dtype_rule, _split_weak_type_rule, _split_sharding_rule,
-            _split_vma_rule))
+            _split_vma_rule, _split_unreduced_rule))
 split_p.def_impl(partial(dispatch.apply_primitive, split_p))
 ad.deflinear2(split_p, _split_transpose_rule)
 batching.primitive_batchers[split_p] = _split_batch_rule
@@ -7634,7 +7637,7 @@ reduce_p.def_impl(partial(dispatch.apply_primitive, reduce_p))
 reduce_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, reduce_p, _reduce_shape_rule,
             _reduce_dtype_rule, _reduce_weak_type_rule, _reduce_sharding_rule,
-            _reduce_vma_rule))
+            _reduce_vma_rule, None))
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 ad.primitive_jvps[reduce_p] = _reduce_jvp_rule
 
@@ -8424,7 +8427,7 @@ rng_bit_generator_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, rng_bit_generator_p,
             _rng_bit_generator_shape_rule, _rng_bit_generator_dtype_rule,
             _rng_bit_generator_weak_type_rule, _rng_bit_generator_sharding_rule,
-            _rng_bit_generator_vma_rule))
+            _rng_bit_generator_vma_rule, None))
 mlir.register_lowering(rng_bit_generator_p,
                        _rng_bit_generator_lowering)
 

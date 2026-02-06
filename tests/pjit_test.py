@@ -10202,6 +10202,56 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     exp_out_g = jax.jit(jax.grad(lambda x: f(x).sum()))(arr2)
     self.assertArraysEqual(exp_out_g, reshard(out_g, P()))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_concat_reduced_split_unreduced(self, mesh):
+    x = jax.device_put(np.arange(8.).reshape(2, 4), P('x'))
+    w1 = jax.device_put(np.arange(32.).reshape(4, 8), P(reduced={'x'}))
+    w2 = jax.device_put(np.arange(32.).reshape(4, 8), P(reduced={'x'}))
+
+    @jax.jit
+    def fn(x, w1, w2):
+      w = jnp.concatenate([w1, w2], axis=-1)
+      return (x @ w).sum()
+
+    out1, out2, out3 = jax.jit(jax.grad(fn, argnums=(0, 1, 2)))(x, w1, w2)
+    self.assertEqual(out1.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertEqual(out2.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
+    self.assertEqual(out3.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
+
+    ew1 = jax.device_put(np.arange(32.).reshape(4, 8), P())
+    ew2 = jax.device_put(np.arange(32.).reshape(4, 8), P())
+    ex_o1, ex_o2, ex_o3 = jax.jit(jax.grad(fn, argnums=(0, 1, 2)))(x, ew1, ew2)
+
+    self.assertArraysEqual(out1, ex_o1)
+    self.assertArraysEqual(reshard(out2, P()), ex_o2)
+    self.assertArraysEqual(reshard(out3, P()), ex_o3)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_split_unreduced(self, mesh):
+    arr = jax.reshard(jnp.arange(8.), P(unreduced={'x'}))
+
+    @jax.jit
+    def f(x):
+      return jax.lax.split(x, sizes=[4, 4])
+
+    out1, out2 = f(arr)
+    self.assertEqual(out1.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+    self.assertEqual(out2.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+
+    for s, ex in zip(out1.addressable_shards, [np.arange(4.), np.zeros((4,))]):
+      self.assertArraysEqual(s.data, ex, check_dtypes=False)
+    for s, ex in zip(out2.addressable_shards,
+                     [np.arange(start=4., stop=8.), np.zeros((4,))]):
+      self.assertArraysEqual(s.data, ex, check_dtypes=False)
+
+    def g(x):
+      o1, o2 = f(x)
+      return reshard((o1 + o2), P()).sum()
+    out_g = jax.jit(jax.grad(g))(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
@@ -10210,7 +10260,6 @@ class PJitErrorTest(jtu.JaxTestCase):
   def testNonDivisibleArgs(self, mesh, resources):
     x = jnp.ones((3, 2))
     spec = P(resources, None)
-    mesh_size = str(math.prod([dim[1] for dim in mesh]))
     with self.assertRaises(IndivisibleError):
       pjit(lambda x: x, in_shardings=spec, out_shardings=None)(x)
 
