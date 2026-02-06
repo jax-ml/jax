@@ -1530,7 +1530,8 @@ def get_distributed_runtime_service(
     heartbeat_timeout: int | None = ...,
     cluster_register_timeout: int | None = ...,
     shutdown_timeout: int | None = ...,
-) -> DistributedRuntimeService: ...
+    recoverable: bool | None = ...,
+) -> DistributedRuntimeService: ...,
 def get_distributed_runtime_client(
     address: str,
     node_id: int,
