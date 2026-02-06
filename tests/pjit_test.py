@@ -10276,10 +10276,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @parameterized.parameters(
       ([0], None, P(None, unreduced={'y'})),
       ([0], P(unreduced={'x', 'y'}), P(None, unreduced={'x', 'y'})),
-      # ([0], P(unreduced={'x'}), P(None, unreduced={'x'})),
+      ([0], P(unreduced={'x'}), P(None, unreduced={'x'})),
       ([0, 1], None, P(unreduced={'y'})),
       ([0, 1], P(unreduced={'x', 'y'}), P(unreduced={'x', 'y'})),
-      # ([0, 1], P(unreduced={'x'}), P(unreduced={'x'})),
+      ([0, 1], P(unreduced={'x'}), P(unreduced={'x'})),
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_sum_unreduced_inp_multi_mesh(self, axes, out_s, eq_out_s, mesh):
