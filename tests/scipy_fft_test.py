@@ -138,6 +138,34 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     rtol = {np.float64: 1E-12, np.float32: 1E-4}
     self.assertArraysAllClose(actual, expected, rtol=rtol)
 
+  @jtu.sample_product(func=['idctn'])
+  def testIdctnAxes(self, func):
+    # Test for https://github.com/jax-ml/jax/issues/29426
+    x = np.array([[1,2,3]])
+    kwds = dict(s=(5,))
+
+    ops_func = getattr(osp_fft, func)
+    jsp_func = getattr(jsp_fft, func)
+
+    expected = ops_func(x, **kwds)
+    actual = jsp_func(x, **kwds)
+
+    rtol = {np.float64: 1E-12, np.float32: 1E-4}
+    self.assertArraysAllClose(actual, expected, rtol=rtol)
+
+  @jtu.sample_product(func=['dctn'])
+  def testDctnAxes(self, func):
+    x = np.array([[1,2,3]])
+    kwds = dict(s=(4,))
+
+    ops_func = getattr(osp_fft, func)
+    jsp_func = getattr(jsp_fft, func)
+
+    expected = ops_func(x, **kwds)
+    actual = jsp_func(x, **kwds)
+
+    rtol = {np.float64: 1E-12, np.float32: 1E-4}
+    self.assertArraysAllClose(actual, expected, rtol=rtol)
 
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())
