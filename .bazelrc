@@ -183,7 +183,7 @@ common:cuda_v12 --repo_env=HERMETIC_NCCL_VERSION="2.27.7"
 # "compute" means we emit both cubin and PTX, which is larger but also forward compatible to future GPU generations.
 common:cuda_v12 --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,sm_90,sm_100,compute_120"
 
-common:cuda_v13 --repo_env=HERMETIC_CUDA_VERSION="13.0.0"
+common:cuda_v13 --repo_env=HERMETIC_CUDA_VERSION="13.1.0"
 common:cuda_v13 --repo_env=HERMETIC_CUDNN_VERSION="9.12.0"
 common:cuda_v13 --repo_env=HERMETIC_NVSHMEM_VERSION="3.3.20"
 common:cuda_v13 --repo_env=HERMETIC_NCCL_VERSION="2.27.7"
@@ -432,7 +432,7 @@ common:rbe_linux_x86_64 --config=ci_linux_x86_64
 common:rbe_linux_x86_64_cuda_common --config=rbe_linux_x86_64_base
 common:rbe_linux_x86_64_cuda_common --config=rbe_gpu_pool
 # Update UMD version when RBE CUDA driver is updated.
-common:rbe_linux_x86_64_cuda_common --repo_env=HERMETIC_CUDA_UMD_VERSION="13.0.1"
+common:rbe_linux_x86_64_cuda_common --repo_env=HERMETIC_CUDA_UMD_VERSION="13.1.0"
 
 common:rbe_linux_x86_64_cuda12 --config=rbe_linux_x86_64_cuda_common
 common:rbe_linux_x86_64_cuda12 --config=ci_linux_x86_64_cuda12

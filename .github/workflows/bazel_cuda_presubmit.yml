@@ -34,7 +34,7 @@ jobs:
           runner: ["linux-x86-n4-16"]
           artifact: ["jax-cuda-plugin", "jax-cuda-pjrt"]
           python: ["3.14",]
-          cuda-version: ["13"]
+          cuda-version: ["12", "13"]
     name: "Build ${{ format('{0}', 'CUDA') }} artifacts"
     with:
       runner: ${{ matrix.runner }}
@@ -53,7 +53,7 @@ jobs:
         matrix:
           python: ["3.11", "3.14"]
           runner: ["linux-x86-n4-16"]
-          jaxlib-version: ["head", "pypi_latest"]
+          jaxlib-version: ["head"]
           enable-x64: [1, 0]
           cuda-version: ["12", "13"]
           exclude:
@@ -73,9 +73,9 @@ jobs:
             - python: "3.14"
               enable-x64: 1
               jaxlib-version: "pypi_latest"
-            # Exclude CUDA 12 on jaxlib head because it's too slow.
-            - cuda-version: "12"
-              jaxlib-version: "head"
+            # # Exclude CUDA 12 on jaxlib head because it's too slow.
+            # - cuda-version: "12"
+            #   jaxlib-version: "head"
     name: "Bazel single accelerator ${{ format('{0}', 'CUDA tests') }}"
 # End Presubmit Naming Check github-cuda-presubmits
     with:
