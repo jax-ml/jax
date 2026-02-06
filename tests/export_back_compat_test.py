@@ -49,6 +49,7 @@ from jax._src.internal_test_util.export_back_compat_test_data import cpu_tridiag
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_tridiagonal_solve_lapack_gtsv
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_threefry2x32
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_pivots_to_permutation
+from jax._src.internal_test_util.export_back_compat_test_data import rocm_lu_pivots_to_permutation
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_cusolver_getrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_svd_cusolver_gesvd
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_tridiagonal_cusolver_sytrd
@@ -131,6 +132,7 @@ class CompatTest(bctu.CompatTestBase):
         cuda_cholesky_solver_potrf.data_2025_10_15,
         cuda_threefry2x32.data_2024_07_30,
         cuda_lu_pivots_to_permutation.data_2025_04_01,
+        rocm_lu_pivots_to_permutation.data_2026_02_04,
         cuda_lu_cusolver_getrf.data_2024_08_19,
         cuda_qr_cusolver_geqrf.data_2024_09_26,
         cuda_eigh_cusolver_syev.data_2024_09_30,
@@ -169,7 +171,7 @@ class CompatTest(bctu.CompatTestBase):
       "AllocateBuffer",  # tested in pallas/export_back_compat_pallas_test.py
       "__gpu$xla.gpu.triton",  # tested in pallas/export_back_compat_pallas_test.py
       # The following require ROCm to test
-      "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",
+      "hipsolver_getrf_ffi",
       "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi", "hipsolver_syevd_ffi",
       "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
       "hipsolver_potrf_ffi",
@@ -380,6 +382,12 @@ class CompatTest(bctu.CompatTestBase):
     shape = (2, 3, 4)
     func = lambda: CompatTest.lu_pivots_to_permutation_harness(shape)
     data = self.load_testdata(cuda_lu_pivots_to_permutation.data_2025_04_01)
+    self.run_one_test(func, data)
+
+  def test_rocm_lu_pivots_to_permutation(self):
+    shape = (2, 3, 4)
+    func = lambda: CompatTest.lu_pivots_to_permutation_harness(shape)
+    data = self.load_testdata(rocm_lu_pivots_to_permutation.data_2026_02_04)
     self.run_one_test(func, data)
 
   @parameterized.named_parameters(
