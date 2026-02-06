@@ -1436,7 +1436,7 @@ class VectorSubcoreTest(PallasSCTest):
   def test_squeezed_blockspec_error_message(self):
     shape = (16, 8, 32)
     spec_shape = (pl.squeezed, 8, 32)
-    x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(*shape)
+    x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(*shape)
 
     @self.vector_subcore_kernel(
         out_shape=x,
@@ -1536,7 +1536,7 @@ class VectorSubcoreTest(PallasSCTest):
     """Gather from HBM at indices added to contiguous VMEM."""
     self.skip_if_tc_tiling()
     shape = (self.sc_info.num_subcores, 64, 32)
-    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(*shape)
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(*shape)
     # TODO(b/478819791): Fix and enable on v7x
     if jtu.is_device_tpu(7, "x"):
       self.skipTest("Mysteriously fails in MLIR verifier (no error message) on v7x")
@@ -1576,7 +1576,7 @@ class VectorSubcoreTest(PallasSCTest):
     self.skip_if_tc_tiling()
     nsubcores = self.sc_info.num_subcores
     shape = (nsubcores, 32)
-    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(*shape)
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(*shape)
 
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
@@ -1635,7 +1635,7 @@ class VectorSubcoreTest(PallasSCTest):
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
     shape = (mesh.num_subcores, 8, self.num_lanes)
-    x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(*shape)
+    x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(*shape)
 
     @self.kernel(out_shape=x, mesh=mesh)
     def kernel(x_ref, o_ref):
