@@ -1,4 +1,3 @@
-
 from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.typing import Array, ArrayLike
@@ -51,9 +50,10 @@ def algdiv(a, b):
 def betaln(a: ArrayLike, b: ArrayLike) -> Array:
     """Compute the log of the beta function.
 
-    Uses a numerically stable algorithm for both small and large inputs.
-    The jnp.where-based swapping (instead of jnp.minimum/maximum) ensures
-    correct gradients at boundary cases where a == b (fixes #34353).
+    Derived from scipy's implementation of `betaln`_.
+
+    This implementation does not handle all branches of the scipy implementation, but is still much more accurate
+    than just doing lgamma(a) + lgamma(b) - lgamma(a + b) when inputs are large (> 1M or so).
 
     .. _betaln:
         https://github.com/scipy/scipy/blob/ef2dee592ba8fb900ff2308b9d1c79e4d6a0ad8b/scipy/special/cdflib/betaln.f
@@ -63,9 +63,8 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
     # at the boundary where a == b. With jnp.where, the gradient flows through
     # only one branch, avoiding the 0.5/0.5 gradient split that causes issues
     # with higher-order derivatives.
-    a_le_b = jnp.where(a <= b, a, b)
-    b_ge_a = jnp.where(a <= b, b, a)
-    small_b = lax.lgamma(a_le_b) + (lax.lgamma(b_ge_a) - lax.lgamma(a_le_b + b_ge_a))
-    large_b = lax.lgamma(a_le_b) + algdiv(a_le_b, b_ge_a)
-    return jnp.where(b_ge_a < 8, small_b, large_b)
-
+    new_a = jnp.where(a <= b, a, b)
+    new_b = jnp.where(a <= b, b, a)
+    small_b = lax.lgamma(new_a) + (lax.lgamma(new_b) - lax.lgamma(new_a + new_b))
+    large_b = lax.lgamma(new_a) + algdiv(new_a, new_b)
+    return jnp.where(new_b < 8, small_b, large_b)
