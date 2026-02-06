@@ -59,22 +59,6 @@ namespace tpu {
 
 namespace {
 
-// This should only be used to canonicalize away EraseLayoutOps that feed ops
-// that only consume memrefs and don't return them.
-LogicalResult propagateTiledLayoutToConsumer(Operation* op,
-                                             PatternRewriter& rewriter) {
-  bool modified = false;
-  for (unsigned int i = 0; i < op->getNumOperands(); ++i) {
-    if (auto erase_layout_op =
-            op->getOperand(i).getDefiningOp<tpu::EraseLayoutOp>()) {
-      modified = true;
-      rewriter.modifyOpInPlace(
-          op, [&]() { op->setOperand(i, erase_layout_op.getOperand()); });
-    }
-  }
-  return success(modified);
-}
-
 llvm::RoundingMode convertTpuRoundingModeToLLVMIR(tpu::RoundingMode mode) {
   switch (mode) {
     case tpu::RoundingMode::kToNearestEven:

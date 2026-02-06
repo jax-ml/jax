@@ -66,6 +66,22 @@ llvm::hash_code hash_value(const ::xla::Tile &p) { return absl::HashOf(p); }
 
 namespace mlir::tpu {
 
+// This should only be used to canonicalize away EraseLayoutOps that feed ops
+// that only consume memrefs and don't return them.
+LogicalResult propagateTiledLayoutToConsumer(Operation* op,
+                                             PatternRewriter& rewriter) {
+  bool modified = false;
+  for (unsigned int i = 0; i < op->getNumOperands(); ++i) {
+    if (auto erase_layout_op =
+            op->getOperand(i).getDefiningOp<tpu::EraseLayoutOp>()) {
+      modified = true;
+      rewriter.modifyOpInPlace(
+          op, [&]() { op->setOperand(i, erase_layout_op.getOperand()); });
+    }
+  }
+  return success(modified);
+}
+
 void TPUDialect::initialize() {
   addAttributes<
 #define GET_ATTRDEF_LIST

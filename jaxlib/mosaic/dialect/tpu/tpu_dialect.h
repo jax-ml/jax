@@ -52,6 +52,11 @@ namespace tpu {
 
 DEFINE_ABSL_STRINGIFY_FOR_ENUMS();
 
+// This should only be used to canonicalize away EraseLayoutOps that feed ops
+// that only consume memrefs and don't return them.
+LogicalResult propagateTiledLayoutToConsumer(Operation* op,
+                                             PatternRewriter& rewriter);
+
 struct TpuTilingFlags {
   bool use_x16_large_second_minor = false;
   bool use_x8_large_second_minor = false;
