@@ -945,6 +945,35 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x.view(np.uint32))
 
   @parameterized.product(
+      shape=[(8, 128), (16, 128), (32, 128)],
+      kind=["transpose", "split_last", "split_first"],
+  )
+  def test_ref_reshape(self, shape, kind):
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 7):
+      self.skipTest("Test requires a newer libtpu")
+
+    match kind:
+      case "transpose":
+        out_shape = shape[::-1]
+      case "split_last":
+        out_shape = (*shape[:-1], shape[-1] // 8, 8)
+      case "split_first":
+        out_shape = (shape[0] // 8, 8, *shape[1:])
+      case _:
+        raise ValueError(f"Unsupported kind: {kind}")
+
+    x = jnp.arange(math.prod(shape)).reshape(shape)
+
+    @vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(out_shape, x.dtype),
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_ref, o_hbm_ref):
+      pltpu.sync_copy(x_ref.reshape(o_hbm_ref.shape), o_hbm_ref)
+
+    np.testing.assert_array_equal(kernel(x), x.reshape(out_shape))
+
+  @parameterized.product(
       pack_format=[*plsc.PackFormat],
       dtype=[jnp.float32, jnp.int32],
   )
