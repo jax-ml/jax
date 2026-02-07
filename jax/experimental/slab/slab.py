@@ -178,7 +178,7 @@ def slab_read(slab, view, slice_base: DShape, slice_shape: SShape):
 def slab_write(slab, view, slice_base: DShape, inval: jax.Array):
   slice_shape = inval.shape
   view_tile_shape = tile_shape(view.shape, view.dtype)
-  tiled_shape = map(xceil_div, inval.shape, view_tile_shape)
+  tiled_shape = list(map(xceil_div, inval.shape, view_tile_shape))
   inval_linearized = inval.reshape(
       *tiled_shape[:-1], view_tile_shape[-2], tiled_shape[-1], view_tile_shape[-1]
       ).swapaxes(-2, -3)

@@ -128,8 +128,10 @@ def _get_cmdclass(pkg_source_path):
   class _build_py(build_py_orig):
     def run(self):
       if _release_version is None:
-        this_file_in_build_dir = os.path.join(self.build_lib, pkg_source_path,
-                                              os.path.basename(__file__))
+        this_file_in_build_dir = os.path.join(
+          self.build_lib,  # pyrefly: ignore[missing-attribute]
+          pkg_source_path,
+          os.path.basename(__file__))
         # super().run() only copies files from source -> build if they are
         # missing or outdated. Because _write_version(...) modifies the copy of
         # this file in the build tree, re-building from the same JAX directory
@@ -137,8 +139,10 @@ def _get_cmdclass(pkg_source_path):
         # would fail without this deletion. See jax-ml/jax#18252.
         if os.path.isfile(this_file_in_build_dir):
           os.unlink(this_file_in_build_dir)
+      else:
+        this_file_in_build_dir = ""
       super().run()
-      if _release_version is None:
+      if this_file_in_build_dir:
         _write_version(this_file_in_build_dir)
 
   class _sdist(sdist_orig):

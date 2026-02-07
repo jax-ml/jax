@@ -5,6 +5,11 @@ project-includes = [
     # "tests/**/*.py",
 ]
 
+project-excludes = [
+    "jax/example_libraries/**/*.py",
+    "jax/experimental/**/*.py",
+]
+
 ignore-missing-imports = [
     "absl.*",
     "flatbuffers.*",

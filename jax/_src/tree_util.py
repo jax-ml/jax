@@ -45,14 +45,14 @@ default_registry = pytree.default_registry()
 # Set __module__ and __name__, which allow this registry to be pickled by
 # reference.
 default_registry.__module__ = __name__
-default_registry.__name__ = "default_registry"
+default_registry.__name__ = "default_registry"  # pyrefly: ignore[missing-attribute]
 
 # A copy of the default registry, where None is a leaf.
 none_leaf_registry = pytree.PyTreeRegistry(
     enable_none=False, enable_tuple=True, enable_namedtuple=True,
     enable_list=True, enable_dict=True)
 none_leaf_registry.__module__ = __name__
-none_leaf_registry.__name__ = "none_leaf_registry"
+none_leaf_registry.__name__ = "none_leaf_registry"  # pyrefly: ignore[missing-attribute]
 
 # A special, internal pytree registry that includes everything in
 # `default_registry`, plus internal Python-defined types that we want
@@ -68,7 +68,7 @@ dispatch_registry = pytree.PyTreeRegistry(
     enable_none=True, enable_tuple=True, enable_namedtuple=True,
     enable_list=True, enable_dict=True)
 dispatch_registry.__module__ = __name__
-dispatch_registry.__name__ = "dispatch_registry"
+dispatch_registry.__name__ = "dispatch_registry"  # pyrefly: ignore[missing-attribute]
 
 
 @export
@@ -354,7 +354,11 @@ def register_pytree_node_class(cls: Typ) -> Typ:
     >>> jax.jit(f)(m)
     Array([0., 2., 4., 6.], dtype=float32)
   """
-  register_pytree_node(cls, op.methodcaller("tree_flatten"), cls.tree_unflatten)
+  register_pytree_node(
+    cls,
+    op.methodcaller("tree_flatten"),
+    cls.tree_unflatten  # pyrefly: ignore[missing-attribute]
+  )
   return cls
 
 
@@ -564,9 +568,9 @@ class Partial(functools.partial):
       original_func = func
       func = _HashableCallableShim(original_func)
       out = super().__new__(klass, func, *args, **kw)
-      func.func = original_func.func
-      func.args = original_func.args
-      func.keywords = original_func.keywords
+      func.func = original_func.func  # pyrefly: ignore[missing-attribute]
+      func.args = original_func.args  # pyrefly: ignore[missing-attribute]
+      func.keywords = original_func.keywords  # pyrefly: ignore[missing-attribute]
       return out
     else:
       return super().__new__(klass, func, *args, **kw)
@@ -984,7 +988,8 @@ def register_pytree_with_keys_class(cls: Typ) -> Typ:
       op.methodcaller("tree_flatten") if hasattr(cls, "tree_flatten") else None
   )
   register_pytree_with_keys(
-      cls, op.methodcaller("tree_flatten_with_keys"), cls.tree_unflatten,
+      cls, op.methodcaller("tree_flatten_with_keys"),
+      cls.tree_unflatten,  # pyrefly: ignore[missing-attribute]
       flatten_func
   )
   return cls

@@ -152,6 +152,7 @@ def jax_to_ir(fn, input_shapes, *, constants=None, format):
 
   if format == 'HLO':
     comp = jax.jit(ordered_wrapper).lower(*args).compiler_ir('hlo')
+    assert comp is not None
     serialized_proto = comp.as_serialized_hlo_module_proto()
     debug_txt = comp.as_hlo_text()
   else:
@@ -159,6 +160,9 @@ def jax_to_ir(fn, input_shapes, *, constants=None, format):
     if tf is None:
       raise ValueError(
           'Conversion to TF graph requires TensorFlow to be installed.')
+    if jax2tf is None:
+      raise ValueError(
+          'Conversion to TF graph requires jax.experimental.jax2tf to be importable.')
 
     f = jax2tf.convert(ordered_wrapper)
     f = tf_wrap_with_input_names(f, input_shapes)
@@ -172,6 +176,7 @@ def jax_to_ir(fn, input_shapes, *, constants=None, format):
 
 def tf_wrap_with_input_names(f, input_shapes):
   def wrapper(*args):
+    assert tf is not None  # checked in caller
     args = tuple(
         tf.identity(a, name=name) for a, (name, _) in zip(args, input_shapes))
     # NOTE: Output names already set via `jax2tf.convert(..)`.
