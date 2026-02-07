@@ -268,6 +268,10 @@ cc_library(
             "-Wl,--export-dynamic-symbol='MosaicGpuUnload'",
         ],
     ),
+    local_defines = if_oss(
+        ["PLATFORM_OSS"],
+        [],
+    ),
     deps = [
         ":dump",
         ":library_paths",  # buildcleaner: keep

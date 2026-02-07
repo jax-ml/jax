@@ -495,9 +495,16 @@ jax_multiplatform_test(
         "gpu_h100x2",
         "gpu_b200x2",
     ],
-    env = {
-        "JAX_PALLAS_USE_MOSAIC_GPU": "1",
-    },
+    env = if_oss(
+        {
+            "JAX_PALLAS_USE_MOSAIC_GPU": "1",
+            # TODO(b/481949311): Remove once fixed.
+            "JAX_OSS": "1",
+        },
+        google_value = {
+            "JAX_PALLAS_USE_MOSAIC_GPU": "1",
+        },
+    ),
     tags = [
         "mosaic_gpu_test",
         "multiaccelerator",
@@ -1199,9 +1206,16 @@ jax_multiplatform_test(
         "gpu_h100x2",
         "gpu_b200x2",
     ],
-    env = {
-        "JAX_PALLAS_USE_MOSAIC_GPU": "1",
-    },
+    env = if_oss(
+        {
+            "JAX_PALLAS_USE_MOSAIC_GPU": "1",
+            # TODO(b/481949311): Remove once fixed.
+            "JAX_OSS": "1",
+        },
+        google_value = {
+            "JAX_PALLAS_USE_MOSAIC_GPU": "1",
+        },
+    ),
     tags = [
         "manual",
         "multiaccelerator",
