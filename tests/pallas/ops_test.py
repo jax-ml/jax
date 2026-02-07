@@ -1122,11 +1122,14 @@ class OpsTest(PallasBaseTest):
           and not jtu.is_device_tpu_at_least(6)
       ):
         self.skipTest(f"bfloat16 {fn.__name__} is only supported on TPU v6+")
-      if (
-          fn in (jnp.sin, jnp.cos, jnp.tan, jnp.tanh, jnp.log1p)
-          and dtype == "bfloat16"
-      ):
+      if fn in (jnp.tanh, jnp.log1p) and dtype == "bfloat16":
         self.skipTest(f"bfloat16 {fn.__name__} is not supported on TPU")
+      if (
+          fn in (jnp.sin, jnp.cos, jnp.tan)
+          and dtype == "bfloat16"
+          and not jtu.is_cloud_tpu_at_least(2026, 2, 14)
+      ):
+        self.skipTest("requires a newer libTPU")
       # TODO(b/370578663): implement these lowerings on TPU
       if fn in (
           jnp.acos, jnp.acosh, jnp.asin, jnp.asinh, jnp.atan, jnp.atanh,
