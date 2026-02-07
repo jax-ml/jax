@@ -40,7 +40,6 @@ from jax._src.core import pvary, Tracer, typeof, shard_aval, unshard_aval
 from jax._src.mesh import (AbstractMesh, Mesh, BaseMesh, AxisType,
                            use_abstract_mesh, get_abstract_mesh,
                            get_concrete_mesh)
-from jax._src.pjit import reshard
 from jax._src.lax import lax, parallel as lax_parallel
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo, sdy
@@ -254,9 +253,19 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
         frozenset(mesh.axis_names) - core.get_axis_env().explicit_mesh_axis_names)
     if (mesh_axis_names_wo_vmap == axis_names and
         all(mesh._name_to_type[a] == AxisType.Explicit for a in axis_names)):
-      args_flat = [a if typeof(a).sharding.spec == s
-                   else reshard(a, NamedSharding(mesh, s))
-                   for a, s in zip(args_flat, in_specs_flat)]
+      for a, s in zip(args_flat, in_specs_flat):
+        arg_aval = typeof(a)
+        s = s._normalized_spec_for_aval(arg_aval.ndim)
+        if config.remove_size_one_mesh_axis_from_type.value:
+          s = core.remove_size_one_mesh_axis(s, mesh)
+        if arg_aval.sharding.spec != s:
+          raise ValueError(
+              f"in_specs passed to shard_map: {s} does not match the specs of"
+              f" the input: {arg_aval.sharding.spec} for arg: {typeof(a)}."
+              " `in_specs` is an optional argument so you can omit specifying"
+              " it and shard_map will infer the in_specs from the arguments."
+              " If you want to reshard your inputs, you can use `jax.reshard`"
+              " on the arguments and then pass those args to shard_map.")
 
     try:
       out_flat = shard_map_p.bind(
@@ -1144,7 +1153,8 @@ def _unmatch2(mesh, prev_manual, spec, x):
   src = P(order_wrt_mesh(mesh, prev_manual), *spec)
   newly_manual = _spec_to_vma(spec)
   dst = P(order_wrt_mesh(mesh, prev_manual | newly_manual))
-  return shard_map(lambda x: x, in_specs=src, out_specs=dst)(x)
+  return shard_map(lambda x: x, in_specs=src, out_specs=dst,
+                   axis_names=prev_manual | newly_manual)(x)
 
 def _match_spec2(mesh, prev_manual, spec, x) -> JaxType:
   with (core.eval_context(), api.disable_jit(False),
@@ -1155,7 +1165,8 @@ def _match2(mesh, prev_manual, spec, x):
   newly_manual = _spec_to_vma(spec)
   src = P(order_wrt_mesh(mesh, prev_manual | newly_manual))
   dst = P(order_wrt_mesh(mesh, prev_manual), *spec)
-  return shard_map(lambda x: x, in_specs=src, out_specs=dst)(x)
+  return shard_map(lambda x: x, in_specs=src, out_specs=dst,
+                   axis_names=prev_manual | newly_manual)(x)
 
 
 def _unmatch_spec(mesh: Mesh, check_vma, context_mesh, manual_axes, in_spec,

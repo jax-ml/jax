@@ -958,8 +958,8 @@ class HijaxTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('data',))
   def test_hijax_primitive_under_shard_map(self, mesh):
+    x = jax.device_put(jnp.arange(10), jax.P('data'))
     g = jax.shard_map(square, in_specs=(jax.P('data'),), out_specs=jax.P('data'))
-    x = jnp.arange(10)
     g(x)
     jax.jit(g)(x)
 
