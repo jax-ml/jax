@@ -51,6 +51,7 @@ from jax._src.internal_test_util.export_back_compat_test_data import cuda_threef
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_pivots_to_permutation
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_cusolver_getrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_svd_cusolver_gesvd
+from jax._src.internal_test_util.export_back_compat_test_data import rocm_svd_hipsolver_gesvd
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_tridiagonal_cusolver_sytrd
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_tridiagonal_solve
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Eigh
@@ -135,6 +136,7 @@ class CompatTest(bctu.CompatTestBase):
         cuda_qr_cusolver_geqrf.data_2024_09_26,
         cuda_eigh_cusolver_syev.data_2024_09_30,
         cuda_svd_cusolver_gesvd.data_2024_10_08,
+        rocm_svd_hipsolver_gesvd.data_2026_02_04,
         cpu_tridiagonal_solve_lapack_gtsv.data_2025_01_09,
         cuda_tridiagonal_cusolver_sytrd.data_2025_01_09,
         cuda_tridiagonal_solve.data_2025_06_16,
@@ -171,7 +173,6 @@ class CompatTest(bctu.CompatTestBase):
       # The following require ROCm to test
       "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",
       "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi", "hipsolver_syevd_ffi",
-      "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
       "hipsolver_potrf_ffi",
     })
     not_covered = targets_to_cover.difference(covered_targets)
@@ -624,8 +625,17 @@ class CompatTest(bctu.CompatTestBase):
     algorithm = dict(qr=lax.linalg.SvdAlgorithm.QR,
                      jacobi=lax.linalg.SvdAlgorithm.JACOBI)[algorithm_name]
 
-    info = cuda_svd_cusolver_gesvd.data_2024_10_08[algorithm_name][dtype_name]
-    data = self.load_testdata(info)
+    platform_data = None
+    if jtu.test_device_matches(["cuda"]):
+      platform_data = \
+          cuda_svd_cusolver_gesvd.data_2024_10_08[algorithm_name][dtype_name]
+    elif jtu.test_device_matches(["rocm"]):
+      platform_data = \
+          rocm_svd_hipsolver_gesvd.data_2026_02_04[algorithm_name][dtype_name]
+    else:
+      self.skipTest("Unsupported platform")
+
+    data = self.load_testdata(platform_data)
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_svd_results,
                                             *data.inputs))
