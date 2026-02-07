@@ -2321,7 +2321,9 @@ filegroup(
             "*_test.py",
             "third_party/*/*_test.py",
         ],
-        exclude = [],
+        exclude = [
+            "gpu_matmul_algorithms_precision_test.py",  # the file is used for two different tests.
+        ],
     ) + ["BUILD"],
     visibility = [
         "//jax:internal",
