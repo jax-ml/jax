@@ -786,7 +786,7 @@ NB_MODULE(_jax, m) {
       [](std::string address, int num_nodes,
          std::optional<int> heartbeat_timeout,
          std::optional<int> cluster_register_timeout,
-         std::optional<int> shutdown_timeout)
+         std::optional<int> shutdown_timeout, std::optional<bool> recoverable)
           -> std::unique_ptr<xla::DistributedRuntimeService> {
         xla::CoordinationServiceImpl::Options options;
         options.num_nodes = num_nodes;
@@ -800,6 +800,9 @@ NB_MODULE(_jax, m) {
         if (shutdown_timeout.has_value()) {
           options.shutdown_timeout = absl::Seconds(*shutdown_timeout);
         }
+        if (recoverable.has_value()) {
+          options.recoverable = *recoverable;
+        }
         std::unique_ptr<xla::DistributedRuntimeService> service =
             xla::ValueOrThrow(GetDistributedRuntimeService(address, options));
         return service;
@@ -807,7 +810,8 @@ NB_MODULE(_jax, m) {
       nb::arg("address"), nb::arg("num_nodes"),
       nb::arg("heartbeat_timeout").none() = std::nullopt,
       nb::arg("cluster_register_timeout").none() = std::nullopt,
-      nb::arg("shutdown_timeout").none() = std::nullopt);
+      nb::arg("shutdown_timeout").none() = std::nullopt,
+      nb::arg("recoverable").none() = std::nullopt);
 
   m.def(
       "get_distributed_runtime_client",
