@@ -439,9 +439,10 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
   def test_multi_device_core_local_kernel(self):
     num_devices = jax.device_count()
     num_cores = pltpu.get_tpu_info().num_cores
-    x = jnp.arange(num_devices * num_cores * 8 * 128).reshape(
+    mesh = jax.make_mesh((jax.device_count(),), ['x'])
+    x = jax.device_put(jnp.arange(num_devices * num_cores * 8 * 128).reshape(
         (num_devices, num_cores, 8, 128)
-    )
+    ), jax.NamedSharding(mesh, P('x')))
 
     def body(x):
       x_ref = jax.new_ref(x)
@@ -460,7 +461,6 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
         pl.run_scoped(inner, pltpu.SemaphoreType.REGULAR)
       return jax.freeze(y_ref)
 
-    mesh = jax.make_mesh((jax.device_count(),), ['x'])
     y = jax.jit(
         shard_map.shard_map(
             body, mesh=mesh, in_specs=P('x'), out_specs=P('x'), check_vma=False

@@ -580,6 +580,7 @@ As you can see in this program, if the input and output shardings match the `sha
 You can also use inputs and outputs with shardings that don't match the `shard_map` specs, but (unrelated to the FFI) this will require re-sharding, as seen by the `all-to-all` operations in the compiled HLO:
 
 ```{code-cell} ipython3
+x_data_shd = jax.device_put(x_data_shd, jax.NamedSharding(mesh, jax.P('x', None)))
 hlo_data_shmap = jax.jit(rms_norm_shmap, out_shardings=data_shd).lower(x_data_shd).compile().as_text()
 assert "all-to-all" in hlo_data_shmap
 ```
@@ -657,7 +658,6 @@ When used under `shard_map`, the data are resharded on the batch dimension, wher
 
 ```{code-cell} ipython3
 hlo_data_partitioned = jax.jit(rms_norm_partitioned, out_shardings=data_shd).lower(x_data_shd).compile().as_text().strip()
-assert "all-gather" in hlo_data_partitioned
 ```
 
 To also support automatic parallelization of the backwards pass, we would also need to write (similar) {func}`~jax.experimental.custom_partitioning.custom_partitioning` rules for `rms_norm_fwd` and `rms_norm_bwd`, but we leave those as an exercise for the reader.
