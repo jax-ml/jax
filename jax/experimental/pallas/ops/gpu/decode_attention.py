@@ -325,7 +325,7 @@ def gqa(
     )
   sm_scale = sm_scale if sm_scale is not None else (1 / math.sqrt(q.shape[-1]))
   batch_size, q_heads, head_dim = q.shape
-  k_seq_len, kv_heads = k.shape[1], k.shape[2]
+  _k_seq_len, kv_heads = k.shape[1], k.shape[2]
   assert kv_heads == v.shape[2]
   assert q_heads % kv_heads == 0
   if start_idx is not None:

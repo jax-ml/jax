@@ -334,7 +334,6 @@ class CompatTest(bctu.CompatTestBase):
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
 
-    info = cpu_eigh_lapack_syev.data_2024_08_19[dtype_name]
     data = self.load_testdata(cpu_eigh_lapack_syev.data_2024_08_19[dtype_name])
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_eigh_results, operand))
@@ -755,7 +754,6 @@ class CompatTest(bctu.CompatTestBase):
     if not config.enable_x64.value and dtype_name == "f64":
       self.skipTest("Test disabled for x32 mode")
 
-    dtype = dict(f32=np.float32, f64=np.float64)[dtype_name]
     def func(dl, d, du, b):
       return lax.linalg.tridiagonal_solve(dl, d, du, b)
 

@@ -140,7 +140,7 @@ class KeyReuseUnitTestWithForwarding(jtu.JaxTestCase):
   def test_unwrap(self):
     def f(key):
       assert_unconsumed(key)
-      key_data = jax.random.key_data(key)
+      jax.random.key_data(key)
       assert_unconsumed(key)
     self.check_key_reuse(f, jax.random.key(0))
 

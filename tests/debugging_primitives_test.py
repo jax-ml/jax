@@ -1160,16 +1160,16 @@ class VisualizeShardingTest(jtu.JaxTestCase):
       debugging.visualize_array_sharding(a)
       return a
 
-    with jtu.capture_stdout() as output:
+    with jtu.capture_stdout():
       f()  # doesn't crash
 
-    with jtu.capture_stdout() as output:
+    with jtu.capture_stdout():
       jax.jit(f, out_shardings=jax.NamedSharding(mesh, P('x')))()  # doesn't crash
 
-    with jtu.capture_stdout() as output:
+    with jtu.capture_stdout():
       jax.shard_map(f, mesh=mesh, in_specs=P(None), out_specs=P("x"))()  # doesn't crash
 
-    with jtu.capture_stdout() as output:
+    with jtu.capture_stdout():
       jax.shard_map(f, mesh=mesh, in_specs=P(None), out_specs=P("x"),
                     check_vma=False)()  # doesn't crash
 
@@ -1306,7 +1306,7 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2,), ("x",))
     arr = jax.device_put(np.arange(8), jax.NamedSharding(mesh, jax.P("x")))
 
-    with jtu.capture_stdout() as output:
+    with jtu.capture_stdout():
       with jax.set_mesh(mesh):
         f(arr)
       jax.effects_barrier()

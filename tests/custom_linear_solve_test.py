@@ -514,8 +514,8 @@ class CustomLinearSolveTest(jtu.JaxTestCase):
       return jax.vjp(g(x), jnp.ones_like(x))[1](x)[0]
 
     x = jnp.array([200.0])
-    f_x = f(x)
-    grad_f_x = jax.jacrev(f)(x)  # don't crash
+    f(x)
+    jax.jacrev(f)(x)  # don't crash
 
 
 if __name__ == '__main__':

@@ -3213,12 +3213,6 @@ def hyp2f1(a: ArrayLike, b: ArrayLike, c: ArrayLike, x: ArrayLike) -> Array:
   cb = c - b
 
   id = jnp.round(d)
-  ica = jnp.round(ca)
-  icb = jnp.round(cb)
-
-  neg_int_ca = jnp.logical_and(ca <= 0, jnp.abs(ca - ica) < eps)
-  neg_int_cb = jnp.logical_and(cb <= 0, jnp.abs(cb - icb) < eps)
-  neg_int_ca_or_cb = jnp.logical_or(neg_int_ca, neg_int_cb)
 
   index = jnp.where(jnp.logical_or(x == 0, jnp.logical_and(jnp.logical_or(a == 0, b == 0), c != 0)), 0,
             jnp.where(jnp.logical_or(c == 0, jnp.logical_and(c < 0, c % 1 == 0)), 1,

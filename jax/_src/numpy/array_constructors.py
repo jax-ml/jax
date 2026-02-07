@@ -47,7 +47,7 @@ for pkg_name in ['jax_cuda13_plugin', 'jax_cuda12_plugin', 'jaxlib.cuda']:
 
 def _supports_buffer_protocol(obj):
   try:
-    view = memoryview(obj)
+    memoryview(obj)
   except TypeError:
     return False
   else:

@@ -185,7 +185,6 @@ def mma(
   if a_swizzle == 16 or b_swizzle == 16:
     raise NotImplementedError("No swizzle is not supported")
   i32 = ir.IntegerType.get_signless(32)
-  i64 = ir.IntegerType.get_signless(64)
   if isinstance(accumulate, bool):
     accumulate = arith.constant(ir.IntegerType.get_signless(1), accumulate)
   num_cta = 2 if collective else 1
@@ -579,7 +578,6 @@ def _do_mma(
 ) -> None:
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
-  i64 = ir.IntegerType.get_signless(64)
   a_k_idx_tiling, a_k_strides = a_k_strides or (None, None)
   b_k_idx_tiling, b_k_strides = b_k_strides
   assert all(s % 16 == 0 for s in itertools.chain(a_k_strides or (), b_k_strides))

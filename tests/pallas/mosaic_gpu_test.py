@@ -5264,7 +5264,6 @@ class WarpSpecializedPipelineTest(PallasTest):
     blk_m = blk_n = 32
 
     def copy_kernel(_, x_smem, o_smem, o_last_block_smem, *consumed_barriers):
-      wg_idx = lax.axis_index("wg")
       o_smem[...] = x_smem[...]
       o_last_block_smem[...] = x_smem[...]
       if manual_consumed_barriers:

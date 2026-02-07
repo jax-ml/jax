@@ -6388,7 +6388,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
   try:
     return _repeat(repeats, a, axis=axis,
                    total_repeat_length=total_repeat_length)
-  except core.ShardingTypeError as e:
+  except core.ShardingTypeError:
     raise ValueError(
         "Please pass sharding to `jnp.repeat` via `out_sharding` parameter.")
 

@@ -1577,7 +1577,7 @@ def _handle_transforms(
         else:
           new_transforms.append(t)
           new_transforms_avals.append(t_aval)
-      case ReshapeTransform(shape=shape) if handle_reshapes:
+      case ReshapeTransform() if handle_reshapes:
         t, _, new_transforms, new_transforms_avals = _bubble_up_transform(
             ctx, ref_aval, new_transforms, new_transforms_avals, t, t_aval
         )

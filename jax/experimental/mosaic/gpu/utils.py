@@ -157,7 +157,6 @@ def debug_print(fmt, *args, uniform=True, scope=None):
   new_args = []
   for arg in args:
     if isinstance(arg.type, ir.VectorType):
-      index = ir.IndexType.get()
       vec_ty = ir.VectorType(arg.type)
       if len(vec_ty.shape) > 1:
         raise NotImplementedError(
@@ -1711,7 +1710,6 @@ def dyn_dot(x, y):
 
 def shfl_bfly(x: ir.Value, distance: int | ir.Value):
   i32 = ir.IntegerType.get_signless(32)
-  index = ir.IndexType.get()
   if isinstance(distance, int):
     distance = c(distance, i32)
   if (result_type := x.type) != i32:

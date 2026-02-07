@@ -1089,7 +1089,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     num_devices = jax.device_count()
     partition = P('x', None)
     mesh = jtu.create_mesh((num_devices,), ('x',))
-    sharding = jax.sharding.NamedSharding(mesh, partition)
 
     core_mesh = pltpu.create_tensorcore_mesh('core', num_cores=num_cores)
     interpret = pltpu.InterpretParams(detect_races=True)

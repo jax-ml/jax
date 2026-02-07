@@ -761,7 +761,6 @@ def _check_primal_refs(
 
 def _check_for_aliased_refs(
     f: Callable, nondiff_argnums: Sequence[int], debug: core.DebugInfo, args):
-  nondiff_argnums_ = set(nondiff_argnums)
   argnums = [x for i, arg in enumerate(args)
              for x in [i] * tree_structure(arg).num_leaves]
   leaves = tree_leaves(args)

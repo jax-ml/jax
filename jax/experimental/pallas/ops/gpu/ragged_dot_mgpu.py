@@ -127,10 +127,6 @@ def ragged_dot(
     grid_m = pl.cdiv(m, block_m) + g - 1
     grid_n = pl.cdiv(n, block_n)
     grid = (grid_m * grid_n,)
-    if load_group_sizes_to_register:
-      rows_per_expert = [rows_per_expert_gmem[i] for i in range(len(rows_per_expert_gmem))]
-    else:
-      rows_per_expert = rows_per_expert_gmem
 
     @plgpu.nd_loop(grid, collective_axes="sm")
     def mn_loop(loop_info: plgpu.NDLoopInfo):  # pylint: disable=unused-variable
