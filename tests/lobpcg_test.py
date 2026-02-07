@@ -387,7 +387,7 @@ class F32LobpcgTest(LobpcgTest):
       linalg.lobpcg_standard(A[:50, :50], X[:50])
 
   @parameterized.named_parameters(_make_concrete_cases(f64=False))
-  @jtu.skip_on_devices("gpu")
+  @jtu.skip_on_devices("cuda")
   def testLobpcgConsistencyF32(self, matrix_name, n, k, m, tol):
     self.checkLobpcgConsistency(matrix_name, n, k, m, tol, jnp.float32)
 
@@ -404,17 +404,17 @@ class F32LobpcgTest(LobpcgTest):
 class F64LobpcgTest(LobpcgTest):
 
   @parameterized.named_parameters(_make_concrete_cases(f64=True))
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices("tpu", "cuda")
   def testLobpcgConsistencyF64(self, matrix_name, n, k, m, tol):
     self.checkLobpcgConsistency(matrix_name, n, k, m, tol, jnp.float64)
 
   @parameterized.named_parameters(_make_concrete_cases(f64=True))
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices("tpu", "cuda")
   def testLobpcgMonotonicityF64(self, matrix_name, n, k, m, tol):
     self.checkLobpcgMonotonicity(matrix_name, n, k, m, tol, jnp.float64)
 
   @parameterized.named_parameters(_make_callable_cases(f64=True))
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices("tpu", "cuda")
   def testCallableMatricesF64(self, matrix_name):
     self.checkApproxEigs(matrix_name, jnp.float64)
 
