@@ -623,6 +623,18 @@ class TreeTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "Mismatch"):
       tree_util.tree_transpose(outer_treedef, inner_treedef, tree)
 
+  @parameterized.parameters([
+    (tuple, [[1, 2], [3, 4], [5, 6]]),
+    (list, [(1, 2), (3, 4), (5, 6)]),
+    (list, [1, [2, [3, [4, [5, [6]]]]]]),
+  ])
+  def testTransposeMismatchStructure(self, type_cls, tree):
+    # https://github.com/google/jax/issues/19810
+    outer_treedef = tree_util.tree_structure(['*', '*', '*'])
+    inner_treedef = tree_util.tree_structure(type_cls(['*', '*']))
+    with self.assertRaisesRegex(TypeError, "Mismatch"):
+      tree_util.tree_transpose(outer_treedef, inner_treedef, tree)
+
   def testTransposeWithCustomObject(self):
     outer_treedef = tree_util.tree_structure(FlatCache({"a": 1, "b": 2}))
     inner_treedef = tree_util.tree_structure([1, 2])
