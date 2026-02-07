@@ -41,6 +41,7 @@ limitations under the License.
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "third_party/protobuf/arena.h"
 #include "jaxlib/dlpack.h"
 #include "jaxlib/py_client.h"
 #include "xla/array.h"
