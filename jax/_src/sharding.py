@@ -29,7 +29,7 @@ Device = xc.Device
 Index = tuple[slice, ...]
 XLADeviceAssignment = Sequence[Device]
 
-class IndivisibleError(Exception):
+class IndivisibleError(ValueError):
   pass
 
 @cache(max_size=4096, trace_context_in_key=False)
