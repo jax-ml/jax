@@ -285,7 +285,7 @@ def jax_multiplatform_test(
             test_shards = test_shard_count.get(backend, 1)
         test_args = list(args) + [
             "--jax_test_dut=" + backend,
-            "--jax_platform_name=" + backend,
+            "--jax_platforms=" + backend,
         ]
         test_args += backend_variant_args.get(backend, [])
         test_tags = list(tags) + ["jax_test_%s" % backend] + backend_tags.get(backend, [])
