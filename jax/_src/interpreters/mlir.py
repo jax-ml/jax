@@ -2866,7 +2866,12 @@ def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
   """Variant of convert that has HLO semantics.
 
   In particular, treat casts to boolean as x != 0, rather than truncating
-  integer values (b/209440332)."""
+  integer values (b/209440332).
+
+  Also handles conversion FROM boolean to ensure canonical values (0 or 1)
+  before conversion. Non-canonical bool values (e.g., 0xff from raw memory)
+  would otherwise be sign-extended when converting to signed integers
+  (b/34751)."""
   if (not dtypes.issubdtype(aval_out.dtype, dtypes.extended) and
       aval_out.dtype == np.dtype(np.bool_)):
     if dtypes.issubdtype(aval_in.dtype, np.inexact):
@@ -2877,6 +2882,14 @@ def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
       compare_type = "UNSIGNED"
     x = compare_hlo(x, full_like_aval(ctx, 0, aval_in), "NE", compare_type)
     # continue, to adjust the shape if needed
+  elif (not dtypes.issubdtype(aval_in.dtype, dtypes.extended) and
+        aval_in.dtype == np.dtype(np.bool_) and
+        aval_out.dtype != np.dtype(np.bool_)):
+    # When converting FROM bool, canonicalize to 0/1 using select.
+    # This ensures non-canonical bool values (like 0xff) become 1, not -1.
+    one = full_like_aval(ctx, 1, aval_out)
+    zero = full_like_aval(ctx, 0, aval_out)
+    return hlo.select(x, one, zero)
   return hlo.convert(aval_to_ir_type(aval_out), x)
 
 def _wrap_with_spmd_op(name: str,
