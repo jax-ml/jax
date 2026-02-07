@@ -1241,6 +1241,7 @@ def TPU_BarrierOp : TPU_Op<"barrier"> {
 // device_id         : The id of the device to copy to for remote DMAs.
 // core_id           : The id of the core to copy to for remote and cross-core
 //                     DMAs.
+// core_type         : The core type that is being targeted for remote DMAs.
 // priority          : The priority of the DMA.
 // strict_ordering   : True if the DMA requires strict ordering. If false, the
 //                     ordering is either strict or relaxed depending on the
@@ -1253,6 +1254,7 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     MemRefOf<[TPU_DMASemaphoreType]>:$target_semaphore,
     Optional<I32>:$device_id, // For remote DMAs
     Optional<I32>:$core_id, // For megacore
+    OptionalAttr<TPU_CoreTypeEnum>:$core_type, // For megachip
     // Smaller number means higher priority. 0 is the highest and the default.
     DefaultValuedAttr<I32Attr, "0">:$priority,
     DefaultValuedAttr<BoolAttr, "false">:$strict_ordering
@@ -1264,10 +1266,18 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     `target_semaphore` `(` $target_semaphore `:` type($target_semaphore) `)`
     (`device_id` `(` $device_id^ `)`)?
     (`core_id` `(` $core_id^ `)`)?
+    (`core_type` `(` $core_type^ `)`)?
     attr-dict
   }];
   let hasVerifier = 1;
   let hasCanonicalizeMethod = 1;
+  let builders = [
+    // A backward-compatible builder that sets `core_type` to nullptr.
+    OpBuilder<(ins "Value":$source, "Value":$source_semaphore,
+               "Value":$target, "Value":$target_semaphore, "Value":$device_id,
+               "Value":$core_id, CArg<"uint32_t", "0">:$priority,
+               CArg<"bool", "false">:$strict_ordering)>,
+  ];
 }
 
 // A base class for all ops that need to differentiate between gather and
@@ -1336,6 +1346,7 @@ def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
     AnyMemRef:$dst,
     Optional<I32>:$device_id, // For remote DMAs
     Optional<I32>:$core_id, // For megacore
+    OptionalAttr<TPU_CoreTypeEnum>:$core_type, // For megachip
     DefaultValuedAttr<BoolAttr, "false">:$strict_ordering
   );
   let assemblyFormat = [{
@@ -1344,10 +1355,11 @@ def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
     `dst` `(` $dst `:` type($dst) `)`
     (`device_id` `(` $device_id^ `)`)?
     (`core_id` `(` $core_id^ `)`)?
+    (`core_type` `(` $core_type^ `)`)?
     attr-dict
   }];
   let hasVerifier = 1;
-  // A backward-compatible builder that sets `device_id` and `core_id` to nullptr.
+  // A backward-compatible builder that sets `device_id`, `core_id` and `core_type` to nullptr.
   let builders = [
     OpBuilder<(ins "Value":$semaphore, "Value":$src, "Value":$dst)>
   ];
