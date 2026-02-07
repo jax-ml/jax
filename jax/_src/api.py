@@ -29,7 +29,7 @@ import dataclasses
 from functools import partial
 import inspect
 import typing
-from typing import (Any, Literal, NamedTuple, Optional, TypeVar, overload,
+from typing import (Any, Literal, NamedTuple, Optional, ParamSpec, TypeVar, overload,
                     cast, TYPE_CHECKING)
 import weakref
 
@@ -159,9 +159,13 @@ class NotSpecified:
   def __repr__(self):
     return "<not-specified>"
 
+
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
+
 @overload
-def jit(
-  fun: Callable, /, *,
+def jit(  # pytype: disable=invalid-annotation
+  fun: Callable[_P, _T], /, *,
   in_shardings: Any = ...,
   out_shardings: Any = ...,
   static_argnums: int | Sequence[int] | None = ...,
@@ -189,10 +193,10 @@ def jit(
   backend: str | None = ...,
   inline: bool = ...,
   compiler_options: dict[str, Any] | None = ...,
-) -> Callable[[Callable], pjit.JitWrapped]: ...
+) -> Callable[[Callable[_P, _T]], pjit.JitWrapped]: ...
 
 def jit(
-  fun: Callable | NotSpecified = NotSpecified(), /, *,
+  fun: Callable[_P, _T] | NotSpecified = NotSpecified(), /, *,
   in_shardings: Any = sharding_impls.UNSPECIFIED,
   out_shardings: Any = sharding_impls.UNSPECIFIED,
   static_argnums: int | Sequence[int] | None = None,
@@ -204,7 +208,7 @@ def jit(
   backend: str | None = None,
   inline: bool = False,
   compiler_options: dict[str, Any] | None = None,
-) -> pjit.JitWrapped | Callable[[Callable], pjit.JitWrapped]:
+) -> pjit.JitWrapped | Callable[[Callable[_P, _T]], pjit.JitWrapped]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
