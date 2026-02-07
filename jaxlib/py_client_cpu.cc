@@ -128,8 +128,13 @@ ffi::Error XlaFfiPythonCpuCallback(xla::FfiLoadedHostCallbacks* callbacks,
       auto result_object = callback(*nb::borrow<nb::args>(nb_args));
       result_tuple = nb::cast<nb::tuple>(result_object);
     } catch (nb::python_error& e) {
-      return ffi::Error::Internal(
-          absl::StrFormat("CpuCallback error calling callback: %s", e.what()));
+      // 1. Save the message for the status (just in case)
+      std::string msg = e.what();
+      // 2. Restore the exception to the Python interpreter state
+      e.restore();
+      // 3. Return error. The JAX runtime *should* check PyErr_Occured() on failure.
+      return ffi::Error(ffi::ErrorCode::kUnknown,
+          absl::StrFormat("CpuCallback error calling callback: %s", msg));
     }
   }
 
