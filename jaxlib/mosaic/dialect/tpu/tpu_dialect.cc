@@ -114,6 +114,16 @@ Operation *TPUDialect::materializeConstant(OpBuilder &builder, Attribute value,
   return mlir::cast<CoreTypeAttr>(attr).getValue();
 }
 
+template <typename Op>
+struct PropagateTiledLayoutToConsumerPattern : public OpRewritePattern<Op> {
+  using OpRewritePattern<Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(Op op,
+                                PatternRewriter& rewriter) const override {
+    return propagateTiledLayoutToConsumer(op, rewriter);
+  }
+};
+
 struct MemRefCastEraseLayout : public OpRewritePattern<memref::CastOp> {
   // Set the benefit to 0 to ensure that other patterns that fold in the cast
   // are tried first.
@@ -222,7 +232,9 @@ struct MemRefDimOfSqueeze : public OpRewritePattern<memref::DimOp> {
 
 void TPUDialect::getCanonicalizationPatterns(RewritePatternSet& results) const
 /*override*/ {
-  results.add<MemRefCastEraseLayout, MemRefDimOfSlice, MemRefDimOfSqueeze>(
+  results.add<PropagateTiledLayoutToConsumerPattern<memref::StoreOp>,
+              PropagateTiledLayoutToConsumerPattern<memref::LoadOp>,
+              MemRefCastEraseLayout, MemRefDimOfSlice, MemRefDimOfSqueeze>(
       getContext());
 }
 
