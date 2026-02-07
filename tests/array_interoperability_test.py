@@ -306,17 +306,17 @@ class DLPackTest(jtu.JaxTestCase):
 
 class CudaArrayInterfaceTest(jtu.JaxTestCase):
 
-  @jtu.skip_on_devices("cuda")
+  @jtu.skip_on_devices("cuda", "rocm")
   def testCudaArrayInterfaceOnNonCudaFails(self):
     x = jnp.arange(5)
     self.assertFalse(hasattr(x, "__cuda_array_interface__"))
     with self.assertRaisesRegex(
         AttributeError,
-        "__cuda_array_interface__ is only defined for NVidia GPU buffers.",
+        "__cuda_array_interface__ is only defined for GPU buffers.",
     ):
       _ = x.__cuda_array_interface__
 
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("gpu")
   def testCudaArrayInterfaceOnShardedArrayFails(self):
     devices = jax.local_devices()
     if len(devices) <= 1:
@@ -337,7 +337,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     shape=all_shapes,
     dtype=cuda_array_interface_dtypes,
   )
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("gpu")
   def testCudaArrayInterfaceWorks(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
@@ -347,7 +347,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     self.assertEqual(shape, a["shape"])
     self.assertEqual(z.__array_interface__["typestr"], a["typestr"])
 
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("gpu")
   def testCudaArrayInterfaceBfloat16Fails(self):
     rng = jtu.rand_default(self.rng())
     x = rng((2, 2), jnp.bfloat16)
@@ -392,7 +392,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     shape=all_shapes,
     dtype=jtu.dtypes.supported(cuda_array_interface_dtypes),
   )
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("gpu")
   def testCaiToJax(self, shape, dtype):
     dtype = np.dtype(dtype)
 
@@ -401,7 +401,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
 
     # using device with highest device_id for testing the correctness
     # of detecting the device id from a pointer value
-    device = jax.devices('cuda')[-1]
+    device = jax.devices('gpu')[-1]
     with jax.default_device(device):
       y = jnp.array(x, dtype=dtype)
       # TODO(parkers): Remove after setting 'stream' properly below.
