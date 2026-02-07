@@ -47,6 +47,7 @@ namespace {
 
 struct TritonCompilationResult {
   std::string asm_text;
+  std::string hsaco_path;
   int64_t smem_bytes;
 };
 
@@ -69,10 +70,20 @@ absl::StatusOr<TritonCompilationResult> CompileTritonToASM(
   args.num_ctas = num_ctas;
   args.num_stages = num_stages;
   RETURN_STATUS_IF_PJRT_ERROR(triton_ext->compile(&args), c_api);
-  auto asm_text = std::string(args.out_asm, args.out_asm_size);
-  delete[] args.out_asm;
+  std::string asm_text;
+  std::string hsaco_path;
+  if (args.out_asm && args.out_asm_size > 0) {
+    asm_text.assign(args.out_asm, args.out_asm_size);
+    delete[] args.out_asm;
+    args.out_asm = nullptr;
+  } else if (args.out_path && args.out_path_size > 0) {
+    hsaco_path.assign(args.out_path, args.out_path_size);
+    delete[] args.out_path;
+    args.out_path = nullptr;
+  }
   return TritonCompilationResult{
-      .asm_text = asm_text,
+      .asm_text = std::move(asm_text),
+      .hsaco_path = std::move(hsaco_path),
       .smem_bytes = args.out_smem_bytes,
   };
 }
@@ -234,6 +245,7 @@ void BuildGpuPluginExtension(nanobind::module_& m) {
 
   nb::class_<TritonCompilationResult>(m, "TritonCompilationResult")
       .def_ro("asm", &TritonCompilationResult::asm_text)
+      .def_ro("hsaco_path", &TritonCompilationResult::hsaco_path)
       .def_ro("smem_bytes", &TritonCompilationResult::smem_bytes);
 
   m.def("compile_triton_to_asm",
