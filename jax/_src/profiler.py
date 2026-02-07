@@ -149,6 +149,7 @@ def start_trace(
     if _profile_state.profile_session is not None:
       raise RuntimeError("Profile has already been started. "
                          "Only one profile may be run at a time.")
+    clear_metadata()
     # Make sure backends are initialized before creating a profiler
     # session. Otherwise on Cloud TPU, libtpu may not be initialized before
     # creating the tracer, which will cause the TPU tracer initialization to
@@ -248,6 +249,7 @@ def stop_trace():
       if _profile_state.create_perfetto_link:
         _host_perfetto_trace_file(abs_filename)
     _profile_state.reset()
+    clear_metadata()
 
 
 def stop_and_get_fdo_profile() -> bytes | str:
@@ -262,6 +264,7 @@ def stop_and_get_fdo_profile() -> bytes | str:
     xspace = _profile_state.profile_session.stop()
     fdo_profile = _profiler.get_fdo_profile(xspace)
     _profile_state.reset()
+    clear_metadata()
     return fdo_profile
 
 
