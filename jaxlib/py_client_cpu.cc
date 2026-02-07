@@ -36,7 +36,6 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "jaxlib/ffi.h"
 #include "xla/ffi/api/ffi.h"
-#include "xla/ffi/ffi_api.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/primitive_util.h"
