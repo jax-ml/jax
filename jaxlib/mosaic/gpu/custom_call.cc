@@ -698,19 +698,20 @@ void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,
                                          "CUDA");
 
-// TODO(b/481949311): Register type with FFI and use absl::flat_hash_map instead
-// of std::map after.
 struct CustomCallResources {
   CustomCallResources(CompiledKernel* kernel) : kernel(kernel) {}
   CompiledKernel* kernel = nullptr;
 
+  // TODO(b/481949311): Enable this for OSS once the bug is fixed.
+  #ifndef PLATFORM_OSS
   absl::Mutex mutex;
   // A map from a global device ID to the CPU version of the collective metadata
   // for TMA initialization.
   // Stores the following structure:
   // CollectiveKernelMetadata | param_to_peers array
-  std::map<int, std::vector<char>> cpu_metadata_buffers
+  absl::flat_hash_map<int, std::vector<char>> cpu_metadata_buffers
       ABSL_GUARDED_BY(mutex);
+  #endif
 };
 
 // Validate custom call attributes and compile the kernel.
@@ -908,9 +909,12 @@ absl::Status MosaicGpuInitialize(
       CreateCollectiveMetadata(clique_key, current_rank, stream,
                                collective_metadata_ptr, std::move(parameters)));
 
+  // TODO(b/481949311): Enable this for OSS once the bug is fixed.
+  #ifndef PLATFORM_OSS
   absl::MutexLock lock(resources->mutex);
   resources->cpu_metadata_buffers[collective_params->global_device_id.value()] =
       std::move(cpu_metadata_buffer);
+  #endif
   return absl::OkStatus();
 }
 
@@ -927,6 +931,8 @@ absl::Status MosaicGpuExecute(
     buffer_ptrs.push_back(buffer.untyped_data());
   }
 
+  // TODO(b/481949311): Enable this for OSS once the bug is fixed.
+  #ifndef PLATFORM_OSS
   // Adding a CPU version of the collective metadata for TMA initialization.
   if (uses_collective_metadata) {
     absl::MutexLock lock(resources->mutex);
@@ -935,6 +941,7 @@ absl::Status MosaicGpuExecute(
         collective_params->global_device_id.value());
     buffer_ptrs.push_back(cpu_metadata_buffer.data());
   }
+  #endif
 
   CompiledKernel* kernel = resources->kernel;
   TF_ASSIGN_OR_RETURN(auto ctx, CachedInit(kernel));

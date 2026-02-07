@@ -448,6 +448,8 @@ class PallasCallRemoteDMATest(TestCase):
   def test_copy_tma(self, use_dict):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
+    if "JAX_OSS" in os.environ:
+      self.skipTest("b/481949311")
 
     def kernel(y_ref, smem_ref, sem):
       dev_id = lax.axis_index("y")
