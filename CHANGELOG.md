@@ -16,14 +16,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
-* Changes
-  * Using `jax.shard_map` in Explicit mode will raise an error
-    if the PartitionSpec of input does not match the PartitionSpec specified in `in_specs`. In other words, it will act like an assert instead of an
-    implicit reshard.
-    `in_specs` is an optional argument so you can omit specifying it
-    and `shard_map` will infer the `PartitionSpec` from the argument. If you want
-    to reshard your inputs, you can use `jax.reshard` on the arguments and then
-    pass those args to shard_map.
+* New features:
+* Bug fixes:
+* Deprecations:
+* Changes:
   * JAX tracers that are not of `Array` type (e.g., of `Ref` type) will no
     longer report themselves to be instances of `Array`.
 

@@ -242,7 +242,7 @@ f_elementwise_sharded = jax.shard_map(
     in_specs=P('x'),
     out_specs=P('x'))
 
-arr = jax.device_put(jnp.arange(32), jax.NamedSharding(mesh, P('x')))
+arr = jnp.arange(32)
 f_elementwise_sharded(arr)
 ```
 
@@ -251,7 +251,7 @@ The function you write only "sees" a single batch of the data, which you can che
 ```{code-cell}
 :outputId: 99a3dc6e-154a-4ef6-8eaa-3dd0b68fb1da
 
-x = jax.device_put(jnp.arange(32), jax.NamedSharding(mesh, P('x')))
+x = jnp.arange(32)
 print(f"global shape: {x.shape=}")
 
 def f(x):
@@ -367,9 +367,6 @@ from functools import partial
 def layer_sharded(x, weights, bias):
   return jax.nn.sigmoid(jax.lax.psum(x @ weights, 'x') + bias)
 
-rep_s = jax.NamedSharding(mesh, P())
-sharded_s = jax.NamedSharding(mesh, P('x'))
-x, weights, bias = jax.device_put((x, weights, bias), (sharded_s, sharded_s, rep_s))
 layer_sharded(x, weights, bias)
 ```
 
