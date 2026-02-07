@@ -2448,7 +2448,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   def test_custom_jvp_inside_jit(self):
     mesh = jtu.create_mesh((4,), ('batch',))
-    x = shard_map(jax.jit(jax.nn.relu),
+    shard_map(jax.jit(jax.nn.relu),
                   mesh=mesh, in_specs=P('batch'),
                   out_specs=P('batch'))(jnp.arange(16.))  # don't crash
 
@@ -3922,9 +3922,9 @@ class ShardMapTest(jtu.JaxTestCase):
       v = v.sum()
       return v * xs.sum(axis=-1).astype(v.dtype)
 
-    res = fun(variables, xs)
+    fun(variables, xs)
     fun_shard_map = shard_map(fun, mesh=mesh, in_specs=in_specs, out_specs=out_specs)
-    res = fun_shard_map(variables, xs)  # don't crash
+    fun_shard_map(variables, xs)  # don't crash
 
   def test_rep_none_canonicalization_again(self):
     # https://github.com/jax-ml/jax/issues/24762

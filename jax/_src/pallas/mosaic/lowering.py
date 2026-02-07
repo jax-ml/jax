@@ -1740,7 +1740,6 @@ def _prng_key_load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree
   key_shape = aval_out.dtype._impl.key_shape
   ref_block_shape, *_ = ctx.block_shapes
   idx = cast(NDIndexer, idx)
-  inner_aval = jax_core.physical_aval(ref_aval.inner_aval)  # pytype: disable=wrong-arg-types
   ref, ref_block_shape = _transform_ref(
       ref, ref_aval, ref_block_shape, prev_transforms
   )
@@ -1900,9 +1899,6 @@ def _masked_swap_lowering_rule(
   ]
   mem_aval = aval_out.update(
       shape=tuple(mem_slice_shape), sharding=jax_core.get_cur_mesh_sharding()
-  )
-  mem_aval_shape = ctx.lowering_context.dynamic_shape_replacement_fn(
-      mem_aval.shape
   )
   mem_aval_vec_type = ir.VectorType.get(
       ctx.lowering_context.dynamic_shape_replacement_fn(mem_aval.shape),
@@ -2512,9 +2508,6 @@ def _gather_lowering_rule(
   if in_aval.shape != indices_aval.shape[:-1] != out_aval.shape:
     raise ValueError("Shape mismatch in input, indices and output")
 
-  out_type = aval_to_ir_type(
-      ctx.lowering_context.dynamic_shape_replacement_fn, out_aval
-  )
   # During lowering jnp.take_along_axis to lax.gather, we append extra dimension
   # to the end of the indices array. We should reshape it back to the original
   # shape before lowering to Mosaic and rely on MLIR canonicalization to remove

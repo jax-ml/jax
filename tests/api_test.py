@@ -1382,7 +1382,7 @@ class JitTest(jtu.BufferDonationTestCase):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
 
-    f_jit = jit(
+    jit(
         f,
         compiler_options={
             "xla_embed_ir_in_executable": True,
@@ -1394,14 +1394,14 @@ class JitTest(jtu.BufferDonationTestCase):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
 
-    f_jit = jit(
+    jit(
         f,
         compiler_options={
             "exec_time_optimization_effort": 0.0,
         })(1.0)  # doesn't crash.
 
     with self.assertRaisesRegex(jax.errors.JaxRuntimeError, "No such"):
-      f_jit = jit(
+      jit(
           f,
           compiler_options={
               "exec_time_compilation_effort": 0.0,
@@ -1411,7 +1411,7 @@ class JitTest(jtu.BufferDonationTestCase):
     def f(x):
       return jnp.sqrt(x**2) + 1.0
 
-    f_jit = jit(
+    jit(
         f,
         compiler_options={
             "optimization_level": config.EffortLevel.O1.value,
@@ -1424,7 +1424,7 @@ class JitTest(jtu.BufferDonationTestCase):
     def f(x):
       return jnp.sqrt(x**2) + 1.0
 
-    f_jit = jit(
+    jit(
         f,
         compiler_options={
             "memory_fitting_level": config.EffortLevel.O0.value,
@@ -4944,9 +4944,9 @@ class APITest(jtu.JaxTestCase):
     @jax.jit
     def f(x): return jnp.sin(x)
 
-    call_1 = f(np.arange(4, dtype=np.float32))
+    f(np.arange(4, dtype=np.float32))
     with jax.numpy_rank_promotion("warn"):
-      call_2 = f(np.arange(8, dtype=np.float32))
+      f(np.arange(8, dtype=np.float32))
 
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:
@@ -4967,7 +4967,6 @@ class APITest(jtu.JaxTestCase):
     def f(x, y):
       return jnp.sin(x) * y['hi']
 
-    x = jnp.float32(1.)
 
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:
@@ -5261,7 +5260,6 @@ class APITest(jtu.JaxTestCase):
 
     self.assertLen(consts, 1)
 
-    d = np.zeros(3)
 
     # TODO(mattjj,phawkins): we broke this on purpose, as it probably isn't
     # load-bearing (see above comment). If we wanted to fix it, we might share
@@ -5295,7 +5293,6 @@ class APITest(jtu.JaxTestCase):
     def foo(x):
       const = np.zeros((300,))
       x * const
-      r = weakref.ref(const)
       del const
       return x
 
@@ -6389,7 +6386,7 @@ class RematTest(jtu.JaxTestCase):
 
     res = saved_residuals(f, (2., 3.), y=4.)
     if config.use_simplified_jaxpr_constants.value:
-      base_res_idx = 0
+      pass
     else:
       self.assertEqual(res[0][1], "from a constant")
       self.assertEqual(res[0][0].shape, (1,))
@@ -7121,7 +7118,7 @@ class RematTest(jtu.JaxTestCase):
 
     Ws = [jnp.ones((3, 3)) for _ in range(2)]
     x = jnp.ones(3)
-    txt = jax.jit(jax.grad(loss, (0, 1))).lower(Ws, x).as_text()  # don't crash
+    jax.jit(jax.grad(loss, (0, 1))).lower(Ws, x).as_text()  # don't crash
 
   def test_remat_partial_cse_prevention_pytree(self):
     @partial(jax.remat, prevent_cse=({'W': False, 'x': True},))
@@ -7757,7 +7754,6 @@ class InputSavedVJPTest(jtu.JaxTestCase):
     primals = [2., 3.]
     y, f_vjp = jax.vjp(f, *primals)
     f_vjp.args_res = [None, None]
-    y_grad = 1.
     f_vjp.args_res = primals
     arg_cts = f_vjp(1.)
     self.assertAllClose(y, 6.)

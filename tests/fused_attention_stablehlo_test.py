@@ -853,7 +853,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
         sdpa_ref, scale=1.0, mask_type=MaskType.NO_MASK, dropout_rate=0)
     )
 
-    out = sdpa_infer(q, k_container, v_container, q_seqlen=q_seqlen,
+    sdpa_infer(q, k_container, v_container, q_seqlen=q_seqlen,
       kv_seqlen=kv_seqlen, page_table_k=page_table_k, page_table_v=page_table_v)
     out_ref = sdpa_infer_ref(q, k, v)
     self.assertArraysAllClose(out_ref, out_ref, rtol=1e-2, atol=1e-2)

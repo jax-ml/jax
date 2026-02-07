@@ -1857,7 +1857,6 @@ def _drop_unused_vars(constvars, constvals, eqns, outvars
   def vars(atom: Atom) -> list[Var]:
     if isinstance(atom, Literal):
       return []
-    aval = atom.aval
     return [atom]
   used: set[Var] = {v for atom in outvars for v in vars(atom)}
   for eqn in eqns[::-1]:
@@ -2060,7 +2059,7 @@ class DynamicJaxprTrace(core.Trace):
     else:
       try:
         out_avals, effs = _cached_abstract_eval(primitive, *aval_qdds, **params)
-      except Exception as e:
+      except Exception:
         # TODO(phawkins): remove this 3 months after the release of JAX v0.7.
         _verify_params_are_hashable(primitive, params)
         raise
@@ -2597,7 +2596,7 @@ def lower_traceable(jaxpr, *lo_args):
              if not aval.has_qdd else
              aval.new_from_loval(*it.islice(lo_args_, len(aval.lo_ty())))
              for aval in jaxpr.in_aval_qdds]
-  assert (problem := next(lo_args_, None)) is None
+  assert (_problem := next(lo_args_, None)) is None
   hi_outs = core.jaxpr_as_fun(jaxpr)(*hi_args)
   mut_outs = [lo_val for aval, hi_arg in zip(jaxpr.final_aval_qdds, hi_args) if aval.has_qdd
               for lo_val in aval.read_loval(hi_arg)]

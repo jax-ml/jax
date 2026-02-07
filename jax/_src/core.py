@@ -2574,7 +2574,6 @@ def _ref_to_lojax(init_val, *, memory_space, kind):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   val_ty = typeof(init_val)
   hival_of_refs = val_ty.raise_val(*map(new_ref, val_ty.lower_val(init_val)))  # type: ignore
-  aval = AbstractRef(typeof(init_val))
   return Ref(AbstractRef(val_ty), hival_of_refs)
 ref_p.to_lojax = _ref_to_lojax  # type: ignore
 
@@ -3454,7 +3453,6 @@ def _check_call(ctx_factory, prim, in_atoms, params):
 
   check_jaxpr(call_jaxpr)
 
-  invars, outvars = call_jaxpr.invars, call_jaxpr.outvars
   out_avals = [x.aval for x in call_jaxpr.outvars]
   out_type = out_avals
   # jaxpr input effects are indexed to include jaxpr.constvars, but the eqn

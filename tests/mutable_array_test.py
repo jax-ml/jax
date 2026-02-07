@@ -319,7 +319,7 @@ class MutableArrayTest(jtu.JaxTestCase):
     with jax.set_mesh(mesh):
       x = jnp.zeros((4, 4), jnp.int32, device=sharding)
       x_ref = core.new_ref(x)
-      y = f(x_ref)
+      f(x_ref)
 
   def test_vmap_basic(self):
     @jax.vmap
@@ -1364,9 +1364,9 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
       jax.lax.cond(pred, true_fun, false_fun)
     if jit:
       f = jax.jit(f)
-    out_true = f(True)
+    f(True)
     self.assertAllClose(x_ref[...], 1.)
-    out_false = f(False)
+    f(False)
     self.assertAllClose(x_ref[...], 2.)
 
   def test_vmap_closed_over_ref_write(self):

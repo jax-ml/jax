@@ -345,7 +345,7 @@ def _infer_scan_length(
   if length is not None:
     try:
       return int(length)
-    except core.ConcretizationTypeError as err:
+    except core.ConcretizationTypeError:
       msg = ('The `length` argument to `scan` expects a concrete `int` value.'
              ' For scan-like iteration with a dynamic length, use `while_loop`'
              ' or `fori_loop`.')
@@ -804,7 +804,6 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
   tracers = [trace.instantiate_const(t) if uk else t
              for t, uk in zip(tracers, unknowns)]
   known_ins   = [t.pval.get_known() for t in tracers if     t.pval.is_known()]
-  unknown_ins = [t                  for t in tracers if not t.pval.is_known()]
 
   # At this point all non-forwarded residuals are treated as extensive outputs
   # of jaxpr_known. Hoist out those that only depend on consts.

@@ -397,7 +397,6 @@ class DebugInfoTest(jtu.JaxTestCase):
     def f(x, y):
       return jnp.sin(x) * y['hi']
 
-    x = jnp.float32(1.)
 
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:

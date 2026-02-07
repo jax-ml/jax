@@ -1459,8 +1459,6 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual(exported.out_avals[0].memory_space, core.MemorySpace.Host)
 
     empty_mesh = jax.sharding.AbstractMesh((), ())
-    shd_ns = jax.sharding.NamedSharding(empty_mesh, P(None, None),
-                                        memory_kind="pinned_host")
 
     self.assertEqual(exported.in_avals[0].sharding,
                      jax.sharding.NamedSharding(empty_mesh, P(None, None)))
@@ -1673,7 +1671,7 @@ class JaxExportTest(jtu.JaxTestCase):
         sharding_d_None if out_shardings == "P" else None)
     f_jax_jit = jax.jit(f_jax, **jit_kwargs)
 
-    with contextlib.ExitStack() as stack:
+    with contextlib.ExitStack():
       # Serialize higher-order gradiends
       exp = get_exported(f_jax_jit, vjp_order=2)(x)
       exp_vjp = exp.vjp()

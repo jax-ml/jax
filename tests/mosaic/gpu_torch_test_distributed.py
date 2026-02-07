@@ -121,7 +121,7 @@ class TorchTest(parameterized.TestCase):
     )
     gathered = torch.empty((2,), dtype=torch.int32)
     sem = symm_mem.empty((1,), dtype=torch.int32)
-    sem_symm = symm_mem.rendezvous(sem, dist.group.WORLD)
+    symm_mem.rendezvous(sem, dist.group.WORLD)
     (sem_again,) = kernel(sem)
     self.assertEqual(sem_again.data_ptr(), sem.data_ptr())
     dist.all_gather_into_tensor(gathered, sem)

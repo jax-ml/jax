@@ -491,7 +491,6 @@ class MapTrace(core.Trace):
                            (primitive, tuple(params.items())))
     tracers = map(self.to_map_tracer, tracers)
     vals, shard_axes = unzip2([(t.val, t.shard_axes) for t in tracers])
-    info = self.emap_info
     names = core.get_axis_env().axis_names()
     all_axes = tuple(_map_schedule(map(s.get, names)) for s in shard_axes)  # pytype: disable=wrong-arg-types  # always-use-return-annotations
     f_mapped, out_shard_axes = _multi_pmap(f, self.emap_info, names, all_axes)
@@ -750,7 +749,6 @@ def stage_parallel_callable(
       _shard_aval(pci.axis_size, axis, aval) if axis is not None else aval
       for axis, aval in safe_zip(pci.in_axes, pci.avals))
 
-  orig_fun = fun
   fun = _change_argument_ranks(fun, pci.in_axes, pci.out_axes_thunk)
   with core.extend_axis_env_nd([(pci.axis_name, pci.global_axis_size)]):
     with dispatch.log_elapsed_time(
