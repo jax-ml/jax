@@ -31,7 +31,7 @@ from functools import partial
 import math
 import operator
 import os
-from typing import Any, IO, Literal, Protocol, TypeVar, Union, overload
+from typing import Any, IO, Literal, Protocol, TypeVar, Union, overload, Dict
 
 import numpy as np
 
@@ -3874,7 +3874,7 @@ def unwrap(p: ArrayLike, discont: ArrayLike | None = None,
 
 ### Padding
 
-PadValueLike = Union[T, Sequence[T], Sequence[Sequence[T]]]
+PadValueLike = Union[T, Sequence[T], Sequence[Sequence[T]], Dict[int, Union[T, Sequence[T]]]]
 PadValue = tuple[tuple[T, T], ...]
 
 class PadStatFunc(Protocol):
@@ -3884,6 +3884,20 @@ class PadStatFunc(Protocol):
 
 
 def _broadcast_to_pairs(nvals: PadValueLike, nd: int, name: str) -> PadValue:
+  if isinstance(nvals, dict):
+    seq = [(0, 0)] * nd
+    for axis, width in nvals.items():
+      if isinstance(width, int):
+        seq[axis] = (width, width)
+      elif (
+        isinstance(width, tuple) and len(width) == 2
+        and isinstance(width[0], int) and isinstance(width[1], int)
+      ):
+        seq[axis] = width
+      else:
+          raise TypeError(f"Invalid pad width {width} for axis {axis}")
+    nvals = seq
+
   try:
     nvals = np.asarray(tree_map(
       lambda x: core.concrete_or_error(None, x, context=f"{name} argument of jnp.pad"),
@@ -4235,6 +4249,9 @@ def pad(array: ArrayLike, pad_width: PadValueLike[int | Array | np.ndarray],
         elements after
       - ``((before_1, after_1), (before_2, after_2), ... (before_N, after_N))``: specify
         distinct ``before`` and ``after`` values for each array dimension.
+      - a ``dict`` where each key is an axis and its corresponding value is an
+        ``int`` or ``int`` pair describing the padding ``(before, after)`` or
+        ``pad`` width for that axis.
 
     mode: a string or callable. Supported pad modes are:
 
@@ -4333,9 +4350,32 @@ def pad(array: ArrayLike, pad_width: PadValueLike[int | Array | np.ndarray],
     >>> x = jnp.array([2, 3, 4])
     >>> jnp.pad(x, 2, custom_pad, before_value=-10, after_value=10)
     Array([-10, -10,   2,   3,   4,  10,  10], dtype=int32)
+
+    Specify padding using a dictionary:
+
+    >>> a = jnp.arange(1, 7).reshape(2, 3)
+    >>> jnp.pad(a, {1: (1, 2)})
+    array([[0, 1, 2, 3, 0, 0],
+           [0, 4, 5, 6, 0, 0]])
+    >>> jnp.pad(a, {-1: 2})
+    array([[0, 0, 1, 2, 3, 0, 0],
+           [0, 0, 4, 5, 6, 0, 0]])
+    >>> jnp.pad(a, {0: (3, 0)})
+    array([[0, 0, 0],
+           [0, 0, 0],
+           [0, 0, 0],
+           [1, 2, 3],
+           [4, 5, 6]])
+    >>> jnp.pad(a, {0: (3, 0), 1: 2})
+    array([[0, 0, 0, 0, 0, 0, 0],
+           [0, 0, 0, 0, 0, 0, 0],
+           [0, 0, 0, 0, 0, 0, 0],
+           [0, 0, 1, 2, 3, 0, 0],
+           [0, 0, 4, 5, 6, 0, 0]])
   """
 
   array = util.ensure_arraylike("pad", array)
+
   pad_width = _broadcast_to_pairs(pad_width, np.ndim(array), "pad_width")
   if pad_width and not all(core.is_dim(p[0]) and core.is_dim(p[1])
                            for p in pad_width):
