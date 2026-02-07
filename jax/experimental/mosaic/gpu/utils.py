@@ -1589,21 +1589,15 @@ def warp_tree_reduce(value, op, group_size):
 def memref_ptr(memref_arg, memory_space=None):
   i64 = ir.IntegerType.get_signless(64)
   memref_ty = ir.MemRefType(memref_arg.type)
-  rank = len(memref_ty.shape)
   # TODO: Read out memory space from memref
   space = "" if memory_space is None else "<" + str(memory_space) + ">"
   ptr_ty = ir.Type.parse("!llvm.ptr" + space)
-  if rank == 0:
-    desc_ty = ir.Type.parse(f"!llvm.struct<({ptr_ty}, {ptr_ty}, i64)>")
-  else:
-    desc_ty = ir.Type.parse(
-        f"!llvm.struct<({ptr_ty}, {ptr_ty}, i64, array<{rank} x i64>,"
-        f" array<{rank} x i64>)>"
-    )
-  desc = builtin.UnrealizedConversionCastOp([desc_ty], [memref_arg])
-  aligned_ptr = llvm.extractvalue(ptr_ty, desc, [1])
+  aligned_ptr_idx = memref.extract_aligned_pointer_as_index(memref_arg)
+  aligned_ptr_i64 = arith.index_cast(i64, aligned_ptr_idx)
+  aligned_ptr = llvm.inttoptr(ptr_ty, aligned_ptr_i64)
+  _, offset_elems_idx, *_ = memref.extract_strided_metadata(memref_arg)
+  offset_elems = arith.index_cast(i64, offset_elems_idx)
 
-  offset_elems = llvm.extractvalue(i64, desc, [2])
   elem_bitwidth = bitwidth(memref_ty.element_type)
   if elem_bitwidth < 8:
     *_, static_offset = memref_ty.get_strides_and_offset()
