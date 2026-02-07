@@ -1177,7 +1177,7 @@ class LaxTest(jtu.JaxTestCase):
           lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
           lax.DotAlgorithmPreset.BF16_BF16_F32_X9,
       }:
-        if not jtu.is_cuda_compute_capability_at_least("8.0"):
+        if jtu.test_device_matches(["cuda"]) and not jtu.is_cuda_compute_capability_at_least("8.0"):
           raise SkipTest(
               f"The dot algorithm '{algorithm}' requires CUDA compute "
               "capability >= 8.0.")
