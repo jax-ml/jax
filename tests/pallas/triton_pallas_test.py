@@ -97,8 +97,8 @@ class TritonPallasTest(PallasBaseTest):
       ("min_i32", "atomic_min", np.array([1, 2, 3, 4], np.int32), np.min),
       ("add_f16", "atomic_add", np.array([1, 2, 3, 4], np.float16), np.sum),
       ("add_f32", "atomic_add", np.array([1, 2, 3, 4], np.float32), np.sum),
-      ("max_f32", "atomic_max", np.array([1, 2, 3, 4], np.float32), np.max),
-      ("min_f32", "atomic_min", np.array([1, 2, 3, 4], np.float32), np.min),
+      ("max_f32", "atomic_max", np.array([-2, -1, 0, 1], np.float32), np.max),
+      ("min_f32", "atomic_min", np.array([-2, -1, 0, 1], np.float32), np.min),
   )
   def test_scalar_atomic(self, op, value, numpy_op):
     if plgpu is None:
