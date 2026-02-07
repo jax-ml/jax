@@ -1153,8 +1153,17 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     pnorm=[jnp.inf, -jnp.inf, 1, -1, 2, -2, 'fro'],
     dtype=float_types + complex_types,
   )
-  @jtu.skip_on_devices("gpu")  # TODO(#2203): numerical errors
   def testCond(self, shape, pnorm, dtype):
+
+    if jtu.test_device_matches(['gpu']):
+      # Unskipping test for ROCm while leaving
+      # original skip in place for other GPUs as per
+      # commit: e81024f5053def119eddb7fb06ff6c4f7b5948a8
+      #
+      # Original note: TODO(#2203): numerical errors
+      if not jtu.is_device_rocm():
+        self.skipTest("Unsupported platform")
+
     def gen_mat():
       # arr_gen = jtu.rand_some_nan(self.rng())
       arr_gen = jtu.rand_default(self.rng())
@@ -2159,7 +2168,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @jtu.sample_product(
     shape=[(), (3,), (1, 4), (1, 5, 9), (11, 0, 13)],
     dtype=float_types + complex_types + int_types)
-  @jtu.skip_on_devices("rocm")
   def testToeplitzSymmetricConstruction(self, shape, dtype):
     if (dtype in [np.float64, np.complex128]
         and not config.enable_x64.value):
