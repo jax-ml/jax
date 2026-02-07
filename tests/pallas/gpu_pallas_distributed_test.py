@@ -59,6 +59,10 @@ class TestCase(jt_multiprocess.MultiProcessTest if is_nvshmem_used() is None els
     if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
       self.skipTest("NVSHMEM doesn't work with the platform allocator.")
 
+    # Skipping here avoids attempting communicator initialization on 1-device systems
+    if jax.device_count() == 1:
+      self.skipTest("Test requires multiple devices")
+
     super().setUp()
 
 
