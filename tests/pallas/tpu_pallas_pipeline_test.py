@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Test TPU-specific extensions to pallas_call."""
+from __future__ import annotations
 
 import dataclasses
 import functools
@@ -124,7 +125,7 @@ def basic_matmul_kernel(
     out_ref[...] = acc_scratch_ref[...].astype(out_ref.dtype)
 
 
-class PallasCallPipelineTest(parameterized.TestCase):
+class PallasCallPipelineTest(jtu.JaxTestCase):
 
   def setUp(self):
     if not jtu.is_device_tpu_at_least(5):
@@ -266,7 +267,7 @@ class PallasCallPipelineTest(parameterized.TestCase):
     np.testing.assert_allclose(z, jnp.dot(x, y) + jnp.dot(x, y))
 
 
-class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
+class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
 
   def setUp(self):
     if jax.device_count() > 1:
@@ -765,7 +766,7 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
     np.testing.assert_allclose(result, x @ y, atol=5e-5)
 
 
-class PallasCallCollectivePipelineTest(parameterized.TestCase):
+class PallasCallCollectivePipelineTest(jtu.JaxTestCase):
 
   def setUp(self):
     if jax.device_count() < 2:
@@ -1859,7 +1860,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
     )
 
 
-class PallasCallMegacoreTest(parameterized.TestCase):
+class PallasCallMegacoreTest(jtu.JaxTestCase):
 
   def setUp(self):
     if not jtu.is_device_tpu_at_least(4):
@@ -2037,7 +2038,7 @@ def matmul(x: jax.Array, y: jax.Array, *, bm: int, bk: int, bn: int):
   )(x, y)
 
 @jtu.thread_unsafe_test_class(condition=not jtu.hypothesis_is_thread_safe())
-class PaddedPipelineEmitterTest(parameterized.TestCase):
+class PaddedPipelineEmitterTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
@@ -2083,7 +2084,7 @@ class PaddedPipelineEmitterTest(parameterized.TestCase):
     np.testing.assert_allclose(out, expected, atol=atol, rtol=rtol)
 
 
-class PallasCallBoundedSliceIndexingTest(parameterized.TestCase):
+class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
 
   def test_block_spec_bounded_slice_invalid_index(self):
     if not jtu.is_device_tpu():
@@ -2219,7 +2220,7 @@ class PallasCallBoundedSliceIndexingTest(parameterized.TestCase):
     np.testing.assert_allclose(out, x)
 
 
-class PipelineHijaxTest(parameterized.TestCase):
+class PipelineHijaxTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
@@ -2316,6 +2317,13 @@ class PipelineHijaxTest(parameterized.TestCase):
           self, block_spec: pl.BlockSpec
       ) -> list[pl.BlockSpec]:
         return [block_spec, block_spec]
+
+      def transform_ndindexer(
+          self, idx: indexing.NDIndexer
+      ) -> ShapedArrayTuple:
+        x0_t = idx.transform_type(self.x0)
+        x1_t = idx.transform_type(self.x1)
+        return ShapedArrayTuple(x0_t, x1_t)
 
       def dma_start(
           self,
@@ -2431,6 +2439,7 @@ class PipelineHijaxTest(parameterized.TestCase):
     hijax.register_hitype(
         ArrayTuple, lambda q: ShapedArrayTuple(q.shape, q.dtype)
     )
+    indexing.indexer_transform_type_registry.add(ShapedArrayTuple)
 
     def kernel(x_hbm_ref, o_hbm_ref):
       def body(x_ref, o_ref):

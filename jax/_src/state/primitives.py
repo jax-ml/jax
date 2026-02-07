@@ -42,6 +42,7 @@ from jax._src.state.types import (
     Transform,
     TransformedRef,
     WriteEffect,
+    transform_type as transform_type,
 )
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import safe_map, safe_zip
@@ -382,31 +383,6 @@ def ref_addupdate(
 ## get/set/addupdate abstract evaluation rules
 
 
-def _shape_after_transforming(
-    shape: tuple[int | Array, ...], transforms: tuple[Transform, ...]
-) -> tuple[int | Array, ...]:
-  for transform in transforms:
-    shape = transform.transform_shape(shape)  # type: ignore
-  assert shape is not None
-  return shape
-
-
-def _dtype_after_transforming(
-    dtype: Any, transforms: tuple[Transform, ...]
-) -> Any:
-  for transform in transforms:
-    dtype = transform.transform_dtype(dtype)
-  assert dtype is not None
-  return dtype
-
-
-def _sharding_after_transforming(sharding, transforms):
-  for transform in transforms:
-    sharding = transform.transform_sharding(sharding)
-  assert sharding is not None
-  return sharding
-
-
 def _get_abstract_eval(ref_aval: AbstractRef, *args,
                        tree):
   transforms = tree_util.tree_unflatten(tree, args)
@@ -415,11 +391,7 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`get` must be called on `Ref` types: {ref_aval}.")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
-    out_shape = _shape_after_transforming(ref_aval.shape, transforms)
-    out_dtype = _dtype_after_transforming(ref_aval.dtype, transforms)
-    out_sharding = _sharding_after_transforming(ref_aval.sharding, transforms)
-    out_aval = ref_aval.inner_aval.update(
-        shape=out_shape, dtype=out_dtype, sharding=out_sharding)
+    out_aval = transform_type(transforms, ref_aval.inner_aval)
   else:
     if transforms:
       raise ValueError("Cannot index non-shaped array with nontrivial indices.")
@@ -442,21 +414,20 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
                      "Did you forget to load from it using `[...]`?")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
     assert isinstance(val_aval, core.ShapedArray)
-    expected_out_shape = _shape_after_transforming(ref_aval.shape, transforms)
-    expected_out_dtype = _dtype_after_transforming(ref_aval.dtype, transforms)
-    if expected_out_shape != val_aval.shape:
+    expected_out_ty = transform_type(transforms, ref_aval.inner_aval)
+    if expected_out_ty.shape != val_aval.shape:
       raise ValueError("Invalid shape for `swap`. "
                        f"Ref shape: {ref_aval.shape}. "
-                       f"Expected shape: {expected_out_shape}. "
+                       f"Expected shape: {expected_out_ty.shape}. "
                        f"Value shape: {val_aval.shape}. "
                        f"Transforms: {transforms}. ")
-    if expected_out_dtype != val_aval.dtype:
+    if expected_out_ty.dtype != val_aval.dtype:
       raise ValueError(
           "Invalid dtype for `swap`. "
-          f"Ref dtype: {expected_out_dtype}. "
+          f"Ref dtype: {expected_out_ty.dtype}. "
           f"Value dtype: {val_aval.dtype}. "
       )
-    out_aval = core.ShapedArray(expected_out_shape, expected_out_dtype)
+    out_aval = expected_out_ty
   else:
     if transforms:
       raise ValueError("Cannot index non-shaped array with nontrivial indices.")
@@ -472,22 +443,21 @@ def _addupdate_abstract_eval(ref_aval: AbstractRef,
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`addupdate` must be called on `Ref` types: {ref_aval}.")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
-    out_shape = _shape_after_transforming(ref_aval.shape, transforms)
-    out_dtype = _dtype_after_transforming(ref_aval.dtype, transforms)
-    out_sharding = _sharding_after_transforming(ref_aval.sharding, transforms)
+    expected_out_ty = transform_type(transforms, ref_aval.inner_aval)
     assert isinstance(val_aval, core.ShapedArray)
-    if out_shape != val_aval.shape:
+    if expected_out_ty.shape != val_aval.shape:
       raise ValueError(
           "Invalid shape for `addupdate`. "
           f"Ref shape: {ref_aval.shape}. "
-          f"Expected shape: {out_shape}. "
+          f"Expected shape: {expected_out_ty.shape}. "
           f"Value shape: {val_aval.shape}. "
           f"Transforms: {transforms}. "
       )
-    if out_dtype != val_aval.dtype:
+    if expected_out_ty.dtype != val_aval.dtype:
       raise ValueError("Invalid dtype for `addupdate`. "
                        f"Ref dtype: {ref_aval.dtype}. "
                        f"Value shape: {val_aval.dtype}. ")
+    out_sharding = expected_out_ty.sharding
     if ((out_sharding.mesh._any_axis_explicit or
          val_aval.sharding.mesh._any_axis_explicit) and
         out_sharding != val_aval.sharding):

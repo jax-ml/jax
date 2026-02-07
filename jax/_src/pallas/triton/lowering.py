@@ -511,8 +511,9 @@ def _atomic_lowering_rule(
   *_, value_aval, mask_aval = args_tree.unflatten(ctx.avals_in)
   indexers = list(indexers)
   if not indexers or not isinstance(indexers[-1], indexing.NDIndexer):
-    ref_shape = state.get_transforms_shape(indexers, ctx.avals_in[0].shape)
-    indexers.append(NDIndexer.make_trivial_indexer(ref_shape))
+    ref_aval = state.transform_type(indexers, ctx.avals_in[0])
+    assert isinstance(ref_aval, state.AbstractRef)
+    indexers.append(NDIndexer.make_trivial_indexer(ref_aval.shape))
   if len(indexers) != 1:
     raise NotImplementedError("Only single indexer is supported.")
   idx = indexers[0]
@@ -2110,8 +2111,9 @@ def _masked_load_lowering_rule(
     raise NotImplementedError("No support for multiple indexers yet.")
   indexers = list(indexers)
   if not indexers:
-    ref_shape = state.get_transforms_shape(indexers, ctx.avals_in[0].shape)
-    idx = NDIndexer.make_trivial_indexer(ref_shape)
+    ref_aval = state.transform_type(indexers, ctx.avals_in[0])
+    assert isinstance(ref_aval, state.AbstractRef)
+    idx = NDIndexer.make_trivial_indexer(ref_aval.shape)
   else:
     idx = indexers[0]
   if not _is_triton_pointer_type(ptr.type):
@@ -2246,7 +2248,7 @@ def _masked_swap_lowering_rule(
   if len(indexers) > 1:
     raise NotImplementedError("No support for multiple indexers yet.")
   if not indexers:
-    ref_shape = state.get_transforms_shape(indexers, ctx.avals_in[0].shape)
+    ref_shape = state.transform_type(indexers, ctx.avals_in[0].shape)
     idx = NDIndexer.make_trivial_indexer(ref_shape)
   else:
     idx = indexers[0]

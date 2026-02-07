@@ -501,8 +501,6 @@ def _validate_transforms(transforms):
           raise ValueError(
               "Dynamic indexing not supported in GPU interpret mode"
           )
-      case mosaic_gpu_core.MemoryRefTransform():
-        raise ValueError(f"GPU transformation {transform} not supported yet")
       case _:
         raise ValueError(f"Unsupported transform: {transform}")
 
