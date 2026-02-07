@@ -6361,6 +6361,16 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
     Array([[1, 1, 2, 2, 2, 2, 2],
            [3, 3, 4, 4, 4, 4, 4]], dtype=int32)
   """
+  if core.is_dim(repeats):
+    util.check_arraylike("repeat", a)
+  else:
+    util.check_arraylike("repeat", a, repeats)
+  a = asarray(a)
+
+  if axis is None:
+    a = a.ravel()
+    axis = 0
+
   if out_sharding is not None:
     return _auto_repeat(_repeat, a, repeats, axis, total_repeat_length,
                         out_sharding)
@@ -6397,18 +6407,8 @@ def _auto_repeat(fun, a, repeats, axis, total_repeat_length, out_sharding):
         axes=out_sharding.mesh.explicit_axes  # type: ignore
         )(repeats, a)
 
-def _repeat(repeats: ArrayLike, a: ArrayLike, *, axis: int | None = None,
+def _repeat(repeats, arr, *, axis: int,
             total_repeat_length: int | None = None) -> Array:
-  if core.is_dim(repeats):
-    util.check_arraylike("repeat", a)
-  else:
-    util.check_arraylike("repeat", a, repeats)
-  arr = asarray(a)
-
-  if axis is None:
-    arr = arr.ravel()
-    axis = 0
-
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.repeat()")
   assert isinstance(axis, int)  # to appease mypy
 
