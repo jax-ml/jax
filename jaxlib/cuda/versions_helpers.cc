@@ -96,9 +96,22 @@ size_t CudnnGetVersion() {
   ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&version, sizeof version);
   return version;
 }
+
+// Helper function to initialize the GPU driver with improved error handling.
+static void InitGpu() {
+  CUresult result = gpuInit(0);
+  if (result == CUDA_ERROR_SYSTEM_NOT_READY) {
+    throw std::runtime_error(
+        "Operation gpuInit(0) failed: CUDA_ERROR_SYSTEM_NOT_READY. "
+        "This often indicates that the NVIDIA Fabric Manager is not running "
+        "on systems that require it (e.g. A100/H100 clusters). "
+        "Please check if the 'nvidia-fabricmanager' service is active.");
+  }
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(result));
+}
 int CudaComputeCapability(int device) {
   int major, minor;
-  JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpuInit(0)));
+  InitGpu();
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpuDeviceGetAttribute(
       &major, GPU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device)));
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpuDeviceGetAttribute(
@@ -110,7 +123,7 @@ int CudaComputeCapability(int device) {
 
 int CudaDeviceCount() {
   int device_count = 0;
-  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cuInit(0)));
+  InitGpu();
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(cuDeviceGetCount(&device_count)));
 
   ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&device_count, sizeof device_count);
