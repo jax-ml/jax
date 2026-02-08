@@ -1,0 +1,71 @@
+name: Mosaic GPU B200 Presubmit
+
+on:
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        required: true
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/bazel_cuda_b200_mosaic_presubmit.yml'
+      - 'jax/_src/pallas/mosaic_gpu'
+      - 'jax/experimental/mosaic/gpu'
+      - 'jaxlib/mosaic/dialect/gpu'
+      - 'jaxlib/mosaic/gpu'
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
+
+jobs:
+  run_tests:
+    runs-on: linux-x86-a4-224-b200-1gpu
+    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
+    timeout-minutes: 15  # Stop potential hangs from keeping the job running too long
+    name: Mosaic GPU B200 tests
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
+        with:
+          persist-credentials: false
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@9f8d7d8d9954430d0fef4a8cce2cb4e3844c200d
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Run Tests
+        run: |
+            nvidia-smi
+
+            bazel test \
+            --config=ci_linux_x86_64_cuda \
+            --config=ci_rbe_cache \
+            --config=hermetic_cuda_umd \
+            --repo_env=HERMETIC_PYTHON_VERSION="3.14" \
+            --repo_env=HERMETIC_CUDNN_VERSION="9.11.0" \
+            --repo_env=HERMETIC_CUDA_UMD_VERSION="13.0.0" \
+            --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
+            --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
+            --test_output=errors \
+            --test_tag_filters=-multiaccelerator \
+            --test_env=JAX_ACCELERATOR_COUNT=1 \
+            --test_env=JAX_TESTS_PER_ACCELERATOR=8 \
+            --strategy=TestRunner=local \
+            --local_test_jobs=8 \
+            --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
+            --test_env=JAX_SKIP_SLOW_TESTS=true \
+            --action_env=JAX_ENABLE_X64="1" \
+            --action_env=NCCL_DEBUG=WARN \
+            --flaky_test_attempts=1 \
+            --test_timeout=420 \
+            --color=yes \
+            //tests/mosaic:gpu_test_gpu \
+            //tests/pallas:mosaic_gpu_test_gpu
