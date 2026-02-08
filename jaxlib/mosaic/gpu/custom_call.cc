@@ -124,7 +124,6 @@ limitations under the License.
 #include "xla/core/collectives/rank_id.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/ffi.h"
-#include "xla/ffi/ffi_api.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"

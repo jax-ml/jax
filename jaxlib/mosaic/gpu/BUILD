@@ -341,7 +341,6 @@ cc_library(
         "@xla//xla/backends/gpu/runtime:collective_params",
         "@xla//xla/core/collectives:rank_id",
         "@xla//xla/ffi",
-        "@xla//xla/ffi:ffi_api",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/service:custom_call_target_registry",
         "@xla//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
