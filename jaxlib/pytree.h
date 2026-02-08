@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/string.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pytree.pb.h"
 
@@ -48,6 +49,7 @@ enum class PyTreeKind {
   kDict,        // A dict
   kCustom,      // A custom type.
   kDataclass,   // A dataclass.
+  kObject, // An object with attributes specified in a python dict
 };
 
 // Registry of custom node types.
@@ -90,6 +92,10 @@ class PyTreeRegistry {
     std::vector<nanobind::str> data_fields;
     std::vector<nanobind::str> meta_fields;
 
+    // For register_object
+    nanobind::str mapping_attr;
+    bool has_int_keys;
+
     int tp_traverse(visitproc visit, void* arg);
   };
 
@@ -103,6 +109,8 @@ class PyTreeRegistry {
   void RegisterDataclass(nanobind::object type,
                          std::vector<nanobind::str> data_fields,
                          std::vector<nanobind::str> meta_fields);
+  // Registration for flax objects.
+  void RegisterObject(nanobind::object type, nanobind::str mapping_attr, bool has_int_keys);
 
   // Finds the custom type registration for `type`. Returns nullptr if none
   // exists.
@@ -338,6 +346,10 @@ class PyTreeDef {
     // using c++ vector instead of py::list avoids creating too many python
     // objects that make python gc sweep slow.
     std::vector<nanobind::object> sorted_dict_keys;
+
+    // Kind-specific auxiliary data for kObject. Stores metadata keys and values.
+    std::vector<nanobind::object> meta_data;
+    std::vector<nanobind::object> meta_keys;
 
     // Custom type registration. Must be null for non-custom types.
     const PyTreeRegistry::Registration* custom = nullptr;
