@@ -800,8 +800,14 @@ NB_MODULE(_jax, m) {
         if (shutdown_timeout.has_value()) {
           options.shutdown_timeout = absl::Seconds(*shutdown_timeout);
         }
+#if JAX_IFRT_VERSION_NUMBER >= 48
+        std::unique_ptr<xla::DistributedRuntimeService> service =
+            xla::ValueOrThrow(
+                GetDistributedRuntimeService(address, options, 42));
+#else
         std::unique_ptr<xla::DistributedRuntimeService> service =
             xla::ValueOrThrow(GetDistributedRuntimeService(address, options));
+#endif
         return service;
       },
       nb::arg("address"), nb::arg("num_nodes"),
