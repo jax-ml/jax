@@ -2170,6 +2170,44 @@ LogicalResult AssumeMultipleOp::verify() {
   return success();
 }
 
+LogicalResult AssumeOp::verify() {
+  auto value = mlir::getConstantIntValue(getValue());
+  if (!value.has_value()) {
+    return success();
+  }
+  auto kind = getKind();
+  // Check for multiple of.
+  if (kind == AssumeOpKind::kMultipleOf) {
+    auto multiple = getTarget();
+    if (multiple <= 0) {
+      return emitOpError("<multiple_of>: Target must be > 0, got ") << multiple;
+    }
+    if (*value % multiple != 0) {
+      return emitOpError("<multiple_of>: Operand is a constant ")
+             << *value << " that is not a multiple of " << multiple;
+    }
+    return success();
+  }
+  // Check for min.
+  if (kind == AssumeOpKind::kMin) {
+    if (*value < getTarget()) {
+      return emitOpError("<min>: Operand is a constant ")
+             << *value << " that is less than " << getTarget();
+    }
+    return success();
+  }
+  // Check for max.
+  if (kind == AssumeOpKind::kMax) {
+    if (*value > getTarget()) {
+      return emitOpError("<max>: Operand is a constant ")
+             << *value << " that is greater than " << getTarget();
+    }
+    return success();
+  }
+  return emitError(
+      "generic assume only supports multiple_of, min, and max kinds");
+}
+
 LogicalResult SublaneShuffleOp::verify() {
   auto lhs = getLhs();
   auto rhs = getRhs();
