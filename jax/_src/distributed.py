@@ -152,7 +152,8 @@ class State:
       self.service = _jax.get_distributed_runtime_service(
           coordinator_bind_address, num_processes,
           heartbeat_timeout=heartbeat_timeout_seconds,
-          shutdown_timeout=shutdown_timeout_seconds)
+          shutdown_timeout=shutdown_timeout_seconds,
+          example_added_argument=42)
 
     self.num_processes = num_processes
 
