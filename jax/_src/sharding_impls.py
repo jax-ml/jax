@@ -704,11 +704,12 @@ def parse_flatten_op_sharding(
       while dim_size > 1:
         axis = next(mesh_axis)
         axis_size = mesh_shape[axis]
-        dim_size, remainder = divmod(dim_size, axis_size)
+        quotient, remainder = divmod(dim_size, axis_size)
         if remainder != 0:
           raise jsharding.IndivisibleError(
               f'{shape=} is incompatible with {mesh_shape=}: '
               f'{dim_size=} is not divisible by {axis_size=}.')
+        dim_size = quotient
         dim_partitions.append(axis)
       partitions.append(tuple(dim_partitions))
     if len(hlo_sharding.subgroup_types()) > 1:
