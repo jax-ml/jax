@@ -43,7 +43,7 @@ else
 fi
 
 OVERRIDE_XLA_REPO=""
-if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
+if [[ -n "$JAXCI_XLA_GIT_DIR" ]]; then
   OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
 fi
 
