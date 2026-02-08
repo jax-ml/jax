@@ -51,6 +51,7 @@ from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            as_hashable_function, weakref_lru_cache,
                            multi_weakref_lru_cache, subs_list,
                            HashableFunction, foreach, test_event)
+from jax._src.lib import xla_client as xc
 
 
 map, unsafe_map = safe_map, map
@@ -2402,7 +2403,8 @@ def trace_to_jaxpr(
   trace = DynamicJaxprTrace(debug_info, parent_trace=parent_trace)
   # Name stacks are reset because the name stacks on jaxpr equations should be
   # rooted at the enclosing jaxpr.
-  with core.ensure_no_leaks(trace), source_info_util.reset_name_stack():
+  with (core.ensure_no_leaks(trace), source_info_util.reset_name_stack(),
+        xc.TracebackScope()):
     source_info = source_info_util.current()
     in_tracers = in_avals.map(partial(trace.new_arg, source_info=source_info))
     with core.set_current_trace(trace):
@@ -2440,7 +2442,8 @@ def trace_to_jaxpr_dynamic(
                             lower=lower, auto_dce=auto_dce)
   # Name stacks are reset because the name stacks on jaxpr equations should be
   # rooted at the enclosing jaxpr.
-  with core.ensure_no_leaks(trace), source_info_util.reset_name_stack():
+  with (core.ensure_no_leaks(trace), source_info_util.reset_name_stack(),
+        xc.TracebackScope()):
     source_info = source_info_util.current()
     in_tracers = map(partial(trace.new_arg, source_info=source_info), in_avals)
     in_tracers = [t for t, keep in zip(in_tracers, keep_inputs) if keep]

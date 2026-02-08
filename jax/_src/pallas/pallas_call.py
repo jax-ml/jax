@@ -38,8 +38,6 @@ from jax._src import state
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src import typing as jax_typing
-from jax._src.lib import jaxlib_extension_version
-from jax._src.lib import xla_client
 from jax._src.mesh import get_abstract_mesh
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import ad
@@ -1046,14 +1044,9 @@ def _trace_kernel_to_jaxpr(
   )
   with grid_mapping.trace_env(), config._check_vma(False):
     with config.mutable_array_checks(False):
-      with (
-          xla_client.TracebackScope()
-          if jaxlib_extension_version >= 399
-          else contextlib.nullcontext()
-      ):
-        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-            wrapped_kernel_fun, kernel_avals
-        )
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+          wrapped_kernel_fun, kernel_avals
+      )
     if consts:
       consts_avals = [
           aval
