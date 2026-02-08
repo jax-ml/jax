@@ -6528,6 +6528,10 @@ def trapezoid(y: ArrayLike, x: ArrayLike | None = None, dx: ArrayLike = 1.0,
     y = util.ensure_arraylike('trapezoid', y)
     y_arr, = util.promote_dtypes_inexact(y)
     dx_array = asarray(dx)
+    # Fast path for the scalar dx case:
+    if dx_array.ndim == 0:
+      y_arr = moveaxis(y_arr, axis, -1)
+      return dx_array * (y_arr.sum(-1) - 0.5 * (y_arr[..., 0] + y_arr[..., -1]))
   else:
     y, x = util.ensure_arraylike('trapezoid', y, x)
     y_arr, x_arr = util.promote_dtypes_inexact(y, x)
