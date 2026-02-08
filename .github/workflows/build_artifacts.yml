@@ -129,6 +129,14 @@ jobs:
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Checkout Specific Commit
+        run: |
+           git config --global --add safe.directory /__w/jax/jax
+           git config --global user.email "jax-team@google.com"
+           git config --global user.name "JAX CI"
+           # Known good commit (prev): 68992a18241cb3769faba994c788a2edefb891e5
+           git checkout b2c727e3251deca529506568c1154404de379ddc
       - name: Configure Build Environment
         shell: bash
         run: |
