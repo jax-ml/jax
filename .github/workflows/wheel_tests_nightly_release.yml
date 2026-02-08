@@ -20,6 +20,9 @@
 name: CI - Wheel Tests (Nightly/Release)
 
 on:
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       gcs_download_uri:
@@ -342,7 +345,7 @@ jobs:
         matrix:
           python: ["3.11", "3.13", "3.13-nogil"]
           cuda-version: [12, 13]
-    container:  "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    container:  "us-docker.pkg.dev/ml-oss-artifacts-transient/ml-public-testing-container/ml-build:infrastructure-public-image-a9244380692c"
 
     # Verifies that JAX's release wheels can be installed
     name: "Verify release wheels install (Python ${{ matrix.python }})"
