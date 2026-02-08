@@ -36,6 +36,11 @@ import numpy as np
 from .utils import *  # noqa: F403
 
 try:
+  from tensorflow.compiler.xla.python import _gpu_ondevice_tracing as gpu_ondevice_tracing  # noqa: F401
+except ImportError:
+  gpu_ondevice_tracing = None  # type: ignore[assignment]
+
+try:
   from jax._src.lib import mosaic_gpu as mosaic_gpu_lib
 except ImportError:
   mosaic_gpu_lib = None  # type: ignore[assignment]
@@ -54,7 +59,11 @@ class Cupti:
   finalize: bool = True
 
   def measure(
-      self, f, *, aggregate: bool = True, iterations: int = 1,
+      self,
+      f,
+      *,
+      aggregate: bool = True,
+      iterations: int = 1,
   ):
     if not isinstance(f, (stages.Wrapped, stages.Compiled)):
       f = jax.jit(f)
@@ -88,16 +97,22 @@ class Cupti:
       for kernel_idx, (kernel_name, _) in enumerate(iter_timings[0]):
         for i in range(1, iterations):
           if iter_timings[i][kernel_idx][0] != kernel_name:
-            raise RuntimeError("Kernel names are not consistent across iterations")
+            raise RuntimeError(
+                "Kernel names are not consistent across iterations"
+            )
 
       if aggregate:
         iter_timings = [
             sum(item[1] for item in timings) for timings in iter_timings
         ]
 
-      return results, iter_timings[0] if len(iter_timings) == 1 else iter_timings
+      return (
+          results,
+          iter_timings[0] if len(iter_timings) == 1 else iter_timings,
+      )
 
     return wrapper
+
 
 @overload
 def measure(
@@ -108,6 +123,7 @@ def measure(
 ) -> Callable[P, tuple[T, float | None]]:
   ...
 
+
 @overload
 def measure(
     f: Callable[P, T],
@@ -117,6 +133,7 @@ def measure(
 ) -> Callable[P, tuple[T, list[tuple[str, float]] | None]]:
   ...
 
+
 @overload
 def measure(
     f: Callable[P, T],
@@ -125,6 +142,7 @@ def measure(
     iterations: int = ...,
 ) -> Callable[P, tuple[T, list[float] | None]]:
   ...
+
 
 @overload
 def measure(
@@ -137,7 +155,10 @@ def measure(
 
 
 def measure(
-    f, *, aggregate: bool = True, iterations: int = 1,
+    f,
+    *,
+    aggregate: bool = True,
+    iterations: int = 1,
 ):
   """Measures the GPU runtime of a function using CUPTI.
 
@@ -185,6 +206,25 @@ class ProfilerSpec:
       )
     else:
       self.dump_path = dump_path
+    self.tracing_version = self.injection_id = 0
+    self._check_gpu_ondevice_tracing()
+
+  def __bool__(self) -> bool:
+    return self.entries_per_warpgroup > 0 and (
+        (self.tracing_version > 0 and self.injection_id > 0)
+        or bool(self.dump_path)
+    )
+
+  def _check_gpu_ondevice_tracing(self):
+    if gpu_ondevice_tracing is not None:
+      self.tracing_version = gpu_ondevice_tracing.active_version()
+      # tracing_version == 0 means no active tracing.
+      if self.tracing_version > 0:
+        # injection_id == 0 means on device tracing is not enabled for the
+        # current profiling session or no more injection is allowed.
+        self.injection_id = gpu_ondevice_tracing.start_injection_instance(
+            self.tracing_version
+        )
 
   def _num_warpgroups(
       self, grid: tuple[int, ...], block: tuple[int, ...]
@@ -242,7 +282,9 @@ class ProfilerSpec:
 
     # Estimate the overhead of profiling.
     time_events = traces[:, :, 1::2]
-    valid_times_mask = np.arange(traces.shape[-1])[1::2] < traces_used[..., None]
+    valid_times_mask = (
+        np.arange(traces.shape[-1])[1::2] < traces_used[..., None]
+    )
     # 12 cycles is a ballpark estimate for H100
     profiling_overhead = (time_events[:, :, 1:] - time_events[:, :, :-1]).min(
         where=valid_times_mask[:, :, 1:], initial=12
@@ -264,7 +306,9 @@ class ProfilerSpec:
         if local_clock_offset is None:
           local_clock_offset = time
         time -= local_clock_offset
-        time -= (i // 2) * profiling_overhead  # Account for the overhead of profiling.
+        time -= (
+            i // 2
+        ) * profiling_overhead  # Account for the overhead of profiling.
         if time < 0:
           break  # Detect a timer wraparound
         name_id = tag
@@ -294,7 +338,52 @@ class ProfilerSpec:
           events.append(block_events)
     events = sorted(events, key=lambda x: x[0]["ts"])
     flat_events = list(itertools.chain.from_iterable(events))
-    return json.dump({"displayTimeUnit": "ns", "traceEvents": flat_events}, f)
+
+    if f is not None:
+      json.dump({"displayTimeUnit": "ns", "traceEvents": flat_events}, f)
+
+    if (
+        gpu_ondevice_tracing is not None
+        and self.tracing_version > 0
+        and self.injection_id > 0
+    ):
+      range_dict = {}
+      for event in flat_events:
+        range_key = (event["name"], event["pid"], event["tid"])
+        if event["ph"] == "B":
+          range_dict[range_key] = event["ts"]
+        elif event["ph"] == "E":
+          if range_key in range_dict:
+            begin_ts = range_dict[range_key]
+            range_dict.pop(range_key)
+          else:
+            begin_ts = None
+            warnings.warn(
+                "Event start time not found for ending event:"
+                f" {event['name']}@{event['ts']}"
+            )
+          gpu_ondevice_tracing.inject(
+              version=self.tracing_version,
+              injection_instance_id=self.injection_id,
+              tag_name=(
+                  event["name"]
+                  if begin_ts is not None
+                  else f"{event['name']} (ERROR NO START TIMESTAMP)"
+              ),
+              tag_id=self.interned_names[event["name"]],
+              pid=event["pid"],
+              tid=event["tid"],
+              start_time_ns=(
+                  int(begin_ts * 1e3)
+                  if begin_ts is not None
+                  else int(event["ts"] * 1e3) - 1
+              ),
+              duration_ps=(
+                  int((event["ts"] - begin_ts) * 1e6)
+                  if begin_ts is not None
+                  else 1000  # Just a 1 ns event when missing the start time.
+              ),
+          )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -374,6 +463,7 @@ class OnDeviceProfiler:
     i32 = ir.IntegerType.get_signless(32)
     index = ir.IndexType.get()
     name_id = self.spec.intern_name(name)
+
     def store(modifier):
       with self._profiler_ctx() as ctx:
         # smem_buffer[offset] = modifier | name_id

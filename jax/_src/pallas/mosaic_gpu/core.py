@@ -127,11 +127,6 @@ class CompilerParams(pallas_core.CompilerParams):
       object.__setattr__(
           self, "dimension_semantics", tuple(self.dimension_semantics)
       )
-    if bool(self.profile_space) ^ bool(self.profile_dir):
-      raise ValueError(
-          "Either both profile_space and profile_dir must be set, or neither."
-      )
-
 
 class MemorySpace(enum.Enum):
   #: Global memory.
