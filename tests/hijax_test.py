@@ -983,6 +983,14 @@ class HijaxTest(jtu.JaxTestCase):
         actual_grad = jax.jit(jax.grad(jax.remat(square)))(x)
       self.assertArraysAllClose(actual_grad, expected_grad)
 
+  def test_hijax_custom_root(self):
+    result = jax.lax.custom_root(
+      square,
+      initial_guess=jnp.ones(2),
+      solve=lambda _, y: jnp.zeros_like(y),
+      tangent_solve=lambda g, y: jnp.linalg.solve(jax.jacfwd(g)(y), y))
+    self.assertArraysEqual(result, jnp.zeros(2))
+
 
 class BoxTest(jtu.JaxTestCase):
 
