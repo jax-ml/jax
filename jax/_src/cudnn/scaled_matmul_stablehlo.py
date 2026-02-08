@@ -318,7 +318,6 @@ def _scaled_matmul_batcher(batched_args, batch_dims, *, preferred_element_type):
       and batch_dims[0] == batch_dims[2]
       and batch_dims[0] == batch_dims[3]
   )
-  lhs_bdims = batch_dims[0]
   out_bdims = (batch_dims[0],)
   lhs, rhs, lhs_scales, rhs_scales = batched_args
   *batch, lhs_non_contracting, contracting = lhs.shape
@@ -614,7 +613,6 @@ def scaled_dot_general_transpose_lhs(
   else:
     ans_batch, _, ans_y = ranges_like(x_batch, x_kept, y_kept)
 
-  dims = ((ans_y, y_kept), (ans_batch, y_batch))
   x_contract_sorted_by_y = list(np.take(x_contract, np.argsort(y_contract)))
   out_axes = np.argsort(list(x_batch) + x_kept + x_contract_sorted_by_y)
 

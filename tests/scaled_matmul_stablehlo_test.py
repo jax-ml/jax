@@ -19,7 +19,6 @@ import re
 import numpy as np
 import jax
 import jax.numpy as jnp
-import jax.ad_checkpoint
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec, NamedSharding
 from jax._src import config
@@ -126,9 +125,6 @@ def generate_quantized_tensors(
       configs[1].data_type,
   )
 
-  dn = ((2,), (0,))
-  a_3d = shape_normalization(a, dn)
-  b_3d = shape_normalization(b, dn)
   a_q, a_scales = quantize(a, configs[0])
   b_q, b_scales = quantize(b, configs[1])
 

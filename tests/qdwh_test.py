@@ -81,7 +81,6 @@ class QdwhTest(jtu.JaxTestCase):
   )
   def testQdwhWithUpperTriangularInputAllOnes(self, shape, dtype):
     """Tests qdwh with upper triangular input of all ones."""
-    eps = jnp.finfo(dtype).eps
     m, n = shape
     a = jnp.triu(jnp.ones((m, n))).astype(dtype)
     self._testQdwh(a)

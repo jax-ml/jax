@@ -525,7 +525,6 @@ def _copy_gmem_to_smem_lowering(
   barrier_ref_aval = ctx.avals_in[2]
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
-  barrier_transforms = barrier_transforms_treedef.unflatten(flat_barrier_transforms)
   handle_transposes = (
       ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup
   )
@@ -1736,9 +1735,9 @@ def _tcgen05_mma_lowering(
   avals = list(ctx.avals_in[4:])
   if arrive:
     barrier_ref, leaves = leaves[0], leaves[1:]
-    barrier_ref_aval, avals = avals[0], avals[1:]
+    _barrier_ref_aval, avals = avals[0], avals[1:]
   else:
-    barrier_ref = barrier_ref_aval = None
+    barrier_ref = None
   if scaled:
     a_scale_ref, b_scale_ref, leaves = leaves[0], leaves[1], leaves[2:]
     a_scale_ref_aval, b_scale_ref_aval, avals = avals[0], avals[1], avals[2:]
@@ -2009,9 +2008,9 @@ def _tcgen05_mma_lowering_wg(
   avals = list(ctx.avals_in[4:])
   if arrive:
     barrier_ref, leaves = leaves[0], leaves[1:]
-    barrier_ref_aval, avals = avals[0], avals[1:]
+    _barrier_ref_aval, avals = avals[0], avals[1:]
   else:
-    barrier_ref = barrier_ref_aval = None
+    barrier_ref = None
 
   if scaled:
     # Scales are not supported for WG semantics, but we still need to unpack them

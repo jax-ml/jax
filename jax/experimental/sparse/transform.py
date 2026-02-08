@@ -336,7 +336,7 @@ class SparseTrace(core.Trace):
     if any(params['donated_invars']):
       raise NotImplementedError("sparsify does not support donated_invars")
     params = dict(params, donated_invars=tuple(False for buf in in_bufs))
-    bufs_out = call_primitive.bind(fun, *in_bufs, **params)
+    _bufs_out = call_primitive.bind(fun, *in_bufs, **params)
     return [SparseTracer(self, spvalue=spvalue) for spvalue in out_spvalues()]
 
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, *, symbolic_zeros):

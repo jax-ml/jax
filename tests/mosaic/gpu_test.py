@@ -288,7 +288,6 @@ class TestUtilTest(TestCase):
   def test_iota_tensor(self):
     m = n = 64
     def kernel(ctx, dst, _):
-      f32 = ir.F32Type.get()
       index = ir.IndexType.get()
       registers = iota_tensor(m, n, jnp.float32).registers
       assert registers.size == 16, registers.size
@@ -494,7 +493,7 @@ class MemRefTest(TestCase):
       cluster_idx = tuple(gpu.cluster_block_id(dim) for dim in dims)
       peer_idx = arith.subi(arith.constant(index, 1), cluster_idx[dim])
       peer_smem = ctx.get_cluster_ref(smem, dim, peer_idx)
-      a = mgpu.FragmentedArray.load_strided(memref_slice(src, cluster_idx)).store_untiled(smem)
+      mgpu.FragmentedArray.load_strided(memref_slice(src, cluster_idx)).store_untiled(smem)
       utils.warpgroup_barrier()
       barrier.arrive()
       barrier.wait()
@@ -4287,7 +4286,6 @@ class FragmentedArrayTest(TestCase):
   def test_convert_int_uint(self, from_dtype, to_dtype, value):
     m, n = 1, 128
     def kernel(ctx, dst, _):
-      i8 = ir.IntegerType.get_signless(8)
       from_mlir_dtype = utils.dtype_to_ir_type(from_dtype)
       to_mlir_dtype = utils.dtype_to_ir_type(to_dtype)
       from_arr = mgpu.FragmentedArray.splat(
@@ -6582,8 +6580,7 @@ class ApiTest(TestCase):
       f = mgpu.as_gpu_kernel(
           kernel, (1, 1, 1), (128, 1, 1), x, x, (),
       )
-      bytecode_stablehlo = jax.jit(f).lower(x).as_text()
-      module_prefix = "module = \"ML\\EFR"
+      jax.jit(f).lower(x).as_text()
 
 if hp is not None:
   @hps.composite

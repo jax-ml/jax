@@ -643,7 +643,7 @@ def fun_sourceinfo(fun: Callable) -> str:
     filename = fun.__code__.co_filename
     lineno = fun.__code__.co_firstlineno
     return f"{fun.__name__} at {filename}:{lineno}"
-  except AttributeError as e:
+  except AttributeError:
     try:
       fun_str = str(fun)
     except:

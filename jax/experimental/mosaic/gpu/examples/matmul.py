@@ -118,7 +118,6 @@ def build_kernel(
     wgmma_impl=WGMMADefaultImpl,
     profiler_spec: profiler.ProfilerSpec | None = None,
 ):
-  f32 = ir.F32Type.get()
   if tile_m % 64 != 0:
     raise ValueError(f"{tile_m=} must be divisible by 64")
   if m % tile_m != 0:

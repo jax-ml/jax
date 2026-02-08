@@ -176,8 +176,6 @@ def _serialize_array(
 
 
 def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
-  serialization_version = exp.SerializationVersion()
-
   fun_name = exp.FunctionName().decode("utf-8")
   in_tree = tree_util.tree_structure(
       _deserialize_pytreedef_to_pytree(exp.InTree())
