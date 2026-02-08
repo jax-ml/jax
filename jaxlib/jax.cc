@@ -801,7 +801,8 @@ NB_MODULE(_jax, m) {
           options.shutdown_timeout = absl::Seconds(*shutdown_timeout);
         }
         std::unique_ptr<xla::DistributedRuntimeService> service =
-            xla::ValueOrThrow(GetDistributedRuntimeService(address, options));
+            xla::ValueOrThrow(
+                GetDistributedRuntimeService(address, options, 42));
         return service;
       },
       nb::arg("address"), nb::arg("num_nodes"),
