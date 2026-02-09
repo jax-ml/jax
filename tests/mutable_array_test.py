@@ -1178,6 +1178,20 @@ class MutableArrayTest(jtu.JaxTestCase):
     x_ref = jax.new_ref(x)
     self.assertArraysAllClose(x[indexer], x_ref[indexer])
 
+  def test_can_dce_internal_ref_effect(self):
+
+    @jax.jit
+    def f(x, y):
+      @jax.jit
+      def g(y):
+        y_ref = jax.new_ref(y)
+        y_ref[...] += 1
+        return jax.freeze(y_ref)
+      _ = g(y)
+      return x
+    stable_hlo = f.lower(1, 2).as_text()
+    self.assertNotIn("add", stable_hlo)
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):

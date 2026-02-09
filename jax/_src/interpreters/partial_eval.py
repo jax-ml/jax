@@ -1415,9 +1415,32 @@ def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
   return new_jaxpr, used_consts, used_inputs
 
 
+def _default_dce_rule(
+    used_outs: list[bool], eqn: JaxprEqn
+  ) -> tuple[list[bool], JaxprEqn | None]:
+  if not any(used_outs) and not has_effects(eqn):
+    return [False] * len(eqn.invars), None
+  return [True] * len(eqn.invars), eqn
+
+dce_rules: dict[Primitive, DCERule] = {}
+
+dceable_effects = effects.EffectTypeSet()
+
+dceable_effects.add_type(ReadEffect)
+dceable_effects.add_type(core.NamedAxisEffect)
+dceable_effects.add_type(core.InternalMutableArrayEffect)
+
+def _free_ref_dce_rule(
+    used_outs: list[bool], eqn: JaxprEqn
+) -> tuple[list[bool], JaxprEqn | None]:
+  # Never gonna DCE free_ref.
+  del used_outs
+  return [True] * len(eqn.invars), eqn
+dce_rules[core.free_ref_p] = _free_ref_dce_rule
+
+
 def has_effects(eqn: JaxprEqn) -> bool:
-  effs = {e for e in eqn.effects if not isinstance(e, core.NamedAxisEffect)
-          and not isinstance(e, ReadEffect)}
+  effs = {e for e in eqn.effects if not dceable_effects.contains(e)}
   return bool(effs)
 
 
@@ -1463,15 +1486,6 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
 
 DCERule = Callable[[list[bool], JaxprEqn],
                    tuple[list[bool], Union[JaxprEqn, None]]]
-
-def _default_dce_rule(
-    used_outs: list[bool], eqn: JaxprEqn
-  ) -> tuple[list[bool], JaxprEqn | None]:
-  if not any(used_outs) and not has_effects(eqn):
-    return [False] * len(eqn.invars), None
-  return [True] * len(eqn.invars), eqn
-
-dce_rules: dict[Primitive, DCERule] = {}
 
 
 def dce_jaxpr_call_rule(used_outputs: list[bool], eqn: JaxprEqn

@@ -2609,7 +2609,9 @@ free_ref_p.ref_primitive = True
 
 @free_ref_p.def_effectful_abstract_eval
 def _free_ref_abstract_eval(ref_aval):
-  return (), {internal_mutable_array_effect}
+  # No effects, but there is a custom DCE rule that prevents free_ref from
+  # being DCE'd.
+  return (), {}
 
 
 @free_ref_p.def_impl
