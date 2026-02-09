@@ -25,7 +25,7 @@ import enum
 import functools
 import itertools
 import threading
-from typing import Any, ClassVar, Protocol, TypeAlias, Union, runtime_checkable
+from typing import Any, ClassVar, Optional, Protocol, TypeAlias, Union, runtime_checkable
 
 from jax._src import api_util
 from jax._src import config
@@ -130,6 +130,26 @@ class CompilerParams(Protocol):
   # Subclasses must be dataclasses.
   __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
 
+
+@enum.unique
+class RevisitMode(enum.Enum):
+  """Specifies whether an output buffer supports revisiting.
+
+  By default, buffers can only be safely revisited at the next iteration
+  (immediate revisiting). If revisited at any other iteration, the buffer state
+  should be considered undefined.
+
+  If revisiting at any arbitrary iteration is required, use RevisitMode.ANY.
+  This will insert additional DMAs as needed to restore the buffer state.
+
+  Input buffers ignore revisit mode: as inputs read data from memory, their
+  buffers state is correct regardless of revisit order.
+  """
+
+  IMMEDIATE = "immediate"
+  ANY = "any"
+
+
 @dataclasses.dataclass(frozen=True)
 class Buffered:
   """Specifies how a block should be buffered for a pipeline.
@@ -140,9 +160,17 @@ class Buffered:
       buffer. Enabling lookahead allows the pipeline to begin fetching the next
       changed block as soon as a slot is available, no matter how many
       iterations ahead that block is.
+    revisit: optional RevisitMode, determines how revisiting the same output
+      block at different iterations is handled. RevisitMode.IMMEDIATE is the
+      default for outputs. In this mode, the same block can only be revisited in
+      subsequent kernel invocations. Once another block is visited, the old one
+      should not be visited again. RevisitMode.ANY relaxes this restriction, at
+      a cost of addition DMAs. Input blocks ignore this field and can be visited
+      at any iteration, as they read the state from memory in any case.
   """
   buffer_count: int
   use_lookahead: bool = False
+  revisit: Optional[RevisitMode] = None
 
 split_list = util.split_list
 

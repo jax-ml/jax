@@ -143,6 +143,45 @@ class TPUPipelineModeTest(ptu.PallasTPUTest):
     np.testing.assert_allclose(z, x + y)
 
 
+class TPUPipelineModeRevisitTest(ptu.PallasTPUTest):
+
+  def test_block_reduction_with_non_immediate_revisit(self):
+    # Accumulator mode enables accumulating into an output even if we don't
+    # revisit immediately.
+    def body(x_ref, o_ref):
+      @pl.when(pl.program_id(0) == 0)
+      def _():
+        o_ref[...] = jnp.full_like(o_ref, 0, dtype=o_ref.dtype)
+
+      o_ref[:] = o_ref[:] + x_ref[:]
+
+    block_shape = (8, 128)
+    x_shape = (3 * block_shape[0], 3 * block_shape[1])
+    o_shape = (1 * block_shape[0], 3 * block_shape[1])
+
+    x = jnp.arange(np.prod(x_shape), dtype=jnp.float32).reshape(x_shape)
+    in_specs = [pl.BlockSpec(block_shape, lambda i, j: (i, j))]
+    out_specs = pl.BlockSpec(
+        block_shape,
+        lambda i, j: (0, j),
+        pipeline_mode=pl.Buffered(1, revisit=pl.RevisitMode.ANY),
+    )
+
+    @jax.jit
+    def reduction(x):
+      return self.pallas_call(
+          body,
+          out_shape=jax.ShapeDtypeStruct(o_shape, jnp.float32),
+          in_specs=in_specs,
+          out_specs=out_specs,
+          grid=(3, 3),
+      )(x)
+
+    z = reduction(x)
+    expected = x.reshape(3, block_shape[0], -1).sum(axis=0)
+    np.testing.assert_allclose(z, expected)
+
+
 class PallasCallScalarPrefetchTest(ptu.PallasTPUTest):
   def test_trivial_scalar_prefetch(self):
     def body(_, x_ref, o_ref):
