@@ -17,6 +17,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features:
+  * Added a debug config `jax_compilation_cache_check_contents`. If set, we miss
+    when `get()` is called on a value that has not been `put()` by the current
+    process, even if the value is actually in the disk cache. When a value is
+    `put()`, we verify that its contents match.
 * Bug fixes:
 * Deprecations:
 * Changes:
