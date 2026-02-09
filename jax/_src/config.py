@@ -2143,18 +2143,6 @@ gpu_use_magma = enum_state(
     ),
 )
 
-exec_time_optimization_effort = float_state(
-    name='jax_exec_time_optimization_effort',
-    default=0.0,
-    help='Effort for minimizing execution time (higher means more effort), valid range [-1.0, 1.0].'
-)
-
-memory_fitting_effort = float_state(
-    name='jax_memory_fitting_effort',
-    default=0.0,
-    help='Effort for minimizing memory usage (higher means more effort), valid range [-1.0, 1.0].'
-)
-
 optimization_level = enum_state(
     name='jax_optimization_level',
     enum_values=[
