@@ -276,8 +276,11 @@ def _mosaic_gpu_lowering_rule(
   # Collective metadata stores pointers to both input and output parameters.
   num_params = len(ctx.avals_out) + len(ctx.avals_in)
   num_peers = axis_context.mesh.size
+  barrier_buffer_size = 2
   collective_metadata_size = (
-      launch_context.COLLECTIVE_METADATA_SIZE + num_peers * num_params
+      launch_context.COLLECTIVE_METADATA_SIZE
+      + num_peers * (num_params + 1)
+      + barrier_buffer_size
   )
 
   custom_call_kwargs["result_layouts"] += [[0]]  # type: ignore
@@ -866,8 +869,13 @@ def _lower_as_gpu_kernel(
             ir.IntegerType.get_signless(64)
         )
         collective_metadata = utils.ptr_as_memref(metadata_ptr, metadata_ty)
-        # TODO(b/481949311) Construct host_collective_metadata once the bug is
-        # fixed.
+
+        host_metadata_ptr = llvm.load(
+            ptr_ty, utils.getelementptr(buffers, [num_args + 1], ptr_ty)
+        )
+        host_collective_metadata = utils.ptr_as_memref(
+            host_metadata_ptr, metadata_ty
+        )
 
       prof_buffer = arg_refs.pop() if prof_spec is not None else None
 

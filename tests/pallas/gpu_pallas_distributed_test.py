@@ -48,16 +48,6 @@ def is_nvshmem_used():
 class TestCase(jt_multiprocess.MultiProcessTest if is_nvshmem_used() is None else parameterized.TestCase):
 
   def setUp(self):
-    # TODO(b/482756208): Fix this
-    if jax.local_device_count() > 1:
-      self.skipTest("Collective metadata tests are flaky since right now when "
-                    "collective metadata is used there is no cross-device "
-                    "barrier before the module execution. This might lead to a "
-                    "situation when device 1 writes a signal to the device 2 "
-                    "the same time as device 2 zeroes it's signal memory "
-                    "buffer to launch a kernel. Eventually device 1 waits "
-                    "forever on a deadlock.")
-
     if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("Only works on GPU with capability >= sm90")
@@ -458,10 +448,6 @@ class PallasCallRemoteDMATest(TestCase):
   def test_copy_tma(self, use_dict):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
-
-    # TODO(b/481949311): Remove this once the bug is fixed.
-    if jax.local_device_count() > 1:
-      self.skipTest("b/481949311")
 
     def kernel(y_ref, smem_ref, sem):
       dev_id = lax.axis_index("y")
