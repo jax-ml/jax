@@ -909,6 +909,59 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       out_ref = jitted_sdpa_inference_ref(query, key, value)
       self.assertArraysAllClose(out_ref, out, rtol=2e-2, atol=2e-2)
 
+  @jtu.sample_product(
+      dtype=[jnp.float16, jnp.bfloat16],
+      use_gqa=[False, True],
+      use_mask=[False, True],
+      use_bias=[False, True],
+  )
+  @jtu.run_on_devices("cuda")
+  def test_sdpa_vmap_broadcast_bias(self, dtype, use_gqa, use_mask, use_bias):
+    """Test that vmap works with cuDNN attention and broadcast bias/mask.
+
+    Regression test: the fwd/bwd batchers reshaped the bias as (B, N, T, S)
+    using N from the query, but the bias may have fewer heads (1 for broadcast
+    or num_kv_heads for GQA). The fix uses (B,) + bias.shape[-3:] to preserve
+    the bias's own head dimension.
+    """
+    if not use_mask and not use_bias:
+      self.skipTest("Need at least one of mask or bias")
+
+    vmap_size = 3
+    seq_len = 128
+    head_dim = 64
+    num_q_heads = 8
+    num_kv_heads = 2 if use_gqa else num_q_heads
+
+    k1, k2, k3 = jax.random.split(jax.random.key(0), 3)
+    q = jax.random.normal(k1, (1, seq_len, num_q_heads, head_dim), dtype=dtype)
+    k = jax.random.normal(k2, (1, seq_len, num_kv_heads, head_dim), dtype=dtype)
+    v = jax.random.normal(k3, (1, seq_len, num_kv_heads, head_dim), dtype=dtype)
+
+    # Broadcast head dim = 1 (common for attention masks)
+    bias = jax.random.normal(
+        k1, (1, 1, seq_len, seq_len), dtype=dtype) if use_bias else None
+    mask = jnp.ones((1, 1, seq_len, seq_len), dtype=bool) if use_mask else None
+
+    def fn(q, k, v, bias, mask):
+      return jax.nn.dot_product_attention(
+          q, k, v, bias=bias, mask=mask, implementation="cudnn")
+
+    # Stack inputs for vmap
+    q_v = jnp.stack([q] * vmap_size)
+    k_v = jnp.stack([k] * vmap_size)
+    v_v = jnp.stack([v] * vmap_size)
+    bias_v = jnp.stack([bias] * vmap_size) if bias is not None else None
+    mask_v = jnp.stack([mask] * vmap_size) if mask is not None else None
+
+    # This previously failed with a reshape error in the batcher
+    out_vmap = jax.vmap(fn)(q_v, k_v, v_v, bias_v, mask_v)
+
+    # Compare against non-vmapped reference
+    out_ref = fn(q, k, v, bias, mask)
+    for i in range(vmap_size):
+      self.assertArraysAllClose(out_vmap[i], out_ref, rtol=1e-2, atol=1e-2)
+
 
 @jtu.with_config(jax_numpy_dtype_promotion="standard")
 class DotProductAttentionF8Test(jtu.JaxTestCase):
