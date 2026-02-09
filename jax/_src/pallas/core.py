@@ -16,8 +16,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Iterable, Iterator, Sequence
-from collections.abc import Hashable, Mapping
+from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence, Set
 import contextlib
 import copy
 import dataclasses
@@ -27,19 +26,19 @@ import itertools
 import threading
 from typing import Any, ClassVar, Literal, Protocol, TypeAlias, Union, runtime_checkable
 
-
 from jax._src import api_util
-from jax._src.api import jit
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import frozen_dict
 from jax._src import linear_util as lu
+from jax._src import numpy as jnp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import typing as jax_typing
 from jax._src import util
+from jax._src.api import jit
 from jax._src.export._export import export
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -47,7 +46,6 @@ from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import types as state_types
 from jax._src.state.types import TransformedRef
-from jax._src import numpy as jnp
 
 
 class DynamicGridDim:
@@ -1459,26 +1457,30 @@ effects.custom_derivatives_allowed_effects.add_type(CommsEffect)
 kernel_local_effects: effects.EffectTypeSet = effects.EffectTypeSet()
 
 
+def get_interpret_effects(interpret: Any) -> Set[effects.Effect]:
+  try:
+    from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret  # Avoid circular dependency.
+  except ImportError:
+    pass
+  else:
+    if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
+      return mosaic_tpu_interpret.get_interpret_effects()
+  try:
+    from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret  # Avoid circular dependency.
+  except ImportError:
+    pass
+  else:
+    if isinstance(interpret, mosaic_gpu_interpret.InterpretParams):
+      return mosaic_gpu_interpret.get_interpret_effects()
+  return effects.no_effects
+
+
 @core_map_p.def_effectful_abstract_eval
-def _core_map_abstract_eval(*args, jaxpr, mesh, **kwargs):
+def _core_map_abstract_eval(*args, jaxpr, mesh, interpret, **kwargs):
   del args
   if jaxpr.outvars:
     raise ValueError("core_map must not return any outputs.")
-  interpret = kwargs.get('interpret', False)
-  effs = set()
-  if interpret:
-    try:
-      from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret  # Avoid circular dependency.
-      if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
-        effs = mosaic_tpu_interpret.get_interpret_effects()
-    except ImportError:
-      pass
-    try:
-      from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret  # Avoid circular dependency.
-      if isinstance(interpret, mosaic_gpu_interpret.InterpretParams):
-        effs = mosaic_gpu_interpret.get_interpret_effects()
-    except ImportError:
-      pass
+  effs = {*get_interpret_effects(interpret)}
   for eff in jaxpr.effects:
     if mesh.discharges_effect(eff) or isinstance(eff, CommsEffect):
       continue

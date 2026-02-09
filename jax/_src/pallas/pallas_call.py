@@ -94,23 +94,16 @@ def _pallas_call_abstract_eval(
     *avals,
     out_avals: tuple[jax_core.AbstractValue, ...],
     interpret,
-    backend,
     input_output_aliases,
+    compiler_params: CompilerParams | None,
     grid_mapping,
-    **params
+    **params,
 ):
-  if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
-    # Report effects that will be introduced when running/lowering
-    # mosaic_tpu_interpret.interpret_pallas_call .
-    effs = mosaic_tpu_interpret.get_interpret_effects()
-  elif isinstance(interpret, mosaic_gpu_interpret.InterpretParams):
-    # Report effects that will be introduced when running/lowering
-    # mosaic_gpu_interpret.interpret_pallas_call .
-    effs = mosaic_gpu_interpret.get_interpret_effects()
-  elif getattr(params.get('compiler_params', None), 'has_side_effects', False):
-    effs = {jax_core.GenericEffect(pallas_call_p)}
-  else:
-    effs = jax_core.no_effects
+  del params  # Unused.
+
+  effs = {*pallas_core.get_interpret_effects(interpret)}
+  if getattr(compiler_params, "has_side_effects", False):
+    effs.add(jax_core.GenericEffect(pallas_call_p))
 
   # closed-over refs and dynamic grid bounds aren't reflected in
   # input_output_aliases, though they are present in `avals`, so split them off
