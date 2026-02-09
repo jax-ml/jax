@@ -4220,6 +4220,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @jtu.sample_product(dtype=[np.int16, np.uint32])
+  def testArgsortDtype(self, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng((10,), 'float32')]
+    np_fun = lambda x: np.argsort(x).astype(dtype)
+    jnp_fun = partial(jnp.argsort, dtype=dtype)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
       for shape in nonempty_nonscalar_array_shapes

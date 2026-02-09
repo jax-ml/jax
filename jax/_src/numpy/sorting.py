@@ -22,7 +22,7 @@ from jax._src.lax import lax
 from jax._src.lax import utils as lax_utils
 from jax._src.numpy import util
 from jax._src.util import canonicalize_axis, set_module
-from jax._src.typing import Array, ArrayLike
+from jax._src.typing import Array, ArrayLike, DTypeLike
 
 export = set_module('jax.numpy')
 
@@ -88,7 +88,7 @@ def sort(
   return lax.rev(result, dimensions=[dimension]) if descending else result
 
 @export
-@api.jit(static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
+@api.jit(static_argnames=('axis', 'kind', 'order', 'stable', 'descending', 'dtype'))
 def argsort(
     a: ArrayLike,
     axis: int | None = -1,
@@ -97,6 +97,7 @@ def argsort(
     order: None = None,
     stable: bool = True,
     descending: bool = False,
+    dtype: DTypeLike | None = None,
 ) -> Array:
   """Return indices that sort an array.
 
@@ -110,6 +111,8 @@ def argsort(
     descending: boolean specifying whether to sort in descending order. Default=False.
     kind: deprecated; instead specify sort algorithm using stable=True or stable=False.
     order: not supported by JAX
+    dtype: optionally specify the dtype of the resulting indices. If not specified,
+      the default integer dtype will be used.
 
   Returns:
     Array of indices that sort an array. Returned array will be of shape ``a.shape``
@@ -153,11 +156,14 @@ def argsort(
     arr = arr.ravel()
     axis = 0
   dimension = canonicalize_axis(axis, arr.ndim)
-  idx_dtype = lax_utils.int_dtype_for_dim(arr.shape[dimension], signed=True)
-  # We'd give the correct output values with int32, but use the default dtype to
-  # match NumPy type semantics if x64 mode is enabled for now.
-  if idx_dtype == np.dtype(np.int32):
-    idx_dtype = dtypes.default_int_dtype()
+  if dtype is not None:
+    idx_dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "argsort")
+  else:
+    idx_dtype = lax_utils.int_dtype_for_dim(arr.shape[dimension], signed=True)
+    # We'd give the correct output values with int32, but use the default dtype to
+    # match NumPy type semantics if x64 mode is enabled for now.
+    if idx_dtype == np.dtype(np.int32):
+      idx_dtype = dtypes.default_int_dtype()
   iota = lax.broadcasted_iota(idx_dtype, arr.shape, dimension)
   # For stable descending sort, we reverse the array and indices to ensure that
   # duplicates remain in their original order when the final indices are reversed.
