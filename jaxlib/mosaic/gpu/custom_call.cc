@@ -697,19 +697,9 @@ void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,
                                          "CUDA");
 
-// TODO(b/481949311): Register type with FFI and use absl::flat_hash_map instead
-// of std::map after.
 struct CustomCallResources {
   CustomCallResources(CompiledKernel* kernel) : kernel(kernel) {}
   CompiledKernel* kernel = nullptr;
-
-  absl::Mutex mutex;
-  // A map from a global device ID to the CPU version of the collective metadata
-  // for TMA initialization.
-  // Stores the following structure:
-  // CollectiveKernelMetadata | param_to_peers array
-  std::map<int, std::vector<char>> cpu_metadata_buffers
-      ABSL_GUARDED_BY(mutex);
 };
 
 // Validate custom call attributes and compile the kernel.
@@ -906,10 +896,6 @@ absl::Status MosaicGpuInitialize(
       std::vector<char> cpu_metadata_buffer,
       CreateCollectiveMetadata(clique_key, current_rank, stream,
                                collective_metadata_ptr, std::move(parameters)));
-
-  absl::MutexLock lock(resources->mutex);
-  resources->cpu_metadata_buffers[collective_params->global_device_id.value()] =
-      std::move(cpu_metadata_buffer);
   return absl::OkStatus();
 }
 
@@ -924,15 +910,6 @@ absl::Status MosaicGpuExecute(
   buffer_ptrs.reserve(buffers.size() + (uses_collective_metadata ? 1 : 0));
   for (const xla::ffi::AnyBuffer& buffer : buffers) {
     buffer_ptrs.push_back(buffer.untyped_data());
-  }
-
-  // Adding a CPU version of the collective metadata for TMA initialization.
-  if (uses_collective_metadata) {
-    absl::MutexLock lock(resources->mutex);
-
-    std::vector<char>& cpu_metadata_buffer = resources->cpu_metadata_buffers.at(
-        collective_params->global_device_id.value());
-    buffer_ptrs.push_back(cpu_metadata_buffer.data());
   }
 
   CompiledKernel* kernel = resources->kernel;

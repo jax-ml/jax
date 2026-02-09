@@ -866,13 +866,8 @@ def _lower_as_gpu_kernel(
             ir.IntegerType.get_signless(64)
         )
         collective_metadata = utils.ptr_as_memref(metadata_ptr, metadata_ty)
-
-        host_metadata_ptr = llvm.load(
-            ptr_ty, utils.getelementptr(buffers, [num_args + 1], ptr_ty)
-        )
-        host_collective_metadata = utils.ptr_as_memref(
-            host_metadata_ptr, metadata_ty
-        )
+        # TODO(b/481949311) Construct host_collective_metadata once the bug is
+        # fixed.
 
       prof_buffer = arg_refs.pop() if prof_spec is not None else None
 

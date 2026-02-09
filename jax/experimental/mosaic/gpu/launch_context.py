@@ -772,6 +772,9 @@ class LaunchContext:
             peer_id = c(gmem_peer_id, i32)
           else:
             try:
+              # TODO(b/481949311): Remove this once the bug is fixed.
+              if uses_collective_metadata(self.module):
+                raise ValueError("TMA is not supported with collectives.")
               # We try to reproduce the gmem_peer_id computation on the host.
               peer_id = self._recompute_peer_id(gmem_peer_id, fuel=16)
             except ReplicationError as e:
@@ -789,8 +792,8 @@ class LaunchContext:
                 callee="nvshmem_ptr",
             )
           else:
-            remote_ref = self.to_remote(ref, peer_id, on_host=True)
-            base_ptr = utils.memref_ptr(remote_ref)
+            # TODO(b/481949311): Remove this once the bug is fixed.
+            raise ValueError("TMA is not supported with collectives.")
         rank = ref_ty.rank
         assert rank * 2 == len(sizes_and_strides)
         swizzle_arg = (
