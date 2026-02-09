@@ -497,6 +497,247 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertTrue(np.all(np.linalg.norm(
         np.matmul(args, vs) - ws[..., None, :] * vs) < 1e-3))
 
+  @jtu.sample_product(
+      n=[0, 4, 5, 50, 512],
+      dtype=float_types + complex_types,
+      lower=[True, False],
+  )
+  def testEigh(self, n, dtype, lower):
+    rng = jtu.rand_default(self.rng())
+    eps = np.finfo(dtype).eps
+    args_maker = lambda: [rng((n, n), dtype)]
+
+    uplo = "L" if lower else "U"
+
+    a, = args_maker()
+    a = (a + np.conj(a.T)) / 2
+    w, v = jnp.linalg.eigh(np.tril(a) if lower else np.triu(a),
+                           UPLO=uplo, symmetrize_input=False)
+    w = w.astype(v.dtype)
+    tol = 2 * n * eps
+    self.assertAllClose(
+        np.eye(n, dtype=v.dtype),
+        np.matmul(np.conj(T(v)), v),
+        atol=tol,
+        rtol=tol,
+    )
+
+    with jax.numpy_rank_promotion('allow'):
+      tol = 100 * eps
+      self.assertLessEqual(
+          np.linalg.norm(np.matmul(a, v) - w * v), tol * np.linalg.norm(a)
+      )
+
+    self._CompileAndCheck(
+        partial(jnp.linalg.eigh, UPLO=uplo), args_maker, rtol=eps
+    )
+
+    # Compare eigenvalues against Numpy using double precision. We do not compare
+    # eigenvectors because they are not uniquely defined, but the two checks above
+    # guarantee that that they satisfy the conditions for being eigenvectors.
+    double_type = dtype
+    if dtype == np.float32:
+      double_type = np.float64
+    if dtype == np.complex64:
+      double_type = np.complex128
+    w_np = np.linalg.eigvalsh(a.astype(double_type))
+    tol = 8 * eps
+    self.assertAllClose(
+        w_np.astype(w.dtype), w, atol=tol * np.linalg.norm(a), rtol=tol
+    )
+
+  @jax._src.config.explicit_x64_dtypes("allow")
+  @jtu.run_on_devices("gpu")
+  @unittest.skip("Needs a large amount of GPU memory, doesn't work in CI")
+  def testEighLargeMatrix(self):
+    # https://github.com/jax-ml/jax/issues/33062
+    n = 16384
+    A = jnp.eye(n, dtype=jnp.float64)
+    jax.block_until_ready(jax.lax.linalg.eigh(A))
+
+  @jtu.sample_product(
+      start=[0, 1, 63, 64, 65, 255],
+      end=[1, 63, 64, 65, 256],
+  )
+  @jtu.run_on_devices("tpu")  # TODO(rmlarsen: enable on other devices)
+  def testEighSubsetByIndex(self, start, end):
+    if start >= end:
+      return
+    dtype = np.float32
+    n = 256
+    rng = jtu.rand_default(self.rng())
+    eps = np.finfo(dtype).eps
+    args_maker = lambda: [rng((n, n), dtype)]
+    subset_by_index = (start, end)
+    k = end - start
+    (a,) = args_maker()
+    a = (a + np.conj(a.T)) / 2
+
+    v, w = lax.linalg.eigh(
+        a, symmetrize_input=False, subset_by_index=subset_by_index
+    )
+    w = w.astype(v.dtype)
+
+    self.assertEqual(v.shape, (n, k))
+    self.assertEqual(w.shape, (k,))
+    with jax.numpy_rank_promotion("allow"):
+      tol = 200 * eps
+      self.assertLessEqual(
+          np.linalg.norm(np.matmul(a, v) - w * v), tol * np.linalg.norm(a)
+      )
+    tol = 3 * n * eps
+    self.assertAllClose(
+        np.eye(k, dtype=v.dtype),
+        np.matmul(np.conj(T(v)), v),
+        atol=tol,
+        rtol=tol,
+    )
+
+    self._CompileAndCheck(partial(jnp.linalg.eigh), args_maker, rtol=eps)
+
+    # Compare eigenvalues against Numpy. We do not compare eigenvectors because
+    # they are not uniquely defined, but the two checks above guarantee that
+    # that they satisfy the conditions for being eigenvectors.
+    double_type = dtype
+    if dtype == np.float32:
+      double_type = np.float64
+    if dtype == np.complex64:
+      double_type = np.complex128
+    w_np = np.linalg.eigvalsh(a.astype(double_type))[
+        subset_by_index[0] : subset_by_index[1]
+    ]
+    tol = 20 * eps
+    self.assertAllClose(
+        w_np.astype(w.dtype), w, atol=tol * np.linalg.norm(a), rtol=tol
+    )
+
+  def testEighZeroDiagonal(self):
+    a = np.array([[0., -1., -1.,  1.],
+                  [-1.,  0.,  1., -1.],
+                  [-1.,  1.,  0., -1.],
+                  [1., -1., -1.,  0.]], dtype=np.float32)
+    w, v = jnp.linalg.eigh(a)
+    w = w.astype(v.dtype)
+    eps = jnp.finfo(a.dtype).eps
+    with jax.numpy_rank_promotion('allow'):
+      self.assertLessEqual(
+          np.linalg.norm(np.matmul(a, v) - w * v), 2.5 * eps * np.linalg.norm(a)
+      )
+
+
+  def testEighTinyNorm(self):
+    if jtu.is_device_rocm():
+      # numerical errors seen as of ROCm 7.2 due to hipSolver issue
+      # TODO: re-enable the test once the hipSolver issue is fixed
+      self.skipTest("testEighNorm not supported on ROCm due to hipSOLVER issue")
+    rng = jtu.rand_default(self.rng())
+    a = rng((300, 300), dtype=np.float32)
+    eps = jnp.finfo(a.dtype).eps
+    a = eps * (a + np.conj(a.T))
+    w, v = jnp.linalg.eigh(a)
+    w = w.astype(v.dtype)
+    with jax.numpy_rank_promotion("allow"):
+      self.assertLessEqual(
+          np.linalg.norm(np.matmul(a, v) - w * v), 80 * eps * np.linalg.norm(a)
+      )
+
+  @jtu.sample_product(
+      rank=[1, 3, 299],
+  )
+  def testEighRankDeficient(self, rank):
+    rng = jtu.rand_default(self.rng())
+    eps = jnp.finfo(np.float32).eps
+    a = rng((300, rank), dtype=np.float32)
+    a = a @ np.conj(a.T)
+    w, v = jnp.linalg.eigh(a)
+    w = w.astype(v.dtype)
+    with jax.numpy_rank_promotion("allow"):
+      self.assertLessEqual(
+          np.linalg.norm(np.matmul(a, v) - w * v),
+          85 * eps * np.linalg.norm(a),
+      )
+
+  @jtu.sample_product(
+    n=[0, 4, 5, 50, 512],
+    dtype=float_types + complex_types,
+    lower=[True, False],
+  )
+  def testEighIdentity(self, n, dtype, lower):
+    tol = np.finfo(dtype).eps
+    uplo = "L" if lower else "U"
+
+    a = jnp.eye(n, dtype=dtype)
+    w, v = jnp.linalg.eigh(a, UPLO=uplo, symmetrize_input=False)
+    w = w.astype(v.dtype)
+    self.assertLessEqual(
+        np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), tol
+    )
+    with jax.numpy_rank_promotion('allow'):
+      self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
+                           tol * np.linalg.norm(a))
+
+  @jtu.sample_product(
+    shape=[(4, 4), (5, 5), (50, 50)],
+    dtype=float_types + complex_types,
+  )
+  def testEigvalsh(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    n = shape[-1]
+    def args_maker():
+      a = rng((n, n), dtype)
+      a = (a + np.conj(a.T)) / 2
+      return [a]
+    self._CheckAgainstNumpy(
+        np.linalg.eigvalsh, jnp.linalg.eigvalsh, args_maker, tol=2e-5
+    )
+
+  @jtu.sample_product(
+      shape=[(1, 1), (4, 4), (5, 5), (25, 25), (2, 10, 10)],
+      dtype=float_types + complex_types,
+      lower=[True, False],
+  )
+  def testEighGrad(self, shape, dtype, lower):
+    if platform.system() == "Windows":
+      self.skipTest("Skip on Windows due to tolerance issues.")
+    rng = jtu.rand_default(self.rng())
+    a = rng(shape, dtype)
+    a = (a + np.conj(T(a))) / 2
+    ones = np.ones((a.shape[-1], a.shape[-1]), dtype=dtype)
+    a *= np.tril(ones) if lower else np.triu(ones)
+    # Gradient checks will fail without symmetrization as the eigh jvp rule
+    # is only correct for tangents in the symmetric subspace, whereas the
+    # checker checks against unconstrained (co)tangents.
+    f = partial(_normalizing_eigh, lower=lower, symmetrize_input=True)
+    norm_a = jnp.linalg.norm(a)
+    eps = 2e-5 * norm_a
+    atol = 5e-3 * norm_a
+    rtol = 0.025
+    jtu.check_grads(f, (a,), 2, atol=atol, rtol=rtol, eps=eps)
+
+  def testEighGradPrecision(self):
+    rng = jtu.rand_default(self.rng())
+    a = rng((3, 3), np.float32)
+    jtu.assert_dot_precision(
+        lax.Precision.HIGHEST, partial(jvp, jnp.linalg.eigh), (a,), (a,))
+
+  def testEighGradRankPromotion(self):
+    rng = jtu.rand_default(self.rng())
+    a = rng((10, 3, 3), np.float32)
+    jvp(jnp.linalg.eigh, (a,), (a,))  # doesn't crash
+
+  @jtu.sample_product(
+    shape=[(1, 1), (4, 4), (5, 5), (300, 300)],
+    dtype=float_types + complex_types,
+  )
+  def testEighBatching(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    shape = (10,) + shape
+    args = rng(shape, dtype)
+    args = (args + np.conj(T(args))) / 2
+    ws, vs = vmap(jsp.linalg.eigh)(args)
+    ws = ws.astype(vs.dtype)
+    norm = np.max(np.linalg.norm(np.matmul(args, vs) - ws[..., None, :] * vs))
+    self.assertLess(norm, 1.4e-2)
 
   @jtu.sample_product(
     shape=[(1,), (4,), (5,)],
