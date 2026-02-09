@@ -178,7 +178,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     device_order = jax.devices()
     pmap_sharding = pmap(lambda x: x)(np.arange(jax.device_count())).sharding
     if config.pmap_shmap_merge.value:
-      self.assertListEqual(device_order, list(pmap_sharding._device_assignment))
+      self.assertListEqual([d.id for d in device_order],
+                           [d.id for d in pmap_sharding._device_assignment])
     else:
       self.assertListEqual(device_order, pmap_sharding.devices.tolist())
 
