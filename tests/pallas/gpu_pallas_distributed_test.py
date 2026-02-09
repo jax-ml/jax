@@ -182,9 +182,9 @@ class PallasCallRemoteDMATest(TestCase):
                   plgpu.SemaphoreType.REGULAR,
                   plgpu.SemaphoreType.REGULAR,
               ],
-              compiler_params={"mosaic_gpu":
-                              plgpu.CompilerParams(profile_space=1,
-                                                  profile_dir=tmpdir)},
+              compiler_params=plgpu.CompilerParams(
+                  profile_space=1, profile_dir=tmpdir
+              ),
           )(x)
 
         devices = jax.devices()[:2]
