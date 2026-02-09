@@ -17,9 +17,9 @@ bazel_dep(name = "rules_python", version = "1.6.1")
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-oeeg2T6kykUWIsmsdk6UMiWLG0/jXsNSZmVIXypeDHg=",
-    strip_prefix = "rules_ml_toolchain-4414c8de64a0e3723a24097092d8c8c4b771e96a",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/4414c8de64a0e3723a24097092d8c8c4b771e96a.tar.gz"],
+    integrity = "sha256-KEURV/vM/wuMXOYzREGY+K09q1zXSVEx9AuKTTr2MsM=",
+    strip_prefix = "rules_ml_toolchain-b23aabf15172daebdbab15956147bbf0cccf5a17",
+    urls = ["https://github.com/ybaturina/rules_ml_toolchain/archive/b23aabf15172daebdbab15956147bbf0cccf5a17.tar.gz"],
 )
 
 # TODO: use a released version when available
@@ -145,9 +145,6 @@ use_repo(pybind11_internal_configure, "pybind11")
 ##############################################################
 
 ### CUDA dependencies
-cuda_configure = use_extension("@rules_ml_toolchain//extensions:cuda_configure.bzl", "cuda_configure_ext")
-use_repo(cuda_configure, "local_config_cuda")
-
 cuda_json_ext = use_extension("@rules_ml_toolchain//extensions:cuda_json.bzl", "cuda_json_ext")
 use_repo(cuda_json_ext, "cuda_redist_json")
 
@@ -164,13 +161,34 @@ use_repo(
     "cuda_curand",
     "cuda_cusolver",
     "cuda_cusparse",
+    "cuda_driver",
     "cuda_nvcc",
+    "cuda_nvrtc",
     "cuda_nvdisasm",
     "cuda_nvjitlink",
     "cuda_nvml",
     "cuda_nvtx",
     "cuda_nvvm",
+    "cuda_profiler_api",
 )
+
+cuda_configure_ext = use_extension("@rules_ml_toolchain//extensions:cuda_configure.bzl", "cuda_configure_ext")
+use_repo(cuda_configure_ext, "local_config_cuda")
+
+nvshmem_json_ext = use_extension("@rules_ml_toolchain//extensions:nvshmem_json.bzl", "nvshmem_json_ext")
+use_repo(nvshmem_json_ext, "nvshmem_redist_json")
+
+nvshmem_redist_init_ext = use_extension("@rules_ml_toolchain//extensions:nvshmem_redist_init.bzl", "nvshmem_redist_init_ext")
+use_repo(
+    nvshmem_redist_init_ext,
+    "nvidia_nvshmem",
+)
+
+nccl_redist = use_extension("@rules_ml_toolchain//extensions:nccl_redist.bzl", "nccl_redist_ext")
+use_repo(nccl_redist, "cuda_nccl")
+
+nccl_configure = use_extension("@rules_ml_toolchain//extensions:nccl_configure.bzl", "nccl_configure_ext")
+use_repo(nccl_configure, "local_config_nccl")
 
 ### Toolchains
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
