@@ -38,7 +38,6 @@ limitations under the License.
 #include "jaxlib/ffi.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/api/ffi.h"
-#include "xla/ffi/ffi_api.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/primitive_util.h"
