@@ -933,14 +933,14 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     num_q_heads = 8
     num_kv_heads = 2 if use_gqa else num_q_heads
 
-    k1, k2, k3 = jax.random.split(jax.random.key(0), 3)
+    k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
     q = jax.random.normal(k1, (1, seq_len, num_q_heads, head_dim), dtype=dtype)
     k = jax.random.normal(k2, (1, seq_len, num_kv_heads, head_dim), dtype=dtype)
     v = jax.random.normal(k3, (1, seq_len, num_kv_heads, head_dim), dtype=dtype)
 
     # Broadcast head dim = 1 (common for attention masks)
     bias = jax.random.normal(
-        k1, (1, 1, seq_len, seq_len), dtype=dtype) if use_bias else None
+        k4, (1, 1, seq_len, seq_len), dtype=dtype) if use_bias else None
     mask = jnp.ones((1, 1, seq_len, seq_len), dtype=bool) if use_mask else None
 
     def fn(q, k, v, bias, mask):
