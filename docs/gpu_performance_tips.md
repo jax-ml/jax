@@ -721,3 +721,22 @@ cases, this can speed up jitted computation. The
 that configuration when run under SLURM. However, this only a rule of
 thumb and it may be useful to test both one process per GPU and one
 process per node on your use case.
+
+### CPU allocation per task
+
+When running one process per GPU, the number of host **CPUs allocated per
+task** can have a major impact on multi-GPU communication performance.  GPU
+collective operations (e.g. all-to-all, especially ragged all-to-all) rely on
+the host CPU for coordination, and under-provisioning CPUs can bottleneck
+communication throughput by as much as 50×.
+
+As a best practice, divide the total number of CPUs on a node by the number of
+GPUs and allocate that many CPUs per task.  For example, on a Slurm cluster
+with 128 CPUs and 8 GPUs per node:
+
+```bash
+srun --ntasks-per-node=8 --cpus-per-task=16 python train.py
+```
+
+See the {doc}`multi_process` guide for additional details on setting up
+multi-process JAX.

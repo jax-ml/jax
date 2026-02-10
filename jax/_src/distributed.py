@@ -262,6 +262,16 @@ def initialize(coordinator_address: str | None = None,
   :func:`~jax.distributed.initialize` may timeout.  You may need to unset these variables
   prior to application launch.
 
+  .. tip::
+
+    **CPU allocation matters for GPU communication performance.** When running
+    one process per GPU (the recommended setup), the number of host CPUs
+    available to each process can significantly affect the throughput of
+    collective communication operations (e.g. all-to-all). Allocate as many
+    CPUs per task as are available on the node — for example, in Slurm set
+    ``--cpus-per-task`` to the total CPU count divided by the number of GPUs.
+    See :doc:`multi_process` for more details.
+
   Args:
     coordinator_address: the IP address of process `0` and a port on which that
       process should launch a coordinator service. The choice of
