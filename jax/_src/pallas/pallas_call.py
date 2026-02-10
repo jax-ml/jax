@@ -15,18 +15,16 @@
 """Module for calling pallas functions from JAX."""
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence, Set
 import contextlib
 import enum
-import math
 from functools import partial, reduce
+import math
 import types
 from typing import Any
 
-from jax._src import api
-import jax._src.lax as lax
-
 from jax._src import ad_util
+from jax._src import api
 from jax._src import api_util
 from jax._src import checkify
 from jax._src import config
@@ -34,24 +32,26 @@ from jax._src import core as jax_core
 from jax._src import effects
 from jax._src import hijax
 from jax._src import linear_util as lu
+from jax._src import numpy as jnp
 from jax._src import state
-from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src import typing as jax_typing
-from jax._src.lib import jaxlib_extension_version
-from jax._src.lib import xla_client
-from jax._src.mesh import get_abstract_mesh
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+import jax._src.lax as lax
+from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import xla_client
+from jax._src.mesh import get_abstract_mesh
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import hlo_interpreter
 from jax._src.pallas import primitives
+from jax._src.shard_map import P, _as_manual_mesh, shard_map
 from jax._src.state import discharge as state_discharge
-from jax._src.shard_map import shard_map, P, _as_manual_mesh
 from jax._src.state import types as state_types
+from jax._src.traceback_util import api_boundary
 from jax._src.util import (
     safe_map,
     safe_zip,
@@ -59,7 +59,6 @@ from jax._src.util import (
     tuple_insert,
     unzip2,
 )
-from jax._src import numpy as jnp
 
 
 map, unsafe_map = safe_map, map
@@ -101,7 +100,7 @@ def _pallas_call_abstract_eval(
 ):
   del params  # Unused.
 
-  effs = {*pallas_core.get_interpret_effects(interpret)}
+  effs: Set[jax_core.Effect] = {*pallas_core.get_interpret_effects(interpret)}
   if getattr(compiler_params, "has_side_effects", False):
     # TODO(slebedev): Fix internal breakages and add
     # ``jax_core.GenericEffect(pallas_call_p)`` here.
