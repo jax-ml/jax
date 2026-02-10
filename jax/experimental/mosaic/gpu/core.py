@@ -184,6 +184,15 @@ def _has_communication(module, **_):
 KNOWN_KERNELS: dict[bytes, bytes] = {}
 
 
+def _get_collective_metadata_size(num_params: int, num_peers: int) -> int:
+  """Returns the size of the collective metadata buffer for the given number of parameters and peers."""
+  return (
+      launch_context.COLLECTIVE_METADATA_SIZE
+      + num_peers * (num_params + 1)
+      + num_params
+  )
+
+
 def _mosaic_gpu_lowering_rule(
     ctx,
     *args,
@@ -250,14 +259,20 @@ def _mosaic_gpu_lowering_rule(
   else:
     KNOWN_KERNELS[kernel_id] = module_asm
 
-  backend_config = dict(
-      kernel_hash=ir.StringAttr.get(kernel_id),
-      module=ir.StringAttr.get(module_asm),
-      use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
-      uses_xla_collective_metadata=ir.BoolAttr.get(
+  backend_config = {
+      "kernel_hash": ir.StringAttr.get(kernel_id),
+      "module": ir.StringAttr.get(module_asm),
+      "use_custom_barrier": ir.BoolAttr.get(use_custom_barrier),
+      "uses_xla_collective_metadata": ir.BoolAttr.get(
           launch_context.uses_collective_metadata(module)
       ),
-  )
+  }
+
+  if launch_context.MULTIMEM_ARGS_ATTR in module.operation.attributes:
+    backend_config["xla_multimem_parameters"] = ir.StringAttr.get(
+        module.operation.attributes[launch_context.MULTIMEM_ARGS_ATTR].value
+    )
+
   custom_call_kwargs = {
       "call_target_name": "mosaic_gpu_v2",
       "result_types": [mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
@@ -266,7 +281,7 @@ def _mosaic_gpu_lowering_rule(
       "result_layouts": [list(reversed(range(a.ndim))) for a in ctx.avals_out],
       "backend_config": backend_config,
       "operand_output_aliases": dict(input_output_aliases),
-      "api_version": 4
+      "api_version": 4,
   }
 
   if not is_multi_device_module or not is_single_process_multi_device_topology():
@@ -276,15 +291,16 @@ def _mosaic_gpu_lowering_rule(
   # Collective metadata stores pointers to both input and output parameters.
   num_params = len(ctx.avals_out) + len(ctx.avals_in)
   num_peers = axis_context.mesh.size
-  collective_metadata_size = (
-      launch_context.COLLECTIVE_METADATA_SIZE + num_peers * num_params
-  )
+  barrier_buffer_size = 2
+  collective_metadata_size = _get_collective_metadata_size(
+      num_params, num_peers
+  ) + barrier_buffer_size
 
   custom_call_kwargs["result_layouts"] += [[0]]  # type: ignore
   custom_call_kwargs["result_types"] += [  # type: ignore
       ir.RankedTensorType.get((collective_metadata_size,),
                               ir.IntegerType.get_signless(64))]
-  backend_config["xla_replica_ids"] = ir.StringAttr.get(
+  custom_call_kwargs["backend_config"]["xla_replica_ids"] = ir.StringAttr.get(
       ",".join(map(str, replica_ids))
   )
   # Drop the collective metadata buffer from the results.
@@ -594,6 +610,7 @@ def _launch(
     device_collective_metadata: ir.Value | None = None,
     host_collective_metadata: ir.Value | None = None,
     num_peers: int = 0,
+    num_params: int = 0,
 ):
   if (profiler_spec is None) != (maybe_prof_buffer is None):
     raise ValueError(
@@ -694,6 +711,7 @@ def _launch(
         device_collective_metadata=device_collective_metadata,
         host_collective_metadata=host_collective_metadata,
         num_peers=num_peers,
+        num_params=num_params,
     )
     with ctx.named_region("Init"):
       tmem_allocs: list[_TMEMAlloc | _TMEMDialectAlloc] = []
@@ -848,6 +866,7 @@ def _lower_as_gpu_kernel(
       collective_metadata = None
       host_collective_metadata = None
       num_peers = 0
+      num_args = 0
 
       # Collective metadata parameter is used to lower collective operations
       # in a single-process setup.
@@ -862,12 +881,17 @@ def _lower_as_gpu_kernel(
             ptr_ty, utils.getelementptr(buffers, [num_args], ptr_ty)
         )
         metadata_ty = ir.MemRefType.get(
-            (launch_context.COLLECTIVE_METADATA_SIZE + num_args * num_peers,),
-            ir.IntegerType.get_signless(64)
+            (_get_collective_metadata_size(num_args, num_peers),),
+            ir.IntegerType.get_signless(64),
         )
         collective_metadata = utils.ptr_as_memref(metadata_ptr, metadata_ty)
-        # TODO(b/481949311) Construct host_collective_metadata once the bug is
-        # fixed.
+
+        host_metadata_ptr = llvm.load(
+            ptr_ty, utils.getelementptr(buffers, [num_args + 1], ptr_ty)
+        )
+        host_collective_metadata = utils.ptr_as_memref(
+            host_metadata_ptr, metadata_ty
+        )
 
       prof_buffer = arg_refs.pop() if prof_spec is not None else None
 
@@ -884,6 +908,7 @@ def _lower_as_gpu_kernel(
           collective_metadata,
           host_collective_metadata,
           num_peers,
+          num_args,
       ) as (_launch_ctx, smem_refs):
         nonlocal launch_ctx
         launch_ctx = _launch_ctx
