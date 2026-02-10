@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import time
+from typing import cast
 import warnings
 
 import jax
@@ -44,7 +45,7 @@ def pallas_call_lowering(
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: pallas_core.GridMapping,
     mesh: pallas_core.Mesh | None,
-    compiler_params: pallas_core.CompilerParams | None,
+    compiler_params: dict[str, pallas_core.CompilerParams],
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
     metadata: frozen_dict.FrozenDict[str, str] | None,
@@ -66,12 +67,10 @@ def pallas_call_lowering(
 
   mgpu.dialect.register_dialect(ctx.module_context.context)  # pytype: disable=attribute-error
 
-  if compiler_params is None:
-    gpu_params = gpu_core.CompilerParams()
+  if "mosaic_gpu" in compiler_params:
+    params = cast(gpu_core.CompilerParams, compiler_params["mosaic_gpu"])
   else:
-    assert isinstance(compiler_params, gpu_core.CompilerParams)
-    gpu_params = compiler_params  # type: ignore[assignment]
-
+    params = gpu_core.CompilerParams()
 
   jax_mesh = None
   axis_context = ctx.module_context.axis_context
@@ -83,7 +82,7 @@ def pallas_call_lowering(
   # pass correctly handles full tracebacks.
   with config.include_full_tracebacks_in_locations(False):
     lowering_result = lowering.lower_pipelined_jaxpr_to_module(
-        grid_mapping, mesh, jax_mesh, jaxpr, gpu_params, cost_estimate
+        grid_mapping, mesh, jax_mesh, jaxpr, params, cost_estimate
     )
   if debug:
     print(f"\nThe Mosaic GPU module for pallas_call {debug_info.func_src_info}:")

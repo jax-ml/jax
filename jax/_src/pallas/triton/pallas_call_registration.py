@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import io
 import json
+from typing import cast
 import zlib
 
 import jax
@@ -53,7 +54,7 @@ def pallas_call_lowering(
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: pallas_core.GridMapping,
     mesh: pallas_core.Mesh | None,
-    compiler_params: pallas_core.CompilerParams | None,
+    compiler_params: dict[str, pallas_core.CompilerParams],
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
     metadata: frozen_dict.FrozenDict[str, str] | None,
@@ -74,14 +75,12 @@ def pallas_call_lowering(
 
   [lowering_platform] = ctx.platforms or ctx.module_context.platforms
 
-  if compiler_params is None:
-    triton_params = triton_core.CompilerParams()
+  if "triton" in compiler_params:
+    params = cast(triton_core.CompilerParams, compiler_params["triton"])
   else:
-    assert isinstance(compiler_params, triton_core.CompilerParams)
-    triton_params = compiler_params  # type: ignore[assignment]
-
-  num_warps = 4 if triton_params.num_warps is None else triton_params.num_warps
-  num_stages = triton_params.num_stages
+    params = triton_core.CompilerParams()
+  num_warps = 4 if params.num_warps is None else params.num_warps
+  num_stages = params.num_stages
   if num_stages is None:
     num_stages = 1 if lowering_platform == "rocm" else 3
 
