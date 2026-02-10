@@ -65,6 +65,7 @@ from jax._src.config import (
   default_prng_impl as default_prng_impl,
   numpy_dtype_promotion as numpy_dtype_promotion,
   numpy_rank_promotion as numpy_rank_promotion,
+  allow_f16_reductions as allow_f16_reductions,
   jax2tf_associative_scan_reductions as jax2tf_associative_scan_reductions,
   legacy_prng_key as legacy_prng_key,
   threefry_partitionable as threefry_partitionable,

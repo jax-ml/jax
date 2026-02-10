@@ -1778,6 +1778,14 @@ default_matmul_precision = optional_enum_state(
     include_in_jit_key=True,
     include_in_trace_context=True)
 
+allow_f16_reductions = bool_state(
+    name='jax_allow_f16_reductions',
+    default=True,
+    help=('If False, `reduce_sum` on `f16` or `bf16` inputs will raise an error.'
+          'Defaults to True.'),
+    include_in_jit_key=True,
+    include_in_trace_context=True)
+
 
 traceback_filtering = enum_state(
     name = 'jax_traceback_filtering',

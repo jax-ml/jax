@@ -5001,7 +5001,7 @@ def _convert_elt_type_fwd_rule(eqn):
 
 def _convert_elt_type_pp_rule(eqn, context, settings):
   params = dict(eqn.params)
-  if params['sharding'] is None:
+  if params['sharding'] is None or params['sharding'].mesh.empty:
     del params['sharding']  # don't show trivial case
   return core._pp_eqn(eqn.replace(params=params), context, settings)
 
@@ -6485,13 +6485,12 @@ def _broadcast_in_dim_transpose_rule(ct, operand,
     return [None]  # transpose wrt literal
   unit_dims = [i for i, s in enumerate(operand.aval.shape)
                if core.definitely_equal(s, 1)]
-  bdims = tuple(np.delete(broadcast_dimensions, unit_dims))
-  axes = tuple(np.delete(range(len(shape)), bdims))
+  bdims = tuple_delete(broadcast_dimensions, unit_dims)
+  axes = tuple_delete(tuple(range(len(shape))), bdims)
   ct_s = operand.aval.to_cotangent_aval().sharding
   ct_s = ct_s.update(spec=ct_s.spec.update(
       partitions=tuple_delete(ct_s.spec, unit_dims)))
-  out = reduce_sum(ct, axes, out_sharding=ct_s)
-  return [expand_dims(out, unit_dims)]
+  return [expand_dims(reduce_sum(ct, axes, out_sharding=ct_s), unit_dims)]
 
 def _broadcast_in_dim_batch_rule(axis_data, batched_args, batch_dims, shape,
                                  broadcast_dimensions, sharding):
@@ -6572,6 +6571,14 @@ def _broadcast_in_dim_abstract_eval(x, shape, broadcast_dimensions,
   return core.ShapedArray(shape, x.dtype, x.weak_type, sharding=new_sharding,
                           vma=new_vma, memory_space=x.memory_space)
 
+def _broadcast_in_dim_pp_rule(eqn, context, settings):
+  params = dict(eqn.params)
+  if params['sharding'] is None:
+    del params['sharding']  # don't show trivial case
+  if not params['broadcast_dimensions']:
+    del params['broadcast_dimensions']  # don't show trivial case
+  del params['shape']  # implied by let binder type
+  return core._pp_eqn(eqn.replace(params=params), context, settings)
 
 broadcast_in_dim_p = core.Primitive('broadcast_in_dim')
 broadcast_in_dim_p.def_abstract_eval(_broadcast_in_dim_abstract_eval)
@@ -6584,6 +6591,7 @@ pe.custom_partial_eval_rules[broadcast_in_dim_p] = _broadcast_in_dim_partial_eva
 pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
 core.custom_typechecks[broadcast_in_dim_p] = _broadcast_in_dim_typecheck_rule
 mlir.register_lowering(broadcast_in_dim_p, _broadcast_in_dim_lower)
+core.pp_eqn_rules[broadcast_in_dim_p] = _broadcast_in_dim_pp_rule
 
 
 def _tile_lower(ctx, x, reps) -> Sequence[ir.Value]:
@@ -7681,7 +7689,7 @@ def _reduce_lower(ctx: mlir.LoweringRuleContext, *values,
 mlir.register_lowering(reduce_p, _reduce_lower)
 
 
-def _reduce_number_dtype_rule(name, operand, *args, **kw):
+def _reduce_number_dtype_rule(name, operand, *_, **__):
   if not dtypes.issubdtype(operand.dtype, np.number):
     raise TypeError("{} does not accept dtype {}. Accepted dtypes are subtypes "
                     "of number.".format(name, dtype_to_string(operand.dtype)))
@@ -7697,8 +7705,7 @@ def _reduce_sum_transpose_rule(cotangent, operand, *, axes, out_sharding):
   assert result.shape == input_shape
   return [result]
 
-def _reduce_op_shape_rule(operand, *, axes, input_shape=None, **kwargs):
-  del input_shape  # Unused.
+def _reduce_op_shape_rule(operand, *, axes, **_):
   if len(axes) != len(set(axes)):
     raise ValueError(f"duplicate value in 'axes' of reduction: {axes}")
   if not all(0 <= a < operand.ndim for a in axes):
@@ -7715,7 +7722,7 @@ def _reduce_sum_sharding_rule(operand, *, axes, out_sharding):
                       if i not in axes))
   return operand.sharding.update(spec=new_spec)
 
-def _reduce_sum_unreduced_rule(out_s, operand, *, axes, **kwargs):
+def _reduce_sum_unreduced_rule(out_s, operand, *, axes, **_):
   if unreduced_spec := out_s.spec.unreduced:
     axes = frozenset(axes)
     used_spec = frozenset(
@@ -7732,12 +7739,20 @@ def _reduce_sum_unreduced_rule(out_s, operand, *, axes, **kwargs):
         unreduced=operand.sharding.spec.unreduced))
   return out_s
 
-def _reduce_sum_reduced_rule(out_s, operand, *, axes, **kwargs):
+def _reduce_sum_reduced_rule(out_s, operand, *, axes, **_):
   return out_s.update(spec=out_s.spec.update(
       reduced=operand.sharding.spec.reduced))
 
+def _reduce_sum_dtype_rule(operand, *, axes, **_):
+  dt = _reduce_number_dtype_rule('reduce_sum', operand)
+  if (operand.dtype in [np.float16, dtypes.bfloat16] and
+      not config.allow_f16_reductions.value):
+    raise ValueError(f"reduce_sum on operand {operand.str_short(True)} is not "
+                     "allowed when jax_allow_f16_reductions=False.")
+  return dt
+
 reduce_sum_p = standard_primitive(
-  _reduce_op_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_sum'),
+  _reduce_op_shape_rule, _reduce_sum_dtype_rule,
   'reduce_sum', sharding_rule=_reduce_sum_sharding_rule,
   vma_rule=partial(core.standard_vma_rule, 'reduce_sum'),
   unreduced_rule=_reduce_sum_unreduced_rule,
