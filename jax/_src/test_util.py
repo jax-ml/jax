@@ -1799,7 +1799,7 @@ def complex_plane_sample(dtype, size_re=10, size_im=None):
 
   def make_axis_points(size):
     prec_dps_ratio = 3.3219280948873626
-    logmin = logmax = finfo.maxexp / prec_dps_ratio
+    logmin = finfo.maxexp / prec_dps_ratio
     logtiny = finfo.minexp / prec_dps_ratio
     axis_points = np.zeros(3 + 2 * size, dtype=finfo.dtype)
 

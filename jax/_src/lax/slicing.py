@@ -2040,7 +2040,6 @@ def _gather_spec_computation(operand, indices, dimension_numbers, slice_sizes):
   operand_batching_dims = dimension_numbers.operand_batching_dims
   start_indices_batching_dims = dimension_numbers.start_indices_batching_dims
   output_shape_rank = len(offset_dims) + indices.ndim - 1
-  index_vector_dim = indices.ndim - 1
 
   operand_spec = operand.sharding.spec
   indices_spec = list(indices.sharding.spec)

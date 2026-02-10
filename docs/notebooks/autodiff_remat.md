@@ -296,7 +296,7 @@ That is, in code we'd have something like:
 ```{code-cell}
 def f_grad_bad2(x):
   y, g_vjp = jax.vjp(g, x)  # step 1
-  z = h(y)                  # step 2
+  _z = h(y)                 # step 2
   _, h_vjp = jax.vjp(h, y)  # step 3
   y_bar, = h_vjp(1.0)       # step 3
   x_bar, = g_vjp(y_bar)     # step 5

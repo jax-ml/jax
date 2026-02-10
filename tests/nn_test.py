@@ -29,7 +29,6 @@ from jax._src import dtypes as _dtypes
 from jax._src import test_util as jtu
 from jax._src.cudnn.scaled_matmul_stablehlo import (
     quantize,
-    shape_normalization,
 )
 from jax.test_util import check_grads
 from jax import nn
@@ -89,9 +88,6 @@ def _generate_quantized_tensors(
       configs[1].data_type,
   )
 
-  dn = ((2,), (0,))
-  a_3d = shape_normalization(a, dn)
-  b_3d = shape_normalization(b, dn)
   a_q, a_scales = quantize(a, configs[0])
   b_q, b_scales = quantize(b, configs[1])
 
@@ -216,9 +212,6 @@ class NNFunctionsTest(jtu.JaxTestCase):
     sdpa_ans_lse = partial(sdpa, implementation=impl, return_residual=True)
     if use_vmap:
       sdpa_ans = jax.vmap(sdpa_ans, in_axes=(0, 0, 0, None, None), out_axes=0)
-      spda_ans_lse = jax.vmap(
-          sdpa_ans_lse, in_axes=(0, 0, 0, None, None), out_axes=0
-      )
 
     # For testing purposes, we call the non-GQA version without vmap in the
     # reference code

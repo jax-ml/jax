@@ -891,7 +891,7 @@ class HijaxTest(jtu.JaxTestCase):
       return jnp.sum(dq(q(x)))
 
     x = jax.random.normal(jax.random.key(0), (3, 3), dtype='float32')
-    g = jax.grad(f)(x)
+    jax.grad(f)(x)
 
   def test_symbolic_zeros(self):
 
@@ -1626,7 +1626,7 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
     def loss_fn(box):
       return box.get() ** 2
 
-    grads = jax.grad(loss_fn)(box)
+    jax.grad(loss_fn)(box)
     # NOTE: unclear what the tangent type will be here
 
   # with non-differentiable mutable hijax arguments

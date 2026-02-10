@@ -1148,7 +1148,7 @@ def _pallas_call_lowering(
             from jax._src.pallas.triton import pallas_call_registration  # type: ignore
         case _:
           raise ValueError(f"Unsupported backend: {backend}")
-    except ImportError as e:
+    except ImportError:
       raise _unsupported_lowering_error("gpu")
 
     return pallas_call_registration.pallas_call_lowering(

@@ -134,7 +134,6 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     logging.info("[%s] Got TF graph %s",
                  self._testMethodName,
                  f_tf_fun.get_concrete_function(*args_tf).graph.as_graph_def())
-    device_name = f"/device:{jtu.device_under_test().upper()}:0"
     tf_hlo_generator = f_tf_fun.experimental_get_compiler_ir(*args_tf)
     tf_hlo = tf_hlo_generator(
         stage="hlo", platform_name=jtu.device_under_test().upper()
@@ -426,8 +425,6 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     count_in_replicated = self.GEQ(2) if in_shardings in [None, "missing"] else 0
     # Annotation count for the contangent input
     count_out_P = self.GEQ(1) if out_shardings == "P" else 0
-    # With native serialization even unspecified shardings turn into replicated
-    count_out_replicated = self.GEQ(1) if out_shardings in [None, "missing"] else 0
 
     self.check_sharding(f_grad_tf, [x, x.T],
         checks=[

@@ -313,7 +313,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testWhileTypeErrors(self):
     """Test typing error messages for while."""
     tuple_treedef = jax.tree.structure((1., 1.))
-    leaf_treedef = jax.tree.structure(0.)
     with self.assertRaisesRegex(
         TypeError,
         re.escape(f"cond_fun must return a boolean scalar, but got pytree {tuple_treedef}.")):
@@ -3440,7 +3439,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     f = np.arange(num_xs)
     f = [f[i] if idx < num_input_fwds else None for idx, i in enumerate(xs_perm)]
     f += [None]
-    in_fwd = [f[i] for i in ys_perm]
 
     body_consts = [jnp.array(rng.randn(3)) for _ in range(num_const)]
     init_vals = list(map(jnp.array, rng.uniform(size=(num_carry, 3))))

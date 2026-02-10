@@ -3812,7 +3812,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
         out_shape=jax.ShapeDtypeStruct((q, m * n), dtype),
     )(x)
     jax.numpy.set_printoptions(threshold=jax.numpy.inf)
-    expected = x.reshape([q, m * n])
     np.testing.assert_array_equal(out, x.reshape([q, m * n]))
 
   # (q, m, n, k) -> (q, m, n * k) where k % 128 == 0

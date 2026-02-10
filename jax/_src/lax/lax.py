@@ -7065,8 +7065,6 @@ def _reshape_shape_rule(operand, *, new_sizes, dimensions, sharding):
     msg = 'reshape new_sizes must all be positive, got {}.'
     raise TypeError(msg.format(new_sizes))
   # TODO(necula): re-enable this check
-  operand_size = math.prod(np.shape(operand))
-  new_size = math.prod(new_sizes)
   if dimensions is not None:
     if set(dimensions) != set(range(np.ndim(operand))):
       msg = ('reshape dimensions must be a permutation of operand dimensions, '

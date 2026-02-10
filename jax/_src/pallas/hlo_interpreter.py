@@ -409,8 +409,6 @@ def pallas_call_hlo_interpret(
   # Pad values to evenly divide into block dimensions. This matches the
   # behavior of the non-interpret mode. We pad with NaN, to make it easier
   # to catch OOB accesses.
-  for carry_element in carry:
-    aval = carry_element.aval
 
   carry = map(_pad_to_block_dimension, carry, block_shapes)
   carry.extend(scratch_values)

@@ -391,7 +391,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     z = np.ones((2, 11))
     z_tree = jax.device_put({'a': {'b': z}, 'c': z}, s)
 
-    out = f(x_tree, y_tree, z_tree)
+    f(x_tree, y_tree, z_tree)
     jax.tree.map(self.assertNotDeleted, x_tree)
     jax.tree.map(self.assertDeleted, y_tree)
     jax.tree.map(self.assertDeleted, z_tree)
@@ -3343,7 +3343,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with jtu.count_pjit_cpp_cache_miss() as count:
       out = f(arr)
-      cache_info1 = pxla._cached_compilation.cache_info()
       self.assertIsInstance(out.sharding, NamedSharding)
 
       out = f(arr)
@@ -4065,7 +4064,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   def test_spmd_preserves_input_sharding_vmap_grad(self):
     # https://github.com/jax-ml/jax/issues/20710
-    n_devices = jax.device_count()
     mesh = Mesh(jax.devices(), 'x')
     sharding = NamedSharding(mesh, P('x'))
 
@@ -8745,7 +8743,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         return out
       return g(x, y)
 
-    out = jax.jit(jax.vmap(f, spmd_axis_name='x'))(arr1, arr2)  # doesn't crash
+    jax.jit(jax.vmap(f, spmd_axis_name='x'))(arr1, arr2)  # doesn't crash
 
   @parameterized.named_parameters(
       ('replicated', None),
