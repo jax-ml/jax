@@ -63,6 +63,8 @@ from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
+from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import ifrt_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -10279,13 +10281,20 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @parameterized.parameters(
       ([0], None, P(None, unreduced={'y'})),
       ([0], P(unreduced={'x', 'y'}), P(None, unreduced={'x', 'y'})),
-      # ([0], P(unreduced={'x'}), P(None, unreduced={'x'})),
+      ([0], P(unreduced={'x'}), P(None, unreduced={'x'})),
       ([0, 1], None, P(unreduced={'y'})),
       ([0, 1], P(unreduced={'x', 'y'}), P(unreduced={'x', 'y'})),
-      # ([0, 1], P(unreduced={'x'}), P(unreduced={'x'})),
+      ([0, 1], P(unreduced={'x'}), P(unreduced={'x'})),
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_sum_unreduced_inp_multi_mesh(self, axes, out_s, eq_out_s, mesh):
+    if jaxlib_extension_version < 404:
+      self.skipTest('Requires jaxlib_extension_version >= 404')
+    if ifrt_version < 49:
+      self.skipTest('Requires ifrt_version >= 49')
+    if not jtu.is_cloud_tpu_at_least(2026, 2, 11):
+      self.skipTest('Requires a newer libtpu')
+
     inp1 = jax.device_put(np.arange(16).reshape(8, 2), P('x', 'y'))
     inp2 = jax.device_put(np.arange(8).reshape(2, 4), P('y', None))
     arr = jnp.dot(inp1, inp2, out_sharding=P('x', unreduced={'y'}))
@@ -10298,6 +10307,58 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = f(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, eq_out_s))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_split_reduced_concat_unreduced(self, mesh):
+    if jaxlib_extension_version < 404:
+      self.skipTest('Requires jaxlib_extension_version >= 404')
+    if ifrt_version < 49:
+      self.skipTest('Requires ifrt_version >= 49')
+    if not jtu.is_cloud_tpu_at_least(2026, 2, 11):
+      self.skipTest('Requires a newer libtpu')
+
+    x = jax.device_put(np.arange(8.).reshape(2, 4), P('x'))
+    w = jax.device_put(np.arange(64.).reshape(4, 16), P(reduced={'x'}))
+
+    @jax.jit
+    def fn(x, w):
+      w1, w2 = jnp.split(w, 2, axis=-1)
+      return (x @ w1).sum()
+
+    out1, out2 = jax.jit(jax.grad(fn, argnums=(0, 1)))(x, w)
+    self.assertEqual(out1.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertEqual(out2.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
+
+    ew = jax.device_put(np.arange(64.).reshape(4, 16), P())
+    ex_o1, ex_o2 = jax.jit(jax.grad(fn, argnums=(0, 1)))(x, ew)
+
+    self.assertArraysEqual(out1, ex_o1)
+    self.assertArraysEqual(reshard(out2, P()), ex_o2)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_concat_unreduced(self, mesh):
+    arr1 = jax.reshard(jnp.arange(8.), P(unreduced={'x'}))
+    arr2 = jax.reshard(jnp.arange(8.), P(unreduced={'x'}))
+
+    @jax.jit
+    def f(x1, x2):
+      return jnp.concatenate([x1, x2], axis=0)
+
+    out = f(arr1, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+
+    for s, ex in zip(
+        out.addressable_shards,
+        [np.concat([np.arange(8.), np.arange(8.)]), np.zeros((16,))]):
+      self.assertArraysEqual(s.data, ex, check_dtypes=False)
+
+    out_g = jax.jit(jax.grad(lambda x1, x2: f(x1, x2).sum()))(arr1, arr2)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
+
+    ex_out_g = jax.jit(jax.grad(lambda x1, x2: f(x1, x2).sum())
+                       )(jnp.arange(8.), jnp.arange(8.))
+    self.assertArraysEqual(ex_out_g, out_g)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

@@ -815,7 +815,7 @@ def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
     prim.def_abstract_eval(
         partial(lax_utils.standard_multi_result_abstract_eval, prim,
                 shape_rule, dtype_rule, lax_utils._standard_weak_type_rule,
-                sharding_rule, vma_rule, None))
+                sharding_rule, vma_rule, None, None))
   else:
     prim.def_abstract_eval(
       partial(lax_utils.standard_abstract_eval, prim, shape_rule, dtype_rule,

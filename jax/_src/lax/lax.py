@@ -6750,22 +6750,32 @@ def _concatenate_reduced_rule(out_s, *operands, **kwargs):
   if len(reduced_specs) > 1:
     raise core.ShardingTypeError(
         'All operands should be reduced along the same mesh axes. Got reduced'
-        f' specs {reduced_specs}')
+        f' specs: {reduced_specs}')
   reduced_s, = reduced_specs if reduced_specs else (frozenset(),)
   return out_s.update(spec=out_s.spec.update(reduced=reduced_s))
+
+def _concatenate_unreduced_rule(out_s, *operands, **kwargs):
+  unreduced_specs = {o.sharding.spec.unreduced
+                     for o in operands if o.sharding.spec.unreduced}
+  if len(unreduced_specs) > 1:
+    raise core.ShardingTypeError(
+        'All operands should be unreduced along the same mesh axes. Got'
+        f' unreduced specs: {unreduced_specs}')
+  unreduced_s, = unreduced_specs if unreduced_specs else (frozenset(),)
+  return out_s.update(spec=out_s.spec.update(unreduced=unreduced_s))
 
 def _concatenate_dtype_rule(*operands, **kwargs):
   check_same_dtypes('concatenate', *operands)
   return operands[0].dtype
 
-def _concatenate_transpose_rule(t, *operands, dimension):
+def _concatenate_transpose_rule(ct, *operands, dimension):
   operand_shapes = [o.aval.shape if ad.is_undefined_primal(o) else o.shape
                     for o in operands]
-  if type(t) is ad_util.Zero:
-    return [ad_util.Zero(o.aval) if ad.is_undefined_primal(o) else None
-            for o in operands]
+  if type(ct) is ad_util.Zero:
+    return [ad_util.Zero(o.aval.to_cotangent_aval())
+            if ad.is_undefined_primal(o) else None for o in operands]
   else:
-    return split(t, tuple(shape[dimension] for shape in operand_shapes),
+    return split(ct, tuple(shape[dimension] for shape in operand_shapes),
                  axis=dimension)
 
 def _concatenate_batch_rule(batched_args, batch_dims, *, dimension):
@@ -6784,6 +6794,7 @@ concatenate_p = standard_primitive(
     _concatenate_shape_rule, _concatenate_dtype_rule, 'concatenate',
     sharding_rule=_concatenate_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'concatenate'),
+    unreduced_rule=_concatenate_unreduced_rule,
     reduced_rule=_concatenate_reduced_rule)
 ad.deflinear2(concatenate_p, _concatenate_transpose_rule)
 ad.primitive_transposes[concatenate_p] = _concatenate_transpose_rule
@@ -6856,6 +6867,9 @@ def _split_sharding_rule(operand, *, sizes, axis):
 def _split_unreduced_rule(out_shardings, operand, *, sizes, axis):
   return out_shardings
 
+def _split_reduced_rule(out_shardings, operand, *, sizes, axis):
+  return out_shardings
+
 def _split_vma_rule(operand, *, sizes, axis):
   out_vma = core.standard_vma_rule('split', operand)
   out_shapes = _split_shape_rule(operand, sizes=sizes, axis=axis)
@@ -6866,7 +6880,7 @@ split_p.multiple_results = True
 split_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, split_p, _split_shape_rule,
             _split_dtype_rule, _split_weak_type_rule, _split_sharding_rule,
-            _split_vma_rule, _split_unreduced_rule))
+            _split_vma_rule, _split_unreduced_rule, _split_reduced_rule))
 split_p.def_impl(partial(dispatch.apply_primitive, split_p))
 ad.deflinear2(split_p, _split_transpose_rule)
 batching.primitive_batchers[split_p] = _split_batch_rule
@@ -7639,7 +7653,7 @@ reduce_p.def_impl(partial(dispatch.apply_primitive, reduce_p))
 reduce_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, reduce_p, _reduce_shape_rule,
             _reduce_dtype_rule, _reduce_weak_type_rule, _reduce_sharding_rule,
-            _reduce_vma_rule, None))
+            _reduce_vma_rule, None, None))
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 ad.primitive_jvps[reduce_p] = _reduce_jvp_rule
 
@@ -8430,7 +8444,7 @@ rng_bit_generator_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, rng_bit_generator_p,
             _rng_bit_generator_shape_rule, _rng_bit_generator_dtype_rule,
             _rng_bit_generator_weak_type_rule, _rng_bit_generator_sharding_rule,
-            _rng_bit_generator_vma_rule, None))
+            _rng_bit_generator_vma_rule, None, None))
 mlir.register_lowering(rng_bit_generator_p,
                        _rng_bit_generator_lowering)
 
