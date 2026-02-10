@@ -6580,7 +6580,8 @@ class ApiTest(TestCase):
       f = mgpu.as_gpu_kernel(
           kernel, (1, 1, 1), (128, 1, 1), x, x, (),
       )
-      jax.jit(f).lower(x).as_text()
+      bytecode_stablehlo = jax.jit(f).lower(x).as_text()
+      self.assertIn("module = \"ML\\EFR", bytecode_stablehlo)
 
 if hp is not None:
   @hps.composite
