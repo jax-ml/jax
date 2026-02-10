@@ -4978,9 +4978,14 @@ class APITest(jtu.JaxTestCase):
       msg = cm.output[3]
       self.assertIn('another function defined on the same line', msg)
     else:
-      self.assertLen(cm.output, 2)
-      _, msg = cm.output
-      self.assertIn('another function defined on the same line', msg)
+      # number of warnings depends on the backend
+      self.assertTrue(2 <= len(cm.output) <= 3)
+      self.assertTrue(
+          any(
+              'another function defined on the same line' in m
+              for m in cm.output
+          )
+      )
 
   def test_cache_miss_explanations_no_source_info(self):
     # ``operator.add`` is a built-in function and does not have source info.
