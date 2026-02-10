@@ -20,6 +20,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import error_check
+from jax._src.error_check import _ErrorClass, _INVALID_ERROR_CODE_MSG, _INVALID_ERROR_CODE_TRACEBACK, unwrap_from_import
 from jax._src import mesh as mesh_lib
 from jax._src import test_util as jtu
 import jax.export
@@ -382,8 +383,6 @@ class ErrorCheckTests(jtu.JaxTestCase):
 
     https://github.com/jax-ml/jax/issues/34370
     """
-    from jax._src.error_check import _ErrorClass, unwrap_from_import
-
     def make_corrupted_function():
       """Create a function that simulates corrupted AOT import data."""
 
@@ -409,11 +408,6 @@ class ErrorCheckTests(jtu.JaxTestCase):
 
   def test_error_check_invalid_error_code_constants(self):
     """Test that the standard error message constants are defined correctly."""
-    from jax._src.error_check import (
-        _INVALID_ERROR_CODE_MSG,
-        _INVALID_ERROR_CODE_TRACEBACK,
-    )
-
     self.assertIn("unknown error", _INVALID_ERROR_CODE_MSG)
     self.assertIn("Traceback not available", _INVALID_ERROR_CODE_TRACEBACK)
 
