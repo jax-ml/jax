@@ -5980,6 +5980,29 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                           check_dtypes=False)
 
   @jtu.sample_product(
+    [dict(yshape=yshape, dxshape=dxshape, axis=axis)
+      for yshape, dxshape, axis in [
+        ((3, 10), (3, 1), -1),
+        ((10,), (1,), -1),
+        ((2, 3, 4, 10), (2, 3, 4, 1), -1),
+        ((2, 3, 4, 10), (1, 1, 4, 1), -1),
+        ((2, 3, 4, 10), (2, 1, 1, 1), 1),
+      ]
+    ],
+  )
+  @jtu.skip_on_devices("tpu")
+  def test_trapezoid_array_dx(self, yshape, dxshape, axis):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(yshape, np.float32)]
+    dx = rng(dxshape, np.float32)
+    np_fun = partial(np.trapezoid, dx=dx, axis=axis)
+    jnp_fun = partial(jnp.trapezoid, dx=dx, axis=axis)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=1e-5,
+                            check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker, atol=1e-5, rtol=1e-5,
+                          check_dtypes=False)
+
+  @jtu.sample_product(
       shape=all_shapes,
       dtype=default_dtypes,
       op=['ndim', 'shape', 'size'],
