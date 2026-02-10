@@ -60,14 +60,18 @@ def element_type_to_backend_config_type(dtype):
   return _element_type_to_backend_config_type_mapping[dtype]
 
 
-def _scaled_matmul_impl(a, b, a_scale, b_scale, preferred_element_type):
+def _scaled_matmul_impl(a, b, a_scale, b_scale, global_scale,
+                        preferred_element_type, has_global_scale):
   return _scaled_matmul_p.bind(
-      a, b, a_scale, b_scale, preferred_element_type=preferred_element_type
+      a, b, a_scale, b_scale, global_scale,
+      preferred_element_type=preferred_element_type,
+      has_global_scale=has_global_scale
   )
 
 
 def _scaled_matmul_gpu_lowering(
-    ctx, a, b, a_scales, b_scales, preferred_element_type
+    ctx, a, b, a_scales, b_scales, global_scale, preferred_element_type,
+    has_global_scale
   ):
   lhs_type = ir.RankedTensorType(a.type)
   lhs_shape = lhs_type.shape
@@ -82,6 +86,8 @@ def _scaled_matmul_gpu_lowering(
   result_types = [ir.RankedTensorType.get(result_shape, out_type)]
 
   operands = [a, b, a_scales, b_scales]
+  if has_global_scale:
+    operands.append(global_scale)
   backend_config = {
       "scaled_dot_backend_config": {
           "lhs_batch_dimensions": [0],
@@ -104,7 +110,8 @@ def _scaled_matmul_gpu_lowering(
   return [out.result]
 
 
-def _scaled_matmul_abstract(a, b, a_scale, b_scale, *, preferred_element_type):
+def _scaled_matmul_abstract(a, b, a_scale, b_scale, global_scale,
+                            *, preferred_element_type, has_global_scale):
   batch, non_contracting_lhs, contracting_lhs = a.shape
   _, non_contracting_rhs, _ = b.shape
   output_shape = (batch, non_contracting_lhs, non_contracting_rhs)
@@ -150,10 +157,10 @@ _scaled_matmul_p_wrapper.def_abstract_eval(_scaled_matmul_abstract)
 #   - Input spec : ([B], M, None), ([B], N, None)
 #   - Output spec: ([B], M, N)
 def _check_shardings(shardings):
-  if len(shardings) != 4:
-    msg = f"shardings should container 4 inputs, but got {len(shardings)}"
+  if len(shardings) != 5:
+    msg = f"shardings should contain 5 inputs, but got {len(shardings)}"
     raise TypeError(msg)
-  lhs, rhs, _, _ = shardings
+  lhs, rhs, _, _, _ = shardings
   if len(lhs.spec) != 3 or len(rhs.spec) != 3:
     msg = (f'shardings specs rank should be 3, but got lhs: {len(lhs.spec)} '
             'and rhs: {len(rhs.spec)}')
@@ -203,7 +210,7 @@ def _get_output_sharding(shardings):
 
 
 def _scaled_matmul_infer_sharding_from_operands(
-    preferred_element_type, mesh, shapes, output_shape
+    preferred_element_type, has_global_scale, mesh, shapes, output_shape
   ):
   shardings = tree_util.tree_map(lambda x: x.sharding, shapes)
   _check_shardings(shardings)
@@ -275,7 +282,7 @@ def _supported_in_out_sharding(lhs_sharding, rhs_sharding, out_sharding, reduce_
   return named_sharding(lhs_specs, rhs_specs, out_specs)
 
 def _scaled_matmul_partition(
-    preferred_element_type, mesh, shapes, output_shape
+    preferred_element_type, has_global_scale, mesh, shapes, output_shape
   ):
   shardings = tree_util.tree_map(lambda x: x.sharding, shapes)
   _check_shardings(shardings)
@@ -286,8 +293,9 @@ def _scaled_matmul_partition(
   reduce_scatter_dim = _get_reduce_scatter_dim(lhs, rhs, out)
   lhs_k_spec = lhs.spec[2]
 
-  def _scaled_matmul_impl_partition(a, b, a_scale, b_scale):
-    z = _scaled_matmul_impl(a, b, a_scale, b_scale, preferred_element_type)
+  def _scaled_matmul_impl_partition(a, b, a_scale, b_scale, global_scale):
+    z = _scaled_matmul_impl(a, b, a_scale, b_scale, global_scale,
+                            preferred_element_type, has_global_scale)
     if reduce_scatter_dim is not None:
       z = lax_parallel.psum_scatter(
           z, lhs_k_spec, scatter_dimension=reduce_scatter_dim, tiled=True
@@ -297,11 +305,13 @@ def _scaled_matmul_partition(
     return z
 
   arg_shardings, out_shardings = _supported_in_out_sharding(lhs, rhs, out, reduce_scatter_dim)
+  if has_global_scale:
+    arg_shardings += (NamedSharding(shardings[4].mesh, P(None, None, None)),)
   return mesh, _scaled_matmul_impl_partition, out_shardings, arg_shardings
 
 
 _scaled_matmul_lower = custom_partitioning(
-    _scaled_matmul_impl, static_argnums=(4,)
+    _scaled_matmul_impl, static_argnums=(5, 6)
 )
 
 _scaled_matmul_lower.def_partition(
@@ -311,16 +321,13 @@ _scaled_matmul_lower.def_partition(
 )
 
 
-def _scaled_matmul_batcher(batched_args, batch_dims, *, preferred_element_type):
-  assert len(batch_dims) == 4
-  assert (
-      batch_dims[0] == batch_dims[1]
-      and batch_dims[0] == batch_dims[2]
-      and batch_dims[0] == batch_dims[3]
-  )
+def _scaled_matmul_batcher(batched_args, batch_dims, *, preferred_element_type,
+                           has_global_scale):
+  assert len(batch_dims) == 5
+  assert len(set(batch_dims[:4])) == 1 and batch_dims[4] is None
   lhs_bdims = batch_dims[0]
   out_bdims = (batch_dims[0],)
-  lhs, rhs, lhs_scales, rhs_scales = batched_args
+  lhs, rhs, lhs_scales, rhs_scales, global_scale = batched_args
   *batch, lhs_non_contracting, contracting = lhs.shape
   *_, _, scales_contracting = lhs_scales.shape
   *_, rhs_non_contracting, _ = rhs.shape
@@ -341,7 +348,9 @@ def _scaled_matmul_batcher(batched_args, batch_dims, *, preferred_element_type):
           rhs,
           lhs_scales,
           rhs_scales,
+          global_scale,
           preferred_element_type=preferred_element_type,
+          has_global_scale=has_global_scale,
       )[0],
       (*batch, lhs_non_contracting, rhs_non_contracting),
   )
@@ -360,17 +369,20 @@ batching.primitive_batchers[_scaled_matmul_p_wrapper] = _scaled_matmul_batcher
 batching.primitive_batchers[_scaled_matmul_p] = _scaled_matmul_batcher
 
 
-@api.jit(static_argnames=("preferred_element_type",))
+@api.jit(static_argnames=("preferred_element_type", "has_global_scale"))
 def _scaled_matmul(
     lhs: Array,
     rhs: Array,
     lhs_scales: Array,
     rhs_scales: Array,
+    global_scale: Array,
     preferred_element_type: DTypeLike = np.dtype('float32'),
+    has_global_scale: bool = False,
   ) -> Array:
   output = _scaled_matmul_p_wrapper.bind(
-      lhs, rhs, lhs_scales, rhs_scales,
-      preferred_element_type=preferred_element_type
+      lhs, rhs, lhs_scales, rhs_scales, global_scale,
+      preferred_element_type=preferred_element_type,
+      has_global_scale=has_global_scale
   )
   return output[0]
 
@@ -379,7 +391,9 @@ def scaled_matmul_wrapper(
     rhs: Array,
     lhs_scales: Array,
     rhs_scales: Array,
+    global_scale: Array,
     preferred_element_type: DTypeLike = np.dtype('float32'),
+    has_global_scale: bool = False,
 ) -> Array:
     """
     Performs scaled matrix multiplication between two 3D arrays, with scaling
@@ -390,8 +404,10 @@ def scaled_matmul_wrapper(
         rhs (Array): A 3D array of shape (B, N, K).
         lhs_scales (Array): A 3D array of shape (B, M, K_block).
         rhs_scales (Array): A 3D array of shape (B, N, K_block).
+        global_scale (Array): A 0D array (scalar).
         preferred_element_type (DTypeLike, optional): The preferred data type
           for the computation. Defaults to `jnp.float32`.
+        has_global_scale (bool, optional): Whether to use a global scale.
 
     Returns:
         Array: A 3D array of shape (B, M, N) representing the scaled matrix
@@ -421,7 +437,9 @@ def scaled_matmul_wrapper(
         rhs,
         lhs_scales,
         rhs_scales,
+        global_scale,
         preferred_element_type=preferred_element_type,
+        has_global_scale=has_global_scale,
     )
 
     return out
@@ -582,17 +600,16 @@ def scaled_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type,
   lhs_q, lhs_scales = quantize(lhs_3d, lhs_config)
   rhs_q, rhs_scales = quantize(rhs_3d, rhs_config)
 
-  out_dtype = preferred_element_type
-  if configs[0].mode == 'nvfp4':
-    out_dtype = np.float32
+  has_global_scale = configs[0].mode == 'nvfp4'
+  global_scale = jnp.array(
+    configs[0].global_scale * configs[1].global_scale
+    if has_global_scale else 0, dtype=preferred_element_type)
 
   out = scaled_matmul_wrapper(
-      lhs_q, rhs_q, lhs_scales, rhs_scales, preferred_element_type=out_dtype
+      lhs_q, rhs_q, lhs_scales, rhs_scales, global_scale,
+      preferred_element_type=preferred_element_type,
+      has_global_scale=has_global_scale,
   )
-
-  if configs[0].mode == 'nvfp4':
-    out *= (configs[0].global_scale * configs[1].global_scale)
-    out = out.astype(preferred_element_type)
 
   expanded_out_shape = compute_dot_output_shape(
       lhs.shape, rhs.shape, lhs_dn, rhs_dn
@@ -630,7 +647,8 @@ def scaled_dot_general_transpose_lhs(
     y_q, y_scales = quantize(y_3d, y_config)
 
     out = scaled_matmul_wrapper(
-        g_q, y_q, g_scales, y_scales, preferred_element_type
+        g_q, y_q, g_scales, y_scales, jnp.array(0),
+        preferred_element_type, has_global_scale=False
     )
   else:
     out = jnp.matmul(g_3d, jnp.permute_dims(y_3d, (0, 2, 1)), preferred_element_type=preferred_element_type)

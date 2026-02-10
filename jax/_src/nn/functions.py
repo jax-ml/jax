@@ -1254,6 +1254,7 @@ def scaled_matmul(
     rhs: Array,
     lhs_scales: Array,
     rhs_scales: Array,
+    global_scale: Array | None = None,
     preferred_element_type: DTypeLike = np.float32,
 ) -> Array:
     r"""Scaled matrix multiplication function.
@@ -1274,6 +1275,7 @@ def scaled_matmul(
       rhs (Array): Operand b, shape (B, N, K).
       lhs_scales (Array): Shape (B, M, K_a), where `K % K_a == 0`.
       rhs_scales (Array): Shape (B, N, K_b), where `K % K_b == 0`.
+      global_scale (Array, optional): Scalar scaling factor.
       preferred_element_type (DTypeLike, optional): Defaults to `jnp.float32`.
 
     Returns:
@@ -1353,7 +1355,9 @@ def scaled_matmul(
         b,
         a_scales,
         b_scales,
+        global_scale or jnp.array(0, dtype=preferred_element_type),
         preferred_element_type=preferred_element_type,
+        has_global_scale=global_scale is not None,
     )
     return out
 
