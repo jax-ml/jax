@@ -104,6 +104,34 @@ def lower_jaxpr_to_module(
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
 ) -> ir.Module:
+  module = ir.Module.create()
+  debug_info = jaxpr.debug_info
+  lower_jaxpr_into_module(
+      lowering_context,
+      module,
+      grid_mapping,
+      jaxpr,
+      name=mlir.sanitize_name(debug_info.func_name),
+      dimension_semantics=dimension_semantics,
+      kernel_type=kernel_type,
+      mesh=mesh,
+      dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
+  )
+  return module
+
+
+def lower_jaxpr_into_module(
+    lowering_context: mlir.LoweringRuleContext,
+    module: ir.Module,
+    grid_mapping: pallas_core.GridMapping,
+    jaxpr: jax_core.Jaxpr,
+    *,
+    name: str,
+    dimension_semantics: Sequence[tpu_core.DimensionSemantics] | None,
+    kernel_type: tpu_core.KernelType,
+    mesh: mesh_lib.Mesh | None = None,
+    dynamic_shape_replacement_enabled: bool = False,
+) -> None:
   """Lowers a Jaxpr to a Mosaic SparseCore module."""
   if dynamic_shape_replacement_enabled:
     raise NotImplementedError(
@@ -121,17 +149,16 @@ def lower_jaxpr_to_module(
   mosaic_grid_mapping = MosaicGridMapping(
       jaxpr, grid_mapping, dimension_semantics, mesh=mesh
   )
-  m = ir.Module.create()
-  sym_tab = ir.SymbolTable(m.operation)
+  sym_tab = ir.SymbolTable(module.operation)
   func_op = lower_jaxpr_to_func(
       jaxpr,
-      name="main",
+      name=name,
       kernel_type=kernel_type,
       mosaic_grid_mapping=mosaic_grid_mapping,
       forward_compatible=lowering_context.is_forward_compat(),
       backend=backend,
   )
-  m.body.append(func_op)
+  module.body.append(func_op)
   sym_tab.insert(func_op)
   func_op.attributes["iteration_bounds"] = ir.DenseI64ArrayAttr.get(
       mosaic_grid_mapping.grid
@@ -141,10 +168,10 @@ def lower_jaxpr_to_module(
   )
   if not mosaic_grid_mapping.grid:
     # No need for "window_params" if the grid is empty.
-    return m
+    return module
   window_params = []
   for i, bm in enumerate(grid_mapping.block_mappings):
-    func_name = f"transform_{i}"
+    func_name = f"{name}_transform_{i}"
     mlir_func = tc_lowering.lower_jaxpr_to_transform_func(
         bm.index_map_jaxpr.jaxpr,
         bm.block_aval,
@@ -156,7 +183,8 @@ def lower_jaxpr_to_module(
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
     )
     assert mlir_func.verify(), mlir_func
-    m.body.append(mlir_func)
+    module.body.append(mlir_func)
+    assert func_name not in sym_tab
     sym_tab.insert(mlir_func)
 
     block_shape = list(pallas_core._get_block_shape(bm.block_shape))
@@ -166,7 +194,7 @@ def lower_jaxpr_to_module(
     )
     window_params.append(ir.DictAttr.get(block_params))
   func_op.attributes["window_params"] = ir.ArrayAttr.get(window_params)
-  return m
+  return module
 
 
 @dataclasses.dataclass(init=False)
