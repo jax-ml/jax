@@ -52,7 +52,7 @@ FromEltHandler = Callable[[Callable, AxisSize, Elt, MapSpec], Vmappable]
 MakeIotaHandler = Callable[[AxisSize], Array]
 
 def to_elt(trace: Trace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
-  from jax._src import hijax
+  from jax._src import hijax  # type: ignore
   handler = to_elt_handlers.get(type(x))
   if handler:
     return handler(partial(to_elt, trace, get_idx), get_idx, x, spec)
@@ -60,7 +60,7 @@ def to_elt(trace: Trace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
     spec = spec and canonicalize_axis(spec, len(np.shape(x)))
     return (BatchTracer(trace, x, spec, source_info_util.current())
             if spec is not None else x)
-  elif isinstance(ty := typeof(x), hijax.HiType):
+  elif isinstance(typeof(x), hijax.HiType):
     # TODO check possible errors
     return BatchTracer(trace, x, spec, source_info_util.current())
   else:
@@ -71,7 +71,6 @@ to_elt_handlers: dict[type, ToEltHandler] = {}
 
 def from_elt(trace: BatchTrace, axis_size: AxisSize, mesh_axis: MeshAxis,
              sum_match: bool, i: int, x: Elt, spec: MapSpec) -> tuple[Vmappable, MapSpec]:
-  from jax._src import hijax
   handler = from_elt_handlers.get(type(x))
   if handler:
     def _cont(axis_size, elt, axis):
@@ -80,8 +79,8 @@ def from_elt(trace: BatchTrace, axis_size: AxisSize, mesh_axis: MeshAxis,
   val, bdim = trace.to_batch_info(x)
   bdim_inferred = bdim if spec is infer else spec
   try:
-    return matchaxis(trace.axis_data.name, axis_size, mesh_axis,
-                     bdim, spec, val, sum_match=sum_match), bdim_inferred
+    return matchaxis2(trace.axis_data, bdim, spec, val,
+                      sum_match=sum_match), bdim_inferred
   except SpecMatchError:
     raise SpecMatchError(i, x.batch_dim, spec) from None
 from_elt_handlers: dict[type, FromEltHandler] = {}
@@ -109,15 +108,7 @@ vmappables: dict[type, tuple[type, type]] = {}
 spec_types: set[type] = set()
 
 def unregister_vmappable(data_type: type) -> None:
-  _, axis_size_type = vmappables.pop(data_type)
-  del to_elt_handlers[data_type]
-  del from_elt_handlers[data_type]
-  if axis_size_type in make_iota_handlers:
-    del make_iota_handlers[axis_size_type]
-  global spec_types
-  spec_types = (
-      set() | {spec_type for spec_type, _ in vmappables.values()}
-  )
+  pass  # this used to do cleanup, but it was dumb
 
 def is_vmappable(x: Any) -> bool:
   return type(x) in vmappables
@@ -159,7 +150,7 @@ class BatchTracer(Tracer):
 
   @property
   def aval(self):
-    from jax._src import hijax
+    from jax._src import hijax  # type: ignore
     aval = core.get_aval(self.val)
     if self._trace.axis_data.spmd_name is not None:
       if config._check_vma.value:
@@ -170,7 +161,7 @@ class BatchTracer(Tracer):
     elif type(self.batch_dim) is int:
       return core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)
     elif isinstance(aval, hijax.HiType):
-      return aval.mapped_aval(self._trace.axis_data.size, self.batch_dim)
+      return aval.dec_rank(self._trace.axis_data.size, self.batch_dim)
     else:
       raise Exception("batch dim should be int or `not_mapped`")
 
@@ -773,15 +764,13 @@ def matchaxis2(axis_data, src, dst, x, sum_match=False):
   return matchaxis(axis_data.name, axis_data.size, axis_data.explicit_mesh_axis,
                    src, dst, x, sum_match)
 
+# TODO(yashkatariya): remove this, inline into matchaxis2
 def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
   try:
     _ = core.get_aval(x)
   except TypeError as e:
     raise TypeError(f"Output from batched function {x!r} with type "
                     f"{type(x)} is not a valid JAX type") from e
-  from jax._src import hijax
-  if isinstance(ty := typeof(x), hijax.HiType):
-    return ty.match_spec(src, dst, x)
   if src == dst or dst is infer:
     return x
   elif type(src) == type(dst) == int:

@@ -2287,8 +2287,11 @@ class ShapedArray(AbstractValue):
         self.shape, dtype, self.weak_type, sharding=sharding, vma=self.vma,
         memory_space=self.memory_space)
 
-  def mapped_aval(self, size, spec):
+  def dec_rank(self, size, spec):
     return mapped_aval(size, spec, self)
+
+  def inc_rank(self, size, spec):
+    return unmapped_aval(size, spec, self)
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str_short_aval(
@@ -3033,16 +3036,22 @@ class MapPrimitive(Primitive):
     new_params['out_axes_thunk'] = HashableFunction(lambda: axes, closure=axes)
     return [subfun], new_params
 
-def mapped_aval(size: AxisSize, axis: int | None,
-                aval: AbstractValue) -> AbstractValue:
+def mapped_aval(size: AxisSize, axis, aval: AbstractValue) -> AbstractValue:
+  from jax._src.hijax import HiType  # type: ignore
+  if isinstance(aval, HiType):
+    return aval.dec_rank(size, axis)  # type: ignore
   handler, _ = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
     return handler(size, axis, aval)
   else:
     raise TypeError(f"no mapping handler for {aval} of type {type(aval)}")
 
+# TODO(yashkatariya): take axis data
 def unmapped_aval(size: AxisSize, axis: int | None,
                   aval: AbstractValue, explicit_mesh_axis=None) -> AbstractValue:
+  from jax._src.hijax import HiType  # type: ignore
+  if isinstance(aval, HiType):
+    return aval.inc_rank(size, axis)  # type: ignore
   _, handler = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
     return handler(size, axis, explicit_mesh_axis, aval)

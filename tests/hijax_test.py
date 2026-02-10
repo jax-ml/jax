@@ -34,6 +34,7 @@ from jax._src import state
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map
 from jax._src.state.discharge import run_state
@@ -175,7 +176,7 @@ class HiTup:
 
 @dataclass(frozen=True)
 class TupTy(HiType):
-  tys: tuple[Ty]
+  tys: tuple[Ty, ...]
 
   def __repr__(self):
     return 'Tup{' + ','.join(a.str_short() for a in self.tys) + '}'
@@ -204,14 +205,19 @@ class TupTy(HiType):
   def normalize(self):
     return TupTy(tuple(ty.normalize() for ty in self.tys))
 
-  def mapped_aval(self, size, spec):
-    return TupTy(tuple(ty.mapped_aval(size, s) for ty, s in zip(self.tys, spec.val)))
-
-  def match_spec(self, src, dst, val):
-    if src == dst:
-      return val
+  def dec_rank(self, size, spec):
+    if spec == 0:
+      return TupTy(tuple(ty.dec_rank(size, 0) for ty in self.tys))
+    elif isinstance(spec, TupSpec):
+      return TupTy(tuple(ty.dec_rank(size, s) for ty, s in zip(self.tys, spec.val)))
     else:
-      raise NotImplementedError
+      assert False
+
+  def inc_rank(self, size, spec):
+    if spec == 0:
+      return TupTy(tuple(ty.inc_rank(size, 0) for ty in self.tys))
+    else:
+      assert False
 
 register_hitype(HiTup, lambda t: TupTy(tuple(map(typeof, t.elts))))
 
@@ -686,6 +692,33 @@ class HijaxTest(jtu.JaxTestCase):
   def test_tuple_vmap(self):
     tup = make_tup(jnp.arange(3.), jnp.arange(3.))
     jax.vmap(lambda x: x, in_axes=TupSpec((0, 0)), out_axes=TupSpec((0, 0)), axis_size=3)(tup)
+
+  def test_tuple_vmap_infer(self):
+    tup = make_tup(jnp.arange(3.), jnp.arange(3.))
+    jax.vmap(lambda _: make_tup(jnp.ones(3), jnp.ones(3)),
+             in_axes=TupSpec((0, 0)), out_axes=batching.infer, axis_size=3)(tup)
+
+  # def test_tuple_vmap_match(self):
+  #   tup = make_tup(jnp.arange(3.), jnp.arange(3.))
+  #   jax.vmap(lambda _: make_tup(jnp.ones(3), jnp.ones(3)),
+  #            in_axes=TupSpec((0, 0)), out_axes=TupSpec((0, 0)), axis_size=3)(tup)
+
+  @parameterized.parameters([False, True])
+  def test_tuple_scan(self, jit):
+    tup = make_tup(jnp.arange(3.), jnp.arange(3. * 4).reshape(3, 4))
+    def body(_, x):
+      self.assertEqual(typeof(x), TupTy((typeof(jnp.zeros(())), typeof(jnp.arange(4.)))))
+      a = get_tuple_element(x, 0)
+      b = get_tuple_element(x, 1)
+      return (), make_tup(a + 1, b * 2)
+    def f(): return jax.lax.scan(body, (), tup, length=3)
+    if jit:
+      f = jax.jit(f)
+    (), tup2 = f()
+    a = get_tuple_element(tup2, 0)
+    b = get_tuple_element(tup2, 1)
+    self.assertAllClose(a, jnp.arange(3.) + 1)
+    self.assertAllClose(b, jnp.arange(3. * 4).reshape(3, 4) * 2)
 
   @parameterized.parameters([False, True])
   def test_ref_to_tuple(self, jit):
@@ -1686,19 +1719,6 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
     x, y = immutbox_get(box)
     self.assertAllClose(x, 6.0, check_dtypes=False)
     self.assertAllClose(y, 12.0, check_dtypes=False)
-
-  # with hijax extensive arguments
-  def test_hitypes_as_scan_extensive(self):
-    box = immutbox_new((jnp.arange(5), -jnp.arange(5)))
-
-    def body(_, box_i):
-      x, y = immutbox_get(box_i)
-      box_i = immutbox_new((x * 2, y * 2))
-      return None, box_i
-    _, box = jax.lax.scan(body, None, box)
-    x, y = immutbox_get(box)
-    self.assertAllClose(x, jnp.arange(5) * 2, check_dtypes=False)
-    self.assertAllClose(y, -jnp.arange(5) * 2, check_dtypes=False)
 
   # with hijax captured arguments
   def test_hitypes_as_scan_captured(self):

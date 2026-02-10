@@ -117,6 +117,13 @@ class HiType(core.AbstractValue):
   def vspace_add(self, x: HiVal, y: HiVal) -> HiVal:
     assert False, "must override"
 
+  # vmap/scan interface
+  def dec_rank(self, size: int | None, spec: MappingSpec) -> HiType:
+    assert False, "must override"
+
+  def inc_rank(self, size: int | None, spec: MappingSpec) -> HiType:
+    assert False, "must override"
+
 class MutableHiType(core.AbstractValue):
   is_high = True
   has_qdd = True  # mutable and potentially type-changing

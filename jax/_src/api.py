@@ -1158,7 +1158,7 @@ def vmap(fun: F,
     # rather than raising an error. https://github.com/jax-ml/jax/issues/2367
     in_axes = tuple(in_axes)
 
-  from jax._src import hijax
+  from jax._src import hijax  # type: ignore
   if not (in_axes is None or type(in_axes) in {int, tuple, *batching.spec_types}
           or isinstance(in_axes, hijax.MappingSpec)):
     raise TypeError("vmap in_axes must be an int, None, or a tuple of entries corresponding "
