@@ -1100,8 +1100,7 @@ def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn
   _, new_effects = eqn.primitive.abstract_eval(
       *[v.aval for v in new_invars], **new_params)
   new_eqn = pe.new_jaxpr_eqn(
-      new_invars,
-      new_outvars,
+      new_invars, new_outvars,
       eqn.primitive, new_params, new_effects, eqn.source_info, eqn.ctx)
   assert len(new_eqn.invars ) == len(new_params['jaxpr'].in_avals )
   assert len(new_eqn.outvars) == len(new_params['jaxpr'].out_avals)
@@ -1886,6 +1885,45 @@ def _while_transpose_error(*_, **kwargs):
                    "lax.while_loop or lax.fori_loop with dynamic start/stop values. "
                    "Try using lax.scan, or using fori_loop with static start/stop.")
 
+def _while_dce(used_outputs, eqn):
+  if not any(used_outputs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
+  cond_jaxpr, body_jaxpr = eqn.params['cond_jaxpr'], eqn.params['body_jaxpr']
+  cn, bn = eqn.params['cond_nconsts'], eqn.params['body_nconsts']
+
+  cond_jaxpr_dce, cond_used_inputs = pe.dce_jaxpr(
+      cond_jaxpr.jaxpr, [True], instantiate=[False] * cn + used_outputs)
+  cond_used_consts, used_outputs = split_list(cond_used_inputs, [cn])
+
+  for i in range(1 + len(used_outputs)):
+    body_jaxpr_dce, body_used_inputs = pe.dce_jaxpr(
+        body_jaxpr.jaxpr, used_outputs, instantiate=[False] * bn + used_outputs)
+    body_used_consts, used_outputs_ = split_list(body_used_inputs, [bn])
+    if list(used_outputs_) == list(used_outputs):
+      break
+    else:
+      used_outputs = _map(operator.or_, used_outputs_, used_outputs)
+  else:
+    assert False, "Fixpoint not reached"
+
+  cond_jaxpr_dce, cond_used_inputs = pe.dce_jaxpr(
+      cond_jaxpr.jaxpr, [True], instantiate=[False] * cn + used_outputs)
+  cond_used_consts_, used_outputs = split_list(cond_used_inputs, [cn])
+  assert list(cond_used_consts_) == list(cond_used_consts)
+
+  new_params = dict(eqn.params, cond_nconsts=sum(cond_used_consts),
+                    body_nconsts=sum(body_used_consts),
+                    cond_jaxpr=ClosedJaxpr(cond_jaxpr_dce, cond_jaxpr.consts),
+                    body_jaxpr=ClosedJaxpr(body_jaxpr_dce, body_jaxpr.consts))
+  used_inputs = cond_used_consts + body_used_consts + used_outputs
+  new_invars = [x for x, u in zip(eqn.invars, used_inputs) if u]
+  new_outvars = [v for v, u in zip(eqn.outvars, used_outputs) if u]
+  _, new_effects = eqn.primitive.abstract_eval(
+      *[v.aval for v in new_invars], **new_params)
+  new_eqn = pe.new_jaxpr_eqn(new_invars, new_outvars, eqn.primitive, new_params,
+                             new_effects, eqn.source_info, eqn.ctx)
+  return used_inputs, new_eqn
+
 # For a while loop with ordered effects in the cond, we need a special
 # lowering. Fundamentally, we'd like to rewrite a while loop that looks like
 # this:
@@ -2222,6 +2260,7 @@ pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 core.custom_typechecks[while_p] = _while_typecheck
 mlir.register_lowering(while_p, _while_lowering)
 state_discharge.register_partial_discharge_rule(while_p)(_while_partial_discharge_rule)
+pe.dce_rules[while_p] = _while_dce
 
 def _while_is_high(*_, cond_jaxpr, body_jaxpr, **__):
   return cond_jaxpr.is_high or body_jaxpr.is_high
