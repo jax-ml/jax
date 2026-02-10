@@ -19,11 +19,9 @@ import dataclasses
 import functools
 from typing import Any, cast, NoReturn
 
-from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import debugging
 from jax._src import lax
-from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import numpy as jnp
 from jax._src import source_info_util
@@ -31,7 +29,6 @@ from jax._src import state
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import mlir
-from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
@@ -112,61 +109,6 @@ def lower_jaxpr_to_module(
     raise NotImplementedError(
         "Dynamic shape replacement is not supported for SparseCore."
     )
-  dynamic_shape_replacement_fn = lambda x: x
-  if (
-      lowering_context.is_forward_compat()
-      or tc_lowering.is_cloud_tpu_older_than(
-          2026, 1, 18, lowering_context.module_context.backend
-      )
-  ) and not grid_mapping.grid:
-    # TODO(slebedev): Remove this branch after Jan 18th 2026.
-    index_map_avals, index_map_tree = tree_util.tree_flatten(
-        ((jax_core.ShapedArray((), jnp.int32),), {})
-    )
-    if grid_mapping.num_index_operands:
-      raise ValueError(
-          "Index operands not supported for SparseCore when grid is empty."
-      )
-    new_grid = (1,)
-    new_block_mappings = []
-    for bm in grid_mapping.block_mappings:
-
-      def new_index_map(*args, bm=bm):
-        return jax_core.eval_jaxpr(
-            # Discard the leading grid index.
-            bm.index_map_jaxpr.jaxpr,
-            bm.index_map_jaxpr.consts,
-            *args[1:],
-        )
-
-      debug_info = bm.index_map_jaxpr.jaxpr.debug_info
-      if debug_info.arg_names is not None:
-        debug_info = debug_info._replace(
-            arg_names=("idx", *debug_info.arg_names)
-        )
-      flat_fun, _ = api_util.flatten_fun(
-          lu.wrap_init(new_index_map, debug_info=debug_info), index_map_tree
-      )
-      with pallas_core.tracing_grid_env(new_grid, grid_mapping.vmapped_dims):
-        index_map_jaxpr, _, index_map_jaxpr_consts = pe.trace_to_jaxpr_dynamic(
-            flat_fun, index_map_avals
-        )
-      new_block_mappings.append(
-          bm.replace(
-              index_map_jaxpr=jax_core.ClosedJaxpr(
-                  index_map_jaxpr, index_map_jaxpr_consts
-              )
-          )
-      )
-
-    grid_mapping = grid_mapping.replace(
-        grid=new_grid,
-        index_map_avals=index_map_avals,
-        index_map_tree=index_map_tree,
-        block_mappings=tuple(new_block_mappings),
-    )
-    dimension_semantics = ("arbitrary",)
-
   for bm in grid_mapping.block_mappings:
     for bd in bm.block_shape:
       if not isinstance(bd, pallas_core.Blocked):
