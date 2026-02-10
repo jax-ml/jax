@@ -67,6 +67,10 @@ class NvshmemApi {
     return nvshmemx_init_status != nullptr && nvshmemx_init_status() == 2;
   }
 
+  int n_pes() {
+    return nvshmem_n_pes();
+  }
+
   NvshmemApi(NvshmemApi const&)     = delete;
   void operator=(NvshmemApi const&) = delete;
 
@@ -85,12 +89,14 @@ class NvshmemApi {
     NVSHMEM_SET_FN(nvshmemx_cumodule_finalize)
     NVSHMEM_SET_FN(nvshmemx_cumodule_init)
     NVSHMEM_SET_FN(nvshmemx_init_status)
+    NVSHMEM_SET_FN(nvshmem_n_pes);
   }
 
   int (*nvshmemx_barrier_all_on_stream)(cudaStream_t);
   int (*nvshmemx_cumodule_finalize)(CUmodule);
   int (*nvshmemx_cumodule_init)(CUmodule);
   int (*nvshmemx_init_status)();
+  int (*nvshmem_n_pes)();
 
   std::mutex mutex_;
 };
