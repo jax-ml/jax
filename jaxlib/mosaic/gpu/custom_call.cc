@@ -828,15 +828,15 @@ absl::StatusOr<std::vector<char>> CreateCollectiveMetadata(
       std::vector<void*> param_to_peers,
       xla::gpu::CollectiveMetadataThunk::CollectParamToPeers(
           clique_key, current_rank, stream, std::move(parameters)));
-  TF_ASSIGN_OR_RETURN(
-      CollectiveKernelMetadata metadata,
-      xla::gpu::CollectiveMetadataThunk::CreateCollectiveMetadata(
-          clique_key, current_rank, stream,
-          // TODO(patrios): Add multimem support.
-          /*multimem=*/nullptr));
+  CollectiveKernelMetadata metadata;
+  metadata.rank = current_rank.value();
+
+  // TODO(b/476264413): Support multimem.
+  std::vector<void*> param_to_multimem;
   TF_RETURN_IF_ERROR(
       xla::gpu::CollectiveMetadataThunk::CopyCollectiveMetadataToDevice(
-          stream, metadata, param_to_peers, collective_metadata_ptr));
+          stream, metadata, param_to_peers, param_to_multimem,
+          collective_metadata_ptr));
 
   // Copy the metadata and param to peers array to the CPU RAM for the TMA
   // initialization.
