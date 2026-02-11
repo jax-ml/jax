@@ -245,9 +245,10 @@ def raise_if_error() -> None:
   )  # clear the error code
 
   with _error_list_lock:
-    if error_code >= len(_error_list):
+    if error_code < 0 or error_code >= len(_error_list):
       # Handle invalid error codes gracefully with a standard error message.
-      # This can happen with corrupted AOT serialization data.
+      # This can happen with corrupted AOT serialization data or negative
+      # error codes that could lead to incorrect indexing.
       msg, traceback = _INVALID_ERROR_CODE_MSG, _INVALID_ERROR_CODE_TRACEBACK
     else:
       msg, traceback = _error_list[error_code]

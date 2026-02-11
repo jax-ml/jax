@@ -20,7 +20,6 @@ from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import error_check
-from jax._src.error_check import _ErrorClass, _INVALID_ERROR_CODE_MSG, _INVALID_ERROR_CODE_TRACEBACK, unwrap_from_import
 from jax._src import mesh as mesh_lib
 from jax._src import test_util as jtu
 import jax.export
@@ -391,12 +390,12 @@ class ErrorCheckTests(jtu.JaxTestCase):
         # that is out of bounds of the error_list (which is empty here)
         invalid_error_code = jnp.uint32(999)
         empty_error_list = []
-        return x + 1, _ErrorClass(invalid_error_code, empty_error_list)
+        return x + 1, error_check._ErrorClass(invalid_error_code, empty_error_list)
 
       return corrupted_fn
 
     corrupted_fn = make_corrupted_function()
-    unwrapped_fn = unwrap_from_import(corrupted_fn)
+    unwrapped_fn = error_check.unwrap_from_import(corrupted_fn)
 
     x = jnp.float32(1.0)
     _ = unwrapped_fn(x)
@@ -408,8 +407,8 @@ class ErrorCheckTests(jtu.JaxTestCase):
 
   def test_error_check_invalid_error_code_constants(self):
     """Test that the standard error message constants are defined correctly."""
-    self.assertIn("unknown error", _INVALID_ERROR_CODE_MSG)
-    self.assertIn("Traceback not available", _INVALID_ERROR_CODE_TRACEBACK)
+    self.assertIn("unknown error", error_check._INVALID_ERROR_CODE_MSG)
+    self.assertIn("Traceback not available", error_check._INVALID_ERROR_CODE_TRACEBACK)
 
 
 if __name__ == "__main__":
