@@ -21,9 +21,9 @@ from absl import logging
 from absl.testing import absltest
 from absl.testing import parameterized
 from jax._src import mesh as mesh_lib
+from jax._src import mesh_utils
 from jax._src import test_util
 from jax._src.sharding_impls import NamedSharding, PartitionSpec, local_to_global_shape
-from jax._src import mesh_utils
 from jax.sharding import Mesh  # pylint: disable=g-importing-member
 import numpy as np
 
@@ -200,6 +200,40 @@ def mock_4x2_v5e_devices(one_device_per_chip=True):
 def mock_2x2x2_v5e_devices(one_device_per_chip=True):
   """Hard-coded reproduction of jax.devices() output on 2x2x2 v5e."""
   return mock_tpu_devices(2, 2, 2, 'TPU v5 lite', one_device_per_chip)
+
+
+_V7_MESH_TEST_CASES = (
+  #        <-logical-> <-physical->
+  ('1x1x2', [1, 1, 2], [1, 1, 1], [[[0, 1]]]),
+  ('2x1x4', [2, 1, 4], [2, 2, 1], [[[0, 1, 2, 3]], [[6, 7, 4, 5]]]),
+  ('4x1x2', [4, 1, 2], [2, 2, 1], [[[0, 1]], [[2, 3]], [[6, 7]], [[4, 5]]]),
+  ('4x2x2', [4, 2, 2], [2, 2, 2], [[[0, 1], [2, 3]],
+                                    [[6, 7], [4, 5]],
+                                    [[8, 9], [10, 11]],
+                                    [[14, 15], [12, 13]]]),
+  ('8x2',   [2, 8],    [2, 2, 2], [[0, 1, 2, 3, 6, 7, 4, 5],
+                                    [8, 9, 10, 11, 14, 15, 12, 13]]),
+  ('4x4x2', [4, 4, 2], [2, 2, 4], [[[0, 1], [2, 3],
+                                    [6, 7], [4, 5]],
+                                    [[8, 9], [10, 11],
+                                    [14, 15], [12, 13]],
+                                    [[16, 17], [18, 19],
+                                    [22, 23], [20, 21]],
+                                    [[24, 25], [26, 27],
+                                    [30, 31], [28, 29]]]),
+  ('4x2x4', [4, 2, 4], [2, 2, 4], [[[0, 1, 2, 3], [6, 7, 4, 5]],
+                                    [[8, 9, 10, 11], [14, 15, 12, 13]],
+                                    [[16, 17, 18, 19], [22, 23, 20, 21]],
+                                    [[24, 25, 26, 27], [30, 31, 28, 29]]]),
+  ('8x4',   [8, 4],    [2, 2, 4], [[0, 1, 2, 3], [6, 7, 4, 5],
+                                    [8, 9, 10, 11], [14, 15, 12, 13],
+                                    [16, 17, 18, 19], [22, 23, 20, 21],
+                                    [24, 25, 26, 27], [30, 31, 28, 29]]),
+  ('4x8',   [4, 8],    [2, 2, 4], [[0, 1, 2, 3, 6, 7, 4, 5],
+                                    [8, 9, 10, 11, 14, 15, 12, 13],
+                                    [16, 17, 18, 19, 22, 23, 20, 21],
+                                    [24, 25, 26, 27, 30, 31, 28, 29]]),
+)
 
 
 class MeshUtilsTest(test_util.JaxTestCase):
@@ -651,45 +685,20 @@ class MeshUtilsTest(test_util.JaxTestCase):
       )
 
   @parameterized.named_parameters(
-      #        <-logical-> <-physical->
-      ('1x1x2', [1, 1, 2], [1, 1, 1], [[[0, 1]]]),
-      ('2x1x4', [2, 1, 4], [2, 2, 1], [[[0, 1, 2, 3]], [[6, 7, 4, 5]]]),
-      ('4x1x2', [4, 1, 2], [2, 2, 1], [[[0, 1]], [[2, 3]], [[6, 7]], [[4, 5]]]),
-      ('4x2x2', [4, 2, 2], [2, 2, 2], [[[0, 1], [2, 3]],
-                                       [[6, 7], [4, 5]],
-                                       [[8, 9], [10, 11]],
-                                       [[14, 15], [12, 13]]]),
-      ('8x2',   [2, 8],    [2, 2, 2], [[0, 1, 2, 3, 6, 7, 4, 5],
-                                       [8, 9, 10, 11, 14, 15, 12, 13]]),
-      ('4x4x2', [4, 4, 2], [2, 2, 4], [[[0, 1], [2, 3],
-                                        [6, 7], [4, 5]],
-                                       [[8, 9], [10, 11],
-                                        [14, 15], [12, 13]],
-                                       [[16, 17], [18, 19],
-                                        [22, 23], [20, 21]],
-                                       [[24, 25], [26, 27],
-                                        [30, 31], [28, 29]]]),
-      ('4x2x4', [4, 2, 4], [2, 2, 4], [[[0, 1, 2, 3], [6, 7, 4, 5]],
-                                       [[8, 9, 10, 11], [14, 15, 12, 13]],
-                                       [[16, 17, 18, 19], [22, 23, 20, 21]],
-                                       [[24, 25, 26, 27], [30, 31, 28, 29]]]),
-      ('8x4',   [8, 4],    [2, 2, 4], [[0, 1, 2, 3], [6, 7, 4, 5],
-                                       [8, 9, 10, 11], [14, 15, 12, 13],
-                                       [16, 17, 18, 19], [22, 23, 20, 21],
-                                       [24, 25, 26, 27], [30, 31, 28, 29]]),
-      ('4x8',   [4, 8],    [2, 2, 4], [[0, 1, 2, 3, 6, 7, 4, 5],
-                                       [8, 9, 10, 11, 14, 15, 12, 13],
-                                       [16, 17, 18, 19, 22, 23, 20, 21],
-                                       [24, 25, 26, 27, 30, 31, 28, 29]]),
+      *[(f'{name}_{suffix}', logical, physical, expected, kind)
+        for name, logical, physical, expected in _V7_MESH_TEST_CASES
+        for suffix, kind in [('v7x', mesh_utils._TPU_7X),
+                             ('v7', mesh_utils._TPU_7)]]
   )
   def test_v7x_create_device_mesh(
-      self, logical_mesh_shape, physical_mesh_shape, expected_device_id_mesh
+      self, logical_mesh_shape, physical_mesh_shape, expected_device_id_mesh,
+      device_kind
   ):
     global_devices = mock_tpu_devices(
         physical_mesh_shape[0],
         physical_mesh_shape[1],
         physical_mesh_shape[2],
-        mesh_utils._TPU_7X,
+        device_kind,
         one_device_per_chip=False,
     )
     mesh = mesh_utils.create_device_mesh(
@@ -698,8 +707,12 @@ class MeshUtilsTest(test_util.JaxTestCase):
     device_id_mesh = np.vectorize(lambda d: d.id)(mesh)
     self.assertAllClose(device_id_mesh, np.array(expected_device_id_mesh))
 
-  def test_v7x_create_device_mesh_fallback(self):
-    devices = mock_tpu_devices(2, 4, 4, mesh_utils._TPU_7X,
+  @parameterized.named_parameters(
+      ('v7x', mesh_utils._TPU_7X),
+      ('v7', mesh_utils._TPU_7),
+  )
+  def test_v7x_create_device_mesh_fallback(self, device_kind):
+    devices = mock_tpu_devices(2, 4, 4, device_kind,
                                one_device_per_chip=False)
     mesh = mesh_utils.create_device_mesh(
         (1, 32), devices=devices[:32], contiguous_submeshes=False)
