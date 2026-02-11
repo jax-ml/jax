@@ -1454,7 +1454,7 @@ class JaxExportTest(jtu.JaxTestCase):
     a = jax.device_put(np.ones((2, 3), dtype=np.float32), shd)
     f = jax.jit(lambda x: x)
 
-    exported = get_exported(f, platforms=("tpu", "cuda"))(a)
+    exported = get_exported(f, platforms=("tpu", "cuda", "rocm"))(a)
     self.assertEqual(exported.in_avals[0].memory_space, core.MemorySpace.Host)
     self.assertEqual(exported.out_avals[0].memory_space, core.MemorySpace.Host)
 
@@ -1481,7 +1481,7 @@ class JaxExportTest(jtu.JaxTestCase):
     f = jax.jit(lambda: jnp.ones((2, 2), dtype=np.float32),
                 out_shardings=shd)
 
-    exported = get_exported(f, platforms=("tpu", "cuda"))()
+    exported = get_exported(f, platforms=("tpu", "cuda", "rocm"))()
     self.assertEqual(exported.out_avals[0].memory_space, core.MemorySpace.Host)
     empty_mesh = jax.sharding.AbstractMesh((), ())
     shd_ns = jax.sharding.NamedSharding(empty_mesh, P(None, None),
