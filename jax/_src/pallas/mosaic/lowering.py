@@ -734,6 +734,33 @@ def lower_jaxpr_to_module(
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
 ) -> ir.Module:
+  module = ir.Module.create()
+  lower_jaxpr_into_module(
+      lowering_context,
+      module,
+      grid_mapping,
+      jaxpr,
+      name=mlir.sanitize_name(jaxpr.debug_info.func_name),
+      dimension_semantics=dimension_semantics,
+      kernel_type=kernel_type,
+      mesh=mesh,
+      dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
+  )
+  return module
+
+
+def lower_jaxpr_into_module(
+    lowering_context: mlir.LoweringRuleContext,
+    module: ir.Module,
+    grid_mapping: pallas_core.GridMapping,
+    jaxpr: jax_core.Jaxpr,
+    *,
+    name: str,
+    dimension_semantics: Sequence[tpu_core.DimensionSemantics] | None,
+    kernel_type: tpu_core.KernelType,
+    mesh: mesh_lib.Mesh | None = None,
+    dynamic_shape_replacement_enabled: bool = False,
+) -> None:
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
   if backend is not None and is_cloud_tpu_older_than(2025, 8, 1, backend):
@@ -771,12 +798,10 @@ def lower_jaxpr_to_module(
       dynamic_shape_replacement_fn,
   )
   mosaic_grid_mapping.maybe_compress_grid()
-  m = ir.Module.create()
-  attrs = m.operation.attributes
-  module_name = mlir.sanitize_name(debug_info.func_name)
+  attrs = module.operation.attributes
+  module_name = name
   attrs["sym_name"] = ir.StringAttr.get(module_name)
-  sym_tab = ir.SymbolTable(m.operation)
-
+  sym_tab = ir.SymbolTable(module.operation)
   func_op = lower_jaxpr_to_func(
       jaxpr,
       mosaic_grid_mapping=mosaic_grid_mapping,
@@ -787,7 +812,8 @@ def lower_jaxpr_to_module(
       dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
       backend=backend,
   )
-  m.body.append(func_op)
+  module.body.append(func_op)
+  assert "main" not in sym_tab
   sym_tab.insert(func_op)
   window_params = []
   static_grid = None
@@ -891,7 +917,7 @@ def lower_jaxpr_to_module(
             f"#tpu.pipeline_mode<{pipeline_mode_str}>"
         )
       window_params.append(ir.DictAttr.get(block_params))
-      m.body.append(mlir_func)
+      module.body.append(mlir_func)
       sym_tab.insert(mlir_func)
     func_op.attributes["window_params"] = ir.ArrayAttr.get(window_params)
 
@@ -980,7 +1006,7 @@ def lower_jaxpr_to_module(
         ).mlir_module()
         arg_names = args_dimvars
         # See Note - On Export Placeholders for more details.
-        m.operation.attributes[
+        module.operation.attributes[
             "tpu.dynamic_dimension_mapping_module_" + str(placeholder)
         ] = ir.StringAttr.get(str(stablehlo))
         arg_locs_attr = []
@@ -1002,10 +1028,9 @@ def lower_jaxpr_to_module(
               "dimension_index": dim_idx,
           })
           arg_locs_attr.append(loc_attr)
-        m.operation.attributes[
+        module.operation.attributes[
             "tpu.dynamic_dimension_mapping_indices_" + str(placeholder)
         ] = ir.ArrayAttr.get(arg_locs_attr)
-  return m
 
 
 def lower_jaxpr_to_transform_func(
