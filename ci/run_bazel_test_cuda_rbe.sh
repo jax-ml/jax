@@ -48,8 +48,16 @@ fi
 # Run Bazel GPU tests with RBE (single accelerator tests with one GPU apiece).
 echo "Running RBE GPU tests..."
 
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
+  FREETHREADED_FLAG_VALUE="yes"
+else
+  FREETHREADED_FLAG_VALUE="no"
+fi
+
 bazel test --config=rbe_linux_x86_64_cuda${JAXCI_CUDA_VERSION} \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
+      --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
       $OVERRIDE_XLA_REPO \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --test_output=errors \
