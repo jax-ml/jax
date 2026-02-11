@@ -903,27 +903,30 @@ def tile_strides(
   to_ordered = lambda i: tiled_ordered_strides.index(tiled_strides[i])
   from_ordered = lambda i: tiled_strides.index(tiled_ordered_strides[i])
 
-  ordered_tiling = [tiling[to_ordered(i)] for i in range(len(tiling))]
-  ordered_tiled_strides = [tiled_strides[to_ordered(i)] for i in range(len(tiling))]
+  ordered_tiling = [tiling[from_ordered(i)] for i in range(len(tiling))]
+  ordered_tiled_strides = [tiled_strides[from_ordered(i)] for i in range(len(tiling))]
 
   ordered_tiled_tiling_strides = [1]
   for t in reversed(ordered_tiling):
     ordered_tiled_tiling_strides.append(ordered_tiled_tiling_strides[-1] * t)
 
+  prev_s = ordered_tiled_strides[-1]
   for s, t in zip(ordered_tiled_strides[:-1][::-1], ordered_tiling[1:][::-1], strict=True):
-    if s % t != 0:
+    d = prev_s * t
+    prev_s = s
+    if s % d != 0:
       raise ValueError(
-          f"Stride {s} is not divisible by tile size {t}. Strides: {strides}, "
-          f"tiling: {tiling}"
+          f"Stride {s} is not divisible by {d} (tile size = {t}). "
+          f"Strides: {strides}, tiling: {tiling}"
       )
-    ordered_tiled_tiling_strides.append(s // t * ordered_tiled_tiling_strides[-1])
+    ordered_tiled_tiling_strides.append(s // d * ordered_tiled_tiling_strides[-1])
 
   ordered_tiled_tiling_strides.reverse()
 
   return (
       *untiled_strides,
-      *[ordered_tiled_tiling_strides[from_ordered(i)] for i in range(len(tiling))],
-      *[ordered_tiled_tiling_strides[len(tiling) + from_ordered(i)] for i in range(len(tiling))]
+      *[ordered_tiled_tiling_strides[to_ordered(i)] for i in range(len(tiling))],
+      *[ordered_tiled_tiling_strides[len(tiling) + to_ordered(i)] for i in range(len(tiling))]
   )
 
 

@@ -38,6 +38,14 @@ from jax.experimental.mosaic.gpu import layouts
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
 
+try:
+  import hypothesis as hp  # pylint: disable=g-import-not-at-top
+  import hypothesis.strategies as hps  # pylint: disable=g-import-not-at-top
+  jtu.setup_hypothesis()
+except ImportError:
+  hp = hps = None
+
+
 _cext = mgpu.dialect._cext if mgpu.dialect is not None else None
 
 
@@ -1562,6 +1570,76 @@ class DialectLoweringTest(MosaicGpuTest):
     self.assertEqual(tuple(tiled_type.shape), (8, 8, 8, 16))
     self.assertEqual(tuple(tiled_strides), (128, 4096, 1, 8))
     self.assertEqual(tiled_offset, 128 // 16 * 4096 + 32 // 8 * 128)
+
+  def test_transform_type_handles_transposed_type_correctly(self):
+    shape = (256, 256, 256, 256)
+    tiling = (16, 32, 64, 128)
+    permute = lambda tup: tuple(tup[i] for i in (1, 2, 0, 3))
+    unpermute = lambda tup: tuple(tup[i] for i in (2, 0, 1, 3))
+    strides = unpermute(mgpu_utils.get_contiguous_strides(permute(shape)))
+    ty = ir.MemRefType.get(
+        shape,
+        ir.BF16Type.get(),
+        memory_space=mgpu_utils.smem(),
+        layout=ir.StridedLayoutAttr.get(0, strides),
+    )
+    transforms = (launch_context.TileTransform(tiling),)
+    tiled_type = lowering.transform_type(ty, transforms)
+    tiled_strides, tiled_offset = tiled_type.get_strides_and_offset()
+    tiled_shape = (16, 8, 4, 2, 16, 32, 64, 128)
+    self.assertEqual(tuple(tiled_type.shape), (16, 8, 4, 2, 16, 32, 64, 128))
+    self.assertEqual(tiled_offset, 0)
+
+    permuted_tile, permuted_tiling = permute(tiled_shape[:4]), permute(
+        tiled_shape[4:]
+    )
+    permuted_expected_strides = mgpu_utils.get_contiguous_strides(
+        permuted_tile + permuted_tiling
+    )
+    expected_tile_strides = unpermute(permuted_expected_strides[:4])
+    expected_tiling_strides = unpermute(permuted_expected_strides[4:])
+    self.assertEqual(
+        tuple(tiled_strides), expected_tile_strides + expected_tiling_strides
+    )
+
+
+if hp is not None:
+  @hps.composite
+  def shape_and_tiling(draw):
+    rank = draw(hps.integers(2, 8))
+    tiling_rank = draw(hps.integers(1, rank))
+    shape = tuple(
+        draw(hps.sampled_from([32, 64, 128, 256, 512])) for _ in range(rank)
+    )
+    tiling = tuple(
+        draw(hps.sampled_from([4, 8, 16, 32])) for _ in range(tiling_rank)
+    )
+    return shape, tiling
+
+  class HypothesisTest(MosaicGpuTest):
+
+    def test_transform_type_tiles_contiguous_type_correctly(self):
+      @hp.given(shape_and_tiling())
+      def run(args):
+        shape, tiling = args
+        i32 = ir.IntegerType.get_signless(32)
+        strides = mgpu_utils.get_contiguous_strides(shape)
+        ref_ty = ir.MemRefType.get(
+            shape, i32, memory_space=mgpu_utils.smem(),
+            layout=ir.StridedLayoutAttr.get(0, strides))
+        tiled_type = lowering.transform_type(ref_ty, (launch_context.TileTransform(tiling),))
+        expected_shape = (
+            *shape[:-len(tiling)],
+            *[s // t for s, t in zip(shape[-len(tiling):], tiling)],
+            *tiling
+        )
+        expected_strides = mgpu_utils.get_contiguous_strides(expected_shape)
+        strides, offset = tiled_type.get_strides_and_offset()
+
+        self.assertEqual(tuple(tiled_type.shape), expected_shape)
+        self.assertEqual(offset, 0)
+        self.assertEqual(tuple(strides), tuple(expected_strides))
+      run()
 
 
 if __name__ == "__main__":
