@@ -40,7 +40,8 @@ limitations under the License.
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
-#include "xla/ffi/ffi_api.h"
+#include "xla/ffi/ffi_registry.h"
+#include "xla/ffi/ffi_interop.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/dlpack_types.h"
 #include "xla/python/nb_numpy.h"
