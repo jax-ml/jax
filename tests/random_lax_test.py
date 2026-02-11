@@ -963,7 +963,7 @@ class DistributionsTest(RandomTestBase):
                         check_dtypes=False)
 
   @jtu.sample_product(method=['cholesky', 'eigh', 'svd'])
-  @jtu.skip_on_devices('gpu', 'tpu')  # Some NaNs on accelerators.
+  @jtu.skip_on_devices('cuda', 'tpu')  # Some NaNs on accelerators. Passing on ROCm
   def testMultivariateNormalSingularCovariance(self, method):
     # Singular covariance matrix https://github.com/jax-ml/jax/discussions/13293
     mu = jnp.zeros((2,))
