@@ -10419,8 +10419,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "cannot contain unreduced"):
       jnp.reshape(np.arange(8), (4, 2), out_sharding=P(unreduced={'x'}))
 
-    with self.assertRaisesRegex(ValueError, "cannot contain unreduced/reduced"):
+    with self.assertRaisesRegex(ValueError, "cannot contain reduced"):
       jnp.reshape(np.arange(8), (4, 2), out_sharding=P(reduced={'x'}))
+
+    arr = jax.reshard(jnp.arange(8), P(unreduced={'x'}))
+    with self.assertRaisesRegex(
+        ValueError, "must be unreduced over the same mesh axes as operand"):
+      jnp.reshape(arr, (4, 2), out_sharding=P('x'))
+
+    arr = jax.reshard(jnp.arange(8), P(reduced={'x'}))
+    with self.assertRaisesRegex(
+        ValueError, "must be reduced over the same mesh axes as operand"):
+      jnp.reshape(arr, (4, 2), out_sharding=P('x'))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

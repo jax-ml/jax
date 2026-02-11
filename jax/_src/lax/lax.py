@@ -2791,10 +2791,6 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
     dims = api_util._ensure_index_tuple(dimensions)
     same_dims = tuple(dims) == tuple(range(np.ndim(operand)))
   out_sharding = canonicalize_sharding(out_sharding, 'reshape')
-  if (out_sharding is not None and
-      (out_sharding.spec.unreduced or out_sharding.spec.reduced)):
-    raise ValueError('out_sharding passed to `reshape` cannot contain '
-                     f'unreduced/reduced axes. Got {out_sharding}')
   same_sharding = (out_sharding is None or
                    typeof(operand).sharding == out_sharding)
 
@@ -7222,14 +7218,32 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes, dimensions):
 
 def _reshape_unreduced_rule(out_s, operand, *, new_sizes, dimensions, sharding):
   if operand.sharding.spec.unreduced:
+    if (sharding is not None and
+        operand.sharding.spec.unreduced != sharding.spec.unreduced):
+      raise ValueError(
+          'out_sharding passed to reshape must be unreduced over the same mesh'
+          f' axes as operand. Got out_sharding: {sharding.spec} and operand'
+          f' type: {operand.str_short(True)}')
     return out_s.update(spec=out_s.spec.update(
         unreduced=operand.sharding.spec.unreduced))
+  if sharding is not None and sharding.spec.unreduced:
+    raise ValueError('out_sharding passed to `reshape` cannot contain '
+                     f'unreduced axes. Got {sharding}')
   return out_s
 
 def _reshape_reduced_rule(out_s, operand, *, new_sizes, dimensions, sharding):
   if operand.sharding.spec.reduced:
+    if (sharding is not None and
+        operand.sharding.spec.reduced != sharding.spec.reduced):
+      raise ValueError(
+          'out_sharding passed to reshape must be reduced over the same mesh'
+          f' axes as operand. Got out_sharding: {sharding.spec} and operand'
+          f' type: {operand.str_short(True)}')
     return out_s.update(spec=out_s.spec.update(
         reduced=operand.sharding.spec.reduced))
+  if sharding is not None and sharding.spec.reduced:
+    raise ValueError('out_sharding passed to `reshape` cannot contain '
+                     f'reduced axes. Got {sharding}')
   return out_s
 
 def _reshape_typecheck_rule(_, operand, new_sizes, dimensions,
