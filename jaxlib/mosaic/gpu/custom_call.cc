@@ -118,7 +118,9 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/ffi.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
+#include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
+#include "xla/backends/gpu/runtime/collective_kernel_utils.h"
 #include "xla/backends/gpu/runtime/collective_metadata_thunk.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/core/collectives/rank_id.h"
@@ -697,10 +699,24 @@ void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,
                                          "CUDA");
 
+struct DeviceState {
+  // Stores serialized CollectiveKernelMetadata | param_to_peers array
+  std::vector<char> cpu_metadata;
+  se::DeviceAddressBase barrier_signal_value_buffer;
+  std::vector<se::DeviceAddressBase> peer_barrier_signal_buffers;
+};
+
+// TODO(b/481949311): Register type with FFI and use absl::flat_hash_map instead
+// of std::map after.
 struct CustomCallResources {
   CustomCallResources(CompiledKernel* kernel) : kernel(kernel) {}
   CompiledKernel* kernel = nullptr;
 };
+
+// TODO(b/481949311): Move this to CustomCallResources and use
+// absl::flat_hash_map instead of std::map after FFI usage is fixed.
+absl::NoDestructor<std::map<std::pair<CustomCallResources*, int>, DeviceState>>
+    device_states;
 
 // Validate custom call attributes and compile the kernel.
 absl::StatusOr<std::unique_ptr<CustomCallResources>> InstantiateResources(
@@ -818,41 +834,82 @@ GetCliqueDeviceGroups(const xla::gpu::CollectiveParams& collective_params,
   return device_groups;
 }
 
-// Creates a collective metadata, stores the device version in a provided
-// location and returns the pointer to the CPU version of the metadata.
-absl::StatusOr<std::vector<char>> CreateCollectiveMetadata(
-    const xla::gpu::GpuCliqueKey& clique_key, xla::RankId current_rank,
-    se::Stream* stream, se::DeviceAddressBase collective_metadata_ptr,
-    std::vector<se::DeviceAddressBase> parameters) {
-  TF_ASSIGN_OR_RETURN(
-      std::vector<void*> param_to_peers,
-      xla::gpu::CollectiveMetadataThunk::CollectParamToPeers(
-          clique_key, current_rank, stream, std::move(parameters)));
+struct PtrFormatter {
+  void operator()(std::string* out, const void* ptr) const {
+    absl::StrAppend(out, absl::StrFormat("%p", ptr));
+  }
+};
+
+struct DeviceAddressFormatter {
+  void operator()(std::string* out,
+                  const se::DeviceAddressBase& address) const {
+    absl::StrAppend(out, absl::StrFormat("DeviceAddress(ptr=%p, size=%d)",
+                                         address.opaque(), address.size()));
+  }
+};
+
+absl::StatusOr<DeviceState> ConstructDeviceState(
+    const xla::gpu::GpuCliqueKey& clique_key, xla::RankId rank,
+    se::Stream* stream, std::vector<se::DeviceAddressBase> parameters) {
+  se::DeviceAddressBase collective_metadata_address = parameters.back();
+  const int collective_metadata_index = parameters.size() - 1;
+  TF_ASSIGN_OR_RETURN(std::vector<void*> param_to_peers,
+                      xla::gpu::CollectiveMetadataThunk::CollectParamToPeers(
+                          clique_key, rank, stream, std::move(parameters)));
   TF_ASSIGN_OR_RETURN(
       CollectiveKernelMetadata metadata,
       xla::gpu::CollectiveMetadataThunk::CreateCollectiveMetadata(
-          clique_key, current_rank, stream,
+          clique_key, rank, stream,
           // TODO(patrios): Add multimem support.
           /*multimem=*/nullptr));
   TF_RETURN_IF_ERROR(
       xla::gpu::CollectiveMetadataThunk::CopyCollectiveMetadataToDevice(
-          stream, metadata, param_to_peers, collective_metadata_ptr));
+          stream, metadata, param_to_peers, collective_metadata_address));
 
   // Copy the metadata and param to peers array to the CPU RAM for the TMA
   // initialization.
   const size_t param_to_peers_size_bytes =
       param_to_peers.size() * sizeof(void*);
-  std::vector<char> cpu_metadata_buffer(sizeof(CollectiveKernelMetadata) +
-                                        param_to_peers_size_bytes);
+  const size_t metadata_size_bytes =
+      sizeof(CollectiveKernelMetadata) + param_to_peers_size_bytes;
 
-  // Reset the pointer [to peer arrays to the existing pointer in the CPU RAM].
+  DeviceState device_state;
+  device_state.cpu_metadata.reserve(metadata_size_bytes);
   metadata.param_to_peers = reinterpret_cast<void**>(
-      cpu_metadata_buffer.data() + sizeof(CollectiveKernelMetadata));
-  std::memcpy(cpu_metadata_buffer.data(), &metadata,
+      device_state.cpu_metadata.data() + sizeof(CollectiveKernelMetadata));
+  std::memcpy(device_state.cpu_metadata.data(), &metadata,
               sizeof(CollectiveKernelMetadata));
   std::memcpy(metadata.param_to_peers, param_to_peers.data(),
               param_to_peers_size_bytes);
-  return cpu_metadata_buffer;
+
+  const size_t barrier_signal_buffer_size = 2 * sizeof(uint64_t);
+  se::DeviceAddressBase barrier_signal_buffer =
+      collective_metadata_address.GetByteSlice(metadata_size_bytes,
+                                               barrier_signal_buffer_size);
+  TF_RETURN_IF_ERROR(
+      stream->MemZero(&barrier_signal_buffer, barrier_signal_buffer_size));
+  device_state.peer_barrier_signal_buffers.resize(clique_key.num_devices());
+  const int collective_metadata_peer_offset =
+      collective_metadata_index * clique_key.num_devices();
+  for (int i = 0; i < clique_key.num_devices(); ++i) {
+    void* barrier_address = reinterpret_cast<void*>(
+        reinterpret_cast<uint64_t>(
+            param_to_peers[collective_metadata_peer_offset + i]) +
+        metadata_size_bytes);
+
+    device_state.peer_barrier_signal_buffers[i] =
+        se::DeviceAddressBase(barrier_address, barrier_signal_buffer_size);
+  }
+  device_state.barrier_signal_value_buffer =
+      barrier_signal_buffer.GetByteSlice(sizeof(uint64_t), sizeof(uint64_t));
+  VLOG(6) << "[" << rank << "] Constructed device state {"
+          << " metadata rank: " << metadata.rank << ", param_to_peers: ("
+          << absl::StrJoin(param_to_peers, ", ", PtrFormatter{})
+          << "), peer_barrier_signal_buffers: ("
+          << absl::StrJoin(device_state.peer_barrier_signal_buffers, ", ",
+                           DeviceAddressFormatter{})
+          << ")}";
+  return device_state;
 }
 
 absl::Status MosaicGpuInitialize(
@@ -867,40 +924,39 @@ absl::Status MosaicGpuInitialize(
     return absl::OkStatus();
   }
 
-  // When several devices handled with a single process we also need to
-  // construct the collective metadata and store it to the last buffer.
   TF_ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
                       GetBuffers(inputs, results));
-
+  // Parameters which are going to be exchanged with peer ranks to construct
+  // collective metadata.
   std::vector<se::DeviceAddressBase> parameters;
-  // Reserve space for input and output buffers, except the
-  // collective metadata buffer.
-  parameters.reserve(buffers.size() - 1);
-
-  // Add all result buffers except the collective metadata buffer.
-  for (int i = 0; i < buffers.size() - 1; ++i) {
-    xla::ffi::AnyBuffer input_buffer = buffers[i];
-    parameters.push_back(input_buffer.device_memory());
+  parameters.reserve(buffers.size());
+  for (int i = 0; i < buffers.size(); ++i) {
+    xla::ffi::AnyBuffer buffer = buffers[i];
+    parameters.push_back(buffer.device_memory());
   }
 
   TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
                       GetCliqueKey(*collective_params, attributes));
 
-  // The last output buffer is used as the collective metadata buffer.
-  se::DeviceAddressBase collective_metadata_ptr =
-      buffers.back().device_memory();
-
   auto current_rank =
       clique_key.rank(collective_params->global_device_id).value();
-  TF_ASSIGN_OR_RETURN(
-      std::vector<char> cpu_metadata_buffer,
-      CreateCollectiveMetadata(clique_key, current_rank, stream,
-                               collective_metadata_ptr, std::move(parameters)));
+  TF_ASSIGN_OR_RETURN(DeviceState device_state,
+                      ConstructDeviceState(clique_key, current_rank, stream,
+                                           std::move(parameters)));
+
+  auto device_id = collective_params->global_device_id.value();
+  auto key = std::make_pair(resources, device_id);
+  // TODO(b/481949311): Move this to CustomCallResources.
+  // It's okay to only write under the mutex since there is a rendezvous after
+  // initialization.
+  static absl::NoDestructor<absl::Mutex> mutex;
+  absl::MutexLock lock(*mutex);
+  device_states->insert_or_assign(key, std::move(device_state));
   return absl::OkStatus();
 }
 
 absl::Status MosaicGpuExecute(
-    cudaStream_t stream, const xla::gpu::CollectiveParams* collective_params,
+    se::Stream* stream, const xla::gpu::CollectiveParams* collective_params,
     ffi::RemainingArgs inputs, ffi::RemainingRets results,
     CustomCallResources* resources, xla::ffi::Dictionary attributes) {
   std::vector<void*> buffer_ptrs;
@@ -914,11 +970,33 @@ absl::Status MosaicGpuExecute(
 
   CompiledKernel* kernel = resources->kernel;
   TF_ASSIGN_OR_RETURN(auto ctx, CachedInit(kernel));
-  if (kernel->is_comm_used) {
-    NvshmemApi::Default().barrier_all_on_stream(stream);
+
+  cudaStream_t cuda_stream =
+      reinterpret_cast<cudaStream_t>(stream->platform_specific_handle().stream);
+  // Adding a CPU version of the collective metadata for TMA initialization.
+  if (uses_collective_metadata) {
+    DeviceState* device_state;
+    auto device_id = collective_params->global_device_id.value();
+    auto key = std::make_pair(resources, device_id);
+    device_state = &device_states->at(key);
+
+    buffer_ptrs.push_back(device_state->cpu_metadata.data());
+
+    TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
+                        GetCliqueKey(*collective_params, attributes));
+    auto current_rank =
+        clique_key.rank(collective_params->global_device_id).value();
+
+    TF_RETURN_IF_ERROR(xla::gpu::CollectiveKernelUtils::LaunchMultiGpuBarrier(
+        stream, clique_key.num_devices(), current_rank,
+        device_state->peer_barrier_signal_buffers,
+        device_state->barrier_signal_value_buffer));
+  } else if (kernel->is_comm_used) {
+    NvshmemApi::Default().barrier_all_on_stream(cuda_stream);
   }
+
   void** buffers_data = buffer_ptrs.data();
-  void* args[4] = {&ctx, &stream, &buffers_data};
+  void* args[4] = {&ctx, &cuda_stream, &buffers_data};
   kernel->host_launch(args);
   return absl::OkStatus();
 }
@@ -972,7 +1050,7 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuInitialize, MosaicGpuInitialize,
 // - uses_xla_collective_metadata (optional)
 XLA_FFI_DEFINE_HANDLER(kMosaicGpuExecute, MosaicGpuExecute,
                        ffi::Ffi::Bind<ffi::ExecutionStage::kExecute>()
-                           .Ctx<ffi::PlatformStream<cudaStream_t>>()
+                           .Ctx<ffi::Stream>()
                            .Ctx<ffi::CollectiveParams>()
                            .RemainingArgs()
                            .RemainingRets()
