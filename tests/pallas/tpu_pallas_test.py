@@ -2431,7 +2431,9 @@ class PallasCallTest(ptu.PallasTPUTest):
   def test_pltpu_repeat(self, dtype, axis):
     def test_kernel(x_ref, o_ref):
       x = x_ref[...]
-      o_ref[...] = pltpu.repeat(x, 2, axis=axis)
+      reps = [1] * x.ndim
+      reps[axis] = 2
+      o_ref[...] = jnp.tile(x, tuple(reps))
 
     @jax.jit
     def test(x: jax.Array) -> jax.Array:
