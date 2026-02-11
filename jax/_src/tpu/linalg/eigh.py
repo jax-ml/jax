@@ -71,7 +71,7 @@ def _mask(x, dims, alternative=0):
   broadcast with `x`.
   """
   assert np.ndim(x) == len(dims)
-  mask = None
+  mask: Array | None = None
   for i, d in enumerate(dims):
     if d is not None:
       mask_dim_i = lax.broadcasted_iota(np.int32, x.shape, i) < d
@@ -494,12 +494,12 @@ def _eigh_work(H, n, termination_size, subset_by_index):
       buckets.append(bucket_size)
       branches.append(partial(recursive_case, bucket_size))
       i = i // 2
-  buckets = jnp.array(buckets, dtype=np.int32)
+  buckets_arr = jnp.array(buckets, dtype=np.int32)
 
   def loop_body(state):
     agenda, blocks, eigenvectors = state
     (offset, b), agenda = agenda.pop()
-    which = jnp.where(buckets < b, dtypes.iinfo(np.int32).max, buckets)
+    which = jnp.where(buckets_arr < b, dtypes.iinfo(np.int32).max, buckets_arr)
     choice = jnp.argmin(which)
     return lax.switch(choice, branches, offset, b, agenda, blocks, eigenvectors)
 
@@ -545,7 +545,7 @@ def eigh(
     raise ValueError('Static size must be greater or equal to dynamic size.')
 
   compute_slice = False
-  if not subset_by_index is None:
+  if subset_by_index is not None:
     compute_slice = subset_by_index != (0, n)
     if len(subset_by_index) != 2:
       raise ValueError('subset_by_index must be a tuple of size 2.')
@@ -565,7 +565,7 @@ def eigh(
         subset_by_index=None, symmetrize_input=False,
         implementation=lax_linalg.EighImplementation.JACOBI,
     )
-    if compute_slice:
+    if subset_by_index is not None and compute_slice:
       eig_vals = eig_vals[subset_by_index[0] : subset_by_index[1]]
       eig_vecs = eig_vecs[:, subset_by_index[0] : subset_by_index[1]]
     return eig_vals, eig_vecs

@@ -361,9 +361,8 @@ def lu_pivots_to_permutation(pivots: ArrayLike, permutation_size: int) -> Array:
   return lu_pivots_to_permutation_p.bind(
       pivots, permutation_size=permutation_size)
 
-
 @overload
-def qr(x: ArrayLike, *, pivoting: Literal[False], full_matrices: bool = True,
+def qr(x: ArrayLike, *, pivoting: Literal[False] = False, full_matrices: bool = True,
       use_magma: bool | None = None) -> tuple[Array, Array]:
   ...
 

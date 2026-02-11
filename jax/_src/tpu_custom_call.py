@@ -125,9 +125,9 @@ class CostEstimate(TypedDict):
   flops: int
   transcendentals: int
   bytes_accessed: int
-  remote_bytes_transferred: int = 0
+  remote_bytes_transferred: int
 
-  def to_json(self) -> bytes:
+  def to_json(self) -> bytes:  # pyrefly: ignore[bad-class-definition]
     return (
         f'{{"flops": {self["flops"]}, "transcendentals":'
         f' {self["transcendentals"]}, "bytes_accessed":'
@@ -410,7 +410,7 @@ def _lower_mosaic_module_to_asm(
     *,
     ir_version: int | None = None,
 ) -> tuple[ir.Module, tuple[bool, bool]]:
-  has_communication, has_custom_barrier = tpu.private_has_communication(
+  has_communication, has_custom_barrier = tpu.private_has_communication(  # pyrefly: ignore[missing-attribute]
       module.operation
   )
   # We'll mutate the module, so clone it

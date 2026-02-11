@@ -144,6 +144,11 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
       -1.493439396592284e1,
       +9.999841934744914e-1,
     ], dtype=np.float32)
+
+    fresnl_cd = jnp.empty(0)
+    fresnl_sd = jnp.empty(0)
+    fresnl_fd = jnp.empty(0)
+    fresnl_gd = jnp.empty(0)
   elif xxa.dtype == np.float64:
     # Double-precision Cephes coefficients
 
