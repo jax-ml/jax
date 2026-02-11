@@ -167,6 +167,7 @@ def is_tpu_device() -> bool:
       "TPU v6 lite",
       "TPU v6e",
       "TPU7x",
+      "TPU7",
   }
 
 
@@ -334,7 +335,7 @@ def get_tpu_info() -> TpuInfo:
               dma_granule_size_bytes=32,
           ),
       )
-    case "TPU7x":
+    case "TPU7x" | "TPU7":
       num_cores = core.get_num_device_cores()
       num_chip_cores = 2
       return TpuInfo(

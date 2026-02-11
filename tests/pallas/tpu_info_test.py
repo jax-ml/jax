@@ -47,6 +47,8 @@ class TpuInfoTest(jtu.JaxTestCase):
         self.assertEqual(info.chip_version, pltpu.ChipVersion.TPU_V6E)
       case "TPU7x":
         self.assertEqual(info.chip_version, pltpu.ChipVersion.TPU_7X)
+      case "TPU7":
+        self.assertEqual(info.chip_version, pltpu.ChipVersion.TPU_7X)
       case _:
         self.fail(f"Unexpected device kind: {device.device_kind}")
 
