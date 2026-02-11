@@ -1979,7 +1979,7 @@ def concatenate(operands: Array | Sequence[ArrayLike], dimension: int) -> Array:
   return concatenate_p.bind(*operands, dimension=dimension)
 
 
-def split(operand: ArrayLike, sizes: Sequence[int],
+def split(operand: ArrayLike, sizes: Sequence[DimSize],
           axis: int = 0) -> Sequence[Array]:
   """Splits an array along ``axis``.
 

@@ -44,9 +44,9 @@ from jax._src.numpy import array_api_metadata
 from jax._src.numpy import array_creation
 from jax._src.numpy import indexing
 from jax._src.numpy import lax_numpy
-from jax._src.numpy import tensor_contractions
 from jax._src.numpy import reductions
 from jax._src.numpy import sorting
+from jax._src.numpy import tensor_contractions
 from jax._src.numpy import ufuncs
 from jax._src.pjit import PartitionSpec
 from jax._src.sharding import Sharding
@@ -1017,7 +1017,7 @@ class _IndexUpdateRef:
                                    unique_indices=unique_indices, mode=mode,
                                    normalize_indices=wrap_negative_indices)
 
-_array_operators = {
+_array_operators: dict[str, Callable[..., Any]] = {
   "getitem": _getitem,
   "setitem": _unimplemented_setitem,
   "copy": _copy,
@@ -1154,10 +1154,9 @@ def _forward_method_to_aval(name):
   return meth
 
 def _forward_property_to_aval(name):
-  @property
   def prop(self):
     return getattr(self.aval, name).fget(self)
-  return prop
+  return property(prop)
 
 def _set_tracer_aval_forwarding(tracer, exclude=()):
   for operator_name in _array_operators:
@@ -1193,11 +1192,10 @@ def _set_array_attributes(array_impl):
   setattr(array_impl, "__array_module__", __array_module__)
 
 def _make_abstract_method(name, func):
-  @abc.abstractmethod
   @wraps(func)
   def method(*args, **kwargs):
     raise NotImplementedError(f"Cannot call abstract method {name}")
-  return method
+  return abc.abstractmethod(method)
 
 def _set_array_abstract_methods(basearray):
   for operator_name, function in _array_operators.items():

@@ -256,7 +256,7 @@ class ufunc:
     reduce = self.__static_props['reduce'] or self._reduce_via_scan
     return reduce(a, axis=axis, dtype=dtype, keepdims=keepdims, initial=initial, where=where)
 
-  def _reduce_via_scan(self, arr: ArrayLike, axis: int | None = 0, dtype: DTypeLike | None = None,
+  def _reduce_via_scan(self, arr: ArrayLike, axis: int | tuple[int, ...] | None = 0, dtype: DTypeLike | None = None,
                        keepdims: bool = False, initial: ArrayLike | None = None,
                        where: ArrayLike | None = None) -> Array:
     assert self.nin == 2 and self.nout == 1

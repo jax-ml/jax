@@ -20,6 +20,8 @@ del os, traceback_util
 
 # Import a subset of objects from `lax` for internal use.
 
+from jax._src.lax import linalg as linalg
+
 from jax._src.lax.lax import (
   DotAlgorithmPreset as DotAlgorithmPreset,
   Precision as Precision,

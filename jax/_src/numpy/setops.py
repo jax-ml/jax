@@ -402,6 +402,7 @@ def _intersect1d_size(arr1: Array, arr2: Array, fill_value: ArrayLike | None, as
     val_indices = nonzero(aux_mask, size=size, fill_value=aux.size)[0]
     vals = aux.at[val_indices].get(mode='fill', fill_value=0)
   else:
+    val_indices = arange(0)
     vals = zeros(size, aux.dtype)
   if fill_value is None:
     vals = where(arange(len(vals)) < num_results, vals, vals.max())
@@ -509,6 +510,7 @@ def intersect1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
     return _intersect1d_size(arr1, arr2, return_indices=return_indices,
                              size=size, fill_value=fill_value, assume_unique=assume_unique)
 
+  ind1 = ind2 = arange(0)
   if not assume_unique:
     if return_indices:
       arr1, ind1 = unique(arr1, return_index=True)
@@ -596,7 +598,7 @@ def _unique_sorted_mask(ar: Array, axis: int, equal_nan: bool) -> tuple[Array, A
       neq = lambda x, y: lax.ne(x, y) & ~(isnan(x) & isnan(y))
     else:
       neq = lax.ne
-    mask = ones(size, dtype=bool).at[1:].set(any(neq(aux[1:], aux[:-1]), tuple(range(1, aux.ndim))))
+    mask = ones(size, dtype=bool).at[1:].set(any(neq(aux[1:], aux[:-1]), tuple(range(1, aux.ndim))))  # pyrefly: ignore[bad-argument-count]  # redefined builtin
   else:
     mask = zeros(size, dtype=bool)
   return aux, mask, perm

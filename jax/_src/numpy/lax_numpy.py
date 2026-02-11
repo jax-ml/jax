@@ -31,7 +31,7 @@ from functools import partial
 import math
 import operator
 import os
-from typing import Any, IO, Literal, Protocol, TypeVar, Union, overload
+from typing import Any, IO, Literal, Protocol, TypeVar, Union, cast, overload
 
 import numpy as np
 
@@ -266,7 +266,9 @@ def fmin(x1: ArrayLike, x2: ArrayLike) -> Array:
     Array([[ 2.,  3., nan],
            [inf,  5.,  7.]], dtype=float32)
   """
-  return where(ufuncs.less(x1, x2) | ufuncs.isnan(x2), x1, x2)
+  # TODO(jakevdp) remove cast when jit type annotations improve
+  mask = cast(Array, ufuncs.less(x1, x2) | ufuncs.isnan(x2))
+  return where(mask, x1, x2)
 
 
 @export
@@ -316,7 +318,9 @@ def fmax(x1: ArrayLike, x2: ArrayLike) -> Array:
     Array([[ inf,   6.,   7.,  nan],
            [ inf,   9., -inf,  -1.]], dtype=float32)
   """
-  return where(ufuncs.greater(x1, x2) | ufuncs.isnan(x2), x1, x2)
+  # TODO(jakevdp) remove cast when jit type annotations improve
+  mask = cast(Array, ufuncs.greater(x1, x2) | ufuncs.isnan(x2))
+  return where(mask, x1, x2)
 
 
 @export
@@ -1854,7 +1858,7 @@ def gradient(
   elif len(spacing) == len(axis_tuple):
     dx = list(spacing)
   else:
-    TypeError(f"Invalid number of spacing arguments {len(spacing)} for {axis=}")
+    raise TypeError(f"Invalid number of spacing arguments {len(spacing)} for {axis=}")
 
   a_grad = [gradient_along_axis(a, h, ax) for ax, h in zip(axis_tuple, dx)]
   return a_grad[0] if len(axis_tuple) == 1 else a_grad
@@ -3463,7 +3467,7 @@ def round(a: ArrayLike, decimals: int = 0, out: None = None) -> Array:
 @api.jit(static_argnames=('decimals',))
 def around(a: ArrayLike, decimals: int = 0, out: None = None) -> Array:
   """Alias of :func:`jax.numpy.round`"""
-  return round(a, decimals, out)
+  return round(a, decimals, out)  # pyrefly: ignore[no-matching-overload]
 
 
 @export
@@ -6440,7 +6444,7 @@ def _repeat(repeats, arr, *, axis: int,
     repeats = np.ravel(repeats)
     if arr.ndim != 0:
       repeats = np.broadcast_to(repeats, [arr.shape[axis]])
-    total_repeat_length = np.sum(repeats)
+    total_repeat_length = int(np.sum(repeats))
   else:
     repeats = ravel(repeats)
     if arr.ndim != 0:
@@ -9224,7 +9228,7 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
       raise RuntimeError("incompatible numbers of samples and aweights")
     # Ensure positive aweights: note that numpy raises an error for negative aweights.
     aweights = abs(aweights)
-    w = aweights if w is None else w * aweights
+    w = asarray(aweights if w is None else w * aweights) # pyrefly: ignore[unsupported-operation]
 
   if dtype is not None:
     X = X.astype(dtype)

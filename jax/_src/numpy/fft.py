@@ -84,7 +84,7 @@ def _fft_core(func_name: str, fft_type: lax_fft.FftType, a: ArrayLike,
     if fft_type == lax_fft.FftType.IRFFT:
       in_s[-1] = (in_s[-1] // 2 + 1)
     # Cropping
-    arr = arr[tuple(map(slice, in_s))]
+    arr = arr[tuple(slice(s) for s in in_s)]
     # Padding
     arr = jnp.pad(arr, [(0, x-y) for x, y in zip(in_s, arr.shape)])
   else:

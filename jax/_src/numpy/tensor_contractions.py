@@ -544,7 +544,7 @@ def tensordot(a: ArrayLike, b: ArrayLike,
     contracting_dims = tuple(range(a_ndim - axes, a_ndim)), tuple(range(axes))
   elif isinstance(axes, (tuple, list)) and len(axes) == 2:
     ax1, ax2 = axes
-    if type(ax1) == type(ax2) == int:
+    if isinstance(ax1, int) and isinstance(ax2, int):
       contracting_dims = ((canonicalize_axis(ax1, a_ndim),),
                           (canonicalize_axis(ax2, b_ndim),))
     elif isinstance(ax1, (tuple, list)) and isinstance(ax2, (tuple, list)):

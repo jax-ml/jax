@@ -743,7 +743,7 @@ def _logsumexp(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   where = check_where("logsumexp", where)
   a_arr, = promote_dtypes_inexact(a)
   pos_dims, dims = _reduction_dims(a_arr, axis)
-  amax = max(a_arr.real, axis=dims, keepdims=keepdims, where=where, initial=-np.inf)
+  amax = max(a_arr.real, axis=dims, keepdims=keepdims, where=where, initial=-np.inf)  # pyrefly: ignore[no-matching-overload]  # redefined builtin
   amax = lax.stop_gradient(lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0)))
   amax_with_dims = amax if keepdims else lax.expand_dims(amax, pos_dims)
   exp_a = lax.exp(lax.sub(a_arr, amax_with_dims.astype(a_arr.dtype)))
@@ -774,7 +774,7 @@ def amin(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, initial: ArrayLike | None = None,
         where: ArrayLike | None = None) -> Array:
   """Alias of :func:`jax.numpy.min`."""
-  return min(a, axis=axis, out=out, keepdims=keepdims,
+  return min(a, axis=axis, out=out, keepdims=keepdims,  # pyrefly: ignore[no-matching-overload]  # redefined builtin
              initial=initial, where=where)
 
 @export
@@ -782,7 +782,7 @@ def amax(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, initial: ArrayLike | None = None,
         where: ArrayLike | None = None) -> Array:
   """Alias of :func:`jax.numpy.max`."""
-  return max(a, axis=axis, out=out, keepdims=keepdims,
+  return max(a, axis=axis, out=out, keepdims=keepdims,  # pyrefly: ignore[no-matching-overload]  # redefined builtin
              initial=initial, where=where)
 
 def _axis_size(a: ArrayLike, axis: int | Sequence[int]):
@@ -878,7 +878,7 @@ def _count(
       count = core.dimension_as_value(_axis_size(a, axis))
     count = lax.convert_element_type(count, dtype)
   else:
-    count = sum(_broadcast_to(where, np.shape(a)), axis, dtype=dtype, keepdims=keepdims)
+    count = sum(_broadcast_to(where, np.shape(a)), axis, dtype=dtype, keepdims=keepdims)  # pyrefly: ignore[no-matching-overload]  # redefined builtin
   return count
 
 @api.jit(static_argnames=('axis', 'dtype', 'keepdims', 'upcast_f16_for_computation'),
@@ -911,7 +911,7 @@ def _mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   )
 
   return lax.div(
-      sum(a, axis, dtype=computation_dtype, keepdims=keepdims, where=where),
+      sum(a, axis, dtype=computation_dtype, keepdims=keepdims, where=where),  # pyrefly: ignore[no-matching-overload]  # redefined builtin
       normalizer,
   ).astype(result_dtype)
 
@@ -984,7 +984,7 @@ def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
 @api.jit(static_argnames=('axis', 'returned', 'keepdims'), inline=True)
 def _average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
              returned: bool = False, keepdims: bool = False) -> Array | tuple[Array, Array]:
-  axis = None if axis is None else canonicalize_axis_tuple(axis, np.ndim(a))
+  axis_tuple = canonicalize_axis_tuple(axis, np.ndim(a))
 
   if weights is None: # Treat all weights as 1
     a = ensure_arraylike("average", a)
@@ -992,8 +992,8 @@ def _average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
     avg = mean(a, axis=axis, keepdims=keepdims)
     if axis is None:
       weights_sum = lax.full((), core.dimension_as_value(a.size), dtype=avg.dtype)
-    elif isinstance(axis, tuple):
-      weights_sum = lax.full((), math.prod(core.dimension_as_value(a.shape[d]) for d in axis), dtype=avg.dtype)
+    else:
+      weights_sum = lax.full((), math.prod(core.dimension_as_value(a.shape[d]) for d in axis_tuple), dtype=avg.dtype)
   else:
     a, weights = ensure_arraylike("average", a, weights)
     a, weights = promote_dtypes_inexact(a, weights)
@@ -1002,14 +1002,14 @@ def _average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
       if axis is None:
         raise ValueError("Axis must be specified when shapes of a and "
                          "weights differ.")
-      if weights.shape != tuple(a.shape[ax] for ax in axis):
+      if weights.shape != tuple(a.shape[ax] for ax in axis_tuple):
         raise ValueError("Shape of weights must be consistent with shape "
                          "of a along specified axis.")
-      new_shape = tuple(dim if i in axis else 1 for i, dim in enumerate(a.shape))
-      weights = lax.reshape(weights, new_shape, dimensions=tuple(np.argsort(axis)))
+      new_shape = tuple(dim if i in axis_tuple else 1 for i, dim in enumerate(a.shape))
+      weights = lax.reshape(weights, new_shape, dimensions=tuple(np.argsort(axis_tuple)))
 
-    weights_sum = sum(weights, axis=axis, keepdims=keepdims)
-    avg = sum(a * weights, axis=axis, keepdims=keepdims) / weights_sum
+    weights_sum = sum(weights, axis=axis, keepdims=keepdims)  # pyrefly: ignore[no-matching-overload]  # redefined builtin
+    avg = sum(a * weights, axis=axis, keepdims=keepdims) / weights_sum  # pyrefly: ignore[no-matching-overload]  # redefined builtin
 
   if returned:
     if avg.shape != weights_sum.shape:
@@ -1142,7 +1142,7 @@ def _var(a: Array, *, axis: Axis = None, dtype: DTypeLike | None = None,
   )
 
   normalizer = lax.sub(normalizer, lax.convert_element_type(correction, computation_dtype))
-  result = sum(centered, axis, dtype=computation_dtype, keepdims=keepdims, where=where)
+  result = sum(centered, axis, dtype=computation_dtype, keepdims=keepdims, where=where)  # pyrefly: ignore[no-matching-overload]  # redefined builtin
   result = lax.div(result, normalizer).astype(dtype)
   with config.debug_nans(False):
     result = _where(normalizer > 0, result, np.nan)
@@ -1364,7 +1364,7 @@ def count_nonzero(a: ArrayLike, axis: Axis = None,
            [3]], dtype=int32)
   """
   a = ensure_arraylike("count_nonzero", a)
-  return sum(lax.ne(a, lax._const(a, 0)), axis=axis,
+  return sum(lax.ne(a, lax._const(a, 0)), axis=axis,  # pyrefly: ignore[no-matching-overload]  # redefined builtin
              dtype=dtypes.default_int_dtype(), keepdims=keepdims)
 
 
@@ -1380,7 +1380,7 @@ def _nan_reduction(a: ArrayLike, name: str, jnp_reduction: Callable[..., Array],
   out = jnp_reduction(_where(lax._isnan(a), _reduction_init_val(a, init_val), a),
                       axis=axis, keepdims=keepdims, where=where, **kwargs)
   if nan_if_all_nan:
-    return _where(all(lax._isnan(a), axis=axis, keepdims=keepdims),
+    return _where(all(lax._isnan(a), axis=axis, keepdims=keepdims),  # pyrefly: ignore[unexpected-keyword]  # redefined builtin
                   lax._const(a, np.nan), out)
   else:
     return out
@@ -1810,7 +1810,7 @@ def nanmean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out
   else:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "mean")
   nan_mask = lax.bitwise_not(lax._isnan(a))
-  normalizer = sum(nan_mask, axis=axis, dtype=dtype, keepdims=keepdims, where=where)
+  normalizer = sum(nan_mask, axis=axis, dtype=dtype, keepdims=keepdims, where=where)  # pyrefly: ignore[no-matching-overload]  # redefined builtin
   td = lax.div(nansum(a, axis, dtype=dtype, keepdims=keepdims, where=where), normalizer)
   return td
 
@@ -1921,11 +1921,11 @@ def _nanvar(a: Array, *, axis: Axis = None, dtype: DTypeLike | None = None, out:
   else:
     centered = lax.square(centered)
 
-  normalizer = sum(lax.bitwise_not(lax._isnan(a)),
+  normalizer = sum(lax.bitwise_not(lax._isnan(a)),  # pyrefly: ignore[no-matching-overload]  # redefined builtin
                    axis=axis, keepdims=keepdims, where=where)
   normalizer = normalizer - ddof
   normalizer_mask = lax.le(normalizer, lax._zero(normalizer))
-  result = sum(centered, axis, keepdims=keepdims, where=where)
+  result = sum(centered, axis, keepdims=keepdims, where=where)  # pyrefly: ignore[no-matching-overload]  # redefined builtin
   result = _where(normalizer_mask, np.nan, result)
   divisor = _where(normalizer_mask, 1, normalizer)
   result = lax.div(result, lax.convert_element_type(divisor, result.dtype))
@@ -2514,7 +2514,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
   if squash_nans:
     a = _where(lax._isnan(a), np.nan, a) # Ensure nans are positive so they sort to the end.
     a = lax.sort(a, dimension=axis)
-    counts = sum(lax.bitwise_not(lax._isnan(a)), axis=axis, dtype=q.dtype, keepdims=keepdims)
+    counts = sum(lax.bitwise_not(lax._isnan(a)), axis=axis, dtype=q.dtype, keepdims=keepdims)  # pyrefly: ignore[no-matching-overload]  # redefined builtin
     shape_after_reduction = counts.shape
     q = lax.expand_dims(
       q, tuple(range(q_ndim, len(shape_after_reduction) + q_ndim)))
@@ -2541,7 +2541,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     high_value = a[tuple(index)]
   else:
     with config.debug_nans(False):
-      a = _where(any(lax._isnan(a), axis=axis, keepdims=True), np.nan, a)
+      a = _where(any(lax._isnan(a), axis=axis, keepdims=True), np.nan, a)  # pyrefly: ignore[unexpected-keyword]  # redefined builtin
     a = lax.sort(a, dimension=axis)
     n = lax.convert_element_type(a_shape[axis], lax._dtype(q))
     q = lax.mul(q, n - 1)

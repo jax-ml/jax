@@ -400,7 +400,8 @@ def matrix_power(a: ArrayLike, n: int) -> Array:
   elif n == 3:
     return (arr @ arr) @ arr
 
-  z = result = None
+  z: Array | None = None
+  result: Array | None = None
   while n > 0:
     z = arr if z is None else (z @ z)  # type: ignore[operator]
     n, bit = divmod(n, 2)
@@ -1173,7 +1174,7 @@ def norm(x: ArrayLike, ord: int | str | None = None,
     return vector_norm(x, ord=2 if ord is None else ord, axis=axis, keepdims=keepdims)
 
   elif num_axes == 2:
-    row_axis, col_axis = axis  # pytype: disable=bad-unpacking
+    row_axis, col_axis = axis  # type: ignore[bad-unpacking]
     if ord is None or ord in ('f', 'fro'):
       return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
                                         keepdims=keepdims))
@@ -1371,7 +1372,7 @@ def solve(a: ArrayLike, b: ArrayLike) -> Array:
   return jnp.vectorize(lax_linalg._solve, signature=signature)(a, b)
 
 
-def _lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None, *,
+def _lstsq(a: ArrayLike, b: ArrayLike, rcond: Array | float | None, *,
            numpy_resid: bool = False) -> tuple[Array, Array, Array, Array]:
   # TODO: add lstsq to lax_linalg and implement this function via those wrappers.
   # TODO: add custom jvp rule for more robust lstsq differentiation
