@@ -131,7 +131,32 @@ class TileTransform(MemRefTransform):
   tiling: tuple[int, ...]
   rounding: Rounding | None = None
 
+  _cc_impl: Any | None = dataclasses.field(init=False, compare=False)
+
+  def __post_init__(self):
+    if not (
+        hasattr(mgpu_dialect, "TileTransform")
+        and hasattr(mgpu_dialect, "init_cc_mlir")
+        and mgpu_dialect.init_cc_mlir(ir)
+    ):
+      return
+    rounding = self.rounding
+    if rounding is not None:
+      if rounding == Rounding.UP:
+        rounding = mgpu_dialect.Rounding.UP
+      elif rounding == Rounding.DOWN:
+        rounding = mgpu_dialect.Rounding.DOWN
+      else:
+        raise ValueError(f"Unknown rounding mode: {rounding}")
+    object.__setattr__(
+        self,
+        "_cc_impl",
+        mgpu_dialect.TileTransform(self.tiling, rounding),
+    )
+
   def apply(self, ref: ir.Value) -> ir.Value:
+    if (impl := self._cc_impl) is not None:
+      return impl.apply(ref)
     untiled_rank = ir.MemRefType(ref.type).rank
     tiling_rank = len(self.tiling)
     tiled_rank = untiled_rank + tiling_rank
@@ -165,6 +190,8 @@ class TileTransform(MemRefTransform):
     return utils.memref_transpose(ref, permutation)
 
   def transform_index(self, idx: Sequence[ir.Value]) -> tuple[ir.Value, ...]:
+    if (impl := self._cc_impl) is not None:
+      return impl.transform_index(idx)
     index = ir.IndexType.get()
     tiling_rank = len(self.tiling)
     return (
@@ -180,6 +207,8 @@ class TileTransform(MemRefTransform):
     )
 
   def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    if (impl := self._cc_impl) is not None:
+      return impl.transform_shape(shape)
     # Note that this also checks that tiled dims are not squeezed. Their slice
     # size would be 1 if so.
     tiling_rank = len(self.tiling)
@@ -201,6 +230,8 @@ class TileTransform(MemRefTransform):
     )
 
   def transform_strides(self, strides: Sequence[int]) -> tuple[int, ...]:
+    if (impl := self._cc_impl) is not None:
+      return impl.transform_strides(strides)
     tiling_rank = len(self.tiling)
     return (
         *strides[:-tiling_rank],

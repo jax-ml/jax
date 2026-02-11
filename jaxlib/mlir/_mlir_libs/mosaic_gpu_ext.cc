@@ -41,6 +41,7 @@ limitations under the License.
 #include "jaxlib/mosaic/dialect/gpu/integrations/c/attributes.h"
 #include "jaxlib/mosaic/dialect/gpu/integrations/c/gpu_dialect.h"
 #include "jaxlib/mosaic/gpu/tiled_layout.h"
+#include "jaxlib/mosaic/gpu/transforms.h"
 
 namespace nb = nanobind;
 namespace mgpu = jax::mosaic::gpu;
@@ -563,4 +564,57 @@ NB_MODULE(_mosaic_gpu_ext, m) {
             return self == nb::cast<mgpu::TiledLayout>(other);
           },
           nb::arg("other").none());
+
+  nb::enum_<mgpu::Rounding>(m, "Rounding")
+      .value("UP", mgpu::Rounding::kUp)
+      .value("DOWN", mgpu::Rounding::kDown);
+
+  nb::class_<mgpu::TileTransform>(m, "TileTransform")
+      .def(nb::init<std::vector<int64_t>, std::optional<mgpu::Rounding>>(),
+           nb::arg("tiling"), nb::arg("rounding") = std::nullopt)
+      .def("apply",
+           [](const mgpu::TileTransform& self, nb::object ref) {
+             auto builder = MlirBuilder();
+             if (!builder.ok()) {
+               throw nb::value_error(builder.status().message().data());
+             }
+             auto result =
+                 self.Apply(*builder, unwrap(nb::cast<MlirValue>(ref)));
+             if (!result.ok()) {
+               throw nb::value_error(result.status().message().data());
+             }
+             return wrap(*result);
+           })
+      .def("transform_index",
+           [](const mgpu::TileTransform& self, nb::iterable idx) {
+             auto builder = MlirBuilder();
+             if (!builder.ok()) {
+               throw nb::value_error(builder.status().message().data());
+             }
+             std::vector<mlir::Value> idxs;
+             for (nb::handle i : idx) {
+               idxs.push_back(unwrap(nb::cast<MlirValue>(i)));
+             }
+             auto result = self.TransformIndex(*builder, idxs);
+             if (!result.ok()) {
+               throw nb::value_error(result.status().message().data());
+             }
+             nb::list wrapped_result;
+             for (auto v : *result) {
+               wrapped_result.append(nb::cast(wrap(v)));
+             }
+             return nb::tuple(wrapped_result);
+           })
+      .def("transform_shape",
+           [](const mgpu::TileTransform& self, std::vector<int64_t> shape) {
+             auto result = self.TransformShape(shape);
+             if (!result.ok()) {
+               throw nb::value_error(result.status().message().data());
+             }
+             return nb::tuple(nb::cast(*result));
+           })
+      .def("transform_strides",
+           [](const mgpu::TileTransform& self, std::vector<int64_t> strides) {
+             return nb::tuple(nb::cast(self.TransformStrides(strides)));
+           });
 }

@@ -490,3 +490,34 @@ cc_test(
         "@llvm-project//mlir:Support",
     ],
 )
+
+cc_library(
+    name = "transforms",
+    srcs = ["transforms.cc"],
+    hdrs = ["transforms.h"],
+    deps = [
+        ":utils",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@xla//xla/tsl/platform:statusor",
+    ],
+)
+
+cc_test(
+    name = "transforms_test",
+    srcs = ["transforms_test.cc"],
+    deps = [
+        ":transforms",
+        "//testing/base/public:gunit_main",
+        "@com_google_absl//absl/status",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:Support",
+    ],
+)
