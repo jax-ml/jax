@@ -17,7 +17,6 @@ from functools import partial
 import itertools
 import math
 import operator
-import platform
 import types
 import unittest
 from unittest import SkipTest
@@ -4521,7 +4520,6 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       self.skipTest(f'could not import mpmath: {msg}')
 
     is_cpu = jtu.test_device_matches(["cpu"])
-    platform.machine()
     # TODO: remove is_arm_cpu as previously arm cpu related failures
     # were due to numpy issues. Confirm?
     is_cuda = jtu.test_device_matches(["cuda"])

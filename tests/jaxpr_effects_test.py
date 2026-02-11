@@ -261,6 +261,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
     def bar(x, w):
         def scan_fn(x, _):
             c = jnp.array([])
+            _ = w[...] @ x
             x = jnp.concatenate([x, c], axis=-1)
             return x, None
 

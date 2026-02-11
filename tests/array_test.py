@@ -766,7 +766,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     x = rng((64, 64), np.float32)
     y = jax.device_put(x)
     # holds ref.
-    memoryview(y)
+    _ = memoryview(y)
     # doesn't crash
     self.assertArraysEqual(add_one(y), x + 1)
 
