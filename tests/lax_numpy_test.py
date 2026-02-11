@@ -1982,8 +1982,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     xshape=one_dim_array_shapes,
     yshape=one_dim_array_shapes,
   )
-  @jtu.skip_on_devices("cuda", "rocm")  # backends don't support all dtypes.
+  @jtu.skip_on_devices("cuda")  # backends don't support all dtypes.
   def testConvolutionsPreferredElementType(self, xshape, yshape, dtype, mode, op):
+    if jtu.test_device_matches(["rocm"]) and not dtypes.issubdtype(dtype, np.inexact):
+      self.skipTest(f"preferred_element_type={dtype} unsupported for ROCm GPU convolutions")
     jnp_op = getattr(jnp, op)
     np_op = getattr(np, op)
     rng = jtu.rand_default(self.rng())
