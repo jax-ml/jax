@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import datetime
-from numpy import array, float32, float64, complex64, complex128, int32
+from numpy import array, float32, complex64, int32
 
 data_2026_02_04 = {}
 
