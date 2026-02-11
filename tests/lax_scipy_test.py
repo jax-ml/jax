@@ -465,3 +465,222 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     n_max = 1
 
     expected = (-1.0 / 2.0 * jnp.sqrt(3.0 / (2.0 * np.pi)) *
+                jnp.sin(phi) * jnp.exp(1j * theta))
+    actual = lsp_special.sph_harm(
+        jnp.array([1]), jnp.array([1]), theta, phi, n_max)
+
+    self.assertAllClose(actual, expected, rtol=1e-8, atol=6e-8)
+
+  @jtu.sample_product(
+    [dict(l_max=l_max, num_z=num_z)
+      for l_max, num_z in zip([1, 3, 8, 10], [2, 6, 7, 8])
+    ],
+    dtype=jtu.dtypes.all_integer,
+  )
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message=".*scipy.special.sph_harm.*")
+  @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.sph_harm has been removed.")
+  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
+  def testSphHarmForJitAndAgainstNumpy(self, l_max, num_z, dtype):
+    """Tests against JIT compatibility and Numpy."""
+    if not hasattr(lsp_special, 'sph_harm'):
+      self.skipTest("jax.scipy.special.sph_harm has been removed.")
+    if jtu.is_device_tpu_at_least(6):
+      self.skipTest("TODO(b/364258243): fails on TPU v6+")
+    n_max = l_max
+    shape = (num_z,)
+    rng = jtu.rand_int(self.rng(), -l_max, l_max + 1)
+
+    lsp_special_fn = partial(lsp_special.sph_harm, n_max=n_max)
+
+    def args_maker():
+      m = rng(shape, dtype)
+      n = abs(m)
+      theta = np.linspace(-4.0, 5.0, num_z)
+      phi = np.linspace(-2.0, 1.0, num_z)
+      return m, n, theta, phi
+
+    with self.subTest('Test JIT compatibility'):
+      self._CompileAndCheck(lsp_special_fn, args_maker)
+
+    with self.subTest('Test against numpy.'):
+      self._CheckAgainstNumpy(osp_special.sph_harm, lsp_special_fn, args_maker)
+
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message=".*scipy.special.sph_harm.*")
+  @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.sph_harm has been removed.")
+  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
+  def testSphHarmCornerCaseWithWrongNmax(self):
+    """Tests the corner case where `n_max` is not the maximum value of `n`."""
+    if not hasattr(lsp_special, 'sph_harm'):
+      self.skipTest("jax.scipy.special.sph_harm has been removed.")
+    m = jnp.array([2])
+    n = jnp.array([10])
+    n_clipped = jnp.array([6])
+    n_max = 6
+    theta = jnp.array([0.9])
+    phi = jnp.array([0.2])
+
+    expected = lsp_special.sph_harm(m, n, theta, phi, n_max)
+
+    actual = lsp_special.sph_harm(m, n_clipped, theta, phi, n_max)
+
+    self.assertAllClose(actual, expected, rtol=1e-8, atol=9e-5)
+
+  @jtu.sample_product(
+    [dict(l_max=l_max, num_z=num_z)
+      for l_max, num_z in zip([1, 3, 8, 10], [2, 6, 7, 8])
+    ],
+    dtype=jtu.dtypes.all_integer,
+  )
+  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
+  def testSphHarmY(self, l_max, num_z, dtype):
+    if jtu.is_device_tpu_at_least(6):
+      self.skipTest("TODO(b/364258243): fails on TPU v6+")
+    n_max = l_max
+    shape = (num_z,)
+    rng = jtu.rand_int(self.rng(), -l_max, l_max + 1)
+
+    def args_maker():
+      m = rng(shape, dtype)
+      n = abs(m)
+      theta = np.linspace(-2.0, 1.0, num_z)
+      phi = np.linspace(-4.0, 5.0, num_z)
+      return n, m, theta, phi
+
+    lsp_special_fn = partial(lsp_special.sph_harm_y, n_max=n_max)
+    self._CompileAndCheck(lsp_special_fn, args_maker)
+    if scipy_version < (1, 15, 0):
+      osp_special_fn = lambda n, m, theta, phi: osp_special.sph_harm(m, n, phi, theta)
+    else:
+      osp_special_fn = osp_special.sph_harm_y
+    self._CheckAgainstNumpy(osp_special_fn, lsp_special_fn, args_maker)
+
+  @jtu.sample_product(
+    n_zero_sv=n_zero_svs,
+    degeneracy=degeneracies,
+    geometric_spectrum=geometric_spectra,
+    max_sv=max_svs,
+    shape=polar_shapes,
+    method=methods,
+    side=sides,
+    nonzero_condition_number=nonzero_condition_numbers,
+    dtype=jtu.dtypes.inexact,
+    seed=seeds,
+  )
+  def testPolar(
+    self, n_zero_sv, degeneracy, geometric_spectrum, max_sv, shape, method,
+      side, nonzero_condition_number, dtype, seed):
+    """ Tests jax.scipy.linalg.polar."""
+    if not jtu.test_device_matches(["cpu"]):
+      if jnp.dtype(dtype).name in ("bfloat16", "float16"):
+        raise unittest.SkipTest("Skip half precision off CPU.")
+
+    m, n = shape
+    if (method == "qdwh" and ((side == "left" and m >= n) or
+                              (side == "right" and m < n))):
+      raise unittest.SkipTest("method=qdwh does not support these sizes")
+
+    matrix, _ = _initialize_polar_test(self.rng(),
+      shape, n_zero_sv, degeneracy, geometric_spectrum, max_sv,
+      nonzero_condition_number, dtype)
+    if jnp.dtype(dtype).name in ("bfloat16", "float16"):
+      self.assertRaises(
+        NotImplementedError, jsp.linalg.polar, matrix, method=method,
+        side=side)
+      return
+
+    unitary, posdef = jsp.linalg.polar(matrix, method=method, side=side)
+    if shape[0] >= shape[1]:
+      should_be_eye = np.matmul(unitary.conj().T, unitary)
+    else:
+      should_be_eye = np.matmul(unitary, unitary.conj().T)
+    tol = 650 * float(jnp.finfo(matrix.dtype).eps)
+    eye_mat = np.eye(should_be_eye.shape[0], dtype=should_be_eye.dtype)
+    with self.subTest('Test unitarity.'):
+      self.assertAllClose(
+        eye_mat, should_be_eye, atol=tol * 1000 * min(shape))
+
+    with self.subTest('Test Hermiticity.'):
+      self.assertAllClose(
+        posdef, posdef.conj().T, atol=tol * jnp.linalg.norm(posdef))
+
+    ev, _ = np.linalg.eigh(posdef)
+    ev = ev[np.abs(ev) > tol * np.linalg.norm(posdef)]
+    negative_ev = jnp.sum(ev < 0.)
+    with self.subTest('Test positive definiteness.'):
+      self.assertEqual(negative_ev, 0)
+
+    if side == "right":
+      recon = jnp.matmul(unitary, posdef, precision=lax.Precision.HIGHEST)
+    elif side == "left":
+      recon = jnp.matmul(posdef, unitary, precision=lax.Precision.HIGHEST)
+    with self.subTest('Test reconstruction.'):
+      self.assertAllClose(
+        matrix, recon, atol=tol * jnp.linalg.norm(matrix))
+
+  @jtu.sample_product(
+    n_obs=[1, 3, 5],
+    n_codes=[1, 2, 4],
+    n_feats=[()] + [(i,) for i in range(1, 3)],
+    dtype=float_dtypes + int_dtypes, # scipy doesn't support complex
+  )
+  def test_vq(self, n_obs, n_codes, n_feats, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng((n_obs, *n_feats), dtype), rng((n_codes, *n_feats), dtype)]
+    self._CheckAgainstNumpy(osp_cluster.vq.vq, lsp_cluster.vq.vq, args_maker, check_dtypes=False)
+    self._CompileAndCheck(lsp_cluster.vq.vq, args_maker)
+
+  @jtu.sample_product(
+    shape=all_shapes,
+    dtype=float_dtypes,
+  )
+  def test_spence(self, shape, dtype):
+    rng = jtu.rand_positive(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+    with self.subTest('Test against SciPy'):
+      rtol = 1e-4 if jtu.test_device_matches(["tpu"]) else 1e-8
+      self._CheckAgainstNumpy(osp_special.spence, lsp_special.spence, args_maker,
+                              rtol=rtol, check_dtypes=False)
+
+    with self.subTest('Test JIT compatibility'):
+      self._CompileAndCheck(lsp_special.spence, args_maker)
+
+    # This function is not defined for negative values, this makes sure they are nan
+    with self.subTest('Test Negative Values'):
+      x = -rng(shape, dtype)
+      nan_array = jnp.nan * jnp.ones_like(x)
+      actual = lsp_special.spence(x)
+      self.assertArraysEqual(actual, nan_array, check_dtypes=False)
+
+  @jtu.sample_product(
+    [dict(yshape=yshape, xshape=xshape, dx=dx, axis=axis)
+      for yshape, xshape, dx, axis in [
+        ((10,), None, 1.0, -1),
+        ((3, 10), None, 2.0, -1),
+        ((3, 10), None, 3.0, -0),
+        ((10, 3), (10,), 1.0, -2),
+        ((3, 10), (10,), 1.0, -1),
+        ((3, 10), (3, 10), 1.0, -1),
+        ((2, 3, 10), (3, 10), 1.0, -2),
+      ]
+    ],
+    dtype=float_dtypes + int_dtypes,
+  )
+  @jtu.skip_on_devices("tpu")  # TODO(jakevdp): fix and re-enable this test.
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def testIntegrateTrapezoid(self, yshape, xshape, dtype, dx, axis):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(yshape, dtype), rng(xshape, dtype) if xshape is not None else None]
+    np_fun = partial(scipy.integrate.trapezoid, dx=dx, axis=axis)
+    jnp_fun = partial(jax.scipy.integrate.trapezoid, dx=dx, axis=axis)
+    tol = jtu.tolerance(dtype, {np.float16: 2e-3, np.float64: 1e-12,
+                                jax.dtypes.bfloat16: 4e-2})
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol,
+                            check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol,
+                          check_dtypes=False)
+
+if __name__ == "__main__":
+  absltest.main(testLoader=jtu.JaxTestLoader())
