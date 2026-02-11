@@ -2576,15 +2576,6 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
     return _program_id_lowering_rule(ctx, axis=grid_names.index(axis_name))
   raise LookupError(f"Axis name {axis_name} not found in grid.")
 
-def _is_read_only(ref_effects) -> bool:
-  if len(ref_effects) == 0:
-    return True
-  if len(ref_effects) > 1:
-    # Means we must have a write or accum effect so not read-only
-    return False
-  (eff,) = ref_effects
-  return isinstance(eff, state.ReadEffect)
-
 
 def _lower_jaxpr_to_for_loop(
     ctx: LoweringRuleContext,

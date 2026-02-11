@@ -44,11 +44,6 @@ def _e4m3fn(shape):
   return jax.random.normal(key, shape, dtype=jnp.float8_e4m3fn)
 
 
-def _e5m2(shape):
-  key = jax.random.key(42)
-  return jax.random.normal(key, shape, dtype=jnp.float8_e5m2)
-
-
 def _bf16(shape):
   key = jax.random.key(42)
   return jax.random.normal(key, shape, dtype=jnp.bfloat16)

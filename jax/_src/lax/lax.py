@@ -4778,17 +4778,6 @@ ad.defjvp(
     lambda g, x, y: mul(neg(g), mul(sign(div(x, y)), floor(abs(div(x, y))))))
 mlir.register_lowering(rem_p, partial(_nary_lower_hlo, hlo.remainder))
 
-def _minmax_complex_lowering(x, y, *, lax_cmp_pick_x):
-  result_shape = broadcast_shapes(np.shape(x), np.shape(y))
-  result_sharding = broadcast_shardings(typeof(x), typeof(y))
-  x = _maybe_broadcast(result_shape, x, result_sharding)
-  y = _maybe_broadcast(result_shape, y, result_sharding)
-  rx = real(x)
-  ry = real(y)
-  pick_x = select(eq(rx, ry), lax_cmp_pick_x(imag(x), imag(y)),
-                  lax_cmp_pick_x(rx, ry))
-  return select(pick_x, x, y)
-
 max_p: core.Primitive = standard_naryop([_any, _any], 'max')
 ad.defjvp2(max_p,
            lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
