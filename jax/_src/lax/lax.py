@@ -7261,14 +7261,12 @@ def _reshape_transpose_rule(ct, operand, *, new_sizes, dimensions, sharding):
   assert ad.is_undefined_primal(operand)
   op_ct_aval = operand.aval.to_cotangent_aval()
   if dimensions is None:
-    return [reshape_p.bind(ct, new_sizes=op_ct_aval.shape, dimensions=dimensions,
-                           sharding=op_ct_aval.sharding)]
+    return [reshape(ct, op_ct_aval.shape, out_sharding=op_ct_aval.sharding)]
   else:
     ct_s = op_ct_aval.sharding.update(spec=op_ct_aval.sharding.spec.update(
         partitions=tuple(map(lambda s: s if s is None else str(s),
                              np.take(op_ct_aval.sharding.spec, dimensions)))))
-    ct_shape = tuple(canonicalize_shape(np.take(op_ct_aval.shape, dimensions)))
-    out = reshape_p.bind(ct, new_sizes=ct_shape, dimensions=None, sharding=ct_s)
+    out = reshape(ct, np.take(op_ct_aval.shape, dimensions), out_sharding=ct_s)
     return [transpose(out, np.argsort(dimensions))]
 
 def _reshape_batch_rule(axis_data, batched_args, batch_dims, *, new_sizes,
