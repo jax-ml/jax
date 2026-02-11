@@ -76,7 +76,7 @@ def assert_subprocess_call(stdout: bytes | None = None):
 class JaxVersionTest(unittest.TestCase):
 
   def assertValidVersion(self, version):
-    self.assertIsNotNone(VERSION_PATTERN.match(version))
+    self.assertRegex(version, VERSION_PATTERN)
 
   def testVersionValidity(self):
     self.assertValidVersion(jax.__version__)
