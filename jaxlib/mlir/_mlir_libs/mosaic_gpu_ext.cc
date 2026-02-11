@@ -516,11 +516,7 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       .def(
           "reduce",
           [](const mgpu::TiledLayout& self, nb::iterable axes) {
-            std::vector<int64_t> axes_vec;
-            for (const auto& axis : axes) {
-              axes_vec.push_back(nb::cast<int64_t>(axis));
-            }
-            auto result = self.Reduce(axes_vec);
+            auto result = self.Reduce(nb::cast<std::vector<int64_t>>(axes));
             if (!result.ok()) {
               throw nb::value_error(result.status().message().data());
             }
