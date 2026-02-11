@@ -37,7 +37,7 @@ jax_multiplatform_test(
     enable_configs = ["tpu_v3_x4"],
     shard_count = {
         "cpu": select({
-            "//tests/config:tsan_freethreading_rbe": 10,
+            "//tests/config:tsan_freethreading_rbe": 12,
             "//conditions:default": 5,
         }),
         "gpu": 5,
@@ -2251,10 +2251,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "scaled_dot_test",
     srcs = ["scaled_dot_test.py"],
-    shard_count = {
-        "gpu": 5,
-        "tpu": 5,
-    },
+    shard_count = 5,
     deps = py_deps([
         "absl/testing",
         "numpy",
