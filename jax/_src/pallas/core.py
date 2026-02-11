@@ -1663,35 +1663,11 @@ def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, debug_info,
 
 
 def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
-  del in_atoms
   with jax_core.extend_axis_env_nd(tuple(mesh.shape.items())):
     jax_core.check_jaxpr(jaxpr)
-  interpret = kwargs.get('interpret', False)
-  effs = set()
-  if interpret:
-    try:
-      from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret  # Avoid circular dependency.
-      if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
-        effs = mosaic_tpu_interpret.get_interpret_effects()
-    except ImportError:
-      pass
-    try:
-      from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret  # Avoid circular dependency.
-      if isinstance(interpret, mosaic_gpu_interpret.InterpretParams):
-        effs = mosaic_gpu_interpret.get_interpret_effects()
-    except ImportError:
-      pass
-  for eff in jaxpr.effects:
-    if mesh.discharges_effect(eff) or isinstance(eff, CommsEffect):
-      continue
-    if kernel_local_effects.contains(eff):
-      continue
-    if not isinstance(eff, jax_core.NamedAxisEffect):
-      effs.add(eff)
-      continue
-    if eff.name not in mesh.shape:
-      effs.add(eff)
-  return [], effs
+  return _core_map_abstract_eval(*in_atoms, jaxpr=jaxpr, mesh=mesh, **kwargs)
+
+
 jax_core.custom_typechecks[core_map_p] = _core_map_typecheck_rule
 
 
