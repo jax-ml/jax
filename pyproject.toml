@@ -118,6 +118,8 @@ ignore = [
     "C420",
     # Object names too complex
     "C901",
+    # Using `yield` and `return {value}` in a generator function can lead to confusing behavior
+    "B901",
     # Class could be dataclass or namedtuple
     "B903",
     # Raise with from clause inside except block

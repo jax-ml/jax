@@ -31,12 +31,12 @@ repos:
     files: \.py$
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: a113f03edeabb71305f025e6e14bd2cd68660e29  # frozen: v0.13.1
+  rev: 0470f7c8a653e950f7cc5a653204ceb3fde4c02a  # frozen: v0.15.1
   hooks:
   - id: ruff
 
 - repo: https://github.com/pre-commit/mirrors-mypy
-  rev: 9f70dc58c23dfcca1b97af99eaeee3140a807c7e  # frozen: v1.18.2
+  rev: a66e98df7b4aeeb3724184b332785976d062b92e  # frozen: v1.19.1
   hooks:
   - id: mypy
     files: (jax/|tests/typing_test\.py)
@@ -54,7 +54,7 @@ repos:
 # This is a manual-only pre-commit hook to run pyrefly type checks. To run it:
 # $ pre-commit run --hook-stage manual pyrefly-check --all-files
 - repo: https://github.com/facebook/pyrefly-pre-commit
-  rev: 099622e491908f1e032f6fa734057ea1e5b6058b  # frozen: v0.50.0
+  rev: 9a1f9496fbaeef712203986d6953bb573f2511fe  # frozen: v0.52.0
   hooks:
     - id: pyrefly-check
       name: Pyrefly (type checking)
