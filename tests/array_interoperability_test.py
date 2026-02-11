@@ -312,7 +312,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     self.assertFalse(hasattr(x, "__cuda_array_interface__"))
     with self.assertRaisesRegex(
         AttributeError,
-        "__cuda_array_interface__ is only defined for GPU buffers.",
+        "__cuda_array_interface__ is only defined for .*GPU buffers.",
     ):
       _ = x.__cuda_array_interface__
 
