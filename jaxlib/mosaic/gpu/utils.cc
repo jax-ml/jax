@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/AsmParser/AsmParser.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
 #include "mlir/IR/Attributes.h"
@@ -254,6 +255,11 @@ absl::StatusOr<mlir::Value> MemRefTranspose(
       .create<mlir::memref::TransposeOp>(
           new_ty, ref, mlir::AffineMapAttr::get(permutation_map))
       .getResult();
+}
+
+mlir::Value c(mlir::ImplicitLocOpBuilder& b, int64_t val, mlir::Type type) {
+  CHECK(type.isInteger()) << "Only integer type supported for integer values";
+  return mlir::arith::ConstantOp::create(b, type, b.getIntegerAttr(type, val));
 }
 
 }  // namespace jax::mosaic::gpu

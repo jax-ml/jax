@@ -38,6 +38,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
+#include "jaxlib/mosaic/gpu/utils.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace jax::mosaic::gpu {
@@ -98,8 +99,7 @@ mlir::Value DynDot(mlir::ImplicitLocOpBuilder& builder,
                    const std::vector<mlir::Value>& a,
                    const std::vector<mlir::Value>& b) {
   CHECK(a.size() == b.size()) << "Vectors must have the same size";
-  mlir::Value res = mlir::arith::ConstantOp::create(
-      builder, a[0].getType(), builder.getIntegerAttr(a[0].getType(), 0));
+  mlir::Value res = c(builder, 0, a[0].getType());
   for (auto [lhs, rhs] : llvm::zip(a, b)) {
     mlir::Value prod = mlir::arith::MulIOp::create(builder, lhs, rhs);
     res = mlir::arith::AddIOp::create(builder, res, prod);
@@ -671,10 +671,8 @@ std::vector<int64_t> TiledLayout::PartitionedLaneDims() const {
 absl::StatusOr<std::vector<mlir::Value>> TiledLayout::WarpIndices(
     mlir::ImplicitLocOpBuilder& builder) const {
   mlir::Type i32 = builder.getI32Type();
-  mlir::Value c32 = mlir::arith::ConstantOp::create(
-      builder, i32, builder.getIntegerAttr(i32, WARP_SIZE));
-  mlir::Value c4 = mlir::arith::ConstantOp::create(
-      builder, i32, builder.getIntegerAttr(i32, WARPS_IN_WARPGROUP));
+  mlir::Value c32 = c(builder, WARP_SIZE, i32);
+  mlir::Value c4 = c(builder, WARPS_IN_WARPGROUP, i32);
   mlir::Value thread_id = ThreadIdx(builder);
   mlir::Value warp_id = mlir::arith::DivUIOp::create(builder, thread_id, c32);
   warp_id = mlir::arith::RemUIOp::create(builder, warp_id, c4);
@@ -684,8 +682,7 @@ absl::StatusOr<std::vector<mlir::Value>> TiledLayout::WarpIndices(
 absl::StatusOr<std::vector<mlir::Value>> TiledLayout::LaneIndices(
     mlir::ImplicitLocOpBuilder& builder) const {
   mlir::Type i32 = builder.getI32Type();
-  mlir::Value c32 = mlir::arith::ConstantOp::create(
-      builder, i32, builder.getIntegerAttr(i32, WARP_SIZE));
+  mlir::Value c32 = c(builder, WARP_SIZE, i32);
   mlir::Value thread_id = ThreadIdx(builder);
   mlir::Value lane_id = mlir::arith::RemUIOp::create(builder, thread_id, c32);
   return DelinearizeIndex(builder, lane_id, lane_dims_);
@@ -751,17 +748,13 @@ absl::StatusOr<std::vector<mlir::Value>> TiledLayout::DelinearizeIndex(
   std::vector<mlir::Value> dims_indices;
   for (const auto& [dim_stride, dim_size] :
        llvm::zip(dims_strides, dims_sizes)) {
-    mlir::Value stride = mlir::arith::ConstantOp::create(
-        builder, i32, builder.getIntegerAttr(i32, dim_stride));
-    mlir::Value size = mlir::arith::ConstantOp::create(
-        builder, i32, builder.getIntegerAttr(i32, dim_size));
+    mlir::Value stride = c(builder, dim_stride, i32);
+    mlir::Value size = c(builder, dim_size, i32);
     mlir::Value div = mlir::arith::DivUIOp::create(builder, idx, stride);
     dims_indices.push_back(mlir::arith::RemUIOp::create(builder, div, size));
   }
 
-  std::vector<mlir::Value> full_indices(
-      tiled_shape.size(), mlir::arith::ConstantOp::create(
-                              builder, i32, builder.getIntegerAttr(i32, 0)));
+  std::vector<mlir::Value> full_indices(tiled_shape.size(), c(builder, 0, i32));
   for (const auto& [dim, dim_idx] : llvm::zip(dims, dims_indices)) {
     if (std::holds_alternative<Replicated>(dim)) {
       continue;
@@ -939,8 +932,7 @@ absl::StatusOr<std::vector<std::vector<mlir::Value>>> TiledLayout::ThreadIdxs(
   std::vector<mlir::Value> dyn_tile_strides;
   for (size_t i = tile_strides.size() - tiled_tiling_shape.size();
        i < tile_strides.size(); ++i) {
-    dyn_tile_strides.push_back(mlir::arith::ConstantOp::create(
-        builder, i32, builder.getIntegerAttr(i32, tile_strides[i])));
+    dyn_tile_strides.push_back(c(builder, tile_strides[i], i32));
   }
 
   mlir::Value warp_offset = DynDot(builder, warp_indices, dyn_tile_strides);
@@ -957,15 +949,12 @@ absl::StatusOr<std::vector<std::vector<mlir::Value>>> TiledLayout::ThreadIdxs(
       tile_lin_idx += tile_idx[i] * tile_strides[i];
     }
     mlir::Value dyn_lin_idx = mlir::arith::AddIOp::create(
-        builder, dyn_offset,
-        mlir::arith::ConstantOp::create(
-            builder, i32, builder.getIntegerAttr(i32, tile_lin_idx)));
+        builder, dyn_offset, c(builder, tile_lin_idx, i32));
 
     std::vector<mlir::Value> idx;
     idx.reserve(contig_strides.size());
     for (const auto& contig_stride : contig_strides) {
-      mlir::Value s = mlir::arith::ConstantOp::create(
-          builder, i32, builder.getIntegerAttr(i32, contig_stride));
+      mlir::Value s = c(builder, contig_stride, i32);
       mlir::Value div = mlir::arith::DivUIOp::create(builder, dyn_lin_idx, s);
       idx.push_back(mlir::arith::IndexCastOp::create(builder, index_type, div));
       dyn_lin_idx = mlir::arith::RemUIOp::create(builder, dyn_lin_idx, s);

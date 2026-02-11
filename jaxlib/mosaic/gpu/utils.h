@@ -81,6 +81,9 @@ absl::StatusOr<mlir::Value> MemRefTranspose(
     mlir::ImplicitLocOpBuilder& builder, mlir::Value ref,
     const std::vector<int64_t>& permutation);
 
+// Creates a constant integer value.
+mlir::Value c(mlir::ImplicitLocOpBuilder& b, int64_t val, mlir::Type type);
+
 }  // namespace jax::mosaic::gpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_GPU_UTILS_H_
