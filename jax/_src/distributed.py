@@ -167,10 +167,15 @@ class State:
     if self.client is not None:
       raise RuntimeError('distributed.initialize should only be called once.')
 
-    self.client = _jax.get_distributed_runtime_client(
-        coordinator_address, process_id, init_timeout=initialization_timeout,
-        use_compression=True, heartbeat_timeout=heartbeat_timeout_seconds,
-        recoverable=_ENABLE_RECOVERABILITY.value)  # type: ignore
+    if jaxlib_extension_version >= 405:
+      self.client = _jax.get_distributed_runtime_client(
+          coordinator_address, process_id, init_timeout=initialization_timeout,
+          use_compression=True, heartbeat_timeout=heartbeat_timeout_seconds)  # type: ignore
+    else:
+      self.client = _jax.get_distributed_runtime_client(
+          coordinator_address, process_id, init_timeout=initialization_timeout,
+          use_compression=True, heartbeat_timeout=heartbeat_timeout_seconds,
+          recoverable=_ENABLE_RECOVERABILITY.value)  # type: ignore
     logger.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 
