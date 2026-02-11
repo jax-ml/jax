@@ -717,8 +717,11 @@ def _pallas_call_batching_rule(
   batched_index_map_avals, batched_index_map_tree = tree_util.tree_flatten(
       (batched_index_map_args, {}))
 
+  axis_size_is_dynamic = not jax_core.is_constant_dim(axis_size)
+  new_grid_dim = pallas_core.dynamic_grid_dim if axis_size_is_dynamic else axis_size
+
   batched_grid_mapping = grid_mapping.replace(
-      grid=(axis_size, *grid_mapping.grid),
+      grid=(new_grid_dim, *grid_mapping.grid),
       block_mappings=tuple(batched_block_mappings),
       index_map_avals=tuple(batched_index_map_avals),
       index_map_tree=batched_index_map_tree,
@@ -729,7 +732,7 @@ def _pallas_call_batching_rule(
   # Avoid scaling the cost estimate by the batch size if the batch size is a
   # dynamic shape (DimExpr).
   # https://docs.jax.dev/en/latest/export/shape_poly.html#computing-with-dimension-variables
-  if cost_estimate is not None and isinstance(axis_size, int):
+  if cost_estimate is not None and not axis_size_is_dynamic:
     batched_cost_estimate = CostEstimate(
         flops=cost_estimate.flops * axis_size,
         bytes_accessed=cost_estimate.bytes_accessed * axis_size,
@@ -762,6 +765,8 @@ def _pallas_call_batching_rule(
     with jax_core.remove_explicit_mesh_axis_names(ema):
       bind = shard_map(bind, out_specs=P(ema), axis_names=set(ema))
 
+  if axis_size_is_dynamic:
+    dynamic_grid_args = [axis_size, *dynamic_grid_args]
   out = bind(*dynamic_grid_args, *args)
   return out, (0,) * len(out)
 
