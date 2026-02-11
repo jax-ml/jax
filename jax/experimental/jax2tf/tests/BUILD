@@ -288,6 +288,7 @@ py_binary(
     data = [
         "//jax/experimental/jax2tf/g3doc:convert_models_results",
     ],
+    strict_deps = False,
     deps = [
         ":models_util",
         "//jax",
