@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import importlib
+import logging
 from typing import Any
 
 import numpy as np
@@ -31,6 +32,7 @@ from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 
+logger = logging.getLogger(__name__)
 
 export = util.set_module('jax.numpy')
 
@@ -43,6 +45,24 @@ for pkg_name in ['jax_cuda13_plugin', 'jax_cuda12_plugin', 'jaxlib.cuda']:
     cuda_plugin_extension = None  # type: ignore
   else:
     break
+
+# Dynamically find and load ROCm plugin extension
+rocm_plugin_extension = None
+try:
+  from importlib.metadata import distributions
+  for dist in distributions():
+    name = dist.metadata.get('Name', '')
+    if name.startswith('jax-rocm') and name.endswith('-plugin'):
+      module_name = name.replace('-', '_')
+      try:
+        rocm_plugin_extension = importlib.import_module(
+            f'{module_name}.rocm_plugin_extension'
+        )
+        break
+      except ImportError:
+        continue
+except Exception as e:
+  logger.debug("ROCm plugin discovery failed: %s", e)
 
 
 def _supports_buffer_protocol(obj):
@@ -218,11 +238,17 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
       object = object.__jax_array__()
     elif hasattr(object, '__cuda_array_interface__'):
       cai = object.__cuda_array_interface__
-      backend = xla_bridge.get_backend("cuda")
-      if cuda_plugin_extension is None:
+      backend = xla_bridge.get_backend()
+      if 'rocm' in backend.platform_version.lower():
+        gpu_plugin_extension = rocm_plugin_extension
+      elif 'cuda' in backend.platform_version.lower():
+        gpu_plugin_extension = cuda_plugin_extension
+      else:
+        gpu_plugin_extension = None
+      if gpu_plugin_extension is None:
         device_id = None
       else:
-        device_id = cuda_plugin_extension.get_device_ordinal(cai["data"][0])
+        device_id = gpu_plugin_extension.get_device_ordinal(cai["data"][0])
       object = xc._xla.cuda_array_interface_to_buffer(
           cai=cai, gpu_backend=backend, device_id=device_id)
 
