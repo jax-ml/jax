@@ -16,8 +16,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Iterable, Iterator, Sequence
-from collections.abc import Hashable, Mapping
+from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence, Set
 import contextlib
 import copy
 import dataclasses
@@ -27,19 +26,19 @@ import itertools
 import threading
 from typing import Any, ClassVar, Literal, Protocol, TypeAlias, Union, runtime_checkable
 
-
 from jax._src import api_util
-from jax._src.api import jit
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import frozen_dict
 from jax._src import linear_util as lu
+from jax._src import numpy as jnp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import typing as jax_typing
 from jax._src import util
+from jax._src.api import jit
 from jax._src.export._export import export
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -47,7 +46,6 @@ from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import types as state_types
 from jax._src.state.types import TransformedRef
-from jax._src import numpy as jnp
 
 
 class DynamicGridDim:
@@ -637,11 +635,20 @@ no_block_spec = NoBlockSpec()
 BlockSpecTree = Any
 
 
-class MemoryRefTransform(Protocol):
-  """Transforms a memory reference on load or store."""
-
-  def undo(self, ref: TransformedRef) -> TransformedRef:
-    raise NotImplementedError("Abstract evaluation not implemented.")
+def undo_transforms(
+    aval: jax_core.AbstractValue,
+    memory_transforms: Sequence[state_types.Transform],
+) -> list[state_types.Transform]:
+  """Extract the `Transform`s that reverse the `Transforms`s"""
+  if not memory_transforms:
+    return []
+  transforms: list[state_types.Transform] = []
+  avals = [aval]
+  for t in memory_transforms[:-1]:
+    avals.append(t.transform_type(aval))
+  for t, a in reversed(list(zip(memory_transforms, avals))):
+    transforms.append(t.undo(a))
+  return transforms
 
 
 @dataclasses.dataclass(frozen=True)
@@ -658,7 +665,7 @@ class BlockMapping:
   index_map_out_tree: tree_util.PyTreeDef
   array_aval: jax_core.ShapedArray  # The whole array
   origin: OriginStr
-  transforms: Sequence[MemoryRefTransform] = ()
+  transforms: Sequence[state_types.Transform] = ()
   pipeline_mode: Buffered | None = None
   debug: bool = False
 
@@ -695,10 +702,10 @@ class BlockMapping:
     """Returns the abstract value of the Ref after transformations."""
     if not self.transforms:
       return self.transformed_block_aval
-    ref = TransformedRef(self.transformed_block_aval, ())
-    for transform in reversed(self.transforms):
-      ref = transform.undo(ref)
-    return ref
+    reverse_transforms = tuple(undo_transforms(
+        self.transformed_block_aval, self.transforms
+    ))
+    return TransformedRef(self.transformed_block_aval, reverse_transforms)
 
   def compute_start_indices_interpret(self, loop_idx, *args):
     discharged_jaxpr, discharged_consts = state_discharge.discharge_state(
@@ -1450,26 +1457,30 @@ effects.custom_derivatives_allowed_effects.add_type(CommsEffect)
 kernel_local_effects: effects.EffectTypeSet = effects.EffectTypeSet()
 
 
+def get_interpret_effects(interpret: Any) -> Set[effects.Effect]:
+  try:
+    from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret  # Avoid circular dependency.
+  except ImportError:
+    pass
+  else:
+    if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
+      return mosaic_tpu_interpret.get_interpret_effects()
+  try:
+    from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret  # Avoid circular dependency.
+  except ImportError:
+    pass
+  else:
+    if isinstance(interpret, mosaic_gpu_interpret.InterpretParams):
+      return mosaic_gpu_interpret.get_interpret_effects()
+  return effects.no_effects
+
+
 @core_map_p.def_effectful_abstract_eval
-def _core_map_abstract_eval(*args, jaxpr, mesh, **kwargs):
+def _core_map_abstract_eval(*args, jaxpr, mesh, interpret, **kwargs):
   del args
   if jaxpr.outvars:
     raise ValueError("core_map must not return any outputs.")
-  interpret = kwargs.get('interpret', False)
-  effs = set()
-  if interpret:
-    try:
-      from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret  # Avoid circular dependency.
-      if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
-        effs = mosaic_tpu_interpret.get_interpret_effects()
-    except ImportError:
-      pass
-    try:
-      from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret  # Avoid circular dependency.
-      if isinstance(interpret, mosaic_gpu_interpret.InterpretParams):
-        effs = mosaic_gpu_interpret.get_interpret_effects()
-    except ImportError:
-      pass
+  effs = {*get_interpret_effects(interpret)}
   for eff in jaxpr.effects:
     if mesh.discharges_effect(eff) or isinstance(eff, CommsEffect):
       continue
@@ -1503,7 +1514,14 @@ class Mesh(Protocol):
     ...
 
   @property
+  def default_memory_space(self) -> MemorySpace | Any:
+    ...
+
+  @property
   def shape(self) -> collections.OrderedDict[object, int]:
+    ...
+
+  def discharges_effect(self, effect: jax_core.Effect) -> bool:
     ...
 
 
@@ -1547,12 +1565,10 @@ def default_mesh_discharge_rule(
     interpret,
     cost_estimate,
     name,
-    memory_space=MemorySpace.ANY,
     metadata,
     scratch_shapes,
 ):
   """Discharges a ``core_map`` over a mesh to a ``pallas_call``."""
-  default_memory_space = memory_space
   if not all(
       isinstance(aval, state.AbstractRef) for aval in (in_avals + out_avals)
   ):
@@ -1572,13 +1588,14 @@ def default_mesh_discharge_rule(
       for eff in jaxpr.effects
       if isinstance(eff, state_types.WriteEffect)
   )
+  default_memory_space = mesh.default_memory_space
   in_memory_spaces = [get_memory_space_aval(aval) for aval in in_avals]
   in_memory_spaces = [
-      memory_space if m is None else m for m in in_memory_spaces
+      default_memory_space if m is None else m for m in in_memory_spaces
   ]
   args = [
       with_memory_space_constraint_p.bind(arg, memory_space=memory_space)
-      if memory_space is not None and memory_space is not default_memory_space else arg
+      if memory_space is not default_memory_space else arg
       for arg, memory_space in zip(args, in_memory_spaces)
   ]
   in_specs = [
@@ -1652,35 +1669,11 @@ def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, debug_info,
 
 
 def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
-  del in_atoms
   with jax_core.extend_axis_env_nd(tuple(mesh.shape.items())):
     jax_core.check_jaxpr(jaxpr)
-  interpret = kwargs.get('interpret', False)
-  effs = set()
-  if interpret:
-    try:
-      from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret  # Avoid circular dependency.
-      if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
-        effs = mosaic_tpu_interpret.get_interpret_effects()
-    except ImportError:
-      pass
-    try:
-      from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret  # Avoid circular dependency.
-      if isinstance(interpret, mosaic_gpu_interpret.InterpretParams):
-        effs = mosaic_gpu_interpret.get_interpret_effects()
-    except ImportError:
-      pass
-  for eff in jaxpr.effects:
-    if mesh.discharges_effect(eff) or isinstance(eff, CommsEffect):
-      continue
-    if kernel_local_effects.contains(eff):
-      continue
-    if not isinstance(eff, jax_core.NamedAxisEffect):
-      effs.add(eff)
-      continue
-    if eff.name not in mesh.shape:
-      effs.add(eff)
-  return [], effs
+  return _core_map_abstract_eval(*in_atoms, jaxpr=jaxpr, mesh=mesh, **kwargs)
+
+
 jax_core.custom_typechecks[core_map_p] = _core_map_typecheck_rule
 
 

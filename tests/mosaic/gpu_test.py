@@ -288,7 +288,6 @@ class TestUtilTest(TestCase):
   def test_iota_tensor(self):
     m = n = 64
     def kernel(ctx, dst, _):
-      f32 = ir.F32Type.get()
       index = ir.IndexType.get()
       registers = iota_tensor(m, n, jnp.float32).registers
       assert registers.size == 16, registers.size
@@ -494,7 +493,7 @@ class MemRefTest(TestCase):
       cluster_idx = tuple(gpu.cluster_block_id(dim) for dim in dims)
       peer_idx = arith.subi(arith.constant(index, 1), cluster_idx[dim])
       peer_smem = ctx.get_cluster_ref(smem, dim, peer_idx)
-      a = mgpu.FragmentedArray.load_strided(memref_slice(src, cluster_idx)).store_untiled(smem)
+      mgpu.FragmentedArray.load_strided(memref_slice(src, cluster_idx)).store_untiled(smem)
       utils.warpgroup_barrier()
       barrier.arrive()
       barrier.wait()
@@ -1203,9 +1202,6 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
 
   def setUp(self):
     self.skip_unless_tcgen05()
-    if jtu.is_cuda_compute_capability_equal("10.3"):
-      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
-      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
     # No artificially lowered limit for arch-specific tests
     super().setUp(artificial_shared_memory_limit=None)
 
@@ -1353,6 +1349,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       swizzle=(32, 64, 128,),
   )
   def test_mma_basic_int(self, **kwargs):
+    self.skip_unless_tcgen05_int8()
     in_bytewidth = jnp.dtype(kwargs["in_jax_dtype"]).itemsize
     lhs_transpose = kwargs["lhs_transpose"]
     swizzle = kwargs["swizzle"]
@@ -1534,6 +1531,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       n=(64, 128, 256),
   )
   def test_mma_lhs_tmem_integer(self, m, n, in_jax_dtype, out_jax_dtype):
+    self.skip_unless_tcgen05_int8()
     self._basic_mma_lhs_tmem_test(
         m, n, in_jax_dtype, out_jax_dtype, fa.tmem_native_layout(vector_length=4),
         swizzle=math.gcd(n, 128)
@@ -1923,6 +1921,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       rhs_swizzle=(64, 128),  # 32 is too small and unsuported.
   )
   def test_mma_sparse(self, m, n, in_jax_dtype, lhs_swizzle, rhs_swizzle, lhs_transpose, rhs_transpose):
+    if in_jax_dtype == jnp.int8:
+      self.skip_unless_tcgen05_int8()
     if jnp.issubdtype(in_jax_dtype, jnp.floating):
       out_jax_dtype = jnp.float32
     else:
@@ -4286,7 +4286,6 @@ class FragmentedArrayTest(TestCase):
   def test_convert_int_uint(self, from_dtype, to_dtype, value):
     m, n = 1, 128
     def kernel(ctx, dst, _):
-      i8 = ir.IntegerType.get_signless(8)
       from_mlir_dtype = utils.dtype_to_ir_type(from_dtype)
       to_mlir_dtype = utils.dtype_to_ir_type(to_dtype)
       from_arr = mgpu.FragmentedArray.splat(
@@ -5626,10 +5625,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     if not config.enable_x64.value and dtype in (jnp.int64, jnp.uint64):
       self.skipTest("x64 support is disabled")
 
-    # TODO(b/415721295):Clean up after the minimal jaxlib version is 0.8.2.
-    if not hasattr(mgpu_dialect, "TMAReduction"):
-      self.skipTest("The mgpu_dialect.TMAReduction attribute is required.")
-
     if reduction_op in ("min", "max"):
       if dtype in (jnp.int32, jnp.int64):
         reduction_op = "s" + reduction_op
@@ -5948,9 +5943,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
 
   def setUp(self):
     self.skip_unless_tcgen05()
-    if jtu.is_cuda_compute_capability_equal("10.3"):
-      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
-      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
     # No artificially lowered limit for arch-specific tests
     super().setUp(artificial_shared_memory_limit=None)
 
@@ -6406,10 +6398,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
 
   @parameterized.parameters(jnp.int32, jnp.int16, jnp.int8)
   def test_tma_gather(self, index_dtype):
-    # TODO(b/415721295): Remove when the minimum jaxlib version is 0.8.3.
-    if not hasattr(mgpu_dialect, "tma_gather_supported"):
-      self.skipTest("TMA gather support is required.")
-
     dtype = jnp.bfloat16
     src_shape = (128, 64)
     dst_shape = (32, 64)
@@ -6593,7 +6581,7 @@ class ApiTest(TestCase):
           kernel, (1, 1, 1), (128, 1, 1), x, x, (),
       )
       bytecode_stablehlo = jax.jit(f).lower(x).as_text()
-      module_prefix = "module = \"ML\\EFR"
+      self.assertIn("module = \"ML\\EFR", bytecode_stablehlo)
 
 if hp is not None:
   @hps.composite
@@ -6862,15 +6850,23 @@ if hp is not None:
           new_warp_dims = list(layout.warp_dims)
           position = data.draw(hps.integers(0, len(layout.warp_dims)))
           new_warp_dims.insert(position, d)
-          layout = dataclasses.replace(
-              layout, warp_dims=tuple(new_warp_dims), _check_canonical=False
+          layout = fa.TiledLayout(
+              layout.tiling,
+              warp_dims=tuple(new_warp_dims),
+              lane_dims=layout.lane_dims,
+              vector_dim=layout.vector_dim,
+              _check_canonical=False,
           )
         else:
           new_lane_dims = list(layout.lane_dims)
           position = data.draw(hps.integers(0, len(layout.lane_dims)))
           new_lane_dims.insert(position, d)
-          layout = dataclasses.replace(
-              layout, lane_dims=tuple(new_lane_dims), _check_canonical=False
+          layout = fa.TiledLayout(
+              layout.tiling,
+              warp_dims=layout.warp_dims,
+              lane_dims=tuple(new_lane_dims),
+              vector_dim=layout.vector_dim,
+              _check_canonical=False,
           )
       self.assertNotEqual(layout, canonical_layout)
       self.assertEqual(layout.canonicalize(), canonical_layout)

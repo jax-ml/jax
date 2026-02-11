@@ -529,7 +529,6 @@ def _cond_linearize(nzs, *primals_in, branches, **params):
     branch_res_avals.append(res_avals)
 
   all_res_avals, res_avals_per_branch = _merge_branch_residuals(branch_res_avals)
-  num_res = len(all_res_avals)
   primal_jaxprs = _join_cond_outputs(
       primal_jaxprs, all_res_avals, res_avals_per_branch, len(nzs_out))
   tangent_jaxprs = _join_cond_pe_staged_jaxpr_inputs(
@@ -575,7 +574,7 @@ def _cond_jvp(primals, tangents, *, branches, **params):
   out_primals, out_tangents = split_list(out, [len(out_nz)])
   out_tangents_iter = iter(out_tangents)
   out_tangents = [next(out_tangents_iter) if nz else
-                  ad_util.Zero.from_primal_value(p)
+                  ad_util.p2tz(p)
                   for p, nz in zip(out_primals, out_nz)]
   return out_primals, out_tangents
 

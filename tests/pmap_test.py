@@ -48,6 +48,7 @@ from jax._src import test_util as jtu
 from jax._src.internal_test_util import lax_test_util
 from jax._src.interpreters import pxla
 from jax._src.lax import parallel
+from jax._src.sharding import IndivisibleError
 from jax._src.lib import xla_client as xc
 from jax._src.util import safe_map, safe_zip
 
@@ -666,11 +667,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     n = jax.device_count()
     f = self.pmap(lambda x, y: x + y)
     if config.pmap_shmap_merge.value:
-      self.assertRaisesRegex(
-          ValueError,
-          # NOTE(dsuo): Different error message on device/version.
-          ".*",
-          lambda: f(self.rng().randn(n), self.rng().randn(n - 1)))
+      with self.assertRaises((IndivisibleError, ValueError)):
+        f(self.rng().randn(n), self.rng().randn(n - 1))
     else:
       self.assertRaisesRegex(
           ValueError,
@@ -941,7 +939,7 @@ class PythonPmapTest(jtu.JaxTestCase):
        .replace(" ", ""),
        "in_shape": in_shape, "out_shape": out_shape}
       for in_shape, out_shape in [
-          [(1,1), (1,)], [(1,), (1,1)], [(1,), ()], [(4,7), (2,2,7)]
+          [(1,1), (1,)], [(1,), (1,1)], [(1,), ()]
       ])
   def testArrayReshape(self, in_shape, out_shape):
     if jax.device_count() < max(in_shape[:1] + out_shape[:1]):
@@ -1341,26 +1339,24 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testDeviceCountError(self):
+    if not config.pmap_shmap_merge.value:
+      self.skipTest('Requires pmap_shmap_merge=True')
+
     device_count = jax.device_count()
-
-    # NOTE(dsuo): The error message is different depending on the version of
-    # this test.
-    if config.pmap_shmap_merge.value:
-      expected_regex = r".*"
-    else:
-      expected_regex = r".*requires.*replicas"
-
     f = self.pmap(lambda x: 2 * x)
     x = jnp.arange(device_count + 1)
-    self.assertRaisesRegex(ValueError, expected_regex, lambda: f(x))
+    with self.assertRaises((IndivisibleError, ValueError)):
+      f(x)
 
     f = self.pmap(lambda x: 2 * x)
     x = np.ones((device_count + 1, 10))
-    self.assertRaisesRegex(ValueError, expected_regex, lambda: f(x))
+    with self.assertRaises((IndivisibleError, ValueError)):
+      f(x)
 
     f = self.pmap(lambda x: self.pmap(lambda x: 2 * x)(x))
     x = np.ones((device_count, 2, 10))
-    self.assertRaisesRegex(ValueError, expected_regex, lambda: f(x))
+    with self.assertRaises(ValueError):
+      f(x)
 
   def testPmapConstant(self):
     device_count = jax.device_count()
@@ -1402,31 +1398,10 @@ class PythonPmapTest(jtu.JaxTestCase):
       self.assertEqual(ans_devices, tuple(devices))
 
   def testPmapConstantError(self):
-    device_count = jax.device_count()
-    f = self.pmap(lambda x: 3)
-    x = jnp.arange(device_count + 1)
-    expected_regex_old = r'compiling computation that requires \d+ logical devices, but only \d+ XLA devices are available .*'
-    if config.pmap_shmap_merge.value:
-      expected_regex = [
-        # NOTE(dsuo): We get different error messages depending on backend.
-        r'shard_map applied.*axis sizes.*not evenly divisible.*mesh axis sizes.*',
-        r'cannot select an axis to squeeze out which has size not equal to one.*',
-        r'Sharding.*implies that array.*but the dimension size is.*',
-        r'implies that the global size of its dimension.*should be divisible by.*',
-        r'One of pjit arguments.*was given the sharding.*divisible by.*',
-        expected_regex_old,
-      ]
-      expected_regex = '|'.join(expected_regex)
-    else:
-      expected_regex = expected_regex_old
-    self.assertRaisesRegex(ValueError, expected_regex, lambda: f(x))
-
-    # TODO(mattjj): test error message with explicit devices
-    # f = pmap(lambda x: 3, devices=[jax.devices()[0]])
-    # x = jnp.arange(2)
-    # self.assertRaisesRegex(
-    #     ValueError, r"Cannot replicate across \d+ replicas because only \d+ "
-    #     r"local devices are available.", lambda: f(x))
+    if not config.pmap_shmap_merge.value:
+      self.skipTest('Requires pmap_shmap_merge=True')
+    with self.assertRaises((IndivisibleError, ValueError)):
+      self.pmap(lambda x: 3)(jnp.arange(jax.device_count() + 1))
 
   def testNestedPmapConstant(self):
     if jax.device_count() == 1:

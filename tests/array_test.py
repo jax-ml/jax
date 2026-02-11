@@ -31,7 +31,7 @@ from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.util import safe_zip
 from jax._src.mesh import AxisType, AbstractMesh, Mesh
-from jax._src.sharding import common_devices_indices_map
+from jax._src.sharding import common_devices_indices_map, IndivisibleError
 from jax._src.sharding_impls import (
     pmap_sharding_devices_indices_map, NamedSharding, GSPMDSharding)
 from jax.experimental import multihost_utils
@@ -766,7 +766,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     x = rng((64, 64), np.float32)
     y = jax.device_put(x)
     # holds ref.
-    y_bytes = memoryview(y)
+    _ = memoryview(y)
     # doesn't crash
     self.assertArraysEqual(add_one(y), x + 1)
 
@@ -969,11 +969,7 @@ class ShardingTest(jtu.JaxTestCase):
   def test_uneven_shard_error(self):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     mps = jax.sharding.NamedSharding(mesh, P('x', 'y'))
-    with self.assertRaisesRegex(
-        ValueError,
-        r"Sharding.*implies that array axis 1 is partitioned 2 times, but the "
-        r"dimension size is 3 \(full shape: \(8, 3\), per-dimension tiling "
-        r"factors: \[4, 2\] should evenly divide the shape\)"):
+    with self.assertRaises(IndivisibleError):
       mps.shard_shape((8, 3))
 
   @jtu.ignore_warning(category=DeprecationWarning)
@@ -1198,10 +1194,7 @@ class ShardingTest(jtu.JaxTestCase):
     shape = (1, 2)
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
-    with self.assertRaisesRegex(
-        ValueError,
-        "Sharding.*implies that array axis 0 is partitioned 2 times, but the "
-        "dimension size is 1"):
+    with self.assertRaises(IndivisibleError):
       s.devices_indices_map(shape)
 
   def test_scalar_input_wrong_pspec(self):

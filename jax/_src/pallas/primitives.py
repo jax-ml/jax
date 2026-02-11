@@ -500,8 +500,9 @@ def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
   ref, transforms, mask, other = args_tree.unflatten(args_flat)
   transforms = list(transforms)
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
-    ref_shape = state.get_transforms_shape(transforms, in_avals[0].shape)
-    transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_shape))
+    ref_aval = state.transform_type(transforms, in_avals[0])
+    assert isinstance(ref_aval, state.AbstractRef)
+    transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_aval.shape))
   *prev_transforms, idx = transforms
   assert isinstance(idx, NDIndexer)
   ref = state_discharge.transform_array(ref, prev_transforms)
@@ -622,8 +623,9 @@ def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
   ref, transforms, val, mask = args_tree.unflatten(args_flat)
   transforms = list(transforms)
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
-    ref_shape = state.get_transforms_shape(transforms, in_avals[0].shape)
-    transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_shape))
+    ref_aval = state.transform_type(transforms, in_avals[0])
+    assert isinstance(ref_aval, state.AbstractRef)
+    transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_aval.shape))
   *prev_transforms, idx = transforms
   assert isinstance(idx, NDIndexer)
   ref = state_discharge.transform_array(ref, prev_transforms)

@@ -51,6 +51,8 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
+          # Note: For testing external dependencies updates, change the python values
+          # add 3.13 and 3.13-nogil here when debugging.
           python: ["3.11", "3.14"]
           runner: ["linux-x86-n4-16"]
           jaxlib-version: ["head", "pypi_latest"]
@@ -82,11 +84,13 @@ jobs:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       download-jax-from-gcs: 0
-      skip-download-jaxlib-and-cuda-plugins-from-gcs: 0
+      skip-download-jaxlib-and-plugins-from-gcs: 0
       jaxlib-version: ${{ matrix.jaxlib-version }}
       halt-for-connection: ${{ inputs.halt-for-connection }}
       cuda-version: ${{ matrix.cuda-version }}
       enable-x64:  ${{ matrix.enable-x64 }}
+      # NOTE: For debugging wheel test change build_jaxlib and build_jax to 'wheel'.
       build_jaxlib: ${{ (matrix.jaxlib-version == 'head' && true) || false }}
       build_jax: 'true'
       run_multiaccelerator_tests: 'false'
+      clone_main_xla: 1

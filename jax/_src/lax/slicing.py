@@ -1545,11 +1545,12 @@ def _dynamic_slice_jvp(primals, tangents, *, slice_sizes):
 def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes):
   assert ad.is_undefined_primal(operand)
   assert all(not ad.is_undefined_primal(s) for s in start_indices)
+  operand_ct_aval = operand.aval.to_cotangent_aval()
   if type(t) is ad_util.Zero:
-    return [ad_util.Zero(operand.aval)] + [None] * len(start_indices)
+    return [ad_util.Zero(operand_ct_aval)] + [None] * len(start_indices)
   else:
     zeros = lax.full(operand.aval.shape, 0, operand.aval.dtype,
-                     sharding=operand.aval.sharding)
+                     sharding=operand_ct_aval.sharding)
     zeros = core.pvary(zeros, tuple(operand.aval.vma))
     return ([dynamic_update_slice_p.bind(zeros, t, *start_indices)] +
             [None] * len(start_indices))
@@ -1704,7 +1705,7 @@ def _dynamic_update_slice_jvp(primals, tangents):
   g_operand, g_update = tangents[:2]
   val_out = dynamic_update_slice_p.bind(operand, update, *start_indices)
   if type(g_operand) is ad_util.Zero and type(g_update) is ad_util.Zero:
-    tangent_out = ad_util.Zero.from_primal_value(val_out)
+    tangent_out = ad_util.p2tz(val_out)
   else:
     g_operand = ad.instantiate_zeros(g_operand)
     g_update = ad.instantiate_zeros(g_update)
@@ -1715,12 +1716,15 @@ def _dynamic_update_slice_transpose_rule(t, operand, update, *start_indices):
   assert all(not ad.is_undefined_primal(x) for x in start_indices)
   update_shape = (update.aval.shape if ad.is_undefined_primal(update) else
                   update.shape)
-  update_sharding = update.aval.sharding
+  operand_ct_aval = operand.aval.to_cotangent_aval()
+  update_ct_aval = update.aval.to_cotangent_aval()
   if type(t) is ad_util.Zero:
-    operand_t = ad_util.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
-    update_t = ad_util.Zero(update.aval) if ad.is_undefined_primal(update) else None
+    operand_t = (ad_util.Zero(operand_ct_aval)
+                 if ad.is_undefined_primal(operand) else None)
+    update_t = (ad_util.Zero(update_ct_aval)
+                if ad.is_undefined_primal(update) else None)
   else:
-    zeros = lax._zeros(t, shape=update_shape, sharding=update_sharding)
+    zeros = lax._zeros(t, shape=update_shape, sharding=update_ct_aval.sharding)
     operand_t = (dynamic_update_slice_p.bind(t, zeros, *start_indices)
                  if ad.is_undefined_primal(operand) else None)
     update_t = (dynamic_slice_p.bind(t, *start_indices, slice_sizes=update_shape)
@@ -2036,7 +2040,6 @@ def _gather_spec_computation(operand, indices, dimension_numbers, slice_sizes):
   operand_batching_dims = dimension_numbers.operand_batching_dims
   start_indices_batching_dims = dimension_numbers.start_indices_batching_dims
   output_shape_rank = len(offset_dims) + indices.ndim - 1
-  index_vector_dim = indices.ndim - 1
 
   operand_spec = operand.sharding.spec
   indices_spec = list(indices.sharding.spec)
@@ -2758,7 +2761,7 @@ def _scatter_addsub_jvp(
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
       mode=mode)
   if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
-    tangent_out = ad_util.Zero.from_primal_value(val_out)
+    tangent_out = ad_util.p2tz(val_out)
   else:
     g_operand = ad.instantiate_zeros(g_operand)
     g_updates = ad.instantiate_zeros(g_updates)
@@ -2981,7 +2984,7 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
       unique_indices=unique_indices, mode=mode)
 
   if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
-    tangent_out = ad_util.Zero.from_primal_value(val_out)
+    tangent_out = ad_util.p2tz(val_out)
   else:
     g_operand = ad.instantiate_zeros(g_operand)
     g_updates = ad.instantiate_zeros(g_updates)
@@ -3105,7 +3108,7 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
       update_consts=update_consts, dimension_numbers=dnums,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
       mode=mode)
-    return val_out, ad_util.Zero.from_primal_value(val_out)
+    return val_out, ad_util.p2tz(val_out)
 
   g_operand = ad.instantiate_zeros(g_operand)
   g_updates = ad.instantiate_zeros(g_updates)

@@ -204,7 +204,7 @@ def standard_abstract_eval(
 
 def standard_multi_result_abstract_eval(
     prim, shape_rule, dtype_rule, weak_type_rule, sharding_rule, vma_rule,
-    *avals, **kwargs):
+    unreduced_rule, reduced_rule, *avals, **kwargs):
   assert prim.multiple_results
   assert all(isinstance(aval, core.ShapedArray) for aval in avals), avals
   least_specialized = max(map(type, avals), key=_get_array_abstraction_level)
@@ -212,8 +212,8 @@ def standard_multi_result_abstract_eval(
   if least_specialized is core.ShapedArray:
     core.check_avals_context_mesh(avals, prim.name)
     out_shapes, out_dtypes, out_shardings = call_shape_dtype_sharding_rule(
-        prim, shape_rule, dtype_rule, sharding_rule, None, None, True,
-        *avals, **kwargs)
+        prim, shape_rule, dtype_rule, sharding_rule, unreduced_rule,
+        reduced_rule, True, *avals, **kwargs)
     out_vmas = vma_rule(*avals, **kwargs)
     out_mem_spaces = multi_mem_space_rule(prim, len(out_shapes), *avals, **kwargs)
     if isinstance(weak_types, bool):

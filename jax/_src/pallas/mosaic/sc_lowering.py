@@ -19,11 +19,9 @@ import dataclasses
 import functools
 from typing import Any, cast, NoReturn
 
-from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import debugging
 from jax._src import lax
-from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import numpy as jnp
 from jax._src import source_info_util
@@ -31,7 +29,6 @@ from jax._src import state
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import mlir
-from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
@@ -107,66 +104,39 @@ def lower_jaxpr_to_module(
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
 ) -> ir.Module:
+  module = ir.Module.create()
+  debug_info = jaxpr.debug_info
+  lower_jaxpr_into_module(
+      lowering_context,
+      module,
+      grid_mapping,
+      jaxpr,
+      name=mlir.sanitize_name(debug_info.func_name),
+      dimension_semantics=dimension_semantics,
+      kernel_type=kernel_type,
+      mesh=mesh,
+      dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
+  )
+  return module
+
+
+def lower_jaxpr_into_module(
+    lowering_context: mlir.LoweringRuleContext,
+    module: ir.Module,
+    grid_mapping: pallas_core.GridMapping,
+    jaxpr: jax_core.Jaxpr,
+    *,
+    name: str,
+    dimension_semantics: Sequence[tpu_core.DimensionSemantics] | None,
+    kernel_type: tpu_core.KernelType,
+    mesh: mesh_lib.Mesh | None = None,
+    dynamic_shape_replacement_enabled: bool = False,
+) -> None:
   """Lowers a Jaxpr to a Mosaic SparseCore module."""
   if dynamic_shape_replacement_enabled:
     raise NotImplementedError(
         "Dynamic shape replacement is not supported for SparseCore."
     )
-  dynamic_shape_replacement_fn = lambda x: x
-  if (
-      lowering_context.is_forward_compat()
-      or tc_lowering.is_cloud_tpu_older_than(
-          2026, 1, 18, lowering_context.module_context.backend
-      )
-  ) and not grid_mapping.grid:
-    # TODO(slebedev): Remove this branch after Jan 18th 2026.
-    index_map_avals, index_map_tree = tree_util.tree_flatten(
-        ((jax_core.ShapedArray((), jnp.int32),), {})
-    )
-    if grid_mapping.num_index_operands:
-      raise ValueError(
-          "Index operands not supported for SparseCore when grid is empty."
-      )
-    new_grid = (1,)
-    new_block_mappings = []
-    for bm in grid_mapping.block_mappings:
-
-      def new_index_map(*args, bm=bm):
-        return jax_core.eval_jaxpr(
-            # Discard the leading grid index.
-            bm.index_map_jaxpr.jaxpr,
-            bm.index_map_jaxpr.consts,
-            *args[1:],
-        )
-
-      debug_info = bm.index_map_jaxpr.jaxpr.debug_info
-      if debug_info.arg_names is not None:
-        debug_info = debug_info._replace(
-            arg_names=("idx", *debug_info.arg_names)
-        )
-      flat_fun, _ = api_util.flatten_fun(
-          lu.wrap_init(new_index_map, debug_info=debug_info), index_map_tree
-      )
-      with pallas_core.tracing_grid_env(new_grid, grid_mapping.vmapped_dims):
-        index_map_jaxpr, _, index_map_jaxpr_consts = pe.trace_to_jaxpr_dynamic(
-            flat_fun, index_map_avals
-        )
-      new_block_mappings.append(
-          bm.replace(
-              index_map_jaxpr=jax_core.ClosedJaxpr(
-                  index_map_jaxpr, index_map_jaxpr_consts
-              )
-          )
-      )
-
-    grid_mapping = grid_mapping.replace(
-        grid=new_grid,
-        index_map_avals=index_map_avals,
-        index_map_tree=index_map_tree,
-        block_mappings=tuple(new_block_mappings),
-    )
-    dimension_semantics = ("arbitrary",)
-
   for bm in grid_mapping.block_mappings:
     for bd in bm.block_shape:
       if not isinstance(bd, pallas_core.Blocked):
@@ -179,17 +149,16 @@ def lower_jaxpr_to_module(
   mosaic_grid_mapping = MosaicGridMapping(
       jaxpr, grid_mapping, dimension_semantics, mesh=mesh
   )
-  m = ir.Module.create()
-  sym_tab = ir.SymbolTable(m.operation)
+  sym_tab = ir.SymbolTable(module.operation)
   func_op = lower_jaxpr_to_func(
       jaxpr,
-      name="main",
+      name=name,
       kernel_type=kernel_type,
       mosaic_grid_mapping=mosaic_grid_mapping,
       forward_compatible=lowering_context.is_forward_compat(),
       backend=backend,
   )
-  m.body.append(func_op)
+  module.body.append(func_op)
   sym_tab.insert(func_op)
   func_op.attributes["iteration_bounds"] = ir.DenseI64ArrayAttr.get(
       mosaic_grid_mapping.grid
@@ -199,10 +168,10 @@ def lower_jaxpr_to_module(
   )
   if not mosaic_grid_mapping.grid:
     # No need for "window_params" if the grid is empty.
-    return m
+    return module
   window_params = []
   for i, bm in enumerate(grid_mapping.block_mappings):
-    func_name = f"transform_{i}"
+    func_name = f"{name}_transform_{i}"
     mlir_func = tc_lowering.lower_jaxpr_to_transform_func(
         bm.index_map_jaxpr.jaxpr,
         bm.block_aval,
@@ -214,7 +183,8 @@ def lower_jaxpr_to_module(
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
     )
     assert mlir_func.verify(), mlir_func
-    m.body.append(mlir_func)
+    module.body.append(mlir_func)
+    assert func_name not in sym_tab
     sym_tab.insert(mlir_func)
 
     block_shape = list(pallas_core._get_block_shape(bm.block_shape))
@@ -224,7 +194,7 @@ def lower_jaxpr_to_module(
     )
     window_params.append(ir.DictAttr.get(block_params))
   func_op.attributes["window_params"] = ir.ArrayAttr.get(window_params)
-  return m
+  return module
 
 
 @dataclasses.dataclass(init=False)
@@ -406,12 +376,13 @@ def _load_lowering_rule(
 
   transforms = list(tree_util.tree_unflatten(tree, flat_transforms))
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
-    ref_shape = state.get_transforms_shape(transforms, ref_aval.shape)
-    transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_shape))
+    tref_aval = state.transform_type(transforms, ref_aval)
+    assert isinstance(tref_aval, state.AbstractRef)
+    transforms.append(indexing.NDIndexer.make_trivial_indexer(tref_aval.shape))
   *prev_transforms, indexer = transforms
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
-      ref, ref_aval.dtype, ref_block_shape, prev_transforms
+      ref, ref_aval, ref_block_shape, prev_transforms
   )
   starts, sizes, strides, _, _ = tc_lowering._indexer_to_start_size_stride(
       indexer, ref_block_shape, cast_to_index=True
@@ -467,12 +438,13 @@ def _store_lowering_rule(
 
   transforms = list(tree_util.tree_unflatten(tree, flat_transforms))
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
-    ref_shape = state.get_transforms_shape(transforms, ref_aval.shape)
-    transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_shape))
+    tref_aval = state.transform_type(transforms, ref_aval)
+    assert isinstance(tref_aval, state.AbstractRef)
+    transforms.append(indexing.NDIndexer.make_trivial_indexer(tref_aval.shape))
   *prev_transforms, indexer = transforms
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
-      ref, ref_aval.dtype, ref_block_shape, prev_transforms
+      ref, ref_aval, ref_block_shape, prev_transforms
   )
   starts, sizes, strides, _, _ = tc_lowering._indexer_to_start_size_stride(
       indexer, ref_block_shape, cast_to_index=True
@@ -609,14 +581,14 @@ def _prepare_dma_refs(
             " `pltpu.async_copy`"
         )
       dst_ref, _ = _transform_ref(
-          dst_ref, dst_aval.dtype, dst_aval.shape, dst_transforms
+          dst_ref, dst_aval, dst_aval.shape, dst_transforms
       )
       dst_ref_shape = ir.MemRefType(dst_ref.type).shape
       indirect_offsets, src_transforms = _extract_indirect_offsets(
           src_transforms, tuple(dst_ref_shape)
       )
       src_ref, _ = _transform_ref(
-          src_ref, src_aval.dtype, src_aval.shape, src_transforms
+          src_ref, src_aval, src_aval.shape, src_transforms
       )
       indirect_offsets_ref_str = "src_ref"
     case MemorySpace.VMEM, MemorySpace.HBM | MemorySpace.VMEM_SHARED:
@@ -626,14 +598,14 @@ def _prepare_dma_refs(
             " `pltpu.async_copy`"
         )
       src_ref, _ = _transform_ref(
-          src_ref, src_aval.dtype, src_aval.shape, src_transforms
+          src_ref, src_aval, src_aval.shape, src_transforms
       )
       src_ref_shape = ir.MemRefType(src_ref.type).shape
       indirect_offsets, dst_transforms = _extract_indirect_offsets(
           dst_transforms, tuple(src_ref_shape)
       )
       dst_ref, _ = _transform_ref(
-          dst_ref, dst_aval.dtype, dst_aval.shape, dst_transforms
+          dst_ref, dst_aval, dst_aval.shape, dst_transforms
       )
       indirect_offsets_ref_str = "dst_ref"
     case _:  # Indirect DMA is not supported.
@@ -655,10 +627,10 @@ def _prepare_dma_refs(
             f"Got (src, dst)={(src_aval.memory_space, dst_aval.memory_space)}"
         )
       src_ref, _ = _transform_ref(
-          src_ref, src_aval.dtype, src_aval.shape, src_transforms
+          src_ref, src_aval, src_aval.shape, src_transforms
       )
       dst_ref, _ = _transform_ref(
-          dst_ref, dst_aval.dtype, dst_aval.shape, dst_transforms
+          dst_ref, dst_aval, dst_aval.shape, dst_transforms
       )
       indirect_offsets = None
       indirect_offsets_ref_str = ""
@@ -710,10 +682,10 @@ def _dma_start_lowering_rule(
         "`pltpu.async_copy(..., dst_ref=ref.at[jnp.arange(vec_dim)], ...)` or "
         "`pltpu.async_copy(..., dst_ref=ref.at[iota_ref], ...)`."
     )
-  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
+  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, sem_transforms)
   if src_sem is not None:
     src_sem, _ = _transform_ref(
-        src_sem, src_sem_aval.dtype, src_sem_aval.shape, src_sem_transforms
+        src_sem, src_sem_aval, src_sem_aval.shape, src_sem_transforms
     )
 
   # If not ``None``, we lower to an indirect DMA instead.
@@ -769,7 +741,7 @@ def _dma_wait_lowering_rule(
   src_ref, dst_ref, indirect_offsets = _prepare_dma_refs(
       src_ref, src_transforms, dst_ref, dst_transforms, src_aval, dst_aval,
   )
-  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
+  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, sem_transforms)
 
   # If not ``None``, we lower to an indirect DMA instead of a regular DMA.
   if indirect_offsets is None:
@@ -813,9 +785,16 @@ def _extract_indirect_offsets_from_indexer(
             "Only int32 indices are supported by scatter/gather via"
             " `pltpu.async_copy` with a dynamically-shaped indexer"
         )
+      offsets_ref_aval = state.AbstractRef(
+          inner_aval=jax_core.ShapedArray(
+              dtype=jnp.dtype("int32"),
+              shape=tuple(offsets_type.shape),
+          ),
+          memory_space=None,
+      )
       offsets, _ = _transform_ref(
           offsets_ref.ref,
-          jnp.int32,
+          offsets_ref_aval,
           offsets_type.shape,  # The shape before the indexing.
           offsets_ref.transforms,
       )
@@ -842,7 +821,7 @@ def _extract_indirect_offsets_from_indexer(
 
 def _extract_indirect_offsets(
     transforms: Sequence[ir.Value], expected_shape: tuple[int, ...]
-) -> tuple[ir.Value | None, Sequence[pallas_core.MemoryRefTransform]]:
+) -> tuple[ir.Value | None, Sequence[state.Transform]]:
   for i, indexer in enumerate(transforms):
     if not isinstance(indexer, indexing.NDIndexer):
       continue
@@ -878,6 +857,13 @@ def _run_scoped_lowering_rule(
       collective_axes=collective_axes,
       alloc_fn=_alloc_value,
   )
+
+
+@register_lowering_rule(jax_core.empty_ref_p)
+def _empty_ref_lowering_rule(ctx: LoweringRuleContext, ty, memory_space):
+  del ty, memory_space
+  [aval_out] = ctx.avals_out
+  return _alloc_value(aval_out, ctx=ctx)  # pytype: disable=wrong-arg-types
 
 
 @register_lowering_rule(
@@ -1012,7 +998,7 @@ def _default_tile_strides(
 
 
 def _alloc_value(
-    aval: jax_core.AbstractValue, *, ctx: LoweringRuleContext
+    aval: jax_core.AbstractValue | tc_lowering.ShapedAbstractValue, *, ctx: LoweringRuleContext
 ) -> ir.Value:
   if isinstance(aval, sc_core.AbstractRef) and aval.tiling is not None:
     tiling = "".join(f"({','.join(map(str, tile))})" for tile in aval.tiling)

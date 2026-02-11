@@ -61,6 +61,8 @@ _cache_initialized_mutex = threading.Lock()
 
 _UNSUPPORTED_RUNTIMES: set[str] = set()
 
+_TIME_BYTES = 4
+
 def is_cache_used(backend: xla_client.Client) -> bool:
   """Check if cache is used and report adoption metrics one-time per task.
   The cache may be initialized during the first call to this function.
@@ -100,7 +102,60 @@ def is_cache_used(backend: xla_client.Client) -> bool:
 def get_file_cache(path: str) -> tuple[CacheInterface, str] | None:
   """Returns the file cache and the path to the cache."""
   max_size = config.compilation_cache_max_size.value
-  return LRUCache(path, max_size=max_size), path
+  cache = LRUCache(path, max_size=max_size)
+  if config.compilation_cache_check_contents.value:
+    return VerificationCache(cache), path
+  return cache, path
+
+
+class VerificationCache(CacheInterface):
+  """A cache that wraps another cache and verifies its contents.
+
+  If jax_compilation_cache_check_contents is True, then the first time
+  we encounter a new key in the disk cache in this process, even if the
+  disk cache already contains such an entry, we return None from get(),
+  forcing a recompilation. Then, when put() is called with the compiled
+  executable, we verify that it matches what's on disk.
+  """
+
+  def __init__(self, base_cache: CacheInterface):
+    self._base_cache = base_cache
+    self._verified_keys: set[str] = set()
+
+  @property
+  def _path(self):
+    return self._base_cache._path
+
+  def get(self, key: str) -> bytes | None:
+    if key not in self._verified_keys:
+      # Force a recompile the first time we see a key.
+      return None
+
+    return self._base_cache.get(key)
+
+  def put(self, key: str, value: bytes) -> None:
+    if key not in self._verified_keys:
+      on_disk = self._base_cache.get(key)
+      if on_disk is not None:
+        # The cache content is [timestamp] + [executable].
+        # We decompress both and compare skip the timestamp which will
+        # differ for fresh compilations.
+        decompressed_on_disk = decompress_executable(on_disk)
+        decompressed_new = decompress_executable(value)
+        executable_on_disk, _ = extract_executable_and_time(decompressed_on_disk)
+        executable_new, _ = extract_executable_and_time(decompressed_new)
+        if executable_on_disk != executable_new:
+          raise RuntimeError(
+              f"Persistent compilation cache inconsistency for key {key}. "
+              "Executable found in the disk cache does not match the "
+              "freshly compiled executable."
+          )
+      self._verified_keys.add(key)
+
+    self._base_cache.put(key, value)
+
+  def clear(self):
+    self._verified_keys.clear()
 
 
 def set_cache_dir(path) -> None:
@@ -350,7 +405,10 @@ def combine_executable_and_time(
   Content:  compilation time    serialized executable
             (big-endian int)
   """
-  return int(compile_time).to_bytes(4, byteorder='big') + serialized_executable
+  return (
+      int(compile_time).to_bytes(_TIME_BYTES, byteorder="big")
+      + serialized_executable
+  )
 
 
 def extract_executable_and_time(
@@ -364,5 +422,5 @@ def extract_executable_and_time(
   Content:  compilation time    serialized executable
             (big-endian int)
   """
-  return executable_and_time[4:], int.from_bytes(
-      executable_and_time[:4], byteorder='big')
+  return executable_and_time[_TIME_BYTES:], int.from_bytes(
+      executable_and_time[:_TIME_BYTES], byteorder='big')

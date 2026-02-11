@@ -784,7 +784,7 @@ def _select_and_scatter_add_jvp(
       padding)
   del g_operand
   if type(g_source) is ad_util.Zero:
-    tangent_out = ad_util.Zero.from_primal_value(val_out)
+    tangent_out = ad_util.p2tz(val_out)
   else:
     tangent_out = _select_and_scatter_add(
         g_source, operand, select_prim, window_dimensions,
@@ -1042,7 +1042,7 @@ def _select_and_gather_add_jvp(
       padding, base_dilation, window_dilation)
   del g_operand
   if type(g_source) is ad_util.Zero:
-    tangent_out = ad_util.Zero.from_primal_value(val_out)
+    tangent_out = ad_util.p2tz(val_out)
   else:
     tangent_out = _select_and_gather_add(
         g_source, operand, select_prim, window_dimensions,

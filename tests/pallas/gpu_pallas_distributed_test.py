@@ -48,6 +48,16 @@ def is_nvshmem_used():
 class TestCase(jt_multiprocess.MultiProcessTest if is_nvshmem_used() is None else parameterized.TestCase):
 
   def setUp(self):
+    # TODO(b/482756208): Fix this
+    if jax.local_device_count() > 1:
+      self.skipTest("Collective metadata tests are flaky since right now when "
+                    "collective metadata is used there is no cross-device "
+                    "barrier before the module execution. This might lead to a "
+                    "situation when device 1 writes a signal to the device 2 "
+                    "the same time as device 2 zeroes it's signal memory "
+                    "buffer to launch a kernel. Eventually device 1 waits "
+                    "forever on a deadlock.")
+
     if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("Only works on GPU with capability >= sm90")
@@ -65,9 +75,7 @@ class TestCase(jt_multiprocess.MultiProcessTest if is_nvshmem_used() is None els
 class PallasCallRemoteDMATest(TestCase):
 
   def test_remote_dma_basic(self):
-    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
-    # subset device execution is supported.
-    if jax.process_index() > 2 or jax.local_device_count() > 2:
+    if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
       other_dev_id = 1 - lax.axis_index('x')
@@ -103,10 +111,49 @@ class PallasCallRemoteDMATest(TestCase):
     expected = x[8:] if jax.process_index() == 0 else x[:8]
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
+  def test_remote_dma_with_retries(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+    def kernel(x_ref, y_ref, ready_sem, recv_sem):
+      other_dev_id = 1 - lax.axis_index('x')
+      y_ref[...] = x_ref[...]
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      pl.semaphore_wait(ready_sem)
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+      pl.semaphore_signal(recv_sem, device_id=other_dev_id)
+      pl.semaphore_wait(recv_sem)
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+    def body(x):
+      return pl.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+          out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          scratch_shapes=[
+              plgpu.SemaphoreType.REGULAR,
+              plgpu.SemaphoreType.REGULAR,
+          ],
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ['x'])
+    jit_body = jax.jit(
+        jax.shard_map(
+            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'),
+            check_vma=False,
+        )
+    )
+    y = x
+    for _ in range(51):
+      y = jit_body(y)
+
+    expected = x[8:] if jax.process_index() == 0 else x[:8]
+    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+
   def test_remote_dma_with_profiler(self):
-    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
-    # subset device execution is supported.
-    if jax.process_index() > 2 or jax.local_device_count() > 2:
+    if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
       other_dev_id = 1 - lax.axis_index('x')
@@ -135,9 +182,9 @@ class PallasCallRemoteDMATest(TestCase):
                   plgpu.SemaphoreType.REGULAR,
                   plgpu.SemaphoreType.REGULAR,
               ],
-              compiler_params={"mosaic_gpu":
-                              plgpu.CompilerParams(profile_space=1,
-                                                  profile_dir=tmpdir)},
+              compiler_params=plgpu.CompilerParams(
+                  profile_space=1, profile_dir=tmpdir
+              ),
           )(x)
 
         devices = jax.devices()[:2]
@@ -152,9 +199,7 @@ class PallasCallRemoteDMATest(TestCase):
       np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
   def test_remote_dma_in_loop(self):
-    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
-    # subset device execution is supported.
-    if jax.process_index() > 2 or jax.local_device_count() > 2:
+    if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
@@ -196,9 +241,7 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
   def test_remote_dma_dynamic_index(self):
-    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
-    # subset device execution is supported.
-    if jax.process_index() > 2 or jax.local_device_count() > 2:
+    if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
       other_dev_id = jnp.sum(x_ref[...] == 1, dtype=jnp.int32)
@@ -237,13 +280,11 @@ class PallasCallRemoteDMATest(TestCase):
 
   @parameterized.parameters(('x',), ('y',))
   def test_remote_dma_2d_mesh(self, axis):
-    # TODO(b/477478816): Get rid of local_device_count() < 4 condition once
-    # subset device execution is supported.
-    if jax.process_count() < 4 or jax.local_device_count() < 4:
-      self.skipTest('Test requires at least 4 devices (and processes).')
-    # TODO(b/477478816): Get rid of local_device_count() > 4 condition once
-    # subset device execution is supported.
-    if jax.process_index() > 4 or jax.local_device_count() > 4:
+    if (jax.process_count() < 4 and
+        (jax.process_count() != 1 or jax.local_device_count() < 4)):
+      self.skipTest('Test requires at least 4 devices either accessible by a'
+                    'single process or 4 processes with 1 device each.')
+    if jax.process_index() > 4:
       return  # Only 4 processes needed.
     def kernel(x_ref, y_ref, recv_sem):
       other_dev_id = {axis: 1 - lax.axis_index(axis)}
@@ -274,9 +315,7 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
   def test_wait_twice(self):
-    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
-    # subset device execution is supported.
-    if jax.process_index() > 2 or jax.local_device_count() > 2:
+    if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem):
@@ -303,9 +342,7 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y, jnp.ones_like(y))
 
   def test_wait_nodec(self):
-    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
-    # subset device execution is supported.
-    if jax.process_index() > 2 or jax.local_device_count() > 2:
+    if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem):
@@ -333,9 +370,7 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y, jnp.ones_like(y))
 
   def test_signal_parallel(self):
-    # TODO(b/477478816): Get rid of local_device_count() > 2 condition once
-    # subset device execution is supported.
-    if jax.process_index() > 2 or jax.local_device_count() > 2:
+    if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem, sem2):
@@ -421,11 +456,12 @@ class PallasCallRemoteDMATest(TestCase):
 
   @parameterized.parameters(False, True)
   def test_copy_tma(self, use_dict):
-    if jax.local_device_count() > 1:
-      return  # Test-case uses multiprocess collectives.
-
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
+
+    # TODO(b/481949311): Remove this once the bug is fixed.
+    if jax.local_device_count() > 1:
+      self.skipTest("b/481949311")
 
     def kernel(y_ref, smem_ref, sem):
       dev_id = lax.axis_index("y")
@@ -464,7 +500,8 @@ class PallasCallRemoteDMATest(TestCase):
             kernel_call, mesh=mesh, in_specs=(), out_specs=P("y"), check_vma=False,
         )
     )()
-    y = multihost_utils.process_allgather(y, tiled=True)
+    if jax.local_device_count() == 1:
+      y = multihost_utils.process_allgather(y, tiled=True)
     ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 

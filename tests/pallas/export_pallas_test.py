@@ -14,16 +14,20 @@
 
 """Test exporting Pallas kernels."""
 
+from jax.experimental.pallas import tpu as pltpu
 import sys
 
 from absl.testing import absltest
 import jax
 from jax import export
+from jax import numpy as jnp
 from jax._src import test_util as jtu
+from jax._src.pallas import core
 from jax._src.pallas import pallas_call as pallas_call_lib
 from jax.experimental import pallas as pl
-
 import numpy as np
+
+
 try:
   from jax._src.lib import triton
 except ImportError:
@@ -32,6 +36,7 @@ except ImportError:
 
 jax.config.parse_flags_with_absl()
 
+pallas_export_experimental = core.pallas_export_experimental
 
 class ExportTestWithTriton(jtu.JaxTestCase):
 
@@ -88,6 +93,59 @@ class ExportTestWithTriton(jtu.JaxTestCase):
           r"stablehlo.custom_call @tpu_custom_call.+kernel_name\s*=\s*\"my_custom_kernel_name\"")
     if "cuda" in platforms:
       self._check_cuda_export(exp)
+
+
+class ExportTestWithMosaicTPU(jtu.JaxTestCase):
+  def test_dynamic_shapes_export(self):
+    if jtu.device_under_test() != "tpu":
+      self.skipTest("Mosaic TPU test only runs on TPU")
+
+    def add_vectors_kernel(x_ref, y_ref, o_ref):
+      block_b = x_ref.shape[0]
+
+      for batch_idx in range(block_b):
+        x_b = x_ref[batch_idx]
+        y_b = y_ref[batch_idx]
+        o_ref[batch_idx] = x_b + y_b
+
+    def add_vectors(x: jax.Array, y: jax.Array) -> jax.Array:
+      batch_block = 4
+      x_block = 128
+      grid = (x.shape[0] // batch_block, x.shape[1] // x_block)
+      in_specs = [
+          pl.BlockSpec((batch_block, x_block, x.shape[2]), lambda batch_idx, x_idx: (batch_idx, x_idx, 0)),
+          pl.BlockSpec((batch_block, x_block, y.shape[2]), lambda batch_idx, x_idx: (batch_idx, x_idx, 0)),
+      ]
+      out_specs = [
+          pl.BlockSpec((batch_block, x_block, x.shape[2]), lambda batch_idx, x_idx: (batch_idx, x_idx, 0)),
+      ]
+      out_shape = [jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype)]
+      return pl.pallas_call(add_vectors_kernel,
+                            out_shape=out_shape,
+                            name="my_custom_kernel_name",
+                            grid_spec=pltpu.PrefetchScalarGridSpec(
+                                grid=grid,
+                                in_specs=in_specs,
+                                out_specs=out_specs,
+                                num_scalar_prefetch=0,
+                            ),
+                            )(x, y)
+
+    batch_size_sym, a_sym, b_sym = jax.export.symbolic_shape(
+        "batch_size,a_size,b_size")
+    x_shape = jax.ShapeDtypeStruct((batch_size_sym, a_sym, b_sym), jnp.float32)
+    y_shape = jax.ShapeDtypeStruct((batch_size_sym, a_sym, b_sym), jnp.float32)
+
+    f_j = jax.jit(add_vectors)
+    f_e = jax.export.export(f_j, platforms=["tpu"])
+
+    with pallas_export_experimental(dynamic_shapes=True):
+      f_k = f_e(x_shape, y_shape)
+
+    print(f_k.mlir_module())
+    self.assertRegex(
+        f_k.mlir_module(),
+        r"stablehlo.custom_call @tpu_custom_call.+kernel_name\s*=\s*\"my_custom_kernel_name\"")
 
 
 class ExportTestWithMosaicGpu(ExportTestWithTriton):

@@ -22,13 +22,8 @@ from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import primitives as plm_primitives
 
 
-def sync_copy(src_ref, dst_ref):
-  """Copies a PyTree of Refs to another PyTree of Refs.
-
-  Args:
-    src_ref: A Pytree of source Refs/TransformedRefs.
-    dst_ref: A Pytree of destination Refs/TransformedRefs.
-  """
+def sync_copy(src_ref, dst_ref, *, add: bool = False) -> None:
+  """Synchronously copies a PyTree of refs to another PyTree of refs."""
   if not jax.tree.leaves(src_ref):
     # No buffers to copy so skip the function.
     return
@@ -40,7 +35,7 @@ def sync_copy(src_ref, dst_ref):
     def _copy_start_or_wait(action, src_ref, dst_ref):
       descriptor = plm_primitives.make_async_copy(src_ref, dst_ref, sem)
       if action == "start":
-        descriptor.start()
+        descriptor.start(add=add)
       elif action == "wait":
         descriptor.wait()
       else:

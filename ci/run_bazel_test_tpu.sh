@@ -28,7 +28,7 @@ set -exu -o history -o allexport
 source ci/envs/default.env
 
 # Clone XLA at HEAD if path to local XLA is not provided
-if [[ -z "$JAXCI_XLA_GIT_DIR" ]]; then
+if [[ -z "$JAXCI_XLA_GIT_DIR" && -z "$JAXCI_CLONE_MAIN_XLA" ]]; then
     export JAXCI_CLONE_MAIN_XLA=1
 fi
 

@@ -15,11 +15,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
+import functools
 import math
 from typing import Any, Protocol, Union
-from collections.abc import Callable
 
 from jax._src import core
 from jax._src import dtypes
@@ -27,9 +27,7 @@ from jax._src import effects
 from jax._src import pretty_printer as pp
 from jax._src import traceback_util
 from jax._src import tree_util
-from jax._src.state import indexing
 from jax._src.typing import Array
-from jax._src.typing import DTypeLike
 from jax._src.util import safe_map, safe_zip
 import numpy as np
 
@@ -84,200 +82,144 @@ effects.remat_allowed_effects.add_type(RefEffect)
 StateEffect = Union[ReadEffect, WriteEffect, AccumEffect]
 
 
-# ## `Ref`s
-@tree_util.register_pytree_node_class
-@dataclasses.dataclass(frozen=True)
-class RefBitcaster:
-  dtype: dtypes.DType
-  shape: tuple[int, ...]
+# ## Transforms
 
-  @classmethod
-  def from_ref_new_dtype(cls, ref_or_view: Any, dtype) -> RefBitcaster:
-    if isinstance(ref_or_view, TransformedRef):
-      if ref_or_view.is_dynamic_size:
-        raise NotImplementedError(
-            "Bitcast ref with dynamic size is not supported."
-        )
-    from jax._src.state.utils import eval_bitcast_shape  # pytype: disable=import-error
-    dtype = dtypes.dtype(dtype)
-    return cls(dtype, eval_bitcast_shape(ref_or_view, dtype))
 
-  @property
-  def is_dynamic_size(self):
-    return False
+class Transform(Protocol):
 
-  def tree_flatten(self):
-    return (), (self.dtype, self.shape)
+  def transform_type(self, x: core.AbstractValue) -> core.AbstractValue:
+    raise NotImplementedError(type(self))
 
-  @classmethod
-  def tree_unflatten(cls, metadata, arrays):
-    assert not arrays
-    return cls(*metadata)
-
-  def transform_shape(
-      self, shape: tuple[int | Array, ...] | None
-  ) -> tuple[int | Array, ...] | None:
-    del shape  # Unused
-    return self.shape
-
-  def transform_dtype(self, dtype):
-    del dtype  # Unused
-    return self.dtype
-
-  def transform_sharding(self, sharding):
-    # If there are no explicit axes, do nothing.
-    if all(p is None for p in sharding.spec):
-      return sharding
-    raise NotImplementedError
+  def undo(self, x: core.AbstractValue) -> Transform:
+    raise NotImplementedError(type(self))
 
   def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
-    del context  # Unused.
-    return pp.text(f"{{bitcast({self.dtype}{list(self.shape)}])}}")
-
-
-@tree_util.register_pytree_node_class
-@dataclasses.dataclass(frozen=True)
-class RefReshaper:
-  dtype: dtypes.DType
-  shape: tuple[int, ...]
-
-  @classmethod
-  def from_ref_new_shape(cls, ref_or_view: Any, *shape: Any) -> RefReshaper:
-    if len(shape) == 1 and isinstance(shape[0], tuple):
-      shape = shape[0]
-    if not shape:
-      raise ValueError("Cannot reshape ref to empty shape")
-    if any(s == -1 for s in shape):
-      num_elements = math.prod(ref_or_view.shape)
-      defined_dims = [d for d in shape if d != -1]
-      if len(defined_dims) != len(shape) - 1:
-        raise ValueError(f"At most one dimension can be -1, but got {shape}")
-      if num_elements % math.prod(defined_dims):
-        raise ValueError(
-            f"Specified dims {shape} do not evenly divide the size of the "
-            f"ref ({num_elements})."
-        )
-      remaining_dim = num_elements // math.prod(defined_dims)
-      shape = tuple(d if d != -1 else remaining_dim for d in shape)
-    if np.prod(shape) != np.prod(ref_or_view.shape):
-      raise TypeError(
-          f"cannot reshape ref of shape {ref_or_view.shape} into shape {shape}"
-      )
-    if isinstance(ref_or_view, TransformedRef):
-      if ref_or_view.is_dynamic_size:
-        raise NotImplementedError(
-            "Reshape ref with dynamic size is not supported."
-        )
-    dtype = dtypes.dtype(ref_or_view.dtype)
-    return cls(dtype, shape)
-
-  @property
-  def is_dynamic_size(self):
-    return False
-
-  def tree_flatten(self):
-    return (), (self.dtype, self.shape)
-
-  @classmethod
-  def tree_unflatten(cls, metadata, arrays):
-    assert not arrays
-    return cls(*metadata)
-
-  def transform_shape(
-      self, shape: tuple[int | Array, ...] | None
-  ) -> tuple[int | Array, ...] | None:
-    del shape  # Unused
-    return self.shape
-
-  def transform_dtype(self, dtype: DTypeLike | None) -> DTypeLike | None:
-    del dtype  # Unused
-    return self.dtype
-
-  def transform_sharding(self, sharding):
-    # If there are no explicit axes, do nothing.
-    if all(p is None for p in sharding.spec):
-      return sharding
-    raise NotImplementedError
-
-  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
-    del context  # Unused.
-    return pp.text(f"{{reshape({self.dtype}{list(self.shape)})}}")
+    return pp.text(f"{{{self}}}")
 
 
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
-class RefTransposer:
+class BitcastTransform(Transform):
+  dtype: dtypes.DType = dataclasses.field(metadata=dict(static=True))
+
+  def transform_type(self, x):
+    match x:
+      case AbstractRef():
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
+      case core.ShapedArray():
+        from jax._src.state.utils import eval_bitcast_shape  # pytype: disable=import-error
+
+        new_shape = eval_bitcast_shape(x, self.dtype)
+        if not all(p is None for p in x.sharding.spec):
+          raise NotImplementedError
+        return x.update(shape=new_shape, dtype=self.dtype)
+      case _:
+        raise TypeError(f"Cannot bitcast {x} to {self.dtype}")
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    del context  # Unused.
+    return pp.text(f"{{bitcast({self.dtype})}}")
+
+
+def _canonicalize_reshape(
+    input_shape: tuple[int, ...], shape: tuple[int, ...]
+) -> tuple[int, ...]:
+  num_negative_ones = sum(s == -1 for s in shape)
+  if num_negative_ones == 0:
+    if np.prod(shape) != np.prod(input_shape):
+      raise ValueError(
+          f"cannot reshape shape {input_shape} into shape {shape}"
+      )
+    return shape
+  num_elements = math.prod(input_shape)
+  defined_dims = [d for d in shape if d != -1]
+  if len(defined_dims) != len(shape) - 1:
+    raise ValueError(f"At most one dimension can be -1, but got {shape}")
+  if num_elements % math.prod(defined_dims):
+    raise ValueError(
+        f"Specified dims {shape} do not evenly divide the size of the "
+        f"ref ({num_elements})."
+    )
+  remaining_dim = num_elements // math.prod(defined_dims)
+  return tuple(d if d != -1 else remaining_dim for d in shape)
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class ReshapeTransform(Transform):
+  shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+
+  def _validate_shape(self, input_shape: tuple[int, ...]):
+    if np.prod(self.shape) != np.prod(input_shape):
+      raise ValueError(
+          f"cannot reshape ref of shape {input_shape} into shape {self.shape}"
+      )
+
+  def transform_type(self, x):
+    match x:
+      case AbstractRef():
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
+      case core.ShapedArray():
+        self._validate_shape(x.shape)
+        # If there are no explicit axes, do nothing.
+        if not all(p is None for p in x.sharding.spec):
+          raise NotImplementedError
+        return x.update(shape=self.shape)
+      case _:
+        raise TypeError(f"Cannot reshape {x} to {self.shape}")
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    del context  # Unused.
+    return pp.text(f"{{reshape({list(self.shape)})}}")
+
+
+def _perm_inverse(permutation: tuple[int, ...]) -> tuple[int, ...]:
+  inverse = [-1] * len(permutation)
+  for i, p in enumerate(permutation):
+    inverse[p] = i
+  return tuple(inverse)
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class TransposeTransform(Transform):
   permutation: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
 
-  @classmethod
-  def from_ref_new_permutation(
-      cls, ref_or_view: Any, *perm: int
-  ) -> RefTransposer:
-    if len(perm) == 1 and isinstance(perm[0], tuple):
-      perm = perm[0]
-    if len(perm) != ref_or_view.ndim:
-      raise ValueError(
-          f"Permutation {perm} does not match the rank of the ref"
-          f" ({ref_or_view.ndim})"
-      )
-    return cls(perm)
+  def undo(self, x: core.AbstractValue) -> Transform:
+    return TransposeTransform(_perm_inverse(self.permutation))
 
-  def transform_shape(
-      self, shape: tuple[int | Array, ...] | None
-  ) -> tuple[int | Array, ...] | None:
-    if shape is None:
-      return None
-    return tuple(shape[i] for i in self.permutation)
-
-  def transform_dtype(self, dtype):
-    return dtype
-
-  def transform_sharding(self, sharding):
-    # If there are no explicit axes, do nothing.
-    if all(p is None for p in sharding.spec):
-      return sharding
-    raise NotImplementedError
+  def transform_type(self, x):
+    match x:
+      case AbstractRef():
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
+      case core.ShapedArray():
+        if len(self.permutation) != x.ndim:
+          raise ValueError(
+              f"Permutation {self.permutation} does not match the rank of the "
+              f"type ({x.ndim})"
+          )
+        # If there are no explicit axes, do nothing.
+        if not all(p is None for p in x.sharding.spec):
+          raise NotImplementedError
+        new_shape = tuple(x.shape[i] for i in self.permutation)
+        return x.update(shape=new_shape)
+      case _:
+        raise TypeError(f"Cannot transpose {x} to {self.permutation}")
 
   def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
     del context  # Unused.
     return pp.text(f"{{transpose({list(self.permutation)})}}")
 
 
-class Transform(Protocol):
-
-  def transform_shape(
-      self, shape: tuple[int | Array, ...] | None
-  ) -> tuple[int | Array, ...] | None:
-    """Transform the shape.
-
-    Can return None if the input shape is not known, but must return a concrete
-    result when the input shape is known.
-    """
-    return shape
-
-  def transform_dtype(self, dtype: DTypeLike | None) -> DTypeLike | None:
-    """Transform the dtype.
-
-    Can return None if the input dtype is not known, but must return a concrete
-    result when the input dtype is known.
-    """
-    return dtype
-
-  def transform_sharding(self, sharding):
-    if all(p is None for p in sharding.spec): return sharding # no explicit axes
-    raise NotImplementedError
-
-  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
-    return pp.text(f"{{{self}}}")
-
-
 @dataclasses.dataclass
 class RefIndexer:
+  """An object temporarily generated when doing ``ref.at``."""
   ref_or_view: Any
 
-  def __getitem__(self, slc):
+  def __getitem__(self, slc) -> TransformedRef:
     if not isinstance(slc, tuple):
       slc = (slc,)
+    from jax._src.state import indexing  # pytype: disable=import-error
     indexer = indexing.NDIndexer.from_indices_shape(slc, self.ref_or_view.shape)
     if isinstance(self.ref_or_view, TransformedRef):
       view = self.ref_or_view
@@ -294,65 +236,56 @@ class TransformedRef:
   def is_dynamic_size(self):
     return any(not isinstance(i, int) for i in self.shape)
 
+  @functools.cached_property
+  def type(self) -> core.AbstractValue:
+    if type(self.ref) in core.pytype_aval_mappings:
+      ref_ty = core.typeof(self.ref)
+    else:
+      ref_ty = self.ref
+    for t in self.transforms:
+      ref_ty = t.transform_type(ref_ty)
+    return ref_ty
+
   @property
   def shape(self) -> tuple[int | Array, ...]:
-    unprocessed, shape = 0, None
-    # We first go backwards to find the first transform that knows its output
-    # shape. It's possible none of them do!
-    for unprocessed, t in enumerate(reversed(self.transforms), 1):
-      if (shape := t.transform_shape(None)) is not None:
-        unprocessed -= 1
-        break
-    if shape is None:
-      shape = self.ref.shape
-    if not unprocessed:
-      return shape
-    # If there are any unprocessed transforms left, we apply them to the shape
-    # we've found previously.
-    for t in self.transforms[-unprocessed:]:
-      shape = t.transform_shape(shape)
-    assert shape is not None
-    return shape
+    if not hasattr(self.type, "shape"):
+      raise AttributeError(f"{self!r} has no `shape`.") from None
+    return self.type.shape
 
   @property
   def dtype(self):
-    # The structure of this method is analogous to `shape`. See comments there.
-    unprocessed, dtype = 0, None
-    for unprocessed, t in enumerate(reversed(self.transforms), 1):
-      if (dtype := t.transform_dtype(None)) is not None:
-        unprocessed -= 1
-        break
-    if dtype is None:
-      dtype = self.ref.dtype
-    if not unprocessed:
-      return dtype
-    for t in self.transforms[-unprocessed:]:
-      dtype = t.transform_dtype(dtype)
-    assert dtype is not None
-    return dtype
+    if not hasattr(self.type, "dtype"):
+      raise AttributeError(f"{self!r} has no `dtype`.") from None
+    return self.type.dtype
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: math.prod(self.shape))
-  T = property(lambda self: self.transpose(*reversed(range(self.ndim))))
+  T = property(lambda self: self.transpose(tuple(reversed(range(self.ndim)))))
 
   @property
   def at(self) -> RefIndexer:
     return RefIndexer(self)
 
   def bitcast(self, dtype):
-    return TransformedRef(
-        self.ref,
-        (*self.transforms, RefBitcaster.from_ref_new_dtype(self, dtype)),
-    )
+    if self.is_dynamic_size:
+      raise NotImplementedError(
+          "Bitcast ref with dynamic size is not supported."
+      )
+    dtype = dtypes.dtype(dtype)
+    return TransformedRef(self.ref, (*self.transforms, BitcastTransform(dtype)))
 
   def reshape(self, *shape):
-    return TransformedRef(
-        self.ref,
-        (*self.transforms, RefReshaper.from_ref_new_shape(self, *shape)),
-    )
+    if self.is_dynamic_size:
+      raise NotImplementedError(
+          "Reshape ref with dynamic size is not supported."
+      )
+    if len(shape) == 1 and isinstance(shape[0], tuple):
+      shape = shape[0]
+    shape = _canonicalize_reshape(self.shape, shape)
+    return TransformedRef(self.ref, (*self.transforms, ReshapeTransform(shape)))
 
-  def transpose(self, *permutation):
-    transposer = RefTransposer.from_ref_new_permutation(self, *permutation)
+  def transpose(self, permutation: Sequence[int]):
+    transposer = TransposeTransform(tuple(permutation))
     return TransformedRef(self.ref, (*self.transforms, transposer))
 
   def set(self, value, idx=()):
@@ -379,13 +312,12 @@ class TransformedRef:
     return ref_set(self, slc, value)
 
 
-def get_transforms_shape(
-    ts: Sequence[Transform], shape: tuple[int | Array, ...]
-) -> tuple[int | Array, ...]:
+def transform_type(
+    ts: Sequence[Transform], ty: core.AbstractValue
+) -> core.AbstractValue:
   for t in ts:
-    shape = t.transform_shape(shape)  # type: ignore
-  assert shape is not None
-  return shape
+    ty = t.transform_type(ty)
+  return ty
 
 
 # We need an aval for `Ref`s so we can represent `get` and `swap` in Jaxprs.

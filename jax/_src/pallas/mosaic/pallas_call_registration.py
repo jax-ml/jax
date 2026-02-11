@@ -118,7 +118,7 @@ def pallas_call_tpu_lowering_rule(
     input_output_aliases: tuple[tuple[int, int], ...],
     debug: bool,
     interpret: bool,
-    compiler_params: dict[str, pallas_core.CompilerParams],
+    compiler_params: pallas_core.CompilerParams | None,
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
     metadata: frozen_dict.FrozenDict[str, str] | None,
@@ -132,10 +132,11 @@ def pallas_call_tpu_lowering_rule(
     print(f"\nThe kernel jaxpr for pallas_call {debug_info.func_src_info}:")
     print(jaxpr)
 
-  if "mosaic_tpu" in compiler_params:
-    mosaic_params = cast(tpu_core.CompilerParams, compiler_params["mosaic_tpu"])
-  else:
+  if compiler_params is None:
     mosaic_params = tpu_core.CompilerParams()
+  else:
+    assert isinstance(compiler_params, tpu_core.CompilerParams)
+    mosaic_params = compiler_params  # type: ignore[assignment]
 
   del mesh
   jax_mesh = None
@@ -210,6 +211,25 @@ def pallas_call_tpu_lowering_rule(
     input_memory_spaces = _get_memory_spaces_from_avals(
         ctx.avals_in, kernel_type=kernel_type
     )
+    # ShapedArrayWithMemorySpace wasn't allowed to escape the Pallas kernel, so
+    # it was stripped from the original out_avals. We need to resolve this for
+    # outputs aliased to inputs with pltpu.with_memory_space_constraint.
+    if input_memory_spaces is not None:
+      output_memory_spaces_list: list[tpu_custom_call.MemorySpace | None]
+      if output_memory_spaces is None:
+        output_memory_spaces_list = [None] * len(out_avals)
+      else:
+        output_memory_spaces_list = list(output_memory_spaces)
+      modified = False
+      for in_idx, out_idx in input_output_aliases:
+        if (ms := input_memory_spaces[in_idx]) is not None:
+          if output_memory_spaces_list is None:
+            output_memory_spaces_list = [None] * len(ctx.avals_out)
+          output_memory_spaces_list[out_idx] = ms
+          modified = True
+      if modified:
+        output_memory_spaces = tuple(output_memory_spaces_list)
+
   if cost_estimate is not None:
     mosaic_cost_estimate = cast(
         tpu_custom_call.CostEstimate, dataclasses.asdict(cost_estimate)

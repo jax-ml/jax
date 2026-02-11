@@ -20,6 +20,8 @@ Remember to align the itemized text with the first line of an item within a list
     control over how much shared memory Pallas is allowed to reserve for
     cross-warp reductions on GPU. Increasing this value typically allows for
     faster reductions.
+  * Added a {func}`jax.experimental.pallas.with_scoped` decorator that provides
+    the function with scope-allocated scratch buffers.
 
 * Changes
 

@@ -2781,7 +2781,7 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
     >>> reshape(y, (6,), (1, 0))
     Array([0, 3, 1, 4, 2, 5], dtype=int32)
   """
-  new_sizes = canonicalize_shape(new_sizes)  # TODO
+  new_sizes = canonicalize_shape(new_sizes)
   new_sizes = tuple(new_sizes)
   same_shape = core.definitely_equal_shape(np.shape(operand), new_sizes)
   if dimensions is None:
@@ -2799,7 +2799,7 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
     return operand
   else:
     return reshape_p.bind(
-      operand, new_sizes=tuple(new_sizes),
+      operand, new_sizes=new_sizes,
       dimensions=None if dims is None or same_dims else dims,
       sharding=out_sharding)
 
@@ -4076,7 +4076,9 @@ standard_naryop = partial(naryop, input_dtype)
 # involving linear primitives with implicit broadcasting.
 def _unbroadcast(aval, x):
   if not isinstance(aval, ShapedArray):
-    raise TypeError("transpose with implicit broadcasting of unshaped values")
+    raise TypeError(
+        'transpose with implicit broadcasting of unshaped values. Got'
+        f' {type(aval)}')
   x_shape = np.shape(x)
   if (core.definitely_equal_shape(aval.shape, x_shape) and
       aval.sharding == typeof(x).sharding):
@@ -4090,7 +4092,7 @@ def _unbroadcast(aval, x):
     if config.enable_checks.value:
       assert all(aval.shape[i] == 1 for i in dims)
     x = reduce_sum(x, dims) if dims else x
-    return reshape(x, aval.shape, out_sharding=aval.to_cotangent_aval().sharding)
+    return reshape(x, aval.shape, out_sharding=aval.sharding)
 
 def _maybe_broadcast(target_shape, x, target_sharding):
   x_shape = np.shape(x)
@@ -4632,7 +4634,7 @@ def _add_jvp(primals, tangents):
   xdot, ydot = tangents
   primal_out = add(x, y)
   if type(xdot) is type(ydot) is ad_util.Zero:
-    return primal_out, ad_util.Zero.from_primal_value(primal_out)
+    return primal_out, ad_util.p2tz(primal_out)
   if type(xdot) is ad_util.Zero:
     return (primal_out, _maybe_broadcast(primal_out.shape, ydot,
                                          typeof(primal_out).sharding))
@@ -4647,8 +4649,10 @@ def _add_transpose(t, x, y):
   # some places (e.g. in custom_jvp) it may not always hold. For example, see
   # api_test.py's CustomJVPTest.test_jaxpr_zeros.
   # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
-  x_aval = x.aval if ad.is_undefined_primal(x) else core.get_aval(x)
-  y_aval = y.aval if ad.is_undefined_primal(y) else core.get_aval(y)
+  x_aval = x.aval if ad.is_undefined_primal(x) else core.typeof(x)
+  x_aval = x_aval.to_cotangent_aval()
+  y_aval = y.aval if ad.is_undefined_primal(y) else core.typeof(y)
+  y_aval = y_aval.to_cotangent_aval()
   if type(t) is ad_util.Zero:
     return [ad_util.Zero(x_aval), ad_util.Zero(y_aval)]
   else:
@@ -4687,7 +4691,7 @@ def _sub_jvp(primals, tangents):
   xdot, ydot = tangents
   primal_out = sub(x, y)
   if type(xdot) is type(ydot) is ad_util.Zero:
-    return primal_out, ad_util.Zero.from_primal_value(primal_out)
+    return primal_out, ad_util.p2tz(primal_out)
   if type(xdot) is ad_util.Zero:
     return (primal_out, _maybe_broadcast(primal_out.shape, neg(ydot),
                                          typeof(primal_out).sharding))
@@ -4746,8 +4750,10 @@ mul_p = standard_naryop([_num, _num], 'mul', unreduced_rule=_mul_unreduced_rule)
 ad.defjvp(mul_p,
           lambda xdot, x, y: mul(xdot, y),
           lambda ydot, x, y: mul(x, ydot))
-ad.defbilinear(mul_p, lambda ct, x, y: _unbroadcast(x.aval, mul(ct, y)),
-               lambda ct, x, y: _unbroadcast(y.aval, mul(x, ct)))
+ad.defbilinear(
+    mul_p,
+    lambda ct, x, y: _unbroadcast(x.aval.to_cotangent_aval(), mul(ct, y)),
+    lambda ct, x, y: _unbroadcast(y.aval.to_cotangent_aval(), mul(x, ct)))
 mlir.register_lowering(mul_p, partial(_nary_lower_hlo, hlo.multiply))
 
 def _div_transpose_rule(cotangent, x, y):
@@ -4932,21 +4938,22 @@ def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type,
   assert ad.is_undefined_primal(operand)
   old_dtype = operand.aval.dtype
   old_weak_type = dtypes.is_weakly_typed(operand)
+  operand_ct_aval = operand.aval.to_cotangent_aval()
   if type(ct) is ad_util.Zero:
-    return [ad_util.Zero(operand.aval)]
+    return [ad_util.Zero(operand_ct_aval)]
   elif core.primal_dtype_to_tangent_dtype(old_dtype) == dtypes.float0:
     return [ad_util.Zero(operand.aval.update(dtype=dtypes.float0, weak_type=False))]
   else:
     out = convert_element_type_p.bind(
         ct, new_dtype=old_dtype, weak_type=old_weak_type,
-        sharding=operand.aval.to_cotangent_aval().sharding)
+        sharding=operand_ct_aval.sharding)
     return [out]
 
 def _convert_element_type_jvp_rule(tangent, primal_result, operand, *,
                                    new_dtype, weak_type, sharding):
   new_tangent_dtype = core.primal_dtype_to_tangent_dtype(new_dtype)
   if new_tangent_dtype == dtypes.float0:
-    return ad_util.Zero.from_primal_value(primal_result)
+    return ad_util.p2tz(primal_result)
   else:
     return convert_element_type_p.bind(tangent, new_dtype=new_tangent_dtype,
                                        weak_type=weak_type, sharding=sharding)
@@ -4994,7 +5001,7 @@ def _convert_elt_type_fwd_rule(eqn):
 
 def _convert_elt_type_pp_rule(eqn, context, settings):
   params = dict(eqn.params)
-  if params['sharding'] is None:
+  if params['sharding'] is None or params['sharding'].mesh.empty:
     del params['sharding']  # don't show trivial case
   return core._pp_eqn(eqn.replace(params=params), context, settings)
 
@@ -6473,14 +6480,17 @@ def _broadcast_in_dim_typecheck_rule(
 def _broadcast_in_dim_transpose_rule(ct, operand,
                                      shape, broadcast_dimensions, sharding):
   if type(ct) is ad_util.Zero:
-    return [ad_util.Zero(operand.aval)]
+    return [ad_util.Zero(operand.aval.to_cotangent_aval())]
   if not isinstance(operand, ad.UndefinedPrimal):
     return [None]  # transpose wrt literal
   unit_dims = [i for i, s in enumerate(operand.aval.shape)
                if core.definitely_equal(s, 1)]
-  bdims = tuple(np.delete(broadcast_dimensions, unit_dims))
-  axes = tuple(np.delete(range(len(shape)), bdims))
-  return [expand_dims(reduce_sum(ct, axes), unit_dims)]
+  bdims = tuple_delete(broadcast_dimensions, unit_dims)
+  axes = tuple_delete(tuple(range(len(shape))), bdims)
+  ct_s = operand.aval.to_cotangent_aval().sharding
+  ct_s = ct_s.update(spec=ct_s.spec.update(
+      partitions=tuple_delete(ct_s.spec, unit_dims)))
+  return [expand_dims(reduce_sum(ct, axes, out_sharding=ct_s), unit_dims)]
 
 def _broadcast_in_dim_batch_rule(axis_data, batched_args, batch_dims, shape,
                                  broadcast_dimensions, sharding):
@@ -6529,7 +6539,7 @@ def _broadcast_in_dim_jvp_rule(primals, tangents, *, shape, broadcast_dimensions
                               broadcast_dimensions=broadcast_dimensions,
                               sharding=sharding)
   if type(operand_dot) is ad_util.Zero:
-    y_dot = ad_util.Zero.from_primal_value(y)
+    y_dot = ad_util.p2tz(y)
   else:
     y_dot = broadcast_in_dim_p.bind(operand_dot, shape=shape,
                                     broadcast_dimensions=broadcast_dimensions,
@@ -6561,6 +6571,14 @@ def _broadcast_in_dim_abstract_eval(x, shape, broadcast_dimensions,
   return core.ShapedArray(shape, x.dtype, x.weak_type, sharding=new_sharding,
                           vma=new_vma, memory_space=x.memory_space)
 
+def _broadcast_in_dim_pp_rule(eqn, context, settings):
+  params = dict(eqn.params)
+  if params['sharding'] is None:
+    del params['sharding']  # don't show trivial case
+  if not params['broadcast_dimensions']:
+    del params['broadcast_dimensions']  # don't show trivial case
+  del params['shape']  # implied by let binder type
+  return core._pp_eqn(eqn.replace(params=params), context, settings)
 
 broadcast_in_dim_p = core.Primitive('broadcast_in_dim')
 broadcast_in_dim_p.def_abstract_eval(_broadcast_in_dim_abstract_eval)
@@ -6573,6 +6591,7 @@ pe.custom_partial_eval_rules[broadcast_in_dim_p] = _broadcast_in_dim_partial_eva
 pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
 core.custom_typechecks[broadcast_in_dim_p] = _broadcast_in_dim_typecheck_rule
 mlir.register_lowering(broadcast_in_dim_p, _broadcast_in_dim_lower)
+core.pp_eqn_rules[broadcast_in_dim_p] = _broadcast_in_dim_pp_rule
 
 
 def _tile_lower(ctx, x, reps) -> Sequence[ir.Value]:
@@ -6739,22 +6758,32 @@ def _concatenate_reduced_rule(out_s, *operands, **kwargs):
   if len(reduced_specs) > 1:
     raise core.ShardingTypeError(
         'All operands should be reduced along the same mesh axes. Got reduced'
-        f' specs {reduced_specs}')
+        f' specs: {reduced_specs}')
   reduced_s, = reduced_specs if reduced_specs else (frozenset(),)
   return out_s.update(spec=out_s.spec.update(reduced=reduced_s))
+
+def _concatenate_unreduced_rule(out_s, *operands, **kwargs):
+  unreduced_specs = {o.sharding.spec.unreduced
+                     for o in operands if o.sharding.spec.unreduced}
+  if len(unreduced_specs) > 1:
+    raise core.ShardingTypeError(
+        'All operands should be unreduced along the same mesh axes. Got'
+        f' unreduced specs: {unreduced_specs}')
+  unreduced_s, = unreduced_specs if unreduced_specs else (frozenset(),)
+  return out_s.update(spec=out_s.spec.update(unreduced=unreduced_s))
 
 def _concatenate_dtype_rule(*operands, **kwargs):
   check_same_dtypes('concatenate', *operands)
   return operands[0].dtype
 
-def _concatenate_transpose_rule(t, *operands, dimension):
+def _concatenate_transpose_rule(ct, *operands, dimension):
   operand_shapes = [o.aval.shape if ad.is_undefined_primal(o) else o.shape
                     for o in operands]
-  if type(t) is ad_util.Zero:
-    return [ad_util.Zero(o.aval) if ad.is_undefined_primal(o) else None
-            for o in operands]
+  if type(ct) is ad_util.Zero:
+    return [ad_util.Zero(o.aval.to_cotangent_aval())
+            if ad.is_undefined_primal(o) else None for o in operands]
   else:
-    return split(t, tuple(shape[dimension] for shape in operand_shapes),
+    return split(ct, tuple(shape[dimension] for shape in operand_shapes),
                  axis=dimension)
 
 def _concatenate_batch_rule(batched_args, batch_dims, *, dimension):
@@ -6773,6 +6802,7 @@ concatenate_p = standard_primitive(
     _concatenate_shape_rule, _concatenate_dtype_rule, 'concatenate',
     sharding_rule=_concatenate_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'concatenate'),
+    unreduced_rule=_concatenate_unreduced_rule,
     reduced_rule=_concatenate_reduced_rule)
 ad.deflinear2(concatenate_p, _concatenate_transpose_rule)
 ad.primitive_transposes[concatenate_p] = _concatenate_transpose_rule
@@ -6809,10 +6839,10 @@ def _split_weak_type_rule(operand, *, sizes, axis):
 def _split_transpose_rule(cotangents, operand, *, sizes, axis):
   assert ad.is_undefined_primal(operand)
   if all(type(t) is ad_util.Zero for t in cotangents):
-    return ad_util.Zero(operand.aval),
-  cotangents = [t.instantiate() if type(t) is ad_util.Zero else t
-                for t in cotangents]
-  return concatenate(cotangents, dimension=axis),
+    return [ad_util.Zero(operand.aval.to_cotangent_aval())]
+  cotangents = [ct.instantiate() if type(ct) is ad_util.Zero else ct
+                for ct in cotangents]
+  return [concatenate(cotangents, dimension=axis)]
 
 def _split_batch_rule(batched_args, batch_dims, *, sizes, axis):
   operand, = batched_args
@@ -6842,6 +6872,12 @@ def _split_sharding_rule(operand, *, sizes, axis):
   return [slicing._get_sharding_for_varying_out_shape(out_sh, operand, 'split')
           for out_sh in out_shapes]
 
+def _split_unreduced_rule(out_shardings, operand, *, sizes, axis):
+  return out_shardings
+
+def _split_reduced_rule(out_shardings, operand, *, sizes, axis):
+  return out_shardings
+
 def _split_vma_rule(operand, *, sizes, axis):
   out_vma = core.standard_vma_rule('split', operand)
   out_shapes = _split_shape_rule(operand, sizes=sizes, axis=axis)
@@ -6852,7 +6888,7 @@ split_p.multiple_results = True
 split_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, split_p, _split_shape_rule,
             _split_dtype_rule, _split_weak_type_rule, _split_sharding_rule,
-            _split_vma_rule))
+            _split_vma_rule, _split_unreduced_rule, _split_reduced_rule))
 split_p.def_impl(partial(dispatch.apply_primitive, split_p))
 ad.deflinear2(split_p, _split_transpose_rule)
 batching.primitive_batchers[split_p] = _split_batch_rule
@@ -7037,8 +7073,6 @@ def _reshape_shape_rule(operand, *, new_sizes, dimensions, sharding):
     msg = 'reshape new_sizes must all be positive, got {}.'
     raise TypeError(msg.format(new_sizes))
   # TODO(necula): re-enable this check
-  operand_size = math.prod(np.shape(operand))
-  new_size = math.prod(new_sizes)
   if dimensions is not None:
     if set(dimensions) != set(range(np.ndim(operand))):
       msg = ('reshape dimensions must be a permutation of operand dimensions, '
@@ -7182,6 +7216,36 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes, dimensions):
   return operand.sharding.update(spec=new_spec)
 
 
+def _reshape_unreduced_rule(out_s, operand, *, new_sizes, dimensions, sharding):
+  if operand.sharding.spec.unreduced:
+    if (sharding is not None and
+        operand.sharding.spec.unreduced != sharding.spec.unreduced):
+      raise ValueError(
+          'out_sharding passed to reshape must be unreduced over the same mesh'
+          f' axes as operand. Got out_sharding: {sharding.spec} and operand'
+          f' type: {operand.str_short(True)}')
+    return out_s.update(spec=out_s.spec.update(
+        unreduced=operand.sharding.spec.unreduced))
+  if sharding is not None and sharding.spec.unreduced:
+    raise ValueError('out_sharding passed to `reshape` cannot contain '
+                     f'unreduced axes. Got {sharding}')
+  return out_s
+
+def _reshape_reduced_rule(out_s, operand, *, new_sizes, dimensions, sharding):
+  if operand.sharding.spec.reduced:
+    if (sharding is not None and
+        operand.sharding.spec.reduced != sharding.spec.reduced):
+      raise ValueError(
+          'out_sharding passed to reshape must be reduced over the same mesh'
+          f' axes as operand. Got out_sharding: {sharding.spec} and operand'
+          f' type: {operand.str_short(True)}')
+    return out_s.update(spec=out_s.spec.update(
+        reduced=operand.sharding.spec.reduced))
+  if sharding is not None and sharding.spec.reduced:
+    raise ValueError('out_sharding passed to `reshape` cannot contain '
+                     f'reduced axes. Got {sharding}')
+  return out_s
+
 def _reshape_typecheck_rule(_, operand, new_sizes, dimensions,
                             sharding):
   out_aval, effects = reshape_p.abstract_eval(
@@ -7193,17 +7257,17 @@ def _reshape_typecheck_rule(_, operand, new_sizes, dimensions,
 def _reshape_dtype_rule(operand, *, new_sizes, dimensions, sharding):
   return operand.dtype
 
-def _reshape_transpose_rule(t, operand, *, new_sizes, dimensions, sharding):
+def _reshape_transpose_rule(ct, operand, *, new_sizes, dimensions, sharding):
   assert ad.is_undefined_primal(operand)
+  op_ct_aval = operand.aval.to_cotangent_aval()
   if dimensions is None:
-    return [reshape(t, operand.aval.shape, out_sharding=operand.aval.sharding)]
+    return [reshape(ct, op_ct_aval.shape, out_sharding=op_ct_aval.sharding)]
   else:
-    t_s = operand.aval.sharding.update(spec=
-        tuple(map(lambda s: s if s is None else str(s),
-                  np.take(operand.aval.sharding.spec, dimensions))))
-    return [transpose(reshape(t, np.take(operand.aval.shape, dimensions),
-                              out_sharding=t_s),
-                      np.argsort(dimensions))]
+    ct_s = op_ct_aval.sharding.update(spec=op_ct_aval.sharding.spec.update(
+        partitions=tuple(map(lambda s: s if s is None else str(s),
+                             np.take(op_ct_aval.sharding.spec, dimensions)))))
+    out = reshape(ct, np.take(op_ct_aval.shape, dimensions), out_sharding=ct_s)
+    return [transpose(out, np.argsort(dimensions))]
 
 def _reshape_batch_rule(axis_data, batched_args, batch_dims, *, new_sizes,
                         dimensions, sharding):
@@ -7238,9 +7302,11 @@ def _reshape_staging_rule(
   return trace.default_process_primitive(reshape_p, (x,), params,
                                          source_info=source_info)
 
-reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
-                               'reshape', sharding_rule=_reshape_sharding_rule,
-                               vma_rule=partial(core.standard_vma_rule, 'reshape'))
+reshape_p = standard_primitive(
+    _reshape_shape_rule, _reshape_dtype_rule, 'reshape',
+    sharding_rule=_reshape_sharding_rule,
+    vma_rule=partial(core.standard_vma_rule, 'reshape'),
+    unreduced_rule=_reshape_unreduced_rule, reduced_rule=_reshape_reduced_rule)
 ad.deflinear2(reshape_p, _reshape_transpose_rule)
 batching.fancy_primitive_batchers[reshape_p] = _reshape_batch_rule
 mlir.register_lowering(reshape_p, _reshape_lower)
@@ -7625,7 +7691,7 @@ reduce_p.def_impl(partial(dispatch.apply_primitive, reduce_p))
 reduce_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, reduce_p, _reduce_shape_rule,
             _reduce_dtype_rule, _reduce_weak_type_rule, _reduce_sharding_rule,
-            _reduce_vma_rule))
+            _reduce_vma_rule, None, None))
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 ad.primitive_jvps[reduce_p] = _reduce_jvp_rule
 
@@ -7655,7 +7721,7 @@ def _reduce_lower(ctx: mlir.LoweringRuleContext, *values,
 mlir.register_lowering(reduce_p, _reduce_lower)
 
 
-def _reduce_number_dtype_rule(name, operand, *args, **kw):
+def _reduce_number_dtype_rule(name, operand, *_, **__):
   if not dtypes.issubdtype(operand.dtype, np.number):
     raise TypeError("{} does not accept dtype {}. Accepted dtypes are subtypes "
                     "of number.".format(name, dtype_to_string(operand.dtype)))
@@ -7671,8 +7737,7 @@ def _reduce_sum_transpose_rule(cotangent, operand, *, axes, out_sharding):
   assert result.shape == input_shape
   return [result]
 
-def _reduce_op_shape_rule(operand, *, axes, input_shape=None, **kwargs):
-  del input_shape  # Unused.
+def _reduce_op_shape_rule(operand, *, axes, **_):
   if len(axes) != len(set(axes)):
     raise ValueError(f"duplicate value in 'axes' of reduction: {axes}")
   if not all(0 <= a < operand.ndim for a in axes):
@@ -7689,34 +7754,43 @@ def _reduce_sum_sharding_rule(operand, *, axes, out_sharding):
                       if i not in axes))
   return operand.sharding.update(spec=new_spec)
 
-def _reduce_sum_unreduced_rule(out_s, operand, *, axes, **kwargs):
-  if operand.sharding.spec.unreduced:
-    raise core.ShardingTypeError(
-        f'operand passed to reduce_sum cannot be unreduced. Got {operand=}')
+def _reduce_sum_unreduced_rule(out_s, operand, *, axes, **_):
   if unreduced_spec := out_s.spec.unreduced:
     axes = frozenset(axes)
-    reduced_spec = frozenset(
+    used_spec = frozenset(
         s for i, spec in enumerate(operand.sharding.spec) if i in axes
-        for s in (spec if isinstance(spec, tuple) else (spec,)))
-    if not all(u in reduced_spec for u in unreduced_spec):
+        for s in (spec if isinstance(spec, tuple) else (spec,))
+    ) | operand.sharding.spec.unreduced
+    if not all(u in used_spec for u in unreduced_spec):
       raise core.ShardingTypeError(
           "out_sharding's unreduced axes should be in operand's specs that"
           f' were summed over. Got {operand=}, {axes=},'
           f' unreduced_spec={unreduced_spec}')
+  elif operand.sharding.spec.unreduced:
+    return out_s.update(spec=out_s.spec.update(
+        unreduced=operand.sharding.spec.unreduced))
   return out_s
 
-def _reduce_sum_reduced_rule(out_s, operand, *, axes, **kwargs):
+def _reduce_sum_reduced_rule(out_s, operand, *, axes, **_):
   return out_s.update(spec=out_s.spec.update(
       reduced=operand.sharding.spec.reduced))
 
+def _reduce_sum_dtype_rule(operand, *, axes, **_):
+  dt = _reduce_number_dtype_rule('reduce_sum', operand)
+  if (operand.dtype in [np.float16, dtypes.bfloat16] and
+      not config.allow_f16_reductions.value):
+    raise ValueError(f"reduce_sum on operand {operand.str_short(True)} is not "
+                     "allowed when jax_allow_f16_reductions=False.")
+  return dt
+
 reduce_sum_p = standard_primitive(
-  _reduce_op_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_sum'),
+  _reduce_op_shape_rule, _reduce_sum_dtype_rule,
   'reduce_sum', sharding_rule=_reduce_sum_sharding_rule,
   vma_rule=partial(core.standard_vma_rule, 'reduce_sum'),
   unreduced_rule=_reduce_sum_unreduced_rule,
   reduced_rule=_reduce_sum_reduced_rule)
 ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
-batching.defreducer(reduce_sum_p, _get_sum_identity)
+batching.defreducer(reduce_sum_p)
 
 def _reduce_prod_jvp_rule(primals, tangents, *, axes):
   reducer = lambda x, y: [mul(x, y)]
@@ -7735,7 +7809,7 @@ reduce_prod_p = standard_primitive(
   'reduce_prod', sharding_rule=_reduce_op_sharding_rule,
   vma_rule=partial(core.standard_vma_rule, 'reduce_prod'))
 ad.primitive_jvps[reduce_prod_p] = _reduce_prod_jvp_rule
-batching.defreducer(reduce_prod_p, _get_prod_identity)
+batching.defreducer(reduce_prod_p)
 
 def _reduce_chooser_jvp_rule(g, ans, operand, *, axes):
   # TODO(mattjj): an alternative is to use variadic reduce to compute the chosen
@@ -7753,7 +7827,7 @@ reduce_max_p = standard_primitive(
     sharding_rule=_reduce_op_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_max'))
 ad.defjvp2(reduce_max_p, _reduce_chooser_jvp_rule)
-batching.defreducer(reduce_max_p, _get_max_identity)
+batching.defreducer(reduce_max_p)
 
 
 reduce_min_p = standard_primitive(
@@ -7761,7 +7835,7 @@ reduce_min_p = standard_primitive(
     sharding_rule=_reduce_op_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_min'))
 ad.defjvp2(reduce_min_p, _reduce_chooser_jvp_rule)
-batching.defreducer(reduce_min_p, _get_min_identity)
+batching.defreducer(reduce_min_p)
 
 def _argminmax_shape_rule(operand, *, axes, index_dtype):
   axis, = axes
@@ -7825,14 +7899,14 @@ argmin_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               'argmin', weak_type_rule=_strip_weak_type,
                               sharding_rule=_argminmax_sharding_rule,
                               vma_rule=partial(core.standard_vma_rule, 'argmin'))
-batching.defreducer(argmin_p, _get_min_identity)
+batching.defreducer(argmin_p)
 ad.defjvp_zero(argmin_p)
 
 argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               'argmax', weak_type_rule=_strip_weak_type,
                               sharding_rule=_argminmax_sharding_rule,
                               vma_rule=partial(core.standard_vma_rule, 'argmax'))
-batching.defreducer(argmax_p, _get_max_identity)
+batching.defreducer(argmax_p)
 ad.defjvp_zero(argmax_p)
 
 mlir.register_lowering(
@@ -7871,7 +7945,7 @@ reduce_or_p = standard_primitive(
     _reduce_logical_shape_rule, input_dtype, 'reduce_or',
     weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_or'))
-batching.defreducer(reduce_or_p, _get_bitwise_or_identity)
+batching.defreducer(reduce_or_p)
 ad.primitive_linearizations[reduce_or_p] = _reduce_or_lin
 
 
@@ -7879,14 +7953,14 @@ reduce_and_p = standard_primitive(
     _reduce_logical_shape_rule, input_dtype, 'reduce_and',
     weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_and'))
-batching.defreducer(reduce_and_p, _get_bitwise_and_identity)
+batching.defreducer(reduce_and_p)
 
 
 reduce_xor_p = standard_primitive(
     _reduce_logical_shape_rule, input_dtype, 'reduce_xor',
     weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_xor'))
-batching.defreducer(reduce_xor_p, _get_bitwise_or_identity)
+batching.defreducer(reduce_xor_p)
 
 
 def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes, **kwargs):
@@ -8147,7 +8221,7 @@ def _top_k_jvp(primals, tangents, *, k, axis):
   tangent, = tangents
   primals_out = top_k(operand, k, axis=axis)
   if type(tangent) is ad_util.Zero:
-    tangent_out = ad_util.Zero.from_primal_value(primals_out[0])
+    tangent_out = ad_util.p2tz(primals_out[0])
   else:
     _, k_idxs = primals_out
     idx_shape = k_idxs.shape
@@ -8163,7 +8237,7 @@ def _top_k_jvp(primals, tangents, *, k, axis):
         start_index_map=(axis,),
     )
     tangent_out = slicing.gather(tangent, gather_indices, dnums, slice_sizes)
-  return primals_out, (tangent_out, ad_util.Zero.from_primal_value(primals_out[1]))
+  return primals_out, (tangent_out, ad_util.p2tz(primals_out[1]))
 
 def _top_k_batch_rule(batched_args, batch_dims, *, k, axis):
   operand, = batched_args
@@ -8211,7 +8285,7 @@ batching.primitive_batchers[top_k_p] = _top_k_batch_rule
 def _stop_gradient_jvp_rule(primals, tangents):
   # if we don't call stop_gradient here, we'd only peel off one autodiff tracer
   x, = primals
-  return stop_gradient(x), ad_util.Zero.from_primal_value(x)
+  return stop_gradient(x), ad_util.p2tz(x)
 
 def _stop_gradient_batch_rule(batched_args, batch_dims):
   x, = batched_args
@@ -8415,7 +8489,7 @@ rng_bit_generator_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, rng_bit_generator_p,
             _rng_bit_generator_shape_rule, _rng_bit_generator_dtype_rule,
             _rng_bit_generator_weak_type_rule, _rng_bit_generator_sharding_rule,
-            _rng_bit_generator_vma_rule))
+            _rng_bit_generator_vma_rule, None, None))
 mlir.register_lowering(rng_bit_generator_p,
                        _rng_bit_generator_lowering)
 

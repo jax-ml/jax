@@ -905,6 +905,40 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     )()
     np.testing.assert_allclose(o, 4 * np.ones_like(o))
 
+  def test_with_scoped_allocation(self):
+    def kernel(y_ref):
+
+      @pl.with_scoped(
+          pltpu.VMEM((8, 128), jnp.float32),
+          w_ref=pltpu.VMEM((8, 128), jnp.float32),
+      )
+      def body(y_ref, x_ref, w_ref):
+        x_ref[...] = jnp.ones_like(x_ref)
+        w_ref[...] = jnp.ones_like(w_ref)
+        y_ref[...] = 4 * x_ref[...] * w_ref[...]
+      body(y_ref)
+
+    o = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )()
+    np.testing.assert_allclose(o, 4 * np.ones_like(o))
+
+  def test_empty_ref_allocation(self):
+    def kernel(y_ref):
+      x_ref = jax.empty_ref(
+          jax.ShapeDtypeStruct(y_ref.shape, y_ref.dtype),
+          memory_space=pltpu.VMEM
+      )
+      x_ref[...] = jnp.ones_like(x_ref)
+      y_ref[...] = 4 * x_ref[...]
+
+    o = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )()
+    np.testing.assert_allclose(o, 4 * np.ones_like(o))
+
   def test_run_scoped_can_return_scalar_value(self):
     def kernel(y_ref):
       def body(x_ref):
@@ -1245,19 +1279,42 @@ class PallasCallDMATest(ptu.PallasTPUTest):
 
   def test_hbm_hbm_dma(self):
     def kernel(x_hbm_ref, y_hbm_ref):
-      def body(sem):
-        pltpu.async_copy(x_hbm_ref.at[:8, :], y_hbm_ref.at[:, :128], sem).wait()
-      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
+      pltpu.sync_copy(x_hbm_ref.at[:8, :], y_hbm_ref.at[:, :128])
     x = jnp.arange(8 * 128.).reshape((8, 128))
     y = self.pallas_call(
         kernel,
-        in_specs=[
-            pl.BlockSpec(memory_space=pl.ANY),
-        ],
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
         out_specs=pl.BlockSpec(memory_space=pl.ANY),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
     np.testing.assert_array_equal(y, x)
+
+  def test_hbm_hbm_dma_with_memory_space_annotation_aliased_input(self):
+    def kernel(x_hbm_ref, aliased_y_input, y_hbm_ref):
+      del aliased_y_input
+      pltpu.sync_copy(x_hbm_ref.at[:2], y_hbm_ref.at[pl.ds(1, 2)])
+    x = jnp.arange(8 * 128.).reshape(8, 128)
+    y_init = -jnp.arange(8 * 128.).reshape(8, 128)
+
+    @functools.partial(jax.jit, donate_argnums=(1,))
+    def f(x, y_init):
+      y_init = pltpu.with_memory_space_constraint(y_init, pltpu.HBM)
+      y_out = self.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY),
+                    pl.BlockSpec(memory_space=pltpu.HBM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+          out_shape=jax.ShapeDtypeStruct(y_init.shape, y_init.dtype),
+          input_output_aliases={1: 0},
+      )(x, y_init)
+      # Transpose tests jnp op on result of pallas_call, verifying we don't leak
+      # ShapedArrayWithMemorySpace.
+      y_out = y_out.T
+      return y_out
+    y_out = f(x, y_init)
+    expected = -jnp.arange(8 * 128.).reshape(8, 128)
+    expected = expected.at[1:3].set(x[:2])
+    np.testing.assert_array_equal(y_out, expected.T)
 
   def test_host_input_host_to_hbm_dma(self):
     if self.INTERPRET:
@@ -3755,7 +3812,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
         out_shape=jax.ShapeDtypeStruct((q, m * n), dtype),
     )(x)
     jax.numpy.set_printoptions(threshold=jax.numpy.inf)
-    expected = x.reshape([q, m * n])
     np.testing.assert_array_equal(out, x.reshape([q, m * n]))
 
   # (q, m, n, k) -> (q, m, n * k) where k % 128 == 0

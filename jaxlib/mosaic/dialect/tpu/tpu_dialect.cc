@@ -66,6 +66,22 @@ llvm::hash_code hash_value(const ::xla::Tile &p) { return absl::HashOf(p); }
 
 namespace mlir::tpu {
 
+// This should only be used to canonicalize away EraseLayoutOps that feed ops
+// that only consume memrefs and don't return them.
+LogicalResult propagateTiledLayoutToConsumer(Operation* op,
+                                             PatternRewriter& rewriter) {
+  bool modified = false;
+  for (unsigned int i = 0; i < op->getNumOperands(); ++i) {
+    if (auto erase_layout_op =
+            op->getOperand(i).getDefiningOp<tpu::EraseLayoutOp>()) {
+      modified = true;
+      rewriter.modifyOpInPlace(
+          op, [&]() { op->setOperand(i, erase_layout_op.getOperand()); });
+    }
+  }
+  return success(modified);
+}
+
 void TPUDialect::initialize() {
   addAttributes<
 #define GET_ATTRDEF_LIST
@@ -97,6 +113,16 @@ Operation *TPUDialect::materializeConstant(OpBuilder &builder, Attribute value,
   }
   return mlir::cast<CoreTypeAttr>(attr).getValue();
 }
+
+template <typename Op>
+struct PropagateTiledLayoutToConsumerPattern : public OpRewritePattern<Op> {
+  using OpRewritePattern<Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(Op op,
+                                PatternRewriter& rewriter) const override {
+    return propagateTiledLayoutToConsumer(op, rewriter);
+  }
+};
 
 struct MemRefCastEraseLayout : public OpRewritePattern<memref::CastOp> {
   // Set the benefit to 0 to ensure that other patterns that fold in the cast
@@ -206,7 +232,9 @@ struct MemRefDimOfSqueeze : public OpRewritePattern<memref::DimOp> {
 
 void TPUDialect::getCanonicalizationPatterns(RewritePatternSet& results) const
 /*override*/ {
-  results.add<MemRefCastEraseLayout, MemRefDimOfSlice, MemRefDimOfSqueeze>(
+  results.add<PropagateTiledLayoutToConsumerPattern<memref::StoreOp>,
+              PropagateTiledLayoutToConsumerPattern<memref::LoadOp>,
+              MemRefCastEraseLayout, MemRefDimOfSlice, MemRefDimOfSqueeze>(
       getContext());
 }
 
@@ -404,6 +432,13 @@ SmallVector<int64_t> TiledLayoutAttr::getDefaultTileStrides(
     }
   }
   return strides;
+}
+
+TiledLayoutAttr TiledLayoutAttr::getContiguous(MLIRContext* context,
+                                               ArrayRef<xla::Tile> tiles,
+                                               ArrayRef<int64_t> shape) {
+  return TiledLayoutAttr::get(
+      context, tiles, TiledLayoutAttr::getDefaultTileStrides(tiles, shape));
 }
 
 bool TiledLayoutAttr::tilesAreKnownContiguous(

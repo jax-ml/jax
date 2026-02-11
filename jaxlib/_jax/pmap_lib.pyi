@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Jax C++ pmap library"""
+
 from collections.abc import Callable, Iterable, Sequence
 import inspect
 import types

@@ -59,22 +59,6 @@ namespace tpu {
 
 namespace {
 
-// This should only be used to canonicalize away EraseLayoutOps that feed ops
-// that only consume memrefs and don't return them.
-LogicalResult propagateTiledLayoutToConsumer(Operation* op,
-                                             PatternRewriter& rewriter) {
-  bool modified = false;
-  for (unsigned int i = 0; i < op->getNumOperands(); ++i) {
-    if (auto erase_layout_op =
-            op->getOperand(i).getDefiningOp<tpu::EraseLayoutOp>()) {
-      modified = true;
-      rewriter.modifyOpInPlace(
-          op, [&]() { op->setOperand(i, erase_layout_op.getOperand()); });
-    }
-  }
-  return success(modified);
-}
-
 llvm::RoundingMode convertTpuRoundingModeToLLVMIR(tpu::RoundingMode mode) {
   switch (mode) {
     case tpu::RoundingMode::kToNearestEven:
@@ -152,13 +136,10 @@ OpFoldResult BitcastVregOp::fold(FoldAdaptor adaptor) {
   if (getType() == getInput().getType()) {
     return getInput();
   }
-  // Bitcast from X -> Y -> ... -> Z -> X is a no-op.
-  Value input = getInput();
-  while (auto op = dyn_cast<BitcastVregOp>(input.getDefiningOp())) {
-    input = op.getInput();
-    if (getType() == input.getType()) {
-      return input;
-    }
+  // Simplify bitcast chain of X -> Y -> Z to X -> Z.
+  if (auto defining_op = getInput().getDefiningOp<BitcastVregOp>()) {
+    getInputMutable().assign(defining_op.getInput());
+    return getResult();
   }
   return nullptr;
 }
@@ -491,8 +472,8 @@ LogicalResult MemRefReshapeOp::verify() {
   if (tile.size() != 2) {
     return emitOpError("Not implemented: memref reshape with 1D tiling.");
   }
-  SmallVector<int64_t> src_tile_strides(src_layout.getTileStrides());
-  if (ComputeTileStrides(src_ty, tile) != src_tile_strides) {
+  if (!src_layout.tilesAreKnownContiguous(src_ty.getShape()) ||
+      !tgt_layout.tilesAreKnownContiguous(tgt_ty.getShape())) {
     return emitOpError("Not implemented: reshape on a non-contiguous memref.");
   }
   auto src_tiled_shape = src_ty.getShape().take_back(2);
@@ -1305,12 +1286,8 @@ LogicalResult SemaphoreSignalOp::verify() {
     return emitOpError("Semaphore reference must be rank 0");
   }
 
-  FailureOr<std::optional<CoreType>> issuing_core_type_maybe =
-      GetCoreTypeOfParentFunc(**this);
-  if (failed(issuing_core_type_maybe)) {
-    return issuing_core_type_maybe;
-  }
-  CoreType issuing_core_type = issuing_core_type_maybe->value_or(CoreType::kTc);
+  FAILUREOR_ASSIGN_OR_RETURN(CoreType issuing_core_type,
+                             GetCoreTypeOfParentFunc(**this));
   CoreType target_core_type = getCoreType().value_or(issuing_core_type);
 
   if (getCoreId() == nullptr && getDeviceId() == nullptr) {
@@ -1336,6 +1313,14 @@ LogicalResult SemaphoreWaitOp::verify() {
     return emitOpError("Semaphore reference must be rank 0");
   }
   return success();
+}
+
+void EnqueueDMAOp::build(OpBuilder& builder, OperationState& state,
+                         Value source, Value source_semaphore, Value target,
+                         Value target_semaphore, Value device_id, Value core_id,
+                         uint32_t priority, bool strict_ordering) {
+  build(builder, state, source, source_semaphore, target, target_semaphore,
+        device_id, core_id, /*core_type=*/nullptr, priority, strict_ordering);
 }
 
 LogicalResult EnqueueDMAOp::verify() {
@@ -1387,6 +1372,15 @@ LogicalResult EnqueueDMAOp::verify() {
   FailureOr<CoreType> issuing_core = GetCoreTypeOfParentFunc(**this);
   if (failed(issuing_core)) {
     return issuing_core;
+  }
+  // If the target core_type is different from the issuing core_type,
+  // the specific core_id must be provided. The device_id is irrelevant here.
+  CoreType target_core = getCoreType().value_or(*issuing_core);
+  if (target_core != *issuing_core && getCoreId() == nullptr) {
+    return emitOpError(
+        absl::StrFormat("Core id must be specified when target core type (%v) "
+                        "is different from source core type (%v)",
+                        target_core, *issuing_core));
   }
   if (getStrictOrdering() && *issuing_core != CoreType::kScScalarSubcore &&
       *issuing_core != CoreType::kScVectorSubcore) {
@@ -1599,7 +1593,7 @@ LogicalResult WaitDMAOp::verify() {
 void WaitDMA2Op::build(OpBuilder &builder, OperationState &state,
                        Value semaphore, Value src, Value dst) {
   build(builder, state, semaphore, src, dst, /*device_id=*/nullptr,
-        /*core_id=*/nullptr);
+        /*core_id=*/nullptr, /*core_type=*/nullptr);
 }
 
 LogicalResult WaitDMA2Op::verify() {
@@ -1680,8 +1674,7 @@ LogicalResult ShuffledLoadOp::canonicalize(ShuffledLoadOp op,
   }
   if (can_convert_to_simple_load) {
     rewriter.replaceOpWithNewOp<tpu::LoadOp>(
-        op, op.getType(), op.getBase(), op.getIndices(), op.getSublaneMask(),
-        /*sublane_stride=*/nullptr);
+        op, op.getType(), op.getBase(), op.getIndices(), op.getSublaneMask());
   }
   return success();
 }
@@ -1722,8 +1715,7 @@ LogicalResult ShuffledStoreOp::canonicalize(ShuffledStoreOp op,
     rewriter.replaceOpWithNewOp<tpu::StoreOp>(op, op.getValueToStore(),
                                               op.getBase(), op.getIndices(),
                                               op.getSublaneMask(),
-                                              /*mask=*/nullptr,
-                                              /*sublane_stride=*/nullptr);
+                                              /*mask=*/nullptr);
   }
   return success();
 }
@@ -1884,7 +1876,7 @@ LogicalResult UnpackSubelementsOp::canonicalize(UnpackSubelementsOp op,
   }
   if (!op.getSignExtended()) {
     // Unpack of pack with the same format is reversible if not sign extended.
-    if (auto pack = dyn_cast<PackSubelementsOp>(op.getSource().getDefiningOp());
+    if (auto pack = op.getSource().getDefiningOp<PackSubelementsOp>();
         pack && pack.getPackFormat() == op.getPackFormat() &&
         pack.getSources().front().getType() == op.getType()) {
       Value source = pack.getPaddedSources(
@@ -2296,6 +2288,35 @@ LogicalResult StochasticConvertElementwiseOp::verify() {
         "destination types.");
   }
   return success();
+}
+
+LogicalResult FetchAndAddSyncOp::verify() {
+  switch (getCoreType()) {
+    case CoreType::kScVectorSubcore:
+      break;
+    case CoreType::kScScalarSubcore:
+      // TODO(b/480918210): Remove this once the bug is fixed.
+      [[fallthrough]];
+    default:
+      return emitOpError(
+                 "Only SC scalar and vector subcores are supported, got ")
+             << getCoreType();
+  }
+  MemRefType base_type = getBase().getType();
+  if (base_type.getRank() != getIndices().size()) {
+    return emitOpError("Number of indices (")
+           << getIndices().size() << ") must match memref rank ("
+           << base_type.getRank() << ")";
+  }
+  // TODO(slebedev): Require the base to be in SMEM.
+  // TODO(slebedev): Check that the enclosing function has subcore_parallel
+  // in its dimension semantics.
+  return success();
+}
+
+LogicalResult FetchAndAddSyncOp::canonicalize(FetchAndAddSyncOp op,
+                                              PatternRewriter& rewriter) {
+  return propagateTiledLayoutToConsumer(op, rewriter);
 }
 
 }  // namespace tpu

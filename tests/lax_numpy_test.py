@@ -1982,8 +1982,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     xshape=one_dim_array_shapes,
     yshape=one_dim_array_shapes,
   )
-  @jtu.skip_on_devices("cuda", "rocm")  # backends don't support all dtypes.
+  @jtu.skip_on_devices("cuda")  # backends don't support all dtypes.
   def testConvolutionsPreferredElementType(self, xshape, yshape, dtype, mode, op):
+    if jtu.test_device_matches(["rocm"]) and not dtypes.issubdtype(dtype, np.inexact):
+      self.skipTest(f"preferred_element_type={dtype} unsupported for ROCm GPU convolutions")
     jnp_op = getattr(jnp, op)
     np_op = getattr(np, op)
     rng = jtu.rand_default(self.rng())
@@ -4218,6 +4220,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = partial(jnp.argsort, stable=True, **kwds)
 
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(dtype=[np.int16, np.uint32])
+  def testArgsortDtype(self, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng((10,), 'float32')]
+    np_fun = lambda x: np.argsort(x).astype(dtype)
+    jnp_fun = partial(jnp.argsort, dtype=dtype)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(

@@ -27,12 +27,17 @@ set -exu -o history -o allexport
 source ci/envs/default.env
 
 # Clone XLA at HEAD if path to local XLA is not provided
-if [[ -z "$JAXCI_XLA_GIT_DIR" ]]; then
+if [[ -z "$JAXCI_XLA_GIT_DIR" && -z "$JAXCI_CLONE_MAIN_XLA" ]]; then
     export JAXCI_CLONE_MAIN_XLA=1
 fi
 
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
+
+OVERRIDE_XLA_REPO=""
+if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
+  OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
+fi
 
 if [[ "$JAXCI_BUILD_JAXLIB" != "true" ]]; then
   cuda_libs_flag="--config=cuda_libraries_from_stubs"
@@ -43,9 +48,17 @@ fi
 # Run Bazel GPU tests with RBE (single accelerator tests with one GPU apiece).
 echo "Running RBE GPU tests..."
 
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
+  FREETHREADED_FLAG_VALUE="yes"
+else
+  FREETHREADED_FLAG_VALUE="no"
+fi
+
 bazel test --config=rbe_linux_x86_64_cuda${JAXCI_CUDA_VERSION} \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
-      --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
+      --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
+      $OVERRIDE_XLA_REPO \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --test_output=errors \
       --test_env=TF_CPP_MIN_LOG_LEVEL=0 \

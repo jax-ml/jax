@@ -157,7 +157,6 @@ def debug_print(fmt, *args, uniform=True, scope=None):
   new_args = []
   for arg in args:
     if isinstance(arg.type, ir.VectorType):
-      index = ir.IndexType.get()
       vec_ty = ir.VectorType(arg.type)
       if len(vec_ty.shape) > 1:
         raise NotImplementedError(
@@ -1711,7 +1710,6 @@ def dyn_dot(x, y):
 
 def shfl_bfly(x: ir.Value, distance: int | ir.Value):
   i32 = ir.IntegerType.get_signless(32)
-  index = ir.IndexType.get()
   if isinstance(distance, int):
     distance = c(distance, i32)
   if (result_type := x.type) != i32:
@@ -1764,7 +1762,15 @@ def shfl_bfly(x: ir.Value, distance: int | ir.Value):
   return bitcast(y, result_type)
 
 
-def redux(x: ir.Value, mask: ir.Value, kind: nvvm.ReduxKind):
+# TODO(bchetioui): Clean this up once minimum jaxlib version is at least 0.9.1.
+if hasattr(nvvm, "ReductionKind"):
+  ReductionKind = nvvm.ReductionKind
+else:
+  assert hasattr(nvvm, "ReduxKind")
+  ReductionKind = nvvm.ReduxKind
+
+
+def redux(x: ir.Value, mask: ir.Value, kind: ReductionKind):  # type: ignore
   i32 = ir.IntegerType.get_signless(32)
   if isinstance(vec_ty := x.type, ir.VectorType):
     if bitwidth(vec_ty.element_type) != 32:
@@ -1787,7 +1793,7 @@ def redux(x: ir.Value, mask: ir.Value, kind: nvvm.ReduxKind):
     raise NotImplementedError(x.type)
   assert mask.type == i32
   extra_kwargs = {}
-  if kind == nvvm.ReduxKind.FMAX or kind == nvvm.ReduxKind.FMIN:
+  if kind == ReductionKind.FMAX or kind == ReductionKind.FMIN:
     extra_kwargs = dict(nan=True)
   return nvvm.redux_sync(x.type, x, kind, mask, **extra_kwargs)
 

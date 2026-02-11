@@ -29,6 +29,7 @@ limitations under the License.
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"  // IWYU pragma: keep
+#include "jaxlib/mosaic/dialect/tpu/stringify_util.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_enums.h.inc"
 #include "xla/layout.h"  // IWYU pragma: keep
 
@@ -48,6 +49,13 @@ class TPUDialect;
 
 namespace mlir {
 namespace tpu {
+
+DEFINE_ABSL_STRINGIFY_FOR_ENUMS();
+
+// This should only be used to canonicalize away EraseLayoutOps that feed ops
+// that only consume memrefs and don't return them.
+LogicalResult propagateTiledLayoutToConsumer(Operation* op,
+                                             PatternRewriter& rewriter);
 
 struct TpuTilingFlags {
   bool use_x16_large_second_minor = false;

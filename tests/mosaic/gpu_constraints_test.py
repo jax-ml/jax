@@ -471,7 +471,18 @@ class ConstraintSystemTest(parameterized.TestCase):
   def test_forcing_relayout_on_supported_bitwidth_succeeds(self, src, dst, bitwidth):
     self.assertTrue(cs.Relayout(cs.RegisterLayout(src), cs.RegisterLayout(dst), bitwidth).holds())
 
+  @parameterized.product(
+      bitwidth=(16, 32),
+      swizzle=(32, 64, 128)
+  )
+  def test_tiling_is_valid_mma_tiling_holds_for_valid_tiling(self, swizzle, bitwidth):
+    swizzle_elems = swizzle * 8 // bitwidth
+    layout = cs.SMEMTiling(lc.TileTransform((8, swizzle_elems)))
+    self.assertTrue(cs.IsValidMmaTiling(layout, bitwidth).holds())
 
+  def test_tiling_is_valid_mma_tiling_does_not_hold_for_invalid_tiling(self):
+    layout = cs.SMEMTiling(lc.TileTransform((8, 8)))
+    self.assertFalse(cs.IsValidMmaTiling(layout, 16).holds())
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

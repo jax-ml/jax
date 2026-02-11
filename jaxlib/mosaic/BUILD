@@ -56,6 +56,7 @@ cc_library(
     ],
     # compatible with libtpu
     deps = [
+        ":stringify_util",
         ":tpu_inc_gen",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/hash",
@@ -354,4 +355,11 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
     ],
+)
+
+cc_library(
+    name = "stringify_util",
+    hdrs = ["dialect/tpu/stringify_util.h"],
+    # compatible with libtpu
+    deps = ["@llvm-project//llvm:Support"],
 )

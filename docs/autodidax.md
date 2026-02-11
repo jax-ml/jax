@@ -1831,7 +1831,7 @@ def xla_call_translation(c, in_avals, out_avals, in_vals, *, jaxpr, num_consts):
     @func.func(*(aval_to_ir_type(aval) for aval in in_avals))
     def inner_xla_call(*params):
       return jaxpr_subcomp(c, jaxpr, params)
-    name = c.symbol_table.insert(inner_xla_call.func_op)
+    c.symbol_table.insert(inner_xla_call.func_op)
   return func.CallOp(inner_xla_call.func_op, in_vals).results
 hlo_translations[xla_call_p] = xla_call_translation
 ```

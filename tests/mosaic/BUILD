@@ -135,7 +135,10 @@ jax_py_test(
         "//jax/_src:test_util",
     ] + if_cuda_is_configured([
         "//jax/experimental:mosaic_gpu",
-    ]) + py_deps("absl/testing"),
+    ]) + py_deps([
+        "absl/testing",
+        "hypothesis",
+    ]),
 )
 
 jax_py_test(

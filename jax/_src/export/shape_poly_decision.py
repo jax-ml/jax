@@ -385,8 +385,8 @@ class _DecisionByElimination:
       return
 
     # It is a factor, is it a variable?
-    if (v := f.to_var()) is not None:
-      self.combine_and_add_constraint(Comparator.GEQ, t_e, 1)  # v >= 1
+    if f.to_var() is not None:
+      self.combine_and_add_constraint(Comparator.GEQ, t_e, 1)  # f.to_var() >= 1
       return
 
     for oper in f.operands:

@@ -18,6 +18,7 @@ import functools
 import itertools
 
 import jax
+import os
 from jax import lax
 from jax.experimental import multihost_utils
 from jax.experimental import pallas as pl
@@ -31,6 +32,12 @@ MatmulDimension = hopper_matmul_mgpu.MatmulDimension
 TuningConfig = hopper_matmul_mgpu.TuningConfig
 
 
+def is_nvshmem_used() -> bool:
+  return (
+      "XLA_FLAGS" in os.environ
+      and "--xla_gpu_experimental_enable_nvshmem" in os.environ["XLA_FLAGS"]
+  )
+
 def all_gather_lhs_matmul(
     lhs: jax.Array,
     rhs: jax.Array,
@@ -39,8 +46,13 @@ def all_gather_lhs_matmul(
     config: hopper_matmul_mgpu.TuningConfig,
     dtype: jnp.dtype = jnp.float16,
 ) -> jax.Array:
-  if (num_devices := jax.device_count()) != jax.process_count():
-    raise ValueError("The kernel only supports one device per process")
+  if (
+      num_devices := jax.device_count()
+  ) != jax.process_count() and num_devices != jax.local_device_count():
+    raise ValueError(
+        "Kernel requires either 1 process per single GPU or 1 process per all"
+        " GPUs."
+    )
   if (axis_size := lax.axis_size(axis_name)) != num_devices:
     raise ValueError("The kernel can only work over all devices in a Mesh.")
   if jnp.dtype(dtype) not in map(jnp.dtype, [jnp.float16, jnp.bfloat16]):
@@ -78,7 +90,7 @@ def all_gather_lhs_matmul(
     received_sem = pl.get_global(plgpu.SemaphoreType.REGULAR)
     wg_idx = lax.axis_index("wg")
     dev_id = lax.axis_index(axis_name)
-    send_dev_id = lax.rem(dev_id + axis_size - 1, axis_size)
+    send_dev_id = lax.rem(dev_id + axis_size - 1, jnp.int32(axis_size))
     send_scratch_ref = plgpu.remote_ref(scratch_ref, send_dev_id)
 
     def send_lhs(m_idx, n_idx, k_idx, a_smem, b_smem, send_ref, should_send):
@@ -98,7 +110,8 @@ def all_gather_lhs_matmul(
       # Invariant: lhs_source_ref is ready to be used
       next_scratch_slot = device_offset
       out_device_m_slice = pl.ds(
-          lax.rem(device_offset + dev_id, num_devices) * m_shard, m_shard
+          lax.rem(device_offset + dev_id, jnp.int32(num_devices)) * m_shard,
+          m_shard,
       )
       is_send_wg = wg_idx == 0
       has_send_space = next_scratch_slot < num_devices - 1
@@ -161,6 +174,24 @@ def all_gather_lhs_matmul(
   return result
 
 
+def _min_results_across_devices(kernels_ms : list[tuple[str, float]]) -> float:
+  # We choose the minimum across processes to choose the runtime that didn't
+  # include devices waiting for other devices.
+  if is_nvshmem_used():
+    time_us = sum(t * 1e3 for _, t in kernels_ms)
+    return min(multihost_utils.process_allgather(time_us).tolist())
+
+  # profiler.measures measures all devices visible to the process, so we
+  # need to select the mimimum result of each kernel across devices.
+  # This code relies on the fact that with collective metadata a single kernel
+  # with unique name is launched on each device.
+  min_values : dict[str, float] = {}
+  for kernel_name, t in kernels_ms:
+    if kernel_name not in min_values or t < min_values[kernel_name]:
+      min_values[kernel_name] = t
+  return sum(time_ms * 1e3 for time_ms in min_values.values())
+
+
 def _run_example():
   P = jax.sharding.PartitionSpec
   m_shard = 1024
@@ -188,10 +219,8 @@ def _run_example():
           check_vma=False,
       )
   ), aggregate=False)(a, b)
-  ref_time_us = sum(t * 1e3 for _, t in ref_kernels_ms)
-  # We choose the minimum across processes to choose the runtime that didn't
-  # include devices waiting for other devices.
-  ref_time_us = min(multihost_utils.process_allgather(ref_time_us).tolist())
+
+  ref_time_us = _min_results_across_devices(ref_kernels_ms)
   ref_util = optimal_time / ref_time_us * 100
 
   tuning_it = itertools.product(
@@ -233,8 +262,7 @@ def _run_example():
       if "exceeds available shared memory" in e.args[0]:  # Ignore SMEM OOMs.
         continue
       raise
-    runtime_us = sum(t * 1e3 for _, t in kernels_ms)
-    runtime_us = min(multihost_utils.process_allgather(runtime_us).tolist())
+    runtime_us = _min_results_across_devices(kernels_ms)
     achieved_tc_util = optimal_time / runtime_us * 100
     if achieved_tc_util > best_util:
       best_runtime = runtime_us
@@ -249,5 +277,11 @@ def _run_example():
 
 
 if __name__ == "__main__":
-  from jax._src import test_multiprocess as jt_multiprocess  # pytype: disable=import-error
-  jt_multiprocess.main(shard_main=_run_example)
+  if is_nvshmem_used():
+    from jax._src import test_multiprocess as jt_multiprocess  # pytype: disable=import-error
+    jt_multiprocess.main(shard_main=_run_example)
+  else:
+    from jax._src.config import config as jax_config
+    from absl import app
+    jax_config.config_with_absl()
+    app.run(lambda _: _run_example())

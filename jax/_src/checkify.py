@@ -1264,7 +1264,7 @@ def check(pred: Bool, msg: str,
     pred: if False, a FailedCheckError error is added.
     msg: error message if error is added. Can be a format string.
     debug: Whether to turn on debugging mode. If True, check will be removed
-      during execution. If False, the the check must be functionalized using
+      during execution. If False, the check must be functionalized using
       checkify.checkify.
     fmt_args, fmt_kwargs: Positional and keyword formatting arguments for
       `msg`, eg.:

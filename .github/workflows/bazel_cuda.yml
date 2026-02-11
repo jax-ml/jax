@@ -49,8 +49,8 @@ on:
         description: "Whether to download the jax wheel from GCS"
         default: '1'
         type: string
-      skip-download-jaxlib-and-cuda-plugins-from-gcs:
-        description: "Whether to skip downloading the jaxlib and cuda plugins from GCS (e.g for testing a jax only release)"
+      skip-download-jaxlib-and-plugins-from-gcs:
+        description: "Whether to skip downloading the jaxlib and plugins from GCS (e.g for testing a jax only release)"
         default: '0'
         type: string
       gcs_download_uri:
@@ -75,6 +75,10 @@ on:
         required: false
         default: 'false'
         type: string
+      clone_main_xla:
+        description: "Should latest XLA be used?"
+        type: string
+        required: true
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -96,6 +100,7 @@ jobs:
       JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: ${{ inputs.write_to_bazel_remote_cache }}
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
+      JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
         (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||
@@ -112,7 +117,7 @@ jobs:
           python: ${{ inputs.python }}
           cuda-version: ${{ inputs.cuda-version }}
           download-jax-from-gcs: ${{ inputs.download-jax-from-gcs }}
-          skip-download-jaxlib-and-cuda-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs }}
+          skip-download-jaxlib-and-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
           jaxlib-version: ${{ inputs.jaxlib-version }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
       # Halt for testing

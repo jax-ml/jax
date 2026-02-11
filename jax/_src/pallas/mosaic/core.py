@@ -291,10 +291,14 @@ class TensorCoreMesh:
     return "mosaic_tpu"
 
   @property
+  def default_memory_space(self) -> pallas_core.MemorySpace:
+    return pallas_core.MemorySpace.ANY
+
+  @property
   def shape(self):
     return collections.OrderedDict(zip(self.axis_names, self.devices.shape))
 
-  def discharges_effect(self, effect: jax_core.Effect):
+  def discharges_effect(self, effect: jax_core.Effect) -> Literal[False]:
     del effect
     return False
 

@@ -51,6 +51,10 @@ on:
         required: false
         type: string
         default: "test"
+      clone_main_xla:
+        description: "Should latest XLA be used?"
+        type: string
+        required: true
       gcs_download_uri:
         description: "GCS location prefix from where the artifacts should be downloaded"
         default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
@@ -73,6 +77,7 @@ jobs:
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_BAZEL_CPU_RBE_MODE: "${{ inputs.bazel_command }}"
+      JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
 
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||

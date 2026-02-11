@@ -20,7 +20,7 @@ import functools
 import itertools
 import math
 import threading
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import jax
 from jax import lax
@@ -41,6 +41,7 @@ from jax._src.pallas.mosaic.interpret import vector_clock as vc
 from jax._src.pallas.mosaic.interpret.race_detection_state import RaceDetectionState
 from jax._src.pallas.mosaic.interpret.thread_map import thread_map
 import jax._src.pallas.mosaic.interpret.utils as interpret_utils
+from jax._src import state
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
@@ -1055,15 +1056,6 @@ def semaphore_wait(device_id, local_core_id, sem_id, value):
   sem.wait(value, global_core_id)
 
 
-def _compute_transformed_shape_and_dtype(shape, dtype, transforms):
-  for transform in transforms:
-    if transform is None:
-      continue
-    shape = transform.transform_shape(shape)
-    dtype = transform.transform_dtype(dtype)
-  return shape, dtype
-
-
 def _is_any(memory_space):
   return memory_space is pallas_core.MemorySpace.ANY
 
@@ -1092,7 +1084,7 @@ def _interpret_jaxpr(
     axis_indices,
     device_id,
     local_core_id,
-    compiler_params,
+    mosaic_params,
     interpret_params
 ):
   sentinel_for_floating_point_values = (
@@ -1114,7 +1106,7 @@ def _interpret_jaxpr(
       axis_indices=axis_indices,
       device_id=device_id,
       local_core_id=local_core_id,
-      compiler_params=compiler_params,
+      mosaic_params=mosaic_params,
       interpret_params=interpret_params,
   )
   for eqn in jaxpr.eqns:
@@ -1389,8 +1381,10 @@ def _interpret_jaxpr(
             src_sem_transforms,
             target_device_id,
         ) = jax.tree.unflatten(eqn.params['tree'], deferred_invals())
-        read_shape, read_dtype = _compute_transformed_shape_and_dtype(
-            eqn.invars[0].aval.shape, eqn.invars[0].aval.dtype, src_transforms)
+        src_ref_aval = state.transform_type(src_transforms, eqn.invars[0].aval)
+        assert isinstance(src_ref_aval, state.AbstractRef)
+        read_shape = src_ref_aval.shape
+        read_dtype = src_ref_aval.dtype
         callback.io_callback(
             dma_wait,
             (),
@@ -1407,7 +1401,7 @@ def _interpret_jaxpr(
             get_barrier_semaphore,
             jax.ShapeDtypeStruct((), jnp.int16),
             device_id,
-            _get_mosaic_params(compiler_params).collective_id,
+            mosaic_params.collective_id,
             ordered=True,
         )
 
@@ -1475,7 +1469,7 @@ def _interpret_jaxpr(
 def _compute_start_indices(
     block_mapping, loop_idx, *args,
     axis_sizes, mesh, axis_indices, device_id, local_core_id,
-    compiler_params, interpret_params):
+    mosaic_params, interpret_params):
   jaxpr = block_mapping.index_map_jaxpr
   block_indices = _interpret_jaxpr(
       jaxpr.jaxpr,
@@ -1487,7 +1481,7 @@ def _compute_start_indices(
       axis_indices=axis_indices,
       device_id=device_id,
       local_core_id=local_core_id,
-      compiler_params=compiler_params,
+      mosaic_params=mosaic_params,
       interpret_params=interpret_params,
   )
   def _get_start_index(i, b):
@@ -1509,21 +1503,14 @@ def _compute_start_indices(
   )
   return block_indices, ret
 
-def _get_mosaic_params(compiler_params: dict[str, pallas_core.CompilerParams]) -> mosaic_core.CompilerParams:
-  try:
-    return cast(mosaic_core.CompilerParams, compiler_params['mosaic_tpu'])
-  except KeyError:
-    return mosaic_core.CompilerParams()
-
 
 def _get_parallel_dim_semantics(
-    compiler_params: dict[str, Any], num_dimensions_in_grid: int,
+    mosaic_params: mosaic_core.CompilerParams, num_dimensions_in_grid: int,
 ) -> tuple[bool, ...]:
   """Returns a tuple indicating which grid dimensions have parallel semantics.
 
   Args:
-    compiler_params: Representation of a `mosaic_core.CompilerParams` object
-      as a dictionary.
+    mosaic_params: The compiler params for the Mosaic TPU backend.
     num_dimensions_in_grid: The number of dimensions in the grid.
 
   Returns:
@@ -1534,7 +1521,6 @@ def _get_parallel_dim_semantics(
     ValueError: If the dimensions with parallel semantics do not form a prefix
       of the grid.
   """
-  mosaic_params = _get_mosaic_params(compiler_params)
   if mosaic_params.dimension_semantics is None:
     return (False,) * num_dimensions_in_grid
   result = tuple(ds in ('parallel', mosaic_core.PARALLEL)
@@ -1560,7 +1546,7 @@ _GridPointCoordinatesPerDim = tuple[Array, ...]
 
 def _get_randomized_grid_coordinates(
     grid: tuple[int, ...],
-    compiler_params: dict[str, Any],
+    mosaic_params: mosaic_core.CompilerParams,
     random_seed: int | None,
 ) -> _GridPointCoordinatesPerDim:
   """Returns a tuple of randomized coordinates for each 'parallel' dimension in `grid`.
@@ -1575,15 +1561,14 @@ def _get_randomized_grid_coordinates(
 
   Args:
     grid: Tuple of sizes of the dimensions in the grid.
-    compiler_params: Representation of a `mosaic_core.CompilerParams` object
-      as a dictionary.
+    mosaic_params: The compiler params for the Mosaic TPU backend.
     parallel_semantics_per_dim: A tuple of booleans indicating whether the
       corresponding dimension in the grid has parallel semantics.
     random_seed: The seed to use for randomizing coordinates in parallel
       dimensions.
   """
   parallel_semantics_per_dim = _get_parallel_dim_semantics(
-      compiler_params, len(grid)
+      mosaic_params, len(grid)
   )
 
   key = jax.random.key(random_seed or 0)
@@ -1669,7 +1654,7 @@ def interpret_pallas_call(
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: pallas_core.GridMapping,
     mesh: pallas_core.Mesh | None,
-    compiler_params: dict[str, Any],
+    compiler_params: pallas_core.CompilerParams | None,
     cost_estimate: pallas_core.CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
     interpret_params: InterpretParams,
@@ -1687,6 +1672,13 @@ def interpret_pallas_call(
     interpret_params = dataclasses.replace(
         interpret_params, num_cores_or_threads=mesh.devices.shape[0]
     )
+
+  if compiler_params is None:
+    mosaic_params = mosaic_core.CompilerParams()
+  else:
+    assert isinstance(compiler_params, mosaic_core.CompilerParams)
+    mosaic_params = compiler_params  # type: ignore[assignment]
+  del compiler_params
 
   args = [remove_memory_space_p.bind(a) for a in args]
   # args contains: *dynamic_grid_sizes, *index, *inputs.  (No consts?)
@@ -1852,7 +1844,7 @@ def interpret_pallas_call(
           )
       )
 
-  if _get_mosaic_params(compiler_params).collective_id is None:
+  if mosaic_params.collective_id is None:
     # The kernel doesn't specify its own barrier semaphore, so we do a global
     # barrier before running the first iteration of the kernel.
     callback.io_callback(_barrier, (), device_id, ordered=True)
@@ -1875,11 +1867,11 @@ def interpret_pallas_call(
     randomized_grid_coordinates = (jnp.array((), dtype=jnp.int32),) * len(grid)
   else:
     randomized_grid_coordinates = _get_randomized_grid_coordinates(
-        grid, compiler_params, interpret_params.random_seed  # type: ignore[arg-type]
+        grid, mosaic_params, interpret_params.random_seed  # type: ignore[arg-type]
     )
 
   parallel_dim_semantics = _get_parallel_dim_semantics(
-      compiler_params, len(grid)
+      mosaic_params, len(grid)
   )
   parallel_subgrid_size = _get_parallel_subgrid_size(
       parallel_dim_semantics, grid  # type: ignore[arg-type]
@@ -1988,7 +1980,7 @@ def interpret_pallas_call(
                 axis_indices=axis_indices,
                 device_id=device_id,
                 local_core_id=core_index,
-                compiler_params=compiler_params,
+                mosaic_params=mosaic_params,
                 interpret_params=interpret_params,
             )
             for bm in grid_mapping.block_mappings
@@ -2068,7 +2060,7 @@ def interpret_pallas_call(
             axis_indices=axis_indices,
             device_id=device_id,
             local_core_id=core_index,
-            compiler_params=compiler_params,
+            mosaic_params=mosaic_params,
             interpret_params=interpret_params,
         )
 
@@ -2170,7 +2162,7 @@ def interpret_pallas_call(
               axis_indices=axis_indices,
               device_id=device_id,
               local_core_id=core_index,
-              compiler_params=compiler_params,
+              mosaic_params=mosaic_params,
               interpret_params=interpret_params,
           )
           for bm in grid_mapping.block_mappings

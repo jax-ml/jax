@@ -194,6 +194,7 @@ def _mosaic_gpu_lowering_rule(
     use_custom_barrier: bool = False,
 ):
   axis_context = ctx.module_context.axis_context
+  replica_ids = []
   if is_multi_device_module := _has_communication(module):
     # Those checks are trying to ensure that the logical device ids are
     # consistent with the NVSHMEM PE ids that Mosaic will be using for
@@ -201,13 +202,14 @@ def _mosaic_gpu_lowering_rule(
     # to physical translation, which is currently not implemented.
     if isinstance(axis_context, sharding_impls.SPMDAxisContext):
       mesh = axis_context.mesh
-      # Skip the check for AbstractMesh
-      if (isinstance(mesh, mesh_lib.Mesh) and
-          not np.array_equal(mesh.device_ids.ravel(), np.arange(mesh.size))):
-        raise NotImplementedError(
-            "Mosaic GPU only supports meshes with device ordering that follows"
-            f" row-major device ids. Got: {mesh.device_ids.ravel()} device ids."
-        )
+      if isinstance(mesh, mesh_lib.Mesh):
+        replica_ids = mesh.device_ids.ravel()
+        # Skip the check for AbstractMesh
+        if not np.array_equal(mesh.device_ids.ravel(), np.arange(mesh.size)):
+          raise NotImplementedError(
+              "Mosaic GPU only supports meshes with device ordering that follows"
+              f" row-major device ids. Got: {mesh.device_ids.ravel()} device ids."
+          )
     elif isinstance(axis_context, sharding_impls.ShardingContext):
       if axis_context.num_devices != 1:
         raise NotImplementedError(
@@ -248,20 +250,21 @@ def _mosaic_gpu_lowering_rule(
   else:
     KNOWN_KERNELS[kernel_id] = module_asm
 
+  backend_config = dict(
+      kernel_hash=ir.StringAttr.get(kernel_id),
+      module=ir.StringAttr.get(module_asm),
+      use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
+      uses_xla_collective_metadata=ir.BoolAttr.get(
+          launch_context.uses_collective_metadata(module)
+      ),
+  )
   custom_call_kwargs = {
       "call_target_name": "mosaic_gpu_v2",
       "result_types": [mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
       "operands": args,
       "operand_layouts": [list(reversed(range(a.ndim))) for a in ctx.avals_in],
       "result_layouts": [list(reversed(range(a.ndim))) for a in ctx.avals_out],
-      "backend_config": dict(
-          kernel_hash=ir.StringAttr.get(kernel_id),
-          module=ir.StringAttr.get(module_asm),
-          use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
-          uses_xla_collective_metadata=ir.BoolAttr.get(
-              launch_context.uses_collective_metadata(module)
-          ),
-      ),
+      "backend_config": backend_config,
       "operand_output_aliases": dict(input_output_aliases),
       "api_version": 4
   }
@@ -281,6 +284,9 @@ def _mosaic_gpu_lowering_rule(
   custom_call_kwargs["result_types"] += [  # type: ignore
       ir.RankedTensorType.get((collective_metadata_size,),
                               ir.IntegerType.get_signless(64))]
+  backend_config["xla_replica_ids"] = ir.StringAttr.get(
+      ",".join(map(str, replica_ids))
+  )
   # Drop the collective metadata buffer from the results.
   return mlir.custom_call(**custom_call_kwargs).results[:-1]  # type: ignore
 
@@ -585,7 +591,8 @@ def _launch(
     module: ir.Module,
     profiler_spec: profiler.ProfilerSpec | None = None,
     maybe_prof_buffer: ir.Value | None = None,
-    collective_metadata: ir.Value | None = None,
+    device_collective_metadata: ir.Value | None = None,
+    host_collective_metadata: ir.Value | None = None,
     num_peers: int = 0,
 ):
   if (profiler_spec is None) != (maybe_prof_buffer is None):
@@ -684,7 +691,8 @@ def _launch(
         launch_context.Scratch(launch_op),
         cluster,
         prof,
-        collective_metadata=collective_metadata,
+        device_collective_metadata=device_collective_metadata,
+        host_collective_metadata=host_collective_metadata,
         num_peers=num_peers,
     )
     with ctx.named_region("Init"):
@@ -761,7 +769,14 @@ def _infer_arch() -> tuple[int, int]:
     device = jex_backend.get_default_device()
   if not hasattr(device, "compute_capability"):
     return (9, 0)  # TODO(apaszke): Remove this once we figure out the export story.
-  return tuple(map(int, device.compute_capability.split(".")))  # type: ignore
+  arch_name = device.compute_capability
+  # Handle ROCm devices that return architecture strings like "gfxXXX".
+  if arch_name.startswith("gfx"):
+    raise ValueError(
+        f"Mosaic GPU does not yet support AMD ROCm devices. "
+        f"Got compute_capability: {arch_name}"
+    )
+  return tuple(map(int, arch_name.split(".")))  # type: ignore
 
 
 def _lower_as_gpu_kernel(
@@ -838,6 +853,7 @@ def _lower_as_gpu_kernel(
         arg_refs.append(arg_memref)
 
       collective_metadata = None
+      host_collective_metadata = None
       num_peers = 0
 
       # Collective metadata parameter is used to lower collective operations
@@ -857,6 +873,8 @@ def _lower_as_gpu_kernel(
             ir.IntegerType.get_signless(64)
         )
         collective_metadata = utils.ptr_as_memref(metadata_ptr, metadata_ty)
+        # TODO(b/481949311) Construct host_collective_metadata once the bug is
+        # fixed.
 
       prof_buffer = arg_refs.pop() if prof_spec is not None else None
 
@@ -871,6 +889,7 @@ def _lower_as_gpu_kernel(
           prof_spec,
           prof_buffer,
           collective_metadata,
+          host_collective_metadata,
           num_peers,
       ) as (_launch_ctx, smem_refs):
         nonlocal launch_ctx

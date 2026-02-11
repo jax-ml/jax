@@ -1411,7 +1411,7 @@ class CustomJVPTest(jtu.JaxTestCase):
       return y
 
     def f_jvp(primals, tangents):
-      (x, y), (x_dot, y_dot) = primals, tangents
+      (_x, y), (_x_dot, y_dot) = primals, tangents
       assert type(y_dot) is jax.custom_derivatives.SymbolicZero
       return y, y_dot
 
@@ -1483,7 +1483,7 @@ class CustomJVPTest(jtu.JaxTestCase):
       return x
     @f.defjvp
     def f_jvp(primals, tangents):
-      (x,), (x_dot,) = primals, tangents
+      (x,), (_x_dot,) = primals, tangents
       assert x == 0.  # concrete!
 
     @jax.jit

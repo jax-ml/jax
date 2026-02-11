@@ -303,7 +303,6 @@ class InterpretTest(jtu.JaxTestCase):
     ref = jax.lax.dynamic_slice(
         x, start_indices=(128, 256), slice_sizes=(128, 128)
     )
-    diff = jnp.max(jnp.abs(result - ref))
     np.testing.assert_allclose(result, ref)
 
   def test_dynamic_grid_and_aliasing(self):

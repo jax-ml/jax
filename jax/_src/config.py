@@ -1526,6 +1526,17 @@ compilation_cache_dir = optional_string_state(
           '2. The value of this flag set in the command line or by default.'),
 )
 
+compilation_cache_check_contents = bool_state(
+    name='jax_compilation_cache_check_contents',
+    default=False,
+    help=(
+        'When the compilation cache is enabled, check that the value '
+        'found in the disk cache matches the result of a fresh compilation. '
+        'This check is performed only the first time a key is encountered '
+        'in a process.'
+    ),
+)
+
 compilation_cache_expect_pgle = bool_state(
     name='jax_compilation_cache_expect_pgle',
     default=False,
@@ -1764,6 +1775,14 @@ default_matmul_precision = optional_enum_state(
           '"algorithm" for functions that perform matrix multiplications, like '
           ':func:`jax.lax.dot`. To specify an algorithm, set this option to '
           'the name of a :class:`~jax.lax.DotAlgorithmPreset`.\n\n'),
+    include_in_jit_key=True,
+    include_in_trace_context=True)
+
+allow_f16_reductions = bool_state(
+    name='jax_allow_f16_reductions',
+    default=True,
+    help=('If False, `reduce_sum` on `f16` or `bf16` inputs will raise an error.'
+          'Defaults to True.'),
     include_in_jit_key=True,
     include_in_trace_context=True)
 

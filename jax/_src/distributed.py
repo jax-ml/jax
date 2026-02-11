@@ -24,6 +24,7 @@ from jax._src import clusters
 from jax._src import config
 from jax._src import xla_bridge
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -149,20 +150,32 @@ class State:
       logger.info(
           'Starting JAX distributed service on %s', coordinator_bind_address
       )
-      self.service = _jax.get_distributed_runtime_service(
-          coordinator_bind_address, num_processes,
-          heartbeat_timeout=heartbeat_timeout_seconds,
-          shutdown_timeout=shutdown_timeout_seconds)
+      if jaxlib_extension_version >= 403:
+        self.service = _jax.get_distributed_runtime_service(
+            coordinator_bind_address, num_processes,
+            heartbeat_timeout=heartbeat_timeout_seconds,
+            shutdown_timeout=shutdown_timeout_seconds,
+            recoverable=_ENABLE_RECOVERABILITY.value) # type: ignore
+      else:
+        self.service = _jax.get_distributed_runtime_service(
+            coordinator_bind_address, num_processes,
+            heartbeat_timeout=heartbeat_timeout_seconds,
+            shutdown_timeout=shutdown_timeout_seconds) # type: ignore
 
     self.num_processes = num_processes
 
     if self.client is not None:
       raise RuntimeError('distributed.initialize should only be called once.')
 
-    self.client = _jax.get_distributed_runtime_client(
-        coordinator_address, process_id, init_timeout=initialization_timeout,
-        use_compression=True, heartbeat_timeout=heartbeat_timeout_seconds,
-        recoverable=_ENABLE_RECOVERABILITY.value)  # type: ignore
+    if jaxlib_extension_version >= 405:
+      self.client = _jax.get_distributed_runtime_client(
+          coordinator_address, process_id, init_timeout=initialization_timeout,
+          use_compression=True, heartbeat_timeout=heartbeat_timeout_seconds)  # type: ignore
+    else:
+      self.client = _jax.get_distributed_runtime_client(
+          coordinator_address, process_id, init_timeout=initialization_timeout,
+          use_compression=True, heartbeat_timeout=heartbeat_timeout_seconds,
+          recoverable=_ENABLE_RECOVERABILITY.value)  # type: ignore
     logger.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 

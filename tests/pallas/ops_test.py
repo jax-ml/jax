@@ -1759,8 +1759,7 @@ class OpsTest(PallasBaseTest):
         rtol=rtol,
     )
 
-  @parameterized.parameters("float16", "bfloat16")
-  def test_true_divide_unsupported(self, dtype):
+  def test_f16_true_divide_unsupported(self):
     self.skip_if_mosaic_gpu()
 
     if self.INTERPRET:
@@ -1768,13 +1767,13 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((2,), dtype),
+        out_shape=jax.ShapeDtypeStruct((2,), jnp.float16),
     )
     def kernel(x_ref, y_ref, o_ref):
       o_ref[...] = jnp.true_divide(x_ref[...], y_ref[...])
 
-    x = jnp.array([2.4, 4.2]).astype(dtype)
-    y = jnp.array([4.2, 2.4]).astype(dtype)
+    x = jnp.array([2.4, 4.2]).astype(jnp.float16)
+    y = jnp.array([4.2, 2.4]).astype(jnp.float16)
     with self.assertRaises(Exception):
       kernel(x, y)
 
@@ -2543,20 +2542,17 @@ class OpsTest(PallasBaseTest):
       )(x)
       np.testing.assert_array_equal(out, jnp.pad(x, padding, mode=pad_type))
     except Exception as e:
+      self.assertLess(
+          jtu.get_tpu_version(), 4, "only TPU older than v4 may fail"
+      )
       self.assertEqual(
           dtype,
           jnp.bfloat16,
           "some bfloat16 combinations can fail with not implemented",
       )
-      # The first two options are expected to fail due to current limitations
-      # in the Pallas TPU lowering. However, the last one is unexpected, and
-      # should be fixed, it is a pjrt bug.
-      # b/379787665
-      acceptable_errors = (
-          "Only 32-bit types supported" in str(e)
-          or "Not implemented" in str(e)
-          or "Expected mask vector type" in str(e)
-      )
+      acceptable_errors = "Not implemented: Unsupported mask bitwidth" in str(
+          e
+      ) or "Expected mask vector type" in str(e)
       self.assertTrue(acceptable_errors, "Failed with error: " + str(e))
 
   @parameterized.parameters((128, 128), (256, 256))
@@ -2714,7 +2710,8 @@ class OpsTest(PallasBaseTest):
 
   def test_delay(self):
     if jtu.test_device_matches(["gpu"]):
-      if not use_mosaic_gpu:
+      # ROCm always uses Triton (Mosaic GPU doesn't support ROCm).
+      if jtu.is_device_rocm() or not use_mosaic_gpu:
         self.skipTest("Delay is only implemented on the MGPU backend for GPUs.")
     if self.INTERPRET:
       self.skipTest("Not implemented in interpret mode.")

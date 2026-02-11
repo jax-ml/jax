@@ -85,11 +85,8 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
     cached = _cached_shard_map(
         dyn_f, dyn_args_tree, in_axes_flat, out_axes_flat, out_axes_tree,
         donated_invars, mesh_devices, axis_name)
-    jit_kwargs = {"donate_argnums": cached.donate_argnums}
-    if trace_state_clean:
-      jit_kwargs["in_shardings"] = tuple(cached.in_global_shardings)
-      jit_kwargs["out_shardings"] = cached.out_global_shardings
-    jitted_f = api.jit(cached.pmapped, **jit_kwargs)
+    jitted_f = (cached.jitted_f_with_shardings if trace_state_clean
+                else cached.jitted_f)
     if process_count > 1:
       dyn_args_flat = host_local_array_to_global_array(
           dyn_args_flat, cached, trace_state_clean, donated_invars
@@ -141,6 +138,8 @@ class CachedShardMap(NamedTuple):
       pairs for output pspecs.
     donate_argnums: Indices of donated arguments.
     out_global_shardings: Output NamedShardings as a pytree.
+    jitted_f: Pre-cached jit wrapper without explicit shardings.
+    jitted_f_with_shardings: Pre-cached jit wrapper with in/out shardings.
   """
 
   pmapped: Callable[..., Any]
@@ -156,6 +155,8 @@ class CachedShardMap(NamedTuple):
   ]
   donate_argnums: list[int]
   out_global_shardings: Any  # pytree of NamedShardings
+  jitted_f: Any
+  jitted_f_with_shardings: Any
 
 
 @lu.cache
@@ -208,6 +209,13 @@ def _cached_shard_map(fun, in_tree, in_axes_flat, out_axes_flat, out_axes_tree,
       sharding_impls.NamedSharding(mesh.local_mesh, p) for p in in_specs]
   in_global_shardings = [
       sharding_impls.NamedSharding(mesh, p) for p in in_specs]
+  jitted_f = api.jit(_pmapped, donate_argnums=donate_argnums)
+  jitted_f_with_shardings = api.jit(
+      _pmapped,
+      donate_argnums=donate_argnums,
+      in_shardings=tuple(in_global_shardings),
+      out_shardings=out_global_shardings,
+  )
   return CachedShardMap(
       pmapped=_pmapped,
       in_specs_flat=in_specs,
@@ -219,6 +227,8 @@ def _cached_shard_map(fun, in_tree, in_axes_flat, out_axes_flat, out_axes_tree,
       out_local_shardings_thunk=out_local_shardings_thunk,
       donate_argnums=donate_argnums,
       out_global_shardings=out_global_shardings,
+      jitted_f=jitted_f,
+      jitted_f_with_shardings=jitted_f_with_shardings,
   )
 
 

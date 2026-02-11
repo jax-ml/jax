@@ -15,18 +15,16 @@
 """Module for calling pallas functions from JAX."""
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence, Set
 import contextlib
 import enum
-import math
 from functools import partial, reduce
+import math
 import types
 from typing import Any
 
-from jax._src import api
-import jax._src.lax as lax
-
 from jax._src import ad_util
+from jax._src import api
 from jax._src import api_util
 from jax._src import checkify
 from jax._src import config
@@ -34,24 +32,26 @@ from jax._src import core as jax_core
 from jax._src import effects
 from jax._src import hijax
 from jax._src import linear_util as lu
+from jax._src import numpy as jnp
 from jax._src import state
-from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src import typing as jax_typing
-from jax._src.lib import jaxlib_extension_version
-from jax._src.lib import xla_client
-from jax._src.mesh import get_abstract_mesh
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+import jax._src.lax as lax
+from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import xla_client
+from jax._src.mesh import get_abstract_mesh
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import hlo_interpreter
 from jax._src.pallas import primitives
+from jax._src.shard_map import P, _as_manual_mesh, shard_map
 from jax._src.state import discharge as state_discharge
-from jax._src.shard_map import shard_map, P, _as_manual_mesh
 from jax._src.state import types as state_types
+from jax._src.traceback_util import api_boundary
 from jax._src.util import (
     safe_map,
     safe_zip,
@@ -59,7 +59,6 @@ from jax._src.util import (
     tuple_insert,
     unzip2,
 )
-from jax._src import numpy as jnp
 
 
 map, unsafe_map = safe_map, map
@@ -78,9 +77,9 @@ pallas_call_p.multiple_results = True
 
 
 def _pallas_call_impl(*args, **params):
+
   # Call the lowering path
   @partial(api.jit, inline=True)
-
   def _jit_run(*args):
     return pallas_call_p.bind(*args, **params)
 
@@ -94,22 +93,17 @@ def _pallas_call_abstract_eval(
     *avals,
     out_avals: tuple[jax_core.AbstractValue, ...],
     interpret,
-    backend,
+    compiler_params: CompilerParams | None,
     input_output_aliases,
     grid_mapping,
-    **params
+    **params,
 ):
-  if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
-    # Report effects that will be introduced when running/lowering
-    # mosaic_tpu_interpret.interpret_pallas_call .
-    effs = mosaic_tpu_interpret.get_interpret_effects()
-  elif isinstance(interpret, mosaic_gpu_interpret.InterpretParams):
-    # Report effects that will be introduced when running/lowering
-    # mosaic_gpu_interpret.interpret_pallas_call .
-    effs = mosaic_gpu_interpret.get_interpret_effects()
-  elif getattr(params.get('compiler_params', None), 'has_side_effects', False):
-    effs = jax_core.GenericEffect(pallas_call_p)
-  else:
+  del params  # Unused.
+
+  effs: Set[jax_core.Effect] = {*pallas_core.get_interpret_effects(interpret)}
+  if getattr(compiler_params, "has_side_effects", False):
+    # TODO(slebedev): Fix internal breakages and add
+    # ``jax_core.GenericEffect(pallas_call_p)`` here.
     effs = jax_core.no_effects
 
   # closed-over refs and dynamic grid bounds aren't reflected in
@@ -124,12 +118,14 @@ def _pallas_call_abstract_eval(
     raise ValueError(f"input pinned buffers without input_output_aliases:"
                      f"{missing}")
   outin_aliases = {out_idx: in_idx for in_idx, out_idx in inout_aliases.items()}
+  out_avals = [avals[outin_aliases[out_idx]] if out_idx in outin_aliases else a
+               for out_idx, a in enumerate(out_avals)]
   # Make sure we don't return ShapedArrayWithMemorySpace to the outside world.
   out_avals = [jax_core.ShapedArray(a.shape, a.dtype, a.weak_type,
                                     sharding=a.sharding)
-               if isinstance(a, pallas_core.ShapedArrayWithMemorySpace) else
-               avals[outin_aliases[out_idx]] if out_idx in outin_aliases
-               else a for out_idx, a in enumerate(out_avals)]
+               if isinstance(a, pallas_core.ShapedArrayWithMemorySpace) else a
+               for a in out_avals]
+
   # TODO(mattjj,yashkatariya): if we hide vmapped away mesh axes, use this:
   # if not (all(a.sharding.mesh.are_all_axes_manual for a in avals) and
   #         all(a.sharding.mesh.are_all_axes_manual for a in out_avals) and
@@ -266,7 +262,7 @@ def _pallas_call_jvp_rule(
     mesh: pallas_core.Mesh | None,
     debug: bool,
     interpret: Any,
-    compiler_params: Any,
+    compiler_params: CompilerParams | None,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
     backend: Backend | None,
@@ -548,7 +544,7 @@ def _pallas_call_batching_rule(
     input_output_aliases: tuple[tuple[int, int], ...],
     debug: bool,
     interpret: Any,
-    compiler_params: Any,
+    compiler_params: CompilerParams | None,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
     backend: Backend | None,
@@ -1136,34 +1132,54 @@ def _pallas_call_lowering(
         ctx, *in_nodes, **params
     )
 
-  def gpu_lowering(ctx: mlir.LoweringRuleContext,
-                   *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
-                   **params):
+  def _gpu_lowering_impl(ctx: mlir.LoweringRuleContext,
+                         *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
+                         is_rocm: bool,
+                         **params):
+    """Shared GPU lowering implementation for CUDA and ROCm."""
     try:
       match backend:
         case "mosaic_gpu":
+          if is_rocm:
+            raise ValueError(
+                "Mosaic GPU backend does not yet support AMD ROCm devices. "
+                "Use backend='triton' for ROCm."
+            )
           from jax._src.pallas.mosaic_gpu import pallas_call_registration
         case "triton":
           from jax._src.pallas.triton import pallas_call_registration  # type: ignore
         case None:
-          if _PALLAS_USE_MOSAIC_GPU.value:
+          # Mosaic GPU only supports NVIDIA CUDA, not AMD ROCm.
+          if _PALLAS_USE_MOSAIC_GPU.value and not is_rocm:
             from jax._src.pallas.mosaic_gpu import pallas_call_registration
           else:
             from jax._src.pallas.triton import pallas_call_registration  # type: ignore
         case _:
           raise ValueError(f"Unsupported backend: {backend}")
-    except ImportError as e:
+    except ImportError:
       raise _unsupported_lowering_error("gpu")
 
     return pallas_call_registration.pallas_call_lowering(
         ctx, *in_nodes, **params
     )
 
+  def cuda_lowering(ctx: mlir.LoweringRuleContext,
+                    *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
+                    **params):
+    """Lowering rule for NVIDIA CUDA GPUs."""
+    return _gpu_lowering_impl(ctx, *in_nodes, is_rocm=False, **params)
+
+  def rocm_lowering(ctx: mlir.LoweringRuleContext,
+                    *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
+                    **params):
+    """Lowering rule for AMD ROCm GPUs."""
+    return _gpu_lowering_impl(ctx, *in_nodes, is_rocm=True, **params)
+
   return mlir.lower_per_platform(ctx, "pallas_call",
                                  dict(cpu=cpu_lowering,
                                       tpu=tpu_lowering,
-                                      cuda=gpu_lowering,
-                                      rocm=gpu_lowering),
+                                      cuda=cuda_lowering,
+                                      rocm=rocm_lowering),
                                  None,  # default_rule
                                  effects.no_effects,
                                  *in_nodes,
@@ -1233,7 +1249,7 @@ def _pallas_call_state_discharge_rule(
     mesh: pallas_core.Mesh | None,
     debug: bool,
     interpret: Any,
-    compiler_params: Any,
+    compiler_params: CompilerParams | None,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
     backend: Backend | None,
@@ -1365,11 +1381,7 @@ def pallas_call(
     debug: bool = False,
     interpret: Any = False,
     name: str | None = None,
-    compiler_params: (
-        Mapping[Backend, pallas_core.CompilerParams]
-        | pallas_core.CompilerParams
-        | None
-    ) = None,
+    compiler_params: pallas_core.CompilerParams | None = None,
     cost_estimate: CostEstimate | None = None,
     backend: Backend | None = None,
     metadata: dict[str, str] | None = None,
@@ -1420,12 +1432,11 @@ def pallas_call(
       where the kernel function is defined, .e.g: `{name} for kernel function
       {kernel_name} at {file}:{line}`. If missing, then we use `{kernel_name} at
       {file}:{line}`.
-    compiler_params: Optional compiler parameters. The value should either be a
+    compiler_params: Optional compiler parameters. The value should be a
       backend-specific dataclass
       (:class:`jax.experimental.pallas.tpu.CompilerParams`,
       :class:`jax.experimental.pallas.triton.CompilerParams`,
-      :class:`jax.experimental.pallas.mosaic_gpu.CompilerParams`) or a dict
-      mapping backend name to the corresponding platform-specific dataclass.
+      :class:`jax.experimental.pallas.mosaic_gpu.CompilerParams`).
     backend: Optional string literal one of  ``"mosaic_tpu"``, ``"triton"`` or
       ``"mosaic_gpu"`` determining the backend to be used. None means let Pallas
       decide.
@@ -1456,9 +1467,6 @@ def pallas_call(
           "If `grid_spec` is specified, then `scratch_shapes` must "
           f"be `()`. It is {scratch_shapes}")
   del grid, in_specs, out_specs
-  # We can infer a backend from compiler_params if it is not specified.
-  if backend is None and isinstance(compiler_params, pallas_core.CompilerParams):
-    backend = compiler_params.BACKEND
   return _pallas_call(
       kernel,
       out_shape,
@@ -1474,31 +1482,6 @@ def pallas_call(
   )
 
 
-def _normalize_compiler_params(
-    compiler_params: Mapping[Backend, pallas_core.CompilerParams] | pallas_core.CompilerParams | None,
-) -> Mapping[Backend, pallas_core.CompilerParams]:
-  if compiler_params is None:
-    return FrozenDict({})
-  if isinstance(compiler_params, CompilerParams):
-    compiler_params = {compiler_params.BACKEND: compiler_params}
-  assert isinstance(compiler_params, Mapping)
-  for backend, params in compiler_params.items():
-    if backend not in ["mosaic_tpu", "mosaic_gpu", "triton"]:
-      raise ValueError(f"Unknown backend in compiler_params: {backend}")
-    if not isinstance(params, CompilerParams):
-      raise ValueError(
-          f"Unexpected compiler_params for backend {backend}: {params}"
-      )
-    if params.BACKEND != backend:
-      raise ValueError(
-          f"Inconsistent backend in compiler_params: {params.BACKEND} !="
-          f" {backend}"
-      )
-  if not isinstance(compiler_params, FrozenDict):
-    compiler_params = FrozenDict(compiler_params)
-  return compiler_params
-
-
 @partial(api_boundary, repro_api_name="jax.experimental.pallas.pallas_call")
 def _pallas_call(
     kernel: Callable[..., None],
@@ -1510,16 +1493,13 @@ def _pallas_call(
     debug: bool = False,
     interpret: Any = False,
     name: str | None = None,
-    compiler_params: (
-        Mapping[Backend, CompilerParams] | CompilerParams | None
-    ) = None,
+    compiler_params: CompilerParams | None = None,
     cost_estimate: CostEstimate | None = None,
     backend: Backend | None = None,
     metadata: dict[str, str] | None = None,
 ):
   interpret = (
       config.pallas_tpu_interpret_mode_context_manager.value or interpret)
-  compiler_params = _normalize_compiler_params(compiler_params)
 
   if mesh is not None:
     if tuple(mesh.shape.values()) != grid_spec.grid:
@@ -1530,6 +1510,16 @@ def _pallas_call(
     if backend is not None:
       raise ValueError("If `mesh` is specified, then `backend` must be `None`.")
     backend = mesh.backend
+
+  if compiler_params is not None:
+    if backend is None:
+      # We can infer a backend from compiler_params if it is not specified.
+      backend = compiler_params.BACKEND
+    elif compiler_params.BACKEND != backend:
+      raise ValueError(
+        f"Inconsistent backend in compiler_params: {compiler_params.BACKEND} !="
+        f" {backend}"
+    )
 
   grid_spec, dynamic_grid_bounds = pallas_core.unzip_dynamic_grid_bounds(grid_spec)
   # TODO(necula): this canonicalization may be convenient for some usage

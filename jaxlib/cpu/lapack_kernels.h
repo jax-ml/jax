@@ -231,7 +231,8 @@ struct SingularValueDecomposition {
   inline static FnType* fn = nullptr;
 
   static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+      ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<dtype> singular_values,
       ::xla::ffi::ResultBuffer<dtype> u, ::xla::ffi::ResultBuffer<dtype> vt,
       ::xla::ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode);
@@ -256,7 +257,8 @@ struct SingularValueDecompositionComplex {
   inline static FnType* fn = nullptr;
 
   static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+      ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<::xla::ffi::ToReal(dtype)> singular_values,
       ::xla::ffi::ResultBuffer<dtype> u, ::xla::ffi::ResultBuffer<dtype> vt,
       ::xla::ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode);

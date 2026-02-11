@@ -1101,6 +1101,51 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), np.broadcast_to(expected, x.shape))
 
+  def test_fetch_and_add(self):
+    n = self.sc_info.num_subcores
+    dim = self.num_lanes
+
+    @functools.partial(
+        pl.pallas_call,
+        compiler_params=pltpu.CompilerParams(
+            kernel_type=pltpu.KernelType.SC_VECTOR_SUBCORE,
+            dimension_semantics=["subcore_parallel"],
+        ),
+        out_shape=(
+            jax.ShapeDtypeStruct((n * dim,), jnp.int32),
+            jax.ShapeDtypeStruct((n * dim,), jnp.int32),
+        ),
+        grid=(n,),
+        out_specs=(
+            pl.BlockSpec([dim], lambda i: (i,)),
+            pl.BlockSpec([dim], lambda i: (i,)),
+        ),
+        scratch_shapes=(pltpu.SMEM([1], jnp.int32),),
+    )
+    def kernel(old_val_ref, new_val_ref, smem_ref):
+      my_id = pl.program_id(0)
+      smem_ref[0] = my_id
+      plsc.subcore_barrier()
+      neighbor_id = (my_id + 1) % n
+      old_val = plsc.fetch_and_add(
+          smem_ref.at[0], 10, subcore_id=neighbor_id
+      )
+      plsc.subcore_barrier()
+      new_val = smem_ref[0]
+      old_val_ref[...] = jax.lax.broadcast(old_val, old_val_ref.shape)
+      new_val_ref[...] = jax.lax.broadcast(new_val, new_val_ref.shape)
+
+    old, new = kernel()
+    old = old.reshape(n, dim)
+    new = new.reshape(n, dim)
+
+    # old_val comes from the neighbor, which is (my_id + 1) % n.
+    expected_old = (np.arange(n) + 1) % n
+    # new_val is my_id + 10, since the neighbor added 10 to me.
+    expected_new = np.arange(n) + 10
+    np.testing.assert_array_equal(old[:, 0], expected_old)
+    np.testing.assert_array_equal(new[:, 1], expected_new)
+
   def test_run_scoped(self):
     x = jnp.arange(self.num_lanes)
 
@@ -1134,6 +1179,23 @@ class VectorSubcoreTest(PallasSCTest):
     # Just make sure it compiles. The unrolling logic in the SC compiler
     # does not yet handle tiled layouts properly, so the result is wrong.
     _ = kernel(x)
+
+  @parameterized.parameters(pltpu.VMEM, pltpu.SMEM)
+  def test_empty_ref_allocation(self, memory_space):
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct((16,), jnp.float32),
+    )
+    def kernel(y_ref):
+      x_ref = jax.empty_ref(
+          jax.ShapeDtypeStruct(y_ref.shape, y_ref.dtype),
+          memory_space=memory_space,
+      )
+      s = ... if memory_space == pltpu.VMEM else 0
+      x_ref[s] = jnp.ones_like(x_ref) if memory_space == pltpu.VMEM else 1.
+      y_ref[...] = jnp.broadcast_to(4 * x_ref[s], y_ref.shape)
+
+    o = kernel()
+    np.testing.assert_allclose(o, 4 * np.ones_like(o))
 
   @parameterized.product(sizes=[[1, 1], [2, 2], [1, 1, 1, 1]])
   def test_split_concatenate(self, sizes):
@@ -1436,7 +1498,7 @@ class VectorSubcoreTest(PallasSCTest):
   def test_squeezed_blockspec_error_message(self):
     shape = (16, 8, 32)
     spec_shape = (pl.squeezed, 8, 32)
-    x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(*shape)
+    x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(*shape)
 
     @self.vector_subcore_kernel(
         out_shape=x,
@@ -1533,10 +1595,10 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(jnp.int32, jnp.float32)
   def test_gather_add(self, dtype):
-    """Gather from HBM at indices added to contiguous VMEM."""
     self.skip_if_tc_tiling()
+
     shape = (self.sc_info.num_subcores, 64, 32)
-    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(*shape)
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(*shape)
     # TODO(b/478819791): Fix and enable on v7x
     if jtu.is_device_tpu(7, "x"):
       self.skipTest("Mysteriously fails in MLIR verifier (no error message) on v7x")
@@ -1546,25 +1608,21 @@ class VectorSubcoreTest(PallasSCTest):
         mesh=plsc.VectorSubcoreMesh(
             core_axis_name="core", subcore_axis_name="subcore", num_cores=1
         ),
-        scratch_shapes=[
-            pltpu.VMEM([8], jnp.int32),
-            pltpu.VMEM([8, 32], dtype),
-            pltpu.SemaphoreType.DMA,
-        ],
+        scratch_shapes=dict(
+            indices_vmem=pltpu.VMEM([8], jnp.int32),
+            scratch_ref=pltpu.VMEM([8, 32], dtype),
+        ),
     )
-    def kernel(x_ref, indices_ref, o_ref, indices_vmem, scratch_ref, sem):
+    def kernel(x_ref, indices_ref, o_ref, indices_vmem, scratch_ref):
       subcore_id = lax.axis_index("subcore")
       pltpu.sync_copy(indices_ref, indices_vmem)
       # Initialize scratch space.
       pltpu.sync_copy(x_ref.at[subcore_id, pl.ds(0, 8)], scratch_ref)
       # Gather-add selected indices to scratch.
-      pltpu.async_copy(
-          # TODO: Can't mix array and ref indexers .at[subcore_id, indices_vmem]
-          x_ref.at[subcore_id].at[indices_vmem],
-          scratch_ref,
-          sem,
-          add=True,
-      ).wait()
+      # TODO(selebedev): Allow mixing array and ref indexers in ``.at``.
+      pltpu.sync_copy(
+          x_ref.at[subcore_id].at[indices_vmem], scratch_ref, add=True
+      )
       pltpu.sync_copy(scratch_ref, o_ref.at[subcore_id])
 
     indices = jnp.arange(8) * 8
@@ -1572,11 +1630,10 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(jnp.int32, jnp.float32)
   def test_scatter_add(self, dtype):
-    """Scatter from contiguous VMEM added to VMEM_SHARED at indices."""
     self.skip_if_tc_tiling()
-    nsubcores = self.sc_info.num_subcores
-    shape = (nsubcores, 32)
-    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(*shape)
+
+    shape = (self.sc_info.num_subcores, 32)
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(*shape)
 
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
@@ -1600,11 +1657,9 @@ class VectorSubcoreTest(PallasSCTest):
         scratch_shapes=[
             pltpu.VMEM_SHARED(shape[1:], dtype),
             pltpu.VMEM(shape[1:], dtype),
-            pltpu.SemaphoreType.DMA,
         ],
     )
-    def kernel(x_ref, indices_ref, o_ref,
-               shared_scratch_ref, scratch_ref, sem):
+    def kernel(x_ref, indices_ref, o_ref, shared_scratch_ref, scratch_ref):
       subcore_id = pl.program_id(0)
       pltpu.sync_copy(x_ref.at[subcore_id], scratch_ref)
       # Subcore 0 to init shared scratch.
@@ -1613,12 +1668,7 @@ class VectorSubcoreTest(PallasSCTest):
         pltpu.sync_copy(scratch_ref, shared_scratch_ref)
       plsc.subcore_barrier()
       # All cores to add their slice to shared scratch.
-      pltpu.async_copy(
-          scratch_ref,
-          shared_scratch_ref.at[indices_ref],
-          sem,
-          add=True,
-      ).wait()
+      pltpu.sync_copy(scratch_ref, shared_scratch_ref.at[indices_ref], add=True)
       plsc.subcore_barrier()
       # Subcore 0 to copy shared scratch to output.
       @pl.when(subcore_id == 0)
@@ -1635,7 +1685,7 @@ class VectorSubcoreTest(PallasSCTest):
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
     shape = (mesh.num_subcores, 8, self.num_lanes)
-    x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(*shape)
+    x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(*shape)
 
     @self.kernel(out_shape=x, mesh=mesh)
     def kernel(x_ref, o_ref):

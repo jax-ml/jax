@@ -91,3 +91,4 @@ jobs:
       build_jaxlib: 'true'
       build_jax: 'true'
       bazel_command: ${{ (contains(matrix.runner, 'linux-x86') && 'test') || 'build' }}
+      clone_main_xla: 1

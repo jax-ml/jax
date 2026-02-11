@@ -135,7 +135,7 @@ def _allocate_buffers_for_outputs(
     grid_mapping: pallas_core.GridMapping,
     input_buffer_keys: Sequence[jax.Array],
     input_vals: Sequence[jax.Array],
-    interpret_params: InterpretParams,
+    interpret_params: interpret_utils.InterpretGPUParams,
 ) -> list[AllocationKeyAndValue]:
   """Allocates `GMEM` buffers for `pallas_call` outputs, respecting aliased inputs."""
   # TODO(nrink): This code is a simplified version to the corresponding TPU
@@ -198,7 +198,7 @@ def _get_kernel_buffers(
     invars: Sequence[Any],
     input_buffer_keys: Sequence[jax.Array],
     output_buffer_keys: Sequence[jax.Array],
-    interpret_params: InterpretParams,
+    interpret_params: interpret_utils.InterpretGPUParams,
 ) -> list[jax.Array]:
   """Collects buffers to be passed to the kernel from `pallas_call` input/output buffers."""
   # TODO(nrink): This code is a simplified version to the corresponding TPU
@@ -339,7 +339,7 @@ def interpret_pallas_call(
     compiler_params: Mapping[str, Any],
     cost_estimate: pallas_core.CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    interpret_params: InterpretParams,
+    interpret_params: interpret_utils.InterpretGPUParams,
     metadata: Mapping[str, str] | None,
     **kwargs,
 ) -> Sequence[Array]:
@@ -489,8 +489,15 @@ def interpret_pallas_call(
 
   outputs = _get_outputs(device_info.device_id, output_buffers)
 
-  # TODO(nrink): It might make sense to check/assert here that no barriers
-  # remain allocated in the shared memory.
+  # We assert that no barriers remain allocated. This is an internal consistency
+  # check because the interpreter should take care of deallocating all barriers
+  # that it has allocated. It is important that the interpreter deallocates all
+  # barriers because barrier deallocation also checks that the barrier was used
+  # correctly by the kernel/threads. (Specifically, it is checked that if a
+  # thread has observed any completed barrier arrival, it has in fact observed
+  # all completed arrivals).
+  gpu_callbacks.call_assert_no_barriers_allocated()
+
   gpu_callbacks.call_clean_up_shared_memory()
 
   return outputs

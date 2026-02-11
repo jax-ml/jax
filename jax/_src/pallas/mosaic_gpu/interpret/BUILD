@@ -89,6 +89,7 @@ pytype_strict_library(
     srcs = ["shared_memory.py"],
     deps = [
         "//jax/_src/pallas/mosaic/interpret:shared_memory",
+        "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic/interpret:vector_clock",
-    ],
+    ] + py_deps("absl/logging"),
 )

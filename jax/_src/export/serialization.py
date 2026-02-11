@@ -176,8 +176,6 @@ def _serialize_array(
 
 
 def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
-  serialization_version = exp.SerializationVersion()
-
   fun_name = exp.FunctionName().decode("utf-8")
   in_tree = tree_util.tree_structure(
       _deserialize_pytreedef_to_pytree(exp.InTree())
@@ -377,7 +375,8 @@ def _deserialize_pytreedef_to_pytree(p: ser_flatbuf.PyTreeDef):
     auxdata = deserialize_auxdata(p.CustomAuxdataAsNumpy().tobytes())
     return from_iter(auxdata, children)
   else:
-    assert False, kind
+    raise ValueError(
+        f"Cannot deserialize PyTreeDef with unknown kind: {kind}")
 
 
 _dtype_to_dtype_kind = {
@@ -718,4 +717,4 @@ def _deserialize_disabled_safety_check(
     # TODO(necula): remove this after June 2025, when we should not have any
     # more serialized artifacts with shape_assertions.
     return _export.DisabledSafetyCheck.custom_call("no op")
-  assert False, kind
+  raise ValueError(f"Cannot deserialize DisabledSafetyCheck with unknown kind: {kind}")

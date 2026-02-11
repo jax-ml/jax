@@ -10,11 +10,13 @@
 #                     built by internal CI jobs and runs CUDA tests.
 # 4. run-bazel-test-cuda: Calls the `bazel_cuda.yml` workflow which downloads the JAX wheels
 #                     that were built by internal CI jobs and runs Bazel CUDA tests.
-# 5. run-pytest-tpu: Calls the `pytest_tpu.yml` workflow which downloads the JAX wheels that were
+# 5. run-pytest-rocm: Calls the `pytest_rocm.yml` workflow which downloads the JAX wheels and
+#                     ROCm plugins from PyPI/GitHub releases and runs ROCm tests.
+# 6. run-pytest-tpu: Calls the `pytest_tpu.yml` workflow which downloads the JAX wheels that were
 #                    built by internal CI jobs and runs TPU tests.
-# 6. run-bazel-test-tpu: Calls the `bazel_test_tpu.yml` workflow which downloads the JAX wheels that
+# 7. run-bazel-test-tpu: Calls the `bazel_test_tpu.yml` workflow which downloads the JAX wheels that
 #                        were built by internal CI jobs and runs Bazel TPU tests.
-# 7. verify-release-wheels-install: Verifies that JAX's release wheels can be installed.
+# 8. verify-release-wheels-install: Verifies that JAX's release wheels can be installed.
 name: CI - Wheel Tests (Nightly/Release)
 
 on:
@@ -25,7 +27,7 @@ on:
         required: true
         default: 'gs://jax-nightly-artifacts/latest'
         type: string
-      skip-download-jaxlib-and-cuda-plugins-from-gcs:
+      skip-download-jaxlib-and-plugins-from-gcs:
         description: "Whether to download only the jax wheel from GCS (e.g for testing a jax only release)"
         required: true
         default: '0'
@@ -65,7 +67,7 @@ jobs:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
-      skip-download-jaxlib-from-gcs: ${{inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs}}
+      skip-download-jaxlib-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
       # TODO(b/456203132): Increase to more than 16 processes if this works
@@ -91,6 +93,7 @@ jobs:
       halt-for-connection: ${{inputs.halt-for-connection}}
       build_jaxlib: "false"
       build_jax: "false"
+      clone_main_xla: 0
 
   run-pytest-cuda:
     uses: ./.github/workflows/pytest_cuda.yml
@@ -139,7 +142,7 @@ jobs:
       cuda-version:  ${{ matrix.cuda.cuda-version }}
       use-nvidia-pip-wheels: ${{ matrix.cuda.use-nvidia-pip-wheels }}
       enable-x64:  ${{ matrix.enable-x64 }}
-      skip-download-jaxlib-and-cuda-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs}}
+      skip-download-jaxlib-and-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
 
@@ -167,6 +170,27 @@ jobs:
       jaxlib-version: "head"
       write_to_bazel_remote_cache: 1
       run_multiaccelerator_tests: "true"
+      clone_main_xla: 0
+
+  run-pytest-rocm:
+    uses: ./.github/workflows/pytest_rocm.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          runner: ["linux-x86-64-1gpu-amd", "linux-x86-64-4gpu-amd", "linux-x86-64-8gpu-amd"]
+          python: ["3.11", "3.12", "3.13", "3.14"]
+          rocm: [
+            {version: "7.2.0", tag: "rocm720"},
+          ]
+    name: "Pytest ROCm (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      rocm-version: ${{ matrix.rocm.version }}
+      rocm-tag: ${{ matrix.rocm.tag }}
+      jaxlib-version: "head"
+      skip-download-jaxlib-and-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
+      gcs_download_uri: ${{inputs.gcs_download_uri}}
 
   run-pytest-tpu:
     uses: ./.github/workflows/pytest_tpu.yml
@@ -228,7 +252,7 @@ jobs:
       python: ${{ matrix.python }}
       run-full-tpu-test-suite: "1"
       libtpu-version-type: ${{ matrix.libtpu-version-type }}
-      skip-download-jaxlib-from-gcs: ${{inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs}}
+      skip-download-jaxlib-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
 
@@ -298,7 +322,7 @@ jobs:
       python: ${{ matrix.python }}
       run-full-tpu-test-suite: "1"
       libtpu-version-type: ${{ matrix.libtpu-version-type }}
-      skip-download-jaxlib-from-gcs: ${{inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs}}
+      skip-download-jaxlib-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
       build_jaxlib: "false"
@@ -344,7 +368,7 @@ jobs:
           jax_wheel=$(ls dist/jax*py3*none*any.whl 2>/dev/null)
           echo "JAX_WHEEL=$jax_wheel" >> $GITHUB_ENV
 
-          if [[ "${{ inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs }}" != "1" ]]; then
+          if [[ "${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}" != "1" ]]; then
             gcloud storage cp -r "${final_gcs_download_uri}/jaxlib*${python_major_minor}*linux*x86_64*.whl" $(pwd)/dist/
             gcloud storage cp -r "${final_gcs_download_uri}/jax*cuda${{ matrix.cuda-version }}*plugin*${python_major_minor}*linux*x86_64*.whl" $(pwd)/dist/
             gcloud storage cp -r "${final_gcs_download_uri}/jax*cuda${{ matrix.cuda-version }}*pjrt*linux*x86_64*.whl" $(pwd)/dist/
@@ -360,7 +384,7 @@ jobs:
       - name: Verify JAX CPU packages can be installed
         run: |
           $PYTHON -m uv venv ~/test_cpu && source ~/test_cpu/bin/activate
-          if [[ "${{ inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs }}" == "1" ]]; then
+          if [[ "${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}" == "1" ]]; then
             uv pip install $JAX_WHEEL
           else
             uv pip install $JAX_WHEEL $JAXLIB_WHEEL
@@ -369,7 +393,7 @@ jobs:
         run: |
           $PYTHON -m uv venv ~/test_tpu && source ~/test_tpu/bin/activate
 
-          if [[ "${{ inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs }}" == "1" ]]; then
+          if [[ "${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}" == "1" ]]; then
             uv pip install $JAX_WHEEL[tpu]
           else
             uv pip install $JAX_WHEEL[tpu] $JAXLIB_WHEEL
@@ -377,7 +401,7 @@ jobs:
       - name: Verify JAX CUDA packages can be installed (Nvidia Pip Packages)
         run: |
           $PYTHON -m uv venv ~/test_cuda_pip && source ~/test_cuda_pip/bin/activate
-          if [[ "${{ inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs }}" == "1" ]]; then
+          if [[ "${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}" == "1" ]]; then
             uv pip install $JAX_WHEEL[cuda${{ matrix.cuda-version }}]
           else
             uv pip install $JAX_WHEEL[cuda${{ matrix.cuda-version }}] $JAXLIB_WHEEL $JAX_CUDA_PJRT_WHEEL $JAX_CUDA_PLUGIN_WHEEL[with-cuda] $EXTRA_INDEX
@@ -385,7 +409,7 @@ jobs:
       - name: Verify JAX CUDA packages can be installed (CUDA local)
         run: |
           $PYTHON -m uv venv ~/test_cuda_local && source ~/test_cuda_local/bin/activate
-          if [[ "${{ inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs }}" == "1" ]]; then
+          if [[ "${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}" == "1" ]]; then
             uv pip install $JAX_WHEEL[cuda${{ matrix.cuda-version }}-local]
           else
             uv pip install $JAX_WHEEL $JAXLIB_WHEEL $JAX_CUDA_PJRT_WHEEL $JAX_CUDA_PLUGIN_WHEEL

@@ -582,7 +582,6 @@ class CompilationCacheTest(CompilationCacheTestCase):
       msg = "to persistent compilation cache with key"
       self.assertFalse(msg_exists_in_logs(msg, log.records, logging.WARNING))
 
-
   @parameterized.parameters(0, 1)
   def test_cache_write_with_process_restriction(self, process_id):
     with (
@@ -676,6 +675,52 @@ class CompilationCacheTest(CompilationCacheTestCase):
         self.assertEqual(file1.read(), file2.read())
       dump2_pbs = glob.glob(os.path.join(dump_dir2, "*after_optimizations.hlo.pb"))
       self.assertEqual(len(dump2_pbs), 1)
+
+  def test_verification_cache(self):
+    base_cache = InMemoryCache()
+    v_cache = cc.VerificationCache(base_cache)
+
+    key = "test_key"
+    executable = b"test_executable"
+    val1 = cc.compress_executable(cc.combine_executable_and_time(executable, 100))
+
+    v_cache.put(key, val1)
+    self.assertEqual(v_cache.get(key), val1)
+
+    # Equivalent content with different timestamp should also be ok.
+    v_cache.clear()
+    self.assertIsNone(v_cache.get(key))
+    val1_diff_time = cc.compress_executable(
+        cc.combine_executable_and_time(executable, 200)
+    )
+    v_cache.put(key, val1_diff_time)
+    self.assertEqual(v_cache.get(key), val1_diff_time)
+
+    # Different content should raise.
+    v_cache.clear()
+    self.assertIsNone(v_cache.get(key))
+    base_cache.put(
+        key,
+        cc.compress_executable(
+            cc.combine_executable_and_time(b"different", 300)
+        ),
+    )
+
+    with self.assertRaisesRegex(
+        RuntimeError, "Persistent compilation cache inconsistency"
+    ):
+      v_cache.put(key, val1)
+
+  def test_get_file_cache(self):
+    with tempfile.TemporaryDirectory() as cache_dir:
+      with config.compilation_cache_check_contents(False):
+        cache, _ = cc.get_file_cache(cache_dir)
+        self.assertNotIsInstance(cache, cc.VerificationCache)
+        self.assertIsInstance(cache, CacheInterface)
+
+      with config.compilation_cache_check_contents(True):
+        cache, _ = cc.get_file_cache(cache_dir)
+        self.assertIsInstance(cache, cc.VerificationCache)
 
 
 @jtu.with_config(

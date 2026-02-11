@@ -324,7 +324,7 @@ class CompileOptions:
   @property
   def argument_layouts(self) -> list[Shape] | None: ...
   @argument_layouts.setter
-  def argument_layouts(self, arg: Sequence[Shape], /) -> None: ...
+  def argument_layouts(self, arg: Sequence[Shape]) -> None: ...
   @property
   def parameter_is_tupled_arguments(self) -> bool: ...
   @parameter_is_tupled_arguments.setter
@@ -910,7 +910,7 @@ class Client:
       serialized: bytes,
       executable_devices: DeviceList,
       compile_options: CompileOptions | None = ...,
-      host_callbacks: Sequence[typing_extensions.CapsuleType] = ...,
+      host_callbacks: Sequence[typing_extensions.CapsuleType] | None = ...,
   ) -> LoadedExecutable: ...
   @overload
   def deserialize_executable(
@@ -918,7 +918,7 @@ class Client:
       serialized: bytes,
       executable_devices: DeviceList,
       compile_options: CompileOptions | None = ...,
-      host_callbacks: Sequence[Callable] = ...,
+      host_callbacks: Sequence[Callable] | None = ...,
   ) -> LoadedExecutable: ...
   @overload
   def deserialize_executable(
@@ -1530,6 +1530,7 @@ def get_distributed_runtime_service(
     heartbeat_timeout: int | None = ...,
     cluster_register_timeout: int | None = ...,
     shutdown_timeout: int | None = ...,
+    recoverable: bool | None = ...,
 ) -> DistributedRuntimeService: ...
 def get_distributed_runtime_client(
     address: str,
@@ -1541,7 +1542,6 @@ def get_distributed_runtime_client(
     missed_heartbeat_callback: Callable | None = ...,
     shutdown_on_destruction: bool | None = ...,
     use_compression: bool | None = ...,
-    recoverable: bool | None = ...,
 ) -> DistributedRuntimeClient: ...
 def collect_garbage() -> None: ...
 def is_optimized_build() -> bool: ...

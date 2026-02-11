@@ -381,7 +381,7 @@ def custom_dce_jvp(primals, tangents, *, fun_jaxpr: core.ClosedJaxpr, **_):
   out_primals, out_tangents = util.split_list(out, [len(out_nz)])
   out_tangents_iter = iter(out_tangents)
   out_tangents = [
-      next(out_tangents_iter) if nz else ad.Zero.from_primal_value(p)
+      next(out_tangents_iter) if nz else ad.p2tz(p)
       for p, nz in zip(out_primals, out_nz)
   ]
   return out_primals, out_tangents

@@ -49,6 +49,7 @@ Functions
   multiple_of
   run_scoped
   when
+  with_scoped
 
 Synchronization
 ---------------

@@ -17,6 +17,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features:
+  * Added a debug config `jax_compilation_cache_check_contents`. If set, we miss
+    when `get()` is called on a value that has not been `put()` by the current
+    process, even if the value is actually in the disk cache. When a value is
+    `put()`, we verify that its contents match.
 * Bug fixes:
 * Deprecations:
 * Changes:
@@ -868,7 +872,7 @@ See the 0.4.33 release notes for more details.
     synchronously. You can recover the old behavior by setting
     `jax.config.update('jax_cpu_enable_async_dispatch', False)`.
   * Added new {func}`jax.process_indices` function to replace the
-    `jax.host_ids()` function that was deprecated in JAX v0.2.13.
+    `jax.process_indexs()` function that was deprecated in JAX v0.2.13.
   * To align with the behavior of `numpy.fabs`, `jax.numpy.fabs` has been
     modified to no longer support `complex dtypes`.
   * ``jax.tree_util.register_dataclass`` now checks that ``data_fields``

@@ -786,7 +786,7 @@ NB_MODULE(_jax, m) {
       [](std::string address, int num_nodes,
          std::optional<int> heartbeat_timeout,
          std::optional<int> cluster_register_timeout,
-         std::optional<int> shutdown_timeout)
+         std::optional<int> shutdown_timeout, std::optional<bool> recoverable)
           -> std::unique_ptr<xla::DistributedRuntimeService> {
         xla::CoordinationServiceImpl::Options options;
         options.num_nodes = num_nodes;
@@ -800,6 +800,9 @@ NB_MODULE(_jax, m) {
         if (shutdown_timeout.has_value()) {
           options.shutdown_timeout = absl::Seconds(*shutdown_timeout);
         }
+        if (recoverable.has_value()) {
+          options.recoverable = *recoverable;
+        }
         std::unique_ptr<xla::DistributedRuntimeService> service =
             xla::ValueOrThrow(GetDistributedRuntimeService(address, options));
         return service;
@@ -807,7 +810,8 @@ NB_MODULE(_jax, m) {
       nb::arg("address"), nb::arg("num_nodes"),
       nb::arg("heartbeat_timeout").none() = std::nullopt,
       nb::arg("cluster_register_timeout").none() = std::nullopt,
-      nb::arg("shutdown_timeout").none() = std::nullopt);
+      nb::arg("shutdown_timeout").none() = std::nullopt,
+      nb::arg("recoverable").none() = std::nullopt);
 
   m.def(
       "get_distributed_runtime_client",
@@ -816,7 +820,7 @@ NB_MODULE(_jax, m) {
          std::optional<int> heartbeat_timeout,
          std::optional<nb::callable> missed_heartbeat_callback,
          std::optional<bool> shutdown_on_destruction,
-         std::optional<bool> use_compression, std::optional<bool> recoverable)
+         std::optional<bool> use_compression)
           -> std::shared_ptr<xla::DistributedRuntimeClient> {
         bool compression = use_compression.value_or(false);
         xla::DistributedRuntimeClient::Options options;
@@ -841,9 +845,6 @@ NB_MODULE(_jax, m) {
         if (shutdown_on_destruction.has_value()) {
           options.shutdown_on_destruction = *shutdown_on_destruction;
         }
-        if (recoverable.has_value()) {
-          options.recoverable = *recoverable;
-        }
         return GetDistributedRuntimeClient(address, options, compression);
       },
       nb::arg("address"), nb::arg("node_id"),
@@ -853,8 +854,7 @@ NB_MODULE(_jax, m) {
       nb::arg("heartbeat_timeout").none() = std::nullopt,
       nb::arg("missed_heartbeat_callback").none() = std::nullopt,
       nb::arg("shutdown_on_destruction").none() = std::nullopt,
-      nb::arg("use_compression").none() = std::nullopt,
-      nb::arg("recoverable").none() = std::nullopt);
+      nb::arg("use_compression").none() = std::nullopt);
 
   m.def("collect_garbage", []() { GlobalPyRefManager()->CollectGarbage(); });
 

@@ -17,10 +17,10 @@ xla_workspace3()
 # Details: https://github.com/google-ml-infra/rules_ml_toolchain
 tf_http_archive(
     name = "rules_ml_toolchain",
-    sha256 = "6c7659bb7b9215f3d7235ee000736ffda8cca2ecda528cc48fc7e8f73f1c3737",
-    strip_prefix = "rules_ml_toolchain-c05eda50ad564dcd2f9745a2b4ec582ef8444c71",
+    sha256 = "a1e7a0d93ea4ca451622c9ac764e9432258b1b4fe35ec3526665485f2a5e0c78",
+    strip_prefix = "rules_ml_toolchain-4414c8de64a0e3723a24097092d8c8c4b771e96a",
     urls = tf_mirror_urls(
-        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/c05eda50ad564dcd2f9745a2b4ec582ef8444c71.tar.gz",
+        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/4414c8de64a0e3723a24097092d8c8c4b771e96a.tar.gz",
     ),
 )
 
@@ -99,6 +99,10 @@ xla_workspace0()
 load("//third_party/flatbuffers:workspace.bzl", flatbuffers = "repo")
 
 flatbuffers()
+
+load("//third_party/external_deps:workspace.bzl", "external_deps_repository")
+
+external_deps_repository(name = "rocm_external_test_deps")
 
 load("//:test_shard_count.bzl", "test_shard_count_repository")
 

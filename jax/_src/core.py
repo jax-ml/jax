@@ -2384,6 +2384,8 @@ def pvary(x, axis_name):
   if not axis_name:
     return x
   cur_mesh = mesh_lib.get_abstract_mesh()
+  if not config._check_vma.value and all(a in cur_mesh.manual_axes for a in axes):
+    return x
   new_axes = axes if cur_mesh.empty else order_wrt_mesh(cur_mesh, axes)
   assert set(new_axes) == set(axes)
   del axes
@@ -2403,6 +2405,9 @@ pvary_p = Primitive('pvary')
 def reduced_vary_cast(x, axis_name):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
+    return x
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  if not config._check_vma.value and all(a in cur_mesh.manual_axes for a in axes):
     return x
   return tree_map(lambda leaf: reduced_vary_cast_p.bind(leaf, axes=axes), x)
 
@@ -2512,6 +2517,7 @@ class Ref(metaclass=RefMeta):
   # forward type-level info to aval
   aval = property(lambda self: self._aval)
   shape = property(lambda self: self._aval.shape)
+  size = property(lambda self: self._aval.size)
   ndim = property(lambda self: len(self._aval.shape))
   dtype = property(lambda self: self._aval.dtype)
 
@@ -2568,9 +2574,48 @@ def _ref_to_lojax(init_val, *, memory_space, kind):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   val_ty = typeof(init_val)
   hival_of_refs = val_ty.raise_val(*map(new_ref, val_ty.lower_val(init_val)))  # type: ignore
-  aval = AbstractRef(typeof(init_val))
   return Ref(AbstractRef(val_ty), hival_of_refs)
 ref_p.to_lojax = _ref_to_lojax  # type: ignore
+
+
+# TODO(mattjj,dougalm): merge with ref_p
+def empty_ref(ty, memory_space=None):
+  aval = shaped_abstractify(ty)
+  return empty_ref_p.bind(ty=aval, memory_space=memory_space)
+empty_ref_p = Primitive('empty_ref')
+empty_ref_p.ref_primitive = True
+empty_ref_p.is_effectful = lambda _: True  # type: ignore
+
+
+@empty_ref_p.def_effectful_abstract_eval
+def _empty_ref_abstract_eval(*, ty, memory_space):
+  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+  return (AbstractRef(ty, memory_space=memory_space),
+          {internal_mutable_array_effect})
+
+
+# TODO(mattjj,dougalm): merge with freeze_p
+def free_ref(ref: Ref):
+  """Invalidate a given reference."""
+  free_ref_p.bind(ref)
+  return ()
+
+free_ref_p = Primitive('free_ref')
+free_ref_p.multiple_results = True
+free_ref_p.is_effectful = lambda _: True  # type: ignore
+free_ref_p.ref_primitive = True
+
+
+@free_ref_p.def_effectful_abstract_eval
+def _free_ref_abstract_eval(ref_aval):
+  # No effects, but there is a custom DCE rule that prevents free_ref from
+  # being DCE'd.
+  return (), {}
+
+
+@free_ref_p.def_impl
+def _free_ref_impl(ref):
+  return ()
 
 
 class InternalMutableArrayEffect(effects.Effect):
@@ -3131,10 +3176,16 @@ def typematch(t1: AbstractValue, t2: AbstractValue,
 def cmp_shape_sharding_vma(t1, t2):
   # TODO(yashkatariya): Expand this to Manual and Auto mode.
   # See https://github.com/jax-ml/jax/issues/26474
-  if (not t1.sharding.mesh.empty and not t2.sharding.mesh.empty and
-      (t1.sharding.mesh._any_axis_explicit or
-        t2.sharding.mesh._any_axis_explicit)):
-    shd_eq = t1.sharding == t2.sharding
+  t1_mesh, t2_mesh = t1.sharding.mesh, t2.sharding.mesh
+  if not t1_mesh.empty and not t2_mesh.empty:
+    if t1_mesh._any_axis_explicit or t2_mesh._any_axis_explicit:
+      shd_eq = t1.sharding == t2.sharding
+    elif t1_mesh._any_axis_manual or t2_mesh._any_axis_manual:
+      # TODO(yashkatariya): Once reduced/unreduced is fused into vma, remove this.
+      shd_eq = (t1.sharding.spec.unreduced == t2.sharding.spec.unreduced or
+                t1.sharding.spec.reduced == t2.sharding.spec.reduced)
+    else:
+      shd_eq = True
   else:
     shd_eq = True
   return (shd_eq and definitely_equal_shape(t1.shape, t2.shape) and
@@ -3217,7 +3268,7 @@ class MutableTypecheckVal:
   mutable_qdd : MutableQuasiDynamicData
 
 
-_ref_allocating_primitives = {ref_p}
+_ref_allocating_primitives = {ref_p, empty_ref_p}
 
 
 def _check_jaxpr(
@@ -3402,7 +3453,6 @@ def _check_call(ctx_factory, prim, in_atoms, params):
 
   check_jaxpr(call_jaxpr)
 
-  invars, outvars = call_jaxpr.invars, call_jaxpr.outvars
   out_avals = [x.aval for x in call_jaxpr.outvars]
   out_type = out_avals
   # jaxpr input effects are indexed to include jaxpr.constvars, but the eqn

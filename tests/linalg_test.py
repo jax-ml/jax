@@ -1894,7 +1894,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       dtype=float_types + complex_types,
       lower=[False, True],
   )
-  @jtu.skip_on_devices("tpu","rocm")
+  @jtu.skip_on_devices("tpu")
   def testTridiagonal(self, shape, dtype, lower):
     rng = jtu.rand_default(self.rng())
     def jax_func(a):
@@ -2411,12 +2411,10 @@ class LaxLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(shape=[(3,), (3, 4)], dtype=float_types + complex_types)
   def test_tridiagonal_solve_grad(self, shape, dtype):
-    # Skip test_tridiagonal_solve_grad: The test_tridiagonal_solve_grad test fails 
-    # on ROCm devices due to numerical error. 
-    # TODO(AratiGanesh): Remove this skip after fixing the issue. Linked to 
-    # issue #34711
-    if jtu.is_device_rocm() and shape == (3,4) and dtype == np.float32:
-      self.skipTest("Skipped on ROCm due to numerical error.")
+    if jtu.is_device_rocm() and shape == (3, 4) and dtype == np.float32:
+      # numerical errors seen as of ROCm 7.2 due to rocSparse issue for grad0 variant
+      # TODO(AratiGanesh): re-enable the test once the rocSparse issue is fixed
+      self.skipTest("test_tridiagonal_solve_grad0 not supported on ROCm due to rocSparse issue")
     if dtype not in float_types and jtu.test_device_matches(["gpu"]):
       self.skipTest("Data type not supported on GPU")
     rng = self.rng()

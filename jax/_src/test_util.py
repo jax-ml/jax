@@ -568,6 +568,12 @@ class CudaArchSpecificTest:
       if target_major not in (10, 11):
         self.skipTest("Only works on GPU with tcgen05 instructions")  # pytype: disable=attribute-error
 
+  def skip_unless_tcgen05_int8(self):
+    self.skip_unless_tcgen05()
+    if not any(map(is_cuda_compute_capability_equal, ("10.0", "10.1", "11.0"))):
+      # https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-instructions-mma-ws
+      self.skipTest("tcgen05 in int8 only works on GPU with capability sm100a/sm101a/sm110a")  # pytype: disable=attribute-error
+
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""
   if is_device_rocm():
@@ -1793,7 +1799,7 @@ def complex_plane_sample(dtype, size_re=10, size_im=None):
 
   def make_axis_points(size):
     prec_dps_ratio = 3.3219280948873626
-    logmin = logmax = finfo.maxexp / prec_dps_ratio
+    logmin = finfo.maxexp / prec_dps_ratio
     logtiny = finfo.minexp / prec_dps_ratio
     axis_points = np.zeros(3 + 2 * size, dtype=finfo.dtype)
 

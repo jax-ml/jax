@@ -18,6 +18,7 @@ import types
 from typing import Any, TypeVar
 
 from jax._src import core
+from jax._src.core import typeof
 from jax._src import traceback_util
 from jax._src.core import Primitive, valid_jaxtype, get_aval
 from jax._src.tree_util import register_pytree_node, tree_map
@@ -31,7 +32,7 @@ T = TypeVar('T')
 map = safe_map
 
 def add_jaxvals(x: ArrayLike, y: ArrayLike) -> Array:
-  ty = core.typeof(x)
+  ty = typeof(x)
   if hasattr(ty, 'vspace_add'):  # TODO(mattjj,dougalm): revise away hasattr
     return ty.vspace_add(x, y)
   x, y = core.standard_insert_pvary(x, y)
@@ -71,14 +72,16 @@ class Zero:
     self.aval = aval
   def __repr__(self) -> str:
     return f'Zero({self.aval})'
-  @staticmethod
-  def from_primal_value(val: Any) -> Zero:
-    # TODO(mattjj,yashkatariya): sometimes we want to_cotangent_aval...
-    return Zero(get_aval(val).to_tangent_aval())
   def instantiate(self):
     return zeros_like_aval(self.aval)
 
 register_pytree_node(Zero, lambda z: ((), z.aval), lambda aval, _: Zero(aval))
+
+def p2tz(primal_value):
+  return Zero(typeof(primal_value).to_tangent_aval())
+
+def p2cz(primal_value):
+  return Zero(typeof(primal_value).to_cotangent_aval())
 
 
 def _stop_gradient_impl(x: T) -> T:

@@ -60,7 +60,7 @@ class PullRuleContext:
   eval_function: Any = dataclasses.field(default=None, init=False)
   scalar_prefetch_fn: Any = dataclasses.field(default=None, init=False)
   scalar_prefetch_handler: Any | None
-  grid: tuple[int | jax.Array, ...] | None
+  grid_len: int | None
 
   def __post_init__(self):
     self._scalar_prefetch = None
@@ -153,7 +153,7 @@ class KernelEvalContext:
   avals_out: tuple[core.AbstractValue, ...] | None
   in_block_specs: tuple[pallas_core.BlockSpec, ...]
   out_block_specs: tuple[pallas_core.BlockSpec, ...]
-  grid: tuple[int | jax.Array, ...] | None
+  grid_len: int | None
   scalar_prefetch_handler: Any | None
   out_usages: tuple[set[Usage], ...] | None
 
@@ -244,7 +244,7 @@ def pull_block_spec(
     out_block_specs: pallas_core.BlockSpec | tuple[pallas_core.BlockSpec, ...],
     *,
     scalar_prefetch_handler: Any | None = None,
-    grid: tuple[int | jax.Array, ...] | None = None,
+    grid_len: int | None = None,
 ):
   def wrapped(*args, **kwargs):
     jaxpr, consts, in_tree, out_tree_ = fuser_utils.make_jaxpr(
@@ -269,7 +269,7 @@ def pull_block_spec(
         tuple(flat_block_specs),
         scalar_prefetch_handler=scalar_prefetch_handler,
         read_usage_env=read_usage_env,
-        grid=grid,
+        grid_len=grid_len,
     )
     kernel_fn = make_kernel_function(
         jaxpr,
@@ -280,13 +280,13 @@ def pull_block_spec(
         in_block_specs,
         env,
         scalar_prefetch_handler,
-        grid,
+        grid_len,
     )
     in_block_specs = jax.tree.unflatten(in_tree, in_block_specs)
     in_block_specs = jax.tree.map(
         functools.partial(
             _wrap_block_spec_scalar_prefetch,
-            num_grid_args=len(grid),
+            num_grid_args=grid_len,
         ),
         in_block_specs,
     )
@@ -330,7 +330,7 @@ def _pull_block_spec(
     *,
     read_usage_env: Callable[[core.Var], set[Usage]],
     scalar_prefetch_handler: Any | None = None,
-    grid: tuple[int | jax.Array, ...],
+    grid_len: int,
 ) -> tuple[
     tuple[pallas_core.BlockSpec | pallas_core.NoBlockSpec, ...],
     tuple[dict[core.Var, pallas_core.BlockSpec], dict[int, Any]],
@@ -366,7 +366,7 @@ def _pull_block_spec(
         avals_out=tuple(v.aval for v in eqn.outvars),
         out_usages=tuple(read_usage_env(v) for v in jaxpr.outvars),
         scalar_prefetch_handler=scalar_prefetch_handler,
-        grid=grid,
+        grid_len=grid_len,
     )
     if eqn.primitive.multiple_results:
       in_block_specs = rule(ctx, eqn_out_block_specs, **eqn.params)
@@ -405,7 +405,7 @@ def _pull_block_spec(
       )
 
       def _scalar_prefetch_fn(jaxpr):
-        if grid is None:
+        if grid_len is None:
           raise ValueError('Grid must be provided to pull_block_spec.')
         args = scalar_prefetch_handler(*_get_scalar_prefetch())
         # Load from SMEM
@@ -456,7 +456,7 @@ def make_kernel_function(
     in_block_specs,
     block_spec_env,
     scalar_prefetch_handler,
-    grid,
+    grid_len,
 ):
   in_avals = [v.aval for v in jaxpr.invars]
   invar_usages = util.safe_map(read_usage_env, jaxpr.invars)
@@ -553,7 +553,7 @@ def make_kernel_function(
             in_block_specs=in_block_specs,
             out_block_specs=out_block_specs,
             scalar_prefetch_handler=scalar_prefetch_handler,
-            grid=grid,
+            grid_len=grid_len,
             out_usages=out_usages,
         )
         outs = eval_rule(eval_ctx, *in_vals, **eqn.params)
@@ -1897,7 +1897,7 @@ def _jit_eval_rule(ctx: KernelEvalContext, *args, jaxpr, **kwargs):
       ctx.out_block_specs,
       scalar_prefetch_handler=ctx.scalar_prefetch_handler,
       read_usage_env=read_usage_env,
-      grid=ctx.grid,
+      grid_len=ctx.grid_len,
   )
   kernel_fn = make_kernel_function(
       jaxpr,
@@ -1908,7 +1908,7 @@ def _jit_eval_rule(ctx: KernelEvalContext, *args, jaxpr, **kwargs):
       ctx.in_block_specs,
       env,
       ctx.scalar_prefetch_handler,
-      ctx.grid,
+      ctx.grid_len,
   )
   return kernel_fn(ctx.get_program_ids(), ctx.scalar_prefetch, *args)
 
@@ -1929,7 +1929,7 @@ def _jit_pull_block_spec_rule(
       out_block_specs,
       scalar_prefetch_handler=ctx.scalar_prefetch_handler,
       read_usage_env=read_usage_env,
-      grid=ctx.grid,
+      grid_len=ctx.grid_len,
   )
   return in_block_specs
 
@@ -1961,7 +1961,7 @@ def _custom_jvp_call_eval_rule(
       jaxpr,
       ctx.out_block_specs,
       scalar_prefetch_handler=ctx.scalar_prefetch_handler,
-      grid=ctx.grid,
+      grid_len=ctx.grid_len,
       read_usage_env=read_usage_env,
   )
   kernel_fn = make_kernel_function(
@@ -1973,7 +1973,7 @@ def _custom_jvp_call_eval_rule(
       ctx.in_block_specs,
       env,
       ctx.scalar_prefetch_handler,
-      ctx.grid,
+      ctx.grid_len,
   )
   return kernel_fn(ctx.get_program_ids(), ctx.scalar_prefetch, *args)
 
@@ -1993,7 +1993,7 @@ def _custom_jvp_call_pull_block_spec_rule(
       jaxpr,
       out_block_specs,
       scalar_prefetch_handler=ctx.scalar_prefetch_handler,
-      grid=ctx.grid,
+      grid_len=ctx.grid_len,
       read_usage_env=read_usage_env,
   )
   return in_block_specs
@@ -2026,7 +2026,7 @@ def _custom_vjp_call_eval_rule(
       jaxpr,
       ctx.out_block_specs,
       scalar_prefetch_handler=ctx.scalar_prefetch_handler,
-      grid=ctx.grid,
+      grid_len=ctx.grid_len,
       read_usage_env=read_usage_env,
   )
   kernel_fn = make_kernel_function(
@@ -2038,7 +2038,7 @@ def _custom_vjp_call_eval_rule(
       ctx.in_block_specs,
       env,
       ctx.scalar_prefetch_handler,
-      ctx.grid,
+      ctx.grid_len,
   )
   return kernel_fn(ctx.get_program_ids(), ctx.scalar_prefetch, *args)
 
@@ -2058,7 +2058,7 @@ def _custom_vjp_call_pull_block_spec_rule(
       jaxpr,
       out_block_specs,
       scalar_prefetch_handler=ctx.scalar_prefetch_handler,
-      grid=ctx.grid,
+      grid_len=ctx.grid_len,
       read_usage_env=read_usage_env,
   )
   return in_block_specs

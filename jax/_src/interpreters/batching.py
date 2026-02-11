@@ -26,7 +26,6 @@ from jax._src.core import typeof
 from jax._src import source_info_util
 from jax._src import linear_util as lu
 from jax._src.partition_spec import PartitionSpec as P
-from jax._src.sharding_impls import NamedSharding
 from jax._src import mesh as mesh_lib
 from jax._src.ad_util import Zero, SymbolicZero, add_jaxvals, add_jaxvals_p
 from jax._src.core import Trace, Tracer, TraceTag, AxisName
@@ -224,10 +223,9 @@ class AxisData:
 
 def get_sharding_for_vmap(axis_data, orig_sharding, axis):
   val = axis_data.explicit_mesh_axis
-  # TODO(yashkatariya): Preserve unreduced here using
-  # `orig_sharding.spec.update`
-  new_spec = P(*tuple_insert(orig_sharding.spec, axis, val))
-  return NamedSharding(orig_sharding.mesh, new_spec)
+  new_spec = orig_sharding.spec.update(
+      partitions=tuple_insert(orig_sharding.spec, axis, val))
+  return orig_sharding.update(spec=new_spec)
 
 
 class BatchTrace(Trace):
@@ -705,10 +703,10 @@ def _handle_scalar_broadcasting(nd, x, d):
   else:
     return lax.expand_dims(x, tuple(range(np.ndim(x), nd)))
 
-def defreducer(prim, ident):
-  fancy_primitive_batchers[prim] = partial(reducer_batcher, prim, ident)
+def defreducer(prim):
+  fancy_primitive_batchers[prim] = partial(reducer_batcher, prim)
 
-def reducer_batcher(prim, ident, axis_data, batched_args, batch_dims, axes,
+def reducer_batcher(prim, axis_data, batched_args, batch_dims, axes,
                     **params):
   if all(d is None for d in batch_dims):
     return prim.bind(*batched_args, axes=axes, **params), None
@@ -721,6 +719,11 @@ def reducer_batcher(prim, ident, axis_data, batched_args, batch_dims, axes,
     bdim_out = out_axis(axes, bdim)
     if 'input_shape' in params:
       params = dict(params, input_shape=operand.shape)
+    if 'out_sharding' in params:
+      out_s = params['out_sharding']
+      if out_s is not None:
+        params = dict(params,
+                      out_sharding=get_sharding_for_vmap(axis_data, out_s, bdim_out))
     return prim.bind(operand, axes=axes, **params), bdim_out
   else:
     assert False

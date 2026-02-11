@@ -225,7 +225,11 @@ class JaxprInterpreter:
           match inner:
             case jax_core.ShapedArray(shape=_, dtype=dtype):
               if isinstance(dtype, mosaic_gpu_core.BarrierType):
-                gpu_callbacks.call_deallocate_barrier(allocation)
+                gpu_callbacks.call_deallocate_barrier(
+                    device_id=self.device_info.device_id,
+                    thread_id=self.thread_id,
+                    allocation_key=allocation,
+                )
               else:
                 _raise_if_unsupported_memory_space(aval.memory_space)
                 gpu_callbacks.call_deallocate_buffer(allocation)

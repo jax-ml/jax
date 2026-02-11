@@ -77,7 +77,8 @@ def update_logging_level_global(logging_level: str | None) -> None:
   root_loggers = [logging.getLogger("jax"), logging.getLogger("jaxlib")]
   for logger in root_loggers:
     logger.setLevel(logging_level_num)
-    logger.addHandler(_jax_logger_handler)
+    if logging_level_num != logging.NOTSET:
+      logger.addHandler(_jax_logger_handler)
     _logging_level_set[logger.name] = logger.level
 
 # per-module debug logging

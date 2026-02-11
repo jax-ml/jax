@@ -34,6 +34,9 @@ traceback_util.register_exclusion(__file__)
 from jax._src import xla_bridge
 from jax._src.lib import _profiler
 from jax._src.lib import _profile_data
+from jax._src.lib import jaxlib_extension_version
+from jax import version as jax_version_module
+from jax._src.lib import version as version_lib
 
 ProfileData = _profile_data.ProfileData
 ProfileEvent = _profile_data.ProfileEvent
@@ -98,6 +101,18 @@ class _ProfileState:
 _profile_state = _ProfileState()
 
 
+def set_metadata(key: str, value: str) -> None:
+  """Sets metadata for the current profiling session."""
+  if jaxlib_extension_version >= 402 and hasattr(_profiler, "set_metadata"):
+    return _profiler.set_metadata(key, value)
+
+
+def clear_metadata() -> None:
+  """Clears metadata for the current profiling session."""
+  if jaxlib_extension_version >= 402 and hasattr(_profiler, "clear_metadata"):
+    return _profiler.clear_metadata()
+
+
 def start_trace(
     log_dir: os.PathLike | str,
     create_perfetto_link: bool = False,
@@ -134,18 +149,26 @@ def start_trace(
     if _profile_state.profile_session is not None:
       raise RuntimeError("Profile has already been started. "
                          "Only one profile may be run at a time.")
+    clear_metadata()
     # Make sure backends are initialized before creating a profiler
     # session. Otherwise on Cloud TPU, libtpu may not be initialized before
     # creating the tracer, which will cause the TPU tracer initialization to
     # fail and no TPU operations will be included in the profile.
     xla_bridge.get_backend()
 
-    if profiler_options is None:
-      _profile_state.profile_session = _profiler.ProfilerSession()
-    else:
-      _profile_state.profile_session = _profiler.ProfilerSession(
-          profiler_options
-      )
+    options = profiler_options
+    if options is None:
+      options = ProfileOptions()
+    set_metadata("jax_version", jax_version_module.__version__)
+    jaxlib_version_str = ".".join(map(str, version_lib))
+    set_metadata("jaxlib_version", jaxlib_version_str)
+    for backend_name in xla_bridge.backends():
+      try:
+        backend = xla_bridge.get_backend(backend_name)
+        set_metadata(f"{backend.platform}_version", backend.platform_version)
+      except RuntimeError:
+        pass
+    _profile_state.profile_session = _profiler.ProfilerSession(options)
     _profile_state.create_perfetto_link = create_perfetto_link
     _profile_state.create_perfetto_trace = (
         create_perfetto_trace or create_perfetto_link)
@@ -226,6 +249,7 @@ def stop_trace():
       if _profile_state.create_perfetto_link:
         _host_perfetto_trace_file(abs_filename)
     _profile_state.reset()
+    clear_metadata()
 
 
 def stop_and_get_fdo_profile() -> bytes | str:
@@ -240,6 +264,7 @@ def stop_and_get_fdo_profile() -> bytes | str:
     xspace = _profile_state.profile_session.stop()
     fdo_profile = _profiler.get_fdo_profile(xspace)
     _profile_state.reset()
+    clear_metadata()
     return fdo_profile
 
 

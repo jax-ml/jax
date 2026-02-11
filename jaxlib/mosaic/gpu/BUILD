@@ -339,8 +339,8 @@ cc_library(
         "@xla//xla/backends/gpu/runtime:collective_execution",
         "@xla//xla/backends/gpu/runtime:collective_metadata_thunk",
         "@xla//xla/backends/gpu/runtime:collective_params",
+        "@xla//xla/core/collectives:rank_id",
         "@xla//xla/ffi",
-        "@xla//xla/ffi:ffi_api",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/service:custom_call_target_registry",
         "@xla//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
@@ -351,6 +351,7 @@ cc_library(
         "@xla//xla/stream_executor/cuda:compilation_provider_options",
         "@xla//xla/stream_executor/cuda:cuda_compute_capability",
         "@xla//xla/stream_executor/cuda:ptx_compiler_support",
+        "@xla//xla/stream_executor/gpu:collective_kernel_metadata",
         "@xla//xla/tsl/platform:errors",
         "@xla//xla/tsl/platform:statusor",
     ],
@@ -426,6 +427,7 @@ cc_library(
     srcs = ["tiled_layout.cc"],
     hdrs = ["tiled_layout.h"],
     deps = [
+        ":utils",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -433,7 +435,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
         "@xla//xla/tsl/platform:statusor",
     ],
@@ -465,8 +466,10 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:AsmParser",
         "@llvm-project//mlir:DialectUtils",
+        "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:Support",
@@ -478,6 +481,37 @@ cc_test(
     srcs = ["utils_test.cc"],
     deps = [
         ":utils",
+        "//testing/base/public:gunit_main",
+        "@com_google_absl//absl/status",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+cc_library(
+    name = "transforms",
+    srcs = ["transforms.cc"],
+    hdrs = ["transforms.h"],
+    deps = [
+        ":utils",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@xla//xla/tsl/platform:statusor",
+    ],
+)
+
+cc_test(
+    name = "transforms_test",
+    srcs = ["transforms_test.cc"],
+    deps = [
+        ":transforms",
         "//testing/base/public:gunit_main",
         "@com_google_absl//absl/status",
         "@llvm-project//llvm:Support",

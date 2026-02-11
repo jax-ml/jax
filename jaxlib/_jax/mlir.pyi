@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""MLIR/XLA integration"""
+
 from typing import overload
 
 from .import XlaComputation as _XlaComputation

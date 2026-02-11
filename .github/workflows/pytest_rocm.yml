@@ -1,0 +1,150 @@
+# CI - Pytest ROCm
+#
+# This workflow runs the ROCm tests with Pytest in ROCm team's GHCR containers.
+# It can be triggered manually via workflow_dispatch or called by other workflows
+# via workflow_call.
+#
+# It consists of the following job:
+# run-tests:
+#    - Runs in ROCm team's container (ghcr.io/rocm/jax-base-ubu24-rocm*:latest)
+#    - Downloads the JAX and jaxlib wheels from GCS, and ROCm plugins from latest release.
+#    - Executes the `run_pytest_rocm.sh` script, which performs the following actions:
+#      - Installs the downloaded wheel artifacts.
+#      - Runs the ROCm tests with Pytest.
+name: CI - Pytest ROCm
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Which runner should the workflow run on?"
+        type: choice
+        default: "linux-x86-64-4gpu-amd"
+        options:
+          - "linux-x86-64-1gpu-amd"
+          - "linux-x86-64-4gpu-amd"
+          - "linux-x86-64-8gpu-amd"
+      python:
+        description: "Which Python version to use?"
+        type: choice
+        default: "3.11"
+        options:
+          - "3.11"
+          - "3.12"
+      rocm-version:
+        description: "Which ROCm version to test?"
+        type: choice
+        default: "7.2.0"
+        options:
+          - "7.2.0"
+      rocm-tag:
+        description: "ROCm tag for container image (e.g., rocm720)"
+        type: string
+        default: "rocm720"
+      jaxlib-version:
+        description: "Which jaxlib version to use? (head/pypi_latest)"
+        type: choice
+        default: "head"
+        options:
+          - "head"
+          - "pypi_latest"
+      skip-download-jaxlib-and-plugins-from-gcs:
+        description: "Whether to skip downloading the jaxlib and plugins from GCS (e.g for testing a jax only release)"
+        type: choice
+        default: '0'
+        options:
+          - '0'
+          - '1'
+      gcs_download_uri:
+        description: "GCS location prefix from where the artifacts should be downloaded"
+        type: string
+        default: 'gs://jax-nightly-artifacts/latest'
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: string
+        default: 'no'
+  workflow_call:
+    inputs:
+      runner:
+        description: "Which runner should the workflow run on?"
+        type: string
+        default: "linux-x86-64-4gpu-amd"
+      python:
+        description: "Which Python version to use?"
+        type: string
+        default: "3.11"
+      rocm-version:
+        description: "Which ROCm version to test?"
+        type: string
+        default: "7.2.0"
+      rocm-tag:
+        description: "ROCm tag for container image (e.g., rocm720)"
+        type: string
+        default: "rocm720"
+      jaxlib-version:
+        description: "Which jaxlib version to use? (head/pypi_latest)"
+        type: string
+        default: "head"
+      skip-download-jaxlib-and-plugins-from-gcs:
+        description: "Whether to skip downloading the jaxlib and plugins from GCS (e.g for testing a jax only release)"
+        default: '0'
+        type: string
+      gcs_download_uri:
+        description: "GCS location prefix from where the artifacts should be downloaded"
+        default: 'gs://jax-nightly-artifacts/latest'
+        type: string
+permissions: {}
+
+env:
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+
+jobs:
+  run-tests:
+    defaults:
+      run:
+        # Set the shell to bash as GitHub actions run with /bin/sh by default
+        shell: bash
+    runs-on: ${{ inputs.runner }}
+    continue-on-error: true
+    # Run in ROCm team's GHCR container with GPU access
+    container:
+      image: ghcr.io/rocm/jax-base-ubu24.${{ inputs.rocm-tag }}:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --shm-size 64G --env-file /etc/podinfo/gha-gpu-isolation-settings
+    name: "${{ (contains(inputs.runner, '1gpu') && '1gpu') ||
+        (contains(inputs.runner, '4gpu') && '4gpu') ||
+        (contains(inputs.runner, '8gpu') && '8gpu') }}, ROCm ${{ inputs.rocm-version }}, py${{ inputs.python }}"
+
+    env:
+      JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
+      JAXCI_PYTHON: "python${{ inputs.python }}"
+      JAXCI_ENABLE_X64: "0"
+
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+      - name: Download JAX ROCm wheels
+        uses: ./.github/actions/download-jax-rocm-wheels
+        with:
+          python: ${{ inputs.python }}
+          rocm-version: ${{ inputs.rocm-version }}
+          jaxlib-version: ${{ inputs.jaxlib-version }}
+          skip-download-jaxlib-and-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
+          gcs_download_uri: ${{ inputs.gcs_download_uri }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Python dependencies
+        run: |
+          $JAXCI_PYTHON -m pip install uv~=0.5.30
+          $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
+      # Halt for testing
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Run Pytest ROCm tests
+        timeout-minutes: 120
+        run: ./ci/run_pytest_rocm.sh

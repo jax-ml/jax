@@ -53,7 +53,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         block_spec_lib.pull_block_spec(
             f2,
             block_spec,
-            grid=(1, 1, 1),
+            grid_len=3,
             scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
         )(new_values, in_type)
     )
@@ -84,7 +84,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid=(1, 1, 1),
+        grid_len=3,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     self.assertLen(value_block_specs, 1)
@@ -120,7 +120,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         block_spec_lib.pull_block_spec(
             f2,
             block_spec,
-            grid=(1, 1, 1),
+            grid_len=3,
             scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(
                 0
             ),
@@ -156,7 +156,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         block_spec_lib.pull_block_spec(
             f2,
             block_spec,
-            grid=(1, 1, 1),
+            grid_len=3,
             scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
         )(new_values, in_type)
     )
@@ -197,7 +197,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         block_spec_lib.pull_block_spec(
             f2,
             block_spec,
-            grid=(1, 1, 1),
+            grid_len=3,
             scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
         )(new_values, *in_type)
     )
@@ -238,7 +238,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         block_spec_lib.pull_block_spec(
             f2,
             block_spec,
-            grid=(1, 1, 1),
+            grid_len=3,
             scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
         )(new_values, *in_type)
     )
@@ -277,7 +277,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         block_spec_lib.pull_block_spec(
             f2,
             block_spec,
-            grid=(128, 4),
+            grid_len=2,
             scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
         )(new_values, *in_type)
     )
@@ -308,7 +308,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid=(1, 1, 1),
+        grid_len=3,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(0),
     )(new_values)
 
@@ -340,7 +340,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid=(1, 1, 1),
+        grid_len=3,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     self.assertLen(value_block_specs, 1)
@@ -376,7 +376,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid=(1, 1, 1),
+        grid_len=3,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     scalar_prefetch_values = jax.tree.map(
@@ -415,7 +415,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid=(1, 1, 1),
+        grid_len=3,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     self.assertLen(value_block_specs, 1)
@@ -448,7 +448,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         block_spec_lib.pull_block_spec(
             f2,
             block_spec,
-            grid=(4, 2),
+            grid_len=2,
             scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(
                 0
             ),
@@ -520,7 +520,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         block_spec_lib.pull_block_spec(
             f2,
             block_spec,
-            grid=(1, 2),
+            grid_len=2,
             scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(
                 0
             ),
@@ -571,7 +571,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid=(1, 1, 1),
+        grid_len=3,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     self.assertLen(value_block_specs, 1)
@@ -602,7 +602,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid=(1, 1, 1, 1),
+        grid_len=4,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     self.assertLen(value_block_specs, 1)
@@ -633,7 +633,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     kernel_fn, ((),), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid=(2, 2, 4, 4),
+        grid_len=4,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
 
@@ -669,7 +669,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     kernel_fn, ((),), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid=(2, 2, 4, 4),
+        grid_len=4,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
 
@@ -707,7 +707,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     kernel_fn, ((),), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid=(2, 2, 4, 4),
+        grid_len=4,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     scalar_prefetch_values = jax.tree.map(
@@ -750,7 +750,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid=(2, 2, 4, 4),
+        grid_len=4,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     self.assertLen(value_block_specs, 1)
@@ -789,7 +789,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid=(2, 2, 4, 4),
+        grid_len=4,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     self.assertLen(value_block_specs, 1)
@@ -828,7 +828,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid=(1, 1, 1),
+        grid_len=3,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     self.assertLen(value_block_specs, 1)
@@ -886,7 +886,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         block_spec_lib.pull_block_spec(
             f2,
             block_spec,
-            grid=(2, 3, 4)[: len(shape)],
+            grid_len=len(shape),
             scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
         )(new_values, in_type)
     )
@@ -930,7 +930,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         block_spec_lib.pull_block_spec(
             f2,
             block_spec,
-            grid=(2, 3, 4),
+            grid_len=3,
             scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
         )(new_values, in_type)
     )
@@ -960,7 +960,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         block_spec_lib.pull_block_spec(
             f2,
             block_spec,
-            grid=(2, 3, 4),
+            grid_len=3,
             scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
         )(new_values, in_type)
     )
@@ -977,7 +977,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
       _ = block_spec_lib.pull_block_spec(
           f2,
           block_spec,
-          grid=(2, 3, 4),
+          grid_len=3,
           scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
       )(new_values, in_type)
 
@@ -1003,7 +1003,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
           block_spec_lib.pull_block_spec(
               f2,
               block_spec,
-              grid=(2, 3, 4),
+              grid_len=3,
               scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
           )(new_values, in_type)
       )
@@ -1030,7 +1030,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
       kernel_fn, (), _ = block_spec_lib.pull_block_spec(
           f,
           block_spec,
-          grid=(2, 3, 4),
+          grid_len=3,
           scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
       )()
       y_ref[...] = kernel_fn((0, 1, 1), ())
@@ -1057,7 +1057,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
       kernel_fn, (), _ = block_spec_lib.pull_block_spec(
           f,
           block_spec,
-          grid=(2, 3, 4),
+          grid_len=3,
           scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
       )()
       y_ref[...] = kernel_fn((0, 3, 1), ())
@@ -1082,7 +1082,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
       kernel_fn, (), _ = block_spec_lib.pull_block_spec(
           f,
           block_spec,
-          grid=(2, 3, 4),
+          grid_len=3,
           scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
       )()
       y_ref[...] = kernel_fn((0, 2, 1), ())
@@ -1108,7 +1108,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         block_spec_lib.pull_block_spec(
             f2,
             block_spec,
-            grid=(4, 2),
+            grid_len=2,
             scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
         )(new_values, key)
     )
@@ -1144,7 +1144,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid=(8,),
+        grid_len=1,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     self.assertLen(value_block_specs, 1)
@@ -1170,7 +1170,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid=(1, 1, 1),
+        grid_len=3,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     self.assertLen(value_block_specs, 1)
@@ -1233,7 +1233,7 @@ class PullBlockSpecHOPTest(jtu.JaxTestCase):
         block_spec_lib.pull_block_spec(
             f2,
             block_spec,
-            grid=(2, 2, 4, 4),
+            grid_len=4,
             scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
         )(new_values, in_type)
     )
@@ -1266,7 +1266,7 @@ class PullBlockSpecHOPTest(jtu.JaxTestCase):
         block_spec_lib.pull_block_spec(
             f2,
             block_spec,
-            grid=(2, 2, 4, 4),
+            grid_len=4,
             scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
         )(new_values, in_type)
     )
@@ -1312,7 +1312,7 @@ class PullBlockSpecHOPTest(jtu.JaxTestCase):
         block_spec_lib.pull_block_spec(
             f2,
             block_spec,
-            grid=(2, 2, 4, 4),
+            grid_len=4,
             scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
         )(new_values, in_type)
     )
@@ -1344,7 +1344,7 @@ class PullBlockSpecHOPTest(jtu.JaxTestCase):
     kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid=(2, 2, 4, 4),
+        grid_len=4,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     self.assertLen(value_block_specs, 1)
@@ -1358,7 +1358,7 @@ class PullBlockSpecHOPTest(jtu.JaxTestCase):
     _ = block_spec_lib.pull_block_spec(
         fn,
         block_spec,
-        grid=(1,),
+        grid_len=1,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values_type)
 

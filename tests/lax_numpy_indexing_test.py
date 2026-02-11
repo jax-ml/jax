@@ -36,6 +36,7 @@ from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy import indexing
+from jax._src.indexing import Slice
 
 config.parse_flags_with_absl()
 
@@ -102,6 +103,8 @@ STATIC_SLICE_TESTS = [
     IndexSpec(shape=(10, 8), indexer=slice(3, 1, -1), out_shape=(2, 8)),
     IndexSpec(shape=(10, 8), indexer=slice(0, 8, -1), out_shape=(0, 8)),
     IndexSpec(shape=(10, 8), indexer=slice(None, None, -1), out_shape=(10, 8)),
+    IndexSpec(shape=(10, 8), indexer=slice(12, 12, -4), out_shape=(0, 8)),
+    IndexSpec(shape=(10, 8), indexer=slice(12, 4, -4), out_shape=(2, 8)),
   ]),
   ("OneSliceIndexNonUnitStride", [
     IndexSpec(shape=(10,), indexer=slice(0, 8, 2), out_shape=(4,)),
@@ -201,6 +204,11 @@ STATIC_INDEXING_OUT_OF_BOUNDS_TESTS = [
   ]),
 ]
 
+DYNAMIC_SLICE_TESTS = [
+  ("OneSliceIndex", [
+    IndexSpec(shape=(10,), indexer=jax.ds(1, 3), out_shape=(3,)),
+  ]),
+]
 
 ADVANCED_INDEXING_TESTS = [
   ("One1DIntArrayIndex", [
@@ -470,6 +478,43 @@ class IndexingStrategyTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     np_fun = lambda x: np.asarray(x)[indexer]
+    jnp_fun = partial(indexing.rewriting_take, idx=indexer, strategy=strategy, mode=mode)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+
+  @jtu.sample_product(
+    [dict(name=name, shape=shape, indexer=indexer)
+     for name, index_specs in DYNAMIC_SLICE_TESTS
+     for shape, indexer, _ in index_specs],
+    dtype=all_dtypes,
+    strategy=[indexing.IndexingStrategy.AUTO,
+              indexing.IndexingStrategy.DYNAMIC_SLICE,
+              indexing.IndexingStrategy.GATHER],
+    mode=[None, "clip", "promise_in_bounds"],
+  )
+  def test_dslice_indexing(self, name, shape, dtype, indexer, strategy, mode):
+    del name # unused within test
+    tuple_indexer = indexer if isinstance(indexer, tuple) else (indexer,)
+    if (strategy == indexing.IndexingStrategy.STATIC_SLICE and
+        any(isinstance(i, np.ndarray) for i in tuple_indexer)):
+      self.skipTest("array indices not supported with STATIC_SLICE.")
+    if (strategy == indexing.IndexingStrategy.DYNAMIC_SLICE and
+        any(isinstance(i, slice) and not (i.step is None or i.step in [-1, 1])
+            for i in tuple_indexer)):
+      self.skipTest("non-unit step sizes not supported with DYNAMIC_SLICE")
+
+    def to_numpy_indexer(indexer):
+      if not isinstance(indexer, tuple):
+        indexer = (indexer,)
+      return tuple(
+        slice(i.start, i.start + i.size, i.stride) if isinstance(i, Slice) else i
+        for i in indexer
+      )
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    np_fun = lambda x: np.asarray(x)[to_numpy_indexer(indexer)]
     jnp_fun = partial(indexing.rewriting_take, idx=indexer, strategy=strategy, mode=mode)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
@@ -1037,26 +1082,31 @@ class IndexingTest(jtu.JaxTestCase):
     eqn, = jaxpr.jaxpr.eqns
     self.assertEqual(eqn.primitive, lax.rev_p)
 
-    # Non-static indices produce a dynamic slice
+    # Non-static scalar indices produce a dynamic slice
     jaxpr = jax.make_jaxpr(lambda x, i: x[i])(jnp.ones((4,)), 2)
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 6)
+    self.assertLen(jaxpr.jaxpr.eqns, 6)
     self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
     self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+
+    # Non-scalar indices produce a gather
+    jaxpr = jax.make_jaxpr(lambda x, i: x[i])(jnp.ones((4,)), jnp.array([2, 3]))
+    self.assertIn(len(jaxpr.jaxpr.eqns), (5, 6))  # depending on X64 mode
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.gather_p)
 
   def testTrivialGatherIsntGenerated(self):
     # https://github.com/jax-ml/jax/issues/1621
     jaxpr = jax.make_jaxpr(lambda x: x[:, None])(np.arange(4))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
+    self.assertLen(jaxpr.jaxpr.eqns, 1)
     self.assertNotIn('gather', str(jaxpr))
 
     jaxpr = jax.make_jaxpr(lambda x: x[0:6:1])(np.arange(4))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 0)
+    self.assertLen(jaxpr.jaxpr.eqns, 0)
 
     jaxpr = jax.make_jaxpr(lambda x: x[:4])(np.arange(4))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 0)
+    self.assertLen(jaxpr.jaxpr.eqns, 0)
 
     jaxpr = jax.make_jaxpr(lambda x: x[::-1])(np.arange(4))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
+    self.assertLen(jaxpr.jaxpr.eqns, 1)
     self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.rev_p)
 
   def testOOBEmptySlice(self):

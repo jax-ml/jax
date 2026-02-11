@@ -31,6 +31,7 @@ from absl.testing import parameterized
 import jax
 from jax import export
 from jax import lax
+from jax import sharding
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import test_util as jtu
@@ -173,7 +174,7 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
 
   def default_transforms(
       self, *, swizzle: int = 128, dtype: jnp.dtype
-  ) -> Sequence[plgpu.MemoryRefTransform]:
+  ) -> Sequence[plgpu.Transform]:
     if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
       return ()
     swizzle_elems = 8 * swizzle // dtypes.itemsize_bits(dtype)
@@ -195,9 +196,6 @@ class PallasTCGen05Test(PallasTest, jtu.CudaArchSpecificTest):
 
   def setUp(self):
     self.skip_unless_tcgen05()
-    if jtu.is_cuda_compute_capability_equal("10.3"):
-      # nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a
-      self.skipTest("Mosaic GPU tcgen05 tests do not pass on sm_103a")
     # No artificially lowered limit for arch-specific tests
     super().setUp(artificial_shared_memory_limit=None)
 
@@ -756,10 +754,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   @parameterized.parameters(jnp.bfloat16, jnp.float16, jnp.float32)
   def test_copy_smem_to_gmem_reduction(self, dtype):
-    # TODO(b/415721295):Remove after the minimal jaxlib version is 0.8.2.
-    if not hasattr(mgpu.dialect, "TMAReduction"):
-      self.skip_if_wg_semantics()
-
     @functools.partial(
         self.pallas_call,
         grid=(200,),
@@ -1143,11 +1137,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     if transforms:
       # We cannot yet specify transforms on block specs for WG semantics.
       self.skip_if_wg_semantics()
-
-    # TODO(b/415721295): Remove when the minimum jaxlib version is 0.8.3.
-    if not hasattr(mgpu.dialect, "tma_gather_supported"):
-      self.skip_if_wg_semantics()
-
     dtype = jnp.int32
     out_shape = (64, 128)
     shape = (128, 64 + out_shape[-1])
@@ -1439,6 +1428,30 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       jax.block_until_ready(kernel(x))
 
     self.assertIn("x: WGMMA_ROW\n", output())
+
+  @parameterized.parameters(False, True)
+  def test_fp8_relayout(self, from_narrow):
+    self.skip_if_wg_semantics()  # Failed to infer layouts.
+    shape = (128, 32)
+    dtype = jnp.float8_e4m3fn
+    if from_narrow:
+      from_, to = 4, 8
+    else:
+      from_, to = 8, 4
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct(shape, dtype)
+    )
+    def kernel(x_ref, o_ref):
+      x = plgpu.load(
+          x_ref, (),
+          layout=plgpu.Layout.TCGEN05_TMEM_NATIVE(from_),
+          optimized=False
+      )
+      o_ref[...] = plgpu.layout_cast(x, plgpu.Layout.TCGEN05_TMEM_NATIVE(to))
+
+    x = jax.random.normal(jax.random.key(10), shape).astype(dtype)
+    np.testing.assert_array_equal(kernel(x), x)
 
   @parameterized.parameters(
           (plgpu.TilingTransform((1, 32)), plgpu.SwizzleTransform(128)),
@@ -2096,7 +2109,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       # Ensure that the transforms provided in the scratch shapes have been
       # passed correctly.
       self.assertIsInstance(extract_alias_transform, gpu_core.ExtractAliasedRef)
-      self.assertIsInstance(tile_transform, gpu_core.UntileRef)
+      self.assertIsInstance(tile_transform, gpu_core.UntilingTransform)
       smem_ref256[...] = x_ref[...] + 1
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(smem_ref128, o_ref128)
@@ -3395,8 +3408,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
     np.testing.assert_allclose(res, a[0] @ b[0], rtol=1e-3)
 
   def test_wgmma_sliced_acc_read(self):
-    self.skip_if_wg_semantics()  # MLIR verifier error for `memref.subview`.
-
     def kernel(a_ref, b_ref, o_ref):
       def scope(acc_ref):
         plgpu.wgmma(acc_ref, a_ref, b_ref)
@@ -3830,6 +3841,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       lhs_tmem=[False, True],
   )
   def test_integer_matmul(self, m, n, swizzle, dtype, lhs_tmem):
+    self.skip_unless_tcgen05_int8()
     if n * jnp.dtype(dtype).itemsize <= swizzle:
       self.skipTest("swizzle too big")
     if lhs_tmem and m == 64:
@@ -5252,7 +5264,6 @@ class WarpSpecializedPipelineTest(PallasTest):
     blk_m = blk_n = 32
 
     def copy_kernel(_, x_smem, o_smem, o_last_block_smem, *consumed_barriers):
-      wg_idx = lax.axis_index("wg")
       o_smem[...] = x_smem[...]
       o_last_block_smem[...] = x_smem[...]
       if manual_consumed_barriers:
@@ -6771,6 +6782,43 @@ class HelpersTest(PallasTest):
                     plgpu.SMEM((large_amount_of_shared_memory,), jnp.int8)],
                   )()
     self.assertEqual(result[0], blocks_to_steal + 1)
+
+
+class DistributedTest(PallasTest):
+  def test_lowering_with_explicit_sharding(self):
+    mesh = jax.make_mesh(
+      (1, 1),
+      ("x", "y"),
+      axis_types=(sharding.AxisType.Explicit, sharding.AxisType.Explicit))
+
+    with jax.set_mesh(mesh):
+      x = jax.random.normal(jax.random.key(0), shape=(64, 64), dtype=jnp.float32)
+      x = sharding.reshard(x, sharding.PartitionSpec("x", "y"))
+      @jax.jit
+      def sharded_relu(x):
+          x_spec = jax.typeof(x).sharding.spec
+          @jax.shard_map(in_specs=x_spec, out_specs=x_spec)
+          def shmap(x_shard):
+              def relu_kernel(x_ref, o_ref, x_smem, barrier):
+                  plgpu.copy_gmem_to_smem(x_ref, x_smem, barrier)
+                  plgpu.barrier_wait(barrier)
+                  x_value = x_smem[...]
+                  x_smem[...] = jnp.where(x_value > 0, x_value, 0)
+                  plgpu.commit_smem()
+                  plgpu.copy_smem_to_gmem(x_smem, o_ref)
+                  plgpu.wait_smem_to_gmem(0)
+              out_shape = jax.ShapeDtypeStruct(shape=(64, 64), dtype=jnp.float32)
+              result = plgpu.kernel(relu_kernel,
+                  out_shape=out_shape,
+                  scratch_shapes=dict(
+                      x_smem=plgpu.SMEM((64, 64), jnp.float32),
+                      barrier=plgpu.Barrier()
+                  )
+              )(x_shard)
+              return result
+          return shmap(x)
+      result = sharded_relu(x)
+    np.testing.assert_array_equal(result, jnp.maximum(x, 0))
 
 
 if __name__ == "__main__":

@@ -146,6 +146,7 @@ def TPU_TiledLayoutAttr
   );
   let extraClassDeclaration = [{
     static ::llvm::SmallVector<int64_t> getDefaultTileStrides(::llvm::ArrayRef<::xla::Tile> tiles, ::llvm::ArrayRef<int64_t> shape);
+    static TiledLayoutAttr getContiguous(::mlir::MLIRContext* context, ::llvm::ArrayRef<::xla::Tile> tiles, ::llvm::ArrayRef<int64_t> shape);
     bool tilesAreKnownContiguous(::llvm::ArrayRef<int64_t> shape) const;
 
     int64_t getRank() const {
@@ -286,7 +287,7 @@ def TPU_StoreOp : TPU_Op<"store", [DefaultMemWrite, AttrSizedOperandSegments]> {
     Variadic<Index>:$indices,
     DenseBoolArrayAttr:$sublane_mask,
     Optional<AnyType>:$mask,
-    OptionalAttr<I32Attr>:$sublane_stride  // In sublane-sized units
+    DefaultValuedAttr<I32Attr, "1">:$sublane_stride  // In sublane-sized units
   );
   let results = (outs);
   let assemblyFormat = [{
@@ -299,7 +300,7 @@ def TPU_LoadOp : TPU_Op<"load", [DefaultMemRead]> {
     AnyType:$base,
     Variadic<Index>:$indices,
     DenseBoolArrayAttr:$sublane_mask,
-    OptionalAttr<I32Attr>:$sublane_stride  // In sublane-sized units
+    DefaultValuedAttr<I32Attr, "1">:$sublane_stride  // In sublane-sized units
   );
   let results = (outs TPU_Vreg:$result);
   let assemblyFormat = [{
@@ -1240,6 +1241,7 @@ def TPU_BarrierOp : TPU_Op<"barrier"> {
 // device_id         : The id of the device to copy to for remote DMAs.
 // core_id           : The id of the core to copy to for remote and cross-core
 //                     DMAs.
+// core_type         : The core type that is being targeted for remote DMAs.
 // priority          : The priority of the DMA.
 // strict_ordering   : True if the DMA requires strict ordering. If false, the
 //                     ordering is either strict or relaxed depending on the
@@ -1252,6 +1254,7 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     MemRefOf<[TPU_DMASemaphoreType]>:$target_semaphore,
     Optional<I32>:$device_id, // For remote DMAs
     Optional<I32>:$core_id, // For megacore
+    OptionalAttr<TPU_CoreTypeEnum>:$core_type, // For megachip
     // Smaller number means higher priority. 0 is the highest and the default.
     DefaultValuedAttr<I32Attr, "0">:$priority,
     DefaultValuedAttr<BoolAttr, "false">:$strict_ordering
@@ -1263,10 +1266,18 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     `target_semaphore` `(` $target_semaphore `:` type($target_semaphore) `)`
     (`device_id` `(` $device_id^ `)`)?
     (`core_id` `(` $core_id^ `)`)?
+    (`core_type` `(` $core_type^ `)`)?
     attr-dict
   }];
   let hasVerifier = 1;
   let hasCanonicalizeMethod = 1;
+  let builders = [
+    // A backward-compatible builder that sets `core_type` to nullptr.
+    OpBuilder<(ins "Value":$source, "Value":$source_semaphore,
+               "Value":$target, "Value":$target_semaphore, "Value":$device_id,
+               "Value":$core_id, CArg<"uint32_t", "0">:$priority,
+               CArg<"bool", "false">:$strict_ordering)>,
+  ];
 }
 
 // A base class for all ops that need to differentiate between gather and
@@ -1335,6 +1346,7 @@ def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
     AnyMemRef:$dst,
     Optional<I32>:$device_id, // For remote DMAs
     Optional<I32>:$core_id, // For megacore
+    OptionalAttr<TPU_CoreTypeEnum>:$core_type, // For megachip
     DefaultValuedAttr<BoolAttr, "false">:$strict_ordering
   );
   let assemblyFormat = [{
@@ -1343,10 +1355,11 @@ def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
     `dst` `(` $dst `:` type($dst) `)`
     (`device_id` `(` $device_id^ `)`)?
     (`core_id` `(` $core_id^ `)`)?
+    (`core_type` `(` $core_type^ `)`)?
     attr-dict
   }];
   let hasVerifier = 1;
-  // A backward-compatible builder that sets `device_id` and `core_id` to nullptr.
+  // A backward-compatible builder that sets `device_id`, `core_id` and `core_type` to nullptr.
   let builders = [
     OpBuilder<(ins "Value":$semaphore, "Value":$src, "Value":$dst)>
   ];
@@ -1550,6 +1563,49 @@ def TPU_LogBufferOp : TPU_Op<"log_buffer"> {
   );
   let results = (outs);
   let assemblyFormat = [{ $tag attr-dict `:` $input `:` type($input) }];
+  let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
+}
+
+def TPU_FetchAndAddSyncOp : TPU_Op<"fetch_and_add_sync", [DefaultMemRead, DefaultMemWrite]> {
+  let summary = [{
+    FetchAndAddSyncOp atomically increments an SMEM element on another core and
+    returns the old value.
+  }];
+
+  let description = [{
+    FetchAndAddSyncOp atomically increments the element at `base[indices]` on
+    core `core_id` by `$value` and returns the old value. The number of
+    `$indices` must match the rank of the `$base` memref. The `$base` memref
+    must be in SMEM. The update is synchronous.
+
+    The `$core_type` and `$core_id` specify the core on which the increment is
+    performed.
+
+    Example:
+
+    ```mlir
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %tile_id = arith.constant 3 : i32
+    %old = tpu.fetch_and_add_sync %smem[%c0], %c1, <sc_vector_subcore>, %tile_id
+        : memref<1xi32, #tpu.memory_space<smem>>, i32 -> i32
+    ```
+  }];
+
+  let arguments = (ins
+    MemRefOf<[I32]>:$base,
+    Variadic<I32>:$indices,
+    I32:$value,
+    TPU_CoreTypeEnum:$core_type,
+    I32:$core_id
+  );
+  let results = (outs I32:$result);
+  let assemblyFormat = [{
+    $base `[` $indices `]` `,` $value `,` $core_type `,` $core_id
+    attr-dict `:` type($base) `,` type($value) `->` type($result)
+  }];
+
   let hasVerifier = 1;
   let hasCanonicalizeMethod = 1;
 }

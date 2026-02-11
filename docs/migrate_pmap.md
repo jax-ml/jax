@@ -579,7 +579,51 @@ what they assumed was a cheap local replica.
 To get the data back to the host process, you use standard
 JAX patterns like `device_get` or simple indexing.
 
-### Related documentation
+#### Sharded Reductions
+
+When consuming `pmap` outputs with reduction operations like `jnp.sum` or
+`jnp.mean`, be aware that the new `pmap` implementation returns sharded arrays.
+If you perform reductions **outside** of `jax.jit`, the reduction may operate
+on only a subset of the data, producing incorrect results.
+
+- **The issue**: With `jax_pmap_shmap_merge=True`, `pmap` outputs are
+  `jax.Array` objects with `NamedSharding`. When you call `jnp.sum(x)` or
+  `jnp.mean(x, where=mask)` outside of `jit`, JAX may perform the reduction
+  per-shard rather than globally, leading to silently wrong values (often
+  returning `0.0` or a fraction of the expected value).
+
+- **Symptoms**: Metrics like rewards or losses suddenly drop to near-zero or
+  are scaled down by the number of devices, even though the underlying
+  computation is correct.
+
+- **Fix**: Materialize pmap outputs before performing reductions outside `jit`:
+
+  ```python
+  import numpy as np
+
+  # After calling pmap
+  result = pmapped_fn(...)
+
+  # Materialize before reduction
+  if jax.config.jax_pmap_shmap_merge:
+    result = jax.tree.map(np.asarray, result)
+
+  # Now reductions work correctly
+  mean_value = jnp.mean(result.values, where=result.mask)
+  ```
+
+  If performing reductions inside `@jax.jit`, use `jnp.asarray` instead:
+
+  ```python
+  @jax.jit
+  def training_step(...):
+    scores = pmapped_fn(...)
+    # Materialize sharded arrays inside jit
+    if jax.config.jax_pmap_shmap_merge:
+      scores = jnp.asarray(scores)
+    return jnp.reshape(scores, [-1])  # Now reshapes correctly
+  ```
+
 
 To help with migration, we recommend reviewing the following documentation based
 on your needs:

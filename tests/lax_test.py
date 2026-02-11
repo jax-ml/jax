@@ -17,7 +17,6 @@ from functools import partial
 import itertools
 import math
 import operator
-import platform
 import types
 import unittest
 from unittest import SkipTest
@@ -1177,7 +1176,7 @@ class LaxTest(jtu.JaxTestCase):
           lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
           lax.DotAlgorithmPreset.BF16_BF16_F32_X9,
       }:
-        if not jtu.is_cuda_compute_capability_at_least("8.0"):
+        if jtu.test_device_matches(["cuda"]) and not jtu.is_cuda_compute_capability_at_least("8.0"):
           raise SkipTest(
               f"The dot algorithm '{algorithm}' requires CUDA compute "
               "capability >= 8.0.")
@@ -2213,7 +2212,7 @@ class LaxTest(jtu.JaxTestCase):
           )
       ],
   )
-  @jtu.skip_on_devices('gpu') # jax.lax.mul has an XLA bug on GPU b/339071103
+  @jtu.skip_on_devices('cuda') # jax.lax.mul has an XLA bug on CUDA GPU b/339071103
   @jtu.skip_on_devices('tpu') # b/39342488
   def testReduceWindowGeneralJVP(
       self,
@@ -2309,7 +2308,7 @@ class LaxTest(jtu.JaxTestCase):
           )
       ],
   )
-  @jtu.skip_on_devices('gpu') # jax.lax.mul has an XLA bug on GPU b/339071103
+  @jtu.skip_on_devices('cuda') # jax.lax.mul has an XLA bug on CUDA GPU b/339071103
   @jtu.skip_on_devices('tpu') # b/39342488
   def testReduceWindowCustomSameAsMonoid(
       self,
@@ -2432,7 +2431,7 @@ class LaxTest(jtu.JaxTestCase):
       ],
       dtype=[np.float32],
   )
-  @jtu.skip_on_devices('gpu')
+  @jtu.skip_on_devices('cuda')
   def testReduceWindowVariadic(self, dtype, shape, dims, strides, padding,
                                base_dilation, window_dilation):
     if (jtu.test_device_matches(["tpu"]) and
@@ -3673,7 +3672,7 @@ class LaxTest(jtu.JaxTestCase):
           g,
           jax.random.normal(jax.random.key(0), (9, 8), dtype=jnp.complex64),
       )
-      out = f_vjp(np.array(1.0 + 0j, 'complex64'))[0]
+      f_vjp(np.array(1.0 + 0j, 'complex64'))[0]
       return carry, carry
 
     a, b = jax.lax.scan(_step, 0, jnp.arange(4, dtype=jnp.complex64))
@@ -4521,10 +4520,8 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       self.skipTest(f'could not import mpmath: {msg}')
 
     is_cpu = jtu.test_device_matches(["cpu"])
-    machine = platform.machine()
     # TODO: remove is_arm_cpu as previously arm cpu related failures
     # were due to numpy issues. Confirm?
-    is_arm_cpu = machine.startswith('aarch') or machine.startswith('arm')
     is_cuda = jtu.test_device_matches(["cuda"])
 
     size_re = 11
@@ -4693,13 +4690,13 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     for region_name, region_slice in s_dict_parts.items():
       region = args[0][region_slice]
       if region_name.endswith('.real'):
-        result_slice, expected_slice = result[region_slice].real, expected[region_slice].real
+        _result_slice, _expected_slice = result[region_slice].real, expected[region_slice].real
         normalized_result_slice, normalized_expected_slice = normalized_result[region_slice].real, normalized_expected[region_slice].real
       elif region_name.endswith('.imag'):
-        result_slice, expected_slice = result[region_slice].imag, expected[region_slice].imag
+        _result_slice, _expected_slice = result[region_slice].imag, expected[region_slice].imag
         normalized_result_slice, normalized_expected_slice = normalized_result[region_slice].imag, normalized_expected[region_slice].imag
       else:
-        result_slice, expected_slice = result[region_slice], expected[region_slice]
+        _result_slice, _expected_slice = result[region_slice], expected[region_slice]
         normalized_result_slice, normalized_expected_slice = normalized_result[region_slice], normalized_expected[region_slice]
 
       inexact_indices = np.where(normalized_result_slice != normalized_expected_slice)

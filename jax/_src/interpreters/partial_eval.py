@@ -1415,9 +1415,32 @@ def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
   return new_jaxpr, used_consts, used_inputs
 
 
+def _default_dce_rule(
+    used_outs: list[bool], eqn: JaxprEqn
+  ) -> tuple[list[bool], JaxprEqn | None]:
+  if not any(used_outs) and not has_effects(eqn):
+    return [False] * len(eqn.invars), None
+  return [True] * len(eqn.invars), eqn
+
+dce_rules: dict[Primitive, DCERule] = {}
+
+dceable_effects = effects.EffectTypeSet()
+
+dceable_effects.add_type(ReadEffect)
+dceable_effects.add_type(core.NamedAxisEffect)
+dceable_effects.add_type(core.InternalMutableArrayEffect)
+
+def _free_ref_dce_rule(
+    used_outs: list[bool], eqn: JaxprEqn
+) -> tuple[list[bool], JaxprEqn | None]:
+  # Never gonna DCE free_ref.
+  del used_outs
+  return [True] * len(eqn.invars), eqn
+dce_rules[core.free_ref_p] = _free_ref_dce_rule
+
+
 def has_effects(eqn: JaxprEqn) -> bool:
-  effs = {e for e in eqn.effects if not isinstance(e, core.NamedAxisEffect)
-          and not isinstance(e, ReadEffect)}
+  effs = {e for e in eqn.effects if not dceable_effects.contains(e)}
   return bool(effs)
 
 
@@ -1463,15 +1486,6 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
 
 DCERule = Callable[[list[bool], JaxprEqn],
                    tuple[list[bool], Union[JaxprEqn, None]]]
-
-def _default_dce_rule(
-    used_outs: list[bool], eqn: JaxprEqn
-  ) -> tuple[list[bool], JaxprEqn | None]:
-  if not any(used_outs) and not has_effects(eqn):
-    return [False] * len(eqn.invars), None
-  return [True] * len(eqn.invars), eqn
-
-dce_rules: dict[Primitive, DCERule] = {}
 
 
 def dce_jaxpr_call_rule(used_outputs: list[bool], eqn: JaxprEqn
@@ -1843,7 +1857,6 @@ def _drop_unused_vars(constvars, constvals, eqns, outvars
   def vars(atom: Atom) -> list[Var]:
     if isinstance(atom, Literal):
       return []
-    aval = atom.aval
     return [atom]
   used: set[Var] = {v for atom in outvars for v in vars(atom)}
   for eqn in eqns[::-1]:
@@ -2046,7 +2059,7 @@ class DynamicJaxprTrace(core.Trace):
     else:
       try:
         out_avals, effs = _cached_abstract_eval(primitive, *aval_qdds, **params)
-      except Exception as e:
+      except Exception:
         # TODO(phawkins): remove this 3 months after the release of JAX v0.7.
         _verify_params_are_hashable(primitive, params)
         raise
@@ -2583,7 +2596,7 @@ def lower_traceable(jaxpr, *lo_args):
              if not aval.has_qdd else
              aval.new_from_loval(*it.islice(lo_args_, len(aval.lo_ty())))
              for aval in jaxpr.in_aval_qdds]
-  assert (problem := next(lo_args_, None)) is None
+  assert (_problem := next(lo_args_, None)) is None
   hi_outs = core.jaxpr_as_fun(jaxpr)(*hi_args)
   mut_outs = [lo_val for aval, hi_arg in zip(jaxpr.final_aval_qdds, hi_args) if aval.has_qdd
               for lo_val in aval.read_loval(hi_arg)]
