@@ -66,6 +66,11 @@ if [[ "${JAXCI_ENABLE_BZLMOD:-0}" == "1" ]]; then
   BZLMOD_CONFIG="--config=bzlmod"
 fi
 
+RULES_PYTHON_ENABLE_PIPSTAR=""
+if [[ "${JAXCI_ENABLE_BZLMOD:-0}" == "0" ]]; then
+  RULES_PYTHON_ENABLE_PIPSTAR="--repo_env=RULES_PYTHON_ENABLE_PIPSTAR=0"
+fi
+
  # TODO(b/446172564): Remove this condition when the test is fixed on all
  # platforms.
 if [[ $os == "linux" ]] && [[ $arch == "x86_64" ]]; then
@@ -101,6 +106,7 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     --build_runfile_links=false \
     --config=$rbe_config \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
+    $RULES_PYTHON_ENABLE_PIPSTAR \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     $OVERRIDE_XLA_REPO \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
