@@ -51,6 +51,7 @@ from jax._src import numpy as jnp
 from jax._src.interpreters import mlir
 from jax._src.lax import linalg as lax_linalg
 from jax._src.tpu.linalg import qdwh as tpu_qdwh
+from jax._src.typing import Array
 
 
 @functools.partial(api.jit, static_argnums=(1, 2, 3, 4))
@@ -203,19 +204,22 @@ def svd(
     m, n = a.shape
     is_flip = True
 
-  reduce_to_square = False
+  u_out_null: Array | None
+  q: Array | None
+
   if full_matrices and m > n:
     q_full, a_full = lax_linalg.qr(a, pivoting=False, full_matrices=True)
     q = q_full[:, :n]
     u_out_null = q_full[:, n:]
     a = a_full[:n, :]
-    reduce_to_square = True
-  else:
+  elif m > 1.15 * n:
     # The constant `1.15` comes from Yuji Nakatsukasa's implementation
     # https://www.mathworks.com/matlabcentral/fileexchange/36830-symmetric-eigenvalue-decomposition-and-the-svd?s_tid=FX_rc3_behav
-    if m > 1.15 * n:
-      q, a = lax_linalg.qr(a, pivoting=False, full_matrices=False)
-      reduce_to_square = True
+    q, a = lax_linalg.qr(a, pivoting=False, full_matrices=False)
+    u_out_null = None
+  else:
+    q = None
+    u_out_null = None
 
   if not compute_uv:
     with config.default_matmul_precision('float32'):
@@ -227,10 +231,10 @@ def svd(
     u_out, s_out, v_out = _svd_tall_and_square_input(
         a, hermitian, compute_uv, max_iterations, subset_by_index
     )
-    if reduce_to_square:
+    if q is not None:  # (full_matrices and m > n) or (m > 1.15 * n)
       u_out = q @ u_out
 
-  if full_matrices and m > n:
+  if u_out_null is not None:  # full_matrices and m > n
     u_out = jnp.hstack((u_out, u_out_null))
 
   is_finite = jnp.all(jnp.isfinite(a))

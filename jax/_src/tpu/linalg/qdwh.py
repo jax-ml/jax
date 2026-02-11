@@ -38,6 +38,7 @@ from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy import linalg as jnp_linalg
+from jax._src.typing import Array
 
 
 # Helpers for working with padded shapes
@@ -48,7 +49,7 @@ def _mask(x, dims, alternative=0):
   broadcast with `x`.
   """
   assert np.ndim(x) == len(dims)
-  mask = None
+  mask: Array | None = None
   for i, d in enumerate(dims):
     if d is not None:
       mask_dim_i = lax.broadcasted_iota(np.int32, x.shape, i) < d
