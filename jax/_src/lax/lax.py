@@ -2781,7 +2781,7 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
     >>> reshape(y, (6,), (1, 0))
     Array([0, 3, 1, 4, 2, 5], dtype=int32)
   """
-  new_sizes = canonicalize_shape(new_sizes)  # TODO
+  new_sizes = canonicalize_shape(new_sizes)
   new_sizes = tuple(new_sizes)
   same_shape = core.definitely_equal_shape(np.shape(operand), new_sizes)
   if dimensions is None:
@@ -2791,6 +2791,10 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
     dims = api_util._ensure_index_tuple(dimensions)
     same_dims = tuple(dims) == tuple(range(np.ndim(operand)))
   out_sharding = canonicalize_sharding(out_sharding, 'reshape')
+  if (out_sharding is not None and
+      (out_sharding.spec.unreduced or out_sharding.spec.reduced)):
+    raise ValueError('out_sharding passed to `reshape` cannot contain '
+                     f'unreduced/reduced axes. Got {out_sharding}')
   same_sharding = (out_sharding is None or
                    typeof(operand).sharding == out_sharding)
 
@@ -2799,7 +2803,7 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
     return operand
   else:
     return reshape_p.bind(
-      operand, new_sizes=tuple(new_sizes),
+      operand, new_sizes=new_sizes,
       dimensions=None if dims is None or same_dims else dims,
       sharding=out_sharding)
 
@@ -7216,6 +7220,18 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes, dimensions):
   return operand.sharding.update(spec=new_spec)
 
 
+def _reshape_unreduced_rule(out_s, operand, *, new_sizes, dimensions, sharding):
+  if operand.sharding.spec.unreduced:
+    return out_s.update(spec=out_s.spec.update(
+        unreduced=operand.sharding.spec.unreduced))
+  return out_s
+
+def _reshape_reduced_rule(out_s, operand, *, new_sizes, dimensions, sharding):
+  if operand.sharding.spec.reduced:
+    return out_s.update(spec=out_s.spec.update(
+        reduced=operand.sharding.spec.reduced))
+  return out_s
+
 def _reshape_typecheck_rule(_, operand, new_sizes, dimensions,
                             sharding):
   out_aval, effects = reshape_p.abstract_eval(
@@ -7227,17 +7243,19 @@ def _reshape_typecheck_rule(_, operand, new_sizes, dimensions,
 def _reshape_dtype_rule(operand, *, new_sizes, dimensions, sharding):
   return operand.dtype
 
-def _reshape_transpose_rule(t, operand, *, new_sizes, dimensions, sharding):
+def _reshape_transpose_rule(ct, operand, *, new_sizes, dimensions, sharding):
   assert ad.is_undefined_primal(operand)
+  op_ct_aval = operand.aval.to_cotangent_aval()
   if dimensions is None:
-    return [reshape(t, operand.aval.shape, out_sharding=operand.aval.sharding)]
+    return [reshape_p.bind(ct, new_sizes=op_ct_aval.shape, dimensions=dimensions,
+                           sharding=op_ct_aval.sharding)]
   else:
-    t_s = operand.aval.sharding.update(spec=
-        tuple(map(lambda s: s if s is None else str(s),
-                  np.take(operand.aval.sharding.spec, dimensions))))
-    return [transpose(reshape(t, np.take(operand.aval.shape, dimensions),
-                              out_sharding=t_s),
-                      np.argsort(dimensions))]
+    ct_s = op_ct_aval.sharding.update(spec=op_ct_aval.sharding.spec.update(
+        partitions=tuple(map(lambda s: s if s is None else str(s),
+                             np.take(op_ct_aval.sharding.spec, dimensions)))))
+    ct_shape = tuple(canonicalize_shape(np.take(op_ct_aval.shape, dimensions)))
+    out = reshape_p.bind(ct, new_sizes=ct_shape, dimensions=None, sharding=ct_s)
+    return [transpose(out, np.argsort(dimensions))]
 
 def _reshape_batch_rule(axis_data, batched_args, batch_dims, *, new_sizes,
                         dimensions, sharding):
@@ -7272,9 +7290,11 @@ def _reshape_staging_rule(
   return trace.default_process_primitive(reshape_p, (x,), params,
                                          source_info=source_info)
 
-reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
-                               'reshape', sharding_rule=_reshape_sharding_rule,
-                               vma_rule=partial(core.standard_vma_rule, 'reshape'))
+reshape_p = standard_primitive(
+    _reshape_shape_rule, _reshape_dtype_rule, 'reshape',
+    sharding_rule=_reshape_sharding_rule,
+    vma_rule=partial(core.standard_vma_rule, 'reshape'),
+    unreduced_rule=_reshape_unreduced_rule, reduced_rule=_reshape_reduced_rule)
 ad.deflinear2(reshape_p, _reshape_transpose_rule)
 batching.fancy_primitive_batchers[reshape_p] = _reshape_batch_rule
 mlir.register_lowering(reshape_p, _reshape_lower)
