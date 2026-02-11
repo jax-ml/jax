@@ -23,6 +23,7 @@ from jax import lax
 from jax._src import ad_checkpoint
 from jax._src import config
 from jax._src import debugging
+from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src.interpreters import pxla
@@ -1110,6 +1111,8 @@ class VisualizeShardingTest(jtu.JaxTestCase):
   @jtu.ignore_warning(category=DeprecationWarning,
                       message='jax.sharding.PmapSharding is deprecated')
   def test_visualize_pmap_sharding(self):
+    if deprecations.is_accelerated_attribute(jax.sharding, 'PmapSharding'):
+      self.skipTest('PmapSharding is accelerated.')
     ss = pxla.ShardingSpec(
         sharding=(pxla.Unstacked(8),),
         mesh_mapping=(pxla.ShardedAxis(0),))

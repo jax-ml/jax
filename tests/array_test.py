@@ -32,8 +32,10 @@ from jax._src.lib import xla_client as xc
 from jax._src.util import safe_zip
 from jax._src.mesh import AxisType, AbstractMesh, Mesh
 from jax._src.sharding import common_devices_indices_map, IndivisibleError
+from jax._src import deprecations
 from jax._src.sharding_impls import (
-    pmap_sharding_devices_indices_map, NamedSharding, GSPMDSharding)
+    pmap_sharding_devices_indices_map, NamedSharding, GSPMDSharding,
+    PmapSharding as _PmapSharding)
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
 from jax._src import array
@@ -986,7 +988,7 @@ class ShardingTest(jtu.JaxTestCase):
     num_elements = math.prod(shape)
     inp_data = np.arange(num_elements).reshape(shape)
     out = jax.pmap(lambda x: x)(inp_data)
-    self.assertIsInstance(out.sharding, jax.sharding.PmapSharding)
+    self.assertIsInstance(out.sharding, _PmapSharding)
     # Populate the device_indices_map cache.
     _ = out.sharding.devices_indices_map(shape)
     cache_info1 = pmap_sharding_devices_indices_map.cache_info()
@@ -1105,7 +1107,7 @@ class ShardingTest(jtu.JaxTestCase):
       # `GSPMDSharding` when `pmap_shmap_merge=True`. It should be
       # `NamedSharding`.
       actual_sharding, = compiled._executable.unsafe_call.in_handler.in_shardings
-      expected_sharding = jax.sharding.PmapSharding.default(shape, sharded_dim)
+      expected_sharding = _PmapSharding.default(shape, sharded_dim)
       self.assertEqual(actual_sharding.sharding_spec, expected_sharding.sharding_spec)
       self.assertEqual(actual_sharding._device_assignment, expected_sharding._device_assignment)
 
@@ -1116,6 +1118,8 @@ class ShardingTest(jtu.JaxTestCase):
 
     devs = jax.devices()
     new_order = (devs[0], devs[3], devs[2], devs[1])
+    if deprecations.is_accelerated_attribute(jax.sharding, 'PmapSharding'):
+      self.skipTest('PmapSharding is accelerated.')
     ps = jax.sharding.PmapSharding.default((4, 2), devices=new_order)
     self.assertEqual(ps._device_assignment, new_order)
 
@@ -1130,7 +1134,7 @@ class ShardingTest(jtu.JaxTestCase):
       )
       self.assertEqual(x.sharding, expected_sharding)
     else:
-      ps = jax.sharding.PmapSharding.default(
+      ps = _PmapSharding.default(
           shape=(8,), sharded_dim=None,
           devices=jax.local_devices())
       self.assertEqual(x.sharding, ps)
