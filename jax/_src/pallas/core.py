@@ -1514,7 +1514,14 @@ class Mesh(Protocol):
     ...
 
   @property
+  def default_memory_space(self) -> MemorySpace | Any:
+    ...
+
+  @property
   def shape(self) -> collections.OrderedDict[object, int]:
+    ...
+
+  def discharges_effect(self, effect: jax_core.Effect) -> bool:
     ...
 
 
@@ -1558,12 +1565,10 @@ def default_mesh_discharge_rule(
     interpret,
     cost_estimate,
     name,
-    memory_space=MemorySpace.ANY,
     metadata,
     scratch_shapes,
 ):
   """Discharges a ``core_map`` over a mesh to a ``pallas_call``."""
-  default_memory_space = memory_space
   if not all(
       isinstance(aval, state.AbstractRef) for aval in (in_avals + out_avals)
   ):
@@ -1583,13 +1588,14 @@ def default_mesh_discharge_rule(
       for eff in jaxpr.effects
       if isinstance(eff, state_types.WriteEffect)
   )
+  default_memory_space = mesh.default_memory_space
   in_memory_spaces = [get_memory_space_aval(aval) for aval in in_avals]
   in_memory_spaces = [
-      memory_space if m is None else m for m in in_memory_spaces
+      default_memory_space if m is None else m for m in in_memory_spaces
   ]
   args = [
       with_memory_space_constraint_p.bind(arg, memory_space=memory_space)
-      if memory_space is not None and memory_space is not default_memory_space else arg
+      if memory_space is not default_memory_space else arg
       for arg, memory_space in zip(args, in_memory_spaces)
   ]
   in_specs = [

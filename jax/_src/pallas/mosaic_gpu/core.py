@@ -1294,6 +1294,10 @@ class Mesh:
     return "mosaic_gpu"
 
   @property
+  def default_memory_space(self) -> MemorySpace:
+    return MemorySpace.GMEM
+
+  @property
   def shape(self) -> collections.OrderedDict[object, int]:
     pairs: Iterable[tuple[object, int]]
     if self.num_threads is not None:
@@ -1308,7 +1312,7 @@ class Mesh:
       )
     return collections.OrderedDict(pairs)
 
-  def discharges_effect(self, effect: jax_core.Effect):
+  def discharges_effect(self, effect: jax_core.Effect) -> bool:
     return effect is _wgmma_pipeline_effect or effect is _memory_effect
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -1324,12 +1328,20 @@ class WarpMesh:
   axis_name: str
 
   @property
+  def backend(self) -> str:
+    raise NotImplementedError
+
+  @property
   def shape(self):
     return collections.OrderedDict([
         (self.axis_name, self._NUM_WARPS_PER_WARPGROUP),
     ])
 
-  def discharges_effect(self, effect: jax_core.Effect):
+  @property
+  def default_memory_space(self) -> MemorySpace:
+    raise NotImplementedError
+
+  def discharges_effect(self, effect: jax_core.Effect) -> Literal[False]:
     del effect
     return False
 
@@ -1371,7 +1383,6 @@ def _gpu_mesh_discharge_rule(
       interpret=interpret,
       cost_estimate=cost_estimate,
       name=name,
-      memory_space=GMEM,
       metadata=metadata,
       scratch_shapes=[],
   )

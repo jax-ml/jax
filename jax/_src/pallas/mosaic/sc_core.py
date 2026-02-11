@@ -166,6 +166,10 @@ class ScalarSubcoreMesh:
     return "mosaic_tpu"
 
   @property
+  def default_memory_space(self) -> tpu_core.MemorySpace:
+    return tpu_core.MemorySpace.HBM
+
+  @property
   def shape(self):
     return collections.OrderedDict(core=self.num_cores)
 
@@ -239,7 +243,6 @@ def _scalar_subcore_mesh_discharge_rule(
       debug=debug,
       cost_estimate=cost_estimate,
       name=name,
-      memory_space=tpu_core.MemorySpace.HBM,
       metadata=metadata,
       scratch_shapes=tree_util.tree_leaves(gather_global_allocations(jaxpr)),
   )
@@ -283,6 +286,10 @@ class VectorSubcoreMesh:
   @property
   def backend(self) -> str:
     return "mosaic_tpu"
+
+  @property
+  def default_memory_space(self) -> tpu_core.MemorySpace:
+    return tpu_core.MemorySpace.HBM
 
   @property
   def shape(self):
@@ -335,7 +342,6 @@ def _vector_subcore_mesh_discharge_rule(
       debug=debug,
       cost_estimate=cost_estimate,
       name=name,
-      memory_space=tpu_core.MemorySpace.HBM,
       metadata=metadata,
       scratch_shapes=tree_util.tree_leaves(gather_global_allocations(jaxpr)),
   )
