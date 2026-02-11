@@ -29,6 +29,7 @@ pytype_strict_library(
     deps = [
         ":ir",
         ":pass_manager",
+        "//jax/_src:mlir",
         "//jax/_src/lib",
     ],
 )
