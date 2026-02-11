@@ -2710,7 +2710,8 @@ class OpsTest(PallasBaseTest):
 
   def test_delay(self):
     if jtu.test_device_matches(["gpu"]):
-      if not use_mosaic_gpu:
+      # ROCm always uses Triton (Mosaic GPU doesn't support ROCm).
+      if jtu.is_device_rocm() or not use_mosaic_gpu:
         self.skipTest("Delay is only implemented on the MGPU backend for GPUs.")
     if self.INTERPRET:
       self.skipTest("Not implemented in interpret mode.")

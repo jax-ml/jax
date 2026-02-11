@@ -1132,17 +1132,25 @@ def _pallas_call_lowering(
         ctx, *in_nodes, **params
     )
 
-  def gpu_lowering(ctx: mlir.LoweringRuleContext,
-                   *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
-                   **params):
+  def _gpu_lowering_impl(ctx: mlir.LoweringRuleContext,
+                         *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
+                         is_rocm: bool,
+                         **params):
+    """Shared GPU lowering implementation for CUDA and ROCm."""
     try:
       match backend:
         case "mosaic_gpu":
+          if is_rocm:
+            raise ValueError(
+                "Mosaic GPU backend does not yet support AMD ROCm devices. "
+                "Use backend='triton' for ROCm."
+            )
           from jax._src.pallas.mosaic_gpu import pallas_call_registration
         case "triton":
           from jax._src.pallas.triton import pallas_call_registration  # type: ignore
         case None:
-          if _PALLAS_USE_MOSAIC_GPU.value:
+          # Mosaic GPU only supports NVIDIA CUDA, not AMD ROCm.
+          if _PALLAS_USE_MOSAIC_GPU.value and not is_rocm:
             from jax._src.pallas.mosaic_gpu import pallas_call_registration
           else:
             from jax._src.pallas.triton import pallas_call_registration  # type: ignore
@@ -1155,11 +1163,23 @@ def _pallas_call_lowering(
         ctx, *in_nodes, **params
     )
 
+  def cuda_lowering(ctx: mlir.LoweringRuleContext,
+                    *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
+                    **params):
+    """Lowering rule for NVIDIA CUDA GPUs."""
+    return _gpu_lowering_impl(ctx, *in_nodes, is_rocm=False, **params)
+
+  def rocm_lowering(ctx: mlir.LoweringRuleContext,
+                    *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
+                    **params):
+    """Lowering rule for AMD ROCm GPUs."""
+    return _gpu_lowering_impl(ctx, *in_nodes, is_rocm=True, **params)
+
   return mlir.lower_per_platform(ctx, "pallas_call",
                                  dict(cpu=cpu_lowering,
                                       tpu=tpu_lowering,
-                                      cuda=gpu_lowering,
-                                      rocm=gpu_lowering),
+                                      cuda=cuda_lowering,
+                                      rocm=rocm_lowering),
                                  None,  # default_rule
                                  effects.no_effects,
                                  *in_nodes,
