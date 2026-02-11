@@ -48,6 +48,8 @@ def is_nvshmem_used():
 class TestCase(jt_multiprocess.MultiProcessTest if is_nvshmem_used() is None else parameterized.TestCase):
 
   def setUp(self):
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic not supported on ROCm currently.")
     # TODO(b/482756208): Fix this
     if jax.local_device_count() > 1:
       self.skipTest("Collective metadata tests are flaky since right now when "
