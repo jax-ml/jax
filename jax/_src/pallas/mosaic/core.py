@@ -420,8 +420,8 @@ def _tensorcore_mesh_discharge_rule(
       cost_estimate=cost_estimate,
       name=name,
       metadata=metadata,
-      scratch_shapes=[],
   )
+
 
 pallas_core._core_map_mesh_rules[TensorCoreMesh] = (
     _tensorcore_mesh_discharge_rule

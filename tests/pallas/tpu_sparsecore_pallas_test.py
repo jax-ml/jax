@@ -1687,14 +1687,18 @@ class VectorSubcoreTest(PallasSCTest):
     shape = (mesh.num_subcores, 8, self.num_lanes)
     x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(*shape)
 
-    @self.kernel(out_shape=x, mesh=mesh)
-    def kernel(x_ref, o_ref):
+    @self.kernel(
+        out_shape=x,
+        mesh=mesh,
+        scratch_shapes=(
+            pltpu.VMEM_SHARED(shape[1:], jnp.int32),
+            pltpu.VMEM_SHARED(shape, jnp.int32),
+        ),
+    )
+    def kernel(x_ref, o_ref, shared_scratch_ref, shared_scratch_ref2):
       subcore_id = lax.axis_index("subcore")
-      shared_scratch_ref = pl.get_global(
-          pltpu.VMEM_SHARED(shape[1:], jnp.int32))
       @pl.when(subcore_id == 0)
       def _():
-        shared_scratch_ref2 = pl.get_global(pltpu.VMEM_SHARED(shape, jnp.int32))
         pltpu.sync_copy(
             x_ref.at[subcore_id], shared_scratch_ref2.at[subcore_id])
         pltpu.sync_copy(x_ref.at[subcore_id], shared_scratch_ref)

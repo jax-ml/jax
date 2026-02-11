@@ -160,7 +160,9 @@ pytype_strict_library(
         "//jax",
         "//jax/_src:core",
         "//jax/_src:lax",
+        "//jax/_src:partial_eval",
         "//jax/_src:tree_util",
+        "//jax/_src:util",
         "//jax/_src/pallas",
     ],
 )

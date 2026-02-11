@@ -1389,6 +1389,7 @@ def core_map(
     cost_estimate: CostEstimate | None = None,
     name: str | None = None,
     metadata: dict[str, str] | None = None,
+    scratch_shapes: ScratchShapeTree = (),
 ):
   """Runs a function on a mesh, mapping it over the devices in the mesh.
 
@@ -1404,18 +1405,27 @@ def core_map(
     name: The (optional) name of the kernel.
     metadata: Optional dictionary of information about the kernel that will be
       serialized as JSON in the HLO. Can be used for debugging and analysis.
+    scratch_shapes: The scratch arrays for the kernel. Supports both sequence
+      and dict format. The space will be core-local unless the memory space type
+      is specified to be shared (e.g., VMEM_SHARED).
   """
   def wrapped(f):
-    flat_args, in_tree = tree_util.tree_flatten(((), {}))
-    debug_info = api_util.debug_info("pallas_core_map", f, (), {})
+    if isinstance(scratch_shapes, dict):
+      fun_args = ((), scratch_shapes)
+    else:
+      fun_args = (scratch_shapes, {})
+
+    flat_args, in_tree = tree_util.tree_flatten(fun_args)
+    debug_info = api_util.debug_info("pallas_core_map", f, *fun_args)
     flat_fun, out_tree_thunk = api_util.flatten_fun(
         lu.wrap_init(f, debug_info=debug_info), in_tree
     )
+    ref_avals = tuple(t.get_ref_aval() for t in flat_args)
     with (
         tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
         jax_core.extend_axis_env_nd(mesh.shape.items()),
     ):
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_args)
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, ref_avals)
 
     out_tree = out_tree_thunk()
     if out_tree != tree_util.tree_structure(None):
@@ -1423,6 +1433,8 @@ def core_map(
           f"The kernel function in core_map {debug_info.func_src_info} should"
           f" return None. It returns a PyTree: {out_tree}."
       )
+    if debug:
+      print(f"core_map jaxpr: {jaxpr}")
 
     out = core_map_p.bind(
         *consts,
@@ -1443,6 +1455,7 @@ def core_map(
     return tree_util.tree_unflatten(out_tree, out)
 
   return wrapped
+
 
 # TODO(sharadmv,ivyzheng): remove this once we use axis dicts primarily
 class CommsEffect(effects.Effect):
@@ -1485,6 +1498,10 @@ def _core_map_abstract_eval(*args, jaxpr, mesh, interpret, **kwargs):
     if mesh.discharges_effect(eff) or isinstance(eff, CommsEffect):
       continue
     if kernel_local_effects.contains(eff):
+      continue
+    if isinstance(eff, effects.JaxprInputEffect):
+      if eff.input_index < len(jaxpr.constvars):
+        effs.add(eff)
       continue
     if not isinstance(eff, jax_core.NamedAxisEffect):
       effs.add(eff)
@@ -1566,7 +1583,6 @@ def default_mesh_discharge_rule(
     cost_estimate,
     name,
     metadata,
-    scratch_shapes,
 ):
   """Discharges a ``core_map`` over a mesh to a ``pallas_call``."""
   if not all(
@@ -1576,17 +1592,12 @@ def default_mesh_discharge_rule(
         "default_mesh_discharge_rule only supports Ref inputs/outputs."
     )
 
-  def body(*args):
-    # Due to aliasing, ``args`` contains aliased inputs and outputs so we
-    # remove outputs.
-    in_refs = args[:len(in_avals)]
-    jax_core.eval_jaxpr(jaxpr, in_refs)
-
   assert len(jaxpr.outvars) == 0
   modified_idxs = sorted(
       eff.input_index
       for eff in jaxpr.effects
       if isinstance(eff, state_types.WriteEffect)
+      and eff.input_index < len(in_avals)
   )
   default_memory_space = mesh.default_memory_space
   in_memory_spaces = [get_memory_space_aval(aval) for aval in in_avals]
@@ -1603,6 +1614,18 @@ def default_mesh_discharge_rule(
   ]
   out_specs = [in_specs[idx] for idx in modified_idxs]
   out_shapes = [_get_sds(in_avals[idx]) for idx in modified_idxs]
+
+  scratch_avals = [v.aval for v in jaxpr.invars]
+  scratch_shapes = tuple(
+      MemoryRef(v.inner_aval, v.memory_space) for v in scratch_avals
+  )
+
+  def body(*args):
+    # Due to aliasing, ``args`` contains aliased inputs and outputs so we
+    # remove outputs.
+    in_refs, _, scratch_refs = split_list(args, [len(in_avals), len(out_specs)])
+    jax_core.eval_jaxpr(jaxpr, in_refs, *scratch_refs)
+
   from jax._src.pallas import pallas_call  # Avoid circular dependency.
   outs = pallas_call._pallas_call(
       body,

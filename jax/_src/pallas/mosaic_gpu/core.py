@@ -1384,7 +1384,6 @@ def _gpu_mesh_discharge_rule(
       cost_estimate=cost_estimate,
       name=name,
       metadata=metadata,
-      scratch_shapes=[],
   )
 
 

@@ -13,7 +13,7 @@
 # limitations under the License.
 """Pallas helper functions."""
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable
 import functools
 from typing import Any, Hashable
 
@@ -171,14 +171,14 @@ def _make_kernel(body,
         out_shape,
     )
 
-
-    @pl_core.core_map(mesh, **mesh_kwargs, name=name or util.fun_name(body))
-    def _():
-      return pl_primitives.run_scoped(
-          functools.partial(body, *arg_refs, *out_refs),
-          *scratch_shapes if isinstance(scratch_shapes, Sequence) else (),
-          **scratch_shapes if isinstance(scratch_shapes, Mapping) else {},
-      )
+    @pl_core.core_map(
+        mesh,
+        scratch_shapes=scratch_shapes,
+        **mesh_kwargs,
+        name=name or util.fun_name(body),
+    )
+    def _(*scratch_refs, **scratch_kwrefs):
+      return body(*arg_refs, *out_refs, *scratch_refs, **scratch_kwrefs)
 
     outs = tree_util.tree_map(lambda ref: ref[...], out_refs)
     return outs[0] if unwrap_out else outs
