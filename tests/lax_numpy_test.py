@@ -2522,8 +2522,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     dtype=number_dtypes,
     method=['sort', 'scan', 'scan_unrolled', 'compare_all'],
     use_sorter=[True, False],
+    use_method=[True, False],
   )
-  def testSearchsorted(self, ashape, vshape, side, dtype, method, use_sorter):
+  def testSearchsorted(self, ashape, vshape, side, dtype, method, use_sorter, use_method):
     rng = jtu.rand_default(self.rng())
     def args_maker():
       a = rng(ashape, dtype)
@@ -2532,7 +2533,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     def np_fun(a, v, sorter=None):
       return np.searchsorted(a, v, side=side, sorter=sorter).astype('int32')
     def jnp_fun(a, v, sorter=None):
-      return jnp.searchsorted(a, v, side=side, method=method, sorter=sorter)
+      if use_method:
+        return jnp.asarray(a).searchsorted(v, side=side, method=method, sorter=sorter)
+      else:
+        return jnp.searchsorted(a, v, side=side, method=method, sorter=sorter)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -4143,8 +4147,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ],
     stable=[True, False],
     dtype=all_dtypes,
+    use_method=[True, False]
   )
-  def testSort(self, dtype, shape, axis, stable):
+  def testSort(self, dtype, shape, axis, stable, use_method):
     rng = jtu.rand_some_equal(self.rng()) if stable else jtu.rand_some_inf_and_nan(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     kwds = {} if axis is NO_VALUE else {'axis': axis}
@@ -4158,7 +4163,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       result = np.sort(arr, kind='stable' if stable else None, **kwds)
       with jtu.ignore_warning(category=RuntimeWarning, message='invalid value'):
         return result.astype(dtype)
-    jnp_fun = partial(jnp.sort, stable=stable, **kwds)
+    if use_method:
+      jnp_fun = lambda x: jnp.asarray(x).sort(stable=stable, **kwds)
+    else:
+      jnp_fun = partial(jnp.sort, stable=stable, **kwds)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -4204,8 +4212,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for axis in (NO_VALUE, None, *range(-len(shape), len(shape)))
     ],
     dtype=all_dtypes,
+    use_method=[True, False]
   )
-  def testArgsort(self, dtype, shape, axis):
+  def testArgsort(self, dtype, shape, axis, use_method):
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     kwds = {} if axis is NO_VALUE else {'axis': axis}
@@ -4217,7 +4226,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         arr = arr.astype('float32')
       # TODO(jakevdp): switch to stable=True when supported by numpy.
       return np.argsort(arr, kind='stable', **kwds)
-    jnp_fun = partial(jnp.argsort, stable=True, **kwds)
+    if use_method:
+      jnp_fun = lambda x: jnp.asarray(x).argsort(stable=True, **kwds)
+    else:
+      jnp_fun = partial(jnp.argsort, stable=True, **kwds)
 
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
@@ -4300,13 +4312,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
      for axis in range(-len(shape), len(shape))
      for kth in range(-shape[axis], shape[axis])],
     dtype=default_dtypes,
+    use_method=[True, False]
   )
-  def testArgpartition(self, shape, dtype, axis, kth):
+  def testArgpartition(self, shape, dtype, axis, kth, use_method):
     rng = jtu.rand_default(self.rng())
     arg = rng(shape, dtype)
 
-    jnp_output = jnp.argpartition(arg, axis=axis, kth=kth)
     np_output = np.argpartition(arg, axis=axis, kth=kth)
+    if use_method:
+      jnp_output = jnp.asarray(arg).argpartition(axis=axis, kth=kth)
+    else:
+      jnp_output = jnp.argpartition(arg, axis=axis, kth=kth)
 
     # Assert that all indices are present
     self.assertArraysEqual(jnp.sort(jnp_output, axis), np.sort(np_output, axis), check_dtypes=False)

@@ -46,6 +46,7 @@ from jax._src.numpy import indexing
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import tensor_contractions
 from jax._src.numpy import reductions
+from jax._src.numpy import sorting
 from jax._src.numpy import ufuncs
 from jax._src.pjit import PartitionSpec
 from jax._src.sharding import Sharding
@@ -102,7 +103,7 @@ def _argpartition(self: Array, kth: int, axis: int = -1) -> Array:
 
   Refer to :func:`jax.numpy.argpartition` for the full documentation.
   """
-  return lax_numpy.argpartition(self, kth=kth, axis=axis)
+  return sorting.argpartition(self, kth=kth, axis=axis)
 
 def _argsort(self: Array, axis: int | None = -1, *, kind: None = None, order: None = None,
              stable: bool = True, descending: bool = False) -> Array:
