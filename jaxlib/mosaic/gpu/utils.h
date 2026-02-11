@@ -17,6 +17,7 @@ limitations under the License.
 #define THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_GPU_UTILS_H_
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <variant>
 #include <vector>
@@ -26,6 +27,10 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 
 namespace jax::mosaic::gpu {
+
+constexpr int64_t WARP_SIZE = 32;
+constexpr int64_t WARPGROUP_SIZE = 128;
+constexpr int64_t WARPS_IN_WARPGROUP = WARPGROUP_SIZE / WARP_SIZE;
 
 // Unfolds a single dimension of a MemRef into multiple dimensions.
 //
@@ -83,6 +88,19 @@ absl::StatusOr<mlir::Value> MemRefTranspose(
 
 // Creates a constant integer value.
 mlir::Value c(mlir::ImplicitLocOpBuilder& b, int64_t val, mlir::Type type);
+
+// Returns the thread index.
+mlir::Value ThreadIdx(mlir::ImplicitLocOpBuilder& builder);
+
+// Returns the dot product of two vectors of mlir::Value.
+mlir::Value DynDot(mlir::ImplicitLocOpBuilder& builder,
+                   const std::vector<mlir::Value>& a,
+                   const std::vector<mlir::Value>& b);
+
+// Traverses all elements of a `shape` with the minor-most dim-first order and
+// applies `callback` to each of them.
+void ForAllNdIndices(const std::vector<int64_t>& shape,
+                     std::function<void(const std::vector<int64_t>&)> callback);
 
 }  // namespace jax::mosaic::gpu
 

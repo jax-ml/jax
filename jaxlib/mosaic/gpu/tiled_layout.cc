@@ -18,7 +18,6 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <limits>
 #include <ostream>
 #include <sstream>
@@ -34,7 +33,6 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
@@ -43,10 +41,6 @@ limitations under the License.
 
 namespace jax::mosaic::gpu {
 namespace {
-
-constexpr int64_t WARP_SIZE = 32;
-constexpr int64_t WARPGROUP_SIZE = 128;
-constexpr int64_t WARPS_IN_WARPGROUP = WARPGROUP_SIZE / WARP_SIZE;
 
 int64_t DimSize(const TiledLayout::Dim& d,
                 const std::vector<int64_t>& tiled_shape) {
@@ -68,62 +62,6 @@ std::vector<int64_t> PartitionedDims(
       result.push_back(std::get<int64_t>(d));
     }
   }
-  return result;
-}
-
-mlir::Value ThreadIdx(mlir::ImplicitLocOpBuilder& builder) {
-  mlir::Type i32 = builder.getI32Type();
-  auto get_thread_id = [&](mlir::gpu::Dimension dim) {
-    mlir::Value tid = mlir::gpu::ThreadIdOp::create(builder, dim);
-    return mlir::arith::IndexCastOp::create(builder, i32, tid);
-  };
-  auto get_block_dim = [&](mlir::gpu::Dimension dim) {
-    mlir::Value bdim = mlir::gpu::BlockDimOp::create(builder, dim);
-    return mlir::arith::IndexCastOp::create(builder, i32, bdim);
-  };
-
-  mlir::Value idx = get_thread_id(mlir::gpu::Dimension::x);
-  mlir::Value stride = get_block_dim(mlir::gpu::Dimension::x);
-  for (const auto& dim : {mlir::gpu::Dimension::y, mlir::gpu::Dimension::z}) {
-    idx = mlir::arith::AddIOp::create(
-        builder, idx,
-        mlir::arith::MulIOp::create(builder, get_thread_id(dim), stride));
-    stride = mlir::arith::MulIOp::create(builder, stride, get_block_dim(dim));
-  }
-
-  return idx;
-}
-
-// Returns the dot product of `a` and `b`.
-mlir::Value DynDot(mlir::ImplicitLocOpBuilder& builder,
-                   const std::vector<mlir::Value>& a,
-                   const std::vector<mlir::Value>& b) {
-  CHECK(a.size() == b.size()) << "Vectors must have the same size";
-  mlir::Value res = c(builder, 0, a[0].getType());
-  for (auto [lhs, rhs] : llvm::zip(a, b)) {
-    mlir::Value prod = mlir::arith::MulIOp::create(builder, lhs, rhs);
-    res = mlir::arith::AddIOp::create(builder, res, prod);
-  }
-  return res;
-}
-
-// Returns the nd-indices of all the elements in `shape`.
-std::vector<std::vector<int64_t>> NdIndices(const std::vector<int64_t>& shape) {
-  std::vector<int64_t> idx(shape.size(), 0);
-  std::vector<std::vector<int64_t>> result;
-
-  std::function<void(int64_t)> gen = [&](int64_t rank) {
-    if (rank == shape.size()) {
-      result.push_back(idx);
-      return;
-    }
-    for (size_t j = 0; j < shape[rank]; ++j) {
-      idx[rank] = j;
-      gen(rank + 1);
-    }
-  };
-
-  gen(0);
   return result;
 }
 
@@ -943,7 +881,7 @@ absl::StatusOr<std::vector<std::vector<mlir::Value>>> TiledLayout::ThreadIdxs(
   TF_ASSIGN_OR_RETURN(std::vector<int64_t> reg_shape, RegistersShape(shape));
   std::vector<std::vector<mlir::Value>> indices;
 
-  for (const std::vector<int64_t>& tile_idx : NdIndices(reg_shape)) {
+  ForAllNdIndices(reg_shape, [&](const std::vector<int64_t>& tile_idx) {
     int64_t tile_lin_idx = 0;
     for (size_t i = 0; i < tile_idx.size(); ++i) {
       tile_lin_idx += tile_idx[i] * tile_strides[i];
@@ -960,7 +898,7 @@ absl::StatusOr<std::vector<std::vector<mlir::Value>>> TiledLayout::ThreadIdxs(
       dyn_lin_idx = mlir::arith::RemUIOp::create(builder, dyn_lin_idx, s);
     }
     indices.push_back(idx);
-  }
+  });
 
   return indices;
 }

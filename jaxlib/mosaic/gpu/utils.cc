@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <variant>
 #include <vector>
@@ -28,6 +29,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
 #include "mlir/IR/Attributes.h"
@@ -260,6 +262,60 @@ absl::StatusOr<mlir::Value> MemRefTranspose(
 mlir::Value c(mlir::ImplicitLocOpBuilder& b, int64_t val, mlir::Type type) {
   CHECK(type.isInteger()) << "Only integer type supported for integer values";
   return mlir::arith::ConstantOp::create(b, type, b.getIntegerAttr(type, val));
+}
+
+mlir::Value ThreadIdx(mlir::ImplicitLocOpBuilder& builder) {
+  mlir::Type i32 = builder.getI32Type();
+  auto get_thread_id = [&](mlir::gpu::Dimension dim) {
+    mlir::Value tid = mlir::gpu::ThreadIdOp::create(builder, dim);
+    return mlir::arith::IndexCastOp::create(builder, i32, tid);
+  };
+  auto get_block_dim = [&](mlir::gpu::Dimension dim) {
+    mlir::Value bdim = mlir::gpu::BlockDimOp::create(builder, dim);
+    return mlir::arith::IndexCastOp::create(builder, i32, bdim);
+  };
+
+  mlir::Value idx = get_thread_id(mlir::gpu::Dimension::x);
+  mlir::Value stride = get_block_dim(mlir::gpu::Dimension::x);
+  for (const auto& dim : {mlir::gpu::Dimension::y, mlir::gpu::Dimension::z}) {
+    idx = mlir::arith::AddIOp::create(
+        builder, idx,
+        mlir::arith::MulIOp::create(builder, get_thread_id(dim), stride));
+    stride = mlir::arith::MulIOp::create(builder, stride, get_block_dim(dim));
+  }
+
+  return idx;
+}
+
+mlir::Value DynDot(mlir::ImplicitLocOpBuilder& builder,
+                   const std::vector<mlir::Value>& a,
+                   const std::vector<mlir::Value>& b) {
+  CHECK(a.size() == b.size()) << "Vectors must have the same size";
+  mlir::Value res = c(builder, 0, a[0].getType());
+  for (auto [lhs, rhs] : llvm::zip(a, b)) {
+    mlir::Value prod = mlir::arith::MulIOp::create(builder, lhs, rhs);
+    res = mlir::arith::AddIOp::create(builder, res, prod);
+  }
+  return res;
+}
+
+void ForAllNdIndices(
+    const std::vector<int64_t>& shape,
+    std::function<void(const std::vector<int64_t>&)> callback) {
+  std::vector<int64_t> idx(shape.size(), 0);
+
+  std::function<void(int64_t)> gen = [&](int64_t rank) {
+    if (rank == shape.size()) {
+      callback(idx);
+      return;
+    }
+    for (size_t j = 0; j < shape[rank]; ++j) {
+      idx[rank] = j;
+      gen(rank + 1);
+    }
+  };
+
+  gen(0);
 }
 
 }  // namespace jax::mosaic::gpu
