@@ -15,6 +15,9 @@
 from jax._src.lib import (
     _jax as _jax
 )
+from jax._src.interpreters.mlir import (
+    lower_with_sharding_in_types as lower_with_sharding_in_types,
+)
 
 deserialize_portable_artifact = _jax.mlir.deserialize_portable_artifact
 serialize_portable_artifact = _jax.mlir.serialize_portable_artifact

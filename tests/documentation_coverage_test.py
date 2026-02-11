@@ -85,6 +85,7 @@ MODULES_TO_SKIP = [
   "jax.extend.backend",
   "jax.extend.core.primitives",
   "jax.extend.ifrt_programs",
+  "jax.extend.mlir",
   "jax.extend.mlir.dialects",
   "jax.extend.mlir.ir",
   "jax.extend.mlir.passmanager",
