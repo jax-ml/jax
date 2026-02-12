@@ -618,7 +618,7 @@ class MosaicGridMapping:
     return ir.ArrayAttr.get(
         map(
             ir.Attribute.parse,
-            map(_get_semantics, self._dimension_semantics),
+            map(_get_semantics, self._dimension_semantics),  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
         )
     )
 
@@ -1263,7 +1263,7 @@ def jaxpr_subcomp(
             ctx,
             cast(Sequence[ShapedAbstractValue], [v.aval for v in eqn.invars]),
             cast(Sequence[ShapedAbstractValue], [v.aval for v in eqn.outvars]),
-            block_shapes,
+            block_shapes,  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
         )
 
         # Insert trace_start and trace_stop ops on named_scope boundaries.
@@ -4226,7 +4226,7 @@ def random_fold_in_lowering(ctx: LoweringRuleContext, keys, msgs):
   else:
     ctx = dataclasses.replace(ctx,
                         avals_in=[jax_core.physical_aval(keys_aval), msgs_aval],
-                        avals_out=map(jax_core.physical_aval, ctx.avals_out))
+                        avals_out=map(jax_core.physical_aval, ctx.avals_out))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
     return fold_in_lowering(ctx, keys, msgs)
 
 

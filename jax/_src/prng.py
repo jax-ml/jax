@@ -537,7 +537,7 @@ def iterated_vmap_binary_bcast(shape1, shape2, f):
     else:
       return lambda x, y: iterated_vmap_unary(ndim1, lambda x: f(x, y))(x)
   assert len(shape1) == len(shape2)
-  for sz1, sz2 in reversed(zip(shape1, shape2)):
+  for sz1, sz2 in reversed(zip(shape1, shape2)):  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
     if sz1 == sz2:
       f = api.vmap(f, out_axes=0)
     else:

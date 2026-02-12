@@ -985,7 +985,7 @@ def _unravel_array_into_pytree(pytree, axis, example, arr, specs):
   leaves, treedef = tree_flatten(pytree)
   specs, _ = tree_flatten(specs)
   shapes = [arr.shape[:axis] + np.shape(l) + arr.shape[axis+1:] for l in leaves]
-  parts = _split(arr, np.cumsum(map(np.size, leaves[:-1])), axis)
+  parts = _split(arr, np.cumsum(map(np.size, leaves[:-1])), axis)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
   reshaped_parts = [
       _possible_downcast(np.reshape(x, shape),
                          leaf if example is None else example,
@@ -2424,9 +2424,9 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars), True)
   out_avals, _ = unzip2(out_pvals)
   out_dtypes = map(lambda a: a.dtype, out_avals)
-  if not (all(dtypes.issubdtype(d, np.inexact) for d in in_dtypes + out_dtypes)
+  if not (all(dtypes.issubdtype(d, np.inexact) for d in in_dtypes + out_dtypes)  # pyrefly: ignore[unsupported-operation]  # pyrefly#2385
           or all(dtypes.issubdtype(d, np.integer)
-                 for d in in_dtypes + out_dtypes)):
+                 for d in in_dtypes + out_dtypes)):  # pyrefly: ignore[unsupported-operation]  # pyrefly#2385
     raise TypeError("linear_transpose only supports [float or complex] -> "
                     "[float or complex], and integer -> integer functions, "
                     f"but got {in_dtypes} -> {out_dtypes}.")

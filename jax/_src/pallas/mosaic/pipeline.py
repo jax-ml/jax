@@ -434,7 +434,7 @@ class BufferedRefBase:
     block_indices = self.compute_index(*grid_indices)
     return tuple(
         _make_block_slice(bi, bs, ss, t)
-        for bi, bs, ss, t in zip(
+        for bi, bs, ss, t in zip(  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
             block_indices, self.block_shape, src_shape, tiling, strict=True
         )
     )
@@ -1348,7 +1348,7 @@ class Scheduler:
 
   def grid_env(self):
     return pallas_core.grid_env(
-        list(map(pallas_core.GridAxis, self.indices, self.grid)))
+        list(map(pallas_core.GridAxis, self.indices, self.grid)))  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
 
   def out_of_fetch(self, buffered_ref):
     """Returns whether there are no more blocks to fetch."""

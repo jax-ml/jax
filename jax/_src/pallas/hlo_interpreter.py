@@ -227,7 +227,7 @@ def eval_jaxpr_recursive(
     else:
       write(eqn.outvars[0], ans)
     jax_core.clean_up_dead_vars(eqn, env, lu)
-  return map(read, jaxpr.outvars)
+  return map(read, jaxpr.outvars)  # pyrefly: ignore[bad-return]  # pyrefly#2385
 
 # Higher-order primitive rules.
 _eval_jaxpr_hop_rules = {}
@@ -452,12 +452,12 @@ def pallas_call_hlo_interpret(
     blocks = map(_dynamic_slice, start_indices, block_shapes,
                  carry_consts_ins, is_squeeze_dim)
     with pallas_core.grid_env(local_grid_env):
-      assert len(discharged_jaxpr.invars) == len(scalars) + len(blocks) + len(
+      assert len(discharged_jaxpr.invars) == len(scalars) + len(blocks) + len(  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
           scratch_values
       ), (
           len(discharged_jaxpr.invars),
           len(scalars),
-          len(blocks),
+          len(blocks),  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
           len(scratch_values),
       )
 

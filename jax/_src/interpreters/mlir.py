@@ -112,8 +112,8 @@ def shape_tensor(sizes: Sequence[int | ir.RankedTensorType]
   ds = map(lower_dim, sizes)
   if not ds:
     return type_cast(ir.RankedTensorType, ir_constant(np.array([], np.int32)))
-  elif len(ds) == 1:
-    return ds[0]
+  elif len(ds) == 1:  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+    return ds[0]  # pyrefly: ignore[bad-index]  # pyrefly#2385
   else:
     return hlo.concatenate(ds, i64_attr(0))
 
@@ -1320,8 +1320,8 @@ def lower_jaxpr_to_module(
         xla_donated_args=xla_donated_args,
         arg_names=arg_names,
         result_names=result_names,
-        arg_memory_kinds=arg_memory_kinds,
-        result_memory_kinds=result_memory_kinds,
+        arg_memory_kinds=arg_memory_kinds,  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+        result_memory_kinds=result_memory_kinds,  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
         arg_layouts=in_layouts,
         result_layouts=out_layouts,
         propagated_out_mem_kinds=propagated_out_mem_kinds)
@@ -1381,8 +1381,8 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
   if (arg_memory_kinds is None or result_memory_kinds is None or
       any(a is None for a in arg_memory_kinds) or
       any(r is None for r in result_memory_kinds)):
-    arg_memory_kinds = [None] * len(avals_in)
-    result_memory_kinds = [None] * len(avals_out)
+    arg_memory_kinds = [None] * len(avals_in)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+    result_memory_kinds = [None] * len(avals_out)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
 
   donations = collections.defaultdict(collections.deque)
   for i, (aval, am, donated, aliased) in enumerate(
@@ -1427,7 +1427,7 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
       else:
         # Fallback to xla donation if layouts don't match.
         if xla_donated_args is None:
-          xla_donated_args = [False] * len(avals_in)
+          xla_donated_args = [False] * len(avals_in)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
         xla_donated_args[input_id] = True
 
   aliased_output_ids = {i for i in input_output_aliases if i is not None}
@@ -1447,14 +1447,14 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
     # If the argument is not a token and hasn't been aliased or donated to XLA,
     # then try to find an output array with matching size.
     if (out_donated_args[input_idx]
-        and avals_in[input_idx] is not core.abstract_token):
-      key = (avals_in[input_idx].size, arg_memory_kinds[input_idx])
+        and avals_in[input_idx] is not core.abstract_token):  # pyrefly: ignore[bad-index]  # pyrefly#2385
+      key = (avals_in[input_idx].size, arg_memory_kinds[input_idx])  # pyrefly: ignore[bad-index]  # pyrefly#2385
       if results_not_matched.get(key, ()):
         # XLA donate the argument because there's a matching output array.
         results_not_matched[key].popleft()
         out_donated_args[input_idx] = False
         if xla_donated_args is None:
-          xla_donated_args = [False] * len(avals_in)
+          xla_donated_args = [False] * len(avals_in)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
         xla_donated_args[input_idx] = True
 
   return input_output_aliases, out_donated_args, xla_donated_args
@@ -1749,7 +1749,7 @@ def lower_jaxpr_to_fun(
 
     if input_output_aliases is not None:
       output_ids = util.unflatten(
-        list(range(len(flat_output_types))), map(len_ir_types, output_types))
+        list(range(len(flat_output_types))), map(len_ir_types, output_types))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       aliases: list[int | None] = []
       for itypes, alias in zip(input_types, input_output_aliases):
         if alias is None:
@@ -1798,7 +1798,7 @@ def lower_jaxpr_to_fun(
         attrs['jax.result_info'] = ir.StringAttr.get(name_)
 
   if use_sharding_annotations and ir_result_shardings is not None:
-    for attrs, sharding, uv in zip(result_attrs, ir_result_shardings,
+    for attrs, sharding, uv in zip(result_attrs, ir_result_shardings,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
                                    unconstrained_variants):  # type: ignore
       if sharding is not None and not uv.contains_unconstrained:
         if config.use_shardy_partitioner.value:
@@ -1870,7 +1870,7 @@ def lower_jaxpr_to_fun(
           if (a is not core.abstract_token and
               dtypes.issubdtype(a.dtype, dtypes.extended) and
               (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
-          for o, s, a, rs in zip(flat_args, ir_arg_shardings, input_avals,
+          for o, s, a, rs in zip(flat_args, ir_arg_shardings, input_avals,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
                                  arg_shardings)  # type: ignore
       ]
 
@@ -1903,7 +1903,7 @@ def lower_jaxpr_to_fun(
 
     if ir_result_shardings is not None:
       temp_flat_outputs = []
-      for o, s, o_aval, uv in zip(flat_outputs, ir_result_shardings,
+      for o, s, o_aval, uv in zip(flat_outputs, ir_result_shardings,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
                                   output_avals, unconstrained_variants):  # type: ignore
         if (s is not None and uv.contains_unconstrained and
             not uv.all_unconstrained):
@@ -1935,7 +1935,7 @@ def lower_jaxpr_to_fun(
           if (a is not core.abstract_token and
               dtypes.issubdtype(a.dtype, dtypes.extended) and
               (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
-          for o, s, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,
+          for o, s, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
                                  result_shardings)  # type: ignore
       ]
 
@@ -2125,7 +2125,7 @@ def _cached_lowering(
     cache_entry = _emit_lowering_rule_as_fun(
         partial(_uncached_lowering, eqn.primitive, eqn.ctx, eqn.effects), ctx,
         eqn.ctx, eqn.primitive, ordered_effects, avals_in,
-        avals_out, **params)
+        avals_out, **params)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
     ctx.lowering_cache[cache_key] = cache_entry
 
   tokens_in_args = tuple(tokens_in.get(eff) for eff in ordered_effects)
@@ -2433,7 +2433,7 @@ def lower_per_platform(ctx: LoweringRuleContext,
   results = case_op.results
   if ordered_effects:
     tokens, results = util.split_list(
-      unflatten_ir_values_like_types(results, output_types),
+      unflatten_ir_values_like_types(results, output_types),  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       [len(ordered_effects)])
     tokens_out = ctx.tokens_in.update_tokens(TokenSet(zip(ordered_effects,
                                                           tokens)))
@@ -2534,7 +2534,7 @@ def lower_called_computation(
   check_backend_matches(backend, ctx.platforms)
   effects = list(tokens_in.effects())
   output_types = map(aval_to_ir_type, out_avals)
-  output_types = [token_type()] * len(effects) + output_types
+  output_types = [token_type()] * len(effects) + output_types  # pyrefly: ignore[unsupported-operation]  # pyrefly#2385
   func_op = _lower_jaxpr_to_fun_cached(
       ctx, fn_name, call_jaxpr, num_const_args, effects, in_avals=in_avals,
       arg_names=arg_names, result_names=result_names)

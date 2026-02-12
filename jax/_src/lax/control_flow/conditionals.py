@@ -522,7 +522,7 @@ def _cond_linearize(nzs, *primals_in, branches, **params):
   primal_jaxprs, tangent_jaxprs, branch_res_avals = [], [], []
   for jaxpr in branches:
     primal_jaxpr, num_res_out, _, _, tangent_jaxpr = \
-        ad.linearize_jaxpr(jaxpr, nzs, instantiate=nzs_out, allow_fwds=False)
+        ad.linearize_jaxpr(jaxpr, nzs, instantiate=nzs_out, allow_fwds=False)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
     res_avals = primal_jaxpr.out_avals[len(primal_jaxpr.out_avals)-num_res_out:]
     primal_jaxprs.append(primal_jaxpr)
     tangent_jaxprs.append(tangent_jaxpr)
@@ -530,13 +530,13 @@ def _cond_linearize(nzs, *primals_in, branches, **params):
 
   all_res_avals, res_avals_per_branch = _merge_branch_residuals(branch_res_avals)
   primal_jaxprs = _join_cond_outputs(
-      primal_jaxprs, all_res_avals, res_avals_per_branch, len(nzs_out))
+      primal_jaxprs, all_res_avals, res_avals_per_branch, len(nzs_out))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   tangent_jaxprs = _join_cond_pe_staged_jaxpr_inputs(
       tangent_jaxprs, all_res_avals, res_avals_per_branch)
   tangent_avals_out = [a.to_tangent_aval() for a in jaxpr.out_avals]
 
   primals_res_out = cond_p.bind(*primals_in, branches=primal_jaxprs, **params)
-  primals, res = split_list(primals_res_out, [len(nzs_out)])
+  primals, res = split_list(primals_res_out, [len(nzs_out)])  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
 
   def tangent_fun(res, *tangents_in):
     nz_tangents_in = [t for t in tangents_in if not isinstance(t, ad.Zero)]
@@ -633,7 +633,7 @@ def _cond_partial_eval(trace, *tracers, branches, **params):
   name_stack = source_info_util.current_name_stack()[len(trace.name_stack):]
   source = source_info_util.current().replace(name_stack=name_stack)
   eqn = pe.new_eqn_recipe(
-      trace, [index_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params,
+      trace, [index_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params,  # pyrefly: ignore[unsupported-operation]  # pyrefly#2385
       core.join_effects(*(j.effects for j in branches_unknown)), source)
   for t in out_tracers: t.recipe = eqn
   return util.merge_lists(out_uks, out_consts, out_tracers)
@@ -663,7 +663,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
     _, _, unks_out_, _, _ = pe.partial_eval_jaxpr_custom(
         jaxpr.jaxpr, in_unknowns=ops_uk, in_inst=True,
         ensure_out_unknowns=False, ensure_out_inst=True, saveable=saveable)
-    unks_out = map(operator.or_, unks_out, unks_out_)
+    unks_out = map(operator.or_, unks_out, unks_out_)  # pyrefly: ignore[bad-assignment]  # pyrefly#2385
 
   # Next, use the computed output unknowns to build a known jaxpr and a staged
   # jaxpr for each branch.
@@ -764,7 +764,7 @@ def _join_cond_outputs(jaxprs: Sequence[core.ClosedJaxpr],
       outs_and_residuals = core.jaxpr_as_fun(jaxpr)(*args)
       outs, residuals = split_list(outs_and_residuals, [num_non_res_outputs])
       aug_residuals = map(ad_util.zeros_like_aval, all_res_avals)
-      aug_residuals = util.subvals(aug_residuals, zip(res_indices, residuals))
+      aug_residuals = util.subvals(aug_residuals, zip(res_indices, residuals))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       return outs + list(aug_residuals)
 
     wrapped_f_aug = lu.wrap_init(f_aug, debug_info=jaxpr.jaxpr.debug_info)
@@ -785,7 +785,7 @@ def _join_cond_pe_staged_jaxpr_inputs(
     res_vars = jaxpr.jaxpr.invars[:num_res]
     non_res_vars = jaxpr.jaxpr.invars[num_res:]
 
-    aug_res_vars = list(util.subvals(all_res_vars, zip(res_indices, res_vars)))
+    aug_res_vars = list(util.subvals(all_res_vars, zip(res_indices, res_vars)))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
     aug_invars = aug_res_vars + non_res_vars
     jaxpr_aug = core.Jaxpr(jaxpr.jaxpr.constvars, aug_invars,
                            jaxpr.jaxpr.outvars, jaxpr.jaxpr.eqns,
@@ -812,7 +812,7 @@ def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
   used_inputs: list[bool] = [False] * (len(eqn.invars) - 1)  # -1 for pred
   for jaxpr in branches:
     _, used_inputs_ = pe.dce_jaxpr(jaxpr, used_outputs, instantiate=False)
-    used_inputs = map(operator.or_, used_inputs, used_inputs_)
+    used_inputs = map(operator.or_, used_inputs, used_inputs_)  # pyrefly: ignore[bad-assignment]  # pyrefly#2385
 
   # Next, compute DCEd branches, instantiating according to used_inputs.
   dce_branches_ = [pe.dce_jaxpr(jaxpr, used_outputs, instantiate=used_inputs)[0]

@@ -3443,7 +3443,7 @@ def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize = 0) -> Array:
 
 def _delta(dtype: DTypeLike, shape: Shape, axes: Sequence[int]) -> Array:
   """This utility function exists for creating Kronecker delta arrays."""
-  axes = map(int, axes)
+  axes = map(int, axes)  # pyrefly: ignore[bad-assignment]  # pyrefly#2385
   dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "delta")
   base_shape = tuple(np.take(shape, axes))
   iotas = [broadcasted_iota(np.uint32, base_shape, i)
@@ -9081,7 +9081,7 @@ def _optimization_barrier_lowering_rule(ctx, *args):
   barrier_types = map(mlir.aval_to_ir_type, ctx.avals_in)
   flat_args = mlir.flatten_ir_values(args)
   barrier_op = hlo.OptimizationBarrierOp(flat_args)
-  return mlir.unflatten_ir_values_like_types(barrier_op.results, barrier_types)
+  return mlir.unflatten_ir_values_like_types(barrier_op.results, barrier_types)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
 
 
 optimization_barrier_p = core.Primitive('optimization_barrier')

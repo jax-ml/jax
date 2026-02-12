@@ -928,7 +928,7 @@ class GridMapping:
       axis_env_ctx = contextlib.nullcontext()
     else:
       axis_env_ctx = jax_core.extend_axis_env_nd(
-          zip(self.grid_names, self.grid)
+          zip(self.grid_names, self.grid)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       )
     with tracing_grid_env(self.grid, self.vmapped_dims), axis_env_ctx:
       yield
