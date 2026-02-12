@@ -529,6 +529,7 @@ inline hipblasStatus_t gpublasCreate(gpublasHandle_t* handle) {
   return hipblasCreate(reinterpret_cast<hipblasHandle_t*>(handle));
 }
 }  // namespace jax::hip
+
 #define gpublasCreate ::jax::hip::gpublasCreate
 #define gpublasSetStream hipblasSetStream
 #define gpublasSgeqrfBatched hipblasSgeqrfBatched
@@ -585,6 +586,7 @@ inline hipsolverStatus_t gpusolverDnCreate(gpusolverDnHandle_t* handle) {
   return hipsolverCreate(reinterpret_cast<hipsolverHandle_t*>(handle));
 }
 }  // namespace jax::hip
+
 #define gpusolverDnCreate ::jax::hip::gpusolverDnCreate
 #define gpusolverDnSetStream hipsolverSetStream
 #define gpusolverDnCreateSyevjInfo hipsolverCreateSyevjInfo
