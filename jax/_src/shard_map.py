@@ -204,9 +204,8 @@ def _smap(f, *, in_axes, out_axes, axis_name: AxisName):
 
 @partial(traceback_util.api_boundary, repro_api_name="jax.shard_map")
 def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
-               in_specs: Specs, out_specs: Specs | Callable[[], Specs],
-               axis_names: Set[AxisName], check_vma: bool,
-               _smap: bool = False) -> Callable:
+               in_specs: Specs, out_specs: Specs, axis_names: Set[AxisName],
+               check_vma: bool, _smap: bool = False) -> Callable:
   if not callable(f):
     raise TypeError("shard_map requires a callable for its first argument, "
                     f"but got {f} of type {type(f)}.")
@@ -265,18 +264,16 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
           manual_axes=axis_names)
     except _SpecError as e:
       fails, = e.args
-      if not callable(out_specs):
-        msg = _spec_rank_error(SpecErrorType.out, f, out_tree(), out_specs, fails)
-        if any(fail is not no_fail and not fail.shape for fail in fails):
-          msg += (" In particular, for rank 0 outputs which are not constant "
-                  "over the mesh, add at least one (singleton) axis to them so "
-                  "that they can be concatenated using out_specs.")
-        raise ValueError(msg) from None
+      msg = _spec_rank_error(SpecErrorType.out, f, out_tree(), out_specs, fails)
+      if any(fail is not no_fail and not fail.shape for fail in fails):
+        msg += (" In particular, for rank 0 outputs which are not constant "
+                "over the mesh, add at least one (singleton) axis to them so "
+                "that they can be concatenated using out_specs.")
+      raise ValueError(msg) from None
     except _RepError as e:
       fails, = e.args
-      if not callable(out_specs):
-        msg = _inout_vma_error(f, mesh, out_tree(), out_specs, fails)
-        raise ValueError(msg) from None
+      msg = _inout_vma_error(f, mesh, out_tree(), out_specs, fails)
+      raise ValueError(msg) from None
     return tree_unflatten(out_tree(), out_flat)
   return wrapped
 
@@ -285,16 +282,10 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
 def _broadcast_out_specs(_fun, _store, out_specs, axis_names, *args, **kwargs):
   ans = _fun(*args, **kwargs)
 
-  if callable(out_specs):
-    out_specs_ = out_specs()
-    _check_specs(SpecErrorType.out, out_specs_, axis_names)
-  else:
-    out_specs_ = out_specs
-
   try:
-    out_specs_flat = broadcast_prefix(out_specs_, ans)
+    out_specs_flat = broadcast_prefix(out_specs, ans)
   except ValueError:
-    e, *_ = prefix_errors(out_specs_, ans)
+    e, *_ = prefix_errors(out_specs, ans)
     raise e('shard_map out_specs') from None
 
   _store.store(tuple(out_specs_flat))
@@ -360,9 +351,8 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _smap):
   if in_specs is not Infer and in_specs is not None:
     _check_specs(SpecErrorType.input, in_specs, axis_names)
     _check_unreduced(SpecErrorType.input, mesh, axis_names, in_specs)
-  if not callable(out_specs):
-    _check_specs(SpecErrorType.out, out_specs, axis_names)
-    _check_unreduced(SpecErrorType.out, mesh, axis_names, out_specs)
+  _check_specs(SpecErrorType.out, out_specs, axis_names)
+  _check_unreduced(SpecErrorType.out, mesh, axis_names, out_specs)
   return mesh, axis_names
 
 
@@ -1775,10 +1765,9 @@ def _shard_map_transpose(out_cts, *args,
       api_util._raise_no_nan_in_deoptimized(e)
   except _RepError as e:
     fails, = e.args
-    if not callable(out_specs):
-      msg = _inout_vma_error(
-          fun_trans, mesh, out_tree(), list(new_out_specs_thunk()), fails)
-      raise ValueError(msg) from None
+    msg = _inout_vma_error(
+        fun_trans, mesh, out_tree(), list(new_out_specs_thunk()), fails)
+    raise ValueError(msg) from None
   in_cts = tree_unflatten(out_tree(), out_flat)
   return [ad.Zero(unshard_aval(mesh, check_vma, sp, x.aval))
           if type(x) is ad.Zero else x for sp, x in zip(in_specs, in_cts)]

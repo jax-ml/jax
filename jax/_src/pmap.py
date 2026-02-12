@@ -37,7 +37,7 @@ from jax._src.interpreters import pxla
 from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import Mesh
-from jax._src.shard_map import _axes_to_pspec, _shard_map
+from jax._src.shard_map import _axes_to_pspec, shard_map
 from jax._src.tree_util import (
     broadcast_flattened_prefix_with_treedef, broadcast_prefix,
     prefix_errors, tree_flatten, tree_map, tree_unflatten)
@@ -184,8 +184,8 @@ def _cached_shard_map(fun, in_tree, in_axes_flat, out_axes_flat, out_axes_tree,
         out_axes_flat,
     )
     return tree_unflatten(out_tree, out_flat)
-  _pmapped = _shard_map(_fun, mesh=mesh, in_specs=in_specs, out_specs=out_specs,
-      check_vma=False, axis_names=set(mesh.axis_names))
+  _pmapped = shard_map(_fun, mesh=mesh, in_specs=in_specs, out_specs=out_specs,
+                       check_vma=False, axis_names=set(mesh.axis_names))
   # Donation is now safe in multi-host mode because host_local_array_to_global_array
   # copies donated arrays instead of rewrapping them (which would share buffers).
   donate_argnums = [i for i, val in enumerate(donated_invars) if val]
