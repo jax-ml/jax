@@ -1,0 +1,67 @@
+name: CI - Bazel ROCm tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        required: true
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - 'release/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # Don't cancel in-progress jobs for main/release branches.
+  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
+permissions: {}
+jobs:
+  run-tests:
+    #if: github.event.repository.fork == false
+    uses: ./.github/workflows/bazel_rocm.yml
+# Begin Presubmit Naming Check - name modification requires internal check to be updated
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          python: ["3.11", "3.14"]
+          runner: ["linux-x86-64-1gpu-amd"]
+          jaxlib-version: ["head", "pypi_latest"]
+          enable-x64: [1, 0]
+          rocm-version: ["7"]
+          exclude:
+            # Exclude x64=1 on the oldest Python and x64=0 on the newest Python. As long as we have
+            # coverage for one of each, we don't need to run both.
+            - python: "3.11"
+              enable-x64: 1
+            - python: "3.11"
+              enable-x64: 0
+              jaxlib-version: "head"
+            - python: "3.14"
+              enable-x64: 0
+            - python: "3.14"
+              enable-x64: 1
+              jaxlib-version: "pypi_latest"
+    name: "Bazel single accelerator ${{ format('{0}', 'ROCm tests') }}"
+# End Presubmit Naming Check github-rocm-presubmits
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      download-jax-from-gcs: 0
+      skip-download-jaxlib-and-plugins-from-gcs: 0
+      jaxlib-version: ${{ matrix.jaxlib-version }}
+      halt-for-connection: ${{ inputs.halt-for-connection }}
+      rocm-version: ${{ matrix.rocm-version }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      build_jaxlib: ${{ (matrix.jaxlib-version == 'head' && true) || false }}
+      build_jax: 'true'
+      run_multiaccelerator_tests: 'false'
+      clone_main_xla: 1

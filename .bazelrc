@@ -472,6 +472,32 @@ common:rbe_windows_amd64 --host_platform="@xla//tools/toolchains/win2022:windows
 common:rbe_windows_amd64 --extra_execution_platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_new"
 common:rbe_windows_amd64 --platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_new"
 
+# RBE configs for ROCm
+build:rocm_rbe --tls_client_certificate="/data/ci-cert.crt"
+build:rocm_rbe --tls_client_key="/data/ci-cert.key"
+
+build:rocm_rbe --bes_backend="grpcs://wardite.cluster.engflow.com"
+build:rocm_rbe --bes_results_url="https://wardite.cluster.engflow.com/invocation/"
+build:rocm_rbe --remote_executor="grpcs://wardite.cluster.engflow.com"
+build:rocm_rbe --remote_cache="grpcs://wardite.cluster.engflow.com"
+build:rocm_rbe --host_platform="//platform/linux:manylinux"
+build:rocm_rbe --extra_execution_platforms="//platform/linux:manylinux"
+build:rocm_rbe --platforms="//platform/linux:manylinux"
+build:rocm_rbe --bes_timeout=600s
+build:rocm_rbe --spawn_strategy=local
+build:rocm_rbe --grpc_keepalive_time=30s
+build:rocm_rbe --repo_env=REMOTE_GPU_TESTING=1
+
+test:rocm_rbe --host_platform="//platform/linux:ubuntu_gpu"
+test:rocm_rbe --extra_execution_platforms="//platform/linux:ubuntu_gpu"
+test:rocm_rbe --platforms="//platform/linux:ubuntu_gpu"
+test:rocm_rbe --remote_timeout=3600
+test:rocm_rbe --jobs=200
+test:rocm_rbe --test_sharding_strategy=disabled
+test:rocm_rbe --strategy=TestRunner=remote,local
+test:rocm_rbe --worker_sandboxing=true
+test:rocm_rbe --repo_env=REMOTE_GPU_TESTING=1
+
 # #############################################################################
 # Cross-compile config options below. Native RBE support does not exist for
 # Linux Aarch64 and Mac x86. So, we use a cross-compile toolchain to build
