@@ -4835,10 +4835,8 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(x):
       return jax.lax.psum(x, axis_name='y')
 
-    # TODO(yashkatariya): Make this work in eager mode by probably inserting a
-    # reshard on the input because the in_specs passed to unmatch seem correct.
-    # out = jax.vmap(f)(arr)
-    # self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+    out = jax.vmap(f)(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
     out = jax.jit(jax.vmap(f))(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))

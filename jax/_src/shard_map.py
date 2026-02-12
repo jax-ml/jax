@@ -1456,7 +1456,10 @@ def _shard_map_batch(
   new_params = dict(mesh=mesh, in_specs=new_in_specs,
                     out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
                     manual_axes=manual_axes)
-  with core.set_current_trace(trace.parent_trace):
+  # TODO(yashkatariya): Remove remove_explicit_mesh_axis_names when vmap
+  # mesh ctx is correctly set.
+  with (core.set_current_trace(trace.parent_trace),
+        core.remove_explicit_mesh_axis_names(trace.axis_data.explicit_mesh_axis)):
     out_vals = prim.bind(fun, *in_vals, **new_params)
   make_tracer = partial(batching.BatchTracer, trace,
                         source_info=source_info_util.current())
