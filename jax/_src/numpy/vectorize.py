@@ -142,7 +142,7 @@ def _check_output_dims(
   """Check that output core dimensions match the signature."""
   def wrapped(*args):
     out = func(*args)
-    out_shapes = map(np.shape, out if isinstance(out, tuple) else [out])
+    out_shapes = list(map(np.shape, out if isinstance(out, tuple) else [out]))  # pyrefly redefined builtin
 
     output_core_dims = expected_output_core_dims
     if len(output_core_dims) > 1 and not isinstance(out, tuple):
@@ -274,6 +274,8 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
                      "signature={!r}".format(excluded, signature))
     excluded_func, args, kwargs = _apply_excluded(pyfunc, excluded, args, kwargs)
 
+    input_core_dims: list[CoreDims]
+    output_core_dims: list[CoreDims] | None
     if signature is not None:
       input_core_dims, output_core_dims = _parse_gufunc_signature(signature)
     else:

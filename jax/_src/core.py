@@ -618,6 +618,8 @@ class Primitive:
   ref_primitive: bool = False
   # set for primitives that can skip canonicalization of values
   skip_canonicalization: bool = False
+  # hook for converting a hijax primitive to a lojax primitive
+  to_lojax: Callable[..., Any] | None = None
 
   is_effectful = None
 

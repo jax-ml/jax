@@ -104,7 +104,8 @@ def roots(p: ArrayLike, *, strip_zeros: bool = True) -> Array:
     Array([-2. +0.j, nan+nanj], dtype=complex64)
   """
   p = ensure_arraylike("roots", p)
-  p_arr = atleast_1d(*promote_dtypes_inexact(p))
+  p, = promote_dtypes_inexact(p)
+  p_arr = atleast_1d(p)
   del p
   if p_arr.ndim != 1:
     raise ValueError("Input must be a rank-1 array.")

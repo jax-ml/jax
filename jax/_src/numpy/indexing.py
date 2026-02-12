@@ -198,8 +198,8 @@ class NDIndexer:
   def from_raw_indices(cls, indices: Index | tuple[Index, ...], shape: tuple[int, ...]) -> NDIndexer:
     """Create an NDIndexer object from raw user-supplied indices."""
     indices = eliminate_deprecated_list_indexing(indices)
-    indices = _parse_indices(indices, shape)
-    return cls(shape=shape, indices=indices)
+    parsed = _parse_indices(indices, shape)
+    return cls(shape=shape, indices=parsed)
 
   def validate_static_indices(self, normalize_indices: bool = True) -> None:
     """Check that all static integer indices are in-bounds.
@@ -269,12 +269,12 @@ class NDIndexer:
         # TODO(mattjj): improve this error by tracking _why_ the indices are not concrete
         raise errors.NonConcreteBooleanIndexError(core.get_aval(idx.index))
       assert isinstance(idx.index, (bool, np.ndarray, Array, literals.TypedNdArray, list))
-      if np.ndim(idx.index) == 0:
+      if np.ndim(idx.index) == 0:  # pyrefly: ignore[bad-argument-type]
         # Scalar booleans
         assert idx.consumed_axes == ()
         expanded_indices.append(ParsedIndex(index=bool(idx.index), typ=idx.typ, consumed_axes=()))
         continue
-      idx_shape = np.shape(idx.index)
+      idx_shape = np.shape(idx.index)  # pyrefly: ignore[no-matching-overload]
       expected_shape = [self.shape[i] for i in idx.consumed_axes]
       if not all(s1 in (0, s2) for s1, s2 in zip(idx_shape, expected_shape)):
         raise IndexError("boolean index did not match shape of indexed array in index"
@@ -574,7 +574,7 @@ class NDIndexer:
   def is_advanced_int_indexer(self):
     """Returns True if idx should trigger int array indexing, False otherwise."""
     # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
-    return any(idx.typ in [IndexType.ARRAY, IndexType.BOOLEAN] and np.ndim(idx.index) > 0
+    return any(idx.typ in [IndexType.ARRAY, IndexType.BOOLEAN] and np.ndim(idx.index) > 0  # type: ignore[arg-type]
                for idx in self.indices)
 
   def to_gather(self, x_sharding: NamedSharding | Any,
@@ -1286,7 +1286,8 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
   indexer.validate_slices()
   indexer = indexer.convert_sequences_to_arrays()
 
-  is_advanced = np.nonzero([idx.typ in {IndexType.ARRAY, IndexType.INTEGER} for idx in indexer.indices])
+  is_advanced = np.nonzero(
+    np.array([idx.typ in {IndexType.ARRAY, IndexType.INTEGER} for idx in indexer.indices]))
   advanced_axes_are_contiguous = np.all(np.diff(is_advanced) == 1)
 
   indexer = indexer.expand_ellipses()
