@@ -759,6 +759,8 @@ class LaxVmapTest(jtu.JaxTestCase):
   # TODO Collapse
   # TODO Scatter
 
+  # b/183233858: variadic reduce-window not implemented on XLA:CUDA
+  @jtu.skip_on_devices("cuda")
   def test_variadic_reduce_window(self):
     # https://github.com/jax-ml/jax/discussions/9818 and
     # https://github.com/jax-ml/jax/issues/9837
