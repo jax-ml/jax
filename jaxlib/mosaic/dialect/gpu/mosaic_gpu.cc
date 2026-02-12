@@ -15,19 +15,27 @@ limitations under the License.
 
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <functional>
+#include <iterator>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/LogicalResult.h"
 #include "mlir/Conversion/LLVMCommon/MemRefBuilder.h"
@@ -40,13 +48,13 @@ limitations under the License.
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep
-#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
@@ -75,6 +83,7 @@ namespace {
 using ::mlir::FloatType;
 using ::mlir::ImplicitLocOpBuilder;
 using ::mlir::IntegerType;
+using ::mlir::MemRefType;
 using ::mlir::MLIRContext;
 using ::mlir::Type;
 using ::mlir::TypeRange;
@@ -407,6 +416,232 @@ llvm::LogicalResult WGMMAOp::verify() {
         kWgmmaSizeM, M);
   }
 
+  return llvm::success();
+}
+
+namespace {
+
+absl::StatusOr<llvm::SmallVector<int64_t, 8>> TileShape(
+    llvm::ArrayRef<int64_t> shape, llvm::ArrayRef<int32_t> tiling) {
+  CHECK_LE(tiling.size(), shape.size());
+  llvm::SmallVector<int64_t, 4> num_tiles;
+  for (auto [dim_size, tile_size] :
+       llvm::zip_equal(shape.take_back(tiling.size()), tiling)) {
+    if (dim_size % tile_size != 0) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "The dimension size ", dim_size,
+          " must be a multiple of the tile size ", tile_size, "."));
+    }
+    num_tiles.push_back(dim_size / tile_size);
+  }
+
+  llvm::SmallVector<int64_t, 8> tiled_shape;
+  absl::c_copy(shape.drop_back(tiling.size()), std::back_inserter(tiled_shape));
+  absl::c_copy(num_tiles, std::back_inserter(tiled_shape));
+  absl::c_copy(tiling, std::back_inserter(tiled_shape));
+  return tiled_shape;
+}
+
+// Tiles the trailing strides in `strides` according to `tiling`.
+//
+// The `len(tiling)` trailing strides in `strides` must be the `len(tiling)`
+// smallest strides in `strides`. The same property holds in the result, i.e.,
+// given two tiles with indices i and j (i < j) with strides tiled according to
+// this function, then all the elements in tile i are physically ordered before
+// all the elements in tile j.
+
+// E.g., TileStrides((2048, 32, 1), (8, 4)) = (2048, 256, 32, 4, 1)
+absl::StatusOr<llvm::SmallVector<int64_t, 8>> TileStrides(
+    llvm::ArrayRef<int64_t> strides, llvm::ArrayRef<int32_t> tiling) {
+  int64_t tiling_rank = tiling.size();
+  if (strides.size() < tiling_rank) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Strides have lower rank than tiling: ",
+                     strides.size(), " < ", tiling.size()));
+  }
+
+  llvm::SmallVector<int64_t, 8> ordered_strides(strides.begin(), strides.end());
+  std::sort(ordered_strides.begin(), ordered_strides.end(),
+            std::greater<int64_t>());
+
+  absl::flat_hash_set<int64_t> smallest_strides(
+      ordered_strides.end() - tiling_rank, ordered_strides.end());
+  absl::flat_hash_set<int64_t> trailing_strides(strides.end() - tiling_rank,
+                                                strides.end());
+  if (smallest_strides != trailing_strides) {
+    return absl::InvalidArgumentError(
+        "Can not tile strides when tiled dimensions have been transposed with "
+        "untiled dimensions.");
+  }
+
+  llvm::ArrayRef<int64_t> tiled_ordered_strides =
+      llvm::ArrayRef(ordered_strides).take_back(tiling_rank);
+  llvm::ArrayRef<int64_t> tiled_strides = strides.take_back(tiling_rank);
+
+  auto to_ordered = [&](int64_t i) -> int64_t {
+    for (int64_t j = 0; j < tiling_rank; ++j) {
+      if (tiled_ordered_strides[j] == tiled_strides[i]) return j;
+    }
+    llvm_unreachable("Stride not found");
+  };
+
+  auto from_ordered = [&](int64_t i) -> int64_t {
+    for (int64_t j = 0; j < tiling_rank; ++j) {
+      if (tiled_strides[j] == tiled_ordered_strides[i]) return j;
+    }
+    llvm_unreachable("Stride not found");
+  };
+
+  llvm::SmallVector<int32_t, 4> ordered_tiling(tiling_rank);
+  llvm::SmallVector<int64_t, 4> ordered_tiled_strides(tiling_rank);
+  for (int64_t i = 0; i < tiling_rank; ++i) {
+    ordered_tiling[i] = tiling[from_ordered(i)];
+    ordered_tiled_strides[i] = tiled_strides[from_ordered(i)];
+  }
+
+  llvm::SmallVector<int64_t, 8> ordered_tiled_tiling_strides;
+  ordered_tiled_tiling_strides.push_back(1);
+  for (int64_t i = tiling_rank - 1; i >= 0; --i) {
+    ordered_tiled_tiling_strides.push_back(ordered_tiled_tiling_strides.back() *
+                                           ordered_tiling[i]);
+  }
+
+  int64_t prev_s = ordered_tiled_strides[tiling_rank - 1];
+  for (int64_t i = tiling_rank - 2; i >= 0; --i) {
+    int64_t s = ordered_tiled_strides[i];
+    int64_t t = ordered_tiling[i + 1];
+    int64_t d = prev_s * t;
+    if (s % d != 0) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Stride ", s, " is not divisible by ", d, " (tile size = ", t, ")"));
+    }
+    ordered_tiled_tiling_strides.push_back(s / d *
+                                           ordered_tiled_tiling_strides.back());
+    prev_s = s;
+  }
+
+  std::reverse(ordered_tiled_tiling_strides.begin(),
+               ordered_tiled_tiling_strides.end());
+
+  llvm::SmallVector<int64_t, 8> result;
+  for (int64_t i = 0; i < strides.size() - tiling_rank; ++i) {
+    result.push_back(strides[i]);
+  }
+  for (int64_t i = 0; i < tiling_rank; ++i) {
+    result.push_back(ordered_tiled_tiling_strides[to_ordered(i)]);
+  }
+  for (int64_t i = 0; i < tiling_rank; ++i) {
+    result.push_back(ordered_tiled_tiling_strides[tiling_rank + to_ordered(i)]);
+  }
+  return result;
+}
+
+
+// Tiles the trailing offsets in `offsets` according to `tiling`.
+absl::StatusOr<llvm::SmallVector<int64_t, 8>> TileOffset(
+    llvm::ArrayRef<int64_t> offsets, llvm::ArrayRef<int32_t> tiling) {
+  int64_t tiling_rank = tiling.size();
+  if (offsets.size() < tiling_rank) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Offsets have lower rank than tiling: ",
+                     offsets.size(), " < ", tiling.size()));
+  }
+
+  llvm::SmallVector<int64_t, 8> result;
+  // Untiled offsets are unchanged.
+  for (int64_t i = 0; i < offsets.size() - tiling_rank; ++i) {
+    result.push_back(offsets[i]);
+  }
+  for (int64_t i = offsets.size() - tiling_rank; i < offsets.size(); ++i) {
+    int32_t t = tiling[i - (offsets.size() - tiling_rank)];
+    if (offsets[i] % t != 0) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Offset ", offsets[i], " is not divisible by tile size ", t, "."));
+    }
+    result.push_back(offsets[i] / t);
+  }
+  for (int64_t i = 0; i < tiling_rank; ++i) {
+    result.push_back(0);
+  }
+  return result;
+}
+
+absl::StatusOr<MemRefType> TileMemRefTypeImpl(MemRefType source_type,
+                                              llvm::ArrayRef<int32_t> tiling) {
+  llvm::ArrayRef<int64_t> source_shape = source_type.getShape();
+  auto [strides, offset] = source_type.getStridesAndOffset();
+
+  TF_ASSIGN_OR_RETURN(auto tiled_shape, TileShape(source_shape, tiling));
+  TF_ASSIGN_OR_RETURN(auto tiled_strides, TileStrides(strides, tiling));
+
+  int64_t tiled_offset;
+  if (offset == mlir::ShapedType::kDynamic) {
+    tiled_offset = offset;
+  } else {
+    llvm::SmallVector<int64_t, 4> delinearized_offset(strides.size(), 0);
+    llvm::SmallVector<std::pair<int64_t, int64_t>, 4> stride_index_pairs;
+    for (int64_t i = 0; i < strides.size(); ++i) {
+      stride_index_pairs.push_back({strides[i], i});
+    }
+    std::sort(stride_index_pairs.begin(), stride_index_pairs.end(),
+              [](const auto& a, const auto& b) { return a.first > b.first; });
+
+    int64_t remaining_offset = offset;
+    for (auto [stride, idx] : stride_index_pairs) {
+      delinearized_offset[idx] = remaining_offset / stride;
+      remaining_offset %= stride;
+    }
+
+    TF_ASSIGN_OR_RETURN(auto tiled_delinearized_offset,
+                        TileOffset(delinearized_offset, tiling));
+
+    tiled_offset = 0;
+    for (int64_t i = 0; i < tiled_strides.size(); ++i) {
+      tiled_offset += tiled_delinearized_offset[i] * tiled_strides[i];
+    }
+  }
+
+  return MemRefType::get(
+      tiled_shape, source_type.getElementType(),
+      mlir::StridedLayoutAttr::get(source_type.getContext(), tiled_offset,
+                                   tiled_strides),
+      source_type.getMemorySpace());
+}
+
+}  // namespace
+
+::llvm::LogicalResult TileShapeOp::inferReturnTypes(
+    mlir::MLIRContext* context, std::optional<mlir::Location> location,
+    mlir::ValueRange operands, mlir::DictionaryAttr attributes,
+    mlir::OpaqueProperties properties, mlir::RegionRange regions,
+    llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  auto fail = [&location](absl::string_view message) -> llvm::LogicalResult {
+    if (location.has_value()) {
+      return mlir::emitError(*location) << message;
+    }
+    return llvm::failure();
+  };
+  MemRefType source_type = llvm::cast<MemRefType>(operands.front().getType());
+  llvm::ArrayRef<int64_t> source_shape = source_type.getShape();
+  llvm::ArrayRef<int32_t> tiling = properties.as<Properties*>()->getTiling();
+
+  if (source_shape.size() < tiling.size()) {
+    return fail(absl::StrCat(
+        "The source shape must have at least as many dimensions as the tiling, "
+        " but got ",
+        source_shape.size(), " < ", tiling.size()));
+  }
+
+  if (!source_type.isStrided()) {
+    return fail("The source memref must have a strided layout.");
+  }
+
+  auto result = TileMemRefTypeImpl(source_type, tiling);
+  if (!result.ok()) {
+    return fail(result.status().message());
+  }
+
+  inferredReturnTypes.push_back(*result);
   return llvm::success();
 }
 

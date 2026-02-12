@@ -243,6 +243,29 @@ def SwizzleTransformAttr : MosaicGPU_Attr<"SwizzleTransform", "swizzle"> {
   let assemblyFormat = "`<` $swizzle `>`";
 }
 
+def MosaicGPU_TileShapeOp : Op<MosaicGPU_Dialect, "tile_shape",
+    [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+  let summary = "Tiles the shape of a strided memref.";
+  let description = [{
+    Tiles the shape of a strided `memref`.
+
+    The `tiling` is applied to the logical trailing dimensions of the source
+    `memref`.
+
+    Note that this is different from tiling the `memref` itself, since this
+    operation does not perform any data movement.
+
+    E.g., for a contiguous `memref` of shape `(5, 128, 128)` and a tiling
+    `(64, 32)`, the result will be a contiguous `memref` of shape
+    `(5, 2, 4, 64, 32)`.
+  }];
+  let arguments = (ins
+    AnyMemRef:$source,
+    DenseI32ArrayAttr:$tiling
+  );
+  let results = (outs AnyMemRef);
+}
+
 def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
       [AttrSizedOperandSegments]> {
   let summary = "Schedules an async load of a MemRef from GMEM to SMEM";
