@@ -849,8 +849,4 @@ def pprint_bytes(num_bytes: int | float) -> str:
   scaled_value = num_bytes / (1000**exponent)
   return f"{scaled_value:.2f}{prefixes[exponent]}B"
 
-if hasattr(jaxlib_utils, "install_failure_signal_handler"):
-  install_failure_signal_handler = jaxlib_utils.install_failure_signal_handler
-else:
-  def install_failure_signal_handler(call_previous_handler: bool = True):
-    pass
+install_failure_signal_handler = jaxlib_utils.install_failure_signal_handler
