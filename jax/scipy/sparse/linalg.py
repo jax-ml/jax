@@ -19,4 +19,5 @@ from jax._src.scipy.sparse.linalg import (
   cg as cg,
   gmres as gmres,
   bicgstab as bicgstab,
+  eigs as eigs,
 )

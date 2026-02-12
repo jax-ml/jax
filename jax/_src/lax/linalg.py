@@ -435,8 +435,10 @@ def schur(
     x: ArrayLike,
     *,
     compute_schur_vectors: bool = True,
+    compute_eig_vals: bool = False,
     sort_eig_vals: bool = False,
     select_callable: Callable[..., Any] | None = None,
+    is_hessenberg: bool = False,
 ) -> tuple[Array, Array]:
   r"""Schur decomposition.
 
@@ -453,18 +455,91 @@ def schur(
     x: A batch of square matrices with shape ``[..., m, m]``.
     compute_schur_vectors: If ``True``, compute the Schur vectors ::math:`Q`,
       otherwise only :math:`U` is computed.
+    compute_eig_vals: If ``True``, compute the eigenvalues ::math:`E` from Schur
+      matrix, otherwise eigenvalues are not returned.
     sort_eig_vals: Unused.
     select_callable: Unused.
+    is_hessenberg: If ``True``, use specialized to calculate the Schur
+      decomposition for an input matrix :math:`A` in Hessenberg form.
 
   Returns:
-    A pair of arrays ``U, Q``, if ``compute_schur_vectors=True``, otherwise
-    only ``U`` is returned.
+    A pair of arrays ``U, Q, E``, if ``compute_schur_vectors=True`` and
+    ``compute_eig_vals=True``, a pair of arrays ``U, Q`` or ``U, E`` if only one
+    of the options are ``True``, otherwise only ``U`` is returned.
   """
   return schur_p.bind(
       x,
       compute_schur_vectors=compute_schur_vectors,
+      compute_eig_vals=compute_eig_vals,
       sort_eig_vals=sort_eig_vals,
-      select_callable=select_callable)
+      select_callable=select_callable,
+      is_hessenberg=is_hessenberg)
+
+
+def schur_eigenvectors(x, eigvals=None):
+  r"""Eigenvectors of Schur decomposition.
+
+  Only implemented on CPU.
+
+  Computes the right eigenvectors :math:`v` of a Schur decomposition :math:`T`
+  with eigenvalues :math:`w`:
+
+  .. math::
+    T \, v = v \, w .
+
+  Args:
+    x: A batch of square matrices in Schur form with shape ``[..., m, m]``.
+    eigvals: For a real input `x` the eigenvalues of Schur matrix are needed.
+      The eigenvalues are returned by :func:`jax.lax.linalg.schur` if
+      ``compute_eig_vals=True``.
+
+  Returns:
+    A complex array ``V`` with shape ``[..., m, m]`` containing the
+    right eigenvectors as columns of the batched matrices.
+  """
+  if not dtypes.issubdtype(lax.dtype(x), np.complexfloating):
+    if eigvals is None:
+      raise ValueError("Eigenvalues have to be supplied for real input matrix.")
+    if not dtypes.issubdtype(lax.dtype(eigvals), np.complexfloating):
+      raise ValueError("Expect complex array with eigenvalues.")
+
+    eigvals_imag = lax.imag(eigvals)
+
+    return schur_eigenvectors_real_p.bind(x, eigvals_imag)[0]
+
+  return schur_eigenvectors_complex_p.bind(x)[0]
+
+
+def schur_reorder(schur_form, schur_vectors, order):
+  r"""Reorder (Permute) a Schur decomposition.
+
+  Only implemented on CPU.
+
+  Permute a matrix Schur such that the diagonal blocks selected by
+  the ``order`` parameter are sorted in the specified order.
+
+  For real Schur matrices the order must ensure that 2x2 diagonal blocks
+  encoding a complex conjugate pair of eigenvalues have to be successive in
+  the ``order`` parameter. Otherwise, the code will return an exception.
+
+  Args:
+    schur_form: A batch of square matrices in Schur form with
+      shape ``[..., m, m]``.
+    schur_vectors: A batch of square matrices with the vectors that
+      transformed a matrix in the Schur form with shape ``[..., m, m]``.
+    order: A batch of vectors containing the new order of the diagonal blocks
+      with shape ``[..., m]``. Indices can be either supplied in C-style
+      starting at zero and running to ``m-1`` or in Fortran-style starting
+      at one and running to ``m``.
+
+  Returns:
+    A pair of array ``S, V`` with shape ``[..., m, m]`` containing the
+    reordered Schur form and Schur vector.
+  """
+  order = order.astype(np.uint32)
+  order = control_flow.cond(order.all(), lambda x: x, lambda x: x+1, order)
+
+  return schur_reorder_p.bind(schur_form, schur_vectors, order)
 
 
 class SvdAlgorithm(enum.Enum):
@@ -1925,17 +2000,36 @@ mlir.register_lowering(qr_p, mlir.lower_fun(_qr_lowering))
 
 # Schur Decomposition
 
-def _schur_shape_rule(shape, *, compute_schur_vectors, **_):
+def _schur_shape_rule(shape, *, compute_schur_vectors, compute_eig_vals, **_):
   if shape[0] != shape[1]:
     raise ValueError(
         f"The input to schur must be a square matrix. Got shape {shape}.")
-  return (shape, shape) if compute_schur_vectors else (shape,)
+  if compute_eig_vals and compute_schur_vectors:
+    return (shape, shape, shape[:-1])
+  elif compute_eig_vals:
+    return (shape, shape[:-1])
+  elif compute_schur_vectors:
+    return (shape, shape)
+  return (shape,)
 
-def _schur_dtype_rule(dtype, *, compute_schur_vectors, **_):
-  return (dtype, dtype) if compute_schur_vectors else (dtype,)
+def _schur_dtype_rule(dtype, *, compute_schur_vectors, compute_eig_vals, **_):
+  if dtype.dtype == np.float32:
+    cdtype = np.complex64
+  elif dtype.dtype == np.float64:
+    cdtype = np.complex128
+  else:
+    cdtype = dtype
 
-def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
-                        select_callable):
+  if compute_eig_vals and compute_schur_vectors:
+    return (dtype, dtype, cdtype)
+  elif compute_eig_vals:
+    return (dtype, cdtype)
+  elif compute_schur_vectors:
+    return (dtype, dtype)
+  return (dtype,)
+
+def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, compute_eig_vals,
+                        sort_eig_vals, select_callable, is_hessenberg):
   del select_callable  # unused
   if sort_eig_vals:
     raise NotImplementedError(
@@ -1944,26 +2038,46 @@ def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
   operand_aval, = ctx.avals_in
   batch_dims = operand_aval.shape[:-2]
   real = operand_aval.dtype == np.float32 or operand_aval.dtype == np.float64
-  target_name = lapack.prepare_lapack_call("gees_ffi", operand_aval.dtype)
+  if is_hessenberg:
+    target_name = lapack.prepare_lapack_call("hseqr_ffi", operand_aval.dtype)
+  else:
+    target_name = lapack.prepare_lapack_call("gees_ffi", operand_aval.dtype)
 
   info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
   eigvals_aval = ShapedArray(operand_aval.shape[:-1], operand_aval.dtype)
-  if real:
-    avals_out = [operand_aval, operand_aval, eigvals_aval, eigvals_aval,
-                 info_aval, info_aval]
+  if is_hessenberg:
+    if real:
+      avals_out = [operand_aval, operand_aval, eigvals_aval, eigvals_aval,
+                   info_aval]
+    else:
+      avals_out = [operand_aval, operand_aval, eigvals_aval, info_aval]
   else:
-    avals_out = [operand_aval, operand_aval, eigvals_aval, info_aval, info_aval]
+    if real:
+      avals_out = [operand_aval, operand_aval, eigvals_aval, eigvals_aval,
+                   info_aval, info_aval]
+    else:
+      avals_out = [operand_aval, operand_aval, eigvals_aval, info_aval, info_aval]
 
-  mode = (
+  rule = _linalg_ffi_lowering(target_name, avals_out=avals_out,
+                              operand_output_aliases={0: 0})
+  if is_hessenberg:
+    mode = (
+      lapack.schur.ComputationModeHessenberg.kComputeSchurVectors
+      if compute_schur_vectors
+      else lapack.schur.ComputationModeHessenberg.kNoComputeSchurVectors
+    )
+    schur_form, schur_vectors, *result_args, info = rule(
+      ctx, operand, mode=_enum_attr(mode))
+  else:
+    mode = (
       lapack.schur.ComputationMode.kComputeSchurVectors
       if compute_schur_vectors
       else lapack.schur.ComputationMode.kNoComputeSchurVectors
-  )
-  rule = _linalg_ffi_lowering(target_name, avals_out=avals_out,
-                              operand_output_aliases={0: 0})
-  schur_form, schur_vectors, *_, info = rule(
+    )
+    schur_form, schur_vectors, *result_args, info = rule(
       ctx, operand, mode=_enum_attr(mode),
       sort=_enum_attr(lapack.schur.Sort.kNoSortEigenvalues))
+
 
   ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
@@ -1977,6 +2091,29 @@ def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
                                              ctx.avals_out[1])
     output.append(schur_vectors)
 
+  if compute_eig_vals:
+    if compute_schur_vectors:
+      eig_aval_out = ctx.avals_out[2]
+    else:
+      eig_aval_out = ctx.avals_out[1]
+
+    if real:
+      eig_real = mlir.convert_hlo(ctx, result_args[0], eigvals_aval, eig_aval_out)
+      eig_imag = mlir.convert_hlo(ctx, result_args[1], eigvals_aval, eig_aval_out)
+
+      eig_real = _replace_not_ok_with_nan(ctx, batch_dims, ok, eig_real,
+                                          eig_aval_out)
+      eig_imag = _replace_not_ok_with_nan(ctx, batch_dims, ok, eig_imag,
+                                          eig_aval_out)
+
+      eig_imag = hlo.multiply(mlir.full_like_aval(ctx, 1j, eig_aval_out), eig_imag)
+
+      eig_vals = hlo.add(eig_real, eig_imag)
+    else:
+      eig_vals = _replace_not_ok_with_nan(ctx, batch_dims, ok, result_args[0],
+                                          eig_aval_out)
+    output.append(eig_vals)
+
   return output
 
 schur_p = linalg_primitive(
@@ -1984,6 +2121,114 @@ schur_p = linalg_primitive(
     multiple_results=True)
 mlir.register_lowering(schur_p, _schur_cpu_lowering, platform="cpu")
 
+
+# Eigenvectors of Schur Decomposition
+
+def _schur_eigenvectors_real_shape_rule(x_shape, eigvals_imag_shape):
+  if x_shape[0] != x_shape[1]:
+    raise ValueError(
+        f"The input to schur eigenvectors must be a square matrix. Got shape {x_shape}.")
+  return (x_shape,)
+
+def _schur_eigenvectors_real_dtype_rule(x_dtype, eigvals_imag_dtype):
+  if x_dtype.dtype == np.float32:
+    cdtype = np.complex64
+  elif x_dtype.dtype == np.float64:
+    cdtype = np.complex128
+  return (cdtype,)
+
+def _schur_eigenvectors_complex_shape_rule(shape):
+  if shape[0] != shape[1]:
+    raise ValueError(
+        f"The input to schur eigenvectors must be a square matrix. Got shape {shape}.")
+  return (shape,)
+
+def _schur_eigenvectors_complex_dtype_rule(dtype):
+  return (dtype,)
+
+def _schur_eigenvectors_cpu_lowering(ctx, x_operand, eigvals_imag_operand, real):
+  if real:
+    operand_aval, eigvals_aval = ctx.avals_in
+  else:
+    operand_aval, = ctx.avals_in
+  batch_dims = operand_aval.shape[:-2]
+  target_name = lapack.prepare_lapack_call("trevc_ffi", operand_aval.dtype)
+
+  info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
+  avals_out = [ctx.avals_out[0], info_aval]
+
+  rule = _linalg_ffi_lowering(target_name, avals_out=avals_out)
+  if real:
+    eigen_vectors, info = rule(ctx, x_operand, eigvals_imag_operand)
+  else:
+    eigen_vectors, info = rule(ctx, x_operand)
+
+  ok = mlir.compare_hlo(
+      info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      "EQ", "SIGNED")
+
+  eigen_vectors = _replace_not_ok_with_nan(ctx, batch_dims, ok, eigen_vectors,
+                                           ctx.avals_out[0])
+  output = [eigen_vectors]
+  return output
+
+schur_eigenvectors_real_p = linalg_primitive(
+    _schur_eigenvectors_real_dtype_rule, (_float, _float), (2, 1),
+    _schur_eigenvectors_real_shape_rule, "schur_eigenvectors_real",
+    multiple_results=True)
+mlir.register_lowering(schur_eigenvectors_real_p,
+                       partial(_schur_eigenvectors_cpu_lowering, real=True),
+                       platform="cpu")
+
+schur_eigenvectors_complex_p = linalg_primitive(
+    _schur_eigenvectors_complex_dtype_rule, (_complex,), (2,),
+    _schur_eigenvectors_complex_shape_rule, "schur_eigenvectors_complex",
+    multiple_results=True)
+mlir.register_lowering(schur_eigenvectors_complex_p,
+                       partial(_schur_eigenvectors_cpu_lowering, real=False,
+                               eigvals_imag_operand=None),
+                       platform="cpu")
+
+# Reorder of Schur Decomposition
+
+def _schur_reorder_shape_rule(x_shape, vec_shape, order_shape):
+  if x_shape[0] != x_shape[1]:
+    raise ValueError(
+        f"The input to schur reordering must be a square matrix. Got shape {x_shape}.")
+  return (x_shape, vec_shape)
+
+def _schur_reorder_dtype_rule(x_dtype, vec_dtype, order_dtype):
+  return (x_dtype, vec_dtype)
+
+def _schur_reorder_cpu_lowering(ctx, x_operand, vec_operand, order_operand):
+  operand_aval, vec_aval, order_aval = ctx.avals_in
+  batch_dims = operand_aval.shape[:-2]
+  target_name = lapack.prepare_lapack_call("trexc_ffi", operand_aval.dtype)
+
+  info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
+  avals_out = [operand_aval, vec_aval, info_aval]
+
+  rule = _linalg_ffi_lowering(target_name, avals_out=avals_out,
+                              operand_output_aliases={0: 0, 1: 1})
+  schur_form, schur_vectors, info = rule(ctx, x_operand, vec_operand, order_operand)
+
+  ok = mlir.compare_hlo(
+      info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      "EQ", "SIGNED")
+
+  schur_form = _replace_not_ok_with_nan(ctx, batch_dims, ok, schur_form,
+                                        ctx.avals_out[0])
+  schur_vectors = _replace_not_ok_with_nan(ctx, batch_dims, ok, schur_vectors,
+                                           ctx.avals_out[1])
+
+  output = [schur_form, schur_vectors]
+  return output
+
+schur_reorder_p = linalg_primitive(
+    _schur_reorder_dtype_rule, (_float | _complex, _float | _complex, _int), (2, 2, 1),
+    _schur_reorder_shape_rule, "schur_reorder",
+    multiple_results=True, require_same=False)
+mlir.register_lowering(schur_reorder_p, _schur_reorder_cpu_lowering, platform="cpu")
 
 # Singular value decomposition
 
