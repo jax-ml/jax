@@ -663,7 +663,6 @@ class Primitive:
     trace.process_primitive(self, args, params)  # may raise lojax error
     raise Exception(f"couldn't apply typeof to args: {args}")
 
-
   def def_impl(self, impl):
     self.impl = impl
     return impl
@@ -1667,8 +1666,14 @@ def definitely_equal(x, y):
 
 class AbstractValue:
   __slots__: list[str] = []
-  is_high = False
-  has_qdd = False
+
+  @property
+  def is_high(self) -> bool:
+    return False
+
+  @property
+  def has_qdd(self) -> bool:
+    return False
 
   def to_tangent_aval(self):
     raise NotImplementedError("must override")

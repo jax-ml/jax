@@ -387,7 +387,8 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
                        tree):
   transforms = tree_util.tree_unflatten(tree, args)
   if transforms and ref_aval.inner_aval.is_high:
-    return ref_aval.inner_aval.ref_get_abstract_eval(ref_aval, *args, tree=tree)
+    # TODO(mattjj): aval.is_high does not imply the existence of ref_get_abstract_aval.
+    return ref_aval.inner_aval.ref_get_abstract_eval(ref_aval, *args, tree=tree)  # pyrefly: ignore[missing-attribute]
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`get` must be called on `Ref` types: {ref_aval}.")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
@@ -404,7 +405,8 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
                         *args: Any, tree):
   transforms = tree_util.tree_unflatten(tree, args)
   if transforms and ref_aval.inner_aval.is_high:
-    return ref_aval.inner_aval.ref_swap_abstract_eval(
+    # TODO(mattjj): aval.is_high does not imply the existence of ref_swap_abstract_aval.
+    return ref_aval.inner_aval.ref_swap_abstract_eval(  # pyrefly: ignore[missing-attribute]
         ref_aval, val_aval, *args, tree=tree)
   out_aval: core.AbstractValue
   if not isinstance(ref_aval, AbstractRef):
@@ -415,6 +417,7 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
     assert isinstance(val_aval, core.ShapedArray)
     expected_out_ty = transform_type(transforms, ref_aval.inner_aval)
+    assert isinstance(expected_out_ty, core.ShapedArray)
     if expected_out_ty.shape != val_aval.shape:
       raise ValueError("Invalid shape for `swap`. "
                        f"Ref shape: {ref_aval.shape}. "
@@ -445,6 +448,7 @@ def _addupdate_abstract_eval(ref_aval: AbstractRef,
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
     expected_out_ty = transform_type(transforms, ref_aval.inner_aval)
     assert isinstance(val_aval, core.ShapedArray)
+    assert isinstance(expected_out_ty, core.ShapedArray)
     if expected_out_ty.shape != val_aval.shape:
       raise ValueError(
           "Invalid shape for `addupdate`. "

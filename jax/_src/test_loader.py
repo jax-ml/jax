@@ -149,15 +149,15 @@ class ThreadSafeTestResult:
       # consumed by CI.
       time_getter = getattr(self.test_result, "time_getter", None)
       try:
-        self.test_result.time_getter = lambda: self.start_time
+        self.test_result.time_getter = lambda: self.start_time  # pyrefly: ignore[missing-attribute]
         self.test_result.startTest(test)
         for callback in self.actions:
           callback()
-        self.test_result.time_getter = lambda: stop_time
+        self.test_result.time_getter = lambda: stop_time  # pyrefly: ignore[missing-attribute]
         self.test_result.stopTest(test)
       finally:
         if time_getter is not None:
-          self.test_result.time_getter = time_getter
+          self.test_result.time_getter = time_getter  # pyrefly: ignore[missing-attribute]
 
   def addSuccess(self, test: unittest.TestCase):
     self.actions.append(lambda: self.test_result.addSuccess(test))
@@ -216,7 +216,7 @@ class JaxTestSuite(unittest.TestSuite):
 
 
 class JaxTestLoader(absltest.TestLoader):
-  suiteClass = JaxTestSuite
+  suiteClass = JaxTestSuite  # pyrefly: ignore[bad-assignment]
 
   def getTestCaseNames(self, testCaseClass):
     names = super().getTestCaseNames(testCaseClass)

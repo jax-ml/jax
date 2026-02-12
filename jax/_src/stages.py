@@ -320,10 +320,14 @@ class ArgInfo:
 
   @property
   def shape(self):
+    if not hasattr(self._aval, "shape"):
+      raise TypeError(f"No shape attribute with aval of type {type(self._aval)}")
     return self._aval.shape  # pytype: disable=attribute-error
 
   @property
   def dtype(self):
+    if not hasattr(self._aval, "dtype"):
+      raise TypeError(f"No dtype attribute with aval of type {type(self._aval)}")
     return self._aval.dtype  # pytype: disable=attribute-error
 
 
@@ -739,18 +743,18 @@ class Compiled(Stage):
 
   @property
   def in_avals(self):
-    in_avals_ = self._executable.in_avals
+    in_avals_ = self._executable.in_avals  # pyrefly: ignore[missing-attribute]
     if self.in_tree.num_leaves > len(in_avals_):
       iter_in_avals = iter(in_avals_)
-      non_dce_avals = self._executable._all_args_info.in_avals
+      non_dce_avals = self._executable._all_args_info.in_avals  # pyrefly: ignore[missing-attribute]
       in_avals_ = [
-          next(iter_in_avals) if i in self._executable._kept_var_idx
+          next(iter_in_avals) if i in self._executable._kept_var_idx  # pyrefly: ignore[missing-attribute]
           else a for i, a in zip(range(self.in_tree.num_leaves), non_dce_avals)]
     return self.in_tree.unflatten(in_avals_)
 
   @property
   def out_info(self):  # PyTree of jax.ShapeDtypeStruct
-    out_avals = self._executable.out_avals
+    out_avals = self._executable.out_avals  # pyrefly: ignore[missing-attribute]
     out_formats_flat = self._output_formats_flat
     return self.out_tree.unflatten(
         [core.ShapeDtypeStruct(o.shape, o.dtype, sharding=f)
@@ -769,11 +773,11 @@ class Compiled(Stage):
     return self._executable.runtime_executable()
 
   def _input_shardings_flat(self):
-    shardings_flat = self._executable._in_shardings
+    shardings_flat = self._executable._in_shardings  # pyrefly: ignore[missing-attribute]
     # Some input shardings got DCE'd
     if self.in_tree.num_leaves > len(shardings_flat):
       iter_shardings_flat = iter(shardings_flat)
-      shardings_flat = [next(iter_shardings_flat) if i in self._executable._kept_var_idx
+      shardings_flat = [next(iter_shardings_flat) if i in self._executable._kept_var_idx  # pyrefly: ignore[missing-attribute]
                         else None for i in range(self.in_tree.num_leaves)]
     return shardings_flat
 
@@ -784,15 +788,15 @@ class Compiled(Stage):
 
   @property
   def output_shardings(self):  # -> PyTree[sharding.Sharding]
-    shardings_flat = self._executable._out_shardings
+    shardings_flat = self._executable._out_shardings  # pyrefly: ignore[missing-attribute]
     return tree_util.tree_unflatten(self.out_tree, shardings_flat)  # pytype: disable=attribute-error
 
   def _input_layouts_flat(self):
-    layouts_flat = self._executable._xla_in_layouts
+    layouts_flat = self._executable._xla_in_layouts  # pyrefly: ignore[missing-attribute]
     # Some input layouts got DCE'd
     if self.in_tree.num_leaves > len(layouts_flat):
       iter_layouts_flat = iter(layouts_flat)
-      layouts_flat = [next(iter_layouts_flat) if i in self._executable._kept_var_idx
+      layouts_flat = [next(iter_layouts_flat) if i in self._executable._kept_var_idx  # pyrefly: ignore[missing-attribute]
                       else None for i in range(self.in_tree.num_leaves)]
     return layouts_flat
 
@@ -805,8 +809,8 @@ class Compiled(Stage):
 
   @property
   def _output_formats_flat(self):
-    layouts_flat = self._executable._xla_out_layouts
-    shardings_flat = self._executable._out_shardings
+    layouts_flat = self._executable._xla_out_layouts  # pyrefly: ignore[missing-attribute]
+    shardings_flat = self._executable._out_shardings  # pyrefly: ignore[missing-attribute]
     assert all(isinstance(l, Layout) for l in layouts_flat)
     return [Format(l, s) for l, s in zip(layouts_flat, shardings_flat)]
 
@@ -832,12 +836,15 @@ class Compiled(Stage):
 
     if params.is_high:
       hi_args_flat, in_hi_tree = tree_util.tree_flatten((args, kwargs))
-      in_hi_tree_, final_qdds = params.in_types
+      _in_hi_tree, final_qdds = params.in_types
+      # TODO(jakevdp): remove pyrefly ignore when https://github.com/facebook/pyrefly/issues/2382 is fixed.
       args_flat = [a.read_loval(core.cur_qdd(x), x) if (a := typeof(x)).has_qdd
-                  else a.lower_val(x) for x in hi_args_flat]
+                  else a.lower_val(x) for x in hi_args_flat]  # pyrefly: ignore[unbound-name]
       args_flat, in_tree = \
           tree_util.tree_flatten(tree_util.tree_unflatten(in_hi_tree, args_flat))
     else:
+      hi_args_flat = []
+      final_qdds = None
       args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
 
     # TODO(mattjj): improve wrong-number-of-args error
