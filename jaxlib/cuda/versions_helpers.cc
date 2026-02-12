@@ -20,6 +20,7 @@ limitations under the License.
 #include <stdexcept>
 
 #include "absl/base/dynamic_annotations.h"
+#include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 
@@ -28,6 +29,9 @@ namespace jax::cuda {
 #if CUDA_VERSION < 11080
 #error "JAX requires CUDA 11.8 or newer."
 #endif  // CUDA_VERSION < 11080
+
+static bool driver_initialized = false;
+static absl::Mutex driver_initialization_mutex;
 
 int CudaRuntimeGetVersion() {
   int version;
@@ -98,7 +102,13 @@ size_t CudnnGetVersion() {
 }
 int CudaComputeCapability(int device) {
   int major, minor;
-  JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpuInit(0)));
+  {
+    absl::MutexLock lock(driver_initialization_mutex);
+    if (!driver_initialized) {
+      JAX_THROW_IF_ERROR(JAX_AS_STATUS(cuInit(0)));
+      driver_initialized = true;
+    }
+  }
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpuDeviceGetAttribute(
       &major, GPU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device)));
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpuDeviceGetAttribute(
@@ -110,7 +120,13 @@ int CudaComputeCapability(int device) {
 
 int CudaDeviceCount() {
   int device_count = 0;
-  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cuInit(0)));
+  {
+    absl::MutexLock lock(driver_initialization_mutex);
+    if (!driver_initialized) {
+      JAX_THROW_IF_ERROR(JAX_AS_STATUS(cuInit(0)));
+      driver_initialized = true;
+    }
+  }
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(cuDeviceGetCount(&device_count)));
 
   ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&device_count, sizeof device_count);

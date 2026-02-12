@@ -269,6 +269,26 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
                  scale_for_comparison=100,
                  min_supported_version=12100)
 
+  compute_capabilities = [
+      cuda_versions.cuda_compute_capability(d)
+      for d in range(cuda_versions.cuda_device_count())
+  ]
+  # cuBLAS has a known issue whereby many kernels free Tensor Memory multiple
+  # times between CUDA versions 12.8 and 13.1 inclusive---making them unsafe
+  # to use in scenarios involving several concurrent streams of compute kernels.
+  #
+  # tcgen05 instructions are available on the sm_100f, and sm_110f
+  # architecture families.
+  # https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-instructions-tcgen05-alloc-dealloc-relinquish-alloc-permit
+  if (cublas_version is not None and 120800 <= cublas_version < 130200 and
+      any(100 <= cc < 120 for cc in compute_capabilities)):
+    logger.warning(
+        f"cuBLAS < 13.2 ({cublas_version} found) has a known issue where "
+        "many kernels free TMEM buffers multiple times. Executing a cuBLAS "
+        "kernel concurrently with another kernel (e.g. on another stream) can "
+        "lead to silent data corruption."
+    )
+
   # https://docs.nvidia.com/deeplearning/cudnn/backend/latest/release-notes.html#cudnn-9-10-1
   if (cudnn_version is not None and cudnn_version == 91000
       and cuda_versions.cudnn_build_version() != 91000):
