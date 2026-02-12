@@ -312,14 +312,14 @@ def kernel(
   def _vmap_rule(axis_size, in_batched, *args):
     axis_name = object()
 
-    def batched_body(*refs):
+    def batched_body(*refs, **scratch_ref_kwargs):
       idx = lax.axis_index(axis_name)
       lens = (len(args), len(out_shape))
       operand_refs, out_refs, scratch_refs = util.split_list(refs, lens)
       slice_ref = lambda r, b=True: (r.at[idx] if b else r)
       operand_refs = tree_util.tree_map(slice_ref, operand_refs, in_batched)
       out_refs = tree_util.tree_map(slice_ref, out_refs)
-      return body(*operand_refs, *out_refs, *scratch_refs)
+      return body(*operand_refs, *out_refs, *scratch_refs, **scratch_ref_kwargs)
 
     out_shape_ = out_shape[0] if unwrap_out else out_shape
     add_batch_dim = lambda x: x.update(shape=(axis_size, *x.shape))

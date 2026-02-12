@@ -855,6 +855,30 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     # Each block gets the same data and writes it out.
     np.testing.assert_array_equal(y, jnp.stack([x, x], axis=0))
 
+  @parameterized.parameters(True, False)
+  def test_kernel_scratch_kwargs(self, vmap):
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_shapes=dict(
+            smem_ref=plgpu.SMEM((128,), jnp.float32),
+            barrier_ref=plgpu.Barrier(),
+        ),
+    )
+    def kernel(x_ref, y_ref, *, smem_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      plgpu.copy_smem_to_gmem(smem_ref, y_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jnp.arange(128, dtype=jnp.float32)
+
+    if vmap:
+      x = jnp.stack([x, x], axis=0)
+      kernel = jax.vmap(kernel)
+
+    np.testing.assert_array_equal(kernel(x), x)
+
   @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
   def test_async_prefetch(self, indexer):
 
