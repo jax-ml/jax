@@ -455,7 +455,9 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
     # cuDNN and Blackwell checks only apply to CUDA devices.
-    # ROCm uses XLA's fallback path (dequantize + standard dot) for MXFP8/NVFP4.
+    # ROCm does not support the cuDNN block scaled dot operation used by scaled_matmul.
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("scaled_matmul requires cuDNN which is not available on ROCm")
     if jtu.test_device_matches(["cuda"]):
       try:
         check_cudnn_version()
