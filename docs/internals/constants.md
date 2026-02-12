@@ -2,8 +2,9 @@
 
 # Handling of closed-over constants
 
-"Closed-over constants" are non-scalar arrays that are encountered during JAX tracing
-of a function and do not have dependencies on any of the function's arguments.
+"Closed-over constants" are non-scalar arrays that are encountered during JAX
+tracing of a function and do not have dependencies on any of the function's
+arguments.
 JAX operations such as `jax.numpy` and `lax` are staged out and do not create
 closed-over constants.
 In the following example, the arrays
@@ -30,7 +31,8 @@ implementation, including its drawbacks.
 
 ## Tracing
 
-When JAX tracing encounters a constant that is either an argument of a JAX primitive
+When JAX tracing encounters a constant that is either an argument of a JAX
+primitive
 or a function return, it is represented as a `core.Literal`, and is embedded
 in the `Jaxpr` along with the primitives that use them.
 The function `core.is_literalable` decides which constants are turned into
@@ -39,19 +41,20 @@ non-scalar `np.ndarray` and `jax.Array`.
 
 ## Lowering
 
-When lowering the code to HLO we could just emit a `stablehlo.constant` operation
-for a `core.Literal`, but this would have several disadvantages:
+When lowering the code to HLO we could just emit a `stablehlo.constant`
+operation for a `core.Literal`, but this would have several disadvantages:
 
  * if the constant is a `jax.Array` (e.g., the `a_jax_array` above), then it is
- pulled from the device to the host during lowering, and it will later re-materialized
- on the device when the lowered module executes.
+ pulled from the device to the host during lowering, and it will later
+ re-materialized on the device when the lowered module executes.
  This can increase the host memory usage, sometimes dramatically.
  Furthermore, if the constant is sharded on multiple devices this
  sharding is lost.
  * large constants increase the size of the HLO, especially if
  the same constant is used multiple times. Also, the XLA compiler will attempt
  to constant-fold them, resulting in warnings and slow compilation. Furthermore,
- we have observed that XLA constant-folding sometimes produces slightly different
+ we have observed that XLA constant-folding sometimes produces slightly
+ different
  numerics compared to compiled code.
  See also [Large closed-over constants are inlined in the HLO code #29684](https://github.com/jax-ml/jax/issues/29684).
 
@@ -161,11 +164,11 @@ of `jax_enable_x64` for lowering and execution.
 ## Previous implementation
 
 This describes the current way we handle closed-over constants, as
-of July 2025 (as long as `JAX_USE_SIMPLIFIED_CONSTANTS=False`).
+of July 2025 (as long as `JAX_USE_SIMPLIFIED_JAXPR_CONSTANTS=False`).
 
 When JAX traces a function to a `Jaxpr` it collects the closed-over values
-into a set of constants, and adds a corresponding set of `constvars` to the Jaxpr
-(the actual arguments are represented by `invars`).
+into a set of constants, and adds a corresponding set of `constvars` to the
+Jaxpr (the actual arguments are represented by `invars`).
 Most tracing functions, e.g., `trace_to_jaxpr_dynamic`,
 return both the `Jaxpr` and the constants.
 
@@ -177,17 +180,19 @@ There are several issues with `ClosedJaxpr`:
   * the lowering of the `consts` in `ClosedJaxpr` results in inlined
     `stablehlo.constant`, with all the issues described above.
   * `Jaxpr` and `ClosedJaxpr` are used pervasively in JAX, often with the
-    generic name `jaxpr` and it is not easy to tell which kind of `Jaxpr` we have.
+    generic name `jaxpr` and it is not easy to tell which kind of `Jaxpr` we
+    have.
     We have started to add type declarations, but in some places the code
     is written with `isinstance` conditionals to work with both.
   * Since Jaxpr and ClosedJaxpr are sometimes used as caching keys,
     and they are hashed by `id`, we would like to memoize their construction.
     For example, the function [pe.closed_jaxpr](https://github.com/jax-ml/jax/blob/0956da1466d03af81b24d16554f30f2ff8163346/jax/_src/interpreters/partial_eval.py#L1570)
-    memoizes the construction of `ClosedJaxpr` but only for the case when consts is empty.
+    memoizes the construction of `ClosedJaxpr` but only for the case when
+    consts is empty.
     This is because sometimes consts are not hashable.
   * Handling the constants in ClosedJaxpr requires some extra care.
-    E.g., there are places in the Mosaic lowering where we have not yet implemented
-    the handling of ClosedJaxpr with non-empty constants
+    E.g., there are places in the Mosaic lowering where we have not yet
+    implemented the handling of ClosedJaxpr with non-empty constants
     (e.g. [here](https://github.com/jax-ml/jax/blob/7d924e8f72fd84fb2305f0a1683ae081f171602f/jax/_src/pallas/mosaic/lowering.py#L3115)).
   * When we turn closed-over constants into inputs we have to be careful
     during transformations with how we handle these auxiliary inputs.
