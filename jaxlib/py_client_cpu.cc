@@ -55,7 +55,8 @@ struct CpuTransposePlanCache {
   xla::TransposePlanCache cache;
 };
 
-ffi::TypeId CpuTransposePlanCache::id = {};
+ffi::TypeId CpuTransposePlanCache::id =
+    ffi::TypeId{reinterpret_cast<intptr_t>(&CpuTransposePlanCache::id)};
 ffi::TypeInfo CpuTransposePlanCache::info =
     ffi::MakeTypeInfo<CpuTransposePlanCache>();
 
