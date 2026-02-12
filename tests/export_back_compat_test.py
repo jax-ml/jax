@@ -152,6 +152,7 @@ class CompatTest(bctu.CompatTestBase):
         stablehlo_dynamic_approx_top_k.data_2024_05_30,
         annotate_data_placement.data_2025_04_07_tpu,
         annotate_data_placement.data_2025_04_07_cuda,
+        annotate_data_placement.data_2026_02_04_rocm,
     ]
     # Some of the above are nested structures.
     covering_testdatas = itertools.chain(
@@ -854,11 +855,16 @@ class CompatTest(bctu.CompatTestBase):
     def func(x, y):
       return x + y
 
+    # Check the actual GPU backend type to load appropriate test data
     if platform == "tpu":
       data = [(annotate_data_placement.data_2025_04_07_tpu,
                ["annotate_device_placement"]),
               (annotate_data_placement.data_2025_06_30_tpu, None)]
-    else:
+    elif jtu.test_device_matches(["rocm"]):
+      # ROCm test data - currently only have one version (Feb 2026)
+      data = [(annotate_data_placement.data_2026_02_04_rocm,
+               ["annotate_device_placement"])]
+    else:  # cuda
       data = [(annotate_data_placement.data_2025_04_07_cuda,
                ["annotate_device_placement"]),
               (annotate_data_placement.data_2025_06_30_cuda, None)]
