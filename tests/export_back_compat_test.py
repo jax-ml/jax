@@ -238,7 +238,7 @@ class CompatTest(bctu.CompatTestBase):
       info = cuda_cholesky_solver_potrf.data_2025_10_15[dtype_name]
     else:
       self.skipTest("Unsupported platform")
-    
+
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol)
 
