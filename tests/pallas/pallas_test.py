@@ -2706,6 +2706,21 @@ class SymbolicPallasTest(ptu.PallasTest):
     exported_module2 = pl.lower_as_mlir(jax.jit(f), x2_shape, dynamic_shapes=True)
     self.assertIn("(b2, 8, 128)", str(exported_module2))
 
+  def test_cdiv(self):
+    def kernel(x, y):
+      c = pl.cdiv(x.shape[0], 2)
+      assert c == (x.shape[0] + 1) // 2
+      assert c == y.shape[0]
+      y[:] = x[:c]
+
+    m, = jax.export.symbolic_shape('m')
+    x_shape = jax.ShapeDtypeStruct((m, 128), jnp.float32)
+    y_shape = jax.ShapeDtypeStruct(((m + 1) // 2, 128), jnp.float32)
+    f = self.pallas_call(kernel, out_shape=y_shape)
+
+    exported_module = pl.lower_as_mlir(jax.jit(f), x_shape, dynamic_shapes=True)
+    self.assertIn("(m, 128)", str(exported_module))
+
 
 class PallasCallNamedGridInterpretTest(PallasCallNamedGridTest):
   INTERPRET = True

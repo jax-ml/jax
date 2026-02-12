@@ -53,7 +53,7 @@ def cdiv(a: int | jax_typing.Array, b: int | jax_typing.Array) -> int | jax_typi
     >>> cdiv(9, 2)  # 9 / 2 = 4.5, which rounds up to 5
     5
   """
-  if isinstance(a, int) and isinstance(b, int):
+  if jax_core.is_dim(a) and jax_core.is_dim(b):
     return (a + b - 1) // b
   return lax.div(a + (b - 1), b)
 
