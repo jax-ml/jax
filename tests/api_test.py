@@ -5105,9 +5105,10 @@ class APITest(jtu.JaxTestCase):
       return inner(0.0, x)[0]
     jax.grad(f)(1.)  # don't crash
 
-  @parameterized.parameters(it.product(range(4), repeat=3))
+  @parameterized.parameters((remat, *rest) for remat in [False, True]
+                            for rest in it.product(range(4), repeat=3))
   @jtu.run_on_devices("cpu")
-  def test_jit_forwarding_correctness(self, seed, num_input_fwd, num_output_fwd):
+  def test_jit_forwarding_correctness(self, remat, seed, num_input_fwd, num_output_fwd):
     num_args = 3
     rng = np.random.RandomState(seed)
     in_perm = rng.permutation(num_args)
@@ -5121,8 +5122,21 @@ class APITest(jtu.JaxTestCase):
           for i in range(num_args - num_input_fwd)]
       return [outputs[i] for i in out_perm]
 
+    if remat:
+      f = jax.remat(f)
+
     jtu.check_grads(f, (list(jnp.arange(float(num_args))),), order=1,
                     modes=['rev'], atol=1e-3, rtol=1e-3)
+
+  def test_remat_of_jit_input_to_output_forwarding(self):
+    @partial(jax.remat, policy=lambda *_, **__: True)
+    def f(x):
+      y = jnp.ones(2, 'float32')
+      x = jax.jit(lambda: x * y)()
+      x = jax.jit(lambda: x * y)()
+      return x
+    res = saved_residuals(f, jnp.float32(3.))
+    self.assertLen(res, 1)
 
   @unittest.skip # TODO(dougalm): figure out with Matt what to do with this feature
   def test_inner_jit_forwarded_consts_stay_const(self):

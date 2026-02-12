@@ -1270,10 +1270,20 @@ def closed_call_partial_eval_custom_rule(
     eqn: JaxprEqn, *, res_aval: ResAvalUpdater = _default_res_aval_updater,
   ) -> tuple[JaxprEqn, JaxprEqn, Sequence[bool], Sequence[bool], list[Var]]:
   # TODO(sharadmv,mattjj): dedup this rule with call_partial_eval_custom_rule.
-  dropvars = tuple(isinstance(v, DropVar) for v in eqn.outvars)
-  jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res_ref, num_res_val, out_fwd = \
+  disallow_output_fwds = tuple(isinstance(v, DropVar) for v in eqn.outvars)
+  # TODO(mattjj): this is just for pjit... but let's delete all this code
+  from jax._src.sharding_impls import UNSPECIFIED
+  in_shardings, in_layouts = eqn.params.get('in_shardings'), eqn.params.get('in_layouts')
+  if in_shardings is not None:
+    assert in_layouts is not None
+    disallow_input_fwds = tuple(s is not UNSPECIFIED or l is not None
+                                for s, l in zip(in_shardings, in_layouts))
+  else:
+    disallow_input_fwds = (False,) * len(unks_in)
+  jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res_ref, num_res_val, in_fwd, out_fwd = \
       _closed_jaxpr_partial_eval_custom_cached(
-          eqn.params[jaxpr_param_name], (*unks_in,), (*inst_in,), dropvars, saveable)
+          eqn.params[jaxpr_param_name], (*unks_in,), (*inst_in,),
+          disallow_input_fwds, disallow_output_fwds, saveable)
   num_res = num_res_ref + num_res_val
   out_binders_known, _ = partition_list(unks_out, eqn.outvars)
   ins_known, _ = partition_list(unks_in, eqn.invars)
@@ -1283,12 +1293,18 @@ def closed_call_partial_eval_custom_rule(
   params_staged = {**eqn.params, jaxpr_param_name: jaxpr_staged}
   params_known, params_staged = params_updater(
       unks_in, inst_in, map(op.not_, unks_out), inst_out,
-      sum(f is None for f in out_fwd), num_res, params_known, params_staged)
+      sum(fin is fout is None for fin, fout in zip(in_fwd, out_fwd)),
+      num_res, params_known, params_staged)
   res_val_binders, res_ref_binders = split_list(
       [Var(res_aval(params_known, v))
        for v in jaxpr_staged.in_avals[:num_res]], [num_res_val])
-  res_val_binders = [v for v, f in zip(res_val_binders, out_fwd) if f is None]
-  res_val_vars = subs_list(out_fwd, out_binders_known, res_val_binders)
+  res_val_binders = [v for v, fin, fout in zip(res_val_binders, in_fwd, out_fwd)
+                     if fin is fout is None]
+  res_val_binders_ = iter(res_val_binders)
+  res_val_vars = [out_binders_known[fout] if fout is not None else
+                  ins_known[fin] if fin is not None else
+                  next(res_val_binders_) for fin, fout in zip(in_fwd, out_fwd)]
+  assert next(res_val_binders_, None) is None
   eqn_known = new_jaxpr_eqn(
       [*ins_known, *res_ref_binders], [*out_binders_known, *res_val_binders],
       eqn.primitive, params_known, core.eqn_effects(jaxpr_known),
@@ -1309,29 +1325,37 @@ def closed_call_partial_eval_custom_rule(
 @weakref_lru_cache
 def _closed_jaxpr_partial_eval_custom_cached(
     jaxpr: ClosedJaxpr, unks_in: tuple[bool, ...], inst_in: tuple[bool, ...],
-    dropvars: tuple[bool, ...], saveable: Callable
+    disallowed_input_forwards: tuple[bool, ...],
+    disallowed_output_forwards: tuple[bool, ...],
+    saveable: Callable
     ) -> tuple[ClosedJaxpr, ClosedJaxpr, Sequence[bool], Sequence[bool],
-               int, int, Sequence[int | None]]:
+               int, int, Sequence[int | None], Sequence[int | None]]:
   jaxpr_known_, jaxpr_staged_, unks_out, inst_out, num_res_val, num_res_ref = \
       partial_eval_jaxpr_stateful(jaxpr.jaxpr, unks_in, inst_in,
                                   False, False, saveable)
 
-  # Compute which residual value outputs are also *undropped* primal outputs.
   num_out_primals = len(jaxpr_known_.outvars) - num_res_val
   out_vars, res_vars = split_list(jaxpr_known_.outvars, [num_out_primals])
-  out_dropvars_known, _ = partition_list(unks_out, dropvars)
-  idx_map = {id(v): i for i, (v, b) in enumerate(zip(out_vars, out_dropvars_known))
+
+  # Compute which residual value outputs are also primal inputs.
+  disallowed, _ = partition_list(unks_in, disallowed_input_forwards)
+  idx_map = {id(v): i for i, (v, b) in enumerate(zip(jaxpr_known_.invars, disallowed))
+             if not b}
+  in_fwd = [idx_map.get(id(v)) for v in res_vars]
+
+  # Compute which residual value outputs are also *undropped* primal outputs.
+  disallowed, _ = partition_list(unks_out, disallowed_output_forwards)
+  idx_map = {id(v): i for i, (v, b) in enumerate(zip(out_vars, disallowed))
              if not b}
   out_fwd = [idx_map.get(id(v)) for v in res_vars]
 
   # Prune jaxpr_known_ outputs by removing forwards.
-  jaxpr_known_ = prune_jaxpr_outputs(
-      jaxpr_known_, [True] * num_out_primals + [f is None for f in out_fwd])
+  keep = [f1 is f2 is None for f1, f2 in zip(in_fwd, out_fwd)]
+  jaxpr_known_ = prune_jaxpr_outputs(jaxpr_known_, [True] * num_out_primals + keep)
 
   jaxpr_known = core.ClosedJaxpr(jaxpr_known_, jaxpr.consts)
   jaxpr_staged = core.ClosedJaxpr(jaxpr_staged_, jaxpr.consts)
-  return jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res_ref, num_res_val, out_fwd
-
+  return jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res_ref, num_res_val, in_fwd, out_fwd
 
 partial_eval_jaxpr_custom_rules[core.call_p] = \
     partial(call_partial_eval_custom_rule, 'call_jaxpr',
