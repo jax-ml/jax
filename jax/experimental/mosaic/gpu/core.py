@@ -595,7 +595,7 @@ def _launch(
     host_collective_metadata: ir.Value | None = None,
     num_peers: int = 0,
 ):
-  if (profiler_spec is None) != (maybe_prof_buffer is None):
+  if (not profiler_spec) != (maybe_prof_buffer is None):
     raise ValueError(
         "Both profiler_spec and maybe_prof_buffer must be specified or"
         " left unspecified."
@@ -609,7 +609,7 @@ def _launch(
   user_smem_bytes = _smem_tree_size(smem_buffers)
 
   smem_bytes = user_smem_bytes
-  if profiler_spec is not None:
+  if profiler_spec:
     # Profiler array stores values in 64 bit chunks (vectors of size 2
     # of 32-bit elements), and so the starting address needs to be 64
     # bit = 8 byte aligned.
@@ -811,7 +811,7 @@ def _lower_as_gpu_kernel(
     out_shape = (out_shape,)
     unwrap_output_tuple = not inout_shape
   out_ref_tys = [_shape_to_ref_ty(t) for t in out_shape]
-  if prof_spec is not None:
+  if prof_spec:
     out_shape = (*out_shape, prof_spec.jax_buffer_type(grid, block))
     out_ref_tys.append(prof_spec.mlir_buffer_type(grid, block))
 
@@ -1054,16 +1054,21 @@ def as_gpu_kernel(
         inout_types=inout_shape,
     )
 
-  if prof_spec is not None:
+  if prof_spec:
     @jax.jit
     def prof_kernel(*args):
       _check_args(*args)
       *results, prof_buffer = bind(*args)
       def dump_profile(prof_buffer):
-        out_file = os.path.join(prof_spec.dump_path, f"{time.time_ns()}-trace.json")
         try:
-          with open(out_file, "x") as f:
-            prof_spec.dump(prof_buffer, f, grid=grid, block=block)
+          if prof_spec.dump_path is not None:
+            out_file = os.path.join(
+                prof_spec.dump_path, f"{time.time_ns()}-trace.json"
+            )
+            with open(out_file, "x") as f:
+              prof_spec.dump(prof_buffer, f, grid=grid, block=block)
+          else:
+            prof_spec.dump(prof_buffer, None, grid=grid, block=block)
         except FileExistsError:
           pass  # TODO: Retry
       jax.debug.callback(dump_profile, prof_buffer)
