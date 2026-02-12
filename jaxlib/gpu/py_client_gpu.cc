@@ -60,7 +60,8 @@ struct GpuTransposePlanCache {
   xla::TransposePlanCache cache;
 };
 
-xla::ffi::TypeId GpuTransposePlanCache::id = {};
+xla::ffi::TypeId GpuTransposePlanCache::id =
+    xla::ffi::TypeId{reinterpret_cast<intptr_t>(&GpuTransposePlanCache::id)};
 xla::ffi::TypeInfo GpuTransposePlanCache::info =
     xla::ffi::MakeTypeInfo<GpuTransposePlanCache>();
 
