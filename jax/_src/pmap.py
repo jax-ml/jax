@@ -576,10 +576,10 @@ def host_local_array_to_global_array(
     donated = donated_invars[i]
     prng_impl = None
     typ = type(arr)
-    if typ == array.ArrayImpl and not arr.is_fully_addressable:
+    if typ is array.ArrayImpl and not arr.is_fully_addressable:
       continue
-    if typ != array.ArrayImpl:
-      if typ == prng.PRNGKeyArray:
+    if typ is not array.ArrayImpl:
+      if typ is prng.PRNGKeyArray:
         prng_impl = arr.dtype._impl  # pylint: disable=protected-access
         arr = arr._base_array  # pylint: disable=protected-access
       dtype = arr.dtype
@@ -589,6 +589,7 @@ def host_local_array_to_global_array(
       if dtype != dtypes.canonicalize_dtype(dtype):
         arr = dtypes.canonicalize_value(arr)
     shape, dtype = arr.shape, arr.dtype
+    typ = type(arr)
 
     global_aval = _local_to_global_aval(shape, dtype, global_sharding)
     if typ == array.ArrayImpl and _is_sharding_equivalent(
@@ -622,7 +623,7 @@ def host_local_array_to_global_array(
           arrays,
           list(local_sharding._device_assignment),
       )  # pylint: disable=protected-access
-      if donated and typ == array.ArrayImpl:
+      if donated and typ is array.ArrayImpl:
         warnings.warn(
             "Donated pmap argument required resharding. This causes a brief "
             "2x memory spike before the original is freed. For optimal "
@@ -667,10 +668,10 @@ def global_array_to_host_local_array(out, cached, trace_state_clean):
     global_sharding = out_global_shardings[i]
     prng_impl = None
     typ = type(arr)
-    if typ == array.ArrayImpl and arr.is_fully_addressable:
+    if typ is array.ArrayImpl and arr.is_fully_addressable:
       continue
-    if typ != array.ArrayImpl:
-      if typ == prng.PRNGKeyArray:
+    if typ is not array.ArrayImpl:
+      if typ is prng.PRNGKeyArray:
         prng_impl = arr.dtype._impl  # pylint: disable=protected-access
         arr = arr._base_array  # pylint: disable=protected-access
       try:
@@ -683,6 +684,7 @@ def global_array_to_host_local_array(out, cached, trace_state_clean):
       if dtype != dtypes.canonicalize_dtype(dtype):
         arr = dtypes.canonicalize_value(arr)
     shape, dtype = arr.shape, arr.dtype
+    typ = type(arr)
 
     local_aval = _global_to_local_aval(shape, dtype, global_sharding)
     if typ == array.ArrayImpl:
