@@ -4320,6 +4320,11 @@ def _sin_lin(nzs, x, accuracy):
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x, accuracy: mul(g, cos(x, accuracy=accuracy)))
+def sin_vjp(x, **kw):
+  out = sin(x, **kw)
+  cos_ = cos(x, **kw)
+  return [out], lambda g: [mul(g[0], cos_)]
+ad.primitive_vjps[sin_p] = sin_vjp
 ad.primitive_linearizations[sin_p] = _sin_lin
 mlir.register_lowering(sin_p, _sin_lowering)
 core.pp_eqn_rules[sin_p] = _unary_with_accuracy_pp_rule

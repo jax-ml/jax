@@ -61,7 +61,7 @@ from jax._src.layout import Format, Layout as DLL
 from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
-from jax._src.interpreters import pxla
+from jax._src.interpreters import pxla, ad
 from jax._src.lib import xla_client as xc
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import ifrt_version
@@ -10146,6 +10146,15 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
     self.assertEqual(out.aval.sharding,
                      NamedSharding(mesh.abstract_mesh, P(None)))
+
+  def test_yash(self):
+    out_primal, pullback = ad.vjp4(lambda x: x, np.arange(4.))
+    out_grad = pullback(np.ones((4,)))
+    print(out_primal, out_grad)
+
+    out_primal, pullback = ad.vjp4(lambda x: jax.lax.sin(x), np.arange(4.))
+    out_grad = pullback(np.ones((4,)))
+    print(out_primal, out_grad)
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_vjp_unreduced_zeros(self, mesh):
