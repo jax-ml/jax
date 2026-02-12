@@ -1,6 +1,6 @@
 absl-py
 cloudpickle
-filelock
+filelock==3.20.3
 flatbuffers
 hypothesis==6.142.1  # TODO(justinfu): Fix test failures surfaced by Hypothesis 6.147.0 and remove pin.
 mpmath>=1.3
