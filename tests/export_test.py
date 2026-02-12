@@ -1449,10 +1449,6 @@ class JaxExportTest(jtu.JaxTestCase):
       exp.call(b)
 
   def test_memory_space_from_arg(self):
-    # Skip test on ROCm due to wrong function export platform error. 
-    # TODO(GulsumGudukbay): Unskip once fixed. Issue #34711.
-    if jtu.is_device_rocm():
-      self.skipTest("Skipped on ROCm due to wrong function export platform error.")
     shd = jax.sharding.SingleDeviceSharding(
         jax.devices()[0], memory_kind="pinned_host")
     a = jax.device_put(np.ones((2, 3), dtype=np.float32), shd)
@@ -1480,10 +1476,6 @@ class JaxExportTest(jtu.JaxTestCase):
       self.assertEqual(b.sharding, a.sharding)
 
   def test_memory_space_from_out_shardings(self):
-    # Skip test on ROCm due to wrong function export platform error. 
-    # TODO(GulsumGudukbay): Unskip once fixed. Issue #34711.
-    if jtu.is_device_rocm():
-      self.skipTest("Skipped on ROCm due to wrong function export platform error.")
     shd = jax.sharding.SingleDeviceSharding(jax.devices()[0],
                                             memory_kind="pinned_host")
     f = jax.jit(lambda: jnp.ones((2, 2), dtype=np.float32),
