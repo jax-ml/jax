@@ -945,6 +945,8 @@ def _pack_abstract_eval(a, b, *, format, preferred_element_type):
       packed_shape = (2 * a.size,)
     case PackFormat.COMPRESSED:
       packed_shape = (a.size, 2)
+    case _:
+      raise TypeError(f"Unexpected format: {format}")
   return jax_core.ShapedArray(packed_shape, packed_dtype)
 
 

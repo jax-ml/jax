@@ -1906,6 +1906,8 @@ def _compute_offsets_from_indices(
         index = _ir_constant(0, offset_eltype)
       case int():
         index = next(indexer_iter)
+      case _:
+        raise ValueError(f"Unexpected dim_block_size: {dim_block_size}")
 
     if isinstance(index, slice):
       index = primitives.Slice.from_slice(index, dim_block_size)
