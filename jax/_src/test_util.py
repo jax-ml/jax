@@ -616,7 +616,7 @@ def _device_filter(predicate, skip_reason=None):
 
 def skip_on_devices(*disabled_devices, skip_reason=None):
   """A decorator for test methods to skip the test on certain devices.
-  
+
   Args:
     *disabled_devices: Device names that the test should skip on.
     skip_reason: Optional custom skip message when test is skipped.
@@ -627,7 +627,7 @@ def skip_on_devices(*disabled_devices, skip_reason=None):
 
 def run_on_devices(*enabled_devices, skip_reason=None):
   """A decorator for test methods to run the test only on certain devices.
-  
+
   Args:
     *enabled_devices: Device names that the test should run on.
     skip_reason: Optional custom skip message when test is skipped.
