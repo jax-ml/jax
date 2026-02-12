@@ -132,6 +132,9 @@ jax_multiplatform_test(
             "noasan",  # Forge OOM
         ],
     },
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     enable_backends = [
         "cpu",
         "gpu",
@@ -387,6 +390,9 @@ jax_py_test(
 jax_multiplatform_test(
     name = "memories_test",
     srcs = ["memories_test.py"],
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     tags = ["multiaccelerator"],
     deps = [
         "//jax/experimental:compute_on",
@@ -403,6 +409,9 @@ jax_multiplatform_test(
         "tpu": ["notsan"],  # Times out under tsan.
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     enable_configs = [
         "tpu_v3_x4",
         "gpu_h100x2",
@@ -426,6 +435,9 @@ jax_multiplatform_test(
         ],
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     enable_configs = [
         "tpu_v3_x4",
         "gpu_h100x2",
@@ -451,6 +463,9 @@ jax_multiplatform_test(
     backend_tags = {
         "tpu": ["requires-mem:16g"],  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
     },
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     enable_configs = [
         "tpu_v3_x4",
     ],
@@ -466,6 +481,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "shard_alike_test",
     srcs = ["shard_alike_test.py"],
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     tags = ["multiaccelerator"],
     deps = [
         "//jax/experimental:shard_alike",
@@ -483,6 +501,7 @@ jax_multiplatform_test(
     },
     disable_configs = [
         "gpu_h100x2_tfrt",  # TODO(b/419192167): Doesn't work
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
     ],
     enable_backends = ["gpu"],
     tags = [
@@ -530,6 +549,9 @@ jax_multiplatform_test(
     backend_tags = {
         "tpu": ["requires-mem:16g"],  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
     },
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     enable_configs = [
         "tpu_v3_x4",
     ],
@@ -546,6 +568,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "aot_test",
     srcs = ["aot_test.py"],
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     tags = ["multiaccelerator"],
     deps = [
         "//jax/experimental:pjit",
@@ -1125,6 +1150,7 @@ jax_multiplatform_test(
     },
     disable_configs = [
         "tpu_v6e",  # Forge OOM.
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once fixed.
     ],
     enable_configs = [
         "gpu_v100",
@@ -1183,6 +1209,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "pmap_shmap_merge_test",
     srcs = ["pmap_shmap_merge_test.py"],
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     enable_configs = [
         "gpu_v100",
         "tpu_v3_x4",
@@ -1238,6 +1267,9 @@ jax_multiplatform_test(
             "noasan",
         ],
     },
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     enable_backends = [
         "cpu",
         "gpu",
@@ -1852,6 +1884,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "debugging_primitives_test",
     srcs = ["debugging_primitives_test.py"],
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     tags = ["multiaccelerator"],
     deps = py_deps([
         "absl/testing",
@@ -1865,6 +1900,9 @@ jax_multiplatform_test(
     backend_tags = {
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     tags = ["multiaccelerator"],
     deps = [
         "//jax/experimental",
@@ -1877,6 +1915,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "debugger_test",
     srcs = ["debugger_test.py"],
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     tags = ["multiaccelerator"],
     deps = py_deps([
         "absl/testing",
@@ -1928,6 +1969,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "ragged_collective_test",
     srcs = ["ragged_collective_test.py"],
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     enable_backends = [
         "gpu",
         "tpu",
@@ -2061,6 +2105,9 @@ jax_py_test(
 jax_multiplatform_test(
     name = "export_test",
     srcs = ["export_test.py"],
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     tags = ["multiaccelerator"],
     deps = py_deps([
         "absl/testing",
@@ -2152,6 +2199,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "fused_attention_stablehlo_test",
     srcs = ["fused_attention_stablehlo_test.py"],
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     enable_backends = ["gpu"],
     shard_count = 8,
     tags = ["multiaccelerator"],
@@ -2235,6 +2285,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "scaled_matmul_stablehlo_test",
     srcs = ["scaled_matmul_stablehlo_test.py"],
+    disable_configs = [
+        "gpu_h100fullx2",  # TODO(b/483929299): Remove once Forge clusters are updated.
+    ],
     enable_backends = ["gpu"],
     shard_count = {
         "gpu": 4,
