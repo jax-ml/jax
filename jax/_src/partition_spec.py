@@ -23,7 +23,7 @@ _canonicalize_partition = _jax.canonicalize_partition
 
 
 def unpickle_pspec(partitions, unreduced, reduced):
-  return PartitionSpec(*partitions, unreduced=unreduced, reduced=reduced)
+  return P(*partitions, unreduced=unreduced, reduced=reduced)
 
 def _get_ur_str(unreduced, reduced):
   if unreduced and reduced:
@@ -37,7 +37,7 @@ def _get_ur_str(unreduced, reduced):
 AxisName = Any
 
 @use_cpp_class(_jax.PartitionSpec)
-class PartitionSpec:
+class P:
   """Tuple describing how to partition an array across a mesh of devices.
 
   Each element is either ``None``, a string, or a tuple of strings.
@@ -71,10 +71,10 @@ class PartitionSpec:
   def __repr__(self):
     pr = repr(self._partitions)[1:-1]
     if not self.unreduced and not self.reduced:
-      return f"PartitionSpec({pr})"
+      return f"P({pr})"
     ur_str = _get_ur_str(self.unreduced, self.reduced)
     pr = '' if not pr else f"{pr} " if pr.endswith(',') else f"{pr}, "
-    return (f"PartitionSpec({pr}{ur_str})")
+    return (f"P({pr}{ur_str})")
 
   def __reduce__(self):
     return (unpickle_pspec, (self._partitions, self.unreduced, self.reduced))
@@ -90,7 +90,7 @@ class PartitionSpec:
 
   @use_cpp_method()
   def __eq__(self, other):
-    if isinstance(other, PartitionSpec):
+    if isinstance(other, P):
       return (self._partitions == other._partitions and
               self.unreduced == other.unreduced and
               self.reduced == other.reduced)
@@ -113,11 +113,9 @@ class PartitionSpec:
     return hash((self._partitions, self.unreduced, self.reduced))
 
   def __add__(self, other):
-    if isinstance(other, PartitionSpec):
-      return PartitionSpec(
-          *self, *other,
-          unreduced={*self.unreduced, *other.unreduced},
-          reduced={*self.reduced, *other.reduced})
+    if isinstance(other, P):
+      return P(*self, *other, unreduced={*self.unreduced, *other.unreduced},
+               reduced={*self.reduced, *other.reduced})
     elif isinstance(other, tuple):
       if self.unreduced:
         raise TypeError(
@@ -127,7 +125,7 @@ class PartitionSpec:
         raise TypeError(
             f"other {other} cannot be of instance `tuple` when self {self} has"
             " reduced in `__add__` of PartitionSpec.")
-      return PartitionSpec(*self, *other)
+      return P(*self, *other)
     else:
       raise NotImplementedError
 
@@ -143,7 +141,7 @@ class PartitionSpec:
       raise TypeError(
           f"other {other} cannot be of instance `tuple` when self {self} has"
           " reduced in `__radd__` of PartitionSpec.")
-    return PartitionSpec(*other, *self)
+    return P(*other, *self)
 
   def index(self, value):
     return self._partitions.index(_canonicalize_partition(value))
@@ -152,11 +150,11 @@ class PartitionSpec:
     return self._partitions.count(_canonicalize_partition(value))
 
   def update(self, **kwargs):
-    return PartitionSpec(*kwargs.pop("partitions", self._partitions),
-                         unreduced=kwargs.pop("unreduced", self.unreduced),
-                         reduced=kwargs.pop("reduced", self.reduced))
+    return P(*kwargs.pop("partitions", self._partitions),
+             unreduced=kwargs.pop("unreduced", self.unreduced),
+             reduced=kwargs.pop("reduced", self.reduced))
 
-  def _normalized_spec_for_aval(self, ndim: int) -> PartitionSpec:
+  def _normalized_spec_for_aval(self, ndim: int) -> P:
     out = [None if p is _UNCONSTRAINED_PARTITION else p
            for p in self._partitions]
     if len(out) < ndim:
@@ -172,6 +170,6 @@ class PartitionSpec:
           f"{len(self._partitions)}, but was applied to a value of rank "
           f"{len(shape)}.{extra_msg}")
 
-PartitionSpec.__module__ = 'jax.sharding'
+P.__module__ = 'jax.sharding'
 
-P = PartitionSpec
+PartitionSpec = P

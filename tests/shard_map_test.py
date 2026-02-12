@@ -1536,7 +1536,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        r".*out_specs is PartitionSpec\('x',\) which implies that the.*"
+        r".*out_specs is P\('x',\) which implies that the.*"
         r' output value is only varying across mesh axes \{x\} and not \{y,z\},'
         r' but it was inferred to be possibly varying over \{x,y,z\}.*'):
       f(np.arange(16).reshape(4, 2, 2))

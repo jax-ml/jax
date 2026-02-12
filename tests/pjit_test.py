@@ -1107,7 +1107,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       with self.assertRaisesRegex(
           ValueError,
           r"One of with_sharding_constraint.*Sharding "
-          r"NamedSharding.*PartitionSpec\(None, 'mdl', None, None\).*\) is only "
+          r"NamedSharding.*P\(None, 'mdl', None, None\).*\) is only "
           "valid for values of rank at least 4, but was applied to a value of rank 1"):
         pjit_f(jnp.array([1, 2, 3]))
 
@@ -7363,7 +7363,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   def test_wsc_error(self, mesh):
     with self.assertRaisesRegex(
         ValueError,
-        'PartitionSpec.*cannot contain `P.UNCONSTRAINED` when no mesh'
+        'P.*cannot contain `P.UNCONSTRAINED` when no mesh'
         ' axis_types are `Auto`'):
       NamedSharding(mesh, P(P.UNCONSTRAINED))
 

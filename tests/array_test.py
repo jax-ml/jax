@@ -1007,7 +1007,7 @@ class ShardingTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        r"Sharding NamedSharding.*PartitionSpec\(None, 'mdl', None, None\).*\)"
+        r"Sharding NamedSharding.*P\(None, 'mdl', None, None\).*\)"
         ' is only valid for values of rank at least 4, but was applied to a'
         ' value of rank 2'):
       mps.check_compatible_aval(shape)
@@ -1460,11 +1460,11 @@ class ShardingTest(jtu.JaxTestCase):
     pspec = P('a', 'b', None, unreduced={'c'}, reduced={'d'})
     self.assertEqual(
         repr(pspec),
-        "PartitionSpec('a', 'b', None, unreduced={'c'}, reduced={'d'})")
+        "P('a', 'b', None, unreduced={'c'}, reduced={'d'})")
 
     pspec1 = P('a', 'b', None, unreduced={'c'})
     self.assertEqual(repr(pspec1),
-                     "PartitionSpec('a', 'b', None, unreduced={'c'})")
+                     "P('a', 'b', None, unreduced={'c'})")
 
     pspec2 = P('a', 'b', None, unreduced={'c'})
     self.assertEqual(pspec1, pspec2)
@@ -1477,17 +1477,17 @@ class ShardingTest(jtu.JaxTestCase):
 
     pspec4 = P('x', unreduced={'y'})
     self.assertEqual(repr(pspec4),
-                     "PartitionSpec('x', unreduced={'y'})")
+                     "P('x', unreduced={'y'})")
 
     pspec5 = P(None, None, unreduced={'x'})
     self.assertEqual(repr(pspec5),
-                     "PartitionSpec(None, None, unreduced={'x'})")
+                     "P(None, None, unreduced={'x'})")
 
     pspec6 = P(None, unreduced={'x'})
-    self.assertEqual(repr(pspec6), "PartitionSpec(None, unreduced={'x'})")
+    self.assertEqual(repr(pspec6), "P(None, unreduced={'x'})")
 
     pspec7 = P(unreduced={'x'})
-    self.assertEqual(repr(pspec7), "PartitionSpec(unreduced={'x'})")
+    self.assertEqual(repr(pspec7), "P(unreduced={'x'})")
 
     with self.assertRaisesRegex(
         TypeError, 'unreduced in `__add__` of PartitionSpec'):
