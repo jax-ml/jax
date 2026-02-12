@@ -24,10 +24,12 @@ class DeviceTest(jtu.JaxTestCase):
   def test_repr(self):
     device = jax.devices()[0]
 
-    # TODO(pobudzey): Add a test for rocm devices when available.
     if jtu.is_device_cuda():
       self.assertEqual(device.platform, 'gpu')
       self.assertEqual(repr(device), 'CudaDevice(id=0)')
+    elif jtu.is_device_rocm():
+      self.assertEqual(device.platform, 'gpu')
+      self.assertEqual(repr(device), 'RocmDevice(id=0)')
     elif jtu.test_device_matches(['tpu']):
       self.assertEqual(device.platform, 'tpu')
       self.assertEqual(
@@ -41,9 +43,10 @@ class DeviceTest(jtu.JaxTestCase):
   def test_str(self):
     device = jax.devices()[0]
 
-    # TODO(pobudzey): Add a test for rocm devices when available.
     if jtu.is_device_cuda():
       self.assertEqual(str(device), 'cuda:0')
+    elif jtu.is_device_rocm():
+      self.assertEqual(str(device), 'rocm:0')
     elif jtu.test_device_matches(['tpu']):
       self.assertEqual(str(device), 'TPU_0(process=0,(0,0,0,0))')
     elif jtu.test_device_matches(['cpu']):
