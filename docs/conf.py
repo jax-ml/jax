@@ -233,7 +233,6 @@ nb_execution_excludepatterns = [
     'jep/9407-type-promotion.*',
     # TODO(jakevdp): enable execution on the following if possible:
     'notebooks/Distributed_arrays_and_automatic_parallelization.*',
-    'notebooks/shard_map.*',  # temporary exception
     'notebooks/autodiff_remat.*',
     # Example only gives the specific output demonstrated on some platforms
     'notebooks/layout.*',
