@@ -215,12 +215,12 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
   @traceback_util.api_boundary
   def wrapped(*args):
     nonlocal mesh, axis_names
-    mesh, axis_names = _shmap_checks(
-        mesh, axis_names, in_specs, out_specs, _smap)
+    mesh, axis_names, in_specs, out_specs = _shmap_checks(
+      mesh, axis_names, in_specs, out_specs, _smap)
     fun = lu.wrap_init(
         f, debug_info=api_util.debug_info("shard_map", f, args, {}))
     args_flat, in_tree = tree_flatten(args)
-    fun, out_specs_thunk = _broadcast_out_specs(fun, out_specs, axis_names)
+    fun, out_specs_thunk = _broadcast_out_specs(fun, out_specs, axis_names, mesh)
     fun, out_tree = api_util.flatten_fun_nokwargs(fun, in_tree)
 
     try:
@@ -282,7 +282,7 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
 
 
 @lu.transformation_with_aux2
-def _broadcast_out_specs(_fun, _store, out_specs, axis_names, *args, **kwargs):
+def _broadcast_out_specs(_fun, _store, out_specs, axis_names, mesh, *args, **kwargs):
   ans = _fun(*args, **kwargs)
 
   if callable(out_specs):
@@ -292,6 +292,8 @@ def _broadcast_out_specs(_fun, _store, out_specs, axis_names, *args, **kwargs):
     out_specs_ = out_specs
 
   try:
+    # Expand any numeric specs using the mesh before broadcasting.
+    out_specs_ = _expand_numeric_specs(out_specs_, mesh)
     out_specs_flat = broadcast_prefix(out_specs_, ans)
   except ValueError:
     e, *_ = prefix_errors(out_specs_, ans)
@@ -305,6 +307,26 @@ def _axes_to_pspec(axis_name, axis):
   if axis is None:
     return P()
   return P(*[None] * axis + [axis_name])
+
+
+def _expand_numeric_specs(specs, mesh):
+  """Expand PartitionSpec leaves (or shorthand ints/tuples) that use numeric
+  indices into name-based PartitionSpec instances using `mesh`.
+  """
+  def _maybe_expand(leaf):
+    # If it's already a PartitionSpec with numeric markers, expand.
+    if isinstance(leaf, PartitionSpec):
+      if getattr(leaf, '_has_numeric', False):
+        return leaf._expand_with_mesh(mesh)
+      return leaf
+    # Accept shorthand int or tuple-of-ints as a leaf and convert.
+    if isinstance(leaf, int):
+      return PartitionSpec(leaf)._expand_with_mesh(mesh)
+    if isinstance(leaf, tuple) and any(isinstance(e, int) for e in leaf):
+      return PartitionSpec(*leaf)._expand_with_mesh(mesh)
+    return leaf
+
+  return tree_map(_maybe_expand, specs, is_leaf=lambda x: isinstance(x, (PartitionSpec, int, tuple)))
 
 
 def _shmap_checks(mesh, axis_names, in_specs, out_specs, _smap):
@@ -358,12 +380,15 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _smap):
     raise TypeError(msg)
 
   if in_specs is not Infer and in_specs is not None:
+    # Expand numeric/positional specs against the given mesh before checks.
+    in_specs = _expand_numeric_specs(in_specs, mesh)
     _check_specs(SpecErrorType.input, in_specs, axis_names)
     _check_unreduced(SpecErrorType.input, mesh, axis_names, in_specs)
   if not callable(out_specs):
+    out_specs = _expand_numeric_specs(out_specs, mesh)
     _check_specs(SpecErrorType.out, out_specs, axis_names)
     _check_unreduced(SpecErrorType.out, mesh, axis_names, out_specs)
-  return mesh, axis_names
+  return mesh, axis_names, in_specs, out_specs
 
 
 def _manual_spec(manual_axes, spec: P, mesh) -> P:

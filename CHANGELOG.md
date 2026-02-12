@@ -17,6 +17,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features:
+* New features:
+  * shard_map: Allow positional / numeric PartitionSpec entries that refer to
+    mesh axes by index. PartitionSpec now accepts integers in its entries
+    (e.g. `P(0)`, `P(0, 1)`) and a single `-1` sentinel which expands to the
+    tuple of all remaining mesh axes. This makes `shard_map` definitions that
+    use `PartitionSpec` more mesh-name-agnostic and easier to write in
+    library code. See the new documentation page `docs/partition_spec_positional.md`
+    and issue {jax-issue}`#34752` for motivation and examples.
 * Bug fixes:
 * Deprecations:
 * Changes:
