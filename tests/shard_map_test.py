@@ -5057,6 +5057,26 @@ class ShardMapTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(NameError, "Found an unbound axis name"):
       f(np.arange(8))
 
+  @parameterized.parameters(AxisType.Auto, AxisType.Explicit)
+  def test_slice_oob_shmap(self, axis_type):
+    mesh = jtu.create_mesh((2,), 'x', axis_types=(axis_type,))
+    with jax.set_mesh(mesh):
+      arr = jax.device_put(jnp.ones((32, 32)), P(None, 'x'))
+
+      def f(x):
+        return x[:, 100:116]
+
+      out = jax.jit(jax.shard_map(f, in_specs=P(None, 'x'),
+                                  out_specs=P(None, 'x')))(arr)
+      self.assertEqual(out.shape, (32, 0))
+      if axis_type == (AxisType.Explicit,):
+        self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'x')))
+
+      out = jax.jit(f)(arr)
+      self.assertEqual(out.shape, (32, 0))
+      if axis_type == (AxisType.Explicit,):
+        self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'x')))
+
 
 class FunSpec(NamedTuple):
   name: str

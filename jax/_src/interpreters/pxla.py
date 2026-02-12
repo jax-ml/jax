@@ -2920,7 +2920,7 @@ def _maybe_get_and_check_out_shardings(
       orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)  # pytype: disable=attribute-error
       # MANUAL HloSharding comes from other partitioning frameworks.
       if (not dtypes.issubdtype(aval.dtype, dtypes.extended) and
-          not xla_hlo_s.is_manual() and
+          not xla_hlo_s.is_manual() and aval.size != 0 and
           (not op_shardings.are_hlo_shardings_equal(xla_hlo_s, orig_hlo_s) or
            xla_s.memory_kind != orig.memory_kind)):  # pytype: disable=attribute-error
         raise AssertionError(
