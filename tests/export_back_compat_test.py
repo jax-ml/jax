@@ -40,6 +40,7 @@ from jax._src.internal_test_util.export_back_compat_test_data import rocm_eigh_h
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eigh_lapack_syev
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_lu_lapack_getrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_qr_cusolver_geqrf
+from jax._src.internal_test_util.export_back_compat_test_data import rocm_qr_hipsolver_geqrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_qr_lapack_geqrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_schur_lapack_gees
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_svd_lapack_gesdd
@@ -134,6 +135,7 @@ class CompatTest(bctu.CompatTestBase):
         cuda_lu_pivots_to_permutation.data_2025_04_01,
         cuda_lu_cusolver_getrf.data_2024_08_19,
         cuda_qr_cusolver_geqrf.data_2024_09_26,
+        rocm_qr_hipsolver_geqrf.data_2026_02_04,
         cuda_eigh_cusolver_syev.data_2024_09_30,
         cuda_svd_cusolver_gesvd.data_2024_10_08,
         rocm_svd_hipsolver_gesvd.data_2026_02_04,
@@ -173,7 +175,7 @@ class CompatTest(bctu.CompatTestBase):
       "__gpu$xla.gpu.triton",  # tested in pallas/export_back_compat_pallas_test.py
       # The following require ROCm to test
       "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",
-      "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi", "hipsolver_syevd_ffi",
+      "hipsolver_syevd_ffi",
       "hipsolver_potrf_ffi",
     })
     not_covered = targets_to_cover.difference(covered_targets)
@@ -422,8 +424,6 @@ class CompatTest(bctu.CompatTestBase):
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_gpu_qr_solver_geqrf(self, dtype_name="f32"):
-    if not jtu.test_device_matches(["cuda"]):
-      self.skipTest("Unsupported platform")
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
     dtype = dict(f32=np.float32, f64=np.float64,
@@ -431,7 +431,18 @@ class CompatTest(bctu.CompatTestBase):
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     shape = (2, 3, 3)
     func = lambda: CompatTest.qr_harness(shape, dtype)
-    data = self.load_testdata(cuda_qr_cusolver_geqrf.data_2024_09_26[dtype_name])
+
+    platform_data = None
+    if jtu.test_device_matches(["cuda"]):
+      platform_data = \
+          cuda_qr_cusolver_geqrf.data_2024_09_26[dtype_name]
+    elif jtu.test_device_matches(["rocm"]):
+      platform_data = \
+          rocm_qr_hipsolver_geqrf.data_2026_02_04[dtype_name]
+    else:
+      self.skipTest("Unsupported platform")
+
+    data = self.load_testdata(platform_data)
     self.run_one_test(func, data, rtol=rtol)
 
   def test_tpu_Qr(self):
