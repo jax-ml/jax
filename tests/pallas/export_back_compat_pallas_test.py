@@ -76,7 +76,7 @@ class CompatTest(bctu.CompatTestBase):
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct((128 * 2,), jnp.float32),
         grid=2,
-        backend="mosaic_gpu",
+        compiler_params=plgpu.CompilerParams(),
     )
     def add_one(x_ref, o_ref):
       o_ref[...] = x_ref[...] + 1
