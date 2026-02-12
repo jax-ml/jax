@@ -261,7 +261,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     dtype=float_types + complex_types,
     preconditioner=[None, 'identity', 'exact'],
   )
-  @jtu.skip_on_devices("gpu")
+  @jtu.skip_on_devices("cuda")
   def test_bicgstab_on_identity_system(self, shape, dtype, preconditioner):
     A = jnp.eye(shape[1], dtype=dtype)
     solution = jnp.ones(shape[1], dtype=dtype)
@@ -280,7 +280,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     dtype=float_types + complex_types,
     preconditioner=[None, 'identity', 'exact'],
   )
-  @jtu.skip_on_devices("gpu")
+  @jtu.skip_on_devices("cuda")
   def test_bicgstab_on_random_system(self, shape, dtype, preconditioner):
     rng = jtu.rand_default(self.rng())
     A = rng(shape, dtype)
@@ -367,7 +367,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     preconditioner=[None, 'identity', 'exact'],
     solve_method=['batched', 'incremental'],
   )
-  @jtu.skip_on_devices("gpu")
+  @jtu.skip_on_devices("cuda")
   def test_gmres_on_identity_system(self, shape, dtype, preconditioner,
                                     solve_method):
     A = jnp.eye(shape[1], dtype=dtype)
@@ -391,7 +391,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     preconditioner=[None, 'identity', 'exact'],
     solve_method=['incremental', 'batched'],
   )
-  @jtu.skip_on_devices("gpu")
+  @jtu.skip_on_devices("cuda")
   def test_gmres_on_random_system(self, shape, dtype, preconditioner,
                                   solve_method):
     rng = jtu.rand_default(self.rng())
