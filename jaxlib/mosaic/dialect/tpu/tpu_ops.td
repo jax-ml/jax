@@ -181,6 +181,19 @@ def TPU_MemorySpaceEnum
     let assemblyFormat = "`<` $value `>`";
 }
 
+def TPU_AssumeOpKind : I32EnumAttr<"AssumeOpKind", "Assume kind", [
+  I32EnumAttrCase<"kMultipleOf", 0, "multiple_of">,
+  I32EnumAttrCase<"kMin", 1, "min">,
+  I32EnumAttrCase<"kMax", 2, "max">
+  ]> {
+    let genSpecializedAttr = 0;
+    let cppNamespace = "::mlir::tpu";
+}
+
+def TPU_AssumeOpKindAttr : EnumAttr<TPU_Dialect, TPU_AssumeOpKind, "assume_op_kind"> {
+    let assemblyFormat = "`<` $value `>`";
+}
+
 class TPU_Op<string mnemonic, list<Trait> traits = []> :
     Op<TPU_Dialect, mnemonic, traits> {
 }
@@ -1083,6 +1096,35 @@ def TPU_AssumeMultipleOp : TPU_Op<"assume_multiple", [Pure, SameOperandsAndResul
   );
   let results = (outs AnyTypeOf<[Index, AnyInteger]>:$result);
   let assemblyFormat = [{$value `,` $multiple attr-dict `:` type($result)}];
+  let hasVerifier = 1;
+}
+
+def TPU_AssumeOp : TPU_Op<"assume", [Pure, SameOperandsAndResultType]> {
+  let summary = "Assumes that a value satisfies a property, such as being less than or equal to a given value.";
+  let description = [{
+    This operation is a hint to the compiler that the input `value` is guaranteed
+    to be of a given property, such as being less than or equal to a given value.
+    This can be used to satisfy the inequality checks in some compiler passes.
+
+    The result is the same as the input `value`.
+
+    Currently the supported properties are:
+    - `kind == TPU_AssumeOpKindAttr::kMultipleOf`, `value` is a multiple of `target`
+    - `kind == TPU_AssumeOpKindAttr::kMax`, `value` is at most `target`
+    - `kind == TPU_AssumeOpKindAttr::kMin`, `value` is at least `target`
+
+    Example:
+    ```mlir
+    %val = tpu.assume %kind, %value, 16 : index
+    ```
+  }];
+  let arguments = (ins
+    TPU_AssumeOpKindAttr:$kind,
+    AnyTypeOf<[Index, AnyInteger]>:$value,
+    SI64Attr:$target
+  );
+  let results = (outs AnyTypeOf<[Index, AnyInteger]>:$result);
+  let assemblyFormat = [{$kind `,` $value `,` $target attr-dict `:` type($value) `->` type($result)}];
   let hasVerifier = 1;
 }
 
