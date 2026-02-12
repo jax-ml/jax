@@ -19,6 +19,7 @@ from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import math
+import operator
 from typing import Any, Protocol, Union
 
 from jax._src import core
@@ -116,6 +117,9 @@ class BitcastTransform(Transform):
       case _:
         raise TypeError(f"Cannot bitcast {x} to {self.dtype}")
 
+  def undo(self, x: core.AbstractValue) -> Transform:
+    raise NotImplementedError(type(self))
+
   def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
     del context  # Unused.
     return pp.text(f"{{bitcast({self.dtype})}}")
@@ -167,6 +171,9 @@ class ReshapeTransform(Transform):
         return x.update(shape=self.shape)
       case _:
         raise TypeError(f"Cannot reshape {x} to {self.shape}")
+
+  def undo(self, x: core.AbstractValue) -> Transform:
+    raise NotImplementedError(type(self))
 
   def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
     del context  # Unused.
@@ -281,7 +288,8 @@ class TransformedRef:
       )
     if len(shape) == 1 and isinstance(shape[0], tuple):
       shape = shape[0]
-    shape = _canonicalize_reshape(self.shape, shape)
+    input_shape = tuple(operator.index(s) for s in self.shape)
+    shape = _canonicalize_reshape(input_shape, shape)
     return TransformedRef(self.ref, (*self.transforms, ReshapeTransform(shape)))
 
   def transpose(self, permutation: Sequence[int]):
@@ -366,7 +374,7 @@ class AbstractRef(core.AbstractValue):
   def update_weak_type(self, weak_type):
     return self.update(inner_aval=self.inner_aval.update_weak_type(weak_type))
 
-  def update(self, inner_aval=None, memory_space=None, kind=None):
+  def update(self, inner_aval=None, memory_space=None, kind=None):  # pyrefly: ignore[bad-override]
     inner_aval = self.inner_aval if inner_aval is None else inner_aval
     memory_space = self.memory_space if memory_space is None else memory_space
     kind = self.kind if kind is None else kind
@@ -384,7 +392,7 @@ class AbstractRef(core.AbstractValue):
   @property
   def shape(self):
     try:
-      return self.inner_aval.shape  # pytype: disable=attribute-error
+      return self.inner_aval.shape  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
           f"{self!r} has no `shape`."
@@ -393,7 +401,7 @@ class AbstractRef(core.AbstractValue):
   @property
   def dtype(self):
     try:
-      return self.inner_aval.dtype  # pytype: disable=attribute-error
+      return self.inner_aval.dtype  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
           f"{self!r} has no `dtype`."
@@ -402,7 +410,7 @@ class AbstractRef(core.AbstractValue):
   @property
   def sharding(self):
     try:
-      return self.inner_aval.sharding  # pytype: disable=attribute-error
+      return self.inner_aval.sharding  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
           f"{self!r} has no `sharding`."
@@ -411,7 +419,7 @@ class AbstractRef(core.AbstractValue):
   @property
   def vma(self):
     try:
-      return self.inner_aval.vma  # pytype: disable=attribute-error
+      return self.inner_aval.vma  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
           f"{self!r} has no `vma`."

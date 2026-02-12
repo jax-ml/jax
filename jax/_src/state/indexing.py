@@ -397,7 +397,7 @@ class DShapedArray:
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return core.str_short_aval(
-        self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,
+        self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,  # pyrefly: ignore[missing-attribute]
         self.vma, self.memory_space, short_dtypes, mesh_axis_types)
 
   def _len(self, ignored_tracer):

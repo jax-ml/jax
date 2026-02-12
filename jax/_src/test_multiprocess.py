@@ -158,7 +158,7 @@ def _main(argv, shard_main):
   if MULTIPROCESS_TEST_WORKER_ID.value >= 0:
     local_device_ids = _DEVICE_IDS.value
     if local_device_ids is not None:
-      local_device_ids = map(int, local_device_ids)
+      local_device_ids = [int(device_id) for device_id in local_device_ids]
     distributed.initialize(
         _MULTIPROCESS_TEST_CONTROLLER_ADDRESS.value,
         num_processes=num_processes,
@@ -181,7 +181,8 @@ def _main(argv, shard_main):
   tpu_chips_per_process = _TPU_CHIPS_PER_PROCESS.value
   num_tpu_chips = num_processes * tpu_chips_per_process
   if num_tpu_chips == 0:
-    pass
+    tpu_host_bounds = ""
+    tpu_chips_per_host_bounds = ""
   elif num_tpu_chips == 1:
     assert tpu_chips_per_process == 1
     tpu_host_bounds = "1,1,1"
@@ -430,6 +431,8 @@ class MultiProcessTest(parameterized.TestCase):
     )
     # Make sure all processes are at the same test case.
     client = distributed.global_state.client
+    if client is None:
+      raise TypeError("client cannot be None")
     try:
       client.wait_at_barrier(
           f"{self._testMethodName}_start", _BARRIER_TIMEOUT.value * 1000)
@@ -446,6 +449,8 @@ class MultiProcessTest(parameterized.TestCase):
   def tearDown(self):
     """End tests together."""
     client = distributed.global_state.client
+    if client is None:
+      raise TypeError("client cannot be None")
     # Ensure a shared fate for tests where a subset of processes run different
     # test assertions (i.e. some processes may pass and some processes fail -
     # but the overall test should fail).

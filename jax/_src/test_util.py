@@ -498,8 +498,8 @@ def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
   return expected_version in device_kind
 
 def pattern_search(patterns: str | Sequence[str], string: str):
-  if not isinstance(patterns, tuple):
-    patterns = (patterns,)  # type: ignore
+  if isinstance(patterns, str):
+    patterns = (patterns,)
 
   for pattern in patterns:
     if re.search(pattern, string):
@@ -556,6 +556,7 @@ _SMEM_SIZE_BOUND_FOR_TESTS = 99 * 1024
 
 class CudaArchSpecificTest:
   """A mixin with methods allowing to skip arch specific tests."""
+  skipTest: Callable[[str], Any]  # must be provided via inheritance
 
   def skip_unless_sm90a(self):
     if not is_cuda_compute_capability_equal("9.0"):
@@ -596,7 +597,7 @@ def test_device_matches(device_types: Iterable[str]) -> bool:
       return True
   return False
 
-test_device_matches.__test__ = False  # This isn't a test case, pytest.
+test_device_matches.__test__ = False  # This isn't a test case, pytest.  # pyrefly: ignore[missing-attribute]
 
 def _device_filter(predicate, skip_reason=None):
   def skip(test_method):
@@ -1412,7 +1413,7 @@ class JaxTestCase(parameterized.TestCase):
   # thread-safe warning utilities. Unlike the unittest versions these only
   # function as context managers.
   @contextmanager
-  def assertWarns(self, warning, *, msg=None):
+  def assertWarns(self, warning, *, msg=None):  # pyrefly: ignore[bad-override]
     with test_warning_util.record_warnings() as ws:
       yield
     for w in ws:
@@ -1425,7 +1426,7 @@ class JaxTestCase(parameterized.TestCase):
               f"{ws}")
 
   @contextmanager
-  def assertWarnsRegex(self, warning, regex):
+  def assertWarnsRegex(self, warning, regex):  # pyrefly: ignore[bad-override]
     if regex is not None and not isinstance(regex, re.Pattern):
         regex = re.compile(regex)
 
@@ -1524,9 +1525,9 @@ class JaxTestCase(parameterized.TestCase):
                        compilation_count())
 
 _PJIT_IMPLEMENTATION = api.jit
-_PJIT_IMPLEMENTATION._name = "jit"
+_PJIT_IMPLEMENTATION._name = "jit"  # pyrefly: ignore[missing-attribute]
 _NOOP_JIT_IMPLEMENTATION = lambda x, *args, **kwargs: x
-_NOOP_JIT_IMPLEMENTATION._name = "noop"
+_NOOP_JIT_IMPLEMENTATION._name = "noop"  # pyrefly: ignore[missing-attribute]
 
 JIT_IMPLEMENTATION = (
   _PJIT_IMPLEMENTATION,

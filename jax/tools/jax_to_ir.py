@@ -195,12 +195,17 @@ def main(argv):
     raise app.Error('At least one of --ir_dest and '
                     '--ir_human_dest is required.')
 
-  module_name, fn_name = _FN.value.rsplit('.', 1)
+  raw_input_shapes = _INPUT_SHAPES.value
+  raw_fn_name = _FN.value
+  assert raw_input_shapes is not None  # required by set_up_flags
+  assert raw_fn_name is not None  # required by set_up_flags
+
+  module_name, fn_name = raw_fn_name.rsplit('.', 1)
   module = importlib.import_module(module_name)
   fn = getattr(module, fn_name)
 
   input_shapes = [(name, parse_shape_str(shape_str))
-                  for name, shape_str in literal_eval(_INPUT_SHAPES.value)]
+                  for name, shape_str in literal_eval(raw_input_shapes)]
 
   # Parse --constants and --evaled_constants.
   constants = {}
