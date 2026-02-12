@@ -855,6 +855,74 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     # Each block gets the same data and writes it out.
     np.testing.assert_array_equal(y, jnp.stack([x, x], axis=0))
 
+  @parameterized.parameters(
+      jnp.float16, jnp.bfloat16, jnp.float32, jnp.float64,
+  )
+  def test_padded_tma_load_compute_store(self, dtype):
+    self.skip_if_wg_semantics()
+    tensor_size = 100
+    tile_size = 128
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((tensor_size,), dtype),
+        in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        scratch_shapes=[
+            plgpu.SMEM((tile_size,), dtype),
+            plgpu.Barrier(),
+        ],
+        grid=(1,),
+    )
+    def kernel(x_ref_gmem, o_ref_gmem, smem_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(
+          x_ref_gmem.at[pl.ds(0, tile_size)],
+          smem_ref,
+          barrier_ref,
+      )
+      plgpu.barrier_wait(barrier_ref)
+      smem_ref[...] = smem_ref[...] + 1
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(
+          smem_ref,
+          o_ref_gmem.at[pl.ds(0, tile_size)],
+      )
+      plgpu.wait_smem_to_gmem(0)
+
+    with jax.enable_x64(dtype == jnp.float64):
+      x = jnp.arange(tensor_size, dtype=dtype)
+      np.testing.assert_array_equal(kernel(x), x + 1)
+
+  @parameterized.parameters(
+      jnp.float16, jnp.bfloat16, jnp.float32, jnp.float64,
+  )
+  def test_padded_tma_emit_pipeline(self, dtype):
+    self.skip_if_wg_semantics()
+    tensor_size = 100
+    tile_size = 128
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((tensor_size,), dtype),
+        in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+    )
+    def kernel(x_gmem, o_gmem):
+      def body(_, x_smem, o_smem):
+        o_smem[...] = x_smem[...] + 1
+
+      plgpu.emit_pipeline(
+          body,
+          in_specs=[plgpu.BlockSpec((tile_size,), lambda i: (i,))],
+          out_specs=[plgpu.BlockSpec((tile_size,), lambda i: (i,))],
+          grid=(1,),
+          max_concurrent_steps=1,
+      )(x_gmem, o_gmem)
+
+    with jax.enable_x64(dtype == jnp.float64):
+      x = jnp.arange(tensor_size, dtype=dtype)
+      np.testing.assert_array_equal(kernel(x), x + 1)
+
   @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
   def test_async_prefetch(self, indexer):
 
