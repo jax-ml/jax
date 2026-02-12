@@ -210,7 +210,12 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   args_avals = args.map(core.get_aval)
   init_avals, xs_avals = args_avals.unpack()
 
-  length = _infer_scan_length(list(xs), list(xs_avals), length)
+  from jax._src.hijax import HiType  # type: ignore
+  if any(isinstance(a, HiType) for a in xs_avals):
+    if length is None:
+      raise ValueError("must provide `length` to `scan`")
+  else:
+    length = _infer_scan_length(list(xs), list(xs_avals), length)
 
   if config.disable_jit.value:
     if length == 0:
