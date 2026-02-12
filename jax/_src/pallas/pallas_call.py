@@ -121,8 +121,7 @@ def _pallas_call_abstract_eval(
   out_avals = [avals[outin_aliases[out_idx]] if out_idx in outin_aliases else a
                for out_idx, a in enumerate(out_avals)]
   # Make sure we don't return ShapedArrayWithMemorySpace to the outside world.
-  out_avals = [jax_core.ShapedArray(a.shape, a.dtype, a.weak_type,
-                                    sharding=a.sharding)
+  out_avals = [a.unwrap()
                if isinstance(a, pallas_core.ShapedArrayWithMemorySpace) else a
                for a in out_avals]
 
@@ -1198,35 +1197,6 @@ def _pallas_call_typecheck_rule(ctx_factory, *in_atoms, grid_mapping, **params):
     )
 jax_core.custom_typechecks[pallas_call_p] = _pallas_call_typecheck_rule
 
-def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
-  match out_shape:
-    case jax_core.ShapeDtypeStruct():
-      if config._check_vma.value:
-        if out_shape.vma is None:
-          raise ValueError(
-              "When `check_vma=True` on `jax.shard_map`, `vma` on"
-              " `jax.ShapeDtypeStruct` must not be `None`. Please specify how the"
-              " output should be varying across mesh axes using the `vma`"
-              " argument of `jax.ShapeDtypeStruct` or set `check_vma=False` on"
-              " `jax.shard_map`.")
-        return jax_core.ShapedArray(
-            shape=out_shape.shape, dtype=out_shape.dtype,
-            sharding=jax_core.get_cur_mesh_sharding(), vma=out_shape.vma)
-      return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype,
-                                  sharding=jax_core.get_cur_mesh_sharding())
-    case pallas_core.MemoryRef():
-      return out_shape.get_array_aval()
-    case hijax.HiType():
-      return out_shape
-    case _:
-      if type(out_shape) in pallas_core._out_shape_to_aval_mapping:
-        return pallas_core._out_shape_to_aval_mapping[type(out_shape)](
-            out_shape
-        )
-      if not (hasattr(out_shape, "shape") and hasattr(out_shape, "dtype")):
-        raise ValueError(f"Invalid out_shape type: {type(out_shape)}")
-      return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype)
-
 
 @state_discharge.register_discharge_rule(pallas_call_p)
 def _pallas_call_state_discharge_rule(
@@ -1526,8 +1496,9 @@ def _pallas_call(
     in_paths, flat_args = unzip2(flat_args_with_paths)
     flat_in_avals = tuple(jax_core.get_aval(a) for a in flat_args)
 
-    flat_out_avals = tuple(_convert_out_shape_to_aval(v)
-                           for v in flat_out_shapes)
+    flat_out_avals = tuple(
+        pallas_core._convert_out_shape_to_aval(v) for v in flat_out_shapes
+    )
 
     in_origins = tuple(f"args{tree_util.keystr(p)}" for p in in_paths)
     out_origins = tuple(f"outputs{tree_util.keystr(p)}" for p in out_paths)
