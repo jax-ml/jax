@@ -52,6 +52,7 @@ from jax._src.internal_test_util.export_back_compat_test_data import cuda_threef
 from jax._src.internal_test_util.export_back_compat_test_data import rocm_threefry2x32
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_pivots_to_permutation
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_cusolver_getrf
+from jax._src.internal_test_util.export_back_compat_test_data import rocm_lu_rocsolver_getrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_svd_cusolver_gesvd
 from jax._src.internal_test_util.export_back_compat_test_data import rocm_svd_hipsolver_gesvd
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_tridiagonal_cusolver_sytrd
@@ -137,6 +138,7 @@ class CompatTest(bctu.CompatTestBase):
         rocm_threefry2x32.data_2026_02_05,
         cuda_lu_pivots_to_permutation.data_2025_04_01,
         cuda_lu_cusolver_getrf.data_2024_08_19,
+        rocm_lu_rocsolver_getrf.data_2026_02_04,
         cuda_qr_cusolver_geqrf.data_2024_09_26,
         rocm_qr_hipsolver_geqrf.data_2026_02_04,
         cuda_eigh_cusolver_syev.data_2024_09_30,
@@ -402,6 +404,23 @@ class CompatTest(bctu.CompatTestBase):
     func = lambda: CompatTest.lu_harness(shape, dtype)
     data = self.load_testdata(cuda_lu_cusolver_getrf.data_2024_08_19[dtype_name])
     self.run_one_test(func, data)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}",
+           dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128"))
+  def test_rocm_lu_rocsolver_getrf(self, dtype_name:str):
+    if not jtu.test_device_matches(["rocm"]):
+      self.skipTest("ROCm only test")
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+    dtype = dict(f32=np.float32, f64=np.float64,
+                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    shape = (3, 4)
+    func = lambda: CompatTest.lu_harness(shape, dtype)
+    data = self.load_testdata(rocm_lu_rocsolver_getrf.data_2026_02_04[dtype_name])
+    self.run_one_test(func, data)
+
 
   @staticmethod
   def qr_harness(shape, dtype):
