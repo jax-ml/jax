@@ -330,6 +330,7 @@ class PmapSharding(jsharding.Sharding):
   def shard_shape(self, global_shape: Shape) -> Shape:
     sharded_dim = None
     sharded_dim_size = None
+    sharded_shape = global_shape
     for i, s in enumerate(self.sharding_spec.sharding):
       if isinstance(s, sharding_specs.Unstacked):
         sharded_dim = i

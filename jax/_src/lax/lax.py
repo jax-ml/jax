@@ -6113,7 +6113,7 @@ def _ragged_dot_general_transpose_rule(
             np.take(x_contract, np.argsort(y_contract))
         )
         unsorted_axes = list(x_batch) + x_kept + x_contract_sorted_by_y
-      case RaggedDotMode.RAGGED_CONTRACTING | RaggedDotMode.RAGGED_BATCH:
+      case RaggedDotMode.RAGGED_CONTRACTING | RaggedDotMode.RAGGED_BATCH | _:
         raise unimplemented('grad_x_dims', mode)
     return dims, unsorted_axes  # pytype: disable=name-error
 
@@ -6132,7 +6132,7 @@ def _ragged_dot_general_transpose_rule(
         unsorted_axes = (
             list(y_group) + list(y_batch) + y_contract_sorted_by_x + y_kept
         )
-      case RaggedDotMode.RAGGED_CONTRACTING | RaggedDotMode.RAGGED_BATCH:
+      case RaggedDotMode.RAGGED_CONTRACTING | RaggedDotMode.RAGGED_BATCH | _:
         raise unimplemented('grad_y_dims', mode)
     return dims, unsorted_axes  # pytype: disable=name-error
 

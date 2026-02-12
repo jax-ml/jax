@@ -1802,6 +1802,7 @@ def _cpp_pmap(
     )
 
     execute: Callable | None = None
+    const_args = []
     with core.take_current_trace() as trace:
       try:
         if isinstance(trace, core.EvalTrace):

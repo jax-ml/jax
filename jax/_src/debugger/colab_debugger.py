@@ -141,13 +141,12 @@ class FramePreview(colab_lib.DynamicDOMElement):
         try:
           with open(filename) as fp:
             self._file_cache[filename] = fp.read()
-          source = self._file_cache[filename]
-          highlight = lineno
-          linenostart = 1
         except FileNotFoundError:
-          source = "\n".join(frame.source)
-          highlight = min(frame.offset + 1, len(frame.source) - 1)
-          linenostart = lineno - frame.offset
+          pass
+    if filename in self._file_cache:
+      source = self._file_cache[filename]
+      highlight = lineno
+      linenostart = 1
     else:
       source = "\n".join(frame.source)
       highlight = min(frame.offset + 1, len(frame.source) - 1)

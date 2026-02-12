@@ -170,7 +170,8 @@ def _run_python_pjit(p, args_flat, fun: Callable, args, kwargs):
     if getattr(fun, '_apply_primitive', False):
       raise FloatingPointError(
           f"invalid value ({e.ty}) encountered in {fun.__qualname__}") from None
-    api_util.maybe_recursive_nan_check(e, fun, args, kwargs)
+    api_util.maybe_recursive_nan_check(e, fun, args, kwargs)  # should always raise.
+    raise RuntimeError("Internal error") from e  # fall-back error to be safe.
 
   outs = tree_unflatten(p.out_tree, out_flat)
   return (outs, out_flat, p.out_tree, args_flat,
