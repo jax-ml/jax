@@ -622,17 +622,7 @@ def skip_on_devices(*disabled_devices, skip_reason=None):
     skip_reason: Optional custom skip message when test is skipped.
   """
   if skip_reason is None:
-    skip_messages = {
-      ("gpu",): "Skipped on all GPUs.",
-      ("cpu",): "Skipped on CPU.",
-      ("tpu",): "Skipped on TPU.",
-      ("cuda",): "Skipped on CUDA GPUs.",
-      ("rocm",): "Skipped on ROCm GPUs.",
-    }
-    skip_reason = skip_messages.get(disabled_devices)
-    if skip_reason is None:
-      skip_reason = "Skipped on devices with tags: " + ", ".join(map(str, disabled_devices))
-
+    skip_reason = "Skipped on devices with tags: " + ", ".join(disabled_devices)
   return _device_filter(lambda: not test_device_matches(disabled_devices), skip_reason)
 
 def run_on_devices(*enabled_devices, skip_reason=None):
@@ -643,17 +633,9 @@ def run_on_devices(*enabled_devices, skip_reason=None):
     skip_reason: Optional custom skip message when test is skipped.
   """
   if skip_reason is None:
-    device_specific_skip_reasons = {
-        ("cpu",): "Skipped: CPU-only test.",
-        ("tpu",): "Skipped: TPU-only test.",
-        ("gpu",): "Skipped: GPU-only test.",
-        ("rocm",): "Skipped: ROCm-only test.",
-        ("cuda",): "Skipped: CUDA-only test.",
-    }
-    skip_reason = device_specific_skip_reasons.get(enabled_devices)
-    if skip_reason is None:
-      skip_reason = "Skipped unless running on devices with tags: " + ", ".join(map(str, enabled_devices))
-
+    skip_reason = (
+      "Skipped unless running on devices with tags: " + ", ".join(enabled_devices)
+    )
   return _device_filter(lambda: test_device_matches(enabled_devices), skip_reason)
 
 def device_supports_buffer_donation():
