@@ -1163,7 +1163,8 @@ def get_grid_mapping(
     dim_check : Any = jax_core.is_constant_dim  # type: ignore[no-redef]
   assert all(i is None or dim_check(i) for i in grid_spec.grid)
   grid_mapping_grid = tuple(
-      dynamic_grid_dim if d is None else d for d in grid_spec.grid
+      dynamic_grid_dim if (d is None or not jax_core.is_constant_dim(d)) else d
+      for d in grid_spec.grid
   )
   # The inputs for the index maps
   index_map_avals = (
