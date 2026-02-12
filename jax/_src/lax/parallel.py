@@ -746,7 +746,7 @@ def axis_index(axis_name: AxisName) -> Array:
 
   For example, with 8 XLA devices available:
 
-  >>> mesh = jax.make_mesh((8,), 'i', axis_types=(jax.sharding.AxisType.Explicit,))
+  >>> mesh = jax.make_mesh((8,), 'i')
   >>> @jax.shard_map(mesh=mesh, in_specs=(), out_specs=jax.P('i'))
   ... def f():
   ...   return lax.axis_index('i')[None]
@@ -754,8 +754,7 @@ def axis_index(axis_name: AxisName) -> Array:
   >>> f()
   Array([0, 1, 2, 3, 4, 5, 6, 7], dtype=int32)
 
-  >>> mesh = jax.make_mesh((4, 2), ('i', 'j'),
-  ...                       axis_types=(jax.sharding.AxisType.Explicit,) * 2)
+  >>> mesh = jax.make_mesh((4, 2), ('i', 'j'))
   >>> @jax.shard_map(mesh=mesh, in_specs=(), out_specs=jax.P('i', 'j'))
   ... def f():
   ...   return lax.axis_index(('i', 'j'))[None, None]
@@ -788,21 +787,20 @@ def axis_size(axis_name: AxisName) -> int:
 
   For example, with 8 XLA devices available:
 
-  >>> mesh = jax.make_mesh((8,), 'i', axis_types=(jax.sharding.AxisType.Explicit,))
+  >>> mesh = jax.make_mesh((8,), 'i')
   >>> @jax.shard_map(mesh=mesh, in_specs=jax.P('i'), out_specs=jax.P())
   ... def f(_):
   ...   return lax.axis_size('i')
   ...
-  >>> f(jnp.zeros(16))
+  >>> f(jax.device_put(jnp.zeros(16), jax.NamedSharding(mesh, P('i'))))
   Array(8, dtype=int32, weak_type=True)
 
-  >>> mesh = jax.make_mesh((4, 2), ('i', 'j'),
-  ...                       axis_types=(jax.sharding.AxisType.Explicit,) * 2)
+  >>> mesh = jax.make_mesh((4, 2), ('i', 'j'))
   >>> @jax.shard_map(mesh=mesh, in_specs=jax.P('i', 'j'), out_specs=jax.P())
   ... def f(_):
   ...   return lax.axis_size(('i', 'j'))
   ...
-  >>> f(jnp.zeros((16, 8)))
+  >>> f(jax.device_put(jnp.zeros((16, 8)), jax.NamedSharding(mesh, P('i', 'j'))))
   Array(8, dtype=int32, weak_type=True)
   """
   return _axis_size(axis_name)
