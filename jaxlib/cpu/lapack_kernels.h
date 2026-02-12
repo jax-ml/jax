@@ -400,8 +400,8 @@ struct EigenvalueDecompositionHermitian {
 // eigenvectors and complex conjugate pairs. This helper unpacks the
 // representation into regular complex matrices.
 template <typename T, typename Int = lapack_int>
-static void UnpackEigenvectors(Int n, const T* eigenvals_imag, const T* packed,
-                               std::complex<T>* unpacked) {
+void UnpackEigenvectors(Int n, const T* eigenvals_imag, const T* packed,
+                        std::complex<T>* unpacked) {
   for (int j = 0; j < n;) {
     if (eigenvals_imag[j] == 0. || std::isnan(eigenvals_imag[j])) {
       // Real values in each row without imaginary part

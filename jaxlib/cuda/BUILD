@@ -32,10 +32,10 @@ package(
 
 cc_library(
     name = "cuda_vendor",
-    hdrs = [
+    defines = ["JAX_GPU_CUDA=1"],
+    textual_hdrs = [
         "//jaxlib/gpu:vendor.h",
     ],
-    defines = ["JAX_GPU_CUDA=1"],
     visibility = ["//visibility:public"],
     deps = [
         "@local_config_cuda//cuda:cuda_headers",

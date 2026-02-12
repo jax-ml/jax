@@ -32,10 +32,10 @@ package(
 
 cc_library(
     name = "hip_vendor",
-    hdrs = [
+    defines = ["JAX_GPU_HIP=1"],
+    textual_hdrs = [
         "//jaxlib/gpu:vendor.h",
     ],
-    defines = ["JAX_GPU_HIP=1"],
     deps = [
         "@local_config_rocm//rocm:rocm_headers",
     ],
