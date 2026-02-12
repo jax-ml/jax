@@ -5347,6 +5347,16 @@ class APITest(jtu.JaxTestCase):
 
     f(jnp.arange(2.))
 
+  def test_disallowed_bf16_reductions(self):
+    x = jnp.ones(3, 'bfloat16')
+    jax.lax.reduce_sum(x, [0])  # allowed by default
+    with jax.allow_f16_reductions(False):
+      with self.assertRaisesRegex(ValueError, "not allowed"):
+        jax.lax.reduce_sum(x, [0])
+    x = jnp.ones((1, 3), 'bfloat16')
+    with jax.allow_f16_reductions(False):
+      jax.lax.reduce_sum(x, [0])  # allowed on singleton axes
+
 
 class RematTest(jtu.JaxTestCase):
 
