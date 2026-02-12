@@ -20,6 +20,7 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import array
+from jax._src import sharding_impls
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
 import jax.numpy as jnp
@@ -55,7 +56,7 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
     if jax.config.jax_pmap_shmap_merge:
       self.assertIsInstance(out.sharding, jax.sharding.NamedSharding)
     else:
-      self.assertIsInstance(out.sharding, jax.sharding.PmapSharding)
+      self.assertIsInstance(out.sharding, sharding_impls.PmapSharding)
     np.testing.assert_array_equal(
         out, np.array([expected_out.sum(axis=0)] * len(devices)))
 
@@ -79,7 +80,7 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
     n = jax.local_device_count()
     shape = (n, 1) if sharded_dim == 0 else (1, n)
 
-    ps = jax.sharding.PmapSharding.default(shape, sharded_dim)
+    ps = sharding_impls.PmapSharding.default(shape, sharded_dim)
     inp = jnp.arange(np.prod(shape)).reshape(shape)
     compiled = jax.pmap(lambda x: x, in_axes=sharded_dim).lower(inp).compile()
     pmap_in_sharding, = compiled._executable.unsafe_call.in_handler.in_shardings

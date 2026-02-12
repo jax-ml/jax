@@ -2899,7 +2899,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.skipTest("Test does not raise under pmap_shmap_merge=True")
 
     pmap_out = jax.pmap(lambda x: x)(jnp.arange(jax.device_count()))
-    self.assertIsInstance(pmap_out.sharding, jax.sharding.PmapSharding)
+    self.assertIsInstance(pmap_out.sharding, sharding_impls.PmapSharding)
 
     with self.assertRaisesRegex(
         ValueError,
@@ -2917,7 +2917,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     if config.pmap_shmap_merge.value:
       self.assertIsInstance(pmap_out.sharding, jax.sharding.NamedSharding)
     else:
-      self.assertIsInstance(pmap_out.sharding, jax.sharding.PmapSharding)
+      self.assertIsInstance(pmap_out.sharding, sharding_impls.PmapSharding)
     self.assertLen(pmap_out.devices(), jax.device_count())
 
     out = pjit(lambda x: x * 3)(pmap_out)
@@ -2945,7 +2945,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertIsInstance(pmap_out.sharding, jax.sharding.NamedSharding)
       out1, out2 = pjit(lambda x, y: (x * 2, y * 2))(pmap_out, inp2)
     else:
-      self.assertIsInstance(pmap_out.sharding, jax.sharding.PmapSharding)
+      self.assertIsInstance(pmap_out.sharding, sharding_impls.PmapSharding)
       with mesh:
         out1, out2 = pjit(lambda x, y: (x * 2, y * 2))(pmap_out, inp2)
 
@@ -2970,7 +2970,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     if config.pmap_shmap_merge.value:
       self.assertIsInstance(pmap_out.sharding, jax.sharding.NamedSharding)
     else:
-      self.assertIsInstance(pmap_out.sharding, jax.sharding.PmapSharding)
+      self.assertIsInstance(pmap_out.sharding, sharding_impls.PmapSharding)
 
     out = pjit(lambda x: x * 2, in_shardings=NamedSharding(mesh, P('x')))(pmap_out)
     self.assertArraysEqual(out, pmap_out * 2)

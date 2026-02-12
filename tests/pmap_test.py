@@ -108,7 +108,7 @@ def create_input_array_for_pmap(input_shape, in_axes=0, input_data=None,
   if devices is None:
     devices = jax.devices()
 
-  pmap_sharding = jax.sharding.PmapSharding(np.array(devices), sharding_spec)
+  pmap_sharding = sharding_impls.PmapSharding(np.array(devices), sharding_spec)
 
   return array.make_array_from_callback(
       input_shape, pmap_sharding, lambda idx: input_data[idx]), input_data
@@ -921,7 +921,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       # NOTE(dsuo): Need to redefine pmap with the updated devices.
       f = self.pmap(inner_f, axis_name='i', devices=devices)
     else:
-      sharding = jax.sharding.PmapSharding(devices, y.sharding.sharding_spec)
+      sharding = sharding_impls.PmapSharding(devices, y.sharding.sharding_spec)
     y = jax.make_array_from_single_device_arrays(y.shape, sharding, bufs)
     z = f(y)
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
@@ -2897,7 +2897,7 @@ class ArrayTest(jtu.JaxTestCase):
     if config.pmap_shmap_merge.value:
       self.assertIsInstance(y.sharding, jax.NamedSharding)
     else:
-      self.assertIsInstance(y.sharding, jax.sharding.PmapSharding)
+      self.assertIsInstance(y.sharding, sharding_impls.PmapSharding)
     for s in y.addressable_shards:
       self.assertArraysEqual(s.data, y[s.index])
       self.assertEqual(s.replica_id, 0)
@@ -3144,7 +3144,7 @@ class ShardArgsTest(jtu.JaxTestCase):
       raise SkipTest
     x = np.arange(math.prod(shape)).reshape(shape)
     arg = make_arg(x)
-    sharding = jax.sharding.PmapSharding(jax.devices()[:nshards], spec)
+    sharding = sharding_impls.PmapSharding(jax.devices()[:nshards], spec)
     results = pxla.shard_args([sharding], [None],
                               [xc.ArrayCopySemantics.REUSE_INPUT], [arg])
     self.assertEqual(len(results), 1)
