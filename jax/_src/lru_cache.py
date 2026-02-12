@@ -20,11 +20,7 @@ import time
 from typing import Any
 import warnings
 
-filelock: Any | None = None
-try:
-  import filelock  # type: ignore[no-redef]
-except ImportError:
-  pass
+import filelock
 
 from jax._src import path as pathlib
 from jax._src.compilation_cache_interface import CacheInterface
