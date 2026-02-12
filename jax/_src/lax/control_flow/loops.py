@@ -1067,10 +1067,6 @@ def _scan_batching_rule(axis_data, args,
   ys_bdims = [1 if b else batching.not_mapped for b in ys_batched]
   return outs, carry_bdims + ys_bdims
 
-@weakref_lru_cache
-def _cached_scan_pad_jaxpr(jaxpr):
-  return ClosedJaxpr(*pe.pad_jaxpr(jaxpr.jaxpr, jaxpr.consts))
-
 def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn
                    ) -> tuple[list[bool], core.JaxprEqn | None]:
   if not any(used_outputs) and not pe.has_effects(eqn):

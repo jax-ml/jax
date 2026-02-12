@@ -2125,48 +2125,6 @@ def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
 
   return apply_flat_fun_nokwargs(fun, io_tree, py_args)
 
-@api_boundary
-def _vjp_pullback_wrapper(name, out_primal_avals, io_tree, fun, *py_args_):
-  if len(py_args_) != 1:
-    msg = (f"The function returned by `jax.vjp` applied to {name} was called "
-           f"with {len(py_args_)} arguments, but functions returned by "
-           "`jax.vjp` must be called with a single argument corresponding to "
-           f"the single value returned by {name} (even if that returned "
-           "value is a tuple or other container).\n"
-           "\n"
-           "For example, if we have:\n"
-           "\n"
-           "  def f(x):\n"
-           "    return (x, x)\n"
-           "  _, f_vjp = jax.vjp(f, 1.0)\n"
-           "\n"
-           "the function `f` returns a single tuple as output, and so we call "
-           "`f_vjp` with a single tuple as its argument:\n"
-           "\n"
-           "  x_bar, = f_vjp((2.0, 2.0))\n"
-           "\n"
-           "If we instead call `f_vjp(2.0, 2.0)`, with the values 'splatted "
-           "out' as arguments rather than in a tuple, this error can arise.")
-    raise TypeError(msg)
-  py_args, = py_args_
-  in_tree_expected, out_tree = io_tree
-  args, in_tree = tree_flatten(py_args)
-  if in_tree != in_tree_expected:
-    raise ValueError(f"unexpected tree structure of argument to vjp function: "
-                     f"got {in_tree}, but expected to match {in_tree_expected}")
-  for arg, aval in zip(args, out_primal_avals):
-    ct_aval = shaped_abstractify(arg)
-    ct_aval_expected = aval.to_cotangent_aval()
-    if (not core.typecompat(ct_aval, ct_aval_expected) and
-        not _temporary_dtype_exception(ct_aval, ct_aval_expected)):
-      raise ValueError(
-          "unexpected JAX type (e.g. shape/dtype) for argument to vjp function: "
-          f"got {ct_aval.str_short()}, but expected {ct_aval_expected.str_short()} "
-          f"because the corresponding output of the function {name} had JAX type "
-          f"{aval.str_short()}")
-  ans = fun(*args)
-  return tree_unflatten(out_tree, ans)
-
 # TODO(mattjj): see similar function in custom_derivatives.py
 def _temporary_dtype_exception(a, a_) -> bool:
   if isinstance(a, core.ShapedArray) and isinstance(a_, core.ShapedArray):
