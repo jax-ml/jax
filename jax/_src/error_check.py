@@ -330,6 +330,7 @@ def wrap_for_export(f):
 
       # 2. Trace the function.
       out = f(*args, **kwargs)
+      assert _error_storage.ref is not None
       error_code = _error_storage.ref[...].min()
 
       # 3. Restore the old state.
@@ -371,6 +372,7 @@ def unwrap_from_import(f):
       _error_list.extend(error_list)
 
     # Update the global error code array.
+    assert _error_storage.ref is not None
     error_code = _error_storage.ref[...]
     should_update = lax.bitwise_and(
         error_code == np.uint32(_NO_ERROR),

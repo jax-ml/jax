@@ -1659,8 +1659,7 @@ def _tcgen05_mma_abstract_eval(acc, a, b, accumulate,
                                arrive,
                                scaled,
                                sparse):
-  del (accumulate, acc_transforms_tree,
-       a_transforms_tree, b_transforms_tree, barrier_transforms_tree)
+  del accumulate, acc_transforms_tree, a_transforms_tree, b_transforms_tree, barrier_transforms_tree
 
   if acc.memory_space != gpu_core.TMEM:
     raise ValueError("Accumulator must be a TMEM Ref.")
@@ -1982,11 +1981,7 @@ def _tcgen05_mma_lowering_wg(
     scaled: bool,
     sparse: bool,
 ):
-  del (
-      a_scale_transforms_tree,
-      b_scale_transforms_tree,
-      a_sparse_metadata_transforms_tree,
-  )
+  del a_scale_transforms_tree, b_scale_transforms_tree, a_sparse_metadata_transforms_tree
   if scaled or sparse:
     raise NotImplementedError(
         "Scaled and sparse MMAs not supported for WG semantics."
@@ -2152,7 +2147,7 @@ def _tcgen05_commit_arrive_abstract_eval(barrier,
                                *barrier_transforms_leaves,
                                barrier_transforms_tree,
                                collective_axis):
-  del (barrier_transforms_leaves, barrier_transforms_tree, collective_axis)
+  del barrier_transforms_leaves, barrier_transforms_tree, collective_axis
   orders_tensor_core = getattr(
       barrier.inner_aval.dtype, "orders_tensor_core", False)
   if not orders_tensor_core:

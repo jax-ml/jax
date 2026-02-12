@@ -19,7 +19,7 @@ import dataclasses
 import functools
 import itertools as it
 from typing import Any, TypeVar
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import jax
 from jax._src import api_util
@@ -50,7 +50,7 @@ zip, unsafe_zip = util.safe_zip, zip
 
 T = TypeVar("T")
 
-_physicalize_rules = {}
+_physicalize_rules: dict[core.Primitive, Callable[..., Any]] = {}
 
 pack_dtype_p = core.Primitive("pack_dtype")
 
