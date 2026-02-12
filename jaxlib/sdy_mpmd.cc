@@ -58,6 +58,7 @@ using ::mlir::mpmd::FragmentMergeRule;
 using ::mlir::mpmd::FragmentMergeRules;
 using ::mlir::mpmd::FragmentOrigin;
 using ::mlir::mpmd::FragmentScheduleRule;
+using ::mlir::mpmd::FragmentScheduleRules;
 using ::mlir::mpmd::FunctionIOShardingSpecsAndMeshes;
 using ::mlir::mpmd::MpmdProgram;
 using ::mlir::mpmd::NamedSpmdShardingSpec;
@@ -158,11 +159,26 @@ NB_MODULE(_sdy_mpmd, m) {
              std::map<std::string, std::variant<std::string, bool>>>&
              partitioning_options,
          const FragmentMergeRules& fragment_merge_rules,
+         const FragmentScheduleRules& fragment_schedule_rules,
          PartitioningPhase phases) -> PartitioningResultWrapper {
         PartitioningOptions options;
         if (partitioning_options) {
           options = mlir::mpmd::ParsePartitioningOptions(*partitioning_options);
         }
+        // TODO: b/483036036 - This check should be able to be removed once
+        // jaxlib and openxla versions are properly synced
+#if SHARDY_MPMD_JAXLIB_VERSION >= 1
+        MpmdProgram program{.module = unwrap(c_module),
+                            .func_name = func_name,
+                            .options = std::move(options),
+                            .named_meshes = named_meshes,
+                            .assignment = GetCppUserAssignmentMap(assignment),
+                            .input_meshes = input_meshes,
+                            .output_meshes = output_meshes,
+                            .donate_argnums = donate_argnums,
+                            .fragment_merge_rules = fragment_merge_rules,
+                            .fragment_schedule_rules = fragment_schedule_rules};
+#else
         MpmdProgram program{.module = unwrap(c_module),
                             .func_name = func_name,
                             .options = std::move(options),
@@ -172,6 +188,7 @@ NB_MODULE(_sdy_mpmd, m) {
                             .output_meshes = output_meshes,
                             .donate_argnums = donate_argnums,
                             .fragment_merge_rules = fragment_merge_rules};
+#endif
 
         PartitioningResult partitioning_result =
             program.ApplyPartitioning(phases);
@@ -185,7 +202,8 @@ NB_MODULE(_sdy_mpmd, m) {
       nb::arg("assignment"), nb::arg("input_meshes"), nb::arg("output_meshes"),
       nb::arg("donate_argnums"),
       nb::arg("partitioning_options").none() = std::nullopt,
-      nb::arg("fragment_merge_rules"), nb::arg("phases"));
+      nb::arg("fragment_merge_rules"), nb::arg("fragment_schedule_rules"),
+      nb::arg("phases"));
 
   m.def("get_fragment_info",
         [](MlirModule c_module) -> std::vector<FragmentInfo> {

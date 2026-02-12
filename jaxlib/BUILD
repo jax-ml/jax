@@ -1308,6 +1308,7 @@ nanobind_pywrap_extension(
         "@shardy//shardy/integrations/python/jax/mpmd/jaxlib:mpmd_program",
         "@xla//xla/pjrt:status_casters",
         "@xla//xla/python:nb_absl_flat_hash_map",
+        "@xla//xla/python:version",
         "@xla//xla/python/ifrt/ir/conversions/mpmd:lower_to_ifrt",
     ],
 )
