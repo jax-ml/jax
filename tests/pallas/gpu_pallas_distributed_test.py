@@ -280,6 +280,47 @@ class PallasCallRemoteDMATest(TestCase):
     expected = x[1:] if jax.process_index() == 0 else x[:1]
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
+  def test_levon(self):
+    def kernel(x_ref, y_ref, ready_sem):
+      other_dev_id = 1 - lax.axis_index("x")
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      pl.semaphore_wait(ready_sem)
+
+    def body(x):
+      result_0 = pl.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+          out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+          out_shape=jax.ShapeDtypeStruct((1, 128), jnp.float32),
+          scratch_shapes=[
+              plgpu.SemaphoreType.REGULAR,
+          ],
+      )(x)
+
+      return pl.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+          out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+          out_shape=jax.ShapeDtypeStruct((1, 128), jnp.float32),
+          scratch_shapes=[
+              plgpu.SemaphoreType.REGULAR,
+          ],
+      )(result_0)
+
+    x = jnp.arange(2 * 128.0, dtype=jnp.float32).reshape((2, 128))
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ['x'])
+    y = jax.jit(
+        jax.shard_map(
+            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'), check_vma=False,
+        )
+    )(x)
+    expected = x[:1] if jax.process_index() == 0 else x[1:]
+    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+
+
   @parameterized.parameters(('x',), ('y',))
   def test_remote_dma_2d_mesh(self, axis):
     if (jax.process_count() < 4 and
