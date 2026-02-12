@@ -114,7 +114,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
   )
   def testScaledMatmul(self, contract, lhs_non_contract, dtype):
     # ROCm: scaled_matmul works, skip only CUDA compute capability check
-    if not jtu.is_device_rocm() and not jtu.is_cuda_compute_capability_at_least("10.0"):
+    if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least("10.0"):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
     # Check if float8_e8m0fnu is available
     configs = create_mxfp8_configs_if_available()
@@ -138,7 +138,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testScaledDotGeneral(
       self, is_training, output_type):
     # ROCm: scaled_dot_general works, skip only CUDA compute capability check
-    if not jtu.is_device_rocm() and not jtu.is_cuda_compute_capability_at_least("10.0"):
+    if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least("10.0"):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
 
     configs = create_mxfp8_configs_if_available()
@@ -270,7 +270,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     if isinstance(mask_mode, str):
       mask_mode = (mask_mode,)
     # ROCm: use XLA implementation instead of cuDNN
-    use_cudnn = not jtu.is_device_rocm()
+    use_cudnn = jtu.is_device_cuda()
     if use_cudnn:
       if not jtu.is_cuda_compute_capability_at_least("8.0"):
         raise unittest.SkipTest("Requires compute capability 8.0 or higher.")
@@ -340,7 +340,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
   )
   def testDotProductAttentionBiasGradient(self, batch_size, use_vmap):
     # ROCm: use XLA implementation instead of cuDNN
-    use_cudnn = not jtu.is_device_rocm()
+    use_cudnn = jtu.is_device_cuda()
     if use_cudnn:
       if not jtu.is_cuda_compute_capability_at_least("8.0"):
         raise unittest.SkipTest("Requires compute capability 8.0 or higher.")
