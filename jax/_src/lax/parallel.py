@@ -2795,3 +2795,37 @@ def pcast(x, axis_name, *, to: str):
       raise ValueError(f"Unsupported pcast from={from_}, {to=}")
     return func(leaf, axes)
   return tree_util.tree_map(bind, x)
+
+
+def all_gather_start(x, axis_name, axis=0, tiled=False):
+  if tiled: raise NotImplementedError  # TODO(mwhittaker)
+  return all_gather_start_p.bind(x, axis_name=axis_name, axis=axis, tiled=tiled)
+
+all_gather_start_p = core.Primitive('ag_start')
+@all_gather_start_p.def_effectful_abstract_eval
+def _all_gather_start_abstract_eval(x, *, axis_name, axis, tiled):
+  mesh = get_abstract_mesh()
+  size = math.prod(mesh.shape[d] for d in axis_name)
+  result_aval, effs = all_gather_p.abstract_eval(
+      x, axis_name=axis_name, all_gather_dimension=axis, tiled=tiled,
+      axis_index_groups=None, axis_size=size)
+  return core.AbstractTodo(result_aval), effs
+
+def _ag_start_lowering(ctx, x, *, axis_name, axis, tiled):
+  mesh = get_abstract_mesh()
+  size = math.prod(mesh.shape[d] for d in axis_name)
+  return _all_gather_lowering(
+      ctx, x, all_gather_dimension=axis, axis_name=axis_name,
+      axis_index_groups=None, axis_size=size, tiled=tiled)
+mlir.register_lowering(all_gather_start_p, _ag_start_lowering)
+
+def all_gather_done(x):
+  return all_gather_done_p.bind(x)
+
+all_gather_done_p = core.Primitive('ag_done')
+@all_gather_done_p.def_abstract_eval
+def _all_gather_done_abstract_eval(aval):
+  if not isinstance(aval, core.AbstractTodo): raise TypeError
+  return aval.inner_aval
+
+mlir.register_lowering(all_gather_done_p, lambda ctx, x: [x])
