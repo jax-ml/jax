@@ -119,7 +119,7 @@ limitations under the License.
 #include "xla/backends/gpu/ffi.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
-#include "xla/backends/gpu/runtime/collective_metadata_thunk.h"
+#include "xla/backends/gpu/runtime/collective_kernel_api.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/executable_run_options.h"
@@ -826,7 +826,7 @@ absl::StatusOr<std::vector<char>> CreateCollectiveMetadata(
     std::vector<se::DeviceAddressBase> parameters) {
   TF_ASSIGN_OR_RETURN(
       std::vector<void*> param_to_peers,
-      xla::gpu::CollectiveMetadataThunk::CollectParamToPeers(
+      xla::gpu::CollectParamToPeers(
           clique_key, current_rank, stream, std::move(parameters)));
   CollectiveKernelMetadata metadata;
   metadata.rank = current_rank.value();
@@ -834,7 +834,7 @@ absl::StatusOr<std::vector<char>> CreateCollectiveMetadata(
   // TODO(b/476264413): Support multimem.
   std::vector<void*> param_to_multimem;
   TF_RETURN_IF_ERROR(
-      xla::gpu::CollectiveMetadataThunk::CopyCollectiveMetadataToDevice(
+      xla::gpu::CopyCollectiveMetadataToDevice(
           stream, metadata, param_to_peers, param_to_multimem,
           collective_metadata_ptr));
 
