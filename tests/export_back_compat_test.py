@@ -51,6 +51,7 @@ from jax._src.internal_test_util.export_back_compat_test_data import cuda_threef
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_pivots_to_permutation
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_cusolver_getrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_svd_cusolver_gesvd
+from jax._src.internal_test_util.export_back_compat_test_data import rocm_svd_hipsolver_gesvd
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_tridiagonal_cusolver_sytrd
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_tridiagonal_solve
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Eigh
@@ -135,6 +136,7 @@ class CompatTest(bctu.CompatTestBase):
         cuda_qr_cusolver_geqrf.data_2024_09_26,
         cuda_eigh_cusolver_syev.data_2024_09_30,
         cuda_svd_cusolver_gesvd.data_2024_10_08,
+        rocm_svd_hipsolver_gesvd.data_2026_02_04,
         cpu_tridiagonal_solve_lapack_gtsv.data_2025_01_09,
         cuda_tridiagonal_cusolver_sytrd.data_2025_01_09,
         cuda_tridiagonal_solve.data_2025_06_16,
@@ -171,7 +173,6 @@ class CompatTest(bctu.CompatTestBase):
       # The following require ROCm to test
       "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",
       "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi", "hipsolver_syevd_ffi",
-      "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
       "hipsolver_potrf_ffi",
     })
     not_covered = targets_to_cover.difference(covered_targets)
@@ -623,8 +624,24 @@ class CompatTest(bctu.CompatTestBase):
     algorithm = dict(qr=lax.linalg.SvdAlgorithm.QR,
                      jacobi=lax.linalg.SvdAlgorithm.JACOBI)[algorithm_name]
 
-    info = cuda_svd_cusolver_gesvd.data_2024_10_08[algorithm_name][dtype_name]
-    data = self.load_testdata(info)
+    # The `platform_data_map` dictionary allows additional testdata modules
+    # to be easily added to the unit test. If no acceptable testdata is found
+    # for the current platform, the test will be skipped.
+    platform_data = None
+    platform_data_map = {
+        "cuda": cuda_svd_cusolver_gesvd.data_2024_10_08,
+        "rocm": rocm_svd_hipsolver_gesvd.data_2026_02_04,
+    }
+
+    for platform, data_module in platform_data_map.items():
+      if jtu.test_device_matches([platform]):
+        platform_data = data_module[algorithm_name][dtype_name]
+        break
+
+    if platform_data is None:
+      self.skipTest("Unsupported platform: " + jtu.device_under_test())
+
+    data = self.load_testdata(platform_data)
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_svd_results,
                                             *data.inputs))
