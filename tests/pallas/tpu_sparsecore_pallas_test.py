@@ -2008,7 +2008,7 @@ class PipelineTest(PallasSCTest):
   def test_basic(self):
     self.skip_if_tc_tiling()
     num_steps = 16
-    x = jnp.arange(num_steps * self.num_lanes).reshape(-1, self.num_lanes)
+    x = jnp.arange(num_steps * 8).reshape(-1, 8)
 
     @self.vector_subcore_kernel(
         out_shape=x,
@@ -2019,8 +2019,8 @@ class PipelineTest(PallasSCTest):
       @functools.partial(
           pltpu.emit_pipeline,
           grid=(num_steps // 2,),
-          in_specs=pl.BlockSpec((2, self.num_lanes), lambda i: (i, 0)),
-          out_specs=pl.BlockSpec((2, self.num_lanes), lambda i: (i, 0)),
+          in_specs=pl.BlockSpec((2, 8), lambda i: (i, 0)),
+          out_specs=pl.BlockSpec((2, 8), lambda i: (i, 0)),
       )
       def pipeline(x_ref, o_ref):
         o_ref[...] = x_ref[...] + 1
