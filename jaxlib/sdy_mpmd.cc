@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -22,10 +23,15 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "llvm/Support/Casting.h"
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep; Needed to allow MlirModule -> ModuleOp.
 #include "mlir/CAPI/IR.h"  // IWYU pragma: keep; Needed to allow MlirModule -> ModuleOp.
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OperationSupport.h"
 #include "nanobind/nanobind.h"
@@ -35,15 +41,37 @@ limitations under the License.
 #include "nanobind/stl/pair.h"
 #include "nanobind/stl/string.h"
 #include "nanobind/stl/tuple.h"
+#include "nanobind/stl/unique_ptr.h"
 #include "nanobind/stl/variant.h"
 #include "nanobind/stl/vector.h"
 // IWYU pragma: end_keep
+#include "shardy/dialect/mpmd/ir/dialect.h"
 #include "shardy/dialect/mpmd/ir/fragment_execution_rules.h"
 #include "shardy/dialect/mpmd/ir/utils.h"
+#include "shardy/dialect/mpmd/transforms/import/mesh_assignment_map.h"
 #include "shardy/integrations/python/jax/mpmd/jaxlib/mpmd_program.h"
+#include "jaxlib/nb_class_ptr.h"
+#include "jaxlib/py_client.h"
+#include "jaxlib/py_device.h"
+#include "jaxlib/py_executable.h"
+#include "jaxlib/py_mpmd_loaded_executable.h"
+#include "jaxlib/py_user_context.h"
+#include "xla/pjrt/pjrt_common.h"
+#include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/status_casters.h"  // IWYU pragma: keep; Needed for ValueOrThrow
+#include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/device_list.h"
+#include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/ir/conversions/mpmd/lower_to_ifrt.h"
+#include "xla/python/ifrt/ir/ifrt_ir_program.h"
+#include "xla/python/ifrt/ir/program_memory_tracer.h"
+#include "xla/python/ifrt/mpmd_executable.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
+#include "xla/python/pjrt_ifrt/xla_compiler.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 
 namespace nb = nanobind;
 
@@ -94,6 +122,109 @@ UserAssignmentMap GetCppUserAssignmentMap(const PyUserAssignmentMap& py_map) {
     }
   }
   return cpp_map;
+}
+
+// Helper function to create an xla::ifrt::DeviceListeRef from JAX devices.
+absl::StatusOr<xla::ifrt::DeviceListRef> MakeDeviceListFromPyDevices(
+    jax::nb_class_ptr<jax::PyClient> py_client,
+    std::vector<jax::nb_class_ptr<jax::PyDevice>> py_devices) {
+  absl::InlinedVector<xla::ifrt::Device*, 1> unwrapped_devices;
+  unwrapped_devices.reserve(py_devices.size());
+  for (const jax::nb_class_ptr<jax::PyDevice>& d : py_devices) {
+    if (d->client().get() != py_client.get()) {
+      if (d->client().get() == nullptr) {
+        return xla::InvalidArgument("Unattached device '%s' (expected: '%s')",
+                                    d->device()->ToString(),
+                                    py_client->platform_name());
+      }
+      return xla::InvalidArgument(
+          "Device '%s' is from client '%s' (expected: '%s')",
+          d->device()->ToString(), d->client()->platform_name(),
+          py_client->platform_name());
+    }
+    unwrapped_devices.push_back(d->device());
+  }
+  return py_client->ifrt_client()->MakeDeviceList(unwrapped_devices);
+}
+
+// Calls `Compiler::CompileAndLoad()` and returns
+// `PyMpmdLoadedExecutable` for the compiled MPMD program.
+//
+// Requires GIL.
+absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>>
+ExperimentalCompileMpmd(
+    nb::object backend_py, MlirModule c_module, nb::sequence devices_py,
+    const std::vector<nb::object> out_avals,
+    std::optional<const std::vector<nb::object>> out_shardings,
+    const absl::flat_hash_map<std::string, nb::object>& xla_compile_options,
+    const absl::flat_hash_map<std::string, nb::handle>&
+        loaded_executable_bindings) {
+  auto backend = nb::cast<jax::nb_class_ptr<jax::PyClient>>(backend_py);
+  auto devices = nb::cast<std::vector<jax::nb_class_ptr<jax::PyDevice>>>(
+      devices_py);
+
+  // Get IFRT client and construct an IFRT device list.
+  xla::ifrt::Client* client = backend->ifrt_client();
+  TF_ASSIGN_OR_RETURN(const xla::ifrt::DeviceListRef device_list,
+                      MakeDeviceListFromPyDevices(backend, std::move(devices)));
+
+  xla::ifrt::UserContextScope user_context_scope(jax::PyUserContext::Create());
+  xla::ifrt::LoadedExecutableRef loaded_executable;
+  auto compile_options = std::make_shared<absl::flat_hash_map<
+      std::string, std::unique_ptr<xla::ifrt::CompileOptions>>>();
+  for (const auto& [compile_key, atom_program_compile_options_py] :
+       xla_compile_options) {
+    const xla::CompileOptions* atom_program_compile_options =
+        nb::cast<const xla::CompileOptions*>(atom_program_compile_options_py);
+    compile_options->emplace(compile_key,
+                             std::make_unique<xla::ifrt::XlaCompileOptions>(
+                                 *atom_program_compile_options, device_list));
+  }
+  absl::flat_hash_map<std::string, xla::ifrt::LoadedExecutableRef>
+      loaded_exec_bindings;
+  for (const auto& [exec_symbol_name, py_exec] : loaded_executable_bindings) {
+    jax::PyLoadedExecutable* executable =
+        nb::cast<jax::PyLoadedExecutable*>(py_exec);
+    loaded_exec_bindings.emplace(exec_symbol_name,
+                                 executable->shared_ifrt_loaded_executable());
+  }
+  {
+    nb::gil_scoped_release gil_release;
+    TF_ASSIGN_OR_RETURN(
+        loaded_executable,
+        client->GetDefaultCompiler()
+            ->CompileAndLoad(
+                std::make_unique<xla::ifrt::IfrtIRProgram>(unwrap(c_module)),
+                std::make_unique<xla::ifrt::IfrtIRCompileOptions>(
+                    xla::ifrt::GetDeviceIds(device_list),
+                    std::move(loaded_exec_bindings), compile_options))
+            .Await());
+  }
+  if (!llvm::isa<xla::ifrt::MpmdLoadedExecutable>(loaded_executable.get())) {
+    return absl::InternalError(
+        "Loaded executable must be an `xla::ifrt::MpmdLoadedExecutable`.");
+  };
+  if (out_shardings.has_value()) {
+    return std::make_unique<PyMpmdLoadedExecutable>(
+        backend,
+        std::static_pointer_cast<xla::ifrt::MpmdLoadedExecutable>(
+            std::move(loaded_executable)),
+        out_avals, *out_shardings);
+  } else {
+    auto exec_out_shardings = loaded_executable->GetOutputShardings();
+    if (!exec_out_shardings.has_value()) {
+      return absl::InternalError("Executable does not have output shardings.");
+    }
+    std::vector<nb::object> out_shardings_py;
+    for (auto& op_sharding : *exec_out_shardings) {
+      out_shardings_py.push_back(nb::cast(std::move(op_sharding)));
+    }
+    return std::make_unique<PyMpmdLoadedExecutable>(
+        backend,
+        std::static_pointer_cast<xla::ifrt::MpmdLoadedExecutable>(
+            std::move(loaded_executable)),
+        out_avals, out_shardings_py);
+  }
 }
 
 NB_MODULE(_sdy_mpmd, m) {
@@ -241,7 +372,7 @@ NB_MODULE(_sdy_mpmd, m) {
   m.def("get_compile_options",
         [](MlirModule c_module,
            const absl::flat_hash_map<std::string, const EnvOptionsOverride>&
-               compile_options_overrides) -> absl::StatusOr<nb::dict> {
+               compile_options_overrides) -> nb::dict {
           auto module = unwrap(c_module);
           auto compile_options_map = ValueOrThrow(
               GetCompileOptions(module, compile_options_overrides));
@@ -252,6 +383,123 @@ NB_MODULE(_sdy_mpmd, m) {
           }
           return out;
         });
+
+  m.def("experimental_compile_mpmd",
+        xla::ValueOrThrowWrapper(ExperimentalCompileMpmd),  //
+        nb::arg("backend"),                                 //
+        nb::arg("ifrt_mlir_module"),                        //
+        nb::arg("devices"),                                 //
+        nb::arg("out_avals"),                               //
+        nb::arg("out_shardings"),                           //
+        nb::arg("xla_compile_options"),                     //
+        nb::arg("loaded_executable_bindings")               //
+  );
+
+  nb::class_<xla::ifrt::IfrtIrProgramMemoryStats>(m, "IfrtIrProgramMemoryStats")
+      .def_ro(
+          "argument_size_in_bytes",
+          &xla::ifrt::IfrtIrProgramMemoryStats::argument_size_in_bytes)
+      .def_ro("output_size_in_bytes",
+                    &xla::ifrt::IfrtIrProgramMemoryStats::output_size_in_bytes)
+      .def_ro(
+          "device_to_peak_bytes_used",
+          &xla::ifrt::IfrtIrProgramMemoryStats::device_to_peak_bytes_used)
+      .def_ro("device_to_min_memory_bytes_available",
+                    &xla::ifrt::IfrtIrProgramMemoryStats::
+                        device_to_min_memory_bytes_available)
+      .def_ro(
+          "host_argument_size_in_bytes",
+          &xla::ifrt::IfrtIrProgramMemoryStats::host_argument_size_in_bytes)
+      .def_ro(
+          "host_output_size_in_bytes",
+          &xla::ifrt::IfrtIrProgramMemoryStats::host_output_size_in_bytes);
+
+  auto mpmd_executable =
+      nb::class_<PyMpmdLoadedExecutable>(m, "MpmdLoadedExecutable");
+  mpmd_executable.def(
+      "execute",
+      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::Execute),
+      nb::arg("args"));
+  mpmd_executable.def(
+      "execute_fastpath",
+      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::ExecuteFastpath));
+  mpmd_executable.def("setup_fastpath",
+                      &PyMpmdLoadedExecutable::SetupFastpath);
+  mpmd_executable.def("input_shardings",
+                      xla::ValueOrThrowWrapper(
+                          &PyMpmdLoadedExecutable::GetParameterShardings));
+  mpmd_executable.def("output_shardings",
+                      xla::ValueOrThrowWrapper(
+                          &PyMpmdLoadedExecutable::GetOutputShardings));
+  mpmd_executable.def("input_layouts",
+                      xla::ValueOrThrowWrapper(
+                          &PyMpmdLoadedExecutable::GetParameterLayouts));
+  mpmd_executable.def("output_layouts",
+                      xla::ValueOrThrowWrapper(
+                          &PyMpmdLoadedExecutable::GetOutputLayouts));
+  mpmd_executable.def(
+      "get_compiled_memory_stats",
+      [](PyMpmdLoadedExecutable& exec)
+          -> absl::flat_hash_map<std::string, nb::object> {
+        absl::flat_hash_map<std::string, xla::CompiledMemoryStats> stats;
+        {
+          nb::gil_scoped_release gil;
+          stats = xla::ValueOrThrow(exec.GetMpmdCompiledMemoryStats());
+        }
+        absl::flat_hash_map<std::string, nb::object> py_stats;
+        for (const auto& [atom_program_name, memory_stats] : stats) {
+          py_stats[atom_program_name] = nb::steal<nb::object>(
+              nb::cast(memory_stats).release().ptr());
+        }
+        return py_stats;
+      });
+  mpmd_executable.def(
+      "get_ifrt_ir_program_memory_stats",
+      xla::ValueOrThrowWrapper(
+          &PyMpmdLoadedExecutable::GetIfrtIrProgramMemoryStats));
+  mpmd_executable.def(
+      "get_ifrt_ir_program_xprof_url",
+      xla::ValueOrThrowWrapper(
+          &PyMpmdLoadedExecutable::GetIfrtIrProgramXprofUrl));
+  mpmd_executable.def(
+      "hlo_modules",
+      [](PyMpmdLoadedExecutable& exec)
+          -> absl::StatusOr<
+              absl::flat_hash_map<std::string, std::vector<nb::object>>> {
+        absl::flat_hash_map<std::string,
+                            std::vector<std::shared_ptr<xla::HloModule>>>
+            hlo_modules;
+        {
+          nb::gil_scoped_release gil;
+          TF_ASSIGN_OR_RETURN(hlo_modules, exec.GetHloModules());
+        }
+        absl::flat_hash_map<std::string, std::vector<nb::object>>
+            py_hlo_modules;
+        py_hlo_modules.reserve(hlo_modules.size());
+        for (auto& [name, modules] : hlo_modules) {
+          std::vector<nb::object> py_modules;
+          py_modules.reserve(modules.size());
+          for (auto& hlo_module : modules) {
+            py_modules.push_back(nb::cast(std::move(hlo_module)));
+          }
+          py_hlo_modules.insert({name, std::move(py_modules)});
+        }
+        return py_hlo_modules;
+      });
+  mpmd_executable.def("cost_analysis", [](PyMpmdLoadedExecutable& exec) {
+    auto attrs = xla::ValueOrThrow(exec.GetMpmdCostAnalysis());
+    absl::flat_hash_map<std::string,
+                        absl::flat_hash_map<std::string, xla::PjRtValueType>>
+        map;
+    map.reserve(attrs.size());
+    for (auto& [key, value] : attrs) {
+      map.insert({key, xla::ifrt::ToPjRtAttributeMap(std::move(value))});
+    }
+    return map;
+  });
+  mpmd_executable.def("get_raw_ptr", [](PyMpmdLoadedExecutable* self) {
+    return reinterpret_cast<uintptr_t>(self);
+  });
 }
 
 }  // namespace
