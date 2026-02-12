@@ -818,7 +818,7 @@ def rand_fullrange(rng, standardize_nans=False):
   def gen(shape, dtype, post=lambda x: x):
     dtype = np.dtype(dtype)
     size = dtype.itemsize * math.prod(_dims_of_shape(shape))
-    vals = rng.randint(0, np.iinfo(np.uint8).max, size=size, dtype=np.uint8)
+    vals = rng.randint(0, np.iinfo(np.uint8).max, size=size, dtype=np.uint8)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2398
     vals = post(vals).view(dtype)
     if shape is PYTHON_SCALAR_SHAPE:
       # Sampling from the full range of the largest available uint type
