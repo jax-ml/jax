@@ -12,18 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@rules_python//python:defs.bzl", "py_library")
+load(
+    "//jaxlib:jax.bzl",
+    "if_cuda_is_configured",
+    "if_rocm_is_configured",
+    "py_library_providing_imports_info",
+)
+
 package(
     default_visibility = ["//jax:internal"],
 )
 
 licenses(["notice"])
-
-load(
-  "//jaxlib:jax.bzl",
-  "if_cuda_is_configured",
-  "if_rocm_is_configured",
-  "py_library_providing_imports_info",
-)
 
 py_library_providing_imports_info(
     name = "jax_plugins",
@@ -32,8 +33,8 @@ py_library_providing_imports_info(
 py_library(
     name = "gpu_plugin_only_test_deps",
     deps = [
-      ":jax_plugins",
-      ] + if_cuda_is_configured([
+        ":jax_plugins",
+    ] + if_cuda_is_configured([
         "//jax_plugins/cuda:cuda_plugin",
     ]) + if_rocm_is_configured([
         "//jax_plugins/rocm:rocm_plugin",

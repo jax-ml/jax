@@ -14,14 +14,14 @@
 
 """Wrappers around pywrap rules for JAX."""
 
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load(
     "@xla//third_party/py/rules_pywrap:pywrap.impl.bzl",
     "pybind_extension",
     _pywrap_binaries = "pywrap_binaries",
     _pywrap_library = "pywrap_library",
 )
-load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 
 pywrap_library = _pywrap_library
 pywrap_binaries = _pywrap_binaries

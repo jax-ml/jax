@@ -21,14 +21,16 @@ repos:
           ci/k8s/indexed-job\.yaml
       )$
   - id: end-of-file-fixer
-    # only include python files
-    files: \.py$
+    files: \.(py|cc|h)$
   - id: debug-statements
-    # only include python files
     files: \.py$
   - id: trailing-whitespace
-    # only include python files
-    files: \.py$
+    files: \.(py|cc|h)$
+
+- repo: https://github.com/keith/pre-commit-buildifier
+  rev: 7b5f1dd4697379a46dd6abd4ee5f79926444b2ac  # frozen: 8.2.1.1
+  hooks:
+    - id: buildifier
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
   rev: 0470f7c8a653e950f7cc5a653204ceb3fde4c02a  # frozen: v0.15.1

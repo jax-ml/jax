@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-exports_files(["setup.py", "__init__.py"])
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+
+exports_files([
+    "setup.py",
+    "__init__.py",
+])
 
 cc_binary(
     name = "mosaic_gpu.so",
@@ -21,9 +26,9 @@ cc_binary(
         "-Wl,--no-undefined",
     ],
     linkshared = True,
+    visibility = ["//visibility:public"],
     deps = [
         ":mosaic_symbols.lds",
         "//jaxlib/mosaic/gpu:custom_call",
     ],
-    visibility = ["//visibility:public"],
 )
