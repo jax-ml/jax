@@ -134,11 +134,7 @@ class TileTransform(MemRefTransform):
   _cc_impl: Any | None = dataclasses.field(init=False, compare=False)
 
   def __post_init__(self):
-    if not (
-        hasattr(mgpu_dialect, "TileTransform")
-        and hasattr(mgpu_dialect, "init_cc_mlir")
-        and mgpu_dialect.init_cc_mlir(ir)
-    ):
+    if not hasattr(mgpu_dialect, "TileTransform"):
       return
     rounding = self.rounding
     if rounding is not None:

@@ -601,7 +601,7 @@ class TiledLayoutImpl:
         _check_canonical=False,
     )
 
-# TODO(olechwierowicz): Clean this up once C++ TiledLayout is always available in JAX build.
+# TODO(olechwierowicz): Clean this up once C++ TiledLayout and init_cc_mlir are always available in JAX build (min ver 0.9.1).
 TiledLayout: Any
 if (
     hasattr(mgpu.dialect, "TiledLayout")
@@ -612,9 +612,6 @@ if (
             if not attr.startswith("_")
         )
     )
-    and (hasattr(mgpu.dialect, "init_cc_mlir"))
-    and (init_attr := getattr(mgpu.dialect, "init_cc_mlir"))
-    and init_attr(ir)
 ):
   TiledLayout = mgpu.dialect.TiledLayout
 else:
