@@ -394,12 +394,16 @@ def _tensorcore_mesh_discharge_rule(
         else v.aval
         for v, is_scalar in zip(jaxpr.constvars, is_scalar_const)
     ]
-    new_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(
-            new_body, debug_info=jaxpr.debug_info.with_unknown_names()
-        ),
-        new_trace_avals,
-    )
+    with (
+        pallas_core.tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
+        jax_core.extend_axis_env_nd(mesh.shape.items()),
+    ):
+      new_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+          lu.wrap_init(
+              new_body, debug_info=jaxpr.debug_info.with_unknown_names()
+          ),
+          new_trace_avals,
+      )
     jaxpr = new_jaxpr.replace(invars=[], constvars=new_jaxpr.invars)
     args = tuple(
         a[None] if is_scalar else a

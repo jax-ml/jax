@@ -351,16 +351,17 @@ class CoreMapTest(jtu.JaxTestCase):
   def test_capture_scalar(self):
     @jax.jit
     def f(x, i):
-      @pl.kernel(out_shape=jax.ShapeDtypeStruct(x.shape[1:], jnp.int32),
+      @pl.kernel(out_shape=jax.ShapeDtypeStruct((1, *x.shape[1:]), jnp.int32),
                  mesh=pltpu.create_tensorcore_mesh("x", num_cores=1))
       def kernel(x_ref, out_ref):
-        pltpu.sync_copy(x_ref.at[i], out_ref)
+        idx = jax.lax.axis_index("x")  # this is always 0
+        pltpu.sync_copy(x_ref.at[i], out_ref.at[idx])
       return kernel(x)
 
     x = jnp.arange(4 * 8 * 128, dtype=jnp.int32).reshape((4, 8, 128))
     for i in range(x.shape[0]):
       out = f(x, i)
-      np.testing.assert_array_equal(out, x[i])
+      np.testing.assert_array_equal(out[0], x[i])
 
     @jax.jit
     def g(x, i):
