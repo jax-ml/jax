@@ -50,15 +50,6 @@ class TestCase(jt_multiprocess.MultiProcessTest if is_nvshmem_used() is None els
   def setUp(self):
     if jtu.test_device_matches(["rocm"]):
       self.skipTest("Mosaic not supported on ROCm currently.")
-    # TODO(b/482756208): Fix this
-    if jax.local_device_count() > 1:
-      self.skipTest("Collective metadata tests are flaky since right now when "
-                    "collective metadata is used there is no cross-device "
-                    "barrier before the module execution. This might lead to a "
-                    "situation when device 1 writes a signal to the device 2 "
-                    "the same time as device 2 zeroes it's signal memory "
-                    "buffer to launch a kernel. Eventually device 1 waits "
-                    "forever on a deadlock.")
 
     if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_at_least("9.0")):
@@ -102,6 +93,58 @@ class PallasCallRemoteDMATest(TestCase):
           ],
       )(x)
 
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    y = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )(x)
+
+    expected = x[8:] if jax.process_index() == 0 else x[:8]
+    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+
+  def test_remote_dma_several_mosaic_ops(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+
+    def kernel(x_ref, y_ref, done_sem):
+      other_dev_id = 1 - lax.axis_index("x")
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+      pl.semaphore_signal(done_sem, device_id=other_dev_id)
+      pl.semaphore_wait(done_sem)
+
+    def different_kernel(x_ref, y_ref, wait_sem, ready_sem):
+      other_dev_id = 1 - lax.axis_index("x")
+      pl.semaphore_signal(wait_sem, device_id=other_dev_id)
+      pl.semaphore_wait(wait_sem)
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      pl.semaphore_wait(ready_sem)
+
+    def body(x):
+      result = x
+      for step in range(51):
+        result = pl.pallas_call(
+            kernel if step % 2 == 0 else different_kernel,
+            in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+            out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+            out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+            scratch_shapes=[
+                plgpu.SemaphoreType.REGULAR,
+            ]
+            + ([] if step % 2 == 0 else [plgpu.SemaphoreType.REGULAR]),
+        )(result)
+
+      return result
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ['x'])
     y = jax.jit(
@@ -933,6 +976,14 @@ if __name__ == '__main__':
   # allocator is used, setUp will skip the test.
   os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.01'
   os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'default'
+  # TODO(b/483671897) re-enable once command buffers supported with collectives.
+  additional_xla_flags = "--xla_gpu_enable_command_buffer=''"
+  if "XLA_FLAGS" in os.environ:
+    os.environ["XLA_FLAGS"] = (
+        f"{os.environ['XLA_FLAGS']} {additional_xla_flags}"
+    )
+  else:
+    os.environ["XLA_FLAGS"] = f"{additional_xla_flags}"
   if is_nvshmem_used():
     jt_multiprocess.main()
   else:
