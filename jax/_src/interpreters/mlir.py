@@ -210,6 +210,7 @@ def aval_to_ir_type(aval: core.AbstractValue) -> IrTypes:
 
 ir_type_handlers[core.ShapedArray] = _array_ir_types
 ir_type_handlers[core.AbstractToken] = lambda _: hlo.TokenType.get()
+ir_type_handlers[core.AbstractTodo] = lambda x: _array_ir_types(x.inner_aval)
 
 # This is a backwards compatibility shim for external users of jax.mlir apis.
 def aval_to_ir_types(aval: core.AbstractValue) -> tuple[ir.Type, ...]:

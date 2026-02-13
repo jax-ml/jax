@@ -2723,6 +2723,13 @@ pytype_aval_mappings[Token] = lambda _: abstract_token
 dtypes.canonicalize_value_handlers[Token] = lambda x: x
 
 
+class AbstractTodo(AbstractValue):
+  def __init__(self, inner_aval):
+    self.inner_aval = inner_aval
+
+  def str_short(self, short_dtypes=False, mesh_axis_types=False) -> str:
+    return f'Todo{{{self.inner_aval.str_short(True)}}}'
+
 ### Operations on shapes and dimension sizes.
 
 class InconclusiveDimensionOperation(Exception):
