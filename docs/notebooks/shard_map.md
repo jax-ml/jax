@@ -1,8 +1,7 @@
 ---
 jupytext:
   cell_metadata_filter: -all
-  formats: ipynb,md:myst
-  main_language: python
+  formats: ipynb,md:myst,py
   text_representation:
     extension: .md
     format_name: myst
@@ -51,14 +50,13 @@ Auto = jax.sharding.AxisType.Auto
 ```
 
 ```{code-cell}
-mesh = jax.make_mesh((4, 2), ('x', 'y'), axis_types=(Explicit,) * 2)
+mesh = jax.make_mesh((4, 2), ('x', 'y'))
 jax.set_mesh(mesh)
 
-a = jnp.arange( 8 * 16.).reshape(8, 16)
-b = jnp.arange(16 *  4.).reshape(16, 4)
+a = jax.device_put(jnp.arange( 8 * 16.).reshape(8, 16), P('x', 'y'))
+b = jax.device_put(jnp.arange(16 *  4.).reshape(16, 4), P('y', None))
 
-@jax.shard_map(in_specs=(P('x', 'y'), P('y', None)),
-               out_specs=P('x', None))
+@jax.shard_map(in_specs=(P('x', 'y'), P('y', None)), out_specs=P('x', None))
 def matmul_basic(a_block, b_block):
   # a_block: f32[2, 8]
   # b_block: f32[8, 4]
@@ -78,7 +76,7 @@ from jax.tree_util import tree_map, tree_all
 def allclose(a, b):
   return tree_all(tree_map(partial(jnp.allclose, atol=1e-2, rtol=1e-2), a, b))
 
-allclose(c, jnp.dot(a, b))
+allclose(c, jnp.dot(a, b, out_sharding=P('x', None)))
 ```
 
 The result is sharded along its rows:
@@ -159,11 +157,11 @@ when collectives aren't involved):
 ```{code-cell}
 import numpy as np
 devices = np.array(jax.devices()[:4])
-mesh = Mesh(devices, ('i',), axis_types=(Explicit,))  # mesh.shape['i'] = 4
+mesh = Mesh(devices, ('i',))  # mesh.shape['i'] = 4
 jax.set_mesh(mesh)
 
 def check_shmap(f, y):
-  ans = jax.shard_map(f, mesh=mesh, in_specs=P('i'), out_specs=P('i'))(y)
+  ans = jax.shard_map(f, in_specs=P('i'), out_specs=P('i'))(y)
   expected = jnp.concatenate([f(y_blk) for y_blk in jnp.split(y, mesh.shape['i'])])
   print(allclose(ans, expected))
 
@@ -196,15 +194,15 @@ input array axis size.) If an input's pspec does not mention a mesh axis name,
 then there's no splitting over that mesh axis. For example:
 
 ```{code-cell}
-mesh = jax.make_mesh((4, 2), ('i', 'j'), axis_types=(Auto,) * 2)
+mesh = jax.make_mesh((4, 2), ('i', 'j'))
 jax.set_mesh(mesh)
 
-@jax.shard_map(mesh=mesh, in_specs=P('i', None), out_specs=P('i', 'j'))
+@jax.shard_map(in_specs=P('i', None), out_specs=P('i', 'j'))
 def f1(x_block):
   print(x_block.shape)  # prints (3, 12)
   return x_block
 
-x1 = jnp.arange(12 * 12).reshape(12, 12)
+x1 = jax.device_put(jnp.arange(12 * 12).reshape(12, 12), P('i', None))
 y = f1(x1)
 ```
 
@@ -218,13 +216,14 @@ less efficient program where all mesh axes are mentioned but the caller
 performs a `jnp.tile`, for example:
 
 ```{code-cell}
-@jax.shard_map(mesh=mesh, in_specs=P('i', 'j'), out_specs=P('i', 'j'))
+@jax.shard_map(in_specs=P('i', 'j'), out_specs=P('i', 'j'))
 def f2(x_block):
   print(x_block.shape)
   return x_block
 
 x = jnp.arange(12 * 12).reshape(12, 12)
 x_ = jnp.tile(x, (1, mesh.shape['j']))  # x_ has shape (12, 24)
+x_ = jax.device_put(x, P('i', 'j'))
 y = f2(x_)  # prints (3,12), and f1(x) == f2(x_)
 ```
 
@@ -260,16 +259,18 @@ than concatenating all the blocks together along that mesh axis). For example,
 using the same mesh as above:
 
 ```{code-cell}
-x = jnp.array([[3.]])
+auto_mesh = jax.make_mesh((4, 2), ('i', 'j'), (Auto, Auto))
+with jax.set_mesh(auto_mesh):
+  x = jnp.array([[3.]])
 
-z = jax.shard_map(lambda: x, mesh=mesh, in_specs=(), out_specs=P('i', 'j'))()
-print(z)  # prints the same as jnp.tile(x, (4, 2))
+  z = jax.shard_map(lambda: x, in_specs=(), out_specs=P('i', 'j'))()
+  print(z)  # prints the same as jnp.tile(x, (4, 2))
 
-z = jax.shard_map(lambda: x, mesh=mesh, in_specs=(), out_specs=P('i', None))()
-print(z)  # prints the same as jnp.tile(x, (4, 1)), or just jnp.tile(x, (4,))
+  z = jax.shard_map(lambda: x, in_specs=(), out_specs=P('i', None))()
+  print(z)  # prints the same as jnp.tile(x, (4, 1)), or just jnp.tile(x, (4,))
 
-z = jax.shard_map(lambda: x, mesh=mesh, in_specs=(), out_specs=P(None, None))()
-print(z)  # prints the same as jnp.tile(x, (1, 1)), or just x
+  z = jax.shard_map(lambda: x, in_specs=(), out_specs=P(None, None))()
+  print(z)  # prints the same as jnp.tile(x, (1, 1)), or just x
 ```
 
 The body function closing over an array value is equivalent to passing it as an
@@ -277,11 +278,11 @@ augment with a corresponding input pspec of P(None, None). As another example,
 following more closely to the other examples above:
 
 ```{code-cell}
-@jax.shard_map(mesh=mesh, in_specs=P('i', 'j'), out_specs=P('i', None))
+@jax.shard_map(in_specs=P('i', 'j'), out_specs=P('i', None))
 def f3(x_block):
   return jax.lax.psum(x_block, 'j')
 
-x = jnp.arange(12 * 12).reshape(12, 12)
+x = jax.device_put(jnp.arange(12 * 12).reshape(12, 12), P('i', 'j'))
 y3 = f3(x)
 print(y3.shape)
 ```
@@ -294,16 +295,16 @@ two more examples where we vary which mesh axes are mentioned in the output
 pspec:
 
 ```{code-cell}
-@jax.shard_map(mesh=mesh, in_specs=P('i', 'j'), out_specs=P(None, 'j'))
+@jax.shard_map(in_specs=P('i', 'j'), out_specs=P(None, 'j'))
 def f4(x_block):
   return jax.lax.psum(x_block, 'i')
 
-x = jnp.arange(12 * 12).reshape(12, 12)
+x = jax.device_put(jnp.arange(12 * 12).reshape(12, 12), P('i', 'j'))
 y4 = f4(x)
 print(y4.shape)  # (3,12)
 
 
-@jax.shard_map(mesh=mesh, in_specs=P('i', 'j'), out_specs=P(None, None))
+@jax.shard_map(in_specs=P('i', 'j'), out_specs=P(None, None))
 def f5(x_block):
   return jax.lax.psum(x_block, ('i', 'j'))
 
@@ -338,15 +339,15 @@ the same. For example, when we use `in_specs` to split an argument over a mesh
 axis, each function instance along that mesh axis gets a different value:
 
 ```{code-cell}
-mesh = jax.make_mesh((2,), ('i',), axis_types=(Explicit,))
+mesh = jax.make_mesh((2,), ('i',))
 jax.set_mesh(mesh)
 
-@jax.shard_map(mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+@jax.shard_map(in_specs=P('i'), out_specs=P('i'))
 def f(x):
   print(x)
   return 2 * x
 
-x = jnp.arange(6.)
+x = jax.device_put(jnp.arange(6.), P('i'))
 f(x)
 ```
 
@@ -354,7 +355,7 @@ If instead `in_specs` does not split the argument over a mesh axis, the value
 is the same for each function instance along that axis:
 
 ```{code-cell}
-@jax.shard_map(mesh=mesh, in_specs=P(), out_specs=P())
+@jax.shard_map(in_specs=P(), out_specs=P())
 def f(x):
   print(x)
   return 2 * x
@@ -368,13 +369,13 @@ example, applying a `psum` produces the same output on each function instance
 along an axis:
 
 ```{code-cell}
-@jax.shard_map(mesh=mesh, in_specs=P('i'), out_specs=P())
+@jax.shard_map(in_specs=P('i'), out_specs=P())
 def f(x):
   y = jax.lax.psum(x, 'i')
   print(y)
   return y
 
-x = jnp.arange(6.)
+x = jax.device_put(jnp.arange(6.), P('i'))
 f(x)
 ```
 
@@ -383,14 +384,14 @@ possibly-varying over each manual mesh axis. That information can be tracked in
 the JAX type system, enabled by the `check_vma=True` argument to `shard_map`:
 
 ```{code-cell}
-@jax.shard_map(mesh=mesh, in_specs=P('i'), out_specs=P())
+@jax.shard_map(in_specs=P('i'), out_specs=P())
 def f(x):
   print(jax.typeof(x))  # f32[3]{i}
   y = jax.lax.psum(x, 'i')
   print(jax.typeof(y))  # f32[3]
   return y
 
-x = jnp.arange(6.)
+x = jax.device_put(jnp.arange(6.), P('i'))
 f(x)
 ```
 
@@ -404,10 +405,10 @@ In general, the VMA type of a value can include any subset of the manual mesh
 axes over which the `shard_map` is acting:
 
 ```{code-cell}
-mesh = jax.make_mesh((4, 2), ('i', 'j'), axis_types=(Explicit,) * 2)
+mesh = jax.make_mesh((4, 2), ('i', 'j'))
 jax.set_mesh(mesh)
 
-@jax.shard_map(mesh=mesh, in_specs=P('i', 'j'), out_specs=P('i'))
+@jax.shard_map(in_specs=P('i', 'j'), out_specs=P('i'))
 def f(x):
   print(jax.typeof(x))  # f32[2,2]{i,j}
   y = jax.lax.psum(x, 'j')
@@ -415,7 +416,7 @@ def f(x):
   print(jax.typeof(y))  # f32[2,2]{i}
   return y
 
-x = jnp.arange(8 * 4.).reshape(8, 4)
+x = jax.device_put(jnp.arange(8 * 4.).reshape(8, 4), P('i', 'j'))
 f(x)
 ```
 
@@ -431,12 +432,12 @@ For example, this `out_specs` bug is caught with `check_vma=True`, but uncaught
 without it:
 
 ```{code-cell}
-mesh = jax.make_mesh((2,), ('i',), axis_types=(Explicit,))
+mesh = jax.make_mesh((2,), ('i',))
 jax.set_mesh(mesh)
 
-x = jnp.arange(6.)
+x = jax.device_put(jnp.arange(6.), P('i'))
 try:
-  y = jax.shard_map(lambda x: x, mesh=mesh, in_specs=P('i'), out_specs=P())(x)
+  y = jax.shard_map(lambda x: x, in_specs=P('i'), out_specs=P())(x)
 except Exception as e:
   print(e)
 ```
@@ -451,7 +452,7 @@ Sometimes we want to treat a value that is unvarying over a mesh axis as
 varying over that mesh axis. That's what `jax.lax.pcast` does:
 
 ```{code-cell}
-@jax.shard_map(mesh=mesh, in_specs=P(), out_specs=None)
+@jax.shard_map(in_specs=P(), out_specs=None)
 def f(x):
   print(jax.typeof(x))  # f32[6]
   y = jax.lax.pcast(x, 'i', to='varying')
@@ -473,11 +474,11 @@ JAX implicitly inserts `jax.lax.pcast(..., to='varying')` calls in many cases,
 especially for binary operations:
 
 ```{code-cell}
-@jax.shard_map(mesh=mesh, in_specs=(P('i'), P()), out_specs=P('i'))
+@jax.shard_map(in_specs=(P('i'), P()), out_specs=P('i'))
 def f(x, y):
   return x * y
 
-x = jnp.arange(6.)
+x = jax.device_put(jnp.arange(6.), P('i'))
 y = jnp.arange(3.)
 print(jax.make_jaxpr(f)(x, y))
 ```
@@ -495,10 +496,10 @@ In some cases, like with `jax.lax.scan`, you might need to apply
 this code raises an error:
 
 ```{code-cell}
-mesh = jax.make_mesh((2,), ('i',), axis_types=(Explicit,))
+mesh = jax.make_mesh((2,), ('i',))
 jax.set_mesh(mesh)
 
-@jax.shard_map(mesh=mesh, in_specs=(P('i'), P()), out_specs=P('i'))
+@jax.shard_map(in_specs=(P('i'), P()), out_specs=P('i'))
 def f(x, y):
   def body(carry, _):
     c1, c2 = carry
@@ -519,10 +520,10 @@ To make the types match, we need to apply `jax.lax.pcast` to some arguments to
 the `scan`:
 
 ```{code-cell}
-mesh = jax.make_mesh((2,), ('i',), axis_types=(Explicit,))
+mesh = jax.make_mesh((2,), ('i',))
 jax.set_mesh(mesh)
 
-@jax.shard_map(mesh=mesh, in_specs=(P('i'), P()), out_specs=P('i'))
+@jax.shard_map(in_specs=(P('i'), P()), out_specs=P('i'))
 def f(x, y):
   def body(carry, _):
     c1, c2 = carry
@@ -532,7 +533,7 @@ def f(x, y):
   (x_, y_), _ = jax.lax.scan(body, (x, y), (), length=2)
   return x_, y_
 
-x = jnp.arange(6.)
+x = jax.device_put(jnp.arange(6.), P('i'))
 y = jnp.arange(3.)
 
 f(x, y)
@@ -602,7 +603,7 @@ so that this:
 ```python
 mesh = Mesh(jax.devices(), ('i',))
 x = jnp.arange(16.)
-f_shmapped = jax.shard_map(f, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+f_shmapped = jax.shard_map(f, in_specs=P('i'), out_specs=P('i'))
 y = f_shmapped(x)
 ```
 
@@ -1072,7 +1073,7 @@ side:
 
 ```{code-cell}
 @jax.jit
-@jax.shard_map(mesh=mesh, in_specs=(lhs_spec, rhs_spec),
+@jax.shard_map(in_specs=(lhs_spec, rhs_spec),
                out_specs=rhs_spec)
 def matmul_allgather(lhs_block, rhs_block):
   rhs = jax.lax.all_gather(rhs_block, 'i', tiled=True)
@@ -1098,7 +1099,7 @@ multiplies:
 
 ```{code-cell}
 @jax.jit
-@jax.shard_map(mesh=mesh, in_specs=(lhs_spec, rhs_spec),
+@jax.shard_map(in_specs=(lhs_spec, rhs_spec),
                out_specs=rhs_spec)
 def matmul_allgather_overlapped(lhs_block, rhs_block):
   size = jax.lax.axis_size('i')
@@ -1129,7 +1130,7 @@ each half in each direction:
 
 ```{code-cell}
 @jax.jit
-@jax.shard_map(mesh=mesh, in_specs=(lhs_spec, rhs_spec),
+@jax.shard_map(in_specs=(lhs_spec, rhs_spec),
                out_specs=rhs_spec)
 def matmul_allgather_overlapped_bidi(lhs_block, rhs_block):
   size = jax.lax.axis_size('i')
@@ -1180,7 +1181,7 @@ rhs = device_put(rhs, rhs_spec)
 Here we can use a `reduce_scatter` to perform the contraction sum over shards:
 
 ```{code-cell}
-@jax.shard_map(mesh=mesh, in_specs=(lhs_spec, rhs_spec),
+@jax.shard_map(in_specs=(lhs_spec, rhs_spec),
                out_specs=rhs_spec)
 def matmul_psumscatter(lhs_block, rhs_block):
   out_summand = lhs_block @ rhs_block
@@ -1196,7 +1197,7 @@ inline an implementation of `psum_scatter` in terms of `ppermute`, then
 interleave the communication steps with local matrix multiplies:
 
 ```{code-cell}
-@jax.shard_map(mesh=mesh, in_specs=(lhs_spec, rhs_spec),
+@jax.shard_map(in_specs=(lhs_spec, rhs_spec),
                out_specs=rhs_spec)
 def matmul_psumscatter_overlapped(lhs_block, rhs_block):
   size = jax.lax.axis_size('i')
@@ -1221,7 +1222,7 @@ As in the previous example, to fully utilize interconnects on TPU, we'd run a
 bidirectional version:
 
 ```{code-cell}
-@jax.shard_map(mesh=mesh, in_specs=(lhs_spec, rhs_spec),
+@jax.shard_map(in_specs=(lhs_spec, rhs_spec),
                out_specs=rhs_spec)
 def matmul_psumscatter_overlapped_bidi(lhs_block, rhs_block):
   size = jax.lax.axis_size('i')
@@ -1315,7 +1316,7 @@ all-reduce-sums of parameter gradients in the backward pass.)
 ```{code-cell}
 from jax.sharding import Mesh, PartitionSpec as P
 
-mesh = jax.make_mesh((8,), ('batch',), axis_types=(Auto,))
+mesh = jax.make_mesh((8,), ('batch',), (Auto,))
 jax.set_mesh(mesh)
 
 # replicate initial params on all devices, shard data batch over devices
@@ -1324,7 +1325,7 @@ params = jax.device_put(params, NamedSharding(mesh, P()))
 
 # adapt the loss function to sum the losses across devices
 def loss_dp(params, batch):
-  @jax.shard_map(mesh=mesh, in_specs=P('batch', None), out_specs=P())
+  @jax.shard_map(in_specs=P('batch', None), out_specs=P())
   def loss_spmd(local_batch):
     inputs, targets = local_batch
     predictions = predict(params, inputs)  # use reference 'predict`
@@ -1400,7 +1401,7 @@ def predict_fsdp(params_frag, inputs):
   return outputs
 
 def loss_fsdp(params, batch):
-  @jax.shard_map(mesh=mesh, in_specs=P('batch'), out_specs=P())
+  @jax.shard_map(in_specs=P('batch'), out_specs=P())
   def loss_spmd(local_params, local_batch):
     inputs, targets = local_batch
     predictions = predict_fsdp(local_params, inputs)
@@ -1434,7 +1435,7 @@ multiplications followed by a `psum_scatter` to sum the local results and
 efficiently scatter the result's shards.
 
 ```{code-cell}
-mesh = jax.make_mesh((8,), ('feats',), axis_types=(Auto,))
+mesh = jax.make_mesh((8,), ('feats',), (Auto,))
 jax.set_mesh(mesh)
 
 batch = jax.device_put(batch, NamedSharding(mesh, P(None, 'feats')))
@@ -1446,7 +1447,7 @@ def predict_tp(params, inputs):
     inputs = jax.nn.relu(outputs)
   return outputs
 
-@jax.shard_map(mesh=mesh, in_specs=(P(None, 'feats'), P('feats', None), P('feats')),
+@jax.shard_map(in_specs=(P(None, 'feats'), P('feats', None), P('feats')),
                out_specs=P(None, 'feats'))
 def gemm_tp(inputs, W, b):
   block_result = jnp.dot(inputs, W)
@@ -1464,7 +1465,7 @@ def loss_tp(params, batch):
 We can compose these strategies together, using multiple axes of parallelism.
 
 ```{code-cell}
-mesh = jax.make_mesh((4, 2), ('batch', 'feats'), axis_types=(Auto,) * 2)
+mesh = jax.make_mesh((4, 2), ('batch', 'feats'), (Auto, Auto))
 jax.set_mesh(mesh)
 
 batch_ = jax.device_put(batch, NamedSharding(mesh, P('batch', 'feats')))
@@ -1482,7 +1483,7 @@ def predict_fsdp_tp(params_frag, inputs):
     inputs = jax.nn.relu(outputs)
   return outputs
 
-@jax.shard_map(mesh=mesh, in_specs=(P(('feats', 'batch')), P('batch', 'feats')),
+@jax.shard_map(in_specs=(P(('feats', 'batch')), P('batch', 'feats')),
                out_specs=P())
 def loss_fsdp_tp(local_params, local_batch):
   inputs, targets = local_batch
@@ -1551,7 +1552,7 @@ print(f'{B} examples per microbatch, {M} microbatches total')
 ```
 
 ```{code-cell}
-mesh = Mesh(jax.devices()[:S], ('stages',))
+mesh = Mesh(jax.devices()[:S], ('stages',), (Auto,))
 
 def predict_pp(params, inputs):
   (W_first, b_first), inner_params, (W_last, b_last) = params
@@ -1561,8 +1562,7 @@ def predict_pp(params, inputs):
   outputs = jnp.dot(inputs, W_last) + b_last
   return outputs
 
-@jax.shard_map(mesh=mesh, in_specs=((P(), P('stages'), P()), P('stages')),
-               out_specs=P())
+@jax.shard_map(in_specs=((P(), P('stages'), P()), P('stages')), out_specs=P())
 def loss_pp(params, batch):
   inputs, targets = batch
   predictions = predict_pp(params, inputs.reshape(K, B, -1)).reshape(K * B, -1)
