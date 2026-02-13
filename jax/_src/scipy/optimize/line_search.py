@@ -147,8 +147,8 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
 
     hi_to_j = wolfe_one(a_j, phi_j) | (phi_j >= state.phi_lo)
     star_to_j = wolfe_two(dphi_j) & (~hi_to_j)
-    hi_to_lo = (dphi_j * (state.a_hi - state.a_lo) >= 0.) & (~hi_to_j) & (~star_to_j)
     lo_to_j = (~hi_to_j) & (~star_to_j)
+    hi_to_old_lo = lo_to_j & (dphi_j * (state.a_hi - state.a_lo) >= 0.)
 
     state = state._replace(
         **_binary_replace(
@@ -178,19 +178,9 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
             )
         ),
     )
-    state = state._replace(
-        **_binary_replace(
-            hi_to_lo,
-            state._asdict(),
-            dict(
-                a_hi=state.a_lo,
-                phi_hi=state.phi_lo,
-                dphi_hi=state.dphi_lo,
-                a_rec=state.a_hi,
-                phi_rec=state.phi_hi,
-            ),
-        ),
-    )
+    old_a_lo = state.a_lo
+    old_phi_lo = state.phi_lo
+    old_dphi_lo = state.dphi_lo
     state = state._replace(
         **_binary_replace(
             lo_to_j & ~hi_to_lo,
@@ -209,6 +199,19 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
                 a_lo=a_j,
                 phi_lo=phi_j,
                 dphi_lo=dphi_j,
+            ),
+        ),
+    )
+    state = state._replace(
+        **_binary_replace(
+            hi_to_old_lo,
+            state._asdict(),
+            dict(
+                a_hi=old_a_lo,
+                phi_hi=old_phi_lo,
+                dphi_hi=old_dphi_lo,
+                a_rec=state.a_hi,
+                phi_rec=state.phi_hi,
             ),
         ),
     )
