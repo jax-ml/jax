@@ -19,11 +19,9 @@ from jaxlib.triton import dialect  # noqa: F401  # pytype: disable=import-error
 
 
 class CompilationResult(Protocol):
-  asm: str
+  asm: str  # Only set for CUDA (contains PTX)
+  hsaco_path: str  # Only set for ROCm (path to HSACO binary)
   smem_bytes: int
-  cluster_dim_x: int
-  cluster_dim_y: int
-  cluster_dim_z: int
 
 
 class CompilationHandler(Protocol):

@@ -136,8 +136,9 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
 #ifdef JAX_GPU_HIP  // For HIP/ROCM just read the hsaco file
   std::string result_blob;
   std::string fname{ptx};
-  TF_RETURN_IF_ERROR(
-      tsl::ReadFileToString(tsl::Env::Default(), fname, &result_blob));
+  tsl::Env* env = tsl::Env::Default();
+  TF_RETURN_IF_ERROR(tsl::ReadFileToString(env, fname, &result_blob));
+  TF_RETURN_IF_ERROR(env->DeleteFile(fname));
   std::vector<uint8_t> module_image(result_blob.begin(), result_blob.end());
 #else
   // TODO(cjfj): Support `TRITON_PTXAS_PATH` environment variable?

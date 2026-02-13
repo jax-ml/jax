@@ -144,7 +144,6 @@ def pallas_call_lowering(
         operand_output_aliases=dict(input_output_aliases),
     ).results
 
-  # TODO(slebedev): Make this work for ROCm.
   try:
     gpu_device, *_ = jax.local_devices(backend="gpu")
   except RuntimeError:
@@ -154,7 +153,11 @@ def pallas_call_lowering(
     cc = 80
   else:
     arch_name = str(gpu_device.compute_capability)
-    cc = int(arch_name.replace(".", ""))
+    cc = (
+        0
+        if lowering_platform == "rocm"
+        else int(arch_name.replace(".", ""))
+    )
 
   compilation_result = triton.compile(
       lowering_platform,
@@ -167,13 +170,15 @@ def pallas_call_lowering(
   kernel = triton_kernel_call_lib.TritonKernel(
       debug_info.func_name,
       num_warps,
+      1,
       compilation_result.smem_bytes,
-      compilation_result.asm,
+      (
+          compilation_result.hsaco_path
+          if lowering_platform == "rocm"
+          else compilation_result.asm
+      ),
       module_op.get_asm(enable_debug_info=True, pretty_debug_info=True),
       cc,
-      compilation_result.cluster_dim_x,
-      compilation_result.cluster_dim_y,
-      compilation_result.cluster_dim_z,
   )
   kernel_call = triton_kernel_call_lib.TritonKernelCall(
       kernel,
