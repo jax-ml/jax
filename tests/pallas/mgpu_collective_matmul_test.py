@@ -47,10 +47,6 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    # TODO(b/481949311): Remove this once the bug is fixed.
-    if not is_nvshmem_used():
-      self.skipTest("b/481949311")
-
     if collective_matmul_mgpu is None:
       self.skipTest("Mosaic GPU not available.")
     if (not jtu.test_device_matches(["cuda"]) or
