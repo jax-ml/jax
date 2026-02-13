@@ -32,6 +32,8 @@ If you prefer a video introduction here is one from JAX contributor Jake VanderP
 	frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
 	allowfullscreen></iframe>
 
+If the video above does not display, you can also watch it on `YouTube <https://www.youtube.com/watch?v=WdTeDXsOSj4>`_.
+
 Building on JAX
 ---------------
 JAX provides the core numerical computing primitives for a number of tools developed by the
