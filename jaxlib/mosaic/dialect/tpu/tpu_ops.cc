@@ -651,6 +651,14 @@ LogicalResult MemRefBitcastOp::canonicalize(MemRefBitcastOp op,
   return success();
 }
 
+LogicalResult LoadOp::canonicalize(LoadOp op, PatternRewriter &rewriter) {
+  return propagateTiledLayoutToConsumer(op, rewriter);
+}
+
+LogicalResult StoreOp::canonicalize(StoreOp op, PatternRewriter &rewriter) {
+  return propagateTiledLayoutToConsumer(op, rewriter);
+}
+
 template <typename Op>
 LogicalResult verifyStridedOp(Op op, MemRefType memref_ty,
                               VectorType vector_ty, int64_t min_stride) {
