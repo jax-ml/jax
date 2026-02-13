@@ -1198,19 +1198,6 @@ def register_object(
   Returns:
     The input class ``nodetype`` is returned unchanged after being added to JAX's
     pytree registry, so that :func:`register_object` can be used as a decorator.
-
-  Examples:
-
-    >>> import jax
-    >>> from functools import partial
-    ...
-    >>> @partial(jax.tree_util.register_object,
-    ...          mapping_attr='__mapping__')
-    ... class MyStruct:
-    ...   def __init__(self, x: jax.Array, y: str):
-    ...     self.x = x
-    ...     self.y = y
-    ...     self.__mapping__ = {'x': True, 'y': False}
   """
   def object_unflatten_func(meta, data):
     (meta_fields, meta_data, data_fields) = meta
