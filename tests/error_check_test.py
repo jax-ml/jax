@@ -373,5 +373,43 @@ class ErrorCheckTests(jtu.JaxTestCase):
       error_check.raise_if_error()
 
 
+  def test_error_check_aot_invalid_error_code_regression(self):
+    """Regression test for issue #34370.
+
+    Verifies that invalid error codes from corrupted AOT serialization data
+    are handled gracefully with a standard error message, rather than causing
+    an IndexError.
+
+    https://github.com/jax-ml/jax/issues/34370
+    """
+    def make_corrupted_function():
+      """Create a function that simulates corrupted AOT import data."""
+
+      def corrupted_fn(x):
+        # Return an _ErrorClass with an invalid error code (999)
+        # that is out of bounds of the error_list (which is empty here)
+        invalid_error_code = jnp.uint32(999)
+        empty_error_list = []
+        return x + 1, error_check._ErrorClass(invalid_error_code, empty_error_list)
+
+      return corrupted_fn
+
+    corrupted_fn = make_corrupted_function()
+    unwrapped_fn = error_check.unwrap_from_import(corrupted_fn)
+
+    x = jnp.float32(1.0)
+    _ = unwrapped_fn(x)
+
+    # Should raise JaxValueError with the standard error message for
+    # invalid error codes, NOT an IndexError
+    with self.assertRaisesRegex(JaxValueError, "unknown error"):
+      error_check.raise_if_error()
+
+  def test_error_check_invalid_error_code_constants(self):
+    """Test that the standard error message constants are defined correctly."""
+    self.assertIn("unknown error", error_check._INVALID_ERROR_CODE_MSG)
+    self.assertIn("Traceback not available", error_check._INVALID_ERROR_CODE_TRACEBACK)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -54,6 +54,14 @@ _error_list_lock = threading.RLock()
 # (error_message, traceback) pairs. Traceback is `str` when imported from AOT.
 _error_list: list[tuple[str, TracebackType | str]] = []
 
+# Standard error message for invalid/corrupted error codes from AOT import.
+_INVALID_ERROR_CODE_MSG = (
+    "An unknown error occurred during execution of an AOT-imported function. "
+    "This may indicate data corruption during AOT serialization/deserialization, "
+    "or a version mismatch between the exporting and importing JAX versions."
+)
+_INVALID_ERROR_CODE_TRACEBACK = "Traceback not available for corrupted error codes."
+
 
 class _ErrorStorage(threading.local):
 
@@ -237,7 +245,13 @@ def raise_if_error() -> None:
   )  # clear the error code
 
   with _error_list_lock:
-    msg, traceback = _error_list[error_code]
+    if error_code < 0 or error_code >= len(_error_list):
+      # Handle invalid error codes gracefully with a standard error message.
+      # This can happen with corrupted AOT serialization data or negative
+      # error codes that could lead to incorrect indexing.
+      msg, traceback = _INVALID_ERROR_CODE_MSG, _INVALID_ERROR_CODE_TRACEBACK
+    else:
+      msg, traceback = _error_list[error_code]
   if isinstance(traceback, str):  # from imported AOT functions
     exc = JaxValueError(
         f"{msg}\nThe original traceback is shown below:\n{traceback}"
@@ -363,6 +377,7 @@ def unwrap_from_import(f):
         new_error_code != np.uint32(_NO_ERROR),
     )
     error_code = lax.select(should_update, new_error_code + offset, error_code)
+
     # TODO(ayx): support vmap and shard_map.
     _error_storage.ref[...] = error_code
 
