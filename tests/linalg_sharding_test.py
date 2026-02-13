@@ -158,6 +158,12 @@ class LinalgShardingTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("gpu", "cpu")
   def test_batch_axis_sharding_jvp(self, fun_and_shapes, dtype):
+    # Skip test_batch_axis_sharding_jvp13: The test_batch_axis_sharding_jvp13 test fails
+    # on ROCm devices due to numerical precision issues in the underlying hipSPARSE
+    # tridiagonal_solve implementation.
+    # TODO(AratiGanesh): Remove this skip after fixing the issue. Linked to issue #34388
+    if jtu.is_device_rocm() and fun_and_shapes[0] is lax.linalg.qr and dtype == np.complex64:
+      self.skipTest("Skipped on ROCm due to hipSPARSE tridiagonal_solve issue.")
     fun, shapes = self.get_fun_and_shapes(fun_and_shapes, grad=True)
     primals = self.get_args(shapes, dtype, batch_size=8)
     tangents = tuple(map(jnp.ones_like, primals))

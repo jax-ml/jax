@@ -164,6 +164,14 @@ class ExportTestWithMosaicGpu(ExportTestWithTriton):
         exp.mlir_module(),
         r"stablehlo.custom_call @mosaic_gpu_v2.*my_custom_kernel_name")
 
+  def test_cross_platform(self):
+    # Skip test_cross_platform on ROCm: Mosaic GPU not supported on ROCm.
+    # TODO(GulsumGudukbay): Unskip once Mosaic is enabled. Issues #34669
+    # and # 34711.
+    if jtu.is_device_rocm():
+      self.skipTest("Mosaic GPU not supported on ROCm.")
+    return super().test_cross_platform()
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
