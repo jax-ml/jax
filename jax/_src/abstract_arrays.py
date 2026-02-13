@@ -85,10 +85,10 @@ core.literalable_types.update(array_types)
 
 core.literalable_types.add(literals.TypedNdArray)
 
-_int32_min = np.iinfo(np.int32).min
-_int32_max = np.iinfo(np.int32).max
-_int64_min = np.iinfo(np.int64).min
-_int64_max = np.iinfo(np.int64).max
+_int32_min = np.iinfo(np.int32).min  # pyrefly: ignore[no-matching-overload]  # pyrefly#2398
+_int32_max = np.iinfo(np.int32).max  # pyrefly: ignore[no-matching-overload]  # pyrefly#2398
+_int64_min = np.iinfo(np.int64).min  # pyrefly: ignore[no-matching-overload]  # pyrefly#2398
+_int64_max = np.iinfo(np.int64).max  # pyrefly: ignore[no-matching-overload]  # pyrefly#2398
 
 # Note: all python scalar types are weak except bool, because bool only
 # comes in a single width.

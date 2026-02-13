@@ -47,7 +47,7 @@ class JaxValueError(ValueError):
 #:
 #: This value is chosen because we can use `jnp.min()` to obtain the
 #: first error when performing reductions.
-_NO_ERROR = np.iinfo(np.uint32).max
+_NO_ERROR = np.iinfo(np.uint32).max  # pyrefly: ignore[no-matching-overload]  # pyrefly#2398
 
 
 _error_list_lock = threading.RLock()

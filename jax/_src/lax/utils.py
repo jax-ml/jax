@@ -243,8 +243,8 @@ def dtype_to_string(dtype):
     pass
   return str(dtype)
 
-_int32_max = np.iinfo(np.int32).max
-_uint32_max = np.iinfo(np.uint32).max
+_int32_max = np.iinfo(np.int32).max  # pyrefly: ignore[no-matching-overload]  # pyrefly#2398
+_uint32_max = np.iinfo(np.uint32).max  # pyrefly: ignore[no-matching-overload]  # pyrefly#2398
 
 def int_dtype_for_dim(d: DimSize, *, signed: bool) -> DType:
   """Returns a integer dtype large enough to contain indices in dimension d."""

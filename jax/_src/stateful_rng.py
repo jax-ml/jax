@@ -294,7 +294,7 @@ def stateful_rng(seed: typing.ArrayLike | None = None, *,
         " requires an explicit seed to be set.")
     entropy = np.random.SeedSequence().entropy
     assert isinstance(entropy, int)
-    seed = np.int64(entropy & np.iinfo(np.int64).max)
+    seed = np.int64(entropy & np.iinfo(np.int64).max)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2398
   assert seed is not None
   return StatefulPRNG(
     _base_key=random.key(seed, impl=impl),
