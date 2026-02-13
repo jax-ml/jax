@@ -48,9 +48,11 @@ class FusionTest(jtu.JaxTestCase):
     def f(x_fn, y_fn, z_fns):
       x = x_fn()
       y = y_fn()
-      if z_fns is None:
-        z_fns = lambda x: x, lambda x: x
       z_fn1, z_fn2 = z_fns
+      if z_fn1 is None:
+        z_fn1 = lambda x: x
+      if z_fn2 is None:
+        z_fn2 = lambda x: x
       return z_fn1(x), z_fn2(y)
 
     @jax.jit
@@ -64,6 +66,33 @@ class FusionTest(jtu.JaxTestCase):
     x_out, y_out = g(x, y)
     np.testing.assert_array_equal(x_out, x)
     np.testing.assert_array_equal(y_out, y * 2)
+
+  def test_output_fusions_are_actually_trivial(self):
+
+    @fuser.fusible(output_fusion_prefix=(True, True))
+    def f(x_fn, y_fn, z_fns):
+      x = x_fn()
+      y = y_fn()
+      z_fn1, z_fn2 = z_fns
+      self.assertIsNone(z_fn1)
+      self.assertIsNone(z_fn2)
+      if z_fn1 is None:
+        z_fn1 = lambda x: x
+      if z_fn2 is None:
+        z_fn2 = lambda x: x
+      return z_fn1(x), z_fn2(y)
+
+    @jax.jit
+    @fuser.fuse
+    def g(x, y):
+      x, y = f(x, y)
+      return x, y
+
+    x = jax.random.normal(jax.random.key(0), (128, 128), dtype=jnp.float32)
+    y = jax.random.normal(jax.random.key(1), (1, 128), dtype=jnp.float32)
+    x_out, y_out = g(x, y)
+    np.testing.assert_array_equal(x_out, x)
+    np.testing.assert_array_equal(y_out, y)
 
   def test_custom_fusion(self):
     const = jnp.array(1.0, dtype=jnp.float32)
@@ -83,9 +112,11 @@ class FusionTest(jtu.JaxTestCase):
     def f(x_fn, y_fn, z_fns):
       x = x_fn()
       y = y_fn()
-      if z_fns is None:
-        z_fns = lambda x: x, lambda x: x
       z_fn1, z_fn2 = z_fns
+      if z_fn1 is None:
+        z_fn1 = lambda x: x
+      if z_fn2 is None:
+        z_fn2 = lambda x: x
       return z_fn1(x), z_fn2(y)
 
     def g(x, y, z):
@@ -110,9 +141,11 @@ class FusionTest(jtu.JaxTestCase):
     def f(x_fn, y_fn, z_fns):
       x = x_fn()
       y = y_fn()
-      if z_fns is None:
-        z_fns = lambda x: x, lambda x: x
       z_fn1, z_fn2 = z_fns
+      if z_fn1 is None:
+        z_fn1 = lambda x: x
+      if z_fn2 is None:
+        z_fn2 = lambda x: x
       return z_fn1(x), z_fn2(y)
 
     @jax.jit
@@ -136,9 +169,11 @@ class FusionTest(jtu.JaxTestCase):
     def f(x_fn, y_fn, z_fns):
       x = x_fn()
       y = y_fn()
-      if z_fns is None:
-        z_fns = lambda x: x, lambda x: x
       z_fn1, z_fn2 = z_fns
+      if z_fn1 is None:
+        z_fn1 = lambda x: x
+      if z_fn2 is None:
+        z_fn2 = lambda x: x
       return z_fn1(x), z_fn2(y)
 
     @jax.jit
@@ -159,9 +194,11 @@ class FusionTest(jtu.JaxTestCase):
     def f(x_fn, y_fn, z_fns):
       x = x_fn()
       y = y_fn()
-      if z_fns is None:
-        z_fns = lambda x: x, lambda x: x
       z_fn1, z_fn2 = z_fns
+      if z_fn1 is None:
+        z_fn1 = lambda x: x
+      if z_fn2 is None:
+        z_fn2 = lambda x: x
       return z_fn1(x), z_fn2(y)
 
     @jax.jit
@@ -183,9 +220,11 @@ class FusionTest(jtu.JaxTestCase):
     def f(x_fn, y_fn, z_fns):
       x = x_fn()
       y = y_fn()
-      if z_fns is None:
-        z_fns = lambda x: x, lambda x: x
       z_fn1, z_fn2 = z_fns
+      if z_fn1 is None:
+        z_fn1 = lambda x: x
+      if z_fn2 is None:
+        z_fn2 = lambda x: x
       return z_fn1(x), z_fn2(y)
 
     @jax.jit
@@ -208,9 +247,13 @@ class FusionTest(jtu.JaxTestCase):
       x = x_fn()
       y = y_fn()
       z = z_fn()
-      if o_fns is None:
-        o_fns = lambda x: x, (lambda x: x, lambda x: x)
       o_fn1, (o_fn2, o_fn3) = o_fns
+      if o_fn1 is None:
+        o_fn1 = lambda x: x
+      if o_fn2 is None:
+        o_fn2 = lambda x: x
+      if o_fn3 is None:
+        o_fn3 = lambda x: x
       return o_fn1(x), (o_fn2(y), o_fn3(z))
 
     @jax.jit
@@ -233,9 +276,11 @@ class FusionTest(jtu.JaxTestCase):
     def f(x_fn, y_fn, z_fns):
       x = x_fn()
       y = y_fn()
-      if z_fns is None:
-        z_fns = lambda x: x, lambda x: x
       z_fn1, z_fn2 = z_fns
+      if z_fn1 is None:
+        z_fn1 = lambda x: x
+      if z_fn2 is None:
+        z_fn2 = lambda x: x
       return z_fn1(x), z_fn2(y)
 
     @jax.jit

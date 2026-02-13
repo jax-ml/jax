@@ -223,6 +223,13 @@ def _construct_output_fusions(
         c for used, c in zip(used_consts, all_values, strict=True) if used
     )
 
+    if (
+        not jaxpr_out_for_group.eqns
+        and jaxpr_out_for_group.outvars == jaxpr_out_for_group.invars
+    ):
+      output_fusions.append(None)
+      continue
+
     def _fn(jaxpr, vals, *args, **kwargs):
       flat_args, _ = tree_util.tree_flatten((args, kwargs))
       out_flat = jax_core.eval_jaxpr(jaxpr, vals, *flat_args)

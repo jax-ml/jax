@@ -52,7 +52,11 @@ def fusible(f=None, *, output_fusion_prefix: Any = True):
     def wrapper(*args):
       def wrapped(*args):
         in_fusions = tree_util.tree_map(_make_trivial_fusion, args)
-        return f(*in_fusions, None)
+        output_fusions = tree_util.tree_unflatten(
+            tree_util.tree_structure(output_fusion_prefix),
+            [None] * len(tree_util.tree_leaves(output_fusion_prefix)),
+        )
+        return f(*in_fusions, output_fusions)
 
       flat_args, in_tree = tree_util.tree_flatten(args)
       debug_info = api_util.debug_info('fusible', wrapped, args, {})
