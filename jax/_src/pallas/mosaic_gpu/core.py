@@ -112,7 +112,6 @@ class CompilerParams(pallas_core.CompilerParams):
       events than this.
     profile_dir: The directory to which profiling traces will be written to.
   """
-  BACKEND: ClassVar[pallas_core.Backend] = "mosaic_gpu"
   approx_math: bool = False
   dimension_semantics: Sequence[DimensionSemantics] | None = None
   max_concurrent_steps: int = 1
@@ -1290,10 +1289,6 @@ class Mesh:
     object.__setattr__(self, "cluster_names", tuple(self.cluster_names))
 
   @property
-  def backend(self) -> str:
-    return "mosaic_gpu"
-
-  @property
   def default_memory_space(self) -> MemorySpace:
     return MemorySpace.GMEM
 
@@ -1326,10 +1321,6 @@ class WarpMesh:
 
   _NUM_WARPS_PER_WARPGROUP: ClassVar[int] = 4
   axis_name: str
-
-  @property
-  def backend(self) -> str:
-    raise NotImplementedError
 
   @property
   def shape(self):
