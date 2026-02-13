@@ -484,8 +484,28 @@ class MemRefTest(TestCase):
     )(scalar)
     np.testing.assert_array_equal(res, expected)
 
+  @jtu.thread_unsafe_test()  # Modifies `os.environ``.
+  def test_cluster_id_simplify(self):
+    def kernel(ctx, dst, _):
+      idx = mgpu.utils.cluster_idx(gpu.Dimension)  # type: ignore
+      idx = arith.index_cast(ir.IntegerType.get_signless(32), idx)
+      memref.store(idx, dst, [gpu.block_id(gpu.Dimension.y)])
+
+    out_ty = jax.ShapeDtypeStruct(shape=(8,), dtype=jnp.int32)
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      f = mgpu.as_gpu_kernel(
+          kernel, (1, 8, 1), (128, 1, 1), (), out_ty, (), cluster=(1, 4, 1)
+      )
+      np.testing.assert_array_equal(f(), np.arange(8) % 4)
+    # Make sure MLIR/LLVM have simplified the calculation of cluster_idx and
+    # that recognized that we only need the Y component.
+    self.assertEqual(ptx().count("%cluster_ctaid"), 1)
+    self.assertEqual(ptx().count("%ctaid"), 1)
+    self.assertEqual(ptx().count("%cluster_ctaid.y"), 1)
+    self.assertEqual(ptx().count("%ctaid.y"), 1)
+
   @parameterized.parameters(gpu.Dimension.x, gpu.Dimension.y)
-  def test_cluster_ref(self, dim):
+  def test_cluster_ref_read(self, dim):
     index = ir.IndexType.get()
     dims = (gpu.Dimension.x, gpu.Dimension.y)
     def kernel(ctx, src, dst, scratch):
@@ -506,6 +526,36 @@ class MemRefTest(TestCase):
         kernel, (2, 2, 1), (128, 1, 1), x, x, (smem, barrier), cluster=(2, 2, 1)
     )
     np.testing.assert_array_equal(f(x), np.flip(x, axis=int(dim)))
+
+  def test_cluster_ref_write(self):
+    index = ir.IndexType.get()
+    def kernel(ctx, src, dst, scratch):
+      smem, barrier = scratch
+      cluster_idx = gpu.cluster_block_id(gpu.Dimension.x)
+      peer_idx = arith.subi(arith.constant(index, 1), cluster_idx)
+      a = mgpu.FragmentedArray.load_tiled(
+          memref_slice(src, cluster_idx),
+          layout=mgpu.WGMMA_LAYOUT,
+          swizzle=128,
+      )
+      barrier.arrive_expect_tx(math.prod(a.shape) * mgpu.bitwidth(a.mlir_dtype) // 8 // 128)
+      a.store_tiled_async(
+          smem,
+          barrier,
+          cluster_dim=gpu.Dimension.x,
+          cluster_idx=peer_idx,
+          swizzle=128,
+      )
+      barrier.wait()
+      mgpu.FragmentedArray.load_strided(smem).store_untiled(memref_slice(dst, cluster_idx))
+
+    barrier = mgpu.Barrier(arrival_count=128)
+    x = np.arange(2 * 64 * 32, dtype=jnp.float32).reshape(2, 8, 1, 8, 32)
+    smem = jax.ShapeDtypeStruct(shape=x.shape[1:], dtype=jnp.float32)
+    f = mgpu.as_gpu_kernel(
+        kernel, (2, 1, 1), (128, 1, 1), x, x, (smem, barrier), cluster=(2, 1, 1)
+    )
+    np.testing.assert_array_equal(f(x), np.flip(x, axis=0))
 
 
 def get_packed_shape(strides, shape):

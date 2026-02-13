@@ -3343,6 +3343,69 @@ class FragmentedArray:
     )
     fa.store_untiled(ref)
 
+  def store_tiled_async(
+      self,
+      ref: ir.Value,
+      barrier: utils.BarrierRef,
+      cluster_dim: gpu.Dimension,
+      cluster_idx: ir.Value,
+      swizzle: int | None,
+      optimized: bool = True,
+      tiling_rank: int | None = None,
+  ):
+    i32 = ir.IntegerType.get_signless(32)
+    i64 = ir.IntegerType.get_signless(64)
+    if isinstance(ref, utils.MultimemRef):
+      raise ValueError("Multimem refs are not supported in store_tiled_async")
+    layout, shape = self.layout, self.shape
+    if not isinstance(layout, TiledLayout):
+      raise NotImplementedError(self.layout)
+    if any(
+        isinstance(d, Replicated)
+        for d in itertools.chain(layout.warp_dims, layout.lane_dims)
+    ):
+      raise NotImplementedError("Replicated dimensions are not supported")
+    full_cluster_idx = [gpu.cluster_block_id(d) for d in gpu.Dimension]
+    full_cluster_idx[cluster_dim] = cluster_idx
+    lin_cluster_idx = arith.index_cast(i32, utils.cluster_idx(gpu.Dimension, full_cluster_idx))
+    cluster_barrier_ptr = utils.get_cluster_ptr(
+        barrier.get_ptr(), lin_cluster_idx, generic=False
+    )
+    cluster_ref = utils.get_cluster_ref(
+        ref, cluster_dim, cluster_idx, generic=False
+    )
+    stores = self.transfer_tiled(
+        cluster_ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank
+    )
+    for get, _update, _idx, cluster_ptr in stores:
+      reg = get(self.registers)
+      reg_ty = ir.VectorType(reg.type)
+      element_bitwidth = utils.bitwidth(reg_ty.element_type)
+      if (
+          isinstance(reg_ty.element_type, ir.FloatType)
+          and element_bitwidth <= 8
+      ):
+        narrow_int = ir.IntegerType.get_signless(element_bitwidth)
+        reg = vector.bitcast(ir.VectorType.get(reg_ty.shape, narrow_int), reg)
+      reg_bitwidth = utils.bitwidth(reg_ty)
+      if reg_bitwidth == 32:
+        ptx_constraint = "r"
+        ptx_type = "b32"
+        reg = utils.bitcast(reg, i32)
+      elif reg_bitwidth == 64:
+        ptx_constraint = "l"
+        ptx_type = "b64"
+        reg = utils.bitcast(reg, i64)
+      else:
+        raise NotImplementedError(f"Unsupported register bitwidth: {reg_bitwidth}")
+      llvm.inline_asm(
+          ir.Type.parse("!llvm.void"),
+          [cluster_ptr, reg, cluster_barrier_ptr],
+          f"st.async.cluster.shared::cluster.mbarrier::complete_tx::bytes.{ptx_type} [$0], $1, [$2];",
+          f"l,{ptx_constraint},l",
+          has_side_effects=True,
+      )
+
   def store_tiled(
       self,
       ref: ir.Value | utils.MultimemRef,
@@ -3515,6 +3578,7 @@ class FragmentedArray:
     """
     # TODO(apaszke): Use ldmatrix/stmatrix when possible.
     c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
+    i32 = ir.IntegerType.get_signless(32)
     tiling = layout.tiling
 
     ref_ty = ir.MemRefType(ref.type)
@@ -3620,11 +3684,13 @@ class FragmentedArray:
       llvm_memory_space = None
     elif utils.is_smem_ref(ref_ty):
       llvm_memory_space = 3
+    elif ref_ty.memory_space == ir.IntegerAttr.get(i32, 7):  # Cluster SMEM
+      llvm_memory_space = 7
     else:
       raise ValueError(f"Unsupported memory space: {ref_ty.memory_space}")
 
     if optimized:
-      if llvm_memory_space != 3:
+      if llvm_memory_space != 3 and llvm_memory_space != 7:
         raise NotImplementedError("Only optimized transfers to SMEM supported")
       plan = plan_tiled_transfer(
           tiles_shape, tiles_strides,
