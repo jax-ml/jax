@@ -2078,12 +2078,65 @@ def elements_to_bytes(offset: ir.Value, element_bitwidth: int) -> ir.Value:
     return offset
 
 
+def cluster_idx(
+    dim: gpu.Dimension | Sequence[gpu.Dimension] | None = None,
+    dim_idx: ir.Value | Sequence[ir.Value] | None = None,
+) -> ir.Value:
+  """Returns the linear index of a block within a subset of the cluster spanned by the given dimensions.
+
+  dim_idx can be used to specify the index of another block along the selected
+  dimensions. If not provided, the current block's index is used.
+  """
+  if dim is None:
+    dim = gpu.Dimension
+  elif isinstance(dim, gpu.Dimension):
+    dim = (dim,)
+  if dim_idx is None:
+    dim_idx = [gpu.cluster_block_id(d) for d in dim]
+  elif isinstance(dim_idx, ir.Value):
+    if len(dim) != 1:
+      raise ValueError(
+          "Expected a single dimension when passing a single index"
+      )
+    dim_idx = [dim_idx]
+  index = ir.IndexType.get()
+  stride = c(1, index)
+  lin_idx = c(0, index)
+  for d, idx in sorted(zip(dim, dim_idx, strict=True), key=lambda x: x[0]):
+    lin_idx = arith.addi(lin_idx, arith.muli(idx, stride))
+    stride = arith.muli(stride, gpu.cluster_dim_blocks(d))
+  return lin_idx
+
+
 def get_cluster_ptr(ptr: ir.Value, cluster_block: ir.Value):
   i32 = ir.IntegerType.get_signless(32)
   assert cluster_block.type == i32, cluster_block.type
   assert ptr.type == ir.Type.parse("!llvm.ptr<3>"), ptr.type
   mapped_smem_ptr = nvvm.mapa(ir.Type.parse("!llvm.ptr<7>"), ptr, cluster_block)
   return llvm.addrspacecast(ir.Type.parse("!llvm.ptr"), mapped_smem_ptr)
+
+
+def get_cluster_ref(ref: ir.Value, dim: gpu.Dimension, idx: ir.Value):
+  i32 = ir.IntegerType.get_signless(32)
+  # We replace the offset in the ref type by 0, because memref_ptr always
+  # folds the offset into the pointer.
+  ref_ty = ir.MemRefType(ref.type)
+  strides, _ = ref_ty.get_strides_and_offset()
+  result_type = ir.MemRefType.get(
+      ref_ty.shape,
+      ref_ty.element_type,
+      ir.StridedLayoutAttr.get(0, strides),
+      None,
+  )
+  if ref_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
+    raise ValueError(f"Expected SMEM but got: {ref.memory_space}")
+  idxs = [gpu.cluster_block_id(d) for d in gpu.Dimension]
+  idxs[dim] = idx
+  flat_block = arith.index_cast(i32, cluster_idx(gpu.Dimension, idxs))  # type: ignore
+  return ptr_as_memref(
+      get_cluster_ptr(memref_ptr(ref, memory_space=3), flat_block),
+      result_type,
+  )
 
 
 @dataclasses.dataclass(frozen=True)
