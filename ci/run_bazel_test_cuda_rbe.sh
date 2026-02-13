@@ -55,8 +55,14 @@ else
   FREETHREADED_FLAG_VALUE="no"
 fi
 
+PIPSTAR_ARG=""
+if [[ "${JAXCI_ENABLE_BZLMOD:-0}" == "0" ]]; then
+  PIPSTAR_ARG="--repo_env=RULES_PYTHON_ENABLE_PIPSTAR=0"
+fi
+
 bazel test --config=rbe_linux_x86_64_cuda${JAXCI_CUDA_VERSION} \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
+      $PIPSTAR_ARG \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
       $OVERRIDE_XLA_REPO \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
