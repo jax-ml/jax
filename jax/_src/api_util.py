@@ -30,7 +30,7 @@ from jax._src.tree_util import (
     generate_key_paths, broadcast_prefix, prefix_errors,
     none_leaf_registry, broadcast_flattened_prefix_with_treedef)
 from jax._src import linear_util as lu
-from jax._src.util import (safe_map, WrapKwArgs, Hashable, HashableFunction,
+from jax._src.util import (safe_map, WrapKwArgs, HashableFunction,
                            Unhashable, safe_zip)
 from jax._src import traceback_util
 
@@ -255,30 +255,6 @@ def _split_args(static_argnums, args, allow_invalid):
   dyn_args = tuple(args[i] for i in dyn_argnums)
   return static_argnums, dyn_argnums, dyn_args
 
-def argnums_partial_except(f: lu.WrappedFun, static_argnums: tuple[int, ...],
-                           args: tuple[Any, ...], *, allow_invalid: bool):
-  "Version of ``argnums_partial`` that checks hashability of static_argnums."
-  if not static_argnums:
-    return f, args
-  static_argnums, dyn_argnums, dyn_args = _split_args(
-      static_argnums, args, allow_invalid)
-
-  fixed_args = []
-  for i in sorted(static_argnums):
-    # TODO(shoyer): set allow_invalid=True permanently after static_argnames.
-    if allow_invalid and i >= len(args):
-      continue
-    static_arg = args[i]
-    if not is_hashable(static_arg):
-      raise ValueError(
-          "Non-hashable static arguments are not supported, as this can lead "
-          f"to unexpected cache-misses. Static argument (index {i}) of type "
-          f"{type(static_arg)} for function {f.__name__} is non-hashable.")
-    else:
-      fixed_args.append(_HashableWithStrictTypeEquality(static_arg))
-
-  return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
-
 @lu.transformation2
 def _argnums_partial(_fun: Callable,
                      _dyn_argnums: Sequence[int],
@@ -291,27 +267,6 @@ def _argnums_partial(_fun: Callable,
   args = [next(fixed_args_).val if x is sentinel else x for x in args]
   assert next(fixed_args_, sentinel) is sentinel
   return _fun(*args, **kwargs)
-
-def argnames_partial_except(f: lu.WrappedFun, static_argnames: tuple[str, ...],
-                            kwargs: dict[str, Any]):
-  if not static_argnames:
-    return f, kwargs
-  dyn_kwargs = {k: v for k, v in kwargs.items() if k not in static_argnames}
-
-  fixed_kwargs: dict[str, Any] = {}
-  for k, arg in kwargs.items():
-    if k not in dyn_kwargs:
-      try:
-        hash(arg)
-      except TypeError:
-        raise ValueError(
-            "Non-hashable static arguments are not supported, as this can lead "
-            f"to unexpected cache-misses. Static argument (name {k}) of type "
-            f"{type(arg)} for function {f.__name__} is non-hashable.")
-      else:
-        fixed_kwargs[k] = Hashable(arg)
-
-  return _argnames_partial(f, WrapKwArgs(fixed_kwargs)), dyn_kwargs
 
 @lu.transformation2
 def _argnames_partial(_fun, _fixed_kwargs: WrapKwArgs, *args, **dyn_kwargs):

@@ -311,16 +311,6 @@ def count_primitive_compiles():
     count[0] = dispatch.xla_primitive_callable.cache_info().misses
 
 @contextmanager
-def count_jit_infer_params_cache_miss():
-  assert thread_local_state.infer_params_fun_counts is None
-  counts = collections.Counter()
-  thread_local_state.infer_params_fun_counts = counts
-  try:
-    yield counts
-  finally:
-    thread_local_state.infer_params_fun_counts = None
-
-@contextmanager
 def count_subjaxpr_to_hlo_conversion(fun_name):
   assert thread_local_state.lower_jaxpr_to_fun_counts is None
   counts = collections.Counter()
@@ -1563,14 +1553,6 @@ def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
 
 def with_mesh_from_kwargs(f):
   return lambda *args, **kwargs: with_mesh(kwargs['mesh'])(f)(*args, **kwargs)
-
-def with_and_without_mesh(f):
-  return parameterized.named_parameters(
-    {"testcase_name": name, "mesh": mesh, "axis_resources": axis_resources}
-    for name, mesh, axis_resources in (
-      ('', (), ()),
-      ('Mesh', (('x', 2),), (('i', 'x'),))
-    ))(with_mesh_from_kwargs(f))
 
 def with_explicit_mesh(sizes, names, axis_types=None, iota_order=False):
   axis_types = ((mesh_lib.AxisType.Explicit,) * len(names)

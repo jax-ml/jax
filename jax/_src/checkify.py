@@ -74,18 +74,6 @@ Payload = list[Union[np.ndarray, Array]]
 PyTreeDef = jtu.PyTreeDef
 Out = TypeVar('Out')
 
-## Utils
-
-def popattr(obj, attrname):
-  val = getattr(obj, attrname)
-  delattr(obj, attrname)
-  return val
-
-def setnewattr(obj, name, val):
-  sentinel = object()
-  assert getattr(obj, name, sentinel) is sentinel
-  setattr(obj, name, val)
-
 # Concrete errors
 
 class JaxException(Exception):

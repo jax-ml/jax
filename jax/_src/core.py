@@ -3156,9 +3156,6 @@ def remove_named_axis_effects(
     return jaxpr
   return jaxpr.replace(effects=filter_named_axis_effects(jaxpr.effects, names))
 
-def used_axis_names_jaxpr(jaxpr: Jaxpr | ClosedJaxpr):
-  return {e.name for e in jaxpr.effects if isinstance(e, NamedAxisEffect)}
-
 def replace_jaxpr_effects(jaxpr: ClosedJaxpr, effects: Effects):
   return _replace_jaxpr_effects(jaxpr, frozenset(effects))
 

@@ -1612,27 +1612,6 @@ def _pallas_call(
   return wrapped
 
 
-def in_path_to_input_origin(
-    in_path: tree_util.KeyPath, arg_names: tuple[str, ...] | None
-) -> pallas_core.OriginStr:
-  """Converts `args[k]<rest>` into `arg_k_name<rest>`."""
-  if arg_names is None:
-    return f"args{tree_util.keystr(in_path)}"
-  if len(in_path) == 0:
-    return "args"
-  arg_idx, *rest_path = in_path
-  if isinstance(arg_idx, tree_util.SequenceKey) and arg_idx.idx < len(
-      arg_names
-  ):
-    if arg_names[arg_idx.idx] is None:
-      # TODO(necula): when is this needed?
-      # Repro: pallas_test:test_with_input_output_aliasing
-      return f"args{tree_util.keystr(in_path)}"
-    return arg_names[arg_idx.idx] + tree_util.keystr(tuple(rest_path))
-  else:
-    return f"args{tree_util.keystr(tuple(in_path))}"
-
-
 # We import the TPU backend at the top level because it defines flags. Note that
 # we can only do that at the bottom of this file, because it also depends on
 # this module already being initialized.

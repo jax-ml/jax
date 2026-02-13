@@ -13,8 +13,6 @@
 # limitations under the License.
 
 import functools
-import itertools
-from typing import Any
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -136,23 +134,6 @@ def reference_gmm(
     out.append(result)
     start += group_sizes[i]
   return jnp.concatenate(out, axis=0)
-
-def with_dtype_arguments(xs: tuple[Any, ...]) -> tuple[Any, ...]:
-  dtypes = [jnp.float32, jnp.bfloat16]
-
-  result = []
-  for x in xs:
-    for dtypes_tuple in itertools.product(dtypes, dtypes, dtypes):
-      result.append(x + dtypes_tuple)
-  return tuple(result)
-
-def with_transpose_argument(xs: tuple[Any, ...]) -> tuple[Any, ...]:
-  flags = [False, True]
-  result = []
-  for x in xs:
-    for flag in flags:
-      result.append(x + (flag,))
-  return tuple(result)
 
 def tolerances(
     lhs_dtype: jnp.dtype, rhs_dtype: jnp.dtype, out_dtype: jnp.dtype

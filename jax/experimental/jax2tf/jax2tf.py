@@ -462,33 +462,6 @@ def eval_polymorphic_shape(fun_jax: Callable,
 
 # Internals
 
-def flatten_fun_jax(fun_jax: Callable,
-                    in_tree,
-                    ) -> tuple[Callable, Callable]:
-  """Wraps the function to take a (flat) list of positional args.
-
-  jax2tf works better and is simpler when the JAX function takes and returns
-  just a tuple of values (no pytrees, no kwargs). This is in part because
-  jax.vjp does not support kwargs and we can only set
-  tf.custom_gradient on functions with flat arguments and results
-
-  Returns:
-     * the wrapped JAX function taking and returning a flat list of arguments
-     * a thunk that can be called after the wrapped function has been called
-       to return the output pytree.
-  """
-  out_tree_ref = None
-  def fun_flat_jax(*args_flat_jax):
-    tree_args, tree_kwargs = tree_util.tree_unflatten(in_tree, args_flat_jax)
-    tree_res = fun_jax(*tree_args, **tree_kwargs)
-    res_flat_jax, out_tree = tree_util.tree_flatten(tree_res)
-    nonlocal out_tree_ref
-    assert out_tree_ref is None or out_tree_ref == out_tree
-    out_tree_ref = out_tree
-    return res_flat_jax
-
-  return fun_flat_jax, lambda: out_tree_ref
-
 def preprocess_arg_tf(arg_idx: int,
                       arg_tf: TfVal) -> TfVal:
   """Pre-processes the TF args.

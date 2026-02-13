@@ -1616,15 +1616,6 @@ def move_binders_to_back(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]
   """Reorder `invars` by moving those indicated in `to_move` to the back."""
   return move_binders_to_front(closed_jaxpr, map(op.not_, to_move))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
 
-def move_outvars_to_back(jaxpr: ClosedJaxpr, to_move: Sequence[bool]) -> ClosedJaxpr:
-  return _move_outvars_to_back(jaxpr, tuple(to_move))
-
-@weakref_lru_cache
-def _move_outvars_to_back(jaxpr: core.ClosedJaxpr, to_move):
-  new_outvars = ([e for e, m in zip(jaxpr.jaxpr.outvars, to_move) if not m] +
-                 [e for e, m in zip(jaxpr.jaxpr.outvars, to_move) if     m])
-  return jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(outvars=new_outvars))
-
 
 class DynamicJaxprTracer(core.Tracer):
   __slots__ = ['aval', 'val', 'mutable_qdd', 'parent', '_debug_info']
