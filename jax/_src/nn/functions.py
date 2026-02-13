@@ -278,6 +278,31 @@ def mish(x: ArrayLike) -> Array:
   x_arr = numpy_util.ensure_arraylike("mish", x)
   return x_arr * jnp.tanh(softplus(x_arr))
 
+@api.jit(static_argnames=('approximate',))
+def geglu(x: ArrayLike, gate: ArrayLike, approximate: bool = True) -> Array:
+  r"""Gated GELU activation (GEGLU).
+
+  Computes:
+    .. math::
+      \mathrm{GEGLU}(x, g) = \mathrm{GELU}(x, \text{approximate}) * g
+
+  Reference:
+    * Shazeer, N. (2020). "GLU Variants Improve Transformer"
+      (https://arxiv.org/abs/2002.05202)
+
+  Args:
+    x: Input array.
+    gate: Gating tensor. The shape must be broadcastable to the shape of `x`.
+    approximate: Whether to use the approximate or exact GELU formulation. Default is True.
+
+  Returns:
+    Array: Elementwise product of GELU(x) and gate.
+  """
+  x, gate = numpy_util.promote_args_inexact("geglu", x, gate)
+  return gelu(x, approximate=approximate) * gate
+
+
+
 @api.jit
 def log_sigmoid(x: ArrayLike) -> Array:
   r"""Log-sigmoid activation function.
