@@ -2,7 +2,7 @@
 
 # Pallas Changelog
 
-<!--* freshness: { reviewed: '2025-04-24' } *-->
+<!--* freshness: { reviewed: '2026-02-13' } *-->
 
 This is the list of changes specific to {class}`jax.experimental.pallas`.
 For the overall JAX change log see [here](https://docs.jax.dev/en/latest/changelog.html).
@@ -15,13 +15,18 @@ Remember to align the itemized text with the first line of an item within a list
 
 * New features:
 
+  * Added a {func}`jax.experimental.pallas.with_scoped` decorator that provides
+    the function with scope-allocated scratch buffers.
+
+## Released with JAX 0.9.0
+
+* New features:
+
   * Added a `reduction_scratch_bytes` field to
     {class}`jax.experimental.pallas.mosaic_gpu.CompilerParams`. This gives user
     control over how much shared memory Pallas is allowed to reserve for
     cross-warp reductions on GPU. Increasing this value typically allows for
     faster reductions.
-  * Added a {func}`jax.experimental.pallas.with_scoped` decorator that provides
-    the function with scope-allocated scratch buffers.
 
 * Changes
 
