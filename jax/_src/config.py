@@ -1195,7 +1195,8 @@ debug_nans = bool_state(
     help=('Add nan checks to every operation. When a nan is detected on the '
           'output of a jit-compiled computation, call into the un-compiled '
           'version in an attempt to more precisely identify the operation '
-          'which produced the nan.'))
+          'which produced the nan. Note: enabling this option disables buffer '
+          'donation (donate_argnums/donate_argnames).'))
 
 debug_infs = bool_state(
     name='jax_debug_infs',
