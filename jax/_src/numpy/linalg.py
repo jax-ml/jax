@@ -465,32 +465,30 @@ def matrix_rank(
   return reductions.sum(S > rtol, axis=-1)
 
 
-def _slogdet_from_det(det: Array, a: Array) -> tuple[Array, Array]:
-  """Helper to compute slogdet from a pre-computed determinant."""
+def _slogdet_1x1(a: Array) -> tuple[Array, Array]:
+  """Analytic slogdet for 1x1 matrices. No LU/solve"""
+  det = a[..., 0, 0]
   dtype = lax.dtype(a)
   abs_det = ufuncs.abs(det)
   is_zero = abs_det == jnp.array(0, dtype=dtype)
-  if jnp.iscomplexobj(a):
-    sign = jnp.where(is_zero, jnp.array(0, dtype=dtype), det / ufuncs.astype(abs_det, det.dtype))
-  else:
-    sign = jnp.where(is_zero, jnp.array(0, dtype=dtype), ufuncs.sign(det))
+  sign = jnp.where(is_zero, jnp.array(0, dtype=dtype), ufuncs.sign(det))
   logabsdet = jnp.where(
-      is_zero, jnp.array(-np.inf, dtype=dtype), ufuncs.log(abs_det).astype(dtype))
+      is_zero, jnp.array(-np.inf, dtype=dtype), ufuncs.log(abs_det))
   return sign, ufuncs.real(logabsdet)
 
 
-def _slogdet_1x1(a: Array) -> tuple[Array, Array]:
-  """Analytic slogdet for 1x1 matrices. No LU/solve; avoids TRSV on ROCm."""
-  det = a[..., 0, 0]
-  return _slogdet_from_det(det, a)
-
-
 def _slogdet_2x2(a: Array) -> tuple[Array, Array]:
-  """Analytic slogdet for 2x2 matrices. No LU/solve; avoids TRSV on ROCm."""
+  """Analytic slogdet for 2x2 matrices. No LU/solve."""
   a00, a01 = a[..., 0, 0], a[..., 0, 1]
   a10, a11 = a[..., 1, 0], a[..., 1, 1]
   det = (a00 * a11) - (a01 * a10)
-  return _slogdet_from_det(det, a)
+  dtype = lax.dtype(a)
+  abs_det = ufuncs.abs(det)
+  is_zero = abs_det == jnp.array(0, dtype=dtype)
+  sign = jnp.where(is_zero, jnp.array(0, dtype=dtype), ufuncs.sign(det))
+  logabsdet = jnp.where(
+      is_zero, jnp.array(-np.inf, dtype=dtype), ufuncs.log(abs_det))
+  return sign, ufuncs.real(logabsdet)
 
 
 @custom_jvp
