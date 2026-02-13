@@ -3560,7 +3560,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
   regions = regions[1:] + regions[:1]
   treedef = None
   for branch, region in zip(branches, regions):
-    block = region.blocks.append() if mlir_compat else region.blocks[0]
+    block = region.blocks.append() if mlir_compat else region.blocks[0]  # pyrefly: ignore[unbound-name]  # pyrefly#2382
     with ir.InsertionPoint(block):
       outs = lower_jaxpr_to_mosaic_gpu(
           ctx.module_ctx, ctx.launch_ctx, branch.jaxpr, args, consts=branch.consts

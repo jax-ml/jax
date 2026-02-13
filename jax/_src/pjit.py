@@ -1864,7 +1864,7 @@ def _pjit_transpose_fancy(
   primals_ctrefs, specs = ad.project_accums(args)
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
   in_avals = [core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd  # type: ignore
-              else a for x in in_flat]
+              else a for x in in_flat]  # pyrefly: ignore[unbound-name]  # pyrefly#2382
   trans_jaxpr, out_tree = _transpose_jaxpr_fancy(jaxpr, in_tree, (*in_avals,), specs)
 
   trans_in_shardings = (

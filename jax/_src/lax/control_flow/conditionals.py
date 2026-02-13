@@ -65,8 +65,8 @@ zip, unsafe_zip = safe_zip, zip
 _no_operand_sentinel = object()
 
 @api_boundary
-def switch(index, branches: Sequence[Callable], *operands,
-           operand=_no_operand_sentinel):
+def switch(index, branches: Sequence[Callable], *operands: Any,
+           operand: Any = _no_operand_sentinel):
   """Apply exactly one of the ``branches`` given by ``index``.
 
   If ``index`` is out of bounds, it is clamped to within bounds.
@@ -135,7 +135,7 @@ def switch(index, branches: Sequence[Callable], *operands,
 def _switch_internal(
     index: ArrayLike,
     branches: Sequence[Callable],
-    operands: Sequence[ArrayLike], *,
+    operands: Sequence[Any], *,
     branches_platforms: BranchesPlatforms | None):
   if (config.disable_jit.value and core.is_concrete(index)):
     return branches[int(index)](*operands)  # type: ignore
@@ -840,7 +840,7 @@ def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
   primals_ctrefs, specs = ad.project_accums(args)
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
   in_avals = tuple(core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd  # type: ignore
-                   else a for x in in_flat)
+                   else a for x in in_flat)  # pyrefly: ignore[unbound-name]  # pyrefly#2382
   trans_branches, out_trees = unzip2(
       _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, (False,) * len(args))
       for j in branches)
@@ -1064,7 +1064,7 @@ def _cond_state_discharge_rule(should_discharge, in_avals, out_avals, index, *ar
       discharge_state(branch.jaxpr, branch.consts, should_discharge=should_discharge[1:])
       for branch in branches)
   # Don't thread the ref values through the cond if they never change.
-  forwarded_outvars = None
+  forwarded_outvars: list[int | None] | None = None
   for branch in discharged_branches:
     invar_pos = {v: i for i, v in enumerate(branch.invars)}
     branch_forwarding = [
