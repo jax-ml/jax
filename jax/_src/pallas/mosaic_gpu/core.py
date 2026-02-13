@@ -293,14 +293,13 @@ def kernel(
             collective_axes=_thread_name,
             **(scratch_shapes if isinstance(scratch_shapes, Mapping) else {}),
         )
-      if mesh.kernel_name is not None:
-        cmap_body.__name__ = mesh.kernel_name
-      else:
-        # The body function name is used to set the name of the kernel as a
-        # fallback if the kernel name is not set explicitly.
-        cmap_body.__name__ = getattr(body, "__name__", "anonymous")
+      name = (
+          getattr(body, "__name__", "anonymous")
+          if mesh.kernel_name is None
+          else mesh.kernel_name
+      )
       pallas_core.core_map(
-          mesh, compiler_params=compiler_params, interpret=interpret
+          mesh, compiler_params=compiler_params, interpret=interpret, name=name
       )(cmap_body)
     _, outs = state_discharge.run_state(stateful)((
         operands,
