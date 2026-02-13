@@ -15,6 +15,11 @@
 # The following are a subset of the full jax.numpy functionality used by
 # internal imports.
 
+from jax._src.numpy import (
+    fft as fft,
+    linalg as linalg,
+)
+
 from jax._src.numpy.array_constructors import (
     asarray as asarray,
     array as array,

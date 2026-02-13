@@ -3173,10 +3173,10 @@ class JitGlobalCppCacheKeys:
             self.donate_argnames is not None or
             self.device is not None or
             self.backend is not None or
-            any(not isinstance(i, UnspecifiedValue) for i in self.in_shardings_leaves) or
-            any(not isinstance(o, UnspecifiedValue) for o in self.out_shardings_leaves) or
-            any(i is not None for i in self.in_layouts_leaves) or
-            any(o is not None for o in self.out_layouts_leaves) or
+            any(not isinstance(i, UnspecifiedValue) for i in (self.in_shardings_leaves or [])) or
+            any(not isinstance(o, UnspecifiedValue) for o in (self.out_shardings_leaves or [])) or
+            any(i is not None for i in (self.in_layouts_leaves or [])) or
+            any(o is not None for o in (self.out_layouts_leaves or [])) or
             self.compiler_options_kvs)
 
 

@@ -2302,7 +2302,9 @@ def _fori_body_fun(body_fun: Callable, body_fun_dbg: core.DebugInfo) -> Callable
 
   def while_body_fun(loop_carry):
     i, upper, x = loop_carry
-    return lax.add(i, lax._const(i, 1)), upper, body_fun_ref()(i, x)
+    body_fun = body_fun_ref()
+    assert body_fun is not None
+    return lax.add(i, lax._const(i, 1)), upper, body_fun(i, x)
   if body_fun_dbg.arg_names is not None:
     arg_names = (body_fun_dbg.arg_names[0],
                  "",  # upper,
@@ -2319,7 +2321,9 @@ def _fori_scan_body_fun(body_fun: Callable, body_fun_dbg: core.DebugInfo) -> Cal
   body_fun_ref = weakref.ref(body_fun)
   def scanned_fun(loop_carry, _):
     i, x = loop_carry
-    return (i + 1, body_fun_ref()(i, x)), None
+    body_fun = body_fun_ref()
+    assert body_fun is not None
+    return (i + 1, body_fun(i, x)), None
   api_util.save_wrapped_fun_debug_info(
       scanned_fun, body_fun_dbg._replace(result_paths=None))
   return scanned_fun
