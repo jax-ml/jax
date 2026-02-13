@@ -73,6 +73,10 @@ jobs:
       - name: Run Bazel single B200 CUDA Tests
         run: |
             nvidia-smi
+            git clone https://github.com/openxla/xla.git ./xla
+            cd ./xla
+            git checkout test_845842053
+            cd ..
             bazel test \
             --config=ci_linux_x86_64_cuda \
             --config=ci_rbe_cache \
@@ -96,6 +100,7 @@ jobs:
             --flaky_test_attempts=1 \
             --test_timeout=420 \
             --color=yes \
+            --override_repository=xla=./xla \
             //tests:cudnn_fusion_test_gpu \
             //tests:scaled_matmul_stablehlo_test_gpu \
             //tests:fused_attention_stablehlo_test_gpu \
@@ -103,7 +108,8 @@ jobs:
             //tests/pallas:gpu_tests \
             //tests/mosaic:gpu_tests
   run_multiaccelerator_tests:
-    if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
+    needs: changed_files
+    if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || needs.changed_files.outputs.any_changed == 'true' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
     runs-on: linux-x86-a3-8g-h100-8gpu
     container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
     name: "Bazel multiple H100 CUDA tests"
@@ -118,6 +124,10 @@ jobs:
       - name: Run Bazel multiple H100 CUDA Tests
         run: |
             nvidia-smi
+            git clone https://github.com/openxla/xla.git ./xla
+            cd ./xla
+            git checkout test_845842053
+            cd ..
             bazel test \
             --config=ci_linux_x86_64_cuda \
             --config=ci_rbe_cache \
@@ -137,6 +147,7 @@ jobs:
             --action_env=NCCL_DEBUG=WARN \
             --flaky_test_attempts=1 \
             --color=yes \
+            --override_repository=xla=./xla \
             //tests/mosaic:gpu_tests \
             //tests/pallas:gpu_tests \
             //tests:array_interoperability_test_gpu \
