@@ -108,6 +108,20 @@ jobs:
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           persist-credentials: false
+          # fetch-depth: 0 # Fetches full history so we can checkout specific commits
+
+      # - name: Checkout Specific Commit (Regression Check)
+      #   run: |
+      #     # Fix safe directory issue often found in containers
+      #     git config --global --add safe.directory $GITHUB_WORKSPACE
+      #     git config --global user.email "jax-team@google.com"
+      #     git config --global user.name "JAX CI"
+
+      #     echo "Checking out suspected regression commit..."
+      #     # 3ddf068515d26cb481f7340889d6ef345619f968
+      #     # c9ef1c10f3e6636ce7c3e787a4822a228e4bec6b
+      #     git checkout c9dbcaa9d27fe4ccde9043098240692d3f48d8fd
+
       - name: Download JAX wheels
         if: inputs.build_jaxlib == 'false'
         uses: ./.github/actions/download-jax-cpu-wheels
