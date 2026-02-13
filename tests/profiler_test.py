@@ -41,10 +41,14 @@ except ImportError:
   portpicker = None
 
 try:
-  from xprof.convert import _pywrap_profiler_plugin
+  from xprof.pywrap import _pywrap_profiler_plugin
   import jax.collect_profile
 except ImportError:
-  _pywrap_profiler_plugin = None
+  try:
+    from xprof.convert import _pywrap_profiler_plugin
+    import jax.collect_profile
+  except ImportError:
+    _pywrap_profiler_plugin = None
 
 jax.config.parse_flags_with_absl()
 
@@ -518,6 +522,107 @@ class ProfilerTest(unittest.TestCase):
     options.advanced_configuration = advanced_config
     returned_config = options.advanced_configuration
     self.assertDictEqual(returned_config, advanced_config)
+
+
+class ProfilerOnDemandTpuTest(jtu.JaxTestCase):
+
+  @unittest.skipIf(not portpicker, "Test requires portpicker")
+  @unittest.skipIf(not _pywrap_profiler_plugin, "Test requires xprof")
+  @jtu.run_on_devices("tpu")
+  def test_ondemand_profile_with_hostname_override(self):
+    if jax.device_count() < 1:
+      self.skipTest("Test requires at least one TPU device")
+
+    port = portpicker.pick_unused_port()
+    jax.profiler.start_server(port)
+    self.addCleanup(jax.profiler.stop_server)
+
+    log_dir = self.create_tempdir().full_path
+    override_hostname = "my-tpu-worker-test"
+    hosts = f"localhost:{port}"  # Or the appropriate address for the TPU worker
+
+    plugin_options = {
+        "host_tracer_level": 2,
+        "python_tracer_level": 2,
+        "device_tracer_level": 1,
+        "override_hostnames": override_hostname,
+    }
+
+    try:
+      # Use xprof to trigger on-demand profiling
+      _pywrap_profiler_plugin.trace(
+          hosts,
+          log_dir,
+          "",  # worker_list
+          True,  # create_perfetto_trace
+          2000,  # duration_ms
+          1,  # num_retries
+          plugin_options,
+      )
+    except Exception as e:
+      self.fail(f"On-demand profiling failed: {e}")
+
+    # Verify that the output file exists
+    expected_file_pattern = os.path.join(
+        log_dir, "plugins", "profile", "*", f"localhost_{port}*.xplane.pb"
+    )
+    found_files = glob.glob(expected_file_pattern)
+    self.assertNotEmpty(
+        found_files, f"No profile found matching {expected_file_pattern}"
+    )
+
+    # Verify TPU traces are present in the file.
+    with open(found_files[0], "rb") as f:
+      proto = f.read()
+    self.assertIn(b"/device:TPU", proto)
+
+  @unittest.skipIf(not portpicker, "Test requires portpicker")
+  @unittest.skipIf(not _pywrap_profiler_plugin, "Test requires xprof")
+  @jtu.run_on_devices("tpu")
+  def test_ondemand_profile_without_hostname_override_and_verify_tpu(self):
+    if jax.device_count() < 1:
+      self.skipTest("Test requires at least one TPU device")
+
+    port = portpicker.pick_unused_port()
+    jax.profiler.start_server(port)
+    self.addCleanup(jax.profiler.stop_server)
+
+    log_dir = self.create_tempdir().full_path
+    hosts = f"localhost:{port}"
+
+    plugin_options = {
+        "host_tracer_level": 2,
+        "python_tracer_level": 2,
+        "device_tracer_level": 1,
+    }
+
+    try:
+      # Use xprof to trigger on-demand profiling
+      _pywrap_profiler_plugin.trace(
+          hosts,
+          log_dir,
+          "",  # worker_list
+          True,  # create_perfetto_trace
+          2000,  # duration_ms
+          1,  # num_retries
+          plugin_options,
+      )
+    except Exception as e:
+      self.fail(f"On-demand profiling failed: {e}")
+
+    # Verify that the output file exists
+    expected_file_pattern = os.path.join(
+        log_dir, "plugins", "profile", "*", f"localhost_{port}*.xplane.pb"
+    )
+    found_files = glob.glob(expected_file_pattern)
+    self.assertNotEmpty(
+        found_files, f"No profile found matching {expected_file_pattern}"
+    )
+
+    # Verify TPU traces are present in the file.
+    with open(found_files[0], "rb") as f:
+      proto = f.read()
+    self.assertIn(b"/device:TPU", proto, "No TPU traces found in the profile")
 
 
 if __name__ == "__main__":
