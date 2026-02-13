@@ -1321,7 +1321,7 @@ jax_multiplatform_test(
     ],
     enable_backends = [],
     enable_configs = [
-        "gpu_h100x2",
+        "gpu_h100fullx2",
     ],
     env = {
         "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",

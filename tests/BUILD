@@ -137,7 +137,7 @@ jax_multiplatform_test(
         "gpu",
     ],
     enable_configs = [
-        "gpu_h100x2",
+        "gpu_h100fullx2",
     ],
     tags = [
         "multiaccelerator",
@@ -282,7 +282,7 @@ jax_multiplatform_test(
     name = "ffi_test",
     srcs = ["ffi_test.py"],
     enable_configs = [
-        "gpu_h100x2",
+        "gpu_h100fullx2",
     ],
     # TODO(dfm): Remove after removal of jex.ffi imports.
     deps = [
@@ -405,7 +405,7 @@ jax_multiplatform_test(
     },
     enable_configs = [
         "tpu_v3_x4",
-        "gpu_h100x2",
+        "gpu_h100fullx2",
     ],
     tags = ["multiaccelerator"],
     deps = [
@@ -428,7 +428,7 @@ jax_multiplatform_test(
     },
     enable_configs = [
         "tpu_v3_x4",
-        "gpu_h100x2",
+        "gpu_h100fullx2",
     ],
     shard_count = {
         "cpu": 5,
@@ -1000,7 +1000,7 @@ jax_multiplatform_test(
         "cpu",
     ],
     enable_configs = [
-        "gpu_h100x2",
+        "gpu_h100fullx2",
     ],
     shard_count = 2,
     tags = [
@@ -1052,7 +1052,7 @@ jax_multiplatform_test(
     srcs = ["multibackend_test.py"],
     enable_configs = [
         "tpu_v3_x4",
-        "gpu_h100x2",
+        "gpu_h100fullx2",
     ],
     deps = py_deps([
         "absl/testing",
@@ -2138,7 +2138,7 @@ jax_multiplatform_test(
     ],
     enable_configs = [
         "tpu_v3_x4",
-        "gpu_h100x2",
+        "gpu_h100fullx2",
     ],
     tags = [],
     deps = [
