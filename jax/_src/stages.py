@@ -35,6 +35,7 @@ import enum
 from collections.abc import Sequence
 from dataclasses import dataclass
 import itertools as it
+import time
 from typing import Any, NamedTuple, Protocol, Union, runtime_checkable
 
 from jax._src import core
@@ -53,11 +54,10 @@ from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.tree_util import tree_structure, tree_unflatten
 from jax._src.core import typeof
-
+from jax._src import monitoring
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
-
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -479,22 +479,30 @@ class Traced(Stage):
   def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
             _private_parameters: mlir.LoweringParameters | None = None):
     """Lower to compiler input, returning a ``Lowered`` instance."""
-    lo = self.lojax
-    if _private_parameters is None:
-      _private_parameters = mlir.LoweringParameters()
+    start_time = time.perf_counter()
     try:
+      lo = self.lojax
+      if _private_parameters is None:
+        _private_parameters = mlir.LoweringParameters()
       from jax._src.pjit import _resolve_and_lower  # type: ignore
       lowering = _resolve_and_lower(
           lo._meta_tys_flat, **lo._params, lowering_platforms=lowering_platforms,
           lowering_parameters=_private_parameters, pgle_profiler=None)
+      return Lowered(lowering, lo.args_info, lo.out_tree,
+                    in_types=lo._in_types, out_types=lo._out_types)
     except DeviceAssignmentMismatchError as e:
       fails, = e.args
       msg = _device_assignment_mismatch_error(
           lo._params['name'], fails, lo._meta_tys_flat, 'jit',
           lo.jaxpr.debug_info.safe_arg_names(len(lo.jaxpr.in_avals)))
       raise ValueError(msg) from None
-    return Lowered(lowering, lo.args_info, lo.out_tree,
-                   in_types=lo._in_types, out_types=lo._out_types)
+    finally:
+      end_time = time.perf_counter()
+      monitoring.record_event_duration_secs(
+          "/jax/core/compile/lowering_duration",
+          end_time - start_time,
+          fun_name=self.fun_name,
+      )
 
 
 def lojax_expand_params(jaxpr, params):

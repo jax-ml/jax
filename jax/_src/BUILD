@@ -1229,6 +1229,7 @@ pytype_strict_library(
         ":core",
         ":layout",
         ":mlir",
+        ":monitoring",
         ":sharding",
         ":sharding_impls",
         ":source_info_util",
