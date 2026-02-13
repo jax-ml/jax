@@ -411,6 +411,26 @@ class DevicePutTest(jtu.JaxTestCase):
     self._check_device_put_addressable_shards(
         out2, np_inp * np_inp * 2, s_host, 'pinned_host')
 
+  def test_oom(self):
+    if jtu.device_under_test() != "tpu":
+      self.skipTest("This test is only for TPU")
+
+    if not jtu.is_cloud_tpu_at_least(2026, 2, 1):
+      self.skipTest("Requires libtpu built after 2026-02-01")
+
+    np_inp = np.arange(1)
+
+    @functools.partial(jax.jit)
+    def f(x: jax.Array) -> jax.Array:
+      return jax.lax.broadcast(x, (1024, 1024, 1024, 1024))
+
+    with self.assertRaisesRegex(
+        jax.errors.JaxRuntimeError,
+        "RESOURCE_EXHAUSTED: Ran out of memory on HBM, the total memory"
+        " required for HLO temporaries \\(.*\\) exceeds available HBM \\(.*\\)",
+    ):
+      f.lower(np_inp).compile()
+
   def test_zero_size_parameter(self):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("This test does not work on GPU backend.")
