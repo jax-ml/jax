@@ -308,6 +308,12 @@ class PRNGKeyArray(Array):
                     " Use jax.random.key_data(arr) if you wish to extract the underlying"
                     " integer array.")
 
+  # Python 3.11 pickle doesn't find __getstate__ in the parent C class
+  # (See https://github.com/jax-ml/jax/issues/35065).
+  # TODO(jakevdp): remove this when we drop support for Python 3.11.
+  def __getstate__(self):
+    return super().__getstate__()
+
   # Overwritten immediately below
   @property
   def at(self)                  -> _IndexUpdateHelper: assert False  # type: ignore[override]
