@@ -21,7 +21,7 @@ import dataclasses
 import functools
 import itertools
 import math
-from typing import Any, Protocol, TypeAlias, TypeVar, cast, overload
+from typing import Any, Protocol, TypeAlias, TypeVar, cast, overload, runtime_checkable
 
 import jax
 import jax.experimental.mosaic.gpu as mgpu
@@ -3742,6 +3742,7 @@ class FragmentedArray:
 IndexTransform: TypeAlias = Callable[[tuple[int, ...]], tuple[int, ...]]
 
 
+@runtime_checkable
 class TransferPlan(Protocol):
   tile_index_transforms: tuple[IndexTransform, ...]
 
@@ -3761,7 +3762,7 @@ class TransferPlan(Protocol):
 
 
 @dataclasses.dataclass(frozen=True)
-class TrivialTransferPlan(TransferPlan):
+class TrivialTransferPlanImpl(TransferPlan):
   @property
   def tile_index_transforms(self):
     return (lambda x: x,)
@@ -3776,7 +3777,7 @@ class TrivialTransferPlan(TransferPlan):
 
 
 @dataclasses.dataclass(frozen=True)
-class StaggeredTransferPlan(TransferPlan):
+class StaggeredTransferPlanImpl(TransferPlan):
   stagger: int
   dim: int
   size: int
@@ -3784,7 +3785,7 @@ class StaggeredTransferPlan(TransferPlan):
 
   @property
   def tile_index_transforms(self):
-    dim = self.dim
+    dim = self.dim  # pytype: disable=attribute-error
     def rotate(idx: tuple[int, ...]) -> tuple[int, ...]:
       return (
           *idx[:dim], (idx[dim] + self.stagger) % self.size, *idx[dim + 1 :],
@@ -3799,6 +3800,22 @@ class StaggeredTransferPlan(TransferPlan):
     assert 0 <= group_idx <= 1
     sides = [old, new] if group_idx == 0 else [new, old]
     return arith.select(self.group_pred, *sides)
+
+TrivialTransferPlan: type[TransferPlan]
+StaggeredTransferPlan: type[TransferPlan]
+
+# TODO(olechwierowicz): Remove this once the C++ impl is always included in jaxlib (min ver 0.9.1).
+if (
+    hasattr(mgpu.dialect, "TrivialTransferPlan")
+    and hasattr(mgpu.dialect, "StaggeredTransferPlan")
+    and hasattr(mgpu.dialect, "init_cc_mlir")
+    and mgpu.dialect.init_cc_mlir(ir)
+):
+  TrivialTransferPlan = mgpu.dialect.TrivialTransferPlan
+  StaggeredTransferPlan = mgpu.dialect.StaggeredTransferPlan
+else:
+  TrivialTransferPlan = TrivialTransferPlanImpl
+  StaggeredTransferPlan = StaggeredTransferPlanImpl
 
 
 def plan_tiled_transfer(
@@ -3940,8 +3957,8 @@ def plan_tiled_transfer(
           lane_idx = arith.remui(utils.thread_idx(), c(WARP_SIZE))
           group_idx = arith.remui(arith.divui(lane_idx, c(group_stride)), c(2))
           group_pred = arith.cmpi(arith.CmpIPredicate.ne, group_idx, c(0))
-          return StaggeredTransferPlan(
-              stagger, dim, tiles_shape[dim], group_pred
+          return StaggeredTransferPlan(  # type: ignore[call-arg]
+              stagger, dim, tiles_shape[dim], group_pred  # pylint: disable=too-many-function-args
           )
   raise ValueError(
       "Failed to synthesize a transfer pattern that avoids bank conflicts"

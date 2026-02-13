@@ -460,7 +460,6 @@ cc_library(
     srcs = ["utils.cc"],
     hdrs = ["utils.h"],
     deps = [
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -504,6 +503,19 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@xla//xla/tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "transfer_plan",
+    srcs = ["transfer_plan.cc"],
+    hdrs = ["transfer_plan.h"],
+    deps = [
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:IR",
     ],
 )
 

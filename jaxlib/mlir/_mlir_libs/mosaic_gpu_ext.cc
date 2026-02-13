@@ -35,12 +35,14 @@ limitations under the License.
 #include "mlir/IR/Value.h"  // IWYU pragma: keep
 #include "nanobind/nanobind.h"
 #include "nanobind/operators.h"  // IWYU pragma: keep
+#include "nanobind/stl/function.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/tuple.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/mosaic/dialect/gpu/integrations/c/attributes.h"
 #include "jaxlib/mosaic/dialect/gpu/integrations/c/gpu_dialect.h"
 #include "jaxlib/mosaic/gpu/tiled_layout.h"
+#include "jaxlib/mosaic/gpu/transfer_plan.h"
 #include "jaxlib/mosaic/gpu/transforms.h"
 
 namespace nb = nanobind;
@@ -91,6 +93,57 @@ absl::StatusOr<mlir::ImplicitLocOpBuilder> MlirBuilder() {
     builder.setInsertionPoint(ref_op);
   }
   return builder;
+}
+
+nb::tuple TileIndexTransforms(const mgpu::TransferPlan& plan) {
+  auto transforms = plan.TileIndexTransforms();
+  nb::list py_transforms;
+  for (const auto& transform : transforms) {
+    py_transforms.append(nb::cpp_function([transform](nb::tuple idx) {
+      auto idx_list = nb::cast<std::vector<int64_t>>(idx);
+      nb::list result;
+      for (const auto& v : transform(idx_list)) {
+        result.append(nb::cast(v));
+      }
+      return nb::tuple(result);
+    }));
+  }
+  return nb::tuple(py_transforms);
+}
+
+mlir::Value Select(const mgpu::TransferPlan& plan, nb::iterable group_elems) {
+  auto builder = MlirBuilder();
+  if (!builder.ok()) {
+    throw nb::value_error(builder.status().message().data());
+  }
+  std::vector<mlir::Value> elems;
+  for (nb::handle elem : group_elems) {
+    elems.push_back(unwrap(nb::cast<MlirValue>(elem)));
+  }
+  auto result = plan.Select(*builder, elems);
+  if (!result.ok()) {
+    if (absl::IsFailedPrecondition(result.status())) {
+      PyErr_SetString(PyExc_AssertionError, result.status().message().data());
+      throw nb::python_error();
+    }
+    throw nb::value_error(result.status().message().data());
+  }
+  return *result;
+}
+
+mlir::Value SelectIfGroup(const mgpu::TransferPlan& plan, int64_t group_idx,
+                          nb::object old_val, nb::object new_val) {
+  auto builder = MlirBuilder();
+  if (!builder.ok()) {
+    throw nb::value_error(builder.status().message().data());
+  }
+  auto result = plan.SelectIfGroup(*builder, group_idx,
+                                   unwrap(nb::cast<MlirValue>(old_val)),
+                                   unwrap(nb::cast<MlirValue>(new_val)));
+  if (!result.ok()) {
+    throw nb::value_error(result.status().message().data());
+  }
+  return *result;
 }
 
 }  // namespace
@@ -612,5 +665,53 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       .def("transform_strides",
            [](const mgpu::TileTransform& self, std::vector<int64_t> strides) {
              return nb::tuple(nb::cast(self.TransformStrides(strides)));
+           });
+
+  nb::class_<mgpu::TrivialTransferPlan>(m, "TrivialTransferPlan")
+      .def(nb::init<>())
+      .def_prop_ro("tile_index_transforms",
+                   [](const mgpu::TrivialTransferPlan& self) {
+                     return TileIndexTransforms(self);
+                   })
+      .def("select",
+           [](const mgpu::TrivialTransferPlan& self, nb::iterable group_elems) {
+             return wrap(Select(self, group_elems));
+           })
+      .def("select_if_group",
+           [](const mgpu::TrivialTransferPlan& self, int64_t group_idx,
+              nb::object old_val, nb::object new_val) {
+             return wrap(SelectIfGroup(self, group_idx, old_val, new_val));
+           });
+
+  nb::class_<mgpu::StaggeredTransferPlan>(m, "StaggeredTransferPlan")
+      .def(
+          "__init__",
+          [](mgpu::StaggeredTransferPlan* self, int64_t stagger, int64_t dim,
+             int64_t size, nb::object group_pred) {
+            new (self) mgpu::StaggeredTransferPlan(
+                stagger, dim, size, unwrap(nb::cast<MlirValue>(group_pred)));
+          },
+          nb::arg("stagger"), nb::arg("dim"), nb::arg("size"),
+          nb::arg("group_pred"))
+      .def_prop_ro("stagger", &mgpu::StaggeredTransferPlan::stagger)
+      .def_prop_ro("dim", &mgpu::StaggeredTransferPlan::dim)
+      .def_prop_ro("size", &mgpu::StaggeredTransferPlan::size)
+      .def_prop_ro("group_pred",
+                   [](const mgpu::StaggeredTransferPlan& self) {
+                     return wrap(self.group_pred());
+                   })
+      .def_prop_ro("tile_index_transforms",
+                   [](const mgpu::StaggeredTransferPlan& self) {
+                     return TileIndexTransforms(self);
+                   })
+      .def("select",
+           [](const mgpu::StaggeredTransferPlan& self,
+              nb::iterable group_elems) {
+             return wrap(Select(self, group_elems));
+           })
+      .def("select_if_group",
+           [](const mgpu::StaggeredTransferPlan& self, int64_t group_idx,
+              nb::object old_val, nb::object new_val) {
+             return wrap(SelectIfGroup(self, group_idx, old_val, new_val));
            });
 }
