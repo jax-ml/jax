@@ -41,10 +41,10 @@ from jax._src.state.discharge import run_state
 
 from jax._src.hijax import (
     HiPrimitive, HiType, Box, new_box, box_set, box_get, box_effect,
-    register_hitype, ShapedArray, Ty, custom_vjp3, MappingSpec)
+    register_hitype, ShapedArray, Ty, custom_vjp3, MappingSpec, HipSpec)
 from jax.experimental.hijax import VJPHiPrimitive
 
-jtu.request_cpu_devices(2)
+jtu.request_cpu_devices(8)
 
 config.parse_flags_with_absl()
 
@@ -219,11 +219,26 @@ class TupTy(HiType):
     else:
       assert False
 
+  def shard(self, mesh, manual_axes, check_vma, spec):
+    return TupTy(tuple(ty.shard(mesh, manual_axes, check_vma, s)
+                       for ty, s in zip(self.tys, spec.val)))
+
+  def unshard(self, mesh, check_vma, spec):
+    return TupTy(tuple(ty.unshard(mesh, check_vma, s)
+                       for ty, s in zip(self.tys, spec.val)))
+
 register_hitype(HiTup, lambda t: TupTy(tuple(map(typeof, t.elts))))
 
 @dataclass(frozen=True)
 class TupSpec(MappingSpec):
   val: tuple
+
+@dataclass(frozen=True)
+class TupP(HipSpec):
+  val: tuple
+
+  def to_lo(self) -> tuple[jax.PartitionSpec, ...]:
+    return self.val
 
 class MakeTup(HiPrimitive):
   def abstract_eval(_, *in_avals):
@@ -719,6 +734,57 @@ class HijaxTest(jtu.JaxTestCase):
     b = get_tuple_element(tup2, 1)
     self.assertAllClose(a, jnp.arange(3.) + 1)
     self.assertAllClose(b, jnp.arange(3. * 4).reshape(3, 4) * 2)
+
+  @jtu.with_explicit_mesh((2, 2), ('i', 'j'))
+  def test_tuple_shit(self, mesh):
+    x = jax.device_put(jnp.arange(4.), jax.P('i'))
+    y = jax.device_put(jnp.arange(3.), jax.P(None))
+    tup = make_tup(x, y)
+    x_ = get_tuple_element(tup, 0)
+    y_ = get_tuple_element(tup, 1)
+    self.assertEqual(jax.typeof(x_).sharding.spec, jax.P('i'))
+    self.assertEqual(jax.typeof(y_).sharding.spec, jax.P(None))
+
+  @jtu.with_explicit_mesh((2, 2), ('i', 'j'))
+  def test_tuple_shmap(self, mesh):
+    x = jax.device_put(jnp.arange(4.), jax.P('i'))
+    y = jax.device_put(jnp.arange(3.), jax.P(None))
+    tup = make_tup(x, y)
+
+    @jax.jit
+    @jax.shard_map(in_specs=TupP((jax.P('i'), jax.P(None))),
+                   out_specs=TupP((jax.P(None), jax.P('i'))))
+    def fun(tup):
+      a, b = get_tuple_element(tup, 0), get_tuple_element(tup, 1)
+      return make_tup(b, a)
+    out = fun(tup)
+    x_ = get_tuple_element(out, 1)
+    y_ = get_tuple_element(out, 0)
+    self.assertAllClose(x, x_)
+    self.assertAllClose(y, y_)
+    self.assertEqual(x.sharding, x_.sharding)
+    self.assertEqual(y.sharding, y_.sharding)
+
+  # @jtu.with_explicit_mesh((2, 2), ('i', 'j'))
+  # def test_tuple_shmap_out_specs_error(self, mesh):
+  #   x = jax.device_put(jnp.arange(4.), jax.P('i'))
+  #   y = jax.device_put(jnp.arange(3.), jax.P(None))
+  #   tup = make_tup(x, y)
+
+  #   # TODO(mattjj,yashkatariya): this errors too late, make shmap checks work
+  #   @jax.jit
+  #   @jax.shard_map(in_specs=TupP((jax.P('i'), jax.P(None))),
+  #                  out_specs=TupP((jax.P('i'), jax.P('i'))))  # NOTE!!!!
+  #   def fun(tup):
+  #     a, b = get_tuple_element(tup, 0), get_tuple_element(tup, 1)
+  #     return make_tup(b, a)
+  #   out = fun(tup)
+  #   x_ = get_tuple_element(out, 1)
+  #   y_ = get_tuple_element(out, 0)
+  #   self.assertAllClose(x, x_)
+  #   self.assertAllClose(y, y_)
+  #   self.assertEqual(x.sharding, x_.sharding)
+  #   self.assertEqual(y.sharding, y_.sharding)
 
   @parameterized.parameters([False, True])
   def test_ref_to_tuple(self, jit):

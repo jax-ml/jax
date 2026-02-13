@@ -1716,6 +1716,18 @@ class AbstractValue:
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str(self)
 
+  def dec_rank(self, size, spec):
+    return mapped_aval(size, spec, self)
+
+  def inc_rank(self, size, spec):
+    return unmapped_aval(size, spec, self)
+
+  def shard(self, mesh, manual_axes, check_vma, spec):
+    return shard_aval(mesh, manual_axes, check_vma, spec, self)
+
+  def unshard(self, mesh, check_vma, spec):
+    return unshard_aval(mesh, check_vma, spec, self)
+
 InputType = tuple[AbstractValue]
 OutputType = tuple[AbstractValue]
 
@@ -2293,12 +2305,6 @@ class ShapedArray(AbstractValue):
     return ShapedArray(
         self.shape, dtype, self.weak_type, sharding=sharding, vma=self.vma,
         memory_space=self.memory_space)
-
-  def dec_rank(self, size, spec):
-    return mapped_aval(size, spec, self)
-
-  def inc_rank(self, size, spec):
-    return unmapped_aval(size, spec, self)
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str_short_aval(
@@ -3990,17 +3996,21 @@ unshard_aval_handlers = {}  # type: ignore
 
 def shard_aval(mesh, manual_axes, check_vma, spec, aval: AbstractValue
                ) -> AbstractValue:
-  if type(aval) in shard_aval_handlers:
-    return shard_aval_handlers[type(aval)](mesh, manual_axes, check_vma,
-                                                spec, aval)
+  from jax._src.hijax import HiType  # type: ignore
+  if isinstance(aval, HiType):
+    return aval.shard(mesh, manual_axes, check_vma, spec)
+  if (handler := shard_aval_handlers.get(type(aval))):
+    return handler(mesh, manual_axes, check_vma, spec, aval)
   raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
 
 def unshard_aval(mesh, check_vma, spec, aval: AbstractValue
                  ) -> AbstractValue:
-  if type(aval) in unshard_aval_handlers:
-    return unshard_aval_handlers[type(aval)](mesh, check_vma, spec, aval)
-  else:
-    raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
+  from jax._src.hijax import HiType  # type: ignore
+  if isinstance(aval, HiType):
+    return aval.unshard(mesh, check_vma, spec)
+  if (handler := unshard_aval_handlers.get(type(aval))):
+    return handler(mesh, check_vma, spec, aval)
+  raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
 
 
 # ----------------- external APIs for querying tracing context -----------------
