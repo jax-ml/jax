@@ -144,6 +144,7 @@ exclude_patterns = [
     'pallas/tpu/sparse.md',
     'pallas/tpu/matmul.md',
     'pallas/tpu/core_map.md',
+    'pallas/tpu/sparsecore.md',
     'jep/9407-type-promotion.md',
     'autodidax.md',
     'autodidax2_part1.md',
@@ -247,6 +248,7 @@ nb_execution_excludepatterns = [
     'pallas/tpu/sparse.*',
     'pallas/tpu/matmul.*',
     'pallas/tpu/core_map.*',
+    'pallas/tpu/sparsecore.*',
     'distributed_data_loading.*',
     'notebooks/host-offloading.*',
 ]

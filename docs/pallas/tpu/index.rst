@@ -12,5 +12,6 @@ TPU specific documentation.
    sparse
    distributed
    core_map
+   sparsecore
    prng
 
