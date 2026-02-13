@@ -1190,16 +1190,6 @@ def _pallas_call_lowering(
 mlir.register_lowering(pallas_call_p, _pallas_call_lowering)
 
 
-def _pallas_custom_str_eqn_compact(
-    prim: jax_core.Primitive, params: dict[Any, Any]
-) -> str:
-  del prim, params
-  # Hide most info from compact str representation
-  return "pallas_call"
-jax_core.custom_str_eqn_compact_rules[pallas_call_p] = (
-    _pallas_custom_str_eqn_compact
-)
-
 def _pallas_call_typecheck_rule(ctx_factory, *in_atoms, grid_mapping, **params):
   in_avals = [x.aval for x in in_atoms]
   with grid_mapping.trace_env():

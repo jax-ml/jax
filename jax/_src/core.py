@@ -3875,26 +3875,6 @@ def pp_eqns(eqns: Sequence[JaxprEqn],
     pp.brk("; "),
     [pp_eqn(e, context, settings) for e in eqns])
 
-def _compact_eqn_should_include(k: str, v: Any) -> bool:
-  if k == 'branches': return False
-  if isinstance(v, (Jaxpr, ClosedJaxpr)): return False
-  if (isinstance(v, tuple) and
-      any(isinstance(e, (Jaxpr, ClosedJaxpr)) for e in v)):
-    return False
-  return True
-
-def str_eqn_compact(primitive: Primitive, params: dict[Any, Any]) -> str:
-  "Compact equation to string conversion used in HLO metadata."
-  if primitive in custom_str_eqn_compact_rules:
-    return custom_str_eqn_compact_rules[primitive](primitive, params)
-  primitive_name = primitive.name
-  kvs = " ".join(f"{k}={v}" for k, v in params.items()
-                 if _compact_eqn_should_include(k, v))
-  return f"{primitive_name}[{kvs}]" if len(kvs) > 0 else primitive_name
-custom_str_eqn_compact_rules: dict[
-    Primitive, Callable[[Primitive, dict[Any, Any]], str]
-] = {}
-
 def pp_jaxpr_skeleton(jaxpr: Jaxpr, eqns_fn, context: JaxprPpContext,
                       settings: JaxprPpSettings) -> pp.Doc:
   constvars = pp_vars(jaxpr.constvars, context, print_shapes=settings.print_shapes)
