@@ -1832,7 +1832,7 @@ void BuildPytreeSubmodule(nb::module_& m) {
           throw xla::XlaRuntimeError(
               "Pytree serialization too large to deserialize.");
         }
-        if (!input.ParseFromArray(serialized.data(), serialized.size())) {
+        if (!input.ParseFromString(serialized)) {
           throw xla::XlaRuntimeError("Could not deserialize PyTreeDefProto.");
         }
         return PyTreeDef::DeserializeFrom(std::move(registry), input);
