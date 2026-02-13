@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import dataclasses
-import functools
 import logging
 from typing import Any
 
@@ -50,33 +49,12 @@ IntDeviceId = int | jax.Array
 MultiDimDeviceId = tuple[IntDeviceId, ...] | dict[str | tuple[str, ...], IntDeviceId]
 Ref = state.AbstractRef | state.TransformedRef
 
-repeat_p = jax_core.Primitive('repeat')
 
 def repeat(x: jax.Array, repeats: int, axis: int) -> jax.Array:
   axis = util.canonicalize_axis(axis, x.ndim)
-  return repeat_p.bind(x, repeats=repeats, axis=axis)
-
-@repeat_p.def_abstract_eval
-def _repeat_abstract_eval(x, *, repeats, axis):
-  if axis < 0 or axis >= len(x.shape):
-    raise ValueError(f"axis: {axis} is out of range [0, {len(x.shape)})")
-  shape = list(x.shape)
-  shape[axis] *= repeats
-  return jax_core.ShapedArray(shape, x.dtype)
-
-
-@repeat_p.def_impl
-def repeat_impl(x: jax.Array, *, repeats: int, axis: int):
   reps = [repeats if i == axis else 1 for i in range(x.ndim)]
   return jnp.tile(x, reps)
 
-
-def _repeat_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, repeats, axis):
-  return mlir.lower_fun(
-      functools.partial(repeat_impl, repeats=repeats, axis=axis),
-      multiple_results=False,
-  )(ctx, x)
-mlir.register_lowering(repeat_p, _repeat_lowering_rule)
 
 bitcast_p = jax_core.Primitive("bitcast")
 

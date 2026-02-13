@@ -3568,14 +3568,6 @@ def _num_programs_lowering_rule(ctx: LoweringRuleContext, *, axis: int):
   return tpu.iteration_bound(i)
 
 
-@register_lowering_rule(tpu_primitives.repeat_p)
-def _repeat_lowering_rule(ctx: LoweringRuleContext, x, *, repeats, axis):
-  del ctx  # Unused.
-  if repeats == 1:
-    return x
-  return tpu.concatenate([x] * repeats, dimension=axis)
-
-
 @register_lowering_rule(lax.tile_p)
 def _tile_lowering_rule(ctx: LoweringRuleContext, x, *, reps):
   del ctx  # Unused.

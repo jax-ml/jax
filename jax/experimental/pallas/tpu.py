@@ -53,7 +53,6 @@ from jax._src.pallas.mosaic.primitives import matmul_pop as matmul_pop
 from jax._src.pallas.mosaic.primitives import pack_elementwise as pack_elementwise
 from jax._src.pallas.mosaic.primitives import prng_random_bits as prng_random_bits
 from jax._src.pallas.mosaic.primitives import prng_seed as prng_seed
-from jax._src.pallas.mosaic.primitives import repeat as repeat
 from jax._src.pallas.mosaic.primitives import roll as roll
 from jax._src.pallas.mosaic.primitives import stochastic_round as stochastic_round
 from jax._src.pallas.mosaic.primitives import store as store
@@ -95,6 +94,8 @@ HBM = MemorySpace.HBM
 HOST = MemorySpace.HOST
 SEMAPHORE = MemorySpace.SEMAPHORE
 
+from jax._src.pallas.mosaic.primitives import repeat as _deprecated_repeat
+
 _deprecations = {
     # Added Oct 31, 2025
     "delay": (
@@ -106,11 +107,17 @@ _deprecations = {
         "pltpu.ANY is deprecated, use pl.ANY instead.",
         GeneralMemorySpace.ANY
     ),
+    # Added Feb 11, 2026
+    "repeat": (
+        "pltpu.repeat is deprecated, use jnp.tile instead.",
+        _deprecated_repeat
+    ),
 }
 
 if typing.TYPE_CHECKING:
   delay = pl_primitives.delay
   ANY = GeneralMemorySpace.ANY
+  repeat = _deprecated_repeat
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
