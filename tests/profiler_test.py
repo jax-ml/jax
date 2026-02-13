@@ -580,7 +580,7 @@ class ProfilerTest(unittest.TestCase):
         trace_content = f.read()
       # Sanity check that trace contains kernel_details
       self.assertIn("kernel_details", trace_content)
-      
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
