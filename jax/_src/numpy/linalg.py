@@ -468,13 +468,8 @@ def matrix_rank(
 def _slogdet_1x1(a: Array) -> tuple[Array, Array]:
   """Analytic slogdet for 1x1 matrices. No LU/solve"""
   det = a[..., 0, 0]
-  dtype = lax.dtype(a)
   abs_det = ufuncs.abs(det)
-  is_zero = abs_det == jnp.array(0, dtype=dtype)
-  sign = jnp.where(is_zero, jnp.array(0, dtype=dtype), ufuncs.sign(det))
-  logabsdet = jnp.where(
-      is_zero, jnp.array(-np.inf, dtype=dtype), ufuncs.log(abs_det))
-  return sign, ufuncs.real(logabsdet)
+  return ufuncs.sign(det), ufuncs.real(ufuncs.log(abs_det))
 
 
 def _slogdet_2x2(a: Array) -> tuple[Array, Array]:
@@ -482,13 +477,8 @@ def _slogdet_2x2(a: Array) -> tuple[Array, Array]:
   a00, a01 = a[..., 0, 0], a[..., 0, 1]
   a10, a11 = a[..., 1, 0], a[..., 1, 1]
   det = (a00 * a11) - (a01 * a10)
-  dtype = lax.dtype(a)
   abs_det = ufuncs.abs(det)
-  is_zero = abs_det == jnp.array(0, dtype=dtype)
-  sign = jnp.where(is_zero, jnp.array(0, dtype=dtype), ufuncs.sign(det))
-  logabsdet = jnp.where(
-      is_zero, jnp.array(-np.inf, dtype=dtype), ufuncs.log(abs_det))
-  return sign, ufuncs.real(logabsdet)
+  return ufuncs.sign(det), ufuncs.real(ufuncs.log(abs_det))
 
 
 @custom_jvp
