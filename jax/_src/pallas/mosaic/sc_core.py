@@ -23,11 +23,8 @@ from typing import Any, TypeAlias
 
 import jax
 from jax._src import core as jax_core
-from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import tree_util
-from jax._src import util
-from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic import core as tpu_core
@@ -231,29 +228,6 @@ def _scalar_subcore_mesh_discharge_rule(
     raise NotImplementedError(
         f"Cannot close over values in core_map: {sa_avals}"
     )
-
-  # TODO(ivyzheng): Remove this once we support scratch_shapes for SCS.
-  if len(jaxpr.invars) > 0:
-    scratch_avals = [v.aval for v in jaxpr.invars]
-    scratch_shapes = [
-        pallas_core.MemoryRef(v.inner_aval, v.memory_space)
-        for v in scratch_avals
-    ]
-    const_avals = [v.aval for v in jaxpr.constvars]
-    old_jaxpr = jaxpr
-    def new_body(*const_args):
-      def body(*sc_args):
-        return jax_core.eval_jaxpr(old_jaxpr, const_args, *sc_args)
-      return pallas_primitives.run_scoped(body, *scratch_shapes)
-
-    new_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(
-            new_body, debug_info=old_jaxpr.debug_info.with_unknown_names()
-        ),
-        const_avals,
-    )
-    jaxpr = new_jaxpr.replace(invars=[], constvars=new_jaxpr.invars)
-    in_avals, out_avals = util.split_list(const_avals, [len(in_avals)])
 
   return pallas_core.default_mesh_discharge_rule(
       in_avals,

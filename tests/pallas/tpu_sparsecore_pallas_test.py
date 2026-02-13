@@ -1935,6 +1935,8 @@ class ScalarSubcoreTest(PallasSCTest):
       first_parallel=[False, True], second_parallel=[False, True]
   )
   def test_parallel_loop(self, first_parallel, second_parallel):
+    if not jtu.is_cloud_tpu_at_least(2026, 2, 13):
+      self.skipTest("Requires a newer libtpu")
     self.skip_if_tc_tiling()
     x = jnp.arange(self.num_lanes * self.num_lanes).reshape(
         self.num_lanes, self.num_lanes
@@ -1968,6 +1970,8 @@ class ScalarSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x + 1)
 
   def test_parallel_loop_with_carry(self):
+    if not jtu.is_cloud_tpu_at_least(2026, 2, 13):
+      self.skipTest("Requires a newer libtpu")
     self.skip_if_tc_tiling()
     x = jnp.arange(self.num_lanes * self.num_lanes).reshape(
         self.num_lanes, self.num_lanes
@@ -1997,6 +2001,27 @@ class ScalarSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(
         kernel(x), x + jnp.arange(1, self.num_lanes + 1)[:, None]
     )
+
+  def test_dma_memory_space(self):
+    if not jtu.is_cloud_tpu_at_least(2026, 2, 13):
+      self.skipTest("Requires a newer libtpu")
+    x = jnp.arange(self.num_lanes)
+
+    @functools.partial(
+        pl.pallas_call,
+        compiler_params=pltpu.CompilerParams(
+            kernel_type=pltpu.KernelType.SC_SCALAR_SUBCORE,
+        ),
+        grid=(1,),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_shape=x,
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        scratch_shapes=(pltpu.SemaphoreType.DMA,),
+    )
+    def kernel(x_ref, o_hbm_ref, sem):
+      pltpu.async_copy(x_ref, o_hbm_ref, sem).wait()
+
+    np.testing.assert_array_equal(kernel(x), x)
 
 
 class ScalarSubcoreTestWithTCTiling(ScalarSubcoreTest):
