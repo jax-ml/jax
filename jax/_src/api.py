@@ -3169,8 +3169,18 @@ def live_arrays(platform=None):
 def clear_caches():
   """Clear all compilation and staging caches.
 
-  This doesn't clear the persistent cache; to disable it (e.g. for benchmarks),
-  set the jax_enable_compilation_cache config option to False.
+  This function clears internal caches used for tracing, staging, and JIT compilation.
+  
+  This does not clear the persistent compilation cache; to disable it (e.g. for benchmarks), set the ``jax_enable_compilation_cache`` config option to False.
+  
+  This function is primarily intended for debugging, benchmarking, or
+  development workflows. In normal usage, user code should not need to call ``jax.clear_caches()``. If a program requires repeated calls to this function to work correctly, this likely indicates a bug either in JAX or in the user code.
+  
+  This function is Python-thread-safe, as it is called while holding the
+  Python GIL.
+
+  ``jax.clear_caches()`` is the supported API for clearing all of JAX's
+  internal caches.
   """
   # Clear all lu.cache, util.cache and util.weakref_lru_cache instances
   # (used for staging and Python-dispatch compiled executable caches).
