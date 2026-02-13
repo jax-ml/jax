@@ -30,6 +30,7 @@ py_library(
         "__init__.py",
         "interpret_pallas_call.py",
     ],
+    strict_deps = False,
     deps = [
         ":gpu_callbacks",
         ":jaxpr_interpret",

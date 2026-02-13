@@ -24,6 +24,7 @@ py_library(
         "//jaxlib/mosaic/dialect/gpu:_mosaic_gpu_gen_enums.py",
         "//jaxlib/mosaic/dialect/gpu:_mosaic_gpu_gen_ops.py",
     ],
+    strict_deps = False,
     visibility = ["//visibility:public"],
     deps = [
         "//jaxlib/mlir",
@@ -63,6 +64,7 @@ py_library(
         "_tpu_gen.py",
         "tpu.py",
     ],
+    strict_deps = False,
     visibility = ["//visibility:public"],
     deps = [
         "//jaxlib/mlir",
@@ -75,6 +77,7 @@ py_library(
     srcs = [
         "layout_defs.py",
     ],
+    strict_deps = False,
     visibility = [
         "//visibility:public",
     ],

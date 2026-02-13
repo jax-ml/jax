@@ -572,6 +572,7 @@ nanobind_extension(
 
 py_library(
     name = "cuda_gpu_support",
+    strict_deps = False,
     deps = [
         ":_hybrid",
         ":_linalg",
@@ -644,6 +645,7 @@ nanobind_extension(
 # a standalone py_library target.
 py_library(
     name = "gpu_only_test_deps",
+    strict_deps = False,
     # `if_cuda_is_configured` will default to `[]`.
     deps = if_cuda_is_configured([
         ":cuda_gpu_support",

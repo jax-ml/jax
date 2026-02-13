@@ -23,6 +23,7 @@ package(
 py_library(
     name = "private_mm",
     srcs = ["__init__.py"],
+    strict_deps = False,
     deps = [":private_mm_internal"],
 )
 
@@ -34,6 +35,7 @@ py_library(
         "mm.py",
         "profile_utils.py",
     ],
+    strict_deps = False,
     tags = ["pytype_unchecked_annotations"],
     deps = [
         "//jax",

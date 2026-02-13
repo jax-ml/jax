@@ -24,6 +24,7 @@ package(
 py_library(
     name = "back_compat_testdata",
     srcs = glob(["*.py"]),
+    strict_deps = False,
     deps = [
         "//third_party/py/numpy",
         "//third_party/py/typing_extensions",
