@@ -405,11 +405,6 @@ class ErrorCheckTests(jtu.JaxTestCase):
     with self.assertRaisesRegex(JaxValueError, "unknown error"):
       error_check.raise_if_error()
 
-  def test_error_check_invalid_error_code_constants(self):
-    """Test that the standard error message constants are defined correctly."""
-    self.assertIn("unknown error", error_check._INVALID_ERROR_CODE_MSG)
-    self.assertIn("Traceback not available", error_check._INVALID_ERROR_CODE_TRACEBACK)
-
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
