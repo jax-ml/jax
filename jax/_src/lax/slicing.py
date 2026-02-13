@@ -1427,7 +1427,7 @@ def _slice_transpose_rule(t, operand, *, start_indices, limit_indices, strides):
                np.add(1, np.multiply(np.subtract(t.shape, 1), strides))))
     pads = zip(start_indices, np.subtract(operand_shape, real_limits),
                np.subtract(strides, 1))
-  result = lax.pad(t, lax._const(t, 0), pads)
+  result = lax.pad(t, lax._const(t, 0), pads)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   assert result.shape == operand_shape, f"{result.shape=} {operand_shape=}"
   return [result]
 
@@ -1448,7 +1448,7 @@ def _slice_transpose_fancy(out_ct, operand, *, start_indices, limit_indices, str
                  np.add(1, np.multiply(np.subtract(out_ct.shape, 1), strides))))
       pads = zip(start_indices, np.subtract(operand.aval.shape, real_limits),
                  np.subtract(strides, 1))
-    operand.accum(lax.pad(out_ct, lax._const(out_ct, 0), pads))
+    operand.accum(lax.pad(out_ct, lax._const(out_ct, 0), pads))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
 
 
 def _slice_batching_rule(batched_args, batch_dims, *, start_indices,

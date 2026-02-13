@@ -976,7 +976,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
 
   # Prepare pallas_call inputs. We need to create new block specs
   # for the new error inputs and outputs.
-  error_block_specs = [pallas_core.BlockSpec(None, None)] * len(shaped_err_avals)
+  error_block_specs = [pallas_core.BlockSpec(None, None)] * len(shaped_err_avals)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   error_paths, _ = unzip2(tree_util.tree_flatten_with_path(error_block_specs)[0])
   error_origins = tuple(f"errors[{tree_util.keystr(p)}" for p in error_paths)
   error_block_mappings = map(
@@ -997,8 +997,8 @@ def pallas_call_checkify_rule(error: checkify.Error,
   grid_mapping_with_error = grid_mapping.replace(
       block_mappings=(*error_block_mappings, *input_block_mappings,
                       *error_block_mappings, *output_block_mappings),
-      num_inputs=grid_mapping.num_inputs + len(error_block_mappings),
-      num_outputs=grid_mapping.num_outputs + len(error_block_mappings)
+      num_inputs=grid_mapping.num_inputs + len(error_block_mappings),  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      num_outputs=grid_mapping.num_outputs + len(error_block_mappings)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   )
   # Bump all input_output_aliases by num_err_vals to make room for error
   # TODO(justinfu): Don't bump scalars here.

@@ -598,7 +598,7 @@ def _unique_sorted_mask(ar: Array, axis: int, equal_nan: bool) -> tuple[Array, A
       neq = lambda x, y: lax.ne(x, y) & ~(isnan(x) & isnan(y))
     else:
       neq = lax.ne
-    mask = ones(size, dtype=bool).at[1:].set(any(neq(aux[1:], aux[:-1]), tuple(range(1, aux.ndim))))  # pyrefly: ignore[bad-argument-count]  # redefined builtin
+    mask = ones(size, dtype=bool).at[1:].set(any(neq(aux[1:], aux[:-1]), tuple(range(1, aux.ndim))))  # pyrefly: ignore[bad-argument-count]  # pyrefly#2385
   else:
     mask = zeros(size, dtype=bool)
   return aux, mask, perm

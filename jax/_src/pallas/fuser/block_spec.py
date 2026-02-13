@@ -973,7 +973,7 @@ def _slice_rule(
       int(end - start) for start, end in zip(start_indices, limit_indices)
   )
   # Do some basic checks
-  for bs, slice_start, slice_size in zip(
+  for bs, slice_start, slice_size in zip(  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
       block_spec.block_shape, start_indices, slice_sizes
   ):
     match bs:
@@ -1003,7 +1003,7 @@ def _slice_rule(
     assert len(idx) == len(block_spec.block_shape)
     idx = tuple(
         _offset_indexer(bs, i, start, size)
-        for bs, i, start, size in zip(
+        for bs, i, start, size in zip(  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
             block_spec.block_shape, idx, start_indices, slice_sizes, strict=True
         )
     )
@@ -1061,7 +1061,7 @@ def _dynamic_slice_rule(
     # map
     block_indices = tuple(
         _offset_indexer(s, i, start, size)
-        for i, s, start, size in zip(
+        for i, s, start, size in zip(  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
             idx, block_spec.block_shape, slice_starts, slice_sizes, strict=True
         )
     )
@@ -1121,7 +1121,7 @@ def _swap_eval_rule(ctx: KernelEvalContext, ref, val, *idx, tree):
 
   indexer = tuple(
       _slice(i, b)
-      for i, b in zip(block_idx, block_spec.block_shape, strict=True)
+      for i, b in zip(block_idx, block_spec.block_shape, strict=True)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
   )
   return ref.swap(val, idx=indexer)
 
@@ -1215,7 +1215,7 @@ def _get_eval_rule(ctx: KernelEvalContext, ref, *idx, tree):
     # Short-circuit if the ref is not blocked.
     return state_primitives.get_p.bind(ref, *idx, tree=tree)
   block_idx_iter = iter(ctx.get_out_block_indices()[0])
-  for idx_aval, size, idx, bd in zip(
+  for idx_aval, size, idx, bd in zip(  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
       indexer_aval.indices,
       ref_aval.shape,
       indexer.indices,
@@ -1378,7 +1378,7 @@ def _broadcast_in_dim_eval_rule(
   if in_shape == shape:
     # Dummy broadcast
     return x
-  shape = tuple(map(_block_size, eval_ctx.out_block_specs[0].block_shape))
+  shape = tuple(map(_block_size, eval_ctx.out_block_specs[0].block_shape))  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
   dims = tuple(
       d - sum(s is None for s in shape[:d])
       for d in broadcast_dimensions
@@ -1477,7 +1477,7 @@ def _tile_eval_rule(
         'tile with Element-indexed dimensions not supported yet'
     )
   if not all(
-      out_dim % in_dim == 0 for out_dim, in_dim in zip(block_shape, x.shape)
+      out_dim % in_dim == 0 for out_dim, in_dim in zip(block_shape, x.shape)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
   ):
     raise NotImplementedError(
         'Block size must be a multiple of the input size. '
@@ -1485,7 +1485,7 @@ def _tile_eval_rule(
     )
   reps_in_block = [
       out_dim // in_dim if out_dim >= in_dim else 1
-      for out_dim, in_dim in zip(block_shape, x.shape)
+      for out_dim, in_dim in zip(block_shape, x.shape)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
   ]
   return lax.tile(x, reps_in_block)
 
@@ -1508,7 +1508,7 @@ def _tile_pull_rule(
 
   if not all(
       (block_dim % in_dim == 0) or (in_dim % block_dim == 0)
-      for block_dim, in_dim in zip(block_shape, aval_in.shape)
+      for block_dim, in_dim in zip(block_shape, aval_in.shape)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
   ):
     raise NotImplementedError(
         'Every block dimension must be either a multiple or factor of input. '
@@ -1517,14 +1517,14 @@ def _tile_pull_rule(
 
   new_shape = tuple(
       min(block_dim, in_dim)
-      for block_dim, in_dim in zip(block_shape, aval_in.shape)
+      for block_dim, in_dim in zip(block_shape, aval_in.shape)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
   )
 
   def new_index_map(*args):
     original_idxs = block_spec.index_map(*args)
     return tuple(
         0 if block_dim >= in_dim else orig_idx % (in_dim // block_dim)
-        for orig_idx, block_dim, in_dim in zip(
+        for orig_idx, block_dim, in_dim in zip(  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
             original_idxs, block_shape, aval_in.shape
         )
     )
@@ -1712,7 +1712,7 @@ def _reshape_pull_rule(
     new_block_shape = []
     new_grids = []
 
-    for d, bd, merged in zip(shape_out, block_shape, merged_dims):
+    for d, bd, merged in zip(shape_out, block_shape, merged_dims):  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
       bs = pallas_core.get_block_size(bd)
 
       if len(merged) == 1:

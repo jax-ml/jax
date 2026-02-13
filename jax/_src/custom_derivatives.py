@@ -1771,12 +1771,12 @@ def _remat_opt_jvp(
   tangents = map(ad.instantiate_zeros, tangents)
   consts_nz = [not isinstance(t, Zero) for t in consts_dot]
   consts_dot = [c for nz, c in zip(consts_nz, consts_dot) if nz]
-  in_nz = consts_nz + [True] * len(tangents)
+  in_nz = consts_nz + [True] * len(tangents)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   fwd_jaxpr_jvp_, out_nz = ad.jvp_jaxpr(fwd_jaxpr, in_nz, True)
   num_out = len(out_nz) - num_res
   fwd_jaxpr_jvp_ = ad.rearrange_binders(
       fwd_jaxpr_jvp_, [num_consts, len(primals)],
-      [len(consts_dot), len(tangents)], [num_res, num_out], [num_res, num_out])
+      [len(consts_dot), len(tangents)], [num_res, num_out], [num_res, num_out])  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   fwd_jaxpr_jvp = pe.close_jaxpr(pe.convert_constvars_jaxpr(fwd_jaxpr_jvp_.jaxpr))
 
   # @pe._memoize

@@ -1229,7 +1229,7 @@ def lower_jaxpr_to_mosaic_gpu(
         write_env(eqn.outvars[0], outvals)
   while named_regions:  # Drain the name stack.
     named_regions.pop().close()
-  return map(read_env, jaxpr.outvars)
+  return map(read_env, jaxpr.outvars)  # pyrefly: ignore[bad-return]  # pyrefly#2385
 
 
 @register_lowering_rule(primitives.program_id_p, mgpu.LoweringSemantics.Lane)
@@ -1495,7 +1495,7 @@ def _bubble_up_transform(
 ) -> tuple[T, T, list[state_types.Transform], list[state_types.Transform]]:
   new_transforms_rev = []
   new_transforms_avals_rev = []
-  for transform, transform_aval in reversed(zip(transforms, transforms_avals)):
+  for transform, transform_aval in reversed(zip(transforms, transforms_avals)):  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
     avals = (transform_aval, t_aval)
     (t, new_transform), (t_aval, new_transform_aval) = _lower_fn_with_avals(
         functools.partial(_commute_transform, aval), avals
