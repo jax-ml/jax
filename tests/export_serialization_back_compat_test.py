@@ -181,7 +181,7 @@ class CompatTest(jtu.JaxTestCase):
   )
   def test_with_memory_space(self, testdata: dict[str, Any] | None):
     # This test is based on export_test.py::test_memory_space_from_arg
-    # Skip test on ROCm due to wrong function export platform error. 
+    # Skip test on ROCm due to wrong function export platform error.
     # TODO(GulsumGudukbay): Unskip once fixed. Issue #34711.
     if jtu.is_device_rocm():
       self.skipTest("Skipped on ROCm due to wrong function export platform error.")

@@ -294,7 +294,7 @@ class TritonPallasTest(PallasBaseTest):
 
   @parameterized.parameters("float16", "bfloat16", "float32")
   def test_approx_tanh(self, dtype):
-    # Skip approx_tanh tests on ROCm due to missing tanh.approx instruction. 
+    # Skip approx_tanh tests on ROCm due to missing tanh.approx instruction.
     # TODO(GulsumGudukbay): Will be unskipped once PR 34598 is merged. Issue #34711.
     if jtu.is_device_rocm() and dtype in ("float16", "float32"):
       self.skipTest("Skipped on ROCm due to missing tanh.approx instruction.")  # test_approx_tanh0 and test_approx_tanh2
