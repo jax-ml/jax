@@ -1,0 +1,27 @@
+name: Benchmarks
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  multiprocess_gpu_test:
+    runs-on: ubuntu-latest  #  For self-hosted runners with GPUs, update accordingly.
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          pip install absl-py
+          pip install -U jax
+          pip install -U "jax[cuda12]"
+          pip install google-benchmark
+      - name: Run Multiprocess GPU Test
+        run: |
+          python -m pytest tests/multiprocess_gpu_test.py
+          pytest -k "conv"
