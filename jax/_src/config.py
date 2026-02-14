@@ -2253,3 +2253,8 @@ jax_pallas_verbose_errors = bool_flag(
     default=bool_env("JAX_PALLAS_VERBOSE_ERRORS", False),
     help="If True, print verbose error messages for Pallas kernels.",
 )
+
+rbg_remat_unsafe = define_bool_state(
+    name='jax_rbg_remat_unsafe',
+    default=False,
+    help=('Allows unsafe combination of jax.remat and rbg / unsafe_rbg PRNGs.'))
