@@ -48,6 +48,11 @@ def approx_tanh(x: jax.Array) -> jax.Array:
   elif x.dtype == jnp.float32:
     asm = "tanh.approx.f32 $0, $1;"
     constraint = "f"
+  elif x.dtype == jnp.float64:
+    # f64 tanh.approx is only supported on ROCm (uses __ocml_tanh_f64)
+    # CUDA does not have a PTX instruction for f64 approximate tanh
+    asm = "tanh.approx.f64 $0, $1;"
+    constraint = "d"
   else:
     raise TypeError(f"approx_tanh does not accept {x.dtype} arrays")
 
@@ -119,6 +124,13 @@ def _elementwise_inline_asm_lowering(
     result_shape_dtypes,
 ):
   del result_shape_dtypes  # Unused.
+
+  # For ROCm, PTX inline assembly is not supported. For tanh.approx, we use
+  # Triton's __triton_hip_fast_tanhf (fast exp-based formula) for f32, and
+  # OCML's __ocml_tanh_f64 for f64. See: https://github.com/triton-lang/triton/pull/7780
+  if ctx.context.platform == "rocm" and "tanh.approx" in asm:
+    return _approx_tanh_rocm_lowering(ctx, *args)
+
   return tt_dialect.ElementwiseInlineAsmOp(
       [*map(mlir.aval_to_ir_type, ctx.avals_out)],
       asm,
@@ -127,6 +139,86 @@ def _elementwise_inline_asm_lowering(
       packed_element=pack,
       args=args,
   ).result
+
+
+def _approx_tanh_rocm_lowering(
+    ctx: lowering.LoweringRuleContext,
+    *args,
+):
+  """Lower approx_tanh for ROCm.
+
+  AMD CDNA3 (MI300X/gfx942) does not have a hardware tanh instruction.
+
+  For f32 (and f16/bf16 via casting): We use Triton's __triton_hip_fast_tanhf
+  which implements a fast exp-based formula: tanh(x) = (exp(2x) - 1) / (exp(2x) + 1)
+  See: https://github.com/triton-lang/triton/pull/7780
+
+  For f64: We use OCML's __ocml_tanh_f64 (AMD's Open Compute Math Library)
+  since fast_tanhf only supports f32.
+  """
+  from jax._src.lib.mlir import ir
+  from jax._src.lib.mlir.dialects import arith as arith_dialect
+
+  [arg] = args
+  [out_aval] = ctx.avals_out
+  in_dtype = ctx.avals_in[0].dtype
+
+  # Helper to get IR type for a dtype
+  def dtype_to_ir_type(dtype):
+    dtype = jnp.dtype(dtype)
+    return mlir.dtype_to_ir_type(dtype)
+
+  # f64: use __ocml_tanh_f64 (fast_tanhf only supports f32)
+  if in_dtype == jnp.float64:
+    result_type = mlir.aval_to_ir_type(out_aval)
+    result = tt_dialect.extern_elementwise(
+        result_type,
+        list(args),
+        libname="",
+        libpath="",
+        symbol="__ocml_tanh_f64",
+        pure=True,
+    )
+    return [result]
+
+  # fast_tanhf only supports f32. For f16/bf16, cast to f32, compute, cast back.
+  needs_cast = in_dtype in (jnp.float16, jnp.bfloat16)
+
+  if needs_cast:
+    # Cast input to f32 (extend)
+    f32_type = dtype_to_ir_type(jnp.float32)
+    if out_aval.shape:
+      f32_result_type = ir.RankedTensorType.get(out_aval.shape, f32_type)
+    else:
+      f32_result_type = f32_type
+    arg_f32 = arith_dialect.extf(f32_result_type, arg)
+
+    # Call __triton_hip_fast_tanhf (fast exp-based implementation)
+    tanh_result = tt_dialect.extern_elementwise(
+        f32_result_type,
+        [arg_f32],
+        libname="libdevice",
+        libpath="",
+        symbol="__triton_hip_fast_tanhf",
+        pure=True,
+    )
+
+    # Cast result back to original dtype (truncate)
+    out_type = mlir.aval_to_ir_type(out_aval)
+    result = arith_dialect.truncf(out_type, tanh_result)
+  else:
+    # f32: call __triton_hip_fast_tanhf directly
+    result_type = mlir.aval_to_ir_type(out_aval)
+    result = tt_dialect.extern_elementwise(
+        result_type,
+        list(args),
+        libname="libdevice",
+        libpath="",
+        symbol="__triton_hip_fast_tanhf",
+        pure=True,
+    )
+
+  return [result]
 
 
 def debug_barrier() -> None:
