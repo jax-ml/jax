@@ -1429,13 +1429,17 @@ def TPU_TraceValueOp : TPU_Op<"trace_value", []> {
   let summary = "Emit a scalar value as a trace event.";
   let description = [{
     Emits a dynamic scalar value as a trace event.
-    When lowered to LLO, creates its own trace scope (start/value/stop).
+    Must be used inside a TraceOp region; the value is appended to the
+    enclosing trace scope.  Otherwise, the result is undefined.
     Supported types: i32, f32.
 
     Example:
     ```mlir
     %count = arith.constant 42 : i32
-    tpu.trace_value %count, "my_value" : i32
+    tpu.trace "my_scope", 0 {
+      tpu.trace_value %count, "my_value" : i32
+      tpu.yield
+    }
     ```
   }];
   let arguments = (ins

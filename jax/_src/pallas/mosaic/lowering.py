@@ -4406,9 +4406,23 @@ def _touch_lowering_rule(ctx: LoweringRuleContext, x: jax.Array):
 
 @register_lowering_rule(tpu_primitives.trace_value_p)
 def _trace_value_lowering_rule(ctx: LoweringRuleContext, value, *, label: str):
-  """Lower trace_value to tpu.trace_value."""
-  del ctx
-  tpu.trace_value(value, label)
+  """Lower trace_value to tpu.trace_value.
+
+  Uses a TraceOp region to create a single xprof scope. All trace_value ops
+  within the region append to the enclosing scope.
+  """
+
+  (aval,) = ctx.avals_in
+
+  trace_op = tpu.TraceOp([], message=label, level=0)
+  with ir.InsertionPoint(trace_op.body):
+    if not aval.shape:  # Scalar case.
+      tpu.trace_value(value, label)
+    else:  # Vector case.
+      for idx in np.ndindex(aval.shape):
+        elem = vector.extract(value, [], list(idx))
+        tpu.trace_value(elem, "")
+    tpu.YieldOp([])
   return []
 
 

@@ -1216,20 +1216,26 @@ trace_value_p.multiple_results = True
 
 
 def trace_value(label: str, value: jax.Array) -> None:
-  """Emit a scalar value to the current xprof trace scope.
+  """Emit a value to an xprof trace scope.
 
-  This appends a dynamic scalar value to the enclosing trace region.
-  The value will appear in xprof trace viewer associated with the trace event.
+  Appends dynamic values to an enclosing trace region. The values will appear
+  in the xprof trace viewer associated with the trace event.
+
+  For scalar values, emits a single value with the given label.
+  For array values, iterates over elements and emits each (they will appear
+  as indexed values in xprof, e.g., value_0, value_1, ...). It is undefined
+  behavior to call ``trace_value`` when no trace scope is active.
 
   Args:
     label: A string label for this value in xprof.
-    value: A scalar i32 or f32 value to emit.
+    value: An i32 or f32 value (scalar or array) to emit.
 
   Example:
     # Inside a Pallas kernel:
-    x  = jnp.sum(y > 0)
+    x = jnp.sum(y > 0)
     pltpu.trace_value("my_x", x)
   """
+
   trace_value_p.bind(value, label=label)
 
 
@@ -1245,10 +1251,6 @@ pl_core.kernel_local_effects.add_type(TraceEffect)
 @trace_value_p.def_effectful_abstract_eval
 def _trace_value_abstract_eval(value, *, label):
   del label
-  if value.shape:
-    raise ValueError(
-        f"trace_value requires a scalar value, got shape {value.shape}"
-    )
   if value.dtype not in (jnp.int32, jnp.float32):
     raise ValueError(f"trace_value requires i32 or f32, got {value.dtype}")
   return [], {trace_effect}
