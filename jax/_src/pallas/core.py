@@ -41,6 +41,7 @@ from jax._src import util
 from jax._src.api import jit
 from jax._src.export._export import export
 from jax._src.interpreters import mlir
+from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
@@ -1569,6 +1570,7 @@ def with_memory_space_constraint_lowering_rule(ctx, x, *, memory_space):
 mlir.register_lowering(
     with_memory_space_constraint_p, with_memory_space_constraint_lowering_rule
 )
+batching.defvectorized(with_memory_space_constraint_p)
 
 
 def default_mesh_discharge_rule(
