@@ -31,6 +31,11 @@ on:
   schedule:
     - cron: "0 */3 * * *" # Run once every 3 hours
   workflow_dispatch: # allows triggering the workflow run manually
+    inputs:
+      xla-commit:
+        description: "Specific XLA commit to use (overrides clone_main_xla)"
+        type: string
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -66,6 +71,7 @@ jobs:
         artifact: ${{ matrix.artifact }}
         python: ${{ matrix.python }}
         clone_main_xla: 1
+        xla-commit: ${{ inputs.xla-commit }}
         upload_artifacts_to_gcs: true
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
@@ -86,6 +92,7 @@ jobs:
       python: ${{ matrix.python }}
       cuda-version: ${{ matrix.cuda-version }}
       clone_main_xla: 1
+      xla-commit: ${{ inputs.xla-commit }}
       upload_artifacts_to_gcs: true
       gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
