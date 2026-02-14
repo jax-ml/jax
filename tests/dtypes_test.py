@@ -509,6 +509,29 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(dtypes.float_, np.float64)
     self.assertEqual(dtypes.complex_, np.complex128)
 
+  @parameterized.parameters(
+    {"np_scalar_type": np.bool, "jnp_scalar_type": jnp.bool, "np_base_type": np.generic},
+    {"np_scalar_type": np.int8, "jnp_scalar_type": jnp.int8, "np_base_type": np.signedinteger},
+    {"np_scalar_type": np.int16, "jnp_scalar_type": jnp.int16, "np_base_type": np.signedinteger},
+    {"np_scalar_type": np.int32, "jnp_scalar_type": jnp.int32, "np_base_type": np.signedinteger},
+    {"np_scalar_type": np.int64, "jnp_scalar_type": jnp.int64, "np_base_type": np.signedinteger},
+    {"np_scalar_type": np.uint8, "jnp_scalar_type": jnp.uint8, "np_base_type": np.unsignedinteger},
+    {"np_scalar_type": np.uint16, "jnp_scalar_type": jnp.uint16, "np_base_type": np.unsignedinteger},
+    {"np_scalar_type": np.uint32, "jnp_scalar_type": jnp.uint32, "np_base_type": np.unsignedinteger},
+    {"np_scalar_type": np.uint64, "jnp_scalar_type": jnp.uint64, "np_base_type": np.unsignedinteger},
+    {"np_scalar_type": np.float16, "jnp_scalar_type": jnp.float16, "np_base_type": np.floating},
+    {"np_scalar_type": np.float32, "jnp_scalar_type": jnp.float32, "np_base_type": np.floating},
+    {"np_scalar_type": np.float64, "jnp_scalar_type": jnp.float64, "np_base_type": np.floating},
+    {"np_scalar_type": np.complex64, "jnp_scalar_type": jnp.complex64, "np_base_type": np.complexfloating},
+    {"np_scalar_type": np.complex128, "jnp_scalar_type": jnp.complex128, "np_base_type": np.complexfloating},
+  )
+  def testDefaultScalarTypeHierarchy(self, np_scalar_type, jnp_scalar_type, np_base_type):
+    self.assertTrue(issubclass(np_scalar_type, np_base_type)) # sanity check
+    self.assertTrue(issubclass(jnp_scalar_type, np_base_type))
+
+    self.assertTrue(issubclass(jnp_scalar_type, np_scalar_type))
+    self.assertTrue(issubclass(np_scalar_type, jnp_scalar_type))
+
   def test_check_dtype_non_hashable(self):
     # regression test for issue with checking non-hashable custom dtype
     class MyDtype:
