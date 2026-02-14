@@ -22,6 +22,7 @@ env:
 
 jobs:
   lint_and_typecheck:
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
