@@ -2256,18 +2256,35 @@ absl::Status PyArray::Register(nb::module_& m) {
   m.attr("ArrayImpl") = type;
 
   type.attr("__init__") = nb::cpp_function(
-      [](PyArray self, nb::object aval, nb::object sharding, nb::list arrays,
+      [](PyArray self, nb::object aval, nb::object sharding, nb::object arg,
          bool committed, bool skip_checks) {
-        if (!(arrays.size() == 0 || arrays[0].type().is(PyArray::type()))) {
+        if (PyArray py_array; nb::try_cast<PyArray>(arg, py_array)) {
+          auto dtype = nb::cast<xla::nb_dtype>(aval.attr("dtype"));
+          auto shape = nb::cast<std::vector<int64_t>>(aval.attr("shape"));
+          auto py_device_list = nb::cast<const PyDeviceList*>(
+              sharding.attr("_internal_device_list"));
+          nb_class_ptr<PyClient> py_client = py_device_list->py_client();
+          auto ifrt_array = tsl::FormRef(py_array.ifrt_array());
+          Construct(reinterpret_cast<PyArrayObject*>(self.ptr()), aval,
+                    nb::cast<bool>(aval.attr("weak_type")), std::move(dtype),
+                    std::move(shape), std::move(sharding), committed, py_client,
+                    std::move(ifrt_array), xla::Future<>());
+        } else if (std::vector<PyArray> py_arrays;
+                   nb::try_cast<std::vector<PyArray>>(arg, py_arrays)) {
+          PyArray::PyInit(self, std::move(aval), std::move(sharding), py_arrays,
+                          committed, skip_checks);
+        } else if (nb::list arr; nb::try_cast<nb::list>(arg, arr)) {
+          throw nb::type_error(
+              absl::StrCat("Unsupported type for elements in `arrays`: ",
+                           nb::cast<std::string_view>(nb::str(arr[0].type())))
+                  .c_str());
+        } else {
           throw nb::type_error(
               absl::StrCat(
-                  "Unsupported type for elements in `arrays`: ",
-                  nb::cast<std::string_view>(nb::str(arrays[0].type())))
+                  "Expected a single PyArray or a sequence of PyArrays, got ",
+                  nb::cast<std::string_view>(nb::str(arg.type())))
                   .c_str());
         }
-        auto py_arrays = nb::cast<std::vector<PyArray>>(arrays);
-        PyArray::PyInit(self, std::move(aval), std::move(sharding), py_arrays,
-                        committed, skip_checks);
       },
       nb::is_method(), nb::arg("aval"), nb::arg("sharding"), nb::arg("arrays"),
       nb::arg("committed"), nb::arg("_skip_checks") = false);
