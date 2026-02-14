@@ -6296,14 +6296,14 @@ class RematTest(jtu.JaxTestCase):
     # no residuals from jnp.zeros
     @partial(jax.checkpoint, policy=lambda *_, **__: False)
     def f(x):
-      return jnp.zeros_like(x) * x
+      return jnp.zeros(x.shape, x.dtype) * x
     res_avals = saved_residuals(f, jnp.ones((2, 2)))
     self.assertLen(res_avals, 0)
 
     # no residuals from jnp.zeros, but input must be saved
     @partial(jax.checkpoint, policy=lambda *_, **__: False)
     def f(x):
-      return jnp.zeros_like(x) * jnp.sin(x)
+      return jnp.zeros(x.shape, x.dtype) * jnp.sin(x)
     res_avals = saved_residuals(f, jnp.ones((2, 2)))
     self.assertLen(res_avals, 1)
 
