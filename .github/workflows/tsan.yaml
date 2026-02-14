@@ -276,7 +276,7 @@ jobs:
               --@rules_python//python/config_settings:py_freethreaded="yes" \
               --test_output=errors \
               --test_timeout=1800 \
-              --config=rbe_linux_x86_64 \
               --test_tag_filters=-notsan \
+              --config=rbe_linux_x86_64 \
               --run_under=//tests/config:oss_tsan_wrapper_sh \
               //tests:cpu_tests
