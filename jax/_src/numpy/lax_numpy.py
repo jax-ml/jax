@@ -8266,7 +8266,7 @@ def argmax(a: ArrayLike, axis: int | None = None, out: None = None,
 
   Note:
     When the maximum value occurs more than once along a particular axis, the
-    smallest index is returned.
+    smallest index is returned. This behavior is currently not true on Pallas TPU.
 
   Examples:
     >>> x = jnp.array([1, 3, 5, 4, 2])
@@ -8323,7 +8323,7 @@ def argmin(a: ArrayLike, axis: int | None = None, out: None = None,
 
   Note:
     When the minimum value occurs more than once along a particular axis, the
-    smallest index is returned.
+    smallest index is returned. This behavior is currently not true on Pallas TPU.
 
   See also:
     - :func:`jax.numpy.argmax`: return the index of the maximum value.
