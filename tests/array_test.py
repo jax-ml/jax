@@ -38,6 +38,7 @@ from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
 from jax._src import array
 from jax._src import prng
+from jax._src.lib import jaxlib_extension_version
 
 jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -1579,6 +1580,8 @@ class ShardingTest(jtu.JaxTestCase):
       jax.P((('a', 'b'), 'c'))
 
   def test_pspec_subclass_error(self):
+    if jaxlib_extension_version < 407:
+      self.skipTest('Requires jaxlib_extension_version >= 407')
     with self.assertRaisesRegex(TypeError, "prohibits subclassing"):
       class MyP(jax.P):
         pass
