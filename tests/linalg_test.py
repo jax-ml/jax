@@ -44,6 +44,7 @@ scipy_version = jtu.parse_version(scipy.version.version)
 T = lambda x: np.swapaxes(x, -1, -2)
 
 float_types = jtu.dtypes.floating
+all_float_types = jtu.dtypes.all_floating
 complex_types = jtu.dtypes.complex
 int_types = jtu.dtypes.all_integer
 
@@ -1776,7 +1777,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @jtu.sample_product(
     n=[1, 4, 5, 20, 50, 100],
     batch_size=[(), (2,), (3, 4)],
-    dtype=int_types + float_types + complex_types
+    dtype=int_types + all_float_types + complex_types
   )
   def testExpm(self, n, batch_size, dtype):
     if (jtu.test_device_matches(["cuda"]) and
@@ -2079,6 +2080,73 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         tol={np.complex64: 1e-5, np.complex128: 1e-6},
     )
     self._CompileAndCheck(jnp_fun, args_maker, atol=2e-5)
+
+  @jtu.sample_product(
+    shape=[(0, 0), (2, 0), (0, 2), (3, 3), (3, 4), (2, 10, 5),
+           (2, 200, 100), (64, 16, 5), (33, 7, 3), (137, 9, 5), (20000, 2, 2)],
+    dtype=all_float_types + complex_types,
+    full_matrices=[False, True],
+  )
+  @jax.default_matmul_precision("float32")
+  def testQr(self, shape, dtype, full_matrices):
+    if (jtu.test_device_matches(["cuda"]) and
+        _is_required_cuda_version_satisfied(12000)):
+      self.skipTest("Triggers a bug in cuda-12 b/287345077")
+    rng = jtu.rand_default(self.rng())
+    m, n = shape[-2:]
+
+    if full_matrices:
+      mode, k = "full", m
+    else:
+      mode, k = "economic", min(m, n)
+
+    a = rng(shape, dtype)
+    lq, lr = jsp.linalg.qr(a, mode=mode)
+
+    # scipy.linalg.qr doesn't support batch dimensions. But it seems like an
+    # inevitable extension so we support it in our version.
+    nq = np.zeros(shape[:-2] + (m, k), dtype)
+    nr = np.zeros(shape[:-2] + (k, n), dtype)
+    for index in np.ndindex(*shape[:-2]):
+      nq[index], nr[index] = scipy.linalg.qr(a[index], mode=mode)
+
+    max_rank = max(m, n)
+
+    # Norm, adjusted for dimension and type.
+    def norm(x):
+      n = scipy.linalg.norm(x, axis=(-2, -1))
+      return n / (max(1, max_rank) * jnp.finfo(dtype).eps)
+
+    def compare_orthogonal(q1, q2):
+      q1 = q1.astype(q2.dtype)
+      # Q is unique up to sign, so normalize the sign first.
+      ratio = np.divide(np.where(q2 == 0, 0, q1), np.where(q2 == 0, 1, q2))
+      sum_of_ratios = ratio.sum(axis=-2, keepdims=True)
+      phases = np.divide(sum_of_ratios, np.abs(sum_of_ratios))
+      q1 *= phases
+      nm = norm(q1 - q2)
+      self.assertTrue(np.all(nm < 160), msg=f"norm={np.amax(nm)}")
+
+    # Check a ~= qr
+    norm_error = norm(a - np.matmul(lq, lr))
+    self.assertTrue(np.all(norm_error < 60), msg=np.amax(norm_error))
+
+    # Compare the first 'k' vectors of Q; the remainder form an arbitrary
+    # orthonormal basis for the null space.
+    compare_orthogonal(nq[..., :k], lq[..., :k])
+
+    # Check that q is close to unitary.
+    self.assertTrue(np.all(
+        norm(np.eye(k) - np.matmul(np.conj(T(lq)), lq)) < 10))
+
+    # This expresses identity function, which makes us robust to, e.g., the
+    # tangents flipping the direction of vectors in Q.
+    def qr_and_mul(a):
+      q, r = jsp.linalg.qr(a, mode=mode)
+      return q @ r
+
+    if m == n or (m > n and not full_matrices):
+      jtu.check_jvp(qr_and_mul, partial(jvp, qr_and_mul), (a,), atol=3e-3)
 
   @jtu.sample_product(
     shape=[(4, 4), (15, 15), (50, 50), (100, 100)],
