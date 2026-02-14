@@ -155,6 +155,8 @@ common:avx_linux --host_copt=-mavx
 common:avx_windows --copt=/arch:AVX
 
 common:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
+# For XLA's thunk runtime we need to use async version of oneDNN
+common:mkl_open_source_only --define=build_with_onednn_async=true
 
 # Config setting to build oneDNN with Compute Library for the Arm Architecture (ACL).
 common:mkl_aarch64_threadpool --define=build_with_mkl_aarch64=true
