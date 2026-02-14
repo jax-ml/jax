@@ -1822,7 +1822,7 @@ eager_constant_folding = bool_state(
 
 enable_remat_opt_pass = bool_state(
     name='jax_compiler_enable_remat_pass',
-    default=True,
+    default=False,
     help=('Config to enable / disable the rematerialization HLO pass. '
           'Useful to allow XLA to automatically trade off memory and '
           'compute when encountering OOM errors. However, you are '
