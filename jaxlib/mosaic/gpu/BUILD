@@ -336,6 +336,7 @@ cc_library(
         "@xla//xla/backends/gpu:ffi",
         "@xla//xla/backends/gpu/collectives:gpu_clique_key",
         "@xla//xla/backends/gpu/runtime:collective_clique_requests",
+        "@xla//xla/backends/gpu/runtime:collective_cliques",
         "@xla//xla/backends/gpu/runtime:collective_execution",
         "@xla//xla/backends/gpu/runtime:collective_kernel_api",
         "@xla//xla/backends/gpu/runtime:collective_params",
