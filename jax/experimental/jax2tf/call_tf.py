@@ -30,7 +30,7 @@ import dataclasses
 import functools
 from typing import Any
 
-from absl import logging
+import logging
 import jax
 from jax import dlpack
 from jax import dtypes
