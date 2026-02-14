@@ -1578,6 +1578,11 @@ class ShardingTest(jtu.JaxTestCase):
         "A tuple inside PartitionSpec cannot contain a nested tuple"):
       jax.P((('a', 'b'), 'c'))
 
+  def test_pspec_subclass_error(self):
+    with self.assertRaisesRegex(TypeError, "prohibits subclassing"):
+      class MyP(jax.P):
+        pass
+
 
 class RngShardingTest(jtu.JaxTestCase):
   # tests that the PRNGs are automatically sharded as expected
