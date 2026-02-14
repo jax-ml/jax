@@ -194,6 +194,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * `jax.interpreters.mlir.dense_bool_array` was removed. Use MLIR APIs to
     construct attributes instead.
 
+* Breaking changes
+  * Fixed a numerical issue in the gradients produced by `jax.remat`. This may
+    cause ``f(x) != jax.value_and_grad(f)(x)[0]`` (due to numerical differences)
+    for more functions f than previously. See
+    https://github.com/google/jax/pull/22244 for more information.
+
 * Changes
   * {func}`jax.numpy.linalg.eig` now returns a namedtuple (with attributes
     `eigenvalues` and `eigenvectors`) instead of a plain tuple.
