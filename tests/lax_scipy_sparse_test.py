@@ -98,13 +98,16 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     shape=[(4, 4), (7, 7)],
     dtype=[np.float64, np.complex128],
     preconditioner=[None, 'identity', 'exact', 'random'],
+    assume_ipart_is_zero=[False, True]
   )
-  def test_cg_against_scipy(self, shape, dtype, preconditioner):
+  def test_cg_against_scipy(self, shape, dtype, preconditioner, assume_ipart_is_zero):
     if not config.enable_x64.value:
       raise unittest.SkipTest("requires x64 mode")
 
     rng = jtu.rand_default(self.rng())
     A = rand_sym_pos_def(rng, shape, dtype)
+    if assume_ipart_is_zero:
+      A = A.real.astype(A.dtype)
     b = rng(shape[:1], dtype)
     M = self._fetch_preconditioner(preconditioner, A, rng=rng)
 
@@ -113,19 +116,19 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(
         partial(scipy_cg, M=M, maxiter=1),
-        partial(lax_cg, M=M, maxiter=1),
+        partial(lax_cg, M=M, maxiter=1, assume_ipart_is_zero=assume_ipart_is_zero),
         args_maker,
         tol=1e-12)
 
     self._CheckAgainstNumpy(
         partial(scipy_cg, M=M, maxiter=3),
-        partial(lax_cg, M=M, maxiter=3),
+        partial(lax_cg, M=M, maxiter=3, assume_ipart_is_zero=assume_ipart_is_zero),
         args_maker,
         tol=1e-12)
 
     self._CheckAgainstNumpy(
         np.linalg.solve,
-        partial(lax_cg, M=M, atol=1e-10),
+        partial(lax_cg, M=M, atol=1e-10, assume_ipart_is_zero=assume_ipart_is_zero),
         args_maker,
         tol=1e-6)
 
@@ -218,14 +221,16 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     shape=[(5, 5)],
     dtype=[np.float64, np.complex128],
     preconditioner=[None, 'identity', 'exact', 'random'],
+    symmetric=[False, True]
   )
-  def test_bicgstab_against_scipy(
-      self, shape, dtype, preconditioner):
+  def test_bicgstab_against_scipy(self, shape, dtype, preconditioner, symmetric):
     if not config.enable_x64.value:
       raise unittest.SkipTest("requires x64 mode")
 
     rng = jtu.rand_default(self.rng())
     A = rng(shape, dtype)
+    if symmetric:
+      A = A + A.T
     b = rng(shape[:1], dtype)
     M = self._fetch_preconditioner(preconditioner, A, rng=rng)
 
@@ -234,25 +239,25 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(
         partial(scipy_bicgstab, M=M, maxiter=1),
-        partial(lax_bicgstab, M=M, maxiter=1),
+        partial(lax_bicgstab, M=M, maxiter=1, symmetric=symmetric),
         args_maker,
         tol=1e-5)
 
     self._CheckAgainstNumpy(
         partial(scipy_bicgstab, M=M, maxiter=2),
-        partial(lax_bicgstab, M=M, maxiter=2),
+        partial(lax_bicgstab, M=M, maxiter=2, symmetric=symmetric),
         args_maker,
         tol=1e-4)
 
     self._CheckAgainstNumpy(
         partial(scipy_bicgstab, M=M, maxiter=1),
-        partial(lax_bicgstab, M=M, maxiter=1),
+        partial(lax_bicgstab, M=M, maxiter=1, symmetric=symmetric),
         args_maker,
         tol=1e-4)
 
     self._CheckAgainstNumpy(
         np.linalg.solve,
-        partial(lax_bicgstab, M=M, atol=1e-6),
+        partial(lax_bicgstab, M=M, atol=1e-6, symmetric=symmetric),
         args_maker,
         tol=1e-4)
 
