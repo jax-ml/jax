@@ -92,6 +92,10 @@ if [[ "$driver_major_version" -lt "580" ]]; then
   TEST_CONFIG="$TEST_CONFIG --repo_env=HERMETIC_CUDA_UMD_VERSION=13.0.0"
 fi
 
+RULES_PYTHON_ENABLE_PIPSTAR=""
+if [[ "${JAXCI_ENABLE_BZLMOD:-0}" == "0" ]]; then
+  RULES_PYTHON_ENABLE_PIPSTAR="--repo_env=RULES_PYTHON_ENABLE_PIPSTAR=0"
+fi
 
 # Don't abort the script if one command fails to ensure we run both test
 # commands below.
@@ -104,6 +108,7 @@ set +e
 bazel test --config=$TEST_CONFIG \
       $CACHE_OPTION \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
+      $RULES_PYTHON_ENABLE_PIPSTAR \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
       --//jax:build_jax=$JAXCI_BUILD_JAX \
