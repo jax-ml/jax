@@ -1207,6 +1207,48 @@ class LaxTest(jtu.JaxTestCase):
                           rtol={np.float64: 3e-15})
     self.assertEqual(lax.dot(*args_maker(), precision=algorithm).dtype, dtype)
 
+  @parameterized.parameters(
+      (
+          lax.Precision.DEFAULT,
+          dict(
+              cpu=lax.DotAlgorithmPreset.F32_F32_F32,
+              gpu=lax.DotAlgorithmPreset.TF32_TF32_F32,
+              gpu_old=lax.DotAlgorithmPreset.F32_F32_F32,
+              tpu=lax.DotAlgorithmPreset.BF16_BF16_F32,
+          ),
+      ),
+      (
+          lax.Precision.HIGH,
+          dict(
+              cpu=lax.DotAlgorithmPreset.F32_F32_F32,
+              gpu=lax.DotAlgorithmPreset.TF32_TF32_F32,
+              gpu_old=lax.DotAlgorithmPreset.F32_F32_F32,
+              tpu=lax.DotAlgorithmPreset.BF16_BF16_F32_X3,
+          ),
+      ),
+      (
+          lax.Precision.HIGHEST,
+          dict(
+              cpu=lax.DotAlgorithmPreset.F32_F32_F32,
+              gpu=lax.DotAlgorithmPreset.F32_F32_F32,
+              gpu_old=lax.DotAlgorithmPreset.F32_F32_F32,
+              tpu=lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
+          ),
+      ),
+  )
+  def testDotAlgorithmPrecisionEquivalence(self, precision, algorithms):
+    device = jtu.device_under_test()
+    if device == "gpu" and not jtu.is_cuda_compute_capability_at_least("8.0"):
+      device = "gpu_old"
+
+    rng = jtu.rand_default(self.rng())
+    lhs = rng((32, 64), np.float32)
+    rhs = rng((64, 32), np.float32)
+    self.assertArraysEqual(
+        lax.dot(lhs, rhs, precision=precision),
+        lax.dot(lhs, rhs, precision=algorithms[device]),
+    )
+
   def testDotAlgorithmInvalidFloat8Type(self):
     if jtu.test_device_matches(["cpu"]):
       raise SkipTest("Not supported on CPU.")
@@ -5373,6 +5415,62 @@ class RaggedTest(jtu.JaxTestCase):
       self.assertArraysAllClose(
           batch_res[i, 0:upper_bound, :], ref_res, rtol=tol, atol=tol
       )
+
+  @parameterized.parameters(
+      (
+          lax.Precision.DEFAULT,
+          dict(
+              cpu=lax.DotAlgorithmPreset.F32_F32_F32,
+              gpu=lax.DotAlgorithmPreset.TF32_TF32_F32,
+              gpu_old=lax.DotAlgorithmPreset.F32_F32_F32,
+              tpu=lax.DotAlgorithmPreset.BF16_BF16_F32,
+          ),
+      ),
+      (
+          lax.Precision.HIGH,
+          dict(
+              cpu=lax.DotAlgorithmPreset.F32_F32_F32,
+              gpu=lax.DotAlgorithmPreset.TF32_TF32_F32,
+              gpu_old=lax.DotAlgorithmPreset.F32_F32_F32,
+              tpu=lax.DotAlgorithmPreset.BF16_BF16_F32_X3,
+          ),
+      ),
+      (
+          lax.Precision.HIGHEST,
+          dict(
+              cpu=lax.DotAlgorithmPreset.F32_F32_F32,
+              gpu=lax.DotAlgorithmPreset.F32_F32_F32,
+              gpu_old=lax.DotAlgorithmPreset.F32_F32_F32,
+              tpu=lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
+          ),
+      ),
+  )
+  def test_ragged_dot_algorithm_precision_equivalence(
+      self, precision, algorithms
+  ):
+    device = jtu.device_under_test()
+    if device == "gpu":
+      if jtu.is_cuda_compute_capability_at_least("8.0"):
+        if precision == lax.Precision.HIGHEST:
+          self.skipTest("FIXME(#32207)")
+      else:
+        device = "gpu_old"
+
+    if device == "tpu":
+      if precision == lax.Precision.HIGH:
+        self.skipTest("TPU `ragged_dot` does not support `HIGH` precision")
+      if precision == lax.Precision.HIGHEST:
+        self.skipTest("FIXME(b/422084662)")
+
+    rng = jtu.rand_default(self.rng())
+    lhs = rng((32, 64), np.float32)
+    rhs = rng((2, 64, 32), np.float32)
+    group_sizes = jnp.array([16, 16], dtype=np.int32)
+    self.assertArraysEqual(
+        lax.ragged_dot(lhs, rhs, group_sizes, precision=precision),
+        lax.ragged_dot(lhs, rhs, group_sizes, precision=algorithms[device]),
+    )
+
 
 class LaxUtilsTest(jtu.JaxTestCase):
 
