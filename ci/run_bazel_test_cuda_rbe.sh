@@ -45,6 +45,13 @@ else
   cuda_libs_flag="--@local_config_cuda//cuda:override_include_cuda_libs=true"
 fi
 
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
+  FREETHREADED_FLAG_VALUE="yes"
+else
+  FREETHREADED_FLAG_VALUE="no"
+fi
+
 # Run Bazel GPU tests with RBE (single accelerator tests with one GPU apiece).
 echo "Running RBE GPU tests..."
 
