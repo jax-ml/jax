@@ -21,6 +21,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import scipy.stats
+import scipy
 
 from jax._src import ad_checkpoint
 from jax._src import config
@@ -939,6 +940,63 @@ class NNInitializersTest(jtu.JaxTestCase):
       sub_rng, rng = random.split(rng)
       val = init_fn(sub_rng, shape)
       self.assertEqual(val.dtype, jnp.bfloat16)
+
+
+@jtu.with_config(
+  jax_legacy_prng_key="allow",
+  jax_numpy_rank_promotion="allow",
+  jax_numpy_dtype_promotion="standard",
+)
+class NNSampleImageTest(jtu.JaxTestCase):
+  @parameterized.product(
+      interpolation=["nearest", "linear"],
+      padding=["fill", "clip", "wrap", "reflect"],
+      shapes=[
+          [(10, 20, 3), (2,)],
+          [(10, 20, 3), (100, 2,)],
+          [(10, 20), (2,)],
+          [(10, 20), (100, 2,)],
+          [(10, 20, 30, 5), (3,)],
+          [(10, 20, 30), (100, 3)],
+      ],
+  )
+  def testSampleImageShape(self, shapes, interpolation, padding):
+    img_shape, loc_shape = shapes
+
+    def f():
+      img = jnp.zeros(img_shape)
+      loc = jnp.zeros(loc_shape)
+      new_img = nn.sample_image(img, loc, interpolation=interpolation, padding=padding)
+      return new_img
+
+    new_img = jax.eval_shape(f)
+    self.assertEqual(new_img.shape, loc_shape[:-1] + img_shape[loc_shape[-1] :])
+
+  @parameterized.product(
+      interpolation=["nearest", "linear"],
+      fill_value=[0, 1, 2],
+  )
+  def testSampleImageScipy(self, interpolation, fill_value):
+    img = self.rng().rand(512, 512, 3)
+    loc = (self.rng().rand(5, 2) * 3 - 1) * jnp.array(img.shape[:-1])
+    x = nn.sample_image(
+        img,
+        loc,
+        interpolation=interpolation,
+        padding="fill",
+        fill_value=fill_value,
+        rescale=False,
+    )
+    y = scipy.interpolate.interpn(
+        tuple(jnp.arange(i) for i in img.shape[:-1]),
+        img,
+        loc,
+        method=interpolation,
+        bounds_error=False,
+        fill_value=fill_value,
+    )
+    self.assertAllClose(x.astype(float), y)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
