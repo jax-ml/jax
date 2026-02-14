@@ -24,15 +24,16 @@ from typing import Any
 import numpy as np
 
 from jax._src import api
-from jax._src.typing import Array, ArrayLike, DTypeLike
+from jax._src import indexing
 from jax._src.lax import control_flow
-from jax._src.lax import slicing
 from jax._src.lax import lax
-from jax._src.numpy import indexing
+from jax._src.lax import slicing
+from jax._src.numpy import indexing as jnp_indexing
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.reductions import _moveaxis
 from jax._src.numpy.util import check_arraylike, _broadcast_to, _where
 from jax._src.numpy.vectorize import vectorize
+from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.util import canonicalize_axis, set_module
 
 
@@ -536,14 +537,14 @@ class ufunc:
     if axis is None or isinstance(axis, (tuple, list)):
       raise ValueError("reduceat requires a single integer axis.")
     axis = canonicalize_axis(axis, a.ndim)
-    out = indexing.take(a, indices, axis=axis)
+    out = jnp_indexing.take(a, indices, axis=axis)
     ind = lax.expand_dims(jnp.append(indices, a.shape[axis]),
                                    list(np.delete(np.arange(out.ndim), axis)))
     ind_start = slicing.slice_in_dim(ind, 0, ind.shape[axis] - 1, axis=axis)
     ind_end = slicing.slice_in_dim(ind, 1, ind.shape[axis], axis=axis)
     def loop_body(i, out):
       return _where((i > ind_start) & (i < ind_end),
-                    self(out, indexing.take(a, lax.expand_dims(i, (0,)), axis=axis)),
+                    self(out, jnp_indexing.take(a, lax.expand_dims(i, (0,)), axis=axis)),
                     out)
     return control_flow.fori_loop(0, a.shape[axis], loop_body, out)
 
