@@ -441,6 +441,49 @@ class CoreTest(jtu.JaxTestCase):
     jax.grad(f)(jnp.float16(1.0))
     self.assertRegex(x_repr, r"^Traced<float16\[\]>with<(JVP)|(Linearize)Trace>")
 
+  def test_aval_property_setter(self):
+    test = self
+    val = 1
+    class SomeAval:
+      @core.aval_property
+      def value(self):
+        nonlocal val
+        test.assertIsInstance(self, FakeTracer)
+        return val
+      @value.setter
+      def value(self, new_value):
+        nonlocal val
+        val = new_value
+        test.assertIsInstance(self, FakeTracer)
+
+    class FakeTracer(core.Tracer):
+      def __init__(self, aval):
+        self._aval = aval
+      @property
+      def aval(self):
+        return self._aval
+
+    tracer = FakeTracer(SomeAval())
+    self.assertEqual(tracer.value, 1)
+    tracer.value = 2
+    self.assertEqual(tracer.value, 2)
+
+  def test_aval_property_setter_conflict(self):
+    """test that 'value' cannot be used as a Tracer attribute name"""
+    class FakeTracer(core.Tracer):
+      def __init__(self):
+        self.value = 1
+
+      @property
+      def aval(self):
+        return None
+
+    with self.assertRaisesRegex(
+        AttributeError,
+        "Cannot set attribute 'FakeTracer.value' because it conflicts",
+    ):
+      FakeTracer()
+
 
 @jtu.with_config(jax_pprint_use_color=False)
 class JaxprTypeChecks(jtu.JaxTestCase):

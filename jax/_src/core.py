@@ -1079,6 +1079,30 @@ class Tracer(TracerBase, metaclass=TracerMeta):
       else:
         return attr
 
+  def __setattr__(self, name, value):
+    # hardcoding 'value' for now, a more general mechanism
+    # could be added in the future
+    if name == "value":
+      try:
+        attr = getattr(self.aval, name)
+      except AttributeError as err:
+        raise AttributeError(
+          f"Cannot set attribute '{type(self).__name__}.{name}' because it "
+          "conflicts with a named reserved for aval setter properties."
+        ) from err
+      if type(attr) is aval_property:
+        if attr.fset is None:
+          raise AttributeError(
+            f"Cannot set aval property '{name}' because it is a "
+            "read-only property."
+          )
+        return attr.fset(self, value)
+      raise AttributeError(
+        f"Cannot set attribute '{type(self).__name__}.{name}' because it "
+        "conflicts with a named reserved for aval setter properties."
+      )
+    object.__setattr__(self, name, value)
+
   def _short_repr(self) -> str:
     return f'{self.__class__.__name__}<{self.aval}>'
 
@@ -1182,8 +1206,12 @@ _jax.set_tracer_class(Tracer)
 
 # these can be used to set up forwarding of properties and instance methods from
 # Tracer instances to the underlying avals
-aval_property = namedtuple("aval_property", ["fget"])
 aval_method = namedtuple("aval_method", ["fun"])
+class aval_property(NamedTuple):
+  fget: Any = None
+  fset: Any = None
+  def setter(self, fset) -> "aval_property":
+    return aval_property(self.fget, fset)
 
 pytype_aval_mappings[Tracer] = lambda x: x.aval
 
