@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Module for pallas-core functionality."""
+
 from __future__ import annotations
 
 import collections
@@ -24,7 +25,7 @@ import enum
 import functools
 import itertools
 import threading
-from typing import Any, ClassVar, Literal, Protocol, TypeAlias, Union, runtime_checkable
+from typing import Any, ClassVar, Literal, Protocol, runtime_checkable, TypeAlias, Union
 
 from jax._src import api_util
 from jax._src import config
@@ -32,6 +33,7 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import frozen_dict
+from jax._src import hijax
 from jax._src import linear_util as lu
 from jax._src import numpy as jnp
 from jax._src import state
@@ -205,6 +207,13 @@ class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
         shape, dtype, weak_type, sharding=sharding, vma=vma,
         memory_space=memory_space
     )
+
+  def unwrap(self) -> jax_core.ShapedArray:
+    """Returns a ShapedArray with the memory space removed."""
+    return jax_core.ShapedArray(
+        self.shape, self.dtype, self.weak_type, sharding=self.sharding, vma=self.vma
+    )
+
 mlir.ir_type_handlers[ShapedArrayWithMemorySpace] = mlir._array_ir_types
 
 
@@ -1584,7 +1593,7 @@ def default_mesh_discharge_rule(
     name,
     metadata,
 ):
-  """Discharges a ``core_map`` over a mesh to a ``pallas_call``."""
+  """Discharges a ``core_map`` over a mesh to a ``mpmd_map``."""
   if not all(
       isinstance(aval, state.AbstractRef) for aval in (in_avals + out_avals)
   ):
@@ -1592,7 +1601,6 @@ def default_mesh_discharge_rule(
         "default_mesh_discharge_rule only supports Ref inputs/outputs."
     )
 
-  assert len(jaxpr.outvars) == 0
   modified_idxs = sorted(
       eff.input_index
       for eff in jaxpr.effects
@@ -1609,11 +1617,6 @@ def default_mesh_discharge_rule(
       if memory_space is not default_memory_space else arg
       for arg, memory_space in zip(args, in_memory_spaces)
   ]
-  in_specs = [
-      BlockSpec(memory_space=memory_space) for memory_space in in_memory_spaces
-  ]
-  out_specs = [in_specs[idx] for idx in modified_idxs]
-  out_shapes = [_get_sds(in_avals[idx]) for idx in modified_idxs]
 
   scratch_avals = [v.aval for v in jaxpr.invars]
   scratch_shapes = tuple(
@@ -1623,30 +1626,27 @@ def default_mesh_discharge_rule(
   def body(*args):
     # Due to aliasing, ``args`` contains aliased inputs and outputs so we
     # remove outputs.
-    in_refs, _, scratch_refs = split_list(args, [len(in_avals), len(out_specs)])
+    in_refs, _, scratch_refs = split_list(
+        args, [len(in_avals), len(modified_idxs)]
+    )
     jax_core.eval_jaxpr(jaxpr, in_refs, *scratch_refs)
 
-  from jax._src.pallas import pallas_call  # Avoid circular dependency.
-  outs = pallas_call._pallas_call(
-      body,
-      name=name,
-      out_shape=out_shapes,
+  from jax._src.pallas import mpmd  # Avoid circular dependency.
+  outs = mpmd.mpmd_map(
+      [(mesh, body)],
+      out_shapes=tuple(_get_sds(in_avals[idx]) for idx in modified_idxs),
       input_output_aliases={
           in_idx: out_idx for out_idx, in_idx in enumerate(modified_idxs)
       },
-      grid_spec=GridSpec(
-          grid=tuple(mesh.shape.items()),
-          in_specs=in_specs,
-          out_specs=out_specs,
-          scratch_shapes=scratch_shapes,
-      ),
-      mesh=mesh,
+      scratch_shapes=scratch_shapes,
       compiler_params=compiler_params,
       interpret=interpret,
       debug=debug,
       cost_estimate=cost_estimate,
       metadata=metadata,
+      name=name,
   )(*args)
+
   # ``outs`` lacks the unmodified inputs. Add them back in.
   all_outs = [None] * len(args)
   for out_idx, in_idx in enumerate(modified_idxs):
@@ -1722,6 +1722,36 @@ def lower_as_mlir(
 _out_shape_to_aval_mapping: dict[
     type[Any], Callable[[Any], jax_core.AbstractValue]
 ] = {}
+
+
+def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
+  match out_shape:
+    case jax_core.ShapeDtypeStruct():
+      if config._check_vma.value:
+        if out_shape.vma is None:
+          raise ValueError(
+              "When `check_vma=True` on `jax.shard_map`, `vma` on"
+              " `jax.ShapeDtypeStruct` must not be `None`. Please specify how the"
+              " output should be varying across mesh axes using the `vma`"
+              " argument of `jax.ShapeDtypeStruct` or set `check_vma=False` on"
+              " `jax.shard_map`.")
+        return jax_core.ShapedArray(
+            shape=out_shape.shape, dtype=out_shape.dtype,
+            sharding=jax_core.get_cur_mesh_sharding(), vma=out_shape.vma)
+      return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype,
+                                  sharding=jax_core.get_cur_mesh_sharding())
+    case MemoryRef():
+      return out_shape.get_array_aval()
+    case hijax.HiType():
+      return out_shape
+    case _:
+      if type(out_shape) in _out_shape_to_aval_mapping:
+        return _out_shape_to_aval_mapping[type(out_shape)](
+            out_shape
+        )
+      if not (hasattr(out_shape, "shape") and hasattr(out_shape, "dtype")):
+        raise ValueError(f"Invalid out_shape type: {type(out_shape)}")
+      return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype)
 
 
 def _core_map_partial_eval_custom(saveable, unks_in, inst_in, eqn):
