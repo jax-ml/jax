@@ -414,7 +414,6 @@ nanobind_pywrap_extension(
         "@xla//xla/python/pjrt_ifrt:transfer_server_interface",
         "@xla//xla/python/pjrt_ifrt:xla_ifrt",
         "@xla//xla/tsl/concurrency:ref_count",
-        "@xla//xla/tsl/distributed_runtime/preemption:preemption_sync_manager",
         "@xla//xla/tsl/platform:logging",
         "@xla//xla/tsl/platform:status",
         "@xla//xla/tsl/platform:statusor",
