@@ -227,31 +227,29 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), x + 1)
 
-  @parameterized.named_parameters(*(
-      dict(
-          testcase_name=(
-              f"_{'x'.join(map(str, shape))}x{dtype.name}_{minor_scale}"
-          ),
-          dtype=dtype,
-          out_shape=shape,
-          minor_scale=minor_scale,
-      )
-      for dtype, shapes in sc_core.SUPPORTED_VECTOR_SHAPES.items()
-      for shape in shapes
-      if math.prod(shape) * dtype.itemsize == 32
-      for minor_scale in [1, 2, 4]
-  ))
-  def test_slicing(self, dtype, out_shape, minor_scale):
+  @parameterized.product(
+      dtype=[
+          # fmt: off
+          "int32", "uint32", "float32", "int16", "uint16", "float16",
+          "bfloat16", "int8", "uint8"
+          # fmt: on
+      ]
+  )
+  @jtu.thread_unsafe_test(condition=not jtu.hypothesis_is_thread_safe())
+  @hp.given(hps.data())
+  def test_slicing(self, dtype, data):
     self.skip_if_tc_tiling()
 
-    if dtype == jnp.float16:
+    if dtype == "float16":
       # TODO(b/433704850): Remove this once the bug is fixed.
-      self.skipTest("Crashes")
-    # TODO(b/478819791): Remove this once the bug is fixed.
-    if jtu.is_device_tpu(7, "x"):
-      self.skipTest("Need to update SUPPORTED_VECTOR_SHAPES")
+      self.skipTest("Crashes in the backend")
 
-    crashing = {
+    out_shape = data.draw(
+        hps.sampled_from(sc_core.supported_shapes(dtype)), label="out_shape"
+    )
+    minor_scale = data.draw(hps.sampled_from([1, 2, 4]), label="minor_scale")
+
+    problematic = {
         "int16": [(2, self.num_lanes)],
         "uint16": [(2, self.num_lanes)],
         "float16": [(2, self.num_lanes)],
@@ -259,8 +257,8 @@ class VectorSubcoreTest(PallasSCTest):
         "int8": [(4, self.num_lanes)],
         "uint8": [(4, self.num_lanes)],
     }
-    if out_shape in crashing.get(dtype.name, []):
-      self.skipTest("Crashes")
+    if out_shape in problematic.get(dtype, []):
+      self.skipTest("Miscompiles or crashes in the backend")
 
     out_minor = out_shape[-1]
     in_minor = out_minor * minor_scale
