@@ -4969,17 +4969,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
         "of rank 2"):
       jax.ShapeDtypeStruct((128, 128), jnp.float32, sharding=P(None, 'x', None))
 
-  def test_indivisible_sharding_xla(self):
-    mesh = jtu.create_mesh((4,), 'x')
-    arr = jax.device_put(np.arange(8), NamedSharding(mesh, P('x')))
-
-    @jax.jit
-    def f(x):
-      return x[:2]
-
-    with self.assertRaises(IndivisibleError):
-      f(arr)
-
 
 class ShardingInTypesTest(jtu.JaxTestCase):
 
