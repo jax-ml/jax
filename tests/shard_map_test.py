@@ -4841,18 +4841,6 @@ class ShardMapTest(jtu.JaxTestCase):
     out = jax.jit(jax.vmap(f))(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
-  @jtu.with_explicit_mesh((2,), 'x')
-  def test_subclass_partition_spec_error_message(self, mesh):
-    class MyP(jax.P):
-      pass
-
-    @jax.shard_map(in_specs=(jax.P("x"), MyP("x"),), out_specs=())
-    def f(x, y):
-      return ()
-
-    with self.assertRaisesRegex(ValueError, 'not evenly divisible'):
-      f(jnp.arange(8.), jnp.arange(9.))
-
   def test_shmap_empty_mesh_error(self):
     mesh = empty_concrete_mesh
 

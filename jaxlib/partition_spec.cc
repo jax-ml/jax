@@ -186,7 +186,7 @@ void PartitionSpec::Register(nb::module_& m) {
   });
 
   auto partition_spec =
-      nb::class_<PartitionSpec>(m, "PartitionSpec",
+      nb::class_<PartitionSpec>(m, "PartitionSpec", nb::is_final(),
                                 nb::sig("class PartitionSpec(typing.Any)"))
           .def(
               "__init__",
