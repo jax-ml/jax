@@ -18,6 +18,14 @@ Remember to align the itemized text with the first line of an item within a list
   * Added a {func}`jax.experimental.pallas.with_scoped` decorator that provides
     the function with scope-allocated scratch buffers.
 
+* Changes
+
+  * Removed the `backend` argument of
+    {func}`jax.experimental.pallas.pallas_call` in favor of `compiler_params`.
+    For example, to force the use of the Triton backend you have to now write
+    `compiler_params=pltriton.CompilerParams()`, where `pltriton` refers to
+    {mod}`jax.experimental.pallas.triton`.
+
 ## Released with JAX 0.9.0
 
 * New features:

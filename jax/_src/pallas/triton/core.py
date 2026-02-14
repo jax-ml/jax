@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import ClassVar
 
 from jax._src.pallas import core as pallas_core
 
@@ -30,6 +29,5 @@ class CompilerParams(pallas_core.CompilerParams):
     num_stages: The number of stages the compiler should use for software
       pipelining loops.
   """
-  BACKEND: ClassVar[pallas_core.Backend] = "triton"
   num_warps: int | None = None
   num_stages: int | None = None

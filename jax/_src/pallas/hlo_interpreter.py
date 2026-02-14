@@ -158,13 +158,10 @@ def _initialize_output_vals(
   return output_vals
 
 
-def kernel_to_hlo_jaxpr(jaxpr: jax_core.Jaxpr,
-                        consts: Sequence[Any],
-                        grid_mapping: GridMapping,
-                        backend: str | None,
-    ) -> tuple[jax_core.Jaxpr, Sequence[Any], Sequence[Any]]:
+def kernel_to_hlo_jaxpr(
+    jaxpr: jax_core.Jaxpr, consts: Sequence[Any], grid_mapping: GridMapping
+) -> tuple[jax_core.Jaxpr, Sequence[Any], Sequence[Any]]:
   """Converts a Pallas kernel jaxpr to a valid HLO jaxpr."""
-  del backend
   with grid_mapping.trace_env():
     # TODO(justinfu): Evaluate backend-specific primitives in a new pass.
     phys_jaxpr, phys_consts = resolve_physical_types(jaxpr, consts)
@@ -346,7 +343,6 @@ def resolve_physical_types(jaxpr: jax_core.Jaxpr, consts: Sequence[Any]):
 
 def pallas_call_hlo_interpret(
     *args,
-    backend: str | None,
     jaxpr: jax_core.Jaxpr,
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
@@ -373,7 +369,7 @@ def pallas_call_hlo_interpret(
   )
   assert next(dynamic_grid_args_iter, None) is None
   discharged_jaxpr, discharged_consts, scratch_avals = kernel_to_hlo_jaxpr(
-      jaxpr, (), grid_mapping, backend=backend)
+      jaxpr, (), grid_mapping)
   if debug:
     print(f"\nJaxpr of the kernel in pallas_call {debug_info.func_src_info}:")
     print(discharged_jaxpr)

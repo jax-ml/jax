@@ -24,7 +24,7 @@ import enum
 import functools
 import itertools
 import threading
-from typing import Any, ClassVar, Literal, Protocol, TypeAlias, Union, runtime_checkable
+from typing import Any, ClassVar, Protocol, TypeAlias, Union, runtime_checkable
 
 from jax._src import api_util
 from jax._src import config
@@ -122,13 +122,9 @@ class BarrierSemaphore(AbstractSemaphoreTy):
   name = "barrier_semaphore"
   type = barrier_semaphore
 
-Backend = Literal["mosaic_tpu", "triton", "mosaic_gpu"]
-
 @runtime_checkable
 class CompilerParams(Protocol):
   """Base class for compiler parameters."""
-  BACKEND: ClassVar[Backend]
-
   # Subclasses must be dataclasses.
   __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
 
@@ -1525,10 +1521,6 @@ mlir.register_lowering(core_map_p, core_map_lowering_rule)
 
 
 class Mesh(Protocol):
-
-  @property
-  def backend(self) -> Backend:
-    ...
 
   @property
   def default_memory_space(self) -> MemorySpace | Any:

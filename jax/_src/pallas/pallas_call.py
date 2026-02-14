@@ -44,6 +44,7 @@ from jax._src.interpreters import partial_eval as pe
 import jax._src.lax as lax
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
+from jax._src.lib.mlir import ir
 from jax._src.mesh import get_abstract_mesh
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import hlo_interpreter
@@ -68,7 +69,6 @@ BlockMapping = pallas_core.BlockMapping
 GridMapping = pallas_core.GridMapping
 no_block_spec = pallas_core.no_block_spec
 CostEstimate = pallas_core.CostEstimate
-Backend = pallas_core.Backend
 CompilerParams = pallas_core.CompilerParams
 
 # See the docstring for GridMapping for the calling convention
@@ -174,7 +174,6 @@ def _pallas_call_to_lojax(
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    backend: Backend | None,
     metadata: FrozenDict[str, str] | None,
     name: str | None,
 ):
@@ -239,7 +238,6 @@ def _pallas_call_to_lojax(
       grid_mapping=lo_grid_mapping,
       mesh=mesh,
       cost_estimate=cost_estimate,
-      backend=backend,
       metadata=metadata,
       compiler_params=compiler_params,
       debug=debug,
@@ -249,6 +247,8 @@ def _pallas_call_to_lojax(
       name=name,
   )
   return pe.raise_lo_outs(out_avals, lo_outs)
+
+
 pallas_call_p.to_lojax = _pallas_call_to_lojax  # type: ignore
 
 
@@ -265,7 +265,6 @@ def _pallas_call_jvp_rule(
     compiler_params: CompilerParams | None,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    backend: Backend | None,
     metadata: FrozenDict[str, str] | None,
     name: str | None,
 ):
@@ -333,7 +332,6 @@ def _pallas_call_jvp_rule(
       compiler_params=compiler_params,
       cost_estimate=jvp_cost_estimate,
       out_avals=(*out_avals, *out_avals),
-      backend=backend,
       metadata=metadata,
       name=name,
   )
@@ -443,7 +441,6 @@ def _batch_with_explicit_loop(
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    backend: Backend | None,
     metadata: FrozenDict[str, str] | None,
     name: str | None,
 ):
@@ -514,7 +511,6 @@ def _batch_with_explicit_loop(
         compiler_params=compiler_params,
         cost_estimate=cost_estimate,
         out_avals=out_avals,
-        backend=backend,
         metadata=metadata,
         name=name,
     )
@@ -547,17 +543,24 @@ def _pallas_call_batching_rule(
     compiler_params: CompilerParams | None,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    backend: Backend | None,
     metadata: FrozenDict[str, str] | None = None,
     name: str | None = None,
 ):
   if all(bdim is None for bdim in dims):
     out = pallas_call_p.bind(
-        *args, jaxpr=jaxpr, grid_mapping=grid_mapping, mesh=mesh,
-        input_output_aliases=input_output_aliases, debug=debug,
-        interpret=interpret, compiler_params=compiler_params,
-        cost_estimate=cost_estimate, out_avals=out_avals,
-        backend=backend, metadata=metadata, name=name)
+        *args,
+        jaxpr=jaxpr,
+        grid_mapping=grid_mapping,
+        mesh=mesh,
+        input_output_aliases=input_output_aliases,
+        debug=debug,
+        interpret=interpret,
+        compiler_params=compiler_params,
+        cost_estimate=cost_estimate,
+        out_avals=out_avals,
+        metadata=metadata,
+        name=name,
+    )
     return out, (None,) * len(out)
 
   if mesh is not None:
@@ -587,11 +590,19 @@ def _pallas_call_batching_rule(
     def temp_f(*args):
       args = map(_maybe_squeeze_out_bdim, args, dims)
       out = pallas_call_p.bind(
-          *args, jaxpr=jaxpr, grid_mapping=grid_mapping, mesh=mesh,
-          input_output_aliases=input_output_aliases, debug=debug,
-          interpret=interpret, compiler_params=compiler_params,
-          cost_estimate=cost_estimate, out_avals=tuple(manual_out_avals),
-          backend=backend, metadata=metadata, name=name)
+          *args,
+          jaxpr=jaxpr,
+          grid_mapping=grid_mapping,
+          mesh=mesh,
+          input_output_aliases=input_output_aliases,
+          debug=debug,
+          interpret=interpret,
+          compiler_params=compiler_params,
+          cost_estimate=cost_estimate,
+          out_avals=tuple(manual_out_avals),
+          metadata=metadata,
+          name=name,
+      )
       return [jnp.expand_dims(x, 0) for x in out]
     if ema:
       with jax_core.remove_explicit_mesh_axis_names(ema):
@@ -631,7 +642,6 @@ def _pallas_call_batching_rule(
         compiler_params=compiler_params,
         cost_estimate=cost_estimate,
         out_avals=out_avals,
-        backend=backend,
         metadata=metadata,
         name=name,
     )
@@ -670,7 +680,6 @@ def _pallas_call_batching_rule(
           compiler_params=compiler_params,
           cost_estimate=cost_estimate,
           out_avals=out_avals,
-          backend=backend,
           metadata=metadata,
           name=name,
       )
@@ -751,11 +760,19 @@ def _pallas_call_batching_rule(
   batched_out_avals = tuple(batched_out_avals)
 
   bind = partial(
-      pallas_call_p.bind, jaxpr=jaxpr, grid_mapping=batched_grid_mapping,
-      mesh=mesh, input_output_aliases=input_output_aliases, debug=debug,
-      interpret=interpret, compiler_params=compiler_params,
-      cost_estimate=batched_cost_estimate, out_avals=batched_out_avals,
-      backend=backend, metadata=metadata, name=name)
+      pallas_call_p.bind,
+      jaxpr=jaxpr,
+      grid_mapping=batched_grid_mapping,
+      mesh=mesh,
+      input_output_aliases=input_output_aliases,
+      debug=debug,
+      interpret=interpret,
+      compiler_params=compiler_params,
+      cost_estimate=batched_cost_estimate,
+      out_avals=batched_out_avals,
+      metadata=metadata,
+      name=name,
+  )
 
   if ema:
     # TODO all batching rules should probably be in outer mesh ctx
@@ -764,6 +781,7 @@ def _pallas_call_batching_rule(
 
   out = bind(*dynamic_grid_args, *args)
   return out, (0,) * len(out)
+
 
 batching.fancy_primitive_batchers[pallas_call_p] = _pallas_call_batching_rule
 
@@ -1086,18 +1104,13 @@ _PALLAS_USE_MOSAIC_GPU = config.bool_state(
 def _unsupported_lowering_error(platform: str) -> Exception:
   return ValueError(
       f"Cannot lower pallas_call on platform: {platform}. To use Pallas on GPU,"
-      " install jaxlib GPU 0.4.24 or newer. To use Pallas on TPU, install"
-      " jaxlib TPU and libtpu. See"
-      " https://docs.jax.dev/en/latest/installation.html."
+      " install jaxlib GPU. To use Pallas on TPU, install jaxlib TPU and"
+      " libtpu. See https://docs.jax.dev/en/latest/installation.html."
   )
 
 
 def _pallas_call_lowering(
-    ctx: mlir.LoweringRuleContext,
-    *in_nodes,
-    interpret: Any,
-    backend: Backend | None,
-    **params,
+    ctx: mlir.LoweringRuleContext, *in_nodes, interpret: Any, **params
 ):
   if params['jaxpr'].constvars:
     raise ValueError('Cannot lower a pallas_call with constants.')
@@ -1111,80 +1124,79 @@ def _pallas_call_lowering(
                      interpret_params=interpret,
                      **params)
     else:
-      impl = partial(hlo_interpreter.pallas_call_hlo_interpret,
-                     backend=backend,
-                     **params)
+      impl = partial(hlo_interpreter.pallas_call_hlo_interpret, **params)
     return mlir.lower_fun(impl, multiple_results=True)(ctx, *in_nodes)
 
-  def cpu_lowering(ctx: mlir.LoweringRuleContext,
-                   *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
-                   **params):
+  def cpu_lowering(
+      ctx: mlir.LoweringRuleContext,
+      *in_nodes: ir.Value | Sequence[ir.Value],
+      **params,
+  ):
     raise ValueError("Only interpret mode is supported on CPU backend.")
 
-  def tpu_lowering(ctx: mlir.LoweringRuleContext,
-                   *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
-                   **params):
-    if backend and backend != "mosaic_tpu":
-      raise ValueError("Only mosaic backend supported for TPU")
+  def tpu_lowering(
+      ctx: mlir.LoweringRuleContext,
+      *in_nodes: ir.Value | Sequence[ir.Value],
+      **params,
+  ):
     if mosaic_tpu_backend is None:
       raise _unsupported_lowering_error("tpu")
     return mosaic_tpu_backend.pallas_call_tpu_lowering_rule(
         ctx, *in_nodes, **params
     )
 
-  def _gpu_lowering_impl(ctx: mlir.LoweringRuleContext,
-                         *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
-                         is_rocm: bool,
-                         **params):
+  def gpu_lowering(
+      ctx: mlir.LoweringRuleContext,
+      *in_nodes: ir.Value | Sequence[ir.Value],
+      is_rocm: bool,
+      compiler_params: pallas_core.CompilerParams | None,
+      **params,
+  ):
     """Shared GPU lowering implementation for CUDA and ROCm."""
-    try:
-      match backend:
-        case "mosaic_gpu":
-          if is_rocm:
-            raise ValueError(
-                "Mosaic GPU backend does not yet support AMD ROCm devices. "
-                "Use backend='triton' for ROCm."
-            )
-          from jax._src.pallas.mosaic_gpu import pallas_call_registration
-        case "triton":
-          from jax._src.pallas.triton import pallas_call_registration  # type: ignore
-        case None:
-          # Mosaic GPU only supports NVIDIA CUDA, not AMD ROCm.
-          if _PALLAS_USE_MOSAIC_GPU.value and not is_rocm:
-            from jax._src.pallas.mosaic_gpu import pallas_call_registration
-          else:
-            from jax._src.pallas.triton import pallas_call_registration  # type: ignore
-        case _:
-          raise ValueError(f"Unsupported backend: {backend}")
-    except ImportError:
+    backend: Any = None
+    if mosaic_gpu_backend is not None:
+      from jax._src.pallas.mosaic_gpu import core as mgpu_core
+      if (
+          isinstance(compiler_params, mgpu_core.CompilerParams)
+          or _PALLAS_USE_MOSAIC_GPU.value
+      ):
+        backend = mosaic_gpu_backend
+    elif triton_backend is not None:
+      from jax._src.pallas.triton import core as triton_core
+      if (
+          isinstance(compiler_params, triton_core.CompilerParams)
+          or not _PALLAS_USE_MOSAIC_GPU.value
+      ):
+        backend = triton_backend
+
+    if backend is None:
       raise _unsupported_lowering_error("gpu")
 
-    return pallas_call_registration.pallas_call_lowering(
-        ctx, *in_nodes, **params
+    if is_rocm and backend is mosaic_gpu_backend:
+      raise ValueError(
+          "Mosaic GPU does not yet support AMD ROCm devices. "
+          "Use ``compiler_params=pltriton.CompilerParams()`` for ROCm."
+      )
+
+    return backend.pallas_call_lowering(
+        ctx, *in_nodes, compiler_params=compiler_params, **params
     )
 
-  def cuda_lowering(ctx: mlir.LoweringRuleContext,
-                    *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
-                    **params):
-    """Lowering rule for NVIDIA CUDA GPUs."""
-    return _gpu_lowering_impl(ctx, *in_nodes, is_rocm=False, **params)
-
-  def rocm_lowering(ctx: mlir.LoweringRuleContext,
-                    *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
-                    **params):
-    """Lowering rule for AMD ROCm GPUs."""
-    return _gpu_lowering_impl(ctx, *in_nodes, is_rocm=True, **params)
-
-  return mlir.lower_per_platform(ctx, "pallas_call",
-                                 dict(cpu=cpu_lowering,
-                                      tpu=tpu_lowering,
-                                      cuda=cuda_lowering,
-                                      rocm=rocm_lowering),
-                                 None,  # default_rule
-                                 effects.no_effects,
-                                 *in_nodes,
-                                 interpret=interpret,
-                                 **params)
+  return mlir.lower_per_platform(
+      ctx,
+      "pallas_call",
+      dict(
+          cpu=cpu_lowering,
+          tpu=tpu_lowering,
+          cuda=partial(gpu_lowering, is_rocm=False),
+          rocm=partial(gpu_lowering, is_rocm=True),
+      ),
+      None,  # default_rule
+      effects.no_effects,
+      *in_nodes,
+      interpret=interpret,
+      **params,
+  )
 
 
 mlir.register_lowering(pallas_call_p, _pallas_call_lowering)
@@ -1242,7 +1254,6 @@ def _pallas_call_state_discharge_rule(
     compiler_params: CompilerParams | None,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    backend: Backend | None,
     metadata: FrozenDict[str, str] | None,
     name: str | None,
 ):
@@ -1349,7 +1360,6 @@ def _pallas_call_state_discharge_rule(
       compiler_params=compiler_params,
       cost_estimate=cost_estimate,
       out_avals=new_out_avals,
-      backend=backend,
       metadata=metadata,
       name=name,
   )
@@ -1373,7 +1383,6 @@ def pallas_call(
     name: str | None = None,
     compiler_params: pallas_core.CompilerParams | None = None,
     cost_estimate: CostEstimate | None = None,
-    backend: Backend | None = None,
     metadata: dict[str, str] | None = None,
 ) -> Callable[..., Any]:
   """Entry point for creating a Pallas kernel.
@@ -1381,7 +1390,8 @@ def pallas_call(
   In contrast to :func:`jax.experimental.pallas.kernel`, this entry point
   assumes that the kernel will be executed over a ``grid``.
 
-  See `Pallas Quickstart <https://docs.jax.dev/en/latest/pallas/quickstart.html>`_.
+  See `Pallas Quickstart
+  <https://docs.jax.dev/en/latest/pallas/quickstart.html>`_.
 
   Args:
     kernel: the kernel function, that receives a Ref for each input and output.
@@ -1392,31 +1402,28 @@ def pallas_call(
     grid_spec: An alternative way to specify ``grid``, ``in_specs``,
       ``out_specs`` and ``scratch_shapes``. If given, those other parameters
       must not be also given.
-    grid: the iteration space, as a tuple of integers. The kernel is executed
-      as many times as ``prod(grid)``.
-      See details at :ref:`pallas_grid`.
-    in_specs: a PyTree of :class:`jax.experimental.pallas.BlockSpec` with
-      a structure matching that of the positional arguments.
-      The default value for ``in_specs`` specifies the whole array for all
-      inputs, e.g., as ``pl.BlockSpec(x.shape, lambda *indices: (0,) * x.ndim)``.
-      See details at :ref:`pallas_blockspec`.
-    out_specs: a PyTree of :class:`jax.experimental.pallas.BlockSpec` with
-      a structure matching that of the outputs.
-      The default value for ``out_specs`` specifies the whole array,
-      e.g., as ``pl.BlockSpec(x.shape, lambda *indices: (0,) * x.ndim)``.
-      See details at :ref:`pallas_blockspec`.
-    scratch_shapes: a PyTree of backend-specific temporary objects required
-      by the kernel, such as temporary buffers, synchronization primitives,
-      etc.
-    input_output_aliases: a dictionary mapping the index of some inputs to
-      the index of the output that aliases them. These indices are in the
-      flattened inputs and outputs (ignoring None values).
-    debug: if True, Pallas prints various intermediate forms of the kernel
-      as it is being processed.
-    interpret: runs the ``pallas_call`` as a ``jax.jit`` of a scan over the
-      grid whose body is the kernel lowered as a JAX function. This does not
-      require a TPU or a GPU, and is the only way to run Pallas kernels on CPU.
-      This is useful for debugging.
+    grid: the iteration space, as a tuple of integers. The kernel is executed as
+      many times as ``prod(grid)``. See details at :ref:`pallas_grid`.
+    in_specs: a PyTree of :class:`jax.experimental.pallas.BlockSpec` with a
+      structure matching that of the positional arguments. The default value for
+      ``in_specs`` specifies the whole array for all inputs, e.g., as
+      ``pl.BlockSpec(x.shape, lambda *indices: (0,) * x.ndim)``. See details at
+      :ref:`pallas_blockspec`.
+    out_specs: a PyTree of :class:`jax.experimental.pallas.BlockSpec` with a
+      structure matching that of the outputs. The default value for
+      ``out_specs`` specifies the whole array, e.g., as ``pl.BlockSpec(x.shape,
+      lambda *indices: (0,) * x.ndim)``. See details at :ref:`pallas_blockspec`.
+    scratch_shapes: a PyTree of backend-specific temporary objects required by
+      the kernel, such as temporary buffers, synchronization primitives, etc.
+    input_output_aliases: a dictionary mapping the index of some inputs to the
+      index of the output that aliases them. These indices are in the flattened
+      inputs and outputs (ignoring None values).
+    debug: if True, Pallas prints various intermediate forms of the kernel as it
+      is being processed.
+    interpret: runs the ``pallas_call`` as a ``jax.jit`` of a scan over the grid
+      whose body is the kernel lowered as a JAX function. This does not require
+      a TPU or a GPU, and is the only way to run Pallas kernels on CPU. This is
+      useful for debugging.
     name: if present, specifies the name to use for this kernel call in
       debugging and error messages. To this name we append the file and line
       where the kernel function is defined, .e.g: `{name} for kernel function
@@ -1427,9 +1434,6 @@ def pallas_call(
       (:class:`jax.experimental.pallas.tpu.CompilerParams`,
       :class:`jax.experimental.pallas.triton.CompilerParams`,
       :class:`jax.experimental.pallas.mosaic_gpu.CompilerParams`).
-    backend: Optional string literal one of  ``"mosaic_tpu"``, ``"triton"`` or
-      ``"mosaic_gpu"`` determining the backend to be used. None means let Pallas
-      decide.
     metadata: Optional dictionary of information about the kernel that will be
       serialized as JSON in the HLO. Can be used for debugging and analysis.
 
@@ -1467,7 +1471,6 @@ def pallas_call(
       name=name,
       compiler_params=compiler_params,
       cost_estimate=cost_estimate,
-      backend=backend,
       metadata=metadata,
   )
 
@@ -1485,7 +1488,6 @@ def _pallas_call(
     name: str | None = None,
     compiler_params: CompilerParams | None = None,
     cost_estimate: CostEstimate | None = None,
-    backend: Backend | None = None,
     metadata: dict[str, str] | None = None,
 ):
   interpret = (
@@ -1497,19 +1499,6 @@ def _pallas_call(
           f"Mesh shape {tuple(mesh.shape.values())} does not match grid "
           f"shape {grid_spec.grid}."
       )
-    if backend is not None:
-      raise ValueError("If `mesh` is specified, then `backend` must be `None`.")
-    backend = mesh.backend
-
-  if compiler_params is not None:
-    if backend is None:
-      # We can infer a backend from compiler_params if it is not specified.
-      backend = compiler_params.BACKEND
-    elif compiler_params.BACKEND != backend:
-      raise ValueError(
-        f"Inconsistent backend in compiler_params: {compiler_params.BACKEND} !="
-        f" {backend}"
-    )
 
   grid_spec, dynamic_grid_bounds = pallas_core.unzip_dynamic_grid_bounds(grid_spec)
   # TODO(necula): this canonicalization may be convenient for some usage
@@ -1603,7 +1592,6 @@ def _pallas_call(
           input_output_aliases=tuple(input_output_aliases.items()),
           compiler_params=compiler_params,
           cost_estimate=cost_estimate,
-          backend=backend,
           metadata=FrozenDict(metadata) if metadata is not None else None,
           name=name,
       )
@@ -1620,6 +1608,18 @@ try:
   from jax._src.pallas.mosaic import pallas_call_registration as mosaic_tpu_backend
 except ImportError:
   mosaic_tpu_backend = None  # type: ignore
+
+
+try:
+  from jax._src.pallas.mosaic_gpu import pallas_call_registration as mosaic_gpu_backend
+except ImportError:
+  mosaic_gpu_backend = None  # type: ignore
+
+
+try:
+  from jax._src.pallas.triton import pallas_call_registration as triton_backend
+except ImportError:
+  triton_backend = None  # type: ignore
 
 try:
   from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret

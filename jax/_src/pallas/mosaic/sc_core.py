@@ -162,10 +162,6 @@ class ScalarSubcoreMesh:
   num_cores: int
 
   @property
-  def backend(self) -> str:
-    return "mosaic_tpu"
-
-  @property
   def default_memory_space(self) -> tpu_core.MemorySpace:
     return tpu_core.MemorySpace.HBM
 
@@ -282,10 +278,6 @@ class VectorSubcoreMesh:
           f"Mesh has {self.num_subcores} subcores, but the current TPU chip has"
           f" only {num_expected} subcores"
       )
-
-  @property
-  def backend(self) -> str:
-    return "mosaic_tpu"
 
   @property
   def default_memory_space(self) -> tpu_core.MemorySpace:

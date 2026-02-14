@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from collections.abc import Sequence
 import dataclasses
 import enum
-from typing import Any, ClassVar, Literal
+from typing import Any, Literal
 
 import jax
 from jax._src import core as jax_core
@@ -106,7 +106,6 @@ class CompilerParams(pallas_core.CompilerParams):
     use_tc_tiling_on_sc: Use TensorCore tiling for SparseCore. This flag is
       only used for ``SC_*_SUBCORE`` kernels.
   """
-  BACKEND: ClassVar[pallas_core.Backend] = "mosaic_tpu"
   dimension_semantics: tuple[DimensionSemantics, ...] | None = None
   allow_input_fusion: tuple[bool, ...] | None = None
   vmem_limit_bytes: int | None = None
@@ -285,10 +284,6 @@ class TensorCoreMesh:
     return hash(
         (self.devices.shape, tuple(np.ravel(self.devices)), self.axis_names)
     )
-
-  @property
-  def backend(self) -> str:
-    return "mosaic_tpu"
 
   @property
   def default_memory_space(self) -> pallas_core.MemorySpace:
