@@ -1,8 +1,9 @@
+This document focuses on performance tips for neural network workloads. 
+There are two sections in this document. One for GPU and one for CPU.
+
 # GPU performance tips
 
 <!--* freshness: { reviewed: '2025-03-20' } *-->
-
-This document focuses on performance tips for neural network workloads
 
 ## Matmul precision
 
@@ -721,3 +722,89 @@ cases, this can speed up jitted computation. The
 that configuration when run under SLURM. However, this only a rule of
 thumb and it may be useful to test both one process per GPU and one
 process per node on your use case.
+
+
+
+# CPU performance tips
+
+## XLA performance flags
+
+These flags can be set via the `XLA_FLAGS` shell environment variable. For
+example, we can add this to the top of a Python file:
+```python
+import os
+os.environ['XLA_FLAGS'] = (
+    '--xla_cpu_use_thunk_runtime=false '
+)
+```
+* **--xla_cpu_multi_thread_eigen** This flag enables multi-threaded Eigen mode in the CPU backend.
+  The default value is True.
+
+* **--xla_cpu_enable_concurrency_optimized_scheduler** Use HLO module scheduler that is optimized for extracting concurrency
+  from an HLO module by trading off extra memory pressure.
+  The default value is False.
+
+* **--xla_cpu_prefer_vector_width** Preferred vector width for the XLA:CPU LLVM backend.
+  The default value is 256.
+
+* **--xla_cpu_enable_experimental_deallocation** Enable experimental deallocation.
+  The default value is True.
+
+### Code generation flags
+
+* **--xla_cpu_use_thunk_runtime** Use Thunk-based runtime for the CPU backend.
+  The default value is True.
+
+> NOTE: For JAX Versions after v0.4.33 or later, users will need to set the above environment variables as a \
+> temporary workaround to use Bfloat16 datatype becasue high performance oneDNN library has not been integrated yet with thunk runtime. \
+> This restriction is expected to be removed in future version
+ 
+* **--xla_cpu_parallel_codegen_split_count** Split LLVM module into at most this many parts before
+  codegen to enable parallel compilation for the CPU backend.
+  The default value is 32.
+
+* **--xla_cpu_enable_fast_math** Enable unsafe fast-math optimizations in the CPU compiler; this may 
+  produce faster code at the expense of some accuracy.
+  The default value is False.
+
+* **--xla_cpu_fast_math_honor_nans** When xla_cpu_fast_math_honor_nans is true then this controls whether we
+  allow operations to produce NaNs.
+  The default value is True.
+
+* **--xla_cpu_fast_math_honor_infs** When xla_cpu_fast_math_honor_infs is true then this controls whether we
+  allow operations to produce infinites.
+  The default value is True.
+
+* **--xla_cpu_fast_math_honor_functions** When xla_cpu_enable_fast_math is true then this controls whether we 
+  forbid to approximate calculations for functions.
+  The default value is True.
+
+* **--xla_cpu_fast_math_honor_division** When xla_cpu_enable_fast_math is true then this controls whether we 
+  forbid to to use multiplication by the reciprocal instead of division.
+  The default value is True.
+  
+* **--xla_cpu_enable_fast_min_max** Enable fast floating point min/max lowering that always propagates NaNs.
+  The default value is True.
+
+* **--xla_cpu_enable_xprof_traceme** If true, XLA CPU generates code to call TraceMe::Activity{Start|End}
+  around HLO operations.
+  The default value is False.
+
+* **--xla_cpu_enable_mlir_tiling_and_fusion** Enable MLIR tiling and fusion.
+  The default value is True.
+
+* **--xla_cpu_enable_mlir_fusion_outlining** Enable MLIR fusion outlining (to improve compile time).
+  The default value is True.
+
+* **--xla_cpu_enable_custom_matmul_tiling** Enable custom tiling given by M, K, N parameters.
+  The default value is False.
+
+* **--xla_cpu_matmul_tiling_m_dim** Custom tile size for matmul's M dimension.
+  The default value is 8.
+
+* **--xla_cpu_matmul_tiling_n_dim** Custom tile size for matmul's N dimension.
+  The default value is 8.
+
+* **--xla_cpu_matmul_tiling_k_dim** Custom tile size for matmul's K dimension.
+  The default value is 8.
+  
