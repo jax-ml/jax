@@ -11,7 +11,7 @@ bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_goo
 bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "pybind11_bazel", version = "2.13.6")
 bazel_dep(name = "rules_cc", version = "0.2.8")
-bazel_dep(name = "rules_python", version = "1.6.1")
+bazel_dep(name = "rules_python", version = "1.6.3")
 
 # TODO: use a released version when available
 bazel_dep(name = "rules_ml_toolchain")
