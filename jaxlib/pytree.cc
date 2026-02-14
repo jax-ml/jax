@@ -106,6 +106,21 @@ void PyTreeRegistry::Register(
   }
 }
 
+void PyTreeRegistry::RegisterObject(nb::object type, nb::str mapping_attr, bool has_int_keys) {
+  auto registration = std::make_unique<Registration>();
+  registration->kind = PyTreeKind::kObject;
+  registration->type = type;
+  registration->mapping_attr = std::move(mapping_attr);
+  registration->has_int_keys = has_int_keys;
+  nb::ft_lock_guard lock(mu_);
+  auto it = registrations_.emplace(type, std::move(registration));
+  if (!it.second) {
+    throw std::invalid_argument(absl::StrFormat(
+        "Duplicate custom object PyTreeDef type registration for %s.",
+        nb::cast<std::string_view>(nb::repr(std::move(type)))));
+  }
+}
+
 void PyTreeRegistry::RegisterDataclass(nb::object type,
                                        std::vector<nb::str> data_fields,
                                        std::vector<nb::str> meta_fields) {
@@ -208,6 +223,7 @@ PyTreeKind PyTreeRegistry::KindOfObject(
   const PyTreeRegistry::Registration* registration = Lookup(obj.type());
   if (registration) {
     if (registration->kind == PyTreeKind::kCustom ||
+        registration->kind == PyTreeKind::kObject ||
         registration->kind == PyTreeKind::kDataclass) {
       *custom = registration;
     } else {
@@ -230,7 +246,31 @@ PyTreeKind PyTreeRegistry::KindOfObject(
   return it == registrations_.end() ? nullptr : it->second.get();
 }
 
-/*static*/ std::vector<nb::object> GetSortedPyDictKeys(PyObject* py_dict) {
+int py_compare(const nb::object& a, const nb::object& b) {
+    return PyObject_RichCompareBool(a.ptr(), b.ptr(), Py_LT);
+}
+
+int flax_compare(const nb::object& a, const nb::object& b) {
+    std::string a_str = nb::cast<std::string>(nb::str(a));
+    std::string b_str = nb::cast<std::string>(nb::str(b));
+    bool a_is_digit = !a_str.empty() && std::all_of(a_str.begin(), a_str.end(), ::isdigit);
+    bool b_is_digit = !b_str.empty() && std::all_of(b_str.begin(), b_str.end(), ::isdigit);
+    if (a_is_digit && !b_is_digit) {
+        return 1;
+    }
+    if (!a_is_digit && b_is_digit) {
+        return 0;
+    }
+    if (a_is_digit && b_is_digit) {
+        long long a_num = std::stoll(a_str);
+        long long b_num = std::stoll(b_str);
+        return a_num < b_num ? 1 : 0;
+    }
+    return a_str < b_str ? 1 : 0;
+}
+
+/*static*/ std::vector<nb::object> GetSortedPyDictKeys(PyObject* py_dict,
+    int (*compare)(const nb::object&, const nb::object&) = py_compare) {
   std::vector<nb::object> keys;
   keys.reserve(PyDict_Size(py_dict));
   PyObject* key;
@@ -241,8 +281,8 @@ PyTreeKind PyTreeRegistry::KindOfObject(
 
   try {
     std::stable_sort(
-        keys.begin(), keys.end(), [](const nb::object& a, const nb::object& b) {
-          int cmp = PyObject_RichCompareBool(a.ptr(), b.ptr(), Py_LT);
+        keys.begin(), keys.end(), [=](const nb::object& a, const nb::object& b) {
+          int cmp = compare(a, b);
           if (cmp == -1) {
             throw nb::python_error();
           }
@@ -699,6 +739,36 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
         }
         break;
       }
+      case PyTreeKind::kObject: {
+
+        nb::object object = nb::borrow<nb::object>(handle);
+        nb::dict mapping = nb::cast<nb::dict>(nb::getattr(object, node.custom->mapping_attr));
+
+        node.arity = 0;
+        auto compare_f = node.custom->has_int_keys ? flax_compare : py_compare;
+        std::vector<nb::object> keys = GetSortedPyDictKeys(
+            nb::getattr(object, "__dict__").ptr(), compare_f);
+        for (auto k : keys) {
+            if (mapping.contains(k) && nb::cast<bool>(mapping[k])) {
+                node.arity++;
+                node.sorted_dict_keys.push_back(nb::borrow<nb::object>(k));
+                if (keypath.has_value()) {
+                  keypath->push_back(
+                      make_nb_class<GetAttrKey>(nb::cast<nb::str>(k)));
+                }
+                recurse(nb::getattr(handle, k), keypath);
+                if (keypath.has_value()) {
+                  keypath->pop_back();
+                }
+            } else {
+                node.meta_data.push_back(nb::getattr(object, k));
+                node.meta_keys.push_back(nb::borrow<nb::object>(k));
+            }
+        }
+
+        break;
+      }
+
       case PyTreeKind::kNamedTuple: {
         nb::tuple tuple = nb::borrow<nb::tuple>(handle);
         node.arity = tuple.size();
@@ -815,7 +885,8 @@ nb::object PyTreeDef::UnflattenImpl(T leaves) const {
       case PyTreeKind::kList:
       case PyTreeKind::kDict:
       case PyTreeKind::kCustom:
-      case PyTreeKind::kDataclass: {
+      case PyTreeKind::kDataclass:
+      case PyTreeKind::kObject: {
         const int size = agenda.size();
         absl::Span<nb::object> span;
         if (node.arity > 0) {
@@ -908,8 +979,27 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
       }
       return node.custom->type(**kwargs);
     }
+
+    case PyTreeKind::kObject: {
+      nb::object object_class = nb::borrow<nb::object>((PyObject*)&PyBaseObject_Type);
+      nb::object obj = object_class.attr("__new__")(node.custom->type);
+
+      nb::dict dict;
+      for (int i = 0; i < node.arity; ++i) {
+        dict[node.sorted_dict_keys[i]] = std::move(children[i]);
+      }
+
+      for (int i = 0; i < node.meta_keys.size(); ++i) {
+        dict[node.meta_keys[i]] = std::move(node.meta_data[i]);
+      }
+
+      nb::setattr(obj, "__dict__", std::move(dict));
+
+      return obj;
+    }
   }
-  throw std::logic_error("Unreachable code.");
+
+  throw std::runtime_error("Malformed PyTreeDef, this shouldn't happen.");
 }
 
 nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
@@ -1101,6 +1191,50 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         }
         break;
       }
+
+      case PyTreeKind::kObject: {
+        auto* registration = registry_->Lookup(object.type());
+        if (registration != node.custom) {
+        throw std::invalid_argument(absl::StrFormat(
+            "Custom object node type mismatch: expected type: %s, value: "
+            "%s.",
+            nb::cast<std::string_view>(nb::repr(node.custom->type)),
+            nb::cast<std::string_view>(nb::repr(std::move(object)))));
+        }
+
+        nb::dict mapping = nb::cast<nb::dict>(nb::getattr(object, node.custom->mapping_attr));
+        std::vector<nb::object> keys = GetSortedPyDictKeys(nb::getattr(object, "__dict__").ptr());
+        std::vector<nb::object> meta_keys;
+        std::vector<nb::object> meta_data;
+
+        for (auto k : keys) {
+            auto k_str = nb::cast<std::string>(k);
+            if (mapping.contains(k) && nb::cast<bool>(mapping[k])) {
+                agenda.push_back(nb::borrow<nb::object>(
+                    nb::getattr(object, k)));
+            } else {
+                meta_data.push_back(nb::getattr(object, k));
+                meta_keys.push_back(nb::borrow<nb::object>(k));
+            }
+        }
+
+        for (int i=0; i < meta_keys.size(); i++) {
+            if (meta_data[i].not_equal(node.meta_data[i])) {
+                throw std::invalid_argument(absl::StrFormat(
+                    "Mismatch kObject meta data: %s != %s",
+                    nb::cast<std::string_view>(nb::repr(node.meta_data[i])),
+                    nb::cast<std::string_view>(nb::repr(meta_data[i]))));
+            }
+            if (meta_keys[i].not_equal(node.meta_keys[i])) {
+                throw std::invalid_argument(absl::StrFormat(
+                    "Mismatch kObject meta data: %s != %s",
+                    nb::cast<std::string_view>(nb::repr(node.meta_keys[i])),
+                    nb::cast<std::string_view>(nb::repr(meta_keys[i]))));
+            }
+        }
+
+        break;
+      }
     }
   }
   if (it != traversal_.rend() || leaf != -1) {
@@ -1135,7 +1269,8 @@ nb::object PyTreeDef::Walk(const nb::callable& f_node, nb::handle f_leaf,
       case PyTreeKind::kList:
       case PyTreeKind::kDict:
       case PyTreeKind::kCustom:
-      case PyTreeKind::kDataclass: {
+      case PyTreeKind::kDataclass:
+      case PyTreeKind::kObject: {
         if (agenda.size() < node.arity) {
           throw std::logic_error("Too few elements for custom type.");
         }
@@ -1310,7 +1445,8 @@ std::string PyTreeDef::ToString() const {
 
       case PyTreeKind::kNamedTuple:
       case PyTreeKind::kCustom:
-      case PyTreeKind::kDataclass: {
+      case PyTreeKind::kDataclass:
+      case PyTreeKind::kObject:{
         std::string kind;
         std::string data;
         if (node.kind == PyTreeKind::kNamedTuple) {
@@ -1546,6 +1682,7 @@ std::optional<std::pair<nb::object, nb::object>> PyTreeDef::GetNodeData()
       return std::make_pair(node.node_data, nb::none());
     case PyTreeKind::kCustom:
     case PyTreeKind::kDataclass:
+    case PyTreeKind::kObject:
       return std::make_pair(node.custom->type, node.node_data);
   }
 }
@@ -1668,6 +1805,8 @@ void BuildPytreeSubmodule(nb::module_& m) {
                                       nb::dynamic_attr(),
                                       nb::type_slots(PyTreeRegistry::slots_));
 
+
+
   registry.def(nb::init<bool, bool, bool, bool, bool>(),
                nb::arg("enable_none") = true, nb::arg("enable_tuple") = true,
                nb::arg("enable_namedtuple") = true,
@@ -1759,6 +1898,21 @@ void BuildPytreeSubmodule(nb::module_& m) {
       ") -> Any"
                    // clang-format on
                    ));
+
+  registry.def("register_object", &PyTreeRegistry::RegisterObject,
+               nb::arg("type").none(), nb::arg("mapping_attr").none(),
+               nb::arg("has_int_keys").none(),
+               nb::sig(
+                   // clang-format off
+      "def register_object_node("
+      "self, "
+      "type: type, "
+      "mapping_attr: str, "
+      "has_int_keys: bool, /"
+      ") -> Any"
+                   // clang-format on
+               ));
+
   registry.def("__reduce__", [](nb::object self) {
     return nb::cast<nb::str>(self.attr("__name__"));
   });
