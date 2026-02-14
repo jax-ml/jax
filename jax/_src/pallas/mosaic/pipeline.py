@@ -990,7 +990,7 @@ class BufferedRef(BufferedRefBase):
         assert self._wait_out_slot_reg is not None
         self.wait_out_slot[0] = self._wait_out_slot_reg
 
-  def copy_in(self, src_ref, grid_indices):
+  def copy_in(self, src_ref, grid_indices, priority: int = 0):
     """Starts copy of HBM dma slice into the current slot."""
     assert self.is_input
     if not self.is_buffered: return
@@ -1009,7 +1009,7 @@ class BufferedRef(BufferedRefBase):
         src_ref.at[src_slice],
         self.window_ref.at[(slot, *dst_slice)],
         self.sem_recvs.at[slot],
-    ).start()
+    ).start(priority=priority)
 
   def copy_out(self, dst_ref, grid_indices):
     """Starts copy of HBM dma slice from the current slot."""
@@ -1149,7 +1149,7 @@ def fetch_with_lookahead(buffered_ref, src_ref,
 
 
   def _loop_cond(carry):
-    _, next_indices, cumulative_copy_in = carry
+    _, _, next_indices, cumulative_copy_in = carry
     # Don't fetch more blocks than we have buffers.
     within_limit = cumulative_copy_in < fetch_limit
     # Don't fetch past the end of the grid.
@@ -1157,7 +1157,7 @@ def fetch_with_lookahead(buffered_ref, src_ref,
     return predicate & within_limit & in_bounds
 
   def _loop_body(carry):
-    current_indices, next_indices, cumulative_copy_in = carry
+    i, current_indices, next_indices, cumulative_copy_in = carry
     cur_indices_offset = add_offset(current_indices)
     next_indices_offset = add_offset(next_indices)
     block_indices = buffered_ref.compute_index(*cur_indices_offset)
@@ -1167,15 +1167,20 @@ def fetch_with_lookahead(buffered_ref, src_ref,
     bref = buffered_ref.with_slot_index(copy_in_slot=cumulative_copy_in)
     @pl.when(pred)
     def _start():
-      bref.copy_in(src_ref, next_indices_offset)  # pylint: disable=cell-var-from-loop
+      @pl.when(i == 0)
+      def _():
+        bref.copy_in(src_ref, next_indices_offset, priority=0)  # pylint: disable=cell-var-from-loop
+      @pl.when(i != 0)
+      def _():
+        bref.copy_in(src_ref, next_indices_offset, priority=1)  # pylint: disable=cell-var-from-loop
     next_copy_in = cumulative_copy_in + as_uint32(pred)
     next_next_indices = increment_indices(next_indices)
-    return next_indices, next_next_indices, next_copy_in
+    return i + 1, next_indices, next_next_indices, next_copy_in
   current_indices = buffered_ref.next_fetch_indices
   next_fetch = increment_indices(current_indices)
-  final_indices, _, final_copy_in_slot = lax.while_loop(
+  _, final_indices, _, final_copy_in_slot = lax.while_loop(
       _loop_cond, _loop_body,
-      (current_indices, next_fetch, buffered_ref.cumulative_copy_in))
+      (0, current_indices, next_fetch, buffered_ref.cumulative_copy_in))
 
   buffered_ref = buffered_ref.with_next_fetch(final_indices)
   if update_slots:
