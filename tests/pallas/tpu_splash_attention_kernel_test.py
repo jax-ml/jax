@@ -204,6 +204,7 @@ def sequence_length_strategy(draw: Draw) -> tuple[int, int]:
   return q_seq_len, kv_seq_len
 
 
+# No-op
 @hps.composite
 def attention_strategy(draw: Draw) -> tuple[int, int, int, np.dtype]:
   q_seq_len, kv_seq_len = draw(sequence_length_strategy())
