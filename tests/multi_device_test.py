@@ -300,8 +300,8 @@ class MultiDeviceTest(jtu.JaxTestCase):
     if len(devices) < 4:
       self.skipTest("test requires 4 devices")
     mem_stats = devices[0].memory_stats()
-    if mem_stats is None:
-      self.skipTest('Only can run test on device with mem_stats')
+    if mem_stats is None or 'bytes_reservable_limit' not in mem_stats:
+      self.skipTest("This test can only run on devices that provide mem_stats with the 'bytes_reservable_limit' key.")
     mesh = Mesh(devices, axis_names=("i"))
     sharding = NamedSharding(mesh, P('i'))
     if jtu.is_device_rocm():
