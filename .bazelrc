@@ -297,6 +297,12 @@ common:ci_linux_x86_64_clang_local --repo_env=TF_SYSROOT="/dt9"
 # Clang path needs to be set for remote toolchain to be configured correctly.
 common:ci_linux_x86_64_clang_local --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 
+common:ci_linux_x86_64_clang_local --host_crosstool_top="@local_config_cuda//crosstool:toolchain"
+common:ci_linux_x86_64_clang_local --crosstool_top="@local_config_cuda//crosstool:toolchain"
+common:ci_linux_x86_64_clang_local --action_env=CLANG_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
+common:ci_linux_x86_64_clang_local --action_env=CC=/usr/lib/llvm-18/bin/clang
+common:ci_linux_x86_64_clang_local --action_env=CXX=/usr/lib/llvm-18/bin/clang
+
 common:ci_linux_x86_64_cuda_common --config=build_cuda_with_nvcc
 common:ci_linux_x86_64_cuda_common --config=ci_linux_x86_64
 
@@ -428,6 +434,9 @@ common:rbe_linux_x86_64_base --platforms="@ml_build_config_platform//:platform"
 
 common:rbe_linux_x86_64 --config=rbe_linux_x86_64_base
 common:rbe_linux_x86_64 --config=ci_linux_x86_64
+
+common:rbe_linux_x86_64_clang_local --config=rbe_linux_x86_64_base
+common:rbe_linux_x86_64_clang_local --config=ci_linux_x86_64_clang_local
 
 common:rbe_linux_x86_64_cuda_common --config=rbe_linux_x86_64_base
 common:rbe_linux_x86_64_cuda_common --config=rbe_gpu_pool
