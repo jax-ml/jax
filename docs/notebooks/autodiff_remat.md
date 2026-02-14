@@ -13,6 +13,7 @@ kernelspec:
 
 +++ {"id": "29WqUVkCXjDD"}
 
+(gradient-checkpointing)=
 ## Control autodiff's saved values with `jax.checkpoint` (aka `jax.remat`)
 
 <!--* freshness: { reviewed: '2024-04-08' } *-->
@@ -474,6 +475,7 @@ print_fwd_bwd(f, 3.)
 
 +++ {"id": "wvSm1yu0yUtd"}
 
+(gradient-checkpointing-practical-notes)=
 ### Practical notes
 
 +++ {"id": "LSADkBOCyX9X"}
