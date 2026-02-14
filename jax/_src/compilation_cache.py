@@ -45,6 +45,7 @@ from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lru_cache import LRUCache
 
+print("Running custom jax on top of head 7-14-25 with deserialization loop.")
 
 logger = logging.getLogger(__name__)
 
@@ -290,8 +291,12 @@ def get_executable_and_time(
   executable_and_time = decompress_executable(executable_and_time)
   serialized_executable, compile_time = extract_executable_and_time(
       executable_and_time)
-  xla_executable_deserialized = backend.deserialize_executable(
-      serialized_executable, executable_devices, compile_options)
+  print("Attempting deserialization loop\n")
+  for i in range(32):
+    print(f"Deserialize attempt {i}")
+    xla_executable_deserialized = backend.deserialize_executable(
+        serialized_executable, executable_devices, compile_options)
+  print("Deserialization Successful\n")
   return xla_executable_deserialized, compile_time
 
 
