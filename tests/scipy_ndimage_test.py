@@ -34,26 +34,10 @@ float_dtypes = jtu.dtypes.floating
 int_dtypes = jtu.dtypes.integer
 
 
-def _fixed_ref_map_coordinates(input, coordinates, order, mode, cval=0.0):
-  # SciPy's implementation of map_coordinates handles boundaries incorrectly,
-  # unless mode='reflect'. For order=1, this only affects interpolation outside
-  # the bounds of the original array.
-  # https://github.com/scipy/scipy/issues/2640
-  assert order <= 1
-  padding = [(max(-np.floor(c.min()).astype(int) + 1, 0),
-              max(np.ceil(c.max()).astype(int) + 1 - size, 0))
-             for c, size in zip(coordinates, input.shape)]
-  shifted_coords = [c + p[0] for p, c in zip(padding, coordinates)]
-  pad_mode = {
-      'nearest': 'edge', 'mirror': 'reflect', 'reflect': 'symmetric'
+def _fix_scipy_mode(mode):
+  return {
+    'constant': 'grid-constant', 'wrap': 'grid-wrap'
   }.get(mode, mode)
-  if mode == 'constant':
-    padded = np.pad(input, padding, mode=pad_mode, constant_values=cval)
-  else:
-    padded = np.pad(input, padding, mode=pad_mode)
-  result = osp_ndimage.map_coordinates(
-      padded, shifted_coords, order=order, mode=mode, cval=cval)
-  return result
 
 
 class NdimageTest(jtu.JaxTestCase):
@@ -63,21 +47,24 @@ class NdimageTest(jtu.JaxTestCase):
      for mode in ['wrap', 'constant', 'nearest', 'mirror', 'reflect']
      for cval in ([0, -1] if mode == 'constant' else [0])
     ],
-    [dict(impl=impl, rng_factory=rng_factory)
-     for impl, rng_factory in [
+    [dict(order=order, prefilter=prefilter, impl=impl, rng_factory=rng_factory)
+     for order in list(range(6))
+     for prefilter in ([False, True] if order > 1 else [True])
+     for impl, rng_factory in ([
        ("original", partial(jtu.rand_uniform, low=0, high=1)),
        ("fixed", partial(jtu.rand_uniform, low=-0.75, high=1.75)),
-     ]
+     ] if order < 2 else [
+       ("fixed", partial(jtu.rand_uniform, low=-0.75, high=1.75))
+      ])
     ],
     shape=[(5,), (3, 4), (3, 4, 5)],
     coords_shape=[(7,), (2, 3, 4)],
     dtype=float_dtypes + int_dtypes,
     coords_dtype=float_dtypes,
-    order=[0, 1],
     round_=[True, False],
   )
   def testMapCoordinates(self, shape, dtype, coords_shape, coords_dtype, order,
-                         mode, cval, impl, round_, rng_factory):
+                         mode, cval, prefilter, impl, round_, rng_factory):
 
     def args_maker():
       x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
@@ -88,24 +75,29 @@ class NdimageTest(jtu.JaxTestCase):
 
     rng = rng_factory(self.rng())
     lsp_op = lambda x, c: lsp_ndimage.map_coordinates(
-        x, c, order=order, mode=mode, cval=cval)
-    impl_fun = (osp_ndimage.map_coordinates if impl == "original"
-                else _fixed_ref_map_coordinates)
-    osp_op = lambda x, c: impl_fun(x, c, order=order, mode=mode, cval=cval)
+        x, c, order=order, mode=mode, cval=cval, prefilter=prefilter)
 
-    with jtu.strict_promotion_if_dtypes_match([dtype, int if round else coords_dtype]):
+    scipy_mode = _fix_scipy_mode(mode) if impl == 'fixed' else mode
+    osp_op = lambda x, c: osp_ndimage.map_coordinates(
+      x, c, order=order, mode=scipy_mode, cval=cval, prefilter=prefilter)
+
+    with jtu.strict_promotion_if_dtypes_match([dtype, int if round_ else coords_dtype]):
       if dtype in float_dtypes:
         epsilon = max(dtypes.finfo(dtypes.canonicalize_dtype(d)).eps
                       for d in [dtype, coords_dtype])
-        self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=100*epsilon)
+        self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=1e-3 if order > 3 else 100*epsilon)
+      elif order > 1:
+        # output often falls exactly on 1/2, susceptible to rounding errors
+        self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, atol=1, rtol=0)
       else:
         self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=0)
 
   def testMapCoordinatesErrors(self):
     x = np.arange(5.0)
     c = [np.linspace(0, 5, num=3)]
-    with self.assertRaisesRegex(NotImplementedError, 'requires order<=1'):
-      lsp_ndimage.map_coordinates(x, c, order=2)
+    with self.assertRaisesRegex(
+      NotImplementedError, 'does not yet support order'):
+      lsp_ndimage.map_coordinates(x, c, order=7, prefilter=False)
     with self.assertRaisesRegex(
         NotImplementedError, 'does not yet support mode'):
       lsp_ndimage.map_coordinates(x, c, order=1, mode='grid-wrap')
@@ -114,16 +106,16 @@ class NdimageTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=float_dtypes + int_dtypes,
-    order=[0, 1],
+    order=[0, 1, 2, 3],
   )
   def testMapCoordinatesRoundHalf(self, dtype, order):
-    x = np.arange(-3, 3, dtype=dtype)
+    x = np.arange(-3, 8, 2, dtype=dtype)
     c = np.array([[.5, 1.5, 2.5, 3.5]])
     def args_maker():
       return x, c
 
-    lsp_op = lambda x, c: lsp_ndimage.map_coordinates(x, c, order=order)
-    osp_op = lambda x, c: osp_ndimage.map_coordinates(x, c, order=order)
+    lsp_op = lambda x, c: lsp_ndimage.map_coordinates(x, c, order=order, prefilter=False, mode='constant')
+    osp_op = lambda x, c: osp_ndimage.map_coordinates(x, c, order=order, prefilter=False, mode='grid-constant')
 
     with jtu.strict_promotion_if_dtypes_match([dtype, c.dtype]):
       self._CheckAgainstNumpy(osp_op, lsp_op, args_maker)
@@ -142,6 +134,61 @@ class NdimageTest(jtu.JaxTestCase):
     # analytical gradient of (x - (x - delta)) ** 2 is 2 * delta
     self.assertAllClose(grad(loss)(0.5), 1.0, check_dtypes=False)
     self.assertAllClose(grad(loss)(1.0), 2.0, check_dtypes=False)
+
+  @jtu.sample_product(
+    order=[3, 4, 5],
+    mode=['reflect', 'wrap', 'mirror'],
+    shape=[(5,), (3, 4), (3, 1, 4)],
+    dtype=float_dtypes,
+  )
+  def testSplineFilter(self, order, mode, shape, dtype):
+    rng = jtu.rand_uniform(self.rng(), low=-0.5, high=0.5)
+
+    def args_maker():
+      return (rng(shape, dtype=dtype),)
+
+    lsp_op = lambda arr: lsp_ndimage.spline_filter(arr, order=order, mode=mode)
+    osp_op = lambda arr: osp_ndimage.spline_filter(arr, order=order, output=dtype, mode=_fix_scipy_mode(mode))
+
+    self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=1e-2)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis)
+     for shape in [(5,), (3, 4), (3, 4, 5)]
+     for axis in range(len(shape))
+    ],
+    order=[3, 4, 5],
+    mode=['reflect', 'wrap', 'mirror'],
+    dtype=float_dtypes,
+  )
+  def testSplineFilter1D(self, order, mode, shape, axis, dtype):
+    rng = jtu.rand_uniform(self.rng(), low=-0.5, high=0.5)
+
+    def args_maker():
+      return (rng(shape, dtype=dtype),)
+
+    lsp_op = lambda arr: lsp_ndimage.spline_filter1d(arr, order=order, axis=axis, mode=mode)
+    osp_op = lambda arr: osp_ndimage.spline_filter1d(arr, order=order, axis=axis, output=dtype, mode=_fix_scipy_mode(mode))
+
+    self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=1e-2)
+
+  def testSplineFilterErrors(self):
+    x = np.arange(5.0)
+    with self.assertRaisesRegex(
+      ValueError, r"Spline order '7' not supported for pre-filtering"):
+      lsp_ndimage.spline_filter(x, order=7)
+    with self.assertRaisesRegex(
+        ValueError, r"Boundary mode 'fail' not supported for pre-filtering"):
+      lsp_ndimage.spline_filter(x, order=3, mode='fail')
+
+  def testSplineFilter1DErrors(self):
+    x = np.arange(5.0)
+    with self.assertRaisesRegex(
+      ValueError, r"Spline order '7' not supported for pre-filtering"):
+      lsp_ndimage.spline_filter1d(x, order=7)
+    with self.assertRaisesRegex(
+        ValueError, r"Boundary mode 'fail' not supported for pre-filtering"):
+      lsp_ndimage.spline_filter1d(x, order=3, mode='fail')
 
 
 if __name__ == "__main__":
