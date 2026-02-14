@@ -3442,8 +3442,9 @@ def _while_lowering_rule(
   return list(while_op.results)
 
 
-@register_lowering_rule(lax.cond_p, kernel_types=[*tpu_core.KernelType])
-def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
+def _legacy_cond_lowering_rule(
+    ctx: LoweringRuleContext, *args, branches, **params
+):
   index, *args = args
   constant_index = _fold_and_get_constant_value(index)
 
@@ -3463,8 +3464,6 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
       block_shapes=ctx.block_shapes[1:],
   )
   with ir.InsertionPoint(if_op.then_block):
-    # TODO(b/300272065): Use `scf.IndexSwitchOp` instead of a cascade of
-    # if/else.
     if len(branches) > 2:
       out = _cond_lowering_rule(
           ctx,
@@ -3479,6 +3478,55 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
     out = jaxpr_subcomp(lowering_context, branches[0].jaxpr, *args)
     scf.yield_(out)
   return if_op.results
+
+
+@register_lowering_rule(lax.cond_p, kernel_types=[*tpu_core.KernelType])
+def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
+  if ctx.forward_compatible or ctx.is_cloud_tpu_older_than(2026, 1, 8):
+    return _legacy_cond_lowering_rule(ctx, *args, branches=branches, **params)
+
+  del params  # Unused.
+
+  index, *args = args
+  index_aval, *_arg_avals = ctx.avals_in
+
+  constant_index = _fold_and_get_constant_value(index)
+  if constant_index is not None:
+    return jaxpr_subcomp(
+        ctx.lowering_context.replace(block_shapes=ctx.block_shapes[1:]),
+        branches[constant_index].jaxpr,
+        *args,
+    )
+
+  aval_to_ir_type_with_fn = functools.partial(
+      aval_to_ir_type, ctx.lowering_context.dynamic_shape_replacement_fn
+  )
+  out_types = map(aval_to_ir_type_with_fn, ctx.avals_out)
+  switch_op = scf.IndexSwitchOp(
+      out_types,
+      arith.index_cast(
+          ir.IndexType.get(), _ensure_mlir_value(index, index_aval)
+      ),
+      ir.DenseI64ArrayAttr.get(range(len(branches) - 1)),
+  )
+
+  # ``RegionSequence`` in MLIR does not support slicing, so the
+  # auto-generated Python bindings for ``caseRegions`` fail at runtime!
+  # We convert it to a list to work around that.
+  regions = [*switch_op.regions]
+  # Move the default region to the back to match order of ``branches``.
+  for branch, region in zip(branches, [*regions[1:], regions[0]]):
+    with ctx.lowering_context.grid_name_context():
+      jaxpr = pe.convert_constvars_jaxpr(branch.jaxpr)
+    lowering_ctx = ctx.lowering_context.replace(
+        block_shapes=ctx.block_shapes[1:],
+    )
+    [block] = region.blocks
+    with ir.InsertionPoint(block):
+      outs = jaxpr_subcomp(lowering_ctx, jaxpr, *branch.consts, *args)
+      scf.yield_(map(_ensure_mlir_value, outs, ctx.avals_out))
+
+  return switch_op.results
 
 
 @register_lowering_rule(pjit.jit_p, kernel_types=[*tpu_core.KernelType])
