@@ -1884,6 +1884,7 @@ def concrete_dim_or_error(val: Any, context=""):
 # Quasi-dynamic data includes things like liveness bits and the content type of
 # a type-changeable box. These change throughout the program but at a given
 # point in the program they have a single statically known value.
+# See https://github.com/jax-ml/jax/pull/29245 for motivation.
 
 class MutableQuasiDynamicData:
   def __init__(self, val : QuasiDynamicData | None):
