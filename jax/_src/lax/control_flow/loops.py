@@ -2433,8 +2433,7 @@ def fori_loop(lower, upper, body_fun, init_val,
     if unroll is None:
       unroll = False
     length = max(upper_ - lower_, 0)
-    if config.disable_jit.value and length == 0:
-      # non-jit implementation of scan does not support length=0
+    if length == 0:
       return init_val
     scan_body = _fori_scan_body_fun(body_fun, body_fun_dbg)
     (_, result), _ = scan(
