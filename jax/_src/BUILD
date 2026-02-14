@@ -1094,10 +1094,8 @@ pytype_strict_library(
     name = "profiler",
     srcs = ["profiler.py"],
     deps = [
-        ":init",
         ":traceback_util",
         ":xla_bridge",
-        "//jax:version",
         "//jax/_src/lib",
     ],
 )
