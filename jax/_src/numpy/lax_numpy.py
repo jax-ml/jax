@@ -7321,7 +7321,9 @@ def diagonal(a: ArrayLike, offset: int = 0, axis1: int = 0,
     )
     i = arange(diag_size)
     j = arange(abs(offset), abs(offset) + diag_size)
-    return a[..., i, j] if offset >= 0 else a[..., j, i]
+    if offset < 0:
+      i, j = j, i
+    return a.at[..., i, j].get(wrap_negative_indices=False)
 
 
   # The mosaic lowering rule for diag is only defined for square arrays.
