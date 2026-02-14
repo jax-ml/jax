@@ -361,6 +361,9 @@ common:ci_windows_amd64 --extra_toolchains="@xla//tools/toolchains/win2022/20241
 common:ci_windows_amd64 --host_linkopt=/FORCE:MULTIPLE --linkopt=/FORCE:MULTIPLE
 common:ci_windows_amd64 --color=yes
 
+# Used for rules_python bootstrap 1.8.0+
+build --@rules_python//python/config_settings:bootstrap_impl=script
+
 # #############################################################################
 # RBE config options below. These inherit the CI configs above and set the
 # remote execution backend and authentication options required to run builds

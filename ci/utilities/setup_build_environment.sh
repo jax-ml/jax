@@ -29,9 +29,11 @@ if [[ ! $(uname -s) =~ "MSYS_NT" ]]; then
 fi
 
 function clone_main_xla() {
-  echo "Cloning XLA at HEAD to $(pwd)/xla"
+  echo "Cloning XLA and checking out 7b726400c43a10bbc627fc47aa1dc457d3b6425c at $(pwd)/xla"
   git clone --depth=1 https://github.com/openxla/xla.git $(pwd)/xla
   cd $(pwd)/xla
+  git fetch --depth=1 origin 7b726400c43a10bbc627fc47aa1dc457d3b6425c
+  git checkout 7b726400c43a10bbc627fc47aa1dc457d3b6425c
   echo "XLA commit: $(git log -1 --format=%H)"
   cd ..
   export JAXCI_XLA_GIT_DIR=$(pwd)/xla

@@ -115,7 +115,7 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
     python_version = python_version,
     requirements_lock = "//build:requirements_lock_{}.txt".format(python_version.replace(".", "_")),
     whl_modifications = {
-        "@pypi_mods//:numpy.json": "numpy",  # @pypi_mods is defined in XLA's MODULE.bazel
+        "@//build:numpy.json": "numpy",
     },
 ) for python_version in [
     "3.11",

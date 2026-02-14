@@ -42,6 +42,14 @@ COMBOS = [
     ("_ft", FREETHREADING_REQUIREMENTS),
 ]
 
+exports_files(["numpy.json"])
+
+filegroup(
+    name = "numpy_json",
+    srcs = ["numpy.json"],
+    visibility = ["//visibility:public"],
+)
+
 [
     compile_pip_requirements(
         name = "requirements" + suffix,
