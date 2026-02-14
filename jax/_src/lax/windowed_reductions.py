@@ -130,7 +130,7 @@ def reduce_window(
   Args:
     operand: input array or tree of arrays.
     init_value: value or tree of values. Tree structure must match that
-      of ``operand``.
+      of ``operand``. The values in ``init_value`` must be scalars.
     computation: callable function over which to reduce. Input and output must be
       a tree of the same structure as ``operand``.
     window_dimensions: sequence of integers specifying the window size.
