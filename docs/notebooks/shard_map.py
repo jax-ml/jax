@@ -1291,7 +1291,7 @@ def predict(params, inputs):
 def loss(params, batch):
   inputs, targets = batch
   predictions = predict(params, inputs)
-  return jnp.mean(jnp.sum((predictions - targets)**2, axis=-1))
+  return jnp.mean(jnp.sum((predictions - targets) ** 2, axis=-1))
 
 
 # +
@@ -1338,7 +1338,7 @@ params, batch = init(jax.random.key(0), layer_sizes, batch_size)
 # +
 from jax.sharding import Mesh, PartitionSpec as P
 
-mesh = jax.make_mesh((8,), ('batch',), (Auto,))
+mesh = jax.make_mesh((8,), ('batch',))
 jax.set_mesh(mesh)
 
 # replicate initial params on all devices, shard data batch over devices
@@ -1346,14 +1346,12 @@ batch = jax.device_put(batch, NamedSharding(mesh, P('batch')))
 params = jax.device_put(params, NamedSharding(mesh, P()))
 
 # adapt the loss function to sum the losses across devices
-def loss_dp(params, batch):
-  @jax.shard_map(in_specs=P('batch', None), out_specs=P())
-  def loss_spmd(local_batch):
-    inputs, targets = local_batch
-    predictions = predict(params, inputs)  # use reference 'predict`
-    local_loss = jnp.mean(jnp.sum((predictions - targets)**2, axis=-1))
-    return jax.lax.pmean(local_loss, 'batch')
-  return loss_spmd(batch)
+@jax.shard_map(out_specs=P())
+def loss_dp(params, local_batch):
+  inputs, targets = local_batch
+  predictions = predict(params, inputs)  # use reference 'predict`
+  local_loss = jnp.mean(jnp.sum((predictions - targets)**2, axis=-1))
+  return jax.lax.pmean(local_loss, 'batch')
 
 
 # -
@@ -1407,10 +1405,10 @@ print(allclose(jax.jit(jax.grad(loss))(params, batch),
 
 # +
 # shard data batch *and params* over devices
-mesh = Mesh(devices, ('batch',))
+mesh = jax.make_mesh((4,), ('batch',))
 jax.set_mesh(mesh)
-batch = jax.device_put(batch, NamedSharding(mesh, P('batch')))
-params = jax.device_put(params, NamedSharding(mesh, P('batch')))
+batch = jax.device_put(batch, P('batch'))
+params = jax.device_put(params, P('batch'))
 
 # adapt the prediction function to gather weights just before their use,
 # and to re-gather them on the backward pass (rather than saving them)
@@ -1423,14 +1421,12 @@ def predict_fsdp(params_frag, inputs):
     inputs = jax.nn.relu(outputs)
   return outputs
 
-def loss_fsdp(params, batch):
-  @jax.shard_map(in_specs=P('batch'), out_specs=P())
-  def loss_spmd(local_params, local_batch):
-    inputs, targets = local_batch
-    predictions = predict_fsdp(local_params, inputs)
-    local_loss = jnp.mean(jnp.sum((predictions - targets)**2, axis=-1))
-    return jax.lax.pmean(local_loss, 'batch')
-  return loss_spmd(params, batch)
+@jax.shard_map(out_specs=P())
+def loss_fsdp(local_params, local_batch):
+  inputs, targets = local_batch
+  predictions = predict_fsdp(local_params, inputs)
+  local_loss = jnp.mean(jnp.sum((predictions - targets) ** 2, axis=-1))
+  return jax.lax.pmean(local_loss, 'batch')
 
 
 # -
@@ -1438,10 +1434,12 @@ def loss_fsdp(params, batch):
 # Again we can check that the loss and its gradients match the reference model:
 
 # +
-print(jax.jit(loss)(params, batch))
+repl_params = jax.device_put(params, P())
+repl_batch = jax.device_put(batch, P())
+print(jax.jit(loss)(repl_params, repl_batch))
 print(jax.jit(loss_fsdp)(params, batch))
 
-print(allclose(jax.jit(jax.grad(loss))(params, batch),
+print(allclose(jax.jit(jax.grad(loss))(repl_params, repl_batch),
                jax.jit(jax.grad(loss_fsdp))(params, batch)))
 # -
 
@@ -1460,7 +1458,7 @@ print(allclose(jax.jit(jax.grad(loss))(params, batch),
 # efficiently scatter the result's shards.
 
 # +
-mesh = jax.make_mesh((8,), ('feats',), (Auto,))
+mesh = jax.make_mesh((8,), ('feats',))
 jax.set_mesh(mesh)
 
 batch = jax.device_put(batch, NamedSharding(mesh, P(None, 'feats')))
@@ -1492,11 +1490,11 @@ def loss_tp(params, batch):
 # We can compose these strategies together, using multiple axes of parallelism.
 
 # +
-mesh = jax.make_mesh((4, 2), ('batch', 'feats'), (Auto, Auto))
+mesh = jax.make_mesh((4, 2), ('batch', 'feats'))
 jax.set_mesh(mesh)
 
-batch_ = jax.device_put(batch, NamedSharding(mesh, P('batch', 'feats')))
-params_ = jax.device_put(params, NamedSharding(mesh, P(('batch', 'feats'))))
+batch = jax.device_put(batch, NamedSharding(mesh, P('batch', 'feats')))
+params = jax.device_put(params, NamedSharding(mesh, P(('feats', 'batch'))))
 
 # mostly same as previous predict_fsdp definition, except we call gemm_tp
 @partial(jax.remat, policy=lambda op, *_, **__: str(op) != 'all_gather')
@@ -1515,7 +1513,7 @@ def predict_fsdp_tp(params_frag, inputs):
 def loss_fsdp_tp(local_params, local_batch):
   inputs, targets = local_batch
   predictions = predict_fsdp_tp(local_params, inputs)
-  sq_err = jax.lax.psum(jnp.sum((predictions - targets)**2, axis=-1), 'feats')
+  sq_err = jax.lax.psum(jnp.sum((predictions - targets) ** 2, axis=-1), 'feats')
   return jax.lax.pmean(jnp.mean(sq_err), 'batch')
 
 
@@ -1528,10 +1526,12 @@ def loss_fsdp_tp(local_params, local_batch):
 # perform a `psum` as needed given the sharded result returned by `predict_tp`.
 
 # +
-print(jax.jit(loss)(params, batch))
-print(jax.jit(loss_fsdp_tp)(params_, batch_))
+repl_params = jax.device_put(params, P())
+repl_batch = jax.device_put(batch, P())
+print(jax.jit(loss)(repl_params, repl_batch))
+print(jax.jit(loss_fsdp_tp)(params, batch))
 
-print(allclose(jax.jit(jax.grad(loss))(params, batch),
+print(allclose(jax.jit(jax.grad(loss))(repl_params, repl_batch),
                jax.jit(jax.grad(loss_fsdp_tp))(params, batch)))
 # -
 
@@ -1580,7 +1580,7 @@ print(f'{S} stages, {L // S} layer(s) per stage, {L} pipelined layers total')
 print(f'{B} examples per microbatch, {M} microbatches total')
 
 # +
-mesh = Mesh(jax.devices()[:S], ('stages',), (Auto,))
+mesh = Mesh(jax.devices()[:S], ('stages',))
 
 def predict_pp(params, inputs):
   (W_first, b_first), inner_params, (W_last, b_last) = params
@@ -1632,8 +1632,6 @@ params_ = first_params, params_stacked, last_params
 
 batch_ = jax.device_put(batch, NamedSharding(mesh, P('stages')))
 # -
-
-print(jax.jit(loss)(params, batch))
 
 jax.set_mesh(mesh)
 print(jax.jit(loss_pp)(params_, batch_))
