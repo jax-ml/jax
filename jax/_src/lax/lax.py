@@ -5751,16 +5751,18 @@ def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
     # to the F32_F32_F32 algorithm preset which uses the algorithm attribute
     # instead of precision_config to specify the computation type.
     if platform in ("cuda", "rocm") and isinstance(precision, tuple):
-      has_highest = any(p == Precision.HIGHEST for p in precision)
-      has_non_default = any(p != Precision.DEFAULT for p in precision)
-      if has_highest and lhs_dtype == np.float32 and rhs_dtype == np.float32:
-        # Convert to F32_F32_F32 algorithm to get full f32 precision without
-        # using non-DEFAULT precision_config.
-        precision = DotAlgorithmPreset.F32_F32_F32
-        algorithm_kwarg = {
-            "algorithm": dot_algorithm_attr(precision, lhs_dtype, rhs_dtype)
-        }
-      elif has_non_default:
+      if any(p is Precision.HIGHEST for p in precision):
+        if lhs_dtype == np.float32 and rhs_dtype == np.float32:
+          # Convert to F32_F32_F32 algorithm to get full f32 precision without
+          # using non-DEFAULT precision_config.
+          precision = DotAlgorithmPreset.F32_F32_F32
+          algorithm_kwarg = {
+              "algorithm": dot_algorithm_attr(precision, lhs_dtype, rhs_dtype)
+          }
+        else:
+          # For non-f32 dtypes, HIGHEST on GPU is treated as DEFAULT.
+          precision = (Precision.DEFAULT, Precision.DEFAULT)
+      elif any(p is not Precision.DEFAULT for p in precision):
         # HIGH == DEFAULT on GPU (both use TF32). Normalize to DEFAULT.
         precision = (Precision.DEFAULT, Precision.DEFAULT)
 
