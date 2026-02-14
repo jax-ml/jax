@@ -7310,6 +7310,81 @@ class DCETest(jtu.JaxTestCase):
       f = lambda *args: core.eval_jaxpr(jaxpr_dce, consts, *args)
       jtu.check_grads(f, inputs_dce, order=2, modes=['rev'])
 
+  def test_dce_jaxpr_while_cond_dependency(self):
+    def f(c0, c1, c2):
+      def cond(c):
+        c0, c1, c2 = c
+        return c1 < 5
+
+      def body(c):
+        c0, c1, c2 = c
+        new_c0 = c0 + 1
+        new_c1 = c1 + c2
+        new_c2 = c2 + 1
+        return (new_c0, new_c1, new_c2)
+
+      return lax.while_loop(cond, body, (c0, c1, c2))
+
+    c0 = jnp.int32(0)
+    c1 = jnp.int32(0)
+    c2 = jnp.int32(1)
+    jaxpr = api.make_jaxpr(f)(c0, c1, c2).jaxpr
+
+    self.assert_dce_result(
+        jaxpr,
+        used_outputs=[True, False, False],
+        expected_used_inputs=[True, True, True],
+        expected_num_eqns=5,
+        check_diff=False)
+
+  def test_dce_jaxpr_while(self):
+    def f(c):
+      i, x, y = c
+      def cond(c):
+        i, _, _ = c  # i is used anyway
+        return i < 5
+      def body(c):
+        i, x, y = c
+        return i + 1, x * 2, y + i
+      return lax.while_loop(cond, body, (i, x, y))
+
+    i = jnp.int32(0)
+    x = jnp.int32(1)
+    y = jnp.int32(2)
+    jaxpr = api.make_jaxpr(f)((i, x, y)).jaxpr
+
+    # Use x: y should be pruned.
+    self.assert_dce_result(
+        jaxpr,
+        used_outputs=[False, True, False],
+        expected_used_inputs=[True, True, False],
+        expected_num_eqns=4,
+        check_diff=False)
+
+    # Use i and x: y should be pruned.
+    self.assert_dce_result(
+        jaxpr,
+        used_outputs=[True, True, False],
+        expected_used_inputs=[True, True, False],
+        expected_num_eqns=4,
+        check_diff=False)
+
+    # Use i and y: x should be pruned.
+    self.assert_dce_result(
+        jaxpr,
+        used_outputs=[True, False, True],
+        expected_used_inputs=[True, False, True],
+        expected_num_eqns=4,
+        check_diff=False)
+
+    # Use i: x and y should be pruned
+    self.assert_dce_result(
+        jaxpr,
+        used_outputs=[True, False, False],
+        expected_used_inputs=[True, False, False],
+        expected_num_eqns=3,
+        check_diff=False)
+
   def test_dce_jaxpr_scan_nontrivial_fixedpoint_carry(self):
     # The idea is that each element of the output carry tuple depends on the
     # corresponding carried input as well as the one to the left. The extensive
