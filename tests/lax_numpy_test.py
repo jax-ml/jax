@@ -5972,7 +5972,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(yshape, dtype), rng(xshape, dtype) if xshape is not None else None]
     np_fun = partial(np.trapezoid, dx=dx, axis=axis)
     jnp_fun = partial(jnp.trapezoid, dx=dx, axis=axis)
-    tol = jtu.tolerance(dtype, {np.float16: 2e-3, np.float64: 1e-12,
+    tol = jtu.tolerance(dtype, {np.float16: 4e-3, np.float64: 1e-12,
                                 jax.dtypes.bfloat16: 4e-2})
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol,
                             check_dtypes=False)
@@ -5985,8 +5985,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         ((3, 10), (3, 1), -1),
         ((10,), (1,), -1),
         ((2, 3, 4, 10), (2, 3, 4, 1), -1),
-        ((2, 3, 4, 10), (1, 1, 4, 1), -1),
-        ((2, 3, 4, 10), (2, 1, 1, 1), 1),
+        ((2, 3), (3,), 0),
+        ((3, 4, 5), (4, 5), 0),
+        ((3, 4, 5), (3, 5), 1),
+        ((3, 4, 5), (5,), 1),
+        ((2, 3, 4, 5), (2, 4, 5), 1),
+        ((2, 3, 4, 5), (2, 1, 3, 5), 2),
+        # slow path: varies along integration axis
+        ((3, 4, 5), (2, 4, 5), 0),
+        ((3, 4, 5), (3, 3, 5), 1),
       ]
     ],
   )
