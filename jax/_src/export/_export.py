@@ -248,6 +248,8 @@ class Exported:
 
     Example usage:
 
+      >>> from jax._src.lib import ifrt_version
+      >>> if ifrt_version < 12: jax.config.update("jax_use_shardy_partitioner", False)
       >>> from jax import export, sharding
       >>> # Prepare the exported object:
       >>> exp_mesh = sharding.Mesh(jax.devices(), ("a",))

@@ -29,6 +29,8 @@ Here is an example:
 >>> import numpy as np
 >>> import jax
 >>> from jax import export
+>>> from jax._src.lib import ifrt_version
+>>> if ifrt_version < 12: jax.config.update("jax_use_shardy_partitioner", False)
 
 >>> def f(x): return 2 * x * x
 
