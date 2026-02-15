@@ -371,9 +371,9 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
             # The input argument
             (r"f32\[10,20\].*custom_call_target.*\"Sharding.*sharding.*replicated", 1),
             # The y argument
-            (r"f32\[10,40\].*custom_call_target.*\"Sharding.*sharding.*devices=\[2,1\]",
+            (r"f32\[10,40\].*custom_call_target.*\"Sharding.*frontend_attributes.*#sdy.sharding_per_value<\[<mesh<\[\\\"x\\\"=2\]>, \[{\\\"x\\\"}, {}\]>\]>",
              count_inner_sharding),
-            (r"f32\[10,40\].*custom_call_target.*\"Sharding.*sharding.*replicated",
+            (r"f32\[10,40\].*custom_call_target.*\"Sharding.*frontend_attributes.*#sdy.sharding_per_value<\[<mesh<\[\\\"x\\\"=2\]>, \[{}, {}\]>\]>",
              count_inner_replicated),
             # The output sharding
             (r"f32\[10,80\].*custom_call_target.*\"Sharding.*sharding.*replicated", 1),
