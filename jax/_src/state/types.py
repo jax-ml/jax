@@ -22,6 +22,7 @@ import math
 import operator
 from typing import Any, Protocol, Union
 
+from jax._src import ad_util
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
@@ -562,6 +563,16 @@ def get_ref_aval_from_value(x: Any):
   if type(x) in _ref_type_aval_mappings:
     return _ref_type_aval_mappings[type(x)](x)
   return _default_value_to_ref_aval(x)
+
+
+def zeros_like_abstract_ref(aval: AbstractRef) -> core.Ref:
+  val = ad_util.zeros_like_aval(aval.inner_aval)
+  return core.new_ref(val)
+
+# TODO(dougalm): this is nonsense but it's here because in places like
+# custom_vjp we assume that all arguments have tangent spaces. We could have
+# a distinct NotATangentType value instead.
+ad_util.aval_zeros_likers[AbstractRef] = zeros_like_abstract_ref  # type: ignore
 
 # === pinned, chained LinearVals ===
 
