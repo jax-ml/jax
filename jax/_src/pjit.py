@@ -1654,6 +1654,7 @@ def _pjit_linearize(nzs, *primals_in, jaxpr, in_shardings, out_shardings,
     return tuple(x for nz, x in zip(is_nz_l, l) if nz)
 
   assert len(in_shardings) == len(primal_jaxpr.in_avals)
+  check_closed_over_tracers(primal_jaxpr.consts)
   ans = jit_p.bind(*primals_in, jaxpr=primal_jaxpr,
                    in_shardings=in_shardings,
                    out_shardings=primal_out_shardings,
@@ -1878,7 +1879,7 @@ def _pjit_transpose_fancy(
                               if isinstance(x, core.AbstractValue))
   trans_out_layouts   = tuple(l for x, l in zip(cts_out_, in_layouts  )
                               if isinstance(x, core.AbstractValue))
-
+  check_closed_over_tracers(trans_jaxpr.consts)
   try:
     cts_out = jit_p.bind(
         *in_flat, jaxpr=trans_jaxpr, in_shardings=tuple(trans_in_shardings),
@@ -1916,6 +1917,18 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs):
       lu.wrap_init(transposed, debug_info=dbg), in_avals)
   return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # type: ignore
 ad.fancy_transposes[jit_p] = _pjit_transpose_fancy
+
+
+def check_closed_over_tracers(consts: list[Any]):
+  for c in consts:
+    if isinstance(c, core.Tracer):
+      msg = ('Encountered a tracer that was closed-over in a custom_vjp, '
+             'custom_jvp, or custom_gradient function or their rules. '
+             'The tracer references a value '
+             f'with type {c.aval.str_short()} wrapped in a {type(c).__name__}. '
+             'Try passing the closed-over value into the function as an '
+             'argument, and adapting the custom_vjp fwd and bwd rules.\n')
+      raise ValueError(msg + core.tracer_provenance(c))
 
 @weakref_lru_cache
 def _dce_jaxpr_pjit(

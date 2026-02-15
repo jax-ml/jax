@@ -1217,7 +1217,8 @@ def custom_gradient(fun):
 
 @register_pytree_node_class
 class Residuals:
-  def __init__(self, jaxpr, in_tree, out_tree, consts):
+  def __init__(self, jaxpr: core.Jaxpr,
+              in_tree: PyTreeDef, out_tree: PyTreeDef, consts: list[Any]):
     self.jaxpr = jaxpr
     self.in_tree = in_tree
     self.out_tree = out_tree
