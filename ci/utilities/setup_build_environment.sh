@@ -47,6 +47,11 @@ if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
     # Set JAXCI_XLA_GIT_DIR if local XLA already exists
     export JAXCI_XLA_GIT_DIR=$(pwd)/xla
   fi
+
+  pushd "$JAXCI_XLA_GIT_DIR"
+  xla_git_head=$(git rev-parse HEAD)
+  echo "XLA git head: $xla_git_head"
+  popd
 fi
 
 # If a XLA commit is provided, check out XLA at that commit.
