@@ -1009,7 +1009,7 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuInitialize, MosaicGpuInitialize,
 // - use_custom_barrier
 // - uses_xla_collective_metadata (optional)
 XLA_FFI_DEFINE_HANDLER(kMosaicGpuExecute, MosaicGpuExecute,
-                       ffi::Ffi::Bind<ffi::ExecutionStage::kExecute>()
+                       ffi::Ffi::BindExecute()
                            .Ctx<ffi::PlatformStream<cudaStream_t>>()
                            .Ctx<ffi::CollectiveParams>()
                            .RemainingArgs()
