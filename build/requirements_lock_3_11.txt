@@ -426,9 +426,9 @@ h5py==3.15.1 \
     # via
     #   keras
     #   tensorflow
-hypothesis==6.142.1 \
-    --hash=sha256:3179cb08756562c526aaf4a9871ebbff83d2d75c03896ed0bc9c1d14097a930c \
-    --hash=sha256:95a7d38fcc58e697e3020665adcb951c630cdbc8065e4b4474949e486b06bd6d
+hypothesis==6.148.2 \
+    --hash=sha256:07e65d34d687ddff3e92a3ac6b43966c193356896813aec79f0a611c5018f4b1 \
+    --hash=sha256:bf8ddc829009da73b321994b902b1964bcc3e5c3f0ed9a1c1e6a1631ab97c5fa
     # via -r build/test-requirements.txt
 idna==3.11 \
     --hash=sha256:771a87f49d9defaf64091e6e6fe9c18d4833f140bd19464795bc32d966ca37ea \
