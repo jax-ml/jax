@@ -409,6 +409,65 @@ def erfc(x: ArrayLike) -> Array:
   return lax.erfc(x)
 
 
+def erfcx(x: ArrayLike) -> Array:
+  r"""The scaled complementary error function
+
+  JAX implementation of :obj:`scipy.special.erfcx`.
+
+  .. math::
+
+     \mathrm{erfcx}(x) = e^{x^2} \, \mathrm{erfc}(x)
+
+  Args:
+    x: arraylike, real-valued.
+
+  Returns:
+    array containing values of the scaled complementary error function.
+
+  Notes:
+     The JAX version only supports real-valued inputs.
+
+  See also:
+    - :func:`jax.scipy.special.erf`
+    - :func:`jax.scipy.special.erfc`
+
+    The scaled complementary error function, numerically stable for large x.
+    """
+    x = promote_args_inexact("erfcx", x)
+    dtype = x.dtype
+
+    # Set thresholds depending on dtype
+    threshold = lax.select(
+        lax.eq(dtype, np.float32),  # JAX treats dtype as numpy dtype objects
+        lax.convert_element_type(9.1, dtype),
+        lax.convert_element_type(26.0, dtype)
+    )
+
+    sqrt_pi = lax.convert_element_type(np.sqrt(np.pi), dtype)
+
+    def asymptotic(x):
+        x2 = x * x
+        x3 = x2 * x
+        x5 = x3 * x2
+        x7 = x5 * x2
+        return (1 / sqrt_pi) * (
+            1 / x - 1 / (2 * x3) + 3 / (4 * x5) - 15 / (8 * x7)
+        )
+
+    def standard(x):
+        return lax.mul(lax.exp(lax.square(x)), lax.erfc(x))
+
+    # Support broadcasting, so use lax.select for arrays:
+    use_asymptotic = x > threshold
+    result = lax.select(
+        use_asymptotic,
+        asymptotic(x),
+        standard(x)
+    )
+    return result
+
+
+
 def erfinv(x: ArrayLike) -> Array:
   """The inverse of the error function
 
