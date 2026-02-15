@@ -1,0 +1,83 @@
+name: Mosaic GPU B200 Presubmit
+
+on:
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        required: true
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
+      python_version:
+        description: 'Hermetic Python version for tests (for example, 3.14).'
+        type: string
+        required: true
+        default: '3.14'
+      xla_track:
+        description: 'XLA revision used by tests.'
+        type: choice
+        required: true
+        default: 'pinned'
+        options:
+        - 'pinned'
+        - 'head'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/bazel_cuda_b200_mosaic_presubmit.yml'
+      - 'ci/run_bazel_cuda_targeted_tests.sh'
+      - 'jax/_src/pallas/mosaic_gpu/**'
+      - 'jax/experimental/mosaic/gpu/**'
+      - 'jaxlib/mosaic/dialect/gpu/**'
+      - 'jaxlib/mosaic/gpu/**'
+
+permissions: {}
+
+# For PRs, group by PR number and cancel stale in-progress runs.
+# For workflow_dispatch events, group by actor+ref and cancel stale in-progress
+# runs from the same actor on the same ref.
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{
+      github.event_name == 'pull_request'
+      && format('pr-{0}', github.event.pull_request.number)
+      || github.event_name == 'workflow_dispatch'
+      && format('dispatch-{0}-{1}', github.actor, github.ref)
+      || format('ref-{0}', github.ref)
+    }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  run_tests:
+    runs-on: linux-x86-a4-224-b200-1gpu
+    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
+    timeout-minutes: 15  # Stop potential hangs from keeping the job running too long
+    name: Mosaic GPU B200 tests
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
+        with:
+          persist-credentials: false
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@9f8d7d8d9954430d0fef4a8cce2cb4e3844c200d
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Run Tests
+        env:
+          JAXCI_HERMETIC_PYTHON_VERSION: ${{ github.event.inputs.python_version || '3.14' }}
+          JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'pinned' }}
+          JAXCI_BAZEL_TARGETS: |
+            //tests/mosaic:gpu_test_gpu
+            //tests/pallas:mosaic_gpu_test_gpu
+          JAXCI_TEST_TAG_FILTERS: '-multiaccelerator'
+          JAXCI_USE_PARALLEL_ACCELERATOR_RUNNER: '1'
+          JAXCI_LOCAL_TEST_JOBS: '8'
+          JAXCI_TEST_TIMEOUT: '420'
+        run: bash ./ci/run_bazel_cuda_targeted_tests.sh
