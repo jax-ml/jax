@@ -467,6 +467,7 @@ def _dot_product_attention_fwd_rule(
 def _dot_product_attention_bwd_rule(
     scale, seed, dropout_rate, variadic_args, mask_type, layout,
     sliding_window_length, is_training, return_residual, res, grad_output):
+  breakpoint()  # BREAKPOINT 5: Check backward rule inputs and grad_output
   (query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
    page_table_k, page_table_v, activation, fwd_output) = res
   if return_residual:
@@ -553,6 +554,7 @@ def _dot_product_attention_bwd_impl(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
     page_table_k, page_table_v, activation, fwd_output, grad_output, scale,
     seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length):
+  breakpoint()  # BREAKPOINT 1: Check inputs to backward pass
   q_seqlen, kv_seqlen, q_offsets, kv_offsets = \
       _fix_seqlen_offsets(q_seqlen, kv_seqlen, q_offsets, kv_offsets, query, key)
   grads = _dot_product_attention_bwd_p.bind(
@@ -709,6 +711,7 @@ def _dot_product_attention_bwd_cuda_lowering(
     ctx, query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
     page_table_k, page_table_v, activation, fwd_output, grad_output,
     scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length):
+  breakpoint()  # BREAKPOINT 2: Check CUDA lowering for backward pass
   query_type = ir.RankedTensorType(query.type)
   query_shape = query_type.shape
   key_type = ir.RankedTensorType(key.type)
@@ -776,6 +779,7 @@ def _dot_product_attention_bwd_cuda_lowering(
   # workspace
   result_types.append(ir.RankedTensorType.get(workspace_shape, workspace_type))
   result_layouts = result_layouts + default_layouts(workspace_shape)
+  breakpoint()  # BREAKPOINT 3: Before custom_call to cuDNN
   out = mlir.custom_call(
     custom_call_name,
     result_types=result_types,
@@ -785,6 +789,7 @@ def _dot_product_attention_bwd_cuda_lowering(
       *[ir.RankedTensorType(operand.type).shape for operand in operands]),
     result_layouts=result_layouts,
   )
+  breakpoint()  # BREAKPOINT 4: After custom_call, check results
   dqkv = (hlo.transpose(out.results[0], grad_transpose_perm),
           hlo.transpose(out.results[1], grad_transpose_perm),
           hlo.transpose(out.results[2], grad_transpose_perm))
