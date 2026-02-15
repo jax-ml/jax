@@ -452,6 +452,8 @@ ad.primitive_jvps[load_p] = _load_jvp
 def uninitialized_value(shape, dtype):
   if jnp.issubdtype(dtype, jnp.floating):
     return jnp.full(shape, jnp.nan, dtype)
+  elif jnp.issubdtype(dtype, jnp.complexfloating):
+    return jnp.full(shape, jnp.nan, dtype)
   # Note: Currently semaphore is i16[], meaning this case needs to be
   # handled before the general case for integers.
   # TODO(justinfu): Handle semaphores with a custom extended dtype.
