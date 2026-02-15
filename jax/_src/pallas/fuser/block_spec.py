@@ -819,6 +819,7 @@ def register_binop_rule(prim: core.Primitive):
 
 
 register_default_eval_rule(state_primitives.get_p)
+register_default_eval_rule(lax.axis_index_p)
 
 register_binop_rule(lax.mul_p)
 register_binop_rule(lax.add_p)
