@@ -174,6 +174,7 @@ def multi_mem_space_rule(prim, num_out, *avals, **kwargs):
 def standard_abstract_eval(
     prim, shape_rule, dtype_rule, weak_type_rule, sharding_rule, vma_rule,
     unreduced_rule, reduced_rule, memory_space_rule, *avals, **kwargs):
+  assert not prim.multiple_results
   for a in avals:
     if isinstance(a, state.AbstractRef):
       raise ValueError(f'Attempting to pass a Ref {a} to a primitive: '
@@ -181,8 +182,6 @@ def standard_abstract_eval(
     if not isinstance(a, core.ShapedArray):
       raise ValueError(f'Attempting to pass an unexpected type {a} to a '
                        f'primitive: {prim}')
-  assert all(isinstance(aval, core.ShapedArray) for aval in avals), avals
-  assert not prim.multiple_results
   weak_type = weak_type_rule(*avals, **kwargs)
   least_specialized = type(max(avals, key=_get_array_abstraction_level))
   if least_specialized is core.ShapedArray:
