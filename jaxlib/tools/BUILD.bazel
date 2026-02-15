@@ -34,7 +34,6 @@ load(
     "compare_srcs_and_test_deps_test",
     "get_test_suite_list",
     "if_pypi_cuda_wheel_deps",
-    "jax_py_test",
     "jax_wheel",
     "pytype_strict_library",
     "pytype_test",

@@ -14,8 +14,8 @@
 
 """JAX tools."""
 
-load("@rules_python//python:py_binary.bzl", "py_binary")
 load("@bazel_skylib//lib:shell.bzl", "shell")
+load("@rules_python//python:py_binary.bzl", "py_binary")
 
 def jax_to_hlo(name, deps, fn, input_shapes, constants = None):
     jax_to_ir(name, deps, fn, input_shapes, constants = constants, format = "HLO")

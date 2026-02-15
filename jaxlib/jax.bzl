@@ -299,7 +299,7 @@ def jax_multiplatform_test(
             test_deps += _gpu_test_deps()
             test_tags += tf_cuda_tests_tags()
         elif backend == "tpu":
-            test_deps += ["@pypi//libtpu"]
+            test_deps += ["@pypi//libtpu"]  # buildifier: disable=list-append
         py_test(
             name = name + "_" + backend,
             srcs = srcs,

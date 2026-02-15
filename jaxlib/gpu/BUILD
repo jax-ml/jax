@@ -14,6 +14,7 @@
 
 # Shared CUDA/ROCM GPU kernels.
 
+load("@com_google_protobuf//bazel:proto_library.bzl", "proto_library")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 # Placeholder: load proto_library
 
