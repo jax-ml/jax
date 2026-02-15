@@ -1591,7 +1591,8 @@ class RngShardingTest(jtu.JaxTestCase):
   # tests that the PRNGs are automatically sharded as expected
 
   @parameterized.named_parameters(("3", 3), ("4", 4), ("5", 5))
-  @jtu.skip_on_devices("gpu")
+  # TODO(#34358): Test on ROCm hardware to verify threefry_partitionable support
+  @jtu.skip_on_devices("cuda")
   def test_random_bits_is_pure_map_1d(self, num_devices):
     @jax.jit
     def f(x):
@@ -1625,7 +1626,8 @@ class RngShardingTest(jtu.JaxTestCase):
        "mesh_shape": mesh_shape, "pspec": pspec}
       for mesh_shape in [(3, 2), (4, 2), (2, 3)]
       for pspec in [P('x', None), P(None, 'y'), P('x', 'y')])
-  @jtu.skip_on_devices("gpu")
+  # TODO(#34358): Test on ROCm hardware to verify threefry_partitionable support
+  @jtu.skip_on_devices("cuda")
   def test_random_bits_is_pure_map_2d(self, mesh_shape, pspec):
     @jax.jit
     def f(x):
