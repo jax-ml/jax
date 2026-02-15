@@ -190,8 +190,13 @@ class CompatTest(jtu.JaxTestCase):
 
       if testdata is None:
         serialized = self.export_and_serialize(
-            f, a, platforms=("tpu", "cuda"))
+            f, a, platforms=("tpu", "cuda", "rocm"))
       else:
+
+        if jtu.is_device_rocm() and testdata["serialization_version"] < 6:
+          self.skipTest("ROCm serialization testdata is only available for "
+                        "serialization formats v6 and onwards.")
+
         serialized = testdata["exported_serialized"]
 
     exported = _export.deserialize(serialized)
