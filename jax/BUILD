@@ -181,6 +181,7 @@ py_library_providing_imports_info(
         "//jax/_src:compute_on",
         "//jax/_src:config",
         "//jax/_src:core",
+        "//jax/_src:cpu_lib_ops",
         "//jax/_src:cudnn",
         "//jax/_src:custom_api_util",
         "//jax/_src:custom_batching",
