@@ -922,6 +922,22 @@ class NNInitializersTest(jtu.JaxTestCase):
     ):
       initializer(rng, shape)
 
+  @jtu.sample_product(
+    initializer=[
+      nn.initializers.he_normal(),
+      nn.initializers.lecun_normal(),
+      nn.initializers.glorot_normal(),
+    ],
+    shape=[
+      (8, 0),
+      (0, 8),
+      (0, 0),
+    ],
+  )
+  def testVarianceScalingDivisionByZero(self, initializer, shape):
+    rng = random.PRNGKey(0)
+    initializer(rng, shape)
+
   def testIdentity(self):
     x  = jnp.array([1., 2., 3.])
     self.assertAllClose(nn.identity(x), x, check_dtypes=False)
