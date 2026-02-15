@@ -19,6 +19,7 @@ concurrency:
 env:
   UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
   PIP_INDEX_URL: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+  CI_UV_DEBUG: 'true'
 
 jobs:
   lint_and_typecheck:
@@ -28,16 +29,29 @@ jobs:
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
         with:
           persist-credentials: false
-      - name: Set up Python 3.11
-        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548  # v6.1.0
+      - name: Set up uv-managed Python 3.11
+        uses: ./.github/actions/setup-uv-python
         with:
-          python-version: 3.11
-      - run: python -m pip install pre-commit
+          python-version: '3.11'
+          summary-label: 'lint_and_typecheck'
+      - name: Mark dependency install start
+        if: ${{ env.CI_UV_DEBUG == 'true' }}
+        shell: bash
+        run: echo "DEPS_T0=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Install lint dependencies
+        shell: bash
+        run: uv pip install --python "$PYTHON_BIN" pre-commit
+      - name: Report dependency install duration
+        if: ${{ env.CI_UV_DEBUG == 'true' }}
+        shell: bash
+        run: |
+          echo "### lint_and_typecheck dependency install" >> "$GITHUB_STEP_SUMMARY"
+          echo "- duration: $(( $(date +%s) - DEPS_T0 ))s" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/pre-commit
-          key: pre-commit-${{ env.pythonLocation }}-${{ hashFiles('.pre-commit-config.yaml', 'setup.py') }}
-      - run: pre-commit run --show-diff-on-failure --color=always --all-files
+          key: pre-commit-${{ runner.os }}-py3.11-${{ hashFiles('.pre-commit-config.yaml', 'setup.py') }}
+      - run: $PYTHON_BIN -m pre_commit run --show-diff-on-failure --color=always --all-files
 
   build:
     # Don't execute in fork due to runner type
@@ -69,14 +83,24 @@ jobs:
       run: |
         apt update
         apt install -y libssl-dev
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548  # v6.1.0
+    - name: Set up uv-managed Python ${{ matrix.python-version }}
+      uses: ./.github/actions/setup-uv-python
       with:
         python-version: ${{ matrix.python-version }}
+        summary-label: "build (${{ matrix.python-version }})"
+    - name: Mark dependency install start
+      if: ${{ env.CI_UV_DEBUG == 'true' }}
+      shell: bash
+      run: echo "DEPS_T0=$(date +%s)" >> "$GITHUB_ENV"
     - name: Install dependencies
       run: |
-        pip install uv~=0.5.30
-        uv pip install --system .[minimum-jaxlib] -r build/test-requirements.txt
+        uv pip install --python "$PYTHON_BIN" .[minimum-jaxlib] -r build/test-requirements.txt
+    - name: Report dependency install duration
+      if: ${{ env.CI_UV_DEBUG == 'true' }}
+      shell: bash
+      run: |
+        echo "### build dependency install (${{ matrix.python-version }})" >> "$GITHUB_STEP_SUMMARY"
+        echo "- duration: $(( $(date +%s) - DEPS_T0 ))s" >> "$GITHUB_STEP_SUMMARY"
 
     - name: Run tests
       env:
@@ -94,7 +118,7 @@ jobs:
         echo "JAX_THREEFRY_PARTITIONABLE=$JAX_THREEFRY_PARTITIONABLE"
         echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
         echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
-        pytest -n auto --tb=short --maxfail=20 tests examples
+        $PYTHON_BIN -m pytest -n auto --tb=short --maxfail=20 tests examples
 
 
   documentation:
@@ -108,14 +132,24 @@ jobs:
     - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
       with:
         persist-credentials: false
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548  # v6.1.0
+    - name: Set up uv-managed Python ${{ matrix.python-version }}
+      uses: ./.github/actions/setup-uv-python
       with:
         python-version: ${{ matrix.python-version }}
+        summary-label: "documentation (${{ matrix.python-version }})"
+    - name: Mark dependency install start
+      if: ${{ env.CI_UV_DEBUG == 'true' }}
+      shell: bash
+      run: echo "DEPS_T0=$(date +%s)" >> "$GITHUB_ENV"
     - name: Install dependencies
       run: |
-        pip install uv~=0.5.30
-        uv pip install --system -r docs/requirements.txt
+        uv pip install --python "$PYTHON_BIN" -r docs/requirements.txt
+    - name: Report dependency install duration
+      if: ${{ env.CI_UV_DEBUG == 'true' }}
+      shell: bash
+      run: |
+        echo "### documentation dependency install (${{ matrix.python-version }})" >> "$GITHUB_STEP_SUMMARY"
+        echo "- duration: $(( $(date +%s) - DEPS_T0 ))s" >> "$GITHUB_STEP_SUMMARY"
     - name: Test documentation
       env:
         XLA_FLAGS: "--xla_force_host_platform_device_count=8"
@@ -123,8 +157,8 @@ jobs:
         JAX_ARRAY: 1
         PY_COLORS: 1
       run: |
-        pytest -n auto --tb=short --doctest-glob='*.md' --doctest-glob='*.rst' docs --doctest-continue-on-failure --ignore=docs/multi_process.md
-        pytest -n auto --tb=short --doctest-modules jax --ignore=jax/config.py --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/_src/lib/triton.py --ignore=jax/_src/lib/mosaic_gpu.py --ignore=jax/interpreters/mlir.py --ignore=jax/experimental/array_serialization --ignore=jax/collect_profile.py --ignore=jax/_src/tpu_custom_call.py --ignore=jax/experimental/mosaic --ignore=jax/experimental/pallas --ignore=jax/_src/pallas --ignore=jax/lib
+        $PYTHON_BIN -m pytest -n auto --tb=short --doctest-glob='*.md' --doctest-glob='*.rst' docs --doctest-continue-on-failure --ignore=docs/multi_process.md
+        $PYTHON_BIN -m pytest -n auto --tb=short --doctest-modules jax --ignore=jax/config.py --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/_src/lib/triton.py --ignore=jax/_src/lib/mosaic_gpu.py --ignore=jax/interpreters/mlir.py --ignore=jax/experimental/array_serialization --ignore=jax/collect_profile.py --ignore=jax/_src/tpu_custom_call.py --ignore=jax/experimental/mosaic --ignore=jax/experimental/pallas --ignore=jax/_src/pallas --ignore=jax/lib
 
 
   documentation_render:
@@ -144,17 +178,27 @@ jobs:
       run: |
         apt update
         apt install -y libssl-dev libsqlite3-dev build-essential
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548  # v6.1.0
+    - name: Set up uv-managed Python ${{ matrix.python-version }}
+      uses: ./.github/actions/setup-uv-python
       with:
         python-version: ${{ matrix.python-version }}
+        summary-label: "documentation_render (${{ matrix.python-version }})"
+    - name: Mark dependency install start
+      if: ${{ env.CI_UV_DEBUG == 'true' }}
+      shell: bash
+      run: echo "DEPS_T0=$(date +%s)" >> "$GITHUB_ENV"
     - name: Install dependencies
       run: |
-        pip install uv~=0.5.30
-        uv pip install --system -r docs/requirements.txt
+        uv pip install --python "$PYTHON_BIN" -r docs/requirements.txt
+    - name: Report dependency install duration
+      if: ${{ env.CI_UV_DEBUG == 'true' }}
+      shell: bash
+      run: |
+        echo "### documentation_render dependency install (${{ matrix.python-version }})" >> "$GITHUB_STEP_SUMMARY"
+        echo "- duration: $(( $(date +%s) - DEPS_T0 ))s" >> "$GITHUB_STEP_SUMMARY"
     - name: Render documentation
       run: |
-        sphinx-build -j auto --color -W --keep-going -b html docs docs/build/html
+        $PYTHON_BIN -m sphinx -j auto --color -W --keep-going -b html docs docs/build/html
 
   ffi:
     name: FFI example
@@ -166,16 +210,20 @@ jobs:
     - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
       with:
         persist-credentials: false
-    - name: Set up Python
-      uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548  # v6.1.0
+    - name: Set up uv-managed Python 3.12
+      uses: ./.github/actions/setup-uv-python
       with:
-        python-version: 3.12
+        python-version: '3.12'
+        summary-label: 'ffi'
+    - name: Mark dependency install start
+      if: ${{ env.CI_UV_DEBUG == 'true' }}
+      shell: bash
+      run: echo "DEPS_T0=$(date +%s)" >> "$GITHUB_ENV"
     - name: Install JAX
       run: |
-        pip install uv~=0.5.30
-        uv pip install --system .[cuda12]
+        uv pip install --python "$PYTHON_BIN" .[cuda12]
     - name: Build and install example project
-      run: uv pip install --system ./examples/ffi[test]
+      run: uv pip install --python "$PYTHON_BIN" ./examples/ffi[test]
       env:
         # We test building using GCC instead of clang. All other JAX builds use
         # clang, but it is useful to make sure that FFI users can compile using
@@ -183,9 +231,15 @@ jobs:
         # 'ubuntu-latest' runner, but we still set this explicitly just to be
         # clear.
         CMAKE_ARGS: -DCMAKE_CXX_COMPILER=g++ -DJAX_FFI_EXAMPLE_ENABLE_CUDA=ON
+    - name: Report dependency install duration
+      if: ${{ env.CI_UV_DEBUG == 'true' }}
+      shell: bash
+      run: |
+        echo "### ffi dependency install" >> "$GITHUB_STEP_SUMMARY"
+        echo "- duration: $(( $(date +%s) - DEPS_T0 ))s" >> "$GITHUB_STEP_SUMMARY"
     - name: Run CPU tests
-      run: python -m pytest examples/ffi/tests
+      run: $PYTHON_BIN -m pytest examples/ffi/tests
       env:
         JAX_PLATFORM_NAME: cpu
     - name: Run GPU tests
-      run: python -m pytest examples/ffi/tests
+      run: $PYTHON_BIN -m pytest examples/ffi/tests

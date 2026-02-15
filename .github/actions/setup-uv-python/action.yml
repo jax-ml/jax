@@ -1,0 +1,83 @@
+name: 'Setup uv-managed Python'
+description: 'Install uv, install/select Python, and emit setup timing debug summary.'
+
+inputs:
+  python-version:
+    description: 'Python version request for uv.'
+    required: true
+  summary-label:
+    description: 'Label used in GitHub step summary output.'
+    required: true
+  uv-version:
+    description: 'uv version to install.'
+    required: false
+    default: '0.10.2'
+  enable-cache:
+    description: 'Whether to enable uv cache uploads/restores.'
+    required: false
+    default: 'true'
+  cache-python:
+    description: 'Whether to cache uv-managed Python installations.'
+    required: false
+    default: 'true'
+
+outputs:
+  python-bin:
+    description: 'Selected Python interpreter path.'
+    value: ${{ steps.select_python.outputs.python_bin }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Mark Python setup start
+      if: ${{ env.CI_UV_DEBUG == 'true' }}
+      shell: bash
+      run: echo "PY_SETUP_T0=$(date +%s)" >> "$GITHUB_ENV"
+
+    - name: Install uv and set Python ${{ inputs.python-version }}
+      id: setup_uv
+      uses: astral-sh/setup-uv@eac588ad8def6316056a12d4907a9d4d84ff7a3b  # v7.3.0
+      with:
+        version: ${{ inputs.uv-version }}
+        python-version: ${{ inputs.python-version }}
+        enable-cache: ${{ inputs.enable-cache }}
+        cache-python: ${{ inputs.cache-python }}
+
+    - name: Install Python ${{ inputs.python-version }}
+      shell: bash
+      run: uv python install "${{ inputs.python-version }}"
+
+    - name: Create and select uv virtual environment
+      id: select_python
+      shell: bash
+      run: |
+        MANAGED_PYTHON_BIN="$(uv python find "${{ inputs.python-version }}")"
+        VENV_PATH="${RUNNER_TEMP:-/tmp}/uv-ci-venv"
+        uv venv --python "$MANAGED_PYTHON_BIN" "$VENV_PATH"
+        if [ -x "$VENV_PATH/bin/python" ]; then
+          PYTHON_BIN="$VENV_PATH/bin/python"
+        elif [ -x "$VENV_PATH/Scripts/python.exe" ]; then
+          PYTHON_BIN="$VENV_PATH/Scripts/python.exe"
+        else
+          echo "::error::Could not find Python executable in $VENV_PATH"
+          exit 1
+        fi
+        echo "python_bin=$PYTHON_BIN" >> "$GITHUB_OUTPUT"
+        echo "PYTHON_BIN=$PYTHON_BIN" >> "$GITHUB_ENV"
+        echo "VIRTUAL_ENV=$VENV_PATH" >> "$GITHUB_ENV"
+        echo "$(dirname "$PYTHON_BIN")" >> "$GITHUB_PATH"
+
+    - name: Debug sqlite smoke check
+      if: ${{ env.CI_UV_DEBUG == 'true' }}
+      shell: bash
+      run: |
+        "$PYTHON_BIN" -c "import sqlite3; print(sqlite3.sqlite_version)"
+
+    - name: Report Python setup duration
+      if: ${{ env.CI_UV_DEBUG == 'true' }}
+      shell: bash
+      run: |
+        echo "### ${{ inputs.summary-label }} Python setup" >> "$GITHUB_STEP_SUMMARY"
+        echo "- duration: $(( $(date +%s) - PY_SETUP_T0 ))s" >> "$GITHUB_STEP_SUMMARY"
+        echo "- uv cache hit: ${{ steps.setup_uv.outputs.cache-hit }}" >> "$GITHUB_STEP_SUMMARY"
+        echo "- python cache hit: ${{ steps.setup_uv.outputs.python-cache-hit }}" >> "$GITHUB_STEP_SUMMARY"
