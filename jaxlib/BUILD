@@ -15,6 +15,7 @@
 # JAX is Autograd and XLA
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load(
     "//jaxlib:jax.bzl",
     "cc_proto_library",
@@ -279,14 +280,17 @@ nanobind_pywrap_extension(
     srcs = ["weakref_lru_cache.cc"],
     pytype_srcs = ["weakref_lru_cache.pyi"],
     deps = [
+        ":reentrant_hash_map",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
         "@nanobind",
         "@xla//third_party/python_runtime:headers",
-        "@xla//xla/pjrt:lru_cache",
         "@xla//xla/tsl/platform:logging",
     ],
 )
@@ -1453,4 +1457,57 @@ py_strict_test(
         "absl/logging",
         "absl/testing",
     ]),
+)
+
+cc_library(
+    name = "reentrant_hash_set",
+    hdrs = ["reentrant_hash_set.h"],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/log:check",
+    ],
+)
+
+cc_library(
+    name = "reentrant_hash_map",
+    hdrs = ["reentrant_hash_map.h"],
+    deps = [
+        ":reentrant_hash_set",
+        "@com_google_absl//absl/hash",
+    ],
+)
+
+cc_test(
+    name = "reentrant_hash_test",
+    srcs = ["reentrant_hash_test.cc"],
+    copts = ["-fexceptions"],
+    features = ["-use_header_modules"],
+    deps = [
+        ":reentrant_hash_map",
+        ":reentrant_hash_set",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/random",
+        "@com_google_absl//absl/synchronization",
+        "@xla//xla/tsl/platform:env",
+        "@xla//xla/tsl/platform:test",
+        "@xla//xla/tsl/platform:test_main",
+    ],
+)
+
+cc_test(
+    name = "reentrant_hash_benchmark",
+    srcs = ["reentrant_hash_benchmark.cc"],
+    deps = [
+        ":reentrant_hash_map",
+        ":reentrant_hash_set",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/random",
+        "@com_google_absl//absl/random:distributions",
+        "@xla//xla/tsl/platform:test_benchmark",
+        "@xla//xla/tsl/platform:test_main",
+    ],
 )
