@@ -280,7 +280,7 @@ class VectorSubcoreMesh:
     if self.num_subcores != sc_info.num_subcores:
       raise ValueError(
           f"Mesh has {self.num_subcores} subcores, but the current TPU chip has"
-          f" only {num_expected} subcores"
+          f" only {sc_info.num_subcores} subcores"
       )
 
   @property

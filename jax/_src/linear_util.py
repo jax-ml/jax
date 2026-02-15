@@ -458,7 +458,7 @@ def cache(call: Callable, *,
       if do_explain := explain and config.explain_cache_misses.value:
         start = time.time()
       ans = call(fun, *args)
-      if do_explain:
+      if do_explain:  # pyrefly: ignore[unbound-name]  # pyrefly#2382
         explain(fun, cache is new_cache, cache, key, time.time() - start)  # type: ignore
       cache[key] = (ans, fun.stores)
 

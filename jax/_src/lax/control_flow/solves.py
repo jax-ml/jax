@@ -15,7 +15,7 @@
 import collections
 from functools import partial
 import operator
-from typing import Any
+from typing import Any, NamedTuple
 from collections.abc import Callable
 
 from jax._src import ad_util
@@ -173,8 +173,11 @@ def _root_jvp(const_lengths, jaxprs, primals, tangents):
   return solution, solution_dot
 
 
-class _LinearSolveTuple(collections.namedtuple(
-    '_LinearSolveTuple', 'matvec, vecmat, solve, transpose_solve')):
+class _LinearSolveTuple(NamedTuple):
+  matvec: Any
+  vecmat: Any
+  solve: Any
+  transpose_solve: Any
 
   def transpose(self):
     return type(self)(self.vecmat, self.matvec, self.transpose_solve, self.solve)

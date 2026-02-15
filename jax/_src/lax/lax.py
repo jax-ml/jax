@@ -2920,8 +2920,8 @@ def select_n(which: ArrayLike, *cases: ArrayLike) -> Array:
   """
   if len(cases) == 0:
     raise ValueError("select_n() must have at least one case")
-  which, *cases = core.standard_insert_pvary(which, *cases)
-  return select_n_p.bind(which, *cases)
+  which_pvary, *cases_pvary = core.standard_insert_pvary(which, *cases)
+  return select_n_p.bind(which_pvary, *cases_pvary)
 
 
 def transpose(operand: ArrayLike,
@@ -3882,12 +3882,12 @@ def _iter(tracer):
               for i in range(n))
     else:
       return (slicing.index_in_dim(tracer, i, keepdims=False) for i in range(n))
-ShapedArray._iter = staticmethod(_iter)
+ShapedArray._iter = staticmethod(_iter)  # type: ignore[bad-assignment]
 
 def _add_arrays(x, y):
   if (isinstance(a := core.get_aval(x), ShapedArray) and
       dtypes.issubdtype(a.dtype, dtypes.extended)):
-    return dtype._rules.add(dtype, x, y)  # pytype: disable=attribute-error
+    return a.dtype._rules.add(dtype, x, y)
   return add(x, y)
 
 for t in itertools.chain(
@@ -4112,8 +4112,8 @@ def _nary_lower_hlo(
   """
   del params
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
-  args = mlir.multi_broadcast_in_dim(ctx, args, avals_in, aval_out.shape,
-                                     aval_out.sharding)
+  args = tuple(mlir.multi_broadcast_in_dim(ctx, args, avals_in, aval_out.shape,
+                                           aval_out.sharding))
 
   out = op(*args)
   if accuracy:
@@ -4545,7 +4545,7 @@ def _integer_pow(x, *, y):
   is_reciprocal = y < 0
   if is_reciprocal:
     y = -y
-  acc = None
+  acc: Array | None = None
   while y > 0:
     if y & 1:
       acc = x if acc is None else mul(acc, x)
@@ -4553,6 +4553,7 @@ def _integer_pow(x, *, y):
     if y > 0:
       # We don't call square because it calls integer_pow.
       x = mul(x, x)
+  assert acc is not None
   return div(full_like(acc, 1), acc) if is_reciprocal else acc
 
 
@@ -6901,8 +6902,8 @@ def _pad_transpose(t, operand, padding_value, *, padding_config):
       unpad_config = safe_zip(np.negative(lo), np.negative(hi),
                               np.zeros_like(interior))
       unpadded = pad(t, np.array(0., t.dtype), unpad_config)
-      return slicing.slice(unpadded, np.zeros_like(lo), unpadded.shape,
-                           np.add(interior, 1))
+      return slicing.slice(unpadded, list(np.zeros_like(lo)), unpadded.shape,
+                           list(np.add(interior, 1)))
 
     t_operand = t_op() if ad.is_undefined_primal(operand) else None
     t_padv = sub(total(t), total(t_operand)) if ad.is_undefined_primal(padding_value) else None
@@ -7627,7 +7628,7 @@ def _reduce_jvp(reducer, init_values, primals, tangents, axes):
         xs2 = [pad(x2, i, paddings) for x2, i in zip(xs2, init_values)]
       xs = reducer(*(xs1 + xs2))
     if xs[0].shape[axis] == 0:
-      return [full(input_shape[non_axes], i) for i in init_values]
+      return [full(tuple(input_shape[non_axes]), i) for i in init_values]
     return tuple(squeeze(x, (axis,)) for x in xs)
 
   return api.jvp(_reduce_tree, primals, tangents)
@@ -8034,7 +8035,7 @@ def _canonicalize_float_for_sort(x):
 # https://github.com/tensorflow/tensorflow/blob/ba43780830f09da72081fe5061c436f1c6203a92/tensorflow/compiler/xla/client/lib/comparators.h#L33
 def _sort_lt_comparator(*operands, num_keys=1):
   x_keys, y_keys = _operands_to_keys(*operands, num_keys=num_keys)
-  p = None
+  p: Array | None = None
   for xk, yk in zip(x_keys[::-1], y_keys[::-1]):
     xk, yk = core.standard_insert_pvary(xk, yk)
     p = (bitwise_or(lt_to_p.bind(xk, yk), bitwise_and(eq_to_p.bind(xk, yk), p)) if p is not None
@@ -8045,7 +8046,7 @@ def _sort_lt_comparator(*operands, num_keys=1):
 # the searchsorted() implementation.
 def _sort_le_comparator(*operands, num_keys=1):
   x_keys, y_keys = _operands_to_keys(*operands, num_keys=num_keys)
-  p = None
+  p: Array | None = None
   for xk, yk in zip(x_keys[::-1], y_keys[::-1]):
     xk, yk = core.standard_insert_pvary(xk, yk)
     p = (bitwise_or(lt_to_p.bind(xk, yk), bitwise_and(eq_to_p.bind(xk, yk), p)) if p is not None
@@ -8771,7 +8772,7 @@ def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
     msg = "{} {} must be 1-dimensional, got {}."
     raise TypeError(msg.format(obj_arr.ndim))
   try:
-    canonicalize_shape(obj_arr)
+    canonicalize_shape(list(obj_arr))
   except TypeError as err:
     msg = "{} {} must have every element be an integer type, got {}."
     raise TypeError(msg.format(fun_name, arg_name, tuple(map(type, obj)))) from err

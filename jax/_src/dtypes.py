@@ -88,6 +88,7 @@ class ExtendedDType(StrictABC):
   @abc.abstractmethod
   def type(self) -> type: ...
 
+  _rules: Any = None
 
 # fp8 support
 float8_e3m4: type[np.generic] = ml_dtypes.float8_e3m4

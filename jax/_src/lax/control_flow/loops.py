@@ -203,9 +203,10 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     raise TypeError("lax.scan: f argument should be a callable.")
 
   dbg_body = api_util.debug_info("scan", f, (init, xs), {})
-  init = FlatTree.flatten(init)
-  xs = FlatTree.flatten(xs)
-  args = FlatTree.pack((init, xs))
+  init_flat = FlatTree.flatten(init)
+  xs_flat = FlatTree.flatten(xs)
+  args = FlatTree.pack((init_flat, xs_flat))
+  del init, xs
 
   args_avals = args.map(core.get_aval)
   init_avals, xs_avals = args_avals.unpack()
@@ -215,17 +216,17 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     if length is None:
       raise ValueError("must provide `length` to `scan`")
   else:
-    length = _infer_scan_length(list(xs), list(xs_avals), length)
+    length = _infer_scan_length(list(xs_flat), list(xs_avals), length)
 
   if config.disable_jit.value:
     if length == 0:
       raise ValueError("zero-length scan is not supported in disable_jit() "
                        "mode because the output type is unknown.")
-    carry = init.unflatten()
+    carry = init_flat.unflatten()
     ys = []
     maybe_reversed = reversed if reverse else lambda x: x
     for i in maybe_reversed(range(length)):
-      xs_slice = xs.map(lambda x: slicing.index_in_dim(x, i, keepdims=False))
+      xs_slice = xs_flat.map(lambda x: slicing.index_in_dim(x, i, keepdims=False))
       carry, y = f(carry, xs_slice.unflatten())
       ys.append(y)
     stack = lambda *ys: _stack(ys)
@@ -259,12 +260,12 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   carry_out_avals, ys_avals = out_avals.unpack()
   if len(carry_out_avals) != len(init_avals):
     _check_carry_type('scan body', f, init_avals, carry_out_avals)
-  init, changed = init.map3(
+  init_flat, changed = init_flat.map3(
      _promote_weak_typed_input,
      init_avals, carry_out_avals).unzip2()
-  num_carry, num_xs, num_ys = len(init), len(xs), len(ys_avals)
+  num_carry, num_xs, num_ys = len(init_flat), len(xs_flat), len(ys_avals)
   if any(changed):
-    init_avals = init.map(core.get_aval)
+    init_avals = init_flat.map(core.get_aval)
     jaxpr, out_avals, consts = _create_jaxpr(init_avals)
     carry_out_avals, ys_avals = out_avals.unpack()
 
@@ -284,7 +285,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   if unroll < 0:
     raise ValueError("`unroll` must be a `bool` or a non-negative `int`.")
 
-  args_flat = [*init.vals, *xs.vals]
+  args_flat = [*init_flat.vals, *xs_flat.vals]
 
   # If the body forwards an input carry to an output carry, that input is
   # read-only and can be moved to be a const. Doing so can lead to efficiency
@@ -300,6 +301,8 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     args_flat, new_consts = partition_list(move_to_const + [False] * num_xs, args_flat)
     consts = [*new_consts, *consts]
     num_carry -= len(new_consts)
+  else:
+    new_consts = []
 
   # When an extensive output is forwarded from an extensive input, we can
   # avoid copying it by pruning it from the jaxpr and forwarding manually. We
@@ -336,7 +339,7 @@ def _infer_scan_length(
     xs_flat: list[Any], xs_avals: list[AbstractValue],
     length: int | None) -> int:
   try:
-    lengths = [x.shape[0] for x in xs_flat]
+    lengths: list[int] = [x.shape[0] for x in xs_flat]
   except AttributeError as err:
     msg = "scan got value with no leading axis to scan over: {}."
     raise ValueError(
@@ -355,10 +358,6 @@ def _infer_scan_length(
              ' For scan-like iteration with a dynamic length, use `while_loop`'
              ' or `fori_loop`.')
       raise core.ConcretizationTypeError(length, msg) from None  # type: ignore[arg-type]
-    if not all(length == l for l in lengths):
-      msg = ("scan got `length` argument of {} which disagrees with "
-             "leading axis sizes {}.")
-      raise ValueError(msg.format(length, [x.shape[0] for x in xs_flat]))
   else:
     unique_lengths = set(lengths)
     if len(unique_lengths) > 1:
@@ -469,6 +468,7 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
   else:
     num_trips, remainder = divmod(length, unroll)
 
+  xs_rem: tuple[Array, ...] = ()
   if unroll != 1 and num_trips == 1 and remainder == 0:
     # In that case, we explicitly want to fully unroll the loop. Put everything
     # into the remainder block and avoid lowering to a while loop.
@@ -1108,7 +1108,7 @@ def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn
   return used_inputs, new_eqn
 
 # TODO(mattjj): de-duplicate code with _scan_partial_eval
-def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
+def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn: core.JaxprEqn):
   jaxpr = eqn.params['jaxpr']
   num_consts, num_carry = eqn.params['num_consts'], eqn.params['num_carry']
   num_ys = len(jaxpr.out_avals) - num_carry
@@ -1489,8 +1489,9 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
 
   cond_dbg = api_util.debug_info("while_cond", cond_fun, (init_val,), {})
   body_dbg = api_util.debug_info("while_body", body_fun, (init_val,), {})
-  init_val = FlatTree.flatten(init_val)  # type: ignore
-  init_aval = init_val.map(core.get_aval)
+  init_val_flat = FlatTree.flatten(init_val)
+  del init_val
+  init_aval = init_val_flat.map(core.get_aval)
 
   # The body input and output avals must match exactly. However, we want to account for
   # the case when init contains weakly-typed values (e.g. Python scalars), with avals that
@@ -1502,11 +1503,11 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
     _check_carry_type('while_loop body', body_fun, init_aval, body_out_avals)
     assert False, "shouldn't get here"
 
-  init_val, changed = init_val.map3(
+  init_val_flat, changed = init_val_flat.map3(
       _promote_weak_typed_input,
       init_aval, body_out_avals).unzip2()
   if any(changed):
-    init_aval = init_val.map(core.get_aval)
+    init_aval = init_val_flat.map(core.get_aval)
     cond_jaxpr, body_jaxpr, body_out_avals = _create_jaxpr(init_aval)
 
   cond_jaxpr, cond_consts = pe.separate_consts(cond_jaxpr)
@@ -1533,7 +1534,8 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   _, keep_cond_carry = split_list(keep_cond, [len(cond_consts)])
   move_to_const = _map(operator.not_, keep_cond_carry)
 
-  init_vals = list(init_val)  # type: ignore
+  init_vals = list(init_val_flat)
+  new_body_consts: list[Any] = []
   if any(move_to_const):
     cond_jaxpr = pe.close_jaxpr(cond_jaxpr_)
     body_jaxpr = pe.prune_closed_jaxpr_outputs(
@@ -2415,6 +2417,7 @@ def fori_loop(lower, upper, body_fun, init_val,
 
   # If we can specialize on the trip count, call scan instead of a while_loop
   # to enable efficient reverse-mode differentiation.
+  lower_ = upper_ = 0
   if core.is_concrete(lower) and core.is_concrete(upper):
     try:
       lower_ = int(lower)
