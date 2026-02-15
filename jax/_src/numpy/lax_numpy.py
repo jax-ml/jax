@@ -5828,9 +5828,6 @@ def _eye(N: DimSize, M: DimSize | None = None,
         dtype: DTypeLike | None = None) -> Array:
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype, "eye")
-  if isinstance(k, int):
-    k = lax._clip_int_to_valid_range(k, np.int32,
-                                              "`argument `k` of jax.numpy.eye")
   offset = util.ensure_arraylike("eye", k)
   if not (offset.shape == () and dtypes.issubdtype(offset.dtype, np.integer)):
     raise ValueError(f"k must be a scalar integer; got {k}")
