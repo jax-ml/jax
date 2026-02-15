@@ -486,7 +486,27 @@ class NNFunctionsTest(jtu.JaxTestCase):
     check_grads(nn.relu6, (-1.,), order=3, rtol=rtol)
     self.assertAllClose(jax.grad(nn.relu6)(0.), 0., check_dtypes=False)
     self.assertAllClose(jax.grad(nn.relu6)(6.), 0., check_dtypes=False)
+  def testPreluValue(self): 
+     x = jnp.array([[1.0, -1.0, 2.0, -2.0]], dtype=jnp.float32) 
+     a = jnp.array([0.1], dtype=jnp.float32) 
+     expected = jnp.where(x >= 0, x, a * x) 
+      
+     y = nn.prelu(x, a) 
+     self.assertTrue(jnp.allclose(y, expected, rtol=1e-6, atol=1e-6))
+  
+     y_scalar = nn.prelu(x, 0.1) 
+     self.assertTrue(jnp.allclose(y_scalar, expected, rtol=1e-6, atol=1e-6))
+    
+  def testPreluGrad(self):
+    x = jnp.array([[1.0, -1.0, 0.0, -2.0]], dtype=jnp.float32)
+        a = jnp.array([0.1], dtype=jnp.float32)
 
+        def sum(x, a):
+            return jnp.sum(nn.prelu(x, a))
+
+        check_grads(sum, (x, a), order=1, modes=["fwd", "rev"])
+    
+      
   def testSoftplusValue(self):
     val = nn.softplus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)

@@ -1472,26 +1472,40 @@ def scaled_dot_general(
   )
 
   return out
+  @jax.jit
+  @custom_jvp
+  def prelu(x: ArrayLike, a: ArrayLike) -> Array:
+    """
+    Applies the PReLU (Parametric ReLU) activation function element-wise. Similar to ReLU, but includes a slope parameter a that controls the slope for negative inputs, allowing the network to adaptively retain some negative information and prevent dead neurons.
 
-@custom_derivatives.custom_jvp
-@api.jit
-def log1mexp(x: ArrayLike) -> Array:
-  r"""Numerically stable calculation of :math:`\log(1 - \exp(-x))`.
 
-  This function is undefined for :math:`x < 0`.
 
-  Based on `TensorFlow's implementation <https://www.tensorflow.org/probability/api_docs/python/tfp/math/log1mexp>`_.
+    Args:
+        x (Array): Input tensor.
 
-  References:
-    .. [1] Martin Mächler. `Accurately Computing log(1 − exp(−|a|)) Assessed by the Rmpfr package.
-      <https://cran.r-project.org/web/packages/Rmpfr/vignettes/log1mexp-note.pdf>`_.
+
+        a (Array): Slope parameter.
+                             
+
+    Returns:
+        Output tensor with the PReLU activation applied.
+
+If x>= 0 it returns x.
+Otherwise, it returns x*a.
+Examples:
+x = jnp.array([0.1,0.2,3,-2])
+a = 0.1 (Placeholder scalar value, the a is trained through backpropagation)
+output: [ 0.1  0.2  3.  -0.2]
+
   """
-  x = numpy_util.ensure_arraylike("log1mexp", x)
-  c = jnp.log(2.0)
-  return jnp.where(
-      x < c,
-      jnp.log(-jnp.expm1(-x)),
-      jnp.log1p(-jnp.exp(-x)),
-  )
 
-log1mexp.defjvps(lambda g, ans, x: g / jnp.expm1(x))
+    x = jnp.asarray(x)
+    a = jnp.asarray(a)
+
+    return jnp.maximum(x, 0) + a * jnp.minimum(x, 0) # This approach is more idiomatical because it avoids boolean masking.
+    #prelu.defjvps(
+    #lambda g, ans, x, a: lax.select(x >= 0, g, a * g),       # f'(x) = 1 if x>= 0
+    #lambda g, ans, x, a: lax.select(x < 0, x * g, lax.full_like(g, 0))  # f'(x) = a if x<0
+)
+   
+    
