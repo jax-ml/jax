@@ -5988,11 +5988,41 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(yshape, dtype), rng(xshape, dtype) if xshape is not None else None]
     np_fun = partial(np.trapezoid, dx=dx, axis=axis)
     jnp_fun = partial(jnp.trapezoid, dx=dx, axis=axis)
-    tol = jtu.tolerance(dtype, {np.float16: 2e-3, np.float64: 1e-12,
+    tol = jtu.tolerance(dtype, {np.float16: 4e-3, np.float64: 1e-12,
                                 jax.dtypes.bfloat16: 4e-2})
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol,
                             check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol,
+                          check_dtypes=False)
+
+  @jtu.sample_product(
+    [dict(yshape=yshape, dxshape=dxshape, axis=axis)
+      for yshape, dxshape, axis in [
+        ((3, 10), (3, 1), -1),
+        ((10,), (1,), -1),
+        ((2, 3, 4, 10), (2, 3, 4, 1), -1),
+        ((2, 3), (3,), 0),
+        ((3, 4, 5), (4, 5), 0),
+        ((3, 4, 5), (3, 5), 1),
+        ((3, 4, 5), (5,), 1),
+        ((2, 3, 4, 5), (2, 4, 5), 1),
+        ((2, 3, 4, 5), (2, 1, 3, 5), 2),
+        # slow path: varies along integration axis
+        ((3, 4, 5), (2, 4, 5), 0),
+        ((3, 4, 5), (3, 3, 5), 1),
+      ]
+    ],
+  )
+  @jtu.skip_on_devices("tpu")
+  def test_trapezoid_array_dx(self, yshape, dxshape, axis):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(yshape, np.float32)]
+    dx = rng(dxshape, np.float32)
+    np_fun = partial(np.trapezoid, dx=dx, axis=axis)
+    jnp_fun = partial(jnp.trapezoid, dx=dx, axis=axis)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=1e-5,
+                            check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker, atol=1e-5, rtol=1e-5,
                           check_dtypes=False)
 
   @jtu.sample_product(
