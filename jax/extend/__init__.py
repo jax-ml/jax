@@ -37,6 +37,7 @@ Breaking changes will be announced via the
 """
 
 from jax.extend import (
+    ad as ad,
     backend as backend,
     core as core,
     linear_util as linear_util,
@@ -44,4 +45,7 @@ from jax.extend import (
     random as random,
     sharding as sharding,
     source_info_util as source_info_util,
+)
+from jax._src.extend.custom_primitive import (
+    custom_primitive as custom_primitive,
 )
