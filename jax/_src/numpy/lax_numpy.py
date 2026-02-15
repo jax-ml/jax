@@ -980,7 +980,7 @@ def histogram2d(x: ArrayLike, y: ArrayLike, bins: ArrayLike | list[ArrayLike] = 
 def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
                 range: Sequence[None | Array | Sequence[ArrayLike]] | None = None,
                 weights: ArrayLike | None = None,
-                density: bool | None = None) -> tuple[Array, list[Array]]:
+                density: bool | None = None) -> tuple[Array, tuple[Array, ...]]:
   """Compute an N-dimensional histogram.
 
   JAX implementation of :func:`numpy.histogramdd`.
@@ -1083,7 +1083,7 @@ def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
     for norm in ix_(*dedges):
       hist /= norm
 
-  return hist, bin_edges_by_dim
+  return hist, tuple(bin_edges_by_dim)
 
 
 @export
@@ -2998,7 +2998,7 @@ def broadcast_shapes(*shapes):
 
 
 @export
-def broadcast_arrays(*args: ArrayLike) -> list[Array]:
+def broadcast_arrays(*args: ArrayLike) -> tuple[Array, ...]:
   """Broadcast arrays to a common shape.
 
   JAX implementation of :func:`numpy.broadcast_arrays`. JAX uses NumPy-style
@@ -3019,7 +3019,7 @@ def broadcast_arrays(*args: ArrayLike) -> list[Array]:
     >>> x = jnp.arange(3)
     >>> y = jnp.int32(1)
     >>> jnp.broadcast_arrays(x, y)
-    [Array([0, 1, 2], dtype=int32), Array([1, 1, 1], dtype=int32)]
+    (Array([0, 1, 2], dtype=int32), Array([1, 1, 1], dtype=int32))
 
     >>> x = jnp.array([[1, 2, 3]])
     >>> y = jnp.array([[10],
@@ -5108,17 +5108,17 @@ def block(arrays: ArrayLike | list[ArrayLike]) -> Array:
 
 
 @overload
-def atleast_1d() -> list[Array]:
+def atleast_1d() -> tuple[()]:
   ...
 @overload
 def atleast_1d(x: ArrayLike, /) -> Array:
   ...
 @overload
-def atleast_1d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
+def atleast_1d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> tuple[Array, ...]:
   ...
 @export
 @api.jit
-def atleast_1d(*arys: ArrayLike) -> Array | list[Array]:
+def atleast_1d(*arys: ArrayLike) -> Array | tuple[Array, ...]:
   """Convert inputs to arrays with at least 1 dimension.
 
   JAX implementation of :func:`numpy.atleast_1d`.
@@ -5150,30 +5150,30 @@ def atleast_1d(*arys: ArrayLike) -> Array | list[Array]:
     Array([0, 1, 2, 3], dtype=int32)
 
     Multiple arguments can be passed to the function at once, in which
-    case a list of results is returned:
+    case a tuple of results is returned:
 
     >>> jnp.atleast_1d(x, y)
-    [Array([1.], dtype=float32), Array([0, 1, 2, 3], dtype=int32)]
+    (Array([1.], dtype=float32), Array([0, 1, 2, 3], dtype=int32))
   """
   util.check_arraylike("atleast_1d", *arys, emit_warning=True)
   if len(arys) == 1:
     return array(arys[0], copy=False, ndmin=1)
   else:
-    return [array(arr, copy=False, ndmin=1) for arr in arys]
+    return tuple(array(arr, copy=False, ndmin=1) for arr in arys)
 
 
 @overload
-def atleast_2d() -> list[Array]:
+def atleast_2d() -> tuple[()]:
   ...
 @overload
 def atleast_2d(x: ArrayLike, /) -> Array:
   ...
 @overload
-def atleast_2d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
+def atleast_2d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> tuple[Array, ...]:
   ...
 @export
 @api.jit
-def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
+def atleast_2d(*arys: ArrayLike) -> Array | tuple[Array, ...]:
   """Convert inputs to arrays with at least 2 dimensions.
 
   JAX implementation of :func:`numpy.atleast_2d`.
@@ -5213,31 +5213,31 @@ def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
            [1., 1., 1.]], dtype=float32)
 
     Multiple arguments can be passed to the function at once, in which
-    case a list of results is returned:
+    case a tuple of results is returned:
 
     >>> jnp.atleast_2d(x, y)
-    [Array([[1.]], dtype=float32), Array([[0, 1, 2, 3]], dtype=int32)]
+    (Array([[1.]], dtype=float32), Array([[0, 1, 2, 3]], dtype=int32))
   """
   # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
   util.check_arraylike("atleast_2d", *arys, emit_warning=True)
   if len(arys) == 1:
     return array(arys[0], copy=False, ndmin=2)
   else:
-    return [array(arr, copy=False, ndmin=2) for arr in arys]
+    return tuple(array(arr, copy=False, ndmin=2) for arr in arys)
 
 
 @overload
-def atleast_3d() -> list[Array]:
+def atleast_3d() -> tuple[()]:
   ...
 @overload
 def atleast_3d(x: ArrayLike, /) -> Array:
   ...
 @overload
-def atleast_3d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
+def atleast_3d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> tuple[Array, ...]:
   ...
 @export
 @api.jit
-def atleast_3d(*arys: ArrayLike) -> Array | list[Array]:
+def atleast_3d(*arys: ArrayLike) -> Array | tuple[Array, ...]:
   """Convert inputs to arrays with at least 3 dimensions.
 
   JAX implementation of :func:`numpy.atleast_3d`.
@@ -5300,7 +5300,7 @@ def atleast_3d(*arys: ArrayLike) -> Array | list[Array]:
       arr = lax.expand_dims(arr, dimensions=(2,))
     return arr
   else:
-    return [atleast_3d(arr) for arr in arys]
+    return tuple(atleast_3d(arr) for arr in arys)
 
 
 @export
@@ -6055,7 +6055,7 @@ def _arange_dynamic(
 
 @export
 def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
-             indexing: str = 'xy') -> list[Array]:
+             indexing: str = 'xy') -> tuple[Array, ...]:
   """Construct N-dimensional grid arrays from N 1-dimensional vectors.
 
   JAX implementation of :func:`numpy.meshgrid`.
@@ -6131,7 +6131,7 @@ def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
   output = [lax.broadcast_in_dim(a, _a_shape(i, a), (i,)) for i, a, in enumerate(args)]
   if indexing == "xy" and len(args) >= 2:
     output[0], output[1] = output[1], output[0]
-  return output
+  return tuple(output)
 
 
 @export
