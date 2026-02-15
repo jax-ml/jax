@@ -2238,6 +2238,12 @@ jax_dump_ir_modes = string_flag(
          "default), 'jaxpr', or 'eqn_count_pprof' for "
          "jaxpr equation count pprof profile.")
 
+jax_mosaic_tpu_allow_hlo = bool_state(
+    name='jax_mosaic_tpu_allow_hlo',
+    default=False,
+    help='Allow HLO dialects in Mosaic.',
+)
+
 jax_ragged_dot_use_ragged_dot_instruction = bool_state(
     name='jax_ragged_dot_use_ragged_dot_instruction',
     default=True,

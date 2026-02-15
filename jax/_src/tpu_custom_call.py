@@ -45,12 +45,6 @@ try:
 except ImportError:
   FLAGS = {}
 
-_MOSAIC_ALLOW_HLO = config.bool_state(
-    name="jax_mosaic_allow_hlo",
-    default=False,
-    help="Allow hlo dialects in Mosaic",
-)
-
 
 # Controls the IR serialization version. Upon incrementing the
 # default version in jaxlib/mosaic/dialect/tpu/transforms/serde.cc we must
@@ -571,7 +565,7 @@ def _lower_to_custom_call_config(
     tiling: Tiling | None = None,
 ) -> CustomCallBackendConfig:
   device_type = _get_device_type(module)
-  needs_hlo_passes = _MOSAIC_ALLOW_HLO.value
+  needs_hlo_passes = config.jax_mosaic_tpu_allow_hlo.value
   if needs_layout_passes is None:
     needs_layout_passes = not device_type
   lowered_module_asm, (
