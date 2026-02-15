@@ -2963,6 +2963,8 @@ def reduce(operands: Any,
   ``computation``, and ``computation`` must be associative. XLA may exploit both
   of these properties during code generation; if either is violated the result
   is undefined.
+
+  ``init_values`` must consist of scalars.
   """
   flat_operands, operand_tree = tree_util.tree_flatten(operands)
   comp_debug = api_util.debug_info("reduce comp", computation,
