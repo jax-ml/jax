@@ -2136,19 +2136,19 @@ def _temporary_dtype_exception(a, a_) -> bool:
 def vjp(fun: Callable[..., T],
         *primals: Any,
         has_aux: Literal[False] = False,
-        reduce_axes: Sequence[AxisName] = ()) -> tuple[T, Callable]:
+        reduce_axes: Sequence[AxisName] = ()) -> tuple[T, VJP]:
   ...
 
 @overload
 def vjp(fun: Callable[..., tuple[T, U]], *primals: Any,
         has_aux: Literal[True],
-        reduce_axes: Sequence[AxisName] = ()) -> tuple[T, Callable, U]:
+        reduce_axes: Sequence[AxisName] = ()) -> tuple[T, VJP, U]:
   ...
 
 @partial(api_boundary, repro_api_name="jax.vjp")
 def vjp(
     fun: Callable, *primals, has_aux: bool = False, reduce_axes=()
-  ) -> tuple[Any, Callable] | tuple[Any, Callable, Any]:
+  ) -> tuple[Any, VJP] | tuple[Any, VJP, Any]:
   """Compute a (reverse-mode) vector-Jacobian product of ``fun``.
 
   :py:func:`grad` is implemented as a special case of :py:func:`vjp`.
