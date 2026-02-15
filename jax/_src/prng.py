@@ -308,6 +308,12 @@ class PRNGKeyArray(Array):
                     " Use jax.random.key_data(arr) if you wish to extract the underlying"
                     " integer array.")
 
+  # Python 3.11 pickle doesn't find __getstate__ in the parent C class
+  # (See https://github.com/jax-ml/jax/issues/35065).
+  # TODO(jakevdp): remove this when we drop support for Python 3.11.
+  def __getstate__(self):
+    return super().__getstate__()
+
   # Overwritten immediately below
   @property
   def at(self)                  -> _IndexUpdateHelper: assert False  # type: ignore[override]
@@ -537,7 +543,7 @@ def iterated_vmap_binary_bcast(shape1, shape2, f):
     else:
       return lambda x, y: iterated_vmap_unary(ndim1, lambda x: f(x, y))(x)
   assert len(shape1) == len(shape2)
-  for sz1, sz2 in reversed(zip(shape1, shape2)):
+  for sz1, sz2 in reversed(zip(shape1, shape2)):  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
     if sz1 == sz2:
       f = api.vmap(f, out_axes=0)
     else:

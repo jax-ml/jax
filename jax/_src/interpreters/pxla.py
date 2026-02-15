@@ -492,7 +492,7 @@ class MapTrace(core.Trace):
     tracers = map(self.to_map_tracer, tracers)
     vals, shard_axes = unzip2([(t.val, t.shard_axes) for t in tracers])
     names = core.get_axis_env().axis_names()
-    all_axes = tuple(_map_schedule(map(s.get, names)) for s in shard_axes)  # pytype: disable=wrong-arg-types  # always-use-return-annotations
+    all_axes = tuple(_map_schedule(map(s.get, names)) for s in shard_axes)  # pytype: disable=wrong-arg-types  # always-use-return-annotations  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
     f_mapped, out_shard_axes = _multi_pmap(f, self.emap_info, names, all_axes)
     with core.eval_context(), api.disable_jit(False):
       outvals = f_mapped(*vals)
@@ -1956,8 +1956,8 @@ def _cached_lowering_to_hlo(closed_jaxpr: core.ClosedJaxpr, module_name, backend
   axis_ctx: mlir.AxisContext
 
   if nreps == 1:
-    in_mlir_shardings = map(_to_logical_sharding, in_avals, in_shardings)
-    out_mlir_shardings = map(_to_logical_sharding, out_avals, out_shardings)
+    in_mlir_shardings = map(_to_logical_sharding, in_avals, in_shardings)  # pyrefly: ignore[bad-assignment]  # pyrefly#2385
+    out_mlir_shardings = map(_to_logical_sharding, out_avals, out_shardings)  # pyrefly: ignore[bad-assignment]  # pyrefly#2385
     replicated_args = [False] * len(in_avals)
     axis_ctx = sharding_impls.ShardingContext(num_devices, device_assignment,
                                               abstract_mesh)

@@ -105,7 +105,7 @@ def linearize_subtrace(_f: Callable, _store: lu.Store, _tag: core.TraceTag,
   nzs_out = tuple(type(t) is not Zero for t in out_tangents)
   out_tangents = tuple(t for t, nz in zip(out_tangents, nzs_out) if nz)
   out_tangents = map(partial(tangent_trace.to_jaxpr_tracer, source_info=source_info), out_tangents)  # type: ignore[assignment]
-  jaxpr, consts = tangent_trace.to_jaxpr(out_tangents, debug_info.with_unknown_names(), source_info)
+  jaxpr, consts = tangent_trace.to_jaxpr(out_tangents, debug_info.with_unknown_names(), source_info)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   which_env = [(isinstance(c, pe.DynamicJaxprTracer) and
                 getattr(c._trace, 'tag', None) is _tag) for c in consts]
   jaxpr = pe.move_envvars(jaxpr, tuple(which_env))
@@ -214,7 +214,7 @@ def _linearize_jaxpr(
   primals_and_residuals = map(partial(primal_trace.to_jaxpr_tracer, source_info=source_info),
                               primals_and_residuals)
   primal_jaxpr, primal_consts = primal_trace.to_jaxpr(
-      primals_and_residuals, dbg.with_unknown_names(),
+      primals_and_residuals, dbg.with_unknown_names(),  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       source_info)
   primal_trace.invalidate()
   primal_jaxpr, primal_consts = _dce_consts(primal_jaxpr, primal_consts)
@@ -260,7 +260,7 @@ def direct_linearize(traceable: lu.WrappedFun, primals, kwargs, *,
   out_nz_tangents = [t for t, nz in zip(out_tangents, out_nzs) if nz]
   out_nz_tangents = map(partial(tangent_trace.to_jaxpr_tracer,
                                 source_info=source_info), out_nz_tangents)
-  jaxpr, consts = tangent_trace.to_jaxpr(out_nz_tangents, dbg, source_info)
+  jaxpr, consts = tangent_trace.to_jaxpr(out_nz_tangents, dbg, source_info)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   tangent_trace.invalidate()
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   jaxpr, used_consts, _ = pe.dce_jaxpr_consts(
@@ -1399,7 +1399,7 @@ def _custom_lin_transpose(cts_out, *invals, num_res,
     cts_out = map(instantiate_zeros, cts_out)
   cts_in = bwd.call_wrapped(*res, *cts_out)
   cts_in = map(replace_rule_output_symbolic_zeros, cts_in)
-  nz_cts_in, _ = partition_list(in_zeros, cts_in)
+  nz_cts_in, _ = partition_list(in_zeros, cts_in)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   return [None] * num_res + nz_cts_in
 primitive_transposes[custom_lin_p] = _custom_lin_transpose
 

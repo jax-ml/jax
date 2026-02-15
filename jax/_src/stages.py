@@ -54,10 +54,8 @@ from jax._src.lib import xla_client as xc
 from jax._src.tree_util import tree_structure, tree_unflatten
 from jax._src.core import typeof
 
-
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
-
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -436,7 +434,6 @@ class Traced(Stage):
     out_flat = core.jaxpr_as_fun(self.jaxpr)(*args_flat)
     return tree_unflatten(self.out_tree, out_flat)
 
-
   @property
   def lojax(self) -> LoJax:
     if self._lojax is not None:
@@ -532,7 +529,6 @@ class LoJax:
   _num_consts = property(lambda self: len(self._consts))
 
 
-
 class Lowered(Stage):
   """Lowering of a function specialized to argument types and values.
 
@@ -594,20 +590,11 @@ class Lowered(Stage):
       self, compiler_options: CompilerOptions | None = None, *,
       device_assignment: tuple[xc.Device, ...] | None = None) -> Compiled:
     """Compile, returning a corresponding ``Compiled`` instance."""
-
-    kw: dict[str, Any] = {
-        "compiler_options": compiler_options,
-        "device_assignment": device_assignment
-    }
-    return Compiled(
-        self._lowering.compile(**kw),  # pytype: disable=wrong-keyword-args
-        self._lowering.const_args,
-        self.args_info,
-        self.out_tree,
-        self._no_kwargs,
-        self._in_types,
-        self._out_types,
-    )
+    kw: dict[str, Any] = {"compiler_options": compiler_options,
+                          "device_assignment": device_assignment}
+    return Compiled(self._lowering.compile(**kw), self._lowering.const_args,  # type: ignore
+                    self.args_info, self.out_tree, self._no_kwargs,
+                    self._in_types, self._out_types)
 
   def as_text(self, dialect: str | None = None, *,
               debug_info: bool = False) -> str:

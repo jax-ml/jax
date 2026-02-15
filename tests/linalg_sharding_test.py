@@ -158,6 +158,12 @@ class LinalgShardingTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("gpu", "cpu")
   def test_batch_axis_sharding_jvp(self, fun_and_shapes, dtype):
+    if (jtu.is_device_rocm() and
+        fun_and_shapes[0] is lax.linalg.qr and
+        dtype == np.complex64):
+      # numerical errors seen as of ROCm 7.2 due to rocSolver issue for qr with complex64
+      # TODO: re-enable the test once the rocSolver issue is fixed
+      self.skipTest("test_batch_axis_sharding_jvp13 not supported on ROCm due to rocSolver issue")
     fun, shapes = self.get_fun_and_shapes(fun_and_shapes, grad=True)
     primals = self.get_args(shapes, dtype, batch_size=8)
     tangents = tuple(map(jnp.ones_like, primals))

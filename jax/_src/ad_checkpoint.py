@@ -646,7 +646,7 @@ def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
                        for x in jaxpr_unknown.outvars]
   if isinstance(prevent_cse, tuple):
     _, prevent_cse_ = partition_list(in_used_staged, prevent_cse)
-    prevent_cse = (True,) * len(res_tracers) + tuple(prevent_cse_)
+    prevent_cse = (True,) * len(res_tracers) + tuple(prevent_cse_)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   new_params = dict(params, jaxpr=jaxpr_unknown, differentiated=True,
                     prevent_cse=prevent_cse)
   recipe = pe.new_eqn_recipe(trace, in_jaxpr_tracers, out_jaxpr_tracers, remat_p,
@@ -887,7 +887,7 @@ def _remat_lowering(
     barrier_op = hlo.OptimizationBarrierOp(
         mlir.flatten_ir_values(barrier_args))
     barrier_results = mlir.unflatten_ir_values_like_types(
-        barrier_op.results, map(mlir.aval_to_ir_type, barrier_avals))
+        barrier_op.results, map(mlir.aval_to_ir_type, barrier_avals))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
     args = merge_lists(prevent_cse, other_args, barrier_results)  # type: ignore
   outs, tokens_out = mlir.jaxpr_subcomp(
       ctx.module_context, jaxpr, ctx.name_stack.extend('checkpoint'),

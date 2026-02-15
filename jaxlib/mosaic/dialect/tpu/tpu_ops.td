@@ -293,6 +293,7 @@ def TPU_StoreOp : TPU_Op<"store", [DefaultMemWrite, AttrSizedOperandSegments]> {
   let assemblyFormat = [{
     $base `[` $indices `]` `,` $valueToStore (`masked` $mask^)? `sublanes` $sublane_mask  (`sublane_stride` $sublane_stride^)? attr-dict `:` type($base) `,` type($valueToStore) `,` type($mask)
   }];
+  let hasCanonicalizeMethod = 1;
 }
 
 def TPU_LoadOp : TPU_Op<"load", [DefaultMemRead]> {
@@ -311,6 +312,7 @@ def TPU_LoadOp : TPU_Op<"load", [DefaultMemRead]> {
     When `indices` are negative, it means loading from negative offset
     of `base` address.
   }];
+  let hasCanonicalizeMethod = 1;
 }
 
 // TODO(jevinjiang): migrate tpu.strided_store to general vector store op.

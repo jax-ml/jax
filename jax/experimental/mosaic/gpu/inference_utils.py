@@ -258,30 +258,6 @@ def _value_attr(value: ir.Value, attr_type: str) -> ir.Attribute | None:
   )
 
 
-def value_layout(value: ir.Value) -> ir.Attribute | None:
-  """Returns the layout for a given value as defined by its owner.
-
-  Raises:
-    ValueError: If `result` is not a Vector.
-  """
-  if not isinstance(value.type, ir.VectorType):
-    raise ValueError(f"{value} is not a vector.")
-
-  return _value_attr(value, "layouts")
-
-
-def value_transforms(value: ir.Value) -> ir.Attribute | None:
-  """Returns the transforms for a given value as defined by its owner.
-
-  Raises:
-    ValueError: If `result` is not a memref.
-  """
-  if not isinstance(value.type, ir.MemRefType):
-    raise ValueError(f"{value} is not a memref.")
-
-  return _value_attr(value, "transforms")
-
-
 def is_mma_layout(layout: fa.FragmentedLayout) -> bool:
   if not isinstance(layout, fa.TiledLayout):
     return False

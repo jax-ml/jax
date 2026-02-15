@@ -80,13 +80,6 @@ def hoist_consts_to_refs(
   return hoisted_jaxpr
 
 
-def val_to_ref_aval(x) -> AbstractRef:
-  aval = core.get_aval(x)
-  if type(aval) is not core.ShapedArray:
-    raise TypeError(f"can't make ref from {x}")
-  return AbstractRef(aval)
-
-
 def bitcast(x, dtype: DTypeLike):
   x_bitwidth = dtypes.itemsize_bits(x.dtype)
   y_bitwidth = dtypes.itemsize_bits(dtype)

@@ -17,18 +17,18 @@ bazel_dep(name = "rules_python", version = "1.6.1")
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-oeeg2T6kykUWIsmsdk6UMiWLG0/jXsNSZmVIXypeDHg=",
-    strip_prefix = "rules_ml_toolchain-4414c8de64a0e3723a24097092d8c8c4b771e96a",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/4414c8de64a0e3723a24097092d8c8c4b771e96a.tar.gz"],
+    integrity = "sha256-KIfZtJ4Y7132+HQ4pNmXWUCNIaH0Y8YfS+arMdiS3Ig=",
+    strip_prefix = "rules_ml_toolchain-de6fc6c38ea0368a198daa3f8c7cb829cc8db185",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/de6fc6c38ea0368a198daa3f8c7cb829cc8db185.tar.gz"],
 )
 
 # TODO: use a released version when available
 bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
-    integrity = "sha256-gFS7F8PpMBagFUVEKSljYyb+7g4xM+uE7e9Eo6aceWc=",
-    strip_prefix = "xla-e0a75749fa93ecff45e6b97243902addb72cd7b2",
-    urls = ["https://github.com/openxla/xla/archive/e0a75749fa93ecff45e6b97243902addb72cd7b2.tar.gz"],
+    integrity = "sha256-ZnPOKLqQeji6JQg82euRYUoJkC8tgblbutZGTjV+vkU=",
+    strip_prefix = "xla-3eb5197b71e3771a69defc25e491b1299d6b93f3",
+    urls = ["https://github.com/openxla/xla/archive/3eb5197b71e3771a69defc25e491b1299d6b93f3.tar.gz"],
 )
 
 # TODO: upstream, otherwise we have to duplicate the patches in jax
