@@ -150,14 +150,14 @@ EOF
 
     # Create a genrule which invokes the py_binary created above.
     #
-    # Set JAX_PLATFORM_NAME to "cpu" to silence the "no GPU/TPU backend found,
+    # Set JAX_PLATFORMS to "cpu" to silence the "no GPU/TPU backend found,
     # falling back to CPU" warning.
     native.genrule(
         name = name + "_jax_to_ir_genrule",
         outs = [name + ".pb", name + ".txt"],
         tools = [runner],
         cmd = """
-        JAX_PLATFORM_NAME=cpu \
+        JAX_PLATFORMS=cpu \
         '$(location {runner})' \
           --fn {fn} \
           --input_shapes {input_shapes} \

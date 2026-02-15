@@ -245,6 +245,6 @@ def train_loop(config: Config):
 
 
 if __name__ == "__main__":
-  jax.config.update("jax_platform_name", "cpu")
+  jax.config.update("jax_platforms", "cpu")
   jax.config.update("jax_num_cpu_devices", 8)
   train_loop(config=Config())
