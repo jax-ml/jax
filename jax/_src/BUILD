@@ -86,9 +86,16 @@ pytype_strict_library(
     name = "indexing",
     srcs = ["indexing.py"],
     deps = [
+        ":api",
         ":core",
+        ":dtypes",
+        ":errors",
+        ":lax",
+        ":literals",
+        ":sharding_impls",
         ":tree_util",
         ":typing",
+        ":util",
     ],
 )
 
