@@ -61,6 +61,22 @@ jax_multiprocess_test(
 )
 
 jax_multiprocess_test(
+    name = "array_serialization_test",
+    srcs = ["array_serialization_test.py"],
+    enable_backends = [
+        "cpu",
+        "tpu",
+    ],
+    main = "array_serialization_test.py",
+    deps = [
+        "//jax/_src:test_multiprocess",
+        "//jax/experimental/array_serialization:pytree_serialization",
+        "//jax/experimental/array_serialization:serialization",
+        "//jax/experimental/array_serialization:tensorstore_impl",
+    ],
+)
+
+jax_multiprocess_test(
     name = "axis_index_test",
     srcs = ["axis_index_test.py"],
     main = "axis_index_test.py",
@@ -136,6 +152,46 @@ jax_multiprocess_test(
         None,
     ),  # b/453057226
     main = "multihost_utils_test.py",
+    deps = [
+        "//jax/_src:test_multiprocess",
+    ],
+)
+
+jax_multiprocess_test(
+    name = "multi_worker_hang_test",
+    srcs = ["multi_worker_hang_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
+    },
+    main = "multi_worker_hang_test.py",
+    deps = [
+        "//jax/_src:test_multiprocess",
+    ],
+)
+
+jax_multiprocess_test(
+    name = "multi_worker_hang_test_with_poll_for_error",
+    srcs = ["multi_worker_hang_test.py"],
+    args = [
+        "--extra_test_args=--jax_distributed_poll_for_error_at_startup=true",
+    ],
+    backend_tags = {
+        "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
+    },
+    main = "multi_worker_hang_test.py",
+    deps = [
+        "//jax/_src:test_multiprocess",
+    ],
+)
+
+jax_multiprocess_test(
+    name = "multi_worker_poll_for_error_test",
+    srcs = ["multi_worker_poll_for_error_test.py"],
+    args = [
+        "--extra_test_args=--jax_distributed_poll_for_error_at_startup=true",  # DO NOT SUBMIT internal flag
+    ],
+    enable_backends = ["tpu"],
+    main = "multi_worker_poll_for_error_test.py",
     deps = [
         "//jax/_src:test_multiprocess",
     ],
