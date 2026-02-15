@@ -5744,6 +5744,28 @@ def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
           "algorithm": dot_algorithm_attr(precision, lhs_dtype, rhs_dtype)
       }
   else:
+    # On GPU, non-DEFAULT precision_config values (HIGH, HIGHEST) can cause
+    # crashes inside while loop bodies (e.g. from jax.lax.scan). Since on GPU,
+    # HIGH has the same effect as DEFAULT (both use TF32 where available), we
+    # normalize HIGH to DEFAULT. For HIGHEST (full f32 precision), we convert
+    # to the F32_F32_F32 algorithm preset which uses the algorithm attribute
+    # instead of precision_config to specify the computation type.
+    if platform in ("cuda", "rocm") and isinstance(precision, tuple):
+      if any(p is Precision.HIGHEST for p in precision):
+        if lhs_dtype == np.float32 and rhs_dtype == np.float32:
+          # Convert to F32_F32_F32 algorithm to get full f32 precision without
+          # using non-DEFAULT precision_config.
+          precision = DotAlgorithmPreset.F32_F32_F32
+          algorithm_kwarg = {
+              "algorithm": dot_algorithm_attr(precision, lhs_dtype, rhs_dtype)
+          }
+        else:
+          # For non-f32 dtypes, HIGHEST on GPU is treated as DEFAULT.
+          precision = (Precision.DEFAULT, Precision.DEFAULT)
+      elif any(p is not Precision.DEFAULT for p in precision):
+        # HIGH == DEFAULT on GPU (both use TF32). Normalize to DEFAULT.
+        precision = (Precision.DEFAULT, Precision.DEFAULT)
+
     # TODO(b/...): JAX's dot_general primitive accepts the same input dtype
     # combinations that are accepted in XLA's shape_inference.cc (the canonical
     # reference for the HLO type system), but actually different XLA platforms
@@ -5765,15 +5787,15 @@ def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
                                  core.ShapedArray(lhs_aval.shape, aval_out.dtype))
           rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
                                  core.ShapedArray(rhs_aval.shape, aval_out.dtype))
-  return lhs, rhs, accumulation_aval, algorithm_kwarg
+  return lhs, rhs, accumulation_aval, algorithm_kwarg, precision
 
 
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: np.dtype | None,
                        out_sharding, platform: str = "default"):
   del preferred_element_type  # Implied by the output aval
-  lhs, rhs, accumulation_aval, algorithm_kwarg = _handle_dot_precision(
-      ctx, lhs, rhs, precision, platform
+  lhs, rhs, accumulation_aval, algorithm_kwarg, precision = (
+      _handle_dot_precision(ctx, lhs, rhs, precision, platform)
   )
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   dot_dnums = hlo.DotDimensionNumbers.get(
@@ -5797,7 +5819,7 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
 
 mlir.register_lowering(dot_general_p, _dot_general_lower)
 
-for platform in ["cpu", "tpu"]:
+for platform in ["cpu", "tpu", "cuda", "rocm"]:
   mlir.register_lowering(dot_general_p,
                          partial(_dot_general_lower, platform=platform),
                          platform=platform)
@@ -6335,7 +6357,7 @@ def _ragged_dot_general_lower(
     return mlir.lower_with_sharding_in_types(ctx, result, aval_out)
 
   del preferred_element_type  # Implied by the output aval
-  lhs, rhs, accumulation_aval, _ = _handle_dot_precision(
+  lhs, rhs, accumulation_aval, _, precision = _handle_dot_precision(
       ctx, lhs, rhs, precision, platform
   )
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = (
