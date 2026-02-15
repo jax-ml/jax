@@ -38,7 +38,7 @@ jobs:
       - name: Get and filter changed files # We only run this if it is a pull request, do not run tj-actions on non PR event
         if: ${{ github.event_name == 'pull_request' }}
         id: changed-files
-        uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46
+        uses: tj-actions/changed-files@24d32ffd492484c1d75e0c0b894501ddb9d30d62 # v46
         with:
           files: |
             jax/_src/pallas/mosaic_gpu/**
