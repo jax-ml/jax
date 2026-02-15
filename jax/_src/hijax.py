@@ -175,7 +175,10 @@ def new_box():
   return new_box_p.bind(treedef=treedef)
 
 def box_get(box):
-  tys = core.cur_qdd(box)
+  if isinstance(box, core.Tracer):
+    tys = core.cur_qdd(box)
+  else:
+    tys = box.cur_qdd()
   leaf_vals = box_get_p.bind(box, avals=tuple(tys.leaf_avals))
   return tree_unflatten(tys.treedef, leaf_vals)
 
