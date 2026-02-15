@@ -104,24 +104,25 @@ class HiType(core.AbstractValue):
   # autodiff interface
   def to_tangent_aval(self) -> HiType:
     assert False, "must override"
-
-  # Subclasses should override if the cotangent type is a function of primal
-  # type. For example, CT unreduced = reduced and vice-versa.
   def to_cotangent_aval(self) -> HiType:
     return self.to_tangent_aval()
-
   # the next two are required if this type is itself a tangent type
   def vspace_zero(self) -> HiVal:
     assert False, "must override"
-
   def vspace_add(self, x: HiVal, y: HiVal) -> HiVal:
     assert False, "must override"
 
   # vmap/scan interface
   def dec_rank(self, size: int | None, spec: MappingSpec) -> HiType:
     assert False, "must override"
-
   def inc_rank(self, size: int | None, spec: MappingSpec) -> HiType:
+    assert False, "must override"
+
+  # shard_map interface
+  def shard(self, mesh, manual_axes: frozenset, check_vma: bool, spec: HipSpec
+            ) -> HiType:
+    assert False, "must override"
+  def unshard(self, mesh, check_vma: bool, spec: HipSpec) -> HiType:
     assert False, "must override"
 
 class MutableHiType(core.AbstractValue):
@@ -772,3 +773,5 @@ class Static:
   val: Any
 
 class MappingSpec: pass
+class HipSpec:
+  def to_lo(self): assert False, "must override"
