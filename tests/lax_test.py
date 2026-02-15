@@ -181,6 +181,27 @@ class LaxTest(jtu.JaxTestCase):
     out = lax.convert_element_type(2 ** 32, 'int32')
     self.assertEqual(out, 0)
 
+  def testConvertElementTypeBoolToIntNonCanonical(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/34751
+    # Non-canonical bool values (like 0xff from raw memory) should still
+    # convert to 1 (True), not -1 (from sign extension).
+    numpy_bool_array = np.frombuffer(b'\x00\x01\xff', dtype=bool)
+    jax_bool_array = jnp.array(numpy_bool_array)
+    # Verify the numpy array is [False, True, True]
+    self.assertEqual(list(numpy_bool_array), [False, True, True])
+    # Convert to int32 - should be [0, 1, 1], not [0, 1, -1]
+    jax_int_array = jnp.array(jax_bool_array, dtype=jnp.int32)
+    self.assertEqual(list(jax_int_array), [0, 1, 1])
+    # Also test via lax.convert_element_type directly
+    jax_int_array2 = lax.convert_element_type(jax_bool_array, jnp.int32)
+    self.assertEqual(list(jax_int_array2), [0, 1, 1])
+    # Test jit compilation path
+    @jax.jit
+    def convert_bool_to_int(x):
+      return lax.convert_element_type(x, jnp.int32)
+    jax_int_array3 = convert_bool_to_int(jax_bool_array)
+    self.assertEqual(list(jax_int_array3), [0, 1, 1])
+
   @jtu.sample_product(
     [dict(from_dtype=from_dtype, to_dtype=to_dtype)
      for from_dtype, to_dtype in itertools.product(
