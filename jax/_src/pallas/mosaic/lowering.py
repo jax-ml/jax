@@ -2388,7 +2388,15 @@ def _convert_element_type_lowering_rule(
   unsigned = jnp.unsignedinteger
   old_bitwidth = dtypes.itemsize_bits(old_dtype)
   new_bitwidth = dtypes.itemsize_bits(new_dtype)
-  if _from(floating) and _to(floating):
+  # Handle bool conversions first, before the general integer check, because
+  # bool is a subtype of integer but not of signedinteger or unsignedinteger.
+  # If the general integer branch matches bool first, it falls through without
+  # returning (since neither extui nor extsi applies), causing infinite
+  # recursion via lower_fun -> _convert_helper -> convert_element_type.
+  if old_dtype == jnp.bool_ and _to(integer):
+    # bool is either 0 or 1 in integer representation hence unsigned.
+    return arith.extui(out_type, x)
+  elif _from(floating) and _to(floating):
     if old_bitwidth < new_bitwidth:
       return arith.extf(out_type, x)
     elif old_bitwidth > new_bitwidth:
@@ -2408,9 +2416,6 @@ def _convert_element_type_lowering_rule(
     return arith.fptosi(out_type, x)
   elif _from(signed) and _to(floating):
     return arith.sitofp(out_type, x)
-  elif old_dtype == jnp.bool_ and _to(integer):
-    # bool is either 0 or 1 in integer representation hence unsigned.
-    return arith.extui(out_type, x)
   return lower_fun(functools.partial(_convert_helper, to_dtype=new_dtype),
                    multiple_results=False)(ctx, x)
 
