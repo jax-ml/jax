@@ -193,30 +193,51 @@ def rankdata(
   if method not in ("average", "min", "max", "dense", "ordinal"):
     raise ValueError(f"unknown method '{method}'")
 
-  a = jnp.asarray(a)
 
   if axis is not None:
     return jnp.apply_along_axis(rankdata, axis, a, method)
 
   arr = jnp.ravel(a)
-  arr, sorter = lax.sort_key_val(arr, jnp.arange(arr.size))
-  inv = invert_permutation(sorter)
+  def _rankdata_impl(operand: Array) -> Array:
+    # Use 'operand' instead of 'arr' inside here
+    arr_sorted, sorter = lax.sort_key_val(operand, jnp.arange(operand.size))
+    inv = invert_permutation(sorter)
 
-  if method == "ordinal":
-    return inv + 1
-  obs = jnp.concatenate([jnp.array([True]), arr[1:] != arr[:-1]])
-  dense = obs.cumsum()[inv]
-  if method == "dense":
-    return dense
-  count = jnp.nonzero(obs, size=arr.size + 1, fill_value=obs.size)[0]
-  if method == "max":
-    return count[dense]
-  if method == "min":
-    return count[dense - 1] + 1
-  if method == "average":
-    return .5 * (count[dense] + count[dense - 1] + 1).astype(dtypes.default_float_dtype())
-  raise ValueError(f"unknown method '{method}'")
+    obs = jnp.concatenate([jnp.array([True]), arr_sorted[1:] != arr_sorted[:-1]])
+    dense = obs.cumsum()[inv]
+    count = jnp.nonzero(obs, size=operand.size + 1, fill_value=obs.size)[0]
 
+    out_dtype = dtypes.to_inexact_dtype(operand.dtype)
+
+    if method == "ordinal":
+      res = inv + 1
+    elif method == "dense":
+      res = dense
+    elif method == "max":
+      res = count[dense]
+    elif method == "min":
+      res = count[dense - 1] + 1
+    elif method == "average":
+      sum_ranks = count[dense] + count[dense - 1] + 1
+      res = sum_ranks.astype(out_dtype) * 0.5
+
+    else:
+      raise ValueError(f"unknown method '{method}'")
+
+    # Ensure float output
+    return res.astype(out_dtype)
+
+  if nan_policy == "propagate":
+    contains_nan = jnp.any(jnp.isnan(arr))
+    # Efficient branching: _rankdata_impl only runs if contains_nan is False
+    return lax.cond(
+        jnp.logical_not(contains_nan),
+        _rankdata_impl,
+        lambda x: jnp.full(x.shape, jnp.nan, dtype=dtypes.default_float_dtype()),
+        arr
+    )
+
+  return _rankdata_impl(arr)
 
 @api.jit(static_argnames=['axis', 'nan_policy', 'keepdims'])
 def sem(a: ArrayLike, axis: int | None = 0, ddof: int = 1, nan_policy: str = "propagate", *, keepdims: bool = False) -> Array:
