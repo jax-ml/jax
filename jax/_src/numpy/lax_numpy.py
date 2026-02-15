@@ -6529,9 +6529,7 @@ def trapezoid(y: ArrayLike, x: ArrayLike | None = None, dx: ArrayLike = 1.0,
     y_arr, = util.promote_dtypes_inexact(y)
     dx_array = asarray(dx)
     if dx_array.ndim > 0:
-      # Match y's ndim then moveaxis to match y's rearrangement.
-      dx_array = dx_array.reshape(
-          (1,) * (y_arr.ndim - dx_array.ndim) + dx_array.shape)
+      dx_array = broadcast_to(dx_array, (1,) * (y_arr.ndim - dx_array.ndim) + dx_array.shape)
       dx_array = moveaxis(dx_array, axis, -1)
   else:
     y, x = util.ensure_arraylike('trapezoid', y, x)
