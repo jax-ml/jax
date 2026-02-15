@@ -317,6 +317,15 @@ class FusionTest(jtu.JaxTestCase):
     y_out = g(x, a)
     np.testing.assert_array_equal(y_out, a)
 
+  def test_fusion_pytree(self):
+    x = jax.random.normal(jax.random.key(0), (128, 128), dtype=jnp.float32)
+    a = jax.random.normal(jax.random.key(1), (1, 128), dtype=jnp.float32)
+    f = fuser.Fusion(lambda x: x + a, ((jax.typeof(x),), {}), jax.typeof(x))
+    [leaf], treedef = jax.tree.flatten(f)
+    np.testing.assert_array_equal(leaf, a)
+    f_roundtrip = treedef.unflatten([leaf])
+    np.testing.assert_array_equal(f_roundtrip(x), f(x))
+
 
 @dataclasses.dataclass(frozen=True)
 class ArrayTuple:

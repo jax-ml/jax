@@ -16,12 +16,15 @@
 
 from __future__ import annotations
 
-import dataclasses
-from typing import Any, Generic, ParamSpec, TypeVar
 from collections.abc import Callable
+import dataclasses
+import functools
+from typing import Any, Generic, ParamSpec, TypeVar
 
 import jax
+from jax._src import tree_util
 from jax._src import util
+from jax._src.pallas.fuser import block_spec
 
 safe_map = util.safe_map
 
@@ -29,6 +32,7 @@ A = ParamSpec("A")
 K = TypeVar("K")
 
 
+@tree_util.register_pytree_node_class
 @dataclasses.dataclass
 class Fusion(Generic[A, K]):
 
@@ -58,3 +62,14 @@ class Fusion(Generic[A, K]):
   @property
   def in_dtype(self):
     return jax.tree.map(lambda x: x.dtype, self.in_type)
+
+  def tree_flatten(self):
+    as_shape_dtype = lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype)
+    args, kwargs = tree_util.tree_map(as_shape_dtype, self.in_type)
+    fn, values, _ = block_spec.get_fusion_values(self.func, *args, **kwargs)
+    return values, (fn, self.in_type, self.out_type)
+
+  @classmethod
+  def tree_unflatten(cls, aux_data, children):
+    fn, in_type, out_type = aux_data
+    return cls(functools.partial(fn, children), in_type, out_type)
