@@ -941,8 +941,8 @@ def index_take(src: Array, idxs: Array, axes: Sequence[int]) -> Array:
 
 ### convenience wrappers around traceables
 
-def slice_in_dim(operand: Array | np.ndarray, start_index: int | None,
-                 limit_index: int | None,
+def slice_in_dim(operand: Array | np.ndarray, start_index: int | None = 0,
+                 limit_index: int | None = None,
                  stride: int = 1, axis: int = 0) -> Array:
   """Convenience wrapper around :func:`lax.slice` applying to only one dimension.
 

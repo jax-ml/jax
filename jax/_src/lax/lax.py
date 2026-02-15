@@ -7619,13 +7619,13 @@ def _reduce_jvp(reducer, init_values, primals, tangents, axes):
       n = xs[0].shape[axis]
       n1 = (n + 1) // 2
       n2 = n - n1
-      xs1 = [slicing.slice_in_dim(x, 0, n1) for x in xs]
-      xs2 = [slicing.slice_in_dim(x, n1, None) for x in xs]
+      xs1 = [slicing.slice_in_dim(x, stride=2) for x in xs]
+      xs2 = [slicing.slice_in_dim(x, 1, stride=2) for x in xs]
       if n2 != n1:
         paddings = [(0, 0, 0)] * len(xs[0].shape)
         paddings[axis] = (0, 1, 0)
         xs2 = [pad(x2, i, paddings) for x2, i in zip(xs2, init_values)]
-      xs = reducer(*(xs1 + xs2))
+      xs = reducer(*xs1, *xs2)
     if xs[0].shape[axis] == 0:
       return [full(input_shape[non_axes], i) for i in init_values]
     return tuple(squeeze(x, (axis,)) for x in xs)
