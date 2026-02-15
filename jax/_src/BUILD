@@ -460,7 +460,6 @@ py_library_providing_imports_info(
         ":sharding",
         ":sharding_impls",
         ":source_info_util",
-        ":state_types",
         ":traceback_util",
         ":tree_util",
         ":typing",
@@ -1423,6 +1422,7 @@ pytype_strict_library(
     ],
     visibility = ["//jax:internal"] + jax_visibility("state_types"),
     deps = [
+        ":ad_util",
         ":core",
         ":dtypes",
         ":effects",

@@ -42,7 +42,6 @@ from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
-from jax._src import state
 from jax._src import tree_util
 from jax._src import util
 from jax._src.abstract_arrays import array_types
@@ -3399,15 +3398,6 @@ def zeros_like_shaped_array(aval: ShapedArray) -> Array:
   out = broadcast(scalar_zero, aval.shape, out_sharding=aval.sharding)
   return core.pvary(out, tuple(aval.vma))
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
-
-def zeros_like_abstract_ref(aval: state.AbstractRef) -> core.Ref:
-  val = ad_util.zeros_like_aval(aval.inner_aval)
-  return core.new_ref(val)
-
-# TODO(dougalm): this is nonsense but it's here because in places like
-# custom_vjp we assume that all arguments have tangent spaces. We could have
-# a distinct NotATangentType value instead.
-ad_util.aval_zeros_likers[state.AbstractRef] = zeros_like_abstract_ref  # type: ignore
 
 def iota(dtype: DTypeLike, size: int) -> Array:
   """Wraps XLA's `Iota
