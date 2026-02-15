@@ -373,6 +373,17 @@ class NNFunctionsTest(jtu.JaxTestCase):
     _, dbias_ans, _ = bwd_ans(x, bias, mask)
     self.assertAllClose(dbias_ans, dbias_ref, rtol=0.1, atol=0.1)
 
+  @parameterized.product(dtype=[jnp.float16, jnp.float32, jnp.float64])
+  def testDotProductAttentionDebugInfs(self, dtype):
+    with jax.enable_x64(True), jax.debug_infs(True):
+      shape = (1, 2, 4)
+      q = jnp.zeros(shape, dtype=dtype)
+      k = jnp.zeros(shape, dtype=dtype)
+      v = jnp.zeros(shape, dtype=dtype)
+      mask = jnp.array([[True, False]])
+
+      nn.dot_product_attention(q, k, v, mask=mask)
+
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), order=4,
                 rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None,
