@@ -3311,6 +3311,8 @@ def sort_key_val(keys: Array, values: ArrayLike, dimension: int = -1,
 def top_k(operand: ArrayLike, k: int, *, axis: int = -1) -> tuple[Array, Array]:
   """Returns top ``k`` values and their indices along the specified axis of ``operand``.
 
+  The order of returned values is implementation-dependent.
+
   Args:
     operand: N-dimensional array of non-complex type.
     k: integer specifying the number of top entries.
