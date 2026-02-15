@@ -56,20 +56,6 @@ PipelineBlockSpecs = Union[Sequence[pallas_core.BlockSpec], Any]
 PipelineRefs = Union[Sequence[REF], Any]
 
 
-class Tiling(enum.Enum):
-  COMPACT = enum.auto()
-  SPARSE_CORE = enum.auto()
-
-  @property
-  def shape(self) -> tuple[int, ...]:
-    # TODO(slebedev): Use ``get_tpu_info()`` instead of hardcoding the values.
-    match self:
-      case Tiling.COMPACT:
-        return (8, 128)
-      case Tiling.SPARSE_CORE:
-        return (8,)
-
-
 def _broadcast_pytree_to(from_pytree, to_pytree):
   """Broadcast a prefix pytree to a given full tree."""
   proxy = object()
@@ -87,53 +73,6 @@ def _broadcast_pytree_to(from_pytree, to_pytree):
   broadcast_leaves = [None if a is proxy else a for a in broadcast_leaves]
   assert len(broadcast_leaves) == treedef.num_leaves
   return tree_util.tree_unflatten(treedef, broadcast_leaves)
-
-
-def _get_tpu_generation() -> int:
-  return tpu_info.get_tpu_info().generation
-
-
-def _make_tiling(
-    shape: tuple[int, ...],
-    ty: jax_core.AbstractValue,
-    tiling: Tiling | None = None,
-) -> tuple[int | None, ...]:
-  """Compute a tiling for the given shape and type.
-
-  For an n-dimensional shape, returns the tiling for the last
-  ``len(tiling.shape)`` dimensions and 1 for the leading dims. For example:
-  - 2D tiling: (256, 256) -> (8, 128) and (2, 3, 128, 128) -> (1, 1, 8, 128).
-  - 1D tiling: (16,) -> (8,) and (2, 3, 8) -> (1, 1, 8).
-
-  Types are not required to have a dtype, so for such types we return None for
-  all dimensions because their tiling is unknown.
-  """
-  if not hasattr(ty, "dtype"):
-    return (None,) * len(shape)
-  packing = 4 // ty.dtype.itemsize
-
-  if tiling is None:
-    tiling = Tiling.COMPACT
-  tiling_rank = len(tiling.shape)
-  if len(shape) < tiling_rank:
-    raise ValueError(
-        f"Shape must have at least {tiling_rank} dimensions: {shape=}"
-    )
-
-  leading_dims, final_dims = shape[:-tiling_rank], shape[-tiling_rank:]
-  match tiling:
-    case Tiling.COMPACT:
-      # We want to find the minimum power of 2 that fits the second-minor
-      # dimension of shape, with maximum value equal to ``tiling.shape[0]``.
-      second_minor, _ = final_dims
-      max_tiling = tiling.shape[0]
-      second_minor_tiling = (1 + int(_get_tpu_generation() < 4)) * packing
-      while second_minor_tiling < min(second_minor, max_tiling):
-        second_minor_tiling *= 2
-      return (*(1,) * len(leading_dims), second_minor_tiling, tiling.shape[1])
-    case Tiling.SPARSE_CORE:
-      [tile_size] = tiling.shape
-      return (*(1,) * len(leading_dims), tile_size * packing)
 
 
 def _round_up_to_nearest_multiple(
@@ -430,7 +369,7 @@ class BufferedRefBase:
     if (src_shape := getattr(src_ty, "shape", None)) is None:
       raise ValueError(f"Type {src_ty} does not have a shape")
 
-    tiling = _make_tiling(src_shape, src_ty, getattr(self, "tiling", None))
+    tiling = tpu_info.infer_tiling(src_ty, getattr(self, "tiling", None))
     block_indices = self.compute_index(*grid_indices)
     return tuple(
         _make_block_slice(bi, bs, ss, t)
@@ -518,7 +457,7 @@ class BufferedRef(BufferedRefBase):
   # TODO(ramiroleal): Improve prefetch/postyeet interface to avoid
   # using this ref.
   swap: ArrayRef | None
-  tiling: Tiling | None = dataclasses.field(metadata=dict(static=True))
+  tiling: tpu_info.Tiling | None = dataclasses.field(metadata=dict(static=True))
 
   def __post_init__(self):
     if self.is_buffered and self.buffer_count < 1:
@@ -573,7 +512,7 @@ class BufferedRef(BufferedRefBase):
       grid_rank=None,
       use_lookahead=False,
       source_memory_space: tpu_core.MemorySpace | Literal[ANY] = ANY,  # type: ignore[valid-type]
-      tiling: Tiling | None = None,
+      tiling: tpu_info.Tiling | None = None,
   ) -> BufferedRef:
     """Create a BufferedRef.
 
@@ -1716,7 +1655,7 @@ def make_pipeline_allocations(
     *refs,
     in_specs=(),
     out_specs=(),
-    tiling: Tiling | None = None,
+    tiling: tpu_info.Tiling | None = None,
     should_accumulate_out=False,
     needs_swap_ref=True,
     grid=None,
@@ -1933,7 +1872,7 @@ def emit_pipeline(
     grid: tuple[int | jax.Array, ...],
     in_specs=(),
     out_specs=(),
-    tiling: Tiling | None = None,
+    tiling: tpu_info.Tiling | None = None,
     should_accumulate_out: bool = False,
     core_axis: int | None = None,
     core_axis_name: str | None = None,

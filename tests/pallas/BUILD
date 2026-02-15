@@ -143,6 +143,41 @@ jax_multiplatform_test(
     ]),
 )
 
+jax_py_test(
+    name = "einshape_parse_test",
+    srcs = ["einshape_parse_test.py"],
+    deps = [
+        "//jax/_src:test_util",
+        "//jax/experimental:pallas",
+    ] + py_deps([
+        "absl/testing",
+        "hypothesis",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "einshape_test",
+    srcs = ["einshape_test.py"],
+    enable_backends = [
+        "cpu",
+        "tpu",
+    ],
+    shard_count = {
+        "cpu": 2,
+        "tpu": 2,
+    },
+    tags = ["requires-net:external"],
+    deps = [
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_tpu",
+    ] + py_deps([
+        "absl/testing",
+        "hypothesis",
+        "numpy",
+    ]),
+)
+
 jax_multiplatform_test(
     name = "ops_test_mgpu",
     srcs = [

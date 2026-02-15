@@ -233,6 +233,7 @@ pytype_strict_library(
     deps = [
         ":core",
         "//jax",
+        "//jax/_src:core",
         "//jax/_src:dtypes",
         "//jax/_src:util",
     ],

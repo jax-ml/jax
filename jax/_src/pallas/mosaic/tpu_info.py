@@ -19,6 +19,7 @@ import enum
 from typing import Callable
 
 from jax import numpy as jnp
+from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import util as jax_util
 from jax._src.pallas.mosaic import core
@@ -365,3 +366,67 @@ def get_tpu_info() -> TpuInfo:
       if d in registry:
         return registry[d]()
       raise ValueError(f"Unsupported TPU device kind: {device_kind}")
+
+
+# TODO(sharadmv): Generalize Tiling to capture the various options
+# (compact 2nd minor, large 2nd minor, regular tiling)
+class Tiling(enum.Enum):
+  COMPACT = enum.auto()
+  SPARSE_CORE = enum.auto()
+
+  @property
+  def shape(self) -> tuple[int, ...]:
+    # TODO(slebedev): Use ``get_tpu_info()`` instead of hardcoding the values.
+    match self:
+      case Tiling.COMPACT:
+        return (8, 128)
+      case Tiling.SPARSE_CORE:
+        return (8,)
+
+
+def infer_tiling(
+    ty: jax_core.AbstractValue,
+    tiling: Tiling | None = None,
+) -> tuple[int | None, ...] | None:
+  """Compute a tiling for the given shape and type.
+
+  For an n-dimensional shape, returns the tiling for the last
+  ``len(tiling.shape)`` dimensions and 1 for the leading dims. For example:
+  - 2D tiling: (256, 256) -> (8, 128) and (2, 3, 128, 128) -> (1, 1, 8, 128).
+  - 1D tiling: (16,) -> (8,) and (2, 3, 8) -> (1, 1, 8).
+
+  Types are not required to have a dtype, so for such types we return None for
+  all dimensions because their tiling is unknown.
+  """
+  assert hasattr(ty, "shape")
+  shape = ty.shape
+  if not hasattr(ty, "dtype"):
+    return (None,) * len(shape)
+  if jnp.dtype(ty.dtype) == jnp.dtype("int4"):
+    packing = 8
+  else:
+    packing = 4 // ty.dtype.itemsize
+
+  if tiling is None:
+    tiling = Tiling.COMPACT
+  tiling_rank = len(tiling.shape)
+  if len(shape) < tiling_rank:
+    raise ValueError(
+        f"Shape must have at least {tiling_rank} dimensions: {shape=}"
+    )
+
+  leading_dims, final_dims = shape[:-tiling_rank], shape[-tiling_rank:]
+  tpu_generation = get_tpu_info().generation
+  match tiling:
+    case Tiling.COMPACT:
+      # We want to find the minimum power of 2 that fits the second-minor
+      # dimension of shape, with maximum value equal to ``tiling.shape[0]``.
+      second_minor, _ = final_dims
+      max_tiling = tiling.shape[0]
+      second_minor_tiling = (1 + int(tpu_generation < 4)) * packing
+      while second_minor_tiling < min(second_minor, max_tiling):
+        second_minor_tiling *= 2
+      return (*(1,) * len(leading_dims), second_minor_tiling, tiling.shape[1])
+    case Tiling.SPARSE_CORE:
+      [tile_size] = tiling.shape
+      return (*(1,) * len(leading_dims), tile_size * packing)
