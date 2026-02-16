@@ -175,6 +175,20 @@ class TorchTest(jtu.JaxTestCase):
         x.cpu(), torch.ones((128,), dtype=torch.float32, device="cpu")
     )
 
+  def test_scalar_args(self):
+    @pl.kernel(mesh=plgpu.Mesh(), out_shape=(), compiler_params=plgpu.CompilerParams())
+    def kernel(x_ref, int_ref, float_ref, flag_ref):
+      x_ref[...] = jnp.where(
+          flag_ref[...], x_ref[...] + int_ref[...], x_ref[...] + float_ref[...]
+      )
+
+    x = torch.ones(128, dtype=torch.float32, device="cuda")
+    plgpu.as_torch_kernel(kernel)(x, 1, 2.0, True)
+    # flag=True -> add int_val=1 -> 1.0 + 1 = 2.0
+    np.testing.assert_array_equal(
+        x.cpu(), torch.full((128,), 2.0, dtype=torch.float32)
+    )
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
