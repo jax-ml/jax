@@ -997,6 +997,64 @@ def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: str = "
   return _qr(a, mode, pivoting)
 
 
+def qr_multiply(a: ArrayLike, c: ArrayLike, mode: str = 'right',
+                pivoting: bool = False, conjugate: bool = False,
+                overwrite_a: bool = False, overwrite_c: bool = False
+                ) -> tuple[Array, Array] | tuple[Array, Array, Array]:
+  """Calculate the QR decomposition and multiply Q with a matrix.
+
+  JAX implementation of :func:`scipy.linalg.qr_multiply`.
+
+  Args:
+    a: array of shape ``(..., M, N)``. Matrix to be decomposed.
+    c: array to be multiplied by Q. For ``mode='right'``, ``c`` has shape
+      ``(..., M, K)``. For ``mode='left'``, ``c`` has shape ``(..., K, M)``.
+    mode: ``'right'`` (default) or ``'left'``.
+
+      - ``'right'``: compute ``Q @ c`` and return ``(Q @ c, R)``
+      - ``'left'``: compute ``c @ Q^H`` and return ``(c @ Q^H, R)``
+    pivoting: If ``True``, use column-pivoted QR and return permutation indices
+      as a third element.
+    conjugate: If ``True``, use ``Q^H`` instead of ``Q`` in mode ``'right'``,
+      or ``Q`` instead of ``Q^H`` in mode ``'left'``.
+    overwrite_a: unused in JAX
+    overwrite_c: unused in JAX
+
+  Returns:
+    If ``pivoting`` is ``False``: ``(result, R)``
+
+    If ``pivoting`` is ``True``: ``(result, R, P)``
+  """
+  del overwrite_a, overwrite_c  # unused
+  a, c = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(c))
+  if mode not in ('right', 'left'):
+    raise ValueError(f"mode must be 'right' or 'left', got {mode!r}")
+
+  m, n = a.shape[-2:]
+  k = min(m, n)
+
+  if pivoting:
+    jpvt = jnp.zeros(a.shape[:-2] + (n,), dtype=jnp.int32)
+    qr_result, jpvt_out, taus = lax_linalg.geqp3(a, jpvt)
+    # Convert from 1-based to 0-based indexing
+    p = jpvt_out - 1
+  else:
+    qr_result, taus = lax_linalg.geqrf(a)
+
+  if mode == 'right':
+    result = lax_linalg.ormqr(qr_result, taus, c,
+                               left=True, transpose=conjugate)
+  else:
+    result = lax_linalg.ormqr(qr_result, taus, c,
+                               left=False, transpose=(not conjugate))
+
+  r = jnp.triu(qr_result[..., :k, :])
+
+  if pivoting:
+    return result, r, p
+  return result, r
+
+
 @jit(static_argnames=('assume_a', 'lower'))
 def _solve(a: ArrayLike, b: ArrayLike, assume_a: str, lower: bool) -> Array:
   if assume_a != 'pos':

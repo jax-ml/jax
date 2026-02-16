@@ -79,6 +79,11 @@ void GetLapackKernelsFromScipy() {
     AssignKernelFn<OrthogonalQr<DataType::C64>>(lapack_ptr("cungqr"));
     AssignKernelFn<OrthogonalQr<DataType::C128>>(lapack_ptr("zungqr"));
 
+    AssignKernelFn<OrthogonalQrMultiply<DataType::F32>>(lapack_ptr("sormqr"));
+    AssignKernelFn<OrthogonalQrMultiply<DataType::F64>>(lapack_ptr("dormqr"));
+    AssignKernelFn<OrthogonalQrMultiply<DataType::C64>>(lapack_ptr("cunmqr"));
+    AssignKernelFn<OrthogonalQrMultiply<DataType::C128>>(lapack_ptr("zunmqr"));
+
     AssignKernelFn<CholeskyFactorization<DataType::F32>>(lapack_ptr("spotrf"));
     AssignKernelFn<CholeskyFactorization<DataType::F64>>(lapack_ptr("dpotrf"));
     AssignKernelFn<CholeskyFactorization<DataType::C64>>(lapack_ptr("cpotrf"));
@@ -159,6 +164,10 @@ nb::dict Registrations() {
   dict["lapack_dorgqr_ffi"] = EncapsulateFunction(lapack_dorgqr_ffi);
   dict["lapack_cungqr_ffi"] = EncapsulateFunction(lapack_cungqr_ffi);
   dict["lapack_zungqr_ffi"] = EncapsulateFunction(lapack_zungqr_ffi);
+  dict["lapack_sormqr_ffi"] = EncapsulateFunction(lapack_sormqr_ffi);
+  dict["lapack_dormqr_ffi"] = EncapsulateFunction(lapack_dormqr_ffi);
+  dict["lapack_cunmqr_ffi"] = EncapsulateFunction(lapack_cunmqr_ffi);
+  dict["lapack_zunmqr_ffi"] = EncapsulateFunction(lapack_zunmqr_ffi);
   dict["lapack_spotrf_ffi"] = EncapsulateFunction(lapack_spotrf_ffi);
   dict["lapack_dpotrf_ffi"] = EncapsulateFunction(lapack_dpotrf_ffi);
   dict["lapack_cpotrf_ffi"] = EncapsulateFunction(lapack_cpotrf_ffi);
