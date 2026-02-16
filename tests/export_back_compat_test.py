@@ -38,6 +38,7 @@ from jax._src.internal_test_util.export_back_compat_test_data import rocm_choles
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eig_lapack_geev
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_eigh_cusolver_syev
 from jax._src.internal_test_util.export_back_compat_test_data import rocm_eigh_hipsolver_syev
+from jax._src.internal_test_util.export_back_compat_test_data import gpu_eigh_solver_syev
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eigh_lapack_syev
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_lu_lapack_getrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_qr_cusolver_geqrf
@@ -362,7 +363,7 @@ class CompatTest(bctu.CompatTestBase):
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_gpu_eigh_solver_syev(self, dtype_name="f32"):
-    if not jtu.test_device_matches(["cuda"]):
+    if not jtu.test_device_matches(["cuda", "rocm"]):
       self.skipTest("Unsupported platform")
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
@@ -372,7 +373,15 @@ class CompatTest(bctu.CompatTestBase):
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     atol = dict(f32=1e-2, f64=1e-10, c64=1e-2, c128=1e-10)[dtype_name]
     operand = CompatTest.eigh_input((size, size), dtype)
-    data = self.load_testdata(cuda_eigh_cusolver_syev.data_2024_09_30[dtype_name])
+
+    # Select appropriate test data based on platform
+    if jtu.test_device_matches(["rocm"]):
+      data = self.load_testdata(gpu_eigh_solver_syev.data_2026_02_16[dtype_name])
+    elif jtu.test_device_matches(["cuda"]):
+      data = self.load_testdata(cuda_eigh_cusolver_syev.data_2024_09_30[dtype_name])
+    else:
+      self.skipTest("Unsupported platform")
+
     func = lambda: CompatTest.eigh_harness((size, size), dtype)
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_eigh_results, operand))
