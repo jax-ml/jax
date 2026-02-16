@@ -424,8 +424,8 @@ ffi::Error OrmqrImpl(int64_t batch, int64_t c_rows, int64_t c_cols,
         out_data, c_data, c.size_bytes(), gpuMemcpyDeviceToDevice, stream));
   }
 
-  int out_step = m * n;
-  int a_step = a_rows * a_cols;
+  int64_t out_step = static_cast<int64_t>(m) * n;
+  int64_t a_step = static_cast<int64_t>(a_rows) * a_cols;
   for (auto i = 0; i < batch; ++i) {
     FFI_RETURN_IF_ERROR_STATUS(solver::Ormqr<T>(
         handle.get(), side, trans, m, n, k_v, a_data, lda, tau_data,

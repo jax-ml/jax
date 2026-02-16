@@ -1431,7 +1431,8 @@ def _ormqr_shape_rule(a_shape, taus_shape, c_shape, *, left, transpose):
 
 def _ormqr_lowering(a, taus, c, *, left, transpose):
   # Apply Householder reflectors H_i = I - tau_i * v_i * v_i^H directly to c
-  # without materializing Q. Cost: O(k * m * c_cols).
+  # without materializing Q. Cost: O(k * m * c_cols) if left,
+  # O(k * c_rows * m) otherwise, where c has shape (..., c_rows, c_cols).
   *batch_dims, m, n = a.shape
   k = taus.shape[-1]
   is_complex = dtypes.issubdtype(a.dtype, np.complexfloating)
