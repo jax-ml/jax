@@ -57,13 +57,16 @@ runs:
       if: ${{ !contains(inputs.runner, 'windows-x86') }}
       run: |
         mkdir -p $(pwd)/dist
-        gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+        gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}"/jax*py3*none*any.whl $(pwd)/dist/
 
-        if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
+        if [[ "${INPUTS_DOWNLOAD_JAX_ONLY_FROM_GCS}" == "1" ]]; then
           echo "JAX only release. Only downloading the jax wheel from the release bucket."
         else
-          gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+          gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
         fi
+      env:
+        INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
+        INPUTS_DOWNLOAD_JAX_ONLY_FROM_GCS: ${{ inputs.download-jax-only-from-gcs }}
     - name: Download wheels from GCS (Windows runs)
       shell: cmd
       id: download-wheel-artifacts-w
@@ -76,13 +79,16 @@ runs:
         mkdir dist
         @REM Use `call` so that we can run sequential gcloud storage commands on Windows
         @REM See https://github.com/GoogleCloudPlatform/gsutil/issues/233#issuecomment-196150652
-        call gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl dist/
+        call gcloud storage cp -r "%INPUTS_GCS_DOWNLOAD_URI%"/jax*py3*none*any.whl dist/
 
-        if "${{ inputs.download-jax-only-from-gcs }}"=="1" (
+        if "%INPUTS_DOWNLOAD_JAX_ONLY_FROM_GCS%"=="1" (
           echo "JAX only release. Only downloading the jax wheel from the release bucket."
         ) else (
-          call gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
+          call gcloud storage cp -r "%INPUTS_GCS_DOWNLOAD_URI%/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
         )
+      env:
+        INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
+        INPUTS_DOWNLOAD_JAX_ONLY_FROM_GCS: ${{ inputs.download-jax-only-from-gcs }}
     - name: Skip the test run if the wheel artifacts were not downloaded successfully
       shell: bash
       if: steps.download-wheel-artifacts-nw.outcome == 'failure' || steps.download-wheel-artifacts-w.outcome == 'failure'
