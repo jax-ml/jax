@@ -109,8 +109,10 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p $(pwd)/dist
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+          gsutil -m cp -r "${INPUTS_GCS_DOWNLOAD_URI}"/jax*py3*none*any.whl $(pwd)/dist/
+          gsutil -m cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+        env:
+          INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
       - name: Skip the test run if the wheel artifacts were not downloaded successfully
         if: steps.download-wheel-artifacts.outcome == 'failure'
         run: |
@@ -123,24 +125,26 @@ jobs:
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt -r build/collect-profile-requirements.txt
       - name: Set up libtpu wheels
         run: |
-          if [[ "${{ inputs.libtpu-version-type }}" == "nightly" ]]; then
+          if [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "nightly" ]]; then
             echo "Using nightly libtpu"
             $JAXCI_PYTHON -m uv pip install --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-          elif [[ "${{ inputs.libtpu-version-type }}" == "pypi_latest" ]]; then
+          elif [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "pypi_latest" ]]; then
             echo "Using latest libtpu from PyPI"
             # Set JAXCI_ADDITIONAL_WHEELS_INSTALL_FROM_PYPI to "tpu_pypi". The `run_pytest_tpu.sh`
             # script will install the latest libtpu wheel from PyPI.
             echo "JAXCI_ADDITIONAL_WHEELS_INSTALL_FROM_PYPI=tpu_pypi" >> $GITHUB_ENV
-          elif [[ "${{ inputs.libtpu-version-type }}" == "oldest_supported_libtpu" ]]; then
+          elif [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "oldest_supported_libtpu" ]]; then
             echo "Using oldest supported libtpu"
             $JAXCI_PYTHON -m uv pip install --pre libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
             echo "libtpu_version_type=oldest_supported_libtpu" >> $GITHUB_ENV
           else
-            echo "Unknown libtpu version type: ${{ inputs.libtpu-version-type }}"
+            echo "Unknown libtpu version type: ${INPUTS_LIBTPU_VERSION_TYPE}"
             exit 1
           fi
+        env:
+          INPUTS_LIBTPU_VERSION_TYPE: ${{ inputs.libtpu-version-type }}
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@main
