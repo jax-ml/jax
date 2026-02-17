@@ -83,19 +83,23 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p $(pwd)/dist
-          gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+          gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}"/jax*py3*none*any.whl $(pwd)/dist/
 
-          if [[ ${{ inputs.jaxlib-version }} == "head" ]]; then
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
-          elif [[ ${{ inputs.jaxlib-version }} == "pypi_latest" ]]; then
-            PYTHON=python${{ inputs.python }}
+          if [[ ${INPUTS_JAXLIB_VERSION} == "head" ]]; then
+            gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
+            gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
+            gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
+          elif [[ ${INPUTS_JAXLIB_VERSION} == "pypi_latest" ]]; then
+            PYTHON=python${INPUTS_PYTHON}
             $PYTHON -m pip download jaxlib jax-cuda12-pjrt jax-cuda12-plugin --dest $(pwd)/dist/
           else
-            echo "Invalid jaxlib version: ${{ inputs.jaxlib-version }}"
+            echo "Invalid jaxlib version: ${INPUTS_JAXLIB_VERSION}"
             exit 1
           fi
+        env:
+          INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
+          INPUTS_JAXLIB_VERSION: ${{ inputs.jaxlib-version }}
+          INPUTS_PYTHON: ${{ inputs.python }}
       - name: Skip the test run if the wheel artifacts were not downloaded successfully
         if: steps.download-wheel-artifacts.outcome == 'failure'
         run: |

@@ -123,18 +123,26 @@ jobs:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Build ${{ inputs.artifact }}
         timeout-minutes: 60
-        run: ./ci/build_artifacts.sh "${{ inputs.artifact }}"
+        run: ./ci/build_artifacts.sh "${INPUTS_ARTIFACT}"
+        env:
+          INPUTS_ARTIFACT: ${{ inputs.artifact }}
       - name: Upload artifacts to a GCS bucket (non-Windows runs)
         if: >-
           ${{ inputs.upload_artifacts_to_gcs && !contains(inputs.runner, 'windows-x86') }}
-        run:  gcloud storage cp -r "$(pwd)/dist/*.whl" "${{ inputs.gcs_upload_uri }}"/
+        run:  gcloud storage cp -r "$(pwd)/dist/*.whl" "${INPUTS_GCS_UPLOAD_URI}"/
+        env:
+          INPUTS_GCS_UPLOAD_URI: ${{ inputs.gcs_upload_uri }}
       # Set shell to cmd to avoid path errors when using gcloud commands on Windows
       - name: Upload artifacts to a GCS bucket (Windows runs)
         if: >-
           ${{ inputs.upload_artifacts_to_gcs &&  contains(inputs.runner, 'windows-x86') }}
         shell: cmd
-        run:  gcloud storage cp -r "dist/*.whl" "${{ inputs.gcs_upload_uri }}"/
+        run:  gcloud storage cp -r "dist/*.whl" "%INPUTS_GCS_UPLOAD_URI%"/
+        env:
+          INPUTS_GCS_UPLOAD_URI: ${{ inputs.gcs_upload_uri }}
       - name: Store the GCS upload URI as an output
         id: store-gcs-upload-uri
         if: ${{ inputs.upload_artifacts_to_gcs }}
-        run:  echo "gcs_upload_uri=${{ inputs.gcs_upload_uri }}" >> "$GITHUB_OUTPUT"
+        run:  echo "gcs_upload_uri=${INPUTS_GCS_UPLOAD_URI}" >> "$GITHUB_OUTPUT"
+        env:
+          INPUTS_GCS_UPLOAD_URI: ${{ inputs.gcs_upload_uri }}
