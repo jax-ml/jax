@@ -61,21 +61,26 @@ runs:
       if: ${{ !contains(inputs.runner, 'windows-x86') }}
       run: |
         mkdir -p $(pwd)/dist
-        gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+        gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}"/jax*py3*none*any.whl $(pwd)/dist/
 
-        if [[ "${{ inputs.skip-download-jaxlib-from-gcs }}" == "1" ]]; then
+        if [[ "${INPUTS_SKIP_DOWNLOAD_JAXLIB_FROM_GCS}" == "1" ]]; then
           echo "JAX only release. Only downloading the jax wheel from the release bucket."
         else
-          if [[ ${{ inputs.jaxlib-version }} == "head" ]]; then
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
-          elif [[ ${{ inputs.jaxlib-version }} == "pypi_latest" ]]; then
-            PYTHON=python${{ inputs.python }}
+          if [[ ${INPUTS_JAXLIB_VERSION} == "head" ]]; then
+            gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+          elif [[ ${INPUTS_JAXLIB_VERSION} == "pypi_latest" ]]; then
+            PYTHON=python${INPUTS_PYTHON}
             $PYTHON -m pip download jaxlib --dest $(pwd)/dist/
           else
-            echo "Invalid jaxlib version: ${{ inputs.jaxlib-version }}"
+            echo "Invalid jaxlib version: ${INPUTS_JAXLIB_VERSION}"
             exit 1
           fi
         fi
+      env:
+        INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
+        INPUTS_SKIP_DOWNLOAD_JAXLIB_FROM_GCS: ${{ inputs.skip-download-jaxlib-from-gcs }}
+        INPUTS_JAXLIB_VERSION: ${{ inputs.jaxlib-version }}
+        INPUTS_PYTHON: ${{ inputs.python }}
     - name: Download wheels from GCS (Windows runs)
       shell: cmd
       id: download-wheel-artifacts-w
@@ -88,13 +93,16 @@ runs:
         mkdir dist
         @REM Use `call` so that we can run sequential gcloud storage commands on Windows
         @REM See https://github.com/GoogleCloudPlatform/gsutil/issues/233#issuecomment-196150652
-        call gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl dist/
+        call gcloud storage cp -r "%INPUTS_GCS_DOWNLOAD_URI%"/jax*py3*none*any.whl dist/
 
-        if "${{ inputs.skip-download-jaxlib-from-gcs }}"=="1" (
+        if "%INPUTS_SKIP_DOWNLOAD_JAXLIB_FROM_GCS%"=="1" (
           echo "JAX only release. Only downloading the jax wheel from the release bucket."
         ) else (
-          call gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
+          call gcloud storage cp -r "%INPUTS_GCS_DOWNLOAD_URI%/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
         )
+      env:
+        INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
+        INPUTS_SKIP_DOWNLOAD_JAXLIB_FROM_GCS: ${{ inputs.skip-download-jaxlib-from-gcs }}
     - name: Skip the test run if the wheel artifacts were not downloaded successfully
       shell: bash
       if: steps.download-wheel-artifacts-nw.outcome == 'failure' || steps.download-wheel-artifacts-w.outcome == 'failure'
