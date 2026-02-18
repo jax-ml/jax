@@ -166,6 +166,16 @@ _dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(dtypes.float4_e2m1fn): ir.Float4E2M1FNType.get,
 }
 
+if dtypes.int1 is not None:
+  assert dtypes.uint1 is not None
+  _dtype_to_ir_type[np.dtype(dtypes.int1)] = partial(
+      ir.IntegerType.get_signless, 1
+  )
+  _dtype_to_ir_type[np.dtype(dtypes.uint1)] = partial(
+      ir.IntegerType.get_unsigned, 1
+  )
+
+
 def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
   if isinstance(dtype, core.bint):
     # TODO Support different-size underlying dtypes to take advantage of the

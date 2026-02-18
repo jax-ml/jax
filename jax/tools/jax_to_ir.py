@@ -257,6 +257,11 @@ _DT = {
     'c64': jnp.complex64, 'c128': jnp.complex128
 }
 
+if hasattr(jnp, 'int1'):
+  _DT['s1'] = jnp.int1
+if hasattr(jnp, 'uint1'):
+  _DT['u1'] = jnp.uint1
+
 _SHAPE_RE = re.compile(f"^({'|'.join(_DT)})\\[\\s*(\\d*[\\s*,\\d+]*)\\s*\\]$")
 
 

@@ -50,6 +50,11 @@ unsigned_dtypes = list(np_unsigned_dtypes)
 intn_dtypes = [np.dtype('int2'), np.dtype('uint2'), np.dtype('int4'), np.dtype('uint4')]
 signed_dtypes += [np.dtype('int2'), np.dtype('int4')]
 unsigned_dtypes += [np.dtype('uint2'), np.dtype('uint4')]
+if dtypes.int1 is not None:
+  assert dtypes.uint1 is not None
+  intn_dtypes[:0] = [np.dtype('int1'), np.dtype('uint1')]
+  signed_dtypes[:0] = [np.dtype('int1')]
+  unsigned_dtypes[:0] = [np.dtype('uint1')]
 
 np_float_dtypes = [np.dtype('float16'), np.dtype('float32'), np.dtype('float64')]
 
@@ -388,9 +393,9 @@ class DtypesTest(jtu.JaxTestCase):
 
   @parameterized.product(dtype=intn_dtypes)
   def testIsSubdtypeIntN(self, dtype):
-    if dtype in ('int2', 'int4'):
+    if dtype in ('int1', 'int2', 'int4'):
       int_category = np.signedinteger
-    elif dtype in ('uint2', 'uint4'):
+    elif dtype in ('uint1', 'uint2', 'uint4'):
       int_category = np.unsignedinteger
     else:
       raise ValueError(f'Unexpected dtype: {dtype}')
@@ -527,6 +532,7 @@ class DtypesTest(jtu.JaxTestCase):
       jax.jit(f)(x)
 
   @parameterized.parameters(
+      (jnp.int1, 1),
       (jnp.int2, 2),
       (jnp.int4, 4),
       (jnp.int8, 8),
@@ -1102,7 +1108,7 @@ class TestPromotionTables(jtu.JaxTestCase):
   def testUnaryPromotion(self, dtype, weak_type):
     # Regression test for https://github.com/jax-ml/jax/issues/6051
     if dtype in intn_dtypes:
-      self.skipTest("XLA support for int2 and int4 is incomplete.")
+      self.skipTest('XLA support for int1, int2 and int4 is incomplete.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest("TPU does not support float8_e8m0fnu.")
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
@@ -1145,9 +1151,9 @@ class TestPromotionTables(jtu.JaxTestCase):
 
   @jax.numpy_dtype_promotion('standard')
   @jtu.run_on_devices('tpu')
-  def testInt2PromotionError(self):
+  def testIntNPromotionError(self):
     for dtype in intn_dtypes:
-      if dtype.name == 'int2' or dtype.name == 'uint2':
+      if dtypes.iinfo(dtype).bits in {1, 2}:
         # TODO(b/343490729): Remove continue once the bug is fixed.
         continue
 
@@ -1155,7 +1161,7 @@ class TestPromotionTables(jtu.JaxTestCase):
       y = jnp.array(1, dtype='int32')
       with self.assertRaisesRegex(
           dtypes.TypePromotionError,
-          '.*[24]-bit integers do not support implicit promotion',
+          '.*[124]-bit integers do not support implicit promotion',
       ):
         x + y
 
@@ -1198,7 +1204,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     if dtype in intn_dtypes:
       if not jtu.test_device_matches(['tpu']):
         self.skipTest('XLA support for int4 is incomplete.')
-      if dtypes.iinfo(dtype).bits == 2:
+      if dtypes.iinfo(dtype).bits <= 2:
         self.skipTest('XLA support for int2 is incomplete.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float8_e8m0fnu.')

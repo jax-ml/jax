@@ -41,6 +41,11 @@ if dtypes.int2 is not None:
   numpy_scalar_types.add(dtypes.int2)
   numpy_scalar_types.add(dtypes.uint2)
 
+if dtypes.int1 is not None:
+  assert dtypes.uint1 is not None
+  numpy_scalar_types.add(dtypes.int1)
+  numpy_scalar_types.add(dtypes.uint1)
+
 array_types: set[type] = {literals.TypedNdArray, np.ndarray} | numpy_scalar_types  # pylint: disable=g-bare-generic
 
 

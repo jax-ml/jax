@@ -164,6 +164,11 @@ _float4_dtypes: list[np.dtype] = [
     _float4_e2m1fn_dtype,
 ]
 
+int1: type[np.generic] | None = None
+uint1: type[np.generic] | None = None
+_int1_dtype: np.dtype | None = None
+_uint1_dtype: np.dtype | None = None
+
 int2: type[np.generic] = ml_dtypes.int2
 uint2: type[np.generic] = ml_dtypes.uint2
 
@@ -182,6 +187,16 @@ _intn_dtypes = [
     _int4_dtype,
     _uint4_dtype,
 ]
+
+if hasattr(ml_dtypes, 'int1'):
+  int1 = ml_dtypes.int1
+  _int1_dtype = np.dtype(int1)
+  _intn_dtypes.append(_int1_dtype)
+
+if hasattr(ml_dtypes, 'uint1'):
+  uint1 = ml_dtypes.uint1
+  _uint1_dtype = np.dtype(uint1)
+  _intn_dtypes.append(_uint1_dtype)
 
 # Default types.
 bool_ = np.bool_
@@ -331,10 +346,22 @@ def _canonicalize_dtype(x64_enabled: bool, allow_extended_dtype: bool, dtype: An
     return _dtype_to_32bit_dtype.get(dtype_, dtype_)
 
 @overload
-def canonicalize_dtype(dtype: Any, allow_extended_dtype: Literal[False] = False) -> DType: ...
+
+
+def canonicalize_dtype(
+    dtype: Any, allow_extended_dtype: Literal[False] = False
+) -> DType:
+  ...
+
 
 @overload
-def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False) -> DType | ExtendedDType: ...
+
+
+def canonicalize_dtype(
+    dtype: Any, allow_extended_dtype: bool = False
+) -> DType | ExtendedDType:
+  ...
+
 
 @export
 def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False) -> DType | ExtendedDType:
@@ -510,9 +537,9 @@ def _issubdtype_cached(a: type | np.dtype | ExtendedDType,
   # to the normal scalar type hierarchy.
   if a_sctype in _custom_float_scalar_types:
     return b_sctype in {a_sctype, np.floating, np.inexact, np.number, np.generic}
-  if a_sctype in [int2, int4]:
+  if a_sctype in [int2, int4] or (int1 is not None and a_sctype == int1):
     return b_sctype in {a_sctype, np.signedinteger, np.integer, np.number, np.generic}
-  if a_sctype in [uint2, uint4]:
+  if a_sctype in [uint2, uint4] or (uint1 is not None and a_sctype == uint1):
     return b_sctype in {a_sctype, np.unsignedinteger, np.integer, np.number, np.generic}
 
   # Otherwise, fall back to numpy.issubdtype
@@ -544,6 +571,11 @@ _signed_types = [
     np.dtype('int32'),
     np.dtype('int64'),
 ]
+
+if int1 is not None:
+  _signed_types.insert(0, np.dtype(int1))
+if uint1 is not None:
+  _unsigned_types.insert(0, np.dtype(uint1))
 
 _int_types = _unsigned_types + _signed_types
 
@@ -661,7 +693,12 @@ def _type_promotion_lattice(strict: bool, x64: bool) -> dict[JAXType, list[JAXTy
     x64: allow promotions that form x64 types from non-x64 inputs?
   """
   b1, = _bool_types
-  u2, u4, u8, u16, u32, u64, i2, i4, i8, i16, i32, i64 = _int_types
+  u1, i1 = None, None
+  if _int1_dtype is not None:
+    assert _uint1_dtype is not None
+    u1, u2, u4, u8, u16, u32, u64, i1, i2, i4, i8, i16, i32, i64 = _int_types
+  else:
+    u2, u4, u8, u16, u32, u64, i2, i4, i8, i16, i32, i64 = _int_types
   *small_float_types, bf16, f16, f32, f64 = _float_types
   c64, c128 = _complex_types
   i_, f_, c_ = _weak_types
@@ -691,6 +728,12 @@ def _type_promotion_lattice(strict: bool, x64: bool) -> dict[JAXType, list[JAXTy
         c64: [c128],
         c128: [],
     }
+    if i1 is not None:
+      out[i_].append(i1)
+      out[i1] = []
+    if u1 is not None:
+      out[i_].append(u1)
+      out[u1] = []
     # If x64 mode is not enabled, then we want to avoid any promotions that form
     # 64-bit types from non-64-bit inputs. There's only one of these in the
     # entire promotion lattice, namely u4xi4->i8, which we can avoid by
@@ -795,10 +838,12 @@ def _least_upper_bound(jax_numpy_dtype_promotion: config.NumpyDtypePromotion,
         "you can do so explicitly using e.g. x.astype('float32')")
     elif any(n in _intn_dtypes for n in nodes):
       msg = (
-        f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
-        "promotion path. To avoid unintended promotion, 2-bit and 4-bit integers do not "
-        "support implicit promotion. If you'd like your inputs to be promoted to another "
-        "type, you can do so explicitly using e.g. x.astype('int32')")
+          f'Input dtypes {tuple(str(n) for n in nodes)} have no available'
+          ' implicit dtype promotion path. To avoid unintended promotion,'
+          ' 1-bit, 2-bit and 4-bit integers do not support implicit promotion.'
+          " If you'd like your inputs to be promoted to another type, you can"
+          " do so explicitly using e.g. x.astype('int32')"
+      )
     else:
       msg = (
         f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "

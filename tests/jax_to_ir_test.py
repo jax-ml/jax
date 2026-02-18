@@ -125,12 +125,16 @@ class JaxToIRTest(absltest.TestCase):
     self.assertParsedShape('f32[]', [], jnp.float32)
     self.assertParsedShape('f32[1,2,3]', [1, 2, 3], jnp.float32)
     self.assertParsedShape('pred[1]', [1], jnp.bool_)
+    if hasattr(jnp, 'int1'):
+      self.assertParsedShape('s1[1]', [1], jnp.int1)
     self.assertParsedShape('s2[1]', [1], jnp.int2)
     self.assertParsedShape('s4[1]', [1], jnp.int4)
     self.assertParsedShape('s8[1]', [1], jnp.int8)
     self.assertParsedShape('s16[1]', [1], jnp.int16)
     self.assertParsedShape('s32[1]', [1], jnp.int32)
     self.assertParsedShape('s64[1]', [1], jnp.int64)
+    if hasattr(jnp, 'uint1'):
+      self.assertParsedShape('u1[1]', [1], jnp.uint1)
     self.assertParsedShape('u2[1]', [1], jnp.uint2)
     self.assertParsedShape('u4[1]', [1], jnp.uint4)
     self.assertParsedShape('u8[1]', [1], jnp.uint8)

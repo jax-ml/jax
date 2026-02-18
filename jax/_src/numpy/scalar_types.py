@@ -13,7 +13,6 @@
 # limitations under the License.
 
 
-
 # At present JAX doesn't have a reason to distinguish between scalars and arrays
 # in its object system. Further, we want JAX scalars to have the same type
 # promotion behaviors as JAX arrays. Rather than introducing a new type of JAX
@@ -22,12 +21,11 @@
 
 from typing import Any
 
-import numpy as np
-
-from jax._src.typing import Array
 from jax._src import core
 from jax._src import dtypes
 from jax._src.numpy.array_constructors import asarray
+from jax._src.typing import Array
+import numpy as np
 
 
 # Some objects below rewrite their __module__ attribute to this name.
@@ -74,12 +72,16 @@ def _make_scalar_type(np_scalar_type: type) -> _ScalarMeta:
   return meta
 
 bool_ = _make_scalar_type(np.bool_)
+if dtypes.uint1 is not None:
+  uint1 = _make_scalar_type(dtypes.uint1)
 uint2 = _make_scalar_type(dtypes.uint2)
 uint4 = _make_scalar_type(dtypes.uint4)
 uint8 = _make_scalar_type(np.uint8)
 uint16 = _make_scalar_type(np.uint16)
 uint32 = _make_scalar_type(np.uint32)
 uint64 = _make_scalar_type(np.uint64)
+if dtypes.int1 is not None:
+  int1 = _make_scalar_type(dtypes.int1)
 int2 = _make_scalar_type(dtypes.int2)
 int4 = _make_scalar_type(dtypes.int4)
 int8 = _make_scalar_type(np.int8)

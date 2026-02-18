@@ -1070,13 +1070,17 @@ class JaxExportTest(jtu.JaxTestCase):
       for dtype in dtypes._jax_types if dtype != np.dtype("bool")
   ])
   def test_poly_numeric_dtypes(self, dtype=np.int32):
-    if str(dtype) in {"float8_e4m3b11fnuz",
-                      "float8_e4m3fnuz",
-                      "float8_e5m2fnuz",
-                      "int2",
-                      "int4",
-                      "uint2",
-                      "uint4"}:
+    if str(dtype) in {
+        "float8_e4m3b11fnuz",
+        "float8_e4m3fnuz",
+        "float8_e5m2fnuz",
+        "int1",
+        "int2",
+        "int4",
+        "uint1",
+        "uint2",
+        "uint4",
+    }:
       self.skipTest(f"TODO: serialization not supported for {str(dtype)}")
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest("TPU does not support float8_e8m0fnu.")

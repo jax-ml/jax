@@ -242,6 +242,15 @@ from jax._src.numpy.scalar_types import (
     uint64 as uint64,
 )
 
+# TODO(twsung): Remove try-except once we upgrade to ml_dtypes > 0.5.4
+try:
+  from jax._src.numpy.scalar_types import (
+      int1 as int1,
+      uint1 as uint1,
+  )
+except ImportError:
+  pass
+
 from jax._src.numpy.sorting import (
     argpartition as argpartition,
     argsort as argsort,

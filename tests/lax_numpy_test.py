@@ -3969,10 +3969,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                                              "Casting from complex to real dtypes.*"):
       x.astype('float32')
 
-  @parameterized.parameters('int2', 'int4')
+  @parameterized.parameters('int1', 'int2', 'int4')
   def testAstypeIntN(self, dtype):
-    if dtype == 'int2':
-      self.skipTest('XLA support for int2 is incomplete.')
+    if dtype in ['int1', 'int2']:
+      self.skipTest('XLA support for int1/int2 is incomplete.')
 
     # Test converting from intN to int8
     x = np.array([1, -2, -3, 4, -8, 7], dtype=dtype)

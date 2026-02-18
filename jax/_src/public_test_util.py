@@ -75,6 +75,12 @@ _default_tolerance: ToleranceDict = {
     np.dtype(np.complex128): 1e-15,
 }
 
+if _dtypes.int1 is not None:
+  _default_tolerance[np.dtype(_dtypes.int1)] = 0
+if _dtypes.uint1 is not None:
+  _default_tolerance[np.dtype(_dtypes.uint1)] = 0
+
+
 def default_tolerance():
   return _default_tolerance
 

@@ -407,12 +407,18 @@ absl::StatusOr<ShardFn> HandleNumpyScalar(nb::handle h, ifrt::Client* client,
   std::variant<T, SquashedT, void*> data;
   xla::PrimitiveType type;
   // For extension types, ScalarAsCtype returns a pointer to the data.
-  if (std::is_same<T, xla::s2>()) {
+  if (std::is_same<T, xla::s1>()) {
+    PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
+    type = xla::S1;
+  } else if (std::is_same<T, xla::s2>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
     type = xla::S2;
   } else if (std::is_same<T, xla::s4>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
     type = xla::S4;
+  } else if (std::is_same<T, xla::u1>()) {
+    PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
+    type = xla::U1;
   } else if (std::is_same<T, xla::u2>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
     type = xla::U2;
@@ -766,12 +772,18 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
     // Numpy scalar types. For some of them, we share the handler with
     // Python types (np_int64, np_float64, np_complex128).
     (*p)[dtypes.np_bool.ptr()] = HandleNumpyScalar<bool>;
-    (*p)[dtypes.np_int4.ptr()] = HandleNumpyScalar<xla::s4>;
+    if (dtypes.np_int1.has_value()) {
+      (*p)[dtypes.np_int1->ptr()] = HandleNumpyScalar<xla::s1>;
+    }
     (*p)[dtypes.np_int2.ptr()] = HandleNumpyScalar<xla::s2>;
+    (*p)[dtypes.np_int4.ptr()] = HandleNumpyScalar<xla::s4>;
     (*p)[dtypes.np_int8.ptr()] = HandleNumpyScalar<int8_t>;
     (*p)[dtypes.np_int16.ptr()] = HandleNumpyScalar<int16_t>;
     (*p)[dtypes.np_int32.ptr()] = HandleNumpyScalar<int32_t>;
     (*p)[dtypes.np_int64.ptr()] = HandleNumpyScalar<int64_t, int32_t>;
+    if (dtypes.np_uint1.has_value()) {
+      (*p)[dtypes.np_uint1->ptr()] = HandleNumpyScalar<xla::u1>;
+    }
     (*p)[dtypes.np_uint2.ptr()] = HandleNumpyScalar<xla::u2>;
     (*p)[dtypes.np_uint4.ptr()] = HandleNumpyScalar<xla::u4>;
     (*p)[dtypes.np_uint8.ptr()] = HandleNumpyScalar<uint8_t>;
