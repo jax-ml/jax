@@ -122,21 +122,23 @@ jobs:
           mkdir -p $(pwd)/dist
           $JAXCI_PYTHON -m pip install --upgrade pip
           echo "Download the wheel into a local directory"
-          if [[ "${{ inputs.libtpu-version-type }}" == "nightly" ]]; then
+          if [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "nightly" ]]; then
             $JAXCI_PYTHON -m pip download -d $(pwd)/dist --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-          elif [[ "${{ inputs.libtpu-version-type }}" == "pypi_latest" ]]; then
+          elif [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "pypi_latest" ]]; then
             echo "Using latest libtpu from PyPI"
             $JAXCI_PYTHON -m pip download -d $(pwd)/dist libtpu
-          elif [[ "${{ inputs.libtpu-version-type }}" == "oldest_supported_libtpu" ]]; then
+          elif [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "oldest_supported_libtpu" ]]; then
             echo "Using oldest supported libtpu"
             $JAXCI_PYTHON -m pip download -d $(pwd)/dist --pre libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
             echo "libtpu_version_type=oldest_supported_libtpu" >> $GITHUB_ENV
           else
-            echo "Unknown libtpu version type: ${{ inputs.libtpu-version-type }}"
+            echo "Unknown libtpu version type: ${INPUTS_LIBTPU_VERSION_TYPE}"
             exit 1
           fi
+        env:
+          INPUTS_LIBTPU_VERSION_TYPE: ${{ inputs.libtpu-version-type }}
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
