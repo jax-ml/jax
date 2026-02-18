@@ -19,7 +19,7 @@ from functools import partial
 import inspect
 from math import prod
 import operator as op
-from typing import Any, TypeVar, Union
+from typing import Any, TypeVar, Union, cast, overload
 
 import numpy as np
 
@@ -81,13 +81,36 @@ Infer = InferFromArgs()
 def _get_default_infer():
   return Infer
 
+
+F = TypeVar("F", bound=Callable)
+G = TypeVar("G", bound=Callable)
+
+
+@overload
+def shard_map(
+  f: F, /, *,
+  out_specs: Specs,
+  in_specs: Specs | None | InferFromArgs = ...,
+  mesh: Mesh | AbstractMesh | None = ...,
+  axis_names: Set[AxisName] = ...,
+  check_vma: bool = ...) -> F: ...
+
+@overload
+def shard_map(
+  f: None = None, /, *,
+  out_specs: Specs,
+  in_specs: Specs | None | InferFromArgs = ...,
+  mesh: Mesh | AbstractMesh | None = ...,
+  axis_names: Set[AxisName] = ...,
+  check_vma: bool = ...) -> Callable[[G], G]: ...
+
 # See https://github.com/jax-ml/jax/pull/30753 to understand why `in_specs`
 # defaults to `Infer`.
-def shard_map(f=None, /, *, out_specs: Specs,
+def shard_map(f: F | None = None, /, *, out_specs: Specs,
               in_specs: Specs | None | InferFromArgs = Infer,
               mesh: Mesh | AbstractMesh | None = None,
               axis_names: Set[AxisName] = frozenset(),
-              check_vma: bool = True):
+              check_vma: bool = True) -> F | Callable[[G], G]:
   """Map a function over shards of data using a mesh of devices.
 
   See the docs at https://docs.jax.dev/en/latest/notebooks/shard_map.html.
@@ -202,9 +225,9 @@ def _smap(f, *, in_axes, out_axes, axis_name: AxisName):
 
 
 @partial(traceback_util.api_boundary, repro_api_name="jax.shard_map")
-def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
+def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
                in_specs: Specs, out_specs: Specs, axis_names: Set[AxisName],
-               check_vma: bool, _smap: bool = False) -> Callable:
+               check_vma: bool, _smap: bool = False) -> F:
   if not callable(f):
     raise TypeError("shard_map requires a callable for its first argument, "
                     f"but got {f} of type {type(f)}.")
@@ -285,7 +308,7 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
       msg = _inout_vma_error(f, mesh, out_tree(), out_specs, fails)
       raise ValueError(msg) from None
     return tree_unflatten(out_tree(), out_flat)
-  return wrapped
+  return cast(F, wrapped)
 
 
 @lu.transformation_with_aux2
