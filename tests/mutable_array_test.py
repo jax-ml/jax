@@ -1192,6 +1192,17 @@ class MutableArrayTest(jtu.JaxTestCase):
     stable_hlo = f.lower(1, 2).as_text()
     self.assertNotIn("add", stable_hlo)
 
+  def test_grad_of_ref_swap(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/33987
+    @jax.jit
+    def fn(x):
+      x = jax.new_ref(x)
+      x[...] = 2.0
+      return jax.freeze(x)
+
+    result = jax.grad(fn)(1.0)
+    self.assertEqual(result, 1.0)
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
