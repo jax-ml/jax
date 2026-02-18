@@ -29,7 +29,6 @@ from jax._src.internal_test_util import export_back_compat_test_util as bctu
 from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosaic_gpu_add_one
 from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosaic_matmul
 from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosaic_semaphore_dma
-from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosaic_boolean_constant
 from jax._src.internal_test_util.export_back_compat_test_data.pallas import triton_add_one
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
@@ -142,26 +141,6 @@ class CompatTest(bctu.CompatTestBase):
 
     data = self.load_testdata(
         mosaic_semaphore_dma.semaphore_and_dma_2024_04_22)
-    self.run_one_test(func, data)
-
-  def test_mosaic_boolean_constant(self):
-    # This is a test for https://github.com/llvm/llvm-project/commit/c6964b1b4dcda0f19f91cef186314f4cc2e0feb8
-    # that changed the encoding of arith.constant. Boolean >= does `x ^ true` as
-    # part of its implementation, emitting the problematic constant.
-    def func():
-      # Build the inputs here, to reduce the size of the golden inputs.
-      x_shape = (8, 128)
-      x = (
-          jnp.arange(math.prod(x_shape), dtype=jnp.int32).reshape(x_shape) % 2
-          == 1
-      )
-      y = x
-      def kernel(x, y, z):
-        z[...] = x[...] >= y[...]
-      z = pl.pallas_call(kernel, out_shape=x)(x, y)
-      return jnp.all(z).astype(jnp.float32)
-
-    data = self.load_testdata(mosaic_boolean_constant.data_2026_02_17)
     self.run_one_test(func, data)
 
 

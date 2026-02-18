@@ -19,7 +19,6 @@ limitations under the License.
 #include <vector>
 
 #include "llvm/ADT/StringMap.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -41,7 +40,7 @@ constexpr StringRef kMangledDialect = "stable_mosaic.";
 constexpr StringRef kVersionAttrName = "stable_mosaic.version";
 // When this is bumped, we should file a TODO to update the forward-compatible
 // version in tpu_custom_call.py in a month!
-constexpr int kVersion = 10;
+constexpr int kVersion = 9;
 
 using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
 
@@ -265,37 +264,7 @@ LogicalResult vector_multi_dim_reduce_upgrade(Operation* op, int version,
 LogicalResult vector_multi_dim_reduce_downgrade(Operation* op, int version,
                                                 bool&) {
   if (version < 3) {
-    return op->emitOpError("Downgrade to version ")
-           << version << " unsupported";
-  }
-  return success();
-}
-
-LogicalResult arith_constant_upgrade(Operation* op, int version, bool&) {
-  return success();
-}
-
-LogicalResult arith_constant_downgrade(Operation* op, int version, bool&) {
-  // The encoding of the boolean dense elements attr changed in version 10.
-  // Before, it used to be a bitpacked value, but a splat true was represented
-  // by a single byte with all bits set to 1. After the change, a splat true is
-  // represented by a byte with the LSB set to 1. The change happens to be
-  // backwards-compatible, but not forwards-compatible, which is why we need to
-  // have the downgrade rule only.
-  if (version < 10) {
-    auto value_attr = op->getAttrOfType<DenseElementsAttr>("value");
-    // Only i1 dense elements attrs are affected.
-    if (!value_attr || value_attr.getElementType() !=
-                           mlir::IntegerType::get(op->getContext(), 1)) {
-      return success();
-    }
-    if (!value_attr.isSplat()) {
-      return op->emitOpError("Downgrade to version ")
-             << version << " not implemented: value is not a splat";
-    }
-    char new_splat = value_attr.getSplatValue<bool>() ? 0xff : 0x00;
-    op->setAttr("value", mlir::SplatElementsAttr::getFromRawBuffer(
-                             value_attr.getType(), {new_splat}));
+    return op->emitError("Downgrade to version ") << version << " unsupported";
   }
   return success();
 }
@@ -309,7 +278,6 @@ const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
       {SemaphoreSignalOp::getOperationName(), semaphore_signal_upgrade},
       {vector::MultiDimReductionOp::getOperationName(),
        vector_multi_dim_reduce_upgrade},
-      {arith::ConstantOp::getOperationName(), arith_constant_upgrade},
   };
   return *rules;
 }
@@ -322,9 +290,7 @@ const llvm::StringMap<SerdeRuleType>& downgrade_rules() {
       {IotaOp::getOperationName(), iota_downgrade},
       {SemaphoreSignalOp::getOperationName(), semaphore_signal_downgrade},
       {vector::MultiDimReductionOp::getOperationName(),
-       vector_multi_dim_reduce_downgrade},
-      {arith::ConstantOp::getOperationName(), arith_constant_downgrade},
-  };
+       vector_multi_dim_reduce_downgrade}};
   return *rules;
 }
 
