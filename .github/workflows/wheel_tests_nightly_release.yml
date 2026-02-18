@@ -354,7 +354,7 @@ jobs:
       - name: Download release wheels from GCS
         run: |
           mkdir -p $(pwd)/dist
-          final_gcs_download_uri=${{ inputs.gcs_download_uri }}
+          final_gcs_download_uri=${INPUTS_GCS_DOWNLOAD_URI}
 
           # Get the major and minor version of Python.
           # E.g if python=3.11, then python_major_minor=311
@@ -368,7 +368,7 @@ jobs:
           jax_wheel=$(ls dist/jax*py3*none*any.whl 2>/dev/null)
           echo "JAX_WHEEL=$jax_wheel" >> $GITHUB_ENV
 
-          if [[ "${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}" != "1" ]]; then
+          if [[ "${INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS}" != "1" ]]; then
             gcloud storage cp -r "${final_gcs_download_uri}/jaxlib*${python_major_minor}*linux*x86_64*.whl" $(pwd)/dist/
             gcloud storage cp -r "${final_gcs_download_uri}/jax*cuda${{ matrix.cuda-version }}*plugin*${python_major_minor}*linux*x86_64*.whl" $(pwd)/dist/
             gcloud storage cp -r "${final_gcs_download_uri}/jax*cuda${{ matrix.cuda-version }}*pjrt*linux*x86_64*.whl" $(pwd)/dist/
@@ -381,36 +381,47 @@ jobs:
             echo "JAX_CUDA_PLUGIN_WHEEL=$jax_cuda_plugin_wheel" >> $GITHUB_ENV
             echo "JAX_CUDA_PJRT_WHEEL=$jax_cuda_pjrt_wheel" >> $GITHUB_ENV
           fi
+        env:
+          INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
+          INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
       - name: Verify JAX CPU packages can be installed
         run: |
           $PYTHON -m uv venv ~/test_cpu && source ~/test_cpu/bin/activate
-          if [[ "${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}" == "1" ]]; then
+          if [[ "${INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS}" == "1" ]]; then
             uv pip install $JAX_WHEEL
           else
             uv pip install $JAX_WHEEL $JAXLIB_WHEEL
           fi
+        env:
+          INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
       - name: Verify JAX TPU packages can be installed
         run: |
           $PYTHON -m uv venv ~/test_tpu && source ~/test_tpu/bin/activate
 
-          if [[ "${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}" == "1" ]]; then
+          if [[ "${INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS}" == "1" ]]; then
             uv pip install $JAX_WHEEL[tpu]
           else
             uv pip install $JAX_WHEEL[tpu] $JAXLIB_WHEEL
           fi
+        env:
+          INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
       - name: Verify JAX CUDA packages can be installed (Nvidia Pip Packages)
         run: |
           $PYTHON -m uv venv ~/test_cuda_pip && source ~/test_cuda_pip/bin/activate
-          if [[ "${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}" == "1" ]]; then
+          if [[ "${INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS}" == "1" ]]; then
             uv pip install $JAX_WHEEL[cuda${{ matrix.cuda-version }}]
           else
             uv pip install $JAX_WHEEL[cuda${{ matrix.cuda-version }}] $JAXLIB_WHEEL $JAX_CUDA_PJRT_WHEEL $JAX_CUDA_PLUGIN_WHEEL[with-cuda] $EXTRA_INDEX
           fi
+        env:
+          INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
       - name: Verify JAX CUDA packages can be installed (CUDA local)
         run: |
           $PYTHON -m uv venv ~/test_cuda_local && source ~/test_cuda_local/bin/activate
-          if [[ "${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}" == "1" ]]; then
+          if [[ "${INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS}" == "1" ]]; then
             uv pip install $JAX_WHEEL[cuda${{ matrix.cuda-version }}-local]
           else
             uv pip install $JAX_WHEEL $JAXLIB_WHEEL $JAX_CUDA_PJRT_WHEEL $JAX_CUDA_PLUGIN_WHEEL
           fi
+        env:
+          INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}

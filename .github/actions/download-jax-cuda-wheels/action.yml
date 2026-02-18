@@ -55,8 +55,10 @@ runs:
         echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
 
         # Get the CUDA major version only
-        full_cuda_version="${{ inputs.cuda-version }}"
+        full_cuda_version="${INPUTS_CUDA_VERSION}"
         echo "JAXCI_CUDA_VERSION=${full_cuda_version%%.*}" >> $GITHUB_ENV
+      env:
+        INPUTS_CUDA_VERSION: ${{ inputs.cuda-version }}
     - name: Download wheels
       shell: bash
       id: download-wheel-artifacts
@@ -66,29 +68,35 @@ runs:
       continue-on-error: true
       run: |
         mkdir -p $(pwd)/dist
-        if [[ "${{ inputs.download-jax-from-gcs }}" == "1" ]]; then
-          gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+        if [[ "${INPUTS_DOWNLOAD_JAX_FROM_GCS}" == "1" ]]; then
+          gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}"/jax*py3*none*any.whl $(pwd)/dist/
         else
           echo "JAX wheel won't be downloaded, only jaxlib pre-built wheel is tested."
         fi
 
         # Do not download the jaxlib and CUDA plugin artifacts if we are testing a jax only
         # release.
-        if [[ "${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}" == "1" ]]; then
+        if [[ "${INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS}" == "1" ]]; then
           echo "JAX only release. Only downloading the jax wheel from the release bucket."
         else
-          if [[ ${{ inputs.jaxlib-version }} == "head" ]]; then
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda${JAXCI_CUDA_VERSION}*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda${JAXCI_CUDA_VERSION}*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
-          elif [[ ${{ inputs.jaxlib-version }} == "pypi_latest" ]]; then
-            PYTHON=python${{ inputs.python }}
+          if [[ ${INPUTS_JAXLIB_VERSION} == "head" ]]; then
+            gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+            gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jax*cuda${JAXCI_CUDA_VERSION}*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+            gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jax*cuda${JAXCI_CUDA_VERSION}*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
+          elif [[ ${INPUTS_JAXLIB_VERSION} == "pypi_latest" ]]; then
+            PYTHON=python${INPUTS_PYTHON}
             $PYTHON -m pip download jaxlib jax-cuda${JAXCI_CUDA_VERSION}-pjrt jax-cuda${JAXCI_CUDA_VERSION}-plugin --dest $(pwd)/dist/
           else
-            echo "Invalid jaxlib version: ${{ inputs.jaxlib-version }}"
+            echo "Invalid jaxlib version: ${INPUTS_JAXLIB_VERSION}"
             exit 1
           fi
         fi
+      env:
+        INPUTS_DOWNLOAD_JAX_FROM_GCS: ${{ inputs.download-jax-from-gcs }}
+        INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
+        INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
+        INPUTS_JAXLIB_VERSION: ${{ inputs.jaxlib-version }}
+        INPUTS_PYTHON: ${{ inputs.python }}
     - name: Skip the test run if the wheel artifacts were not downloaded successfully
       shell: bash
       if: steps.download-wheel-artifacts.outcome == 'failure'

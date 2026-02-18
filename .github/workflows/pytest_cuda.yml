@@ -88,16 +88,18 @@ jobs:
         run: |
           # Set the "jax" wheel extra to configure whether to download the Nvidia Pip packages from
           # PyPI.
-          if [[ "${{ inputs.use-nvidia-pip-wheels }}" == false ]] && [[ "${{ inputs.cuda-version }}" == 12* ]]; then
+          if [[ "${{ inputs.use-nvidia-pip-wheels }}" == false ]] && [[ "${INPUTS_CUDA_VERSION}" == 12* ]]; then
             echo "JAXCI_JAX_PYPI_EXTRAS=cuda12-local">> $GITHUB_ENV
-          elif [[ "${{ inputs.use-nvidia-pip-wheels }}" == true ]] && [[ "${{ inputs.cuda-version }}" == 12* ]]; then
+          elif [[ "${{ inputs.use-nvidia-pip-wheels }}" == true ]] && [[ "${INPUTS_CUDA_VERSION}" == 12* ]]; then
             echo "JAXCI_JAX_PYPI_EXTRAS=cuda12">> $GITHUB_ENV
-          elif [[ "${{ inputs.use-nvidia-pip-wheels }}" == true ]] && [[ "${{ inputs.cuda-version }}" == 13* ]]; then
+          elif [[ "${{ inputs.use-nvidia-pip-wheels }}" == true ]] && [[ "${INPUTS_CUDA_VERSION}" == 13* ]]; then
             echo "JAXCI_JAX_PYPI_EXTRAS=cuda13">> $GITHUB_ENV
           else
-            echo "Invalid CUDA version: ${{ inputs.cuda-version }}"
+            echo "Invalid CUDA version: ${INPUTS_CUDA_VERSION}"
             exit 1
           fi
+        env:
+          INPUTS_CUDA_VERSION: ${{ inputs.cuda-version }}
       - name: Install Python dependencies
         run: |
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
