@@ -93,12 +93,15 @@ jobs:
         if: ${{ !contains(inputs.runner, 'windows-x86') }}
         run: |
           mkdir -p $(pwd)/dist &&
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+          gsutil -m cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
 
           # Download the "jax" wheel from GCS if inputs.install-jax-current-commit is not set to 1
-          if [[ "${{ inputs.install-jax-current-commit }}" != 1 ]]; then
-            gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+          if [[ "${INPUTS_INSTALL_JAX_CURRENT_COMMIT}" != 1 ]]; then
+            gsutil -m cp -r "${INPUTS_GCS_DOWNLOAD_URI}"/jax*py3*none*any.whl $(pwd)/dist/
           fi
+        env:
+          INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
+          INPUTS_INSTALL_JAX_CURRENT_COMMIT: ${{ inputs.install-jax-current-commit }}
       - name: Download jaxlib wheel from GCS (Windows runs)
         id: download-wheel-artifacts-w
         # Set continue-on-error to true to prevent actions from failing the workflow if this step
@@ -111,12 +114,15 @@ jobs:
           mkdir dist
           @REM Use `call` so that we can run sequential gsutil commands on Windows
           @REM See https://github.com/GoogleCloudPlatform/gsutil/issues/233#issuecomment-196150652
-          call gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
+          call gsutil -m cp -r "%INPUTS_GCS_DOWNLOAD_URI%/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
 
           @REM Download the "jax" wheel from GCS if inputs.install-jax-current-commit is not set to 1
-          if not "${{ inputs.install-jax-current-commit }}"=="1" (
-            call gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl dist/
+          if not "%INPUTS_INSTALL_JAX_CURRENT_COMMIT%"=="1" (
+            call gsutil -m cp -r "%INPUTS_GCS_DOWNLOAD_URI%"/jax*py3*none*any.whl dist/
           )
+        env:
+          INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
+          INPUTS_INSTALL_JAX_CURRENT_COMMIT: ${{ inputs.install-jax-current-commit }}
       - name: Skip the test run if the wheel artifacts were not downloaded successfully
         if: steps.download-wheel-artifacts-nw.outcome == 'failure' || steps.download-wheel-artifacts-w.outcome == 'failure'
         run: |
