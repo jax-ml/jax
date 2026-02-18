@@ -63,6 +63,7 @@ class LoweringContext:
   is_collective_kernel: bool | None = dataclasses.field(
       init=False, default=None
   )
+  smem_base : ir.Value | None = dataclasses.field(init=False, default=None)
 
   def check_collective(self, op: ir.OpView) -> None:
     """Checks that the collective attribute is consistent across operations.
@@ -100,6 +101,13 @@ class LoweringContext:
       for old, new in zip(op.results, new_results):
         old.replace_all_uses_with(new)
       self.lowered_operations.add(op)
+
+  def get_smem_base(self) -> ir.Value:
+    if self.smem_base is None:
+      i8 = ir.IntegerType.get_signless(8)
+      ty = ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=utils.smem())
+      self.smem_base = gpu.dynamic_shared_memory(ty)
+    return self.smem_base
 
 
 class Recursed:
@@ -709,9 +717,9 @@ def _vector_reduction_op_lowering_rule(
   [layout] = inference_utils.in_layouts(op)
   element_type = op.vector.type.element_type
   scratch = _slice_smem(
+      ctx,
       ir.MemRefType.get([4], element_type, memory_space=utils.smem()),
       arith.constant(None, op.attributes["offset"]),
-      ctx.smem_requested_bytes,
   )
   axes = range(op.vector.type.rank)
   op_kind = _combining_kind(op.kind)
@@ -758,9 +766,9 @@ def _vector_multi_dim_reduction_op_lowering_rule(
     dtype = op.source.type.element_type
     allocation_size = ir.IntegerAttr(op.attributes["scratch_size"]).value * 8 // utils.bitwidth(dtype)
     scratch = _slice_smem(
+        ctx,
         ir.MemRefType.get([allocation_size], dtype, memory_space=utils.smem()),
         arith.constant(None, op.attributes["offset"]),
-        ctx.smem_requested_bytes,
     )
   else:
     scratch = None
@@ -1509,26 +1517,24 @@ def _mgpu_slice_smem_op_lowering_rule(
   if ref_ty.element_type == ir.Type.parse("!mosaic_gpu.barrier"):
     # Barrier memrefs are not transformed and must not be wrapped.
     assert not inference_utils.has_out_transforms_set(op)
-    return [_slice_smem(ref_ty, op.offset, ctx.smem_requested_bytes)]
+    return [_slice_smem(ctx, ref_ty, op.offset)]
 
   [out_transforms] = inference_utils.out_transforms(op)
   _, transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
   transformed_ref_ty = transform_type(ref_ty, transforms)
-  transformed_ref = _slice_smem(transformed_ref_ty, op.offset, ctx.smem_requested_bytes)
+  transformed_ref = _slice_smem(ctx, transformed_ref_ty, op.offset)
   return [wrap_transformed_memref(transformed_ref, op.result.type, out_transforms)]
 
 
-def _slice_smem(result: ir.MemRefType, offset: ir.Value, smem_size: int):
+def _slice_smem(ctx: LoweringContext, result: ir.MemRefType, offset: ir.Value):
+  smem_size = ctx.smem_requested_bytes
   if isinstance(offset.owner, arith.ConstantOp):
     cst_offset = ir.IntegerAttr(offset.owner.value).value
     size = math.prod(result.shape) * utils.bitwidth(result.element_type) // 8
     if cst_offset + size > smem_size:
       raise ValueError("Ran out of shared memory.")
 
-  i8 = ir.IntegerType.get_signless(8)
-  smem_base = gpu.dynamic_shared_memory(
-      ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=utils.smem())
-  )
+  smem_base = ctx.get_smem_base()
   offset = arith.index_cast(ir.IndexType.get(), offset)
   lowered_result_type = result
   if result.element_type == ir.Type.parse("!mosaic_gpu.barrier"):
