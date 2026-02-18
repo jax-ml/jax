@@ -227,6 +227,7 @@ def kernel(
     body: Callable[..., None],
     out_shape: object,
     *,
+    input_output_aliases: Mapping[int, int] = {},
     scratch_shapes: pallas_core.ScratchShapeTree = (),
     compiler_params: pallas_core.CompilerParams | None = None,
     # Mesh kwargs
@@ -258,6 +259,9 @@ def kernel(
     cluster: A tuple of integers specifying the size of the kernel cluster.
     cluster_names: The axis names of the grid. Must be the same length as
       `cluster`.
+    input_output_aliases: a dictionary mapping the index of some inputs to the
+      index of the output that aliases them. These indices are in the flattened
+      inputs and outputs.
     num_threads: The number of threads to launch per block. Note that these
       do not correspond to CUDA threads, but rather to warpgroups on Hopper
       and Blackwell GPUs.
@@ -300,10 +304,12 @@ def kernel(
       pallas_core.core_map(
           mesh, compiler_params=compiler_params, interpret=interpret, name=name
       )(cmap_body)
-    _, outs = state_discharge.run_state(stateful)((
-        operands,
-        jax.tree.map(lambda s: jax.lax.empty(s.shape, s.dtype), out_shape),
-    ))
+    out_inits = list(
+        jax.tree.map(lambda s: jax.lax.empty(s.shape, s.dtype), out_shape)
+    )
+    for in_idx, out_idx in input_output_aliases.items():
+      out_inits[out_idx] = operands[in_idx]
+    _, outs = state_discharge.run_state(stateful)((operands, out_inits))
     return outs[0] if unwrap_out else outs
 
   @wrapper.def_vmap
@@ -325,6 +331,7 @@ def kernel(
     out = kernel(
         batched_body,
         out_shape=tree_util.tree_map(add_batch_dim, out_shape_),
+        input_output_aliases=input_output_aliases,
         scratch_shapes=scratch_shapes,
         compiler_params=compiler_params,
         grid=(axis_size,) + grid,
