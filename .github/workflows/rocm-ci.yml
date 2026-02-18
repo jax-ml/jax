@@ -1,58 +1,105 @@
-name: ROCm GPU Post-Merge Check
+name: ROCm CI Unit Tests
 
 on:
-  # Trigger the workflow after a push into the main branch
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
-permissions: {}
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  build-jax-in-docker:
+  build-and-test:
+    name: build-and-test (${{ matrix.mode.name }})
     runs-on: linux-x86_64-cirrascale-64-8gpu-amd-mi250
-    env:
-      BASE_IMAGE: "ubuntu:22.04"
-      TEST_IMAGE: ubuntu-jax-upstream-${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
-      PYTHON_VERSION: "3.11"
-      ROCM_VERSION: "6.3.3"
-      WORKSPACE_DIR: workdir_${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
+    strategy:
+      fail-fast: false
+      matrix:
+        mode:
+          - {name: "py3.11", python_version: "3.11", config: ""}
+          - {name: "py3.12", python_version: "3.12", config: ""}
+          - {name: "py3.13", python_version: "3.13", config: ""}
+          - {name: "py3.14", python_version: "3.14", config: ""}
+    container:
+      image: rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa
+      options: >-
+        -w ${{ github.workspace }}/rocm-jax/jax_rocm_plugin
+        --device=/dev/kfd
+        --device=/dev/dri
+        --group-add video
+        --cap-add=SYS_PTRACE
+        --security-opt seccomp=unconfined
+        --shm-size 16G
+    defaults:
+      run:
+        working-directory: rocm-jax/jax_rocm_plugin
     steps:
-      - name: Clean up old runs
-        run: |
-          ls
-          # Make sure that we own all of the files so that we have permissions to delete them
-          docker run -v "./:/jax" ubuntu /bin/bash -c "chown -R $UID /jax/workdir_* || true"
-          # Remove any old work directories from this machine
-          rm -rf workdir_*
-          ls
-      - name: Print system info
-        run: |
-          rocm-smi
-      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
+      - name: Checkout JAX repo
+        uses: actions/checkout@v4
         with:
-          path: ${{ env.WORKSPACE_DIR }}
-          persist-credentials: false
-      - name: Build JAX
-        run: |
-          pushd $WORKSPACE_DIR
-          python3 build/rocm/ci_build \
-            --rocm-version $ROCM_VERSION \
-            --base-docker $BASE_IMAGE \
-            --python-versions $PYTHON_VERSION \
-            --compiler=clang \
-            dist_docker \
-            --image-tag $TEST_IMAGE
-      - name: Archive jax wheels
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
-        with:
-          name: rocm_jax_r${{ env.ROCM_VERSION }}_py${{ env.PYTHON_VERSION  }}_id${{ github.run_id }}
-          path: ${{ env.WORKSPACE_DIR }}/dist/*.whl
-          retention-days: 2
-      - name: Run tests
-        run: |
-          cd $WORKSPACE_DIR
-          python3 build/rocm/ci_build test $TEST_IMAGE --test-cmd "pytest tests/core_test.py"
+          path: jax
 
+      - name: Checkout rocm-jax plugin repo
+        uses: actions/checkout@v4
+        with:
+          repository: ROCm/rocm-jax
+          path: rocm-jax
+
+      - name: Get RBE cluster keys
+        env:
+          RBE_CI_CERT: ${{ secrets.RBE_CI_CERT }}
+          RBE_CI_KEY: ${{ secrets.RBE_CI_KEY }}
+        run: |
+          echo "$RBE_CI_CERT" >> ci-cert.crt
+          echo "$RBE_CI_KEY" >> ci-cert.key
+
+      - name: ROCm Info
+        run: /opt/rocm/bin/rocminfo
+
+      - name: Run single-GPU unit tests
+        if: always()
+        run: |
+          bash build/rocm/ci_run_jax_ut.sh \
+            --config=rocm_sgpu \
+            --config=rocm_rbe \
+            --override_repository=jax=${{ github.workspace }}/jax \
+            --repo_env=HERMETIC_PYTHON_VERSION=${{ matrix.mode.python_version }} \
+            ${{ matrix.mode.config }} \
+            --curses=no \
+            --color=yes \
+            -- \
+            @jax//tests:gpu_tests \
+            @jax//tests:backend_independent_tests \
+            $(build/rocm/targets_to_ignore.sh)
+
+      - name: Run multi-GPU unit tests
+        if: always()
+        run: |
+          bash build/rocm/ci_run_jax_ut.sh \
+            --config=rocm_mgpu \
+            --config=rocm_rbe \
+            --override_repository=jax=${{ github.workspace }}/jax \
+            --repo_env=HERMETIC_PYTHON_VERSION=${{ matrix.mode.python_version }} \
+            ${{ matrix.mode.config }} \
+            --curses=no \
+            --color=yes \
+            --strategy=TestRunner=local \
+            -- \
+            @jax//tests:gpu_tests \
+            @jax//tests:backend_independent_tests \
+            $(build/rocm/targets_to_ignore.sh)
+
+      - name: Upload logs to artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-rbe-py${{ matrix.mode.name }}
+          path: rocm-jax/jax_rocm_plugin/logs/
