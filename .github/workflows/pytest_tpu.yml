@@ -96,24 +96,26 @@ jobs:
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt -r build/collect-profile-requirements.txt
       - name: Set up libtpu wheels
         run: |
-          if [[ "${{ inputs.libtpu-version-type }}" == "nightly" ]]; then
+          if [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "nightly" ]]; then
             echo "Using nightly libtpu"
             $JAXCI_PYTHON -m uv pip install --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-          elif [[ "${{ inputs.libtpu-version-type }}" == "pypi_latest" ]]; then
+          elif [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "pypi_latest" ]]; then
             echo "Using latest libtpu from PyPI"
             # Set JAXCI_JAX_PYPI_EXTRAS to "tpu". The `run_pytest_tpu.sh` script will install the
             # latest libtpu wheel from PyPI.
             echo "JAXCI_JAX_PYPI_EXTRAS=tpu" >> $GITHUB_ENV
-          elif [[ "${{ inputs.libtpu-version-type }}" == "oldest_supported_libtpu" ]]; then
+          elif [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "oldest_supported_libtpu" ]]; then
             echo "Using oldest supported libtpu"
             $JAXCI_PYTHON -m uv pip install --pre libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
             echo "libtpu_version_type=oldest_supported_libtpu" >> $GITHUB_ENV
           else
-            echo "Unknown libtpu version type: ${{ inputs.libtpu-version-type }}"
+            echo "Unknown libtpu version type: ${INPUTS_LIBTPU_VERSION_TYPE}"
             exit 1
           fi
+        env:
+          INPUTS_LIBTPU_VERSION_TYPE: ${{ inputs.libtpu-version-type }}
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
@@ -122,8 +124,10 @@ jobs:
       - name: Run Pytest TPU tests
         timeout-minutes: ${{ github.event_name == 'pull_request' && 30 || 210 }}
         run: |
-          if [[ ${{ inputs.python }} == "3.13-nogil" ]]; then
+          if [[ ${INPUTS_PYTHON} == "3.13-nogil" ]]; then
             echo "Uninstalling xprof as it is not compatible with python 3.13t."
             $JAXCI_PYTHON -m uv pip uninstall xprof
           fi
           ./ci/run_pytest_tpu.sh
+        env:
+          INPUTS_PYTHON: ${{ inputs.python }}

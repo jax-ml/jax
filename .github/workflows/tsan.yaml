@@ -137,12 +137,12 @@ jobs:
       # Upload the Python tarball to GCS so RBE can access it.
       - name: Upload TSAN CPython to GCS
         run: |
-          GCS_DEST="gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}"
+          GCS_DEST="gs://general-ml-ci-transient/jax-github-actions/jax/${GITHUB_WORKFLOW}/${{ github.run_number }}/${{ github.run_attempt }}"
           echo "Uploading python-tsan.tgz to $GCS_DEST"
           gcloud storage cp python-tsan.tgz "$GCS_DEST/"
 
           # Output the HTTP URL for Bazel
-          BASE_URL="https://storage.googleapis.com/general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}/python-tsan.tgz"
+          BASE_URL="https://storage.googleapis.com/general-ml-ci-transient/jax-github-actions/jax/${GITHUB_WORKFLOW}/${{ github.run_number }}/${{ github.run_attempt }}/python-tsan.tgz"
           # URL-encode the path (handles spaces in workflow name)
           PUBLIC_URL=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${BASE_URL}', safe=':/'))")
           echo "HERMETIC_PYTHON_URL=$PUBLIC_URL" >> $GITHUB_ENV
