@@ -31,7 +31,8 @@ jobs:
     container:
       image: rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa
       options: >-
-        -w ${{ github.workspace }}/rocm-jax/jax_rocm_plugin
+        -v /data/ci-cert.crt:/certs/ci-cert.crt:ro
+        -v /data/ci-cert.key:/certs/ci-cert.key:ro
         --device=/dev/kfd
         --device=/dev/dri
         --group-add video
@@ -53,13 +54,18 @@ jobs:
           repository: ROCm/rocm-jax
           path: rocm-jax
 
-      - name: Get RBE cluster keys
-        env:
-          RBE_CI_CERT: ${{ secrets.RBE_CI_CERT }}
-          RBE_CI_KEY: ${{ secrets.RBE_CI_KEY }}
+      - name: Copy RBE certificates
         run: |
-          echo "$RBE_CI_CERT" >> ci-cert.crt
-          echo "$RBE_CI_KEY" >> ci-cert.key
+          cp /certs/ci-cert.crt ci-cert.crt
+          cp /certs/ci-cert.key ci-cert.key
+
+      - name: Info
+        working-directory: /
+        run: |
+          echo "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
+          ls -alsh "${GITHUB_WORKSPACE}"
+          ls -alsh "${GITHUB_WORKSPACE}/jax" || echo "jax/ not found"
+          ls -alsh "${GITHUB_WORKSPACE}/rocm-jax" || echo "rocm-jax/ not found"
 
       - name: ROCm Info
         run: /opt/rocm/bin/rocminfo
@@ -70,7 +76,7 @@ jobs:
           bash build/rocm/ci_run_jax_ut.sh \
             --config=rocm_sgpu \
             --config=rocm_rbe \
-            --override_repository=jax=${{ github.workspace }}/jax \
+            --override_repository=jax=${GITHUB_WORKSPACE}/jax \
             --repo_env=HERMETIC_PYTHON_VERSION=${{ matrix.mode.python_version }} \
             ${{ matrix.mode.config }} \
             --curses=no \
@@ -86,7 +92,7 @@ jobs:
           bash build/rocm/ci_run_jax_ut.sh \
             --config=rocm_mgpu \
             --config=rocm_rbe \
-            --override_repository=jax=${{ github.workspace }}/jax \
+            --override_repository=jax=${GITHUB_WORKSPACE}/jax \
             --repo_env=HERMETIC_PYTHON_VERSION=${{ matrix.mode.python_version }} \
             ${{ matrix.mode.config }} \
             --curses=no \
