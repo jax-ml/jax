@@ -19,7 +19,7 @@ permissions:
 jobs:
   build-and-test:
     name: build-and-test (${{ matrix.mode.name }})
-    runs-on: linux-x86_64-cirrascale-64-8gpu-amd-mi250
+    runs-on: linux-x86-64-4gpu-amd
     strategy:
       fail-fast: false
       matrix:
