@@ -104,7 +104,13 @@ flatbuffers()
 
 load("//third_party/external_deps:workspace.bzl", "external_deps_repository")
 
-external_deps_repository(name = "rocm_external_test_deps")
+external_deps_repository(
+    name = "rocm_external_test_deps",
+    deps = [
+        "//jaxlib/tools:jax_rocm_pjrt_py_import",
+        "//jaxlib/tools:jax_rocm_plugin_py_import",
+    ],
+)
 
 load("//:test_shard_count.bzl", "test_shard_count_repository")
 
