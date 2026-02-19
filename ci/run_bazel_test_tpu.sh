@@ -91,8 +91,8 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   # Run single-accelerator tests in parallel
   bazel test \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
-    --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     $OVERRIDE_XLA_REPO \
+    --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     --config=ci_linux_x86_64 \
     --config=ci_rbe_cache \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
@@ -123,8 +123,8 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   # Run multi-accelerator across all chips
   bazel test \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
-    --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     $OVERRIDE_XLA_REPO \
+    --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     --config=ci_linux_x86_64 \
     --config=ci_rbe_cache \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
@@ -152,8 +152,8 @@ else
   # Run single-accelerator tests in parallel
   bazel test \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
-    --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     $OVERRIDE_XLA_REPO \
+    --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     --config=ci_linux_x86_64 \
     --config=ci_rbe_cache \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \

@@ -1,0 +1,10 @@
+{
+  "additive_build_content": "cc_library(\n    name = \"numpy_headers\",\n    hdrs = glob([\"numpy/_core/include/**/*.h\", \"numpy/core/include/**/*.h\", \"site-packages/numpy/_core/include/**/*.h\", \"site-packages/numpy/core/include/**/*.h\"], allow_empty = True),\n    includes = [\"numpy/_core/include\", \"numpy/core/include\", \"site-packages/numpy/_core/include\", \"site-packages/numpy/core/include\"],\n    visibility = [\"//visibility:public\"],\n)",
+  "data": [],
+  "srcs": [],
+  "common_extra_deps": [],
+  "copy_files": {},
+  "copy_executables": {},
+  "data_exclude_glob": [],
+  "srcs_exclude_glob": []
+}
