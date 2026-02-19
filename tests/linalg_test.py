@@ -99,6 +99,17 @@ def osp_linalg_toeplitz(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarra
     return np.vectorize(
       scipy.linalg.toeplitz, signature="(m),(n)->(m,n)", otypes=(np.result_type(c, r),))(c, r)
 
+def osp_linalg_hankel(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarray:
+  """Batched scipy hankel for testing."""
+  if scipy_version >= (1, 19):
+    if r is None:
+      return scipy.linalg.hankel(c)
+    return scipy.linalg.hankel(c, r)
+  if r is None:
+    r = np.zeros_like(c)
+  return np.vectorize(
+      scipy.linalg.hankel, signature="(m),(n)->(m,n)",
+      otypes=(np.result_type(c.dtype, r.dtype),))(c, r)
 
 def svd_algorithms():
   algorithms = [None]
@@ -2193,6 +2204,42 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       [1, 4, 5, 6],
       [2, 1, 4, 5],
       [3, 2, 1, 4]], dtype=np.float32))
+  def testHankelConstructionWithKnownCases(self):
+    # r=None should default to zeros_like(c)
+    c = np.array([1, 2, 3], dtype=np.float32)
+    expected = osp_linalg_hankel(c, None)
+    actual = jsp.linalg.hankel(c)
+    self.assertAllClose(expected, actual)
+
+    # r[0] is ignored (changing it should not change output)
+    r1 = np.array([999, 4, 5, 6], dtype=np.float32)
+    r2 = np.array([c[-1], 4, 5, 6], dtype=np.float32)
+    out1 = jsp.linalg.hankel(c, r1)
+    out2 = jsp.linalg.hankel(c, r2)
+    self.assertAllClose(out1, out2)
+
+  @jtu.sample_product(
+     cshape = [(3,), (0,), (2, 3), (1, 2, 3)],
+     rshape = [(4,), (0,), (1, 4), (2, 4), (1, 1, 4)],
+     cdtype=float_types + complex_types + int_types,
+     rdtype=float_types + complex_types + int_types,
+  )
+  def testHankelConstruction(self, cshape, cdtype, rshape, rdtype):
+    int_types_excl_i8 = set(int_types) - {np.int8}
+    if ((rdtype in int_types_excl_i8 or cdtype in int_types_excl_i8)
+        and jtu.test_device_matches(["gpu"])):
+      self.skipTest("Integer (except int8) hankel is not supported on GPU")
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(cshape, cdtype), rng(rshape, rdtype)]
+    with jtu.strict_promotion_if_dtypes_match([rdtype, cdtype]):
+      self._CheckAgainstNumpy(
+          jtu.promote_like_jnp(osp_linalg_hankel),
+          jsp.linalg.hankel,
+          args_maker,
+          check_dtypes=False,
+      )
+      self._CompileAndCheck(jsp.linalg.hankel, args_maker)
+
 
   @jtu.sample_product(
     shape=[(2, 3), (4, 6), (50, 7), (100, 110)],
