@@ -43,6 +43,7 @@ cc_binary(
     deps = [
         ":gpu_version_script.lds",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu",
+        "@xla//xla/pjrt/c:pjrt_c_api_gpu_version_script.lds",
         "@xla//xla/service:gpu_plugin",
         "@xla//xla/stream_executor:rocm_platform",
     ],
