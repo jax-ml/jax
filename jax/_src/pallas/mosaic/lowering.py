@@ -97,7 +97,7 @@ MLIR_DYNAMIC = -9223372036854775808
 # TODO(mvoz): Find a way to make this a contract we can share with the
 # export specialization step in XLA export.
 DIM_UPPER_BOUND = np.iinfo(np.int32).max  # pyrefly: ignore[no-matching-overload]  # pyrefly#2398
-DIM_LOWER_BOUND = -128
+DIM_LOWER_BOUND = DIM_UPPER_BOUND - 128
 
 partial = functools.partial
 map, unsafe_map = safe_map, map  # pylint: disable=redefined-builtin
@@ -126,7 +126,7 @@ def _maybe_physicalize_block_shape(aval, block_shape):
 #
 # Since the vector dialect used by Mosaic does not support dynamic shapes,
 # we replace all top-level symbolic dimensions with placeholder
-# constants (between max(int32) - 128 and max(int32)) and we keep a
+# constants (between max(int32) - 128 and max(int32) inclusive) and we keep a
 # mapping from the placeholder constants to SHLO functions that encode
 # the symbolic dimension expression, as a function of the dimension
 # variables.
@@ -152,10 +152,13 @@ class LoweringDynamicShapeEnv:
   def __init__(self):
     self.dim_expr_to_placeholder: dict[shape_poly._DimExpr, int] = {}
     self.placeholder_to_dim_expr: dict[int, shape_poly._DimExpr] = {}
+    self.largest_const_dim: int = 0
 
   def to_placeholder(self, dim_expr: Any) -> ir.Value:
     if jax_core.is_constant_dim(dim_expr):
       # avoid ints, these are not dynamic
+      self.largest_const_dim = max(self.largest_const_dim, int(dim_expr))
+      self.check_placeholder_collision()
       return dim_expr
     if dim_expr not in self.dim_expr_to_placeholder:
       next_val = DIM_UPPER_BOUND - len(self.dim_expr_to_placeholder)
@@ -164,15 +167,25 @@ class LoweringDynamicShapeEnv:
         # anything even close to this limit. It is arbitrary, and can be safely
         # increased if needed.
         raise ValueError(
-            "Too many dynamic shapes in the input. Mosaic currently only"
-            " supports up to 128 dynamic dimension values."
+            "Too many dynamic shapes in the input. Mosaic currently only "
+            f"supports up to {DIM_UPPER_BOUND - DIM_LOWER_BOUND} distinct "
+            "dynamic dimension values."
         )
+      self.check_placeholder_collision()
       self.dim_expr_to_placeholder[dim_expr] = next_val
       # Reverse mapping - this is consumed to generate a table that is either
       # input<>placeholder or intermediary computation<>placeholder.
       self.placeholder_to_dim_expr[next_val] = dim_expr
     return self.dim_expr_to_placeholder[dim_expr]
 
+  def check_placeholder_collision(self):
+    if (len(self.dim_expr_to_placeholder) and
+        self.largest_const_dim >= DIM_LOWER_BOUND):
+      raise ValueError(
+        "Found constant dimension "
+        f"{self.largest_const_dim} >= {DIM_LOWER_BOUND} in Mosaic kernel using "
+        "dynamic shapes."
+      )
 
 DynamicShapeReplacementFn = Callable[
     [tuple[jax_core.DimSize, ...]], tuple[int, ...]

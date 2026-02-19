@@ -154,6 +154,26 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
           jax.jit(functools.partial(f, compiler_params=plgpu.CompilerParams())),
           platforms=["cuda"])(jax.ShapeDtypeStruct((w, h), jnp.int32))
 
+  def test_dynamic_dimension_collision(self):
+    # An actual shape that is very large and conflicts with the placeholder
+    # shapes
+    w, = export.symbolic_shape("w")
+    very_large_dim = np.iinfo(np.int32).max  # pyrefly: ignore[no-matching-overload]  # pyrefly#2398
+    @jax.jit
+    def f(x):  # x: i32[w, very_large_dim]
+      def copy_kernel(x_ref, o_ref):
+        o_ref[...] = x_ref[...]
+
+      return pl.pallas_call(
+          copy_kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype))(x)
+
+    with core.pallas_export_experimental(dynamic_shapes=True):
+      with self.assertRaisesRegex(ValueError,
+               "Found constant dimension .* >= .*"):
+        export.export(f, platforms=["tpu"])(
+          jax.ShapeDtypeStruct((w, very_large_dim), np.int32))
+
   def test_block_sizes_must_be_static_no_grid(self):
     def f(x, *, eager=False):  # x: f32[w, h]
       def copy_one(x_ref, o_ref):
