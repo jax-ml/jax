@@ -1015,14 +1015,16 @@ def register_dataclass(
       to have the semantics of a :obj:`~dataclasses.dataclass`: namely, class
       attributes represent the whole of the object state, and can be passed
       as keywords to the class constructor to create a copy of the object.
-      All defined attributes should be listed among ``meta_fields`` or ``data_fields``.
     meta_fields: metadata field names: these are attributes which will be treated as
       :term:`static` when this pytree is passed to :func:`jax.jit`. ``meta_fields`` is
       optional only if ``nodetype`` is a dataclass, in which case individual fields can
       be marked static via :func:`dataclasses.field` (see examples below).
       Metadata fields *must* be static, hashable, immutable objects, as these objects
       are used to generate JIT cache keys. In particular, metadata fields cannot contain
-      :class:`jax.Array` or :class:`numpy.ndarray` objects.
+      :class:`jax.Array` or :class:`numpy.ndarray` objects. If ``meta_fields`` is not
+      specified and ``nodetype`` is a dataclass, fields are assumed to be metadata
+      fields if they are marked static via :func:`dataclasses.field` or are not present
+      in ``data_fields`` (if specified).
     data_fields: data field names: these are attributes which will be treated as non-static
       when this pytree is passed to :func:`jax.jit`. ``data_fields`` is optional only if
       ``nodetype`` is a dataclass, in which case fields are assumed data fields unless
@@ -1030,6 +1032,11 @@ def register_dataclass(
       Data fields *must* be JAX-compatible objects such as arrays (:class:`jax.Array`
       or :class:`numpy.ndarray`), scalars, or pytrees whose leaves are arrays or scalars.
       Note that ``None`` is a valid data field, as JAX recognizes this as an empty pytree.
+      If ``data_fields`` is not specified and ``nodetype`` is a dataclass, fields are
+      assumed to be data fields if they are not marked static via :func:`dataclasses.field`
+      or are not present in ``meta_fields`` (if specified).
+    drop_fields: fields to drop from the pytree. This must be a subset of the fields
+      of ``nodetype`` if it is a dataclass.
 
   Returns:
     The input class ``nodetype`` is returned unchanged after being added to JAX's
@@ -1100,22 +1107,39 @@ def register_dataclass(
     Array([1., 2., 3.], dtype=float32)
   """
   if data_fields is None or meta_fields is None:
-    if (data_fields is None) != (meta_fields is None):
-      raise TypeError("register_dataclass: data_fields and meta_fields must both be specified"
-                      f" when either is specified. Got {data_fields=} {meta_fields=}.")
     if not dataclasses.is_dataclass(nodetype):
       raise TypeError("register_dataclass: data_fields and meta_fields are required when"
                       f" nodetype is not a dataclass. Got {nodetype=}.")
-    data_fields = [
-        f.name
-        for f in dataclasses.fields(nodetype)
-        if not f.metadata.get("static", False)
-    ]
-    meta_fields = [
-        f.name
-        for f in dataclasses.fields(nodetype)
-        if f.metadata.get("static", False)
-    ]
+    drop = set(drop_fields)
+    if data_fields is None and meta_fields is None:
+      data_fields = [
+          f.name
+          for f in dataclasses.fields(nodetype)
+          if not f.metadata.get("static", False)
+      ]
+      meta_fields = [
+          f.name
+          for f in dataclasses.fields(nodetype)
+          if f.metadata.get("static", False)
+      ]
+    elif data_fields is None:
+      assert meta_fields is not None
+      specified = set(meta_fields) | drop
+      data_fields = []
+      meta_fields = list(meta_fields)
+      for f in dataclasses.fields(nodetype):
+        if f.name in specified or not f.init:
+          continue
+        static = f.metadata.get("static", False)
+        (meta_fields if static else data_fields).append(f.name)
+    elif meta_fields is None:
+      assert data_fields is not None
+      specified = set(data_fields) | drop
+      meta_fields = [
+          f.name
+          for f in dataclasses.fields(nodetype)
+          if f.init and f.name not in specified
+      ]
 
   assert meta_fields is not None
   assert data_fields is not None
