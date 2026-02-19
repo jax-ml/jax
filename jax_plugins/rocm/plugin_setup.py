@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Setup script for JAX ROCm plugin package."""
+
 import importlib
 import os
 from setuptools import setup
@@ -26,6 +28,7 @@ package_name = f"jax_rocm{rocm_version}_plugin"
 default_rocm_path = "/opt/rocm"
 rocm_path = os.getenv("ROCM_PATH", default_rocm_path)
 rocm_detected_version = rocm_path.split('-')[-1] if '-' in rocm_path else "unknown"
+rocm_tag = os.getenv("ROCM_VERSION_EXTRA")
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -36,6 +39,8 @@ def load_version_module(pkg_path):
 
 _version_module = load_version_module(package_name)
 __version__ = _version_module._get_version_for_build()
+if rocm_tag:
+  __version__ = __version__ + "+rocm" + rocm_tag
 _cmdclass = _version_module._get_cmdclass(package_name)
 
 class BinaryDistribution(Distribution):
@@ -72,4 +77,20 @@ setup(
     },
     zip_safe=False,
     distclass=BinaryDistribution,
+    extras_require={
+        "with_rocm": [
+            "amd_rocm_hip_runtime_devel_instinct",
+            "amd_rocm_hip_runtime_instinct",
+            "amd_hipblas_instinct",
+            "amd_hipsparse_instinct",
+            "amd_hipsolver_instinct",
+            "amd_miopen_hip_instinct",
+            "amd_rocm_llvm_instinct",
+            "amd_rocm_language_runtime_instinct",
+            "amd_rccl_instinct",
+            "amd_hipfft_instinct",
+            "amd_rocm_device_libs_instinct",
+            "amd_hipsparselt_instinct",
+        ],
+    },
 )
