@@ -1379,6 +1379,16 @@ class LowerableChecksTest(jtu.JaxTestCase):
     super().setUp()
     self.enter_context(config.xla_runtime_errors(True))
 
+  def tearDown(self):
+    # Drain the error state from the runtime token. Callback errors are
+    # stored in both the result array and the runtime token; catching the
+    # exception from block_until_ready() doesn't clear the token.
+    try:
+      jax.effects_barrier()
+    except:
+      pass
+    super().tearDown()
+
   @jtu.run_on_devices("cpu", "gpu")
   def test_jit(self):
     @jax.jit
