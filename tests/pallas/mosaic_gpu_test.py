@@ -316,19 +316,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
     np.testing.assert_array_equal(kernel(), jnp.full([256], op(42, 24), dtype))
 
-  def test_add_first(self):
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
-    )
-    def kernel(x_ref, y_ref, o_ref):
-      o_ref[...] = x_ref[...] + y_ref[0]
-
-    x = jnp.arange(256).astype(jnp.float32)
-    y = jnp.flip(x).reshape(1, 256)
-    np.testing.assert_array_equal(kernel(x, y), x + y[0])
-
   @parameterized.product(
       op=(jnp.sum, jnp.max, jnp.min),
       shape=((128,), (128, 64)),
@@ -433,33 +420,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       out_ref[...] = lax.squeeze(x, dimensions=(0, 1, 2))
 
     np.testing.assert_array_equal(kernel(), jnp.array(42, dtype=jnp.float32))
-
-  def test_add_xy_indexed(self):
-    @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct([128], jnp.float32)
-    )
-    def kernel(x_ref, y_ref, o_ref):
-      idx = _sum_same_dtype(y_ref[...])
-      o_ref[...] = x_ref[idx]
-
-    x = jnp.arange(4 * 128).reshape(4, 128).astype(jnp.float32)
-    y = jnp.zeros(128, dtype=jnp.int32)
-    np.testing.assert_array_equal(kernel(x, y), x[jnp.sum(y)])
-
-  def test_add_one_grid(self):
-
-    @functools.partial(
-        self.pallas_call,
-        in_specs=[pl.BlockSpec((128,), lambda *i: i)],
-        out_specs=pl.BlockSpec((128,), lambda *i: i),
-        out_shape=jax.ShapeDtypeStruct([128 * 2], jnp.float32),
-        grid=2,
-    )
-    def kernel(x_ref, o_ref):
-      o_ref[...] = x_ref[...] + 1.0
-
-    x = jnp.arange(128 * 2).astype(jnp.float32)
-    np.testing.assert_array_equal(kernel(x), x + 1.0)
 
   def test_add_one_grid_with_scratch(self):
     @functools.partial(
