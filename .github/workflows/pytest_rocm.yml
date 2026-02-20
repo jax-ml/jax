@@ -148,3 +148,38 @@ jobs:
       - name: Run Pytest ROCm tests
         timeout-minutes: 120
         run: ./ci/run_pytest_rocm.sh
+      - name: Collect run-manifest info
+        if: always()
+        run: |
+          cat > logs/run-manifest.json << 'EOF'
+          {
+            "github_run_id": "${{ github.run_id }}",
+            "github_run_attempt": "${{ github.run_attempt }}",
+            "github_run_number": "${{ github.run_number }}",
+            "github_sha": "${{ github.sha }}",
+            "github_ref": "${{ github.ref }}",
+            "repo_name": "${{ github.repository }}",
+            "github_workflow": "${{ github.workflow }}",
+            "github_job": "${{ github.job }}",
+            "branch_name": "${{ github.ref_name }}",
+            "runner_label": "${{ inputs.runner }}",
+            "rocm_version": "${{ inputs.rocm-version }}",
+            "python_version": "${{ inputs.python }}"
+          }
+          EOF
+      - name: Create a compressed tar archive
+        if: always()
+        run: |
+          set -euo pipefail
+          tar -czf logs.tar.gz logs
+      - name: Upload logs archive to AMD S3 bucket
+        if: always()
+        run: |
+          set -euo pipefail
+          export BUCKET="${AMD_S3_BUCKET_NAME}"
+          export AWS_ACCESS_KEY_ID="${AMD_S3_BUCKET_ACCESS_KEY}"
+          export AWS_SECRET_ACCESS_KEY="${AMD_S3_BUCKET_SECRET_KEY}"
+          $JAXCI_PYTHON -m pip install -q boto3
+          SHARD="py${{ inputs.python }}-${{ inputs.rocm-tag }}-$(echo "${{ inputs.runner }}" | sed 's/.*-\([0-9]\)gpu.*/\1gpu/')"
+          export PREFIX="test-logs/${{ github.repository }}/${{ github.run_id }}/${{ github.run_attempt }}/${{ github.job }}/${SHARD}/"
+          $JAXCI_PYTHON -c "import boto3,os;s3=boto3.client('s3');s3.upload_file('logs.tar.gz',os.environ['BUCKET'],os.environ['PREFIX']+'logs.tar.gz')"

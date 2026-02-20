@@ -8,6 +8,7 @@ pillow>=11.3
 portpicker
 pytest<9.0  # Works around https://github.com/pytest-dev/pytest/issues/13895
 pytest-xdist
+pytest-json-report
 rich
 matplotlib
 auditwheel
