@@ -15,10 +15,6 @@
 
 import os
 import pytest
-import json
-import threading
-import shutil
-from datetime import datetime
 
 @pytest.fixture(autouse=True)
 def add_imports(doctest_namespace):
@@ -76,174 +72,69 @@ def pytest_collection() -> None:
         "CUDA_VISIBLE_DEVICES", str(xdist_worker_number % num_cuda_devices)
     )
 
-class ThreadSafeTestLogger:
-    """Thread-safe logging for parallel test execution and abort detection"""
-    def __init__(self):
-        self.locks = {}
-        self.global_lock = threading.Lock()
-        self.base_dir = os.path.abspath("./logs")
-        
-        # Create logs directory (archiving is handled by test runner scripts)
-        try:
-            os.makedirs(self.base_dir, exist_ok=True)
-            print(f"[TestLogger] Initialized log directory: {self.base_dir}")
-        except Exception as e:
-            print(f"[TestLogger] ERROR: Failed to create log directory {self.base_dir}: {e}")
-            # Fallback to temp directory if logs dir creation fails
-            import tempfile
-            self.base_dir = os.path.join(tempfile.gettempdir(), "jax_test_logs")
-            os.makedirs(self.base_dir, exist_ok=True)
-            print(f"[TestLogger] Using fallback directory: {self.base_dir}")
+  elif num_rocm_devices := os.environ.get("JAX_ENABLE_ROCM_XDIST", None):
+    num_rocm_devices = int(num_rocm_devices)
+    xdist_worker_name = os.environ.get("PYTEST_XDIST_WORKER", "")
+    if not xdist_worker_name.startswith("gw"):
+      return
+    xdist_worker_number = int(xdist_worker_name[len("gw") :])
+    assigned = str(xdist_worker_number % num_rocm_devices)
 
-    def get_file_lock(self, test_file):
-        """Get or create a lock for a specific test file"""
-        with self.global_lock:
-            if test_file not in self.locks:
-                self.locks[test_file] = threading.Lock()
-            return self.locks[test_file]
+    # If ROCR_VISIBLE_DEVICES is set, don't also set HIP_VISIBLE_DEVICES
+    # (double-filtering can produce HIP_ERROR_NoDevice). Respect the outer setting.
+    if os.environ.get("ROCR_VISIBLE_DEVICES"):
+      return
 
-    def get_test_file_name(self, session):
-        """Extract the test file name from the session"""
-        # Try to get from session config args
-        if hasattr(session, "config") and hasattr(session.config, "args"):
-            for arg in session.config.args:
-                # Handle full nodeid like "jax/tests/foo_test.py::TestClass::test_method"
-                if "tests/" in arg:
-                    # Split on :: to get just the file path
-                    file_path = arg.split("::")[0]
-                    if file_path.endswith(".py"):
-                        return os.path.basename(file_path).replace(".py", "")
-        
-        # Try to get from invocation params
-        if hasattr(session, "config") and hasattr(session.config, "invocation_params"):
-            invocation_dir = getattr(session.config.invocation_params, "dir", None)
-            if invocation_dir:
-                dir_name = os.path.basename(str(invocation_dir))
-                if dir_name:
-                    print(f"[TestLogger] Using invocation directory as test name: {dir_name}")
-                    return dir_name
-        
-        # Last resort: try to get from session items
-        if hasattr(session, "items") and session.items:
-            first_item = session.items[0]
-            if hasattr(first_item, "fspath"):
-                fspath = str(first_item.fspath)
-                if ".py" in fspath:
-                    return os.path.basename(fspath).replace(".py", "")
-        
-        print(f"[TestLogger] WARNING: Could not determine test file name, using 'unknown_test'")
-        print(f"[TestLogger] Session config args: {getattr(session.config, 'args', 'N/A')}")
-        return "unknown_test"
+    # If present-but-empty, this can hide all GPUs.
+    if os.environ.get("HIP_VISIBLE_DEVICES", None) == "":
+      del os.environ["HIP_VISIBLE_DEVICES"]
 
-    def log_running_test(self, test_file, test_name, nodeid, start_time):
-        """Log the currently running test for abort detection"""
-        lock = self.get_file_lock(test_file)
-        with lock:
-            log_data = {
-                "test_file": test_file,
-                "test_name": test_name,
-                "nodeid": nodeid,
-                "start_time": start_time,
-                "status": "running",
-                "pid": os.getpid(),
-                "gpu_id": os.environ.get("HIP_VISIBLE_DEVICES", "unknown"),
-            }
+    # HIP layer isolation (ROCm also accepts CUDA_VISIBLE_DEVICES, but we avoid it here).
+    os.environ["HIP_VISIBLE_DEVICES"] = assigned
 
-            log_file = f"{self.base_dir}/{test_file}_last_running.json"
-            try:
-                # Ensure directory still exists (might have been deleted)
-                os.makedirs(self.base_dir, exist_ok=True)
-                with open(log_file, "w") as f:
-                    json.dump(log_data, f, indent=2)
-            except Exception as e:
-                print(f"[TestLogger] ERROR: Failed to write running test log to {log_file}: {e}")
-                print(f"[TestLogger] Current working directory: {os.getcwd()}")
-                print(f"[TestLogger] Base directory: {self.base_dir}")
-                print(f"[TestLogger] Base directory exists: {os.path.exists(self.base_dir)}")
-                raise
+def pytest_configure(config) -> None:
+  # Real pytest hook (runs early in main + each xdist worker).
+  xdist_worker_name = os.environ.get("PYTEST_XDIST_WORKER", "") or "main"
 
-    def clear_running_test(self, test_file):
-        """Clear the running test log when test completes successfully"""
-        lock = self.get_file_lock(test_file)
-        with lock:
-            log_file = f"{self.base_dir}/{test_file}_last_running.json"
-            if os.path.exists(log_file):
-                os.remove(log_file)
+  # xdist master: print planned mapping (worker stdout is often hidden)
+  numproc = int(getattr(getattr(config, "option", None), "numprocesses", 0) or 0)
+  if xdist_worker_name == "main" and numproc > 0:
+    hip0 = (os.environ.get("HIP_VISIBLE_DEVICES") or "").strip()
+    cuda_x = (os.environ.get("JAX_ENABLE_CUDA_XDIST") or "").strip()
+    tpu_x = (os.environ.get("JAX_ENABLE_TPU_XDIST") or "").strip()
+    rocm_x = (os.environ.get("JAX_ENABLE_ROCM_XDIST") or "").strip()
+    if cuda_x:
+      try:
+        ndev = int(cuda_x)
+      except ValueError:
+        ndev = 0
+      if ndev > 0:
+        mapping = ", ".join(f"gw{i}->CUDA_VISIBLE_DEVICES={i % ndev}" for i in range(numproc))
+        print(f"[DeviceVisibility] xdist planned mapping: {mapping}", flush=True)
+    elif tpu_x:
+      mapping = ", ".join(f"gw{i}->TPU_VISIBLE_CHIPS={i}" for i in range(numproc))
+      print(f"[DeviceVisibility] xdist planned mapping: {mapping}", flush=True)
+    elif rocm_x:
+      try:
+        ndev = int(rocm_x)
+      except ValueError:
+        ndev = 0
+      if ndev > 0:
+        mapping = ", ".join(f"gw{i}->HIP_VISIBLE_DEVICES={i % ndev}" for i in range(numproc))
+        print(f"[DeviceVisibility] xdist planned mapping: {mapping}", flush=True)
+    elif hip0:
+      print(f"[DeviceVisibility] master HIP_VISIBLE_DEVICES={hip0}", flush=True)
 
+  if os.environ.get("JAX_ENABLE_TPU_XDIST", None):
+    if xdist_worker_name.startswith("gw"):
+      xdist_worker_number = int(xdist_worker_name[len("gw") :])
+      os.environ.setdefault("TPU_VISIBLE_CHIPS", str(xdist_worker_number))
+      os.environ.setdefault("ALLOW_MULTIPLE_LIBTPU_LOAD", "true")
 
-# Global logger instance
-test_logger = ThreadSafeTestLogger()
-
-
-@pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_protocol(item, nextitem):
-    """Hook that wraps around each test to track running tests for crash detection.
-    
-    This creates a "last_running" file before each test starts and deletes it
-    when the test completes successfully. If the test crashes, the file remains
-    and can be detected by the test runner.
-    """
-    test_file = test_logger.get_test_file_name(item.session)
-    test_name = item.name
-    nodeid = item.nodeid
-    start_time = datetime.now().isoformat()
-
-    # Log that this test is starting
-    try:
-        test_logger.log_running_test(test_file, test_name, nodeid, start_time)
-    except Exception as e:
-        print(f"[TestLogger] WARNING: Failed to log running test: {e}")
-        # Continue anyway - not critical for test execution
-
-    test_completed = False
-    try:
-        outcome = yield
-        # Test completed (successfully or with normal failure)
-        test_completed = True
-        
-        # Clear the crash detection file
-        try:
-            test_logger.clear_running_test(test_file)
-        except Exception as e:
-            print(f"[TestLogger] WARNING: Failed to clear running test log: {e}")
-            
-    except Exception as e:
-        # Test raised exception (might be crash, might be normal exception)
-        print(f"[TestLogger] Test {test_name} exception: {e}")
-        if not test_completed:
-            # Don't clear the file - this might be a crash
-            print(f"[TestLogger] Leaving crash file for detection")
-        raise
-
-
-@pytest.hookimpl(tryfirst=True)
-def pytest_sessionstart(session):
-    """Called after the Session object has been created"""
-    gpu = os.environ.get('HIP_VISIBLE_DEVICES', '?')
-    print(f"Test session starting on GPU {gpu}")
-
-
-@pytest.hookimpl(trylast=True)
-def pytest_sessionfinish(session, exitstatus):
-    """Called after test run finished.
-    
-    If a crash file still exists, it means a test crashed and the runner
-    will detect it. We just report it here for visibility.
-    """
-    test_file = test_logger.get_test_file_name(session)
-    log_file = f"{test_logger.base_dir}/{test_file}_last_running.json"
-    
-    if os.path.exists(log_file):
-        try:
-            with open(log_file, "r") as f:
-                abort_data = json.load(f)
-            print(
-                f"\n[CRASH DETECTED] {abort_data.get('nodeid', abort_data.get('test_name', 'unknown'))} "
-                f"(GPU: {abort_data.get('gpu_id', '?')}, PID: {abort_data.get('pid', '?')})"
-            )
-            print(f"[CRASH DETECTED] Crash file will be processed by test runner")
-        except Exception as e:
-            print(f"[TestLogger] WARNING: Crash file exists but unreadable: {e}")
-    else:
-        # Normal completion - no crash
-        pass
+  elif num_cuda_devices := os.environ.get("JAX_ENABLE_CUDA_XDIST", None):
+    if xdist_worker_name.startswith("gw"):
+      num_cuda_devices = int(num_cuda_devices)
+      xdist_worker_number = int(xdist_worker_name[len("gw") :])
+      os.environ.setdefault(
+          "CUDA_VISIBLE_DEVICES", str(xdist_worker_number % num_cuda_devices)
+      )
