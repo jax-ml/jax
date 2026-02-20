@@ -1144,6 +1144,8 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertEqual(f(2.0), 8.0)
     self.assertEqual(jax.linearize(f, 2.0)[1](1.0), 12.0)
 
+def log_to_box(box, name, value):
+    box.set({**box.get(), f'{name}': jax.lax.stop_gradient(value)})
 
 class BoxTest(jtu.JaxTestCase):
 
@@ -1663,6 +1665,26 @@ class BoxTest(jtu.JaxTestCase):
     f()
     self.assertEqual(box.get(), dict(a=5, b=3))
     self.assertEqual(box2.get(), 3)
+
+  @parameterized.parameters([False, True])
+  def test_vmap(self, jit):
+    b = Box({})
+    def f(b, a):
+        log_to_box(b, "forward", a)
+        return jnp.sum(a)
+    if jit:
+      f = jax.jit(f)
+    jax.vmap(f, in_axes=(None, 0))(b, jnp.ones((4,5)))
+    assert 'forward' in b.get()
+
+  def test_vmap_closure(self):
+    b = Box({})
+    @jax.jit
+    def f(a):
+        log_to_box(b, "forward", a)
+        return jnp.sum(a)
+    jax.vmap(f, in_axes=(0))(jnp.ones((4,5)))
+    assert 'forward' in b.get()
 
   @parameterized.parameters([False, True])
   def test_while_loop(self, jit):

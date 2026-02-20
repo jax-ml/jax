@@ -331,9 +331,17 @@ class BoxSet(HiPrimitive):
     box_set_p.bind(box_dot, *val_dots, treedef=treedef)
     return [], []
 
+  def batch(_, axis_data, args, dims, *, treedef):
+    box, *vals = args
+    box_dim, *val_dims = dims
+    assert box_dim is None, "box itself cannot be batched"
+    box_set_p.bind(box, *vals, treedef=treedef)
+    return [], []
+
   def transpose(_, *args, treedef):
     assert False  # TODO
 box_set_p = BoxSet('box_set')
+batching.fancy_primitive_batchers[box_set_p] = lambda axis_data, args, dims, **params: box_set_p.batch(axis_data, args, dims, **params)
 
 
 class BoxGet(HiPrimitive):

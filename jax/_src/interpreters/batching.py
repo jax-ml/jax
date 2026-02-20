@@ -458,12 +458,14 @@ def _batch_jaxpr2(
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
   f = _batch_jaxpr_outer(f, axis_data, in_axes)
   avals_in2 = []
-  for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes):
+  for aval, b in unsafe_zip(closed_jaxpr.in_aval_qdds, in_axes):
     if b is not_mapped:
       avals_in2.append(aval)
     else:
+      # Unwrap AvalQDD to get the base aval for unmapping
+      base_aval = aval.aval if isinstance(aval, core.AvalQDD) else aval
       aval = core.unmapped_aval(
-          axis_data.size, b, aval, axis_data.explicit_mesh_axis)
+          axis_data.size, b, base_aval, axis_data.explicit_mesh_axis)
       if axis_data.spmd_name is not None:
         if config._check_vma.value:
           aval = aval.update(vma=aval.vma | frozenset(axis_data.spmd_name))  # type: ignore
