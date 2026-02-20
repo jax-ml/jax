@@ -933,9 +933,9 @@ class SwizzleTransform(state_types.Transform):
   swizzle: int
 
   def __post_init__(self):
-    if self.swizzle not in {32, 64, 128}:
+    if self.swizzle not in {16, 32, 64, 128}:
       raise ValueError(
-          f"Swizzle {self.swizzle} is not supported. Only 32, 64 and 128 are"
+          f"Swizzle {self.swizzle} is not supported. Only 16, 32, 64 and 128 are"
           " accepted."
       )
 
