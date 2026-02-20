@@ -27,9 +27,11 @@ import jax
 import jax.numpy as jnp
 from jax import typeof
 
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
+from jax._src import linear_util as lu
 from jax._src import state
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
@@ -1110,6 +1112,17 @@ class HijaxTest(jtu.JaxTestCase):
       with Square.assert_jvp_rule_called_once():
         actual_grad = jax.jit(jax.grad(jax.remat(square)))(x)
       self.assertArraysAllClose(actual_grad, expected_grad)
+
+  def test_hijax_primitive_under_core_call(self):
+    @jax.jit(static_argnames=['f'])
+    def core_call(f, *args):
+      args, in_tree = jax.tree.flatten(args)
+      dbg = api_util.debug_info("core_call", f, args, {})
+      f, out_tree = api_util.flatten_fun_nokwargs(lu.wrap_init(f, debug_info=dbg), in_tree)
+      out = core.call_p.bind(f, *args)
+      return jax.tree.unflatten(out_tree(), out)
+
+    core_call(square, jnp.arange(4.))
 
 
 class BoxTest(jtu.JaxTestCase):
