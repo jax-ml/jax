@@ -1674,8 +1674,10 @@ class BoxTest(jtu.JaxTestCase):
         return jnp.sum(a)
     if jit:
       f = jax.jit(f)
-    jax.vmap(f, in_axes=(None, 0))(b, jnp.ones((4,5)))
-    assert 'forward' in b.get()
+    arr = jnp.ones((4,5))
+    jax.vmap(f, in_axes=(None, 0))(b, arr)
+    self.assertIn('forward', b.get())
+    self.assertArraysAllClose(b.get()['forward'], arr)
 
   def test_vmap_closure(self):
     b = Box({})
@@ -1683,8 +1685,10 @@ class BoxTest(jtu.JaxTestCase):
     def f(a):
         log_to_box(b, "forward", a)
         return jnp.sum(a)
-    jax.vmap(f, in_axes=(0))(jnp.ones((4,5)))
-    assert 'forward' in b.get()
+    arr = jnp.ones((4,5))
+    jax.vmap(f, in_axes=(0))(arr)
+    self.assertIn('forward', b.get())
+    self.assertArraysAllClose(b.get()['forward'], arr)
 
   @parameterized.parameters([False, True])
   def test_while_loop(self, jit):
