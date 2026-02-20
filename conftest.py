@@ -15,10 +15,6 @@
 
 import os
 import pytest
-import json
-import threading
-import shutil
-from datetime import datetime
 
 @pytest.fixture(autouse=True)
 def add_imports(doctest_namespace):
