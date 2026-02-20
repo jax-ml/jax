@@ -1431,21 +1431,9 @@ def _slice_transpose_rule(t, operand, *, start_indices, limit_indices, strides):
   assert result.shape == operand_shape, f"{result.shape=} {operand_shape=}"
   return [result]
 
-def _slice_jvp_rule(primals, tangents, *, start_indices, limit_indices, strides):
-  (p,), (t,) = primals, tangents
-  primal_out = slice_p.bind(p, start_indices=start_indices,
-                            limit_indices=limit_indices, strides=strides)
-  if type(t) is ad.Zero:
-    return primal_out, ad.p2tz(primal_out)
-  else:
-    tangent_out = slice_p.bind(t, start_indices=start_indices,
-                               limit_indices=limit_indices, strides=strides)
-    return primal_out, tangent_out
-
 def _slice_transpose_fancy(out_ct, operand, *, start_indices, limit_indices, strides):
   assert isinstance(operand, ad.GradAccum)
-  if type(out_ct) is ad_util.Zero:
-    return
+  if type(out_ct) is ad_util.Zero: return
   if isinstance(operand, ad.RefAccum):
     slices = map(_slice, start_indices, limit_indices, strides)
     operand.ref.addupdate(out_ct, tuple(slices))
@@ -1486,7 +1474,7 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
 slice_p = standard_primitive(_slice_shape_rule, input_dtype, 'slice',
                              sharding_rule=_slice_sharding_rule,
                              vma_rule=partial(core.standard_vma_rule, 'slice'))
-ad.primitive_jvps[slice_p] = _slice_jvp_rule
+ad.deflinear2(slice_p, _slice_transpose_rule)
 ad.fancy_transposes[slice_p] = _slice_transpose_fancy
 batching.primitive_batchers[slice_p] = _slice_batching_rule
 
@@ -1640,6 +1628,7 @@ dynamic_slice_p = standard_primitive(
     vma_rule=partial(core.standard_vma_rule, 'dynamic_slice'),
     reduced_rule=_dynamic_slice_reduced_rule)
 ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp
+ad.primitive_transposes[dynamic_slice_p] = _dynamic_slice_transpose_rule
 ad.fancy_transposes[dynamic_slice_p] = _dynamic_slice_transpose_fancy
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
 pe.custom_staging_rules[dynamic_slice_p] = _dynamic_slice_staging_rule
