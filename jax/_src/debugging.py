@@ -650,7 +650,7 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
     am = axis_context.abstract_mesh
     if am is not None:
       mesh = mesh_lib.Mesh(np.array(devices).reshape(am.axis_sizes),
-                           am.axis_names)
+                           am.axis_names, axis_types=am.axis_types)
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
     mesh = axis_context.mesh
     devices = axis_context.mesh._flat_devices_tuple
