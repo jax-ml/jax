@@ -581,7 +581,7 @@ class InferParamsCacheEntry:
 @weakref_lru_cache
 def _infer_params_cached(
     fun: Callable, jit_info: PjitInfo, signature: jax_jit.ArgumentSignature,
-    in_avals: tuple[core.AbstractValue, ...], ctx_mesh: mesh_lib.Mesh
+    in_avals: tuple[core.AbstractValue, ...], qdd_token: int, ctx_mesh: mesh_lib.Mesh
     ) -> InferParamsCacheEntry:
   return InferParamsCacheEntry()
 
@@ -599,14 +599,15 @@ def _infer_params(
       args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
       ji.static_argnames, tree_util.default_registry)
   avals = _infer_input_type(fun, dbg_fn, dynargs)
-  entry = _infer_params_cached(fun, ji, arg_signature, avals, ctx_mesh)
+  in_avals_qdd = tuple(core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a
+                       for a, x in zip(avals, dynargs))
+  qdd_token = _qdd_cache_index(fun, in_avals_qdd)
+  entry = _infer_params_cached(fun, ji, arg_signature, in_avals_qdd, qdd_token, ctx_mesh)
 
   if entry.pjit_params is not None:
     return entry.pjit_params, entry.pjit_params.consts + dynargs
 
   p = _trace_for_jit(fun, ji, ctx_mesh, dbg_fn(), avals, args, kwargs)
-  if p.params['jaxpr'].jaxpr.is_high:
-    return p, p.consts + dynargs
   entry.pjit_params = p
   return p, p.consts + dynargs
 
