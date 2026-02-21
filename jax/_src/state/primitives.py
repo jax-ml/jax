@@ -597,6 +597,27 @@ ad.primitive_jvps[addupdate_p] = addupdate_jvp_rule
 
 ##  get/swap/addupdate transpose rules
 
+def _get_transpose(g, ref, *idx, **params):
+  # get transpose is addupdate
+  if type(g) is not ad_util.Zero:
+    addupdate_p.bind(ref, g, *idx, **params)
+  return [None] + [None] * len(idx)
+ad.primitive_transposes[get_p] = _get_transpose
+
+def _swap_transpose(g, ref, x, *idx, **params):
+  # swap transpose is swap
+  x_bar = swap_p.bind(ref, ad_util.instantiate(g), *idx, **params)
+  return [None, x_bar] + [None] * len(idx)
+ad.primitive_transposes[swap_p] = _swap_transpose
+
+def addupdate_transpose(cts_in, ref, x, *idx, **params):
+  # addupdate transpose is get
+  del cts_in, x
+  g = get_p.bind(ref, *idx, **params)
+  return [None, g] + [None] * len(idx)
+ad.primitive_transposes[addupdate_p] = addupdate_transpose
+
+
 def _get_transpose_fancy(g, ref_, *idx, **params):
   if idx and type(g) is not ad_util.Zero:
     addupdate_p.bind(ref_.inst().ref, g, *idx, **params)
