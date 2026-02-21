@@ -192,13 +192,17 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
     )
   axis_context = sharding_impls.SPMDAxisContext(mesh)
   with core.extend_axis_env_nd(mesh.shape.items()):
-    module = mlir.build_mlir_module_helper(
-        closed_jaxpr,
-        name="tmp_xla_computation",
+    lowering_result = mlir.build_mlir_module_helper(
+        closed_jaxpr, name="tmp_xla_computation",
         platforms=module_context.platforms,
         backend=module_context.backend,
-        axis_context=axis_context.extend_manual(frozenset(mesh.axis_names)),
-    )
+        axis_context=axis_context.extend_manual(frozenset(mesh.axis_names)))
+    module = lowering_result.module
+    for hc in lowering_result.host_callbacks:
+      module_context.add_host_callback(hc)
+    if lowering_result.keepalive is not None:
+      for ka in lowering_result.keepalive:
+        module_context.add_keepalive(ka)
   result_sharding = _pack_result_sharding(result_shape, result_shardings)
   return mlir.module_to_bytecode(module), arg_shardings, result_sharding
 
