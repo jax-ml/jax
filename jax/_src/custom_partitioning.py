@@ -20,6 +20,7 @@ It was moved out of ``jax.experimental`` to avoid import cycles.
 from __future__ import annotations
 
 from functools import partial
+import hashlib
 import inspect
 from typing import Any
 from collections.abc import Callable
@@ -115,6 +116,51 @@ def _flatten_sharding(tree, shardings, shapes):
           tree.flatten_up_to(shardings), shapes
       )
   ]
+
+
+def _compute_callback_key(propagate, partition, infer, static_args,
+                          in_tree, out_tree, mesh, decode_shardings):
+  """Compute a stable, deterministic key for custom partitioning callbacks.
+
+  This replaces the previous ``str(id(...))`` approach which used a
+  non-deterministic memory address, preventing the persistent compilation
+  cache from working across processes.
+  """
+  h = hashlib.sha256()
+  def _update(val):
+    if val is None:
+      h.update(b"\x00")
+    elif isinstance(val, partial):
+      _update(val.func)
+      _update(val.args)
+      _update(val.keywords)
+    elif hasattr(val, "__code__"):
+      code = val.__code__
+      h.update(code.co_code)
+      h.update(str(code.co_consts).encode())
+      h.update(str(code.co_names).encode())
+    elif isinstance(val, (list, tuple)):
+      h.update(str(type(val).__name__).encode())
+      for x in val:
+        _update(x)
+    elif isinstance(val, dict):
+      for k in sorted(val):
+        _update(k)
+        _update(val[k])
+    else:
+      h.update(str(val).encode())
+
+  _update(propagate)
+  _update(partition)
+  _update(infer)
+  _update(static_args)
+  h.update(str(in_tree).encode())
+  h.update(str(out_tree).encode())
+  h.update(str(decode_shardings).encode())
+  if mesh:
+    h.update(str(mesh.axis_names).encode())
+    h.update(str(mesh.devices.shape).encode())
+  return h.hexdigest()
 
 
 def _custom_partitioning_propagate_user_sharding(user_sharding, shape,
@@ -612,7 +658,9 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
   sharding_callback_info = _ShardingCallbackInfo(propagate_user_sharding,
       partition, to_mesh_pspec_sharding, in_tree, out_tree,
       infer_sharding_from_operands, ctx.module_context, mesh, static_args)
-  key = str(id(sharding_callback_info))
+  key = _compute_callback_key(propagate_user_sharding, partition,
+                              infer_sharding_from_operands, static_args,
+                              in_tree, out_tree, mesh, decode_shardings)
   _sharding_callbacks[bytes(key, 'utf8')] = sharding_callback_info
   # We need to make sure `sharding_callback_info` is still alive when the SPMD
   # partitioner runs so we keep it alive by attaching it to the executable.
