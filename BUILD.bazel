@@ -25,6 +25,11 @@ load(
     "wheel_sources",
 )
 
+exports_files(
+    ["conftest.py"],
+    visibility = ["//visibility:public"],
+)
+
 wheel_sources(
     name = "jax_sources",
     data_srcs = ["//jax"],

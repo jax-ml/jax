@@ -99,11 +99,13 @@ pytype_strict_library(
         "internal_test_util/__init__.py",
         "internal_test_util/deprecation_module.py",
         "internal_test_util/lax_test_util.py",
+        "internal_test_util/mosaic_gpu_test_filter.py",
     ] + glob(
         [
             "internal_test_util/lazy_loader_module/*.py",
         ],
     ),
+    data = ["//:conftest.py"],
     visibility = ["//jax:internal"],
     deps = if_building_jaxlib(
         if_building = [
