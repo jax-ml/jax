@@ -16,12 +16,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from collections.abc import Hashable
+from collections.abc import Callable, Hashable, Sequence
 import dataclasses
 import functools
 import math
-from typing import Any, TypeVar
+from typing import cast, Any, TypeVar
 
 import jax
 from jax import lax
@@ -158,7 +157,7 @@ def _get_index_alignment(block_mapping: BlockMapping) -> tuple[int, ...]:
   return tuple(_get_bdim_alignment(b) for b in block_mapping.block_shape)
 
 
-def _bcast_to(a: ir.Value, shape: tuple[int, ...]) -> ir.Value:
+def _bcast_to(a: ir.Value, shape: Sequence[int]) -> ir.Value:
   if not isinstance(a.type, ir.RankedTensorType):
     if not shape:
       return a
@@ -217,11 +216,12 @@ def register_lowering(primitive: jax_core.Primitive) -> Callable[[_T], _T]:
 
 
 def _process_grid_to_3d_grid(grid_mapping: GridMapping):
-  launch_grid = []
+  launch_grid: list[int] = []
   launch_grid_to_pallas_grid = []
 
   # Preserve grid order provided to pallas_call
   for i, s in enumerate(grid_mapping.grid):
+    assert isinstance(s, int)
     if i not in grid_mapping.vmapped_dims:
       launch_grid.append(s)
       launch_grid_to_pallas_grid.append(i)
@@ -230,6 +230,7 @@ def _process_grid_to_3d_grid(grid_mapping: GridMapping):
   # batching rule that prepends the vmapped dimension.
   for dim in reversed(grid_mapping.vmapped_dims):
     s = grid_mapping.grid[dim]
+    assert isinstance(s, int)
     launch_grid.append(s)
     launch_grid_to_pallas_grid.append(dim)
 
@@ -325,6 +326,7 @@ def lower_jaxpr_to_triton_module(
     module_name = mlir.sanitize_name(debug_info.func_name)
     attrs["sym_name"] = ir.StringAttr.get(module_name)
     param_types = [
+        # pyrefly: ignore[missing-attribute]
         tt_dialect.PointerType.get(_dtype_to_ir_type(var.aval.dtype), 1)
         for var in jaxpr.invars
     ]
@@ -354,10 +356,6 @@ def lower_jaxpr_to_triton_module(
           mlir.sanitize_name(debug_info.func_name),
           grid_mapping, local_program_ids, mlir.TracebackCaches(), platform
       )
-      if grid_mapping.num_index_operands:
-        raise NotImplementedError(
-            "Scalar prefetch not supported in Triton lowering."
-        )
       block_infos = [
           BlockInfo(
               block_mapping.array_aval,
@@ -1556,7 +1554,7 @@ def _make_range(start: int, end: int) -> ir.Value:
   )
 
 
-def _full(t: ir.Type, v: object) -> ir.Type:
+def _full(t: ir.Type, v: Any) -> ir.Type:
   element_type = _element_type(t)
   if isinstance(element_type, ir.IntegerType):
     result = arith_dialect.constant(element_type, int(v))
@@ -1587,7 +1585,7 @@ def _ones_like(x: ir.Value) -> ir.Value:
   return _full(x.type, 1)
 
 
-def _splat(x: ir.value, shape: Sequence[int]) -> ir.Value:
+def _splat(x: ir.Value, shape: Sequence[int]) -> ir.Value:
   if isinstance(x.type, ir.RankedTensorType):
     raise TypeError("cannot splat a tensor")
   if not shape:
@@ -1873,7 +1871,7 @@ def _split_lowering_rule(ctx: LoweringRuleContext, x, *, sizes, axis):
     permutation = tuple(d for d in range(len(shape) + 1) if d != axis) + (axis,)
     return tuple(tt_dialect.split(tt_dialect.trans(x, permutation)))
 
-  x_parts = (x,)
+  x_parts: tuple[ir.Value, ...] = (x,)
   while len(x_parts) < num_parts:
     x_parts = sum(map(split_into_2, x_parts), ())
   return x_parts
@@ -1886,7 +1884,8 @@ def _compute_offsets_from_indices(
   num_squeezed_dims = sum(isinstance(b, pallas_core.Squeezed)
                           for b in block_info.block_shape)
   strides = pallas_utils.strides_from_shape(full_shape)
-  indexer_shape = nd_indexer.get_indexer_shape()
+  assert all(isinstance(d, int) for d in nd_indexer.get_indexer_shape())
+  indexer_shape = cast(tuple[int, ...], nd_indexer.get_indexer_shape())
   int_indexer_shape = nd_indexer.int_indexer_shape
   _check_tensor_size(indexer_shape)
   indices = nd_indexer.indices
@@ -1917,7 +1916,9 @@ def _compute_offsets_from_indices(
         raise ValueError(f"Unexpected dim_block_size: {dim_block_size}")
 
     if isinstance(index, slice):
-      index = primitives.Slice.from_slice(index, dim_block_size)
+      index = primitives.Slice.from_slice(
+          index, pallas_core.get_block_size(dim_block_size)
+      )
 
     if isinstance(index, primitives.Slice):
       if index.is_dynamic_start or (index.stride != 1):
@@ -1926,12 +1927,14 @@ def _compute_offsets_from_indices(
           start = _ir_constant(start, offset_eltype)
         start = _ir_cast(start, offset_eltype, signed=False)
 
-        iota = _ir_cast(_make_range(0, index.size), offset_eltype, signed=False)
+        iota = _ir_cast(
+            _make_range(0, int(index.size)), offset_eltype, signed=False
+        )
         if index.stride != 1:
           iota = _mul(iota, _full(iota.type, index.stride))
-        dim_offsets = _add(_bcast_to(start, [index.size]), iota)
+        dim_offsets = _add(_bcast_to(start, (int(index.size),)), iota)
       else:
-        iota = _make_range(index.start, index.start + index.size)
+        iota = _make_range(int(index.start), int(index.start + index.size))
         dim_offsets = _ir_cast(iota, offset_eltype, signed=False)
 
       other_shape_idx += 1
@@ -1970,7 +1973,9 @@ def _compute_pointers_from_indices(
     root_ptr: ir.Value, block_info: BlockInfo, nd_indexer: NDIndexer
 ) -> ir.Value:
   offsets = _compute_offsets_from_indices(block_info, nd_indexer)
-  return _add(_bcast_to(root_ptr, nd_indexer.get_indexer_shape()), offsets)
+  assert all(isinstance(d, int) for d in nd_indexer.get_indexer_shape())
+  shape = cast(tuple[int, ...], nd_indexer.get_indexer_shape())
+  return _add(_bcast_to(root_ptr, shape), offsets)
 
 
 @register_lowering(sp.get_p)
@@ -2004,16 +2009,16 @@ def _load(
     is_volatile: bool = False,
 ) -> ir.Value:
   if cache_modifier is None:
-    cache_modifier = tt_dialect.CacheModifier.NONE
+    cache = tt_dialect.CacheModifier.NONE
   elif cache_modifier == ".ca" or cache_modifier == ".cg":
-    cache_modifier = _STR_TO_CACHE_MODIFIER[cache_modifier]
+    cache = _STR_TO_CACHE_MODIFIER[cache_modifier]
   else:
     raise ValueError(f"unsupported cache modifier: {cache_modifier}")
   if eviction_policy is None:
-    eviction_policy = tt_dialect.EvictionPolicy.NORMAL
+    evict = tt_dialect.EvictionPolicy.NORMAL
   else:
     try:
-      eviction_policy = _STR_TO_EVICTION_POLICY[eviction_policy]
+      evict = _STR_TO_EVICTION_POLICY[eviction_policy]
     except KeyError:
       raise ValueError(
           f"unsupported eviction policy: {eviction_policy}"
@@ -2053,8 +2058,8 @@ def _load(
       ptr,
       mask=mask,
       other=other,
-      cache=cache_modifier,
-      evict=eviction_policy,
+      cache=cache,
+      evict=evict,
       is_volatile=is_volatile,
   )
   return (
@@ -2069,7 +2074,7 @@ def _is_contiguous_int4(block_info: BlockInfo, nd_indexer: NDIndexer) -> bool:
   # In order to loaded as `uint8` the index must be an aligned slice.
   return (
       block_info.full_shape_dtype.dtype in (jnp.int4, jnp.uint4)
-      and block_info.start_indices_alignment
+      and bool(block_info.start_indices_alignment)
       and (block_info.start_indices_alignment[-1] % 2 == 0)
       and isinstance(slc := nd_indexer.indices[-1], indexing.Slice)
       and isinstance(slc.start, int)
@@ -2085,6 +2090,7 @@ def _reinterpret_int4_as_uint8(
 ) -> tuple[BlockInfo, NDIndexer]:
   """Returns a new block info and indexer that reads `int4` as `uint8`."""
   last_idx = nd_indexer.indices[-1]
+  # pyrefly: ignore[missing-attribute]
   new_last_idx = indexing.Slice(last_idx.start // 2, last_idx.size // 2)
   new_indices = (*nd_indexer.indices[:-1], new_last_idx)
   new_shape = (*nd_indexer.shape[:-1], nd_indexer.shape[-1] // 2)
@@ -2097,7 +2103,7 @@ def _reinterpret_int4_as_uint8(
   new_start_indices = (*block_info.start_indices[:-1], new_start_idx)
   block_info = dataclasses.replace(
       block_info,
-      full_shape_dtype=jax.ShapeDtypeStruct(new_full_shape, jnp.uint8),
+      full_shape_dtype=jax_core.ShapedArray(new_full_shape, jnp.uint8),
       start_indices=new_start_indices,
   )
   return block_info, idx
@@ -2145,7 +2151,8 @@ def _masked_load_lowering_rule(
   if is_int4 and not is_contiguous_int4:
     ptr_offsets = _floordiv(offsets, _full(offsets.type, 2), signed=False)
 
-  shape = idx.get_indexer_shape()
+  assert all(isinstance(d, int) for d in idx.get_indexer_shape())
+  shape = cast(tuple[int, ...], idx.get_indexer_shape())
   ptr = _add(_bcast_to(ptr, shape), ptr_offsets)
   if mask is not None:
     mask = _bcast_to(_ensure_ir_value(mask, mask_aval), shape)
@@ -2201,16 +2208,16 @@ def _store(
     eviction_policy: str | None = None,
 ) -> ir.Value:
   if cache_modifier is None:
-    cache_modifier = tt_dialect.CacheModifier.NONE
+    cache = tt_dialect.CacheModifier.NONE
   elif cache_modifier != ".ca":
-    cache_modifier = _STR_TO_CACHE_MODIFIER[cache_modifier]
+    cache = _STR_TO_CACHE_MODIFIER[cache_modifier]
   else:
     raise ValueError(f"unsupported cache modifier: {cache_modifier}")
   if eviction_policy is None:
-    eviction_policy = tt_dialect.EvictionPolicy.NORMAL
+    evict = tt_dialect.EvictionPolicy.NORMAL
   else:
     try:
-      eviction_policy = _STR_TO_EVICTION_POLICY[eviction_policy]
+      evict = _STR_TO_EVICTION_POLICY[eviction_policy]
     except KeyError:
       raise ValueError(
           f"unsupported eviction policy: {eviction_policy}"
@@ -2241,9 +2248,7 @@ def _store(
     )
 
   value = _ir_cast(value, pointee_type, signed=False)
-  return tt_dialect.store(
-      ptr, value, mask=mask, cache=cache_modifier, evict=eviction_policy
-  )
+  return tt_dialect.store(ptr, value, mask=mask, cache=cache, evict=evict)
 
 
 @register_lowering(primitives.swap_p)
@@ -2253,12 +2258,11 @@ def _masked_swap_lowering_rule(
   block_info, *_ = ctx.block_infos
   assert block_info is not None
   ptr, indexers, value, mask = args_tree.unflatten(args_flat)
-  *_, value_aval, mask_aval = args_tree.unflatten(ctx.avals_in)
+  ref_aval, value_aval, mask_aval = args_tree.unflatten(ctx.avals_in)
   if len(indexers) > 1:
     raise NotImplementedError("No support for multiple indexers yet.")
   if not indexers:
-    ref_shape = state.transform_type(indexers, ctx.avals_in[0].shape)
-    idx = NDIndexer.make_trivial_indexer(ref_shape)
+    idx = NDIndexer.make_trivial_indexer(ref_aval.shape)
   else:
     idx = indexers[0]
   ptr = _compute_pointers_from_indices(ptr, block_info, idx)
@@ -2266,9 +2270,11 @@ def _masked_swap_lowering_rule(
   if value is not None:
     value = _ensure_ir_value(value, value_aval)
   if mask is not None:
-    mask = _bcast_to(_ensure_ir_value(mask, mask_aval), idx.get_indexer_shape())
+    assert all(isinstance(d, int) for d in idx.get_indexer_shape())
+    shape = cast(tuple[int, ...], idx.get_indexer_shape())
+    mask = _bcast_to(_ensure_ir_value(mask, mask_aval), shape)
     if value is not None:
-      other = _bcast_to(value, idx.get_indexer_shape())
+      other = _bcast_to(value, shape)
 
   old_value = _load(ptr, mask=mask, other=other)
   _store(ptr, value, mask=mask, eviction_policy=eviction_policy)
@@ -2357,6 +2363,8 @@ def _dot_general_lowering(
       case _:
         raise NotImplementedError(f"Unsupported dot algorithm: {precision}.")
 
+    assert precision.supported_lhs_types is not None
+    assert precision.supported_rhs_types is not None
     a = _cast(a, a_aval.dtype, precision.supported_lhs_types[0])
     b = _cast(b, b_aval.dtype, precision.supported_rhs_types[0])
     acc_dtype = precision.accumulation_type
@@ -2390,6 +2398,7 @@ def _dot_general_lowering(
 
   m, _ = a_type.shape
   _, n = b_type.shape
+  assert acc_dtype is not None
   acc = _zeros(ir.RankedTensorType.get([m, n], _dtype_to_ir_type(acc_dtype)))
 
   if precision in (
@@ -2580,7 +2589,7 @@ triton_lowering_rules[ad_util.stop_gradient_p] = lambda _, x: x
 @register_lowering(lax.axis_index_p)
 def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
   grid_names = ctx.context.grid_mapping.grid_names
-  if axis_name in grid_names:
+  if grid_names is not None and axis_name in grid_names:
     # We are querying a named axis corresponding to a grid dimension.
     return _program_id_lowering_rule(ctx, axis=grid_names.index(axis_name))
   raise LookupError(f"Axis name {axis_name} not found in grid.")
@@ -2643,17 +2652,16 @@ def _scan_lowering_rule(
   if jaxpr_consts: raise NotImplementedError
   del jaxpr_consts
 
-  print("PRE JAXPR", jaxpr)
   jaxpr, has_loop_index = (
       pallas_utils.pattern_match_scan_to_fori_loop(jaxpr, num_consts, num_carry)
   )
-  print("POST JAXPR", jaxpr, has_loop_index)
   args = map(_ensure_ir_value, args, ctx.avals_in)
   consts, args = util.split_list(args, [num_consts])  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   if has_loop_index:
     lower_bound, *args = args
     upper_bound = _add(lower_bound, _ir_constant(length, lower_bound.type))
     bound_type = lower_bound.type
+    assert isinstance(bound_type, ir.IntegerType)
   else:
     lower_bound = _i32_constant(0)
     upper_bound = _i32_constant(length)
@@ -2847,6 +2855,7 @@ def _cond_lowering_rule(
         block_infos[1:],
         *args)
     scf_dialect.yield_(outs0)
+  assert if_op.else_block is not None
   with ir.InsertionPoint.at_block_begin(if_op.else_block):
     # TODO(bjp): Instead of linear nest of 'if's, partition into halves.
     if len(branches) > 2:

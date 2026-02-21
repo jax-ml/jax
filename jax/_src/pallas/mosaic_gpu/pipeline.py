@@ -22,7 +22,7 @@ import enum
 import functools
 import itertools as it
 import math
-from typing import Any, Protocol, TypeVar, Union, cast
+from typing import Any, Protocol, TypeVar, Union, TypeAlias
 
 import jax
 from jax import api_util
@@ -44,8 +44,10 @@ zip = util.safe_zip
 T = TypeVar('T')
 
 
-BlockSpecPytree = Sequence[Union[pl.BlockSpec, "BlockSpecPytree"]]
-AbstractRefPytree = Sequence[Union[state.AbstractRef, "AbstractRefPytree"]]
+BlockSpecPytree: TypeAlias = Sequence[Union[pl.BlockSpec, "BlockSpecPytree"]]
+AbstractRefPytree: TypeAlias = Sequence[
+    Union[state.AbstractRef, "AbstractRefPytree"]
+]
 
 def _get_block_size(
     bd: pl.Blocked | pl.Element | pl.Squeezed | pl.BoundedSlice | int | None,
@@ -77,7 +79,7 @@ map_brefs = functools.partial(
 @jax.tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class BufferedRef:
-  spec: gpu_core.BlockSpec = dataclasses.field(metadata={"static": True})
+  spec: pallas_core.BlockSpec = dataclasses.field(metadata={"static": True})
   is_index_invariant: bool = dataclasses.field(metadata={"static": True})
   gmem_ref: state.AbstractRef
   # ``None`` if the ref is pinned to GMEM; otherwise, has shape
@@ -120,7 +122,9 @@ class BufferedRef:
     assert self.smem_ref is not None
     gmem_slices = self.compute_gmem_slice(grid_indices)
     gpu_primitives.copy_gmem_to_smem(
+        # pyrefly: ignore[bad-index]
         self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands
+        # pyrefly: ignore[bad-index]
         self.smem_ref.at[slot],  # pytype: disable=unsupported-operands
         barrier_ref.at[barrier_slot if barrier_slot is not None else slot],
         collective_axes=getattr(self.spec, "collective_axes", ()),
@@ -132,7 +136,9 @@ class BufferedRef:
     assert self.smem_ref is not None
     gmem_slices = self.compute_gmem_slice(grid_indices)
     gpu_primitives.copy_smem_to_gmem(
+        # pyrefly: ignore[bad-index]
         self.smem_ref.at[slot],  # pytype: disable=unsupported-operands
+        # pyrefly: ignore[bad-index]
         self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands
         predicate=predicate,
         commit_group=False,
@@ -236,16 +242,18 @@ def emit_pipeline(
   in_specs = tuple(map(_downcast_spec, in_specs))
   out_specs = tuple(map(_downcast_spec, out_specs))
   for spec in in_specs:
-    if spec.collective_axes:
+    if isinstance(spec, gpu_core.BlockSpec) and spec.collective_axes:
       raise NotImplementedError(
           "BlockSpecs with collective_axes are not supported in emit_pipeline"
       )
   for spec in out_specs:
-    if spec.collective_axes:
+    if isinstance(spec, gpu_core.BlockSpec) and spec.collective_axes:
       raise ValueError("Output BlockSpecs cannot have collective_axes")
   # TODO(justinfu): Factor out common code between warp-specialized and
   # normal pipelines.
-  delay_release_levels = sorted({s.delay_release for s in in_specs}) or [0]
+  delay_release_levels = sorted(
+      {getattr(s, "delay_release", 0) for s in in_specs} or {0}
+  )
   if delay_release_levels and max_concurrent_steps <= delay_release_levels[0]:
     raise ValueError(
         "max_concurrent_steps must be greater than all delay_release values,"
@@ -260,7 +268,7 @@ def emit_pipeline(
   # Shrink ``max_concurrent_steps`` if the total number of steps is lower to
   # reduce the size of the refs allocated in SMEM.
   if not has_dynamic_grid and max_concurrent_steps > num_steps:
-    max_concurrent_steps = cast(int, num_steps)
+    max_concurrent_steps = num_steps
 
   def pipeline(*gmem_refs: state.AbstractRef):
     in_gmem_refs, out_gmem_refs = util.split_list(gmem_refs, [len(in_specs)])
@@ -367,14 +375,17 @@ def emit_pipeline(
         if bref.is_index_invariant:
           assert last_store_indices[idx] is None
           continue
-        assert last_store_indices[idx] is not None
+        assert bref.spec.index_map is not None
         new_store_indices[idx] = bref.spec.index_map(*indices)
+        assert last_store_indices[idx] is not None
         are_same_slices = map(
             lambda old, new: old == new,
             last_store_indices[idx],
             new_store_indices[idx],
         )
-        slices_changed = ~functools.reduce(lax.bitwise_and, are_same_slices)
+        slices_changed = lax.bitwise_not(
+            functools.reduce(lax.bitwise_and, are_same_slices)
+        )
         is_last_step = step == num_steps - 1
         # TODO(apaszke,slebedev): This still diverges significantly from the
         # TPU semantics in that it will move on to the next SMEM output slice
@@ -397,7 +408,7 @@ def emit_pipeline(
         # pylint: disable=cell-var-from-loop
         def do_fetch():
           for bref in in_brefs:
-            if bref.spec.delay_release == delay_release:
+            if getattr(bref.spec, "delay_release", 0) == delay_release:
               bref.copy_in(fetch_slot, fetch_indices, barrier_ref)
         # pylint: enable=cell-var-from-loop
 
@@ -429,6 +440,7 @@ def emit_pipeline(
     last_store_indices = [
         None
         if bref.is_index_invariant
+        # pyrefly: ignore[bad-argument-type]
         else (jnp.array(-1),) * len(bref.spec.block_shape)
         for bref in out_brefs
     ]
@@ -608,19 +620,19 @@ def emit_pipeline_warp_specialized(
   for spec in flat_out_specs:
     if spec.collective_axes:
       raise ValueError("Output BlockSpecs cannot have collective_axes")
-  delay_release = None
+  delay_release = -1
   for in_spec in in_specs:
     if not isinstance(in_spec, gpu_core.BlockSpec):
       delay_release = 0
       continue
-    delay_release = in_spec.delay_release
-    if in_spec.delay_release != delay_release:
+    if delay_release >= 0 and in_spec.delay_release != delay_release:
       raise NotImplementedError(
           "All inputs must have the same delay_release, but"
           f" {in_spec.delay_release=} != {delay_release=}"
       )
+    delay_release = in_spec.delay_release
 
-  delay_release = delay_release or 0
+  delay_release = max(delay_release, 0)
   if max_concurrent_steps <= delay_release:
     raise ValueError(
         "max_concurrent_steps must be greater than delay_release, but"
@@ -659,7 +671,7 @@ def emit_pipeline_warp_specialized(
   # Shrink ``max_concurrent_steps`` if the total number of steps is lower to
   # reduce the size of the refs allocated in SMEM.
   if not has_dynamic_grid and max_concurrent_steps > num_steps:
-    max_concurrent_steps = cast(int, num_steps)
+    max_concurrent_steps = num_steps
 
   def _get_scoped_allocs(*gmem_refs: AbstractRefPytree):
     in_gmem_refs = gmem_refs[:len(in_specs)]
@@ -692,7 +704,10 @@ def emit_pipeline_warp_specialized(
       )
     flat_in_smem_refs, flat_out_smem_refs = util.split_list(
         smem_allocs, [len(flat_in_specs)])
-    in_smem_barrier = gpu_core.Barrier(num_arrivals=len(flat_in_specs), num_barriers=max_concurrent_steps)
+    in_smem_barrier = gpu_core.Barrier(
+        num_arrivals=len(flat_in_specs), num_barriers=max_concurrent_steps
+    )
+    flat_consumed_barriers: list[gpu_core.Barrier | gpu_core.ClusterBarrier]
     flat_consumed_barriers = []
     consumed_barrier_type: Any
     if collective_axes:
@@ -771,7 +786,7 @@ def emit_pipeline_warp_specialized(
           **allocations,
       )
 
-  pipeline.get_allocations = _get_scoped_allocs
+  pipeline.get_allocations = _get_scoped_allocs  # pyrefly: ignore[missing-attribute]
 
   def scoped_pipeline(
       *,
@@ -873,14 +888,17 @@ def emit_pipeline_warp_specialized(
           if bref.is_index_invariant:
             assert last_store_indices[idx] is None
             continue
-          assert last_store_indices[idx] is not None
+          assert bref.spec.index_map is not None
           new_store_indices[idx] = bref.spec.index_map(*indices)
+          assert last_store_indices[idx] is not None
           are_same_slices = map(
               lambda old, new: old == new,
               last_store_indices[idx],
               new_store_indices[idx],
           )
-          slices_changed = ~functools.reduce(lax.bitwise_and, are_same_slices)
+          slices_changed = lax.bitwise_not(
+              functools.reduce(lax.bitwise_and, are_same_slices)
+          )
           bref.copy_out(_get_slot(slot, not bref.is_index_invariant),
                         indices,
                         predicate=slices_changed)
@@ -893,6 +911,7 @@ def emit_pipeline_warp_specialized(
       last_store_indices = [
           None
           if bref.is_index_invariant
+          # pyrefly: ignore[bad-argument-type]
           else (jnp.array(-1),) * len(bref.spec.block_shape)
           for bref in flat_out_brefs
       ]
@@ -910,6 +929,7 @@ def emit_pipeline_warp_specialized(
                         compute_loop_body,
                         init_loop_carry)
           return final_body_carry
+        assert compute_context is not None
         compute_context(pipeline_callback)
         if last_indices is None:
           raise ValueError("Pipeline was not called in `compute_context`")
@@ -997,6 +1017,7 @@ def emit_pipeline_warp_specialized(
 
         for bref, consumed_barrier in zip(flat_in_brefs, consumed_barrier_it):
           if manual_consumed_barriers:
+            assert consumed_barrier is not None
             gpu_primitives.barrier_wait(consumed_barrier.at[slot])  # pytype: disable=attribute-error
           buf_slot = _get_slot(fetch_slot, not bref.is_index_invariant)
           barrier_slot = _get_slot(fetch_slot, True)
@@ -1028,10 +1049,7 @@ def emit_pipeline_warp_specialized(
   # Mypy doesn't notice the .get_allocations assignment above.
   return pipeline  # type: ignore
 
-def _compute_registers(
-    memory_registers: int,
-    num_compute_wgs: int,
-) -> int:
+def _compute_registers(memory_registers: int, num_compute_wgs: int) -> int:
   """Returns the max number of registers to use in compute threads.
 
   We start with the theoretical max registers per thread if one wargroup
@@ -1042,6 +1060,6 @@ def _compute_registers(
   Note: The maximum number of registers per thread is 255, so we clamp
   the value.
   """
-  n_registers = min(256, (512 - memory_registers) / num_compute_wgs)
+  n_registers = min(256., (512 - memory_registers) / num_compute_wgs)
   # Round down to the nearest multiple of 8.
   return int((n_registers // 8) * 8)

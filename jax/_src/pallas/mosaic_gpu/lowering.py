@@ -21,7 +21,6 @@ from collections.abc import Callable, Hashable, Iterator, MutableMapping, Mutabl
 import contextlib
 import dataclasses
 import functools
-import inspect
 import itertools
 import math
 import operator
@@ -85,6 +84,8 @@ partial = functools.partial
 SMEM = gpu_core.SMEM
 WARPGROUP_SIZE = 128
 RefOrTmemType = TypeVar("RefOrTmemType", ir.Value, tcgen05.TMEMRef)
+
+# TODO(slebedev): The type argument should also be comparable.
 CollectiveAxesType = Sequence[Hashable]
 
 
@@ -328,6 +329,7 @@ def _run_scoped_resource_estimator(
       continue
     assert isinstance(aval, state_types.AbstractRef)
     if aval.memory_space == gpu_core.TMEM:
+      assert isinstance(aval, tcgen05.TMEMRef)
       if len(aval.shape) != 2:
         raise ValueError(f"TMEM allocations must be 2D. Got {aval.shape}")
       # Estimate columns used.
@@ -338,7 +340,7 @@ def _run_scoped_resource_estimator(
         cols_used = aval.layout.cols_in_shape(
             aval.shape, dtypes.itemsize_bits(aval.dtype)
         )
-      if aval.collective:
+      if aval.collective:  # pyrefly: ignore[missing-attribute]
         rs += Resources(tmem_collective_scratch_cols=cols_used)
       else:
         rs += Resources(tmem_scratch_cols=cols_used)
@@ -440,7 +442,7 @@ class ModuleContext:
 
   @contextlib.contextmanager
   def reserve_barrier(
-      self, barrier: mgpu.Barrier
+      self, barrier: mgpu.Barrier | mgpu.ClusterBarrier
   ) -> Iterator[
       mgpu.BarrierRef | mgpu.DialectBarrierRef | mgpu.CollectiveBarrierRef
   ]:
@@ -452,9 +454,9 @@ class ModuleContext:
     available = self.runtime_barriers.get(barrier, [])
     if not available:
       raise RuntimeError(f"Barrier {barrier} is already reserved")
-    barrier = available.pop()
-    yield barrier
-    available.append(barrier)
+    barrier_ref = available.pop()
+    yield barrier_ref
+    available.append(barrier_ref)
 
   @contextlib.contextmanager
   def reserve_semaphores(self,
@@ -710,13 +712,13 @@ def _block_spec_from_block_mapping(
       bm.block_shape,
       index_map,
       memory_space=bm.transformed_block_aval.memory_space,
-      transforms=cast(Sequence[state_types.Transform], bm.transforms),
+      transforms=bm.transforms,
   )
 
 
 def lower_pipelined_jaxpr_to_module(
     grid_mapping: pallas_core.GridMapping,
-    gpu_mesh: pallas_core.Mesh | None,
+    gpu_mesh: gpu_core.Mesh | None,
     jax_mesh: mesh_lib.Mesh | None,
     jaxpr: jax_core.Jaxpr,
     params: gpu_core.CompilerParams,
@@ -741,6 +743,7 @@ def lower_pipelined_jaxpr_to_module(
       block_mappings, [grid_mapping.num_inputs]
   )
 
+  grid: Sequence[int]
   if gpu_mesh:
     assert isinstance(gpu_mesh, gpu_core.Mesh)
     block = (128 * (gpu_mesh.num_threads or 1), 1, 1)
@@ -750,7 +753,7 @@ def lower_pipelined_jaxpr_to_module(
     )
   else:
     block = (128, 1, 1)
-    grid = grid_mapping.grid
+    grid = cast(Sequence[int], grid_mapping.grid)
     thread_axis = ()
 
   if params.dimension_semantics is None:
@@ -841,7 +844,7 @@ def lower_pipelined_jaxpr_to_module(
         axis_names,
         parallel_grid,
         block,
-        gpu_mesh.cluster if gpu_mesh is not None else (),
+        tuple(gpu_mesh.cluster) if gpu_mesh is not None else (),
         [bm.array_aval for bm in in_block_mappings],
         [bm.array_aval for bm in out_block_mappings],
         new_jaxpr,
@@ -854,7 +857,7 @@ def lower_jaxpr_to_module(
     jax_mesh: mesh_lib.Mesh | None,
     axis_names: _AxisNames,
     grid: tuple[int, ...],
-    block: tuple[int, ...],
+    block: tuple[int, int, int],
     cluster: tuple[int, ...],
     in_shapes: Sequence[jax_core.ShapedArray],
     out_shapes: Sequence[jax_core.ShapedArray],
@@ -883,7 +886,7 @@ def lower_jaxpr_to_module(
   # We reverse the order because Pallas prefers row-major iteration while the
   # CUDA runtime prefers column-major iteration.
   parallel_grid = parallel_grid[::-1]
-  cluster = cluster[::-1]
+  cluster = cluster[::-1]  # pyrefly: ignore[bad-assignment]
   squashed_dims = squashed_dims[::-1]
   axis_names = axis_names.reverse()
 
@@ -907,8 +910,8 @@ def lower_jaxpr_to_module(
     output_buffers_gmem = buffers_gmem[num_input_buffers:]
 
     scoped_gmem_semaphores = {}
-    for collective_axes in sorted(
-        rs.scoped_gmem_semaphores.keys(), reverse=True):
+    # pyrefly: ignore[no-matching-overload]
+    for collective_axes in sorted(rs.scoped_gmem_semaphores, reverse=True):
       num_sems = rs.scoped_gmem_semaphores[collective_axes]
       # Extract the semaphores local to the current scope.
       index = ir.IndexType.get()
@@ -936,6 +939,7 @@ def lower_jaxpr_to_module(
       output_buffers_gmem = output_buffers_gmem[:-1]
     buffers_gmem = [*input_buffers_gmem, *output_buffers_gmem]
 
+    grouped_barriers: MutableMapping[AnyBarrier, MutableSequence[AnyBarrierRef]]
     grouped_barriers = collections.defaultdict(list)
     for barrier, barrier_ref in zip(rs.barriers, runtime_barriers):
       grouped_barriers[barrier].append(barrier_ref)
@@ -993,7 +997,7 @@ def lower_jaxpr_to_module(
         module_ctx, launch_ctx, jaxpr, buffers_gmem, consts
     )
 
-  scratch_buffers = [
+  scratch_buffers: list[Any] = [
       jax.ShapeDtypeStruct(shape=[rs.smem_scratch_bytes], dtype=np.int8),
       rs.barriers,
   ]
@@ -1023,7 +1027,8 @@ def lower_jaxpr_to_module(
   cuda_grid = tuple(map(operator.mul, parallel_grid, cluster))
 
   scoped_semaphores_shape = []
-  for collective_axes in sorted(rs.scoped_gmem_semaphores.keys()):
+  # pyrefly: ignore[no-matching-overload]
+  for collective_axes in sorted(rs.scoped_gmem_semaphores):
     num_sems = rs.scoped_gmem_semaphores[collective_axes]
     # TODO(justinfu): Compute axis_size for general collective_axes.
     # axis_size computes axis_size(all_axes - collective_axes)
@@ -1046,7 +1051,7 @@ def lower_jaxpr_to_module(
   module, new_out_shapes, _, launch_ctx = mgpu_core._lower_as_gpu_kernel(
       body,
       grid=cuda_grid,
-      cluster=cluster,
+      cluster=cast(tuple[int, int, int], cluster),
       block=block,
       in_shapes=(*in_shapes, *scoped_semaphores_shape),
       out_shape=(*out_shapes, *scoped_semaphores_shape),
@@ -1206,8 +1211,8 @@ def lower_jaxpr_to_mosaic_gpu(
       rule_ctx = LoweringRuleContext(
           module_ctx,
           launch_ctx,
-          avals_in=[cast(jax_core.ShapedArray, v.aval) for v in eqn.invars],
-          avals_out=[cast(jax_core.ShapedArray, v.aval) for v in eqn.outvars],
+          avals_in=[cast(ShapedAbstractValue, v.aval) for v in eqn.invars],
+          avals_out=[cast(ShapedAbstractValue, v.aval) for v in eqn.outvars],
           prim=eqn.primitive,
           out_layout_hint=out_layout_hint,
       )
@@ -1387,7 +1392,7 @@ def _extract_aliased_ref(
         address = arith_dialect.addi(ref.address, _i32_constant(offset))
         ref = tcgen05.TMEMRef(
             address=address,
-            shape=transformed_shape,
+            shape=cast(tuple[int, int], transformed_shape),
             dtype=mgpu_utils.dtype_to_ir_type(dtype),
             layout=layout,
         )
@@ -1433,9 +1438,9 @@ def _commute_transform(
   Returns:
     Returns a tuple of transforms (t2', t1') such that t2' . t1' == t1 . t2.
   """
-  match (t1, t2):
+  match t1, t2:
     case (
-        gpu_core.UntilingTransform() | gpu_core.UnswizzleRef(),
+        (gpu_core.UntilingTransform() | gpu_core.UnswizzleRef()) as t1,
         indexing.NDIndexer() as t2,
     ):
       new_indexer, new_t1 = t1.commute_ndindexer(aval, t2)
@@ -1449,12 +1454,14 @@ def _commute_transform(
         gpu_core.UnswizzleRef() as t1,
         state_types.ReshapeTransform() as t2,
     ):
+      assert isinstance(aval, jax_core.ShapedArray)
       new_reshape, new_unswizzle = t1.commute_reshape(aval, t2)
       return new_reshape, new_unswizzle
     case (
         gpu_core.UntilingTransform() | gpu_core.UnswizzleRef() as t1,
         gpu_core.TransposeTransform() as t2,
     ):
+      assert isinstance(aval, jax_core.ShapedArray)
       new_reshape, new_unswizzle = t1.commute_transpose(aval, t2)
       return new_reshape, new_unswizzle
     case _:
@@ -1539,8 +1546,7 @@ def _handle_transforms(
 
   for t_aval, t in zip(transform_avals, transforms):
     match t:
-      case indexing.NDIndexer():
-        indexer = cast(indexing.NDIndexer, t)
+      case indexing.NDIndexer() as indexer:
         indexer, indexer_aval, new_transforms, new_transforms_avals = (
             _bubble_up_transform(
                 ctx,
@@ -1548,7 +1554,7 @@ def _handle_transforms(
                 new_transforms,
                 new_transforms_avals,
                 indexer,
-                t_aval,
+                cast(indexing.NDIndexer, t_aval),
             )
         )
         if indexer_aval.int_indexer_shape:
@@ -1565,7 +1571,12 @@ def _handle_transforms(
       case TransposeTransform() as t:
         if handle_transposes:
           t, t_aval, new_transforms, new_transforms_avals = _bubble_up_transform(
-              ctx, ref_aval, new_transforms, new_transforms_avals, t, t_aval
+              ctx,
+              ref_aval,
+              new_transforms,
+              new_transforms_avals,
+              t,
+              cast(TransposeTransform, t_aval),
           )
           assert isinstance(t, TransposeTransform)
           if isinstance(transformed_ref, tcgen05.TMEMRef):
@@ -1579,12 +1590,18 @@ def _handle_transforms(
           new_transforms_avals.append(t_aval)
       case ReshapeTransform() if handle_reshapes:
         t, _, new_transforms, new_transforms_avals = _bubble_up_transform(
-            ctx, ref_aval, new_transforms, new_transforms_avals, t, t_aval
+            ctx,
+            ref_aval,
+            new_transforms,
+            new_transforms_avals,
+            t,
+            cast(ReshapeTransform, t_aval),
         )
         if isinstance(transformed_ref, tcgen05.TMEMRef):
           raise ValueError("TMEM reshape not allowed.")
         assert isinstance(t, ReshapeTransform)
         transformed_ref = mgpu.memref_reshape(transformed_ref, t.shape)
+        # pyrefly: ignore[bad-assignment]
         ref_aval = t_aval.transform_type(ref_aval)
       case gpu_core.PeerMemRef(device_id, device_id_type):
         peer_device_id, other_axes = primitives.device_id_to_logical(
@@ -1645,7 +1662,7 @@ def _ndindexer_indices(
       indices.append(
           mgpu.DynamicSlice(
               _as_index(idx.start) if idx.is_dynamic_start else idx.start,
-              _as_index(idx.size) if idx.is_dynamic_size else idx.size,
+              int(idx.size),
           )
       )
     else:
@@ -2004,6 +2021,7 @@ def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, *cases):
   [out_aval] = ctx.avals_out
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     pred = _ensure_fa(pred, pred_aval.dtype)
+    # pyrefly: ignore[bad-argument-count]  # pyrefly#2487
     cases = _bcast(*cases, *cases_avals, out_aval)
     # ``select`` expects the first case to be the true branch, but ``select_n``
     # orders the cases in reverse.
@@ -2037,6 +2055,7 @@ def _broadcast_in_dim_lowering_rule(
   if (isinstance(x.layout, mgpu.WGSplatFragLayout) and
       broadcast_dimensions == tuple(range(rank_diff, rank_diff + x_aval.ndim))):
     return x.broadcast(shape)
+  new_layout = None
   if (
       isinstance(x.layout, mgpu.WGStridedFragLayout)
       and broadcast_dimensions == tuple(range(rank_diff, y_aval.ndim))
@@ -2728,10 +2747,10 @@ def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):
           raise NotImplementedError("Sub-byte dtypes not supported")
         scratch_elems = ctx.module_ctx.reduction_scratch_bytes * 8 // dtype_bitwidth
         scratch_ty = jax.ShapeDtypeStruct(shape=(scratch_elems,), dtype=x_aval.dtype)
-        ctx = ctx.module_ctx.scratch_view(scratch_ty)
+        scratch_ctx = ctx.module_ctx.scratch_view(scratch_ty)
       else:
-        ctx = contextlib.nullcontext(None)
-      with ctx as scratch:
+        scratch_ctx = contextlib.nullcontext(None)
+      with scratch_ctx as scratch:
         return x.reduce(op, axes[0], scratch=scratch)
     case _:
       raise NotImplementedError(f"Unsupported layout {x.layout}")
@@ -3061,6 +3080,7 @@ def _run_scoped_lowering_rule(
         dtype = mlir.dtype_to_ir_type(aval.dtype)
         if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
           input_refs.append(
+              # pyrefly: ignore[bad-argument-count]  # pyrefly#2487
               mgpu.WGMMAAccumulator.zero(*aval.shape, dtype, is_signed=is_signed)
           )
         else:
@@ -3138,6 +3158,7 @@ def _run_scoped_lowering_rule(
         input_refs.append(input_ref)
         should_discharge.append(False)
       elif aval.memory_space == gpu_core.TMEM:
+        assert isinstance(aval, gpu_core.AbstractTMEMRef)
         input_ref = alloc_stack.enter_context(
             ctx.module_ctx.alloc_tmem(
                 jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype),
@@ -3360,7 +3381,7 @@ def _scan_lowering_rule(
     raise NotImplementedError
   del jaxpr_consts
 
-  jaxpr, has_loop_index = pallas_utils.pattern_match_scan_to_fori_loop(
+  body_jaxpr, has_loop_index = pallas_utils.pattern_match_scan_to_fori_loop(
       jaxpr, num_consts, num_carry
   )
   consts, args = util.split_list(args, [num_consts])
@@ -3374,7 +3395,7 @@ def _scan_lowering_rule(
 
   for_out = _lower_jaxpr_to_for_loop(
       ctx,
-      jaxpr,
+      body_jaxpr,
       start,
       length,
       consts,
@@ -3538,21 +3559,11 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
     ]
     del outs
 
-  # TODO(apaszke): Remove once minimal jaxlib is 0.8.2
-  idx_switch_params = inspect.signature(scf_dialect.IndexSwitchOp).parameters
-  if (mlir_compat := "num_caseRegions" in idx_switch_params):
-    switch_op = scf_dialect.IndexSwitchOp(
-        yielded_types,
-        _as_index(_ensure_ir_value(index, index_aval.dtype)),
-        ir.DenseI64ArrayAttr.get(range(len(branches) - 1)),
-        num_caseRegions=len(branches) - 1,
-    )
-  else:
-    switch_op = scf_dialect.IndexSwitchOp(
-        yielded_types,
-        _as_index(_ensure_ir_value(index, index_aval.dtype)),
-        range(len(branches) - 1),
-    )
+  switch_op = scf_dialect.IndexSwitchOp(
+      yielded_types,
+      _as_index(_ensure_ir_value(index, index_aval.dtype)),
+      range(len(branches) - 1),
+  )
 
   # ``RegionSequence`` in MLIR does not support slicing, so the
   # auto-generated Python bindings for ``caseRegions`` fail at runtime!
@@ -3560,9 +3571,9 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
   regions = list(switch_op.regions)
   # Move the default region to the back.
   regions = regions[1:] + regions[:1]
-  treedef = None
+  treedef: tree_util.PyTreeDef | None = None
   for branch, region in zip(branches, regions):
-    block = region.blocks.append() if mlir_compat else region.blocks[0]  # pyrefly: ignore[unbound-name]  # pyrefly#2382
+    block = region.blocks[0]
     with ir.InsertionPoint(block):
       outs = lower_jaxpr_to_mosaic_gpu(
           ctx.module_ctx, ctx.launch_ctx, branch.jaxpr, args, consts=branch.consts

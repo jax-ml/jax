@@ -260,7 +260,7 @@ def planar_snake(
   and when moving from one tile to another, the indices increase along columns
   in one of them and decrease in the other.
   """
-  tile_width = np.int32(tile_width)
+  tile_width = np.int32(tile_width)  # pyrefly: ignore[bad-assignment]
   major_size = np.int32(shape[1 - minor_dim])
   minor_size = np.int32(shape[minor_dim])
   minor_tile_idx = lax.div(lin_idx, tile_width * major_size)

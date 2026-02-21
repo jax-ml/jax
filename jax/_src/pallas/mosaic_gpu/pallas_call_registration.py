@@ -58,6 +58,11 @@ def pallas_call_lowering(
         "dynamic grid bounds not supported in the Mosaic GPU backend"
     )
 
+  if mesh is not None and not isinstance(mesh, gpu_core.Mesh):
+    raise NotImplementedError(
+        f"Mesh {mesh} is not supported by the Mosaic GPU backend"
+    )
+
   if debug:
     print(f"\nThe kernel jaxpr for pallas_call {debug_info.func_src_info}:")
     print(jaxpr)
@@ -126,6 +131,7 @@ def pallas_call_lowering(
         f"{mlir.sanitize_name(debug_info.func_name)}-{time.time_ns()}-trace.json",
     )
     def dump_profile(prof_buffer):
+      assert prof_spec is not None  # pyrefly#40
       try:
         with open(out_file, "x") as f:
           prof_spec.dump(

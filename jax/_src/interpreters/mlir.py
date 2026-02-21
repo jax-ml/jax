@@ -443,12 +443,19 @@ def get_canonical_source_file(file_name: str, caches: TracebackCaches) -> str:
   caches.canonical_name_cache[file_name] = file_name
   return file_name
 
-def _traceback_to_location(ctx: ModuleContext, tb: xc.Traceback) -> ir.Location:
+
+class HasTracebackCaches(Protocol):
+  @property
+  def traceback_caches(self) -> TracebackCaches:
+    ...
+
+
+def _traceback_to_location(ctx: HasTracebackCaches, tb: xc.Traceback) -> ir.Location:
   """Converts a full traceback to a callsite() MLIR location."""
   return ctx.traceback_caches.traceback_to_location_cache.get(tb)
 
 def source_info_to_location(
-    ctx: ModuleContext, primitive: core.Primitive | None,
+    ctx: HasTracebackCaches, primitive: core.Primitive | None,
     name_stack: source_info_util.NameStack,
     traceback: xc.Traceback | None) -> ir.Location:
   if config.include_full_tracebacks_in_locations.value:

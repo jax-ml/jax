@@ -21,7 +21,7 @@ def make_vector_clock(vector_clock_size: int) -> VectorClock:
   return np.zeros(vector_clock_size, dtype=np.int32)
 
 
-def copy_vector_clock(x: VectorClock) -> VectorClock:
+def copy_vector_clock(x: VectorClock | None) -> VectorClock | None:
   if x is None:
     return None
   return x.copy()

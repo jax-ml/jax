@@ -320,10 +320,9 @@ def _allocate_buffer(
   Returns:
     Integer id for the allocated buffer.
   """
-  device_id = int(device_id)
+  device_id: int = int(device_id)  # pyrefly: ignore[redefinition]
   memory_space_str = TPU_MEMORY_SPACE_NAMES[int(memory_space)]
   del memory_space
-  val = np.array(val)
 
   shared_memory = _get_shared_memory()
 
@@ -356,7 +355,9 @@ def _allocate_buffer(
         # copies of `val` so that each buffer is a distinct ndarray.
         val = val.copy()
 
-    shared_memory.allocate_buffer(key, ref_count=ref_count, value=val)
+    shared_memory.allocate_buffer(
+        key, ref_count=ref_count, value=np.array(val)
+    )
     local_core_id_to_buffer_id[lci] = buffer_id
 
   # The buffer ids should always be kept in sync across all cores.
@@ -412,8 +413,8 @@ def _allocate_semaphores(
   Returns:
     Array of semaphore ids.
   """
-  device_id = int(device_id)
-  shape = tuple(map(int, shape))
+  device_id: int = int(device_id)  # pyrefly: ignore[redefinition]
+  shape: tuple[int, ...] = tuple(map(int, shape))  # pyrefly: ignore[redefinition]
   num_semaphores = math.prod(shape)
 
   shared_memory = _get_shared_memory()
@@ -516,7 +517,9 @@ def get(
     # NOTE: input_name, block_indices, and grid_loop_idx are set only if this
     # function is being called to read a block from a pallas_call input (at the
     # start of one iteration of the kernel body).
+    assert block_indices is not None
     block_indices = tuple(int(x) for x in block_indices)
+    assert grid_loop_idx is not None
     grid_loop_idx = tuple(int(x) for x in tuple(grid_loop_idx))
 
   shared_memory = _get_shared_memory()
@@ -537,7 +540,7 @@ def get(
   # TODO(jburnim): We already know this shape in the Jaxpr where we insert a
   # callback to `get`.  Should we just pass the shape to `get`?
   # TODO(jburnim): Move to a helper function?
-  full_read_shape = []
+  full_read_shape: list[int] = []
   assert len(read_range) <= len(shape)
   for dim_size, idx_or_slice in itertools.zip_longest(
       shape, read_range, fillvalue=None
@@ -551,9 +554,8 @@ def get(
       dim_size = (idx_or_slice.stop - idx_or_slice.start) // idx_or_slice.step
       assert isinstance(dim_size, int)
       full_read_shape.append(dim_size)
-  full_read_shape = tuple(full_read_shape)
 
-  if (ret is None) or (full_read_shape != ret.shape):
+  if (ret is None) or (tuple(full_read_shape) != ret.shape):
     if shared_memory.out_of_bounds_reads == 'raise':
       if source_info is None:
         ctx = contextlib.nullcontext()
@@ -640,7 +642,9 @@ def store(
     # NOTE: output_name, block_indices, and grid_loop_idx are set only if this
     # function is being called to store a block into a pallas_call output (at
     # the end of one iteration of the kernel body).
+    assert block_indices is not None
     block_indices = tuple(int(x) for x in block_indices)
+    assert grid_loop_idx is not None
     grid_loop_idx = tuple(int(x) for x in tuple(grid_loop_idx))
 
   shared_memory = _get_shared_memory()
@@ -935,6 +939,8 @@ def dma_start(
   (src_sem, dst_sem), clock = shared_memory.get_semaphores_and_increment_clock(
       (src_sem_id, dst_sem_id), src_global_core_id
   )
+  assert clock is not None
+  assert dst_sem is not None
 
   assert dma_id_counter is not None
   id = dma_id_counter.get_next()
@@ -999,7 +1005,7 @@ def dma_wait(device_id, local_core_id, sem_id, size):
   global_core_id = shared_memory.get_global_core_id(device_id, local_core_id)
 
   (sem,), _ = shared_memory.get_semaphores_and_increment_clock(
-      {sem_id}, global_core_id
+      [sem_id], global_core_id
   )
   assert sem is not None
   sem.wait(size, global_core_id, has_tasks=True)
@@ -1030,7 +1036,7 @@ def semaphore_signal(
     target_local_core_id = 0
 
   (sem,), clock = shared_memory.get_semaphores_and_increment_clock(
-      {sem_id}, src_global_core_id
+      [sem_id], src_global_core_id
   )
   assert sem is not None
   sem.signal(
@@ -1050,7 +1056,7 @@ def semaphore_wait(device_id, local_core_id, sem_id, value):
   global_core_id = shared_memory.get_global_core_id(device_id, local_core_id)
 
   (sem,), _ = shared_memory.get_semaphores_and_increment_clock(
-      {sem_id}, global_core_id
+      [sem_id], global_core_id
   )
   assert sem is not None
   sem.wait(value, global_core_id)
@@ -1734,7 +1740,7 @@ def interpret_pallas_call(
   input_buffer_ids = []
   for i, var in enumerate(
       jaxpr.invars[grid_mapping.num_index_operands:][:grid_mapping.num_inputs]):
-    assert var.aval.dtype == input_args[i].dtype
+    assert var.aval.dtype == input_args[i].dtype  # pyrefly: ignore[missing-attribute]
     input_buffer_ids.append(
         callback.io_callback(
             _allocate_buffer,
@@ -1807,18 +1813,20 @@ def interpret_pallas_call(
     output_idx = i - grid_mapping.num_inputs
     is_input = i < grid_mapping.num_inputs
     is_output = (output_idx >= 0) and (output_idx < grid_mapping.num_outputs)
-    if var.aval.memory_space == mosaic_core.MemorySpace.SEMAPHORE:
+    aval = var.aval
+    assert isinstance(aval, state.AbstractRef)
+    if aval.memory_space == mosaic_core.MemorySpace.SEMAPHORE:
       kernel_buffer_ids.append(
           callback.io_callback(
               _allocate_semaphores,
-              jax.ShapeDtypeStruct(var.aval.shape, jnp.int16),
+              jax.ShapeDtypeStruct(aval.shape, jnp.int16),
               device_id,
               None,  # local_core_id
-              var.aval.shape,
+              aval.shape,
               ordered=True,
           )
       )
-    elif _is_any(var.aval.memory_space):
+    elif _is_any(aval.memory_space):
       # Use the already-allocated HBM input or output buffer.
       #
       # TODO(jburnim): For kernel args in HBM, check that block shape equals the
@@ -1836,10 +1844,8 @@ def interpret_pallas_call(
               jax.ShapeDtypeStruct((), jnp.int16),
               device_id,
               None,  # local_core_id,
-              TPU_MEMORY_SPACE_IDXS[var.aval.memory_space],
-              interpret_params.get_uninitialized_array(
-                  var.aval.shape, var.aval.dtype
-              ),
+              TPU_MEMORY_SPACE_IDXS[aval.memory_space],
+              interpret_params.get_uninitialized_array(aval.shape, aval.dtype),
               ordered=True,
           )
       )
@@ -1892,7 +1898,7 @@ def interpret_pallas_call(
       return grid_mapping.local_grid_env(grid_point, grid)
     else:
       return tuple(
-          pallas_core.GridAxis(idx, b)
+          pallas_core.GridAxis(idx, b)  # pyrefly: ignore[bad-argument-type]
           for dim, (idx, b) in enumerate(zip(grid_point, grid))
           if dim not in grid_mapping.vmapped_dims
       )
@@ -1999,7 +2005,7 @@ def interpret_pallas_call(
           # TODO(jburnim): Just use input_args[j] when the input is not aliased?
           transform = indexing.NDIndexer(
               indices=tuple(
-                  indexing.ds(st, sz) if not iid else st
+                  indexing.Slice(st, sz) if not iid else st
                   for st, sz, iid in zip(
                       cur_start_indices[index],
                       block_shapes[index],
@@ -2144,8 +2150,8 @@ def interpret_pallas_call(
             next_loop_idx,
             next_grid_point,
             cur_start_indices,
-            next_block_indices,
-            next_start_indices,
+            list(next_block_indices),
+            list(next_start_indices),
         )
 
     initial_loop_idx = interpret_utils.get_indices(grid, initial_iteration_idx)

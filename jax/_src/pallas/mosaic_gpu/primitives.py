@@ -236,9 +236,10 @@ def _copy_smem_to_gmem_lowering(
       ctx, src_aval, src, src_transform_avals, src_transforms,
       handle_transposes=handle_transposes
   )
-  copy_params = _extract_gmem_copy_params(
-      ctx, dst_transforms, supports_multicast=True
-  ) | _extract_smem_copy_params(src_aval, src_transforms)
+  copy_params = {
+      **_extract_gmem_copy_params(ctx, dst_transforms, supports_multicast=True),
+      **_extract_smem_copy_params(src_aval, src_transforms),
+  }
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     ctx.launch_ctx.async_copy(
         src_ref=src,
@@ -539,9 +540,10 @@ def _copy_gmem_to_smem_lowering(
       ctx, dst_ref_aval, dst, dst_transform_avals, dst_transforms,
       handle_transposes=handle_transposes)
 
-  copy_params = _extract_smem_copy_params(
-      dst_ref_aval, dst_transforms
-  ) | _extract_gmem_copy_params(ctx, src_transforms)
+  copy_params = {
+      **_extract_smem_copy_params(dst_ref_aval, dst_transforms),
+      **_extract_gmem_copy_params(ctx, src_transforms),
+  }
   base_index = _extract_barrier_slice_base(
       barrier_transforms_treedef.unflatten(flat_barrier_transforms)
   )
@@ -1884,6 +1886,7 @@ def _tcgen05_mma_lowering(
     assert isinstance(accumulate, ir.Value)
 
   if a_scale_ref is not None and a_scale_transforms_tree is not None:
+    assert isinstance(a_scale_ref_aval, state.AbstractRef)
     a_scale_transforms = a_scale_transforms_tree.unflatten(
         a_scale_transforms_leaves
     )
@@ -1899,6 +1902,7 @@ def _tcgen05_mma_lowering(
           f"Unsupported transforms: {a_scale_transforms}"
       )
   if b_scale_ref is not None and b_scale_transforms_tree is not None:
+    assert isinstance(b_scale_ref_aval, state.AbstractRef)
     b_scale_transforms = b_scale_transforms_tree.unflatten(
         b_scale_transforms_leaves
     )
@@ -2613,7 +2617,7 @@ def inline_mgpu(*, arg_types=(), return_type=None):
 
       # Strip the transforms from the refs since they will be recorded in
       # the types.
-      ref_transforms = []
+      ref_transforms: list[Any] = []
       raw_flat_args = []
       for a, t in zip(flat_args, flat_arg_types):
         if isinstance(a, state_types.TransformedRef) and isinstance(t, RefType):
@@ -2803,7 +2807,7 @@ def _inline_mgpu_lowering_rule(
   return ret_leaves
 
 
-def _ref_type_to_transforms(ref_type: RefType) -> ir.ArrayAttribute:
+def _ref_type_to_transforms(ref_type: RefType) -> ir.ArrayAttr:
   """Returns the Mosaic GPU transforms for the given ref type."""
   transform_attrs = [gpu_core.to_gpu_transform(t).to_attr()
                      for t in ref_type.transforms]
@@ -2882,8 +2886,8 @@ def _custom_primitive_in_specs(
 ) -> tuple[Sequence[ir.Type], Sequence[ir.Attribute], Sequence[ir.ArrayAttr]]:
   """Returns a tuple containing the list of MLIR input types, layouts, and
   transforms for the given JAX array and ref arguments."""
-  in_types = []
-  in_layouts = []
+  in_types : list[ir.Type] = []
+  in_layouts : list[ir.Attribute] = []
   in_transforms : list[ir.ArrayAttr] = []
   flat_arg_avals = ctx.avals_in[:pytree_args.num_leaves]
   for aval, transformed, t in zip(
@@ -2938,7 +2942,7 @@ def _populate_custom_primitive_op_block(
     mgpu_fn: Callable[..., Any],
     pytree_args,
     in_layouts: Sequence[ir.Attribute],
-    in_transforms: ir.ArrayAttr,
+    in_transforms: Sequence[ir.ArrayAttr],
     results_ty: Sequence[ir.Type],
     out_layouts: Sequence[ir.Attribute | None],
 ):
@@ -2965,7 +2969,7 @@ def _populate_custom_primitive_op_block(
 
         _, transforms = (
             mgpu.dialect_lowering.swizzle_and_transforms_from_transforms_attr(
-                next(in_transforms_it)
+                ir.ArrayAttr(next(in_transforms_it))
             )
         )
         # The block arguments in the Mosaic GPU dialect are logical refs that
@@ -2984,7 +2988,7 @@ def _populate_custom_primitive_op_block(
         layout = mgpu.layouts.from_layout_attr(layout_attr)
 
         vector_ty = ir.VectorType(arg.type)
-        reg_shape = layout.registers_shape(vector_ty.shape)
+        reg_shape = layout.registers_shape(tuple(vector_ty.shape))
         reg_ty = layout.registers_element_type(vector_ty.element_type)
 
         # The vector block arguments in the Mosaic GPU dialect are wrapped
@@ -3100,7 +3104,7 @@ def _inline_mgpu_lowering_rule_wg_semantics(
       in_transforms=in_transforms,
       out_layouts=[l for l in out_layouts if l is not None],
   )
-  block : ir.Block = custom_op.body.blocks.append(*in_types)
+  block: ir.Block = custom_op.body.blocks.append(*in_types)
   _populate_custom_primitive_op_block(
       ctx,
       block,

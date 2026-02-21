@@ -131,7 +131,7 @@ def _swap_abstract_eval(ref, x, *args, has_mask, tree, add):
     )
   if tref.shape != x.shape:
     raise ValueError(f"Value must have shape {tref.shape}, got {x.shape}")
-  effects = {state_types.WriteEffect(0)}
+  effects: set[jax_core.Effect] = {state_types.WriteEffect(0)}
   if add:
     effects.add(state_types.ReadEffect(0))
   return x, effects
@@ -223,7 +223,7 @@ def addupdate_compressed(ref: Ref, x: jax.Array, *, mask: jax.Array) -> None:
 def _indexed_shape(ref: Ref, indices: Sequence[jax.Array]) -> tuple[int, ...]:
   if len(indices) != ref.ndim:
     raise ValueError(f"The number of indices does not match {ref.ndim=}")
-  prev_idx = None
+  prev_idx: jax.Array | None = None
   for idx in indices:
     if idx.ndim != 1:
       raise ValueError(
@@ -326,7 +326,7 @@ def _scatter_abstract_eval(*flat_args, tree, add):
     raise ValueError(
         f"{mask.shape=} does not match expected shape {expected_shape}"
     )
-  effects = {state_types.WriteEffect(0)}
+  effects: set[jax_core.Effect] = {state_types.WriteEffect(0)}
   if add:
     effects.add(state_types.ReadEffect(0))
   return (), effects

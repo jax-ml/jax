@@ -291,6 +291,7 @@ def _compile_fn(fn, in_structs):
     return out[0] if unwrap_output_tuple else out
 
   # Unload the compiled code when the Python function is destroyed.
+  # pyrefly: ignore[missing-attribute]
   apply.destructor = weakref.ref(apply, lambda _weak_ref: unload)
 
   return apply

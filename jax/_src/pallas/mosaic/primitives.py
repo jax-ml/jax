@@ -348,7 +348,7 @@ def _get_dma_effects(
   n_dst_transforms = len(tree_util.tree_leaves(dst_transforms_avals))
   n_dst_sem_transforms = len(tree_util.tree_leaves(dst_sem_transforms_avals))
   dst_sem_index = 1 + n_src_transforms + 1 + n_dst_transforms
-  effs = {
+  effs: set[jax_core.Effect] = {
       state.ReadEffect(0),  # Read from src ref
       state.WriteEffect(n_src_transforms + 1),  # Write to dst ref
       state.WriteEffect(dst_sem_index),  # Write to dst sem

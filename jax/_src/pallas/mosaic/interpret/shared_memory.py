@@ -82,10 +82,10 @@ class Semaphore:
     with self.cv:
       self.count_by_core[global_core_id] += inc
       if self.detect_races:
-        if self.clocks[global_core_id] is None:
+        if (global_clock := self.clocks[global_core_id]) is None:
           self.clocks[global_core_id] = vc.copy_vector_clock(clock)
         else:
-          vc.update_vector_clock(self.clocks[global_core_id], clock)
+          vc.update_vector_clock(global_clock, clock)
       self.cv.notify_all()
 
   def read(self, global_core_id):

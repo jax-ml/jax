@@ -191,7 +191,9 @@ def pallas_call_lowering(
   # TODO(b/392558289): Migrate to ``jax.ffi``.
   return mlir.custom_call(
       call_target_name="triton_kernel_call",
-      result_types=[*map(mlir.aval_to_ir_type, ctx.avals_out)],
+      result_types=mlir.flatten_ir_values(
+          map(mlir.aval_to_ir_type, ctx.avals_out)
+      ),
       operands=in_nodes,
       backend_config=zlib.compress(
           kernel_call.to_proto(

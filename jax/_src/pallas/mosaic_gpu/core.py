@@ -76,7 +76,7 @@ def is_trivial_index(idx, shape) -> bool:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class CompilerParams(pallas_core.CompilerParams):
+class CompilerParams:
   """Mosaic GPU compiler parameters.
 
   Attributes:
@@ -237,7 +237,7 @@ def kernel(
     num_threads: int | None = None,
     thread_name: str | None = None,
     interpret: Any = None,
-    **mesh_kwargs: object,
+    **mesh_kwargs: Any,
 ):
   """Entry point for defining a Mosaic GPU kernel.
 
@@ -328,7 +328,7 @@ def kernel(
         scratch_shapes=scratch_shapes,
         compiler_params=compiler_params,
         grid=(axis_size,) + grid,
-        grid_names=(axis_name,) + grid_names,
+        grid_names=(axis_name,) + grid_names,  # pyrefly: ignore[bad-argument-type]
         cluster=cluster,
         cluster_names=cluster_names,
         num_threads=num_threads,
@@ -509,11 +509,11 @@ class AbstractRefUnion(state.AbstractRef):
   def _iter(self, tracer):
     return iter(flatten_ref_union(tracer))
 
-  def _getitem(self, tracer, index):
-    return list(iter(tracer))[index]
+  def _getitem(self, tracer, idx):
+    return list(iter(tracer))[idx]
 
-  def _setitem(self, tracer, index, value):
-    del tracer, index, value  # Unused.
+  def _setitem(self, tracer, idx, value):
+    del tracer, idx, value  # Unused.
     raise ValueError("Ref unions can't be assigned to.")
 
   def update(self, inner_aval=None, memory_space=None, kind=None):
@@ -605,22 +605,22 @@ class TilingTransform(state_types.Transform):
   """
   tiling: tuple[int, ...]
 
-  def transform_type(self, ty):
-    match ty:
+  def transform_type(self, x):
+    match x:
       case jax_core.ShapedArray():
-        shape = ty.shape
+        shape = x.shape
         if shape is None:
-          return ty
+          return x
         leading_dims = shape[: -len(self.tiling) :]
         tiled_dims = shape[-len(self.tiling) :]
         assert all(d % t == 0 for d, t in zip(tiled_dims, self.tiling))
         num_tiles = [d // t for d, t in zip(tiled_dims, self.tiling)]
         new_shape = (*leading_dims, *num_tiles, *self.tiling)
-        return ty.update(shape=new_shape)
+        return x.update(shape=new_shape)
       case state_types.AbstractRef():
-        return ty.update(inner_aval=self.transform_type(ty.inner_aval))
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
       case _:
-        raise TypeError(f"Cannot transform type: {ty}")
+        raise TypeError(f"Cannot transform type: {x}")
 
   def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
     return UntilingTransform(self.tiling)
@@ -630,12 +630,12 @@ class TilingTransform(state_types.Transform):
 class UntilingTransform(state_types.Transform):
   tiling: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
 
-  def transform_type(self, ty):
-    match ty:
+  def transform_type(self, x):
+    match x:
       case jax_core.ShapedArray():
-        shape = ty.shape
+        shape = x.shape
         if shape is None:
-          return ty
+          return x
         assert shape[-len(self.tiling) :] == self.tiling, (shape, self.tiling)
         shape = shape[: -len(self.tiling)]  # Drop tiling
         new_shape = shape[: -len(self.tiling)] + tuple(
@@ -644,11 +644,11 @@ class UntilingTransform(state_types.Transform):
                 shape[-len(self.tiling) :], self.tiling
             )
         )
-        return ty.update(shape=new_shape)
+        return x.update(shape=new_shape)
       case state_types.AbstractRef():
-        return ty.update(inner_aval=self.transform_type(ty.inner_aval))
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
       case _:
-        raise TypeError(f"Cannot transform type: {ty}")
+        raise TypeError(f"Cannot transform type: {x}")
 
   def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
     return TilingTransform(self.tiling)
@@ -801,8 +801,8 @@ class PeerMemRef(state_types.Transform):
   def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
     raise NotImplementedError()
 
-  def transform_type(self, ty):
-    return ty
+  def transform_type(self, x):
+    return x
 
   def commute_ndindexer(
       self, _: jax_core.AbstractValue, indexer: indexing.NDIndexer
@@ -817,8 +817,8 @@ class MulticastRef(state_types.Transform):
       metadata=dict(static=True)
   )
 
-  def transform_type(self, ty):
-    return ty
+  def transform_type(self, x):
+    return x
 
   def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
     raise NotImplementedError()
@@ -918,14 +918,14 @@ class ExtractAliasedRef(state_types.Transform):
   ):
     return cls(dtypes.dtype(ref.dtype), ref.ref.shape, byte_offset, layout)
 
-  def transform_type(self, ty):
-    match ty:
+  def transform_type(self, x):
+    match x:
       case state_types.AbstractRef():
-        return ty.update(inner_aval=self.transform_type(ty.inner_aval))
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
       case jax_core.ShapedArray():
-        return ty.update(shape=self.shape, dtype=self.dtype)
+        return x.update(shape=self.shape, dtype=self.dtype)
       case _:
-        raise TypeError(f"Unsupported type: {ty}")
+        raise TypeError(f"Unsupported type: {x}")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -940,21 +940,21 @@ class SwizzleTransform(state_types.Transform):
       )
 
   def transform_type(
-      self, aval: jax_core.AbstractValue
+      self, x: jax_core.AbstractValue
   ) -> jax_core.AbstractValue:
-    match aval:
+    match x:
       case jax_core.ShapedArray():
-        swizzle_elems = (self.swizzle * 8) // dtypes.itemsize_bits(aval.dtype)
-        if swizzle_elems != aval.shape[-1]:
+        swizzle_elems = (self.swizzle * 8) // dtypes.itemsize_bits(x.dtype)
+        if swizzle_elems != x.shape[-1]:
           raise ValueError(
               f"Swizzle {self.swizzle} requires the trailing dimension to be of"
-              f" size {swizzle_elems}, but got shape: {aval.shape}"
+              f" size {swizzle_elems}, but got shape: {x.shape}"
           )
-        return aval
+        return x
       case state_types.AbstractRef():
-        return aval.update(inner_aval=self.transform_type(aval.inner_aval))
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
       case _:
-        raise NotImplementedError(f"Unsupported type: {aval}")
+        raise NotImplementedError(f"Unsupported type: {x}")
 
   def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
     return UnswizzleRef(self.swizzle)
@@ -1099,7 +1099,7 @@ class barrier_dtype(dtypes.extended):
 
 @dataclasses.dataclass(frozen=True)
 class BarrierType(dtypes.ExtendedDType):
-  type: ClassVar[Any] = barrier_dtype
+  type: ClassVar[Any] = barrier_dtype  # pyrefly: ignore[bad-override]
   name: ClassVar[str] = "barrier"
 
   num_arrivals: int
@@ -1111,7 +1111,7 @@ class BarrierType(dtypes.ExtendedDType):
 
 @dataclasses.dataclass(frozen=True)
 class ClusterBarrierType(dtypes.ExtendedDType):
-  type: ClassVar[Any] = barrier_dtype
+  type: ClassVar[Any] = barrier_dtype  # pyrefly: ignore[bad-override]
   name: ClassVar[str] = "cluster_barrier"
 
   collective_axes: tuple[str | tuple[str, ...], ...]
@@ -1435,7 +1435,9 @@ class ParameterizedLayout(SomeLayout):
     object.__setattr__(self, "args", tuple(self.args))
     object.__setattr__(self, "kwargs", frozen_dict.FrozenDict(self.kwargs))
 
-  def to_mgpu(self) -> mgpu.FragmentedLayout:
+  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:
+    if args or kwargs:
+      raise ValueError(f"Can't instantiate {self} with arguments.")
     return self.layout_cls.to_mgpu(*self.args, **self.kwargs)
 
 
@@ -1444,7 +1446,9 @@ class ReducedLayout(SomeLayout):
   layout: SomeLayout
   axes: Sequence[int]
 
-  def to_mgpu(self) -> mgpu.FragmentedLayout:
+  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:
+    if args or kwargs:
+      raise ValueError(f"Can't instantiate {self} with arguments.")
     layout = self.layout.to_mgpu()
     if not isinstance(layout, mgpu.TiledLayout):
       raise ValueError("Only TiledLayout supports reductions.")
@@ -1479,12 +1483,12 @@ class Layout(SomeLayout, enum.Enum):
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
 
-  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:
+  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:  # pyrefly: ignore[bad-override]
     def check_no_args():
       if args or kwargs:
         raise ValueError(f"Can't instantiate {self} with arguments.")
 
-    match self:
+    match self:  # pyrefly: ignore[non-exhaustive-match]  # pyrefly#2080
       case Layout.WGMMA_TRANSPOSED:
         check_no_args()
         return mgpu.WGMMA_TRANSPOSED_LAYOUT
@@ -1555,7 +1559,7 @@ class TMEMLayout(enum.Enum):
     return ParameterizedLayout(self, args, kwargs)
 
   def to_mgpu(self, *args, **kwargs) -> tcgen05.TMEMLayout:
-    match self:
+    match self:  # pyrefly: ignore[non-exhaustive-match]  # pyrefly#2080
       case TMEMLayout.SCALES_LAYOUT:
         return tcgen05.scales_layout(*args, **kwargs)
       case TMEMLayout.SPARSE_METADATA_LAYOUT:

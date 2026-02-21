@@ -17,10 +17,9 @@ from __future__ import annotations
 
 import dataclasses
 
-from jax._src.pallas import core as pallas_core
 
 @dataclasses.dataclass(frozen=True)
-class CompilerParams(pallas_core.CompilerParams):
+class CompilerParams:
   """Compiler parameters for Triton.
 
   Attributes:

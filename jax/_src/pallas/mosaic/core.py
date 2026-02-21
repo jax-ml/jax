@@ -16,8 +16,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Mapping
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import dataclasses
 import enum
 from typing import Any, Literal
@@ -77,7 +76,7 @@ class SideEffectType(enum.Enum):
 
 
 @dataclasses.dataclass(frozen=True)
-class CompilerParams(pallas_core.CompilerParams):
+class CompilerParams:
   """Mosaic TPU compiler parameters.
 
   Attributes:

@@ -377,11 +377,13 @@ class Tiling(enum.Enum):
   @property
   def shape(self) -> tuple[int, ...]:
     # TODO(slebedev): Use ``get_tpu_info()`` instead of hardcoding the values.
-    match self:
+    match self:  # pyrefly: ignore[non-exhaustive-match]  # pyrefly#2080
       case Tiling.COMPACT:
         return (8, 128)
       case Tiling.SPARSE_CORE:
         return (8,)
+      case _:
+        raise NotImplementedError  # pyrefly#2080
 
 
 def infer_tiling(
@@ -417,7 +419,7 @@ def infer_tiling(
 
   leading_dims, final_dims = shape[:-tiling_rank], shape[-tiling_rank:]
   tpu_generation = get_tpu_info().generation
-  match tiling:
+  match tiling:  # pyrefly: ignore[non-exhaustive-match]  # pyrefly#2080
     case Tiling.COMPACT:
       # We want to find the minimum power of 2 that fits the second-minor
       # dimension of shape, with maximum value equal to ``tiling.shape[0]``.

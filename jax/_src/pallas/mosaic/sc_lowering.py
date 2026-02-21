@@ -134,15 +134,17 @@ def lower_jaxpr_into_module(
   )
   module.body.append(func_op)
   sym_tab.insert(func_op)
+  assert mosaic_grid_mapping.grid is not None
+  assert all(isinstance(d, int) for d in mosaic_grid_mapping.grid)
   func_op.attributes["iteration_bounds"] = ir.DenseI64ArrayAttr.get(
-      mosaic_grid_mapping.grid
+      cast(tuple[int, ...], mosaic_grid_mapping.grid)
   )
   func_op.attributes["dimension_semantics"] = (
       mosaic_grid_mapping.get_dimension_semantics()
   )
   if not mosaic_grid_mapping.grid:
     # No need for "window_params" if the grid is empty.
-    return module
+    return
   window_params = []
   for i, bm in enumerate(grid_mapping.block_mappings):
     func_name = f"{name}_transform_{i}"
@@ -168,7 +170,6 @@ def lower_jaxpr_into_module(
     )
     window_params.append(ir.DictAttr.get(block_params))
   func_op.attributes["window_params"] = ir.ArrayAttr.get(window_params)
-  return module
 
 
 @dataclasses.dataclass(init=False)
@@ -266,7 +267,7 @@ def lower_jaxpr_to_func(
           lowering_context, jaxpr, *scalar_prefetch, *operands_and_scratch
     )
 
-  body = func.FuncOp.from_py_func(*arg_types, name=name)(body_func)
+  body: Any = func.FuncOp.from_py_func(*arg_types, name=name)(body_func)
   func_op = cast(func.FuncOp, body.func_op)
   func_op.attributes["tpu.core_type"] = ir.Attribute.parse(
       f"#tpu.core_type<{kernel_type.name.lower()}>"

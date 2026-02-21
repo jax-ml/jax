@@ -21,7 +21,7 @@ import functools
 import itertools
 import threading
 import types
-from typing import Self
+from typing import Any, Self
 
 import jax
 from jax import numpy as jnp
@@ -36,13 +36,13 @@ from jax._src.state import indexing
 import numpy as np
 
 
-IDX_BY_GPU_MEMORY_SPACE: Mapping[mosaic_gpu_core.MemorySpace, int] = (
-    types.MappingProxyType(
-        {v: i for i, v in enumerate(mosaic_gpu_core.MemorySpace)}
-    )
+IDX_BY_GPU_MEMORY_SPACE: Mapping[mosaic_gpu_core.MemorySpace, int]
+IDX_BY_GPU_MEMORY_SPACE = types.MappingProxyType(
+    {v: i for i, v in enumerate(mosaic_gpu_core.MemorySpace)}
 )
 
 
+GPU_MEMORY_SPACE_BY_IDX: Mapping[int, mosaic_gpu_core.MemorySpace]
 GPU_MEMORY_SPACE_BY_IDX = types.MappingProxyType(
     dict(enumerate(mosaic_gpu_core.MemorySpace))
 )
@@ -123,8 +123,8 @@ def reset_gpu_interpret_mode_state():
 
 
 def _initialize_shared_memory(
-    num_devices: jnp.ndarray,
-    num_threads: jnp.ndarray,
+    num_devices: Any,
+    num_threads: Any,
     *,
     interpret_params: interpret_utils.InterpretGPUParams,
 ):
@@ -289,9 +289,7 @@ class HostAllocationKey(HostAllocationRequest):
 
 
 def _allocate_buffer_for_all_threads(
-    device_id: np.ndarray,
-    allocation_request: np.ndarray,
-    value: np.ndarray,
+    device_id: Any, allocation_request: Any, value: Any
 ) -> np.ndarray:
   """Allocates a buffer for the given `allocation_request`.
 
@@ -321,8 +319,8 @@ def _allocate_buffer_for_all_threads(
   value = np.array(value)
   shared_memory = _get_shared_memory()
 
-  key = None
-  buffer_id = None
+  key: HostAllocationKey | None = None
+  buffer_id: int | None = None
   for thread_id in range(shared_memory.num_cores_per_device):
     buffer_id_for_thread_id = shared_memory.get_next_buffer_id(
         device_id, thread_id
@@ -368,10 +366,10 @@ def call_allocate_buffer_for_all_threads(
 
 
 def _allocate_buffer(
-    device_id: np.ndarray,
-    thread_id: np.ndarray,
-    allocation_request: np.ndarray,
-    value: np.ndarray,
+    device_id: Any,
+    thread_id: Any,
+    allocation_request: Any,
+    value: Any,
 ) -> np.ndarray:
   """Allocates a buffer for the given `allocation_request`.
 
@@ -419,7 +417,7 @@ def call_allocate_buffer(
   )
 
 
-def _deallocate_buffer(allocation_key: np.ndarray):
+def _deallocate_buffer(allocation_key: Any):
   """Decreases the reference count of the buffer with `allocation_key` (Deallocates the buffer if its reference count becomes zero)."""
   allocation_key = HostAllocationKey.from_array(allocation_key)
   shared_memory = _get_shared_memory()
@@ -506,9 +504,9 @@ def _validate_transforms(transforms):
 
 
 def _get(
-    device_id: np.ndarray,
-    thread_id: np.ndarray,
-    allocation_key: np.ndarray,
+    device_id: Any,
+    thread_id: Any,
+    allocation_key: Any,
     transforms,
     block_indices=None,
     grid_loop_idx=None,
@@ -548,21 +546,22 @@ def _get(
   # TODO(jburnim): We already know this shape in the Jaxpr where we insert a
   # callback to `get`.  Should we just pass the shape to `get`?
   # TODO(jburnim): Move to a helper function?
-  full_read_shape = []
+  new_full_read_shape: list[int] = []
   assert len(read_range) <= len(shape)
   for dim_size, idx_or_slice in itertools.zip_longest(
       shape, read_range, fillvalue=None
   ):
     assert isinstance(dim_size, int)
     if idx_or_slice is None:
-      full_read_shape.append(dim_size)
+      new_full_read_shape.append(dim_size)
     elif isinstance(idx_or_slice, int):
       continue
     else:
       dim_size = (idx_or_slice.stop - idx_or_slice.start) // idx_or_slice.step
       assert isinstance(dim_size, int)
-      full_read_shape.append(dim_size)
-  full_read_shape = tuple(full_read_shape)
+      new_full_read_shape.append(dim_size)
+  full_read_shape = tuple(new_full_read_shape)
+  del new_full_read_shape
 
   if (ret is None) or (full_read_shape != ret.shape):
     ret = _handle_out_of_bounds_read(
@@ -619,9 +618,9 @@ def call_get(
 
 
 def _swap(
-    device_id: np.ndarray,
-    thread_id: np.ndarray,
-    allocation_key_as_array: np.ndarray,
+    device_id: Any,
+    thread_id: Any,
+    allocation_key_as_array: Any,
     transforms,
     val,
     mask,
@@ -703,11 +702,11 @@ def call_swap(
 
 
 def _allocate_barriers(
-    device_id: np.ndarray,
-    thread_id: np.ndarray,
-    num_arrivals: np.ndarray,
-    num_barriers: np.ndarray,
-    ref_count: np.ndarray,
+    device_id: Any,
+    thread_id: Any,
+    num_arrivals: Any,
+    num_barriers: Any,
+    ref_count: Any,
 ) -> np.ndarray:
   device_id = int(device_id)
   thread_id = int(thread_id)
@@ -770,7 +769,7 @@ def call_allocate_barriers(
 
 
 def _deallocate_barrier(
-    device_id: np.ndarray, thread_id: np.ndarray, allocation_key: np.ndarray
+    device_id: Any, thread_id: Any, allocation_key: np.ndarray
 ):
   device_id = int(device_id)
   thread_id = int(thread_id)
