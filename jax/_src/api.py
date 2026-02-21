@@ -31,7 +31,11 @@ import inspect
 import typing
 from typing import (Any, Literal, NamedTuple, Optional, TypeVar, overload,
                     cast, TYPE_CHECKING)
+from typing_extensions import ParamSpec
 import weakref
+
+_P_jit = ParamSpec("_P_jit")
+_T_jit = TypeVar("_T_jit")
 
 import numpy as np
 from contextlib import contextmanager
@@ -161,7 +165,7 @@ class NotSpecified:
 
 @overload
 def jit(
-  fun: Callable, /, *,
+  fun: Callable[_P_jit, _T_jit], /, *,
   in_shardings: Any = ...,
   out_shardings: Any = ...,
   static_argnums: int | Sequence[int] | None = ...,
@@ -189,10 +193,10 @@ def jit(
   backend: str | None = ...,
   inline: bool = ...,
   compiler_options: dict[str, Any] | None = ...,
-) -> Callable[[Callable], pjit.JitWrapped]: ...
+) -> Callable[[Callable[_P_jit, _T_jit]], pjit.JitWrapped]: ...
 
 def jit(
-  fun: Callable | NotSpecified = NotSpecified(), /, *,
+  fun: Callable[_P_jit, _T_jit] | NotSpecified = NotSpecified(), /, *,
   in_shardings: Any = sharding_impls.UNSPECIFIED,
   out_shardings: Any = sharding_impls.UNSPECIFIED,
   static_argnums: int | Sequence[int] | None = None,
@@ -204,7 +208,7 @@ def jit(
   backend: str | None = None,
   inline: bool = False,
   compiler_options: dict[str, Any] | None = None,
-) -> pjit.JitWrapped | Callable[[Callable], pjit.JitWrapped]:
+) -> pjit.JitWrapped | Callable[[Callable[_P_jit, _T_jit]], pjit.JitWrapped]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
