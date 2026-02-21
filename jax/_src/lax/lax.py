@@ -2426,6 +2426,14 @@ def dot(lhs: ArrayLike, rhs: ArrayLike, *args,
   If you really want to understand ``dot_general`` itself, we recommend reading XLA's
   DotGeneral_ operator documentation.
 
+  .. warning::
+    **Batch Invariance & Floating Point Non-Associativity:**
+    The exact hardware tiling strategy (and thus the order of additions) for ``dot_general``
+    can change depending on the batch and matrix dimensions. Due to floating-point
+    non-associativity, this can result in slight numerical deviations when computing the same
+    operation with different batch sizes. If exact numerical invariance across batch sizes is
+    required (e.g., in LLM serving), consider setting ``precision=jax.lax.Precision.HIGHEST``.
+
   Args:
     lhs: an array
     rhs: an array
