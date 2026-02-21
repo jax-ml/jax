@@ -3598,7 +3598,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
         and (x.sharding._is_concrete or not get_concrete_mesh().empty)
         and getattr(x, '_committed', True)
         and not weak_type
-        and (fill_shape == np.shape(x) or x.sharding.is_fully_replicated)  # type: ignore[arg-type]
+        and (fill_shape == np.shape(x) or 0 in fill_shape or x.sharding.is_fully_replicated)  # type: ignore[arg-type]
     )
     if use_x_sharding:
       sharding = x.sharding  # type: ignore
