@@ -1026,7 +1026,7 @@ def eval_dynamic_shape_as_tensor(ctx: LoweringRuleContext,
 
 class LoweringResult(NamedTuple):
   module: ir.Module
-  keepalive: Any | None
+  keepalives: list[Any]
   host_callbacks: list[Any]
   shape_poly_state: ShapePolyLoweringState
 
@@ -3062,7 +3062,7 @@ def build_mlir_module_helper(
     closed_jaxpr: core.ClosedJaxpr, *, name: str,
     platforms: Sequence[str],
     backend: xc.Client | None,
-    axis_context: AxisContext) -> ir.Module:
+    axis_context: AxisContext) -> LoweringResult:
   """Helper to generate pmap-style XLA computations for custom partitioners."""
   unlowerable_effects = effects_lib.lowerable_effects.filter_not_in(
       closed_jaxpr.effects)
@@ -3075,7 +3075,7 @@ def build_mlir_module_helper(
       donated_args=[False] * len(closed_jaxpr.jaxpr.invars),
       axis_context=axis_context, platforms=platforms,
       lowering_parameters=LoweringParameters(hoist_constants_as_args=False))
-  return lowering_result.module
+  return lowering_result
 
 def custom_call(
     call_target_name: str,
