@@ -1205,8 +1205,14 @@ def _gather(arr, dynamic_idx, *, treedef, indices_are_sorted,
   # Avoid calling gather if the slice shape is empty, both as a fast path and to
   # handle cases like zeros(0)[array([], int32)].
   if core.is_empty_shape(indexer.slice_shape):
+    slice_sharding = indexer.slice_sharding
+    # If the abstract sharding has an empty mesh (e.g. from SingleDeviceSharding),
+    # drop it to allow full_like to fall back to the concrete `y.sharding`.
+    if slice_sharding is not None and getattr(slice_sharding.mesh, "empty", False):
+      slice_sharding = None
+
     return lax.full_like(y, 0, shape=indexer.slice_shape,
-                         sharding=indexer.slice_sharding)
+                         sharding=slice_sharding)
 
   # We avoid generating a gather when indexer.gather_indices.size is empty.
   if not core.is_empty_shape(indexer.gather_indices.shape):
