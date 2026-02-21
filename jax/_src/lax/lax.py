@@ -3585,6 +3585,13 @@ def full_like(x: ArrayLike | DuckTypedArray,
   if sharding is None and shape is None and isinstance(x, core.Tracer):
     sharding = x.aval.sharding
   else:
+    # If a NamedSharding with an empty mesh is passed, treat it as None
+    # to allow fallback to the source array's physical sharding. This
+    # happens when indexing.py passes an abstract sharding from an aval.
+    if (isinstance(sharding, NamedSharding) and
+        sharding.mesh.empty and not sharding.mesh._is_concrete):
+      sharding = None
+
     # If `x` has a sharding but no `_committed` attribute
     # (in case of ShapeDtypeStruct), default it to True.
     use_x_sharding = (
