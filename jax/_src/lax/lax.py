@@ -2427,7 +2427,7 @@ def dot(lhs: ArrayLike, rhs: ArrayLike, *args,
   DotGeneral_ operator documentation.
 
   .. warning::
-    **Batch Invariance & Floating Point Non-Associativity:**
+    **Batch Variance and Floating-Point Non-Associativity:**
     The exact hardware tiling strategy (and thus the order of additions) for ``dot_general``
     can change depending on the batch and matrix dimensions. Due to floating-point
     non-associativity, this can result in slight numerical deviations when computing the same
