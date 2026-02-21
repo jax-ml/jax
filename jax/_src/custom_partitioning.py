@@ -588,7 +588,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
     am = axis_context.abstract_mesh
     if am is not None:
       mesh = mesh_lib.Mesh(np.array(devices).reshape(am.axis_sizes),
-                           am.axis_names)
+                           am.axis_names, am.axis_types)
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
     devices = axis_context.mesh._flat_devices_tuple
   else:
