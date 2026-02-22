@@ -1199,6 +1199,9 @@ absl::Status MosaicGpuExecute(
 
   void** buffers_data = buffer_ptrs.data();
   kernel->host_launch(ctx, cuda_stream, buffers_data);
+  if (uses_collective_metadata) {
+    device_states->erase(resources);
+  }
   return absl::OkStatus();
 }
 
