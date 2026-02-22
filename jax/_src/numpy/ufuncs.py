@@ -3835,22 +3835,38 @@ def sinc(x: ArrayLike, /) -> Array:
   """
   x = ensure_arraylike("sinc", x)
   x, = promote_dtypes_inexact(x)
-  eq_zero = lax.eq(x, _lax_const(x, 0))
+  abs_x = lax.abs(x)
+  # Use Taylor series for abs(x) < 0.01 to avoid numerical instability in the
+  # gradient calculation due to catastrophic cancellation in cos(x) - sin(x)/x.
+  # See jax-ml/jax#34139.
+  threshold = _lax_const(x, 0.01)
+  use_taylor = lax.lt(abs_x, threshold)
   pi_x = lax.mul(_lax_const(x, np.pi), x)
-  safe_pi_x = _where(eq_zero, _lax_const(x, 1), pi_x)
-  return _where(eq_zero, _sinc_maclaurin(0, pi_x),
+  safe_pi_x = _where(use_taylor, _lax_const(x, 1.0), pi_x)
+  return _where(use_taylor, _sinc_maclaurin(0, pi_x),
                 lax.div(lax.sin(safe_pi_x), safe_pi_x))
 
 
 @partial(custom_jvp, nondiff_argnums=(0,))
 def _sinc_maclaurin(k, x):
-  # compute the kth derivative of x -> sin(x)/x evaluated at zero (since we
-  # compute the monomial term in the jvp rule)
-  # TODO(mattjj): see https://github.com/jax-ml/jax/issues/10750
-  if k % 2:
-    return x * 0
+  # compute the kth derivative of x -> sin(x)/x.
+  # We use a 3-term Taylor expansion around zero to maintain precision for
+  # small x. The k-th derivative of sinc(x) at 0 is (-1)^j / (2j+1) for k=2j.
+  # See jax-ml/jax#34139.
+  j = (k + 1) // 2
+  sign = (-1) ** j
+  if k % 2 == 0:
+    # even k=2j: sign * [ 1/(2j+1) - x^2/(2*(2j+3)) + x^4/(24*(2j+5)) ]
+    term0 = _lax_const(x, 1 / (k + 1))
+    term1 = lax.mul(lax.square(x), _lax_const(x, -1 / (2 * (k + 3))))
+    term2 = lax.mul(lax.square(lax.square(x)), _lax_const(x, 1 / (24 * (k + 5))))
+    return lax.mul(_lax_const(x, sign), lax.add(term0, lax.add(term1, term2)))
   else:
-    return x * 0 + _lax_const(x, (-1) ** (k // 2) / (k + 1))
+    # odd k=2j+1: sign * [ x/(2j+3) - x^3/(6*(2j+5)) + x^5/(120*(2j+7)) ]
+    term0 = lax.mul(x, _lax_const(x, 1 / (k + 2)))
+    term1 = lax.mul(lax.mul(x, lax.square(x)), _lax_const(x, -1 / (6 * (k + 4))))
+    term2 = lax.mul(lax.mul(x, lax.square(lax.square(x))), _lax_const(x, 1 / (120 * (k + 6))))
+    return lax.mul(_lax_const(x, sign), lax.add(term0, lax.add(term1, term2)))
 
 @_sinc_maclaurin.defjvp
 def _sinc_maclaurin_jvp(k, primals, tangents):
