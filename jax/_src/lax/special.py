@@ -26,7 +26,7 @@ from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
                               broadcast_in_dim, broadcast_shapes,
                               convert_element_type, div, eq, exp, full_like, ge,
                               gt, le, log, log1p, lt, mul, ne, neg, reciprocal,
-                              reduce, select, sign, sqrt, square,
+                              reduce, select, sign, sin, sqrt, square,
                               standard_naryop, standard_unop, sub,
                               _const, _dtype,
                               _float, _nary_lower_hlo, _ones, _isnan)
@@ -73,7 +73,38 @@ def digamma(x: ArrayLike) -> Array:
 def polygamma(m: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise polygamma: :math:`\psi^{(m)}(x)`."""
   m, x = core.standard_insert_pvary(m, x)
-  return polygamma_p.bind(m, x)
+  return _polygamma_with_reflection(m, x)
+
+def _polygamma_with_reflection(m, x):
+  r"""Compute polygamma(m, x) correctly for negative x.
+
+  XLA's chlo.polygamma returns incorrect values for x < 0. We fix this
+  using the reflection formula (DLMF 5.15.6). For n=1 (trigamma):
+
+    \psi'(z) = \pi^2 / \sin^2(\pi z) - \psi'(1 - z)
+
+  When z < 0, 1-z > 1 > 0, so chlo.polygamma(m, 1-z) is correct.
+
+  See: https://github.com/jax-ml/jax/issues/11481
+  """
+  is_negative = lt(x, _const(x, 0))
+  m_is_one = eq(m, _const(m, 1))
+  use_reflection = bitwise_and(is_negative, m_is_one)
+
+  # When using reflection for m=1 and x < 0, we call polygamma(1, 1-x).
+  # Otherwise we call polygamma(m, x).
+  reflected_x = sub(_const(x, 1), x)
+  x_for_bind = select(use_reflection, reflected_x, x)
+  base_result = polygamma_p.bind(m, x_for_bind)
+
+  # Reflection term for m=1: pi^2 / sin^2(pi*x)
+  pi = _const(x, np.pi)
+  sin_pi_x = sin(mul(pi, x))
+  reflection_term = div(square(pi), square(sin_pi_x))
+
+  # For m=1 and x < 0: ψ'(x) = π²/sin²(πx) - ψ'(1-x)
+  return select(use_reflection, sub(reflection_term, base_result), base_result)
+
 
 def igamma(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise regularized incomplete gamma function."""
