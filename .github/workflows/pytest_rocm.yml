@@ -160,16 +160,18 @@ jobs:
           tar -czf logs.tar.gz logs
       - name: Collect run-manifest info
         if: always()
+        env:
+          INPUT_RUNNER: ${{ inputs.runner }}
+          INPUT_PYTHON: ${{ inputs.python }}
+          INPUT_ROCM_VERSION: ${{ inputs.rocm-version }}
+          INPUT_ROCM_TAG: ${{ inputs.rocm-tag }}
         run: |
-          JOB_KEY="${{ inputs.call-id }}"
-          if [ -z "${JOB_KEY}" ]; then JOB_KEY="${{ github.job }}"; fi
-
           PKGS="$($JAXCI_PYTHON -m pip list | grep -E '^(jax|jaxlib)|pjrt|plugin' || true)"
           PKGS_ONE_LINE="$(printf "%s" "$PKGS" | tr '\n' '|' | sed 's/|$//')"
           WHEELS="$(sha256sum dist/*.whl 2>/dev/null || true)"
           WHEELS_ONE_LINE="$(printf "%s" "$WHEELS" | tr '\n' '|' | sed 's/|$//')"
 
-          REPO="rocm/jax-base-ubu24.${{ inputs.rocm-tag }}"
+          REPO="rocm/jax-base-ubu24.${INPUT_ROCM_TAG}"
           IMAGE="ghcr.io/${REPO}:latest"
           BASE="https://ghcr.io"
           DIGEST=""
@@ -184,10 +186,9 @@ jobs:
               | tr -d $'\r' || true)"
           fi
 
-          cat > logs/run-manifest.json << 'EOF'
+          cat > logs/run-manifest.json << EOF
           {
             "schema_version": 1,
-            "call_id": "${{ inputs.call-id }}",
             "github_repository": "${{ github.repository }}",
             "github_workflow": "${{ github.workflow }}",
             "github_job": "${{ github.job }}",
@@ -198,9 +199,9 @@ jobs:
             "github_ref": "${{ github.ref }}",
             "github_ref_name": "${{ github.ref_name }}",
             "github_sha": "${{ github.sha }}",
-            "runner": "${{ inputs.runner }}",
-            "python_version": "${{ inputs.python }}",
-            "rocm_version": "${{ inputs.rocm-version }}",
+            "runner": "${INPUT_RUNNER}",
+            "python_version": "${INPUT_PYTHON}",
+            "rocm_version": "${INPUT_ROCM_VERSION}",
             "base_image_name": "${IMAGE}",
             "base_image_digest": "${DIGEST}",
             "jax_packages_raw": "${PKGS_ONE_LINE}",
@@ -209,15 +210,17 @@ jobs:
           EOF
       - name: Upload logs to AMD S3 bucket
         if: always()
+        env:
+          RUN_KEY: ${{ github.repository }}/${{ github.run_id }}/${{ github.run_attempt }}
+          JOB_KEY: ${{ inputs.call-id || github.job }}
+          VARIANT: py${{ inputs.python }}-rocm${{ inputs.rocm-version }}-${{ inputs.runner }}
         run: |
           set -euo pipefail
-          export BUCKET="${AMD_S3_BUCKET_NAME}"
+          export S3_BUCKET_NAME="${AMD_S3_BUCKET_NAME}"
           export AWS_ACCESS_KEY_ID="${AMD_S3_BUCKET_ACCESS_KEY}"
           export AWS_SECRET_ACCESS_KEY="${AMD_S3_BUCKET_SECRET_KEY}"
           $JAXCI_PYTHON -m pip install -q boto3
-          VARIANT="py${{ inputs.python }}-${{ inputs.rocm-version }}-${{ inputs.runner }}"
-          RUN_KEY="${{ github.repository }}/${{ github.run_id }}/${{ github.run_attempt }}"
-          PREFIX="test-logs/${RUN_KEY}/${JOB_KEY}/${VARIANT}/"
+          PREFIX="logs/${RUN_KEY}/${JOB_KEY}/${VARIANT}/"
           $JAXCI_PYTHON - <<PY
           import boto3, os; s3=boto3.client("s3"); bucket = os.environ["S3_BUCKET_NAME"]
           s3.upload_file("logs.tar.gz", bucket, "${PREFIX}"+"logs.tar.gz")
