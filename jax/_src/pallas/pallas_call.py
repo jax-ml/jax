@@ -1169,27 +1169,25 @@ def _pallas_call_lowering(
     backend: Any = None
     if mosaic_gpu_backend is not None:
       from jax._src.pallas.mosaic_gpu import core as mgpu_core
-      if (
-          isinstance(compiler_params, mgpu_core.CompilerParams)
-          or (compiler_params is None and _PALLAS_USE_MOSAIC_GPU.value)
-      ):
+      if isinstance(compiler_params, mgpu_core.CompilerParams):
+        if is_rocm:
+          raise ValueError(
+              "Mosaic GPU does not yet support AMD ROCm devices. "
+              "Use ``compiler_params=pltriton.CompilerParams()`` for ROCm."
+          )
+        backend = mosaic_gpu_backend
+      elif compiler_params is None and _PALLAS_USE_MOSAIC_GPU.value and not is_rocm:
         backend = mosaic_gpu_backend
     if triton_backend is not None:
       from jax._src.pallas.triton import core as triton_core
       if (
           isinstance(compiler_params, triton_core.CompilerParams)
-          or (compiler_params is None and not _PALLAS_USE_MOSAIC_GPU.value)
+          or (compiler_params is None and backend is None)
       ):
         backend = triton_backend
 
     if backend is None:
       raise _unsupported_lowering_error("gpu")
-
-    if is_rocm and backend is mosaic_gpu_backend:
-      raise ValueError(
-          "Mosaic GPU does not yet support AMD ROCm devices. "
-          "Use ``compiler_params=pltriton.CompilerParams()`` for ROCm."
-      )
 
     return backend.pallas_call_lowering(
         ctx, *in_nodes, compiler_params=compiler_params, **params
