@@ -472,6 +472,10 @@ common:rbe_windows_amd64 --host_platform="@xla//tools/toolchains/win2022:windows
 common:rbe_windows_amd64 --extra_execution_platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_new"
 common:rbe_windows_amd64 --platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_new"
 
+# Test configs for ROCm
+build:rocm_single_gpu --run_under=@xla//build_tools/rocm:parallel_gpu_execute
+build:rocm_multi_gpu --run_under=@xla//build_tools/rocm:sanitizer_wrapper
+
 # RBE configs for ROCm
 build:rocm_rbe --tls_client_certificate="/data/ci-cert.crt"
 build:rocm_rbe --tls_client_key="/data/ci-cert.key"
@@ -488,9 +492,6 @@ build:rocm_rbe --spawn_strategy=local
 build:rocm_rbe --grpc_keepalive_time=30s
 build:rocm_rbe --repo_env=REMOTE_GPU_TESTING=1
 
-test:rocm_rbe --host_platform="@local_config_rocm//rocm:linux_x64"
-test:rocm_rbe --extra_execution_platforms="@local_config_rocm//rocm:linux_x64"
-test:rocm_rbe --platforms="@local_config_rocm//rocm:linux_x64"
 test:rocm_rbe --remote_timeout=3600
 test:rocm_rbe --jobs=200
 test:rocm_rbe --test_sharding_strategy=disabled

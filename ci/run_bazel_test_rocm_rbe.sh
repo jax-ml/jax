@@ -29,6 +29,17 @@ source ci/envs/default.env
 # Run Bazel GPU tests with RBE (single accelerator tests with one GPU apiece).
 echo "Running RBE GPU tests..."
 
+TAG_FILTERS="jax_test_gpu,-config-cuda-only,-manual"
+
+for arg in "$@"; do
+    if [[ "$arg" == "--config=multi_gpu" ]]; then
+        TAG_FILTERS="${TAG_FILTERS},multiaccelerator"
+    fi
+    if [[ "$arg" == "--config=single_gpu" ]]; then
+        TAG_FILTERS="${TAG_FILTERS},gpu,-multiaccelerator"
+    fi
+done
+
 bazel test --config=rocm_rbe \
     --config=rocm \
     --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa" \
@@ -37,13 +48,14 @@ bazel test --config=rocm_rbe \
     --test_output=errors \
     --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
     --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
-    --build_tag_filters=jax_test_gpu,-config-cuda-only,-manual,-multiaccelerator \
-    --test_tag_filters=jax_test_gpu,-config-cuda-only,-manual,-multiaccelerator \
+    --build_tag_filters=${TAG_FILTERS} \
+    --test_tag_filters=${TAG_FILTERS} \
     --test_env=JAX_SKIP_SLOW_TESTS=true \
     --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
     --color=yes \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAX \
+    $@ \
     //tests:gpu_tests \
     //tests:backend_independent_tests \
     //tests/pallas:gpu_tests \

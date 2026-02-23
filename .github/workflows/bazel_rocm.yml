@@ -147,5 +147,16 @@ jobs:
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: "Bazel ROCm tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
+        if: always()
         timeout-minutes: 60
-        run: ${{ ((inputs.run_multiaccelerator_tests == 'false') && './ci/run_bazel_test_rocm_rbe.sh') || './ci/run_bazel_test_rocm_non_rbe.sh' }}
+        run: |
+          ./ci/run_bazel_test_rocm_rbe.sh  \
+            --config=single_gpu \
+            --local_test_jobs=4
+      - name: "Bazel ROCm multigpu tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
+        if: always()
+        timeout-minutes: 60
+        run: |
+          ./ci/run_bazel_test_rocm_rbe.sh \
+            --config=multi_gpu \
+            --local_test_jobs=1
