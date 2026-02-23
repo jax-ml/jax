@@ -1030,7 +1030,7 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["cuda"]):
       # The original test worked only on fp32@TPU, have no way to test CUDA
       self.skipTest("Not tested on CUDA, todo for the respective team")
-    if jtu.is_device_rocm():
+    if jtu.is_device_rocm() and jtu.parse_version(jax.__version__) == (0, 8, 0):
       self.skipTest("is_finite not in Triton lowering for jax 0.8.0")
 
     size = len(self.IS_FINITE_TEST_VALUES)
@@ -1082,7 +1082,7 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["cuda"]):
       # The original test worked only on fp32@TPU, have no way to test CUDA
       self.skipTest("Not tested on CUDA, todo for the respective team")
-    if jtu.is_device_rocm():
+    if jtu.is_device_rocm() and jtu.parse_version(jax.__version__) == (0, 8, 0):
       self.skipTest("is_finite not in Triton lowering for jax 0.8.0")
 
     size = len(self.IS_FINITE_TEST_VALUES)
