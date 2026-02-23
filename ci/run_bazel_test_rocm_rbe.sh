@@ -26,19 +26,6 @@ set -exu -o history -o allexport
 # Source default JAXCI environment variables.
 source ci/envs/default.env
 
-# Clone XLA at HEAD if path to local XLA is not provided
-if [[ -z "$JAXCI_XLA_GIT_DIR" && -z "$JAXCI_CLONE_MAIN_XLA" ]]; then
-    export JAXCI_CLONE_MAIN_XLA=1
-fi
-
-# Set up the build environment.
-source "ci/utilities/setup_build_environment.sh"
-
-OVERRIDE_XLA_REPO=""
-if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
-  OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
-fi
-
 # Run Bazel GPU tests with RBE (single accelerator tests with one GPU apiece).
 echo "Running RBE GPU tests..."
 
@@ -46,7 +33,6 @@ bazel test --config=rocm_rbe \
       --config=rocm \
       --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa" \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
-      $OVERRIDE_XLA_REPO \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --test_output=errors \
       --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
