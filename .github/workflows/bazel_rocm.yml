@@ -100,9 +100,15 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.github_token }}
-      volumes:
-        - /data:/data
-      options: --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --shm-size 64G --env-file /etc/podinfo/gha-gpu-isolation-settings
+      options: >-
+        -v /data/ci-cert.crt:/certs/ci-cert.crt:ro
+        -v /data/ci-cert.key:/certs/ci-cert.key:ro
+        --device=/dev/kfd
+        --device=/dev/dri
+        --security-opt seccomp=unconfined
+        --group-add video
+        --shm-size 64G
+        --env-file /etc/podinfo/gha-gpu-isolation-settings
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
       JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
