@@ -96,7 +96,7 @@ def get_rocm_shared_memory_limit() -> int:
           if match:
             size_kb = int(match.group(1))
             return size_kb * 1024  # Convert KB to bytes
-  except Exception:
+  except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
     pass
   # Default for AMD GPUs (MI100/MI200/MI300 all have 64KB LDS)
   return 64 * 1024
