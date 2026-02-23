@@ -625,13 +625,13 @@ libclang==18.1.1 \
     --hash=sha256:c533091d8a3bbf7460a00cb6c1a71da93bffe148f172c7d03b1c31fbf8aa2a0b \
     --hash=sha256:cf4a99b05376513717ab5d82a0db832c56ccea4fd61a69dbb7bccf2dfb207dbe
     # via tensorflow
-libtpu==0.0.34 ; sys_platform == "linux" and platform_machine == "x86_64" \
-    --hash=sha256:2edd4a2a8a747dd4c2a98f05ca2900c1bf3d304bae436355c8a9751aafdf86b0 \
-    --hash=sha256:5aaf31201628d6e1e645a02abfb38d96e67c236a918d2bb043b98b9740adc988 \
-    --hash=sha256:5e600d7797ac801d0c903f52ae46c03538bb77817a48579aa581faa8d2a8a734 \
-    --hash=sha256:6662d29a7e5049dfe9f6a108be67112d4b3b47c545b8b9bcb1c393c330351b46 \
-    --hash=sha256:e43c953d68f5c4064eca46772814d1e20cd92363f4eec5c6fa00aed18553353f \
-    --hash=sha256:e9216ac1ca11d2d12adcc639730fbe500488bd811972a3f8cab092250fc157fe
+libtpu==0.0.36 ; sys_platform == "linux" and platform_machine == "x86_64" \
+    --hash=sha256:06513f48a76443e45ad33e428a5e7ee35a55cfcc760c1d036978986756477630 \
+    --hash=sha256:1ab2ab666463b38db4f73918d44473c87c759b64ca03c906ad8d7b6558f81eed \
+    --hash=sha256:50baae6149a47104174f2b0f91c0e9af72f7fe708c0442c2896f6abbdaa1dd6c \
+    --hash=sha256:6d0e6a2ec26b851f5a00c74933738b2b185af47c4eacbd161e23954b1d911ae4 \
+    --hash=sha256:db7c3540c396ccccab2dd4afa7974e3ed3c75e842e03e04e501d577033f2ebae \
+    --hash=sha256:e0062407121ecf0e96eaff3695ea889a2fcadad1fd08727d4d96b85af6677548
     # via -r build/requirements.in
 markdown==3.10.1 \
     --hash=sha256:1c19c10bd5c14ac948c53d0d762a04e2fa35a6d58a6b7b1e6bfcbe6fefc0001a \

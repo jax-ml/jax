@@ -358,13 +358,13 @@ kiwisolver==1.4.9 \
     --hash=sha256:fb940820c63a9590d31d88b815e7a3aa5915cad3ce735ab45f0c730b39547de1 \
     --hash=sha256:fc1795ac5cd0510207482c3d1d3ed781143383b8cfd36f5c645f3897ce066220
     # via matplotlib
-libtpu==0.0.34 ; sys_platform == "linux" and platform_machine == "x86_64" \
-    --hash=sha256:2edd4a2a8a747dd4c2a98f05ca2900c1bf3d304bae436355c8a9751aafdf86b0 \
-    --hash=sha256:5aaf31201628d6e1e645a02abfb38d96e67c236a918d2bb043b98b9740adc988 \
-    --hash=sha256:5e600d7797ac801d0c903f52ae46c03538bb77817a48579aa581faa8d2a8a734 \
-    --hash=sha256:6662d29a7e5049dfe9f6a108be67112d4b3b47c545b8b9bcb1c393c330351b46 \
-    --hash=sha256:e43c953d68f5c4064eca46772814d1e20cd92363f4eec5c6fa00aed18553353f \
-    --hash=sha256:e9216ac1ca11d2d12adcc639730fbe500488bd811972a3f8cab092250fc157fe
+libtpu==0.0.36 ; sys_platform == "linux" and platform_machine == "x86_64" \
+    --hash=sha256:06513f48a76443e45ad33e428a5e7ee35a55cfcc760c1d036978986756477630 \
+    --hash=sha256:1ab2ab666463b38db4f73918d44473c87c759b64ca03c906ad8d7b6558f81eed \
+    --hash=sha256:50baae6149a47104174f2b0f91c0e9af72f7fe708c0442c2896f6abbdaa1dd6c \
+    --hash=sha256:6d0e6a2ec26b851f5a00c74933738b2b185af47c4eacbd161e23954b1d911ae4 \
+    --hash=sha256:db7c3540c396ccccab2dd4afa7974e3ed3c75e842e03e04e501d577033f2ebae \
+    --hash=sha256:e0062407121ecf0e96eaff3695ea889a2fcadad1fd08727d4d96b85af6677548
     # via -r build/requirements.in
 markdown-it-py==4.0.0 \
     --hash=sha256:87327c59b172c5011896038353a81343b6754500a08cd7a4973bb48c6d578147 \
