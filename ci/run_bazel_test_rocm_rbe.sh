@@ -42,7 +42,6 @@ done
 
 bazel test --config=rocm_rbe \
     --config=rocm \
-    --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa" \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
     --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
     --test_output=errors \
@@ -50,6 +49,7 @@ bazel test --config=rocm_rbe \
     --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
     --build_tag_filters=${TAG_FILTERS} \
     --test_tag_filters=${TAG_FILTERS} \
+    --remote_download_outputs=minimal \
     --test_env=JAX_SKIP_SLOW_TESTS=true \
     --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
     --color=yes \

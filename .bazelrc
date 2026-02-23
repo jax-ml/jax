@@ -472,6 +472,9 @@ common:rbe_windows_amd64 --host_platform="@xla//tools/toolchains/win2022:windows
 common:rbe_windows_amd64 --extra_execution_platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_new"
 common:rbe_windows_amd64 --platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_new"
 
+# used for @xla//build_tools/rocm:parallel_gpu_execute
+build:rocm --legacy_external_runfiles=true
+
 # Test configs for ROCm
 build:rocm_single_gpu --run_under=@xla//build_tools/rocm:parallel_gpu_execute
 build:rocm_multi_gpu --run_under=@xla//build_tools/rocm:sanitizer_wrapper
@@ -480,6 +483,7 @@ build:rocm_multi_gpu --run_under=@xla//build_tools/rocm:sanitizer_wrapper
 build:rocm_rbe --tls_client_certificate="/data/ci-cert.crt"
 build:rocm_rbe --tls_client_key="/data/ci-cert.key"
 
+build:rocm_rbe --test_sharding_strategy=disabled
 build:rocm_rbe --bes_backend="grpcs://wardite.cluster.engflow.com"
 build:rocm_rbe --bes_results_url="https://wardite.cluster.engflow.com/invocation/"
 build:rocm_rbe --remote_executor="grpcs://wardite.cluster.engflow.com"
@@ -487,6 +491,7 @@ build:rocm_rbe --remote_cache="grpcs://wardite.cluster.engflow.com"
 build:rocm_rbe --host_platform="@local_config_rocm//rocm:linux_x64"
 build:rocm_rbe --extra_execution_platforms="@local_config_rocm//rocm:linux_x64"
 build:rocm_rbe --platforms="@local_config_rocm//rocm:linux_x64"
+build:rocm_rbe --repo_env="TF_ROCM_RBE_POOL=linux_x64_gpu"
 build:rocm_rbe --bes_timeout=600s
 build:rocm_rbe --spawn_strategy=local
 build:rocm_rbe --grpc_keepalive_time=30s
@@ -498,6 +503,11 @@ test:rocm_rbe --test_sharding_strategy=disabled
 test:rocm_rbe --strategy=TestRunner=remote,local
 test:rocm_rbe --worker_sandboxing=true
 test:rocm_rbe --repo_env=REMOTE_GPU_TESTING=1
+
+test:rocm --test_timeout=920,2400,7200,9600
+test:rocm --flaky_test_attempts=3
+test:rocm --test_verbose_timeout_warnings
+
 
 # #############################################################################
 # Cross-compile config options below. Native RBE support does not exist for

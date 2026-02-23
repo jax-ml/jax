@@ -151,12 +151,14 @@ jobs:
         timeout-minutes: 60
         run: |
           ./ci/run_bazel_test_rocm_rbe.sh  \
-            --config=single_gpu \
-            --local_test_jobs=4
+            --config=rocm_single_gpu \
+            --local_test_jobs=4 \
+            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="ghcr.io/rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}:latest"
       - name: "Bazel ROCm multigpu tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
         if: always()
         timeout-minutes: 60
         run: |
           ./ci/run_bazel_test_rocm_rbe.sh \
-            --config=multi_gpu \
-            --local_test_jobs=1
+            --config=rocm_multi_gpu \
+            --local_test_jobs=1 \
+            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="ghcr.io/rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}:latest"
