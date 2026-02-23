@@ -779,7 +779,7 @@ def _lojax_traceable(_fun, _store, hi_avals_in, *lo_tracers):
 def _shard_map_staging(
     trace: pe.DynamicJaxprTrace, prim: core.Primitive, f: lu.WrappedFun,
     args: Sequence[Any], *, mesh: Mesh,
-    in_specs, out_specs_thunk, check_vma: bool, manual_axes: frozenset,
+    in_specs, check_vma: bool, manual_axes: frozenset, debug_info
   ) -> Sequence[pe.DynamicJaxprTracer]:
   source_info = source_info_util.current()
   if trace.requires_low:
@@ -805,11 +805,11 @@ def _shard_map_staging(
   out_avals_ft, out_specs = out_data.unpack_aux()
   out_avals_flat = list(out_avals_ft)
   _check_names(out_specs, out_avals_flat)
+  out_avals_ = [v.aval for v in jaxpr.outvars]
   if check_vma:
-    _check_vmas(mesh, out_specs, out_vma)
-  out_avals = map(_check_shapedarray, out_avals_flat)
-  out_avals = [_check_shapedarray(unshard_aval(mesh, check_vma, spec, aval))
-               for spec, aval in zip(out_specs, out_avals)]
+    _check_vmas(mesh, out_specs, out_avals_)
+  out_avals = [unshard_aval(mesh, check_vma, spec, aval)
+               for spec, aval in zip(out_specs, out_avals_)]
   with (_extend_axis_env(mesh, manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
     jaxpr, consts = pe.separate_consts(jaxpr)
@@ -1191,7 +1191,7 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs,
   out_avals = outs.map(lambda x: core.mapped_aval(x.shape[0], 0, core.get_aval(x)))
   _check_names(out_specs, out_avals)  # type: ignore[arg-type]
   if check_vma:
-    _check_vmas(mesh, out_specs, out_vma)
+    _check_vmas(mesh, out_specs, out_avals)
     src_pspecs = tuple(_vma_to_spec(mesh, r) for r in out_vma)
   else:
     src_pspecs = tuple(P(order_wrt_mesh(mesh, manual_axes))
@@ -1536,14 +1536,13 @@ def _shard_map_batch(
     new_out_specs = _batch_out_specs(spmd_axis_name, explicit_mesh_axis, out_dims, out_specs)
     return ans.with_aux(out_dims).with_aux(new_out_specs)
 
-  new_params = dict(mesh=mesh, in_specs=new_in_specs,
-                    out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
+  new_params = dict(mesh=mesh, in_specs=new_in_specs, check_vma=check_vma,
                     manual_axes=manual_axes, debug_info=debug_info)
   # TODO(yashkatariya): Remove remove_explicit_mesh_axis_names when vmap
   # mesh ctx is correctly set.
   with (core.set_current_trace(trace.parent_trace),
         core.remove_explicit_mesh_axis_names(trace.axis_data.explicit_mesh_axis)):
-    out_vals = prim.bind(fun, *in_vals, **new_params)
+    out_vals = prim.bind(fun_batched, *in_vals, **new_params)
   make_tracer = partial(batching.BatchTracer, trace,
                         source_info=source_info_util.current())
   out_vals, out_dims = out_vals.unpack_aux()
@@ -1593,14 +1592,14 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_specs,
                 out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
                 manual_axes=manual_axes)
   # f_jvp, out_tree = ad.traceable(f_jvp, in_zeros_tree)
-  def f_jvp(*primals_and_nz_tangents_flat)
+  def f_jvp(*primals_and_nz_tangents_flat):
     primals, tangents = tree_unflatten(in_zeros_tree, primals_and_nz_tangents_flat)
     tangents = [p2tz(p) if t is None else t for p, t in zip(primals, tangents)]
     primals_out, tangents_out = jvp_subtrace_2(f, trace.tag, primals, tangents)
 
     tangents_out = [None if type(t) is Zero else t for t in tangents_out]
     out_flat, out_zeros_tree = tree_flatten((primals_out, tangents_out))
-    new_out_specs = ???
+    # new_out_specs = ???
     return FlatTree.flatten(out_flat).with_aux(out_zeros_tree).with_aux(new_out_specs)
 
 
