@@ -179,8 +179,24 @@ class PythonPmapTest(jtu.JaxTestCase):
     pmap_sharding = pmap(lambda x: x)(np.arange(jax.device_count())).sharding
     if config.pmap_shmap_merge.value:
       self.assertListEqual(device_order, list(pmap_sharding._device_assignment))
+
+  def testDefaultDeviceOrderingAfterClearBackends(self):
+    # Test that clear_backends() properly drops cached PyDevice objects in pmap
+    # so that pointer-based __eq__ doesn't fail.
+    device_order = jax.devices()
+    # Execute pmap first to populate the cache
+    f = pmap(lambda x: x)
+    f(np.arange(jax.device_count()))
+    
+    src_api.clear_backends()
+    device_order_after = jax.devices()
+    
+    pmap_sharding = pmap(lambda x: x)(np.arange(jax.device_count())).sharding
+    if config.pmap_shmap_merge.value:
+      self.assertListEqual(device_order_after, list(pmap_sharding._device_assignment))
     else:
-      self.assertListEqual(device_order, pmap_sharding.devices.tolist())
+      self.assertListEqual(device_order_after, pmap_sharding.devices.tolist())
+
 
   def testLowerCompile(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
