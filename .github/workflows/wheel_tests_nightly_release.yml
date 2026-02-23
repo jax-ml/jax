@@ -184,6 +184,7 @@ jobs:
           ]
     name: "Pytest ROCm (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
+      call-id: "run-pytest-rocm"
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       rocm-version: ${{ matrix.rocm.version }}
