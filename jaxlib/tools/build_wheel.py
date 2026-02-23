@@ -347,8 +347,6 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
       dst_dir=mlir_libs_dir,
       src_files=[
           f"{source_file_prefix}jaxlib/mlir/_mlir_libs/__init__.py",
-          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mosaic_gpu_ext.pyi",
-          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_tpu_ext.pyi",
           f"{source_file_prefix}jaxlib/_mlir.{pyext}",
           f"{source_file_prefix}jaxlib/_chlo.{pyext}",
           f"{source_file_prefix}jaxlib/_mlirHlo.{pyext}",

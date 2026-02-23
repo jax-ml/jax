@@ -1,4 +1,4 @@
-# Copyright 2025 The JAX Authors.
+# Copyright 2024 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,20 +17,19 @@ from jaxlib.mlir import ir
 def register_dialect(context: ir.Context, load: bool = ...) -> None: ...
 
 class PointerType(ir.Type):
+  @classmethod
+  def get(cls, pointee_type: ir.Type, address_space: int) -> PointerType: ...
+
   @staticmethod
-  def isinstance(other_type: ir.Type) -> bool: ...
-  def __repr__(self) -> str: ...
-  @staticmethod
-  def get_static_typeid() -> ir.TypeID: ...
-  @staticmethod
-  def get(pointee_type: ir.Type, address_space: int) -> PointerType:
-    """Creates a PointerType type."""
+  def isinstance(other: ir.Type) -> bool: ...
 
   @property
   def pointee_type(self) -> ir.Type: ...
+
   @property
   def address_space(self) -> int: ...
 
 def infer_reduce_op_encoding(
-    arg0: ir.Attribute, arg1: int, /
-) -> ir.Attribute | None: ...
+    op_attribute: ir.Attribute,
+    axis: int,
+) -> ir.Attribute: ...

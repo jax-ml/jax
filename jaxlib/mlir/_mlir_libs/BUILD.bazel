@@ -194,7 +194,6 @@ nanobind_pywrap_extension(
     name = "_mosaic_gpu_ext",
     srcs = ["mosaic_gpu_ext.cc"],
     copts = COPTS,
-    pytype_srcs = ["_mosaic_gpu_ext.pyi"],
     deps = [
         "//jaxlib/mosaic/dialect/gpu:gpu_dialect_capi",
         "//jaxlib/mosaic/gpu:tiled_layout",
@@ -217,7 +216,6 @@ nanobind_pywrap_extension(
     name = "_tpu_ext",
     srcs = ["tpu_ext.cc"],
     copts = COPTS,
-    pytype_srcs = ["_tpu_ext.pyi"],
     deps = [
         "//jaxlib/mosaic:tpu_dialect_capi",
         "@com_google_absl//absl/log:check",

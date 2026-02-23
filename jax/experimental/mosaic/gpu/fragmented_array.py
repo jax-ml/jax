@@ -3587,18 +3587,16 @@ IndexTransform: TypeAlias = Callable[[tuple[int, ...]], tuple[int, ...]]
 
 @runtime_checkable
 class TransferPlan(Protocol):
-  @property
-  def tile_index_transforms(self) -> tuple[IndexTransform, ...]:
-    raise NotImplementedError
+  tile_index_transforms: tuple[IndexTransform, ...]
 
-  def select(self, group_elems: Sequence[ir.Value], /) -> ir.Value:
+  def select(self, group_elems: Sequence[ir.Value]) -> ir.Value:
     """Selects the value corresponding to the group of the current thread.
 
     The argument must be of the same length as tile_index_transforms.
     """
     raise NotImplementedError
 
-  def select_if_group(self, group_idx: int, old: ir.Value, new: ir.Value, /) -> ir.Value:
+  def select_if_group(self, group_idx: int, old: ir.Value, new: ir.Value) -> ir.Value:
     """Returns `new` if the current thread belongs to the given group and `old` otherwise.
 
     group_idx must be between 0 and len(tile_index_transforms) - 1.
