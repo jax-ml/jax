@@ -622,9 +622,10 @@ nvidia-cuda-runtime-cu12==12.9.79 ; sys_platform == "linux" \
     --hash=sha256:83469a846206f2a733db0c42e223589ab62fd2fabac4432d2f8802de4bded0a4 \
     --hash=sha256:8e018af8fa02363876860388bd10ccb89eb9ab8fb0aa749aaf58430a9f7c4891
     # via -r build/nvidia-requirements.txt
-nvidia-cudnn-cu12==9.18.0.77 ; sys_platform == "linux" \
-    --hash=sha256:090ad0b9d676b2eb95b0b48e2e947f9e06a3acf549b31066aaf3dbb33881e0c3 \
-    --hash=sha256:3a1c17088ab54049b9e0e107eb5a9b7893c1d1d9d9f425acd830a7113851586f
+nvidia-cudnn-cu12==9.19.0.56 ; sys_platform == "linux" \
+    --hash=sha256:08caaf27fe556aca82a3ee3b5aa49a77e7de0cfcb7ff4e5c29da426387a8267e \
+    --hash=sha256:ac6ad90a075bb33a94f2b4cf4622eac13dd4dc65cf6dd9c7572a318516a36625 \
+    --hash=sha256:cec70596b9ce878fab83810c3f5a2e606d35f510e5fee579759e4cbc68a23750
     # via -r build/nvidia-requirements.txt
 nvidia-cudnn-cu13==9.18.0.77 ; sys_platform == "linux" \
     --hash=sha256:82b86573bd24bfc1450c2e94866af23f5327982a7a4f14ee2416f8e0dd4631f6 \
