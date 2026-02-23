@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from functools import lru_cache, partial
+from functools import partial
 from typing import Any, Callable, NamedTuple
 import warnings
 
@@ -197,7 +197,7 @@ def _cached_shard_map(fun, in_tree, in_axes_flat, out_axes_flat, out_axes_tree,
   out_global_shardings = tree_map(
       get_sharding, out_specs, is_leaf=lambda x: x is None)
 
-  @lru_cache
+  @util.cache()
   def out_local_shardings_thunk(pspec):
     return (
         sharding_impls.NamedSharding(mesh.local_mesh, pspec),
@@ -426,7 +426,7 @@ def _get_donated_invars(donate_tuple, in_tree, num_flat_args):
     return (False,) * num_flat_args
 
 
-@lru_cache
+@util.cache()
 def _get_mesh_devices(devices, backend, local_axis_size, axis_size,
                       trace_state_clean):
   """Compute effective mesh devices based on context.
@@ -492,7 +492,7 @@ def _get_mesh_devices(devices, backend, local_axis_size, axis_size,
     return mesh_devices[:global_axis_size]
 
 
-@lru_cache
+@util.cache()
 def _local_to_global_aval(shape, dtype, sharding):
   """Compute global aval from local shape."""
   pspec_prepared = sharding_impls.prepare_axis_resources(sharding.spec, "pspec")
@@ -504,7 +504,7 @@ def _local_to_global_aval(shape, dtype, sharding):
   )
 
 
-@lru_cache
+@util.cache()
 def _global_to_local_aval(shape, dtype, sharding):
   """Compute local aval from global shape."""
   pspec_prepared = sharding_impls.prepare_axis_resources(sharding.spec, "pspec")
@@ -516,19 +516,19 @@ def _global_to_local_aval(shape, dtype, sharding):
   )
 
 
-@lru_cache
+@util.cache()
 def _local_device_indices(local_sharding, shape):
   """Cached device indices for slicing arrays."""
   return tuple(local_sharding.devices_indices_map(shape).values())
 
 
-@lru_cache
+@util.cache()
 def _is_sharding_equivalent(sharding_a, sharding_b, ndim):
   """Check if sharding is equivalent to NamedSharding(mesh.local_mesh, pspec)."""
   return sharding_a.is_equivalent_to(sharding_b, ndim)
 
 
-@lru_cache
+@util.cache()
 def _get_out_shardings(out_tree, pspecs, out_shardings_thunk):
   """Get flattened output shardings, combining pspec flattening and sharding lookup."""
   out_pspecs_flat = pjit_lib.flatten_axis_resources(
