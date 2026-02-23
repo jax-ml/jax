@@ -493,6 +493,9 @@ jax_multiplatform_test(
     tags = [
         "mosaic_gpu_test",
         "multiaccelerator",
+        # ASAN fails since we currentl using global map in the custom call which is
+        # cleaned-up before the next execution. TODO(b/481949311): Remove once fixed.
+        "noasan",
     ],
     deps = [
         "//jax/_src:test_multiprocess",
