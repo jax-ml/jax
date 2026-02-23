@@ -30,19 +30,22 @@ source ci/envs/default.env
 echo "Running RBE GPU tests..."
 
 bazel test --config=rocm_rbe \
-      --config=rocm \
-      --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa" \
-      --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
-      --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
-      --test_output=errors \
-      --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
-      --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
-      --test_tag_filters=-multiaccelerator \
-      --test_env=JAX_SKIP_SLOW_TESTS=true \
-      --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
-      --color=yes \
-      --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
-      --//jax:build_jax=$JAXCI_BUILD_JAX \
-      //tests:gpu_tests //tests:backend_independent_tests \
-      //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests \
-      //jaxlib/tools:check_gpu_wheel_sources_test
+    --config=rocm \
+    --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa" \
+    --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
+    --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
+    --test_output=errors \
+    --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
+    --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
+    --build_tag_filters=jax_test_gpu,-config-cuda-only,-manual,-multiaccelerator \
+    --test_tag_filters=jax_test_gpu,-config-cuda-only,-manual,-multiaccelerator \
+    --test_env=JAX_SKIP_SLOW_TESTS=true \
+    --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
+    --color=yes \
+    --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
+    --//jax:build_jax=$JAXCI_BUILD_JAX \
+    //tests:gpu_tests \
+    //tests:backend_independent_tests \
+    //tests/pallas:gpu_tests \
+    //tests/pallas:backend_independent_tests \
+    //jaxlib/tools:check_gpu_wheel_sources_test
