@@ -140,6 +140,8 @@ limitations under the License.
 #include "xla/core/collectives/rank_id.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/ffi.h"
+#include "xla/service/custom_call_status.h"
+#include "xla/service/custom_call_target_registry.h"
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/stream_executor/cuda/assemble_compilation_provider.h"
@@ -479,13 +481,17 @@ struct CompiledKernel {
   bool is_comm_used = false;
 };
 
-absl::Status RunMlirPasses(mlir::ModuleOp module, se::CudaComputeCapability cc,
+absl::Status RunMlirPasses(mlir::ModuleOp module,
+                           std::optional<se::CudaComputeCapability> cc,
                            bool is_comm_used,
                            const mosaic::gpu::DumpOptions& dump_opts) {
   TF_ASSIGN_OR_RETURN(se::cuda::CompilationProvider * compilation_provider,
                       GetAssemblyToBinaryCompilationProvider());
+  if (!cc.has_value()) {
+    TF_ASSIGN_OR_RETURN(cc, GetCudaComputeCapability());
+  }
   TF_ASSIGN_OR_RETURN(std::string sm,
-                      mosaic::gpu::GetSmVersion(cc.major, cc.minor));
+                      mosaic::gpu::GetSmVersion(cc->major, cc->minor));
   // Here, it is important to use a PTX ISA version that is supported by both
   // the underlying compilation provider, and by LLVM. Using a version that is
   // newer than what LLVM supports will lead to the indication being ignored by
@@ -500,8 +506,8 @@ absl::Status RunMlirPasses(mlir::ModuleOp module, se::CudaComputeCapability cc,
   }
   // nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a; disable
   // verification on sm_103a, sm_110a etc. where we see spurious failures.
-  bool verify_target = !((cc.major == 10 && cc.minor > 0) || cc.major == 11);
-  auto passes = GetPassPipeline(module.getContext(), compilation_provider, cc,
+  bool verify_target = !((cc->major == 10 && cc->minor > 0) || cc->major == 11);
+  auto passes = GetPassPipeline(module.getContext(), compilation_provider, *cc,
                                 sm, llvm_ptx_isa, nvshmem_path, verify_target);
   if (mlir::failed(passes)) {
     return absl::InternalError("Failed to construct pass pipeline");
@@ -698,8 +704,9 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
       init_sym->toPtr<MosaicInitFunc*>(), is_comm_used);
 }
 
+// TODO(b/464203195): Require a compute capability to be passed in.
 absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
-    llvm::StringRef module_str, se::CudaComputeCapability cc) {
+    llvm::StringRef module_str, std::optional<se::CudaComputeCapability> cc) {
   tsl::profiler::TraceMe trace("Compile");
   mlir::MLIRContext context(mlir::MLIRContext::Threading::DISABLED);
   context.allowUnregisteredDialects(true);
@@ -778,9 +785,9 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
 
 using KernelHash = std::array<uint64_t, 4>;
 
-absl::StatusOr<CompiledKernel*> CachedCompile(const KernelHash& kernel_hash,
-                                              llvm::StringRef module,
-                                              se::CudaComputeCapability cc) {
+absl::StatusOr<CompiledKernel*> CachedCompile(
+    const KernelHash& kernel_hash, llvm::StringRef module,
+    std::optional<se::CudaComputeCapability> cc) {
   struct Cache {
     absl::Mutex mutex;
     absl::flat_hash_map<KernelHash, std::unique_ptr<CompiledKernel>> kernels
@@ -832,6 +839,35 @@ absl::StatusOr<void*> CachedInit(const CompiledKernel* absl_nonnull kernel) {
   cache->contexts.insert_or_assign(key, context);
   return context;
 }
+
+absl::Status LegacyCustomCall(cudaStream_t stream, void** buffers,
+                              const KernelHash& hash, llvm::StringRef module) {
+  TF_ASSIGN_OR_RETURN(auto* kernel,
+                      CachedCompile(hash, module, /*cc=*/std::nullopt));
+  TF_ASSIGN_OR_RETURN(auto ctx, CachedInit(kernel));
+  if (kernel->is_comm_used) {
+    NvshmemApi::Default().barrier_all_on_stream(stream);
+  }
+  kernel->host_launch(ctx, stream, buffers);
+  return absl::OkStatus();
+}
+
+// TODO(b/464203195): Backward-compatible version using the legacy FFI
+// API. Remove once backward compatibility window has passed.
+void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
+                         size_t opaque_len, XlaCustomCallStatus* cc_status) {
+  KernelHash hash;
+  std::memcpy(hash.data(), opaque, sizeof(KernelHash));
+  auto status = LegacyCustomCall(reinterpret_cast<cudaStream_t>(stream),
+                                 buffers, hash, opaque + sizeof(KernelHash));
+  if (!status.ok()) {
+    XlaCustomCallStatusSetFailure(cc_status, status.message().data(),
+                                  status.message().size());
+  }
+}
+
+XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,
+                                         "CUDA");
 
 // Structure stores data needed during the execution and filled during the
 // initialization.
@@ -1253,11 +1289,7 @@ extern "C" {
 __attribute__((visibility("default"))) void** MosaicGpuCompile(
     const char* module, int num_module_bytes) {
   std::string module_str(module, num_module_bytes);
-  auto cc = GetCudaComputeCapability();
-  if (!cc.ok()) {
-    return nullptr;
-  }
-  auto kernel = Compile(module_str, *cc);
+  auto kernel = Compile(module_str, /*cc=*/std::nullopt);
   if (!kernel.ok()) {
     return nullptr;
   }
