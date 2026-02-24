@@ -501,7 +501,7 @@ test:rocm_rbe --remote_timeout=3600
 test:rocm_rbe --jobs=200
 test:rocm_rbe --test_sharding_strategy=disabled
 test:rocm_rbe --strategy=TestRunner=remote,local
-test:rocm_rbe --worker_sandboxing=true
+test:rocm_rbe --worker_sandboxing=false
 test:rocm_rbe --repo_env=REMOTE_GPU_TESTING=1
 
 test:rocm --test_timeout=920,2400,7200,9600
