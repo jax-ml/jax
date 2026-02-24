@@ -14,27 +14,26 @@
 
 from __future__ import annotations
 
-import textwrap
 from functools import partial
-from typing import Any, Literal, overload
+import textwrap
+from typing import overload, Any, Literal
 
 import numpy as np
 
-from jax._src import config, dtypes, lax
+from jax._src import config
+from jax._src import dtypes
+from jax._src import lax
 from jax._src import numpy as jnp
-from jax._src.api import jit, jvp, vmap
+from jax._src.api import jit, vmap, jvp
 from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy import linalg as jnp_linalg
 from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import (
-  check_arraylike,
-  promote_args_inexact,
-  promote_dtypes,
-  promote_dtypes_complex,
-  promote_dtypes_inexact,
-)
+    check_arraylike, promote_dtypes, promote_dtypes_inexact,
+    promote_dtypes_complex, promote_args_inexact)
 from jax._src.tpu.linalg import qdwh
 from jax._src.typing import Array, ArrayLike
+
 
 _no_chkfinite_doc = textwrap.dedent("""
 Does not support the Scipy argument ``check_finite=True``,
