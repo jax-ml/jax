@@ -833,15 +833,15 @@ def swizzle_and_transforms_from_transforms_attr(
   for transform in transforms:
     if swizzle is not None:
       raise ValueError(f"{transforms} contain more transforms after swizzle.")
-    if mgpu.SwizzleTransformAttr.isinstance(transform):
+    if isinstance(transform, mgpu.SwizzleTransformAttr):
       # TODO(dasenov): Swizzling can change if the ref is sliced in certain
       # ways. We might want to enforce some restrictions here.
       swizzle = mgpu.SwizzleTransformAttr(transform).swizzle
-    elif mgpu.TileTransformAttr.isinstance(transform):
+    elif isinstance(transform, mgpu.TileTransformAttr):
       tiling = mgpu.TileTransformAttr(transform).tiling
       tiling_transform = lc.TileTransform(tuple(tiling))
       gmem_transforms.append(tiling_transform)
-    elif mgpu.TransposeTransformAttr.isinstance(transform):
+    elif isinstance(transform, mgpu.TransposeTransformAttr):
       permutation = mgpu.TransposeTransformAttr(transform).permutation
       transpose_transform = lc.TransposeTransform(
           tuple(permutation)
@@ -1961,7 +1961,7 @@ def _swizzle(attrs: Sequence[ir.Attribute]) -> mgpu.SwizzlingMode:
   """Returns the swizzle transform from the given attributes."""
   swizzle = None
   for attr in attrs:
-    if mgpu.SwizzleTransformAttr.isinstance(attr):
+    if isinstance(attr, mgpu.SwizzleTransformAttr):
       if swizzle is not None:
         raise ValueError("Multiple swizzle transforms are not supported.")
       swizzle = mgpu.SwizzleTransformAttr(attr).swizzle

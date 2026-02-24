@@ -189,8 +189,6 @@ cc_library(
     hdrs = DIALECT_CAPI_HEADERS,
     deps = [
         ":mosaic_gpu",
-        ":mosaic_gpu_inc_gen",
-        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIR",
         "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:IR",
@@ -203,10 +201,7 @@ cc_library(
 cc_library(
     name = "gpu_dialect_capi_headers",
     hdrs = DIALECT_CAPI_HEADERS,
-    deps = [
-        ":mosaic_gpu_inc_gen",
-        "@llvm-project//mlir:CAPIIRHeaders",
-    ],
+    deps = ["@llvm-project//mlir:CAPIIRHeaders"],
 )
 
 # Alwayslink target, used when exporting the C API from a shared library.
@@ -216,8 +211,6 @@ cc_library(
     hdrs = DIALECT_CAPI_HEADERS,
     deps = [
         ":mosaic_gpu",
-        ":mosaic_gpu_inc_gen",
-        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIRObjects",
         "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:IR",

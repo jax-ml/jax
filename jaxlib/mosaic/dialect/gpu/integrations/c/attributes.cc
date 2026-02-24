@@ -19,6 +19,7 @@ limitations under the License.
 
 #include "mlir-c/IR.h"
 #include "mlir/CAPI/IR.h"
+#include "mlir/CAPI/Support.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
@@ -49,6 +50,11 @@ int32_t mlirMosaicGpuTileTransformAttrGetTiling(MlirAttribute attr,
   return mlir::cast<mosaic_gpu::TileTransformAttr>(unwrap(attr))
       .getTiling()[index];
 }
+
+MlirTypeID mlirMosaicGpuTileTransformAttrGetTypeID(void) {
+  return wrap(mosaic_gpu::TileTransformAttr::getTypeID());
+}
+
 //===----------------------------------------------------------------------===//
 // TransposeTransformAttr
 //===----------------------------------------------------------------------===//
@@ -77,6 +83,10 @@ int32_t mlirMosaicGpuTransposeTransformAttrGetPermutation(MlirAttribute attr,
       .getPermutation()[index];
 }
 
+MlirTypeID mlirMosaicGpuTransposeTransformAttrGetTypeID(void) {
+  return wrap(mosaic_gpu::TransposeTransformAttr::getTypeID());
+}
+
 //===----------------------------------------------------------------------===//
 // SwizzleTransformAttr
 //===----------------------------------------------------------------------===//
@@ -95,4 +105,8 @@ int32_t mlirMosaicGpuSwizzleTransformAttrGetSwizzle(MlirAttribute attr) {
       mlir::cast<mosaic_gpu::SwizzleTransformAttr>(unwrap(attr))
           .getSwizzle()
           .getValue());
+}
+
+MlirTypeID mlirMosaicGpuSwizzleTransformAttrGetTypeID(void) {
+  return wrap(mosaic_gpu::SwizzleTransformAttr::getTypeID());
 }

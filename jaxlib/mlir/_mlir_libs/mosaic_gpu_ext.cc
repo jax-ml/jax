@@ -22,9 +22,9 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "mlir-c/Bindings/Python/Interop.h"
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/IRCore.h"
-#include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
 #include "mlir/CAPI/IR.h"
 #include "mlir/IR/Block.h"  // IWYU pragma: keep
 #include "mlir/IR/Builders.h"
@@ -49,6 +49,8 @@ namespace mgpu = jax::mosaic::gpu;
 
 namespace {
 
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::DefaultingPyMlirContext;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyConcreteAttribute;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyInsertionPoint;
 
 // Returns the `mlir_ir_module` and caches its usage in the program. If the
@@ -144,9 +146,118 @@ mlir::Value SelectIfGroup(const mgpu::TransferPlan& plan, int64_t group_idx,
   return *result;
 }
 
+struct TileTransformAttr : PyConcreteAttribute<TileTransformAttr> {
+  static constexpr IsAFunctionTy isaFunction =
+      mlirMosaicGpuIsATileTransformAttr;
+  static constexpr GetTypeIDFunctionTy getTypeIdFunction =
+      mlirMosaicGpuTileTransformAttrGetTypeID;
+  static constexpr const char* pyClassName = "TileTransformAttr";
+
+  using Base::Base;
+
+  static void bindDerived(ClassTy& c) {
+    c.def_static(
+        "get",
+        [](std::vector<int32_t>& tiling, DefaultingPyMlirContext ctx) {
+          return TileTransformAttr(
+              ctx->getRef(),
+              mlirMosaicGpuTileTransformAttrGet(ctx.get()->get(), tiling.data(),
+                                                tiling.size()));
+        },
+        nb::arg("tiling"), nb::arg("context").none() = nb::none(),
+        nb::sig("def get("
+                "tiling: Sequence[int], "
+                "context: mlir.ir.Context | None = None"
+                ") -> TileTransformAttr"),
+        "Creates a TileTransformAttr with the given tiling.");
+    c.def_prop_ro("tiling", [](TileTransformAttr& self) {
+      MlirAttribute attr = self;
+      std::vector<int32_t> result;
+      result.reserve(mlirMosaicGpuTileTransformAttrGetTilingSize(attr));
+      for (int i = 0; i < mlirMosaicGpuTileTransformAttrGetTilingSize(attr);
+           ++i) {
+        result.push_back(mlirMosaicGpuTileTransformAttrGetTiling(attr, i));
+      }
+      return result;
+    });
+  }
+};
+
+struct TransposeTransformAttr : PyConcreteAttribute<TransposeTransformAttr> {
+  static constexpr IsAFunctionTy isaFunction =
+      mlirMosaicGpuIsATransposeTransformAttr;
+  static constexpr GetTypeIDFunctionTy getTypeIdFunction =
+      mlirMosaicGpuTransposeTransformAttrGetTypeID;
+  static constexpr const char* pyClassName = "TransposeTransformAttr";
+
+  using Base::Base;
+
+  static void bindDerived(ClassTy& c) {
+    c.def_static(
+        "get",
+        [](std::vector<int32_t>& permutation, DefaultingPyMlirContext ctx) {
+          return TransposeTransformAttr(
+              ctx->getRef(),
+              mlirMosaicGpuTransposeTransformAttrGet(
+                  ctx.get()->get(), permutation.data(), permutation.size()));
+        },
+        nb::arg("permutation"), nb::arg("context").none() = nb::none(),
+        nb::sig("def get("
+                "permutation: Sequence[int], "
+                "context: mlir.ir.Context | None = None"
+                ") -> TransposeTransformAttr"),
+        "Creates a TransposeTransformAttr with the given permutation.");
+    c.def_prop_ro("permutation", [](TransposeTransformAttr& self) {
+      MlirAttribute attr = self;
+      std::vector<int32_t> result;
+      result.reserve(
+          mlirMosaicGpuTransposeTransformAttrGetPermutationSize(attr));
+      for (int i = 0;
+           i < mlirMosaicGpuTransposeTransformAttrGetPermutationSize(attr);
+           ++i) {
+        result.push_back(
+            mlirMosaicGpuTransposeTransformAttrGetPermutation(attr, i));
+      }
+      return result;
+    });
+  }
+};
+
+struct SwizzleTransformAttr : PyConcreteAttribute<SwizzleTransformAttr> {
+  static constexpr IsAFunctionTy isaFunction =
+      mlirMosaicGpuIsASwizzleTransformAttr;
+  static constexpr GetTypeIDFunctionTy getTypeIdFunction =
+      mlirMosaicGpuSwizzleTransformAttrGetTypeID;
+  static constexpr const char* pyClassName = "SwizzleTransformAttr";
+
+  using Base::Base;
+
+  static void bindDerived(ClassTy& c) {
+    c.def_static(
+        "get",
+        [](int32_t swizzle, DefaultingPyMlirContext ctx) {
+          return SwizzleTransformAttr(
+              ctx->getRef(),
+              mlirMosaicGpuSwizzleTransformAttrGet(
+                  ctx.get()->get(), static_cast<int32_t>(swizzle)));
+        },
+        nb::arg("swizzle"), nb::arg("context").none() = nb::none(),
+        nb::sig("def get("
+                "swizzle: int, "
+                "context: mlir.ir.Context | None = None"
+                ") -> SwizzleTransformAttr"),
+        "Creates a SwizzleTransformAttr with the given swizzle.");
+    c.def_prop_ro("swizzle", [](SwizzleTransformAttr& self) {
+      return mlirMosaicGpuSwizzleTransformAttrGetSwizzle(self);
+    });
+  }
+};
+
 }  // namespace
 
 NB_MODULE(_mosaic_gpu_ext, m) {
+  nb::module_::import_(MAKE_MLIR_PYTHON_QUALNAME("ir"));
+
   m.def(
       "register_dialect",
       [](MlirContext context, bool load) {
@@ -165,95 +276,9 @@ NB_MODULE(_mosaic_gpu_ext, m) {
     mlirDialectRegistryDestroy(registry);
   });
 
-  auto tile_transform_attr =
-      mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "TileTransformAttr", mlirMosaicGpuIsATileTransformAttr);
-  tile_transform_attr
-      .def_staticmethod(
-          "get",
-          [cls = tile_transform_attr.get_class()](std::vector<int32_t>& tiling,
-                                                  MlirContext ctx) {
-            return cls(mlirMosaicGpuTileTransformAttrGet(ctx, tiling.data(),
-                                                         tiling.size()));
-          },
-          nb::arg("tiling"), nb::arg("context").none() = nb::none(),
-          nb::sig(
-              // clang-format: off
-              "def get("
-              "tiling: Sequence[int], "
-              "context: mlir.ir.Context | None = None"
-              ") -> TileTransformAttr"
-              // clang-format: on
-              ),
-          "Creates a TileTransformAttr with the given tiling.")
-      .def_property_readonly("tiling", [](MlirAttribute self) {
-        std::vector<int32_t> result;
-        result.reserve(mlirMosaicGpuTileTransformAttrGetTilingSize(self));
-        for (int i = 0; i < mlirMosaicGpuTileTransformAttrGetTilingSize(self);
-             ++i) {
-          result.push_back(mlirMosaicGpuTileTransformAttrGetTiling(self, i));
-        }
-        return result;
-      });
-
-  auto transpose_transform_attr =
-      mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "TransposeTransformAttr", mlirMosaicGpuIsATransposeTransformAttr);
-  transpose_transform_attr
-      .def_staticmethod(
-          "get",
-          [cls = transpose_transform_attr.get_class()](
-              std::vector<int32_t>& permutation, MlirContext ctx) {
-            return cls(mlirMosaicGpuTransposeTransformAttrGet(
-                ctx, permutation.data(), permutation.size()));
-          },
-          nb::arg("permutation"), nb::arg("context").none() = nb::none(),
-          nb::sig(
-              // clang-format: off
-              "def get("
-              "permutation: Sequence[int], "
-              "context: mlir.ir.Context | None = None"
-              ") -> TransposeTransformAttr"
-              // clang-format: on
-              ),
-          "Creates a TransposeTransformAttr with the given permutation.")
-      .def_property_readonly("permutation", [](MlirAttribute self) {
-        std::vector<int32_t> result;
-        result.reserve(
-            mlirMosaicGpuTransposeTransformAttrGetPermutationSize(self));
-        for (int i = 0;
-             i < mlirMosaicGpuTransposeTransformAttrGetPermutationSize(self);
-             ++i) {
-          result.push_back(
-              mlirMosaicGpuTransposeTransformAttrGetPermutation(self, i));
-        }
-        return result;
-      });
-
-  auto swizzle_transform_attr =
-      mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "SwizzleTransformAttr", mlirMosaicGpuIsASwizzleTransformAttr);
-  swizzle_transform_attr
-      .def_staticmethod(
-          "get",
-          [cls = swizzle_transform_attr.get_class()](int32_t swizzle,
-                                                     MlirContext ctx) {
-            return cls(mlirMosaicGpuSwizzleTransformAttrGet(
-                ctx, static_cast<int32_t>(swizzle)));
-          },
-          nb::arg("swizzle"), nb::arg("context").none() = nb::none(),
-          nb::sig(
-              // clang-format: off
-              "def get("
-              "swizzle: int, "
-              "context: mlir.ir.Context | None = None"
-              ") -> SwizzleTransformAttr"
-              // clang-format: on
-              ),
-          "Creates a SwizzleTransformAttr with the given swizzle.")
-      .def_property_readonly("swizzle", [](MlirAttribute self) {
-        return mlirMosaicGpuSwizzleTransformAttrGetSwizzle(self);
-      });
+  TileTransformAttr::bind(m);
+  TransposeTransformAttr::bind(m);
+  SwizzleTransformAttr::bind(m);
 
   m.def("init_cc_mlir", [](nb::object mlir_ir_module) {
     nb::object& mlir_ir = MlirIrModule(mlir_ir_module);
