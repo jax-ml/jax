@@ -476,8 +476,8 @@ common:rbe_windows_amd64 --platforms="@xla//tools/toolchains/win2022:windows_lts
 build:rocm --legacy_external_runfiles=true
 
 # Test configs for ROCm
-build:rocm_single_gpu --run_under=@xla//build_tools/rocm:parallel_gpu_execute
-build:rocm_multi_gpu --run_under=@xla//build_tools/rocm:sanitizer_wrapper
+build:rocm_single_gpu --run_under=//build/rocm:parallel_gpu_pytest
+build:rocm_multi_gpu --run_under=//build/rocm:parallel_gpu_pytest
 
 # RBE configs for ROCm
 build:rocm_rbe --tls_client_certificate="/data/ci-cert.crt"
