@@ -479,6 +479,8 @@ build:rocm --legacy_external_runfiles=true
 build:rocm_single_gpu --run_under=//build/rocm:parallel_gpu_pytest
 build:rocm_multi_gpu --run_under=//build/rocm:parallel_gpu_pytest
 
+build:rocm_pytest --run_under=//build/rocm:parallel_gpu_pytest
+
 # RBE configs for ROCm
 build:rocm_rbe --tls_client_certificate="/data/ci-cert.crt"
 build:rocm_rbe --tls_client_key="/data/ci-cert.key"
