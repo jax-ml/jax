@@ -2305,18 +2305,14 @@ def _reshard_impl(x, *, dst_sharding, concrete_mesh):
       return thunk()
 reshard_p.def_impl(_reshard_impl)
 
-def _reshard_jvp_rule(primals, tangents, *, dst_sharding, concrete_mesh):
-  (p,), (t,) = primals, tangents
-  primal_out = reshard_p.bind(p, dst_sharding=dst_sharding,
-                              concrete_mesh=concrete_mesh)
-  if type(t) is ad.Zero:
-    return primal_out, ad.p2tz(primal_out)
-  else:
-    tangent_out = reshard_p.bind(t, dst_sharding=dst_sharding,
-                                 concrete_mesh=concrete_mesh)
-    return primal_out, tangent_out
-
-ad.primitive_jvps[reshard_p] = _reshard_jvp_rule
+def _reshard_transpose_rule(ct, x, *, dst_sharding, concrete_mesh):
+  assert ad.is_undefined_primal(x)
+  out_sharding = x.aval.to_cotangent_aval().sharding
+  with mesh_lib.use_abstract_mesh(out_sharding.mesh):
+    x_bar = reshard_p.bind(ct, dst_sharding=out_sharding,
+                           concrete_mesh=concrete_mesh)
+    return [x_bar]
+ad.deflinear2(reshard_p, _reshard_transpose_rule)
 
 def _reshard_transpose_fancy(ct, x, *, dst_sharding, concrete_mesh):
   assert isinstance(x, ad.GradAccum)
