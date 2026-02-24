@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -188,7 +189,85 @@ LogicalResult MemRefSliceOp::verify() {
       isa<TiledLayoutAttr>(target_layout)) {
     return emitOpError("Source and target layouts must match.");
   }
+  auto tiled_layout = dyn_cast<TiledLayoutAttr>(source_layout);
+  if (!tiled_layout) {
+    return success();
+  }
+  ArrayRef<xla::Tile> tiles = tiled_layout.getTiles();
+  if (tiles.empty()) {
+    return success();
+  }
+  const xla::Tile& first_tile = tiles.front();
+  const int64_t tile_rank = first_tile.dimensions().size();
+  const int64_t rank = source_shape.size();
+  if (rank < tile_rank) {
+    return emitOpError("Source memref has ")
+           << rank << " dimensions, but the tiling has " << tile_rank
+           << " dimensions. The memref must have at least as many dimensions "
+              "as the tiling.";
+  }
   return success();
+}
+
+mlir::InFlightDiagnostic MemRefSliceOp::verifyOffsetAndSizeTileAlignment(
+    std::array<int64_t, 2> tc_target_shape, MemRefType source_type_override) {
+  mlir::MemRefType source_ty = getMemRef().getType();
+  if (source_type_override) {
+    source_ty = source_type_override;
+  }
+  auto tiled_layout = cast<TiledLayoutAttr>(source_ty.getLayout());
+  if (getResult().getType().getLayout() != tiled_layout) {
+    return emitOpError("Operand and result layouts must be equal.");
+  }
+  ArrayRef<xla::Tile> tiles = tiled_layout.getTiles();
+  if (tiles.empty()) {
+    return {};
+  }
+  const xla::Tile& first_tile = tiles.front();
+  const int64_t tile_rank = first_tile.dimensions().size();
+  const int64_t untiled_dims = source_ty.getRank() - tile_rank;
+  MemRefType result_type = getResult().getType();
+  int64_t dynamic_dim_idx = llvm::count(
+      result_type.getShape().take_front(untiled_dims), ShapedType::kDynamic);
+  const int64_t sublane_count = tc_target_shape[0];
+  const int64_t lane_count = tc_target_shape[1];
+  for (int64_t i = 0; i < tile_rank; ++i) {
+    int64_t tile_dim = first_tile.dimension(i);
+    const int64_t dim = untiled_dims + i;
+    if (!isGuaranteedDivisible(getBaseIdx()[dim], tile_dim)) {
+      return emitOpError(
+                 "Offsets along tiled dimensions must be aligned to "
+                 "tiles. Failed to verify that the index at dimension ")
+             << dim << " is divisible by the tile dimension " << tile_dim
+             << ". If it is, use tpu.assume_multiple to suppress this "
+                "error.";
+    }
+    // We only require alignment to compact 2nd minor for large 2nd minor.
+    if (tile_rank == 2 && i == 0) {
+      int64_t packing = tile_dim / sublane_count;
+      if (tile_dim == sublane_count * packing &&
+          first_tile.dimension(1) == lane_count && packing > 1 &&
+          packing <= sublane_count) {
+        tile_dim = sublane_count;
+      }
+    }
+    bool size_is_aligned;
+    if (result_type.getShape()[dim] == ShapedType::kDynamic) {
+      size_is_aligned =
+          isGuaranteedDivisible(getDynamicSizes()[dynamic_dim_idx++], tile_dim);
+    } else {
+      size_is_aligned = result_type.getShape()[dim] % tile_dim == 0;
+    }
+    if (!size_is_aligned) {
+      return emitOpError(
+                 "Slice sizes along tiled dimensions must be aligned to "
+                 "tiles. Failed to verify that the size at dimension ")
+             << dim << " is divisible by the tile dimension " << tile_dim
+             << ". If it is, use tpu.assume_multiple to suppress this "
+                "error.";
+    }
+  }
+  return {};
 }
 
 struct MemRefSliceFoldConstantDynamicDim
@@ -239,9 +318,35 @@ struct MemRefSliceFoldConstantDynamicDim
   }
 };
 
+struct MemRefSliceFoldIdentity : public OpRewritePattern<MemRefSliceOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MemRefSliceOp op,
+                                PatternRewriter& rewriter) const override {
+    if (!op.getDynamicSizes().empty()) {
+      return failure();
+    }
+    auto source_type = op.getMemRef().getType();
+    auto result_type = op.getType();
+    if (source_type != result_type) {
+      return failure();
+    }
+    for (Value idx : op.getBaseIdx()) {
+      APInt constant_value;
+      if (!matchPattern(idx, m_ConstantInt(&constant_value)) ||
+          constant_value != 0) {
+        return failure();
+      }
+    }
+    rewriter.replaceOp(op, op.getMemRef());
+    return success();
+  }
+};
+
 void MemRefSliceOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                                 MLIRContext* context) {
-  results.add<MemRefSliceFoldConstantDynamicDim>(context);
+  results.add<MemRefSliceFoldConstantDynamicDim, MemRefSliceFoldIdentity>(
+      context);
 }
 
 LogicalResult MemRefSqueezeOp::verify() {

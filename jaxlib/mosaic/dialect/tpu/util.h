@@ -247,6 +247,11 @@ bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
                                    const std::array<int64_t, 2> &target_shape,
                                    bool allow_minormost_padding = false);
 
+// TODO(apaszke): Unify this with mlir::tpu::canReinterpretToUntiledMemref.
+// Returns true if a 1D memref has a tiled layout and can be equivalently
+// considered as an untiled memref and is contiguous.
+bool canReinterpretToUntiledContiguousMemref(MemRefType ty);
+
 bool isContiguousMemref(TypedValue<MemRefType> memref);
 
 // Determines whether the given MemRefType has the given memory space.
