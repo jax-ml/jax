@@ -1843,8 +1843,9 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     m, n = shape[-2:]
     a = rng(shape, dtype)
-    if mode == 'right':
-      c_shape = shape[:-1] + (2,)  # [..., m, 2]
+    k = min(m, n)
+    if mode == 'left':
+      c_shape = shape[:-2] + (k, 2)  # [..., k, 2] — scipy: K-row input
     else:
       c_shape = shape[:-2] + (2, m)  # [..., 2, m]
     c = rng(c_shape, dtype)
@@ -1857,23 +1858,47 @@ class ScipyLinalgTest(jtu.JaxTestCase):
                                                  pivoting=False)
 
     # Compute reference using full QR
-    k = min(m, n)
     if pivoting:
       q_full, r_full, p_ref = jax.scipy.linalg.qr(a, pivoting=True)
     else:
       q_full, r_full = jax.scipy.linalg.qr(a)
     r_ref = r_full[..., :k, :]
 
-    if mode == 'right':
-      expected = q_full @ c
+    if mode == 'left':
+      expected = q_full[..., :k] @ c  # Q_eco @ c: (M,K) @ (K,2) = (M,2)
     else:
-      expected = c @ jnp.conj(jnp.swapaxes(q_full, -1, -2))
+      expected = c @ q_full[..., :k]  # c @ Q_eco: (2,M) @ (M,K) = (2,K)
 
     tol = {np.float32: 1e-4, np.complex64: 1e-4, np.float64: 1e-10,
            np.complex128: 1e-10}
     self.assertAllClose(result, expected, rtol=tol, atol=tol)
     # R should match
     self.assertAllClose(r, r_ref, rtol=tol, atol=tol)
+
+  @jtu.sample_product(
+      shape=[(4, 3), (4, 4), (6, 4)],
+      dtype=float_types + complex_types,
+      mode=['right', 'left'],
+  )
+  def testQrMultiply1D(self, shape, dtype, mode):
+    rng = jtu.rand_default(self.rng())
+    m, n = shape[-2:]
+    k = min(m, n)
+    a = rng(shape, dtype)
+    # 1-D c: length K for mode='left' (column), length M for mode='right' (row)
+    c = rng((k,), dtype) if mode == 'left' else rng((m,), dtype)
+    result, r = jax.scipy.linalg.qr_multiply(a, c, mode=mode)
+    self.assertEqual(result.ndim, 1)
+
+    q_full, _ = jax.scipy.linalg.qr(a)
+    if mode == 'left':
+      expected = (q_full[..., :k] @ c[:, None]).ravel()  # Q_eco @ c: (M,)
+    else:
+      expected = (c[None, :] @ q_full[..., :k]).ravel()  # c @ Q_eco: (K,)
+
+    tol = {np.float32: 1e-4, np.complex64: 1e-4, np.float64: 1e-10,
+           np.complex128: 1e-10}
+    self.assertAllClose(result, expected, rtol=tol, atol=tol)
 
   @jtu.sample_product(
       [dict(shape=shape, k=k)
