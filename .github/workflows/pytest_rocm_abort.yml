@@ -64,6 +64,10 @@ on:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
         default: 'no'
+      max-worker-restart:
+        description: "Max xdist worker restarts (passed to pytest --max-worker-restart)"
+        type: string
+        default: '50'
   workflow_call:
     inputs:
       runner:
@@ -94,6 +98,14 @@ on:
         description: "GCS location prefix from where the artifacts should be downloaded"
         default: 'gs://jax-nightly-artifacts/latest'
         type: string
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: string
+        default: 'no'
+      max-worker-restart:
+        description: "Max xdist worker restarts (passed to pytest --max-worker-restart)"
+        type: string
+        default: '50'
 
 permissions: {}
 
@@ -123,6 +135,7 @@ jobs:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_PYTHON: "python${{ inputs.python }}"
       JAXCI_ENABLE_X64: "0"
+      MAX_WORKER_RESTART: "${{ inputs['max-worker-restart'] }}"
 
     steps:
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0

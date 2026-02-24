@@ -73,7 +73,7 @@ export num_cpu_cores=$(nproc)
 echo "Number of CPU cores available: $num_cpu_cores"
 
 # Reads total memory from /proc/meminfo (in KiB) and converts to GiB.
-export total_ram_gib=$(awk '/MemTotal/ {printf \"%.0f\", $2/1048576}' /proc/meminfo)
+export total_ram_gib=$(awk '/MemTotal/ {printf "%.0f", $2/1048576}' /proc/meminfo)
 echo "Total system RAM: $total_ram_gib GiB"
 
 # Set a safety limit for system RAM usage, e.g., 1/6th of total.
@@ -150,13 +150,16 @@ echo "Running ROCm tests (with abort/retry wrapper)..."
 mkdir -p logs_abort
 logfile="logs_abort/jax_ToT_UT_abort.log"
 
+# Allow the workflow to override worker restart limit.
+max_worker_restart="${MAX_WORKER_RESTART:-50}"
+
 # pytest-abort output directories (must be set before running pytest).
 export PYTEST_ABORT_LAST_RUNNING_DIR="logs_abort/last_running"
 export PYTEST_ABORT_CRASHED_TESTS_LOG="logs_abort/crashed_tests.jsonl"
 mkdir -p "$PYTEST_ABORT_LAST_RUNNING_DIR"
 
 set +e
-rocm_test_cmd 1 "$JAXCI_PYTHON" -m pytest -n "$num_processes" --max-worker-restart=200 --tb=short --timeout=1200 --timeout-method=thread tests \
+rocm_test_cmd 1 "$JAXCI_PYTHON" -m pytest -n "$num_processes" --max-worker-restart="$max_worker_restart" --tb=short --timeout=1200 --timeout-method=thread tests \
   "${ROCM_PYTEST_DESELECT_ARGS[@]}" \
   --json-report \
   --json-report-file=logs_abort/tests-report-abort.json \
