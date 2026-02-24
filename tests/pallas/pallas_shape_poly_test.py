@@ -105,6 +105,7 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
     # TODO(bchetioui): Remove this for H100+ once tests are all compatible with
     # Pallas/Mosaic GPU.
     self.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(False))
+    self.enter_context(config.export_unstable_symbolic_shapes(True))
 
   def test_copy(self):
     # The blocks are static, but the input and the grid are of polymorphic
@@ -535,6 +536,36 @@ class ExportTestWithMosaicGpu(ExportTestWithTriton):
         exp.mlir_module(),
         r"stablehlo.custom_call @mosaic_gpu_v2.*my_custom_kernel_name",
     )
+
+
+class UnstableExportTest(jtu.JaxTestCase):
+
+  def test_dynamic_shapes_export_rejected(self):
+    def add_vectors_kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = x_ref[...] + y_ref[...]
+
+    def add_vectors(x, y):
+      return pl.pallas_call(
+          add_vectors_kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          grid=(pl.cdiv(x.shape[0], 128),),
+          in_specs=[
+              pl.BlockSpec((128,), lambda i: (i,)),
+              pl.BlockSpec((128,), lambda i: (i,)),
+          ],
+          out_specs=pl.BlockSpec((128,), lambda i: (i,)),
+      )(x, y)
+
+    n = jax.export.symbolic_shape("n")[0]
+    x_shape = jax.ShapeDtypeStruct((n,), jnp.float32)
+
+    f_e = jax.export.export(jax.jit(add_vectors), platforms=["tpu"])
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Exporting Pallas TPU kernels with polymorphic shapes is not"
+        " supported"):
+      with core.pallas_export_experimental(dynamic_shapes=True):
+        f_e(x_shape, x_shape)
 
 
 if __name__ == "__main__":

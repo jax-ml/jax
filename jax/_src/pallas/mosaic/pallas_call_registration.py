@@ -23,6 +23,7 @@ from typing import Any, cast
 
 import jax
 from jax import dtypes
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import frozen_dict
 from jax._src import sharding_impls
@@ -320,6 +321,26 @@ def _lower_to_custom_call(
   return mlir.lower_fun(_maybe_cast_outputs)(cast_ctx, *out_nodes)
 
 
+def _check_polymorphic_export(ctx: mlir.LoweringRuleContext):
+  if (ctx.module_context.lowering_parameters.for_export
+      and pallas_core.dynamic_shapes_export_enabled()
+      and not config.export_unstable_symbolic_shapes.value):
+    # Only compute this when necessary
+    has_symbolic_shapes = any(
+        not jax_core.is_constant_dim(d)
+        for aval in ctx.avals_in
+        for d in (aval.shape if isinstance(aval, jax_core.ShapedArray) else ())
+    )
+    if has_symbolic_shapes:
+      raise NotImplementedError(
+          "Exporting Pallas TPU kernels with polymorphic shapes is not"
+          " supported. Polymorphic shape export for Pallas does not yet have"
+          " compatibility guarantees. Set JAX_EXPORT_UNSTABLE_SYMBOLIC_SHAPES=1"
+          " or use jax.config.update('jax_export_unstable_symbolic_shapes',"
+          " True) to opt in."
+      )
+
+
 def pallas_call_tpu_lowering_rule(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
@@ -337,6 +358,8 @@ def pallas_call_tpu_lowering_rule(
 ):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
   del interpret  # Unused.
+
+  _check_polymorphic_export(ctx)
 
   debug_info = jaxpr.debug_info
   if debug:
@@ -420,6 +443,8 @@ def mpmd_map_tpu_lowering_rule(
     name,
 ):
   del interpret  # Unused.
+
+  _check_polymorphic_export(ctx)
 
   if debug:
     for idx, jaxpr in enumerate(jaxprs):

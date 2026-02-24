@@ -1105,6 +1105,16 @@ export_ignore_forward_compatibility = bool_state(
     )
 )
 
+export_unstable_symbolic_shapes = bool_state(
+    name='jax_export_unstable_symbolic_shapes',
+    default=bool_env('JAX_EXPORT_UNSTABLE_SYMBOLIC_SHAPES', False),
+    help=(
+        'Allow exporting Pallas TPU kernels with symbolic (polymorphic) '
+        'shapes. This feature does not yet have compatibility guarantees. '
+        'Set to True to opt in to the unstable export behavior.'
+    )
+)
+
 jax_platforms = optional_string_state(
     name='jax_platforms',
     default=None,

@@ -30,6 +30,7 @@ import jax
 from jax import api_util
 from jax import lax
 from jax._src import checkify
+from jax._src import config as jax_config
 from jax._src import shard_map
 from jax._src import state
 from jax._src import test_util as jtu
@@ -2182,8 +2183,11 @@ class PallasCallTest(ptu.PallasTPUTest):
     x_shape = jax.ShapeDtypeStruct(
         jax.export.symbolic_shape('b, 8, 128'), jnp.float32
     )
-    exported_module = pl.lower_as_mlir(jax.jit(f), x_shape, dynamic_shapes=True)
     # Assert that the cost analysis is not present in the serialized module.
+    with jax_config.export_unstable_symbolic_shapes(True):
+      exported_module = pl.lower_as_mlir(
+          jax.jit(f), x_shape, dynamic_shapes=True
+      )
     self.assertIn('tpu_custom_call', str(exported_module))
     self.assertNotIn('cost_estimate', str(exported_module))
     self.assertNotIn('flops', str(exported_module))
