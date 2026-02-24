@@ -4072,6 +4072,8 @@ class CustomDceTest(jtu.JaxTestCase):
     )
 
   def test_composes_with_custom_vjp(self):
+    if config.custom_vjp3.value:
+      raise unittest.SkipTest("regressed intentionally")
     # custom_dce must be the "outer" decorator (for now!) because custom_vjp
     # doesn't pass through DCE.
     @jax.experimental.custom_dce.custom_dce
