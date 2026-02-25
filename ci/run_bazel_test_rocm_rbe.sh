@@ -32,10 +32,10 @@ echo "Running RBE GPU tests..."
 TAG_FILTERS="jax_test_gpu,-config-cuda-only,-manual"
 
 for arg in "$@"; do
-    if [[ "$arg" == "--config=multi_gpu" ]]; then
+    if [[ "$arg" == "--config=rocm_multi_gpu" ]]; then
         TAG_FILTERS="${TAG_FILTERS},multiaccelerator"
     fi
-    if [[ "$arg" == "--config=single_gpu" ]]; then
+    if [[ "$arg" == "--config=rocm_single_gpu" ]]; then
         TAG_FILTERS="${TAG_FILTERS},gpu,-multiaccelerator"
     fi
 done
