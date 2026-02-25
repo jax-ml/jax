@@ -56,6 +56,9 @@ bazel test --config=rocm_rbe \
     --color=yes \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAX \
+    --verbose_failures \
+    --sandbox_debug \
+    --experimental_ui_max_stdouterr_bytes=-1 \
     $@ \
     //tests:gpu_tests \
     //tests:backend_independent_tests \
