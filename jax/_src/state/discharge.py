@@ -87,7 +87,7 @@ def discharge_state(
   eval_jaxpr = lu.wrap_init(partial(_eval_jaxpr_discharge_state, jaxpr,
                                     should_discharge, consts),
                             debug_info=jaxpr.debug_info.with_unknown_names())
-  new_jaxpr, _ , new_consts = pe.trace_to_jaxpr_dynamic(eval_jaxpr, in_avals)
+  new_jaxpr, _ , new_consts = pe.trace_to_jaxpr_dynamic(eval_jaxpr, in_avals, lower=True)
   return new_jaxpr, new_consts
 
 # TODO(mattjj): migrate callers to discharge_state2 for caching
