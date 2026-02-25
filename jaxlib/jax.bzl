@@ -202,7 +202,7 @@ def _gpu_test_deps():
         "//jax:config_build_jaxlib_false": if_cuda_is_configured([
             "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",
             "//jaxlib/tools:pypi_jax_cuda_pjrt_with_cuda_deps",
-        ]) + if_rocm_is_configured(EXTERNAL_DEPS),
+        ]),
         "//jax:config_build_jaxlib_wheel": if_cuda_is_configured([
             "//jaxlib/tools:jax_cuda_plugin_py_import",
             "//jaxlib/tools:jax_cuda_pjrt_py_import",
