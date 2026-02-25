@@ -23,6 +23,7 @@ limitations under the License.
 #include "mlir-c/Support.h"
 #include "mlir/CAPI/IR.h"
 #include "mlir/CAPI/Registration.h"
+#include "mlir/CAPI/Support.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
@@ -50,6 +51,10 @@ MLIR_CAPI_EXPORTED void mlirTpuRegisterMosaicSerdePass() {
 MlirType mlirTpuFloat8EXMYTypeGetUnderlyingType(MlirType exmy_type) {
   return wrap(llvm::cast<mlir::tpu::Float8EXMYType>(unwrap(exmy_type))
                   .getUnderlyingType());
+}
+
+MlirTypeID mlirTpuFloat8EXMYTypeGetTypeID(void) {
+  return wrap(mlir::tpu::Float8EXMYType::getTypeID());
 }
 
 bool mlirTpuIsAFloat8EXMYType(MlirType type) {

@@ -27,3 +27,8 @@ sed -i -e '0,/^[[:space:]]*from mlir import ir[[:space:]]*$/b' \
   -e '/^[[:space:]]*from mlir import ir[[:space:]]*$/d' "$@"
 # Replace `mlir.ir.<NAME>` with `ir.<NAME>`.
 sed -i -E 's/mlir\.ir\.([a-zA-Z0-9_]+)/ir.\1/g' "$@"
+
+# TODO(slebedev): Remove once https://github.com/llvm/llvm-project/pull/183021
+# is merged and available internally.
+# Replace bare `TypeID` with `ir.TypeID`.
+sed -i -E 's/: TypeID/: ir.TypeID/g' "$@"

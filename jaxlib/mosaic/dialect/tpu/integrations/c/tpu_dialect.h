@@ -44,6 +44,8 @@ MLIR_CAPI_EXPORTED MlirType mlirTpuFloat8EXMYTypeGetUnderlyingType(
 
 MLIR_CAPI_EXPORTED bool mlirTpuIsAFloat8EXMYType(MlirType type);
 
+MLIR_CAPI_EXPORTED MlirTypeID mlirTpuFloat8EXMYTypeGetTypeID(void);
+
 MLIR_CAPI_EXPORTED MlirType mlirTpuFloat8EXMYTypeGet(
     MlirContext ctx, MlirType exmy_type);
 

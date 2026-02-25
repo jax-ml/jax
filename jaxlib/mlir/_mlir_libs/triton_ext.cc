@@ -18,14 +18,57 @@ limitations under the License.
 #include <cstdint>
 #include <optional>
 
+#include "mlir-c/Bindings/Python/Interop.h"
 #include "mlir-c/IR.h"
-#include "mlir/Bindings/Python/NanobindAdaptors.h"
+#include "mlir/Bindings/Python/IRCore.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/triton/triton_dialect_capi.h"
 
 namespace nb = nanobind;
 
+namespace {
+
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyConcreteType;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyType;
+
+struct PointerType : PyConcreteType<PointerType> {
+  static constexpr IsAFunctionTy isaFunction = mlirTritonIsAPointer;
+  static constexpr GetTypeIDFunctionTy getTypeIdFunction =
+      mlirTritonPointerTypeGetTypeID;
+  static constexpr const char* pyClassName = "PointerType";
+
+  using Base::Base;
+
+  static void bindDerived(ClassTy& c) {
+    c.def_static(
+        "get",
+        [](PyType& pointee_type, int64_t address_space) {
+          return PointerType(
+              pointee_type.getContext(),
+              mlirTritonPointerTypeGet(pointee_type, address_space));
+        },
+        nb::arg("pointee_type"), nb::arg("address_space"),
+        nb::sig("def get("
+                "pointee_type: mlir.ir.Type, "
+                "address_space: int"
+                ") -> PointerType"),
+        "Creates a PointerType type.");
+    c.def_prop_ro("pointee_type", [](PointerType& self) {
+      return PyType(self.getContext(),
+                    mlirTritonPointerTypeGetPointeeType(self))
+          .maybeDownCast();
+    });
+    c.def_prop_ro("address_space", [](PointerType& self) {
+      return mlirTritonPointerTypeGetAddressSpace(self);
+    });
+  }
+};
+
+}  // namespace
+
 NB_MODULE(_triton_ext, m) {
+  nb::module_::import_(MAKE_MLIR_PYTHON_QUALNAME("ir"));
+
   //
   // Dialects.
   //
@@ -45,32 +88,7 @@ NB_MODULE(_triton_ext, m) {
   // Types.
   //
 
-  auto pointer_type = mlir::python::nanobind_adaptors::mlir_type_subclass(
-      m, "PointerType", mlirTritonIsAPointer, mlirTritonPointerTypeGetTypeID);
-  pointer_type
-      .def_staticmethod(
-          "get",
-          [cls = pointer_type.get_class()](MlirType pointee_type,
-                                           int64_t address_space) {
-            return cls(mlirTritonPointerTypeGet(pointee_type, address_space));
-          },
-          nb::arg("pointee_type"), nb::arg("address_space"),
-          nb::sig(
-              // clang-format: off
-              "def get("
-              "pointee_type: mlir.ir.Type, "
-              "address_space: int"
-              ") -> PointerType"
-              // clang-format: on
-              ),
-          "Creates a PointerType type.")
-      .def_property_readonly("pointee_type",
-                             [](MlirType self) {
-                               return mlirTritonPointerTypeGetPointeeType(self);
-                             })
-      .def_property_readonly("address_space", [](MlirType self) {
-        return mlirTritonPointerTypeGetAddressSpace(self);
-      });
+  PointerType::bind(m);
 
   //
   // Attributes.
