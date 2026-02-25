@@ -335,7 +335,7 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
     raise RuntimeError(f'Unable to use CUDA because of the '
                        f'following issues with CUDA components:\n'
                        f'{join_str.join(errors)}')
-                       
+
 def initialize():
   _load_nvidia_libraries()
   _import_extensions()
