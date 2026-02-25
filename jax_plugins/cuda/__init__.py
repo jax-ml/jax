@@ -335,8 +335,6 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
     raise RuntimeError(f'Unable to use CUDA because of the '
                        f'following issues with CUDA components:\n'
                        f'{join_str.join(errors)}')
-
-
 def initialize():
   _load_nvidia_libraries()
   _import_extensions()
@@ -344,16 +342,44 @@ def initialize():
   if path is None:
     return
 
-  if not os.getenv("JAX_SKIP_CUDA_CONSTRAINTS_CHECK"):
-    _check_cuda_versions(raise_on_first_error=True)
+  from jax._src import config
+
+  requested = config.jax_platforms.value
+  should_validate = True
+
+  if requested:
+    allowed_platforms = set()
+    for p in requested.split(","):
+      allowed_platforms.update(xb.expand_platform_alias(p.strip()))
+    if "cuda" not in allowed_platforms:
+      should_validate = False
+
+  if not os.getenv("JAX_SKIP_CUDA_CONSTRAINTS_CHECK") and should_validate:
+    try:
+      _check_cuda_versions(raise_on_first_error=True)
+    except Exception as e:
+      logger.warning(
+          "CUDA version check failed during initialization. "
+          "CUDA backend will not be available. Error: %s",
+          e,
+      )
+      return
+  elif not should_validate:
+    logger.debug(
+        "Skipping CUDA version check because CUDA backend is not requested "
+        "via JAX_PLATFORMS."
+    )
   else:
-    logger.debug('Skipped CUDA versions constraints check due to the '
-                'JAX_SKIP_CUDA_CONSTRAINTS_CHECK env var being set.')
+    logger.debug(
+        "Skipped CUDA versions constraints check due to the "
+        "JAX_SKIP_CUDA_CONSTRAINTS_CHECK env var being set."
+    )
 
   options = xla_client.generate_pjrt_gpu_plugin_options()
   c_api = xb.register_plugin(
-      'cuda', priority=500, library_path=str(path), options=options
+      "cuda", priority=500, library_path=str(path), options=options
   )
+
   if cuda_plugin_extension:
     xla_client.register_custom_type_handler(
         "CUDA",
@@ -369,11 +395,11 @@ def initialize():
     )
     for _name, _value in cuda_plugin_extension.ffi_types().items():
       xla_client.register_custom_type(
-          _name, _value, platform='CUDA'
+          _name, _value, platform="CUDA"
       )
     for _name, _value in cuda_plugin_extension.ffi_handlers().items():
       xla_client.register_custom_call_target(
-          _name, _value, platform='CUDA', api_version=1
+          _name, _value, platform="CUDA", api_version=1
       )
     triton.register_compilation_handler(
         "CUDA",
@@ -382,4 +408,5 @@ def initialize():
         ),
     )
   else:
-    logger.warning('cuda_plugin_extension is not found.')
+    logger.warning("cuda_plugin_extension is not found.")
+    
