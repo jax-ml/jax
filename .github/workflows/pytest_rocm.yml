@@ -98,7 +98,9 @@ on:
         description: "GCS location prefix from where the artifacts should be downloaded"
         default: 'gs://jax-nightly-artifacts/latest'
         type: string
-permissions: {}
+permissions:
+  id-token: write
+  contents: read
 
 env:
   UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
@@ -153,12 +155,12 @@ jobs:
       - name: Run Pytest ROCm tests
         timeout-minutes: 120
         run: ./ci/run_pytest_rocm.sh
-      - name: Create a logs archive
+      - name: Archive logs
         if: always()
         run: |
           set -euo pipefail
           tar -czf logs.tar.gz logs
-      - name: Collect run-manifest info
+      - name: Generate run manifest
         if: always()
         env:
           INPUT_RUNNER: ${{ inputs.runner }}
@@ -208,23 +210,25 @@ jobs:
             "wheels_sha_raw": "${WHEELS_ONE_LINE}"
           }
           EOF
-      - name: Upload logs to AMD S3 bucket
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc
+          aws-region: us-east-1
+      - name: Upload test artifacts to AMD S3
         if: always()
         env:
           RUN_KEY: ${{ github.repository }}/${{ github.run_id }}/${{ github.run_attempt }}
           JOB_KEY: ${{ inputs.call-id || github.job }}
-          VARIANT: py${{ inputs.python }}-rocm${{ inputs.rocm-version }}-${{ inputs.runner }}
+          COMBO: py${{ inputs.python }}-rocm${{ inputs.rocm-version }}-${{ inputs.runner }}
         run: |
           set -euo pipefail
-          export S3_BUCKET_NAME="${AMD_S3_BUCKET_NAME}"
-          export AWS_ACCESS_KEY_ID="${AMD_S3_BUCKET_ACCESS_KEY}"
-          export AWS_SECRET_ACCESS_KEY="${AMD_S3_BUCKET_SECRET_KEY}"
+          PREFIX="jax-test-logs/${RUN_KEY}/${JOB_KEY}/${COMBO}/"
           $JAXCI_PYTHON -m pip install -q boto3
-          PREFIX="logs/${RUN_KEY}/${JOB_KEY}/${VARIANT}/"
           $JAXCI_PYTHON - <<PY
-          import boto3, os; s3=boto3.client("s3"); bucket = os.environ["S3_BUCKET_NAME"]
-          s3.upload_file("logs.tar.gz", bucket, "${PREFIX}"+"logs.tar.gz")
-          s3.upload_file("logs/run-manifest.json", bucket, "${PREFIX}"+"run-manifest.json")
-          s3.put_object(Bucket=bucket, Key="${PREFIX}"+"_SUCCESS", Body=b"")
+          import boto3, os; s3=boto3.client("s3"); BUCKET = "jax-ci-amd"
+          s3.upload_file("logs.tar.gz", BUCKET, "${PREFIX}"+"logs.tar.gz")
+          s3.upload_file("logs/run-manifest.json", BUCKET, "${PREFIX}"+"run-manifest.json")
+          s3.put_object(Bucket=BUCKET, Key="${PREFIX}"+"_SUCCESS", Body=b"")
           PY
 

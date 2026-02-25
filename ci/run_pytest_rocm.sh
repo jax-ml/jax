@@ -114,7 +114,8 @@ echo "Running ROCm tests..."
 # TODO: Add examples directory to test suite (CUDA tests both: tests examples)
 # TODO: Verify if CSV/HTML report generation should be kept (unique to ROCm)
 # TODO: Verify if log file output should be kept (unique to ROCm)
-mkdir -p logs
+LOGS_DIR="logs"
+mkdir -p "${LOGS_DIR}"
 export NPROC=32
 "$JAXCI_PYTHON" -m pytest -n $num_processes --tb=short \
 --json-report --json-report-file=logs/pytest_results.json \
