@@ -96,10 +96,7 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     container:
-      image: "ghcr.io/rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}:latest"
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.github_token }}
+      image: "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa"
       options: >-
         -v /data/ci-cert.crt:/certs/ci-cert.crt:ro
         -v /data/ci-cert.key:/certs/ci-cert.key:ro
@@ -123,14 +120,6 @@ jobs:
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           persist-credentials: false
-      - name: Install Bazel
-        run: |
-          apt install apt-transport-https curl gnupg -y
-          curl -fsSL https://bazel.build/bazel-release.pub.gpg | gpg --dearmor >bazel-archive-keyring.gpg
-          mv bazel-archive-keyring.gpg /usr/share/keyrings
-          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/bazel-archive-keyring.gpg] https://storage.googleapis.com/bazel-apt stable jdk1.8" | tee /etc/apt/sources.list.d/bazel.list
-          apt update && apt install bazel-7.7.0 -y
-          ln -s /bin/bazel-7.7.0 /bin/bazel
       - name: Download JAX ROCm wheels
         if: inputs.build_jaxlib == 'false'
         uses: ./.github/actions/download-jax-rocm-wheels
@@ -153,7 +142,7 @@ jobs:
           ./ci/run_bazel_test_rocm_rbe.sh  \
             --config=rocm_single_gpu \
             --local_test_jobs=4 \
-            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="ghcr.io/rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}:latest"
+            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa"
       - name: "Bazel ROCm multigpu tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
         if: always()
         timeout-minutes: 60
@@ -161,4 +150,4 @@ jobs:
           ./ci/run_bazel_test_rocm_rbe.sh \
             --config=rocm_multi_gpu \
             --local_test_jobs=1 \
-            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="ghcr.io/rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}:latest"
+            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa"
