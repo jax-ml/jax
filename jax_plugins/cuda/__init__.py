@@ -335,6 +335,7 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
     raise RuntimeError(f'Unable to use CUDA because of the '
                        f'following issues with CUDA components:\n'
                        f'{join_str.join(errors)}')
+                       
 def initialize():
   _load_nvidia_libraries()
   _import_extensions()
@@ -348,11 +349,27 @@ def initialize():
   should_validate = True
 
   if requested:
-    allowed_platforms = {alias for p in requested.split(",") for alias in xb.expand_platform_alias(p.strip())}
+    allowed_platforms = {
+        alias
+        for p in requested.split(",")
+        for alias in xb.expand_platform_alias(p.strip())
+    }
     if "cuda" not in allowed_platforms:
       should_validate = False
 
-  if not os.getenv("JAX_SKIP_CUDA_CONSTRAINTS_CHECK") and should_validate:
+  skip_env = os.getenv("JAX_SKIP_CUDA_CONSTRAINTS_CHECK")
+
+  if not should_validate:
+    logger.debug(
+        "Skipping CUDA version check because CUDA backend is not requested "
+        "via JAX_PLATFORMS."
+    )
+  elif skip_env:
+    logger.debug(
+        "Skipped CUDA versions constraints check due to the "
+        "JAX_SKIP_CUDA_CONSTRAINTS_CHECK env var being set."
+    )
+  else:
     try:
       _check_cuda_versions(raise_on_first_error=True)
     except Exception as e:
@@ -362,16 +379,6 @@ def initialize():
           e,
       )
       return
-  elif not should_validate:
-    logger.debug(
-        "Skipping CUDA version check because CUDA backend is not requested "
-        "via JAX_PLATFORMS."
-    )
-  else:
-    logger.debug(
-        "Skipped CUDA versions constraints check due to the "
-        "JAX_SKIP_CUDA_CONSTRAINTS_CHECK env var being set."
-    )
 
   options = xla_client.generate_pjrt_gpu_plugin_options()
   c_api = xb.register_plugin(
@@ -407,4 +414,3 @@ def initialize():
     )
   else:
     logger.warning("cuda_plugin_extension is not found.")
-    
