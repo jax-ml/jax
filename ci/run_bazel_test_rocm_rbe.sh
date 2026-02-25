@@ -52,6 +52,7 @@ bazel test --config=rocm_rbe \
     --remote_download_outputs=minimal \
     --test_env=JAX_SKIP_SLOW_TESTS=true \
     --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
+    --repo_env=TF_AMD_GPU_TARGETS="gfx908,gfx90a,gfx942" \
     --color=yes \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAX \
