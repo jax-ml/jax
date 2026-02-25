@@ -97,9 +97,9 @@ jobs:
     runs-on: ${{ inputs.runner }}
     container:
       image: "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa"
+      volumes:
+        - /data:/data
       options: >-
-        -v /data/ci-cert.crt:/certs/ci-cert.crt:ro
-        -v /data/ci-cert.key:/certs/ci-cert.key:ro
         --device=/dev/kfd
         --device=/dev/dri
         --security-opt seccomp=unconfined
