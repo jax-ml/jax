@@ -75,8 +75,8 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        pip install uv~=0.5.30
-        uv pip install --system .[minimum-jaxlib] -r build/test-requirements.txt
+        pip install 'uv~=0.5.30'
+        uv pip install --system '.[minimum-jaxlib]' -r build/test-requirements.txt
 
     - name: Run tests
       env:
@@ -175,7 +175,7 @@ jobs:
         pip install uv~=0.5.30
         uv pip install --system .[cuda12]
     - name: Build and install example project
-      run: uv pip install --system ./examples/ffi[test]
+      run: uv pip install --system './examples/ffi[test]'
       env:
         # We test building using GCC instead of clang. All other JAX builds use
         # clang, but it is useful to make sure that FFI users can compile using

@@ -46,9 +46,9 @@ jobs:
           python build/build.py build --wheels=jaxlib --verbose \
             --bazel_options=--color=yes \
             --bazel_options=--config=asan_shared \
-            --python_version=${PYTHON_VERSION} \
+            --python_version="${PYTHON_VERSION}" \
             --bazel_options=--repo_env=HERMETIC_PYTHON_URL="${CPYTHON_URL}" \
-            --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256=${CPYTHON_SHA256} \
+            --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256="${CPYTHON_SHA256}" \
             --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX="${CPYTHON_PREFIX}/"
 
       - name: Run tests
@@ -60,14 +60,15 @@ jobs:
           PY_COLORS: 1
         run: |
           echo "Download CPython with ASAN support"
-          cd ${GITHUB_WORKSPACE}
-          wget ${CPYTHON_URL}
-          tar -xzf ${CPYTHON_PREFIX}.tar.gz
+          cd "${GITHUB_WORKSPACE}"
+          wget "${CPYTHON_URL}"
+          tar -xzf "${CPYTHON_PREFIX}.tar.gz"
 
           echo "Install python requirements and JAX"
-          ${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/bin/python3 -m venv \
-            ${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/venv
-          source ${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/venv/bin/activate
+          "${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/bin/python3" -m venv \
+            "${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/venv"
+          # shellcheck source=/dev/null
+          source "${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/venv/bin/activate"
           pip install uv~=0.5.30
           cd jax
           uv pip install -r build/test-requirements.txt
