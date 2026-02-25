@@ -348,9 +348,7 @@ def initialize():
   should_validate = True
 
   if requested:
-    allowed_platforms = set()
-    for p in requested.split(","):
-      allowed_platforms.update(xb.expand_platform_alias(p.strip()))
+    allowed_platforms = {alias for p in requested.split(",") for alias in xb.expand_platform_alias(p.strip())}
     if "cuda" not in allowed_platforms:
       should_validate = False
 
