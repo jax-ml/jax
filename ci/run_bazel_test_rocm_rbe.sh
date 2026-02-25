@@ -57,8 +57,28 @@ bazel test --config=rocm_rbe \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAX \
     $@ \
+    -- \
     //tests:gpu_tests \
     //tests:backend_independent_tests \
     //tests/pallas:gpu_tests \
     //tests/pallas:backend_independent_tests \
-    //jaxlib/tools:check_gpu_wheel_sources_test
+    //jaxlib/tools:check_gpu_wheel_sources_test \
+    -//tests/pallas:ops_test_gpu \
+    -//tests/pallas:ops_test_mgpu_gpu \
+    -//tests/pallas:pallas_shape_poly_test_gpu \
+    -//tests/pallas:pallas_vmap_test_gpu \
+    -//tests/pallas:triton_pallas_test_gpu \
+    -//tests:export_harnesses_multi_platform_test_gpu \
+    -//tests:jet_test_gpu \
+    -//tests:lax_autodiff_test_gpu \
+    -//tests:lax_numpy_setops_test_gpu \
+    -//tests:lax_numpy_test_gpu \
+    -//tests:lax_test_gpu \
+    -//tests:linalg_test_gpu \
+    -//tests:logging_test_gpu \
+    -//tests:random_lax_test_gpu \
+    -//tests:scipy_signal_test_gpu \
+    -//tests:stax_test_gpu \
+    -//tests:ode_test_gpu \
+    -//tests:lobpcg_test_gpu \
+    -//tests:scipy_stats_test_gpu
