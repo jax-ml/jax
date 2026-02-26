@@ -222,6 +222,13 @@ class TupTy(HiType):
     return TupTy(tuple(ty.unshard(mesh, check_vma, s)
                        for ty, s in zip(self.tys, spec.val)))
 
+  def vspace_add(self, x_tup, y_tup):
+    n = len(self.tys)
+    x_elts = [get_tuple_element(x_tup, i) for i in range(n)]
+    y_elts = [get_tuple_element(y_tup, i) for i in range(n)]
+    return make_tup(*(ty.vspace_add(x, y) for ty, x, y
+                      in zip(self.tys, x_elts, y_elts)))
+
 register_hitype(HiTup, lambda t: TupTy(tuple(map(typeof, t.elts))))
 
 @dataclass(frozen=True)
@@ -246,6 +253,16 @@ class MakeTup(VJPHiPrimitive):
   def expand(self, *elts):
     return HiTup(elts)
 
+  def jvp(self, primals, tangents):
+    tangents = map(ad.instantiate_zeros, tangents)
+    return make_tup(*primals), make_tup(*tangents)
+
+  def transpose(self, ct, *maybe_accums):
+    cts = [get_tuple_element(ct, i) for i in range(len(self.out_aval.tys))]
+    for ct_, accum in zip(cts, maybe_accums):
+      if isinstance(accum, ad.GradAccum):
+        accum.accum(ct_)
+
   def batch(self, _axis_data, args, in_dims):
     return make_tup(*args), TupSpec(in_dims)
 
@@ -258,6 +275,16 @@ class GetTupElt(VJPHiPrimitive):
 
   def expand(self, tup):
     return tup.elts[self.idx]
+
+  def jvp(self, primals, tangents):
+    (tup,), (tup_dot,) = primals, tangents
+    return get_tuple_element(tup, self.idx), get_tuple_element(tup_dot, self.idx)
+
+  def transpose(self, g, tup_accum):
+    tup_ty, = self.in_avals
+    elts = map(ad.zeros_like_aval, tup_ty.tys)
+    elts[self.idx] = g
+    tup_accum.accum(make_tup(*elts))
 
   def vjp_fwd(self, tup):
     return get_tuple_element(tup, self.idx), None
@@ -1173,6 +1200,21 @@ class HijaxTest(jtu.JaxTestCase):
 
     self.assertEqual(f(2.0), 8.0)
     self.assertEqual(jax.linearize(f, 2.0)[1](1.0), 12.0)
+
+  @jtu.with_explicit_mesh((2, 2), ('i', 'j'))
+  def test_oh_hi_mat(self, mesh):
+    x = jnp.ones(4)
+    y = jnp.ones(2)
+
+    @jax.remat
+    def f(x, y):
+      tup = make_tup(x, y)
+      x_ = get_tuple_element(tup, 0)
+      y_ = get_tuple_element(tup, 1)
+      return jnp.sum(x_ + jnp.concatenate((y_, y_)))
+
+    f(x, y)
+    jax.jit(jax.grad(f))(x, y)
 
 
 class BoxTest(jtu.JaxTestCase):

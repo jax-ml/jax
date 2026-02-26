@@ -1752,6 +1752,10 @@ class AbstractValue:
   def unshard(self, mesh, check_vma, spec):
     return unshard_aval(mesh, check_vma, spec, self)
 
+  def vspace_add(self, x, y):
+    from jax._src.ad_util import add_jaxvals  # type: ignore
+    return add_jaxvals(x, y)
+
 InputType = tuple[AbstractValue, ...]
 OutputType = tuple[AbstractValue, ...]
 
