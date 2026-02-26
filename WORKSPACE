@@ -102,6 +102,7 @@ flatbuffers()
 
 load("//third_party/external_deps:workspace.bzl", "external_deps_repository")
 
+# Used for --//jax:build_jaxlib=wheel (locally-built wheels).
 external_deps_repository(
     name = "rocm_external_test_deps",
     deps = [
@@ -122,6 +123,27 @@ jax_python_wheel_repository(
     name = "jax_wheel",
     version_key = "_version",
     version_source = "//jax:version.py",
+)
+
+load("@jax_wheel//:wheel.bzl", "WHEEL_VERSION")
+load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
+load("//third_party/rocm_wheels:workspace.bzl", "rocm_wheels_repository")
+
+# Pre-built ROCm wheels from a GitHub release (ROCm/rocm-jax).
+rocm_wheels_repository(
+    name = "rocm_wheels",
+    jaxlib_version = WHEEL_VERSION,
+    python_version = HERMETIC_PYTHON_VERSION,
+    # rocm_version = "7.2.0",  # Optional: pick a specific ROCm version.
+)
+
+# Used for --//jax:build_jaxlib=false (pre-built wheels from GitHub).
+external_deps_repository(
+    name = "rocm_prebuilt_test_deps",
+    deps = [
+        "@rocm_wheels//:rocm_pjrt_py_import",
+        "@rocm_wheels//:rocm_plugin_py_import",
+    ],
 )
 
 load(
