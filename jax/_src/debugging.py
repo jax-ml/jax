@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import copy
+import dataclasses
 from functools import partial
 import importlib.util
 import logging
@@ -55,6 +56,10 @@ from jax._src.sharding_impls import (
 from jax._src.state import discharge as state_discharge
 
 logger = logging.getLogger(__name__)
+
+# Maximum number of elements to send per tensor in a jax.debug.print callback.
+# Tensors larger than this are truncated to avoid excessive data transfer.
+_MAX_DEBUG_PRINT_ITEMS = 128
 
 class DebugEffect(effects.Effect):
   __str__ = lambda self: "Debug"
@@ -153,12 +158,65 @@ def _debug_callback_partial_auto(axis_context, *args, **params):
                     lambda: [])
   return shard_map.shard_map(f, in_specs=(), out_specs=[])()
 
-def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params):
+
+# Truncates large tensor operands before they are sent to the host callback,
+# to avoid sending gargantuan tensors. Each operand exceeding
+# _MAX_DEBUG_PRINT_ITEMS elements is flattened and sliced to that limit.
+def _maybe_truncate_for_callback(ctx, args, avals_in):
+  new_args = list(args)
+  new_avals = list(avals_in)
+  for i, (arg, aval) in enumerate(zip(args, avals_in)):
+    if not hasattr(aval, "shape") or not hasattr(aval, "dtype"):
+      continue
+    if not aval.shape:
+      continue
+    num_elements = np.prod(aval.shape)
+    if num_elements > _MAX_DEBUG_PRINT_ITEMS:
+      logger.warning(
+          "jax.debug.print: truncating tensor with shape %s and dtype %s "
+          "(%d elements) to %d elements to avoid serialization overflow.",
+          aval.shape,
+          aval.dtype,
+          num_elements,
+          _MAX_DEBUG_PRINT_ITEMS,
+      )
+      flat_aval = core.ShapedArray((num_elements,), aval.dtype)
+      flat_arg = mlir.reshape(ctx, arg, flat_aval)
+      truncated_aval = core.ShapedArray((_MAX_DEBUG_PRINT_ITEMS,), aval.dtype)
+      truncated_arg = mlir.slice_op(
+          ctx,
+          flat_arg,
+          truncated_aval,
+          start_indices=(0,),
+          limit_indices=(_MAX_DEBUG_PRINT_ITEMS,),
+          strides=(1,),
+      )
+      new_args[i] = truncated_arg
+      new_avals[i] = truncated_aval
+  return tuple(new_args), tuple(new_avals)
+
+
+def debug_callback_lowering(
+    ctx,
+    *args,
+    effect,
+    partitioned,
+    callback,
+    operand_frontend_attributes=None,
+    recv_frontend_attributes=None,
+    **params,
+):
+  for_export = ctx.module_context.lowering_parameters.for_export
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
     # We're a shard_map, which might be partial-manual or full-manual.
     partial_auto = set(axis_context.mesh.axis_names) - axis_context.manual_axes
     if partial_auto:
+      if for_export:
+        raise NotImplementedError(
+            "Exporting jax.debug.print with partial auto sharding is not "
+            "yet supported."
+        )
       # If we have partial manual / partial auto sharding, we gather and
       # conditionally run the callback.
       lower = partial(
@@ -209,14 +267,21 @@ def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params)
   if effects.ordered_effects.contains(effect):
     token = ctx.tokens_in.get(effect)
     result, token, _ = cb.emit_python_callback(
-        ctx, _callback, token, list(args), ctx.avals_in, ctx.avals_out,
-        has_side_effect=True, returns_token=True, partitioned=partitioned)
+        ctx, _callback, token, list(args), ctx.avals_in,
+        ctx.avals_out, has_side_effect=True, returns_token=True,
+        partitioned=partitioned, sharding=sharding,
+        operand_frontend_attributes=operand_frontend_attributes,
+        recv_frontend_attributes=recv_frontend_attributes,
+        register_callback=not for_export)
     ctx.set_tokens_out(mlir.TokenSet({effect: token}))
   else:
     result, _, _ = cb.emit_python_callback(
-        ctx, _callback, None, list(args), ctx.avals_in, ctx.avals_out,
-        has_side_effect=True, returns_token=True, partitioned=partitioned,
-        sharding=sharding)
+        ctx, _callback, None, list(args), ctx.avals_in,
+        ctx.avals_out, has_side_effect=True, returns_token=True,
+        partitioned=partitioned, sharding=sharding,
+        operand_frontend_attributes=operand_frontend_attributes,
+        recv_frontend_attributes=recv_frontend_attributes,
+        register_callback=not for_export)
   return result
 mlir.register_lowering(debug_callback_p, debug_callback_lowering,
                        platform="cpu")
@@ -361,6 +426,88 @@ def debug_print_transpose_rule(_, *args, **kwargs):
 ad.primitive_transposes[debug_print_p] = debug_print_transpose_rule
 
 
+# Renders a single value into its string representation for a debug_print
+# format template. Tensors are replaced with <T0>, <T1>, etc. placeholders;
+# static values (scalars, strings, containers) are rendered inline.
+def _render_for_template(value, tensor_counter):
+  if isinstance(value, core.Tracer) or (
+      hasattr(value, "shape") and hasattr(value, "dtype")
+  ):
+    idx = tensor_counter[0]
+    tensor_counter[0] += 1
+    return f"<T{idx}>"
+  if value is None:
+    return "None"
+  if isinstance(value, bool):
+    return repr(value)
+  if isinstance(value, (int, float)):
+    return repr(value)
+  if isinstance(value, str):
+    return repr(value)
+  if isinstance(value, dict):
+    items = ", ".join(
+        f"{repr(k)}: {_render_for_template(v, tensor_counter)}"
+        for k, v in value.items()
+    )
+    return "{" + items + "}"
+  if isinstance(value, (list, tuple)) and not hasattr(value, "_fields"):
+    items = ", ".join(_render_for_template(v, tensor_counter) for v in value)
+    if isinstance(value, tuple):
+      return "(" + items + ("," if len(value) == 1 else "") + ")"
+    return "[" + items + "]"
+  if dataclasses.is_dataclass(value) and not isinstance(value, type):
+    fields = dataclasses.fields(value)
+    items = ", ".join(
+        f"{f.name}={_render_for_template(getattr(value, f.name), tensor_counter)}"
+        for f in fields
+    )
+    return f"{type(value).__name__}({items})"
+  if hasattr(value, "_fields"):
+    items = ", ".join(
+        f"{name}={_render_for_template(getattr(value, name), tensor_counter)}"
+        for name in value._fields
+    )
+    return f"{type(value).__name__}({items})"
+  return repr(value)
+
+
+# Builds the full format template string for a jax.debug.print call at
+# lowering time. Reconstructs the original pytree structure from the flat
+# dynamic + static args, then renders each leaf via _render_for_template.
+# The result is a string like "x = <T0>, y = <T1>" where tensor placeholders
+# correspond to the dynamic operands that will be sent to the host.
+def _render_template_from_parts(fmt, in_tree, static_args, num_dyn_args):
+  static_args_dict = dict(static_args)
+  total_args = len(static_args) + num_dyn_args
+  tensor_counter = [0]
+
+  class _TensorPlaceholder:
+    shape = ()
+    dtype = None
+
+  placeholder_args = []
+  for i in range(total_args):
+    if i in static_args_dict:
+      placeholder_args.append(static_args_dict[i])
+    else:
+      placeholder_args.append(_TensorPlaceholder())
+  all_args = tree_util.tree_unflatten(in_tree, placeholder_args)
+  args, kwargs = all_args
+  rendered_parts = {}
+  for name, value in kwargs.items():
+    rendered_parts[name] = _render_for_template(value, tensor_counter)
+  for i, value in enumerate(args):
+    rendered_parts[str(i)] = _render_for_template(value, tensor_counter)
+  rendered = fmt
+  for name, rendered_part in rendered_parts.items():
+    rendered = rendered.replace(f"{{{name}}}", rendered_part)
+  positional_parts = [rendered_parts[str(i)] for i in range(len(args))
+                      if str(i) in rendered_parts]
+  for part in positional_parts:
+    rendered = rendered.replace("{}", part, 1)
+  return rendered
+
+
 def debug_print_lowering_rule(
     ctx,
     *dyn_args,
@@ -373,6 +520,9 @@ def debug_print_lowering_rule(
     has_placeholders,
     logging_record,
 ):
+  rendered_template = _render_template_from_parts(
+      fmt, in_tree, static_args, len(dyn_args)
+  )
   callback = partial(
       _format_print_callback,
       fmt,
@@ -382,8 +532,33 @@ def debug_print_lowering_rule(
   )
   callback = _make_flat_callback(in_tree, callback, static_args)
   effect = ordered_debug_effect if ordered else debug_effect
+  operand_attrs = None
+  recv_attrs = None
+  for_export = ctx.module_context.lowering_parameters.for_export
+  if for_export:
+    dyn_args, _ = _maybe_truncate_for_callback(ctx, dyn_args, ctx.avals_in)
+  if rendered_template and for_export:
+    # _debug_print_group is a unique ID that ties together all the SendOps
+    # and the RecvOp belonging to the same jax.debug.print call, so that the
+    # host callback can group operands and match them with the completion
+    # RecvOp.
+    group_id = str(ctx.module_context.new_channel())
+    group_dict = {"_debug_print_group": group_id}
+    first_dict = {
+        "_debug_print_group": group_id,
+        "_debug_print_format": rendered_template,
+    }
+    n = max(len(dyn_args), 1)
+    operand_attrs = [first_dict] + [group_dict] * (n - 1)
+    recv_attrs = group_dict
   return debug_callback_lowering(
-      ctx, *dyn_args, effect=effect, partitioned=partitioned, callback=callback
+      ctx,
+      *dyn_args,
+      effect=effect,
+      partitioned=partitioned,
+      callback=callback,
+      operand_frontend_attributes=operand_attrs,
+      recv_frontend_attributes=recv_attrs,
   )
 
 

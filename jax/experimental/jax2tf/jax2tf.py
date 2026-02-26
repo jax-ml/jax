@@ -35,6 +35,7 @@ from jax._src import api
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
+from jax._src import debugging as jax_debugging
 from jax._src import dtypes
 from jax._src import op_shardings
 from jax._src import source_info_util
@@ -327,6 +328,10 @@ def convert(fun_jax: Callable,
   return converted_fun_tf
 
 
+def _debug_callback_unsupported_lowering(ctx, *args, **params):
+  raise NotImplementedError("jax.debug.print is not supported in jax2tf.")
+
+
 class NativeSerializationImpl:
   def __init__(self, fun_jax, *,
                args_specs, kwargs_specs,
@@ -363,6 +368,9 @@ class NativeSerializationImpl:
         platforms=self.native_serialization_platforms,
         disabled_checks=self.native_serialization_disabled_checks,
         _device_assignment_for_internal_jax2tf_use_only=_exported_device_assignment,
+        override_lowering_rules=(
+            (jax_debugging.debug_print_p, _debug_callback_unsupported_lowering),
+        ),
     )(*self.args_specs, **self.kwargs_specs)
     assert(_exported_device_assignment[0] is not None)
     self.device_assignment = _exported_device_assignment[0]
