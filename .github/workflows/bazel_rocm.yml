@@ -96,7 +96,7 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     container:
-      image: "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa"
+      image: "rocm/tensorflow-build@sha256:30e7fcfad87b74a4b916565a6156f4d8d01a2f5a4e06d0d0e6c37926a1507d72"
       volumes:
         - /data:/data
       options: >-
@@ -106,14 +106,6 @@ jobs:
         --group-add video
         --shm-size 64G
         --env-file /etc/podinfo/gha-gpu-isolation-settings
-    env:
-      JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
-      JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
-      JAXCI_ROCM_VERSION: ${{ inputs.rocm-version }}
-      JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: ${{ inputs.write_to_bazel_remote_cache }}
-      JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
-      JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
-      JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "linux x86, jaxlib=${{ inputs.jaxlib-version }}, ROCM=${{ inputs.rocm-version }}, Python=${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
 # End Presubmit Naming Check github-rocm-presubmits
@@ -124,21 +116,25 @@ jobs:
       - name: ROCm Info
         run: |
           rocminfo
+      - name: Download jaxlib wheel from PyPI
+        if: inputs.build_jaxlib == 'false'
+        run: |
+          mkdir -p $(pwd)/dist
+          python${{ inputs.python }} -m pip download jaxlib --dest $(pwd)/dist/
+          echo "Downloaded wheels:" && ls -lh $(pwd)/dist/
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Set ROCm requirements lock file
-        if: inputs.build_jaxlib == 'false'
-        run: |
-          PY_VERSION="${JAXCI_HERMETIC_PYTHON_VERSION//./_}"
-          echo "JAXCI_ROCM_LOCK_FLAG=--repo_env=HERMETIC_REQUIREMENTS_LOCK=build/requirements_lock_${PY_VERSION}_rocm.txt" >> $GITHUB_ENV
       - name: "Bazel ROCm tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
         timeout-minutes: 120
         run: |
           ./ci/run_bazel_test_rocm_rbe.sh  \
             --config=single_gpu \
             --local_test_jobs=4 \
-            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa" \
-            ${JAXCI_ROCM_LOCK_FLAG:-}
+            --//jax:build_jaxlib="${{ inputs.build_jaxlib }}" \
+            --//jax:build_jax="${{ inputs.build_jax }}" \
+            --repo_env=HERMETIC_PYTHON_VERSION="${{ inputs.python }}" \
+            --action_env=JAX_ENABLE_X64="${{ inputs.enable-x64 }}" \
+            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="rocm/tensorflow-build@sha256:30e7fcfad87b74a4b916565a6156f4d8d01a2f5a4e06d0d0e6c37926a1507d72" \
