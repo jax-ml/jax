@@ -95,14 +95,85 @@ class PallasCallRemoteDMATest(TestCase):
       )(x)
 
     devices = jax.devices()[:2]
-    mesh = jax.sharding.Mesh(devices, ['x'])
+    mesh = jax.sharding.Mesh(devices, ["x"])
     y = jax.jit(
         jax.shard_map(
-            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'), check_vma=False,
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
         )
     )(x)
 
     expected = x[8:] if jax.process_index() == 0 else x[:8]
+    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+
+  # Test verifies an execution of HLO with several slightly different mosaic
+  # custom calls. The difference is needed to validate correct initialization
+  # of the collective metadata before each kernel execution.
+  def test_remote_dma_several_mosaic_ops(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+
+    def kernel(x_ref, y_ref, done_sem):
+      other_dev_id = 1 - lax.axis_index("x")
+      pl.semaphore_signal(done_sem, device_id=other_dev_id)
+      pl.semaphore_wait(done_sem)
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+      pl.semaphore_signal(done_sem, device_id=other_dev_id)
+      pl.semaphore_wait(done_sem)
+
+    def different_kernel(x_ref, y_ref, wait_sem, ready_sem):
+      other_dev_id = 1 - lax.axis_index("x")
+      pl.semaphore_signal(wait_sem, device_id=other_dev_id)
+      pl.semaphore_wait(wait_sem)
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      pl.semaphore_wait(ready_sem)
+
+    def body(x):
+      result = x
+      for _ in range(25):
+        result = pl.pallas_call(
+            kernel,
+            in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+            out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+            out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+            scratch_shapes=[
+                plgpu.SemaphoreType.REGULAR,
+            ],
+        )(result)
+
+        result = pl.pallas_call(
+            different_kernel,
+            in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+            out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+            out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+            scratch_shapes=[
+                plgpu.SemaphoreType.REGULAR,
+                plgpu.SemaphoreType.REGULAR,
+            ],
+        )(result)
+
+      return result
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    y = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )(x)
+
+    expected = x[:8] if jax.process_index() == 0 else x[8:]
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
   def test_remote_dma_with_retries(self):
@@ -938,6 +1009,14 @@ if __name__ == '__main__':
   # allocator is used, setUp will skip the test.
   os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.01'
   os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'default'
+  # TODO(b/483671897) re-enable once command buffers supported with collectives.
+  additional_xla_flags = "--xla_gpu_enable_command_buffer=''"
+  if "XLA_FLAGS" in os.environ:
+    os.environ["XLA_FLAGS"] = (
+        f"{os.environ['XLA_FLAGS']} {additional_xla_flags}"
+    )
+  else:
+    os.environ["XLA_FLAGS"] = additional_xla_flags
   if is_nvshmem_used():
     jt_multiprocess.main()
   else:
