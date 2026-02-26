@@ -43,6 +43,7 @@ from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import cf as cf_dialect
@@ -425,6 +426,7 @@ class ModuleContext:
   # See the documentation of reduction_scratch_bytes in CompilerParams.
   reduction_scratch_bytes: int
   warp_axis_name: str | None = None
+  outer_traceback: xc.Traceback | None = None
 
   @property
   def single_lane_predicate(self) -> ir.Value:
@@ -723,6 +725,7 @@ def lower_pipelined_jaxpr_to_module(
     jaxpr: jax_core.Jaxpr,
     params: gpu_core.CompilerParams,
     cost_estimate: pallas_core.CostEstimate | None,
+    outer_traceback: xc.Traceback | None = None,
 ) -> LoweringResult:
   del cost_estimate  # Unused.
 
@@ -850,6 +853,7 @@ def lower_pipelined_jaxpr_to_module(
         new_jaxpr,
         params,
         new_consts,
+        outer_traceback=outer_traceback,
     )
 
 
@@ -864,6 +868,7 @@ def lower_jaxpr_to_module(
     jaxpr: jax_core.Jaxpr,
     params: gpu_core.CompilerParams,
     consts=(),
+    outer_traceback: xc.Traceback | None = None,
 ) -> LoweringResult:
   debug_info = jaxpr.debug_info
   approx_math = params.approx_math
@@ -991,6 +996,7 @@ def lower_jaxpr_to_module(
         else None,
         auto_barriers=not params.unsafe_no_auto_barriers,
         reduction_scratch_bytes=params.reduction_scratch_bytes,
+        outer_traceback=outer_traceback,
     )
     del runtime_smem, grouped_barriers, runtime_barriers
     _ = lower_jaxpr_to_mosaic_gpu(
@@ -1046,6 +1052,21 @@ def lower_jaxpr_to_module(
     )
   scoped_semaphores_shape = tuple(scoped_semaphores_shape)
 
+  if outer_traceback is not None:
+    frame = source_info_util.user_frame(outer_traceback)
+    if frame is not None:
+      base_loc = ir.Location.file(
+          mlir.get_canonical_source_file(
+              frame.file_name, mlir.TracebackCaches()
+          ),
+          frame.start_line,
+          frame.start_column,
+      )
+    else:
+      base_loc = None
+  else:
+    base_loc = None
+
   # NOTE: new_out_shapes has out_shapes, then semaphores_shape and
   # optionally the profiler buffer.
   module, new_out_shapes, _, launch_ctx = mgpu_core._lower_as_gpu_kernel(
@@ -1062,6 +1083,7 @@ def lower_jaxpr_to_module(
       kernel_name=mlir.sanitize_name(debug_info.func_name),
       prof_spec=prof_spec,
       jax_mesh=jax_mesh,
+      base_loc=base_loc,
   )
 
   if lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
@@ -1175,7 +1197,10 @@ def lower_jaxpr_to_mosaic_gpu(
     invals = map(read_env, eqn.invars)
     eqn_name_stack = module_ctx.name_stack + eqn.source_info.name_stack
     loc = mlir.source_info_to_location(  # pytype: disable=wrong-arg-types
-        module_ctx, eqn.primitive, eqn_name_stack, eqn.source_info.traceback
+        module_ctx,
+        eqn.primitive,
+        eqn_name_stack,
+        eqn.source_info.traceback or module_ctx.outer_traceback,
     )
     with source_info_util.user_context(eqn.source_info.traceback), loc:
       if eqn.primitive not in mosaic_lowering_rules[

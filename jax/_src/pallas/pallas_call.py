@@ -42,8 +42,6 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 import jax._src.lax as lax
-from jax._src.lib import jaxlib_extension_version
-from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.mesh import get_abstract_mesh
 from jax._src.pallas import core as pallas_core
@@ -1069,16 +1067,11 @@ def _trace_kernel_to_jaxpr(
   )
   with grid_mapping.trace_env(), config._check_vma(False):
     with config.mutable_array_checks(False):
-      with (
-          xla_client.TracebackScope()
-          if jaxlib_extension_version >= 399
-          else contextlib.nullcontext()
-      ):
-        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-            wrapped_kernel_fun, kernel_avals
-        )
-        jaxpr, _ = pe.dce_jaxpr(jaxpr, used_outputs=[True] * len(jaxpr.outvars),
-                                instantiate=True)
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+          wrapped_kernel_fun, kernel_avals
+      )
+      jaxpr, _ = pe.dce_jaxpr(jaxpr, used_outputs=[True] * len(jaxpr.outvars),
+                              instantiate=True)
     if consts:
       consts_avals = [
           aval

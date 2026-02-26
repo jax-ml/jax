@@ -143,9 +143,19 @@ PyObject* traceback_tp_str(PyObject* self) {
   return nb::cast(traceback_to_string(tb)).release().ptr();
 }
 
+PyObject* traceback_tp_new(PyTypeObject* type, PyObject* args, PyObject* kwds) {
+  if (PyTuple_GET_SIZE(args) != 0 ||
+      (kwds != nullptr && PyDict_Size(kwds) != 0)) {
+    PyErr_SetString(PyExc_TypeError, "Traceback() takes no arguments");
+    return nullptr;
+  }
+  return PyObject_NewVar(PyObject, type, 0);
+}
+
 // It turns out to be slightly faster to define a tp_hash slot rather than
 // defining __hash__ and __eq__ on the class.
 PyType_Slot traceback_slots_[] = {
+    {Py_tp_new, reinterpret_cast<void*>(traceback_tp_new)},
     {Py_tp_hash, reinterpret_cast<void*>(traceback_tp_hash)},
     {Py_tp_richcompare, reinterpret_cast<void*>(traceback_tp_richcompare)},
     {Py_tp_dealloc, reinterpret_cast<void*>(traceback_tp_dealloc)},
@@ -390,6 +400,34 @@ void Traceback::Register(nb::module_& m) {
       traceback collection is disabled, returns ``None``. )doc");
 
   type.attr("frames") = xla::nb_property_readonly(&Traceback::Frames);
+
+  type.attr("__add__") = nb::cpp_function(
+      [](const Traceback& a, nb::handle b) -> nb::object {
+        if (!traceback_check(b)) {
+          return nb::borrow<nb::object>(Py_NotImplemented);
+        }
+        // Frames are ordered from innermost (most recent call) to outermost.
+        // Therefore, when concatenating tb1 + tb2, tb1 should be the inner
+        // traceback and tb2 should be the outer traceback.
+        Traceback b_tb = nb::borrow<Traceback>(b);
+        absl::Span<const TracebackEntry> a_frames = a.RawFrames();
+        absl::Span<const TracebackEntry> b_frames = b_tb.RawFrames();
+        int count = a_frames.size() + b_frames.size();
+        Traceback traceback = nb::steal<Traceback>(
+            PyObject_NewVar(PyObject, traceback_type_, count));
+        TracebackObject* tb =
+            reinterpret_cast<TracebackObject*>(traceback.ptr());
+        std::memcpy(tb->frames, a_frames.data(),
+                    sizeof(TracebackEntry) * a_frames.size());
+        std::memcpy(tb->frames + a_frames.size(), b_frames.data(),
+                    sizeof(TracebackEntry) * b_frames.size());
+        for (int i = 0; i < count; ++i) {
+          Py_INCREF(tb->frames[i].code);
+        }
+        return traceback;
+      },
+      nb::is_method(), nb::arg("other"), "Concatenates two tracebacks.");
+
   type.attr("raw_frames") = nb::cpp_function(
       [](const Traceback& tb) -> nb::tuple {
         // We return a tuple of lists, rather than a list of tuples, because it

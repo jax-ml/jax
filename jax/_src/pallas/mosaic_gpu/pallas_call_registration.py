@@ -22,7 +22,6 @@ import time
 import warnings
 
 import jax
-from jax._src import config
 from jax._src import core as jax_core
 from jax._src import frozen_dict
 from jax._src import sharding_impls
@@ -77,19 +76,21 @@ def pallas_call_lowering(
     assert isinstance(compiler_params, gpu_core.CompilerParams)
     gpu_params = compiler_params  # type: ignore[assignment]
 
-
   jax_mesh = None
   axis_context = ctx.module_context.axis_context
   if axis_context is not None:
     if isinstance(axis_context, sharding_impls.SPMDAxisContext):
       jax_mesh = axis_context.mesh
 
-  # TODO(slebedev): Remove this once the ensure-debug-info-scope-on-llvm-func
-  # pass correctly handles full tracebacks.
-  with config.include_full_tracebacks_in_locations(False):
-    lowering_result = lowering.lower_pipelined_jaxpr_to_module(
-        grid_mapping, mesh, jax_mesh, jaxpr, gpu_params, cost_estimate
-    )
+  lowering_result = lowering.lower_pipelined_jaxpr_to_module(
+      grid_mapping,
+      mesh,
+      jax_mesh,
+      jaxpr,
+      gpu_params,
+      cost_estimate,
+      outer_traceback=ctx.traceback,
+  )
   if debug:
     print(f"\nThe Mosaic GPU module for pallas_call {debug_info.func_src_info}:")
     print(lowering_result.module.operation)

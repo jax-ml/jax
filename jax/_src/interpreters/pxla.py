@@ -1600,7 +1600,8 @@ def _pmap_lowering(ctx: mlir.LoweringRuleContext, *in_nodes, axis_name,
         sub_ctx, call_jaxpr,
         ctx.name_stack.extend(util.wrap_name('pmap', name)),
         mlir.TokenSet(), (), *in_nodes_sharded,
-        dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering)
+        dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering,
+        outer_traceback=ctx.traceback)
   out_avals = [v.aval for v in call_jaxpr.outvars]
   outs = [_hlo_unshard(ctx, aval, new_env, out_axis, shard)
           for aval, out_axis, shard in zip(out_avals, out_axes, sharded_outs)]

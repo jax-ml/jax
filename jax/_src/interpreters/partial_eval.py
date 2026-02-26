@@ -20,11 +20,11 @@ from collections.abc import Callable, Sequence
 import contextlib
 from dataclasses import dataclass
 from functools import partial
-import logging
 import itertools as it
+import logging
 import operator as op
 from typing import Any, NamedTuple, Union
-from weakref import finalize, ref, ReferenceType, WeakValueDictionary
+from weakref import ReferenceType, WeakValueDictionary, finalize, ref
 
 import numpy as np
 
@@ -37,15 +37,17 @@ from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import profiler
 from jax._src import source_info_util
-from jax._src import xla_metadata_lib
 from jax._src import tree_util
+from jax._src import xla_metadata_lib
 from jax._src.core import (
     Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval, AbstractValue,
     ClosedJaxpr, new_jaxpr_eqn, Var, DropVar, Atom, JaxprEqn, Primitive,
     mapped_aval, unmapped_aval, get_referent, JaxprEqnContext, typeof)
+from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 from jax._src.source_info_util import SourceInfo
 from jax._src.state.types import AbstractRef, ReadEffect
-from jax._src.tree_util import PyTreeDef, treedef_tuple, FlatTree
+from jax._src.tree_util import FlatTree, PyTreeDef, treedef_tuple
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            as_hashable_function, weakref_lru_cache,
@@ -64,6 +66,13 @@ ConstId = int
 AttrKind = Any
 PyTree = Any
 logger = logging.getLogger(__name__)
+
+# TODO(phawkins): remove after jaxlib 0.9.1 is the minimum
+if jaxlib_extension_version >= 406:
+  TracebackScope = _jax.TracebackScope
+else:
+  TracebackScope = contextlib.nullcontext  # type: ignore
+
 
 class PartialVal(tuple):
   """Partial value: either a known value or an unknown (abstract) value.
@@ -2407,9 +2416,15 @@ def trace_to_jaxpr(
   config.enable_checks.value and debug_info.assert_arg_names(len(in_avals))
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(debug_info, parent_trace=parent_trace)
-  # Name stacks are reset because the name stacks on jaxpr equations should be
-  # rooted at the enclosing jaxpr.
-  with core.ensure_no_leaks(trace), source_info_util.reset_name_stack():
+  # Name stack and the traceback scope are reset because the metadata on jaxpr
+  # equations should be rooted at the enclosing jaxpr and not contain any
+  # context from the callsite. Otherwise metadata from one caller would bleed
+  # into metadata from a different caller if we, e.g., inline.
+  with (
+      core.ensure_no_leaks(trace),
+      source_info_util.reset_name_stack(),
+      TracebackScope(),
+  ):
     source_info = source_info_util.current()
     in_tracers = in_avals.map(partial(trace.new_arg, source_info=source_info))
     with core.set_current_trace(trace):
@@ -2445,9 +2460,15 @@ def trace_to_jaxpr_dynamic(
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(fun.debug_info, parent_trace=parent_trace,
                             lower=lower, auto_dce=auto_dce)
-  # Name stacks are reset because the name stacks on jaxpr equations should be
-  # rooted at the enclosing jaxpr.
-  with core.ensure_no_leaks(trace), source_info_util.reset_name_stack():
+  # Name stack and the traceback scope are reset because the metadata on jaxpr
+  # equations should be rooted at the enclosing jaxpr and not contain any
+  # context from the callsite. Otherwise metadata from one caller would bleed
+  # into metadata from a different caller if we, e.g., inline.
+  with (
+      core.ensure_no_leaks(trace),
+      source_info_util.reset_name_stack(),
+      TracebackScope(),
+  ):
     source_info = source_info_util.current()
     in_tracers = map(partial(trace.new_arg, source_info=source_info), in_avals)
     in_tracers = [t for t, keep in zip(in_tracers, keep_inputs) if keep]

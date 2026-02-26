@@ -1531,6 +1531,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   def test_barrier_via_pallas_call(self):
     self.skip_if_tc_tiling()
+
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
@@ -1656,8 +1657,7 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, indices), x[0] + x.sum(0)[::-1])
 
   def test_shared_scratch(self):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 1):
-      self.skip_if_tc_tiling()
+    self.skip_if_tc_tiling()
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
@@ -1684,8 +1684,7 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x)[0], x[0])
 
   def test_copy_in_shard_map(self):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 1):
-      self.skip_if_tc_tiling()
+    self.skip_if_tc_tiling()
     num_devices = len(jax.devices())
     mesh = jtu.create_mesh((num_devices,), ("x",))
 
@@ -1935,8 +1934,7 @@ class ScalarSubcoreTest(PallasSCTest):
   def test_parallel_loop(self, first_parallel, second_parallel):
     if not jtu.is_cloud_tpu_at_least(2026, 2, 13):
       self.skipTest("Requires a newer libtpu")
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 1):
-      self.skip_if_tc_tiling()
+    self.skip_if_tc_tiling()
     x = jnp.arange(self.num_lanes * self.num_lanes).reshape(
         self.num_lanes, self.num_lanes
     )
@@ -1971,8 +1969,7 @@ class ScalarSubcoreTest(PallasSCTest):
   def test_parallel_loop_with_carry(self):
     if not jtu.is_cloud_tpu_at_least(2026, 2, 13):
       self.skipTest("Requires a newer libtpu")
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 1):
-      self.skip_if_tc_tiling()
+    self.skip_if_tc_tiling()
     x = jnp.arange(self.num_lanes * self.num_lanes).reshape(
         self.num_lanes, self.num_lanes
     )

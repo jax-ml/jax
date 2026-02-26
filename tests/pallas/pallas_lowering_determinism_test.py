@@ -15,6 +15,8 @@
 """Tests for Pallas lowering determinism."""
 
 import json
+import unittest
+
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
@@ -110,10 +112,11 @@ class PallasLoweringDeterminismTest(jtu.JaxTestCase):
 
     self.assertEqual(body0, body1)
 
+  @unittest.skipIf(
+      jaxlib_extension_version < 409,
+      "Order independence requires a recent jaxlib"
+  )
   def testOrderAgnostic(self):
-    # TODO(b/476232048): Reenable once fixed.
-    self.skipTest("Fix debug info in jit cache.")
-
     def get_pallas_body(f):
       x = jnp.ones((8,), dtype=jnp.float32)
       return extract_pallas_body(f.lower(x))

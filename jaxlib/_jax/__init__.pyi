@@ -1376,6 +1376,9 @@ class Traceback:
 
   @property
   def frames(self) -> list[Frame]: ...
+  def __add__(self, other: object) -> object:
+    """Concatenates two tracebacks."""
+
   def raw_frames(self) -> tuple[list[types.CodeType], list[int]]: ...
   def as_python_traceback(self) -> traceback.TracebackType: ...
   @staticmethod

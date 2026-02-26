@@ -896,7 +896,7 @@ def _remat_lowering(
   outs, tokens_out = mlir.jaxpr_subcomp(
       ctx.module_context, jaxpr, ctx.name_stack.extend('checkpoint'),
       ctx.tokens_in, (), *args, dim_var_values=ctx.dim_var_values,
-      const_lowering=ctx.const_lowering)
+      const_lowering=ctx.const_lowering, outer_traceback=ctx.traceback)
   ctx.set_tokens_out(tokens_out)
   return outs
 

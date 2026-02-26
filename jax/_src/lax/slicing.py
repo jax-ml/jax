@@ -3313,7 +3313,8 @@ def _scatter_lower(ctx: mlir.LoweringRuleContext, operand, indices, updates, *,
     out_nodes, _ = mlir.jaxpr_subcomp(
         ctx.module_context, update_jaxpr, name_stack, mlir.TokenSet(),
         update_consts, update.arguments[0], update.arguments[1],
-        dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering)
+        dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering,
+        outer_traceback=ctx.traceback)
     hlo.return_(mlir.flatten_ir_values(out_nodes))
   return [mlir.lower_with_sharding_in_types(ctx, r, aval)
           for r, aval in safe_zip(op.results, ctx.avals_out)]

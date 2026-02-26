@@ -14,6 +14,7 @@
 
 import contextlib
 import traceback
+import unittest
 
 from absl.testing import absltest
 import jax
@@ -115,6 +116,33 @@ class TracebackTest(absltest.TestCase):
     python_tb = tb.as_python_traceback()
     for frame, _ in traceback.walk_tb(python_tb):
       _ = frame.f_locals  # should not crash
+
+  @unittest.skipIf(jaxlib_extension_version < 409, reason="Needs newer jaxlib")
+  def testAdd(self):
+    def FooFn():
+      return Traceback.get_traceback()
+
+    def BarFn():
+      return Traceback.get_traceback()
+
+    with tracebacks(enabled=True):
+      tb1 = FooFn()
+      tb2 = BarFn()
+
+      tb3 = tb1 + tb2
+      self.assertEqual(len(tb3.frames), len(tb1.frames) + len(tb2.frames))
+      self.assertEqual(tb3.frames[0].function_name, tb1.frames[0].function_name)
+      self.assertEqual(
+        tb3.frames[-1].function_name, tb2.frames[-1].function_name)
+
+      with self.assertRaises(TypeError):
+        _ = tb1 + 1
+
+  def testEmptyConstructor(self):
+    tb = Traceback()
+    self.assertIsInstance(tb, Traceback)
+    self.assertEmpty(tb.frames)
+    self.assertEqual(str(tb), "")
 
   def testTracebackFromFrames(self):
     def FooFn(x):

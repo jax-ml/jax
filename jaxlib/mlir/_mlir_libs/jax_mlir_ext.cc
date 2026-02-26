@@ -146,13 +146,17 @@ absl::StatusOr<std::vector<MlirValue>> InlinedCall(
         // * The name should be "parent_op_name/child_op_name" (assuming both
         //   are present).
         // * We use the op_type of the parent.
-        // * We use the traceback of the parent. We want the location of the
-        //   equation, not the location of the lowering rule.
+        // * We concatenate the traceback of the parent with the traceback of
+        //   the child.
         mlir::Location child_loc = op->getLoc();
         llvm::StringRef child_op_type, child_op_name;
         ParseLocation(child_loc, child_op_type, child_op_name);
 
-        child_loc = parent_base_loc;
+        if (mlir::isa<mlir::UnknownLoc>(child_loc)) {
+          child_loc = parent_base_loc;
+        } else if (!mlir::isa<mlir::UnknownLoc>(parent_base_loc)) {
+          child_loc = mlir::CallSiteLoc::get(child_loc, parent_base_loc);
+        }
         if (child_op_name.empty()) {
           child_loc = mlir::NameLoc::get(
               op_builder.getStringAttr(parent_op_name), child_loc);

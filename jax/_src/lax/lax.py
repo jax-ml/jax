@@ -7667,7 +7667,8 @@ def _reduce_lower(ctx: mlir.LoweringRuleContext, *values,
                                       jaxpr.consts,
                                       *reducer.arguments,
                                       dim_var_values=ctx.dim_var_values,
-                                      const_lowering=ctx.const_lowering)
+                                      const_lowering=ctx.const_lowering,
+                                      outer_traceback=ctx.traceback)
     hlo.return_(mlir.flatten_ir_values(out_nodes))
   return [mlir.lower_with_sharding_in_types(ctx, r, aval)
           for r, aval in safe_zip(op.results, ctx.avals_out)]

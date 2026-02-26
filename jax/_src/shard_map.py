@@ -41,6 +41,7 @@ from jax._src.mesh import (AbstractMesh, Mesh, BaseMesh, AxisType,
                            use_abstract_mesh, get_abstract_mesh,
                            get_concrete_mesh)
 from jax._src.lax import lax, parallel as lax_parallel
+from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo, sdy
 from jax._src.sharding_impls import NamedSharding, PartitionSpec
@@ -962,7 +963,8 @@ def _shard_map_lowering_shardy(
           mlir.TokenSet(zip(ctx.tokens_in.effects(), tokens)),
           (), *in_nodes,
           dim_var_values=ctx.dim_var_values,
-          const_lowering=ctx.const_lowering)
+          const_lowering=ctx.const_lowering,
+          outer_traceback=_jax.Traceback())
       ctx.set_tokens_out(tokens_out)
     return out_nodes
 
@@ -1025,7 +1027,8 @@ def _shard_map_lowering_shardy(
         mlir.TokenSet(zip(ctx.tokens_in.effects(), token_arg_values)),
         (), *in_args,
         dim_var_values=dim_var_values,
-        const_lowering=block_const_lowering)
+        const_lowering=block_const_lowering,
+        outer_traceback=_jax.Traceback())
     sdy.ReturnOp([ir.Value(x) for x in (*[v for _, v in tokens_out.items()],
                                         *out_nodes_)])
     num_tokens = len(tokens_out.effects())

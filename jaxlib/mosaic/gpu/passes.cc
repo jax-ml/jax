@@ -34,8 +34,8 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/Location.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Location.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Value.h"
@@ -58,7 +58,7 @@ struct ConvertExtractStridedSlicePattern final
   using OpConversionPattern::OpConversionPattern;
   mlir::LogicalResult matchAndRewrite(
       mlir::vector::ExtractStridedSliceOp op, OpAdaptor subst,
-      mlir::ConversionPatternRewriter &rewriter) const override {
+      mlir::ConversionPatternRewriter& rewriter) const override {
     auto vty = op.getSourceVectorType();
     if (vty.getRank() != 1) {
       return rewriter.notifyMatchFailure(op, "only 1-D vectors are supported");
@@ -111,7 +111,7 @@ class ConvertGpuToLLVMPass
   static constexpr llvm::StringLiteral kPassName = "ConvertGpuToLLVMPass";
 
   void runOnOperation() override {
-    mlir::MLIRContext *ctx = &getContext();
+    mlir::MLIRContext* ctx = &getContext();
     mlir::RewritePatternSet patterns(ctx);
     mlir::LLVMTypeConverter converter(ctx);
     mlir::ConversionTarget target(*ctx);
@@ -194,7 +194,8 @@ class LLVMAttrInsertionPass
     : public jaxlib::mlir::Pass<LLVMAttrInsertionPass, mlir::gpu::GPUModuleOp> {
  public:
   using jaxlib::mlir::Pass<LLVMAttrInsertionPass, mlir::gpu::GPUModuleOp>::Pass;
-  static constexpr llvm::StringLiteral kArgumentName = "mosaic-llvm-attr-insertion";
+  static constexpr llvm::StringLiteral kArgumentName =
+      "mosaic-llvm-attr-insertion";
   static constexpr llvm::StringLiteral kPassName = "LLVMAttrInsertionPass";
 
   void runOnOperation() override {
@@ -241,19 +242,25 @@ class ResolveTrivialLocationsPass
   void runOnOperation() override {
     const auto trivial_loc =
         mlir::NameLoc::get(mlir::StringAttr::get(&getContext(), "pallas_call"));
+    const auto trivial_loc2 = mlir::NameLoc::get(
+        mlir::StringAttr::get(&getContext(), "pallas_call:"), trivial_loc);
     getOperation()->walk([&](mlir::func::FuncOp func_op) {
-      if (func_op->getLoc() != trivial_loc) {
+      if (func_op->getLoc() != trivial_loc &&
+          func_op->getLoc() != trivial_loc2) {
         return mlir::WalkResult::advance();
       }
       std::optional<mlir::Location> replacement_loc;
       func_op.getBody().walk([&](mlir::Operation* op) {
-        if (op->getLoc() == trivial_loc) {
-          return mlir::WalkResult::advance();
-        }
         auto candidate_loc = op->getLoc();
-        while (mlir::isa<mlir::NameLoc>(candidate_loc)) {
-          candidate_loc =
-              mlir::cast<mlir::NameLoc>(candidate_loc).getChildLoc();
+        while (true) {
+          if (auto name_loc = mlir::dyn_cast<mlir::NameLoc>(candidate_loc)) {
+            candidate_loc = name_loc.getChildLoc();
+          } else {
+            break;
+          }
+        }
+        if (mlir::isa<mlir::UnknownLoc>(candidate_loc)) {
+          return mlir::WalkResult::advance();
         }
         replacement_loc = candidate_loc;
         return mlir::WalkResult::interrupt();
@@ -264,7 +271,7 @@ class ResolveTrivialLocationsPass
       func_op.walk([&](mlir::Operation* op) {
         // We use the same replacement for all ops with the trivial location,
         // because that what the lowering of pallas_call would have done.
-        if (op->getLoc() == trivial_loc) {
+        if (op->getLoc() == trivial_loc || op->getLoc() == trivial_loc2) {
           op->setLoc(*replacement_loc);
         }
       });
@@ -273,8 +280,7 @@ class ResolveTrivialLocationsPass
   }
 };
 
-
-bool IsMemRefDescriptorBuilderOp(mlir::Operation *op) {
+bool IsMemRefDescriptorBuilderOp(mlir::Operation* op) {
   return mlir::matchPattern(op, mlir::m_Constant()) ||
          mlir::isa<mlir::UnrealizedConversionCastOp, mlir::LLVM::InsertValueOp,
                    mlir::LLVM::UndefOp, mlir::LLVM::ConstantOp>(op);
@@ -305,16 +311,16 @@ class MosaicGpuSinkMemRefDescriptorsPass
       "MosaicGpuSinkMemRefDescriptorsPass";
 
   void runOnOperation() override {
-    mlir::Operation *op = getOperation();
+    mlir::Operation* op = getOperation();
     op->walk([](mlir::gpu::LaunchOp launch) {
-      mlir::Region &body = launch.getBody();
+      mlir::Region& body = launch.getBody();
 
       mlir::SetVector<mlir::Value> sink_sources;
       mlir::getUsedValuesDefinedAbove(body, sink_sources);
 
-      mlir::SetVector<mlir::Operation *> to_sink;
+      mlir::SetVector<mlir::Operation*> to_sink;
       for (mlir::Value operand : sink_sources) {
-        if (mlir::Operation *sink_source_op = operand.getDefiningOp()) {
+        if (mlir::Operation* sink_source_op = operand.getDefiningOp()) {
           GetOpsToSink(sink_source_op, to_sink);
         }
       }
