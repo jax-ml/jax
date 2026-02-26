@@ -1451,6 +1451,37 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
     self.assertIn("x: WGMMA_ROW\n", output())
 
+  def test_scratch_ref_with_transforms_regression(self):
+    self.skip_if_wg_semantics()
+    # Tests that scratch shapes with transforms (e.g. Tiling + Transpose)
+    # can be allocated and used without triggering rank mismatch errors.
+    def body(x_ref, o_ref, scratch_ref, barrier):
+      plgpu.copy_gmem_to_smem(x_ref, scratch_ref, barrier)
+      plgpu.barrier_wait(barrier)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(scratch_ref, o_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    shape = (128, 2, 128)
+    dtype = jnp.bfloat16
+    swizzle = 128
+    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+    transforms = (
+        plgpu.TransposeTransform((1, 0, 2)),
+        plgpu.TilingTransform((8, swizzle_elems)),
+        plgpu.TransposeTransform((1, 0, 2, 3, 4)),
+        plgpu.SwizzleTransform(swizzle),
+    )
+
+    kernel = self.kernel(
+        body,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        scratch_shapes=[plgpu.SMEM(shape, dtype, transforms=transforms),
+                        plgpu.Barrier()]
+    )
+    x = jnp.ones(shape, dtype=dtype)
+    np.testing.assert_array_equal(kernel(x), x)
+
   @parameterized.parameters(False, True)
   def test_fp8_relayout(self, from_narrow):
     self.skip_if_wg_semantics()  # Failed to infer layouts.

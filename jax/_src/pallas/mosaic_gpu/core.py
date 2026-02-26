@@ -357,17 +357,21 @@ class GPUMemoryRef(pallas_core.MemoryRef):
 
   def get_ref_aval(self) -> _Ref:
     aval: Any = jax_core.ShapedArray(self.shape, self.dtype)
-    aval = state_types.transform_type(self.transforms, aval)
     if self.memory_space == MemorySpace.TMEM:
       aval = AbstractTMEMRef(
           aval, self.memory_space, self.layout, self.collective
       )
+      physical_ref_aval = aval
     else:
+      physical_aval = aval
+      for t in self.transforms:
+        physical_aval = t.transform_type(physical_aval)
       aval = state.AbstractRef(aval, memory_space=self.memory_space)
+      physical_ref_aval = state.AbstractRef(physical_aval, memory_space=self.memory_space)
     transforms: list[state_types.Transform] = pallas_core.undo_transforms(
         aval, self.transforms
     )
-    ref = state_types.TransformedRef(aval, tuple(transforms))
+    ref = state_types.TransformedRef(physical_ref_aval, tuple(transforms))
     if not ref.transforms:
       return ref.ref
     return ref
