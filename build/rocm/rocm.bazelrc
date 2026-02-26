@@ -27,7 +27,12 @@ test:rocm --run_under=@xla//build_tools/rocm:parallel_gpu_execute
 
 # Configs for ROCm RBE tests
 build:single_gpu --repo_env=TF_ROCM_RBE_POOL="linux_x64_gpu"
+build:single_gpu --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL="linux_x64_gpu"
+build:single_gpu --repo_env=TF_ROCM_RBE_MULTI_GPU_POOL="linux_x64_gpu"
+
 build:multi_gpu --repo_env=TF_ROCM_RBE_POOL="linux_x64_multigpu"
+build:multi_gpu --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL="linux_x64_multigpu"
+build:multi_gpu --repo_env=TF_ROCM_RBE_MULTI_GPU_POOL="linux_x64_multigpu"
 
 build:rocm_rbe --tls_client_certificate="/data/ci-cert.crt"
 build:rocm_rbe --tls_client_key="/data/ci-cert.key"

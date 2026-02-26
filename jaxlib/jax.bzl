@@ -404,6 +404,8 @@ def _jax_wheel_impl(ctx):
 
     full_wheel_version = (WHEEL_VERSION + WHEEL_VERSION_SUFFIX)
     env["WHEEL_VERSION_SUFFIX"] = WHEEL_VERSION_SUFFIX
+    if ctx.attr.reproducible:
+        env["SOURCE_DATE_EPOCH"] = "0"
     if not WHEEL_VERSION_SUFFIX:
         env["JAX_RELEASE"] = "1"
 
@@ -512,6 +514,7 @@ _jax_wheel = rule(
         "platform_version": attr.string(),
         "skip_gpu_kernels": attr.bool(default = False),
         "enable_rocm": attr.bool(default = False),
+        "reproducible": attr.bool(default = False),
         "include_cuda_libs": attr.label(default = Label("@local_config_cuda//cuda:include_cuda_libs")),
         "override_include_cuda_libs": attr.label(default = Label("@local_config_cuda//cuda:override_include_cuda_libs")),
         "py_freethreaded": attr.label(default = Label("@rules_python//python/config_settings:py_freethreaded")),
@@ -530,6 +533,7 @@ def jax_wheel(
         enable_cuda = False,
         enable_rocm = False,
         platform_version = "",
+        reproducible = False,
         source_files = []):
     """Create jax artifact wheels.
 
@@ -545,6 +549,7 @@ def jax_wheel(
       enable_cuda: whether to build a cuda wheel
       enable_rocm: whether to build a rocm wheel
       platform_version: the cuda version to use for the wheel
+      reproducible: whether to produce a reproducible wheel by fixing timestamps
       source_files: the source files to include in the wheel
 
     Returns:
@@ -562,6 +567,7 @@ def jax_wheel(
         enable_cuda = enable_cuda,
         enable_rocm = enable_rocm,
         platform_version = platform_version,
+        reproducible = reproducible,
         # git_hash is empty by default. Use `--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)`
         # flag in bazel command to pass the git hash for nightly or release builds.
         platform_name = select({
