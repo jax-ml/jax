@@ -16,7 +16,7 @@
 
 from typing import overload
 
-from .import XlaComputation as _XlaComputation
+from . import XlaComputation as _XlaComputation
 
 def hlo_to_stablehlo(computation: bytes) -> bytes: ...
 def xla_computation_to_mlir_module(computation: _XlaComputation) -> str: ...

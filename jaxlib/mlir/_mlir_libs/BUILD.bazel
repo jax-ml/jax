@@ -471,10 +471,9 @@ py_binary(
     ],
 )
 
-sh_binary(
+py_binary(
     name = "normalize_stubs",
-    srcs = ["normalize_stubs.sh"],
-    env = {"JAXLIB_BUILD": "1"},
+    srcs = ["normalize_stubs.py"],
     visibility = ["//visibility:private"],
 )
 

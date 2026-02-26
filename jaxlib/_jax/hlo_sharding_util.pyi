@@ -16,7 +16,7 @@
 
 from collections.abc import Sequence
 
-from .import HloSharding as _HloSharding
+from . import HloSharding as _HloSharding
 
 def PartiallyReplicateTiledShardingOnDims(
     sharding: _HloSharding, dims: Sequence[int], /

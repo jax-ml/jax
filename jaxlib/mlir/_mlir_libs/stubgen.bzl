@@ -24,7 +24,7 @@ def py_stubgen(name, module, outs = None, stubgen = "//jaxlib/mlir/_mlir_libs:st
         outs = outs,
         cmd = """
             $(location {stubgen}) -m {module} -O $(RULEDIR)
-            $(location {normalize}) $(OUTS)
+            $(location {normalize}) --jaxlib-build $(OUTS)
         """.format(module = module, stubgen = stubgen, normalize = normalize),
         tools = [normalize, stubgen],
     )

@@ -15,12 +15,11 @@
 """Jax C++ jit library"""
 
 from collections.abc import Callable, Sequence
-from .config import Config as _Config
-from .pytree import (
-    PyTreeDef as _PyTreeDef,
-    PyTreeRegistry as _PyTreeRegistry,
-)
+
 import numpy
+
+from .config import Config as _Config
+from .pytree import (PyTreeDef as _PyTreeDef, PyTreeRegistry as _PyTreeRegistry)
 
 def set_disable_jit_state(config: _Config) -> None: ...
 def set_enable_x64_state(config: _Config) -> None: ...

@@ -15,12 +15,13 @@
 from collections.abc import Sequence
 from typing import Any, overload
 
-from .import (
+import typing_extensions
+
+from . import (
     CompileOptions as _CompileOptions,
     DeviceList as _DeviceList,
     Device as _Device,
 )
-import typing_extensions
 
 class Program:
   pass
