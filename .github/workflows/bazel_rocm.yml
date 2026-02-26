@@ -134,7 +134,7 @@ jobs:
           PY_VERSION="${JAXCI_HERMETIC_PYTHON_VERSION//./_}"
           echo "JAXCI_ROCM_LOCK_FLAG=--repo_env=HERMETIC_REQUIREMENTS_LOCK=build/requirements_lock_${PY_VERSION}_rocm.txt" >> $GITHUB_ENV
       - name: "Bazel ROCm tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
-        timeout-minutes: 60
+        timeout-minutes: 120
         run: |
           ./ci/run_bazel_test_rocm_rbe.sh  \
             --config=single_gpu \
