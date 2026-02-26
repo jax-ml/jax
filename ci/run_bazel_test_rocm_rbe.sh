@@ -84,4 +84,6 @@ bazel --bazelrc=build/rocm/rocm.bazelrc test \
     -//tests:lobpcg_test_gpu \
     -//tests:scipy_stats_test_gpu \
     -//tests:nn_test_gpu \
-    -//tests:lax_scipy_sparse_test_gpu
+    -//tests:lax_scipy_sparse_test_gpu \
+    -//tests:lax_scipy_spectral_dac_test_gpu \
+    -//tests:lax_scipy_special_functions_test_gpu

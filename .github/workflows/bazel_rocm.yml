@@ -140,5 +140,4 @@ jobs:
             --config=single_gpu \
             --local_test_jobs=4 \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa" \
-            --repo_env=TF_ROCM_RBE_POOL="linux_x64_gpu" \
             ${JAXCI_ROCM_LOCK_FLAG:-}

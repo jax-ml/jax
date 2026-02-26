@@ -17,16 +17,17 @@ common:rocm --action_env=CLANG_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 common:rocm --copt=-Wno-gnu-offsetof-extensions
 common:rocm --copt=-Qunused-arguments
 
+# Used for @xla//build_tools/rocm:parallel_gpu_execute
+common:rocm --legacy_external_runfiles=true
+
 test:rocm --test_timeout=920,2400,7200,9600
 test:rocm --flaky_test_attempts=3
 test:rocm --test_verbose_timeout_warnings
-
-# Used for @xla//build_tools/rocm:parallel_gpu_execute
-build:rocm --legacy_external_runfiles=true
+test:rocm --run_under=@xla//build_tools/rocm:parallel_gpu_execute
 
 # Configs for ROCm RBE tests
-build:single_gpu --run_under=@xla//build_tools/rocm:parallel_gpu_execute
-build:multi_gpu --run_under=@xla//build_tools/rocm:sanitizer_wrapper
+build:single_gpu --repo_env=TF_ROCM_RBE_POOL="linux_x64_gpu"
+build:multi_gpu --repo_env=TF_ROCM_RBE_POOL="linux_x64_multigpu"
 
 build:rocm_rbe --tls_client_certificate="/data/ci-cert.crt"
 build:rocm_rbe --tls_client_key="/data/ci-cert.key"
@@ -39,11 +40,11 @@ build:rocm_rbe --remote_cache="grpcs://wardite.cluster.engflow.com"
 build:rocm_rbe --host_platform="@local_config_rocm//rocm:linux_x64"
 build:rocm_rbe --extra_execution_platforms="@local_config_rocm//rocm:linux_x64"
 build:rocm_rbe --platforms="@local_config_rocm//rocm:linux_x64"
-build:rocm_rbe --repo_env="TF_ROCM_RBE_POOL=linux_x64_gpu"
 build:rocm_rbe --bes_timeout=600s
 build:rocm_rbe --spawn_strategy=local
 build:rocm_rbe --grpc_keepalive_time=30s
 build:rocm_rbe --repo_env=REMOTE_GPU_TESTING=1
+build:rocm_rbe --remote_download_outputs=minimal
 
 test:rocm_rbe --remote_timeout=3600
 test:rocm_rbe --jobs=200
