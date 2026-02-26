@@ -14,25 +14,19 @@
 
 """Repository rule to download ROCm plugin wheels from a GitHub release.
 
-Queries the GitHub Releases API to discover the latest (or a specific) release,
-finds the matching plugin and PJRT wheel assets, and exposes them as py_import
-targets.
+Queries the GitHub Releases API on ROCm/rocm-jax to find wheels matching the
+current jaxlib version, Python version, and ROCm version, then exposes them
+as py_import targets.
 
-Usage in MODULE.bazel:
+Usage in WORKSPACE (after @jax_wheel and @python_version_repo are initialized):
 
-    rocm_wheels_repository = use_repo_rule(
-        "//third_party/rocm_wheels:workspace.bzl",
-        "rocm_wheels_repository",
-    )
+    load("@jax_wheel//:wheel.bzl", "WHEEL_VERSION")
+    load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
 
-    # Fetch the latest release (Python version from HERMETIC_PYTHON_VERSION):
-    rocm_wheels_repository(name = "rocm_wheels")
-
-    # Or pin to a specific release tag and/or Python version:
     rocm_wheels_repository(
         name = "rocm_wheels",
-        tag = "jax-rocm-v0.5.0",
-        python_version = "3.11",
+        jaxlib_version = WHEEL_VERSION,
+        python_version = HERMETIC_PYTHON_VERSION,
     )
 
 Then reference the targets as:
@@ -70,41 +64,105 @@ def _get_github_headers(repository_ctx):
         headers["Authorization"] = "Bearer " + github_token
     return headers
 
-def _fetch_release_metadata(repository_ctx, headers):
-    owner = repository_ctx.attr.github_owner
-    repo = repository_ctx.attr.github_repo
-    tag = repository_ctx.attr.tag
-
-    if tag:
-        api_url = "https://api.github.com/repos/{}/{}/releases/tags/{}".format(
-            owner,
-            repo,
-            tag,
-        )
-    else:
-        api_url = "https://api.github.com/repos/{}/{}/releases/latest".format(
-            owner,
-            repo,
-        )
-
+def _download_release_json(repository_ctx, api_url, headers):
     result = repository_ctx.download(
         url = api_url,
         output = "_release.json",
         headers = headers,
+        allow_fail = True,
     )
-
     if not result.success:
-        fail("Failed to fetch release metadata from {}".format(api_url))
-
+        return None
     content = repository_ctx.read("_release.json")
     repository_ctx.delete("_release.json")
     return json.decode(content)
 
-def _find_wheel_assets(release, python_version):
-    """Finds the plugin and pjrt wheel assets in a release.
+def _download_releases_list(repository_ctx, api_url, headers):
+    """Downloads a page of releases and returns the parsed JSON list."""
+    result = repository_ctx.download(
+        url = api_url,
+        output = "_releases.json",
+        headers = headers,
+        allow_fail = True,
+    )
+    if not result.success:
+        return []
+    content = repository_ctx.read("_releases.json")
+    repository_ctx.delete("_releases.json")
+    return json.decode(content)
 
-    Returns (plugin_asset, pjrt_asset) or fails if not found.
-    """
+def _major_minor(version):
+    """Returns 'MAJOR.MINOR.' from a version string like '0.9.1'."""
+    parts = version.split(".")
+    if len(parts) < 2:
+        return version + "."
+    return parts[0] + "." + parts[1] + "."
+
+def _fetch_release_metadata(repository_ctx, headers):
+    owner = repository_ctx.attr.github_owner
+    repo = repository_ctx.attr.github_repo
+    tag = repository_ctx.attr.tag
+    base_api = "https://api.github.com/repos/{}/{}".format(owner, repo)
+
+    if tag:
+        release = _download_release_json(
+            repository_ctx,
+            "{}/releases/tags/{}".format(base_api, tag),
+            headers,
+        )
+        if not release:
+            fail("Release '{}' not found in {}/{}".format(tag, owner, repo))
+        return release
+
+    version_tag = "rocm-jax-v{}".format(repository_ctx.attr.jaxlib_version)
+
+    # Try exact version match first.
+    release = _download_release_json(
+        repository_ctx,
+        "{}/releases/tags/{}".format(base_api, version_tag),
+        headers,
+    )
+    if release:
+        return release
+
+    # Exact tag not found — scan all recent releases for the best match.
+    # Prefer the highest version with the same major.minor, including RCs
+    # (e.g. for jaxlib 0.9.1, match rocm-jax-v0.9.0-rc2).
+    mm_prefix = "rocm-jax-v" + _major_minor(repository_ctx.attr.jaxlib_version)
+    releases = _download_releases_list(
+        repository_ctx,
+        "{}/releases?per_page=50".format(base_api),
+        headers,
+    )
+    best = None
+    for rel in releases:
+        rel_tag = rel.get("tag_name", "")
+        if rel_tag.startswith(mm_prefix):
+            if not best or rel_tag > best.get("tag_name", ""):
+                best = rel
+
+    if best:
+        # buildifier: disable=print
+        print("rocm_wheels: release '{}' not found, using '{}'".format(
+            version_tag,
+            best["tag_name"],
+        ))
+        return best
+
+    # Nothing matched the major.minor — pick the overall newest release.
+    if releases:
+        newest = releases[0]
+        # buildifier: disable=print
+        print("rocm_wheels: no release matching '{}', falling back to '{}'".format(
+            version_tag,
+            newest["tag_name"],
+        ))
+        return newest
+
+    fail("No releases found in {}/{}".format(owner, repo))
+
+def _find_wheel_assets(release, python_version, rocm_version):
+    """Finds the plugin and pjrt wheel assets in a release."""
     cp_tag = "cp" + python_version.replace(".", "")
     assets = release.get("assets", [])
     tag_name = release.get("tag_name", "unknown")
@@ -116,7 +174,8 @@ def _find_wheel_assets(release, python_version):
         name = asset["name"]
         if not name.endswith(".whl"):
             continue
-        if "rocm" not in name:
+
+        if rocm_version and ("rocm" + rocm_version) not in name:
             continue
 
         is_plugin = "plugin" in name and "pjrt" not in name
@@ -127,37 +186,25 @@ def _find_wheel_assets(release, python_version):
         elif is_pjrt:
             pjrt_asset = asset
 
-    if not plugin_asset:
-        available = [a["name"] for a in assets if a["name"].endswith(".whl")]
-        fail(
-            "No ROCm plugin wheel found for Python {} (abi tag '{}') in " +
-            "release '{}'. Available wheels: {}".format(
-                python_version,
-                cp_tag,
-                tag_name,
-                available,
-            ),
-        )
+    wheel_names = [a["name"] for a in assets if a["name"].endswith(".whl")]
 
-    if not pjrt_asset:
-        available = [a["name"] for a in assets if a["name"].endswith(".whl")]
-        fail(
-            "No ROCm PJRT wheel found in release '{}'. " +
-            "Available wheels: {}".format(tag_name, available),
-        )
+    for label, asset in [("plugin", plugin_asset), ("pjrt", pjrt_asset)]:
+        if not asset:
+            fail(
+                "No ROCm {} wheel found for Python {} (abi '{}') and ".format(label, python_version, cp_tag) +
+                "ROCm '{}' in release '{}'. Available wheels:\n  {}".format(
+                    rocm_version or "any",
+                    tag_name,
+                    "\n  ".join(wheel_names),
+                ),
+            )
 
     return plugin_asset, pjrt_asset
 
 def _rocm_wheels_repository_impl(repository_ctx):
-    python_version = repository_ctx.os.environ.get(
-        "HERMETIC_PYTHON_VERSION",
-        repository_ctx.attr.python_version,
-    )
-    if not python_version:
-        fail(
-            "python_version must be set either via the 'python_version' " +
-            "attribute or the HERMETIC_PYTHON_VERSION environment variable.",
-        )
+    python_version = repository_ctx.attr.python_version
+    jaxlib_version = repository_ctx.attr.jaxlib_version
+    rocm_version = repository_ctx.attr.rocm_version
 
     headers = _get_github_headers(repository_ctx)
     release = _fetch_release_metadata(repository_ctx, headers)
@@ -165,12 +212,13 @@ def _rocm_wheels_repository_impl(repository_ctx):
     plugin_asset, pjrt_asset = _find_wheel_assets(
         release,
         python_version,
+        rocm_version,
     )
 
     tag_name = release.get("tag_name", "unknown")
 
     # buildifier: disable=print
-    print("rocm_wheels: using release '{}' — plugin='{}', pjrt='{}'".format(
+    print("rocm_wheels: release '{}' — plugin='{}', pjrt='{}'".format(
         tag_name,
         plugin_asset["name"],
         pjrt_asset["name"],
@@ -198,19 +246,26 @@ rocm_wheels_repository = repository_rule(
             doc = "GitHub repository owner.",
         ),
         "github_repo": attr.string(
-            default = "jax",
+            default = "rocm-jax",
             doc = "GitHub repository name.",
         ),
         "tag": attr.string(
             default = "",
-            doc = "GitHub release tag. If empty, the latest release is used.",
+            doc = "GitHub release tag override. If empty, derived as 'rocm-jax-v{jaxlib_version}'.",
+        ),
+        "jaxlib_version": attr.string(
+            mandatory = True,
+            doc = "JAX/jaxlib version to match, e.g. '0.9.1'.",
         ),
         "python_version": attr.string(
+            mandatory = True,
+            doc = "Python version to match wheels against, e.g. '3.11'.",
+        ),
+        "rocm_version": attr.string(
             default = "",
-            doc = "Python version to match wheels against, e.g. '3.11'. " +
-                  "If empty, reads from the HERMETIC_PYTHON_VERSION env var.",
+            doc = "ROCm version to match, e.g. '7.2.0'. If empty, picks the first match.",
         ),
     },
-    environ = ["GITHUB_TOKEN", "HERMETIC_PYTHON_VERSION"],
+    environ = ["GITHUB_TOKEN"],
     doc = "Downloads ROCm plugin wheels from a GitHub release and exposes them as py_import targets.",
 )
