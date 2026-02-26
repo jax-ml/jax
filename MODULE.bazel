@@ -107,10 +107,14 @@ single_version_override(
 
 # TODO: Support HERMETIC_PYTHON_URL, etc to allow specifying a custom built
 # python version.
+# Keep in sync with jax/version.py (_version) and python.defaults below.
+DEFAULT_PYTHON_VERSION = "3.11"
+JAXLIB_VERSION = "0.9.1"
+
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
 python.defaults(
     # The environment variable takes precedence if set.
-    python_version = "3.11",
+    python_version = DEFAULT_PYTHON_VERSION,
     python_version_env = "HERMETIC_PYTHON_VERSION",
 )
 python.toolchain(python_version = "3.11")
@@ -248,11 +252,12 @@ rocm_wheels_repository = use_repo_rule(
     "rocm_wheels_repository",
 )
 
-# Pre-built ROCm wheels from a GitHub release.
+# Pre-built ROCm wheels from GitHub (ROCm/rocm-jax).
 rocm_wheels_repository(
     name = "rocm_wheels",
-    # Python version is read from HERMETIC_PYTHON_VERSION env var by default.
-    # tag = "jax-rocm-v0.5.0",  # Optional: omit for latest release.
+    jaxlib_version = JAXLIB_VERSION,
+    python_version = DEFAULT_PYTHON_VERSION,
+    # rocm_version = "7.2.0",  # Optional: pick a specific ROCm version.
 )
 
 # Used for --//jax:build_jaxlib=wheel (locally-built wheels).
