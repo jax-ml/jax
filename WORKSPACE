@@ -101,12 +101,28 @@ load("//third_party/flatbuffers:workspace.bzl", flatbuffers = "repo")
 flatbuffers()
 
 load("//third_party/external_deps:workspace.bzl", "external_deps_repository")
+load("//third_party/rocm_wheels:workspace.bzl", "rocm_wheels_repository")
 
+# Pre-built ROCm wheels from a GitHub release.
+rocm_wheels_repository(
+    name = "rocm_wheels",
+)
+
+# Used for --//jax:build_jaxlib=wheel (locally-built wheels).
 external_deps_repository(
     name = "rocm_external_test_deps",
     deps = [
         "//jaxlib/tools:jax_rocm_pjrt_py_import",
         "//jaxlib/tools:jax_rocm_plugin_py_import",
+    ],
+)
+
+# Used for --//jax:build_jaxlib=false (pre-built wheels from GitHub).
+external_deps_repository(
+    name = "rocm_prebuilt_test_deps",
+    deps = [
+        "@rocm_wheels//:rocm_pjrt_py_import",
+        "@rocm_wheels//:rocm_plugin_py_import",
     ],
 )
 
