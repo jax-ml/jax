@@ -112,6 +112,7 @@ class PallasLoweringDeterminismTest(jtu.JaxTestCase):
 
     self.assertEqual(body0, body1)
 
+  @jtu.run_on_devices("tpu")
   @unittest.skipIf(
       jaxlib_extension_version < 409,
       "Order independence requires a recent jaxlib"
