@@ -503,7 +503,15 @@ def _ring_collective_roofline(
 roofline.register_roofline(lax_parallel.reduce_scatter_p)(
   lambda *args, axis_name, **kw: _ring_collective_roofline(*args, axes=axis_name, **kw)
 )
+roofline.register_roofline(lax_parallel.unreduced_reduce_scatter_p)(
+  lambda *args, axis_name, **kw: _ring_collective_roofline(*args, axes=axis_name, **kw)
+)
 roofline.register_roofline(lax_parallel.all_gather_p)(
+  lambda *args, axis_name, **kw: _ring_collective_roofline(
+    *args, axes=axis_name, is_reduce=False, **kw
+  )
+)
+roofline.register_roofline(lax_parallel.all_gather_reduced_p)(
   lambda *args, axis_name, **kw: _ring_collective_roofline(
     *args, axes=axis_name, is_reduce=False, **kw
   )

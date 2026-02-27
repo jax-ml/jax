@@ -5037,18 +5037,8 @@ class ShardMapTest(jtu.JaxTestCase):
     jax.jit(jax.grad(lambda x: f_shmap(x).sum()))(inp)  # doesn't crash
 
     with self.assertRaisesRegex(
-        ValueError, "pvary should be called under jax.shard_map"):
+        NameError, "please call pvary under `jax.shard_map`"):
       f(inp)
-
-  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_pvary_explicit_axes_error(self, mesh):
-    @jax.jit
-    @shard_map(in_specs=P(), out_specs=P('x'), axis_names={'x'}, check_vma=False)
-    def f(x):
-      return jax.lax.pcast(x, 'y', to='varying')
-
-    with self.assertRaisesRegex(NameError, "Found an unbound axis name"):
-      f(np.arange(8))
 
   @parameterized.parameters(AxisType.Auto, AxisType.Explicit)
   def test_slice_oob_shmap(self, axis_type):

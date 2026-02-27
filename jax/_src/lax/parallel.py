@@ -38,7 +38,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.core import check_unreduced_args
 from jax._src.mesh import get_abstract_mesh
-from jax._src.core import abstract_token, pvary
+from jax._src.core import abstract_token, pvary, _check_axis_names
 from jax._src.lax import control_flow
 from jax._src.lax import lax
 from jax._src.lax import slicing
@@ -965,14 +965,6 @@ def _pmin_pmax_abstract_eval(name, aval, *, axes, axis_index_groups):
         aval, axes=axes, axis_index_groups=axis_index_groups)
   return _psum_invariant_abstract_eval(name, aval, axes=axes)
 
-def _check_axis_names(axes, api_name):
-  named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
-  axis_env = core.get_axis_env()
-  for name in named_axes:
-    if not axis_env.axis_exists(name):
-      raise NameError(
-          f"Found an unbound axis name: {name}. To fix this, please call"
-          f" {api_name} under `jax.shard_map`.")
 
 def _allreduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups):
   aval_in, = ctx.avals_in
@@ -1723,13 +1715,19 @@ def _all_gather_is_async(x, axis_name, *, axis_index_groups=None, axis=0,
         "Got unexpected `to` value for `jax.lax.all_gather`. Allowed `to`"
         f" values are: {_allowed_ag_to}")
   if to == 'varying':
-    return _all_gather(x, axis_name, axis_index_groups=axis_index_groups,
-                       axis=axis, tiled=tiled, is_async=is_async)
+    if axis_index_groups is not None:
+      return _all_gather(x, axis_name, axis_index_groups=axis_index_groups,
+                         axis=axis, tiled=tiled, is_async=is_async)
+    else:
+      out = all_gather_reduced(x, axis_name, axis=axis, tiled=tiled,
+                               is_async=is_async)
+      return core.reduced_vary_cast(out, axis_name)
   else:
     assert to == 'reduced'
     if axis_index_groups is not None:
       raise NotImplementedError
-    return all_gather_reduced(x, axis_name, axis=axis, tiled=tiled, is_async=is_async)
+    return all_gather_reduced(x, axis_name, axis=axis, tiled=tiled,
+                              is_async=is_async)
 
 
 def _all_gather(x, axis_name, *, axis_index_groups, axis, tiled, is_async):
@@ -1838,7 +1836,7 @@ def _all_gather_batcher(prim, vals_in, dims_in, *, all_gather_dimension, axis_na
         tiled=tiled)
     return result, d
   else:
-    assert prim is all_gather_invariant_p
+    assert prim is all_gather_invariant_p or prim is all_gather_reduced_p
     result = all_gather_invariant_p.bind(
         x, all_gather_dimension=all_gather_dimension, axis_name=axis_name,
         axis_size=axis_size, tiled=tiled)
@@ -2200,10 +2198,9 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
    [12 14]
    [16 18]]
   """
-  return _psum_scatter_is_async(x, axis_name,
-                                scatter_dimension=scatter_dimension,
-                                axis_index_groups=axis_index_groups,
-                                tiled=tiled, is_async=False)
+  return _psum_scatter_is_async(
+      x, axis_name, scatter_dimension=scatter_dimension,
+      axis_index_groups=axis_index_groups, tiled=tiled, is_async=False)
 
 def _psum_scatter_is_async(x, axis_name, *, scatter_dimension=0,
                            axis_index_groups=None, tiled=False, is_async=False):
@@ -2222,9 +2219,15 @@ def _psum_scatter_is_async(x, axis_name, *, scatter_dimension=0,
           leaf, axes, scatter_dimension=scatter_dimension, tiled=tiled,
           is_async=is_async)
     else:
-      return _psum_scatter(leaf, axes, scatter_dimension=scatter_dimension,
-                           axis_index_groups=axis_index_groups, tiled=tiled,
-                           is_async=is_async)
+      if axis_index_groups is not None:
+        return _psum_scatter(
+            leaf, axes, scatter_dimension=scatter_dimension,
+            axis_index_groups=axis_index_groups, tiled=tiled, is_async=is_async)
+      else:
+        out = vary_unreduced_cast(leaf, axes)
+        return unreduced_psum_scatter(
+            out, axes, scatter_dimension=scatter_dimension, tiled=tiled,
+            is_async=is_async)
   return tree_util.tree_map(bind, x)
 
 def _psum_scatter(x, axis_name, *, scatter_dimension, axis_index_groups, tiled,
@@ -2415,6 +2418,7 @@ def all_gather_reduced(x, axis_name, *, axis: int = 0, tiled: bool = False, is_a
     return x
   axis_size = _axis_size(axis_name, None)
   def bind(leaf):
+    leaf = insert_collective_pvary(axis_name, leaf)
     prim = all_gather_reduced_start_p if is_async else all_gather_reduced_p
     return prim.bind(
         leaf,
@@ -2429,16 +2433,16 @@ def _all_gather_reduced_effectful_abstract_eval(
     x_aval, *, all_gather_dimension, axis_name, axis_size, tiled
 ):
   _check_axis_names(axis_name, 'all_gather_reduced')
-  if not x_aval.vma:
+  if config._check_vma.value and not x_aval.vma:
     raise ValueError('all_gather_reduced only accepts inputs that are'
                      f' varying. Got {x_aval.str_short(True)}')
   # If the intersection between x.vma and axis_name is empty, error
-  if not (x_aval.vma & set(axis_name)):
+  if config._check_vma.value and not (x_aval.vma & set(axis_name)):
     raise ValueError(
         'all_gather_reduced is a Varying -> Reduced collective. This means '
         f'that the {axis_name=} passed to `all_gather_reduced` must be present '
         f'in jax.typeof(x).vma={x_aval.vma}')
-  if x_aval.mt.reduced & set(axis_name):
+  if config._check_vma.value and x_aval.mt.reduced & set(axis_name):
     raise ValueError(
         "all_gather_reduced's input cannot be reduced across the axis_name"
         f" provided. Got x={x_aval.str_short(True)} and {axis_name=}")
@@ -2449,9 +2453,12 @@ def _all_gather_reduced_effectful_abstract_eval(
   else:
     new_shape.insert(all_gather_dimension, axis_size)
 
-  new_reduced = x_aval.mt.reduced | frozenset(axis_name)
-  out_vma = frozenset(v for v in x_aval.vma if v not in axis_name)
-  out_mt = x_aval.mt.update(varying=out_vma, reduced=new_reduced)
+  if config._check_vma.value:
+    new_reduced = x_aval.mt.reduced | frozenset(axis_name)
+    out_vma = frozenset(v for v in x_aval.vma if v not in axis_name)
+    out_mt = x_aval.mt.update(varying=out_vma, reduced=new_reduced)
+  else:
+    out_mt = core.ManualAxisType()
   return (x_aval.update(shape=new_shape, manual_type=out_mt),
           {*map(core.NamedAxisEffect, axis_name)})
 all_gather_reduced_p.def_effectful_abstract_eval(
@@ -2488,8 +2495,9 @@ ad.deflinear2(all_gather_reduced_p, _all_gather_reduced_transpose_rule)
 def _all_gather_reduced_batched_collective(
     axis_data, vals_in, dims_in, all_gather_dimension, axis_name, axis_size,
     tiled):
-  raise NotImplementedError(
-      "Please file an issue at https://github.com/jax-ml/jax/issues")
+  return _all_gather_batched_collective(
+      all_gather_reduced_p, axis_data, vals_in, dims_in, all_gather_dimension,
+      axis_name, None, axis_size, tiled)
 batching.fancy_primitive_batchers[all_gather_reduced_p] = _all_gather_reduced_batched_collective
 
 ####################### unreduced_psum_scatter ###########################
@@ -2503,11 +2511,8 @@ def unreduced_psum_scatter(x, axis_name, *, scatter_dimension=0, tiled=False,
     return x
   axis_size = _axis_size(axis_name, None)
   def bind(leaf):
-    prim = (
-        unreduced_reduce_scatter_start_p
-        if is_async
-        else unreduced_reduce_scatter_p
-    )
+    prim = (unreduced_reduce_scatter_start_p if is_async
+            else unreduced_reduce_scatter_p)
     return prim.bind(
         leaf, axis_name=axis_name, scatter_dimension=scatter_dimension,
         axis_size=axis_size, tiled=tiled)
@@ -2519,18 +2524,18 @@ def _unreduced_reduce_scatter_effectful_abstract_eval(
     x_aval, *, axis_name, scatter_dimension, axis_size, tiled
 ):
   _check_axis_names(axis_name, 'reduce_scatter')
-  if not x_aval.mt.unreduced:
+  if config._check_vma.value and not x_aval.mt.unreduced:
     raise ValueError('unreduced_psum_scatter only accepts inputs that are'
                      f' unreduced. Got {x_aval.str_short(True)}')
   # If intersection between x.unreduced & axis_name is empty, error
-  if not (x_aval.mt.unreduced & frozenset(axis_name)):
+  if config._check_vma.value and not (x_aval.mt.unreduced & frozenset(axis_name)):
     raise ValueError(
         "unreduced_psum_scatter is a Unreduced -> Varying collective. This"
         f" means that the {axis_name=} passed to `unreduced_psum_scatter` must"
         " be present in"
         f" jax.typeof(x).mt.unreduced={x_aval.mt.unreduced}"
     )
-  if x_aval.vma & set(axis_name):
+  if config._check_vma.value and x_aval.vma & set(axis_name):
     raise ValueError(
         "unreduced_psum_scatter's input cannot be varying across the axis_name"
         f" provided. Got x={x_aval.str_short(True)} and {axis_name=}")
@@ -2550,9 +2555,12 @@ def _unreduced_reduce_scatter_effectful_abstract_eval(
                        f"{axis_size}")
     del new_shape[scatter_dimension]
 
-  out_unreduced = frozenset(i for i in x_aval.mt.unreduced if i not in axis_name)
-  out_vma = x_aval.vma | set(axis_name)
-  out_mt = x_aval.mt.update(varying=out_vma, unreduced=out_unreduced)
+  if config._check_vma.value:
+    out_unreduced = frozenset(i for i in x_aval.mt.unreduced if i not in axis_name)
+    out_vma = x_aval.vma | set(axis_name)
+    out_mt = x_aval.mt.update(varying=out_vma, unreduced=out_unreduced)
+  else:
+    out_mt = core.ManualAxisType()
   return (x_aval.update(shape=new_shape, manual_type=out_mt),
           {*map(core.NamedAxisEffect, axis_name)})
 unreduced_reduce_scatter_p.def_effectful_abstract_eval(
@@ -2573,8 +2581,9 @@ ad.deflinear2(unreduced_reduce_scatter_p, _unreduced_reduce_scatter_transpose_ru
 def _unreduced_reduce_scatter_batcher(
     axis_data, vals_in, dims_in, axis_name, scatter_dimension, axis_size,
     tiled):
-  raise NotImplementedError(
-      "Please file an issue at https://github.com/jax-ml/jax/issues")
+  return _reduce_scatter_collective(
+      axis_data, vals_in, dims_in, scatter_dimension, axis_name, None,
+      axis_size, tiled)
 batching.fancy_primitive_batchers[unreduced_reduce_scatter_p] = _unreduced_reduce_scatter_batcher
 
 def _unreduced_reduce_scatter_lowering(
@@ -2649,7 +2658,8 @@ def preduced(x, axis_name):
   if not axes:
     return x
   cur_mesh = get_abstract_mesh()
-  if not config._check_vma.value and all(a in cur_mesh.manual_axes for a in axes):
+  if not config._check_vma.value:
+    _check_axis_names(axes, 'preduced')
     return x
   new_axes = axes if cur_mesh.empty else core.order_wrt_mesh(cur_mesh, axes)
   assert set(new_axes) == set(axes)
@@ -2692,8 +2702,8 @@ def vary_unreduced_cast(x, axis_name):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
     return x
-  cur_mesh = get_abstract_mesh()
-  if not config._check_vma.value and all(a in cur_mesh.manual_axes for a in axes):
+  if not config._check_vma.value:
+    _check_axis_names(axes, 'vary_unreduced_cast')
     return x
   return tree_util.tree_map(
       lambda leaf: vary_unreduced_cast_p.bind(leaf, axes=axes), x)

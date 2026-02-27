@@ -2491,23 +2491,31 @@ def primal_sharding_to_cotangent_sharding(sharding):
 
 ############################## pvary #################################
 
+def _check_axis_names(axes, api_name):
+  named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
+  axis_env = get_axis_env()
+  for name in named_axes:
+    if not axis_env.axis_exists(name):
+      raise NameError(
+          f"Found an unbound axis name: {name}. To fix this, please call"
+          f" {api_name} under `jax.shard_map`.")
+
 # Invariant -> Variant no-op cast
 def pvary(x, axis_name):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
     return x
   cur_mesh = mesh_lib.get_abstract_mesh()
-  if not config._check_vma.value and all(a in cur_mesh.manual_axes for a in axes):
-    return x
   new_axes = axes if cur_mesh.empty else order_wrt_mesh(cur_mesh, axes)
   assert set(new_axes) == set(axes)
   del axes
-  # TODO(yashkatariya): Remove this handling and remove_size_one_mesh_axis_from_type
-  # generally from JAX.
   if config.remove_size_one_mesh_axis_from_type.value and not cur_mesh.empty:
     new_axes = tuple(i for i in new_axes if cur_mesh.shape[i] != 1)
     if not new_axes:
       return x
+  if not config._check_vma.value:
+    _check_axis_names(new_axes, 'pvary')
+    return x
   return tree_map(lambda leaf: pvary_p.bind(leaf, axes=new_axes), x)
 
 pvary_p = Primitive('pvary')
@@ -2519,8 +2527,8 @@ def reduced_vary_cast(x, axis_name):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
     return x
-  cur_mesh = mesh_lib.get_abstract_mesh()
-  if not config._check_vma.value and all(a in cur_mesh.manual_axes for a in axes):
+  if not config._check_vma.value:
+    _check_axis_names(axes, 'reduced_vary_cast')
     return x
   return tree_map(lambda leaf: reduced_vary_cast_p.bind(leaf, axes=axes), x)
 
