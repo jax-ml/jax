@@ -1677,10 +1677,10 @@ class AbstractValue:
   def has_qdd(self) -> bool:
     return False
 
-  def to_tangent_aval(self):
+  def to_tangent_aval(self) -> AbstractValue:
     raise NotImplementedError("must override")
 
-  def to_cotangent_aval(self):
+  def to_cotangent_aval(self) -> AbstractValue:
     raise NotImplementedError("must override")
 
   # TODO(dougalm): deprecate this alias
@@ -1733,8 +1733,8 @@ class AbstractValue:
   def unshard(self, mesh, check_vma, spec):
     return unshard_aval(mesh, check_vma, spec, self)
 
-InputType = tuple[AbstractValue]
-OutputType = tuple[AbstractValue]
+InputType = tuple[AbstractValue, ...]
+OutputType = tuple[AbstractValue, ...]
 
 # For use in typing annotations to denote either a Tracer or a `valid_jaxtype`.
 Value = Any
