@@ -204,12 +204,12 @@ jobs:
             {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"},
             {type: "v7x-8", cores: "4", runner: "linux-x86-tpu7x-224-4tpu"}
           ]
-          libtpu-version-type: ["pypi_latest", "nightly"]
+          libtpu-version-type: ["pinned", "nightly"]
           exclude:
             # Exclude nightly for releases
             - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
-            # Exclude pypi_latest for nightly releases
-            - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pypi_latest' }}
+            # Exclude pinned for nightly releases
+            - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pinned' }}
             # Run Python versions in between min and max for v6e-8
             - tpu-specs:
                 type: "v6e-8"

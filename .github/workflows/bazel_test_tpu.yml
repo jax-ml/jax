@@ -43,7 +43,7 @@ on:
         type: string
         # Choices are:
         # - "nightly": Use the nightly libtpu wheel.
-        # - "pypi_latest": Use the latest libtpu wheel from PyPI.
+        # - "pinned": Use the pinned libtpu wheel.
         # - "oldest_supported_libtpu": Use the oldest supported libtpu wheel.
         default: "nightly"
       jaxlib-version:
@@ -124,9 +124,10 @@ jobs:
           echo "Download the wheel into a local directory"
           if [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "nightly" ]]; then
             $JAXCI_PYTHON -m pip download -d $(pwd)/dist --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-          elif [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "pypi_latest" ]]; then
-            echo "Using latest libtpu from PyPI"
-            $JAXCI_PYTHON -m pip download -d $(pwd)/dist libtpu
+          elif [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "pinned" ]]; then
+            echo "Using pinned libtpu version"
+            $JAXCI_PYTHON -m pip download -d $(pwd)/tpu_dist .[tpu]
+            cp $(pwd)/tpu_dist/libtpu*.whl $(pwd)/dist/
           elif [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "oldest_supported_libtpu" ]]; then
             echo "Using oldest supported libtpu"
             $JAXCI_PYTHON -m pip download -d $(pwd)/dist --pre libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
