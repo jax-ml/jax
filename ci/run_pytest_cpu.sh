@@ -44,6 +44,7 @@ export PY_COLORS=1
 export JAX_SKIP_SLOW_TESTS=true
 export TF_CPP_MIN_LOG_LEVEL=0
 export JAX_ENABLE_X64="$JAXCI_ENABLE_X64"
+export IS_JAXCI_PYTHON_NOGIL=$("$JAXCI_PYTHON" -c "import sys; print('1' if getattr(sys, '_is_gil_enabled', lambda: True)() == False else '0')")
 
 MAX_PROCESSES=${MAX_PROCESSES:-}
 MAX_PROCESSES_ARG=""
@@ -51,6 +52,8 @@ if [[ -n "${MAX_PROCESSES}" ]]; then
   MAX_PROCESSES_ARG="--maxprocesses=${MAX_PROCESSES}"
 elif [[ "$(uname -s)" == *"MSYS"* ]]; then
   MAX_PROCESSES_ARG="--maxprocesses=32"  # Tests OOM on Windows sometimes.
+elif [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "aarch64" && "${IS_JAXCI_PYTHON_NOGIL}" == "1" ]]; then
+  MAX_PROCESSES_ARG="--maxprocesses=32"  # Tests OOM on Linux ARM64 with nogil.
 fi
 # End of test environment variable setup
 
