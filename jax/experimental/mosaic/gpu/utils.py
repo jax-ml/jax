@@ -1043,7 +1043,6 @@ class BarrierRef:
       orders_tensor_core: bool = False,
       predicate: ir.Value | None = None,
   ):
-    i64 = ir.IntegerType.get_signless(64)
     if orders_tensor_core:
       llvm.inline_asm(
           ir.Type.parse("!llvm.void"),
