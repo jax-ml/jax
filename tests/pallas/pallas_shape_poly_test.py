@@ -445,6 +445,8 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
       f_e(x_shape, x_shape)
 
   def test_export_vmap(self):
+    if not jtu.is_cloud_tpu_at_least(2026, 2, 24):
+      self.skipTest("Requires a newer libTPU")
     def add_vectors_kernel(x_ref, y_ref, o_ref):
       o_ref[...] = x_ref[...] + y_ref[...]
 

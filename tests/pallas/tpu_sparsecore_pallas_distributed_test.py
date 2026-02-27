@@ -41,6 +41,8 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
 
   @parameterized.product(direction=['left', 'right'], num_devices=[2, None])
   def test_collective_permute_1d(self, direction, num_devices):
+    if not jtu.is_cloud_tpu_at_least(2026, 2, 24):
+      self.skipTest("Requires a newer libTPU")
     shape = (8, 128)
 
     # Implements a very simple collective permute.
@@ -92,6 +94,8 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
 
   @parameterized.product(direction=['left', 'right'])
   def test_collective_permute_2d(self, direction):
+    if not jtu.is_cloud_tpu_at_least(2026, 2, 24):
+      self.skipTest("Requires a newer libTPU")
     shape = (8, 128)
 
     @pl.kernel(

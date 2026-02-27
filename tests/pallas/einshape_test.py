@@ -249,6 +249,8 @@ class EinshapeTPUKernelTest(EinshapeTest):
     super().setUp()
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Skipping test because TPU is not supported.")
+    if not jtu.is_cloud_tpu_at_least(2026, 2, 24):
+      self.skipTest("Requires a newer libTPU")
     if (self._testMethodName == "test_hypothesis_einshape"
         and jtu.is_device_tpu(7)):
       self.skipTest("test_hypothesis_einshape is failing on TPU 7x")

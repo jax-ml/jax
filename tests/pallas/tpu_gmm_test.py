@@ -274,6 +274,10 @@ class GroupedMatmulTest(jtu.JaxTestCase):
       n: int,
       data: hps.SearchStrategy[hps.DataObject],
   ):
+    # NOTE(dsuo): Skip libtpu==0.0.36 up until known good nightly.
+    if (jtu.is_cloud_tpu_at_least(2026, 2, 12)
+        and not jtu.is_cloud_tpu_at_least(2026, 2, 24)):
+      self.skipTest("Known regression in libtpu 0.0.36")
     seed = data.draw(seed_strategy())
     num_groups, group_stride = data.draw(group_strategy())
     lhs_dtype, rhs_dtype, out_dtype = (
