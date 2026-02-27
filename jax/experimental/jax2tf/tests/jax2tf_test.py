@@ -657,7 +657,7 @@ class Jax2TfTest(JaxToTfTestCase):
         e = e.numpy() if isinstance(e, tf.Tensor) else e
         try:
           self.assertAllClose(e, w, err_msg=k)
-        except:
+        except Exception:
           print(f"Failed at {k}")
           raise
 

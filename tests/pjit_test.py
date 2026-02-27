@@ -1909,7 +1909,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_pjit_mixed_device_cache_miss(self):
     try:
       tpu_device = jax.devices('tpu')[0]
-    except:
+    except Exception:
       raise unittest.SkipTest('Only a bug on TPU.')
 
     with jax.default_device('cpu'):

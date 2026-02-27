@@ -331,7 +331,7 @@ def _check_branch_outputs(
   info2 = api_util.fun_sourceinfo(f2)
   try:
     outs1 = out_avals1.unflatten()
-  except:
+  except Exception:
     paths = [None] * len(out_avals1)
     component = lambda _: ''
   else:

@@ -301,7 +301,7 @@ class PmapSharding(jsharding.Sharding):
   def memory_kind(self) -> str | None:
     try:
       return self._internal_device_list.default_memory_kind
-    except:
+    except Exception:
       return None
 
   def with_memory_kind(self, kind: str):

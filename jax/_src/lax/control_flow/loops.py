@@ -398,7 +398,7 @@ def _check_carry_type(name, body_fun, in_carry, out_carry):
   if in_carry.tree != out_carry.tree:
     try:
       out_carry_unflat = out_carry.unflatten()
-    except:
+    except Exception:
       out_carry_unflat = None
 
     if out_carry_unflat is None:

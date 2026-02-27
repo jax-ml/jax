@@ -794,7 +794,7 @@ def _equality_errors(path, t1, t2, is_leaf):
   try:
     diff = ' '.join(repr(k.key) for k in
                     set(t1_keys).symmetric_difference(set(t2_keys)))
-  except:
+  except Exception:
     diff = ''
   if len(t1_children) != len(t2_children):
     yield (path,
@@ -1313,7 +1313,7 @@ def _prefix_error(
     # Next we handle the general case of checking child keys.
     try:
       diff = set(prefix_tree_keys).symmetric_difference(set(full_tree_keys))
-    except:
+    except Exception:
       diff = None
     if len(prefix_tree_children) != len(full_tree_children):
       yield lambda name: ValueError(
@@ -1516,7 +1516,7 @@ class FlatTree:
       paths, _ = unzip2(tree_leaves_with_path(self.unflatten()))
       assert len(paths) == len(self.vals)
       return self.update(paths)
-    except:
+    except Exception:
       return self.update([()] * len(self.vals))  # not our fault
 
   def __len__(self):

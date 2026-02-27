@@ -4949,7 +4949,7 @@ class LayoutTest(TestCase):
         used_regs = {get_reg(addr) for addr in addrs}
         try:
           self.assertLessEqual(len(used_regs), expected_regs)
-        except:
+        except Exception:
           problematic_device_patterns = ("RTX PRO 6000 Blackwell", "GB10$")
           if match := jtu.device_kind_match(problematic_device_patterns):
             self.skipTest(f"{match} uses more registers for an unknown reason")
@@ -5093,7 +5093,7 @@ class LayoutTest(TestCase):
     np.testing.assert_array_equal(yt_kernel, yt)
     try:
       self.assertEqual(sass().count("SHFL.BFLY"), regs_per_thread * shfl_per_reg)
-    except:
+    except Exception:
       problematic_device_patterns = ("RTX PRO 6000 Blackwell", "GB10$")
       if match := jtu.device_kind_match(problematic_device_patterns):
         self.skipTest(f"{match} requires more SHFL.BFLY for an unknown reason")

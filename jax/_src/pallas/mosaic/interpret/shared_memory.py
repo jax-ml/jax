@@ -485,7 +485,7 @@ class SharedMemory:
 
       try:
         result = array[rnge].copy()
-      except:
+      except Exception:
         result = None
 
     shape_and_dtype = ShapeAndDtype(array.shape, array.dtype)

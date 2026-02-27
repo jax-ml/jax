@@ -283,7 +283,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     update_params = call_param_updaters.get(primitive) or (lambda p, _, __: p)
     in_knowns, in_avals, in_consts = partition_pvals([t.pval for t in tracers])
 
-    # This method is like process_call above, except:
+    # This method is like process_call above, except Exception:
     #   1. we delete an axis from mapped-over input avals' shapes, and
     #      analogously add an axis to mapped-over output avals' shapes;
     #   2. we update the in_axes and out_axes/out_axes_thunk parameters to

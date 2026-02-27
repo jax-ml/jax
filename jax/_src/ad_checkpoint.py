@@ -439,7 +439,7 @@ class WrapHashably:
     try:
       self.hash = hash(val)
       self.hashable = True
-    except:
+    except Exception:
       self.hash = id(val)
       self.hashable = False
   def __hash__(self):
@@ -675,7 +675,7 @@ def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
                 '  %s from %s\n' * len(body_res),
                 *[v.aval.str_short() for v in res_invars],
                 *[elt for (a, s) in body_res for elt in [a.str_short(), s]])
-    except:
+    except Exception:
       pass  # just don't log anything on failure
 
   for t in out_jaxpr_tracers: t.recipe = recipe

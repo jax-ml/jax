@@ -457,7 +457,7 @@ def _compute_newshape(arr: Array, newshape: DimSize | Shape) -> Shape:
   orig_newshape = newshape  # for error messages
   try:
     iter(newshape)  # type: ignore[arg-type]
-  except:
+  except Exception:
     newshape = [newshape]
   newshape = core.canonicalize_shape(newshape)  # type: ignore[arg-type]
   neg1s = [i for i, d in enumerate(newshape) if type(d) is int and d == -1]

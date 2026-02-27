@@ -42,7 +42,7 @@ def download_dataset(dir_path, nb_classes):
         response = requests.get(url + cls_filename.replace('_', ' '), timeout=60)
         save_file.write(response.content)
         print(f'Successfully fetched {cls_filename}')
-      except:
+      except Exception:
         print(f'Failed to fetch {cls_filename}')
   return classes
 

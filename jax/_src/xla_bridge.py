@@ -495,7 +495,7 @@ def discover_pjrt_plugins() -> None:
     if plugin_module:
       try:
         plugin_module.initialize()
-      except:
+      except Exception:
         logger.exception("Jax plugin configuration error: Exception when "
                          "calling %s.initialize()", plugin_module_name)
 

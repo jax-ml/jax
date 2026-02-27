@@ -560,7 +560,7 @@ def _gmres_solve(A, b, x0, atol, ptol, restart, maxiter, M, gmres_func):
   The main function call wrapped by custom_linear_solve. Repeatedly calls GMRES
   to find the projected solution within the order-``restart``
   Krylov space K(A, x0, restart), using the result of the previous projection
-  in place of x0 each time. Parameters are the same as in ``gmres`` except:
+  in place of x0 each time. Parameters are the same as in ``gmres`` except Exception:
 
   atol: Tolerance for norm(A(x) - b), used between restarts.
   ptol: Tolerance for norm(M(A(x) - b)), used within a restart.

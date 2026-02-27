@@ -59,7 +59,7 @@ def _safe_flatten_dict(dct: dict[Any, Any]
   for key, value in dct.items():
     try:
       tree_util.tree_leaves(value)
-    except:
+    except Exception:
       # If flattening fails, we substitute a sentinel object.
       value = cant_flatten
     keys.append(key)

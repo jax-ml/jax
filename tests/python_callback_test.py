@@ -850,7 +850,7 @@ class PureCallbackTest(jtu.JaxTestCase):
 
     try:
       np.array(f(2.0))
-    except:
+    except Exception:
       # Only should not deadlock.
       pass
 

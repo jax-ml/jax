@@ -590,7 +590,7 @@ def fun_sourceinfo(fun: Callable) -> str:
   except AttributeError:
     try:
       fun_str = str(fun)
-    except:
+    except Exception:
       return "<unknown>"
     # By contract, the function name has no spaces; also, we want to avoid
     # fun_sourceinfo of the form "<object Foo at 0x1234>", because it makes

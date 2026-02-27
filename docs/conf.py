@@ -367,7 +367,7 @@ def linkcode_resolve(domain, info):
         obj = obj.__wrapped__
     filename = inspect.getsourcefile(obj)
     source, linenum = inspect.getsourcelines(obj)
-  except:
+  except Exception:
     return None
   try:
     filename = Path(filename).relative_to(Path(jax.__file__).parent)

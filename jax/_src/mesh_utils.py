@@ -773,7 +773,7 @@ def _canonicalize_axis_sizes(axis_sizes: Sequence[int]
   for s in axis_sizes:
     try:
       new_sizes.append(int(s))
-    except:
+    except Exception:
       return None
   return tuple(new_sizes)
 

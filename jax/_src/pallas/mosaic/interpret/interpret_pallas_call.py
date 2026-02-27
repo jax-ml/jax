@@ -247,7 +247,7 @@ def _check_for_revisiting(device_id, local_core_id, loop_idx, output_blocks):
   loop_idx = tuple(int(x) for x in loop_idx)
   try:
     output_blocks = jax.tree.map(int, output_blocks)
-  except:
+  except Exception:
     raise ValueError('Advanced indexers are not supported on TPU')
   output_ranges = [
       interpret_utils.to_range(b) if b is not None else None
@@ -509,7 +509,7 @@ def get(
   buffer_id = int(buffer_id)
   try:
     transforms = jax.tree.map(int, transforms)
-  except:
+  except Exception:
     raise ValueError('Advanced indexers are not supported on TPU')
   src_device_id = _to_int(src_device_id)
   src_local_core_id = _to_int(src_local_core_id)
@@ -633,7 +633,7 @@ def store(
   buffer_id = int(buffer_id)
   try:
     transforms = jax.tree.map(int, transforms)
-  except:
+  except Exception:
     raise ValueError('Advanced indexers are not supported on TPU')
   val = np.array(val)
   src_device_id = _to_int(src_device_id)
@@ -711,7 +711,7 @@ def swap(
   buffer_id = int(buffer_id)
   try:
     transforms = jax.tree.map(int, transforms)
-  except:
+  except Exception:
     raise ValueError('Advanced indexers are not supported on TPU')
   val = np.array(val)
   mask = np.array(mask) if mask is not None else None

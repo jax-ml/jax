@@ -246,7 +246,7 @@ class GeneratedFunTest(jtu.JaxTestCase):
     ans_jitted = maybe_jit(fun, len(vals))(*vals)
     try:
       check_all_close(ans, ans_jitted)
-    except:
+    except Exception:
       print(fun)
       raise
 

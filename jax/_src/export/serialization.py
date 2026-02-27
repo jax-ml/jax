@@ -671,7 +671,7 @@ def _deserialize_effect(eff: ser_flatbuf.Effect) -> core.Effect:
     if str(existing_effect_type) == effect_type_name:
       try:
         return existing_effect_type()
-      except:
+      except Exception:
         # TODO: add test
         raise NotImplementedError(
             f"deserializing effect {effect_type_name} that does not have a "

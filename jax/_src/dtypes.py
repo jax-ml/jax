@@ -41,7 +41,7 @@ traceback_util.register_exclusion(__file__)
 
 try:
   _ml_dtypes_version = tuple(map(int, ml_dtypes.__version__.split('.')[:3]))
-except:
+except Exception:
   pass
 else:
   if _ml_dtypes_version < (0, 5):

@@ -2759,7 +2759,7 @@ def is_constant_dim(d: DimSize) -> bool:
   try:
     operator.index(d)
     return True
-  except:
+  except Exception:
     return False
 
 def is_dim(v: Any) -> bool:
@@ -2889,7 +2889,7 @@ def canonicalize_slice(
     # Convert np.array and jax.Array to int, leave symbolic dimensions alone
     try:
       return operator.index(d)
-    except:
+    except Exception:
       return d
 
   # Must resolve statically if step is {<0, ==0, >0}
@@ -2968,7 +2968,7 @@ def evaluate_shape(shape: Shape, dim_vars: Sequence[str],
   def eval_one_dim(d: DimSize):
     try:
       return operator.index(d)
-    except:
+    except Exception:
       # Is a _DimExpr
       return d._evaluate(env)  # type: ignore
   return tuple(eval_one_dim(d) for d in shape)

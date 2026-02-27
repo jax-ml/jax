@@ -560,7 +560,7 @@ class _LiveDevices:
         with jax.live_devices(jax.devices()) as devices:
           # Run JAX code here with devices.
           pass
-      except:
+      except Exception:
         # A device died while executing the with statement above.
         pass
       else:
@@ -618,7 +618,7 @@ class _LiveDevices:
       try:
         with jax.live_devices(...) as devices:
           pass
-      except:
+      except Exception:
         pass # A
       else:
         pass # B

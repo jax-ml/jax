@@ -80,7 +80,7 @@ def _is_tfval(v: TfVal) -> bool:
     with tf.device("CPU"):
       tf.constant(v)
     return True
-  except:
+  except Exception:
     return False
 
 class _DefaultNativeSerialization:

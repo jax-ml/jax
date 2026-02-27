@@ -51,7 +51,7 @@ class CliDebugger(cmd.Cmd):
     """Evaluates an expression."""
     try:
       print(repr(self.evaluate(line)), file=self.stdout)
-    except:
+    except Exception:
       self._error_message()
 
   def print_backtrace(self):
@@ -91,7 +91,7 @@ class CliDebugger(cmd.Cmd):
     """
     try:
       print(repr(self.evaluate(arg)), file=self.stdout)
-    except:
+    except Exception:
       self._error_message()
 
   def do_pp(self, arg):
@@ -100,7 +100,7 @@ class CliDebugger(cmd.Cmd):
     """
     try:
       print(pprint.pformat(self.evaluate(arg)), file=self.stdout)
-    except:
+    except Exception:
       self._error_message()
 
   def do_up(self, arg, /):

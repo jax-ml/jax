@@ -2572,7 +2572,7 @@ def get_out_shardings_from_executable(
     omk = xla_executable.get_output_memory_kinds()[0]
     if num_ordered_effects > 0:
       omk = omk[num_ordered_effects:]
-  except:
+  except Exception:
     omk = [None] * num_out_avals
 
   assert len(omk) == num_out_avals, (len(omk), num_out_avals)
@@ -2689,7 +2689,7 @@ def _get_out_sharding_from_orig_sharding(
           out.append(orig_handler(o, out_aval, orig_in_s))
         except IndivisibleError:
           raise
-        except:
+        except Exception:
           out.append(o)
     else:
       out.append(o)
@@ -2740,7 +2740,7 @@ def _get_layouts_from_executable(
   try:
     in_layouts_xla = xla_executable.get_parameter_layouts()
     out_layouts_xla = xla_executable.get_output_layouts()
-  except:
+  except Exception:
     return (None,) * len(in_layouts), (None,) * len(out_layouts)
 
   if num_ordered_effects > 0:
@@ -2914,7 +2914,7 @@ def _maybe_get_and_check_out_shardings(
         xla_s = sharding_impls.logical_sharding(aval.shape, aval.dtype, xla_s)
       try:
         new_out_shardings.append(_gspmd_to_named_sharding(xla_s, aval, orig))  # pytype: disable=wrong-arg-types
-      except:
+      except Exception:
         new_out_shardings.append(xla_s)
     else:
       xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)

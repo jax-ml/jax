@@ -29,7 +29,7 @@ jax.config.parse_flags_with_absl()
 
 try:
   from jax._src.lib import utils as jaxlib_utils
-except:
+except Exception:
   jaxlib_utils = None
 
 class UtilTest(jtu.JaxTestCase):

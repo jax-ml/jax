@@ -299,7 +299,7 @@ def _where(condition: ArrayLike, x: ArrayLike, y: ArrayLike) -> Array:
     condition, x_arr, y_arr = _broadcast_arrays(condition, x, y)
   try:
     is_always_empty = core.is_empty_shape(x_arr.shape)
-  except:
+  except Exception:
     is_always_empty = False  # can fail with dynamic shapes
   return lax.select(condition, x_arr, y_arr) if not is_always_empty else x_arr
 

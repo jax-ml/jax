@@ -191,7 +191,7 @@ def broadcast_shapes(*shapes):
   # NOTE: We have both cached and uncached versions to handle Tracers in shapes.
   try:
     return _broadcast_shapes_cached(*shapes)
-  except:
+  except Exception:
     return _broadcast_shapes_uncached(*shapes)
 
 @cache()

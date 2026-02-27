@@ -132,7 +132,7 @@ class EqualStore:
     except StoreException as e:
       try:
         okay = bool(self._store._val == val)
-      except:
+      except Exception:
         raise e from None
       else:
         if not okay:

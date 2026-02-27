@@ -59,7 +59,7 @@ def _version_from_git_tree(base_version: str) -> str | None:
     datestring = datetime.date.fromtimestamp(int(timestamp)).strftime("%Y%m%d")
     assert datestring.isnumeric()
     assert commit_hash.isalnum()
-  except:
+  except Exception:
     return None
   else:
     version = f"{base_version}.dev{datestring}+{commit_hash}"

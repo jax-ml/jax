@@ -53,7 +53,7 @@ class JAXSparse(util.StrictABC):
       nse = self.nse
       dtype = self.dtype
       shape = list(self.shape)
-    except:
+    except Exception:
       repr_ = f"{name}(<invalid>)"
     else:
       repr_ = f"{name}({dtype}{shape}, {nse=})"

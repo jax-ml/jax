@@ -2373,7 +2373,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
           out_shape=x,
           scratch_shapes=[plgpu.Barrier()],
       )(x)
-    except:
+    except Exception:
       # assertRaisesRegex raises does not let us match the traceback.
       self.assertIn(offending_line, traceback.format_exc())
     else:

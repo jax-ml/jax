@@ -1205,7 +1205,7 @@ def _convertible_to_int(p: Any) -> bool:
   try:
     op.index(p)
     return True
-  except:
+  except Exception:
     return False
 
 def _ensure_poly(p: DimSize,
@@ -1700,12 +1700,12 @@ def _evaluate_add(v1, v2):
   try:
     if op.index(v1) == 0:
       return v2
-  except:
+  except Exception:
     pass
   try:
     if op.index(v2) == 0:
       return v1
-  except:
+  except Exception:
     pass
   return v1 + v2
 
@@ -1713,12 +1713,12 @@ def _evaluate_multiply(v1, v2):
   try:
     if op.index(v1) == 1:
       return v2
-  except:
+  except Exception:
     pass
   try:
     if op.index(v2) == 1:
       return v1
-  except:
+  except Exception:
     pass
   return v1 * v2
 
