@@ -397,7 +397,7 @@ class VJPHiPrimitive:
     raise NotImplementedError(f"for grad support, subclass {type(self)} must "
                               "implement `vjp_fwd`")
 
-  def vjp_bwd(self, res, outgrad, *arg_accums):
+  def vjp_bwd(self, res, outgrad, /, *arg_accums):
     args_grad = self.vjp_bwd_retval(res, outgrad)
     tree_map(lambda acc, leaf_grad: acc.accum(leaf_grad), arg_accums, args_grad)
 

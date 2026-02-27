@@ -48,7 +48,7 @@ from jax._src.state.types import AbstractRef
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix,
-    tree_map)
+    tree_map, tree_leaves, Partial)
 from jax._src.typing import DeprecatedArg
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
@@ -1006,6 +1006,17 @@ def remat3(f=None, /, policy=frozenset()):
 def _remat3(policy, f, *args):
   return RematTraced(api.jit(f).trace(*args), policy)(*args)
 
+def dce(traced):
+  jaxpr_, used = pe.dce_jaxpr(traced.jaxpr.jaxpr, True)
+  jaxpr = core.ClosedJaxpr(jaxpr_, traced.jaxpr.consts)
+  used_res, used_primals = split_list(used, [traced._num_consts])
+  res = [r for r, u in zip(traced._consts, used_res) if u]
+  return used_primals, Partial(partial(_dced, jaxpr, traced.out_tree), res)
+
+def _dced(jaxpr, out_tree, res, *args):
+  out_flat = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *res, *args)
+  return tree_unflatten(out_tree, out_flat)
+
 class RematTraced(VJPHiPrimitive):
   traced: Any
   policy: Any
@@ -1021,11 +1032,13 @@ class RematTraced(VJPHiPrimitive):
 
   def vjp_fwd(self, _nzs_in, *primals):
     primals_out, fwd2 = remat_transform(self.policy, self.traced, *primals)
-    return primals_out, (primals, fwd2)
+    used, rem = dce(api.jit(lambda *xs: api.vjp(fwd2, *xs)[1]).trace(*primals))
+    primals_ = [x for x, u in zip(tree_leaves(primals), used) if u]
+    return primals_out, (primals_, rem)
 
-  def vjp_bwd(self, res, outgrad, *arg_accums):
-    primals, fwd2 = res
-    _, bwd = api.vjp(fwd2, *lax_internal.optimization_barrier(primals))
+  def vjp_bwd(self, primals_vjp, outgrad, *arg_accums):
+    primals, rem = primals_vjp
+    bwd = rem(*lax_internal.optimization_barrier(primals))
     arg_grads = bwd(outgrad)
     for x, ct in zip(arg_accums, arg_grads):
       x.accum(ct)
@@ -1034,6 +1047,7 @@ class RematTraced(VJPHiPrimitive):
     return api.jvp(self.traced, primals, tangents)
 
   def lin(self, nzs_in, *primals):
+    # TODO(mattjj,yashkatariya): use remat_transform for partial remat here too
     primals_out, f_lin = api.linearize(self.traced, *primals)
     return primals_out, primals
 
