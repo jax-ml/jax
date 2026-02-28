@@ -101,7 +101,8 @@ jobs:
             $JAXCI_PYTHON -m uv pip install --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
           elif [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "pinned" ]]; then
             echo "Using pinned libtpu version"
-            $JAXCI_PYTHON -m pip download -d $(pwd)/tpu_dist .[tpu]
+            # Using "dist" folder as artifact registry for jax wheels.
+            $JAXCI_PYTHON -m pip download -d $(pwd)/tpu_dist .[tpu] -f $(pwd)/dist
             $JAXCI_PYTHON -m uv pip install $(pwd)/tpu_dist/libtpu*.whl
           elif [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "oldest_supported_libtpu" ]]; then
             echo "Using oldest supported libtpu"
