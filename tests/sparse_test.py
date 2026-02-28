@@ -17,6 +17,7 @@ from functools import partial
 import itertools
 import math
 import os
+import unittest
 from pathlib import Path
 
 from absl.testing import absltest
@@ -1148,6 +1149,10 @@ class SparseRandomTest(sptu.SparseTestCase):
       ],
       dtype=jtu.dtypes.floating,
       indices_dtype=jtu.dtypes.integer,
+  )
+  @unittest.skipIf(
+      not jtu.is_cloud_tpu_at_least(2026, 2, 24),
+      "Crashes with libtpu<=0.3.5 on TPU v7.",
   )
   def test_random_bcoo(self, shape, dtype, indices_dtype, n_batch, n_dense):
     key = jax.random.PRNGKey(1701)

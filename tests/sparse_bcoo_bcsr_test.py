@@ -841,6 +841,10 @@ class BCOOTest(sptu.SparseTestCase):
       dtype=jtu.dtypes.floating,
   )
   @jax.default_matmul_precision("float32")
+  @unittest.skipIf(
+      not jtu.is_cloud_tpu_at_least(2026, 2, 24),
+      "Crashes with libtpu<=0.3.5 on TPU v7.",
+  )
   def test_bcoo_dot_general_sampled_ad(self, lhs_shape, rhs_shape, dtype, dimension_numbers, n_batch, n_dense):
     rng = jtu.rand_default(self.rng())
     sprng = sptu.rand_sparse(self.rng())
@@ -1013,6 +1017,10 @@ class BCOOTest(sptu.SparseTestCase):
           for layout in sptu.iter_sparse_layouts(shape)
       ],
       dtype=jtu.dtypes.numeric,
+  )
+  @unittest.skipIf(
+      not jtu.is_cloud_tpu_at_least(2026, 2, 24),
+      'Crashes with libtpu<=0.3.5 on TPU v7.',
   )
   def test_bcoo_slice(self, shape, dtype, n_batch, n_dense):
     rng = self.rng()

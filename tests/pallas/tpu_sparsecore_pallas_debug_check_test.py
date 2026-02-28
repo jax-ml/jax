@@ -68,9 +68,9 @@ class DebugCheckTest(jtu.JaxTestCase):
     super().setUp()
 
   def test_scalar_debug_check(self):
-    if not jtu.is_device_tpu_at_least(7):
-      # TODO: b/469486032 - Figure out why the test gets stuck on v5p, v6e.
-      self.skipTest("Fails on v5p and v6e.")
+    if not jtu.is_device_tpu_at_least(8):
+      # TODO: b/469486032 - Figure out why the test gets stuck on v5p, v6e, v7.
+      self.skipTest("Fails on v5p, v6e, and v7.")
 
     x = jnp.arange(8)
 
