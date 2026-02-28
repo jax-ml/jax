@@ -6024,6 +6024,13 @@ def _ragged_dot_general_jvp_rule(
 
   return primal_out, tangent_out
 
+# TODO(rdyro): Remove this flag once we merge the new style in C++.
+ALLOW_BASIC_RAGGED_DOT_FALLBACK = config.bool_state(
+    'allow_basic_ragged_dot_fallback',
+    True,
+    'Whether to use the old-style fallback to the basic ragged dot case via '
+    'the Python interface for ragged_dot_general on TPU.'
+)
 
 def _ragged_dot_general_transpose_rule(
     ct,
