@@ -165,6 +165,7 @@ def argsort(
     descending: builtins.bool = ...,
     kind: str | None = ...,
     order: None = ...,
+    dtype: DTypeLike | None = ...,
 ) -> Array: ...
 def argwhere(
     a: ArrayLike,
