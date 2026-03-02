@@ -243,6 +243,16 @@ template <typename T>
 absl::StatusOr<size_t> GesddWorkspaceSize(gpusolverDnHandle_t handle,
                                          signed char jobu, signed char jobvt,
                                          int m, int n);
+// Run workspace size query on the given handle (no cache). Used by the kernel
+// with a dedicated query handle so the cache lives in the kernel translation
+// unit and is shared across warmup and timed runs.
+template <typename T>
+absl::StatusOr<size_t> GesddWorkspaceSizeQuery(gpusolverDnHandle_t handle,
+                                              signed char jobu, signed char jobvt,
+                                              int m, int n);
+// Handle used only for workspace size queries (no stream set). Kernel uses
+// this so query work is not on the execution stream.
+gpusolverDnHandle_t GetGesddQueryHandle();
 // Set user-owned workspace for rocsolver/rocblas (HIP only). Call with
 // (handle, ptr, size) before Gesdd; call with (handle, nullptr, 0) to clear.
 absl::Status SetWorkspace(gpusolverDnHandle_t handle, void* ptr, size_t size);

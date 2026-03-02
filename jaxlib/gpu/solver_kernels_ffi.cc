@@ -17,8 +17,14 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
+#include <cstdio>
+#include <cstdlib>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string_view>
+#include <tuple>
 
 #if JAX_GPU_HAVE_64_BIT
 #include <cstddef>
@@ -1147,8 +1153,77 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdjFfi, GesvdjDispatch,
 );
 
 #ifdef JAX_GPU_HIP
+// Workspace size from LAPACK formula (no query). The two-phase query can fail
+// with rocblas_status 8/9 in some environments; formula avoids that and never
+// blocks. rocsolver gesdd needs more than LAPACK minimum (syevd+geqrf+orgqr
+// buffers). Use 8x: 2x was too small (slow path for 1536/2048); 16x caused
+// ~1GB for N=2048 and allocation cost. 8x gives ~512MB for 2048. LAPACK for
+// JOBZ='S': 4*mn^2+7*mn elements.
+namespace {
+template <typename T>
+size_t GesddWorkspaceSizeFromFormula(signed char job, int m, int n) {
+  int mn = std::min(m, n);
+  int mx = std::max(m, n);
+  int64_t min_elements;
+  switch (job) {
+    case 'N':
+      min_elements = 3 * mn + std::max(mx, 7 * mn);
+      break;
+    case 'O':
+      min_elements = 3 * mn + std::max(mx, 5 * mn * mn + 4 * mn);
+      break;
+    case 'S':
+      min_elements = 4 * static_cast<int64_t>(mn) * mn + 7 * mn;
+      break;
+    case 'A':
+      min_elements = 4 * static_cast<int64_t>(mn) * mn + 6 * mn + mx;
+      break;
+    default:
+      min_elements = 4 * static_cast<int64_t>(mn) * mn + 7 * mn;
+  }
+  min_elements = std::max(int64_t(1), min_elements);
+  int64_t elements = min_elements * 8;
+  elements += 4096;
+  return static_cast<size_t>(elements) * sizeof(T);
+}
+}  // namespace
+
+// Persistent device workspace for gesdd. When stream is non-null use
+// hipMallocAsync so growth doesn't block the host.
+namespace {
+std::mutex& GetGesddWorkspaceMutex() {
+  static std::mutex mu;
+  return mu;
+}
+void* GetGesddPersistentWorkspace(size_t required_size, size_t preferred_size,
+                                  gpuStream_t stream, size_t* capacity) {
+  static void* ptr = nullptr;
+  static size_t cap = 0;
+  if (required_size == 0) {
+    *capacity = cap;
+    return ptr;
+  }
+  std::lock_guard<std::mutex> lock(GetGesddWorkspaceMutex());
+  if (cap < required_size) {
+    size_t alloc = (preferred_size > required_size) ? preferred_size : required_size;
+    void* new_ptr = nullptr;
+    // Use synchronous hipMalloc so workspace is committed before use; hipMallocAsync
+    // can leave allocation on a stream and cause slow/incorrect behavior in rocsolver.
+    hipError_t err = hipMalloc(&new_ptr, alloc);
+    if (err != hipSuccess || new_ptr == nullptr) {
+      *capacity = 0;
+      return nullptr;
+    }
+    ptr = new_ptr;
+    cap = alloc;
+  }
+  *capacity = cap;
+  return ptr;
+}
+}  // namespace
+
 // Singular Value Decomposition (divide-and-conquer): gesdd (ROCm rocsolver).
-// rocsolver uses rocBLAS's two-phase workspace: query size, set workspace, then run.
+// Uses cached workspace size and a persistent device buffer to minimize overhead.
 template <typename T>
 ffi::Error GesddImpl(int64_t batch, int64_t rows, int64_t cols,
                      gpuStream_t stream, ffi::ScratchAllocator& scratch,
@@ -1158,20 +1233,33 @@ ffi::Error GesddImpl(int64_t batch, int64_t rows, int64_t cols,
                      ffi::Result<ffi::AnyBuffer> u,
                      ffi::Result<ffi::AnyBuffer> vt,
                      ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  (void)scratch;
   FFI_ASSIGN_OR_RETURN(auto m, MaybeCastNoOverflow<int>(rows));
   FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(cols));
   FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
-  signed char job = compute_uv ? (full_matrices ? 'A' : 'S') : 'N';
+  // For square matrices, 'A' and 'S' produce the same output shapes.
+  // Prefer 'S' to avoid slower rocsolver code paths observed for some sizes
+  // (notably n=1536) with job='A'.
+  signed char job =
+      compute_uv ? ((full_matrices && m != n) ? 'A' : 'S') : 'N';
 
-  // Two-phase workspace: query then set so rocsolver has enough device memory.
-  FFI_ASSIGN_OR_RETURN(size_t workspace_size,
-                       solver::GesddWorkspaceSize<T>(handle.get(), job, job, m, n));
-  auto maybe_workspace = scratch.Allocate(workspace_size);
-  if (!maybe_workspace.has_value()) {
-    return ffi::Error(ffi::ErrorCode::kResourceExhausted,
-                     "Unable to allocate device workspace for gesdd");
+  // Formula-based workspace (no query) to avoid rocblas_status 8/9 in some envs.
+  size_t workspace_size = GesddWorkspaceSizeFromFormula<T>(job, m, n);
+  size_t prefer = workspace_size;
+  if (m <= 2048 && n <= 2048) {
+    size_t sz2048 = GesddWorkspaceSizeFromFormula<T>(job, 2048, 2048);
+    if (sz2048 > prefer) prefer = sz2048;
   }
-  void* workspace_ptr = maybe_workspace.value();
+  size_t cap = 0;
+  void* workspace_ptr =
+      GetGesddPersistentWorkspace(workspace_size, prefer, stream, &cap);
+  if (workspace_ptr == nullptr || cap < workspace_size) {
+    return ffi::Error(ffi::ErrorCode::kResourceExhausted,
+                      "Unable to allocate device workspace for gesdd");
+  }
+  // Pass this problem's workspace size (not cap). rocBLAS/rocSOLVER may choose
+  // algorithm from the size; passing full buffer size for small problems can
+  // trigger a slow path. We still allocate cap so the buffer is large enough.
   FFI_RETURN_IF_ERROR_STATUS(
       solver::SetWorkspace(handle.get(), workspace_ptr, workspace_size));
 
@@ -1182,6 +1270,7 @@ ffi::Error GesddImpl(int64_t batch, int64_t rows, int64_t cols,
   auto u_data = compute_uv ? static_cast<T*>(u->untyped_data()) : nullptr;
   auto vt_data = compute_uv ? static_cast<T*>(vt->untyped_data()) : nullptr;
   auto info_data = info->typed_data();
+
   if (a_data != out_data) {
     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
         out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
@@ -1206,7 +1295,10 @@ ffi::Error GesddImpl(int64_t batch, int64_t rows, int64_t cols,
     ++info_data;
   }
 
-  (void)solver::SetWorkspace(handle.get(), nullptr, 0);
+  // Do not call SetWorkspace(handle, nullptr, 0): clearing re-enables
+  // automatic workspace and can introduce a sync on the next use of the
+  // handle, inflating the next run (e.g. N=1536 ~2x). Next borrower will
+  // set their own workspace anyway.
   return ffi::Error::Success();
 }
 

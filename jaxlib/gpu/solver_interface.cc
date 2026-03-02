@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "jaxlib/gpu/solver_interface.h"
 
+#include <map>
+#include <mutex>
+#include <tuple>
+
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -481,10 +485,36 @@ rocblas_status GesddQueryImpl<gpuDoubleComplex>(gpusolverDnHandle_t handle,
 }
 }  // namespace
 
+// Cache workspace size per (m, n, job) to avoid the expensive query (which
+// runs the full rocsolver path with nullptr) on every call. Same shape =>
+// same size; query once per (m, n, job) and dtype.
+namespace {
+std::mutex& GesddWorkspaceCacheMutex() {
+  static std::mutex mu;
+  return mu;
+}
+
+// Dedicated handle for workspace size queries (no stream set → default stream).
+gpusolverDnHandle_t GetGesddQueryHandleImpl() {
+  thread_local gpusolverDnHandle_t h = nullptr;
+  if (h == nullptr) {
+    if (gpusolverDnCreate(&h) != GPUSOLVER_STATUS_SUCCESS) return nullptr;
+  }
+  return h;
+}
+}  // namespace
+
+gpusolverDnHandle_t GetGesddQueryHandle() {
+  return GetGesddQueryHandleImpl();
+}
+
+// Query only (no cache). Kernel uses this with GetGesddQueryHandle so the
+// cache lives in the kernel .cc and is shared across all invocations.
 template <typename T>
-absl::StatusOr<size_t> GesddWorkspaceSize(gpusolverDnHandle_t handle,
-                                         signed char jobu, signed char jobvt,
-                                         int m, int n) {
+absl::StatusOr<size_t> GesddWorkspaceSizeQuery(gpusolverDnHandle_t handle,
+                                               signed char jobu,
+                                               signed char jobvt, int m,
+                                               int n) {
   auto h = reinterpret_cast<rocblas_handle>(handle);
   rocblas_status st = rocblas_start_device_memory_size_query(h);
   JAX_RETURN_IF_ERROR(RocblasStatusToStatus(st, __FILE__, __LINE__,
@@ -501,6 +531,44 @@ absl::StatusOr<size_t> GesddWorkspaceSize(gpusolverDnHandle_t handle,
   return size;
 }
 
+template <typename T>
+absl::StatusOr<size_t> GesddWorkspaceSize(gpusolverDnHandle_t handle,
+                                         signed char jobu, signed char jobvt,
+                                         int m, int n) {
+  using Key = std::tuple<int, int, signed char>;
+  static std::map<Key, size_t> cache;
+
+  Key key(m, n, jobu);
+  {
+    std::lock_guard<std::mutex> lock(GesddWorkspaceCacheMutex());
+    auto it = cache.find(key);
+    if (it != cache.end()) return it->second;
+  }
+
+  gpusolverDnHandle_t query_handle = GetGesddQueryHandleImpl();
+  if (query_handle == nullptr) {
+    return absl::InternalError("Failed to create gesdd query handle");
+  }
+  auto h = reinterpret_cast<rocblas_handle>(query_handle);
+  rocblas_status st = rocblas_start_device_memory_size_query(h);
+  JAX_RETURN_IF_ERROR(RocblasStatusToStatus(st, __FILE__, __LINE__,
+                                            "rocblas_start_device_memory_size_query"));
+  st = GesddQueryImpl<T>(query_handle, jobu, jobvt, m, n);
+  if (st != rocblas_status_success) {
+    (void)rocblas_stop_device_memory_size_query(h, nullptr);
+    return RocblasStatusToStatus(st, __FILE__, __LINE__, "rocsolver_*gesdd (query)");
+  }
+  size_t size = 0;
+  st = rocblas_stop_device_memory_size_query(h, &size);
+  JAX_RETURN_IF_ERROR(RocblasStatusToStatus(st, __FILE__, __LINE__,
+                                            "rocblas_stop_device_memory_size_query"));
+  {
+    std::lock_guard<std::mutex> lock(GesddWorkspaceCacheMutex());
+    cache[key] = size;
+  }
+  return size;
+}
+
 template absl::StatusOr<size_t> GesddWorkspaceSize<float>(gpusolverDnHandle_t,
                                                           signed char, signed char,
                                                           int, int);
@@ -511,6 +579,18 @@ template absl::StatusOr<size_t> GesddWorkspaceSize<gpuComplex>(gpusolverDnHandle
                                                                signed char, signed char,
                                                                int, int);
 template absl::StatusOr<size_t> GesddWorkspaceSize<gpuDoubleComplex>(
+    gpusolverDnHandle_t, signed char, signed char, int, int);
+
+template absl::StatusOr<size_t> GesddWorkspaceSizeQuery<float>(gpusolverDnHandle_t,
+                                                                signed char, signed char,
+                                                                int, int);
+template absl::StatusOr<size_t> GesddWorkspaceSizeQuery<double>(gpusolverDnHandle_t,
+                                                                 signed char, signed char,
+                                                                 int, int);
+template absl::StatusOr<size_t> GesddWorkspaceSizeQuery<gpuComplex>(gpusolverDnHandle_t,
+                                                                    signed char, signed char,
+                                                                    int, int);
+template absl::StatusOr<size_t> GesddWorkspaceSizeQuery<gpuDoubleComplex>(
     gpusolverDnHandle_t, signed char, signed char, int, int);
 #endif  // JAX_GPU_HIP
 
