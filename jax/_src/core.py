@@ -653,7 +653,7 @@ class Primitive:
     finally:
       trace_ctx.set_trace(prev_trace)
 
-  def bind_with_trace(self, trace, args, params):
+  def bind_with_trace(self, trace, args, params, /):
     # TODO(mattjj,dougalm): remove this block?
     try: in_type = map(typeof, args)
     except: pass  # try lojax error message
@@ -2997,7 +2997,7 @@ class CallPrimitive(Primitive):
   def bind(self, *args, **params):
     return self._true_bind(*args, **params)
 
-  def bind_with_trace(self, trace, fun_and_args, params):
+  def bind_with_trace(self, trace, fun_and_args, params, /):
     fun = fun_and_args[0]
     args = fun_and_args[1:]
     return trace.process_call(self, fun, args, params)
@@ -3040,7 +3040,7 @@ class MapPrimitive(Primitive):
   def bind(self, *args, **params):
     return self._true_bind(*args, **params)
 
-  def bind_with_trace(self, trace, fun_and_args, params):
+  def bind_with_trace(self, trace, fun_and_args, params, /):
     fun: lu.WrappedFun = fun_and_args[0]
     args = fun_and_args[1:]
     assert len(params['in_axes']) == len(args)

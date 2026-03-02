@@ -403,7 +403,8 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _smap):
 
 
 def _manual_spec(manual_axes, spec: P, mesh) -> P:
-  out = []  # type: ignore
+  out: list[str | tuple[str, ...] | None] = []  # type: ignore
+  s: str | None | tuple[str, ...]
   for s in spec:
     if s is None:
       out.append(s)
@@ -413,7 +414,7 @@ def _manual_spec(manual_axes, spec: P, mesh) -> P:
         temp.pop()
       if None in temp:
         raise ValueError(f"Invalid spec: {spec}")
-      out.append(None if len(temp) == 0 else tuple(temp))
+      out.append(None if len(temp) == 0 else tuple(temp))  # type: ignore[arg-type]
     else:
       out.append(s if s in manual_axes else None)
   _check_unreduced(SpecErrorType.input, mesh, manual_axes, spec)
@@ -539,6 +540,7 @@ def _spec_rank_error(
     ba = _try_infer_args(f, tree)
   else:
     prefix, base = 'out', f'{fun_name}(*args)'
+    ba = None
   msgs = []
   for (spec_key, spec), (fail_key, aval) in _iter_paths(tree, specs, fails):
     extra = ""
@@ -722,7 +724,7 @@ class ShardMapPrimitive(core.Primitive):
   def bind(self, *args, **params):
     return self._true_bind(*args, **params)
 
-  def bind_with_trace(self, trace, fun_and_args, params):
+  def bind_with_trace(self, trace, fun_and_args, params, /):
     fun: lu.WrappedFun
     fun, *args = fun_and_args
     return trace.process_shard_map(shard_map_p, fun, args, **params)
@@ -772,6 +774,8 @@ def _shard_map_staging(
     args = [lo_val for x in args for lo_val in typeof(x).lower_val(x)]
     out_specs_thunk = (lambda t: lambda: [x for s in t() for x in s.to_lo()])(out_specs_thunk)
     f, hi_avals_out = _lojax_traceable(f, hi_avals_in, unk_names=True)
+  else:
+    hi_avals_out = None
   to_jaxpr_tracer = partial(trace.to_jaxpr_tracer, source_info=source_info)
   in_tracers = map(to_jaxpr_tracer, args)  # pyrefly: ignore[bad-assignment]  # pyrefly#2385
   inner_mesh = _as_manual_mesh(mesh, manual_axes)
@@ -799,6 +803,7 @@ def _shard_map_staging(
   out = trace.emit_eqn([*const_tracers, *in_tracers], out_avals, prim, params,
                        effs, source_info)
   if trace.requires_low:
+    assert hi_avals_out is not None
     out = pe.raise_lo_outs(hi_avals_out(), out)
   return out
 pe.DynamicJaxprTrace.process_shard_map = _shard_map_staging
@@ -1162,7 +1167,7 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs, out_specs_thunk,
   in_vma = map(_spec_to_vma, in_specs)
   outs, out_vma = _run_shmap(fun, mesh, manual_axes, args, in_vma, check_vma)
   out_avals = [core.mapped_aval(x.shape[0], 0, core.get_aval(x)) for x in outs]
-  _check_names(out_specs_thunk(), out_avals)  # pytype: disable=wrong-arg-types
+  _check_names(out_specs_thunk(), out_avals)  # type: ignore[arg-type]
   if check_vma:
     _check_vmas(mesh, out_specs_thunk(), out_avals)
     src_pspecs = tuple(_vma_to_spec(mesh, r) for r in out_vma)
@@ -1198,7 +1203,7 @@ def _unmatch2(mesh, prev_manual, spec, x):
   src = P(order_wrt_mesh(mesh, prev_manual), *spec)
   newly_manual = _spec_to_vma(spec)
   dst = P(order_wrt_mesh(mesh, prev_manual | newly_manual))
-  return shard_map(lambda x: x, in_specs=src, out_specs=dst,
+  return shard_map(lambda x: x, in_specs=src, out_specs=dst,  # pyrefly: ignore[no-matching-overload]
                    axis_names=prev_manual | newly_manual)(x)
 
 def _match_spec2(mesh, prev_manual, spec, x) -> JaxType:
@@ -1210,7 +1215,7 @@ def _match2(mesh, prev_manual, spec, x):
   newly_manual = _spec_to_vma(spec)
   src = P(order_wrt_mesh(mesh, prev_manual | newly_manual))
   dst = P(order_wrt_mesh(mesh, prev_manual), *spec)
-  return shard_map(lambda x: x, in_specs=src, out_specs=dst,
+  return shard_map(lambda x: x, in_specs=src, out_specs=dst,  # pyrefly: ignore[no-matching-overload]
                    axis_names=prev_manual | newly_manual)(x)
 
 
@@ -1406,28 +1411,28 @@ class ShardMapTracer(core.Tracer):
   @property
   def aval(self):
     aval = core.get_aval(self.val)
-    vma = self.vma if self._trace.check else self._trace.manual_axes
-    size = prod(self._trace.mesh.shape[n] for n in vma)
+    vma = self.vma if self._trace.check else self._trace.manual_axes  # pyrefly: ignore[missing-attribute]
+    size = prod(self._trace.mesh.shape[n] for n in vma)  # pyrefly: ignore[missing-attribute]
     out = core.mapped_aval(size, 0, aval)
     new_sharding = NamedSharding(
-        _as_manual_mesh(self._trace.amesh, self._trace.manual_axes),
-        out.sharding.spec)  # pytype: disable=attribute-error
+        _as_manual_mesh(self._trace.amesh, self._trace.manual_axes),  # pyrefly: ignore[missing-attribute]
+        out.sharding.spec)  # type: ignore[missing-attribute]
     vma = self.vma if config._check_vma.value else frozenset()
     return out.update(sharding=new_sharding, vma=vma)
 
   def to_concrete_value(self):
-    if self._trace.check and self.vma == frozenset():
-      with core.eval_context(), use_abstract_mesh(self._trace.amesh):
+    if self._trace.check and self.vma == frozenset():  # pyrefly: ignore[missing-attribute]
+      with core.eval_context(), use_abstract_mesh(self._trace.amesh):  # pyrefly: ignore[missing-attribute]
         return core.to_concrete_value(self.val[0])
     else:
       return None
 
   def __str__(self) -> str:
-    pb_names = set(self._trace.mesh.axis_names) - self.vma
+    pb_names = set(self._trace.mesh.axis_names) - self.vma  # pyrefly: ignore[missing-attribute]
     self = pvary(self, tuple(pb_names))
-    with core.eval_context(), use_abstract_mesh(self._trace.amesh):
+    with core.eval_context(), use_abstract_mesh(self._trace.amesh):  # pyrefly: ignore[missing-attribute]
       blocks = list(self.val)
-    mesh = self._trace.mesh
+    mesh = self._trace.mesh  # pyrefly: ignore[missing-attribute]
     axis_names = f"({', '.join(map(str, mesh.axis_names))},)"
     return '\n'.join(
         f"On {device} at mesh coordinates {axis_names} = {idx}:\n{block}\n"
@@ -1832,6 +1837,7 @@ def _shard_map_transpose(out_cts, *args,
       raise e2 from None
     else:
       api_util._raise_no_nan_in_deoptimized(e)
+    raise  # will never get here.
   except _RepError as e:
     fails, = e.args
     msg = _inout_vma_error(
@@ -1910,7 +1916,7 @@ def _add_reshapes(which: Sequence[bool],
                   jaxpr_known: core.Jaxpr,
                   jaxpr_staged: core.Jaxpr) -> tuple[core.Jaxpr, core.Jaxpr]:
   # add singleton axes to residuals which are from jaxpr_known and are scalars
-  which_ = [w and not v.aval.shape  # pytype: disable=attribute-error
+  which_ = [w and not v.aval.shape  # type: ignore[missing-attribute]
             for w, v in zip(which, jaxpr_staged.invars[:len(which)])]
   if not any(which_): return jaxpr_known, jaxpr_staged
   assert not jaxpr_known.constvars and not jaxpr_staged.constvars

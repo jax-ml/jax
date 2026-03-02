@@ -389,7 +389,7 @@ class CustomJVPCallPrimitive(core.Primitive):
   def bind(self, *args, **params):
     return self._true_bind(*args, **params)
 
-  def bind_with_trace(self, trace, args, params):
+  def bind_with_trace(self, trace, args, params, /):
     fun, jvp, tracers = args[0], args[1], args[2:]
     return trace.process_custom_jvp_call(self, fun, jvp, tracers, **params)
 
@@ -997,7 +997,7 @@ class CustomVJPCallPrimitive(core.Primitive):
   def bind(self, *args, **params):
     return self._true_bind(*args, **params)
 
-  def bind_with_trace(self, trace, args, params):
+  def bind_with_trace(self, trace, args, params, /):
     fun, fwd, bwd, tracers = args[0], args[1], args[2], args[3:]
     return trace.process_custom_vjp_call(self, fun, fwd, bwd, tracers, **params)
 
