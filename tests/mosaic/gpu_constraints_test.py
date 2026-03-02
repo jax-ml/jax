@@ -169,14 +169,26 @@ class ConstraintSystemTest(parameterized.TestCase):
   def test_reduce_reduce_expression_reduces_layout(self, axes, expected_layout):
     tiled_layout = RL(mgpu.WGMMA_LAYOUT)
     self.assertEqual(
-        cs.reduce_expression(cs.Reduce(tiled_layout, axes=axes), {}),
+        cs.reduce_expression(
+            cs.Reduce(tiled_layout, axes=axes, shape=(128,)), {}
+        ),
         RL(expected_layout),
     )
 
-  def test_reduce_reduce_expression_with_unsupported_layout_is_irreducible(self):
-    layout = RL(mgpu.WGStridedFragLayout((128, 8), vec_size=8))
-    expr = cs.Reduce(layout, axes=(0,))
-    self.assertEqual(cs.reduce_expression(expr, {}), expr)
+  def test_reduce_reduce_expression_with_strided_layout(self):
+    layout = RL(mgpu.WGStridedFragLayout((128, 8), vec_size=1))
+    expr = cs.Reduce(layout, axes=(1,), shape=(128,))
+    self.assertEqual(
+        cs.reduce_expression(expr, {}),
+        RL(mgpu.WGStridedFragLayout((128,), vec_size=1)),
+    )
+
+  def test_reduce_reduce_expression_with_splat_layout(self):
+    layout = RL(mgpu.WGSplatFragLayout((128, 8)))
+    expr = cs.Reduce(layout, axes=(0,), shape=(8,))
+    self.assertEqual(
+        cs.reduce_expression(expr, {}), RL(mgpu.WGSplatFragLayout((8,)))
+    )
 
   def test_reduce_reshape_of_splat_layout_is_reduced_to_splat_layout(self):
     layout = RL(mgpu.WGSplatFragLayout((1024,)))
@@ -452,6 +464,22 @@ class ConstraintSystemTest(parameterized.TestCase):
   def test_tiling_is_valid_mma_tiling_does_not_hold_for_invalid_tiling(self):
     layout = cs.SMEMTiling(lc.TileTransform((8, 8)))
     self.assertFalse(cs.IsValidMmaTiling(layout, 16).holds())
+
+  @parameterized.parameters(
+      ((1, 128), (4, 128), (0, 1), True),
+      ((1, 1, 128), (2, 4, 128), (0, 1, 2), True),
+      ((1, 4, 128), (2, 4, 128), (0, 1, 2), True),
+      ((128,), (4, 128), (1,), True),
+      ((2, 1, 128), (2, 4, 128), (0, 1, 2), False),
+      ((128,), (128, 128), (1,), True),
+      ((1, 128), (128, 4), (1, 0), False),
+  )
+  def test_broadcast_in_dim_constraint_holds_for_strided_layouts(
+      self, src_shape, dst_shape, dims, holds
+  ):
+    layout = RL(fa.WGStridedFragLayout(dst_shape, vec_size=1))
+    self.assertEqual(cs.BroadcastInDim(layout, src_shape, dims).holds(), holds)
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

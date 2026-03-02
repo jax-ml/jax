@@ -90,6 +90,7 @@ class SMEMTiling(Constant):
 class Reduce:
   expression: Expression
   axes: tuple[int, ...]
+  shape: tuple[int, ...]
 
   def __str__(self):
     return f"Reduce([{self.axes}], {self.expression})"
@@ -201,15 +202,21 @@ def reduce_expression(
       return expr
     case Variable():
       return assignments.get(expr, expr)
-    case Reduce(expression=expr, axes=axes):
+    case Reduce(expression=expr, axes=axes, shape=shape):
       reduced_expr = reduce_expression(expr, assignments)
       match reduced_expr:
         case Unsatisfiable():
           return Unsatisfiable()
-        case RegisterLayout(value=layout) if isinstance(layout, fa.TiledLayout):
+        case RegisterLayout(value=fa.TiledLayout() as layout):
           return RegisterLayout(layout.reduce(axes))
+        case RegisterLayout(value=fa.WGSplatFragLayout()):
+          return RegisterLayout(fa.WGSplatFragLayout(shape))
+        case RegisterLayout(value=fa.WGStridedFragLayout() as layout):
+          if math.prod(shape) % (layout.vec_size * fa.WARPGROUP_SIZE) != 0:
+            return Unsatisfiable()
+          return RegisterLayout(fa.WGStridedFragLayout(shape, layout.vec_size))
         case _:
-          return Reduce(expression=reduced_expr, axes=axes)
+          return Reduce(reduced_expr, axes, shape)
     case Reshape():
       return reduce_reshape_expression(expr, assignments)
     case Transpose():
@@ -490,7 +497,41 @@ class IsValidMmaTiling:
     return f"IsValidMMATiling({self.expr}, {self.bitwidth})"
 
 
-Constraint = Equals | Relayout | NotOfType | IsTransferable | IsValidMmaTiling | Divides
+@dataclasses.dataclass(frozen=True)
+class BroadcastInDim:
+  """States that `expr` must be compatible with broadcast requirements."""
+
+  expr: Expression
+  src_shape: tuple[int, ...]
+  broadcast_dimensions: tuple[int, ...]
+
+  def holds(self) -> bool | None:
+    match self.expr:
+      case RegisterLayout(value=fa.WGStridedFragLayout() as layout):
+        return fa.WGStridedFragLayout.is_supported_broadcast(
+            self.src_shape, layout.shape, self.broadcast_dimensions
+        )
+      case RegisterLayout():
+        return True
+      case _:
+        return None
+
+  def __str__(self):
+    return (
+        f"BroadcastInDim({self.expr}, {self.src_shape},"
+        f" {self.broadcast_dimensions})"
+    )
+
+
+Constraint = (
+    Equals
+    | Relayout
+    | NotOfType
+    | IsTransferable
+    | IsValidMmaTiling
+    | Divides
+    | BroadcastInDim
+)
 
 
 def reduce_constraint(
@@ -536,6 +577,11 @@ def reduce_constraint(
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
       return Divides(expr_red, tiling_multiple)
+    case BroadcastInDim(expr=expr):
+      expr_red = reduce_expression(expr, assignments)
+      if isinstance(expr_red, Unsatisfiable):
+        return Unsatisfiable()
+      return dataclasses.replace(constraint, expr=expr_red)
     case _ as never:
       assert_never(never)
 
@@ -590,6 +636,8 @@ class ConstraintSystem:
         case IsValidMmaTiling(expr=expr):
           extract_variables(expr)
         case Divides(expr=expr):
+          extract_variables(expr)
+        case BroadcastInDim(expr=expr):
           extract_variables(expr)
         case _ as never:
           assert_never(never)

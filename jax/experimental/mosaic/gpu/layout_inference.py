@@ -150,7 +150,18 @@ def extract_assignment_candidates_from_reduce_equation(
     reduction_dims: tuple[int, ...]
 ) -> Iterator[cs.RegisterLayout]:
   """Yields layout candidates for the reduce equation `small = reduce(large, reduction_dims)."""
-  large_shape = large.key.value.type.shape  # pytype: disable=attribute-error
+  large_shape = large.key.shape  # pytype: disable=attribute-error
+
+  if isinstance(small.value, fa.WGSplatFragLayout):
+    yield cs.RegisterLayout(fa.WGSplatFragLayout(large_shape))
+    return
+
+  if isinstance(small.value, fa.WGStridedFragLayout):
+    layout = fa.WGStridedFragLayout(large_shape, small.value.vec_size)
+    yield cs.RegisterLayout(layout)
+    return
+
+  assert isinstance(small.value, fa.TiledLayout)
   candidates = [
       fa.WGMMA_LAYOUT,
       fa.WGMMA_TRANSPOSED_LAYOUT,
@@ -998,18 +1009,6 @@ def _vector_reduction_constraint_system(
   return cs.ConstraintSystem(), {in_variable: [in_variable.key]}
 
 
-def _reduction_constraints(
-    larger: cs.Variable,
-    smaller: cs.Variable,
-    reduction_dims: tuple[int, ...],
-) -> list[cs.Constraint]:
-  return [
-      cs.Equals(lhs=smaller, rhs=cs.Reduce(larger, reduction_dims)),
-      # TODO(allanrenucci): Remove once we support reduction of strided layouts.
-      cs.NotOfType(larger, fa.WGStridedFragLayout),
-  ]
-
-
 @_add_constraint_system_derivation_rule(vector.MultiDimReductionOp)
 def _multi_dim_reduction_constraint_system(
     ctx: DerivationContext,
@@ -1021,17 +1020,15 @@ def _multi_dim_reduction_constraint_system(
   out = ValueSite(op, VariableType.RESULT, 0)
   source_variable = cs.Variable(source)
   out_variable = cs.Variable(out)
-
-  reduction_constraints = _reduction_constraints(
-      source_variable,
-      out_variable,
-      tuple(op.reduction_dims),
-  )
-  # TODO(bchetioui): in the future, we may need to add rules that prevent
-  # strided layouts from being chosen---since trying to reduce a strided layout
-  # may cause us to raise an Exception at the moment.
+  constraints = [
+      cs.NotOfType(source_variable, fa.WGStridedFragLayout),
+      cs.Equals(
+          out_variable,
+          cs.Reduce(source_variable, tuple(op.reduction_dims), out.shape),
+      ),
+  ]
   return (
-      cs.ConstraintSystem(constraints=reduction_constraints),
+      cs.ConstraintSystem(constraints=constraints),
       {source_variable: [source], out_variable: [acc, out]},
   )
 
@@ -1044,16 +1041,20 @@ def _broadcast_in_dim_constraint_system(
   del ctx
   out_variable = cs.Variable(ValueSite(op, VariableType.RESULT, 0))
   source_variable = cs.Variable(ValueSite(op, VariableType.OPERAND, 0))
-  out_shape = tuple(cast(ir.ShapedType, op.result.type).shape)
+  in_shape = tuple(op.operand.type.shape)
+  out_shape = tuple(op.result.type.shape)
   reduction_dims = tuple(
       i for i in range(len(out_shape)) if i not in op.broadcast_dimensions
   )
-  reduction_constraints = _reduction_constraints(
-      out_variable, source_variable, reduction_dims
-  )
-
+  constraints = [
+      cs.Equals(
+          source_variable,
+          cs.Reduce(out_variable, reduction_dims, in_shape),
+      ),
+      cs.BroadcastInDim(out_variable, in_shape, op.broadcast_dimensions),
+  ]
   return (
-      cs.ConstraintSystem(constraints=reduction_constraints),
+      cs.ConstraintSystem(constraints=constraints),
       {
           source_variable: [source_variable.key],
           out_variable: [out_variable.key],
