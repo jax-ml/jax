@@ -21,7 +21,7 @@ import enum
 import functools
 import math
 import typing
-from typing import Any, Literal
+from typing import Any, Literal, overload
 
 import jax
 from jax import numpy as jnp
@@ -670,6 +670,12 @@ def _reshape(ref: ir.Value, sh0: list[int], sh1: list[int]):
 
   return ref
 
+
+@overload
+def memref_reshape(ref: ir.Value, shape: tuple[int, ...]) -> ir.Value: ...
+
+@overload
+def memref_reshape(ref: MultimemRef, shape: tuple[int, ...]) -> MultimemRef: ...  # type: ignore[overload-cannot-match]
 
 def memref_reshape(
     ref: ir.Value | MultimemRef, shape: tuple[int, ...]

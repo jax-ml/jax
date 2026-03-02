@@ -189,8 +189,8 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
     for thunk in to_evaluate:
       thunk(env, device)
     return tuple(env[name] for name in mgpu_arg_names)
-  output_input_aliases = [None] * len(mgpu_call.results)
-  for alias in mgpu_call.output_operand_aliases:
+  output_input_aliases: list[int | None] = [None] * len(mgpu_call.results)
+  for alias in mgpu_call.output_operand_aliases or []:
     alias = hlo.OutputOperandAlias(alias)
     if alias.operand_tuple_indices:
       raise NotImplementedError("Tupled operand indices not supported")

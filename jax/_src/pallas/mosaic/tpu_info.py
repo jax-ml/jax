@@ -72,8 +72,8 @@ class ChipVersion(ChipVersionBase, enum.Enum):
     return self.value
 
   @property
-  def num_physical_tensor_cores_per_chip(self) -> int:
-    match self:
+  def _num_physical_tensor_cores_per_chip(self) -> int:  # pyrefly: ignore[bad-return]  # pyrefly#2080
+    match self:  # pyrefly: ignore[non-exhaustive-match]  # pyrefly#2080
       case (
           ChipVersion.TPU_V2
           | ChipVersion.TPU_V3
@@ -85,6 +85,11 @@ class ChipVersion(ChipVersionBase, enum.Enum):
         return 2
       case ChipVersion.TPU_V4I | ChipVersion.TPU_V5E | ChipVersion.TPU_V6E:
         return 1
+
+  @property
+  def num_physical_tensor_cores_per_chip(self) -> int:
+    # TODO(slebedev): Remove this wrapper once pyrefly#2080 is fixed.
+    return cast(int, self._num_physical_tensor_cores_per_chip)  # type: ignore[redundant-cast]
 
   @property
   def supports_megacore(self) -> bool:
@@ -280,7 +285,6 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
   MXU_COLUMN_SIZE_GEN_LT_6 = 128
   MXU_COLUMN_SIZE_GEN_GE_6 = 256
   tensor_cores_per_chip = chip_version.num_physical_tensor_cores_per_chip
-
   match chip_version:
     case ChipVersion.TPU_V2:
       return TpuInfo(

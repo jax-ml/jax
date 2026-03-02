@@ -1447,7 +1447,7 @@ class ParameterizedLayout(SomeLayout):
   def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:
     if args or kwargs:
       raise ValueError(f"Can't instantiate {self} with arguments.")
-    return self.layout_cls.to_mgpu(*self.args, **self.kwargs)
+    return self.layout_cls.to_mgpu(*self.args, **self.kwargs)  # pyrefly: ignore[bad-return]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1492,7 +1492,7 @@ class Layout(SomeLayout, enum.Enum):
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
 
-  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:  # pyrefly: ignore[bad-override]
+  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:  # pyrefly: ignore[bad-override, bad-return]
     def check_no_args():
       if args or kwargs:
         raise ValueError(f"Can't instantiate {self} with arguments.")

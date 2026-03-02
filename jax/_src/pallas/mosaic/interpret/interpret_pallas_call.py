@@ -1845,15 +1845,15 @@ def interpret_pallas_call(
     is_input = i < grid_mapping.num_inputs
     is_output = (output_idx >= 0) and (output_idx < grid_mapping.num_outputs)
     aval = var.aval
-    memory_space = _forward_any_to_hbm(aval.memory_space)
+    memory_space = _forward_any_to_hbm(aval.memory_space)  # pyrefly: ignore[missing-attribute]
     if memory_space is _SEMAPHORE:
       kernel_buffer_ids.append(
           callback.io_callback(
               _allocate_semaphores,
-              jax.ShapeDtypeStruct(aval.shape, jnp.int16),
+              jax.ShapeDtypeStruct(aval.shape, jnp.int16),  # pyrefly: ignore[missing-attribute]
               device_id,
               None,  # local_core_id
-              aval.shape,
+              aval.shape,  # pyrefly: ignore[missing-attribute]
               ordered=True,
           )
       )
@@ -1877,7 +1877,7 @@ def interpret_pallas_call(
               None,  # local_core_id,
               TPU_MEMORY_SPACE_IDXS[memory_space],
               interpret_params.get_uninitialized_array(
-                  var.aval.shape, var.aval.dtype
+                  var.aval.shape, var.aval.dtype  # pyrefly: ignore[missing-attribute]
               ),
               ordered=True,
           )
