@@ -2011,17 +2011,13 @@ def try_cluster_cancel(
   if predicate is None:
     predicate = single_thread_predicate(ThreadSubset.BLOCK)
 
-  pred_ptx = "@$2"
-  pred_constraint = ",b"
-
   addr = memref_ptr(result_ref, memory_space=3)
   llvm.inline_asm(
       ir.Type.parse("!llvm.void"),
-      [addr, barrier.get_ptr()]
-      + ([predicate] if predicate is not None else []),
-      f"{pred_ptx} clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.multicast::cluster::all.b128"
+      [addr, barrier.get_ptr(), predicate],
+      "@$2 clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.multicast::cluster::all.b128"
       " [$0], [$1];",
-      "r,r" + pred_constraint,
+      "r,r,b",
       has_side_effects=True,
   )
 
