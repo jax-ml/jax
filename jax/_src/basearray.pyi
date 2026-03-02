@@ -42,7 +42,8 @@ PrecisionLike = Any
 
 
 class Array:
-  aval: Any
+  @property
+  def aval(self) -> Any: ...
 
   @property
   def dtype(self) -> np.dtype: ...
