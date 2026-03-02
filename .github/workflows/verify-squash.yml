@@ -1,0 +1,99 @@
+name: Verify Squashed Commits
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
+
+permissions:
+  pull-requests: write  # needed to add comments in the pull request
+  contents: read
+
+jobs:
+  verify-squash:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check commit count
+        id: check-commits
+        shell: bash
+        env:
+          MAX_COMMITS: 1
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          SKIP_LABEL: 'skip-squash-check'
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
+        run: |
+          # Check if the skip label is present
+          if echo "$PR_LABELS" | grep -q "\"name\": \"$SKIP_LABEL\""; then
+            echo "Skip label '$SKIP_LABEL' found. Bypassing squash check."
+            echo "is_squashed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Get base and head refs from GitHub context
+          if [ -z "$PR_BASE_SHA" ]; then
+            echo "::error::This action must be run on a pull request event"
+            exit 1
+          fi
+
+          BASE_SHA="$PR_BASE_SHA"
+          HEAD_SHA="$PR_HEAD_SHA"
+
+          # Fetch the base branch to ensure we have the commits
+          git fetch origin "$PR_BASE_REF"
+
+          # Count commits in the PR using git
+          COMMIT_COUNT=$(git rev-list --count "$BASE_SHA..$HEAD_SHA")
+          echo "count=$COMMIT_COUNT" >> $GITHUB_OUTPUT
+
+          echo "Found $COMMIT_COUNT commit(s) in PR"
+
+          # Check if squashed
+          if [ "$COMMIT_COUNT" -le "$MAX_COMMITS" ]; then
+            echo "is_squashed=true" >> $GITHUB_OUTPUT
+            echo "PR is squashed ($COMMIT_COUNT commit(s), max allowed: $MAX_COMMITS)"
+          else
+            echo "is_squashed=false" >> $GITHUB_OUTPUT
+            echo "::error::PR is not squashed ($COMMIT_COUNT commit(s), max allowed: $MAX_COMMITS)"
+            echo "::error::Please squash your commits before merging"
+            exit 1
+          fi
+
+      - name: Post PR Comment
+        if: failure() && steps.check-commits.outputs.is_squashed == 'false'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          COMMIT_COUNT: ${{ steps.check-commits.outputs.count }}
+          MAX_COMMITS: 1
+        with:
+            github-token: ${{ secrets.GITHUB_TOKEN }}
+            script: |
+              const { COMMIT_COUNT, MAX_COMMITS } = process.env;
+
+              const body = `
+              ### ⚠️ Squash Check Failed
+
+              This Pull Request currently contains **${COMMIT_COUNT}** commits.
+              To keep our history clean, we require a maximum of **${MAX_COMMITS}** commit(s) per PR.
+
+              **How to fix this:**
+              1. Squash your commits locally: \`git rebase -i HEAD~${COMMIT_COUNT}\`
+              2. Force push the changes: \`git push --force-with-lease\`
+
+              _This is an automated message from the Verify Squashed Commits check._
+              `;
+
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body.trim()
+              })
