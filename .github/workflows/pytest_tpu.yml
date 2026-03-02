@@ -93,7 +93,11 @@ jobs:
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
       - name: Install Python dependencies
         run: |
-          $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt -r build/collect-profile-requirements.txt
+          $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
+          # xprof depends on cffi, which doesn't support Python 3.13 free-threaded.
+          if [[ "${JAXCI_HERMETIC_PYTHON_VERSION}" != "3.13-nogil" ]]; then
+            $JAXCI_PYTHON -m uv pip install -r build/collect-profile-requirements.txt
+          fi
       - name: Set up libtpu wheels
         run: |
           if [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "nightly" ]]; then
@@ -124,10 +128,6 @@ jobs:
       - name: Run Pytest TPU tests
         timeout-minutes: ${{ github.event_name == 'pull_request' && 30 || 210 }}
         run: |
-          if [[ ${INPUTS_PYTHON} == "3.13-nogil" ]]; then
-            echo "Uninstalling xprof as it is not compatible with python 3.13t."
-            $JAXCI_PYTHON -m uv pip uninstall xprof
-          fi
           ./ci/run_pytest_tpu.sh
         env:
           INPUTS_PYTHON: ${{ inputs.python }}
