@@ -39,6 +39,39 @@ jtu.setup_hypothesis()
 jax.config.parse_flags_with_absl()
 
 
+class PallasSCMeshTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    if not jtu.is_device_tpu(5, "p") and not jtu.is_device_tpu_at_least(6):
+      self.skipTest("SparseCore only supported on TPU v5p+")
+    super().setUp()
+
+  def test_scalar_subcore_mesh(self):
+    sc_info = plsc.get_sparse_core_info()
+    mesh = sc_core.ScalarSubcoreMesh(axis_name="x", num_cores=sc_info.num_cores)
+    self.assertEqual(
+        mesh.shape, collections.OrderedDict({"x": sc_info.num_cores})
+    )
+    self.assertEqual(mesh.dimension_semantics, ["core_parallel"])
+    self.assertEqual(mesh.default_memory_space, pltpu.MemorySpace.HBM)
+
+  def test_vector_subcore_mesh(self):
+    sc_info = plsc.get_sparse_core_info()
+    num_cores = sc_info.num_cores
+    num_subcores = sc_info.num_subcores
+    mesh = sc_core.VectorSubcoreMesh(
+        core_axis_name="x", num_cores=num_cores, subcore_axis_name="y"
+    )
+    self.assertEqual(
+        mesh.shape,
+        collections.OrderedDict({"x": num_cores, "y": num_subcores}),
+    )
+    self.assertEqual(
+        mesh.dimension_semantics, ["core_parallel", "subcore_parallel"]
+    )
+    self.assertEqual(mesh.default_memory_space, pltpu.MemorySpace.HBM)
+
+
 class PallasSCTest(jtu.JaxTestCase):
   USE_TC_TILING = False
 
@@ -145,7 +178,7 @@ class DebugPrintTest(PallasSCTest):
     @self.kernel(
         out_shape=int32s,
         mesh=plsc.ScalarSubcoreMesh(
-            axis_name="core", num_cores=self.sc_info.num_cores
+            axis_name="x", num_cores=self.sc_info.num_cores
         ),
     )
     def kernel(int32s_hbm_ref, int16s_hbm_ref, int8s_hbm_ref, o_hbm_ref):
@@ -155,7 +188,7 @@ class DebugPrintTest(PallasSCTest):
           sem=pltpu.SemaphoreType.DMA,
       )
       def _(tmp_ref, sem):
-        @pl.when(lax.axis_index("core") == 0)
+        @pl.when(lax.axis_index("x") == 0)
         def _():
           pltpu.async_copy(int32s_hbm_ref, tmp_ref, sem).wait()
           pltpu.async_copy(tmp_ref, o_hbm_ref, sem).wait()
@@ -176,7 +209,6 @@ class DebugPrintTest(PallasSCTest):
     )
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel(int32s, int16s, int8s))
-    print(get_output())
     self.assertIn("s32 array, data: s32", get_output())
     self.assertIn(
         "{ " + ", ".join(map(str, range(nl, 2 * nl))) + " }", get_output()
@@ -1879,12 +1911,12 @@ class ScalarSubcoreTest(PallasSCTest):
     @self.kernel(
         out_shape=x,
         mesh=plsc.ScalarSubcoreMesh(
-            axis_name="core", num_cores=self.sc_info.num_cores
+            axis_name="x", num_cores=self.sc_info.num_cores
         ),
     )
     def kernel(x_ref, o_ref):
       lax.cond(
-          lax.axis_index("core") == lax.axis_size("core") - 1,
+          lax.axis_index("x") == lax.axis_size("x") - 1,
           lambda: pltpu.sync_copy(x_ref, o_ref),
           lambda: None,
       )
@@ -1900,13 +1932,13 @@ class ScalarSubcoreTest(PallasSCTest):
     @self.kernel(
         out_shape=x,
         mesh=plsc.ScalarSubcoreMesh(
-            axis_name="core", num_cores=self.sc_info.num_cores
+            axis_name="x", num_cores=self.sc_info.num_cores
         ),
     )
     def kernel(x_ref, o_ref):
       @functools.partial(pl.run_scoped, sems=pltpu.SemaphoreType.DMA(4))
       def _(sems):
-        core_id = lax.axis_index("core")
+        core_id = lax.axis_index("x")
         pltpu.async_copy(
             x_ref.at[core_id], o_ref.at[core_id], sems.at[core_id]
         ).wait()

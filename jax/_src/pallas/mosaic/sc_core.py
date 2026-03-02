@@ -169,7 +169,7 @@ class ScalarSubcoreMesh:
 
   @property
   def shape(self):
-    return collections.OrderedDict(core=self.num_cores)
+    return collections.OrderedDict({self.axis_name: self.num_cores})
 
   @property
   def dimension_semantics(self) -> Sequence[str]:
@@ -272,8 +272,10 @@ class VectorSubcoreMesh:
 
   @property
   def shape(self):
-    return collections.OrderedDict(
-        core=self.num_cores, subcore=self.num_subcores)
+    return collections.OrderedDict({
+        self.core_axis_name: self.num_cores,
+        self.subcore_axis_name: self.num_subcores,
+    })
 
   @property
   def dimension_semantics(self) -> Sequence[str]:
