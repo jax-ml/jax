@@ -425,6 +425,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   ))
   def testReducerWhere(self, name, rng_factory, shape, dtype, axis,
                        keepdims, initial, inexact, whereshape, tol):
+    if not jtu.is_cloud_tpu_at_least(2026, 2, 28):
+      self.skipTest("Requires a newer libTPU")
     np_op = getattr(np, name)
     jnp_op = getattr(jnp, name)
     if (shape in [()] + scalar_shapes and
@@ -488,6 +490,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   ))
   def testReducerWhereNoInitial(self, name, rng_factory, shape, dtype, axis,
                                 keepdims, inexact, whereshape, tol):
+    if not jtu.is_cloud_tpu_at_least(2026, 2, 28):
+      self.skipTest("b/412684823: Requires a newer libTPU")
     np_op = getattr(np, name)
     jnp_op = getattr(jnp, name)
     rng = rng_factory(self.rng())
