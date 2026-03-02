@@ -1205,12 +1205,17 @@ void* GetGesddPersistentWorkspace(size_t required_size, size_t preferred_size,
   }
   std::lock_guard<std::mutex> lock(GetGesddWorkspaceMutex());
   if (cap < required_size) {
+    if (ptr) {
+      hipFree(ptr);
+    }
     size_t alloc = (preferred_size > required_size) ? preferred_size : required_size;
     void* new_ptr = nullptr;
     // Use synchronous hipMalloc so workspace is committed before use; hipMallocAsync
     // can leave allocation on a stream and cause slow/incorrect behavior in rocsolver.
     hipError_t err = hipMalloc(&new_ptr, alloc);
     if (err != hipSuccess || new_ptr == nullptr) {
+      ptr = nullptr;
+      cap = 0;
       *capacity = 0;
       return nullptr;
     }
