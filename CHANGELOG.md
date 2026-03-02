@@ -16,6 +16,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.9.1 (March 2, 2026)
+
 * Changes:
   * JAX tracers that are not of `Array` type (e.g., of `Ref` type) will no
     longer report themselves to be instances of `Array`.
