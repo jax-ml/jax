@@ -178,37 +178,6 @@ class ConstraintSystemTest(parameterized.TestCase):
     expr = cs.Reduce(layout, axes=(0,))
     self.assertEqual(cs.reduce_expression(expr, {}), expr)
 
-  def test_reduce_broadcast_of_splat_layout_is_reduced_to_splat_layout(self):
-    layout = RL(mgpu.WGSplatFragLayout((128,)))
-    valid_shape = (128, 8)
-    self.assertEqual(
-        cs.reduce_expression(
-            cs.BroadcastInDim(layout, axes=(0,), shape=valid_shape), {}
-        ),
-        RL(mgpu.WGSplatFragLayout((128, 8))),
-    )
-
-  def test_reduce_broadcast_of_splat_layout_is_unsatisfiable_for_incompatible_shape(self):
-    layout = RL(mgpu.WGSplatFragLayout((128,)))
-    invalid_shape = (129, 8)
-    self.assertIsInstance(
-        cs.reduce_expression(
-            cs.BroadcastInDim(layout, axes=(0,), shape=invalid_shape),
-            {},
-        ),
-        cs.Unsatisfiable,
-    )
-
-  def test_reduce_broadcast_of_strided_layout_is_irreducible(self):
-    layout = RL(mgpu.WGStridedFragLayout((128,), vec_size=1))
-    expr = cs.BroadcastInDim(layout, axes=(0,), shape=(128, 8))
-    self.assertEqual(cs.reduce_expression(expr, {}), expr)
-
-  def test_reduce_broadcast_of_tiled_layout_is_irreducible(self):
-    layout = RL(mgpu.WGMMA_LAYOUT)
-    expr = cs.BroadcastInDim(layout, axes=(1, 2), shape=(8, 128, 8))
-    self.assertEqual(cs.reduce_expression(expr, {}), expr)
-
   def test_reduce_reshape_of_splat_layout_is_reduced_to_splat_layout(self):
     layout = RL(mgpu.WGSplatFragLayout((1024,)))
     source_shape, target_shape = (1024,), (128, 8)

@@ -96,13 +96,6 @@ class Reduce:
 
 
 @dataclasses.dataclass(frozen=True)
-class BroadcastInDim:
-  expression: Expression
-  axes: tuple[int, ...]
-  shape: tuple[int, ...]
-
-
-@dataclasses.dataclass(frozen=True)
 class Reshape:
   expression: Expression
   source_shape: tuple[int, ...]
@@ -121,41 +114,9 @@ Expression = (
     Variable
     | Constant
     | Reduce
-    | BroadcastInDim
     | Reshape
     | Transpose
 )
-
-
-def reduce_broadcast_expression(
-    broadcast: BroadcastInDim, assignments: dict[Variable, Constant]
-) -> Expression | Unsatisfiable:
-  def _check_shape_broadcast(shape: tuple[int, ...]) -> bool:
-    for axis, s in zip(broadcast.axes, shape, strict=True):
-      if broadcast.shape[axis] != s:
-        return False
-    return True
-
-  reduced_expr = reduce_expression(broadcast.expression, assignments)
-  match reduced_expr:
-    case Unsatisfiable():
-      return Unsatisfiable()
-    case RegisterLayout(value=layout):
-      match layout:
-        case fa.WGSplatFragLayout(shape=shape):
-          if not _check_shape_broadcast(shape):
-            return Unsatisfiable()
-          return RegisterLayout(fa.WGSplatFragLayout(shape=broadcast.shape))
-        case _:
-          return BroadcastInDim(
-              expression=reduced_expr,
-              axes=broadcast.axes,
-              shape=broadcast.shape,
-          )
-    case _:
-      return BroadcastInDim(
-          expression=reduced_expr, axes=broadcast.axes, shape=broadcast.shape
-      )
 
 
 def reduce_reshape_expression(
@@ -249,8 +210,6 @@ def reduce_expression(
           return RegisterLayout(layout.reduce(axes))
         case _:
           return Reduce(expression=reduced_expr, axes=axes)
-    case BroadcastInDim():
-      return reduce_broadcast_expression(expr, assignments)
     case Reshape():
       return reduce_reshape_expression(expr, assignments)
     case Transpose():
@@ -608,8 +567,6 @@ class ConstraintSystem:
         case Constant():
           ...
         case Reduce(expression=e):
-          extract_variables(e)
-        case BroadcastInDim(expression=e):
           extract_variables(e)
         case Reshape(expression=e):
           extract_variables(e)
