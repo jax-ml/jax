@@ -14,7 +14,9 @@ limitations under the License.
 ==============================================================================*/
 
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -25,6 +27,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -47,6 +50,8 @@ absl::Status ExecuteSync(xla::PjRtLoadedExecutable* executable) {
                       executable->Execute({no_buffers}, /*options=*/{}));
   return result[0][0]->GetReadyFuture().Await();
 }
+
+extern "C" void MosaicGpuClearKernelCache();
 
 TEST(CustomCallTest, MosaicGpuUsesCommandBuffers) {
   //  Dumped from the following kernel:
@@ -87,16 +92,18 @@ ENTRY main {
                        xla::ParseAndReturnUnverifiedModule(hlo_module));
 
   std::string tmp_path = testing::TempDir();
-  tsl::setenv("XLA_FLAGS", absl::StrCat("--xla_dump_to=", tmp_path).c_str(),
-              /*overwrite=*/true);
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
                        xla::GetXlaPjrtGpuClient(/*options=*/{}));
 
+  xla::CompileOptions compile_options;
+  compile_options.executable_build_options.mutable_debug_options()
+      ->set_xla_dump_to(tmp_path);
+
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<xla::PjRtLoadedExecutable> executable,
       client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
-                             /*options=*/{}));
+                             /*options=*/std::move(compile_options)));
 
   // Matching the name exactly is vulnerable to renaming changes, and is not
   // ideal. With that said, this seems like the most reasonable thing to do, and
@@ -157,6 +164,14 @@ std::string TestMGPUHloModule(std::string extra_attributes = "") {
                           extra_attributes);
 }
 
+// NOTE: If this test fails with a potential Mutex deadlock, it is likely
+// because a failure was reported before all EXPECT_CALLs were satisfied. This
+// can trigger a deadlock in the stack trace generator while logs are being
+// captured. See yaqs/5335380633059328 for details.
+//
+// TL;DR: Adding `dwarf2reader::ElfMapper().GetMap();` before
+// `StartCapturingLogs()` can prevent the deadlock and allow the real error
+// message to be printed.
 TEST(CustomCallTest, KernelInitializationIsCached) {
   std::string module_str = TestMGPUHloModule();
   ASSERT_OK_AND_ASSIGN(auto module,
@@ -172,7 +187,7 @@ TEST(CustomCallTest, KernelInitializationIsCached) {
     absl::ScopedMockLog log;
     EXPECT_CALL(log,
                 Log(absl::LogSeverity::kInfo, _,
-                    "Successfully compiled Mosaic GPU kernel"))
+                    "Successfully compiled Mosaic GPU kernel to object file"))
         .Times(1);
     log.StartCapturingLogs();
     ASSERT_OK_AND_ASSIGN(executable, client->CompileAndLoad(
@@ -182,9 +197,8 @@ TEST(CustomCallTest, KernelInitializationIsCached) {
 
   {
     absl::ScopedMockLog log;
-    EXPECT_CALL(log,
-                Log(absl::LogSeverity::kInfo, _,
-                    "Successfully initialized Mosaic GPU kernel"))
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Successfully initialized Mosaic GPU kernel"))
         .Times(1);
     log.StartCapturingLogs();
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
@@ -213,6 +227,98 @@ TEST(CustomCallTest, IgnoresUnknownAttributes) {
       client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
                              /*options=*/{}));
   EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+}
+
+// NOTE: If this test fails with a potential Mutex deadlock, it is likely
+// because a failure was reported before all EXPECT_CALLs were satisfied. This
+// can trigger a deadlock in the stack trace generator while logs are being
+// captured. See yaqs/5335380633059328 for details.
+//
+// TL;DR: Adding `dwarf2reader::ElfMapper().GetMap();` before
+// `StartCapturingLogs()` can prevent the deadlock and allow the real error
+// message to be printed.
+TEST(CustomCallTest, SerializationAndDeduplication) {
+  // Use a unique kernel hash to avoid cache hits from previous tests.
+  std::string kernel_hash = "serdes_dedup_test_hash_012345678";
+  std::string module_str = TestMGPUHloModule();
+  // Substitute the unique hash into the module.
+  module_str = absl::StrReplaceAll(
+      module_str, {{"6f8a2b1d5e9c0f4a3b7d8e2c1a6b0f9e", kernel_hash}});
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       xla::ParseAndReturnUnverifiedModule(module_str));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+
+  absl::SetVLogLevel("custom_call", 5);
+
+  std::string serialized;
+  xla::CompileOptions compile_options;
+  compile_options.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_experimental_aot_compiled_thunks(true);
+  {
+    absl::ScopedMockLog log;
+    // Should be compiled only once.
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    "Successfully compiled Mosaic GPU kernel to object file"))
+        .Times(1);
+    log.StartCapturingLogs();
+
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+        client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                               /*options=*/std::move(compile_options)));
+    ASSERT_OK_AND_ASSIGN(serialized,
+                         executable->GetExecutable()->SerializeExecutable());
+  }
+
+  {
+    // Clear the cache to test deserialization.
+    MosaicGpuClearKernelCache();
+    absl::ScopedMockLog log;
+    // Should not hit the cache during Prepare. One cache hit is expected on the
+    // Execute stage.
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Found Mosaic GPU kernel in cache"))
+        .Times(1);
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    "Successfully compiled Mosaic GPU kernel to object file"))
+        .Times(0);
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Successfully JIT-linked Mosaic GPU kernel"))
+        .Times(1);
+
+    log.StartCapturingLogs();
+
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+        client->LoadSerializedExecutable(serialized, std::nullopt, {}));
+    EXPECT_OK(ExecuteSync(executable.get()));
+  }
+
+  {
+    absl::ScopedMockLog log;
+    // The second execution should hit the cache on both Prepare and Execution
+    // stages.
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Found Mosaic GPU kernel in cache"))
+        .Times(2);
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    "Successfully compiled Mosaic GPU kernel to object file"))
+        .Times(0);
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Successfully JIT-linked Mosaic GPU kernel"))
+        .Times(0);
+    log.StartCapturingLogs();
+
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+        client->LoadSerializedExecutable(serialized, std::nullopt, {}));
+    EXPECT_OK(ExecuteSync(executable.get()));
+  }
 }
 
 }  // namespace

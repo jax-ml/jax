@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package mosaic.gpu;
+
+option java_outer_classname = "MosaicGpuProto";
+option java_multiple_files = true;
+
+message MosaicGpuKernelProto {
+  int32 version = 1;
+  bytes object_file = 2;
+  bool is_comm_used = 3;
+  bytes kernel_hash = 4;
+  string host_func_name = 5;
+  string init_func_name = 6;
+}

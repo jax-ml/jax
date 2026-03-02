@@ -16,11 +16,24 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_python//python:defs.bzl", "py_library")
-load("//jaxlib:jax.bzl", "if_oss", "nanobind_extension")
+# Placeholder: load proto_library
+
+load("//jaxlib:jax.bzl", "cc_proto_library", "if_oss", "nanobind_extension")
 
 package(
     default_applicable_licenses = [],
     default_visibility = ["//jax/experimental:mosaic_gpu_users"],
+)
+
+proto_library(
+    name = "mosaic_gpu_proto",
+    srcs = ["mosaic_gpu.proto"],
+)
+
+cc_proto_library(
+    name = "mosaic_gpu_cc_proto",
+    compatible_with = None,
+    deps = [":mosaic_gpu_proto"],
 )
 
 py_library(
@@ -271,6 +284,7 @@ cc_library(
     deps = [
         ":dump",
         ":library_paths",  # buildcleaner: keep
+        ":mosaic_gpu_cc_proto",
         ":nvshmem",
         ":passes",
         ":serde",
@@ -283,6 +297,7 @@ cc_library(
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -349,6 +364,7 @@ cc_library(
         "@xla//xla/backends/gpu/runtime:collective_params",
         "@xla//xla/core/collectives:rank_id",
         "@xla//xla/ffi",
+        "@xla//xla/ffi:type_registry",
         "@xla//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
         "@xla//xla/service/llvm_ir:llvm_command_line_options",
         "@xla//xla/stream_executor:device_address_handle",
