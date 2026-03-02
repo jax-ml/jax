@@ -1375,7 +1375,7 @@ def _get_vjp_fun(
     if has_named_shardings or mesh:
       vjp_in_shardings = tuple(
           _get_named_sharding(has_named_shardings, named_sharding,  # type: ignore
-                              hlo_sharding, aval, mesh)  # pyrefly: ignore[bad-argument-type]
+                              hlo_sharding, aval, mesh)  # type: ignore[arg-type]
           for named_sharding, hlo_sharding, aval in zip(
             itertools.chain(in_named_shardings, out_named_shardings),
             itertools.chain(in_shardings_hlo, out_shardings_hlo),
