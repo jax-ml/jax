@@ -910,7 +910,7 @@ class Client:
       serialized: bytes,
       executable_devices: DeviceList,
       compile_options: CompileOptions | None = ...,
-      host_callbacks: Sequence[typing_extensions.CapsuleType] = ...,
+      host_callbacks: Sequence[types.CapsuleType] = ...,
   ) -> LoadedExecutable: ...
   @overload
   def deserialize_executable(
@@ -983,8 +983,8 @@ def pjrt_plugin_loaded(arg: str, /) -> bool: ...
 def load_pjrt_plugin(
     platform_name: str,
     library_path: str | None = ...,
-    c_api: typing_extensions.CapsuleType | None = ...,
-) -> typing_extensions.CapsuleType: ...
+    c_api: types.CapsuleType | None = ...,
+) -> types.CapsuleType: ...
 def pjrt_plugin_initialized(arg: str, /) -> bool: ...
 def initialize_pjrt_plugin(arg: str, /) -> None: ...
 def get_c_api_client(
@@ -1002,7 +1002,7 @@ def get_default_c_api_topology(
     /,
 ) -> DeviceTopology: ...
 def get_c_api_topology(
-    arg0: typing_extensions.CapsuleType,
+    arg0: types.CapsuleType,
     arg1: str,
     arg2: Mapping[str, str | bool | int | Sequence[int] | float],
     /,
@@ -1257,7 +1257,7 @@ class Executable:
 
 def buffer_to_dlpack_managed_tensor(
     buffer: object, stream: int | None = ...
-) -> typing_extensions.CapsuleType: ...
+) -> types.CapsuleType: ...
 def dlpack_managed_tensor_to_buffer(
     dlpack: typing_extensions.CapsuleType,
     device: Device,
@@ -1409,7 +1409,7 @@ def register_custom_call_partitioner(
     partition: object,
     infer_sharding_from_operands: object,
     can_side_effecting_have_replicated_sharding: bool = ...,
-    c_api: typing_extensions.CapsuleType | None = ...,
+    c_api: types.CapsuleType | None = ...,
 ) -> None:
   """Registers a partitioner for a custom-call operation.
 
@@ -1430,7 +1430,7 @@ def register_custom_call_partitioner(
 
 def encode_inspect_sharding_callback(arg: object, /) -> bytes: ...
 def register_custom_call_as_batch_partitionable(
-    target_name: str, c_api: typing_extensions.CapsuleType | None = ...
+    target_name: str, c_api: types.CapsuleType | None = ...
 ) -> None:
   """Registers a custom call as batch partitionable.
 
