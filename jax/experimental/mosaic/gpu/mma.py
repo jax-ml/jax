@@ -54,11 +54,15 @@ class MMALayouts:
     )
 
 
-def _ptx_dtype_str(dtype: ir.Type) -> str:
+def _ptx_dtype_str(dtype: ir.Type, *, is_signed: bool | None = None) -> str:
   if isinstance(dtype, ir.Float8E4M3FNType):
     return "e4m3"
   elif isinstance(dtype, ir.Float8E5M2Type):
     return "e5m2"
+  elif isinstance(dtype, ir.IntegerType):
+    if is_signed is None:
+      raise ValueError("is_signed must be specified for integer types")
+    return "s8" if is_signed else "u8"
   return str(dtype)
 
 
@@ -66,13 +70,16 @@ def _mma_single_tile(
     acc: fa.FragmentedArray, a: fa.FragmentedArray, b: fa.FragmentedArray
 ) -> fa.FragmentedArray:
   """Performs `acc + a @ b.T` using warp level MMA instructions."""
+  i32 = ir.IntegerType.get_signless(32)
 
   k_tile = 32 // utils.bytewidth(a.mlir_dtype)
   assert a.shape == (64, k_tile)
   assert b.shape == (8, k_tile)
   assert acc.shape == (64, 8)
   assert a.mlir_dtype == b.mlir_dtype
-  assert acc.mlir_dtype == ir.F32Type.get()
+  is_integer = isinstance(a.mlir_dtype, ir.IntegerType)
+  assert acc.mlir_dtype == i32 if is_integer else ir.F32Type.get()
+  assert acc.is_signed in {None, True}
   assert (
       isinstance(acc.layout, fa.TiledLayout)
       and isinstance(a.layout, fa.TiledLayout)
@@ -89,7 +96,6 @@ def _mma_single_tile(
       for reg in acc.registers.flatten()
       for pos in range(acc.layout.vector_length)
   ]
-  i32 = ir.IntegerType.get_signless(32)
   a_regs = [utils.bitcast(r, i32) for r in a.registers.flatten()]
   b_regs = [utils.bitcast(r, i32) for r in b.registers.flatten()]
 
@@ -98,9 +104,11 @@ def _mma_single_tile(
   assert len(acc_regs) == 4
   assert len(b_regs) == 2
 
-  a_ptx_dtype = _ptx_dtype_str(a.mlir_dtype)
-  b_ptx_dtype = _ptx_dtype_str(b.mlir_dtype)
-  instr = f"mma.sync.aligned.m16n8k{k_tile}.row.col.f32.{a_ptx_dtype}.{b_ptx_dtype}.f32"
+  a_ptx_dtype = _ptx_dtype_str(a.mlir_dtype, is_signed=a.is_signed)
+  b_ptx_dtype = _ptx_dtype_str(b.mlir_dtype, is_signed=b.is_signed)
+  acc_ptx_dtype = "s32" if is_integer else "f32"
+  acc_constraint = "r" if is_integer else "f"
+  instr = f"mma.sync.aligned.m16n8k{k_tile}.row.col.{acc_ptx_dtype}.{a_ptx_dtype}.{b_ptx_dtype}.{acc_ptx_dtype}"
   counter = itertools.count()
   n_regs_str = lambda n: (
       "{" + ",".join([f"${next(counter)}" for _ in range(n)]) + "}"
@@ -112,10 +120,10 @@ def _mma_single_tile(
   ptx = f"{instr} {out_regs_str}, {a_regs_str}, {b_regs_str}, {c_regs_str};"
   # See: https://llvm.org/docs/LangRef.html#inline-assembler-expressions
   constraints = (
-      f"{','.join(['=f']*num_acc_regs)},"  # Output accumulator regs
-      f"{','.join(['r']*num_a_regs)},"  # Input A regs
+      f"{','.join([f'={acc_constraint}']*num_acc_regs)},"
+      f"{','.join(['r']*num_a_regs)},"
       f"{','.join(['r']*num_b_regs)},"
-      f"{','.join(['f']*num_acc_regs)}"  # Input accumulator regs
+      f"{','.join([acc_constraint]*num_acc_regs)}"
   )
 
   in_operands = [*a_regs, *b_regs, *acc_regs]
@@ -141,7 +149,7 @@ def _mma_single_tile(
     vec_regs.append(vec)
   out_regs = np.asarray(vec_regs, dtype=object).reshape(acc.registers.shape)
   return fa.FragmentedArray(
-      _registers=out_regs, _layout=acc.layout, _is_signed=None
+      _registers=out_regs, _layout=acc.layout, _is_signed=acc.is_signed
   )
 
 
@@ -185,19 +193,26 @@ def mma(
   # sharded across warps.
   bf16 = ir.BF16Type.get()
   f16 = ir.F16Type.get()
+  i8 = ir.IntegerType.get_signless(8)
+  i32 = ir.IntegerType.get_signless(32)
   f8e4m3fn = ir.Float8E4M3FNType.get()
   f8e5m2 = ir.Float8E5M2Type.get()
-  if a.mlir_dtype != b.mlir_dtype:
+  if (element_type := a.mlir_dtype) != b.mlir_dtype:
     raise ValueError(f"Dtype mismatch: {a.mlir_dtype} != {b.mlir_dtype}")
-  if a.mlir_dtype not in (bf16, f16, f8e4m3fn, f8e5m2):
+  if element_type not in (bf16, f16, f8e4m3fn, f8e5m2, i8):
     raise NotImplementedError(
-        "Only bf16, f16, float8_e4m3fn and float8_e5m2 supported for the"
+        "Only bf16, f16, float8_e4m3fn, float8_e5m2 and i8 supported for the"
         " operands."
     )
-  if acc.mlir_dtype != ir.F32Type.get():
-    raise NotImplementedError("Only f32 accumulator supported.")
+  if element_type == i8:
+    if acc.mlir_dtype != i32:
+      raise NotImplementedError("Only s32 accumulator supported for i8 operands.")
+    if not acc.is_signed:
+      raise ValueError("Only signed accumulator supported for i8 operands.")
+  elif acc.mlir_dtype != ir.F32Type.get():
+    raise NotImplementedError("Only f32 accumulator supported for floating operands.")
 
-  layouts = MMALayouts(a.mlir_dtype)
+  layouts = MMALayouts(element_type)
   if layouts.lhs != a.layout:
     raise ValueError("Expected MMALayouts.lhs layout for A")
   if layouts.rhs != b.layout:
