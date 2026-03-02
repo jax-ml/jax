@@ -1213,7 +1213,7 @@ absl::Status MosaicGpuInitialize(
         &barrier_signal_buffer_address, barrier_signal_buffer_address.size()));
   }
 
-  if (device_state.metadata_handle.address().is_null()) {
+  if (device_state.barrier_signal_value_buffer_handle.address().is_null()) {
     device_state.barrier_signal_value_buffer_handle = se::DeviceAddressHandle{
         collective_params->executor,
         collective_params->executor->Allocate(
