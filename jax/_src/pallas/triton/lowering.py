@@ -501,7 +501,6 @@ def _atomic_rmw(
       result_type, op, ptr, val, mask=mask, sem=semantic, scope=sync_scope
   )
 
-
 def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
   flat_args = tree_util.tree_leaves(args)
   (axis,) = axes
@@ -1085,6 +1084,20 @@ def _is_triton_pointer_type(t):
     return tt_dialect.PointerType.isinstance(t)
   return isinstance(t, tt_dialect.PointerType)
 
+def _fp_bits_type(t: ir.Type) -> ir.Type:
+  if isinstance(t, ir.RankedTensorType):
+    t_type = ir.RankedTensorType(t)
+    return ir.RankedTensorType.get(
+      t_type.shape, _fp_bits_type(t_type.element_type), t_type.encoding
+    )
+  elif _is_triton_pointer_type(t):
+    ptr_type = tt_dialect.PointerType(t)
+    return tt_dialect.PointerType.get(
+      _fp_bits_type(ptr_type.pointee_type), ptr_type.address_space
+    )
+  else:
+    assert isinstance(t, ir.FloatType)
+    return ir.IntegerType.get_signless(t.width)
 
 def _minus(x: ir.Value) -> ir.Value:
   if _is_triton_pointer_type(x.type):
