@@ -1190,21 +1190,6 @@ class LaunchContext:
         raise NotImplementedError("Gather/scatter unsupported for the CP_ASYNC implementation")
       if smem_ref is src_ref:
         raise ValueError("CP_ASYNC implementation only supports GMEM -> SMEM copies")
-      assert swizzle is not None
-      swizzle_elems = 8 * swizzle // element_bitwidth
-      if gmem_transform != (TileTransform((8, swizzle_elems)),):
-        raise NotImplementedError(gmem_transform)
-      layout = fa.tiled_copy_smem_gmem_layout(
-          *smem_ref_ty.shape[-4:-2], swizzle, element_bitwidth  # type: ignore[call-arg]
-      )
-      gmem_strides = gmem_ref_ty.get_strides_and_offset()[0]
-      dst_tiled_strides = [
-          arith.constant(i32, s)
-          for s in layout.tiling.tile_strides(gmem_strides)[gmem_ref_ty.rank :]
-      ]
-      lane_offset = utils.dyn_dot(layout.lane_indices(), dst_tiled_strides)
-      warp_offset = utils.dyn_dot(layout.warp_indices(), dst_tiled_strides)
-      dyn_offset = arith.addi(lane_offset, warp_offset)
       offset_scale = 1 if element_bitwidth >= 8 else 8 // element_bitwidth
       if element_bitwidth < 8:
         gep_type = i8
@@ -1215,25 +1200,76 @@ class LaunchContext:
         gep_type = i8  # LLVM has no support for f8.
       else:
         gep_type = element_type
-      dyn_offset = arith.divui(dyn_offset, c(offset_scale, i32))
-      if gmem_ref_ty.rank != 2:
-        raise NotImplementedError("Only 2D copies implemented")
-      transfers = fa.FragmentedArray.transfer_tiled(
-          smem_ref, swizzle, layout, tuple(gmem_ref_ty.shape), optimized=False
-      )
-      gmem_base_ptr = utils.getelementptr(utils.memref_ptr(gmem_ref), [dyn_offset], gep_type)
-      gmem_base_ptr = llvm.addrspacecast(ir.Type.parse("!llvm.ptr<1>"), gmem_base_ptr)
-      bytes_per_transfer = layout.vector_length * element_bitwidth // 8
-      # Only 16-byte transfers can skip the L1 cache (this is what CG means).
-      cache_modifier = (
-          nvvm.LoadCacheModifierKind.CG
-          if bytes_per_transfer == 16
-          else nvvm.LoadCacheModifierKind.CA
-      )
-      for _get, _update, get_base_idx, smem_ptr in transfers:
-        constant_offset = sum(i * s for i, s in zip(get_base_idx(), gmem_strides, strict=True))
-        gmem_ptr = utils.getelementptr(gmem_base_ptr, [constant_offset // offset_scale], gep_type)
-        nvvm.cp_async_shared_global(smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier)
+      if not gmem_transform:
+        if swizzle is not None:
+          raise NotImplementedError(
+              "Swizzle is not supported for untiled CP_ASYNC copies"
+          )
+        layout = fa.WGStridedFragLayout.from_shaped_type(smem_ref.type)
+        if layout is None:
+          raise ValueError(
+              "CP_ASYNC requires the number of elements to be a multiple of"
+              f" {fa.WARPGROUP_SIZE}"
+          )
+        if layout.vec_size * element_bitwidth < 32:
+          raise ValueError(
+              "CP_ASYNC requires at least 4 bytes per transfer"
+          )
+        gmem_base_ptr = utils.memref_ptr(gmem_ref)
+        gmem_base_ptr = llvm.addrspacecast(
+            ir.Type.parse("!llvm.ptr<1>"), gmem_base_ptr
+        )
+        smem_base_ptr = utils.memref_ptr(smem_ref, memory_space=3)
+        bytes_per_transfer = layout.vec_size * element_bitwidth // 8
+        cache_modifier = (
+            nvvm.LoadCacheModifierKind.CG
+            if bytes_per_transfer == 16
+            else nvvm.LoadCacheModifierKind.CA
+        )
+        for linear_idx in layout.linear_thread_idxs():
+          idx = arith.index_castui(i32, linear_idx)
+          if offset_scale > 1:
+            idx = arith.divui(idx, c(offset_scale, i32))
+          smem_ptr = utils.getelementptr(smem_base_ptr, [idx], gep_type)
+          gmem_ptr = utils.getelementptr(gmem_base_ptr, [idx], gep_type)
+          nvvm.cp_async_shared_global(
+              smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier
+          )
+      else:
+        assert swizzle is not None
+        swizzle_elems = 8 * swizzle // element_bitwidth
+        if gmem_transform != (TileTransform((8, swizzle_elems)),):
+          raise NotImplementedError(gmem_transform)
+        layout = fa.tiled_copy_smem_gmem_layout(
+            *smem_ref_ty.shape[-4:-2], swizzle, element_bitwidth  # type: ignore[call-arg]
+        )
+        gmem_strides = gmem_ref_ty.get_strides_and_offset()[0]
+        dst_tiled_strides = [
+            arith.constant(i32, s)
+            for s in layout.tiling.tile_strides(gmem_strides)[gmem_ref_ty.rank :]
+        ]
+        lane_offset = utils.dyn_dot(layout.lane_indices(), dst_tiled_strides)
+        warp_offset = utils.dyn_dot(layout.warp_indices(), dst_tiled_strides)
+        dyn_offset = arith.addi(lane_offset, warp_offset)
+        dyn_offset = arith.divui(dyn_offset, c(offset_scale, i32))
+        if gmem_ref_ty.rank != 2:
+          raise NotImplementedError("Only 2D copies implemented")
+        transfers = fa.FragmentedArray.transfer_tiled(
+            smem_ref, swizzle, layout, tuple(gmem_ref_ty.shape), optimized=False
+        )
+        gmem_base_ptr = utils.getelementptr(utils.memref_ptr(gmem_ref), [dyn_offset], gep_type)
+        gmem_base_ptr = llvm.addrspacecast(ir.Type.parse("!llvm.ptr<1>"), gmem_base_ptr)
+        bytes_per_transfer = layout.vector_length * element_bitwidth // 8
+        # Only 16-byte transfers can skip the L1 cache (this is what CG means).
+        cache_modifier = (
+            nvvm.LoadCacheModifierKind.CG
+            if bytes_per_transfer == 16
+            else nvvm.LoadCacheModifierKind.CA
+        )
+        for _get, _update, get_base_idx, smem_ptr in transfers:
+          constant_offset = sum(i * s for i, s in zip(get_base_idx(), gmem_strides, strict=True))
+          gmem_ptr = utils.getelementptr(gmem_base_ptr, [constant_offset // offset_scale], gep_type)
+          nvvm.cp_async_shared_global(smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier)
       if barrier is None:
         nvvm.cp_async_commit_group()
       else:

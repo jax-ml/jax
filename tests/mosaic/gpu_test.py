@@ -3647,33 +3647,45 @@ class AsyncCopyTest(TestCase):
     ):
       run_kernel([23])
 
-  @parameterized.product(
-      swizzle=(16, 32, 64, 128),
-      shape=((64, 128), (128, 32)),
-      dtype=(jnp.float32, jnp.float16, jnp.float8_e5m2, jnp.int4),
-  )
-  def test_cp_async(self, swizzle, shape, dtype):
-    bw = bitwidth(dtype_to_ir_type(dtype))
-    swizzle_elems = 8 * swizzle // bw
-    tiling = (8, swizzle_elems)
-    if shape[-1] < swizzle_elems:
-      self.skipTest("Minor dimension too small")
-    minor_size = 64 if swizzle is None else swizzle_elems
-    shape = (*shape[:-1], minor_size)
+  def _test_cp_async(self, shape, dtype, swizzle=None, tiling=None):
     def kernel(ctx, src, dst, tmp):
       ctx.async_copy(
           src_ref=src,
           dst_ref=tmp,
           swizzle=swizzle,
-          gmem_transform=mgpu.TileTransform(tiling),
+          gmem_transform=mgpu.TileTransform(tiling) if tiling else (),
           implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
       )
       ctx.await_cp_async_copy(0)
-      mgpu.copy_tiled(tmp, dst, swizzle=swizzle)
+      if tiling:
+        mgpu.copy_tiled(tmp, dst, swizzle=swizzle)
+      else:
+        copy(tmp, dst)
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    smem = jax.ShapeDtypeStruct(mgpu.tile_shape(shape, tiling), dtype)
+    smem_shape = mgpu.tile_shape(shape, tiling) if tiling else shape
+    smem = jax.ShapeDtypeStruct(smem_shape, dtype)
     y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)(x)
     np.testing.assert_array_equal(y, x)
+
+  @parameterized.product(
+      swizzle=(16, 32, 64, 128),
+      shape=((64, 128), (128, 32)),
+      dtype=(jnp.float32, jnp.float16, jnp.float8_e5m2, jnp.int4),
+  )
+  def test_cp_async_tiled(self, swizzle, shape, dtype):
+    bw = bitwidth(dtype_to_ir_type(dtype))
+    swizzle_elems = 8 * swizzle // bw
+    tiling = (8, swizzle_elems)
+    if shape[-1] % swizzle_elems:
+      self.skipTest("Minor dimension not divisible by swizzle_elems")
+    self._test_cp_async(shape, dtype, swizzle=swizzle, tiling=tiling)
+
+  @parameterized.product(
+      shape=((64, 128), (128, 40), (32, 384)),
+      dtype=(jnp.float32, jnp.float16),
+  )
+  def test_cp_async_untiled(self, shape, dtype):
+    self._test_cp_async(shape, dtype)
 
   def test_tma_collective_async_cp_with_no_swizzle(self):
     def body(ctx, src, dst, scratch):
