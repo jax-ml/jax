@@ -90,7 +90,7 @@ def build_kernel(
     (ab_full_barriers, ab_empty_barriers) = barriers
 
     warp_idx = mgpu.warp_idx(sync=True)
-    is_warp_leader = nvvm.elect_sync(i1)
+    is_warp_leader = nvvm.elect_sync()
     is_leader_of = lambda i: arith.andi(
         arith.cmpi(arith.CmpIPredicate.eq, warp_idx, c(i, i32)), is_warp_leader
     )
