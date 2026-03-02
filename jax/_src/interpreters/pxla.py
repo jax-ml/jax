@@ -476,7 +476,7 @@ class MapTrace(core.Trace):
     else:
       return MapTracer(self, val, {})
 
-  def process_primitive(self, primitive, tracers, params):
+  def process_primitive(self, primitive, tracers, params, /):
     from jax._src.lax import parallel  # pytype: disable=import-error
     if primitive is parallel.axis_index_p:
       return self.process_axis_index(**params)  # pytype: disable=missing-parameter
@@ -500,10 +500,10 @@ class MapTrace(core.Trace):
       return [MapTracer(self, val, out_shard_axes) for val in outvals]
     return MapTracer(self, outvals, out_shard_axes)
 
-  def process_call(self, call_primitive, fun, tracers, params):
+  def process_call(self, call_primitive, fun, tracers, params, /):
     raise NotImplementedError
 
-  def process_map(self, map_primitive, fun, tracers, params):
+  def process_map(self, map_primitive, fun, tracers, params, /):
     if params['devices'] is not None:
       raise ValueError("Nested pmap with explicit devices argument.")
     if not config.disable_jit.value:
@@ -528,7 +528,7 @@ class MapTrace(core.Trace):
                            for v, s, dst in zip(out, outaxes, out_axes_thunk()))
     return map(partial(MapTracer, self), out, outaxes)
 
-  def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     if symbolic_zeros:
       msg = ("custom_jvp with symbolic_zeros=True not supported with eager pmap. "
              "Please open an issue at https://github.com/jax-ml/jax/issues !")
@@ -537,7 +537,7 @@ class MapTrace(core.Trace):
     with core.set_current_trace(self):
       return fun.call_wrapped(*tracers)
 
-  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers,
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, /, *,
                               out_trees, symbolic_zeros):
     if symbolic_zeros:
       msg = ("custom_vjp with symbolic_zeros=True not supported with eager pmap. "

@@ -249,7 +249,7 @@ class BatchTrace(Trace):
     with core.set_current_trace(self.parent_trace):
       return core.cur_qdd(val)
 
-  def process_primitive(self, p, tracers, params):  # pyrefly: ignore[bad-param-name-override]
+  def process_primitive(self, p, tracers, params, /):
     vals_in, dims_in = unzip2(map(self.to_batch_info, tracers))
     args_not_mapped = all(bdim is not_mapped for bdim in dims_in)
     if p in fancy_primitive_batchers:
@@ -271,7 +271,7 @@ class BatchTrace(Trace):
     else:
       raise NotImplementedError(f"Batching rule for '{p}' not implemented")
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f, tracers, params, /):
     assert call_primitive.multiple_results
     params = dict(params, name=params.get('name', f.__name__))
     vals, dims = unzip2(map(self.to_batch_info, tracers))
@@ -282,7 +282,7 @@ class BatchTrace(Trace):
     src = source_info_util.current()
     return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out())]
 
-  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
+  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params, /):
     vals, dims = unzip2(map(self.to_batch_info, tracers))
     # The logic for the dimension math below is as follows:
     # ╔═════════════╦════════════════════════════════════════╦═══════════╗
@@ -320,7 +320,7 @@ class BatchTrace(Trace):
     src = source_info_util.current()
     return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out_)]
 
-  def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):  # pyrefly: ignore[bad-param-name-override]
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     in_vals, in_dims = unzip2(map(self.to_batch_info, tracers))
     fun, out_dims1 = batch_subtrace(fun, self.tag, self.axis_data, in_dims)
     jvp, out_dims2 = batch_custom_jvp_subtrace(jvp, self.tag, self.axis_data, in_dims)
@@ -330,8 +330,8 @@ class BatchTrace(Trace):
     src = source_info_util.current()
     return [BatchTracer(self, v, d, src) for v, d in zip(out_vals, out_dims)]
 
-  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, *, out_trees,  # pyrefly: ignore[bad-override]
-                              symbolic_zeros):  # pytype: disable=signature-mismatch
+  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, /, *, out_trees,
+                              symbolic_zeros):
     in_vals, in_dims = unzip2(map(self.to_batch_info, tracers))
     fwd_in_dims = [d for in_dim in in_dims for d in [in_dim, not_mapped]]
 

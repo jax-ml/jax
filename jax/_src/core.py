@@ -785,7 +785,7 @@ class Trace(Generic[TracerType]):
     self._weakref = weakref.ref(self)
     self.requires_low = True
 
-  def process_primitive(self, primitive, tracers, params):
+  def process_primitive(self, primitive, tracers, params, /):
     raise NotImplementedError("must override")
 
   def invalidate(self):
@@ -797,29 +797,29 @@ class Trace(Generic[TracerType]):
   def __repr__(self):
     return f'{self.__class__.__name__}'
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f, tracers, params, /):
     msg = (f"{type(self)} must override process_call to handle call-like "
            "primitives")
     raise NotImplementedError(msg)
 
-  def process_map(self, map_primitive, f, tracers, params):
+  def process_map(self, map_primitive, f, tracers, params, /):
     msg = (f"{type(self)} must override process_map to handle map-like "
            "primitives")
     raise NotImplementedError(msg)
 
-  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, *,
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, *,
                               symbolic_zeros):
     msg = (f"{type(self)} must override process_custom_jvp_call "
            "to handle custom_jvp primitives")
     raise NotImplementedError(msg)
 
   def process_custom_transpose(self, prim: Primitive,
-                               call: lu.WrappedFun, tracers, **params):
+                               call: lu.WrappedFun, tracers, /, **params):
     msg = (f"{type(self)} must override process_custom_transpose "
            "to handle custom_transpose_call primitives")
     raise NotImplementedError(msg)
 
-  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers,
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, /, *,
                               out_trees, symbolic_zeros):
     msg = (f"{type(self)} must override process_custom_vjp_call "
            "to handle custom_vjp primitives")
@@ -1215,7 +1215,7 @@ def check_eval_args(args):
 
 class EvalTrace(Trace):
 
-  def process_primitive(self, primitive, args, params):
+  def process_primitive(self, primitive, args, params, /):
     if config.debug_key_reuse.value:
       # Import here to avoid circular imports
       from jax.experimental.key_reuse._core import call_impl_with_key_reuse_checks  # pytype: disable=import-error
@@ -1226,7 +1226,7 @@ class EvalTrace(Trace):
       check_eval_args(args)
       return primitive.impl(*args, **params)
 
-  def process_call(self, primitive, f, tracers, params):
+  def process_call(self, primitive, f, tracers, params, /):
     if config.debug_key_reuse.value:
       # Import here to avoid circular imports
       from jax.experimental.key_reuse._core import call_impl_with_key_reuse_checks  # pytype: disable=import-error
@@ -1235,15 +1235,15 @@ class EvalTrace(Trace):
       return primitive.impl(f, *tracers, **params)
   process_map = process_call
 
-  def process_custom_transpose(self, primitive, call, tracers, **_):
+  def process_custom_transpose(self, primitive, call, tracers, /, **_):
     del primitive, _
     return call.call_wrapped(*tracers)
 
-  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, **_):
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, **_):
     del primitive, jvp, _  # Unused.
     return fun.call_wrapped(*tracers)
 
-  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, **_):  # pytype: disable=signature-mismatch
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, /, **_):
     del primitive, fwd, bwd, _  # Unused.
     return fun.call_wrapped(*tracers)
 

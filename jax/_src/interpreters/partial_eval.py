@@ -183,7 +183,7 @@ class JaxprTrace(Trace['JaxprTracer']):
       with core.set_current_trace(self.parent_trace):
         return core.cur_qdd(const)
 
-  def process_primitive(self, primitive, tracers, params):
+  def process_primitive(self, primitive, tracers, params, /):
     with core.set_current_trace(self.parent_trace):
       if primitive in custom_partial_eval_rules:
         tracers = map(self.to_jaxpr_tracer, tracers)
@@ -222,7 +222,7 @@ class JaxprTrace(Trace['JaxprTracer']):
       out_tracer.recipe = eqn
       return out_tracer
 
-  def process_call(self, primitive, f: lu.WrappedFun, tracers, params):  # pyrefly: ignore[bad-param-name-override]
+  def process_call(self, primitive, f: lu.WrappedFun, tracers, params, /):
     tracers = map(self.to_jaxpr_tracer, tracers)
     rule = call_partial_eval_rules.get(primitive)
     if rule:
@@ -278,7 +278,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     for t in out_tracers: t.recipe = eqn
     return merge_lists(out_knowns, out_tracers, out_consts)
 
-  def process_map(self, primitive, f: lu.WrappedFun, tracers, params):  # pyrefly: ignore[bad-param-name-override]
+  def process_map(self, primitive, f: lu.WrappedFun, tracers, params, /):
     tracers = map(self.to_jaxpr_tracer, tracers)
     update_params = call_param_updaters.get(primitive) or (lambda p, _, __: p)
     in_knowns, in_avals, in_consts = partition_pvals([t.pval for t in tracers])
@@ -350,7 +350,7 @@ class JaxprTrace(Trace['JaxprTracer']):
   def _current_truncated_name_stack(self):
     return source_info_util.current_name_stack()[len(self.name_stack):]
 
-  def process_custom_jvp_call(self, prim, fun, jvp, tracers, symbolic_zeros):  # pyrefly: ignore[bad-override]
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     tracers = map(self.to_jaxpr_tracer, tracers)
     if all(t.is_known() for t in tracers):
       with core.set_current_trace(self.parent_trace):
@@ -362,7 +362,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     with core.set_current_trace(self):
       return fun.call_wrapped(*tracers)
 
-  def process_custom_transpose(self, prim, call, tracers, **params):
+  def process_custom_transpose(self, prim, call, tracers, /, **params):
     tracers = map(self.to_jaxpr_tracer, tracers)
     res_ts, lin_ts = split_list(tracers, [params['res_tree'].num_leaves])  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
     assert all(t.is_known()     for t in res_ts)
@@ -381,7 +381,7 @@ class JaxprTrace(Trace['JaxprTracer']):
       for t in out_tracers: t.recipe = eqn
       return out_tracers
 
-  def process_custom_vjp_call(self, prim, f, fwd, bwd, tracers, out_trees, symbolic_zeros):  # pyrefly: ignore[bad-param-name-override]
+  def process_custom_vjp_call(self, prim, f, fwd, bwd, tracers, /, *, out_trees, symbolic_zeros):
     tracers = map(self.to_jaxpr_tracer, tracers)
     if all(t.is_known() for t in tracers):
       vals = [t.pval[1] for t in tracers]
@@ -2041,7 +2041,7 @@ class DynamicJaxprTrace(core.Trace):
     source_info = source_info_util.current()
     return self.to_jaxpr_tracer(x, source_info=source_info).mutable_qdd.cur_val
 
-  def process_primitive(self, primitive, tracers, params):
+  def process_primitive(self, primitive, tracers, params, /):
     self.frame.is_high |= primitive.is_high(*map(typeof, tracers), **params)
     if config.eager_constant_folding.value and not any(isinstance(x, Tracer) for x in tracers):
       return primitive.bind_with_trace(core.eval_trace, tracers, params)
@@ -2101,8 +2101,8 @@ class DynamicJaxprTrace(core.Trace):
       self.frame.add_eqn(eqn)  # pyrefly: ignore[bad-argument-type]
     return out_tracers if primitive.multiple_results else out_tracers.pop()
 
-  def process_call(self, call_primitive, f: lu.WrappedFun, in_tracers,  # pyrefly: ignore[bad-param-name-override]
-                   params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, in_tracers,
+                   params, /):
     source_info = source_info_util.current()
     to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
     in_type = (tuple(get_aval(t) for t in in_tracers) if f.in_type is None
@@ -2129,7 +2129,7 @@ class DynamicJaxprTrace(core.Trace):
         [*const_tracers, *in_tracers], out_avals, call_primitive,
         new_params, new_params['call_jaxpr'].effects, source_info=source_info)
 
-  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
+  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params, /):
     source_info = source_info_util.current()
     to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
     tracers = map(to_jaxpr_tracer, tracers)
@@ -2163,8 +2163,8 @@ class DynamicJaxprTrace(core.Trace):
           [*const_tracers, *tracers], out_avals, map_primitive, new_params, effs, source_info=source_info)
     return out_tracers
 
-  def process_custom_jvp_call(self, prim, fun: lu.WrappedFun,  # pyrefly: ignore[bad-override]
-                              jvp: lu.WrappedFun, tracers,
+  def process_custom_jvp_call(self, prim, fun: lu.WrappedFun,
+                              jvp: lu.WrappedFun, tracers, /, *,
                               symbolic_zeros: bool):
     if config.eager_constant_folding.value and not any(isinstance(x, Tracer) for x in tracers):
       return prim.bind_with_trace(core.eval_trace, (fun, jvp, *tracers),
@@ -2198,9 +2198,9 @@ class DynamicJaxprTrace(core.Trace):
         fun_jaxpr.effects,
         source_info=source_info)
 
-  def process_custom_vjp_call(self, prim: core.Primitive,  # pyrefly: ignore[bad-param-name-override]
+  def process_custom_vjp_call(self, prim: core.Primitive,
                               fun: lu.WrappedFun,
-                              fwd: lu.WrappedFun, bwd: lu.WrappedFun, tracers,
+                              fwd: lu.WrappedFun, bwd: lu.WrappedFun, tracers, /, *,
                               out_trees: Callable[[], tuple[PyTreeDef, PyTreeDef, list[int | None]]],
                               symbolic_zeros: bool):
     if config.eager_constant_folding.value and not any(isinstance(x, Tracer) for x in tracers):
