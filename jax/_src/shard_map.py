@@ -1578,41 +1578,69 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_specs,
   which_nz = [     type(t) is not ad.Zero           for t in tangents]
   tangents = [t if type(t) is not ad.Zero else None for t in tangents]
   args, in_zeros_tree = tree_flatten((primals, tangents))
-  f_jvp = ad.jvp_subtrace_2(f, trace.tag)
-  f_jvp, which_nz_out = ad.nonzero_tangent_outputs(f_jvp)
-  tangent_in_specs = [s.to_tangent_spec() for s, nz in zip(in_specs, which_nz) if nz]
+  tangent_in_specs = [sp.to_tangent_spec() for sp, nz in zip(in_specs, which_nz) if nz]
 
-  @as_hashable_function(closure=out_specs_thunk)
-  def new_out_specs_thunk():
-    out_specs = out_specs_thunk()
-    tangent_out_specs = [s.to_tangent_spec()
-                         for s, nz in zip(out_specs, which_nz_out()) if nz]
-    return (*out_specs, *tangent_out_specs)
-  params = dict(mesh=mesh, in_specs=(*in_specs, *tangent_in_specs),
-                out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
-                manual_axes=manual_axes)
-  # f_jvp, out_tree = ad.traceable(f_jvp, in_zeros_tree)
   def f_jvp(*primals_and_nz_tangents_flat):
     primals, tangents = tree_unflatten(in_zeros_tree, primals_and_nz_tangents_flat)
-    tangents = [p2tz(p) if t is None else t for p, t in zip(primals, tangents)]
-    primals_out, tangents_out = jvp_subtrace_2(f, trace.tag, primals, tangents)
+    primals_out_aux, tangents_out = ad.jvp_subtrace_2(f, trace.tag, primals, tangents)
+    primals_out_ft, out_ax = primals_out_aux.unpack_aux()
+    which_nz_out = [type(r) is not ad.Zero for r in tangents_out]
+    new_out_specs = (*out_ax, *(ax for ax, nz in zip(out_ax, which_nz_out) if nz))
+    assert all(which_nz_out), breakpoint()
+    tangents_out = [None if not nz else t for t, nz in zip(tangents_out, which_nz_out)]
+    tangents_out_ft = FlatTree.flatten(list(tangents_out))
+    out_primals_tangents = FlatTree.pack((primals_out_ft, tangents_out_ft))
+    return out_primals_tangents.with_aux(which_nz_out).with_aux(new_out_specs)
 
-    tangents_out = [None if type(t) is Zero else t for t in tangents_out]
-    out_flat, out_zeros_tree = tree_flatten((primals_out, tangents_out))
-    # new_out_specs = ???
-    return FlatTree.flatten(out_flat).with_aux(out_zeros_tree).with_aux(new_out_specs)
-
-
-
-    # unflatten the inputs to add back zeros (as done in ad.traceable)
-    ad.jvp_subtrace_2(f, trace.tag)
-
+  params = dict(mesh=mesh, in_specs=(*in_specs, *tangent_in_specs),
+                check_vma=check_vma, manual_axes=manual_axes,
+                debug_info=debug_info.with_unknown_names())
   result = shard_map_p.bind_with_trace(trace.parent_trace, (f_jvp,) + tuple(args), params)
+  pt_out, which_nz_out = result.unpack_aux()
+  primal_out, nz_tangents_out = pt_out.unpack()
+  tangents_stack = list(nz_tangents_out)[::-1]
+  make_tracer = lambda p, nz: ad.JVPTracer(trace, p, tangents_stack.pop()) if nz else p
+  tracers_out = primal_out.map2(make_tracer, which_nz_out)
+  assert not tangents_stack
+  return tracers_out
+  # tangent_out = [ad.Zero(core.get_aval(p).to_tangent_aval()) if t is None else t
+  #               for p, t in zip(primal_out, tangent_out)]
+  return primal_out.map2(lambda p, t: ad.JVPTracer(trace, p, t), tangent_out)
 
-  primal_out, tangent_out = tree_unflatten(out_tree(), result)
-  tangent_out = [ad.Zero(core.get_aval(p).to_tangent_aval()) if t is None else t
-                 for p, t in zip(primal_out, tangent_out)]
-  return [ad.JVPTracer(trace, p, t) for p, t in zip(primal_out, tangent_out)]
+
+
+#  f_jvp = ad.jvp_subtrace_2(f, trace.tag)
+#  f_jvp, which_nz_out = ad.nonzero_tangent_outputs(f_jvp)
+
+#  @as_hashable_function(closure=out_specs_thunk)
+#  def new_out_specs_thunk():
+#    out_ax = out_specs_thunk()
+#    return (*out_ax, *(ax for ax, nz in zip(out_ax, which_nz_out()) if nz))
+#  params = dict(mesh=mesh, in_specs=(*in_specs, *tangent_in_specs),
+#                out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
+#                manual_axes=manual_axes)
+#  # f_jvp, out_tree = ad.traceable(f_jvp, in_zeros_tree)
+#  def f_jvp(*primals_and_nz_tangents_flat):
+#    primals, tangents = tree_unflatten(in_zeros_tree, primals_and_nz_tangents_flat)
+#    tangents = [p2tz(p) if t is None else t for p, t in zip(primals, tangents)]
+#    primals_out, tangents_out = jvp_subtrace_2(f, trace.tag, primals, tangents)
+#
+#    tangents_out = [None if type(t) is Zero else t for t in tangents_out]
+#    out_flat, out_zeros_tree = tree_flatten((primals_out, tangents_out))
+#    # new_out_specs = ???
+#    return FlatTree.flatten(out_flat).with_aux(out_zeros_tree).with_aux(new_out_specs)
+#
+#
+#
+#    # unflatten the inputs to add back zeros (as done in ad.traceable)
+#    ad.jvp_subtrace_2(f, trace.tag)
+#
+#  result = shard_map_p.bind_with_trace(trace.parent_trace, (f_jvp,) + tuple(args), params)
+
+#  primal_out, tangent_out = tree_unflatten(out_tree(), result)
+#  tangent_out = [ad.Zero(core.get_aval(p).to_tangent_aval()) if t is None else t
+#                 for p, t in zip(primal_out, tangent_out)]
+#  return [ad.JVPTracer(trace, p, t) for p, t in zip(primal_out, tangent_out)]
 ad.JVPTrace.process_shard_map = _shard_map_jvp
 
 def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
@@ -1683,36 +1711,37 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
   return merge_lists(out_knowns, out_tracers, out_consts)
 pe.JaxprTrace.process_shard_map = _shard_map_partial_eval
 
-def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
-                         tracers, mesh, in_specs, out_specs_thunk, check_vma,
-                         manual_axes):
+def _shard_map_linearize(trace, shard_map_p, f: Callable,
+                         tracers, mesh, in_specs, check_vma,
+                         manual_axes, debug_info):
+  debug_info = debug_info.with_unknown_names()
   primals, tangents = unzip2(map(trace.to_primal_tangent_pair, tracers))
   nzs_in = tuple(type(t) is not ad.Zero for t in tangents)
-  f = f.with_unknown_names()
-  f_primal, linearize_outs_thunk = ad.linearize_subtrace(
-      f, trace.is_vjp, trace.tag, nzs_in, f.debug_info)
-  f_primal = _promote_scalar_residuals_lin(f_primal, linearize_outs_thunk)
-  all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
 
-  @as_hashable_function(closure=linearize_outs_thunk)
-  def fwd_out_specs_thunk():
-    res_avals, _, _, _, in_fwd, out_fwd = linearize_outs_thunk()
+  def f_lin(*primals):
+    res, ans_aux, lin_data = ad.linearize_subtrace_2(
+      f, trace.is_vjp, trace.tag, nzs_in, debug_info, primals)
+    primals_out, out_specs = ans_aux.unpack_aux()
+    # TODO: handle scalar promotion
+    res_avals, _, _, _, in_fwd, out_fwd = lin_data
     res_avals = [r for r, f1, f2 in zip(res_avals, in_fwd, out_fwd)
                  if f1 is None and f2 is None]
-    out_specs = out_specs_thunk()
     res_specs = [a.nospec(mesh, check_vma, all_names) for a in res_avals]
-    return (*res_specs, *out_specs)
+    new_out_specs = (*res_specs, *out_specs)
+    res_and_primal = FlatTree.pack((FlatTree.flatten(res), primals_out))
+    return res_and_primal.with_aux((lin_data, out_specs)).with_aux(new_out_specs)
+
+  # f_primal = _promote_scalar_residuals_lin(f_primal, linearize_outs_thunk)
+  # all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
 
   fwd_params = dict(
       mesh=mesh, in_specs=in_specs,
-      out_specs_thunk=fwd_out_specs_thunk, check_vma=check_vma,
-      manual_axes=manual_axes)
-  all_fwd_results = shard_map_p.bind_with_trace(
-      trace.parent_trace, (f_primal, *primals), fwd_params)
-  res_avals, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = linearize_outs_thunk()
-  num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
-  non_fwd_res = all_fwd_results[:num_res_out]
-  primals_out = all_fwd_results[num_res_out:]
+      check_vma=check_vma, manual_axes=manual_axes, debug_info=debug_info)
+  all_results_aux = shard_map_p.bind_with_trace(
+      trace.parent_trace, (f_lin, *primals), fwd_params)
+  all_results, (lin_data, out_specs) = all_results_aux.unpack_aux()
+  res_avals, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = lin_data
+  non_fwd_res, primals_out = all_results.unpack()
   residuals = subs_list2(in_fwd, out_fwd, primals, primals_out, non_fwd_res)
   args_to_promote = [getattr(aval, 'shape', ()) == () and f1 is None and f2 is None
                      for aval, f1, f2 in zip(res_avals, in_fwd, out_fwd)]
@@ -1720,7 +1749,6 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
         use_abstract_mesh(_as_manual_mesh(mesh, manual_axes)),
         config._check_vma(check_vma)):
     lin_jaxpr = _promote_scalar_residuals_jaxpr(lin_jaxpr, args_to_promote)
-  out_specs = out_specs_thunk()
   res_avals2 = [r for r, f1, f2 in zip(res_avals, in_fwd, out_fwd)
                 if f1 is None and f2 is None]
   res_avals_iter = iter(res_avals2)
@@ -1728,30 +1756,26 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
                else next(res_avals_iter).nospec(mesh, check_vma, all_names)
                for f1, f2 in zip(in_fwd, out_fwd)]
   assert next(res_avals_iter, None) is None
-  new_in_specs = [*res_specs, *(_repspec(typeof(e)) for e in env),
-                  *(s.to_tangent_spec() for s, nz in zip(in_specs, nzs_in) if nz)]
-  tangent_out_specs = tuple(s.to_tangent_spec() for s, nz in zip(out_specs, nzs_out) if nz)
-
-  @as_hashable_function(closure=tangent_out_specs)
-  def tangent_out_specs_thunk():
-    return tangent_out_specs
+  new_in_specs = (*res_specs, *(P(),) * len(env),
+                  *(ax for ax, nz in zip(in_specs, nzs_in) if nz))
+  tangent_out_specs = tuple(ax for ax, nz in zip(out_specs, nzs_out) if nz)
   tangent_params = dict(
-      mesh=mesh, in_specs=new_in_specs, out_specs_thunk=tangent_out_specs_thunk,
-      check_vma=check_vma, manual_axes=manual_axes)
+      mesh=mesh, in_specs=new_in_specs,
+      check_vma=check_vma, manual_axes=manual_axes, debug_info=lin_jaxpr.debug_info)
 
   # TODO(mattjj): avoid round-tripping the jaxpr through eval_jaxpr here
   def f_tangent(*args):
-    return core.eval_jaxpr(lin_jaxpr, (), *args)
+    ans = core.eval_jaxpr(lin_jaxpr, (), *args)
+    return FlatTree.flatten(ans).with_aux(tangent_out_specs)
 
   nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
   nz_tangents_out = shard_map_p.bind_with_trace(
       trace.tangent_trace,
-      (lu.wrap_init(f_tangent, debug_info=lin_jaxpr.debug_info),
-       *residuals, *env, *nz_tangents_in), tangent_params)
+      (f_tangent, *residuals, *env, *nz_tangents_in), tangent_params)
   nz_tangents_out_iter = iter(nz_tangents_out)
   tangents_out = [next(nz_tangents_out_iter) if nz else ad.p2tz(primal)
                   for nz, primal in zip(nzs_out, primals_out)]
-  return map(partial(ad.maybe_linearize_tracer, trace), primals_out, nzs_out, tangents_out)
+  return primals_out.map3(partial(ad.maybe_linearize_tracer, trace), nzs_out, tangents_out)
 ad.LinearizeTrace.process_shard_map = _shard_map_linearize
 
 @lu.transformation2
