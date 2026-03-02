@@ -1024,7 +1024,7 @@ def _extract_indirect_offsets_from_indexer(
 
 
 def _extract_indirect_offsets(
-    transforms: Sequence[ir.Value], expected_shape: tuple[int, ...]
+    transforms: Sequence[state.Transform], expected_shape: tuple[int, ...]
 ) -> tuple[ir.Value | None, Sequence[state.Transform]]:
   for i, indexer in enumerate(transforms):
     if not isinstance(indexer, indexing.NDIndexer):

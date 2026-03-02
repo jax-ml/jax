@@ -93,6 +93,8 @@ def _get_memory_space_from_aval(
           raise ValueError(f"Invalid kernel type for semaphore: {kernel_type}")
     case tpu_core.MemorySpace.HOST:
       return tpu_custom_call.MemorySpace.HOST
+    case _:
+      pass
   return None
 
 

@@ -183,7 +183,7 @@ def _bcast(
     x_aval: jax_core.ShapedArray,
     y_aval: jax_core.ShapedArray,
     out_aval: jax_core.ShapedArray,
-) -> ir.Value:
+) -> tuple[ir.Value, ir.Value]:
   if isinstance(
       x, (np.ndarray, np.number, int, float, literals.TypedNdArray)
   ):
@@ -250,7 +250,7 @@ def _process_grid_to_3d_grid(grid_mapping: GridMapping):
   prog_id_dims = launch_grid[num_collapse:]
 
   if len(collapse_dims) == 0:
-    prog_ids = [None] * len(prog_id_dims)
+    prog_ids: list[ir.Value | None] = [None] * len(prog_id_dims)
     for i in range(len(prog_id_dims)):
       prog_ids[launch_grid_to_pallas_grid[i]] = _program_id(i, prog_id_dims)
 
@@ -261,7 +261,7 @@ def _process_grid_to_3d_grid(grid_mapping: GridMapping):
   assert new_grid[0] < 2**31 - 1, \
           "Cannot fix pallas kernel launch grid within CUDA limits"
 
-  out_indices = [None] * len(grid_mapping.grid)
+  out_indices: list[ir.Value | None] = [None] * len(grid_mapping.grid)
 
   grid0 = _program_id(0, new_grid)
   for i, s in enumerate(collapse_dims):
@@ -416,7 +416,7 @@ def lower_jaxpr_to_triton_ir(
     rule_ctx = LoweringRuleContext(ctx, avals_in, avals_out, eqn_block_infos)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
     try:
       with source_info_util.user_context(eqn.source_info.traceback), loc:
-        outvals = rule(rule_ctx, *invals, **eqn.params)
+        outvals: Any = rule(rule_ctx, *invals, **eqn.params)
     except LoweringError:
       raise  # We only add the extra info to the innermost exception.
     except Exception as e:
@@ -635,7 +635,7 @@ class _Extern:
         for aval, arg_type in zip(avals, self.arg_types)
     )
 
-  def lower(self, ctx: LoweringRuleContext, *args: Sequence[ir.Value]):
+  def lower(self, ctx: LoweringRuleContext, *args: ir.Value):
     [out_aval] = ctx.avals_out
     bcast_args = []
     for aval, arg, arg_type in zip(ctx.avals_in, args, self.arg_types):
@@ -670,7 +670,7 @@ class _Fallback:
         for aval, arg_class in zip(avals, self.arg_classes)
     )
 
-  def lower(self, ctx: LoweringRuleContext, *args: Sequence[ir.Value]):
+  def lower(self, ctx: LoweringRuleContext, *args: ir.Value):
     [out_aval] = ctx.avals_out
     bcast_args = []
     for aval, arg in zip(ctx.avals_in, args):
@@ -1381,7 +1381,7 @@ def debug_print_lowering_rule(
 
 def _set_attr(v: ir.Value, name: str, attr: ir.Attribute) -> None:
   if not isinstance(v, ir.BlockArgument):
-    v.owner.attributes[name] = attr
+    v.owner.attributes[name] = attr  # pyrefly: ignore[missing-attribute]
     return
 
   arg = ir.BlockArgument(v)
@@ -1433,7 +1433,7 @@ def _integer_pow_rule(ctx: LoweringRuleContext, x, *, y: int):
   if is_reciprocal:
     y = -y
 
-  acc = None
+  acc: ir.Value | None = None
   while y > 0:
     y, mod = divmod(y, 2)
     if mod:
@@ -1554,7 +1554,7 @@ def _make_range(start: int, end: int) -> ir.Value:
   )
 
 
-def _full(t: ir.Type, v: Any) -> ir.Type:
+def _full(t: ir.Type, v: Any) -> ir.Value:
   element_type = _element_type(t)
   if isinstance(element_type, ir.IntegerType):
     result = arith_dialect.constant(element_type, int(v))
@@ -1921,9 +1921,11 @@ def _compute_offsets_from_indices(
 
     if isinstance(index, primitives.Slice):
       if index.is_dynamic_start or (index.stride != 1):
-        start = index.start
         if not index.is_dynamic_start:
-          start = _ir_constant(start, offset_eltype)
+          start = _ir_constant(index.start, offset_eltype)
+        else:
+          assert isinstance(index.start, ir.Value)
+          start = index.start
         start = _ir_cast(start, offset_eltype, signed=False)
 
         iota = _ir_cast(
@@ -2273,7 +2275,7 @@ def _masked_swap_lowering_rule(
       other = _bcast_to(value, shape)
 
   old_value = _load(ptr, mask=mask, other=other)
-  _store(ptr, value, mask=mask, eviction_policy=eviction_policy)
+  _store(ptr, value, mask=mask, eviction_policy=eviction_policy)  # pyrefly: ignore[bad-argument-type]
   return old_value
 
 
@@ -2605,11 +2607,11 @@ def _lower_jaxpr_to_for_loop(
   if step != 1:
     raise NotImplementedError
   if bound_type is None or bound_type.width == 32:
-    step = _i32_constant(step)
+    step_val = _i32_constant(step)
   else:
-    step = _i64_constant(step)
+    step_val = _i64_constant(step)
 
-  for_op = scf_dialect.ForOp(lower_bound, upper_bound, step, args)
+  for_op = scf_dialect.ForOp(lower_bound, upper_bound, step_val, args)
   with ir.InsertionPoint.at_block_begin(for_op.body):
     loop_index = for_op.induction_variable
     for_body_args = [for_op.body.arguments[i + 1] for i, _ in enumerate(args)]

@@ -98,7 +98,7 @@ def _print_layout_lowering(
   if transforms_leaves:
     assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
     transform_avals = transforms_tree.unflatten(ctx.avals_in[1:])
-    x, _, remaining_transforms = lowering._handle_transforms(
+    x, _, remaining_transforms = lowering._handle_transforms(  # pyrefly: ignore[bad-specialization]
         ctx, ctx.avals_in[0], x, transform_avals,
         transforms_tree.unflatten(transforms_leaves),
     )
@@ -107,7 +107,7 @@ def _print_layout_lowering(
           f"Unsupported transforms {remaining_transforms}."
       )
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
-    print(fmt.format(mgpu.dialect_lowering.pprint_layout(x)))
+    print(fmt.format(mgpu.dialect_lowering.pprint_layout(x)))  # pyrefly: ignore[bad-argument-type]
   else:
     assert isinstance(x, ir.Value)
     mgpu.dialect.print_layout(fmt, x)
@@ -638,7 +638,7 @@ def _copy_gmem_to_smem_lowering(
         collective=collective,
         partitioned=partitioned_axis,
         **copy_params,
-        **predicate_kwarg,
+        **predicate_kwarg,  # pyrefly: ignore[bad-argument-type]
     )
     return ()
   i32 = ir.IntegerType.get_signless(32)
@@ -795,7 +795,7 @@ def _async_prefetch_lowering(
         collective=collective,
         partitioned=partitioned_axis,
         **copy_params,
-        **predicate_kwarg,
+        **predicate_kwarg,  # type: ignore[arg-type]
     )
     return ()
 
@@ -861,7 +861,7 @@ def async_prefetch(
 def _extract_barrier_slice_base(transforms) -> ir.Value | None:
   if not transforms:
     return None
-  base_index = None
+  base_index: ir.Value | None = None
   while transforms:
     match transforms:
       case [indexing.NDIndexer(indices=[idx]) as indexer, *transforms]:
@@ -1521,6 +1521,7 @@ def _wgmma_accumulator_store_abstract_eval(acc, val):
   # the discharge rule re-binds the primitive and acc becomes a ShapedArray.
   if isinstance(acc, gpu_core.WGMMAAbstractAccumulatorRef):
     inner = acc.inner_aval
+    assert isinstance(inner, jax_core.ShapedArray)
   elif isinstance(acc, jax_core.ShapedArray):
     inner = acc
   else:
@@ -1533,7 +1534,7 @@ def _wgmma_accumulator_store_abstract_eval(acc, val):
     raise ValueError(
         f"Accumulator dtype {inner.dtype} does not match value dtype {val.dtype}"
     )
-  effects = {gpu_core._wgmma_pipeline_effect}
+  effects: set[jax_core.Effect] = {gpu_core._wgmma_pipeline_effect}
   if isinstance(acc, gpu_core.WGMMAAbstractAccumulatorRef):
     effects.add(state.WriteEffect(0))
   return inner, effects
@@ -1991,7 +1992,7 @@ def _tcgen05_mma_lowering(
     )
     assert isinstance(a_sparse_metadata_ref_aval, state_types.AbstractRef)
     a_sparse_metadata_ref, _, a_sparse_metadata_transforms = (
-        lowering._handle_transforms(
+        lowering._handle_transforms(  # pyrefly: ignore[bad-specialization]
             ctx, a_sparse_metadata_ref_aval, a_sparse_metadata_ref,
             a_sparse_metadata_transform_avals, a_sparse_metadata_transforms)
     )
@@ -2022,6 +2023,7 @@ def _tcgen05_mma_lowering(
               collective=collective,
           )
     if arrive:
+      assert barrier_ref is not None
       tcgen05.commit_arrive(barrier_ref,
                             collective=collective,
                             ctx=ctx.launch_ctx)
@@ -2856,7 +2858,7 @@ def _populate_custom_primitive_op_block(
   are returned.
   """
   with ir.InsertionPoint(block):
-    fn_inputs = []
+    fn_inputs: list[ir.Value | mgpu.FragmentedArray] = []
     in_layouts_it = iter(in_layouts)
     in_transforms_it = iter(in_transforms)
     avals_in = ctx.avals_in[:pytree_args.num_leaves]

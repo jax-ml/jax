@@ -441,7 +441,7 @@ class ModuleContext:
   outer_traceback: xc.Traceback | None = None
 
   @property
-  def single_lane_predicate(self) -> ir.Value:
+  def single_lane_predicate(self) -> ir.Value | None:
     """Returns a predicate that is True for a single lane within the current
     thread semantics.
     """
@@ -914,7 +914,7 @@ def lower_jaxpr_to_module(
       jaxpr,
   )
 
-  def body(launch_ctx: mgpu.LaunchContext, *buffers: ir.Value):
+  def body(launch_ctx: mgpu.LaunchContext, *buffers: Any):
     *buffers_gmem, (
         runtime_smem,
         runtime_barriers,
@@ -1441,13 +1441,13 @@ def _extract_aliased_ref(
           raise NotImplementedError("Only byte-aligned bitcasts are supported.")
         assert offset % gpu_core.SMEM_ALIGNMENT == 0
         ref_bytes = ref_bits // 8
-        ref = mgpu.memref_slice(ref, slice(offset, offset + ref_bytes))
+        ref = mgpu.memref_slice(ref, slice(offset, offset + ref_bytes))  # pyrefly: ignore[bad-argument-type]
         ref = _handle_dtype_bitcast(
             ref,
             ir.MemRefType(ref.type).element_type,
             mgpu_utils.dtype_to_ir_type(dtype),
         )
-        ref = mgpu.memref_reshape(ref, transformed_shape)
+        ref = mgpu.memref_reshape(ref, transformed_shape)  # pyrefly: ignore[bad-assignment]
       return (
           ref,
           ref_aval,
@@ -1576,7 +1576,7 @@ def _handle_transforms(
   ref, ref_aval, transform_avals, transforms = _extract_aliased_ref(
       ref, ref_aval, transform_avals, transforms
   )
-  transformed_ref = ref
+  transformed_ref: Any = ref
   new_transforms = []
   new_transforms_avals = []
   peer_device_id = None
@@ -1671,18 +1671,18 @@ def _handle_transforms(
           " primitive."
       )
     transformed_ref = ctx.launch_ctx.to_remote(
-        transformed_ref, _ensure_ir_value(peer_device_id, jnp.int32)
+        transformed_ref, _ensure_ir_value(peer_device_id, jnp.int32)  # pyrefly: ignore[bad-argument-type]
     )
   if is_multicast:
-    transformed_ref = ctx.launch_ctx.to_remote_multicast(transformed_ref)
+    transformed_ref = ctx.launch_ctx.to_remote_multicast(transformed_ref)  # pyrefly: ignore[bad-argument-type]
   assert isinstance(ref_aval, state_types.AbstractRef)
-  return transformed_ref, ref_aval, new_transforms
+  return transformed_ref, ref_aval, new_transforms  # pyrefly: ignore[bad-return]
 
 
 def _ndindexer_indices(
     indexer: indexing.NDIndexer, allow_arrays: bool = False
-) -> tuple[gpu_core.Index | mgpu.FragmentedArray | ir.Value, ...]:
-  indices = []
+) -> tuple[Any, ...]:
+  indices: list[Any] = []
   for idx in indexer.indices:
     if (isinstance(idx, mgpu.FragmentedArray) and idx.shape) or (
         isinstance(idx, ir.Value) and isinstance(idx.type, ir.VectorType)  # pytype: disable=attribute-error
@@ -1699,7 +1699,7 @@ def _ndindexer_indices(
         raise NotImplementedError("Dynamic slice size not supported.")
       indices.append(
           mgpu.DynamicSlice(
-              _as_index(idx.start) if idx.is_dynamic_start else idx.start,
+              _as_index(idx.start) if idx.is_dynamic_start else idx.start,  # pyrefly: ignore[bad-argument-type]
               int(idx.size),
           )
       )
@@ -2825,11 +2825,11 @@ def _reduce_lowering_rule_wg(
       )
     reduction = vector_dialect.ReductionOp(out_type, kind, x)
   else:
-    acc = vector_dialect.broadcast(
+    acc_vec = vector_dialect.broadcast(
         ir.VectorType.get(out_aval.shape, out_type),
         _ensure_ir_value(acc, out_aval.dtype),
     )
-    reduction = vector_dialect.MultiDimReductionOp(kind, x, acc, axes)
+    reduction = vector_dialect.MultiDimReductionOp(kind, x, acc_vec, axes)
   def i32_attr(value: int) -> ir.IntegerAttr:
     return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), value)
   reduction.attributes["offset"] = i32_attr(ctx.module_ctx.smem_used_bytes)
@@ -3304,7 +3304,7 @@ def _run_state_lowering_rule(
   )
   assert not new_consts
   outs = lower_jaxpr_to_mosaic_gpu(
-      ctx.module_ctx, ctx.launch_ctx, discharged_jaxpr, new_input_vals, ()
+      ctx.module_ctx, ctx.launch_ctx, discharged_jaxpr, new_input_vals, ()  # pyrefly: ignore[bad-argument-type]
   )
   # Await the accumulators and extract their final values.
   nvvm_dialect.wgmma_wait_group_sync_aligned(0)
@@ -3577,7 +3577,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
   index_aval, *_arg_avals = ctx.avals_in
 
   def _yielded_values(outs, avals):
-    ret = []
+    ret: list[Any] = []
     for out, aval in zip(outs, avals):
       if isinstance(out, (mgpu.WGMMAAccumulator, mgpu.FragmentedArray)):
         ret.append(out)
@@ -3818,7 +3818,7 @@ def _ensure_ir_value(x: Any, dtype: jnp.dtype) -> ir.Value:
   return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
 
 
-def _ensure_ir_value_device_id(device_id: Any) -> ir.Value:
+def _ensure_ir_value_device_id(device_id: Any) -> Any:
   ensure_i32 = functools.partial(_ensure_ir_value, dtype=jnp.int32)
   if isinstance(device_id, tuple):
     return tuple(map(ensure_i32, device_id))
@@ -3997,6 +3997,7 @@ def _semaphore_signal_lowering_rule(
       raise NotImplementedError(
           f"Only JAX mesh axes can be used in device_id, but found {other_axes}"
       )
+    assert device_id is not None
     sem = ctx.launch_ctx.to_remote(sem, device_id)
   sem_ptr = mgpu.utils.memref_ptr(sem)
 
