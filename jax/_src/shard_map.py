@@ -1732,7 +1732,7 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
     return res_and_primal.with_aux((lin_data, out_specs)).with_aux(new_out_specs)
 
   # f_primal = _promote_scalar_residuals_lin(f_primal, linearize_outs_thunk)
-  # all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
+  all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
 
   fwd_params = dict(
       mesh=mesh, in_specs=in_specs,
@@ -1742,7 +1742,7 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
   all_results, (lin_data, out_specs) = all_results_aux.unpack_aux()
   res_avals, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = lin_data
   non_fwd_res, primals_out = all_results.unpack()
-  residuals = subs_list2(in_fwd, out_fwd, primals, primals_out, non_fwd_res)
+  residuals = subs_list2(in_fwd, out_fwd, primals, (*primals_out,), non_fwd_res)
   args_to_promote = [getattr(aval, 'shape', ()) == () and f1 is None and f2 is None
                      for aval, f1, f2 in zip(res_avals, in_fwd, out_fwd)]
   with (_extend_axis_env(mesh, manual_axes),
@@ -1836,64 +1836,28 @@ def _shard_map_transpose(out_cts, *args,
           for sp, x in zip(in_specs, args)]
   all_args, in_tree = tree_flatten((out_cts, tuple(args)))
 
-  def fun_trans_callable(out_cts, args):
-    # TODO(mattjj): when #26811 lands, delete this and just run backward_pass
-    in_undef = map(ad.is_undefined_primal, args)
-    res, undefs = partition_list(in_undef, args)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
-    jaxpr_known, jaxpr_unknown, _, _ = pe.partial_eval_jaxpr_nounits(
-        pe.close_jaxpr(jaxpr), in_undef, False)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
-    res_reshaped = core.jaxpr_as_fun(jaxpr_known)(*res)
-    in_cts = ad.backward_pass(
-        jaxpr_unknown.jaxpr, False, (), (*res_reshaped, *undefs), out_cts
-    )[len(res_reshaped):]
-    _, in_ct_specs = partition_list(in_undef, in_specs)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
-    in_cts = [ad.Zero(x.aval) if type(x) is ad.Zero else x if check_vma
-              else lax_parallel.psum(x, tuple(_unmentioned2(mesh, sp, manual_axes)))
-              for sp, x in zip(in_ct_specs, in_cts)]
-    res_zeros = [ad_util.zero_from_primal(r) for r in res]
-    return merge_lists(in_undef, res_zeros, in_cts)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+  def fun_trans_callable(*right_flat):
+    right_cts, primals_or_undefs = tree_unflatten(in_tree, right_flat)
+    left_cts = ad.backward_pass(jaxpr, False, (), primals_or_undefs, right_cts)
+    left_cts = [x if type(x) is ad.Zero or check_vma
+                else lax_parallel.psum(x, tuple(_unmentioned2(mesh, sp, manual_axes)))
+                for sp, x in zip(in_specs, left_cts)]
+    left_specs_nz = [core.primal_spec_to_cotangent_spec(s)
+                     for ct, s in zip(left_cts, in_specs) if ct is not None
+                     and type(ct) is not ad.Zero]
+    return FlatTree.flatten(left_cts).with_aux(left_specs_nz)
 
-  fun_trans_callable.__name__ = f"transpose({jaxpr.debug_info.func_name})"
-  fun_trans = lu.wrap_init(fun_trans_callable, debug_info=jaxpr.debug_info)
-  fun_trans, nz_arg_cts = ad.nonzero_outputs(fun_trans)
-  fun_trans_flat, out_tree = api_util.flatten_fun_nokwargs(fun_trans, in_tree)
-
+  dbg = jaxpr.debug_info.with_unknown_names()
   new_in_specs = (
       [s.to_ct_spec() for s, x in zip(out_specs, out_cts) if type(x) is not ad.Zero] +
       [s for s, x in zip(in_specs, args) if type(x) is not ad.UndefinedPrimal])
 
-  def new_out_specs_thunk():
-    return tuple(sp.to_ct_spec() for sp, nz in zip(in_specs, nz_arg_cts()) if nz)
-
-  try:
-    out_flat = shard_map_p.bind(
-        fun_trans_flat, *all_args, mesh=mesh, in_specs=tuple(new_in_specs),
-        out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
-        manual_axes=manual_axes)
-  except (FloatingPointError, ZeroDivisionError) as e:
-    print("Invalid nan value encountered in the backward pass of a shard_map "
-          "function. Calling the de-optimized backward pass.")
-    try:
-      # TODO(mattjj): Remove this and do `fun_trans.call_wrapped(out_cts, args)`
-      # in eager mode so that output of shmap are not manual.
-      with api.disable_jit(True):
-        _ = shard_map_p.bind(
-            fun_trans_flat, *all_args, mesh=mesh, in_specs=tuple(new_in_specs),
-            out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
-            manual_axes=manual_axes)
-    except (FloatingPointError, ZeroDivisionError) as e2:
-      raise e2 from None
-    else:
-      api_util._raise_no_nan_in_deoptimized(e)
-    raise  # will never get here.
-  except _RepError as e:
-    fails, = e.args
-    msg = _inout_vma_error(
-        fun_trans, mesh, out_tree(), list(new_out_specs_thunk()), fails)
-    raise ValueError(msg) from None
-  in_cts = tree_unflatten(out_tree(), out_flat)
+  left_ct = shard_map_p.bind(
+      fun_trans_callable, *all_args, mesh=mesh, in_specs=tuple(new_in_specs),
+      check_vma=check_vma, manual_axes=manual_axes, debug_info=dbg)
+  left_cts = left_ct.unflatten()
   return [ad.Zero(unshard_aval(mesh, check_vma, sp, x.aval))
-          if type(x) is ad.Zero else x for sp, x in zip(in_specs, in_cts)]
+          if type(x) is ad.Zero else x for sp, x in zip(in_specs, left_cts)]
 ad.primitive_transposes[shard_map_p] = _shard_map_transpose
 
 # Remat
