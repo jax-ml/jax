@@ -62,15 +62,26 @@ def as_torch_kernel(fn):
   """
   @functools.wraps(fn)
   def wrapper(*args):
-    in_structs = jax.tree.map(
-        lambda arg: jax.ShapeDtypeStruct(
+    scalar_argnums = tuple(
+        i for i, arg in enumerate(args)
+        if isinstance(arg, (bool, int, float))
+    )
+    scalar_values = tuple(args[i] for i in scalar_argnums)
+    scalar_set = set(scalar_argnums)
+    tensor_args = tuple(
+        arg for i, arg in enumerate(args) if i not in scalar_set
+    )
+    in_structs = tuple(
+        jax.ShapeDtypeStruct(
             # Drop the "torch." prefix from the dtype string, if present.
             arg.shape,
             str(arg.dtype).split(".")[-1],
-        ),
-        args,
+        )
+        for arg in tensor_args
     )
-    return _compile_fn(fn, in_structs)(*args)
+    return _compile_fn(
+        fn, in_structs, scalar_argnums, scalar_values
+    )(*tensor_args)
 
   return wrapper
 
@@ -98,6 +109,8 @@ def _mlir_to_torch_dtype(torch, mlir_dtype: ir.Type):
     return torch.bfloat16
   if isinstance(mlir_dtype, ir.IntegerType):
     int_type = ir.IntegerType(mlir_dtype)
+    if int_type.width == 1:
+      return torch.bool
     if int_type.is_signed or int_type.is_signless:
       return getattr(torch, f"int{int_type.width}")
     else:
@@ -146,19 +159,30 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
         raise ValueError(f"Only scalar constants are supported, got {op}")
       if not op.value.is_splat:
         raise ValueError(f"Only splat constants are supported, got {op}")
-      if result_type.element_type == ir.IntegerType.get_signless(32):
-        init_env[value_names[op.result]] = ir.IntegerAttr(
-            op.value.get_splat_value()
-        ).value
+      element_type = result_type.element_type
+      splat = op.value.get_splat_value()
+      if isinstance(element_type, ir.IntegerType):
+        value = ir.IntegerAttr(splat).value
+        if ir.IntegerType(element_type).width == 1:
+          value = bool(value)
+      elif element_type in (
+          ir.F32Type.get(), ir.F16Type.get(), ir.BF16Type.get(),
+      ):
+        value = ir.FloatAttr(splat).value
       else:
-        raise NotImplementedError(f"Only i32 constants are supported, got {op}")
+        raise NotImplementedError(
+            f"Unsupported constant element type: {element_type}"
+        )
+      init_env[value_names[op.result]] = value
     elif op.name == "stablehlo.broadcast_in_dim":
       if op.broadcast_dimensions:
         raise ValueError("Only scalar broadcasts are supported")
       target_shape = tuple(op.result.type.shape)
       result_name = value_names[op.result]
       operand_name = value_names[op.operand]
-      dtype = torch.int32
+      dtype = _mlir_to_torch_dtype(
+          torch, ir.ShapedType(op.result.type).element_type
+      )
       def run_broadcast(
           env,
           device,
@@ -182,13 +206,23 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
 
   block_arg_names = [value_names[arg] for arg in block.arguments]
   mgpu_arg_names = [value_names[arg] for arg in mgpu_call.operands]
+  mgpu_arg_dtypes = [
+      _mlir_to_torch_dtype(torch, arg.type.element_type)
+      for arg in mgpu_call.operands
+  ]
   def prepare_args(*user_args, device):
     env = dict(init_env)
     for name, arg in zip(block_arg_names, user_args, strict=True):
       env[name] = arg
     for thunk in to_evaluate:
       thunk(env, device)
-    return tuple(env[name] for name in mgpu_arg_names)
+    result = []
+    for name, dtype in zip(mgpu_arg_names, mgpu_arg_dtypes):
+      val = env[name]
+      if not isinstance(val, torch.Tensor):
+        val = torch.tensor(val, dtype=dtype, device=device)
+      result.append(val)
+    return tuple(result)
   output_input_aliases = [None] * len(mgpu_call.results)
   for alias in mgpu_call.output_operand_aliases:
     alias = hlo.OutputOperandAlias(alias)
@@ -220,13 +254,26 @@ def _is_custom_call(op: ir.Operation, name: str) -> TypeGuard[hlo.CustomCallOp]:
 
 
 @util.weakref_lru_cache
-def _compile_fn(fn, in_structs):
+def _compile_fn(fn, in_structs, scalar_argnums=(), scalar_values=()):
   try:
     import torch  # type: ignore[import-not-found]  # pytype: disable=import-error
   except ImportError:
     raise RuntimeError("Can't compile for PyTorch: import torch failed") from None
 
-  traced = jax.jit(fn).trace(*in_structs)
+  if scalar_argnums:
+    n_total = len(in_structs) + len(scalar_argnums)
+    trace_args = [None] * n_total
+    scalar_set = set(scalar_argnums)
+    in_structs_it = iter(in_structs)
+    scalar_values_it = iter(scalar_values)
+    for i in range(n_total):
+      if i in scalar_set:
+        trace_args[i] = next(scalar_values_it)
+      else:
+        trace_args[i] = next(in_structs_it)
+    traced = jax.jit(fn, static_argnums=scalar_argnums).trace(*trace_args)
+  else:
+    traced = jax.jit(fn).trace(*in_structs)
   main_module = traced.lower().compiler_ir()
   with main_module.context:
     # jax.jit outlines its bodies which we undo for the interpreter.
