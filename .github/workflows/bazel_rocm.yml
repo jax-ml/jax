@@ -106,13 +106,6 @@ jobs:
         --group-add video
         --shm-size 64G
         --env-file /etc/podinfo/gha-gpu-isolation-settings
-    env:
-      JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
-      JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
-      JAXCI_ROCM_VERSION: ${{ inputs.rocm-version }}
-      JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: ${{ inputs.write_to_bazel_remote_cache }}
-      JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
-      JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "linux x86, jaxlib=${{ inputs.jaxlib-version }}, ROCM=${{ inputs.rocm-version }}, Python=${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
 # End Presubmit Naming Check github-rocm-presubmits
@@ -134,4 +127,8 @@ jobs:
           ./ci/run_bazel_test_rocm_rbe.sh  \
             --config=single_gpu \
             --local_test_jobs=4 \
+            --//jax:build_jaxlib="${{ inputs.build_jaxlib }}" \
+            --//jax:build_jax="${{ inputs.build_jax }}" \
+            --repo_env=HERMETIC_PYTHON_VERSION="${{ inputs.python }}" \
+            --action_env=JAX_ENABLE_X64="${{ inputs.enable-x64 }}" \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="rocm/tensorflow-build@sha256:30e7fcfad87b74a4b916565a6156f4d8d01a2f5a4e06d0d0e6c37926a1507d72" \
