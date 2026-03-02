@@ -311,8 +311,9 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
 #          fun = _implicit_unreduced_on_output(fun, out_specs_thunk)
 
 
+    # TODO(mattjj): replace nonlocal try/except business with logic in f_wrapped
     try:
-      out_flat = shard_map_p.bind(
+      out_ft = shard_map_p.bind(
           f_wrapped, *args_flat, mesh=mesh, in_specs=in_specs_flat,
           check_vma=check_vma, manual_axes=axis_names, debug_info=
           api_util.debug_info("shard_map", f, args, {}))
@@ -330,7 +331,7 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
       fails, = e.args
       msg = _inout_vma_error(f, mesh, out_tree(), out_specs, fails)
       raise ValueError(msg) from None
-    return out_flat.unflatten()
+    return out_ft.unflatten()
   return cast(F, wrapped)
 
 
@@ -1582,6 +1583,7 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_specs,
 
   def f_jvp(*primals_and_nz_tangents_flat):
     primals, tangents = tree_unflatten(in_zeros_tree, primals_and_nz_tangents_flat)
+    tangents = [ad.p2tz(p) if t is None else t for p, t in zip(primals, tangents)]
     primals_out_aux, tangents_out = ad.jvp_subtrace_2(f, trace.tag, primals, tangents)
     primals_out_ft, out_ax = primals_out_aux.unpack_aux()
     which_nz_out = [type(r) is not ad.Zero for r in tangents_out]
