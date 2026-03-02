@@ -676,7 +676,7 @@ def _broadcasted_iota_constraint_system(
 @_add_constraint_system_derivation_rule(mgpu.OptimizationBarrierOp)
 def _optimization_barrier_constraint_system(
     ctx: DerivationContext,
-    op: ir.OpView,
+    op: mgpu.OptimizationBarrierOp,
 ) -> ConstraintSystemDerivationRuleResult:
   del ctx
   value_sites_for_variable: ValueSitesForVariable = {}
