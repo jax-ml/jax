@@ -65,11 +65,6 @@ on:
         default: 'no'
   workflow_call:
     inputs:
-      call-id:
-        description: "Unique ID from caller job (for S3 prefix)"
-        type: string
-        required: false
-        default: ""
       runner:
         description: "Which runner should the workflow run on?"
         type: string
@@ -101,6 +96,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  actions: read
 
 env:
   UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
@@ -155,80 +151,25 @@ jobs:
       - name: Run Pytest ROCm tests
         timeout-minutes: 120
         run: ./ci/run_pytest_rocm.sh
-      - name: Archive logs
+      - name: Archive test logs
         if: always()
         run: |
           set -euo pipefail
           tar -czf logs.tar.gz logs
-      - name: Generate run manifest
-        if: always()
-        env:
-          INPUT_RUNNER: ${{ inputs.runner }}
-          INPUT_PYTHON: ${{ inputs.python }}
-          INPUT_ROCM_VERSION: ${{ inputs.rocm-version }}
-          INPUT_ROCM_TAG: ${{ inputs.rocm-tag }}
-        run: |
-          PKGS="$($JAXCI_PYTHON -m pip list | grep -E '^(jax|jaxlib)|pjrt|plugin' || true)"
-          PKGS_ONE_LINE="$(printf "%s" "$PKGS" | tr '\n' '|' | sed 's/|$//')"
-          WHEELS="$(sha256sum dist/*.whl 2>/dev/null || true)"
-          WHEELS_ONE_LINE="$(printf "%s" "$WHEELS" | tr '\n' '|' | sed 's/|$//')"
-
-          REPO="rocm/jax-base-ubu24.${INPUT_ROCM_TAG}"
-          IMAGE="ghcr.io/${REPO}:latest"
-          BASE="https://ghcr.io"
-          DIGEST=""
-          TOKEN="$(curl -fsSL "${BASE}/token?service=ghcr.io&scope=repository:${REPO}:pull" \
-            | sed -n 's/.*"token":"\([^"]*\)".*/\1/p' || true)"
-          if [ -n "${TOKEN}" ]; then
-            DIGEST="$(curl -fsSL -D - \
-              -H "Authorization: Bearer ${TOKEN}" \
-              -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-              "${BASE}/v2/${REPO}/manifests/latest" -o /dev/null \
-              | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' \
-              | tr -d $'\r' || true)"
-          fi
-
-          cat > logs/run-manifest.json << EOF
-          {
-            "schema_version": 1,
-            "github_repository": "${{ github.repository }}",
-            "github_workflow": "${{ github.workflow }}",
-            "github_job": "${{ github.job }}",
-            "github_run_id": "${{ github.run_id }}",
-            "github_run_attempt": "${{ github.run_attempt }}",
-            "github_run_number": "${{ github.run_number }}",
-            "github_event_name": "${{ github.event_name }}",
-            "github_ref": "${{ github.ref }}",
-            "github_ref_name": "${{ github.ref_name }}",
-            "github_sha": "${{ github.sha }}",
-            "runner": "${INPUT_RUNNER}",
-            "python_version": "${INPUT_PYTHON}",
-            "rocm_version": "${INPUT_ROCM_VERSION}",
-            "base_image_name": "${IMAGE}",
-            "base_image_digest": "${DIGEST}",
-            "jax_packages_raw": "${PKGS_ONE_LINE}",
-            "wheels_sha_raw": "${WHEELS_ONE_LINE}"
-          }
-          EOF
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc
           aws-region: us-east-1
-      - name: Upload test artifacts to AMD S3
+      - name: Upload test-artifacts to AMD S3
         if: always()
         env:
-          RUN_KEY: ${{ github.repository }}/${{ github.run_id }}/${{ github.run_attempt }}
-          JOB_KEY: ${{ inputs.call-id || github.job }}
-          COMBO: py${{ inputs.python }}-rocm${{ inputs.rocm-version }}-${{ inputs.runner }}
+          S3_BUCKET_NAME: jax-ci-amd
+          GITHUB_TOKEN: ${{ github.token }}
+          INPUT_PYTHON: ${{ inputs.python }}
+          INPUT_ROCM_VERSION: ${{ inputs.rocm-version }}
+          INPUT_RUNNER: ${{ inputs.runner }}
+          INPUT_ROCM_TAG: ${{ inputs.rocm-tag }}
+          IS_NIGHTLY: ${{ contains(github.workflow, 'Nightly/Release') && 'nightly' || 'continuous' }}
         run: |
-          set -euo pipefail
-          PREFIX="jax-test-logs/${RUN_KEY}/${JOB_KEY}/${COMBO}/"
-          $JAXCI_PYTHON -m pip install -q boto3
-          $JAXCI_PYTHON - <<PY
-          import boto3, os; s3=boto3.client("s3"); BUCKET = "jax-ci-amd"
-          s3.upload_file("logs.tar.gz", BUCKET, "${PREFIX}"+"logs.tar.gz")
-          s3.upload_file("logs/run-manifest.json", BUCKET, "${PREFIX}"+"run-manifest.json")
-          s3.put_object(Bucket=BUCKET, Key="${PREFIX}"+"_SUCCESS", Body=b"")
-          PY
-
+          ./ci/upload_rocm_logs.sh

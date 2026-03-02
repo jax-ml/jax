@@ -41,9 +41,7 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
-permissions:
-  id-token: write
-  contents: read
+permissions: {}
 
 env:
   UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
@@ -175,6 +173,10 @@ jobs:
       clone_main_xla: 0
 
   run-pytest-rocm:
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
     uses: ./.github/workflows/pytest_rocm.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -186,7 +188,6 @@ jobs:
           ]
     name: "Pytest ROCm (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
-      call-id: "run-pytest-rocm"
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       rocm-version: ${{ matrix.rocm.version }}
