@@ -693,21 +693,6 @@ def _optimization_barrier_constraint_system(
   return cs.ConstraintSystem(), value_sites_for_variable
 
 
-@_add_constraint_system_derivation_rule(vector.BroadcastOp)
-def _vector_splat_constraint_system(
-    ctx: DerivationContext,
-    op: ir.OpView,
-) -> ConstraintSystemDerivationRuleResult:
-  del ctx
-  result = ValueSite(op, VariableType.RESULT, 0)
-  variable = cs.Variable(result)
-  layout = fa.WGSplatFragLayout(tuple(cast(ir.ShapedType, op.result.type).shape))
-  system = cs.ConstraintSystem(
-      assignments={variable: cs.RegisterLayout(layout)}
-  )
-  return system, {variable: [result]}
-
-
 @_add_constraint_system_derivation_rule(arith.ConstantOp)
 def _constant_constraint_system(
     ctx: DerivationContext,
