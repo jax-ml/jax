@@ -14,7 +14,9 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## JAX 0.9.1
+## Unreleased
+
+## JAX 0.9.1 (March 2, 2026)
 
 * Changes:
   * JAX tracers that are not of `Array` type (e.g., of `Ref` type) will no
