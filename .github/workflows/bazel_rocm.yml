@@ -96,7 +96,7 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     container:
-      image: "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa"
+      image: "rocm/tensorflow-build@sha256:30e7fcfad87b74a4b916565a6156f4d8d01a2f5a4e06d0d0e6c37926a1507d72"
       volumes:
         - /data:/data
       options: >-
@@ -128,16 +128,10 @@ jobs:
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Set ROCm requirements lock file
-        if: inputs.build_jaxlib == 'false'
-        run: |
-          PY_VERSION="${JAXCI_HERMETIC_PYTHON_VERSION//./_}"
-          echo "JAXCI_ROCM_LOCK_FLAG=--repo_env=HERMETIC_REQUIREMENTS_LOCK=build/requirements_lock_${PY_VERSION}_rocm.txt" >> $GITHUB_ENV
       - name: "Bazel ROCm tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
         timeout-minutes: 120
         run: |
           ./ci/run_bazel_test_rocm_rbe.sh  \
             --config=single_gpu \
             --local_test_jobs=4 \
-            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa" \
-            ${JAXCI_ROCM_LOCK_FLAG:-}
+            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="rocm/tensorflow-build@sha256:30e7fcfad87b74a4b916565a6156f4d8d01a2f5a4e06d0d0e6c37926a1507d72" \
