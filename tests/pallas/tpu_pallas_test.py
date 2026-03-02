@@ -2269,6 +2269,8 @@ class PallasCallTest(ptu.PallasTPUTest):
         version=6, variant='e'
     ):
       block_shape = (4096 // pmode.buffer_count, 8192)
+    elif jtu.is_device_tpu(version=7, variant='x'):
+      block_shape = (2048 // pmode.buffer_count, 8192)
     elif jtu.is_device_tpu(version=5, variant='p'):
       block_shape = (1024, 8192)
     else:
