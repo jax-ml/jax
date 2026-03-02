@@ -156,6 +156,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@local_config_rocm//rocm:hipblas",
         "@local_config_rocm//rocm:hipsolver",
+        "@local_config_rocm//rocm:rocsolver",
     ],
 )
 
