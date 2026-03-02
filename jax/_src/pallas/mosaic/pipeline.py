@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import contextlib
 from contextlib import contextmanager
 import dataclasses
 import enum
@@ -1907,6 +1908,7 @@ def emit_pipeline(
     dimension_semantics: tuple[GridDimensionSemantics, ...] | None = None,
     trace_scopes: bool = True,
     no_pipelining: bool = False,
+    _explicit_indices: bool = False,
 ):
   """Creates a function to emit a manual pallas pipeline.
 
@@ -1936,6 +1938,8 @@ def emit_pipeline(
       the pipeline using named_scope.
     no_pipelining: If True, turns off pipelining and all copies will be made
       synchronous. This is useful for debugging multiple-buffering related bugs.
+    _explicit_indices: If True, the body will receive the iteration indices as
+      its first argument. This parameter is meant for internal use only.
   """
   if any(not isinstance(d, (int, jax.Array)) for d in grid):
     grid_types = tuple(type(d) for d in grid)
@@ -2060,8 +2064,11 @@ def emit_pipeline(
     def loop_body(step, carry):
       unaliased_brefs, indices = carry
       scheduler = make_scheduler(step, indices)
-      with scheduler.grid_env():
-
+      grid_env_ctx = (
+          contextlib.nullcontext() if _explicit_indices
+          else scheduler.grid_env()
+      )
+      with grid_env_ctx:
         # prepare any local VMEM aliases
         brefs = map_brefs(scheduler.alias_local_refs, unaliased_brefs, refs)
         # loop input handling phase
@@ -2083,7 +2090,10 @@ def emit_pipeline(
           body_prologue()
         current_refs = map_brefs(lambda x: x.current_ref, brefs)
         with scheduler._named_scope("ep_run_kernel"):
-          body(*current_refs, *scratches)
+          if _explicit_indices:
+            body(scheduler.indices, *current_refs, *scratches)
+          else:
+            body(*current_refs, *scratches)
 
         # loop output handling phase
         brefs = map_brefs(scheduler.copy_out, brefs, refs, schedule)
@@ -2108,19 +2118,21 @@ def emit_pipeline(
     if no_pipelining:
       # Debugging mode where all copies are synchronous.
       initial_indices = (0,) * len(grid)
-      scheduler = make_scheduler(0, initial_indices)
-      brefs = map_brefs(scheduler.alias_local_refs, allocations, refs)
-      map_brefs(lambda bref: bref.init_slots(), brefs)
+      map_brefs(lambda bref: bref.init_slots(), allocations)
       if postyeet is not None or prefetch is not None:
         raise NotImplementedError("Prefetch/Postyeet not supported")
-      if any(bref.is_accumulator for bref in brefs):
+      if any(bref.is_accumulator for bref in allocations):
         raise NotImplementedError("Accumulators not supported")
       @functools.partial(jax.lax.fori_loop, 0, num_steps,
-                         init_val=(brefs, initial_indices))
+                         init_val=(allocations, initial_indices))
       def _loop_body(step, carry):
         brefs, indices = carry
         scheduler = make_scheduler(step, indices)
-        with scheduler.grid_env():
+        grid_env_ctx = (
+            contextlib.nullcontext() if _explicit_indices
+            else scheduler.grid_env()
+        )
+        with grid_env_ctx:
           # prepare any local VMEM aliases
           brefs = map_brefs(scheduler.alias_local_refs, brefs, refs)
           # loop input handling phase
@@ -2131,7 +2143,10 @@ def emit_pipeline(
             body_prologue()
           current_refs = map_brefs(lambda x: x.current_ref, brefs)
           with scheduler._named_scope("ep_run_kernel"):
-            body(*current_refs, *scratches)
+            if _explicit_indices:
+              body(scheduler.indices, *current_refs, *scratches)
+            else:
+              body(*current_refs, *scratches)
           # loop output handling phase
           copy_out = lambda bref, ref: sync_copy(bref, ref, indices)
           map_outputs(copy_out, brefs, refs)

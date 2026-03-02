@@ -22,6 +22,7 @@ from jax import numpy as jnp
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import util as jax_util
+from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core
 
 
@@ -518,6 +519,15 @@ class Tiling(enum.Enum):
         raise NotImplementedError  # pyrefly#2080
 
 
+def _get_tiling_factor(src: int, max_tiling: int, packing: int) -> int:
+  # This roughly mirrors ``getTilingFactor`` in infer-memref-layout.
+  tpu_generation = get_tpu_info().generation
+  tiling = (1 + int(tpu_generation < 4)) * packing
+  while tiling < min(src, max_tiling):
+    tiling *= 2
+  return tiling
+
+
 def infer_tiling(
     ty: jax_core.AbstractValue,
     tiling: Tiling | None = None,
@@ -544,23 +554,23 @@ def infer_tiling(
   if tiling is None:
     tiling = Tiling.COMPACT
   tiling_rank = len(tiling.shape)
+  if len(shape) == 1 and tiling == Tiling.COMPACT:
+    sublane_count, lane_count = tiling.shape
+    src_sublane = pallas_utils.cdiv(shape[0], lane_count)
+    max_tiling = max(sublane_count, packing)
+    factor = _get_tiling_factor(src_sublane, max_tiling, packing)
+    return (factor * lane_count,)
   if len(shape) < tiling_rank:
     raise ValueError(
         f"Shape must have at least {tiling_rank} dimensions: {shape=}"
     )
 
   leading_dims, final_dims = shape[:-tiling_rank], shape[-tiling_rank:]
-  tpu_generation = get_tpu_info().generation
   match tiling:  # pyrefly: ignore[non-exhaustive-match]  # pyrefly#2080
     case Tiling.COMPACT:
-      # We want to find the minimum power of 2 that fits the second-minor
-      # dimension of shape, with maximum value equal to ``tiling.shape[0]``.
       second_minor, _ = final_dims
-      max_tiling = tiling.shape[0]
-      second_minor_tiling = (1 + int(tpu_generation < 4)) * packing
-      while second_minor_tiling < min(second_minor, max_tiling):
-        second_minor_tiling *= 2
-      return (*(1,) * len(leading_dims), second_minor_tiling, tiling.shape[1])
+      factor = _get_tiling_factor(second_minor, tiling.shape[0], packing)
+      return (*(1,) * len(leading_dims), factor, tiling.shape[1])
     case Tiling.SPARSE_CORE:
       [tile_size] = tiling.shape
       return (*(1,) * len(leading_dims), tile_size * packing)

@@ -461,8 +461,8 @@ def _get_aval_physical_dtype_shape(aval):
 
 
 def _canonicalize_dimension_semantic(
-    dimension_semantic: str | tpu_core.GridDimensionSemantics,
-) -> str:
+    dimension_semantic: tpu_core.DimensionSemantics,
+) -> tpu_core.LiteralDimensionSemantics:
   if isinstance(dimension_semantic, tpu_core.GridDimensionSemantics):
     return dimension_semantic.value
   return dimension_semantic
