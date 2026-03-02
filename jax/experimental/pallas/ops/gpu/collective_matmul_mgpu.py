@@ -125,6 +125,7 @@ def all_gather_lhs_matmul(
       hopper_matmul_mgpu.kernel(
           lhs_source_ref,  # Use the lhs from previous step.
           rhs_ref,  # Use the same rhs for all steps.
+          None,  # No C.
           out_ref.at[out_device_m_slice],  # Use a slice of the output.
           config=config,
           pipeline_callback=functools.partial(

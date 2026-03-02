@@ -55,10 +55,13 @@ class TuningConfig:
 
 
 # pipeline_callback and delay_release are only used for collective matmuls.
-def kernel(a_gmem, b_gmem, out_gmem, config: TuningConfig,
+def kernel(a_gmem, b_gmem, c_gmem, out_gmem, config: TuningConfig,
            pipeline_callback=None, delay_release=0):
   dtype = a_gmem.dtype
+  out_dtype = out_gmem.dtype
   assert b_gmem.dtype == dtype
+  if c_gmem is not None:
+    assert c_gmem.dtype == out_dtype
   m, k = a_gmem.shape
   k2, n = b_gmem.shape
   assert k == k2
@@ -88,8 +91,8 @@ def kernel(a_gmem, b_gmem, out_gmem, config: TuningConfig,
   epi_tile_n = config.epi_tile_n or tile_n
   # We don't need multiple slots if there's only one epilogue tile.
   num_out_slots = min(2, (tile_m * tile_n) // (epi_tile_m * epi_tile_n))
-  out_swizzle = plgpu.find_swizzle(epi_tile_n * jnp.dtype(dtype).itemsize * 8)
-  out_swizzle_elems = out_swizzle // jnp.dtype(dtype).itemsize
+  out_swizzle = plgpu.find_swizzle(epi_tile_n * jnp.dtype(out_dtype).itemsize * 8)
+  out_swizzle_elems = out_swizzle // jnp.dtype(out_dtype).itemsize
   out_transforms = (
       plgpu.TilingTransform((8, out_swizzle_elems)),
       plgpu.SwizzleTransform(out_swizzle),
@@ -135,12 +138,13 @@ def kernel(a_gmem, b_gmem, out_gmem, config: TuningConfig,
       pipeline_allocs=get_pipeline(ignore, ignore).get_allocations(a_gmem, b_gmem),
       out_smem=plgpu.SMEM(
           (2, num_out_slots, epi_tile_m, epi_tile_n),
-          dtype,
+          out_dtype,
           transforms=out_transforms,
       ),
+      c_barrier=None if c_gmem is None else plgpu.Barrier(num_barriers=2 * num_out_slots),
       collective_axes="wg",
   )
-  def _pipeline_scope(pipeline_allocs, out_smem):
+  def _pipeline_scope(pipeline_allocs, out_smem, c_barrier):
     wg_idx = lax.axis_index("wg")
     cta_idx = lax.axis_index("cluster")
     @plgpu.nd_loop((m_iters * n_iters,), collective_axes="cluster_grid")
@@ -173,7 +177,7 @@ def kernel(a_gmem, b_gmem, out_gmem, config: TuningConfig,
         )
         def _acc_scope(acc_ref):
           eval_pipeline(acc_ref)
-          acc = acc_ref[...].astype(dtype)
+          acc = acc_ref[...].astype(out_dtype)
           plgpu.wait_smem_to_gmem(0, wait_read_only=True)
           for epi_mi in range(tile_m // epi_tile_m):
             for epi_ni in range(tile_n // epi_tile_n):
@@ -181,7 +185,20 @@ def kernel(a_gmem, b_gmem, out_gmem, config: TuningConfig,
               epi_n_slice = slice(epi_ni * epi_tile_n, (epi_ni + 1) * epi_tile_n)
               slot = (epi_mi * (tile_n // epi_tile_n) + epi_ni) % 2
               plgpu.wait_smem_to_gmem(1, wait_read_only=True)
-              out_smem[wg_idx, slot] = acc[epi_m_slice, epi_n_slice]
+              if c_gmem is None:
+                out_smem[wg_idx, slot] = acc[epi_m_slice, epi_n_slice]
+              else:
+                # TODO: Consider using triple-buffering so to not end up issuing
+                # the copy and immediately blocking on it
+                plgpu.copy_gmem_to_smem(
+                    c_gmem.at[cta_m_slice, cta_n_slice]
+                    .at[wg_m_slice, wg_n_slice]
+                    .at[epi_m_slice, epi_n_slice],
+                    out_smem.at[wg_idx, slot],
+                    c_barrier.at[wg_idx * num_out_slots + slot],
+                )
+                plgpu.barrier_wait(c_barrier.at[wg_idx * num_out_slots + slot])
+                out_smem[wg_idx, slot] += acc[epi_m_slice, epi_n_slice]
               plgpu.commit_smem()
               plgpu.copy_smem_to_gmem(
                   out_smem.at[wg_idx, slot],
@@ -207,7 +224,7 @@ def kernel(a_gmem, b_gmem, out_gmem, config: TuningConfig,
   plgpu.wait_smem_to_gmem(0, wait_read_only=True)
 
 
-def matmul(a, b, config: TuningConfig):
+def matmul(a, b, c, config: TuningConfig):
   dtype = a.dtype
   if a.dtype != b.dtype:
     raise ValueError(
@@ -220,6 +237,12 @@ def matmul(a, b, config: TuningConfig):
     raise ValueError(
         f"Matmul LHS and RHS have incompatible shapes {a.shape} vs {b.shape}"
     )
+  if c is None:
+    out_dtype = dtype
+  else:
+    if c.shape != (m, n):
+      raise ValueError(f"C has incompatible shape {c.shape} vs {(m, n)}")
+    out_dtype = c.dtype
   tile_m, tile_n = config.tile_m, config.tile_n
   epi_tile_n = config.epi_tile_n or tile_n
   epi_tile_m = config.epi_tile_m or tile_m
@@ -229,7 +252,7 @@ def matmul(a, b, config: TuningConfig):
   cluster_size = 1 + (config.cluster_dimension is not None)
   f = plgpu.kernel(
       functools.partial(kernel, config=config),
-      out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+      out_shape=jax.ShapeDtypeStruct((m, n), out_dtype),
       grid=(num_sms // cluster_size,),
       grid_names=("cluster_grid",),
       cluster=(cluster_size,),
@@ -237,7 +260,7 @@ def matmul(a, b, config: TuningConfig):
       num_threads=3,
       thread_name="wg",
   )
-  return f(a, b)
+  return f(a, b, c)
 
 
 def main(_) -> None:
@@ -279,7 +302,7 @@ def main(_) -> None:
       try:
         out, runtimes_ms = profiler.measure(
             functools.partial(matmul, config=config), iterations=10,
-        )(a, b)
+        )(a, b, None)
         assert runtimes_ms is not None
         runtime_ms = statistics.median(runtimes_ms)
       except ValueError as e:

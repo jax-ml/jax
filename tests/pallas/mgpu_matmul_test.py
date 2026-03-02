@@ -99,6 +99,7 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
       epi_tile_n=(None, 64),
       epi_tile_m=(None, 64),
       wg_dimension=tuple(hopper_matmul_mgpu.MatmulDimension),
+      c_dtype=(None, jnp.float32),
   )
   def test_hopper_matmul(self, *args, **kwargs):
     self.check_hopper_matmul(*args, **kwargs)
@@ -161,6 +162,7 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
       epi_tile_m,
       epi_tile_n,
       wg_dimension,
+      c_dtype=None,
       **kwargs
   ):
     if not jtu.is_cuda_compute_capability_equal("9.0"):
@@ -175,9 +177,21 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
         + 2 * min(2, num_epi_tiles) * epi_tile_size) * 2
     ):
       self.skipTest("Tile too big to fit into SMEM")
-    k1, k2, = jax.random.split(jax.random.key(42), 2)
-    a = jax.random.normal(k1, (m, k), dtype)
-    b = jax.random.normal(k2, (k, n), dtype)
+
+    key = jax.random.key(42)
+    if c_dtype is None:
+      k1, k2 = jax.random.split(key, 2)
+      a = jax.random.normal(k1, (m, k), dtype)
+      b = jax.random.normal(k2, (k, n), dtype)
+      c = None
+      rtol = 1e-7
+    else:
+      # Uniform avoids too many values around zero which cause precision issues.
+      k1, k2, k3 = jax.random.split(key, 3)
+      a = jax.random.uniform(k1, (m, k), dtype)
+      b = jax.random.uniform(k2, (k, n), dtype)
+      c = jax.random.uniform(k3, (m, n), c_dtype)
+      rtol = 5e-3
 
     spec = hopper_matmul_mgpu.TuningConfig(
         tile_m=tile_m,
@@ -189,9 +203,11 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
         wg_dimension=wg_dimension,
         **kwargs,
     )
-    out = hopper_matmul_mgpu.matmul(a, b, spec)
+    out = hopper_matmul_mgpu.matmul(a, b, c, spec)
     out_ref = jnp.dot(a, b, precision=jax.lax.DotAlgorithmPreset.F16_F16_F32)
-    np.testing.assert_allclose(out, out_ref)
+    if c is not None:
+      out_ref = out_ref.astype(c.dtype) + c
+    np.testing.assert_allclose(out, out_ref, rtol=rtol)
 
   @parameterized.product(
       m=(4096,),
