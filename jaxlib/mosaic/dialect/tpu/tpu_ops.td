@@ -1453,6 +1453,7 @@ def TPU_YieldOp : TPU_Op<"yield", [Pure, ReturnLike, Terminator]> {
 def TPU_DelayOp : TPU_Op<"delay"> {
   let arguments = (ins I32:$nanos);
   let results = (outs);
+  let assemblyFormat = [{ $nanos attr-dict }];
 }
 
 // Expands the granularity of mask to subelements.
