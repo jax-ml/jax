@@ -256,8 +256,8 @@ def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
 
   Args:
     f: function to check at ``f(*args)``.
-    f_vjp: function that calculates ``jax.jvp`` applied to ``f``. Typically this
-      should be ``functools.partial(jax.jvp, f))``.
+    f_jvp: function that calculates ``jax.jvp`` applied to ``f``. Typically this
+      should be ``functools.partial(jax.jvp, f)``.
     args: tuple of argument values.
     atol: absolute tolerance for gradient equality.
     rtol: relative tolerance for gradient equality.
@@ -295,7 +295,7 @@ def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
   Args:
     f: function to check at ``f(*args)``.
     f_vjp: function that calculates ``jax.vjp`` applied to ``f``. Typically this
-      should be ``functools.partial(jax.jvp, f))``.
+      should be ``functools.partial(jax.vjp, f)``.
     args: tuple of argument values.
     atol: absolute tolerance for gradient equality.
     rtol: relative tolerance for gradient equality.
