@@ -907,9 +907,9 @@ numpy==2.0.2 ; python_version <= "3.12" \
     #   tensorboard
     #   tensorflow
     #   tensorstore
-numpy-typing-compat==20251206.2.0 \
-    --hash=sha256:413171c4333c4175cbad4206c94e58422d291d20426c42581865380156715493 \
-    --hash=sha256:7db9d5e991af03b2ade38f43253e4eb03ab88925230931bff7f559c020676fb1
+numpy-typing-compat==20251206.2.4 \
+    --hash=sha256:59882d23aaff054a2536da80564012cdce33487657be4d79c5925bb8705fcabc \
+    --hash=sha256:a82e723bd20efaa4cf2886709d4264c144f1f2b609bda83d1545113b7e47a5b5
     # via optype
 nvidia-cublas==13.2.1.1 ; sys_platform == "linux" \
     --hash=sha256:8b4a4cd8b73772fde9ccaa1f3967eb001ae5fde8b1dc37f7442d072b64d6f5da \

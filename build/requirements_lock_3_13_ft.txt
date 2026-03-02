@@ -543,9 +543,9 @@ numpy==2.2.6 ; python_version == "3.13" \
     #   numpy-typing-compat
     #   optype
     #   scipy
-numpy-typing-compat==20251206.2.2 \
-    --hash=sha256:93c9442985ef73dc5a18d29d6bc0f7d47a9afe95372d0a9fc68ca4802ea7ad86 \
-    --hash=sha256:9d5bf8bca75a27ee1254fea5a2a783b5c862dd9f3e726d12bd4b6143932effd2
+numpy-typing-compat==20251206.2.4 \
+    --hash=sha256:59882d23aaff054a2536da80564012cdce33487657be4d79c5925bb8705fcabc \
+    --hash=sha256:a82e723bd20efaa4cf2886709d4264c144f1f2b609bda83d1545113b7e47a5b5
     # via optype
 nvidia-cublas==13.2.1.1 ; sys_platform == "linux" \
     --hash=sha256:8b4a4cd8b73772fde9ccaa1f3967eb001ae5fde8b1dc37f7442d072b64d6f5da \
