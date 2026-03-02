@@ -351,9 +351,23 @@ def _atomic_lowering_rule(
     else:
       op = tt_dialect.RMWOp.FADD
   elif atomic_type == AtomicOpType.MIN:
-    op = tt_dialect.RMWOp.MIN
+    if isinstance(val.type, ir.IntegerType):
+      op = (
+        tt_dialect.RMWOp.MIN
+        if jnp.issubdtype(value_aval.dtype, jnp.signedinteger)
+        else tt_dialect.RMWOp.UMIN
+      )
+    else:
+      return lowering._expand_atomic_fp_min_max(atomic_type, ptr, val, mask=mask)
   elif atomic_type == AtomicOpType.MAX:
-    op = tt_dialect.RMWOp.MAX
+    if isinstance(val.type, ir.IntegerType):
+      op = (
+        tt_dialect.RMWOp.MAX
+        if jnp.issubdtype(value_aval.dtype, jnp.signedinteger)
+        else tt_dialect.RMWOp.UMAX
+      )
+    else:
+      return lowering._expand_atomic_fp_min_max(atomic_type, ptr, val, mask=mask)
   elif atomic_type == AtomicOpType.AND:
     op = tt_dialect.RMWOp.AND
   elif atomic_type == AtomicOpType.OR:
