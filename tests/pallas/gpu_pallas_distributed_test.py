@@ -1009,15 +1009,15 @@ if __name__ == '__main__':
   # allocator is used, setUp will skip the test.
   os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.01'
   os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'default'
-  # TODO(b/483671897) re-enable once command buffers supported with collectives.
-  additional_xla_flags = "--xla_gpu_enable_command_buffer=''"
-  if "XLA_FLAGS" in os.environ:
-    os.environ["XLA_FLAGS"] = (
-        f"{os.environ['XLA_FLAGS']} {additional_xla_flags}"
-    )
-  else:
-    os.environ["XLA_FLAGS"] = additional_xla_flags
   if is_nvshmem_used():
+    # TODO(b/483671897) re-enable once command buffers supported with collectives.
+    additional_xla_flags = "--xla_gpu_enable_command_buffer=''"
+    if "XLA_FLAGS" in os.environ:
+      os.environ["XLA_FLAGS"] = (
+          f"{os.environ['XLA_FLAGS']} {additional_xla_flags}"
+      )
+    else:
+      os.environ["XLA_FLAGS"] = additional_xla_flags
     jt_multiprocess.main()
   else:
     config.config_with_absl()
