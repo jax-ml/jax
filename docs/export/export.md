@@ -364,8 +364,8 @@ devices in the mesh are ignored for tracing and lowering:
 
 >>> # and it knows the shardings for the inputs. These will be applied
 >>> # when the exported is called.
->>> exp.in_shardings_hlo
-({devices=[4]<=[4]},)
+>>> exp.in_shardings_jax(export_mesh)
+(NamedSharding(mesh=AbstractMesh('a': 4, axis_types=(Auto,)), spec=P('a',)),)
 
 >>> # You can also use a concrete set of devices for exporting
 >>> concrete_devices = jax.local_devices()[:4]
@@ -374,14 +374,11 @@ devices in the mesh are ignored for tracing and lowering:
 ...    jax.ShapeDtypeStruct((32,), dtype=np.int32,
 ...                         sharding=NamedSharding(concrete_mesh, P("a"))))
 
->>> # You can expect the same results
->>> assert exp.in_shardings_hlo == exp2.in_shardings_hlo
-
 >>> # When you call an Exported, you must use a concrete set of devices
->>> arg = jnp.arange(8 * 4)
->>> res1 = exp.call(jax.device_put(arg,
-...                                NamedSharding(concrete_mesh, P("a"))))
+>>> arg = jax.device_put(jnp.arange(8 * 4),
+...                      NamedSharding(concrete_mesh, P("a")))
 
+>>> res1 = exp.call(arg)
 >>> # Check out the first 2 shards of the result
 >>> [f"device={s.device} index={s.index}" for s in res1.addressable_shards[:2]]
 ['device=TFRT_CPU_0 index=(slice(0, 8, None),)',
@@ -461,7 +458,6 @@ As a special facility, if a function was exported for 1 device and if it contain
 sharding annotations, then it can be invoked on an argument of the same shape but sharded
 on multiple devices, and the compiler will shard the function appropriately:
 
-```python
 ```python
 >>> import jax
 >>> from jax import export

@@ -135,6 +135,7 @@ table AbstractValue {
   memory_space: MemorySpace;
 }
 
+// Deprecated 3/17/2026
 enum ShardingKind: byte {
   unspecified = 0,
   hlo_sharding = 1,
@@ -142,9 +143,9 @@ enum ShardingKind: byte {
 }
 
 table Sharding {
-  kind: ShardingKind;
-  hlo_sharding_proto: [byte];  // if kind == hlo_sharding
-  named_sharding: NamedSharding;  // if kind == named_sharding; added 1/15/2026
+  kind: ShardingKind;  // Deprecated 3/17/2026
+  hlo_sharding_proto: [byte];  // unused for exports created after 3/17/2026
+  named_sharding: NamedSharding;  // added 1/15/2026
 }
 
 table Effect {
