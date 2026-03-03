@@ -3681,7 +3681,7 @@ class AsyncCopyTest(TestCase):
     self._test_cp_async(shape, dtype, swizzle=swizzle, tiling=tiling)
 
   @parameterized.product(
-      shape=((64, 128), (128, 40), (32, 384)),
+      shape=((64, 128), (128, 40), (5, 256)),
       dtype=(jnp.float32, jnp.float16),
   )
   def test_cp_async_untiled(self, shape, dtype):

@@ -479,12 +479,16 @@ class WGStridedFragLayout:
       return None
     bw = bitwidth // 8
     assert 8 % bw == 0 and 8 // bw != 0, bw
-    if math.prod(shaped_ty.shape) % WARPGROUP_SIZE != 0:
+    size = math.prod(shaped_ty.shape)
+    if size % WARPGROUP_SIZE != 0:
       return None
-    max_vec_size = np.prod(shaped_ty.shape) // WARPGROUP_SIZE
-    return cls(
-        shape=tuple(shaped_ty.shape), vec_size=min(8 // bw, max_vec_size)
-    )
+    max_vec_size = size // WARPGROUP_SIZE
+    vec_size = min(8 // bw, max_vec_size)
+    while vec_size > 0 and size % (vec_size * WARPGROUP_SIZE) != 0:
+      vec_size //= 2
+    if vec_size == 0:
+      return None
+    return cls(shape=tuple(shaped_ty.shape), vec_size=vec_size)
 
   def registers_element_type(self, t: ir.Type) -> ir.Type:
     return ir.VectorType.get((self.vec_size,), t)
