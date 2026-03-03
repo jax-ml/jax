@@ -1539,8 +1539,8 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     np.testing.assert_allclose(y, x)
 
   def test_dma_with_regular_semaphore(self):
-    if not jtu.is_device_tpu_at_least(5):
-      self.skipTest('Regular semaphores in DMAs require TPU v5+')
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest('Regular semaphores in DMAs require TPU v6+')
     if not jtu.is_cloud_tpu_at_least(2026, 3, 2):
       self.skipTest("Test requires a newer libtpu")
 
