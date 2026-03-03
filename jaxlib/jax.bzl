@@ -928,3 +928,6 @@ def compare_srcs_and_test_deps_test(name, srcs, tests, ignored_init_py_files, ro
         tags = tags,
         testonly = True,
     )
+
+def jax_bzl_library(name, deps = [], **kwargs):  # buildifier: disable=unused-variable
+    pass

@@ -19,6 +19,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "if_rocm_is_configured",
+    "jax_bzl_library",
     "rocm_library",
 )
 load("//jaxlib/rocm:rocm_rpath.bzl", "rocm_nanobind_extension")
@@ -549,4 +550,10 @@ py_library(
         ":rocm_gpu_support",
         ":rocm_plugin_extension",
     ]),
+)
+
+jax_bzl_library(
+    name = "rocm_rpath_bzl",
+    srcs = ["rocm_rpath.bzl"],
+    visibility = ["//visibility:private"],
 )

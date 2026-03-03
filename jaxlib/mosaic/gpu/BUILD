@@ -235,7 +235,7 @@ cc_library(
     srcs = CAPI_SOURCES,
     hdrs = CAPI_HEADERS,
     deps = [
-        ":passes",
+        ":serde",
         "@llvm-project//mlir:CAPIIRObjects",
     ],
     alwayslink = True,
