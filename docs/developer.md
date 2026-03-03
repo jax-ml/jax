@@ -678,20 +678,12 @@ JAX_TRACEBACK_FILTERING=off XLA_FLAGS=--xla_force_host_platform_device_count=8 p
 
 ## Type checking
 
-We use `mypy` to check the type hints. To run `mypy` with the same configuration as the
+We use `pyrefly` to check the type hints. To run `pyrefly` with the same configuration as the
 github CI checks, you can use the [pre-commit](https://pre-commit.com/) framework:
 
 ```
 pip install pre-commit
-pre-commit run mypy --all-files
-```
-
-Because `mypy` can be somewhat slow when checking all files, it may be convenient to
-only check files you have modified. To do this, first stage the changes (i.e. `git add`
-the changed files) and then run this before committing the changes:
-
-```
-pre-commit run mypy
+pre-commit run pyrefly-check --all-files
 ```
 
 ## Linting
