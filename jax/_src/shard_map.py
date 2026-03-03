@@ -320,7 +320,7 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
     # TODO: since we're keeping tree information around we can do this more directly
     # rather than raise/catch in a context where we have tree info.
     except _SpecError as e:
-      fails, = e.args
+      fails, out_tree = e.args
       msg = _spec_rank_error(SpecErrorType.out, f, out_tree(), out_specs, fails)
       if any(fail is not no_fail and not fail.shape for fail in fails):
         msg += (" In particular, for rank 0 outputs which are not constant "
@@ -328,8 +328,8 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
                 "that they can be concatenated using out_specs.")
       raise ValueError(msg) from None
     except _RepError as e:
-      fails, = e.args
-      msg = _inout_vma_error(f, mesh, out_tree(), out_specs, fails)
+      fails, out_tree, = e.args
+      msg = _inout_vma_error(f, mesh, out_tree, out_specs, fails)
       raise ValueError(msg) from None
     return out_ft.unflatten()
   return cast(F, wrapped)
@@ -804,13 +804,11 @@ def _shard_map_staging(
     jaxpr, out_data = pe.trace_to_jaxpr(f, in_avals_flat_tree, debug_info,
                                         fun_returns_flat_tree=True)
   out_avals_ft, out_specs = out_data.unpack_aux()
-  out_avals_flat = list(out_avals_ft)
-  _check_names(out_specs, out_avals_flat)
-  out_avals_ = [v.aval for v in jaxpr.outvars]
+  _check_names(out_specs, out_avals_ft)
   if check_vma:
-    _check_vmas(mesh, out_specs, out_avals_)
+    _check_vmas(mesh, out_specs, out_avals_ft)
   out_avals = [unshard_aval(mesh, check_vma, spec, aval)
-               for spec, aval in zip(out_specs, out_avals_)]
+               for spec, aval in zip(out_specs, out_avals_ft)]
   with (_extend_axis_env(mesh, manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
     jaxpr, consts = pe.separate_consts(jaxpr)
@@ -1263,7 +1261,7 @@ def _check_names(specs, avals: Sequence[core.ShapedArray]) -> None:
   fail = [a if isinstance(sp, P) and sp and len(sp) > a.ndim else no_fail
           for sp, a in zip(specs, avals)]
   if any(f is not no_fail for f in fail):
-    raise _SpecError(fail)
+    raise _SpecError(fail, avals.tree)
 
 class _SpecError(Exception):
   pass
@@ -1272,7 +1270,7 @@ def _check_vmas(mesh, specs, avals):
   fail = [a.vma if isinstance(sp, P) and not _valid_repeats(mesh, a.vma, sp)  # pytype: disable=attribute-error
           else no_fail for sp, a in zip(specs, avals)]
   if any(f is not no_fail for f in fail):
-    raise _RepError(fail)
+    raise _RepError(fail, avals.tree)
 
 class _RepError(Exception):
   pass
