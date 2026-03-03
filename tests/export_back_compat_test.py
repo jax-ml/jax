@@ -185,7 +185,7 @@ class CompatTest(bctu.CompatTestBase):
       "__gpu$xla.gpu.triton",  # tested in pallas/export_back_compat_pallas_test.py
       # The following require ROCm to test
       "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi", "hipsolver_syevd_ffi",
-      "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
+      "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi", "hipsolver_gesdd_ffi",
     })
     not_covered = targets_to_cover.difference(covered_targets)
     self.assertEmpty(not_covered,
